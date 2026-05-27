@@ -21,6 +21,30 @@ has_installation() {
     && [[ -d "$WASMEDGE_DIR/lib" ]]
 }
 
+run_installer() {
+  local installer_home="${1:-}"
+  local installer_tmp
+  local status
+  installer_tmp="$(mktemp -d)"
+
+  if [[ -n "$installer_home" ]]; then
+    if (cd "$installer_tmp" && curl -sSf "$WASMEDGE_INSTALL_SCRIPT_URL" | env -u GIT_DIR -u GIT_WORK_TREE HOME="$installer_home" bash -s -- -v "$WASMEDGE_VERSION"); then
+      status=0
+    else
+      status=$?
+    fi
+  else
+    if (cd "$installer_tmp" && curl -sSf "$WASMEDGE_INSTALL_SCRIPT_URL" | env -u GIT_DIR -u GIT_WORK_TREE bash -s -- -v "$WASMEDGE_VERSION"); then
+      status=0
+    else
+      status=$?
+    fi
+  fi
+
+  rm -rf "$installer_tmp"
+  return "$status"
+}
+
 installed_version() {
   "$WASMEDGE_DIR/bin/wasmedge" --version 2>/dev/null | awk '{print $NF}'
 }
@@ -47,13 +71,13 @@ fi
 
 log "installing WasmEdge ${WASMEDGE_VERSION} into ${WASMEDGE_DIR}"
 if [[ "$WASMEDGE_DIR" == "$WASMEDGE_DEFAULT_DIR" ]]; then
-  curl -sSf "$WASMEDGE_INSTALL_SCRIPT_URL" | bash -s -- -v "$WASMEDGE_VERSION"
+  run_installer
 else
   if [[ "$(basename "$WASMEDGE_DIR")" != ".wasmedge" ]]; then
     fail "custom automatic install paths must end in .wasmedge; current value is ${WASMEDGE_DIR}"
   fi
   mkdir -p "$(dirname "$WASMEDGE_DIR")"
-  curl -sSf "$WASMEDGE_INSTALL_SCRIPT_URL" | HOME="$(dirname "$WASMEDGE_DIR")" bash -s -- -v "$WASMEDGE_VERSION"
+  run_installer "$(dirname "$WASMEDGE_DIR")"
 fi
 
 if ! has_installation; then

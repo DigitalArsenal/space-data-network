@@ -4,6 +4,33 @@ Production releases are tag-driven and owned by `.github/workflows/release-deplo
 The pipeline publishes the immutable browser assets first, then builds every
 downstream artifact from those exact assets.
 
+## Beta Channel
+
+Beta channel artifacts are published by
+`.github/workflows/beta-release-artifacts.yml` as a GitHub release with
+`make_latest: true`. The default release number is
+`v<package.json version>-beta.<run number>`, and manual runs may only provide a
+version containing a SemVer `beta` prerelease segment.
+Native Linux package asset names replace the SemVer beta hyphen with `.`, so
+`v1.0.3-beta.1` is uploaded as `1.0.3.beta.1`.
+
+The beta workflow intentionally stays separate from the production signed
+release path. It does not create `release.plg`, `release.pnm`, or Bitcoin
+anchor records. It does publish usable artifacts for testers:
+
+- `ghcr.io/digitalarsenal/space-data-network-full:<beta-version>`
+- `ghcr.io/digitalarsenal/space-data-network-edge:<beta-version>`
+- full-node RPM and DEB packages named with `spacedatanetwork-full`
+- edge-relay RPM and DEB packages named with `spacedatanetwork-edge`
+- Linux VM tarball named with `spacedatanetwork-linux-vm-`
+- macOS ARM64 bundle named `spacedatanetwork-darwin-arm64.tar.gz`
+- browser and Node SDK tarball named with `spacedatanetwork-sdn-js-`
+- CycloneDX SBOM: `spacedatanetwork-sbom.cdx.json`
+- `ipfs-deployment.json`
+- `container-digests.json`
+- `spacedatanetwork-beta-manifest.json`
+- `spacedatanetwork-checksums.txt`
+
 ## Trust Model
 
 - `release.plg` is the signed binary release publication record.
@@ -35,6 +62,19 @@ downstream artifact from those exact assets.
 ```sh
 cd sdn-server
 ../scripts/go-with-wasmedge.sh run ./cmd/spacedatanetwork release verify ../dist/release
+```
+
+The Docker artifact harness installs every release artifact in clean containers
+and starts a small SDN network from the installed binaries:
+
+```sh
+npm run test:release-artifacts:docker -- --release-dir dist/release
+```
+
+For local `act` runs, point it at the artifact server directory instead:
+
+```sh
+npm run test:release-artifacts:docker -- --act-artifacts /tmp/sdn-beta-act-artifacts
 ```
 
 Manual spot checks:

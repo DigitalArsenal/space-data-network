@@ -1,14 +1,11 @@
-name: SDN Release Deployment
+name: SDN Beta Release Artifacts
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       version:
-        description: Release version, for example v2.1.0
-        required: true
+        description: Optional beta release version, for example v1.0.3-beta.7. Leave blank to use v<package version>-beta.<run number>.
+        required: false
         type: string
 
 permissions:
@@ -18,14 +15,34 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ${{ github.repository }}
-  VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
   NFPM_VERSION: v2.42.0
 
 jobs:
+  beta-version:
+    name: Resolve beta version
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.version.outputs.release_tag }}
+      package_version: ${{ steps.version.outputs.package_version }}
+      native_package_version: ${{ steps.version.outputs.native_package_version }}
+      release_name: ${{ steps.version.outputs.release_name }}
+      channel: ${{ steps.version.outputs.channel }}
+      npm_tag: ${{ steps.version.outputs.npm_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - id: version
+        name: Compute beta release number
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: node deployment/release/prepare-beta-release.mjs
+
   preflight:
     name: Preflight
     runs-on: ubuntu-latest
+    needs: beta-version
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -48,7 +65,7 @@ jobs:
         run: ../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run 'TestVerifyReleaseDirectory|TestHandleModuleRuntime'
 
   ipfs:
-    name: Publish static assets to IPFS
+    name: Build and pin static assets
     runs-on: ubuntu-latest
     needs: preflight
     steps:
@@ -76,9 +93,9 @@ jobs:
             dist/ipfs/ipfs-webui
 
   docker:
-    name: Build and sign container images
+    name: Build beta container images
     runs-on: ubuntu-latest
-    needs: ipfs
+    needs: [beta-version, ipfs]
     strategy:
       fail-fast: false
       matrix:
@@ -105,12 +122,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: sigstore/cosign-installer@v3.4.0
+      - id: image
+        name: Resolve lowercase image name
+        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}-${{ matrix.suffix }}" >> "$GITHUB_OUTPUT"
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.suffix }}
+          images: ${{ steps.image.outputs.name }}
           tags: |
-            type=raw,value=${{ env.VERSION }}
+            type=raw,value=${{ needs.beta-version.outputs.release_tag }}
+            type=raw,value=beta
             type=sha,prefix=
       - id: build
         uses: docker/build-push-action@v5
@@ -133,16 +154,18 @@ jobs:
           done
           cosign sign --yes ${images}
           mkdir -p dist/container-digests
-          printf '{"name":"%s","digest":"%s"}\n' "${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.suffix }}" "${DIGEST}" > "dist/container-digests/${{ matrix.suffix }}.json"
+          printf '{"name":"%s","digest":"%s"}\n' "${{ steps.image.outputs.name }}" "${DIGEST}" > "dist/container-digests/${{ matrix.suffix }}.json"
       - uses: actions/upload-artifact@v4
         with:
           name: container-digest-${{ matrix.suffix }}
           path: dist/container-digests/${{ matrix.suffix }}.json
 
   packages:
-    name: Build native packages and SBOM
+    name: Build beta native packages and SBOM
     runs-on: ubuntu-latest
-    needs: ipfs
+    needs: [beta-version, ipfs]
+    env:
+      VERSION: ${{ needs.beta-version.outputs.native_package_version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -154,10 +177,18 @@ jobs:
           mkdir -p sdn-js/ui/dist webui/build
           cp -R dist/ipfs/sdn-admin/. sdn-js/ui/dist/
           cp -R dist/ipfs/ipfs-webui/. webui/build/
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: sdn-js/package-lock.json
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24.x'
           cache-dependency-path: sdn-server/go.sum
+      - name: Install JS dependencies
+        working-directory: sdn-js
+        run: npm ci
       - name: Install nfpm and syft
         run: |
           mkdir -p "${RUNNER_TEMP}/bin"
@@ -182,10 +213,37 @@ jobs:
             dist/linux-vm/*.tar.gz
             dist/sbom/spacedatanetwork-sbom.cdx.json
 
-  release:
-    name: Assemble verified release
+  sdn-js-package:
+    name: Build beta sdn-js package
     runs-on: ubuntu-latest
-    needs: [ipfs, docker, packages]
+    needs: beta-version
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: sdn-js/package-lock.json
+      - name: Install dependencies
+        working-directory: sdn-js
+        run: npm ci
+      - name: Build browser and Node package
+        working-directory: sdn-js
+        run: npm run build:package
+      - name: Pack npm tarball
+        working-directory: sdn-js
+        run: |
+          mkdir -p ../dist/sdn-js
+          npm pack --pack-destination ../dist/sdn-js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdn-js-package
+          path: dist/sdn-js/*.tgz
+
+  artifact-docker-test:
+    name: Install and network-test release artifacts
+    runs-on: ubuntu-latest
+    needs: [beta-version, ipfs, packages, sdn-js-package]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -198,34 +256,63 @@ jobs:
           path: dist
       - uses: actions/download-artifact@v4
         with:
+          name: sdn-js-package
+          path: dist/sdn-js
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install artifacts and verify SDN network
+        run: npm run test:release-artifacts:docker -- --release-dir dist --timeout-ms 180000
+
+  release:
+    name: Publish beta GitHub release
+    runs-on: ubuntu-latest
+    needs: [beta-version, ipfs, docker, packages, sdn-js-package, artifact-docker-test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ipfs-assets
+          path: dist/ipfs
+      - uses: actions/download-artifact@v4
+        with:
+          name: package-artifacts
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdn-js-package
+          path: dist/sdn-js
+      - uses: actions/download-artifact@v4
+        with:
           pattern: container-digest-*
           path: dist/container-digests
           merge-multiple: true
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-node@v4
         with:
-          go-version: '1.24.x'
-          cache-dependency-path: sdn-server/go.sum
+          node-version: '20'
       - name: Build container digest manifest
         run: |
-          mkdir -p dist
-          jq -s '{images: .}' dist/container-digests/*.json > dist/container-digests.json
-      - name: Assemble and verify release artifacts
+          node - <<'NODE'
+          const { readdirSync, readFileSync, writeFileSync } = require('node:fs');
+          const { join } = require('node:path');
+          const dir = 'dist/container-digests';
+          const images = readdirSync(dir)
+            .filter((file) => file.endsWith('.json'))
+            .sort()
+            .map((file) => JSON.parse(readFileSync(join(dir, file), 'utf8')));
+          writeFileSync('dist/container-digests.json', `${JSON.stringify({ images }, null, 2)}\n`);
+          NODE
+      - name: Assemble beta release artifacts
         env:
-          RELEASE_PLG_CID: ${{ secrets.RELEASE_PLG_CID }}
-          SDN_RELEASE_PUBLIC_KEY: ${{ secrets.SDN_RELEASE_PUBLIC_KEY }}
-          BITCOIN_SIGNATURE: ${{ secrets.BITCOIN_SIGNATURE }}
-          BITCOIN_PUBLIC_KEY: ${{ secrets.BITCOIN_PUBLIC_KEY }}
-          BITCOIN_ADDRESS: ${{ secrets.BITCOIN_ADDRESS }}
-          BITCOIN_DESCRIPTOR: ${{ secrets.BITCOIN_DESCRIPTOR }}
-          BITCOIN_NETWORK: ${{ secrets.BITCOIN_NETWORK }}
-          BITCOIN_ANCHOR_METHOD: ${{ secrets.BITCOIN_ANCHOR_METHOD }}
-          BITCOIN_TXID: ${{ secrets.BITCOIN_TXID }}
-          BITCOIN_PROOF_REFERENCE: ${{ secrets.BITCOIN_PROOF_REFERENCE }}
-          BITCOIN_OUTPUT_INDEX: ${{ secrets.BITCOIN_OUTPUT_INDEX }}
-          BITCOIN_BLOCK_HEIGHT: ${{ secrets.BITCOIN_BLOCK_HEIGHT }}
-          BITCOIN_CONFIRMATIONS: ${{ secrets.BITCOIN_CONFIRMATIONS }}
-        run: deployment/release/assemble-release-artifacts.sh
+          VERSION: ${{ needs.beta-version.outputs.package_version }}
+          RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
+        run: deployment/release/assemble-beta-release-artifacts.sh
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.VERSION }}
+          tag_name: ${{ needs.beta-version.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ needs.beta-version.outputs.release_name }}
+          body_path: dist/release/SDN-BETA-RELEASE.md
+          prerelease: false
+          make_latest: true
           files: dist/release/*

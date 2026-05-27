@@ -1068,16 +1068,29 @@ npm --prefix sdn-js install
 # yarn
 npm --prefix sdn-js install</code></pre>
 
-        <h3>Server Binary</h3>
-        <pre><code># Linux amd64
-curl -Lo spacedatanetwork \
-  https://github.com/DigitalArsenal/space-data-network/releases/latest/download/spacedatanetwork-linux-amd64
+        <h3>Native Releases</h3>
+        <p>Native artifacts are attached to versioned SDN release tags, not SDK-only tags such as <code>sdn-js-v...</code>. The beta channel currently publishes Linux amd64 full-node and edge-relay packages, a Linux VM bundle, and a macOS ARM64 full-node bundle.</p>
 
-# macOS arm64 (Apple Silicon)
-curl -Lo spacedatanetwork \
-  https://github.com/DigitalArsenal/space-data-network/releases/latest/download/spacedatanetwork-darwin-arm64
+        <h3>Beta channel</h3>
+        <p>Beta builds are GitHub releases. Pick the newest numbered beta from <a href="https://github.com/DigitalArsenal/space-data-network/releases/tag/v1.0.3-beta.1" target="_blank">Space Data Network beta release</a>, then use that release number for package and SDK downloads.</p>
+        <pre><code>SDN_BETA_VERSION=v1.0.3-beta.1
+SDN_NATIVE_PACKAGE_VERSION=${SDN_BETA_VERSION#v}
+SDN_NATIVE_PACKAGE_VERSION=${SDN_NATIVE_PACKAGE_VERSION/-beta/.beta}
 
-chmod +x spacedatanetwork</code></pre>
+# Full node package
+curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_BETA_VERSION}/spacedatanetwork-full_${SDN_NATIVE_PACKAGE_VERSION}_amd64.deb"
+
+# Edge relay package
+curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_BETA_VERSION}/spacedatanetwork-edge_${SDN_NATIVE_PACKAGE_VERSION}_amd64.deb"
+
+# Linux VM bundle
+curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_BETA_VERSION}/spacedatanetwork-linux-vm-${SDN_NATIVE_PACKAGE_VERSION}.tar.gz"
+
+# macOS ARM64 full-node bundle
+curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_BETA_VERSION}/spacedatanetwork-darwin-arm64.tar.gz"
+
+# Browser and Node JavaScript SDK tarball
+curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_BETA_VERSION}/spacedatanetwork-sdn-js-&lt;sdk-version&gt;.tgz"</code></pre>
       </section>
 
       <!-- Full Node -->

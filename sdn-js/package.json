@@ -20,7 +20,8 @@
   },
   "files": [
     "dist",
-    "wasm"
+    "wasm",
+    "scripts/patch-hd-wallet-ui.mjs"
   ],
   "scripts": {
     "build": "npm run build:core && npm run build:ui",

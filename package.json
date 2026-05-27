@@ -30,6 +30,7 @@
     "install:webui": "cd webui && npm install",
     "install:all": "npm run install:js && npm run install:desktop && npm run install:webui",
     "webui": "IPFS=./desktop/node_modules/kubo/kubo/ipfs && $IPFS config --json API.HTTPHeaders.Access-Control-Allow-Origin '[\"http://localhost:3117\", \"http://127.0.0.1:5001\", \"https://webui.ipfs.io\"]' && $IPFS config --json API.HTTPHeaders.Access-Control-Allow-Methods '[\"PUT\", \"POST\"]' && $IPFS daemon & until curl -s -o /dev/null http://127.0.0.1:5001/api/v0/version -X POST; do sleep 1; done && echo 'IPFS daemon ready' && PORT=3117 npm --prefix webui start",
+    "dev": "./scripts/dev.sh",
     "webui:build": "npm --prefix webui run build",
     "build:js": "cd sdn-js && npm run build",
     "plugin-harness": "scripts/run-plugin-harness.sh",
@@ -47,7 +48,8 @@
     "test:module-delivery": "npm --prefix sdn-js test -- src/module-delivery.test.ts src/module-delivery-sdk-compat.test.ts && node tests/isomorphic/module-invoke.test.mjs",
     "ci:module-delivery": "npm run test:module-delivery",
     "ci:local": "scripts/ci-local.sh quick",
-    "ci:local:full": "scripts/ci-local.sh full"
+    "ci:local:full": "scripts/ci-local.sh full",
+    "test:release-artifacts:docker": "node deployment/release/test-release-artifacts-docker.mjs"
   },
   "repository": {
     "type": "git",
