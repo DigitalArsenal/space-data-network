@@ -1,0 +1,11 @@
+{
+  "name": "@spacedatanetwork/sdn-updater-module",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "npx --no-install space-data-module check --manifest ./manifest.json --wasm ./dist/isomorphic/module.wasm",
+    "test": "node --test test/smoke.test.mjs"
+  }
+}
