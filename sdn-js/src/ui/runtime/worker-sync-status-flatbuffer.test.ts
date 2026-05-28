@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import * as flatbuffers from 'flatbuffers';
 import { describe, expect, it } from 'vitest';
 
-import { DSS } from '../../../../../spacedatastandards.org/lib/js/DSS/DSS.js';
+import { DSS } from 'spacedatastandards.org/lib/js/DSS/DSS.js';
 import {
   decodeWorkerSchemaSyncProgressFlatBuffer,
   encodeWorkerSchemaSyncProgressFlatBuffer,
@@ -11,7 +12,8 @@ import type { WorkerSchemaSyncProgress } from './local-flatsql-worker-client';
 
 const workerClientSource = readFileSync(new URL('./local-flatsql-worker-client.ts', import.meta.url), 'utf8');
 const workerSource = readFileSync(new URL('./local-flatsql.worker.ts', import.meta.url), 'utf8');
-const dssSchema = readFileSync(new URL('../../../../../spacedatastandards.org/schema/DSS/main.fbs', import.meta.url), 'utf8');
+const require = createRequire(import.meta.url);
+const dssSchema = readFileSync(require.resolve('spacedatastandards.org/schema/DSS/main.fbs'), 'utf8');
 
 describe('FlatSQL worker sync status transport', () => {
   it('sends sync status over the worker boundary as FlatBuffer bytes', () => {

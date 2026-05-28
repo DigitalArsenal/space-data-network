@@ -40,7 +40,8 @@
     "measure:flatsql-sync": "npm run build:core && node scripts/measure-flatsql-sync-throughput.mjs",
     "chaos:local": "node scripts/chaos-local-network.mjs",
     "lint": "eslint src --ext .ts",
-    "prepublishOnly": "npm --prefix .. run check:versions && npm run build:package"
+    "check:versions": "node ../scripts/generate-suite-version-info.js --check && node ../scripts/check-version-consistency.js",
+    "prepublishOnly": "npm run check:versions && npm run build:package"
   },
   "keywords": [
     "space",

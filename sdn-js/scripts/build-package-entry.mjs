@@ -20,6 +20,9 @@ const sharedBuildOptions = {
   format: 'esm',
   platform: 'browser',
   target: 'es2022',
+  banner: {
+    js: 'var WebSocket = globalThis.WebSocket;',
+  },
   sourcemap: false,
   logLevel: 'info',
   mainFields: ['browser', 'module', 'main'],
