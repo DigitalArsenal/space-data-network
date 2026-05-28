@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import * as flatbuffers from 'flatbuffers';
 import { describe, expect, it } from 'vitest';
 
@@ -9,18 +10,15 @@ import { spaceObjectClass } from 'spacedatastandards.org/lib/js/CAT/spaceObjectC
 import { buildEpochProfileSql } from './epoch-query-sql';
 import { clearLocalFlatSqlStore, createLocalFlatSqlStore, decodeFlatSqlSizePrefixedStream, flatSqlSizePrefixedStreamInfo, isReadOnlyFlatSqlQuery, stripSdnFlatBufferSizePrefix } from './local-flatsql';
 
-const CAT_SCHEMA = readFileSync(
-  new URL('../../../../../spacedatastandards.org/schema/CAT/main.fbs', import.meta.url),
-  'utf8',
-);
-const OMM_SCHEMA = readFileSync(
-  new URL('../../../../../spacedatastandards.org/schema/OMM/main.fbs', import.meta.url),
-  'utf8',
-);
-const PNM_SCHEMA = readFileSync(
-  new URL('../../../../../spacedatastandards.org/schema/PNM/main.fbs', import.meta.url),
-  'utf8',
-);
+const require = createRequire(import.meta.url);
+
+function readSdsSchema(specifier: string): string {
+  return readFileSync(require.resolve(specifier), 'utf8');
+}
+
+const CAT_SCHEMA = readSdsSchema('spacedatastandards.org/schema/CAT/main.fbs');
+const OMM_SCHEMA = readSdsSchema('spacedatastandards.org/schema/OMM/main.fbs');
+const PNM_SCHEMA = readSdsSchema('spacedatastandards.org/schema/PNM/main.fbs');
 const STARLINK_6292_OMM_BYTES = Buffer.from('HAEAAEgAAAAkT01NAAAAADwAVAAAAAwACABQAEwAEAAAAAAAAAAAAAAARAAAADwANAAsACQAHAAUAAAAAAAAAAAAAAAAAAAABABIADwAAABQAAAAVAAAAGAAAAB4AAAAxEKtad4BV0DByqFFtsBwQGZmZmZmnGJAXf5D+u1/UUCej3xvHS04P22KKnBw9y1AUAAAAMfdAABkAAAAcAAAAAEAAABVAAAACAAAAFNETi1URVNUAAAAABQAAAAyMDI2LTA1LTExVDEwOjI2OjQxWgAAAAAFAAAARUFSVEgAAAAUAAAAMjAyNi0wNS0xMFQxMDo0NTozMVoAAAAACQAAADIwMjMtMDc4SgAAAA0AAABTVEFSTElOSy02MjkyAAAA', 'base64');
 
 describe('local FlatSQL datastore', () => {

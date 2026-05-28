@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
 const DIST_INDEX_PATH = path.resolve(__dirname, '../dist/index.mjs');
@@ -8,6 +10,7 @@ const DIST_UI_INDEX_PATH = path.resolve(__dirname, '../dist/ui/index.mjs');
 const DIST_STOREFRONT_INDEX_PATH = path.resolve(__dirname, '../dist/storefront/index.mjs');
 const DIST_PATH = path.resolve(__dirname, '../dist');
 const PACKAGE_JSON_PATH = path.resolve(__dirname, '../package.json');
+const execFileAsync = promisify(execFile);
 
 function collectBareSpecifiers(source: string): string[] {
   const withoutComments = source
@@ -143,6 +146,7 @@ describe('sdn-js package build', () => {
         name.includes('runtime-browser'),
       ),
     ).toBe(false);
+    expect(packageJson.scripts?.prepublishOnly).not.toContain('--prefix');
   });
 
   it('keeps the full UI build separate from the package publish build', async () => {
@@ -151,9 +155,34 @@ describe('sdn-js package build', () => {
     expect(packageJson.scripts?.build).toContain('build:ui');
     expect(packageJson.scripts?.buildPackage ?? packageJson.scripts?.['build:package']).toContain('build:core');
     expect(packageJson.scripts?.prepublishOnly).toBe(
-      'npm --prefix .. run check:versions && npm run build:package',
+      'npm run check:versions && npm run build:package',
     );
   });
+
+  it(
+    'imports the built root entry under Node when global WebSocket is absent',
+    { timeout: 60_000 },
+    async () => {
+      const script = `
+        const previousWebSocket = globalThis.WebSocket;
+        delete globalThis.WebSocket;
+        try {
+          await import(${JSON.stringify(pathToFileURL(DIST_INDEX_PATH).href)} + '?no-global-websocket=' + Date.now());
+        } finally {
+          if (previousWebSocket !== undefined) {
+            globalThis.WebSocket = previousWebSocket;
+          }
+        }
+      `;
+
+      const { stderr } = await execFileAsync(process.execPath, ['--input-type=module', '--eval', script], {
+        cwd: path.resolve(__dirname, '..'),
+        timeout: 60_000,
+      });
+
+      expect(stderr).not.toContain('ReferenceError: WebSocket is not defined');
+    },
+  );
 
   it(
     'imports the built canonical root entry successfully',
