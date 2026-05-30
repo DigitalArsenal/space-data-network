@@ -44,8 +44,6 @@ fi
 cat > "${release_dir}/SDN-BETA-RELEASE.md" <<EOF
 # Space Data Network ${release_tag} Beta
 
-Beta channel release for local testing, browser-node clients, and early operator feedback.
-
 These artifacts are beta builds. Use the release number \`${release_tag}\` when reporting issues or pinning deployments.
 
 ## Included artifacts
@@ -59,10 +57,11 @@ cat >> "${release_dir}/SDN-BETA-RELEASE.md" <<'EOF'
 
 ## Container images
 
-- `ghcr.io/digitalarsenal/space-data-network-full:<beta-version>`
-- `ghcr.io/digitalarsenal/space-data-network-edge:<beta-version>`
+- `digitalarsenal/space-data-network:<beta-version>`
 
-Downloadable Docker image tarballs are also included as `spacedatanetwork-container-*-linux-amd64.tar.gz`.
+The same image defaults to a full node. Operators who need edge-relay mode can override the container command.
+
+Downloadable Docker image tarballs are also included as `spacedatanetwork-container-<native-package-version>-linux-amd64.tar.gz`.
 Load them with `docker load --input <file>`.
 
 Verify downloaded files with `spacedatanetwork-checksums.txt`.

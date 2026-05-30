@@ -17,8 +17,8 @@ permissions:
   id-token: write
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_PREFIX: ${{ github.repository }}
+  REGISTRY: docker.io
+  IMAGE_NAME: digitalarsenal/space-data-network
   VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
   NFPM_VERSION: v2.42.0
 
@@ -76,17 +76,9 @@ jobs:
             dist/ipfs/ipfs-webui
 
   docker:
-    name: Build and sign container images
+    name: Build and sign container image
     runs-on: ubuntu-latest
     needs: ipfs
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - suffix: full
-            dockerfile: deployment/docker/Dockerfile.full
-          - suffix: edge
-            dockerfile: deployment/docker/Dockerfile.edge
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -102,13 +94,13 @@ jobs:
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: sigstore/cosign-installer@v3.4.0
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.suffix }}
+          images: ${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=${{ env.VERSION }}
             type=sha,prefix=
@@ -116,7 +108,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
+          file: deployment/docker/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -133,11 +125,11 @@ jobs:
           done
           cosign sign --yes ${images}
           mkdir -p dist/container-digests
-          printf '{"name":"%s","digest":"%s"}\n' "${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.suffix }}" "${DIGEST}" > "dist/container-digests/${{ matrix.suffix }}.json"
+          printf '{"name":"%s","digest":"%s"}\n' "${{ env.IMAGE_NAME }}" "${DIGEST}" > dist/container-digests/image.json
       - uses: actions/upload-artifact@v4
         with:
-          name: container-digest-${{ matrix.suffix }}
-          path: dist/container-digests/${{ matrix.suffix }}.json
+          name: container-digest
+          path: dist/container-digests/image.json
 
   packages:
     name: Build native packages and SBOM
@@ -198,9 +190,8 @@ jobs:
           path: dist
       - uses: actions/download-artifact@v4
         with:
-          pattern: container-digest-*
+          name: container-digest
           path: dist/container-digests
-          merge-multiple: true
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24.x'

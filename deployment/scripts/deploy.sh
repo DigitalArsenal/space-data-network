@@ -337,29 +337,38 @@ deploy_docker() {
 
     log_info "Deploying $type to $ip ($name)..."
 
-    if [[ "$type" == "full" ]]; then
+    if [[ "$type" == "full" || "$type" == "edge" ]]; then
         prepare_full_node_assets
         assert_prod_config_excludes_tracked_dev_wallet "${PROJECT_ROOT}/config/full-docker.yaml" "config/full-docker.yaml"
 
         ssh_cmd "$ip" "rm -rf /opt/sdn && mkdir -p /opt/sdn/deployment/docker /opt/sdn/sdn-server /opt/sdn/sdn-js/ui/dist /opt/sdn/webui/build /opt/sdn/config /opt/sdn/scripts"
 
-        rsync_cmd "${PROJECT_ROOT}/deployment/docker/Dockerfile.full" "$ip" "/opt/sdn/deployment/docker/Dockerfile.full"
+        rsync_cmd "${PROJECT_ROOT}/deployment/docker/Dockerfile" "$ip" "/opt/sdn/deployment/docker/Dockerfile"
         rsync_cmd "${PROJECT_ROOT}/sdn-server/" "$ip" "/opt/sdn/sdn-server/"
         rsync_cmd "${PROJECT_ROOT}/sdn-js/ui/dist/" "$ip" "/opt/sdn/sdn-js/ui/dist/"
         rsync_cmd "${PROJECT_ROOT}/webui/build/" "$ip" "/opt/sdn/webui/build/"
         rsync_cmd "${PROJECT_ROOT}/config/full-docker.yaml" "$ip" "/opt/sdn/config/full-docker.yaml"
         rsync_cmd "${PROJECT_ROOT}/scripts/install-wasmedge.sh" "$ip" "/opt/sdn/scripts/install-wasmedge.sh"
 
+        local entrypoint=""
+        local command=""
+        if [[ "$type" == "edge" ]]; then
+            entrypoint='    entrypoint: ["/app/spacedatanetwork-edge"]'
+            command='    command: ["--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--health-port", "8081"]'
+        fi
+
         cat << EOF | ssh_cmd "$ip" "cat > /opt/sdn/docker-compose.yaml"
 version: '3.8'
 services:
-  sdn-full:
+  sdn-${type}:
     build:
       context: /opt/sdn
-      dockerfile: deployment/docker/Dockerfile.full
-    container_name: sdn-full
+      dockerfile: deployment/docker/Dockerfile
+    container_name: sdn-${type}
     restart: unless-stopped
     network_mode: host
+${entrypoint}
+${command}
     volumes:
       - sdn-data:/app/data
 volumes:
@@ -367,7 +376,7 @@ volumes:
 EOF
 
         ssh_cmd "$ip" "cd /opt/sdn && docker compose up -d --build"
-        log_success "Deployed full to $ip"
+        log_success "Deployed $type to $ip"
         return
     fi
 
