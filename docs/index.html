@@ -2206,28 +2206,6 @@
       flex-shrink: 0;
     }
 
-    .beta-downloads-grid {
-      grid-template-columns: repeat(3, 1fr);
-    }
-
-    .beta-artifact-list {
-      text-align: left;
-      margin-top: 18px;
-      padding-top: 18px;
-      border-top: 1px solid rgba(255, 255, 255, 0.08);
-      color: var(--text-muted);
-      font-size: 13px;
-      line-height: 1.8;
-    }
-
-    .beta-artifact-list code {
-      background: transparent;
-      padding: 0;
-      color: var(--text-secondary);
-      overflow-wrap: anywhere;
-      word-break: break-word;
-    }
-
     .sdk-download {
       text-align: center;
       padding: 32px;
@@ -5030,11 +5008,10 @@ npm run desktop</code></pre>
               <span class="code-lang">Server (Go)</span>
               <button class="code-copy" onclick="copyCode(this)">Copy</button>
             </div>
-            <pre><code><span class="code-comment"># Install a beta full node package on Linux amd64</span>
-SDN_BETA_VERSION=v1.0.3-beta.1
-SDN_NATIVE_PACKAGE_VERSION=${SDN_BETA_VERSION#v}
-SDN_NATIVE_PACKAGE_VERSION=${SDN_NATIVE_PACKAGE_VERSION/-beta/.beta}
-curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_BETA_VERSION}/spacedatanetwork-full_${SDN_NATIVE_PACKAGE_VERSION}_amd64.deb"
+            <pre><code><span class="code-comment"># Install a full node package on Linux amd64</span>
+SDN_VERSION=v1.0.3-beta.1
+SDN_NATIVE_PACKAGE_VERSION=1.0.3.beta.1
+curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_VERSION}/spacedatanetwork-full_${SDN_NATIVE_PACKAGE_VERSION}_amd64.deb"
 sudo apt install "./spacedatanetwork-full_${SDN_NATIVE_PACKAGE_VERSION}_amd64.deb"
 
 <span class="code-comment"># Initialize and start</span>
@@ -5293,105 +5270,6 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
         <p class="section-subtitle">Get the Space Data Network tools for your use case</p>
       </div>
 
-      <!-- Beta Downloads -->
-      <div class="download-category">
-        <div class="category-header">
-          <div class="category-icon icon-purple">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 2v20"/>
-              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7H15a3.5 3.5 0 0 1 0 7H6"/>
-            </svg>
-          </div>
-          <div class="category-info">
-            <h3>Beta channel</h3>
-            <p>Public beta builds with numbered releases for operators, browser-node clients, and local development.</p>
-          </div>
-        </div>
-        <div class="downloads-grid beta-downloads-grid">
-          <div class="download-card">
-            <div class="download-icon icon-indigo">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M21 8v13H3V8"/>
-                <path d="M1 3h22v5H1z"/>
-                <path d="M10 12h4"/>
-              </svg>
-            </div>
-            <h3>GitHub beta release</h3>
-            <div class="download-links">
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/tag/v1.0.3-beta.1" class="download-link" target="_blank">
-                <span>v1.0.3-beta.1 release index</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
-              </a>
-            </div>
-            <div class="beta-artifact-list">
-              <div><code>spacedatanetwork-full</code> packages</div>
-              <div><code>spacedatanetwork-edge</code> packages</div>
-              <div><code>spacedatanetwork-linux-vm-</code> tarball</div>
-              <div><code>spacedatanetwork-darwin-arm64.tar.gz</code></div>
-            </div>
-          </div>
-
-          <div class="download-card">
-            <div class="download-icon icon-cyan">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <rect x="3" y="4" width="18" height="14" rx="2"/>
-                <path d="M8 20h8"/>
-                <path d="M12 18v2"/>
-                <path d="m9 10 2 2 4-4"/>
-              </svg>
-            </div>
-            <h3>Browser and SDK</h3>
-            <div class="download-links">
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-sdn-js-2.0.12.tgz" class="download-link">
-                <span>JavaScript SDK package tarball</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-              </a>
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-sbom.cdx.json" class="download-link">
-                <span>CycloneDX SBOM</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-              </a>
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-checksums.txt" class="download-link">
-                <span>SHA-256 checksums</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-              </a>
-            </div>
-            <div class="beta-artifact-list">
-              <div><code>spacedatanetwork-sdn-js-</code> package tarball</div>
-              <div><code>spacedatanetwork-sbom.cdx.json</code></div>
-              <div><code>spacedatanetwork-checksums.txt</code></div>
-            </div>
-          </div>
-
-          <div class="download-card">
-            <div class="download-icon icon-gold">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <rect x="2" y="4" width="20" height="16" rx="2"/>
-                <path d="M6 8h.01M10 8h.01"/>
-                <path d="M6 12h12"/>
-                <path d="M6 16h12"/>
-              </svg>
-            </div>
-            <h3>Containers</h3>
-            <div class="download-links">
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-container-full-1.0.3.beta.1-linux-amd64.tar.gz" class="download-link">
-                <span>64-bit Intel/AMD Docker full-node image (.tar.gz)</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-              </a>
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-container-edge-1.0.3.beta.1-linux-amd64.tar.gz" class="download-link">
-                <span>64-bit Intel/AMD Docker edge-relay image (.tar.gz)</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-              </a>
-            </div>
-            <div class="beta-artifact-list">
-              <div><code>ghcr.io/digitalarsenal/space-data-network-full:&lt;beta-version&gt;</code></div>
-              <div><code>ghcr.io/digitalarsenal/space-data-network-edge:&lt;beta-version&gt;</code></div>
-              <div><code>spacedatanetwork-container-full-</code> tarball</div>
-              <div><code>spacedatanetwork-container-edge-</code> tarball</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <!-- Server Downloads -->
       <div class="download-category">
         <div class="category-header">
@@ -5405,7 +5283,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
           </div>
           <div class="category-info">
             <h3>Server Node</h3>
-            <p>Full-node and edge-relay artifacts for infrastructure operators. Native downloads use versioned SDN release tags, not SDK-only tags.</p>
+            <p>Versioned SDN release artifacts for infrastructure operators.</p>
           </div>
         </div>
         <div class="downloads-grid">
@@ -5446,14 +5324,6 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
                 <span>64-bit Intel/AMD (RPM) full node</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
               </a>
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-edge_1.0.3.beta.1_amd64.deb" class="download-link">
-                <span>64-bit Intel/AMD (DEB) edge relay</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-              </a>
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-edge-1.0.3.beta.1-1.x86_64.rpm" class="download-link">
-                <span>64-bit Intel/AMD (RPM) edge relay</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-              </a>
               <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-linux-vm-1.0.3.beta.1.tar.gz" class="download-link">
                 <span>64-bit Intel/AMD VM bundle (.tar.gz)</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
@@ -5471,7 +5341,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
             </div>
             <h3>Windows</h3>
             <div class="download-links">
-              <span class="download-coming">Not published in beta yet</span>
+              <span class="download-coming">Not published yet</span>
             </div>
           </div>
 
@@ -5486,12 +5356,12 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
             </div>
             <h3>Docker</h3>
             <div class="download-links">
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-container-full-1.0.3.beta.1-linux-amd64.tar.gz" class="download-link">
-                <span>64-bit Intel/AMD Docker full-node image (.tar.gz)</span>
+              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-container-1.0.3.beta.1-linux-amd64.tar.gz" class="download-link">
+                <span>64-bit Intel/AMD Docker image (.tar.gz)</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
               </a>
-              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-container-edge-1.0.3.beta.1-linux-amd64.tar.gz" class="download-link">
-                <span>64-bit Intel/AMD Docker edge-relay image (.tar.gz)</span>
+              <a href="https://hub.docker.com/r/digitalarsenal/space-data-network" class="download-link" target="_blank">
+                <span>digitalarsenal/space-data-network:v1.0.3-beta.1</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
               </a>
             </div>
@@ -5511,7 +5381,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
           </div>
           <div class="category-info">
             <h3>Desktop Application</h3>
-            <p>GUI application for end users. Desktop installers are not part of the current beta artifact lane, so use source builds until dedicated installers are published.</p>
+            <p>GUI application for end users. Desktop installers are not part of the current release artifact lane, so use source builds until dedicated installers are published.</p>
           </div>
         </div>
         <div class="downloads-grid">
@@ -5578,12 +5448,31 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
       <div class="sdk-download">
         <h3>JavaScript SDK</h3>
         <p>Connect from Node.js or browsers - lightweight client for web applications</p>
+        <div class="download-links" style="max-width: 620px; margin: 20px auto 0;">
+          <a href="https://github.com/DigitalArsenal/space-data-network/releases/tag/v1.0.3-beta.1" class="download-link" target="_blank">
+            <span>v1.0.3-beta.1 release index</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
+          </a>
+          <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-sdn-js-2.0.12.tgz" class="download-link">
+            <span>JavaScript SDK package tarball</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          </a>
+          <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-sbom.cdx.json" class="download-link">
+            <span>CycloneDX SBOM</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          </a>
+          <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-checksums.txt" class="download-link">
+            <span>SHA-256 checksums</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          </a>
+        </div>
         <div class="code-block" style="max-width: 500px; margin: 20px auto 0;">
           <div class="code-header">
             <span class="code-lang">Terminal</span>
             <button class="code-copy" onclick="copyCode(this)">Copy</button>
           </div>
-          <pre><code>npm --prefix sdn-js install</code></pre>
+          <pre><code>cd sdn-js
+npm install</code></pre>
         </div>
       </div>
     </div>

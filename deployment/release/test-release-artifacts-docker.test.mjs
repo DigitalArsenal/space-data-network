@@ -29,8 +29,7 @@ test('discovers all release artifact types from a release directory', () => {
   writeFixture(releaseDir, 'spacedatanetwork-full-1.0.3~beta.1-1.x86_64.rpm');
   writeFixture(releaseDir, 'spacedatanetwork-edge-1.0.3~beta.1-1.x86_64.rpm');
   writeFixture(releaseDir, 'spacedatanetwork-linux-vm-1.0.3~beta.1.tar.gz');
-  writeFixture(releaseDir, 'spacedatanetwork-container-full-1.0.3~beta.1-linux-amd64.tar.gz');
-  writeFixture(releaseDir, 'spacedatanetwork-container-edge-1.0.3~beta.1-linux-amd64.tar.gz');
+  writeFixture(releaseDir, 'spacedatanetwork-container-1.0.3~beta.1-linux-amd64.tar.gz');
   writeFixture(releaseDir, 'spacedatanetwork-sdn-js-2.0.12.tgz');
   writeFixture(releaseDir, 'spacedatanetwork-sbom.cdx.json', '{"bomFormat":"CycloneDX"}');
   writeFixture(releaseDir, 'ipfs-deployment.json', '{"targets":[]}');
@@ -42,8 +41,7 @@ test('discovers all release artifact types from a release directory', () => {
   assert.equal(artifacts.fullRpm.name, 'spacedatanetwork-full-1.0.3~beta.1-1.x86_64.rpm');
   assert.equal(artifacts.edgeRpm.name, 'spacedatanetwork-edge-1.0.3~beta.1-1.x86_64.rpm');
   assert.equal(artifacts.linuxVm.name, 'spacedatanetwork-linux-vm-1.0.3~beta.1.tar.gz');
-  assert.equal(artifacts.containerFull.name, 'spacedatanetwork-container-full-1.0.3~beta.1-linux-amd64.tar.gz');
-  assert.equal(artifacts.containerEdge.name, 'spacedatanetwork-container-edge-1.0.3~beta.1-linux-amd64.tar.gz');
+  assert.equal(artifacts.container.name, 'spacedatanetwork-container-1.0.3~beta.1-linux-amd64.tar.gz');
   assert.equal(artifacts.sdnJs.name, 'spacedatanetwork-sdn-js-2.0.12.tgz');
   assert.equal(artifacts.sbom.name, 'spacedatanetwork-sbom.cdx.json');
   assert.equal(artifacts.ipfsDeployment.name, 'ipfs-deployment.json');
@@ -51,8 +49,8 @@ test('discovers all release artifact types from a release directory', () => {
 
 test('parses docker load output for downloadable container image tars', () => {
   assert.equal(
-    parseDockerLoadImage('Loaded image: ghcr.io/digitalarsenal/space-data-network-full:v1.0.3-beta.1\n'),
-    'ghcr.io/digitalarsenal/space-data-network-full:v1.0.3-beta.1'
+    parseDockerLoadImage('Loaded image: digitalarsenal/space-data-network:v1.0.3-beta.1\n'),
+    'digitalarsenal/space-data-network:v1.0.3-beta.1'
   );
   assert.equal(
     parseDockerLoadImage('Loaded image ID: sha256:abc123\n'),

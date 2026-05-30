@@ -97,8 +97,7 @@ export function discoverArtifacts(releaseRoot) {
     fullRpm: pickArtifact(files, 'fullRpm', /^spacedatanetwork-full-.*\.x86_64\.rpm$/),
     edgeRpm: pickArtifact(files, 'edgeRpm', /^spacedatanetwork-edge-.*\.x86_64\.rpm$/),
     linuxVm: pickArtifact(files, 'linuxVm', /^spacedatanetwork-linux-vm-.*\.tar\.gz$/),
-    containerFull: pickArtifact(files, 'containerFull', /^spacedatanetwork-container-full-.*-linux-amd64\.tar\.gz$/),
-    containerEdge: pickArtifact(files, 'containerEdge', /^spacedatanetwork-container-edge-.*-linux-amd64\.tar\.gz$/),
+    container: pickArtifact(files, 'container', /^spacedatanetwork-container-.*-linux-amd64\.tar\.gz$/),
     sdnJs: pickArtifact(files, 'sdnJs', /^spacedatanetwork-sdn-js-.*\.tgz$/),
     sbom: pickArtifact(files, 'sbom', /^spacedatanetwork-sbom\.cdx\.json$/),
     ipfsDeployment: pickArtifact(files, 'ipfsDeployment', /^ipfs-deployment\.json$/)
@@ -243,6 +242,13 @@ setup:
   token_expiry: 10m
   data_path: /var/lib/spacedatanetwork/data
 `;
+}
+
+export function generateContainerNodeConfig({ bootstrapPeers = [] } = {}) {
+  return generateFullNodeConfig({ bootstrapPeers })
+    .replaceAll('/var/lib/spacedatanetwork/data', '/app/data')
+    .replaceAll('/opt/spacedatanetwork/admin-ui', '/app/admin-ui')
+    .replaceAll('/opt/spacedatanetwork/webui', '/app/webui');
 }
 
 export function generateEdgeArgs({ bootstrapPeer, healthPort }) {
@@ -417,14 +423,9 @@ function loadContainerImage({ artifact, label, platform }) {
 
 function loadContainerImages({ artifacts, platform }) {
   return {
-    containerFull: loadContainerImage({
-      artifact: artifacts.containerFull,
-      label: 'full-node',
-      platform
-    }),
-    containerEdge: loadContainerImage({
-      artifact: artifacts.containerEdge,
-      label: 'edge-relay',
+    container: loadContainerImage({
+      artifact: artifacts.container,
+      label: 'node',
       platform
     })
   };
@@ -437,7 +438,22 @@ function writeFullConfig(workDir, name, bootstrapPeers) {
   return configPath;
 }
 
-function startFullNode({ containerName, imageName, configPath, networkName, platform }) {
+function writeContainerConfig(workDir, name, bootstrapPeers) {
+  const configPath = join(workDir, 'configs', `${name}.yaml`);
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, generateContainerNodeConfig({ bootstrapPeers }));
+  return configPath;
+}
+
+function startFullNode({
+  containerName,
+  imageName,
+  configPath,
+  networkName,
+  platform,
+  binaryPath = '/opt/spacedatanetwork/bin/spacedatanetwork',
+  configTargetPath = '/etc/spacedatanetwork/config.yaml'
+}) {
   log(`starting ${containerName}`);
   runDocker([
     'run',
@@ -449,16 +465,23 @@ function startFullNode({ containerName, imageName, configPath, networkName, plat
     '--network',
     networkName,
     '-v',
-    `${configPath}:/etc/spacedatanetwork/config.yaml:ro`,
+    `${configPath}:${configTargetPath}:ro`,
     imageName,
-    '/opt/spacedatanetwork/bin/spacedatanetwork',
+    binaryPath,
     'daemon',
     '--config',
-    '/etc/spacedatanetwork/config.yaml'
+    configTargetPath
   ]);
 }
 
-function startEdgeNode({ containerName, imageName, bootstrapPeer, networkName, platform }) {
+function startEdgeNode({
+  containerName,
+  imageName,
+  bootstrapPeer,
+  networkName,
+  platform,
+  binaryPath = '/opt/spacedatanetwork/bin/spacedatanetwork-edge'
+}) {
   log(`starting ${containerName}`);
   runDocker([
     'run',
@@ -470,7 +493,7 @@ function startEdgeNode({ containerName, imageName, bootstrapPeer, networkName, p
     '--network',
     networkName,
     imageName,
-    '/opt/spacedatanetwork/bin/spacedatanetwork-edge',
+    binaryPath,
     '--listen',
     '/ip4/0.0.0.0/tcp/8080/ws',
     ...generateEdgeArgs({ bootstrapPeer, healthPort: 8081 })
@@ -535,7 +558,9 @@ async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs }) 
     `${prefix}-full-rpm`,
     `${prefix}-linux-vm`,
     `${prefix}-edge-deb`,
-    `${prefix}-edge-rpm`
+    `${prefix}-edge-rpm`,
+    `${prefix}-container-full`,
+    `${prefix}-container-edge`
   ];
 
   runDocker(['network', 'create', networkName]);
@@ -569,6 +594,7 @@ async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs }) 
     const seedBootstrap = `/dns4/${containers[0]}/tcp/4001/p2p/${seedStatus.peer_id}`;
     const joinedConfig = writeFullConfig(workDir, containers[1], [seedBootstrap]);
     const vmConfig = writeFullConfig(workDir, containers[2], [seedBootstrap]);
+    const containerConfig = writeContainerConfig(workDir, containers[5], [seedBootstrap]);
 
     startFullNode({
       containerName: containers[1],
@@ -597,6 +623,23 @@ async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs }) 
       bootstrapPeer: seedBootstrap,
       networkName,
       platform
+    });
+    startFullNode({
+      containerName: containers[5],
+      imageName: images.container.imageName,
+      configPath: containerConfig,
+      networkName,
+      platform,
+      binaryPath: '/app/spacedatanetwork',
+      configTargetPath: '/app/config/full-docker.yaml'
+    });
+    startEdgeNode({
+      containerName: containers[6],
+      imageName: images.container.imageName,
+      bootstrapPeer: seedBootstrap,
+      networkName,
+      platform,
+      binaryPath: '/app/spacedatanetwork-edge'
     });
 
     await waitForJson({
@@ -628,11 +671,25 @@ async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs }) 
       predicate: (body) => Number(body.peers) >= 1
     });
     await waitForJson({
+      containerName: containers[5],
+      url: 'http://127.0.0.1:5001/api/relay/status',
+      label: 'container full-node peer connection',
+      timeoutMs,
+      predicate: (body) => Number(body.connections) >= 1
+    });
+    await waitForJson({
+      containerName: containers[6],
+      url: 'http://127.0.0.1:8081/health',
+      label: 'container edge-mode peer connection',
+      timeoutMs,
+      predicate: (body) => Number(body.peers) >= 1
+    });
+    await waitForJson({
       containerName: containers[0],
       url: 'http://127.0.0.1:5001/api/relay/status',
       label: 'seed node inbound peer connections',
       timeoutMs,
-      predicate: (body) => Number(body.connections) >= 2
+      predicate: (body) => Number(body.connections) >= 3
     });
 
     runDocker([
@@ -658,6 +715,30 @@ async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs }) 
       'curl',
       '-fsS',
       `http://${containers[3]}:8081/health`
+    ], { stdio: 'inherit' });
+    runDocker([
+      'run',
+      '--rm',
+      '--platform',
+      platform,
+      '--network',
+      networkName,
+      images.fullDeb.imageName,
+      'curl',
+      '-fsS',
+      `http://${containers[5]}:5001/api/v1/data/health`
+    ], { stdio: 'inherit' });
+    runDocker([
+      'run',
+      '--rm',
+      '--platform',
+      platform,
+      '--network',
+      networkName,
+      images.fullDeb.imageName,
+      'curl',
+      '-fsS',
+      `http://${containers[6]}:8081/health`
     ], { stdio: 'inherit' });
 
     log('Docker SDN network check passed');

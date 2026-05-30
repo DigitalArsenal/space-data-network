@@ -1,5 +1,6 @@
-# SDN Full Node
-# Provides the sdn-server daemon plus the hosted /admin and /webui assets.
+# SDN Node
+# Single container image. Defaults to a full node; operators can override the
+# command to run the edge relay binary from the same image.
 
 FROM golang:1.24-bookworm AS builder
 
@@ -29,12 +30,14 @@ WORKDIR /build
 COPY sdn-server/ ./sdn-server/
 
 WORKDIR /build/sdn-server
-RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/spacedatanetwork ./cmd/spacedatanetwork
+RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/spacedatanetwork ./cmd/spacedatanetwork \
+  && CGO_ENABLED=0 go build -tags edge -ldflags="-s -w" -o /out/spacedatanetwork-edge ./cmd/spacedatanetwork-edge
 
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     libsqlite3-0 \
     wget \
   && rm -rf /var/lib/apt/lists/*
@@ -44,6 +47,7 @@ RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin sdn
 WORKDIR /app
 
 COPY --from=builder /out/spacedatanetwork /app/spacedatanetwork
+COPY --from=builder /out/spacedatanetwork-edge /app/spacedatanetwork-edge
 COPY --from=builder /root/.wasmedge /opt/wasmedge
 COPY sdn-js/ui/dist/ /app/admin-ui/
 COPY webui/build/ /app/webui/
@@ -53,7 +57,7 @@ RUN mkdir -p /app/data /app/keys && chown -R sdn:sdn /app
 
 USER sdn
 
-EXPOSE 5001 4001 4001/udp 8080
+EXPOSE 5001 4001 4001/udp 8080 8081
 
 ENV WASMEDGE_DIR=/opt/wasmedge
 ENV LD_LIBRARY_PATH=/opt/wasmedge/lib

@@ -161,19 +161,15 @@ SKIP_LOCAL_CI=1 git push
 
 ## Downloads
 
-### Beta channel
-
-Beta channel builds are published as GitHub releases with beta release numbers like
-`v1.0.3-beta.1`: [Space Data Network beta release](https://github.com/DigitalArsenal/space-data-network/releases/tag/v1.0.3-beta.1).
-Use the newest beta release number as `<beta-version>` when downloading assets.
+Builds are published as GitHub releases with release numbers like
+`v1.0.3-beta.1`: [Space Data Network v1.0.3-beta.1 release](https://github.com/DigitalArsenal/space-data-network/releases/tag/v1.0.3-beta.1).
+Use the newest release number as `<beta-version>` when downloading assets.
 
 | Artifact | Use |
 |----------|-----|
 | `spacedatanetwork-full_<native-package-version>_amd64.deb` / `.rpm` | Linux full-node packages |
-| `spacedatanetwork-edge_<native-package-version>_amd64.deb` / `.rpm` | Linux edge-relay packages |
 | `spacedatanetwork-linux-vm-<native-package-version>.tar.gz` | Linux VM/full-node bundle |
-| `spacedatanetwork-container-full-<native-package-version>-linux-amd64.tar.gz` | Docker full-node image tarball |
-| `spacedatanetwork-container-edge-<native-package-version>-linux-amd64.tar.gz` | Docker edge-relay image tarball |
+| `spacedatanetwork-container-<native-package-version>-linux-amd64.tar.gz` | Docker image tarball |
 | `spacedatanetwork-darwin-arm64.tar.gz` | macOS Apple Silicon full-node bundle |
 | `spacedatanetwork-sdn-js-<sdk-version>.tgz` | Browser and Node JavaScript SDK package tarball |
 | `spacedatanetwork-sbom.cdx.json` | CycloneDX SBOM |
@@ -182,19 +178,20 @@ Use the newest beta release number as `<beta-version>` when downloading assets.
 Native Linux download names use `<native-package-version>` such as `1.0.3.beta.1`
 because GitHub release asset names avoid the release tag's SemVer hyphen.
 
-Beta container images are tagged by release number and by the moving `beta` tag:
+Container images are published to Docker Hub and tagged by release number and by
+the moving `beta` tag:
 
-- `ghcr.io/digitalarsenal/space-data-network-full:<beta-version>`
-- `ghcr.io/digitalarsenal/space-data-network-edge:<beta-version>`
+- `digitalarsenal/space-data-network:v1.0.3-beta.1`
 
-Downloadable Docker image tarballs are published alongside the native packages
-and can be loaded with `docker load --input <tarball>`.
+The single image defaults to a full node. Operators who need edge-relay mode can
+override the container command.
 
 ### Native releases
 
 Native artifacts live under versioned SDN release tags, not SDK-only tags such
-as `sdn-js-v...`. The beta channel currently publishes Linux amd64 full-node and
-edge-relay packages, the Linux VM bundle, and a macOS ARM64 full-node bundle.
+as `sdn-js-v...`. The `v1.0.3-beta.1` release currently publishes Linux amd64
+full-node packages, the Linux VM bundle, a Docker image tarball, and a macOS
+ARM64 full-node bundle.
 Windows native installers are not published in the beta artifact lane yet.
 
 macOS ARM64 direct download:
@@ -204,11 +201,8 @@ Beta `v1.0.3-beta.1` direct downloads:
 
 - [Linux 64-bit Intel/AMD full node DEB](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-full_1.0.3.beta.1_amd64.deb)
 - [Linux 64-bit Intel/AMD full node RPM](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-full-1.0.3.beta.1-1.x86_64.rpm)
-- [Linux 64-bit Intel/AMD edge relay DEB](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-edge_1.0.3.beta.1_amd64.deb)
-- [Linux 64-bit Intel/AMD edge relay RPM](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-edge-1.0.3.beta.1-1.x86_64.rpm)
 - [Linux 64-bit Intel/AMD VM bundle](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-linux-vm-1.0.3.beta.1.tar.gz)
-- [Docker 64-bit Intel/AMD full-node image](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-container-full-1.0.3.beta.1-linux-amd64.tar.gz)
-- [Docker 64-bit Intel/AMD edge-relay image](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-container-edge-1.0.3.beta.1-linux-amd64.tar.gz)
+- [Docker 64-bit Intel/AMD image](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-container-1.0.3.beta.1-linux-amd64.tar.gz)
 - [JavaScript SDK package tarball](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-sdn-js-2.0.12.tgz)
 - [CycloneDX SBOM](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-sbom.cdx.json)
 - [SHA-256 checksums](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-checksums.txt)

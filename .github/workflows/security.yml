@@ -98,22 +98,35 @@ jobs:
   docker-scan:
     name: Docker Image Scan
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        dockerfile:
-          - path: deployment/docker/Dockerfile.full
-            name: full-node
-          - path: deployment/docker/Dockerfile.edge
-            name: edge-relay
 
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            sdn-js/package-lock.json
+            webui/package-lock.json
+
+      - name: Build shared admin shell assets
+        working-directory: sdn-js
+        run: |
+          npm ci
+          npm run build:ui
+
+      - name: Build IPFS WebUI assets
+        working-directory: webui
+        run: |
+          npm ci
+          npm run build
+
       - name: Check if Dockerfile exists
         id: check
         run: |
-          if [ -f "${{ matrix.dockerfile.path }}" ]; then
+          if [ -f "deployment/docker/Dockerfile" ]; then
             echo "exists=true" >> $GITHUB_OUTPUT
           else
             echo "exists=false" >> $GITHUB_OUTPUT
@@ -128,35 +141,35 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ${{ matrix.dockerfile.path }}
+          file: deployment/docker/Dockerfile
           push: false
           load: true
-          tags: sdn-${{ matrix.dockerfile.name }}:scan
+          tags: sdn-node:scan
 
       - name: Run Trivy vulnerability scanner
         if: steps.check.outputs.exists == 'true'
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: sdn-${{ matrix.dockerfile.name }}:scan
+          image-ref: sdn-node:scan
           format: 'table'
           exit-code: '0'
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH,MEDIUM'
-          output: 'trivy-${{ matrix.dockerfile.name }}-report.txt'
+          output: 'trivy-node-report.txt'
 
       - name: Display Trivy scan results
         if: steps.check.outputs.exists == 'true'
         run: |
-          echo "=== Docker Image Scan Results for ${{ matrix.dockerfile.name }} ==="
-          cat trivy-${{ matrix.dockerfile.name }}-report.txt || echo "No report generated"
+          echo "=== Docker Image Scan Results ==="
+          cat trivy-node-report.txt || echo "No report generated"
 
       - name: Upload Trivy report
         if: steps.check.outputs.exists == 'true' && always()
         uses: actions/upload-artifact@v4
         with:
-          name: trivy-${{ matrix.dockerfile.name }}-report
-          path: trivy-${{ matrix.dockerfile.name }}-report.txt
+          name: trivy-node-report
+          path: trivy-node-report.txt
           retention-days: 30
 
   codeql-analysis:

@@ -10,31 +10,24 @@ const macosArm64BundleUrl = 'https://github.com/DigitalArsenal/space-data-networ
 const directReleaseAssetUrls = [
   'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-full_1.0.3.beta.1_amd64.deb',
   'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-full-1.0.3.beta.1-1.x86_64.rpm',
-  'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-edge_1.0.3.beta.1_amd64.deb',
-  'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-edge-1.0.3.beta.1-1.x86_64.rpm',
   'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-linux-vm-1.0.3.beta.1.tar.gz',
-  'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-container-full-1.0.3.beta.1-linux-amd64.tar.gz',
-  'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-container-edge-1.0.3.beta.1-linux-amd64.tar.gz',
+  'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-container-1.0.3.beta.1-linux-amd64.tar.gz',
   'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-sdn-js-2.0.12.tgz',
   'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-sbom.cdx.json',
   'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-checksums.txt'
 ];
 const requiredPhrases = [
-  'Beta channel',
   betaReleasesUrl,
   macosArm64BundleUrl,
   ...directReleaseAssetUrls,
   'spacedatanetwork-full',
-  'spacedatanetwork-edge',
   'spacedatanetwork-linux-vm-',
-  'spacedatanetwork-container-full-',
-  'spacedatanetwork-container-edge-',
+  'spacedatanetwork-container-',
   'spacedatanetwork-darwin-arm64.tar.gz',
   'spacedatanetwork-sdn-js-',
   'spacedatanetwork-sbom.cdx.json',
   'spacedatanetwork-checksums.txt',
-  'ghcr.io/digitalarsenal/space-data-network-full:<beta-version>',
-  'ghcr.io/digitalarsenal/space-data-network-edge:<beta-version>'
+  'digitalarsenal/space-data-network:v1.0.3-beta.1'
 ];
 const homepageRequiredPhrases = requiredPhrases.map((phrase) =>
   phrase.replaceAll('<beta-version>', '&lt;beta-version&gt;')
@@ -58,6 +51,11 @@ test('website downloads page exposes beta artifacts and release links', () => {
   for (const phrase of homepageRequiredPhrases) {
     assert.match(homepage, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `docs/index.html missing ${phrase}`);
   }
+  assert.doesNotMatch(homepage, /Beta channel/);
+  assert.doesNotMatch(homepage, /beta-downloads-grid/);
+  assert.doesNotMatch(homepage, /space-data-network-full/);
+  assert.doesNotMatch(homepage, /space-data-network-edge/);
+  assert.doesNotMatch(homepage, /Docker edge-relay image/);
 });
 
 test('website download cards use direct assets and keep architecture details inside links', () => {
@@ -84,8 +82,7 @@ test('website download cards use direct assets and keep architecture details ins
     '64-bit Intel/AMD (DEB)',
     '64-bit Intel/AMD (RPM)',
     '64-bit Intel/AMD VM bundle',
-    '64-bit Intel/AMD Docker full-node image',
-    '64-bit Intel/AMD Docker edge-relay image'
+    '64-bit Intel/AMD Docker image'
   ]) {
     assert.match(homepage, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `docs/index.html missing link label ${label}`);
   }
@@ -94,17 +91,25 @@ test('website download cards use direct assets and keep architecture details ins
 test('installation docs show beta curl and package guidance', () => {
   const docs = readRepoFile('docs/docs.html');
 
-  for (const phrase of ['SDN_BETA_VERSION', betaReleasesUrl, 'spacedatanetwork-full', 'spacedatanetwork-linux-vm-', 'spacedatanetwork-sdn-js-']) {
+  for (const phrase of ['SDN_VERSION', betaReleasesUrl, 'spacedatanetwork-full', 'spacedatanetwork-linux-vm-', 'spacedatanetwork-container-', 'spacedatanetwork-sdn-js-', 'digitalarsenal/space-data-network:v1.0.3-beta.1']) {
     assert.match(docs, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `docs/docs.html missing ${phrase}`);
   }
+  assert.doesNotMatch(docs, /Beta channel/);
+  assert.doesNotMatch(docs, /space-data-network-full/);
+  assert.doesNotMatch(docs, /space-data-network-edge/);
+  assert.doesNotMatch(docs, /spacedatanetwork-container-full-/);
+  assert.doesNotMatch(docs, /spacedatanetwork-container-edge-/);
+  assert.doesNotMatch(docs, /npm --prefix/);
 });
 
 test('release pipeline docs describe the beta workflow separately from production', () => {
   const releasePipeline = readRepoFile('docs/release-pipeline.md');
 
-  for (const phrase of ['.github/workflows/beta-release-artifacts.yml', 'Beta channel', 'GitHub release', 'make_latest: true', 'spacedatanetwork-beta-manifest.json']) {
+  for (const phrase of ['.github/workflows/beta-release-artifacts.yml', 'GitHub release', 'make_latest: true', 'spacedatanetwork-beta-manifest.json', 'digitalarsenal/space-data-network:<beta-version>']) {
     assert.match(releasePipeline, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `docs/release-pipeline.md missing ${phrase}`);
   }
+  assert.doesNotMatch(releasePipeline, /space-data-network-full/);
+  assert.doesNotMatch(releasePipeline, /space-data-network-edge/);
 });
 
 test('public docs do not route native artifacts through GitHub latest downloads', () => {

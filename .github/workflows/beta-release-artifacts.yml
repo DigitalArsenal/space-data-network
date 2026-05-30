@@ -14,7 +14,8 @@ permissions:
   id-token: write
 
 env:
-  REGISTRY: ghcr.io
+  REGISTRY: docker.io
+  IMAGE_NAME: digitalarsenal/space-data-network
   NFPM_VERSION: v2.42.0
 
 jobs:
@@ -93,20 +94,12 @@ jobs:
             dist/ipfs/ipfs-webui
 
   docker:
-    name: Build beta container images
+    name: Build beta container image
     runs-on: ubuntu-latest
     needs: [beta-version, ipfs]
     env:
       RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
       NATIVE_PACKAGE_VERSION: ${{ needs.beta-version.outputs.native_package_version }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - suffix: full
-            dockerfile: deployment/docker/Dockerfile.full
-          - suffix: edge
-            dockerfile: deployment/docker/Dockerfile.edge
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -122,16 +115,13 @@ jobs:
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: sigstore/cosign-installer@v3.4.0
-      - id: image
-        name: Resolve lowercase image name
-        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}-${{ matrix.suffix }}" >> "$GITHUB_OUTPUT"
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ steps.image.outputs.name }}
+          images: ${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=${{ needs.beta-version.outputs.release_tag }}
             type=raw,value=beta
@@ -140,7 +130,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
+          file: deployment/docker/Dockerfile
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -158,10 +148,10 @@ jobs:
           done
           cosign sign --yes ${images}
           mkdir -p dist/container-digests
-          printf '{"name":"%s","digest":"%s"}\n' "${{ steps.image.outputs.name }}" "${DIGEST}" > "dist/container-digests/${{ matrix.suffix }}.json"
+          printf '{"name":"%s","digest":"%s"}\n' "${{ env.IMAGE_NAME }}" "${DIGEST}" > dist/container-digests/image.json
       - name: Export downloadable Docker image
         env:
-          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
         run: |
           mkdir -p dist/container-images
           image_ref="${IMAGE_NAME}:${RELEASE_TAG}"
@@ -169,18 +159,18 @@ jobs:
             --platform linux/amd64 \
             --load \
             -t "${image_ref}" \
-            -f "${{ matrix.dockerfile }}" \
+            -f deployment/docker/Dockerfile \
             .
-          docker run --rm "${image_ref}" --help >/tmp/spacedatanetwork-container-${{ matrix.suffix }}-help.txt
-          docker save "${image_ref}" | gzip -n > "dist/container-images/spacedatanetwork-container-${{ matrix.suffix }}-${NATIVE_PACKAGE_VERSION}-linux-amd64.tar.gz"
+          docker run --rm "${image_ref}" --help >/tmp/spacedatanetwork-container-help.txt
+          docker save "${image_ref}" | gzip -n > "dist/container-images/spacedatanetwork-container-${NATIVE_PACKAGE_VERSION}-linux-amd64.tar.gz"
       - uses: actions/upload-artifact@v4
         with:
-          name: container-digest-${{ matrix.suffix }}
-          path: dist/container-digests/${{ matrix.suffix }}.json
+          name: container-digest
+          path: dist/container-digests/image.json
       - uses: actions/upload-artifact@v4
         with:
-          name: container-image-${{ matrix.suffix }}
-          path: dist/container-images/spacedatanetwork-container-${{ matrix.suffix }}-${{ needs.beta-version.outputs.native_package_version }}-linux-amd64.tar.gz
+          name: container-image
+          path: dist/container-images/spacedatanetwork-container-${{ needs.beta-version.outputs.native_package_version }}-linux-amd64.tar.gz
 
   packages:
     name: Build beta native packages and SBOM
@@ -282,9 +272,8 @@ jobs:
           path: dist/sdn-js
       - uses: actions/download-artifact@v4
         with:
-          pattern: container-image-*
+          name: container-image
           path: dist
-          merge-multiple: true
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -311,14 +300,12 @@ jobs:
           path: dist/sdn-js
       - uses: actions/download-artifact@v4
         with:
-          pattern: container-image-*
+          name: container-image
           path: dist/container-images
-          merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
-          pattern: container-digest-*
+          name: container-digest
           path: dist/container-digests
-          merge-multiple: true
       - uses: actions/setup-node@v4
         with:
           node-version: '20'

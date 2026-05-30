@@ -21,14 +21,20 @@ test('beta release workflow publishes public beta artifacts', () => {
   assert.match(workflow, /npm pack --pack-destination/);
   assert.match(workflow, /artifact-docker-test:/);
   assert.match(workflow, /test:release-artifacts:docker/);
-  assert.match(workflow, /container-image-\*/);
+  assert.match(workflow, /container-image/);
   assert.match(workflow, /docker save/);
-  assert.match(workflow, /spacedatanetwork-container-\$\{\{ matrix\.suffix \}\}-\$\{NATIVE_PACKAGE_VERSION\}-linux-amd64\.tar\.gz/);
+  assert.match(workflow, /spacedatanetwork-container-\$\{NATIVE_PACKAGE_VERSION\}-linux-amd64\.tar\.gz/);
   assert.match(workflow, /prerelease:\s*false/);
   assert.match(workflow, /make_latest:\s*true/);
   assert.match(workflow, /release_name/);
-  assert.match(workflow, /ghcr\.io/);
+  assert.match(workflow, /docker\.io/);
+  assert.match(workflow, /digitalarsenal\/space-data-network/);
   assert.match(workflow, /beta/);
+  assert.doesNotMatch(workflow, /matrix:/);
+  assert.doesNotMatch(workflow, /Dockerfile\.full/);
+  assert.doesNotMatch(workflow, /Dockerfile\.edge/);
+  assert.doesNotMatch(workflow, /space-data-network-full/);
+  assert.doesNotMatch(workflow, /space-data-network-edge/);
 });
 
 test('npm release publishing maps beta releases to the beta dist-tag', () => {
@@ -62,4 +68,28 @@ test('push packaging workflows build IPFS WebUI before packaging full-node asset
     assert.match(workflow, /working-directory:\s*webui/, `${workflowPath} must install and build webui assets`);
     assert.match(workflow, /npm ci[\s\S]*npm run build/, `${workflowPath} must build webui/build before packaging`);
   }
+});
+
+test('container publish workflow ships one Docker Hub image', () => {
+  const workflow = readRepoFile('.github/workflows/docker-publish.yml');
+
+  assert.match(workflow, /REGISTRY:\s*docker\.io/);
+  assert.match(workflow, /IMAGE_NAME:\s*digitalarsenal\/space-data-network/);
+  assert.match(workflow, /secrets\.DOCKERHUB_USERNAME/);
+  assert.match(workflow, /secrets\.DOCKERHUB_TOKEN/);
+  assert.match(workflow, /deployment\/docker\/Dockerfile/);
+  assert.doesNotMatch(workflow, /matrix:/);
+  assert.doesNotMatch(workflow, /Dockerfile\.full/);
+  assert.doesNotMatch(workflow, /Dockerfile\.edge/);
+  assert.doesNotMatch(workflow, /space-data-network-full/);
+  assert.doesNotMatch(workflow, /space-data-network-edge/);
+});
+
+test('single Dockerfile defaults to full node and keeps edge mode as command override', () => {
+  const dockerfile = readRepoFile('deployment/docker/Dockerfile');
+
+  assert.match(dockerfile, /go build[\s\S]*-o \/out\/spacedatanetwork \.\/cmd\/spacedatanetwork/);
+  assert.match(dockerfile, /go build -tags edge[\s\S]*-o \/out\/spacedatanetwork-edge \.\/cmd\/spacedatanetwork-edge/);
+  assert.match(dockerfile, /ENTRYPOINT \["\/app\/spacedatanetwork"\]/);
+  assert.match(dockerfile, /CMD \["daemon", "--config", "\/app\/config\/full-docker\.yaml"\]/);
 });

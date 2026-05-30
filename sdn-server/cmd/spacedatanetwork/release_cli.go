@@ -338,17 +338,22 @@ func verifyContainerDigests(pathValue string) error {
 	if err := readJSONFile(pathValue, &payload); err != nil {
 		return fmt.Errorf("verify container-digests.json: %w", err)
 	}
-	var full, edge bool
+	var found bool
 	for _, image := range payload.Images {
 		if !validSHA256Digest(image.Digest) {
 			return fmt.Errorf("container image %q has invalid digest %q", image.Name, image.Digest)
 		}
 		lowerName := strings.ToLower(image.Name)
-		full = full || strings.Contains(lowerName, "full")
-		edge = edge || strings.Contains(lowerName, "edge")
+		if lowerName == "digitalarsenal/space-data-network" || lowerName == "docker.io/digitalarsenal/space-data-network" {
+			found = true
+			continue
+		}
+		if strings.Contains(lowerName, "space-data-network-full") || strings.Contains(lowerName, "space-data-network-edge") {
+			return errors.New("container-digests.json must include a single digitalarsenal/space-data-network image, not split full and edge images")
+		}
 	}
-	if !full || !edge {
-		return errors.New("container-digests.json must include full and edge image digests")
+	if !found {
+		return errors.New("container-digests.json must include a single digitalarsenal/space-data-network image")
 	}
 	return nil
 }

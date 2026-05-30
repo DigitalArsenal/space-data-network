@@ -4,10 +4,10 @@ Production releases are tag-driven and owned by `.github/workflows/release-deplo
 The pipeline publishes the immutable browser assets first, then builds every
 downstream artifact from those exact assets.
 
-## Beta Channel
+## Beta Releases
 
-Beta channel artifacts are published by
-`.github/workflows/beta-release-artifacts.yml` as a GitHub release with
+Beta artifacts are published by `.github/workflows/beta-release-artifacts.yml`
+as a GitHub release with
 `make_latest: true`. The default release number is
 `v<package.json version>-beta.<run number>`, and manual runs may only provide a
 version containing a SemVer `beta` prerelease segment.
@@ -18,13 +18,11 @@ The beta workflow intentionally stays separate from the production signed
 release path. It does not create `release.plg`, `release.pnm`, or Bitcoin
 anchor records. It does publish usable artifacts for testers:
 
-- `ghcr.io/digitalarsenal/space-data-network-full:<beta-version>`
-- `ghcr.io/digitalarsenal/space-data-network-edge:<beta-version>`
+- `digitalarsenal/space-data-network:<beta-version>`
 - full-node RPM and DEB packages named with `spacedatanetwork-full`
 - edge-relay RPM and DEB packages named with `spacedatanetwork-edge`
 - Linux VM tarball named with `spacedatanetwork-linux-vm-`
-- downloadable Docker image tarballs named with `spacedatanetwork-container-full-`
-  and `spacedatanetwork-container-edge-`
+- downloadable Docker image tarball named with `spacedatanetwork-container-`
 - macOS ARM64 bundle named `spacedatanetwork-darwin-arm64.tar.gz`
 - browser and Node SDK tarball named with `spacedatanetwork-sdn-js-`
 - CycloneDX SBOM: `spacedatanetwork-sbom.cdx.json`
@@ -46,12 +44,11 @@ anchor records. It does publish usable artifacts for testers:
 
 ## Required Artifacts
 
-- `ghcr.io/<owner>/<repo>-full:<version>`
-- `ghcr.io/<owner>/<repo>-edge:<version>`
+- `digitalarsenal/space-data-network:<version>`
 - full-node RPM and DEB
 - edge-relay RPM and DEB
 - Linux VM tarball
-- downloadable Docker image tarballs
+- downloadable Docker image tarball
 - CycloneDX SBOM: `spacedatanetwork-sbom.cdx.json`
 - `ipfs-deployment.json`
 - `container-digests.json`
@@ -86,7 +83,7 @@ Manual spot checks:
 ```sh
 cd dist/release
 sha256sum -c spacedatanetwork-checksums.txt
-cosign verify ghcr.io/<owner>/<repo>-full:<version> \
+cosign verify digitalarsenal/space-data-network:<version> \
   --certificate-identity-regexp='https://github.com/<owner>/<repo>/.*' \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
 rpm --checksig spacedatanetwork-full-*.rpm
