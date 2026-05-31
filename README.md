@@ -181,7 +181,7 @@ because GitHub release asset names avoid the release tag's SemVer hyphen.
 Container images are published to Docker Hub and tagged by release number and by
 the moving `beta` tag:
 
-- `digitalarsenal/space-data-network:v1.0.3-beta.1`
+- `dockerdigitalarsenal/space-data-network:v1.0.3-beta.1`
 
 The single image defaults to a full node. Operators who need edge-relay mode can
 override the container command.

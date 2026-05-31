@@ -18,7 +18,7 @@ permissions:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: digitalarsenal/space-data-network
+  IMAGE_NAME: dockerdigitalarsenal/space-data-network
   VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
   NFPM_VERSION: v2.42.0
 

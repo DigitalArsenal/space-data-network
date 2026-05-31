@@ -18,7 +18,7 @@ The beta workflow intentionally stays separate from the production signed
 release path. It does not create `release.plg`, `release.pnm`, or Bitcoin
 anchor records. It does publish usable artifacts for testers:
 
-- `digitalarsenal/space-data-network:<beta-version>`
+- `dockerdigitalarsenal/space-data-network:<beta-version>`
 - full-node RPM and DEB packages named with `spacedatanetwork-full`
 - edge-relay RPM and DEB packages named with `spacedatanetwork-edge`
 - Linux VM tarball named with `spacedatanetwork-linux-vm-`
@@ -44,7 +44,7 @@ anchor records. It does publish usable artifacts for testers:
 
 ## Required Artifacts
 
-- `digitalarsenal/space-data-network:<version>`
+- `dockerdigitalarsenal/space-data-network:<version>`
 - full-node RPM and DEB
 - edge-relay RPM and DEB
 - Linux VM tarball
@@ -83,7 +83,7 @@ Manual spot checks:
 ```sh
 cd dist/release
 sha256sum -c spacedatanetwork-checksums.txt
-cosign verify digitalarsenal/space-data-network:<version> \
+cosign verify dockerdigitalarsenal/space-data-network:<version> \
   --certificate-identity-regexp='https://github.com/<owner>/<repo>/.*' \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
 rpm --checksig spacedatanetwork-full-*.rpm

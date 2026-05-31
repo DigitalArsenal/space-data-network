@@ -57,7 +57,7 @@ cat >> "${release_dir}/SDN-BETA-RELEASE.md" <<'EOF'
 
 ## Container images
 
-- `digitalarsenal/space-data-network:<beta-version>`
+- `dockerdigitalarsenal/space-data-network:<beta-version>`
 
 The same image defaults to a full node. Operators who need edge-relay mode can override the container command.
 

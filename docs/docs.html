@@ -1083,7 +1083,7 @@ curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download
 # Docker image tarball
 curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_VERSION}/spacedatanetwork-container-${SDN_NATIVE_PACKAGE_VERSION}-linux-amd64.tar.gz"
 docker load --input "spacedatanetwork-container-${SDN_NATIVE_PACKAGE_VERSION}-linux-amd64.tar.gz"
-docker pull digitalarsenal/space-data-network:${SDN_VERSION}
+docker pull dockerdigitalarsenal/space-data-network:${SDN_VERSION}
 
 # macOS ARM64 full-node bundle
 curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_VERSION}/spacedatanetwork-darwin-arm64.tar.gz"
@@ -1307,7 +1307,7 @@ await node.start();</code></pre>
   -p 4001:4001/udp \
   -p 5001:5001 \
   -v sdn-data:/app/data \
-  digitalarsenal/space-data-network:v1.0.3-beta.1</code></pre>
+  dockerdigitalarsenal/space-data-network:v1.0.3-beta.1</code></pre>
 
         <h3>Edge Relay (Kubernetes)</h3>
         <pre><code>apiVersion: apps/v1
@@ -1323,7 +1323,7 @@ spec:
     spec:
       containers:
       - name: edge
-        image: digitalarsenal/space-data-network:v1.0.3-beta.1
+        image: dockerdigitalarsenal/space-data-network:v1.0.3-beta.1
         command: ["/app/spacedatanetwork-edge"]
         args: ["--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--health-port", "8081"]
         ports:
