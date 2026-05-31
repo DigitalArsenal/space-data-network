@@ -445,17 +445,17 @@ function writeContainerConfig(workDir, name, bootstrapPeers) {
   return configPath;
 }
 
-function startFullNode({
+export function buildFullNodeRunArgs({
   containerName,
   imageName,
   configPath,
   networkName,
   platform,
   binaryPath = '/opt/spacedatanetwork/bin/spacedatanetwork',
-  configTargetPath = '/etc/spacedatanetwork/config.yaml'
+  configTargetPath = '/etc/spacedatanetwork/config.yaml',
+  entrypoint
 }) {
-  log(`starting ${containerName}`);
-  runDocker([
+  const args = [
     'run',
     '-d',
     '--platform',
@@ -465,25 +465,36 @@ function startFullNode({
     '--network',
     networkName,
     '-v',
-    `${configPath}:${configTargetPath}:ro`,
+    `${configPath}:${configTargetPath}:ro`
+  ];
+  if (entrypoint) {
+    args.push('--entrypoint', entrypoint);
+  }
+  args.push(
     imageName,
-    binaryPath,
+    ...(binaryPath === null ? [] : [binaryPath]),
     'daemon',
     '--config',
     configTargetPath
-  ]);
+  );
+  return args;
 }
 
-function startEdgeNode({
+function startFullNode(options) {
+  log(`starting ${options.containerName}`);
+  runDocker(buildFullNodeRunArgs(options));
+}
+
+export function buildEdgeNodeRunArgs({
   containerName,
   imageName,
   bootstrapPeer,
   networkName,
   platform,
-  binaryPath = '/opt/spacedatanetwork/bin/spacedatanetwork-edge'
+  binaryPath = '/opt/spacedatanetwork/bin/spacedatanetwork-edge',
+  entrypoint
 }) {
-  log(`starting ${containerName}`);
-  runDocker([
+  const args = [
     'run',
     '-d',
     '--platform',
@@ -492,12 +503,23 @@ function startEdgeNode({
     containerName,
     '--network',
     networkName,
+  ];
+  if (entrypoint) {
+    args.push('--entrypoint', entrypoint);
+  }
+  args.push(
     imageName,
-    binaryPath,
+    ...(entrypoint ? [] : [binaryPath]),
     '--listen',
     '/ip4/0.0.0.0/tcp/8080/ws',
     ...generateEdgeArgs({ bootstrapPeer, healthPort: 8081 })
-  ]);
+  );
+  return args;
+}
+
+function startEdgeNode(options) {
+  log(`starting ${options.containerName}`);
+  runDocker(buildEdgeNodeRunArgs(options));
 }
 
 function sleep(ms) {
@@ -630,7 +652,7 @@ async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs }) 
       configPath: containerConfig,
       networkName,
       platform,
-      binaryPath: '/app/spacedatanetwork',
+      binaryPath: null,
       configTargetPath: '/app/config/full-docker.yaml'
     });
     startEdgeNode({
@@ -639,7 +661,7 @@ async function runNetworkTest({ images, workDir, platform, prefix, timeoutMs }) 
       bootstrapPeer: seedBootstrap,
       networkName,
       platform,
-      binaryPath: '/app/spacedatanetwork-edge'
+      entrypoint: '/app/spacedatanetwork-edge'
     });
 
     await waitForJson({
