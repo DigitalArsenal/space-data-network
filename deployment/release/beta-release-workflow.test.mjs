@@ -75,7 +75,7 @@ test('container publish workflow ships one Docker Hub image', () => {
 
   assert.match(workflow, /REGISTRY:\s*docker\.io/);
   assert.match(workflow, /IMAGE_NAME:\s*digitalarsenal\/space-data-network/);
-  assert.match(workflow, /username:\s*digitalarsenal/);
+  assert.match(workflow, /username:\s*dockerdigitalarsenal/);
   assert.match(workflow, /secrets\.DOCKERHUB_TOKEN/);
   assert.match(workflow, /deployment\/docker\/Dockerfile/);
   assert.doesNotMatch(workflow, /matrix:/);

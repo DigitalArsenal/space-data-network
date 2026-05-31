@@ -94,7 +94,7 @@ jobs:
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: digitalarsenal
+          username: dockerdigitalarsenal
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: sigstore/cosign-installer@v3.4.0
       - id: meta
