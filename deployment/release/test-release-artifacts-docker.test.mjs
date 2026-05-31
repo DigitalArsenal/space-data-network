@@ -10,7 +10,9 @@ import {
   generateInstallDockerfile,
   generateFullNodeConfig,
   generateEdgeArgs,
-  parseDockerLoadImage
+  parseDockerLoadImage,
+  buildFullNodeRunArgs,
+  buildEdgeNodeRunArgs
 } from './test-release-artifacts-docker.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -115,6 +117,40 @@ test('network configs bootstrap non-seed nodes to the seed peer', () => {
     '--health-port',
     '8081'
   ]);
+});
+
+test('container image run args respect the image entrypoint', () => {
+  const packageFullArgs = buildFullNodeRunArgs({
+    containerName: 'sdn-full-deb',
+    imageName: 'sdn-artifact-full-deb:latest',
+    configPath: '/tmp/full.yaml',
+    networkName: 'sdn-net',
+    platform: 'linux/amd64'
+  });
+  const containerFullArgs = buildFullNodeRunArgs({
+    containerName: 'sdn-container-full',
+    imageName: 'dockerdigitalarsenal/space-data-network:v1.0.3-beta.1',
+    configPath: '/tmp/container.yaml',
+    networkName: 'sdn-net',
+    platform: 'linux/amd64',
+    binaryPath: null,
+    configTargetPath: '/app/config/full-docker.yaml'
+  });
+  const containerEdgeArgs = buildEdgeNodeRunArgs({
+    containerName: 'sdn-container-edge',
+    imageName: 'dockerdigitalarsenal/space-data-network:v1.0.3-beta.1',
+    bootstrapPeer: '/dns4/sdn-full-deb/tcp/4001/p2p/12D3KooWSeed',
+    networkName: 'sdn-net',
+    platform: 'linux/amd64',
+    entrypoint: '/app/spacedatanetwork-edge'
+  });
+
+  assert(packageFullArgs.includes('/opt/spacedatanetwork/bin/spacedatanetwork'));
+  assert.deepEqual(containerFullArgs.slice(-3), ['daemon', '--config', '/app/config/full-docker.yaml']);
+  assert(!containerFullArgs.includes('/app/spacedatanetwork'));
+  assert(containerEdgeArgs.includes('--entrypoint'));
+  assert.equal(containerEdgeArgs[containerEdgeArgs.indexOf('--entrypoint') + 1], '/app/spacedatanetwork-edge');
+  assert(!containerEdgeArgs.slice(containerEdgeArgs.indexOf('dockerdigitalarsenal/space-data-network:v1.0.3-beta.1') + 1).includes('/app/spacedatanetwork-edge'));
 });
 
 test('full-node package and VM bundle scripts include the WasmEdge runtime', () => {
