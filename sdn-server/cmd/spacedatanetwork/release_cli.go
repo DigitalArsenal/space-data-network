@@ -344,16 +344,16 @@ func verifyContainerDigests(pathValue string) error {
 			return fmt.Errorf("container image %q has invalid digest %q", image.Name, image.Digest)
 		}
 		lowerName := strings.ToLower(image.Name)
-		if lowerName == "digitalarsenal/space-data-network" || lowerName == "docker.io/digitalarsenal/space-data-network" {
+		if lowerName == "dockerdigitalarsenal/space-data-network" || lowerName == "docker.io/dockerdigitalarsenal/space-data-network" {
 			found = true
 			continue
 		}
 		if strings.Contains(lowerName, "space-data-network-full") || strings.Contains(lowerName, "space-data-network-edge") {
-			return errors.New("container-digests.json must include a single digitalarsenal/space-data-network image, not split full and edge images")
+			return errors.New("container-digests.json must include a single dockerdigitalarsenal/space-data-network image, not split full and edge images")
 		}
 	}
 	if !found {
-		return errors.New("container-digests.json must include a single digitalarsenal/space-data-network image")
+		return errors.New("container-digests.json must include a single dockerdigitalarsenal/space-data-network image")
 	}
 	return nil
 }

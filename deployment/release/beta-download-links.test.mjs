@@ -27,7 +27,7 @@ const requiredPhrases = [
   'spacedatanetwork-sdn-js-',
   'spacedatanetwork-sbom.cdx.json',
   'spacedatanetwork-checksums.txt',
-  'digitalarsenal/space-data-network:v1.0.3-beta.1'
+  'dockerdigitalarsenal/space-data-network:v1.0.3-beta.1'
 ];
 const homepageRequiredPhrases = requiredPhrases.map((phrase) =>
   phrase.replaceAll('<beta-version>', '&lt;beta-version&gt;')
@@ -91,7 +91,7 @@ test('website download cards use direct assets and keep architecture details ins
 test('installation docs show beta curl and package guidance', () => {
   const docs = readRepoFile('docs/docs.html');
 
-  for (const phrase of ['SDN_VERSION', betaReleasesUrl, 'spacedatanetwork-full', 'spacedatanetwork-linux-vm-', 'spacedatanetwork-container-', 'spacedatanetwork-sdn-js-', 'digitalarsenal/space-data-network:v1.0.3-beta.1']) {
+  for (const phrase of ['SDN_VERSION', betaReleasesUrl, 'spacedatanetwork-full', 'spacedatanetwork-linux-vm-', 'spacedatanetwork-container-', 'spacedatanetwork-sdn-js-', 'dockerdigitalarsenal/space-data-network:v1.0.3-beta.1']) {
     assert.match(docs, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `docs/docs.html missing ${phrase}`);
   }
   assert.doesNotMatch(docs, /Beta channel/);
@@ -105,7 +105,7 @@ test('installation docs show beta curl and package guidance', () => {
 test('release pipeline docs describe the beta workflow separately from production', () => {
   const releasePipeline = readRepoFile('docs/release-pipeline.md');
 
-  for (const phrase of ['.github/workflows/beta-release-artifacts.yml', 'GitHub release', 'make_latest: true', 'spacedatanetwork-beta-manifest.json', 'digitalarsenal/space-data-network:<beta-version>']) {
+  for (const phrase of ['.github/workflows/beta-release-artifacts.yml', 'GitHub release', 'make_latest: true', 'spacedatanetwork-beta-manifest.json', 'dockerdigitalarsenal/space-data-network:<beta-version>']) {
     assert.match(releasePipeline, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `docs/release-pipeline.md missing ${phrase}`);
   }
   assert.doesNotMatch(releasePipeline, /space-data-network-full/);

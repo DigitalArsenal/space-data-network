@@ -49,8 +49,8 @@ test('discovers all release artifact types from a release directory', () => {
 
 test('parses docker load output for downloadable container image tars', () => {
   assert.equal(
-    parseDockerLoadImage('Loaded image: digitalarsenal/space-data-network:v1.0.3-beta.1\n'),
-    'digitalarsenal/space-data-network:v1.0.3-beta.1'
+    parseDockerLoadImage('Loaded image: dockerdigitalarsenal/space-data-network:v1.0.3-beta.1\n'),
+    'dockerdigitalarsenal/space-data-network:v1.0.3-beta.1'
   );
   assert.equal(
     parseDockerLoadImage('Loaded image ID: sha256:abc123\n'),

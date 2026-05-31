@@ -15,7 +15,7 @@ permissions:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: digitalarsenal/space-data-network
+  IMAGE_NAME: dockerdigitalarsenal/space-data-network
   NFPM_VERSION: v2.42.0
 
 jobs:

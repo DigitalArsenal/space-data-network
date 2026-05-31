@@ -28,7 +28,7 @@ test('beta release workflow publishes public beta artifacts', () => {
   assert.match(workflow, /make_latest:\s*true/);
   assert.match(workflow, /release_name/);
   assert.match(workflow, /docker\.io/);
-  assert.match(workflow, /digitalarsenal\/space-data-network/);
+  assert.match(workflow, /dockerdigitalarsenal\/space-data-network/);
   assert.match(workflow, /beta/);
   assert.doesNotMatch(workflow, /matrix:/);
   assert.doesNotMatch(workflow, /Dockerfile\.full/);
@@ -74,7 +74,7 @@ test('container publish workflow ships one Docker Hub image', () => {
   const workflow = readRepoFile('.github/workflows/docker-publish.yml');
 
   assert.match(workflow, /REGISTRY:\s*docker\.io/);
-  assert.match(workflow, /IMAGE_NAME:\s*digitalarsenal\/space-data-network/);
+  assert.match(workflow, /IMAGE_NAME:\s*dockerdigitalarsenal\/space-data-network/);
   assert.match(workflow, /username:\s*dockerdigitalarsenal/);
   assert.match(workflow, /secrets\.DOCKERHUB_TOKEN/);
   assert.match(workflow, /deployment\/docker\/Dockerfile/);

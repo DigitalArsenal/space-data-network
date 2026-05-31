@@ -46,7 +46,7 @@ func TestVerifyReleaseDirectoryAcceptsCompleteReleaseEvidence(t *testing.T) {
 	})
 	writeReleaseTestJSON(t, root, "container-digests.json", map[string]any{
 		"images": []map[string]any{
-			{"name": "digitalarsenal/space-data-network", "digest": "sha256:" + strings.Repeat("b", 64)},
+			{"name": "dockerdigitalarsenal/space-data-network", "digest": "sha256:" + strings.Repeat("b", 64)},
 		},
 	})
 	for _, name := range []string{
@@ -77,13 +77,13 @@ func TestVerifyContainerDigestsRejectsSplitFullAndEdgeImages(t *testing.T) {
 	path := filepath.Join(root, "container-digests.json")
 	writeReleaseTestJSON(t, root, "container-digests.json", map[string]any{
 		"images": []map[string]any{
-			{"name": "digitalarsenal/space-data-network-full", "digest": "sha256:" + strings.Repeat("b", 64)},
-			{"name": "digitalarsenal/space-data-network-edge", "digest": "sha256:" + strings.Repeat("c", 64)},
+			{"name": "dockerdigitalarsenal/space-data-network-full", "digest": "sha256:" + strings.Repeat("b", 64)},
+			{"name": "dockerdigitalarsenal/space-data-network-edge", "digest": "sha256:" + strings.Repeat("c", 64)},
 		},
 	})
 
 	err := verifyContainerDigests(path)
-	if err == nil || !strings.Contains(err.Error(), "single digitalarsenal/space-data-network image") {
+	if err == nil || !strings.Contains(err.Error(), "single dockerdigitalarsenal/space-data-network image") {
 		t.Fatalf("verifyContainerDigests error = %v, want split image rejection", err)
 	}
 }

@@ -9,7 +9,7 @@ ssh:
 
 # Docker registry (optional, for pre-built images)
 registry:
-  url: docker.io/digitalarsenal/space-data-network
+  url: docker.io/dockerdigitalarsenal/space-data-network
   # url: your-registry.example.com/sdn
 
 # Full nodes - datacenter locations with storage
