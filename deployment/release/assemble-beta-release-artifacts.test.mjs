@@ -24,6 +24,7 @@ test('assembles beta release files, manifest, body, and checksums', () => {
   writeFixture(distDir, 'packages/spacedatanetwork-edge_1.0.3~beta.42_amd64.rpm', 'edge rpm');
   writeFixture(distDir, 'linux-vm/spacedatanetwork-linux-vm-1.0.3~beta.42.tar.gz', 'linux vm');
   writeFixture(distDir, 'container-images/spacedatanetwork-container-1.0.3~beta.42-linux-amd64.tar.gz', 'container');
+  writeFixture(distDir, 'cli/spacedatanetwork-1.0.3-beta.42-linux-amd64.tar.gz', 'cli');
   writeFixture(distDir, 'sdn-js/spacedatanetwork-sdn-js-2.0.12.tgz', 'sdn js');
   writeFixture(distDir, 'sbom/spacedatanetwork-sbom.cdx.json', '{"bomFormat":"CycloneDX"}');
   writeFixture(distDir, 'ipfs/ipfs-deployment.json', '{"cid":"bafyfixture"}');
@@ -47,6 +48,7 @@ test('assembles beta release files, manifest, body, and checksums', () => {
     'spacedatanetwork-edge_1.0.3.beta.42_amd64.rpm',
     'spacedatanetwork-linux-vm-1.0.3.beta.42.tar.gz',
     'spacedatanetwork-container-1.0.3.beta.42-linux-amd64.tar.gz',
+    'spacedatanetwork-1.0.3-beta.42-linux-amd64.tar.gz',
     'spacedatanetwork-sdn-js-2.0.12.tgz',
     'spacedatanetwork-sbom.cdx.json',
     'ipfs-deployment.json',
@@ -67,17 +69,20 @@ test('assembles beta release files, manifest, body, and checksums', () => {
   assert.equal(manifest.commit, '0123456789abcdef0123456789abcdef01234567');
   assert(manifest.artifacts.some((artifact) => artifact.name === 'spacedatanetwork-linux-vm-1.0.3.beta.42.tar.gz'));
   assert(manifest.artifacts.some((artifact) => artifact.name === 'spacedatanetwork-container-1.0.3.beta.42-linux-amd64.tar.gz'));
+  assert(manifest.artifacts.some((artifact) => artifact.name === 'spacedatanetwork-1.0.3-beta.42-linux-amd64.tar.gz'));
 
   const releaseBody = readFileSync(join(releaseDir, 'SDN-BETA-RELEASE.md'), 'utf8');
   assert.match(releaseBody, /Space Data Network v1\.0\.3-beta\.42 Beta/);
   assert.match(releaseBody, /spacedatanetwork-sdn-js-2\.0\.12\.tgz/);
   assert.match(releaseBody, /digitalarsenal\/space-data-network:<beta-version>/);
   assert.match(releaseBody, /spacedatanetwork-container-1\.0\.3\.beta\.42-linux-amd64\.tar\.gz/);
+  assert.match(releaseBody, /spacedatanetwork-1\.0\.3-beta\.42-linux-amd64\.tar\.gz/);
   assert.doesNotMatch(releaseBody, /space-data-network-full/);
   assert.doesNotMatch(releaseBody, /space-data-network-edge/);
 
   const checksums = readFileSync(join(releaseDir, 'spacedatanetwork-checksums.txt'), 'utf8');
   assert.match(checksums, /spacedatanetwork-linux-vm-1\.0\.3\.beta\.42\.tar\.gz/);
   assert.match(checksums, /spacedatanetwork-container-1\.0\.3\.beta\.42-linux-amd64\.tar\.gz/);
+  assert.match(checksums, /spacedatanetwork-1\.0\.3-beta\.42-linux-amd64\.tar\.gz/);
   assert.doesNotMatch(checksums, /spacedatanetwork-checksums\.txt/);
 });

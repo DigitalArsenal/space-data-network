@@ -169,6 +169,7 @@ Use the newest release number as `<beta-version>` when downloading assets.
 |----------|-----|
 | `spacedatanetwork-full_<native-package-version>_amd64.deb` / `.rpm` | Linux full-node packages |
 | `spacedatanetwork-linux-vm-<native-package-version>.tar.gz` | Linux VM/full-node bundle |
+| `spacedatanetwork-<beta-version>-<os>-<arch>.tar.gz` / `.zip` | Self-contained native CLI bundle with SDN, Kubo, UI assets, updater module |
 | `spacedatanetwork-container-<native-package-version>-linux-amd64.tar.gz` | Docker image tarball |
 | `spacedatanetwork-darwin-arm64.tar.gz` | macOS Apple Silicon full-node bundle |
 | `spacedatanetwork-sdn-js-<sdk-version>.tgz` | Browser and Node JavaScript SDK package tarball |
@@ -189,16 +190,27 @@ override the container command.
 ### Native releases
 
 Native artifacts live under versioned SDN release tags, not SDK-only tags such
-as `sdn-js-v...`. The `v1.0.3-beta.1` release currently publishes Linux amd64
-full-node packages, the Linux VM bundle, a Docker image tarball, and a macOS
-ARM64 full-node bundle.
-Windows native installers are not published in the beta artifact lane yet.
+as `sdn-js-v...`. The portable CLI archive is the primary cross-platform native
+download and includes `spacedatanetwork`, the `sdn` alias, bundled Kubo, SDN UI,
+IPFS WebUI, and the updater module. Existing Linux packages, VM bundles, Docker
+tarballs, and the macOS ARM64 full-node bundle remain available for operators.
 
 macOS ARM64 direct download:
 [spacedatanetwork-darwin-arm64.tar.gz](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-darwin-arm64.tar.gz)
 
+Portable CLI archive names:
+
+- `spacedatanetwork-<beta-version>-darwin-arm64.tar.gz`
+- `spacedatanetwork-<beta-version>-darwin-amd64.tar.gz`
+- `spacedatanetwork-<beta-version>-linux-amd64.tar.gz`
+- `spacedatanetwork-<beta-version>-linux-arm64.tar.gz`
+- `spacedatanetwork-<beta-version>-windows-amd64.zip`
+
 Beta `v1.0.3-beta.1` direct downloads:
 
+- [macOS Apple Silicon self-contained CLI](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-1.0.3-beta.1-darwin-arm64.tar.gz)
+- [Linux 64-bit Intel/AMD self-contained CLI](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-1.0.3-beta.1-linux-amd64.tar.gz)
+- [Windows 64-bit Intel/AMD self-contained CLI](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-1.0.3-beta.1-windows-amd64.zip)
 - [Linux 64-bit Intel/AMD full node DEB](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-full_1.0.3.beta.1_amd64.deb)
 - [Linux 64-bit Intel/AMD full node RPM](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-full-1.0.3.beta.1-1.x86_64.rpm)
 - [Linux 64-bit Intel/AMD VM bundle](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-linux-vm-1.0.3.beta.1.tar.gz)

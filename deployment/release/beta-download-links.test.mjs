@@ -32,6 +32,10 @@ const requiredPhrases = [
 const homepageRequiredPhrases = requiredPhrases.map((phrase) =>
   phrase.replaceAll('<beta-version>', '&lt;beta-version&gt;')
 );
+const readmeOnlyRequiredPhrases = [
+  'spacedatanetwork-<beta-version>-darwin-arm64.tar.gz',
+  'spacedatanetwork-<beta-version>-windows-amd64.zip'
+];
 
 function readRepoFile(relativePath) {
   return readFileSync(join(repoRoot, relativePath), 'utf8');
@@ -41,6 +45,9 @@ test('README exposes beta artifacts and release links', () => {
   const readme = readRepoFile('README.md');
 
   for (const phrase of requiredPhrases) {
+    assert.match(readme, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `README.md missing ${phrase}`);
+  }
+  for (const phrase of readmeOnlyRequiredPhrases) {
     assert.match(readme, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `README.md missing ${phrase}`);
   }
 });

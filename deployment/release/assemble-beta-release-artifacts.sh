@@ -30,6 +30,8 @@ copy_matches() {
 copy_matches "${dist_dir}/packages/*"
 copy_matches "${dist_dir}/linux-vm/*.tar.gz"
 copy_matches "${dist_dir}/container-images/*.tar.gz"
+copy_matches "${dist_dir}/cli/*.tar.gz"
+copy_matches "${dist_dir}/cli/*.zip"
 copy_matches "${dist_dir}/sdn-js/*.tgz"
 copy_matches "${dist_dir}/sbom/*.json"
 
