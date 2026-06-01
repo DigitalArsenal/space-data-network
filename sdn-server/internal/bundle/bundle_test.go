@@ -24,6 +24,9 @@ func TestResolveFromExecutableInsideBundle(t *testing.T) {
 	if layout.Root != root {
 		t.Fatalf("Root = %q, want %q", layout.Root, root)
 	}
+	if layout.BinDir != filepath.Join(root, "bin") {
+		t.Fatalf("BinDir = %q", layout.BinDir)
+	}
 	if layout.KuboBinary != filepath.Join(root, "runtime", "kubo", "ipfs") {
 		t.Fatalf("KuboBinary = %q", layout.KuboBinary)
 	}
