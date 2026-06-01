@@ -768,12 +768,14 @@ func TestResolveFrontendPathRespectsExplicitConfiguredPath(t *testing.T) {
 }
 
 func TestUserFacingCLICommandsAreRegistered(t *testing.T) {
-	want := []string{"daemon", "init", "status", "open", "update", "version", "config"}
+	want := []string{"daemon", "init", "status", "open", "update", "sync", "version", "config"}
 	for _, name := range want {
 		requireCommand(t, []string{name}, name)
 	}
 	requireCommand(t, []string{"update", "check"}, "check")
 	requireCommand(t, []string{"update", "apply"}, "apply")
+	requireCommand(t, []string{"sync", "status"}, "status")
+	requireCommand(t, []string{"sync", "watch"}, "watch")
 }
 
 func TestAdminURLUsesHTTPSWhenTLSIsEnabled(t *testing.T) {
