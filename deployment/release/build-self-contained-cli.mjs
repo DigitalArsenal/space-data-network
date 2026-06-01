@@ -1,19 +1,21 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cp, chmod, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const executableMode = 0o755;
 
 export async function stageBundle(options) {
-  const version = required(options.version, 'version');
-  const osName = required(options.os, 'os');
-  const arch = required(options.arch, 'arch');
+  const version = safeToken(options.version, 'version');
+  const osName = safeToken(options.os, 'os');
+  const arch = safeToken(options.arch, 'arch');
   const channel = options.channel || 'beta';
   const signature = required(options.manifestSignature, 'manifestSignature');
   const bundleName = `spacedatanetwork-${version}-${osName}-${arch}`;
-  const root = join(required(options.outputDir, 'outputDir'), bundleName);
+  const outputDir = resolve(required(options.outputDir, 'outputDir'));
+  const root = resolve(outputDir, bundleName);
+  assertUnderOutputDir(root, outputDir);
   await rm(root, { recursive: true, force: true });
   await mkdir(root, { recursive: true });
   await mkdir(join(root, 'bin'), { recursive: true });
@@ -111,6 +113,21 @@ function required(value, name) {
     throw new Error(`${name} is required`);
   }
   return value;
+}
+
+function safeToken(value, name) {
+  const token = required(value, name);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(token)) {
+    throw new Error(`${name} contains unsupported characters`);
+  }
+  return token;
+}
+
+function assertUnderOutputDir(root, outputDir) {
+  const normalizedOutputDir = outputDir.endsWith(sep) ? outputDir : `${outputDir}${sep}`;
+  if (!root.startsWith(normalizedOutputDir)) {
+    throw new Error(`bundle root escapes output directory: ${root}`);
+  }
 }
 
 function parseArgs(argv) {
