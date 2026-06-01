@@ -1,0 +1,57 @@
+package bundle
+
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+)
+
+type Layout struct {
+	Root         string
+	BinDir       string
+	KuboBinary   string
+	SDNUIPath    string
+	WebUIPath    string
+	UpdaterWASM  string
+	ManifestPath string
+}
+
+func ResolveCurrent() Layout {
+	exe, err := os.Executable()
+	if err != nil {
+		return Layout{}
+	}
+	resolved, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		resolved = exe
+	}
+	return ResolveFromExecutable(resolved)
+}
+
+func ResolveFromExecutable(executablePath string) Layout {
+	if executablePath == "" {
+		return Layout{}
+	}
+	binDir := filepath.Dir(executablePath)
+	root := filepath.Dir(binDir)
+	if filepath.Base(binDir) != "bin" {
+		return Layout{}
+	}
+	manifestPath := filepath.Join(root, "manifest.json")
+	if _, err := os.Stat(manifestPath); err != nil {
+		return Layout{}
+	}
+	kuboName := "ipfs"
+	if runtime.GOOS == "windows" {
+		kuboName = "ipfs.exe"
+	}
+	return Layout{
+		Root:         root,
+		BinDir:       binDir,
+		KuboBinary:   filepath.Join(root, "runtime", "kubo", kuboName),
+		SDNUIPath:    filepath.Join(root, "runtime", "ui", "sdn"),
+		WebUIPath:    filepath.Join(root, "runtime", "ui", "webui"),
+		UpdaterWASM:  filepath.Join(root, "runtime", "modules", "org.spacedatanetwork.updater.wasm"),
+		ManifestPath: manifestPath,
+	}
+}
