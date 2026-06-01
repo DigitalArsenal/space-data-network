@@ -766,6 +766,21 @@ func TestResolveFrontendPathRespectsExplicitConfiguredPath(t *testing.T) {
 	}
 }
 
+func TestUserFacingCLICommandsAreRegistered(t *testing.T) {
+	want := []string{"daemon", "init", "status", "open", "update", "version", "config"}
+	for _, name := range want {
+		if _, _, err := rootCmd.Find([]string{name}); err != nil {
+			t.Fatalf("root command %q is not registered: %v", name, err)
+		}
+	}
+	if _, _, err := rootCmd.Find([]string{"update", "check"}); err != nil {
+		t.Fatalf("update check is not registered: %v", err)
+	}
+	if _, _, err := rootCmd.Find([]string{"update", "apply"}); err != nil {
+		t.Fatalf("update apply is not registered: %v", err)
+	}
+}
+
 func TestProvisionFrontendDirWritesDefaultIndexInExistingDirectory(t *testing.T) {
 	t.Parallel()
 

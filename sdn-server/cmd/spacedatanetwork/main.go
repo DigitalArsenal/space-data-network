@@ -83,6 +83,54 @@ var initCmd = &cobra.Command{
 	RunE:  runInit,
 }
 
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print SDN version information",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Fprintf(cmd.OutOrStdout(), "version=%s\n", versioninfo.SuiteVersion)
+		fmt.Fprintf(cmd.OutOrStdout(), "agent=%s\n", versioninfo.AgentVersion)
+		return nil
+	},
+}
+
+var configCmd = &cobra.Command{
+	Use:   "config",
+	Short: "Print the SDN configuration path",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		path := strings.TrimSpace(configPath)
+		if path == "" {
+			path = config.DefaultPath()
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), path)
+		return nil
+	},
+}
+
+var statusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Print local SDN daemon status",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runStatus(cmd)
+	},
+}
+
+var openCmd = &cobra.Command{
+	Use:   "open",
+	Short: "Print the local SDN UI URL",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			return err
+		}
+		addr := cfg.Admin.ListenAddr
+		if addr == "" {
+			addr = "127.0.0.1:5001"
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "http://%s/\n", addr)
+		return nil
+	},
+}
+
 var reindexCmd = &cobra.Command{
 	Use:   "reindex",
 	Short: "Rebuild storage indexes for fast API queries",
@@ -129,6 +177,10 @@ func init() {
 
 	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(statusCmd)
+	rootCmd.AddCommand(openCmd)
+	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(reindexCmd)
 	rootCmd.AddCommand(deriveXPubCmd)
 	rootCmd.AddCommand(showIdentityCmd)
@@ -145,6 +197,20 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func runStatus(cmd *cobra.Command) error {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+	addr := cfg.Admin.ListenAddr
+	if addr == "" {
+		addr = "127.0.0.1:5001"
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "admin_url=http://%s/\n", addr)
+	fmt.Fprintln(cmd.OutOrStdout(), "daemon_status=unknown")
+	return nil
 }
 
 func runDaemon(cmd *cobra.Command, args []string) error {
