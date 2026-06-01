@@ -24,6 +24,7 @@ import (
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
+	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
@@ -793,6 +794,56 @@ func TestAdminURLUsesHTTPWhenTLSIsDisabled(t *testing.T) {
 
 	if got := adminURL(cfg); got != "http://127.0.0.1:5001/" {
 		t.Fatalf("adminURL = %q, want http URL", got)
+	}
+}
+
+func TestApplyBundleDefaultsUsesBundledAssetsWhenConfigIsEmpty(t *testing.T) {
+	root := t.TempDir()
+	layout := bundle.Layout{
+		Root:        root,
+		KuboBinary:  filepath.Join(root, "runtime", "kubo", "ipfs"),
+		SDNUIPath:   filepath.Join(root, "runtime", "ui", "sdn"),
+		WebUIPath:   filepath.Join(root, "runtime", "ui", "webui"),
+		UpdaterWASM: filepath.Join(root, "runtime", "modules", "org.spacedatanetwork.updater.wasm"),
+	}
+	if err := os.MkdirAll(layout.SDNUIPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(layout.WebUIPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Admin.FrontendPath = ""
+	cfg.Admin.WebuiPath = ""
+	cfg.Admin.IPFSAPIURL = ""
+	cfg.Admin.IPFSGatewayURL = ""
+
+	applyBundleDefaults(cfg, layout)
+
+	if cfg.Admin.FrontendPath != layout.SDNUIPath {
+		t.Fatalf("FrontendPath = %q, want %q", cfg.Admin.FrontendPath, layout.SDNUIPath)
+	}
+	if cfg.Admin.WebuiPath != layout.WebUIPath {
+		t.Fatalf("WebuiPath = %q, want %q", cfg.Admin.WebuiPath, layout.WebUIPath)
+	}
+}
+
+func TestApplyBundleDefaultsPreservesExplicitConfig(t *testing.T) {
+	layout := bundle.Layout{
+		SDNUIPath: filepath.Join(t.TempDir(), "runtime", "ui", "sdn"),
+		WebUIPath: filepath.Join(t.TempDir(), "runtime", "ui", "webui"),
+	}
+	cfg := config.Default()
+	cfg.Admin.FrontendPath = "/custom/sdn"
+	cfg.Admin.WebuiPath = "/custom/webui"
+
+	applyBundleDefaults(cfg, layout)
+
+	if cfg.Admin.FrontendPath != "/custom/sdn" {
+		t.Fatalf("FrontendPath changed to %q", cfg.Admin.FrontendPath)
+	}
+	if cfg.Admin.WebuiPath != "/custom/webui" {
+		t.Fatalf("WebuiPath changed to %q", cfg.Admin.WebuiPath)
 	}
 }
 

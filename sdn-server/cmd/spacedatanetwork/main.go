@@ -36,6 +36,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/adminui"
 	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
+	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
@@ -219,6 +220,26 @@ func adminURL(cfg *config.Config) string {
 	return fmt.Sprintf("%s://%s/", scheme, addr)
 }
 
+func applyBundleDefaults(cfg *config.Config, layout bundle.Layout) {
+	if cfg == nil || layout.Root == "" {
+		return
+	}
+	if strings.TrimSpace(cfg.Admin.FrontendPath) == "" && pathExists(layout.SDNUIPath) {
+		cfg.Admin.FrontendPath = layout.SDNUIPath
+	}
+	if strings.TrimSpace(cfg.Admin.WebuiPath) == "" && pathExists(layout.WebUIPath) {
+		cfg.Admin.WebuiPath = layout.WebUIPath
+	}
+}
+
+func pathExists(pathValue string) bool {
+	if strings.TrimSpace(pathValue) == "" {
+		return false
+	}
+	_, err := os.Stat(pathValue)
+	return err == nil
+}
+
 func runDaemon(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -263,6 +284,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	if envPath := os.Getenv("SDN_FRONTEND_PATH"); envPath != "" {
 		cfg.Admin.FrontendPath = envPath
 	}
+	applyBundleDefaults(cfg, bundle.ResolveCurrent())
 	// Resolve empty frontend path to the built SDN Svelte UI when available,
 	// then fall back to the managed frontend directory.
 	cfg.Admin.FrontendPath = resolveFrontendPath(cfg.Admin.FrontendPath)
