@@ -333,11 +333,6 @@ func resolveSyncProviderIdentifier(store *storage.FlatSQLStore, input string) (s
 			addDirectoryRecordToSyncResolution(&resolution, record)
 		}
 	}
-	if isDomainSyncProviderKind(resolution.kind) {
-		if err := addSourcePrefixProviderMatches(store, &resolution); err != nil {
-			return resolution, err
-		}
-	}
 	return resolution, nil
 }
 
@@ -359,26 +354,6 @@ func isDomainSyncProviderKind(kind string) bool {
 	return kind == syncProviderKindENSDomain || kind == syncProviderKindSNSDomain
 }
 
-func addSourcePrefixProviderMatches(store *storage.FlatSQLStore, resolution *syncProviderResolution) error {
-	label := syncProviderDomainLabel(resolution.input)
-	if label == "" {
-		return nil
-	}
-	summary, err := store.DataSummary()
-	if err != nil {
-		return fmt.Errorf("summarize sources for provider alias: %w", err)
-	}
-	for _, source := range summary.Sources {
-		if !syncProviderDomainMatchesSource(label, source) {
-			continue
-		}
-		resolution.providers.add(source.ProviderID, syncProviderMatchSource)
-		resolution.peers.add(source.ProducerPeerID, syncProviderMatchSource)
-		resolution.publicKeys.add(source.ProducerPublicKey, syncProviderMatchSource)
-	}
-	return nil
-}
-
 func syncProviderDomainLabel(input string) string {
 	lower := strings.ToLower(strings.TrimSpace(input))
 	for _, suffix := range []string{".eth", ".sol"} {
@@ -387,20 +362,6 @@ func syncProviderDomainLabel(input string) string {
 		}
 	}
 	return ""
-}
-
-func syncProviderDomainMatchesSource(label string, source storage.DataSourceSummary) bool {
-	label = strings.ToLower(strings.TrimSpace(label))
-	if label == "" {
-		return false
-	}
-	for _, value := range []string{source.ProviderID, source.SourceName} {
-		value = strings.ToLower(strings.TrimSpace(value))
-		if value == label || strings.HasPrefix(value, label+"-") || strings.HasPrefix(value, label+"_") {
-			return true
-		}
-	}
-	return false
 }
 
 func newSyncIdentifierSet() syncIdentifierSet {
@@ -443,6 +404,9 @@ func (resolution syncProviderResolution) matchStat(stat storage.LocalReplicaStat
 		return "", true
 	}
 	bestMatch := ""
+	if resolution.domainMatchesStat(stat) {
+		bestMatch = betterSyncProviderMatch(bestMatch, syncProviderMatchSource)
+	}
 	for _, candidate := range []struct {
 		value string
 		set   syncIdentifierSet
@@ -459,6 +423,23 @@ func (resolution syncProviderResolution) matchStat(stat storage.LocalReplicaStat
 		return bestMatch, true
 	}
 	return syncProviderMatchUnmatched, false
+}
+
+func (resolution syncProviderResolution) domainMatchesStat(stat storage.LocalReplicaStats) bool {
+	if !isDomainSyncProviderKind(resolution.kind) {
+		return false
+	}
+	label := syncProviderDomainLabel(resolution.input)
+	if label == "" {
+		return false
+	}
+	for _, value := range []string{stat.ProviderID, stat.SourceName} {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == label || strings.HasPrefix(value, label+"-") || strings.HasPrefix(value, label+"_") {
+			return true
+		}
+	}
+	return false
 }
 
 func betterSyncProviderMatch(current, candidate string) string {
