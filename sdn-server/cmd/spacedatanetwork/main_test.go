@@ -769,15 +769,47 @@ func TestResolveFrontendPathRespectsExplicitConfiguredPath(t *testing.T) {
 func TestUserFacingCLICommandsAreRegistered(t *testing.T) {
 	want := []string{"daemon", "init", "status", "open", "update", "version", "config"}
 	for _, name := range want {
-		if _, _, err := rootCmd.Find([]string{name}); err != nil {
-			t.Fatalf("root command %q is not registered: %v", name, err)
-		}
+		requireCommand(t, []string{name}, name)
 	}
-	if _, _, err := rootCmd.Find([]string{"update", "check"}); err != nil {
-		t.Fatalf("update check is not registered: %v", err)
+	requireCommand(t, []string{"update", "check"}, "check")
+	requireCommand(t, []string{"update", "apply"}, "apply")
+}
+
+func TestAdminURLUsesHTTPSWhenTLSIsEnabled(t *testing.T) {
+	cfg := config.Default()
+	cfg.Admin.ListenAddr = "127.0.0.1:9443"
+	cfg.Admin.TLSEnabled = true
+
+	if got := adminURL(cfg); got != "https://127.0.0.1:9443/" {
+		t.Fatalf("adminURL = %q, want https URL", got)
 	}
-	if _, _, err := rootCmd.Find([]string{"update", "apply"}); err != nil {
-		t.Fatalf("update apply is not registered: %v", err)
+}
+
+func TestAdminURLUsesHTTPWhenTLSIsDisabled(t *testing.T) {
+	cfg := config.Default()
+	cfg.Admin.ListenAddr = "127.0.0.1:5001"
+	cfg.Admin.TLSEnabled = false
+	cfg.Admin.TLSMode = "disabled"
+
+	if got := adminURL(cfg); got != "http://127.0.0.1:5001/" {
+		t.Fatalf("adminURL = %q, want http URL", got)
+	}
+}
+
+func requireCommand(t *testing.T, args []string, wantUse string) {
+	t.Helper()
+	cmd, remaining, err := rootCmd.Find(args)
+	if err != nil {
+		t.Fatalf("command %v is not registered: %v", args, err)
+	}
+	if cmd == nil {
+		t.Fatalf("command %v resolved to nil", args)
+	}
+	if cmd.Use != wantUse {
+		t.Fatalf("command %v resolved to %q, want %q", args, cmd.Use, wantUse)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("command %v left remaining args %v", args, remaining)
 	}
 }
 

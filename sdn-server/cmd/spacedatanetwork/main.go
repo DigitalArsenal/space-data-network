@@ -122,11 +122,7 @@ var openCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		addr := cfg.Admin.ListenAddr
-		if addr == "" {
-			addr = "127.0.0.1:5001"
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "http://%s/\n", addr)
+		fmt.Fprintln(cmd.OutOrStdout(), adminURL(cfg))
 		return nil
 	},
 }
@@ -204,13 +200,23 @@ func runStatus(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	addr := cfg.Admin.ListenAddr
-	if addr == "" {
-		addr = "127.0.0.1:5001"
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "admin_url=http://%s/\n", addr)
+	fmt.Fprintf(cmd.OutOrStdout(), "admin_url=%s\n", adminURL(cfg))
 	fmt.Fprintln(cmd.OutOrStdout(), "daemon_status=unknown")
 	return nil
+}
+
+func adminURL(cfg *config.Config) string {
+	addr := "127.0.0.1:5001"
+	scheme := "http"
+	if cfg != nil {
+		if strings.TrimSpace(cfg.Admin.ListenAddr) != "" {
+			addr = cfg.Admin.ListenAddr
+		}
+		if cfg.Admin.EffectiveTLSMode() != tlsmgr.ModeDisabled {
+			scheme = "https"
+		}
+	}
+	return fmt.Sprintf("%s://%s/", scheme, addr)
 }
 
 func runDaemon(cmd *cobra.Command, args []string) error {
