@@ -829,9 +829,17 @@ func TestApplyBundleDefaultsUsesBundledAssetsWhenConfigIsEmpty(t *testing.T) {
 }
 
 func TestApplyBundleDefaultsPreservesExplicitConfig(t *testing.T) {
+	root := t.TempDir()
 	layout := bundle.Layout{
-		SDNUIPath: filepath.Join(t.TempDir(), "runtime", "ui", "sdn"),
-		WebUIPath: filepath.Join(t.TempDir(), "runtime", "ui", "webui"),
+		Root:      root,
+		SDNUIPath: filepath.Join(root, "runtime", "ui", "sdn"),
+		WebUIPath: filepath.Join(root, "runtime", "ui", "webui"),
+	}
+	if err := os.MkdirAll(layout.SDNUIPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(layout.WebUIPath, 0o755); err != nil {
+		t.Fatal(err)
 	}
 	cfg := config.Default()
 	cfg.Admin.FrontendPath = "/custom/sdn"
