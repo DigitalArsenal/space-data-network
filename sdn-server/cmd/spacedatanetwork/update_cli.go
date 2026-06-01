@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 	"github.com/spf13/cobra"
@@ -25,6 +26,7 @@ var updateCheckCmd = &cobra.Command{
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "version=%s\n", manifest.Version)
 		fmt.Fprintf(cmd.OutOrStdout(), "channel=%s\n", manifest.Channel)
+		fmt.Fprintln(cmd.OutOrStdout(), "update_check_scope=bundled_manifest")
 		fmt.Fprintln(cmd.OutOrStdout(), "updates_available=false")
 		return nil
 	},
@@ -71,6 +73,9 @@ func loadBundleManifest(path string) (*bundleManifest, error) {
 	if manifest.Schema != "org.spacedatanetwork.bundle.v1" {
 		return nil, fmt.Errorf("unsupported bundle manifest schema: %s", manifest.Schema)
 	}
+	manifest.Version = strings.TrimSpace(manifest.Version)
+	manifest.Channel = strings.TrimSpace(manifest.Channel)
+	manifest.Signature = strings.TrimSpace(manifest.Signature)
 	if manifest.Version == "" {
 		return nil, errors.New("bundle manifest missing version")
 	}

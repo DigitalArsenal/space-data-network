@@ -52,6 +52,20 @@ func TestLoadBundleManifestRejectsMissingVersion(t *testing.T) {
 	}
 }
 
+func TestLoadBundleManifestRejectsWhitespaceRequiredFields(t *testing.T) {
+	path := writeBundleManifest(t, `{
+		"schema": "org.spacedatanetwork.bundle.v1",
+		"version": " ",
+		"channel": "beta",
+		"signature": "test-signature"
+	}`)
+
+	_, err := loadBundleManifest(path)
+	if err == nil {
+		t.Fatal("loadBundleManifest accepted a manifest with whitespace-only version")
+	}
+}
+
 func writeBundleManifest(t *testing.T, contents string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "manifest.json")
