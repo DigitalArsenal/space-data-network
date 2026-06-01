@@ -3,6 +3,7 @@ package bundle
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -20,6 +21,10 @@ func TestResolveFromExecutableInsideBundle(t *testing.T) {
 	}
 
 	layout := ResolveFromExecutable(exe)
+	kuboName := "ipfs"
+	if runtime.GOOS == "windows" {
+		kuboName = "ipfs.exe"
+	}
 
 	if layout.Root != root {
 		t.Fatalf("Root = %q, want %q", layout.Root, root)
@@ -27,7 +32,7 @@ func TestResolveFromExecutableInsideBundle(t *testing.T) {
 	if layout.BinDir != filepath.Join(root, "bin") {
 		t.Fatalf("BinDir = %q", layout.BinDir)
 	}
-	if layout.KuboBinary != filepath.Join(root, "runtime", "kubo", "ipfs") {
+	if layout.KuboBinary != filepath.Join(root, "runtime", "kubo", kuboName) {
 		t.Fatalf("KuboBinary = %q", layout.KuboBinary)
 	}
 	if layout.SDNUIPath != filepath.Join(root, "runtime", "ui", "sdn") {
@@ -44,15 +49,29 @@ func TestResolveFromExecutableInsideBundle(t *testing.T) {
 	}
 }
 
+func TestResolveFromExecutableInsideBundleWithoutManifestReturnsEmptyLayout(t *testing.T) {
+	root := t.TempDir()
+	exe := filepath.Join(root, "bin", "spacedatanetwork")
+	if err := os.MkdirAll(filepath.Dir(exe), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exe, []byte("fake"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	layout := ResolveFromExecutable(exe)
+
+	if layout != (Layout{}) {
+		t.Fatalf("layout = %#v, want empty", layout)
+	}
+}
+
 func TestResolveFromExecutableOutsideBundleReturnsEmptyOptionalPaths(t *testing.T) {
 	exe := filepath.Join(t.TempDir(), "spacedatanetwork")
 
 	layout := ResolveFromExecutable(exe)
 
-	if layout.Root != "" {
-		t.Fatalf("Root = %q, want empty", layout.Root)
-	}
-	if layout.KuboBinary != "" || layout.SDNUIPath != "" || layout.WebUIPath != "" || layout.UpdaterWASM != "" {
-		t.Fatalf("runtime paths should be empty outside a bundle: %#v", layout)
+	if layout != (Layout{}) {
+		t.Fatalf("layout = %#v, want empty", layout)
 	}
 }
