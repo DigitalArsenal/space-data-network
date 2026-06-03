@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { lstat, mkdtemp, mkdir, readFile, readlink, stat, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -15,7 +16,7 @@ test('stageBundle creates expected portable archive layout', async () => {
   await mkdir(join(inputs, 'modules'), { recursive: true });
   await mkdir(join(inputs, 'wasmedge', 'bin'), { recursive: true });
   await mkdir(join(inputs, 'wasmedge', 'lib'), { recursive: true });
-  await writeFile(join(inputs, 'spacedatanetwork'), '#!/bin/sh\n');
+  await writeFile(join(inputs, 'spacedatanetwork'), '#!/bin/sh\necho "WASMEDGE_DIR=${WASMEDGE_DIR};ARGS=$*"\n');
   await writeFile(join(inputs, 'ipfs'), '#!/bin/sh\n');
   await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
   await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
@@ -68,7 +69,22 @@ test('stageBundle creates expected portable archive layout', async () => {
   const launcher = await readFile(join(staged.root, 'bin', 'spacedatanetwork'), 'utf8');
   assert.match(launcher, /LD_LIBRARY_PATH=/);
   assert.match(launcher, /WASMEDGE_DIR=/);
+  assert.match(launcher, /readlink/);
   assert.equal((await lstat(join(staged.root, 'bin', 'sdn'))).isSymbolicLink(), true);
+
+  const installBin = join(root, 'install-bin');
+  await mkdir(installBin);
+  await symlink(join(staged.root, 'bin', 'spacedatanetwork'), join(installBin, 'spacedatanetwork'));
+  await symlink(join(staged.root, 'bin', 'sdn'), join(installBin, 'sdn'));
+  for (const commandName of ['spacedatanetwork', 'sdn']) {
+    const result = spawnSync(join(installBin, commandName), ['version'], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      result.stdout.trim(),
+      `WASMEDGE_DIR=${join(staged.root, 'runtime', 'wasmedge')};ARGS=version`,
+    );
+  }
+
   const manifest = JSON.parse(await readFile(join(staged.root, 'manifest.json'), 'utf8'));
   assert.equal(manifest.schema, 'org.spacedatanetwork.bundle.v1');
   assert.equal(manifest.version, '1.2.3');
