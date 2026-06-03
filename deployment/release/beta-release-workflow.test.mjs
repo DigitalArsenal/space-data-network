@@ -5,10 +5,37 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const workflowPaths = [
+  '.github/workflows/beta-release-artifacts.yml',
+  '.github/workflows/ci.yml',
+  '.github/workflows/docker-publish.yml',
+  '.github/workflows/encryption-tests.yml',
+  '.github/workflows/linux-vm-bundle.yml',
+  '.github/workflows/npm-publish-sdn-js.yml',
+  '.github/workflows/release-deploy.yml',
+  '.github/workflows/security.yml',
+];
 
 function readRepoFile(relativePath) {
   return readFileSync(join(repoRoot, relativePath), 'utf8');
 }
+
+test('workflows opt into Node 24 for GitHub actions and project scripts', () => {
+  for (const workflowPath of workflowPaths) {
+    const workflow = readRepoFile(workflowPath);
+
+    assert.match(
+      workflow,
+      /FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*true/,
+      `${workflowPath} must force JavaScript actions onto the Node 24 runtime`,
+    );
+    assert.doesNotMatch(
+      workflow,
+      /node-version:\s*['"]?20['"]?/,
+      `${workflowPath} must not run project scripts on Node 20`,
+    );
+  }
+});
 
 test('beta release workflow publishes public beta artifacts', () => {
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
