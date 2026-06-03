@@ -21,12 +21,19 @@ export async function stageBundle(options) {
   await mkdir(join(root, 'bin'), { recursive: true });
   await mkdir(join(root, 'runtime', 'kubo'), { recursive: true });
   await mkdir(join(root, 'runtime', 'modules'), { recursive: true });
+  await mkdir(join(root, 'runtime', 'sdn'), { recursive: true });
   await mkdir(join(root, 'runtime', 'ui'), { recursive: true });
 
   const exeName = osName === 'windows' ? 'spacedatanetwork.exe' : 'spacedatanetwork';
   const aliasName = osName === 'windows' ? 'sdn.exe' : 'sdn';
   const kuboName = osName === 'windows' ? 'ipfs.exe' : 'ipfs';
-  await cp(required(options.binaryPath, 'binaryPath'), join(root, 'bin', exeName));
+  if (osName === 'windows') {
+    await cp(required(options.binaryPath, 'binaryPath'), join(root, 'bin', exeName));
+  } else {
+    await cp(required(options.binaryPath, 'binaryPath'), join(root, 'runtime', 'sdn', exeName));
+    await cp(required(options.wasmedgePath, 'wasmedgePath'), join(root, 'runtime', 'wasmedge'), { recursive: true });
+    await writeFile(join(root, 'bin', exeName), unixLauncherScript(exeName));
+  }
   await cp(required(options.kuboPath, 'kuboPath'), join(root, 'runtime', 'kubo', kuboName));
   await cp(required(options.sdnUIPath, 'sdnUIPath'), join(root, 'runtime', 'ui', 'sdn'), { recursive: true });
   await cp(required(options.webUIPath, 'webUIPath'), join(root, 'runtime', 'ui', 'webui'), { recursive: true });
@@ -41,6 +48,7 @@ export async function stageBundle(options) {
     await cp(join(root, 'bin', exeName), join(root, 'bin', aliasName));
   } else {
     await chmod(join(root, 'bin', exeName), executableMode);
+    await chmod(join(root, 'runtime', 'sdn', exeName), executableMode);
     await chmod(join(root, 'runtime', 'kubo', kuboName), executableMode);
     await symlink(exeName, join(root, 'bin', aliasName));
   }
@@ -106,6 +114,31 @@ async function listRelativeFiles(root, prefix) {
     }
   }
   return files;
+}
+
+function unixLauncherScript(exeName) {
+  return `#!/bin/sh
+set -eu
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+BUNDLE_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
+export WASMEDGE_DIR="\${WASMEDGE_DIR:-$BUNDLE_ROOT/runtime/wasmedge}"
+
+if [ -d "$WASMEDGE_DIR/lib" ]; then
+  if [ -n "\${LD_LIBRARY_PATH:-}" ]; then
+    export LD_LIBRARY_PATH="$WASMEDGE_DIR/lib:$LD_LIBRARY_PATH"
+  else
+    export LD_LIBRARY_PATH="$WASMEDGE_DIR/lib"
+  fi
+  if [ -n "\${DYLD_LIBRARY_PATH:-}" ]; then
+    export DYLD_LIBRARY_PATH="$WASMEDGE_DIR/lib:$DYLD_LIBRARY_PATH"
+  else
+    export DYLD_LIBRARY_PATH="$WASMEDGE_DIR/lib"
+  fi
+fi
+
+exec "$BUNDLE_ROOT/runtime/sdn/${exeName}" "$@"
+`;
 }
 
 function required(value, name) {
