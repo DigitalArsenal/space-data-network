@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { lstat, mkdtemp, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, mkdir, readFile, readlink, stat, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,7 +21,15 @@ test('stageBundle creates expected portable archive layout', async () => {
   await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
   await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
   await writeFile(join(inputs, 'wasmedge', 'bin', 'wasmedge'), '#!/bin/sh\n');
-  await writeFile(join(inputs, 'wasmedge', 'lib', 'libwasmedge.so.0'), 'libwasmedge');
+  await writeFile(join(inputs, 'wasmedge', 'lib', 'libwasmedge.so.0.1.0'), 'libwasmedge');
+  await symlink(
+    join(inputs, 'wasmedge', 'lib', 'libwasmedge.so.0.1.0'),
+    join(inputs, 'wasmedge', 'lib', 'libwasmedge.so.0'),
+  );
+  await symlink(
+    join(inputs, 'wasmedge', 'lib', 'libwasmedge.so.0'),
+    join(inputs, 'wasmedge', 'lib', 'libwasmedge.so'),
+  );
   await writeFile(join(inputs, 'LICENSE'), 'license');
   await writeFile(join(inputs, 'README.md'), 'readme');
 
@@ -52,6 +60,11 @@ test('stageBundle creates expected portable archive layout', async () => {
   await stat(join(staged.root, 'runtime', 'modules', 'org.spacedatanetwork.updater.wasm'));
   await stat(join(staged.root, 'runtime', 'wasmedge', 'bin', 'wasmedge'));
   await stat(join(staged.root, 'runtime', 'wasmedge', 'lib', 'libwasmedge.so.0'));
+  assert.equal(await readlink(join(staged.root, 'runtime', 'wasmedge', 'lib', 'libwasmedge.so')), 'libwasmedge.so.0');
+  assert.equal(
+    await readlink(join(staged.root, 'runtime', 'wasmedge', 'lib', 'libwasmedge.so.0')),
+    'libwasmedge.so.0.1.0',
+  );
   const launcher = await readFile(join(staged.root, 'bin', 'spacedatanetwork'), 'utf8');
   assert.match(launcher, /LD_LIBRARY_PATH=/);
   assert.match(launcher, /WASMEDGE_DIR=/);
@@ -72,7 +85,9 @@ test('stageBundle creates expected portable archive layout', async () => {
     'runtime/ui/sdn/index.html',
     'runtime/ui/webui/index.html',
     'runtime/wasmedge/bin/wasmedge',
+    'runtime/wasmedge/lib/libwasmedge.so',
     'runtime/wasmedge/lib/libwasmedge.so.0',
+    'runtime/wasmedge/lib/libwasmedge.so.0.1.0',
   ]);
   for (const artifact of manifest.artifacts) {
     const bytes = await readFile(join(staged.root, artifact.path));

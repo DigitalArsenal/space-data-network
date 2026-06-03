@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cp, chmod, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve, sep } from 'node:path';
+import { cp, chmod, lstat, mkdir, readFile, readdir, readlink, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const executableMode = 0o755;
@@ -31,7 +31,9 @@ export async function stageBundle(options) {
     await cp(required(options.binaryPath, 'binaryPath'), join(root, 'bin', exeName));
   } else {
     await cp(required(options.binaryPath, 'binaryPath'), join(root, 'runtime', 'sdn', exeName));
-    await cp(required(options.wasmedgePath, 'wasmedgePath'), join(root, 'runtime', 'wasmedge'), { recursive: true });
+    const bundledWasmEdgePath = join(root, 'runtime', 'wasmedge');
+    await cp(required(options.wasmedgePath, 'wasmedgePath'), bundledWasmEdgePath, { recursive: true });
+    await makeSymlinksPortable(bundledWasmEdgePath);
     await writeFile(join(root, 'bin', exeName), unixLauncherScript(exeName));
   }
   await cp(required(options.kuboPath, 'kuboPath'), join(root, 'runtime', 'kubo', kuboName));
@@ -114,6 +116,39 @@ async function listRelativeFiles(root, prefix) {
     }
   }
   return files;
+}
+
+async function makeSymlinksPortable(root) {
+  const entries = await readdir(root, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = join(root, entry.name);
+    if (entry.isDirectory()) {
+      await makeSymlinksPortable(entryPath);
+      continue;
+    }
+    if (!entry.isSymbolicLink()) {
+      continue;
+    }
+    const target = await readlink(entryPath);
+    if (!isAbsolute(target)) {
+      continue;
+    }
+    const localTarget = basename(target);
+    if (!localTarget) {
+      continue;
+    }
+    const localTargetPath = join(dirname(entryPath), localTarget);
+    if (localTargetPath === entryPath) {
+      continue;
+    }
+    try {
+      await lstat(localTargetPath);
+    } catch {
+      continue;
+    }
+    await unlink(entryPath);
+    await symlink(localTarget, entryPath);
+  }
 }
 
 function unixLauncherScript(exeName) {
