@@ -31,6 +31,7 @@ test('discovers all release artifact types from a release directory', () => {
   writeFixture(releaseDir, 'spacedatanetwork-full-1.0.3~beta.1-1.x86_64.rpm');
   writeFixture(releaseDir, 'spacedatanetwork-edge-1.0.3~beta.1-1.x86_64.rpm');
   writeFixture(releaseDir, 'spacedatanetwork-linux-vm-1.0.3~beta.1.tar.gz');
+  writeFixture(releaseDir, 'spacedatanetwork-1.0.3-beta.1-linux-amd64.tar.gz');
   writeFixture(releaseDir, 'spacedatanetwork-container-1.0.3~beta.1-linux-amd64.tar.gz');
   writeFixture(releaseDir, 'spacedatanetwork-sdn-js-2.0.12.tgz');
   writeFixture(releaseDir, 'spacedatanetwork-sbom.cdx.json', '{"bomFormat":"CycloneDX"}');
@@ -43,10 +44,26 @@ test('discovers all release artifact types from a release directory', () => {
   assert.equal(artifacts.fullRpm.name, 'spacedatanetwork-full-1.0.3~beta.1-1.x86_64.rpm');
   assert.equal(artifacts.edgeRpm.name, 'spacedatanetwork-edge-1.0.3~beta.1-1.x86_64.rpm');
   assert.equal(artifacts.linuxVm.name, 'spacedatanetwork-linux-vm-1.0.3~beta.1.tar.gz');
+  assert.equal(artifacts.linuxCli.name, 'spacedatanetwork-1.0.3-beta.1-linux-amd64.tar.gz');
   assert.equal(artifacts.container.name, 'spacedatanetwork-container-1.0.3~beta.1-linux-amd64.tar.gz');
   assert.equal(artifacts.sdnJs.name, 'spacedatanetwork-sdn-js-2.0.12.tgz');
   assert.equal(artifacts.sbom.name, 'spacedatanetwork-sbom.cdx.json');
   assert.equal(artifacts.ipfsDeployment.name, 'ipfs-deployment.json');
+});
+
+test('portable Linux CLI Dockerfile asserts bundle layout and alias', () => {
+  const linuxCli = generateInstallDockerfile({
+    artifactName: 'spacedatanetwork-1.0.3-beta.1-linux-amd64.tar.gz',
+    artifactType: 'linux-cli'
+  });
+
+  assert.match(linuxCli, /tar -C \/opt -xzf/);
+  assert.match(linuxCli, /\/opt\/spacedatanetwork-1\.0\.3-beta\.1-linux-amd64\/bin\/spacedatanetwork --help/);
+  assert.match(linuxCli, /\/opt\/spacedatanetwork-1\.0\.3-beta\.1-linux-amd64\/bin\/sdn --help/);
+  assert.match(linuxCli, /runtime\/kubo\/ipfs/);
+  assert.match(linuxCli, /runtime\/modules\/org\.spacedatanetwork\.updater\.wasm/);
+  assert.match(linuxCli, /runtime\/ui\/sdn/);
+  assert.match(linuxCli, /runtime\/ui\/webui/);
 });
 
 test('parses docker load output for downloadable container image tars', () => {

@@ -16,6 +16,7 @@ permissions:
 env:
   REGISTRY: docker.io
   IMAGE_NAME: dockerdigitalarsenal/space-data-network
+  KUBO_VERSION: v0.39.0
   NFPM_VERSION: v2.42.0
 
 jobs:
@@ -78,7 +79,7 @@ jobs:
           cache-dependency-path: sdn-js/package-lock.json
       - name: Install Kubo
         run: |
-          curl -L https://dist.ipfs.tech/kubo/v0.39.0/kubo_v0.39.0_linux-amd64.tar.gz | tar -xz
+          curl -L https://dist.ipfs.tech/kubo/${KUBO_VERSION}/kubo_${KUBO_VERSION}_linux-amd64.tar.gz | tar -xz
           sudo install kubo/ipfs /usr/local/bin/ipfs
           ipfs init --profile=server
           ipfs daemon > /tmp/ipfs.log 2>&1 &
@@ -172,6 +173,85 @@ jobs:
           name: container-image
           path: dist/container-images/spacedatanetwork-container-${{ needs.beta-version.outputs.native_package_version }}-linux-amd64.tar.gz
 
+  cli:
+    name: Build self-contained CLI archives (${{ matrix.target_os }}-${{ matrix.target_arch }})
+    runs-on: ${{ matrix.runner }}
+    needs: [beta-version, ipfs]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_os: linux
+            target_arch: amd64
+            runner: ubuntu-latest
+            kubo_platform: linux-amd64
+          - target_os: linux
+            target_arch: arm64
+            runner: ubuntu-24.04-arm
+            kubo_platform: linux-arm64
+          - target_os: darwin
+            target_arch: arm64
+            runner: macos-14
+            kubo_platform: darwin-arm64
+          - target_os: darwin
+            target_arch: amd64
+            runner: macos-15-intel
+            kubo_platform: darwin-amd64
+    env:
+      PACKAGE_VERSION: ${{ needs.beta-version.outputs.package_version }}
+      RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
+      TARGET_OS: ${{ matrix.target_os }}
+      TARGET_ARCH: ${{ matrix.target_arch }}
+      KUBO_PLATFORM: ${{ matrix.kubo_platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ipfs-assets
+          path: dist/ipfs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache-dependency-path: sdn-server/go.sum
+      - name: Install root JS dependencies
+        run: npm ci
+      - name: Build updater module wasm
+        run: npm --prefix packages/sdn-updater-module run build
+      - name: Download target Kubo binary
+        run: |
+          mkdir -p dist/kubo
+          curl -L "https://dist.ipfs.tech/kubo/${KUBO_VERSION}/kubo_${KUBO_VERSION}_${KUBO_PLATFORM}.tar.gz" | tar -xz -C dist/kubo
+      - name: Build target SDN binary
+        run: |
+          mkdir -p dist/cli-input
+          ./scripts/go-with-wasmedge.sh build -o "${PWD}/dist/cli-input/spacedatanetwork" ./cmd/spacedatanetwork
+      - name: Build self-contained CLI archive
+        run: |
+          node deployment/release/build-self-contained-cli.mjs \
+            --version "${PACKAGE_VERSION}" \
+            --os "${TARGET_OS}" \
+            --arch "${TARGET_ARCH}" \
+            --channel beta \
+            --output-dir dist/cli \
+            --binary-path "${PWD}/dist/cli-input/spacedatanetwork" \
+            --kubo-path "${PWD}/dist/kubo/kubo/ipfs" \
+            --sdnUIPath "${PWD}/dist/ipfs/sdn-admin" \
+            --webUIPath "${PWD}/dist/ipfs/ipfs-webui" \
+            --updater-wasm-path "${PWD}/packages/sdn-updater-module/dist/isomorphic/module.wasm" \
+            --wasmedge-path "${HOME}/.wasmedge" \
+            --license-path "${PWD}/LICENSE" \
+            --readme-path "${PWD}/README.md" \
+            --manifest-signature "github-actions:${RELEASE_TAG}:${GITHUB_SHA}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target_os }}-${{ matrix.target_arch }}
+          path: dist/cli/spacedatanetwork-${{ needs.beta-version.outputs.package_version }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.tar.gz
+
   packages:
     name: Build beta native packages and SBOM
     runs-on: ubuntu-latest
@@ -255,7 +335,7 @@ jobs:
   artifact-docker-test:
     name: Install and network-test release artifacts
     runs-on: ubuntu-latest
-    needs: [beta-version, ipfs, docker, packages, sdn-js-package]
+    needs: [beta-version, ipfs, docker, cli, packages, sdn-js-package]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -274,6 +354,11 @@ jobs:
         with:
           name: container-image
           path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli-*
+          path: dist/cli
+          merge-multiple: true
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -283,7 +368,7 @@ jobs:
   release:
     name: Publish beta GitHub release
     runs-on: ubuntu-latest
-    needs: [beta-version, ipfs, docker, packages, sdn-js-package, artifact-docker-test]
+    needs: [beta-version, ipfs, docker, cli, packages, sdn-js-package, artifact-docker-test]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -306,6 +391,11 @@ jobs:
         with:
           name: container-digest
           path: dist/container-digests
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli-*
+          path: dist/cli
+          merge-multiple: true
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
