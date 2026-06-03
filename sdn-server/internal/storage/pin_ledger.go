@@ -254,6 +254,11 @@ func (s *FlatSQLStore) ListPinLedgerEntries(query PinLedgerQuery) ([]PinLedgerEn
 
 func (s *FlatSQLStore) LocalReplicaStats(query LocalReplicaStatsQuery) ([]LocalReplicaStats, error) {
 	query = normalizeLocalReplicaStatsQuery(query)
+	statsByKey := map[string]*LocalReplicaStats{}
+	sourceStatsByKey := map[string]string{}
+	countedShards := map[string]bool{}
+	publicationSummaries := map[string]*localReplicaPublicationSummary{}
+
 	ledger, err := s.ListPinLedgerEntries(PinLedgerQuery{
 		SchemaName:        query.SchemaName,
 		ProviderPeerID:    query.ProviderPeerID,
@@ -269,33 +274,41 @@ func (s *FlatSQLStore) LocalReplicaStats(query LocalReplicaStatsQuery) ([]LocalR
 		return nil, err
 	}
 
-	statsByKey := map[string]*LocalReplicaStats{}
 	for _, entry := range ledger {
-		key := localReplicaStatsKey(entry.SchemaName, entry.ProviderPeerID, entry.ProviderPublicKey, entry.ProviderID, entry.SourceName, entry.BatchID, entry.QueryProfile)
-		stat := statsByKey[key]
-		if stat == nil {
-			stat = &LocalReplicaStats{
-				SchemaName:        entry.SchemaName,
-				ProviderPeerID:    entry.ProviderPeerID,
-				ProviderPublicKey: entry.ProviderPublicKey,
-				ProviderID:        entry.ProviderID,
-				SourceName:        entry.SourceName,
-				BatchID:           entry.BatchID,
-				QueryProfile:      entry.QueryProfile,
-			}
-			statsByKey[key] = stat
-		}
-		stat.PinnedRows += entry.RowCount
-		stat.PinnedBytes += entry.ByteCount
+		stat := localReplicaStatForPinEntry(statsByKey, sourceStatsByKey, entry)
+		addLocalReplicaPinnedEvidence(stat, countedShards, entry.CID, entry.RowCount, entry.ByteCount)
 		entryTime := entry.VerifiedAt
 		if entryTime.IsZero() {
 			entryTime = entry.UpdatedAt
 		}
-		if stat.LastSyncedAt.IsZero() || entryTime.After(stat.LastSyncedAt) {
-			stat.LastSyncedAt = entryTime
-			stat.SnapshotID = entry.SnapshotID
-			stat.Head = entry.Head
-			stat.HighWaterMark = entry.HighWaterMark
+		updateLocalReplicaStatsHead(stat, entryTime, entry.SnapshotID, entry.Head, entry.HighWaterMark)
+	}
+
+	publications, err := s.localReplicaDatasetShardPublications(query)
+	if err != nil {
+		return nil, err
+	}
+	for _, pub := range publications {
+		stat, sourceKey := localReplicaStatForPublication(statsByKey, sourceStatsByKey, pub)
+		summary := publicationSummaries[sourceKey]
+		if summary == nil {
+			summary = &localReplicaPublicationSummary{}
+			publicationSummaries[sourceKey] = summary
+		}
+		summary.add(pub)
+		addLocalReplicaPinnedEvidence(stat, countedShards, pub.ShardCID, int64(pub.RecordCount), pub.ByteCount)
+		updateLocalReplicaStatsHead(stat, pub.PublishedAt, pub.FeedHead, pub.FeedHead, "")
+	}
+	for sourceKey, summary := range publicationSummaries {
+		statKey := sourceStatsByKey[sourceKey]
+		stat := statsByKey[statKey]
+		if stat == nil {
+			continue
+		}
+		if stat.LastSyncedAt.Equal(summary.NewestAt) && stat.Head == summary.NewestHead {
+			stat.HighWaterMark = summary.highWaterMark()
+		} else if stat.HighWaterMark == "" {
+			stat.HighWaterMark = summary.highWaterMark()
 		}
 	}
 
@@ -323,6 +336,117 @@ func (s *FlatSQLStore) LocalReplicaStats(query LocalReplicaStatsQuery) ([]LocalR
 		stats = append(stats, *stat)
 	}
 	return stats, nil
+}
+
+type localReplicaPublicationSummary struct {
+	Count      int
+	TotalRows  int64
+	TotalBytes int64
+	NewestAt   time.Time
+	NewestHead string
+}
+
+func (summary *localReplicaPublicationSummary) add(pub DatasetShardPublication) {
+	if summary == nil {
+		return
+	}
+	summary.Count++
+	summary.TotalRows += int64(pub.RecordCount)
+	summary.TotalBytes += pub.ByteCount
+	if summary.NewestAt.IsZero() || pub.PublishedAt.After(summary.NewestAt) {
+		summary.NewestAt = pub.PublishedAt
+		summary.NewestHead = pub.FeedHead
+	}
+}
+
+func (summary localReplicaPublicationSummary) highWaterMark() string {
+	return fmt.Sprintf("published-feed-v1:%d:%d:%d:%d", unixOrZero(summary.NewestAt), summary.Count, summary.TotalRows, summary.TotalBytes)
+}
+
+func localReplicaStatForPinEntry(statsByKey map[string]*LocalReplicaStats, sourceStatsByKey map[string]string, entry PinLedgerEntry) *LocalReplicaStats {
+	key := localReplicaStatsKey(entry.SchemaName, entry.ProviderPeerID, entry.ProviderPublicKey, entry.ProviderID, entry.SourceName, entry.BatchID, entry.QueryProfile)
+	stat := statsByKey[key]
+	if stat == nil {
+		stat = &LocalReplicaStats{
+			SchemaName:        entry.SchemaName,
+			ProviderPeerID:    entry.ProviderPeerID,
+			ProviderPublicKey: entry.ProviderPublicKey,
+			ProviderID:        entry.ProviderID,
+			SourceName:        entry.SourceName,
+			BatchID:           entry.BatchID,
+			QueryProfile:      entry.QueryProfile,
+		}
+		statsByKey[key] = stat
+	}
+	sourceKey := localReplicaSourceStatsKey(entry.SchemaName, entry.ProviderID, entry.SourceName, entry.BatchID, entry.QueryProfile)
+	if sourceStatsByKey[sourceKey] == "" {
+		sourceStatsByKey[sourceKey] = key
+	}
+	return stat
+}
+
+func localReplicaStatForPublication(statsByKey map[string]*LocalReplicaStats, sourceStatsByKey map[string]string, pub DatasetShardPublication) (*LocalReplicaStats, string) {
+	sourceKey := localReplicaSourceStatsKey(pub.SchemaName, pub.ProviderID, pub.SourceName, pub.BatchID, pub.QueryProfile)
+	if key := sourceStatsByKey[sourceKey]; key != "" {
+		if stat := statsByKey[key]; stat != nil {
+			return stat, sourceKey
+		}
+	}
+	key := localReplicaStatsKey(pub.SchemaName, "", "", pub.ProviderID, pub.SourceName, pub.BatchID, pub.QueryProfile)
+	stat := statsByKey[key]
+	if stat == nil {
+		stat = &LocalReplicaStats{
+			SchemaName:   pub.SchemaName,
+			ProviderID:   pub.ProviderID,
+			SourceName:   pub.SourceName,
+			BatchID:      pub.BatchID,
+			QueryProfile: pub.QueryProfile,
+		}
+		statsByKey[key] = stat
+	}
+	sourceStatsByKey[sourceKey] = key
+	return stat, sourceKey
+}
+
+func addLocalReplicaPinnedEvidence(stat *LocalReplicaStats, countedShards map[string]bool, shardCID string, rowCount, byteCount int64) {
+	if stat == nil {
+		return
+	}
+	evidenceKey := localReplicaShardEvidenceKey(stat.SchemaName, stat.ProviderID, stat.SourceName, stat.BatchID, stat.QueryProfile, shardCID)
+	if countedShards[evidenceKey] {
+		return
+	}
+	countedShards[evidenceKey] = true
+	stat.PinnedRows += rowCount
+	stat.PinnedBytes += byteCount
+}
+
+func updateLocalReplicaStatsHead(stat *LocalReplicaStats, syncedAt time.Time, snapshotID, head, highWaterMark string) {
+	if stat == nil || syncedAt.IsZero() {
+		return
+	}
+	if stat.LastSyncedAt.IsZero() || syncedAt.After(stat.LastSyncedAt) {
+		stat.LastSyncedAt = syncedAt
+		stat.SnapshotID = snapshotID
+		stat.Head = head
+		stat.HighWaterMark = highWaterMark
+	}
+}
+
+func (s *FlatSQLStore) localReplicaDatasetShardPublications(query LocalReplicaStatsQuery) ([]DatasetShardPublication, error) {
+	if query.SchemaName == "" || query.QueryProfile == "" {
+		return nil, nil
+	}
+	if query.ProviderPeerID != "" || query.ProviderPublicKey != "" {
+		return nil, nil
+	}
+	return s.ListDatasetShardPublications(DatasetShardPublicationQuery{
+		SchemaName:   query.SchemaName,
+		ProviderID:   query.ProviderID,
+		SourceName:   query.SourceName,
+		BatchID:      query.BatchID,
+		QueryProfile: query.QueryProfile,
+	})
 }
 
 type pinLedgerScanner interface {
@@ -413,6 +537,14 @@ func normalizeLocalReplicaStatsQuery(query LocalReplicaStatsQuery) LocalReplicaS
 
 func localReplicaStatsKey(schemaName, providerPeerID, providerPublicKey, providerID, sourceName, batchID, queryProfile string) string {
 	return strings.Join([]string{schemaName, providerPeerID, providerPublicKey, providerID, sourceName, batchID, queryProfile}, "\x00")
+}
+
+func localReplicaSourceStatsKey(schemaName, providerID, sourceName, batchID, queryProfile string) string {
+	return strings.Join([]string{schemaName, providerID, sourceName, batchID, queryProfile}, "\x00")
+}
+
+func localReplicaShardEvidenceKey(schemaName, providerID, sourceName, batchID, queryProfile, shardCID string) string {
+	return strings.Join([]string{schemaName, providerID, sourceName, batchID, queryProfile, shardCID}, "\x00")
 }
 
 func (s *FlatSQLStore) localReplicaRawStats(stat LocalReplicaStats, query LocalReplicaStatsQuery) (int64, int64, error) {
