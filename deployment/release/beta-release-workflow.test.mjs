@@ -12,6 +12,7 @@ function readRepoFile(relativePath) {
 
 test('beta release workflow publishes public beta artifacts', () => {
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+  const license = readRepoFile('LICENSE');
 
   assert.match(workflow, /name:\s*SDN Beta Release Artifacts/);
   assert.match(workflow, /workflow_dispatch:/);
@@ -26,6 +27,9 @@ test('beta release workflow publishes public beta artifacts', () => {
   assert.match(workflow, /spacedatanetwork-container-\$\{NATIVE_PACKAGE_VERSION\}-linux-amd64\.tar\.gz/);
   assert.match(workflow, /Build self-contained CLI archives/);
   assert.match(workflow, /build-self-contained-cli\.mjs/);
+  assert.match(workflow, /--license-path "\$\{PWD\}\/LICENSE"/);
+  assert.match(license, /MIT License/);
+  assert.match(license, /Space Data Network/);
   assert.match(workflow, /spacedatanetwork-\$\{\{ needs\.beta-version\.outputs\.package_version \}\}-\$\{\{ matrix\.target_os \}\}-\$\{\{ matrix\.target_arch \}\}\.tar\.gz/);
   assert.match(workflow, /name:\s*cli-\$\{\{ matrix\.target_os \}\}-\$\{\{ matrix\.target_arch \}\}/);
   assert.match(workflow, /pattern:\s*cli-\*/);
