@@ -615,7 +615,8 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid native FlatBuffer stream: "+err.Error())
 		return
 	}
-	metadata, _ = h.metadata.RecordNativeStream(parsed, snapshot, throughputBPS, wireUtilization)
+	timingsMs := timings.AsMilliseconds()
+	metadata, _ = h.metadata.RecordNativeStream(parsed, snapshot, throughputBPS, wireUtilization, timingsMs)
 	response := map[string]interface{}{
 		"channelId":                parsed.ChannelID,
 		"standardCode":             parsed.StandardCode,
@@ -628,7 +629,7 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		"importedRows":             importedRows,
 		"verifiedAt":               metadata.VerifiedAt.Format(time.RFC3339Nano),
 		"streamUpdated":            snapshot.UpdatedAt.Format(time.RFC3339Nano),
-		"timingsMs":                timings.AsMilliseconds(),
+		"timingsMs":                timingsMs,
 	}
 	if gate.Enabled {
 		response["wireSpeedTarget"] = gate.Target
@@ -1027,11 +1028,19 @@ func (h *ChannelHandler) channelMonitor(parsed channels.ChannelID) map[string]in
 	payload["syncedBytes"] = metadata.SyncedBytes
 	payload["throughputBytesPerSecond"] = metadata.ThroughputBPS
 	payload["wireSpeedUtilization"] = metadata.WireUtilization
+	payload["timingsMs"] = channelMonitorTimings(metadata.TimingsMs)
 	payload["lastVerifiedUpdate"] = ""
 	if verified {
 		payload["lastVerifiedUpdate"] = metadata.VerifiedAt.Format(time.RFC3339Nano)
 	}
 	return payload
+}
+
+func channelMonitorTimings(timings map[string]int64) map[string]int64 {
+	if timings == nil {
+		return channelThroughputTimings{}.AsMilliseconds()
+	}
+	return timings
 }
 
 func firstNonEmptyChannelString(values ...string) string {

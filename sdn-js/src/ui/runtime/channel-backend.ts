@@ -6,6 +6,7 @@ import {
   type ChannelBackend,
   type ChannelListOptions,
   type ChannelMonitor,
+  type ChannelMonitorTimings,
   type ChannelSummary,
 } from './sdn-backend';
 import { getBytes, getJson, joinUrl, recordsFromPayload, type FetchLike } from './sdn-backend-adapter-utils';
@@ -145,7 +146,21 @@ function normalizeChannelMonitor(payload: unknown): ChannelMonitor {
     syncedBytes: pickNumber(record, 'syncedBytes') ?? 0,
     throughputBytesPerSecond: pickNumber(record, 'throughputBytesPerSecond') ?? 0,
     wireSpeedUtilization: pickNumber(record, 'wireSpeedUtilization'),
+    timingsMs: normalizeChannelMonitorTimings(record.timingsMs),
     lastVerifiedUpdate: pickString(record, 'lastVerifiedUpdate') ?? '',
+  };
+}
+
+function normalizeChannelMonitorTimings(payload: unknown): ChannelMonitorTimings {
+  const record = isRecord(payload) ? payload : {};
+  return {
+    discovery: pickNumber(record, 'discovery') ?? 0,
+    grantNegotiation: pickNumber(record, 'grantNegotiation') ?? 0,
+    pnmDpmVerification: pickNumber(record, 'pnmDpmVerification') ?? 0,
+    transfer: pickNumber(record, 'transfer') ?? 0,
+    decrypt: pickNumber(record, 'decrypt') ?? 0,
+    hashVerification: pickNumber(record, 'hashVerification') ?? 0,
+    durableImport: pickNumber(record, 'durableImport') ?? 0,
   };
 }
 

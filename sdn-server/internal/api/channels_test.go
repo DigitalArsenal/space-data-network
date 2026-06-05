@@ -487,6 +487,15 @@ func TestChannelHandlerPublishesAndOpensNativeFlatBufferStream(t *testing.T) {
 	if throughput, ok := monitorBody["throughputBytesPerSecond"].(float64); !ok || throughput <= 0 {
 		t.Fatalf("monitor did not report current native stream throughput: %#v", monitorBody)
 	}
+	timings, ok := monitorBody["timingsMs"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("monitor did not report phase timings: %#v", monitorBody)
+	}
+	for _, key := range []string{"discovery", "grantNegotiation", "pnmDpmVerification", "transfer", "decrypt", "hashVerification", "durableImport"} {
+		if _, ok := timings[key]; !ok {
+			t.Fatalf("monitor timingsMs missing %q: %#v", key, timings)
+		}
+	}
 }
 
 func TestChannelHandlerReportsNativeStreamWireSpeedUtilization(t *testing.T) {

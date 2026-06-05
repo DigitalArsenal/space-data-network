@@ -142,7 +142,18 @@ export interface ChannelMonitor extends ChannelSummary {
   syncedBytes?: number;
   throughputBytesPerSecond?: number;
   wireSpeedUtilization?: number | null;
+  timingsMs?: ChannelMonitorTimings;
   lastVerifiedUpdate?: string;
+}
+
+export interface ChannelMonitorTimings {
+  discovery?: number;
+  grantNegotiation?: number;
+  pnmDpmVerification?: number;
+  transfer?: number;
+  decrypt?: number;
+  hashVerification?: number;
+  durableImport?: number;
 }
 
 export type ChannelActionResponse = Record<string, unknown>;

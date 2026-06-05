@@ -32,6 +32,7 @@ type VerifiedMetadata struct {
 	SyncedBytes       int64
 	ThroughputBPS     int64
 	WireUtilization   *float64
+	TimingsMs         map[string]int64
 	LastImportFailure string
 }
 
@@ -92,7 +93,7 @@ func (r *VerifiedMetadataRegistry) RecordDPM(channel ChannelID, evidence DPMTrus
 	return metadata, ok
 }
 
-func (r *VerifiedMetadataRegistry) RecordNativeStream(channel ChannelID, snapshot NativeStreamSnapshot, throughputBPS int64, wireUtilization *float64) (VerifiedMetadata, bool) {
+func (r *VerifiedMetadataRegistry) RecordNativeStream(channel ChannelID, snapshot NativeStreamSnapshot, throughputBPS int64, wireUtilization *float64, timingsMs map[string]int64) (VerifiedMetadata, bool) {
 	if r == nil {
 		return VerifiedMetadata{}, false
 	}
@@ -107,6 +108,7 @@ func (r *VerifiedMetadataRegistry) RecordNativeStream(channel ChannelID, snapsho
 		metadata.PinnedRows = snapshot.FrameCount
 		metadata.ThroughputBPS = throughputBPS
 		metadata.WireUtilization = wireUtilization
+		metadata.TimingsMs = cloneTimingsMs(timingsMs)
 		r.metadata[channel.ChannelID] = metadata
 	}
 	r.mu.Unlock()
@@ -141,6 +143,7 @@ func (r *VerifiedMetadataRegistry) Get(channel ChannelID) (VerifiedMetadata, boo
 	metadata, ok := r.metadata[channel.ChannelID]
 	r.mu.RUnlock()
 	metadata.PNMBytes = append([]byte(nil), metadata.PNMBytes...)
+	metadata.TimingsMs = cloneTimingsMs(metadata.TimingsMs)
 	return metadata, ok
 }
 
@@ -152,6 +155,7 @@ func (r *VerifiedMetadataRegistry) List() []VerifiedMetadata {
 	rows := make([]VerifiedMetadata, 0, len(r.metadata))
 	for _, metadata := range r.metadata {
 		metadata.PNMBytes = append([]byte(nil), metadata.PNMBytes...)
+		metadata.TimingsMs = cloneTimingsMs(metadata.TimingsMs)
 		rows = append(rows, metadata)
 	}
 	r.mu.RUnlock()
@@ -159,6 +163,17 @@ func (r *VerifiedMetadataRegistry) List() []VerifiedMetadata {
 		return rows[i].ChannelID < rows[j].ChannelID
 	})
 	return rows
+}
+
+func cloneTimingsMs(timings map[string]int64) map[string]int64 {
+	if timings == nil {
+		return nil
+	}
+	clone := make(map[string]int64, len(timings))
+	for key, value := range timings {
+		clone[key] = value
+	}
+	return clone
 }
 
 func dpmPolicyVisibility(policyID string) string {

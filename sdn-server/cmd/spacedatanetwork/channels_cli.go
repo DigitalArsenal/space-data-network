@@ -1152,6 +1152,32 @@ func printChannelMonitorPayload(out interface {
 	} {
 		fmt.Fprintf(out, "%s=%v\n", key, monitorValue(payload[key]))
 	}
+	printChannelMonitorTimings(out, payload["timingsMs"])
+}
+
+func printChannelMonitorTimings(out interface {
+	Write([]byte) (int, error)
+}, value interface{}) {
+	timings, ok := value.(map[string]interface{})
+	if !ok {
+		return
+	}
+	for _, timing := range []struct {
+		source string
+		label  string
+	}{
+		{"discovery", "timingDiscoveryMs"},
+		{"grantNegotiation", "timingGrantNegotiationMs"},
+		{"pnmDpmVerification", "timingPnmDpmVerificationMs"},
+		{"transfer", "timingTransferMs"},
+		{"decrypt", "timingDecryptMs"},
+		{"hashVerification", "timingHashVerificationMs"},
+		{"durableImport", "timingDurableImportMs"},
+	} {
+		if duration, ok := timings[timing.source]; ok {
+			fmt.Fprintf(out, "%s=%v\n", timing.label, monitorValue(duration))
+		}
+	}
 }
 
 func printChannelSubscriptionPayload(out interface {
