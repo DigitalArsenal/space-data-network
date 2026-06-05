@@ -551,6 +551,9 @@ func TestChannelsPublishPassesPrivateGrantContextToLocalAPI(t *testing.T) {
 		if got := r.Header.Get("Content-Type"); got != "application/vnd.sdn.flatbuffers.stream" {
 			t.Fatalf("publish Content-Type = %q", got)
 		}
+		if got := r.Header.Get("X-SDN-Encrypted-Stream"); got != "true" {
+			t.Fatalf("publish X-SDN-Encrypted-Stream = %q, want true", got)
+		}
 		body := new(bytes.Buffer)
 		_, _ = body.ReadFrom(r.Body)
 		if !bytes.Equal(body.Bytes(), streamBytes) {

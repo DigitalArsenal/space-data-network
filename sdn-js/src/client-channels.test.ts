@@ -9,7 +9,7 @@ describe('SDNClient channel API', () => {
 
   it('exposes the spec channel operations through client.channels', async () => {
     const stream = new Uint8Array([7, 0, 0, 0, 79, 77, 77, 49, 1, 2, 3]);
-    const requests: Array<{ url: string; method: string; accept: string; contentType: string; body: string }> = [];
+    const requests: Array<{ url: string; method: string; accept: string; contentType: string; encryptedStream: string; body: string }> = [];
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
       const body = init?.body;
       requests.push({
@@ -17,6 +17,7 @@ describe('SDNClient channel API', () => {
         method: init?.method ?? 'GET',
         accept: String((init?.headers as Record<string, string> | undefined)?.Accept ?? ''),
         contentType: String((init?.headers as Record<string, string> | undefined)?.['Content-Type'] ?? ''),
+        encryptedStream: String((init?.headers as Record<string, string> | undefined)?.['X-SDN-Encrypted-Stream'] ?? ''),
         body: body instanceof ArrayBuffer
           ? Array.from(new Uint8Array(body)).join(',')
           : body instanceof Uint8Array ? Array.from(body).join(',') : typeof body === 'string' ? body : '',
@@ -65,15 +66,19 @@ describe('SDNClient channel API', () => {
     }));
     expect(requests[6]).toEqual(expect.objectContaining({
       contentType: 'application/vnd.sdn.flatbuffers.stream',
+      encryptedStream: '',
       method: 'POST',
       body: Array.from(stream).join(','),
     }));
   });
 
   it('passes private grant context through channel requests', async () => {
-    const requests: string[] = [];
-    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
-      requests.push(String(input));
+    const requests: Array<{ url: string; encryptedStream: string }> = [];
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({
+        url: String(input),
+        encryptedStream: String((init?.headers as Record<string, string> | undefined)?.['X-SDN-Encrypted-Stream'] ?? ''),
+      });
       return jsonResponse({ ok: true });
     });
 
@@ -82,11 +87,13 @@ describe('SDNClient channel API', () => {
     await client.channels.list({ standardCode: 'OMM', ...access });
     await client.channels.subscribe('spaceaware-OMM', access);
     await client.channels.openStream('spaceaware-OMM', access);
+    await client.channels.publish('spaceaware-OMM', new Uint8Array([1, 2, 3]), access);
 
     expect(requests).toEqual([
-      'https://sdn.spaceaware.io/api/v1/channels?standardCode=OMM&visibility=private-listed&subject=peer-alpha&grantId=grant-1',
-      'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/subscribe?subject=peer-alpha&grantId=grant-1&visibility=private-listed',
-      'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/stream?subject=peer-alpha&grantId=grant-1&visibility=private-listed',
+      { url: 'https://sdn.spaceaware.io/api/v1/channels?standardCode=OMM&visibility=private-listed&subject=peer-alpha&grantId=grant-1', encryptedStream: '' },
+      { url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/subscribe?subject=peer-alpha&grantId=grant-1&visibility=private-listed', encryptedStream: '' },
+      { url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/stream?subject=peer-alpha&grantId=grant-1&visibility=private-listed', encryptedStream: '' },
+      { url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/publish?subject=peer-alpha&grantId=grant-1&visibility=private-listed', encryptedStream: 'true' },
     ]);
   });
 

@@ -380,6 +380,9 @@ func runChannelsPublishToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiU
 		return err
 	}
 	req.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	if isPrivateChannelVisibility(access.Visibility) {
+		req.Header.Set("X-SDN-Encrypted-Stream", "true")
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("publish native channel stream: %w", err)
@@ -960,6 +963,11 @@ func (access channelAccessQuery) queryValues() url.Values {
 		query.Set("visibility", visibility)
 	}
 	return query
+}
+
+func isPrivateChannelVisibility(visibility string) bool {
+	value := strings.ToLower(strings.TrimSpace(visibility))
+	return value == "private" || strings.HasPrefix(value, "private-")
 }
 
 func channelSubscriptionURL(apiURL string, channelID string, action string, access channelAccessQuery) (string, error) {
