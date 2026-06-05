@@ -525,8 +525,12 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusForbidden, "verified DPM required before stream publish")
 		return
 	}
-	if isPrivateChannelMetadata(metadata) && !h.isEncryptedNativeStreamPublish(r) {
-		writeError(w, http.StatusBadRequest, "encrypted private channel stream required")
+	if isPrivateChannelMetadata(metadata) {
+		if !h.isEncryptedNativeStreamPublish(r) {
+			writeError(w, http.StatusBadRequest, "encrypted private channel stream required")
+			return
+		}
+		writeError(w, http.StatusNotImplemented, "encrypted private channel stream decrypt path unavailable")
 		return
 	}
 	pnmDPMDuration := time.Since(pnmDPMStarted)

@@ -967,8 +967,11 @@ func TestChannelHandlerVerifiedEncryptedDPMMakesChannelPrivateFailClosed(t *test
 	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
 	publishRec = httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
-	if publishRec.Code != http.StatusAccepted {
-		t.Fatalf("private stream publish with grant status = %d body=%s", publishRec.Code, publishRec.Body.String())
+	if publishRec.Code != http.StatusNotImplemented {
+		t.Fatalf("private stream publish with grant status = %d, want %d body=%s", publishRec.Code, http.StatusNotImplemented, publishRec.Body.String())
+	}
+	if !strings.Contains(publishRec.Body.String(), "encrypted private channel stream decrypt path unavailable") {
+		t.Fatalf("private stream rejection did not explain missing decrypt path: %s", publishRec.Body.String())
 	}
 
 	openReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/stream", nil)
@@ -981,11 +984,8 @@ func TestChannelHandlerVerifiedEncryptedDPMMakesChannelPrivateFailClosed(t *test
 	openReq = httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/stream?subject=peer-alpha&grantId="+grantID, nil)
 	openRec = httptest.NewRecorder()
 	mux.ServeHTTP(openRec, openReq)
-	if openRec.Code != http.StatusOK {
-		t.Fatalf("private stream open with grant status = %d body=%s", openRec.Code, openRec.Body.String())
-	}
-	if !bytes.Equal(openRec.Body.Bytes(), streamBytes) {
-		t.Fatal("private stream open did not return verified stream bytes after grant")
+	if openRec.Code != http.StatusNotFound {
+		t.Fatalf("private stream open after rejected encrypted publish status = %d, want %d body=%s", openRec.Code, http.StatusNotFound, openRec.Body.String())
 	}
 }
 
@@ -1022,8 +1022,8 @@ func TestChannelHandlerReadsPrivateNativeFlatBufferByteRangeWithGrant(t *testing
 	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
 	publishRec := httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
-	if publishRec.Code != http.StatusAccepted {
-		t.Fatalf("private stream publish with grant status = %d body=%s", publishRec.Code, publishRec.Body.String())
+	if publishRec.Code != http.StatusNotImplemented {
+		t.Fatalf("private stream publish with grant status = %d, want %d body=%s", publishRec.Code, http.StatusNotImplemented, publishRec.Body.String())
 	}
 
 	rangeReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/bytes?offset=1&length=3", nil)
@@ -1036,18 +1036,12 @@ func TestChannelHandlerReadsPrivateNativeFlatBufferByteRangeWithGrant(t *testing
 	rangeReq = httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/bytes?offset=1&length=3&subject=peer-alpha&grantId="+grantID, nil)
 	rangeRec = httptest.NewRecorder()
 	mux.ServeHTTP(rangeRec, rangeReq)
-	if rangeRec.Code != http.StatusPartialContent {
-		t.Fatalf("private byte range with grant status = %d body=%s", rangeRec.Code, rangeRec.Body.String())
-	}
-	if got := rangeRec.Header().Get("Content-Range"); got != "bytes 1-3/"+strconv.Itoa(len(streamBytes)) {
-		t.Fatalf("private byte range Content-Range = %q", got)
-	}
-	if !bytes.Equal(rangeRec.Body.Bytes(), streamBytes[1:4]) {
-		t.Fatalf("private byte range body = %v, want %v", rangeRec.Body.Bytes(), streamBytes[1:4])
+	if rangeRec.Code != http.StatusNotFound {
+		t.Fatalf("private byte range after rejected encrypted publish status = %d, want %d body=%s", rangeRec.Code, http.StatusNotFound, rangeRec.Body.String())
 	}
 }
 
-func TestChannelHandlerPrivateDurableImportPreservesDPMContentKeyScope(t *testing.T) {
+func TestChannelHandlerPrivateEncryptedStreamDoesNotImportWithoutDecryptPath(t *testing.T) {
 	t.Parallel()
 
 	signing := newChannelSigningFixture(t)
@@ -1077,27 +1071,20 @@ func TestChannelHandlerPrivateDurableImportPreservesDPMContentKeyScope(t *testin
 	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
 	publishRec := httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
-	if publishRec.Code != http.StatusAccepted {
-		t.Fatalf("private stream publish with grant status = %d body=%s", publishRec.Code, publishRec.Body.String())
+	if publishRec.Code != http.StatusNotImplemented {
+		t.Fatalf("private stream publish with grant status = %d, want %d body=%s", publishRec.Code, http.StatusNotImplemented, publishRec.Body.String())
 	}
 
 	schemaName, err := channels.SchemaNameFromStandardCode("OMM")
 	if err != nil {
 		t.Fatalf("SchemaNameFromStandardCode failed: %v", err)
 	}
-	records, err := store.QueryRawRecords(storage.RawRecordQuery{SchemaName: schemaName, Limit: 10})
+	count, err := store.CountRawRecords(storage.RawRecordQuery{SchemaName: schemaName})
 	if err != nil {
-		t.Fatalf("QueryRawRecords failed: %v", err)
+		t.Fatalf("CountRawRecords failed: %v", err)
 	}
-	if len(records) != 1 {
-		t.Fatalf("durable private OMM records = %d, want 1", len(records))
-	}
-	tags, err := store.GetSourceTags(schemaName, records[0].CID)
-	if err != nil {
-		t.Fatalf("GetSourceTags failed: %v", err)
-	}
-	if tags.ContentKeyID != "channel-private-key" {
-		t.Fatalf("private durable ContentKeyID = %q, want channel-private-key", tags.ContentKeyID)
+	if count != 0 {
+		t.Fatalf("durable private OMM rows = %d, want 0 after encrypted stream rejection without decrypt path", count)
 	}
 }
 
