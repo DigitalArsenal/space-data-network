@@ -58,6 +58,7 @@ type channelPublishOptions struct {
 	Subject               string
 	GrantID               string
 	Visibility            string
+	EncryptedStreamHeader string
 	APIURL                string
 	InsecureSkipTLSVerify bool
 }
@@ -188,6 +189,7 @@ func newChannelsCommand() *cobra.Command {
 	publishCmd.Flags().StringVar(&publishOptions.Subject, "subject", "", "subscriber EPM subject for private channel access")
 	publishCmd.Flags().StringVar(&publishOptions.GrantID, "grant-id", "", "private channel grant ID")
 	publishCmd.Flags().StringVar(&publishOptions.Visibility, "visibility", "", "channel visibility for private access checks")
+	publishCmd.Flags().StringVar(&publishOptions.EncryptedStreamHeader, "encrypted-stream-header", "", "JSON encryption header for private channel stream publish")
 	publishCmd.Flags().StringVar(&publishOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	addChannelInsecureTLSFlag(publishCmd, &publishOptions.InsecureSkipTLSVerify)
 	cmd.AddCommand(publishCmd)
@@ -355,9 +357,10 @@ func runChannelsPublish(cmd *cobra.Command, options channelPublishOptions, chann
 	}
 	if apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL"))); apiURL != "" {
 		return runChannelsPublishToAPI(cmd, parsed, apiURL, streamBytes, channelAccessQuery{
-			Subject:    options.Subject,
-			GrantID:    options.GrantID,
-			Visibility: options.Visibility,
+			Subject:               options.Subject,
+			GrantID:               options.GrantID,
+			Visibility:            options.Visibility,
+			EncryptedStreamHeader: options.EncryptedStreamHeader,
 		}, options.InsecureSkipTLSVerify)
 	}
 	out := cmd.OutOrStdout()
@@ -389,6 +392,9 @@ func runChannelsPublishToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiU
 	req.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
 	if isPrivateChannelVisibility(access.Visibility) {
 		req.Header.Set("X-SDN-Encrypted-Stream", "true")
+		if header := strings.TrimSpace(access.EncryptedStreamHeader); header != "" {
+			req.Header.Set("X-SDN-Encrypted-Stream-Header", header)
+		}
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -953,9 +959,10 @@ func channelPublishURL(apiURL string, channelID string, access channelAccessQuer
 }
 
 type channelAccessQuery struct {
-	Subject    string
-	GrantID    string
-	Visibility string
+	Subject               string
+	GrantID               string
+	Visibility            string
+	EncryptedStreamHeader string
 }
 
 func channelStreamURL(apiURL string, channelID string, access channelAccessQuery) (string, error) {

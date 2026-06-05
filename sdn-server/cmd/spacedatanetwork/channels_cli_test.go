@@ -648,6 +648,9 @@ func TestChannelsPublishPassesPrivateGrantContextToLocalAPI(t *testing.T) {
 		if got := r.Header.Get("X-SDN-Encrypted-Stream"); got != "true" {
 			t.Fatalf("publish X-SDN-Encrypted-Stream = %q, want true", got)
 		}
+		if got := r.Header.Get("X-SDN-Encrypted-Stream-Header"); got != `{"algorithm":"x25519","context":"spaceaware-OMM","ephemeral_public_key":"pub","nonce_start":"nonce"}` {
+			t.Fatalf("publish X-SDN-Encrypted-Stream-Header = %q", got)
+		}
 		body := new(bytes.Buffer)
 		_, _ = body.ReadFrom(r.Body)
 		if !bytes.Equal(body.Bytes(), streamBytes) {
@@ -678,6 +681,7 @@ func TestChannelsPublishPassesPrivateGrantContextToLocalAPI(t *testing.T) {
 		"--subject", "peer-alpha",
 		"--grant-id", "grant-1",
 		"--visibility", "private-listed",
+		"--encrypted-stream-header", `{"algorithm":"x25519","context":"spaceaware-OMM","ephemeral_public_key":"pub","nonce_start":"nonce"}`,
 	})
 
 	if err := cmd.Execute(); err != nil {
