@@ -17,6 +17,7 @@
   let selectedChannel: ChannelSummary | null = null;
   let monitor: ChannelMonitor | null = null;
   let streamBytesReceived = 0;
+  let streamFile: File | null = null;
   let status = 'Loading';
   $: listVisibilityFilter = visibilityFilter === 'all' ? undefined : visibilityFilter;
   $: channelAccessOptions = buildChannelAccessOptions(listVisibilityFilter, grantSubject, grantId);
@@ -29,6 +30,7 @@
     selectedChannel = null;
     monitor = null;
     streamBytesReceived = 0;
+    streamFile = null;
   }
 
   onMount(() => {
@@ -101,6 +103,19 @@
     const result = await backend.channels.openStream(selectedChannelId, channelAccessOptions);
     streamBytesReceived = result.data?.byteLength ?? 0;
     status = result.ok ? `Stream opened: ${formatBytes(streamBytesReceived)}` : result.capability.reason ?? 'Stream unavailable';
+  }
+
+  function onStreamFileSelected(event: Event): void {
+    const input = event.currentTarget as HTMLInputElement;
+    streamFile = input.files?.[0] ?? null;
+  }
+
+  async function publishStreamSelected(): Promise<void> {
+    if (!backend || !selectedChannelId || !streamFile) return;
+    const bytes = new Uint8Array(await streamFile.arrayBuffer());
+    const result = await backend.channels.publish(selectedChannelId, bytes, channelAccessOptions);
+    status = result.ok ? `Stream published: ${formatBytes(bytes.byteLength)}` : result.capability.reason ?? 'Publish unavailable';
+    await loadChannel(selectedChannelId);
   }
 
   function channelMatchesFilters(channel: ChannelSummary): boolean {
@@ -202,10 +217,15 @@
       <span>Grant scopes</span>
       <input bind:value={grantScopes} />
     </label>
+    <label>
+      <span>Stream file</span>
+      <input type="file" on:change={onStreamFileSelected} />
+    </label>
     <button class="sdn-button" type="button" on:click={refreshChannels}>Refresh</button>
     <button class="sdn-button sdn-button-muted" type="button" on:click={subscribeSelected} disabled={!selectedChannelId}>Subscribe</button>
     <button class="sdn-button sdn-button-muted" type="button" on:click={unsubscribeSelected} disabled={!selectedChannelId}>Unsubscribe</button>
     <button class="sdn-button sdn-button-muted" type="button" on:click={issueGrantSelected} disabled={!selectedChannelId || !grantRecipient.trim()}>Issue Grant</button>
+    <button class="sdn-button sdn-button-muted" type="button" on:click={publishStreamSelected} disabled={!selectedChannelId || !streamFile}>Publish Stream</button>
     <button class="sdn-button sdn-button-muted" type="button" on:click={openStreamSelected} disabled={!selectedChannelId}>Open Stream</button>
     <span>{status}</span>
   </div>
