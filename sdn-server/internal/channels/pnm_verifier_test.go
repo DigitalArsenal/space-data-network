@@ -1,6 +1,7 @@
 package channels
 
 import (
+	"crypto/ed25519"
 	"encoding/hex"
 	"strings"
 	"testing"
@@ -54,6 +55,49 @@ func TestVerifySignedPNMEnvelopeRejectsInvalidSignatureBytes(t *testing.T) {
 	}))
 	if err == nil {
 		t.Fatal("expected invalid signature bytes to be rejected")
+	}
+}
+
+func TestVerifySignedPNMEnvelopeWithProviderKeyVerifiesSignature(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	signature := ed25519.Sign(privateKey, datasetPublicationPNMSignaturePayload("bafymanifest", "DPM"))
+
+	evidence, err := VerifySignedPNMEnvelopeWithProviderKey(buildVerifierTestPNM(t, verifierPNMOptions{
+		CID:           "bafymanifest",
+		FileID:        "DPM",
+		Signature:     hex.EncodeToString(signature),
+		SignatureType: "Ed25519",
+	}), publicKey)
+	if err != nil {
+		t.Fatalf("VerifySignedPNMEnvelopeWithProviderKey failed: %v", err)
+	}
+	if evidence.CID != "bafymanifest" || evidence.FileID != "DPM" {
+		t.Fatalf("unexpected evidence: %+v", evidence)
+	}
+}
+
+func TestVerifySignedPNMEnvelopeWithProviderKeyRejectsMismatchedSignature(t *testing.T) {
+	publicKey, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	_, otherPrivateKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	signature := ed25519.Sign(otherPrivateKey, datasetPublicationPNMSignaturePayload("bafymanifest", "DPM"))
+
+	_, err = VerifySignedPNMEnvelopeWithProviderKey(buildVerifierTestPNM(t, verifierPNMOptions{
+		CID:           "bafymanifest",
+		FileID:        "DPM",
+		Signature:     hex.EncodeToString(signature),
+		SignatureType: "Ed25519",
+	}), publicKey)
+	if err == nil {
+		t.Fatal("expected mismatched provider key to reject PNM")
 	}
 }
 
