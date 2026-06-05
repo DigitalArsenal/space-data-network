@@ -1,6 +1,7 @@
 package channels
 
 import (
+	"crypto/ed25519"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -61,4 +62,27 @@ func VerifySignedPNMEnvelope(pnmBytes []byte) (PNMTrustEvidence, error) {
 		SignatureType: signatureType,
 		Signature:     signature,
 	}, nil
+}
+
+func VerifySignedPNMEnvelopeWithProviderKey(pnmBytes []byte, providerPublicKey ed25519.PublicKey) (PNMTrustEvidence, error) {
+	if len(providerPublicKey) != ed25519.PublicKeySize {
+		return PNMTrustEvidence{}, fmt.Errorf("ed25519 provider public key is required")
+	}
+	evidence, err := VerifySignedPNMEnvelope(pnmBytes)
+	if err != nil {
+		return PNMTrustEvidence{}, err
+	}
+	if !ed25519.Verify(providerPublicKey, datasetPublicationPNMSignaturePayload(evidence.CID, evidence.FileID), evidence.Signature) {
+		return PNMTrustEvidence{}, fmt.Errorf("invalid PNM signature")
+	}
+	return evidence, nil
+}
+
+func datasetPublicationPNMSignaturePayload(manifestCID, fileID string) []byte {
+	payload := make([]byte, 0, len(manifestCID)+len(fileID)+18)
+	payload = append(payload, []byte("SDN-DPM-PNM\x00")...)
+	payload = append(payload, fileID...)
+	payload = append(payload, 0)
+	payload = append(payload, manifestCID...)
+	return payload
 }
