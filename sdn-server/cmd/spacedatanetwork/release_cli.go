@@ -337,6 +337,16 @@ func verifyPortableCLIArchiveLayout(pathValue string, target portableCLITarget) 
 			return fmt.Errorf("portable CLI archive missing %s", required)
 		}
 	}
+	if target.ArchiveKind == "zip" && strings.HasSuffix(target.PrimaryPath, ".exe") {
+		for _, required := range []string{
+			"bin/wasmedge.dll",
+			"runtime/wasmedge/bin/wasmedge.dll",
+		} {
+			if !archiveContainsRelativePath(entries, required) {
+				return fmt.Errorf("portable CLI archive missing %s", required)
+			}
+		}
+	}
 	return nil
 }
 

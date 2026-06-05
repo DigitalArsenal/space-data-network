@@ -96,6 +96,21 @@ func TestVerifyPortableCLIArchiveLayoutRejectsMissingAlias(t *testing.T) {
 	}
 }
 
+func TestVerifyPortableCLIArchiveLayoutRejectsMissingWindowsWasmEdgeRuntime(t *testing.T) {
+	root := t.TempDir()
+	archivePath := writePortableCLIZipWithoutWindowsWasmEdgeRuntime(t, root, "spacedatanetwork-1.2.3-windows-amd64.zip", "spacedatanetwork-1.2.3-windows-amd64")
+
+	err := verifyPortableCLIArchiveLayout(archivePath, portableCLITarget{
+		Label:       "Windows AMD64 portable CLI",
+		PrimaryPath: "bin/spacedatanetwork.exe",
+		AliasPath:   "bin/sdn.exe",
+		ArchiveKind: "zip",
+	})
+	if err == nil || !strings.Contains(err.Error(), "bin/wasmedge.dll") {
+		t.Fatalf("verifyPortableCLIArchiveLayout error = %v, want missing bin/wasmedge.dll", err)
+	}
+}
+
 func TestVerifyContainerDigestsRejectsSplitFullAndEdgeImages(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "container-digests.json")
@@ -230,6 +245,31 @@ func writePortableCLIZip(t *testing.T, root string, name string, bundleRoot stri
 	return filepath.Join(root, name)
 }
 
+func writePortableCLIZipWithoutWindowsWasmEdgeRuntime(t *testing.T, root string, name string, bundleRoot string) string {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	for _, pathValue := range []string{
+		bundleRoot + "/bin/spacedatanetwork.exe",
+		bundleRoot + "/bin/sdn.exe",
+		bundleRoot + "/runtime/modules/org.spacedatanetwork.updater.wasm",
+		bundleRoot + "/manifest.json",
+	} {
+		file, err := writer.Create(pathValue)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := file.Write([]byte("fixture")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	writeReleaseTestFile(t, root, name, buf.Bytes())
+	return filepath.Join(root, name)
+}
+
 func portableCLIEntries(bundleRoot string, windows bool, omitAlias bool) map[string]string {
 	primary := "spacedatanetwork"
 	alias := "sdn"
@@ -241,6 +281,10 @@ func portableCLIEntries(bundleRoot string, windows bool, omitAlias bool) map[str
 		bundleRoot + "/bin/" + primary:                                    "primary",
 		bundleRoot + "/runtime/modules/org.spacedatanetwork.updater.wasm": "updater",
 		bundleRoot + "/manifest.json":                                     `{"schema":"org.spacedatanetwork.bundle.v1"}`,
+	}
+	if windows {
+		entries[bundleRoot+"/bin/wasmedge.dll"] = "dll"
+		entries[bundleRoot+"/runtime/wasmedge/bin/wasmedge.dll"] = "dll"
 	}
 	if !omitAlias {
 		entries[bundleRoot+"/bin/"+alias] = "alias"
