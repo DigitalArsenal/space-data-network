@@ -49,6 +49,9 @@ describe('SDNClient channel API', () => {
       if (url.endsWith('/api/v1/channels/spaceaware-OMM/stream')) {
         return new Response(stream, { headers: { 'content-type': 'application/vnd.sdn.flatbuffers.stream' } });
       }
+      if (url.endsWith('/api/v1/channels/spaceaware-OMM/module-feed')) {
+        return new Response(stream, { headers: { 'content-type': 'application/vnd.sdn.flatbuffers.stream' } });
+      }
       return jsonResponse({ ok: true, channelId: 'spaceaware-OMM', standardCode: 'OMM' });
     });
 
@@ -73,6 +76,7 @@ describe('SDNClient channel API', () => {
       }),
     }));
     await expect(client.channels.openStream('spaceaware-OMM')).resolves.toEqual(stream);
+    await expect(client.channels.moduleFeed('spaceaware-OMM')).resolves.toEqual(stream);
     await expect(client.channels.publish('spaceaware-OMM', stream)).resolves.toEqual(expect.objectContaining({ ok: true }));
     await expect(client.channels.grant('spaceaware-OMM', { to: 'peer-alpha', scopes: ['stream_open'] })).resolves.toEqual(expect.objectContaining({ ok: true }));
 
@@ -83,6 +87,7 @@ describe('SDNClient channel API', () => {
       'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/unsubscribe',
       'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/monitor',
       'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/stream',
+      'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/module-feed',
       'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/publish',
       'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/grants',
     ]);
@@ -91,6 +96,10 @@ describe('SDNClient channel API', () => {
       method: 'GET',
     }));
     expect(requests[6]).toEqual(expect.objectContaining({
+      accept: 'application/vnd.sdn.flatbuffers.stream',
+      method: 'POST',
+    }));
+    expect(requests[7]).toEqual(expect.objectContaining({
       contentType: 'application/vnd.sdn.flatbuffers.stream',
       encryptedStream: '',
       method: 'POST',
@@ -116,6 +125,7 @@ describe('SDNClient channel API', () => {
     await client.channels.get('spaceaware-OMM', access);
     await client.channels.subscribe('spaceaware-OMM', access);
     await client.channels.openStream('spaceaware-OMM', access);
+    await client.channels.moduleFeed('spaceaware-OMM', access);
     await client.channels.publish('spaceaware-OMM', new Uint8Array([1, 2, 3]), {
       ...access,
       encryptedStreamHeader: streamHeader,
@@ -126,6 +136,7 @@ describe('SDNClient channel API', () => {
       { url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM?subject=peer-alpha&grantId=grant-1&visibility=private-listed', encryptedStream: '', encryptedStreamHeader: '' },
       { url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/subscribe?subject=peer-alpha&grantId=grant-1&visibility=private-listed', encryptedStream: '', encryptedStreamHeader: '' },
       { url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/stream?subject=peer-alpha&grantId=grant-1&visibility=private-listed', encryptedStream: '', encryptedStreamHeader: '' },
+      { url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/module-feed?subject=peer-alpha&grantId=grant-1&visibility=private-listed', encryptedStream: '', encryptedStreamHeader: '' },
       { url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/publish?subject=peer-alpha&grantId=grant-1&visibility=private-listed', encryptedStream: 'true', encryptedStreamHeader: streamHeader },
     ]);
   });
