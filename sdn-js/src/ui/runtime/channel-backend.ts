@@ -16,6 +16,8 @@ export function createHttpChannelBackend(fetchLike: FetchLike, baseUrl: string |
       const params = new URLSearchParams();
       if (options.standardCode) params.set('standardCode', options.standardCode);
       if (options.visibility) params.set('visibility', options.visibility);
+      if (options.subject) params.set('subject', options.subject);
+      if (options.grantId) params.set('grantId', options.grantId);
       const suffix = params.size > 0 ? `?${params.toString()}` : '';
       const result = await getJson<unknown>(fetchLike, joinUrl(baseUrl, `/api/v1/channels${suffix}`), 'channels.list');
       if (!result.ok) return result as BackendResult<ChannelSummary[]>;
