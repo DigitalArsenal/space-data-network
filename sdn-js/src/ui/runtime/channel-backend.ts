@@ -1,0 +1,139 @@
+import {
+  createCapabilityResult,
+  createAvailableResult,
+  type BackendResult,
+  type ChannelBackend,
+  type ChannelListOptions,
+  type ChannelMonitor,
+  type ChannelSummary,
+} from './sdn-backend';
+import { getBytes, getJson, joinUrl, recordsFromPayload, type FetchLike } from './sdn-backend-adapter-utils';
+
+export function createHttpChannelBackend(fetchLike: FetchLike, baseUrl: string | null | undefined): ChannelBackend {
+  return {
+    async list(options: ChannelListOptions = {}): Promise<BackendResult<ChannelSummary[]>> {
+      const params = new URLSearchParams();
+      if (options.standardCode) params.set('standardCode', options.standardCode);
+      if (options.visibility) params.set('visibility', options.visibility);
+      const suffix = params.size > 0 ? `?${params.toString()}` : '';
+      const result = await getJson<unknown>(fetchLike, joinUrl(baseUrl, `/api/v1/channels${suffix}`), 'channels.list');
+      if (!result.ok) return result as BackendResult<ChannelSummary[]>;
+      return createAvailableResult('channels.list', recordsFromPayload(result.data).map(normalizeChannelSummary));
+    },
+    async get(channelId: string): Promise<BackendResult<ChannelSummary>> {
+      const result = await getJson<unknown>(fetchLike, joinUrl(baseUrl, `/api/v1/channels/${encodeURIComponent(channelId)}`), 'channels.get');
+      if (!result.ok) return result as BackendResult<ChannelSummary>;
+      return createAvailableResult('channels.get', normalizeChannelSummary(result.data));
+    },
+    subscribe(channelId: string) {
+      return postChannelAction(fetchLike, baseUrl, channelId, 'subscribe');
+    },
+    unsubscribe(channelId: string) {
+      return postChannelAction(fetchLike, baseUrl, channelId, 'unsubscribe');
+    },
+    publish(channelId: string, body?: BodyInit | null) {
+      return postChannelAction(fetchLike, baseUrl, channelId, 'publish', body);
+    },
+    issueGrant(channelId: string, body: Record<string, unknown> = {}) {
+      return postChannelAction(fetchLike, baseUrl, channelId, 'grants', JSON.stringify(body), {
+        'content-type': 'application/json',
+      });
+    },
+    openStream(channelId: string): Promise<BackendResult<Uint8Array>> {
+      return getBytes(fetchLike, joinUrl(baseUrl, `/api/v1/channels/${encodeURIComponent(channelId)}/stream`), 'channels.openStream', {
+        headers: { accept: 'application/vnd.sdn.flatbuffers.stream' },
+      });
+    },
+    async monitor(channelId: string): Promise<BackendResult<ChannelMonitor>> {
+      const result = await getJson<unknown>(fetchLike, joinUrl(baseUrl, `/api/v1/channels/${encodeURIComponent(channelId)}/monitor`), 'channels.monitor');
+      if (!result.ok) return result as BackendResult<ChannelMonitor>;
+      return createAvailableResult('channels.monitor', normalizeChannelMonitor(result.data));
+    },
+  };
+}
+
+export function createUnavailableChannelBackend(reason: string): ChannelBackend {
+  return {
+    list: () => Promise.resolve(createCapabilityResult('channels.list', 'unavailable', reason, [])),
+    get: () => Promise.resolve(createCapabilityResult('channels.get', 'unavailable', reason)),
+    subscribe: () => Promise.resolve(createCapabilityResult('channels.subscribe', 'unavailable', reason)),
+    unsubscribe: () => Promise.resolve(createCapabilityResult('channels.unsubscribe', 'unavailable', reason)),
+    publish: () => Promise.resolve(createCapabilityResult('channels.publish', 'unavailable', reason)),
+    issueGrant: () => Promise.resolve(createCapabilityResult('channels.issueGrant', 'unavailable', reason)),
+    openStream: () => Promise.resolve(createCapabilityResult('channels.openStream', 'unavailable', reason)),
+    monitor: () => Promise.resolve(createCapabilityResult('channels.monitor', 'unavailable', reason)),
+  };
+}
+
+function postChannelAction(
+  fetchLike: FetchLike,
+  baseUrl: string | null | undefined,
+  channelId: string,
+  action: string,
+  body?: BodyInit | null,
+  headers?: HeadersInit,
+): Promise<BackendResult<Record<string, unknown>>> {
+  return getJson<Record<string, unknown>>(
+    fetchLike,
+    joinUrl(baseUrl, `/api/v1/channels/${encodeURIComponent(channelId)}/${action}`),
+    `channels.${action}`,
+    {
+      method: 'POST',
+      ...(headers ? { headers } : {}),
+      ...(body !== undefined ? { body } : {}),
+    },
+  );
+}
+
+function normalizeChannelSummary(payload: unknown): ChannelSummary {
+  const record = isRecord(payload) ? payload : {};
+  const standardCode = pickString(record, 'standardCode') ?? '';
+  return {
+    channelId: pickString(record, 'channelId') ?? '',
+    sourceId: pickString(record, 'sourceId') ?? '',
+    standardCode,
+    feedUuid: pickString(record, 'feedUuid') ?? null,
+    visibility: pickString(record, 'visibility') ?? 'unknown',
+    pnmVerified: pickBoolean(record, 'pnmVerified') ?? false,
+    grantState: pickString(record, 'grantState') ?? 'unknown',
+    encryptionState: pickString(record, 'encryptionState') ?? 'unknown',
+  };
+}
+
+function normalizeChannelMonitor(payload: unknown): ChannelMonitor {
+  const summary = normalizeChannelSummary(payload);
+  const record = isRecord(payload) ? payload : {};
+  return {
+    ...summary,
+    channelHead: pickString(record, 'channelHead') ?? '',
+    providerPeer: pickString(record, 'providerPeer') ?? '',
+    localRows: pickNumber(record, 'localRows') ?? 0,
+    remoteRows: pickNumber(record, 'remoteRows') ?? 0,
+    syncedRows: pickNumber(record, 'syncedRows') ?? 0,
+    missingRows: pickNumber(record, 'missingRows') ?? 0,
+    pinnedRows: pickNumber(record, 'pinnedRows') ?? 0,
+    syncedBytes: pickNumber(record, 'syncedBytes') ?? 0,
+    throughputBytesPerSecond: pickNumber(record, 'throughputBytesPerSecond') ?? 0,
+    wireSpeedUtilization: pickNumber(record, 'wireSpeedUtilization'),
+    lastVerifiedUpdate: pickString(record, 'lastVerifiedUpdate') ?? '',
+  };
+}
+
+function pickString(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  return typeof value === 'string' && value.trim() !== '' ? value : null;
+}
+
+function pickNumber(record: Record<string, unknown>, key: string): number | null {
+  const value = record[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function pickBoolean(record: Record<string, unknown>, key: string): boolean | null {
+  const value = record[key];
+  return typeof value === 'boolean' ? value : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}

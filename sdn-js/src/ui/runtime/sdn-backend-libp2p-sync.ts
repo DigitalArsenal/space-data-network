@@ -41,6 +41,7 @@ import {
   type SdnBackend,
   type StorageSummary,
 } from './sdn-backend';
+import { createUnavailableChannelBackend } from './channel-backend';
 import { flatSqlSourceNameForSchema } from './data-source-routing';
 
 export interface Libp2pFlatSqlSyncClient {
@@ -179,6 +180,7 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
 
   return {
     mode: 'remote-sdn',
+    channels: createUnavailableChannelBackend('channel operations require the HTTP channel API and verified grants'),
     connect: getNodeSummary,
     async getCapabilities(): Promise<BackendCapability[]> {
       return [

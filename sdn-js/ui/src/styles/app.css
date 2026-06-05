@@ -179,6 +179,129 @@ textarea,
   -webkit-app-region: drag;
 }
 
+.sdn-channel-screen {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 1rem;
+  min-height: 0;
+  padding: 1.25rem;
+  overflow: hidden;
+}
+
+.sdn-channel-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.sdn-channel-toolbar label {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--sdn-text-muted);
+  font-size: 0.78rem;
+}
+
+.sdn-channel-toolbar input {
+  width: 5.5rem;
+  min-height: 2.25rem;
+  border: 1px solid var(--sdn-border);
+  border-radius: var(--sdn-radius-sm);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--sdn-text);
+  padding: 0 0.6rem;
+  text-transform: uppercase;
+}
+
+.sdn-channel-toolbar > span {
+  color: var(--sdn-text-muted);
+  font-size: 0.86rem;
+}
+
+.sdn-channel-layout {
+  display: grid;
+  grid-template-columns: minmax(22rem, 0.95fr) minmax(24rem, 1.05fr);
+  gap: 1rem;
+  min-height: 0;
+}
+
+.sdn-channel-list,
+.sdn-channel-detail {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--sdn-border);
+  border-radius: var(--sdn-radius-sm);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.sdn-channel-list tr {
+  cursor: pointer;
+}
+
+.sdn-channel-list tr.selected {
+  background: rgba(10, 132, 255, 0.16);
+}
+
+.sdn-channel-detail {
+  padding: 1rem;
+}
+
+.sdn-channel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.sdn-channel-heading h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.sdn-channel-heading span {
+  color: var(--sdn-text-muted);
+  font-size: 0.84rem;
+}
+
+.sdn-channel-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+  margin: 0;
+}
+
+.sdn-channel-metrics div {
+  min-width: 0;
+  padding: 0.65rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--sdn-radius-sm);
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.sdn-channel-metrics dt {
+  color: var(--sdn-text-muted);
+  font-size: 0.72rem;
+}
+
+.sdn-channel-metrics dd {
+  margin: 0.18rem 0 0;
+  overflow-wrap: anywhere;
+  color: var(--sdn-text);
+  font-size: 0.92rem;
+  font-weight: 620;
+}
+
+@media (max-width: 900px) {
+  .sdn-channel-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .sdn-channel-metrics {
+    grid-template-columns: 1fr;
+  }
+}
+
 .sdn-chip {
   display: inline-flex;
   align-items: center;
