@@ -2,11 +2,13 @@ import {
   createModuleFlatBufferStreamPump,
   type ModuleFlatBufferStreamPump,
   type ModuleFlatBufferStreamPumpStats,
-} from 'space-data-module-sdk/testing';
+  type PluginInvokeRequestEnvelope,
+  type PluginInvokeResponseEnvelope,
+} from 'space-data-module-sdk';
 
 export interface ChannelModuleStreamPump {
   pushChunk(chunk: Uint8Array | ArrayBuffer | ArrayBufferView): Promise<number>;
-  finish(): Promise<unknown>;
+  finish(): Promise<PluginInvokeResponseEnvelope | null>;
   stats(): ModuleFlatBufferStreamPumpStats;
 }
 
@@ -16,7 +18,7 @@ export interface ChannelModuleStreamPumpOptions {
   maxFramesPerInvoke?: number;
   streamId?: number;
   sequenceStart?: number;
-  invoke(request: unknown): Promise<unknown>;
+  invoke(request: PluginInvokeRequestEnvelope): Promise<PluginInvokeResponseEnvelope>;
 }
 
 export function createChannelModuleStreamPump(options: ChannelModuleStreamPumpOptions): ChannelModuleStreamPump {
