@@ -222,9 +222,12 @@ func (h *ChannelHandler) isPrivateVisibilityRequest(r *http.Request) bool {
 
 func channelListRow(standardCode string) map[string]interface{} {
 	return map[string]interface{}{
-		"standardCode": standardCode,
-		"topic":        channels.DiscoveryTopic(standardCode),
-		"visibility":   "unknown",
+		"standardCode":    standardCode,
+		"topic":           channels.DiscoveryTopic(standardCode),
+		"visibility":      "public",
+		"subscribed":      false,
+		"grantState":      "not-required",
+		"encryptionState": "none",
 	}
 }
 

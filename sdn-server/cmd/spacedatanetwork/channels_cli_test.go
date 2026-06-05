@@ -22,6 +22,10 @@ func TestChannelsListPrintsStandardCodesOnly(t *testing.T) {
 	for _, want := range []string{
 		"standardCode=OMM",
 		"topic=/spacedatanetwork/channels/OMM",
+		"visibility=public",
+		"subscribed=false",
+		"grantState=not-required",
+		"encryptionState=none",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("channels list output missing %q:\n%s", want, body)

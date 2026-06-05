@@ -30,6 +30,12 @@ func TestChannelHandlerListsStandardCodesOnly(t *testing.T) {
 	if row["standardCode"] != "OMM" || row["topic"] != "/spacedatanetwork/channels/OMM" {
 		t.Fatalf("unexpected channel row: %#v", row)
 	}
+	if row["visibility"] != "public" ||
+		row["subscribed"] != false ||
+		row["grantState"] != "not-required" ||
+		row["encryptionState"] != "none" {
+		t.Fatalf("unexpected public channel list state: %#v", row)
+	}
 	if strings.Contains(rec.Body.String(), string([]byte{'.', 'f', 'b', 's'})) {
 		t.Fatalf("channel list exposed internal schema suffix: %s", rec.Body.String())
 	}
