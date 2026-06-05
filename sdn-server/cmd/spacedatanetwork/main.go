@@ -220,6 +220,15 @@ func adminURL(cfg *config.Config) string {
 	return fmt.Sprintf("%s://%s/", scheme, addr)
 }
 
+func channelHandlerOptionsForIdentity(identity *wasm.DerivedIdentity) api.ChannelHandlerOptions {
+	if identity == nil || len(identity.EncryptionKey) != 32 {
+		return api.ChannelHandlerOptions{}
+	}
+	return api.ChannelHandlerOptions{
+		EncryptedStreams: api.NewFlatBuffersEncryptedNativeStreamDecryptor(identity.EncryptionKey),
+	}
+}
+
 func applyBundleDefaults(cfg *config.Config, layout bundle.Layout) {
 	if cfg == nil || layout.Root == "" {
 		return
@@ -475,7 +484,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Data API routes
 			dataAPI := api.NewDataQueryHandler(n.Store(), nil)
 			dataAPI.RegisterRoutes(adminMux)
-			channelAPI := api.NewChannelHandler(n.Store())
+			channelAPI := api.NewChannelHandlerWithOptions(n.Store(), channelHandlerOptionsForIdentity(n.Identity()))
 			channelAPI.RegisterRoutes(adminMux)
 
 			// Log API routes (publication log queries)
