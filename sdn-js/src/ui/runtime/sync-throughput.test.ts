@@ -25,9 +25,17 @@ describe('sync throughput targets', () => {
     expect(boundedWireSpeedUtilization(-0.1)).toBeNull();
   });
 
-  it('requires at least 80 percent of measured wire speed by default', () => {
-    expect(meetsWireSpeedTarget(159_000_000, 200_000_000)).toBe(false);
-    expect(meetsWireSpeedTarget(160_000_000, 200_000_000)).toBe(true);
+  it('requires at least 90 percent of measured wire speed by default', () => {
+    expect(meetsWireSpeedTarget(179_000_000, 200_000_000)).toBe(false);
+    expect(meetsWireSpeedTarget(180_000_000, 200_000_000)).toBe(true);
+  });
+
+  it('requires at least 1.8 Gbit/s on a 2 Gbit/s configured link', () => {
+    const twoGbitBytesPerSecond = 2_000_000_000 / 8;
+    const requiredBytesPerSecond = 1_800_000_000 / 8;
+
+    expect(meetsWireSpeedTarget(requiredBytesPerSecond - 1, twoGbitBytesPerSecond)).toBe(false);
+    expect(meetsWireSpeedTarget(requiredBytesPerSecond, twoGbitBytesPerSecond)).toBe(true);
   });
 
   it('does not report utilization without a positive measured baseline', () => {
@@ -46,7 +54,7 @@ describe('sync throughput targets', () => {
 
     expect(audit.downloadBytesPerSecond).toBe(200_000_000);
     expect(audit.wireSpeedUtilization).toBe(0.8);
-    expect(audit.targetMet).toBe(true);
+    expect(audit.targetMet).toBe(false);
     expect(audit.timingsMs).toEqual({
       manifestDiscovery: 125,
       networkTransfer: 2_750,
@@ -99,7 +107,7 @@ describe('sync throughput targets', () => {
       rangeConcurrency: 1,
       maxSegments: 3,
       requestTimeoutMs: 60_000,
-      target: 0.8,
+      target: 0.9,
     });
   });
 
@@ -184,7 +192,7 @@ describe('sync throughput targets', () => {
       generatedAt: '2026-05-12T20:00:00.000Z',
       peer: '16Uiu2HCelesTrak',
       schema: 'OMM.fbs',
-      target: 0.8,
+      target: 0.9,
       probe: {
         requestedBytes: 64,
         payloadBytes: 64,
@@ -214,9 +222,9 @@ describe('sync throughput targets', () => {
       audit: {
         downloadedBytes: 550_000_000,
         measuredWireSpeedBytesPerSecond: 250_000_000,
-        downloadBytesPerSecond: 200_000_000,
-        wireSpeedUtilization: 0.8,
-        wireSpeedTarget: 0.8,
+        downloadBytesPerSecond: 225_000_000,
+        wireSpeedUtilization: 0.9,
+        wireSpeedTarget: 0.9,
         targetMet: true,
         timingsMs: {
           manifestDiscovery: 125,
@@ -230,9 +238,9 @@ describe('sync throughput targets', () => {
     expect(summary).toContain('Wire speed probe: 250.0 MB/s');
     expect(summary).toContain('Shard transfer: direct-libp2p-published-shard-ranges over /space-data-network/flatsql-sync/1.0.0');
     expect(summary).toContain('no HTTP/SSH fallbacks');
-    expect(summary).toContain('Published shard download: 200.0 MB/s (80% of wire)');
+    expect(summary).toContain('Published shard download: 225.0 MB/s (90% of wire)');
     expect(summary).toContain('Timing: manifest 125 ms / network 2.75 s / verify 900 ms / FlatSQL 0 ms');
-    expect(summary).toContain('80% target: met');
+    expect(summary).toContain('90% target: met');
   });
 
   it('does not render impossible utilization from persisted audit results', () => {
@@ -240,7 +248,7 @@ describe('sync throughput targets', () => {
       generatedAt: '2026-05-12T20:00:00.000Z',
       peer: '16Uiu2HCelesTrak',
       schema: 'OMM.fbs',
-      target: 0.8,
+      target: 0.9,
       probe: {
         requestedBytes: 64,
         payloadBytes: 64,
@@ -263,7 +271,7 @@ describe('sync throughput targets', () => {
         measuredWireSpeedBytesPerSecond: 200_000_000,
         downloadBytesPerSecond: 226_000_000,
         wireSpeedUtilization: 1.13,
-        wireSpeedTarget: 0.8,
+        wireSpeedTarget: 0.9,
         targetMet: true,
         timingsMs: {
           manifestDiscovery: 125,

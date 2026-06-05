@@ -1,4 +1,4 @@
-export const DEFAULT_WIRE_SPEED_TARGET = 0.8;
+export const DEFAULT_WIRE_SPEED_TARGET = 0.9;
 
 export interface PublishedShardWireSpeedAuditInput {
   downloadedBytes: number;

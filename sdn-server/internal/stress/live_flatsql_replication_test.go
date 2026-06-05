@@ -17,7 +17,7 @@ func TestLiveFlatSQLReplicationBenchmarkMeetsWireSpeedGate(t *testing.T) {
 	result, err := RunLiveFlatSQLReplicationBenchmark(ctx, LiveFlatSQLReplicationOptions{
 		TargetBytes:     targetBytes,
 		ProbeBytes:      targetBytes,
-		WireSpeedTarget: 0.80,
+		WireSpeedTarget: 0.90,
 	})
 	if err != nil {
 		t.Fatalf("RunLiveFlatSQLReplicationBenchmark failed: %v", err)
@@ -50,7 +50,7 @@ func TestLiveFlatSQLReplicationRangeResumeKeepsVerifiedPrefixAndImportsRows(t *t
 	result, err := RunLiveFlatSQLRangeResumeBenchmark(ctx, LiveFlatSQLReplicationOptions{
 		TargetBytes:     targetBytes,
 		ProbeBytes:      targetBytes,
-		WireSpeedTarget: 0.80,
+		WireSpeedTarget: 0.90,
 	}, LiveFlatSQLRangeResumeOptions{
 		InterruptAfterBytes: targetBytes / 3,
 	})

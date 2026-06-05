@@ -589,7 +589,7 @@ func normalizeLiveFlatSQLReplicationOptions(opts LiveFlatSQLReplicationOptions) 
 		opts.ProbeBytes = opts.TargetBytes
 	}
 	if opts.WireSpeedTarget <= 0 || opts.WireSpeedTarget > 1 {
-		opts.WireSpeedTarget = 0.80
+		opts.WireSpeedTarget = 0.90
 	}
 	if strings.TrimSpace(opts.SchemaName) == "" {
 		opts.SchemaName = liveFlatSQLSchema
