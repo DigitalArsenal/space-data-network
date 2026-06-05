@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -11,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -369,6 +371,106 @@ func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedge
 	}
 	if strings.Contains(listRec.Body.String(), ".fbs") {
 		t.Fatalf("list exposed internal schema suffix: %s", listRec.Body.String())
+	}
+}
+
+func TestChannelHandlerStreamsVerifiedDatasetPublicationShardFromDurableLedger(t *testing.T) {
+	t.Parallel()
+
+	store := newChannelTestStore(t)
+	streamBytes := bytes.Join([][]byte{
+		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
+		nativeAPIFrame("OMM1", []byte{4, 5, 6, 7}),
+	}, nil)
+	shardHashBytes := sha256.Sum256(streamBytes)
+	shardHash := hex.EncodeToString(shardHashBytes[:])
+	publication := storage.DatasetShardPublication{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "batch-stream",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        50000,
+		RecordCount:  2,
+		ByteCount:    int64(len(streamBytes)),
+		ShardCID:     "bafkstreamshard",
+		IndexCID:     "bafkstreamindex",
+		ManifestCID:  "bafkstreammanifest",
+		PNMCID:       "bafkstreampnm",
+		ShardSHA256:  shardHash,
+		IndexSHA256:  strings.Repeat("2", 64),
+		QuerySHA256:  strings.Repeat("1", 64),
+		ResultSHA256: shardHash,
+		PublishedAt:  time.Unix(1_779_999_900, 0).UTC(),
+	}
+	if err := store.UpsertDatasetShardPublication(publication); err != nil {
+		t.Fatalf("UpsertDatasetShardPublication failed: %v", err)
+	}
+	shardPath, err := store.DatasetPublicationShardPath(publication)
+	if err != nil {
+		t.Fatalf("DatasetPublicationShardPath failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(shardPath), 0o755); err != nil {
+		t.Fatalf("create shard dir failed: %v", err)
+	}
+	if err := os.WriteFile(shardPath, streamBytes, 0o644); err != nil {
+		t.Fatalf("write shard failed: %v", err)
+	}
+	for _, entry := range []storage.PinLedgerEntry{
+		{
+			CID:               publication.ShardCID,
+			Role:              "shard",
+			RowCount:          int64(publication.RecordCount),
+			ByteCount:         publication.ByteCount,
+			Head:              publication.FeedHead,
+			ByteHash:          "sha256:" + shardHash,
+			VerificationState: "verified",
+		},
+		{
+			CID:               publication.ManifestCID,
+			Role:              "manifest",
+			ByteCount:         512,
+			Head:              publication.FeedHead,
+			ByteHash:          "sha256:manifest",
+			VerificationState: "verified",
+		},
+		{
+			CID:               publication.PNMCID,
+			Role:              "pnm",
+			ByteCount:         256,
+			Head:              publication.FeedHead,
+			ByteHash:          "sha256:pnm",
+			VerificationState: "verified",
+		},
+	} {
+		entry.SchemaName = publication.SchemaName
+		entry.ProviderPeerID = "16Uiu2HCelesTrakProvider"
+		entry.ProviderPublicKey = "provider-public-key"
+		entry.ProviderID = publication.ProviderID
+		entry.SourceName = publication.SourceName
+		entry.BatchID = publication.BatchID
+		entry.QueryProfile = publication.QueryProfile
+		entry.VerifiedAt = publication.PublishedAt
+		if err := store.UpsertPinLedgerEntry(entry); err != nil {
+			t.Fatalf("UpsertPinLedgerEntry(%s) failed: %v", entry.Role, err)
+		}
+	}
+
+	mux := http.NewServeMux()
+	NewChannelHandler(store).RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels/celestrak-OMM/stream", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stream status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/vnd.sdn.flatbuffers.stream" {
+		t.Fatalf("stream Content-Type = %q", got)
+	}
+	if !bytes.Equal(rec.Body.Bytes(), streamBytes) {
+		t.Fatal("stream endpoint did not serve durable verified shard bytes")
 	}
 }
 
