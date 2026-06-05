@@ -55,12 +55,38 @@ describe('sync throughput targets', () => {
     expect(audit.downloadBytesPerSecond).toBe(200_000_000);
     expect(audit.wireSpeedUtilization).toBe(0.8);
     expect(audit.targetMet).toBe(false);
-    expect(audit.timingsMs).toEqual({
+    expect(audit.timingsMs).toEqual(expect.objectContaining({
       manifestDiscovery: 125,
       networkTransfer: 2_750,
       verification: 4_000,
       flatSqlMaterialization: 8_000,
+    }));
+  });
+
+  it('reports production channel sync phases required by the wire-speed gate', () => {
+    const audit = publishedShardWireSpeedAudit({
+      downloadedBytes: 675_000_000,
+      measuredWireSpeedBytesPerSecond: 250_000_000,
+      discoveryMs: 40,
+      grantNegotiationMs: 15,
+      pnmDpmVerificationMs: 35,
+      transferMs: 3_000,
+      decryptMs: 25,
+      hashVerificationMs: 50,
+      durableImportMs: 250,
     });
+
+    expect(audit.downloadBytesPerSecond).toBe(225_000_000);
+    expect(audit.targetMet).toBe(true);
+    expect(audit.timingsMs).toEqual(expect.objectContaining({
+      discovery: 40,
+      grantNegotiation: 15,
+      pnmDpmVerification: 35,
+      transfer: 3_000,
+      decrypt: 25,
+      hashVerification: 50,
+      durableImport: 250,
+    }));
   });
 
   it('can audit against an absolute 2 Gbps baseline instead of the measured probe', () => {
@@ -239,6 +265,7 @@ describe('sync throughput targets', () => {
     expect(summary).toContain('Shard transfer: direct-libp2p-published-shard-ranges over /space-data-network/flatsql-sync/1.0.0');
     expect(summary).toContain('no HTTP/SSH fallbacks');
     expect(summary).toContain('Published shard download: 225.0 MB/s (90% of wire)');
+    expect(summary).toContain('Phases: discovery 125 ms / grant 0 ms / PNM+DPM 0 ms / transfer 2.75 s / decrypt 0 ms / hash 900 ms / durable import 0 ms');
     expect(summary).toContain('Timing: manifest 125 ms / network 2.75 s / verify 900 ms / FlatSQL 0 ms');
     expect(summary).toContain('90% target: met');
   });
