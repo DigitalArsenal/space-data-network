@@ -1053,6 +1053,13 @@ func (h *ChannelHandler) channelMonitor(parsed channels.ChannelID) map[string]in
 	payload["syncedBytes"] = metadata.SyncedBytes
 	payload["throughputBytesPerSecond"] = metadata.ThroughputBPS
 	payload["wireSpeedUtilization"] = metadata.WireUtilization
+	if linkBytesPerSecond, ok := channelLinkBytesPerSecond(); ok {
+		target := 0.90
+		requiredBytesPerSecond := int64(linkBytesPerSecond * target)
+		payload["wireSpeedTarget"] = target
+		payload["requiredBytesPerSecond"] = requiredBytesPerSecond
+		payload["targetMet"] = metadata.ThroughputBPS >= requiredBytesPerSecond
+	}
 	payload["timingsMs"] = channelMonitorTimings(metadata.TimingsMs)
 	payload["lastVerifiedUpdate"] = ""
 	if verified {
