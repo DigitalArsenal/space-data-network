@@ -265,12 +265,19 @@ describe('SDN backend channel runtime surface', () => {
     const grant = { subject: 'peer-alpha', grantId: 'grant-1', visibility: 'private' };
     const stream = new Uint8Array([7, 0, 0, 0, 79, 77, 77, 49, 1, 2, 3]);
 
+    await backend.channels.get('spaceaware-OMM', grant);
     await backend.channels.subscribe('spaceaware-OMM', grant);
     await backend.channels.publish('spaceaware-OMM', stream, grant);
     await backend.channels.openStream('spaceaware-OMM', grant);
     await backend.channels.issueGrant('spaceaware-OMM', { to: 'peer-alpha', scopes: ['stream_open'] }, grant);
 
     expect(requests).toEqual([
+      {
+        url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM?subject=peer-alpha&grantId=grant-1&visibility=private',
+        method: 'GET',
+        contentType: 'undefined',
+        bodyText: '',
+      },
       {
         url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/subscribe?subject=peer-alpha&grantId=grant-1&visibility=private',
         method: 'POST',

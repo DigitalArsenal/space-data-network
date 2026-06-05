@@ -202,7 +202,7 @@ export interface ChannelMonitor extends ChannelSummary {
 
 export interface ChannelBackend {
   list(options?: ChannelListOptions): Promise<BackendResult<ChannelSummary[]>>;
-  get(channelId: string): Promise<BackendResult<ChannelSummary>>;
+  get(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<ChannelSummary>>;
   subscribe(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
   unsubscribe(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
   publish(channelId: string, body?: BodyInit | null, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;

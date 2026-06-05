@@ -59,7 +59,7 @@
 
   async function loadChannel(channelId: string): Promise<void> {
     if (!backend || !channelId) return;
-    const detail = await backend.channels.get(channelId);
+    const detail = await backend.channels.get(channelId, channelAccessOptions);
     selectedChannel = detail.data ?? null;
     const nextMonitor = await backend.channels.monitor(channelId, channelAccessOptions);
     monitor = nextMonitor.data ?? null;
