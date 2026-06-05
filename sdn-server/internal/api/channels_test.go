@@ -239,6 +239,39 @@ func TestChannelHandlerPublicPublishRejectsUnverifiedPNM(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerPublicPublishUpdatesVerifiedMonitor(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish", bytes.NewReader(buildAPISignedPNM(t, "bafyverifiedhead", "DPM")))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("publish status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	publishBody := decodeChannelJSON(t, rec.Body.String())
+	if publishBody["pnmVerified"] != true || publishBody["pnmCid"] != "bafyverifiedhead" {
+		t.Fatalf("unexpected publish response: %#v", publishBody)
+	}
+
+	monitorReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/monitor", nil)
+	monitorRec := httptest.NewRecorder()
+	mux.ServeHTTP(monitorRec, monitorReq)
+
+	if monitorRec.Code != http.StatusOK {
+		t.Fatalf("monitor status = %d body=%s", monitorRec.Code, monitorRec.Body.String())
+	}
+	monitorBody := decodeChannelJSON(t, monitorRec.Body.String())
+	if monitorBody["pnmVerified"] != true ||
+		monitorBody["channelHead"] != "bafyverifiedhead" ||
+		monitorBody["lastVerifiedUpdate"] == "" {
+		t.Fatalf("monitor did not reflect verified PNM: %#v", monitorBody)
+	}
+}
+
 func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 	t.Parallel()
 
@@ -282,6 +315,28 @@ func buildAPIUnsignedPNM(t *testing.T) []byte {
 	PNM.PNMAddCID(builder, cidOffset)
 	PNM.PNMAddFILE_ID(builder, fileIDOffset)
 	PNM.PNMAddPUBLISH_TIMESTAMP(builder, timestampOffset)
+	pnm := PNM.PNMEnd(builder)
+	PNM.FinishSizePrefixedPNMBuffer(builder, pnm)
+	return append([]byte(nil), builder.FinishedBytes()...)
+}
+
+func buildAPISignedPNM(t *testing.T, cid string, fileID string) []byte {
+	t.Helper()
+
+	signature := strings.Repeat("a", 128)
+	builder := flatbuffers.NewBuilder(256)
+	cidOffset := builder.CreateString(cid)
+	fileIDOffset := builder.CreateString(fileID)
+	timestampOffset := builder.CreateString(time.Now().UTC().Format(time.RFC3339))
+	signatureOffset := builder.CreateString(signature)
+	signatureTypeOffset := builder.CreateString("Ed25519")
+
+	PNM.PNMStart(builder)
+	PNM.PNMAddCID(builder, cidOffset)
+	PNM.PNMAddFILE_ID(builder, fileIDOffset)
+	PNM.PNMAddPUBLISH_TIMESTAMP(builder, timestampOffset)
+	PNM.PNMAddSIGNATURE(builder, signatureOffset)
+	PNM.PNMAddSIGNATURE_TYPE(builder, signatureTypeOffset)
 	pnm := PNM.PNMEnd(builder)
 	PNM.FinishSizePrefixedPNMBuffer(builder, pnm)
 	return append([]byte(nil), builder.FinishedBytes()...)
