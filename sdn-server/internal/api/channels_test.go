@@ -300,6 +300,35 @@ func TestChannelHandlerPublicPublishUpdatesVerifiedMonitor(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerReturnsVerifiedPNMBytes(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+	pnmBytes := buildAPISignedPNM(t, signing.privateKey, "bafyverifiedhead", "DPM")
+
+	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?"+signing.providerKeyQuery(), bytes.NewReader(pnmBytes))
+	publishRec := httptest.NewRecorder()
+	mux.ServeHTTP(publishRec, publishReq)
+	if publishRec.Code != http.StatusAccepted {
+		t.Fatalf("publish status = %d body=%s", publishRec.Code, publishRec.Body.String())
+	}
+
+	pnmReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/pnm", nil)
+	pnmRec := httptest.NewRecorder()
+	mux.ServeHTTP(pnmRec, pnmReq)
+	if pnmRec.Code != http.StatusOK {
+		t.Fatalf("PNM status = %d body=%s", pnmRec.Code, pnmRec.Body.String())
+	}
+	if got := pnmRec.Header().Get("Content-Type"); got != "application/vnd.sdn.pnm" {
+		t.Fatalf("PNM Content-Type = %q", got)
+	}
+	if !bytes.Equal(pnmRec.Body.Bytes(), pnmBytes) {
+		t.Fatal("PNM endpoint did not return the verified PNM bytes")
+	}
+}
+
 func TestChannelHandlerPublicStreamPublishRequiresVerifiedPNM(t *testing.T) {
 	t.Parallel()
 

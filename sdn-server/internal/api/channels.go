@@ -128,7 +128,7 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		writeError(w, http.StatusNotFound, "verified PNM unavailable for channel")
+		h.getPNM(w, parsed)
 	case "subscribe":
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -326,6 +326,17 @@ func (h *ChannelHandler) publishPublic(w http.ResponseWriter, r *http.Request, p
 		"signatureType": evidence.SignatureType,
 		"verifiedAt":    metadata.VerifiedAt.Format(time.RFC3339Nano),
 	})
+}
+
+func (h *ChannelHandler) getPNM(w http.ResponseWriter, parsed channels.ChannelID) {
+	metadata, verified := h.metadata.Get(parsed)
+	if !verified || len(metadata.PNMBytes) == 0 {
+		writeError(w, http.StatusNotFound, "verified PNM unavailable for channel")
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.sdn.pnm")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(metadata.PNMBytes)
 }
 
 func (h *ChannelHandler) publishDPMManifest(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID, body []byte) {
