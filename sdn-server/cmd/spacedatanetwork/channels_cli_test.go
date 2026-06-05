@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -186,4 +189,50 @@ func TestChannelsGrantIssuePrintsScopedGrant(t *testing.T) {
 	if !strings.Contains(body, "grantId=grant-") {
 		t.Fatalf("grant issue output missing generated grantId:\n%s", body)
 	}
+}
+
+func TestChannelsPublishValidatesNativeStreamFile(t *testing.T) {
+	t.Parallel()
+
+	streamPath := filepath.Join(t.TempDir(), "stream.bin")
+	streamBytes := bytes.Join([][]byte{
+		channelCLITestNativeFrame("OMM1", []byte{1, 2, 3}),
+		channelCLITestNativeFrame("OMM1", []byte{4, 5, 6, 7}),
+	}, nil)
+	if err := os.WriteFile(streamPath, streamBytes, 0o600); err != nil {
+		t.Fatalf("write stream fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"publish", "spaceaware-OMM", "--from", streamPath})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels publish failed: %v", err)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"channelId=spaceaware-OMM",
+		"standardCode=OMM",
+		"streamBytes=23",
+		"streamFrames=2",
+		"contentType=application/vnd.sdn.flatbuffers.stream",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("channels publish output missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "base64") || strings.Contains(body, "records=") {
+		t.Fatalf("channels publish output exposed JSON/base64 hot path:\n%s", body)
+	}
+}
+
+func channelCLITestNativeFrame(fileIdentifier string, payload []byte) []byte {
+	frame := make([]byte, 8+len(payload))
+	binary.LittleEndian.PutUint32(frame[:4], uint32(4+len(payload)))
+	copy(frame[4:8], []byte(fileIdentifier))
+	copy(frame[8:], payload)
+	return frame
 }
