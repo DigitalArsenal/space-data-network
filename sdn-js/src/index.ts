@@ -67,6 +67,16 @@ export { loadEdgeRelays, getBootstrapRelays, DEFAULT_EDGE_RELAYS, EdgeDiscovery,
 export type { RelayStatus, RelayProbeResult, DiscoveryMetrics } from './edge-discovery';
 export { SDS_SCHEMAS, SUPPORTED_SCHEMAS } from './schemas';
 export type { SchemaName } from './schemas';
+export {
+  CHANNEL_TOPIC_PREFIX,
+  assertStandardCode,
+  channelDiscoveryTopic,
+  formatChannelId,
+  parseChannelId,
+  schemaNameFromStandardCode,
+  standardCodeFromSchemaName,
+} from './channels';
+export type { ChannelIdInput, ParsedChannelId } from './channels';
 // Crypto and HD Wallet exports (unified from hd-wallet-wasm)
 export {
   // Initialization
