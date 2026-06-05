@@ -10,6 +10,7 @@ import (
 
 type VerifiedMetadata struct {
 	ChannelID         string
+	ChannelHead       string
 	PNMCID            string
 	PNMBytes          []byte
 	PNMFileID         string
@@ -106,6 +107,26 @@ func (r *VerifiedMetadataRegistry) RecordNativeStream(channel ChannelID, snapsho
 		metadata.PinnedRows = snapshot.FrameCount
 		metadata.ThroughputBPS = throughputBPS
 		metadata.WireUtilization = wireUtilization
+		r.metadata[channel.ChannelID] = metadata
+	}
+	r.mu.Unlock()
+	return metadata, ok
+}
+
+func (r *VerifiedMetadataRegistry) RecordDatasetPublication(channel ChannelID, feedHead string, recordCount int, byteCount int64) (VerifiedMetadata, bool) {
+	if r == nil {
+		return VerifiedMetadata{}, false
+	}
+	r.mu.Lock()
+	metadata, ok := r.metadata[channel.ChannelID]
+	if ok {
+		metadata.ChannelHead = strings.TrimSpace(feedHead)
+		metadata.LocalRows = recordCount
+		metadata.RemoteRows = recordCount
+		metadata.SyncedRows = recordCount
+		metadata.MissingRows = 0
+		metadata.PinnedRows = recordCount
+		metadata.SyncedBytes = byteCount
 		r.metadata[channel.ChannelID] = metadata
 	}
 	r.mu.Unlock()
