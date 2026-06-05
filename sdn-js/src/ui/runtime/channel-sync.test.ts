@@ -44,6 +44,24 @@ describe('channel stream sync adapters', () => {
     }));
   });
 
+  it('passes private grant context to FlatSQL stream opens', async () => {
+    const stream = sizePrefixedFrame(flatBufferPayload('OMM ', 24));
+    let access: unknown = null;
+    const channels = {
+      openStream: async (_channelId: string, options?: unknown) => {
+        access = options;
+        return createAvailableResult('channels.openStream', stream);
+      },
+    } as Pick<ChannelBackend, 'openStream'>;
+
+    const result = await ingestChannelStreamToFlatSql(channels, 'spaceaware-OMM', {
+      access: { subject: 'peer-alpha', grantId: 'grant-1', visibility: 'private-listed' },
+    });
+
+    expect(result).toEqual(expect.objectContaining({ ok: true }));
+    expect(access).toEqual({ subject: 'peer-alpha', grantId: 'grant-1', visibility: 'private-listed' });
+  });
+
   it('opens a channel stream and feeds it through the SDK module stream pump', async () => {
     const requests: Array<{ methodId: string; inputs: Array<Record<string, unknown>> }> = [];
     const channels = channelBackendWithStream(concatBytes(
@@ -84,6 +102,26 @@ describe('channel stream sync adapters', () => {
       framesInvoked: 2,
       invokes: 1,
     }));
+  });
+
+  it('passes private grant context to module feed stream opens', async () => {
+    let access: unknown = null;
+    const channels = {
+      openStream: async (_channelId: string, options?: unknown) => {
+        access = options;
+        return createAvailableResult('channels.openStream', sizePrefixedFrame(flatBufferPayload('OMM ', 24)));
+      },
+    } as Pick<ChannelBackend, 'openStream'>;
+
+    const result = await pumpChannelStreamToModule(channels, 'spaceaware-OMM', {
+      access: { subject: 'peer-alpha', grantId: 'grant-1', visibility: 'private-listed' },
+      methodId: 'upsert_records',
+      portId: 'records',
+      invoke: async () => ({ statusCode: 0, outputs: [] }),
+    });
+
+    expect(result).toEqual(expect.objectContaining({ ok: true }));
+    expect(access).toEqual({ subject: 'peer-alpha', grantId: 'grant-1', visibility: 'private-listed' });
   });
 });
 

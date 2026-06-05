@@ -2,6 +2,7 @@ import {
   createAvailableResult,
   createDegradedResult,
   type BackendResult,
+  type ChannelActionOptions,
   type ChannelBackend,
 } from './sdn-backend';
 import {
@@ -15,16 +16,21 @@ export interface ChannelModulePumpSyncResult {
   stats: ReturnType<typeof createChannelModuleStreamPump>['stats'] extends () => infer T ? T : never;
 }
 
+export interface ChannelModulePumpSyncOptions extends ChannelModuleStreamPumpOptions {
+  access?: ChannelActionOptions;
+}
+
 export async function pumpChannelStreamToModule(
   channels: Pick<ChannelBackend, 'openStream'>,
   channelId: string,
-  options: ChannelModuleStreamPumpOptions,
+  options: ChannelModulePumpSyncOptions,
 ): Promise<BackendResult<ChannelModulePumpSyncResult>> {
-  const stream = await channels.openStream(channelId);
+  const stream = await channels.openStream(channelId, options.access);
   if (!stream.ok || !stream.data) {
     return createDegradedResult('channels.moduleFeed', stream.capability.reason ?? 'channel stream unavailable');
   }
-  const pump = createChannelModuleStreamPump(options);
+  const { access: _access, ...pumpOptions } = options;
+  const pump = createChannelModuleStreamPump(pumpOptions);
   await pump.pushChunk(stream.data);
   const lastResponse = await pump.finish();
   return createAvailableResult('channels.moduleFeed', {
