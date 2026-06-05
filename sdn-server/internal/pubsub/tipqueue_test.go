@@ -10,6 +10,9 @@ import (
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
+	ps "github.com/libp2p/go-libp2p-pubsub"
+	pb "github.com/libp2p/go-libp2p-pubsub/pb"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 // mockFetcher implements ContentFetcher for testing.
@@ -365,6 +368,42 @@ func TestTipQueueProcessTipNoAutoFetch(t *testing.T) {
 
 	if fetcher.WasFetched("bafytest789") {
 		t.Error("Content should NOT have been fetched")
+	}
+}
+
+func TestTipQueueHandleMessageRejectsUnsignedPNMBeforeTrustingTip(t *testing.T) {
+	config := NewTipQueueConfig()
+	config.DefaultAutoFetch = true
+	config.DefaultAutoPin = true
+
+	tq := NewTipQueue(config)
+	fetcher := newMockFetcher()
+	pinner := newMockPinner()
+	tq.SetFetcher(fetcher)
+	tq.SetPinner(pinner)
+
+	handlerCalled := false
+	tq.OnTip(func(tip *Tip, config ResolvedConfig) {
+		handlerCalled = true
+	})
+
+	tq.handleMessage(&ps.Message{
+		Message:      &pb.Message{Data: buildTestPNM(t, "bafyunsigned", "DPM")},
+		ReceivedFrom: peer.ID("12D3KooWUnsignedPublisher"),
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	if tq.QueueSize() != 0 {
+		t.Fatalf("unsigned PNM should not be queued, got %d queued tips", tq.QueueSize())
+	}
+	if handlerCalled {
+		t.Fatal("unsigned PNM should not notify tip handlers")
+	}
+	if fetcher.WasFetched("bafyunsigned") {
+		t.Fatal("unsigned PNM should not be fetched")
+	}
+	if pinner.IsPinned("bafyunsigned") {
+		t.Fatal("unsigned PNM should not be pinned")
 	}
 }
 
