@@ -38,6 +38,29 @@ describe('SDN channels UI source', () => {
     expect(source).not.toContain(String.fromCharCode(46, 102, 98, 115));
   });
 
+  it('shows monitor phase timings in the Channels screen source', () => {
+    const source = readFileSync(new URL('../../ui/src/screens/ChannelsScreen.svelte', import.meta.url), 'utf8');
+    for (const expected of [
+      'Discovery',
+      'Grant Negotiation',
+      'PNM/DPM Verification',
+      'Transfer',
+      'Decrypt',
+      'Hash Verification',
+      'Durable Import',
+      'monitor?.timingsMs.discovery',
+      'monitor?.timingsMs.grantNegotiation',
+      'monitor?.timingsMs.pnmDpmVerification',
+      'monitor?.timingsMs.transfer',
+      'monitor?.timingsMs.decrypt',
+      'monitor?.timingsMs.hashVerification',
+      'monitor?.timingsMs.durableImport',
+    ]) {
+      expect(source).toContain(expected);
+    }
+    expect(source).not.toContain(String.fromCharCode(46, 102, 98, 115));
+  });
+
   it('renders channel filters and subscribe controls required by the pub/sub surface', () => {
     const source = readFileSync(new URL('../../ui/src/screens/ChannelsScreen.svelte', import.meta.url), 'utf8');
     for (const expected of [

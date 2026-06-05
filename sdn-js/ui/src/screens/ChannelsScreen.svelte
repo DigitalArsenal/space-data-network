@@ -123,6 +123,10 @@
   function formatPercent(value: number | null | undefined): string {
     return typeof value === 'number' ? `${(value * 100).toFixed(1)}%` : 'Unknown';
   }
+
+  function formatDurationMs(value: number | null | undefined): string {
+    return `${formatNumber(value)} ms`;
+  }
 </script>
 
 <section class="sdn-channel-screen" aria-label="Channels">
@@ -216,6 +220,13 @@
         <div><dt>Grant State</dt><dd>{monitor?.grantState ?? selectedChannel?.grantState ?? 'unknown'}</dd></div>
         <div><dt>Encryption State</dt><dd>{monitor?.encryptionState ?? selectedChannel?.encryptionState ?? 'unknown'}</dd></div>
         <div><dt>Last Verified Update</dt><dd>{monitor?.lastVerifiedUpdate || 'Unknown'}</dd></div>
+        <div><dt>Discovery</dt><dd>{formatDurationMs(monitor?.timingsMs.discovery)}</dd></div>
+        <div><dt>Grant Negotiation</dt><dd>{formatDurationMs(monitor?.timingsMs.grantNegotiation)}</dd></div>
+        <div><dt>PNM/DPM Verification</dt><dd>{formatDurationMs(monitor?.timingsMs.pnmDpmVerification)}</dd></div>
+        <div><dt>Transfer</dt><dd>{formatDurationMs(monitor?.timingsMs.transfer)}</dd></div>
+        <div><dt>Decrypt</dt><dd>{formatDurationMs(monitor?.timingsMs.decrypt)}</dd></div>
+        <div><dt>Hash Verification</dt><dd>{formatDurationMs(monitor?.timingsMs.hashVerification)}</dd></div>
+        <div><dt>Durable Import</dt><dd>{formatDurationMs(monitor?.timingsMs.durableImport)}</dd></div>
       </dl>
     </section>
   </div>
