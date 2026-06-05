@@ -235,6 +235,13 @@ export type {
   LogHeadResponse,
   LogEntriesResponse,
   LogHeadsResponse,
+  ChannelAccessOptions,
+  ChannelActionResponse,
+  ChannelGrantRequest,
+  ChannelListOptions,
+  ChannelMonitor,
+  ChannelSummary,
+  SDNClientChannels,
   SDNClientOptions,
 } from './client';
 
