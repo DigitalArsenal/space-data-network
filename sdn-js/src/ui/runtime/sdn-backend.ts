@@ -211,6 +211,11 @@ export interface ChannelMonitorTimings {
   durableImport: number;
 }
 
+export interface ChannelKeyEnvelopeRequest {
+  recipientKeyId: string;
+  contentKeyId?: string;
+}
+
 export interface ChannelBackend {
   list(options?: ChannelListOptions): Promise<BackendResult<ChannelSummary[]>>;
   get(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<ChannelSummary>>;
@@ -218,6 +223,7 @@ export interface ChannelBackend {
   unsubscribe(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
   publish(channelId: string, body?: BodyInit | null, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
   issueGrant(channelId: string, body?: Record<string, unknown>, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
+  keyUnwrap(channelId: string, body: ChannelKeyEnvelopeRequest, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
   openStream(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<Uint8Array>>;
   monitor(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<ChannelMonitor>>;
 }

@@ -111,6 +111,21 @@ describe('SDN channels UI source', () => {
     expect(source).not.toContain(String.fromCharCode(46, 102, 98, 115));
   });
 
+  it('renders a private channel key-envelope action required by the private pub/sub surface', () => {
+    const source = readFileSync(new URL('../../ui/src/screens/ChannelsScreen.svelte', import.meta.url), 'utf8');
+    for (const expected of [
+      'Content key ID',
+      'Recipient key ID',
+      'keyUnwrapSelected',
+      'backend.channels.keyUnwrap(selectedChannelId',
+      'Key Envelope',
+      'Key Envelope CID',
+    ]) {
+      expect(source).toContain(expected);
+    }
+    expect(source).not.toContain(String.fromCharCode(46, 102, 98, 115));
+  });
+
   it('renders a native channel stream open action required by the pub/sub surface', () => {
     const source = readFileSync(new URL('../../ui/src/screens/ChannelsScreen.svelte', import.meta.url), 'utf8');
     for (const expected of [
