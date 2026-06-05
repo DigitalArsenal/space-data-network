@@ -38,6 +38,19 @@ describe('sync throughput targets', () => {
     expect(meetsWireSpeedTarget(requiredBytesPerSecond, twoGbitBytesPerSecond)).toBe(true);
   });
 
+  it('reports the required bytes per second for the 90 percent production gate', () => {
+    const audit = publishedShardWireSpeedAudit({
+      downloadedBytes: 675_000_000,
+      measuredWireSpeedBytesPerSecond: 250_000_000,
+      transferMs: 3_000,
+    });
+
+    expect(audit.wireSpeedTarget).toBe(0.9);
+    expect(audit.requiredBytesPerSecond).toBe(225_000_000);
+    expect(audit.downloadBytesPerSecond).toBe(225_000_000);
+    expect(audit.targetMet).toBe(true);
+  });
+
   it('does not report utilization without a positive measured baseline', () => {
     expect(measuredWireSpeedUtilization(160_000_000, 0)).toBeNull();
   });
@@ -251,6 +264,7 @@ describe('sync throughput targets', () => {
         downloadBytesPerSecond: 225_000_000,
         wireSpeedUtilization: 0.9,
         wireSpeedTarget: 0.9,
+        requiredBytesPerSecond: 225_000_000,
         targetMet: true,
         timingsMs: {
           manifestDiscovery: 125,
@@ -265,6 +279,7 @@ describe('sync throughput targets', () => {
     expect(summary).toContain('Shard transfer: direct-libp2p-published-shard-ranges over /space-data-network/flatsql-sync/1.0.0');
     expect(summary).toContain('no HTTP/SSH fallbacks');
     expect(summary).toContain('Published shard download: 225.0 MB/s (90% of wire)');
+    expect(summary).toContain('Required data-plane throughput: 225.0 MB/s');
     expect(summary).toContain('Phases: discovery 125 ms / grant 0 ms / PNM+DPM 0 ms / transfer 2.75 s / decrypt 0 ms / hash 900 ms / durable import 0 ms');
     expect(summary).toContain('Timing: manifest 125 ms / network 2.75 s / verify 900 ms / FlatSQL 0 ms');
     expect(summary).toContain('90% target: met');

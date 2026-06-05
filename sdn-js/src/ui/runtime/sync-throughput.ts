@@ -25,6 +25,7 @@ export interface PublishedShardWireSpeedAudit {
   downloadBytesPerSecond: number;
   wireSpeedUtilization: number | null;
   wireSpeedTarget: number;
+  requiredBytesPerSecond: number | null;
   targetMet: boolean | null;
   timingsMs: {
     discovery: number;
@@ -159,6 +160,9 @@ export function publishedShardWireSpeedAudit(
   const wireSpeedBaselineBytesPerSecond = finitePositive(input.wireSpeedBaselineBytesPerSecond)
     ?? measuredWireSpeedBytesPerSecond;
   const wireSpeedTarget = finitePositive(input.wireSpeedTarget) ?? DEFAULT_WIRE_SPEED_TARGET;
+  const requiredBytesPerSecond = wireSpeedBaselineBytesPerSecond == null
+    ? null
+    : Math.floor(wireSpeedBaselineBytesPerSecond * wireSpeedTarget);
   const wireSpeedUtilization = measuredWireSpeedUtilization(downloadBytesPerSecond, wireSpeedBaselineBytesPerSecond);
   return {
     downloadedBytes,
@@ -167,6 +171,7 @@ export function publishedShardWireSpeedAudit(
     downloadBytesPerSecond,
     wireSpeedUtilization,
     wireSpeedTarget,
+    requiredBytesPerSecond,
     targetMet: wireSpeedUtilization == null ? null : wireSpeedUtilization >= wireSpeedTarget,
     timingsMs: {
       discovery: discoveryMs,
@@ -326,6 +331,7 @@ export function throughputHarnessSummary(result: ThroughputHarnessResult): strin
     `Wire speed probe: ${formatBytesPerSecond(result.probe.bytesPerSecond)}`,
     ...(baseline && baseline !== result.probe.bytesPerSecond ? [`Wire speed target baseline: ${formatBytesPerSecond(baseline)}`] : []),
     `Published shard download: ${formatBytesPerSecond(result.audit.downloadBytesPerSecond)} (${utilization})`,
+    ...(result.audit.requiredBytesPerSecond == null ? [] : [`Required data-plane throughput: ${formatBytesPerSecond(result.audit.requiredBytesPerSecond)}`]),
     `Phases: discovery ${formatDuration(phaseTiming(result.audit.timingsMs.discovery, result.audit.timingsMs.manifestDiscovery))} / grant ${formatDuration(result.audit.timingsMs.grantNegotiation)} / PNM+DPM ${formatDuration(result.audit.timingsMs.pnmDpmVerification)} / transfer ${formatDuration(phaseTiming(result.audit.timingsMs.transfer, result.audit.timingsMs.networkTransfer))} / decrypt ${formatDuration(result.audit.timingsMs.decrypt)} / hash ${formatDuration(phaseTiming(result.audit.timingsMs.hashVerification, result.audit.timingsMs.verification))} / durable import ${formatDuration(phaseTiming(result.audit.timingsMs.durableImport, result.audit.timingsMs.flatSqlMaterialization))}`,
     `Timing: manifest ${formatDuration(result.audit.timingsMs.manifestDiscovery)} / network ${formatDuration(result.audit.timingsMs.networkTransfer)} / verify ${formatDuration(result.audit.timingsMs.verification)} / FlatSQL ${formatDuration(result.audit.timingsMs.flatSqlMaterialization)}`,
     `${Math.round(result.target * 100)}% target: ${targetStatus}`,

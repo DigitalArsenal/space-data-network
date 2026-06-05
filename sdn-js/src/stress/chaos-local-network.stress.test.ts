@@ -72,6 +72,7 @@ describe('local virtual SDN chaos network', () => {
           peerBytes: number;
           persistedCheckpoints: number;
           wireSpeedTarget: number;
+          requiredBytesPerSecond: number;
           targetMet: boolean;
         };
         timingMs: {
@@ -113,6 +114,7 @@ describe('local virtual SDN chaos network', () => {
       expect(report.replication.providerBytes + report.replication.peerBytes).toBeGreaterThan(0);
       expect(report.replication.bytesPerSecond).toBeLessThanOrEqual(report.replication.measuredWireSpeedBytesPerSecond);
       expect(report.replication.wireSpeedTarget).toBe(0.9);
+      expect(report.replication.requiredBytesPerSecond).toBe(225_000_000);
       expect(typeof report.replication.targetMet).toBe('boolean');
       for (const key of ['discovery', 'grantNegotiation', 'pnmDpmVerification', 'transfer', 'decrypt', 'hashVerification', 'durableImport'] as const) {
         expect(Number.isFinite(report.timingMs[key])).toBe(true);
