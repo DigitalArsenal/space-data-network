@@ -20,6 +20,7 @@ type AccessRequest struct {
 	Channel  ChannelID
 	Boundary AccessBoundary
 	Subject  string
+	GrantID  string
 }
 
 type AccessDecision struct {

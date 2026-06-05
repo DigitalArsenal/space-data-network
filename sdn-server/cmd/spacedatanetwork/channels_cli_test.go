@@ -158,3 +158,32 @@ func TestChannelsPrivateSubscribeFailsClosed(t *testing.T) {
 		t.Fatalf("private subscribe error = %v", err)
 	}
 }
+
+func TestChannelsGrantIssuePrintsScopedGrant(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"grants", "issue", "spaceaware-OMM", "--to", "peer-alpha", "--scope", "subscribe", "--scope", "stream_open"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels grants issue failed: %v", err)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"channelId=spaceaware-OMM",
+		"subject=peer-alpha",
+		"grantState=verified",
+		"scope=subscribe",
+		"scope=stream_open",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("grant issue output missing %q:\n%s", want, body)
+		}
+	}
+	if !strings.Contains(body, "grantId=grant-") {
+		t.Fatalf("grant issue output missing generated grantId:\n%s", body)
+	}
+}

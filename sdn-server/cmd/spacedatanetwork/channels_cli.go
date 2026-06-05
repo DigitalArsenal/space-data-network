@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -18,6 +19,12 @@ type channelSubscriptionOptions struct {
 	Visibility string
 }
 
+type channelGrantIssueOptions struct {
+	To        string
+	Scopes    []string
+	ExpiresAt string
+}
+
 func init() {
 	rootCmd.AddCommand(newChannelsCommand())
 }
@@ -27,6 +34,7 @@ func newChannelsCommand() *cobra.Command {
 	subscribeOptions := channelSubscriptionOptions{}
 	unsubscribeOptions := channelSubscriptionOptions{}
 	subscriptions := channels.NewSubscriptionRegistry()
+	grants := channels.NewChannelGrantRegistry()
 	cmd := &cobra.Command{
 		Use:   "channels",
 		Short: "List, inspect, subscribe, and monitor SDN data channels",
@@ -82,7 +90,19 @@ func newChannelsCommand() *cobra.Command {
 		Use:   "grants",
 		Short: "Manage private channel grants",
 	}
-	grantsCmd.AddCommand(failClosedChannelCommand("issue <channelId>", "Issue a private channel grant"))
+	grantIssueOptions := channelGrantIssueOptions{}
+	grantIssueCmd := &cobra.Command{
+		Use:   "issue <channelId>",
+		Short: "Issue a private channel grant",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runChannelsGrantIssue(cmd, grants, grantIssueOptions, args[0])
+		},
+	}
+	grantIssueCmd.Flags().StringVar(&grantIssueOptions.To, "to", "", "subscriber peer or EPM subject")
+	grantIssueCmd.Flags().StringArrayVar(&grantIssueOptions.Scopes, "scope", nil, "private channel access scope")
+	grantIssueCmd.Flags().StringVar(&grantIssueOptions.ExpiresAt, "expires-at", "", "grant expiration as RFC3339")
+	grantsCmd.AddCommand(grantIssueCmd)
 	cmd.AddCommand(grantsCmd)
 	return cmd
 }
@@ -143,6 +163,70 @@ func printChannelSubscriptionState(cmd *cobra.Command, state channels.Subscripti
 	fmt.Fprintf(out, "grantState=%s\n", state.GrantState)
 	fmt.Fprintf(out, "encryptionState=%s\n", state.EncryptionState)
 	return nil
+}
+
+func runChannelsGrantIssue(cmd *cobra.Command, registry *channels.ChannelGrantRegistry, options channelGrantIssueOptions, channelID string) error {
+	parsed, err := channels.ParseChannelID(channelID)
+	if err != nil {
+		return err
+	}
+	scopes, err := parseChannelGrantScopes(options.Scopes)
+	if err != nil {
+		return err
+	}
+	expiresAt := time.Time{}
+	if strings.TrimSpace(options.ExpiresAt) != "" {
+		expiresAt, err = time.Parse(time.RFC3339, strings.TrimSpace(options.ExpiresAt))
+		if err != nil {
+			return fmt.Errorf("invalid expires-at: %w", err)
+		}
+	}
+	grant, err := registry.Issue(channels.ChannelGrantIssueRequest{
+		Channel:   parsed,
+		Subject:   options.To,
+		Scopes:    scopes,
+		ExpiresAt: expiresAt,
+	})
+	if err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "grantId=%s\n", grant.GrantID)
+	fmt.Fprintf(out, "channelId=%s\n", grant.ChannelID)
+	fmt.Fprintf(out, "subject=%s\n", grant.Subject)
+	fmt.Fprintln(out, "grantState=verified")
+	for _, scope := range grant.Scopes {
+		fmt.Fprintf(out, "scope=%s\n", scope)
+	}
+	fmt.Fprintf(out, "expiresAt=%s\n", grant.ExpiresAt.Format(time.RFC3339Nano))
+	return nil
+}
+
+func parseChannelGrantScopes(values []string) ([]channels.AccessBoundary, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	allowed := map[string]channels.AccessBoundary{
+		string(channels.BoundarySubscribe):          channels.BoundarySubscribe,
+		string(channels.BoundaryUnsubscribe):        channels.BoundaryUnsubscribe,
+		string(channels.BoundaryPublish):            channels.BoundaryPublish,
+		string(channels.BoundaryStreamOpen):         channels.BoundaryStreamOpen,
+		string(channels.BoundaryByteRangeRead):      channels.BoundaryByteRangeRead,
+		string(channels.BoundaryKeyUnwrap):          channels.BoundaryKeyUnwrap,
+		string(channels.BoundaryShardImport):        channels.BoundaryShardImport,
+		string(channels.BoundaryModuleFeedDelivery): channels.BoundaryModuleFeedDelivery,
+		string(channels.BoundaryLocalCacheRead):     channels.BoundaryLocalCacheRead,
+	}
+	scopes := make([]channels.AccessBoundary, 0, len(values))
+	for _, value := range values {
+		scope := strings.TrimSpace(value)
+		boundary, ok := allowed[scope]
+		if !ok {
+			return nil, fmt.Errorf("invalid channel grant scope %q", value)
+		}
+		scopes = append(scopes, boundary)
+	}
+	return scopes, nil
 }
 
 func runChannelsShow(cmd *cobra.Command, channelID string) error {
