@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,60 +20,68 @@ import (
 )
 
 type channelsListOptions struct {
-	StandardCode string
-	Visibility   string
-	Subject      string
-	GrantID      string
-	APIURL       string
+	StandardCode          string
+	Visibility            string
+	Subject               string
+	GrantID               string
+	APIURL                string
+	InsecureSkipTLSVerify bool
 }
 
 type channelShowOptions struct {
-	APIURL string
+	APIURL                string
+	InsecureSkipTLSVerify bool
 }
 
 type channelSubscriptionOptions struct {
-	Visibility string
-	Subject    string
-	GrantID    string
-	APIURL     string
+	Visibility            string
+	Subject               string
+	GrantID               string
+	APIURL                string
+	InsecureSkipTLSVerify bool
 }
 
 type channelGrantIssueOptions struct {
-	To        string
-	Scopes    []string
-	ExpiresAt string
-	APIURL    string
+	To                    string
+	Scopes                []string
+	ExpiresAt             string
+	APIURL                string
+	InsecureSkipTLSVerify bool
 }
 
 type channelPublishOptions struct {
-	From       string
-	Subject    string
-	GrantID    string
-	Visibility string
-	APIURL     string
+	From                  string
+	Subject               string
+	GrantID               string
+	Visibility            string
+	APIURL                string
+	InsecureSkipTLSVerify bool
 }
 
 type channelStreamOptions struct {
-	Out        string
-	Subject    string
-	GrantID    string
-	Visibility string
-	APIURL     string
+	Out                   string
+	Subject               string
+	GrantID               string
+	Visibility            string
+	APIURL                string
+	InsecureSkipTLSVerify bool
 }
 
 type channelPNMOptions struct {
-	Out        string
-	Subject    string
-	GrantID    string
-	Visibility string
-	APIURL     string
+	Out                   string
+	Subject               string
+	GrantID               string
+	Visibility            string
+	APIURL                string
+	InsecureSkipTLSVerify bool
 }
 
 type channelMonitorOptions struct {
-	Subject    string
-	GrantID    string
-	Visibility string
-	APIURL     string
+	Subject               string
+	GrantID               string
+	Visibility            string
+	APIURL                string
+	InsecureSkipTLSVerify bool
 }
 
 func init() {
@@ -102,6 +112,7 @@ func newChannelsCommand() *cobra.Command {
 	listCmd.Flags().StringVar(&listOptions.Subject, "subject", "", "subscriber EPM subject for private channel access")
 	listCmd.Flags().StringVar(&listOptions.GrantID, "grant-id", "", "private channel grant ID")
 	listCmd.Flags().StringVar(&listOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
+	addChannelInsecureTLSFlag(listCmd, &listOptions.InsecureSkipTLSVerify)
 
 	cmd.AddCommand(listCmd)
 	showCmd := &cobra.Command{
@@ -113,6 +124,7 @@ func newChannelsCommand() *cobra.Command {
 		},
 	}
 	showCmd.Flags().StringVar(&showOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
+	addChannelInsecureTLSFlag(showCmd, &showOptions.InsecureSkipTLSVerify)
 	cmd.AddCommand(showCmd)
 	monitorCmd := &cobra.Command{
 		Use:   "monitor <channelId>",
@@ -126,6 +138,7 @@ func newChannelsCommand() *cobra.Command {
 	monitorCmd.Flags().StringVar(&monitorOptions.GrantID, "grant-id", "", "private channel grant ID")
 	monitorCmd.Flags().StringVar(&monitorOptions.Visibility, "visibility", "", "channel visibility for private access checks")
 	monitorCmd.Flags().StringVar(&monitorOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
+	addChannelInsecureTLSFlag(monitorCmd, &monitorOptions.InsecureSkipTLSVerify)
 	cmd.AddCommand(monitorCmd)
 	subscribeCmd := &cobra.Command{
 		Use:   "subscribe <channelId>",
@@ -139,6 +152,7 @@ func newChannelsCommand() *cobra.Command {
 	subscribeCmd.Flags().StringVar(&subscribeOptions.Subject, "subject", "", "subscriber EPM subject for private channel access")
 	subscribeCmd.Flags().StringVar(&subscribeOptions.GrantID, "grant-id", "", "private channel grant ID")
 	subscribeCmd.Flags().StringVar(&subscribeOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
+	addChannelInsecureTLSFlag(subscribeCmd, &subscribeOptions.InsecureSkipTLSVerify)
 	cmd.AddCommand(subscribeCmd)
 	unsubscribeCmd := &cobra.Command{
 		Use:   "unsubscribe <channelId>",
@@ -152,6 +166,7 @@ func newChannelsCommand() *cobra.Command {
 	unsubscribeCmd.Flags().StringVar(&unsubscribeOptions.Subject, "subject", "", "subscriber EPM subject for private channel access")
 	unsubscribeCmd.Flags().StringVar(&unsubscribeOptions.GrantID, "grant-id", "", "private channel grant ID")
 	unsubscribeCmd.Flags().StringVar(&unsubscribeOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
+	addChannelInsecureTLSFlag(unsubscribeCmd, &unsubscribeOptions.InsecureSkipTLSVerify)
 	cmd.AddCommand(unsubscribeCmd)
 	publishOptions := channelPublishOptions{}
 	publishCmd := &cobra.Command{
@@ -167,6 +182,7 @@ func newChannelsCommand() *cobra.Command {
 	publishCmd.Flags().StringVar(&publishOptions.GrantID, "grant-id", "", "private channel grant ID")
 	publishCmd.Flags().StringVar(&publishOptions.Visibility, "visibility", "", "channel visibility for private access checks")
 	publishCmd.Flags().StringVar(&publishOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
+	addChannelInsecureTLSFlag(publishCmd, &publishOptions.InsecureSkipTLSVerify)
 	cmd.AddCommand(publishCmd)
 	streamOptions := channelStreamOptions{}
 	streamCmd := &cobra.Command{
@@ -182,6 +198,7 @@ func newChannelsCommand() *cobra.Command {
 	streamCmd.Flags().StringVar(&streamOptions.GrantID, "grant-id", "", "private channel grant ID")
 	streamCmd.Flags().StringVar(&streamOptions.Visibility, "visibility", "", "channel visibility for private access checks")
 	streamCmd.Flags().StringVar(&streamOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
+	addChannelInsecureTLSFlag(streamCmd, &streamOptions.InsecureSkipTLSVerify)
 	cmd.AddCommand(streamCmd)
 	pnmOptions := channelPNMOptions{}
 	pnmCmd := &cobra.Command{
@@ -197,6 +214,7 @@ func newChannelsCommand() *cobra.Command {
 	pnmCmd.Flags().StringVar(&pnmOptions.GrantID, "grant-id", "", "private channel grant ID")
 	pnmCmd.Flags().StringVar(&pnmOptions.Visibility, "visibility", "", "channel visibility for private access checks")
 	pnmCmd.Flags().StringVar(&pnmOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
+	addChannelInsecureTLSFlag(pnmCmd, &pnmOptions.InsecureSkipTLSVerify)
 	cmd.AddCommand(pnmCmd)
 	grantsCmd := &cobra.Command{
 		Use:   "grants",
@@ -215,9 +233,14 @@ func newChannelsCommand() *cobra.Command {
 	grantIssueCmd.Flags().StringArrayVar(&grantIssueOptions.Scopes, "scope", nil, "private channel access scope")
 	grantIssueCmd.Flags().StringVar(&grantIssueOptions.ExpiresAt, "expires-at", "", "grant expiration as RFC3339")
 	grantIssueCmd.Flags().StringVar(&grantIssueOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
+	addChannelInsecureTLSFlag(grantIssueCmd, &grantIssueOptions.InsecureSkipTLSVerify)
 	grantsCmd.AddCommand(grantIssueCmd)
 	cmd.AddCommand(grantsCmd)
 	return cmd
+}
+
+func addChannelInsecureTLSFlag(cmd *cobra.Command, target *bool) {
+	cmd.Flags().BoolVar(target, "insecure-skip-tls-verify", false, "allow self-signed loopback HTTPS SDN API certificates")
 }
 
 func runChannelsList(cmd *cobra.Command, options channelsListOptions) error {
@@ -248,7 +271,10 @@ func runChannelsListFromAPI(cmd *cobra.Command, options channelsListOptions, api
 	if err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client, err := newChannelAPIClient(apiURL, 10*time.Second, options.InsecureSkipTLSVerify)
+	if err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, listURL, nil)
 	if err != nil {
 		return err
@@ -325,7 +351,7 @@ func runChannelsPublish(cmd *cobra.Command, options channelPublishOptions, chann
 			Subject:    options.Subject,
 			GrantID:    options.GrantID,
 			Visibility: options.Visibility,
-		})
+		}, options.InsecureSkipTLSVerify)
 	}
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "channelId=%s\n", parsed.ChannelID)
@@ -340,12 +366,15 @@ func runChannelsPublish(cmd *cobra.Command, options channelPublishOptions, chann
 	return nil
 }
 
-func runChannelsPublishToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, streamBytes []byte, access channelAccessQuery) error {
+func runChannelsPublishToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, streamBytes []byte, access channelAccessQuery, insecureSkipTLSVerify bool) error {
 	publishURL, err := channelPublishURL(apiURL, parsed.ChannelID, access)
 	if err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client, err := newChannelAPIClient(apiURL, 10*time.Second, insecureSkipTLSVerify)
+	if err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, publishURL, bytes.NewReader(streamBytes))
 	if err != nil {
 		return err
@@ -428,7 +457,10 @@ func readChannelsStreamFromAPI(cmd *cobra.Command, parsed channels.ChannelID, op
 	if err != nil {
 		return nil, "", err
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
+	client, err := newChannelAPIClient(apiURL, 30*time.Second, options.InsecureSkipTLSVerify)
+	if err != nil {
+		return nil, "", err
+	}
 	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, streamURL, nil)
 	if err != nil {
 		return nil, "", err
@@ -496,7 +528,10 @@ func readChannelsPNMFromAPI(cmd *cobra.Command, parsed channels.ChannelID, optio
 	if err != nil {
 		return nil, "", err
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client, err := newChannelAPIClient(apiURL, 10*time.Second, options.InsecureSkipTLSVerify)
+	if err != nil {
+		return nil, "", err
+	}
 	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, pnmURL, nil)
 	if err != nil {
 		return nil, "", err
@@ -533,7 +568,7 @@ func runChannelsSubscribe(cmd *cobra.Command, registry *channels.SubscriptionReg
 			Subject:    options.Subject,
 			GrantID:    options.GrantID,
 			Visibility: options.Visibility,
-		})
+		}, options.InsecureSkipTLSVerify)
 	}
 	if strings.EqualFold(strings.TrimSpace(options.Visibility), "private") {
 		return fmt.Errorf("verified channel grant required for %s", parsed.ChannelID)
@@ -551,7 +586,7 @@ func runChannelsUnsubscribe(cmd *cobra.Command, registry *channels.SubscriptionR
 			Subject:    options.Subject,
 			GrantID:    options.GrantID,
 			Visibility: options.Visibility,
-		})
+		}, options.InsecureSkipTLSVerify)
 	}
 	if strings.EqualFold(strings.TrimSpace(options.Visibility), "private") {
 		return fmt.Errorf("verified channel grant required for %s", parsed.ChannelID)
@@ -559,12 +594,15 @@ func runChannelsUnsubscribe(cmd *cobra.Command, registry *channels.SubscriptionR
 	return printChannelSubscriptionState(cmd, registry.Unsubscribe(parsed))
 }
 
-func runChannelsSubscriptionToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, action string, access channelAccessQuery) error {
+func runChannelsSubscriptionToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, action string, access channelAccessQuery, insecureSkipTLSVerify bool) error {
 	subscriptionURL, err := channelSubscriptionURL(apiURL, parsed.ChannelID, action, access)
 	if err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client, err := newChannelAPIClient(apiURL, 10*time.Second, insecureSkipTLSVerify)
+	if err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, subscriptionURL, nil)
 	if err != nil {
 		return err
@@ -664,7 +702,10 @@ func runChannelsGrantIssueToAPI(cmd *cobra.Command, parsed channels.ChannelID, a
 	if err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client, err := newChannelAPIClient(apiURL, 10*time.Second, options.InsecureSkipTLSVerify)
+	if err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, grantURL, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -723,7 +764,7 @@ func runChannelsShow(cmd *cobra.Command, options channelShowOptions, channelID s
 		return err
 	}
 	if apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL"))); apiURL != "" {
-		return runChannelsShowFromAPI(cmd, parsed, apiURL)
+		return runChannelsShowFromAPI(cmd, parsed, apiURL, options.InsecureSkipTLSVerify)
 	}
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "channelId=%s\n", parsed.ChannelID)
@@ -737,12 +778,15 @@ func runChannelsShow(cmd *cobra.Command, options channelShowOptions, channelID s
 	return nil
 }
 
-func runChannelsShowFromAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string) error {
+func runChannelsShowFromAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, insecureSkipTLSVerify bool) error {
 	showURL, err := channelDetailURL(apiURL, parsed.ChannelID)
 	if err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client, err := newChannelAPIClient(apiURL, 10*time.Second, insecureSkipTLSVerify)
+	if err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, showURL, nil)
 	if err != nil {
 		return err
@@ -782,7 +826,7 @@ func runChannelsMonitor(cmd *cobra.Command, options channelMonitorOptions, chann
 			Subject:    options.Subject,
 			GrantID:    options.GrantID,
 			Visibility: options.Visibility,
-		})
+		}, options.InsecureSkipTLSVerify)
 	}
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "channelId=%s\n", parsed.ChannelID)
@@ -805,12 +849,15 @@ func runChannelsMonitor(cmd *cobra.Command, options channelMonitorOptions, chann
 	return nil
 }
 
-func runChannelsMonitorFromAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, access channelAccessQuery) error {
+func runChannelsMonitorFromAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, access channelAccessQuery, insecureSkipTLSVerify bool) error {
 	monitorURL, err := channelMonitorURL(apiURL, parsed.ChannelID, access)
 	if err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client, err := newChannelAPIClient(apiURL, 10*time.Second, insecureSkipTLSVerify)
+	if err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, monitorURL, nil)
 	if err != nil {
 		return err
@@ -1135,6 +1182,34 @@ func monitorValue(value interface{}) interface{} {
 		return ""
 	}
 	return value
+}
+
+func newChannelAPIClient(apiURL string, timeout time.Duration, insecureSkipTLSVerify bool) (*http.Client, error) {
+	if !insecureSkipTLSVerify {
+		return &http.Client{Timeout: timeout}, nil
+	}
+	if !isLoopbackChannelAPIURL(apiURL) {
+		return nil, fmt.Errorf("--insecure-skip-tls-verify is only allowed for loopback SDN API URLs")
+	}
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}, nil
+}
+
+func isLoopbackChannelAPIURL(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func firstNonEmptyChannelOption(values ...string) string {

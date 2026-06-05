@@ -333,6 +333,77 @@ func TestChannelsMonitorReadsLocalAPI(t *testing.T) {
 	}
 }
 
+func TestChannelsMonitorAllowsLoopbackSelfSignedTLS(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/channels/spaceaware-OMM/monitor" {
+			t.Fatalf("unexpected monitor request %s %s", r.Method, r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"channelId":"spaceaware-OMM",
+			"sourceId":"spaceaware",
+			"standardCode":"OMM",
+			"channelHead":"bafyhead",
+			"pnmVerified":true
+		}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"monitor",
+		"spaceaware-OMM",
+		"--api-url",
+		server.URL,
+		"--insecure-skip-tls-verify",
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels monitor failed: %v", err)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"channelId=spaceaware-OMM",
+		"sourceId=spaceaware",
+		"standardCode=OMM",
+		"channelHead=bafyhead",
+		"pnmVerified=true",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("channels monitor output missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestChannelsMonitorRejectsInsecureTLSForNonLoopbackAPI(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"monitor",
+		"spaceaware-OMM",
+		"--api-url",
+		"https://spaceaware.io",
+		"--insecure-skip-tls-verify",
+	})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("channels monitor unexpectedly allowed insecure TLS for non-loopback API")
+	}
+	if !strings.Contains(err.Error(), "only allowed for loopback") {
+		t.Fatalf("channels monitor error = %q", err.Error())
+	}
+}
+
 func TestChannelsMonitorPassesPrivateGrantContextToLocalAPI(t *testing.T) {
 	t.Parallel()
 
