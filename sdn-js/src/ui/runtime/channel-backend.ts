@@ -23,8 +23,8 @@ export function createHttpChannelBackend(fetchLike: FetchLike, baseUrl: string |
       if (!result.ok) return result as BackendResult<ChannelSummary[]>;
       return createAvailableResult('channels.list', recordsFromPayload(result.data).map(normalizeChannelSummary));
     },
-    async get(channelId: string): Promise<BackendResult<ChannelSummary>> {
-      const result = await getJson<unknown>(fetchLike, joinUrl(baseUrl, `/api/v1/channels/${encodeURIComponent(channelId)}`), 'channels.get');
+    async get(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<ChannelSummary>> {
+      const result = await getJson<unknown>(fetchLike, channelDetailUrl(baseUrl, channelId, options), 'channels.get');
       if (!result.ok) return result as BackendResult<ChannelSummary>;
       return createAvailableResult('channels.get', normalizeChannelSummary(result.data));
     },
@@ -90,12 +90,19 @@ function postChannelAction(
 }
 
 function channelActionUrl(baseUrl: string | null | undefined, channelId: string, action: string, options?: ChannelActionOptions): string {
+  return joinUrl(baseUrl, `/api/v1/channels/${encodeURIComponent(channelId)}/${action}${channelAccessQuerySuffix(options)}`);
+}
+
+function channelDetailUrl(baseUrl: string | null | undefined, channelId: string, options?: ChannelActionOptions): string {
+  return joinUrl(baseUrl, `/api/v1/channels/${encodeURIComponent(channelId)}${channelAccessQuerySuffix(options)}`);
+}
+
+function channelAccessQuerySuffix(options?: ChannelActionOptions): string {
   const params = new URLSearchParams();
   if (options?.subject) params.set('subject', options.subject);
   if (options?.grantId) params.set('grantId', options.grantId);
   if (options?.visibility) params.set('visibility', options.visibility);
-  const suffix = params.size > 0 ? `?${params.toString()}` : '';
-  return joinUrl(baseUrl, `/api/v1/channels/${encodeURIComponent(channelId)}/${action}${suffix}`);
+  return params.size > 0 ? `?${params.toString()}` : '';
 }
 
 function nativeStreamHeaders(body?: BodyInit | null): HeadersInit | undefined {
