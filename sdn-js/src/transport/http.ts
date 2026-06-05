@@ -110,6 +110,7 @@ export interface ChannelAccessOptions {
   subject?: string;
   grantId?: string;
   visibility?: string;
+  encryptedStreamHeader?: string;
 }
 
 export interface ChannelListOptions extends ChannelAccessOptions {
@@ -392,6 +393,9 @@ function channelStreamPublishHeaders(options?: ChannelAccessOptions): Record<str
   };
   if (isPrivateChannelVisibility(options?.visibility)) {
     headers['X-SDN-Encrypted-Stream'] = 'true';
+    if (options?.encryptedStreamHeader?.trim()) {
+      headers['X-SDN-Encrypted-Stream-Header'] = options.encryptedStreamHeader;
+    }
   }
   return headers;
 }
