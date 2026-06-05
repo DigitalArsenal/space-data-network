@@ -84,6 +84,7 @@ export {
 export type {
   ChannelStreamDispatcher,
   ChannelStreamDispatcherOptions,
+  ChannelStreamPushOptions,
   ChannelStreamStats,
   ChannelStreamType,
   EncryptedChannelStreamDispatcherOptions,
