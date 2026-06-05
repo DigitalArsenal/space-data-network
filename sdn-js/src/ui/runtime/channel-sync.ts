@@ -2,6 +2,7 @@ import {
   createAvailableResult,
   createDegradedResult,
   type BackendResult,
+  type ChannelActionOptions,
   type ChannelBackend,
 } from './sdn-backend';
 import {
@@ -15,16 +16,21 @@ export interface ChannelFlatSqlSyncResult {
   stats: ReturnType<typeof createChannelFlatSqlIngestor>['stats'] extends () => infer T ? T : never;
 }
 
+export interface ChannelFlatSqlSyncOptions extends ChannelFlatSqlIngestorOptions {
+  access?: ChannelActionOptions;
+}
+
 export async function ingestChannelStreamToFlatSql(
   channels: Pick<ChannelBackend, 'openStream'>,
   channelId: string,
-  options: ChannelFlatSqlIngestorOptions = {},
+  options: ChannelFlatSqlSyncOptions = {},
 ): Promise<BackendResult<ChannelFlatSqlSyncResult>> {
-  const stream = await channels.openStream(channelId);
+  const stream = await channels.openStream(channelId, options.access);
   if (!stream.ok || !stream.data) {
     return createDegradedResult('channels.ingestFlatSql', stream.capability.reason ?? 'channel stream unavailable');
   }
-  const ingestor = createChannelFlatSqlIngestor(options);
+  const { access: _access, ...ingestorOptions } = options;
+  const ingestor = createChannelFlatSqlIngestor(ingestorOptions);
   ingestor.pushChunk(stream.data);
   ingestor.finish();
   return createAvailableResult('channels.ingestFlatSql', {
