@@ -130,6 +130,56 @@ describe('SDNClient channel API', () => {
     ]);
   });
 
+  it('requests private channel key envelopes through client.channels', async () => {
+    const requests: Array<{ url: string; method: string; contentType: string; body: string }> = [];
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({
+        url: String(input),
+        method: init?.method ?? 'GET',
+        contentType: String((init?.headers as Record<string, string> | undefined)?.['Content-Type'] ?? ''),
+        body: typeof init?.body === 'string' ? init.body : '',
+      });
+      return jsonResponse({
+        channelId: 'spaceaware-OMM',
+        standardCode: 'OMM',
+        grantState: 'verified',
+        contentKeyId: 'channel-private-key',
+        recipientKeyId: 'peer-alpha-x25519',
+        keyEpoch: 'epoch-2026-06-05T00',
+        algorithm: 'DigitalArsenal-FlatBuffers-X25519-AES256GCM',
+        envelopeCid: 'bafywrappedpeeralpha',
+        wrappedKeyEnvelopeBase64: 'd3JhcHBlZA==',
+      });
+    });
+
+    const client = SDNClient.fromUrl('https://sdn.spaceaware.io');
+    await expect(client.channels.keyUnwrap('spaceaware-OMM', {
+      recipientKeyId: 'peer-alpha-x25519',
+      contentKeyId: 'channel-private-key',
+    }, {
+      subject: 'peer-alpha',
+      grantId: 'grant-1',
+      visibility: 'private-listed',
+    })).resolves.toEqual(expect.objectContaining({
+      channelId: 'spaceaware-OMM',
+      standardCode: 'OMM',
+      grantState: 'verified',
+      contentKeyId: 'channel-private-key',
+      recipientKeyId: 'peer-alpha-x25519',
+      wrappedKeyEnvelopeBase64: 'd3JhcHBlZA==',
+    }));
+
+    expect(requests).toEqual([{
+      url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/key-unwrap?subject=peer-alpha&grantId=grant-1&visibility=private-listed',
+      method: 'POST',
+      contentType: 'application/json',
+      body: JSON.stringify({
+        recipientKeyId: 'peer-alpha-x25519',
+        contentKeyId: 'channel-private-key',
+      }),
+    }]);
+  });
+
   it('keeps public SDNClient examples on channel standardCode naming', () => {
     const source = readFileSync(new URL('./client.ts', import.meta.url), 'utf8');
 
