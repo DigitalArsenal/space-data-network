@@ -940,6 +940,73 @@ func TestChannelsStreamPassesPrivateGrantContextToLocalAPI(t *testing.T) {
 	}
 }
 
+func TestChannelsModuleFeedReadsVerifiedPrivateFeedFromLocalAPI(t *testing.T) {
+	t.Parallel()
+
+	streamBytes := bytes.Join([][]byte{
+		channelCLITestNativeFrame("OMM1", []byte{1, 2, 3}),
+		channelCLITestNativeFrame("OMM1", []byte{4, 5, 6, 7}),
+	}, nil)
+	outFile := filepath.Join(t.TempDir(), "module-feed.bin")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/channels/spaceaware-OMM/module-feed" {
+			t.Fatalf("unexpected module-feed request %s %s", r.Method, r.URL.String())
+		}
+		query := r.URL.Query()
+		if query.Get("subject") != "peer-alpha" || query.Get("grantId") != "grant-1" || query.Get("visibility") != "private-listed" {
+			t.Fatalf("module-feed private access query = %s", r.URL.RawQuery)
+		}
+		if got := r.Header.Get("Accept"); got != "application/vnd.sdn.flatbuffers.stream" {
+			t.Fatalf("module-feed Accept = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(streamBytes)
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"module-feed", "spaceaware-OMM",
+		"--out", outFile,
+		"--subject", "peer-alpha",
+		"--grant-id", "grant-1",
+		"--visibility", "private-listed",
+		"--api-url", server.URL,
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels module-feed failed: %v", err)
+	}
+	written, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("read module-feed output: %v", err)
+	}
+	if !bytes.Equal(written, streamBytes) {
+		t.Fatalf("module-feed output mismatch: %v", written)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"channelId=spaceaware-OMM",
+		"sourceId=spaceaware",
+		"standardCode=OMM",
+		"contentType=application/vnd.sdn.flatbuffers.stream",
+		"streamBytes=23",
+		"streamFrames=2",
+		"out=" + outFile,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("channels module-feed output missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "wrapped") || strings.Contains(body, "channel-private-key") {
+		t.Fatalf("channels module-feed output leaked key material:\n%s", body)
+	}
+}
+
 func TestChannelsPNMReadsVerifiedPNMFromLocalAPI(t *testing.T) {
 	t.Parallel()
 

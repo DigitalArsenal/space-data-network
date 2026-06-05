@@ -367,6 +367,14 @@ export class HttpTransport {
     return new Uint8Array(await resp.arrayBuffer());
   }
 
+  async openChannelModuleFeed(channelId: string, options?: ChannelAccessOptions): Promise<Uint8Array> {
+    const resp = await this.fetch(channelActionPath(channelId, 'module-feed', options), {
+      method: 'POST',
+      headers: { Accept: 'application/vnd.sdn.flatbuffers.stream' },
+    });
+    return new Uint8Array(await resp.arrayBuffer());
+  }
+
   async monitorChannel(channelId: string, options?: ChannelAccessOptions): Promise<ChannelMonitor> {
     const resp = await this.fetch(channelActionPath(channelId, 'monitor', options));
     return resp.json();

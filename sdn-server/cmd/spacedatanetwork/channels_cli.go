@@ -221,6 +221,22 @@ func newChannelsCommand() *cobra.Command {
 	streamCmd.Flags().StringVar(&streamOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	addChannelInsecureTLSFlag(streamCmd, &streamOptions.InsecureSkipTLSVerify)
 	cmd.AddCommand(streamCmd)
+	moduleFeedOptions := channelStreamOptions{}
+	moduleFeedCmd := &cobra.Command{
+		Use:   "module-feed <channelId>",
+		Short: "Request a grant-protected native FlatBuffers module feed",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runChannelsModuleFeed(cmd, moduleFeedOptions, args[0])
+		},
+	}
+	moduleFeedCmd.Flags().StringVar(&moduleFeedOptions.Out, "out", "", "file path for native FlatBuffers module feed bytes")
+	moduleFeedCmd.Flags().StringVar(&moduleFeedOptions.Subject, "subject", "", "subscriber EPM subject for private channel access")
+	moduleFeedCmd.Flags().StringVar(&moduleFeedOptions.GrantID, "grant-id", "", "private channel grant ID")
+	moduleFeedCmd.Flags().StringVar(&moduleFeedOptions.Visibility, "visibility", "", "channel visibility for private access checks")
+	moduleFeedCmd.Flags().StringVar(&moduleFeedOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
+	addChannelInsecureTLSFlag(moduleFeedCmd, &moduleFeedOptions.InsecureSkipTLSVerify)
+	cmd.AddCommand(moduleFeedCmd)
 	pnmOptions := channelPNMOptions{}
 	pnmCmd := &cobra.Command{
 		Use:   "pnm <channelId>",
@@ -546,6 +562,82 @@ func readChannelsStreamFromAPI(cmd *cobra.Command, parsed channels.ChannelID, op
 	streamBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, "", fmt.Errorf("read native channel stream: %w", err)
+	}
+	return streamBytes, resp.Header.Get("Content-Type"), nil
+}
+
+func runChannelsModuleFeed(cmd *cobra.Command, options channelStreamOptions, channelID string) error {
+	parsed, err := channels.ParseChannelID(channelID)
+	if err != nil {
+		return err
+	}
+	outPath := strings.TrimSpace(options.Out)
+	if outPath == "" {
+		return fmt.Errorf("--out is required")
+	}
+	apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL")))
+	if apiURL == "" {
+		return fmt.Errorf("--api-url or SDN_API_URL is required to request a channel module feed")
+	}
+	streamBytes, contentType, err := readChannelsModuleFeedFromAPI(cmd, parsed, options, apiURL)
+	if err != nil {
+		return err
+	}
+	frames, err := channels.SplitNativeStreamFramesForChannel(parsed, streamBytes)
+	if err != nil {
+		return fmt.Errorf("invalid native FlatBuffers module feed: %w", err)
+	}
+	if err := os.WriteFile(outPath, streamBytes, 0o600); err != nil {
+		return fmt.Errorf("write native FlatBuffers module feed: %w", err)
+	}
+	if strings.TrimSpace(contentType) == "" {
+		contentType = "application/vnd.sdn.flatbuffers.stream"
+	}
+	payload := map[string]interface{}{
+		"channelId":    parsed.ChannelID,
+		"sourceId":     parsed.SourceID,
+		"standardCode": parsed.StandardCode,
+		"contentType":  contentType,
+		"streamBytes":  len(streamBytes),
+		"streamFrames": len(frames),
+		"out":          outPath,
+	}
+	if parsed.FeedUUID != "" {
+		payload["feedUuid"] = parsed.FeedUUID
+	}
+	printChannelStreamPayload(cmd.OutOrStdout(), payload)
+	return nil
+}
+
+func readChannelsModuleFeedFromAPI(cmd *cobra.Command, parsed channels.ChannelID, options channelStreamOptions, apiURL string) ([]byte, string, error) {
+	feedURL, err := channelModuleFeedURL(apiURL, parsed.ChannelID, channelAccessQuery{
+		Subject:    options.Subject,
+		GrantID:    options.GrantID,
+		Visibility: options.Visibility,
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	client, err := newChannelAPIClient(apiURL, 30*time.Second, options.InsecureSkipTLSVerify)
+	if err != nil {
+		return nil, "", err
+	}
+	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, feedURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Accept", "application/vnd.sdn.flatbuffers.stream")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("request native channel module feed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("request native channel module feed: %s", resp.Status)
+	}
+	streamBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("read native channel module feed: %w", err)
 	}
 	return streamBytes, resp.Header.Get("Content-Type"), nil
 }
@@ -1093,6 +1185,10 @@ type channelAccessQuery struct {
 
 func channelStreamURL(apiURL string, channelID string, access channelAccessQuery) (string, error) {
 	return channelAPIURLWithQuery(apiURL, channelID, "/stream", access.queryValues())
+}
+
+func channelModuleFeedURL(apiURL string, channelID string, access channelAccessQuery) (string, error) {
+	return channelAPIURLWithQuery(apiURL, channelID, "/module-feed", access.queryValues())
 }
 
 func channelPNMURL(apiURL string, channelID string, access channelAccessQuery) (string, error) {
