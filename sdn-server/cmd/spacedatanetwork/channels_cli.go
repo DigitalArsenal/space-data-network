@@ -44,13 +44,19 @@ type channelPublishOptions struct {
 }
 
 type channelStreamOptions struct {
-	Out    string
-	APIURL string
+	Out        string
+	Subject    string
+	GrantID    string
+	Visibility string
+	APIURL     string
 }
 
 type channelPNMOptions struct {
-	Out    string
-	APIURL string
+	Out        string
+	Subject    string
+	GrantID    string
+	Visibility string
+	APIURL     string
 }
 
 type channelMonitorOptions struct {
@@ -148,6 +154,9 @@ func newChannelsCommand() *cobra.Command {
 		},
 	}
 	streamCmd.Flags().StringVar(&streamOptions.Out, "out", "", "file path for native FlatBuffers stream bytes")
+	streamCmd.Flags().StringVar(&streamOptions.Subject, "subject", "", "subscriber EPM subject for private channel access")
+	streamCmd.Flags().StringVar(&streamOptions.GrantID, "grant-id", "", "private channel grant ID")
+	streamCmd.Flags().StringVar(&streamOptions.Visibility, "visibility", "", "channel visibility for private access checks")
 	streamCmd.Flags().StringVar(&streamOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	cmd.AddCommand(streamCmd)
 	pnmOptions := channelPNMOptions{}
@@ -160,6 +169,9 @@ func newChannelsCommand() *cobra.Command {
 		},
 	}
 	pnmCmd.Flags().StringVar(&pnmOptions.Out, "out", "", "file path for verified PNM bytes")
+	pnmCmd.Flags().StringVar(&pnmOptions.Subject, "subject", "", "subscriber EPM subject for private channel access")
+	pnmCmd.Flags().StringVar(&pnmOptions.GrantID, "grant-id", "", "private channel grant ID")
+	pnmCmd.Flags().StringVar(&pnmOptions.Visibility, "visibility", "", "channel visibility for private access checks")
 	pnmCmd.Flags().StringVar(&pnmOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	cmd.AddCommand(pnmCmd)
 	grantsCmd := &cobra.Command{
@@ -349,7 +361,7 @@ func runChannelsStream(cmd *cobra.Command, options channelStreamOptions, channel
 	if apiURL == "" {
 		return fmt.Errorf("--api-url or SDN_API_URL is required to open a channel stream")
 	}
-	streamBytes, contentType, err := readChannelsStreamFromAPI(cmd, parsed, apiURL)
+	streamBytes, contentType, err := readChannelsStreamFromAPI(cmd, parsed, options, apiURL)
 	if err != nil {
 		return err
 	}
@@ -379,8 +391,12 @@ func runChannelsStream(cmd *cobra.Command, options channelStreamOptions, channel
 	return nil
 }
 
-func readChannelsStreamFromAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string) ([]byte, string, error) {
-	streamURL, err := channelStreamURL(apiURL, parsed.ChannelID)
+func readChannelsStreamFromAPI(cmd *cobra.Command, parsed channels.ChannelID, options channelStreamOptions, apiURL string) ([]byte, string, error) {
+	streamURL, err := channelStreamURL(apiURL, parsed.ChannelID, channelAccessQuery{
+		Subject:    options.Subject,
+		GrantID:    options.GrantID,
+		Visibility: options.Visibility,
+	})
 	if err != nil {
 		return nil, "", err
 	}
@@ -418,7 +434,7 @@ func runChannelsPNM(cmd *cobra.Command, options channelPNMOptions, channelID str
 	if apiURL == "" {
 		return fmt.Errorf("--api-url or SDN_API_URL is required to fetch channel PNM")
 	}
-	pnmBytes, contentType, err := readChannelsPNMFromAPI(cmd, parsed, apiURL)
+	pnmBytes, contentType, err := readChannelsPNMFromAPI(cmd, parsed, options, apiURL)
 	if err != nil {
 		return err
 	}
@@ -443,8 +459,12 @@ func runChannelsPNM(cmd *cobra.Command, options channelPNMOptions, channelID str
 	return nil
 }
 
-func readChannelsPNMFromAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string) ([]byte, string, error) {
-	pnmURL, err := channelPNMURL(apiURL, parsed.ChannelID)
+func readChannelsPNMFromAPI(cmd *cobra.Command, parsed channels.ChannelID, options channelPNMOptions, apiURL string) ([]byte, string, error) {
+	pnmURL, err := channelPNMURL(apiURL, parsed.ChannelID, channelAccessQuery{
+		Subject:    options.Subject,
+		GrantID:    options.GrantID,
+		Visibility: options.Visibility,
+	})
 	if err != nil {
 		return nil, "", err
 	}
@@ -813,12 +833,32 @@ func channelPublishURL(apiURL string, channelID string) (string, error) {
 	return channelAPIURL(apiURL, channelID, "/publish?stream=1")
 }
 
-func channelStreamURL(apiURL string, channelID string) (string, error) {
-	return channelAPIURL(apiURL, channelID, "/stream")
+type channelAccessQuery struct {
+	Subject    string
+	GrantID    string
+	Visibility string
 }
 
-func channelPNMURL(apiURL string, channelID string) (string, error) {
-	return channelAPIURL(apiURL, channelID, "/pnm")
+func channelStreamURL(apiURL string, channelID string, access channelAccessQuery) (string, error) {
+	return channelAPIURLWithQuery(apiURL, channelID, "/stream", access.queryValues())
+}
+
+func channelPNMURL(apiURL string, channelID string, access channelAccessQuery) (string, error) {
+	return channelAPIURLWithQuery(apiURL, channelID, "/pnm", access.queryValues())
+}
+
+func (access channelAccessQuery) queryValues() url.Values {
+	query := url.Values{}
+	if subject := strings.TrimSpace(access.Subject); subject != "" {
+		query.Set("subject", subject)
+	}
+	if grantID := strings.TrimSpace(access.GrantID); grantID != "" {
+		query.Set("grantId", grantID)
+	}
+	if visibility := strings.TrimSpace(access.Visibility); visibility != "" {
+		query.Set("visibility", visibility)
+	}
+	return query
 }
 
 func channelSubscriptionURL(apiURL string, channelID string, action string) (string, error) {
@@ -835,6 +875,10 @@ func channelGrantURL(apiURL string, channelID string) (string, error) {
 }
 
 func channelAPIURL(apiURL string, channelID string, suffix string) (string, error) {
+	return channelAPIURLWithQuery(apiURL, channelID, suffix, nil)
+}
+
+func channelAPIURLWithQuery(apiURL string, channelID string, suffix string, extraQuery url.Values) (string, error) {
 	base, err := url.Parse(strings.TrimRight(apiURL, "/"))
 	if err != nil {
 		return "", fmt.Errorf("invalid api-url: %w", err)
@@ -844,7 +888,16 @@ func channelAPIURL(apiURL string, channelID string, suffix string) (string, erro
 	}
 	pathSuffix, rawQuery, _ := strings.Cut(suffix, "?")
 	base.Path = strings.TrimRight(base.Path, "/") + "/api/v1/channels/" + url.PathEscape(channelID) + pathSuffix
-	base.RawQuery = rawQuery
+	query, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return "", fmt.Errorf("invalid channel query: %w", err)
+	}
+	for key, values := range extraQuery {
+		for _, value := range values {
+			query.Add(key, value)
+		}
+	}
+	base.RawQuery = query.Encode()
 	base.Fragment = ""
 	return base.String(), nil
 }
