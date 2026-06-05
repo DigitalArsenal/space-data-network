@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,6 +40,11 @@ type channelGrantIssueOptions struct {
 
 type channelPublishOptions struct {
 	From   string
+	APIURL string
+}
+
+type channelStreamOptions struct {
+	Out    string
 	APIURL string
 }
 
@@ -127,6 +133,18 @@ func newChannelsCommand() *cobra.Command {
 	publishCmd.Flags().StringVar(&publishOptions.From, "from", "", "native FlatBuffers stream file to publish")
 	publishCmd.Flags().StringVar(&publishOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	cmd.AddCommand(publishCmd)
+	streamOptions := channelStreamOptions{}
+	streamCmd := &cobra.Command{
+		Use:   "stream <channelId>",
+		Short: "Open and save a native FlatBuffers channel stream",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runChannelsStream(cmd, streamOptions, args[0])
+		},
+	}
+	streamCmd.Flags().StringVar(&streamOptions.Out, "out", "", "file path for native FlatBuffers stream bytes")
+	streamCmd.Flags().StringVar(&streamOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
+	cmd.AddCommand(streamCmd)
 	grantsCmd := &cobra.Command{
 		Use:   "grants",
 		Short: "Manage private channel grants",
@@ -268,6 +286,75 @@ func runChannelsPublishToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiU
 	}
 	printChannelPublishPayload(cmd.OutOrStdout(), payload)
 	return nil
+}
+
+func runChannelsStream(cmd *cobra.Command, options channelStreamOptions, channelID string) error {
+	parsed, err := channels.ParseChannelID(channelID)
+	if err != nil {
+		return err
+	}
+	outPath := strings.TrimSpace(options.Out)
+	if outPath == "" {
+		return fmt.Errorf("--out is required")
+	}
+	apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL")))
+	if apiURL == "" {
+		return fmt.Errorf("--api-url or SDN_API_URL is required to open a channel stream")
+	}
+	streamBytes, contentType, err := readChannelsStreamFromAPI(cmd, parsed, apiURL)
+	if err != nil {
+		return err
+	}
+	frames, err := channels.SplitNativeStreamFrames(streamBytes)
+	if err != nil {
+		return fmt.Errorf("invalid native FlatBuffers stream: %w", err)
+	}
+	if err := os.WriteFile(outPath, streamBytes, 0o600); err != nil {
+		return fmt.Errorf("write native FlatBuffers stream: %w", err)
+	}
+	if strings.TrimSpace(contentType) == "" {
+		contentType = "application/vnd.sdn.flatbuffers.stream"
+	}
+	payload := map[string]interface{}{
+		"channelId":    parsed.ChannelID,
+		"sourceId":     parsed.SourceID,
+		"standardCode": parsed.StandardCode,
+		"contentType":  contentType,
+		"streamBytes":  len(streamBytes),
+		"streamFrames": len(frames),
+		"out":          outPath,
+	}
+	if parsed.FeedUUID != "" {
+		payload["feedUuid"] = parsed.FeedUUID
+	}
+	printChannelStreamPayload(cmd.OutOrStdout(), payload)
+	return nil
+}
+
+func readChannelsStreamFromAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string) ([]byte, string, error) {
+	streamURL, err := channelStreamURL(apiURL, parsed.ChannelID)
+	if err != nil {
+		return nil, "", err
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, streamURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Accept", "application/vnd.sdn.flatbuffers.stream")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("open native channel stream: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("open native channel stream: %s", resp.Status)
+	}
+	streamBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("read native channel stream: %w", err)
+	}
+	return streamBytes, resp.Header.Get("Content-Type"), nil
 }
 
 func printChannelListRow(out interface {
@@ -614,6 +701,10 @@ func channelPublishURL(apiURL string, channelID string) (string, error) {
 	return channelAPIURL(apiURL, channelID, "/publish?stream=1")
 }
 
+func channelStreamURL(apiURL string, channelID string) (string, error) {
+	return channelAPIURL(apiURL, channelID, "/stream")
+}
+
 func channelSubscriptionURL(apiURL string, channelID string, action string) (string, error) {
 	switch action {
 	case "subscribe", "unsubscribe":
@@ -656,6 +747,25 @@ func printChannelPublishPayload(out interface {
 		"throughputBytesPerSecond",
 		"wireSpeedUtilization",
 		"importedRows",
+	} {
+		if value, ok := payload[key]; ok {
+			fmt.Fprintf(out, "%s=%v\n", key, monitorValue(value))
+		}
+	}
+}
+
+func printChannelStreamPayload(out interface {
+	Write([]byte) (int, error)
+}, payload map[string]interface{}) {
+	for _, key := range []string{
+		"channelId",
+		"sourceId",
+		"standardCode",
+		"feedUuid",
+		"contentType",
+		"streamBytes",
+		"streamFrames",
+		"out",
 	} {
 		if value, ok := payload[key]; ok {
 			fmt.Fprintf(out, "%s=%v\n", key, monitorValue(value))
