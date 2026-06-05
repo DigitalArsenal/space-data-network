@@ -488,6 +488,41 @@ func TestChannelHandlerPublishesAndOpensNativeFlatBufferStream(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerReportsNativeStreamWireSpeedUtilization(t *testing.T) {
+	t.Setenv("SDN_TEST_LINK_GBIT", "2")
+
+	signing := newChannelSigningFixture(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+	manifest := buildAPISignedDPM(t, signing.privateKey, "DPM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	streamBytes := bytes.Join([][]byte{
+		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
+		nativeAPIFrame("OMM1", []byte{4, 5, 6, 7}),
+	}, nil)
+	streamReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1", bytes.NewReader(streamBytes))
+	streamReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	streamRec := httptest.NewRecorder()
+	mux.ServeHTTP(streamRec, streamReq)
+	if streamRec.Code != http.StatusAccepted {
+		t.Fatalf("stream publish status = %d body=%s", streamRec.Code, streamRec.Body.String())
+	}
+
+	monitorReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/monitor", nil)
+	monitorRec := httptest.NewRecorder()
+	mux.ServeHTTP(monitorRec, monitorReq)
+	if monitorRec.Code != http.StatusOK {
+		t.Fatalf("monitor status = %d body=%s", monitorRec.Code, monitorRec.Body.String())
+	}
+	monitorBody := decodeChannelJSON(t, monitorRec.Body.String())
+	if utilization, ok := monitorBody["wireSpeedUtilization"].(float64); !ok || utilization <= 0 {
+		t.Fatalf("monitor did not report native stream wire-speed utilization: %#v", monitorBody)
+	}
+}
+
 func TestChannelHandlerReadsPublicNativeFlatBufferByteRange(t *testing.T) {
 	t.Parallel()
 
