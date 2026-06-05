@@ -9,8 +9,10 @@ type VerifiedMetadata struct {
 	ChannelID         string
 	PNMCID            string
 	PNMFileID         string
+	DPMFileID         string
 	SignatureType     string
 	VerifiedAt        time.Time
+	DPMVerifiedAt     time.Time
 	ProviderPeer      string
 	LocalRows         int
 	RemoteRows        int
@@ -47,6 +49,24 @@ func (r *VerifiedMetadataRegistry) RecordPNM(channel ChannelID, evidence PNMTrus
 	r.metadata[channel.ChannelID] = metadata
 	r.mu.Unlock()
 	return metadata
+}
+
+func (r *VerifiedMetadataRegistry) RecordDPM(channel ChannelID, evidence DPMTrustEvidence) (VerifiedMetadata, bool) {
+	if r == nil {
+		return VerifiedMetadata{}, false
+	}
+	r.mu.Lock()
+	metadata, ok := r.metadata[channel.ChannelID]
+	if ok {
+		metadata.DPMFileID = evidence.FileID
+		metadata.DPMVerifiedAt = time.Now().UTC()
+		if evidence.ProviderPeer != "" {
+			metadata.ProviderPeer = evidence.ProviderPeer
+		}
+		r.metadata[channel.ChannelID] = metadata
+	}
+	r.mu.Unlock()
+	return metadata, ok
 }
 
 func (r *VerifiedMetadataRegistry) RecordNativeStream(channel ChannelID, snapshot NativeStreamSnapshot) (VerifiedMetadata, bool) {

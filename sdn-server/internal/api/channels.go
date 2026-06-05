@@ -285,6 +285,10 @@ func (h *ChannelHandler) publishPublic(w http.ResponseWriter, r *http.Request, p
 		writeError(w, http.StatusBadRequest, "read PNM envelope: "+err.Error())
 		return
 	}
+	if h.isDPMManifestPublish(r, body) {
+		h.publishDPMManifest(w, parsed, body)
+		return
+	}
 	evidence, err := channels.VerifySignedPNMEnvelope(body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "verified PNM envelope required: "+err.Error())
@@ -301,9 +305,43 @@ func (h *ChannelHandler) publishPublic(w http.ResponseWriter, r *http.Request, p
 	})
 }
 
+func (h *ChannelHandler) publishDPMManifest(w http.ResponseWriter, parsed channels.ChannelID, body []byte) {
+	metadata, verified := h.metadata.Get(parsed)
+	if !verified {
+		writeError(w, http.StatusForbidden, "verified PNM required before DPM publish")
+		return
+	}
+	evidence, err := channels.VerifySignedDPMManifest(body, metadata.PNMFileID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "verified DPM manifest required: "+err.Error())
+		return
+	}
+	metadata, ok := h.metadata.RecordDPM(parsed, evidence)
+	if !ok {
+		writeError(w, http.StatusForbidden, "verified PNM required before DPM publish")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{
+		"channelId":     parsed.ChannelID,
+		"standardCode":  parsed.StandardCode,
+		"pnmVerified":   true,
+		"dpmVerified":   true,
+		"pnmCid":        metadata.PNMCID,
+		"dpmFileId":     evidence.FileID,
+		"providerPeer":  metadata.ProviderPeer,
+		"signatureType": evidence.SignatureType,
+		"verifiedAt":    metadata.DPMVerifiedAt.Format(time.RFC3339Nano),
+	})
+}
+
 func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
-	if _, verified := h.metadata.Get(parsed); !verified {
+	metadata, verified := h.metadata.Get(parsed)
+	if !verified {
 		writeError(w, http.StatusForbidden, "verified PNM required before stream publish")
+		return
+	}
+	if metadata.DPMVerifiedAt.IsZero() {
+		writeError(w, http.StatusForbidden, "verified DPM required before stream publish")
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<20))
@@ -342,7 +380,7 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid native FlatBuffer stream: "+err.Error())
 		return
 	}
-	metadata, _ := h.metadata.RecordNativeStream(parsed, snapshot)
+	metadata, _ = h.metadata.RecordNativeStream(parsed, snapshot)
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"channelId":     parsed.ChannelID,
 		"standardCode":  parsed.StandardCode,
@@ -438,6 +476,15 @@ func (h *ChannelHandler) isNativeStreamPublish(r *http.Request) bool {
 	return strings.HasPrefix(contentType, "application/vnd.sdn.flatbuffers.stream")
 }
 
+func (h *ChannelHandler) isDPMManifestPublish(r *http.Request, body []byte) bool {
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("manifest")), "1") ||
+		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("manifest")), "true") {
+		return true
+	}
+	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+	return strings.HasPrefix(contentType, "application/vnd.sdn.dpm") || channels.IsDPMManifest(body)
+}
+
 func channelListRow(standardCode string) map[string]interface{} {
 	return map[string]interface{}{
 		"standardCode":    standardCode,
@@ -460,6 +507,7 @@ func (h *ChannelHandler) channelDetail(parsed channels.ChannelID) map[string]int
 		"visibility":      state.Visibility,
 		"subscribed":      state.Subscribed,
 		"pnmVerified":     verified,
+		"dpmVerified":     !metadata.DPMVerifiedAt.IsZero(),
 		"pnmCid":          emptyStringAsNil(metadata.PNMCID),
 		"grantState":      state.GrantState,
 		"encryptionState": state.EncryptionState,

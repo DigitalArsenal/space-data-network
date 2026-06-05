@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	dpm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DPM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
@@ -296,6 +297,58 @@ func TestChannelHandlerPublicStreamPublishRequiresVerifiedPNM(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerPublicStreamPublishRequiresVerifiedDPM(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+
+	pnmReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish", bytes.NewReader(buildAPISignedPNM(t, "bafystreamhead", "DPM")))
+	pnmRec := httptest.NewRecorder()
+	mux.ServeHTTP(pnmRec, pnmReq)
+	if pnmRec.Code != http.StatusAccepted {
+		t.Fatalf("PNM publish status = %d body=%s", pnmRec.Code, pnmRec.Body.String())
+	}
+
+	streamBytes := nativeAPIFrame("OMM1", []byte{1, 2, 3})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1", bytes.NewReader(streamBytes))
+	req.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("stream publish status = %d, want %d body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "verified DPM required") {
+		t.Fatalf("stream publish body did not require verified DPM: %s", rec.Body.String())
+	}
+}
+
+func TestChannelHandlerRejectsDPMMismatchedToPNM(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+
+	pnmReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish", bytes.NewReader(buildAPISignedPNM(t, "bafystreamhead", "DPM")))
+	pnmRec := httptest.NewRecorder()
+	mux.ServeHTTP(pnmRec, pnmReq)
+	if pnmRec.Code != http.StatusAccepted {
+		t.Fatalf("PNM publish status = %d body=%s", pnmRec.Code, pnmRec.Body.String())
+	}
+
+	dpmReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?manifest=1", bytes.NewReader(buildAPISignedDPM(t, "OTHER")))
+	dpmReq.Header.Set("Content-Type", "application/vnd.sdn.dpm")
+	dpmRec := httptest.NewRecorder()
+	mux.ServeHTTP(dpmRec, dpmReq)
+	if dpmRec.Code != http.StatusBadRequest {
+		t.Fatalf("DPM publish status = %d, want %d body=%s", dpmRec.Code, http.StatusBadRequest, dpmRec.Body.String())
+	}
+	if !strings.Contains(dpmRec.Body.String(), "does not match PNM") {
+		t.Fatalf("DPM publish body did not report FILE_ID mismatch: %s", dpmRec.Body.String())
+	}
+}
+
 func TestChannelHandlerPublishesAndOpensNativeFlatBufferStream(t *testing.T) {
 	t.Parallel()
 
@@ -308,6 +361,7 @@ func TestChannelHandlerPublishesAndOpensNativeFlatBufferStream(t *testing.T) {
 	if pnmRec.Code != http.StatusAccepted {
 		t.Fatalf("PNM publish status = %d body=%s", pnmRec.Code, pnmRec.Body.String())
 	}
+	publishDPMForChannel(t, mux, "spaceaware-OMM", "DPM")
 
 	streamBytes := bytes.Join([][]byte{
 		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
@@ -369,6 +423,7 @@ func TestChannelHandlerImportsVerifiedNativeStreamIntoFlatSQL(t *testing.T) {
 	if pnmRec.Code != http.StatusAccepted {
 		t.Fatalf("PNM publish status = %d body=%s", pnmRec.Code, pnmRec.Body.String())
 	}
+	publishDPMForChannel(t, mux, "spaceaware-OMM", "DPM")
 
 	streamBytes := bytes.Join([][]byte{
 		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
@@ -448,6 +503,22 @@ func nativeAPIFrame(fileIdentifier string, payload []byte) []byte {
 	return frame
 }
 
+func publishDPMForChannel(t *testing.T, mux *http.ServeMux, channelID string, fileID string) {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/"+channelID+"/publish?manifest=1", bytes.NewReader(buildAPISignedDPM(t, fileID)))
+	req.Header.Set("Content-Type", "application/vnd.sdn.dpm")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("DPM publish status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := decodeChannelJSON(t, rec.Body.String())
+	if body["dpmVerified"] != true || body["dpmFileId"] != fileID {
+		t.Fatalf("unexpected DPM publish response: %#v", body)
+	}
+}
+
 func newChannelTestStore(t *testing.T) *storage.FlatSQLStore {
 	t.Helper()
 
@@ -503,6 +574,34 @@ func buildAPISignedPNM(t *testing.T, cid string, fileID string) []byte {
 	PNM.PNMAddSIGNATURE_TYPE(builder, signatureTypeOffset)
 	pnm := PNM.PNMEnd(builder)
 	PNM.FinishSizePrefixedPNMBuffer(builder, pnm)
+	return append([]byte(nil), builder.FinishedBytes()...)
+}
+
+func buildAPISignedDPM(t *testing.T, fileID string) []byte {
+	t.Helper()
+
+	signature := bytes.Repeat([]byte{0xaa}, 64)
+	builder := flatbuffers.NewBuilder(512)
+	versionOffset := builder.CreateString("1")
+	datasetOffset := builder.CreateString("spaceaware")
+	updateOffset := builder.CreateString("update-1")
+	fileIDOffset := builder.CreateString(fileID)
+	providerOffset := builder.CreateString("spaceaware")
+	publishedOffset := builder.CreateString(time.Now().UTC().Format(time.RFC3339Nano))
+	signatureTypeOffset := builder.CreateString("Ed25519")
+	signatureOffset := builder.CreateByteVector(signature)
+
+	dpm.DPMStart(builder)
+	dpm.DPMAddVERSION(builder, versionOffset)
+	dpm.DPMAddDATASET_ID(builder, datasetOffset)
+	dpm.DPMAddUPDATE_ID(builder, updateOffset)
+	dpm.DPMAddFILE_ID(builder, fileIDOffset)
+	dpm.DPMAddPROVIDER_PEER_ID(builder, providerOffset)
+	dpm.DPMAddPUBLISH_TIMESTAMP(builder, publishedOffset)
+	dpm.DPMAddPROVIDER_SIGNATURE(builder, signatureOffset)
+	dpm.DPMAddSIGNATURE_TYPE(builder, signatureTypeOffset)
+	root := dpm.DPMEnd(builder)
+	dpm.FinishDPMBuffer(builder, root)
 	return append([]byte(nil), builder.FinishedBytes()...)
 }
 
