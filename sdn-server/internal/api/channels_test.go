@@ -1403,17 +1403,81 @@ func TestChannelHandlerPrivateEncryptedStreamAcceptsFlatBuffersRunnerByteArrayHe
 	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader([]byte("ciphertext")))
 	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.encrypted-stream")
 	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
-	publishReq.Header.Set("X-SDN-Encrypted-Stream-Header", `{"algorithm":"x25519","ephemeralPublicKey":[0,1,2,3,252,253,254,255],"nonceStart":[16,17,18,19],"context":"spaceaware-OMM","fields":["OMM"]}`)
+	publishReq.Header.Set("X-SDN-Encrypted-Stream-Header", `{"algorithm":"x25519","ephemeralPublicKey":[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31],"nonceStart":[16,17,18,19,20,21,22,23,24,25,26,27],"context":"spaceaware-OMM","fields":["OMM"]}`)
 	publishRec := httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
 	if publishRec.Code != http.StatusAccepted {
 		t.Fatalf("private encrypted stream publish status = %d body=%s", publishRec.Code, publishRec.Body.String())
 	}
-	if decryptor.header.SenderPublicKey != "00010203fcfdfeff" ||
-		decryptor.header.EphemeralPublicKey != "00010203fcfdfeff" ||
-		decryptor.header.NonceStart != "10111213" ||
+	if decryptor.header.SenderPublicKey != "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f" ||
+		decryptor.header.EphemeralPublicKey != "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f" ||
+		decryptor.header.NonceStart != "101112131415161718191a1b" ||
 		decryptor.header.Context != "spaceaware-OMM" {
 		t.Fatalf("decryptor header did not normalize FlatBuffers byte-array fields: %#v", decryptor.header)
+	}
+}
+
+func TestChannelHandlerPrivateEncryptedStreamRejectsMalformedHeaderKeyAndNonceSizes(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name       string
+		headerJSON string
+		want       string
+	}{
+		{
+			name:       "short sender key",
+			headerJSON: `{"algorithm":"x25519","senderPublicKey":"00010203","nonceStart":"cccccccccccccccccccccccc","context":"spaceaware-OMM"}`,
+			want:       "senderPublicKey must be 32 bytes",
+		},
+		{
+			name:       "short nonce",
+			headerJSON: `{"algorithm":"x25519","senderPublicKey":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","nonceStart":[16,17,18,19],"context":"spaceaware-OMM"}`,
+			want:       "nonceStart must be 12 bytes",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			signing := newChannelSigningFixture(t)
+			store := newChannelTestStore(t)
+			decryptor := &channelTestEncryptedStreamDecryptor{plaintext: nativeAPIFrame("OMM1", []byte{1, 2, 3})}
+			handler := NewChannelHandlerWithOptions(store, ChannelHandlerOptions{
+				EncryptedStreams: decryptor,
+			})
+			mux := http.NewServeMux()
+			handler.RegisterRoutes(mux)
+			manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+			publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+			publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+			grantReq := httptest.NewRequest(
+				http.MethodPost,
+				"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
+				strings.NewReader(`{"to":"peer-alpha","scopes":["publish"]}`),
+			)
+			grantRec := httptest.NewRecorder()
+			mux.ServeHTTP(grantRec, grantReq)
+			if grantRec.Code != http.StatusCreated {
+				t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+			}
+			grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+			publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader([]byte("ciphertext")))
+			publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.encrypted-stream")
+			publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+			publishReq.Header.Set("X-SDN-Encrypted-Stream-Header", tt.headerJSON)
+			publishRec := httptest.NewRecorder()
+			mux.ServeHTTP(publishRec, publishReq)
+			if publishRec.Code != http.StatusBadRequest {
+				t.Fatalf("private encrypted stream publish status = %d, want %d body=%s", publishRec.Code, http.StatusBadRequest, publishRec.Body.String())
+			}
+			if !strings.Contains(publishRec.Body.String(), tt.want) {
+				t.Fatalf("private encrypted stream rejection missing %q: %s", tt.want, publishRec.Body.String())
+			}
+			if len(decryptor.ciphertext) != 0 {
+				t.Fatalf("decryptor saw ciphertext despite malformed header: %q", string(decryptor.ciphertext))
+			}
+		})
 	}
 }
 
@@ -1667,7 +1731,7 @@ func channelTestPNMSignaturePayload(manifestCID, fileID string) []byte {
 
 func setEncryptedChannelStreamHeader(req *http.Request, channelID string) {
 	req.Header.Set("X-SDN-Encrypted-Stream-Header", fmt.Sprintf(
-		`{"algorithm":"x25519","context":%q,"ephemeral_public_key":"0123456789abcdef","nonce_start":"00112233445566778899aabb"}`,
+		`{"algorithm":"x25519","context":%q,"ephemeral_public_key":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f","nonce_start":"00112233445566778899aabb"}`,
 		channelID,
 	))
 }
