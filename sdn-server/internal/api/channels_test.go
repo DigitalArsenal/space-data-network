@@ -706,6 +706,63 @@ func TestChannelHandlerPrivateListedCollectionFailsClosedWithoutGrant(t *testing
 	}
 }
 
+func TestChannelHandlerPrivateListedCollectionReturnsGrantedVerifiedMetadata(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants",
+		strings.NewReader(`{"to":"peer-alpha","scopes":["list_private"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels?standardCode=OMM&visibility=private-listed&subject=peer-alpha&grantId="+grantID, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("private-listed collection with grant status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := decodeChannelJSON(t, rec.Body.String())
+	results := body["results"].([]interface{})
+	if len(results) != 1 {
+		t.Fatalf("private-listed result count = %d, want 1 body=%#v", len(results), body)
+	}
+	row := results[0].(map[string]interface{})
+	for key, want := range map[string]interface{}{
+		"channelId":       "spaceaware-OMM",
+		"sourceId":        "spaceaware",
+		"standardCode":    "OMM",
+		"visibility":      "private-listed",
+		"grantState":      "verified",
+		"encryptionState": "encrypted",
+		"pnmVerified":     true,
+		"dpmVerified":     true,
+	} {
+		if row[key] != want {
+			t.Fatalf("private-listed row[%s] = %#v, want %#v row=%#v", key, row[key], want, row)
+		}
+	}
+	for _, forbidden := range []string{"contentKeyID", "encryptionPolicy"} {
+		if _, ok := row[forbidden]; ok {
+			t.Fatalf("private-listed row exposed protected key metadata %q: %#v", forbidden, row)
+		}
+	}
+}
+
 func TestChannelHandlerVerifiedEncryptedDPMMakesChannelPrivateFailClosed(t *testing.T) {
 	t.Parallel()
 

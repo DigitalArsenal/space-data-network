@@ -717,6 +717,23 @@ func TestChannelsGrantIssuePrintsScopedGrant(t *testing.T) {
 	}
 }
 
+func TestChannelsGrantIssueAllowsPrivateListScope(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"grants", "issue", "spaceaware-OMM", "--to", "peer-alpha", "--scope", "list_private"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels grants issue failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "scope=list_private") {
+		t.Fatalf("grant output missing list_private scope:\n%s", out.String())
+	}
+}
+
 func TestChannelsGrantIssueUsesLocalAPI(t *testing.T) {
 	t.Parallel()
 
