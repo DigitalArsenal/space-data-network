@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1323,6 +1324,121 @@ func TestChannelHandlerPrivateEncryptedStreamDecryptsBeforeImportAndCache(t *tes
 	}
 }
 
+func TestChannelHandlerPrivateEncryptedStreamAcceptsFlatBuffersHeaderJSON(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	store := newChannelTestStore(t)
+	decryptedStream := nativeAPIFrame("OMM1", []byte{1, 2, 3})
+	decryptor := &channelTestEncryptedStreamDecryptor{plaintext: decryptedStream}
+	handler := NewChannelHandlerWithOptions(store, ChannelHandlerOptions{
+		EncryptedStreams: decryptor,
+	})
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
+		strings.NewReader(`{"to":"peer-alpha","scopes":["publish"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	ciphertext := []byte("flatbuffers-encrypted-stream-bytes")
+	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(ciphertext))
+	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.encrypted-stream")
+	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+	publishReq.Header.Set("X-SDN-Encrypted-Stream-Header", `{"version":2,"algorithm":"x25519","senderPublicKey":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","recipientKeyId":"bbbbbbbbbbbbbbbb","nonceStart":"cccccccccccccccccccccccc","context":"spaceaware-OMM"}`)
+	publishRec := httptest.NewRecorder()
+	mux.ServeHTTP(publishRec, publishReq)
+	if publishRec.Code != http.StatusAccepted {
+		t.Fatalf("private encrypted stream publish status = %d body=%s", publishRec.Code, publishRec.Body.String())
+	}
+	if decryptor.header.SenderPublicKey != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ||
+		decryptor.header.RecipientKeyID != "bbbbbbbbbbbbbbbb" ||
+		decryptor.header.NonceStart != "cccccccccccccccccccccccc" ||
+		decryptor.header.Context != "spaceaware-OMM" {
+		t.Fatalf("decryptor header did not preserve FlatBuffers header JSON fields: %#v", decryptor.header)
+	}
+}
+
+func TestChannelHandlerPrivateEncryptedStreamDecryptFailureDoesNotImportOrCache(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	store := newChannelTestStore(t)
+	decryptor := &channelTestEncryptedStreamDecryptor{err: errors.New("bad encrypted stream header")}
+	handler := NewChannelHandlerWithOptions(store, ChannelHandlerOptions{
+		EncryptedStreams: decryptor,
+	})
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
+		strings.NewReader(`{"to":"peer-alpha","scopes":["publish","stream_open","byte_range_read"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader([]byte("ciphertext")))
+	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.encrypted-stream")
+	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+	setEncryptedChannelStreamHeader(publishReq, "spaceaware-OMM")
+	publishRec := httptest.NewRecorder()
+	mux.ServeHTTP(publishRec, publishReq)
+	if publishRec.Code != http.StatusBadRequest {
+		t.Fatalf("private encrypted stream publish status = %d, want %d body=%s", publishRec.Code, http.StatusBadRequest, publishRec.Body.String())
+	}
+	if !strings.Contains(publishRec.Body.String(), "decrypt encrypted private channel stream: bad encrypted stream header") {
+		t.Fatalf("private decrypt failure did not explain failure: %s", publishRec.Body.String())
+	}
+
+	schemaName, err := channels.SchemaNameFromStandardCode("OMM")
+	if err != nil {
+		t.Fatalf("SchemaNameFromStandardCode failed: %v", err)
+	}
+	count, err := store.CountRawRecords(storage.RawRecordQuery{SchemaName: schemaName})
+	if err != nil {
+		t.Fatalf("CountRawRecords failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("durable private OMM rows = %d, want 0 after decrypt failure", count)
+	}
+
+	openReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/stream?subject=peer-alpha&grantId="+grantID, nil)
+	openRec := httptest.NewRecorder()
+	mux.ServeHTTP(openRec, openReq)
+	if openRec.Code != http.StatusNotFound {
+		t.Fatalf("private stream open after decrypt failure status = %d, want %d body=%s", openRec.Code, http.StatusNotFound, openRec.Body.String())
+	}
+
+	rangeReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/bytes?offset=0&length=1&subject=peer-alpha&grantId="+grantID, nil)
+	rangeRec := httptest.NewRecorder()
+	mux.ServeHTTP(rangeRec, rangeReq)
+	if rangeRec.Code != http.StatusNotFound {
+		t.Fatalf("private byte range after decrypt failure status = %d, want %d body=%s", rangeRec.Code, http.StatusNotFound, rangeRec.Body.String())
+	}
+}
+
 func TestChannelHandlerRejectsPlaintextPrivateStreamPublishBeforeImport(t *testing.T) {
 	t.Parallel()
 
@@ -1514,11 +1630,15 @@ type channelTestEncryptedStreamDecryptor struct {
 	plaintext  []byte
 	ciphertext []byte
 	header     EncryptedNativeStreamHeader
+	err        error
 }
 
 func (d *channelTestEncryptedStreamDecryptor) DecryptNativeStream(req EncryptedNativeStreamDecryptRequest) ([]byte, error) {
 	d.ciphertext = append([]byte(nil), req.Ciphertext...)
 	d.header = req.Header
+	if d.err != nil {
+		return nil, d.err
+	}
 	return append([]byte(nil), d.plaintext...), nil
 }
 
