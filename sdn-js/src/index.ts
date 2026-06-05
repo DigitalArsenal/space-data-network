@@ -77,6 +77,18 @@ export {
   standardCodeFromSchemaName,
 } from './channels';
 export type { ChannelIdInput, ParsedChannelId } from './channels';
+export {
+  createChannelStreamDispatcher,
+  createEncryptedChannelStreamDispatcher,
+} from './channel-stream';
+export type {
+  ChannelStreamDispatcher,
+  ChannelStreamDispatcherOptions,
+  ChannelStreamStats,
+  ChannelStreamType,
+  EncryptedChannelStreamDispatcherOptions,
+  NativeStreamingDispatcher,
+} from './channel-stream';
 // Crypto and HD Wallet exports (unified from hd-wallet-wasm)
 export {
   // Initialization
