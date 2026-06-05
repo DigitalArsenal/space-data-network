@@ -2,6 +2,7 @@ import {
   createCapabilityResult,
   createAvailableResult,
   type BackendResult,
+  type ChannelActionOptions,
   type ChannelBackend,
   type ChannelListOptions,
   type ChannelMonitor,
@@ -25,22 +26,22 @@ export function createHttpChannelBackend(fetchLike: FetchLike, baseUrl: string |
       if (!result.ok) return result as BackendResult<ChannelSummary>;
       return createAvailableResult('channels.get', normalizeChannelSummary(result.data));
     },
-    subscribe(channelId: string) {
-      return postChannelAction(fetchLike, baseUrl, channelId, 'subscribe');
+    subscribe(channelId: string, options?: ChannelActionOptions) {
+      return postChannelAction(fetchLike, baseUrl, channelId, 'subscribe', undefined, undefined, options);
     },
-    unsubscribe(channelId: string) {
-      return postChannelAction(fetchLike, baseUrl, channelId, 'unsubscribe');
+    unsubscribe(channelId: string, options?: ChannelActionOptions) {
+      return postChannelAction(fetchLike, baseUrl, channelId, 'unsubscribe', undefined, undefined, options);
     },
-    publish(channelId: string, body?: BodyInit | null) {
-      return postChannelAction(fetchLike, baseUrl, channelId, 'publish', body);
+    publish(channelId: string, body?: BodyInit | null, options?: ChannelActionOptions) {
+      return postChannelAction(fetchLike, baseUrl, channelId, 'publish', body, nativeStreamHeaders(body), options);
     },
-    issueGrant(channelId: string, body: Record<string, unknown> = {}) {
+    issueGrant(channelId: string, body: Record<string, unknown> = {}, options?: ChannelActionOptions) {
       return postChannelAction(fetchLike, baseUrl, channelId, 'grants', JSON.stringify(body), {
         'content-type': 'application/json',
-      });
+      }, options);
     },
-    openStream(channelId: string): Promise<BackendResult<Uint8Array>> {
-      return getBytes(fetchLike, joinUrl(baseUrl, `/api/v1/channels/${encodeURIComponent(channelId)}/stream`), 'channels.openStream', {
+    openStream(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<Uint8Array>> {
+      return getBytes(fetchLike, channelActionUrl(baseUrl, channelId, 'stream', options), 'channels.openStream', {
         headers: { accept: 'application/vnd.sdn.flatbuffers.stream' },
       });
     },
@@ -72,10 +73,11 @@ function postChannelAction(
   action: string,
   body?: BodyInit | null,
   headers?: HeadersInit,
+  options?: ChannelActionOptions,
 ): Promise<BackendResult<Record<string, unknown>>> {
   return getJson<Record<string, unknown>>(
     fetchLike,
-    joinUrl(baseUrl, `/api/v1/channels/${encodeURIComponent(channelId)}/${action}`),
+    channelActionUrl(baseUrl, channelId, action, options),
     `channels.${action}`,
     {
       method: 'POST',
@@ -83,6 +85,22 @@ function postChannelAction(
       ...(body !== undefined ? { body } : {}),
     },
   );
+}
+
+function channelActionUrl(baseUrl: string | null | undefined, channelId: string, action: string, options?: ChannelActionOptions): string {
+  const params = new URLSearchParams();
+  if (options?.subject) params.set('subject', options.subject);
+  if (options?.grantId) params.set('grantId', options.grantId);
+  if (options?.visibility) params.set('visibility', options.visibility);
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  return joinUrl(baseUrl, `/api/v1/channels/${encodeURIComponent(channelId)}/${action}${suffix}`);
+}
+
+function nativeStreamHeaders(body?: BodyInit | null): HeadersInit | undefined {
+  if (body instanceof Uint8Array || body instanceof ArrayBuffer) {
+    return { 'content-type': 'application/vnd.sdn.flatbuffers.stream' };
+  }
+  return undefined;
 }
 
 function normalizeChannelSummary(payload: unknown): ChannelSummary {
