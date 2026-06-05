@@ -122,7 +122,7 @@ func (h *ChannelHandler) RecordDatasetPublicationChannelUpdate(update DatasetPub
 	if err != nil {
 		return fmt.Errorf("record dataset publication channel: verified PNM required: %w", err)
 	}
-	dpmEvidence, err := storage.VerifySignedDatasetPublicationManifest(update.ManifestBytes, update.ProviderPublicKey)
+	dpmEvidence, err := channels.VerifySignedDPMManifestWithProviderKey(update.ManifestBytes, pnmEvidence.FileID, update.ProviderPublicKey)
 	if err != nil {
 		return fmt.Errorf("record dataset publication channel: verified DPM required: %w", err)
 	}
@@ -133,14 +133,7 @@ func (h *ChannelHandler) RecordDatasetPublicationChannelUpdate(update DatasetPub
 		return fmt.Errorf("record dataset publication channel: DPM FILE_ID %q does not match PNM FILE_ID %q", dpmEvidence.FileID, pnmEvidence.FileID)
 	}
 	h.metadata.RecordPNM(parsed, pnmEvidence)
-	if _, ok := h.metadata.RecordDPM(parsed, channels.DPMTrustEvidence{
-		FileID:        dpmEvidence.FileID,
-		SignatureType: dpmEvidence.SignatureType,
-		ProviderPeer:  dpmEvidence.ProviderPeer,
-		Encrypted:     dpmEvidence.Encrypted,
-		ContentKeyID:  dpmEvidence.ContentKeyID,
-		PolicyID:      dpmEvidence.PolicyID,
-	}); !ok {
+	if _, ok := h.metadata.RecordDPM(parsed, dpmEvidence); !ok {
 		return fmt.Errorf("record dataset publication channel: verified PNM was not recorded")
 	}
 	if _, ok := h.metadata.RecordDatasetPublication(parsed, update.PublishedShard.FeedHead, update.PublishedShard.RecordCount, update.PublishedShard.ByteCount); !ok {
@@ -549,7 +542,7 @@ func (h *ChannelHandler) publishDPMManifest(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusForbidden, "DPM provider public key does not match verified PNM provider")
 		return
 	}
-	evidence, err := storage.VerifySignedDatasetPublicationManifest(body, providerPublicKey)
+	evidence, err := channels.VerifySignedDPMManifestWithProviderKey(body, metadata.PNMFileID, providerPublicKey)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "verified DPM manifest required: "+err.Error())
 		return
@@ -562,14 +555,7 @@ func (h *ChannelHandler) publishDPMManifest(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("DPM FILE_ID %q does not match PNM FILE_ID %q", evidence.FileID, metadata.PNMFileID))
 		return
 	}
-	metadata, ok := h.metadata.RecordDPM(parsed, channels.DPMTrustEvidence{
-		FileID:        evidence.FileID,
-		SignatureType: evidence.SignatureType,
-		ProviderPeer:  evidence.ProviderPeer,
-		Encrypted:     evidence.Encrypted,
-		ContentKeyID:  evidence.ContentKeyID,
-		PolicyID:      evidence.PolicyID,
-	})
+	metadata, ok := h.metadata.RecordDPM(parsed, evidence)
 	if !ok {
 		writeError(w, http.StatusForbidden, "verified PNM required before DPM publish")
 		return
