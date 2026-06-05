@@ -1437,7 +1437,7 @@ func channelListRow(standardCode string) map[string]interface{} {
 
 func (h *ChannelHandler) channelDetail(parsed channels.ChannelID) map[string]interface{} {
 	state := h.subscriptions.Get(parsed)
-	metadata, verified := h.metadata.Get(parsed)
+	metadata, verified := h.verifiedChannelMetadata(parsed)
 	visibility := state.Visibility
 	grantState := state.GrantState
 	encryptionState := state.EncryptionState
@@ -1467,7 +1467,7 @@ func (h *ChannelHandler) channelDetail(parsed channels.ChannelID) map[string]int
 
 func (h *ChannelHandler) channelMonitor(parsed channels.ChannelID) map[string]interface{} {
 	payload := h.channelDetail(parsed)
-	metadata, verified := h.metadata.Get(parsed)
+	metadata, verified := h.verifiedChannelMetadata(parsed)
 	payload["channelHead"] = firstNonEmptyChannelString(metadata.ChannelHead, metadata.PNMCID)
 	payload["providerPeer"] = metadata.ProviderPeer
 	payload["localRows"] = metadata.LocalRows
@@ -1493,6 +1493,117 @@ func (h *ChannelHandler) channelMonitor(parsed channels.ChannelID) map[string]in
 		payload["lastVerifiedUpdate"] = metadata.VerifiedAt.Format(time.RFC3339Nano)
 	}
 	return payload
+}
+
+func (h *ChannelHandler) verifiedChannelMetadata(parsed channels.ChannelID) (channels.VerifiedMetadata, bool) {
+	if h == nil {
+		return channels.VerifiedMetadata{}, false
+	}
+	if metadata, ok := h.metadata.Get(parsed); ok {
+		return metadata, true
+	}
+	metadata, ok := h.restoreVerifiedDatasetPublicationMetadata(parsed)
+	if !ok {
+		return channels.VerifiedMetadata{}, false
+	}
+	return h.metadata.RecordRestored(metadata), true
+}
+
+func (h *ChannelHandler) restoreVerifiedDatasetPublicationMetadata(parsed channels.ChannelID) (channels.VerifiedMetadata, bool) {
+	if h == nil || h.store == nil {
+		return channels.VerifiedMetadata{}, false
+	}
+	schemaName, err := channels.SchemaNameFromStandardCode(parsed.StandardCode)
+	if err != nil {
+		return channels.VerifiedMetadata{}, false
+	}
+	stats, err := h.store.LocalReplicaStats(storage.LocalReplicaStatsQuery{
+		SchemaName:   schemaName,
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+	})
+	if err != nil {
+		return channels.VerifiedMetadata{}, false
+	}
+	for _, stat := range stats {
+		if datasetPublicationSourceID(stat.ProviderID, stat.SourceName) != parsed.SourceID {
+			continue
+		}
+		pnm, ok := h.latestVerifiedPinLedgerEntry(storage.PinLedgerQuery{
+			SchemaName:        schemaName,
+			ProviderPeerID:    stat.ProviderPeerID,
+			ProviderPublicKey: stat.ProviderPublicKey,
+			ProviderID:        stat.ProviderID,
+			SourceName:        stat.SourceName,
+			BatchID:           stat.BatchID,
+			QueryProfile:      stat.QueryProfile,
+			Role:              "pnm",
+			VerificationState: "verified",
+		})
+		if !ok {
+			continue
+		}
+		dpm, ok := h.latestVerifiedPinLedgerEntry(storage.PinLedgerQuery{
+			SchemaName:        schemaName,
+			ProviderPeerID:    stat.ProviderPeerID,
+			ProviderPublicKey: stat.ProviderPublicKey,
+			ProviderID:        stat.ProviderID,
+			SourceName:        stat.SourceName,
+			BatchID:           stat.BatchID,
+			QueryProfile:      stat.QueryProfile,
+			Role:              "manifest",
+			VerificationState: "verified",
+		})
+		if !ok {
+			continue
+		}
+		verifiedAt := pnm.VerifiedAt
+		if verifiedAt.IsZero() {
+			verifiedAt = pnm.UpdatedAt
+		}
+		dpmVerifiedAt := dpm.VerifiedAt
+		if dpmVerifiedAt.IsZero() {
+			dpmVerifiedAt = dpm.UpdatedAt
+		}
+		return channels.VerifiedMetadata{
+			ChannelID:         parsed.ChannelID,
+			ChannelHead:       firstNonEmptyChannelString(stat.Head, pnm.Head, dpm.Head),
+			PNMCID:            pnm.CID,
+			PNMFileID:         parsed.StandardCode,
+			DPMFileID:         parsed.StandardCode,
+			VerifiedAt:        verifiedAt,
+			DPMVerifiedAt:     dpmVerifiedAt,
+			ProviderPeer:      firstNonEmptyChannelString(stat.ProviderPeerID, pnm.ProviderPeerID, dpm.ProviderPeerID),
+			ProviderPublicKey: firstNonEmptyChannelString(stat.ProviderPublicKey, pnm.ProviderPublicKey, dpm.ProviderPublicKey),
+			Visibility:        "public",
+			EncryptionState:   "none",
+			LocalRows:         int(stat.LocalRows),
+			RemoteRows:        int(stat.PinnedRows),
+			SyncedRows:        int(stat.PinnedRows),
+			MissingRows:       0,
+			PinnedRows:        int(stat.PinnedRows),
+			PinnedBytes:       stat.PinnedBytes,
+			SyncedBytes:       stat.PinnedBytes,
+		}, true
+	}
+	return channels.VerifiedMetadata{}, false
+}
+
+func (h *ChannelHandler) latestVerifiedPinLedgerEntry(query storage.PinLedgerQuery) (storage.PinLedgerEntry, bool) {
+	if h == nil || h.store == nil {
+		return storage.PinLedgerEntry{}, false
+	}
+	entries, err := h.store.ListPinLedgerEntries(query)
+	if err != nil || len(entries) == 0 {
+		return storage.PinLedgerEntry{}, false
+	}
+	return entries[0], true
+}
+
+func datasetPublicationSourceID(providerID, sourceName string) string {
+	return datasetPublicationChannelSourceID(DatasetPublicationRequest{ProviderID: providerID, SourceName: sourceName}, datasetPublicationSourceIdentity{
+		ProviderID: providerID,
+		SourceName: sourceName,
+	})
 }
 
 func channelMonitorTimings(timings map[string]int64) map[string]int64 {
