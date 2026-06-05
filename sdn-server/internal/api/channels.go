@@ -799,6 +799,9 @@ func measuredWireSpeedUtilization(throughputBPS int64) *float64 {
 	}
 	linkBytesPerSecond := gbits * 1_000_000_000 / 8
 	utilization := float64(throughputBPS) / linkBytesPerSecond
+	if utilization > 1 {
+		utilization = 1
+	}
 	return &utilization
 }
 
