@@ -988,11 +988,11 @@ func (h *ChannelHandler) parseEncryptedNativeStreamHeader(r *http.Request, parse
 	if !ok {
 		return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header missing context")
 	}
-	senderPublicKey, ok := encryptedNativeStreamHeaderString(header, "senderPublicKey", "ephemeral_public_key")
+	senderPublicKey, ok := encryptedNativeStreamHeaderBytes(header, "senderPublicKey", "ephemeralPublicKey", "ephemeral_public_key")
 	if !ok {
 		return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header missing senderPublicKey")
 	}
-	nonceStart, ok := encryptedNativeStreamHeaderString(header, "nonceStart", "nonce_start")
+	nonceStart, ok := encryptedNativeStreamHeaderBytes(header, "nonceStart", "nonce_start")
 	if !ok {
 		return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header missing nonceStart")
 	}
@@ -1003,13 +1003,50 @@ func (h *ChannelHandler) parseEncryptedNativeStreamHeader(r *http.Request, parse
 		SenderPublicKey:    senderPublicKey,
 		NonceStart:         nonceStart,
 	}
-	if recipientKeyID, ok := encryptedNativeStreamHeaderString(header, "recipientKeyId", "recipient_key_id"); ok {
+	if recipientKeyID, ok := encryptedNativeStreamHeaderBytes(header, "recipientKeyId", "recipient_key_id"); ok {
 		parsedHeader.RecipientKeyID = recipientKeyID
 	}
 	if parsedHeader.Context != parsed.ChannelID {
 		return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header context %q does not match channel %q", parsedHeader.Context, parsed.ChannelID)
 	}
 	return parsedHeader, nil
+}
+
+func encryptedNativeStreamHeaderBytes(header map[string]interface{}, names ...string) (string, bool) {
+	for _, name := range names {
+		value, ok := header[name]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case string:
+			trimmed := strings.TrimSpace(typed)
+			if trimmed != "" {
+				return trimmed, true
+			}
+		case []interface{}:
+			encoded, ok := encryptedNativeStreamHeaderByteArrayHex(typed)
+			if ok {
+				return encoded, true
+			}
+		}
+	}
+	return "", false
+}
+
+func encryptedNativeStreamHeaderByteArrayHex(values []interface{}) (string, bool) {
+	if len(values) == 0 {
+		return "", false
+	}
+	bytes := make([]byte, len(values))
+	for i, value := range values {
+		number, ok := value.(float64)
+		if !ok || number < 0 || number > 255 || number != float64(byte(number)) {
+			return "", false
+		}
+		bytes[i] = byte(number)
+	}
+	return hex.EncodeToString(bytes), true
 }
 
 func encryptedNativeStreamHeaderString(header map[string]interface{}, names ...string) (string, bool) {
