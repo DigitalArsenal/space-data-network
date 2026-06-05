@@ -18,6 +18,7 @@ env:
   REGISTRY: docker.io
   IMAGE_NAME: dockerdigitalarsenal/space-data-network
   KUBO_VERSION: v0.39.0
+  WASMEDGE_VERSION: 0.14.0
   NFPM_VERSION: v2.42.0
 
 jobs:
@@ -178,6 +179,9 @@ jobs:
     name: Build self-contained CLI archives (${{ matrix.target_os }}-${{ matrix.target_arch }})
     runs-on: ${{ matrix.runner }}
     needs: [beta-version, ipfs]
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
@@ -186,24 +190,52 @@ jobs:
             target_arch: amd64
             runner: ubuntu-latest
             kubo_platform: linux-amd64
+            kubo_archive: tar.gz
+            archive_extension: tar.gz
+            binary_name: spacedatanetwork
+            kubo_binary_name: ipfs
           - target_os: linux
             target_arch: arm64
             runner: ubuntu-24.04-arm
             kubo_platform: linux-arm64
+            kubo_archive: tar.gz
+            archive_extension: tar.gz
+            binary_name: spacedatanetwork
+            kubo_binary_name: ipfs
           - target_os: darwin
             target_arch: arm64
             runner: macos-14
             kubo_platform: darwin-arm64
+            kubo_archive: tar.gz
+            archive_extension: tar.gz
+            binary_name: spacedatanetwork
+            kubo_binary_name: ipfs
           - target_os: darwin
             target_arch: amd64
             runner: macos-15-intel
             kubo_platform: darwin-amd64
+            kubo_archive: tar.gz
+            archive_extension: tar.gz
+            binary_name: spacedatanetwork
+            kubo_binary_name: ipfs
+          - target_os: windows
+            target_arch: amd64
+            runner: windows-latest
+            kubo_platform: windows-amd64
+            kubo_archive: zip
+            archive_extension: zip
+            binary_name: spacedatanetwork.exe
+            kubo_binary_name: ipfs.exe
     env:
       PACKAGE_VERSION: ${{ needs.beta-version.outputs.package_version }}
       RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
       TARGET_OS: ${{ matrix.target_os }}
       TARGET_ARCH: ${{ matrix.target_arch }}
       KUBO_PLATFORM: ${{ matrix.kubo_platform }}
+      KUBO_ARCHIVE: ${{ matrix.kubo_archive }}
+      BINARY_NAME: ${{ matrix.binary_name }}
+      KUBO_BINARY_NAME: ${{ matrix.kubo_binary_name }}
+      WASMEDGE_DIR: ${{ github.workspace }}/dist/.wasmedge
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -223,14 +255,34 @@ jobs:
         run: npm ci
       - name: Build updater module wasm
         run: npm --prefix packages/sdn-updater-module run build
+      - name: Install Windows CLI build tools
+        if: matrix.target_os == 'windows'
+        run: |
+          choco install zip -y --no-progress
+          echo "/c/msys64/mingw64/bin" >> "$GITHUB_PATH"
+      - name: Install Windows WasmEdge runtime
+        if: matrix.target_os == 'windows'
+        run: |
+          mkdir -p dist/wasmedge
+          curl -L -o dist/wasmedge/wasmedge.zip "https://github.com/WasmEdge/WasmEdge/releases/download/${WASMEDGE_VERSION}/WasmEdge-${WASMEDGE_VERSION}-windows.zip"
+          unzip -q dist/wasmedge/wasmedge.zip -d dist/wasmedge
+          rm -rf "${WASMEDGE_DIR}"
+          mkdir -p "${WASMEDGE_DIR}"
+          cp -R "dist/wasmedge/WasmEdge-${WASMEDGE_VERSION}-Windows/." "${WASMEDGE_DIR}/"
+          test -f "${WASMEDGE_DIR}/bin/wasmedge.dll"
       - name: Download target Kubo binary
         run: |
           mkdir -p dist/kubo
-          curl -L "https://dist.ipfs.tech/kubo/${KUBO_VERSION}/kubo_${KUBO_VERSION}_${KUBO_PLATFORM}.tar.gz" | tar -xz -C dist/kubo
+          if [ "${KUBO_ARCHIVE}" = "zip" ]; then
+            curl -L -o dist/kubo/kubo.zip "https://dist.ipfs.tech/kubo/${KUBO_VERSION}/kubo_${KUBO_VERSION}_${KUBO_PLATFORM}.zip"
+            unzip -q dist/kubo/kubo.zip -d dist/kubo
+          else
+            curl -L "https://dist.ipfs.tech/kubo/${KUBO_VERSION}/kubo_${KUBO_VERSION}_${KUBO_PLATFORM}.tar.gz" | tar -xz -C dist/kubo
+          fi
       - name: Build target SDN binary
         run: |
           mkdir -p dist/cli-input
-          ./scripts/go-with-wasmedge.sh build -o "${PWD}/dist/cli-input/spacedatanetwork" ./cmd/spacedatanetwork
+          GOOS="${TARGET_OS}" GOARCH="${TARGET_ARCH}" ./scripts/go-with-wasmedge.sh build -o "${PWD}/dist/cli-input/${BINARY_NAME}" ./cmd/spacedatanetwork
       - name: Build self-contained CLI archive
         run: |
           node deployment/release/build-self-contained-cli.mjs \
@@ -239,19 +291,19 @@ jobs:
             --arch "${TARGET_ARCH}" \
             --channel beta \
             --output-dir dist/cli \
-            --binary-path "${PWD}/dist/cli-input/spacedatanetwork" \
-            --kubo-path "${PWD}/dist/kubo/kubo/ipfs" \
+            --binary-path "${PWD}/dist/cli-input/${BINARY_NAME}" \
+            --kubo-path "${PWD}/dist/kubo/kubo/${KUBO_BINARY_NAME}" \
             --sdnUIPath "${PWD}/dist/ipfs/sdn-admin" \
             --webUIPath "${PWD}/dist/ipfs/ipfs-webui" \
             --updater-wasm-path "${PWD}/packages/sdn-updater-module/dist/isomorphic/module.wasm" \
-            --wasmedge-path "${HOME}/.wasmedge" \
+            --wasmedge-path "${WASMEDGE_DIR}" \
             --license-path "${PWD}/LICENSE" \
             --readme-path "${PWD}/README.md" \
             --manifest-signature "github-actions:${RELEASE_TAG}:${GITHUB_SHA}"
       - uses: actions/upload-artifact@v4
         with:
           name: cli-${{ matrix.target_os }}-${{ matrix.target_arch }}
-          path: dist/cli/spacedatanetwork-${{ needs.beta-version.outputs.package_version }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.tar.gz
+          path: dist/cli/spacedatanetwork-${{ needs.beta-version.outputs.package_version }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.${{ matrix.archive_extension }}
 
   packages:
     name: Build beta native packages and SBOM

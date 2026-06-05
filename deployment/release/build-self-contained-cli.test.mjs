@@ -131,11 +131,14 @@ test('stageBundle creates Windows executable names and copied alias', async () =
   await mkdir(join(inputs, 'sdn-ui'), { recursive: true });
   await mkdir(join(inputs, 'webui'), { recursive: true });
   await mkdir(join(inputs, 'modules'), { recursive: true });
+  await mkdir(join(inputs, 'wasmedge', 'bin'), { recursive: true });
   await writeFile(join(inputs, 'spacedatanetwork.exe'), 'exe');
   await writeFile(join(inputs, 'ipfs.exe'), 'ipfs');
   await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
   await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
   await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
+  await writeFile(join(inputs, 'wasmedge', 'bin', 'wasmedge.dll'), 'dll');
+  await writeFile(join(inputs, 'wasmedge', 'bin', 'wasmedge.exe'), 'exe');
   await writeFile(join(inputs, 'LICENSE'), 'license');
   await writeFile(join(inputs, 'README.md'), 'readme');
 
@@ -149,6 +152,7 @@ test('stageBundle creates Windows executable names and copied alias', async () =
     sdnUIPath: join(inputs, 'sdn-ui'),
     webUIPath: join(inputs, 'webui'),
     updaterWasmPath: join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'),
+    wasmedgePath: join(inputs, 'wasmedge'),
     licensePath: join(inputs, 'LICENSE'),
     readmePath: join(inputs, 'README.md'),
     manifestSignature: 'test-signature',
@@ -156,7 +160,9 @@ test('stageBundle creates Windows executable names and copied alias', async () =
 
   await stat(join(staged.root, 'bin', 'spacedatanetwork.exe'));
   await stat(join(staged.root, 'bin', 'sdn.exe'));
+  await stat(join(staged.root, 'bin', 'wasmedge.dll'));
   await stat(join(staged.root, 'runtime', 'kubo', 'ipfs.exe'));
+  await stat(join(staged.root, 'runtime', 'wasmedge', 'bin', 'wasmedge.dll'));
   const alias = await readFile(join(staged.root, 'bin', 'sdn.exe'), 'utf8');
   assert.equal(alias, 'exe');
   const manifest = JSON.parse(await readFile(join(staged.root, 'manifest.json'), 'utf8'));
@@ -172,10 +178,13 @@ test('stageBundle creates Windows executable names and copied alias', async () =
     'README.md',
     'bin/sdn.exe',
     'bin/spacedatanetwork.exe',
+    'bin/wasmedge.dll',
     'runtime/kubo/ipfs.exe',
     'runtime/modules/org.spacedatanetwork.updater.wasm',
     'runtime/ui/sdn/index.html',
     'runtime/ui/webui/index.html',
+    'runtime/wasmedge/bin/wasmedge.dll',
+    'runtime/wasmedge/bin/wasmedge.exe',
   ]);
 });
 
