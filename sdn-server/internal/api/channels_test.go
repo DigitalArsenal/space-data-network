@@ -724,6 +724,54 @@ func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerProtectedPrivateOperationsFailClosedAfterGrantUntilImplemented(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
+		strings.NewReader(`{"to":"peer-alpha"}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	for _, tc := range []struct {
+		method string
+		path   string
+		want   string
+	}{
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/key-unwrap", "stream key unwrap is unavailable"},
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/shard-import", "shard import is unavailable"},
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/module-feed", "module feed delivery is unavailable"},
+		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/cache", "local cache read is unavailable"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path+"?subject=peer-alpha&grantId="+grantID, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotImplemented {
+			t.Fatalf("%s %s status = %d, want %d body=%s", tc.method, tc.path, rec.Code, http.StatusNotImplemented, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), tc.want) {
+			t.Fatalf("%s %s response missing %q: %s", tc.method, tc.path, tc.want, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "channel-private-key") || strings.Contains(rec.Body.String(), "wrapped") {
+			t.Fatalf("%s %s leaked protected key material: %s", tc.method, tc.path, rec.Body.String())
+		}
+	}
+}
+
 func TestChannelHandlerPrivateListedCollectionFailsClosedWithoutGrant(t *testing.T) {
 	t.Parallel()
 

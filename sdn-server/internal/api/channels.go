@@ -304,25 +304,25 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		h.requireGrant(w, r, parsed, channels.BoundaryKeyUnwrap)
+		h.requireGrantUnavailable(w, r, parsed, channels.BoundaryKeyUnwrap, "private channel stream key unwrap is unavailable")
 	case "shard-import":
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		h.requireGrant(w, r, parsed, channels.BoundaryShardImport)
+		h.requireGrantUnavailable(w, r, parsed, channels.BoundaryShardImport, "private channel shard import is unavailable")
 	case "module-feed":
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		h.requireGrant(w, r, parsed, channels.BoundaryModuleFeedDelivery)
+		h.requireGrantUnavailable(w, r, parsed, channels.BoundaryModuleFeedDelivery, "private channel module feed delivery is unavailable")
 	case "cache":
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		h.requireGrant(w, r, parsed, channels.BoundaryLocalCacheRead)
+		h.requireGrantUnavailable(w, r, parsed, channels.BoundaryLocalCacheRead, "private channel local cache read is unavailable")
 	case "grants":
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -357,6 +357,15 @@ func (h *ChannelHandler) requireGrant(w http.ResponseWriter, r *http.Request, pa
 		"channelId":  parsed.ChannelID,
 		"grantState": decision.GrantState,
 	})
+}
+
+func (h *ChannelHandler) requireGrantUnavailable(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID, boundary channels.AccessBoundary, message string) {
+	decision := h.authorizeGrant(r, parsed, boundary)
+	if !decision.Allowed {
+		h.writeAccessDenied(w, decision)
+		return
+	}
+	writeError(w, http.StatusNotImplemented, message)
 }
 
 func (h *ChannelHandler) authorizeGrant(r *http.Request, parsed channels.ChannelID, boundary channels.AccessBoundary) channels.AccessDecision {
