@@ -91,3 +91,66 @@ func TestChannelsMonitorReportsRequiredFields(t *testing.T) {
 		}
 	}
 }
+
+func TestChannelsSubscribeAndUnsubscribePublicChannel(t *testing.T) {
+	t.Parallel()
+
+	cmd := newChannelsCommand()
+
+	var subscribeOut bytes.Buffer
+	cmd.SetOut(&subscribeOut)
+	cmd.SetErr(&subscribeOut)
+	cmd.SetArgs([]string{"subscribe", "spaceaware-OMM"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels subscribe failed: %v", err)
+	}
+	for _, want := range []string{
+		"channelId=spaceaware-OMM",
+		"subscribed=true",
+		"visibility=public",
+		"grantState=not-required",
+		"encryptionState=none",
+	} {
+		if !strings.Contains(subscribeOut.String(), want) {
+			t.Fatalf("channels subscribe output missing %q:\n%s", want, subscribeOut.String())
+		}
+	}
+
+	var unsubscribeOut bytes.Buffer
+	cmd.SetOut(&unsubscribeOut)
+	cmd.SetErr(&unsubscribeOut)
+	cmd.SetArgs([]string{"unsubscribe", "spaceaware-OMM"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels unsubscribe failed: %v", err)
+	}
+	for _, want := range []string{
+		"channelId=spaceaware-OMM",
+		"subscribed=false",
+		"visibility=public",
+		"grantState=not-required",
+	} {
+		if !strings.Contains(unsubscribeOut.String(), want) {
+			t.Fatalf("channels unsubscribe output missing %q:\n%s", want, unsubscribeOut.String())
+		}
+	}
+}
+
+func TestChannelsPrivateSubscribeFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"subscribe", "spaceaware-OMM", "--visibility", "private"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("private subscribe unexpectedly succeeded:\n%s", out.String())
+	}
+	if !strings.Contains(err.Error(), "verified channel grant required") {
+		t.Fatalf("private subscribe error = %v", err)
+	}
+}
