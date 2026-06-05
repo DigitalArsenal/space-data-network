@@ -948,6 +948,15 @@ func TestRequestDatasetPublicationUsesLongTimeoutForFullCatalog(t *testing.T) {
 	}
 }
 
+func TestDatasetPublicationRequestLogStandardCodeOmitsSchemaSuffix(t *testing.T) {
+	if got := datasetPublicationRequestLogStandardCode("OMM.fbs"); got != "OMM" {
+		t.Fatalf("datasetPublicationRequestLogStandardCode = %q, want OMM", got)
+	}
+	if got := datasetPublicationRequestLogStandardCode("CAT"); got != "CAT" {
+		t.Fatalf("datasetPublicationRequestLogStandardCode without suffix = %q, want CAT", got)
+	}
+}
+
 func TestSyncSpaceTrackGapFillRecordsBatchProvenance(t *testing.T) {
 	fixture, err := os.ReadFile("testdata/celestrak-gp-omm.csv")
 	if err != nil {
