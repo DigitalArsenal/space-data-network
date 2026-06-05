@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,6 +94,71 @@ func TestChannelsMonitorReportsRequiredFields(t *testing.T) {
 		"grantState=",
 		"encryptionState=",
 		"lastVerifiedUpdate=",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("channels monitor output missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestChannelsMonitorReadsLocalAPI(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/channels/spaceaware-OMM/monitor" {
+			t.Fatalf("unexpected monitor request %s %s", r.Method, r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"channelId":"spaceaware-OMM",
+			"sourceId":"spaceaware",
+			"standardCode":"OMM",
+			"channelHead":"bafyhead",
+			"pnmVerified":true,
+			"providerPeer":"12D3KooProvider",
+			"localRows":10,
+			"remoteRows":12,
+			"syncedRows":10,
+			"missingRows":2,
+			"pinnedRows":8,
+			"syncedBytes":4096,
+			"throughputBytesPerSecond":2048,
+			"wireSpeedUtilization":0.91,
+			"grantState":"verified",
+			"encryptionState":"public",
+			"lastVerifiedUpdate":"2026-06-04T00:00:00Z"
+		}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"monitor", "spaceaware-OMM", "--api-url", server.URL})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels monitor failed: %v", err)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"channelId=spaceaware-OMM",
+		"sourceId=spaceaware",
+		"standardCode=OMM",
+		"channelHead=bafyhead",
+		"pnmVerified=true",
+		"providerPeer=12D3KooProvider",
+		"localRows=10",
+		"remoteRows=12",
+		"syncedRows=10",
+		"missingRows=2",
+		"pinnedRows=8",
+		"syncedBytes=4096",
+		"throughputBytesPerSecond=2048",
+		"wireSpeedUtilization=0.91",
+		"grantState=verified",
+		"encryptionState=public",
+		"lastVerifiedUpdate=2026-06-04T00:00:00Z",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("channels monitor output missing %q:\n%s", want, body)
