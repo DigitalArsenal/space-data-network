@@ -26,6 +26,10 @@ var updateCheckCmd = &cobra.Command{
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "version=%s\n", manifest.Version)
 		fmt.Fprintf(cmd.OutOrStdout(), "channel=%s\n", manifest.Channel)
+		fmt.Fprintf(cmd.OutOrStdout(), "update_feed_base_url=%s\n", manifest.Update.FeedBaseURL)
+		fmt.Fprintf(cmd.OutOrStdout(), "update_pubsub_topic=%s\n", manifest.Update.PubsubTopic)
+		fmt.Fprintf(cmd.OutOrStdout(), "updater_module=%s\n", manifest.Update.UpdaterModule)
+		fmt.Fprintf(cmd.OutOrStdout(), "updater_wasm=%s\n", manifest.Update.UpdaterWASM)
 		fmt.Fprintln(cmd.OutOrStdout(), "update_check_scope=bundled_manifest")
 		fmt.Fprintln(cmd.OutOrStdout(), "updates_available=false")
 		return nil
@@ -41,10 +45,18 @@ var updateApplyCmd = &cobra.Command{
 }
 
 type bundleManifest struct {
-	Schema    string `json:"schema"`
-	Version   string `json:"version"`
-	Channel   string `json:"channel"`
-	Signature string `json:"signature"`
+	Schema    string               `json:"schema"`
+	Version   string               `json:"version"`
+	Channel   string               `json:"channel"`
+	Signature string               `json:"signature"`
+	Update    bundleUpdateMetadata `json:"update"`
+}
+
+type bundleUpdateMetadata struct {
+	FeedBaseURL   string `json:"feedBaseUrl"`
+	PubsubTopic   string `json:"pubsubTopic"`
+	UpdaterModule string `json:"updaterModule"`
+	UpdaterWASM   string `json:"updaterWasm"`
 }
 
 func init() {
@@ -76,6 +88,10 @@ func loadBundleManifest(path string) (*bundleManifest, error) {
 	manifest.Version = strings.TrimSpace(manifest.Version)
 	manifest.Channel = strings.TrimSpace(manifest.Channel)
 	manifest.Signature = strings.TrimSpace(manifest.Signature)
+	manifest.Update.FeedBaseURL = strings.TrimSpace(manifest.Update.FeedBaseURL)
+	manifest.Update.PubsubTopic = strings.TrimSpace(manifest.Update.PubsubTopic)
+	manifest.Update.UpdaterModule = strings.TrimSpace(manifest.Update.UpdaterModule)
+	manifest.Update.UpdaterWASM = strings.TrimSpace(manifest.Update.UpdaterWASM)
 	if manifest.Version == "" {
 		return nil, errors.New("bundle manifest missing version")
 	}
@@ -84,6 +100,18 @@ func loadBundleManifest(path string) (*bundleManifest, error) {
 	}
 	if manifest.Signature == "" {
 		return nil, errors.New("bundle manifest missing signature")
+	}
+	if manifest.Update.FeedBaseURL == "" {
+		return nil, errors.New("bundle manifest missing update feed base URL")
+	}
+	if manifest.Update.PubsubTopic == "" {
+		return nil, errors.New("bundle manifest missing update pubsub topic")
+	}
+	if manifest.Update.UpdaterModule == "" {
+		return nil, errors.New("bundle manifest missing updater module")
+	}
+	if manifest.Update.UpdaterWASM == "" {
+		return nil, errors.New("bundle manifest missing updater wasm")
 	}
 	return &manifest, nil
 }
