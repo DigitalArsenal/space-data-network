@@ -43,8 +43,8 @@ export async function stageBundle(options) {
     await writeFile(join(root, 'bin', exeName), unixLauncherScript(exeName));
   }
   await cp(required(options.kuboPath, 'kuboPath'), join(root, 'runtime', 'kubo', kuboName));
-  await cp(required(options.sdnUIPath, 'sdnUIPath'), join(root, 'runtime', 'ui', 'sdn'), { recursive: true });
-  await cp(required(options.webUIPath, 'webUIPath'), join(root, 'runtime', 'ui', 'webui'), { recursive: true });
+  await cp(required(options.sdnUIPath ?? options.sdnUiPath, 'sdnUIPath'), join(root, 'runtime', 'ui', 'sdn'), { recursive: true });
+  await cp(required(options.webUIPath ?? options.webUiPath, 'webUIPath'), join(root, 'runtime', 'ui', 'webui'), { recursive: true });
   await cp(
     required(options.updaterWasmPath, 'updaterWasmPath'),
     join(root, 'runtime', 'modules', 'org.spacedatanetwork.updater.wasm'),
