@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const FLATSQL_SYNC_PROTOCOL_ID = '/space-data-network/flatsql-sync/1.0.0';
+const DEFAULT_WIRE_SPEED_TARGET = 0.9;
 
 const DEFAULTS = {
   shards: 256,
@@ -19,6 +20,7 @@ const DEFAULTS = {
   partitionEvery: 0,
   restartEvery: 0,
   maxAttempts: 64,
+  wireSpeedTarget: DEFAULT_WIRE_SPEED_TARGET,
   json: false,
   checkpointFile: '',
 };
@@ -136,7 +138,8 @@ export async function runChaosLocalNetwork(rawOptions = {}) {
       bytesPerSecond,
       measuredWireSpeedBytesPerSecond: wireSpeedBytesPerSecond,
       wireSpeedUtilization,
-      targetMet: wireSpeedUtilization == null ? null : wireSpeedUtilization >= 0.8,
+      wireSpeedTarget: options.wireSpeedTarget,
+      targetMet: wireSpeedUtilization == null ? null : wireSpeedUtilization >= options.wireSpeedTarget,
     },
     timingMs: {
       manifestDiscovery: manifestMs,
@@ -340,6 +343,7 @@ function normalizeOptions(input) {
   options.concurrency = Math.max(1, options.concurrency);
   options.bandwidthMbps = Math.max(1, options.bandwidthMbps);
   options.maxAttempts = Math.max(1, options.maxAttempts);
+  options.wireSpeedTarget = normalizedRatio(options.wireSpeedTarget, DEFAULT_WIRE_SPEED_TARGET);
   options.checkpointFile = String(options.checkpointFile ?? '').trim();
   options.json = Boolean(options.json);
   return options;
@@ -386,6 +390,9 @@ function parseArgs(argv) {
       case '--max-attempts':
         options.maxAttempts = requiredNumber(argv, index += 1, arg);
         break;
+      case '--target':
+        options.wireSpeedTarget = requiredNumber(argv, index += 1, arg);
+        break;
       case '--checkpoint-file':
         options.checkpointFile = requiredValue(argv, index += 1, arg);
         break;
@@ -404,6 +411,11 @@ function requiredNumber(argv, index, option) {
   const value = Number(requiredValue(argv, index, option));
   if (!Number.isFinite(value)) throw new Error(`${option} requires a number`);
   return value;
+}
+
+function normalizedRatio(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 && numeric <= 1 ? numeric : fallback;
 }
 
 function requiredValue(argv, index, option) {
@@ -431,6 +443,7 @@ function usage() {
     '  --partition-every <n>     Partition every Nth request, default disabled',
     '  --restart-every <n>       Restart requester every Nth request, default disabled',
     '  --checkpoint-file <path>  Persist consumer pin progress for resume testing',
+    '  --target <ratio>          Required clean-link utilization, default 0.9',
     '  --json                    Print JSON only',
   ].join('\n');
 }

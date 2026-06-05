@@ -50,7 +50,7 @@
   import { decodeOmmFlatBuffer } from '../../../src/ui/runtime/omm-flatbuffer';
   import { decodePnmFlatBuffer } from '../../../src/ui/runtime/pnm-flatbuffer';
   import { normalizeIpfsArtifactPeerAddrs } from '../../../src/ui/runtime/ipfs-artifact-peers';
-  import { boundedWireSpeedUtilization } from '../../../src/ui/runtime/sync-throughput';
+  import { boundedWireSpeedUtilization, DEFAULT_WIRE_SPEED_TARGET } from '../../../src/ui/runtime/sync-throughput';
   import {
     isSchemaSyncProgressStalled,
     nextSchemaSyncStallState,
@@ -3525,7 +3525,7 @@
       downloadSpeedBytesPerSecond: active ? activePersisted?.downloadSpeedBytesPerSecond ?? 0 : 0,
       measuredWireSpeedBytesPerSecond: activePersisted?.measuredWireSpeedBytesPerSecond ?? measuredWireSpeedBytesPerSecondForSource(dataSourceId),
       wireSpeedUtilization: active ? activePersisted?.wireSpeedUtilization ?? null : null,
-      wireSpeedTarget: activePersisted?.wireSpeedTarget ?? 0.8,
+      wireSpeedTarget: activePersisted?.wireSpeedTarget ?? DEFAULT_WIRE_SPEED_TARGET,
       wireSpeedTargetMet: activePersisted?.wireSpeedTargetMet ?? null,
       manifestDiscoveryMs: activePersisted?.manifestDiscoveryMs ?? 0,
       networkTransferMs: activePersisted?.networkTransferMs ?? 0,
@@ -3864,7 +3864,7 @@
       downloadSpeedBytesPerSecond: normalizedRowCount(candidate.downloadSpeedBytesPerSecond),
       measuredWireSpeedBytesPerSecond: normalizedRowCount(candidate.measuredWireSpeedBytesPerSecond),
       wireSpeedUtilization: normalizedOptionalRatio(candidate.wireSpeedUtilization),
-      wireSpeedTarget: normalizedOptionalRatio(candidate.wireSpeedTarget) ?? 0.8,
+      wireSpeedTarget: normalizedOptionalRatio(candidate.wireSpeedTarget) ?? DEFAULT_WIRE_SPEED_TARGET,
       wireSpeedTargetMet: typeof candidate.wireSpeedTargetMet === 'boolean' ? candidate.wireSpeedTargetMet : null,
       manifestDiscoveryMs: normalizedRowCount(candidate.manifestDiscoveryMs),
       networkTransferMs: normalizedRowCount(candidate.networkTransferMs),
