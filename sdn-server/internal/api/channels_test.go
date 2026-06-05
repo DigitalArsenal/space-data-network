@@ -1371,6 +1371,52 @@ func TestChannelHandlerPrivateEncryptedStreamAcceptsFlatBuffersHeaderJSON(t *tes
 	}
 }
 
+func TestChannelHandlerPrivateEncryptedStreamAcceptsFlatBuffersRunnerByteArrayHeader(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	store := newChannelTestStore(t)
+	decryptedStream := nativeAPIFrame("OMM1", []byte{1, 2, 3})
+	decryptor := &channelTestEncryptedStreamDecryptor{plaintext: decryptedStream}
+	handler := NewChannelHandlerWithOptions(store, ChannelHandlerOptions{
+		EncryptedStreams: decryptor,
+	})
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
+		strings.NewReader(`{"to":"peer-alpha","scopes":["publish"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader([]byte("ciphertext")))
+	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.encrypted-stream")
+	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+	publishReq.Header.Set("X-SDN-Encrypted-Stream-Header", `{"algorithm":"x25519","ephemeralPublicKey":[0,1,2,3,252,253,254,255],"nonceStart":[16,17,18,19],"context":"spaceaware-OMM","fields":["OMM"]}`)
+	publishRec := httptest.NewRecorder()
+	mux.ServeHTTP(publishRec, publishReq)
+	if publishRec.Code != http.StatusAccepted {
+		t.Fatalf("private encrypted stream publish status = %d body=%s", publishRec.Code, publishRec.Body.String())
+	}
+	if decryptor.header.SenderPublicKey != "00010203fcfdfeff" ||
+		decryptor.header.EphemeralPublicKey != "00010203fcfdfeff" ||
+		decryptor.header.NonceStart != "10111213" ||
+		decryptor.header.Context != "spaceaware-OMM" {
+		t.Fatalf("decryptor header did not normalize FlatBuffers byte-array fields: %#v", decryptor.header)
+	}
+}
+
 func TestChannelHandlerPrivateEncryptedStreamDecryptFailureDoesNotImportOrCache(t *testing.T) {
 	t.Parallel()
 
