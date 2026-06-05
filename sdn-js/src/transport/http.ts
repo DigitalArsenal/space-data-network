@@ -277,8 +277,11 @@ export class HttpTransport {
     return channelRowsFromPayload(payload);
   }
 
-  async getChannel(channelId: string): Promise<ChannelSummary> {
-    const resp = await this.fetch(`/api/v1/channels/${encodeURIComponent(channelId)}`);
+  async getChannel(channelId: string, options?: ChannelAccessOptions): Promise<ChannelSummary> {
+    const query = new URLSearchParams();
+    appendChannelActionAccessQuery(query, options);
+    const suffix = query.size > 0 ? `?${query.toString()}` : '';
+    const resp = await this.fetch(`/api/v1/channels/${encodeURIComponent(channelId)}${suffix}`);
     return resp.json();
   }
 
