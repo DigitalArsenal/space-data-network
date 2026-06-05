@@ -1215,6 +1215,8 @@ func isPublicReadAPIPath(path string) bool {
 	}
 
 	return strings.HasPrefix(path, "/api/directory/") ||
+		path == "/api/v1/channels" ||
+		strings.HasPrefix(path, "/api/v1/channels/") ||
 		strings.HasPrefix(path, "/api/v1/demo/") ||
 		strings.HasPrefix(path, "/api/storefront/listings/") ||
 		strings.HasPrefix(path, "/api/storefront/trust/") ||
