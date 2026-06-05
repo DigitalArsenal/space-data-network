@@ -13,4 +13,10 @@ func TestHostcallImportModuleUsesSDKName(t *testing.T) {
 	if HostcallImportModule == retiredName {
 		t.Fatalf("HostcallImportModule still uses retired import module %q", retiredName)
 	}
+	if LegacyHostcallImportModule != retiredName {
+		t.Fatalf("LegacyHostcallImportModule = %q, want %q", LegacyHostcallImportModule, retiredName)
+	}
+	if LegacyHostcallImportModule == HostcallImportModule {
+		t.Fatalf("legacy import module should not replace canonical SDK module %q", HostcallImportModule)
+	}
 }
