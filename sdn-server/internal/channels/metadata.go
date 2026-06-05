@@ -3,6 +3,7 @@ package channels
 import (
 	"encoding/hex"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -76,7 +77,7 @@ func (r *VerifiedMetadataRegistry) RecordDPM(channel ChannelID, evidence DPMTrus
 			metadata.ProviderPeer = evidence.ProviderPeer
 		}
 		if evidence.Encrypted {
-			metadata.Visibility = "private-listed"
+			metadata.Visibility = dpmPolicyVisibility(evidence.PolicyID)
 			metadata.EncryptionState = "encrypted"
 			metadata.ContentKeyID = evidence.ContentKeyID
 			metadata.EncryptionPolicy = evidence.PolicyID
@@ -137,4 +138,16 @@ func (r *VerifiedMetadataRegistry) List() []VerifiedMetadata {
 		return rows[i].ChannelID < rows[j].ChannelID
 	})
 	return rows
+}
+
+func dpmPolicyVisibility(policyID string) string {
+	policy := strings.ToLower(strings.TrimSpace(policyID))
+	switch {
+	case strings.Contains(policy, "private-hidden") || policy == "hidden":
+		return "private-hidden"
+	case strings.Contains(policy, "private-listed") || policy == "listed" || policy == "private":
+		return "private-listed"
+	default:
+		return "private-listed"
+	}
 }

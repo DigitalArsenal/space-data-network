@@ -808,6 +808,67 @@ func TestChannelHandlerPrivateMonitorFailsClosedWithoutGrant(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerPrivateHiddenMetadataFailsClosedWithoutGrant(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "private-hidden:policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	for _, target := range []string{
+		"/api/v1/channels/spaceaware-OMM",
+		"/api/v1/channels/spaceaware-OMM/monitor",
+		"/api/v1/channels/spaceaware-OMM/pnm",
+	} {
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s without grant status = %d body=%s", target, rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "spaceaware-OMM") || strings.Contains(rec.Body.String(), "private-hidden") {
+			t.Fatalf("%s leaked private-hidden metadata without grant: %s", target, rec.Body.String())
+		}
+	}
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants",
+		strings.NewReader(`{"to":"peer-alpha","scopes":["list_private"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	detailReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM?subject=peer-alpha&grantId="+grantID, nil)
+	detailRec := httptest.NewRecorder()
+	mux.ServeHTTP(detailRec, detailReq)
+	if detailRec.Code != http.StatusOK {
+		t.Fatalf("private-hidden detail with grant status = %d body=%s", detailRec.Code, detailRec.Body.String())
+	}
+	detailBody := decodeChannelJSON(t, detailRec.Body.String())
+	if detailBody["visibility"] != "private-hidden" || detailBody["grantState"] != "verified" {
+		t.Fatalf("private-hidden detail did not require verified grant: %#v", detailBody)
+	}
+
+	pnmReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/pnm?subject=peer-alpha&grantId="+grantID, nil)
+	pnmRec := httptest.NewRecorder()
+	mux.ServeHTTP(pnmRec, pnmReq)
+	if pnmRec.Code != http.StatusOK {
+		t.Fatalf("private-hidden PNM with grant status = %d body=%s", pnmRec.Code, pnmRec.Body.String())
+	}
+	if pnmRec.Header().Get("Content-Type") != "application/vnd.sdn.pnm" || pnmRec.Body.Len() == 0 {
+		t.Fatalf("private-hidden PNM response did not return verified PNM bytes: contentType=%q len=%d", pnmRec.Header().Get("Content-Type"), pnmRec.Body.Len())
+	}
+}
+
 func TestChannelHandlerVerifiedEncryptedDPMMakesChannelPrivateFailClosed(t *testing.T) {
 	t.Parallel()
 
