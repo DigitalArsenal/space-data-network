@@ -533,7 +533,7 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	transferDuration := time.Since(transferStarted)
-	frames, err := channels.SplitNativeStreamFrames(body)
+	frames, err := channels.SplitNativeStreamFramesForChannel(parsed, body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid native FlatBuffer stream: "+err.Error())
 		return
