@@ -342,7 +342,7 @@ func runChannelsPublish(cmd *cobra.Command, options channelPublishOptions, chann
 	if err != nil {
 		return fmt.Errorf("read native FlatBuffers stream: %w", err)
 	}
-	frames, err := channels.SplitNativeStreamFrames(streamBytes)
+	frames, err := channels.SplitNativeStreamFramesForChannel(parsed, streamBytes)
 	if err != nil {
 		return fmt.Errorf("invalid native FlatBuffers stream: %w", err)
 	}
@@ -425,7 +425,7 @@ func runChannelsStream(cmd *cobra.Command, options channelStreamOptions, channel
 	if err != nil {
 		return err
 	}
-	frames, err := channels.SplitNativeStreamFrames(streamBytes)
+	frames, err := channels.SplitNativeStreamFramesForChannel(parsed, streamBytes)
 	if err != nil {
 		return fmt.Errorf("invalid native FlatBuffers stream: %w", err)
 	}
