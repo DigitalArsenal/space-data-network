@@ -71,6 +71,7 @@ describe('local virtual SDN chaos network', () => {
           providerBytes: number;
           peerBytes: number;
           persistedCheckpoints: number;
+          wireSpeedTarget: number;
           targetMet: boolean;
         };
       };
@@ -102,6 +103,7 @@ describe('local virtual SDN chaos network', () => {
       expect(report.replication.persistedCheckpoints).toBeGreaterThan(0);
       expect(report.replication.providerBytes + report.replication.peerBytes).toBeGreaterThan(0);
       expect(report.replication.bytesPerSecond).toBeLessThanOrEqual(report.replication.measuredWireSpeedBytesPerSecond);
+      expect(report.replication.wireSpeedTarget).toBe(0.9);
       expect(typeof report.replication.targetMet).toBe('boolean');
     } finally {
       rmSync(tempDir, { recursive: true, force: true });

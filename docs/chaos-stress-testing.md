@@ -15,7 +15,7 @@ The highest-risk path is not basic FlatBuffer generation. It is resumable publis
 
 The council recommended these concrete scenarios:
 
-1. Wire-speed baseline vs published shard download with an 80% pass gate.
+1. Wire-speed baseline vs published shard download with a 90% pass gate.
 2. Interrupted published-shard resume at deterministic byte offsets.
 3. Snapshot/cursor resume while provider data advances.
 4. Peer churn with 8-32 requesters and repeated provider/requester restarts.
@@ -124,7 +124,7 @@ Result:
 - 16 MiB default range-resume run: resumed from byte `5,592,405`, completed `17.09 MiB` across `60,000` OMM rows in `3` range requests, and imported `60,000` rows.
 - 256 MiB disk-backed gate run: downloaded `257.36 MiB` across `900,000` OMM rows at `1757.05 MiB/s` against a `2083.93 MiB/s` measured wire-speed probe.
 - 256 MiB gate imported rows: `900,000`.
-- 80% measured-wire-speed gate: passed.
+- 90% measured-wire-speed gate: pending production/lab run.
 - HTTP fallback: none.
 - SSH fallback: none.
 
@@ -332,7 +332,7 @@ Hard gates:
 
 Performance gates:
 
-- clean network published-shard sync: `>=80%` measured wire speed
+- clean network published-shard sync: `>=90%` measured wire speed
 - lossy/partitioned chaos: `>=60%` measured wire speed unless the scenario is intentionally saturated
 - time to first local page: p95 `<=2s`
 - time to first remote page: p95 `<=8s`
