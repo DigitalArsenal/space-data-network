@@ -774,17 +774,18 @@ func TestChannelHandlerProtectedPrivateOperationsFailClosedAfterGrant(t *testing
 	for _, tc := range []struct {
 		method string
 		path   string
+		status int
 		want   string
 	}{
-		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/key-unwrap", "envelope provider is unavailable"},
-		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/shard-import", "durable FlatSQL store is unavailable"},
-		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/module-feed", "module feed delivery is unavailable"},
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/key-unwrap", http.StatusNotImplemented, "envelope provider is unavailable"},
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/shard-import", http.StatusNotImplemented, "durable FlatSQL store is unavailable"},
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/module-feed", http.StatusNotFound, "verified native FlatBuffer stream unavailable"},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path+"?subject=peer-alpha&grantId="+grantID, nil)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotImplemented {
-			t.Fatalf("%s %s status = %d, want %d body=%s", tc.method, tc.path, rec.Code, http.StatusNotImplemented, rec.Body.String())
+		if rec.Code != tc.status {
+			t.Fatalf("%s %s status = %d, want %d body=%s", tc.method, tc.path, rec.Code, tc.status, rec.Body.String())
 		}
 		if !strings.Contains(rec.Body.String(), tc.want) {
 			t.Fatalf("%s %s response missing %q: %s", tc.method, tc.path, tc.want, rec.Body.String())
@@ -945,6 +946,62 @@ func TestChannelHandlerPrivateShardImportImportsVerifiedCachedStreamWithGrant(t 
 	}
 	if strings.Contains(rec.Body.String(), "channel-private-key") || strings.Contains(rec.Body.String(), "wrapped") {
 		t.Fatalf("shard import leaked protected key material: %s", rec.Body.String())
+	}
+}
+
+func TestChannelHandlerPrivateModuleFeedDeliversVerifiedCachedStreamWithGrant(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	handler := NewChannelHandler(nil)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	parsed, err := channels.ParseChannelID("spaceaware-OMM")
+	if err != nil {
+		t.Fatalf("ParseChannelID failed: %v", err)
+	}
+	streamBytes := bytes.Join([][]byte{
+		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
+		nativeAPIFrame("OMM1", []byte{4, 5, 6}),
+	}, nil)
+	snapshot, err := handler.streams.Store(parsed, streamBytes)
+	if err != nil {
+		t.Fatalf("Store verified stream failed: %v", err)
+	}
+	handler.metadata.RecordNativeStream(parsed, snapshot, 0, nil, nil)
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
+		strings.NewReader(`{"to":"peer-alpha","scopes":["module_feed_delivery"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/module-feed?subject=peer-alpha&grantId="+grantID, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("module feed status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/vnd.sdn.flatbuffers.stream" {
+		t.Fatalf("module feed Content-Type = %q", got)
+	}
+	if !bytes.Equal(rec.Body.Bytes(), streamBytes) {
+		t.Fatalf("module feed bytes mismatch: %v", rec.Body.Bytes())
+	}
+	if strings.Contains(rec.Body.String(), "channel-private-key") || strings.Contains(rec.Body.String(), "wrapped") {
+		t.Fatalf("module feed leaked protected key material: %s", rec.Body.String())
 	}
 }
 

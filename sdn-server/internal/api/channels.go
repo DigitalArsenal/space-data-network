@@ -372,7 +372,7 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		h.requireGrantUnavailable(w, r, parsed, channels.BoundaryModuleFeedDelivery, "private channel module feed delivery is unavailable")
+		h.deliverVerifiedChannelModuleFeed(w, r, parsed)
 	case "cache":
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -917,6 +917,34 @@ func (h *ChannelHandler) importVerifiedChannelShard(w http.ResponseWriter, r *ht
 		"importedRows": importedRows,
 		"importedAt":   time.Now().UTC().Format(time.RFC3339Nano),
 	})
+}
+
+func (h *ChannelHandler) deliverVerifiedChannelModuleFeed(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
+	decision := h.authorizeGrant(r, parsed, channels.BoundaryModuleFeedDelivery)
+	if !decision.Allowed {
+		h.writeAccessDenied(w, decision)
+		return
+	}
+	metadata, verified := h.metadata.Get(parsed)
+	if !verified || metadata.DPMVerifiedAt.IsZero() || !isPrivateChannelMetadata(metadata) {
+		writeError(w, http.StatusNotFound, "verified private encrypted channel metadata unavailable")
+		return
+	}
+	snapshot, ok := h.streams.Get(parsed)
+	if !ok {
+		writeError(w, http.StatusNotFound, "verified native FlatBuffer stream unavailable for channel")
+		return
+	}
+	if _, err := channels.SplitNativeStreamFramesForChannel(parsed, snapshot.Bytes); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid native FlatBuffer stream: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	w.Header().Set("X-SDN-Grant-State", decision.GrantState)
+	w.Header().Set("X-SDN-Stream-Frames", strconv.Itoa(snapshot.FrameCount))
+	w.Header().Set("X-SDN-Stream-Bytes", strconv.Itoa(snapshot.ByteCount))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(snapshot.Bytes)
 }
 
 func (h *ChannelHandler) readLocalCache(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
