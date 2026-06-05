@@ -1558,7 +1558,7 @@ func (h *ChannelHandler) restoreVerifiedDatasetPublicationMetadataList(standardF
 	} else {
 		schemaNames = append(schemaNames, sds.SupportedSchemas...)
 	}
-	restored := make([]channels.VerifiedMetadata, 0)
+	restoredByChannelID := make(map[string]channels.VerifiedMetadata)
 	for _, schemaName := range schemaNames {
 		standardCode, err := channels.StandardCodeFromSchemaName(schemaName)
 		if err != nil {
@@ -1591,13 +1591,35 @@ func (h *ChannelHandler) restoreVerifiedDatasetPublicationMetadataList(standardF
 			if !ok {
 				continue
 			}
-			restored = append(restored, h.metadata.RecordRestored(metadata))
+			if existing, ok := restoredByChannelID[metadata.ChannelID]; ok && !verifiedMetadataIsNewer(metadata, existing) {
+				continue
+			}
+			restoredByChannelID[metadata.ChannelID] = metadata
 		}
+	}
+	restored := make([]channels.VerifiedMetadata, 0, len(restoredByChannelID))
+	for _, metadata := range restoredByChannelID {
+		restored = append(restored, h.metadata.RecordRestored(metadata))
 	}
 	sort.Slice(restored, func(i, j int) bool {
 		return restored[i].ChannelID < restored[j].ChannelID
 	})
 	return restored
+}
+
+func verifiedMetadataIsNewer(candidate, existing channels.VerifiedMetadata) bool {
+	candidateTime := candidate.VerifiedAt
+	if candidateTime.IsZero() {
+		candidateTime = candidate.DPMVerifiedAt
+	}
+	existingTime := existing.VerifiedAt
+	if existingTime.IsZero() {
+		existingTime = existing.DPMVerifiedAt
+	}
+	if candidateTime.Equal(existingTime) {
+		return candidate.ChannelHead > existing.ChannelHead
+	}
+	return candidateTime.After(existingTime)
 }
 
 func (h *ChannelHandler) restoreVerifiedDatasetPublicationMetadataFromStat(parsed channels.ChannelID, schemaName string, stat storage.LocalReplicaStats) (channels.VerifiedMetadata, bool) {

@@ -285,6 +285,57 @@ func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedge
 		t.Fatalf("monitor exposed wrong PNM/naming payload: %s", rec.Body.String())
 	}
 
+	secondBatchAt := verifiedAt.Add(time.Minute)
+	if err := store.UpsertDatasetShardPublication(storage.DatasetShardPublication{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "batch-002",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        50000,
+		RecordCount:  1,
+		ByteCount:    1024,
+		ShardCID:     "bafkshard-restored-2",
+		IndexCID:     "bafkindex-restored-2",
+		ManifestCID:  "bafkmanifest-restored-2",
+		PNMCID:       "bafkpnm-restored-2",
+		FeedHead:     "restored-feed-head-2",
+		PublishedAt:  secondBatchAt,
+	}); err != nil {
+		t.Fatalf("UpsertDatasetShardPublication batch 2 failed: %v", err)
+	}
+	for _, entry := range []storage.PinLedgerEntry{
+		{
+			CID:               "bafkmanifest-restored-2",
+			Role:              "manifest",
+			ByteCount:         512,
+			Head:              "restored-feed-head-2",
+			ByteHash:          "sha256:manifest-2",
+			VerificationState: "verified",
+		},
+		{
+			CID:               "bafkpnm-restored-2",
+			Role:              "pnm",
+			ByteCount:         256,
+			Head:              "restored-feed-head-2",
+			ByteHash:          "sha256:pnm-2",
+			VerificationState: "verified",
+		},
+	} {
+		entry.SchemaName = "OMM.fbs"
+		entry.ProviderPeerID = "16Uiu2HCelesTrakProvider"
+		entry.ProviderPublicKey = "provider-public-key"
+		entry.ProviderID = "space-data-network-02"
+		entry.SourceName = "celestrak-gp"
+		entry.BatchID = "batch-002"
+		entry.QueryProfile = storage.DatasetPublicationQueryProfile
+		entry.VerifiedAt = secondBatchAt
+		if err := store.UpsertPinLedgerEntry(entry); err != nil {
+			t.Fatalf("UpsertPinLedgerEntry batch 2 %s failed: %v", entry.Role, err)
+		}
+	}
+
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels?standardCode=OMM", nil)
 	listRec := httptest.NewRecorder()
 	mux.ServeHTTP(listRec, listReq)
@@ -294,22 +345,26 @@ func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedge
 	listBody := decodeChannelJSON(t, listRec.Body.String())
 	listResults := listBody["results"].([]interface{})
 	var restoredRow map[string]interface{}
+	restoredCount := 0
 	for _, result := range listResults {
 		row := result.(map[string]interface{})
 		if row["channelId"] == "celestrak-OMM" {
+			restoredCount++
 			restoredRow = row
-			break
 		}
 	}
 	if restoredRow == nil {
 		t.Fatalf("list did not restore verified feed from durable ledger: %s", listRec.Body.String())
+	}
+	if restoredCount != 1 {
+		t.Fatalf("list restored celestrak-OMM %d times, want 1: %s", restoredCount, listRec.Body.String())
 	}
 	if restoredRow["sourceId"] != "celestrak" ||
 		restoredRow["standardCode"] != "OMM" ||
 		restoredRow["topic"] != "/spacedatanetwork/channels/OMM" ||
 		restoredRow["pnmVerified"] != true ||
 		restoredRow["dpmVerified"] != true ||
-		restoredRow["pnmCid"] != "bafkpnm-restored" {
+		restoredRow["pnmCid"] != "bafkpnm-restored-2" {
 		t.Fatalf("list restored wrong verified feed row: %#v", restoredRow)
 	}
 	if strings.Contains(listRec.Body.String(), ".fbs") {
