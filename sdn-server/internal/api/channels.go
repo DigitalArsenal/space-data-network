@@ -159,13 +159,24 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if h.requiresPrivateHiddenGrant(parsed) {
+			decision := h.authorizeGrant(r, parsed, channels.BoundaryListPrivate)
+			if !decision.Allowed {
+				h.writeAccessDenied(w, decision)
+				return
+			}
+			payload := h.channelDetail(parsed)
+			payload["grantState"] = decision.GrantState
+			writeJSON(w, http.StatusOK, payload)
+			return
+		}
 		writeJSON(w, http.StatusOK, h.channelDetail(parsed))
 	case "monitor":
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if h.isPrivateVisibilityRequest(r) {
+		if h.isPrivateVisibilityRequest(r) || h.requiresPrivateHiddenGrant(parsed) {
 			decision := h.authorizeGrant(r, parsed, channels.BoundaryListPrivate)
 			if !decision.Allowed {
 				h.writeAccessDenied(w, decision)
@@ -180,7 +191,7 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		h.getPNM(w, parsed)
+		h.getPNM(w, r, parsed)
 	case "subscribe":
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -380,7 +391,14 @@ func (h *ChannelHandler) publishPublic(w http.ResponseWriter, r *http.Request, p
 	})
 }
 
-func (h *ChannelHandler) getPNM(w http.ResponseWriter, parsed channels.ChannelID) {
+func (h *ChannelHandler) getPNM(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
+	if h.requiresPrivateHiddenGrant(parsed) {
+		decision := h.authorizeGrant(r, parsed, channels.BoundaryListPrivate)
+		if !decision.Allowed {
+			h.writeAccessDenied(w, decision)
+			return
+		}
+	}
 	metadata, verified := h.metadata.Get(parsed)
 	if !verified || len(metadata.PNMBytes) == 0 {
 		writeError(w, http.StatusNotFound, "verified PNM unavailable for channel")
@@ -781,6 +799,11 @@ func (h *ChannelHandler) requiresPrivateGrant(r *http.Request, parsed channels.C
 		return false
 	}
 	return isPrivateChannelMetadata(metadata)
+}
+
+func (h *ChannelHandler) requiresPrivateHiddenGrant(parsed channels.ChannelID) bool {
+	metadata, ok := h.metadata.Get(parsed)
+	return ok && strings.EqualFold(metadata.Visibility, "private-hidden")
 }
 
 func isPrivateChannelMetadata(metadata channels.VerifiedMetadata) bool {
