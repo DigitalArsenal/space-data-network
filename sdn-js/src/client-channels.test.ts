@@ -96,6 +96,15 @@ describe('SDNClient channel API', () => {
     expect(source).toContain('client.channels.list({ standardCode:');
     expect(source).not.toContain('OMM.fbs');
   });
+
+  it('keeps the public quick start on channel standardCode naming', () => {
+    const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+    const quickStart = readme.slice(readme.indexOf('## Quick Start'), readme.indexOf('## Features'));
+
+    expect(quickStart).toContain("channels.list({ standardCode: 'OMM' })");
+    expect(quickStart).toContain("channels.publish('spaceaware-OMM'");
+    expect(quickStart).not.toContain('OMM.fbs');
+  });
 });
 
 function jsonResponse(payload: unknown, status = 200): Response {
