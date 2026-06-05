@@ -24,6 +24,7 @@ export interface ChannelStreamDispatcher {
 
 export interface ChannelStreamPushOptions {
   recordIndex?: number;
+  fileIdentifier?: string;
 }
 
 export interface ChannelStreamDispatcherOptions {
@@ -32,7 +33,13 @@ export interface ChannelStreamDispatcherOptions {
 }
 
 export interface EncryptedChannelStreamDispatcherOptions extends ChannelStreamDispatcherOptions {
-  encryptionContexts: Record<string, unknown>;
+  encryptionContexts: Record<string, ChannelStreamEncryptionContext>;
+}
+
+export interface ChannelStreamEncryptionContext {
+  setRecordIndex?(recordIndex: number): void;
+  decryptBuffer?(bytes: Uint8Array): Uint8Array | ArrayBuffer | ArrayBufferView;
+  [key: string]: unknown;
 }
 
 export function createChannelStreamDispatcher(options: ChannelStreamDispatcherOptions): ChannelStreamDispatcher {
@@ -58,12 +65,17 @@ export function createEncryptedChannelStreamDispatcher(
 class NativeChannelStreamDispatcher implements ChannelStreamDispatcher {
   private readonly dispatcher: NativeStreamingDispatcher;
   private readonly accepted: Set<string>;
+  private readonly acceptedTypes: string[];
+  private readonly encryptionContexts: Record<string, ChannelStreamEncryptionContext>;
   private readonly counters: Record<string, number> = {};
   private readonly encryptedRecordIndexes = new Set<number>();
   private bytesReceived = 0;
   private framesReceived = 0;
 
-  constructor(options: ChannelStreamDispatcherOptions, private readonly encrypted: boolean) {
+  constructor(
+    options: ChannelStreamDispatcherOptions | EncryptedChannelStreamDispatcherOptions,
+    private readonly encrypted: boolean,
+  ) {
     if (!options.dispatcher) {
       throw new Error('native streaming dispatcher is required');
     }
@@ -72,9 +84,12 @@ class NativeChannelStreamDispatcher implements ChannelStreamDispatcher {
     }
     this.dispatcher = options.dispatcher;
     this.accepted = new Set();
+    this.acceptedTypes = [];
+    this.encryptionContexts = encrypted && 'encryptionContexts' in options ? options.encryptionContexts : {};
     for (const type of options.acceptedTypes) {
       assertFileIdentifier(type.fileIdentifier);
       this.accepted.add(type.fileIdentifier);
+      this.acceptedTypes.push(type.fileIdentifier);
       this.counters[type.fileIdentifier] = 0;
       this.dispatcher.registerType(type.fileIdentifier, type.messageSize, type.capacity);
     }
@@ -83,9 +98,21 @@ class NativeChannelStreamDispatcher implements ChannelStreamDispatcher {
   pushChunk(chunk: Uint8Array | ArrayBuffer | ArrayBufferView, options: ChannelStreamPushOptions = {}): void {
     const bytes = asUint8Array(chunk);
     if (this.encrypted) {
-      this.assertEncryptedRecordIndex(options.recordIndex);
-      this.dispatcher.pushBytes(bytes);
+      const recordIndex = this.assertEncryptedRecordIndex(options.recordIndex);
+      const fileIdentifier = this.encryptedChunkFileIdentifier(options.fileIdentifier);
+      const context = this.encryptionContexts[fileIdentifier];
+      if (!context || typeof context.decryptBuffer !== 'function') {
+        throw new Error(`encrypted channel stream chunks require a decryptBuffer context for ${fileIdentifier}`);
+      }
+      context.setRecordIndex?.(recordIndex);
+      const decrypted = asUint8Array(context.decryptBuffer(bytes));
+      const frameCounts = scanNativeFrames(decrypted, this.accepted);
+      this.dispatcher.pushBytes(decrypted);
       this.bytesReceived += bytes.byteLength;
+      for (const [frameFileIdentifier, count] of Object.entries(frameCounts)) {
+        this.counters[frameFileIdentifier] = (this.counters[frameFileIdentifier] ?? 0) + count;
+        this.framesReceived += count;
+      }
       return;
     }
     const frameCounts = scanNativeFrames(bytes, this.accepted);
@@ -106,7 +133,7 @@ class NativeChannelStreamDispatcher implements ChannelStreamDispatcher {
     };
   }
 
-  private assertEncryptedRecordIndex(recordIndex: number | undefined): void {
+  private assertEncryptedRecordIndex(recordIndex: number | undefined): number {
     if (typeof recordIndex !== 'number' || !Number.isSafeInteger(recordIndex) || recordIndex < 0) {
       throw new Error('encrypted channel stream chunks require a non-negative record index');
     }
@@ -115,6 +142,21 @@ class NativeChannelStreamDispatcher implements ChannelStreamDispatcher {
       throw new Error(`replayed encrypted channel stream record index ${index}`);
     }
     this.encryptedRecordIndexes.add(index);
+    return index;
+  }
+
+  private encryptedChunkFileIdentifier(fileIdentifier: string | undefined): string {
+    if (fileIdentifier !== undefined) {
+      assertFileIdentifier(fileIdentifier);
+      if (!this.accepted.has(fileIdentifier)) {
+        throw new Error(`unregistered encrypted channel stream file identifier ${fileIdentifier}`);
+      }
+      return fileIdentifier;
+    }
+    if (this.acceptedTypes.length === 1) {
+      return this.acceptedTypes[0];
+    }
+    throw new Error('encrypted mixed channel stream chunks require a file identifier');
   }
 }
 

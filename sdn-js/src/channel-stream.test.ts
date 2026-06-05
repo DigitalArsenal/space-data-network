@@ -49,15 +49,18 @@ describe('channel native stream dispatcher adapter', () => {
 
   it('uses dispatcher encryption contexts for private channel streams', () => {
     const dispatcher = new RecordingDispatcher();
-    const encryptionContext = { context: 'spaceaware-OMM' };
+    const chunk = nativeFrame('OMM1', new Uint8Array([9, 8, 7]));
+    const encryptionContext = {
+      context: 'spaceaware-OMM',
+      decryptBuffer: () => chunk,
+    };
     const stream = createEncryptedChannelStreamDispatcher({
       dispatcher,
       acceptedTypes: [{ fileIdentifier: 'OMM1', messageSize: 64, capacity: 8 }],
       encryptionContexts: { OMM1: encryptionContext },
     });
-    const chunk = nativeFrame('OMM1', new Uint8Array([9, 8, 7]));
 
-    stream.pushChunk(chunk, { recordIndex: 0 });
+    stream.pushChunk(new Uint8Array([0x8f, 0x23, 0x91, 0x05]), { recordIndex: 0 });
 
     expect(dispatcher.encryptionContexts).toEqual([['OMM1', encryptionContext]]);
     expect(dispatcher.pushed[0]).toEqual(chunk);
@@ -66,7 +69,10 @@ describe('channel native stream dispatcher adapter', () => {
 
   it('rejects encrypted private chunks without a record index before dispatching', () => {
     const dispatcher = new RecordingDispatcher();
-    const encryptionContext = { context: 'spaceaware-OMM' };
+    const encryptionContext = {
+      context: 'spaceaware-OMM',
+      decryptBuffer: () => nativeFrame('OMM1', new Uint8Array([1])),
+    };
     const stream = createEncryptedChannelStreamDispatcher({
       dispatcher,
       acceptedTypes: [{ fileIdentifier: 'OMM1', messageSize: 64, capacity: 8 }],
@@ -78,9 +84,18 @@ describe('channel native stream dispatcher adapter', () => {
     expect(dispatcher.pushed).toHaveLength(0);
   });
 
-  it('forwards indexed opaque encrypted private chunks without plaintext file identifier scanning', () => {
+  it('decrypts indexed opaque private chunks before native dispatcher routing', () => {
     const dispatcher = new RecordingDispatcher();
-    const encryptionContext = { context: 'spaceaware-OMM' };
+    const encryptedIndexes: number[] = [];
+    const decrypted = nativeFrame('OMM1', new Uint8Array([7, 6, 5]));
+    const encryptionContext = {
+      context: 'spaceaware-OMM',
+      setRecordIndex: (recordIndex: number) => encryptedIndexes.push(recordIndex),
+      decryptBuffer: (bytes: Uint8Array) => {
+        expect(bytes).toEqual(new Uint8Array([0x8f, 0x23, 0x91, 0x05, 0xaa, 0x70, 0x42, 0x19, 0x5d]));
+        return decrypted;
+      },
+    };
     const stream = createEncryptedChannelStreamDispatcher({
       dispatcher,
       acceptedTypes: [{ fileIdentifier: 'OMM1', messageSize: 64, capacity: 8 }],
@@ -90,18 +105,41 @@ describe('channel native stream dispatcher adapter', () => {
 
     stream.pushChunk(encryptedChunk, { recordIndex: 7 });
 
-    expect(dispatcher.pushed).toEqual([encryptedChunk]);
+    expect(encryptedIndexes).toEqual([7]);
+    expect(dispatcher.pushed).toEqual([decrypted]);
     expect(stream.stats()).toEqual({
       bytesReceived: encryptedChunk.byteLength,
-      framesReceived: 0,
-      fileIdentifiers: { OMM1: 0 },
+      framesReceived: 1,
+      fileIdentifiers: { OMM1: 1 },
       encrypted: true,
     });
   });
 
+  it('rejects encrypted mixed-feed chunks without a target file identifier', () => {
+    const dispatcher = new RecordingDispatcher();
+    const encryptionContext = {
+      context: 'spaceaware-OMM',
+      decryptBuffer: () => nativeFrame('OMM1', new Uint8Array([1])),
+    };
+    const stream = createEncryptedChannelStreamDispatcher({
+      dispatcher,
+      acceptedTypes: [
+        { fileIdentifier: 'OMM1', messageSize: 64, capacity: 8 },
+        { fileIdentifier: 'CDM1', messageSize: 64, capacity: 8 },
+      ],
+      encryptionContexts: { OMM1: encryptionContext, CDM1: encryptionContext },
+    });
+
+    expect(() => stream.pushChunk(new Uint8Array([0x8f, 0x23]), { recordIndex: 1 })).toThrow(/file identifier/i);
+    expect(dispatcher.pushed).toHaveLength(0);
+  });
+
   it('rejects replayed encrypted record indexes before dispatching private stream bytes', () => {
     const dispatcher = new RecordingDispatcher();
-    const encryptionContext = { context: 'spaceaware-OMM' };
+    const encryptionContext = {
+      context: 'spaceaware-OMM',
+      decryptBuffer: () => nativeFrame('OMM1', new Uint8Array([1])),
+    };
     const stream = createEncryptedChannelStreamDispatcher({
       dispatcher,
       acceptedTypes: [{ fileIdentifier: 'OMM1', messageSize: 64, capacity: 8 }],
@@ -109,11 +147,12 @@ describe('channel native stream dispatcher adapter', () => {
     });
     const first = new Uint8Array([0x8f, 0x23, 0x91, 0x05]);
     const replay = new Uint8Array([0x91, 0x05, 0x8f, 0x23]);
+    const decrypted = nativeFrame('OMM1', new Uint8Array([1]));
 
     stream.pushChunk(first, { recordIndex: 12 });
 
     expect(() => stream.pushChunk(replay, { recordIndex: 12 })).toThrow(/replay/i);
-    expect(dispatcher.pushed).toEqual([first]);
+    expect(dispatcher.pushed).toEqual([decrypted]);
   });
 });
 
