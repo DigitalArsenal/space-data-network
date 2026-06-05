@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -206,18 +207,17 @@ func TestChannelHandlerIssuesPrivateGrantAndAuthorizesBoundaries(t *testing.T) {
 
 	streamReq := httptest.NewRequest(
 		http.MethodGet,
-		"/api/v1/channels/spaceaware-OMM/stream?subject=peer-alpha&grantId="+grantID,
+		"/api/v1/channels/spaceaware-OMM/stream?visibility=private&subject=peer-alpha&grantId="+grantID,
 		nil,
 	)
 	streamRec := httptest.NewRecorder()
 	mux.ServeHTTP(streamRec, streamReq)
 
-	if streamRec.Code != http.StatusOK {
-		t.Fatalf("private stream status = %d body=%s", streamRec.Code, streamRec.Body.String())
+	if streamRec.Code != http.StatusNotFound {
+		t.Fatalf("private stream status = %d, want no verified stream after grant body=%s", streamRec.Code, streamRec.Body.String())
 	}
-	streamBody := decodeChannelJSON(t, streamRec.Body.String())
-	if streamBody["grantState"] != "verified" {
-		t.Fatalf("private stream did not verify grant: %#v", streamBody)
+	if strings.Contains(streamRec.Body.String(), "verified channel grant required") {
+		t.Fatalf("private stream did not pass grant boundary: %s", streamRec.Body.String())
 	}
 }
 
@@ -272,6 +272,86 @@ func TestChannelHandlerPublicPublishUpdatesVerifiedMonitor(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerPublicStreamPublishRequiresVerifiedPNM(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+
+	streamBytes := nativeAPIFrame("OMM1", []byte{1, 2, 3})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1", bytes.NewReader(streamBytes))
+	req.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("stream publish status = %d, want %d body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "verified PNM required") {
+		t.Fatalf("stream publish body did not require verified PNM: %s", rec.Body.String())
+	}
+}
+
+func TestChannelHandlerPublishesAndOpensNativeFlatBufferStream(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+
+	pnmReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish", bytes.NewReader(buildAPISignedPNM(t, "bafystreamhead", "DPM")))
+	pnmRec := httptest.NewRecorder()
+	mux.ServeHTTP(pnmRec, pnmReq)
+	if pnmRec.Code != http.StatusAccepted {
+		t.Fatalf("PNM publish status = %d body=%s", pnmRec.Code, pnmRec.Body.String())
+	}
+
+	streamBytes := bytes.Join([][]byte{
+		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
+		nativeAPIFrame("OMM1", []byte{4, 5, 6, 7}),
+	}, nil)
+	streamReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1", bytes.NewReader(streamBytes))
+	streamReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	streamRec := httptest.NewRecorder()
+	mux.ServeHTTP(streamRec, streamReq)
+	if streamRec.Code != http.StatusAccepted {
+		t.Fatalf("stream publish status = %d body=%s", streamRec.Code, streamRec.Body.String())
+	}
+	publishBody := decodeChannelJSON(t, streamRec.Body.String())
+	if publishBody["pnmVerified"] != true ||
+		publishBody["streamBytes"] != float64(len(streamBytes)) ||
+		publishBody["streamFrames"] != float64(2) {
+		t.Fatalf("unexpected stream publish response: %#v", publishBody)
+	}
+
+	openReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/stream", nil)
+	openReq.Header.Set("Accept", "application/vnd.sdn.flatbuffers.stream")
+	openRec := httptest.NewRecorder()
+	mux.ServeHTTP(openRec, openReq)
+	if openRec.Code != http.StatusOK {
+		t.Fatalf("stream open status = %d body=%s", openRec.Code, openRec.Body.String())
+	}
+	if got := openRec.Header().Get("Content-Type"); got != "application/vnd.sdn.flatbuffers.stream" {
+		t.Fatalf("stream Content-Type = %q", got)
+	}
+	if !bytes.Equal(openRec.Body.Bytes(), streamBytes) {
+		t.Fatal("stream open did not return original native FlatBuffer stream bytes")
+	}
+	if strings.Contains(openRec.Body.String(), "base64") || strings.Contains(openRec.Body.String(), "records") {
+		t.Fatalf("stream hot path returned JSON/base64-looking data: %q", openRec.Body.String())
+	}
+
+	monitorReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/monitor", nil)
+	monitorRec := httptest.NewRecorder()
+	mux.ServeHTTP(monitorRec, monitorReq)
+	if monitorRec.Code != http.StatusOK {
+		t.Fatalf("monitor status = %d body=%s", monitorRec.Code, monitorRec.Body.String())
+	}
+	monitorBody := decodeChannelJSON(t, monitorRec.Body.String())
+	if monitorBody["syncedBytes"] != float64(len(streamBytes)) || monitorBody["syncedRows"] != float64(2) {
+		t.Fatalf("monitor did not reflect native stream import: %#v", monitorBody)
+	}
+}
+
 func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 	t.Parallel()
 
@@ -285,7 +365,7 @@ func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 		{http.MethodGet, "/api/v1/channels?visibility=private"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/subscribe?visibility=private"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/unsubscribe?visibility=private"},
-		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/stream"},
+		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/stream?visibility=private"},
 		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/bytes"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/key-unwrap"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/shard-import"},
@@ -301,6 +381,17 @@ func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 			t.Fatalf("%s %s status = %d, want %d body=%s", tc.method, tc.path, rec.Code, http.StatusForbidden, rec.Body.String())
 		}
 	}
+}
+
+func nativeAPIFrame(fileIdentifier string, payload []byte) []byte {
+	if len(fileIdentifier) != 4 {
+		panic("fileIdentifier must be four bytes")
+	}
+	frame := make([]byte, 8+len(payload))
+	binary.LittleEndian.PutUint32(frame[:4], uint32(4+len(payload)))
+	copy(frame[4:8], []byte(fileIdentifier))
+	copy(frame[8:], payload)
+	return frame
 }
 
 func buildAPIUnsignedPNM(t *testing.T) []byte {
