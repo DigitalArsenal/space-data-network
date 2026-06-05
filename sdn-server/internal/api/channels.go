@@ -17,6 +17,7 @@ type ChannelHandler struct {
 	store         *storage.FlatSQLStore
 	gate          *channels.AccessGate
 	grants        *channels.ChannelGrantRegistry
+	metadata      *channels.VerifiedMetadataRegistry
 	subscriptions *channels.SubscriptionRegistry
 }
 
@@ -26,6 +27,7 @@ func NewChannelHandler(store *storage.FlatSQLStore) *ChannelHandler {
 		store:         store,
 		gate:          channels.NewAccessGate(grants),
 		grants:        grants,
+		metadata:      channels.NewVerifiedMetadataRegistry(),
 		subscriptions: channels.NewSubscriptionRegistry(),
 	}
 }
@@ -278,12 +280,14 @@ func (h *ChannelHandler) publishPublic(w http.ResponseWriter, r *http.Request, p
 		writeError(w, http.StatusBadRequest, "verified PNM envelope required: "+err.Error())
 		return
 	}
+	metadata := h.metadata.RecordPNM(parsed, evidence)
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"channelId":     parsed.ChannelID,
 		"standardCode":  parsed.StandardCode,
 		"pnmVerified":   true,
 		"pnmCid":        evidence.CID,
 		"signatureType": evidence.SignatureType,
+		"verifiedAt":    metadata.VerifiedAt.Format(time.RFC3339Nano),
 	})
 }
 
@@ -355,6 +359,7 @@ func channelListRow(standardCode string) map[string]interface{} {
 
 func (h *ChannelHandler) channelDetail(parsed channels.ChannelID) map[string]interface{} {
 	state := h.subscriptions.Get(parsed)
+	metadata, verified := h.metadata.Get(parsed)
 	return map[string]interface{}{
 		"channelId":       parsed.ChannelID,
 		"sourceId":        parsed.SourceID,
@@ -362,7 +367,8 @@ func (h *ChannelHandler) channelDetail(parsed channels.ChannelID) map[string]int
 		"feedUuid":        emptyStringAsNil(parsed.FeedUUID),
 		"visibility":      state.Visibility,
 		"subscribed":      state.Subscribed,
-		"pnmVerified":     false,
+		"pnmVerified":     verified,
+		"pnmCid":          emptyStringAsNil(metadata.PNMCID),
 		"grantState":      state.GrantState,
 		"encryptionState": state.EncryptionState,
 	}
@@ -370,17 +376,21 @@ func (h *ChannelHandler) channelDetail(parsed channels.ChannelID) map[string]int
 
 func (h *ChannelHandler) channelMonitor(parsed channels.ChannelID) map[string]interface{} {
 	payload := h.channelDetail(parsed)
-	payload["channelHead"] = ""
-	payload["providerPeer"] = ""
-	payload["localRows"] = 0
-	payload["remoteRows"] = 0
-	payload["syncedRows"] = 0
-	payload["missingRows"] = 0
-	payload["pinnedRows"] = 0
-	payload["syncedBytes"] = 0
-	payload["throughputBytesPerSecond"] = 0
-	payload["wireSpeedUtilization"] = nil
+	metadata, verified := h.metadata.Get(parsed)
+	payload["channelHead"] = metadata.PNMCID
+	payload["providerPeer"] = metadata.ProviderPeer
+	payload["localRows"] = metadata.LocalRows
+	payload["remoteRows"] = metadata.RemoteRows
+	payload["syncedRows"] = metadata.SyncedRows
+	payload["missingRows"] = metadata.MissingRows
+	payload["pinnedRows"] = metadata.PinnedRows
+	payload["syncedBytes"] = metadata.SyncedBytes
+	payload["throughputBytesPerSecond"] = metadata.ThroughputBPS
+	payload["wireSpeedUtilization"] = metadata.WireUtilization
 	payload["lastVerifiedUpdate"] = ""
+	if verified {
+		payload["lastVerifiedUpdate"] = metadata.VerifiedAt.Format(time.RFC3339Nano)
+	}
 	return payload
 }
 
