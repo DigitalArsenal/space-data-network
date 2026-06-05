@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	channelmodel "github.com/spacedatanetwork/sdn-server/internal/channels"
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -128,7 +129,31 @@ func (h *DatasetPublicationHandler) handlePublish(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusAccepted, result)
+	writeJSON(w, http.StatusAccepted, publicDatasetPublicationResult(result))
+}
+
+func publicDatasetPublicationResult(result *DatasetPublicationResult) *DatasetPublicationResult {
+	if result == nil {
+		return nil
+	}
+	public := *result
+	public.Schema = publicDatasetPublicationStandardCode(public.Schema)
+	if len(result.Publications) > 0 {
+		public.Publications = make([]DatasetPublicationResult, 0, len(result.Publications))
+		for _, publication := range result.Publications {
+			publication.Schema = publicDatasetPublicationStandardCode(publication.Schema)
+			public.Publications = append(public.Publications, publication)
+		}
+	}
+	return &public
+}
+
+func publicDatasetPublicationStandardCode(schema string) string {
+	standardCode, err := channelmodel.StandardCodeFromSchemaName(schema)
+	if err == nil {
+		return standardCode
+	}
+	return strings.TrimSpace(schema)
 }
 
 func isLoopbackRemoteAddr(remoteAddr string) bool {
