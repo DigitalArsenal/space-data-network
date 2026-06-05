@@ -777,7 +777,7 @@ func TestChannelHandlerProtectedPrivateOperationsFailClosedAfterGrant(t *testing
 		want   string
 	}{
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/key-unwrap", "envelope provider is unavailable"},
-		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/shard-import", "shard import is unavailable"},
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/shard-import", "durable FlatSQL store is unavailable"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/module-feed", "module feed delivery is unavailable"},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path+"?subject=peer-alpha&grantId="+grantID, nil)
@@ -875,6 +875,76 @@ func TestChannelHandlerPrivateKeyUnwrapReturnsRequesterWrappedEnvelopeWithGrant(
 	}
 	if strings.Contains(rec.Body.String(), "plaintext") {
 		t.Fatalf("key unwrap response referenced plaintext key material: %s", rec.Body.String())
+	}
+}
+
+func TestChannelHandlerPrivateShardImportImportsVerifiedCachedStreamWithGrant(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	store := newChannelTestStore(t)
+	handler := NewChannelHandler(store)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	parsed, err := channels.ParseChannelID("spaceaware-OMM")
+	if err != nil {
+		t.Fatalf("ParseChannelID failed: %v", err)
+	}
+	streamBytes := bytes.Join([][]byte{
+		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
+		nativeAPIFrame("OMM1", []byte{4, 5, 6}),
+	}, nil)
+	snapshot, err := handler.streams.Store(parsed, streamBytes)
+	if err != nil {
+		t.Fatalf("Store verified stream failed: %v", err)
+	}
+	handler.metadata.RecordNativeStream(parsed, snapshot, 0, nil, nil)
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
+		strings.NewReader(`{"to":"peer-alpha","scopes":["shard_import"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/shard-import?subject=peer-alpha&grantId="+grantID, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("shard import status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := decodeChannelJSON(t, rec.Body.String())
+	if body["channelId"] != "spaceaware-OMM" ||
+		body["standardCode"] != "OMM" ||
+		body["grantState"] != "verified" ||
+		body["importedRows"] != float64(2) ||
+		body["streamFrames"] != float64(2) {
+		t.Fatalf("unexpected shard import response: %#v", body)
+	}
+	schemaName, err := channels.SchemaNameFromStandardCode("OMM")
+	if err != nil {
+		t.Fatalf("SchemaNameFromStandardCode failed: %v", err)
+	}
+	count, err := store.CountRawRecords(storage.RawRecordQuery{SchemaName: schemaName})
+	if err != nil {
+		t.Fatalf("CountRawRecords failed: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("durable OMM rows = %d, want 2 after shard import", count)
+	}
+	if strings.Contains(rec.Body.String(), "channel-private-key") || strings.Contains(rec.Body.String(), "wrapped") {
+		t.Fatalf("shard import leaked protected key material: %s", rec.Body.String())
 	}
 }
 
