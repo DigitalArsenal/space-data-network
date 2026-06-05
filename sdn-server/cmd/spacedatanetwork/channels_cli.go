@@ -48,6 +48,11 @@ type channelStreamOptions struct {
 	APIURL string
 }
 
+type channelPNMOptions struct {
+	Out    string
+	APIURL string
+}
+
 type channelMonitorOptions struct {
 	APIURL string
 }
@@ -145,6 +150,18 @@ func newChannelsCommand() *cobra.Command {
 	streamCmd.Flags().StringVar(&streamOptions.Out, "out", "", "file path for native FlatBuffers stream bytes")
 	streamCmd.Flags().StringVar(&streamOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	cmd.AddCommand(streamCmd)
+	pnmOptions := channelPNMOptions{}
+	pnmCmd := &cobra.Command{
+		Use:   "pnm <channelId>",
+		Short: "Fetch verified PNM bytes for a channel",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runChannelsPNM(cmd, pnmOptions, args[0])
+		},
+	}
+	pnmCmd.Flags().StringVar(&pnmOptions.Out, "out", "", "file path for verified PNM bytes")
+	pnmCmd.Flags().StringVar(&pnmOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
+	cmd.AddCommand(pnmCmd)
 	grantsCmd := &cobra.Command{
 		Use:   "grants",
 		Short: "Manage private channel grants",
@@ -386,6 +403,70 @@ func readChannelsStreamFromAPI(cmd *cobra.Command, parsed channels.ChannelID, ap
 		return nil, "", fmt.Errorf("read native channel stream: %w", err)
 	}
 	return streamBytes, resp.Header.Get("Content-Type"), nil
+}
+
+func runChannelsPNM(cmd *cobra.Command, options channelPNMOptions, channelID string) error {
+	parsed, err := channels.ParseChannelID(channelID)
+	if err != nil {
+		return err
+	}
+	outPath := strings.TrimSpace(options.Out)
+	if outPath == "" {
+		return fmt.Errorf("--out is required")
+	}
+	apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL")))
+	if apiURL == "" {
+		return fmt.Errorf("--api-url or SDN_API_URL is required to fetch channel PNM")
+	}
+	pnmBytes, contentType, err := readChannelsPNMFromAPI(cmd, parsed, apiURL)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(outPath, pnmBytes, 0o600); err != nil {
+		return fmt.Errorf("write verified PNM: %w", err)
+	}
+	if strings.TrimSpace(contentType) == "" {
+		contentType = "application/vnd.sdn.pnm"
+	}
+	payload := map[string]interface{}{
+		"channelId":    parsed.ChannelID,
+		"sourceId":     parsed.SourceID,
+		"standardCode": parsed.StandardCode,
+		"contentType":  contentType,
+		"pnmBytes":     len(pnmBytes),
+		"out":          outPath,
+	}
+	if parsed.FeedUUID != "" {
+		payload["feedUuid"] = parsed.FeedUUID
+	}
+	printChannelPNMPayload(cmd.OutOrStdout(), payload)
+	return nil
+}
+
+func readChannelsPNMFromAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string) ([]byte, string, error) {
+	pnmURL, err := channelPNMURL(apiURL, parsed.ChannelID)
+	if err != nil {
+		return nil, "", err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, pnmURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Accept", "application/vnd.sdn.pnm")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("fetch verified channel PNM: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("fetch verified channel PNM: %s", resp.Status)
+	}
+	pnmBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("read verified channel PNM: %w", err)
+	}
+	return pnmBytes, resp.Header.Get("Content-Type"), nil
 }
 
 func printChannelListRow(out interface {
@@ -736,6 +817,10 @@ func channelStreamURL(apiURL string, channelID string) (string, error) {
 	return channelAPIURL(apiURL, channelID, "/stream")
 }
 
+func channelPNMURL(apiURL string, channelID string) (string, error) {
+	return channelAPIURL(apiURL, channelID, "/pnm")
+}
+
 func channelSubscriptionURL(apiURL string, channelID string, action string) (string, error) {
 	switch action {
 	case "subscribe", "unsubscribe":
@@ -796,6 +881,24 @@ func printChannelStreamPayload(out interface {
 		"contentType",
 		"streamBytes",
 		"streamFrames",
+		"out",
+	} {
+		if value, ok := payload[key]; ok {
+			fmt.Fprintf(out, "%s=%v\n", key, monitorValue(value))
+		}
+	}
+}
+
+func printChannelPNMPayload(out interface {
+	Write([]byte) (int, error)
+}, payload map[string]interface{}) {
+	for _, key := range []string{
+		"channelId",
+		"sourceId",
+		"standardCode",
+		"feedUuid",
+		"contentType",
+		"pnmBytes",
 		"out",
 	} {
 		if value, ok := payload[key]; ok {

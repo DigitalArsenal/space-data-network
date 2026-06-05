@@ -391,6 +391,58 @@ func TestChannelsStreamReadsNativeStreamFromLocalAPI(t *testing.T) {
 	}
 }
 
+func TestChannelsPNMReadsVerifiedPNMFromLocalAPI(t *testing.T) {
+	t.Parallel()
+
+	pnmBytes := []byte{11, 0, 0, 0, 80, 78, 77, 49, 1, 2, 3, 4, 5, 6, 7}
+	outFile := filepath.Join(t.TempDir(), "channel.pnm")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/channels/spaceaware-OMM/pnm" {
+			t.Fatalf("unexpected PNM request %s %s", r.Method, r.URL.String())
+		}
+		if got := r.Header.Get("Accept"); got != "application/vnd.sdn.pnm" {
+			t.Fatalf("PNM Accept = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/vnd.sdn.pnm")
+		_, _ = w.Write(pnmBytes)
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"pnm", "spaceaware-OMM", "--out", outFile, "--api-url", server.URL})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels pnm failed: %v", err)
+	}
+	written, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("read PNM output: %v", err)
+	}
+	if !bytes.Equal(written, pnmBytes) {
+		t.Fatalf("PNM output mismatch: %v", written)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"channelId=spaceaware-OMM",
+		"sourceId=spaceaware",
+		"standardCode=OMM",
+		"contentType=application/vnd.sdn.pnm",
+		"pnmBytes=15",
+		"out=" + outFile,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("channels pnm output missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "base64") || strings.Contains(body, "records=") {
+		t.Fatalf("channels pnm output exposed JSON/base64 hot path:\n%s", body)
+	}
+}
+
 func TestChannelsSubscribeAndUnsubscribePublicChannel(t *testing.T) {
 	t.Parallel()
 
