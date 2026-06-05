@@ -29,6 +29,9 @@ type channelsListOptions struct {
 }
 
 type channelShowOptions struct {
+	Subject               string
+	GrantID               string
+	Visibility            string
 	APIURL                string
 	InsecureSkipTLSVerify bool
 }
@@ -124,6 +127,9 @@ func newChannelsCommand() *cobra.Command {
 		},
 	}
 	showCmd.Flags().StringVar(&showOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
+	showCmd.Flags().StringVar(&showOptions.Subject, "subject", "", "subscriber EPM subject for private channel access")
+	showCmd.Flags().StringVar(&showOptions.GrantID, "grant-id", "", "private channel grant ID")
+	showCmd.Flags().StringVar(&showOptions.Visibility, "visibility", "", "channel visibility for private access checks")
 	addChannelInsecureTLSFlag(showCmd, &showOptions.InsecureSkipTLSVerify)
 	cmd.AddCommand(showCmd)
 	monitorCmd := &cobra.Command{
@@ -767,7 +773,11 @@ func runChannelsShow(cmd *cobra.Command, options channelShowOptions, channelID s
 		return err
 	}
 	if apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL"))); apiURL != "" {
-		return runChannelsShowFromAPI(cmd, parsed, apiURL, options.InsecureSkipTLSVerify)
+		return runChannelsShowFromAPI(cmd, parsed, apiURL, channelAccessQuery{
+			Subject:    options.Subject,
+			GrantID:    options.GrantID,
+			Visibility: options.Visibility,
+		}, options.InsecureSkipTLSVerify)
 	}
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "channelId=%s\n", parsed.ChannelID)
@@ -781,8 +791,8 @@ func runChannelsShow(cmd *cobra.Command, options channelShowOptions, channelID s
 	return nil
 }
 
-func runChannelsShowFromAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, insecureSkipTLSVerify bool) error {
-	showURL, err := channelDetailURL(apiURL, parsed.ChannelID)
+func runChannelsShowFromAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, access channelAccessQuery, insecureSkipTLSVerify bool) error {
+	showURL, err := channelDetailURL(apiURL, parsed.ChannelID, access)
 	if err != nil {
 		return err
 	}
@@ -928,8 +938,8 @@ func channelListURL(apiURL string, options channelsListOptions) (string, error) 
 	return base.String(), nil
 }
 
-func channelDetailURL(apiURL string, channelID string) (string, error) {
-	return channelAPIURL(apiURL, channelID, "")
+func channelDetailURL(apiURL string, channelID string, access channelAccessQuery) (string, error) {
+	return channelAPIURLWithQuery(apiURL, channelID, "", access.queryValues())
 }
 
 func channelPublishURL(apiURL string, channelID string, access channelAccessQuery) (string, error) {

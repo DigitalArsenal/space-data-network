@@ -41,7 +41,7 @@ export interface SDNClientOptions extends ResolveOptions {
 
 export interface SDNClientChannels {
   list(options?: ChannelListOptions): Promise<ChannelSummary[]>;
-  get(channelId: string): Promise<ChannelSummary>;
+  get(channelId: string, options?: ChannelAccessOptions): Promise<ChannelSummary>;
   subscribe(channelId: string, options?: ChannelAccessOptions): Promise<ChannelActionResponse>;
   unsubscribe(channelId: string, options?: ChannelAccessOptions): Promise<ChannelActionResponse>;
   publish(channelId: string, stream: Uint8Array, options?: ChannelAccessOptions): Promise<ChannelActionResponse>;
@@ -86,7 +86,7 @@ export class SDNClient {
     this.transport = transport;
     this.channels = {
       list: (options) => this.transport.listChannels(options),
-      get: (channelId) => this.transport.getChannel(channelId),
+      get: (channelId, options) => this.transport.getChannel(channelId, options),
       subscribe: (channelId, options) => this.transport.subscribeChannel(channelId, options),
       unsubscribe: (channelId, options) => this.transport.unsubscribeChannel(channelId, options),
       publish: (channelId, stream, options) => this.transport.publishChannelStream(channelId, stream, options),
