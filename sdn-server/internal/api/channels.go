@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -25,6 +26,7 @@ type ChannelHandler struct {
 	streams          *channels.NativeStreamRegistry
 	subscriptions    *channels.SubscriptionRegistry
 	encryptedStreams EncryptedNativeStreamDecryptor
+	keyEnvelopes     PrivateChannelKeyEnvelopeProvider
 }
 
 type EncryptedNativeStreamHeader struct {
@@ -49,6 +51,29 @@ type EncryptedNativeStreamDecryptor interface {
 
 type ChannelHandlerOptions struct {
 	EncryptedStreams EncryptedNativeStreamDecryptor
+	KeyEnvelopes     PrivateChannelKeyEnvelopeProvider
+}
+
+type PrivateChannelKeyEnvelopeRequest struct {
+	Channel        channels.ChannelID
+	Subject        string
+	GrantID        string
+	ContentKeyID   string
+	RecipientKeyID string
+	Metadata       channels.VerifiedMetadata
+}
+
+type PrivateChannelKeyEnvelope struct {
+	ContentKeyID       string
+	RecipientKeyID     string
+	KeyEpoch           string
+	Algorithm          string
+	WrappedKeyEnvelope []byte
+	EnvelopeCID        string
+}
+
+type PrivateChannelKeyEnvelopeProvider interface {
+	GetPrivateChannelKeyEnvelope(PrivateChannelKeyEnvelopeRequest) (PrivateChannelKeyEnvelope, error)
 }
 
 func NewChannelHandler(store *storage.FlatSQLStore) *ChannelHandler {
@@ -65,6 +90,7 @@ func NewChannelHandlerWithOptions(store *storage.FlatSQLStore, options ChannelHa
 		streams:          channels.NewNativeStreamRegistry(),
 		subscriptions:    channels.NewSubscriptionRegistry(),
 		encryptedStreams: options.EncryptedStreams,
+		keyEnvelopes:     options.KeyEnvelopes,
 	}
 }
 
@@ -334,7 +360,7 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		h.requireGrantUnavailable(w, r, parsed, channels.BoundaryKeyUnwrap, "private channel stream key unwrap is unavailable")
+		h.unwrapPrivateChannelKey(w, r, parsed)
 	case "shard-import":
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -858,6 +884,82 @@ func (h *ChannelHandler) readLocalCache(w http.ResponseWriter, r *http.Request, 
 	w.Header().Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(snapshot.Bytes)
+}
+
+type privateChannelKeyUnwrapPayload struct {
+	ContentKeyID   string `json:"contentKeyId"`
+	RecipientKeyID string `json:"recipientKeyId"`
+}
+
+func (h *ChannelHandler) unwrapPrivateChannelKey(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
+	decision := h.authorizeGrant(r, parsed, channels.BoundaryKeyUnwrap)
+	if !decision.Allowed {
+		h.writeAccessDenied(w, decision)
+		return
+	}
+	metadata, verified := h.metadata.Get(parsed)
+	if !verified || metadata.DPMVerifiedAt.IsZero() || !isPrivateChannelMetadata(metadata) {
+		writeError(w, http.StatusNotFound, "verified private encrypted channel metadata unavailable")
+		return
+	}
+	if h.keyEnvelopes == nil {
+		writeError(w, http.StatusNotImplemented, "private channel envelope provider is unavailable")
+		return
+	}
+	var payload privateChannelKeyUnwrapPayload
+	if r.Body != nil {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+		if err := decoder.Decode(&payload); err != nil && err != io.EOF {
+			writeError(w, http.StatusBadRequest, "invalid key unwrap payload: "+err.Error())
+			return
+		}
+	}
+	subject := strings.TrimSpace(r.URL.Query().Get("subject"))
+	grantID := strings.TrimSpace(r.URL.Query().Get("grantId"))
+	contentKeyID := strings.TrimSpace(payload.ContentKeyID)
+	if contentKeyID == "" {
+		contentKeyID = strings.TrimSpace(metadata.ContentKeyID)
+	}
+	if contentKeyID == "" || contentKeyID != strings.TrimSpace(metadata.ContentKeyID) {
+		writeError(w, http.StatusForbidden, "verified channel grant does not match requested content key")
+		return
+	}
+	recipientKeyID := strings.TrimSpace(payload.RecipientKeyID)
+	if recipientKeyID == "" {
+		writeError(w, http.StatusBadRequest, "recipientKeyId is required")
+		return
+	}
+	envelope, err := h.keyEnvelopes.GetPrivateChannelKeyEnvelope(PrivateChannelKeyEnvelopeRequest{
+		Channel:        parsed,
+		Subject:        subject,
+		GrantID:        grantID,
+		ContentKeyID:   contentKeyID,
+		RecipientKeyID: recipientKeyID,
+		Metadata:       metadata,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "wrapped key envelope unavailable for requester")
+		return
+	}
+	if strings.TrimSpace(envelope.ContentKeyID) != contentKeyID || strings.TrimSpace(envelope.RecipientKeyID) != recipientKeyID {
+		writeError(w, http.StatusForbidden, "wrapped key envelope does not match verified request")
+		return
+	}
+	if len(envelope.WrappedKeyEnvelope) == 0 && strings.TrimSpace(envelope.EnvelopeCID) == "" {
+		writeError(w, http.StatusNotFound, "wrapped key envelope unavailable for requester")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"channelId":                parsed.ChannelID,
+		"standardCode":             parsed.StandardCode,
+		"grantState":               decision.GrantState,
+		"contentKeyId":             contentKeyID,
+		"recipientKeyId":           recipientKeyID,
+		"keyEpoch":                 strings.TrimSpace(envelope.KeyEpoch),
+		"algorithm":                strings.TrimSpace(envelope.Algorithm),
+		"envelopeCid":              strings.TrimSpace(envelope.EnvelopeCID),
+		"wrappedKeyEnvelopeBase64": base64.StdEncoding.EncodeToString(envelope.WrappedKeyEnvelope),
+	})
 }
 
 func (h *ChannelHandler) requiresLocalCacheReadGrant(r *http.Request, parsed channels.ChannelID) bool {
