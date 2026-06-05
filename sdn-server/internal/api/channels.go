@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -184,7 +185,7 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		h.requireGrant(w, r, parsed, channels.BoundaryByteRangeRead)
+		h.readStreamBytes(w, r, parsed)
 	case "key-unwrap":
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -457,6 +458,57 @@ func (h *ChannelHandler) openStream(w http.ResponseWriter, r *http.Request, pars
 	w.Header().Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(snapshot.Bytes)
+}
+
+func (h *ChannelHandler) readStreamBytes(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
+	if h.requiresPrivateGrant(r, parsed) {
+		decision := h.authorizeGrant(r, parsed, channels.BoundaryByteRangeRead)
+		if !decision.Allowed {
+			h.writeAccessDenied(w, decision)
+			return
+		}
+	}
+	snapshot, ok := h.streams.Get(parsed)
+	if !ok {
+		writeError(w, http.StatusNotFound, "verified native FlatBuffer stream unavailable for channel")
+		return
+	}
+	start, end, err := parseByteRangeQuery(r, len(snapshot.Bytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end-1, len(snapshot.Bytes)))
+	w.WriteHeader(http.StatusPartialContent)
+	_, _ = w.Write(snapshot.Bytes[start:end])
+}
+
+func parseByteRangeQuery(r *http.Request, total int) (int, int, error) {
+	if total <= 0 {
+		return 0, 0, fmt.Errorf("verified native FlatBuffer stream is empty")
+	}
+	offsetText := strings.TrimSpace(r.URL.Query().Get("offset"))
+	lengthText := strings.TrimSpace(r.URL.Query().Get("length"))
+	if offsetText == "" || lengthText == "" {
+		return 0, 0, fmt.Errorf("offset and length query parameters are required")
+	}
+	offset, err := strconv.ParseInt(offsetText, 10, 64)
+	if err != nil || offset < 0 {
+		return 0, 0, fmt.Errorf("offset must be a non-negative integer")
+	}
+	length, err := strconv.ParseInt(lengthText, 10, 64)
+	if err != nil || length <= 0 {
+		return 0, 0, fmt.Errorf("length must be a positive integer")
+	}
+	if offset >= int64(total) {
+		return 0, 0, fmt.Errorf("offset is outside verified stream byte range")
+	}
+	end := offset + length
+	if end > int64(total) {
+		end = int64(total)
+	}
+	return int(offset), int(end), nil
 }
 
 func parseGrantScopes(values []string) ([]channels.AccessBoundary, error) {
