@@ -328,8 +328,17 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if h.isPrivateVisibilityRequest(r) {
-			h.requireGrant(w, r, parsed, channels.BoundaryGrantIssue)
+		if h.requiresPrivateGrant(r, parsed) {
+			if h.requestMatchesVerifiedProvider(r, parsed) {
+				h.issueGrant(w, r, parsed)
+				return
+			}
+			decision := h.authorizeGrant(r, parsed, channels.BoundaryGrantIssue)
+			if !decision.Allowed {
+				h.writeAccessDenied(w, decision)
+				return
+			}
+			h.issueGrant(w, r, parsed)
 			return
 		}
 		h.issueGrant(w, r, parsed)
@@ -812,6 +821,7 @@ func parseGrantScopes(values []string) ([]channels.AccessBoundary, error) {
 		string(channels.BoundarySubscribe):          channels.BoundarySubscribe,
 		string(channels.BoundaryUnsubscribe):        channels.BoundaryUnsubscribe,
 		string(channels.BoundaryPublish):            channels.BoundaryPublish,
+		string(channels.BoundaryGrantIssue):         channels.BoundaryGrantIssue,
 		string(channels.BoundaryStreamOpen):         channels.BoundaryStreamOpen,
 		string(channels.BoundaryByteRangeRead):      channels.BoundaryByteRangeRead,
 		string(channels.BoundaryKeyUnwrap):          channels.BoundaryKeyUnwrap,
@@ -927,6 +937,30 @@ func providerPublicKeyFromRequest(r *http.Request) (ed25519.PublicKey, error) {
 		return nil, fmt.Errorf("provider public key length = %d, want %d", len(key), ed25519.PublicKeySize)
 	}
 	return ed25519.PublicKey(key), nil
+}
+
+func providerPublicKeyHexFromRequest(r *http.Request) (string, bool, error) {
+	key, err := providerPublicKeyFromRequest(r)
+	if err != nil {
+		message := err.Error()
+		if strings.Contains(message, "provider public key is required") {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return hex.EncodeToString(key), true, nil
+}
+
+func (h *ChannelHandler) requestMatchesVerifiedProvider(r *http.Request, parsed channels.ChannelID) bool {
+	metadata, ok := h.metadata.Get(parsed)
+	if !ok || strings.TrimSpace(metadata.ProviderPublicKey) == "" {
+		return false
+	}
+	providerKey, present, err := providerPublicKeyHexFromRequest(r)
+	if err != nil || !present {
+		return false
+	}
+	return strings.EqualFold(metadata.ProviderPublicKey, providerKey)
 }
 
 func channelListRow(standardCode string) map[string]interface{} {
