@@ -5,11 +5,24 @@
   export let backend: SdnBackend | null = null;
 
   let standardCode = 'OMM';
+  let visibilityFilter = 'all';
+  let sourceFilter = '';
+  let grantStateFilter = 'all';
   let channels: ChannelSummary[] = [];
   let selectedChannelId = '';
   let selectedChannel: ChannelSummary | null = null;
   let monitor: ChannelMonitor | null = null;
   let status = 'Loading';
+  $: listVisibilityFilter = visibilityFilter === 'all' ? undefined : visibilityFilter;
+  $: filteredChannels = channels.filter(channelMatchesFilters);
+  $: if (filteredChannels.length > 0 && !filteredChannels.some((channel) => channel.channelId === selectedChannelId)) {
+    selectedChannelId = filteredChannels[0].channelId;
+  }
+  $: if (filteredChannels.length === 0 && channels.length > 0) {
+    selectedChannelId = '';
+    selectedChannel = null;
+    monitor = null;
+  }
 
   onMount(() => {
     void refreshChannels();
@@ -26,7 +39,7 @@
       return;
     }
     status = 'Loading';
-    const result = await backend.channels.list({ standardCode });
+    const result = await backend.channels.list({ standardCode, visibility: listVisibilityFilter });
     if (!result.ok) {
       status = result.capability.reason ?? 'Channels unavailable';
       channels = [];
@@ -34,9 +47,11 @@
       monitor = null;
       return;
     }
-    channels = result.data ?? [];
-    selectedChannelId = channels[0]?.channelId ?? '';
-    status = channels.length > 0 ? `${channels.length} channels` : 'No channels';
+    const nextChannels = result.data ?? [];
+    const nextFilteredChannels = nextChannels.filter(channelMatchesFilters);
+    channels = nextChannels;
+    selectedChannelId = nextFilteredChannels[0]?.channelId ?? '';
+    status = nextFilteredChannels.length > 0 ? `${nextFilteredChannels.length} channels` : 'No channels';
   }
 
   async function loadChannel(channelId: string): Promise<void> {
@@ -55,6 +70,27 @@
     const result = await backend.channels.subscribe(selectedChannelId);
     status = result.ok ? 'Subscribed' : result.capability.reason ?? 'Subscribe unavailable';
     await loadChannel(selectedChannelId);
+  }
+
+  async function unsubscribeSelected(): Promise<void> {
+    if (!backend || !selectedChannelId) return;
+    const result = await backend.channels.unsubscribe(selectedChannelId);
+    status = result.ok ? 'Unsubscribed' : result.capability.reason ?? 'Unsubscribe unavailable';
+    await loadChannel(selectedChannelId);
+  }
+
+  function channelMatchesFilters(channel: ChannelSummary): boolean {
+    const sourceQuery = sourceFilter.trim().toLowerCase();
+    if (sourceQuery && !channel.sourceId.toLowerCase().includes(sourceQuery) && !channel.channelId.toLowerCase().includes(sourceQuery)) {
+      return false;
+    }
+    if (visibilityFilter !== 'all' && channel.visibility !== visibilityFilter) {
+      return false;
+    }
+    if (grantStateFilter !== 'all' && channel.grantState !== grantStateFilter) {
+      return false;
+    }
+    return true;
   }
 
   function formatNumber(value: number | null | undefined): string {
@@ -84,8 +120,32 @@
       <span>standardCode</span>
       <input bind:value={standardCode} maxlength="3" />
     </label>
+    <label>
+      <span>Filter by source</span>
+      <input bind:value={sourceFilter} />
+    </label>
+    <label>
+      <span>Filter by visibility</span>
+      <select bind:value={visibilityFilter}>
+        <option value="all">All</option>
+        <option value="public">Public</option>
+        <option value="private-listed">Private listed</option>
+        <option value="private-hidden">Private hidden</option>
+      </select>
+    </label>
+    <label>
+      <span>Filter by grant state</span>
+      <select bind:value={grantStateFilter}>
+        <option value="all">All</option>
+        <option value="not-required">Not required</option>
+        <option value="required">Required</option>
+        <option value="verified">Verified</option>
+        <option value="revoked">Revoked</option>
+      </select>
+    </label>
     <button class="sdn-button" type="button" on:click={refreshChannels}>Refresh</button>
     <button class="sdn-button sdn-button-muted" type="button" on:click={subscribeSelected} disabled={!selectedChannelId}>Subscribe</button>
+    <button class="sdn-button sdn-button-muted" type="button" on:click={unsubscribeSelected} disabled={!selectedChannelId}>Unsubscribe</button>
     <span>{status}</span>
   </div>
 
@@ -102,7 +162,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each channels as channel}
+          {#each filteredChannels as channel}
             <tr class:selected={channel.channelId === selectedChannelId} on:click={() => selectedChannelId = channel.channelId}>
               <td>{channel.channelId}</td>
               <td>{channel.standardCode}</td>
