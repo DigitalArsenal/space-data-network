@@ -393,6 +393,65 @@ func TestChannelHandlerStreamsVerifiedDatasetPublicationShardFromDurableLedger(t
 	t.Parallel()
 
 	store := newChannelTestStore(t)
+	oldStreamBytes := bytes.Join([][]byte{
+		nativeSizePrefixedFlatBufferFrame("$OMM", []byte{9, 9}),
+	}, nil)
+	oldShardHashBytes := sha256.Sum256(oldStreamBytes)
+	oldShardHash := hex.EncodeToString(oldShardHashBytes[:])
+	oldPublication := storage.DatasetShardPublication{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "batch-stream-old",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        50000,
+		RecordCount:  1,
+		ByteCount:    int64(len(oldStreamBytes)),
+		ShardCID:     "bafkstreamshard-old",
+		IndexCID:     "bafkstreamindex-old",
+		ManifestCID:  "bafkstreammanifest-old",
+		PNMCID:       "bafkstreampnm-old",
+		ShardSHA256:  oldShardHash,
+		IndexSHA256:  strings.Repeat("4", 64),
+		QuerySHA256:  strings.Repeat("3", 64),
+		ResultSHA256: oldShardHash,
+		PublishedAt:  time.Unix(1_779_999_800, 0).UTC(),
+	}
+	if err := store.UpsertDatasetShardPublication(oldPublication); err != nil {
+		t.Fatalf("UpsertDatasetShardPublication old failed: %v", err)
+	}
+	var (
+		found bool
+		err   error
+	)
+	oldPublication, found, err = store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
+		SchemaName:   oldPublication.SchemaName,
+		ProviderID:   oldPublication.ProviderID,
+		SourceName:   oldPublication.SourceName,
+		BatchID:      oldPublication.BatchID,
+		QueryProfile: oldPublication.QueryProfile,
+		Offset:       oldPublication.Offset,
+		Limit:        oldPublication.Limit,
+		RecordCount:  oldPublication.RecordCount,
+	})
+	if err != nil {
+		t.Fatalf("FindDatasetShardPublication old failed: %v", err)
+	}
+	if !found {
+		t.Fatal("FindDatasetShardPublication old did not find stored publication")
+	}
+	oldShardPath, err := store.DatasetPublicationShardPath(oldPublication)
+	if err != nil {
+		t.Fatalf("DatasetPublicationShardPath old failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(oldShardPath), 0o755); err != nil {
+		t.Fatalf("create old shard dir failed: %v", err)
+	}
+	if err := os.WriteFile(oldShardPath, oldStreamBytes, 0o644); err != nil {
+		t.Fatalf("write old shard failed: %v", err)
+	}
+
 	streamBytes := bytes.Join([][]byte{
 		nativeSizePrefixedFlatBufferFrame("$OMM", []byte{1, 2, 3}),
 		nativeSizePrefixedFlatBufferFrame("$OMM", []byte{4, 5, 6, 7}),
@@ -422,6 +481,22 @@ func TestChannelHandlerStreamsVerifiedDatasetPublicationShardFromDurableLedger(t
 	if err := store.UpsertDatasetShardPublication(publication); err != nil {
 		t.Fatalf("UpsertDatasetShardPublication failed: %v", err)
 	}
+	publication, found, err = store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
+		SchemaName:   publication.SchemaName,
+		ProviderID:   publication.ProviderID,
+		SourceName:   publication.SourceName,
+		BatchID:      publication.BatchID,
+		QueryProfile: publication.QueryProfile,
+		Offset:       publication.Offset,
+		Limit:        publication.Limit,
+		RecordCount:  publication.RecordCount,
+	})
+	if err != nil {
+		t.Fatalf("FindDatasetShardPublication failed: %v", err)
+	}
+	if !found {
+		t.Fatal("FindDatasetShardPublication did not find stored publication")
+	}
 	shardPath, err := store.DatasetPublicationShardPath(publication)
 	if err != nil {
 		t.Fatalf("DatasetPublicationShardPath failed: %v", err)
@@ -431,6 +506,45 @@ func TestChannelHandlerStreamsVerifiedDatasetPublicationShardFromDurableLedger(t
 	}
 	if err := os.WriteFile(shardPath, streamBytes, 0o644); err != nil {
 		t.Fatalf("write shard failed: %v", err)
+	}
+	for _, entry := range []storage.PinLedgerEntry{
+		{
+			CID:               oldPublication.ShardCID,
+			Role:              "shard",
+			RowCount:          int64(oldPublication.RecordCount),
+			ByteCount:         oldPublication.ByteCount,
+			Head:              oldPublication.FeedHead,
+			ByteHash:          "sha256:" + oldShardHash,
+			VerificationState: "verified",
+		},
+		{
+			CID:               oldPublication.ManifestCID,
+			Role:              "manifest",
+			ByteCount:         512,
+			Head:              oldPublication.FeedHead,
+			ByteHash:          "sha256:manifest-old",
+			VerificationState: "verified",
+		},
+		{
+			CID:               oldPublication.PNMCID,
+			Role:              "pnm",
+			ByteCount:         256,
+			Head:              oldPublication.FeedHead,
+			ByteHash:          "sha256:pnm-old",
+			VerificationState: "verified",
+		},
+	} {
+		entry.SchemaName = oldPublication.SchemaName
+		entry.ProviderPeerID = "16Uiu2HCelesTrakProvider"
+		entry.ProviderPublicKey = "provider-public-key"
+		entry.ProviderID = oldPublication.ProviderID
+		entry.SourceName = oldPublication.SourceName
+		entry.BatchID = oldPublication.BatchID
+		entry.QueryProfile = oldPublication.QueryProfile
+		entry.VerifiedAt = oldPublication.PublishedAt
+		if err := store.UpsertPinLedgerEntry(entry); err != nil {
+			t.Fatalf("UpsertPinLedgerEntry old %s failed: %v", entry.Role, err)
+		}
 	}
 	for _, entry := range []storage.PinLedgerEntry{
 		{
@@ -486,6 +600,47 @@ func TestChannelHandlerStreamsVerifiedDatasetPublicationShardFromDurableLedger(t
 	}
 	if !bytes.Equal(rec.Body.Bytes(), streamBytes) {
 		t.Fatal("stream endpoint did not serve durable verified shard bytes")
+	}
+}
+
+func TestChannelHandlerLatestVerifiedDatasetShardPublicationRequiresMatchingHead(t *testing.T) {
+	t.Parallel()
+
+	store := newChannelTestStore(t)
+	publication := storage.DatasetShardPublication{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "batch-old",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        50000,
+		RecordCount:  1,
+		ByteCount:    128,
+		ShardCID:     "bafkoldshard",
+		IndexCID:     "bafkoldindex",
+		ManifestCID:  "bafkoldmanifest",
+		PNMCID:       "bafkoldpnm",
+		ShardSHA256:  strings.Repeat("1", 64),
+		IndexSHA256:  strings.Repeat("2", 64),
+		QuerySHA256:  strings.Repeat("3", 64),
+		ResultSHA256: strings.Repeat("1", 64),
+		PublishedAt:  time.Unix(1_779_999_700, 0).UTC(),
+	}
+	if err := store.UpsertDatasetShardPublication(publication); err != nil {
+		t.Fatalf("UpsertDatasetShardPublication failed: %v", err)
+	}
+
+	handler := NewChannelHandler(store)
+	_, ok := handler.latestVerifiedDatasetShardPublication("OMM.fbs", storage.LocalReplicaStats{
+		ProviderID:   publication.ProviderID,
+		SourceName:   publication.SourceName,
+		BatchID:      publication.BatchID,
+		QueryProfile: publication.QueryProfile,
+		PinnedRows:   int64(publication.RecordCount),
+	}, "newer-channel-head")
+	if ok {
+		t.Fatal("mismatched channel head returned a fallback publication")
 	}
 }
 
