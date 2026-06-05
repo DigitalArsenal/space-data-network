@@ -89,7 +89,7 @@ func (r *VerifiedMetadataRegistry) RecordDPM(channel ChannelID, evidence DPMTrus
 	return metadata, ok
 }
 
-func (r *VerifiedMetadataRegistry) RecordNativeStream(channel ChannelID, snapshot NativeStreamSnapshot) (VerifiedMetadata, bool) {
+func (r *VerifiedMetadataRegistry) RecordNativeStream(channel ChannelID, snapshot NativeStreamSnapshot, throughputBPS int64) (VerifiedMetadata, bool) {
 	if r == nil {
 		return VerifiedMetadata{}, false
 	}
@@ -102,6 +102,7 @@ func (r *VerifiedMetadataRegistry) RecordNativeStream(channel ChannelID, snapsho
 		metadata.LocalRows = snapshot.FrameCount
 		metadata.MissingRows = 0
 		metadata.PinnedRows = snapshot.FrameCount
+		metadata.ThroughputBPS = throughputBPS
 		r.metadata[channel.ChannelID] = metadata
 	}
 	r.mu.Unlock()

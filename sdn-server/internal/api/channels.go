@@ -394,6 +394,7 @@ func (h *ChannelHandler) publishDPMManifest(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
+	started := time.Now()
 	metadata, verified := h.metadata.Get(parsed)
 	if !verified {
 		writeError(w, http.StatusForbidden, "verified PNM required before stream publish")
@@ -439,18 +440,30 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid native FlatBuffer stream: "+err.Error())
 		return
 	}
-	metadata, _ = h.metadata.RecordNativeStream(parsed, snapshot)
+	throughputBPS := measuredBytesPerSecond(snapshot.ByteCount, time.Since(started))
+	metadata, _ = h.metadata.RecordNativeStream(parsed, snapshot, throughputBPS)
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
-		"channelId":     parsed.ChannelID,
-		"standardCode":  parsed.StandardCode,
-		"pnmVerified":   true,
-		"pnmCid":        metadata.PNMCID,
-		"streamBytes":   snapshot.ByteCount,
-		"streamFrames":  snapshot.FrameCount,
-		"importedRows":  importedRows,
-		"verifiedAt":    metadata.VerifiedAt.Format(time.RFC3339Nano),
-		"streamUpdated": snapshot.UpdatedAt.Format(time.RFC3339Nano),
+		"channelId":                parsed.ChannelID,
+		"standardCode":             parsed.StandardCode,
+		"pnmVerified":              true,
+		"pnmCid":                   metadata.PNMCID,
+		"streamBytes":              snapshot.ByteCount,
+		"streamFrames":             snapshot.FrameCount,
+		"throughputBytesPerSecond": throughputBPS,
+		"importedRows":             importedRows,
+		"verifiedAt":               metadata.VerifiedAt.Format(time.RFC3339Nano),
+		"streamUpdated":            snapshot.UpdatedAt.Format(time.RFC3339Nano),
 	})
+}
+
+func measuredBytesPerSecond(byteCount int, elapsed time.Duration) int64 {
+	if byteCount <= 0 {
+		return 0
+	}
+	if elapsed <= 0 {
+		elapsed = time.Nanosecond
+	}
+	return int64(float64(byteCount) / elapsed.Seconds())
 }
 
 func (h *ChannelHandler) openStream(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
