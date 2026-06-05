@@ -43,6 +43,56 @@ func (h *ChannelHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/channels/", h.handleChannel)
 }
 
+func (h *ChannelHandler) RecordDatasetPublicationChannelUpdate(update DatasetPublicationChannelUpdate) error {
+	if h == nil {
+		return fmt.Errorf("channel handler is unavailable")
+	}
+	standardCode, err := channels.StandardCodeFromSchemaName(update.Schema)
+	if err != nil {
+		return err
+	}
+	channelID, err := channels.FormatChannelID(channels.ChannelIDInput{
+		SourceID:     update.SourceID,
+		StandardCode: standardCode,
+	})
+	if err != nil {
+		return err
+	}
+	parsed, err := channels.ParseChannelID(channelID)
+	if err != nil {
+		return err
+	}
+	pnmEvidence, err := channels.VerifySignedPNMEnvelopeWithProviderKey(update.PNMBytes, update.ProviderPublicKey)
+	if err != nil {
+		return fmt.Errorf("record dataset publication channel: verified PNM required: %w", err)
+	}
+	dpmEvidence, err := storage.VerifySignedDatasetPublicationManifest(update.ManifestBytes, update.ProviderPublicKey)
+	if err != nil {
+		return fmt.Errorf("record dataset publication channel: verified DPM required: %w", err)
+	}
+	if pnmEvidence.CID != "" && dpmEvidence.ManifestCID != "" && pnmEvidence.CID != dpmEvidence.ManifestCID {
+		return fmt.Errorf("record dataset publication channel: DPM CID %q does not match PNM CID %q", dpmEvidence.ManifestCID, pnmEvidence.CID)
+	}
+	if pnmEvidence.FileID != "" && dpmEvidence.FileID != "" && pnmEvidence.FileID != dpmEvidence.FileID {
+		return fmt.Errorf("record dataset publication channel: DPM FILE_ID %q does not match PNM FILE_ID %q", dpmEvidence.FileID, pnmEvidence.FileID)
+	}
+	h.metadata.RecordPNM(parsed, pnmEvidence)
+	if _, ok := h.metadata.RecordDPM(parsed, channels.DPMTrustEvidence{
+		FileID:        dpmEvidence.FileID,
+		SignatureType: dpmEvidence.SignatureType,
+		ProviderPeer:  dpmEvidence.ProviderPeer,
+		Encrypted:     dpmEvidence.Encrypted,
+		ContentKeyID:  dpmEvidence.ContentKeyID,
+		PolicyID:      dpmEvidence.PolicyID,
+	}); !ok {
+		return fmt.Errorf("record dataset publication channel: verified PNM was not recorded")
+	}
+	if _, ok := h.metadata.RecordDatasetPublication(parsed, update.PublishedShard.FeedHead, update.PublishedShard.RecordCount, update.PublishedShard.ByteCount); !ok {
+		return fmt.Errorf("record dataset publication channel: verified channel metadata was not recorded")
+	}
+	return nil
+}
+
 func (h *ChannelHandler) handleCollection(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/api/v1/channels" {
 		http.NotFound(w, r)
@@ -905,7 +955,7 @@ func (h *ChannelHandler) channelDetail(parsed channels.ChannelID) map[string]int
 func (h *ChannelHandler) channelMonitor(parsed channels.ChannelID) map[string]interface{} {
 	payload := h.channelDetail(parsed)
 	metadata, verified := h.metadata.Get(parsed)
-	payload["channelHead"] = metadata.PNMCID
+	payload["channelHead"] = firstNonEmptyChannelString(metadata.ChannelHead, metadata.PNMCID)
 	payload["providerPeer"] = metadata.ProviderPeer
 	payload["localRows"] = metadata.LocalRows
 	payload["remoteRows"] = metadata.RemoteRows
@@ -920,6 +970,15 @@ func (h *ChannelHandler) channelMonitor(parsed channels.ChannelID) map[string]in
 		payload["lastVerifiedUpdate"] = metadata.VerifiedAt.Format(time.RFC3339Nano)
 	}
 	return payload
+}
+
+func firstNonEmptyChannelString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (h *ChannelHandler) channelMonitorWithDecision(parsed channels.ChannelID, decision channels.AccessDecision) map[string]interface{} {

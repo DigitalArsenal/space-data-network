@@ -509,7 +509,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					}
 				}
 				publicationDir := filepath.Join(filepath.Dir(cfg.Storage.Path), "dataset-publications")
-				publicationAPI := api.NewDatasetPublicationHandler(api.NewConcreteDatasetPublicationService(
+				publicationService := api.NewConcreteDatasetPublicationService(
 					n.Store(),
 					n,
 					publicationSigningKey,
@@ -517,7 +517,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					providerEPMCID,
 					cfg.Admin.IPFSAPIURL,
 					publicationDir,
-				))
+				)
+				publicationService.SetChannelRecorder(channelAPI)
+				publicationAPI := api.NewDatasetPublicationHandler(publicationService)
 				publicationAPI.RegisterRoutes(adminMux)
 				log.Infof("Dataset publication API available at %s://%s/api/v1/admin/dataset-updates/publish", adminScheme, adminAddr)
 			}
