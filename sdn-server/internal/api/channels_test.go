@@ -532,6 +532,15 @@ func TestChannelHandlerReportsNativeStreamWireSpeedUtilization(t *testing.T) {
 	if utilization, ok := monitorBody["wireSpeedUtilization"].(float64); !ok || utilization <= 0 {
 		t.Fatalf("monitor did not report native stream wire-speed utilization: %#v", monitorBody)
 	}
+	if monitorBody["wireSpeedTarget"] != 0.9 {
+		t.Fatalf("monitor wire speed target = %#v, want 0.9 body=%#v", monitorBody["wireSpeedTarget"], monitorBody)
+	}
+	if monitorBody["requiredBytesPerSecond"] != 225_000_000.0 {
+		t.Fatalf("monitor required bytes/sec = %#v, want 225000000 body=%#v", monitorBody["requiredBytesPerSecond"], monitorBody)
+	}
+	if _, ok := monitorBody["targetMet"].(bool); !ok {
+		t.Fatalf("monitor did not report wire-speed target status: %#v", monitorBody)
+	}
 }
 
 func TestChannelHandlerEnforcesWirespeedGateWhenEnabled(t *testing.T) {
