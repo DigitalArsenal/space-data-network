@@ -83,6 +83,9 @@ export async function runChaosLocalNetwork(rawOptions = {}) {
   const wireSpeedUtilization = wireSpeedBytesPerSecond > 0
     ? Math.min(1, bytesPerSecond / wireSpeedBytesPerSecond)
     : null;
+  const requiredBytesPerSecond = wireSpeedBytesPerSecond > 0
+    ? Math.floor(wireSpeedBytesPerSecond * options.wireSpeedTarget)
+    : null;
 
   const hashVerificationMs = verificationMs;
   const durableImportMs = 0;
@@ -141,6 +144,7 @@ export async function runChaosLocalNetwork(rawOptions = {}) {
       measuredWireSpeedBytesPerSecond: wireSpeedBytesPerSecond,
       wireSpeedUtilization,
       wireSpeedTarget: options.wireSpeedTarget,
+      requiredBytesPerSecond,
       targetMet: wireSpeedUtilization == null ? null : wireSpeedUtilization >= options.wireSpeedTarget,
     },
     timingMs: channelTimingBreakdown({
@@ -497,6 +501,7 @@ function formatReport(report) {
     `Topology: 1 provider, ${report.summary.totalConsumers} consumers, ${report.summary.uniqueShards} shards`,
     `Rows: ${report.summary.totalRows.toLocaleString()} / ${report.summary.expectedRowsTotal.toLocaleString()} verified`,
     `Download: ${speed}/s simulated (${utilization} of ${report.scenario.bandwidthMbps} Mbps clean link)`,
+    ...(report.replication.requiredBytesPerSecond == null ? [] : [`Required: ${formatBytes(report.replication.requiredBytesPerSecond)}/s data-plane throughput`]),
     `Bytes: provider ${formatBytes(report.replication.providerBytes)}, peer ${formatBytes(report.replication.peerBytes)}, duplicate ${formatBytes(report.replication.duplicateBytes)}`,
     `Chaos: drops ${report.chaos.droppedRequests}, corruption ${report.chaos.corruptedResponses}, partitions ${report.chaos.partitionFailures}, restarts ${report.chaos.restartEvents}, retries ${report.chaos.retryCount}`,
     `Timing: manifest ${report.timingMs.manifestDiscovery} ms / network ${report.timingMs.networkTransfer} ms / verify ${report.timingMs.verification} ms`,
