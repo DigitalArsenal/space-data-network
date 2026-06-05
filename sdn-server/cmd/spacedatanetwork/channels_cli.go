@@ -94,7 +94,7 @@ func runChannelsList(cmd *cobra.Command, options channelsListOptions) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "standardCode=%s topic=%s visibility=unknown\n", code, channels.DiscoveryTopic(code))
+		printChannelListRow(out, code)
 		return nil
 	}
 	for _, schemaName := range sds.SupportedSchemas {
@@ -102,9 +102,15 @@ func runChannelsList(cmd *cobra.Command, options channelsListOptions) error {
 		if err != nil {
 			continue
 		}
-		fmt.Fprintf(out, "standardCode=%s topic=%s visibility=unknown\n", code, channels.DiscoveryTopic(code))
+		printChannelListRow(out, code)
 	}
 	return nil
+}
+
+func printChannelListRow(out interface {
+	Write([]byte) (int, error)
+}, standardCode string) {
+	fmt.Fprintf(out, "standardCode=%s topic=%s visibility=public subscribed=false grantState=not-required encryptionState=none\n", standardCode, channels.DiscoveryTopic(standardCode))
 }
 
 func runChannelsSubscribe(cmd *cobra.Command, registry *channels.SubscriptionRegistry, options channelSubscriptionOptions, channelID string) error {
