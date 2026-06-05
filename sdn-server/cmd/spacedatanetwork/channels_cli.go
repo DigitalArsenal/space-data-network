@@ -54,13 +54,14 @@ type channelGrantIssueOptions struct {
 }
 
 type channelPublishOptions struct {
-	From                  string
-	Subject               string
-	GrantID               string
-	Visibility            string
-	EncryptedStreamHeader string
-	APIURL                string
-	InsecureSkipTLSVerify bool
+	From                      string
+	Subject                   string
+	GrantID                   string
+	Visibility                string
+	EncryptedStreamHeader     string
+	EncryptedStreamHeaderFile string
+	APIURL                    string
+	InsecureSkipTLSVerify     bool
 }
 
 type channelStreamOptions struct {
@@ -190,6 +191,7 @@ func newChannelsCommand() *cobra.Command {
 	publishCmd.Flags().StringVar(&publishOptions.GrantID, "grant-id", "", "private channel grant ID")
 	publishCmd.Flags().StringVar(&publishOptions.Visibility, "visibility", "", "channel visibility for private access checks")
 	publishCmd.Flags().StringVar(&publishOptions.EncryptedStreamHeader, "encrypted-stream-header", "", "JSON encryption header for private channel stream publish")
+	publishCmd.Flags().StringVar(&publishOptions.EncryptedStreamHeaderFile, "encrypted-stream-header-file", "", "file containing JSON encryption header for private channel stream publish")
 	publishCmd.Flags().StringVar(&publishOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	addChannelInsecureTLSFlag(publishCmd, &publishOptions.InsecureSkipTLSVerify)
 	cmd.AddCommand(publishCmd)
@@ -356,11 +358,15 @@ func runChannelsPublish(cmd *cobra.Command, options channelPublishOptions, chann
 		return fmt.Errorf("invalid native FlatBuffers stream: %w", err)
 	}
 	if apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL"))); apiURL != "" {
+		encryptedStreamHeader, err := resolveEncryptedStreamHeader(options)
+		if err != nil {
+			return err
+		}
 		return runChannelsPublishToAPI(cmd, parsed, apiURL, streamBytes, channelAccessQuery{
 			Subject:               options.Subject,
 			GrantID:               options.GrantID,
 			Visibility:            options.Visibility,
-			EncryptedStreamHeader: options.EncryptedStreamHeader,
+			EncryptedStreamHeader: encryptedStreamHeader,
 		}, options.InsecureSkipTLSVerify)
 	}
 	out := cmd.OutOrStdout()
@@ -374,6 +380,26 @@ func runChannelsPublish(cmd *cobra.Command, options channelPublishOptions, chann
 	fmt.Fprintf(out, "streamBytes=%d\n", len(streamBytes))
 	fmt.Fprintf(out, "streamFrames=%d\n", len(frames))
 	return nil
+}
+
+func resolveEncryptedStreamHeader(options channelPublishOptions) (string, error) {
+	inlineHeader := strings.TrimSpace(options.EncryptedStreamHeader)
+	headerFile := strings.TrimSpace(options.EncryptedStreamHeaderFile)
+	if inlineHeader != "" && headerFile != "" {
+		return "", fmt.Errorf("use only one of --encrypted-stream-header or --encrypted-stream-header-file")
+	}
+	if headerFile == "" {
+		return inlineHeader, nil
+	}
+	headerBytes, err := os.ReadFile(headerFile)
+	if err != nil {
+		return "", fmt.Errorf("read encrypted stream header file: %w", err)
+	}
+	header := strings.TrimSpace(string(headerBytes))
+	if header == "" {
+		return "", fmt.Errorf("encrypted stream header file is empty")
+	}
+	return header, nil
 }
 
 func runChannelsPublishToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, streamBytes []byte, access channelAccessQuery, insecureSkipTLSVerify bool) error {

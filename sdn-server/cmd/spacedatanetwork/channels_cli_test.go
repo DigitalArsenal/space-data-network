@@ -702,6 +702,78 @@ func TestChannelsPublishPassesPrivateGrantContextToLocalAPI(t *testing.T) {
 	}
 }
 
+func TestChannelsPublishReadsEncryptedStreamHeaderFile(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	streamFile := filepath.Join(tempDir, "private-stream.bin")
+	streamBytes := channelCLITestNativeFrame("OMM1", []byte{1, 2, 3})
+	if err := os.WriteFile(streamFile, streamBytes, 0o600); err != nil {
+		t.Fatalf("write stream fixture: %v", err)
+	}
+	headerFile := filepath.Join(tempDir, "stream-header.json")
+	headerJSON := `{"version":2,"algorithm":"x25519","senderPublicKey":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","recipientKeyId":"bbbbbbbbbbbbbbbb","nonceStart":"cccccccccccccccccccccccc","context":"spaceaware-OMM"}`
+	if err := os.WriteFile(headerFile, []byte(headerJSON+"\n"), 0o600); err != nil {
+		t.Fatalf("write header fixture: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/channels/spaceaware-OMM/publish" {
+			t.Fatalf("unexpected publish request %s %s", r.Method, r.URL.String())
+		}
+		query := r.URL.Query()
+		if query.Get("stream") != "1" || query.Get("subject") != "peer-alpha" || query.Get("grantId") != "grant-1" || query.Get("visibility") != "private-listed" {
+			t.Fatalf("private publish query = %s", r.URL.RawQuery)
+		}
+		if strings.Contains(r.URL.RawQuery, "senderPublicKey") || strings.Contains(r.URL.RawQuery, "nonceStart") {
+			t.Fatalf("encrypted stream header leaked into URL query: %s", r.URL.RawQuery)
+		}
+		if got := r.Header.Get("X-SDN-Encrypted-Stream"); got != "true" {
+			t.Fatalf("publish X-SDN-Encrypted-Stream = %q, want true", got)
+		}
+		if got := r.Header.Get("X-SDN-Encrypted-Stream-Header"); got != headerJSON {
+			t.Fatalf("publish X-SDN-Encrypted-Stream-Header = %q", got)
+		}
+		body := new(bytes.Buffer)
+		_, _ = body.ReadFrom(r.Body)
+		if !bytes.Equal(body.Bytes(), streamBytes) {
+			t.Fatalf("publish body mismatch: %v", body.Bytes())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"channelId":"spaceaware-OMM",
+			"standardCode":"OMM",
+			"contentType":"application/vnd.sdn.flatbuffers.stream",
+			"streamBytes":11,
+			"streamFrames":1,
+			"grantState":"verified",
+			"encryptionState":"encrypted"
+		}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"publish", "spaceaware-OMM",
+		"--from", streamFile,
+		"--api-url", server.URL,
+		"--subject", "peer-alpha",
+		"--grant-id", "grant-1",
+		"--visibility", "private-listed",
+		"--encrypted-stream-header-file", headerFile,
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels publish failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "encryptionState=encrypted") {
+		t.Fatalf("channels publish output missing encryption state:\n%s", out.String())
+	}
+}
+
 func TestChannelsPublishRejectsStreamOutsideChannelStandard(t *testing.T) {
 	t.Parallel()
 
