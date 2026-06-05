@@ -18,12 +18,31 @@ import (
 )
 
 type ChannelHandler struct {
-	store         *storage.FlatSQLStore
-	gate          *channels.AccessGate
-	grants        *channels.ChannelGrantRegistry
-	metadata      *channels.VerifiedMetadataRegistry
-	streams       *channels.NativeStreamRegistry
-	subscriptions *channels.SubscriptionRegistry
+	store            *storage.FlatSQLStore
+	gate             *channels.AccessGate
+	grants           *channels.ChannelGrantRegistry
+	metadata         *channels.VerifiedMetadataRegistry
+	streams          *channels.NativeStreamRegistry
+	subscriptions    *channels.SubscriptionRegistry
+	encryptedStreams EncryptedNativeStreamDecryptor
+}
+
+type EncryptedNativeStreamHeader struct {
+	Algorithm          string
+	Context            string
+	EphemeralPublicKey string
+	NonceStart         string
+}
+
+type EncryptedNativeStreamDecryptRequest struct {
+	Channel    channels.ChannelID
+	Header     EncryptedNativeStreamHeader
+	Ciphertext []byte
+	Metadata   channels.VerifiedMetadata
+}
+
+type EncryptedNativeStreamDecryptor interface {
+	DecryptNativeStream(EncryptedNativeStreamDecryptRequest) ([]byte, error)
 }
 
 func NewChannelHandler(store *storage.FlatSQLStore) *ChannelHandler {
@@ -543,26 +562,43 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusForbidden, "verified DPM required before stream publish")
 		return
 	}
-	if isPrivateChannelMetadata(metadata) {
-		if !h.isEncryptedNativeStreamPublish(r) {
-			writeError(w, http.StatusBadRequest, "encrypted private channel stream required")
-			return
-		}
-		if err := h.validateEncryptedNativeStreamHeader(r, parsed); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeError(w, http.StatusNotImplemented, "encrypted private channel stream decrypt path unavailable")
-		return
+	timings := channelThroughputTimings{
+		PNMDPMVerification: time.Since(pnmDPMStarted),
 	}
-	pnmDPMDuration := time.Since(pnmDPMStarted)
 	transferStarted := time.Now()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<20))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "read native FlatBuffer stream: "+err.Error())
 		return
 	}
-	transferDuration := time.Since(transferStarted)
+	timings.Transfer = time.Since(transferStarted)
+	if isPrivateChannelMetadata(metadata) {
+		if !h.isEncryptedNativeStreamPublish(r) {
+			writeError(w, http.StatusBadRequest, "encrypted private channel stream required")
+			return
+		}
+		header, err := h.parseEncryptedNativeStreamHeader(r, parsed)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if h.encryptedStreams == nil {
+			writeError(w, http.StatusNotImplemented, "encrypted private channel stream decrypt path unavailable")
+			return
+		}
+		decryptStarted := time.Now()
+		body, err = h.encryptedStreams.DecryptNativeStream(EncryptedNativeStreamDecryptRequest{
+			Channel:    parsed,
+			Header:     header,
+			Ciphertext: body,
+			Metadata:   metadata,
+		})
+		timings.Decrypt = time.Since(decryptStarted)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "decrypt encrypted private channel stream: "+err.Error())
+			return
+		}
+	}
 	frames, err := channels.SplitNativeStreamFramesForChannel(parsed, body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid native FlatBuffer stream: "+err.Error())
@@ -575,10 +611,6 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 	}
 	throughputBPS := measuredBytesPerSecond(len(body), time.Since(started))
 	wireUtilization := measuredWireSpeedUtilization(throughputBPS)
-	timings := channelThroughputTimings{
-		PNMDPMVerification: pnmDPMDuration,
-		Transfer:           transferDuration,
-	}
 	gate := evaluateChannelWireSpeedGate(throughputBPS, wireUtilization, timings)
 	if gate.Enabled && !gate.TargetMet {
 		writeJSON(w, http.StatusTooManyRequests, gate.Response(parsed, len(body), len(frames)))
@@ -924,24 +956,40 @@ func (h *ChannelHandler) isEncryptedNativeStreamPublish(r *http.Request) bool {
 }
 
 func (h *ChannelHandler) validateEncryptedNativeStreamHeader(r *http.Request, parsed channels.ChannelID) error {
+	_, err := h.parseEncryptedNativeStreamHeader(r, parsed)
+	return err
+}
+
+func (h *ChannelHandler) parseEncryptedNativeStreamHeader(r *http.Request, parsed channels.ChannelID) (EncryptedNativeStreamHeader, error) {
 	raw := strings.TrimSpace(r.Header.Get("X-SDN-Encrypted-Stream-Header"))
 	if raw == "" {
-		return fmt.Errorf("encrypted private channel stream header required")
+		return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header required")
 	}
 	var header map[string]interface{}
 	if err := json.Unmarshal([]byte(raw), &header); err != nil {
-		return fmt.Errorf("encrypted private channel stream header must be JSON metadata: %w", err)
+		return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header must be JSON metadata: %w", err)
 	}
+	parsedHeader := EncryptedNativeStreamHeader{}
 	for _, field := range []string{"algorithm", "context", "ephemeral_public_key", "nonce_start"} {
 		value, ok := header[field].(string)
 		if !ok || strings.TrimSpace(value) == "" {
-			return fmt.Errorf("encrypted private channel stream header missing %s", field)
+			return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header missing %s", field)
+		}
+		switch field {
+		case "algorithm":
+			parsedHeader.Algorithm = strings.TrimSpace(value)
+		case "context":
+			parsedHeader.Context = strings.TrimSpace(value)
+		case "ephemeral_public_key":
+			parsedHeader.EphemeralPublicKey = strings.TrimSpace(value)
+		case "nonce_start":
+			parsedHeader.NonceStart = strings.TrimSpace(value)
 		}
 	}
-	if context := strings.TrimSpace(header["context"].(string)); context != parsed.ChannelID {
-		return fmt.Errorf("encrypted private channel stream header context %q does not match channel %q", context, parsed.ChannelID)
+	if parsedHeader.Context != parsed.ChannelID {
+		return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header context %q does not match channel %q", parsedHeader.Context, parsed.ChannelID)
 	}
-	return nil
+	return parsedHeader, nil
 }
 
 func (h *ChannelHandler) isDPMManifestPublish(r *http.Request, body []byte) bool {
