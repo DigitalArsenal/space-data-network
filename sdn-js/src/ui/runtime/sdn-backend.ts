@@ -159,6 +159,47 @@ export interface DataScanResult {
   results: RawDataRecord[];
 }
 
+export interface ChannelListOptions {
+  standardCode?: string;
+  visibility?: string;
+}
+
+export interface ChannelSummary {
+  channelId: string;
+  sourceId: string;
+  standardCode: string;
+  feedUuid: string | null;
+  visibility: string;
+  pnmVerified: boolean;
+  grantState: string;
+  encryptionState: string;
+}
+
+export interface ChannelMonitor extends ChannelSummary {
+  channelHead: string;
+  providerPeer: string;
+  localRows: number;
+  remoteRows: number;
+  syncedRows: number;
+  missingRows: number;
+  pinnedRows: number;
+  syncedBytes: number;
+  throughputBytesPerSecond: number;
+  wireSpeedUtilization: number | null;
+  lastVerifiedUpdate: string;
+}
+
+export interface ChannelBackend {
+  list(options?: ChannelListOptions): Promise<BackendResult<ChannelSummary[]>>;
+  get(channelId: string): Promise<BackendResult<ChannelSummary>>;
+  subscribe(channelId: string): Promise<BackendResult<Record<string, unknown>>>;
+  unsubscribe(channelId: string): Promise<BackendResult<Record<string, unknown>>>;
+  publish(channelId: string, body?: BodyInit | null): Promise<BackendResult<Record<string, unknown>>>;
+  issueGrant(channelId: string, body?: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>>;
+  openStream(channelId: string): Promise<BackendResult<Uint8Array>>;
+  monitor(channelId: string): Promise<BackendResult<ChannelMonitor>>;
+}
+
 export interface RawDataStreamRequest {
   schema: string;
   datastoreKey?: string;
@@ -249,6 +290,7 @@ export interface WalletStorageSnapshot {
 
 export interface SdnBackend {
   readonly mode: SdnBackendMode;
+  readonly channels: ChannelBackend;
   connect(): Promise<BackendResult<NodeSummary>>;
   getCapabilities(): Promise<BackendCapability[]>;
   getNodeSummary(): Promise<BackendResult<NodeSummary>>;

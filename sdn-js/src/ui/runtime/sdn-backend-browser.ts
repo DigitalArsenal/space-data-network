@@ -17,6 +17,7 @@ import {
   type SdnBackend,
   type StorageSummary,
 } from './sdn-backend';
+import { createUnavailableChannelBackend } from './channel-backend';
 import type { HostedEpmRecord } from './identity';
 
 export function createBrowserNodeBackend(): SdnBackend {
@@ -30,6 +31,7 @@ export function createBrowserNodeBackend(): SdnBackend {
 
   return {
     mode: 'browser-node',
+    channels: createUnavailableChannelBackend('channel operations require a local or remote SDN server with verified grants'),
     async connect(): Promise<BackendResult<NodeSummary>> {
       return createDegradedResult('connect', 'browser-node adapter is scheduled for Milestone 4', summary);
     },

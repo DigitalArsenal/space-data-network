@@ -8,6 +8,7 @@
     type NodeIdentitySessionState,
   } from './lib/node-identity-session';
   import { normalizeSdnRoute, primaryRouteFromNormalized } from './lib/routes';
+  import ChannelsScreen from './screens/ChannelsScreen.svelte';
   import LocalDataScreen from './screens/LocalDataScreen.svelte';
   import NodeScreen from './screens/NodeScreen.svelte';
   import PeersScreen from './screens/PeersScreen.svelte';
@@ -48,6 +49,7 @@
     '/node': 'Node',
     '/peers': 'Peers',
     '/data': 'Data',
+    '/channels': 'Channels',
   };
 
   onMount(() => {
@@ -204,6 +206,8 @@
 >
   {#if primaryRoute === '/peers'}
     <PeersScreen {backend} {peers} {hostedEpms} />
+  {:else if primaryRoute === '/channels'}
+    <ChannelsScreen {backend} />
   {:else if primaryRoute !== '/data'}
     <NodeScreen
       {backend}
