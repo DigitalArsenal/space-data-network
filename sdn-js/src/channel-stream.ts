@@ -77,6 +77,11 @@ class NativeChannelStreamDispatcher implements ChannelStreamDispatcher {
 
   pushChunk(chunk: Uint8Array | ArrayBuffer | ArrayBufferView): void {
     const bytes = asUint8Array(chunk);
+    if (this.encrypted) {
+      this.dispatcher.pushBytes(bytes);
+      this.bytesReceived += bytes.byteLength;
+      return;
+    }
     const frameCounts = scanNativeFrames(bytes, this.accepted);
     this.dispatcher.pushBytes(bytes);
     this.bytesReceived += bytes.byteLength;
