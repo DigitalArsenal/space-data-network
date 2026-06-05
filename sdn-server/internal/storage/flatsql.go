@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"bufio"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -1023,6 +1024,15 @@ type sqlExecer interface {
 }
 
 func insertSchemaMetadata(exec sqlExecer, tableName, cid, peerID string, timestamp int64, streamPath string, streamOffset, recordLength int64, signature []byte, createdAt int64) error {
+	_, err := insertSchemaMetadataWithMode(exec, tableName, cid, peerID, timestamp, streamPath, streamOffset, recordLength, signature, createdAt, true)
+	return err
+}
+
+func insertSchemaMetadataReturningRowID(exec sqlExecer, tableName, cid, peerID string, timestamp int64, streamPath string, streamOffset, recordLength int64, signature []byte, createdAt int64) (int64, error) {
+	return insertSchemaMetadataWithMode(exec, tableName, cid, peerID, timestamp, streamPath, streamOffset, recordLength, signature, createdAt, false)
+}
+
+func insertSchemaMetadataWithMode(exec sqlExecer, tableName, cid, peerID string, timestamp int64, streamPath string, streamOffset, recordLength int64, signature []byte, createdAt int64, ignoreDuplicates bool) (int64, error) {
 	var signatureHex any
 	if len(signature) > 0 {
 		signatureHex = hex.EncodeToString(signature)
@@ -1030,19 +1040,32 @@ func insertSchemaMetadata(exec sqlExecer, tableName, cid, peerID string, timesta
 	if createdAt <= 0 {
 		createdAt = timestamp
 	}
-	_, err := exec.Exec(fmt.Sprintf(`
-		INSERT OR IGNORE INTO %s (
+	insertMode := "INSERT INTO"
+	if ignoreDuplicates {
+		insertMode = "INSERT OR IGNORE INTO"
+	}
+	result, err := exec.Exec(fmt.Sprintf(`
+		%s %s (
 			cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex, created_at
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, tableName), cid, peerID, timestamp, streamPath, streamOffset, recordLength, signatureHex, createdAt)
-	return err
+	`, insertMode, tableName), cid, peerID, timestamp, streamPath, streamOffset, recordLength, signatureHex, createdAt)
+	if err != nil {
+		return 0, err
+	}
+	rowID, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return rowID, nil
 }
 
 type flatSQLStreamAppender struct {
 	file         *os.File
+	writer       *bufio.Writer
 	relativePath string
 	offset       int64
+	closed       bool
 }
 
 func (s *FlatSQLStore) newFlatSQLStreamAppender(schemaName string) (*flatSQLStreamAppender, error) {
@@ -1067,6 +1090,7 @@ func (s *FlatSQLStore) newFlatSQLStreamAppender(schemaName string) (*flatSQLStre
 	}
 	return &flatSQLStreamAppender{
 		file:         file,
+		writer:       bufio.NewWriterSize(file, 4*1024*1024),
 		relativePath: relativePath,
 		offset:       info.Size(),
 	}, nil
@@ -1076,13 +1100,16 @@ func (a *flatSQLStreamAppender) Append(data []byte) (string, int64, int64, error
 	if len(data) > int(^uint32(0)) {
 		return "", 0, 0, fmt.Errorf("record exceeds uint32 FlatSQL stream frame length")
 	}
+	if a.closed {
+		return "", 0, 0, fmt.Errorf("FlatSQL stream appender is closed")
+	}
 	offset := a.offset
 	var sizePrefix [4]byte
 	binary.LittleEndian.PutUint32(sizePrefix[:], uint32(len(data)))
-	if _, err := a.file.Write(sizePrefix[:]); err != nil {
+	if _, err := a.writer.Write(sizePrefix[:]); err != nil {
 		return "", 0, 0, err
 	}
-	if _, err := a.file.Write(data); err != nil {
+	if _, err := a.writer.Write(data); err != nil {
 		return "", 0, 0, err
 	}
 	a.offset += int64(len(sizePrefix) + len(data))
@@ -1090,7 +1117,19 @@ func (a *flatSQLStreamAppender) Append(data []byte) (string, int64, int64, error
 }
 
 func (a *flatSQLStreamAppender) Close() error {
-	return a.file.Close()
+	if a == nil || a.closed {
+		return nil
+	}
+	a.closed = true
+	var flushErr error
+	if a.writer != nil {
+		flushErr = a.writer.Flush()
+	}
+	closeErr := a.file.Close()
+	if flushErr != nil {
+		return flushErr
+	}
+	return closeErr
 }
 
 func (s *FlatSQLStore) appendFlatSQLStreamRecord(schemaName string, data []byte) (string, int64, int64, error) {
@@ -1588,22 +1627,31 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 			if err != nil {
 				return inserted, fmt.Errorf("append %s record %s to FlatSQL stream: %w", schemaName, cid, err)
 			}
-			if err := insertSchemaMetadata(tx, tableName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now); err != nil {
+			rowID, err := insertSchemaMetadataReturningRowID(tx, tableName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now)
+			if err != nil {
 				return inserted, fmt.Errorf("store %s record %s: %w", schemaName, cid, err)
 			}
 			if err := upsertRecordIndexExec(tx, schemaName, cid, now, data); err != nil {
 				log.Warnf("Failed to index batch %s record %s: %v", schemaName, cid[:16]+"...", err)
 			}
 			inserted++
+			if tags != nil {
+				if err := insertNewSourceTagsTx(tx, schemaName, cid, *tags, recordLength, rowID); err != nil {
+					return inserted, err
+				}
+			}
 		default:
 			return inserted, fmt.Errorf("check %s record %s: %w", schemaName, cid, err)
 		}
 
-		if tags != nil {
+		if tags != nil && err == nil {
 			if err := upsertSourceTagsTx(tx, tableName, schemaName, cid, *tags, int64(len(data))); err != nil {
 				return inserted, err
 			}
 		}
+	}
+	if err := appender.Close(); err != nil {
+		return inserted, fmt.Errorf("flush %s FlatSQL stream: %w", schemaName, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return inserted, fmt.Errorf("commit batch store: %w", err)
@@ -1633,6 +1681,30 @@ func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit source tag upsert: %w", err)
+	}
+	return nil
+}
+
+func insertNewSourceTagsTx(tx *sql.Tx, schemaName, cid string, tags SourceTags, recordBytes, recordRowID int64) error {
+	tags = normalizeSourceTags(tags)
+	if err := ValidateSourceTags(tags); err != nil {
+		return err
+	}
+	if strings.TrimSpace(cid) == "" {
+		return errors.New("cid is required")
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO sdn_record_source_tags (
+			schema_name, cid, provider_id, source_name, source_url, batch_id,
+			content_key_id, producer_peer_id, producer_public_key
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, schemaName, cid, tags.ProviderID, tags.SourceName, tags.SourceURL, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey); err != nil {
+		return fmt.Errorf("failed to insert source tags: %w", err)
+	}
+	if err := incrementSourceSummary(tx, schemaName, tags, recordBytes, recordRowID); err != nil {
+		return err
 	}
 	return nil
 }
