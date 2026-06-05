@@ -1,6 +1,7 @@
 package api
 
 import (
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -141,7 +142,11 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		h.requireGrant(w, parsed, channels.BoundaryPublish)
+		if h.isPrivateVisibilityRequest(r) {
+			h.requireGrant(w, parsed, channels.BoundaryPublish)
+			return
+		}
+		h.publishPublic(w, r, parsed)
 	case "stream":
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -205,6 +210,26 @@ func (h *ChannelHandler) requireGrant(w http.ResponseWriter, parsed channels.Cha
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"channelId":  parsed.ChannelID,
 		"grantState": decision.GrantState,
+	})
+}
+
+func (h *ChannelHandler) publishPublic(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "read PNM envelope: "+err.Error())
+		return
+	}
+	evidence, err := channels.VerifySignedPNMEnvelope(body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "verified PNM envelope required: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{
+		"channelId":     parsed.ChannelID,
+		"standardCode":  parsed.StandardCode,
+		"pnmVerified":   true,
+		"pnmCid":        evidence.CID,
+		"signatureType": evidence.SignatureType,
 	})
 }
 
