@@ -140,6 +140,7 @@ export interface ChannelMonitor extends ChannelSummary {
   missingRows?: number;
   pinnedCount?: number;
   pinnedRows?: number;
+  pinnedBytes?: number;
   syncedBytes?: number;
   throughputBytesPerSecond?: number;
   wireSpeedUtilization?: number | null;

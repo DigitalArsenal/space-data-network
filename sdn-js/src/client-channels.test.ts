@@ -34,6 +34,7 @@ describe('SDNClient channel API', () => {
           channelId: 'spaceaware-OMM',
           standardCode: 'OMM',
           pinnedCount: 8,
+          pinnedBytes: 4096,
           timingsMs: {
             discovery: 11,
             grantNegotiation: 12,
@@ -60,6 +61,7 @@ describe('SDNClient channel API', () => {
     await expect(client.channels.unsubscribe('spaceaware-OMM')).resolves.toEqual(expect.objectContaining({ ok: true }));
     await expect(client.channels.monitor('spaceaware-OMM')).resolves.toEqual(expect.objectContaining({
       pinnedCount: 8,
+      pinnedBytes: 4096,
       timingsMs: expect.objectContaining({
         discovery: 11,
         grantNegotiation: 12,
