@@ -258,13 +258,15 @@ describe('SDN backend channel runtime surface', () => {
   });
 
   it('passes private grant context through protected channel actions', async () => {
-    const requests: Array<{ url: string; method: string; contentType: string; bodyText: string }> = [];
+    const requests: Array<{ url: string; method: string; contentType: string; encryptedStream: string; encryptedStreamHeader: string; bodyText: string }> = [];
     const fetchMock = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const body = init?.body;
       requests.push({
         url: String(input),
         method: init?.method ?? 'GET',
         contentType: String(init?.headers && (init.headers as Record<string, string>)['content-type']),
+        encryptedStream: String(init?.headers && (init.headers as Record<string, string>)['X-SDN-Encrypted-Stream']),
+        encryptedStreamHeader: String(init?.headers && (init.headers as Record<string, string>)['X-SDN-Encrypted-Stream-Header']),
         bodyText: typeof body === 'string' ? body : body instanceof Uint8Array ? Array.from(body).join(',') : '',
       });
       if (String(input).includes('/stream')) {
@@ -280,7 +282,8 @@ describe('SDN backend channel runtime surface', () => {
       serverUrl: 'https://sdn.spaceaware.io',
       fetch: fetchMock,
     });
-    const grant = { subject: 'peer-alpha', grantId: 'grant-1', visibility: 'private' };
+    const encryptedStreamHeader = '{"algorithm":"x25519","context":"spaceaware-OMM","ephemeral_public_key":"pub","nonce_start":"nonce"}';
+    const grant = { subject: 'peer-alpha', grantId: 'grant-1', visibility: 'private', encryptedStreamHeader };
     const stream = new Uint8Array([7, 0, 0, 0, 79, 77, 77, 49, 1, 2, 3]);
 
     await backend.channels.get('spaceaware-OMM', grant);
@@ -298,36 +301,48 @@ describe('SDN backend channel runtime surface', () => {
         url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM?subject=peer-alpha&grantId=grant-1&visibility=private',
         method: 'GET',
         contentType: 'undefined',
+        encryptedStream: 'undefined',
+        encryptedStreamHeader: 'undefined',
         bodyText: '',
       },
       {
         url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/subscribe?subject=peer-alpha&grantId=grant-1&visibility=private',
         method: 'POST',
         contentType: 'undefined',
+        encryptedStream: 'undefined',
+        encryptedStreamHeader: 'undefined',
         bodyText: '',
       },
       {
         url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/publish?subject=peer-alpha&grantId=grant-1&visibility=private',
         method: 'POST',
         contentType: 'application/vnd.sdn.flatbuffers.stream',
+        encryptedStream: 'true',
+        encryptedStreamHeader,
         bodyText: Array.from(stream).join(','),
       },
       {
         url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/stream?subject=peer-alpha&grantId=grant-1&visibility=private',
         method: 'GET',
         contentType: 'undefined',
+        encryptedStream: 'undefined',
+        encryptedStreamHeader: 'undefined',
         bodyText: '',
       },
       {
         url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/grants?subject=peer-alpha&grantId=grant-1&visibility=private',
         method: 'POST',
         contentType: 'application/json',
+        encryptedStream: 'undefined',
+        encryptedStreamHeader: 'undefined',
         bodyText: JSON.stringify({ to: 'peer-alpha', scopes: ['stream_open'] }),
       },
       {
         url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/key-unwrap?subject=peer-alpha&grantId=grant-1&visibility=private',
         method: 'POST',
         contentType: 'application/json',
+        encryptedStream: 'undefined',
+        encryptedStreamHeader: 'undefined',
         bodyText: JSON.stringify({
           recipientKeyId: 'peer-alpha-x25519',
           contentKeyId: 'channel-private-key',
