@@ -116,6 +116,7 @@ function normalizeChannelSummary(payload: unknown): ChannelSummary {
     visibility: pickString(record, 'visibility') ?? 'unknown',
     subscribed: pickBoolean(record, 'subscribed') ?? false,
     pnmVerified: pickBoolean(record, 'pnmVerified') ?? false,
+    dpmVerified: pickBoolean(record, 'dpmVerified') ?? false,
     grantState: pickString(record, 'grantState') ?? 'unknown',
     encryptionState: pickString(record, 'encryptionState') ?? 'unknown',
   };
