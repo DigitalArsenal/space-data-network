@@ -1235,13 +1235,14 @@ func TestChannelHandlerPrivateEncryptedStreamDecryptsBeforeImportAndCache(t *tes
 
 	signing := newChannelSigningFixture(t)
 	store := newChannelTestStore(t)
-	handler := NewChannelHandler(store)
 	decryptedStream := bytes.Join([][]byte{
 		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
 		nativeAPIFrame("OMM1", []byte{4, 5, 6, 7}),
 	}, nil)
 	decryptor := &channelTestEncryptedStreamDecryptor{plaintext: decryptedStream}
-	handler.encryptedStreams = decryptor
+	handler := NewChannelHandlerWithOptions(store, ChannelHandlerOptions{
+		EncryptedStreams: decryptor,
+	})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
