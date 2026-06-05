@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -775,7 +776,7 @@ func TestChannelHandlerProtectedPrivateOperationsFailClosedAfterGrant(t *testing
 		path   string
 		want   string
 	}{
-		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/key-unwrap", "stream key unwrap is unavailable"},
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/key-unwrap", "envelope provider is unavailable"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/shard-import", "shard import is unavailable"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/module-feed", "module feed delivery is unavailable"},
 	} {
@@ -805,6 +806,90 @@ func TestChannelHandlerProtectedPrivateOperationsFailClosedAfterGrant(t *testing
 	if strings.Contains(cacheRec.Body.String(), "channel-private-key") || strings.Contains(cacheRec.Body.String(), "wrapped") {
 		t.Fatalf("GET /cache leaked protected key material: %s", cacheRec.Body.String())
 	}
+}
+
+func TestChannelHandlerPrivateKeyUnwrapReturnsRequesterWrappedEnvelopeWithGrant(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	mux := http.NewServeMux()
+	keyEnvelopes := &recordingPrivateChannelKeyEnvelopeProvider{
+		envelope: PrivateChannelKeyEnvelope{
+			ContentKeyID:       "channel-private-key",
+			RecipientKeyID:     "peer-alpha-x25519",
+			KeyEpoch:           "epoch-2026-06-05T00",
+			Algorithm:          "DigitalArsenal-FlatBuffers-X25519-AES256GCM",
+			WrappedKeyEnvelope: []byte("wrapped-envelope-for-peer-alpha"),
+			EnvelopeCID:        "bafywrappedpeeralpha",
+		},
+	}
+	NewChannelHandlerWithOptions(nil, ChannelHandlerOptions{KeyEnvelopes: keyEnvelopes}).RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
+		strings.NewReader(`{"to":"peer-alpha","scopes":["key_unwrap"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/key-unwrap?subject=peer-alpha&grantId="+grantID,
+		strings.NewReader(`{"recipientKeyId":"peer-alpha-x25519","contentKeyId":"channel-private-key"}`),
+	)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("key unwrap status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := decodeChannelJSON(t, rec.Body.String())
+	if body["channelId"] != "spaceaware-OMM" ||
+		body["grantState"] != "verified" ||
+		body["contentKeyId"] != "channel-private-key" ||
+		body["recipientKeyId"] != "peer-alpha-x25519" ||
+		body["keyEpoch"] != "epoch-2026-06-05T00" ||
+		body["algorithm"] != "DigitalArsenal-FlatBuffers-X25519-AES256GCM" ||
+		body["envelopeCid"] != "bafywrappedpeeralpha" {
+		t.Fatalf("unexpected key unwrap response: %#v", body)
+	}
+	wantEnvelope := base64.StdEncoding.EncodeToString([]byte("wrapped-envelope-for-peer-alpha"))
+	if body["wrappedKeyEnvelopeBase64"] != wantEnvelope {
+		t.Fatalf("wrapped envelope = %q, want %q", body["wrappedKeyEnvelopeBase64"], wantEnvelope)
+	}
+	if keyEnvelopes.request.Subject != "peer-alpha" ||
+		keyEnvelopes.request.GrantID != grantID ||
+		keyEnvelopes.request.ContentKeyID != "channel-private-key" ||
+		keyEnvelopes.request.RecipientKeyID != "peer-alpha-x25519" ||
+		keyEnvelopes.request.Metadata.ContentKeyID != "channel-private-key" {
+		t.Fatalf("unexpected envelope provider request: %#v", keyEnvelopes.request)
+	}
+	if strings.Contains(rec.Body.String(), "plaintext") {
+		t.Fatalf("key unwrap response referenced plaintext key material: %s", rec.Body.String())
+	}
+}
+
+type recordingPrivateChannelKeyEnvelopeProvider struct {
+	request  PrivateChannelKeyEnvelopeRequest
+	envelope PrivateChannelKeyEnvelope
+	err      error
+}
+
+func (p *recordingPrivateChannelKeyEnvelopeProvider) GetPrivateChannelKeyEnvelope(req PrivateChannelKeyEnvelopeRequest) (PrivateChannelKeyEnvelope, error) {
+	p.request = req
+	if p.err != nil {
+		return PrivateChannelKeyEnvelope{}, p.err
+	}
+	return p.envelope, nil
 }
 
 func TestChannelHandlerPrivateListedCollectionFailsClosedWithoutGrant(t *testing.T) {
