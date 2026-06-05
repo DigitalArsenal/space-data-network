@@ -12,6 +12,9 @@
   let grantId = '';
   let grantRecipient = '';
   let grantScopes = 'list_private subscribe stream_open byte_range_read';
+  let contentKeyId = '';
+  let recipientKeyId = '';
+  let keyEnvelopeCid = '';
   let channels: ChannelSummary[] = [];
   let selectedChannelId = '';
   let selectedChannel: ChannelSummary | null = null;
@@ -96,6 +99,16 @@
     const issuedGrantId = typeof result.data?.grantId === 'string' ? result.data.grantId : '';
     status = result.ok ? `Grant issued${issuedGrantId ? `: ${issuedGrantId}` : ''}` : result.capability.reason ?? 'Grant unavailable';
     await loadChannel(selectedChannelId);
+  }
+
+  async function keyUnwrapSelected(): Promise<void> {
+    if (!backend || !selectedChannelId || !recipientKeyId.trim()) return;
+    const result = await backend.channels.keyUnwrap(selectedChannelId, {
+      recipientKeyId: recipientKeyId.trim(),
+      ...(contentKeyId.trim() ? { contentKeyId: contentKeyId.trim() } : {}),
+    }, channelAccessOptions);
+    keyEnvelopeCid = typeof result.data?.envelopeCid === 'string' ? result.data.envelopeCid : '';
+    status = result.ok ? `Key envelope ready${keyEnvelopeCid ? `: ${keyEnvelopeCid}` : ''}` : result.capability.reason ?? 'Key envelope unavailable';
   }
 
   async function openStreamSelected(): Promise<void> {
@@ -218,6 +231,14 @@
       <input bind:value={grantScopes} />
     </label>
     <label>
+      <span>Content key ID</span>
+      <input bind:value={contentKeyId} />
+    </label>
+    <label>
+      <span>Recipient key ID</span>
+      <input bind:value={recipientKeyId} />
+    </label>
+    <label>
       <span>Stream file</span>
       <input type="file" on:change={onStreamFileSelected} />
     </label>
@@ -225,6 +246,7 @@
     <button class="sdn-button sdn-button-muted" type="button" on:click={subscribeSelected} disabled={!selectedChannelId}>Subscribe</button>
     <button class="sdn-button sdn-button-muted" type="button" on:click={unsubscribeSelected} disabled={!selectedChannelId}>Unsubscribe</button>
     <button class="sdn-button sdn-button-muted" type="button" on:click={issueGrantSelected} disabled={!selectedChannelId || !grantRecipient.trim()}>Issue Grant</button>
+    <button class="sdn-button sdn-button-muted" type="button" on:click={keyUnwrapSelected} disabled={!selectedChannelId || !recipientKeyId.trim()}>Key Envelope</button>
     <button class="sdn-button sdn-button-muted" type="button" on:click={publishStreamSelected} disabled={!selectedChannelId || !streamFile}>Publish Stream</button>
     <button class="sdn-button sdn-button-muted" type="button" on:click={openStreamSelected} disabled={!selectedChannelId}>Open Stream</button>
     <span>{status}</span>
@@ -274,6 +296,7 @@
         <div><dt>Pinned Count</dt><dd>{formatNumber(monitor?.pinnedCount ?? monitor?.pinnedRows)}</dd></div>
         <div><dt>Synced Bytes</dt><dd>{formatBytes(monitor?.syncedBytes)}</dd></div>
         <div><dt>Stream Bytes</dt><dd>{formatBytes(streamBytesReceived)}</dd></div>
+        <div><dt>Key Envelope CID</dt><dd>{keyEnvelopeCid || 'Unknown'}</dd></div>
         <div><dt>Current Throughput</dt><dd>{formatRate(monitor?.throughputBytesPerSecond)}</dd></div>
         <div><dt>Wire-Speed Utilization</dt><dd>{formatPercent(monitor?.wireSpeedUtilization)}</dd></div>
         <div><dt>Grant State</dt><dd>{monitor?.grantState ?? selectedChannel?.grantState ?? 'unknown'}</dd></div>

@@ -43,6 +43,11 @@ export function createHttpChannelBackend(fetchLike: FetchLike, baseUrl: string |
         'content-type': 'application/json',
       }, options);
     },
+    keyUnwrap(channelId: string, body, options?: ChannelActionOptions) {
+      return postChannelAction(fetchLike, baseUrl, channelId, 'key-unwrap', JSON.stringify(body), {
+        'content-type': 'application/json',
+      }, options);
+    },
     openStream(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<Uint8Array>> {
       return getBytes(fetchLike, channelActionUrl(baseUrl, channelId, 'stream', options), 'channels.openStream', {
         headers: { accept: 'application/vnd.sdn.flatbuffers.stream' },
@@ -64,6 +69,7 @@ export function createUnavailableChannelBackend(reason: string): ChannelBackend 
     unsubscribe: () => Promise.resolve(createCapabilityResult('channels.unsubscribe', 'unavailable', reason)),
     publish: () => Promise.resolve(createCapabilityResult('channels.publish', 'unavailable', reason)),
     issueGrant: () => Promise.resolve(createCapabilityResult('channels.issueGrant', 'unavailable', reason)),
+    keyUnwrap: () => Promise.resolve(createCapabilityResult('channels.keyUnwrap', 'unavailable', reason)),
     openStream: () => Promise.resolve(createCapabilityResult('channels.openStream', 'unavailable', reason)),
     monitor: () => Promise.resolve(createCapabilityResult('channels.monitor', 'unavailable', reason)),
   };

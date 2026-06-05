@@ -288,6 +288,10 @@ describe('SDN backend channel runtime surface', () => {
     await backend.channels.publish('spaceaware-OMM', stream, grant);
     await backend.channels.openStream('spaceaware-OMM', grant);
     await backend.channels.issueGrant('spaceaware-OMM', { to: 'peer-alpha', scopes: ['stream_open'] }, grant);
+    await backend.channels.keyUnwrap('spaceaware-OMM', {
+      recipientKeyId: 'peer-alpha-x25519',
+      contentKeyId: 'channel-private-key',
+    }, grant);
 
     expect(requests).toEqual([
       {
@@ -319,6 +323,15 @@ describe('SDN backend channel runtime surface', () => {
         method: 'POST',
         contentType: 'application/json',
         bodyText: JSON.stringify({ to: 'peer-alpha', scopes: ['stream_open'] }),
+      },
+      {
+        url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/key-unwrap?subject=peer-alpha&grantId=grant-1&visibility=private',
+        method: 'POST',
+        contentType: 'application/json',
+        bodyText: JSON.stringify({
+          recipientKeyId: 'peer-alpha-x25519',
+          contentKeyId: 'channel-private-key',
+        }),
       },
     ]);
   });
