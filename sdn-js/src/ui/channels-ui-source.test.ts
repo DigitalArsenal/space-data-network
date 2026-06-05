@@ -43,12 +43,27 @@ describe('SDN channels UI source', () => {
       'Filter by source',
       'Filter by visibility',
       'Filter by grant state',
-      'backend.channels.list({ standardCode, visibility: listVisibilityFilter })',
+      'backend.channels.list({ standardCode, ...channelAccessOptions })',
       'filteredChannels',
       'channelMatchesFilters',
       'unsubscribeSelected',
-      'backend.channels.unsubscribe(selectedChannelId)',
+      'backend.channels.unsubscribe(selectedChannelId, channelAccessOptions)',
       '>Unsubscribe<',
+    ]) {
+      expect(source).toContain(expected);
+    }
+    expect(source).not.toContain(String.fromCharCode(46, 102, 98, 115));
+  });
+
+  it('passes private grant context from the Channels screen to list and subscription actions', () => {
+    const source = readFileSync(new URL('../../ui/src/screens/ChannelsScreen.svelte', import.meta.url), 'utf8');
+    for (const expected of [
+      'Grant subject',
+      'Grant ID',
+      'channelAccessOptions',
+      'backend.channels.list({ standardCode, ...channelAccessOptions })',
+      'backend.channels.subscribe(selectedChannelId, channelAccessOptions)',
+      'backend.channels.unsubscribe(selectedChannelId, channelAccessOptions)',
     ]) {
       expect(source).toContain(expected);
     }

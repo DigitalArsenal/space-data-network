@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { ChannelMonitor, ChannelSummary, SdnBackend } from '../../../src/ui/runtime/sdn-backend';
+  import type { ChannelActionOptions, ChannelMonitor, ChannelSummary, SdnBackend } from '../../../src/ui/runtime/sdn-backend';
 
   export let backend: SdnBackend | null = null;
 
@@ -8,12 +8,15 @@
   let visibilityFilter = 'all';
   let sourceFilter = '';
   let grantStateFilter = 'all';
+  let grantSubject = '';
+  let grantId = '';
   let channels: ChannelSummary[] = [];
   let selectedChannelId = '';
   let selectedChannel: ChannelSummary | null = null;
   let monitor: ChannelMonitor | null = null;
   let status = 'Loading';
   $: listVisibilityFilter = visibilityFilter === 'all' ? undefined : visibilityFilter;
+  $: channelAccessOptions = buildChannelAccessOptions(listVisibilityFilter, grantSubject, grantId);
   $: filteredChannels = channels.filter(channelMatchesFilters);
   $: if (filteredChannels.length > 0 && !filteredChannels.some((channel) => channel.channelId === selectedChannelId)) {
     selectedChannelId = filteredChannels[0].channelId;
@@ -39,7 +42,7 @@
       return;
     }
     status = 'Loading';
-    const result = await backend.channels.list({ standardCode, visibility: listVisibilityFilter });
+    const result = await backend.channels.list({ standardCode, ...channelAccessOptions });
     if (!result.ok) {
       status = result.capability.reason ?? 'Channels unavailable';
       channels = [];
@@ -67,14 +70,14 @@
 
   async function subscribeSelected(): Promise<void> {
     if (!backend || !selectedChannelId) return;
-    const result = await backend.channels.subscribe(selectedChannelId);
+    const result = await backend.channels.subscribe(selectedChannelId, channelAccessOptions);
     status = result.ok ? 'Subscribed' : result.capability.reason ?? 'Subscribe unavailable';
     await loadChannel(selectedChannelId);
   }
 
   async function unsubscribeSelected(): Promise<void> {
     if (!backend || !selectedChannelId) return;
-    const result = await backend.channels.unsubscribe(selectedChannelId);
+    const result = await backend.channels.unsubscribe(selectedChannelId, channelAccessOptions);
     status = result.ok ? 'Unsubscribed' : result.capability.reason ?? 'Unsubscribe unavailable';
     await loadChannel(selectedChannelId);
   }
@@ -91,6 +94,14 @@
       return false;
     }
     return true;
+  }
+
+  function buildChannelAccessOptions(visibility: string | undefined, subject: string, accessGrantId: string): ChannelActionOptions {
+    return {
+      ...(visibility ? { visibility } : {}),
+      ...(subject.trim() ? { subject: subject.trim() } : {}),
+      ...(accessGrantId.trim() ? { grantId: accessGrantId.trim() } : {}),
+    };
   }
 
   function formatNumber(value: number | null | undefined): string {
@@ -142,6 +153,14 @@
         <option value="verified">Verified</option>
         <option value="revoked">Revoked</option>
       </select>
+    </label>
+    <label>
+      <span>Grant subject</span>
+      <input bind:value={grantSubject} />
+    </label>
+    <label>
+      <span>Grant ID</span>
+      <input bind:value={grantId} />
     </label>
     <button class="sdn-button" type="button" on:click={refreshChannels}>Refresh</button>
     <button class="sdn-button sdn-button-muted" type="button" on:click={subscribeSelected} disabled={!selectedChannelId}>Subscribe</button>
