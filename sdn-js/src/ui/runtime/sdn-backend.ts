@@ -162,6 +162,8 @@ export interface DataScanResult {
 export interface ChannelListOptions {
   standardCode?: string;
   visibility?: string;
+  subject?: string;
+  grantId?: string;
 }
 
 export interface ChannelActionOptions {
