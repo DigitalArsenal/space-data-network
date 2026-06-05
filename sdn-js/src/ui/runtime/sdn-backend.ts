@@ -171,6 +171,7 @@ export interface ChannelActionOptions {
   grantId?: string;
   visibility?: string;
   encryptedStreamHeader?: string;
+  encryptedRecordIndex?: number | string;
 }
 
 export interface ChannelSummary {

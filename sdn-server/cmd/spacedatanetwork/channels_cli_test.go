@@ -737,6 +737,9 @@ func TestChannelsPublishReadsEncryptedStreamHeaderFile(t *testing.T) {
 		if got := r.Header.Get("X-SDN-Encrypted-Stream-Header"); got != headerJSON {
 			t.Fatalf("publish X-SDN-Encrypted-Stream-Header = %q", got)
 		}
+		if got := r.Header.Get("X-SDN-Encrypted-Record-Index"); got != "42" {
+			t.Fatalf("publish X-SDN-Encrypted-Record-Index = %q, want 42", got)
+		}
 		body := new(bytes.Buffer)
 		_, _ = body.ReadFrom(r.Body)
 		if !bytes.Equal(body.Bytes(), streamBytes) {
@@ -767,6 +770,7 @@ func TestChannelsPublishReadsEncryptedStreamHeaderFile(t *testing.T) {
 		"--grant-id", "grant-1",
 		"--visibility", "private-listed",
 		"--encrypted-stream-header-file", headerFile,
+		"--encrypted-record-index", "42",
 	})
 
 	if err := cmd.Execute(); err != nil {

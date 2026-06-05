@@ -111,6 +111,7 @@ export interface ChannelAccessOptions {
   grantId?: string;
   visibility?: string;
   encryptedStreamHeader?: string;
+  encryptedRecordIndex?: number | string;
 }
 
 export interface ChannelListOptions extends ChannelAccessOptions {
@@ -440,6 +441,9 @@ function channelStreamPublishHeaders(options?: ChannelAccessOptions): Record<str
     headers['X-SDN-Encrypted-Stream'] = 'true';
     if (options?.encryptedStreamHeader?.trim()) {
       headers['X-SDN-Encrypted-Stream-Header'] = options.encryptedStreamHeader;
+    }
+    if (options?.encryptedRecordIndex !== undefined && options.encryptedRecordIndex !== null && String(options.encryptedRecordIndex).trim()) {
+      headers['X-SDN-Encrypted-Record-Index'] = String(options.encryptedRecordIndex).trim();
     }
   }
   return headers;

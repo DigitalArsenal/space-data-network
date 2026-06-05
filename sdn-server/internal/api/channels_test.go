@@ -1332,6 +1332,7 @@ func TestChannelHandlerVerifiedEncryptedDPMMakesChannelPrivateFailClosed(t *test
 	publishReq = httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(streamBytes))
 	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
 	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+	setEncryptedChannelStreamRecordIndex(publishReq, 0)
 	setEncryptedChannelStreamHeader(publishReq, "spaceaware-OMM")
 	publishRec = httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
@@ -1388,6 +1389,7 @@ func TestChannelHandlerReadsPrivateNativeFlatBufferByteRangeWithGrant(t *testing
 	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(streamBytes))
 	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
 	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+	setEncryptedChannelStreamRecordIndex(publishReq, 0)
 	setEncryptedChannelStreamHeader(publishReq, "spaceaware-OMM")
 	publishRec := httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
@@ -1438,6 +1440,7 @@ func TestChannelHandlerPrivateEncryptedStreamDoesNotImportWithoutDecryptPath(t *
 	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(streamBytes))
 	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
 	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+	setEncryptedChannelStreamRecordIndex(publishReq, 0)
 	setEncryptedChannelStreamHeader(publishReq, "spaceaware-OMM")
 	publishRec := httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
@@ -1494,6 +1497,7 @@ func TestChannelHandlerPrivateEncryptedStreamDecryptsBeforeImportAndCache(t *tes
 	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(ciphertext))
 	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.encrypted-stream")
 	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+	publishReq.Header.Set("X-SDN-Encrypted-Record-Index", "7")
 	setEncryptedChannelStreamHeader(publishReq, "spaceaware-OMM")
 	publishRec := httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
@@ -1505,6 +1509,9 @@ func TestChannelHandlerPrivateEncryptedStreamDecryptsBeforeImportAndCache(t *tes
 	}
 	if decryptor.header.Context != "spaceaware-OMM" || decryptor.header.Algorithm != "x25519" {
 		t.Fatalf("decryptor header = %#v", decryptor.header)
+	}
+	if decryptor.recordIndex != 7 {
+		t.Fatalf("decryptor record index = %d, want 7", decryptor.recordIndex)
 	}
 	body := decodeChannelJSON(t, publishRec.Body.String())
 	if body["streamBytes"] != float64(len(decryptedStream)) || body["streamFrames"] != float64(2) {
@@ -1585,6 +1592,7 @@ func TestChannelHandlerPrivateLocalCacheReadReturnsVerifiedDecryptedStream(t *te
 	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader([]byte("ciphertext")))
 	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.encrypted-stream")
 	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+	setEncryptedChannelStreamRecordIndex(publishReq, 0)
 	setEncryptedChannelStreamHeader(publishReq, "spaceaware-OMM")
 	publishRec := httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
@@ -1639,6 +1647,7 @@ func TestChannelHandlerPrivateEncryptedStreamAcceptsFlatBuffersHeaderJSON(t *tes
 	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(ciphertext))
 	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.encrypted-stream")
 	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+	setEncryptedChannelStreamRecordIndex(publishReq, 0)
 	publishReq.Header.Set("X-SDN-Encrypted-Stream-Header", `{"version":2,"algorithm":"x25519","senderPublicKey":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","recipientKeyId":"bbbbbbbbbbbbbbbb","nonceStart":"cccccccccccccccccccccccc","context":"spaceaware-OMM"}`)
 	publishRec := httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
@@ -1685,6 +1694,7 @@ func TestChannelHandlerPrivateEncryptedStreamAcceptsFlatBuffersRunnerByteArrayHe
 	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader([]byte("ciphertext")))
 	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.encrypted-stream")
 	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+	setEncryptedChannelStreamRecordIndex(publishReq, 0)
 	publishReq.Header.Set("X-SDN-Encrypted-Stream-Header", `{"algorithm":"x25519","ephemeralPublicKey":[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31],"nonceStart":[16,17,18,19,20,21,22,23,24,25,26,27],"context":"spaceaware-OMM","fields":["OMM"]}`)
 	publishRec := httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
@@ -1794,6 +1804,7 @@ func TestChannelHandlerPrivateEncryptedStreamDecryptFailureDoesNotImportOrCache(
 	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader([]byte("ciphertext")))
 	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.encrypted-stream")
 	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+	setEncryptedChannelStreamRecordIndex(publishReq, 0)
 	setEncryptedChannelStreamHeader(publishReq, "spaceaware-OMM")
 	publishRec := httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
@@ -2018,16 +2029,22 @@ func setEncryptedChannelStreamHeader(req *http.Request, channelID string) {
 	))
 }
 
+func setEncryptedChannelStreamRecordIndex(req *http.Request, recordIndex uint64) {
+	req.Header.Set("X-SDN-Encrypted-Record-Index", fmt.Sprintf("%d", recordIndex))
+}
+
 type channelTestEncryptedStreamDecryptor struct {
-	plaintext  []byte
-	ciphertext []byte
-	header     EncryptedNativeStreamHeader
-	err        error
+	plaintext   []byte
+	ciphertext  []byte
+	header      EncryptedNativeStreamHeader
+	recordIndex uint64
+	err         error
 }
 
 func (d *channelTestEncryptedStreamDecryptor) DecryptNativeStream(req EncryptedNativeStreamDecryptRequest) ([]byte, error) {
 	d.ciphertext = append([]byte(nil), req.Ciphertext...)
 	d.header = req.Header
+	d.recordIndex = req.RecordIndex
 	if d.err != nil {
 		return nil, d.err
 	}
