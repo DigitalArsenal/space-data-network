@@ -30,7 +30,20 @@ describe('SDNClient channel API', () => {
         return jsonResponse({ channelId: 'spaceaware-OMM', sourceId: 'spaceaware', standardCode: 'OMM', pnmVerified: true });
       }
       if (url.endsWith('/api/v1/channels/spaceaware-OMM/monitor')) {
-        return jsonResponse({ channelId: 'spaceaware-OMM', standardCode: 'OMM', pinnedCount: 8 });
+        return jsonResponse({
+          channelId: 'spaceaware-OMM',
+          standardCode: 'OMM',
+          pinnedCount: 8,
+          timingsMs: {
+            discovery: 11,
+            grantNegotiation: 12,
+            pnmDpmVerification: 13,
+            transfer: 14,
+            decrypt: 15,
+            hashVerification: 16,
+            durableImport: 17,
+          },
+        });
       }
       if (url.endsWith('/api/v1/channels/spaceaware-OMM/stream')) {
         return new Response(stream, { headers: { 'content-type': 'application/vnd.sdn.flatbuffers.stream' } });
@@ -45,7 +58,18 @@ describe('SDNClient channel API', () => {
     await expect(client.channels.get('spaceaware-OMM')).resolves.toEqual(expect.objectContaining({ pnmVerified: true }));
     await expect(client.channels.subscribe('spaceaware-OMM')).resolves.toEqual(expect.objectContaining({ ok: true }));
     await expect(client.channels.unsubscribe('spaceaware-OMM')).resolves.toEqual(expect.objectContaining({ ok: true }));
-    await expect(client.channels.monitor('spaceaware-OMM')).resolves.toEqual(expect.objectContaining({ pinnedCount: 8 }));
+    await expect(client.channels.monitor('spaceaware-OMM')).resolves.toEqual(expect.objectContaining({
+      pinnedCount: 8,
+      timingsMs: expect.objectContaining({
+        discovery: 11,
+        grantNegotiation: 12,
+        pnmDpmVerification: 13,
+        transfer: 14,
+        decrypt: 15,
+        hashVerification: 16,
+        durableImport: 17,
+      }),
+    }));
     await expect(client.channels.openStream('spaceaware-OMM')).resolves.toEqual(stream);
     await expect(client.channels.publish('spaceaware-OMM', stream)).resolves.toEqual(expect.objectContaining({ ok: true }));
     await expect(client.channels.grant('spaceaware-OMM', { to: 'peer-alpha', scopes: ['stream_open'] })).resolves.toEqual(expect.objectContaining({ ok: true }));
