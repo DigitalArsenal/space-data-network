@@ -366,7 +366,7 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		h.requireGrantUnavailable(w, r, parsed, channels.BoundaryShardImport, "private channel shard import is unavailable")
+		h.importVerifiedChannelShard(w, r, parsed)
 	case "module-feed":
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -656,26 +656,7 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 	importedRows := 0
 	if h.store != nil {
 		importStarted := time.Now()
-		contentKeyID := strings.TrimSpace(metadata.ContentKeyID)
-		if contentKeyID == "" {
-			contentKeyID = "public"
-		}
-		producerPeerID := strings.TrimSpace(metadata.ProviderPeer)
-		if producerPeerID == "" {
-			producerPeerID = parsed.SourceID
-		}
-		producerPublicKey := strings.TrimSpace(metadata.ProviderPublicKey)
-		if producerPublicKey == "" {
-			producerPublicKey = parsed.SourceID
-		}
-		tags := storage.SourceTags{
-			ProviderID:        parsed.SourceID,
-			SourceName:        "channel:" + parsed.ChannelID,
-			BatchID:           parsed.ChannelID,
-			ContentKeyID:      contentKeyID,
-			ProducerPeerID:    producerPeerID,
-			ProducerPublicKey: producerPublicKey,
-		}
+		tags := channelSourceTags(parsed, metadata)
 		importedRows, err = h.store.StoreBatchWithSourceTags(schemaName, frames, "channel:"+parsed.SourceID, nil, tags)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "durable FlatSQL import failed: "+err.Error())
@@ -710,6 +691,29 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		response["targetMet"] = gate.TargetMet
 	}
 	writeJSON(w, http.StatusAccepted, response)
+}
+
+func channelSourceTags(parsed channels.ChannelID, metadata channels.VerifiedMetadata) storage.SourceTags {
+	contentKeyID := strings.TrimSpace(metadata.ContentKeyID)
+	if contentKeyID == "" {
+		contentKeyID = "public"
+	}
+	producerPeerID := strings.TrimSpace(metadata.ProviderPeer)
+	if producerPeerID == "" {
+		producerPeerID = parsed.SourceID
+	}
+	producerPublicKey := strings.TrimSpace(metadata.ProviderPublicKey)
+	if producerPublicKey == "" {
+		producerPublicKey = parsed.SourceID
+	}
+	return storage.SourceTags{
+		ProviderID:        parsed.SourceID,
+		SourceName:        "channel:" + parsed.ChannelID,
+		BatchID:           parsed.ChannelID,
+		ContentKeyID:      contentKeyID,
+		ProducerPeerID:    producerPeerID,
+		ProducerPublicKey: producerPublicKey,
+	}
 }
 
 func measuredBytesPerSecond(byteCount int, elapsed time.Duration) int64 {
@@ -866,6 +870,53 @@ func (h *ChannelHandler) readStreamBytes(w http.ResponseWriter, r *http.Request,
 	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end-1, len(snapshot.Bytes)))
 	w.WriteHeader(http.StatusPartialContent)
 	_, _ = w.Write(snapshot.Bytes[start:end])
+}
+
+func (h *ChannelHandler) importVerifiedChannelShard(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
+	decision := h.authorizeGrant(r, parsed, channels.BoundaryShardImport)
+	if !decision.Allowed {
+		h.writeAccessDenied(w, decision)
+		return
+	}
+	if h.store == nil {
+		writeError(w, http.StatusNotImplemented, "durable FlatSQL store is unavailable")
+		return
+	}
+	metadata, verified := h.metadata.Get(parsed)
+	if !verified || metadata.DPMVerifiedAt.IsZero() || !isPrivateChannelMetadata(metadata) {
+		writeError(w, http.StatusNotFound, "verified private encrypted channel metadata unavailable")
+		return
+	}
+	snapshot, ok := h.streams.Get(parsed)
+	if !ok {
+		writeError(w, http.StatusNotFound, "verified native FlatBuffer stream unavailable for channel")
+		return
+	}
+	frames, err := channels.SplitNativeStreamFramesForChannel(parsed, snapshot.Bytes)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid native FlatBuffer stream: "+err.Error())
+		return
+	}
+	schemaName, err := channels.SchemaNameFromStandardCode(parsed.StandardCode)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	tags := channelSourceTags(parsed, metadata)
+	importedRows, err := h.store.StoreBatchWithSourceTags(schemaName, frames, "channel:"+parsed.SourceID, nil, tags)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "durable FlatSQL import failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"channelId":    parsed.ChannelID,
+		"standardCode": parsed.StandardCode,
+		"grantState":   decision.GrantState,
+		"streamBytes":  snapshot.ByteCount,
+		"streamFrames": snapshot.FrameCount,
+		"importedRows": importedRows,
+		"importedAt":   time.Now().UTC().Format(time.RFC3339Nano),
+	})
 }
 
 func (h *ChannelHandler) readLocalCache(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
