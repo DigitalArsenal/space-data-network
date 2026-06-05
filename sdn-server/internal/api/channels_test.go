@@ -102,6 +102,7 @@ func TestChannelHandlerMonitorReportsRequiredFields(t *testing.T) {
 		"remoteRows",
 		"syncedRows",
 		"missingRows",
+		"pinnedCount",
 		"pinnedRows",
 		"syncedBytes",
 		"throughputBytesPerSecond",

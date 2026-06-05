@@ -839,6 +839,7 @@ func runChannelsMonitor(cmd *cobra.Command, options channelMonitorOptions, chann
 	fmt.Fprintln(out, "remoteRows=0")
 	fmt.Fprintln(out, "syncedRows=0")
 	fmt.Fprintln(out, "missingRows=0")
+	fmt.Fprintln(out, "pinnedCount=0")
 	fmt.Fprintln(out, "pinnedRows=0")
 	fmt.Fprintln(out, "syncedBytes=0")
 	fmt.Fprintln(out, "throughputBytesPerSecond=0")
@@ -1120,6 +1121,7 @@ func printChannelMonitorPayload(out interface {
 		"remoteRows",
 		"syncedRows",
 		"missingRows",
+		"pinnedCount",
 		"pinnedRows",
 		"syncedBytes",
 		"throughputBytesPerSecond",
