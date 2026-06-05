@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -411,6 +412,61 @@ func TestChannelsGrantIssuePrintsScopedGrant(t *testing.T) {
 	}
 	if !strings.Contains(body, "grantId=grant-") {
 		t.Fatalf("grant issue output missing generated grantId:\n%s", body)
+	}
+}
+
+func TestChannelsGrantIssueUsesLocalAPI(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/channels/spaceaware-OMM/grants" {
+			t.Fatalf("unexpected grant request %s %s", r.Method, r.URL.String())
+		}
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode grant request: %v", err)
+		}
+		if body["subject"] != "peer-alpha" {
+			t.Fatalf("grant subject = %#v", body["subject"])
+		}
+		scopes, ok := body["scopes"].([]interface{})
+		if !ok || len(scopes) != 2 || scopes[0] != "subscribe" || scopes[1] != "stream_open" {
+			t.Fatalf("grant scopes = %#v", body["scopes"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"grantId":"grant-api-1",
+			"channelId":"spaceaware-OMM",
+			"subject":"peer-alpha",
+			"grantState":"verified",
+			"scopes":["subscribe","stream_open"],
+			"expiresAt":"2026-06-05T00:00:00Z"
+		}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"grants", "issue", "spaceaware-OMM", "--to", "peer-alpha", "--scope", "subscribe", "--scope", "stream_open", "--api-url", server.URL})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels grants issue failed: %v", err)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"grantId=grant-api-1",
+		"channelId=spaceaware-OMM",
+		"subject=peer-alpha",
+		"grantState=verified",
+		"scope=subscribe",
+		"scope=stream_open",
+		"expiresAt=2026-06-05T00:00:00Z",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("grant issue output missing %q:\n%s", want, body)
+		}
 	}
 }
 

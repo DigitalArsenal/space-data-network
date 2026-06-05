@@ -29,6 +29,7 @@ type channelGrantIssueOptions struct {
 	To        string
 	Scopes    []string
 	ExpiresAt string
+	APIURL    string
 }
 
 type channelPublishOptions struct {
@@ -133,6 +134,7 @@ func newChannelsCommand() *cobra.Command {
 	grantIssueCmd.Flags().StringVar(&grantIssueOptions.To, "to", "", "subscriber peer or EPM subject")
 	grantIssueCmd.Flags().StringArrayVar(&grantIssueOptions.Scopes, "scope", nil, "private channel access scope")
 	grantIssueCmd.Flags().StringVar(&grantIssueOptions.ExpiresAt, "expires-at", "", "grant expiration as RFC3339")
+	grantIssueCmd.Flags().StringVar(&grantIssueOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	grantsCmd.AddCommand(grantIssueCmd)
 	cmd.AddCommand(grantsCmd)
 	return cmd
@@ -315,6 +317,9 @@ func runChannelsGrantIssue(cmd *cobra.Command, registry *channels.ChannelGrantRe
 	if err != nil {
 		return err
 	}
+	if apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL"))); apiURL != "" {
+		return runChannelsGrantIssueToAPI(cmd, parsed, apiURL, options, scopes)
+	}
 	expiresAt := time.Time{}
 	if strings.TrimSpace(options.ExpiresAt) != "" {
 		expiresAt, err = time.Parse(time.RFC3339, strings.TrimSpace(options.ExpiresAt))
@@ -340,6 +345,51 @@ func runChannelsGrantIssue(cmd *cobra.Command, registry *channels.ChannelGrantRe
 		fmt.Fprintf(out, "scope=%s\n", scope)
 	}
 	fmt.Fprintf(out, "expiresAt=%s\n", grant.ExpiresAt.Format(time.RFC3339Nano))
+	return nil
+}
+
+func runChannelsGrantIssueToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, options channelGrantIssueOptions, scopes []channels.AccessBoundary) error {
+	grantURL, err := channelGrantURL(apiURL, parsed.ChannelID)
+	if err != nil {
+		return err
+	}
+	scopeValues := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		scopeValues = append(scopeValues, string(scope))
+	}
+	payload := map[string]interface{}{
+		"subject": strings.TrimSpace(options.To),
+		"scopes":  scopeValues,
+	}
+	if strings.TrimSpace(options.ExpiresAt) != "" {
+		payload["expiresAt"] = strings.TrimSpace(options.ExpiresAt)
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, grantURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("issue channel grant: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("issue channel grant: %s", resp.Status)
+	}
+	var response map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return fmt.Errorf("decode channel grant response: %w", err)
+	}
+	if _, ok := response["channelId"]; !ok {
+		response["channelId"] = parsed.ChannelID
+	}
+	printChannelGrantPayload(cmd.OutOrStdout(), response)
 	return nil
 }
 
@@ -468,6 +518,10 @@ func channelSubscriptionURL(apiURL string, channelID string, action string) (str
 	return channelAPIURL(apiURL, channelID, "/"+action)
 }
 
+func channelGrantURL(apiURL string, channelID string) (string, error) {
+	return channelAPIURL(apiURL, channelID, "/grants")
+}
+
 func channelAPIURL(apiURL string, channelID string, suffix string) (string, error) {
 	base, err := url.Parse(strings.TrimRight(apiURL, "/"))
 	if err != nil {
@@ -544,6 +598,31 @@ func printChannelSubscriptionPayload(out interface {
 		"encryptionState",
 		"lastUpdated",
 	} {
+		if value, ok := payload[key]; ok {
+			fmt.Fprintf(out, "%s=%v\n", key, monitorValue(value))
+		}
+	}
+}
+
+func printChannelGrantPayload(out interface {
+	Write([]byte) (int, error)
+}, payload map[string]interface{}) {
+	for _, key := range []string{
+		"grantId",
+		"channelId",
+		"subject",
+		"grantState",
+	} {
+		if value, ok := payload[key]; ok {
+			fmt.Fprintf(out, "%s=%v\n", key, monitorValue(value))
+		}
+	}
+	if scopes, ok := payload["scopes"].([]interface{}); ok {
+		for _, scope := range scopes {
+			fmt.Fprintf(out, "scope=%v\n", monitorValue(scope))
+		}
+	}
+	for _, key := range []string{"issuedAt", "expiresAt"} {
 		if value, ok := payload[key]; ok {
 			fmt.Fprintf(out, "%s=%v\n", key, monitorValue(value))
 		}
