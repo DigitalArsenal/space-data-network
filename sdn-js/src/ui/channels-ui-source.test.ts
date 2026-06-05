@@ -95,4 +95,19 @@ describe('SDN channels UI source', () => {
     }
     expect(source).not.toContain(String.fromCharCode(46, 102, 98, 115));
   });
+
+  it('renders a channel grant issue action required by the private pub/sub surface', () => {
+    const source = readFileSync(new URL('../../ui/src/screens/ChannelsScreen.svelte', import.meta.url), 'utf8');
+    for (const expected of [
+      'Issue grant to',
+      'Grant scopes',
+      'issueGrantSelected',
+      'parseGrantScopes',
+      'backend.channels.issueGrant(selectedChannelId, { to: grantRecipient.trim(), scopes }, channelAccessOptions)',
+      '>Issue Grant<',
+    ]) {
+      expect(source).toContain(expected);
+    }
+    expect(source).not.toContain(String.fromCharCode(46, 102, 98, 115));
+  });
 });
