@@ -5,6 +5,9 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const executableMode = 0o755;
+const defaultUpdateFeedBaseUrl = 'https://updates.spacedatanetwork.org';
+const updaterModuleId = 'org.spacedatanetwork.updater';
+const updaterWasmPath = 'runtime/modules/org.spacedatanetwork.updater.wasm';
 
 export async function stageBundle(options) {
   const version = safeToken(options.version, 'version');
@@ -63,6 +66,12 @@ export async function stageBundle(options) {
     signature,
     os: osName,
     arch,
+    update: {
+      feedBaseUrl: options.updateFeedBaseUrl || defaultUpdateFeedBaseUrl,
+      pubsubTopic: `/sdn/updates/v1/${channel}`,
+      updaterModule: updaterModuleId,
+      updaterWasm: updaterWasmPath,
+    },
     artifacts,
   };
   await writeFile(join(root, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);

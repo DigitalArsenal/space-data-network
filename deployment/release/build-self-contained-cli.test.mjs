@@ -90,6 +90,12 @@ test('stageBundle creates expected portable archive layout', async () => {
   assert.equal(manifest.version, '1.2.3');
   assert.equal(manifest.channel, 'beta');
   assert.equal(manifest.signature, 'test-signature');
+  assert.deepEqual(manifest.update, {
+    feedBaseUrl: 'https://updates.spacedatanetwork.org',
+    pubsubTopic: '/sdn/updates/v1/beta',
+    updaterModule: 'org.spacedatanetwork.updater',
+    updaterWasm: 'runtime/modules/org.spacedatanetwork.updater.wasm',
+  });
   assert.deepEqual(manifest.artifacts.map((artifact) => artifact.path), [
     'LICENSE',
     'README.md',
@@ -155,6 +161,12 @@ test('stageBundle creates Windows executable names and copied alias', async () =
   assert.equal(alias, 'exe');
   const manifest = JSON.parse(await readFile(join(staged.root, 'manifest.json'), 'utf8'));
   assert.equal(manifest.os, 'windows');
+  assert.deepEqual(manifest.update, {
+    feedBaseUrl: 'https://updates.spacedatanetwork.org',
+    pubsubTopic: '/sdn/updates/v1/beta',
+    updaterModule: 'org.spacedatanetwork.updater',
+    updaterWasm: 'runtime/modules/org.spacedatanetwork.updater.wasm',
+  });
   assert.deepEqual(manifest.artifacts.map((artifact) => artifact.path), [
     'LICENSE',
     'README.md',
