@@ -63,6 +63,27 @@ describe('channel native stream dispatcher adapter', () => {
     expect(dispatcher.pushed[0]).toEqual(chunk);
     expect(stream.stats().encrypted).toBe(true);
   });
+
+  it('forwards opaque encrypted private chunks without plaintext file identifier scanning', () => {
+    const dispatcher = new RecordingDispatcher();
+    const encryptionContext = { context: 'spaceaware-OMM' };
+    const stream = createEncryptedChannelStreamDispatcher({
+      dispatcher,
+      acceptedTypes: [{ fileIdentifier: 'OMM1', messageSize: 64, capacity: 8 }],
+      encryptionContexts: { OMM1: encryptionContext },
+    });
+    const encryptedChunk = new Uint8Array([0x8f, 0x23, 0x91, 0x05, 0xaa, 0x70, 0x42, 0x19, 0x5d]);
+
+    stream.pushChunk(encryptedChunk);
+
+    expect(dispatcher.pushed).toEqual([encryptedChunk]);
+    expect(stream.stats()).toEqual({
+      bytesReceived: encryptedChunk.byteLength,
+      framesReceived: 0,
+      fileIdentifiers: { OMM1: 0 },
+      encrypted: true,
+    });
+  });
 });
 
 class RecordingDispatcher {
