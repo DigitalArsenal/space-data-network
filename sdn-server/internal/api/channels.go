@@ -1006,10 +1006,42 @@ func (h *ChannelHandler) parseEncryptedNativeStreamHeader(r *http.Request, parse
 	if recipientKeyID, ok := encryptedNativeStreamHeaderBytes(header, "recipientKeyId", "recipient_key_id"); ok {
 		parsedHeader.RecipientKeyID = recipientKeyID
 	}
+	if err := validateEncryptedNativeStreamHeaderFields(parsedHeader); err != nil {
+		return EncryptedNativeStreamHeader{}, err
+	}
 	if parsedHeader.Context != parsed.ChannelID {
 		return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header context %q does not match channel %q", parsedHeader.Context, parsed.ChannelID)
 	}
 	return parsedHeader, nil
+}
+
+func validateEncryptedNativeStreamHeaderFields(header EncryptedNativeStreamHeader) error {
+	if !strings.EqualFold(header.Algorithm, "x25519") {
+		return nil
+	}
+	if _, err := encryptedNativeStreamHeaderDecodeHexSize(header.SenderPublicKey, 32); err != nil {
+		return fmt.Errorf("encrypted private channel stream header senderPublicKey must be 32 bytes: %w", err)
+	}
+	if _, err := encryptedNativeStreamHeaderDecodeHexSize(header.NonceStart, 12); err != nil {
+		return fmt.Errorf("encrypted private channel stream header nonceStart must be 12 bytes: %w", err)
+	}
+	if strings.TrimSpace(header.RecipientKeyID) != "" {
+		if _, err := encryptedNativeStreamHeaderDecodeHexSize(header.RecipientKeyID, 8); err != nil {
+			return fmt.Errorf("encrypted private channel stream header recipientKeyId must be 8 bytes: %w", err)
+		}
+	}
+	return nil
+}
+
+func encryptedNativeStreamHeaderDecodeHexSize(value string, want int) ([]byte, error) {
+	decoded, err := hex.DecodeString(strings.TrimSpace(value))
+	if err != nil {
+		return nil, fmt.Errorf("decode hex: %w", err)
+	}
+	if len(decoded) != want {
+		return nil, fmt.Errorf("got %d", len(decoded))
+	}
+	return decoded, nil
 }
 
 func encryptedNativeStreamHeaderBytes(header map[string]interface{}, names ...string) (string, bool) {
