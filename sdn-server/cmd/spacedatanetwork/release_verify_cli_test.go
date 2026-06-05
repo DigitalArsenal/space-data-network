@@ -1,6 +1,10 @@
 package main
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -58,6 +62,11 @@ func TestVerifyReleaseDirectoryAcceptsCompleteReleaseEvidence(t *testing.T) {
 	} {
 		writeReleaseTestFile(t, root, name, []byte("artifact:"+name))
 	}
+	writePortableCLITarGz(t, root, "spacedatanetwork-1.2.3-darwin-arm64.tar.gz", "spacedatanetwork-1.2.3-darwin-arm64", false)
+	writePortableCLITarGz(t, root, "spacedatanetwork-1.2.3-darwin-amd64.tar.gz", "spacedatanetwork-1.2.3-darwin-amd64", false)
+	writePortableCLITarGz(t, root, "spacedatanetwork-1.2.3-linux-amd64.tar.gz", "spacedatanetwork-1.2.3-linux-amd64", false)
+	writePortableCLITarGz(t, root, "spacedatanetwork-1.2.3-linux-arm64.tar.gz", "spacedatanetwork-1.2.3-linux-arm64", false)
+	writePortableCLIZip(t, root, "spacedatanetwork-1.2.3-windows-amd64.zip", "spacedatanetwork-1.2.3-windows-amd64", false)
 	writeChecksums(t, root)
 
 	report, err := verifyReleaseDirectory(root)
@@ -69,6 +78,21 @@ func TestVerifyReleaseDirectoryAcceptsCompleteReleaseEvidence(t *testing.T) {
 	}
 	if len(report.Artifacts) < 10 {
 		t.Fatalf("artifacts = %#v, want release artifacts reported", report.Artifacts)
+	}
+}
+
+func TestVerifyPortableCLIArchiveLayoutRejectsMissingAlias(t *testing.T) {
+	root := t.TempDir()
+	archivePath := writePortableCLITarGz(t, root, "spacedatanetwork-1.2.3-linux-amd64.tar.gz", "spacedatanetwork-1.2.3-linux-amd64", true)
+
+	err := verifyPortableCLIArchiveLayout(archivePath, portableCLITarget{
+		Label:       "Linux AMD64 portable CLI",
+		PrimaryPath: "bin/spacedatanetwork",
+		AliasPath:   "bin/sdn",
+		ArchiveKind: "tar.gz",
+	})
+	if err == nil || !strings.Contains(err.Error(), "bin/sdn") {
+		t.Fatalf("verifyPortableCLIArchiveLayout error = %v, want missing bin/sdn", err)
 	}
 }
 
@@ -155,6 +179,73 @@ func writeReleaseTestFile(t *testing.T, root string, name string, data []byte) {
 	if err := os.WriteFile(filepath.Join(root, name), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writePortableCLITarGz(t *testing.T, root string, name string, bundleRoot string, omitAlias bool) string {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	writer := tar.NewWriter(gz)
+	entries := portableCLIEntries(bundleRoot, false, omitAlias)
+	for pathValue, contents := range entries {
+		header := &tar.Header{
+			Name: pathValue,
+			Mode: 0o755,
+			Size: int64(len(contents)),
+		}
+		if err := writer.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.Write([]byte(contents)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	writeReleaseTestFile(t, root, name, buf.Bytes())
+	return filepath.Join(root, name)
+}
+
+func writePortableCLIZip(t *testing.T, root string, name string, bundleRoot string, omitAlias bool) string {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	for pathValue, contents := range portableCLIEntries(bundleRoot, true, omitAlias) {
+		file, err := writer.Create(pathValue)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := file.Write([]byte(contents)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	writeReleaseTestFile(t, root, name, buf.Bytes())
+	return filepath.Join(root, name)
+}
+
+func portableCLIEntries(bundleRoot string, windows bool, omitAlias bool) map[string]string {
+	primary := "spacedatanetwork"
+	alias := "sdn"
+	if windows {
+		primary += ".exe"
+		alias += ".exe"
+	}
+	entries := map[string]string{
+		bundleRoot + "/bin/" + primary:                                    "primary",
+		bundleRoot + "/runtime/modules/org.spacedatanetwork.updater.wasm": "updater",
+		bundleRoot + "/manifest.json":                                     `{"schema":"org.spacedatanetwork.bundle.v1"}`,
+	}
+	if !omitAlias {
+		entries[bundleRoot+"/bin/"+alias] = "alias"
+	}
+	return entries
 }
 
 func writeChecksums(t *testing.T, root string) {

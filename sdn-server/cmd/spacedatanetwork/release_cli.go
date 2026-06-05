@@ -1,12 +1,16 @@
 package main
 
 import (
+	"archive/tar"
+	"archive/zip"
 	"bufio"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -211,6 +215,9 @@ func verifyReleaseDirectory(rawDir string) (*releaseVerificationReport, error) {
 	}); err != nil {
 		return nil, err
 	}
+	if err := verifyPortableCLIArtifacts(dir, files); err != nil {
+		return nil, err
+	}
 
 	releasePLGBytes, err := os.ReadFile(filepath.Join(dir, "release.plg"))
 	if err != nil {
@@ -267,6 +274,124 @@ func requireReleaseArtifactPattern(files map[string]os.DirEntry, label string, m
 		}
 	}
 	return fmt.Errorf("required release artifact is missing: %s", label)
+}
+
+type portableCLITarget struct {
+	Label       string
+	Suffix      string
+	PrimaryPath string
+	AliasPath   string
+	ArchiveKind string
+}
+
+func verifyPortableCLIArtifacts(dir string, files map[string]os.DirEntry) error {
+	targets := []portableCLITarget{
+		{Label: "macOS ARM64 portable CLI", Suffix: "-darwin-arm64.tar.gz", PrimaryPath: "bin/spacedatanetwork", AliasPath: "bin/sdn", ArchiveKind: "tar.gz"},
+		{Label: "macOS AMD64 portable CLI", Suffix: "-darwin-amd64.tar.gz", PrimaryPath: "bin/spacedatanetwork", AliasPath: "bin/sdn", ArchiveKind: "tar.gz"},
+		{Label: "Linux AMD64 portable CLI", Suffix: "-linux-amd64.tar.gz", PrimaryPath: "bin/spacedatanetwork", AliasPath: "bin/sdn", ArchiveKind: "tar.gz"},
+		{Label: "Linux ARM64 portable CLI", Suffix: "-linux-arm64.tar.gz", PrimaryPath: "bin/spacedatanetwork", AliasPath: "bin/sdn", ArchiveKind: "tar.gz"},
+		{Label: "Windows AMD64 portable CLI", Suffix: "-windows-amd64.zip", PrimaryPath: "bin/spacedatanetwork.exe", AliasPath: "bin/sdn.exe", ArchiveKind: "zip"},
+	}
+	for _, target := range targets {
+		name := portableCLIArtifactName(files, target.Suffix)
+		if name == "" {
+			return fmt.Errorf("required release artifact is missing: %s", target.Label)
+		}
+		if err := verifyPortableCLIArchiveLayout(filepath.Join(dir, name), target); err != nil {
+			return fmt.Errorf("verify %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func portableCLIArtifactName(files map[string]os.DirEntry, suffix string) string {
+	for name := range files {
+		if strings.HasPrefix(name, "spacedatanetwork-") && strings.HasSuffix(name, suffix) && !strings.Contains(name, "linux-vm") {
+			return name
+		}
+	}
+	return ""
+}
+
+func verifyPortableCLIArchiveLayout(pathValue string, target portableCLITarget) error {
+	var entries map[string]bool
+	var err error
+	switch target.ArchiveKind {
+	case "tar.gz":
+		entries, err = tarGzEntries(pathValue)
+	case "zip":
+		entries, err = zipEntries(pathValue)
+	default:
+		err = fmt.Errorf("unsupported archive kind %q", target.ArchiveKind)
+	}
+	if err != nil {
+		return err
+	}
+	for _, required := range []string{
+		target.PrimaryPath,
+		target.AliasPath,
+		"runtime/modules/org.spacedatanetwork.updater.wasm",
+		"manifest.json",
+	} {
+		if !archiveContainsRelativePath(entries, required) {
+			return fmt.Errorf("portable CLI archive missing %s", required)
+		}
+	}
+	return nil
+}
+
+func tarGzEntries(pathValue string) (map[string]bool, error) {
+	file, err := os.Open(pathValue)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+	reader := tar.NewReader(gz)
+	entries := map[string]bool{}
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			return entries, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		entries[normalizeArchivePath(header.Name)] = true
+	}
+}
+
+func zipEntries(pathValue string) (map[string]bool, error) {
+	reader, err := zip.OpenReader(pathValue)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	entries := map[string]bool{}
+	for _, file := range reader.File {
+		entries[normalizeArchivePath(file.Name)] = true
+	}
+	return entries, nil
+}
+
+func archiveContainsRelativePath(entries map[string]bool, required string) bool {
+	required = normalizeArchivePath(required)
+	for entry := range entries {
+		if entry == required || strings.HasSuffix(entry, "/"+required) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeArchivePath(value string) string {
+	value = filepath.ToSlash(filepath.Clean(strings.TrimSpace(value)))
+	value = strings.TrimPrefix(value, "./")
+	return strings.Trim(value, "/")
 }
 
 func verifyReleasePLG(data []byte) error {
