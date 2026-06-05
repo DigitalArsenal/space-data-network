@@ -19,6 +19,12 @@ import type {
   LogHeadResponse,
   LogEntriesResponse,
   LogHeadsResponse,
+  ChannelAccessOptions,
+  ChannelActionResponse,
+  ChannelGrantRequest,
+  ChannelListOptions,
+  ChannelMonitor,
+  ChannelSummary,
 } from './transport/http';
 import { SessionAuth } from './transport/auth';
 import type { AuthProvider } from './transport/auth';
@@ -31,6 +37,18 @@ export interface SDNClientOptions extends ResolveOptions {
   baseUrl?: string;
   /** Auth provider for authenticated requests. */
   authProvider?: AuthProvider;
+}
+
+export interface SDNClientChannels {
+  list(options?: ChannelListOptions): Promise<ChannelSummary[]>;
+  get(channelId: string): Promise<ChannelSummary>;
+  subscribe(channelId: string, options?: ChannelAccessOptions): Promise<ChannelActionResponse>;
+  unsubscribe(channelId: string, options?: ChannelAccessOptions): Promise<ChannelActionResponse>;
+  publish(channelId: string, stream: Uint8Array, options?: ChannelAccessOptions): Promise<ChannelActionResponse>;
+  grant(channelId: string, grant: ChannelGrantRequest, options?: ChannelAccessOptions): Promise<ChannelActionResponse>;
+  issueGrant(channelId: string, grant: ChannelGrantRequest, options?: ChannelAccessOptions): Promise<ChannelActionResponse>;
+  openStream(channelId: string, options?: ChannelAccessOptions): Promise<Uint8Array>;
+  monitor(channelId: string, options?: ChannelAccessOptions): Promise<ChannelMonitor>;
 }
 
 /**
@@ -58,12 +76,24 @@ export interface SDNClientOptions extends ResolveOptions {
 export class SDNClient {
   /** The resolved node info. */
   readonly resolved: ResolvedNode;
+  readonly channels: SDNClientChannels;
   private transport: HttpTransport;
   private _catalog?: NodeCatalog;
 
   private constructor(resolved: ResolvedNode, transport: HttpTransport) {
     this.resolved = resolved;
     this.transport = transport;
+    this.channels = {
+      list: (options) => this.transport.listChannels(options),
+      get: (channelId) => this.transport.getChannel(channelId),
+      subscribe: (channelId, options) => this.transport.subscribeChannel(channelId, options),
+      unsubscribe: (channelId, options) => this.transport.unsubscribeChannel(channelId, options),
+      publish: (channelId, stream, options) => this.transport.publishChannelStream(channelId, stream, options),
+      grant: (channelId, grant, options) => this.transport.issueChannelGrant(channelId, grant, options),
+      issueGrant: (channelId, grant, options) => this.transport.issueChannelGrant(channelId, grant, options),
+      openStream: (channelId, options) => this.transport.openChannelStream(channelId, options),
+      monitor: (channelId, options) => this.transport.monitorChannel(channelId, options),
+    };
   }
 
   /**
@@ -232,6 +262,12 @@ export type {
   LogHeadResponse,
   LogEntriesResponse,
   LogHeadsResponse,
+  ChannelAccessOptions,
+  ChannelActionResponse,
+  ChannelGrantRequest,
+  ChannelListOptions,
+  ChannelMonitor,
+  ChannelSummary,
   ResolvedNode,
   ResolveOptions,
   IdentifierType,

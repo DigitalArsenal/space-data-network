@@ -106,6 +106,48 @@ export interface LogHeadsResponse {
   heads: LogHeadInfo[];
 }
 
+export interface ChannelAccessOptions {
+  subject?: string;
+  grantId?: string;
+  visibility?: string;
+}
+
+export interface ChannelListOptions extends ChannelAccessOptions {
+  standardCode?: string;
+}
+
+export interface ChannelSummary {
+  channelId: string;
+  sourceId?: string;
+  standardCode: string;
+  feedUuid?: string | null;
+  visibility?: string;
+  subscribed?: boolean;
+  pnmVerified?: boolean;
+  dpmVerified?: boolean;
+  grantState?: string;
+  encryptionState?: string;
+  [key: string]: unknown;
+}
+
+export interface ChannelMonitor extends ChannelSummary {
+  channelHead?: string;
+  providerPeer?: string;
+  localRows?: number;
+  remoteRows?: number;
+  syncedRows?: number;
+  missingRows?: number;
+  pinnedCount?: number;
+  pinnedRows?: number;
+  syncedBytes?: number;
+  throughputBytesPerSecond?: number;
+  wireSpeedUtilization?: number | null;
+  lastVerifiedUpdate?: string;
+}
+
+export type ChannelActionResponse = Record<string, unknown>;
+export type ChannelGrantRequest = Record<string, unknown>;
+
 /** HTTP transport for SDN server APIs. */
 export class HttpTransport {
   private baseUrl: string;
@@ -225,6 +267,64 @@ export class HttpTransport {
     return resp.json();
   }
 
+  async listChannels(options: ChannelListOptions = {}): Promise<ChannelSummary[]> {
+    const query = new URLSearchParams();
+    if (options.standardCode) query.set('standardCode', options.standardCode);
+    appendChannelAccessQuery(query, options);
+    const suffix = query.size > 0 ? `?${query.toString()}` : '';
+    const resp = await this.fetch(`/api/v1/channels${suffix}`);
+    const payload = await resp.json();
+    return channelRowsFromPayload(payload);
+  }
+
+  async getChannel(channelId: string): Promise<ChannelSummary> {
+    const resp = await this.fetch(`/api/v1/channels/${encodeURIComponent(channelId)}`);
+    return resp.json();
+  }
+
+  async subscribeChannel(channelId: string, options?: ChannelAccessOptions): Promise<ChannelActionResponse> {
+    return this.postChannelAction(channelId, 'subscribe', options);
+  }
+
+  async unsubscribeChannel(channelId: string, options?: ChannelAccessOptions): Promise<ChannelActionResponse> {
+    return this.postChannelAction(channelId, 'unsubscribe', options);
+  }
+
+  async publishChannelStream(channelId: string, stream: Uint8Array, options?: ChannelAccessOptions): Promise<ChannelActionResponse> {
+    const resp = await this.fetch(channelActionPath(channelId, 'publish', options), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/vnd.sdn.flatbuffers.stream' },
+      body: stream.buffer.slice(stream.byteOffset, stream.byteOffset + stream.byteLength) as ArrayBuffer,
+    });
+    return resp.json();
+  }
+
+  async issueChannelGrant(channelId: string, grant: ChannelGrantRequest, options?: ChannelAccessOptions): Promise<ChannelActionResponse> {
+    const resp = await this.fetch(channelActionPath(channelId, 'grants', options), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(grant),
+    });
+    return resp.json();
+  }
+
+  async openChannelStream(channelId: string, options?: ChannelAccessOptions): Promise<Uint8Array> {
+    const resp = await this.fetch(channelActionPath(channelId, 'stream', options), {
+      headers: { Accept: 'application/vnd.sdn.flatbuffers.stream' },
+    });
+    return new Uint8Array(await resp.arrayBuffer());
+  }
+
+  async monitorChannel(channelId: string, options?: ChannelAccessOptions): Promise<ChannelMonitor> {
+    const resp = await this.fetch(channelActionPath(channelId, 'monitor', options));
+    return resp.json();
+  }
+
+  private async postChannelAction(channelId: string, action: string, options?: ChannelAccessOptions): Promise<ChannelActionResponse> {
+    const resp = await this.fetch(channelActionPath(channelId, action, options), { method: 'POST' });
+    return resp.json();
+  }
+
   /** Internal fetch with auth headers. */
   private async fetch(path: string, init?: RequestInit): Promise<Response> {
     const url = this.baseUrl + path;
@@ -251,6 +351,35 @@ export class HttpTransport {
 
     return resp;
   }
+}
+
+function channelActionPath(channelId: string, action: string, options?: ChannelAccessOptions): string {
+  const query = new URLSearchParams();
+  appendChannelActionAccessQuery(query, options);
+  const suffix = query.size > 0 ? `?${query.toString()}` : '';
+  return `/api/v1/channels/${encodeURIComponent(channelId)}/${action}${suffix}`;
+}
+
+function appendChannelAccessQuery(query: URLSearchParams, options?: ChannelAccessOptions): void {
+  if (options?.visibility) query.set('visibility', options.visibility);
+  if (options?.subject) query.set('subject', options.subject);
+  if (options?.grantId) query.set('grantId', options.grantId);
+}
+
+function appendChannelActionAccessQuery(query: URLSearchParams, options?: ChannelAccessOptions): void {
+  if (options?.subject) query.set('subject', options.subject);
+  if (options?.grantId) query.set('grantId', options.grantId);
+  if (options?.visibility) query.set('visibility', options.visibility);
+}
+
+function channelRowsFromPayload(payload: unknown): ChannelSummary[] {
+  if (Array.isArray(payload)) return payload.filter(isRecord) as ChannelSummary[];
+  if (isRecord(payload) && Array.isArray(payload.results)) return payload.results.filter(isRecord) as ChannelSummary[];
+  return [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** Error thrown by HttpTransport on non-2xx responses. */

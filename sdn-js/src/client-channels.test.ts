@@ -1,0 +1,98 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SDNClient } from './client';
+
+describe('SDNClient channel API', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('exposes the spec channel operations through client.channels', async () => {
+    const stream = new Uint8Array([7, 0, 0, 0, 79, 77, 77, 49, 1, 2, 3]);
+    const requests: Array<{ url: string; method: string; accept: string; contentType: string; body: string }> = [];
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body;
+      requests.push({
+        url: String(input),
+        method: init?.method ?? 'GET',
+        accept: String((init?.headers as Record<string, string> | undefined)?.Accept ?? ''),
+        contentType: String((init?.headers as Record<string, string> | undefined)?.['Content-Type'] ?? ''),
+        body: body instanceof ArrayBuffer
+          ? Array.from(new Uint8Array(body)).join(',')
+          : body instanceof Uint8Array ? Array.from(body).join(',') : typeof body === 'string' ? body : '',
+      });
+      const url = String(input);
+      if (url.endsWith('/api/v1/channels?standardCode=OMM')) {
+        return jsonResponse({ results: [{ channelId: 'spaceaware-OMM', sourceId: 'spaceaware', standardCode: 'OMM' }] });
+      }
+      if (url.endsWith('/api/v1/channels/spaceaware-OMM')) {
+        return jsonResponse({ channelId: 'spaceaware-OMM', sourceId: 'spaceaware', standardCode: 'OMM', pnmVerified: true });
+      }
+      if (url.endsWith('/api/v1/channels/spaceaware-OMM/monitor')) {
+        return jsonResponse({ channelId: 'spaceaware-OMM', standardCode: 'OMM', pinnedCount: 8 });
+      }
+      if (url.endsWith('/api/v1/channels/spaceaware-OMM/stream')) {
+        return new Response(stream, { headers: { 'content-type': 'application/vnd.sdn.flatbuffers.stream' } });
+      }
+      return jsonResponse({ ok: true, channelId: 'spaceaware-OMM', standardCode: 'OMM' });
+    });
+
+    const client = SDNClient.fromUrl('https://sdn.spaceaware.io');
+    await expect(client.channels.list({ standardCode: 'OMM' })).resolves.toEqual([
+      expect.objectContaining({ channelId: 'spaceaware-OMM', standardCode: 'OMM' }),
+    ]);
+    await expect(client.channels.get('spaceaware-OMM')).resolves.toEqual(expect.objectContaining({ pnmVerified: true }));
+    await expect(client.channels.subscribe('spaceaware-OMM')).resolves.toEqual(expect.objectContaining({ ok: true }));
+    await expect(client.channels.unsubscribe('spaceaware-OMM')).resolves.toEqual(expect.objectContaining({ ok: true }));
+    await expect(client.channels.monitor('spaceaware-OMM')).resolves.toEqual(expect.objectContaining({ pinnedCount: 8 }));
+    await expect(client.channels.openStream('spaceaware-OMM')).resolves.toEqual(stream);
+    await expect(client.channels.publish('spaceaware-OMM', stream)).resolves.toEqual(expect.objectContaining({ ok: true }));
+    await expect(client.channels.grant('spaceaware-OMM', { to: 'peer-alpha', scopes: ['stream_open'] })).resolves.toEqual(expect.objectContaining({ ok: true }));
+
+    expect(requests.map((request) => request.url)).toEqual([
+      'https://sdn.spaceaware.io/api/v1/channels?standardCode=OMM',
+      'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM',
+      'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/subscribe',
+      'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/unsubscribe',
+      'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/monitor',
+      'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/stream',
+      'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/publish',
+      'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/grants',
+    ]);
+    expect(requests[5]).toEqual(expect.objectContaining({
+      accept: 'application/vnd.sdn.flatbuffers.stream',
+      method: 'GET',
+    }));
+    expect(requests[6]).toEqual(expect.objectContaining({
+      contentType: 'application/vnd.sdn.flatbuffers.stream',
+      method: 'POST',
+      body: Array.from(stream).join(','),
+    }));
+  });
+
+  it('passes private grant context through channel requests', async () => {
+    const requests: string[] = [];
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      requests.push(String(input));
+      return jsonResponse({ ok: true });
+    });
+
+    const client = SDNClient.fromUrl('https://sdn.spaceaware.io');
+    const access = { subject: 'peer-alpha', grantId: 'grant-1', visibility: 'private-listed' };
+    await client.channels.list({ standardCode: 'OMM', ...access });
+    await client.channels.subscribe('spaceaware-OMM', access);
+    await client.channels.openStream('spaceaware-OMM', access);
+
+    expect(requests).toEqual([
+      'https://sdn.spaceaware.io/api/v1/channels?standardCode=OMM&visibility=private-listed&subject=peer-alpha&grantId=grant-1',
+      'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/subscribe?subject=peer-alpha&grantId=grant-1&visibility=private-listed',
+      'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/stream?subject=peer-alpha&grantId=grant-1&visibility=private-listed',
+    ]);
+  });
+});
+
+function jsonResponse(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
