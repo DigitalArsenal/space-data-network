@@ -31,6 +31,8 @@ type EncryptedNativeStreamHeader struct {
 	Algorithm          string
 	Context            string
 	EphemeralPublicKey string
+	SenderPublicKey    string
+	RecipientKeyID     string
 	NonceStart         string
 }
 
@@ -978,27 +980,51 @@ func (h *ChannelHandler) parseEncryptedNativeStreamHeader(r *http.Request, parse
 	if err := json.Unmarshal([]byte(raw), &header); err != nil {
 		return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header must be JSON metadata: %w", err)
 	}
-	parsedHeader := EncryptedNativeStreamHeader{}
-	for _, field := range []string{"algorithm", "context", "ephemeral_public_key", "nonce_start"} {
-		value, ok := header[field].(string)
-		if !ok || strings.TrimSpace(value) == "" {
-			return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header missing %s", field)
-		}
-		switch field {
-		case "algorithm":
-			parsedHeader.Algorithm = strings.TrimSpace(value)
-		case "context":
-			parsedHeader.Context = strings.TrimSpace(value)
-		case "ephemeral_public_key":
-			parsedHeader.EphemeralPublicKey = strings.TrimSpace(value)
-		case "nonce_start":
-			parsedHeader.NonceStart = strings.TrimSpace(value)
-		}
+	algorithm, ok := encryptedNativeStreamHeaderString(header, "algorithm")
+	if !ok {
+		return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header missing algorithm")
+	}
+	context, ok := encryptedNativeStreamHeaderString(header, "context")
+	if !ok {
+		return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header missing context")
+	}
+	senderPublicKey, ok := encryptedNativeStreamHeaderString(header, "senderPublicKey", "ephemeral_public_key")
+	if !ok {
+		return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header missing senderPublicKey")
+	}
+	nonceStart, ok := encryptedNativeStreamHeaderString(header, "nonceStart", "nonce_start")
+	if !ok {
+		return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header missing nonceStart")
+	}
+	parsedHeader := EncryptedNativeStreamHeader{
+		Algorithm:          algorithm,
+		Context:            context,
+		EphemeralPublicKey: senderPublicKey,
+		SenderPublicKey:    senderPublicKey,
+		NonceStart:         nonceStart,
+	}
+	if recipientKeyID, ok := encryptedNativeStreamHeaderString(header, "recipientKeyId", "recipient_key_id"); ok {
+		parsedHeader.RecipientKeyID = recipientKeyID
 	}
 	if parsedHeader.Context != parsed.ChannelID {
 		return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header context %q does not match channel %q", parsedHeader.Context, parsed.ChannelID)
 	}
 	return parsedHeader, nil
+}
+
+func encryptedNativeStreamHeaderString(header map[string]interface{}, names ...string) (string, bool) {
+	for _, name := range names {
+		value, ok := header[name].(string)
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		return value, true
+	}
+	return "", false
 }
 
 func (h *ChannelHandler) isDPMManifestPublish(r *http.Request, body []byte) bool {
