@@ -173,6 +173,119 @@ func TestChannelHandlerPublicSubscribeUpdatesMonitor(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedger(t *testing.T) {
+	t.Parallel()
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	tags := storage.SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "batch-001",
+		ContentKeyID: "public",
+	}
+	for _, record := range [][]byte{
+		sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").WithEpoch("2026-05-12T00:00:00Z").Build(),
+		sds.NewOMMBuilder().WithNoradCatID(56775).WithObjectName("STARLINK-6292").WithEpoch("2026-05-12T00:01:00Z").Build(),
+	} {
+		if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:celestrak", nil, tags); err != nil {
+			t.Fatalf("store OMM failed: %v", err)
+		}
+	}
+
+	verifiedAt := time.Unix(1_779_999_600, 0).UTC()
+	if err := store.UpsertDatasetShardPublication(storage.DatasetShardPublication{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "batch-001",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        50000,
+		RecordCount:  2,
+		ByteCount:    2048,
+		ShardCID:     "bafkshard-restored",
+		IndexCID:     "bafkindex-restored",
+		ManifestCID:  "bafkmanifest-restored",
+		PNMCID:       "bafkpnm-restored",
+		FeedHead:     "restored-feed-head",
+		PublishedAt:  verifiedAt,
+	}); err != nil {
+		t.Fatalf("UpsertDatasetShardPublication failed: %v", err)
+	}
+	for _, entry := range []storage.PinLedgerEntry{
+		{
+			CID:               "bafkshard-restored",
+			Role:              "shard",
+			RowCount:          2,
+			ByteCount:         2048,
+			SnapshotID:        "restored-feed-head",
+			Head:              "restored-feed-head",
+			HighWaterMark:     "published-feed-v1:1779999600:1:2:2048",
+			ByteHash:          "sha256:shard",
+			VerificationState: "verified",
+		},
+		{
+			CID:               "bafkmanifest-restored",
+			Role:              "manifest",
+			ByteCount:         512,
+			Head:              "restored-feed-head",
+			ByteHash:          "sha256:manifest",
+			VerificationState: "verified",
+		},
+		{
+			CID:               "bafkpnm-restored",
+			Role:              "pnm",
+			ByteCount:         256,
+			Head:              "restored-feed-head",
+			ByteHash:          "sha256:pnm",
+			VerificationState: "verified",
+		},
+	} {
+		entry.SchemaName = "OMM.fbs"
+		entry.ProviderPeerID = "16Uiu2HCelesTrakProvider"
+		entry.ProviderPublicKey = "provider-public-key"
+		entry.ProviderID = "space-data-network-02"
+		entry.SourceName = "celestrak-gp"
+		entry.BatchID = "batch-001"
+		entry.QueryProfile = storage.DatasetPublicationQueryProfile
+		entry.VerifiedAt = verifiedAt
+		if err := store.UpsertPinLedgerEntry(entry); err != nil {
+			t.Fatalf("UpsertPinLedgerEntry(%s) failed: %v", entry.Role, err)
+		}
+	}
+
+	mux := http.NewServeMux()
+	NewChannelHandler(store).RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels/celestrak-OMM/monitor", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("monitor status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := decodeChannelJSON(t, rec.Body.String())
+	if body["pnmVerified"] != true || body["dpmVerified"] != true {
+		t.Fatalf("monitor did not restore verified state: %#v", body)
+	}
+	if body["channelHead"] != "restored-feed-head" || body["providerPeer"] != "16Uiu2HCelesTrakProvider" {
+		t.Fatalf("monitor did not restore head/provider: %#v", body)
+	}
+	if body["localRows"] != float64(2) || body["remoteRows"] != float64(2) || body["syncedRows"] != float64(2) {
+		t.Fatalf("monitor did not restore row counts: %#v", body)
+	}
+	if body["pnmCid"] != "bafkpnm-restored" || strings.Contains(rec.Body.String(), ".fbs") {
+		t.Fatalf("monitor exposed wrong PNM/naming payload: %s", rec.Body.String())
+	}
+}
+
 func TestChannelHandlerIssuesPrivateGrantAndAuthorizesBoundaries(t *testing.T) {
 	t.Parallel()
 

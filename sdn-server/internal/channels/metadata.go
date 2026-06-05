@@ -138,6 +138,22 @@ func (r *VerifiedMetadataRegistry) RecordDatasetPublication(channel ChannelID, f
 	return metadata, ok
 }
 
+func (r *VerifiedMetadataRegistry) RecordRestored(metadata VerifiedMetadata) VerifiedMetadata {
+	metadata.ChannelID = strings.TrimSpace(metadata.ChannelID)
+	if metadata.ChannelID == "" {
+		return metadata
+	}
+	metadata.PNMBytes = append([]byte(nil), metadata.PNMBytes...)
+	metadata.TimingsMs = cloneTimingsMs(metadata.TimingsMs)
+	if r == nil {
+		return metadata
+	}
+	r.mu.Lock()
+	r.metadata[metadata.ChannelID] = metadata
+	r.mu.Unlock()
+	return metadata
+}
+
 func (r *VerifiedMetadataRegistry) Get(channel ChannelID) (VerifiedMetadata, bool) {
 	if r == nil {
 		return VerifiedMetadata{}, false
