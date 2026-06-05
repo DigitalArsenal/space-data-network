@@ -333,6 +333,64 @@ func TestChannelsMonitorReadsLocalAPI(t *testing.T) {
 	}
 }
 
+func TestChannelsMonitorPassesPrivateGrantContextToLocalAPI(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/channels/spaceaware-OMM/monitor" {
+			t.Fatalf("unexpected monitor request %s %s", r.Method, r.URL.String())
+		}
+		query := r.URL.Query()
+		if query.Get("subject") != "peer-alpha" || query.Get("grantId") != "grant-1" || query.Get("visibility") != "private-listed" {
+			t.Fatalf("private monitor query = %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"channelId":"spaceaware-OMM",
+			"sourceId":"spaceaware",
+			"standardCode":"OMM",
+			"visibility":"private-listed",
+			"grantState":"verified",
+			"encryptionState":"encrypted",
+			"pnmVerified":true
+		}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"monitor",
+		"spaceaware-OMM",
+		"--subject",
+		"peer-alpha",
+		"--grant-id",
+		"grant-1",
+		"--visibility",
+		"private-listed",
+		"--api-url",
+		server.URL,
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels monitor failed: %v", err)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"channelId=spaceaware-OMM",
+		"visibility=private-listed",
+		"grantState=verified",
+		"encryptionState=encrypted",
+		"pnmVerified=true",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("channels monitor output missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestChannelsPublishSendsNativeStreamToLocalAPI(t *testing.T) {
 	t.Parallel()
 

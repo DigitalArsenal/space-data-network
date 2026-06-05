@@ -763,6 +763,51 @@ func TestChannelHandlerPrivateListedCollectionReturnsGrantedVerifiedMetadata(t *
 	}
 }
 
+func TestChannelHandlerPrivateMonitorFailsClosedWithoutGrant(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/monitor?visibility=private-listed", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("private monitor without grant status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "spaceaware-OMM") || strings.Contains(rec.Body.String(), "private-listed") {
+		t.Fatalf("private monitor leaked private metadata without grant: %s", rec.Body.String())
+	}
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants",
+		strings.NewReader(`{"to":"peer-alpha","scopes":["list_private"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/monitor?visibility=private-listed&subject=peer-alpha&grantId="+grantID, nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("private monitor with grant status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := decodeChannelJSON(t, rec.Body.String())
+	if body["channelId"] != "spaceaware-OMM" || body["visibility"] != "private-listed" || body["grantState"] != "verified" {
+		t.Fatalf("private monitor did not return verified grant metadata: %#v", body)
+	}
+}
+
 func TestChannelHandlerVerifiedEncryptedDPMMakesChannelPrivateFailClosed(t *testing.T) {
 	t.Parallel()
 

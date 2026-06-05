@@ -63,7 +63,10 @@ type channelPNMOptions struct {
 }
 
 type channelMonitorOptions struct {
-	APIURL string
+	Subject    string
+	GrantID    string
+	Visibility string
+	APIURL     string
 }
 
 func init() {
@@ -114,6 +117,9 @@ func newChannelsCommand() *cobra.Command {
 			return runChannelsMonitor(cmd, monitorOptions, args[0])
 		},
 	}
+	monitorCmd.Flags().StringVar(&monitorOptions.Subject, "subject", "", "subscriber EPM subject for private channel access")
+	monitorCmd.Flags().StringVar(&monitorOptions.GrantID, "grant-id", "", "private channel grant ID")
+	monitorCmd.Flags().StringVar(&monitorOptions.Visibility, "visibility", "", "channel visibility for private access checks")
 	monitorCmd.Flags().StringVar(&monitorOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	cmd.AddCommand(monitorCmd)
 	subscribeCmd := &cobra.Command{
@@ -748,7 +754,11 @@ func runChannelsMonitor(cmd *cobra.Command, options channelMonitorOptions, chann
 		return err
 	}
 	if apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL"))); apiURL != "" {
-		return runChannelsMonitorFromAPI(cmd, parsed, apiURL)
+		return runChannelsMonitorFromAPI(cmd, parsed, apiURL, channelAccessQuery{
+			Subject:    options.Subject,
+			GrantID:    options.GrantID,
+			Visibility: options.Visibility,
+		})
 	}
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "channelId=%s\n", parsed.ChannelID)
@@ -771,8 +781,8 @@ func runChannelsMonitor(cmd *cobra.Command, options channelMonitorOptions, chann
 	return nil
 }
 
-func runChannelsMonitorFromAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string) error {
-	monitorURL, err := channelMonitorURL(apiURL, parsed.ChannelID)
+func runChannelsMonitorFromAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, access channelAccessQuery) error {
+	monitorURL, err := channelMonitorURL(apiURL, parsed.ChannelID, access)
 	if err != nil {
 		return err
 	}
@@ -806,8 +816,8 @@ func runChannelsMonitorFromAPI(cmd *cobra.Command, parsed channels.ChannelID, ap
 	return nil
 }
 
-func channelMonitorURL(apiURL string, channelID string) (string, error) {
-	return channelAPIURL(apiURL, channelID, "/monitor")
+func channelMonitorURL(apiURL string, channelID string, access channelAccessQuery) (string, error) {
+	return channelAPIURLWithQuery(apiURL, channelID, "/monitor", access.queryValues())
 }
 
 func channelListURL(apiURL string, options channelsListOptions) (string, error) {
@@ -1027,6 +1037,7 @@ func printChannelMonitorPayload(out interface {
 		"channelId",
 		"sourceId",
 		"standardCode",
+		"visibility",
 		"channelHead",
 		"pnmVerified",
 		"providerPeer",

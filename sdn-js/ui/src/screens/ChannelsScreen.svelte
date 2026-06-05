@@ -61,7 +61,7 @@
     if (!backend || !channelId) return;
     const detail = await backend.channels.get(channelId);
     selectedChannel = detail.data ?? null;
-    const nextMonitor = await backend.channels.monitor(channelId);
+    const nextMonitor = await backend.channels.monitor(channelId, channelAccessOptions);
     monitor = nextMonitor.data ?? null;
     if (!detail.ok || !nextMonitor.ok) {
       status = detail.capability.reason ?? nextMonitor.capability.reason ?? 'Channel monitor unavailable';

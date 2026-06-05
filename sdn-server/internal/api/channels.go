@@ -165,6 +165,15 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if h.isPrivateVisibilityRequest(r) {
+			decision := h.authorizeGrant(r, parsed, channels.BoundaryListPrivate)
+			if !decision.Allowed {
+				h.writeAccessDenied(w, decision)
+				return
+			}
+			writeJSON(w, http.StatusOK, h.channelMonitorWithDecision(parsed, decision))
+			return
+		}
 		writeJSON(w, http.StatusOK, h.channelMonitor(parsed))
 	case "pnm":
 		if r.Method != http.MethodGet {
@@ -875,6 +884,12 @@ func (h *ChannelHandler) channelMonitor(parsed channels.ChannelID) map[string]in
 	if verified {
 		payload["lastVerifiedUpdate"] = metadata.VerifiedAt.Format(time.RFC3339Nano)
 	}
+	return payload
+}
+
+func (h *ChannelHandler) channelMonitorWithDecision(parsed channels.ChannelID, decision channels.AccessDecision) map[string]interface{} {
+	payload := h.channelMonitor(parsed)
+	payload["grantState"] = decision.GrantState
 	return payload
 }
 
