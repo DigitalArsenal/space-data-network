@@ -191,6 +191,7 @@ export interface ChannelMonitor extends ChannelSummary {
   remoteRows: number;
   syncedRows: number;
   missingRows: number;
+  pinnedCount: number;
   pinnedRows: number;
   syncedBytes: number;
   throughputBytesPerSecond: number;

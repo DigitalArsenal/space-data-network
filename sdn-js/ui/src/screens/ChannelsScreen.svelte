@@ -208,7 +208,7 @@
         <div><dt>Remote Rows</dt><dd>{formatNumber(monitor?.remoteRows)}</dd></div>
         <div><dt>Synced Rows</dt><dd>{formatNumber(monitor?.syncedRows)}</dd></div>
         <div><dt>Missing Rows</dt><dd>{formatNumber(monitor?.missingRows)}</dd></div>
-        <div><dt>Pinned Rows</dt><dd>{formatNumber(monitor?.pinnedRows)}</dd></div>
+        <div><dt>Pinned Count</dt><dd>{formatNumber(monitor?.pinnedCount ?? monitor?.pinnedRows)}</dd></div>
         <div><dt>Synced Bytes</dt><dd>{formatBytes(monitor?.syncedBytes)}</dd></div>
         <div><dt>Current Throughput</dt><dd>{formatRate(monitor?.throughputBytesPerSecond)}</dd></div>
         <div><dt>Wire-Speed Utilization</dt><dd>{formatPercent(monitor?.wireSpeedUtilization)}</dd></div>

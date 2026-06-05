@@ -961,6 +961,7 @@ func (h *ChannelHandler) channelMonitor(parsed channels.ChannelID) map[string]in
 	payload["remoteRows"] = metadata.RemoteRows
 	payload["syncedRows"] = metadata.SyncedRows
 	payload["missingRows"] = metadata.MissingRows
+	payload["pinnedCount"] = metadata.PinnedRows
 	payload["pinnedRows"] = metadata.PinnedRows
 	payload["syncedBytes"] = metadata.SyncedBytes
 	payload["throughputBytesPerSecond"] = metadata.ThroughputBPS

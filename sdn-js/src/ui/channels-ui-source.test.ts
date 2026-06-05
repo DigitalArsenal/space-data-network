@@ -24,7 +24,7 @@ describe('SDN channels UI source', () => {
       'Remote Rows',
       'Synced Rows',
       'Missing Rows',
-      'Pinned Rows',
+      'Pinned Count',
       'Synced Bytes',
       'Current Throughput',
       'Wire-Speed Utilization',
