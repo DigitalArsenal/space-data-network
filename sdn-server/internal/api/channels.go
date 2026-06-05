@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
@@ -27,6 +28,8 @@ type ChannelHandler struct {
 	subscriptions    *channels.SubscriptionRegistry
 	encryptedStreams EncryptedNativeStreamDecryptor
 	keyEnvelopes     PrivateChannelKeyEnvelopeProvider
+	replayMu         sync.Mutex
+	encryptedIndexes map[string]struct{}
 }
 
 type EncryptedNativeStreamHeader struct {
@@ -92,6 +95,7 @@ func NewChannelHandlerWithOptions(store *storage.FlatSQLStore, options ChannelHa
 		subscriptions:    channels.NewSubscriptionRegistry(),
 		encryptedStreams: options.EncryptedStreams,
 		keyEnvelopes:     options.KeyEnvelopes,
+		encryptedIndexes: make(map[string]struct{}),
 	}
 }
 
@@ -576,6 +580,14 @@ func (h *ChannelHandler) publishDPMManifest(w http.ResponseWriter, r *http.Reque
 
 func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
 	started := time.Now()
+	replayKey := ""
+	replayReserved := false
+	replayCommitted := false
+	defer func() {
+		if replayReserved && !replayCommitted {
+			h.releaseEncryptedNativeStreamRecordIndex(replayKey)
+		}
+	}()
 	pnmDPMStarted := time.Now()
 	metadata, verified := h.metadata.Get(parsed)
 	if !verified {
@@ -628,6 +640,12 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusBadRequest, "decrypt encrypted private channel stream: "+err.Error())
 			return
 		}
+		replayKey = encryptedNativeStreamReplayKey(parsed, metadata, header, recordIndex)
+		if !h.reserveEncryptedNativeStreamRecordIndex(replayKey) {
+			writeError(w, http.StatusConflict, "encrypted private channel stream record index replayed")
+			return
+		}
+		replayReserved = true
 	}
 	frames, err := channels.SplitNativeStreamFramesForChannel(parsed, body)
 	if err != nil {
@@ -683,7 +701,45 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		response["requiredBytesPerSecond"] = gate.RequiredBytesPerSecond
 		response["targetMet"] = gate.TargetMet
 	}
+	replayCommitted = true
 	writeJSON(w, http.StatusAccepted, response)
+}
+
+func encryptedNativeStreamReplayKey(parsed channels.ChannelID, metadata channels.VerifiedMetadata, header EncryptedNativeStreamHeader, recordIndex uint64) string {
+	parts := []string{
+		parsed.ChannelID,
+		strings.TrimSpace(metadata.PNMCID),
+		strings.TrimSpace(metadata.ContentKeyID),
+		strings.TrimSpace(header.Context),
+		strings.ToLower(strings.TrimSpace(header.SenderPublicKey)),
+		strconv.FormatUint(recordIndex, 10),
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func (h *ChannelHandler) reserveEncryptedNativeStreamRecordIndex(key string) bool {
+	if h == nil {
+		return false
+	}
+	h.replayMu.Lock()
+	defer h.replayMu.Unlock()
+	if h.encryptedIndexes == nil {
+		h.encryptedIndexes = make(map[string]struct{})
+	}
+	if _, ok := h.encryptedIndexes[key]; ok {
+		return false
+	}
+	h.encryptedIndexes[key] = struct{}{}
+	return true
+}
+
+func (h *ChannelHandler) releaseEncryptedNativeStreamRecordIndex(key string) {
+	if h == nil {
+		return
+	}
+	h.replayMu.Lock()
+	delete(h.encryptedIndexes, key)
+	h.replayMu.Unlock()
 }
 
 func channelSourceTags(parsed channels.ChannelID, metadata channels.VerifiedMetadata) storage.SourceTags {
