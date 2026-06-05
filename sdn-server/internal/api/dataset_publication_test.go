@@ -96,6 +96,9 @@ func TestDatasetPublicationHandlerPublishesLocalRequest(t *testing.T) {
 	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
+	if payload.Schema != "OMM" || strings.Contains(res.Body.String(), ".fbs") {
+		t.Fatalf("response exposed schema suffix instead of standard code: %s", res.Body.String())
+	}
 	if payload.ManifestCID != "bafymanifest" || payload.PNMCID != "bafypnm" {
 		t.Fatalf("unexpected response: %#v", payload)
 	}
