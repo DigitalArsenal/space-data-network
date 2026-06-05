@@ -60,30 +60,38 @@ func (r *NativeStreamRegistry) Get(channel ChannelID) (NativeStreamSnapshot, boo
 }
 
 func CountNativeStreamFrames(stream []byte) (int, error) {
+	frames, err := SplitNativeStreamFrames(stream)
+	if err != nil {
+		return 0, err
+	}
+	return len(frames), nil
+}
+
+func SplitNativeStreamFrames(stream []byte) ([][]byte, error) {
 	if len(stream) == 0 {
-		return 0, fmt.Errorf("native FlatBuffer stream is empty")
+		return nil, fmt.Errorf("native FlatBuffer stream is empty")
 	}
 	offset := 0
-	frameCount := 0
+	frames := make([][]byte, 0)
 	for offset < len(stream) {
 		if len(stream)-offset < 4 {
-			return 0, fmt.Errorf("truncated native FlatBuffer stream header at offset %d", offset)
+			return nil, fmt.Errorf("truncated native FlatBuffer stream header at offset %d", offset)
 		}
 		size := int(binary.LittleEndian.Uint32(stream[offset : offset+4]))
 		if size < 4 {
-			return 0, fmt.Errorf("invalid native FlatBuffer stream frame size %d at offset %d", size, offset)
+			return nil, fmt.Errorf("invalid native FlatBuffer stream frame size %d at offset %d", size, offset)
 		}
 		frameEnd := offset + 4 + size
 		if frameEnd > len(stream) {
-			return 0, fmt.Errorf("truncated native FlatBuffer stream frame at offset %d", offset)
+			return nil, fmt.Errorf("truncated native FlatBuffer stream frame at offset %d", offset)
 		}
 		if !isFourByteFileIdentifier(stream[offset+4 : offset+8]) {
-			return 0, fmt.Errorf("invalid native FlatBuffer file identifier at offset %d", offset+4)
+			return nil, fmt.Errorf("invalid native FlatBuffer file identifier at offset %d", offset+4)
 		}
-		frameCount++
+		frames = append(frames, append([]byte(nil), stream[offset:frameEnd]...))
 		offset = frameEnd
 	}
-	return frameCount, nil
+	return frames, nil
 }
 
 func isFourByteFileIdentifier(value []byte) bool {
