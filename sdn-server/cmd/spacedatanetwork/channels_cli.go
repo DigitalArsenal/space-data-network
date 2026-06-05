@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -858,6 +859,9 @@ func runChannelsMonitor(cmd *cobra.Command, options channelMonitorOptions, chann
 	fmt.Fprintln(out, "syncedBytes=0")
 	fmt.Fprintln(out, "throughputBytesPerSecond=0")
 	fmt.Fprintln(out, "wireSpeedUtilization=")
+	fmt.Fprintln(out, "wireSpeedTarget=")
+	fmt.Fprintln(out, "requiredBytesPerSecond=")
+	fmt.Fprintln(out, "targetMet=")
 	fmt.Fprintln(out, "grantState=unknown")
 	fmt.Fprintln(out, "encryptionState=unknown")
 	fmt.Fprintln(out, "lastVerifiedUpdate=")
@@ -1146,6 +1150,9 @@ func printChannelMonitorPayload(out interface {
 		"syncedBytes",
 		"throughputBytesPerSecond",
 		"wireSpeedUtilization",
+		"wireSpeedTarget",
+		"requiredBytesPerSecond",
+		"targetMet",
 		"grantState",
 		"encryptionState",
 		"lastVerifiedUpdate",
@@ -1228,6 +1235,9 @@ func printChannelGrantPayload(out interface {
 func monitorValue(value interface{}) interface{} {
 	if value == nil {
 		return ""
+	}
+	if number, ok := value.(float64); ok && math.Trunc(number) == number {
+		return fmt.Sprintf("%.0f", number)
 	}
 	return value
 }
