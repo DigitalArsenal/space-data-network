@@ -45,15 +45,24 @@ type EncryptedNativeStreamDecryptor interface {
 	DecryptNativeStream(EncryptedNativeStreamDecryptRequest) ([]byte, error)
 }
 
+type ChannelHandlerOptions struct {
+	EncryptedStreams EncryptedNativeStreamDecryptor
+}
+
 func NewChannelHandler(store *storage.FlatSQLStore) *ChannelHandler {
+	return NewChannelHandlerWithOptions(store, ChannelHandlerOptions{})
+}
+
+func NewChannelHandlerWithOptions(store *storage.FlatSQLStore, options ChannelHandlerOptions) *ChannelHandler {
 	grants := channels.NewChannelGrantRegistry()
 	return &ChannelHandler{
-		store:         store,
-		gate:          channels.NewAccessGate(grants),
-		grants:        grants,
-		metadata:      channels.NewVerifiedMetadataRegistry(),
-		streams:       channels.NewNativeStreamRegistry(),
-		subscriptions: channels.NewSubscriptionRegistry(),
+		store:            store,
+		gate:             channels.NewAccessGate(grants),
+		grants:           grants,
+		metadata:         channels.NewVerifiedMetadataRegistry(),
+		streams:          channels.NewNativeStreamRegistry(),
+		subscriptions:    channels.NewSubscriptionRegistry(),
+		encryptedStreams: options.EncryptedStreams,
 	}
 }
 
