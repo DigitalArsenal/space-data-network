@@ -36,4 +36,22 @@ describe('SDN channels UI source', () => {
     }
     expect(source).not.toContain(String.fromCharCode(46, 102, 98, 115));
   });
+
+  it('renders channel filters and subscribe controls required by the pub/sub surface', () => {
+    const source = readFileSync(new URL('../../ui/src/screens/ChannelsScreen.svelte', import.meta.url), 'utf8');
+    for (const expected of [
+      'Filter by source',
+      'Filter by visibility',
+      'Filter by grant state',
+      'backend.channels.list({ standardCode, visibility: listVisibilityFilter })',
+      'filteredChannels',
+      'channelMatchesFilters',
+      'unsubscribeSelected',
+      'backend.channels.unsubscribe(selectedChannelId)',
+      '>Unsubscribe<',
+    ]) {
+      expect(source).toContain(expected);
+    }
+    expect(source).not.toContain(String.fromCharCode(46, 102, 98, 115));
+  });
 });
