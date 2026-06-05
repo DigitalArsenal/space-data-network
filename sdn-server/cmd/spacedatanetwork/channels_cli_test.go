@@ -607,6 +607,33 @@ func TestChannelsPublishPassesPrivateGrantContextToLocalAPI(t *testing.T) {
 	}
 }
 
+func TestChannelsPublishRejectsStreamOutsideChannelStandard(t *testing.T) {
+	t.Parallel()
+
+	streamFile := filepath.Join(t.TempDir(), "stream.bin")
+	streamBytes := bytes.Join([][]byte{
+		channelCLITestNativeFrame("OMM1", []byte{1, 2, 3}),
+		channelCLITestNativeFrame("CDM1", []byte{4, 5, 6}),
+	}, nil)
+	if err := os.WriteFile(streamFile, streamBytes, 0o600); err != nil {
+		t.Fatalf("write stream fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"publish", "spaceaware-OMM", "--from", streamFile})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected channels publish to reject mismatched stream standard")
+	}
+	if !strings.Contains(err.Error(), "does not match channel standardCode OMM") {
+		t.Fatalf("publish mismatch error = %q", err.Error())
+	}
+}
+
 func TestChannelsStreamReadsNativeStreamFromLocalAPI(t *testing.T) {
 	t.Parallel()
 
@@ -661,6 +688,39 @@ func TestChannelsStreamReadsNativeStreamFromLocalAPI(t *testing.T) {
 	}
 	if strings.Contains(body, "base64") || strings.Contains(body, "records=") {
 		t.Fatalf("channels stream output exposed JSON/base64 hot path:\n%s", body)
+	}
+}
+
+func TestChannelsStreamRejectsStreamOutsideChannelStandardBeforeWrite(t *testing.T) {
+	t.Parallel()
+
+	streamBytes := bytes.Join([][]byte{
+		channelCLITestNativeFrame("OMM1", []byte{1, 2, 3}),
+		channelCLITestNativeFrame("CDM1", []byte{4, 5, 6}),
+	}, nil)
+	outFile := filepath.Join(t.TempDir(), "stream.bin")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+		_, _ = w.Write(streamBytes)
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"stream", "spaceaware-OMM", "--out", outFile, "--api-url", server.URL})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected channels stream to reject mismatched stream standard")
+	}
+	if !strings.Contains(err.Error(), "does not match channel standardCode OMM") {
+		t.Fatalf("stream mismatch error = %q", err.Error())
+	}
+	if _, statErr := os.Stat(outFile); !os.IsNotExist(statErr) {
+		t.Fatalf("mismatched stream wrote output file, statErr=%v", statErr)
 	}
 }
 
