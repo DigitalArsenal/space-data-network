@@ -133,8 +133,13 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if h.isPrivateVisibilityRequest(r) {
-			h.requireGrant(w, r, parsed, channels.BoundarySubscribe)
+		if h.requiresPrivateGrant(r, parsed) {
+			decision := h.authorizeGrant(r, parsed, channels.BoundarySubscribe)
+			if !decision.Allowed {
+				h.writeAccessDenied(w, decision)
+				return
+			}
+			writeJSON(w, http.StatusOK, h.subscriptionResponseWithDecision(parsed, h.subscriptions.Subscribe(parsed), decision))
 			return
 		}
 		writeJSON(w, http.StatusOK, h.subscriptionResponse(parsed, h.subscriptions.Subscribe(parsed)))
@@ -143,8 +148,13 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if h.isPrivateVisibilityRequest(r) {
-			h.requireGrant(w, r, parsed, channels.BoundaryUnsubscribe)
+		if h.requiresPrivateGrant(r, parsed) {
+			decision := h.authorizeGrant(r, parsed, channels.BoundaryUnsubscribe)
+			if !decision.Allowed {
+				h.writeAccessDenied(w, decision)
+				return
+			}
+			writeJSON(w, http.StatusOK, h.subscriptionResponseWithDecision(parsed, h.subscriptions.Unsubscribe(parsed), decision))
 			return
 		}
 		writeJSON(w, http.StatusOK, h.subscriptionResponse(parsed, h.subscriptions.Unsubscribe(parsed)))
@@ -153,8 +163,13 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if h.isPrivateVisibilityRequest(r) {
-			h.requireGrant(w, r, parsed, channels.BoundaryPublish)
+		if h.requiresPrivateGrant(r, parsed) {
+			decision := h.authorizeGrant(r, parsed, channels.BoundaryPublish)
+			if !decision.Allowed {
+				h.writeAccessDenied(w, decision)
+				return
+			}
+			h.publishPublic(w, r, parsed)
 			return
 		}
 		h.publishPublic(w, r, parsed)
@@ -345,6 +360,9 @@ func (h *ChannelHandler) publishDPMManifest(w http.ResponseWriter, r *http.Reque
 		FileID:        evidence.FileID,
 		SignatureType: evidence.SignatureType,
 		ProviderPeer:  evidence.ProviderPeer,
+		Encrypted:     evidence.Encrypted,
+		ContentKeyID:  evidence.ContentKeyID,
+		PolicyID:      evidence.PolicyID,
 	})
 	if !ok {
 		writeError(w, http.StatusForbidden, "verified PNM required before DPM publish")
@@ -424,7 +442,7 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *ChannelHandler) openStream(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
-	if h.isPrivateVisibilityRequest(r) {
+	if h.requiresPrivateGrant(r, parsed) {
 		decision := h.authorizeGrant(r, parsed, channels.BoundaryStreamOpen)
 		if !decision.Allowed {
 			h.writeAccessDenied(w, decision)
@@ -496,6 +514,21 @@ func (h *ChannelHandler) isPrivateVisibilityRequest(r *http.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("visibility")), "private")
 }
 
+func (h *ChannelHandler) requiresPrivateGrant(r *http.Request, parsed channels.ChannelID) bool {
+	if h.isPrivateVisibilityRequest(r) {
+		return true
+	}
+	metadata, ok := h.metadata.Get(parsed)
+	if !ok {
+		return false
+	}
+	return isPrivateChannelMetadata(metadata)
+}
+
+func isPrivateChannelMetadata(metadata channels.VerifiedMetadata) bool {
+	return strings.HasPrefix(metadata.Visibility, "private") || metadata.EncryptionState == "encrypted"
+}
+
 func (h *ChannelHandler) isNativeStreamPublish(r *http.Request) bool {
 	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("stream")), "1") ||
 		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("stream")), "true") {
@@ -549,18 +582,30 @@ func channelListRow(standardCode string) map[string]interface{} {
 func (h *ChannelHandler) channelDetail(parsed channels.ChannelID) map[string]interface{} {
 	state := h.subscriptions.Get(parsed)
 	metadata, verified := h.metadata.Get(parsed)
+	visibility := state.Visibility
+	grantState := state.GrantState
+	encryptionState := state.EncryptionState
+	if metadata.Visibility != "" {
+		visibility = metadata.Visibility
+	}
+	if metadata.EncryptionState != "" {
+		encryptionState = metadata.EncryptionState
+	}
+	if isPrivateChannelMetadata(metadata) {
+		grantState = "required"
+	}
 	return map[string]interface{}{
 		"channelId":       parsed.ChannelID,
 		"sourceId":        parsed.SourceID,
 		"standardCode":    parsed.StandardCode,
 		"feedUuid":        emptyStringAsNil(parsed.FeedUUID),
-		"visibility":      state.Visibility,
+		"visibility":      visibility,
 		"subscribed":      state.Subscribed,
 		"pnmVerified":     verified,
 		"dpmVerified":     !metadata.DPMVerifiedAt.IsZero(),
 		"pnmCid":          emptyStringAsNil(metadata.PNMCID),
-		"grantState":      state.GrantState,
-		"encryptionState": state.EncryptionState,
+		"grantState":      grantState,
+		"encryptionState": encryptionState,
 	}
 }
 
@@ -587,12 +632,15 @@ func (h *ChannelHandler) channelMonitor(parsed channels.ChannelID) map[string]in
 func (h *ChannelHandler) subscriptionResponse(parsed channels.ChannelID, state channels.SubscriptionState) map[string]interface{} {
 	payload := h.channelDetail(parsed)
 	payload["subscribed"] = state.Subscribed
-	payload["visibility"] = state.Visibility
-	payload["grantState"] = state.GrantState
-	payload["encryptionState"] = state.EncryptionState
 	if !state.UpdatedAt.IsZero() {
 		payload["lastUpdated"] = state.UpdatedAt.Format(time.RFC3339Nano)
 	}
+	return payload
+}
+
+func (h *ChannelHandler) subscriptionResponseWithDecision(parsed channels.ChannelID, state channels.SubscriptionState, decision channels.AccessDecision) map[string]interface{} {
+	payload := h.subscriptionResponse(parsed, state)
+	payload["grantState"] = decision.GrantState
 	return payload
 }
 

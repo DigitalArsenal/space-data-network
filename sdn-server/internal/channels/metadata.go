@@ -16,6 +16,10 @@ type VerifiedMetadata struct {
 	DPMVerifiedAt     time.Time
 	ProviderPeer      string
 	ProviderPublicKey string
+	Visibility        string
+	EncryptionState   string
+	ContentKeyID      string
+	EncryptionPolicy  string
 	LocalRows         int
 	RemoteRows        int
 	SyncedRows        int
@@ -44,6 +48,8 @@ func (r *VerifiedMetadataRegistry) RecordPNM(channel ChannelID, evidence PNMTrus
 		SignatureType:     evidence.SignatureType,
 		VerifiedAt:        time.Now().UTC(),
 		ProviderPublicKey: hex.EncodeToString(evidence.ProviderPublicKey),
+		Visibility:        "public",
+		EncryptionState:   "none",
 	}
 	if r == nil {
 		return metadata
@@ -65,6 +71,15 @@ func (r *VerifiedMetadataRegistry) RecordDPM(channel ChannelID, evidence DPMTrus
 		metadata.DPMVerifiedAt = time.Now().UTC()
 		if evidence.ProviderPeer != "" {
 			metadata.ProviderPeer = evidence.ProviderPeer
+		}
+		if evidence.Encrypted {
+			metadata.Visibility = "private-listed"
+			metadata.EncryptionState = "encrypted"
+			metadata.ContentKeyID = evidence.ContentKeyID
+			metadata.EncryptionPolicy = evidence.PolicyID
+		} else if metadata.Visibility == "" {
+			metadata.Visibility = "public"
+			metadata.EncryptionState = "none"
 		}
 		r.metadata[channel.ChannelID] = metadata
 	}

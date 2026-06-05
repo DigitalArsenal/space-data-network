@@ -20,6 +20,9 @@ type DPMTrustEvidence struct {
 	SignatureType string
 	Signature     []byte
 	ProviderPeer  string
+	Encrypted     bool
+	ContentKeyID  string
+	PolicyID      string
 }
 
 func IsDPMManifest(manifestBytes []byte) bool {
@@ -52,10 +55,16 @@ func VerifySignedDPMManifest(manifestBytes []byte, expectedFileID string) (DPMTr
 	if len(signature) != 64 {
 		return DPMTrustEvidence{}, fmt.Errorf("DPM provider signature length = %d, want 64", len(signature))
 	}
-	return DPMTrustEvidence{
+	evidence := DPMTrustEvidence{
 		FileID:        fileID,
 		SignatureType: signatureType,
 		Signature:     signature,
 		ProviderPeer:  strings.TrimSpace(string(manifest.PROVIDER_PEER_ID())),
-	}, nil
+	}
+	if enc := manifest.ENCRYPTION(nil); enc != nil {
+		evidence.Encrypted = enc.ENCRYPTED()
+		evidence.ContentKeyID = strings.TrimSpace(string(enc.CONTENT_KEY_ID()))
+		evidence.PolicyID = strings.TrimSpace(string(enc.POLICY_ID()))
+	}
+	return evidence, nil
 }
