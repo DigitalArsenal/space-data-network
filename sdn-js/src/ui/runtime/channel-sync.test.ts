@@ -6,7 +6,7 @@ import { pumpChannelStreamToModule } from './channel-module-sync';
 describe('channel stream sync adapters', () => {
   it('opens a channel stream and imports it through the SDK FlatSQL ingestor', async () => {
     const first = flatBufferPayload('OMM ', 24);
-    const second = flatBufferPayload('CDM ', 32);
+    const second = flatBufferPayload('OMM ', 32);
     const stream = concatBytes(sizePrefixedFrame(first), sizePrefixedFrame(second));
     const channels = channelBackendWithStream(stream);
 
@@ -16,7 +16,7 @@ describe('channel stream sync adapters', () => {
     expect(result.data?.channelId).toBe('spaceaware-OMM');
     expect(result.data?.rows.listRows().map((row) => row.handle)).toEqual([
       { schemaFileId: 'OMM', rowId: 1 },
-      { schemaFileId: 'CDM', rowId: 1 },
+      { schemaFileId: 'OMM', rowId: 2 },
     ]);
     expect(result.data?.rows.listRows()[0].payload).toEqual(first);
     expect(result.data?.stats).toEqual(expect.objectContaining({
@@ -24,6 +24,17 @@ describe('channel stream sync adapters', () => {
       framesAppended: 2,
       framesRouted: 0,
     }));
+  });
+
+  it('rejects channel FlatSQL ingest when a frame file identifier does not match the channel standardCode', async () => {
+    const stream = concatBytes(
+      sizePrefixedFrame(flatBufferPayload('OMM ', 24)),
+      sizePrefixedFrame(flatBufferPayload('CDM ', 32)),
+    );
+
+    await expect(ingestChannelStreamToFlatSql(channelBackendWithStream(stream), 'spaceaware-OMM')).rejects.toThrow(
+      /does not match channel standardCode OMM/i,
+    );
   });
 
   it('returns a degraded result when the channel stream cannot be opened', async () => {
@@ -66,7 +77,7 @@ describe('channel stream sync adapters', () => {
     const requests: Array<{ methodId: string; inputs: Array<Record<string, unknown>> }> = [];
     const channels = channelBackendWithStream(concatBytes(
       sizePrefixedFrame(flatBufferPayload('OMM ', 24)),
-      sizePrefixedFrame(flatBufferPayload('CDM ', 32)),
+      sizePrefixedFrame(flatBufferPayload('OMM ', 32)),
     ));
 
     const result = await pumpChannelStreamToModule(channels, 'spaceaware-OMM', {
@@ -94,7 +105,7 @@ describe('channel stream sync adapters', () => {
         portId: 'records',
         sequence: 2,
         endOfStream: true,
-        typeRef: expect.objectContaining({ fileIdentifier: 'CDM' }),
+        typeRef: expect.objectContaining({ fileIdentifier: 'OMM' }),
       }),
     ]);
     expect(result.data?.stats).toEqual(expect.objectContaining({
@@ -102,6 +113,19 @@ describe('channel stream sync adapters', () => {
       framesInvoked: 2,
       invokes: 1,
     }));
+  });
+
+  it('rejects module feed delivery when a frame file identifier does not match the channel standardCode', async () => {
+    const channels = channelBackendWithStream(concatBytes(
+      sizePrefixedFrame(flatBufferPayload('OMM ', 24)),
+      sizePrefixedFrame(flatBufferPayload('CDM ', 32)),
+    ));
+
+    await expect(pumpChannelStreamToModule(channels, 'spaceaware-OMM', {
+      methodId: 'upsert_records',
+      portId: 'records',
+      invoke: async () => ({ statusCode: 0, outputs: [] }),
+    })).rejects.toThrow(/does not match channel standardCode OMM/i);
   });
 
   it('passes private grant context to module feed stream opens', async () => {

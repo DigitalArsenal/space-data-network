@@ -9,6 +9,7 @@ import {
   createChannelFlatSqlIngestor,
   type ChannelFlatSqlIngestorOptions,
 } from './channel-ingest';
+import { assertChannelStreamMatchesStandardCode } from './channel-stream-standard';
 
 export interface ChannelFlatSqlSyncResult {
   channelId: string;
@@ -30,6 +31,7 @@ export async function ingestChannelStreamToFlatSql(
     return createDegradedResult('channels.ingestFlatSql', stream.capability.reason ?? 'channel stream unavailable');
   }
   const { access: _access, ...ingestorOptions } = options;
+  assertChannelStreamMatchesStandardCode(channelId, stream.data);
   const ingestor = createChannelFlatSqlIngestor(ingestorOptions);
   ingestor.pushChunk(stream.data);
   ingestor.finish();
