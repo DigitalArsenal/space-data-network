@@ -314,9 +314,9 @@ func TestGetRequiredTopics(t *testing.T) {
 		"/sdn/data/OMM":             true,
 		"/sdn/data/CDM":             true,
 		"/sdn/data/EPM":             true,
-		"/spacedatanetwork/sds/OMM.fbs": true,
-		"/spacedatanetwork/sds/CDM.fbs": true,
-		"/spacedatanetwork/sds/EPM.fbs": true,
+		"/spacedatanetwork/sds/OMM": true,
+		"/spacedatanetwork/sds/CDM": true,
+		"/spacedatanetwork/sds/EPM": true,
 		"/sdn/peer/peer1":           true,
 	}
 

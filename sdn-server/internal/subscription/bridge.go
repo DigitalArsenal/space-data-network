@@ -147,7 +147,7 @@ func (tr *TopicRouter) schemaFromTopic(topic string) string {
 	if strings.HasPrefix(topic, "/sdn/data/") {
 		return strings.TrimPrefix(topic, "/sdn/data/")
 	}
-	// /spacedatanetwork/sds/{schema}.fbs
+	// /spacedatanetwork/sds/{standardCode}
 	if strings.HasPrefix(topic, "/spacedatanetwork/sds/") {
 		return strings.TrimPrefix(topic, "/spacedatanetwork/sds/")
 	}
@@ -247,11 +247,11 @@ func (erf *EdgeRelayFilter) ToTopicFilter() TopicFilterFunc {
 // PubSubBridge provides a high-level integration between PubSub and subscriptions.
 // It manages topic joins/leaves based on active subscriptions.
 type PubSubBridge struct {
-	topicRouter    *TopicRouter
-	joinTopic      func(topic string) error
-	leaveTopic     func(topic string) error
+	topicRouter      *TopicRouter
+	joinTopic        func(topic string) error
+	leaveTopic       func(topic string) error
 	subscribedTopics map[string]bool
-	mu             sync.Mutex
+	mu               sync.Mutex
 }
 
 // NewPubSubBridge creates a new PubSub bridge

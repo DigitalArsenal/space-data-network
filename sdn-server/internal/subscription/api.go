@@ -238,11 +238,11 @@ func (h *APIHandler) handleStats(w http.ResponseWriter, r *http.Request) {
 	subs := h.manager.ListSubscriptions()
 
 	stats := SubscriptionStats{
-		TotalSubscriptions: len(subs),
+		TotalSubscriptions:  len(subs),
 		ActiveSubscriptions: 0,
 		PausedSubscriptions: 0,
-		TotalMessages:      0,
-		SchemaBreakdown:    make(map[string]int),
+		TotalMessages:       0,
+		SchemaBreakdown:     make(map[string]int),
 	}
 
 	for _, sub := range subs {
@@ -564,14 +564,14 @@ const newSubscriptionPageHTML = `<!DOCTYPE html>
             <div class="form-group">
                 <label>Data Types</label>
                 <div class="checkbox-group" id="data-types">
-                    <label class="checkbox-item"><input type="checkbox" name="dataTypes" value="OMM.fbs"> OMM</label>
-                    <label class="checkbox-item"><input type="checkbox" name="dataTypes" value="CDM.fbs"> CDM</label>
-                    <label class="checkbox-item"><input type="checkbox" name="dataTypes" value="EPM.fbs"> EPM</label>
-                    <label class="checkbox-item"><input type="checkbox" name="dataTypes" value="OEM.fbs"> OEM</label>
-                    <label class="checkbox-item"><input type="checkbox" name="dataTypes" value="TDM.fbs"> TDM</label>
-                    <label class="checkbox-item"><input type="checkbox" name="dataTypes" value="CAT.fbs"> CAT</label>
-                    <label class="checkbox-item"><input type="checkbox" name="dataTypes" value="VCM.fbs"> VCM</label>
-                    <label class="checkbox-item"><input type="checkbox" name="dataTypes" value="PNM.fbs"> PNM</label>
+                    <label class="checkbox-item"><input type="checkbox" name="dataTypes" value="OMM"> OMM</label>
+                    <label class="checkbox-item"><input type="checkbox" name="dataTypes" value="CDM"> CDM</label>
+                    <label class="checkbox-item"><input type="checkbox" name="dataTypes" value="EPM"> EPM</label>
+                    <label class="checkbox-item"><input type="checkbox" name="dataTypes" value="OEM"> OEM</label>
+                    <label class="checkbox-item"><input type="checkbox" name="dataTypes" value="TDM"> TDM</label>
+                    <label class="checkbox-item"><input type="checkbox" name="dataTypes" value="CAT"> CAT</label>
+                    <label class="checkbox-item"><input type="checkbox" name="dataTypes" value="VCM"> VCM</label>
+                    <label class="checkbox-item"><input type="checkbox" name="dataTypes" value="PNM"> PNM</label>
                 </div>
             </div>
 
