@@ -1,11 +1,16 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
+	flatbuffers "github.com/google/flatbuffers/go"
 )
 
 func TestChannelHandlerListsStandardCodesOnly(t *testing.T) {
@@ -155,6 +160,24 @@ func TestChannelHandlerPublicSubscribeUpdatesMonitor(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerPublicPublishRejectsUnverifiedPNM(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish", bytes.NewReader(buildAPIUnsignedPNM(t)))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("publish status = %d, want %d body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "SIGNATURE_TYPE") {
+		t.Fatalf("publish body did not report PNM signature rejection: %s", rec.Body.String())
+	}
+}
+
 func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 	t.Parallel()
 
@@ -174,7 +197,7 @@ func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/shard-import"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/module-feed"},
 		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/cache"},
-		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish"},
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?visibility=private"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/grants"},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path, nil)
@@ -184,6 +207,23 @@ func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 			t.Fatalf("%s %s status = %d, want %d body=%s", tc.method, tc.path, rec.Code, http.StatusForbidden, rec.Body.String())
 		}
 	}
+}
+
+func buildAPIUnsignedPNM(t *testing.T) []byte {
+	t.Helper()
+
+	builder := flatbuffers.NewBuilder(256)
+	cidOffset := builder.CreateString("bafymanifest")
+	fileIDOffset := builder.CreateString("DPM")
+	timestampOffset := builder.CreateString(time.Now().UTC().Format(time.RFC3339))
+
+	PNM.PNMStart(builder)
+	PNM.PNMAddCID(builder, cidOffset)
+	PNM.PNMAddFILE_ID(builder, fileIDOffset)
+	PNM.PNMAddPUBLISH_TIMESTAMP(builder, timestampOffset)
+	pnm := PNM.PNMEnd(builder)
+	PNM.FinishSizePrefixedPNMBuffer(builder, pnm)
+	return append([]byte(nil), builder.FinishedBytes()...)
 }
 
 func decodeChannelJSON(t *testing.T, body string) map[string]interface{} {
