@@ -18,6 +18,7 @@ type ChannelHandler struct {
 	gate          *channels.AccessGate
 	grants        *channels.ChannelGrantRegistry
 	metadata      *channels.VerifiedMetadataRegistry
+	streams       *channels.NativeStreamRegistry
 	subscriptions *channels.SubscriptionRegistry
 }
 
@@ -28,6 +29,7 @@ func NewChannelHandler(store *storage.FlatSQLStore) *ChannelHandler {
 		gate:          channels.NewAccessGate(grants),
 		grants:        grants,
 		metadata:      channels.NewVerifiedMetadataRegistry(),
+		streams:       channels.NewNativeStreamRegistry(),
 		subscriptions: channels.NewSubscriptionRegistry(),
 	}
 }
@@ -159,7 +161,7 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		h.requireGrant(w, r, parsed, channels.BoundaryStreamOpen)
+		h.openStream(w, r, parsed)
 	case "bytes":
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -206,16 +208,7 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ChannelHandler) requireGrant(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID, boundary channels.AccessBoundary) {
-	gate := h.gate
-	if gate == nil {
-		gate = channels.NewAccessGate(nil)
-	}
-	decision := gate.Authorize(channels.AccessRequest{
-		Channel:  parsed,
-		Boundary: boundary,
-		Subject:  strings.TrimSpace(r.URL.Query().Get("subject")),
-		GrantID:  strings.TrimSpace(r.URL.Query().Get("grantId")),
-	})
+	decision := h.authorizeGrant(r, parsed, boundary)
 	if !decision.Allowed {
 		h.writeAccessDenied(w, decision)
 		return
@@ -223,6 +216,19 @@ func (h *ChannelHandler) requireGrant(w http.ResponseWriter, r *http.Request, pa
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"channelId":  parsed.ChannelID,
 		"grantState": decision.GrantState,
+	})
+}
+
+func (h *ChannelHandler) authorizeGrant(r *http.Request, parsed channels.ChannelID, boundary channels.AccessBoundary) channels.AccessDecision {
+	gate := h.gate
+	if gate == nil {
+		gate = channels.NewAccessGate(nil)
+	}
+	return gate.Authorize(channels.AccessRequest{
+		Channel:  parsed,
+		Boundary: boundary,
+		Subject:  strings.TrimSpace(r.URL.Query().Get("subject")),
+		GrantID:  strings.TrimSpace(r.URL.Query().Get("grantId")),
 	})
 }
 
@@ -270,6 +276,10 @@ func (h *ChannelHandler) issueGrant(w http.ResponseWriter, r *http.Request, pars
 }
 
 func (h *ChannelHandler) publishPublic(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
+	if h.isNativeStreamPublish(r) {
+		h.publishNativeStream(w, r, parsed)
+		return
+	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<20))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "read PNM envelope: "+err.Error())
@@ -289,6 +299,52 @@ func (h *ChannelHandler) publishPublic(w http.ResponseWriter, r *http.Request, p
 		"signatureType": evidence.SignatureType,
 		"verifiedAt":    metadata.VerifiedAt.Format(time.RFC3339Nano),
 	})
+}
+
+func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
+	if _, verified := h.metadata.Get(parsed); !verified {
+		writeError(w, http.StatusForbidden, "verified PNM required before stream publish")
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "read native FlatBuffer stream: "+err.Error())
+		return
+	}
+	snapshot, err := h.streams.Store(parsed, body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid native FlatBuffer stream: "+err.Error())
+		return
+	}
+	metadata, _ := h.metadata.RecordNativeStream(parsed, snapshot)
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{
+		"channelId":     parsed.ChannelID,
+		"standardCode":  parsed.StandardCode,
+		"pnmVerified":   true,
+		"pnmCid":        metadata.PNMCID,
+		"streamBytes":   snapshot.ByteCount,
+		"streamFrames":  snapshot.FrameCount,
+		"verifiedAt":    metadata.VerifiedAt.Format(time.RFC3339Nano),
+		"streamUpdated": snapshot.UpdatedAt.Format(time.RFC3339Nano),
+	})
+}
+
+func (h *ChannelHandler) openStream(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
+	if h.isPrivateVisibilityRequest(r) {
+		decision := h.authorizeGrant(r, parsed, channels.BoundaryStreamOpen)
+		if !decision.Allowed {
+			h.writeAccessDenied(w, decision)
+			return
+		}
+	}
+	snapshot, ok := h.streams.Get(parsed)
+	if !ok {
+		writeError(w, http.StatusNotFound, "verified native FlatBuffer stream unavailable for channel")
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(snapshot.Bytes)
 }
 
 func parseGrantScopes(values []string) ([]channels.AccessBoundary, error) {
@@ -344,6 +400,15 @@ func (h *ChannelHandler) writeAccessDenied(w http.ResponseWriter, decision chann
 
 func (h *ChannelHandler) isPrivateVisibilityRequest(r *http.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("visibility")), "private")
+}
+
+func (h *ChannelHandler) isNativeStreamPublish(r *http.Request) bool {
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("stream")), "1") ||
+		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("stream")), "true") {
+		return true
+	}
+	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+	return strings.HasPrefix(contentType, "application/vnd.sdn.flatbuffers.stream")
 }
 
 func channelListRow(standardCode string) map[string]interface{} {

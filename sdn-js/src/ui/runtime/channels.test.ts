@@ -12,11 +12,11 @@ describe('SDN backend channel runtime surface', () => {
           results: [{
             channelId: 'spaceaware-OMM',
             sourceId: 'spaceaware',
-          standardCode: 'OMM',
-          visibility: 'public',
-          subscribed: true,
-          grantState: 'verified',
-        }],
+            standardCode: 'OMM',
+            visibility: 'public',
+            subscribed: true,
+            grantState: 'verified',
+          }],
         });
       }
       if (url.endsWith('/api/v1/channels/spaceaware-OMM/monitor')) {
@@ -109,6 +109,36 @@ describe('SDN backend channel runtime surface', () => {
         reason: expect.stringContaining('HTTP 403'),
       }),
     }));
+  });
+
+  it('opens channel streams as native FlatBuffer bytes without JSON wrapping', async () => {
+    const streamBytes = new Uint8Array([9, 0, 0, 0, 79, 77, 77, 49, 1, 2, 3, 4, 5]);
+    const requests: Array<{ url: string; accept: string }> = [];
+    const fetchMock = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      requests.push({ url, accept: String(init?.headers && (init.headers as Record<string, string>).accept) });
+      if (url.endsWith('/api/v1/channels/spaceaware-OMM/stream')) {
+        return new Response(streamBytes, {
+          status: 200,
+          headers: { 'content-type': 'application/vnd.sdn.flatbuffers.stream' },
+        });
+      }
+      return jsonResponse({ error: `unexpected ${url}` }, 404);
+    };
+
+    const backend = createRemoteSdnBackend({
+      serverUrl: 'https://sdn.spaceaware.io',
+      fetch: fetchMock,
+    });
+
+    await expect(backend.channels.openStream('spaceaware-OMM')).resolves.toEqual(expect.objectContaining({
+      ok: true,
+      data: streamBytes,
+    }));
+    expect(requests).toEqual([{
+      url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/stream',
+      accept: 'application/vnd.sdn.flatbuffers.stream',
+    }]);
   });
 });
 

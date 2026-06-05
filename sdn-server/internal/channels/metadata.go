@@ -49,6 +49,25 @@ func (r *VerifiedMetadataRegistry) RecordPNM(channel ChannelID, evidence PNMTrus
 	return metadata
 }
 
+func (r *VerifiedMetadataRegistry) RecordNativeStream(channel ChannelID, snapshot NativeStreamSnapshot) (VerifiedMetadata, bool) {
+	if r == nil {
+		return VerifiedMetadata{}, false
+	}
+	r.mu.Lock()
+	metadata, ok := r.metadata[channel.ChannelID]
+	if ok {
+		metadata.SyncedBytes = int64(snapshot.ByteCount)
+		metadata.SyncedRows = snapshot.FrameCount
+		metadata.RemoteRows = snapshot.FrameCount
+		metadata.LocalRows = snapshot.FrameCount
+		metadata.MissingRows = 0
+		metadata.PinnedRows = snapshot.FrameCount
+		r.metadata[channel.ChannelID] = metadata
+	}
+	r.mu.Unlock()
+	return metadata, ok
+}
+
 func (r *VerifiedMetadataRegistry) Get(channel ChannelID) (VerifiedMetadata, bool) {
 	if r == nil {
 		return VerifiedMetadata{}, false
