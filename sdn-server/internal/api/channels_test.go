@@ -747,6 +747,18 @@ func TestChannelHandlerReportsNativeStreamWireSpeedUtilization(t *testing.T) {
 	}
 }
 
+func TestChannelMonitorWireSpeedUtilizationIsBounded(t *testing.T) {
+	t.Setenv("SDN_TEST_LINK_GBIT", "2")
+
+	utilization := measuredWireSpeedUtilization(500_000_000)
+	if utilization == nil {
+		t.Fatal("expected configured link to produce utilization")
+	}
+	if *utilization != 1 {
+		t.Fatalf("wire speed utilization = %v, want capped 1.0", *utilization)
+	}
+}
+
 func TestChannelHandlerEnforcesWirespeedGateWhenEnabled(t *testing.T) {
 	t.Setenv("SDN_WIRESPEED_TEST", "1")
 	t.Setenv("SDN_TEST_LINK_GBIT", "2")
