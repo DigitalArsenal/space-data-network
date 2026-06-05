@@ -333,6 +333,63 @@ func TestChannelsPublishSendsNativeStreamToLocalAPI(t *testing.T) {
 	}
 }
 
+func TestChannelsStreamReadsNativeStreamFromLocalAPI(t *testing.T) {
+	t.Parallel()
+
+	streamBytes := bytes.Join([][]byte{
+		channelCLITestNativeFrame("OMM1", []byte{1, 2, 3}),
+		channelCLITestNativeFrame("OMM1", []byte{4, 5, 6, 7}),
+	}, nil)
+	outFile := filepath.Join(t.TempDir(), "stream.bin")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/channels/spaceaware-OMM/stream" {
+			t.Fatalf("unexpected stream request %s %s", r.Method, r.URL.String())
+		}
+		if got := r.Header.Get("Accept"); got != "application/vnd.sdn.flatbuffers.stream" {
+			t.Fatalf("stream Accept = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+		w.Header().Set("X-SDN-Stream-Frames", "2")
+		_, _ = w.Write(streamBytes)
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"stream", "spaceaware-OMM", "--out", outFile, "--api-url", server.URL})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels stream failed: %v", err)
+	}
+	written, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("read stream output: %v", err)
+	}
+	if !bytes.Equal(written, streamBytes) {
+		t.Fatalf("stream output mismatch: %v", written)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"channelId=spaceaware-OMM",
+		"sourceId=spaceaware",
+		"standardCode=OMM",
+		"contentType=application/vnd.sdn.flatbuffers.stream",
+		"streamBytes=23",
+		"streamFrames=2",
+		"out=" + outFile,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("channels stream output missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "base64") || strings.Contains(body, "records=") {
+		t.Fatalf("channels stream output exposed JSON/base64 hot path:\n%s", body)
+	}
+}
+
 func TestChannelsSubscribeAndUnsubscribePublicChannel(t *testing.T) {
 	t.Parallel()
 
