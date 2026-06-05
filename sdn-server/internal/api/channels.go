@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -900,7 +901,7 @@ func (h *ChannelHandler) openStream(w http.ResponseWriter, r *http.Request, pars
 			return
 		}
 	}
-	snapshot, ok := h.streams.Get(parsed)
+	snapshot, ok := h.verifiedNativeStreamSnapshot(parsed)
 	if !ok {
 		writeError(w, http.StatusNotFound, "verified native FlatBuffer stream unavailable for channel")
 		return
@@ -918,7 +919,7 @@ func (h *ChannelHandler) readStreamBytes(w http.ResponseWriter, r *http.Request,
 			return
 		}
 	}
-	snapshot, ok := h.streams.Get(parsed)
+	snapshot, ok := h.verifiedNativeStreamSnapshot(parsed)
 	if !ok {
 		writeError(w, http.StatusNotFound, "verified native FlatBuffer stream unavailable for channel")
 		return
@@ -949,7 +950,7 @@ func (h *ChannelHandler) importVerifiedChannelShard(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusNotFound, "verified private encrypted channel metadata unavailable")
 		return
 	}
-	snapshot, ok := h.streams.Get(parsed)
+	snapshot, ok := h.verifiedNativeStreamSnapshot(parsed)
 	if !ok {
 		writeError(w, http.StatusNotFound, "verified native FlatBuffer stream unavailable for channel")
 		return
@@ -992,7 +993,7 @@ func (h *ChannelHandler) deliverVerifiedChannelModuleFeed(w http.ResponseWriter,
 		writeError(w, http.StatusNotFound, "verified private encrypted channel metadata unavailable")
 		return
 	}
-	snapshot, ok := h.streams.Get(parsed)
+	snapshot, ok := h.verifiedNativeStreamSnapshot(parsed)
 	if !ok {
 		writeError(w, http.StatusNotFound, "verified native FlatBuffer stream unavailable for channel")
 		return
@@ -1017,7 +1018,7 @@ func (h *ChannelHandler) readLocalCache(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 	}
-	snapshot, ok := h.streams.Get(parsed)
+	snapshot, ok := h.verifiedNativeStreamSnapshot(parsed)
 	if !ok {
 		writeError(w, http.StatusNotFound, "verified native FlatBuffer stream unavailable for channel")
 		return
@@ -1112,6 +1113,104 @@ func (h *ChannelHandler) requiresLocalCacheReadGrant(r *http.Request, parsed cha
 		return true
 	}
 	return isPrivateChannelMetadata(metadata)
+}
+
+func (h *ChannelHandler) verifiedNativeStreamSnapshot(parsed channels.ChannelID) (channels.NativeStreamSnapshot, bool) {
+	if h == nil {
+		return channels.NativeStreamSnapshot{}, false
+	}
+	if snapshot, ok := h.streams.Get(parsed); ok {
+		return snapshot, true
+	}
+	return h.restoreVerifiedNativeStreamSnapshot(parsed)
+}
+
+func (h *ChannelHandler) restoreVerifiedNativeStreamSnapshot(parsed channels.ChannelID) (channels.NativeStreamSnapshot, bool) {
+	if h == nil || h.store == nil {
+		return channels.NativeStreamSnapshot{}, false
+	}
+	metadata, verified := h.verifiedChannelMetadata(parsed)
+	if !verified || metadata.DPMVerifiedAt.IsZero() {
+		return channels.NativeStreamSnapshot{}, false
+	}
+	schemaName, err := channels.SchemaNameFromStandardCode(parsed.StandardCode)
+	if err != nil {
+		return channels.NativeStreamSnapshot{}, false
+	}
+	stats, err := h.store.LocalReplicaStats(storage.LocalReplicaStatsQuery{
+		SchemaName:   schemaName,
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+	})
+	if err != nil {
+		return channels.NativeStreamSnapshot{}, false
+	}
+	for _, stat := range stats {
+		if datasetPublicationSourceID(stat.ProviderID, stat.SourceName) != parsed.SourceID {
+			continue
+		}
+		publication, ok := h.latestVerifiedDatasetShardPublication(schemaName, stat, metadata.ChannelHead)
+		if !ok {
+			continue
+		}
+		snapshot, ok := h.restoreNativeStreamSnapshotFromPublication(parsed, publication)
+		if !ok {
+			continue
+		}
+		h.metadata.RecordNativeStream(parsed, snapshot, metadata.ThroughputBPS, metadata.WireUtilization, metadata.TimingsMs)
+		return snapshot, true
+	}
+	return channels.NativeStreamSnapshot{}, false
+}
+
+func (h *ChannelHandler) latestVerifiedDatasetShardPublication(schemaName string, stat storage.LocalReplicaStats, channelHead string) (storage.DatasetShardPublication, bool) {
+	if h == nil || h.store == nil {
+		return storage.DatasetShardPublication{}, false
+	}
+	publications, err := h.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+		SchemaName:   schemaName,
+		ProviderID:   stat.ProviderID,
+		SourceName:   stat.SourceName,
+		BatchID:      stat.BatchID,
+		QueryProfile: stat.QueryProfile,
+		RecordCount:  int(stat.PinnedRows),
+	})
+	if err != nil || len(publications) == 0 {
+		return storage.DatasetShardPublication{}, false
+	}
+	channelHead = strings.TrimSpace(channelHead)
+	for i := len(publications) - 1; i >= 0; i-- {
+		publication := publications[i]
+		if channelHead != "" && strings.TrimSpace(publication.FeedHead) != channelHead {
+			continue
+		}
+		return publication, true
+	}
+	return publications[len(publications)-1], true
+}
+
+func (h *ChannelHandler) restoreNativeStreamSnapshotFromPublication(parsed channels.ChannelID, publication storage.DatasetShardPublication) (channels.NativeStreamSnapshot, bool) {
+	if h == nil || h.store == nil {
+		return channels.NativeStreamSnapshot{}, false
+	}
+	shardPath, err := h.store.DatasetPublicationShardPath(publication)
+	if err != nil {
+		return channels.NativeStreamSnapshot{}, false
+	}
+	shardBytes, err := os.ReadFile(shardPath)
+	if err != nil || len(shardBytes) == 0 {
+		return channels.NativeStreamSnapshot{}, false
+	}
+	if expected := strings.TrimSpace(publication.ShardSHA256); expected != "" {
+		actual := sha256.Sum256(shardBytes)
+		if hex.EncodeToString(actual[:]) != expected {
+			return channels.NativeStreamSnapshot{}, false
+		}
+	}
+	snapshot, err := h.streams.Store(parsed, shardBytes)
+	if err != nil {
+		return channels.NativeStreamSnapshot{}, false
+	}
+	return snapshot, true
 }
 
 func parseByteRangeQuery(r *http.Request, total int) (int, int, error) {
