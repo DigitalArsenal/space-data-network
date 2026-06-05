@@ -52,7 +52,11 @@ func TestChannelHandlerShowsHyphenatedSourceChannel(t *testing.T) {
 	if body["channelId"] != "celestrak-eth-CDM" || body["sourceId"] != "celestrak-eth" || body["standardCode"] != "CDM" {
 		t.Fatalf("unexpected channel response: %#v", body)
 	}
-	if body["pnmVerified"] != false || body["visibility"] != "unknown" {
+	if body["pnmVerified"] != false ||
+		body["visibility"] != "public" ||
+		body["subscribed"] != false ||
+		body["grantState"] != "not-required" ||
+		body["encryptionState"] != "none" {
 		t.Fatalf("unexpected verification fields: %#v", body)
 	}
 }
@@ -93,6 +97,58 @@ func TestChannelHandlerMonitorReportsRequiredFields(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerPublicSubscribeUpdatesMonitor(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+
+	subscribeReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/subscribe", nil)
+	subscribeRec := httptest.NewRecorder()
+	mux.ServeHTTP(subscribeRec, subscribeReq)
+
+	if subscribeRec.Code != http.StatusOK {
+		t.Fatalf("subscribe status = %d body=%s", subscribeRec.Code, subscribeRec.Body.String())
+	}
+	subscribeBody := decodeChannelJSON(t, subscribeRec.Body.String())
+	if subscribeBody["channelId"] != "spaceaware-OMM" ||
+		subscribeBody["subscribed"] != true ||
+		subscribeBody["visibility"] != "public" ||
+		subscribeBody["grantState"] != "not-required" ||
+		subscribeBody["encryptionState"] != "none" {
+		t.Fatalf("unexpected subscribe response: %#v", subscribeBody)
+	}
+
+	monitorReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/monitor", nil)
+	monitorRec := httptest.NewRecorder()
+	mux.ServeHTTP(monitorRec, monitorReq)
+
+	if monitorRec.Code != http.StatusOK {
+		t.Fatalf("monitor status = %d body=%s", monitorRec.Code, monitorRec.Body.String())
+	}
+	monitorBody := decodeChannelJSON(t, monitorRec.Body.String())
+	if monitorBody["subscribed"] != true ||
+		monitorBody["visibility"] != "public" ||
+		monitorBody["grantState"] != "not-required" ||
+		monitorBody["encryptionState"] != "none" {
+		t.Fatalf("unexpected subscribed monitor response: %#v", monitorBody)
+	}
+
+	unsubscribeReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/unsubscribe", nil)
+	unsubscribeRec := httptest.NewRecorder()
+	mux.ServeHTTP(unsubscribeRec, unsubscribeReq)
+
+	if unsubscribeRec.Code != http.StatusOK {
+		t.Fatalf("unsubscribe status = %d body=%s", unsubscribeRec.Code, unsubscribeRec.Body.String())
+	}
+	unsubscribeBody := decodeChannelJSON(t, unsubscribeRec.Body.String())
+	if unsubscribeBody["subscribed"] != false ||
+		unsubscribeBody["visibility"] != "public" ||
+		unsubscribeBody["grantState"] != "not-required" {
+		t.Fatalf("unexpected unsubscribe response: %#v", unsubscribeBody)
+	}
+}
+
 func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 	t.Parallel()
 
@@ -104,8 +160,8 @@ func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 		path   string
 	}{
 		{http.MethodGet, "/api/v1/channels?visibility=private"},
-		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/subscribe"},
-		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/unsubscribe"},
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/subscribe?visibility=private"},
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/unsubscribe?visibility=private"},
 		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/stream"},
 		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/bytes"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/key-unwrap"},

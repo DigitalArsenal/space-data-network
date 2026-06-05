@@ -170,6 +170,7 @@ export interface ChannelSummary {
   standardCode: string;
   feedUuid: string | null;
   visibility: string;
+  subscribed: boolean;
   pnmVerified: boolean;
   grantState: string;
   encryptionState: string;

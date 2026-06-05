@@ -12,10 +12,11 @@ describe('SDN backend channel runtime surface', () => {
           results: [{
             channelId: 'spaceaware-OMM',
             sourceId: 'spaceaware',
-            standardCode: 'OMM',
-            visibility: 'public',
-            grantState: 'verified',
-          }],
+          standardCode: 'OMM',
+          visibility: 'public',
+          subscribed: true,
+          grantState: 'verified',
+        }],
         });
       }
       if (url.endsWith('/api/v1/channels/spaceaware-OMM/monitor')) {
@@ -24,6 +25,7 @@ describe('SDN backend channel runtime surface', () => {
           sourceId: 'spaceaware',
           standardCode: 'OMM',
           channelHead: 'bafyhead',
+          subscribed: true,
           pnmVerified: true,
           providerPeer: '12D3KooProvider',
           localRows: 10,
@@ -45,6 +47,7 @@ describe('SDN backend channel runtime surface', () => {
           sourceId: 'spaceaware',
           standardCode: 'OMM',
           visibility: 'public',
+          subscribed: true,
           pnmVerified: true,
           grantState: 'verified',
           encryptionState: 'public',
@@ -60,16 +63,17 @@ describe('SDN backend channel runtime surface', () => {
 
     await expect(backend.channels.list({ standardCode: 'OMM' })).resolves.toEqual(expect.objectContaining({
       ok: true,
-      data: [expect.objectContaining({ channelId: 'spaceaware-OMM', standardCode: 'OMM' })],
+      data: [expect.objectContaining({ channelId: 'spaceaware-OMM', standardCode: 'OMM', subscribed: true })],
     }));
     await expect(backend.channels.get('spaceaware-OMM')).resolves.toEqual(expect.objectContaining({
       ok: true,
-      data: expect.objectContaining({ channelId: 'spaceaware-OMM', pnmVerified: true }),
+      data: expect.objectContaining({ channelId: 'spaceaware-OMM', pnmVerified: true, subscribed: true }),
     }));
     await expect(backend.channels.monitor('spaceaware-OMM')).resolves.toEqual(expect.objectContaining({
       ok: true,
       data: expect.objectContaining({
         channelHead: 'bafyhead',
+        subscribed: true,
         pnmVerified: true,
         providerPeer: '12D3KooProvider',
         localRows: 10,

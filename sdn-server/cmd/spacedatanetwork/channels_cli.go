@@ -14,12 +14,19 @@ type channelsListOptions struct {
 	StandardCode string
 }
 
+type channelSubscriptionOptions struct {
+	Visibility string
+}
+
 func init() {
 	rootCmd.AddCommand(newChannelsCommand())
 }
 
 func newChannelsCommand() *cobra.Command {
 	listOptions := channelsListOptions{}
+	subscribeOptions := channelSubscriptionOptions{}
+	unsubscribeOptions := channelSubscriptionOptions{}
+	subscriptions := channels.NewSubscriptionRegistry()
 	cmd := &cobra.Command{
 		Use:   "channels",
 		Short: "List, inspect, subscribe, and monitor SDN data channels",
@@ -50,8 +57,26 @@ func newChannelsCommand() *cobra.Command {
 			return runChannelsMonitor(cmd, args[0])
 		},
 	})
-	cmd.AddCommand(failClosedChannelCommand("subscribe <channelId>", "Subscribe to a channel"))
-	cmd.AddCommand(failClosedChannelCommand("unsubscribe <channelId>", "Unsubscribe from a channel"))
+	subscribeCmd := &cobra.Command{
+		Use:   "subscribe <channelId>",
+		Short: "Subscribe to a channel",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runChannelsSubscribe(cmd, subscriptions, subscribeOptions, args[0])
+		},
+	}
+	subscribeCmd.Flags().StringVar(&subscribeOptions.Visibility, "visibility", "public", "channel visibility")
+	cmd.AddCommand(subscribeCmd)
+	unsubscribeCmd := &cobra.Command{
+		Use:   "unsubscribe <channelId>",
+		Short: "Unsubscribe from a channel",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runChannelsUnsubscribe(cmd, subscriptions, unsubscribeOptions, args[0])
+		},
+	}
+	unsubscribeCmd.Flags().StringVar(&unsubscribeOptions.Visibility, "visibility", "public", "channel visibility")
+	cmd.AddCommand(unsubscribeCmd)
 	cmd.AddCommand(failClosedChannelCommand("publish <channelId>", "Publish a native FlatBuffers channel stream"))
 	grantsCmd := &cobra.Command{
 		Use:   "grants",
@@ -79,6 +104,38 @@ func runChannelsList(cmd *cobra.Command, options channelsListOptions) error {
 		}
 		fmt.Fprintf(out, "standardCode=%s topic=%s visibility=unknown\n", code, channels.DiscoveryTopic(code))
 	}
+	return nil
+}
+
+func runChannelsSubscribe(cmd *cobra.Command, registry *channels.SubscriptionRegistry, options channelSubscriptionOptions, channelID string) error {
+	parsed, err := channels.ParseChannelID(channelID)
+	if err != nil {
+		return err
+	}
+	if strings.EqualFold(strings.TrimSpace(options.Visibility), "private") {
+		return fmt.Errorf("verified channel grant required for %s", parsed.ChannelID)
+	}
+	return printChannelSubscriptionState(cmd, registry.Subscribe(parsed))
+}
+
+func runChannelsUnsubscribe(cmd *cobra.Command, registry *channels.SubscriptionRegistry, options channelSubscriptionOptions, channelID string) error {
+	parsed, err := channels.ParseChannelID(channelID)
+	if err != nil {
+		return err
+	}
+	if strings.EqualFold(strings.TrimSpace(options.Visibility), "private") {
+		return fmt.Errorf("verified channel grant required for %s", parsed.ChannelID)
+	}
+	return printChannelSubscriptionState(cmd, registry.Unsubscribe(parsed))
+}
+
+func printChannelSubscriptionState(cmd *cobra.Command, state channels.SubscriptionState) error {
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "channelId=%s\n", state.ChannelID)
+	fmt.Fprintf(out, "subscribed=%t\n", state.Subscribed)
+	fmt.Fprintf(out, "visibility=%s\n", state.Visibility)
+	fmt.Fprintf(out, "grantState=%s\n", state.GrantState)
+	fmt.Fprintf(out, "encryptionState=%s\n", state.EncryptionState)
 	return nil
 }
 

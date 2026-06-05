@@ -97,6 +97,7 @@
             <th>Channel</th>
             <th>standardCode</th>
             <th>Visibility</th>
+            <th>Subscribed</th>
             <th>Grant</th>
           </tr>
         </thead>
@@ -106,6 +107,7 @@
               <td>{channel.channelId}</td>
               <td>{channel.standardCode}</td>
               <td>{channel.visibility}</td>
+              <td>{channel.subscribed ? 'Yes' : 'No'}</td>
               <td>{channel.grantState}</td>
             </tr>
           {/each}
@@ -122,6 +124,7 @@
         <div><dt>Channel Head</dt><dd>{monitor?.channelHead || 'Unknown'}</dd></div>
         <div><dt>Verified PNM</dt><dd>{monitor?.pnmVerified ? 'Verified' : 'Unverified'}</dd></div>
         <div><dt>Provider Peer</dt><dd>{monitor?.providerPeer || 'Unknown'}</dd></div>
+        <div><dt>Subscribed</dt><dd>{monitor?.subscribed ? 'Yes' : 'No'}</dd></div>
         <div><dt>Local Rows</dt><dd>{formatNumber(monitor?.localRows)}</dd></div>
         <div><dt>Remote Rows</dt><dd>{formatNumber(monitor?.remoteRows)}</dd></div>
         <div><dt>Synced Rows</dt><dd>{formatNumber(monitor?.syncedRows)}</dd></div>

@@ -94,6 +94,7 @@ function normalizeChannelSummary(payload: unknown): ChannelSummary {
     standardCode,
     feedUuid: pickString(record, 'feedUuid') ?? null,
     visibility: pickString(record, 'visibility') ?? 'unknown',
+    subscribed: pickBoolean(record, 'subscribed') ?? false,
     pnmVerified: pickBoolean(record, 'pnmVerified') ?? false,
     grantState: pickString(record, 'grantState') ?? 'unknown',
     encryptionState: pickString(record, 'encryptionState') ?? 'unknown',
