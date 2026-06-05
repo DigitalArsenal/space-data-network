@@ -164,6 +164,12 @@ export interface ChannelListOptions {
   visibility?: string;
 }
 
+export interface ChannelActionOptions {
+  subject?: string;
+  grantId?: string;
+  visibility?: string;
+}
+
 export interface ChannelSummary {
   channelId: string;
   sourceId: string;
@@ -193,11 +199,11 @@ export interface ChannelMonitor extends ChannelSummary {
 export interface ChannelBackend {
   list(options?: ChannelListOptions): Promise<BackendResult<ChannelSummary[]>>;
   get(channelId: string): Promise<BackendResult<ChannelSummary>>;
-  subscribe(channelId: string): Promise<BackendResult<Record<string, unknown>>>;
-  unsubscribe(channelId: string): Promise<BackendResult<Record<string, unknown>>>;
-  publish(channelId: string, body?: BodyInit | null): Promise<BackendResult<Record<string, unknown>>>;
-  issueGrant(channelId: string, body?: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>>;
-  openStream(channelId: string): Promise<BackendResult<Uint8Array>>;
+  subscribe(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
+  unsubscribe(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
+  publish(channelId: string, body?: BodyInit | null, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
+  issueGrant(channelId: string, body?: Record<string, unknown>, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
+  openStream(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<Uint8Array>>;
   monitor(channelId: string): Promise<BackendResult<ChannelMonitor>>;
 }
 

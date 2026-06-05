@@ -140,6 +140,65 @@ describe('SDN backend channel runtime surface', () => {
       accept: 'application/vnd.sdn.flatbuffers.stream',
     }]);
   });
+
+  it('passes private grant context through protected channel actions', async () => {
+    const requests: Array<{ url: string; method: string; contentType: string; bodyText: string }> = [];
+    const fetchMock = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const body = init?.body;
+      requests.push({
+        url: String(input),
+        method: init?.method ?? 'GET',
+        contentType: String(init?.headers && (init.headers as Record<string, string>)['content-type']),
+        bodyText: typeof body === 'string' ? body : body instanceof Uint8Array ? Array.from(body).join(',') : '',
+      });
+      if (String(input).includes('/stream')) {
+        return new Response(new Uint8Array([1, 2, 3]), {
+          status: 200,
+          headers: { 'content-type': 'application/vnd.sdn.flatbuffers.stream' },
+        });
+      }
+      return jsonResponse({ grantState: 'verified' });
+    };
+
+    const backend = createRemoteSdnBackend({
+      serverUrl: 'https://sdn.spaceaware.io',
+      fetch: fetchMock,
+    });
+    const grant = { subject: 'peer-alpha', grantId: 'grant-1', visibility: 'private' };
+    const stream = new Uint8Array([7, 0, 0, 0, 79, 77, 77, 49, 1, 2, 3]);
+
+    await backend.channels.subscribe('spaceaware-OMM', grant);
+    await backend.channels.publish('spaceaware-OMM', stream, grant);
+    await backend.channels.openStream('spaceaware-OMM', grant);
+    await backend.channels.issueGrant('spaceaware-OMM', { to: 'peer-alpha', scopes: ['stream_open'] }, grant);
+
+    expect(requests).toEqual([
+      {
+        url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/subscribe?subject=peer-alpha&grantId=grant-1&visibility=private',
+        method: 'POST',
+        contentType: 'undefined',
+        bodyText: '',
+      },
+      {
+        url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/publish?subject=peer-alpha&grantId=grant-1&visibility=private',
+        method: 'POST',
+        contentType: 'application/vnd.sdn.flatbuffers.stream',
+        bodyText: Array.from(stream).join(','),
+      },
+      {
+        url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/stream?subject=peer-alpha&grantId=grant-1&visibility=private',
+        method: 'GET',
+        contentType: 'undefined',
+        bodyText: '',
+      },
+      {
+        url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/grants?subject=peer-alpha&grantId=grant-1&visibility=private',
+        method: 'POST',
+        contentType: 'application/json',
+        bodyText: JSON.stringify({ to: 'peer-alpha', scopes: ['stream_open'] }),
+      },
+    ]);
+  });
 });
 
 function jsonResponse(payload: unknown, status = 200): Response {
