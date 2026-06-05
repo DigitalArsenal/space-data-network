@@ -47,8 +47,8 @@ export function createHttpChannelBackend(fetchLike: FetchLike, baseUrl: string |
         headers: { accept: 'application/vnd.sdn.flatbuffers.stream' },
       });
     },
-    async monitor(channelId: string): Promise<BackendResult<ChannelMonitor>> {
-      const result = await getJson<unknown>(fetchLike, joinUrl(baseUrl, `/api/v1/channels/${encodeURIComponent(channelId)}/monitor`), 'channels.monitor');
+    async monitor(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<ChannelMonitor>> {
+      const result = await getJson<unknown>(fetchLike, channelActionUrl(baseUrl, channelId, 'monitor', options), 'channels.monitor');
       if (!result.ok) return result as BackendResult<ChannelMonitor>;
       return createAvailableResult('channels.monitor', normalizeChannelMonitor(result.data));
     },

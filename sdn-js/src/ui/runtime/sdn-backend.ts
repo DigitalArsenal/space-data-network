@@ -206,7 +206,7 @@ export interface ChannelBackend {
   publish(channelId: string, body?: BodyInit | null, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
   issueGrant(channelId: string, body?: Record<string, unknown>, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
   openStream(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<Uint8Array>>;
-  monitor(channelId: string): Promise<BackendResult<ChannelMonitor>>;
+  monitor(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<ChannelMonitor>>;
 }
 
 export interface RawDataStreamRequest {

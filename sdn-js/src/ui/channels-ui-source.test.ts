@@ -62,6 +62,7 @@ describe('SDN channels UI source', () => {
       'Grant ID',
       'channelAccessOptions',
       'backend.channels.list({ standardCode, ...channelAccessOptions })',
+      'backend.channels.monitor(channelId, channelAccessOptions)',
       'backend.channels.subscribe(selectedChannelId, channelAccessOptions)',
       'backend.channels.unsubscribe(selectedChannelId, channelAccessOptions)',
     ]) {

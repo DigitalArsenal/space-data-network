@@ -157,6 +157,49 @@ describe('SDN backend channel runtime surface', () => {
     ]);
   });
 
+  it('passes private grant context through channel monitor requests', async () => {
+    const requested: string[] = [];
+    const fetchMock = async (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input);
+      requested.push(url);
+      if (url.endsWith('/api/v1/channels/spaceaware-OMM/monitor?subject=peer-alpha&grantId=grant-1&visibility=private-listed')) {
+        return jsonResponse({
+          channelId: 'spaceaware-OMM',
+          sourceId: 'spaceaware',
+          standardCode: 'OMM',
+          visibility: 'private-listed',
+          grantState: 'verified',
+          encryptionState: 'encrypted',
+          pnmVerified: true,
+        });
+      }
+      return jsonResponse({ error: `unexpected ${url}` }, 404);
+    };
+
+    const backend = createRemoteSdnBackend({
+      serverUrl: 'https://sdn.spaceaware.io',
+      fetch: fetchMock,
+    });
+
+    await expect(backend.channels.monitor('spaceaware-OMM', {
+      subject: 'peer-alpha',
+      grantId: 'grant-1',
+      visibility: 'private-listed',
+    })).resolves.toEqual(expect.objectContaining({
+      ok: true,
+      data: expect.objectContaining({
+        channelId: 'spaceaware-OMM',
+        visibility: 'private-listed',
+        grantState: 'verified',
+        encryptionState: 'encrypted',
+        pnmVerified: true,
+      }),
+    }));
+    expect(requested).toEqual([
+      'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/monitor?subject=peer-alpha&grantId=grant-1&visibility=private-listed',
+    ]);
+  });
+
   it('opens channel streams as native FlatBuffer bytes without JSON wrapping', async () => {
     const streamBytes = new Uint8Array([9, 0, 0, 0, 79, 77, 77, 49, 1, 2, 3, 4, 5]);
     const requests: Array<{ url: string; accept: string }> = [];
