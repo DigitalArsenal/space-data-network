@@ -103,8 +103,16 @@ func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 		method string
 		path   string
 	}{
+		{http.MethodGet, "/api/v1/channels?visibility=private"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/subscribe"},
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/unsubscribe"},
 		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/stream"},
+		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/bytes"},
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/key-unwrap"},
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/shard-import"},
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/module-feed"},
+		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/cache"},
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/grants"},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path, nil)

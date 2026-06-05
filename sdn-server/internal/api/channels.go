@@ -11,10 +11,14 @@ import (
 
 type ChannelHandler struct {
 	store *storage.FlatSQLStore
+	gate  *channels.AccessGate
 }
 
 func NewChannelHandler(store *storage.FlatSQLStore) *ChannelHandler {
-	return &ChannelHandler{store: store}
+	return &ChannelHandler{
+		store: store,
+		gate:  channels.NewAccessGate(nil),
+	}
 }
 
 func (h *ChannelHandler) RegisterRoutes(mux *http.ServeMux) {
@@ -34,6 +38,14 @@ func (h *ChannelHandler) handleCollection(w http.ResponseWriter, r *http.Request
 	standardFilter := strings.TrimSpace(r.URL.Query().Get("standardCode"))
 	if standardFilter == "" {
 		standardFilter = strings.TrimSpace(r.URL.Query().Get("standard"))
+	}
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("visibility")), "private") {
+		h.writeAccessDenied(w, channels.AccessDecision{
+			Allowed:    false,
+			GrantState: "required",
+			Reason:     "verified channel grant required",
+		})
+		return
 	}
 	results := make([]map[string]interface{}, 0)
 	if standardFilter != "" {
@@ -101,11 +113,56 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusNotFound, "verified PNM unavailable for channel")
-	case "subscribe", "unsubscribe", "publish", "stream", "grants":
-		writeError(w, http.StatusForbidden, "verified channel grants are required before this operation")
+	case "subscribe":
+		h.requireGrant(w, parsed, channels.BoundarySubscribe)
+	case "unsubscribe":
+		h.requireGrant(w, parsed, channels.BoundaryUnsubscribe)
+	case "publish":
+		h.requireGrant(w, parsed, channels.BoundaryPublish)
+	case "stream":
+		h.requireGrant(w, parsed, channels.BoundaryStreamOpen)
+	case "bytes":
+		h.requireGrant(w, parsed, channels.BoundaryByteRangeRead)
+	case "key-unwrap":
+		h.requireGrant(w, parsed, channels.BoundaryKeyUnwrap)
+	case "shard-import":
+		h.requireGrant(w, parsed, channels.BoundaryShardImport)
+	case "module-feed":
+		h.requireGrant(w, parsed, channels.BoundaryModuleFeedDelivery)
+	case "cache":
+		h.requireGrant(w, parsed, channels.BoundaryLocalCacheRead)
+	case "grants":
+		h.requireGrant(w, parsed, channels.BoundaryGrantIssue)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (h *ChannelHandler) requireGrant(w http.ResponseWriter, parsed channels.ChannelID, boundary channels.AccessBoundary) {
+	gate := h.gate
+	if gate == nil {
+		gate = channels.NewAccessGate(nil)
+	}
+	decision := gate.Authorize(channels.AccessRequest{
+		Channel:  parsed,
+		Boundary: boundary,
+	})
+	if !decision.Allowed {
+		h.writeAccessDenied(w, decision)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"channelId":  parsed.ChannelID,
+		"grantState": decision.GrantState,
+	})
+}
+
+func (h *ChannelHandler) writeAccessDenied(w http.ResponseWriter, decision channels.AccessDecision) {
+	message := decision.Reason
+	if strings.TrimSpace(message) == "" {
+		message = "verified channel grant required"
+	}
+	writeError(w, http.StatusForbidden, message)
 }
 
 func channelListRow(standardCode string) map[string]interface{} {
