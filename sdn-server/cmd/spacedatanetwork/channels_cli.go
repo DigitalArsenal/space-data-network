@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -23,6 +24,10 @@ type channelGrantIssueOptions struct {
 	To        string
 	Scopes    []string
 	ExpiresAt string
+}
+
+type channelPublishOptions struct {
+	From string
 }
 
 func init() {
@@ -85,7 +90,17 @@ func newChannelsCommand() *cobra.Command {
 	}
 	unsubscribeCmd.Flags().StringVar(&unsubscribeOptions.Visibility, "visibility", "public", "channel visibility")
 	cmd.AddCommand(unsubscribeCmd)
-	cmd.AddCommand(failClosedChannelCommand("publish <channelId>", "Publish a native FlatBuffers channel stream"))
+	publishOptions := channelPublishOptions{}
+	publishCmd := &cobra.Command{
+		Use:   "publish <channelId>",
+		Short: "Publish a native FlatBuffers channel stream",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runChannelsPublish(cmd, publishOptions, args[0])
+		},
+	}
+	publishCmd.Flags().StringVar(&publishOptions.From, "from", "", "native FlatBuffers stream file to publish")
+	cmd.AddCommand(publishCmd)
 	grantsCmd := &cobra.Command{
 		Use:   "grants",
 		Short: "Manage private channel grants",
@@ -124,6 +139,36 @@ func runChannelsList(cmd *cobra.Command, options channelsListOptions) error {
 		}
 		printChannelListRow(out, code)
 	}
+	return nil
+}
+
+func runChannelsPublish(cmd *cobra.Command, options channelPublishOptions, channelID string) error {
+	parsed, err := channels.ParseChannelID(channelID)
+	if err != nil {
+		return err
+	}
+	from := strings.TrimSpace(options.From)
+	if from == "" {
+		return fmt.Errorf("--from is required")
+	}
+	streamBytes, err := os.ReadFile(from)
+	if err != nil {
+		return fmt.Errorf("read native FlatBuffers stream: %w", err)
+	}
+	frames, err := channels.SplitNativeStreamFrames(streamBytes)
+	if err != nil {
+		return fmt.Errorf("invalid native FlatBuffers stream: %w", err)
+	}
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "channelId=%s\n", parsed.ChannelID)
+	fmt.Fprintf(out, "sourceId=%s\n", parsed.SourceID)
+	fmt.Fprintf(out, "standardCode=%s\n", parsed.StandardCode)
+	if parsed.FeedUUID != "" {
+		fmt.Fprintf(out, "feedUuid=%s\n", parsed.FeedUUID)
+	}
+	fmt.Fprintln(out, "contentType=application/vnd.sdn.flatbuffers.stream")
+	fmt.Fprintf(out, "streamBytes=%d\n", len(streamBytes))
+	fmt.Fprintf(out, "streamFrames=%d\n", len(frames))
 	return nil
 }
 
@@ -270,19 +315,4 @@ func runChannelsMonitor(cmd *cobra.Command, channelID string) error {
 	fmt.Fprintln(out, "encryptionState=unknown")
 	fmt.Fprintln(out, "lastVerifiedUpdate=")
 	return nil
-}
-
-func failClosedChannelCommand(use, short string) *cobra.Command {
-	return &cobra.Command{
-		Use:   use,
-		Short: short,
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			parsed, err := channels.ParseChannelID(args[0])
-			if err != nil {
-				return err
-			}
-			return fmt.Errorf("%s requires verified channel API and grant support before changing %s", cmd.Name(), parsed.ChannelID)
-		},
-	}
 }
