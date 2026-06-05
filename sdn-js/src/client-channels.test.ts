@@ -97,29 +97,34 @@ describe('SDNClient channel API', () => {
   });
 
   it('passes private grant context through channel requests', async () => {
-    const requests: Array<{ url: string; encryptedStream: string }> = [];
+    const requests: Array<{ url: string; encryptedStream: string; encryptedStreamHeader: string }> = [];
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
       requests.push({
         url: String(input),
         encryptedStream: String((init?.headers as Record<string, string> | undefined)?.['X-SDN-Encrypted-Stream'] ?? ''),
+        encryptedStreamHeader: String((init?.headers as Record<string, string> | undefined)?.['X-SDN-Encrypted-Stream-Header'] ?? ''),
       });
       return jsonResponse({ ok: true });
     });
 
     const client = SDNClient.fromUrl('https://sdn.spaceaware.io');
+    const streamHeader = '{"algorithm":"x25519","context":"spaceaware-OMM","ephemeral_public_key":"pub","nonce_start":"nonce"}';
     const access = { subject: 'peer-alpha', grantId: 'grant-1', visibility: 'private-listed' };
     await client.channels.list({ standardCode: 'OMM', ...access });
     await client.channels.get('spaceaware-OMM', access);
     await client.channels.subscribe('spaceaware-OMM', access);
     await client.channels.openStream('spaceaware-OMM', access);
-    await client.channels.publish('spaceaware-OMM', new Uint8Array([1, 2, 3]), access);
+    await client.channels.publish('spaceaware-OMM', new Uint8Array([1, 2, 3]), {
+      ...access,
+      encryptedStreamHeader: streamHeader,
+    });
 
     expect(requests).toEqual([
-      { url: 'https://sdn.spaceaware.io/api/v1/channels?standardCode=OMM&visibility=private-listed&subject=peer-alpha&grantId=grant-1', encryptedStream: '' },
-      { url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM?subject=peer-alpha&grantId=grant-1&visibility=private-listed', encryptedStream: '' },
-      { url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/subscribe?subject=peer-alpha&grantId=grant-1&visibility=private-listed', encryptedStream: '' },
-      { url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/stream?subject=peer-alpha&grantId=grant-1&visibility=private-listed', encryptedStream: '' },
-      { url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/publish?subject=peer-alpha&grantId=grant-1&visibility=private-listed', encryptedStream: 'true' },
+      { url: 'https://sdn.spaceaware.io/api/v1/channels?standardCode=OMM&visibility=private-listed&subject=peer-alpha&grantId=grant-1', encryptedStream: '', encryptedStreamHeader: '' },
+      { url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM?subject=peer-alpha&grantId=grant-1&visibility=private-listed', encryptedStream: '', encryptedStreamHeader: '' },
+      { url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/subscribe?subject=peer-alpha&grantId=grant-1&visibility=private-listed', encryptedStream: '', encryptedStreamHeader: '' },
+      { url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/stream?subject=peer-alpha&grantId=grant-1&visibility=private-listed', encryptedStream: '', encryptedStreamHeader: '' },
+      { url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/publish?subject=peer-alpha&grantId=grant-1&visibility=private-listed', encryptedStream: 'true', encryptedStreamHeader: streamHeader },
     ]);
   });
 
