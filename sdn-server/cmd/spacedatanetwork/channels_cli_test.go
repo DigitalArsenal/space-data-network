@@ -92,6 +92,71 @@ func TestChannelsListUsesLocalAPI(t *testing.T) {
 	}
 }
 
+func TestChannelsListPassesPrivateGrantContextToLocalAPI(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/channels" {
+			t.Fatalf("unexpected list request %s %s", r.Method, r.URL.String())
+		}
+		query := r.URL.Query()
+		if got := query.Get("standardCode"); got != "OMM" {
+			t.Fatalf("list standardCode query = %q", got)
+		}
+		if got := query.Get("visibility"); got != "private-listed" {
+			t.Fatalf("list visibility query = %q", got)
+		}
+		if got := query.Get("subject"); got != "peer-alpha" {
+			t.Fatalf("list subject query = %q", got)
+		}
+		if got := query.Get("grantId"); got != "grant-123" {
+			t.Fatalf("list grantId query = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"count":1,
+			"results":[{
+				"channelId":"spaceaware-OMM",
+				"sourceId":"spaceaware",
+				"standardCode":"OMM",
+				"visibility":"private-listed",
+				"grantState":"verified",
+				"encryptionState":"encrypted"
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"list",
+		"--standard", "OMM",
+		"--visibility", "private-listed",
+		"--subject", "peer-alpha",
+		"--grant-id", "grant-123",
+		"--api-url", server.URL,
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels list failed: %v", err)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"channelId=spaceaware-OMM",
+		"standardCode=OMM",
+		"visibility=private-listed",
+		"grantState=verified",
+		"encryptionState=encrypted",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("channels list output missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestChannelsShowParsesHyphenatedSource(t *testing.T) {
 	t.Parallel()
 

@@ -19,6 +19,9 @@ import (
 
 type channelsListOptions struct {
 	StandardCode string
+	Visibility   string
+	Subject      string
+	GrantID      string
 	APIURL       string
 }
 
@@ -87,6 +90,9 @@ func newChannelsCommand() *cobra.Command {
 		},
 	}
 	listCmd.Flags().StringVar(&listOptions.StandardCode, "standard", "", "three-letter Space Data Standards record code")
+	listCmd.Flags().StringVar(&listOptions.Visibility, "visibility", "", "channel visibility filter")
+	listCmd.Flags().StringVar(&listOptions.Subject, "subject", "", "subscriber EPM subject for private channel access")
+	listCmd.Flags().StringVar(&listOptions.GrantID, "grant-id", "", "private channel grant ID")
 	listCmd.Flags().StringVar(&listOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 
 	cmd.AddCommand(listCmd)
@@ -220,7 +226,7 @@ func runChannelsList(cmd *cobra.Command, options channelsListOptions) error {
 }
 
 func runChannelsListFromAPI(cmd *cobra.Command, options channelsListOptions, apiURL string) error {
-	listURL, err := channelListURL(apiURL, options.StandardCode)
+	listURL, err := channelListURL(apiURL, options)
 	if err != nil {
 		return err
 	}
@@ -804,7 +810,7 @@ func channelMonitorURL(apiURL string, channelID string) (string, error) {
 	return channelAPIURL(apiURL, channelID, "/monitor")
 }
 
-func channelListURL(apiURL string, standardCode string) (string, error) {
+func channelListURL(apiURL string, options channelsListOptions) (string, error) {
 	base, err := url.Parse(strings.TrimRight(apiURL, "/"))
 	if err != nil {
 		return "", fmt.Errorf("invalid api-url: %w", err)
@@ -814,12 +820,22 @@ func channelListURL(apiURL string, standardCode string) (string, error) {
 	}
 	base.Path = strings.TrimRight(base.Path, "/") + "/api/v1/channels"
 	query := base.Query()
+	standardCode := options.StandardCode
 	if strings.TrimSpace(standardCode) != "" {
 		code, err := channels.AssertStandardCode(standardCode)
 		if err != nil {
 			return "", err
 		}
 		query.Set("standardCode", code)
+	}
+	if visibility := strings.TrimSpace(options.Visibility); visibility != "" {
+		query.Set("visibility", visibility)
+	}
+	if subject := strings.TrimSpace(options.Subject); subject != "" {
+		query.Set("subject", subject)
+	}
+	if grantID := strings.TrimSpace(options.GrantID); grantID != "" {
+		query.Set("grantId", grantID)
 	}
 	base.RawQuery = query.Encode()
 	base.Fragment = ""
