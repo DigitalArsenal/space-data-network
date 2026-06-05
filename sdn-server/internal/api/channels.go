@@ -352,7 +352,7 @@ func (h *ChannelHandler) handleChannel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		h.requireGrantUnavailable(w, r, parsed, channels.BoundaryLocalCacheRead, "private channel local cache read is unavailable")
+		h.readLocalCache(w, r, parsed)
 	case "grants":
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -840,6 +840,35 @@ func (h *ChannelHandler) readStreamBytes(w http.ResponseWriter, r *http.Request,
 	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end-1, len(snapshot.Bytes)))
 	w.WriteHeader(http.StatusPartialContent)
 	_, _ = w.Write(snapshot.Bytes[start:end])
+}
+
+func (h *ChannelHandler) readLocalCache(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
+	if h.requiresLocalCacheReadGrant(r, parsed) {
+		decision := h.authorizeGrant(r, parsed, channels.BoundaryLocalCacheRead)
+		if !decision.Allowed {
+			h.writeAccessDenied(w, decision)
+			return
+		}
+	}
+	snapshot, ok := h.streams.Get(parsed)
+	if !ok {
+		writeError(w, http.StatusNotFound, "verified native FlatBuffer stream unavailable for channel")
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(snapshot.Bytes)
+}
+
+func (h *ChannelHandler) requiresLocalCacheReadGrant(r *http.Request, parsed channels.ChannelID) bool {
+	if h.requiresPrivateGrant(r, parsed) {
+		return true
+	}
+	metadata, verified := h.metadata.Get(parsed)
+	if !verified {
+		return true
+	}
+	return isPrivateChannelMetadata(metadata)
 }
 
 func parseByteRangeQuery(r *http.Request, total int) (int, int, error) {

@@ -747,7 +747,7 @@ func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 	}
 }
 
-func TestChannelHandlerProtectedPrivateOperationsFailClosedAfterGrantUntilImplemented(t *testing.T) {
+func TestChannelHandlerProtectedPrivateOperationsFailClosedAfterGrant(t *testing.T) {
 	t.Parallel()
 
 	signing := newChannelSigningFixture(t)
@@ -778,7 +778,6 @@ func TestChannelHandlerProtectedPrivateOperationsFailClosedAfterGrantUntilImplem
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/key-unwrap", "stream key unwrap is unavailable"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/shard-import", "shard import is unavailable"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/module-feed", "module feed delivery is unavailable"},
-		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/cache", "local cache read is unavailable"},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path+"?subject=peer-alpha&grantId="+grantID, nil)
 		rec := httptest.NewRecorder()
@@ -792,6 +791,19 @@ func TestChannelHandlerProtectedPrivateOperationsFailClosedAfterGrantUntilImplem
 		if strings.Contains(rec.Body.String(), "channel-private-key") || strings.Contains(rec.Body.String(), "wrapped") {
 			t.Fatalf("%s %s leaked protected key material: %s", tc.method, tc.path, rec.Body.String())
 		}
+	}
+
+	cacheReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/cache?subject=peer-alpha&grantId="+grantID, nil)
+	cacheRec := httptest.NewRecorder()
+	mux.ServeHTTP(cacheRec, cacheReq)
+	if cacheRec.Code != http.StatusNotFound {
+		t.Fatalf("GET /cache status = %d, want %d body=%s", cacheRec.Code, http.StatusNotFound, cacheRec.Body.String())
+	}
+	if !strings.Contains(cacheRec.Body.String(), "verified native FlatBuffer stream unavailable") {
+		t.Fatalf("GET /cache response missing unavailable stream message: %s", cacheRec.Body.String())
+	}
+	if strings.Contains(cacheRec.Body.String(), "channel-private-key") || strings.Contains(cacheRec.Body.String(), "wrapped") {
+		t.Fatalf("GET /cache leaked protected key material: %s", cacheRec.Body.String())
 	}
 }
 
@@ -1324,6 +1336,61 @@ func TestChannelHandlerPrivateEncryptedStreamDecryptsBeforeImportAndCache(t *tes
 	}
 	if !bytes.Equal(rangeRec.Body.Bytes(), decryptedStream[1:6]) {
 		t.Fatalf("private byte range body = %v, want %v", rangeRec.Body.Bytes(), decryptedStream[1:6])
+	}
+}
+
+func TestChannelHandlerPrivateLocalCacheReadReturnsVerifiedDecryptedStream(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	store := newChannelTestStore(t)
+	decryptedStream := bytes.Join([][]byte{
+		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
+		nativeAPIFrame("OMM1", []byte{4, 5, 6, 7}),
+	}, nil)
+	handler := NewChannelHandlerWithOptions(store, ChannelHandlerOptions{
+		EncryptedStreams: &channelTestEncryptedStreamDecryptor{plaintext: decryptedStream},
+	})
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
+		strings.NewReader(`{"to":"peer-alpha","scopes":["publish","local_cache_read"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader([]byte("ciphertext")))
+	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.encrypted-stream")
+	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+	setEncryptedChannelStreamHeader(publishReq, "spaceaware-OMM")
+	publishRec := httptest.NewRecorder()
+	mux.ServeHTTP(publishRec, publishReq)
+	if publishRec.Code != http.StatusAccepted {
+		t.Fatalf("private encrypted stream publish status = %d body=%s", publishRec.Code, publishRec.Body.String())
+	}
+
+	cacheReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/cache?subject=peer-alpha&grantId="+grantID, nil)
+	cacheRec := httptest.NewRecorder()
+	mux.ServeHTTP(cacheRec, cacheReq)
+	if cacheRec.Code != http.StatusOK {
+		t.Fatalf("private local cache read status = %d, want %d body=%s", cacheRec.Code, http.StatusOK, cacheRec.Body.String())
+	}
+	if got := cacheRec.Header().Get("Content-Type"); got != "application/vnd.sdn.flatbuffers.stream" {
+		t.Fatalf("private local cache content type = %q", got)
+	}
+	if !bytes.Equal(cacheRec.Body.Bytes(), decryptedStream) {
+		t.Fatal("private local cache did not return decrypted native stream bytes")
 	}
 }
 
