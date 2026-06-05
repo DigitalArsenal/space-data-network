@@ -10,6 +10,8 @@
   let grantStateFilter = 'all';
   let grantSubject = '';
   let grantId = '';
+  let grantRecipient = '';
+  let grantScopes = 'list_private subscribe stream_open byte_range_read';
   let channels: ChannelSummary[] = [];
   let selectedChannelId = '';
   let selectedChannel: ChannelSummary | null = null;
@@ -82,6 +84,15 @@
     await loadChannel(selectedChannelId);
   }
 
+  async function issueGrantSelected(): Promise<void> {
+    if (!backend || !selectedChannelId || !grantRecipient.trim()) return;
+    const scopes = parseGrantScopes(grantScopes);
+    const result = await backend.channels.issueGrant(selectedChannelId, { to: grantRecipient.trim(), scopes }, channelAccessOptions);
+    const issuedGrantId = typeof result.data?.grantId === 'string' ? result.data.grantId : '';
+    status = result.ok ? `Grant issued${issuedGrantId ? `: ${issuedGrantId}` : ''}` : result.capability.reason ?? 'Grant unavailable';
+    await loadChannel(selectedChannelId);
+  }
+
   function channelMatchesFilters(channel: ChannelSummary): boolean {
     const sourceQuery = sourceFilter.trim().toLowerCase();
     if (sourceQuery && !channel.sourceId.toLowerCase().includes(sourceQuery) && !channel.channelId.toLowerCase().includes(sourceQuery)) {
@@ -102,6 +113,13 @@
       ...(subject.trim() ? { subject: subject.trim() } : {}),
       ...(accessGrantId.trim() ? { grantId: accessGrantId.trim() } : {}),
     };
+  }
+
+  function parseGrantScopes(value: string): string[] {
+    return value
+      .split(/[,\s]+/)
+      .map((scope) => scope.trim())
+      .filter((scope) => scope.length > 0);
   }
 
   function formatNumber(value: number | null | undefined): string {
@@ -166,9 +184,18 @@
       <span>Grant ID</span>
       <input bind:value={grantId} />
     </label>
+    <label>
+      <span>Issue grant to</span>
+      <input bind:value={grantRecipient} />
+    </label>
+    <label>
+      <span>Grant scopes</span>
+      <input bind:value={grantScopes} />
+    </label>
     <button class="sdn-button" type="button" on:click={refreshChannels}>Refresh</button>
     <button class="sdn-button sdn-button-muted" type="button" on:click={subscribeSelected} disabled={!selectedChannelId}>Subscribe</button>
     <button class="sdn-button sdn-button-muted" type="button" on:click={unsubscribeSelected} disabled={!selectedChannelId}>Unsubscribe</button>
+    <button class="sdn-button sdn-button-muted" type="button" on:click={issueGrantSelected} disabled={!selectedChannelId || !grantRecipient.trim()}>Issue Grant</button>
     <span>{status}</span>
   </div>
 
