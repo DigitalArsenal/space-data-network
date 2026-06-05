@@ -82,6 +82,16 @@ type channelPNMOptions struct {
 	InsecureSkipTLSVerify bool
 }
 
+type channelKeyUnwrapOptions struct {
+	Subject               string
+	GrantID               string
+	Visibility            string
+	ContentKeyID          string
+	RecipientKeyID        string
+	APIURL                string
+	InsecureSkipTLSVerify bool
+}
+
 type channelMonitorOptions struct {
 	Subject               string
 	GrantID               string
@@ -227,6 +237,23 @@ func newChannelsCommand() *cobra.Command {
 	pnmCmd.Flags().StringVar(&pnmOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	addChannelInsecureTLSFlag(pnmCmd, &pnmOptions.InsecureSkipTLSVerify)
 	cmd.AddCommand(pnmCmd)
+	keyUnwrapOptions := channelKeyUnwrapOptions{}
+	keyUnwrapCmd := &cobra.Command{
+		Use:   "key-unwrap <channelId>",
+		Short: "Request the requester-specific private channel key envelope",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runChannelsKeyUnwrap(cmd, keyUnwrapOptions, args[0])
+		},
+	}
+	keyUnwrapCmd.Flags().StringVar(&keyUnwrapOptions.Subject, "subject", "", "subscriber EPM subject for private channel access")
+	keyUnwrapCmd.Flags().StringVar(&keyUnwrapOptions.GrantID, "grant-id", "", "private channel grant ID")
+	keyUnwrapCmd.Flags().StringVar(&keyUnwrapOptions.Visibility, "visibility", "", "channel visibility for private access checks")
+	keyUnwrapCmd.Flags().StringVar(&keyUnwrapOptions.ContentKeyID, "content-key-id", "", "verified channel content key ID")
+	keyUnwrapCmd.Flags().StringVar(&keyUnwrapOptions.RecipientKeyID, "recipient-key-id", "", "recipient encryption key ID")
+	keyUnwrapCmd.Flags().StringVar(&keyUnwrapOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
+	addChannelInsecureTLSFlag(keyUnwrapCmd, &keyUnwrapOptions.InsecureSkipTLSVerify)
+	cmd.AddCommand(keyUnwrapCmd)
 	grantsCmd := &cobra.Command{
 		Use:   "grants",
 		Short: "Manage private channel grants",
@@ -592,6 +619,78 @@ func readChannelsPNMFromAPI(cmd *cobra.Command, parsed channels.ChannelID, optio
 		return nil, "", fmt.Errorf("read verified channel PNM: %w", err)
 	}
 	return pnmBytes, resp.Header.Get("Content-Type"), nil
+}
+
+func runChannelsKeyUnwrap(cmd *cobra.Command, options channelKeyUnwrapOptions, channelID string) error {
+	parsed, err := channels.ParseChannelID(channelID)
+	if err != nil {
+		return err
+	}
+	apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL")))
+	if apiURL == "" {
+		return fmt.Errorf("--api-url or SDN_API_URL is required to request a private channel key envelope")
+	}
+	if strings.TrimSpace(options.RecipientKeyID) == "" {
+		return fmt.Errorf("--recipient-key-id is required")
+	}
+	payload, err := requestChannelsKeyEnvelopeFromAPI(cmd, parsed, options, apiURL)
+	if err != nil {
+		return err
+	}
+	if _, ok := payload["channelId"]; !ok {
+		payload["channelId"] = parsed.ChannelID
+	}
+	if _, ok := payload["sourceId"]; !ok {
+		payload["sourceId"] = parsed.SourceID
+	}
+	if _, ok := payload["standardCode"]; !ok {
+		payload["standardCode"] = parsed.StandardCode
+	}
+	printChannelKeyEnvelopePayload(cmd.OutOrStdout(), payload)
+	return nil
+}
+
+func requestChannelsKeyEnvelopeFromAPI(cmd *cobra.Command, parsed channels.ChannelID, options channelKeyUnwrapOptions, apiURL string) (map[string]interface{}, error) {
+	keyUnwrapURL, err := channelKeyUnwrapURL(apiURL, parsed.ChannelID, channelAccessQuery{
+		Subject:    options.Subject,
+		GrantID:    options.GrantID,
+		Visibility: options.Visibility,
+	})
+	if err != nil {
+		return nil, err
+	}
+	requestPayload := map[string]string{
+		"recipientKeyId": strings.TrimSpace(options.RecipientKeyID),
+	}
+	if contentKeyID := strings.TrimSpace(options.ContentKeyID); contentKeyID != "" {
+		requestPayload["contentKeyId"] = contentKeyID
+	}
+	body, err := json.Marshal(requestPayload)
+	if err != nil {
+		return nil, err
+	}
+	client, err := newChannelAPIClient(apiURL, 10*time.Second, options.InsecureSkipTLSVerify)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, keyUnwrapURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request private channel key envelope: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("request private channel key envelope: %s", resp.Status)
+	}
+	var payload map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("decode private channel key envelope: %w", err)
+	}
+	return payload, nil
 }
 
 func printChannelListRow(out interface {
@@ -1000,6 +1099,10 @@ func channelPNMURL(apiURL string, channelID string, access channelAccessQuery) (
 	return channelAPIURLWithQuery(apiURL, channelID, "/pnm", access.queryValues())
 }
 
+func channelKeyUnwrapURL(apiURL string, channelID string, access channelAccessQuery) (string, error) {
+	return channelAPIURLWithQuery(apiURL, channelID, "/key-unwrap", access.queryValues())
+}
+
 func (access channelAccessQuery) queryValues() url.Values {
 	query := url.Values{}
 	if subject := strings.TrimSpace(access.Subject); subject != "" {
@@ -1116,6 +1219,28 @@ func printChannelPNMPayload(out interface {
 		"contentType",
 		"pnmBytes",
 		"out",
+	} {
+		if value, ok := payload[key]; ok {
+			fmt.Fprintf(out, "%s=%v\n", key, monitorValue(value))
+		}
+	}
+}
+
+func printChannelKeyEnvelopePayload(out interface {
+	Write([]byte) (int, error)
+}, payload map[string]interface{}) {
+	for _, key := range []string{
+		"channelId",
+		"sourceId",
+		"standardCode",
+		"feedUuid",
+		"grantState",
+		"contentKeyId",
+		"recipientKeyId",
+		"keyEpoch",
+		"algorithm",
+		"envelopeCid",
+		"wrappedKeyEnvelopeBase64",
 	} {
 		if value, ok := payload[key]; ok {
 			fmt.Fprintf(out, "%s=%v\n", key, monitorValue(value))

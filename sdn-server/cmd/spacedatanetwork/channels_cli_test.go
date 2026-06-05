@@ -1038,6 +1038,86 @@ func TestChannelsPNMPassesPrivateGrantContextToLocalAPI(t *testing.T) {
 	}
 }
 
+func TestChannelsKeyUnwrapRequestsWrappedEnvelopeFromLocalAPI(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/channels/spaceaware-OMM/key-unwrap" {
+			t.Fatalf("unexpected key unwrap request %s %s", r.Method, r.URL.String())
+		}
+		query := r.URL.Query()
+		if got := query.Get("subject"); got != "epm-subject-alpha" {
+			t.Fatalf("key unwrap subject query = %q", got)
+		}
+		if got := query.Get("grantId"); got != "grant-123" {
+			t.Fatalf("key unwrap grantId query = %q", got)
+		}
+		if got := query.Get("visibility"); got != "private-listed" {
+			t.Fatalf("key unwrap visibility query = %q", got)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			t.Fatalf("key unwrap Content-Type = %q", got)
+		}
+		var request map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode key unwrap request: %v", err)
+		}
+		if request["recipientKeyId"] != "peer-alpha-x25519" || request["contentKeyId"] != "channel-private-key" {
+			t.Fatalf("unexpected key unwrap body: %#v", request)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"channelId":"spaceaware-OMM",
+			"standardCode":"OMM",
+			"grantState":"verified",
+			"contentKeyId":"channel-private-key",
+			"recipientKeyId":"peer-alpha-x25519",
+			"keyEpoch":"epoch-2026-06-05T00",
+			"algorithm":"DigitalArsenal-FlatBuffers-X25519-AES256GCM",
+			"envelopeCid":"bafywrappedpeeralpha",
+			"wrappedKeyEnvelopeBase64":"d3JhcHBlZA=="
+		}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"key-unwrap", "spaceaware-OMM",
+		"--subject", "epm-subject-alpha",
+		"--grant-id", "grant-123",
+		"--visibility", "private-listed",
+		"--content-key-id", "channel-private-key",
+		"--recipient-key-id", "peer-alpha-x25519",
+		"--api-url", server.URL,
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels key-unwrap failed: %v", err)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"channelId=spaceaware-OMM",
+		"standardCode=OMM",
+		"grantState=verified",
+		"contentKeyId=channel-private-key",
+		"recipientKeyId=peer-alpha-x25519",
+		"keyEpoch=epoch-2026-06-05T00",
+		"algorithm=DigitalArsenal-FlatBuffers-X25519-AES256GCM",
+		"envelopeCid=bafywrappedpeeralpha",
+		"wrappedKeyEnvelopeBase64=d3JhcHBlZA==",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("channels key-unwrap output missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "plaintext") {
+		t.Fatalf("channels key-unwrap output referenced plaintext key material:\n%s", body)
+	}
+}
+
 func TestChannelsSubscribeAndUnsubscribePublicChannel(t *testing.T) {
 	t.Parallel()
 
