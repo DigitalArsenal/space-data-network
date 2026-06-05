@@ -31,6 +31,8 @@ type channelShowOptions struct {
 
 type channelSubscriptionOptions struct {
 	Visibility string
+	Subject    string
+	GrantID    string
 	APIURL     string
 }
 
@@ -42,8 +44,11 @@ type channelGrantIssueOptions struct {
 }
 
 type channelPublishOptions struct {
-	From   string
-	APIURL string
+	From       string
+	Subject    string
+	GrantID    string
+	Visibility string
+	APIURL     string
 }
 
 type channelStreamOptions struct {
@@ -131,6 +136,8 @@ func newChannelsCommand() *cobra.Command {
 		},
 	}
 	subscribeCmd.Flags().StringVar(&subscribeOptions.Visibility, "visibility", "public", "channel visibility")
+	subscribeCmd.Flags().StringVar(&subscribeOptions.Subject, "subject", "", "subscriber EPM subject for private channel access")
+	subscribeCmd.Flags().StringVar(&subscribeOptions.GrantID, "grant-id", "", "private channel grant ID")
 	subscribeCmd.Flags().StringVar(&subscribeOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	cmd.AddCommand(subscribeCmd)
 	unsubscribeCmd := &cobra.Command{
@@ -142,6 +149,8 @@ func newChannelsCommand() *cobra.Command {
 		},
 	}
 	unsubscribeCmd.Flags().StringVar(&unsubscribeOptions.Visibility, "visibility", "public", "channel visibility")
+	unsubscribeCmd.Flags().StringVar(&unsubscribeOptions.Subject, "subject", "", "subscriber EPM subject for private channel access")
+	unsubscribeCmd.Flags().StringVar(&unsubscribeOptions.GrantID, "grant-id", "", "private channel grant ID")
 	unsubscribeCmd.Flags().StringVar(&unsubscribeOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	cmd.AddCommand(unsubscribeCmd)
 	publishOptions := channelPublishOptions{}
@@ -154,6 +163,9 @@ func newChannelsCommand() *cobra.Command {
 		},
 	}
 	publishCmd.Flags().StringVar(&publishOptions.From, "from", "", "native FlatBuffers stream file to publish")
+	publishCmd.Flags().StringVar(&publishOptions.Subject, "subject", "", "subscriber EPM subject for private channel access")
+	publishCmd.Flags().StringVar(&publishOptions.GrantID, "grant-id", "", "private channel grant ID")
+	publishCmd.Flags().StringVar(&publishOptions.Visibility, "visibility", "", "channel visibility for private access checks")
 	publishCmd.Flags().StringVar(&publishOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	cmd.AddCommand(publishCmd)
 	streamOptions := channelStreamOptions{}
@@ -309,7 +321,11 @@ func runChannelsPublish(cmd *cobra.Command, options channelPublishOptions, chann
 		return fmt.Errorf("invalid native FlatBuffers stream: %w", err)
 	}
 	if apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL"))); apiURL != "" {
-		return runChannelsPublishToAPI(cmd, parsed, apiURL, streamBytes)
+		return runChannelsPublishToAPI(cmd, parsed, apiURL, streamBytes, channelAccessQuery{
+			Subject:    options.Subject,
+			GrantID:    options.GrantID,
+			Visibility: options.Visibility,
+		})
 	}
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "channelId=%s\n", parsed.ChannelID)
@@ -324,8 +340,8 @@ func runChannelsPublish(cmd *cobra.Command, options channelPublishOptions, chann
 	return nil
 }
 
-func runChannelsPublishToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, streamBytes []byte) error {
-	publishURL, err := channelPublishURL(apiURL, parsed.ChannelID)
+func runChannelsPublishToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, streamBytes []byte, access channelAccessQuery) error {
+	publishURL, err := channelPublishURL(apiURL, parsed.ChannelID, access)
 	if err != nil {
 		return err
 	}
@@ -513,7 +529,11 @@ func runChannelsSubscribe(cmd *cobra.Command, registry *channels.SubscriptionReg
 		return err
 	}
 	if apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL"))); apiURL != "" {
-		return runChannelsSubscriptionToAPI(cmd, parsed, apiURL, "subscribe")
+		return runChannelsSubscriptionToAPI(cmd, parsed, apiURL, "subscribe", channelAccessQuery{
+			Subject:    options.Subject,
+			GrantID:    options.GrantID,
+			Visibility: options.Visibility,
+		})
 	}
 	if strings.EqualFold(strings.TrimSpace(options.Visibility), "private") {
 		return fmt.Errorf("verified channel grant required for %s", parsed.ChannelID)
@@ -527,7 +547,11 @@ func runChannelsUnsubscribe(cmd *cobra.Command, registry *channels.SubscriptionR
 		return err
 	}
 	if apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL"))); apiURL != "" {
-		return runChannelsSubscriptionToAPI(cmd, parsed, apiURL, "unsubscribe")
+		return runChannelsSubscriptionToAPI(cmd, parsed, apiURL, "unsubscribe", channelAccessQuery{
+			Subject:    options.Subject,
+			GrantID:    options.GrantID,
+			Visibility: options.Visibility,
+		})
 	}
 	if strings.EqualFold(strings.TrimSpace(options.Visibility), "private") {
 		return fmt.Errorf("verified channel grant required for %s", parsed.ChannelID)
@@ -535,8 +559,8 @@ func runChannelsUnsubscribe(cmd *cobra.Command, registry *channels.SubscriptionR
 	return printChannelSubscriptionState(cmd, registry.Unsubscribe(parsed))
 }
 
-func runChannelsSubscriptionToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, action string) error {
-	subscriptionURL, err := channelSubscriptionURL(apiURL, parsed.ChannelID, action)
+func runChannelsSubscriptionToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, action string, access channelAccessQuery) error {
+	subscriptionURL, err := channelSubscriptionURL(apiURL, parsed.ChannelID, action, access)
 	if err != nil {
 		return err
 	}
@@ -856,8 +880,10 @@ func channelDetailURL(apiURL string, channelID string) (string, error) {
 	return channelAPIURL(apiURL, channelID, "")
 }
 
-func channelPublishURL(apiURL string, channelID string) (string, error) {
-	return channelAPIURL(apiURL, channelID, "/publish?stream=1")
+func channelPublishURL(apiURL string, channelID string, access channelAccessQuery) (string, error) {
+	query := access.queryValues()
+	query.Set("stream", "1")
+	return channelAPIURLWithQuery(apiURL, channelID, "/publish", query)
 }
 
 type channelAccessQuery struct {
@@ -888,13 +914,13 @@ func (access channelAccessQuery) queryValues() url.Values {
 	return query
 }
 
-func channelSubscriptionURL(apiURL string, channelID string, action string) (string, error) {
+func channelSubscriptionURL(apiURL string, channelID string, action string, access channelAccessQuery) (string, error) {
 	switch action {
 	case "subscribe", "unsubscribe":
 	default:
 		return "", fmt.Errorf("invalid channel subscription action %q", action)
 	}
-	return channelAPIURL(apiURL, channelID, "/"+action)
+	return channelAPIURLWithQuery(apiURL, channelID, "/"+action, access.queryValues())
 }
 
 func channelGrantURL(apiURL string, channelID string) (string, error) {
@@ -943,6 +969,8 @@ func printChannelPublishPayload(out interface {
 		"throughputBytesPerSecond",
 		"wireSpeedUtilization",
 		"importedRows",
+		"grantState",
+		"encryptionState",
 	} {
 		if value, ok := payload[key]; ok {
 			fmt.Fprintf(out, "%s=%v\n", key, monitorValue(value))

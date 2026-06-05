@@ -457,6 +457,76 @@ func TestChannelsPublishSendsNativeStreamToLocalAPI(t *testing.T) {
 	}
 }
 
+func TestChannelsPublishPassesPrivateGrantContextToLocalAPI(t *testing.T) {
+	t.Parallel()
+
+	streamFile := filepath.Join(t.TempDir(), "private-stream.bin")
+	streamBytes := channelCLITestNativeFrame("OMM1", []byte{1, 2, 3})
+	if err := os.WriteFile(streamFile, streamBytes, 0o600); err != nil {
+		t.Fatalf("write stream fixture: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/channels/spaceaware-OMM/publish" {
+			t.Fatalf("unexpected publish request %s %s", r.Method, r.URL.String())
+		}
+		query := r.URL.Query()
+		if query.Get("stream") != "1" || query.Get("subject") != "peer-alpha" || query.Get("grantId") != "grant-1" || query.Get("visibility") != "private-listed" {
+			t.Fatalf("private publish query = %s", r.URL.RawQuery)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/vnd.sdn.flatbuffers.stream" {
+			t.Fatalf("publish Content-Type = %q", got)
+		}
+		body := new(bytes.Buffer)
+		_, _ = body.ReadFrom(r.Body)
+		if !bytes.Equal(body.Bytes(), streamBytes) {
+			t.Fatalf("publish body mismatch: %v", body.Bytes())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"channelId":"spaceaware-OMM",
+			"sourceId":"spaceaware",
+			"standardCode":"OMM",
+			"contentType":"application/vnd.sdn.flatbuffers.stream",
+			"streamBytes":11,
+			"streamFrames":1,
+			"grantState":"verified",
+			"encryptionState":"encrypted"
+		}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"publish", "spaceaware-OMM",
+		"--from", streamFile,
+		"--api-url", server.URL,
+		"--subject", "peer-alpha",
+		"--grant-id", "grant-1",
+		"--visibility", "private-listed",
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels publish failed: %v", err)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"channelId=spaceaware-OMM",
+		"standardCode=OMM",
+		"contentType=application/vnd.sdn.flatbuffers.stream",
+		"streamFrames=1",
+		"grantState=verified",
+		"encryptionState=encrypted",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("channels publish output missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestChannelsStreamReadsNativeStreamFromLocalAPI(t *testing.T) {
 	t.Parallel()
 
@@ -748,6 +818,57 @@ func TestChannelsSubscribeUsesLocalAPI(t *testing.T) {
 	}
 }
 
+func TestChannelsSubscribePassesPrivateGrantContextToLocalAPI(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/channels/spaceaware-OMM/subscribe" {
+			t.Fatalf("unexpected subscribe request %s %s", r.Method, r.URL.String())
+		}
+		query := r.URL.Query()
+		if query.Get("subject") != "peer-alpha" || query.Get("grantId") != "grant-1" || query.Get("visibility") != "private-listed" {
+			t.Fatalf("private subscribe query = %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"channelId":"spaceaware-OMM",
+			"sourceId":"spaceaware",
+			"standardCode":"OMM",
+			"subscribed":true,
+			"visibility":"private-listed",
+			"grantState":"verified",
+			"encryptionState":"encrypted"
+		}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"subscribe", "spaceaware-OMM",
+		"--api-url", server.URL,
+		"--subject", "peer-alpha",
+		"--grant-id", "grant-1",
+		"--visibility", "private-listed",
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels subscribe failed: %v", err)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"visibility=private-listed",
+		"grantState=verified",
+		"encryptionState=encrypted",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("channels subscribe output missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestChannelsUnsubscribeUsesLocalAPI(t *testing.T) {
 	t.Parallel()
 
@@ -786,6 +907,57 @@ func TestChannelsUnsubscribeUsesLocalAPI(t *testing.T) {
 		"visibility=public",
 		"grantState=not-required",
 		"encryptionState=none",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("channels unsubscribe output missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestChannelsUnsubscribePassesPrivateGrantContextToLocalAPI(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/channels/spaceaware-OMM/unsubscribe" {
+			t.Fatalf("unexpected unsubscribe request %s %s", r.Method, r.URL.String())
+		}
+		query := r.URL.Query()
+		if query.Get("subject") != "peer-alpha" || query.Get("grantId") != "grant-1" || query.Get("visibility") != "private-hidden" {
+			t.Fatalf("private unsubscribe query = %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"channelId":"spaceaware-OMM",
+			"sourceId":"spaceaware",
+			"standardCode":"OMM",
+			"subscribed":false,
+			"visibility":"private-hidden",
+			"grantState":"verified",
+			"encryptionState":"encrypted"
+		}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"unsubscribe", "spaceaware-OMM",
+		"--api-url", server.URL,
+		"--subject", "peer-alpha",
+		"--grant-id", "grant-1",
+		"--visibility", "private-hidden",
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels unsubscribe failed: %v", err)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"visibility=private-hidden",
+		"grantState=verified",
+		"encryptionState=encrypted",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("channels unsubscribe output missing %q:\n%s", want, body)
