@@ -427,6 +427,46 @@ func TestChannelsMonitorReadsLocalAPI(t *testing.T) {
 	}
 }
 
+func TestChannelsMonitorSendsSessionTokenCookie(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/channels/spaceaware-OMM/monitor" {
+			t.Fatalf("unexpected monitor request %s %s", r.Method, r.URL.String())
+		}
+		if got := r.Header.Get("Accept"); got != "application/json" {
+			t.Fatalf("Accept = %q, want application/json", got)
+		}
+		cookie, err := r.Cookie("sdn_wallet_session")
+		if err != nil {
+			t.Fatalf("missing sdn_wallet_session cookie: %v", err)
+		}
+		if cookie.Value != "session-123" {
+			t.Fatalf("session cookie = %q, want session-123", cookie.Value)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"channelId":"spaceaware-OMM",
+			"sourceId":"spaceaware",
+			"standardCode":"OMM"
+		}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--session-token", "session-123", "monitor", "spaceaware-OMM", "--api-url", server.URL})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels monitor failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "channelId=spaceaware-OMM") {
+		t.Fatalf("channels monitor output missing channelId: %s", out.String())
+	}
+}
+
 func TestChannelsMonitorAllowsLoopbackSelfSignedTLS(t *testing.T) {
 	t.Parallel()
 

@@ -118,6 +118,7 @@ func newChannelsCommand() *cobra.Command {
 		Use:   "channels",
 		Short: "List, inspect, subscribe, and monitor SDN data channels",
 	}
+	cmd.PersistentFlags().String("session-token", "", "SDN wallet session token for auth-enabled APIs (default: SDN_SESSION_TOKEN)")
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List discoverable SDN channels by standardCode",
@@ -336,6 +337,7 @@ func runChannelsListFromAPI(cmd *cobra.Command, options channelsListOptions, api
 	if err != nil {
 		return err
 	}
+	prepareChannelAPIRequest(cmd, req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("list channels: %w", err)
@@ -477,6 +479,7 @@ func runChannelsPublishToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiU
 	if err != nil {
 		return err
 	}
+	prepareChannelAPIRequest(cmd, req)
 	req.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
 	if isPrivateChannelVisibility(access.Visibility) {
 		req.Header.Set("X-SDN-Encrypted-Stream", "true")
@@ -572,6 +575,7 @@ func readChannelsStreamFromAPI(cmd *cobra.Command, parsed channels.ChannelID, op
 	if err != nil {
 		return nil, "", err
 	}
+	prepareChannelAPIRequest(cmd, req)
 	req.Header.Set("Accept", "application/vnd.sdn.flatbuffers.stream")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -648,6 +652,7 @@ func readChannelsModuleFeedFromAPI(cmd *cobra.Command, parsed channels.ChannelID
 	if err != nil {
 		return nil, "", err
 	}
+	prepareChannelAPIRequest(cmd, req)
 	req.Header.Set("Accept", "application/vnd.sdn.flatbuffers.stream")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -719,6 +724,7 @@ func readChannelsPNMFromAPI(cmd *cobra.Command, parsed channels.ChannelID, optio
 	if err != nil {
 		return nil, "", err
 	}
+	prepareChannelAPIRequest(cmd, req)
 	req.Header.Set("Accept", "application/vnd.sdn.pnm")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -791,6 +797,7 @@ func requestChannelsKeyEnvelopeFromAPI(cmd *cobra.Command, parsed channels.Chann
 	if err != nil {
 		return nil, err
 	}
+	prepareChannelAPIRequest(cmd, req)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -862,6 +869,7 @@ func runChannelsSubscriptionToAPI(cmd *cobra.Command, parsed channels.ChannelID,
 	if err != nil {
 		return err
 	}
+	prepareChannelAPIRequest(cmd, req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("%s channel: %w", action, err)
@@ -965,6 +973,7 @@ func runChannelsGrantIssueToAPI(cmd *cobra.Command, parsed channels.ChannelID, a
 	if err != nil {
 		return err
 	}
+	prepareChannelAPIRequest(cmd, req)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -1050,6 +1059,7 @@ func runChannelsShowFromAPI(cmd *cobra.Command, parsed channels.ChannelID, apiUR
 	if err != nil {
 		return err
 	}
+	prepareChannelAPIRequest(cmd, req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("show channel: %w", err)
@@ -1127,6 +1137,7 @@ func runChannelsMonitorFromAPI(cmd *cobra.Command, parsed channels.ChannelID, ap
 	if err != nil {
 		return err
 	}
+	prepareChannelAPIRequest(cmd, req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("fetch channel monitor: %w", err)
@@ -1559,4 +1570,31 @@ func firstNonEmptyChannelOption(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func prepareChannelAPIRequest(cmd *cobra.Command, req *http.Request) {
+	if req.Header.Get("Accept") == "" {
+		req.Header.Set("Accept", "application/json")
+	}
+	sessionToken := channelAPISessionToken(cmd)
+	if sessionToken == "" {
+		return
+	}
+	req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: sessionToken})
+}
+
+func channelAPISessionToken(cmd *cobra.Command) string {
+	if cmd != nil {
+		if flag := cmd.Flags().Lookup("session-token"); flag != nil {
+			if value := strings.TrimSpace(flag.Value.String()); value != "" {
+				return value
+			}
+		}
+		if flag := cmd.InheritedFlags().Lookup("session-token"); flag != nil {
+			if value := strings.TrimSpace(flag.Value.String()); value != "" {
+				return value
+			}
+		}
+	}
+	return strings.TrimSpace(os.Getenv("SDN_SESSION_TOKEN"))
 }
