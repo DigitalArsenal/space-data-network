@@ -16,6 +16,7 @@
   let selectedChannelId = '';
   let selectedChannel: ChannelSummary | null = null;
   let monitor: ChannelMonitor | null = null;
+  let streamBytesReceived = 0;
   let status = 'Loading';
   $: listVisibilityFilter = visibilityFilter === 'all' ? undefined : visibilityFilter;
   $: channelAccessOptions = buildChannelAccessOptions(listVisibilityFilter, grantSubject, grantId);
@@ -27,6 +28,7 @@
     selectedChannelId = '';
     selectedChannel = null;
     monitor = null;
+    streamBytesReceived = 0;
   }
 
   onMount(() => {
@@ -65,6 +67,7 @@
     selectedChannel = detail.data ?? null;
     const nextMonitor = await backend.channels.monitor(channelId, channelAccessOptions);
     monitor = nextMonitor.data ?? null;
+    streamBytesReceived = 0;
     if (!detail.ok || !nextMonitor.ok) {
       status = detail.capability.reason ?? nextMonitor.capability.reason ?? 'Channel monitor unavailable';
     }
@@ -91,6 +94,13 @@
     const issuedGrantId = typeof result.data?.grantId === 'string' ? result.data.grantId : '';
     status = result.ok ? `Grant issued${issuedGrantId ? `: ${issuedGrantId}` : ''}` : result.capability.reason ?? 'Grant unavailable';
     await loadChannel(selectedChannelId);
+  }
+
+  async function openStreamSelected(): Promise<void> {
+    if (!backend || !selectedChannelId) return;
+    const result = await backend.channels.openStream(selectedChannelId, channelAccessOptions);
+    streamBytesReceived = result.data?.byteLength ?? 0;
+    status = result.ok ? `Stream opened: ${formatBytes(streamBytesReceived)}` : result.capability.reason ?? 'Stream unavailable';
   }
 
   function channelMatchesFilters(channel: ChannelSummary): boolean {
@@ -196,6 +206,7 @@
     <button class="sdn-button sdn-button-muted" type="button" on:click={subscribeSelected} disabled={!selectedChannelId}>Subscribe</button>
     <button class="sdn-button sdn-button-muted" type="button" on:click={unsubscribeSelected} disabled={!selectedChannelId}>Unsubscribe</button>
     <button class="sdn-button sdn-button-muted" type="button" on:click={issueGrantSelected} disabled={!selectedChannelId || !grantRecipient.trim()}>Issue Grant</button>
+    <button class="sdn-button sdn-button-muted" type="button" on:click={openStreamSelected} disabled={!selectedChannelId}>Open Stream</button>
     <span>{status}</span>
   </div>
 
@@ -242,6 +253,7 @@
         <div><dt>Missing Rows</dt><dd>{formatNumber(monitor?.missingRows)}</dd></div>
         <div><dt>Pinned Count</dt><dd>{formatNumber(monitor?.pinnedCount ?? monitor?.pinnedRows)}</dd></div>
         <div><dt>Synced Bytes</dt><dd>{formatBytes(monitor?.syncedBytes)}</dd></div>
+        <div><dt>Stream Bytes</dt><dd>{formatBytes(streamBytesReceived)}</dd></div>
         <div><dt>Current Throughput</dt><dd>{formatRate(monitor?.throughputBytesPerSecond)}</dd></div>
         <div><dt>Wire-Speed Utilization</dt><dd>{formatPercent(monitor?.wireSpeedUtilization)}</dd></div>
         <div><dt>Grant State</dt><dd>{monitor?.grantState ?? selectedChannel?.grantState ?? 'unknown'}</dd></div>

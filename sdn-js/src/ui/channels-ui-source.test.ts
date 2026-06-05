@@ -110,4 +110,18 @@ describe('SDN channels UI source', () => {
     }
     expect(source).not.toContain(String.fromCharCode(46, 102, 98, 115));
   });
+
+  it('renders a native channel stream open action required by the pub/sub surface', () => {
+    const source = readFileSync(new URL('../../ui/src/screens/ChannelsScreen.svelte', import.meta.url), 'utf8');
+    for (const expected of [
+      'openStreamSelected',
+      'backend.channels.openStream(selectedChannelId, channelAccessOptions)',
+      'streamBytesReceived',
+      '>Open Stream<',
+      'Stream Bytes',
+    ]) {
+      expect(source).toContain(expected);
+    }
+    expect(source).not.toContain(String.fromCharCode(46, 102, 98, 115));
+  });
 });
