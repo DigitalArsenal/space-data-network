@@ -119,6 +119,9 @@ function nativeStreamHeaders(body?: BodyInit | null, options?: ChannelActionOpti
     if (encryptedStreamHeader) {
       headers['X-SDN-Encrypted-Stream'] = 'true';
       headers['X-SDN-Encrypted-Stream-Header'] = encryptedStreamHeader;
+      if (options?.encryptedRecordIndex !== undefined && options.encryptedRecordIndex !== null && String(options.encryptedRecordIndex).trim()) {
+        headers['X-SDN-Encrypted-Record-Index'] = String(options.encryptedRecordIndex).trim();
+      }
     }
     return headers;
   }

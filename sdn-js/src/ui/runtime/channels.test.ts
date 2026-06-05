@@ -258,7 +258,7 @@ describe('SDN backend channel runtime surface', () => {
   });
 
   it('passes private grant context through protected channel actions', async () => {
-    const requests: Array<{ url: string; method: string; contentType: string; encryptedStream: string; encryptedStreamHeader: string; bodyText: string }> = [];
+    const requests: Array<{ url: string; method: string; contentType: string; encryptedStream: string; encryptedStreamHeader: string; encryptedRecordIndex: string; bodyText: string }> = [];
     const fetchMock = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const body = init?.body;
       requests.push({
@@ -267,6 +267,7 @@ describe('SDN backend channel runtime surface', () => {
         contentType: String(init?.headers && (init.headers as Record<string, string>)['content-type']),
         encryptedStream: String(init?.headers && (init.headers as Record<string, string>)['X-SDN-Encrypted-Stream']),
         encryptedStreamHeader: String(init?.headers && (init.headers as Record<string, string>)['X-SDN-Encrypted-Stream-Header']),
+        encryptedRecordIndex: String(init?.headers && (init.headers as Record<string, string>)['X-SDN-Encrypted-Record-Index']),
         bodyText: typeof body === 'string' ? body : body instanceof Uint8Array ? Array.from(body).join(',') : '',
       });
       if (String(input).includes('/stream')) {
@@ -283,7 +284,7 @@ describe('SDN backend channel runtime surface', () => {
       fetch: fetchMock,
     });
     const encryptedStreamHeader = '{"algorithm":"x25519","context":"spaceaware-OMM","ephemeral_public_key":"pub","nonce_start":"nonce"}';
-    const grant = { subject: 'peer-alpha', grantId: 'grant-1', visibility: 'private', encryptedStreamHeader };
+    const grant = { subject: 'peer-alpha', grantId: 'grant-1', visibility: 'private', encryptedStreamHeader, encryptedRecordIndex: 7 };
     const stream = new Uint8Array([7, 0, 0, 0, 79, 77, 77, 49, 1, 2, 3]);
 
     await backend.channels.get('spaceaware-OMM', grant);
@@ -303,6 +304,7 @@ describe('SDN backend channel runtime surface', () => {
         contentType: 'undefined',
         encryptedStream: 'undefined',
         encryptedStreamHeader: 'undefined',
+        encryptedRecordIndex: 'undefined',
         bodyText: '',
       },
       {
@@ -311,6 +313,7 @@ describe('SDN backend channel runtime surface', () => {
         contentType: 'undefined',
         encryptedStream: 'undefined',
         encryptedStreamHeader: 'undefined',
+        encryptedRecordIndex: 'undefined',
         bodyText: '',
       },
       {
@@ -319,6 +322,7 @@ describe('SDN backend channel runtime surface', () => {
         contentType: 'application/vnd.sdn.flatbuffers.stream',
         encryptedStream: 'true',
         encryptedStreamHeader,
+        encryptedRecordIndex: '7',
         bodyText: Array.from(stream).join(','),
       },
       {
@@ -327,6 +331,7 @@ describe('SDN backend channel runtime surface', () => {
         contentType: 'undefined',
         encryptedStream: 'undefined',
         encryptedStreamHeader: 'undefined',
+        encryptedRecordIndex: 'undefined',
         bodyText: '',
       },
       {
@@ -335,6 +340,7 @@ describe('SDN backend channel runtime surface', () => {
         contentType: 'application/json',
         encryptedStream: 'undefined',
         encryptedStreamHeader: 'undefined',
+        encryptedRecordIndex: 'undefined',
         bodyText: JSON.stringify({ to: 'peer-alpha', scopes: ['stream_open'] }),
       },
       {
@@ -343,6 +349,7 @@ describe('SDN backend channel runtime surface', () => {
         contentType: 'application/json',
         encryptedStream: 'undefined',
         encryptedStreamHeader: 'undefined',
+        encryptedRecordIndex: 'undefined',
         bodyText: JSON.stringify({
           recipientKeyId: 'peer-alpha-x25519',
           contentKeyId: 'channel-private-key',

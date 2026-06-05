@@ -39,10 +39,11 @@ type EncryptedNativeStreamHeader struct {
 }
 
 type EncryptedNativeStreamDecryptRequest struct {
-	Channel    channels.ChannelID
-	Header     EncryptedNativeStreamHeader
-	Ciphertext []byte
-	Metadata   channels.VerifiedMetadata
+	Channel     channels.ChannelID
+	Header      EncryptedNativeStreamHeader
+	RecordIndex uint64
+	Ciphertext  []byte
+	Metadata    channels.VerifiedMetadata
 }
 
 type EncryptedNativeStreamDecryptor interface {
@@ -605,16 +606,22 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		recordIndex, err := h.parseEncryptedNativeStreamRecordIndex(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if h.encryptedStreams == nil {
 			writeError(w, http.StatusNotImplemented, "encrypted private channel stream decrypt path unavailable")
 			return
 		}
 		decryptStarted := time.Now()
 		body, err = h.encryptedStreams.DecryptNativeStream(EncryptedNativeStreamDecryptRequest{
-			Channel:    parsed,
-			Header:     header,
-			Ciphertext: body,
-			Metadata:   metadata,
+			Channel:     parsed,
+			Header:      header,
+			RecordIndex: recordIndex,
+			Ciphertext:  body,
+			Metadata:    metadata,
 		})
 		timings.Decrypt = time.Since(decryptStarted)
 		if err != nil {
@@ -1209,6 +1216,21 @@ func (h *ChannelHandler) parseEncryptedNativeStreamHeader(r *http.Request, parse
 		return EncryptedNativeStreamHeader{}, fmt.Errorf("encrypted private channel stream header context %q does not match channel %q", parsedHeader.Context, parsed.ChannelID)
 	}
 	return parsedHeader, nil
+}
+
+func (h *ChannelHandler) parseEncryptedNativeStreamRecordIndex(r *http.Request) (uint64, error) {
+	raw := strings.TrimSpace(r.Header.Get("X-SDN-Encrypted-Record-Index"))
+	if raw == "" {
+		raw = strings.TrimSpace(r.URL.Query().Get("recordIndex"))
+	}
+	if raw == "" {
+		return 0, fmt.Errorf("encrypted private channel stream record index required")
+	}
+	recordIndex, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("encrypted private channel stream record index must be a uint32: %w", err)
+	}
+	return recordIndex, nil
 }
 
 func validateEncryptedNativeStreamHeaderFields(header EncryptedNativeStreamHeader) error {

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,6 +61,7 @@ type channelPublishOptions struct {
 	Visibility                string
 	EncryptedStreamHeader     string
 	EncryptedStreamHeaderFile string
+	EncryptedRecordIndex      string
 	APIURL                    string
 	InsecureSkipTLSVerify     bool
 }
@@ -202,6 +204,7 @@ func newChannelsCommand() *cobra.Command {
 	publishCmd.Flags().StringVar(&publishOptions.Visibility, "visibility", "", "channel visibility for private access checks")
 	publishCmd.Flags().StringVar(&publishOptions.EncryptedStreamHeader, "encrypted-stream-header", "", "JSON encryption header for private channel stream publish")
 	publishCmd.Flags().StringVar(&publishOptions.EncryptedStreamHeaderFile, "encrypted-stream-header-file", "", "file containing JSON encryption header for private channel stream publish")
+	publishCmd.Flags().StringVar(&publishOptions.EncryptedRecordIndex, "encrypted-record-index", "", "FlatBuffers encrypted stream record index for private channel stream publish")
 	publishCmd.Flags().StringVar(&publishOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	addChannelInsecureTLSFlag(publishCmd, &publishOptions.InsecureSkipTLSVerify)
 	cmd.AddCommand(publishCmd)
@@ -405,11 +408,16 @@ func runChannelsPublish(cmd *cobra.Command, options channelPublishOptions, chann
 		if err != nil {
 			return err
 		}
+		encryptedRecordIndex, err := resolveEncryptedRecordIndex(options)
+		if err != nil {
+			return err
+		}
 		return runChannelsPublishToAPI(cmd, parsed, apiURL, streamBytes, channelAccessQuery{
 			Subject:               options.Subject,
 			GrantID:               options.GrantID,
 			Visibility:            options.Visibility,
 			EncryptedStreamHeader: encryptedStreamHeader,
+			EncryptedRecordIndex:  encryptedRecordIndex,
 		}, options.InsecureSkipTLSVerify)
 	}
 	out := cmd.OutOrStdout()
@@ -445,6 +453,17 @@ func resolveEncryptedStreamHeader(options channelPublishOptions) (string, error)
 	return header, nil
 }
 
+func resolveEncryptedRecordIndex(options channelPublishOptions) (string, error) {
+	recordIndex := strings.TrimSpace(options.EncryptedRecordIndex)
+	if recordIndex == "" {
+		return "", nil
+	}
+	if _, err := strconv.ParseUint(recordIndex, 10, 32); err != nil {
+		return "", fmt.Errorf("encrypted record index must be a uint32: %w", err)
+	}
+	return recordIndex, nil
+}
+
 func runChannelsPublishToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, streamBytes []byte, access channelAccessQuery, insecureSkipTLSVerify bool) error {
 	publishURL, err := channelPublishURL(apiURL, parsed.ChannelID, access)
 	if err != nil {
@@ -463,6 +482,9 @@ func runChannelsPublishToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiU
 		req.Header.Set("X-SDN-Encrypted-Stream", "true")
 		if header := strings.TrimSpace(access.EncryptedStreamHeader); header != "" {
 			req.Header.Set("X-SDN-Encrypted-Stream-Header", header)
+		}
+		if recordIndex := strings.TrimSpace(access.EncryptedRecordIndex); recordIndex != "" {
+			req.Header.Set("X-SDN-Encrypted-Record-Index", recordIndex)
 		}
 	}
 	resp, err := client.Do(req)
@@ -1181,6 +1203,7 @@ type channelAccessQuery struct {
 	GrantID               string
 	Visibility            string
 	EncryptedStreamHeader string
+	EncryptedRecordIndex  string
 }
 
 func channelStreamURL(apiURL string, channelID string, access channelAccessQuery) (string, error) {
