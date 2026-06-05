@@ -156,6 +156,25 @@ The target byte size can be raised with:
 STRESS_LIVE_FLATSQL_BYTES=$((512*1024*1024)) npm run stress:flatsql-replication
 ```
 
+Production/lab acceptance can also enable a configured-link gate in addition to
+the measured `wire_speed_probe` gate:
+
+```sh
+SDN_WIRESPEED_TEST=1 \
+SDN_TEST_LINK_GBIT=2 \
+STRESS_LIVE_FLATSQL_BYTES=$((1024*1024*1024)) \
+npm run stress:flatsql-replication
+```
+
+With `SDN_TEST_LINK_GBIT=2`, the sustained published-shard download phase must
+meet `225,000,000 B/s` (1.8 Gbit/s), which is 90% of the configured 2 Gbit/s
+link. The stress result reports the measured probe gate and the configured-link
+gate separately through `WireSpeedTarget`, `TargetMet`,
+`ConfiguredGateEnabled`, `ConfiguredLinkBytesPerSecond`,
+`ConfiguredRequiredBytesPerSecond`, and `ConfiguredTargetMet`. Manifest
+discovery, shard verification, and FlatSQL import remain separate timing fields
+and do not hide a data-plane transfer miss.
+
 The range-resume byte size can be raised independently with:
 
 ```sh
