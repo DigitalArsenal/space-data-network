@@ -964,6 +964,7 @@ func TestChannelHandlerVerifiedEncryptedDPMMakesChannelPrivateFailClosed(t *test
 
 	publishReq = httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(streamBytes))
 	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
 	publishRec = httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
 	if publishRec.Code != http.StatusAccepted {
@@ -1018,6 +1019,7 @@ func TestChannelHandlerReadsPrivateNativeFlatBufferByteRangeWithGrant(t *testing
 
 	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(streamBytes))
 	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
 	publishRec := httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
 	if publishRec.Code != http.StatusAccepted {
@@ -1072,6 +1074,7 @@ func TestChannelHandlerPrivateDurableImportPreservesDPMContentKeyScope(t *testin
 	streamBytes := nativeAPIFrame("OMM1", []byte{1, 2, 3})
 	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(streamBytes))
 	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
 	publishRec := httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
 	if publishRec.Code != http.StatusAccepted {
@@ -1095,6 +1098,55 @@ func TestChannelHandlerPrivateDurableImportPreservesDPMContentKeyScope(t *testin
 	}
 	if tags.ContentKeyID != "channel-private-key" {
 		t.Fatalf("private durable ContentKeyID = %q, want channel-private-key", tags.ContentKeyID)
+	}
+}
+
+func TestChannelHandlerRejectsPlaintextPrivateStreamPublishBeforeImport(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	store := newChannelTestStore(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(store).RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants",
+		strings.NewReader(`{"to":"peer-alpha","scopes":["publish"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	streamBytes := nativeAPIFrame("OMM1", []byte{1, 2, 3})
+	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(streamBytes))
+	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	publishRec := httptest.NewRecorder()
+	mux.ServeHTTP(publishRec, publishReq)
+	if publishRec.Code != http.StatusBadRequest {
+		t.Fatalf("plaintext private stream publish status = %d, want %d body=%s", publishRec.Code, http.StatusBadRequest, publishRec.Body.String())
+	}
+	if strings.Contains(publishRec.Body.String(), "channel-private-key") || strings.Contains(publishRec.Body.String(), string(streamBytes)) {
+		t.Fatalf("plaintext private stream rejection leaked protected material: %s", publishRec.Body.String())
+	}
+
+	schemaName, err := channels.SchemaNameFromStandardCode("OMM")
+	if err != nil {
+		t.Fatalf("SchemaNameFromStandardCode failed: %v", err)
+	}
+	count, err := store.CountRawRecords(storage.RawRecordQuery{SchemaName: schemaName})
+	if err != nil {
+		t.Fatalf("CountRawRecords failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("durable private OMM rows = %d, want 0 after plaintext rejection", count)
 	}
 }
 

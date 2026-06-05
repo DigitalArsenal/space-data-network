@@ -525,6 +525,10 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusForbidden, "verified DPM required before stream publish")
 		return
 	}
+	if isPrivateChannelMetadata(metadata) && !h.isEncryptedNativeStreamPublish(r) {
+		writeError(w, http.StatusBadRequest, "encrypted private channel stream required")
+		return
+	}
 	pnmDPMDuration := time.Since(pnmDPMStarted)
 	transferStarted := time.Now()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<20))
@@ -879,6 +883,16 @@ func (h *ChannelHandler) isNativeStreamPublish(r *http.Request) bool {
 	}
 	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
 	return strings.HasPrefix(contentType, "application/vnd.sdn.flatbuffers.stream")
+}
+
+func (h *ChannelHandler) isEncryptedNativeStreamPublish(r *http.Request) bool {
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-SDN-Encrypted-Stream")), "true") ||
+		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("encrypted")), "1") ||
+		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("encrypted")), "true") {
+		return true
+	}
+	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+	return strings.HasPrefix(contentType, "application/vnd.sdn.flatbuffers.encrypted-stream")
 }
 
 func (h *ChannelHandler) isDPMManifestPublish(r *http.Request, body []byte) bool {
