@@ -523,6 +523,47 @@ func TestChannelHandlerReportsNativeStreamWireSpeedUtilization(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerEnforcesWirespeedGateWhenEnabled(t *testing.T) {
+	t.Setenv("SDN_WIRESPEED_TEST", "1")
+	t.Setenv("SDN_TEST_LINK_GBIT", "2")
+
+	signing := newChannelSigningFixture(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+	manifest := buildAPISignedDPM(t, signing.privateKey, "DPM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	streamBytes := nativeAPIFrame("OMM1", []byte{1, 2, 3})
+	streamReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1", bytes.NewReader(streamBytes))
+	streamReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	streamRec := httptest.NewRecorder()
+	mux.ServeHTTP(streamRec, streamReq)
+	if streamRec.Code != http.StatusTooManyRequests {
+		t.Fatalf("wirespeed-gated stream publish status = %d body=%s", streamRec.Code, streamRec.Body.String())
+	}
+	body := decodeChannelJSON(t, streamRec.Body.String())
+	if body["wireSpeedTarget"] != 0.9 {
+		t.Fatalf("wire speed target = %#v, want 0.9 body=%#v", body["wireSpeedTarget"], body)
+	}
+	if body["requiredBytesPerSecond"] != 225_000_000.0 {
+		t.Fatalf("required bytes/sec = %#v, want 225000000 body=%#v", body["requiredBytesPerSecond"], body)
+	}
+	if body["targetMet"] != false {
+		t.Fatalf("targetMet = %#v, want false body=%#v", body["targetMet"], body)
+	}
+	timings, ok := body["timingsMs"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing timingsMs: %#v", body)
+	}
+	for _, key := range []string{"discovery", "grantNegotiation", "pnmDpmVerification", "transfer", "decrypt", "hashVerification", "durableImport"} {
+		if _, ok := timings[key]; !ok {
+			t.Fatalf("timingsMs missing %q: %#v", key, timings)
+		}
+	}
+}
+
 func TestChannelHandlerReadsPublicNativeFlatBufferByteRange(t *testing.T) {
 	t.Parallel()
 

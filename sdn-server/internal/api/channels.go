@@ -396,6 +396,7 @@ func (h *ChannelHandler) publishDPMManifest(w http.ResponseWriter, r *http.Reque
 
 func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
 	started := time.Now()
+	pnmDPMStarted := time.Now()
 	metadata, verified := h.metadata.Get(parsed)
 	if !verified {
 		writeError(w, http.StatusForbidden, "verified PNM required before stream publish")
@@ -405,11 +406,14 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusForbidden, "verified DPM required before stream publish")
 		return
 	}
+	pnmDPMDuration := time.Since(pnmDPMStarted)
+	transferStarted := time.Now()
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<20))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "read native FlatBuffer stream: "+err.Error())
 		return
 	}
+	transferDuration := time.Since(transferStarted)
 	frames, err := channels.SplitNativeStreamFrames(body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid native FlatBuffer stream: "+err.Error())
@@ -420,8 +424,20 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	throughputBPS := measuredBytesPerSecond(len(body), time.Since(started))
+	wireUtilization := measuredWireSpeedUtilization(throughputBPS)
+	timings := channelThroughputTimings{
+		PNMDPMVerification: pnmDPMDuration,
+		Transfer:           transferDuration,
+	}
+	gate := evaluateChannelWireSpeedGate(throughputBPS, wireUtilization, timings)
+	if gate.Enabled && !gate.TargetMet {
+		writeJSON(w, http.StatusTooManyRequests, gate.Response(parsed, len(body), len(frames)))
+		return
+	}
 	importedRows := 0
 	if h.store != nil {
+		importStarted := time.Now()
 		tags := storage.SourceTags{
 			ProviderID:        parsed.SourceID,
 			SourceName:        "channel:" + parsed.ChannelID,
@@ -435,16 +451,15 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusInternalServerError, "durable FlatSQL import failed: "+err.Error())
 			return
 		}
+		timings.DurableImport = time.Since(importStarted)
 	}
 	snapshot, err := h.streams.Store(parsed, body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid native FlatBuffer stream: "+err.Error())
 		return
 	}
-	throughputBPS := measuredBytesPerSecond(snapshot.ByteCount, time.Since(started))
-	wireUtilization := measuredWireSpeedUtilization(throughputBPS)
 	metadata, _ = h.metadata.RecordNativeStream(parsed, snapshot, throughputBPS, wireUtilization)
-	writeJSON(w, http.StatusAccepted, map[string]interface{}{
+	response := map[string]interface{}{
 		"channelId":                parsed.ChannelID,
 		"standardCode":             parsed.StandardCode,
 		"pnmVerified":              true,
@@ -456,7 +471,14 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		"importedRows":             importedRows,
 		"verifiedAt":               metadata.VerifiedAt.Format(time.RFC3339Nano),
 		"streamUpdated":            snapshot.UpdatedAt.Format(time.RFC3339Nano),
-	})
+		"timingsMs":                timings.AsMilliseconds(),
+	}
+	if gate.Enabled {
+		response["wireSpeedTarget"] = gate.Target
+		response["requiredBytesPerSecond"] = gate.RequiredBytesPerSecond
+		response["targetMet"] = gate.TargetMet
+	}
+	writeJSON(w, http.StatusAccepted, response)
 }
 
 func measuredBytesPerSecond(byteCount int, elapsed time.Duration) int64 {
@@ -484,6 +506,93 @@ func measuredWireSpeedUtilization(throughputBPS int64) *float64 {
 	linkBytesPerSecond := gbits * 1_000_000_000 / 8
 	utilization := float64(throughputBPS) / linkBytesPerSecond
 	return &utilization
+}
+
+type channelThroughputTimings struct {
+	Discovery          time.Duration
+	GrantNegotiation   time.Duration
+	PNMDPMVerification time.Duration
+	Transfer           time.Duration
+	Decrypt            time.Duration
+	HashVerification   time.Duration
+	DurableImport      time.Duration
+}
+
+func (t channelThroughputTimings) AsMilliseconds() map[string]int64 {
+	return map[string]int64{
+		"discovery":          durationMilliseconds(t.Discovery),
+		"grantNegotiation":   durationMilliseconds(t.GrantNegotiation),
+		"pnmDpmVerification": durationMilliseconds(t.PNMDPMVerification),
+		"transfer":           durationMilliseconds(t.Transfer),
+		"decrypt":            durationMilliseconds(t.Decrypt),
+		"hashVerification":   durationMilliseconds(t.HashVerification),
+		"durableImport":      durationMilliseconds(t.DurableImport),
+	}
+}
+
+func durationMilliseconds(duration time.Duration) int64 {
+	if duration <= 0 {
+		return 0
+	}
+	return int64(duration / time.Millisecond)
+}
+
+type channelWireSpeedGate struct {
+	Enabled                bool
+	Target                 float64
+	RequiredBytesPerSecond int64
+	TargetMet              bool
+	Timings                channelThroughputTimings
+	WireUtilization        *float64
+	ThroughputBytesPerSec  int64
+}
+
+func evaluateChannelWireSpeedGate(throughputBPS int64, wireUtilization *float64, timings channelThroughputTimings) channelWireSpeedGate {
+	gate := channelWireSpeedGate{
+		Target:                0.90,
+		Timings:               timings,
+		WireUtilization:       wireUtilization,
+		ThroughputBytesPerSec: throughputBPS,
+	}
+	if strings.TrimSpace(os.Getenv("SDN_WIRESPEED_TEST")) != "1" {
+		return gate
+	}
+	linkBytesPerSecond, ok := channelLinkBytesPerSecond()
+	if !ok {
+		return gate
+	}
+	gate.Enabled = true
+	gate.RequiredBytesPerSecond = int64(linkBytesPerSecond * gate.Target)
+	gate.TargetMet = throughputBPS >= gate.RequiredBytesPerSecond
+	return gate
+}
+
+func channelLinkBytesPerSecond() (float64, bool) {
+	linkGBit := strings.TrimSpace(os.Getenv("SDN_TEST_LINK_GBIT"))
+	if linkGBit == "" {
+		return 0, false
+	}
+	gbits, err := strconv.ParseFloat(linkGBit, 64)
+	if err != nil || gbits <= 0 {
+		return 0, false
+	}
+	return gbits * 1_000_000_000 / 8, true
+}
+
+func (g channelWireSpeedGate) Response(parsed channels.ChannelID, streamBytes int, streamFrames int) map[string]interface{} {
+	return map[string]interface{}{
+		"error":                    "channel stream throughput below configured wire-speed gate",
+		"channelId":                parsed.ChannelID,
+		"standardCode":             parsed.StandardCode,
+		"streamBytes":              streamBytes,
+		"streamFrames":             streamFrames,
+		"throughputBytesPerSecond": g.ThroughputBytesPerSec,
+		"wireSpeedUtilization":     g.WireUtilization,
+		"wireSpeedTarget":          g.Target,
+		"requiredBytesPerSecond":   g.RequiredBytesPerSecond,
+		"targetMet":                g.TargetMet,
+		"timingsMs":                g.Timings.AsMilliseconds(),
+	}
 }
 
 func (h *ChannelHandler) openStream(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
