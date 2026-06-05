@@ -1,6 +1,7 @@
 package channels
 
 import (
+	"encoding/hex"
 	"sync"
 	"time"
 )
@@ -14,6 +15,7 @@ type VerifiedMetadata struct {
 	VerifiedAt        time.Time
 	DPMVerifiedAt     time.Time
 	ProviderPeer      string
+	ProviderPublicKey string
 	LocalRows         int
 	RemoteRows        int
 	SyncedRows        int
@@ -36,11 +38,12 @@ func NewVerifiedMetadataRegistry() *VerifiedMetadataRegistry {
 
 func (r *VerifiedMetadataRegistry) RecordPNM(channel ChannelID, evidence PNMTrustEvidence) VerifiedMetadata {
 	metadata := VerifiedMetadata{
-		ChannelID:     channel.ChannelID,
-		PNMCID:        evidence.CID,
-		PNMFileID:     evidence.FileID,
-		SignatureType: evidence.SignatureType,
-		VerifiedAt:    time.Now().UTC(),
+		ChannelID:         channel.ChannelID,
+		PNMCID:            evidence.CID,
+		PNMFileID:         evidence.FileID,
+		SignatureType:     evidence.SignatureType,
+		VerifiedAt:        time.Now().UTC(),
+		ProviderPublicKey: hex.EncodeToString(evidence.ProviderPublicKey),
 	}
 	if r == nil {
 		return metadata

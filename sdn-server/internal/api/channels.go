@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -286,10 +288,15 @@ func (h *ChannelHandler) publishPublic(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 	if h.isDPMManifestPublish(r, body) {
-		h.publishDPMManifest(w, parsed, body)
+		h.publishDPMManifest(w, r, parsed, body)
 		return
 	}
-	evidence, err := channels.VerifySignedPNMEnvelope(body)
+	providerPublicKey, err := providerPublicKeyFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	evidence, err := channels.VerifySignedPNMEnvelopeWithProviderKey(body, providerPublicKey)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "verified PNM envelope required: "+err.Error())
 		return
@@ -305,18 +312,40 @@ func (h *ChannelHandler) publishPublic(w http.ResponseWriter, r *http.Request, p
 	})
 }
 
-func (h *ChannelHandler) publishDPMManifest(w http.ResponseWriter, parsed channels.ChannelID, body []byte) {
+func (h *ChannelHandler) publishDPMManifest(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID, body []byte) {
 	metadata, verified := h.metadata.Get(parsed)
 	if !verified {
 		writeError(w, http.StatusForbidden, "verified PNM required before DPM publish")
 		return
 	}
-	evidence, err := channels.VerifySignedDPMManifest(body, metadata.PNMFileID)
+	providerPublicKey, err := providerPublicKeyFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	providerPublicKeyHex := hex.EncodeToString(providerPublicKey)
+	if metadata.ProviderPublicKey != "" && metadata.ProviderPublicKey != providerPublicKeyHex {
+		writeError(w, http.StatusForbidden, "DPM provider public key does not match verified PNM provider")
+		return
+	}
+	evidence, err := storage.VerifySignedDatasetPublicationManifest(body, providerPublicKey)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "verified DPM manifest required: "+err.Error())
 		return
 	}
-	metadata, ok := h.metadata.RecordDPM(parsed, evidence)
+	if metadata.PNMCID != "" && evidence.ManifestCID != metadata.PNMCID {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("DPM CID %q does not match PNM CID %q", evidence.ManifestCID, metadata.PNMCID))
+		return
+	}
+	if metadata.PNMFileID != "" && evidence.FileID != metadata.PNMFileID {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("DPM FILE_ID %q does not match PNM FILE_ID %q", evidence.FileID, metadata.PNMFileID))
+		return
+	}
+	metadata, ok := h.metadata.RecordDPM(parsed, channels.DPMTrustEvidence{
+		FileID:        evidence.FileID,
+		SignatureType: evidence.SignatureType,
+		ProviderPeer:  evidence.ProviderPeer,
+	})
 	if !ok {
 		writeError(w, http.StatusForbidden, "verified PNM required before DPM publish")
 		return
@@ -483,6 +512,27 @@ func (h *ChannelHandler) isDPMManifestPublish(r *http.Request, body []byte) bool
 	}
 	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
 	return strings.HasPrefix(contentType, "application/vnd.sdn.dpm") || channels.IsDPMManifest(body)
+}
+
+func providerPublicKeyFromRequest(r *http.Request) (ed25519.PublicKey, error) {
+	value := strings.TrimSpace(r.URL.Query().Get("providerPublicKey"))
+	if value == "" {
+		value = strings.TrimSpace(r.URL.Query().Get("provider_public_key"))
+	}
+	if value == "" {
+		value = strings.TrimSpace(r.Header.Get("X-SDN-Provider-Public-Key"))
+	}
+	if value == "" {
+		return nil, fmt.Errorf("provider public key is required")
+	}
+	key, err := hex.DecodeString(value)
+	if err != nil {
+		return nil, fmt.Errorf("decode provider public key: %w", err)
+	}
+	if len(key) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("provider public key length = %d, want %d", len(key), ed25519.PublicKeySize)
+	}
+	return ed25519.PublicKey(key), nil
 }
 
 func channelListRow(standardCode string) map[string]interface{} {

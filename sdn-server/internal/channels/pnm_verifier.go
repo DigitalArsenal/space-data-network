@@ -19,10 +19,11 @@ var (
 )
 
 type PNMTrustEvidence struct {
-	CID           string
-	FileID        string
-	SignatureType string
-	Signature     []byte
+	CID               string
+	FileID            string
+	SignatureType     string
+	Signature         []byte
+	ProviderPublicKey []byte
 }
 
 func VerifySignedPNMEnvelope(pnmBytes []byte) (PNMTrustEvidence, error) {
@@ -75,6 +76,7 @@ func VerifySignedPNMEnvelopeWithProviderKey(pnmBytes []byte, providerPublicKey e
 	if !ed25519.Verify(providerPublicKey, datasetPublicationPNMSignaturePayload(evidence.CID, evidence.FileID), evidence.Signature) {
 		return PNMTrustEvidence{}, fmt.Errorf("invalid PNM signature")
 	}
+	evidence.ProviderPublicKey = append([]byte(nil), providerPublicKey...)
 	return evidence, nil
 }
 
