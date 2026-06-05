@@ -683,6 +683,29 @@ func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerPrivateListedCollectionFailsClosedWithoutGrant(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels?standardCode=OMM&visibility=private-listed", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("private-listed collection without grant status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "spaceaware-OMM") || strings.Contains(rec.Body.String(), "private-listed") {
+		t.Fatalf("private-listed collection leaked private metadata without grant: %s", rec.Body.String())
+	}
+}
+
 func TestChannelHandlerVerifiedEncryptedDPMMakesChannelPrivateFailClosed(t *testing.T) {
 	t.Parallel()
 

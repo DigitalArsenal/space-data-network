@@ -56,7 +56,7 @@ func (h *ChannelHandler) handleCollection(w http.ResponseWriter, r *http.Request
 	if standardFilter == "" {
 		standardFilter = strings.TrimSpace(r.URL.Query().Get("standard"))
 	}
-	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("visibility")), "private") {
+	if h.isPrivateVisibilityRequest(r) {
 		h.writeAccessDenied(w, channels.AccessDecision{
 			Allowed:    false,
 			GrantState: "required",
@@ -716,7 +716,8 @@ func (h *ChannelHandler) writeAccessDenied(w http.ResponseWriter, decision chann
 }
 
 func (h *ChannelHandler) isPrivateVisibilityRequest(r *http.Request) bool {
-	return strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("visibility")), "private")
+	visibility := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("visibility")))
+	return visibility == "private" || strings.HasPrefix(visibility, "private-")
 }
 
 func (h *ChannelHandler) requiresPrivateGrant(r *http.Request, parsed channels.ChannelID) bool {
