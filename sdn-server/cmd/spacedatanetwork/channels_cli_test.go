@@ -588,7 +588,10 @@ func TestChannelsPublishSendsNativeStreamToLocalAPI(t *testing.T) {
 			"streamBytes":23,
 			"streamFrames":2,
 			"throughputBytesPerSecond":2048,
-			"wireSpeedUtilization":0.91
+			"wireSpeedUtilization":0.91,
+			"wireSpeedTarget":0.9,
+			"requiredBytesPerSecond":225000000,
+			"targetMet":true
 		}`))
 	}))
 	defer server.Close()
@@ -612,6 +615,9 @@ func TestChannelsPublishSendsNativeStreamToLocalAPI(t *testing.T) {
 		"streamFrames=2",
 		"throughputBytesPerSecond=2048",
 		"wireSpeedUtilization=0.91",
+		"wireSpeedTarget=0.9",
+		"requiredBytesPerSecond=225000000",
+		"targetMet=true",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("channels publish output missing %q:\n%s", want, body)
