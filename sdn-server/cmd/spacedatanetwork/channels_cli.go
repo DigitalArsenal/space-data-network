@@ -22,6 +22,7 @@ type channelsListOptions struct {
 
 type channelSubscriptionOptions struct {
 	Visibility string
+	APIURL     string
 }
 
 type channelGrantIssueOptions struct {
@@ -91,6 +92,7 @@ func newChannelsCommand() *cobra.Command {
 		},
 	}
 	subscribeCmd.Flags().StringVar(&subscribeOptions.Visibility, "visibility", "public", "channel visibility")
+	subscribeCmd.Flags().StringVar(&subscribeOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	cmd.AddCommand(subscribeCmd)
 	unsubscribeCmd := &cobra.Command{
 		Use:   "unsubscribe <channelId>",
@@ -101,6 +103,7 @@ func newChannelsCommand() *cobra.Command {
 		},
 	}
 	unsubscribeCmd.Flags().StringVar(&unsubscribeOptions.Visibility, "visibility", "public", "channel visibility")
+	unsubscribeCmd.Flags().StringVar(&unsubscribeOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	cmd.AddCommand(unsubscribeCmd)
 	publishOptions := channelPublishOptions{}
 	publishCmd := &cobra.Command{
@@ -235,6 +238,9 @@ func runChannelsSubscribe(cmd *cobra.Command, registry *channels.SubscriptionReg
 	if err != nil {
 		return err
 	}
+	if apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL"))); apiURL != "" {
+		return runChannelsSubscriptionToAPI(cmd, parsed, apiURL, "subscribe")
+	}
 	if strings.EqualFold(strings.TrimSpace(options.Visibility), "private") {
 		return fmt.Errorf("verified channel grant required for %s", parsed.ChannelID)
 	}
@@ -246,10 +252,48 @@ func runChannelsUnsubscribe(cmd *cobra.Command, registry *channels.SubscriptionR
 	if err != nil {
 		return err
 	}
+	if apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL"))); apiURL != "" {
+		return runChannelsSubscriptionToAPI(cmd, parsed, apiURL, "unsubscribe")
+	}
 	if strings.EqualFold(strings.TrimSpace(options.Visibility), "private") {
 		return fmt.Errorf("verified channel grant required for %s", parsed.ChannelID)
 	}
 	return printChannelSubscriptionState(cmd, registry.Unsubscribe(parsed))
+}
+
+func runChannelsSubscriptionToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, action string) error {
+	subscriptionURL, err := channelSubscriptionURL(apiURL, parsed.ChannelID, action)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, subscriptionURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("%s channel: %w", action, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("%s channel: %s", action, resp.Status)
+	}
+	var payload map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return fmt.Errorf("decode channel %s response: %w", action, err)
+	}
+	if _, ok := payload["channelId"]; !ok {
+		payload["channelId"] = parsed.ChannelID
+	}
+	if _, ok := payload["sourceId"]; !ok {
+		payload["sourceId"] = parsed.SourceID
+	}
+	if _, ok := payload["standardCode"]; !ok {
+		payload["standardCode"] = parsed.StandardCode
+	}
+	printChannelSubscriptionPayload(cmd.OutOrStdout(), payload)
+	return nil
 }
 
 func printChannelSubscriptionState(cmd *cobra.Command, state channels.SubscriptionState) error {
@@ -415,6 +459,15 @@ func channelPublishURL(apiURL string, channelID string) (string, error) {
 	return channelAPIURL(apiURL, channelID, "/publish?stream=1")
 }
 
+func channelSubscriptionURL(apiURL string, channelID string, action string) (string, error) {
+	switch action {
+	case "subscribe", "unsubscribe":
+	default:
+		return "", fmt.Errorf("invalid channel subscription action %q", action)
+	}
+	return channelAPIURL(apiURL, channelID, "/"+action)
+}
+
 func channelAPIURL(apiURL string, channelID string, suffix string) (string, error) {
 	base, err := url.Parse(strings.TrimRight(apiURL, "/"))
 	if err != nil {
@@ -474,6 +527,26 @@ func printChannelMonitorPayload(out interface {
 		"lastVerifiedUpdate",
 	} {
 		fmt.Fprintf(out, "%s=%v\n", key, monitorValue(payload[key]))
+	}
+}
+
+func printChannelSubscriptionPayload(out interface {
+	Write([]byte) (int, error)
+}, payload map[string]interface{}) {
+	for _, key := range []string{
+		"channelId",
+		"sourceId",
+		"standardCode",
+		"feedUuid",
+		"subscribed",
+		"visibility",
+		"grantState",
+		"encryptionState",
+		"lastUpdated",
+	} {
+		if value, ok := payload[key]; ok {
+			fmt.Fprintf(out, "%s=%v\n", key, monitorValue(value))
+		}
 	}
 }
 

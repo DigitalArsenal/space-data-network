@@ -277,6 +277,96 @@ func TestChannelsSubscribeAndUnsubscribePublicChannel(t *testing.T) {
 	}
 }
 
+func TestChannelsSubscribeUsesLocalAPI(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/channels/spaceaware-OMM/subscribe" {
+			t.Fatalf("unexpected subscribe request %s %s", r.Method, r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"channelId":"spaceaware-OMM",
+			"sourceId":"spaceaware",
+			"standardCode":"OMM",
+			"subscribed":true,
+			"visibility":"private-listed",
+			"grantState":"verified",
+			"encryptionState":"encrypted"
+		}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"subscribe", "spaceaware-OMM", "--api-url", server.URL})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels subscribe failed: %v", err)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"channelId=spaceaware-OMM",
+		"sourceId=spaceaware",
+		"standardCode=OMM",
+		"subscribed=true",
+		"visibility=private-listed",
+		"grantState=verified",
+		"encryptionState=encrypted",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("channels subscribe output missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestChannelsUnsubscribeUsesLocalAPI(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/channels/spaceaware-OMM/unsubscribe" {
+			t.Fatalf("unexpected unsubscribe request %s %s", r.Method, r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"channelId":"spaceaware-OMM",
+			"sourceId":"spaceaware",
+			"standardCode":"OMM",
+			"subscribed":false,
+			"visibility":"public",
+			"grantState":"not-required",
+			"encryptionState":"none"
+		}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"unsubscribe", "spaceaware-OMM", "--api-url", server.URL})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels unsubscribe failed: %v", err)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"channelId=spaceaware-OMM",
+		"sourceId=spaceaware",
+		"standardCode=OMM",
+		"subscribed=false",
+		"visibility=public",
+		"grantState=not-required",
+		"encryptionState=none",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("channels unsubscribe output missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestChannelsPrivateSubscribeFailsClosed(t *testing.T) {
 	t.Parallel()
 
