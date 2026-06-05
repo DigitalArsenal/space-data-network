@@ -161,6 +161,26 @@ export interface ChannelMonitorTimings {
 export type ChannelActionResponse = Record<string, unknown>;
 export type ChannelGrantRequest = Record<string, unknown>;
 
+export interface ChannelKeyEnvelopeRequest {
+  recipientKeyId: string;
+  contentKeyId?: string;
+}
+
+export interface ChannelKeyEnvelopeResponse {
+  channelId: string;
+  sourceId?: string;
+  standardCode: string;
+  feedUuid?: string | null;
+  grantState?: string;
+  contentKeyId: string;
+  recipientKeyId: string;
+  keyEpoch?: string;
+  algorithm?: string;
+  envelopeCid?: string;
+  wrappedKeyEnvelopeBase64?: string;
+  [key: string]: unknown;
+}
+
 /** HTTP transport for SDN server APIs. */
 export class HttpTransport {
   private baseUrl: string;
@@ -320,6 +340,22 @@ export class HttpTransport {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(grant),
+    });
+    return resp.json();
+  }
+
+  async requestChannelKeyEnvelope(
+    channelId: string,
+    request: ChannelKeyEnvelopeRequest,
+    options?: ChannelAccessOptions,
+  ): Promise<ChannelKeyEnvelopeResponse> {
+    const resp = await this.fetch(channelActionPath(channelId, 'key-unwrap', options), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recipientKeyId: request.recipientKeyId,
+        ...(request.contentKeyId ? { contentKeyId: request.contentKeyId } : {}),
+      }),
     });
     return resp.json();
   }

@@ -22,6 +22,8 @@ import type {
   ChannelAccessOptions,
   ChannelActionResponse,
   ChannelGrantRequest,
+  ChannelKeyEnvelopeRequest,
+  ChannelKeyEnvelopeResponse,
   ChannelListOptions,
   ChannelMonitor,
   ChannelSummary,
@@ -47,6 +49,7 @@ export interface SDNClientChannels {
   publish(channelId: string, stream: Uint8Array, options?: ChannelAccessOptions): Promise<ChannelActionResponse>;
   grant(channelId: string, grant: ChannelGrantRequest, options?: ChannelAccessOptions): Promise<ChannelActionResponse>;
   issueGrant(channelId: string, grant: ChannelGrantRequest, options?: ChannelAccessOptions): Promise<ChannelActionResponse>;
+  keyUnwrap(channelId: string, request: ChannelKeyEnvelopeRequest, options?: ChannelAccessOptions): Promise<ChannelKeyEnvelopeResponse>;
   openStream(channelId: string, options?: ChannelAccessOptions): Promise<Uint8Array>;
   monitor(channelId: string, options?: ChannelAccessOptions): Promise<ChannelMonitor>;
 }
@@ -92,6 +95,7 @@ export class SDNClient {
       publish: (channelId, stream, options) => this.transport.publishChannelStream(channelId, stream, options),
       grant: (channelId, grant, options) => this.transport.issueChannelGrant(channelId, grant, options),
       issueGrant: (channelId, grant, options) => this.transport.issueChannelGrant(channelId, grant, options),
+      keyUnwrap: (channelId, request, options) => this.transport.requestChannelKeyEnvelope(channelId, request, options),
       openStream: (channelId, options) => this.transport.openChannelStream(channelId, options),
       monitor: (channelId, options) => this.transport.monitorChannel(channelId, options),
     };
@@ -266,6 +270,8 @@ export type {
   ChannelAccessOptions,
   ChannelActionResponse,
   ChannelGrantRequest,
+  ChannelKeyEnvelopeRequest,
+  ChannelKeyEnvelopeResponse,
   ChannelListOptions,
   ChannelMonitor,
   ChannelSummary,
