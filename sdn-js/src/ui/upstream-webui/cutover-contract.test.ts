@@ -42,6 +42,7 @@ describe('sdn upstream webui cutover contract', () => {
       'lib/schema-sync-labels.ts',
       'lib/schema-sync-scheduler.ts',
       'main.ts',
+      'screens/ChannelsScreen.svelte',
       'screens/LocalDataScreen.svelte',
       'screens/NodeScreen.svelte',
       'screens/PeersScreen.svelte',

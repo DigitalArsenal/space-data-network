@@ -18,8 +18,12 @@ export interface ChannelStreamStats {
 }
 
 export interface ChannelStreamDispatcher {
-  pushChunk(chunk: Uint8Array | ArrayBuffer | ArrayBufferView): void;
+  pushChunk(chunk: Uint8Array | ArrayBuffer | ArrayBufferView, options?: ChannelStreamPushOptions): void;
   stats(): ChannelStreamStats;
+}
+
+export interface ChannelStreamPushOptions {
+  recordIndex?: number;
 }
 
 export interface ChannelStreamDispatcherOptions {
@@ -55,6 +59,7 @@ class NativeChannelStreamDispatcher implements ChannelStreamDispatcher {
   private readonly dispatcher: NativeStreamingDispatcher;
   private readonly accepted: Set<string>;
   private readonly counters: Record<string, number> = {};
+  private readonly encryptedRecordIndexes = new Set<number>();
   private bytesReceived = 0;
   private framesReceived = 0;
 
@@ -75,9 +80,10 @@ class NativeChannelStreamDispatcher implements ChannelStreamDispatcher {
     }
   }
 
-  pushChunk(chunk: Uint8Array | ArrayBuffer | ArrayBufferView): void {
+  pushChunk(chunk: Uint8Array | ArrayBuffer | ArrayBufferView, options: ChannelStreamPushOptions = {}): void {
     const bytes = asUint8Array(chunk);
     if (this.encrypted) {
+      this.assertEncryptedRecordIndex(options.recordIndex);
       this.dispatcher.pushBytes(bytes);
       this.bytesReceived += bytes.byteLength;
       return;
@@ -98,6 +104,17 @@ class NativeChannelStreamDispatcher implements ChannelStreamDispatcher {
       fileIdentifiers: { ...this.counters },
       encrypted: this.encrypted,
     };
+  }
+
+  private assertEncryptedRecordIndex(recordIndex: number | undefined): void {
+    if (typeof recordIndex !== 'number' || !Number.isSafeInteger(recordIndex) || recordIndex < 0) {
+      throw new Error('encrypted channel stream chunks require a non-negative record index');
+    }
+    const index = recordIndex;
+    if (this.encryptedRecordIndexes.has(index)) {
+      throw new Error(`replayed encrypted channel stream record index ${index}`);
+    }
+    this.encryptedRecordIndexes.add(index);
   }
 }
 
