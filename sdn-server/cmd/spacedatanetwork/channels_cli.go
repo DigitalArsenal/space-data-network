@@ -837,6 +837,7 @@ func runChannelsMonitor(cmd *cobra.Command, options channelMonitorOptions, chann
 	fmt.Fprintf(out, "standardCode=%s\n", parsed.StandardCode)
 	fmt.Fprintln(out, "channelHead=")
 	fmt.Fprintln(out, "pnmVerified=false")
+	fmt.Fprintln(out, "dpmVerified=false")
 	fmt.Fprintln(out, "providerPeer=")
 	fmt.Fprintln(out, "localRows=0")
 	fmt.Fprintln(out, "remoteRows=0")
@@ -1124,6 +1125,7 @@ func printChannelMonitorPayload(out interface {
 		"visibility",
 		"channelHead",
 		"pnmVerified",
+		"dpmVerified",
 		"providerPeer",
 		"localRows",
 		"remoteRows",

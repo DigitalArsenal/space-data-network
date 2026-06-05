@@ -249,6 +249,7 @@ func TestChannelsMonitorReportsRequiredFields(t *testing.T) {
 	for _, want := range []string{
 		"channelHead=",
 		"pnmVerified=",
+		"dpmVerified=",
 		"providerPeer=",
 		"localRows=",
 		"remoteRows=",
@@ -283,6 +284,7 @@ func TestChannelsMonitorReadsLocalAPI(t *testing.T) {
 			"standardCode":"OMM",
 			"channelHead":"bafyhead",
 			"pnmVerified":true,
+			"dpmVerified":true,
 			"providerPeer":"12D3KooProvider",
 			"localRows":10,
 			"remoteRows":12,
@@ -316,6 +318,7 @@ func TestChannelsMonitorReadsLocalAPI(t *testing.T) {
 		"standardCode=OMM",
 		"channelHead=bafyhead",
 		"pnmVerified=true",
+		"dpmVerified=true",
 		"providerPeer=12D3KooProvider",
 		"localRows=10",
 		"remoteRows=12",
