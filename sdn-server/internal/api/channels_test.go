@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -455,6 +456,46 @@ func TestChannelHandlerPublishesAndOpensNativeFlatBufferStream(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerReadsPublicNativeFlatBufferByteRange(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+	manifest := buildAPISignedDPM(t, signing.privateKey, "DPM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	streamBytes := bytes.Join([][]byte{
+		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
+		nativeAPIFrame("OMM1", []byte{4, 5, 6, 7}),
+	}, nil)
+	streamReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1", bytes.NewReader(streamBytes))
+	streamReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	streamRec := httptest.NewRecorder()
+	mux.ServeHTTP(streamRec, streamReq)
+	if streamRec.Code != http.StatusAccepted {
+		t.Fatalf("stream publish status = %d body=%s", streamRec.Code, streamRec.Body.String())
+	}
+
+	rangeReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/bytes?offset=1&length=6", nil)
+	rangeRec := httptest.NewRecorder()
+	mux.ServeHTTP(rangeRec, rangeReq)
+	if rangeRec.Code != http.StatusPartialContent {
+		t.Fatalf("byte range status = %d body=%s", rangeRec.Code, rangeRec.Body.String())
+	}
+	if got := rangeRec.Header().Get("Content-Type"); got != "application/vnd.sdn.flatbuffers.stream" {
+		t.Fatalf("byte range Content-Type = %q", got)
+	}
+	if got := rangeRec.Header().Get("Content-Range"); got != "bytes 1-6/"+strconv.Itoa(len(streamBytes)) {
+		t.Fatalf("byte range Content-Range = %q", got)
+	}
+	if !bytes.Equal(rangeRec.Body.Bytes(), streamBytes[1:7]) {
+		t.Fatalf("byte range body = %v, want %v", rangeRec.Body.Bytes(), streamBytes[1:7])
+	}
+}
+
 func TestChannelHandlerImportsVerifiedNativeStreamIntoFlatSQL(t *testing.T) {
 	t.Parallel()
 
@@ -517,7 +558,7 @@ func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/subscribe?visibility=private"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/unsubscribe?visibility=private"},
 		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/stream?visibility=private"},
-		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/bytes"},
+		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/bytes?visibility=private"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/key-unwrap"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/shard-import"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/module-feed"},
@@ -609,6 +650,63 @@ func TestChannelHandlerVerifiedEncryptedDPMMakesChannelPrivateFailClosed(t *test
 	}
 	if !bytes.Equal(openRec.Body.Bytes(), streamBytes) {
 		t.Fatal("private stream open did not return verified stream bytes after grant")
+	}
+}
+
+func TestChannelHandlerReadsPrivateNativeFlatBufferByteRangeWithGrant(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	streamBytes := bytes.Join([][]byte{
+		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
+		nativeAPIFrame("OMM1", []byte{4, 5, 6, 7}),
+	}, nil)
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants",
+		strings.NewReader(`{"to":"peer-alpha","scopes":["publish","byte_range_read"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(streamBytes))
+	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	publishRec := httptest.NewRecorder()
+	mux.ServeHTTP(publishRec, publishReq)
+	if publishRec.Code != http.StatusAccepted {
+		t.Fatalf("private stream publish with grant status = %d body=%s", publishRec.Code, publishRec.Body.String())
+	}
+
+	rangeReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/bytes?offset=1&length=3", nil)
+	rangeRec := httptest.NewRecorder()
+	mux.ServeHTTP(rangeRec, rangeReq)
+	if rangeRec.Code != http.StatusForbidden {
+		t.Fatalf("private byte range without grant status = %d body=%s", rangeRec.Code, rangeRec.Body.String())
+	}
+
+	rangeReq = httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/bytes?offset=1&length=3&subject=peer-alpha&grantId="+grantID, nil)
+	rangeRec = httptest.NewRecorder()
+	mux.ServeHTTP(rangeRec, rangeReq)
+	if rangeRec.Code != http.StatusPartialContent {
+		t.Fatalf("private byte range with grant status = %d body=%s", rangeRec.Code, rangeRec.Body.String())
+	}
+	if got := rangeRec.Header().Get("Content-Range"); got != "bytes 1-3/"+strconv.Itoa(len(streamBytes)) {
+		t.Fatalf("private byte range Content-Range = %q", got)
+	}
+	if !bytes.Equal(rangeRec.Body.Bytes(), streamBytes[1:4]) {
+		t.Fatalf("private byte range body = %v, want %v", rangeRec.Body.Bytes(), streamBytes[1:4])
 	}
 }
 
