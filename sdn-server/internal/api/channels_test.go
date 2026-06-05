@@ -160,6 +160,67 @@ func TestChannelHandlerPublicSubscribeUpdatesMonitor(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerIssuesPrivateGrantAndAuthorizesBoundaries(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants",
+		strings.NewReader(`{"to":"peer-alpha","scopes":["subscribe","stream_open"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantBody := decodeChannelJSON(t, grantRec.Body.String())
+	grantID, ok := grantBody["grantId"].(string)
+	if !ok || grantID == "" {
+		t.Fatalf("grant response missing grantId: %#v", grantBody)
+	}
+	if grantBody["channelId"] != "spaceaware-OMM" ||
+		grantBody["subject"] != "peer-alpha" ||
+		grantBody["grantState"] != "verified" {
+		t.Fatalf("unexpected grant response: %#v", grantBody)
+	}
+
+	subscribeReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/subscribe?visibility=private&subject=peer-alpha&grantId="+grantID,
+		nil,
+	)
+	subscribeRec := httptest.NewRecorder()
+	mux.ServeHTTP(subscribeRec, subscribeReq)
+
+	if subscribeRec.Code != http.StatusOK {
+		t.Fatalf("private subscribe status = %d body=%s", subscribeRec.Code, subscribeRec.Body.String())
+	}
+	subscribeBody := decodeChannelJSON(t, subscribeRec.Body.String())
+	if subscribeBody["grantState"] != "verified" {
+		t.Fatalf("private subscribe did not verify grant: %#v", subscribeBody)
+	}
+
+	streamReq := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/channels/spaceaware-OMM/stream?subject=peer-alpha&grantId="+grantID,
+		nil,
+	)
+	streamRec := httptest.NewRecorder()
+	mux.ServeHTTP(streamRec, streamReq)
+
+	if streamRec.Code != http.StatusOK {
+		t.Fatalf("private stream status = %d body=%s", streamRec.Code, streamRec.Body.String())
+	}
+	streamBody := decodeChannelJSON(t, streamRec.Body.String())
+	if streamBody["grantState"] != "verified" {
+		t.Fatalf("private stream did not verify grant: %#v", streamBody)
+	}
+}
+
 func TestChannelHandlerPublicPublishRejectsUnverifiedPNM(t *testing.T) {
 	t.Parallel()
 
@@ -198,7 +259,7 @@ func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/module-feed"},
 		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/cache"},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?visibility=private"},
-		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/grants"},
+		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/grants?visibility=private"},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path, nil)
 		rec := httptest.NewRecorder()
