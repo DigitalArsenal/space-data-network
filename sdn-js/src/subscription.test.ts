@@ -29,7 +29,7 @@ describe('SubscriptionManager', () => {
   describe('createSubscription', () => {
     it('should create a valid subscription', () => {
       const config: SubscriptionConfig = {
-        dataTypes: ['OMM.fbs', 'CDM.fbs'],
+        dataTypes: ['OMM', 'CDM'],
         sourcePeers: ['all'],
         encrypted: true,
         streaming: true,
@@ -39,7 +39,7 @@ describe('SubscriptionManager', () => {
 
       expect(sub.id).toMatch(/^sub_/);
       expect(sub.status).toBe('active');
-      expect(sub.config.dataTypes).toEqual(['OMM.fbs', 'CDM.fbs']);
+      expect(sub.config.dataTypes).toEqual(['OMM', 'CDM']);
       expect(sub.messageCount).toBe(0);
     });
 
@@ -56,7 +56,7 @@ describe('SubscriptionManager', () => {
 
     it('should throw error for invalid schema', () => {
       const config: SubscriptionConfig = {
-        dataTypes: ['INVALID.fbs'],
+        dataTypes: ['ZZZ'],
         sourcePeers: ['all'],
         encrypted: true,
         streaming: true,
@@ -69,7 +69,7 @@ describe('SubscriptionManager', () => {
   describe('subscription lifecycle', () => {
     it('should pause and resume subscriptions', () => {
       const config: SubscriptionConfig = {
-        dataTypes: ['OMM.fbs'],
+        dataTypes: ['OMM'],
         sourcePeers: ['all'],
         encrypted: true,
         streaming: true,
@@ -87,7 +87,7 @@ describe('SubscriptionManager', () => {
 
     it('should remove subscriptions', () => {
       const config: SubscriptionConfig = {
-        dataTypes: ['OMM.fbs'],
+        dataTypes: ['OMM'],
         sourcePeers: ['all'],
         encrypted: true,
         streaming: true,
@@ -104,7 +104,7 @@ describe('SubscriptionManager', () => {
   describe('processMessage', () => {
     it('should deliver matching messages', () => {
       const config: SubscriptionConfig = {
-        dataTypes: ['OMM.fbs'],
+        dataTypes: ['OMM'],
         sourcePeers: ['all'],
         encrypted: true,
         streaming: true,
@@ -135,7 +135,7 @@ describe('SubscriptionManager', () => {
 
     it('should not deliver non-matching schema', () => {
       const config: SubscriptionConfig = {
-        dataTypes: ['OMM.fbs'],
+        dataTypes: ['OMM'],
         sourcePeers: ['all'],
         encrypted: true,
         streaming: true,
@@ -155,7 +155,7 @@ describe('SubscriptionManager', () => {
 
     it('should filter by source peer', () => {
       const config: SubscriptionConfig = {
-        dataTypes: ['OMM.fbs'],
+        dataTypes: ['OMM'],
         sourcePeers: ['peer1', 'peer2'],
         encrypted: true,
         streaming: true,
@@ -179,7 +179,7 @@ describe('SubscriptionManager', () => {
 
     it('should apply field-level filters', () => {
       const config: SubscriptionConfig = {
-        dataTypes: ['OMM.fbs'],
+        dataTypes: ['OMM'],
         sourcePeers: ['all'],
         encrypted: true,
         streaming: true,
@@ -207,14 +207,14 @@ describe('SubscriptionManager', () => {
   describe('getRequiredTopics', () => {
     it('should return schema and peer topics', () => {
       manager.createSubscription({
-        dataTypes: ['OMM.fbs', 'CDM.fbs'],
+        dataTypes: ['OMM', 'CDM'],
         sourcePeers: ['all'],
         encrypted: true,
         streaming: true,
       });
 
       manager.createSubscription({
-        dataTypes: ['EPM.fbs'],
+        dataTypes: ['EPM'],
         sourcePeers: ['peer1'],
         encrypted: true,
         streaming: true,
@@ -225,6 +225,8 @@ describe('SubscriptionManager', () => {
       expect(topics.has('/sdn/data/OMM')).toBe(true);
       expect(topics.has('/sdn/data/CDM')).toBe(true);
       expect(topics.has('/sdn/data/EPM')).toBe(true);
+      expect(topics.has('/spacedatanetwork/sds/OMM')).toBe(true);
+      expect(topics.has('/spacedatanetwork/sds/OMM.fbs')).toBe(false);
       expect(topics.has('/sdn/peer/peer1')).toBe(true);
     });
   });
@@ -295,7 +297,7 @@ describe('evaluateFilters', () => {
 describe('validateSubscriptionConfig', () => {
   it('should return no errors for valid config', () => {
     const config: SubscriptionConfig = {
-      dataTypes: ['OMM.fbs'],
+      dataTypes: ['OMM'],
       sourcePeers: ['all'],
       encrypted: true,
       streaming: true,
@@ -316,7 +318,7 @@ describe('validateSubscriptionConfig', () => {
 
   it('should return error for invalid operator in filter', () => {
     const config: SubscriptionConfig = {
-      dataTypes: ['OMM.fbs'],
+      dataTypes: ['OMM'],
       sourcePeers: ['all'],
       encrypted: true,
       streaming: true,
