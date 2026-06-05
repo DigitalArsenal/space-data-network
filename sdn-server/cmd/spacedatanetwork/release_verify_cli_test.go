@@ -96,6 +96,32 @@ func TestVerifyPortableCLIArchiveLayoutRejectsMissingAlias(t *testing.T) {
 	}
 }
 
+func TestVerifyPortableCLIArchiveLayoutRejectsMissingBundledRuntimeAssets(t *testing.T) {
+	root := t.TempDir()
+	archivePath := writePortableCLITarGzWithEntries(
+		t,
+		root,
+		"spacedatanetwork-1.2.3-linux-amd64.tar.gz",
+		"spacedatanetwork-1.2.3-linux-amd64",
+		[]string{
+			"bin/spacedatanetwork",
+			"bin/sdn",
+			"runtime/modules/org.spacedatanetwork.updater.wasm",
+			"manifest.json",
+		},
+	)
+
+	err := verifyPortableCLIArchiveLayout(archivePath, portableCLITarget{
+		Label:       "Linux AMD64 portable CLI",
+		PrimaryPath: "bin/spacedatanetwork",
+		AliasPath:   "bin/sdn",
+		ArchiveKind: "tar.gz",
+	})
+	if err == nil || !strings.Contains(err.Error(), "runtime/kubo/ipfs") {
+		t.Fatalf("verifyPortableCLIArchiveLayout error = %v, want missing runtime/kubo/ipfs", err)
+	}
+}
+
 func TestVerifyPortableCLIArchiveLayoutRejectsMissingWindowsWasmEdgeRuntime(t *testing.T) {
 	root := t.TempDir()
 	archivePath := writePortableCLIZipWithoutWindowsWasmEdgeRuntime(t, root, "spacedatanetwork-1.2.3-windows-amd64.zip", "spacedatanetwork-1.2.3-windows-amd64")
@@ -105,6 +131,8 @@ func TestVerifyPortableCLIArchiveLayoutRejectsMissingWindowsWasmEdgeRuntime(t *t
 		PrimaryPath: "bin/spacedatanetwork.exe",
 		AliasPath:   "bin/sdn.exe",
 		ArchiveKind: "zip",
+		KuboPath:    "runtime/kubo/ipfs.exe",
+		Required:    []string{"bin/wasmedge.dll", "runtime/wasmedge/bin/wasmedge.dll"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "bin/wasmedge.dll") {
 		t.Fatalf("verifyPortableCLIArchiveLayout error = %v, want missing bin/wasmedge.dll", err)
@@ -198,20 +226,30 @@ func writeReleaseTestFile(t *testing.T, root string, name string, data []byte) {
 
 func writePortableCLITarGz(t *testing.T, root string, name string, bundleRoot string, omitAlias bool) string {
 	t.Helper()
+	entries := portableCLIEntries(bundleRoot, false, omitAlias)
+	var relativePaths []string
+	for pathValue := range entries {
+		relativePaths = append(relativePaths, strings.TrimPrefix(pathValue, bundleRoot+"/"))
+	}
+	return writePortableCLITarGzWithEntries(t, root, name, bundleRoot, relativePaths)
+}
+
+func writePortableCLITarGzWithEntries(t *testing.T, root string, name string, bundleRoot string, relativePaths []string) string {
+	t.Helper()
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	writer := tar.NewWriter(gz)
-	entries := portableCLIEntries(bundleRoot, false, omitAlias)
-	for pathValue, contents := range entries {
+	for _, relativePath := range relativePaths {
+		pathValue := bundleRoot + "/" + relativePath
 		header := &tar.Header{
 			Name: pathValue,
 			Mode: 0o755,
-			Size: int64(len(contents)),
+			Size: int64(len("fixture")),
 		}
 		if err := writer.WriteHeader(header); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := writer.Write([]byte(contents)); err != nil {
+		if _, err := writer.Write([]byte("fixture")); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -252,7 +290,11 @@ func writePortableCLIZipWithoutWindowsWasmEdgeRuntime(t *testing.T, root string,
 	for _, pathValue := range []string{
 		bundleRoot + "/bin/spacedatanetwork.exe",
 		bundleRoot + "/bin/sdn.exe",
+		bundleRoot + "/runtime/kubo/ipfs.exe",
 		bundleRoot + "/runtime/modules/org.spacedatanetwork.updater.wasm",
+		bundleRoot + "/runtime/ui/sdn/index.html",
+		bundleRoot + "/runtime/ui/webui/index.html",
+		bundleRoot + "/runtime/wasmedge/bin/wasmedge.exe",
 		bundleRoot + "/manifest.json",
 	} {
 		file, err := writer.Create(pathValue)
@@ -279,10 +321,18 @@ func portableCLIEntries(bundleRoot string, windows bool, omitAlias bool) map[str
 	}
 	entries := map[string]string{
 		bundleRoot + "/bin/" + primary:                                    "primary",
+		bundleRoot + "/runtime/kubo/ipfs":                                 "ipfs",
 		bundleRoot + "/runtime/modules/org.spacedatanetwork.updater.wasm": "updater",
+		bundleRoot + "/runtime/ui/sdn/index.html":                         "sdn ui",
+		bundleRoot + "/runtime/ui/webui/index.html":                       "webui",
+		bundleRoot + "/runtime/wasmedge/bin/wasmedge":                     "wasmedge",
 		bundleRoot + "/manifest.json":                                     `{"schema":"org.spacedatanetwork.bundle.v1"}`,
 	}
 	if windows {
+		delete(entries, bundleRoot+"/runtime/kubo/ipfs")
+		delete(entries, bundleRoot+"/runtime/wasmedge/bin/wasmedge")
+		entries[bundleRoot+"/runtime/kubo/ipfs.exe"] = "ipfs"
+		entries[bundleRoot+"/runtime/wasmedge/bin/wasmedge.exe"] = "wasmedge"
 		entries[bundleRoot+"/bin/wasmedge.dll"] = "dll"
 		entries[bundleRoot+"/runtime/wasmedge/bin/wasmedge.dll"] = "dll"
 	}

@@ -282,6 +282,8 @@ type portableCLITarget struct {
 	PrimaryPath string
 	AliasPath   string
 	ArchiveKind string
+	KuboPath    string
+	Required    []string
 }
 
 func verifyPortableCLIArtifacts(dir string, files map[string]os.DirEntry) error {
@@ -290,7 +292,7 @@ func verifyPortableCLIArtifacts(dir string, files map[string]os.DirEntry) error 
 		{Label: "macOS AMD64 portable CLI", Suffix: "-darwin-amd64.tar.gz", PrimaryPath: "bin/spacedatanetwork", AliasPath: "bin/sdn", ArchiveKind: "tar.gz"},
 		{Label: "Linux AMD64 portable CLI", Suffix: "-linux-amd64.tar.gz", PrimaryPath: "bin/spacedatanetwork", AliasPath: "bin/sdn", ArchiveKind: "tar.gz"},
 		{Label: "Linux ARM64 portable CLI", Suffix: "-linux-arm64.tar.gz", PrimaryPath: "bin/spacedatanetwork", AliasPath: "bin/sdn", ArchiveKind: "tar.gz"},
-		{Label: "Windows AMD64 portable CLI", Suffix: "-windows-amd64.zip", PrimaryPath: "bin/spacedatanetwork.exe", AliasPath: "bin/sdn.exe", ArchiveKind: "zip"},
+		{Label: "Windows AMD64 portable CLI", Suffix: "-windows-amd64.zip", PrimaryPath: "bin/spacedatanetwork.exe", AliasPath: "bin/sdn.exe", ArchiveKind: "zip", KuboPath: "runtime/kubo/ipfs.exe", Required: []string{"bin/wasmedge.dll", "runtime/wasmedge/bin/wasmedge.dll"}},
 	}
 	for _, target := range targets {
 		name := portableCLIArtifactName(files, target.Suffix)
@@ -330,24 +332,37 @@ func verifyPortableCLIArchiveLayout(pathValue string, target portableCLITarget) 
 	for _, required := range []string{
 		target.PrimaryPath,
 		target.AliasPath,
+		portableCLIKuboPath(target),
 		"runtime/modules/org.spacedatanetwork.updater.wasm",
+		"runtime/ui/sdn/index.html",
+		"runtime/ui/webui/index.html",
+		portableCLIWasmEdgePath(target),
 		"manifest.json",
 	} {
 		if !archiveContainsRelativePath(entries, required) {
 			return fmt.Errorf("portable CLI archive missing %s", required)
 		}
 	}
-	if target.ArchiveKind == "zip" && strings.HasSuffix(target.PrimaryPath, ".exe") {
-		for _, required := range []string{
-			"bin/wasmedge.dll",
-			"runtime/wasmedge/bin/wasmedge.dll",
-		} {
-			if !archiveContainsRelativePath(entries, required) {
-				return fmt.Errorf("portable CLI archive missing %s", required)
-			}
+	for _, required := range target.Required {
+		if !archiveContainsRelativePath(entries, required) {
+			return fmt.Errorf("portable CLI archive missing %s", required)
 		}
 	}
 	return nil
+}
+
+func portableCLIKuboPath(target portableCLITarget) string {
+	if target.KuboPath != "" {
+		return target.KuboPath
+	}
+	return "runtime/kubo/ipfs"
+}
+
+func portableCLIWasmEdgePath(target portableCLITarget) string {
+	if strings.HasSuffix(target.PrimaryPath, ".exe") {
+		return "runtime/wasmedge/bin/wasmedge.exe"
+	}
+	return "runtime/wasmedge/bin/wasmedge"
 }
 
 func tarGzEntries(pathValue string) (map[string]bool, error) {
