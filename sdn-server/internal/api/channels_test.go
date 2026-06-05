@@ -2,7 +2,9 @@ package api
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	dpm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DPM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
@@ -229,10 +230,11 @@ func TestChannelHandlerIssuesPrivateGrantAndAuthorizesBoundaries(t *testing.T) {
 func TestChannelHandlerPublicPublishRejectsUnverifiedPNM(t *testing.T) {
 	t.Parallel()
 
+	signing := newChannelSigningFixture(t)
 	mux := http.NewServeMux()
 	NewChannelHandler(nil).RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish", bytes.NewReader(buildAPIUnsignedPNM(t)))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?"+signing.providerKeyQuery(), bytes.NewReader(buildAPIUnsignedPNM(t)))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -244,13 +246,33 @@ func TestChannelHandlerPublicPublishRejectsUnverifiedPNM(t *testing.T) {
 	}
 }
 
-func TestChannelHandlerPublicPublishUpdatesVerifiedMonitor(t *testing.T) {
+func TestChannelHandlerPublicPublishRequiresProviderPublicKey(t *testing.T) {
 	t.Parallel()
 
+	signing := newChannelSigningFixture(t)
 	mux := http.NewServeMux()
 	NewChannelHandler(nil).RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish", bytes.NewReader(buildAPISignedPNM(t, "bafyverifiedhead", "DPM")))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish", bytes.NewReader(buildAPISignedPNM(t, signing.privateKey, "bafyverifiedhead", "DPM")))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("publish status = %d, want %d body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "provider public key is required") {
+		t.Fatalf("publish body did not require provider key: %s", rec.Body.String())
+	}
+}
+
+func TestChannelHandlerPublicPublishUpdatesVerifiedMonitor(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?"+signing.providerKeyQuery(), bytes.NewReader(buildAPISignedPNM(t, signing.privateKey, "bafyverifiedhead", "DPM")))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -300,10 +322,11 @@ func TestChannelHandlerPublicStreamPublishRequiresVerifiedPNM(t *testing.T) {
 func TestChannelHandlerPublicStreamPublishRequiresVerifiedDPM(t *testing.T) {
 	t.Parallel()
 
+	signing := newChannelSigningFixture(t)
 	mux := http.NewServeMux()
 	NewChannelHandler(nil).RegisterRoutes(mux)
 
-	pnmReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish", bytes.NewReader(buildAPISignedPNM(t, "bafystreamhead", "DPM")))
+	pnmReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?"+signing.providerKeyQuery(), bytes.NewReader(buildAPISignedPNM(t, signing.privateKey, "bafystreamhead", "DPM")))
 	pnmRec := httptest.NewRecorder()
 	mux.ServeHTTP(pnmRec, pnmReq)
 	if pnmRec.Code != http.StatusAccepted {
@@ -327,17 +350,19 @@ func TestChannelHandlerPublicStreamPublishRequiresVerifiedDPM(t *testing.T) {
 func TestChannelHandlerRejectsDPMMismatchedToPNM(t *testing.T) {
 	t.Parallel()
 
+	signing := newChannelSigningFixture(t)
 	mux := http.NewServeMux()
 	NewChannelHandler(nil).RegisterRoutes(mux)
+	manifest := buildAPISignedDPM(t, signing.privateKey, "OTHER")
 
-	pnmReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish", bytes.NewReader(buildAPISignedPNM(t, "bafystreamhead", "DPM")))
+	pnmReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?"+signing.providerKeyQuery(), bytes.NewReader(buildAPISignedPNM(t, signing.privateKey, manifest.CID, "DPM")))
 	pnmRec := httptest.NewRecorder()
 	mux.ServeHTTP(pnmRec, pnmReq)
 	if pnmRec.Code != http.StatusAccepted {
 		t.Fatalf("PNM publish status = %d body=%s", pnmRec.Code, pnmRec.Body.String())
 	}
 
-	dpmReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?manifest=1", bytes.NewReader(buildAPISignedDPM(t, "OTHER")))
+	dpmReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?manifest=1&"+signing.providerKeyQuery(), bytes.NewReader(manifest.Bytes))
 	dpmReq.Header.Set("Content-Type", "application/vnd.sdn.dpm")
 	dpmRec := httptest.NewRecorder()
 	mux.ServeHTTP(dpmRec, dpmReq)
@@ -349,19 +374,39 @@ func TestChannelHandlerRejectsDPMMismatchedToPNM(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerRejectsDPMFromDifferentProviderKey(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	otherSigning := newChannelSigningFixture(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+	manifest := buildAPISignedDPM(t, signing.privateKey, "DPM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+
+	dpmReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?manifest=1&"+otherSigning.providerKeyQuery(), bytes.NewReader(manifest.Bytes))
+	dpmReq.Header.Set("Content-Type", "application/vnd.sdn.dpm")
+	dpmRec := httptest.NewRecorder()
+	mux.ServeHTTP(dpmRec, dpmReq)
+	if dpmRec.Code != http.StatusForbidden {
+		t.Fatalf("DPM publish status = %d, want %d body=%s", dpmRec.Code, http.StatusForbidden, dpmRec.Body.String())
+	}
+	if !strings.Contains(dpmRec.Body.String(), "does not match verified PNM provider") {
+		t.Fatalf("DPM publish body did not report provider mismatch: %s", dpmRec.Body.String())
+	}
+}
+
 func TestChannelHandlerPublishesAndOpensNativeFlatBufferStream(t *testing.T) {
 	t.Parallel()
 
+	signing := newChannelSigningFixture(t)
 	mux := http.NewServeMux()
 	NewChannelHandler(nil).RegisterRoutes(mux)
+	manifest := buildAPISignedDPM(t, signing.privateKey, "DPM")
 
-	pnmReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish", bytes.NewReader(buildAPISignedPNM(t, "bafystreamhead", "DPM")))
-	pnmRec := httptest.NewRecorder()
-	mux.ServeHTTP(pnmRec, pnmReq)
-	if pnmRec.Code != http.StatusAccepted {
-		t.Fatalf("PNM publish status = %d body=%s", pnmRec.Code, pnmRec.Body.String())
-	}
-	publishDPMForChannel(t, mux, "spaceaware-OMM", "DPM")
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
 
 	streamBytes := bytes.Join([][]byte{
 		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
@@ -413,17 +458,14 @@ func TestChannelHandlerPublishesAndOpensNativeFlatBufferStream(t *testing.T) {
 func TestChannelHandlerImportsVerifiedNativeStreamIntoFlatSQL(t *testing.T) {
 	t.Parallel()
 
+	signing := newChannelSigningFixture(t)
 	store := newChannelTestStore(t)
 	mux := http.NewServeMux()
 	NewChannelHandler(store).RegisterRoutes(mux)
+	manifest := buildAPISignedDPM(t, signing.privateKey, "DPM")
 
-	pnmReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish", bytes.NewReader(buildAPISignedPNM(t, "bafyflatsqlhead", "DPM")))
-	pnmRec := httptest.NewRecorder()
-	mux.ServeHTTP(pnmRec, pnmReq)
-	if pnmRec.Code != http.StatusAccepted {
-		t.Fatalf("PNM publish status = %d body=%s", pnmRec.Code, pnmRec.Body.String())
-	}
-	publishDPMForChannel(t, mux, "spaceaware-OMM", "DPM")
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
 
 	streamBytes := bytes.Join([][]byte{
 		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
@@ -503,10 +545,47 @@ func nativeAPIFrame(fileIdentifier string, payload []byte) []byte {
 	return frame
 }
 
-func publishDPMForChannel(t *testing.T, mux *http.ServeMux, channelID string, fileID string) {
+type channelSigningFixture struct {
+	publicKey  ed25519.PublicKey
+	privateKey ed25519.PrivateKey
+}
+
+func newChannelSigningFixture(t *testing.T) channelSigningFixture {
 	t.Helper()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/"+channelID+"/publish?manifest=1", bytes.NewReader(buildAPISignedDPM(t, fileID)))
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	return channelSigningFixture{
+		publicKey:  append(ed25519.PublicKey(nil), publicKey...),
+		privateKey: append(ed25519.PrivateKey(nil), privateKey...),
+	}
+}
+
+func (f channelSigningFixture) providerKeyQuery() string {
+	return "providerPublicKey=" + hex.EncodeToString(f.publicKey)
+}
+
+func publishPNMForChannel(t *testing.T, mux *http.ServeMux, channelID string, signing channelSigningFixture, cid string, fileID string) {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/"+channelID+"/publish?"+signing.providerKeyQuery(), bytes.NewReader(buildAPISignedPNM(t, signing.privateKey, cid, fileID)))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("PNM publish status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := decodeChannelJSON(t, rec.Body.String())
+	if body["pnmVerified"] != true || body["pnmCid"] != cid {
+		t.Fatalf("unexpected PNM publish response: %#v", body)
+	}
+}
+
+func publishDPMForChannel(t *testing.T, mux *http.ServeMux, channelID string, signing channelSigningFixture, manifest *storage.DatasetPublicationManifest) {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/"+channelID+"/publish?manifest=1&"+signing.providerKeyQuery(), bytes.NewReader(manifest.Bytes))
 	req.Header.Set("Content-Type", "application/vnd.sdn.dpm")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -514,7 +593,7 @@ func publishDPMForChannel(t *testing.T, mux *http.ServeMux, channelID string, fi
 		t.Fatalf("DPM publish status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	body := decodeChannelJSON(t, rec.Body.String())
-	if body["dpmVerified"] != true || body["dpmFileId"] != fileID {
+	if body["dpmVerified"] != true || body["dpmFileId"] != manifest.FileID {
 		t.Fatalf("unexpected DPM publish response: %#v", body)
 	}
 }
@@ -555,15 +634,15 @@ func buildAPIUnsignedPNM(t *testing.T) []byte {
 	return append([]byte(nil), builder.FinishedBytes()...)
 }
 
-func buildAPISignedPNM(t *testing.T, cid string, fileID string) []byte {
+func buildAPISignedPNM(t *testing.T, signingKey ed25519.PrivateKey, cid string, fileID string) []byte {
 	t.Helper()
 
-	signature := strings.Repeat("a", 128)
+	signature := ed25519.Sign(signingKey, channelTestPNMSignaturePayload(cid, fileID))
 	builder := flatbuffers.NewBuilder(256)
 	cidOffset := builder.CreateString(cid)
 	fileIDOffset := builder.CreateString(fileID)
 	timestampOffset := builder.CreateString(time.Now().UTC().Format(time.RFC3339))
-	signatureOffset := builder.CreateString(signature)
+	signatureOffset := builder.CreateString(hex.EncodeToString(signature))
 	signatureTypeOffset := builder.CreateString("Ed25519")
 
 	PNM.PNMStart(builder)
@@ -577,32 +656,61 @@ func buildAPISignedPNM(t *testing.T, cid string, fileID string) []byte {
 	return append([]byte(nil), builder.FinishedBytes()...)
 }
 
-func buildAPISignedDPM(t *testing.T, fileID string) []byte {
+func channelTestPNMSignaturePayload(manifestCID, fileID string) []byte {
+	payload := make([]byte, 0, len(manifestCID)+len(fileID)+18)
+	payload = append(payload, []byte("SDN-DPM-PNM\x00")...)
+	payload = append(payload, fileID...)
+	payload = append(payload, 0)
+	payload = append(payload, manifestCID...)
+	return payload
+}
+
+func buildAPISignedDPM(t *testing.T, signingKey ed25519.PrivateKey, fileID string) *storage.DatasetPublicationManifest {
 	t.Helper()
 
-	signature := bytes.Repeat([]byte{0xaa}, 64)
-	builder := flatbuffers.NewBuilder(512)
-	versionOffset := builder.CreateString("1")
-	datasetOffset := builder.CreateString("spaceaware")
-	updateOffset := builder.CreateString("update-1")
-	fileIDOffset := builder.CreateString(fileID)
-	providerOffset := builder.CreateString("spaceaware")
-	publishedOffset := builder.CreateString(time.Now().UTC().Format(time.RFC3339Nano))
-	signatureTypeOffset := builder.CreateString("Ed25519")
-	signatureOffset := builder.CreateByteVector(signature)
-
-	dpm.DPMStart(builder)
-	dpm.DPMAddVERSION(builder, versionOffset)
-	dpm.DPMAddDATASET_ID(builder, datasetOffset)
-	dpm.DPMAddUPDATE_ID(builder, updateOffset)
-	dpm.DPMAddFILE_ID(builder, fileIDOffset)
-	dpm.DPMAddPROVIDER_PEER_ID(builder, providerOffset)
-	dpm.DPMAddPUBLISH_TIMESTAMP(builder, publishedOffset)
-	dpm.DPMAddPROVIDER_SIGNATURE(builder, signatureOffset)
-	dpm.DPMAddSIGNATURE_TYPE(builder, signatureTypeOffset)
-	root := dpm.DPMEnd(builder)
-	dpm.FinishDPMBuffer(builder, root)
-	return append([]byte(nil), builder.FinishedBytes()...)
+	schemaName, err := channels.SchemaNameFromStandardCode("OMM")
+	if err != nil {
+		t.Fatalf("SchemaNameFromStandardCode failed: %v", err)
+	}
+	export, err := storage.ExportDatasetRecords(t.TempDir(), storage.IndexedRecordQuery{
+		SchemaName:          schemaName,
+		ProviderID:          "spaceaware",
+		SourceName:          "channel:spaceaware-OMM",
+		BatchID:             "batch-1",
+		Limit:               10,
+		AllowLargeResultSet: true,
+		OrderByCID:          true,
+	}, []storage.DatasetExportRecord{{
+		Data: sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build(),
+		SourceTags: storage.SourceTags{
+			ProviderID:        "spaceaware",
+			SourceName:        "channel:spaceaware-OMM",
+			BatchID:           "batch-1",
+			ContentKeyID:      "public",
+			ProducerPeerID:    "spaceaware",
+			ProducerPublicKey: "spaceaware",
+		},
+	}})
+	if err != nil {
+		t.Fatalf("ExportDatasetRecords failed: %v", err)
+	}
+	manifest, err := storage.BuildSignedDatasetPublicationManifest(t.TempDir(), storage.DatasetPublicationManifestOptions{
+		Export:          export,
+		DatasetID:       "spaceaware",
+		UpdateID:        "batch-1",
+		FileID:          fileID,
+		ProviderPeerID:  "spaceaware",
+		ProviderEPMCID:  "bafy-provider-epm",
+		PublishedAt:     time.Now().UTC(),
+		SigningKey:      signingKey,
+		SchemaHash:      "channel-test-schema",
+		QueryEngine:     "FlatSQL",
+		QueryEngineVers: "sdn-channel-test",
+	})
+	if err != nil {
+		t.Fatalf("BuildSignedDatasetPublicationManifest failed: %v", err)
+	}
+	return manifest
 }
 
 func decodeChannelJSON(t *testing.T, body string) map[string]interface{} {

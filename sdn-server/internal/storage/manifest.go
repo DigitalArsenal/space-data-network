@@ -79,6 +79,32 @@ type DatasetPublicationReplayResult struct {
 	ResultSHA256 string
 }
 
+type DatasetPublicationManifestTrustEvidence struct {
+	ManifestCID    string
+	FileID         string
+	SignatureType  string
+	ProviderPeer   string
+	ProviderEPMCID string
+}
+
+func VerifySignedDatasetPublicationManifest(manifestBytes []byte, providerPublicKey ed25519.PublicKey) (DatasetPublicationManifestTrustEvidence, error) {
+	manifest, _, err := parseAndVerifyDatasetManifest(manifestBytes, providerPublicKey)
+	if err != nil {
+		return DatasetPublicationManifestTrustEvidence{}, err
+	}
+	manifestCID, err := cidV1RawSHA256(manifestBytes)
+	if err != nil {
+		return DatasetPublicationManifestTrustEvidence{}, fmt.Errorf("compute manifest CID: %w", err)
+	}
+	return DatasetPublicationManifestTrustEvidence{
+		ManifestCID:    manifestCID,
+		FileID:         strings.TrimSpace(string(manifest.FILE_ID())),
+		SignatureType:  strings.TrimSpace(string(manifest.SIGNATURE_TYPE())),
+		ProviderPeer:   strings.TrimSpace(string(manifest.PROVIDER_PEER_ID())),
+		ProviderEPMCID: strings.TrimSpace(string(manifest.PROVIDER_EPM_CID())),
+	}, nil
+}
+
 // BuildDatasetPublicationPNM creates one PNM announcing a signed DPM manifest CID.
 func BuildDatasetPublicationPNM(manifest *DatasetPublicationManifest, opts DatasetPublicationPNMOptions) ([]byte, error) {
 	if manifest == nil {
