@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -441,7 +442,8 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	throughputBPS := measuredBytesPerSecond(snapshot.ByteCount, time.Since(started))
-	metadata, _ = h.metadata.RecordNativeStream(parsed, snapshot, throughputBPS)
+	wireUtilization := measuredWireSpeedUtilization(throughputBPS)
+	metadata, _ = h.metadata.RecordNativeStream(parsed, snapshot, throughputBPS, wireUtilization)
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"channelId":                parsed.ChannelID,
 		"standardCode":             parsed.StandardCode,
@@ -450,6 +452,7 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		"streamBytes":              snapshot.ByteCount,
 		"streamFrames":             snapshot.FrameCount,
 		"throughputBytesPerSecond": throughputBPS,
+		"wireSpeedUtilization":     wireUtilization,
 		"importedRows":             importedRows,
 		"verifiedAt":               metadata.VerifiedAt.Format(time.RFC3339Nano),
 		"streamUpdated":            snapshot.UpdatedAt.Format(time.RFC3339Nano),
@@ -464,6 +467,23 @@ func measuredBytesPerSecond(byteCount int, elapsed time.Duration) int64 {
 		elapsed = time.Nanosecond
 	}
 	return int64(float64(byteCount) / elapsed.Seconds())
+}
+
+func measuredWireSpeedUtilization(throughputBPS int64) *float64 {
+	if throughputBPS <= 0 {
+		return nil
+	}
+	linkGBit := strings.TrimSpace(os.Getenv("SDN_TEST_LINK_GBIT"))
+	if linkGBit == "" {
+		return nil
+	}
+	gbits, err := strconv.ParseFloat(linkGBit, 64)
+	if err != nil || gbits <= 0 {
+		return nil
+	}
+	linkBytesPerSecond := gbits * 1_000_000_000 / 8
+	utilization := float64(throughputBPS) / linkBytesPerSecond
+	return &utilization
 }
 
 func (h *ChannelHandler) openStream(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
