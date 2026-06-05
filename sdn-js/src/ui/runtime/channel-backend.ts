@@ -36,7 +36,7 @@ export function createHttpChannelBackend(fetchLike: FetchLike, baseUrl: string |
       return postChannelAction(fetchLike, baseUrl, channelId, 'unsubscribe', undefined, undefined, options);
     },
     publish(channelId: string, body?: BodyInit | null, options?: ChannelActionOptions) {
-      return postChannelAction(fetchLike, baseUrl, channelId, 'publish', body, nativeStreamHeaders(body), options);
+      return postChannelAction(fetchLike, baseUrl, channelId, 'publish', body, nativeStreamHeaders(body, options), options);
     },
     issueGrant(channelId: string, body: Record<string, unknown> = {}, options?: ChannelActionOptions) {
       return postChannelAction(fetchLike, baseUrl, channelId, 'grants', JSON.stringify(body), {
@@ -112,9 +112,15 @@ function channelAccessQuerySuffix(options?: ChannelActionOptions): string {
   return params.size > 0 ? `?${params.toString()}` : '';
 }
 
-function nativeStreamHeaders(body?: BodyInit | null): HeadersInit | undefined {
+function nativeStreamHeaders(body?: BodyInit | null, options?: ChannelActionOptions): HeadersInit | undefined {
   if (body instanceof Uint8Array || body instanceof ArrayBuffer) {
-    return { 'content-type': 'application/vnd.sdn.flatbuffers.stream' };
+    const headers: Record<string, string> = { 'content-type': 'application/vnd.sdn.flatbuffers.stream' };
+    const encryptedStreamHeader = options?.encryptedStreamHeader?.trim();
+    if (encryptedStreamHeader) {
+      headers['X-SDN-Encrypted-Stream'] = 'true';
+      headers['X-SDN-Encrypted-Stream-Header'] = encryptedStreamHeader;
+    }
+    return headers;
   }
   return undefined;
 }

@@ -170,6 +170,7 @@ export interface ChannelActionOptions {
   subject?: string;
   grantId?: string;
   visibility?: string;
+  encryptedStreamHeader?: string;
 }
 
 export interface ChannelSummary {
