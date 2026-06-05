@@ -6,12 +6,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/spacedatanetwork/sdn-server/internal/channels"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 func TestChannelHandlerListsStandardCodesOnly(t *testing.T) {
@@ -352,6 +356,56 @@ func TestChannelHandlerPublishesAndOpensNativeFlatBufferStream(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerImportsVerifiedNativeStreamIntoFlatSQL(t *testing.T) {
+	t.Parallel()
+
+	store := newChannelTestStore(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(store).RegisterRoutes(mux)
+
+	pnmReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish", bytes.NewReader(buildAPISignedPNM(t, "bafyflatsqlhead", "DPM")))
+	pnmRec := httptest.NewRecorder()
+	mux.ServeHTTP(pnmRec, pnmReq)
+	if pnmRec.Code != http.StatusAccepted {
+		t.Fatalf("PNM publish status = %d body=%s", pnmRec.Code, pnmRec.Body.String())
+	}
+
+	streamBytes := bytes.Join([][]byte{
+		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
+		nativeAPIFrame("OMM1", []byte{4, 5, 6, 7}),
+	}, nil)
+	streamReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1", bytes.NewReader(streamBytes))
+	streamReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	streamRec := httptest.NewRecorder()
+	mux.ServeHTTP(streamRec, streamReq)
+	if streamRec.Code != http.StatusAccepted {
+		t.Fatalf("stream publish status = %d body=%s", streamRec.Code, streamRec.Body.String())
+	}
+
+	schemaName, err := channels.SchemaNameFromStandardCode("OMM")
+	if err != nil {
+		t.Fatalf("SchemaNameFromStandardCode failed: %v", err)
+	}
+	count, err := store.CountRawRecords(storage.RawRecordQuery{SchemaName: schemaName})
+	if err != nil {
+		t.Fatalf("CountRawRecords failed: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("durable OMM rows = %d, want 2", count)
+	}
+	records, err := store.QueryRawRecords(storage.RawRecordQuery{SchemaName: schemaName, Limit: 10})
+	if err != nil {
+		t.Fatalf("QueryRawRecords failed: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("durable OMM records = %d, want 2", len(records))
+	}
+	if !bytes.Equal(records[0].Data, nativeAPIFrame("OMM1", []byte{1, 2, 3})) &&
+		!bytes.Equal(records[1].Data, nativeAPIFrame("OMM1", []byte{1, 2, 3})) {
+		t.Fatal("durable FlatSQL rows did not preserve native stream record bytes")
+	}
+}
+
 func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 	t.Parallel()
 
@@ -392,6 +446,25 @@ func nativeAPIFrame(fileIdentifier string, payload []byte) []byte {
 	copy(frame[4:8], []byte(fileIdentifier))
 	copy(frame[8:], payload)
 	return frame
+}
+
+func newChannelTestStore(t *testing.T) *storage.FlatSQLStore {
+	t.Helper()
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close FlatSQL store failed: %v", err)
+		}
+	})
+	return store
 }
 
 func buildAPIUnsignedPNM(t *testing.T) []byte {

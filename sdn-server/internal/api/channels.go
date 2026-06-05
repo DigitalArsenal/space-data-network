@@ -311,6 +311,32 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "read native FlatBuffer stream: "+err.Error())
 		return
 	}
+	frames, err := channels.SplitNativeStreamFrames(body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid native FlatBuffer stream: "+err.Error())
+		return
+	}
+	schemaName, err := channels.SchemaNameFromStandardCode(parsed.StandardCode)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	importedRows := 0
+	if h.store != nil {
+		tags := storage.SourceTags{
+			ProviderID:        parsed.SourceID,
+			SourceName:        "channel:" + parsed.ChannelID,
+			BatchID:           parsed.ChannelID,
+			ContentKeyID:      "public",
+			ProducerPeerID:    parsed.SourceID,
+			ProducerPublicKey: parsed.SourceID,
+		}
+		importedRows, err = h.store.StoreBatchWithSourceTags(schemaName, frames, "channel:"+parsed.SourceID, nil, tags)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "durable FlatSQL import failed: "+err.Error())
+			return
+		}
+	}
 	snapshot, err := h.streams.Store(parsed, body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid native FlatBuffer stream: "+err.Error())
@@ -324,6 +350,7 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 		"pnmCid":        metadata.PNMCID,
 		"streamBytes":   snapshot.ByteCount,
 		"streamFrames":  snapshot.FrameCount,
+		"importedRows":  importedRows,
 		"verifiedAt":    metadata.VerifiedAt.Format(time.RFC3339Nano),
 		"streamUpdated": snapshot.UpdatedAt.Format(time.RFC3339Nano),
 	})
