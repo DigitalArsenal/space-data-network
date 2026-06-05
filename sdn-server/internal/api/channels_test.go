@@ -483,6 +483,9 @@ func TestChannelHandlerPublishesAndOpensNativeFlatBufferStream(t *testing.T) {
 	if monitorBody["syncedBytes"] != float64(len(streamBytes)) || monitorBody["syncedRows"] != float64(2) {
 		t.Fatalf("monitor did not reflect native stream import: %#v", monitorBody)
 	}
+	if throughput, ok := monitorBody["throughputBytesPerSecond"].(float64); !ok || throughput <= 0 {
+		t.Fatalf("monitor did not report current native stream throughput: %#v", monitorBody)
+	}
 }
 
 func TestChannelHandlerReadsPublicNativeFlatBufferByteRange(t *testing.T) {
