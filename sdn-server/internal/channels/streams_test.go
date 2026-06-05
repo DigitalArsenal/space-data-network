@@ -32,6 +32,22 @@ func TestNativeStreamRegistryStoresDispatcherFrames(t *testing.T) {
 	}
 }
 
+func TestNativeStreamRegistryStoresSizePrefixedFlatBufferFrames(t *testing.T) {
+	t.Parallel()
+
+	channel := mustParseChannelID(t, "celestrak-OMM")
+	registry := NewNativeStreamRegistry()
+	stream := append(sizePrefixedFlatBufferFrame("$OMM", []byte{1, 2}), sizePrefixedFlatBufferFrame("$OMM", []byte{3, 4, 5})...)
+
+	snapshot, err := registry.Store(channel, stream)
+	if err != nil {
+		t.Fatalf("store size-prefixed FlatBuffer stream: %v", err)
+	}
+	if snapshot.ByteCount != len(stream) || snapshot.FrameCount != 2 {
+		t.Fatalf("unexpected snapshot counts: %#v", snapshot)
+	}
+}
+
 func TestNativeStreamRegistryRejectsMalformedDispatcherFrames(t *testing.T) {
 	t.Parallel()
 
@@ -81,5 +97,14 @@ func nativeStreamFrame(fileIdentifier string, payload []byte) []byte {
 	binary.LittleEndian.PutUint32(frame[:4], uint32(4+len(payload)))
 	copy(frame[4:8], []byte(fileIdentifier))
 	copy(frame[8:], payload)
+	return frame
+}
+
+func sizePrefixedFlatBufferFrame(fileIdentifier string, payload []byte) []byte {
+	frame := make([]byte, 16+len(payload))
+	binary.LittleEndian.PutUint32(frame[:4], uint32(12+len(payload)))
+	binary.LittleEndian.PutUint32(frame[4:8], uint32(8+len(payload)))
+	copy(frame[12:16], []byte(fileIdentifier))
+	copy(frame[16:], payload)
 	return frame
 }

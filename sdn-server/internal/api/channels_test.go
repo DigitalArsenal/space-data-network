@@ -379,8 +379,8 @@ func TestChannelHandlerStreamsVerifiedDatasetPublicationShardFromDurableLedger(t
 
 	store := newChannelTestStore(t)
 	streamBytes := bytes.Join([][]byte{
-		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
-		nativeAPIFrame("OMM1", []byte{4, 5, 6, 7}),
+		nativeSizePrefixedFlatBufferFrame("$OMM", []byte{1, 2, 3}),
+		nativeSizePrefixedFlatBufferFrame("$OMM", []byte{4, 5, 6, 7}),
 	}, nil)
 	shardHashBytes := sha256.Sum256(streamBytes)
 	shardHash := hex.EncodeToString(shardHashBytes[:])
@@ -2279,6 +2279,18 @@ func nativeAPIFrame(fileIdentifier string, payload []byte) []byte {
 	binary.LittleEndian.PutUint32(frame[:4], uint32(4+len(payload)))
 	copy(frame[4:8], []byte(fileIdentifier))
 	copy(frame[8:], payload)
+	return frame
+}
+
+func nativeSizePrefixedFlatBufferFrame(fileIdentifier string, payload []byte) []byte {
+	if len(fileIdentifier) != 4 {
+		panic("fileIdentifier must be four bytes")
+	}
+	frame := make([]byte, 16+len(payload))
+	binary.LittleEndian.PutUint32(frame[:4], uint32(12+len(payload)))
+	binary.LittleEndian.PutUint32(frame[4:8], uint32(8+len(payload)))
+	copy(frame[12:16], []byte(fileIdentifier))
+	copy(frame[16:], payload)
 	return frame
 }
 

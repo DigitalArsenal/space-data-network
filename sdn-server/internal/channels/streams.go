@@ -95,10 +95,10 @@ func splitNativeStreamFrames(stream []byte, expectedStandardCode string) ([][]by
 		if frameEnd > len(stream) {
 			return nil, fmt.Errorf("truncated native FlatBuffer stream frame at offset %d", offset)
 		}
-		if !isFourByteFileIdentifier(stream[offset+4 : offset+8]) {
-			return nil, fmt.Errorf("invalid native FlatBuffer file identifier at offset %d", offset+4)
+		fileIdentifier, identifierOffset, ok := nativeStreamFrameFileIdentifier(stream, offset, frameEnd)
+		if !ok {
+			return nil, fmt.Errorf("invalid native FlatBuffer file identifier at offset %d", identifierOffset)
 		}
-		fileIdentifier := string(stream[offset+4 : offset+8])
 		if expectedStandardCode != "" {
 			frameStandardCode, ok := nativeFrameStandardCode(fileIdentifier)
 			if !ok || frameStandardCode != expectedStandardCode {
@@ -109,6 +109,18 @@ func splitNativeStreamFrames(stream []byte, expectedStandardCode string) ([][]by
 		offset = frameEnd
 	}
 	return frames, nil
+}
+
+func nativeStreamFrameFileIdentifier(stream []byte, offset, frameEnd int) (string, int, bool) {
+	legacyOffset := offset + 4
+	if legacyOffset+4 <= frameEnd && isFourByteFileIdentifier(stream[legacyOffset:legacyOffset+4]) {
+		return string(stream[legacyOffset : legacyOffset+4]), legacyOffset, true
+	}
+	flatBufferOffset := offset + 12
+	if flatBufferOffset+4 <= frameEnd && isFourByteFileIdentifier(stream[flatBufferOffset:flatBufferOffset+4]) {
+		return string(stream[flatBufferOffset : flatBufferOffset+4]), flatBufferOffset, true
+	}
+	return "", legacyOffset, false
 }
 
 func nativeFrameStandardCode(fileIdentifier string) (string, bool) {
