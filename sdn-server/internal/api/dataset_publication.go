@@ -54,6 +54,16 @@ type DatasetPublicationResult struct {
 	Publications []DatasetPublicationResult `json:"publications,omitempty"`
 }
 
+type datasetPublicationResponse struct {
+	StandardCode string                       `json:"standardCode"`
+	RecordCount  int                          `json:"recordCount"`
+	ShardCID     string                       `json:"shardCid"`
+	IndexCID     string                       `json:"indexCid"`
+	ManifestCID  string                       `json:"manifestCid"`
+	PNMCID       string                       `json:"pnmCid,omitempty"`
+	Publications []datasetPublicationResponse `json:"publications,omitempty"`
+}
+
 type datasetPublicationSourceIdentity struct {
 	ProviderID string
 	SourceName string
@@ -132,17 +142,29 @@ func (h *DatasetPublicationHandler) handlePublish(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusAccepted, publicDatasetPublicationResult(result))
 }
 
-func publicDatasetPublicationResult(result *DatasetPublicationResult) *DatasetPublicationResult {
+func publicDatasetPublicationResult(result *DatasetPublicationResult) *datasetPublicationResponse {
 	if result == nil {
 		return nil
 	}
-	public := *result
-	public.Schema = publicDatasetPublicationStandardCode(public.Schema)
+	public := datasetPublicationResponse{
+		StandardCode: publicDatasetPublicationStandardCode(result.Schema),
+		RecordCount:  result.RecordCount,
+		ShardCID:     result.ShardCID,
+		IndexCID:     result.IndexCID,
+		ManifestCID:  result.ManifestCID,
+		PNMCID:       result.PNMCID,
+	}
 	if len(result.Publications) > 0 {
-		public.Publications = make([]DatasetPublicationResult, 0, len(result.Publications))
+		public.Publications = make([]datasetPublicationResponse, 0, len(result.Publications))
 		for _, publication := range result.Publications {
-			publication.Schema = publicDatasetPublicationStandardCode(publication.Schema)
-			public.Publications = append(public.Publications, publication)
+			public.Publications = append(public.Publications, datasetPublicationResponse{
+				StandardCode: publicDatasetPublicationStandardCode(publication.Schema),
+				RecordCount:  publication.RecordCount,
+				ShardCID:     publication.ShardCID,
+				IndexCID:     publication.IndexCID,
+				ManifestCID:  publication.ManifestCID,
+				PNMCID:       publication.PNMCID,
+			})
 		}
 	}
 	return &public

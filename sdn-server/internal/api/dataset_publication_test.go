@@ -96,7 +96,11 @@ func TestDatasetPublicationHandlerPublishesLocalRequest(t *testing.T) {
 	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if payload.Schema != "OMM" || strings.Contains(res.Body.String(), ".fbs") {
+	var responseFields map[string]interface{}
+	if err := json.Unmarshal(res.Body.Bytes(), &responseFields); err != nil {
+		t.Fatalf("decode response fields: %v", err)
+	}
+	if responseFields["schema"] != nil || responseFields["standardCode"] != "OMM" || strings.Contains(res.Body.String(), ".fbs") {
 		t.Fatalf("response exposed schema suffix instead of standard code: %s", res.Body.String())
 	}
 	if payload.ManifestCID != "bafymanifest" || payload.PNMCID != "bafypnm" {
