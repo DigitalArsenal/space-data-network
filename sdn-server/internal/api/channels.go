@@ -1636,11 +1636,23 @@ func (h *ChannelHandler) restoreVerifiedDatasetPublicationMetadata(parsed channe
 	if err != nil {
 		return channels.VerifiedMetadata{}, false
 	}
+	var newest channels.VerifiedMetadata
+	found := false
 	for _, stat := range stats {
 		if datasetPublicationSourceID(stat.ProviderID, stat.SourceName) != parsed.SourceID {
 			continue
 		}
-		return h.restoreVerifiedDatasetPublicationMetadataFromStat(parsed, schemaName, stat)
+		metadata, ok := h.restoreVerifiedDatasetPublicationMetadataFromStat(parsed, schemaName, stat)
+		if !ok {
+			continue
+		}
+		if !found || verifiedMetadataIsNewer(metadata, newest) {
+			newest = metadata
+			found = true
+		}
+	}
+	if found {
+		return newest, true
 	}
 	return channels.VerifiedMetadata{}, false
 }

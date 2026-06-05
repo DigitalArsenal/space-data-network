@@ -338,6 +338,21 @@ func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedge
 		}
 	}
 
+	freshMux := http.NewServeMux()
+	NewChannelHandler(store).RegisterRoutes(freshMux)
+	monitorLatestReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/celestrak-OMM/monitor", nil)
+	monitorLatestRec := httptest.NewRecorder()
+	freshMux.ServeHTTP(monitorLatestRec, monitorLatestReq)
+	if monitorLatestRec.Code != http.StatusOK {
+		t.Fatalf("latest monitor status = %d body=%s", monitorLatestRec.Code, monitorLatestRec.Body.String())
+	}
+	monitorLatestBody := decodeChannelJSON(t, monitorLatestRec.Body.String())
+	if monitorLatestBody["pnmCid"] != "bafkpnm-restored-2" ||
+		monitorLatestBody["providerPeer"] != "16Uiu2HCelesTrakProvider" ||
+		monitorLatestBody["remoteRows"] != float64(1) {
+		t.Fatalf("monitor did not restore newest verified feed: %#v", monitorLatestBody)
+	}
+
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels?standardCode=OMM", nil)
 	listRec := httptest.NewRecorder()
 	mux.ServeHTTP(listRec, listReq)
