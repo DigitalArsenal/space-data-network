@@ -1185,6 +1185,9 @@ func (h *ChannelHandler) latestVerifiedDatasetShardPublication(schemaName string
 		}
 		return publication, true
 	}
+	if channelHead != "" {
+		return storage.DatasetShardPublication{}, false
+	}
 	return publications[len(publications)-1], true
 }
 
