@@ -284,6 +284,37 @@ func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedge
 	if body["pnmCid"] != "bafkpnm-restored" || strings.Contains(rec.Body.String(), ".fbs") {
 		t.Fatalf("monitor exposed wrong PNM/naming payload: %s", rec.Body.String())
 	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels?standardCode=OMM", nil)
+	listRec := httptest.NewRecorder()
+	mux.ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s", listRec.Code, listRec.Body.String())
+	}
+	listBody := decodeChannelJSON(t, listRec.Body.String())
+	listResults := listBody["results"].([]interface{})
+	var restoredRow map[string]interface{}
+	for _, result := range listResults {
+		row := result.(map[string]interface{})
+		if row["channelId"] == "celestrak-OMM" {
+			restoredRow = row
+			break
+		}
+	}
+	if restoredRow == nil {
+		t.Fatalf("list did not restore verified feed from durable ledger: %s", listRec.Body.String())
+	}
+	if restoredRow["sourceId"] != "celestrak" ||
+		restoredRow["standardCode"] != "OMM" ||
+		restoredRow["topic"] != "/spacedatanetwork/channels/OMM" ||
+		restoredRow["pnmVerified"] != true ||
+		restoredRow["dpmVerified"] != true ||
+		restoredRow["pnmCid"] != "bafkpnm-restored" {
+		t.Fatalf("list restored wrong verified feed row: %#v", restoredRow)
+	}
+	if strings.Contains(listRec.Body.String(), ".fbs") {
+		t.Fatalf("list exposed internal schema suffix: %s", listRec.Body.String())
+	}
 }
 
 func TestChannelHandlerIssuesPrivateGrantAndAuthorizesBoundaries(t *testing.T) {
