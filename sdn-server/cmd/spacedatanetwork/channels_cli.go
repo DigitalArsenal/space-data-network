@@ -18,6 +18,11 @@ import (
 
 type channelsListOptions struct {
 	StandardCode string
+	APIURL       string
+}
+
+type channelShowOptions struct {
+	APIURL string
 }
 
 type channelSubscriptionOptions struct {
@@ -47,6 +52,7 @@ func init() {
 
 func newChannelsCommand() *cobra.Command {
 	listOptions := channelsListOptions{}
+	showOptions := channelShowOptions{}
 	subscribeOptions := channelSubscriptionOptions{}
 	unsubscribeOptions := channelSubscriptionOptions{}
 	monitorOptions := channelMonitorOptions{}
@@ -64,16 +70,19 @@ func newChannelsCommand() *cobra.Command {
 		},
 	}
 	listCmd.Flags().StringVar(&listOptions.StandardCode, "standard", "", "three-letter Space Data Standards record code")
+	listCmd.Flags().StringVar(&listOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 
 	cmd.AddCommand(listCmd)
-	cmd.AddCommand(&cobra.Command{
+	showCmd := &cobra.Command{
 		Use:   "show <channelId>",
 		Short: "Show channel metadata",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runChannelsShow(cmd, args[0])
+			return runChannelsShow(cmd, showOptions, args[0])
 		},
-	})
+	}
+	showCmd.Flags().StringVar(&showOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
+	cmd.AddCommand(showCmd)
 	monitorCmd := &cobra.Command{
 		Use:   "monitor <channelId>",
 		Short: "Print channel synchronization status",
@@ -141,6 +150,9 @@ func newChannelsCommand() *cobra.Command {
 }
 
 func runChannelsList(cmd *cobra.Command, options channelsListOptions) error {
+	if apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL"))); apiURL != "" {
+		return runChannelsListFromAPI(cmd, options, apiURL)
+	}
 	out := cmd.OutOrStdout()
 	if strings.TrimSpace(options.StandardCode) != "" {
 		code, err := channels.AssertStandardCode(options.StandardCode)
@@ -156,6 +168,35 @@ func runChannelsList(cmd *cobra.Command, options channelsListOptions) error {
 			continue
 		}
 		printChannelListRow(out, code)
+	}
+	return nil
+}
+
+func runChannelsListFromAPI(cmd *cobra.Command, options channelsListOptions, apiURL string) error {
+	listURL, err := channelListURL(apiURL, options.StandardCode)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, listURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("list channels: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("list channels: %s", resp.Status)
+	}
+	var rows []map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+		return fmt.Errorf("decode channel list: %w", err)
+	}
+	out := cmd.OutOrStdout()
+	for _, row := range rows {
+		printChannelRowPayload(out, row)
 	}
 	return nil
 }
@@ -420,10 +461,13 @@ func parseChannelGrantScopes(values []string) ([]channels.AccessBoundary, error)
 	return scopes, nil
 }
 
-func runChannelsShow(cmd *cobra.Command, channelID string) error {
+func runChannelsShow(cmd *cobra.Command, options channelShowOptions, channelID string) error {
 	parsed, err := channels.ParseChannelID(channelID)
 	if err != nil {
 		return err
+	}
+	if apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL"))); apiURL != "" {
+		return runChannelsShowFromAPI(cmd, parsed, apiURL)
 	}
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "channelId=%s\n", parsed.ChannelID)
@@ -434,6 +478,41 @@ func runChannelsShow(cmd *cobra.Command, channelID string) error {
 	}
 	fmt.Fprintln(out, "visibility=unknown")
 	fmt.Fprintln(out, "pnmVerified=false")
+	return nil
+}
+
+func runChannelsShowFromAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string) error {
+	showURL, err := channelDetailURL(apiURL, parsed.ChannelID)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, showURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("show channel: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("show channel: %s", resp.Status)
+	}
+	var payload map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return fmt.Errorf("decode channel detail: %w", err)
+	}
+	if _, ok := payload["channelId"]; !ok {
+		payload["channelId"] = parsed.ChannelID
+	}
+	if _, ok := payload["sourceId"]; !ok {
+		payload["sourceId"] = parsed.SourceID
+	}
+	if _, ok := payload["standardCode"]; !ok {
+		payload["standardCode"] = parsed.StandardCode
+	}
+	printChannelDetailPayload(cmd.OutOrStdout(), payload)
 	return nil
 }
 
@@ -505,6 +584,32 @@ func channelMonitorURL(apiURL string, channelID string) (string, error) {
 	return channelAPIURL(apiURL, channelID, "/monitor")
 }
 
+func channelListURL(apiURL string, standardCode string) (string, error) {
+	base, err := url.Parse(strings.TrimRight(apiURL, "/"))
+	if err != nil {
+		return "", fmt.Errorf("invalid api-url: %w", err)
+	}
+	if base.Scheme == "" || base.Host == "" {
+		return "", fmt.Errorf("invalid api-url: absolute URL required")
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + "/api/v1/channels"
+	query := base.Query()
+	if strings.TrimSpace(standardCode) != "" {
+		code, err := channels.AssertStandardCode(standardCode)
+		if err != nil {
+			return "", err
+		}
+		query.Set("standardCode", code)
+	}
+	base.RawQuery = query.Encode()
+	base.Fragment = ""
+	return base.String(), nil
+}
+
+func channelDetailURL(apiURL string, channelID string) (string, error) {
+	return channelAPIURL(apiURL, channelID, "")
+}
+
 func channelPublishURL(apiURL string, channelID string) (string, error) {
 	return channelAPIURL(apiURL, channelID, "/publish?stream=1")
 }
@@ -551,6 +656,49 @@ func printChannelPublishPayload(out interface {
 		"throughputBytesPerSecond",
 		"wireSpeedUtilization",
 		"importedRows",
+	} {
+		if value, ok := payload[key]; ok {
+			fmt.Fprintf(out, "%s=%v\n", key, monitorValue(value))
+		}
+	}
+}
+
+func printChannelRowPayload(out interface {
+	Write([]byte) (int, error)
+}, payload map[string]interface{}) {
+	for _, key := range []string{
+		"channelId",
+		"sourceId",
+		"standardCode",
+		"feedUuid",
+		"topic",
+		"visibility",
+		"subscribed",
+		"grantState",
+		"encryptionState",
+	} {
+		if value, ok := payload[key]; ok {
+			fmt.Fprintf(out, "%s=%v ", key, monitorValue(value))
+		}
+	}
+	fmt.Fprintln(out)
+}
+
+func printChannelDetailPayload(out interface {
+	Write([]byte) (int, error)
+}, payload map[string]interface{}) {
+	for _, key := range []string{
+		"channelId",
+		"sourceId",
+		"standardCode",
+		"feedUuid",
+		"visibility",
+		"subscribed",
+		"pnmVerified",
+		"dpmVerified",
+		"pnmCid",
+		"grantState",
+		"encryptionState",
 	} {
 		if value, ok := payload[key]; ok {
 			fmt.Fprintf(out, "%s=%v\n", key, monitorValue(value))
