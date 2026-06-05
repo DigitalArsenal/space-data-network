@@ -24,10 +24,11 @@ describe('SDN backend channel runtime surface', () => {
           channelId: 'spaceaware-OMM',
           sourceId: 'spaceaware',
           standardCode: 'OMM',
-          channelHead: 'bafyhead',
-          subscribed: true,
-          pnmVerified: true,
-          providerPeer: '12D3KooProvider',
+            channelHead: 'bafyhead',
+            subscribed: true,
+            pnmVerified: true,
+            dpmVerified: true,
+            providerPeer: '12D3KooProvider',
           localRows: 10,
           remoteRows: 12,
           syncedRows: 10,
@@ -50,6 +51,7 @@ describe('SDN backend channel runtime surface', () => {
           visibility: 'public',
           subscribed: true,
           pnmVerified: true,
+          dpmVerified: true,
           grantState: 'verified',
           encryptionState: 'public',
         });
@@ -76,6 +78,7 @@ describe('SDN backend channel runtime surface', () => {
         channelHead: 'bafyhead',
         subscribed: true,
         pnmVerified: true,
+        dpmVerified: true,
         providerPeer: '12D3KooProvider',
         localRows: 10,
         remoteRows: 12,
@@ -128,6 +131,7 @@ describe('SDN backend channel runtime surface', () => {
             grantState: 'verified',
             encryptionState: 'encrypted',
             pnmVerified: true,
+            dpmVerified: true,
           }],
         });
       }
@@ -152,6 +156,7 @@ describe('SDN backend channel runtime surface', () => {
         grantState: 'verified',
         encryptionState: 'encrypted',
         pnmVerified: true,
+        dpmVerified: true,
       })],
     }));
     expect(requested).toEqual([
@@ -173,6 +178,7 @@ describe('SDN backend channel runtime surface', () => {
           grantState: 'verified',
           encryptionState: 'encrypted',
           pnmVerified: true,
+          dpmVerified: true,
         });
       }
       return jsonResponse({ error: `unexpected ${url}` }, 404);
@@ -195,6 +201,7 @@ describe('SDN backend channel runtime surface', () => {
         grantState: 'verified',
         encryptionState: 'encrypted',
         pnmVerified: true,
+        dpmVerified: true,
       }),
     }));
     expect(requested).toEqual([

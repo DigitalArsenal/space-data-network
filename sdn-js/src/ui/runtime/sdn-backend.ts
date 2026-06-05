@@ -180,6 +180,7 @@ export interface ChannelSummary {
   visibility: string;
   subscribed: boolean;
   pnmVerified: boolean;
+  dpmVerified: boolean;
   grantState: string;
   encryptionState: string;
 }

@@ -19,6 +19,7 @@ describe('SDN channels UI source', () => {
     for (const label of [
       'Channel Head',
       'Verified PNM',
+      'Verified DPM',
       'Provider Peer',
       'Local Rows',
       'Remote Rows',

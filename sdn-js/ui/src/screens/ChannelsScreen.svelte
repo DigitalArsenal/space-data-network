@@ -202,6 +202,7 @@
       <dl class="sdn-channel-metrics">
         <div><dt>Channel Head</dt><dd>{monitor?.channelHead || 'Unknown'}</dd></div>
         <div><dt>Verified PNM</dt><dd>{monitor?.pnmVerified ? 'Verified' : 'Unverified'}</dd></div>
+        <div><dt>Verified DPM</dt><dd>{monitor?.dpmVerified ? 'Verified' : 'Unverified'}</dd></div>
         <div><dt>Provider Peer</dt><dd>{monitor?.providerPeer || 'Unknown'}</dd></div>
         <div><dt>Subscribed</dt><dd>{monitor?.subscribed ? 'Yes' : 'No'}</dd></div>
         <div><dt>Local Rows</dt><dd>{formatNumber(monitor?.localRows)}</dd></div>
