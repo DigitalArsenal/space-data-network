@@ -1,11 +1,13 @@
 package channels
 
 import (
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"strings"
 
 	dpm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DPM"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 var (
@@ -16,6 +18,7 @@ var (
 )
 
 type DPMTrustEvidence struct {
+	ManifestCID   string
 	FileID        string
 	SignatureType string
 	Signature     []byte
@@ -67,4 +70,29 @@ func VerifySignedDPMManifest(manifestBytes []byte, expectedFileID string) (DPMTr
 		evidence.PolicyID = strings.TrimSpace(string(enc.POLICY_ID()))
 	}
 	return evidence, nil
+}
+
+func VerifySignedDPMManifestWithProviderKey(manifestBytes []byte, expectedFileID string, providerPublicKey ed25519.PublicKey) (DPMTrustEvidence, error) {
+	if len(providerPublicKey) != ed25519.PublicKeySize {
+		return DPMTrustEvidence{}, fmt.Errorf("ed25519 provider public key is required")
+	}
+	structuralEvidence, err := VerifySignedDPMManifest(manifestBytes, expectedFileID)
+	if err != nil {
+		return DPMTrustEvidence{}, err
+	}
+	verifiedEvidence, err := storage.VerifySignedDatasetPublicationManifest(manifestBytes, providerPublicKey)
+	if err != nil {
+		return DPMTrustEvidence{}, err
+	}
+	if strings.TrimSpace(expectedFileID) != "" && verifiedEvidence.FileID != strings.TrimSpace(expectedFileID) {
+		return DPMTrustEvidence{}, fmt.Errorf("DPM FILE_ID %q does not match PNM FILE_ID %q", verifiedEvidence.FileID, strings.TrimSpace(expectedFileID))
+	}
+	structuralEvidence.ManifestCID = verifiedEvidence.ManifestCID
+	structuralEvidence.FileID = verifiedEvidence.FileID
+	structuralEvidence.SignatureType = verifiedEvidence.SignatureType
+	structuralEvidence.ProviderPeer = verifiedEvidence.ProviderPeer
+	structuralEvidence.Encrypted = verifiedEvidence.Encrypted
+	structuralEvidence.ContentKeyID = verifiedEvidence.ContentKeyID
+	structuralEvidence.PolicyID = verifiedEvidence.PolicyID
+	return structuralEvidence, nil
 }
