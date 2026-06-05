@@ -507,13 +507,25 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 	importedRows := 0
 	if h.store != nil {
 		importStarted := time.Now()
+		contentKeyID := strings.TrimSpace(metadata.ContentKeyID)
+		if contentKeyID == "" {
+			contentKeyID = "public"
+		}
+		producerPeerID := strings.TrimSpace(metadata.ProviderPeer)
+		if producerPeerID == "" {
+			producerPeerID = parsed.SourceID
+		}
+		producerPublicKey := strings.TrimSpace(metadata.ProviderPublicKey)
+		if producerPublicKey == "" {
+			producerPublicKey = parsed.SourceID
+		}
 		tags := storage.SourceTags{
 			ProviderID:        parsed.SourceID,
 			SourceName:        "channel:" + parsed.ChannelID,
 			BatchID:           parsed.ChannelID,
-			ContentKeyID:      "public",
-			ProducerPeerID:    parsed.SourceID,
-			ProducerPublicKey: parsed.SourceID,
+			ContentKeyID:      contentKeyID,
+			ProducerPeerID:    producerPeerID,
+			ProducerPublicKey: producerPublicKey,
 		}
 		importedRows, err = h.store.StoreBatchWithSourceTags(schemaName, frames, "channel:"+parsed.SourceID, nil, tags)
 		if err != nil {
