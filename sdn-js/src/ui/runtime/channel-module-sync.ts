@@ -9,6 +9,7 @@ import {
   createChannelModuleStreamPump,
   type ChannelModuleStreamPumpOptions,
 } from './channel-module-pump';
+import { assertChannelStreamMatchesStandardCode } from './channel-stream-standard';
 
 export interface ChannelModulePumpSyncResult {
   channelId: string;
@@ -30,6 +31,7 @@ export async function pumpChannelStreamToModule(
     return createDegradedResult('channels.moduleFeed', stream.capability.reason ?? 'channel stream unavailable');
   }
   const { access: _access, ...pumpOptions } = options;
+  assertChannelStreamMatchesStandardCode(channelId, stream.data);
   const pump = createChannelModuleStreamPump(pumpOptions);
   await pump.pushChunk(stream.data);
   const lastResponse = await pump.finish();
