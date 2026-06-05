@@ -106,6 +106,7 @@ func TestChannelHandlerMonitorReportsRequiredFields(t *testing.T) {
 		"missingRows",
 		"pinnedCount",
 		"pinnedRows",
+		"pinnedBytes",
 		"syncedBytes",
 		"throughputBytesPerSecond",
 		"wireSpeedUtilization",
@@ -483,7 +484,9 @@ func TestChannelHandlerPublishesAndOpensNativeFlatBufferStream(t *testing.T) {
 		t.Fatalf("monitor status = %d body=%s", monitorRec.Code, monitorRec.Body.String())
 	}
 	monitorBody := decodeChannelJSON(t, monitorRec.Body.String())
-	if monitorBody["syncedBytes"] != float64(len(streamBytes)) || monitorBody["syncedRows"] != float64(2) {
+	if monitorBody["syncedBytes"] != float64(len(streamBytes)) ||
+		monitorBody["pinnedBytes"] != float64(len(streamBytes)) ||
+		monitorBody["syncedRows"] != float64(2) {
 		t.Fatalf("monitor did not reflect native stream import: %#v", monitorBody)
 	}
 	if throughput, ok := monitorBody["throughputBytesPerSecond"].(float64); !ok || throughput <= 0 {

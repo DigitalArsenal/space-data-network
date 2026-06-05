@@ -29,6 +29,7 @@ type VerifiedMetadata struct {
 	SyncedRows        int
 	MissingRows       int
 	PinnedRows        int
+	PinnedBytes       int64
 	SyncedBytes       int64
 	ThroughputBPS     int64
 	WireUtilization   *float64
@@ -106,6 +107,7 @@ func (r *VerifiedMetadataRegistry) RecordNativeStream(channel ChannelID, snapsho
 		metadata.LocalRows = snapshot.FrameCount
 		metadata.MissingRows = 0
 		metadata.PinnedRows = snapshot.FrameCount
+		metadata.PinnedBytes = int64(snapshot.ByteCount)
 		metadata.ThroughputBPS = throughputBPS
 		metadata.WireUtilization = wireUtilization
 		metadata.TimingsMs = cloneTimingsMs(timingsMs)
@@ -128,6 +130,7 @@ func (r *VerifiedMetadataRegistry) RecordDatasetPublication(channel ChannelID, f
 		metadata.SyncedRows = recordCount
 		metadata.MissingRows = 0
 		metadata.PinnedRows = recordCount
+		metadata.PinnedBytes = byteCount
 		metadata.SyncedBytes = byteCount
 		r.metadata[channel.ChannelID] = metadata
 	}
