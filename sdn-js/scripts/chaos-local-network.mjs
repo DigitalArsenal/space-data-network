@@ -84,6 +84,8 @@ export async function runChaosLocalNetwork(rawOptions = {}) {
     ? Math.min(1, bytesPerSecond / wireSpeedBytesPerSecond)
     : null;
 
+  const hashVerificationMs = verificationMs;
+  const durableImportMs = 0;
   return {
     generatedAt: new Date().toISOString(),
     scenario: {
@@ -141,13 +143,34 @@ export async function runChaosLocalNetwork(rawOptions = {}) {
       wireSpeedTarget: options.wireSpeedTarget,
       targetMet: wireSpeedUtilization == null ? null : wireSpeedUtilization >= options.wireSpeedTarget,
     },
-    timingMs: {
-      manifestDiscovery: manifestMs,
-      networkTransfer: networkTransferMs,
-      verification: verificationMs,
-      flatSqlMaterialization: 0,
-    },
+    timingMs: channelTimingBreakdown({
+      discoveryMs: manifestMs,
+      transferMs: networkTransferMs,
+      hashVerificationMs,
+      durableImportMs,
+    }),
     consumers: consumerReports,
+  };
+}
+
+function channelTimingBreakdown({
+  discoveryMs,
+  transferMs,
+  hashVerificationMs,
+  durableImportMs,
+}) {
+  return {
+    discovery: discoveryMs,
+    grantNegotiation: 0,
+    pnmDpmVerification: 0,
+    transfer: transferMs,
+    decrypt: 0,
+    hashVerification: hashVerificationMs,
+    durableImport: durableImportMs,
+    manifestDiscovery: discoveryMs,
+    networkTransfer: transferMs,
+    verification: hashVerificationMs,
+    flatSqlMaterialization: durableImportMs,
   };
 }
 
