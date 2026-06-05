@@ -1558,6 +1558,73 @@ func TestChannelHandlerPrivateEncryptedStreamDecryptsBeforeImportAndCache(t *tes
 	}
 }
 
+func TestChannelHandlerPrivateEncryptedStreamRejectsReplayedRecordIndex(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	store := newChannelTestStore(t)
+	recipientPrivate := decodeHexFixture(t, "b096fac6064d1777e18c58179c10386d11ba04f9fc155bf1888fed9fab2cea7c")
+	handler := NewChannelHandlerWithOptions(store, ChannelHandlerOptions{
+		EncryptedStreams: NewFlatBuffersEncryptedNativeStreamDecryptor(recipientPrivate),
+	})
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
+		strings.NewReader(`{"to":"peer-alpha","scopes":["publish"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	ciphertext := decodeHexFixture(t, "bbd30fac58a41b0a11ee4c")
+	header := `{"algorithm":"x25519","context":"spaceaware-OMM","senderPublicKey":"5f8bfd2b52f392a5bd000509945ac8ff840974f0bab1c918cbec18869f79b75c","nonceStart":"00112233445566778899aabb"}`
+	publishEncrypted := func() *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(ciphertext))
+		req.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.encrypted-stream")
+		req.Header.Set("X-SDN-Encrypted-Stream", "true")
+		req.Header.Set("X-SDN-Encrypted-Stream-Header", header)
+		req.Header.Set("X-SDN-Encrypted-Record-Index", "7")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	first := publishEncrypted()
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("first private encrypted publish status = %d body=%s", first.Code, first.Body.String())
+	}
+	second := publishEncrypted()
+	if second.Code != http.StatusConflict {
+		t.Fatalf("replayed private encrypted publish status = %d, want %d body=%s", second.Code, http.StatusConflict, second.Body.String())
+	}
+	if !strings.Contains(second.Body.String(), "record index replayed") {
+		t.Fatalf("replay rejection did not explain record-index replay: %s", second.Body.String())
+	}
+
+	schemaName, err := channels.SchemaNameFromStandardCode("OMM")
+	if err != nil {
+		t.Fatalf("SchemaNameFromStandardCode failed: %v", err)
+	}
+	count, err := store.CountRawRecords(storage.RawRecordQuery{SchemaName: schemaName})
+	if err != nil {
+		t.Fatalf("CountRawRecords failed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("durable private OMM rows after replay = %d, want 1", count)
+	}
+}
+
 func TestChannelHandlerPrivateLocalCacheReadReturnsVerifiedDecryptedStream(t *testing.T) {
 	t.Parallel()
 
