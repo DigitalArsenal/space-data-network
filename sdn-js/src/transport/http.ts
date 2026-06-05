@@ -293,7 +293,7 @@ export class HttpTransport {
   async publishChannelStream(channelId: string, stream: Uint8Array, options?: ChannelAccessOptions): Promise<ChannelActionResponse> {
     const resp = await this.fetch(channelActionPath(channelId, 'publish', options), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/vnd.sdn.flatbuffers.stream' },
+      headers: channelStreamPublishHeaders(options),
       body: stream.buffer.slice(stream.byteOffset, stream.byteOffset + stream.byteLength) as ArrayBuffer,
     });
     return resp.json();
@@ -370,6 +370,21 @@ function appendChannelActionAccessQuery(query: URLSearchParams, options?: Channe
   if (options?.subject) query.set('subject', options.subject);
   if (options?.grantId) query.set('grantId', options.grantId);
   if (options?.visibility) query.set('visibility', options.visibility);
+}
+
+function channelStreamPublishHeaders(options?: ChannelAccessOptions): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/vnd.sdn.flatbuffers.stream',
+  };
+  if (isPrivateChannelVisibility(options?.visibility)) {
+    headers['X-SDN-Encrypted-Stream'] = 'true';
+  }
+  return headers;
+}
+
+function isPrivateChannelVisibility(visibility: string | undefined): boolean {
+  const value = visibility?.trim().toLowerCase() ?? '';
+  return value === 'private' || value.startsWith('private-');
 }
 
 function channelRowsFromPayload(payload: unknown): ChannelSummary[] {
