@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -1084,6 +1085,19 @@ func TestChannelHandlerVerifiedEncryptedDPMMakesChannelPrivateFailClosed(t *test
 	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
 	publishRec = httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
+	if publishRec.Code != http.StatusBadRequest {
+		t.Fatalf("private encrypted stream without header status = %d, want %d body=%s", publishRec.Code, http.StatusBadRequest, publishRec.Body.String())
+	}
+	if !strings.Contains(publishRec.Body.String(), "encrypted private channel stream header required") {
+		t.Fatalf("private stream rejection did not require encryption header: %s", publishRec.Body.String())
+	}
+
+	publishReq = httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(streamBytes))
+	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+	setEncryptedChannelStreamHeader(publishReq, "spaceaware-OMM")
+	publishRec = httptest.NewRecorder()
+	mux.ServeHTTP(publishRec, publishReq)
 	if publishRec.Code != http.StatusNotImplemented {
 		t.Fatalf("private stream publish with grant status = %d, want %d body=%s", publishRec.Code, http.StatusNotImplemented, publishRec.Body.String())
 	}
@@ -1137,6 +1151,7 @@ func TestChannelHandlerReadsPrivateNativeFlatBufferByteRangeWithGrant(t *testing
 	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(streamBytes))
 	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
 	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+	setEncryptedChannelStreamHeader(publishReq, "spaceaware-OMM")
 	publishRec := httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
 	if publishRec.Code != http.StatusNotImplemented {
@@ -1186,6 +1201,7 @@ func TestChannelHandlerPrivateEncryptedStreamDoesNotImportWithoutDecryptPath(t *
 	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(streamBytes))
 	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
 	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+	setEncryptedChannelStreamHeader(publishReq, "spaceaware-OMM")
 	publishRec := httptest.NewRecorder()
 	mux.ServeHTTP(publishRec, publishReq)
 	if publishRec.Code != http.StatusNotImplemented {
@@ -1383,6 +1399,13 @@ func channelTestPNMSignaturePayload(manifestCID, fileID string) []byte {
 	payload = append(payload, 0)
 	payload = append(payload, manifestCID...)
 	return payload
+}
+
+func setEncryptedChannelStreamHeader(req *http.Request, channelID string) {
+	req.Header.Set("X-SDN-Encrypted-Stream-Header", fmt.Sprintf(
+		`{"algorithm":"x25519","context":%q,"ephemeral_public_key":"0123456789abcdef","nonce_start":"00112233445566778899aabb"}`,
+		channelID,
+	))
 }
 
 func buildAPISignedDPM(t *testing.T, signingKey ed25519.PrivateKey, fileID string) *storage.DatasetPublicationManifest {

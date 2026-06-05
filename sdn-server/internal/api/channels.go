@@ -548,6 +548,10 @@ func (h *ChannelHandler) publishNativeStream(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusBadRequest, "encrypted private channel stream required")
 			return
 		}
+		if err := h.validateEncryptedNativeStreamHeader(r, parsed); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusNotImplemented, "encrypted private channel stream decrypt path unavailable")
 		return
 	}
@@ -917,6 +921,27 @@ func (h *ChannelHandler) isEncryptedNativeStreamPublish(r *http.Request) bool {
 	}
 	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
 	return strings.HasPrefix(contentType, "application/vnd.sdn.flatbuffers.encrypted-stream")
+}
+
+func (h *ChannelHandler) validateEncryptedNativeStreamHeader(r *http.Request, parsed channels.ChannelID) error {
+	raw := strings.TrimSpace(r.Header.Get("X-SDN-Encrypted-Stream-Header"))
+	if raw == "" {
+		return fmt.Errorf("encrypted private channel stream header required")
+	}
+	var header map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &header); err != nil {
+		return fmt.Errorf("encrypted private channel stream header must be JSON metadata: %w", err)
+	}
+	for _, field := range []string{"algorithm", "context", "ephemeral_public_key", "nonce_start"} {
+		value, ok := header[field].(string)
+		if !ok || strings.TrimSpace(value) == "" {
+			return fmt.Errorf("encrypted private channel stream header missing %s", field)
+		}
+	}
+	if context := strings.TrimSpace(header["context"].(string)); context != parsed.ChannelID {
+		return fmt.Errorf("encrypted private channel stream header context %q does not match channel %q", context, parsed.ChannelID)
+	}
+	return nil
 }
 
 func (h *ChannelHandler) isDPMManifestPublish(r *http.Request, body []byte) bool {
