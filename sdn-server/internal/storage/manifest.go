@@ -661,22 +661,31 @@ func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, prov
 			if err != nil {
 				return imported, nil, fmt.Errorf("append imported %s record %s to FlatSQL stream: %w", index.SchemaName, record.CID, err)
 			}
-			if err := insertSchemaMetadata(tx, tableName, record.CID, strings.TrimSpace(providerPeerID), now, streamPath, streamOffset, recordLength, nil, now); err != nil {
+			rowID, err := insertSchemaMetadataReturningRowID(tx, tableName, record.CID, strings.TrimSpace(providerPeerID), now, streamPath, streamOffset, recordLength, nil, now)
+			if err != nil {
 				return imported, nil, fmt.Errorf("store imported %s record %s: %w", index.SchemaName, record.CID, err)
 			}
 			if err := upsertRecordIndexExec(tx, index.SchemaName, record.CID, now, data); err != nil {
 				log.Warnf("Failed to index imported %s record %s: %v", index.SchemaName, record.CID[:16]+"...", err)
 			}
 			imported++
+			if strings.TrimSpace(tags.ProviderID) != "" && strings.TrimSpace(tags.SourceName) != "" {
+				if err := insertNewSourceTagsTx(tx, index.SchemaName, record.CID, tags, recordLength, rowID); err != nil {
+					return imported, nil, err
+				}
+			}
 		default:
 			return imported, nil, fmt.Errorf("check imported %s record %s: %w", index.SchemaName, record.CID, err)
 		}
 
-		if strings.TrimSpace(tags.ProviderID) != "" && strings.TrimSpace(tags.SourceName) != "" {
+		if err == nil && strings.TrimSpace(tags.ProviderID) != "" && strings.TrimSpace(tags.SourceName) != "" {
 			if err := upsertSourceTagsTx(tx, tableName, index.SchemaName, record.CID, tags, record.Length); err != nil {
 				return imported, nil, err
 			}
 		}
+	}
+	if err := appender.Close(); err != nil {
+		return imported, nil, fmt.Errorf("flush imported %s FlatSQL stream: %w", index.SchemaName, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return imported, nil, fmt.Errorf("commit dataset shard import: %w", err)

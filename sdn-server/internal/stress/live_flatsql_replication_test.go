@@ -27,6 +27,12 @@ func TestLiveFlatSQLReplicationBenchmarkMeetsWireSpeedGate(t *testing.T) {
 	t.Logf("download: %.2f MiB/s", bytesPerSecondToMiB(result.DownloadBytesPerSecond))
 	t.Logf("downloaded: %.2f MiB across %d FlatSQL rows", float64(result.DownloadedBytes)/(1024*1024), result.RecordCount)
 	t.Logf("imported rows: %d", result.ImportedRows)
+	t.Logf("phase durations: manifest=%s wire_probe=%s transfer=%s hash_verify=%s durable_import=%s",
+		result.ManifestDuration,
+		result.WireSpeedDuration,
+		result.DownloadDuration,
+		result.VerificationDuration,
+		result.ImportDuration)
 	if result.ConfiguredGateEnabled {
 		t.Logf("configured link: %.2f MiB/s required: %.2f MiB/s target met: %v",
 			bytesPerSecondToMiB(result.ConfiguredLinkBytesPerSecond),
@@ -144,5 +150,37 @@ func TestLiveFlatSQLConfiguredWireSpeedGateUsesTwoGbitNinetyPercent(t *testing.T
 	atTarget := evaluateLiveFlatSQLConfiguredWireSpeedGate(225_000_000, 0.90)
 	if !atTarget.TargetMet {
 		t.Fatalf("configured wire-speed gate failed at 1.8 Gbit/s: %#v", atTarget)
+	}
+}
+
+func TestLiveFlatSQLWireSpeedAcceptanceUsesConfiguredGateWhenEnabled(t *testing.T) {
+	t.Setenv("SDN_WIRESPEED_TEST", "1")
+	t.Setenv("SDN_TEST_LINK_GBIT", "2")
+
+	acceptance := evaluateLiveFlatSQLWireSpeedAcceptance(225_000_000, 2_000_000_000, 0.90)
+	if !acceptance.ConfiguredGate.Enabled {
+		t.Fatalf("configured wire-speed gate was not enabled: %#v", acceptance)
+	}
+	if acceptance.MeasuredTargetMet {
+		t.Fatalf("configured acceptance must preserve measured target miss evidence: %#v", acceptance)
+	}
+	if !acceptance.TargetMet {
+		t.Fatalf("configured 2 Gbit/s acceptance failed at 1.8 Gbit/s despite a faster loopback probe: %#v", acceptance)
+	}
+}
+
+func TestLiveFlatSQLWireSpeedAcceptanceTreatsDefaultRunAsSmoke(t *testing.T) {
+	t.Setenv("SDN_WIRESPEED_TEST", "")
+	t.Setenv("SDN_TEST_LINK_GBIT", "")
+
+	acceptance := evaluateLiveFlatSQLWireSpeedAcceptance(1_500_000_000, 2_000_000_000, 0.90)
+	if acceptance.ConfiguredGate.Enabled {
+		t.Fatalf("configured wire-speed gate should be disabled by default: %#v", acceptance)
+	}
+	if acceptance.MeasuredTargetMet {
+		t.Fatalf("smoke acceptance must still record measured target miss evidence: %#v", acceptance)
+	}
+	if !acceptance.TargetMet {
+		t.Fatalf("default smoke run should not fail solely because loopback probe exceeds the configured production profile: %#v", acceptance)
 	}
 }

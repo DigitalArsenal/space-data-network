@@ -65,6 +65,104 @@ func TestNewFlatSQLStoreCreatesCanonicalSchemaTablesWithoutSQLiteBlobs(t *testin
 	assertHasColumns(t, store, "OMM", "cid", "peer_id", "timestamp", "stream_path", "stream_offset", "record_length", "signature_hex")
 }
 
+func TestFlatSQLStreamAppenderUsesBufferedWriter(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-buffered-appender-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	appender, err := store.newFlatSQLStreamAppender("OMM.fbs")
+	if err != nil {
+		t.Fatalf("newFlatSQLStreamAppender failed: %v", err)
+	}
+	if appender.writer == nil {
+		t.Fatal("FlatSQL stream appender must buffer small record writes")
+	}
+	if _, _, _, err := appender.Append([]byte("buffered-record")); err != nil {
+		t.Fatalf("Append failed: %v", err)
+	}
+	if err := appender.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+}
+
+func TestFlatSQLImportFastPathUsesInsertedRowIDForSourceSummary(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	appender, err := store.newFlatSQLStreamAppender("OMM.fbs")
+	if err != nil {
+		t.Fatalf("newFlatSQLStreamAppender failed: %v", err)
+	}
+	defer appender.Close()
+	record := sds.NewOMMBuilder().
+		WithNoradCatID(25544).
+		WithObjectID("1998-067A").
+		WithEpoch("2024-01-16T11:51:22Z").
+		Build()
+	streamPath, streamOffset, recordLength, err := appender.Append(record)
+	if err != nil {
+		t.Fatalf("Append failed: %v", err)
+	}
+
+	tx, err := store.db.Begin()
+	if err != nil {
+		t.Fatalf("Begin failed: %v", err)
+	}
+	defer tx.Rollback()
+
+	cid := computeCID(record)
+	rowID, err := insertSchemaMetadataReturningRowID(tx, "OMM", cid, "source:celestrak", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000)
+	if err != nil {
+		t.Fatalf("insertSchemaMetadataReturningRowID failed: %v", err)
+	}
+	if rowID <= 0 {
+		t.Fatalf("inserted rowID = %d, want populated rowid", rowID)
+	}
+	tags := SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "fast-import-batch",
+		ContentKeyID: "public",
+	}
+	if err := insertNewSourceTagsTx(tx, "OMM.fbs", cid, tags, recordLength, rowID); err != nil {
+		t.Fatalf("insertNewSourceTagsTx failed: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit failed: %v", err)
+	}
+
+	var recordCount, totalBytes, maxRowID int64
+	if err := store.db.QueryRow(`
+		SELECT record_count, total_bytes, max_rowid
+		FROM sdn_record_source_summary
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
+	`, "OMM.fbs", tags.ProviderID, tags.SourceName, tags.BatchID).Scan(&recordCount, &totalBytes, &maxRowID); err != nil {
+		t.Fatalf("query source summary: %v", err)
+	}
+	if recordCount != 1 || totalBytes != recordLength || maxRowID != rowID {
+		t.Fatalf("source summary = count:%d bytes:%d rowid:%d, want 1/%d/%d", recordCount, totalBytes, maxRowID, recordLength, rowID)
+	}
+}
+
 func TestNewFlatSQLStoreMigratesExistingCanonicalBlobTableToStreamMetadata(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-existing-table-test-*")
 	if err != nil {

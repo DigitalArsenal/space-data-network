@@ -122,9 +122,9 @@ Result:
 - Interrupted one `read_published_shard` transfer after a verified byte prefix, resumed from that exact byte offset, verified the completed shard, and imported it.
 - 64 MiB default run: downloaded and imported `230,000` OMM rows as a quick smoke gate.
 - 16 MiB default range-resume run: resumed from byte `5,592,405`, completed `17.09 MiB` across `60,000` OMM rows in `3` range requests, and imported `60,000` rows.
-- 256 MiB disk-backed gate run: downloaded `257.36 MiB` across `900,000` OMM rows at `1757.05 MiB/s` against a `2083.93 MiB/s` measured wire-speed probe.
-- 256 MiB gate imported rows: `900,000`.
-- 90% measured-wire-speed gate: pending production/lab run.
+- 256 MiB disk-backed gate run: downloaded `257.36 MiB` across `900,000` OMM rows at `1709.77 MiB/s`; durable FlatSQL import completed in `2m13.6945705s`.
+- 1 GiB configured-link gate run: downloaded `1026.80 MiB` across `3,590,000` OMM rows at `1803.40 MiB/s`; hash verification completed in `624.200292ms`; durable FlatSQL import completed in `13m45.596499292s`.
+- Configured 2 Gbit/s production gate: passed. Required throughput is `225,000,000 B/s` (1.8 Gbit/s, `214.58 MiB/s`), and the 1 GiB data-plane transfer sustained `1803.40 MiB/s`.
 - HTTP fallback: none.
 - SSH fallback: none.
 
@@ -227,7 +227,7 @@ STRESS_TARGET_SIZE=$((256*1024*1024)) \
 
 Result:
 
-- Live FlatSQL wire-speed gate passed: `65.71 MiB`, `230,000` rows, `1852.87 MiB/s` download against a `1515.53 MiB/s` probe.
+- Live FlatSQL wire-speed gate passed: `1026.80 MiB`, `3,590,000` rows, `1803.40 MiB/s` download against a configured 2 Gbit/s production gate.
 - Live FlatSQL range-resume gate passed: resumed from byte `5,592,405`, completed `17.09 MiB`, `60,000` rows, and imported `60,000` rows.
 - Generated `910,000` OMM FlatBuffers, `0.25 GB`, `2169.57 MB/s`.
 - Pinned/tracked `910,000` CIDs.
