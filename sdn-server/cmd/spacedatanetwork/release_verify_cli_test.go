@@ -139,6 +139,27 @@ func TestVerifyPortableCLIArchiveLayoutRejectsMissingWindowsWasmEdgeRuntime(t *t
 	}
 }
 
+func TestVerifyPortableCLIArchiveLayoutRejectsManifestWithoutUpdaterChannel(t *testing.T) {
+	root := t.TempDir()
+	archivePath := writePortableCLITarGzWithManifest(
+		t,
+		root,
+		"spacedatanetwork-1.2.3-linux-amd64.tar.gz",
+		"spacedatanetwork-1.2.3-linux-amd64",
+		`{"schema":"org.spacedatanetwork.bundle.v1","update":{"updaterModule":"org.spacedatanetwork.updater","updaterWasm":"runtime/modules/org.spacedatanetwork.updater.wasm"}}`,
+	)
+
+	err := verifyPortableCLIArchiveLayout(archivePath, portableCLITarget{
+		Label:       "Linux AMD64 portable CLI",
+		PrimaryPath: "bin/spacedatanetwork",
+		AliasPath:   "bin/sdn",
+		ArchiveKind: "tar.gz",
+	})
+	if err == nil || !strings.Contains(err.Error(), "manifest update pubsubTopic") {
+		t.Fatalf("verifyPortableCLIArchiveLayout error = %v, want missing manifest update pubsubTopic", err)
+	}
+}
+
 func TestVerifyContainerDigestsRejectsSplitFullAndEdgeImages(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "container-digests.json")
@@ -227,29 +248,40 @@ func writeReleaseTestFile(t *testing.T, root string, name string, data []byte) {
 func writePortableCLITarGz(t *testing.T, root string, name string, bundleRoot string, omitAlias bool) string {
 	t.Helper()
 	entries := portableCLIEntries(bundleRoot, false, omitAlias)
-	var relativePaths []string
-	for pathValue := range entries {
-		relativePaths = append(relativePaths, strings.TrimPrefix(pathValue, bundleRoot+"/"))
-	}
-	return writePortableCLITarGzWithEntries(t, root, name, bundleRoot, relativePaths)
+	return writePortableCLITarGzWithEntryContents(t, root, name, entries)
 }
 
 func writePortableCLITarGzWithEntries(t *testing.T, root string, name string, bundleRoot string, relativePaths []string) string {
 	t.Helper()
+	entries := make(map[string]string, len(relativePaths))
+	for _, relativePath := range relativePaths {
+		entries[bundleRoot+"/"+relativePath] = "fixture"
+	}
+	return writePortableCLITarGzWithEntryContents(t, root, name, entries)
+}
+
+func writePortableCLITarGzWithManifest(t *testing.T, root string, name string, bundleRoot string, manifest string) string {
+	t.Helper()
+	entries := portableCLIEntries(bundleRoot, false, false)
+	entries[bundleRoot+"/manifest.json"] = manifest
+	return writePortableCLITarGzWithEntryContents(t, root, name, entries)
+}
+
+func writePortableCLITarGzWithEntryContents(t *testing.T, root string, name string, entries map[string]string) string {
+	t.Helper()
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	writer := tar.NewWriter(gz)
-	for _, relativePath := range relativePaths {
-		pathValue := bundleRoot + "/" + relativePath
+	for pathValue, contents := range entries {
 		header := &tar.Header{
 			Name: pathValue,
 			Mode: 0o755,
-			Size: int64(len("fixture")),
+			Size: int64(len(contents)),
 		}
 		if err := writer.WriteHeader(header); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := writer.Write([]byte("fixture")); err != nil {
+		if _, err := writer.Write([]byte(contents)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -326,7 +358,7 @@ func portableCLIEntries(bundleRoot string, windows bool, omitAlias bool) map[str
 		bundleRoot + "/runtime/ui/sdn/index.html":                         "sdn ui",
 		bundleRoot + "/runtime/ui/webui/index.html":                       "webui",
 		bundleRoot + "/runtime/wasmedge/bin/wasmedge":                     "wasmedge",
-		bundleRoot + "/manifest.json":                                     `{"schema":"org.spacedatanetwork.bundle.v1"}`,
+		bundleRoot + "/manifest.json":                                     `{"schema":"org.spacedatanetwork.bundle.v1","update":{"pubsubTopic":"/sdn/updates/v1/beta","updaterModule":"org.spacedatanetwork.updater","updaterWasm":"runtime/modules/org.spacedatanetwork.updater.wasm"}}`,
 	}
 	if windows {
 		delete(entries, bundleRoot+"/runtime/kubo/ipfs")

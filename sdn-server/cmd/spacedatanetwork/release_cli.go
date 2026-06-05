@@ -348,6 +348,9 @@ func verifyPortableCLIArchiveLayout(pathValue string, target portableCLITarget) 
 			return fmt.Errorf("portable CLI archive missing %s", required)
 		}
 	}
+	if err := verifyPortableCLIManifest(pathValue, target.ArchiveKind); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -401,6 +404,99 @@ func zipEntries(pathValue string) (map[string]bool, error) {
 		entries[normalizeArchivePath(file.Name)] = true
 	}
 	return entries, nil
+}
+
+func verifyPortableCLIManifest(pathValue string, archiveKind string) error {
+	manifestBytes, err := archiveRelativePathBytes(pathValue, archiveKind, "manifest.json")
+	if err != nil {
+		return err
+	}
+	var manifest struct {
+		Schema string `json:"schema"`
+		Update struct {
+			PubSubTopic   string `json:"pubsubTopic"`
+			UpdaterModule string `json:"updaterModule"`
+			UpdaterWasm   string `json:"updaterWasm"`
+		} `json:"update"`
+	}
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return fmt.Errorf("portable CLI manifest is not valid JSON: %w", err)
+	}
+	if strings.TrimSpace(manifest.Schema) != "org.spacedatanetwork.bundle.v1" {
+		return fmt.Errorf("portable CLI manifest schema = %q, want org.spacedatanetwork.bundle.v1", manifest.Schema)
+	}
+	if topic := strings.TrimSpace(manifest.Update.PubSubTopic); !strings.HasPrefix(topic, "/sdn/updates/v1/") {
+		return fmt.Errorf("portable CLI manifest update pubsubTopic = %q, want /sdn/updates/v1/<channel>", topic)
+	}
+	if module := strings.TrimSpace(manifest.Update.UpdaterModule); module != "org.spacedatanetwork.updater" {
+		return fmt.Errorf("portable CLI manifest update updaterModule = %q, want org.spacedatanetwork.updater", module)
+	}
+	if wasm := strings.TrimSpace(manifest.Update.UpdaterWasm); wasm != "runtime/modules/org.spacedatanetwork.updater.wasm" {
+		return fmt.Errorf("portable CLI manifest update updaterWasm = %q, want runtime/modules/org.spacedatanetwork.updater.wasm", wasm)
+	}
+	return nil
+}
+
+func archiveRelativePathBytes(pathValue string, archiveKind string, required string) ([]byte, error) {
+	switch archiveKind {
+	case "tar.gz":
+		return tarGzEntryBytes(pathValue, required)
+	case "zip":
+		return zipEntryBytes(pathValue, required)
+	default:
+		return nil, fmt.Errorf("unsupported archive kind %q", archiveKind)
+	}
+}
+
+func tarGzEntryBytes(pathValue string, required string) ([]byte, error) {
+	file, err := os.Open(pathValue)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	gz, err := gzip.NewReader(file)
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+	reader := tar.NewReader(gz)
+	required = normalizeArchivePath(required)
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("portable CLI archive missing %s", required)
+		}
+		if err != nil {
+			return nil, err
+		}
+		entry := normalizeArchivePath(header.Name)
+		if entry != required && !strings.HasSuffix(entry, "/"+required) {
+			continue
+		}
+		return io.ReadAll(reader)
+	}
+}
+
+func zipEntryBytes(pathValue string, required string) ([]byte, error) {
+	reader, err := zip.OpenReader(pathValue)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	required = normalizeArchivePath(required)
+	for _, file := range reader.File {
+		entry := normalizeArchivePath(file.Name)
+		if entry != required && !strings.HasSuffix(entry, "/"+required) {
+			continue
+		}
+		handle, err := file.Open()
+		if err != nil {
+			return nil, err
+		}
+		defer handle.Close()
+		return io.ReadAll(handle)
+	}
+	return nil, fmt.Errorf("portable CLI archive missing %s", required)
 }
 
 func archiveContainsRelativePath(entries map[string]bool, required string) bool {
