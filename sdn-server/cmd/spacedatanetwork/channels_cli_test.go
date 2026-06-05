@@ -50,8 +50,9 @@ func TestChannelsListUsesLocalAPI(t *testing.T) {
 			t.Fatalf("unexpected list request %s %s", r.Method, r.URL.String())
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[
-			{
+		_, _ = w.Write([]byte(`{
+			"count":1,
+			"results":[{
 				"channelId":"spaceaware-OMM",
 				"sourceId":"spaceaware",
 				"standardCode":"OMM",
@@ -60,8 +61,8 @@ func TestChannelsListUsesLocalAPI(t *testing.T) {
 				"subscribed":true,
 				"grantState":"verified",
 				"encryptionState":"encrypted"
-			}
-		]`))
+			}]
+		}`))
 	}))
 	defer server.Close()
 

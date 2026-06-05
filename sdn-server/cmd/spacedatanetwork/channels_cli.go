@@ -208,8 +208,8 @@ func runChannelsListFromAPI(cmd *cobra.Command, options channelsListOptions, api
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("list channels: %s", resp.Status)
 	}
-	var rows []map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+	rows, err := decodeChannelListResponse(resp.Body)
+	if err != nil {
 		return fmt.Errorf("decode channel list: %w", err)
 	}
 	out := cmd.OutOrStdout()
@@ -217,6 +217,37 @@ func runChannelsListFromAPI(cmd *cobra.Command, options channelsListOptions, api
 		printChannelRowPayload(out, row)
 	}
 	return nil
+}
+
+func decodeChannelListResponse(body io.Reader) ([]map[string]interface{}, error) {
+	var payload interface{}
+	if err := json.NewDecoder(body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	switch value := payload.(type) {
+	case []interface{}:
+		return channelRowsFromInterfaces(value), nil
+	case map[string]interface{}:
+		rows, ok := value["results"].([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("results array missing")
+		}
+		return channelRowsFromInterfaces(rows), nil
+	default:
+		return nil, fmt.Errorf("unexpected channel list payload %T", payload)
+	}
+}
+
+func channelRowsFromInterfaces(values []interface{}) []map[string]interface{} {
+	rows := make([]map[string]interface{}, 0, len(values))
+	for _, value := range values {
+		row, ok := value.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 func runChannelsPublish(cmd *cobra.Command, options channelPublishOptions, channelID string) error {
