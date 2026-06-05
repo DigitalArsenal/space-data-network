@@ -534,6 +534,84 @@ func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerVerifiedEncryptedDPMMakesChannelPrivateFailClosed(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	monitorReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/monitor", nil)
+	monitorRec := httptest.NewRecorder()
+	mux.ServeHTTP(monitorRec, monitorReq)
+	if monitorRec.Code != http.StatusOK {
+		t.Fatalf("monitor status = %d body=%s", monitorRec.Code, monitorRec.Body.String())
+	}
+	monitorBody := decodeChannelJSON(t, monitorRec.Body.String())
+	if monitorBody["visibility"] != "private-listed" ||
+		monitorBody["grantState"] != "required" ||
+		monitorBody["encryptionState"] != "encrypted" {
+		t.Fatalf("monitor did not reflect encrypted private DPM: %#v", monitorBody)
+	}
+
+	subscribeReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/subscribe", nil)
+	subscribeRec := httptest.NewRecorder()
+	mux.ServeHTTP(subscribeRec, subscribeReq)
+	if subscribeRec.Code != http.StatusForbidden {
+		t.Fatalf("private subscribe without grant status = %d body=%s", subscribeRec.Code, subscribeRec.Body.String())
+	}
+
+	streamBytes := nativeAPIFrame("OMM1", []byte{1, 2, 3})
+	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1", bytes.NewReader(streamBytes))
+	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	publishRec := httptest.NewRecorder()
+	mux.ServeHTTP(publishRec, publishReq)
+	if publishRec.Code != http.StatusForbidden {
+		t.Fatalf("private stream publish without grant status = %d body=%s", publishRec.Code, publishRec.Body.String())
+	}
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants",
+		strings.NewReader(`{"to":"peer-alpha","scopes":["publish","stream_open"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	publishReq = httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(streamBytes))
+	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	publishRec = httptest.NewRecorder()
+	mux.ServeHTTP(publishRec, publishReq)
+	if publishRec.Code != http.StatusAccepted {
+		t.Fatalf("private stream publish with grant status = %d body=%s", publishRec.Code, publishRec.Body.String())
+	}
+
+	openReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/stream", nil)
+	openRec := httptest.NewRecorder()
+	mux.ServeHTTP(openRec, openReq)
+	if openRec.Code != http.StatusForbidden {
+		t.Fatalf("private stream open without grant status = %d body=%s", openRec.Code, openRec.Body.String())
+	}
+
+	openReq = httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/stream?subject=peer-alpha&grantId="+grantID, nil)
+	openRec = httptest.NewRecorder()
+	mux.ServeHTTP(openRec, openReq)
+	if openRec.Code != http.StatusOK {
+		t.Fatalf("private stream open with grant status = %d body=%s", openRec.Code, openRec.Body.String())
+	}
+	if !bytes.Equal(openRec.Body.Bytes(), streamBytes) {
+		t.Fatal("private stream open did not return verified stream bytes after grant")
+	}
+}
+
 func nativeAPIFrame(fileIdentifier string, payload []byte) []byte {
 	if len(fileIdentifier) != 4 {
 		panic("fileIdentifier must be four bytes")
@@ -666,6 +744,10 @@ func channelTestPNMSignaturePayload(manifestCID, fileID string) []byte {
 }
 
 func buildAPISignedDPM(t *testing.T, signingKey ed25519.PrivateKey, fileID string) *storage.DatasetPublicationManifest {
+	return buildAPISignedDPMWithAccess(t, signingKey, fileID, "public", "")
+}
+
+func buildAPISignedDPMWithAccess(t *testing.T, signingKey ed25519.PrivateKey, fileID string, contentKeyID string, encryptionPolicy string) *storage.DatasetPublicationManifest {
 	t.Helper()
 
 	schemaName, err := channels.SchemaNameFromStandardCode("OMM")
@@ -694,6 +776,8 @@ func buildAPISignedDPM(t *testing.T, signingKey ed25519.PrivateKey, fileID strin
 	if err != nil {
 		t.Fatalf("ExportDatasetRecords failed: %v", err)
 	}
+	export.ContentKeyID = contentKeyID
+	export.EncryptionPolicy = encryptionPolicy
 	manifest, err := storage.BuildSignedDatasetPublicationManifest(t.TempDir(), storage.DatasetPublicationManifestOptions{
 		Export:          export,
 		DatasetID:       "spaceaware",
