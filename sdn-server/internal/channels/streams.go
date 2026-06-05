@@ -3,6 +3,7 @@ package channels
 import (
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -25,7 +26,7 @@ func NewNativeStreamRegistry() *NativeStreamRegistry {
 }
 
 func (r *NativeStreamRegistry) Store(channel ChannelID, stream []byte) (NativeStreamSnapshot, error) {
-	frameCount, err := CountNativeStreamFrames(stream)
+	frames, err := SplitNativeStreamFramesForChannel(channel, stream)
 	if err != nil {
 		return NativeStreamSnapshot{}, err
 	}
@@ -33,7 +34,7 @@ func (r *NativeStreamRegistry) Store(channel ChannelID, stream []byte) (NativeSt
 		ChannelID:  channel.ChannelID,
 		Bytes:      append([]byte(nil), stream...),
 		ByteCount:  len(stream),
-		FrameCount: frameCount,
+		FrameCount: len(frames),
 		UpdatedAt:  time.Now().UTC(),
 	}
 	if r == nil {
@@ -68,9 +69,18 @@ func CountNativeStreamFrames(stream []byte) (int, error) {
 }
 
 func SplitNativeStreamFrames(stream []byte) ([][]byte, error) {
+	return splitNativeStreamFrames(stream, "")
+}
+
+func SplitNativeStreamFramesForChannel(channel ChannelID, stream []byte) ([][]byte, error) {
+	return splitNativeStreamFrames(stream, channel.StandardCode)
+}
+
+func splitNativeStreamFrames(stream []byte, expectedStandardCode string) ([][]byte, error) {
 	if len(stream) == 0 {
 		return nil, fmt.Errorf("native FlatBuffer stream is empty")
 	}
+	expectedStandardCode = strings.TrimSpace(expectedStandardCode)
 	offset := 0
 	frames := make([][]byte, 0)
 	for offset < len(stream) {
@@ -88,10 +98,30 @@ func SplitNativeStreamFrames(stream []byte) ([][]byte, error) {
 		if !isFourByteFileIdentifier(stream[offset+4 : offset+8]) {
 			return nil, fmt.Errorf("invalid native FlatBuffer file identifier at offset %d", offset+4)
 		}
+		fileIdentifier := string(stream[offset+4 : offset+8])
+		if expectedStandardCode != "" {
+			frameStandardCode, ok := nativeFrameStandardCode(fileIdentifier)
+			if !ok || frameStandardCode != expectedStandardCode {
+				return nil, fmt.Errorf("native FlatBuffer file identifier %q does not match channel standardCode %s", fileIdentifier, expectedStandardCode)
+			}
+		}
 		frames = append(frames, append([]byte(nil), stream[offset:frameEnd]...))
 		offset = frameEnd
 	}
 	return frames, nil
+}
+
+func nativeFrameStandardCode(fileIdentifier string) (string, bool) {
+	fileIdentifier = strings.TrimSpace(fileIdentifier)
+	if len(fileIdentifier) != 4 {
+		return "", false
+	}
+	if strings.HasPrefix(fileIdentifier, "$") {
+		code := fileIdentifier[1:]
+		return code, standardCodePattern.MatchString(code)
+	}
+	code := fileIdentifier[:3]
+	return code, standardCodePattern.MatchString(code)
 }
 
 func isFourByteFileIdentifier(value []byte) bool {

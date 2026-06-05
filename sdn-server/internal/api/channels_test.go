@@ -653,6 +653,46 @@ func TestChannelHandlerImportsVerifiedNativeStreamIntoFlatSQL(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerRejectsNativeStreamStandardMismatchBeforeImport(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	store := newChannelTestStore(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(store).RegisterRoutes(mux)
+	manifest := buildAPISignedDPM(t, signing.privateKey, "DPM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	streamBytes := bytes.Join([][]byte{
+		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
+		nativeAPIFrame("CDM1", []byte{4, 5, 6, 7}),
+	}, nil)
+	streamReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1", bytes.NewReader(streamBytes))
+	streamReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	streamRec := httptest.NewRecorder()
+	mux.ServeHTTP(streamRec, streamReq)
+	if streamRec.Code != http.StatusBadRequest {
+		t.Fatalf("stream publish status = %d, want %d body=%s", streamRec.Code, http.StatusBadRequest, streamRec.Body.String())
+	}
+	if !strings.Contains(streamRec.Body.String(), "standardCode") {
+		t.Fatalf("stream mismatch response did not mention standardCode: %s", streamRec.Body.String())
+	}
+
+	schemaName, err := channels.SchemaNameFromStandardCode("OMM")
+	if err != nil {
+		t.Fatalf("SchemaNameFromStandardCode failed: %v", err)
+	}
+	count, err := store.CountRawRecords(storage.RawRecordQuery{SchemaName: schemaName})
+	if err != nil {
+		t.Fatalf("CountRawRecords failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("durable OMM rows = %d, want 0 after rejected stream", count)
+	}
+}
+
 func TestChannelHandlerPrivateRoutesFailClosed(t *testing.T) {
 	t.Parallel()
 

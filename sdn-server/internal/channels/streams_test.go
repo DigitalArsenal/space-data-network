@@ -55,6 +55,18 @@ func TestNativeStreamRegistryRejectsMalformedDispatcherFrames(t *testing.T) {
 	}
 }
 
+func TestNativeStreamRegistryRejectsFramesOutsideChannelStandard(t *testing.T) {
+	t.Parallel()
+
+	channel := mustParseChannelID(t, "spaceaware-OMM")
+	registry := NewNativeStreamRegistry()
+	stream := append(nativeStreamFrame("OMM1", []byte{1, 2}), nativeStreamFrame("CDM1", []byte{3, 4})...)
+
+	if _, err := registry.Store(channel, stream); err == nil {
+		t.Fatal("expected mixed standard native stream to be rejected")
+	}
+}
+
 func mustParseChannelID(t *testing.T, id string) ChannelID {
 	t.Helper()
 	parsed, err := ParseChannelID(id)
