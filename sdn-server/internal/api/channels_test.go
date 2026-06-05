@@ -1004,6 +1004,59 @@ func TestChannelHandlerReadsPrivateNativeFlatBufferByteRangeWithGrant(t *testing
 	}
 }
 
+func TestChannelHandlerPrivateDurableImportPreservesDPMContentKeyScope(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	store := newChannelTestStore(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(store).RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants",
+		strings.NewReader(`{"to":"peer-alpha","scopes":["publish"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	streamBytes := nativeAPIFrame("OMM1", []byte{1, 2, 3})
+	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(streamBytes))
+	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	publishRec := httptest.NewRecorder()
+	mux.ServeHTTP(publishRec, publishReq)
+	if publishRec.Code != http.StatusAccepted {
+		t.Fatalf("private stream publish with grant status = %d body=%s", publishRec.Code, publishRec.Body.String())
+	}
+
+	schemaName, err := channels.SchemaNameFromStandardCode("OMM")
+	if err != nil {
+		t.Fatalf("SchemaNameFromStandardCode failed: %v", err)
+	}
+	records, err := store.QueryRawRecords(storage.RawRecordQuery{SchemaName: schemaName, Limit: 10})
+	if err != nil {
+		t.Fatalf("QueryRawRecords failed: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("durable private OMM records = %d, want 1", len(records))
+	}
+	tags, err := store.GetSourceTags(schemaName, records[0].CID)
+	if err != nil {
+		t.Fatalf("GetSourceTags failed: %v", err)
+	}
+	if tags.ContentKeyID != "channel-private-key" {
+		t.Fatalf("private durable ContentKeyID = %q, want channel-private-key", tags.ContentKeyID)
+	}
+}
+
 func nativeAPIFrame(fileIdentifier string, payload []byte) []byte {
 	if len(fileIdentifier) != 4 {
 		panic("fileIdentifier must be four bytes")
