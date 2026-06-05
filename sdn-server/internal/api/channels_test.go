@@ -747,7 +747,7 @@ func TestChannelHandlerPrivateListedCollectionFailsClosedWithoutGrant(t *testing
 	}
 }
 
-func TestChannelHandlerPrivateListedCollectionReturnsGrantedVerifiedMetadata(t *testing.T) {
+func TestChannelHandlerPrivateGrantIssueRequiresProviderOrGrantIssueScope(t *testing.T) {
 	t.Parallel()
 
 	signing := newChannelSigningFixture(t)
@@ -761,6 +761,66 @@ func TestChannelHandlerPrivateListedCollectionReturnsGrantedVerifiedMetadata(t *
 	grantReq := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/channels/spaceaware-OMM/grants",
+		strings.NewReader(`{"to":"peer-alpha","scopes":["list_private"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusForbidden {
+		t.Fatalf("private grant issue without provider status = %d, want %d body=%s", grantRec.Code, http.StatusForbidden, grantRec.Body.String())
+	}
+	if strings.Contains(grantRec.Body.String(), "channel-private-key") {
+		t.Fatalf("private grant rejection leaked key metadata: %s", grantRec.Body.String())
+	}
+
+	grantReq = httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
+		strings.NewReader(`{"to":"peer-alpha","scopes":["list_private"]}`),
+	)
+	grantRec = httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("provider-issued private grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+
+	issuerReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
+		strings.NewReader(`{"to":"peer-admin","scopes":["grant_issue"]}`),
+	)
+	issuerRec := httptest.NewRecorder()
+	mux.ServeHTTP(issuerRec, issuerReq)
+	if issuerRec.Code != http.StatusCreated {
+		t.Fatalf("provider-issued grant_issue status = %d body=%s", issuerRec.Code, issuerRec.Body.String())
+	}
+	issuerGrantID := decodeChannelJSON(t, issuerRec.Body.String())["grantId"].(string)
+
+	delegatedReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants?subject=peer-admin&grantId="+issuerGrantID,
+		strings.NewReader(`{"to":"peer-beta","scopes":["stream_open"]}`),
+	)
+	delegatedRec := httptest.NewRecorder()
+	mux.ServeHTTP(delegatedRec, delegatedReq)
+	if delegatedRec.Code != http.StatusCreated {
+		t.Fatalf("delegated private grant issue status = %d body=%s", delegatedRec.Code, delegatedRec.Body.String())
+	}
+}
+
+func TestChannelHandlerPrivateListedCollectionReturnsGrantedVerifiedMetadata(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	mux := http.NewServeMux()
+	NewChannelHandler(nil).RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
 		strings.NewReader(`{"to":"peer-alpha","scopes":["list_private"]}`),
 	)
 	grantRec := httptest.NewRecorder()
@@ -827,7 +887,7 @@ func TestChannelHandlerPrivateMonitorFailsClosedWithoutGrant(t *testing.T) {
 
 	grantReq := httptest.NewRequest(
 		http.MethodPost,
-		"/api/v1/channels/spaceaware-OMM/grants",
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
 		strings.NewReader(`{"to":"peer-alpha","scopes":["list_private"]}`),
 	)
 	grantRec := httptest.NewRecorder()
@@ -878,7 +938,7 @@ func TestChannelHandlerPrivateHiddenMetadataFailsClosedWithoutGrant(t *testing.T
 
 	grantReq := httptest.NewRequest(
 		http.MethodPost,
-		"/api/v1/channels/spaceaware-OMM/grants",
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
 		strings.NewReader(`{"to":"peer-alpha","scopes":["list_private"]}`),
 	)
 	grantRec := httptest.NewRecorder()
@@ -952,7 +1012,7 @@ func TestChannelHandlerVerifiedEncryptedDPMMakesChannelPrivateFailClosed(t *test
 
 	grantReq := httptest.NewRequest(
 		http.MethodPost,
-		"/api/v1/channels/spaceaware-OMM/grants",
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
 		strings.NewReader(`{"to":"peer-alpha","scopes":["publish","stream_open"]}`),
 	)
 	grantRec := httptest.NewRecorder()
@@ -1007,7 +1067,7 @@ func TestChannelHandlerReadsPrivateNativeFlatBufferByteRangeWithGrant(t *testing
 
 	grantReq := httptest.NewRequest(
 		http.MethodPost,
-		"/api/v1/channels/spaceaware-OMM/grants",
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
 		strings.NewReader(`{"to":"peer-alpha","scopes":["publish","byte_range_read"]}`),
 	)
 	grantRec := httptest.NewRecorder()
@@ -1055,7 +1115,7 @@ func TestChannelHandlerPrivateEncryptedStreamDoesNotImportWithoutDecryptPath(t *
 
 	grantReq := httptest.NewRequest(
 		http.MethodPost,
-		"/api/v1/channels/spaceaware-OMM/grants",
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
 		strings.NewReader(`{"to":"peer-alpha","scopes":["publish"]}`),
 	)
 	grantRec := httptest.NewRecorder()
@@ -1102,7 +1162,7 @@ func TestChannelHandlerRejectsPlaintextPrivateStreamPublishBeforeImport(t *testi
 
 	grantReq := httptest.NewRequest(
 		http.MethodPost,
-		"/api/v1/channels/spaceaware-OMM/grants",
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
 		strings.NewReader(`{"to":"peer-alpha","scopes":["publish"]}`),
 	)
 	grantRec := httptest.NewRecorder()
