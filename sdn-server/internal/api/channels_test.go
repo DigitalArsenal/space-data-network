@@ -1230,6 +1230,98 @@ func TestChannelHandlerPrivateEncryptedStreamDoesNotImportWithoutDecryptPath(t *
 	}
 }
 
+func TestChannelHandlerPrivateEncryptedStreamDecryptsBeforeImportAndCache(t *testing.T) {
+	t.Parallel()
+
+	signing := newChannelSigningFixture(t)
+	store := newChannelTestStore(t)
+	handler := NewChannelHandler(store)
+	decryptedStream := bytes.Join([][]byte{
+		nativeAPIFrame("OMM1", []byte{1, 2, 3}),
+		nativeAPIFrame("OMM1", []byte{4, 5, 6, 7}),
+	}, nil)
+	decryptor := &channelTestEncryptedStreamDecryptor{plaintext: decryptedStream}
+	handler.encryptedStreams = decryptor
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	manifest := buildAPISignedDPMWithAccess(t, signing.privateKey, "DPM", "channel-private-key", "policy-spaceaware-OMM")
+
+	publishPNMForChannel(t, mux, "spaceaware-OMM", signing, manifest.CID, "DPM")
+	publishDPMForChannel(t, mux, "spaceaware-OMM", signing, manifest)
+
+	grantReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/channels/spaceaware-OMM/grants?"+signing.providerKeyQuery(),
+		strings.NewReader(`{"to":"peer-alpha","scopes":["publish","stream_open","byte_range_read"]}`),
+	)
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, grantReq)
+	if grantRec.Code != http.StatusCreated {
+		t.Fatalf("grant status = %d body=%s", grantRec.Code, grantRec.Body.String())
+	}
+	grantID := decodeChannelJSON(t, grantRec.Body.String())["grantId"].(string)
+
+	ciphertext := []byte("ciphertext-not-native-flatbuffer")
+	publishReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish?stream=1&subject=peer-alpha&grantId="+grantID, bytes.NewReader(ciphertext))
+	publishReq.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.encrypted-stream")
+	publishReq.Header.Set("X-SDN-Encrypted-Stream", "true")
+	setEncryptedChannelStreamHeader(publishReq, "spaceaware-OMM")
+	publishRec := httptest.NewRecorder()
+	mux.ServeHTTP(publishRec, publishReq)
+	if publishRec.Code != http.StatusAccepted {
+		t.Fatalf("private encrypted stream publish status = %d body=%s", publishRec.Code, publishRec.Body.String())
+	}
+	if !bytes.Equal(decryptor.ciphertext, ciphertext) {
+		t.Fatalf("decryptor saw ciphertext %q, want %q", string(decryptor.ciphertext), string(ciphertext))
+	}
+	if decryptor.header.Context != "spaceaware-OMM" || decryptor.header.Algorithm != "x25519" {
+		t.Fatalf("decryptor header = %#v", decryptor.header)
+	}
+	body := decodeChannelJSON(t, publishRec.Body.String())
+	if body["streamBytes"] != float64(len(decryptedStream)) || body["streamFrames"] != float64(2) {
+		t.Fatalf("private publish did not report decrypted stream counts: %#v", body)
+	}
+	timings, ok := body["timingsMs"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("private publish missing timingsMs: %#v", body)
+	}
+	if _, ok := timings["decrypt"]; !ok {
+		t.Fatalf("private publish timings missing decrypt: %#v", timings)
+	}
+
+	schemaName, err := channels.SchemaNameFromStandardCode("OMM")
+	if err != nil {
+		t.Fatalf("SchemaNameFromStandardCode failed: %v", err)
+	}
+	count, err := store.CountRawRecords(storage.RawRecordQuery{SchemaName: schemaName})
+	if err != nil {
+		t.Fatalf("CountRawRecords failed: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("durable private OMM rows = %d, want 2", count)
+	}
+
+	openReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/stream?subject=peer-alpha&grantId="+grantID, nil)
+	openRec := httptest.NewRecorder()
+	mux.ServeHTTP(openRec, openReq)
+	if openRec.Code != http.StatusOK {
+		t.Fatalf("private stream open status = %d body=%s", openRec.Code, openRec.Body.String())
+	}
+	if !bytes.Equal(openRec.Body.Bytes(), decryptedStream) {
+		t.Fatal("private stream cache did not store decrypted native stream bytes")
+	}
+
+	rangeReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-OMM/bytes?offset=1&length=5&subject=peer-alpha&grantId="+grantID, nil)
+	rangeRec := httptest.NewRecorder()
+	mux.ServeHTTP(rangeRec, rangeReq)
+	if rangeRec.Code != http.StatusPartialContent {
+		t.Fatalf("private byte range status = %d body=%s", rangeRec.Code, rangeRec.Body.String())
+	}
+	if !bytes.Equal(rangeRec.Body.Bytes(), decryptedStream[1:6]) {
+		t.Fatalf("private byte range body = %v, want %v", rangeRec.Body.Bytes(), decryptedStream[1:6])
+	}
+}
+
 func TestChannelHandlerRejectsPlaintextPrivateStreamPublishBeforeImport(t *testing.T) {
 	t.Parallel()
 
@@ -1415,6 +1507,18 @@ func setEncryptedChannelStreamHeader(req *http.Request, channelID string) {
 		`{"algorithm":"x25519","context":%q,"ephemeral_public_key":"0123456789abcdef","nonce_start":"00112233445566778899aabb"}`,
 		channelID,
 	))
+}
+
+type channelTestEncryptedStreamDecryptor struct {
+	plaintext  []byte
+	ciphertext []byte
+	header     EncryptedNativeStreamHeader
+}
+
+func (d *channelTestEncryptedStreamDecryptor) DecryptNativeStream(req EncryptedNativeStreamDecryptRequest) ([]byte, error) {
+	d.ciphertext = append([]byte(nil), req.Ciphertext...)
+	d.header = req.Header
+	return append([]byte(nil), d.plaintext...), nil
 }
 
 func buildAPISignedDPM(t *testing.T, signingKey ed25519.PrivateKey, fileID string) *storage.DatasetPublicationManifest {
