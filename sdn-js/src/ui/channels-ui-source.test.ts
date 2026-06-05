@@ -124,4 +124,21 @@ describe('SDN channels UI source', () => {
     }
     expect(source).not.toContain(String.fromCharCode(46, 102, 98, 115));
   });
+
+  it('renders a native channel stream publish action required by the pub/sub surface', () => {
+    const source = readFileSync(new URL('../../ui/src/screens/ChannelsScreen.svelte', import.meta.url), 'utf8');
+    for (const expected of [
+      'Stream file',
+      'onStreamFileSelected',
+      'publishStreamSelected',
+      'new Uint8Array(await streamFile.arrayBuffer())',
+      'backend.channels.publish(selectedChannelId, bytes, channelAccessOptions)',
+      '>Publish Stream<',
+    ]) {
+      expect(source).toContain(expected);
+    }
+    expect(source).not.toContain('readAsText');
+    expect(source).not.toContain('btoa');
+    expect(source).not.toContain(String.fromCharCode(46, 102, 98, 115));
+  });
 });
