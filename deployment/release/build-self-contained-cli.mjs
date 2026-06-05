@@ -32,6 +32,9 @@ export async function stageBundle(options) {
   const kuboName = osName === 'windows' ? 'ipfs.exe' : 'ipfs';
   if (osName === 'windows') {
     await cp(required(options.binaryPath, 'binaryPath'), join(root, 'bin', exeName));
+    const bundledWasmEdgePath = join(root, 'runtime', 'wasmedge');
+    await cp(required(options.wasmedgePath, 'wasmedgePath'), bundledWasmEdgePath, { recursive: true });
+    await cp(join(bundledWasmEdgePath, 'bin', 'wasmedge.dll'), join(root, 'bin', 'wasmedge.dll'));
   } else {
     await cp(required(options.binaryPath, 'binaryPath'), join(root, 'runtime', 'sdn', exeName));
     const bundledWasmEdgePath = join(root, 'runtime', 'wasmedge');

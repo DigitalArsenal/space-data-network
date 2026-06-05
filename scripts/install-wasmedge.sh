@@ -16,9 +16,16 @@ fail() {
 }
 
 has_installation() {
-  [[ -x "$WASMEDGE_DIR/bin/wasmedge" ]] \
+  [[ -x "$(wasmedge_binary)" ]] \
     && [[ -f "$WASMEDGE_DIR/include/wasmedge/wasmedge.h" ]] \
     && [[ -d "$WASMEDGE_DIR/lib" ]]
+}
+
+wasmedge_binary() {
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) printf '%s\n' "$WASMEDGE_DIR/bin/wasmedge.exe" ;;
+    *) printf '%s\n' "$WASMEDGE_DIR/bin/wasmedge" ;;
+  esac
 }
 
 run_installer() {
@@ -46,11 +53,11 @@ run_installer() {
 }
 
 installed_version() {
-  "$WASMEDGE_DIR/bin/wasmedge" --version 2>/dev/null | awk '{print $NF}'
+  "$(wasmedge_binary)" --version 2>/dev/null | awk '{print $NF}'
 }
 
 case "$(uname -s)" in
-  Darwin|Linux) ;;
+  Darwin|Linux|MINGW*|MSYS*|CYGWIN*) ;;
   *)
     fail "unsupported platform: $(uname -s)"
     ;;
@@ -70,6 +77,18 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 
 log "installing WasmEdge ${WASMEDGE_VERSION} into ${WASMEDGE_DIR}"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    archive_tmp="$(mktemp -d)"
+    archive_path="$archive_tmp/wasmedge.zip"
+    curl -sSfL -o "$archive_path" "https://github.com/WasmEdge/WasmEdge/releases/download/${WASMEDGE_VERSION}/WasmEdge-${WASMEDGE_VERSION}-windows.zip"
+    rm -rf "$WASMEDGE_DIR"
+    mkdir -p "$WASMEDGE_DIR"
+    unzip -q "$archive_path" -d "$archive_tmp"
+    cp -R "$archive_tmp/WasmEdge-${WASMEDGE_VERSION}-Windows/." "$WASMEDGE_DIR/"
+    rm -rf "$archive_tmp"
+    ;;
+  *)
 if [[ "$WASMEDGE_DIR" == "$WASMEDGE_DEFAULT_DIR" ]]; then
   run_installer
 else
@@ -79,6 +98,8 @@ else
   mkdir -p "$(dirname "$WASMEDGE_DIR")"
   run_installer "$(dirname "$WASMEDGE_DIR")"
 fi
+    ;;
+esac
 
 if ! has_installation; then
   fail "WasmEdge installation completed without the expected headers and libraries"

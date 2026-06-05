@@ -57,7 +57,7 @@ test('beta release workflow publishes public beta artifacts', () => {
   assert.match(workflow, /--license-path "\$\{PWD\}\/LICENSE"/);
   assert.match(license, /MIT License/);
   assert.match(license, /Space Data Network/);
-  assert.match(workflow, /spacedatanetwork-\$\{\{ needs\.beta-version\.outputs\.package_version \}\}-\$\{\{ matrix\.target_os \}\}-\$\{\{ matrix\.target_arch \}\}\.tar\.gz/);
+  assert.match(workflow, /spacedatanetwork-\$\{\{ needs\.beta-version\.outputs\.package_version \}\}-\$\{\{ matrix\.target_os \}\}-\$\{\{ matrix\.target_arch \}\}\.\$\{\{ matrix\.archive_extension \}\}/);
   assert.match(workflow, /name:\s*cli-\$\{\{ matrix\.target_os \}\}-\$\{\{ matrix\.target_arch \}\}/);
   assert.match(workflow, /pattern:\s*cli-\*/);
   assert.match(workflow, /merge-multiple:\s*true/);
@@ -71,6 +71,34 @@ test('beta release workflow publishes public beta artifacts', () => {
   assert.doesNotMatch(workflow, /Dockerfile\.edge/);
   assert.doesNotMatch(workflow, /space-data-network-full/);
   assert.doesNotMatch(workflow, /space-data-network-edge/);
+});
+
+test('beta release workflow builds every required portable CLI target', () => {
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+
+  for (const target of [
+    { os: 'linux', arch: 'amd64', archive: 'tar.gz' },
+    { os: 'linux', arch: 'arm64', archive: 'tar.gz' },
+    { os: 'darwin', arch: 'arm64', archive: 'tar.gz' },
+    { os: 'darwin', arch: 'amd64', archive: 'tar.gz' },
+    { os: 'windows', arch: 'amd64', archive: 'zip' },
+  ]) {
+    assert.match(
+      workflow,
+      new RegExp(`target_os:\\s*${target.os}[\\s\\S]*target_arch:\\s*${target.arch}[\\s\\S]*archive_extension:\\s*${target.archive}`),
+      `${target.os}-${target.arch} must declare ${target.archive} as its portable CLI archive extension`,
+    );
+  }
+});
+
+test('beta release workflow builds the Windows CLI with the Windows WasmEdge runtime', () => {
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+
+  assert.match(workflow, /target_os:\s*windows[\s\S]*runner:\s*windows-latest/);
+  assert.match(workflow, /WasmEdge-\$\{WASMEDGE_VERSION\}-windows\.zip/);
+  assert.match(workflow, /WasmEdge-\$\{WASMEDGE_VERSION\}-Windows/);
+  assert.match(workflow, /--wasmedge-path "\$\{WASMEDGE_DIR\}"/);
+  assert.match(workflow, /bin\/wasmedge\.dll/);
 });
 
 test('npm release publishing maps beta releases to the beta dist-tag', () => {
