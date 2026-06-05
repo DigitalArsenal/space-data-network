@@ -114,7 +114,7 @@ describe('FlatBuffer Streaming Stress Tests', () => {
       //
       // const manager = new SubscriptionManager();
       // const sub = manager.createSubscription({
-      //   dataTypes: ['OMM.fbs'],
+      //   dataTypes: ['OMM'],
       //   sourcePeers: ['all'],
       //   encrypted: false,
       //   streaming: true,
@@ -134,7 +134,7 @@ describe('FlatBuffer Streaming Stress Tests', () => {
       //   }
       // });
       //
-      // await node.subscribe('OMM.fbs');
+      // await node.subscribe('OMM');
 
       // Simulate progress for testing the test infrastructure
       console.log('Test infrastructure verified - actual streaming requires running SDN node');
@@ -174,7 +174,7 @@ describe('FlatBuffer Streaming Stress Tests', () => {
       // This would test the rate limiting functionality:
       //
       // const sub = manager.createSubscription({
-      //   dataTypes: ['OMM.fbs'],
+      //   dataTypes: ['OMM'],
       //   sourcePeers: ['all'],
       //   rateLimit: 10000, // 10k messages/minute
       // });
