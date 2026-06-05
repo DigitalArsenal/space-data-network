@@ -9,6 +9,7 @@ import (
 type VerifiedMetadata struct {
 	ChannelID         string
 	PNMCID            string
+	PNMBytes          []byte
 	PNMFileID         string
 	DPMFileID         string
 	SignatureType     string
@@ -44,6 +45,7 @@ func (r *VerifiedMetadataRegistry) RecordPNM(channel ChannelID, evidence PNMTrus
 	metadata := VerifiedMetadata{
 		ChannelID:         channel.ChannelID,
 		PNMCID:            evidence.CID,
+		PNMBytes:          append([]byte(nil), evidence.EnvelopeBytes...),
 		PNMFileID:         evidence.FileID,
 		SignatureType:     evidence.SignatureType,
 		VerifiedAt:        time.Now().UTC(),
@@ -113,5 +115,6 @@ func (r *VerifiedMetadataRegistry) Get(channel ChannelID) (VerifiedMetadata, boo
 	r.mu.RLock()
 	metadata, ok := r.metadata[channel.ChannelID]
 	r.mu.RUnlock()
+	metadata.PNMBytes = append([]byte(nil), metadata.PNMBytes...)
 	return metadata, ok
 }

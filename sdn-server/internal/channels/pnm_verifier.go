@@ -24,6 +24,7 @@ type PNMTrustEvidence struct {
 	SignatureType     string
 	Signature         []byte
 	ProviderPublicKey []byte
+	EnvelopeBytes     []byte
 }
 
 func VerifySignedPNMEnvelope(pnmBytes []byte) (PNMTrustEvidence, error) {
@@ -62,6 +63,7 @@ func VerifySignedPNMEnvelope(pnmBytes []byte) (PNMTrustEvidence, error) {
 		FileID:        fileID,
 		SignatureType: signatureType,
 		Signature:     signature,
+		EnvelopeBytes: append([]byte(nil), pnmBytes...),
 	}, nil
 }
 
