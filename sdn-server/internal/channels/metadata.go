@@ -2,6 +2,7 @@ package channels
 
 import (
 	"encoding/hex"
+	"sort"
 	"sync"
 	"time"
 )
@@ -119,4 +120,21 @@ func (r *VerifiedMetadataRegistry) Get(channel ChannelID) (VerifiedMetadata, boo
 	r.mu.RUnlock()
 	metadata.PNMBytes = append([]byte(nil), metadata.PNMBytes...)
 	return metadata, ok
+}
+
+func (r *VerifiedMetadataRegistry) List() []VerifiedMetadata {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	rows := make([]VerifiedMetadata, 0, len(r.metadata))
+	for _, metadata := range r.metadata {
+		metadata.PNMBytes = append([]byte(nil), metadata.PNMBytes...)
+		rows = append(rows, metadata)
+	}
+	r.mu.RUnlock()
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].ChannelID < rows[j].ChannelID
+	})
+	return rows
 }

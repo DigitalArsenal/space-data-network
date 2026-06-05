@@ -57,11 +57,7 @@ func (h *ChannelHandler) handleCollection(w http.ResponseWriter, r *http.Request
 		standardFilter = strings.TrimSpace(r.URL.Query().Get("standard"))
 	}
 	if h.isPrivateVisibilityRequest(r) {
-		h.writeAccessDenied(w, channels.AccessDecision{
-			Allowed:    false,
-			GrantState: "required",
-			Reason:     "verified channel grant required",
-		})
+		h.handlePrivateCollection(w, r, standardFilter)
 		return
 	}
 	results := make([]map[string]interface{}, 0)
@@ -80,6 +76,52 @@ func (h *ChannelHandler) handleCollection(w http.ResponseWriter, r *http.Request
 			}
 			results = append(results, channelListRow(code))
 		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"count":   len(results),
+		"results": results,
+	})
+}
+
+func (h *ChannelHandler) handlePrivateCollection(w http.ResponseWriter, r *http.Request, standardFilter string) {
+	if standardFilter != "" {
+		if _, err := channels.AssertStandardCode(standardFilter); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	visibility := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("visibility")))
+	results := make([]map[string]interface{}, 0)
+	for _, metadata := range h.metadata.List() {
+		if !isPrivateChannelMetadata(metadata) {
+			continue
+		}
+		if visibility != "" && !strings.EqualFold(metadata.Visibility, visibility) {
+			continue
+		}
+		parsed, err := channels.ParseChannelID(metadata.ChannelID)
+		if err != nil {
+			continue
+		}
+		if standardFilter != "" && parsed.StandardCode != standardFilter {
+			continue
+		}
+		decision := h.authorizeGrant(r, parsed, channels.BoundaryListPrivate)
+		if !decision.Allowed {
+			continue
+		}
+		row := h.channelDetail(parsed)
+		row["grantState"] = decision.GrantState
+		row["topic"] = channels.DiscoveryTopic(parsed.StandardCode)
+		results = append(results, row)
+	}
+	if len(results) == 0 {
+		h.writeAccessDenied(w, channels.AccessDecision{
+			Allowed:    false,
+			GrantState: "required",
+			Reason:     "verified channel grant required",
+		})
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"count":   len(results),
@@ -669,6 +711,7 @@ func parseGrantScopes(values []string) ([]channels.AccessBoundary, error) {
 		return nil, nil
 	}
 	allowed := map[string]channels.AccessBoundary{
+		string(channels.BoundaryListPrivate):        channels.BoundaryListPrivate,
 		string(channels.BoundarySubscribe):          channels.BoundarySubscribe,
 		string(channels.BoundaryUnsubscribe):        channels.BoundaryUnsubscribe,
 		string(channels.BoundaryPublish):            channels.BoundaryPublish,

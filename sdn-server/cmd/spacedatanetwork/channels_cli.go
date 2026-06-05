@@ -658,6 +658,7 @@ func parseChannelGrantScopes(values []string) ([]channels.AccessBoundary, error)
 		return nil, nil
 	}
 	allowed := map[string]channels.AccessBoundary{
+		string(channels.BoundaryListPrivate):        channels.BoundaryListPrivate,
 		string(channels.BoundarySubscribe):          channels.BoundarySubscribe,
 		string(channels.BoundaryUnsubscribe):        channels.BoundaryUnsubscribe,
 		string(channels.BoundaryPublish):            channels.BoundaryPublish,

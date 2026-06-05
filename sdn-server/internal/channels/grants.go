@@ -99,6 +99,7 @@ func (r *ChannelGrantRegistry) HasChannelGrant(req AccessRequest) bool {
 
 func DefaultPrivateGrantScopes() []AccessBoundary {
 	return []AccessBoundary{
+		BoundaryListPrivate,
 		BoundarySubscribe,
 		BoundaryUnsubscribe,
 		BoundaryPublish,
