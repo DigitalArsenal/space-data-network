@@ -475,6 +475,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Data API routes
 			dataAPI := api.NewDataQueryHandler(n.Store(), nil)
 			dataAPI.RegisterRoutes(adminMux)
+			channelAPI := api.NewChannelHandler(n.Store())
+			channelAPI.RegisterRoutes(adminMux)
 
 			// Log API routes (publication log queries)
 			if n.Store() != nil {
