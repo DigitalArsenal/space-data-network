@@ -2,7 +2,7 @@
  * SDNClient — unified client for Space Data Network nodes.
  *
  * Resolves nodes by various identifiers (PeerID, .onion, CID, IPNS, ENS, HTTP URL),
- * queries their data catalog, fetches/publishes SDS records, and manages subscriptions.
+ * queries their data catalog, fetches/publishes SDS records, and manages channel subscriptions.
  */
 
 import { resolveNode } from './resolver';
@@ -54,7 +54,7 @@ export interface SDNClientChannels {
 /**
  * SDNClient provides a unified interface to interact with an SDN node:
  * - Discover the node via various identifier types
- * - Query its data catalog (what schemas it publishes)
+ * - Query its data catalog (what record types it publishes)
  * - Fetch data by schema, day, NORAD ID, entity ID
  * - Publish data (with authentication)
  *
@@ -65,12 +65,13 @@ export interface SDNClientChannels {
  * const catalog = await client.catalog();
  * console.log(catalog.schemas);
  *
- * // Query OMM data
- * const omm = await client.query({ schema: 'OMM.fbs', noradCatId: 25544, day: '2026-02-24' });
+ * // Discover and monitor OMM channel data
+ * const channels = await client.channels.list({ standardCode: 'OMM' });
+ * const monitor = await client.channels.monitor(channels[0].channelId);
  *
  * // Authenticate and publish
  * await client.authenticate(identity);
- * await client.publish('OMM.fbs', flatbufferBytes);
+ * await client.channels.publish('spaceaware-OMM', flatbufferStreamBytes);
  * ```
  */
 export class SDNClient {

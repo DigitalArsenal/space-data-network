@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { SDNClient } from './client';
 
 describe('SDNClient channel API', () => {
@@ -87,6 +88,13 @@ describe('SDNClient channel API', () => {
       'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/subscribe?subject=peer-alpha&grantId=grant-1&visibility=private-listed',
       'https://sdn.spaceaware.io/api/v1/channels/spaceaware-OMM/stream?subject=peer-alpha&grantId=grant-1&visibility=private-listed',
     ]);
+  });
+
+  it('keeps public SDNClient examples on channel standardCode naming', () => {
+    const source = readFileSync(new URL('./client.ts', import.meta.url), 'utf8');
+
+    expect(source).toContain('client.channels.list({ standardCode:');
+    expect(source).not.toContain('OMM.fbs');
   });
 });
 
