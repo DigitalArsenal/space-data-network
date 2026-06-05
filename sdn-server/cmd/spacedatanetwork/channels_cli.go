@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -30,7 +31,8 @@ type channelGrantIssueOptions struct {
 }
 
 type channelPublishOptions struct {
-	From string
+	From   string
+	APIURL string
 }
 
 type channelMonitorOptions struct {
@@ -110,6 +112,7 @@ func newChannelsCommand() *cobra.Command {
 		},
 	}
 	publishCmd.Flags().StringVar(&publishOptions.From, "from", "", "native FlatBuffers stream file to publish")
+	publishCmd.Flags().StringVar(&publishOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	cmd.AddCommand(publishCmd)
 	grantsCmd := &cobra.Command{
 		Use:   "grants",
@@ -169,6 +172,9 @@ func runChannelsPublish(cmd *cobra.Command, options channelPublishOptions, chann
 	if err != nil {
 		return fmt.Errorf("invalid native FlatBuffers stream: %w", err)
 	}
+	if apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL"))); apiURL != "" {
+		return runChannelsPublishToAPI(cmd, parsed, apiURL, streamBytes)
+	}
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "channelId=%s\n", parsed.ChannelID)
 	fmt.Fprintf(out, "sourceId=%s\n", parsed.SourceID)
@@ -179,6 +185,42 @@ func runChannelsPublish(cmd *cobra.Command, options channelPublishOptions, chann
 	fmt.Fprintln(out, "contentType=application/vnd.sdn.flatbuffers.stream")
 	fmt.Fprintf(out, "streamBytes=%d\n", len(streamBytes))
 	fmt.Fprintf(out, "streamFrames=%d\n", len(frames))
+	return nil
+}
+
+func runChannelsPublishToAPI(cmd *cobra.Command, parsed channels.ChannelID, apiURL string, streamBytes []byte) error {
+	publishURL, err := channelPublishURL(apiURL, parsed.ChannelID)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, publishURL, bytes.NewReader(streamBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/vnd.sdn.flatbuffers.stream")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("publish native channel stream: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("publish native channel stream: %s", resp.Status)
+	}
+	var payload map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return fmt.Errorf("decode channel publish response: %w", err)
+	}
+	if _, ok := payload["channelId"]; !ok {
+		payload["channelId"] = parsed.ChannelID
+	}
+	if _, ok := payload["sourceId"]; !ok {
+		payload["sourceId"] = parsed.SourceID
+	}
+	if _, ok := payload["standardCode"]; !ok {
+		payload["standardCode"] = parsed.StandardCode
+	}
+	printChannelPublishPayload(cmd.OutOrStdout(), payload)
 	return nil
 }
 
@@ -366,6 +408,14 @@ func runChannelsMonitorFromAPI(cmd *cobra.Command, parsed channels.ChannelID, ap
 }
 
 func channelMonitorURL(apiURL string, channelID string) (string, error) {
+	return channelAPIURL(apiURL, channelID, "/monitor")
+}
+
+func channelPublishURL(apiURL string, channelID string) (string, error) {
+	return channelAPIURL(apiURL, channelID, "/publish?stream=1")
+}
+
+func channelAPIURL(apiURL string, channelID string, suffix string) (string, error) {
 	base, err := url.Parse(strings.TrimRight(apiURL, "/"))
 	if err != nil {
 		return "", fmt.Errorf("invalid api-url: %w", err)
@@ -373,10 +423,32 @@ func channelMonitorURL(apiURL string, channelID string) (string, error) {
 	if base.Scheme == "" || base.Host == "" {
 		return "", fmt.Errorf("invalid api-url: absolute URL required")
 	}
-	base.Path = strings.TrimRight(base.Path, "/") + "/api/v1/channels/" + url.PathEscape(channelID) + "/monitor"
-	base.RawQuery = ""
+	pathSuffix, rawQuery, _ := strings.Cut(suffix, "?")
+	base.Path = strings.TrimRight(base.Path, "/") + "/api/v1/channels/" + url.PathEscape(channelID) + pathSuffix
+	base.RawQuery = rawQuery
 	base.Fragment = ""
 	return base.String(), nil
+}
+
+func printChannelPublishPayload(out interface {
+	Write([]byte) (int, error)
+}, payload map[string]interface{}) {
+	for _, key := range []string{
+		"channelId",
+		"sourceId",
+		"standardCode",
+		"feedUuid",
+		"contentType",
+		"streamBytes",
+		"streamFrames",
+		"throughputBytesPerSecond",
+		"wireSpeedUtilization",
+		"importedRows",
+	} {
+		if value, ok := payload[key]; ok {
+			fmt.Fprintf(out, "%s=%v\n", key, monitorValue(value))
+		}
+	}
 }
 
 func printChannelMonitorPayload(out interface {

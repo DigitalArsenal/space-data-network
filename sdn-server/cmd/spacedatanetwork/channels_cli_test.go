@@ -166,6 +166,72 @@ func TestChannelsMonitorReadsLocalAPI(t *testing.T) {
 	}
 }
 
+func TestChannelsPublishSendsNativeStreamToLocalAPI(t *testing.T) {
+	t.Parallel()
+
+	streamFile := filepath.Join(t.TempDir(), "stream.bin")
+	streamBytes := bytes.Join([][]byte{
+		channelCLITestNativeFrame("OMM1", []byte{1, 2, 3}),
+		channelCLITestNativeFrame("OMM1", []byte{4, 5, 6, 7}),
+	}, nil)
+	if err := os.WriteFile(streamFile, streamBytes, 0o600); err != nil {
+		t.Fatalf("write stream fixture: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/channels/spaceaware-OMM/publish" || r.URL.Query().Get("stream") != "1" {
+			t.Fatalf("unexpected publish request %s %s", r.Method, r.URL.String())
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/vnd.sdn.flatbuffers.stream" {
+			t.Fatalf("publish Content-Type = %q", got)
+		}
+		body := new(bytes.Buffer)
+		if _, err := body.ReadFrom(r.Body); err != nil {
+			t.Fatalf("read publish body: %v", err)
+		}
+		if !bytes.Equal(body.Bytes(), streamBytes) {
+			t.Fatalf("publish body mismatch: %v", body.Bytes())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"channelId":"spaceaware-OMM",
+			"sourceId":"spaceaware",
+			"standardCode":"OMM",
+			"contentType":"application/vnd.sdn.flatbuffers.stream",
+			"streamBytes":23,
+			"streamFrames":2,
+			"throughputBytesPerSecond":2048,
+			"wireSpeedUtilization":0.91
+		}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"publish", "spaceaware-OMM", "--from", streamFile, "--api-url", server.URL})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels publish failed: %v", err)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"channelId=spaceaware-OMM",
+		"sourceId=spaceaware",
+		"standardCode=OMM",
+		"contentType=application/vnd.sdn.flatbuffers.stream",
+		"streamBytes=23",
+		"streamFrames=2",
+		"throughputBytesPerSecond=2048",
+		"wireSpeedUtilization=0.91",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("channels publish output missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestChannelsSubscribeAndUnsubscribePublicChannel(t *testing.T) {
 	t.Parallel()
 
