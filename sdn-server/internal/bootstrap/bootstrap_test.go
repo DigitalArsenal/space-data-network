@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"strings"
 	"testing"
 
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -215,21 +216,28 @@ func TestDefaultBootstrapAddresses_UsesRealPinnedPeers(t *testing.T) {
 		t.Fatal("DefaultBootstrapAddresses returned no peers")
 	}
 
-	foundApprovedSeed := false
+	foundSpaceawareDNSAddr := false
+	foundCelestrakDNSAddr := false
 	for _, addr := range addresses {
-		if addr == "/ip4/104.131.11.220/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45" {
-			foundApprovedSeed = true
+		if addr == "/dnsaddr/bootstrap.spacedatanetwork.org/p2p/"+bootstrapPeerSpaceaware {
+			foundSpaceawareDNSAddr = true
+		}
+		if addr == "/dnsaddr/bootstrap.spacedatanetwork.org/p2p/"+bootstrapPeerCelestrak {
+			foundCelestrakDNSAddr = true
 		}
 		if addr == "/dnsaddr/bootstrap.digitalarsenal.io/p2p/QmBootstrap1" {
 			t.Fatalf("placeholder bootstrap address leaked into defaults: %s", addr)
+		}
+		if strings.Contains(addr, "104.131.11.220") {
+			t.Fatalf("retired demo relay address leaked into defaults: %s", addr)
 		}
 		if _, err := ParseBootstrapAddress(addr); err != nil {
 			t.Fatalf("DefaultBootstrapAddresses contained invalid peer %q: %v", addr, err)
 		}
 	}
 
-	if !foundApprovedSeed {
-		t.Fatal("DefaultBootstrapAddresses did not include the approved demo relay seed")
+	if !foundSpaceawareDNSAddr || !foundCelestrakDNSAddr {
+		t.Fatal("DefaultBootstrapAddresses did not include both production dnsaddr bootstrap entries")
 	}
 }
 

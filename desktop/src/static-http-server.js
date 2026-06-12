@@ -19,8 +19,8 @@ const FLATSQL_SYNC_PROTOCOL_ID = '/space-data-network/flatsql-sync/1.0.0'
 const CONFIGURED_SDN_NODE_SYNC_WS_PORT = 8080
 const CONFIGURED_SDN_NODE_ARTIFACT_PORT = 4002
 const DESKTOP_SDN_SEED_PEERS = Object.freeze([
-  '/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
-  '/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+  '/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT',
+  '/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT',
   '/dns4/celestrak.eth/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3',
   '/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3'
 ])
@@ -193,14 +193,14 @@ const CONFIGURED_SDN_NODE_IDENTITIES = [
   {
     aliases: ['space-data-network-01', 'sdn.spaceaware.io'],
     name: 'SpaceAware.io',
-    peer_id: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+    peer_id: '16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT',
     epm_cid: 'bafkreiggawraezbltnl3anwmabtuhvmlhdiotx5pxuqa7zmxkfjjjq35d4',
-    xpub: 'xpub6DKCyLbCHZLFR4XpFg26royZdkxExSMHTjNorEgkn1kgvQbLF5sts9RfNt3PbGhphVUh7WsFQ5H6GJBh4LhmRL27oSPt1qDkJ5mAr6FZ3Wa',
-    signing_public_key: '038664c404be42123ce709e53da2b63fc24c091a968dd2200c443d7470f73fb1e6',
+    xpub: 'xpub6Ck6927cz8B67K7wLdqjaFDA89wfaMaRaSMadY2H8kFTQu52y29ZdpKu7aNz3RzRaHXd6zcs7hC6GgBxyZez4F1x2mQmt32DkBgt5rGgNFL',
+    signing_public_key: '02a3510d7c39403feb59f54ffa955c9346ee0970f64192e885e5139c9b6f5750c7',
     signing_key_path: "m/44'/0'/0'/0/0",
-    encryption_public_key: '0213dc855b71c36b4a7e47b034e5f0bcce8b5fdbdae95a04b3441bc8ac2db3cb41',
+    encryption_public_key: '027f12f91c93d119921574196c265fed6ee4bea89620aa9c957b596c89a0d93034',
     encryption_key_path: "m/44'/0'/0'/1/0",
-    public_key: '038664c404be42123ce709e53da2b63fc24c091a968dd2200c443d7470f73fb1e6',
+    public_key: '02a3510d7c39403feb59f54ffa955c9346ee0970f64192e885e5139c9b6f5750c7',
     ipfs_artifact_peer_id: '12D3KooWMtfuRiHtDuzMMRYB2oX8UKVqP43hZQakGBLhWsMnCd7K'
   },
   {

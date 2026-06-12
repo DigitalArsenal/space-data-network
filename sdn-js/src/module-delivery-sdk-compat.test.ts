@@ -95,7 +95,7 @@ describe('module-delivery SDK compatibility', () => {
           peerId: 'provider-peer-id',
           publicKey: new Uint8Array(33).fill(2),
           publicKeyHex: '02'.padEnd(66, '1'),
-          relayAddresses: ['/ip4/104.131.11.220/tcp/4001/ws/p2p/provider-peer-id'],
+          relayAddresses: ['/ip4/159.203.150.8/tcp/4001/ws/p2p/provider-peer-id'],
           source: 'descriptor',
         },
         grant: {

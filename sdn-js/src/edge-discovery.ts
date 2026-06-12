@@ -29,13 +29,15 @@ const getEnvRelays = (): string[] | null => {
  * Prefer DNS-based addresses for production deployments.
  * IP addresses should only be used for development/testing.
  */
-const SPACEAWARE_RELAY_PEER_ID = '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45';
+const SPACEAWARE_RELAY_PEER_ID = '16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT';
+const CELESTRAK_RELAY_PEER_ID = '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3';
 
 export const DEFAULT_EDGE_RELAYS = getEnvRelays() ?? [
-  // Primary relay for the current production deployment.
+  // Primary relay for the current production deployment (nginx proxies 443 -> 8080).
   `/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`,
-  // Direct websocket fallback from the node's advertised listen address.
-  `/ip4/104.131.11.220/tcp/8080/ws/p2p/${SPACEAWARE_RELAY_PEER_ID}`,
+  // Direct websocket fallbacks from the nodes' advertised listen addresses.
+  `/ip4/159.203.150.8/tcp/8080/ws/p2p/${SPACEAWARE_RELAY_PEER_ID}`,
+  `/ip4/167.172.219.213/tcp/8080/ws/p2p/${CELESTRAK_RELAY_PEER_ID}`,
 ];
 
 /**
@@ -43,7 +45,7 @@ export const DEFAULT_EDGE_RELAYS = getEnvRelays() ?? [
  */
 export const REGIONAL_FALLBACK_RELAYS: Record<string, string[]> = {
   'us-east': [`/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`],
-  'eu-west': [`/ip4/104.131.11.220/tcp/8080/ws/p2p/${SPACEAWARE_RELAY_PEER_ID}`],
+  'eu-west': [`/ip4/167.172.219.213/tcp/8080/ws/p2p/${CELESTRAK_RELAY_PEER_ID}`],
   'ap-southeast': [`/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`],
 };
 

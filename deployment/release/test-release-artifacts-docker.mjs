@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 const modulePath = fileURLToPath(import.meta.url);
 const repoRoot = resolve(dirname(modulePath), '../..');
 const defaultPlatform = 'linux/amd64';
-const dummyPinnedBootstrapPeer = '/ip4/127.0.0.1/tcp/9/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45';
+const dummyPinnedBootstrapPeer = '/ip4/127.0.0.1/tcp/9/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT';
 
 function log(message) {
   console.log(`[artifact-docker] ${message}`);
