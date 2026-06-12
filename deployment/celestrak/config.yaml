@@ -7,8 +7,9 @@ network:
     - /ip4/0.0.0.0/udp/4001/quic-v1
     - /ip4/0.0.0.0/udp/4003/webrtc-direct
   bootstrap:
-    - /ip4/104.131.11.220/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
-    - /ip4/104.131.11.220/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
+    - /dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT
+    - /ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT
+    - /ip4/159.203.150.8/tcp/8080/ws/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT
   max_connections: 1000
   enable_relay: true
 
@@ -45,5 +46,5 @@ peers:
   enable_dht: true
   enable_mdns: false
   trusted_peers:
-    - /ip4/104.131.11.220/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
-    - /ip4/104.131.11.220/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
+    - /ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT
+    - /ip4/159.203.150.8/tcp/8080/ws/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT

@@ -17,8 +17,8 @@ const LOCAL_DAEMON_PROBE_TIMEOUT_MS = 750
 const DESKTOP_API_CORS_METHODS = Object.freeze(['PUT', 'POST'])
 const DESKTOP_BOOTSTRAP_PEERS = Object.freeze([
   'auto',
-  '/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
-  '/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+  '/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT',
+  '/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT',
   '/dns4/celestrak.eth/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3',
   '/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3'
 ])

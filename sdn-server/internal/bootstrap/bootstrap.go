@@ -16,7 +16,25 @@ import (
 
 var log = logging.Logger("sdn-bootstrap")
 
-const approvedDemoRelayBootstrap = "/ip4/104.131.11.220/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45"
+// Production SDN bootstrap node peer IDs. Both nodes also serve the dnsaddr
+// TXT records at _dnsaddr.bootstrap.spacedatanetwork.org, so the dnsaddr
+// entries below resolve to the same hosts; the direct ip4 entries keep
+// bootstrap functional when DNS resolution is unavailable.
+const (
+	bootstrapPeerSpaceaware = "16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT" // sdn.spaceaware.io (159.203.150.8)
+	bootstrapPeerCelestrak  = "16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3" // celestrak.eth (167.172.219.213)
+)
+
+var productionBootstrapAddresses = []string{
+	"/dnsaddr/bootstrap.spacedatanetwork.org/p2p/" + bootstrapPeerSpaceaware,
+	"/dnsaddr/bootstrap.spacedatanetwork.org/p2p/" + bootstrapPeerCelestrak,
+	"/ip4/159.203.150.8/tcp/4001/p2p/" + bootstrapPeerSpaceaware,
+	"/ip4/159.203.150.8/udp/4001/quic-v1/p2p/" + bootstrapPeerSpaceaware,
+	"/ip4/159.203.150.8/tcp/8080/ws/p2p/" + bootstrapPeerSpaceaware,
+	"/ip4/167.172.219.213/tcp/4001/p2p/" + bootstrapPeerCelestrak,
+	"/ip4/167.172.219.213/udp/4001/quic-v1/p2p/" + bootstrapPeerCelestrak,
+	"/ip4/167.172.219.213/tcp/8080/ws/p2p/" + bootstrapPeerCelestrak,
+}
 
 // PeerInfo represents a bootstrap peer with its address and expected peer ID.
 type PeerInfo struct {
@@ -218,11 +236,11 @@ func RequirePinnedPeerIDs(peers []PeerInfo) []PeerInfo {
 }
 
 // DefaultBootstrapAddresses returns the default bootstrap set used when the
-// configured list is empty or invalid. The approved demo relay is seeded first,
-// then the libp2p DHT defaults are appended.
+// configured list is empty or invalid. The production SDN bootstrap nodes are
+// seeded first, then the libp2p DHT defaults are appended.
 func DefaultBootstrapAddresses() []string {
-	out := make([]string, 0, len(dht.DefaultBootstrapPeers)+1)
-	seen := make(map[string]struct{}, len(dht.DefaultBootstrapPeers)+1)
+	out := make([]string, 0, len(dht.DefaultBootstrapPeers)+len(productionBootstrapAddresses))
+	seen := make(map[string]struct{}, len(dht.DefaultBootstrapPeers)+len(productionBootstrapAddresses))
 
 	appendAddr := func(addr string) {
 		addr = strings.TrimSpace(addr)
@@ -236,7 +254,9 @@ func DefaultBootstrapAddresses() []string {
 		out = append(out, addr)
 	}
 
-	appendAddr(approvedDemoRelayBootstrap)
+	for _, addr := range productionBootstrapAddresses {
+		appendAddr(addr)
+	}
 	for _, addr := range dht.DefaultBootstrapPeers {
 		appendAddr(addr.String())
 	}

@@ -38,7 +38,7 @@ describe('libp2p FlatSQL sync backend', () => {
 
   it('selects relay WebRTC separately from WebRTC direct', () => {
     expect(selectLibp2pFlatSqlSyncTransports([
-      '/ip4/104.131.11.220/tcp/8080/ws/p2p/16Uiu2HRelay/p2p-circuit/webrtc/p2p/16Uiu2HCelesTrak',
+      '/ip4/159.203.150.8/tcp/8080/ws/p2p/16Uiu2HRelay/p2p-circuit/webrtc/p2p/16Uiu2HCelesTrak',
     ])).toEqual({
       tcp: false,
       webSockets: true,

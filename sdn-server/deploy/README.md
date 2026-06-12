@@ -76,7 +76,10 @@ network:
     - /ip4/0.0.0.0/tcp/8080/ws
     - /ip4/0.0.0.0/udp/4001/quic-v1
   bootstrap:
-    - /dnsaddr/bootstrap.digitalarsenal.io/p2p/QmBootstrap1
+    - /dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT
+    - /dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3
+    - /ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT
+    - /ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3
   max_connections: 1000
   enable_relay: true
 storage:

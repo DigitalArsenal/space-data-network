@@ -5,10 +5,10 @@
 - Browser and Node consumers use `sdn-js` plus the generic async capability surfaces from `space-data-module-sdk`.
 - Public encrypted module delivery stays on `/space-data-network/module-delivery/1.0.0`.
 - Provider discovery is anchored by the provider compressed secp256k1 public key and the DHT namespace `space-data-network/module-delivery/provider-pubkey`.
-- Clients must trust the provider descriptor's advertised relay addresses. The live demo seed currently advertises `104.131.11.220`; do not force the older `159.203.150.8` address.
+- Clients must trust the provider descriptor's advertised relay addresses. Production runs two bootstrap nodes: `sdn.spaceaware.io` (`159.203.150.8`, PeerID `16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT`) and `celestrak.eth` (`167.172.219.213`, PeerID `16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3`); both are also published via dnsaddr under `bootstrap.spacedatanetwork.org`.
 - Module bundles stay encrypted in transit and at rest and are only decrypted locally after the requester receives the wrapped content key in `GrantResponse`.
 - The browser path stays direct and must not route through a helper service or the legacy discovery bootstrap.
-- Seed from the approved demo relay, then expand discovery with libp2p and the DHT.
+- Seed from the production bootstrap nodes, then expand discovery with libp2p and the DHT.
 - `hd-wallet-wasm` and `hd-wallet-ui` are the canonical address, signature, and vCard identity surfaces.
 - Ownership boundary stays split as follows: `spacedatastandards.org` owns canonical FlatBuffer schemas, `space-data-module-sdk` owns shared invoke/licensing helpers and runtime host surfaces, `sdn-server` owns the provider-side host bridge and unified licensing-module runtime loading path, and `sdn-js` owns requester-side discovery, relay selection, and encrypted bundle fetch behavior.
 
