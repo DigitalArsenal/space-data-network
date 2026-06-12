@@ -86,6 +86,10 @@ type ingestBatchProvenance struct {
 	Warnings         []string          `json:"warnings"`
 	FromCache        bool              `json:"from_cache"`
 	CachePath        string            `json:"cache_path,omitempty"`
+	// ClassificationMarkings preserves source classification markings (for
+	// example UDL CLASSIFICATION_MARKING values) that cannot be carried in
+	// the normalized FlatBuffer records without changing builder signatures.
+	ClassificationMarkings map[string]int `json:"classification_markings,omitempty"`
 }
 
 // Config controls ingestion worker behavior.
@@ -111,6 +115,16 @@ type Config struct {
 	SpaceTrackBatchDays    int
 	SpaceTrackBatchSleep   time.Duration
 	SpaceTrackPollInterval time.Duration
+
+	UDLEnabled      bool
+	UDLUsername     string
+	UDLPassword     string
+	UDLBaseURL      string
+	UDLStartDay     string
+	UDLBatchDays    int
+	UDLBatchSleep   time.Duration
+	UDLPollInterval time.Duration
+	UDLMaxResults   int
 
 	HTTPTimeout      time.Duration
 	MinFreeDiskBytes int64
@@ -183,6 +197,21 @@ func NewRunner(cfg Config) (*Runner, error) {
 	if cfg.SpaceTrackBatchSleep <= 0 {
 		cfg.SpaceTrackBatchSleep = 3 * time.Second
 	}
+	if cfg.UDLBaseURL == "" {
+		cfg.UDLBaseURL = defaultUDLBaseURL
+	}
+	if cfg.UDLPollInterval <= 0 {
+		cfg.UDLPollInterval = 30 * time.Minute
+	}
+	if cfg.UDLBatchDays <= 0 {
+		cfg.UDLBatchDays = 3
+	}
+	if cfg.UDLBatchSleep <= 0 {
+		cfg.UDLBatchSleep = 3 * time.Second
+	}
+	if cfg.UDLMaxResults <= 0 {
+		cfg.UDLMaxResults = defaultUDLMaxResults
+	}
 	if cfg.HTTPTimeout <= 0 {
 		cfg.HTTPTimeout = 90 * time.Second
 	}
@@ -250,10 +279,12 @@ func (r *Runner) Run(ctx context.Context) error {
 	satTicker := time.NewTicker(r.cfg.SatcatInterval)
 	spwTicker := time.NewTicker(r.cfg.SpaceWeatherInterval)
 	stTicker := time.NewTicker(r.cfg.SpaceTrackPollInterval)
+	udlTicker := time.NewTicker(r.cfg.UDLPollInterval)
 	defer gpTicker.Stop()
 	defer satTicker.Stop()
 	defer spwTicker.Stop()
 	defer stTicker.Stop()
+	defer udlTicker.Stop()
 
 	for {
 		select {
@@ -274,6 +305,10 @@ func (r *Runner) Run(ctx context.Context) error {
 		case <-stTicker.C:
 			if err := r.syncSpaceTrackGapFill(ctx); err != nil {
 				log.Warnf("Space-Track gap-fill failed: %v", err)
+			}
+		case <-udlTicker.C:
+			if err := r.syncUDL(ctx); err != nil {
+				log.Warnf("UDL sync failed: %v", err)
 			}
 		}
 	}
@@ -312,6 +347,15 @@ func (r *Runner) runCycle(ctx context.Context) error {
 		return err
 	}
 	if err := r.syncSpaceTrackGapFill(ctx); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := ctx.Err(); err != nil {
+		if len(errs) > 0 {
+			return errors.New(strings.Join(errs, "; "))
+		}
+		return err
+	}
+	if err := r.syncUDL(ctx); err != nil {
 		errs = append(errs, err.Error())
 	}
 	if len(errs) > 0 {
@@ -1321,6 +1365,10 @@ func writeNormalizedHashRecord(h interface{ Write([]byte) (int, error) }, schema
 }
 
 func (r *Runner) recordIngestBatchProvenance(source string, data []byte, metadata fetchMetadata, parserVersion, normalizedHash string, schemaCounts map[string]int, warnings []string) error {
+	return r.recordIngestBatchProvenanceDetailed(source, data, metadata, parserVersion, normalizedHash, schemaCounts, warnings, nil)
+}
+
+func (r *Runner) recordIngestBatchProvenanceDetailed(source string, data []byte, metadata fetchMetadata, parserVersion, normalizedHash string, schemaCounts map[string]int, warnings []string, classificationMarkings map[string]int) error {
 	if metadata.RetrievedAt.IsZero() {
 		metadata.RetrievedAt = time.Now().UTC()
 	}
@@ -1345,6 +1393,9 @@ func (r *Runner) recordIngestBatchProvenance(source string, data []byte, metadat
 		Warnings:         warnings,
 		FromCache:        metadata.FromCache,
 		CachePath:        metadata.CachePath,
+	}
+	if len(classificationMarkings) > 0 {
+		payload.ClassificationMarkings = classificationMarkings
 	}
 	if payload.Warnings == nil {
 		payload.Warnings = []string{}

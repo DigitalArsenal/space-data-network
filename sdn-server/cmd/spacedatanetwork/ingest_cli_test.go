@@ -18,3 +18,23 @@ func TestIngestCommandExposesAllCelestrakSourceFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestIngestCommandExposesAllUDLFlags(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"udl-enabled",
+		"udl-username",
+		"udl-password",
+		"udl-base-url",
+		"udl-start-day",
+		"udl-batch-days",
+		"udl-batch-sleep",
+		"udl-poll-interval",
+		"udl-max-results",
+	} {
+		if ingestCmd.Flags().Lookup(name) == nil {
+			t.Fatalf("ingest flag %q is not registered", name)
+		}
+	}
+}

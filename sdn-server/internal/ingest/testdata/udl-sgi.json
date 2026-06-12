@@ -1,0 +1,18 @@
+[
+  {
+    "classificationMarking": "U",
+    "sgiDate": "2026-06-01T00:00:00.000Z",
+    "f10": 152.5,
+    "f10b": 148.2,
+    "ap": 12,
+    "kp": 3.3
+  },
+  {
+    "CLASSIFICATION_MARKING": "U",
+    "SGI_DATE": "2026-06-02T00:00:00.000Z",
+    "F10": 150.1,
+    "F10B": 147.9,
+    "AP": 8,
+    "KP": 2.7
+  }
+]
