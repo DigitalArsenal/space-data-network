@@ -25,6 +25,30 @@ type Config struct {
 	Blockchain BlockchainConfig `yaml:"blockchain"`
 	Publishing PublishingConfig `yaml:"publishing"`
 	Flows      FlowsConfig      `yaml:"flows"`
+	Policies   PoliciesConfig   `yaml:"policies"`
+}
+
+// PoliciesConfig configures the ABAC policy engine.
+type PoliciesConfig struct {
+	// Enabled activates the ABAC policy engine.  When false (the default) the
+	// existing trust-level checks are the sole gate and all policy evaluation is
+	// skipped — behaviour is identical to a pre-ABAC deployment.
+	Enabled bool `yaml:"enabled"`
+
+	// DefaultEffect is "allow" or "deny".  Applied when no rule matches a
+	// request.  Defaults to "deny" when empty.
+	DefaultEffect string `yaml:"default_effect,omitempty"`
+
+	// Path is the filesystem path to a YAML policy file.  When set, rules are
+	// loaded from the file at startup.  InlineRules (below) are appended after
+	// the file rules.
+	Path string `yaml:"path,omitempty"`
+
+	// InlineRules are policy rules specified directly in the config file.
+	// Useful for simple deployments that do not need a separate policy file.
+	// Each entry is stored as a raw YAML node so it can be decoded by the abac
+	// package without introducing an import cycle in config.
+	InlineRules []map[string]interface{} `yaml:"inline_rules,omitempty"`
 }
 
 // FlowsConfig controls the flow orchestration runtime.
@@ -133,6 +157,12 @@ type SecurityConfig struct {
 	// If empty, a machine-derived password is used (hostname + arch + OS via Argon2).
 	// Can also be set via SDN_KEY_PASSWORD environment variable.
 	KeyPassword string `yaml:"key_password,omitempty"`
+
+	// RequireSignedFeedHeads rejects dataset feed-head announcements that do
+	// not carry an Ed25519 payload signature. Invalid signatures are always
+	// rejected; this flag additionally rejects unsigned announcements, for
+	// networks where every publisher has upgraded to signed feed heads.
+	RequireSignedFeedHeads bool `yaml:"require_signed_feed_heads,omitempty"`
 }
 
 // TorConfig contains local TOR runtime settings.

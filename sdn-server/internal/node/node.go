@@ -36,10 +36,6 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
-	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
-	webrtc "github.com/libp2p/go-libp2p/p2p/transport/webrtc"
-	"github.com/libp2p/go-libp2p/p2p/transport/websocket"
-	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
 	"github.com/multiformats/go-multiaddr"
 	mh "github.com/multiformats/go-multihash"
 
@@ -52,6 +48,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt/capabilities"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
+	"github.com/spacedatanetwork/sdn-server/internal/metrics"
 	"github.com/spacedatanetwork/sdn-server/internal/logservice"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
@@ -268,14 +265,12 @@ func (n *Node) init() error {
 
 	// Create libp2p host with connection gater for trust-based filtering
 	var dhtRouting *dht.IpfsDHT
-	n.host, err = libp2p.New(
+	hostOptions := append([]libp2p.Option{
 		libp2p.Identity(privKey),
 		libp2p.UserAgent(versioninfo.AgentVersion),
 		libp2p.ListenAddrs(listenAddrs...),
-		libp2p.Transport(tcp.NewTCPTransport),
-		libp2p.Transport(websocket.New),
-		libp2p.Transport(webtransport.New),
-		libp2p.Transport(webrtc.New),
+	}, hostTransportOptions()...)
+	n.host, err = libp2p.New(append(hostOptions,
 		libp2p.Security(libp2ptls.ID, libp2ptls.New),
 		libp2p.Security(noise.ID, noise.New),
 		libp2p.ConnectionManager(connMgr),
@@ -300,13 +295,14 @@ func (n *Node) init() error {
 		}),
 		libp2p.NATPortMap(),
 		libp2p.EnableNATService(),
-	)
+	)...)
 	if err != nil {
 		return fmt.Errorf("failed to create libp2p host: %w", err)
 	}
 	hostCreated = true
 	n.dht = dhtRouting
 	go n.feedAutoRelayCandidates(n.ctx)
+	metrics.SetPeerCountFunc(func() int { return len(n.host.Network().Peers()) })
 
 	// Create GossipSub
 	n.pubsub, err = pubsub.NewGossipSub(n.ctx, n.host)
@@ -1467,6 +1463,16 @@ func (n *Node) handleDatasetFeedHeadSubscription(sub *pubsub.Subscription, schem
 			log.Warnf("Invalid dataset feed-head announcement on %s from %s: %v", schema, msg.ReceivedFrom.ShortString(), err)
 			continue
 		}
+		if ann.Signature != "" {
+			// Tampered or malformed signatures are always rejected.
+			if err := sdnpubsub.VerifyDatasetFeedHead(ann, nil); err != nil {
+				log.Warnf("Rejecting dataset feed head on %s from %s: %v", schema, msg.ReceivedFrom.ShortString(), err)
+				continue
+			}
+		} else if n.config != nil && n.config.Security.RequireSignedFeedHeads {
+			log.Warnf("Rejecting unsigned dataset feed head on %s from %s (security.require_signed_feed_heads)", schema, msg.ReceivedFrom.ShortString())
+			continue
+		}
 		if ann.Schema != schema {
 			log.Debugf("Skipping dataset feed-head announcement on %s for schema %s", schema, ann.Schema)
 			continue
@@ -2300,7 +2306,11 @@ func (n *Node) Publish(schema string, data []byte) error {
 		return fmt.Errorf("unknown schema: %s", schema)
 	}
 
-	return topic.Publish(n.ctx, data)
+	if err := topic.Publish(n.ctx, data); err != nil {
+		return err
+	}
+	metrics.PubsubPublished(schema)
+	return nil
 }
 
 // PublishToTopic publishes data to an explicit pub/sub topic, joining it first
@@ -2335,6 +2345,9 @@ func (n *Node) PublishDatasetUpdatePNM(ctx context.Context, ann sdnpubsub.Datase
 }
 
 func (n *Node) PublishDatasetFeedHead(ctx context.Context, ann sdnpubsub.DatasetFeedHeadAnnouncement) error {
+	if key := n.SigningKey(); len(key) == ed25519.PrivateKeySize {
+		return sdnpubsub.PublishSignedDatasetFeedHead(ctx, n, ann, ed25519.PrivateKey(key))
+	}
 	return sdnpubsub.PublishDatasetFeedHead(ctx, n, ann)
 }
 
