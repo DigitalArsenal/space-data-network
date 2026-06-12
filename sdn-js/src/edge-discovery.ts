@@ -29,7 +29,11 @@ const getEnvRelays = (): string[] | null => {
  * Prefer DNS-based addresses for production deployments.
  * IP addresses should only be used for development/testing.
  */
-const SPACEAWARE_RELAY_PEER_ID = '16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT';
+// The SpaceAware websocket relay identity lives on sdn.spaceaware.io
+// (159.203.150.8) and owns ws/8080 there; the host's full node
+// (16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT) serves tcp/quic on
+// 4001 and is not reachable over websockets.
+const SPACEAWARE_RELAY_PEER_ID = '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45';
 const CELESTRAK_RELAY_PEER_ID = '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3';
 
 export const DEFAULT_EDGE_RELAYS = getEnvRelays() ?? [
