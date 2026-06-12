@@ -47,6 +47,8 @@ const (
 	PaymentMethodSDNCredits
 	PaymentMethodFiatStripe
 	PaymentMethodFree
+	PaymentMethodUsageBased
+	PaymentMethodEnterprise
 )
 
 const (

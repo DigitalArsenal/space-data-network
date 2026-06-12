@@ -405,6 +405,51 @@ func (s *Store) initTables() error {
 	s.db.Exec(`ALTER TABLE storefront_crypto_intents ADD COLUMN intent_digest TEXT DEFAULT ''`)
 	s.db.Exec(`ALTER TABLE storefront_crypto_intents ADD COLUMN intent_signature TEXT DEFAULT ''`)
 
+	// Usage events table for metered billing
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS storefront_usage_events (
+			event_id TEXT PRIMARY KEY,
+			grant_id TEXT NOT NULL,
+			buyer_peer_id TEXT NOT NULL,
+			listing_id TEXT NOT NULL,
+			records_served INTEGER DEFAULT 0,
+			bytes_delivered INTEGER DEFAULT 0,
+			occurred_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_usage_grant ON storefront_usage_events(grant_id, occurred_at);
+		CREATE INDEX IF NOT EXISTS idx_usage_buyer ON storefront_usage_events(buyer_peer_id, listing_id, occurred_at);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create usage events table: %w", err)
+	}
+
+	// Invoices table for enterprise billing
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS storefront_invoices (
+			invoice_id TEXT PRIMARY KEY,
+			buyer_peer_id TEXT NOT NULL,
+			provider_peer_id TEXT NOT NULL,
+			period_start INTEGER NOT NULL,
+			period_end INTEGER NOT NULL,
+			line_items TEXT NOT NULL,
+			total_amount INTEGER NOT NULL,
+			currency TEXT NOT NULL DEFAULT 'USD',
+			status TEXT NOT NULL DEFAULT 'issued',
+			stripe_invoice_id TEXT DEFAULT '',
+			po_reference TEXT DEFAULT '',
+			notes TEXT DEFAULT '',
+			issued_at INTEGER NOT NULL,
+			paid_at INTEGER DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_invoices_buyer ON storefront_invoices(buyer_peer_id, period_start DESC);
+		CREATE INDEX IF NOT EXISTS idx_invoices_provider ON storefront_invoices(provider_peer_id, period_start DESC);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create invoices table: %w", err)
+	}
+
 	log.Info("Storefront index tables initialized (FlatSQL-backed)")
 	return nil
 }

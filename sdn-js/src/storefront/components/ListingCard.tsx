@@ -98,8 +98,38 @@ export function formatPaymentMethod(method: PaymentMethod): string {
       return 'Card';
     case 5: // Free
       return 'Free';
+    case 6: // UsageBased
+      return 'Metered';
+    case 7: // Enterprise
+      return 'Enterprise';
     default:
       return 'Unknown';
+  }
+}
+
+/** Format an invoice status for display */
+export function formatInvoiceStatus(status: import('../types').InvoiceStatus): string {
+  switch (status) {
+    case 'issued':
+      return 'Issued';
+    case 'paid':
+      return 'Paid';
+    case 'void':
+      return 'Void';
+    default:
+      return 'Unknown';
+  }
+}
+
+/** Format a billing model description for UsageBased and Enterprise payment methods */
+export function formatBillingModel(method: PaymentMethod): string {
+  switch (method) {
+    case 6: // UsageBased
+      return 'Metered — billed per records delivered and bytes transferred';
+    case 7: // Enterprise
+      return 'Enterprise — period-based invoicing with PO support';
+    default:
+      return formatPaymentMethod(method);
   }
 }
 
