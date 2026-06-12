@@ -1,4 +1,4 @@
-export type PrimaryRoute = '/node' | '/peers' | '/data';
+export type PrimaryRoute = '/node' | '/peers' | '/data' | '/channels';
 
 export function normalizeSdnRoute(rawPath: string): string {
   const path = normalizePath(rawPath);
@@ -10,7 +10,7 @@ export function normalizeSdnRoute(rawPath: string): string {
   if (path.startsWith('/marketplace')) return '/peers?tab=marketplace';
   if (path.startsWith('/explore/')) return `/data?inspect=${encodeURIComponent(path.slice('/explore/'.length))}`;
   if (path.startsWith('/local-data')) return `/data${path.slice('/local-data'.length)}`;
-  if (path.startsWith('/node') || path.startsWith('/peers') || path.startsWith('/data')) {
+  if (path.startsWith('/node') || path.startsWith('/peers') || path.startsWith('/data') || path.startsWith('/channels')) {
     return path;
   }
   return '/node';
@@ -19,6 +19,7 @@ export function normalizeSdnRoute(rawPath: string): string {
 export function primaryRouteFromNormalized(route: string): PrimaryRoute {
   if (route.startsWith('/peers')) return '/peers';
   if (route.startsWith('/data')) return '/data';
+  if (route.startsWith('/channels')) return '/channels';
   return '/node';
 }
 

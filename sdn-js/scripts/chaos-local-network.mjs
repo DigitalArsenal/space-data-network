@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const FLATSQL_SYNC_PROTOCOL_ID = '/space-data-network/flatsql-sync/1.0.0';
+const DEFAULT_WIRE_SPEED_TARGET = 0.9;
 
 const DEFAULTS = {
   shards: 256,
@@ -19,6 +20,7 @@ const DEFAULTS = {
   partitionEvery: 0,
   restartEvery: 0,
   maxAttempts: 64,
+  wireSpeedTarget: DEFAULT_WIRE_SPEED_TARGET,
   json: false,
   checkpointFile: '',
 };
@@ -81,7 +83,12 @@ export async function runChaosLocalNetwork(rawOptions = {}) {
   const wireSpeedUtilization = wireSpeedBytesPerSecond > 0
     ? Math.min(1, bytesPerSecond / wireSpeedBytesPerSecond)
     : null;
+  const requiredBytesPerSecond = wireSpeedBytesPerSecond > 0
+    ? Math.floor(wireSpeedBytesPerSecond * options.wireSpeedTarget)
+    : null;
 
+  const hashVerificationMs = verificationMs;
+  const durableImportMs = 0;
   return {
     generatedAt: new Date().toISOString(),
     scenario: {
@@ -136,15 +143,38 @@ export async function runChaosLocalNetwork(rawOptions = {}) {
       bytesPerSecond,
       measuredWireSpeedBytesPerSecond: wireSpeedBytesPerSecond,
       wireSpeedUtilization,
-      targetMet: wireSpeedUtilization == null ? null : wireSpeedUtilization >= 0.8,
+      wireSpeedTarget: options.wireSpeedTarget,
+      requiredBytesPerSecond,
+      targetMet: wireSpeedUtilization == null ? null : wireSpeedUtilization >= options.wireSpeedTarget,
     },
-    timingMs: {
-      manifestDiscovery: manifestMs,
-      networkTransfer: networkTransferMs,
-      verification: verificationMs,
-      flatSqlMaterialization: 0,
-    },
+    timingMs: channelTimingBreakdown({
+      discoveryMs: manifestMs,
+      transferMs: networkTransferMs,
+      hashVerificationMs,
+      durableImportMs,
+    }),
     consumers: consumerReports,
+  };
+}
+
+function channelTimingBreakdown({
+  discoveryMs,
+  transferMs,
+  hashVerificationMs,
+  durableImportMs,
+}) {
+  return {
+    discovery: discoveryMs,
+    grantNegotiation: 0,
+    pnmDpmVerification: 0,
+    transfer: transferMs,
+    decrypt: 0,
+    hashVerification: hashVerificationMs,
+    durableImport: durableImportMs,
+    manifestDiscovery: discoveryMs,
+    networkTransfer: transferMs,
+    verification: hashVerificationMs,
+    flatSqlMaterialization: durableImportMs,
   };
 }
 
@@ -340,6 +370,7 @@ function normalizeOptions(input) {
   options.concurrency = Math.max(1, options.concurrency);
   options.bandwidthMbps = Math.max(1, options.bandwidthMbps);
   options.maxAttempts = Math.max(1, options.maxAttempts);
+  options.wireSpeedTarget = normalizedRatio(options.wireSpeedTarget, DEFAULT_WIRE_SPEED_TARGET);
   options.checkpointFile = String(options.checkpointFile ?? '').trim();
   options.json = Boolean(options.json);
   return options;
@@ -386,6 +417,9 @@ function parseArgs(argv) {
       case '--max-attempts':
         options.maxAttempts = requiredNumber(argv, index += 1, arg);
         break;
+      case '--target':
+        options.wireSpeedTarget = requiredNumber(argv, index += 1, arg);
+        break;
       case '--checkpoint-file':
         options.checkpointFile = requiredValue(argv, index += 1, arg);
         break;
@@ -404,6 +438,11 @@ function requiredNumber(argv, index, option) {
   const value = Number(requiredValue(argv, index, option));
   if (!Number.isFinite(value)) throw new Error(`${option} requires a number`);
   return value;
+}
+
+function normalizedRatio(value, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 && numeric <= 1 ? numeric : fallback;
 }
 
 function requiredValue(argv, index, option) {
@@ -431,6 +470,7 @@ function usage() {
     '  --partition-every <n>     Partition every Nth request, default disabled',
     '  --restart-every <n>       Restart requester every Nth request, default disabled',
     '  --checkpoint-file <path>  Persist consumer pin progress for resume testing',
+    '  --target <ratio>          Required clean-link utilization, default 0.9',
     '  --json                    Print JSON only',
   ].join('\n');
 }
@@ -461,6 +501,7 @@ function formatReport(report) {
     `Topology: 1 provider, ${report.summary.totalConsumers} consumers, ${report.summary.uniqueShards} shards`,
     `Rows: ${report.summary.totalRows.toLocaleString()} / ${report.summary.expectedRowsTotal.toLocaleString()} verified`,
     `Download: ${speed}/s simulated (${utilization} of ${report.scenario.bandwidthMbps} Mbps clean link)`,
+    ...(report.replication.requiredBytesPerSecond == null ? [] : [`Required: ${formatBytes(report.replication.requiredBytesPerSecond)}/s data-plane throughput`]),
     `Bytes: provider ${formatBytes(report.replication.providerBytes)}, peer ${formatBytes(report.replication.peerBytes)}, duplicate ${formatBytes(report.replication.duplicateBytes)}`,
     `Chaos: drops ${report.chaos.droppedRequests}, corruption ${report.chaos.corruptedResponses}, partitions ${report.chaos.partitionFailures}, restarts ${report.chaos.restartEvents}, retries ${report.chaos.retryCount}`,
     `Timing: manifest ${report.timingMs.manifestDiscovery} ms / network ${report.timingMs.networkTransfer} ms / verify ${report.timingMs.verification} ms`,

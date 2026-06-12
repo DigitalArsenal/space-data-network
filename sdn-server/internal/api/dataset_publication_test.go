@@ -96,6 +96,13 @@ func TestDatasetPublicationHandlerPublishesLocalRequest(t *testing.T) {
 	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
+	var responseFields map[string]interface{}
+	if err := json.Unmarshal(res.Body.Bytes(), &responseFields); err != nil {
+		t.Fatalf("decode response fields: %v", err)
+	}
+	if responseFields["schema"] != nil || responseFields["standardCode"] != "OMM" || strings.Contains(res.Body.String(), ".fbs") {
+		t.Fatalf("response exposed schema suffix instead of standard code: %s", res.Body.String())
+	}
 	if payload.ManifestCID != "bafymanifest" || payload.PNMCID != "bafypnm" {
 		t.Fatalf("unexpected response: %#v", payload)
 	}
@@ -365,6 +372,104 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 	}
 }
 
+func TestConcreteDatasetPublicationServiceRecordsVerifiedChannelMonitor(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	dir := t.TempDir()
+	store, err := storage.NewFlatSQLStore(filepath.Join(dir, "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	tags := storage.SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		SourceURL:    "https://celestrak.org/NORAD/elements/gp.php",
+		BatchID:      "source-sha-omm",
+		ContentKeyID: "public",
+	}
+	record := sds.NewOMMBuilder().
+		WithNoradCatID(25544).
+		WithObjectName("ISS (ZARYA)").
+		WithObjectID("1998-067A").
+		WithEpoch("2026-01-01T00:00:00.000000").
+		Build()
+	if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:celestrak", nil, tags); err != nil {
+		t.Fatalf("store OMM failed: %v", err)
+	}
+
+	pinned := make(map[string][]byte)
+	kubo := newDatasetPublicationKuboTestServer(t, pinned)
+	defer kubo.Close()
+
+	_, signingKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	channelAPI := NewChannelHandler(store)
+	publisher := &fakeDatasetUpdatePublisher{}
+	service := NewConcreteDatasetPublicationService(
+		store,
+		publisher,
+		signingKey,
+		"16Uiu2HCelesTrakProvider",
+		"bafy-provider-epm",
+		kubo.URL,
+		filepath.Join(dir, "publications"),
+	)
+	service.SetChannelRecorder(channelAPI)
+
+	result, err := service.PublishDatasetUpdate(context.Background(), DatasetPublicationRequest{
+		Schema:            "OMM.fbs",
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		BatchID:           "source-sha-omm",
+		ChunkSize:         50000,
+		FullCatalog:       true,
+		CombinedCelesTrak: true,
+	})
+	if err != nil {
+		t.Fatalf("PublishDatasetUpdate failed: %v", err)
+	}
+	if result.PNMCID == "" || result.ManifestCID == "" {
+		t.Fatalf("result missing verified publication CIDs: %#v", result)
+	}
+
+	mux := http.NewServeMux()
+	channelAPI.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels/celestrak-OMM/monitor", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("monitor status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var monitor map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &monitor); err != nil {
+		t.Fatalf("decode monitor: %v", err)
+	}
+	if monitor["channelId"] != "celestrak-OMM" || monitor["standardCode"] != "OMM" {
+		t.Fatalf("monitor channel identity mismatch: %#v", monitor)
+	}
+	if monitor["pnmVerified"] != true || monitor["dpmVerified"] != true {
+		t.Fatalf("monitor did not report verified PNM/DPM: %#v", monitor)
+	}
+	if monitor["channelHead"] == "" || monitor["providerPeer"] != "16Uiu2HCelesTrakProvider" {
+		t.Fatalf("monitor did not report provider feed head: %#v", monitor)
+	}
+	if monitor["remoteRows"] != float64(1) || monitor["syncedRows"] != float64(1) || monitor["pinnedRows"] != float64(1) {
+		t.Fatalf("monitor row counters mismatch: %#v", monitor)
+	}
+	if monitor["syncedBytes"] == float64(0) {
+		t.Fatalf("monitor syncedBytes was not populated: %#v", monitor)
+	}
+	if strings.Contains(rec.Body.String(), ".fbs") {
+		t.Fatalf("monitor exposed schema suffix: %s", rec.Body.String())
+	}
+}
+
 func TestConcreteDatasetPublicationServicePublishesRegisteredDatastoreNamespace(t *testing.T) {
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
@@ -625,6 +730,7 @@ func TestConcreteDatasetPublicationServiceSkipsUnchangedFullCatalogShards(t *tes
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 	publisher := &fakeDatasetUpdatePublisher{}
+	firstChannelAPI := NewChannelHandler(store)
 	service := NewConcreteDatasetPublicationService(
 		store,
 		publisher,
@@ -634,6 +740,7 @@ func TestConcreteDatasetPublicationServiceSkipsUnchangedFullCatalogShards(t *tes
 		kubo.URL,
 		filepath.Join(dir, "publications"),
 	)
+	service.SetChannelRecorder(firstChannelAPI)
 	baseTime := time.Date(2026, 5, 12, 22, 0, 0, 0, time.UTC)
 	nowCalls := 0
 	service.now = func() time.Time {
@@ -656,6 +763,8 @@ func TestConcreteDatasetPublicationServiceSkipsUnchangedFullCatalogShards(t *tes
 	if len(first.Publications) != 2 {
 		t.Fatalf("first publications = %d, want 2", len(first.Publications))
 	}
+	restartedChannelAPI := NewChannelHandler(store)
+	service.SetChannelRecorder(restartedChannelAPI)
 	pinnedAfterFirst := len(pinned)
 	announcementsAfterFirst := len(publisher.announcements)
 	headsAfterFirst := len(publisher.feedHeads)
@@ -683,6 +792,30 @@ func TestConcreteDatasetPublicationServiceSkipsUnchangedFullCatalogShards(t *tes
 			second.Publications[i].PNMCID != first.Publications[i].PNMCID {
 			t.Fatalf("publication %d was not reused: first=%#v second=%#v", i, first.Publications[i], second.Publications[i])
 		}
+	}
+	mux := http.NewServeMux()
+	restartedChannelAPI.RegisterRoutes(mux)
+	reqMonitor := httptest.NewRequest(http.MethodGet, "/api/v1/channels/celestrak-CAT/monitor", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, reqMonitor)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("monitor status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var monitor map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &monitor); err != nil {
+		t.Fatalf("decode monitor: %v", err)
+	}
+	if monitor["pnmVerified"] != true || monitor["dpmVerified"] != true {
+		t.Fatalf("reusable publication did not restore verified channel monitor: %#v", monitor)
+	}
+	if monitor["channelHead"] == "" || monitor["providerPeer"] == "" {
+		t.Fatalf("reusable publication did not restore feed head/provider: %#v", monitor)
+	}
+	if monitor["remoteRows"] != float64(1) || monitor["syncedRows"] != float64(1) || monitor["pinnedRows"] != float64(1) {
+		t.Fatalf("reusable publication monitor row counters mismatch: %#v", monitor)
+	}
+	if strings.Contains(rec.Body.String(), ".fbs") {
+		t.Fatalf("monitor exposed schema suffix: %s", rec.Body.String())
 	}
 }
 
@@ -1128,6 +1261,15 @@ func newDatasetPublicationKuboTestServer(t *testing.T, pinned map[string][]byte)
 			}
 			w.Header().Set("Content-Type", "application/vnd.ipld.car")
 			writeSingleBlockCARForTest(t, w, decoded, body)
+			return
+		case "/api/v0/cat":
+			cidValue := r.URL.Query().Get("arg")
+			body, ok := pinned[cidValue]
+			if !ok {
+				t.Fatalf("cat CID %q was not pinned", cidValue)
+			}
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write(body)
 			return
 		case "/api/v0/pin/rm":
 			cidValue := r.URL.Query().Get("arg")

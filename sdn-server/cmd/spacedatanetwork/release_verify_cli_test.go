@@ -1,6 +1,10 @@
 package main
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -58,6 +62,11 @@ func TestVerifyReleaseDirectoryAcceptsCompleteReleaseEvidence(t *testing.T) {
 	} {
 		writeReleaseTestFile(t, root, name, []byte("artifact:"+name))
 	}
+	writePortableCLITarGz(t, root, "spacedatanetwork-1.2.3-darwin-arm64.tar.gz", "spacedatanetwork-1.2.3-darwin-arm64", false)
+	writePortableCLITarGz(t, root, "spacedatanetwork-1.2.3-darwin-amd64.tar.gz", "spacedatanetwork-1.2.3-darwin-amd64", false)
+	writePortableCLITarGz(t, root, "spacedatanetwork-1.2.3-linux-amd64.tar.gz", "spacedatanetwork-1.2.3-linux-amd64", false)
+	writePortableCLITarGz(t, root, "spacedatanetwork-1.2.3-linux-arm64.tar.gz", "spacedatanetwork-1.2.3-linux-arm64", false)
+	writePortableCLIZip(t, root, "spacedatanetwork-1.2.3-windows-amd64.zip", "spacedatanetwork-1.2.3-windows-amd64", false)
 	writeChecksums(t, root)
 
 	report, err := verifyReleaseDirectory(root)
@@ -69,6 +78,85 @@ func TestVerifyReleaseDirectoryAcceptsCompleteReleaseEvidence(t *testing.T) {
 	}
 	if len(report.Artifacts) < 10 {
 		t.Fatalf("artifacts = %#v, want release artifacts reported", report.Artifacts)
+	}
+}
+
+func TestVerifyPortableCLIArchiveLayoutRejectsMissingAlias(t *testing.T) {
+	root := t.TempDir()
+	archivePath := writePortableCLITarGz(t, root, "spacedatanetwork-1.2.3-linux-amd64.tar.gz", "spacedatanetwork-1.2.3-linux-amd64", true)
+
+	err := verifyPortableCLIArchiveLayout(archivePath, portableCLITarget{
+		Label:       "Linux AMD64 portable CLI",
+		PrimaryPath: "bin/spacedatanetwork",
+		AliasPath:   "bin/sdn",
+		ArchiveKind: "tar.gz",
+	})
+	if err == nil || !strings.Contains(err.Error(), "bin/sdn") {
+		t.Fatalf("verifyPortableCLIArchiveLayout error = %v, want missing bin/sdn", err)
+	}
+}
+
+func TestVerifyPortableCLIArchiveLayoutRejectsMissingBundledRuntimeAssets(t *testing.T) {
+	root := t.TempDir()
+	archivePath := writePortableCLITarGzWithEntries(
+		t,
+		root,
+		"spacedatanetwork-1.2.3-linux-amd64.tar.gz",
+		"spacedatanetwork-1.2.3-linux-amd64",
+		[]string{
+			"bin/spacedatanetwork",
+			"bin/sdn",
+			"runtime/modules/org.spacedatanetwork.updater.wasm",
+			"manifest.json",
+		},
+	)
+
+	err := verifyPortableCLIArchiveLayout(archivePath, portableCLITarget{
+		Label:       "Linux AMD64 portable CLI",
+		PrimaryPath: "bin/spacedatanetwork",
+		AliasPath:   "bin/sdn",
+		ArchiveKind: "tar.gz",
+	})
+	if err == nil || !strings.Contains(err.Error(), "runtime/kubo/ipfs") {
+		t.Fatalf("verifyPortableCLIArchiveLayout error = %v, want missing runtime/kubo/ipfs", err)
+	}
+}
+
+func TestVerifyPortableCLIArchiveLayoutRejectsMissingWindowsWasmEdgeRuntime(t *testing.T) {
+	root := t.TempDir()
+	archivePath := writePortableCLIZipWithoutWindowsWasmEdgeRuntime(t, root, "spacedatanetwork-1.2.3-windows-amd64.zip", "spacedatanetwork-1.2.3-windows-amd64")
+
+	err := verifyPortableCLIArchiveLayout(archivePath, portableCLITarget{
+		Label:       "Windows AMD64 portable CLI",
+		PrimaryPath: "bin/spacedatanetwork.exe",
+		AliasPath:   "bin/sdn.exe",
+		ArchiveKind: "zip",
+		KuboPath:    "runtime/kubo/ipfs.exe",
+		Required:    []string{"bin/wasmedge.dll", "runtime/wasmedge/bin/wasmedge.dll"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "bin/wasmedge.dll") {
+		t.Fatalf("verifyPortableCLIArchiveLayout error = %v, want missing bin/wasmedge.dll", err)
+	}
+}
+
+func TestVerifyPortableCLIArchiveLayoutRejectsManifestWithoutUpdaterChannel(t *testing.T) {
+	root := t.TempDir()
+	archivePath := writePortableCLITarGzWithManifest(
+		t,
+		root,
+		"spacedatanetwork-1.2.3-linux-amd64.tar.gz",
+		"spacedatanetwork-1.2.3-linux-amd64",
+		`{"schema":"org.spacedatanetwork.bundle.v1","update":{"updaterModule":"org.spacedatanetwork.updater","updaterWasm":"runtime/modules/org.spacedatanetwork.updater.wasm"}}`,
+	)
+
+	err := verifyPortableCLIArchiveLayout(archivePath, portableCLITarget{
+		Label:       "Linux AMD64 portable CLI",
+		PrimaryPath: "bin/spacedatanetwork",
+		AliasPath:   "bin/sdn",
+		ArchiveKind: "tar.gz",
+	})
+	if err == nil || !strings.Contains(err.Error(), "manifest update pubsubTopic") {
+		t.Fatalf("verifyPortableCLIArchiveLayout error = %v, want missing manifest update pubsubTopic", err)
 	}
 }
 
@@ -155,6 +243,135 @@ func writeReleaseTestFile(t *testing.T, root string, name string, data []byte) {
 	if err := os.WriteFile(filepath.Join(root, name), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writePortableCLITarGz(t *testing.T, root string, name string, bundleRoot string, omitAlias bool) string {
+	t.Helper()
+	entries := portableCLIEntries(bundleRoot, false, omitAlias)
+	return writePortableCLITarGzWithEntryContents(t, root, name, entries)
+}
+
+func writePortableCLITarGzWithEntries(t *testing.T, root string, name string, bundleRoot string, relativePaths []string) string {
+	t.Helper()
+	entries := make(map[string]string, len(relativePaths))
+	for _, relativePath := range relativePaths {
+		entries[bundleRoot+"/"+relativePath] = "fixture"
+	}
+	return writePortableCLITarGzWithEntryContents(t, root, name, entries)
+}
+
+func writePortableCLITarGzWithManifest(t *testing.T, root string, name string, bundleRoot string, manifest string) string {
+	t.Helper()
+	entries := portableCLIEntries(bundleRoot, false, false)
+	entries[bundleRoot+"/manifest.json"] = manifest
+	return writePortableCLITarGzWithEntryContents(t, root, name, entries)
+}
+
+func writePortableCLITarGzWithEntryContents(t *testing.T, root string, name string, entries map[string]string) string {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	writer := tar.NewWriter(gz)
+	for pathValue, contents := range entries {
+		header := &tar.Header{
+			Name: pathValue,
+			Mode: 0o755,
+			Size: int64(len(contents)),
+		}
+		if err := writer.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.Write([]byte(contents)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	writeReleaseTestFile(t, root, name, buf.Bytes())
+	return filepath.Join(root, name)
+}
+
+func writePortableCLIZip(t *testing.T, root string, name string, bundleRoot string, omitAlias bool) string {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	for pathValue, contents := range portableCLIEntries(bundleRoot, true, omitAlias) {
+		file, err := writer.Create(pathValue)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := file.Write([]byte(contents)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	writeReleaseTestFile(t, root, name, buf.Bytes())
+	return filepath.Join(root, name)
+}
+
+func writePortableCLIZipWithoutWindowsWasmEdgeRuntime(t *testing.T, root string, name string, bundleRoot string) string {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	for _, pathValue := range []string{
+		bundleRoot + "/bin/spacedatanetwork.exe",
+		bundleRoot + "/bin/sdn.exe",
+		bundleRoot + "/runtime/kubo/ipfs.exe",
+		bundleRoot + "/runtime/modules/org.spacedatanetwork.updater.wasm",
+		bundleRoot + "/runtime/ui/sdn/index.html",
+		bundleRoot + "/runtime/ui/webui/index.html",
+		bundleRoot + "/runtime/wasmedge/bin/wasmedge.exe",
+		bundleRoot + "/manifest.json",
+	} {
+		file, err := writer.Create(pathValue)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := file.Write([]byte("fixture")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	writeReleaseTestFile(t, root, name, buf.Bytes())
+	return filepath.Join(root, name)
+}
+
+func portableCLIEntries(bundleRoot string, windows bool, omitAlias bool) map[string]string {
+	primary := "spacedatanetwork"
+	alias := "sdn"
+	if windows {
+		primary += ".exe"
+		alias += ".exe"
+	}
+	entries := map[string]string{
+		bundleRoot + "/bin/" + primary:                                    "primary",
+		bundleRoot + "/runtime/kubo/ipfs":                                 "ipfs",
+		bundleRoot + "/runtime/modules/org.spacedatanetwork.updater.wasm": "updater",
+		bundleRoot + "/runtime/ui/sdn/index.html":                         "sdn ui",
+		bundleRoot + "/runtime/ui/webui/index.html":                       "webui",
+		bundleRoot + "/runtime/wasmedge/bin/wasmedge":                     "wasmedge",
+		bundleRoot + "/manifest.json":                                     `{"schema":"org.spacedatanetwork.bundle.v1","update":{"pubsubTopic":"/sdn/updates/v1/beta","updaterModule":"org.spacedatanetwork.updater","updaterWasm":"runtime/modules/org.spacedatanetwork.updater.wasm"}}`,
+	}
+	if windows {
+		delete(entries, bundleRoot+"/runtime/kubo/ipfs")
+		delete(entries, bundleRoot+"/runtime/wasmedge/bin/wasmedge")
+		entries[bundleRoot+"/runtime/kubo/ipfs.exe"] = "ipfs"
+		entries[bundleRoot+"/runtime/wasmedge/bin/wasmedge.exe"] = "wasmedge"
+		entries[bundleRoot+"/bin/wasmedge.dll"] = "dll"
+		entries[bundleRoot+"/runtime/wasmedge/bin/wasmedge.dll"] = "dll"
+	}
+	if !omitAlias {
+		entries[bundleRoot+"/bin/"+alias] = "alias"
+	}
+	return entries
 }
 
 func writeChecksums(t *testing.T, root string) {

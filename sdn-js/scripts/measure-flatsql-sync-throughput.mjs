@@ -628,7 +628,7 @@ function usage() {
     '  --batch-segments <count>    Published shard batch segment cap, default 8',
     '  --batch-concurrency <count> Parallel batch streams, default 4',
     '  --wire-speed-bps <bps>      Absolute wire-speed baseline, e.g. 2000000000 for 2 Gbps',
-    '  --target <ratio>            Required wire-speed utilization, default 0.8',
+    '  --target <ratio>            Required wire-speed utilization, default 0.9',
     '  --json                      Print JSON only',
   ].join('\n');
 }

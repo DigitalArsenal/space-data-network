@@ -149,6 +149,39 @@ func TestSyncStatusResolvesProviderDomainFromSourcePrefix(t *testing.T) {
 	}
 }
 
+func TestSyncStatusReportsMaterializedPublicationReplica(t *testing.T) {
+	cfgPath, store := newSyncCLITestStore(t)
+	seedSyncCLITestPublicationReplica(t, store)
+	withSyncCLITestConfig(t, cfgPath)
+
+	var out bytes.Buffer
+	err := runSyncStatusWithOptions(context.Background(), &out, syncStatusOptions{
+		Schema:       "OMM",
+		ProviderID:   "celestrak.eth",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+	})
+	if err != nil {
+		t.Fatalf("runSyncStatusWithOptions failed: %v", err)
+	}
+
+	body := out.String()
+	for _, want := range []string{
+		"provider_identifier=celestrak.eth",
+		"provider_identifier_kind=ens-domain",
+		"provider_identifier_match=source",
+		"provider_id=space-data-network-02",
+		"source_name=celestrak-gp",
+		"batch_id=test-batch",
+		"status=synced",
+		"local_rows=1",
+		"pinned_rows=1",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("sync status output missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestSyncStatusJSONOutput(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
@@ -286,5 +319,42 @@ func seedSyncCLITestReplica(t *testing.T, store *storage.FlatSQLStore) {
 		VerifiedAt:        verifiedAt,
 	}); err != nil {
 		t.Fatalf("upsert pin ledger entry failed: %v", err)
+	}
+}
+
+func seedSyncCLITestPublicationReplica(t *testing.T, store *storage.FlatSQLStore) {
+	t.Helper()
+
+	payload := sds.NewOMMBuilder().
+		WithNoradCatID(56775).
+		WithObjectName("STARLINK-6292").
+		WithEpoch("2026-05-25T06:08:54Z").
+		Build()
+	if _, err := store.StoreWithSourceTags("OMM.fbs", payload, "16Uiu2HCelesTrak", nil, storage.SourceTags{
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		SourceURL:         "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+		BatchID:           "test-batch",
+		ProducerPeerID:    "16Uiu2HCelesTrak",
+		ProducerPublicKey: "provider-public-key",
+	}); err != nil {
+		t.Fatalf("store OMM failed: %v", err)
+	}
+
+	if err := store.UpsertDatasetShardPublication(storage.DatasetShardPublication{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "test-batch",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        50000,
+		RecordCount:  1,
+		ByteCount:    1024,
+		ShardCID:     "bafkshard-omm",
+		IndexCID:     "bafkindex-omm",
+		PublishedAt:  time.Date(2026, 5, 25, 6, 8, 54, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("upsert dataset shard publication failed: %v", err)
 	}
 }

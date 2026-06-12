@@ -1,13 +1,20 @@
-export const DEFAULT_WIRE_SPEED_TARGET = 0.8;
+export const DEFAULT_WIRE_SPEED_TARGET = 0.9;
 
 export interface PublishedShardWireSpeedAuditInput {
   downloadedBytes: number;
   measuredWireSpeedBytesPerSecond: number | null | undefined;
   wireSpeedBaselineBytesPerSecond?: number | null | undefined;
-  manifestDiscoveryMs: number;
-  networkTransferMs: number;
-  verificationMs: number;
-  flatSqlMaterializationMs: number;
+  manifestDiscoveryMs?: number;
+  networkTransferMs?: number;
+  verificationMs?: number;
+  flatSqlMaterializationMs?: number;
+  discoveryMs?: number;
+  grantNegotiationMs?: number;
+  pnmDpmVerificationMs?: number;
+  transferMs?: number;
+  decryptMs?: number;
+  hashVerificationMs?: number;
+  durableImportMs?: number;
   wireSpeedTarget?: number;
 }
 
@@ -18,8 +25,16 @@ export interface PublishedShardWireSpeedAudit {
   downloadBytesPerSecond: number;
   wireSpeedUtilization: number | null;
   wireSpeedTarget: number;
+  requiredBytesPerSecond: number | null;
   targetMet: boolean | null;
   timingsMs: {
+    discovery: number;
+    grantNegotiation: number;
+    pnmDpmVerification: number;
+    transfer: number;
+    decrypt: number;
+    hashVerification: number;
+    durableImport: number;
     manifestDiscovery: number;
     networkTransfer: number;
     verification: number;
@@ -131,14 +146,23 @@ export function publishedShardWireSpeedAudit(
   input: PublishedShardWireSpeedAuditInput,
 ): PublishedShardWireSpeedAudit {
   const downloadedBytes = nonNegativeInteger(input.downloadedBytes);
-  const networkTransferMs = nonNegativeInteger(input.networkTransferMs);
-  const downloadBytesPerSecond = networkTransferMs > 0
-    ? Math.floor(downloadedBytes / (networkTransferMs / 1000))
+  const discoveryMs = nonNegativeInteger(input.discoveryMs ?? input.manifestDiscoveryMs ?? 0);
+  const grantNegotiationMs = nonNegativeInteger(input.grantNegotiationMs ?? 0);
+  const pnmDpmVerificationMs = nonNegativeInteger(input.pnmDpmVerificationMs ?? 0);
+  const transferMs = nonNegativeInteger(input.transferMs ?? input.networkTransferMs ?? 0);
+  const decryptMs = nonNegativeInteger(input.decryptMs ?? 0);
+  const hashVerificationMs = nonNegativeInteger(input.hashVerificationMs ?? input.verificationMs ?? 0);
+  const durableImportMs = nonNegativeInteger(input.durableImportMs ?? input.flatSqlMaterializationMs ?? 0);
+  const downloadBytesPerSecond = transferMs > 0
+    ? Math.floor(downloadedBytes / (transferMs / 1000))
     : 0;
   const measuredWireSpeedBytesPerSecond = finitePositive(input.measuredWireSpeedBytesPerSecond);
   const wireSpeedBaselineBytesPerSecond = finitePositive(input.wireSpeedBaselineBytesPerSecond)
     ?? measuredWireSpeedBytesPerSecond;
   const wireSpeedTarget = finitePositive(input.wireSpeedTarget) ?? DEFAULT_WIRE_SPEED_TARGET;
+  const requiredBytesPerSecond = wireSpeedBaselineBytesPerSecond == null
+    ? null
+    : Math.floor(wireSpeedBaselineBytesPerSecond * wireSpeedTarget);
   const wireSpeedUtilization = measuredWireSpeedUtilization(downloadBytesPerSecond, wireSpeedBaselineBytesPerSecond);
   return {
     downloadedBytes,
@@ -147,12 +171,20 @@ export function publishedShardWireSpeedAudit(
     downloadBytesPerSecond,
     wireSpeedUtilization,
     wireSpeedTarget,
+    requiredBytesPerSecond,
     targetMet: wireSpeedUtilization == null ? null : wireSpeedUtilization >= wireSpeedTarget,
     timingsMs: {
-      manifestDiscovery: nonNegativeInteger(input.manifestDiscoveryMs),
-      networkTransfer: networkTransferMs,
-      verification: nonNegativeInteger(input.verificationMs),
-      flatSqlMaterialization: nonNegativeInteger(input.flatSqlMaterializationMs),
+      discovery: discoveryMs,
+      grantNegotiation: grantNegotiationMs,
+      pnmDpmVerification: pnmDpmVerificationMs,
+      transfer: transferMs,
+      decrypt: decryptMs,
+      hashVerification: hashVerificationMs,
+      durableImport: durableImportMs,
+      manifestDiscovery: discoveryMs,
+      networkTransfer: transferMs,
+      verification: hashVerificationMs,
+      flatSqlMaterialization: durableImportMs,
     },
   };
 }
@@ -299,6 +331,8 @@ export function throughputHarnessSummary(result: ThroughputHarnessResult): strin
     `Wire speed probe: ${formatBytesPerSecond(result.probe.bytesPerSecond)}`,
     ...(baseline && baseline !== result.probe.bytesPerSecond ? [`Wire speed target baseline: ${formatBytesPerSecond(baseline)}`] : []),
     `Published shard download: ${formatBytesPerSecond(result.audit.downloadBytesPerSecond)} (${utilization})`,
+    ...(result.audit.requiredBytesPerSecond == null ? [] : [`Required data-plane throughput: ${formatBytesPerSecond(result.audit.requiredBytesPerSecond)}`]),
+    `Phases: discovery ${formatDuration(phaseTiming(result.audit.timingsMs.discovery, result.audit.timingsMs.manifestDiscovery))} / grant ${formatDuration(result.audit.timingsMs.grantNegotiation)} / PNM+DPM ${formatDuration(result.audit.timingsMs.pnmDpmVerification)} / transfer ${formatDuration(phaseTiming(result.audit.timingsMs.transfer, result.audit.timingsMs.networkTransfer))} / decrypt ${formatDuration(result.audit.timingsMs.decrypt)} / hash ${formatDuration(phaseTiming(result.audit.timingsMs.hashVerification, result.audit.timingsMs.verification))} / durable import ${formatDuration(phaseTiming(result.audit.timingsMs.durableImport, result.audit.timingsMs.flatSqlMaterialization))}`,
     `Timing: manifest ${formatDuration(result.audit.timingsMs.manifestDiscovery)} / network ${formatDuration(result.audit.timingsMs.networkTransfer)} / verify ${formatDuration(result.audit.timingsMs.verification)} / FlatSQL ${formatDuration(result.audit.timingsMs.flatSqlMaterialization)}`,
     `${Math.round(result.target * 100)}% target: ${targetStatus}`,
   ].join('\n');
@@ -343,6 +377,12 @@ function formatDuration(milliseconds: number): string {
   const value = nonNegativeInteger(milliseconds);
   if (value >= 1000) return `${(value / 1000).toFixed(2)} s`;
   return `${value} ms`;
+}
+
+function phaseTiming(primary: number | undefined, legacy: number | undefined): number {
+  const normalized = nonNegativeInteger(primary ?? 0);
+  if (normalized > 0) return normalized;
+  return nonNegativeInteger(legacy ?? 0);
 }
 
 function artifactRoutingSummary(routing: NonNullable<ThroughputHarnessResult['artifactRouting']>): string {

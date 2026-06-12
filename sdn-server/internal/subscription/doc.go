@@ -8,7 +8,7 @@
 // from selected peers with optional encryption and streaming modes:
 //
 //	config := SubscriptionConfig{
-//	    DataTypes:   []string{"OMM.fbs", "CDM.fbs"},
+//	    DataTypes:   []string{"OMM", "CDM"},
 //	    SourcePeers: []string{"all"},
 //	    Encrypted:   true,
 //	    Streaming:   true,
@@ -37,7 +37,7 @@
 //
 //   - Schema-based: /sdn/data/{schema_type} (e.g., /sdn/data/OMM)
 //   - Peer-based: /sdn/peer/{peer_id} for targeted delivery
-//   - Standard: /spacedatanetwork/sds/{schema}.fbs for compatibility
+//   - Standard: /spacedatanetwork/sds/{standardCode}
 //
 // # Streaming Modes
 //

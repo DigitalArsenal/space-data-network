@@ -159,6 +159,77 @@ export interface DataScanResult {
   results: RawDataRecord[];
 }
 
+export interface ChannelListOptions {
+  standardCode?: string;
+  visibility?: string;
+  subject?: string;
+  grantId?: string;
+}
+
+export interface ChannelActionOptions {
+  subject?: string;
+  grantId?: string;
+  visibility?: string;
+  encryptedStreamHeader?: string;
+  encryptedRecordIndex?: number | string;
+}
+
+export interface ChannelSummary {
+  channelId: string;
+  sourceId: string;
+  standardCode: string;
+  feedUuid: string | null;
+  visibility: string;
+  subscribed: boolean;
+  pnmVerified: boolean;
+  dpmVerified: boolean;
+  grantState: string;
+  encryptionState: string;
+}
+
+export interface ChannelMonitor extends ChannelSummary {
+  channelHead: string;
+  providerPeer: string;
+  localRows: number;
+  remoteRows: number;
+  syncedRows: number;
+  missingRows: number;
+  pinnedCount: number;
+  pinnedRows: number;
+  syncedBytes: number;
+  throughputBytesPerSecond: number;
+  wireSpeedUtilization: number | null;
+  timingsMs: ChannelMonitorTimings;
+  lastVerifiedUpdate: string;
+}
+
+export interface ChannelMonitorTimings {
+  discovery: number;
+  grantNegotiation: number;
+  pnmDpmVerification: number;
+  transfer: number;
+  decrypt: number;
+  hashVerification: number;
+  durableImport: number;
+}
+
+export interface ChannelKeyEnvelopeRequest {
+  recipientKeyId: string;
+  contentKeyId?: string;
+}
+
+export interface ChannelBackend {
+  list(options?: ChannelListOptions): Promise<BackendResult<ChannelSummary[]>>;
+  get(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<ChannelSummary>>;
+  subscribe(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
+  unsubscribe(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
+  publish(channelId: string, body?: BodyInit | null, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
+  issueGrant(channelId: string, body?: Record<string, unknown>, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
+  keyUnwrap(channelId: string, body: ChannelKeyEnvelopeRequest, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
+  openStream(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<Uint8Array>>;
+  monitor(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<ChannelMonitor>>;
+}
+
 export interface RawDataStreamRequest {
   schema: string;
   datastoreKey?: string;
@@ -249,6 +320,7 @@ export interface WalletStorageSnapshot {
 
 export interface SdnBackend {
   readonly mode: SdnBackendMode;
+  readonly channels: ChannelBackend;
   connect(): Promise<BackendResult<NodeSummary>>;
   getCapabilities(): Promise<BackendCapability[]>;
   getNodeSummary(): Promise<BackendResult<NodeSummary>>;

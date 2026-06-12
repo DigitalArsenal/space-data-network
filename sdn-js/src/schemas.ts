@@ -515,10 +515,10 @@ export const SDS_SCHEMAS: Record<SchemaName, string> = {
 };
 
 /**
- * Get topic name for a schema
+ * Get public topic name for a schema or three-letter record code.
  */
-export function getTopicName(schema: SchemaName): string {
-  return `/spacedatanetwork/sds/${schema}`;
+export function getTopicName(schema: string): string {
+  return `/spacedatanetwork/sds/${standardCodeFromSchema(schema)}`;
 }
 
 /**
@@ -529,7 +529,8 @@ export function getSchemaFromTopic(topic: string): SchemaName | null {
   if (!topic.startsWith(prefix)) {
     return null;
   }
-  const schema = topic.slice(prefix.length) as SchemaName;
+  const value = topic.slice(prefix.length);
+  const schema = (value.endsWith('.fbs') ? value : `${value}.fbs`) as SchemaName;
   return SUPPORTED_SCHEMAS.includes(schema) ? schema : null;
 }
 
@@ -538,4 +539,8 @@ export function getSchemaFromTopic(topic: string): SchemaName | null {
  */
 export function isValidSchema(name: string): name is SchemaName {
   return SUPPORTED_SCHEMAS.includes(name as SchemaName);
+}
+
+function standardCodeFromSchema(value: string): string {
+  return value.endsWith('.fbs') ? value.slice(0, -4) : value;
 }

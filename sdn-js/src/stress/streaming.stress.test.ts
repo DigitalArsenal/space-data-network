@@ -210,7 +210,7 @@ describe('FlatBuffer Streaming Stress Tests', () => {
       const transport = createLoopbackSyncTransport(totalRecords);
       const manager = new SubscriptionManager();
       const sub = manager.createSubscription({
-        dataTypes: ['OMM.fbs'],
+        dataTypes: ['OMM'],
         sourcePeers: ['all'],
         encrypted: false,
         streaming: true,
@@ -296,7 +296,7 @@ describe('FlatBuffer Streaming Stress Tests', () => {
     try {
       const manager = new SubscriptionManager();
       const sub = manager.createSubscription({
-        dataTypes: ['OMM.fbs'],
+        dataTypes: ['OMM'],
         sourcePeers: ['all'],
         encrypted: false,
         streaming: true,

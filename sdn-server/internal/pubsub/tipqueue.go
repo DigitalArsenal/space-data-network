@@ -9,6 +9,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
 	ps "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/spacedatanetwork/sdn-server/internal/channels"
 )
 
 // TipQueue errors.
@@ -36,7 +37,7 @@ type ContentPinner interface {
 type Tip struct {
 	PeerID           string
 	CID              string
-	SchemaType       string    // FILE_ID (e.g., "OMM")
+	SchemaType       string // FILE_ID (e.g., "OMM")
 	FileName         string
 	MultiformatAddr  string
 	Signature        string
@@ -50,12 +51,16 @@ type Tip struct {
 // TipHandler is called when a tip is received.
 type TipHandler func(tip *Tip, config ResolvedConfig)
 
+// PNMVerifier rejects untrusted PNM bytes before the queue records or fetches a tip.
+type PNMVerifier func(pnmBytes []byte) (channels.PNMTrustEvidence, error)
+
 // TipQueue manages PNM-based tip/queue messaging.
 type TipQueue struct {
 	config   *TipQueueConfig
 	topicMgr *TopicManager
 	fetcher  ContentFetcher
 	pinner   ContentPinner
+	verifier PNMVerifier
 
 	subscription *ps.Subscription
 	tips         map[string][]*Tip // schema -> pending tips
@@ -79,6 +84,7 @@ func NewTipQueue(config *TipQueueConfig) *TipQueue {
 
 	return &TipQueue{
 		config:     config,
+		verifier:   channels.VerifySignedPNMEnvelope,
 		tips:       make(map[string][]*Tip),
 		pinnedCIDs: make(map[string]*Tip),
 		handlers:   make([]TipHandler, 0),
@@ -106,6 +112,13 @@ func (tq *TipQueue) SetPinner(pinner ContentPinner) {
 	tq.mu.Lock()
 	defer tq.mu.Unlock()
 	tq.pinner = pinner
+}
+
+// SetPNMVerifier replaces the trust gate used before queueing received PNMs.
+func (tq *TipQueue) SetPNMVerifier(verifier PNMVerifier) {
+	tq.mu.Lock()
+	defer tq.mu.Unlock()
+	tq.verifier = verifier
 }
 
 // OnTip registers a handler for received tips.
@@ -165,6 +178,17 @@ func (tq *TipQueue) handleMessage(msg *ps.Message) {
 	// Validate PNM
 	if !PNM.SizePrefixedPNMBufferHasIdentifier(data) {
 		log.Debug("Received message without PNM identifier")
+		return
+	}
+	tq.mu.RLock()
+	verifier := tq.verifier
+	tq.mu.RUnlock()
+	if verifier == nil {
+		log.Debug("PNM verifier is not configured")
+		return
+	}
+	if _, err := verifier(data); err != nil {
+		log.Debugf("Rejected untrusted PNM: %v", err)
 		return
 	}
 

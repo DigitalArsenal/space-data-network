@@ -67,6 +67,29 @@ export { loadEdgeRelays, getBootstrapRelays, DEFAULT_EDGE_RELAYS, EdgeDiscovery,
 export type { RelayStatus, RelayProbeResult, DiscoveryMetrics } from './edge-discovery';
 export { SDS_SCHEMAS, SUPPORTED_SCHEMAS } from './schemas';
 export type { SchemaName } from './schemas';
+export {
+  CHANNEL_TOPIC_PREFIX,
+  assertStandardCode,
+  channelDiscoveryTopic,
+  formatChannelId,
+  parseChannelId,
+  schemaNameFromStandardCode,
+  standardCodeFromSchemaName,
+} from './channels';
+export type { ChannelIdInput, ParsedChannelId } from './channels';
+export {
+  createChannelStreamDispatcher,
+  createEncryptedChannelStreamDispatcher,
+} from './channel-stream';
+export type {
+  ChannelStreamDispatcher,
+  ChannelStreamDispatcherOptions,
+  ChannelStreamPushOptions,
+  ChannelStreamStats,
+  ChannelStreamType,
+  EncryptedChannelStreamDispatcherOptions,
+  NativeStreamingDispatcher,
+} from './channel-stream';
 // Crypto and HD Wallet exports (unified from hd-wallet-wasm)
 export {
   // Initialization
@@ -212,6 +235,13 @@ export type {
   LogHeadResponse,
   LogEntriesResponse,
   LogHeadsResponse,
+  ChannelAccessOptions,
+  ChannelActionResponse,
+  ChannelGrantRequest,
+  ChannelListOptions,
+  ChannelMonitor,
+  ChannelSummary,
+  SDNClientChannels,
   SDNClientOptions,
 } from './client';
 

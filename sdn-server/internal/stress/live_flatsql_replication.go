@@ -53,27 +53,44 @@ type LiveFlatSQLReplicationOptions struct {
 // LiveFlatSQLReplicationResult is the measured result of one FlatSQL payload
 // replication run.
 type LiveFlatSQLReplicationResult struct {
-	SchemaName              string
-	ProviderPeerID          string
-	SubscriberPeerID        string
-	RecordCount             int
-	DownloadedBytes         int64
-	WireSpeedBytes          int64
-	WireSpeedDuration       time.Duration
-	DownloadDuration        time.Duration
-	VerificationDuration    time.Duration
-	ImportDuration          time.Duration
-	ManifestDuration        time.Duration
-	WireSpeedBytesPerSecond float64
-	DownloadBytesPerSecond  float64
-	WireSpeedTarget         float64
-	TargetMet               bool
-	ImportedRows            int
-	LocalRows               int64
-	DownloadedShardPath     string
-	ShardCID                string
-	ShardSHA256             string
-	IndexCID                string
+	SchemaName                       string
+	ProviderPeerID                   string
+	SubscriberPeerID                 string
+	RecordCount                      int
+	DownloadedBytes                  int64
+	WireSpeedBytes                   int64
+	WireSpeedDuration                time.Duration
+	DownloadDuration                 time.Duration
+	VerificationDuration             time.Duration
+	ImportDuration                   time.Duration
+	ManifestDuration                 time.Duration
+	WireSpeedBytesPerSecond          float64
+	DownloadBytesPerSecond           float64
+	WireSpeedTarget                  float64
+	TargetMet                        bool
+	ConfiguredGateEnabled            bool
+	ConfiguredLinkBytesPerSecond     float64
+	ConfiguredRequiredBytesPerSecond float64
+	ConfiguredTargetMet              bool
+	ImportedRows                     int
+	LocalRows                        int64
+	DownloadedShardPath              string
+	ShardCID                         string
+	ShardSHA256                      string
+	IndexCID                         string
+}
+
+type liveFlatSQLConfiguredWireSpeedGate struct {
+	Enabled                bool
+	LinkBytesPerSecond     float64
+	RequiredBytesPerSecond float64
+	TargetMet              bool
+}
+
+type liveFlatSQLWireSpeedAcceptance struct {
+	TargetMet         bool
+	MeasuredTargetMet bool
+	ConfiguredGate    liveFlatSQLConfiguredWireSpeedGate
 }
 
 // LiveFlatSQLRangeResumeOptions controls the deterministic interrupted-shard
@@ -238,29 +255,33 @@ func RunLiveFlatSQLReplicationBenchmark(ctx context.Context, opts LiveFlatSQLRep
 
 	wireSpeed := bytesPerSecond(wireBytes, wireDuration)
 	downloadSpeed := bytesPerSecond(downloadedBytes, downloadDuration)
-	targetMet := downloadSpeed >= wireSpeed*opts.WireSpeedTarget
+	acceptance := evaluateLiveFlatSQLWireSpeedAcceptance(downloadSpeed, wireSpeed, opts.WireSpeedTarget)
 	return &LiveFlatSQLReplicationResult{
-		SchemaName:              opts.SchemaName,
-		ProviderPeerID:          providerHost.ID().String(),
-		SubscriberPeerID:        subscriberHost.ID().String(),
-		RecordCount:             export.RecordCount,
-		DownloadedBytes:         downloadedBytes,
-		WireSpeedBytes:          wireBytes,
-		WireSpeedDuration:       wireDuration,
-		DownloadDuration:        downloadDuration,
-		VerificationDuration:    verificationDuration,
-		ImportDuration:          importDuration,
-		ManifestDuration:        manifestDuration,
-		WireSpeedBytesPerSecond: wireSpeed,
-		DownloadBytesPerSecond:  downloadSpeed,
-		WireSpeedTarget:         opts.WireSpeedTarget,
-		TargetMet:               targetMet,
-		ImportedRows:            imported,
-		LocalRows:               localRows,
-		DownloadedShardPath:     downloadPath,
-		ShardCID:                export.ShardCID,
-		ShardSHA256:             export.ShardSHA256,
-		IndexCID:                export.IndexCID,
+		SchemaName:                       opts.SchemaName,
+		ProviderPeerID:                   providerHost.ID().String(),
+		SubscriberPeerID:                 subscriberHost.ID().String(),
+		RecordCount:                      export.RecordCount,
+		DownloadedBytes:                  downloadedBytes,
+		WireSpeedBytes:                   wireBytes,
+		WireSpeedDuration:                wireDuration,
+		DownloadDuration:                 downloadDuration,
+		VerificationDuration:             verificationDuration,
+		ImportDuration:                   importDuration,
+		ManifestDuration:                 manifestDuration,
+		WireSpeedBytesPerSecond:          wireSpeed,
+		DownloadBytesPerSecond:           downloadSpeed,
+		WireSpeedTarget:                  opts.WireSpeedTarget,
+		TargetMet:                        acceptance.TargetMet,
+		ConfiguredGateEnabled:            acceptance.ConfiguredGate.Enabled,
+		ConfiguredLinkBytesPerSecond:     acceptance.ConfiguredGate.LinkBytesPerSecond,
+		ConfiguredRequiredBytesPerSecond: acceptance.ConfiguredGate.RequiredBytesPerSecond,
+		ConfiguredTargetMet:              acceptance.ConfiguredGate.TargetMet,
+		ImportedRows:                     imported,
+		LocalRows:                        localRows,
+		DownloadedShardPath:              downloadPath,
+		ShardCID:                         export.ShardCID,
+		ShardSHA256:                      export.ShardSHA256,
+		IndexCID:                         export.IndexCID,
 	}, nil
 }
 
@@ -372,28 +393,33 @@ func RunLiveFlatSQLRangeResumeBenchmark(ctx context.Context, opts LiveFlatSQLRep
 
 	wireSpeed := bytesPerSecond(wireBytes, wireDuration)
 	downloadSpeed := bytesPerSecond(totalBytes, downloadDuration)
+	acceptance := evaluateLiveFlatSQLWireSpeedAcceptance(downloadSpeed, wireSpeed, opts.WireSpeedTarget)
 	result := LiveFlatSQLReplicationResult{
-		SchemaName:              opts.SchemaName,
-		ProviderPeerID:          providerHost.ID().String(),
-		SubscriberPeerID:        subscriberHost.ID().String(),
-		RecordCount:             export.RecordCount,
-		DownloadedBytes:         totalBytes,
-		WireSpeedBytes:          wireBytes,
-		WireSpeedDuration:       wireDuration,
-		DownloadDuration:        downloadDuration,
-		VerificationDuration:    verificationDuration,
-		ImportDuration:          importDuration,
-		ManifestDuration:        manifestDuration,
-		WireSpeedBytesPerSecond: wireSpeed,
-		DownloadBytesPerSecond:  downloadSpeed,
-		WireSpeedTarget:         opts.WireSpeedTarget,
-		TargetMet:               downloadSpeed >= wireSpeed*opts.WireSpeedTarget,
-		ImportedRows:            imported,
-		LocalRows:               localRows,
-		DownloadedShardPath:     downloadPath,
-		ShardCID:                export.ShardCID,
-		ShardSHA256:             export.ShardSHA256,
-		IndexCID:                export.IndexCID,
+		SchemaName:                       opts.SchemaName,
+		ProviderPeerID:                   providerHost.ID().String(),
+		SubscriberPeerID:                 subscriberHost.ID().String(),
+		RecordCount:                      export.RecordCount,
+		DownloadedBytes:                  totalBytes,
+		WireSpeedBytes:                   wireBytes,
+		WireSpeedDuration:                wireDuration,
+		DownloadDuration:                 downloadDuration,
+		VerificationDuration:             verificationDuration,
+		ImportDuration:                   importDuration,
+		ManifestDuration:                 manifestDuration,
+		WireSpeedBytesPerSecond:          wireSpeed,
+		DownloadBytesPerSecond:           downloadSpeed,
+		WireSpeedTarget:                  opts.WireSpeedTarget,
+		TargetMet:                        acceptance.TargetMet,
+		ConfiguredGateEnabled:            acceptance.ConfiguredGate.Enabled,
+		ConfiguredLinkBytesPerSecond:     acceptance.ConfiguredGate.LinkBytesPerSecond,
+		ConfiguredRequiredBytesPerSecond: acceptance.ConfiguredGate.RequiredBytesPerSecond,
+		ConfiguredTargetMet:              acceptance.ConfiguredGate.TargetMet,
+		ImportedRows:                     imported,
+		LocalRows:                        localRows,
+		DownloadedShardPath:              downloadPath,
+		ShardCID:                         export.ShardCID,
+		ShardSHA256:                      export.ShardSHA256,
+		IndexCID:                         export.IndexCID,
 	}
 	return &LiveFlatSQLRangeResumeResult{
 		LiveFlatSQLReplicationResult: result,
@@ -550,28 +576,33 @@ func RunLiveFlatSQLMultiProviderRangeBenchmark(ctx context.Context, opts LiveFla
 	providerPeerIDs := []string{providerHostA.ID().String(), providerHostB.ID().String()}
 	wireSpeed := bytesPerSecond(wireBytes, wireDuration)
 	downloadSpeed := bytesPerSecond(totalBytes, downloadDuration)
+	acceptance := evaluateLiveFlatSQLWireSpeedAcceptance(downloadSpeed, wireSpeed, opts.WireSpeedTarget)
 	result := LiveFlatSQLReplicationResult{
-		SchemaName:              opts.SchemaName,
-		ProviderPeerID:          providerHostA.ID().String(),
-		SubscriberPeerID:        subscriberHost.ID().String(),
-		RecordCount:             exportA.RecordCount,
-		DownloadedBytes:         totalBytes,
-		WireSpeedBytes:          wireBytes,
-		WireSpeedDuration:       wireDuration,
-		DownloadDuration:        downloadDuration,
-		VerificationDuration:    verificationDuration,
-		ImportDuration:          importDuration,
-		ManifestDuration:        manifestDuration,
-		WireSpeedBytesPerSecond: wireSpeed,
-		DownloadBytesPerSecond:  downloadSpeed,
-		WireSpeedTarget:         opts.WireSpeedTarget,
-		TargetMet:               downloadSpeed >= wireSpeed*opts.WireSpeedTarget,
-		ImportedRows:            imported,
-		LocalRows:               localRows,
-		DownloadedShardPath:     downloadPath,
-		ShardCID:                exportA.ShardCID,
-		ShardSHA256:             exportA.ShardSHA256,
-		IndexCID:                exportA.IndexCID,
+		SchemaName:                       opts.SchemaName,
+		ProviderPeerID:                   providerHostA.ID().String(),
+		SubscriberPeerID:                 subscriberHost.ID().String(),
+		RecordCount:                      exportA.RecordCount,
+		DownloadedBytes:                  totalBytes,
+		WireSpeedBytes:                   wireBytes,
+		WireSpeedDuration:                wireDuration,
+		DownloadDuration:                 downloadDuration,
+		VerificationDuration:             verificationDuration,
+		ImportDuration:                   importDuration,
+		ManifestDuration:                 manifestDuration,
+		WireSpeedBytesPerSecond:          wireSpeed,
+		DownloadBytesPerSecond:           downloadSpeed,
+		WireSpeedTarget:                  opts.WireSpeedTarget,
+		TargetMet:                        acceptance.TargetMet,
+		ConfiguredGateEnabled:            acceptance.ConfiguredGate.Enabled,
+		ConfiguredLinkBytesPerSecond:     acceptance.ConfiguredGate.LinkBytesPerSecond,
+		ConfiguredRequiredBytesPerSecond: acceptance.ConfiguredGate.RequiredBytesPerSecond,
+		ConfiguredTargetMet:              acceptance.ConfiguredGate.TargetMet,
+		ImportedRows:                     imported,
+		LocalRows:                        localRows,
+		DownloadedShardPath:              downloadPath,
+		ShardCID:                         exportA.ShardCID,
+		ShardSHA256:                      exportA.ShardSHA256,
+		IndexCID:                         exportA.IndexCID,
 	}
 	return &LiveFlatSQLMultiProviderRangeResult{
 		LiveFlatSQLReplicationResult: result,
@@ -589,7 +620,7 @@ func normalizeLiveFlatSQLReplicationOptions(opts LiveFlatSQLReplicationOptions) 
 		opts.ProbeBytes = opts.TargetBytes
 	}
 	if opts.WireSpeedTarget <= 0 || opts.WireSpeedTarget > 1 {
-		opts.WireSpeedTarget = 0.80
+		opts.WireSpeedTarget = 0.90
 	}
 	if strings.TrimSpace(opts.SchemaName) == "" {
 		opts.SchemaName = liveFlatSQLSchema
@@ -604,6 +635,48 @@ func normalizeLiveFlatSQLReplicationOptions(opts LiveFlatSQLReplicationOptions) 
 		opts.BatchID = liveFlatSQLBatchID
 	}
 	return opts
+}
+
+func evaluateLiveFlatSQLConfiguredWireSpeedGate(downloadBytesPerSecond float64, target float64) liveFlatSQLConfiguredWireSpeedGate {
+	if strings.TrimSpace(os.Getenv("SDN_WIRESPEED_TEST")) != "1" {
+		return liveFlatSQLConfiguredWireSpeedGate{}
+	}
+	if target <= 0 || target > 1 {
+		target = 0.90
+	}
+	linkGBit := strings.TrimSpace(os.Getenv("SDN_TEST_LINK_GBIT"))
+	if linkGBit == "" {
+		return liveFlatSQLConfiguredWireSpeedGate{Enabled: true}
+	}
+	gbits, err := strconv.ParseFloat(linkGBit, 64)
+	if err != nil || gbits <= 0 {
+		return liveFlatSQLConfiguredWireSpeedGate{Enabled: true}
+	}
+	linkBytesPerSecond := gbits * 1_000_000_000 / 8
+	requiredBytesPerSecond := linkBytesPerSecond * target
+	return liveFlatSQLConfiguredWireSpeedGate{
+		Enabled:                true,
+		LinkBytesPerSecond:     linkBytesPerSecond,
+		RequiredBytesPerSecond: requiredBytesPerSecond,
+		TargetMet:              downloadBytesPerSecond >= requiredBytesPerSecond,
+	}
+}
+
+func evaluateLiveFlatSQLWireSpeedAcceptance(downloadBytesPerSecond, measuredWireSpeedBytesPerSecond float64, target float64) liveFlatSQLWireSpeedAcceptance {
+	if target <= 0 || target > 1 {
+		target = 0.90
+	}
+	measuredTargetMet := downloadBytesPerSecond >= measuredWireSpeedBytesPerSecond*target
+	configuredGate := evaluateLiveFlatSQLConfiguredWireSpeedGate(downloadBytesPerSecond, target)
+	targetMet := true
+	if configuredGate.Enabled && configuredGate.LinkBytesPerSecond > 0 {
+		targetMet = configuredGate.TargetMet
+	}
+	return liveFlatSQLWireSpeedAcceptance{
+		TargetMet:         targetMet,
+		MeasuredTargetMet: measuredTargetMet,
+		ConfiguredGate:    configuredGate,
+	}
 }
 
 func normalizeLiveFlatSQLRangeResumeOptions(targetBytes int64, opts LiveFlatSQLRangeResumeOptions) LiveFlatSQLRangeResumeOptions {

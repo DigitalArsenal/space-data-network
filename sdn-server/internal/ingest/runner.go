@@ -616,26 +616,35 @@ func (r *Runner) requestDatasetPublication(ctx context.Context, req datasetPubli
 	if publishURL == "" {
 		return nil
 	}
+	standardCode := datasetPublicationRequestLogStandardCode(req.Schema)
 	body, err := json.Marshal(req)
 	if err != nil {
-		return fmt.Errorf("encode dataset publication request for %s: %w", req.Schema, err)
+		return fmt.Errorf("encode dataset publication request for %s: %w", standardCode, err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, publishURL, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create dataset publication request for %s: %w", req.Schema, err)
+		return fmt.Errorf("create dataset publication request for %s: %w", standardCode, err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := r.datasetPublicationHTTPClient(req).Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("request dataset publication for %s: %w", req.Schema, err)
+		return fmt.Errorf("request dataset publication for %s: %w", standardCode, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("dataset publication request for %s returned %s: %s", req.Schema, resp.Status, strings.TrimSpace(string(preview)))
+		return fmt.Errorf("dataset publication request for %s returned %s: %s", standardCode, resp.Status, strings.TrimSpace(string(preview)))
 	}
-	log.Infof("Dataset publication requested for %s via %s", req.Schema, publishURL)
+	log.Infof("Dataset publication requested for %s via %s", standardCode, publishURL)
 	return nil
+}
+
+func datasetPublicationRequestLogStandardCode(schema string) string {
+	value := strings.TrimSpace(schema)
+	if strings.HasSuffix(value, ".fbs") {
+		value = strings.TrimSuffix(value, ".fbs")
+	}
+	return value
 }
 
 func (r *Runner) datasetPublicationHTTPClient(req datasetPublicationRequest) *http.Client {

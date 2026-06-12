@@ -303,10 +303,11 @@ verify_installation() {
         return
     fi
 
-    if command -v "$PRIMARY_BINARY_NAME" &> /dev/null; then
+    if command -v "$PRIMARY_BINARY_NAME" &> /dev/null && command -v "$ALIAS_BINARY_NAME" &> /dev/null; then
         log_info "Installation successful!"
         echo ""
         "$PRIMARY_BINARY_NAME" version || log_warn "Installed binary did not print a version"
+        "$ALIAS_BINARY_NAME" status >/dev/null 2>&1 || log_warn "Alias command did not print local status"
         echo ""
         log_info "Run '$PRIMARY_BINARY_NAME daemon' to start the node"
         log_info "Run '$ALIAS_BINARY_NAME status' to inspect the local node"

@@ -2846,14 +2846,14 @@ CREATE TABLE sdn_log_index (
         </table>
 
         <h3>GossipSub Topic Map</h3>
-        <p>Each schema type gets its own GossipSub topic. Nodes subscribe to the topics they care about:</p>
-        <pre><code>/spacedatanetwork/sds/PNM.fbs     ← Publish notifications
-/spacedatanetwork/sds/PLOG.fbs    ← Publication log entries
-/spacedatanetwork/sds/PLHD.fbs    ← Log head announcements
-/spacedatanetwork/sds/OMM.fbs     ← Orbital mean elements
-/spacedatanetwork/sds/CDM.fbs     ← Conjunction data
-/spacedatanetwork/sds/EPM.fbs     ← Entity profiles
-... (one topic per registered schema, 160+ in total)
+        <p>Each Space Data Standards record code gets its own GossipSub topic. Nodes subscribe to the topics they care about:</p>
+        <pre><code>/spacedatanetwork/sds/PNM     &larr; Publish notifications
+/spacedatanetwork/sds/PLOG    &larr; Publication log entries
+/spacedatanetwork/sds/PLHD    &larr; Log head announcements
+/spacedatanetwork/sds/OMM     &larr; Orbital mean elements
+/spacedatanetwork/sds/CDM     &larr; Conjunction data
+/spacedatanetwork/sds/EPM     &larr; Entity profiles
+... (one topic per registered record code)
 /spacedatanetwork/edge-relays     ← Edge relay announcements
 /sdn/storefront/listings          ← Marketplace listings
 /sdn/data/{listing}/{buyer}       ← Encrypted delivery channels</code></pre>
@@ -2927,7 +2927,7 @@ Entry fields:
         <h3>Subscription Configuration</h3>
         <pre><code>// JavaScript — create a filtered subscription
 const sub = subscriptionManager.createSubscription({
-  dataTypes: ['CDM.fbs', 'OMM.fbs'],  // Which schemas
+  dataTypes: ['CDM', 'OMM'],          // Which SDS record codes
   sourcePeers: ['all'],                 // From any peer (or specific IDs)
   encrypted: false,                     // Plaintext or encrypted
   streaming: true,                      // Real-time delivery
@@ -2945,7 +2945,7 @@ const sub = subscriptionManager.createSubscription({
         <table>
           <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
           <tbody>
-            <tr><td>SchemaType</td><td>string</td><td>Data schema (e.g., "CDM.fbs")</td></tr>
+            <tr><td>standardCode</td><td>string</td><td>Space Data Standards record code (e.g., "CDM")</td></tr>
             <tr><td>DestinationPeers</td><td>string[]</td><td>Target peer IDs</td></tr>
             <tr><td>Priority</td><td>enum</td><td>Low / Normal / High / Critical</td></tr>
             <tr><td>Encrypted</td><td>bool</td><td>Is payload encrypted?</td></tr>
@@ -3129,12 +3129,12 @@ const node = await SDNNode.create({
 });
 
 // Subscribe to conjunction warnings
-await node.subscribe('CDM.fbs', (data, peerId) => {
+await node.subscribe('CDM', (data, peerId) => {
   console.log('Conjunction alert from', peerId);
 });
 
 // Publish orbital data
-await node.publish('OMM.fbs', flatBufferBytes);
+await node.publish('OMM', flatBufferBytes);
 
 // Query remote server via REST
 import { SDNClient } from '@spacedatanetwork/sdn-js';

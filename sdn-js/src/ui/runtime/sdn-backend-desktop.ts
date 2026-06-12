@@ -47,6 +47,7 @@ import {
   resolveFetch,
   type BackendDeps,
 } from './sdn-backend-adapter-utils';
+import { createHttpChannelBackend } from './channel-backend';
 import { decodeEpmFlatBuffer } from './epm-flatbuffer';
 import { normalizeHostedEpmRecord, type HostedEpmRecord } from './identity';
 
@@ -92,6 +93,7 @@ export function createDesktopLocalBackend(options: DesktopLocalBackendOptions = 
 
   return {
     mode: 'desktop-local',
+    channels: createHttpChannelBackend(fetchLike, desktopBase),
     connect: getNodeSummary,
     async getCapabilities(): Promise<BackendCapability[]> {
       return [

@@ -106,6 +106,82 @@ export interface LogHeadsResponse {
   heads: LogHeadInfo[];
 }
 
+export interface ChannelAccessOptions {
+  subject?: string;
+  grantId?: string;
+  visibility?: string;
+  encryptedStreamHeader?: string;
+  encryptedRecordIndex?: number | string;
+}
+
+export interface ChannelListOptions extends ChannelAccessOptions {
+  standardCode?: string;
+}
+
+export interface ChannelSummary {
+  channelId: string;
+  sourceId?: string;
+  standardCode: string;
+  feedUuid?: string | null;
+  visibility?: string;
+  subscribed?: boolean;
+  pnmVerified?: boolean;
+  dpmVerified?: boolean;
+  grantState?: string;
+  encryptionState?: string;
+  [key: string]: unknown;
+}
+
+export interface ChannelMonitor extends ChannelSummary {
+  channelHead?: string;
+  providerPeer?: string;
+  localRows?: number;
+  remoteRows?: number;
+  syncedRows?: number;
+  missingRows?: number;
+  pinnedCount?: number;
+  pinnedRows?: number;
+  pinnedBytes?: number;
+  syncedBytes?: number;
+  throughputBytesPerSecond?: number;
+  wireSpeedUtilization?: number | null;
+  timingsMs?: ChannelMonitorTimings;
+  lastVerifiedUpdate?: string;
+}
+
+export interface ChannelMonitorTimings {
+  discovery?: number;
+  grantNegotiation?: number;
+  pnmDpmVerification?: number;
+  transfer?: number;
+  decrypt?: number;
+  hashVerification?: number;
+  durableImport?: number;
+}
+
+export type ChannelActionResponse = Record<string, unknown>;
+export type ChannelGrantRequest = Record<string, unknown>;
+
+export interface ChannelKeyEnvelopeRequest {
+  recipientKeyId: string;
+  contentKeyId?: string;
+}
+
+export interface ChannelKeyEnvelopeResponse {
+  channelId: string;
+  sourceId?: string;
+  standardCode: string;
+  feedUuid?: string | null;
+  grantState?: string;
+  contentKeyId: string;
+  recipientKeyId: string;
+  keyEpoch?: string;
+  algorithm?: string;
+  envelopeCid?: string;
+  wrappedKeyEnvelopeBase64?: string;
+  [key: string]: unknown;
+}
+
 /** HTTP transport for SDN server APIs. */
 export class HttpTransport {
   private baseUrl: string;
@@ -225,6 +301,91 @@ export class HttpTransport {
     return resp.json();
   }
 
+  async listChannels(options: ChannelListOptions = {}): Promise<ChannelSummary[]> {
+    const query = new URLSearchParams();
+    if (options.standardCode) query.set('standardCode', options.standardCode);
+    appendChannelAccessQuery(query, options);
+    const suffix = query.size > 0 ? `?${query.toString()}` : '';
+    const resp = await this.fetch(`/api/v1/channels${suffix}`);
+    const payload = await resp.json();
+    return channelRowsFromPayload(payload);
+  }
+
+  async getChannel(channelId: string, options?: ChannelAccessOptions): Promise<ChannelSummary> {
+    const query = new URLSearchParams();
+    appendChannelActionAccessQuery(query, options);
+    const suffix = query.size > 0 ? `?${query.toString()}` : '';
+    const resp = await this.fetch(`/api/v1/channels/${encodeURIComponent(channelId)}${suffix}`);
+    return resp.json();
+  }
+
+  async subscribeChannel(channelId: string, options?: ChannelAccessOptions): Promise<ChannelActionResponse> {
+    return this.postChannelAction(channelId, 'subscribe', options);
+  }
+
+  async unsubscribeChannel(channelId: string, options?: ChannelAccessOptions): Promise<ChannelActionResponse> {
+    return this.postChannelAction(channelId, 'unsubscribe', options);
+  }
+
+  async publishChannelStream(channelId: string, stream: Uint8Array, options?: ChannelAccessOptions): Promise<ChannelActionResponse> {
+    const resp = await this.fetch(channelActionPath(channelId, 'publish', options), {
+      method: 'POST',
+      headers: channelStreamPublishHeaders(options),
+      body: stream.buffer.slice(stream.byteOffset, stream.byteOffset + stream.byteLength) as ArrayBuffer,
+    });
+    return resp.json();
+  }
+
+  async issueChannelGrant(channelId: string, grant: ChannelGrantRequest, options?: ChannelAccessOptions): Promise<ChannelActionResponse> {
+    const resp = await this.fetch(channelActionPath(channelId, 'grants', options), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(grant),
+    });
+    return resp.json();
+  }
+
+  async requestChannelKeyEnvelope(
+    channelId: string,
+    request: ChannelKeyEnvelopeRequest,
+    options?: ChannelAccessOptions,
+  ): Promise<ChannelKeyEnvelopeResponse> {
+    const resp = await this.fetch(channelActionPath(channelId, 'key-unwrap', options), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recipientKeyId: request.recipientKeyId,
+        ...(request.contentKeyId ? { contentKeyId: request.contentKeyId } : {}),
+      }),
+    });
+    return resp.json();
+  }
+
+  async openChannelStream(channelId: string, options?: ChannelAccessOptions): Promise<Uint8Array> {
+    const resp = await this.fetch(channelActionPath(channelId, 'stream', options), {
+      headers: { Accept: 'application/vnd.sdn.flatbuffers.stream' },
+    });
+    return new Uint8Array(await resp.arrayBuffer());
+  }
+
+  async openChannelModuleFeed(channelId: string, options?: ChannelAccessOptions): Promise<Uint8Array> {
+    const resp = await this.fetch(channelActionPath(channelId, 'module-feed', options), {
+      method: 'POST',
+      headers: { Accept: 'application/vnd.sdn.flatbuffers.stream' },
+    });
+    return new Uint8Array(await resp.arrayBuffer());
+  }
+
+  async monitorChannel(channelId: string, options?: ChannelAccessOptions): Promise<ChannelMonitor> {
+    const resp = await this.fetch(channelActionPath(channelId, 'monitor', options));
+    return resp.json();
+  }
+
+  private async postChannelAction(channelId: string, action: string, options?: ChannelAccessOptions): Promise<ChannelActionResponse> {
+    const resp = await this.fetch(channelActionPath(channelId, action, options), { method: 'POST' });
+    return resp.json();
+  }
+
   /** Internal fetch with auth headers. */
   private async fetch(path: string, init?: RequestInit): Promise<Response> {
     const url = this.baseUrl + path;
@@ -251,6 +412,56 @@ export class HttpTransport {
 
     return resp;
   }
+}
+
+function channelActionPath(channelId: string, action: string, options?: ChannelAccessOptions): string {
+  const query = new URLSearchParams();
+  appendChannelActionAccessQuery(query, options);
+  const suffix = query.size > 0 ? `?${query.toString()}` : '';
+  return `/api/v1/channels/${encodeURIComponent(channelId)}/${action}${suffix}`;
+}
+
+function appendChannelAccessQuery(query: URLSearchParams, options?: ChannelAccessOptions): void {
+  if (options?.visibility) query.set('visibility', options.visibility);
+  if (options?.subject) query.set('subject', options.subject);
+  if (options?.grantId) query.set('grantId', options.grantId);
+}
+
+function appendChannelActionAccessQuery(query: URLSearchParams, options?: ChannelAccessOptions): void {
+  if (options?.subject) query.set('subject', options.subject);
+  if (options?.grantId) query.set('grantId', options.grantId);
+  if (options?.visibility) query.set('visibility', options.visibility);
+}
+
+function channelStreamPublishHeaders(options?: ChannelAccessOptions): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/vnd.sdn.flatbuffers.stream',
+  };
+  if (isPrivateChannelVisibility(options?.visibility)) {
+    headers['X-SDN-Encrypted-Stream'] = 'true';
+    if (options?.encryptedStreamHeader?.trim()) {
+      headers['X-SDN-Encrypted-Stream-Header'] = options.encryptedStreamHeader;
+    }
+    if (options?.encryptedRecordIndex !== undefined && options.encryptedRecordIndex !== null && String(options.encryptedRecordIndex).trim()) {
+      headers['X-SDN-Encrypted-Record-Index'] = String(options.encryptedRecordIndex).trim();
+    }
+  }
+  return headers;
+}
+
+function isPrivateChannelVisibility(visibility: string | undefined): boolean {
+  const value = visibility?.trim().toLowerCase() ?? '';
+  return value === 'private' || value.startsWith('private-');
+}
+
+function channelRowsFromPayload(payload: unknown): ChannelSummary[] {
+  if (Array.isArray(payload)) return payload.filter(isRecord) as ChannelSummary[];
+  if (isRecord(payload) && Array.isArray(payload.results)) return payload.results.filter(isRecord) as ChannelSummary[];
+  return [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** Error thrown by HttpTransport on non-2xx responses. */

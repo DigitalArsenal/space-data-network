@@ -15,7 +15,7 @@ published at `@spacedatanetwork/sdn-js/storefront`.
 ## Quick Start
 
 ```typescript
-import { SDNNode, identityFromMnemonic, generateMnemonic } from '@spacedatanetwork/sdn-js';
+import { SDNClient, SDNNode, identityFromMnemonic, generateMnemonic } from '@spacedatanetwork/sdn-js';
 
 // Generate an HD wallet identity
 const mnemonic = await generateMnemonic();
@@ -30,20 +30,15 @@ const node = await SDNNode.create({
 console.log('Peer ID:', node.peerId);
 console.log('Connected peers:', node.peers);
 
-// Subscribe to orbit data
-await node.subscribe('OMM.fbs', (data, from) => {
-  console.log(`Received OMM from ${from}:`, data);
-});
+// Discover, subscribe, monitor, and publish native channel streams
+const client = SDNClient.fromUrl('https://spaceaware.io');
+const [channel] = await client.channels.list({ standardCode: 'OMM' });
+await client.channels.subscribe(channel.channelId);
+const monitor = await client.channels.monitor(channel.channelId);
+console.log('OMM channel sync:', monitor);
 
-// Publish orbit data
-await node.publish('OMM.fbs', {
-  OBJECT_NAME: 'ISS (ZARYA)',
-  NORAD_CAT_ID: 25544,
-  EPOCH: '2024-01-15T12:00:00Z',
-  MEAN_MOTION: 15.5,
-  ECCENTRICITY: 0.0001,
-  INCLINATION: 51.6,
-});
+const flatbufferStreamBytes = new Uint8Array(); // native size-prefixed FlatBuffers stream
+await client.channels.publish('spaceaware-OMM', flatbufferStreamBytes);
 
 // Clean up
 await node.stop();
