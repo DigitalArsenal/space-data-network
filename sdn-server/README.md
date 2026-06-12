@@ -47,7 +47,7 @@ tor:
   enabled: false
 ```
 
-## Ingestion Workers (CelesTrak + Space-Track)
+## Ingestion Workers (CelesTrak + Space-Track + UDL)
 
 Run a one-time sync:
 
@@ -84,6 +84,54 @@ Default source behavior:
 - CelesTrak refresh minimum: 3 hours per endpoint (cached under `<raw-path>/cache`)
 - Ingest stores both `OMM.fbs` and `MPE.fbs`; use `MPE` endpoints for orbit bulk consumers.
 
+### Unified Data Library (UDL)
+
+The `udl` source pulls the USSF Unified Data Library REST API
+(`https://unifieddatalibrary.com`) with basic-auth credentials and the same
+checkpointed, epoch-windowed batching used for Space-Track gap-fill:
+
+```bash
+export UDL_USERNAME="your-username"
+export UDL_PASSWORD="your-password"
+./spacedatanetwork ingest \
+  --storage-path /opt/data/sdn \
+  --raw-path /opt/data/raw \
+  --udl-enabled true \
+  --udl-start-day 2026-01-01 \
+  --udl-batch-days 3 \
+  --udl-batch-sleep 3s \
+  --udl-poll-interval 30m \
+  --udl-max-results 10000
+```
+
+Feeds and schema mappings:
+
+- `/udl/elset` -> `OMM.fbs` (parser `udl-elset/v1`, source tags `udl / udl-elset`).
+  If `MEAN_MOTION` is absent it is derived from `SEMI_MAJOR_AXIS`.
+- `/udl/sgi` -> `SPW.fbs` (parser `udl-sgi/v1`, source tags `udl / udl-sgi`).
+  `SGI_DATE -> DATE`, `F10 -> F107_OBS`, `F10B -> F107_OBS_CENTER81`,
+  `AP -> AP_AVG`, `KP -> KP_SUM` (tenths).
+- `/udl/conjunction` is not ingested: no CDM builder exists yet.
+
+UDL behavior notes:
+
+- Credentials: `--udl-username`/`--udl-password` flags or `UDL_USERNAME`/
+  `UDL_PASSWORD` environment variables (same pattern as Space-Track). When
+  credentials are missing the UDL worker logs a warning and skips.
+- Incremental pulls are day-batched epoch windows (`epoch=start..end`,
+  `sgiDate=start..end`) with `maxResults`/`firstResult` paging and a polite
+  sleep between pages and batches.
+- Checkpoints `udl_elset_last_day` and `udl_sgi_last_day` are persisted in
+  `ingest-checkpoints.json`; raw page payloads are archived under
+  `<raw-path>/udl/<day>/`.
+- `CLASSIFICATION_MARKING` values cannot be written into the OMM
+  `CLASSIFICATION_TYPE` field (the shared OMM builder exposes no
+  classification setter), so per-batch marking counts are preserved in the
+  ingest provenance JSON (`classification_markings`) under
+  `<raw-path>/provenance/udl-elset/` and `<raw-path>/provenance/udl-sgi/`.
+- Records missing a NORAD catalog ID or with malformed epochs are skipped and
+  reported in provenance warnings instead of aborting the batch.
+
 Production (systemd) credential location:
 
 ```bash
@@ -94,6 +142,8 @@ Production (systemd) credential location:
 [Service]
 Environment=SPACETRACK_IDENTITY=your-identity
 Environment=SPACETRACK_PASSWORD=your-password
+Environment=UDL_USERNAME=your-username
+Environment=UDL_PASSWORD=your-password
 ```
 
 Apply changes:

@@ -1,0 +1,42 @@
+[
+  {
+    "CLASSIFICATION_MARKING": "U",
+    "NORAD_CAT_ID": 25544,
+    "OBJECT_NAME": "ISS (ZARYA)",
+    "OBJECT_ID": "1998-067A",
+    "EPOCH": "2026-06-01T12:00:00.000000Z",
+    "SEMI_MAJOR_AXIS": 6796.0,
+    "ECCENTRICITY": 0.0004567,
+    "INCLINATION": 51.6405,
+    "RA_OF_ASC_NODE": 247.4627,
+    "ARG_OF_PERICENTER": 130.536,
+    "MEAN_ANOMALY": 325.0288,
+    "MEAN_MOTION": 15.4951
+  },
+  {
+    "classificationMarking": "U//FOUO",
+    "satNo": 40909,
+    "idOnOrbit": "2015-049A",
+    "epoch": "2026-06-01T13:30:00.000000Z",
+    "semiMajorAxis": 6798.0,
+    "eccentricity": 0.0001234,
+    "inclination": 97.45,
+    "raan": 200.1,
+    "argOfPerigee": 90.5,
+    "meanAnomaly": 10.25
+  },
+  {
+    "CLASSIFICATION_MARKING": "U",
+    "NORAD_CAT_ID": 43013,
+    "OBJECT_NAME": "TEST-SAT-3",
+    "OBJECT_ID": "2017-073A",
+    "EPOCH": "2026-06-01T18:45:00.000000Z",
+    "SEMI_MAJOR_AXIS": 7080.6,
+    "ECCENTRICITY": 0.0011,
+    "INCLINATION": 98.7,
+    "RA_OF_ASC_NODE": 110.2,
+    "ARG_OF_PERICENTER": 75.3,
+    "MEAN_ANOMALY": 284.9,
+    "MEAN_MOTION": 14.5612
+  }
+]
