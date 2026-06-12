@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spacedatanetwork/sdn-server/internal/abac"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/logservice"
@@ -72,12 +73,13 @@ type TipPublisher interface {
 
 // PublishHandler accepts data writes from authenticated peers.
 type PublishHandler struct {
-	store       *storage.FlatSQLStore
-	validator   *sds.Validator
-	quotas      *StorageQuotaManager
-	cfg         *config.PublishingConfig
-	authHandler *auth.Handler
-	logService  *logservice.Service
+	store        *storage.FlatSQLStore
+	validator    *sds.Validator
+	quotas       *StorageQuotaManager
+	cfg          *config.PublishingConfig
+	authHandler  *auth.Handler
+	logService   *logservice.Service
+	policyEngine auth.PolicyEngine // optional; nil = policies disabled
 }
 
 // NewPublishHandler creates a new publish handler.
@@ -95,6 +97,13 @@ func NewPublishHandler(
 		cfg:         cfg,
 		authHandler: authHandler,
 	}
+}
+
+// SetPolicyEngine attaches an ABAC policy engine.  When set, every publish
+// request is evaluated against the policy after the trust-level gate.
+// Pass nil to disable (default).
+func (h *PublishHandler) SetPolicyEngine(engine auth.PolicyEngine) {
+	h.policyEngine = engine
 }
 
 // SetLogService sets the publication log service for PLG entry creation.
@@ -150,6 +159,21 @@ func (h *PublishHandler) handlePublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	peerID := session.XPub // use xpub as peer identifier for published records
+
+	// ABAC policy check — runs after trust gate (defence in depth).
+	if h.policyEngine != nil {
+		sub := abac.Subject{
+			XPub:       session.XPub,
+			TrustLevel: int(session.TrustLevel),
+			Attrs:      map[string]string{},
+		}
+		res := abac.Resource{Schema: schema}
+		decision := h.policyEngine.Evaluate(sub, abac.ActionPublish, res)
+		if !decision.Allowed {
+			writeError(w, http.StatusForbidden, "access denied by policy: "+decision.Reason)
+			return
+		}
+	}
 
 	// Read body with size limit
 	maxBytes := int64(h.cfg.MaxRecordBytes)
@@ -242,6 +266,21 @@ func (h *PublishHandler) handlePublishBatch(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	peerID := session.XPub
+
+	// ABAC policy check — runs after trust gate (defence in depth).
+	if h.policyEngine != nil {
+		sub := abac.Subject{
+			XPub:       session.XPub,
+			TrustLevel: int(session.TrustLevel),
+			Attrs:      map[string]string{},
+		}
+		res := abac.Resource{Schema: schema}
+		decision := h.policyEngine.Evaluate(sub, abac.ActionPublish, res)
+		if !decision.Allowed {
+			writeError(w, http.StatusForbidden, "access denied by policy: "+decision.Reason)
+			return
+		}
+	}
 
 	// Read native FlatSQL little-endian uint32 size-prefixed stream.
 	// Total body limit: 10x single record max.
