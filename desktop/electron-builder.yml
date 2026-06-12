@@ -46,7 +46,7 @@ dmg:
 win:
   target:
     - nsis
-    # TODO - portable
+    - portable
   azureSignOptions:
     # multiple publisher names for auto-update compatibility across certificate changes.
     # electron-updater accepts updates if ANY name matches the certificate's CN field.
