@@ -1927,126 +1927,365 @@ Verifiers can confirm:
       <!-- API Reference -->
       <section id="api-rest" class="doc-section">
         <h2>REST API</h2>
-        <p>The HTTP API is available on the configured API port (default: 8080).</p>
+        <p>The HTTP API is served on the configured admin port (default <code>127.0.0.1:5001</code>). All
+        paths below are absolute. Pre-existing data endpoints remain at their original paths; the new
+        core-info, peer-management, and pubsub endpoints are under <code>/api/v1/</code>.</p>
 
-        <h3>Base URL</h3>
-        <pre><code>http://localhost:8080/api/v1</code></pre>
+        <h3>Pre-existing endpoints</h3>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td><code>/api/node/info</code></td><td>public</td><td>Full node identity (EPM JSON + runtime metadata)</td></tr>
+            <tr><td>GET</td><td><code>/api/peers</code></td><td>public</td><td>Trusted-peer registry listing (admin UI backend)</td></tr>
+            <tr><td>GET / POST / PUT / DELETE</td><td><code>/api/peers/{peerId}</code></td><td>varies</td><td>Trusted-peer registry CRUD</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/catalog</code></td><td>public</td><td>Registered SDS schema catalog</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/data/health</code></td><td>public</td><td>Data API health check</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/data/omm</code>, <code>/api/v1/data/omm/bulk</code></td><td>public</td><td>Orbital Mean-Motion records</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/data/mpe</code>, <code>/api/v1/data/mpe/bulk</code></td><td>public</td><td>Mean-Perigee Ephemeris records</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/data/cat</code>, <code>/api/v1/data/cat/bulk</code></td><td>public</td><td>Satellite catalog records</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/data/spw/bulk</code></td><td>public</td><td>Space-weather records</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/data/secure/omm</code></td><td>public</td><td>Authenticated OMM stream</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/data/summary</code></td><td>auth</td><td>Record counts by schema and source</td></tr>
+            <tr><td>POST</td><td><code>/api/v1/data/query</code></td><td>auth</td><td>Raw FlatBuffer query</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/data/records/{schema}/{cid}</code></td><td>auth</td><td>Single record by CID</td></tr>
+            <tr><td>POST</td><td><code>/api/v1/data/publish/{schema}</code></td><td>auth (standard trust)</td><td>Publish SDS-validated FlatBuffer data</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/log/{schema}</code></td><td>public</td><td>Publication log (PLG) entries</td></tr>
+            <tr><td>various</td><td><code>/api/v1/admin/*</code></td><td>auth (admin trust)</td><td>Admin-only operations</td></tr>
+          </tbody>
+        </table>
 
-        <h3>Node Information</h3>
-        <pre><code>GET /id         # Get node identity
-GET /version    # Get software version
-GET /stats      # Get node statistics</code></pre>
+        <h3>Node information &mdash; <code>/api/v1/</code></h3>
+        <pre><code>GET /api/v1/id        # Node identity: peer_id, listen_addresses, version fields  (public)
+GET /api/v1/version   # Software versions: agent_version, suite_version, standards_version  (public)
+GET /api/v1/stats     # Runtime stats: connected_peers, total_records, total_bytes, schemas  (public)</code></pre>
 
-        <h3>Peers</h3>
-        <pre><code>GET    /peers              # List connected peers
-GET    /peers/{peerId}     # Get specific peer info
-POST   /peers/connect      # Connect to a peer
-DELETE /peers/{peerId}     # Disconnect from a peer</code></pre>
+        <p>Example <code>GET /api/v1/id</code> response:</p>
+        <pre><code>{
+  "peer_id": "12D3KooW...",
+  "listen_addresses": ["/ip4/0.0.0.0/tcp/4001"],
+  "agent_version": "spacedatanetwork/1.0.3",
+  "suite_version": "1.0.3",
+  "standards_version": "1.100.0"
+}</code></pre>
 
-        <h3>PubSub</h3>
-        <pre><code>GET    /pubsub/topics              # List subscribed topics
-POST   /pubsub/subscribe           # Subscribe to a topic
-DELETE /pubsub/subscribe/{topic}   # Unsubscribe
-POST   /pubsub/publish             # Publish a message
-GET    /pubsub/messages            # Get recent messages</code></pre>
+        <h3>Peer management &mdash; <code>/api/v1/peers/</code></h3>
+        <p>These endpoints operate on the <em>libp2p network layer</em> (connected peers), which is
+        separate from the trusted-peer registry at <code>/api/peers</code>.</p>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td><code>/api/v1/peers</code></td><td>public</td><td>List currently connected libp2p peers</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/peers/{peerId}</code></td><td>public</td><td>Info for a connected peer (peer_id, addrs)</td></tr>
+            <tr><td>POST</td><td><code>/api/v1/peers/connect</code></td><td>admin</td><td>Connect to a peer by multiaddr. Body: <code>{"addr":"/ip4/..."}</code></td></tr>
+            <tr><td>DELETE</td><td><code>/api/v1/peers/{peerId}</code></td><td>admin</td><td>Disconnect a peer from this node</td></tr>
+          </tbody>
+        </table>
 
-        <h3>Content</h3>
-        <pre><code>GET    /content/{cid}      # Retrieve content by CID
-POST   /content            # Add content to local storage
-GET    /content/{cid}/pin  # Check if content is pinned
-POST   /content/{cid}/pin  # Pin content locally
-DELETE /content/{cid}/pin  # Unpin content
-GET    /pins               # List all pinned CIDs</code></pre>
-
-        <h3>DHT</h3>
-        <pre><code>GET  /dht/providers/{cid}   # Find providers for a CID
-POST /dht/provide/{cid}     # Announce this node provides a CID
-GET  /dht/findpeer/{peerId} # Find addresses for a peer</code></pre>
+        <h3>PubSub &mdash; <code>/api/v1/pubsub/</code></h3>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td><code>/api/v1/pubsub/topics</code></td><td>public</td><td>List currently joined GossipSub topics</td></tr>
+            <tr>
+              <td>POST</td>
+              <td><code>/api/v1/pubsub/publish</code></td>
+              <td>auth (standard trust)</td>
+              <td>
+                Publish SDS-validated data to a GossipSub topic. Body:
+                <code>{"schema":"OMM.fbs","data":"&lt;base64&gt;"}</code>.
+                Data is validated against the schema before publication; invalid data is rejected.
+                Published to libp2p topic <code>/sdn/data/{schema}</code>.
+              </td>
+            </tr>
+            <tr>
+              <td>GET</td>
+              <td><code>/api/v1/pubsub/messages?schema=OMM.fbs&amp;limit=50</code></td>
+              <td>public</td>
+              <td>
+                Return up to <code>limit</code> (max&nbsp;1000, default&nbsp;50) stored records for
+                the given schema from the local FlatSQL store. Records are base64-encoded FlatBuffer
+                bytes. Note: this reflects <em>stored</em> data, not a live message stream; use the
+                WebSocket API for real-time delivery.
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </section>
 
       <section id="api-websocket" class="doc-section">
         <h2>WebSocket API</h2>
+        <p>A JSON WebSocket bridge is available at <code>/ws</code> on the admin port. It provides
+        real-time subscribe/publish over the same GossipSub layer used by libp2p peers.</p>
 
         <h3>Connect</h3>
-        <pre><code>ws://localhost:8080/ws</code></pre>
+        <pre><code>ws://127.0.0.1:5001/ws</code></pre>
 
-        <h3>Subscribe</h3>
+        <h3>Client &rarr; Server: subscribe</h3>
         <pre><code>{
   "type": "subscribe",
-  "topic": "OMM"
+  "schema": "OMM.fbs"
+}</code></pre>
+        <p>Server responds with <code>{"type":"subscribed","schema":"OMM.fbs"}</code>. The
+        connection will then receive <code>message</code> frames whenever data for that schema is
+        published (locally or via libp2p).</p>
+
+        <h3>Client &rarr; Server: unsubscribe</h3>
+        <pre><code>{
+  "type": "unsubscribe",
+  "schema": "OMM.fbs"
 }</code></pre>
 
-        <h3>Publish</h3>
+        <h3>Client &rarr; Server: publish</h3>
         <pre><code>{
   "type": "publish",
-  "topic": "OMM",
-  "data": { ... }
+  "schema": "OMM.fbs",
+  "data": "&lt;base64-encoded FlatBuffer bytes&gt;"
 }</code></pre>
+        <p>Data is validated against the named SDS schema before publication. Invalid data returns an
+        error frame. On success the message is broadcast to local subscribers and forwarded to the
+        libp2p topic <code>/sdn/data/{schema}</code>.</p>
 
-        <h3>Receive Message</h3>
+        <h3>Server &rarr; Client: message</h3>
         <pre><code>{
   "type": "message",
-  "topic": "OMM",
-  "cid": "bafy...",
-  "from": "Qm...",
-  "timestamp": "2025-01-24T12:00:00Z",
-  "data": { ... }
+  "schema": "OMM.fbs",
+  "data": "&lt;base64-encoded FlatBuffer bytes&gt;",
+  "from": "12D3KooW...",
+  "ts": "2025-01-24T12:00:00Z"
+}</code></pre>
+
+        <h3>Server &rarr; Client: error</h3>
+        <pre><code>{
+  "type": "error",
+  "error": "validation failed: ..."
 }</code></pre>
       </section>
 
       <section id="api-errors" class="doc-section">
         <h2>Error Handling</h2>
 
-        <p>All errors return JSON:</p>
+        <p>Errors from the <code>/api/v1/id</code>, <code>/api/v1/version</code>,
+        <code>/api/v1/stats</code>, <code>/api/v1/peers/</code>, and <code>/api/v1/pubsub/</code>
+        endpoints use this envelope:</p>
         <pre><code>{
   "error": {
     "code": "INVALID_REQUEST",
-    "message": "Missing required field: topic",
-    "details": { }
+    "message": "schema query parameter is required"
   }
 }</code></pre>
+
+        <p>Pre-existing data endpoints (<code>/api/v1/data/*</code>) use a simpler envelope
+        <code>{"error":{"message":"..."}}</code> without a code field &mdash; this is intentional
+        for backwards compatibility.</p>
 
         <table>
           <thead>
             <tr><th>Code</th><th>HTTP Status</th><th>Description</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>INVALID_REQUEST</code></td><td>400</td><td>Malformed request</td></tr>
-            <tr><td><code>UNAUTHORIZED</code></td><td>401</td><td>Missing/invalid auth</td></tr>
-            <tr><td><code>FORBIDDEN</code></td><td>403</td><td>Insufficient permissions</td></tr>
-            <tr><td><code>NOT_FOUND</code></td><td>404</td><td>Resource not found</td></tr>
-            <tr><td><code>VALIDATION_ERROR</code></td><td>422</td><td>Schema validation failed</td></tr>
-            <tr><td><code>RATE_LIMITED</code></td><td>429</td><td>Too many requests</td></tr>
-            <tr><td><code>INTERNAL_ERROR</code></td><td>500</td><td>Server error</td></tr>
+            <tr><td><code>INVALID_REQUEST</code></td><td>400</td><td>Malformed request or missing required field</td></tr>
+            <tr><td><code>INVALID_SCHEMA</code></td><td>400</td><td>Schema name failed validation</td></tr>
+            <tr><td><code>METHOD_NOT_ALLOWED</code></td><td>405</td><td>HTTP method not permitted on this endpoint</td></tr>
+            <tr><td><code>VALIDATION_ERROR</code></td><td>422</td><td>SDS schema validation failed for submitted data</td></tr>
+            <tr><td><code>RATE_LIMITED</code></td><td>429</td><td>Rate limit exceeded (see headers below)</td></tr>
+            <tr><td><code>QUERY_FAILED</code></td><td>500</td><td>Internal storage query error</td></tr>
+            <tr><td><code>INTERNAL_ERROR</code></td><td>500</td><td>Unspecified server error</td></tr>
           </tbody>
         </table>
 
+        <p>Auth rejections from the existing middleware return <code>{"code":"unauthorized"}</code>
+        (401) or <code>{"code":"forbidden"}</code> (403) — these originate from
+        <code>internal/auth/middleware.go</code> and are not part of the new error envelope.</p>
+
         <h3>Rate Limiting</h3>
-        <p>Default limits: 100 requests/minute for reads, 10 requests/minute for writes.</p>
+        <p>The <code>/api/v1/id</code>, <code>/api/v1/version</code>, <code>/api/v1/stats</code>,
+        <code>/api/v1/peers</code>, <code>/api/v1/pubsub/topics</code>,
+        <code>/api/v1/pubsub/messages</code>, and <code>/api/v1/pubsub/publish</code> endpoints are
+        rate-limited per client IP: 100 requests/minute for read methods (GET), 10 requests/minute
+        for write methods (POST, PUT, PATCH, DELETE).</p>
         <pre><code>X-RateLimit-Limit: 100
 X-RateLimit-Remaining: 95
-X-RateLimit-Reset: 1706097600</code></pre>
+X-RateLimit-Reset: 1706097660   # Unix timestamp when the bucket refills</code></pre>
+        <p>When the limit is exceeded the server responds with HTTP 429 and the
+        <code>RATE_LIMITED</code> error body. The <code>X-RateLimit-Reset</code> header tells the
+        client when to retry.</p>
       </section>
 
       <!-- Schemas -->
       <section id="schemas-overview" class="doc-section">
         <h2>Schema Reference</h2>
-        <p>SDN supports all Space Data Standards (SDS) schemas. All data on the network must conform to these schemas.</p>
+        <p>SDN registers every <a href="https://spacedatastandards.org">Space Data Standards</a> (SDS) schema — 160+ standards — plus the SDN-internal schemas (PGR, PLHD, PLOG, RHD). All data on the network must conform to these schemas. The full registered list:</p>
 
         <table>
           <thead>
-            <tr><th>Category</th><th>Schemas</th><th>Purpose</th></tr>
+            <tr><th>Schema</th><th>Description</th></tr>
           </thead>
           <tbody>
-            <tr><td><strong>Orbit</strong></td><td>OMM, OEM, OCM, OSM</td><td>Orbital elements and ephemeris</td></tr>
-            <tr><td><strong>Conjunction</strong></td><td>CDM, CSM</td><td>Close approach and collision data</td></tr>
-            <tr><td><strong>Tracking</strong></td><td>TDM, RFM</td><td>Observation and measurement data</td></tr>
-            <tr><td><strong>Catalog</strong></td><td>CAT, SIT</td><td>Object catalogs and identification</td></tr>
-            <tr><td><strong>Entity</strong></td><td>EPM, PNM</td><td>Organization and personnel info</td></tr>
-            <tr><td><strong>Maneuver</strong></td><td>MET, MPE</td><td>Maneuver planning and execution</td></tr>
-            <tr><td><strong>Propagation</strong></td><td>HYP, EME, EOO, EOP</td><td>Propagation parameters</td></tr>
-            <tr><td><strong>Reference</strong></td><td>LCC, LDM, CRM, CTR</td><td>Launch and reference data</td></tr>
-            <tr><td><strong>Other</strong></td><td>ATM, BOV, IDM, PLD, PRG, REC, ROC, SCM, TIM, VCM</td><td>Specialized data types</td></tr>
+            <tr><td><code>ACL</code></td><td>Access Control List - Data access grants for marketplace purchases</td></tr>
+            <tr><td><code>ACM</code></td><td>Attitude Comprehensive Message</td></tr>
+            <tr><td><code>ACR</code></td><td>Aircraft Dynamics</td></tr>
+            <tr><td><code>AEM</code></td><td>Attitude Ephemeris Message</td></tr>
+            <tr><td><code>ANI</code></td><td>Analytic Imagery Product</td></tr>
+            <tr><td><code>AOF</code></td><td>AOS Transfer Frame (CCSDS 732.0-B-3)</td></tr>
+            <tr><td><code>APM</code></td><td>Attitude Parameter Message</td></tr>
+            <tr><td><code>ARM</code></td><td>Armor and Protection</td></tr>
+            <tr><td><code>AST</code></td><td>Astrodynamics</td></tr>
+            <tr><td><code>ATD</code></td><td>Attitude Data Point</td></tr>
+            <tr><td><code>ATM</code></td><td>Attitude Message - Spacecraft attitude information</td></tr>
+            <tr><td><code>BAL</code></td><td>Ballistics</td></tr>
+            <tr><td><code>BEM</code></td><td>Antenna Beam</td></tr>
+            <tr><td><code>BMC</code></td><td>Beam Contour</td></tr>
+            <tr><td><code>BOV</code></td><td>Body Orientation and Velocity - Attitude and angular velocity</td></tr>
+            <tr><td><code>BUS</code></td><td>Satellite Bus Specification</td></tr>
+            <tr><td><code>CAQ</code></td><td>Catalog Query - Catalog query envelope</td></tr>
+            <tr><td><code>CAT</code></td><td>Catalog - Space object catalog entries</td></tr>
+            <tr><td><code>CDM</code></td><td>Conjunction Data Message - Close approach warnings between objects</td></tr>
+            <tr><td><code>CFP</code></td><td>CCSDS File Delivery Protocol PDU (CCSDS 727.0-B-5)</td></tr>
+            <tr><td><code>CHN</code></td><td>Communications Channel</td></tr>
+            <tr><td><code>CLT</code></td><td>Command Link Transmission Unit Service (CCSDS 912.3-B-2)</td></tr>
+            <tr><td><code>CMS</code></td><td>Communications Payload</td></tr>
+            <tr><td><code>COM</code></td><td>Communications Systems</td></tr>
+            <tr><td><code>COT</code></td><td>Cursor on Target Event</td></tr>
+            <tr><td><code>CRD</code></td><td>Coordinate Systems</td></tr>
+            <tr><td><code>CRM</code></td><td>Collision Risk Message - Collision probability assessments</td></tr>
+            <tr><td><code>CSM</code></td><td>Conjunction Summary Message - Brief conjunction event summary</td></tr>
+            <tr><td><code>CTR</code></td><td>Contact Report - Communication contact reports</td></tr>
+            <tr><td><code>CZM</code></td><td>CZML Document</td></tr>
+            <tr><td><code>DFH</code></td><td>GEO Drift History</td></tr>
+            <tr><td><code>DMG</code></td><td>Damage Models</td></tr>
+            <tr><td><code>DOA</code></td><td>Difference of Arrival Geolocation</td></tr>
+            <tr><td><code>DPM</code></td><td>Dataset Publication Manifest</td></tr>
+            <tr><td><code>DSS</code></td><td>Data Sync Status</td></tr>
+            <tr><td><code>EME</code></td><td>Electromagnetic Emissions - RF and electromagnetic data</td></tr>
+            <tr><td><code>ENC</code></td><td>Encryption Header</td></tr>
+            <tr><td><code>ENV</code></td><td>Atmosphere and Environment</td></tr>
+            <tr><td><code>EOO</code></td><td>Earth Orientation - Earth orientation parameters</td></tr>
+            <tr><td><code>EOP</code></td><td>Earth Orientation Parameters - Polar motion and UT1-UTC</td></tr>
+            <tr><td><code>EPM</code></td><td>Entity Profile Manifest - Organization identity and contact information</td></tr>
+            <tr><td><code>ESL</code></td><td>Entity/Standards Link</td></tr>
+            <tr><td><code>ETM</code></td><td>Entity Metadata</td></tr>
+            <tr><td><code>EWR</code></td><td>Electronic Warfare</td></tr>
+            <tr><td><code>FCS</code></td><td>Fire Control Systems</td></tr>
+            <tr><td><code>FPC</code></td><td>Fastest Path Compute</td></tr>
+            <tr><td><code>GDI</code></td><td>Ground Imagery</td></tr>
+            <tr><td><code>GEO</code></td><td>GEO Spacecraft Status</td></tr>
+            <tr><td><code>GJN</code></td><td>GeoJSON FeatureCollection</td></tr>
+            <tr><td><code>GNO</code></td><td>GNSS Observation</td></tr>
+            <tr><td><code>GPX</code></td><td>GPX Document</td></tr>
+            <tr><td><code>GRV</code></td><td>Gravity Models</td></tr>
+            <tr><td><code>GVH</code></td><td>Ground Vehicles</td></tr>
+            <tr><td><code>HEL</code></td><td>Helicopter Dynamics</td></tr>
+            <tr><td><code>HFC</code></td><td>Hypersonic Flight Conditions</td></tr>
+            <tr><td><code>HYP</code></td><td>Hyperbolic Orbit - Hyperbolic trajectory parameters</td></tr>
+            <tr><td><code>IDM</code></td><td>Initial Data Message - Initial orbit determination data</td></tr>
+            <tr><td><code>ION</code></td><td>Ionospheric Observation</td></tr>
+            <tr><td><code>IRO</code></td><td>Infrared Observation</td></tr>
+            <tr><td><code>KMF</code></td><td>Key Material Frame</td></tr>
+            <tr><td><code>KML</code></td><td>KML Document</td></tr>
+            <tr><td><code>KRF</code></td><td>Key Reference Frame</td></tr>
+            <tr><td><code>LAM</code></td><td>Launch Ascent Message</td></tr>
+            <tr><td><code>LCC</code></td><td>Launch Collision Corridor - Launch trajectory corridors</td></tr>
+            <tr><td><code>LCF</code></td><td>Licensing Configuration Frame</td></tr>
+            <tr><td><code>LCH</code></td><td>Licensing Challenge Message</td></tr>
+            <tr><td><code>LDM</code></td><td>Launch Data Message - Launch event information and parameters</td></tr>
+            <tr><td><code>LGR</code></td><td>Licensing Grant Message</td></tr>
+            <tr><td><code>LKS</code></td><td>Link Status</td></tr>
+            <tr><td><code>LMO</code></td><td>Lambert Solve Result</td></tr>
+            <tr><td><code>LMR</code></td><td>Module Control Message</td></tr>
+            <tr><td><code>LMS</code></td><td>Lambert Solve Request</td></tr>
+            <tr><td><code>LND</code></td><td>Launch Detection</td></tr>
+            <tr><td><code>LNE</code></td><td>Launch Event</td></tr>
+            <tr><td><code>LPF</code></td><td>Licensing Proof Message</td></tr>
+            <tr><td><code>LWK</code></td><td>Wrapped Module Content Key</td></tr>
+            <tr><td><code>MBL</code></td><td>Module Bundle Listing</td></tr>
+            <tr><td><code>MET</code></td><td>Meteorological Data - Atmospheric and weather data</td></tr>
+            <tr><td><code>MFE</code></td><td>Manifold Element Set</td></tr>
+            <tr><td><code>MNF</code></td><td>Orbit Manifold</td></tr>
+            <tr><td><code>MNV</code></td><td>Spacecraft Maneuver</td></tr>
+            <tr><td><code>MPE</code></td><td>Maneuver Planning Ephemeris - Planned maneuver data</td></tr>
+            <tr><td><code>MSL</code></td><td>Guided Missiles</td></tr>
+            <tr><td><code>MST</code></td><td>Missile Track</td></tr>
+            <tr><td><code>MTI</code></td><td>Moving Target Indicator</td></tr>
+            <tr><td><code>NAV</code></td><td>Naval Vessels</td></tr>
+            <tr><td><code>OBD</code></td><td>Orbit Determination Results</td></tr>
+            <tr><td><code>OBT</code></td><td>Orbit Track</td></tr>
+            <tr><td><code>OCM</code></td><td>Orbit Comprehensive Message - Full orbit data package</td></tr>
+            <tr><td><code>OEM</code></td><td>Orbit Ephemeris Message - Time-series position/velocity data</td></tr>
+            <tr><td><code>OMM</code></td><td>Orbit Mean-Elements Message - Satellite orbital parameters (TLE/3LE)</td></tr>
+            <tr><td><code>OOA</code></td><td>On-Orbit Antenna</td></tr>
+            <tr><td><code>OOB</code></td><td>On-Orbit Battery</td></tr>
+            <tr><td><code>OOD</code></td><td>On-Orbit Object Details</td></tr>
+            <tr><td><code>OOE</code></td><td>On-Orbit Event</td></tr>
+            <tr><td><code>OOI</code></td><td>Object of Interest</td></tr>
+            <tr><td><code>OOL</code></td><td>On-Orbit Object List</td></tr>
+            <tr><td><code>OON</code></td><td>On-Orbit Object</td></tr>
+            <tr><td><code>OOS</code></td><td>On-Orbit Solar Array</td></tr>
+            <tr><td><code>OOT</code></td><td>On-Orbit Thruster</td></tr>
+            <tr><td><code>OPM</code></td><td>Orbit Parameter Message</td></tr>
+            <tr><td><code>OSM</code></td><td>Orbit State Message - Orbit state vectors</td></tr>
+            <tr><td><code>PCF</code></td><td>Propagator Configuration</td></tr>
+            <tr><td><code>PGR</code></td><td>Peer Graph Record - Peer network graph snapshot (SDN-internal) <em>(SDN-internal)</em></td></tr>
+            <tr><td><code>PHY</code></td><td>Physics and Rigid Body Dynamics</td></tr>
+            <tr><td><code>PIV</code></td><td>Plugin Invoke - Plugin request/response envelopes</td></tr>
+            <tr><td><code>PLD</code></td><td>Payload - Spacecraft payload information</td></tr>
+            <tr><td><code>PLG</code></td><td>Plugin Manifest - Signed plugin distribution record</td></tr>
+            <tr><td><code>PLHD</code></td><td>Publication Log Head - Lightweight log head announcement via GossipSub (SDN-internal) <em>(SDN-internal)</em></td></tr>
+            <tr><td><code>PLK</code></td><td>Plugin License Key</td></tr>
+            <tr><td><code>PLOG</code></td><td>Publication Log Entry - Hash-chained publication log for data provenance (SDN-internal) <em>(SDN-internal)</em></td></tr>
+            <tr><td><code>PNM</code></td><td>Peer Network Manifest - Peer identity and network capabilities</td></tr>
+            <tr><td><code>PPE</code></td><td>Polynomial Ephemeris</td></tr>
+            <tr><td><code>PRG</code></td><td>Propagation Settings - Orbit propagation parameters</td></tr>
+            <tr><td><code>PRW</code></td><td>Propagator Runtime Wire</td></tr>
+            <tr><td><code>PUR</code></td><td>Purchase Request - Marketplace purchase requests</td></tr>
+            <tr><td><code>RAF</code></td><td>Return All Frames Service (CCSDS 913.1-B-2)</td></tr>
+            <tr><td><code>RCF</code></td><td>Return Channel Frames Service (CCSDS 913.5-B-2)</td></tr>
+            <tr><td><code>RDM</code></td><td>Reentry Data Message</td></tr>
+            <tr><td><code>RDO</code></td><td>Radar Observation</td></tr>
+            <tr><td><code>REC</code></td><td>Records - Data records and observations</td></tr>
+            <tr><td><code>REM</code></td><td>Reentry Evaluation Message</td></tr>
+            <tr><td><code>REV</code></td><td>Review - Marketplace listing reviews and ratings</td></tr>
+            <tr><td><code>RFB</code></td><td>RF Band Specification</td></tr>
+            <tr><td><code>RFE</code></td><td>RF Emitter</td></tr>
+            <tr><td><code>RFM</code></td><td>Reference Frame Message - Coordinate frame definitions</td></tr>
+            <tr><td><code>RFO</code></td><td>RF Observation</td></tr>
+            <tr><td><code>RHD</code></td><td>Routing Header - Message routing metadata for PubSub <em>(SDN-internal)</em></td></tr>
+            <tr><td><code>ROC</code></td><td>Re-entry Operations Corridor - Re-entry trajectory corridors</td></tr>
+            <tr><td><code>SAR</code></td><td>SAR Observation</td></tr>
+            <tr><td><code>SCM</code></td><td>Spacecraft Message - Spacecraft characteristics</td></tr>
+            <tr><td><code>SDF</code></td><td>Signed Distance Field</td></tr>
+            <tr><td><code>SDL</code></td><td>Space Data Link Security (CCSDS 355.0-B-1)</td></tr>
+            <tr><td><code>SDR</code></td><td>Sensor Detection Report</td></tr>
+            <tr><td><code>SEN</code></td><td>Sensor Management</td></tr>
+            <tr><td><code>SEO</code></td><td>Space Environment Observation</td></tr>
+            <tr><td><code>SEV</code></td><td>Space Environment Observation Detail</td></tr>
+            <tr><td><code>SHW</code></td><td>Shader Wire</td></tr>
+            <tr><td><code>SIT</code></td><td>Satellite Impact Table - Impact risk assessments</td></tr>
+            <tr><td><code>SKI</code></td><td>Sky Imagery</td></tr>
+            <tr><td><code>SNR</code></td><td>Sensor Systems</td></tr>
+            <tr><td><code>SNW</code></td><td>Sensor Runtime Wire</td></tr>
+            <tr><td><code>SOI</code></td><td>Space Object Identification Observation Set</td></tr>
+            <tr><td><code>SON</code></td><td>Sonar and Underwater Acoustics</td></tr>
+            <tr><td><code>SPP</code></td><td>Space Packet Protocol (CCSDS 133.0-B-1)</td></tr>
+            <tr><td><code>SPW</code></td><td>Space Weather Data Record - Solar flux, geomagnetic, and space weather indices</td></tr>
+            <tr><td><code>SRI</code></td><td>Standards Record Index</td></tr>
+            <tr><td><code>STF</code></td><td>Storefront Listing - Marketplace data listings</td></tr>
+            <tr><td><code>STR</code></td><td>Star Catalog Entry</td></tr>
+            <tr><td><code>STV</code></td><td>State Vector</td></tr>
+            <tr><td><code>SWR</code></td><td>Short-Wave Infrared Observation</td></tr>
+            <tr><td><code>TAB</code></td><td>Typed Arena Buffer</td></tr>
+            <tr><td><code>TCF</code></td><td>Telecommand Transfer Frame (CCSDS 232.0-B-3)</td></tr>
+            <tr><td><code>TDM</code></td><td>Tracking Data Message - Radar/optical observations</td></tr>
+            <tr><td><code>TIM</code></td><td>Time Message - Time synchronization data</td></tr>
+            <tr><td><code>TKG</code></td><td>Tracking and Data Fusion</td></tr>
+            <tr><td><code>TME</code></td><td>Time Systems</td></tr>
+            <tr><td><code>TMF</code></td><td>Telemetry Transfer Frame (CCSDS 132.0-B-2)</td></tr>
+            <tr><td><code>TPN</code></td><td>Transponder</td></tr>
+            <tr><td><code>TRK</code></td><td>Track</td></tr>
+            <tr><td><code>TRN</code></td><td>Terrain Models</td></tr>
+            <tr><td><code>VCM</code></td><td>Vector Covariance Message - State vector with covariance</td></tr>
+            <tr><td><code>WPN</code></td><td>Weapons and Munitions</td></tr>
+            <tr><td><code>WTH</code></td><td>Weather Data</td></tr>
+            <tr><td><code>XTC</code></td><td>XTCE SpaceSystem Document</td></tr>
           </tbody>
         </table>
       </section>
@@ -2534,7 +2773,7 @@ fileID := string(data[4:8])</code></pre>
           <li><strong>Zero-copy reads</strong> — read fields directly from the buffer, no deserialization step</li>
           <li><strong>Deterministic hashing</strong> — same data produces same binary, enabling reliable SHA-256 CIDs</li>
           <li><strong>Schema evolution</strong> — new fields can be added without breaking old readers</li>
-          <li><strong>44 schemas</strong> — all Space Data Standards (OMM, CDM, EPM, etc.) plus SDN internal schemas</li>
+          <li><strong>160+ schemas</strong> — every Space Data Standards schema (OMM, CDM, EPM, etc.) plus SDN-internal schemas</li>
         </ul>
       </section>
 
@@ -2611,7 +2850,7 @@ CREATE TABLE sdn_log_index (
 /spacedatanetwork/sds/OMM.fbs     ← Orbital mean elements
 /spacedatanetwork/sds/CDM.fbs     ← Conjunction data
 /spacedatanetwork/sds/EPM.fbs     ← Entity profiles
-... (44 total schema topics)
+... (one topic per registered schema, 160+ in total)
 /spacedatanetwork/edge-relays     ← Edge relay announcements
 /sdn/storefront/listings          ← Marketplace listings
 /sdn/data/{listing}/{buyer}       ← Encrypted delivery channels</code></pre>

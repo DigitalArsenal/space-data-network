@@ -3380,7 +3380,7 @@
           </svg>
           <div class="ipfs-description-text">
             <p><a href="https://ipfs.tech" target="_blank" style="color: inherit; text-decoration: underline;">IPFS</a> provides the decentralized networking foundation &mdash; <strong><a href="https://libp2p.io" target="_blank" style="color: inherit; text-decoration: underline;">libp2p</a></strong> for peer-to-peer transport with NAT traversal and secure channels, <strong>content addressing</strong> for data integrity, and <strong>DHT</strong> for decentralized discovery.</p>
-            <p><a href="https://digitalarsenal.github.io/flatbuffers/" target="_blank" style="color: inherit; text-decoration: underline;">Google FlatBuffers</a> provides zero-copy serialization for all 127 <a href="https://spacedatastandards.org" target="_blank" style="color: inherit; text-decoration: underline;">Space Data Standards</a> schemas, while <strong><a href="https://github.com/nicklausw/flatsql" target="_blank" style="color: inherit; text-decoration: underline;">FlatSQL</a></strong> enables SQL queries directly over binary FlatBuffer data without conversion overhead.</p>
+            <p><a href="https://digitalarsenal.github.io/flatbuffers/" target="_blank" style="color: inherit; text-decoration: underline;">Google FlatBuffers</a> provides zero-copy serialization for 160+ <a href="https://spacedatastandards.org" target="_blank" style="color: inherit; text-decoration: underline;">Space Data Standards</a> schemas, while <strong><a href="https://github.com/nicklausw/flatsql" target="_blank" style="color: inherit; text-decoration: underline;">FlatSQL</a></strong> enables SQL queries directly over binary FlatBuffer data without conversion overhead.</p>
           </div>
         </div>
         <div class="ipfs-links">
@@ -3797,8 +3797,8 @@
             <li>Credit/debit cards (Stripe)</li>
             <li>One-time purchases</li>
             <li>Recurring subscriptions</li>
-            <li>Usage-based billing</li>
-            <li>Enterprise invoicing</li>
+            <li>Usage-based billing — metered access where buyers are charged per records delivered and bytes transferred within a billing period. The server records each delivery event and aggregates them into a periodic UsageSummary; providers can report metered consumption to Stripe Billing via subscription item usage records, enabling automatic per-period invoicing.</li>
+            <li>Enterprise invoicing — period-based invoices generated from purchase records and usage data, with line items for records and data volume. Invoices can be settled via Stripe Invoicing (items created and finalized automatically) or through offline purchase orders (PO reference stored, manual paid marker). Invoice lifecycle: issued → paid or void.</li>
           </ul>
         </div>
       </div>
