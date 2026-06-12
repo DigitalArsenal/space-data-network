@@ -339,8 +339,8 @@ func TestTopicMatcher(t *testing.T) {
 	}{
 		{"/sdn/data/OMM", true},
 		{"/sdn/data/CDM", true},
-		{"/spacedatanetwork/sds/OMM.fbs", true},
-		{"/spacedatanetwork/sds/CDM.fbs", true},
+		{"/spacedatanetwork/sds/OMM", true},
+		{"/spacedatanetwork/sds/CDM", true},
 		{"/sdn/peer/peer1", true},
 		{"/sdn/data/EPM", false},
 		{"/sdn/peer/peer2", false},

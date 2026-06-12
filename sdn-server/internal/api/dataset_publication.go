@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	channelmodel "github.com/spacedatanetwork/sdn-server/internal/channels"
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -53,6 +54,16 @@ type DatasetPublicationResult struct {
 	Publications []DatasetPublicationResult `json:"publications,omitempty"`
 }
 
+type datasetPublicationResponse struct {
+	StandardCode string                       `json:"standardCode"`
+	RecordCount  int                          `json:"recordCount"`
+	ShardCID     string                       `json:"shardCid"`
+	IndexCID     string                       `json:"indexCid"`
+	ManifestCID  string                       `json:"manifestCid"`
+	PNMCID       string                       `json:"pnmCid,omitempty"`
+	Publications []datasetPublicationResponse `json:"publications,omitempty"`
+}
+
 type datasetPublicationSourceIdentity struct {
 	ProviderID string
 	SourceName string
@@ -71,6 +82,19 @@ type DatasetUpdatePublisher interface {
 
 type DatasetFeedHeadPublisher interface {
 	PublishDatasetFeedHead(context.Context, sdnpubsub.DatasetFeedHeadAnnouncement) error
+}
+
+type DatasetPublicationChannelUpdate struct {
+	Schema            string
+	SourceID          string
+	PNMBytes          []byte
+	ManifestBytes     []byte
+	ProviderPublicKey ed25519.PublicKey
+	PublishedShard    storage.DatasetShardPublication
+}
+
+type DatasetPublicationChannelRecorder interface {
+	RecordDatasetPublicationChannelUpdate(DatasetPublicationChannelUpdate) error
 }
 
 // DatasetPublicationHandler exposes local-only dataset publication operations.
@@ -115,7 +139,43 @@ func (h *DatasetPublicationHandler) handlePublish(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusAccepted, result)
+	writeJSON(w, http.StatusAccepted, publicDatasetPublicationResult(result))
+}
+
+func publicDatasetPublicationResult(result *DatasetPublicationResult) *datasetPublicationResponse {
+	if result == nil {
+		return nil
+	}
+	public := datasetPublicationResponse{
+		StandardCode: publicDatasetPublicationStandardCode(result.Schema),
+		RecordCount:  result.RecordCount,
+		ShardCID:     result.ShardCID,
+		IndexCID:     result.IndexCID,
+		ManifestCID:  result.ManifestCID,
+		PNMCID:       result.PNMCID,
+	}
+	if len(result.Publications) > 0 {
+		public.Publications = make([]datasetPublicationResponse, 0, len(result.Publications))
+		for _, publication := range result.Publications {
+			public.Publications = append(public.Publications, datasetPublicationResponse{
+				StandardCode: publicDatasetPublicationStandardCode(publication.Schema),
+				RecordCount:  publication.RecordCount,
+				ShardCID:     publication.ShardCID,
+				IndexCID:     publication.IndexCID,
+				ManifestCID:  publication.ManifestCID,
+				PNMCID:       publication.PNMCID,
+			})
+		}
+	}
+	return &public
+}
+
+func publicDatasetPublicationStandardCode(schema string) string {
+	standardCode, err := channelmodel.StandardCodeFromSchemaName(schema)
+	if err == nil {
+		return standardCode
+	}
+	return strings.TrimSpace(schema)
 }
 
 func isLoopbackRemoteAddr(remoteAddr string) bool {
@@ -130,14 +190,15 @@ func isLoopbackRemoteAddr(remoteAddr string) bool {
 // ConcreteDatasetPublicationService exports local records and publishes one
 // signed DPM announcement PNM through the running node.
 type ConcreteDatasetPublicationService struct {
-	store          *storage.FlatSQLStore
-	publisher      DatasetUpdatePublisher
-	signingKey     ed25519.PrivateKey
-	providerPeerID string
-	providerEPMCID string
-	ipfsAPIURL     string
-	outputDir      string
-	now            func() time.Time
+	store           *storage.FlatSQLStore
+	publisher       DatasetUpdatePublisher
+	signingKey      ed25519.PrivateKey
+	providerPeerID  string
+	providerEPMCID  string
+	ipfsAPIURL      string
+	outputDir       string
+	channelRecorder DatasetPublicationChannelRecorder
+	now             func() time.Time
 }
 
 // NewConcreteDatasetPublicationService creates the production publication service.
@@ -159,6 +220,12 @@ func NewConcreteDatasetPublicationService(
 		ipfsAPIURL:     strings.TrimSpace(ipfsAPIURL),
 		outputDir:      strings.TrimSpace(outputDir),
 		now:            func() time.Time { return time.Now().UTC() },
+	}
+}
+
+func (s *ConcreteDatasetPublicationService) SetChannelRecorder(recorder DatasetPublicationChannelRecorder) {
+	if s != nil {
+		s.channelRecorder = recorder
 	}
 }
 
@@ -634,6 +701,9 @@ func (s *ConcreteDatasetPublicationService) publishDatasetExport(
 	if err := s.recordDatasetPublicationPins(publishedShard, export, manifest, pnmCID, pnmBytes); err != nil {
 		return nil, storage.DatasetShardPublication{}, err
 	}
+	if err := s.recordDatasetPublicationChannel(req, sourceIdentity, publishedShard, manifest.Bytes, pnmBytes); err != nil {
+		return nil, storage.DatasetShardPublication{}, err
+	}
 	if announce {
 		if err := s.announceDatasetPublication(ctx, req, publishedShard, pnmBytes); err != nil {
 			return nil, storage.DatasetShardPublication{}, err
@@ -647,6 +717,47 @@ func (s *ConcreteDatasetPublicationService) publishDatasetExport(
 		ManifestCID: manifest.CID,
 		PNMCID:      pnmCID,
 	}, publishedShard, nil
+}
+
+func (s *ConcreteDatasetPublicationService) recordDatasetPublicationChannel(
+	req DatasetPublicationRequest,
+	sourceIdentity datasetPublicationSourceIdentity,
+	publishedShard storage.DatasetShardPublication,
+	manifestBytes []byte,
+	pnmBytes []byte,
+) error {
+	if s == nil || s.channelRecorder == nil {
+		return nil
+	}
+	providerPublicKey, ok := s.signingKey.Public().(ed25519.PublicKey)
+	if !ok || len(providerPublicKey) != ed25519.PublicKeySize {
+		return fmt.Errorf("record dataset publication channel: provider public key is unavailable")
+	}
+	sourceID := datasetPublicationChannelSourceID(req, sourceIdentity)
+	if sourceID == "" {
+		return nil
+	}
+	return s.channelRecorder.RecordDatasetPublicationChannelUpdate(DatasetPublicationChannelUpdate{
+		Schema:            publishedShard.SchemaName,
+		SourceID:          sourceID,
+		PNMBytes:          pnmBytes,
+		ManifestBytes:     manifestBytes,
+		ProviderPublicKey: append(ed25519.PublicKey(nil), providerPublicKey...),
+		PublishedShard:    publishedShard,
+	})
+}
+
+func datasetPublicationChannelSourceID(req DatasetPublicationRequest, sourceIdentity datasetPublicationSourceIdentity) string {
+	for _, value := range []string{req.SourceName, sourceIdentity.SourceName} {
+		sourceName := strings.ToLower(strings.TrimSpace(value))
+		if sourceName == "celestrak" || strings.HasPrefix(sourceName, "celestrak-") {
+			return "celestrak"
+		}
+	}
+	if providerID := strings.TrimSpace(sourceIdentity.ProviderID); providerID != "" {
+		return providerID
+	}
+	return strings.TrimSpace(req.ProviderID)
 }
 
 func (s *ConcreteDatasetPublicationService) publishedShardFromResult(
@@ -724,6 +835,16 @@ func (s *ConcreteDatasetPublicationService) reusableDatasetPublicationResult(
 	}
 	if len(pnmRecord.Data) == 0 {
 		return nil, false, fmt.Errorf("load reusable dataset publication PNM: empty record %s", existing.PNMCID)
+	}
+	manifestBytes, err := storage.FetchIPFSBlockByCID(ctx, s.ipfsAPIURL, existing.ManifestCID)
+	if err != nil {
+		return nil, false, fmt.Errorf("load reusable dataset publication DPM: %w", err)
+	}
+	if len(manifestBytes) == 0 {
+		return nil, false, fmt.Errorf("load reusable dataset publication DPM: empty CID %s", existing.ManifestCID)
+	}
+	if err := s.recordDatasetPublicationChannel(req, sourceIdentity, existing, manifestBytes, pnmRecord.Data); err != nil {
+		return nil, false, err
 	}
 	if err := s.announceDatasetPublication(ctx, req, existing, pnmRecord.Data); err != nil {
 		return nil, false, err

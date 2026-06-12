@@ -79,6 +79,41 @@ type DatasetPublicationReplayResult struct {
 	ResultSHA256 string
 }
 
+type DatasetPublicationManifestTrustEvidence struct {
+	ManifestCID    string
+	FileID         string
+	SignatureType  string
+	ProviderPeer   string
+	ProviderEPMCID string
+	Encrypted      bool
+	ContentKeyID   string
+	PolicyID       string
+}
+
+func VerifySignedDatasetPublicationManifest(manifestBytes []byte, providerPublicKey ed25519.PublicKey) (DatasetPublicationManifestTrustEvidence, error) {
+	manifest, _, err := parseAndVerifyDatasetManifest(manifestBytes, providerPublicKey)
+	if err != nil {
+		return DatasetPublicationManifestTrustEvidence{}, err
+	}
+	manifestCID, err := cidV1RawSHA256(manifestBytes)
+	if err != nil {
+		return DatasetPublicationManifestTrustEvidence{}, fmt.Errorf("compute manifest CID: %w", err)
+	}
+	evidence := DatasetPublicationManifestTrustEvidence{
+		ManifestCID:    manifestCID,
+		FileID:         strings.TrimSpace(string(manifest.FILE_ID())),
+		SignatureType:  strings.TrimSpace(string(manifest.SIGNATURE_TYPE())),
+		ProviderPeer:   strings.TrimSpace(string(manifest.PROVIDER_PEER_ID())),
+		ProviderEPMCID: strings.TrimSpace(string(manifest.PROVIDER_EPM_CID())),
+	}
+	if enc := manifest.ENCRYPTION(nil); enc != nil {
+		evidence.Encrypted = enc.ENCRYPTED()
+		evidence.ContentKeyID = strings.TrimSpace(string(enc.CONTENT_KEY_ID()))
+		evidence.PolicyID = strings.TrimSpace(string(enc.POLICY_ID()))
+	}
+	return evidence, nil
+}
+
 // BuildDatasetPublicationPNM creates one PNM announcing a signed DPM manifest CID.
 func BuildDatasetPublicationPNM(manifest *DatasetPublicationManifest, opts DatasetPublicationPNMOptions) ([]byte, error) {
 	if manifest == nil {
@@ -626,22 +661,31 @@ func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, prov
 			if err != nil {
 				return imported, nil, fmt.Errorf("append imported %s record %s to FlatSQL stream: %w", index.SchemaName, record.CID, err)
 			}
-			if err := insertSchemaMetadata(tx, tableName, record.CID, strings.TrimSpace(providerPeerID), now, streamPath, streamOffset, recordLength, nil, now); err != nil {
+			rowID, err := insertSchemaMetadataReturningRowID(tx, tableName, record.CID, strings.TrimSpace(providerPeerID), now, streamPath, streamOffset, recordLength, nil, now)
+			if err != nil {
 				return imported, nil, fmt.Errorf("store imported %s record %s: %w", index.SchemaName, record.CID, err)
 			}
 			if err := upsertRecordIndexExec(tx, index.SchemaName, record.CID, now, data); err != nil {
 				log.Warnf("Failed to index imported %s record %s: %v", index.SchemaName, record.CID[:16]+"...", err)
 			}
 			imported++
+			if strings.TrimSpace(tags.ProviderID) != "" && strings.TrimSpace(tags.SourceName) != "" {
+				if err := insertNewSourceTagsTx(tx, index.SchemaName, record.CID, tags, recordLength, rowID); err != nil {
+					return imported, nil, err
+				}
+			}
 		default:
 			return imported, nil, fmt.Errorf("check imported %s record %s: %w", index.SchemaName, record.CID, err)
 		}
 
-		if strings.TrimSpace(tags.ProviderID) != "" && strings.TrimSpace(tags.SourceName) != "" {
+		if err == nil && strings.TrimSpace(tags.ProviderID) != "" && strings.TrimSpace(tags.SourceName) != "" {
 			if err := upsertSourceTagsTx(tx, tableName, index.SchemaName, record.CID, tags, record.Length); err != nil {
 				return imported, nil, err
 			}
 		}
+	}
+	if err := appender.Close(); err != nil {
+		return imported, nil, fmt.Errorf("flush imported %s FlatSQL stream: %w", index.SchemaName, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return imported, nil, fmt.Errorf("commit dataset shard import: %w", err)

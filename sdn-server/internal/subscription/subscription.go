@@ -18,9 +18,9 @@ var log = logging.Logger("sdn-subscription")
 
 // Common errors
 var (
-	ErrInvalidConfig     = errors.New("invalid subscription configuration")
+	ErrInvalidConfig        = errors.New("invalid subscription configuration")
 	ErrSubscriptionNotFound = errors.New("subscription not found")
-	ErrRateLimitExceeded = errors.New("rate limit exceeded")
+	ErrRateLimitExceeded    = errors.New("rate limit exceeded")
 )
 
 // FilterOperator represents a filter comparison operator
@@ -49,7 +49,7 @@ type QueryFilter struct {
 
 // SubscriptionConfig represents subscription configuration
 type SubscriptionConfig struct {
-	// DataTypes to subscribe to (e.g., ["OMM.fbs", "CDM.fbs"])
+	// DataTypes to subscribe to (for example, ["OMM", "CDM"]).
 	DataTypes []string `json:"dataTypes"`
 	// SourcePeers to receive data from, or ["all"] for all peers
 	SourcePeers []string `json:"sourcePeers"`
@@ -69,9 +69,9 @@ type SubscriptionConfig struct {
 type SubscriptionStatus string
 
 const (
-	StatusActive  SubscriptionStatus = "active"
-	StatusPaused  SubscriptionStatus = "paused"
-	StatusError   SubscriptionStatus = "error"
+	StatusActive SubscriptionStatus = "active"
+	StatusPaused SubscriptionStatus = "paused"
+	StatusError  SubscriptionStatus = "error"
 )
 
 // Subscription represents an active subscription
@@ -85,7 +85,7 @@ type Subscription struct {
 	ErrorMessage  string             `json:"errorMessage,omitempty"`
 
 	// Internal rate limiting
-	rateLimitMu   sync.Mutex
+	rateLimitMu    sync.Mutex
 	rateLimitCount int
 	rateLimitReset time.Time
 }
@@ -462,9 +462,17 @@ func GetPeerRoutingTopic(peerID string) string {
 	return fmt.Sprintf("/sdn/peer/%s", peerID)
 }
 
-// GetSDNTopic returns the standard SDN topic for a schema
+// GetSDNTopic returns the standard SDN topic for a record code.
 func GetSDNTopic(schemaType string) string {
-	return fmt.Sprintf("/spacedatanetwork/sds/%s", schemaType)
+	return fmt.Sprintf("/spacedatanetwork/sds/%s", standardCodeFromSchemaType(schemaType))
+}
+
+func standardCodeFromSchemaType(schemaType string) string {
+	schema := schemaType
+	if len(schema) > 4 && schema[len(schema)-4:] == ".fbs" {
+		schema = schema[:len(schema)-4]
+	}
+	return schema
 }
 
 // validateConfig validates subscription configuration

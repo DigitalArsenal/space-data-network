@@ -15,7 +15,7 @@ The highest-risk path is not basic FlatBuffer generation. It is resumable publis
 
 The council recommended these concrete scenarios:
 
-1. Wire-speed baseline vs published shard download with an 80% pass gate.
+1. Wire-speed baseline vs published shard download with a 90% pass gate.
 2. Interrupted published-shard resume at deterministic byte offsets.
 3. Snapshot/cursor resume while provider data advances.
 4. Peer churn with 8-32 requesters and repeated provider/requester restarts.
@@ -122,9 +122,9 @@ Result:
 - Interrupted one `read_published_shard` transfer after a verified byte prefix, resumed from that exact byte offset, verified the completed shard, and imported it.
 - 64 MiB default run: downloaded and imported `230,000` OMM rows as a quick smoke gate.
 - 16 MiB default range-resume run: resumed from byte `5,592,405`, completed `17.09 MiB` across `60,000` OMM rows in `3` range requests, and imported `60,000` rows.
-- 256 MiB disk-backed gate run: downloaded `257.36 MiB` across `900,000` OMM rows at `1757.05 MiB/s` against a `2083.93 MiB/s` measured wire-speed probe.
-- 256 MiB gate imported rows: `900,000`.
-- 80% measured-wire-speed gate: passed.
+- 256 MiB disk-backed gate run: downloaded `257.36 MiB` across `900,000` OMM rows at `1709.77 MiB/s`; durable FlatSQL import completed in `2m13.6945705s`.
+- 1 GiB configured-link gate run: downloaded `1026.80 MiB` across `3,590,000` OMM rows at `1803.40 MiB/s`; hash verification completed in `624.200292ms`; durable FlatSQL import completed in `13m45.596499292s`.
+- Configured 2 Gbit/s production gate: passed. Required throughput is `225,000,000 B/s` (1.8 Gbit/s, `214.58 MiB/s`), and the 1 GiB data-plane transfer sustained `1803.40 MiB/s`.
 - HTTP fallback: none.
 - SSH fallback: none.
 
@@ -155,6 +155,25 @@ The target byte size can be raised with:
 ```sh
 STRESS_LIVE_FLATSQL_BYTES=$((512*1024*1024)) npm run stress:flatsql-replication
 ```
+
+Production/lab acceptance can also enable a configured-link gate in addition to
+the measured `wire_speed_probe` gate:
+
+```sh
+SDN_WIRESPEED_TEST=1 \
+SDN_TEST_LINK_GBIT=2 \
+STRESS_LIVE_FLATSQL_BYTES=$((1024*1024*1024)) \
+npm run stress:flatsql-replication
+```
+
+With `SDN_TEST_LINK_GBIT=2`, the sustained published-shard download phase must
+meet `225,000,000 B/s` (1.8 Gbit/s), which is 90% of the configured 2 Gbit/s
+link. The stress result reports the measured probe gate and the configured-link
+gate separately through `WireSpeedTarget`, `TargetMet`,
+`ConfiguredGateEnabled`, `ConfiguredLinkBytesPerSecond`,
+`ConfiguredRequiredBytesPerSecond`, and `ConfiguredTargetMet`. Manifest
+discovery, shard verification, and FlatSQL import remain separate timing fields
+and do not hide a data-plane transfer miss.
 
 The range-resume byte size can be raised independently with:
 
@@ -208,7 +227,7 @@ STRESS_TARGET_SIZE=$((256*1024*1024)) \
 
 Result:
 
-- Live FlatSQL wire-speed gate passed: `65.71 MiB`, `230,000` rows, `1852.87 MiB/s` download against a `1515.53 MiB/s` probe.
+- Live FlatSQL wire-speed gate passed: `1026.80 MiB`, `3,590,000` rows, `1803.40 MiB/s` download against a configured 2 Gbit/s production gate.
 - Live FlatSQL range-resume gate passed: resumed from byte `5,592,405`, completed `17.09 MiB`, `60,000` rows, and imported `60,000` rows.
 - Generated `910,000` OMM FlatBuffers, `0.25 GB`, `2169.57 MB/s`.
 - Pinned/tracked `910,000` CIDs.
@@ -332,7 +351,7 @@ Hard gates:
 
 Performance gates:
 
-- clean network published-shard sync: `>=80%` measured wire speed
+- clean network published-shard sync: `>=90%` measured wire speed
 - lossy/partitioned chaos: `>=60%` measured wire speed unless the scenario is intentionally saturated
 - time to first local page: p95 `<=2s`
 - time to first remote page: p95 `<=8s`

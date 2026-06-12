@@ -97,6 +97,7 @@ export function discoverArtifacts(releaseRoot) {
     fullRpm: pickArtifact(files, 'fullRpm', /^spacedatanetwork-full-.*\.x86_64\.rpm$/),
     edgeRpm: pickArtifact(files, 'edgeRpm', /^spacedatanetwork-edge-.*\.x86_64\.rpm$/),
     linuxVm: pickArtifact(files, 'linuxVm', /^spacedatanetwork-linux-vm-.*\.tar\.gz$/),
+    linuxCli: pickArtifact(files, 'linuxCli', /^spacedatanetwork-(?!container-).*-linux-amd64\.tar\.gz$/),
     container: pickArtifact(files, 'container', /^spacedatanetwork-container-.*-linux-amd64\.tar\.gz$/),
     sdnJs: pickArtifact(files, 'sdnJs', /^spacedatanetwork-sdn-js-.*\.tgz$/),
     sbom: pickArtifact(files, 'sbom', /^spacedatanetwork-sbom\.cdx\.json$/),
@@ -177,6 +178,28 @@ RUN test -x /opt/spacedatanetwork/bin/spacedatanetwork \\
   && test -d /opt/spacedatanetwork/.wasmedge/lib \\
   && WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge LD_LIBRARY_PATH=/opt/spacedatanetwork/.wasmedge/lib /opt/spacedatanetwork/bin/spacedatanetwork --help >/tmp/spacedatanetwork-help.txt
 `;
+
+    case 'linux-cli': {
+      const bundleRoot = artifactName.replace(/\.tar\.gz$/, '');
+      return `FROM debian:bookworm-slim
+COPY ${artifactName} /tmp/${artifactName}
+RUN apt-get update \\
+  && apt-get install -y --no-install-recommends ca-certificates curl tar \\
+  && mkdir -p /opt \\
+  && tar -C /opt -xzf /tmp/${artifactName} \\
+  && rm -rf /var/lib/apt/lists/*
+ENV WASMEDGE_DIR=/opt/${bundleRoot}/runtime/wasmedge
+ENV LD_LIBRARY_PATH=/opt/${bundleRoot}/runtime/wasmedge/lib
+RUN test -x /opt/${bundleRoot}/bin/spacedatanetwork \\
+  && test -x /opt/${bundleRoot}/bin/sdn \\
+  && test -x /opt/${bundleRoot}/runtime/kubo/ipfs \\
+  && test -f /opt/${bundleRoot}/runtime/modules/org.spacedatanetwork.updater.wasm \\
+  && test -d /opt/${bundleRoot}/runtime/ui/sdn \\
+  && test -d /opt/${bundleRoot}/runtime/ui/webui \\
+  && /opt/${bundleRoot}/bin/spacedatanetwork --help >/tmp/spacedatanetwork-help.txt \\
+  && /opt/${bundleRoot}/bin/sdn --help >/tmp/sdn-help.txt
+`;
+    }
 
     case 'sdn-js':
       return `FROM node:24-bookworm-slim
@@ -385,6 +408,7 @@ function buildImages({ artifacts, workDir, platform, prefix, keep }) {
     fullRpm: { artifact: artifacts.fullRpm, artifactType: 'full-rpm', imageName: `${prefix}-full-rpm:latest` },
     edgeRpm: { artifact: artifacts.edgeRpm, artifactType: 'edge-rpm', imageName: `${prefix}-edge-rpm:latest` },
     linuxVm: { artifact: artifacts.linuxVm, artifactType: 'linux-vm', imageName: `${prefix}-linux-vm:latest` },
+    linuxCli: { artifact: artifacts.linuxCli, artifactType: 'linux-cli', imageName: `${prefix}-linux-cli:latest` },
     sdnJs: { artifact: artifacts.sdnJs, artifactType: 'sdn-js', imageName: `${prefix}-sdn-js:latest` }
   };
 

@@ -220,6 +220,15 @@ func adminURL(cfg *config.Config) string {
 	return fmt.Sprintf("%s://%s/", scheme, addr)
 }
 
+func channelHandlerOptionsForIdentity(identity *wasm.DerivedIdentity) api.ChannelHandlerOptions {
+	if identity == nil || len(identity.EncryptionKey) != 32 {
+		return api.ChannelHandlerOptions{}
+	}
+	return api.ChannelHandlerOptions{
+		EncryptedStreams: api.NewFlatBuffersEncryptedNativeStreamDecryptor(identity.EncryptionKey),
+	}
+}
+
 func applyBundleDefaults(cfg *config.Config, layout bundle.Layout) {
 	if cfg == nil || layout.Root == "" {
 		return
@@ -475,6 +484,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Data API routes
 			dataAPI := api.NewDataQueryHandler(n.Store(), nil)
 			dataAPI.RegisterRoutes(adminMux)
+			channelAPI := api.NewChannelHandlerWithOptions(n.Store(), channelHandlerOptionsForIdentity(n.Identity()))
+			channelAPI.RegisterRoutes(adminMux)
 
 			// Log API routes (publication log queries)
 			if n.Store() != nil {
@@ -507,7 +518,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					}
 				}
 				publicationDir := filepath.Join(filepath.Dir(cfg.Storage.Path), "dataset-publications")
-				publicationAPI := api.NewDatasetPublicationHandler(api.NewConcreteDatasetPublicationService(
+				publicationService := api.NewConcreteDatasetPublicationService(
 					n.Store(),
 					n,
 					publicationSigningKey,
@@ -515,7 +526,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					providerEPMCID,
 					cfg.Admin.IPFSAPIURL,
 					publicationDir,
-				))
+				)
+				publicationService.SetChannelRecorder(channelAPI)
+				publicationAPI := api.NewDatasetPublicationHandler(publicationService)
 				publicationAPI.RegisterRoutes(adminMux)
 				log.Infof("Dataset publication API available at %s://%s/api/v1/admin/dataset-updates/publish", adminScheme, adminAddr)
 			}
@@ -1245,6 +1258,8 @@ func isPublicReadAPIPath(path string) bool {
 	}
 
 	return strings.HasPrefix(path, "/api/directory/") ||
+		path == "/api/v1/channels" ||
+		strings.HasPrefix(path, "/api/v1/channels/") ||
 		strings.HasPrefix(path, "/api/v1/demo/") ||
 		strings.HasPrefix(path, "/api/storefront/listings/") ||
 		strings.HasPrefix(path, "/api/storefront/trust/") ||

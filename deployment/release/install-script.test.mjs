@@ -23,6 +23,12 @@ test('install script links both Unix commands from the extracted bundle', () => 
   assert.match(script, /ln -sf "\$\{BUNDLE_ROOT\}\/bin\/\$\{ALIAS_BINARY_NAME\}" "\$\{INSTALL_DIR\}\/\$\{ALIAS_BINARY_NAME\}"/);
 });
 
+test('install script verifies both Unix commands are available after linking', () => {
+  assert.match(script, /command -v "\$PRIMARY_BINARY_NAME"/);
+  assert.match(script, /command -v "\$ALIAS_BINARY_NAME"/);
+  assert.match(script, /"\$ALIAS_BINARY_NAME" status/);
+});
+
 test('install script leaves Windows ZIP usage portable', () => {
   assert.match(script, /\[ "\$OS" = "windows" \]/);
   assert.match(script, /Add .*\$\{BUNDLE_ROOT\}\/bin.* to your PATH/);

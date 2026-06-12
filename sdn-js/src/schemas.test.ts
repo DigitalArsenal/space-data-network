@@ -68,23 +68,23 @@ describe('schemas', () => {
   });
 
   describe('getTopicName', () => {
-    it('should generate correct topic names', () => {
-      expect(getTopicName('OMM.fbs')).toBe('/spacedatanetwork/sds/OMM.fbs');
-      expect(getTopicName('CDM.fbs')).toBe('/spacedatanetwork/sds/CDM.fbs');
-      expect(getTopicName('EPM.fbs')).toBe('/spacedatanetwork/sds/EPM.fbs');
+    it('should generate public standardCode topic names', () => {
+      expect(getTopicName('OMM.fbs')).toBe('/spacedatanetwork/sds/OMM');
+      expect(getTopicName('CDM.fbs')).toBe('/spacedatanetwork/sds/CDM');
+      expect(getTopicName('EPM.fbs')).toBe('/spacedatanetwork/sds/EPM');
     });
 
-    it('should follow the standard topic format', () => {
+    it('should follow the standardCode topic format', () => {
       const topic = getTopicName('PNM.fbs');
-      expect(topic).toMatch(/^\/spacedatanetwork\/sds\/.+\.fbs$/);
+      expect(topic).toMatch(/^\/spacedatanetwork\/sds\/[A-Z]{3}$/);
     });
   });
 
   describe('getSchemaFromTopic', () => {
-    it('should extract schema from valid topic', () => {
-      expect(getSchemaFromTopic('/spacedatanetwork/sds/OMM.fbs')).toBe('OMM.fbs');
-      expect(getSchemaFromTopic('/spacedatanetwork/sds/CDM.fbs')).toBe('CDM.fbs');
-      expect(getSchemaFromTopic('/spacedatanetwork/sds/EPM.fbs')).toBe('EPM.fbs');
+    it('should extract internal schema from public standardCode topic', () => {
+      expect(getSchemaFromTopic('/spacedatanetwork/sds/OMM')).toBe('OMM.fbs');
+      expect(getSchemaFromTopic('/spacedatanetwork/sds/CDM')).toBe('CDM.fbs');
+      expect(getSchemaFromTopic('/spacedatanetwork/sds/EPM')).toBe('EPM.fbs');
     });
 
     it('should return null for invalid topic format', () => {
@@ -94,7 +94,7 @@ describe('schemas', () => {
     });
 
     it('should return null for unknown schema', () => {
-      expect(getSchemaFromTopic('/spacedatanetwork/sds/UNKNOWN.fbs')).toBeNull();
+      expect(getSchemaFromTopic('/spacedatanetwork/sds/UNKNOWN')).toBeNull();
     });
 
     it('should be inverse of getTopicName', () => {

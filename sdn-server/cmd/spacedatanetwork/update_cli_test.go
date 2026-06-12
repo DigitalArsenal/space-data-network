@@ -11,7 +11,13 @@ func TestLoadBundleManifestAcceptsSignedManifest(t *testing.T) {
 		"schema": "org.spacedatanetwork.bundle.v1",
 		"version": "1.2.3",
 		"channel": "beta",
-		"signature": "test-signature"
+		"signature": "test-signature",
+		"update": {
+			"feedBaseUrl": "https://updates.spacedatanetwork.org",
+			"pubsubTopic": "/sdn/updates/v1/beta",
+			"updaterModule": "org.spacedatanetwork.updater",
+			"updaterWasm": "runtime/modules/org.spacedatanetwork.updater.wasm"
+		}
 	}`)
 
 	manifest, err := loadBundleManifest(path)
@@ -23,6 +29,26 @@ func TestLoadBundleManifestAcceptsSignedManifest(t *testing.T) {
 	}
 	if manifest.Channel != "beta" {
 		t.Fatalf("Channel = %q, want beta", manifest.Channel)
+	}
+	if manifest.Update.FeedBaseURL != "https://updates.spacedatanetwork.org" ||
+		manifest.Update.PubsubTopic != "/sdn/updates/v1/beta" ||
+		manifest.Update.UpdaterModule != "org.spacedatanetwork.updater" ||
+		manifest.Update.UpdaterWASM != "runtime/modules/org.spacedatanetwork.updater.wasm" {
+		t.Fatalf("Update metadata = %#v", manifest.Update)
+	}
+}
+
+func TestLoadBundleManifestRejectsMissingUpdateMetadata(t *testing.T) {
+	path := writeBundleManifest(t, `{
+		"schema": "org.spacedatanetwork.bundle.v1",
+		"version": "1.2.3",
+		"channel": "beta",
+		"signature": "test-signature"
+	}`)
+
+	_, err := loadBundleManifest(path)
+	if err == nil {
+		t.Fatal("loadBundleManifest accepted a manifest without update metadata")
 	}
 }
 

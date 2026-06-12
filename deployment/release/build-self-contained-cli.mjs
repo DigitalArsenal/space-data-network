@@ -1,10 +1,13 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cp, chmod, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve, sep } from 'node:path';
+import { cp, chmod, lstat, mkdir, readFile, readdir, readlink, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const executableMode = 0o755;
+const defaultUpdateFeedBaseUrl = 'https://updates.spacedatanetwork.org';
+const updaterModuleId = 'org.spacedatanetwork.updater';
+const updaterWasmPath = 'runtime/modules/org.spacedatanetwork.updater.wasm';
 
 export async function stageBundle(options) {
   const version = safeToken(options.version, 'version');
@@ -21,15 +24,27 @@ export async function stageBundle(options) {
   await mkdir(join(root, 'bin'), { recursive: true });
   await mkdir(join(root, 'runtime', 'kubo'), { recursive: true });
   await mkdir(join(root, 'runtime', 'modules'), { recursive: true });
+  await mkdir(join(root, 'runtime', 'sdn'), { recursive: true });
   await mkdir(join(root, 'runtime', 'ui'), { recursive: true });
 
   const exeName = osName === 'windows' ? 'spacedatanetwork.exe' : 'spacedatanetwork';
   const aliasName = osName === 'windows' ? 'sdn.exe' : 'sdn';
   const kuboName = osName === 'windows' ? 'ipfs.exe' : 'ipfs';
-  await cp(required(options.binaryPath, 'binaryPath'), join(root, 'bin', exeName));
+  if (osName === 'windows') {
+    await cp(required(options.binaryPath, 'binaryPath'), join(root, 'bin', exeName));
+    const bundledWasmEdgePath = join(root, 'runtime', 'wasmedge');
+    await cp(required(options.wasmedgePath, 'wasmedgePath'), bundledWasmEdgePath, { recursive: true });
+    await cp(join(bundledWasmEdgePath, 'bin', 'wasmedge.dll'), join(root, 'bin', 'wasmedge.dll'));
+  } else {
+    await cp(required(options.binaryPath, 'binaryPath'), join(root, 'runtime', 'sdn', exeName));
+    const bundledWasmEdgePath = join(root, 'runtime', 'wasmedge');
+    await cp(required(options.wasmedgePath, 'wasmedgePath'), bundledWasmEdgePath, { recursive: true });
+    await makeSymlinksPortable(bundledWasmEdgePath);
+    await writeFile(join(root, 'bin', exeName), unixLauncherScript(exeName));
+  }
   await cp(required(options.kuboPath, 'kuboPath'), join(root, 'runtime', 'kubo', kuboName));
-  await cp(required(options.sdnUIPath, 'sdnUIPath'), join(root, 'runtime', 'ui', 'sdn'), { recursive: true });
-  await cp(required(options.webUIPath, 'webUIPath'), join(root, 'runtime', 'ui', 'webui'), { recursive: true });
+  await cp(required(options.sdnUIPath ?? options.sdnUiPath, 'sdnUIPath'), join(root, 'runtime', 'ui', 'sdn'), { recursive: true });
+  await cp(required(options.webUIPath ?? options.webUiPath, 'webUIPath'), join(root, 'runtime', 'ui', 'webui'), { recursive: true });
   await cp(
     required(options.updaterWasmPath, 'updaterWasmPath'),
     join(root, 'runtime', 'modules', 'org.spacedatanetwork.updater.wasm'),
@@ -45,6 +60,7 @@ export async function stageBundle(options) {
     await cp(join(root, 'bin', exeName), join(root, 'bin', aliasName));
   } else {
     await chmod(join(root, 'bin', exeName), executableMode);
+    await chmod(join(root, 'runtime', 'sdn', exeName), executableMode);
     await chmod(join(root, 'runtime', 'kubo', kuboName), executableMode);
     await symlink(exeName, join(root, 'bin', aliasName));
   }
@@ -57,6 +73,12 @@ export async function stageBundle(options) {
     signature,
     os: osName,
     arch,
+    update: {
+      feedBaseUrl: options.updateFeedBaseUrl || defaultUpdateFeedBaseUrl,
+      pubsubTopic: `/sdn/updates/v1/${channel}`,
+      updaterModule: updaterModuleId,
+      updaterWasm: updaterWasmPath,
+    },
     artifacts,
   };
   await writeFile(join(root, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -112,6 +134,74 @@ async function listRelativeFiles(root, prefix) {
     }
   }
   return files;
+}
+
+async function makeSymlinksPortable(root) {
+  const entries = await readdir(root, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = join(root, entry.name);
+    if (entry.isDirectory()) {
+      await makeSymlinksPortable(entryPath);
+      continue;
+    }
+    if (!entry.isSymbolicLink()) {
+      continue;
+    }
+    const target = await readlink(entryPath);
+    if (!isAbsolute(target)) {
+      continue;
+    }
+    const localTarget = basename(target);
+    if (!localTarget) {
+      continue;
+    }
+    const localTargetPath = join(dirname(entryPath), localTarget);
+    if (localTargetPath === entryPath) {
+      continue;
+    }
+    try {
+      await lstat(localTargetPath);
+    } catch {
+      continue;
+    }
+    await unlink(entryPath);
+    await symlink(localTarget, entryPath);
+  }
+}
+
+function unixLauncherScript(exeName) {
+  return `#!/bin/sh
+set -eu
+
+SCRIPT_PATH="$0"
+while [ -L "$SCRIPT_PATH" ]; do
+  SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
+  LINK_TARGET="$(readlink "$SCRIPT_PATH")"
+  case "$LINK_TARGET" in
+    /*) SCRIPT_PATH="$LINK_TARGET" ;;
+    *) SCRIPT_PATH="$SCRIPT_DIR/$LINK_TARGET" ;;
+  esac
+done
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
+BUNDLE_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
+export WASMEDGE_DIR="\${WASMEDGE_DIR:-$BUNDLE_ROOT/runtime/wasmedge}"
+
+if [ -d "$WASMEDGE_DIR/lib" ]; then
+  if [ -n "\${LD_LIBRARY_PATH:-}" ]; then
+    export LD_LIBRARY_PATH="$WASMEDGE_DIR/lib:$LD_LIBRARY_PATH"
+  else
+    export LD_LIBRARY_PATH="$WASMEDGE_DIR/lib"
+  fi
+  if [ -n "\${DYLD_LIBRARY_PATH:-}" ]; then
+    export DYLD_LIBRARY_PATH="$WASMEDGE_DIR/lib:$DYLD_LIBRARY_PATH"
+  else
+    export DYLD_LIBRARY_PATH="$WASMEDGE_DIR/lib"
+  fi
+fi
+
+exec "$BUNDLE_ROOT/runtime/sdn/${exeName}" "$@"
+`;
 }
 
 function required(value, name) {

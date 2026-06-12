@@ -25,6 +25,10 @@ type CapHandler func(operation string, payload []byte) ([]byte, error)
 // HostcallImportModule is the SDK-owned sync hostcall import module.
 const HostcallImportModule = "space_data_module_host"
 
+// LegacyHostcallImportModule is accepted only for older module artifacts that
+// were built before the SDK import module name was standardized.
+const LegacyHostcallImportModule = "sdn_host"
+
 // HostBridge is a per-module hostcall dispatcher. It holds the module's
 // granted capabilities and routes hostcall operations to the appropriate handler.
 type HostBridge struct {

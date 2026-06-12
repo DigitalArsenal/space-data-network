@@ -20,8 +20,8 @@ export interface QueryFilter {
  * Subscription configuration for data types
  */
 export interface SubscriptionConfig {
-  /** Data types to subscribe to, e.g., ["OMM.fbs", "CDM.fbs", "EPM.fbs"] */
-  dataTypes: SchemaName[];
+  /** Three-letter Space Data Standards record codes to subscribe to, e.g., ["OMM", "CDM", "EPM"] */
+  dataTypes: string[];
   /** Peer IDs to receive data from, or ["all"] for all peers */
   sourcePeers: string[];
   /** Whether to receive encrypted or plaintext data */
@@ -202,7 +202,11 @@ export function validateSubscriptionConfig(config: SubscriptionConfig): string[]
     errors.push('At least one data type must be specified');
   } else {
     for (const dataType of config.dataTypes) {
-      if (!SUPPORTED_SCHEMAS.includes(dataType)) {
+      if (dataType.endsWith('.fbs')) {
+        errors.push(`Data type must use standardCode without schema suffix: ${dataType}`);
+        continue;
+      }
+      if (!isSupportedStandardCode(dataType)) {
         errors.push(`Unknown data type: ${dataType}`);
       }
     }
@@ -402,7 +406,7 @@ export class SubscriptionManager {
 
     const subscription: ActiveSubscription = {
       id: generateSubscriptionId(),
-      config,
+      config: normalizeSubscriptionConfig(config),
       createdAt: Date.now(),
       messageCount: 0,
       lastMessageAt: null,
@@ -448,7 +452,7 @@ export class SubscriptionManager {
       throw new Error(`Invalid subscription config: ${errors.join(', ')}`);
     }
 
-    subscription.config = newConfig;
+    subscription.config = normalizeSubscriptionConfig(newConfig);
     return subscription;
   }
 
@@ -515,6 +519,7 @@ export class SubscriptionManager {
    */
   processMessage(schema: SchemaName, data: unknown, from: string, header?: RoutingHeader): void {
     const now = Date.now();
+    const standardCode = standardCodeFromDataType(schema);
 
     for (const subscription of this.subscriptions.values()) {
       if (subscription.status !== 'active') {
@@ -524,7 +529,7 @@ export class SubscriptionManager {
       const { config } = subscription;
 
       // Check schema match
-      if (!config.dataTypes.includes(schema)) {
+      if (!config.dataTypes.includes(standardCode)) {
         continue;
       }
 
@@ -692,6 +697,21 @@ export class SubscriptionManager {
  * Default subscription manager instance
  */
 export const defaultSubscriptionManager = new SubscriptionManager();
+
+function normalizeSubscriptionConfig(config: SubscriptionConfig): SubscriptionConfig {
+  return {
+    ...config,
+    dataTypes: config.dataTypes.map(standardCodeFromDataType),
+  };
+}
+
+function standardCodeFromDataType(dataType: string): string {
+  return dataType.endsWith('.fbs') ? dataType.slice(0, -4) : dataType;
+}
+
+function isSupportedStandardCode(dataType: string): boolean {
+  return /^[A-Z]{3}$/.test(dataType) && SUPPORTED_SCHEMAS.includes(`${dataType}.fbs` as SchemaName);
+}
 
 // --- Streaming Mode Support ---
 

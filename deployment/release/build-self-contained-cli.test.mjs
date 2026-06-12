@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { lstat, mkdtemp, mkdir, readFile, readlink, stat, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,11 +14,23 @@ test('stageBundle creates expected portable archive layout', async () => {
   await mkdir(join(inputs, 'sdn-ui'), { recursive: true });
   await mkdir(join(inputs, 'webui'), { recursive: true });
   await mkdir(join(inputs, 'modules'), { recursive: true });
-  await writeFile(join(inputs, 'spacedatanetwork'), '#!/bin/sh\n');
+  await mkdir(join(inputs, 'wasmedge', 'bin'), { recursive: true });
+  await mkdir(join(inputs, 'wasmedge', 'lib'), { recursive: true });
+  await writeFile(join(inputs, 'spacedatanetwork'), '#!/bin/sh\necho "WASMEDGE_DIR=${WASMEDGE_DIR};ARGS=$*"\n');
   await writeFile(join(inputs, 'ipfs'), '#!/bin/sh\n');
   await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
   await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
   await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
+  await writeFile(join(inputs, 'wasmedge', 'bin', 'wasmedge'), '#!/bin/sh\n');
+  await writeFile(join(inputs, 'wasmedge', 'lib', 'libwasmedge.so.0.1.0'), 'libwasmedge');
+  await symlink(
+    join(inputs, 'wasmedge', 'lib', 'libwasmedge.so.0.1.0'),
+    join(inputs, 'wasmedge', 'lib', 'libwasmedge.so.0'),
+  );
+  await symlink(
+    join(inputs, 'wasmedge', 'lib', 'libwasmedge.so.0'),
+    join(inputs, 'wasmedge', 'lib', 'libwasmedge.so'),
+  );
   await writeFile(join(inputs, 'LICENSE'), 'license');
   await writeFile(join(inputs, 'README.md'), 'readme');
 
@@ -29,9 +42,10 @@ test('stageBundle creates expected portable archive layout', async () => {
     outputDir: out,
     binaryPath: join(inputs, 'spacedatanetwork'),
     kuboPath: join(inputs, 'ipfs'),
-    sdnUIPath: join(inputs, 'sdn-ui'),
-    webUIPath: join(inputs, 'webui'),
+    sdnUiPath: join(inputs, 'sdn-ui'),
+    webUiPath: join(inputs, 'webui'),
     updaterWasmPath: join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'),
+    wasmedgePath: join(inputs, 'wasmedge'),
     licensePath: join(inputs, 'LICENSE'),
     readmePath: join(inputs, 'README.md'),
     manifestSignature: 'test-signature',
@@ -40,15 +54,48 @@ test('stageBundle creates expected portable archive layout', async () => {
   assert.equal(staged.bundleName, 'spacedatanetwork-1.2.3-linux-amd64');
   await stat(join(staged.root, 'bin', 'spacedatanetwork'));
   await stat(join(staged.root, 'bin', 'sdn'));
+  await stat(join(staged.root, 'runtime', 'sdn', 'spacedatanetwork'));
   await stat(join(staged.root, 'runtime', 'kubo', 'ipfs'));
   await stat(join(staged.root, 'runtime', 'ui', 'sdn', 'index.html'));
   await stat(join(staged.root, 'runtime', 'ui', 'webui', 'index.html'));
   await stat(join(staged.root, 'runtime', 'modules', 'org.spacedatanetwork.updater.wasm'));
+  await stat(join(staged.root, 'runtime', 'wasmedge', 'bin', 'wasmedge'));
+  await stat(join(staged.root, 'runtime', 'wasmedge', 'lib', 'libwasmedge.so.0'));
+  assert.equal(await readlink(join(staged.root, 'runtime', 'wasmedge', 'lib', 'libwasmedge.so')), 'libwasmedge.so.0');
+  assert.equal(
+    await readlink(join(staged.root, 'runtime', 'wasmedge', 'lib', 'libwasmedge.so.0')),
+    'libwasmedge.so.0.1.0',
+  );
+  const launcher = await readFile(join(staged.root, 'bin', 'spacedatanetwork'), 'utf8');
+  assert.match(launcher, /LD_LIBRARY_PATH=/);
+  assert.match(launcher, /WASMEDGE_DIR=/);
+  assert.match(launcher, /readlink/);
+  assert.equal((await lstat(join(staged.root, 'bin', 'sdn'))).isSymbolicLink(), true);
+
+  const installBin = join(root, 'install-bin');
+  await mkdir(installBin);
+  await symlink(join(staged.root, 'bin', 'spacedatanetwork'), join(installBin, 'spacedatanetwork'));
+  await symlink(join(staged.root, 'bin', 'sdn'), join(installBin, 'sdn'));
+  for (const commandName of ['spacedatanetwork', 'sdn']) {
+    const result = spawnSync(join(installBin, commandName), ['version'], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      result.stdout.trim(),
+      `WASMEDGE_DIR=${join(staged.root, 'runtime', 'wasmedge')};ARGS=version`,
+    );
+  }
+
   const manifest = JSON.parse(await readFile(join(staged.root, 'manifest.json'), 'utf8'));
   assert.equal(manifest.schema, 'org.spacedatanetwork.bundle.v1');
   assert.equal(manifest.version, '1.2.3');
   assert.equal(manifest.channel, 'beta');
   assert.equal(manifest.signature, 'test-signature');
+  assert.deepEqual(manifest.update, {
+    feedBaseUrl: 'https://updates.spacedatanetwork.org',
+    pubsubTopic: '/sdn/updates/v1/beta',
+    updaterModule: 'org.spacedatanetwork.updater',
+    updaterWasm: 'runtime/modules/org.spacedatanetwork.updater.wasm',
+  });
   assert.deepEqual(manifest.artifacts.map((artifact) => artifact.path), [
     'LICENSE',
     'README.md',
@@ -56,8 +103,13 @@ test('stageBundle creates expected portable archive layout', async () => {
     'bin/spacedatanetwork',
     'runtime/kubo/ipfs',
     'runtime/modules/org.spacedatanetwork.updater.wasm',
+    'runtime/sdn/spacedatanetwork',
     'runtime/ui/sdn/index.html',
     'runtime/ui/webui/index.html',
+    'runtime/wasmedge/bin/wasmedge',
+    'runtime/wasmedge/lib/libwasmedge.so',
+    'runtime/wasmedge/lib/libwasmedge.so.0',
+    'runtime/wasmedge/lib/libwasmedge.so.0.1.0',
   ]);
   for (const artifact of manifest.artifacts) {
     const bytes = await readFile(join(staged.root, artifact.path));
@@ -79,11 +131,14 @@ test('stageBundle creates Windows executable names and copied alias', async () =
   await mkdir(join(inputs, 'sdn-ui'), { recursive: true });
   await mkdir(join(inputs, 'webui'), { recursive: true });
   await mkdir(join(inputs, 'modules'), { recursive: true });
+  await mkdir(join(inputs, 'wasmedge', 'bin'), { recursive: true });
   await writeFile(join(inputs, 'spacedatanetwork.exe'), 'exe');
   await writeFile(join(inputs, 'ipfs.exe'), 'ipfs');
   await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
   await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
   await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
+  await writeFile(join(inputs, 'wasmedge', 'bin', 'wasmedge.dll'), 'dll');
+  await writeFile(join(inputs, 'wasmedge', 'bin', 'wasmedge.exe'), 'exe');
   await writeFile(join(inputs, 'LICENSE'), 'license');
   await writeFile(join(inputs, 'README.md'), 'readme');
 
@@ -97,6 +152,7 @@ test('stageBundle creates Windows executable names and copied alias', async () =
     sdnUIPath: join(inputs, 'sdn-ui'),
     webUIPath: join(inputs, 'webui'),
     updaterWasmPath: join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'),
+    wasmedgePath: join(inputs, 'wasmedge'),
     licensePath: join(inputs, 'LICENSE'),
     readmePath: join(inputs, 'README.md'),
     manifestSignature: 'test-signature',
@@ -104,20 +160,31 @@ test('stageBundle creates Windows executable names and copied alias', async () =
 
   await stat(join(staged.root, 'bin', 'spacedatanetwork.exe'));
   await stat(join(staged.root, 'bin', 'sdn.exe'));
+  await stat(join(staged.root, 'bin', 'wasmedge.dll'));
   await stat(join(staged.root, 'runtime', 'kubo', 'ipfs.exe'));
+  await stat(join(staged.root, 'runtime', 'wasmedge', 'bin', 'wasmedge.dll'));
   const alias = await readFile(join(staged.root, 'bin', 'sdn.exe'), 'utf8');
   assert.equal(alias, 'exe');
   const manifest = JSON.parse(await readFile(join(staged.root, 'manifest.json'), 'utf8'));
   assert.equal(manifest.os, 'windows');
+  assert.deepEqual(manifest.update, {
+    feedBaseUrl: 'https://updates.spacedatanetwork.org',
+    pubsubTopic: '/sdn/updates/v1/beta',
+    updaterModule: 'org.spacedatanetwork.updater',
+    updaterWasm: 'runtime/modules/org.spacedatanetwork.updater.wasm',
+  });
   assert.deepEqual(manifest.artifacts.map((artifact) => artifact.path), [
     'LICENSE',
     'README.md',
     'bin/sdn.exe',
     'bin/spacedatanetwork.exe',
+    'bin/wasmedge.dll',
     'runtime/kubo/ipfs.exe',
     'runtime/modules/org.spacedatanetwork.updater.wasm',
     'runtime/ui/sdn/index.html',
     'runtime/ui/webui/index.html',
+    'runtime/wasmedge/bin/wasmedge.dll',
+    'runtime/wasmedge/bin/wasmedge.exe',
   ]);
 });
 

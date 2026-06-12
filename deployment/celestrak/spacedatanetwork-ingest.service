@@ -18,6 +18,7 @@ Environment=SDN_DATASET_PUBLISH_URL=http://127.0.0.1:5001/api/v1/admin/dataset-u
 Environment=SPACETRACK_IDENTITY=
 Environment=SPACETRACK_PASSWORD=
 Environment=WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge
+Environment=LD_LIBRARY_PATH=/opt/spacedatanetwork/.wasmedge/lib
 
 WorkingDirectory=/opt/spacedatanetwork
 

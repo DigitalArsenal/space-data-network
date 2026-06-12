@@ -52,7 +52,7 @@ describe('FlatSQL worker sync status transport', () => {
       downloadSpeedBytesPerSecond: 2048,
       measuredWireSpeedBytesPerSecond: 8192,
       wireSpeedUtilization: 0.25,
-      wireSpeedTarget: 0.8,
+      wireSpeedTarget: 0.9,
       wireSpeedTargetMet: false,
       manifestDiscoveryMs: 12,
       networkTransferMs: 34,
