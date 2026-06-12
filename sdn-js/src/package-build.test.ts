@@ -126,6 +126,7 @@ describe('sdn-js package build', () => {
 
     await expect(fs.access(path.resolve(DIST_PATH, 'chunks'))).rejects.toThrow();
     expect(modules.map((modulePath) => path.relative(DIST_PATH, modulePath))).toEqual([
+      'astro/index.mjs',
       'index.mjs',
       'storefront/index.mjs',
       'ui/index.mjs',
@@ -141,6 +142,8 @@ describe('sdn-js package build', () => {
     expect(packageJson.exports?.['./ui']?.types).toBe('./dist/ui/index.d.ts');
     expect(packageJson.exports?.['./storefront']?.import).toBe('./dist/storefront/index.mjs');
     expect(packageJson.exports?.['./storefront']?.types).toBe('./dist/storefront/index.d.ts');
+    expect(packageJson.exports?.['./astro']?.import).toBe('./dist/astro/index.mjs');
+    expect(packageJson.exports?.['./astro']?.types).toBe('./dist/astro/index.d.ts');
     expect(
       Object.keys(packageJson.scripts ?? {}).some((name) =>
         name.includes('runtime-browser'),
