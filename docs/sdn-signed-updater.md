@@ -259,3 +259,82 @@ Emergency disable for a bad manifest or bad upstream refresh:
 Do not delete audit records or mutate an already-published manifest in place.
 Disable through the feed index and signed policy metadata so clients can retain
 a verifiable history of what happened.
+
+## CLI Bundle Update Payloads
+
+Self-contained CLI bundles use the same signed envelope with `target.kind:
+cli-bundle`. The verification side is the Go updater in
+`sdn-server/internal/update/` (`spacedatanetwork update ...`); the release
+side is the tooling in `deployment/release/`.
+
+Feed layout follows the target-kind convention:
+
+```text
+/cli-bundle/<channel>/<platform>/<arch>/index.json
+/cli-bundle/<channel>/<platform>/<arch>/<version>/manifest.json
+/cli-bundle/<channel>/<platform>/<arch>/<version>/update.wasm
+```
+
+Lane-specific manifest rules:
+
+- `target.kind` is `cli-bundle`.
+- `target.platform` and `target.arch` use Go runtime names (`darwin`, `linux`,
+  `windows` and `amd64`, `arm64`). The Go verifier also accepts the
+  Electron-style `win32`/`x64` aliases used by the desktop lane.
+- `bundle.format` is `tar.gz`: the carrier embeds the exact
+  `spacedatanetwork-<version>-<os>-<arch>.tar.gz` archive produced by
+  `deployment/release/build-self-contained-cli.mjs`.
+- `expires_at` is 90 days after `created_at`. The payload builder requires an
+  explicit `--created-at` so rebuilds are reproducible.
+
+Trust roots ship inside the installed bundle at
+`<bundle>/trust/update-roots.json`: a JSON object mapping `signing.key_id` to
+a base64-encoded Ed25519 public key (SPKI DER as exported by the release
+tooling, or a raw 32-byte key). `stageBundle` stages the file via its
+`trustRootsPath` option; it is bundle metadata, so it is excluded from
+`manifest.json` artifacts and `checksums.txt`, and the staged swap never
+replaces it. `SDN_UPDATE_TRUST_ROOTS` overrides the path for tests and
+managed deployments.
+
+End-to-end release flow:
+
+```sh
+# 1. Wrap the CLI bundle archive in a carrier and sign the manifest.
+#    The signing key comes from --key or SDN_UPDATE_SIGNING_KEY_PEM.
+node deployment/release/build-cli-update-payload.mjs \
+  --bundle-archive dist/release/spacedatanetwork-1.2.3-darwin-arm64.tar.gz \
+  --version 1.2.3 \
+  --sequence 7 \
+  --channel beta \
+  --platform darwin \
+  --arch arm64 \
+  --key-id sdn-release-2026 \
+  --key key.pem \
+  --created-at 2026-06-10T00:00:00Z \
+  --out-dir dist/update/darwin-arm64
+
+# 2. Assemble the static feed tree (index.json + payload copies).
+node deployment/release/build-sdn-update-feed.js \
+  --out-dir dist/release/update-feed \
+  --entry dist/update/darwin-arm64/manifest.json:dist/update/darwin-arm64/update.wasm
+
+# 3. Publish the feed tree, then on the target host stage and apply.
+spacedatanetwork update stage \
+  --manifest https://updates.spacedatanetwork.org/cli-bundle/beta/darwin/arm64/1.2.3/manifest.json \
+  --carrier https://updates.spacedatanetwork.org/cli-bundle/beta/darwin/arm64/1.2.3/update.wasm
+spacedatanetwork update apply
+```
+
+The carrier and manifest helpers are also usable standalone:
+
+```sh
+node deployment/release/build-update-carrier.mjs \
+  --bundle path/to/bundle.tar.gz --out path/to/update.wasm
+node deployment/release/sign-update-manifest.mjs \
+  --manifest unsigned.json --key key.pem --out manifest.json
+```
+
+`update stage` re-runs the full manifest verification (signature against the
+bundle trust roots, target, expiration, sequence, bundle/wasm hashes) before
+writing anything under `updates/staged/`, and `update apply` re-verifies the
+staged files before the atomic swap.

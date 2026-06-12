@@ -121,6 +121,59 @@ test('stageBundle creates Windows executable names and copied alias', async () =
   ]);
 });
 
+test('stageBundle stages trust roots outside manifest artifacts and checksums', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sdn-cli-bundle-trust-'));
+  const inputs = join(root, 'inputs');
+  const out = join(root, 'out');
+  await mkdir(join(inputs, 'sdn-ui'), { recursive: true });
+  await mkdir(join(inputs, 'webui'), { recursive: true });
+  await mkdir(join(inputs, 'modules'), { recursive: true });
+  await writeFile(join(inputs, 'spacedatanetwork'), '#!/bin/sh\n');
+  await writeFile(join(inputs, 'ipfs'), '#!/bin/sh\n');
+  await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
+  await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
+  await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
+  await writeFile(join(inputs, 'LICENSE'), 'license');
+  await writeFile(join(inputs, 'README.md'), 'readme');
+  const trustRoots = { 'sdn-test-root': 'MCowBQYDK2VwAyEA' };
+  await writeFile(join(inputs, 'update-roots.json'), `${JSON.stringify(trustRoots, null, 2)}\n`);
+
+  const staged = await stageBundle({
+    version: '1.2.3',
+    os: 'linux',
+    arch: 'amd64',
+    channel: 'beta',
+    outputDir: out,
+    binaryPath: join(inputs, 'spacedatanetwork'),
+    kuboPath: join(inputs, 'ipfs'),
+    sdnUIPath: join(inputs, 'sdn-ui'),
+    webUIPath: join(inputs, 'webui'),
+    updaterWasmPath: join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'),
+    licensePath: join(inputs, 'LICENSE'),
+    readmePath: join(inputs, 'README.md'),
+    manifestSignature: 'test-signature',
+    trustRootsPath: join(inputs, 'update-roots.json'),
+  });
+
+  const stagedRoots = JSON.parse(await readFile(join(staged.root, 'trust', 'update-roots.json'), 'utf8'));
+  assert.deepEqual(stagedRoots, trustRoots);
+  const manifest = JSON.parse(await readFile(join(staged.root, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.artifacts.some((artifact) => artifact.path.startsWith('trust/')), false);
+  assert.deepEqual(manifest.artifacts.map((artifact) => artifact.path), [
+    'LICENSE',
+    'README.md',
+    'bin/sdn',
+    'bin/spacedatanetwork',
+    'runtime/kubo/ipfs',
+    'runtime/modules/org.spacedatanetwork.updater.wasm',
+    'runtime/ui/sdn/index.html',
+    'runtime/ui/webui/index.html',
+  ]);
+  const checksums = await readFile(join(staged.root, 'checksums.txt'), 'utf8');
+  assert.equal(checksums.includes('trust/'), false);
+  assert.equal(checksums.includes('update-roots.json'), false);
+});
+
 test('stageBundle rejects path traversal in bundle name fields', async () => {
   const root = await mkdtemp(join(tmpdir(), 'sdn-cli-bundle-invalid-'));
   await assert.rejects(
