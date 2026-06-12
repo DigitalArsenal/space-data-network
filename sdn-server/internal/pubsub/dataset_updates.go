@@ -2,6 +2,8 @@ package pubsub
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,6 +64,82 @@ type DatasetFeedHeadAnnouncement struct {
 	ManifestCID  string    `json:"manifest_cid,omitempty"`
 	PNMCID       string    `json:"pnm_cid,omitempty"`
 	PublishedAt  time.Time `json:"published_at,omitempty"`
+
+	// Signature is a hex Ed25519 signature over the canonical announcement
+	// payload (all fields above, signature fields cleared), matching the
+	// signing scheme used for dataset-publication PNMs.
+	Signature        string `json:"signature,omitempty"`
+	SignatureType    string `json:"signature_type,omitempty"`
+	SigningPublicKey string `json:"signing_public_key,omitempty"`
+}
+
+const datasetFeedHeadSignatureDomain = "SDN-FEED-HEAD\x00"
+
+// canonicalSignaturePayload returns the deterministic bytes covered by the
+// announcement signature: a domain tag plus the JSON encoding of the
+// announcement with its signature fields cleared (struct field order is
+// fixed, so the encoding is stable across publishers and verifiers).
+func (ann DatasetFeedHeadAnnouncement) canonicalSignaturePayload() ([]byte, error) {
+	ann.Signature = ""
+	ann.SignatureType = ""
+	encoded, err := json.Marshal(ann)
+	if err != nil {
+		return nil, fmt.Errorf("marshal dataset feed head for signing: %w", err)
+	}
+	return append([]byte(datasetFeedHeadSignatureDomain), encoded...), nil
+}
+
+// SignDatasetFeedHead signs the announcement in place with the publisher's
+// Ed25519 signing key (the same key that signs dataset-publication PNMs).
+func SignDatasetFeedHead(ann *DatasetFeedHeadAnnouncement, signingKey ed25519.PrivateKey) error {
+	if ann == nil {
+		return errors.New("dataset feed head is required")
+	}
+	if len(signingKey) != ed25519.PrivateKeySize {
+		return errors.New("invalid Ed25519 signing key")
+	}
+	ann.SignatureType = "Ed25519"
+	ann.SigningPublicKey = hex.EncodeToString(signingKey.Public().(ed25519.PublicKey))
+	payload, err := ann.canonicalSignaturePayload()
+	if err != nil {
+		return err
+	}
+	ann.Signature = hex.EncodeToString(ed25519.Sign(signingKey, payload))
+	return nil
+}
+
+// VerifyDatasetFeedHead verifies the announcement signature. When
+// providerPublicKey is non-nil it is the trust anchor (resolved from the
+// provider's EPM, like PNM verification); otherwise the embedded
+// signing_public_key is used, which proves payload integrity but not
+// publisher identity. Returns an error for tampered or malformed signatures.
+func VerifyDatasetFeedHead(ann DatasetFeedHeadAnnouncement, providerPublicKey ed25519.PublicKey) error {
+	if strings.TrimSpace(ann.Signature) == "" {
+		return errors.New("dataset feed head is unsigned")
+	}
+	if ann.SignatureType != "Ed25519" {
+		return fmt.Errorf("unsupported dataset feed head signature type %q", ann.SignatureType)
+	}
+	publicKey := providerPublicKey
+	if publicKey == nil {
+		raw, err := hex.DecodeString(strings.TrimSpace(ann.SigningPublicKey))
+		if err != nil || len(raw) != ed25519.PublicKeySize {
+			return errors.New("invalid dataset feed head signing public key")
+		}
+		publicKey = ed25519.PublicKey(raw)
+	}
+	signature, err := hex.DecodeString(strings.TrimSpace(ann.Signature))
+	if err != nil || len(signature) != ed25519.SignatureSize {
+		return errors.New("invalid dataset feed head signature encoding")
+	}
+	payload, err := ann.canonicalSignaturePayload()
+	if err != nil {
+		return err
+	}
+	if !ed25519.Verify(publicKey, payload, signature) {
+		return errors.New("invalid dataset feed head signature")
+	}
+	return nil
 }
 
 // PublishDatasetUpdatePNM publishes one signed dataset-update PNM to the PNM
@@ -102,13 +180,22 @@ func DatasetFeedHeadTopic(schema string) string {
 	return DatasetFeedHeadTopicPrefix + normalizeDatasetUpdateSchema(schema)
 }
 
-func PublishDatasetFeedHead(ctx context.Context, publisher TopicPublisher, ann DatasetFeedHeadAnnouncement) error {
-	if publisher == nil {
-		return ErrNoPublisher
+// PublishSignedDatasetFeedHead signs the announcement with the publisher's
+// Ed25519 key before publishing. Use this over PublishDatasetFeedHead
+// whenever a signing key is available.
+func PublishSignedDatasetFeedHead(ctx context.Context, publisher TopicPublisher, ann DatasetFeedHeadAnnouncement, signingKey ed25519.PrivateKey) error {
+	// Normalize before signing so the signature covers exactly the bytes
+	// that PublishDatasetFeedHead emits (normalization is idempotent).
+	if err := normalizeOutgoingDatasetFeedHead(&ann); err != nil {
+		return err
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	if err := SignDatasetFeedHead(&ann, signingKey); err != nil {
+		return err
 	}
+	return PublishDatasetFeedHead(ctx, publisher, ann)
+}
+
+func normalizeOutgoingDatasetFeedHead(ann *DatasetFeedHeadAnnouncement) error {
 	ann.Schema = normalizeDatasetUpdateSchema(ann.Schema)
 	if err := sds.ValidateSchemaName(ann.Schema); err != nil {
 		return fmt.Errorf("invalid schema: %w", err)
@@ -125,6 +212,19 @@ func PublishDatasetFeedHead(ctx context.Context, publisher TopicPublisher, ann D
 		return errors.New("feed sequence must be positive")
 	}
 	ann.MessageType = DatasetFeedHeadMessageType
+	return nil
+}
+
+func PublishDatasetFeedHead(ctx context.Context, publisher TopicPublisher, ann DatasetFeedHeadAnnouncement) error {
+	if publisher == nil {
+		return ErrNoPublisher
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := normalizeOutgoingDatasetFeedHead(&ann); err != nil {
+		return err
+	}
 	payload, err := json.Marshal(ann)
 	if err != nil {
 		return fmt.Errorf("marshal dataset feed head: %w", err)
