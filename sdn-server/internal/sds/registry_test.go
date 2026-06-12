@@ -28,6 +28,17 @@ func TestSchemaRegistryList(t *testing.T) {
 	if len(schemas) == 0 {
 		t.Error("Expected schemas to be listed")
 	}
+
+	// The registry should hold exactly the supported schema set.
+	if len(schemas) != len(SupportedSchemas) {
+		t.Errorf("Expected registry to list %d schemas, got %d", len(SupportedSchemas), len(schemas))
+	}
+
+	for _, name := range SupportedSchemas {
+		if !registry.Has(name) {
+			t.Errorf("Registry missing supported schema %s", name)
+		}
+	}
 }
 
 func TestSchemaRegistryHas(t *testing.T) {
