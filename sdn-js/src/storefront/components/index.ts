@@ -10,6 +10,8 @@ export {
   formatAccessType,
   formatDuration,
   formatPaymentMethod,
+  formatInvoiceStatus,
+  formatBillingModel,
   formatRating,
   renderListingCardHTML,
   listingCardStyles,

@@ -145,6 +145,7 @@ type DeliveryService struct {
 	topics     map[string]*ps.Topic // topic path -> topic
 	httpClient *http.Client
 	mu         sync.RWMutex
+	store      *Store // optional; when set, usage events are recorded after delivery
 }
 
 // NewDeliveryService creates a new delivery service
@@ -163,20 +164,46 @@ func NewDeliveryService(config DeliveryConfig, pubsub *ps.PubSub) *DeliveryServi
 	}
 }
 
+// SetStore attaches a Store to the DeliveryService so that successful deliveries
+// are recorded as usage events for metered billing.
+func (ds *DeliveryService) SetStore(s *Store) {
+	ds.store = s
+}
+
 // Deliver sends data to a buyer using the specified delivery method
 func (ds *DeliveryService) Deliver(ctx context.Context, req *DeliveryRequest) (*DeliveryResult, error) {
+	var result *DeliveryResult
+	var err error
+
 	switch req.Method {
 	case DeliveryPubSubStream:
-		return ds.deliverPubSub(ctx, req)
+		result, err = ds.deliverPubSub(ctx, req)
 	case DeliveryDirectTransfer:
-		return ds.deliverDirect(ctx, req)
+		result, err = ds.deliverDirect(ctx, req)
 	case DeliveryIPFSPin:
-		return ds.deliverIPFSPin(ctx, req)
+		result, err = ds.deliverIPFSPin(ctx, req)
 	case DeliveryWebhookPush:
-		return ds.deliverWebhook(ctx, req)
+		result, err = ds.deliverWebhook(ctx, req)
 	default:
 		return nil, fmt.Errorf("unsupported delivery method: %s", req.Method)
 	}
+
+	// Record usage event for metered billing if delivery succeeded and a store is attached.
+	if err == nil && result != nil && result.Success && ds.store != nil && req.GrantID != "" {
+		event := &UsageEvent{
+			EventID:        generateToken(16),
+			GrantID:        req.GrantID,
+			BuyerPeerID:    req.BuyerPeerID,
+			ListingID:      req.ListingID,
+			BytesDelivered: uint64(result.BytesSent),
+			OccurredAt:     time.Now(),
+		}
+		if recordErr := ds.store.RecordUsageEvent(event); recordErr != nil {
+			log.Warnf("Failed to record usage event for grant %s: %v", req.GrantID, recordErr)
+		}
+	}
+
+	return result, err
 }
 
 // deliverPubSub publishes data to a PubSub topic dedicated to the buyer

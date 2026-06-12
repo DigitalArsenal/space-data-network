@@ -35,6 +35,8 @@ export enum PaymentMethod {
   SDNCredits = 3,
   FiatStripe = 4,
   Free = 5,
+  UsageBased = 6,
+  Enterprise = 7,
 }
 
 /** Grant status */
@@ -555,4 +557,60 @@ export interface TrustWeights {
   disputes: number;
   tenure: number;
   volume: number;
+}
+
+// --- Usage-based billing and enterprise invoicing types ---
+
+/** Usage event (metered billing) */
+export interface UsageEvent {
+  eventId: string;
+  grantId: string;
+  buyerPeerId: string;
+  listingId: string;
+  recordsServed: number;
+  bytesDelivered: number;
+  occurredAt: Date;
+}
+
+/** Usage summary for a billing period */
+export interface UsageSummary {
+  buyerPeerId: string;
+  listingId: string;
+  periodStart: Date;
+  periodEnd: Date;
+  totalRecords: number;
+  totalBytes: number;
+  totalEvents: number;
+  billedAmountUsd: number; // cents
+}
+
+/** Invoice line item */
+export interface InvoiceLineItem {
+  description: string;
+  quantity: number;
+  unitAmount: number; // cents
+  amount: number; // cents
+}
+
+/** Invoice status */
+export type InvoiceStatus = 'issued' | 'paid' | 'void';
+
+/** Enterprise invoice */
+export interface Invoice {
+  invoiceId: string;
+  buyerPeerId: string;
+  providerPeerId: string;
+  periodStart: Date;
+  periodEnd: Date;
+  lineItems: InvoiceLineItem[];
+  totalAmount: number; // cents
+  currency: string;
+  status: InvoiceStatus;
+  stripeInvoiceId?: string;
+  poReference?: string;
+  notes?: string;
+  issuedAt: Date;
+  paidAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
 }

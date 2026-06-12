@@ -39,9 +39,11 @@ func NewPaymentProcessor(store *Store, peerID string, verifiers ...ChainVerifier
 	return pp
 }
 
+// stripeAPIBase is the Stripe API base URL. Tests override this to intercept HTTP calls.
+var stripeAPIBase = "https://api.stripe.com"
+
 const (
-	stripeCheckoutSessionsURL = "https://api.stripe.com/v1/checkout/sessions"
-	stripeSigTolerance        = 5 * time.Minute
+	stripeSigTolerance = 5 * time.Minute
 )
 
 // CryptoPaymentRequest represents a crypto payment verification request
@@ -599,7 +601,7 @@ func (pp *PaymentProcessor) CreateFiatPaymentIntent(ctx context.Context, req *Fi
 		values.Set("line_items[0][quantity]", "1")
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, stripeCheckoutSessionsURL, strings.NewReader(values.Encode()))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, stripeAPIBase+"/v1/checkout/sessions", strings.NewReader(values.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("build stripe checkout request: %w", err)
 	}

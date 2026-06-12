@@ -15,10 +15,12 @@ import {
   formatAccessType,
   formatDuration,
   formatPaymentMethod,
+  formatInvoiceStatus,
+  formatBillingModel,
   formatRating,
   renderListingCardHTML,
 } from './components';
-import type { Listing, PricingTier } from './types';
+import type { Listing, PricingTier, UsageSummary, Invoice } from './types';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -37,6 +39,8 @@ describe('Storefront Types', () => {
     expect(PaymentMethod.SDNCredits).toBe(3);
     expect(PaymentMethod.FiatStripe).toBe(4);
     expect(PaymentMethod.Free).toBe(5);
+    expect(PaymentMethod.UsageBased).toBe(6);
+    expect(PaymentMethod.Enterprise).toBe(7);
     expect('CryptoUSDC' in PaymentMethod).toBe(false);
 
     expect(GrantStatus.Active).toBe(0);
@@ -893,5 +897,169 @@ describe('Trust Score types', () => {
     const total = weights.reputation + weights.uptime + weights.delivery +
       weights.dataQuality + weights.disputes + weights.tenure + weights.volume;
     expect(total).toBe(1.0);
+  });
+});
+
+// --- Usage-based billing and enterprise invoicing ---
+describe('Usage-based billing types', () => {
+  it('PaymentMethod includes UsageBased=6 and Enterprise=7', () => {
+    expect(PaymentMethod.UsageBased).toBe(6);
+    expect(PaymentMethod.Enterprise).toBe(7);
+  });
+
+  it('existing PaymentMethod values are not shifted', () => {
+    expect(PaymentMethod.CryptoETH).toBe(0);
+    expect(PaymentMethod.Free).toBe(5);
+  });
+
+  it('defines UsageSummary interface', () => {
+    const summary: UsageSummary = {
+      buyerPeerId: 'buyer-1',
+      listingId: 'listing-1',
+      periodStart: new Date('2026-06-01'),
+      periodEnd: new Date('2026-06-30'),
+      totalRecords: 4000,
+      totalBytes: 1792000,
+      totalEvents: 3,
+      billedAmountUsd: 8,
+    };
+    expect(summary.totalRecords).toBe(4000);
+    expect(summary.billedAmountUsd).toBe(8);
+  });
+
+  it('defines Invoice interface with correct status types', () => {
+    const inv: Invoice = {
+      invoiceId: 'inv-1',
+      buyerPeerId: 'buyer-1',
+      providerPeerId: 'provider-1',
+      periodStart: new Date('2026-06-01'),
+      periodEnd: new Date('2026-06-30'),
+      lineItems: [
+        { description: 'Records', quantity: 4000, unitAmount: 1, amount: 4 },
+        { description: 'Bytes', quantity: 1792000, unitAmount: 1, amount: 2 },
+      ],
+      totalAmount: 6,
+      currency: 'USD',
+      status: 'issued',
+      issuedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    expect(inv.status).toBe('issued');
+    expect(inv.lineItems).toHaveLength(2);
+    expect(inv.totalAmount).toBe(6);
+  });
+
+  it('getUsageSummary fetches correct endpoint and normalizes response', async () => {
+    const { createStorefrontClient } = await import('./client');
+    const mockSummary = {
+      buyer_peer_id: 'buyer-1',
+      listing_id: 'listing-1',
+      period_start: '2026-06-01T00:00:00.000Z',
+      period_end: '2026-06-30T00:00:00.000Z',
+      total_records: 4000,
+      total_bytes: 1792000,
+      total_events: 3,
+      billed_amount_usd: 8,
+    };
+
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(mockSummary), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.example.com',
+      peerId: 'buyer-1',
+    });
+
+    const summary = await client.getUsageSummary('listing-1', '2026-06-01', '2026-06-30');
+
+    expect(summary.buyerPeerId).toBe('buyer-1');
+    expect(summary.totalRecords).toBe(4000);
+    expect(summary.totalBytes).toBe(1792000);
+    expect(summary.billedAmountUsd).toBe(8);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/storefront/usage/listing-1/summary')
+    );
+  });
+
+  it('getMyInvoices lists buyer invoices with snake_case key normalization', async () => {
+    const { createStorefrontClient } = await import('./client');
+    const mockInvoices = [
+      {
+        invoice_id: 'inv-1',
+        buyer_peer_id: 'buyer-1',
+        provider_peer_id: 'provider-1',
+        period_start: '2026-06-01T00:00:00.000Z',
+        period_end: '2026-06-30T00:00:00.000Z',
+        line_items: [
+          { description: 'Records', quantity: 4000, unit_amount: 1, amount: 4 },
+        ],
+        total_amount: 4,
+        currency: 'USD',
+        status: 'issued',
+        issued_at: '2026-07-01T00:00:00.000Z',
+        created_at: '2026-07-01T00:00:00.000Z',
+        updated_at: '2026-07-01T00:00:00.000Z',
+      },
+    ];
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(mockInvoices), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.example.com',
+      peerId: 'buyer-1',
+    });
+
+    const invoices = await client.getMyInvoices();
+
+    expect(invoices).toHaveLength(1);
+    expect(invoices[0].invoiceId).toBe('inv-1');
+    expect(invoices[0].buyerPeerId).toBe('buyer-1');
+    expect(invoices[0].totalAmount).toBe(4);
+    expect(invoices[0].status).toBe('issued');
+    expect(invoices[0].lineItems).toHaveLength(1);
+    expect(invoices[0].lineItems[0].unitAmount).toBe(1);
+  });
+
+  it('getInvoice returns null for 404', async () => {
+    const { createStorefrontClient } = await import('./client');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, { status: 404 })
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.example.com',
+      peerId: 'buyer-1',
+    });
+
+    const inv = await client.getInvoice('nonexistent');
+    expect(inv).toBeNull();
+  });
+
+  it('formatInvoiceStatus formats all statuses', () => {
+    expect(formatInvoiceStatus('issued')).toBe('Issued');
+    expect(formatInvoiceStatus('paid')).toBe('Paid');
+    expect(formatInvoiceStatus('void')).toBe('Void');
+  });
+
+  it('formatBillingModel returns descriptive labels for UsageBased and Enterprise', () => {
+    expect(formatBillingModel(PaymentMethod.UsageBased)).toContain('Metered');
+    expect(formatBillingModel(PaymentMethod.Enterprise)).toContain('Enterprise');
+    // Other methods fall through to formatPaymentMethod
+    expect(formatBillingModel(PaymentMethod.Free)).toBe('Free');
+  });
+
+  it('formatPaymentMethod handles UsageBased and Enterprise cases', () => {
+    expect(formatPaymentMethod(PaymentMethod.UsageBased)).toBe('Metered');
+    expect(formatPaymentMethod(PaymentMethod.Enterprise)).toBe('Enterprise');
   });
 });

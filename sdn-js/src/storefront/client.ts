@@ -34,6 +34,8 @@ import type {
   CreateCryptoIntentRequest,
   CryptoBuyerIntent,
   SubmitCryptoPaymentRequest,
+  UsageSummary,
+  Invoice,
 } from './types';
 
 export interface DeliveryTopicSubscription {
@@ -684,6 +686,61 @@ export class StorefrontClient {
     throw new Error('API URL required');
   }
 
+  // --- Usage-based billing and invoicing ---
+
+  /**
+   * Get usage summary for a listing/buyer over a date range.
+   * GET /storefront/usage/{listingId}/summary?buyer={peerId}&from={from}&to={to}
+   */
+  async getUsageSummary(listingId: string, from: string, to: string): Promise<UsageSummary> {
+    if (this.config.apiBaseUrl) {
+      const response = await fetch(
+        `${this.config.apiBaseUrl}/storefront/usage/${listingId}/summary?buyer=${this.config.peerId}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to get usage summary: ${response.statusText}`);
+      }
+      return normalizeUsageSummary(await response.json());
+    }
+    throw new Error('API URL required');
+  }
+
+  /**
+   * List invoices for the authenticated buyer.
+   * GET /storefront/invoices?buyer={peerId}&limit={limit}&offset={offset}
+   */
+  async getMyInvoices(limit = 20, offset = 0): Promise<Invoice[]> {
+    if (this.config.apiBaseUrl) {
+      const response = await fetch(
+        `${this.config.apiBaseUrl}/storefront/invoices?buyer=${this.config.peerId}&limit=${limit}&offset=${offset}`
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to get invoices: ${response.statusText}`);
+      }
+      const payload = await response.json();
+      return Array.isArray(payload) ? payload.map(normalizeInvoice) : [];
+    }
+    throw new Error('API URL required');
+  }
+
+  /**
+   * Get a single invoice by ID.
+   * GET /storefront/invoices/{invoiceId}
+   */
+  async getInvoice(invoiceId: string): Promise<Invoice | null> {
+    if (this.config.apiBaseUrl) {
+      const response = await fetch(`${this.config.apiBaseUrl}/storefront/invoices/${invoiceId}`);
+      if (response.status === 404) {
+        return null;
+      }
+      if (!response.ok) {
+        throw new Error(`Failed to get invoice: ${response.statusText}`);
+      }
+      return normalizeInvoice(await response.json());
+    }
+    throw new Error('API URL required');
+  }
+
   // --- Event system ---
 
   /**
@@ -913,6 +970,54 @@ function normalizeCryptoBuyerIntent(value: unknown): CryptoBuyerIntent {
     txHash: stringField(record, 'tx_hash') || stringField(record, 'txHash'),
     intentDigest: stringField(record, 'intent_digest') || stringField(record, 'intentDigest'),
     intentSignature: stringField(record, 'intent_signature') || stringField(record, 'intentSignature'),
+  };
+}
+
+function normalizeUsageSummary(value: unknown): UsageSummary {
+  const record = isRecord(value) ? value : {};
+  return {
+    buyerPeerId: stringField(record, 'buyer_peer_id') || stringField(record, 'buyerPeerId') || '',
+    listingId: stringField(record, 'listing_id') || stringField(record, 'listingId') || '',
+    periodStart: dateField(record, 'period_start') ?? dateField(record, 'periodStart') ?? new Date(0),
+    periodEnd: dateField(record, 'period_end') ?? dateField(record, 'periodEnd') ?? new Date(0),
+    totalRecords: numberField(record, 'total_records') ?? numberField(record, 'totalRecords') ?? 0,
+    totalBytes: numberField(record, 'total_bytes') ?? numberField(record, 'totalBytes') ?? 0,
+    totalEvents: numberField(record, 'total_events') ?? numberField(record, 'totalEvents') ?? 0,
+    billedAmountUsd: numberField(record, 'billed_amount_usd') ?? numberField(record, 'billedAmountUsd') ?? 0,
+  };
+}
+
+function normalizeInvoiceLineItem(value: unknown): import('./types').InvoiceLineItem {
+  const record = isRecord(value) ? value : {};
+  return {
+    description: stringField(record, 'description') || '',
+    quantity: numberField(record, 'quantity') ?? 0,
+    unitAmount: numberField(record, 'unit_amount') ?? numberField(record, 'unitAmount') ?? 0,
+    amount: numberField(record, 'amount') ?? 0,
+  };
+}
+
+function normalizeInvoice(value: unknown): Invoice {
+  const record = isRecord(value) ? value : {};
+  const lineItemsRaw = record['line_items'] ?? record['lineItems'];
+  const lineItems = Array.isArray(lineItemsRaw) ? lineItemsRaw.map(normalizeInvoiceLineItem) : [];
+  return {
+    invoiceId: stringField(record, 'invoice_id') || stringField(record, 'invoiceId') || '',
+    buyerPeerId: stringField(record, 'buyer_peer_id') || stringField(record, 'buyerPeerId') || '',
+    providerPeerId: stringField(record, 'provider_peer_id') || stringField(record, 'providerPeerId') || '',
+    periodStart: dateField(record, 'period_start') ?? dateField(record, 'periodStart') ?? new Date(0),
+    periodEnd: dateField(record, 'period_end') ?? dateField(record, 'periodEnd') ?? new Date(0),
+    lineItems,
+    totalAmount: numberField(record, 'total_amount') ?? numberField(record, 'totalAmount') ?? 0,
+    currency: stringField(record, 'currency') || 'USD',
+    status: (stringField(record, 'status') || 'issued') as import('./types').InvoiceStatus,
+    stripeInvoiceId: stringField(record, 'stripe_invoice_id') || stringField(record, 'stripeInvoiceId'),
+    poReference: stringField(record, 'po_reference') || stringField(record, 'poReference'),
+    notes: stringField(record, 'notes'),
+    issuedAt: dateField(record, 'issued_at') ?? dateField(record, 'issuedAt') ?? new Date(0),
+    paidAt: dateField(record, 'paid_at') ?? dateField(record, 'paidAt'),
+    createdAt: dateField(record, 'created_at') ?? dateField(record, 'createdAt') ?? new Date(0),
+    updatedAt: dateField(record, 'updated_at') ?? dateField(record, 'updatedAt') ?? new Date(0),
   };
 }
 

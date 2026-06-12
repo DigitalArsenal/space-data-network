@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
@@ -76,8 +77,104 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux, authHandler *auth.Handle
 	mux.HandleFunc("/api/storefront/dashboard/buyer", requireAuth(peers.Standard, h.handleBuyerDashboard))
 	mux.HandleFunc("/api/storefront/dashboard/admin", requireAuth(peers.Admin, h.handleAdminDashboard))
 
+	// Usage metering and enterprise invoices — require auth
+	mux.HandleFunc("/api/storefront/usage/", requireAuth(peers.Standard, h.handleUsageSummary))
+	mux.HandleFunc("/api/storefront/invoices", requireAuth(peers.Standard, h.handleInvoices))
+	mux.HandleFunc("/api/storefront/invoices/", requireAuth(peers.Standard, h.handleInvoiceByID))
+
 	// Stripe webhook — no auth (validated by HMAC signature)
 	mux.HandleFunc("/api/storefront/payments/stripe/webhook", h.handleStripeWebhook)
+}
+
+// handleUsageSummary serves GET /api/storefront/usage/{listingId}/summary
+// with buyer/from/to query parameters.
+func (h *APIHandler) handleUsageSummary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rest := extractPathParam(r.URL.Path, "/api/storefront/usage/")
+	listingID, suffix, ok := strings.Cut(rest, "/")
+	if !ok || suffix != "summary" || listingID == "" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	buyerID, ok := authorizeStorefrontPeerQuery(w, r, r.URL.Query().Get("buyer"), "buyer")
+	if !ok {
+		return
+	}
+	from, err := time.Parse(time.RFC3339, r.URL.Query().Get("from"))
+	if err != nil {
+		http.Error(w, "invalid from time", http.StatusBadRequest)
+		return
+	}
+	to, err := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
+	if err != nil {
+		http.Error(w, "invalid to time", http.StatusBadRequest)
+		return
+	}
+	summary, err := h.service.store.GetUsageSummary(buyerID, listingID, from, to)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
+// handleInvoices serves GET /api/storefront/invoices for the authenticated buyer.
+func (h *APIHandler) handleInvoices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	buyerID, ok := authorizeStorefrontPeerQuery(w, r, r.URL.Query().Get("buyer"), "buyer")
+	if !ok {
+		return
+	}
+	limit := queryInt(r, "limit", 20)
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	offset := queryInt(r, "offset", 0)
+	if offset < 0 {
+		offset = 0
+	}
+	invoices, err := h.service.store.GetBuyerInvoices(buyerID, limit, offset)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if invoices == nil {
+		invoices = []*Invoice{}
+	}
+	writeJSON(w, http.StatusOK, invoices)
+}
+
+// handleInvoiceByID serves GET /api/storefront/invoices/{invoiceId}; buyers
+// may only fetch their own invoices.
+func (h *APIHandler) handleInvoiceByID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	invoiceID := extractPathParam(r.URL.Path, "/api/storefront/invoices/")
+	if invoiceID == "" {
+		http.Error(w, "invoice id required", http.StatusBadRequest)
+		return
+	}
+	invoice, err := h.service.store.GetInvoice(invoiceID)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if invoice == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := authorizeStorefrontPeerQuery(w, r, invoice.BuyerPeerID, "buyer"); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, invoice)
 }
 
 func (h *APIHandler) handleListings(w http.ResponseWriter, r *http.Request) {
