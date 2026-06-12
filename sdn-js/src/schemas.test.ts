@@ -8,6 +8,13 @@ import {
   type SchemaName,
 } from './schemas';
 
+// Mirrors sdn-server/internal/sds: 161 Space Data Standards schemas
+// plus 4 SDN-internal schemas (PGR, PLHD, PLOG, RHD).
+const EXPECTED_STANDARD_SCHEMA_COUNT = 161;
+const INTERNAL_SCHEMAS = ['PGR.fbs', 'PLHD.fbs', 'PLOG.fbs', 'RHD.fbs'] as const;
+const EXPECTED_TOTAL_SCHEMA_COUNT =
+  EXPECTED_STANDARD_SCHEMA_COUNT + INTERNAL_SCHEMAS.length;
+
 describe('schemas', () => {
   describe('SUPPORTED_SCHEMAS', () => {
     it('should contain expected SDS schemas', () => {
@@ -17,6 +24,19 @@ describe('schemas', () => {
       expect(SUPPORTED_SCHEMAS).toContain('PNM.fbs');
       expect(SUPPORTED_SCHEMAS).toContain('OEM.fbs');
       expect(SUPPORTED_SCHEMAS).toContain('SPW.fbs');
+    });
+
+    it('should register the full schema set (standard + SDN-internal)', () => {
+      expect(SUPPORTED_SCHEMAS.length).toBe(EXPECTED_TOTAL_SCHEMA_COUNT);
+
+      for (const internal of INTERNAL_SCHEMAS) {
+        expect(SUPPORTED_SCHEMAS).toContain(internal);
+      }
+
+      const standardCount = SUPPORTED_SCHEMAS.filter(
+        (s) => !INTERNAL_SCHEMAS.includes(s as (typeof INTERNAL_SCHEMAS)[number]),
+      ).length;
+      expect(standardCount).toBe(EXPECTED_STANDARD_SCHEMA_COUNT);
     });
 
     it('should have unique values', () => {

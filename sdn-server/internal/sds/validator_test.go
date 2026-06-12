@@ -3,6 +3,9 @@ package sds
 
 import (
 	"context"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -251,34 +254,146 @@ func TestValidateSchemaNameMaxLength(t *testing.T) {
 	}
 }
 
+// internalSchemas are the SDN-internal schemas that are not part of the
+// upstream spacedatastandards.org standards set.
+var internalSchemas = map[string]bool{
+	"PGR.fbs":  true, // Peer Graph Record
+	"PLHD.fbs": true, // Publication Log Head
+	"PLOG.fbs": true, // Publication Log Entry
+	"RHD.fbs":  true, // Routing Header
+}
+
+const (
+	expectedStandardSchemaCount = 161
+	expectedInternalSchemaCount = 4
+	expectedTotalSchemaCount    = expectedStandardSchemaCount + expectedInternalSchemaCount
+)
+
 func TestSupportedSchemas(t *testing.T) {
-	// Verify SupportedSchemas contains expected schemas
-	expectedSchemas := []string{
-		"ACL.fbs", "ATM.fbs", "BOV.fbs", "CAT.fbs", "CDM.fbs",
-		"CRM.fbs", "CSM.fbs", "CTR.fbs", "EME.fbs", "EOO.fbs",
-		"EOP.fbs", "EPM.fbs", "HYP.fbs", "IDM.fbs", "LCC.fbs",
-		"LDM.fbs", "MET.fbs", "MPE.fbs", "OCM.fbs", "OEM.fbs",
-		"OMM.fbs", "OSM.fbs", "PLD.fbs", "PLHD.fbs", "PLOG.fbs",
-		"PNM.fbs", "PRG.fbs",
-		"PUR.fbs", "REC.fbs", "REV.fbs", "RFM.fbs", "RHD.fbs",
-		"ROC.fbs", "SCM.fbs", "SIT.fbs", "SPW.fbs", "STF.fbs", "TDM.fbs",
-		"TIM.fbs", "VCM.fbs",
+	if len(SupportedSchemas) != expectedTotalSchemaCount {
+		t.Errorf("Expected %d schemas, got %d", expectedTotalSchemaCount, len(SupportedSchemas))
 	}
 
-	if len(SupportedSchemas) != len(expectedSchemas) {
-		t.Errorf("Expected %d schemas, got %d", len(expectedSchemas), len(SupportedSchemas))
+	// Verify uniqueness and count standard vs internal schemas
+	seen := make(map[string]bool, len(SupportedSchemas))
+	standard, internal := 0, 0
+	for _, s := range SupportedSchemas {
+		if seen[s] {
+			t.Errorf("Duplicate schema in SupportedSchemas: %s", s)
+		}
+		seen[s] = true
+
+		if internalSchemas[s] {
+			internal++
+		} else {
+			standard++
+		}
 	}
 
-	for _, expected := range expectedSchemas {
-		found := false
-		for _, s := range SupportedSchemas {
-			if s == expected {
-				found = true
-				break
+	if standard != expectedStandardSchemaCount {
+		t.Errorf("Expected %d standard schemas, got %d", expectedStandardSchemaCount, standard)
+	}
+	if internal != expectedInternalSchemaCount {
+		t.Errorf("Expected %d SDN-internal schemas, got %d", expectedInternalSchemaCount, internal)
+	}
+
+	// Spot-check a few well-known schemas
+	for _, expected := range []string{"OMM.fbs", "CDM.fbs", "EPM.fbs", "CAT.fbs", "PNM.fbs", "PGR.fbs"} {
+		if !seen[expected] {
+			t.Errorf("Expected schema %s not found in SupportedSchemas", expected)
+		}
+	}
+}
+
+func TestSupportedSchemasMatchEmbedded(t *testing.T) {
+	entries, err := schemasFS.ReadDir("schemas")
+	if err != nil {
+		t.Fatalf("Failed to read embedded schemas: %v", err)
+	}
+
+	embedded := make(map[string]bool)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".fbs") {
+			continue
+		}
+		embedded[entry.Name()] = true
+	}
+
+	supported := make(map[string]bool, len(SupportedSchemas))
+	for _, s := range SupportedSchemas {
+		supported[s] = true
+		if !embedded[s] {
+			t.Errorf("Schema %s listed in SupportedSchemas but not embedded", s)
+		}
+	}
+
+	for name := range embedded {
+		if !supported[name] {
+			t.Errorf("Embedded schema %s missing from SupportedSchemas", name)
+		}
+	}
+
+	if len(embedded) != expectedTotalSchemaCount {
+		t.Errorf("Expected %d embedded schemas, got %d", expectedTotalSchemaCount, len(embedded))
+	}
+}
+
+// includeRegex matches FlatBuffers include directives of the form:
+// include "../XXX/main.fbs";
+var includeRegex = regexp.MustCompile(`(?m)^include\s+"\.\./(\w+)/main\.fbs"`)
+
+func TestEmbeddedSchemasParse(t *testing.T) {
+	supported := make(map[string]bool, len(SupportedSchemas))
+	for _, s := range SupportedSchemas {
+		supported[s] = true
+	}
+
+	for _, name := range SupportedSchemas {
+		content, err := schemasFS.ReadFile(filepath.Join("schemas", name))
+		if err != nil {
+			t.Errorf("Failed to read embedded schema %s: %v", name, err)
+			continue
+		}
+
+		text := string(content)
+		if len(strings.TrimSpace(text)) == 0 {
+			t.Errorf("Schema %s is empty", name)
+			continue
+		}
+
+		// Every schema must declare a root type to be usable for validation.
+		if !strings.Contains(text, "root_type") {
+			t.Errorf("Schema %s has no root_type declaration", name)
+		}
+
+		// Braces must balance for the schema to parse.
+		if strings.Count(text, "{") != strings.Count(text, "}") {
+			t.Errorf("Schema %s has unbalanced braces", name)
+		}
+
+		// All include targets must also be registered schemas.
+		for _, match := range includeRegex.FindAllStringSubmatch(text, -1) {
+			target := match[1] + ".fbs"
+			if !supported[target] {
+				t.Errorf("Schema %s includes %s which is not a registered schema", name, target)
 			}
 		}
-		if !found {
-			t.Errorf("Expected schema %s not found in SupportedSchemas", expected)
+	}
+}
+
+func TestValidatorLoadsAllSupportedSchemas(t *testing.T) {
+	validator, err := NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	if got := len(validator.Schemas()); got != expectedTotalSchemaCount {
+		t.Errorf("Expected validator to load %d schemas, got %d", expectedTotalSchemaCount, got)
+	}
+
+	for _, name := range SupportedSchemas {
+		if !validator.HasSchema(name) {
+			t.Errorf("Validator missing supported schema %s", name)
 		}
 	}
 }
