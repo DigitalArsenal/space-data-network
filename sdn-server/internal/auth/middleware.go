@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/spacedatanetwork/sdn-server/internal/abac"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
 
@@ -41,6 +42,69 @@ func (h *Handler) RequireAuth(minTrust peers.TrustLevel, next http.HandlerFunc) 
 		// Store session in request context
 		ctx := context.WithValue(r.Context(), sessionContextKey, session)
 		next(w, r.WithContext(ctx))
+	}
+}
+
+// PolicyEngine is the interface used by RequirePolicy.  *abac.Engine satisfies it.
+type PolicyEngine interface {
+	Evaluate(sub abac.Subject, action abac.Action, res abac.Resource) abac.Decision
+}
+
+// RequirePolicy returns a middleware that applies an ABAC policy check AFTER
+// the standard trust-level gate (defence in depth).  The caller supplies:
+//   - action: the operation being attempted.
+//   - resourceFn: a function that extracts the Resource from the request; called
+//     only when a session is present and the engine is non-nil.
+//
+// When engine is nil the middleware is a transparent pass-through, preserving
+// backward-compatibility when policies are disabled.
+//
+// Denials are logged as structured WARNING entries so that they appear in the
+// audit trail even without a full audit.Logger dependency.
+func (h *Handler) RequirePolicy(engine PolicyEngine, action abac.Action, resourceFn func(*http.Request) abac.Resource) func(http.HandlerFunc) http.HandlerFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if engine == nil {
+				next(w, r)
+				return
+			}
+
+			session := SessionFromContext(r.Context())
+			if session == nil {
+				// No session in context — trust gate should have already rejected this,
+				// but be defensive.
+				writeJSON(w, http.StatusUnauthorized, errorResponse{Code: "unauthorized", Message: "not authenticated"})
+				return
+			}
+
+			sub := abac.Subject{
+				XPub:       session.XPub,
+				TrustLevel: int(session.TrustLevel),
+				Attrs:      map[string]string{},
+			}
+
+			res := resourceFn(r)
+			decision := engine.Evaluate(sub, action, res)
+
+			if !decision.Allowed {
+				log.Warnw("abac policy denial",
+					"xpub", session.XPub,
+					"trust_level", session.TrustLevel,
+					"action", action,
+					"schema", res.Schema,
+					"classification", res.Classification,
+					"provider_id", res.ProviderID,
+					"reason", decision.Reason,
+					"rule_index", decision.RuleIndex,
+					"remote_addr", r.RemoteAddr,
+					"path", r.URL.Path,
+				)
+				writeJSON(w, http.StatusForbidden, errorResponse{Code: "policy_denied", Message: "access denied by policy: " + decision.Reason})
+				return
+			}
+
+			next(w, r)
+		}
 	}
 }
 
