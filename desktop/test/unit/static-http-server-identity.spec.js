@@ -699,7 +699,6 @@ test.describe('desktop static identity API', () => {
         name: 'SpaceAware.io',
         metadata: expect.objectContaining({
           xpub: 'xpub6Ck6927cz8B67K7wLdqjaFDA89wfaMaRaSMadY2H8kFTQu52y29ZdpKu7aNz3RzRaHXd6zcs7hC6GgBxyZez4F1x2mQmt32DkBgt5rGgNFL',
-          epm_cid: 'bafkreiggawraezbltnl3anwmabtuhvmlhdiotx5pxuqa7zmxkfjjjq35d4',
           public_key: '02a3510d7c39403feb59f54ffa955c9346ee0970f64192e885e5139c9b6f5750c7',
           signing_public_key: '02a3510d7c39403feb59f54ffa955c9346ee0970f64192e885e5139c9b6f5750c7',
           signing_key_path: "m/44'/0'/0'/0/0",

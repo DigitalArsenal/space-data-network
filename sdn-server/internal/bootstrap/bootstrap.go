@@ -21,8 +21,12 @@ var log = logging.Logger("sdn-bootstrap")
 // entries below resolve to the same hosts; the direct ip4 entries keep
 // bootstrap functional when DNS resolution is unavailable.
 const (
-	bootstrapPeerSpaceaware = "16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT" // sdn.spaceaware.io (159.203.150.8)
-	bootstrapPeerCelestrak  = "16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3" // celestrak.eth (167.172.219.213)
+	bootstrapPeerSpaceaware = "16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT" // sdn.spaceaware.io (159.203.150.8) full node, tcp+quic on 4001
+	bootstrapPeerCelestrak  = "16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3" // celestrak.eth (167.172.219.213) full node, all transports
+	// The long-lived SpaceAware websocket relay identity, co-hosted on
+	// sdn.spaceaware.io. It owns ws/8080 there (nginx terminates wss/443 in
+	// front of it); the full node above does not listen on websockets.
+	bootstrapPeerSpaceawareRelay = "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45"
 )
 
 var productionBootstrapAddresses = []string{
@@ -30,7 +34,7 @@ var productionBootstrapAddresses = []string{
 	"/dnsaddr/bootstrap.spacedatanetwork.org/p2p/" + bootstrapPeerCelestrak,
 	"/ip4/159.203.150.8/tcp/4001/p2p/" + bootstrapPeerSpaceaware,
 	"/ip4/159.203.150.8/udp/4001/quic-v1/p2p/" + bootstrapPeerSpaceaware,
-	"/ip4/159.203.150.8/tcp/8080/ws/p2p/" + bootstrapPeerSpaceaware,
+	"/ip4/159.203.150.8/tcp/8080/ws/p2p/" + bootstrapPeerSpaceawareRelay,
 	"/ip4/167.172.219.213/tcp/4001/p2p/" + bootstrapPeerCelestrak,
 	"/ip4/167.172.219.213/udp/4001/quic-v1/p2p/" + bootstrapPeerCelestrak,
 	"/ip4/167.172.219.213/tcp/8080/ws/p2p/" + bootstrapPeerCelestrak,

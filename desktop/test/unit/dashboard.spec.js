@@ -167,7 +167,7 @@ test.describe('SDN dashboard window', () => {
       'space-data-network-02'
     ])
     expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.addrs)).toEqual([
-      ['/ip4/159.203.150.8/tcp/8080/ws/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT'],
+      ['/ip4/159.203.150.8/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45'],
       ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3']
     ])
     expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.name)).toEqual([
@@ -175,11 +175,11 @@ test.describe('SDN dashboard window', () => {
       'CelesTrak Provider'
     ])
     expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.metadata.peer_id)).toEqual([
-      '16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT',
+      '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
       '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3'
     ])
     expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.metadata.public_key)).toEqual([
-      '02a3510d7c39403feb59f54ffa955c9346ee0970f64192e885e5139c9b6f5750c7',
+      '038664c404be42123ce709e53da2b63fc24c091a968dd2200c443d7470f73fb1e6',
       '02342309cef261ec3535b5a3e7596d5a838366697bc554e68965723584184fd57c'
     ])
     expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.metadata.ipfs_artifact_addrs)).toEqual([
