@@ -392,6 +392,37 @@ func TestEmptyStrings(t *testing.T) {
 	}
 }
 
+func TestOMMClassificationTypeRoundtrip(t *testing.T) {
+	tests := []struct {
+		name        string
+		marking     string
+		wantInOMM   string
+	}{
+		{"unclassified default", "U", "U"},
+		{"confidential", "C", "C"},
+		{"secret", "S", "S"},
+		{"top secret SCI", "TS//SCI", "TS//SCI"},
+		{"CUI with caveat", "U//FOUO", "U//FOUO"},
+		{"empty treated as U", "", "U"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			b := NewOMMBuilder().WithClassificationType(tc.marking)
+			data := b.Build()
+
+			if !OMM.SizePrefixedOMMBufferHasIdentifier(data) {
+				t.Fatal("OMM buffer missing identifier")
+			}
+
+			omm := OMM.GetSizePrefixedRootAsOMM(data, 0)
+			if got := string(omm.CLASSIFICATION_TYPE()); got != tc.wantInOMM {
+				t.Errorf("CLASSIFICATION_TYPE = %q, want %q", got, tc.wantInOMM)
+			}
+		})
+	}
+}
+
 func TestLargeValues(t *testing.T) {
 	// Test with large numeric values
 	builder := NewOMMBuilder().

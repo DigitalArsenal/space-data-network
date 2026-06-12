@@ -119,6 +119,18 @@ func (b *OMMBuilder) WithCreationDate(creationDate string) *OMMBuilder {
 	return b
 }
 
+// WithClassificationType sets the CCSDS CLASSIFICATION_TYPE field for the
+// record.  The empty string is treated as "U" (unclassified) to match the
+// builder default.  Non-empty values are stored verbatim; normalisation and
+// vocabulary enforcement are the caller's responsibility.
+func (b *OMMBuilder) WithClassificationType(ct string) *OMMBuilder {
+	if ct == "" {
+		ct = "U"
+	}
+	b.classificationType = ct
+	return b
+}
+
 // Build creates the OMM FlatBuffer and returns a copy of the bytes.
 func (b *OMMBuilder) Build() []byte {
 	b.builder.Reset()
