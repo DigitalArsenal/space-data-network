@@ -36,6 +36,10 @@ export async function stageBundle(options) {
   );
   await cp(required(options.licensePath, 'licensePath'), join(root, 'LICENSE'));
   await cp(required(options.readmePath, 'readmePath'), join(root, 'README.md'));
+  if (options.trustRootsPath) {
+    await mkdir(join(root, 'trust'), { recursive: true });
+    await cp(options.trustRootsPath, join(root, 'trust', 'update-roots.json'));
+  }
 
   if (osName === 'windows') {
     await cp(join(root, 'bin', exeName), join(root, 'bin', aliasName));
@@ -77,8 +81,10 @@ export async function createArchive(staged) {
 }
 
 async function collectArtifacts(root) {
+  // trust/ holds the update trust roots, which (like manifest.json and
+  // checksums.txt) are bundle metadata rather than swapped payload artifacts.
   const paths = (await listRelativeFiles(root, ''))
-    .filter((path) => path !== 'manifest.json' && path !== 'checksums.txt')
+    .filter((path) => path !== 'manifest.json' && path !== 'checksums.txt' && !path.startsWith('trust/'))
     .sort();
   const artifacts = [];
   for (const path of paths) {
