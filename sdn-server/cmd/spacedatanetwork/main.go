@@ -862,6 +862,32 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			}
 
 			// ----------------------------------------------------------------
+			// Core API: identity, stats, peers, pubsub endpoints
+			// Registered unconditionally — public GET endpoints are open to all;
+			// write/admin endpoints use RequireAuth internally.
+			// ----------------------------------------------------------------
+			{
+				coreAPI := api.NewCoreAPIHandler(
+					n.PeerID(),
+					n.Host(),
+					n.PubSub(),
+					n,
+					n.Store(),
+					n.Validator(),
+					&cfg.Admin,
+					authHandler,
+					n.ListenAddrs,
+				)
+				coreAPI.RegisterRoutes(adminMux)
+				log.Infof("Core API available at %s://%s/api/v1/{id,version,stats,peers,pubsub}", adminScheme, adminAddr)
+
+				// WebSocket bridge
+				wsHandler := api.NewWSHandler(n, n.Validator())
+				adminMux.Handle("/ws", wsHandler)
+				log.Infof("WebSocket bridge available at %s://%s/ws", adminScheme, adminAddr)
+			}
+
+			// ----------------------------------------------------------------
 			// Frontend management API (admin-only)
 			// ----------------------------------------------------------------
 			frontendMgr := frontend.NewManager(cfg.Admin.FrontendPath)
@@ -1208,7 +1234,13 @@ func isPublicReadAPIPath(path string) bool {
 		"/api/v1/data/cat/bulk",
 		"/api/v1/data/spw/bulk",
 		"/api/v1/data/secure/omm",
-		"/sdn/libp2p.js":
+		"/sdn/libp2p.js",
+		"/api/v1/id",
+		"/api/v1/version",
+		"/api/v1/stats",
+		"/api/v1/pubsub/topics",
+		"/api/v1/pubsub/messages",
+		"/api/v1/peers":
 		return true
 	}
 
