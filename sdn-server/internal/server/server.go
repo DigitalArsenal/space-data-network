@@ -18,6 +18,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/audit"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
+	"github.com/spacedatanetwork/sdn-server/internal/metrics"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/setup"
 )
@@ -223,6 +224,11 @@ func (s *Server) setupRoutes() {
 
 	// Health check
 	s.mux.HandleFunc("/health", s.handleHealth)
+
+	// Prometheus metrics (operational data; same auth posture as admin APIs)
+	s.mux.HandleFunc("/metrics", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		metrics.Handler().ServeHTTP(w, r)
+	}))
 
 	// Root redirect
 	s.mux.HandleFunc("/", s.handleRoot)
@@ -853,7 +859,29 @@ func (s *Server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
 
 // handleHealth returns server health status.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "setup_required": s.setupMgr.IsSetupRequired()})
+	components := map[string]interface{}{}
+	status := "ok"
+
+	if s.peerRegistry != nil {
+		components["peer_registry"] = map[string]interface{}{
+			"up":            true,
+			"trusted_peers": len(s.peerRegistry.ListPeers()),
+		}
+	} else {
+		components["peer_registry"] = map[string]interface{}{"up": false}
+		status = "degraded"
+	}
+	if s.auditLog != nil {
+		components["audit_log"] = map[string]interface{}{"up": true}
+	} else {
+		components["audit_log"] = map[string]interface{}{"up": false}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":         status,
+		"setup_required": s.setupMgr.IsSetupRequired(),
+		"components":     components,
+	})
 }
 
 // getClientIP extracts the client IP from the request.
