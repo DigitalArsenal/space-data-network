@@ -186,7 +186,9 @@ function decodeStorefrontListing(listing: unknown): CanonicalListing | null {
     requiredScope: protectedDelivery?.grantScope,
     standardsUsed: uniqueSorted([
       ...dataTypes,
-      ...(inferStandardsUsed(pluginId, name, description, tags) ?? []),
+      // pluginId is a reverse-domain identifier; matching schema names like
+      // COM against it produces false positives.
+      ...(inferStandardsUsed(name, description, tags) ?? []),
     ]),
     sampleCid: pickTrimmedString(listing, 'sample_cid') || undefined,
     accessType: decodeStorefrontAccessType(listing.access_type),

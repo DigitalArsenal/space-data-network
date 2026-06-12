@@ -410,6 +410,40 @@ SDN_EDGE_RELAYS=/dns4/relay1.example.com/tcp/443/wss/p2p/...,/dns4/relay2.exampl
 
 In the browser, set `window.__SDN_EDGE_RELAYS__` as a string array before importing.
 
+## Testing
+
+### Stress tests
+
+Stress tests live in `src/stress/*.stress.test.ts` and are excluded from the normal `npm test` run. They are fully offline and deterministic: streaming and backpressure are exercised against the real FlatSQL sync chunk codec and `SubscriptionManager` over an in-memory loopback transport.
+
+```bash
+# Build first (the throughput harness tests import dist/ui/index.mjs)
+npm run build
+
+npx vitest run --config vitest.stress.config.mts
+
+# Optionally scale the in-memory streaming volume (default: 64 MB)
+STRESS_TARGET_MB=256 npx vitest run --config vitest.stress.config.mts
+```
+
+For live-network throughput measurement against a running SDN node, use `npm run measure:flatsql-sync` or `npm run chaos:local` instead.
+
+### Live relay integration test
+
+`src/spaceaware-relay.integration.test.ts` dials a real relay and is skipped unless `SDN_RUN_RELAY_TEST=1` **and** both fixture variables are set:
+
+```bash
+SDN_RUN_RELAY_TEST=1 \
+SDN_SPACEAWARE_PROVIDER_PUBLIC_KEY=<hex-encoded provider public key> \
+SDN_SPACEAWARE_RELAY_CANDIDATES=/dns4/relay.example.com/tcp/443/wss,/dns4/relay2.example.com/tcp/443/wss \
+npm run test:relay
+```
+
+- `SDN_SPACEAWARE_PROVIDER_PUBLIC_KEY`: hex-encoded provider public key used to derive the relay's PeerID.
+- `SDN_SPACEAWARE_RELAY_CANDIDATES`: comma-separated relay multiaddrs (a `/p2p/<peerId>` suffix is appended automatically when missing).
+
+If either fixture is missing the suite stays skipped even with `SDN_RUN_RELAY_TEST=1`, so it never runs accidentally in offline CI.
+
 ## License
 
 MIT

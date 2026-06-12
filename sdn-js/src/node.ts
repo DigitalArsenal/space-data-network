@@ -342,10 +342,19 @@ export class SDNNode {
 
         const from = evt.detail.from.toString();
 
-        // Store locally
+        // Store locally. Generic SDS messages carry no detached payload
+        // signature today; GossipSub StrictSign covers the message with the
+        // publisher's libp2p identity key, so that transport signature is
+        // recorded instead of an empty placeholder. Payload-level Ed25519
+        // envelopes (as used by PNM and module delivery) are the upgrade
+        // path for end-to-end provenance independent of the transport.
         if (this.storage) {
+          const transportSignature =
+            evt.detail.signature instanceof Uint8Array
+              ? evt.detail.signature
+              : new Uint8Array(0);
           this.storage
-            .store(schema, msgData, from, new Uint8Array(0))
+            .store(schema, msgData, from, transportSignature)
             .catch(console.error);
         }
 

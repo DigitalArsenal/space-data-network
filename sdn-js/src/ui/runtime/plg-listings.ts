@@ -86,8 +86,10 @@ export function decodeCanonicalPlgListing(
     listing.requiredScope = requiredScope;
   }
 
+  // The plugin id is a reverse-domain identifier (e.g. "com.space-data-…"),
+  // not content — matching schema names like COM against it produces false
+  // positives, so only human-readable fields participate in inference.
   const standardsUsed = inferStandardsUsed(
-    listing.pluginId,
     name,
     description,
     tagline,
