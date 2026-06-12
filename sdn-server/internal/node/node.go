@@ -27,6 +27,7 @@ import (
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
@@ -71,6 +72,8 @@ const (
 
 	// mDNS service name
 	MDNSServiceName = "space-data-network-mdns"
+
+	bootstrapReconnectInterval = time.Minute
 
 	datasetPublicationCatchupInitialDelay = 15 * time.Second
 	datasetPublicationCatchupInterval     = 5 * time.Minute
@@ -959,6 +962,12 @@ func (n *Node) Start(ctx context.Context) error {
 		}(p)
 	}
 
+	// Keep bootstrap connectivity alive: the startup dials above run once, so
+	// a healed network partition would otherwise leave the node isolated
+	// until restart (catch-up loops only consult currently connected peers).
+	n.wg.Add(1)
+	go n.maintainBootstrapConnections(pinnedPeers)
+
 	// Setup per-schema PubSub topics
 	for _, schema := range n.validator.Schemas() {
 		topicName := fmt.Sprintf("/spacedatanetwork/sds/%s", schema)
@@ -1042,6 +1051,41 @@ func (n *Node) runDatasetPublicationPNMCatchup() {
 				log.Infof("Dataset publication PNM catch-up materialized %d update(s)", materialized)
 			}
 			timer.Reset(datasetPublicationCatchupInterval)
+		}
+	}
+}
+
+// maintainBootstrapConnections periodically re-dials pinned bootstrap peers
+// that are not currently connected, so connectivity recovers automatically
+// after a network partition heals instead of waiting for a restart.
+func (n *Node) maintainBootstrapConnections(pinnedPeers []bootstrap.PeerInfo) {
+	defer n.wg.Done()
+
+	ticker := time.NewTicker(bootstrapReconnectInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-n.ctx.Done():
+			return
+		case <-ticker.C:
+			for _, peerInfo := range pinnedPeers {
+				if peerInfo.AddrInfo.ID == n.host.ID() {
+					continue
+				}
+				if n.host.Network().Connectedness(peerInfo.AddrInfo.ID) == network.Connected {
+					continue
+				}
+				dialCtx, cancel := context.WithTimeout(n.ctx, 30*time.Second)
+				err := n.host.Connect(dialCtx, peerInfo.AddrInfo)
+				cancel()
+				if err != nil {
+					log.Debugf("Bootstrap reconnect to %s failed: %v", peerInfo.AddrInfo.ID, err)
+					continue
+				}
+				n.enqueueAutoRelayCandidate(peerInfo.AddrInfo)
+				n.requestConnectedPeerEPM(peerInfo.AddrInfo.ID, "bootstrap-reconnect")
+				log.Infof("Reconnected to bootstrap peer %s (peer ID verified)", peerInfo.AddrInfo.ID)
+			}
 		}
 	}
 }
