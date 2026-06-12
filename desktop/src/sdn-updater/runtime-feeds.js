@@ -1,7 +1,9 @@
 const { KUBO_VERSION } = require('../common/consts')
 
 const SDN_DESKTOP_RELEASES_URL = 'https://github.com/DigitalArsenal/space-data-network/releases/latest'
-const SDN_DESKTOP_AUTO_UPDATES_ENABLED = false
+// Automatic SDN desktop updates stay opt-in (default false) until the SDN
+// patch/update server is live; set SDN_DESKTOP_AUTO_UPDATES=1 to enable.
+const SDN_DESKTOP_AUTO_UPDATES_ENABLED = process.env.SDN_DESKTOP_AUTO_UPDATES === '1'
 const KUBO_RELEASES_API_URL = 'https://api.github.com/repos/ipfs/kubo/releases'
 const KUBO_RELEASES_URL = 'https://github.com/ipfs/kubo/releases'
 

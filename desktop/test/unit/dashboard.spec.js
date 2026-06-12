@@ -65,7 +65,7 @@ test.describe('SDN dashboard window', () => {
     const autoUpdaterSource = fs.readFileSync(path.join(__dirname, '../../src/auto-updater/index.js'), 'utf8')
     const runtimeFeedsSource = fs.readFileSync(path.join(__dirname, '../../src/sdn-updater/runtime-feeds.js'), 'utf8')
 
-    expect(runtimeFeedsSource).toContain('const SDN_DESKTOP_AUTO_UPDATES_ENABLED = false')
+    expect(runtimeFeedsSource).toContain("const SDN_DESKTOP_AUTO_UPDATES_ENABLED = process.env.SDN_DESKTOP_AUTO_UPDATES === '1'")
     expect(autoUpdaterSource).toContain('SDN_DESKTOP_AUTO_UPDATES_ENABLED')
     expect(autoUpdaterSource).toContain('SDN desktop auto updates disabled until the SDN patch/update server is available')
     expect(autoUpdaterSource.indexOf('!SDN_DESKTOP_AUTO_UPDATES_ENABLED')).toBeLessThan(autoUpdaterSource.indexOf('!hasPackagedUpdateConfig()'))
@@ -73,10 +73,10 @@ test.describe('SDN dashboard window', () => {
 
   test('does not block the desktop UI with dialogs for background updater errors', () => {
     const autoUpdaterSource = fs.readFileSync(path.join(__dirname, '../../src/auto-updater/index.js'), 'utf8')
-    const errorHandler = autoUpdaterSource.match(/autoUpdater\.on\('error'[\s\S]*?\n {2}\}\)/)?.[0] || ''
+    const errorHandler = autoUpdaterSource.match(/function onUpdateError \(err\) \{[\s\S]*?\n\}/)?.[0] || ''
 
     expect(errorHandler).toContain('if (!feedback)')
-    expect(errorHandler.indexOf('if (!feedback)')).toBeLessThan(errorHandler.indexOf('showDialog({'))
+    expect(errorHandler.indexOf('if (!feedback)')).toBeLessThan(errorHandler.indexOf('showUpdateErrorDialog()'))
     expect(errorHandler).toContain('feedback = false')
     expect(errorHandler).toContain('updater errors must not block the main process')
   })

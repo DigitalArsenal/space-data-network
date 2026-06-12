@@ -1,7 +1,5 @@
-const { shell, app, BrowserWindow, Notification } = require('electron')
-const { autoUpdater } = require('electron-updater')
+const { shell, app, Notification, net, ipcMain } = require('electron')
 const i18n = require('i18next')
-const { ipcMain } = require('electron')
 const fs = require('fs')
 const path = require('path')
 const logger = require('../common/logger')
@@ -16,6 +14,9 @@ const {
   SDN_DESKTOP_RELEASES_URL,
   sdnDesktopReleaseVersionUrl
 } = require('../sdn-updater/runtime-feeds')
+const { createSdnFeedUpdater } = require('../sdn-updater/feed-updater')
+const { SDN_UPDATE_FEED_BASE_URL } = require('../sdn-updater/release-feed')
+const { loadTrustedUpdateRoots } = require('../sdn-updater/trusted-roots')
 
 function isAutoUpdateSupported () {
   if (!SDN_DESKTOP_AUTO_UPDATES_ENABLED) {
@@ -42,61 +43,147 @@ function hasPackagedUpdateConfig () {
 let updateNotification = null // must be a global to avoid gc
 let feedback = false
 
-function setup () {
+async function fetchResponse (url) {
+  const response = await net.fetch(url, { cache: 'no-store' })
+  if (!response.ok) {
+    throw new Error(`SDN update feed request failed with status ${response.status} for ${url}`)
+  }
+  return response
+}
+
+async function fetchJson (url) {
+  const response = await fetchResponse(url)
+  return response.json()
+}
+
+async function fetchBytes (url) {
+  const response = await fetchResponse(url)
+  return Buffer.from(await response.arrayBuffer())
+}
+
+// The SDN feed updater downloads update payloads exclusively from the
+// SDN-owned signed update feed (https://updates.spacedatanetwork.org), never
+// from inherited IPFS Desktop GitHub release feeds. A fresh instance is
+// created per check so the persisted sequence is always re-read.
+function createFeedUpdater () {
   const ctx = getCtx()
-  // we download manually in 'update-available'
-  autoUpdater.autoDownload = false
-  autoUpdater.autoInstallOnAppQuit = true
-  autoUpdater.logger = logger
 
-  autoUpdater.on('error', err => {
-    logger.error(`[updater] error: ${err.message}`)
-    if (err.stack) {
-      logger.error(`[updater] stack: ${err.stack}`)
-    }
+  return createSdnFeedUpdater({
+    rootDir: path.join(app.getPath('userData'), 'sdn-updates'),
+    baseUrl: process.env.SDN_UPDATE_FEED_BASE_URL || SDN_UPDATE_FEED_BASE_URL,
+    channel: 'stable',
+    platform: process.platform,
+    arch: process.arch,
+    currentSequence: store.get(CONFIG_KEYS.SDN_UPDATE_SEQUENCE, 0),
+    trustedRoots: loadTrustedUpdateRoots(),
+    fetchJson,
+    fetchBytes,
+    lifecycle: {
+      getIpfsd: ctx.getFn('getIpfsd'),
+      stopIpfs: ctx.getFn('stopIpfs'),
+      startIpfs: ctx.getFn('startIpfs')
+    },
+    log: message => logger.info(`[updater] ${message}`)
+  })
+}
 
-    if (!feedback) {
-      return
-    }
+function showUpdateErrorDialog () {
+  const opt = showDialog({
+    title: i18n.t('autoUpdateError.title'),
+    message: i18n.t('autoUpdateError.message'),
+    type: 'error',
+    buttons: [
+      i18n.t('autoUpdateError.later'),
+      i18n.t('autoUpdateError.downloadNow')
+    ]
+  })
 
-    feedback = false
+  if (opt === 1) {
+    shell.openExternal(SDN_DESKTOP_RELEASES_URL)
+  }
+}
 
-    // Show dialogs only for explicit user-requested update checks. Background
-    // updater errors must not block the main process that serves desktop UI.
-    const opt = showDialog({
-      title: i18n.t('autoUpdateError.title'),
-      message: i18n.t('autoUpdateError.message'),
-      type: 'error',
-      buttons: [
-        i18n.t('autoUpdateError.later'),
-        i18n.t('autoUpdateError.downloadNow')
-      ]
-    })
+function onUpdateError (err) {
+  logger.error(`[updater] error: ${err.message}`)
+  if (err.stack) {
+    logger.error(`[updater] stack: ${err.stack}`)
+  }
 
-    if (opt === 1) {
-      shell.openExternal(SDN_DESKTOP_RELEASES_URL)
+  if (!feedback) {
+    return
+  }
+
+  feedback = false
+
+  // Show dialogs only for explicit user-requested update checks. Background
+  // updater errors must not block the main process that serves desktop UI.
+  showUpdateErrorDialog()
+}
+
+function onUpdateNotAvailable () {
+  logger.info('[updater] update not available')
+
+  if (!feedback) {
+    return
+  }
+
+  feedback = false
+  showDialog({
+    title: i18n.t('updateNotAvailableDialog.title'),
+    message: i18n.t('updateNotAvailableDialog.message', { version: app.getVersion() }),
+    type: 'info',
+    buttons: [
+      i18n.t('close')
+    ]
+  })
+}
+
+async function commitStagedUpdate (updater, staged) {
+  const result = await updater.commit(staged.updateId, async currentPath => {
+    for (const file of ['manifest.json', 'update.wasm', 'bundle.tar.zst']) {
+      if (!fs.existsSync(path.join(currentPath, file))) {
+        throw new Error(`committed update is missing ${file}`)
+      }
     }
   })
 
-  autoUpdater.on('update-available', async ({ version, releaseNotes }) => {
-    logger.info(`[updater] update to ${version} available, download will start`)
+  await store.safeSet(CONFIG_KEYS.SDN_UPDATE_SEQUENCE, staged.sequence)
+  logger.info(`[updater] update ${staged.updateId} committed, sequence is now ${staged.sequence}`)
+  return result
+}
 
-    try {
-      await autoUpdater.downloadUpdate()
-    } catch (err) {
-      logger.error(`[updater] ${err.toString()}`)
+function onUpdateStaged (updater, staged) {
+  const version = staged.version
+  logger.info(`[updater] update ${staged.updateId} (${version}) verified and staged`)
+
+  const feedbackDialog = () => {
+    const opt = showDialog({
+      title: i18n.t('updateDownloadedDialog.title'),
+      message: i18n.t('updateDownloadedDialog.message', { version }),
+      type: 'info',
+      buttons: [
+        i18n.t('updateDownloadedDialog.later'),
+        i18n.t('updateDownloadedDialog.now')
+      ]
+    })
+    if (opt === 1) { // now
+      setImmediate(async () => {
+        try {
+          await commitStagedUpdate(updater, staged)
+        } catch (err) {
+          logger.error(`[updater] commit failed: ${err.message}`)
+          showUpdateErrorDialog()
+        }
+      })
     }
+  }
 
-    if (!feedback) {
-      return
-    }
-
-    // do not toggle feedback off here so we can show a dialog once the download
-    // is finished.
-
+  if (feedback) {
+    feedback = false
+    // when in instant feedback mode, surface the update immediately
     const opt = showDialog({
       title: i18n.t('updateAvailableDialog.title'),
-      message: i18n.t('updateAvailableDialog.message', { version, releaseNotes }),
+      message: i18n.t('updateAvailableDialog.message', { version }),
       type: 'info',
       buttons: [
         i18n.t('close'),
@@ -107,101 +194,32 @@ function setup () {
     if (opt === 1) {
       shell.openExternal(sdnDesktopReleaseVersionUrl(version))
     }
-  })
 
-  autoUpdater.on('update-not-available', ({ version }) => {
-    logger.info('[updater] update not available')
-
-    if (!feedback) {
-      return
-    }
-
-    feedback = false
-    showDialog({
-      title: i18n.t('updateNotAvailableDialog.title'),
-      message: i18n.t('updateNotAvailableDialog.message', { version }),
-      type: 'info',
-      buttons: [
-        i18n.t('close')
-      ]
+    feedbackDialog()
+  } else {
+    // show unobtrusive notification + dialog on click
+    updateNotification = new Notification({
+      title: i18n.t('updateDownloadedNotification.title'),
+      body: i18n.t('updateDownloadedNotification.message', { version })
     })
-  })
-
-  let progressPercentTimeout = null
-  autoUpdater.on('download-progress', ({ percent, bytesPerSecond }) => {
-    const logDownloadProgress = () => {
-      logger.info(`[updater] download progress is ${percent.toFixed(2)}% at ${bytesPerSecond} bps.`)
-    }
-    // log the percent, but not too often to avoid spamming the logs, but we should
-    // be sure we're logging at what percent any hiccup is occurring.
-    clearTimeout(progressPercentTimeout)
-    if (percent === 100) {
-      logDownloadProgress()
-      return
-    }
-    progressPercentTimeout = setTimeout(logDownloadProgress, 2000)
-  })
-
-  autoUpdater.on('update-downloaded', ({ version }) => {
-    logger.info(`[updater] update to ${version} downloaded`)
-
-    const feedbackDialog = () => {
-      const opt = showDialog({
-        title: i18n.t('updateDownloadedDialog.title'),
-        message: i18n.t('updateDownloadedDialog.message', { version }),
-        type: 'info',
-        buttons: [
-          i18n.t('updateDownloadedDialog.later'),
-          i18n.t('updateDownloadedDialog.now')
-        ]
-      })
-      if (opt === 1) { // now
-        setImmediate(async () => {
-          await beforeQuitCleanup() // just to be sure (we had regressions before)
-          autoUpdater.quitAndInstall()
-        })
-      }
-    }
-    if (feedback) {
-      feedback = false
-      // when in instant feedback mode, show dialog immediately
-      feedbackDialog()
-    } else {
-      // show unobtrusive notification + dialog on click
-      updateNotification = new Notification({
-        title: i18n.t('updateDownloadedNotification.title'),
-        body: i18n.t('updateDownloadedNotification.message', { version })
-      })
-      updateNotification.on('click', feedbackDialog)
-      updateNotification.show()
-    }
-  })
-  const stopIpfs = ctx.getFn('stopIpfs')
-
-  // In some cases before-quit event is not emitted before all windows are closed,
-  // and we need to do cleanup here
-  const beforeQuitCleanup = async () => {
-    BrowserWindow.getAllWindows().forEach(w => w.removeAllListeners('close'))
-    app.removeAllListeners('window-all-closed')
-    try {
-      const s = await stopIpfs()
-      logger.info(`[beforeQuitCleanup] stopIpfs had finished with status: ${s}`)
-    } catch (err) {
-      logger.error('[beforeQuitCleanup] stopIpfs had an error', err)
-    }
+    updateNotification.on('click', feedbackDialog)
+    updateNotification.show()
   }
-  // built-in updater != electron-updater
-  // Added in https://github.com/electron-userland/electron-builder/pull/6395
-  require('electron').autoUpdater.on('before-quit-for-update', beforeQuitCleanup)
 }
 
 async function checkForUpdates () {
   logger.info('[updater] checking for updates')
   ipcMain.emit(ipcMainEvents.UPDATING)
   try {
-    await autoUpdater.checkForUpdates()
-  } catch (_) {
-    // Ignore. The errors are already handled on 'error' event.
+    const updater = createFeedUpdater()
+    const staged = await updater.checkAndStage()
+    if (staged) {
+      onUpdateStaged(updater, staged)
+    } else {
+      onUpdateNotAvailable()
+    }
+  } catch (err) {
+    onUpdateError(err)
   }
   ipcMain.emit(ipcMainEvents.UPDATING_ENDED)
 }
@@ -223,8 +241,6 @@ module.exports = async function () {
     })
     return
   }
-
-  setup()
 
   checkForUpdates()
 
