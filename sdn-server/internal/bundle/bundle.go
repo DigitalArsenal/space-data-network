@@ -35,7 +35,15 @@ func ResolveFromExecutable(executablePath string) Layout {
 	binDir := filepath.Dir(executablePath)
 	root := filepath.Dir(binDir)
 	if filepath.Base(binDir) != "bin" {
-		return Layout{}
+		// The Linux VM bundle ships a launcher script at bin/<exe> that
+		// execs the real binary from runtime/sdn/<exe> (so the bundled
+		// WasmEdge libraries resolve); accept that layout as well.
+		if filepath.Base(binDir) == "sdn" && filepath.Base(root) == "runtime" {
+			root = filepath.Dir(root)
+			binDir = filepath.Join(root, "bin")
+		} else {
+			return Layout{}
+		}
 	}
 	manifestPath := filepath.Join(root, "manifest.json")
 	if _, err := os.Stat(manifestPath); err != nil {
