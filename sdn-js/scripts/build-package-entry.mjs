@@ -40,6 +40,17 @@ const sharedBuildOptions = {
   },
   plugins: [
     {
+      name: 'satellite-js-wasm-disabled',
+      setup(pluginBuild) {
+        pluginBuild.onResolve({ filter: /^\.\/wasm\/index\.js$/ }, (args) => {
+          if (!args.importer.includes(`node_modules${path.sep}satellite.js${path.sep}`)) {
+            return null;
+          }
+          return { path: path.join(packageRoot, 'src/shims/satellite-wasm-disabled.ts') };
+        });
+      },
+    },
+    {
       name: 'hd-wallet-sdn-shims',
       setup(pluginBuild) {
         pluginBuild.onResolve(
@@ -94,6 +105,7 @@ await build({
     path.join(packageRoot, 'src/index.ts'),
     path.join(packageRoot, 'src/ui/index.ts'),
     path.join(packageRoot, 'src/storefront/index.ts'),
+    path.join(packageRoot, 'src/astro/index.ts'),
   ],
   outdir: path.join(packageRoot, 'dist'),
   outbase: path.join(packageRoot, 'src'),
