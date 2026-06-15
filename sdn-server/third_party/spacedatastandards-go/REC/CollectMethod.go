@@ -4,7 +4,7 @@ package REC
 
 import "strconv"
 
-/// Enumeration for data collection methods
+// / Enumeration for data collection methods
 type CollectMethod int8
 
 const (

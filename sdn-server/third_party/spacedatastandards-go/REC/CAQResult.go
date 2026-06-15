@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Catalog query result payload.
+// / Catalog query result payload.
 type CAQResult struct {
 	_tab flatbuffers.Table
 }
@@ -62,7 +62,7 @@ func (rcv *CAQResult) MutateKind(n catalogQueryKind) bool {
 	return rcv.MutateKIND(n)
 }
 
-/// Populated when KIND == ROWS.
+// / Populated when KIND == ROWS.
 func (rcv *CAQResult) ROWS(obj *ETM, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -94,8 +94,8 @@ func (rcv *CAQResult) RowsLength() int {
 	return rcv.ROWSLength()
 }
 
-/// Populated when KIND == ROWS.
-/// Populated when KIND == ENTITY_INDICES.
+// / Populated when KIND == ROWS.
+// / Populated when KIND == ENTITY_INDICES.
 func (rcv *CAQResult) ENTITY_INDICES(j int) uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *CAQResult) EntityIndicesLength() int {
 	return rcv.ENTITY_INDICESLength()
 }
 
-/// Populated when KIND == ENTITY_INDICES.
+// / Populated when KIND == ENTITY_INDICES.
 func (rcv *CAQResult) MutateENTITY_INDICES(j int, n uint32) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -135,7 +135,7 @@ func (rcv *CAQResult) MutateEntityIndices(j int, n uint32) bool {
 	return rcv.MutateENTITY_INDICES(j, n)
 }
 
-/// Populated when KIND == VISIBILITY_MASK (one byte per entity).
+// / Populated when KIND == VISIBILITY_MASK (one byte per entity).
 func (rcv *CAQResult) MASK(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -173,7 +173,7 @@ func (rcv *CAQResult) MaskBytes() []byte {
 	return rcv.MASKBytes()
 }
 
-/// Populated when KIND == VISIBILITY_MASK (one byte per entity).
+// / Populated when KIND == VISIBILITY_MASK (one byte per entity).
 func (rcv *CAQResult) MutateMASK(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -187,7 +187,7 @@ func (rcv *CAQResult) MutateMask(j int, n byte) bool {
 	return rcv.MutateMASK(j, n)
 }
 
-/// Number of visible (masked-in) entities in MASK.
+// / Number of visible (masked-in) entities in MASK.
 func (rcv *CAQResult) VISIBLE_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -200,7 +200,7 @@ func (rcv *CAQResult) VisibleCount() uint32 {
 	return rcv.VISIBLE_COUNT()
 }
 
-/// Number of visible (masked-in) entities in MASK.
+// / Number of visible (masked-in) entities in MASK.
 func (rcv *CAQResult) MutateVISIBLE_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(12, n)
 }
@@ -209,7 +209,7 @@ func (rcv *CAQResult) MutateVisibleCount(n uint32) bool {
 	return rcv.MutateVISIBLE_COUNT(n)
 }
 
-/// Populated when KIND == CATALOG_ROW.
+// / Populated when KIND == CATALOG_ROW.
 func (rcv *CAQResult) ENTITY_INDEX() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -222,7 +222,7 @@ func (rcv *CAQResult) EntityIndex() uint32 {
 	return rcv.ENTITY_INDEX()
 }
 
-/// Populated when KIND == CATALOG_ROW.
+// / Populated when KIND == CATALOG_ROW.
 func (rcv *CAQResult) MutateENTITY_INDEX(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(14, n)
 }
@@ -231,7 +231,7 @@ func (rcv *CAQResult) MutateEntityIndex(n uint32) bool {
 	return rcv.MutateENTITY_INDEX(n)
 }
 
-/// Single matched row when KIND == CATALOG_ROW.
+// / Single matched row when KIND == CATALOG_ROW.
 func (rcv *CAQResult) ROW(obj *ETM) *ETM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -249,7 +249,7 @@ func (rcv *CAQResult) Row(obj *ETM) *ETM {
 	return rcv.ROW(obj)
 }
 
-/// Single matched row when KIND == CATALOG_ROW.
+// / Single matched row when KIND == CATALOG_ROW.
 func CAQResultStart(builder *flatbuffers.Builder) {
 	builder.StartObject(7)
 }

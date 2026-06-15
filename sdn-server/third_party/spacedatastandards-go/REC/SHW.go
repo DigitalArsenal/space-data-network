@@ -6,8 +6,8 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Shader Wire envelope — carries either a compile request or a compile
-/// response across the runtime boundary.
+// / Shader Wire envelope — carries either a compile request or a compile
+// / response across the runtime boundary.
 type SHW struct {
 	_tab flatbuffers.Table
 }

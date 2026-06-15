@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Time System and time-conversion envelope.
+// / Time System and time-conversion envelope.
 type TIM struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *TIM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Legacy time-system selector retained for existing TIM consumers.
+// / Legacy time-system selector retained for existing TIM consumers.
 func (rcv *TIM) TIME_SYSTEM() timingStandard {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *TIM) TimeSystem() timingStandard {
 	return rcv.TIME_SYSTEM()
 }
 
-/// Legacy time-system selector retained for existing TIM consumers.
+// / Legacy time-system selector retained for existing TIM consumers.
 func (rcv *TIM) MutateTIME_SYSTEM(n timingStandard) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -76,7 +76,7 @@ func (rcv *TIM) MutateTimeSystem(n timingStandard) bool {
 	return rcv.MutateTIME_SYSTEM(n)
 }
 
-/// A single tagged instant.
+// / A single tagged instant.
 func (rcv *TIM) INSTANT(obj *TIMInstant) *TIMInstant {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -94,8 +94,8 @@ func (rcv *TIM) Instant(obj *TIMInstant) *TIMInstant {
 	return rcv.INSTANT(obj)
 }
 
-/// A single tagged instant.
-/// Time conversion request.
+// / A single tagged instant.
+// / Time conversion request.
 func (rcv *TIM) CONVERSION_REQUEST(obj *TIMConversionRequest) *TIMConversionRequest {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -113,8 +113,8 @@ func (rcv *TIM) ConversionRequest(obj *TIMConversionRequest) *TIMConversionReque
 	return rcv.CONVERSION_REQUEST(obj)
 }
 
-/// Time conversion request.
-/// Time conversion result.
+// / Time conversion request.
+// / Time conversion result.
 func (rcv *TIM) CONVERSION_RESULT(obj *TIMConversionResult) *TIMConversionResult {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -132,7 +132,7 @@ func (rcv *TIM) ConversionResult(obj *TIMConversionResult) *TIMConversionResult 
 	return rcv.CONVERSION_RESULT(obj)
 }
 
-/// Time conversion result.
+// / Time conversion result.
 func TIMStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

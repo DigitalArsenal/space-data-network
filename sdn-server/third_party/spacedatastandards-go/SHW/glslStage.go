@@ -4,12 +4,12 @@ package SHW
 
 import "strconv"
 
-/// Shader Wire — wire contract for GLSL / WebGL shader plugins that compile
-/// and expose parameterized fragments that a host injects into its own
-/// pipeline. Carries compile request + response, a uniform description
-/// table, and the injection-point enum a host consumes to know where to
-/// splice a shader fragment into its stage graph.
-/// Shader stage into which a compiled fragment should be injected.
+// / Shader Wire — wire contract for GLSL / WebGL shader plugins that compile
+// / and expose parameterized fragments that a host injects into its own
+// / pipeline. Carries compile request + response, a uniform description
+// / table, and the injection-point enum a host consumes to know where to
+// / splice a shader fragment into its stage graph.
+// / Shader stage into which a compiled fragment should be injected.
 type glslStage byte
 
 const (

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Collection of all parameter types
+// / Collection of all parameter types
 type ParameterTypeSet struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ParameterTypeSet) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Integer parameter types
+// / Integer parameter types
 func (rcv *ParameterTypeSet) INTEGER_TYPES(obj *IntegerParameterType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *ParameterTypeSet) IntegerTypesLength() int {
 	return rcv.INTEGER_TYPESLength()
 }
 
-/// Integer parameter types
-/// Float parameter types
+// / Integer parameter types
+// / Float parameter types
 func (rcv *ParameterTypeSet) FLOAT_TYPES(obj *FloatParameterType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -107,8 +107,8 @@ func (rcv *ParameterTypeSet) FloatTypesLength() int {
 	return rcv.FLOAT_TYPESLength()
 }
 
-/// Float parameter types
-/// String parameter types
+// / Float parameter types
+// / String parameter types
 func (rcv *ParameterTypeSet) STRING_TYPES(obj *StringParameterType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -140,8 +140,8 @@ func (rcv *ParameterTypeSet) StringTypesLength() int {
 	return rcv.STRING_TYPESLength()
 }
 
-/// String parameter types
-/// Boolean parameter types
+// / String parameter types
+// / Boolean parameter types
 func (rcv *ParameterTypeSet) BOOLEAN_TYPES(obj *BooleanParameterType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -173,8 +173,8 @@ func (rcv *ParameterTypeSet) BooleanTypesLength() int {
 	return rcv.BOOLEAN_TYPESLength()
 }
 
-/// Boolean parameter types
-/// Enumerated parameter types
+// / Boolean parameter types
+// / Enumerated parameter types
 func (rcv *ParameterTypeSet) ENUMERATED_TYPES(obj *EnumeratedParameterType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -206,8 +206,8 @@ func (rcv *ParameterTypeSet) EnumeratedTypesLength() int {
 	return rcv.ENUMERATED_TYPESLength()
 }
 
-/// Enumerated parameter types
-/// Binary parameter types
+// / Enumerated parameter types
+// / Binary parameter types
 func (rcv *ParameterTypeSet) BINARY_TYPES(obj *BinaryParameterType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -239,8 +239,8 @@ func (rcv *ParameterTypeSet) BinaryTypesLength() int {
 	return rcv.BINARY_TYPESLength()
 }
 
-/// Binary parameter types
-/// Absolute time parameter types
+// / Binary parameter types
+// / Absolute time parameter types
 func (rcv *ParameterTypeSet) ABSOLUTE_TIME_TYPES(obj *AbsoluteTimeParameterType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -272,8 +272,8 @@ func (rcv *ParameterTypeSet) AbsoluteTimeTypesLength() int {
 	return rcv.ABSOLUTE_TIME_TYPESLength()
 }
 
-/// Absolute time parameter types
-/// Relative time parameter types
+// / Absolute time parameter types
+// / Relative time parameter types
 func (rcv *ParameterTypeSet) RELATIVE_TIME_TYPES(obj *RelativeTimeParameterType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -305,8 +305,8 @@ func (rcv *ParameterTypeSet) RelativeTimeTypesLength() int {
 	return rcv.RELATIVE_TIME_TYPESLength()
 }
 
-/// Relative time parameter types
-/// Array parameter types
+// / Relative time parameter types
+// / Array parameter types
 func (rcv *ParameterTypeSet) ARRAY_TYPES(obj *ArrayParameterType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -338,8 +338,8 @@ func (rcv *ParameterTypeSet) ArrayTypesLength() int {
 	return rcv.ARRAY_TYPESLength()
 }
 
-/// Array parameter types
-/// Aggregate parameter types
+// / Array parameter types
+// / Aggregate parameter types
 func (rcv *ParameterTypeSet) AGGREGATE_TYPES(obj *AggregateParameterType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -371,7 +371,7 @@ func (rcv *ParameterTypeSet) AggregateTypesLength() int {
 	return rcv.AGGREGATE_TYPESLength()
 }
 
-/// Aggregate parameter types
+// / Aggregate parameter types
 func ParameterTypeSetStart(builder *flatbuffers.Builder) {
 	builder.StartObject(10)
 }

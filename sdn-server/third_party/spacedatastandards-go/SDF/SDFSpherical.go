@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Spherical SDF parameters.
+// / Spherical SDF parameters.
 type SDFSpherical struct {
 	_tab flatbuffers.Table
 }
@@ -62,7 +62,7 @@ func (rcv *SDFSpherical) MutateRadius(n float64) bool {
 	return rcv.MutateRADIUS(n)
 }
 
-/// Inner radius for hollow sphere (0 == solid).
+// / Inner radius for hollow sphere (0 == solid).
 func (rcv *SDFSpherical) INNER_RADIUS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -75,7 +75,7 @@ func (rcv *SDFSpherical) InnerRadius() float64 {
 	return rcv.INNER_RADIUS()
 }
 
-/// Inner radius for hollow sphere (0 == solid).
+// / Inner radius for hollow sphere (0 == solid).
 func (rcv *SDFSpherical) MutateINNER_RADIUS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }

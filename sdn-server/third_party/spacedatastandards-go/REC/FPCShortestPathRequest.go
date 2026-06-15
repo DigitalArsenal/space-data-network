@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Single-source shortest-path request.
+// / Single-source shortest-path request.
 type FPCShortestPathRequest struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *FPCShortestPathRequest) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Source vertex index.
+// / Source vertex index.
 func (rcv *FPCShortestPathRequest) SOURCE() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *FPCShortestPathRequest) Source() uint32 {
 	return rcv.SOURCE()
 }
 
-/// Source vertex index.
+// / Source vertex index.
 func (rcv *FPCShortestPathRequest) MutateSOURCE(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *FPCShortestPathRequest) MutateSource(n uint32) bool {
 	return rcv.MutateSOURCE(n)
 }
 
-/// Algorithm selection hint.
+// / Algorithm selection hint.
 func (rcv *FPCShortestPathRequest) ALGORITHM() shortestPathAlgorithm {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *FPCShortestPathRequest) Algorithm() shortestPathAlgorithm {
 	return rcv.ALGORITHM()
 }
 
-/// Algorithm selection hint.
+// / Algorithm selection hint.
 func (rcv *FPCShortestPathRequest) MutateALGORITHM(n shortestPathAlgorithm) bool {
 	return rcv._tab.MutateByteSlot(6, byte(n))
 }

@@ -8,17 +8,17 @@ type timConversionStatus int8
 
 const (
 	/// Conversion completed.
-	timConversionStatusOK                        timConversionStatus = 0
+	timConversionStatusOK timConversionStatus = 0
 	/// Input epoch or requested representation is invalid.
-	timConversionStatusINVALID_INPUT             timConversionStatus = 1
+	timConversionStatusINVALID_INPUT timConversionStatus = 1
 	/// Requested source or target time system is not supported.
-	timConversionStatusUNSUPPORTED_TIME_SYSTEM   timConversionStatus = 2
+	timConversionStatusUNSUPPORTED_TIME_SYSTEM timConversionStatus = 2
 	/// Conversion requires leap-second data that was not available.
 	timConversionStatusLEAP_SECOND_DATA_REQUIRED timConversionStatus = 3
 	/// Conversion requires Earth-orientation data that was not available.
-	timConversionStatusEOP_DATA_REQUIRED         timConversionStatus = 4
+	timConversionStatusEOP_DATA_REQUIRED timConversionStatus = 4
 	/// Requested instant is outside the supported conversion range.
-	timConversionStatusOUT_OF_RANGE              timConversionStatus = 5
+	timConversionStatusOUT_OF_RANGE timConversionStatus = 5
 )
 
 var EnumNamestimConversionStatus = map[timConversionStatus]string{

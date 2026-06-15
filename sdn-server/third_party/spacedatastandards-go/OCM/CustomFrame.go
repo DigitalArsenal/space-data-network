@@ -4,46 +4,46 @@ package OCM
 
 import "strconv"
 
-/// Non-registered or local use frames
+// / Non-registered or local use frames
 type CustomFrame int8
 
 const (
 	/// Earth-Centered-Earth-Fixed: Rotates with Earth. X-axis at prime meridian, Y eastward, Z towards North Pole.
-	CustomFrameECEF        CustomFrame = 0
+	CustomFrameECEF CustomFrame = 0
 	/// True Equator Mean Equinox of Date, same as TEMEOFDATE: Dynamic frame for SGP4 satellite tracking.
-	CustomFrameTEME        CustomFrame = 1
+	CustomFrameTEME CustomFrame = 1
 	/// True Equator Mean Equinox of Epoch: Static version of TEMEOFDATE at a given epoch.
 	CustomFrameTEMEOFEPOCH CustomFrame = 2
 	/// East-North-Up: Local tangent plane for surface points.
-	CustomFrameENU         CustomFrame = 3
+	CustomFrameENU CustomFrame = 3
 	/// North-East-Down: Aviation/navigation frame aligned with gravity.
-	CustomFrameNED         CustomFrame = 4
+	CustomFrameNED CustomFrame = 4
 	/// North-East-Up: Local tangent plane variant with Up positive.
-	CustomFrameNEU         CustomFrame = 5
+	CustomFrameNEU CustomFrame = 5
 	/// Radial-Intrack-Cross-track: Spacecraft orientation aligned with orbit.
-	CustomFrameRIC         CustomFrame = 6
+	CustomFrameRIC CustomFrame = 6
 	/// Radial-Transverse-Normal: Orbit frame for spacecraft dynamics.
-	CustomFrameRTN         CustomFrame = 7
+	CustomFrameRTN CustomFrame = 7
 	/// Transverse-Velocity-Normal: Alternative orbit frame.
-	CustomFrameTVN         CustomFrame = 8
+	CustomFrameTVN CustomFrame = 8
 	/// Vehicle-Velocity-Local-Horizontal: Orbit frame aligned with velocity vector.
-	CustomFrameVVLH        CustomFrame = 9
+	CustomFrameVVLH CustomFrame = 9
 	/// Radial-Tangential-Cross-track: Equivalent to LVLH/QSW.
-	CustomFrameQSW         CustomFrame = 10
+	CustomFrameQSW CustomFrame = 10
 	/// Local Tangent Plane: Surface-fixed frame centered on a point.
-	CustomFrameLTP         CustomFrame = 11
+	CustomFrameLTP CustomFrame = 11
 	/// Local Vertical-Local Horizontal: Z axis towards Earth center, X along velocity.
-	CustomFrameLVLH        CustomFrame = 12
+	CustomFrameLVLH CustomFrame = 12
 	/// Polar-North-East: Surface coordinate frame.
-	CustomFramePNE         CustomFrame = 13
+	CustomFramePNE CustomFrame = 13
 	/// Body-Fixed Reference Frame: Fixed to a spacecraft or celestial object.
-	CustomFrameBRF         CustomFrame = 14
+	CustomFrameBRF CustomFrame = 14
 	/// Radial-Along-track-Cross-track: Same as RSW.
-	CustomFrameRSW         CustomFrame = 15
+	CustomFrameRSW CustomFrame = 15
 	/// Tangential-Normal-Cross-track: Same as TNW.
-	CustomFrameTNW         CustomFrame = 16
+	CustomFrameTNW CustomFrame = 16
 	/// Radial-UTF: Radial, Along-track, Cross-track variant.
-	CustomFrameUVW         CustomFrame = 17
+	CustomFrameUVW CustomFrame = 17
 )
 
 var EnumNamesCustomFrame = map[CustomFrame]string{

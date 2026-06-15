@@ -7,15 +7,15 @@ import "strconv"
 type GPXFixType int8
 
 const (
-	GPXFixTypeNONE   GPXFixType = 0
+	GPXFixTypeNONE GPXFixType = 0
 	/// 2D fix
 	GPXFixTypeFIX_2D GPXFixType = 1
 	/// 3D fix
 	GPXFixTypeFIX_3D GPXFixType = 2
 	/// Differential GPS fix
-	GPXFixTypeDGPS   GPXFixType = 3
+	GPXFixTypeDGPS GPXFixType = 3
 	/// PPP fix
-	GPXFixTypePPS    GPXFixType = 4
+	GPXFixTypePPS GPXFixType = 4
 )
 
 var EnumNamesGPXFixType = map[GPXFixType]string{

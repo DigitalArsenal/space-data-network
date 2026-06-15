@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Extended data key-value pair
+// / Extended data key-value pair
 type KMLData struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLData) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Data name
+// / Data name
 func (rcv *KMLData) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLData) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Data name
-/// Display name
+// / Data name
+// / Display name
 func (rcv *KMLData) DISPLAY_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *KMLData) DisplayName() []byte {
 	return rcv.DISPLAY_NAME()
 }
 
-/// Display name
-/// Data value
+// / Display name
+// / Data value
 func (rcv *KMLData) VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *KMLData) Value() []byte {
 	return rcv.VALUE()
 }
 
-/// Data value
+// / Data value
 func KMLDataStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

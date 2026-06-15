@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// LinearRing geometry
+// / LinearRing geometry
 type KMLLinearRing struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLLinearRing) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Coordinates (first = last to close the ring)
+// / Coordinates (first = last to close the ring)
 func (rcv *KMLLinearRing) COORDINATES(obj *KMLCoordinate, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *KMLLinearRing) CoordinatesLength() int {
 	return rcv.COORDINATESLength()
 }
 
-/// Coordinates (first = last to close the ring)
-/// Whether to extrude to ground
+// / Coordinates (first = last to close the ring)
+// / Whether to extrude to ground
 func (rcv *KMLLinearRing) EXTRUDE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -88,7 +88,7 @@ func (rcv *KMLLinearRing) Extrude() bool {
 	return rcv.EXTRUDE()
 }
 
-/// Whether to extrude to ground
+// / Whether to extrude to ground
 func (rcv *KMLLinearRing) MutateEXTRUDE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(6, n)
 }
@@ -97,7 +97,7 @@ func (rcv *KMLLinearRing) MutateExtrude(n bool) bool {
 	return rcv.MutateEXTRUDE(n)
 }
 
-/// Whether to tessellate
+// / Whether to tessellate
 func (rcv *KMLLinearRing) TESSELLATE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -110,7 +110,7 @@ func (rcv *KMLLinearRing) Tessellate() bool {
 	return rcv.TESSELLATE()
 }
 
-/// Whether to tessellate
+// / Whether to tessellate
 func (rcv *KMLLinearRing) MutateTESSELLATE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }
@@ -119,7 +119,7 @@ func (rcv *KMLLinearRing) MutateTessellate(n bool) bool {
 	return rcv.MutateTESSELLATE(n)
 }
 
-/// Altitude mode
+// / Altitude mode
 func (rcv *KMLLinearRing) ALTITUDE_MODE() KMLAltitudeMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -132,7 +132,7 @@ func (rcv *KMLLinearRing) AltitudeMode() KMLAltitudeMode {
 	return rcv.ALTITUDE_MODE()
 }
 
-/// Altitude mode
+// / Altitude mode
 func (rcv *KMLLinearRing) MutateALTITUDE_MODE(n KMLAltitudeMode) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Represents cryptographic key information
+// / Represents cryptographic key information
 type CryptoKey struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CryptoKey) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Public part of the cryptographic key, in hexidecimal format
+// / Public part of the cryptographic key, in hexidecimal format
 func (rcv *CryptoKey) PUBLIC_KEY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *CryptoKey) PublicKey() []byte {
 	return rcv.PUBLIC_KEY()
 }
 
-/// Public part of the cryptographic key, in hexidecimal format
-/// Extended public key https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki#extended-keys
+// / Public part of the cryptographic key, in hexidecimal format
+// / Extended public key https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki#extended-keys
 func (rcv *CryptoKey) XPUB() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *CryptoKey) Xpub() []byte {
 	return rcv.XPUB()
 }
 
-/// Extended public key https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki#extended-keys
-/// Private part of the cryptographic key in hexidecimal format, should be kept secret
+// / Extended public key https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki#extended-keys
+// / Private part of the cryptographic key in hexidecimal format, should be kept secret
 func (rcv *CryptoKey) PRIVATE_KEY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *CryptoKey) PrivateKey() []byte {
 	return rcv.PRIVATE_KEY()
 }
 
-/// Private part of the cryptographic key in hexidecimal format, should be kept secret
-/// Extended private key https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki#extended-keys
+// / Private part of the cryptographic key in hexidecimal format, should be kept secret
+// / Extended private key https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki#extended-keys
 func (rcv *CryptoKey) XPRIV() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *CryptoKey) Xpriv() []byte {
 	return rcv.XPRIV()
 }
 
-/// Extended private key https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki#extended-keys
-/// Address generated from the cryptographic key
+// / Extended private key https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki#extended-keys
+// / Address generated from the cryptographic key
 func (rcv *CryptoKey) KEY_ADDRESS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -111,8 +111,8 @@ func (rcv *CryptoKey) KeyAddress() []byte {
 	return rcv.KEY_ADDRESS()
 }
 
-/// Address generated from the cryptographic key
-/// Type of the address generated from the cryptographic key
+// / Address generated from the cryptographic key
+// / Type of the address generated from the cryptographic key
 func (rcv *CryptoKey) ADDRESS_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -125,8 +125,8 @@ func (rcv *CryptoKey) AddressType() []byte {
 	return rcv.ADDRESS_TYPE()
 }
 
-/// Type of the address generated from the cryptographic key
-/// Type of the cryptographic key (signing or encryption)
+// / Type of the address generated from the cryptographic key
+// / Type of the cryptographic key (signing or encryption)
 func (rcv *CryptoKey) KEY_TYPE() KeyType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -139,7 +139,7 @@ func (rcv *CryptoKey) KeyType() KeyType {
 	return rcv.KEY_TYPE()
 }
 
-/// Type of the cryptographic key (signing or encryption)
+// / Type of the cryptographic key (signing or encryption)
 func (rcv *CryptoKey) MutateKEY_TYPE(n KeyType) bool {
 	return rcv._tab.MutateInt8Slot(16, int8(n))
 }

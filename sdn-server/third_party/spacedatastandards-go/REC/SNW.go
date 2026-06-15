@@ -6,8 +6,8 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Sensor Runtime Wire envelope — carries either a batch request or a batch
-/// response across the runtime boundary.
+// / Sensor Runtime Wire envelope — carries either a batch request or a batch
+// / response across the runtime boundary.
 type SNW struct {
 	_tab flatbuffers.Table
 }

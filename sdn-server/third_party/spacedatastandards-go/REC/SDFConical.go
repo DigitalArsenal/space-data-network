@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Conical SDF parameters.
+// / Conical SDF parameters.
 type SDFConical struct {
 	_tab flatbuffers.Table
 }
@@ -62,7 +62,7 @@ func (rcv *SDFConical) MutateHalfAngle(n float64) bool {
 	return rcv.MutateHALF_ANGLE(n)
 }
 
-/// Inner half-angle for hollow cones (0 == solid).
+// / Inner half-angle for hollow cones (0 == solid).
 func (rcv *SDFConical) INNER_HALF_ANGLE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -75,7 +75,7 @@ func (rcv *SDFConical) InnerHalfAngle() float64 {
 	return rcv.INNER_HALF_ANGLE()
 }
 
-/// Inner half-angle for hollow cones (0 == solid).
+// / Inner half-angle for hollow cones (0 == solid).
 func (rcv *SDFConical) MutateINNER_HALF_ANGLE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -84,7 +84,7 @@ func (rcv *SDFConical) MutateInnerHalfAngle(n float64) bool {
 	return rcv.MutateINNER_HALF_ANGLE(n)
 }
 
-/// Minimum range (inner cap distance).
+// / Minimum range (inner cap distance).
 func (rcv *SDFConical) MIN_RANGE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *SDFConical) MinRange() float64 {
 	return rcv.MIN_RANGE()
 }
 
-/// Minimum range (inner cap distance).
+// / Minimum range (inner cap distance).
 func (rcv *SDFConical) MutateMIN_RANGE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -106,7 +106,7 @@ func (rcv *SDFConical) MutateMinRange(n float64) bool {
 	return rcv.MutateMIN_RANGE(n)
 }
 
-/// Maximum range (outer cap distance).
+// / Maximum range (outer cap distance).
 func (rcv *SDFConical) MAX_RANGE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -119,7 +119,7 @@ func (rcv *SDFConical) MaxRange() float64 {
 	return rcv.MAX_RANGE()
 }
 
-/// Maximum range (outer cap distance).
+// / Maximum range (outer cap distance).
 func (rcv *SDFConical) MutateMAX_RANGE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -128,7 +128,7 @@ func (rcv *SDFConical) MutateMaxRange(n float64) bool {
 	return rcv.MutateMAX_RANGE(n)
 }
 
-/// Use a flat cap (true) or a spherical cap (false).
+// / Use a flat cap (true) or a spherical cap (false).
 func (rcv *SDFConical) FLAT_CAP() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -141,7 +141,7 @@ func (rcv *SDFConical) FlatCap() bool {
 	return rcv.FLAT_CAP()
 }
 
-/// Use a flat cap (true) or a spherical cap (false).
+// / Use a flat cap (true) or a spherical cap (false).
 func (rcv *SDFConical) MutateFLAT_CAP(n bool) bool {
 	return rcv._tab.MutateBoolSlot(12, n)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Review - User review of a storefront listing
+// / Review - User review of a storefront listing
 type REV struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *REV) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique identifier for this review
+// / Unique identifier for this review
 func (rcv *REV) REVIEW_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *REV) ReviewId() []byte {
 	return rcv.REVIEW_ID()
 }
 
-/// Unique identifier for this review
-/// ID of the listing being reviewed
+// / Unique identifier for this review
+// / ID of the listing being reviewed
 func (rcv *REV) LISTING_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *REV) ListingId() []byte {
 	return rcv.LISTING_ID()
 }
 
-/// ID of the listing being reviewed
-/// Peer ID of the reviewer
+// / ID of the listing being reviewed
+// / Peer ID of the reviewer
 func (rcv *REV) REVIEWER_PEER_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *REV) ReviewerPeerId() []byte {
 	return rcv.REVIEWER_PEER_ID()
 }
 
-/// Peer ID of the reviewer
-/// Rating from 1-5 stars
+// / Peer ID of the reviewer
+// / Rating from 1-5 stars
 func (rcv *REV) RATING() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,7 +109,7 @@ func (rcv *REV) Rating() byte {
 	return rcv.RATING()
 }
 
-/// Rating from 1-5 stars
+// / Rating from 1-5 stars
 func (rcv *REV) MutateRATING(n byte) bool {
 	return rcv._tab.MutateByteSlot(10, n)
 }
@@ -118,7 +118,7 @@ func (rcv *REV) MutateRating(n byte) bool {
 	return rcv.MutateRATING(n)
 }
 
-/// Review title
+// / Review title
 func (rcv *REV) TITLE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *REV) Title() []byte {
 	return rcv.TITLE()
 }
 
-/// Review title
-/// Review content/body
+// / Review title
+// / Review content/body
 func (rcv *REV) CONTENT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,8 +145,8 @@ func (rcv *REV) Content() []byte {
 	return rcv.CONTENT()
 }
 
-/// Review content/body
-/// ACL grant ID proving purchase (proof of purchase)
+// / Review content/body
+// / ACL grant ID proving purchase (proof of purchase)
 func (rcv *REV) ACL_GRANT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,8 +159,8 @@ func (rcv *REV) AclGrantId() []byte {
 	return rcv.ACL_GRANT_ID()
 }
 
-/// ACL grant ID proving purchase (proof of purchase)
-/// Unix timestamp of the review
+// / ACL grant ID proving purchase (proof of purchase)
+// / Unix timestamp of the review
 func (rcv *REV) TIMESTAMP() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -173,7 +173,7 @@ func (rcv *REV) Timestamp() uint64 {
 	return rcv.TIMESTAMP()
 }
 
-/// Unix timestamp of the review
+// / Unix timestamp of the review
 func (rcv *REV) MutateTIMESTAMP(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(18, n)
 }
@@ -182,7 +182,7 @@ func (rcv *REV) MutateTimestamp(n uint64) bool {
 	return rcv.MutateTIMESTAMP(n)
 }
 
-/// Ed25519 signature from reviewer
+// / Ed25519 signature from reviewer
 func (rcv *REV) REVIEWER_SIGNATURE(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -220,7 +220,7 @@ func (rcv *REV) ReviewerSignatureBytes() []byte {
 	return rcv.REVIEWER_SIGNATUREBytes()
 }
 
-/// Ed25519 signature from reviewer
+// / Ed25519 signature from reviewer
 func (rcv *REV) MutateREVIEWER_SIGNATURE(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {

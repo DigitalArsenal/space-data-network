@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// ImagePyramid for PhotoOverlay
+// / ImagePyramid for PhotoOverlay
 type KMLImagePyramid struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLImagePyramid) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Tile size in pixels
+// / Tile size in pixels
 func (rcv *KMLImagePyramid) TILE_SIZE() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *KMLImagePyramid) TileSize() int32 {
 	return rcv.TILE_SIZE()
 }
 
-/// Tile size in pixels
+// / Tile size in pixels
 func (rcv *KMLImagePyramid) MutateTILE_SIZE(n int32) bool {
 	return rcv._tab.MutateInt32Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *KMLImagePyramid) MutateTileSize(n int32) bool {
 	return rcv.MutateTILE_SIZE(n)
 }
 
-/// Maximum image width
+// / Maximum image width
 func (rcv *KMLImagePyramid) MAX_WIDTH() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *KMLImagePyramid) MaxWidth() int32 {
 	return rcv.MAX_WIDTH()
 }
 
-/// Maximum image width
+// / Maximum image width
 func (rcv *KMLImagePyramid) MutateMAX_WIDTH(n int32) bool {
 	return rcv._tab.MutateInt32Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *KMLImagePyramid) MutateMaxWidth(n int32) bool {
 	return rcv.MutateMAX_WIDTH(n)
 }
 
-/// Maximum image height
+// / Maximum image height
 func (rcv *KMLImagePyramid) MAX_HEIGHT() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *KMLImagePyramid) MaxHeight() int32 {
 	return rcv.MAX_HEIGHT()
 }
 
-/// Maximum image height
+// / Maximum image height
 func (rcv *KMLImagePyramid) MutateMAX_HEIGHT(n int32) bool {
 	return rcv._tab.MutateInt32Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *KMLImagePyramid) MutateMaxHeight(n int32) bool {
 	return rcv.MutateMAX_HEIGHT(n)
 }
 
-/// Grid origin
+// / Grid origin
 func (rcv *KMLImagePyramid) GRID_ORIGIN() KMLGridOrigin {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *KMLImagePyramid) GridOrigin() KMLGridOrigin {
 	return rcv.GRID_ORIGIN()
 }
 
-/// Grid origin
+// / Grid origin
 func (rcv *KMLImagePyramid) MutateGRID_ORIGIN(n KMLGridOrigin) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }

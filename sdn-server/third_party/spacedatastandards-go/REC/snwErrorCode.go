@@ -4,16 +4,16 @@ package REC
 
 import "strconv"
 
-/// Sensor Runtime Wire — arena-addressed batch request / response envelopes
-/// for sensor detection plugins. Complements the already-published `SDR`
-/// (Sensor Detection Report, which carries per-frame configuration +
-/// single-frame + detection-result payload shapes). SNW is the runtime
-/// transport that moves a batch of target states into a sensor and pulls a
-/// batch of detection results back out across a JS ↔ WASM boundary.
-///
-/// Persistent sensor hardware catalog → SDS `SNR`.
-/// Sensor maintenance event log → SDS `SEN`.
-/// Per-plugin wire contract + config + compact single-frame → SDS `SDR`.
+// / Sensor Runtime Wire — arena-addressed batch request / response envelopes
+// / for sensor detection plugins. Complements the already-published `SDR`
+// / (Sensor Detection Report, which carries per-frame configuration +
+// / single-frame + detection-result payload shapes). SNW is the runtime
+// / transport that moves a batch of target states into a sensor and pulls a
+// / batch of detection results back out across a JS ↔ WASM boundary.
+// /
+// / Persistent sensor hardware catalog → SDS `SNR`.
+// / Sensor maintenance event log → SDS `SEN`.
+// / Per-plugin wire contract + config + compact single-frame → SDS `SDR`.
 type snwErrorCode int32
 
 const (

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Command metadata collection
+// / Command metadata collection
 type CommandMetaData struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CommandMetaData) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Argument type definitions
+// / Argument type definitions
 func (rcv *CommandMetaData) ARGUMENT_TYPE_SET(obj *ArgumentTypeSet) *ArgumentTypeSet {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *CommandMetaData) ArgumentTypeSet(obj *ArgumentTypeSet) *ArgumentTypeS
 	return rcv.ARGUMENT_TYPE_SET(obj)
 }
 
-/// Argument type definitions
-/// Parameter types used by commands
+// / Argument type definitions
+// / Parameter types used by commands
 func (rcv *CommandMetaData) PARAMETER_TYPE_SET(obj *ParameterTypeSet) *ParameterTypeSet {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -79,8 +79,8 @@ func (rcv *CommandMetaData) ParameterTypeSet(obj *ParameterTypeSet) *ParameterTy
 	return rcv.PARAMETER_TYPE_SET(obj)
 }
 
-/// Parameter types used by commands
-/// Parameters used by commands
+// / Parameter types used by commands
+// / Parameters used by commands
 func (rcv *CommandMetaData) PARAMETER_SET(obj *ParameterSet) *ParameterSet {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -98,8 +98,8 @@ func (rcv *CommandMetaData) ParameterSet(obj *ParameterSet) *ParameterSet {
 	return rcv.PARAMETER_SET(obj)
 }
 
-/// Parameters used by commands
-/// MetaCommand definitions
+// / Parameters used by commands
+// / MetaCommand definitions
 func (rcv *CommandMetaData) META_COMMAND_SET(obj *MetaCommandSet) *MetaCommandSet {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *CommandMetaData) MetaCommandSet(obj *MetaCommandSet) *MetaCommandSet 
 	return rcv.META_COMMAND_SET(obj)
 }
 
-/// MetaCommand definitions
-/// Command container set
+// / MetaCommand definitions
+// / Command container set
 func (rcv *CommandMetaData) COMMAND_CONTAINER_SET(obj *ContainerSet) *ContainerSet {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -136,8 +136,8 @@ func (rcv *CommandMetaData) CommandContainerSet(obj *ContainerSet) *ContainerSet
 	return rcv.COMMAND_CONTAINER_SET(obj)
 }
 
-/// Command container set
-/// Algorithm definitions
+// / Command container set
+// / Algorithm definitions
 func (rcv *CommandMetaData) ALGORITHM_SET(obj *AlgorithmSet) *AlgorithmSet {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -155,8 +155,8 @@ func (rcv *CommandMetaData) AlgorithmSet(obj *AlgorithmSet) *AlgorithmSet {
 	return rcv.ALGORITHM_SET(obj)
 }
 
-/// Algorithm definitions
-/// Stream definitions
+// / Algorithm definitions
+// / Stream definitions
 func (rcv *CommandMetaData) STREAM_SET(obj *StreamSet) *StreamSet {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -174,7 +174,7 @@ func (rcv *CommandMetaData) StreamSet(obj *StreamSet) *StreamSet {
 	return rcv.STREAM_SET(obj)
 }
 
-/// Stream definitions
+// / Stream definitions
 func CommandMetaDataStart(builder *flatbuffers.Builder) {
 	builder.StartObject(7)
 }

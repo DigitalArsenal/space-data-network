@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Lambert solve result.
+// / Lambert solve result.
 type LMO struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *LMO) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Request identifier copied from LMS.REQUEST_ID.
+// / Request identifier copied from LMS.REQUEST_ID.
 func (rcv *LMO) REQUEST_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *LMO) RequestId() []byte {
 	return rcv.REQUEST_ID()
 }
 
-/// Request identifier copied from LMS.REQUEST_ID.
-/// Solve status.
+// / Request identifier copied from LMS.REQUEST_ID.
+// / Solve status.
 func (rcv *LMO) STATUS() lambertSolveState {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,7 +81,7 @@ func (rcv *LMO) Status() lambertSolveState {
 	return rcv.STATUS()
 }
 
-/// Solve status.
+// / Solve status.
 func (rcv *LMO) MutateSTATUS(n lambertSolveState) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -90,7 +90,7 @@ func (rcv *LMO) MutateStatus(n lambertSolveState) bool {
 	return rcv.MutateSTATUS(n)
 }
 
-/// Structured error code when STATUS is ERROR.
+// / Structured error code when STATUS is ERROR.
 func (rcv *LMO) ERROR_CODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,8 +103,8 @@ func (rcv *LMO) ErrorCode() []byte {
 	return rcv.ERROR_CODE()
 }
 
-/// Structured error code when STATUS is ERROR.
-/// Human-readable error message when STATUS is ERROR.
+// / Structured error code when STATUS is ERROR.
+// / Human-readable error message when STATUS is ERROR.
 func (rcv *LMO) ERROR_MESSAGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *LMO) ErrorMessage() []byte {
 	return rcv.ERROR_MESSAGE()
 }
 
-/// Human-readable error message when STATUS is ERROR.
-/// Single-revolution solution when STATUS is OK.
+// / Human-readable error message when STATUS is ERROR.
+// / Single-revolution solution when STATUS is OK.
 func (rcv *LMO) SINGLE(obj *lambertSolutionBranch) *lambertSolutionBranch {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -136,8 +136,8 @@ func (rcv *LMO) Single(obj *lambertSolutionBranch) *lambertSolutionBranch {
 	return rcv.SINGLE(obj)
 }
 
-/// Single-revolution solution when STATUS is OK.
-/// Multi-revolution branches in ascending N_REVS order.
+// / Single-revolution solution when STATUS is OK.
+// / Multi-revolution branches in ascending N_REVS order.
 func (rcv *LMO) MULTI(obj *lambertSolutionBranch, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -169,8 +169,8 @@ func (rcv *LMO) MultiLength() int {
 	return rcv.MULTILength()
 }
 
-/// Multi-revolution branches in ascending N_REVS order.
-/// Highest revolution count that produced a feasible pair. Zero when no multi-rev branch is feasible.
+// / Multi-revolution branches in ascending N_REVS order.
+// / Highest revolution count that produced a feasible pair. Zero when no multi-rev branch is feasible.
 func (rcv *LMO) MAX_FEASIBLE_REVS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -183,7 +183,7 @@ func (rcv *LMO) MaxFeasibleRevs() uint16 {
 	return rcv.MAX_FEASIBLE_REVS()
 }
 
-/// Highest revolution count that produced a feasible pair. Zero when no multi-rev branch is feasible.
+// / Highest revolution count that produced a feasible pair. Zero when no multi-rev branch is feasible.
 func (rcv *LMO) MutateMAX_FEASIBLE_REVS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(16, n)
 }
@@ -192,7 +192,7 @@ func (rcv *LMO) MutateMaxFeasibleRevs(n uint16) bool {
 	return rcv.MutateMAX_FEASIBLE_REVS(n)
 }
 
-/// Result flags reserved for future compatibility.
+// / Result flags reserved for future compatibility.
 func (rcv *LMO) FLAGS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -205,7 +205,7 @@ func (rcv *LMO) Flags() uint16 {
 	return rcv.FLAGS()
 }
 
-/// Result flags reserved for future compatibility.
+// / Result flags reserved for future compatibility.
 func (rcv *LMO) MutateFLAGS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(18, n)
 }

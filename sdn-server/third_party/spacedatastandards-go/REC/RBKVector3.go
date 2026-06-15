@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Three-vector used for MRP, Gibbs, PRV, angular rate, and related attitude math values.
+// / Three-vector used for MRP, Gibbs, PRV, angular rate, and related attitude math values.
 type RBKVector3 struct {
 	_tab flatbuffers.Table
 }

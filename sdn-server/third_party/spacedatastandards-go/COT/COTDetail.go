@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// CoT Detail - extensible detail element
+// / CoT Detail - extensible detail element
 type COTDetail struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *COTDetail) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Contact callsign
+// / Contact callsign
 func (rcv *COTDetail) CALLSIGN() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *COTDetail) Callsign() []byte {
 	return rcv.CALLSIGN()
 }
 
-/// Contact callsign
-/// Contact endpoint (e.g. IP:port)
+// / Contact callsign
+// / Contact endpoint (e.g. IP:port)
 func (rcv *COTDetail) ENDPOINT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *COTDetail) Endpoint() []byte {
 	return rcv.ENDPOINT()
 }
 
-/// Contact endpoint (e.g. IP:port)
-/// Contact phone number
+// / Contact endpoint (e.g. IP:port)
+// / Contact phone number
 func (rcv *COTDetail) PHONE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *COTDetail) Phone() []byte {
 	return rcv.PHONE()
 }
 
-/// Contact phone number
-/// Track course in degrees true
+// / Contact phone number
+// / Track course in degrees true
 func (rcv *COTDetail) COURSE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *COTDetail) Course() float64 {
 	return rcv.COURSE()
 }
 
-/// Track course in degrees true
+// / Track course in degrees true
 func (rcv *COTDetail) MutateCOURSE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -106,7 +106,7 @@ func (rcv *COTDetail) MutateCourse(n float64) bool {
 	return rcv.MutateCOURSE(n)
 }
 
-/// Track speed in m/s
+// / Track speed in m/s
 func (rcv *COTDetail) SPEED() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -119,7 +119,7 @@ func (rcv *COTDetail) Speed() float64 {
 	return rcv.SPEED()
 }
 
-/// Track speed in m/s
+// / Track speed in m/s
 func (rcv *COTDetail) MutateSPEED(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -128,7 +128,7 @@ func (rcv *COTDetail) MutateSpeed(n float64) bool {
 	return rcv.MutateSPEED(n)
 }
 
-/// Group name/team
+// / Group name/team
 func (rcv *COTDetail) GROUP_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -141,8 +141,8 @@ func (rcv *COTDetail) GroupName() []byte {
 	return rcv.GROUP_NAME()
 }
 
-/// Group name/team
-/// Group role
+// / Group name/team
+// / Group role
 func (rcv *COTDetail) GROUP_ROLE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -155,8 +155,8 @@ func (rcv *COTDetail) GroupRole() []byte {
 	return rcv.GROUP_ROLE()
 }
 
-/// Group role
-/// Status (battery percentage, etc.)
+// / Group role
+// / Status (battery percentage, etc.)
 func (rcv *COTDetail) STATUS_BATTERY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -169,7 +169,7 @@ func (rcv *COTDetail) StatusBattery() float64 {
 	return rcv.STATUS_BATTERY()
 }
 
-/// Status (battery percentage, etc.)
+// / Status (battery percentage, etc.)
 func (rcv *COTDetail) MutateSTATUS_BATTERY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -178,7 +178,7 @@ func (rcv *COTDetail) MutateStatusBattery(n float64) bool {
 	return rcv.MutateSTATUS_BATTERY(n)
 }
 
-/// Status readiness
+// / Status readiness
 func (rcv *COTDetail) STATUS_READINESS() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -191,7 +191,7 @@ func (rcv *COTDetail) StatusReadiness() bool {
 	return rcv.STATUS_READINESS()
 }
 
-/// Status readiness
+// / Status readiness
 func (rcv *COTDetail) MutateSTATUS_READINESS(n bool) bool {
 	return rcv._tab.MutateBoolSlot(20, n)
 }
@@ -200,7 +200,7 @@ func (rcv *COTDetail) MutateStatusReadiness(n bool) bool {
 	return rcv.MutateSTATUS_READINESS(n)
 }
 
-/// Precision location source
+// / Precision location source
 func (rcv *COTDetail) PREC_LOCATION_SOURCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -213,8 +213,8 @@ func (rcv *COTDetail) PrecLocationSource() []byte {
 	return rcv.PREC_LOCATION_SOURCE()
 }
 
-/// Precision location source
-/// Precision location altitude source
+// / Precision location source
+// / Precision location altitude source
 func (rcv *COTDetail) PREC_ALTSRC() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -227,8 +227,8 @@ func (rcv *COTDetail) PrecAltsrc() []byte {
 	return rcv.PREC_ALTSRC()
 }
 
-/// Precision location altitude source
-/// UID of the device
+// / Precision location altitude source
+// / UID of the device
 func (rcv *COTDetail) UID_DROID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -241,8 +241,8 @@ func (rcv *COTDetail) UidDroid() []byte {
 	return rcv.UID_DROID()
 }
 
-/// UID of the device
-/// Remarks text
+// / UID of the device
+// / Remarks text
 func (rcv *COTDetail) REMARKS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -255,8 +255,8 @@ func (rcv *COTDetail) Remarks() []byte {
 	return rcv.REMARKS()
 }
 
-/// Remarks text
-/// Remarks source
+// / Remarks text
+// / Remarks source
 func (rcv *COTDetail) REMARKS_SOURCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -269,8 +269,8 @@ func (rcv *COTDetail) RemarksSource() []byte {
 	return rcv.REMARKS_SOURCE()
 }
 
-/// Remarks source
-/// Remarks timestamp (ISO 8601)
+// / Remarks source
+// / Remarks timestamp (ISO 8601)
 func (rcv *COTDetail) REMARKS_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -283,8 +283,8 @@ func (rcv *COTDetail) RemarksTime() []byte {
 	return rcv.REMARKS_TIME()
 }
 
-/// Remarks timestamp (ISO 8601)
-/// Link UID (for related events)
+// / Remarks timestamp (ISO 8601)
+// / Link UID (for related events)
 func (rcv *COTDetail) LINK_UID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -297,8 +297,8 @@ func (rcv *COTDetail) LinkUid() []byte {
 	return rcv.LINK_UID()
 }
 
-/// Link UID (for related events)
-/// Link type
+// / Link UID (for related events)
+// / Link type
 func (rcv *COTDetail) LINK_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -311,8 +311,8 @@ func (rcv *COTDetail) LinkType() []byte {
 	return rcv.LINK_TYPE()
 }
 
-/// Link type
-/// Link relation
+// / Link type
+// / Link relation
 func (rcv *COTDetail) LINK_RELATION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -325,8 +325,8 @@ func (rcv *COTDetail) LinkRelation() []byte {
 	return rcv.LINK_RELATION()
 }
 
-/// Link relation
-/// Color in ARGB integer format
+// / Link relation
+// / Color in ARGB integer format
 func (rcv *COTDetail) COLOR() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -339,7 +339,7 @@ func (rcv *COTDetail) Color() int32 {
 	return rcv.COLOR()
 }
 
-/// Color in ARGB integer format
+// / Color in ARGB integer format
 func (rcv *COTDetail) MutateCOLOR(n int32) bool {
 	return rcv._tab.MutateInt32Slot(40, n)
 }
@@ -348,7 +348,7 @@ func (rcv *COTDetail) MutateColor(n int32) bool {
 	return rcv.MutateCOLOR(n)
 }
 
-/// Stroke weight for drawing
+// / Stroke weight for drawing
 func (rcv *COTDetail) STROKE_WEIGHT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -361,7 +361,7 @@ func (rcv *COTDetail) StrokeWeight() float64 {
 	return rcv.STROKE_WEIGHT()
 }
 
-/// Stroke weight for drawing
+// / Stroke weight for drawing
 func (rcv *COTDetail) MutateSTROKE_WEIGHT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -370,7 +370,7 @@ func (rcv *COTDetail) MutateStrokeWeight(n float64) bool {
 	return rcv.MutateSTROKE_WEIGHT(n)
 }
 
-/// Fill color in ARGB integer format
+// / Fill color in ARGB integer format
 func (rcv *COTDetail) FILL_COLOR() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -383,7 +383,7 @@ func (rcv *COTDetail) FillColor() int32 {
 	return rcv.FILL_COLOR()
 }
 
-/// Fill color in ARGB integer format
+// / Fill color in ARGB integer format
 func (rcv *COTDetail) MutateFILL_COLOR(n int32) bool {
 	return rcv._tab.MutateInt32Slot(44, n)
 }
@@ -392,7 +392,7 @@ func (rcv *COTDetail) MutateFillColor(n int32) bool {
 	return rcv.MutateFILL_COLOR(n)
 }
 
-/// Labeled flag
+// / Labeled flag
 func (rcv *COTDetail) LABELLED() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -405,7 +405,7 @@ func (rcv *COTDetail) Labelled() bool {
 	return rcv.LABELLED()
 }
 
-/// Labeled flag
+// / Labeled flag
 func (rcv *COTDetail) MutateLABELLED(n bool) bool {
 	return rcv._tab.MutateBoolSlot(46, n)
 }
@@ -414,7 +414,7 @@ func (rcv *COTDetail) MutateLabelled(n bool) bool {
 	return rcv.MutateLABELLED(n)
 }
 
-/// Archive flag
+// / Archive flag
 func (rcv *COTDetail) ARCHIVE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -427,7 +427,7 @@ func (rcv *COTDetail) Archive() bool {
 	return rcv.ARCHIVE()
 }
 
-/// Archive flag
+// / Archive flag
 func (rcv *COTDetail) MutateARCHIVE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(48, n)
 }
@@ -436,7 +436,7 @@ func (rcv *COTDetail) MutateArchive(n bool) bool {
 	return rcv.MutateARCHIVE(n)
 }
 
-/// Raw XML detail content (for extensions not covered above)
+// / Raw XML detail content (for extensions not covered above)
 func (rcv *COTDetail) RAW_XML() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -449,7 +449,7 @@ func (rcv *COTDetail) RawXml() []byte {
 	return rcv.RAW_XML()
 }
 
-/// Raw XML detail content (for extensions not covered above)
+// / Raw XML detail content (for extensions not covered above)
 func COTDetailStart(builder *flatbuffers.Builder) {
 	builder.StartObject(24)
 }

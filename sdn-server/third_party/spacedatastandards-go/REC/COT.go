@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Cursor on Target Event
+// / Cursor on Target Event
 type COT struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *COT) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Schema version
+// / Schema version
 func (rcv *COT) VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *COT) Version() []byte {
 	return rcv.VERSION()
 }
 
-/// Schema version
-/// Globally unique event identifier
+// / Schema version
+// / Globally unique event identifier
 func (rcv *COT) UID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,9 +81,9 @@ func (rcv *COT) Uid() []byte {
 	return rcv.UID()
 }
 
-/// Globally unique event identifier
-/// CoT event type (dot-delimited MIL-STD-2525/APP-6 hierarchy)
-/// e.g. "a-f-G-U-C" = atom, friend, Ground, Unit, Combat
+// / Globally unique event identifier
+// / CoT event type (dot-delimited MIL-STD-2525/APP-6 hierarchy)
+// / e.g. "a-f-G-U-C" = atom, friend, Ground, Unit, Combat
 func (rcv *COT) TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -96,9 +96,9 @@ func (rcv *COT) Type() []byte {
 	return rcv.TYPE()
 }
 
-/// CoT event type (dot-delimited MIL-STD-2525/APP-6 hierarchy)
-/// e.g. "a-f-G-U-C" = atom, friend, Ground, Unit, Combat
-/// How the event was generated (e.g. "m-g" = machine GPS)
+// / CoT event type (dot-delimited MIL-STD-2525/APP-6 hierarchy)
+// / e.g. "a-f-G-U-C" = atom, friend, Ground, Unit, Combat
+// / How the event was generated (e.g. "m-g" = machine GPS)
 func (rcv *COT) HOW() COTHowType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -111,7 +111,7 @@ func (rcv *COT) How() COTHowType {
 	return rcv.HOW()
 }
 
-/// How the event was generated (e.g. "m-g" = machine GPS)
+// / How the event was generated (e.g. "m-g" = machine GPS)
 func (rcv *COT) MutateHOW(n COTHowType) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
@@ -120,7 +120,7 @@ func (rcv *COT) MutateHow(n COTHowType) bool {
 	return rcv.MutateHOW(n)
 }
 
-/// Time the event was generated (ISO 8601)
+// / Time the event was generated (ISO 8601)
 func (rcv *COT) TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -133,8 +133,8 @@ func (rcv *COT) Time() []byte {
 	return rcv.TIME()
 }
 
-/// Time the event was generated (ISO 8601)
-/// Time the event information was valid (ISO 8601)
+// / Time the event was generated (ISO 8601)
+// / Time the event information was valid (ISO 8601)
 func (rcv *COT) START() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -147,8 +147,8 @@ func (rcv *COT) Start() []byte {
 	return rcv.START()
 }
 
-/// Time the event information was valid (ISO 8601)
-/// Time the event information is no longer valid (ISO 8601)
+// / Time the event information was valid (ISO 8601)
+// / Time the event information is no longer valid (ISO 8601)
 func (rcv *COT) STALE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -161,8 +161,8 @@ func (rcv *COT) Stale() []byte {
 	return rcv.STALE()
 }
 
-/// Time the event information is no longer valid (ISO 8601)
-/// Access control marking
+// / Time the event information is no longer valid (ISO 8601)
+// / Access control marking
 func (rcv *COT) ACCESS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -175,8 +175,8 @@ func (rcv *COT) Access() []byte {
 	return rcv.ACCESS()
 }
 
-/// Access control marking
-/// Quality of service
+// / Access control marking
+// / Quality of service
 func (rcv *COT) QOS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -189,8 +189,8 @@ func (rcv *COT) Qos() []byte {
 	return rcv.QOS()
 }
 
-/// Quality of service
-/// Operational status
+// / Quality of service
+// / Operational status
 func (rcv *COT) OPEX() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -203,8 +203,8 @@ func (rcv *COT) Opex() []byte {
 	return rcv.OPEX()
 }
 
-/// Operational status
-/// Point location
+// / Operational status
+// / Point location
 func (rcv *COT) POINT(obj *COTPoint) *COTPoint {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -222,8 +222,8 @@ func (rcv *COT) Point(obj *COTPoint) *COTPoint {
 	return rcv.POINT(obj)
 }
 
-/// Point location
-/// Detailed event information
+// / Point location
+// / Detailed event information
 func (rcv *COT) DETAIL(obj *COTDetail) *COTDetail {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -241,7 +241,7 @@ func (rcv *COT) Detail(obj *COTDetail) *COTDetail {
 	return rcv.DETAIL(obj)
 }
 
-/// Detailed event information
+// / Detailed event information
 func COTStart(builder *flatbuffers.Builder) {
 	builder.StartObject(12)
 }

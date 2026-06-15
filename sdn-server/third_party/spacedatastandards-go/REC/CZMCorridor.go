@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Corridor (centerline + width shape)
+// / Corridor (centerline + width shape)
 type CZMCorridor struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMCorridor) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Whether the corridor is displayed
+// / Whether the corridor is displayed
 func (rcv *CZMCorridor) SHOW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMCorridor) Show() bool {
 	return rcv.SHOW()
 }
 
-/// Whether the corridor is displayed
+// / Whether the corridor is displayed
 func (rcv *CZMCorridor) MutateSHOW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMCorridor) MutateShow(n bool) bool {
 	return rcv.MutateSHOW(n)
 }
 
-/// Positions as cartographic degrees
+// / Positions as cartographic degrees
 func (rcv *CZMCorridor) POSITIONS_CARTOGRAPHIC_DEGREES(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -90,7 +90,7 @@ func (rcv *CZMCorridor) PositionsCartographicDegreesLength() int {
 	return rcv.POSITIONS_CARTOGRAPHIC_DEGREESLength()
 }
 
-/// Positions as cartographic degrees
+// / Positions as cartographic degrees
 func (rcv *CZMCorridor) MutatePOSITIONS_CARTOGRAPHIC_DEGREES(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -104,7 +104,7 @@ func (rcv *CZMCorridor) MutatePositionsCartographicDegrees(j int, n float64) boo
 	return rcv.MutatePOSITIONS_CARTOGRAPHIC_DEGREES(j, n)
 }
 
-/// Positions as Cartesian
+// / Positions as Cartesian
 func (rcv *CZMCorridor) POSITIONS_CARTESIAN(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -130,7 +130,7 @@ func (rcv *CZMCorridor) PositionsCartesianLength() int {
 	return rcv.POSITIONS_CARTESIANLength()
 }
 
-/// Positions as Cartesian
+// / Positions as Cartesian
 func (rcv *CZMCorridor) MutatePOSITIONS_CARTESIAN(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -144,7 +144,7 @@ func (rcv *CZMCorridor) MutatePositionsCartesian(j int, n float64) bool {
 	return rcv.MutatePOSITIONS_CARTESIAN(j, n)
 }
 
-/// Width in meters
+// / Width in meters
 func (rcv *CZMCorridor) WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *CZMCorridor) Width() float64 {
 	return rcv.WIDTH()
 }
 
-/// Width in meters
+// / Width in meters
 func (rcv *CZMCorridor) MutateWIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -166,7 +166,7 @@ func (rcv *CZMCorridor) MutateWidth(n float64) bool {
 	return rcv.MutateWIDTH(n)
 }
 
-/// Height in meters
+// / Height in meters
 func (rcv *CZMCorridor) HEIGHT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -179,7 +179,7 @@ func (rcv *CZMCorridor) Height() float64 {
 	return rcv.HEIGHT()
 }
 
-/// Height in meters
+// / Height in meters
 func (rcv *CZMCorridor) MutateHEIGHT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -188,7 +188,7 @@ func (rcv *CZMCorridor) MutateHeight(n float64) bool {
 	return rcv.MutateHEIGHT(n)
 }
 
-/// Height reference
+// / Height reference
 func (rcv *CZMCorridor) HEIGHT_REFERENCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -201,8 +201,8 @@ func (rcv *CZMCorridor) HeightReference() []byte {
 	return rcv.HEIGHT_REFERENCE()
 }
 
-/// Height reference
-/// Extruded height
+// / Height reference
+// / Extruded height
 func (rcv *CZMCorridor) EXTRUDED_HEIGHT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -215,7 +215,7 @@ func (rcv *CZMCorridor) ExtrudedHeight() float64 {
 	return rcv.EXTRUDED_HEIGHT()
 }
 
-/// Extruded height
+// / Extruded height
 func (rcv *CZMCorridor) MutateEXTRUDED_HEIGHT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -224,7 +224,7 @@ func (rcv *CZMCorridor) MutateExtrudedHeight(n float64) bool {
 	return rcv.MutateEXTRUDED_HEIGHT(n)
 }
 
-/// Extruded height reference
+// / Extruded height reference
 func (rcv *CZMCorridor) EXTRUDED_HEIGHT_REFERENCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -237,8 +237,8 @@ func (rcv *CZMCorridor) ExtrudedHeightReference() []byte {
 	return rcv.EXTRUDED_HEIGHT_REFERENCE()
 }
 
-/// Extruded height reference
-/// Corner type
+// / Extruded height reference
+// / Corner type
 func (rcv *CZMCorridor) CORNER_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -251,8 +251,8 @@ func (rcv *CZMCorridor) CornerType() []byte {
 	return rcv.CORNER_TYPE()
 }
 
-/// Corner type
-/// Granularity in radians
+// / Corner type
+// / Granularity in radians
 func (rcv *CZMCorridor) GRANULARITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -265,7 +265,7 @@ func (rcv *CZMCorridor) Granularity() float64 {
 	return rcv.GRANULARITY()
 }
 
-/// Granularity in radians
+// / Granularity in radians
 func (rcv *CZMCorridor) MutateGRANULARITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -274,7 +274,7 @@ func (rcv *CZMCorridor) MutateGranularity(n float64) bool {
 	return rcv.MutateGRANULARITY(n)
 }
 
-/// Fill flag
+// / Fill flag
 func (rcv *CZMCorridor) FILL() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -287,7 +287,7 @@ func (rcv *CZMCorridor) Fill() bool {
 	return rcv.FILL()
 }
 
-/// Fill flag
+// / Fill flag
 func (rcv *CZMCorridor) MutateFILL(n bool) bool {
 	return rcv._tab.MutateBoolSlot(24, n)
 }
@@ -296,7 +296,7 @@ func (rcv *CZMCorridor) MutateFill(n bool) bool {
 	return rcv.MutateFILL(n)
 }
 
-/// Surface material
+// / Surface material
 func (rcv *CZMCorridor) MATERIAL(obj *CZMMaterial) *CZMMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -314,8 +314,8 @@ func (rcv *CZMCorridor) Material(obj *CZMMaterial) *CZMMaterial {
 	return rcv.MATERIAL(obj)
 }
 
-/// Surface material
-/// Outline flag
+// / Surface material
+// / Outline flag
 func (rcv *CZMCorridor) OUTLINE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -328,7 +328,7 @@ func (rcv *CZMCorridor) Outline() bool {
 	return rcv.OUTLINE()
 }
 
-/// Outline flag
+// / Outline flag
 func (rcv *CZMCorridor) MutateOUTLINE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(28, n)
 }
@@ -337,7 +337,7 @@ func (rcv *CZMCorridor) MutateOutline(n bool) bool {
 	return rcv.MutateOUTLINE(n)
 }
 
-/// Outline color
+// / Outline color
 func (rcv *CZMCorridor) OUTLINE_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -355,8 +355,8 @@ func (rcv *CZMCorridor) OutlineColor(obj *CZMColor) *CZMColor {
 	return rcv.OUTLINE_COLOR(obj)
 }
 
-/// Outline color
-/// Outline width
+// / Outline color
+// / Outline width
 func (rcv *CZMCorridor) OUTLINE_WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -369,7 +369,7 @@ func (rcv *CZMCorridor) OutlineWidth() float64 {
 	return rcv.OUTLINE_WIDTH()
 }
 
-/// Outline width
+// / Outline width
 func (rcv *CZMCorridor) MutateOUTLINE_WIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -378,7 +378,7 @@ func (rcv *CZMCorridor) MutateOutlineWidth(n float64) bool {
 	return rcv.MutateOUTLINE_WIDTH(n)
 }
 
-/// Shadow mode
+// / Shadow mode
 func (rcv *CZMCorridor) SHADOWS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -391,8 +391,8 @@ func (rcv *CZMCorridor) Shadows() []byte {
 	return rcv.SHADOWS()
 }
 
-/// Shadow mode
-/// Classification type
+// / Shadow mode
+// / Classification type
 func (rcv *CZMCorridor) CLASSIFICATION_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -405,8 +405,8 @@ func (rcv *CZMCorridor) ClassificationType() []byte {
 	return rcv.CLASSIFICATION_TYPE()
 }
 
-/// Classification type
-/// Z-index for ordering
+// / Classification type
+// / Z-index for ordering
 func (rcv *CZMCorridor) Z_INDEX() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -419,7 +419,7 @@ func (rcv *CZMCorridor) ZIndex() int32 {
 	return rcv.Z_INDEX()
 }
 
-/// Z-index for ordering
+// / Z-index for ordering
 func (rcv *CZMCorridor) MutateZ_INDEX(n int32) bool {
 	return rcv._tab.MutateInt32Slot(38, n)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Path reconstruction request.
+// / Path reconstruction request.
 type FPCPathRequest struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *FPCPathRequest) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Target vertex index.
+// / Target vertex index.
 func (rcv *FPCPathRequest) TARGET() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *FPCPathRequest) Target() uint32 {
 	return rcv.TARGET()
 }
 
-/// Target vertex index.
+// / Target vertex index.
 func (rcv *FPCPathRequest) MutateTARGET(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(4, n)
 }

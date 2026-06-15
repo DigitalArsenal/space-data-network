@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Space Environment Observation Detail
+// / Space Environment Observation Detail
 type SEV struct {
 	_tab flatbuffers.Table
 }

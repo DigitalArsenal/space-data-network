@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Collection of Standard Records
+// / Collection of Standard Records
 type REC struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *REC) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Schema version identifier
+// / Schema version identifier
 func (rcv *REC) version() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *REC) Version() []byte {
 	return rcv.version()
 }
 
-/// Schema version identifier
-/// Array of heterogeneous records from any supported standard
+// / Schema version identifier
+// / Array of heterogeneous records from any supported standard
 func (rcv *REC) RECORDS(obj *Record, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -100,7 +100,7 @@ func (rcv *REC) RecordsLength() int {
 	return rcv.RECORDSLength()
 }
 
-/// Array of heterogeneous records from any supported standard
+// / Array of heterogeneous records from any supported standard
 func RECStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

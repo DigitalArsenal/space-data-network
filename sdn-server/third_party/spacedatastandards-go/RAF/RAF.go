@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Return All Frames Service (CCSDS 913.1-B-2)
+// / Return All Frames Service (CCSDS 913.1-B-2)
 type RAF struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *RAF) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// PDU type
+// / PDU type
 func (rcv *RAF) PDU_TYPE() rafPduType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *RAF) PduType() rafPduType {
 	return rcv.PDU_TYPE()
 }
 
-/// PDU type
+// / PDU type
 func (rcv *RAF) MutatePDU_TYPE(n rafPduType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -76,7 +76,7 @@ func (rcv *RAF) MutatePduType(n rafPduType) bool {
 	return rcv.MutatePDU_TYPE(n)
 }
 
-/// Initiator identifier
+// / Initiator identifier
 func (rcv *RAF) INITIATOR_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,8 +89,8 @@ func (rcv *RAF) InitiatorId() []byte {
 	return rcv.INITIATOR_ID()
 }
 
-/// Initiator identifier
-/// Responder port identifier
+// / Initiator identifier
+// / Responder port identifier
 func (rcv *RAF) RESPONDER_PORT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,8 +103,8 @@ func (rcv *RAF) ResponderPortId() []byte {
 	return rcv.RESPONDER_PORT_ID()
 }
 
-/// Responder port identifier
-/// Service type
+// / Responder port identifier
+// / Service type
 func (rcv *RAF) SERVICE_TYPE() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,7 +117,7 @@ func (rcv *RAF) ServiceType() byte {
 	return rcv.SERVICE_TYPE()
 }
 
-/// Service type
+// / Service type
 func (rcv *RAF) MutateSERVICE_TYPE(n byte) bool {
 	return rcv._tab.MutateByteSlot(10, n)
 }
@@ -126,7 +126,7 @@ func (rcv *RAF) MutateServiceType(n byte) bool {
 	return rcv.MutateSERVICE_TYPE(n)
 }
 
-/// Version number
+// / Version number
 func (rcv *RAF) VERSION() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -139,7 +139,7 @@ func (rcv *RAF) Version() uint16 {
 	return rcv.VERSION()
 }
 
-/// Version number
+// / Version number
 func (rcv *RAF) MutateVERSION(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(12, n)
 }
@@ -148,7 +148,7 @@ func (rcv *RAF) MutateVersion(n uint16) bool {
 	return rcv.MutateVERSION(n)
 }
 
-/// Invoke ID
+// / Invoke ID
 func (rcv *RAF) INVOKE_ID() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -161,7 +161,7 @@ func (rcv *RAF) InvokeId() uint32 {
 	return rcv.INVOKE_ID()
 }
 
-/// Invoke ID
+// / Invoke ID
 func (rcv *RAF) MutateINVOKE_ID(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(14, n)
 }
@@ -170,7 +170,7 @@ func (rcv *RAF) MutateInvokeId(n uint32) bool {
 	return rcv.MutateINVOKE_ID(n)
 }
 
-/// Frame quality
+// / Frame quality
 func (rcv *RAF) FRAME_QUALITY() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -183,7 +183,7 @@ func (rcv *RAF) FrameQuality() byte {
 	return rcv.FRAME_QUALITY()
 }
 
-/// Frame quality
+// / Frame quality
 func (rcv *RAF) MutateFRAME_QUALITY(n byte) bool {
 	return rcv._tab.MutateByteSlot(16, n)
 }
@@ -192,7 +192,7 @@ func (rcv *RAF) MutateFrameQuality(n byte) bool {
 	return rcv.MutateFRAME_QUALITY(n)
 }
 
-/// Data
+// / Data
 func (rcv *RAF) DATA(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -230,7 +230,7 @@ func (rcv *RAF) DataBytes() []byte {
 	return rcv.DATABytes()
 }
 
-/// Data
+// / Data
 func (rcv *RAF) MutateDATA(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Path reconstruction result.
+// / Path reconstruction result.
 type FPCPathResult struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *FPCPathResult) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Source vertex index from the latest SSSP solve.
+// / Source vertex index from the latest SSSP solve.
 func (rcv *FPCPathResult) SOURCE() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *FPCPathResult) Source() uint32 {
 	return rcv.SOURCE()
 }
 
-/// Source vertex index from the latest SSSP solve.
+// / Source vertex index from the latest SSSP solve.
 func (rcv *FPCPathResult) MutateSOURCE(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *FPCPathResult) MutateSource(n uint32) bool {
 	return rcv.MutateSOURCE(n)
 }
 
-/// Requested target vertex index.
+// / Requested target vertex index.
 func (rcv *FPCPathResult) TARGET() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *FPCPathResult) Target() uint32 {
 	return rcv.TARGET()
 }
 
-/// Requested target vertex index.
+// / Requested target vertex index.
 func (rcv *FPCPathResult) MutateTARGET(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *FPCPathResult) MutateTarget(n uint32) bool {
 	return rcv.MutateTARGET(n)
 }
 
-/// Whether a path exists from SOURCE to TARGET.
+// / Whether a path exists from SOURCE to TARGET.
 func (rcv *FPCPathResult) REACHABLE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *FPCPathResult) Reachable() bool {
 	return rcv.REACHABLE()
 }
 
-/// Whether a path exists from SOURCE to TARGET.
+// / Whether a path exists from SOURCE to TARGET.
 func (rcv *FPCPathResult) MutateREACHABLE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *FPCPathResult) MutateReachable(n bool) bool {
 	return rcv.MutateREACHABLE(n)
 }
 
-/// Total distance from SOURCE to TARGET (Infinity if unreachable).
+// / Total distance from SOURCE to TARGET (Infinity if unreachable).
 func (rcv *FPCPathResult) DISTANCE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *FPCPathResult) Distance() float64 {
 	return rcv.DISTANCE()
 }
 
-/// Total distance from SOURCE to TARGET (Infinity if unreachable).
+// / Total distance from SOURCE to TARGET (Infinity if unreachable).
 func (rcv *FPCPathResult) MutateDISTANCE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *FPCPathResult) MutateDistance(n float64) bool {
 	return rcv.MutateDISTANCE(n)
 }
 
-/// Vertex sequence from SOURCE to TARGET.
+// / Vertex sequence from SOURCE to TARGET.
 func (rcv *FPCPathResult) PATH(j int) uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -156,7 +156,7 @@ func (rcv *FPCPathResult) PathLength() int {
 	return rcv.PATHLength()
 }
 
-/// Vertex sequence from SOURCE to TARGET.
+// / Vertex sequence from SOURCE to TARGET.
 func (rcv *FPCPathResult) MutatePATH(j int, n uint32) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {

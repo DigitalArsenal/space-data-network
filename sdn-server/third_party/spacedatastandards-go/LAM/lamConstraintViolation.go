@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Launch-ascent constraint violation.
+// / Launch-ascent constraint violation.
 type lamConstraintViolation struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *lamConstraintViolation) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Constraint identifier.
+// / Constraint identifier.
 func (rcv *lamConstraintViolation) CONSTRAINT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *lamConstraintViolation) ConstraintId() []byte {
 	return rcv.CONSTRAINT_ID()
 }
 
-/// Constraint identifier.
-/// Constraint name.
+// / Constraint identifier.
+// / Constraint name.
 func (rcv *lamConstraintViolation) CONSTRAINT_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *lamConstraintViolation) ConstraintName() []byte {
 	return rcv.CONSTRAINT_NAME()
 }
 
-/// Constraint name.
-/// Constraint status.
+// / Constraint name.
+// / Constraint status.
 func (rcv *lamConstraintViolation) STATUS() lamConstraintStatus {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *lamConstraintViolation) Status() lamConstraintStatus {
 	return rcv.STATUS()
 }
 
-/// Constraint status.
+// / Constraint status.
 func (rcv *lamConstraintViolation) MutateSTATUS(n lamConstraintStatus) bool {
 	return rcv._tab.MutateInt8Slot(8, int8(n))
 }
@@ -92,7 +92,7 @@ func (rcv *lamConstraintViolation) MutateStatus(n lamConstraintStatus) bool {
 	return rcv.MutateSTATUS(n)
 }
 
-/// Epoch of closest approach or violation in ISO 8601 UTC format.
+// / Epoch of closest approach or violation in ISO 8601 UTC format.
 func (rcv *lamConstraintViolation) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,8 +105,8 @@ func (rcv *lamConstraintViolation) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-/// Epoch of closest approach or violation in ISO 8601 UTC format.
-/// Time from launch in seconds.
+// / Epoch of closest approach or violation in ISO 8601 UTC format.
+// / Time from launch in seconds.
 func (rcv *lamConstraintViolation) TIME_FROM_LAUNCH_S() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -119,7 +119,7 @@ func (rcv *lamConstraintViolation) TimeFromLaunchS() float64 {
 	return rcv.TIME_FROM_LAUNCH_S()
 }
 
-/// Time from launch in seconds.
+// / Time from launch in seconds.
 func (rcv *lamConstraintViolation) MutateTIME_FROM_LAUNCH_S(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -128,7 +128,7 @@ func (rcv *lamConstraintViolation) MutateTimeFromLaunchS(n float64) bool {
 	return rcv.MutateTIME_FROM_LAUNCH_S(n)
 }
 
-/// Observed constraint value.
+// / Observed constraint value.
 func (rcv *lamConstraintViolation) VALUE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -141,7 +141,7 @@ func (rcv *lamConstraintViolation) Value() float64 {
 	return rcv.VALUE()
 }
 
-/// Observed constraint value.
+// / Observed constraint value.
 func (rcv *lamConstraintViolation) MutateVALUE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -150,7 +150,7 @@ func (rcv *lamConstraintViolation) MutateValue(n float64) bool {
 	return rcv.MutateVALUE(n)
 }
 
-/// Constraint limit.
+// / Constraint limit.
 func (rcv *lamConstraintViolation) LIMIT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -163,7 +163,7 @@ func (rcv *lamConstraintViolation) Limit() float64 {
 	return rcv.LIMIT()
 }
 
-/// Constraint limit.
+// / Constraint limit.
 func (rcv *lamConstraintViolation) MutateLIMIT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -172,7 +172,7 @@ func (rcv *lamConstraintViolation) MutateLimit(n float64) bool {
 	return rcv.MutateLIMIT(n)
 }
 
-/// Units for value and limit.
+// / Units for value and limit.
 func (rcv *lamConstraintViolation) UNITS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -185,8 +185,8 @@ func (rcv *lamConstraintViolation) Units() []byte {
 	return rcv.UNITS()
 }
 
-/// Units for value and limit.
-/// Free-form description.
+// / Units for value and limit.
+// / Free-form description.
 func (rcv *lamConstraintViolation) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -199,7 +199,7 @@ func (rcv *lamConstraintViolation) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-/// Free-form description.
+// / Free-form description.
 func lamConstraintViolationStart(builder *flatbuffers.Builder) {
 	builder.StartObject(9)
 }

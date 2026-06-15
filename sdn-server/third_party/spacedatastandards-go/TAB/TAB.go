@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Typed Arena Buffer — one descriptor for a payload slot in a shared arena.
+// / Typed Arena Buffer — one descriptor for a payload slot in a shared arena.
 type TAB struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *TAB) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Byte offset of the payload body within the arena.
+// / Byte offset of the payload body within the arena.
 func (rcv *TAB) OFFSET() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *TAB) Offset() uint32 {
 	return rcv.OFFSET()
 }
 
-/// Byte offset of the payload body within the arena.
+// / Byte offset of the payload body within the arena.
 func (rcv *TAB) MutateOFFSET(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(4, n)
 }
@@ -76,7 +76,7 @@ func (rcv *TAB) MutateOffset(n uint32) bool {
 	return rcv.MutateOFFSET(n)
 }
 
-/// Byte length of the payload body.
+// / Byte length of the payload body.
 func (rcv *TAB) SIZE() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,7 +89,7 @@ func (rcv *TAB) Size() uint32 {
 	return rcv.SIZE()
 }
 
-/// Byte length of the payload body.
+// / Byte length of the payload body.
 func (rcv *TAB) MutateSIZE(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -98,7 +98,7 @@ func (rcv *TAB) MutateSize(n uint32) bool {
 	return rcv.MutateSIZE(n)
 }
 
-/// Required start alignment of the payload body (in bytes).
+// / Required start alignment of the payload body (in bytes).
 func (rcv *TAB) ALIGNMENT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -111,7 +111,7 @@ func (rcv *TAB) Alignment() uint32 {
 	return rcv.ALIGNMENT()
 }
 
-/// Required start alignment of the payload body (in bytes).
+// / Required start alignment of the payload body (in bytes).
 func (rcv *TAB) MutateALIGNMENT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -120,7 +120,7 @@ func (rcv *TAB) MutateAlignment(n uint32) bool {
 	return rcv.MutateALIGNMENT(n)
 }
 
-/// Wire format for the body.
+// / Wire format for the body.
 func (rcv *TAB) WIRE_FORMAT() payloadWireFormat {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -133,7 +133,7 @@ func (rcv *TAB) WireFormat() payloadWireFormat {
 	return rcv.WIRE_FORMAT()
 }
 
-/// Wire format for the body.
+// / Wire format for the body.
 func (rcv *TAB) MutateWIRE_FORMAT(n payloadWireFormat) bool {
 	return rcv._tab.MutateByteSlot(10, byte(n))
 }
@@ -142,7 +142,7 @@ func (rcv *TAB) MutateWireFormat(n payloadWireFormat) bool {
 	return rcv.MutateWIRE_FORMAT(n)
 }
 
-/// Optional payload schema identity.
+// / Optional payload schema identity.
 func (rcv *TAB) TYPE_REF(obj *FlatBufferTypeRef) *FlatBufferTypeRef {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -160,8 +160,8 @@ func (rcv *TAB) TypeRef(obj *FlatBufferTypeRef) *FlatBufferTypeRef {
 	return rcv.TYPE_REF(obj)
 }
 
-/// Optional payload schema identity.
-/// Mutability contract for the slot.
+// / Optional payload schema identity.
+// / Mutability contract for the slot.
 func (rcv *TAB) MUTABILITY() bufferMutability {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -174,7 +174,7 @@ func (rcv *TAB) Mutability() bufferMutability {
 	return rcv.MUTABILITY()
 }
 
-/// Mutability contract for the slot.
+// / Mutability contract for the slot.
 func (rcv *TAB) MutateMUTABILITY(n bufferMutability) bool {
 	return rcv._tab.MutateByteSlot(14, byte(n))
 }
@@ -183,7 +183,7 @@ func (rcv *TAB) MutateMutability(n bufferMutability) bool {
 	return rcv.MutateMUTABILITY(n)
 }
 
-/// Ownership contract for the slot.
+// / Ownership contract for the slot.
 func (rcv *TAB) OWNERSHIP() bufferOwnership {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -196,7 +196,7 @@ func (rcv *TAB) Ownership() bufferOwnership {
 	return rcv.OWNERSHIP()
 }
 
-/// Ownership contract for the slot.
+// / Ownership contract for the slot.
 func (rcv *TAB) MutateOWNERSHIP(n bufferOwnership) bool {
 	return rcv._tab.MutateByteSlot(16, byte(n))
 }
@@ -205,7 +205,7 @@ func (rcv *TAB) MutateOwnership(n bufferOwnership) bool {
 	return rcv.MutateOWNERSHIP(n)
 }
 
-/// Optional opaque frame identifier for stream bookkeeping.
+// / Optional opaque frame identifier for stream bookkeeping.
 func (rcv *TAB) FRAME_ID() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -218,7 +218,7 @@ func (rcv *TAB) FrameId() uint64 {
 	return rcv.FRAME_ID()
 }
 
-/// Optional opaque frame identifier for stream bookkeeping.
+// / Optional opaque frame identifier for stream bookkeeping.
 func (rcv *TAB) MutateFRAME_ID(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(18, n)
 }
@@ -227,10 +227,10 @@ func (rcv *TAB) MutateFrameId(n uint64) bool {
 	return rcv.MutateFRAME_ID(n)
 }
 
-/// Optional port identifier for frames that route to/from a named
-/// input or output port on a method (maps to
-/// `PLG.PLGPortManifest.PORT_ID`). Empty for arena frames that carry
-/// no port routing hint.
+// / Optional port identifier for frames that route to/from a named
+// / input or output port on a method (maps to
+// / `PLG.PLGPortManifest.PORT_ID`). Empty for arena frames that carry
+// / no port routing hint.
 func (rcv *TAB) PORT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -243,10 +243,10 @@ func (rcv *TAB) PortId() []byte {
 	return rcv.PORT_ID()
 }
 
-/// Optional port identifier for frames that route to/from a named
-/// input or output port on a method (maps to
-/// `PLG.PLGPortManifest.PORT_ID`). Empty for arena frames that carry
-/// no port routing hint.
+// / Optional port identifier for frames that route to/from a named
+// / input or output port on a method (maps to
+// / `PLG.PLGPortManifest.PORT_ID`). Empty for arena frames that carry
+// / no port routing hint.
 func TABStart(builder *flatbuffers.Builder) {
 	builder.StartObject(9)
 }

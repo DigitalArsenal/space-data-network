@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Tour primitive (union-like)
+// / Tour primitive (union-like)
 type KMLTourPrimitive struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLTourPrimitive) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// FlyTo
+// / FlyTo
 func (rcv *KMLTourPrimitive) FLY_TO(obj *KMLFlyTo) *KMLFlyTo {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *KMLTourPrimitive) FlyTo(obj *KMLFlyTo) *KMLFlyTo {
 	return rcv.FLY_TO(obj)
 }
 
-/// FlyTo
-/// Wait
+// / FlyTo
+// / Wait
 func (rcv *KMLTourPrimitive) WAIT(obj *KMLWait) *KMLWait {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -79,8 +79,8 @@ func (rcv *KMLTourPrimitive) Wait(obj *KMLWait) *KMLWait {
 	return rcv.WAIT(obj)
 }
 
-/// Wait
-/// AnimatedUpdate
+// / Wait
+// / AnimatedUpdate
 func (rcv *KMLTourPrimitive) ANIMATED_UPDATE(obj *KMLAnimatedUpdate) *KMLAnimatedUpdate {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -98,8 +98,8 @@ func (rcv *KMLTourPrimitive) AnimatedUpdate(obj *KMLAnimatedUpdate) *KMLAnimated
 	return rcv.ANIMATED_UPDATE(obj)
 }
 
-/// AnimatedUpdate
-/// TourControl
+// / AnimatedUpdate
+// / TourControl
 func (rcv *KMLTourPrimitive) TOUR_CONTROL(obj *KMLTourControl) *KMLTourControl {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *KMLTourPrimitive) TourControl(obj *KMLTourControl) *KMLTourControl {
 	return rcv.TOUR_CONTROL(obj)
 }
 
-/// TourControl
-/// SoundCue
+// / TourControl
+// / SoundCue
 func (rcv *KMLTourPrimitive) SOUND_CUE(obj *KMLSoundCue) *KMLSoundCue {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -136,7 +136,7 @@ func (rcv *KMLTourPrimitive) SoundCue(obj *KMLSoundCue) *KMLSoundCue {
 	return rcv.SOUND_CUE(obj)
 }
 
-/// SoundCue
+// / SoundCue
 func KMLTourPrimitiveStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

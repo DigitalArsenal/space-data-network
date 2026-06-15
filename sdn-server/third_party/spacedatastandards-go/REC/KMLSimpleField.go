@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Schema simple field definition
+// / Schema simple field definition
 type KMLSimpleField struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLSimpleField) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Field name
+// / Field name
 func (rcv *KMLSimpleField) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLSimpleField) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Field name
-/// Field type (xsd:string, xsd:int, xsd:float, etc.)
+// / Field name
+// / Field type (xsd:string, xsd:int, xsd:float, etc.)
 func (rcv *KMLSimpleField) FIELD_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *KMLSimpleField) FieldType() []byte {
 	return rcv.FIELD_TYPE()
 }
 
-/// Field type (xsd:string, xsd:int, xsd:float, etc.)
-/// Display name
+// / Field type (xsd:string, xsd:int, xsd:float, etc.)
+// / Display name
 func (rcv *KMLSimpleField) DISPLAY_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *KMLSimpleField) DisplayName() []byte {
 	return rcv.DISPLAY_NAME()
 }
 
-/// Display name
+// / Display name
 func KMLSimpleFieldStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

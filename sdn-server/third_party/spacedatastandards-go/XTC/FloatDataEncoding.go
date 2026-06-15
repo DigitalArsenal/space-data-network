@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Float data encoding specification
+// / Float data encoding specification
 type FloatDataEncoding struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *FloatDataEncoding) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Number of bits (typically 32 or 64)
+// / Number of bits (typically 32 or 64)
 func (rcv *FloatDataEncoding) SIZE_IN_BITS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *FloatDataEncoding) SizeInBits() uint16 {
 	return rcv.SIZE_IN_BITS()
 }
 
-/// Number of bits (typically 32 or 64)
+// / Number of bits (typically 32 or 64)
 func (rcv *FloatDataEncoding) MutateSIZE_IN_BITS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *FloatDataEncoding) MutateSizeInBits(n uint16) bool {
 	return rcv.MutateSIZE_IN_BITS(n)
 }
 
-/// Byte ordering
+// / Byte ordering
 func (rcv *FloatDataEncoding) BYTE_ORDER() ByteOrderType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *FloatDataEncoding) ByteOrder() ByteOrderType {
 	return rcv.BYTE_ORDER()
 }
 
-/// Byte ordering
+// / Byte ordering
 func (rcv *FloatDataEncoding) MutateBYTE_ORDER(n ByteOrderType) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -86,7 +86,7 @@ func (rcv *FloatDataEncoding) MutateByteOrder(n ByteOrderType) bool {
 	return rcv.MutateBYTE_ORDER(n)
 }
 
-/// Float encoding format
+// / Float encoding format
 func (rcv *FloatDataEncoding) ENCODING() FloatEncodingType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *FloatDataEncoding) Encoding() FloatEncodingType {
 	return rcv.ENCODING()
 }
 
-/// Float encoding format
+// / Float encoding format
 func (rcv *FloatDataEncoding) MutateENCODING(n FloatEncodingType) bool {
 	return rcv._tab.MutateInt8Slot(8, int8(n))
 }
@@ -108,7 +108,7 @@ func (rcv *FloatDataEncoding) MutateEncoding(n FloatEncodingType) bool {
 	return rcv.MutateENCODING(n)
 }
 
-/// Default calibrator reference
+// / Default calibrator reference
 func (rcv *FloatDataEncoding) DEFAULT_CALIBRATOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,8 +121,8 @@ func (rcv *FloatDataEncoding) DefaultCalibrator() []byte {
 	return rcv.DEFAULT_CALIBRATOR()
 }
 
-/// Default calibrator reference
-/// Context-dependent calibrators
+// / Default calibrator reference
+// / Context-dependent calibrators
 func (rcv *FloatDataEncoding) CONTEXT_CALIBRATOR_LIST(obj *ContextCalibrator, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -154,7 +154,7 @@ func (rcv *FloatDataEncoding) ContextCalibratorListLength() int {
 	return rcv.CONTEXT_CALIBRATOR_LISTLength()
 }
 
-/// Context-dependent calibrators
+// / Context-dependent calibrators
 func FloatDataEncodingStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

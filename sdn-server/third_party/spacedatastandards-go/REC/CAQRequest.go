@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Catalog query request payload.
+// / Catalog query request payload.
 type CAQRequest struct {
 	_tab flatbuffers.Table
 }
@@ -62,7 +62,7 @@ func (rcv *CAQRequest) MutateKind(n catalogQueryKind) bool {
 	return rcv.MutateKIND(n)
 }
 
-/// Host-specific query string (for example a FlatSQL or DSL expression).
+// / Host-specific query string (for example a FlatSQL or DSL expression).
 func (rcv *CAQRequest) QUERY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -75,8 +75,8 @@ func (rcv *CAQRequest) Query() []byte {
 	return rcv.QUERY()
 }
 
-/// Host-specific query string (for example a FlatSQL or DSL expression).
-/// Entity index for single-row queries.
+// / Host-specific query string (for example a FlatSQL or DSL expression).
+// / Entity index for single-row queries.
 func (rcv *CAQRequest) ENTITY_INDEX() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -89,7 +89,7 @@ func (rcv *CAQRequest) EntityIndex() uint32 {
 	return rcv.ENTITY_INDEX()
 }
 
-/// Entity index for single-row queries.
+// / Entity index for single-row queries.
 func (rcv *CAQRequest) MutateENTITY_INDEX(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -98,7 +98,7 @@ func (rcv *CAQRequest) MutateEntityIndex(n uint32) bool {
 	return rcv.MutateENTITY_INDEX(n)
 }
 
-/// Upper bound on the number of rows / indices to return (0 = unbounded).
+// / Upper bound on the number of rows / indices to return (0 = unbounded).
 func (rcv *CAQRequest) MAX_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -111,7 +111,7 @@ func (rcv *CAQRequest) MaxCount() uint32 {
 	return rcv.MAX_COUNT()
 }
 
-/// Upper bound on the number of rows / indices to return (0 = unbounded).
+// / Upper bound on the number of rows / indices to return (0 = unbounded).
 func (rcv *CAQRequest) MutateMAX_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }
@@ -120,8 +120,8 @@ func (rcv *CAQRequest) MutateMaxCount(n uint32) bool {
 	return rcv.MutateMAX_COUNT(n)
 }
 
-/// Expected number of entities in the catalog at the time the request was
-/// issued, used to size visibility masks.
+// / Expected number of entities in the catalog at the time the request was
+// / issued, used to size visibility masks.
 func (rcv *CAQRequest) ENTITY_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -134,8 +134,8 @@ func (rcv *CAQRequest) EntityCount() uint32 {
 	return rcv.ENTITY_COUNT()
 }
 
-/// Expected number of entities in the catalog at the time the request was
-/// issued, used to size visibility masks.
+// / Expected number of entities in the catalog at the time the request was
+// / issued, used to size visibility masks.
 func (rcv *CAQRequest) MutateENTITY_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(12, n)
 }

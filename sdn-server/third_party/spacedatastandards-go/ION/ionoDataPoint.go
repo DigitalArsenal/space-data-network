@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Ionospheric Observation Data Point
+// / Ionospheric Observation Data Point
 type ionoDataPoint struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ionoDataPoint) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Observation epoch (ISO 8601)
+// / Observation epoch (ISO 8601)
 func (rcv *ionoDataPoint) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *ionoDataPoint) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-/// Observation epoch (ISO 8601)
-/// Ionospheric layer
+// / Observation epoch (ISO 8601)
+// / Ionospheric layer
 func (rcv *ionoDataPoint) LAYER() ionoLayer {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *ionoDataPoint) Layer() ionoLayer {
 	return rcv.LAYER()
 }
 
-/// Ionospheric layer
+// / Ionospheric layer
 func (rcv *ionoDataPoint) MutateLAYER(n ionoLayer) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -78,7 +78,7 @@ func (rcv *ionoDataPoint) MutateLayer(n ionoLayer) bool {
 	return rcv.MutateLAYER(n)
 }
 
-/// Critical frequency in MHz
+// / Critical frequency in MHz
 func (rcv *ionoDataPoint) CRITICAL_FREQ() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *ionoDataPoint) CriticalFreq() float64 {
 	return rcv.CRITICAL_FREQ()
 }
 
-/// Critical frequency in MHz
+// / Critical frequency in MHz
 func (rcv *ionoDataPoint) MutateCRITICAL_FREQ(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -100,7 +100,7 @@ func (rcv *ionoDataPoint) MutateCriticalFreq(n float64) bool {
 	return rcv.MutateCRITICAL_FREQ(n)
 }
 
-/// Virtual height in km
+// / Virtual height in km
 func (rcv *ionoDataPoint) VIRTUAL_HEIGHT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -113,7 +113,7 @@ func (rcv *ionoDataPoint) VirtualHeight() float64 {
 	return rcv.VIRTUAL_HEIGHT()
 }
 
-/// Virtual height in km
+// / Virtual height in km
 func (rcv *ionoDataPoint) MutateVIRTUAL_HEIGHT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -122,7 +122,7 @@ func (rcv *ionoDataPoint) MutateVirtualHeight(n float64) bool {
 	return rcv.MutateVIRTUAL_HEIGHT(n)
 }
 
-/// True height in km
+// / True height in km
 func (rcv *ionoDataPoint) TRUE_HEIGHT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -135,7 +135,7 @@ func (rcv *ionoDataPoint) TrueHeight() float64 {
 	return rcv.TRUE_HEIGHT()
 }
 
-/// True height in km
+// / True height in km
 func (rcv *ionoDataPoint) MutateTRUE_HEIGHT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -144,7 +144,7 @@ func (rcv *ionoDataPoint) MutateTrueHeight(n float64) bool {
 	return rcv.MutateTRUE_HEIGHT(n)
 }
 
-/// Peak electron density in electrons/m^3
+// / Peak electron density in electrons/m^3
 func (rcv *ionoDataPoint) PEAK_DENSITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *ionoDataPoint) PeakDensity() float64 {
 	return rcv.PEAK_DENSITY()
 }
 
-/// Peak electron density in electrons/m^3
+// / Peak electron density in electrons/m^3
 func (rcv *ionoDataPoint) MutatePEAK_DENSITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -166,7 +166,7 @@ func (rcv *ionoDataPoint) MutatePeakDensity(n float64) bool {
 	return rcv.MutatePEAK_DENSITY(n)
 }
 
-/// Total electron content in TECU
+// / Total electron content in TECU
 func (rcv *ionoDataPoint) TEC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -179,7 +179,7 @@ func (rcv *ionoDataPoint) Tec() float64 {
 	return rcv.TEC()
 }
 
-/// Total electron content in TECU
+// / Total electron content in TECU
 func (rcv *ionoDataPoint) MutateTEC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -188,7 +188,7 @@ func (rcv *ionoDataPoint) MutateTec(n float64) bool {
 	return rcv.MutateTEC(n)
 }
 
-/// TEC uncertainty in TECU
+// / TEC uncertainty in TECU
 func (rcv *ionoDataPoint) TEC_UNCERTAINTY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -201,7 +201,7 @@ func (rcv *ionoDataPoint) TecUncertainty() float64 {
 	return rcv.TEC_UNCERTAINTY()
 }
 
-/// TEC uncertainty in TECU
+// / TEC uncertainty in TECU
 func (rcv *ionoDataPoint) MutateTEC_UNCERTAINTY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }

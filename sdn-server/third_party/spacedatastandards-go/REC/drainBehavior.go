@@ -4,18 +4,18 @@ package REC
 
 import "strconv"
 
-/// Drain semantics for a method that operates over queued stream frames.
-/// Enum name is deliberately distinct from any camelCase field name
-/// (`DRAIN_POLICY` would collide otherwise).
+// / Drain semantics for a method that operates over queued stream frames.
+// / Enum name is deliberately distinct from any camelCase field name
+// / (`DRAIN_POLICY` would collide otherwise).
 type drainBehavior byte
 
 const (
 	/// One invocation consumes exactly one input frame.
-	drainBehaviorSINGLE_SHOT       drainBehavior = 0
+	drainBehaviorSINGLE_SHOT drainBehavior = 0
 	/// Invocation drains queued work until it voluntarily yields.
 	drainBehaviorDRAIN_UNTIL_YIELD drainBehavior = 1
 	/// Invocation drains to empty before returning.
-	drainBehaviorDRAIN_TO_EMPTY    drainBehavior = 2
+	drainBehaviorDRAIN_TO_EMPTY drainBehavior = 2
 )
 
 var EnumNamesdrainBehavior = map[drainBehavior]string{

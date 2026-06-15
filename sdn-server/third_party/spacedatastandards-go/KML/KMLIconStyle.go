@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Icon style
+// / Icon style
 type KMLIconStyle struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLIconStyle) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// KML color in aabbggrr hex format
+// / KML color in aabbggrr hex format
 func (rcv *KMLIconStyle) COLOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLIconStyle) Color() []byte {
 	return rcv.COLOR()
 }
 
-/// KML color in aabbggrr hex format
-/// Color mode
+// / KML color in aabbggrr hex format
+// / Color mode
 func (rcv *KMLIconStyle) COLOR_MODE() KMLColorMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *KMLIconStyle) ColorMode() KMLColorMode {
 	return rcv.COLOR_MODE()
 }
 
-/// Color mode
+// / Color mode
 func (rcv *KMLIconStyle) MutateCOLOR_MODE(n KMLColorMode) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -78,7 +78,7 @@ func (rcv *KMLIconStyle) MutateColorMode(n KMLColorMode) bool {
 	return rcv.MutateCOLOR_MODE(n)
 }
 
-/// Scale factor
+// / Scale factor
 func (rcv *KMLIconStyle) SCALE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *KMLIconStyle) Scale() float64 {
 	return rcv.SCALE()
 }
 
-/// Scale factor
+// / Scale factor
 func (rcv *KMLIconStyle) MutateSCALE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -100,7 +100,7 @@ func (rcv *KMLIconStyle) MutateScale(n float64) bool {
 	return rcv.MutateSCALE(n)
 }
 
-/// Heading in degrees
+// / Heading in degrees
 func (rcv *KMLIconStyle) HEADING() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -113,7 +113,7 @@ func (rcv *KMLIconStyle) Heading() float64 {
 	return rcv.HEADING()
 }
 
-/// Heading in degrees
+// / Heading in degrees
 func (rcv *KMLIconStyle) MutateHEADING(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -122,7 +122,7 @@ func (rcv *KMLIconStyle) MutateHeading(n float64) bool {
 	return rcv.MutateHEADING(n)
 }
 
-/// Icon href (URL)
+// / Icon href (URL)
 func (rcv *KMLIconStyle) ICON_HREF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -135,8 +135,8 @@ func (rcv *KMLIconStyle) IconHref() []byte {
 	return rcv.ICON_HREF()
 }
 
-/// Icon href (URL)
-/// Hot spot X value
+// / Icon href (URL)
+// / Hot spot X value
 func (rcv *KMLIconStyle) HOTSPOT_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -149,7 +149,7 @@ func (rcv *KMLIconStyle) HotspotX() float64 {
 	return rcv.HOTSPOT_X()
 }
 
-/// Hot spot X value
+// / Hot spot X value
 func (rcv *KMLIconStyle) MutateHOTSPOT_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -158,7 +158,7 @@ func (rcv *KMLIconStyle) MutateHotspotX(n float64) bool {
 	return rcv.MutateHOTSPOT_X(n)
 }
 
-/// Hot spot Y value
+// / Hot spot Y value
 func (rcv *KMLIconStyle) HOTSPOT_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -171,7 +171,7 @@ func (rcv *KMLIconStyle) HotspotY() float64 {
 	return rcv.HOTSPOT_Y()
 }
 
-/// Hot spot Y value
+// / Hot spot Y value
 func (rcv *KMLIconStyle) MutateHOTSPOT_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -180,7 +180,7 @@ func (rcv *KMLIconStyle) MutateHotspotY(n float64) bool {
 	return rcv.MutateHOTSPOT_Y(n)
 }
 
-/// Hot spot X units
+// / Hot spot X units
 func (rcv *KMLIconStyle) HOTSPOT_X_UNITS() KMLUnits {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -193,7 +193,7 @@ func (rcv *KMLIconStyle) HotspotXUnits() KMLUnits {
 	return rcv.HOTSPOT_X_UNITS()
 }
 
-/// Hot spot X units
+// / Hot spot X units
 func (rcv *KMLIconStyle) MutateHOTSPOT_X_UNITS(n KMLUnits) bool {
 	return rcv._tab.MutateInt8Slot(18, int8(n))
 }
@@ -202,7 +202,7 @@ func (rcv *KMLIconStyle) MutateHotspotXUnits(n KMLUnits) bool {
 	return rcv.MutateHOTSPOT_X_UNITS(n)
 }
 
-/// Hot spot Y units
+// / Hot spot Y units
 func (rcv *KMLIconStyle) HOTSPOT_Y_UNITS() KMLUnits {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -215,7 +215,7 @@ func (rcv *KMLIconStyle) HotspotYUnits() KMLUnits {
 	return rcv.HOTSPOT_Y_UNITS()
 }
 
-/// Hot spot Y units
+// / Hot spot Y units
 func (rcv *KMLIconStyle) MutateHOTSPOT_Y_UNITS(n KMLUnits) bool {
 	return rcv._tab.MutateInt8Slot(20, int8(n))
 }

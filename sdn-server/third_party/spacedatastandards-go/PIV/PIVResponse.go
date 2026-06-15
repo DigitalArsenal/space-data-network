@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Response envelope emitted by `plugin_invoke_stream`.
+// / Response envelope emitted by `plugin_invoke_stream`.
 type PIVResponse struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *PIVResponse) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Method-specific status code. Zero conventionally indicates success.
+// / Method-specific status code. Zero conventionally indicates success.
 func (rcv *PIVResponse) STATUS_CODE() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *PIVResponse) StatusCode() int32 {
 	return rcv.STATUS_CODE()
 }
 
-/// Method-specific status code. Zero conventionally indicates success.
+// / Method-specific status code. Zero conventionally indicates success.
 func (rcv *PIVResponse) MutateSTATUS_CODE(n int32) bool {
 	return rcv._tab.MutateInt32Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *PIVResponse) MutateStatusCode(n int32) bool {
 	return rcv.MutateSTATUS_CODE(n)
 }
 
-/// Coarse envelope status.
+// / Coarse envelope status.
 func (rcv *PIVResponse) STATUS() pivStatus {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *PIVResponse) Status() pivStatus {
 	return rcv.STATUS()
 }
 
-/// Coarse envelope status.
+// / Coarse envelope status.
 func (rcv *PIVResponse) MutateSTATUS(n pivStatus) bool {
 	return rcv._tab.MutateInt32Slot(6, int32(n))
 }
@@ -86,7 +86,7 @@ func (rcv *PIVResponse) MutateStatus(n pivStatus) bool {
 	return rcv.MutateSTATUS(n)
 }
 
-/// True when the method yielded before fully draining queued work.
+// / True when the method yielded before fully draining queued work.
 func (rcv *PIVResponse) YIELDED() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *PIVResponse) Yielded() bool {
 	return rcv.YIELDED()
 }
 
-/// True when the method yielded before fully draining queued work.
+// / True when the method yielded before fully draining queued work.
 func (rcv *PIVResponse) MutateYIELDED(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }
@@ -108,8 +108,8 @@ func (rcv *PIVResponse) MutateYielded(n bool) bool {
 	return rcv.MutateYIELDED(n)
 }
 
-/// Outstanding frame count remaining after this response. Non-zero
-/// only when STATUS == YIELDED.
+// / Outstanding frame count remaining after this response. Non-zero
+// / only when STATUS == YIELDED.
 func (rcv *PIVResponse) BACKLOG_REMAINING() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -122,8 +122,8 @@ func (rcv *PIVResponse) BacklogRemaining() uint32 {
 	return rcv.BACKLOG_REMAINING()
 }
 
-/// Outstanding frame count remaining after this response. Non-zero
-/// only when STATUS == YIELDED.
+// / Outstanding frame count remaining after this response. Non-zero
+// / only when STATUS == YIELDED.
 func (rcv *PIVResponse) MutateBACKLOG_REMAINING(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }
@@ -132,7 +132,7 @@ func (rcv *PIVResponse) MutateBacklogRemaining(n uint32) bool {
 	return rcv.MutateBACKLOG_REMAINING(n)
 }
 
-/// Output frames. Each TAB carries schema identity and wire format.
+// / Output frames. Each TAB carries schema identity and wire format.
 func (rcv *PIVResponse) OUTPUTS(obj *TAB, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -164,8 +164,8 @@ func (rcv *PIVResponse) OutputsLength() int {
 	return rcv.OUTPUTSLength()
 }
 
-/// Output frames. Each TAB carries schema identity and wire format.
-/// Optional arena backing OUTPUTS payload bodies.
+// / Output frames. Each TAB carries schema identity and wire format.
+// / Optional arena backing OUTPUTS payload bodies.
 func (rcv *PIVResponse) PAYLOAD_ARENA(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -203,7 +203,7 @@ func (rcv *PIVResponse) PayloadArenaBytes() []byte {
 	return rcv.PAYLOAD_ARENABytes()
 }
 
-/// Optional arena backing OUTPUTS payload bodies.
+// / Optional arena backing OUTPUTS payload bodies.
 func (rcv *PIVResponse) MutatePAYLOAD_ARENA(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -217,7 +217,7 @@ func (rcv *PIVResponse) MutatePayloadArena(j int, n byte) bool {
 	return rcv.MutatePAYLOAD_ARENA(j, n)
 }
 
-/// Stable machine-readable error code when STATUS == FAILED.
+// / Stable machine-readable error code when STATUS == FAILED.
 func (rcv *PIVResponse) ERROR_CODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -230,8 +230,8 @@ func (rcv *PIVResponse) ErrorCode() []byte {
 	return rcv.ERROR_CODE()
 }
 
-/// Stable machine-readable error code when STATUS == FAILED.
-/// Human-readable diagnostic when STATUS == FAILED.
+// / Stable machine-readable error code when STATUS == FAILED.
+// / Human-readable diagnostic when STATUS == FAILED.
 func (rcv *PIVResponse) ERROR_MESSAGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -244,8 +244,8 @@ func (rcv *PIVResponse) ErrorMessage() []byte {
 	return rcv.ERROR_MESSAGE()
 }
 
-/// Human-readable diagnostic when STATUS == FAILED.
-/// Echo of the request's TRACE_ID for correlation.
+// / Human-readable diagnostic when STATUS == FAILED.
+// / Echo of the request's TRACE_ID for correlation.
 func (rcv *PIVResponse) TRACE_ID() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -258,7 +258,7 @@ func (rcv *PIVResponse) TraceId() uint64 {
 	return rcv.TRACE_ID()
 }
 
-/// Echo of the request's TRACE_ID for correlation.
+// / Echo of the request's TRACE_ID for correlation.
 func (rcv *PIVResponse) MutateTRACE_ID(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(20, n)
 }

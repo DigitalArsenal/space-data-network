@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Single component in a composed SDF.
+// / Single component in a composed SDF.
 type SDFComponent struct {
 	_tab flatbuffers.Table
 }

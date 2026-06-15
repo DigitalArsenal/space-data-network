@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Simple data value for SchemaData
+// / Simple data value for SchemaData
 type KMLSimpleData struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLSimpleData) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Field name
+// / Field name
 func (rcv *KMLSimpleData) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLSimpleData) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Field name
-/// Field value
+// / Field name
+// / Field value
 func (rcv *KMLSimpleData) VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *KMLSimpleData) Value() []byte {
 	return rcv.VALUE()
 }
 
-/// Field value
+// / Field value
 func KMLSimpleDataStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

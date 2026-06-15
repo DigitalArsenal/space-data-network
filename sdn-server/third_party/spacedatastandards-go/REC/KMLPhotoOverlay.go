@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Photo overlay
+// / Photo overlay
 type KMLPhotoOverlay struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLPhotoOverlay) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Name
+// / Name
 func (rcv *KMLPhotoOverlay) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLPhotoOverlay) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Name
-/// Description
+// / Name
+// / Description
 func (rcv *KMLPhotoOverlay) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *KMLPhotoOverlay) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-/// Description
-/// Visibility
+// / Description
+// / Visibility
 func (rcv *KMLPhotoOverlay) VISIBILITY() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *KMLPhotoOverlay) Visibility() bool {
 	return rcv.VISIBILITY()
 }
 
-/// Visibility
+// / Visibility
 func (rcv *KMLPhotoOverlay) MutateVISIBILITY(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }
@@ -92,7 +92,7 @@ func (rcv *KMLPhotoOverlay) MutateVisibility(n bool) bool {
 	return rcv.MutateVISIBILITY(n)
 }
 
-/// Icon/image URL
+// / Icon/image URL
 func (rcv *KMLPhotoOverlay) ICON_HREF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,8 +105,8 @@ func (rcv *KMLPhotoOverlay) IconHref() []byte {
 	return rcv.ICON_HREF()
 }
 
-/// Icon/image URL
-/// Color
+// / Icon/image URL
+// / Color
 func (rcv *KMLPhotoOverlay) COLOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -119,8 +119,8 @@ func (rcv *KMLPhotoOverlay) Color() []byte {
 	return rcv.COLOR()
 }
 
-/// Color
-/// Draw order
+// / Color
+// / Draw order
 func (rcv *KMLPhotoOverlay) DRAW_ORDER() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -133,7 +133,7 @@ func (rcv *KMLPhotoOverlay) DrawOrder() int32 {
 	return rcv.DRAW_ORDER()
 }
 
-/// Draw order
+// / Draw order
 func (rcv *KMLPhotoOverlay) MutateDRAW_ORDER(n int32) bool {
 	return rcv._tab.MutateInt32Slot(14, n)
 }
@@ -142,7 +142,7 @@ func (rcv *KMLPhotoOverlay) MutateDrawOrder(n int32) bool {
 	return rcv.MutateDRAW_ORDER(n)
 }
 
-/// Rotation
+// / Rotation
 func (rcv *KMLPhotoOverlay) ROTATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -155,7 +155,7 @@ func (rcv *KMLPhotoOverlay) Rotation() float64 {
 	return rcv.ROTATION()
 }
 
-/// Rotation
+// / Rotation
 func (rcv *KMLPhotoOverlay) MutateROTATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -164,7 +164,7 @@ func (rcv *KMLPhotoOverlay) MutateRotation(n float64) bool {
 	return rcv.MutateROTATION(n)
 }
 
-/// View volume
+// / View volume
 func (rcv *KMLPhotoOverlay) VIEW_VOLUME(obj *KMLViewVolume) *KMLViewVolume {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -182,8 +182,8 @@ func (rcv *KMLPhotoOverlay) ViewVolume(obj *KMLViewVolume) *KMLViewVolume {
 	return rcv.VIEW_VOLUME(obj)
 }
 
-/// View volume
-/// Image pyramid
+// / View volume
+// / Image pyramid
 func (rcv *KMLPhotoOverlay) IMAGE_PYRAMID(obj *KMLImagePyramid) *KMLImagePyramid {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -201,8 +201,8 @@ func (rcv *KMLPhotoOverlay) ImagePyramid(obj *KMLImagePyramid) *KMLImagePyramid 
 	return rcv.IMAGE_PYRAMID(obj)
 }
 
-/// Image pyramid
-/// Point for position
+// / Image pyramid
+// / Point for position
 func (rcv *KMLPhotoOverlay) POINT(obj *KMLPoint) *KMLPoint {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -220,8 +220,8 @@ func (rcv *KMLPhotoOverlay) Point(obj *KMLPoint) *KMLPoint {
 	return rcv.POINT(obj)
 }
 
-/// Point for position
-/// Shape
+// / Point for position
+// / Shape
 func (rcv *KMLPhotoOverlay) SHAPE() KMLShape {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -234,7 +234,7 @@ func (rcv *KMLPhotoOverlay) Shape() KMLShape {
 	return rcv.SHAPE()
 }
 
-/// Shape
+// / Shape
 func (rcv *KMLPhotoOverlay) MutateSHAPE(n KMLShape) bool {
 	return rcv._tab.MutateInt8Slot(24, int8(n))
 }

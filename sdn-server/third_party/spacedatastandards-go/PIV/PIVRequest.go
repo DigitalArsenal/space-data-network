@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Request envelope carried by `plugin_invoke_stream`.
+// / Request envelope carried by `plugin_invoke_stream`.
 type PIVRequest struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *PIVRequest) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Stable method identifier from PLG.METHODS[].METHOD_ID.
+// / Stable method identifier from PLG.METHODS[].METHOD_ID.
 func (rcv *PIVRequest) METHOD_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,11 +55,11 @@ func (rcv *PIVRequest) MethodId() []byte {
 	return rcv.METHOD_ID()
 }
 
-/// Stable method identifier from PLG.METHODS[].METHOD_ID.
-/// Input frames. Each TAB.TYPE_REF names the payload schema and each
-/// TAB.WIRE_FORMAT selects FLATBUFFER or ALIGNED_BINARY. TAB.OFFSET
-/// is arena-relative into PAYLOAD_ARENA (or an absolute pointer when
-/// PAYLOAD_ARENA is empty).
+// / Stable method identifier from PLG.METHODS[].METHOD_ID.
+// / Input frames. Each TAB.TYPE_REF names the payload schema and each
+// / TAB.WIRE_FORMAT selects FLATBUFFER or ALIGNED_BINARY. TAB.OFFSET
+// / is arena-relative into PAYLOAD_ARENA (or an absolute pointer when
+// / PAYLOAD_ARENA is empty).
 func (rcv *PIVRequest) INPUTS(obj *TAB, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -91,12 +91,12 @@ func (rcv *PIVRequest) InputsLength() int {
 	return rcv.INPUTSLength()
 }
 
-/// Input frames. Each TAB.TYPE_REF names the payload schema and each
-/// TAB.WIRE_FORMAT selects FLATBUFFER or ALIGNED_BINARY. TAB.OFFSET
-/// is arena-relative into PAYLOAD_ARENA (or an absolute pointer when
-/// PAYLOAD_ARENA is empty).
-/// Optional arena backing the INPUTS payload bodies. Empty means the
-/// caller manages arena state out-of-band.
+// / Input frames. Each TAB.TYPE_REF names the payload schema and each
+// / TAB.WIRE_FORMAT selects FLATBUFFER or ALIGNED_BINARY. TAB.OFFSET
+// / is arena-relative into PAYLOAD_ARENA (or an absolute pointer when
+// / PAYLOAD_ARENA is empty).
+// / Optional arena backing the INPUTS payload bodies. Empty means the
+// / caller manages arena state out-of-band.
 func (rcv *PIVRequest) PAYLOAD_ARENA(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -134,8 +134,8 @@ func (rcv *PIVRequest) PayloadArenaBytes() []byte {
 	return rcv.PAYLOAD_ARENABytes()
 }
 
-/// Optional arena backing the INPUTS payload bodies. Empty means the
-/// caller manages arena state out-of-band.
+// / Optional arena backing the INPUTS payload bodies. Empty means the
+// / caller manages arena state out-of-band.
 func (rcv *PIVRequest) MutatePAYLOAD_ARENA(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -149,7 +149,7 @@ func (rcv *PIVRequest) MutatePayloadArena(j int, n byte) bool {
 	return rcv.MutatePAYLOAD_ARENA(j, n)
 }
 
-/// Optional trace identifier for request correlation.
+// / Optional trace identifier for request correlation.
 func (rcv *PIVRequest) TRACE_ID() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -162,7 +162,7 @@ func (rcv *PIVRequest) TraceId() uint64 {
 	return rcv.TRACE_ID()
 }
 
-/// Optional trace identifier for request correlation.
+// / Optional trace identifier for request correlation.
 func (rcv *PIVRequest) MutateTRACE_ID(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(10, n)
 }
@@ -171,9 +171,9 @@ func (rcv *PIVRequest) MutateTraceId(n uint64) bool {
 	return rcv.MutateTRACE_ID(n)
 }
 
-/// Optional yield-budget hint. Plugins MAY pause queued work after
-/// draining this many output frames and return YIELDED for the caller
-/// to resume. 0 = no hint.
+// / Optional yield-budget hint. Plugins MAY pause queued work after
+// / draining this many output frames and return YIELDED for the caller
+// / to resume. 0 = no hint.
 func (rcv *PIVRequest) OUTPUT_STREAM_CAP() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -186,9 +186,9 @@ func (rcv *PIVRequest) OutputStreamCap() uint32 {
 	return rcv.OUTPUT_STREAM_CAP()
 }
 
-/// Optional yield-budget hint. Plugins MAY pause queued work after
-/// draining this many output frames and return YIELDED for the caller
-/// to resume. 0 = no hint.
+// / Optional yield-budget hint. Plugins MAY pause queued work after
+// / draining this many output frames and return YIELDED for the caller
+// / to resume. 0 = no hint.
 func (rcv *PIVRequest) MutateOUTPUT_STREAM_CAP(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(12, n)
 }

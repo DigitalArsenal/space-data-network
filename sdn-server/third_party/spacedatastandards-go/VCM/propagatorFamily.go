@@ -4,7 +4,7 @@ package VCM
 
 import "strconv"
 
-/// Enum to represent propagator types
+// / Enum to represent propagator types
 type propagatorFamily int8
 
 const (

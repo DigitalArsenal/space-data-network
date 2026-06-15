@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// String data encoding specification
+// / String data encoding specification
 type StringDataEncoding struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *StringDataEncoding) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Character encoding
+// / Character encoding
 func (rcv *StringDataEncoding) ENCODING() StringEncodingType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *StringDataEncoding) Encoding() StringEncodingType {
 	return rcv.ENCODING()
 }
 
-/// Character encoding
+// / Character encoding
 func (rcv *StringDataEncoding) MutateENCODING(n StringEncodingType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *StringDataEncoding) MutateEncoding(n StringEncodingType) bool {
 	return rcv.MutateENCODING(n)
 }
 
-/// Size type specification
+// / Size type specification
 func (rcv *StringDataEncoding) SIZE_TYPE() StringSizeType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *StringDataEncoding) SizeType() StringSizeType {
 	return rcv.SIZE_TYPE()
 }
 
-/// Size type specification
+// / Size type specification
 func (rcv *StringDataEncoding) MutateSIZE_TYPE(n StringSizeType) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -86,7 +86,7 @@ func (rcv *StringDataEncoding) MutateSizeType(n StringSizeType) bool {
 	return rcv.MutateSIZE_TYPE(n)
 }
 
-/// Fixed size in bits (when SIZE_TYPE=FIXED)
+// / Fixed size in bits (when SIZE_TYPE=FIXED)
 func (rcv *StringDataEncoding) SIZE_IN_BITS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *StringDataEncoding) SizeInBits() uint16 {
 	return rcv.SIZE_IN_BITS()
 }
 
-/// Fixed size in bits (when SIZE_TYPE=FIXED)
+// / Fixed size in bits (when SIZE_TYPE=FIXED)
 func (rcv *StringDataEncoding) MutateSIZE_IN_BITS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *StringDataEncoding) MutateSizeInBits(n uint16) bool {
 	return rcv.MutateSIZE_IN_BITS(n)
 }
 
-/// Termination character (when SIZE_TYPE=TERMINATION_CHAR)
+// / Termination character (when SIZE_TYPE=TERMINATION_CHAR)
 func (rcv *StringDataEncoding) TERMINATION_CHAR() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *StringDataEncoding) TerminationChar() byte {
 	return rcv.TERMINATION_CHAR()
 }
 
-/// Termination character (when SIZE_TYPE=TERMINATION_CHAR)
+// / Termination character (when SIZE_TYPE=TERMINATION_CHAR)
 func (rcv *StringDataEncoding) MutateTERMINATION_CHAR(n byte) bool {
 	return rcv._tab.MutateByteSlot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *StringDataEncoding) MutateTerminationChar(n byte) bool {
 	return rcv.MutateTERMINATION_CHAR(n)
 }
 
-/// Maximum size in bits (for variable length)
+// / Maximum size in bits (for variable length)
 func (rcv *StringDataEncoding) MAX_SIZE_IN_BITS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,7 +143,7 @@ func (rcv *StringDataEncoding) MaxSizeInBits() uint16 {
 	return rcv.MAX_SIZE_IN_BITS()
 }
 
-/// Maximum size in bits (for variable length)
+// / Maximum size in bits (for variable length)
 func (rcv *StringDataEncoding) MutateMAX_SIZE_IN_BITS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(12, n)
 }
@@ -152,7 +152,7 @@ func (rcv *StringDataEncoding) MutateMaxSizeInBits(n uint16) bool {
 	return rcv.MutateMAX_SIZE_IN_BITS(n)
 }
 
-/// Leading size field bits (when SIZE_TYPE=LEADING_SIZE)
+// / Leading size field bits (when SIZE_TYPE=LEADING_SIZE)
 func (rcv *StringDataEncoding) LEADING_SIZE_BITS() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -165,7 +165,7 @@ func (rcv *StringDataEncoding) LeadingSizeBits() byte {
 	return rcv.LEADING_SIZE_BITS()
 }
 
-/// Leading size field bits (when SIZE_TYPE=LEADING_SIZE)
+// / Leading size field bits (when SIZE_TYPE=LEADING_SIZE)
 func (rcv *StringDataEncoding) MutateLEADING_SIZE_BITS(n byte) bool {
 	return rcv._tab.MutateByteSlot(14, n)
 }

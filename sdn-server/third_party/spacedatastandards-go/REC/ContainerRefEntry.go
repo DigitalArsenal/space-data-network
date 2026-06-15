@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Container reference entry (nested container)
+// / Container reference entry (nested container)
 type ContainerRefEntry struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ContainerRefEntry) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Container reference path
+// / Container reference path
 func (rcv *ContainerRefEntry) CONTAINER_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *ContainerRefEntry) ContainerRef() []byte {
 	return rcv.CONTAINER_REF()
 }
 
-/// Container reference path
-/// Location in container
+// / Container reference path
+// / Location in container
 func (rcv *ContainerRefEntry) LOCATION(obj *LocationInContainer) *LocationInContainer {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *ContainerRefEntry) Location(obj *LocationInContainer) *LocationInCont
 	return rcv.LOCATION(obj)
 }
 
-/// Location in container
-/// Repeat specification
+// / Location in container
+// / Repeat specification
 func (rcv *ContainerRefEntry) REPEAT(obj *RepeatEntry) *RepeatEntry {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -93,8 +93,8 @@ func (rcv *ContainerRefEntry) Repeat(obj *RepeatEntry) *RepeatEntry {
 	return rcv.REPEAT(obj)
 }
 
-/// Repeat specification
-/// Include condition
+// / Repeat specification
+// / Include condition
 func (rcv *ContainerRefEntry) INCLUDE_CONDITION(obj *MatchCriteria) *MatchCriteria {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -112,7 +112,7 @@ func (rcv *ContainerRefEntry) IncludeCondition(obj *MatchCriteria) *MatchCriteri
 	return rcv.INCLUDE_CONDITION(obj)
 }
 
-/// Include condition
+// / Include condition
 func ContainerRefEntryStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

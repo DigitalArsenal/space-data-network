@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Radar sensor configuration.
+// / Radar sensor configuration.
 type SDRRadarConfig struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *SDRRadarConfig) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Operating frequency (Hz).
+// / Operating frequency (Hz).
 func (rcv *SDRRadarConfig) FREQUENCY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *SDRRadarConfig) Frequency() float64 {
 	return rcv.FREQUENCY()
 }
 
-/// Operating frequency (Hz).
+// / Operating frequency (Hz).
 func (rcv *SDRRadarConfig) MutateFREQUENCY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *SDRRadarConfig) MutateFrequency(n float64) bool {
 	return rcv.MutateFREQUENCY(n)
 }
 
-/// Transmit power (W).
+// / Transmit power (W).
 func (rcv *SDRRadarConfig) POWER() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *SDRRadarConfig) Power() float64 {
 	return rcv.POWER()
 }
 
-/// Transmit power (W).
+// / Transmit power (W).
 func (rcv *SDRRadarConfig) MutatePOWER(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *SDRRadarConfig) MutatePower(n float64) bool {
 	return rcv.MutatePOWER(n)
 }
 
-/// Antenna gain (dB).
+// / Antenna gain (dB).
 func (rcv *SDRRadarConfig) GAIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *SDRRadarConfig) Gain() float64 {
 	return rcv.GAIN()
 }
 
-/// Antenna gain (dB).
+// / Antenna gain (dB).
 func (rcv *SDRRadarConfig) MutateGAIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *SDRRadarConfig) MutateGain(n float64) bool {
 	return rcv.MutateGAIN(n)
 }
 
-/// Receiver bandwidth (Hz).
+// / Receiver bandwidth (Hz).
 func (rcv *SDRRadarConfig) BANDWIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *SDRRadarConfig) Bandwidth() float64 {
 	return rcv.BANDWIDTH()
 }
 
-/// Receiver bandwidth (Hz).
+// / Receiver bandwidth (Hz).
 func (rcv *SDRRadarConfig) MutateBANDWIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *SDRRadarConfig) MutateBandwidth(n float64) bool {
 	return rcv.MutateBANDWIDTH(n)
 }
 
-/// Noise figure (dB).
+// / Noise figure (dB).
 func (rcv *SDRRadarConfig) NOISE_FIGURE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,7 +143,7 @@ func (rcv *SDRRadarConfig) NoiseFigure() float64 {
 	return rcv.NOISE_FIGURE()
 }
 
-/// Noise figure (dB).
+// / Noise figure (dB).
 func (rcv *SDRRadarConfig) MutateNOISE_FIGURE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -152,7 +152,7 @@ func (rcv *SDRRadarConfig) MutateNoiseFigure(n float64) bool {
 	return rcv.MutateNOISE_FIGURE(n)
 }
 
-/// System losses (dB).
+// / System losses (dB).
 func (rcv *SDRRadarConfig) SYSTEM_LOSS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -165,7 +165,7 @@ func (rcv *SDRRadarConfig) SystemLoss() float64 {
 	return rcv.SYSTEM_LOSS()
 }
 
-/// System losses (dB).
+// / System losses (dB).
 func (rcv *SDRRadarConfig) MutateSYSTEM_LOSS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -174,7 +174,7 @@ func (rcv *SDRRadarConfig) MutateSystemLoss(n float64) bool {
 	return rcv.MutateSYSTEM_LOSS(n)
 }
 
-/// Pulse repetition frequency (Hz).
+// / Pulse repetition frequency (Hz).
 func (rcv *SDRRadarConfig) PRF() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -187,7 +187,7 @@ func (rcv *SDRRadarConfig) Prf() float64 {
 	return rcv.PRF()
 }
 
-/// Pulse repetition frequency (Hz).
+// / Pulse repetition frequency (Hz).
 func (rcv *SDRRadarConfig) MutatePRF(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -196,7 +196,7 @@ func (rcv *SDRRadarConfig) MutatePrf(n float64) bool {
 	return rcv.MutatePRF(n)
 }
 
-/// Pulse width (seconds).
+// / Pulse width (seconds).
 func (rcv *SDRRadarConfig) PULSE_WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -209,7 +209,7 @@ func (rcv *SDRRadarConfig) PulseWidth() float64 {
 	return rcv.PULSE_WIDTH()
 }
 
-/// Pulse width (seconds).
+// / Pulse width (seconds).
 func (rcv *SDRRadarConfig) MutatePULSE_WIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -218,7 +218,7 @@ func (rcv *SDRRadarConfig) MutatePulseWidth(n float64) bool {
 	return rcv.MutatePULSE_WIDTH(n)
 }
 
-/// Detection threshold SNR (dB).
+// / Detection threshold SNR (dB).
 func (rcv *SDRRadarConfig) DETECTION_THRESHOLD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -231,7 +231,7 @@ func (rcv *SDRRadarConfig) DetectionThreshold() float64 {
 	return rcv.DETECTION_THRESHOLD()
 }
 
-/// Detection threshold SNR (dB).
+// / Detection threshold SNR (dB).
 func (rcv *SDRRadarConfig) MutateDETECTION_THRESHOLD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -240,7 +240,7 @@ func (rcv *SDRRadarConfig) MutateDetectionThreshold(n float64) bool {
 	return rcv.MutateDETECTION_THRESHOLD(n)
 }
 
-/// Minimum detection range (meters).
+// / Minimum detection range (meters).
 func (rcv *SDRRadarConfig) MIN_RANGE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -253,7 +253,7 @@ func (rcv *SDRRadarConfig) MinRange() float64 {
 	return rcv.MIN_RANGE()
 }
 
-/// Minimum detection range (meters).
+// / Minimum detection range (meters).
 func (rcv *SDRRadarConfig) MutateMIN_RANGE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -262,7 +262,7 @@ func (rcv *SDRRadarConfig) MutateMinRange(n float64) bool {
 	return rcv.MutateMIN_RANGE(n)
 }
 
-/// Maximum detection range (meters).
+// / Maximum detection range (meters).
 func (rcv *SDRRadarConfig) MAX_RANGE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -275,7 +275,7 @@ func (rcv *SDRRadarConfig) MaxRange() float64 {
 	return rcv.MAX_RANGE()
 }
 
-/// Maximum detection range (meters).
+// / Maximum detection range (meters).
 func (rcv *SDRRadarConfig) MutateMAX_RANGE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }

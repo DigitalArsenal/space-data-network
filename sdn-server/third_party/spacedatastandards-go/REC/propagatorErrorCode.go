@@ -4,22 +4,22 @@ package REC
 
 import "strconv"
 
-/// Error codes surfaced by runtime propagation calls.
+// / Error codes surfaced by runtime propagation calls.
 type propagatorErrorCode int32
 
 const (
 	/// No error.
-	propagatorErrorCodeOK                     propagatorErrorCode = 0
+	propagatorErrorCodeOK propagatorErrorCode = 0
 	/// Unknown / unspecified error.
-	propagatorErrorCodeUNKNOWN                propagatorErrorCode = 1
+	propagatorErrorCodeUNKNOWN propagatorErrorCode = 1
 	/// One or more entity handles not found.
-	propagatorErrorCodeUNKNOWN_ENTITY         propagatorErrorCode = 2
+	propagatorErrorCodeUNKNOWN_ENTITY propagatorErrorCode = 2
 	/// Invalid epoch (NaN, out of range, before earliest init epoch, etc.).
-	propagatorErrorCodeINVALID_EPOCH          propagatorErrorCode = 3
+	propagatorErrorCodeINVALID_EPOCH propagatorErrorCode = 3
 	/// Output buffer too small for the requested count.
 	propagatorErrorCodeOUTPUT_BUFFER_OVERFLOW propagatorErrorCode = 4
 	/// Propagator not initialized.
-	propagatorErrorCodeNOT_INITIALIZED        propagatorErrorCode = 5
+	propagatorErrorCodeNOT_INITIALIZED propagatorErrorCode = 5
 )
 
 var EnumNamespropagatorErrorCode = map[propagatorErrorCode]string{

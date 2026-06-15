@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Launch Detection
+// / Launch Detection
 type LND struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *LND) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique identifier
+// / Unique identifier
 func (rcv *LND) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *LND) Id() []byte {
 	return rcv.ID()
 }
 
-/// Unique identifier
-/// Detection event identifier
+// / Unique identifier
+// / Detection event identifier
 func (rcv *LND) EVENT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *LND) EventId() []byte {
 	return rcv.EVENT_ID()
 }
 
-/// Detection event identifier
-/// Detection type
+// / Detection event identifier
+// / Detection type
 func (rcv *LND) DETECTION_TYPE() launchDetectionType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,7 +95,7 @@ func (rcv *LND) DetectionType() launchDetectionType {
 	return rcv.DETECTION_TYPE()
 }
 
-/// Detection type
+// / Detection type
 func (rcv *LND) MutateDETECTION_TYPE(n launchDetectionType) bool {
 	return rcv._tab.MutateInt8Slot(8, int8(n))
 }
@@ -104,7 +104,7 @@ func (rcv *LND) MutateDetectionType(n launchDetectionType) bool {
 	return rcv.MutateDETECTION_TYPE(n)
 }
 
-/// Detection message type code
+// / Detection message type code
 func (rcv *LND) MESSAGE_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *LND) MessageType() []byte {
 	return rcv.MESSAGE_TYPE()
 }
 
-/// Detection message type code
-/// Time of launch detection (ISO 8601)
+// / Detection message type code
+// / Time of launch detection (ISO 8601)
 func (rcv *LND) LAUNCH_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *LND) LaunchTime() []byte {
 	return rcv.LAUNCH_TIME()
 }
 
-/// Time of launch detection (ISO 8601)
-/// Launch site latitude (degrees)
+// / Time of launch detection (ISO 8601)
+// / Launch site latitude (degrees)
 func (rcv *LND) LAUNCH_LATITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,7 +145,7 @@ func (rcv *LND) LaunchLatitude() float64 {
 	return rcv.LAUNCH_LATITUDE()
 }
 
-/// Launch site latitude (degrees)
+// / Launch site latitude (degrees)
 func (rcv *LND) MutateLAUNCH_LATITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -154,7 +154,7 @@ func (rcv *LND) MutateLaunchLatitude(n float64) bool {
 	return rcv.MutateLAUNCH_LATITUDE(n)
 }
 
-/// Launch site longitude (degrees)
+// / Launch site longitude (degrees)
 func (rcv *LND) LAUNCH_LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -167,7 +167,7 @@ func (rcv *LND) LaunchLongitude() float64 {
 	return rcv.LAUNCH_LONGITUDE()
 }
 
-/// Launch site longitude (degrees)
+// / Launch site longitude (degrees)
 func (rcv *LND) MutateLAUNCH_LONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -176,7 +176,7 @@ func (rcv *LND) MutateLaunchLongitude(n float64) bool {
 	return rcv.MutateLAUNCH_LONGITUDE(n)
 }
 
-/// Launch azimuth (degrees from north)
+// / Launch azimuth (degrees from north)
 func (rcv *LND) LAUNCH_AZIMUTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -189,7 +189,7 @@ func (rcv *LND) LaunchAzimuth() float64 {
 	return rcv.LAUNCH_AZIMUTH()
 }
 
-/// Launch azimuth (degrees from north)
+// / Launch azimuth (degrees from north)
 func (rcv *LND) MutateLAUNCH_AZIMUTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -198,7 +198,7 @@ func (rcv *LND) MutateLaunchAzimuth(n float64) bool {
 	return rcv.MutateLAUNCH_AZIMUTH(n)
 }
 
-/// Estimated RAAN (degrees)
+// / Estimated RAAN (degrees)
 func (rcv *LND) RAAN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -211,7 +211,7 @@ func (rcv *LND) Raan() float64 {
 	return rcv.RAAN()
 }
 
-/// Estimated RAAN (degrees)
+// / Estimated RAAN (degrees)
 func (rcv *LND) MutateRAAN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -220,7 +220,7 @@ func (rcv *LND) MutateRaan(n float64) bool {
 	return rcv.MutateRAAN(n)
 }
 
-/// Estimated inclination (degrees)
+// / Estimated inclination (degrees)
 func (rcv *LND) INCLINATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -233,7 +233,7 @@ func (rcv *LND) Inclination() float64 {
 	return rcv.INCLINATION()
 }
 
-/// Estimated inclination (degrees)
+// / Estimated inclination (degrees)
 func (rcv *LND) MutateINCLINATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -242,7 +242,7 @@ func (rcv *LND) MutateInclination(n float64) bool {
 	return rcv.MutateINCLINATION(n)
 }
 
-/// Time of trajectory observation (ISO 8601)
+// / Time of trajectory observation (ISO 8601)
 func (rcv *LND) OBSERVATION_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -255,8 +255,8 @@ func (rcv *LND) ObservationTime() []byte {
 	return rcv.OBSERVATION_TIME()
 }
 
-/// Time of trajectory observation (ISO 8601)
-/// Observation point latitude (degrees)
+// / Time of trajectory observation (ISO 8601)
+// / Observation point latitude (degrees)
 func (rcv *LND) OBSERVATION_LATITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -269,7 +269,7 @@ func (rcv *LND) ObservationLatitude() float64 {
 	return rcv.OBSERVATION_LATITUDE()
 }
 
-/// Observation point latitude (degrees)
+// / Observation point latitude (degrees)
 func (rcv *LND) MutateOBSERVATION_LATITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -278,7 +278,7 @@ func (rcv *LND) MutateObservationLatitude(n float64) bool {
 	return rcv.MutateOBSERVATION_LATITUDE(n)
 }
 
-/// Observation point longitude (degrees)
+// / Observation point longitude (degrees)
 func (rcv *LND) OBSERVATION_LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -291,7 +291,7 @@ func (rcv *LND) ObservationLongitude() float64 {
 	return rcv.OBSERVATION_LONGITUDE()
 }
 
-/// Observation point longitude (degrees)
+// / Observation point longitude (degrees)
 func (rcv *LND) MutateOBSERVATION_LONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -300,7 +300,7 @@ func (rcv *LND) MutateObservationLongitude(n float64) bool {
 	return rcv.MutateOBSERVATION_LONGITUDE(n)
 }
 
-/// Observation point altitude (km)
+// / Observation point altitude (km)
 func (rcv *LND) OBSERVATION_ALTITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -313,7 +313,7 @@ func (rcv *LND) ObservationAltitude() float64 {
 	return rcv.OBSERVATION_ALTITUDE()
 }
 
-/// Observation point altitude (km)
+// / Observation point altitude (km)
 func (rcv *LND) MutateOBSERVATION_ALTITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -322,7 +322,7 @@ func (rcv *LND) MutateObservationAltitude(n float64) bool {
 	return rcv.MutateOBSERVATION_ALTITUDE(n)
 }
 
-/// True if stereo observation (multiple sensors)
+// / True if stereo observation (multiple sensors)
 func (rcv *LND) STEREO_FLAG() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -335,7 +335,7 @@ func (rcv *LND) StereoFlag() bool {
 	return rcv.STEREO_FLAG()
 }
 
-/// True if stereo observation (multiple sensors)
+// / True if stereo observation (multiple sensors)
 func (rcv *LND) MutateSTEREO_FLAG(n bool) bool {
 	return rcv._tab.MutateBoolSlot(32, n)
 }
@@ -344,7 +344,7 @@ func (rcv *LND) MutateStereoFlag(n bool) bool {
 	return rcv.MutateSTEREO_FLAG(n)
 }
 
-/// True if high zenith angle observation
+// / True if high zenith angle observation
 func (rcv *LND) HIGH_ZENITH_AZIMUTH() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -357,7 +357,7 @@ func (rcv *LND) HighZenithAzimuth() bool {
 	return rcv.HIGH_ZENITH_AZIMUTH()
 }
 
-/// True if high zenith angle observation
+// / True if high zenith angle observation
 func (rcv *LND) MutateHIGH_ZENITH_AZIMUTH(n bool) bool {
 	return rcv._tab.MutateBoolSlot(34, n)
 }
@@ -366,7 +366,7 @@ func (rcv *LND) MutateHighZenithAzimuth(n bool) bool {
 	return rcv.MutateHIGH_ZENITH_AZIMUTH(n)
 }
 
-/// Sequence number in detection chain
+// / Sequence number in detection chain
 func (rcv *LND) SEQUENCE_NUMBER() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -379,7 +379,7 @@ func (rcv *LND) SequenceNumber() uint16 {
 	return rcv.SEQUENCE_NUMBER()
 }
 
-/// Sequence number in detection chain
+// / Sequence number in detection chain
 func (rcv *LND) MutateSEQUENCE_NUMBER(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(36, n)
 }
@@ -388,7 +388,7 @@ func (rcv *LND) MutateSequenceNumber(n uint16) bool {
 	return rcv.MutateSEQUENCE_NUMBER(n)
 }
 
-/// Launch site identifier
+// / Launch site identifier
 func (rcv *LND) LAUNCH_SITE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -401,8 +401,8 @@ func (rcv *LND) LaunchSiteId() []byte {
 	return rcv.LAUNCH_SITE_ID()
 }
 
-/// Launch site identifier
-/// Launch vehicle type (if identified)
+// / Launch site identifier
+// / Launch vehicle type (if identified)
 func (rcv *LND) LAUNCH_VEHICLE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -415,8 +415,8 @@ func (rcv *LND) LaunchVehicle() []byte {
 	return rcv.LAUNCH_VEHICLE()
 }
 
-/// Launch vehicle type (if identified)
-/// Estimated trajectory type
+// / Launch vehicle type (if identified)
+// / Estimated trajectory type
 func (rcv *LND) TRAJECTORY_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -429,8 +429,8 @@ func (rcv *LND) TrajectoryType() []byte {
 	return rcv.TRAJECTORY_TYPE()
 }
 
-/// Estimated trajectory type
-/// Detection confidence (0-1)
+// / Estimated trajectory type
+// / Detection confidence (0-1)
 func (rcv *LND) CONFIDENCE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -443,7 +443,7 @@ func (rcv *LND) Confidence() float64 {
 	return rcv.CONFIDENCE()
 }
 
-/// Detection confidence (0-1)
+// / Detection confidence (0-1)
 func (rcv *LND) MutateCONFIDENCE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(44, n)
 }
@@ -452,7 +452,7 @@ func (rcv *LND) MutateConfidence(n float64) bool {
 	return rcv.MutateCONFIDENCE(n)
 }
 
-/// Event descriptor
+// / Event descriptor
 func (rcv *LND) DESCRIPTOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -465,8 +465,8 @@ func (rcv *LND) Descriptor() []byte {
 	return rcv.DESCRIPTOR()
 }
 
-/// Event descriptor
-/// Associated tags
+// / Event descriptor
+// / Associated tags
 func (rcv *LND) TAGS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -492,7 +492,7 @@ func (rcv *LND) TagsLength() int {
 	return rcv.TAGSLength()
 }
 
-/// Associated tags
+// / Associated tags
 func LNDStart(builder *flatbuffers.Builder) {
 	builder.StartObject(23)
 }

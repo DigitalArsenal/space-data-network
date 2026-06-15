@@ -41,7 +41,7 @@ func (rcv *Metadata) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Comments in the Metadata section.
+// / Comments in the Metadata section.
 func (rcv *Metadata) COMMENT(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *Metadata) CommentLength() int {
 	return rcv.COMMENTLength()
 }
 
-/// Comments in the Metadata section.
-/// Free-text field containing the name of the object.
+// / Comments in the Metadata section.
+// / Free-text field containing the name of the object.
 func (rcv *Metadata) OBJECT_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *Metadata) ObjectName() []byte {
 	return rcv.OBJECT_NAME()
 }
 
-/// Free-text field containing the name of the object.
-/// International designator for the object as assigned by COSPAR.
+// / Free-text field containing the name of the object.
+// / International designator for the object as assigned by COSPAR.
 func (rcv *Metadata) INTERNATIONAL_DESIGNATOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *Metadata) InternationalDesignator() []byte {
 	return rcv.INTERNATIONAL_DESIGNATOR()
 }
 
-/// International designator for the object as assigned by COSPAR.
-/// Satellite catalog source from which 'OBJECT_DESIGNATOR' was obtained.
+// / International designator for the object as assigned by COSPAR.
+// / Satellite catalog source from which 'OBJECT_DESIGNATOR' was obtained.
 func (rcv *Metadata) CATALOG_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *Metadata) CatalogName() []byte {
 	return rcv.CATALOG_NAME()
 }
 
-/// Satellite catalog source from which 'OBJECT_DESIGNATOR' was obtained.
-/// Unique satellite identification designator from the catalog.
+// / Satellite catalog source from which 'OBJECT_DESIGNATOR' was obtained.
+// / Unique satellite identification designator from the catalog.
 func (rcv *Metadata) OBJECT_DESIGNATOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *Metadata) ObjectDesignator() []byte {
 	return rcv.OBJECT_DESIGNATOR()
 }
 
-/// Unique satellite identification designator from the catalog.
-/// Alternate names of this space object.
+// / Unique satellite identification designator from the catalog.
+// / Alternate names of this space object.
 func (rcv *Metadata) ALTERNATE_NAMES(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -150,8 +150,8 @@ func (rcv *Metadata) AlternateNamesLength() int {
 	return rcv.ALTERNATE_NAMESLength()
 }
 
-/// Alternate names of this space object.
-/// Originator or programmatic Point-of-Contact (PoC) for OCM.
+// / Alternate names of this space object.
+// / Originator or programmatic Point-of-Contact (PoC) for OCM.
 func (rcv *Metadata) ORIGINATOR_POC() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -164,8 +164,8 @@ func (rcv *Metadata) OriginatorPoc() []byte {
 	return rcv.ORIGINATOR_POC()
 }
 
-/// Originator or programmatic Point-of-Contact (PoC) for OCM.
-/// Contact position of the originator PoC.
+// / Originator or programmatic Point-of-Contact (PoC) for OCM.
+// / Contact position of the originator PoC.
 func (rcv *Metadata) ORIGINATOR_POSITION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -178,8 +178,8 @@ func (rcv *Metadata) OriginatorPosition() []byte {
 	return rcv.ORIGINATOR_POSITION()
 }
 
-/// Contact position of the originator PoC.
-/// Originator PoC phone number.
+// / Contact position of the originator PoC.
+// / Originator PoC phone number.
 func (rcv *Metadata) ORIGINATOR_PHONE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -192,8 +192,8 @@ func (rcv *Metadata) OriginatorPhone() []byte {
 	return rcv.ORIGINATOR_PHONE()
 }
 
-/// Originator PoC phone number.
-/// Originator PoC email address.
+// / Originator PoC phone number.
+// / Originator PoC email address.
 func (rcv *Metadata) ORIGINATOR_EMAIL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -206,8 +206,8 @@ func (rcv *Metadata) OriginatorEmail() []byte {
 	return rcv.ORIGINATOR_EMAIL()
 }
 
-/// Originator PoC email address.
-/// Originator's physical address information.
+// / Originator PoC email address.
+// / Originator's physical address information.
 func (rcv *Metadata) ORIGINATOR_ADDRESS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -220,8 +220,8 @@ func (rcv *Metadata) OriginatorAddress() []byte {
 	return rcv.ORIGINATOR_ADDRESS()
 }
 
-/// Originator's physical address information.
-/// Creating agency or operator for technical contact.
+// / Originator's physical address information.
+// / Creating agency or operator for technical contact.
 func (rcv *Metadata) TECH_ORG() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -234,8 +234,8 @@ func (rcv *Metadata) TechOrg() []byte {
 	return rcv.TECH_ORG()
 }
 
-/// Creating agency or operator for technical contact.
-/// Technical Point-of-Contact (PoC) for OCM.
+// / Creating agency or operator for technical contact.
+// / Technical Point-of-Contact (PoC) for OCM.
 func (rcv *Metadata) TECH_POC() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -248,8 +248,8 @@ func (rcv *Metadata) TechPoc() []byte {
 	return rcv.TECH_POC()
 }
 
-/// Technical Point-of-Contact (PoC) for OCM.
-/// Contact position of the technical PoC.
+// / Technical Point-of-Contact (PoC) for OCM.
+// / Contact position of the technical PoC.
 func (rcv *Metadata) TECH_POSITION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -262,8 +262,8 @@ func (rcv *Metadata) TechPosition() []byte {
 	return rcv.TECH_POSITION()
 }
 
-/// Contact position of the technical PoC.
-/// Technical PoC phone number.
+// / Contact position of the technical PoC.
+// / Technical PoC phone number.
 func (rcv *Metadata) TECH_PHONE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -276,8 +276,8 @@ func (rcv *Metadata) TechPhone() []byte {
 	return rcv.TECH_PHONE()
 }
 
-/// Technical PoC phone number.
-/// Technical PoC email address.
+// / Technical PoC phone number.
+// / Technical PoC email address.
 func (rcv *Metadata) TECH_EMAIL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -290,8 +290,8 @@ func (rcv *Metadata) TechEmail() []byte {
 	return rcv.TECH_EMAIL()
 }
 
-/// Technical PoC email address.
-/// Technical PoC physical address information.
+// / Technical PoC email address.
+// / Technical PoC physical address information.
 func (rcv *Metadata) TECH_ADDRESS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -304,8 +304,8 @@ func (rcv *Metadata) TechAddress() []byte {
 	return rcv.TECH_ADDRESS()
 }
 
-/// Technical PoC physical address information.
-/// ID that uniquely identifies the previous message from this originator.
+// / Technical PoC physical address information.
+// / ID that uniquely identifies the previous message from this originator.
 func (rcv *Metadata) PREVIOUS_MESSAGE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -318,8 +318,8 @@ func (rcv *Metadata) PreviousMessageId() []byte {
 	return rcv.PREVIOUS_MESSAGE_ID()
 }
 
-/// ID that uniquely identifies the previous message from this originator.
-/// ID that uniquely identifies the next message from this originator.
+// / ID that uniquely identifies the previous message from this originator.
+// / ID that uniquely identifies the next message from this originator.
 func (rcv *Metadata) NEXT_MESSAGE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -332,8 +332,8 @@ func (rcv *Metadata) NextMessageId() []byte {
 	return rcv.NEXT_MESSAGE_ID()
 }
 
-/// ID that uniquely identifies the next message from this originator.
-/// Unique identifier of Attitude Data Messages linked to this OCM.
+// / ID that uniquely identifies the next message from this originator.
+// / Unique identifier of Attitude Data Messages linked to this OCM.
 func (rcv *Metadata) ADM_MSG_LINK() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -346,8 +346,8 @@ func (rcv *Metadata) AdmMsgLink() []byte {
 	return rcv.ADM_MSG_LINK()
 }
 
-/// Unique identifier of Attitude Data Messages linked to this OCM.
-/// Unique identifier of Conjunction Data Messages linked to this OCM.
+// / Unique identifier of Attitude Data Messages linked to this OCM.
+// / Unique identifier of Conjunction Data Messages linked to this OCM.
 func (rcv *Metadata) CDM_MSG_LINK() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -360,8 +360,8 @@ func (rcv *Metadata) CdmMsgLink() []byte {
 	return rcv.CDM_MSG_LINK()
 }
 
-/// Unique identifier of Conjunction Data Messages linked to this OCM.
-/// Unique identifier of Pointing Request Messages linked to this OCM.
+// / Unique identifier of Conjunction Data Messages linked to this OCM.
+// / Unique identifier of Pointing Request Messages linked to this OCM.
 func (rcv *Metadata) PRM_MSG_LINK() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -374,8 +374,8 @@ func (rcv *Metadata) PrmMsgLink() []byte {
 	return rcv.PRM_MSG_LINK()
 }
 
-/// Unique identifier of Pointing Request Messages linked to this OCM.
-/// Unique identifier of Reentry Data Messages linked to this OCM.
+// / Unique identifier of Pointing Request Messages linked to this OCM.
+// / Unique identifier of Reentry Data Messages linked to this OCM.
 func (rcv *Metadata) RDM_MSG_LINK() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -388,8 +388,8 @@ func (rcv *Metadata) RdmMsgLink() []byte {
 	return rcv.RDM_MSG_LINK()
 }
 
-/// Unique identifier of Reentry Data Messages linked to this OCM.
-/// List of Tracking Data Messages upon which this orbit determination is based.
+// / Unique identifier of Reentry Data Messages linked to this OCM.
+// / List of Tracking Data Messages upon which this orbit determination is based.
 func (rcv *Metadata) TDM_MSG_LINK(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -415,8 +415,8 @@ func (rcv *Metadata) TdmMsgLinkLength() int {
 	return rcv.TDM_MSG_LINKLength()
 }
 
-/// List of Tracking Data Messages upon which this orbit determination is based.
-/// Operator of the space object.
+// / List of Tracking Data Messages upon which this orbit determination is based.
+// / Operator of the space object.
 func (rcv *Metadata) OPERATOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -429,8 +429,8 @@ func (rcv *Metadata) Operator() []byte {
 	return rcv.OPERATOR()
 }
 
-/// Operator of the space object.
-/// Owner of the space object.
+// / Operator of the space object.
+// / Owner of the space object.
 func (rcv *Metadata) OWNER() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -443,8 +443,8 @@ func (rcv *Metadata) Owner() []byte {
 	return rcv.OWNER()
 }
 
-/// Owner of the space object.
-/// Country where the space object owner is based.
+// / Owner of the space object.
+// / Country where the space object owner is based.
 func (rcv *Metadata) COUNTRY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -457,8 +457,8 @@ func (rcv *Metadata) Country() []byte {
 	return rcv.COUNTRY()
 }
 
-/// Country where the space object owner is based.
-/// Name of the constellation to which this space object belongs.
+// / Country where the space object owner is based.
+// / Name of the constellation to which this space object belongs.
 func (rcv *Metadata) CONSTELLATION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -471,8 +471,8 @@ func (rcv *Metadata) Constellation() []byte {
 	return rcv.CONSTELLATION()
 }
 
-/// Name of the constellation to which this space object belongs.
-/// Specification of the type of object (e.g., PAYLOAD, ROCKET BODY, DEBRIS).
+// / Name of the constellation to which this space object belongs.
+// / Specification of the type of object (e.g., PAYLOAD, ROCKET BODY, DEBRIS).
 func (rcv *Metadata) OBJECT_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -485,8 +485,8 @@ func (rcv *Metadata) ObjectType() []byte {
 	return rcv.OBJECT_TYPE()
 }
 
-/// Specification of the type of object (e.g., PAYLOAD, ROCKET BODY, DEBRIS).
-/// Time system for all absolute time stamps in this OCM, including EPOCH_TZERO.
+// / Specification of the type of object (e.g., PAYLOAD, ROCKET BODY, DEBRIS).
+// / Time system for all absolute time stamps in this OCM, including EPOCH_TZERO.
 func (rcv *Metadata) TIME_SYSTEM() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -499,8 +499,8 @@ func (rcv *Metadata) TimeSystem() []byte {
 	return rcv.TIME_SYSTEM()
 }
 
-/// Time system for all absolute time stamps in this OCM, including EPOCH_TZERO.
-/// Default epoch to which all relative times are referenced in data blocks.
+// / Time system for all absolute time stamps in this OCM, including EPOCH_TZERO.
+// / Default epoch to which all relative times are referenced in data blocks.
 func (rcv *Metadata) EPOCH_TZERO() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -513,8 +513,8 @@ func (rcv *Metadata) EpochTzero() []byte {
 	return rcv.EPOCH_TZERO()
 }
 
-/// Default epoch to which all relative times are referenced in data blocks.
-/// Specification of the operational status of the space object.
+// / Default epoch to which all relative times are referenced in data blocks.
+// / Specification of the operational status of the space object.
 func (rcv *Metadata) OPS_STATUS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
@@ -527,8 +527,8 @@ func (rcv *Metadata) OpsStatus() []byte {
 	return rcv.OPS_STATUS()
 }
 
-/// Specification of the operational status of the space object.
-/// Specification of the type of orbit (e.g., GEO, LEO).
+// / Specification of the operational status of the space object.
+// / Specification of the type of orbit (e.g., GEO, LEO).
 func (rcv *Metadata) ORBIT_CATEGORY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
@@ -541,8 +541,8 @@ func (rcv *Metadata) OrbitCategory() []byte {
 	return rcv.ORBIT_CATEGORY()
 }
 
-/// Specification of the type of orbit (e.g., GEO, LEO).
-/// List of elements of information data blocks included in this message.
+// / Specification of the type of orbit (e.g., GEO, LEO).
+// / List of elements of information data blocks included in this message.
 func (rcv *Metadata) OCM_DATA_ELEMENTS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
 	if o != 0 {
@@ -568,8 +568,8 @@ func (rcv *Metadata) OcmDataElementsLength() int {
 	return rcv.OCM_DATA_ELEMENTSLength()
 }
 
-/// List of elements of information data blocks included in this message.
-/// Number of spacecraft clock counts at EPOCH_TZERO (used if TIME_SYSTEM is SCLK).
+// / List of elements of information data blocks included in this message.
+// / Number of spacecraft clock counts at EPOCH_TZERO (used if TIME_SYSTEM is SCLK).
 func (rcv *Metadata) SCLK_OFFSET_AT_EPOCH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
@@ -582,7 +582,7 @@ func (rcv *Metadata) SclkOffsetAtEpoch() float64 {
 	return rcv.SCLK_OFFSET_AT_EPOCH()
 }
 
-/// Number of spacecraft clock counts at EPOCH_TZERO (used if TIME_SYSTEM is SCLK).
+// / Number of spacecraft clock counts at EPOCH_TZERO (used if TIME_SYSTEM is SCLK).
 func (rcv *Metadata) MutateSCLK_OFFSET_AT_EPOCH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(72, n)
 }
@@ -591,7 +591,7 @@ func (rcv *Metadata) MutateSclkOffsetAtEpoch(n float64) bool {
 	return rcv.MutateSCLK_OFFSET_AT_EPOCH(n)
 }
 
-/// Number of clock seconds occurring during one SI second (used if TIME_SYSTEM is SCLK).
+// / Number of clock seconds occurring during one SI second (used if TIME_SYSTEM is SCLK).
 func (rcv *Metadata) SCLK_SEC_PER_SI_SEC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
 	if o != 0 {
@@ -604,7 +604,7 @@ func (rcv *Metadata) SclkSecPerSiSec() float64 {
 	return rcv.SCLK_SEC_PER_SI_SEC()
 }
 
-/// Number of clock seconds occurring during one SI second (used if TIME_SYSTEM is SCLK).
+// / Number of clock seconds occurring during one SI second (used if TIME_SYSTEM is SCLK).
 func (rcv *Metadata) MutateSCLK_SEC_PER_SI_SEC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(74, n)
 }
@@ -613,7 +613,7 @@ func (rcv *Metadata) MutateSclkSecPerSiSec(n float64) bool {
 	return rcv.MutateSCLK_SEC_PER_SI_SEC(n)
 }
 
-/// Creation epoch of the previous message from this originator.
+// / Creation epoch of the previous message from this originator.
 func (rcv *Metadata) PREVIOUS_MESSAGE_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
 	if o != 0 {
@@ -626,8 +626,8 @@ func (rcv *Metadata) PreviousMessageEpoch() []byte {
 	return rcv.PREVIOUS_MESSAGE_EPOCH()
 }
 
-/// Creation epoch of the previous message from this originator.
-/// Anticipated (or actual) epoch of the next message from this originator.
+// / Creation epoch of the previous message from this originator.
+// / Anticipated (or actual) epoch of the next message from this originator.
 func (rcv *Metadata) NEXT_MESSAGE_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
 	if o != 0 {
@@ -640,8 +640,8 @@ func (rcv *Metadata) NextMessageEpoch() []byte {
 	return rcv.NEXT_MESSAGE_EPOCH()
 }
 
-/// Anticipated (or actual) epoch of the next message from this originator.
-/// Time of the earliest data contained in the OCM.
+// / Anticipated (or actual) epoch of the next message from this originator.
+// / Time of the earliest data contained in the OCM.
 func (rcv *Metadata) START_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(80))
 	if o != 0 {
@@ -654,8 +654,8 @@ func (rcv *Metadata) StartTime() []byte {
 	return rcv.START_TIME()
 }
 
-/// Time of the earliest data contained in the OCM.
-/// Time of the latest data contained in the OCM.
+// / Time of the earliest data contained in the OCM.
+// / Time of the latest data contained in the OCM.
 func (rcv *Metadata) STOP_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(82))
 	if o != 0 {
@@ -668,8 +668,8 @@ func (rcv *Metadata) StopTime() []byte {
 	return rcv.STOP_TIME()
 }
 
-/// Time of the latest data contained in the OCM.
-/// Span of time that the OCM covers, measured in days.
+// / Time of the latest data contained in the OCM.
+// / Span of time that the OCM covers, measured in days.
 func (rcv *Metadata) TIME_SPAN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(84))
 	if o != 0 {
@@ -682,7 +682,7 @@ func (rcv *Metadata) TimeSpan() float64 {
 	return rcv.TIME_SPAN()
 }
 
-/// Span of time that the OCM covers, measured in days.
+// / Span of time that the OCM covers, measured in days.
 func (rcv *Metadata) MutateTIME_SPAN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(84, n)
 }
@@ -691,7 +691,7 @@ func (rcv *Metadata) MutateTimeSpan(n float64) bool {
 	return rcv.MutateTIME_SPAN(n)
 }
 
-/// Difference (TAI - UTC) in seconds at EPOCH_TZERO.
+// / Difference (TAI - UTC) in seconds at EPOCH_TZERO.
 func (rcv *Metadata) TAIMUTC_AT_TZERO() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(86))
 	if o != 0 {
@@ -704,7 +704,7 @@ func (rcv *Metadata) TaimutcAtTzero() float64 {
 	return rcv.TAIMUTC_AT_TZERO()
 }
 
-/// Difference (TAI - UTC) in seconds at EPOCH_TZERO.
+// / Difference (TAI - UTC) in seconds at EPOCH_TZERO.
 func (rcv *Metadata) MutateTAIMUTC_AT_TZERO(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(86, n)
 }
@@ -713,7 +713,7 @@ func (rcv *Metadata) MutateTaimutcAtTzero(n float64) bool {
 	return rcv.MutateTAIMUTC_AT_TZERO(n)
 }
 
-/// Epoch of next leap second.
+// / Epoch of next leap second.
 func (rcv *Metadata) NEXT_LEAP_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(88))
 	if o != 0 {
@@ -726,8 +726,8 @@ func (rcv *Metadata) NextLeapEpoch() []byte {
 	return rcv.NEXT_LEAP_EPOCH()
 }
 
-/// Epoch of next leap second.
-/// Difference (TAI - UTC) in seconds at NEXT_LEAP_EPOCH.
+// / Epoch of next leap second.
+// / Difference (TAI - UTC) in seconds at NEXT_LEAP_EPOCH.
 func (rcv *Metadata) NEXT_LEAP_TAIMUTC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(90))
 	if o != 0 {
@@ -740,7 +740,7 @@ func (rcv *Metadata) NextLeapTaimutc() float64 {
 	return rcv.NEXT_LEAP_TAIMUTC()
 }
 
-/// Difference (TAI - UTC) in seconds at NEXT_LEAP_EPOCH.
+// / Difference (TAI - UTC) in seconds at NEXT_LEAP_EPOCH.
 func (rcv *Metadata) MutateNEXT_LEAP_TAIMUTC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(90, n)
 }
@@ -749,7 +749,7 @@ func (rcv *Metadata) MutateNextLeapTaimutc(n float64) bool {
 	return rcv.MutateNEXT_LEAP_TAIMUTC(n)
 }
 
-/// Difference (UT1 - UTC) in seconds at EPOCH_TZERO.
+// / Difference (UT1 - UTC) in seconds at EPOCH_TZERO.
 func (rcv *Metadata) UT1MUTC_AT_TZERO() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(92))
 	if o != 0 {
@@ -762,7 +762,7 @@ func (rcv *Metadata) Ut1mutcAtTzero() float64 {
 	return rcv.UT1MUTC_AT_TZERO()
 }
 
-/// Difference (UT1 - UTC) in seconds at EPOCH_TZERO.
+// / Difference (UT1 - UTC) in seconds at EPOCH_TZERO.
 func (rcv *Metadata) MutateUT1MUTC_AT_TZERO(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(92, n)
 }
@@ -771,7 +771,7 @@ func (rcv *Metadata) MutateUt1mutcAtTzero(n float64) bool {
 	return rcv.MutateUT1MUTC_AT_TZERO(n)
 }
 
-/// Source and version of Earth Orientation Parameters used.
+// / Source and version of Earth Orientation Parameters used.
 func (rcv *Metadata) EOP_SOURCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(94))
 	if o != 0 {
@@ -784,8 +784,8 @@ func (rcv *Metadata) EopSource() []byte {
 	return rcv.EOP_SOURCE()
 }
 
-/// Source and version of Earth Orientation Parameters used.
-/// Method used to select or interpolate sequential EOP data.
+// / Source and version of Earth Orientation Parameters used.
+// / Method used to select or interpolate sequential EOP data.
 func (rcv *Metadata) INTERP_METHOD_EOP() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(96))
 	if o != 0 {
@@ -798,8 +798,8 @@ func (rcv *Metadata) InterpMethodEop() []byte {
 	return rcv.INTERP_METHOD_EOP()
 }
 
-/// Method used to select or interpolate sequential EOP data.
-/// Source and version of celestial body ephemeris data used.
+// / Method used to select or interpolate sequential EOP data.
+// / Source and version of celestial body ephemeris data used.
 func (rcv *Metadata) CELESTIAL_SOURCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(98))
 	if o != 0 {
@@ -812,7 +812,7 @@ func (rcv *Metadata) CelestialSource() []byte {
 	return rcv.CELESTIAL_SOURCE()
 }
 
-/// Source and version of celestial body ephemeris data used.
+// / Source and version of celestial body ephemeris data used.
 func MetadataStart(builder *flatbuffers.Builder) {
 	builder.StartObject(48)
 }

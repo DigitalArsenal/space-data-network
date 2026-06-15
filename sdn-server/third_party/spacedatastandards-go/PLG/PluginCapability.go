@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Plugin capability declaration
+// / Plugin capability declaration
 type PluginCapability struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *PluginCapability) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Capability name, e.g., "gpu_compute", "wasm_simd"
+// / Capability name, e.g., "gpu_compute", "wasm_simd"
 func (rcv *PluginCapability) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *PluginCapability) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Capability name, e.g., "gpu_compute", "wasm_simd"
-/// Capability version
+// / Capability name, e.g., "gpu_compute", "wasm_simd"
+// / Capability version
 func (rcv *PluginCapability) VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *PluginCapability) Version() []byte {
 	return rcv.VERSION()
 }
 
-/// Capability version
-/// Whether this capability is required
+// / Capability version
+// / Whether this capability is required
 func (rcv *PluginCapability) REQUIRED() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *PluginCapability) Required() bool {
 	return rcv.REQUIRED()
 }
 
-/// Whether this capability is required
+// / Whether this capability is required
 func (rcv *PluginCapability) MutateREQUIRED(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }

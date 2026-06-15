@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// GEO Drift History Record
+// / GEO Drift History Record
 type driftRecord struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *driftRecord) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Epoch of drift measurement (ISO 8601)
+// / Epoch of drift measurement (ISO 8601)
 func (rcv *driftRecord) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *driftRecord) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-/// Epoch of drift measurement (ISO 8601)
-/// Longitude drift rate in degrees/day
+// / Epoch of drift measurement (ISO 8601)
+// / Longitude drift rate in degrees/day
 func (rcv *driftRecord) DRIFT_RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *driftRecord) DriftRate() float64 {
 	return rcv.DRIFT_RATE()
 }
 
-/// Longitude drift rate in degrees/day
+// / Longitude drift rate in degrees/day
 func (rcv *driftRecord) MutateDRIFT_RATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -78,7 +78,7 @@ func (rcv *driftRecord) MutateDriftRate(n float64) bool {
 	return rcv.MutateDRIFT_RATE(n)
 }
 
-/// Mean longitude in degrees East
+// / Mean longitude in degrees East
 func (rcv *driftRecord) MEAN_LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *driftRecord) MeanLongitude() float64 {
 	return rcv.MEAN_LONGITUDE()
 }
 
-/// Mean longitude in degrees East
+// / Mean longitude in degrees East
 func (rcv *driftRecord) MutateMEAN_LONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -100,7 +100,7 @@ func (rcv *driftRecord) MutateMeanLongitude(n float64) bool {
 	return rcv.MutateMEAN_LONGITUDE(n)
 }
 
-/// Longitude oscillation amplitude in degrees
+// / Longitude oscillation amplitude in degrees
 func (rcv *driftRecord) LONGITUDE_AMPLITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -113,7 +113,7 @@ func (rcv *driftRecord) LongitudeAmplitude() float64 {
 	return rcv.LONGITUDE_AMPLITUDE()
 }
 
-/// Longitude oscillation amplitude in degrees
+// / Longitude oscillation amplitude in degrees
 func (rcv *driftRecord) MutateLONGITUDE_AMPLITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -122,7 +122,7 @@ func (rcv *driftRecord) MutateLongitudeAmplitude(n float64) bool {
 	return rcv.MutateLONGITUDE_AMPLITUDE(n)
 }
 
-/// Eccentricity
+// / Eccentricity
 func (rcv *driftRecord) ECCENTRICITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -135,7 +135,7 @@ func (rcv *driftRecord) Eccentricity() float64 {
 	return rcv.ECCENTRICITY()
 }
 
-/// Eccentricity
+// / Eccentricity
 func (rcv *driftRecord) MutateECCENTRICITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -144,7 +144,7 @@ func (rcv *driftRecord) MutateEccentricity(n float64) bool {
 	return rcv.MutateECCENTRICITY(n)
 }
 
-/// Inclination in degrees
+// / Inclination in degrees
 func (rcv *driftRecord) INCLINATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *driftRecord) Inclination() float64 {
 	return rcv.INCLINATION()
 }
 
-/// Inclination in degrees
+// / Inclination in degrees
 func (rcv *driftRecord) MutateINCLINATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }

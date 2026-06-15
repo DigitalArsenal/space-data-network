@@ -4,7 +4,7 @@ package REC
 
 import "strconv"
 
-/// Wrapped content-key envelope algorithm
+// / Wrapped content-key envelope algorithm
 type licensingWrappedKeyAlgorithm int8
 
 const (

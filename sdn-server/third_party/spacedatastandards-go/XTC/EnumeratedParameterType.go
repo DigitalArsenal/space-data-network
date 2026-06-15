@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Enumerated parameter type
+// / Enumerated parameter type
 type EnumeratedParameterType struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *EnumeratedParameterType) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Type name
+// / Type name
 func (rcv *EnumeratedParameterType) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *EnumeratedParameterType) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Type name
-/// Short description
+// / Type name
+// / Short description
 func (rcv *EnumeratedParameterType) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *EnumeratedParameterType) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-/// Short description
-/// Long description
+// / Short description
+// / Long description
 func (rcv *EnumeratedParameterType) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *EnumeratedParameterType) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-/// Long description
-/// Data encoding
+// / Long description
+// / Data encoding
 func (rcv *EnumeratedParameterType) DATA_ENCODING(obj *IntegerDataEncoding) *IntegerDataEncoding {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -102,8 +102,8 @@ func (rcv *EnumeratedParameterType) DataEncoding(obj *IntegerDataEncoding) *Inte
 	return rcv.DATA_ENCODING(obj)
 }
 
-/// Data encoding
-/// Default alarm
+// / Data encoding
+// / Default alarm
 func (rcv *EnumeratedParameterType) DEFAULT_ALARM(obj *DefaultAlarm) *DefaultAlarm {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -121,8 +121,8 @@ func (rcv *EnumeratedParameterType) DefaultAlarm(obj *DefaultAlarm) *DefaultAlar
 	return rcv.DEFAULT_ALARM(obj)
 }
 
-/// Default alarm
-/// Context alarms
+// / Default alarm
+// / Context alarms
 func (rcv *EnumeratedParameterType) CONTEXT_ALARMS(obj *ContextAlarm, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -154,8 +154,8 @@ func (rcv *EnumeratedParameterType) ContextAlarmsLength() int {
 	return rcv.CONTEXT_ALARMSLength()
 }
 
-/// Context alarms
-/// Enumeration values list
+// / Context alarms
+// / Enumeration values list
 func (rcv *EnumeratedParameterType) ENUMERATION_LIST(obj *EnumerationValue, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -187,8 +187,8 @@ func (rcv *EnumeratedParameterType) EnumerationListLength() int {
 	return rcv.ENUMERATION_LISTLength()
 }
 
-/// Enumeration values list
-/// Initial/default value label
+// / Enumeration values list
+// / Initial/default value label
 func (rcv *EnumeratedParameterType) INITIAL_VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -201,7 +201,7 @@ func (rcv *EnumeratedParameterType) InitialValue() []byte {
 	return rcv.INITIAL_VALUE()
 }
 
-/// Initial/default value label
+// / Initial/default value label
 func EnumeratedParameterTypeStart(builder *flatbuffers.Builder) {
 	builder.StartObject(8)
 }

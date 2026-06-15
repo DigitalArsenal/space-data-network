@@ -4,7 +4,7 @@ package LDM
 
 import "strconv"
 
-/// Enum for the type of site
+// / Enum for the type of site
 type SiteType int8
 
 const (

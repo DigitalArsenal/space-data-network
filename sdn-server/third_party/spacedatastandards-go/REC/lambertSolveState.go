@@ -4,7 +4,7 @@ package REC
 
 import "strconv"
 
-/// Lambert solve status.
+// / Lambert solve status.
 type lambertSolveState int8
 
 const (

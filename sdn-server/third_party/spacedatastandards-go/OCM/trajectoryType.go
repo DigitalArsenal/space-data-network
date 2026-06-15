@@ -4,26 +4,26 @@ package OCM
 
 import "strconv"
 
-/// Trajectory state representation type.
-/// Defines how trajectory data is parameterized in this OCM.
-/// CCSDS 502.0-B-3 Section 7 specifies multiple trajectory state types.
+// / Trajectory state representation type.
+// / Defines how trajectory data is parameterized in this OCM.
+// / CCSDS 502.0-B-3 Section 7 specifies multiple trajectory state types.
 type trajectoryType int8
 
 const (
 	/// Cartesian position and velocity (X, Y, Z, X_DOT, Y_DOT, Z_DOT).
-	trajectoryTypeCARTESIAN_PV   trajectoryType = 0
+	trajectoryTypeCARTESIAN_PV trajectoryType = 0
 	/// Cartesian position, velocity, and acceleration (9 components).
-	trajectoryTypeCARTESIAN_PVA  trajectoryType = 1
+	trajectoryTypeCARTESIAN_PVA trajectoryType = 1
 	/// Polynomial coefficients for Cartesian position (and optionally velocity).
 	/// Associated data in POLYNOMIAL_POSITION_RECORDS.
 	trajectoryTypePOLYNOMIAL_POS trajectoryType = 2
 	/// Polynomial coefficients for classical orbital elements.
 	/// Associated data in POLYNOMIAL_OE_RECORDS.
-	trajectoryTypePOLYNOMIAL_OE  trajectoryType = 3
+	trajectoryTypePOLYNOMIAL_OE trajectoryType = 3
 	/// Hermite interpolating polynomial representation.
-	trajectoryTypeHERMITE        trajectoryType = 4
+	trajectoryTypeHERMITE trajectoryType = 4
 	/// Lagrange interpolating polynomial representation.
-	trajectoryTypeLAGRANGE       trajectoryType = 5
+	trajectoryTypeLAGRANGE trajectoryType = 5
 )
 
 var EnumNamestrajectoryType = map[trajectoryType]string{

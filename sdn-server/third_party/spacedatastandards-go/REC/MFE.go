@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Manifold Element Set
+// / Manifold Element Set
 type MFE struct {
 	_tab flatbuffers.Table
 }

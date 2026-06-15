@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Solid color material
+// / Solid color material
 type CZMSolidColorMaterial struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMSolidColorMaterial) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Color
+// / Color
 func (rcv *CZMSolidColorMaterial) COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,7 +60,7 @@ func (rcv *CZMSolidColorMaterial) Color(obj *CZMColor) *CZMColor {
 	return rcv.COLOR(obj)
 }
 
-/// Color
+// / Color
 func CZMSolidColorMaterialStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }

@@ -4,14 +4,14 @@ package LGR
 
 import "strconv"
 
-/// Storefront payment model for the plugin listing
+// / Storefront payment model for the plugin listing
 type purchaseTier int8
 
 const (
 	/// No payment required
-	purchaseTierFree         purchaseTier = 0
+	purchaseTierFree purchaseTier = 0
 	/// Single one-time purchase
-	purchaseTierOneTime      purchaseTier = 1
+	purchaseTierOneTime purchaseTier = 1
 	/// Recurring subscription purchase
 	purchaseTierSubscription purchaseTier = 2
 )

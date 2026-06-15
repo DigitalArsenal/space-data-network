@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Ballistics
+// / Ballistics
 type BAL struct {
 	_tab flatbuffers.Table
 }

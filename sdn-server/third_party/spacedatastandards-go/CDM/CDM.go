@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Conjunction Data Message
+// / Conjunction Data Message
 type CDM struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *CDM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// The version of the CCSDS CDM standard used
+// / The version of the CCSDS CDM standard used
 func (rcv *CDM) CCSDS_CDM_VERS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *CDM) CcsdsCdmVers() float64 {
 	return rcv.CCSDS_CDM_VERS()
 }
 
-/// The version of the CCSDS CDM standard used
+// / The version of the CCSDS CDM standard used
 func (rcv *CDM) MutateCCSDS_CDM_VERS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -76,7 +76,7 @@ func (rcv *CDM) MutateCcsdsCdmVers(n float64) bool {
 	return rcv.MutateCCSDS_CDM_VERS(n)
 }
 
-/// The date the CDM message was created
+// / The date the CDM message was created
 func (rcv *CDM) CREATION_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,8 +89,8 @@ func (rcv *CDM) CreationDate() []byte {
 	return rcv.CREATION_DATE()
 }
 
-/// The date the CDM message was created
-/// The originator of the CDM message
+// / The date the CDM message was created
+// / The originator of the CDM message
 func (rcv *CDM) ORIGINATOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,8 +103,8 @@ func (rcv *CDM) Originator() []byte {
 	return rcv.ORIGINATOR()
 }
 
-/// The originator of the CDM message
-/// The intended recipient of the CDM message
+// / The originator of the CDM message
+// / The intended recipient of the CDM message
 func (rcv *CDM) MESSAGE_FOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *CDM) MessageFor() []byte {
 	return rcv.MESSAGE_FOR()
 }
 
-/// The intended recipient of the CDM message
-/// A unique identifier for the CDM message
+// / The intended recipient of the CDM message
+// / A unique identifier for the CDM message
 func (rcv *CDM) MESSAGE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *CDM) MessageId() []byte {
 	return rcv.MESSAGE_ID()
 }
 
-/// A unique identifier for the CDM message
-/// Time of closest approach
+// / A unique identifier for the CDM message
+// / Time of closest approach
 func (rcv *CDM) TCA() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,8 +145,8 @@ func (rcv *CDM) Tca() []byte {
 	return rcv.TCA()
 }
 
-/// Time of closest approach
-/// The miss distance between the two objects
+// / Time of closest approach
+// / The miss distance between the two objects
 func (rcv *CDM) MISS_DISTANCE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,7 +159,7 @@ func (rcv *CDM) MissDistance() float64 {
 	return rcv.MISS_DISTANCE()
 }
 
-/// The miss distance between the two objects
+// / The miss distance between the two objects
 func (rcv *CDM) MutateMISS_DISTANCE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -168,7 +168,7 @@ func (rcv *CDM) MutateMissDistance(n float64) bool {
 	return rcv.MutateMISS_DISTANCE(n)
 }
 
-/// The relative speed between the two objects
+// / The relative speed between the two objects
 func (rcv *CDM) RELATIVE_SPEED() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -181,7 +181,7 @@ func (rcv *CDM) RelativeSpeed() float64 {
 	return rcv.RELATIVE_SPEED()
 }
 
-/// The relative speed between the two objects
+// / The relative speed between the two objects
 func (rcv *CDM) MutateRELATIVE_SPEED(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -190,7 +190,7 @@ func (rcv *CDM) MutateRelativeSpeed(n float64) bool {
 	return rcv.MutateRELATIVE_SPEED(n)
 }
 
-/// The relative position R component
+// / The relative position R component
 func (rcv *CDM) RELATIVE_POSITION_R() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -203,7 +203,7 @@ func (rcv *CDM) RelativePositionR() float64 {
 	return rcv.RELATIVE_POSITION_R()
 }
 
-/// The relative position R component
+// / The relative position R component
 func (rcv *CDM) MutateRELATIVE_POSITION_R(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -212,7 +212,7 @@ func (rcv *CDM) MutateRelativePositionR(n float64) bool {
 	return rcv.MutateRELATIVE_POSITION_R(n)
 }
 
-/// The relative position T component
+// / The relative position T component
 func (rcv *CDM) RELATIVE_POSITION_T() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -225,7 +225,7 @@ func (rcv *CDM) RelativePositionT() float64 {
 	return rcv.RELATIVE_POSITION_T()
 }
 
-/// The relative position T component
+// / The relative position T component
 func (rcv *CDM) MutateRELATIVE_POSITION_T(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -234,7 +234,7 @@ func (rcv *CDM) MutateRelativePositionT(n float64) bool {
 	return rcv.MutateRELATIVE_POSITION_T(n)
 }
 
-/// The relative position N component
+// / The relative position N component
 func (rcv *CDM) RELATIVE_POSITION_N() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -247,7 +247,7 @@ func (rcv *CDM) RelativePositionN() float64 {
 	return rcv.RELATIVE_POSITION_N()
 }
 
-/// The relative position N component
+// / The relative position N component
 func (rcv *CDM) MutateRELATIVE_POSITION_N(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -256,7 +256,7 @@ func (rcv *CDM) MutateRelativePositionN(n float64) bool {
 	return rcv.MutateRELATIVE_POSITION_N(n)
 }
 
-/// The relative velocity R component
+// / The relative velocity R component
 func (rcv *CDM) RELATIVE_VELOCITY_R() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -269,7 +269,7 @@ func (rcv *CDM) RelativeVelocityR() float64 {
 	return rcv.RELATIVE_VELOCITY_R()
 }
 
-/// The relative velocity R component
+// / The relative velocity R component
 func (rcv *CDM) MutateRELATIVE_VELOCITY_R(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -278,7 +278,7 @@ func (rcv *CDM) MutateRelativeVelocityR(n float64) bool {
 	return rcv.MutateRELATIVE_VELOCITY_R(n)
 }
 
-/// The relative velocity T component
+// / The relative velocity T component
 func (rcv *CDM) RELATIVE_VELOCITY_T() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -291,7 +291,7 @@ func (rcv *CDM) RelativeVelocityT() float64 {
 	return rcv.RELATIVE_VELOCITY_T()
 }
 
-/// The relative velocity T component
+// / The relative velocity T component
 func (rcv *CDM) MutateRELATIVE_VELOCITY_T(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -300,7 +300,7 @@ func (rcv *CDM) MutateRelativeVelocityT(n float64) bool {
 	return rcv.MutateRELATIVE_VELOCITY_T(n)
 }
 
-/// The relative velocity N component
+// / The relative velocity N component
 func (rcv *CDM) RELATIVE_VELOCITY_N() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -313,7 +313,7 @@ func (rcv *CDM) RelativeVelocityN() float64 {
 	return rcv.RELATIVE_VELOCITY_N()
 }
 
-/// The relative velocity N component
+// / The relative velocity N component
 func (rcv *CDM) MutateRELATIVE_VELOCITY_N(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -322,7 +322,7 @@ func (rcv *CDM) MutateRelativeVelocityN(n float64) bool {
 	return rcv.MutateRELATIVE_VELOCITY_N(n)
 }
 
-/// The start time of the screening period
+// / The start time of the screening period
 func (rcv *CDM) START_SCREEN_PERIOD() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -335,8 +335,8 @@ func (rcv *CDM) StartScreenPeriod() []byte {
 	return rcv.START_SCREEN_PERIOD()
 }
 
-/// The start time of the screening period
-/// The end time of the screening period
+// / The start time of the screening period
+// / The end time of the screening period
 func (rcv *CDM) STOP_SCREEN_PERIOD() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -349,8 +349,8 @@ func (rcv *CDM) StopScreenPeriod() []byte {
 	return rcv.STOP_SCREEN_PERIOD()
 }
 
-/// The end time of the screening period
-/// The reference frame for the screening volume
+// / The end time of the screening period
+// / The reference frame for the screening volume
 func (rcv *CDM) SCREEN_VOLUME_FRAME(obj *RFM) *RFM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -368,8 +368,8 @@ func (rcv *CDM) ScreenVolumeFrame(obj *RFM) *RFM {
 	return rcv.SCREEN_VOLUME_FRAME(obj)
 }
 
-/// The reference frame for the screening volume
-/// The shape of the screening volume
+// / The reference frame for the screening volume
+// / The shape of the screening volume
 func (rcv *CDM) SCREEN_VOLUME_SHAPE() screeningVolumeShape {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -382,7 +382,7 @@ func (rcv *CDM) ScreenVolumeShape() screeningVolumeShape {
 	return rcv.SCREEN_VOLUME_SHAPE()
 }
 
-/// The shape of the screening volume
+// / The shape of the screening volume
 func (rcv *CDM) MutateSCREEN_VOLUME_SHAPE(n screeningVolumeShape) bool {
 	return rcv._tab.MutateInt8Slot(38, int8(n))
 }
@@ -391,7 +391,7 @@ func (rcv *CDM) MutateScreenVolumeShape(n screeningVolumeShape) bool {
 	return rcv.MutateSCREEN_VOLUME_SHAPE(n)
 }
 
-/// The X dimension of the screening volume
+// / The X dimension of the screening volume
 func (rcv *CDM) SCREEN_VOLUME_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -404,7 +404,7 @@ func (rcv *CDM) ScreenVolumeX() float64 {
 	return rcv.SCREEN_VOLUME_X()
 }
 
-/// The X dimension of the screening volume
+// / The X dimension of the screening volume
 func (rcv *CDM) MutateSCREEN_VOLUME_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -413,7 +413,7 @@ func (rcv *CDM) MutateScreenVolumeX(n float64) bool {
 	return rcv.MutateSCREEN_VOLUME_X(n)
 }
 
-/// The Y dimension of the screening volume
+// / The Y dimension of the screening volume
 func (rcv *CDM) SCREEN_VOLUME_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -426,7 +426,7 @@ func (rcv *CDM) ScreenVolumeY() float64 {
 	return rcv.SCREEN_VOLUME_Y()
 }
 
-/// The Y dimension of the screening volume
+// / The Y dimension of the screening volume
 func (rcv *CDM) MutateSCREEN_VOLUME_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -435,7 +435,7 @@ func (rcv *CDM) MutateScreenVolumeY(n float64) bool {
 	return rcv.MutateSCREEN_VOLUME_Y(n)
 }
 
-/// The Z dimension of the screening volume
+// / The Z dimension of the screening volume
 func (rcv *CDM) SCREEN_VOLUME_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -448,7 +448,7 @@ func (rcv *CDM) ScreenVolumeZ() float64 {
 	return rcv.SCREEN_VOLUME_Z()
 }
 
-/// The Z dimension of the screening volume
+// / The Z dimension of the screening volume
 func (rcv *CDM) MutateSCREEN_VOLUME_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(44, n)
 }
@@ -457,7 +457,7 @@ func (rcv *CDM) MutateScreenVolumeZ(n float64) bool {
 	return rcv.MutateSCREEN_VOLUME_Z(n)
 }
 
-/// The time the objects entered the screening volume
+// / The time the objects entered the screening volume
 func (rcv *CDM) SCREEN_ENTRY_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -470,8 +470,8 @@ func (rcv *CDM) ScreenEntryTime() []byte {
 	return rcv.SCREEN_ENTRY_TIME()
 }
 
-/// The time the objects entered the screening volume
-/// The time the objects exited the screening volume
+// / The time the objects entered the screening volume
+// / The time the objects exited the screening volume
 func (rcv *CDM) SCREEN_EXIT_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -484,8 +484,8 @@ func (rcv *CDM) ScreenExitTime() []byte {
 	return rcv.SCREEN_EXIT_TIME()
 }
 
-/// The time the objects exited the screening volume
-/// The probability of collision between the two objects
+// / The time the objects exited the screening volume
+// / The probability of collision between the two objects
 func (rcv *CDM) COLLISION_PROBABILITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -498,7 +498,7 @@ func (rcv *CDM) CollisionProbability() float64 {
 	return rcv.COLLISION_PROBABILITY()
 }
 
-/// The probability of collision between the two objects
+// / The probability of collision between the two objects
 func (rcv *CDM) MutateCOLLISION_PROBABILITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(50, n)
 }
@@ -507,7 +507,7 @@ func (rcv *CDM) MutateCollisionProbability(n float64) bool {
 	return rcv.MutateCOLLISION_PROBABILITY(n)
 }
 
-/// The method used to calculate the collision probability
+// / The method used to calculate the collision probability
 func (rcv *CDM) COLLISION_PROBABILITY_METHOD() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -520,8 +520,8 @@ func (rcv *CDM) CollisionProbabilityMethod() []byte {
 	return rcv.COLLISION_PROBABILITY_METHOD()
 }
 
-/// The method used to calculate the collision probability
-/// The first object in the CDM message
+// / The method used to calculate the collision probability
+// / The first object in the CDM message
 func (rcv *CDM) OBJECT1(obj *CDMObject) *CDMObject {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -539,8 +539,8 @@ func (rcv *CDM) Object1(obj *CDMObject) *CDMObject {
 	return rcv.OBJECT1(obj)
 }
 
-/// The first object in the CDM message
-/// The second object in the CDM message
+// / The first object in the CDM message
+// / The second object in the CDM message
 func (rcv *CDM) OBJECT2(obj *CDMObject) *CDMObject {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -558,8 +558,8 @@ func (rcv *CDM) Object2(obj *CDMObject) *CDMObject {
 	return rcv.OBJECT2(obj)
 }
 
-/// The second object in the CDM message
-/// Data Source for the positional information for Object 1
+// / The second object in the CDM message
+// / Data Source for the positional information for Object 1
 func (rcv *CDM) OBJECT1_DATASOURCE(obj *PNM) *PNM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -577,8 +577,8 @@ func (rcv *CDM) Object1Datasource(obj *PNM) *PNM {
 	return rcv.OBJECT1_DATASOURCE(obj)
 }
 
-/// Data Source for the positional information for Object 1
-/// Data Source for the positional information for Object 2
+// / Data Source for the positional information for Object 1
+// / Data Source for the positional information for Object 2
 func (rcv *CDM) OBJECT2_DATASOURCE(obj *PNM) *PNM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -596,7 +596,7 @@ func (rcv *CDM) Object2Datasource(obj *PNM) *PNM {
 	return rcv.OBJECT2_DATASOURCE(obj)
 }
 
-/// Data Source for the positional information for Object 2
+// / Data Source for the positional information for Object 2
 func CDMStart(builder *flatbuffers.Builder) {
 	builder.StartObject(29)
 }

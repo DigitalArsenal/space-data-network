@@ -4,18 +4,18 @@ package CDM
 
 import "strconv"
 
-/// Enum for the mode of data (real, simulated, synthetic)
+// / Enum for the mode of data (real, simulated, synthetic)
 type DataMode int8
 
 const (
 	/// Data collected during an exercise scenario.
-	DataModeEXERCISE  DataMode = 0
+	DataModeEXERCISE DataMode = 0
 	/// Data collected from real-world observations.
-	DataModeREAL      DataMode = 1
+	DataModeREAL DataMode = 1
 	/// Data generated through simulation.
 	DataModeSIMULATED DataMode = 2
 	/// Data collected for testing purposes.
-	DataModeTEST      DataMode = 3
+	DataModeTEST DataMode = 3
 )
 
 var EnumNamesDataMode = map[DataMode]string{

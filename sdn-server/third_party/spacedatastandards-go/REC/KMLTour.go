@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// gx:Tour
+// / gx:Tour
 type KMLTour struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLTour) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Tour name
+// / Tour name
 func (rcv *KMLTour) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLTour) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Tour name
-/// Description
+// / Tour name
+// / Description
 func (rcv *KMLTour) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *KMLTour) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-/// Description
-/// Visibility
+// / Description
+// / Visibility
 func (rcv *KMLTour) VISIBILITY() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *KMLTour) Visibility() bool {
 	return rcv.VISIBILITY()
 }
 
-/// Visibility
+// / Visibility
 func (rcv *KMLTour) MutateVISIBILITY(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }
@@ -92,7 +92,7 @@ func (rcv *KMLTour) MutateVisibility(n bool) bool {
 	return rcv.MutateVISIBILITY(n)
 }
 
-/// Playlist
+// / Playlist
 func (rcv *KMLTour) PLAYLIST(obj *KMLPlaylist) *KMLPlaylist {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -110,7 +110,7 @@ func (rcv *KMLTour) Playlist(obj *KMLPlaylist) *KMLPlaylist {
 	return rcv.PLAYLIST(obj)
 }
 
-/// Playlist
+// / Playlist
 func KMLTourStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

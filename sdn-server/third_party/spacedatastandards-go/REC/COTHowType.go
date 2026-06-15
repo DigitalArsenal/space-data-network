@@ -8,7 +8,7 @@ type COTHowType int8
 
 const (
 	/// Human entered or generated
-	COTHowTypeHE  COTHowType = 0
+	COTHowTypeHE COTHowType = 0
 	/// Human estimated
 	COTHowTypeH_E COTHowType = 1
 	/// Machine generated via GPS

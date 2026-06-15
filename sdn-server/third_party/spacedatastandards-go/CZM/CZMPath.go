@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Path properties (orbit trail)
+// / Path properties (orbit trail)
 type CZMPath struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMPath) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Whether the path is displayed
+// / Whether the path is displayed
 func (rcv *CZMPath) SHOW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMPath) Show() bool {
 	return rcv.SHOW()
 }
 
-/// Whether the path is displayed
+// / Whether the path is displayed
 func (rcv *CZMPath) MutateSHOW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMPath) MutateShow(n bool) bool {
 	return rcv.MutateSHOW(n)
 }
 
-/// Trail time in seconds (how far behind)
+// / Trail time in seconds (how far behind)
 func (rcv *CZMPath) LEAD_TIME() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *CZMPath) LeadTime() float64 {
 	return rcv.LEAD_TIME()
 }
 
-/// Trail time in seconds (how far behind)
+// / Trail time in seconds (how far behind)
 func (rcv *CZMPath) MutateLEAD_TIME(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *CZMPath) MutateLeadTime(n float64) bool {
 	return rcv.MutateLEAD_TIME(n)
 }
 
-/// Lead time in seconds (how far ahead)
+// / Lead time in seconds (how far ahead)
 func (rcv *CZMPath) TRAIL_TIME() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *CZMPath) TrailTime() float64 {
 	return rcv.TRAIL_TIME()
 }
 
-/// Lead time in seconds (how far ahead)
+// / Lead time in seconds (how far ahead)
 func (rcv *CZMPath) MutateTRAIL_TIME(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *CZMPath) MutateTrailTime(n float64) bool {
 	return rcv.MutateTRAIL_TIME(n)
 }
 
-/// Line width in pixels
+// / Line width in pixels
 func (rcv *CZMPath) WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *CZMPath) Width() float64 {
 	return rcv.WIDTH()
 }
 
-/// Line width in pixels
+// / Line width in pixels
 func (rcv *CZMPath) MutateWIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *CZMPath) MutateWidth(n float64) bool {
 	return rcv.MutateWIDTH(n)
 }
 
-/// Path color (legacy solid color)
+// / Path color (legacy solid color)
 func (rcv *CZMPath) COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -148,8 +148,8 @@ func (rcv *CZMPath) Color(obj *CZMColor) *CZMColor {
 	return rcv.COLOR(obj)
 }
 
-/// Path color (legacy solid color)
-/// Resolution in seconds
+// / Path color (legacy solid color)
+// / Resolution in seconds
 func (rcv *CZMPath) RESOLUTION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -162,7 +162,7 @@ func (rcv *CZMPath) Resolution() float64 {
 	return rcv.RESOLUTION()
 }
 
-/// Resolution in seconds
+// / Resolution in seconds
 func (rcv *CZMPath) MutateRESOLUTION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -171,7 +171,7 @@ func (rcv *CZMPath) MutateResolution(n float64) bool {
 	return rcv.MutateRESOLUTION(n)
 }
 
-/// Full polyline material
+// / Full polyline material
 func (rcv *CZMPath) MATERIAL(obj *CZMPolylineMaterial) *CZMPolylineMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -189,7 +189,7 @@ func (rcv *CZMPath) Material(obj *CZMPolylineMaterial) *CZMPolylineMaterial {
 	return rcv.MATERIAL(obj)
 }
 
-/// Full polyline material
+// / Full polyline material
 func CZMPathStart(builder *flatbuffers.Builder) {
 	builder.StartObject(7)
 }

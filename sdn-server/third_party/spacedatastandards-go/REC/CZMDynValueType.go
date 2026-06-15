@@ -4,7 +4,7 @@ package REC
 
 import "strconv"
 
-/// Dynamic value types for time-varying properties
+// / Dynamic value types for time-varying properties
 type CZMDynValueType int8
 
 const (

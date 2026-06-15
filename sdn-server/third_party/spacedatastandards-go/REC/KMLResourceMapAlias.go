@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Resource map alias for Model
+// / Resource map alias for Model
 type KMLResourceMapAlias struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLResourceMapAlias) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Target href
+// / Target href
 func (rcv *KMLResourceMapAlias) TARGET_HREF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLResourceMapAlias) TargetHref() []byte {
 	return rcv.TARGET_HREF()
 }
 
-/// Target href
-/// Source href
+// / Target href
+// / Source href
 func (rcv *KMLResourceMapAlias) SOURCE_HREF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *KMLResourceMapAlias) SourceHref() []byte {
 	return rcv.SOURCE_HREF()
 }
 
-/// Source href
+// / Source href
 func KMLResourceMapAliasStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

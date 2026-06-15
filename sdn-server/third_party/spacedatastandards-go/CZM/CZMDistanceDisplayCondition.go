@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Distance display condition
+// / Distance display condition
 type CZMDistanceDisplayCondition struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMDistanceDisplayCondition) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Near distance in meters
+// / Near distance in meters
 func (rcv *CZMDistanceDisplayCondition) NEAR_DISTANCE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMDistanceDisplayCondition) NearDistance() float64 {
 	return rcv.NEAR_DISTANCE()
 }
 
-/// Near distance in meters
+// / Near distance in meters
 func (rcv *CZMDistanceDisplayCondition) MutateNEAR_DISTANCE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMDistanceDisplayCondition) MutateNearDistance(n float64) bool {
 	return rcv.MutateNEAR_DISTANCE(n)
 }
 
-/// Far distance in meters
+// / Far distance in meters
 func (rcv *CZMDistanceDisplayCondition) FAR_DISTANCE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *CZMDistanceDisplayCondition) FarDistance() float64 {
 	return rcv.FAR_DISTANCE()
 }
 
-/// Far distance in meters
+// / Far distance in meters
 func (rcv *CZMDistanceDisplayCondition) MutateFAR_DISTANCE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }

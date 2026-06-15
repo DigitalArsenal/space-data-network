@@ -4,7 +4,7 @@ package VCM
 
 import "strconv"
 
-/// Enum to represent various solar perturbation models
+// / Enum to represent various solar perturbation models
 type solarPerturbationSource int8
 
 const (

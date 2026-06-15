@@ -8,7 +8,7 @@ type ephemerisFormat int8
 
 const (
 	/// Simplified General Perturbation Model
-	ephemerisFormatSGP  ephemerisFormat = 0
+	ephemerisFormatSGP ephemerisFormat = 0
 	/// Simplified General Perturbation Model 4
 	ephemerisFormatSGP4 ephemerisFormat = 1
 	/// Simplified Deep Space Perturbation Model 4

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Context-dependent alarm
+// / Context-dependent alarm
 type ContextAlarm struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ContextAlarm) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Match criteria for this alarm context
+// / Match criteria for this alarm context
 func (rcv *ContextAlarm) MATCH_CRITERIA(obj *MatchCriteria) *MatchCriteria {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *ContextAlarm) MatchCriteria(obj *MatchCriteria) *MatchCriteria {
 	return rcv.MATCH_CRITERIA(obj)
 }
 
-/// Match criteria for this alarm context
-/// Alarm definition for this context
+// / Match criteria for this alarm context
+// / Alarm definition for this context
 func (rcv *ContextAlarm) ALARM(obj *DefaultAlarm) *DefaultAlarm {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -79,7 +79,7 @@ func (rcv *ContextAlarm) Alarm(obj *DefaultAlarm) *DefaultAlarm {
 	return rcv.ALARM(obj)
 }
 
-/// Alarm definition for this context
+// / Alarm definition for this context
 func ContextAlarmStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

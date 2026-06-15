@@ -4,7 +4,7 @@ package HFC
 
 import "strconv"
 
-/// Hypersonic flight regime classification.
+// / Hypersonic flight regime classification.
 type hfcFlowRegime int8
 
 const (

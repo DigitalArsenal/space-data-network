@@ -8,9 +8,9 @@ type rbkResultStatus int8
 
 const (
 	/// Operation completed.
-	rbkResultStatusOK                    rbkResultStatus = 0
+	rbkResultStatusOK rbkResultStatus = 0
 	/// Request is missing required vector/quaternion data or has invalid values.
-	rbkResultStatusINVALID_INPUT         rbkResultStatus = 1
+	rbkResultStatusINVALID_INPUT rbkResultStatus = 1
 	/// Operation is unknown or not supported by the module implementation.
 	rbkResultStatusUNSUPPORTED_OPERATION rbkResultStatus = 2
 )

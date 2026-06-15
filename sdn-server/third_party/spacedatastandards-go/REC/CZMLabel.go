@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Label properties
+// / Label properties
 type CZMLabel struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMLabel) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Whether the label is displayed
+// / Whether the label is displayed
 func (rcv *CZMLabel) SHOW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMLabel) Show() bool {
 	return rcv.SHOW()
 }
 
-/// Whether the label is displayed
+// / Whether the label is displayed
 func (rcv *CZMLabel) MutateSHOW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMLabel) MutateShow(n bool) bool {
 	return rcv.MutateSHOW(n)
 }
 
-/// Label text
+// / Label text
 func (rcv *CZMLabel) TEXT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,8 +77,8 @@ func (rcv *CZMLabel) Text() []byte {
 	return rcv.TEXT()
 }
 
-/// Label text
-/// Font CSS string (e.g. "12pt Lucida Console")
+// / Label text
+// / Font CSS string (e.g. "12pt Lucida Console")
 func (rcv *CZMLabel) FONT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,8 +91,8 @@ func (rcv *CZMLabel) Font() []byte {
 	return rcv.FONT()
 }
 
-/// Font CSS string (e.g. "12pt Lucida Console")
-/// Label style
+// / Font CSS string (e.g. "12pt Lucida Console")
+// / Label style
 func (rcv *CZMLabel) STYLE() CZMLabelStyle {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,7 +105,7 @@ func (rcv *CZMLabel) Style() CZMLabelStyle {
 	return rcv.STYLE()
 }
 
-/// Label style
+// / Label style
 func (rcv *CZMLabel) MutateSTYLE(n CZMLabelStyle) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
@@ -114,7 +114,7 @@ func (rcv *CZMLabel) MutateStyle(n CZMLabelStyle) bool {
 	return rcv.MutateSTYLE(n)
 }
 
-/// Fill color
+// / Fill color
 func (rcv *CZMLabel) FILL_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -132,8 +132,8 @@ func (rcv *CZMLabel) FillColor(obj *CZMColor) *CZMColor {
 	return rcv.FILL_COLOR(obj)
 }
 
-/// Fill color
-/// Outline color
+// / Fill color
+// / Outline color
 func (rcv *CZMLabel) OUTLINE_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -151,8 +151,8 @@ func (rcv *CZMLabel) OutlineColor(obj *CZMColor) *CZMColor {
 	return rcv.OUTLINE_COLOR(obj)
 }
 
-/// Outline color
-/// Outline width in pixels
+// / Outline color
+// / Outline width in pixels
 func (rcv *CZMLabel) OUTLINE_WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -165,7 +165,7 @@ func (rcv *CZMLabel) OutlineWidth() float64 {
 	return rcv.OUTLINE_WIDTH()
 }
 
-/// Outline width in pixels
+// / Outline width in pixels
 func (rcv *CZMLabel) MutateOUTLINE_WIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -174,7 +174,7 @@ func (rcv *CZMLabel) MutateOutlineWidth(n float64) bool {
 	return rcv.MutateOUTLINE_WIDTH(n)
 }
 
-/// Pixel offset X
+// / Pixel offset X
 func (rcv *CZMLabel) PIXEL_OFFSET_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -187,7 +187,7 @@ func (rcv *CZMLabel) PixelOffsetX() float64 {
 	return rcv.PIXEL_OFFSET_X()
 }
 
-/// Pixel offset X
+// / Pixel offset X
 func (rcv *CZMLabel) MutatePIXEL_OFFSET_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -196,7 +196,7 @@ func (rcv *CZMLabel) MutatePixelOffsetX(n float64) bool {
 	return rcv.MutatePIXEL_OFFSET_X(n)
 }
 
-/// Pixel offset Y
+// / Pixel offset Y
 func (rcv *CZMLabel) PIXEL_OFFSET_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -209,7 +209,7 @@ func (rcv *CZMLabel) PixelOffsetY() float64 {
 	return rcv.PIXEL_OFFSET_Y()
 }
 
-/// Pixel offset Y
+// / Pixel offset Y
 func (rcv *CZMLabel) MutatePIXEL_OFFSET_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -218,7 +218,7 @@ func (rcv *CZMLabel) MutatePixelOffsetY(n float64) bool {
 	return rcv.MutatePIXEL_OFFSET_Y(n)
 }
 
-/// Scale factor
+// / Scale factor
 func (rcv *CZMLabel) SCALE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -231,7 +231,7 @@ func (rcv *CZMLabel) Scale() float64 {
 	return rcv.SCALE()
 }
 
-/// Scale factor
+// / Scale factor
 func (rcv *CZMLabel) MutateSCALE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -240,7 +240,7 @@ func (rcv *CZMLabel) MutateScale(n float64) bool {
 	return rcv.MutateSCALE(n)
 }
 
-/// Horizontal origin
+// / Horizontal origin
 func (rcv *CZMLabel) HORIZONTAL_ORIGIN() CZMHorizontalOrigin {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -253,7 +253,7 @@ func (rcv *CZMLabel) HorizontalOrigin() CZMHorizontalOrigin {
 	return rcv.HORIZONTAL_ORIGIN()
 }
 
-/// Horizontal origin
+// / Horizontal origin
 func (rcv *CZMLabel) MutateHORIZONTAL_ORIGIN(n CZMHorizontalOrigin) bool {
 	return rcv._tab.MutateInt8Slot(24, int8(n))
 }
@@ -262,7 +262,7 @@ func (rcv *CZMLabel) MutateHorizontalOrigin(n CZMHorizontalOrigin) bool {
 	return rcv.MutateHORIZONTAL_ORIGIN(n)
 }
 
-/// Vertical origin
+// / Vertical origin
 func (rcv *CZMLabel) VERTICAL_ORIGIN() CZMVerticalOrigin {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -275,7 +275,7 @@ func (rcv *CZMLabel) VerticalOrigin() CZMVerticalOrigin {
 	return rcv.VERTICAL_ORIGIN()
 }
 
-/// Vertical origin
+// / Vertical origin
 func (rcv *CZMLabel) MutateVERTICAL_ORIGIN(n CZMVerticalOrigin) bool {
 	return rcv._tab.MutateInt8Slot(26, int8(n))
 }
@@ -284,7 +284,7 @@ func (rcv *CZMLabel) MutateVerticalOrigin(n CZMVerticalOrigin) bool {
 	return rcv.MutateVERTICAL_ORIGIN(n)
 }
 
-/// Height reference
+// / Height reference
 func (rcv *CZMLabel) HEIGHT_REFERENCE() CZMHeightReference {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -297,7 +297,7 @@ func (rcv *CZMLabel) HeightReference() CZMHeightReference {
 	return rcv.HEIGHT_REFERENCE()
 }
 
-/// Height reference
+// / Height reference
 func (rcv *CZMLabel) MutateHEIGHT_REFERENCE(n CZMHeightReference) bool {
 	return rcv._tab.MutateInt8Slot(28, int8(n))
 }
@@ -306,7 +306,7 @@ func (rcv *CZMLabel) MutateHeightReference(n CZMHeightReference) bool {
 	return rcv.MutateHEIGHT_REFERENCE(n)
 }
 
-/// Whether to show background
+// / Whether to show background
 func (rcv *CZMLabel) SHOW_BACKGROUND() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -319,7 +319,7 @@ func (rcv *CZMLabel) ShowBackground() bool {
 	return rcv.SHOW_BACKGROUND()
 }
 
-/// Whether to show background
+// / Whether to show background
 func (rcv *CZMLabel) MutateSHOW_BACKGROUND(n bool) bool {
 	return rcv._tab.MutateBoolSlot(30, n)
 }
@@ -328,7 +328,7 @@ func (rcv *CZMLabel) MutateShowBackground(n bool) bool {
 	return rcv.MutateSHOW_BACKGROUND(n)
 }
 
-/// Background color
+// / Background color
 func (rcv *CZMLabel) BACKGROUND_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -346,8 +346,8 @@ func (rcv *CZMLabel) BackgroundColor(obj *CZMColor) *CZMColor {
 	return rcv.BACKGROUND_COLOR(obj)
 }
 
-/// Background color
-/// Background padding X
+// / Background color
+// / Background padding X
 func (rcv *CZMLabel) BACKGROUND_PADDING_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -360,7 +360,7 @@ func (rcv *CZMLabel) BackgroundPaddingX() float64 {
 	return rcv.BACKGROUND_PADDING_X()
 }
 
-/// Background padding X
+// / Background padding X
 func (rcv *CZMLabel) MutateBACKGROUND_PADDING_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -369,7 +369,7 @@ func (rcv *CZMLabel) MutateBackgroundPaddingX(n float64) bool {
 	return rcv.MutateBACKGROUND_PADDING_X(n)
 }
 
-/// Background padding Y
+// / Background padding Y
 func (rcv *CZMLabel) BACKGROUND_PADDING_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -382,7 +382,7 @@ func (rcv *CZMLabel) BackgroundPaddingY() float64 {
 	return rcv.BACKGROUND_PADDING_Y()
 }
 
-/// Background padding Y
+// / Background padding Y
 func (rcv *CZMLabel) MutateBACKGROUND_PADDING_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -391,7 +391,7 @@ func (rcv *CZMLabel) MutateBackgroundPaddingY(n float64) bool {
 	return rcv.MutateBACKGROUND_PADDING_Y(n)
 }
 
-/// Eye offset X in meters
+// / Eye offset X in meters
 func (rcv *CZMLabel) EYE_OFFSET_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -404,7 +404,7 @@ func (rcv *CZMLabel) EyeOffsetX() float64 {
 	return rcv.EYE_OFFSET_X()
 }
 
-/// Eye offset X in meters
+// / Eye offset X in meters
 func (rcv *CZMLabel) MutateEYE_OFFSET_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -413,7 +413,7 @@ func (rcv *CZMLabel) MutateEyeOffsetX(n float64) bool {
 	return rcv.MutateEYE_OFFSET_X(n)
 }
 
-/// Eye offset Y in meters
+// / Eye offset Y in meters
 func (rcv *CZMLabel) EYE_OFFSET_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -426,7 +426,7 @@ func (rcv *CZMLabel) EyeOffsetY() float64 {
 	return rcv.EYE_OFFSET_Y()
 }
 
-/// Eye offset Y in meters
+// / Eye offset Y in meters
 func (rcv *CZMLabel) MutateEYE_OFFSET_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -435,7 +435,7 @@ func (rcv *CZMLabel) MutateEyeOffsetY(n float64) bool {
 	return rcv.MutateEYE_OFFSET_Y(n)
 }
 
-/// Eye offset Z in meters
+// / Eye offset Z in meters
 func (rcv *CZMLabel) EYE_OFFSET_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -448,7 +448,7 @@ func (rcv *CZMLabel) EyeOffsetZ() float64 {
 	return rcv.EYE_OFFSET_Z()
 }
 
-/// Eye offset Z in meters
+// / Eye offset Z in meters
 func (rcv *CZMLabel) MutateEYE_OFFSET_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -457,7 +457,7 @@ func (rcv *CZMLabel) MutateEyeOffsetZ(n float64) bool {
 	return rcv.MutateEYE_OFFSET_Z(n)
 }
 
-/// Translucency by distance
+// / Translucency by distance
 func (rcv *CZMLabel) TRANSLUCENCY_BY_DISTANCE(obj *CZMNearFarScalar) *CZMNearFarScalar {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -475,8 +475,8 @@ func (rcv *CZMLabel) TranslucencyByDistance(obj *CZMNearFarScalar) *CZMNearFarSc
 	return rcv.TRANSLUCENCY_BY_DISTANCE(obj)
 }
 
-/// Translucency by distance
-/// Pixel offset scale by distance
+// / Translucency by distance
+// / Pixel offset scale by distance
 func (rcv *CZMLabel) PIXEL_OFFSET_SCALE_BY_DISTANCE(obj *CZMNearFarScalar) *CZMNearFarScalar {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -494,8 +494,8 @@ func (rcv *CZMLabel) PixelOffsetScaleByDistance(obj *CZMNearFarScalar) *CZMNearF
 	return rcv.PIXEL_OFFSET_SCALE_BY_DISTANCE(obj)
 }
 
-/// Pixel offset scale by distance
-/// Scale by distance
+// / Pixel offset scale by distance
+// / Scale by distance
 func (rcv *CZMLabel) SCALE_BY_DISTANCE(obj *CZMNearFarScalar) *CZMNearFarScalar {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -513,8 +513,8 @@ func (rcv *CZMLabel) ScaleByDistance(obj *CZMNearFarScalar) *CZMNearFarScalar {
 	return rcv.SCALE_BY_DISTANCE(obj)
 }
 
-/// Scale by distance
-/// Distance display condition near
+// / Scale by distance
+// / Distance display condition near
 func (rcv *CZMLabel) DISTANCE_DISPLAY_CONDITION_NEAR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -527,7 +527,7 @@ func (rcv *CZMLabel) DistanceDisplayConditionNear() float64 {
 	return rcv.DISTANCE_DISPLAY_CONDITION_NEAR()
 }
 
-/// Distance display condition near
+// / Distance display condition near
 func (rcv *CZMLabel) MutateDISTANCE_DISPLAY_CONDITION_NEAR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(50, n)
 }
@@ -536,7 +536,7 @@ func (rcv *CZMLabel) MutateDistanceDisplayConditionNear(n float64) bool {
 	return rcv.MutateDISTANCE_DISPLAY_CONDITION_NEAR(n)
 }
 
-/// Distance display condition far
+// / Distance display condition far
 func (rcv *CZMLabel) DISTANCE_DISPLAY_CONDITION_FAR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -549,7 +549,7 @@ func (rcv *CZMLabel) DistanceDisplayConditionFar() float64 {
 	return rcv.DISTANCE_DISPLAY_CONDITION_FAR()
 }
 
-/// Distance display condition far
+// / Distance display condition far
 func (rcv *CZMLabel) MutateDISTANCE_DISPLAY_CONDITION_FAR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(52, n)
 }
@@ -558,7 +558,7 @@ func (rcv *CZMLabel) MutateDistanceDisplayConditionFar(n float64) bool {
 	return rcv.MutateDISTANCE_DISPLAY_CONDITION_FAR(n)
 }
 
-/// Disable depth test distance
+// / Disable depth test distance
 func (rcv *CZMLabel) DISABLE_DEPTH_TEST_DISTANCE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -571,7 +571,7 @@ func (rcv *CZMLabel) DisableDepthTestDistance() float64 {
 	return rcv.DISABLE_DEPTH_TEST_DISTANCE()
 }
 
-/// Disable depth test distance
+// / Disable depth test distance
 func (rcv *CZMLabel) MutateDISABLE_DEPTH_TEST_DISTANCE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(54, n)
 }

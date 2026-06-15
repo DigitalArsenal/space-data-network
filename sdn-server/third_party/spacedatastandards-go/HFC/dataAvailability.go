@@ -8,13 +8,13 @@ type dataAvailability int8
 
 const (
 	/// NCE
-	dataAvailabilityNO_CURRENT_ELEMENTS   dataAvailability = 0
+	dataAvailabilityNO_CURRENT_ELEMENTS dataAvailability = 0
 	/// NIE
-	dataAvailabilityNO_INITIAL_ELEMENTS   dataAvailability = 1
+	dataAvailabilityNO_INITIAL_ELEMENTS dataAvailability = 1
 	/// NEA
 	dataAvailabilityNO_ELEMENTS_AVAILABLE dataAvailability = 2
 	/// OK
-	dataAvailabilityOK                    dataAvailability = 3
+	dataAvailabilityOK dataAvailability = 3
 )
 
 var EnumNamesdataAvailability = map[dataAvailability]string{

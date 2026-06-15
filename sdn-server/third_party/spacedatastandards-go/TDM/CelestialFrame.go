@@ -4,94 +4,94 @@ package TDM
 
 import "strconv"
 
-/// https://www.sanaregistry.org/r/celestial_body_reference_frames/
-/// Celestial Reference Frames (SANA registry 1.3.112.4.57.2)
+// / https://www.sanaregistry.org/r/celestial_body_reference_frames/
+// / Celestial Reference Frames (SANA registry 1.3.112.4.57.2)
 type CelestialFrame int8
 
 const (
 	/// OID: 1.3.112.4.57.2.9
 	/// Inertial Earth-centered frame aligned with Earth's center of mass.
-	CelestialFrameGCRF        CelestialFrame = 0
+	CelestialFrameGCRF CelestialFrame = 0
 	/// OID: 1.3.112.4.57.2.11
 	/// International Celestial Reference Frame based on distant quasars.
-	CelestialFrameICRF        CelestialFrame = 1
+	CelestialFrameICRF CelestialFrame = 1
 	/// OID: 1.3.112.4.57.2.14
 	/// Classical J2000 inertial frame defined at epoch J2000.0.
-	CelestialFrameJ2000       CelestialFrame = 2
+	CelestialFrameJ2000 CelestialFrame = 2
 	/// OID: 1.3.112.4.57.2.15
 	/// Updated J2000 frame using IAU2000A precession-nutation models.
-	CelestialFrameJ2000A      CelestialFrame = 3
+	CelestialFrameJ2000A CelestialFrame = 3
 	/// OID: 1.3.112.4.57.2.7
 	/// Earth Mean Equator frame at epoch J2000 used in orbit determination.
-	CelestialFrameEME2000     CelestialFrame = 4
+	CelestialFrameEME2000 CelestialFrame = 4
 	/// OID: 1.3.112.4.57.2.25
 	/// True Equator Mean Equinox of Date frame for satellite tracking.
-	CelestialFrameTEMEOFDATE  CelestialFrame = 5
+	CelestialFrameTEMEOFDATE CelestialFrame = 5
 	/// OID: 1.3.112.4.57.2.10
 	/// Greenwich True of Date: Earth rotation relative to celestial reference.
-	CelestialFrameGTOD        CelestialFrame = 6
+	CelestialFrameGTOD CelestialFrame = 6
 	/// OID: 1.3.112.4.57.2.4
 	/// Celestial Intermediate Reference System based on CIP and CIO.
-	CelestialFrameCIRS        CelestialFrame = 7
+	CelestialFrameCIRS CelestialFrame = 7
 	/// OID: 1.3.112.4.57.2.18
 	/// Mean of Date (MOD) Earth frame using IAU1976 precession.
-	CelestialFrameMOD_EARTH   CelestialFrame = 8
+	CelestialFrameMOD_EARTH CelestialFrame = 8
 	/// OID: 1.3.112.4.57.2.17
 	/// Mean of Date (MOD) celestial body frame evaluated at each epoch.
-	CelestialFrameMOD_CB      CelestialFrame = 9
+	CelestialFrameMOD_CB CelestialFrame = 9
 	/// OID: 1.3.112.4.57.2.19
 	/// Mean of Date (MOD) Moon frame evaluated at each epoch.
-	CelestialFrameMOD_MOON    CelestialFrame = 10
+	CelestialFrameMOD_MOON CelestialFrame = 10
 	/// OID: 1.3.112.4.57.2.29
 	/// True of Date (TOD) Earth frame with polar motion included.
-	CelestialFrameTOD_EARTH   CelestialFrame = 11
+	CelestialFrameTOD_EARTH CelestialFrame = 11
 	/// OID: 1.3.112.4.57.2.28
 	/// True of Date (TOD) celestial body frame.
-	CelestialFrameTOD_CB      CelestialFrame = 12
+	CelestialFrameTOD_CB CelestialFrame = 12
 	/// OID: 1.3.112.4.57.2.30
 	/// True of Date (TOD) Moon frame.
-	CelestialFrameTOD_MOON    CelestialFrame = 13
+	CelestialFrameTOD_MOON CelestialFrame = 13
 	/// OID: 1.3.112.4.57.2.32
 	/// True of Epoch (TOE) Earth frame at specific epoch.
-	CelestialFrameTOE_EARTH   CelestialFrame = 14
+	CelestialFrameTOE_EARTH CelestialFrame = 14
 	/// OID: 1.3.112.4.57.2.31
 	/// True of Epoch (TOE) celestial body frame at specific epoch.
-	CelestialFrameTOE_CB      CelestialFrame = 15
+	CelestialFrameTOE_CB CelestialFrame = 15
 	/// OID: 1.3.112.4.57.2.33
 	/// True of Epoch (TOE) Moon frame at specific epoch.
-	CelestialFrameTOE_MOON    CelestialFrame = 16
+	CelestialFrameTOE_MOON CelestialFrame = 16
 	/// OID: 1.3.112.4.57.2.13
 	/// International Terrestrial Reference Frame 2000 (Earth-fixed).
-	CelestialFrameITRF2000    CelestialFrame = 17
+	CelestialFrameITRF2000 CelestialFrame = 17
 	/// OID: 1.3.112.4.57.2.13
 	/// International Terrestrial Reference Frame 1993 (Earth-fixed).
-	CelestialFrameITRF93      CelestialFrame = 18
+	CelestialFrameITRF93 CelestialFrame = 18
 	/// OID: 1.3.112.4.57.2.13
 	/// International Terrestrial Reference Frame 1997 (Earth-fixed).
-	CelestialFrameITRF97      CelestialFrame = 19
+	CelestialFrameITRF97 CelestialFrame = 19
 	/// OID: 1.3.112.4.57.2.6
 	/// Earth-Fixed Geocentric frame using geodetic coordinates.
-	CelestialFrameEFG         CelestialFrame = 20
+	CelestialFrameEFG CelestialFrame = 20
 	/// OID: 1.3.112.4.57.2.8
 	/// Fixed frame of a celestial body.
-	CelestialFrameFIXED_CB    CelestialFrame = 21
+	CelestialFrameFIXED_CB CelestialFrame = 21
 	/// OID: 1.3.112.4.57.2.39
 	/// Fixed Earth frame aligned with WGS84 ellipsoid.
 	CelestialFrameFIXED_EARTH CelestialFrame = 22
 	/// WGS84 Earth-fixed terrestrial system.
-	CelestialFrameWGS84       CelestialFrame = 23
+	CelestialFrameWGS84 CelestialFrame = 23
 	/// OID: 1.3.112.4.57.2.5
 	/// Dynamic Terrestrial Reference Frame for a given year (DTRFYYYY).
-	CelestialFrameDTRFYYYY    CelestialFrame = 24
+	CelestialFrameDTRFYYYY CelestialFrame = 24
 	/// OID: 1.3.112.4.57.2.2
 	/// Mean Earth Equator and Equinox (ALIGN_EARTH) frame.
 	CelestialFrameALIGN_EARTH CelestialFrame = 25
 	/// OID: 1.3.112.4.57.2.1
 	/// Mean Central Body Equator and Equinox (ALIGN_CB) frame.
-	CelestialFrameALIGN_CB    CelestialFrame = 26
+	CelestialFrameALIGN_CB CelestialFrame = 26
 	/// OID: 1.3.112.4.57.2.3
 	/// Classical Besselian 1950 equator and equinox frame.
-	CelestialFrameB1950       CelestialFrame = 27
+	CelestialFrameB1950 CelestialFrame = 27
 )
 
 var EnumNamesCelestialFrame = map[CelestialFrame]string{

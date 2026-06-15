@@ -6,8 +6,8 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Compile request — one shader source (typically a fragment of a
-/// larger stage) plus metadata for the host splice.
+// / Compile request — one shader source (typically a fragment of a
+// / larger stage) plus metadata for the host splice.
 type SHWCompileRequest struct {
 	_tab flatbuffers.Table
 }
@@ -43,7 +43,7 @@ func (rcv *SHWCompileRequest) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Logical shader name (used in logs and uniform prefixing).
+// / Logical shader name (used in logs and uniform prefixing).
 func (rcv *SHWCompileRequest) SHADER_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -56,8 +56,8 @@ func (rcv *SHWCompileRequest) ShaderName() []byte {
 	return rcv.SHADER_NAME()
 }
 
-/// Logical shader name (used in logs and uniform prefixing).
-/// Target GLSL stage.
+// / Logical shader name (used in logs and uniform prefixing).
+// / Target GLSL stage.
 func (rcv *SHWCompileRequest) SHADER_STAGE() glslStage {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -70,7 +70,7 @@ func (rcv *SHWCompileRequest) ShaderStage() glslStage {
 	return rcv.SHADER_STAGE()
 }
 
-/// Target GLSL stage.
+// / Target GLSL stage.
 func (rcv *SHWCompileRequest) MutateSHADER_STAGE(n glslStage) bool {
 	return rcv._tab.MutateByteSlot(6, byte(n))
 }
@@ -79,7 +79,7 @@ func (rcv *SHWCompileRequest) MutateShaderStage(n glslStage) bool {
 	return rcv.MutateSHADER_STAGE(n)
 }
 
-/// Intended injection point in the host pipeline.
+// / Intended injection point in the host pipeline.
 func (rcv *SHWCompileRequest) SHADER_INJECTION_POINT() shaderHookPoint {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -92,7 +92,7 @@ func (rcv *SHWCompileRequest) ShaderInjectionPoint() shaderHookPoint {
 	return rcv.SHADER_INJECTION_POINT()
 }
 
-/// Intended injection point in the host pipeline.
+// / Intended injection point in the host pipeline.
 func (rcv *SHWCompileRequest) MutateSHADER_INJECTION_POINT(n shaderHookPoint) bool {
 	return rcv._tab.MutateByteSlot(8, byte(n))
 }
@@ -101,7 +101,7 @@ func (rcv *SHWCompileRequest) MutateShaderInjectionPoint(n shaderHookPoint) bool
 	return rcv.MutateSHADER_INJECTION_POINT(n)
 }
 
-/// GLSL source (or preprocessed chunk).
+// / GLSL source (or preprocessed chunk).
 func (rcv *SHWCompileRequest) SHADER_SOURCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -114,8 +114,8 @@ func (rcv *SHWCompileRequest) ShaderSource() []byte {
 	return rcv.SHADER_SOURCE()
 }
 
-/// GLSL source (or preprocessed chunk).
-/// GLSL version string (for example `300 es`).
+// / GLSL source (or preprocessed chunk).
+// / GLSL version string (for example `300 es`).
 func (rcv *SHWCompileRequest) GLSL_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -128,8 +128,8 @@ func (rcv *SHWCompileRequest) GlslVersion() []byte {
 	return rcv.GLSL_VERSION()
 }
 
-/// GLSL version string (for example `300 es`).
-/// Expected uniforms declared by the source.
+// / GLSL version string (for example `300 es`).
+// / Expected uniforms declared by the source.
 func (rcv *SHWCompileRequest) SHADER_UNIFORMS(obj *SHWUniform, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -161,7 +161,7 @@ func (rcv *SHWCompileRequest) ShaderUniformsLength() int {
 	return rcv.SHADER_UNIFORMSLength()
 }
 
-/// Expected uniforms declared by the source.
+// / Expected uniforms declared by the source.
 func SHWCompileRequestStart(builder *flatbuffers.Builder) {
 	builder.StartObject(6)
 }

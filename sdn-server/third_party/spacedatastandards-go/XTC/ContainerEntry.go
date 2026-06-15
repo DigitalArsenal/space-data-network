@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Container entry list item (union of entry types)
+// / Container entry list item (union of entry types)
 type ContainerEntry struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ContainerEntry) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Parameter reference entry
+// / Parameter reference entry
 func (rcv *ContainerEntry) PARAMETER_REF_ENTRY(obj *ParameterRefEntry) *ParameterRefEntry {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *ContainerEntry) ParameterRefEntry(obj *ParameterRefEntry) *ParameterR
 	return rcv.PARAMETER_REF_ENTRY(obj)
 }
 
-/// Parameter reference entry
-/// Container reference entry
+// / Parameter reference entry
+// / Container reference entry
 func (rcv *ContainerEntry) CONTAINER_REF_ENTRY(obj *ContainerRefEntry) *ContainerRefEntry {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -79,8 +79,8 @@ func (rcv *ContainerEntry) ContainerRefEntry(obj *ContainerRefEntry) *ContainerR
 	return rcv.CONTAINER_REF_ENTRY(obj)
 }
 
-/// Container reference entry
-/// Fixed value entry
+// / Container reference entry
+// / Fixed value entry
 func (rcv *ContainerEntry) FIXED_VALUE_ENTRY(obj *FixedValueEntry) *FixedValueEntry {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -98,8 +98,8 @@ func (rcv *ContainerEntry) FixedValueEntry(obj *FixedValueEntry) *FixedValueEntr
 	return rcv.FIXED_VALUE_ENTRY(obj)
 }
 
-/// Fixed value entry
-/// Array parameter reference entry
+// / Fixed value entry
+// / Array parameter reference entry
 func (rcv *ContainerEntry) ARRAY_PARAMETER_REF_ENTRY(obj *ArrayParameterRefEntry) *ArrayParameterRefEntry {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,7 +117,7 @@ func (rcv *ContainerEntry) ArrayParameterRefEntry(obj *ArrayParameterRefEntry) *
 	return rcv.ARRAY_PARAMETER_REF_ENTRY(obj)
 }
 
-/// Array parameter reference entry
+// / Array parameter reference entry
 func ContainerEntryStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

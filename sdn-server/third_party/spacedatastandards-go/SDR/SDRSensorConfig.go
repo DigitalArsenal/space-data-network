@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Generic sensor configuration.
+// / Generic sensor configuration.
 type SDRSensorConfig struct {
 	_tab flatbuffers.Table
 }
@@ -62,7 +62,7 @@ func (rcv *SDRSensorConfig) MutateCategory(n sensorCategory) bool {
 	return rcv.MutateCATEGORY(n)
 }
 
-/// Sensor position in ECEF (meters) — X.
+// / Sensor position in ECEF (meters) — X.
 func (rcv *SDRSensorConfig) POS_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -75,7 +75,7 @@ func (rcv *SDRSensorConfig) PosX() float64 {
 	return rcv.POS_X()
 }
 
-/// Sensor position in ECEF (meters) — X.
+// / Sensor position in ECEF (meters) — X.
 func (rcv *SDRSensorConfig) MutatePOS_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -84,7 +84,7 @@ func (rcv *SDRSensorConfig) MutatePosX(n float64) bool {
 	return rcv.MutatePOS_X(n)
 }
 
-/// Sensor position in ECEF (meters) — Y.
+// / Sensor position in ECEF (meters) — Y.
 func (rcv *SDRSensorConfig) POS_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *SDRSensorConfig) PosY() float64 {
 	return rcv.POS_Y()
 }
 
-/// Sensor position in ECEF (meters) — Y.
+// / Sensor position in ECEF (meters) — Y.
 func (rcv *SDRSensorConfig) MutatePOS_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -106,7 +106,7 @@ func (rcv *SDRSensorConfig) MutatePosY(n float64) bool {
 	return rcv.MutatePOS_Y(n)
 }
 
-/// Sensor position in ECEF (meters) — Z.
+// / Sensor position in ECEF (meters) — Z.
 func (rcv *SDRSensorConfig) POS_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -119,7 +119,7 @@ func (rcv *SDRSensorConfig) PosZ() float64 {
 	return rcv.POS_Z()
 }
 
-/// Sensor position in ECEF (meters) — Z.
+// / Sensor position in ECEF (meters) — Z.
 func (rcv *SDRSensorConfig) MutatePOS_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -128,7 +128,7 @@ func (rcv *SDRSensorConfig) MutatePosZ(n float64) bool {
 	return rcv.MutatePOS_Z(n)
 }
 
-/// Sensor orientation as quaternion (W, X, Y, Z).
+// / Sensor orientation as quaternion (W, X, Y, Z).
 func (rcv *SDRSensorConfig) ORIENT_W() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -141,7 +141,7 @@ func (rcv *SDRSensorConfig) OrientW() float64 {
 	return rcv.ORIENT_W()
 }
 
-/// Sensor orientation as quaternion (W, X, Y, Z).
+// / Sensor orientation as quaternion (W, X, Y, Z).
 func (rcv *SDRSensorConfig) MutateORIENT_W(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -210,7 +210,7 @@ func (rcv *SDRSensorConfig) MutateOrientZ(n float64) bool {
 	return rcv.MutateORIENT_Z(n)
 }
 
-/// Radar-specific config when CATEGORY == RADAR.
+// / Radar-specific config when CATEGORY == RADAR.
 func (rcv *SDRSensorConfig) RADAR(obj *SDRRadarConfig) *SDRRadarConfig {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -228,8 +228,8 @@ func (rcv *SDRSensorConfig) Radar(obj *SDRRadarConfig) *SDRRadarConfig {
 	return rcv.RADAR(obj)
 }
 
-/// Radar-specific config when CATEGORY == RADAR.
-/// Operational flags.
+// / Radar-specific config when CATEGORY == RADAR.
+// / Operational flags.
 func (rcv *SDRSensorConfig) FLAGS() sensorOperationalFlags {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -242,7 +242,7 @@ func (rcv *SDRSensorConfig) Flags() sensorOperationalFlags {
 	return rcv.FLAGS()
 }
 
-/// Operational flags.
+// / Operational flags.
 func (rcv *SDRSensorConfig) MutateFLAGS(n sensorOperationalFlags) bool {
 	return rcv._tab.MutateUint32Slot(22, uint32(n))
 }

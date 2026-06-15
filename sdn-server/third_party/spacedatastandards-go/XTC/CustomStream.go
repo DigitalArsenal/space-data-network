@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Custom stream
+// / Custom stream
 type CustomStream struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CustomStream) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Stream name
+// / Stream name
 func (rcv *CustomStream) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *CustomStream) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Stream name
-/// Short description
+// / Stream name
+// / Short description
 func (rcv *CustomStream) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *CustomStream) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-/// Short description
-/// Algorithm reference for parsing
+// / Short description
+// / Algorithm reference for parsing
 func (rcv *CustomStream) ALGORITHM_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *CustomStream) AlgorithmRef() []byte {
 	return rcv.ALGORITHM_REF()
 }
 
-/// Algorithm reference for parsing
+// / Algorithm reference for parsing
 func CustomStreamStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

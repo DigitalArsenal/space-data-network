@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Spline calibrator - piecewise linear interpolation
+// / Spline calibrator - piecewise linear interpolation
 type SplineCalibrator struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *SplineCalibrator) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Spline points ordered by raw value
+// / Spline points ordered by raw value
 func (rcv *SplineCalibrator) POINTS(obj *SplinePoint, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *SplineCalibrator) PointsLength() int {
 	return rcv.POINTSLength()
 }
 
-/// Spline points ordered by raw value
-/// Extrapolate below minimum point
+// / Spline points ordered by raw value
+// / Extrapolate below minimum point
 func (rcv *SplineCalibrator) EXTRAPOLATE_LOW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -88,7 +88,7 @@ func (rcv *SplineCalibrator) ExtrapolateLow() bool {
 	return rcv.EXTRAPOLATE_LOW()
 }
 
-/// Extrapolate below minimum point
+// / Extrapolate below minimum point
 func (rcv *SplineCalibrator) MutateEXTRAPOLATE_LOW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(6, n)
 }
@@ -97,7 +97,7 @@ func (rcv *SplineCalibrator) MutateExtrapolateLow(n bool) bool {
 	return rcv.MutateEXTRAPOLATE_LOW(n)
 }
 
-/// Extrapolate above maximum point
+// / Extrapolate above maximum point
 func (rcv *SplineCalibrator) EXTRAPOLATE_HIGH() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -110,7 +110,7 @@ func (rcv *SplineCalibrator) ExtrapolateHigh() bool {
 	return rcv.EXTRAPOLATE_HIGH()
 }
 
-/// Extrapolate above maximum point
+// / Extrapolate above maximum point
 func (rcv *SplineCalibrator) MutateEXTRAPOLATE_HIGH(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }

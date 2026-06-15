@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Constructive composition of two SDFs.
+// / Constructive composition of two SDFs.
 type SDFComposition struct {
 	_tab flatbuffers.Table
 }
@@ -62,7 +62,7 @@ func (rcv *SDFComposition) MutateOperation(n sdfOperation) bool {
 	return rcv.MutateOPERATION(n)
 }
 
-/// First operand (index into SDF.COMPONENTS[]).
+// / First operand (index into SDF.COMPONENTS[]).
 func (rcv *SDFComposition) OPERAND_A() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -75,7 +75,7 @@ func (rcv *SDFComposition) OperandA() uint32 {
 	return rcv.OPERAND_A()
 }
 
-/// First operand (index into SDF.COMPONENTS[]).
+// / First operand (index into SDF.COMPONENTS[]).
 func (rcv *SDFComposition) MutateOPERAND_A(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -84,7 +84,7 @@ func (rcv *SDFComposition) MutateOperandA(n uint32) bool {
 	return rcv.MutateOPERAND_A(n)
 }
 
-/// Second operand (index into SDF.COMPONENTS[]).
+// / Second operand (index into SDF.COMPONENTS[]).
 func (rcv *SDFComposition) OPERAND_B() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *SDFComposition) OperandB() uint32 {
 	return rcv.OPERAND_B()
 }
 
-/// Second operand (index into SDF.COMPONENTS[]).
+// / Second operand (index into SDF.COMPONENTS[]).
 func (rcv *SDFComposition) MutateOPERAND_B(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -106,7 +106,7 @@ func (rcv *SDFComposition) MutateOperandB(n uint32) bool {
 	return rcv.MutateOPERAND_B(n)
 }
 
-/// Blend radius for smooth operations.
+// / Blend radius for smooth operations.
 func (rcv *SDFComposition) BLEND_RADIUS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -119,7 +119,7 @@ func (rcv *SDFComposition) BlendRadius() float64 {
 	return rcv.BLEND_RADIUS()
 }
 
-/// Blend radius for smooth operations.
+// / Blend radius for smooth operations.
 func (rcv *SDFComposition) MutateBLEND_RADIUS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }

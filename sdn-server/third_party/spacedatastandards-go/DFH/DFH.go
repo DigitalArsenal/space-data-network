@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// GEO Drift History
+// / GEO Drift History
 type DFH struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *DFH) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique identifier
+// / Unique identifier
 func (rcv *DFH) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *DFH) Id() []byte {
 	return rcv.ID()
 }
 
-/// Unique identifier
-/// Satellite number
+// / Unique identifier
+// / Satellite number
 func (rcv *DFH) SAT_NO() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,7 +81,7 @@ func (rcv *DFH) SatNo() uint32 {
 	return rcv.SAT_NO()
 }
 
-/// Satellite number
+// / Satellite number
 func (rcv *DFH) MutateSAT_NO(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -90,7 +90,7 @@ func (rcv *DFH) MutateSatNo(n uint32) bool {
 	return rcv.MutateSAT_NO(n)
 }
 
-/// Object designator
+// / Object designator
 func (rcv *DFH) OBJECT_DESIGNATOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,8 +103,8 @@ func (rcv *DFH) ObjectDesignator() []byte {
 	return rcv.OBJECT_DESIGNATOR()
 }
 
-/// Object designator
-/// Object common name
+// / Object designator
+// / Object common name
 func (rcv *DFH) OBJECT_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *DFH) ObjectName() []byte {
 	return rcv.OBJECT_NAME()
 }
 
-/// Object common name
-/// History start time (ISO 8601)
+// / Object common name
+// / History start time (ISO 8601)
 func (rcv *DFH) START_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *DFH) StartTime() []byte {
 	return rcv.START_TIME()
 }
 
-/// History start time (ISO 8601)
-/// History end time (ISO 8601)
+// / History start time (ISO 8601)
+// / History end time (ISO 8601)
 func (rcv *DFH) END_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,8 +145,8 @@ func (rcv *DFH) EndTime() []byte {
 	return rcv.END_TIME()
 }
 
-/// History end time (ISO 8601)
-/// Current effective until date (ISO 8601)
+// / History end time (ISO 8601)
+// / Current effective until date (ISO 8601)
 func (rcv *DFH) EFFECTIVE_UNTIL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,8 +159,8 @@ func (rcv *DFH) EffectiveUntil() []byte {
 	return rcv.EFFECTIVE_UNTIL()
 }
 
-/// Current effective until date (ISO 8601)
-/// Current drift rate in degrees/day
+// / Current effective until date (ISO 8601)
+// / Current drift rate in degrees/day
 func (rcv *DFH) DRIFT_RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -173,7 +173,7 @@ func (rcv *DFH) DriftRate() float64 {
 	return rcv.DRIFT_RATE()
 }
 
-/// Current drift rate in degrees/day
+// / Current drift rate in degrees/day
 func (rcv *DFH) MutateDRIFT_RATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -182,7 +182,7 @@ func (rcv *DFH) MutateDriftRate(n float64) bool {
 	return rcv.MutateDRIFT_RATE(n)
 }
 
-/// Current mean longitude in degrees East
+// / Current mean longitude in degrees East
 func (rcv *DFH) MEAN_LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -195,7 +195,7 @@ func (rcv *DFH) MeanLongitude() float64 {
 	return rcv.MEAN_LONGITUDE()
 }
 
-/// Current mean longitude in degrees East
+// / Current mean longitude in degrees East
 func (rcv *DFH) MutateMEAN_LONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -204,7 +204,7 @@ func (rcv *DFH) MutateMeanLongitude(n float64) bool {
 	return rcv.MutateMEAN_LONGITUDE(n)
 }
 
-/// Longitude slot center in degrees East (if station-keeping)
+// / Longitude slot center in degrees East (if station-keeping)
 func (rcv *DFH) SLOT_CENTER() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -217,7 +217,7 @@ func (rcv *DFH) SlotCenter() float64 {
 	return rcv.SLOT_CENTER()
 }
 
-/// Longitude slot center in degrees East (if station-keeping)
+// / Longitude slot center in degrees East (if station-keeping)
 func (rcv *DFH) MutateSLOT_CENTER(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -226,7 +226,7 @@ func (rcv *DFH) MutateSlotCenter(n float64) bool {
 	return rcv.MutateSLOT_CENTER(n)
 }
 
-/// Longitude slot half-width in degrees
+// / Longitude slot half-width in degrees
 func (rcv *DFH) SLOT_HALF_WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -239,7 +239,7 @@ func (rcv *DFH) SlotHalfWidth() float64 {
 	return rcv.SLOT_HALF_WIDTH()
 }
 
-/// Longitude slot half-width in degrees
+// / Longitude slot half-width in degrees
 func (rcv *DFH) MutateSLOT_HALF_WIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -248,7 +248,7 @@ func (rcv *DFH) MutateSlotHalfWidth(n float64) bool {
 	return rcv.MutateSLOT_HALF_WIDTH(n)
 }
 
-/// Whether object is actively station-keeping
+// / Whether object is actively station-keeping
 func (rcv *DFH) STATION_KEEPING() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -261,7 +261,7 @@ func (rcv *DFH) StationKeeping() bool {
 	return rcv.STATION_KEEPING()
 }
 
-/// Whether object is actively station-keeping
+// / Whether object is actively station-keeping
 func (rcv *DFH) MutateSTATION_KEEPING(n bool) bool {
 	return rcv._tab.MutateBoolSlot(26, n)
 }
@@ -270,7 +270,7 @@ func (rcv *DFH) MutateStationKeeping(n bool) bool {
 	return rcv.MutateSTATION_KEEPING(n)
 }
 
-/// Historical drift records
+// / Historical drift records
 func (rcv *DFH) RECORDS(obj *driftRecord, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -302,8 +302,8 @@ func (rcv *DFH) RecordsLength() int {
 	return rcv.RECORDSLength()
 }
 
-/// Historical drift records
-/// Number of records in history
+// / Historical drift records
+// / Number of records in history
 func (rcv *DFH) NUM_RECORDS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -316,7 +316,7 @@ func (rcv *DFH) NumRecords() uint32 {
 	return rcv.NUM_RECORDS()
 }
 
-/// Number of records in history
+// / Number of records in history
 func (rcv *DFH) MutateNUM_RECORDS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(30, n)
 }
@@ -325,7 +325,7 @@ func (rcv *DFH) MutateNumRecords(n uint32) bool {
 	return rcv.MutateNUM_RECORDS(n)
 }
 
-/// Additional notes
+// / Additional notes
 func (rcv *DFH) NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -338,7 +338,7 @@ func (rcv *DFH) Notes() []byte {
 	return rcv.NOTES()
 }
 
-/// Additional notes
+// / Additional notes
 func DFHStart(builder *flatbuffers.Builder) {
 	builder.StartObject(15)
 }

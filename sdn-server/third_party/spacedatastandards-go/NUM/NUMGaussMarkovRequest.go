@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Request for one Basilisk-compatible Gauss-Markov random sequence.
+// / Request for one Basilisk-compatible Gauss-Markov random sequence.
 type NUMGaussMarkovRequest struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *NUMGaussMarkovRequest) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// GAUSS_MARKOV_SEQUENCE.
+// / GAUSS_MARKOV_SEQUENCE.
 func (rcv *NUMGaussMarkovRequest) OPERATION() numOperationCode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *NUMGaussMarkovRequest) Operation() numOperationCode {
 	return rcv.OPERATION()
 }
 
-/// GAUSS_MARKOV_SEQUENCE.
+// / GAUSS_MARKOV_SEQUENCE.
 func (rcv *NUMGaussMarkovRequest) MutateOPERATION(n numOperationCode) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *NUMGaussMarkovRequest) MutateOperation(n numOperationCode) bool {
 	return rcv.MutateOPERATION(n)
 }
 
-/// Number of scalar states per sample.
+// / Number of scalar states per sample.
 func (rcv *NUMGaussMarkovRequest) DIMENSION() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *NUMGaussMarkovRequest) Dimension() uint32 {
 	return rcv.DIMENSION()
 }
 
-/// Number of scalar states per sample.
+// / Number of scalar states per sample.
 func (rcv *NUMGaussMarkovRequest) MutateDIMENSION(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *NUMGaussMarkovRequest) MutateDimension(n uint32) bool {
 	return rcv.MutateDIMENSION(n)
 }
 
-/// Number of post-warmup samples used in the result statistics.
+// / Number of post-warmup samples used in the result statistics.
 func (rcv *NUMGaussMarkovRequest) SAMPLE_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *NUMGaussMarkovRequest) SampleCount() uint32 {
 	return rcv.SAMPLE_COUNT()
 }
 
-/// Number of post-warmup samples used in the result statistics.
+// / Number of post-warmup samples used in the result statistics.
 func (rcv *NUMGaussMarkovRequest) MutateSAMPLE_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *NUMGaussMarkovRequest) MutateSampleCount(n uint32) bool {
 	return rcv.MutateSAMPLE_COUNT(n)
 }
 
-/// Number of initial state propagations excluded from the result statistics.
+// / Number of initial state propagations excluded from the result statistics.
 func (rcv *NUMGaussMarkovRequest) WARMUP_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *NUMGaussMarkovRequest) WarmupCount() uint32 {
 	return rcv.WARMUP_COUNT()
 }
 
-/// Number of initial state propagations excluded from the result statistics.
+// / Number of initial state propagations excluded from the result statistics.
 func (rcv *NUMGaussMarkovRequest) MutateWARMUP_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *NUMGaussMarkovRequest) MutateWarmupCount(n uint32) bool {
 	return rcv.MutateWARMUP_COUNT(n)
 }
 
-/// Seed for the Basilisk-compatible standard normal generator.
+// / Seed for the Basilisk-compatible standard normal generator.
 func (rcv *NUMGaussMarkovRequest) RNG_SEED() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,7 +143,7 @@ func (rcv *NUMGaussMarkovRequest) RngSeed() uint32 {
 	return rcv.RNG_SEED()
 }
 
-/// Seed for the Basilisk-compatible standard normal generator.
+// / Seed for the Basilisk-compatible standard normal generator.
 func (rcv *NUMGaussMarkovRequest) MutateRNG_SEED(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(12, n)
 }
@@ -152,7 +152,7 @@ func (rcv *NUMGaussMarkovRequest) MutateRngSeed(n uint32) bool {
 	return rcv.MutateRNG_SEED(n)
 }
 
-/// Row-major DIMENSION x DIMENSION state propagation matrix.
+// / Row-major DIMENSION x DIMENSION state propagation matrix.
 func (rcv *NUMGaussMarkovRequest) PROPAGATION_MATRIX(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -178,7 +178,7 @@ func (rcv *NUMGaussMarkovRequest) PropagationMatrixLength() int {
 	return rcv.PROPAGATION_MATRIXLength()
 }
 
-/// Row-major DIMENSION x DIMENSION state propagation matrix.
+// / Row-major DIMENSION x DIMENSION state propagation matrix.
 func (rcv *NUMGaussMarkovRequest) MutatePROPAGATION_MATRIX(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -192,7 +192,7 @@ func (rcv *NUMGaussMarkovRequest) MutatePropagationMatrix(j int, n float64) bool
 	return rcv.MutatePROPAGATION_MATRIX(j, n)
 }
 
-/// Row-major DIMENSION x DIMENSION standard-normal noise mixing matrix.
+// / Row-major DIMENSION x DIMENSION standard-normal noise mixing matrix.
 func (rcv *NUMGaussMarkovRequest) NOISE_MATRIX(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -218,7 +218,7 @@ func (rcv *NUMGaussMarkovRequest) NoiseMatrixLength() int {
 	return rcv.NOISE_MATRIXLength()
 }
 
-/// Row-major DIMENSION x DIMENSION standard-normal noise mixing matrix.
+// / Row-major DIMENSION x DIMENSION standard-normal noise mixing matrix.
 func (rcv *NUMGaussMarkovRequest) MutateNOISE_MATRIX(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -232,7 +232,7 @@ func (rcv *NUMGaussMarkovRequest) MutateNoiseMatrix(j int, n float64) bool {
 	return rcv.MutateNOISE_MATRIX(j, n)
 }
 
-/// Per-state symmetric bounds. Values <= 0 disable clamping for that state.
+// / Per-state symmetric bounds. Values <= 0 disable clamping for that state.
 func (rcv *NUMGaussMarkovRequest) STATE_BOUNDS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -258,7 +258,7 @@ func (rcv *NUMGaussMarkovRequest) StateBoundsLength() int {
 	return rcv.STATE_BOUNDSLength()
 }
 
-/// Per-state symmetric bounds. Values <= 0 disable clamping for that state.
+// / Per-state symmetric bounds. Values <= 0 disable clamping for that state.
 func (rcv *NUMGaussMarkovRequest) MutateSTATE_BOUNDS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -272,7 +272,7 @@ func (rcv *NUMGaussMarkovRequest) MutateStateBounds(j int, n float64) bool {
 	return rcv.MutateSTATE_BOUNDS(j, n)
 }
 
-/// When true, emit flattened sample-major states in SAMPLES.
+// / When true, emit flattened sample-major states in SAMPLES.
 func (rcv *NUMGaussMarkovRequest) EMIT_SAMPLES() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -285,7 +285,7 @@ func (rcv *NUMGaussMarkovRequest) EmitSamples() bool {
 	return rcv.EMIT_SAMPLES()
 }
 
-/// When true, emit flattened sample-major states in SAMPLES.
+// / When true, emit flattened sample-major states in SAMPLES.
 func (rcv *NUMGaussMarkovRequest) MutateEMIT_SAMPLES(n bool) bool {
 	return rcv._tab.MutateBoolSlot(20, n)
 }
@@ -294,7 +294,7 @@ func (rcv *NUMGaussMarkovRequest) MutateEmitSamples(n bool) bool {
 	return rcv.MutateEMIT_SAMPLES(n)
 }
 
-/// Optional trace/correlation identifier.
+// / Optional trace/correlation identifier.
 func (rcv *NUMGaussMarkovRequest) TRACE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -307,7 +307,7 @@ func (rcv *NUMGaussMarkovRequest) TraceId() []byte {
 	return rcv.TRACE_ID()
 }
 
-/// Optional trace/correlation identifier.
+// / Optional trace/correlation identifier.
 func NUMGaussMarkovRequestStart(builder *flatbuffers.Builder) {
 	builder.StartObject(10)
 }

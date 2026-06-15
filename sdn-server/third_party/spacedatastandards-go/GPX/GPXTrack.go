@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Track (ordered list of track segments)
+// / Track (ordered list of track segments)
 type GPXTrack struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *GPXTrack) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Track name
+// / Track name
 func (rcv *GPXTrack) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *GPXTrack) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Track name
-/// Comment
+// / Track name
+// / Comment
 func (rcv *GPXTrack) COMMENT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *GPXTrack) Comment() []byte {
 	return rcv.COMMENT()
 }
 
-/// Comment
-/// Description
+// / Comment
+// / Description
 func (rcv *GPXTrack) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *GPXTrack) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-/// Description
-/// Source of data
+// / Description
+// / Source of data
 func (rcv *GPXTrack) SOURCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *GPXTrack) Source() []byte {
 	return rcv.SOURCE()
 }
 
-/// Source of data
-/// Links to additional information
+// / Source of data
+// / Links to additional information
 func (rcv *GPXTrack) LINKS(obj *GPXLink, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -130,8 +130,8 @@ func (rcv *GPXTrack) LinksLength() int {
 	return rcv.LINKSLength()
 }
 
-/// Links to additional information
-/// Track number
+// / Links to additional information
+// / Track number
 func (rcv *GPXTrack) NUMBER() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -144,7 +144,7 @@ func (rcv *GPXTrack) Number() uint32 {
 	return rcv.NUMBER()
 }
 
-/// Track number
+// / Track number
 func (rcv *GPXTrack) MutateNUMBER(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(14, n)
 }
@@ -153,7 +153,7 @@ func (rcv *GPXTrack) MutateNumber(n uint32) bool {
 	return rcv.MutateNUMBER(n)
 }
 
-/// Type/category
+// / Type/category
 func (rcv *GPXTrack) TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -166,8 +166,8 @@ func (rcv *GPXTrack) Type() []byte {
 	return rcv.TYPE()
 }
 
-/// Type/category
-/// Track segments
+// / Type/category
+// / Track segments
 func (rcv *GPXTrack) SEGMENTS(obj *GPXTrackSegment, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -199,7 +199,7 @@ func (rcv *GPXTrack) SegmentsLength() int {
 	return rcv.SEGMENTSLength()
 }
 
-/// Track segments
+// / Track segments
 func GPXTrackStart(builder *flatbuffers.Builder) {
 	builder.StartObject(8)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Reentry Evaluation Message
+// / Reentry Evaluation Message
 type REM struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *REM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Producer-defined message identifier.
+// / Producer-defined message identifier.
 func (rcv *REM) MESSAGE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *REM) MessageId() []byte {
 	return rcv.MESSAGE_ID()
 }
 
-/// Producer-defined message identifier.
-/// Message creation date in ISO 8601 UTC format.
+// / Producer-defined message identifier.
+// / Message creation date in ISO 8601 UTC format.
 func (rcv *REM) CREATION_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *REM) CreationDate() []byte {
 	return rcv.CREATION_DATE()
 }
 
-/// Message creation date in ISO 8601 UTC format.
-/// Creating agency, application, or service.
+// / Message creation date in ISO 8601 UTC format.
+// / Creating agency, application, or service.
 func (rcv *REM) ORIGINATOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *REM) Originator() []byte {
 	return rcv.ORIGINATOR()
 }
 
-/// Creating agency, application, or service.
-/// Object name.
+// / Creating agency, application, or service.
+// / Object name.
 func (rcv *REM) OBJECT_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *REM) ObjectName() []byte {
 	return rcv.OBJECT_NAME()
 }
 
-/// Object name.
-/// International designator or producer object identifier.
+// / Object name.
+// / International designator or producer object identifier.
 func (rcv *REM) OBJECT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *REM) ObjectId() []byte {
 	return rcv.OBJECT_ID()
 }
 
-/// International designator or producer object identifier.
-/// Satellite catalog number.
+// / International designator or producer object identifier.
+// / Satellite catalog number.
 func (rcv *REM) NORAD_CAT_ID() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,7 +137,7 @@ func (rcv *REM) NoradCatId() uint32 {
 	return rcv.NORAD_CAT_ID()
 }
 
-/// Satellite catalog number.
+// / Satellite catalog number.
 func (rcv *REM) MutateNORAD_CAT_ID(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(14, n)
 }
@@ -146,7 +146,7 @@ func (rcv *REM) MutateNoradCatId(n uint32) bool {
 	return rcv.MutateNORAD_CAT_ID(n)
 }
 
-/// Time system used by all epochs.
+// / Time system used by all epochs.
 func (rcv *REM) TIME_SYSTEM() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,8 +159,8 @@ func (rcv *REM) TimeSystem() []byte {
 	return rcv.TIME_SYSTEM()
 }
 
-/// Time system used by all epochs.
-/// Reference frame for trajectory data.
+// / Time system used by all epochs.
+// / Reference frame for trajectory data.
 func (rcv *REM) REF_FRAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -173,8 +173,8 @@ func (rcv *REM) RefFrame() []byte {
 	return rcv.REF_FRAME()
 }
 
-/// Reference frame for trajectory data.
-/// Evaluation start epoch in ISO 8601 UTC format.
+// / Reference frame for trajectory data.
+// / Evaluation start epoch in ISO 8601 UTC format.
 func (rcv *REM) START_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -187,8 +187,8 @@ func (rcv *REM) StartTime() []byte {
 	return rcv.START_TIME()
 }
 
-/// Evaluation start epoch in ISO 8601 UTC format.
-/// Evaluation stop epoch in ISO 8601 UTC format.
+// / Evaluation start epoch in ISO 8601 UTC format.
+// / Evaluation stop epoch in ISO 8601 UTC format.
 func (rcv *REM) STOP_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -201,8 +201,8 @@ func (rcv *REM) StopTime() []byte {
 	return rcv.STOP_TIME()
 }
 
-/// Evaluation stop epoch in ISO 8601 UTC format.
-/// Uniform propagation step size in seconds.
+// / Evaluation stop epoch in ISO 8601 UTC format.
+// / Uniform propagation step size in seconds.
 func (rcv *REM) STEP_SIZE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -215,7 +215,7 @@ func (rcv *REM) StepSize() float64 {
 	return rcv.STEP_SIZE()
 }
 
-/// Uniform propagation step size in seconds.
+// / Uniform propagation step size in seconds.
 func (rcv *REM) MutateSTEP_SIZE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -224,7 +224,7 @@ func (rcv *REM) MutateStepSize(n float64) bool {
 	return rcv.MutateSTEP_SIZE(n)
 }
 
-/// Source reentry data message.
+// / Source reentry data message.
 func (rcv *REM) REENTRY_DATA(obj *RDM) *RDM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -242,8 +242,8 @@ func (rcv *REM) ReentryData(obj *RDM) *RDM {
 	return rcv.REENTRY_DATA(obj)
 }
 
-/// Source reentry data message.
-/// Source or produced ephemeris.
+// / Source reentry data message.
+// / Source or produced ephemeris.
 func (rcv *REM) TRAJECTORY_OEM(obj *OEM) *OEM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -261,8 +261,8 @@ func (rcv *REM) TrajectoryOem(obj *OEM) *OEM {
 	return rcv.TRAJECTORY_OEM(obj)
 }
 
-/// Source or produced ephemeris.
-/// Source or produced comprehensive trajectory.
+// / Source or produced ephemeris.
+// / Source or produced comprehensive trajectory.
 func (rcv *REM) TRAJECTORY_OCM(obj *OCM) *OCM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -280,8 +280,8 @@ func (rcv *REM) TrajectoryOcm(obj *OCM) *OCM {
 	return rcv.TRAJECTORY_OCM(obj)
 }
 
-/// Source or produced comprehensive trajectory.
-/// Atmosphere model request used by the reentry analysis.
+// / Source or produced comprehensive trajectory.
+// / Atmosphere model request used by the reentry analysis.
 func (rcv *REM) ATMOSPHERE(obj *ATM) *ATM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -299,8 +299,8 @@ func (rcv *REM) Atmosphere(obj *ATM) *ATM {
 	return rcv.ATMOSPHERE(obj)
 }
 
-/// Atmosphere model request used by the reentry analysis.
-/// Hypersonic conditions computed along the reentry trajectory.
+// / Atmosphere model request used by the reentry analysis.
+// / Hypersonic conditions computed along the reentry trajectory.
 func (rcv *REM) HYPERSONIC_CONDITIONS(obj *HFC) *HFC {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -318,8 +318,8 @@ func (rcv *REM) HypersonicConditions(obj *HFC) *HFC {
 	return rcv.HYPERSONIC_CONDITIONS(obj)
 }
 
-/// Hypersonic conditions computed along the reentry trajectory.
-/// Propagator module, engine, or adapter name.
+// / Hypersonic conditions computed along the reentry trajectory.
+// / Propagator module, engine, or adapter name.
 func (rcv *REM) PROPAGATOR_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -332,8 +332,8 @@ func (rcv *REM) PropagatorName() []byte {
 	return rcv.PROPAGATOR_NAME()
 }
 
-/// Propagator module, engine, or adapter name.
-/// Propagator module, engine, or adapter version.
+// / Propagator module, engine, or adapter name.
+// / Propagator module, engine, or adapter version.
 func (rcv *REM) PROPAGATOR_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -346,8 +346,8 @@ func (rcv *REM) PropagatorVersion() []byte {
 	return rcv.PROPAGATOR_VERSION()
 }
 
-/// Propagator module, engine, or adapter version.
-/// Aerothermal model name.
+// / Propagator module, engine, or adapter version.
+// / Aerothermal model name.
 func (rcv *REM) AEROTHERMAL_MODEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -360,8 +360,8 @@ func (rcv *REM) AerothermalModel() []byte {
 	return rcv.AEROTHERMAL_MODEL()
 }
 
-/// Aerothermal model name.
-/// Breakup model name.
+// / Aerothermal model name.
+// / Breakup model name.
 func (rcv *REM) BREAKUP_MODEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -374,8 +374,8 @@ func (rcv *REM) BreakupModel() []byte {
 	return rcv.BREAKUP_MODEL()
 }
 
-/// Breakup model name.
-/// Evaluation outcome.
+// / Breakup model name.
+// / Evaluation outcome.
 func (rcv *REM) OUTCOME() remEvaluationOutcome {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -388,7 +388,7 @@ func (rcv *REM) Outcome() remEvaluationOutcome {
 	return rcv.OUTCOME()
 }
 
-/// Evaluation outcome.
+// / Evaluation outcome.
 func (rcv *REM) MutateOUTCOME(n remEvaluationOutcome) bool {
 	return rcv._tab.MutateInt8Slot(44, int8(n))
 }
@@ -397,7 +397,7 @@ func (rcv *REM) MutateOutcome(n remEvaluationOutcome) bool {
 	return rcv.MutateOUTCOME(n)
 }
 
-/// Dominant breakup or demise mode.
+// / Dominant breakup or demise mode.
 func (rcv *REM) BREAKUP_MODE() remBreakupMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -410,7 +410,7 @@ func (rcv *REM) BreakupMode() remBreakupMode {
 	return rcv.BREAKUP_MODE()
 }
 
-/// Dominant breakup or demise mode.
+// / Dominant breakup or demise mode.
 func (rcv *REM) MutateBREAKUP_MODE(n remBreakupMode) bool {
 	return rcv._tab.MutateInt8Slot(46, int8(n))
 }
@@ -419,7 +419,7 @@ func (rcv *REM) MutateBreakupMode(n remBreakupMode) bool {
 	return rcv.MutateBREAKUP_MODE(n)
 }
 
-/// Predicted atmospheric interface epoch in ISO 8601 UTC format.
+// / Predicted atmospheric interface epoch in ISO 8601 UTC format.
 func (rcv *REM) ENTRY_INTERFACE_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -432,8 +432,8 @@ func (rcv *REM) EntryInterfaceEpoch() []byte {
 	return rcv.ENTRY_INTERFACE_EPOCH()
 }
 
-/// Predicted atmospheric interface epoch in ISO 8601 UTC format.
-/// Entry interface altitude in meters.
+// / Predicted atmospheric interface epoch in ISO 8601 UTC format.
+// / Entry interface altitude in meters.
 func (rcv *REM) ENTRY_INTERFACE_ALTITUDE_M() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -446,7 +446,7 @@ func (rcv *REM) EntryInterfaceAltitudeM() float64 {
 	return rcv.ENTRY_INTERFACE_ALTITUDE_M()
 }
 
-/// Entry interface altitude in meters.
+// / Entry interface altitude in meters.
 func (rcv *REM) MutateENTRY_INTERFACE_ALTITUDE_M(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(50, n)
 }
@@ -455,7 +455,7 @@ func (rcv *REM) MutateEntryInterfaceAltitudeM(n float64) bool {
 	return rcv.MutateENTRY_INTERFACE_ALTITUDE_M(n)
 }
 
-/// Predicted peak heating epoch in ISO 8601 UTC format.
+// / Predicted peak heating epoch in ISO 8601 UTC format.
 func (rcv *REM) PEAK_HEATING_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -468,8 +468,8 @@ func (rcv *REM) PeakHeatingEpoch() []byte {
 	return rcv.PEAK_HEATING_EPOCH()
 }
 
-/// Predicted peak heating epoch in ISO 8601 UTC format.
-/// Peak heat flux in watts per square meter.
+// / Predicted peak heating epoch in ISO 8601 UTC format.
+// / Peak heat flux in watts per square meter.
 func (rcv *REM) PEAK_HEAT_FLUX_W_PER_M2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -482,7 +482,7 @@ func (rcv *REM) PeakHeatFluxWPerM2() float64 {
 	return rcv.PEAK_HEAT_FLUX_W_PER_M2()
 }
 
-/// Peak heat flux in watts per square meter.
+// / Peak heat flux in watts per square meter.
 func (rcv *REM) MutatePEAK_HEAT_FLUX_W_PER_M2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(54, n)
 }
@@ -491,7 +491,7 @@ func (rcv *REM) MutatePeakHeatFluxWPerM2(n float64) bool {
 	return rcv.MutatePEAK_HEAT_FLUX_W_PER_M2(n)
 }
 
-/// Predicted peak dynamic pressure epoch in ISO 8601 UTC format.
+// / Predicted peak dynamic pressure epoch in ISO 8601 UTC format.
 func (rcv *REM) PEAK_DYNAMIC_PRESSURE_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -504,8 +504,8 @@ func (rcv *REM) PeakDynamicPressureEpoch() []byte {
 	return rcv.PEAK_DYNAMIC_PRESSURE_EPOCH()
 }
 
-/// Predicted peak dynamic pressure epoch in ISO 8601 UTC format.
-/// Peak dynamic pressure in pascals.
+// / Predicted peak dynamic pressure epoch in ISO 8601 UTC format.
+// / Peak dynamic pressure in pascals.
 func (rcv *REM) PEAK_DYNAMIC_PRESSURE_PA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -518,7 +518,7 @@ func (rcv *REM) PeakDynamicPressurePa() float64 {
 	return rcv.PEAK_DYNAMIC_PRESSURE_PA()
 }
 
-/// Peak dynamic pressure in pascals.
+// / Peak dynamic pressure in pascals.
 func (rcv *REM) MutatePEAK_DYNAMIC_PRESSURE_PA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(58, n)
 }
@@ -527,7 +527,7 @@ func (rcv *REM) MutatePeakDynamicPressurePa(n float64) bool {
 	return rcv.MutatePEAK_DYNAMIC_PRESSURE_PA(n)
 }
 
-/// Predicted peak deceleration epoch in ISO 8601 UTC format.
+// / Predicted peak deceleration epoch in ISO 8601 UTC format.
 func (rcv *REM) PEAK_DECELERATION_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -540,8 +540,8 @@ func (rcv *REM) PeakDecelerationEpoch() []byte {
 	return rcv.PEAK_DECELERATION_EPOCH()
 }
 
-/// Predicted peak deceleration epoch in ISO 8601 UTC format.
-/// Peak deceleration in g.
+// / Predicted peak deceleration epoch in ISO 8601 UTC format.
+// / Peak deceleration in g.
 func (rcv *REM) PEAK_DECELERATION_G() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -554,7 +554,7 @@ func (rcv *REM) PeakDecelerationG() float64 {
 	return rcv.PEAK_DECELERATION_G()
 }
 
-/// Peak deceleration in g.
+// / Peak deceleration in g.
 func (rcv *REM) MutatePEAK_DECELERATION_G(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(62, n)
 }
@@ -563,7 +563,7 @@ func (rcv *REM) MutatePeakDecelerationG(n float64) bool {
 	return rcv.MutatePEAK_DECELERATION_G(n)
 }
 
-/// Predicted breakup epoch in ISO 8601 UTC format.
+// / Predicted breakup epoch in ISO 8601 UTC format.
 func (rcv *REM) BREAKUP_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -576,8 +576,8 @@ func (rcv *REM) BreakupEpoch() []byte {
 	return rcv.BREAKUP_EPOCH()
 }
 
-/// Predicted breakup epoch in ISO 8601 UTC format.
-/// Predicted breakup altitude in meters.
+// / Predicted breakup epoch in ISO 8601 UTC format.
+// / Predicted breakup altitude in meters.
 func (rcv *REM) BREAKUP_ALTITUDE_M() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
@@ -590,7 +590,7 @@ func (rcv *REM) BreakupAltitudeM() float64 {
 	return rcv.BREAKUP_ALTITUDE_M()
 }
 
-/// Predicted breakup altitude in meters.
+// / Predicted breakup altitude in meters.
 func (rcv *REM) MutateBREAKUP_ALTITUDE_M(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(66, n)
 }
@@ -599,7 +599,7 @@ func (rcv *REM) MutateBreakupAltitudeM(n float64) bool {
 	return rcv.MutateBREAKUP_ALTITUDE_M(n)
 }
 
-/// Predicted impact epoch in ISO 8601 UTC format.
+// / Predicted impact epoch in ISO 8601 UTC format.
 func (rcv *REM) IMPACT_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
@@ -612,8 +612,8 @@ func (rcv *REM) ImpactEpoch() []byte {
 	return rcv.IMPACT_EPOCH()
 }
 
-/// Predicted impact epoch in ISO 8601 UTC format.
-/// Predicted impact latitude in degrees.
+// / Predicted impact epoch in ISO 8601 UTC format.
+// / Predicted impact latitude in degrees.
 func (rcv *REM) IMPACT_LATITUDE_DEG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
 	if o != 0 {
@@ -626,7 +626,7 @@ func (rcv *REM) ImpactLatitudeDeg() float64 {
 	return rcv.IMPACT_LATITUDE_DEG()
 }
 
-/// Predicted impact latitude in degrees.
+// / Predicted impact latitude in degrees.
 func (rcv *REM) MutateIMPACT_LATITUDE_DEG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(70, n)
 }
@@ -635,7 +635,7 @@ func (rcv *REM) MutateImpactLatitudeDeg(n float64) bool {
 	return rcv.MutateIMPACT_LATITUDE_DEG(n)
 }
 
-/// Predicted impact longitude in degrees.
+// / Predicted impact longitude in degrees.
 func (rcv *REM) IMPACT_LONGITUDE_DEG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
@@ -648,7 +648,7 @@ func (rcv *REM) ImpactLongitudeDeg() float64 {
 	return rcv.IMPACT_LONGITUDE_DEG()
 }
 
-/// Predicted impact longitude in degrees.
+// / Predicted impact longitude in degrees.
 func (rcv *REM) MutateIMPACT_LONGITUDE_DEG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(72, n)
 }
@@ -657,7 +657,7 @@ func (rcv *REM) MutateImpactLongitudeDeg(n float64) bool {
 	return rcv.MutateIMPACT_LONGITUDE_DEG(n)
 }
 
-/// Along-track one-sigma impact uncertainty in meters.
+// / Along-track one-sigma impact uncertainty in meters.
 func (rcv *REM) ALONG_TRACK_UNCERTAINTY_M() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
 	if o != 0 {
@@ -670,7 +670,7 @@ func (rcv *REM) AlongTrackUncertaintyM() float64 {
 	return rcv.ALONG_TRACK_UNCERTAINTY_M()
 }
 
-/// Along-track one-sigma impact uncertainty in meters.
+// / Along-track one-sigma impact uncertainty in meters.
 func (rcv *REM) MutateALONG_TRACK_UNCERTAINTY_M(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(74, n)
 }
@@ -679,7 +679,7 @@ func (rcv *REM) MutateAlongTrackUncertaintyM(n float64) bool {
 	return rcv.MutateALONG_TRACK_UNCERTAINTY_M(n)
 }
 
-/// Cross-track one-sigma impact uncertainty in meters.
+// / Cross-track one-sigma impact uncertainty in meters.
 func (rcv *REM) CROSS_TRACK_UNCERTAINTY_M() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
 	if o != 0 {
@@ -692,7 +692,7 @@ func (rcv *REM) CrossTrackUncertaintyM() float64 {
 	return rcv.CROSS_TRACK_UNCERTAINTY_M()
 }
 
-/// Cross-track one-sigma impact uncertainty in meters.
+// / Cross-track one-sigma impact uncertainty in meters.
 func (rcv *REM) MutateCROSS_TRACK_UNCERTAINTY_M(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(76, n)
 }
@@ -701,7 +701,7 @@ func (rcv *REM) MutateCrossTrackUncertaintyM(n float64) bool {
 	return rcv.MutateCROSS_TRACK_UNCERTAINTY_M(n)
 }
 
-/// Total surviving mass in kilograms.
+// / Total surviving mass in kilograms.
 func (rcv *REM) SURVIVING_MASS_KG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
 	if o != 0 {
@@ -714,7 +714,7 @@ func (rcv *REM) SurvivingMassKg() float64 {
 	return rcv.SURVIVING_MASS_KG()
 }
 
-/// Total surviving mass in kilograms.
+// / Total surviving mass in kilograms.
 func (rcv *REM) MutateSURVIVING_MASS_KG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(78, n)
 }
@@ -723,7 +723,7 @@ func (rcv *REM) MutateSurvivingMassKg(n float64) bool {
 	return rcv.MutateSURVIVING_MASS_KG(n)
 }
 
-/// Number of predicted surviving fragments.
+// / Number of predicted surviving fragments.
 func (rcv *REM) SURVIVING_FRAGMENT_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(80))
 	if o != 0 {
@@ -736,7 +736,7 @@ func (rcv *REM) SurvivingFragmentCount() uint32 {
 	return rcv.SURVIVING_FRAGMENT_COUNT()
 }
 
-/// Number of predicted surviving fragments.
+// / Number of predicted surviving fragments.
 func (rcv *REM) MutateSURVIVING_FRAGMENT_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(80, n)
 }
@@ -745,7 +745,7 @@ func (rcv *REM) MutateSurvivingFragmentCount(n uint32) bool {
 	return rcv.MutateSURVIVING_FRAGMENT_COUNT(n)
 }
 
-/// Aggregate survival probability from zero to one.
+// / Aggregate survival probability from zero to one.
 func (rcv *REM) SURVIVAL_PROBABILITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(82))
 	if o != 0 {
@@ -758,7 +758,7 @@ func (rcv *REM) SurvivalProbability() float64 {
 	return rcv.SURVIVAL_PROBABILITY()
 }
 
-/// Aggregate survival probability from zero to one.
+// / Aggregate survival probability from zero to one.
 func (rcv *REM) MutateSURVIVAL_PROBABILITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(82, n)
 }
@@ -767,7 +767,7 @@ func (rcv *REM) MutateSurvivalProbability(n float64) bool {
 	return rcv.MutateSURVIVAL_PROBABILITY(n)
 }
 
-/// Expected casualty value.
+// / Expected casualty value.
 func (rcv *REM) CASUALTY_EXPECTATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(84))
 	if o != 0 {
@@ -780,7 +780,7 @@ func (rcv *REM) CasualtyExpectation() float64 {
 	return rcv.CASUALTY_EXPECTATION()
 }
 
-/// Expected casualty value.
+// / Expected casualty value.
 func (rcv *REM) MutateCASUALTY_EXPECTATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(84, n)
 }
@@ -789,7 +789,7 @@ func (rcv *REM) MutateCasualtyExpectation(n float64) bool {
 	return rcv.MutateCASUALTY_EXPECTATION(n)
 }
 
-/// Ground risk probability from zero to one.
+// / Ground risk probability from zero to one.
 func (rcv *REM) GROUND_RISK_PROBABILITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(86))
 	if o != 0 {
@@ -802,7 +802,7 @@ func (rcv *REM) GroundRiskProbability() float64 {
 	return rcv.GROUND_RISK_PROBABILITY()
 }
 
-/// Ground risk probability from zero to one.
+// / Ground risk probability from zero to one.
 func (rcv *REM) MutateGROUND_RISK_PROBABILITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(86, n)
 }
@@ -811,7 +811,7 @@ func (rcv *REM) MutateGroundRiskProbability(n float64) bool {
 	return rcv.MutateGROUND_RISK_PROBABILITY(n)
 }
 
-/// Minimum thermal margin over the evaluated trajectory.
+// / Minimum thermal margin over the evaluated trajectory.
 func (rcv *REM) MIN_THERMAL_MARGIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(88))
 	if o != 0 {
@@ -824,7 +824,7 @@ func (rcv *REM) MinThermalMargin() float64 {
 	return rcv.MIN_THERMAL_MARGIN()
 }
 
-/// Minimum thermal margin over the evaluated trajectory.
+// / Minimum thermal margin over the evaluated trajectory.
 func (rcv *REM) MutateMIN_THERMAL_MARGIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(88, n)
 }
@@ -833,7 +833,7 @@ func (rcv *REM) MutateMinThermalMargin(n float64) bool {
 	return rcv.MutateMIN_THERMAL_MARGIN(n)
 }
 
-/// Minimum structural margin over the evaluated trajectory.
+// / Minimum structural margin over the evaluated trajectory.
 func (rcv *REM) MIN_STRUCTURAL_MARGIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(90))
 	if o != 0 {
@@ -846,7 +846,7 @@ func (rcv *REM) MinStructuralMargin() float64 {
 	return rcv.MIN_STRUCTURAL_MARGIN()
 }
 
-/// Minimum structural margin over the evaluated trajectory.
+// / Minimum structural margin over the evaluated trajectory.
 func (rcv *REM) MutateMIN_STRUCTURAL_MARGIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(90, n)
 }
@@ -855,7 +855,7 @@ func (rcv *REM) MutateMinStructuralMargin(n float64) bool {
 	return rcv.MutateMIN_STRUCTURAL_MARGIN(n)
 }
 
-/// Fragment-level evaluation outputs.
+// / Fragment-level evaluation outputs.
 func (rcv *REM) FRAGMENTS(obj *remFragmentEvaluation, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(92))
 	if o != 0 {
@@ -887,8 +887,8 @@ func (rcv *REM) FragmentsLength() int {
 	return rcv.FRAGMENTSLength()
 }
 
-/// Fragment-level evaluation outputs.
-/// Free-form model assumptions or limitations.
+// / Fragment-level evaluation outputs.
+// / Free-form model assumptions or limitations.
 func (rcv *REM) ASSUMPTIONS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(94))
 	if o != 0 {
@@ -914,8 +914,8 @@ func (rcv *REM) AssumptionsLength() int {
 	return rcv.ASSUMPTIONSLength()
 }
 
-/// Free-form model assumptions or limitations.
-/// Additional comments.
+// / Free-form model assumptions or limitations.
+// / Additional comments.
 func (rcv *REM) COMMENT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(96))
 	if o != 0 {
@@ -928,7 +928,7 @@ func (rcv *REM) Comment() []byte {
 	return rcv.COMMENT()
 }
 
-/// Additional comments.
+// / Additional comments.
 func REMStart(builder *flatbuffers.Builder) {
 	builder.StartObject(47)
 }

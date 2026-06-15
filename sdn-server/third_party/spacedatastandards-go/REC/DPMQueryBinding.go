@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Canonical query metadata that can replay the dataset selection.
+// / Canonical query metadata that can replay the dataset selection.
 type DPMQueryBinding struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *DPMQueryBinding) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Canonical query text or canonical JSON representation.
+// / Canonical query text or canonical JSON representation.
 func (rcv *DPMQueryBinding) CANONICAL_QUERY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *DPMQueryBinding) CanonicalQuery() []byte {
 	return rcv.CANONICAL_QUERY()
 }
 
-/// Canonical query text or canonical JSON representation.
-/// SHA-256 hash of CANONICAL_QUERY, lowercase hex.
+// / Canonical query text or canonical JSON representation.
+// / SHA-256 hash of CANONICAL_QUERY, lowercase hex.
 func (rcv *DPMQueryBinding) QUERY_SHA256() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *DPMQueryBinding) QuerySha256() []byte {
 	return rcv.QUERY_SHA256()
 }
 
-/// SHA-256 hash of CANONICAL_QUERY, lowercase hex.
-/// SHA-256 hash of the ordered result bytes, lowercase hex.
+// / SHA-256 hash of CANONICAL_QUERY, lowercase hex.
+// / SHA-256 hash of the ordered result bytes, lowercase hex.
 func (rcv *DPMQueryBinding) RESULT_SHA256() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *DPMQueryBinding) ResultSha256() []byte {
 	return rcv.RESULT_SHA256()
 }
 
-/// SHA-256 hash of the ordered result bytes, lowercase hex.
-/// Query engine or profile name, e.g. FlatSQL.
+// / SHA-256 hash of the ordered result bytes, lowercase hex.
+// / Query engine or profile name, e.g. FlatSQL.
 func (rcv *DPMQueryBinding) QUERY_ENGINE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *DPMQueryBinding) QueryEngine() []byte {
 	return rcv.QUERY_ENGINE()
 }
 
-/// Query engine or profile name, e.g. FlatSQL.
-/// Query engine version or profile version.
+// / Query engine or profile name, e.g. FlatSQL.
+// / Query engine version or profile version.
 func (rcv *DPMQueryBinding) QUERY_ENGINE_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -111,10 +111,10 @@ func (rcv *DPMQueryBinding) QueryEngineVersion() []byte {
 	return rcv.QUERY_ENGINE_VERSION()
 }
 
-/// Query engine version or profile version.
-/// Canonical ordering of result records before RESULT_SHA256 or DATA_ROOT is
-/// computed. Providers MUST stream records in this order unless each chunk
-/// includes enough proof material to restore and verify the canonical order.
+// / Query engine version or profile version.
+// / Canonical ordering of result records before RESULT_SHA256 or DATA_ROOT is
+// / computed. Providers MUST stream records in this order unless each chunk
+// / includes enough proof material to restore and verify the canonical order.
 func (rcv *DPMQueryBinding) CANONICAL_ORDER() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -127,15 +127,15 @@ func (rcv *DPMQueryBinding) CanonicalOrder() []byte {
 	return rcv.CANONICAL_ORDER()
 }
 
-/// Canonical ordering of result records before RESULT_SHA256 or DATA_ROOT is
-/// computed. Providers MUST stream records in this order unless each chunk
-/// includes enough proof material to restore and verify the canonical order.
-/// Query protocol name/version for provider-mediated retrieval, e.g.
-/// /sdn/dataset-query/1.0.0. A subscriber verifies the PNM and DPM, opens this
-/// protocol to the provider, submits the signed query or a permitted subset,
-/// and imports only responses that verify against the signed roots. Responses
-/// MUST include enough Merkle proof material for each returned record and, for
-/// completeness-verifiable range queries, the declared range-boundary proofs.
+// / Canonical ordering of result records before RESULT_SHA256 or DATA_ROOT is
+// / computed. Providers MUST stream records in this order unless each chunk
+// / includes enough proof material to restore and verify the canonical order.
+// / Query protocol name/version for provider-mediated retrieval, e.g.
+// / /sdn/dataset-query/1.0.0. A subscriber verifies the PNM and DPM, opens this
+// / protocol to the provider, submits the signed query or a permitted subset,
+// / and imports only responses that verify against the signed roots. Responses
+// / MUST include enough Merkle proof material for each returned record and, for
+// / completeness-verifiable range queries, the declared range-boundary proofs.
 func (rcv *DPMQueryBinding) QUERY_PROTOCOL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -148,13 +148,13 @@ func (rcv *DPMQueryBinding) QueryProtocol() []byte {
 	return rcv.QUERY_PROTOCOL()
 }
 
-/// Query protocol name/version for provider-mediated retrieval, e.g.
-/// /sdn/dataset-query/1.0.0. A subscriber verifies the PNM and DPM, opens this
-/// protocol to the provider, submits the signed query or a permitted subset,
-/// and imports only responses that verify against the signed roots. Responses
-/// MUST include enough Merkle proof material for each returned record and, for
-/// completeness-verifiable range queries, the declared range-boundary proofs.
-/// SDS schema names selected by the query.
+// / Query protocol name/version for provider-mediated retrieval, e.g.
+// / /sdn/dataset-query/1.0.0. A subscriber verifies the PNM and DPM, opens this
+// / protocol to the provider, submits the signed query or a permitted subset,
+// / and imports only responses that verify against the signed roots. Responses
+// / MUST include enough Merkle proof material for each returned record and, for
+// / completeness-verifiable range queries, the declared range-boundary proofs.
+// / SDS schema names selected by the query.
 func (rcv *DPMQueryBinding) SCHEMA_NAMES(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -180,8 +180,8 @@ func (rcv *DPMQueryBinding) SchemaNamesLength() int {
 	return rcv.SCHEMA_NAMESLength()
 }
 
-/// SDS schema names selected by the query.
-/// Provider peer IDs selected by the query.
+// / SDS schema names selected by the query.
+// / Provider peer IDs selected by the query.
 func (rcv *DPMQueryBinding) PROVIDER_IDS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -207,8 +207,8 @@ func (rcv *DPMQueryBinding) ProviderIdsLength() int {
 	return rcv.PROVIDER_IDSLength()
 }
 
-/// Provider peer IDs selected by the query.
-/// Source names selected by the query.
+// / Provider peer IDs selected by the query.
+// / Source names selected by the query.
 func (rcv *DPMQueryBinding) SOURCE_NAMES(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -234,8 +234,8 @@ func (rcv *DPMQueryBinding) SourceNamesLength() int {
 	return rcv.SOURCE_NAMESLength()
 }
 
-/// Source names selected by the query.
-/// Batch IDs selected by the query.
+// / Source names selected by the query.
+// / Batch IDs selected by the query.
 func (rcv *DPMQueryBinding) BATCH_IDS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -261,8 +261,8 @@ func (rcv *DPMQueryBinding) BatchIdsLength() int {
 	return rcv.BATCH_IDSLength()
 }
 
-/// Batch IDs selected by the query.
-/// Inclusive query window start in ISO 8601 UTC.
+// / Batch IDs selected by the query.
+// / Inclusive query window start in ISO 8601 UTC.
 func (rcv *DPMQueryBinding) WINDOW_START() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -275,8 +275,8 @@ func (rcv *DPMQueryBinding) WindowStart() []byte {
 	return rcv.WINDOW_START()
 }
 
-/// Inclusive query window start in ISO 8601 UTC.
-/// Inclusive query window end in ISO 8601 UTC.
+// / Inclusive query window start in ISO 8601 UTC.
+// / Inclusive query window end in ISO 8601 UTC.
 func (rcv *DPMQueryBinding) WINDOW_END() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -289,7 +289,7 @@ func (rcv *DPMQueryBinding) WindowEnd() []byte {
 	return rcv.WINDOW_END()
 }
 
-/// Inclusive query window end in ISO 8601 UTC.
+// / Inclusive query window end in ISO 8601 UTC.
 func DPMQueryBindingStart(builder *flatbuffers.Builder) {
 	builder.StartObject(13)
 }

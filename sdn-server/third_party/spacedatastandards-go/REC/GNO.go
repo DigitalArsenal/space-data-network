@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// GNSS Observation
+// / GNSS Observation
 type GNO struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *GNO) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique identifier
+// / Unique identifier
 func (rcv *GNO) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *GNO) Id() []byte {
 	return rcv.ID()
 }
 
-/// Unique identifier
-/// Receiver identifier
+// / Unique identifier
+// / Receiver identifier
 func (rcv *GNO) RECEIVER_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *GNO) ReceiverId() []byte {
 	return rcv.RECEIVER_ID()
 }
 
-/// Receiver identifier
-/// Receiver type/model
+// / Receiver identifier
+// / Receiver type/model
 func (rcv *GNO) RECEIVER_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *GNO) ReceiverType() []byte {
 	return rcv.RECEIVER_TYPE()
 }
 
-/// Receiver type/model
-/// Antenna identifier
+// / Receiver type/model
+// / Antenna identifier
 func (rcv *GNO) ANTENNA_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *GNO) AntennaId() []byte {
 	return rcv.ANTENNA_ID()
 }
 
-/// Antenna identifier
-/// Antenna type/model
+// / Antenna identifier
+// / Antenna type/model
 func (rcv *GNO) ANTENNA_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *GNO) AntennaType() []byte {
 	return rcv.ANTENNA_TYPE()
 }
 
-/// Antenna type/model
-/// Receiver firmware version
+// / Antenna type/model
+// / Receiver firmware version
 func (rcv *GNO) FIRMWARE_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,8 +137,8 @@ func (rcv *GNO) FirmwareVersion() []byte {
 	return rcv.FIRMWARE_VERSION()
 }
 
-/// Receiver firmware version
-/// Observation epoch (ISO 8601)
+// / Receiver firmware version
+// / Observation epoch (ISO 8601)
 func (rcv *GNO) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -151,8 +151,8 @@ func (rcv *GNO) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-/// Observation epoch (ISO 8601)
-/// Receiver clock offset in seconds
+// / Observation epoch (ISO 8601)
+// / Receiver clock offset in seconds
 func (rcv *GNO) CLOCK_OFFSET() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -165,7 +165,7 @@ func (rcv *GNO) ClockOffset() float64 {
 	return rcv.CLOCK_OFFSET()
 }
 
-/// Receiver clock offset in seconds
+// / Receiver clock offset in seconds
 func (rcv *GNO) MutateCLOCK_OFFSET(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -174,7 +174,7 @@ func (rcv *GNO) MutateClockOffset(n float64) bool {
 	return rcv.MutateCLOCK_OFFSET(n)
 }
 
-/// Receiver clock drift in seconds/second
+// / Receiver clock drift in seconds/second
 func (rcv *GNO) CLOCK_DRIFT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -187,7 +187,7 @@ func (rcv *GNO) ClockDrift() float64 {
 	return rcv.CLOCK_DRIFT()
 }
 
-/// Receiver clock drift in seconds/second
+// / Receiver clock drift in seconds/second
 func (rcv *GNO) MutateCLOCK_DRIFT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -196,7 +196,7 @@ func (rcv *GNO) MutateClockDrift(n float64) bool {
 	return rcv.MutateCLOCK_DRIFT(n)
 }
 
-/// Receiver geodetic latitude in degrees
+// / Receiver geodetic latitude in degrees
 func (rcv *GNO) LATITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -209,7 +209,7 @@ func (rcv *GNO) Latitude() float64 {
 	return rcv.LATITUDE()
 }
 
-/// Receiver geodetic latitude in degrees
+// / Receiver geodetic latitude in degrees
 func (rcv *GNO) MutateLATITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -218,7 +218,7 @@ func (rcv *GNO) MutateLatitude(n float64) bool {
 	return rcv.MutateLATITUDE(n)
 }
 
-/// Receiver geodetic longitude in degrees
+// / Receiver geodetic longitude in degrees
 func (rcv *GNO) LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -231,7 +231,7 @@ func (rcv *GNO) Longitude() float64 {
 	return rcv.LONGITUDE()
 }
 
-/// Receiver geodetic longitude in degrees
+// / Receiver geodetic longitude in degrees
 func (rcv *GNO) MutateLONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -240,7 +240,7 @@ func (rcv *GNO) MutateLongitude(n float64) bool {
 	return rcv.MutateLONGITUDE(n)
 }
 
-/// Receiver altitude in meters above WGS-84
+// / Receiver altitude in meters above WGS-84
 func (rcv *GNO) ALTITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -253,7 +253,7 @@ func (rcv *GNO) Altitude() float64 {
 	return rcv.ALTITUDE()
 }
 
-/// Receiver altitude in meters above WGS-84
+// / Receiver altitude in meters above WGS-84
 func (rcv *GNO) MutateALTITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -262,7 +262,7 @@ func (rcv *GNO) MutateAltitude(n float64) bool {
 	return rcv.MutateALTITUDE(n)
 }
 
-/// Approximate position X in meters (ECEF)
+// / Approximate position X in meters (ECEF)
 func (rcv *GNO) APPROX_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -275,7 +275,7 @@ func (rcv *GNO) ApproxX() float64 {
 	return rcv.APPROX_X()
 }
 
-/// Approximate position X in meters (ECEF)
+// / Approximate position X in meters (ECEF)
 func (rcv *GNO) MutateAPPROX_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -284,7 +284,7 @@ func (rcv *GNO) MutateApproxX(n float64) bool {
 	return rcv.MutateAPPROX_X(n)
 }
 
-/// Approximate position Y in meters (ECEF)
+// / Approximate position Y in meters (ECEF)
 func (rcv *GNO) APPROX_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -297,7 +297,7 @@ func (rcv *GNO) ApproxY() float64 {
 	return rcv.APPROX_Y()
 }
 
-/// Approximate position Y in meters (ECEF)
+// / Approximate position Y in meters (ECEF)
 func (rcv *GNO) MutateAPPROX_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -306,7 +306,7 @@ func (rcv *GNO) MutateApproxY(n float64) bool {
 	return rcv.MutateAPPROX_Y(n)
 }
 
-/// Approximate position Z in meters (ECEF)
+// / Approximate position Z in meters (ECEF)
 func (rcv *GNO) APPROX_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -319,7 +319,7 @@ func (rcv *GNO) ApproxZ() float64 {
 	return rcv.APPROX_Z()
 }
 
-/// Approximate position Z in meters (ECEF)
+// / Approximate position Z in meters (ECEF)
 func (rcv *GNO) MutateAPPROX_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -328,7 +328,7 @@ func (rcv *GNO) MutateApproxZ(n float64) bool {
 	return rcv.MutateAPPROX_Z(n)
 }
 
-/// Observation interval in seconds
+// / Observation interval in seconds
 func (rcv *GNO) INTERVAL() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -341,7 +341,7 @@ func (rcv *GNO) Interval() float64 {
 	return rcv.INTERVAL()
 }
 
-/// Observation interval in seconds
+// / Observation interval in seconds
 func (rcv *GNO) MutateINTERVAL(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -350,7 +350,7 @@ func (rcv *GNO) MutateInterval(n float64) bool {
 	return rcv.MutateINTERVAL(n)
 }
 
-/// Number of satellites observed
+// / Number of satellites observed
 func (rcv *GNO) NUM_SATS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -363,7 +363,7 @@ func (rcv *GNO) NumSats() uint32 {
 	return rcv.NUM_SATS()
 }
 
-/// Number of satellites observed
+// / Number of satellites observed
 func (rcv *GNO) MutateNUM_SATS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(36, n)
 }
@@ -372,7 +372,7 @@ func (rcv *GNO) MutateNumSats(n uint32) bool {
 	return rcv.MutateNUM_SATS(n)
 }
 
-/// PDOP
+// / PDOP
 func (rcv *GNO) PDOP() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -385,7 +385,7 @@ func (rcv *GNO) Pdop() float64 {
 	return rcv.PDOP()
 }
 
-/// PDOP
+// / PDOP
 func (rcv *GNO) MutatePDOP(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -394,7 +394,7 @@ func (rcv *GNO) MutatePdop(n float64) bool {
 	return rcv.MutatePDOP(n)
 }
 
-/// HDOP
+// / HDOP
 func (rcv *GNO) HDOP() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -407,7 +407,7 @@ func (rcv *GNO) Hdop() float64 {
 	return rcv.HDOP()
 }
 
-/// HDOP
+// / HDOP
 func (rcv *GNO) MutateHDOP(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -416,7 +416,7 @@ func (rcv *GNO) MutateHdop(n float64) bool {
 	return rcv.MutateHDOP(n)
 }
 
-/// VDOP
+// / VDOP
 func (rcv *GNO) VDOP() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -429,7 +429,7 @@ func (rcv *GNO) Vdop() float64 {
 	return rcv.VDOP()
 }
 
-/// VDOP
+// / VDOP
 func (rcv *GNO) MutateVDOP(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -438,7 +438,7 @@ func (rcv *GNO) MutateVdop(n float64) bool {
 	return rcv.MutateVDOP(n)
 }
 
-/// Satellite observations
+// / Satellite observations
 func (rcv *GNO) SAT_OBS(obj *gnssSatObs, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -470,8 +470,8 @@ func (rcv *GNO) SatObsLength() int {
 	return rcv.SAT_OBSLength()
 }
 
-/// Satellite observations
-/// Observation code set identifiers
+// / Satellite observations
+// / Observation code set identifiers
 func (rcv *GNO) OBS_CODE_SET(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -497,8 +497,8 @@ func (rcv *GNO) ObsCodeSetLength() int {
 	return rcv.OBS_CODE_SETLength()
 }
 
-/// Observation code set identifiers
-/// Additional notes
+// / Observation code set identifiers
+// / Additional notes
 func (rcv *GNO) NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -511,7 +511,7 @@ func (rcv *GNO) Notes() []byte {
 	return rcv.NOTES()
 }
 
-/// Additional notes
+// / Additional notes
 func GNOStart(builder *flatbuffers.Builder) {
 	builder.StartObject(23)
 }

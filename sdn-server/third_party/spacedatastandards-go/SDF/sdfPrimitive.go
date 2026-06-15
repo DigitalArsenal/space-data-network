@@ -4,27 +4,27 @@ package SDF
 
 import "strconv"
 
-/// Signed Distance Field — detection and containment queries for sensor /
-/// geometric volumes.
-///
-/// Convention for signed-distance values:
-///   - Negative values are inside the volume.
-///   - Zero is on the boundary.
-///   - Positive values are outside the volume.
-/// Primitive shape family for an SDF volume.
+// / Signed Distance Field — detection and containment queries for sensor /
+// / geometric volumes.
+// /
+// / Convention for signed-distance values:
+// /   - Negative values are inside the volume.
+// /   - Zero is on the boundary.
+// /   - Positive values are outside the volume.
+// / Primitive shape family for an SDF volume.
 type sdfPrimitive byte
 
 const (
 	/// Cone with apex at origin, +Z boresight.
-	sdfPrimitiveCONE        sdfPrimitive = 0
+	sdfPrimitiveCONE sdfPrimitive = 0
 	/// Rectangular pyramid (four planes + range cap).
 	sdfPrimitiveRECTANGULAR sdfPrimitive = 1
 	/// Sphere centered at origin.
-	sdfPrimitiveSPHERE      sdfPrimitive = 2
+	sdfPrimitiveSPHERE sdfPrimitive = 2
 	/// Cylinder along Z axis.
-	sdfPrimitiveCYLINDER    sdfPrimitive = 3
+	sdfPrimitiveCYLINDER sdfPrimitive = 3
 	/// Plugin-defined custom SDF.
-	sdfPrimitiveCUSTOM      sdfPrimitive = 255
+	sdfPrimitiveCUSTOM sdfPrimitive = 255
 )
 
 var EnumNamessdfPrimitive = map[sdfPrimitive]string{

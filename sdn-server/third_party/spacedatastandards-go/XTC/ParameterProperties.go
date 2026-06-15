@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Parameter properties
+// / Parameter properties
 type ParameterProperties struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ParameterProperties) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Data source type
+// / Data source type
 func (rcv *ParameterProperties) DATA_SOURCE() DataSourceType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *ParameterProperties) DataSource() DataSourceType {
 	return rcv.DATA_SOURCE()
 }
 
-/// Data source type
+// / Data source type
 func (rcv *ParameterProperties) MutateDATA_SOURCE(n DataSourceType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *ParameterProperties) MutateDataSource(n DataSourceType) bool {
 	return rcv.MutateDATA_SOURCE(n)
 }
 
-/// Read-only parameter
+// / Read-only parameter
 func (rcv *ParameterProperties) READ_ONLY() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *ParameterProperties) ReadOnly() bool {
 	return rcv.READ_ONLY()
 }
 
-/// Read-only parameter
+// / Read-only parameter
 func (rcv *ParameterProperties) MutateREAD_ONLY(n bool) bool {
 	return rcv._tab.MutateBoolSlot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *ParameterProperties) MutateReadOnly(n bool) bool {
 	return rcv.MutateREAD_ONLY(n)
 }
 
-/// System/subsystem name
+// / System/subsystem name
 func (rcv *ParameterProperties) SYSTEM_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,8 +99,8 @@ func (rcv *ParameterProperties) SystemName() []byte {
 	return rcv.SYSTEM_NAME()
 }
 
-/// System/subsystem name
-/// Validity condition
+// / System/subsystem name
+// / Validity condition
 func (rcv *ParameterProperties) VALIDITY_CONDITION(obj *MatchCriteria) *MatchCriteria {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -118,7 +118,7 @@ func (rcv *ParameterProperties) ValidityCondition(obj *MatchCriteria) *MatchCrit
 	return rcv.VALIDITY_CONDITION(obj)
 }
 
-/// Validity condition
+// / Validity condition
 func ParameterPropertiesStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Polyline glow material
+// / Polyline glow material
 type CZMPolylineGlowMaterial struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMPolylineGlowMaterial) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Glow color
+// / Glow color
 func (rcv *CZMPolylineGlowMaterial) COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *CZMPolylineGlowMaterial) Color(obj *CZMColor) *CZMColor {
 	return rcv.COLOR(obj)
 }
 
-/// Glow color
-/// Glow power
+// / Glow color
+// / Glow power
 func (rcv *CZMPolylineGlowMaterial) GLOW_POWER() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -74,7 +74,7 @@ func (rcv *CZMPolylineGlowMaterial) GlowPower() float64 {
 	return rcv.GLOW_POWER()
 }
 
-/// Glow power
+// / Glow power
 func (rcv *CZMPolylineGlowMaterial) MutateGLOW_POWER(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -83,7 +83,7 @@ func (rcv *CZMPolylineGlowMaterial) MutateGlowPower(n float64) bool {
 	return rcv.MutateGLOW_POWER(n)
 }
 
-/// Taper power
+// / Taper power
 func (rcv *CZMPolylineGlowMaterial) TAPER_POWER() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -96,7 +96,7 @@ func (rcv *CZMPolylineGlowMaterial) TaperPower() float64 {
 	return rcv.TAPER_POWER()
 }
 
-/// Taper power
+// / Taper power
 func (rcv *CZMPolylineGlowMaterial) MutateTAPER_POWER(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }

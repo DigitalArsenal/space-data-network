@@ -41,7 +41,7 @@ func (rcv *CDMObject) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// A comment
+// / A comment
 func (rcv *CDMObject) COMMENT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -54,7 +54,7 @@ func (rcv *CDMObject) Comment() []byte {
 	return rcv.COMMENT()
 }
 
-/// A comment
+// / A comment
 func (rcv *CDMObject) OBJECT(obj *CAT) *CAT {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -72,7 +72,7 @@ func (rcv *CDMObject) Object(obj *CAT) *CAT {
 	return rcv.OBJECT(obj)
 }
 
-/// Point of Contact
+// / Point of Contact
 func (rcv *CDMObject) POC(obj *EPM) *EPM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -90,8 +90,8 @@ func (rcv *CDMObject) Poc(obj *EPM) *EPM {
 	return rcv.POC(obj)
 }
 
-/// Point of Contact
-/// Operator contact position
+// / Point of Contact
+// / Operator contact position
 func (rcv *CDMObject) OPERATOR_CONTACT_POSITION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -104,8 +104,8 @@ func (rcv *CDMObject) OperatorContactPosition() []byte {
 	return rcv.OPERATOR_CONTACT_POSITION()
 }
 
-/// Operator contact position
-/// Operator organization
+// / Operator contact position
+// / Operator organization
 func (rcv *CDMObject) OPERATOR_ORGANIZATION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -118,8 +118,8 @@ func (rcv *CDMObject) OperatorOrganization() []byte {
 	return rcv.OPERATOR_ORGANIZATION()
 }
 
-/// Operator organization
-/// Ephemeris name
+// / Operator organization
+// / Ephemeris name
 func (rcv *CDMObject) EPHEMERIS_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -132,8 +132,8 @@ func (rcv *CDMObject) EphemerisName() []byte {
 	return rcv.EPHEMERIS_NAME()
 }
 
-/// Ephemeris name
-/// Covariance method
+// / Ephemeris name
+// / Covariance method
 func (rcv *CDMObject) COVARIANCE_METHOD() covarianceAlgorithm {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -146,7 +146,7 @@ func (rcv *CDMObject) CovarianceMethod() covarianceAlgorithm {
 	return rcv.COVARIANCE_METHOD()
 }
 
-/// Covariance method
+// / Covariance method
 func (rcv *CDMObject) MutateCOVARIANCE_METHOD(n covarianceAlgorithm) bool {
 	return rcv._tab.MutateInt8Slot(16, int8(n))
 }
@@ -155,7 +155,7 @@ func (rcv *CDMObject) MutateCovarianceMethod(n covarianceAlgorithm) bool {
 	return rcv.MutateCOVARIANCE_METHOD(n)
 }
 
-/// Reference Frame in which the object position is defined
+// / Reference Frame in which the object position is defined
 func (rcv *CDMObject) REFERENCE_FRAME(obj *RFM) *RFM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -173,8 +173,8 @@ func (rcv *CDMObject) ReferenceFrame(obj *RFM) *RFM {
 	return rcv.REFERENCE_FRAME(obj)
 }
 
-/// Reference Frame in which the object position is defined
-/// Gravity model
+// / Reference Frame in which the object position is defined
+// / Gravity model
 func (rcv *CDMObject) GRAVITY_MODEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -187,8 +187,8 @@ func (rcv *CDMObject) GravityModel() []byte {
 	return rcv.GRAVITY_MODEL()
 }
 
-/// Gravity model
-/// Atmospheric model
+// / Gravity model
+// / Atmospheric model
 func (rcv *CDMObject) ATMOSPHERIC_MODEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -201,8 +201,8 @@ func (rcv *CDMObject) AtmosphericModel() []byte {
 	return rcv.ATMOSPHERIC_MODEL()
 }
 
-/// Atmospheric model
-/// N-body perturbations
+// / Atmospheric model
+// / N-body perturbations
 func (rcv *CDMObject) N_BODY_PERTURBATIONS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -215,8 +215,8 @@ func (rcv *CDMObject) NBodyPerturbations() []byte {
 	return rcv.N_BODY_PERTURBATIONS()
 }
 
-/// N-body perturbations
-/// Solar radiation pressure
+// / N-body perturbations
+// / Solar radiation pressure
 func (rcv *CDMObject) SOLAR_RAD_PRESSURE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -229,7 +229,7 @@ func (rcv *CDMObject) SolarRadPressure() bool {
 	return rcv.SOLAR_RAD_PRESSURE()
 }
 
-/// Solar radiation pressure
+// / Solar radiation pressure
 func (rcv *CDMObject) MutateSOLAR_RAD_PRESSURE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(26, n)
 }
@@ -238,7 +238,7 @@ func (rcv *CDMObject) MutateSolarRadPressure(n bool) bool {
 	return rcv.MutateSOLAR_RAD_PRESSURE(n)
 }
 
-/// Earth tides
+// / Earth tides
 func (rcv *CDMObject) EARTH_TIDES() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -251,7 +251,7 @@ func (rcv *CDMObject) EarthTides() bool {
 	return rcv.EARTH_TIDES()
 }
 
-/// Earth tides
+// / Earth tides
 func (rcv *CDMObject) MutateEARTH_TIDES(n bool) bool {
 	return rcv._tab.MutateBoolSlot(28, n)
 }
@@ -260,7 +260,7 @@ func (rcv *CDMObject) MutateEarthTides(n bool) bool {
 	return rcv.MutateEARTH_TIDES(n)
 }
 
-/// Intrack thrust
+// / Intrack thrust
 func (rcv *CDMObject) INTRACK_THRUST() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -273,7 +273,7 @@ func (rcv *CDMObject) IntrackThrust() bool {
 	return rcv.INTRACK_THRUST()
 }
 
-/// Intrack thrust
+// / Intrack thrust
 func (rcv *CDMObject) MutateINTRACK_THRUST(n bool) bool {
 	return rcv._tab.MutateBoolSlot(30, n)
 }
@@ -282,7 +282,7 @@ func (rcv *CDMObject) MutateIntrackThrust(n bool) bool {
 	return rcv.MutateINTRACK_THRUST(n)
 }
 
-/// Time of last observation start
+// / Time of last observation start
 func (rcv *CDMObject) TIME_LASTOB_START() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -295,8 +295,8 @@ func (rcv *CDMObject) TimeLastobStart() []byte {
 	return rcv.TIME_LASTOB_START()
 }
 
-/// Time of last observation start
-/// Time of last observation end
+// / Time of last observation start
+// / Time of last observation end
 func (rcv *CDMObject) TIME_LASTOB_END() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -309,8 +309,8 @@ func (rcv *CDMObject) TimeLastobEnd() []byte {
 	return rcv.TIME_LASTOB_END()
 }
 
-/// Time of last observation end
-/// Recommended observation data span
+// / Time of last observation end
+// / Recommended observation data span
 func (rcv *CDMObject) RECOMMENDED_OD_SPAN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -323,7 +323,7 @@ func (rcv *CDMObject) RecommendedOdSpan() float64 {
 	return rcv.RECOMMENDED_OD_SPAN()
 }
 
-/// Recommended observation data span
+// / Recommended observation data span
 func (rcv *CDMObject) MutateRECOMMENDED_OD_SPAN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -332,7 +332,7 @@ func (rcv *CDMObject) MutateRecommendedOdSpan(n float64) bool {
 	return rcv.MutateRECOMMENDED_OD_SPAN(n)
 }
 
-/// Actual observation data span
+// / Actual observation data span
 func (rcv *CDMObject) ACTUAL_OD_SPAN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -345,7 +345,7 @@ func (rcv *CDMObject) ActualOdSpan() float64 {
 	return rcv.ACTUAL_OD_SPAN()
 }
 
-/// Actual observation data span
+// / Actual observation data span
 func (rcv *CDMObject) MutateACTUAL_OD_SPAN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -354,7 +354,7 @@ func (rcv *CDMObject) MutateActualOdSpan(n float64) bool {
 	return rcv.MutateACTUAL_OD_SPAN(n)
 }
 
-/// Number of observations available
+// / Number of observations available
 func (rcv *CDMObject) OBS_AVAILABLE() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -367,7 +367,7 @@ func (rcv *CDMObject) ObsAvailable() uint32 {
 	return rcv.OBS_AVAILABLE()
 }
 
-/// Number of observations available
+// / Number of observations available
 func (rcv *CDMObject) MutateOBS_AVAILABLE(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(40, n)
 }
@@ -376,7 +376,7 @@ func (rcv *CDMObject) MutateObsAvailable(n uint32) bool {
 	return rcv.MutateOBS_AVAILABLE(n)
 }
 
-/// Number of observations used
+// / Number of observations used
 func (rcv *CDMObject) OBS_USED() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -389,7 +389,7 @@ func (rcv *CDMObject) ObsUsed() uint32 {
 	return rcv.OBS_USED()
 }
 
-/// Number of observations used
+// / Number of observations used
 func (rcv *CDMObject) MutateOBS_USED(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(42, n)
 }
@@ -398,7 +398,7 @@ func (rcv *CDMObject) MutateObsUsed(n uint32) bool {
 	return rcv.MutateOBS_USED(n)
 }
 
-/// Number of tracks available
+// / Number of tracks available
 func (rcv *CDMObject) TRACKS_AVAILABLE() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -411,7 +411,7 @@ func (rcv *CDMObject) TracksAvailable() uint32 {
 	return rcv.TRACKS_AVAILABLE()
 }
 
-/// Number of tracks available
+// / Number of tracks available
 func (rcv *CDMObject) MutateTRACKS_AVAILABLE(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(44, n)
 }
@@ -420,7 +420,7 @@ func (rcv *CDMObject) MutateTracksAvailable(n uint32) bool {
 	return rcv.MutateTRACKS_AVAILABLE(n)
 }
 
-/// Number of tracks used
+// / Number of tracks used
 func (rcv *CDMObject) TRACKS_USED() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -433,7 +433,7 @@ func (rcv *CDMObject) TracksUsed() uint32 {
 	return rcv.TRACKS_USED()
 }
 
-/// Number of tracks used
+// / Number of tracks used
 func (rcv *CDMObject) MutateTRACKS_USED(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(46, n)
 }
@@ -442,7 +442,7 @@ func (rcv *CDMObject) MutateTracksUsed(n uint32) bool {
 	return rcv.MutateTRACKS_USED(n)
 }
 
-/// Residuals accepted
+// / Residuals accepted
 func (rcv *CDMObject) RESIDUALS_ACCEPTED() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -455,7 +455,7 @@ func (rcv *CDMObject) ResidualsAccepted() float64 {
 	return rcv.RESIDUALS_ACCEPTED()
 }
 
-/// Residuals accepted
+// / Residuals accepted
 func (rcv *CDMObject) MutateRESIDUALS_ACCEPTED(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(48, n)
 }
@@ -464,7 +464,7 @@ func (rcv *CDMObject) MutateResidualsAccepted(n float64) bool {
 	return rcv.MutateRESIDUALS_ACCEPTED(n)
 }
 
-/// Weighted root mean square
+// / Weighted root mean square
 func (rcv *CDMObject) WEIGHTED_RMS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -477,7 +477,7 @@ func (rcv *CDMObject) WeightedRms() float64 {
 	return rcv.WEIGHTED_RMS()
 }
 
-/// Weighted root mean square
+// / Weighted root mean square
 func (rcv *CDMObject) MutateWEIGHTED_RMS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(50, n)
 }
@@ -486,7 +486,7 @@ func (rcv *CDMObject) MutateWeightedRms(n float64) bool {
 	return rcv.MutateWEIGHTED_RMS(n)
 }
 
-/// Area of the object
+// / Area of the object
 func (rcv *CDMObject) AREA_PC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -499,7 +499,7 @@ func (rcv *CDMObject) AreaPc() float64 {
 	return rcv.AREA_PC()
 }
 
-/// Area of the object
+// / Area of the object
 func (rcv *CDMObject) MutateAREA_PC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(52, n)
 }
@@ -508,7 +508,7 @@ func (rcv *CDMObject) MutateAreaPc(n float64) bool {
 	return rcv.MutateAREA_PC(n)
 }
 
-/// Area of the object drag
+// / Area of the object drag
 func (rcv *CDMObject) AREA_DRG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -521,7 +521,7 @@ func (rcv *CDMObject) AreaDrg() float64 {
 	return rcv.AREA_DRG()
 }
 
-/// Area of the object drag
+// / Area of the object drag
 func (rcv *CDMObject) MutateAREA_DRG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(54, n)
 }
@@ -530,7 +530,7 @@ func (rcv *CDMObject) MutateAreaDrg(n float64) bool {
 	return rcv.MutateAREA_DRG(n)
 }
 
-/// Area of the object solar radiation pressure
+// / Area of the object solar radiation pressure
 func (rcv *CDMObject) AREA_SRP() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -543,7 +543,7 @@ func (rcv *CDMObject) AreaSrp() float64 {
 	return rcv.AREA_SRP()
 }
 
-/// Area of the object solar radiation pressure
+// / Area of the object solar radiation pressure
 func (rcv *CDMObject) MutateAREA_SRP(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(56, n)
 }
@@ -552,7 +552,7 @@ func (rcv *CDMObject) MutateAreaSrp(n float64) bool {
 	return rcv.MutateAREA_SRP(n)
 }
 
-/// Object's area-to-mass ratio
+// / Object's area-to-mass ratio
 func (rcv *CDMObject) CR_AREA_OVER_MASS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -565,7 +565,7 @@ func (rcv *CDMObject) CrAreaOverMass() float64 {
 	return rcv.CR_AREA_OVER_MASS()
 }
 
-/// Object's area-to-mass ratio
+// / Object's area-to-mass ratio
 func (rcv *CDMObject) MutateCR_AREA_OVER_MASS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(58, n)
 }
@@ -574,7 +574,7 @@ func (rcv *CDMObject) MutateCrAreaOverMass(n float64) bool {
 	return rcv.MutateCR_AREA_OVER_MASS(n)
 }
 
-/// Object's thrust acceleration
+// / Object's thrust acceleration
 func (rcv *CDMObject) THRUST_ACCELERATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -587,7 +587,7 @@ func (rcv *CDMObject) ThrustAcceleration() float64 {
 	return rcv.THRUST_ACCELERATION()
 }
 
-/// Object's thrust acceleration
+// / Object's thrust acceleration
 func (rcv *CDMObject) MutateTHRUST_ACCELERATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(60, n)
 }
@@ -596,7 +596,7 @@ func (rcv *CDMObject) MutateThrustAcceleration(n float64) bool {
 	return rcv.MutateTHRUST_ACCELERATION(n)
 }
 
-/// Object's solar flux
+// / Object's solar flux
 func (rcv *CDMObject) SEDR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -609,7 +609,7 @@ func (rcv *CDMObject) Sedr() float64 {
 	return rcv.SEDR()
 }
 
-/// Object's solar flux
+// / Object's solar flux
 func (rcv *CDMObject) MutateSEDR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(62, n)
 }
@@ -618,7 +618,7 @@ func (rcv *CDMObject) MutateSedr(n float64) bool {
 	return rcv.MutateSEDR(n)
 }
 
-/// X-coordinate of the object's position in RTN coordinates
+// / X-coordinate of the object's position in RTN coordinates
 func (rcv *CDMObject) X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -627,12 +627,12 @@ func (rcv *CDMObject) X() float64 {
 	return 0.0
 }
 
-/// X-coordinate of the object's position in RTN coordinates
+// / X-coordinate of the object's position in RTN coordinates
 func (rcv *CDMObject) MutateX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(64, n)
 }
 
-/// Y-coordinate of the object's position in RTN
+// / Y-coordinate of the object's position in RTN
 func (rcv *CDMObject) Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
@@ -641,12 +641,12 @@ func (rcv *CDMObject) Y() float64 {
 	return 0.0
 }
 
-/// Y-coordinate of the object's position in RTN
+// / Y-coordinate of the object's position in RTN
 func (rcv *CDMObject) MutateY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(66, n)
 }
 
-/// Z-coordinate of the object's position in RTN
+// / Z-coordinate of the object's position in RTN
 func (rcv *CDMObject) Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
@@ -655,12 +655,12 @@ func (rcv *CDMObject) Z() float64 {
 	return 0.0
 }
 
-/// Z-coordinate of the object's position in RTN
+// / Z-coordinate of the object's position in RTN
 func (rcv *CDMObject) MutateZ(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(68, n)
 }
 
-/// X-coordinate of the object's position in RTN coordinates
+// / X-coordinate of the object's position in RTN coordinates
 func (rcv *CDMObject) X_DOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
 	if o != 0 {
@@ -673,7 +673,7 @@ func (rcv *CDMObject) XDot() float64 {
 	return rcv.X_DOT()
 }
 
-/// X-coordinate of the object's position in RTN coordinates
+// / X-coordinate of the object's position in RTN coordinates
 func (rcv *CDMObject) MutateX_DOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(70, n)
 }
@@ -682,7 +682,7 @@ func (rcv *CDMObject) MutateXDot(n float64) bool {
 	return rcv.MutateX_DOT(n)
 }
 
-/// Y-coordinate of the object's position in RTN
+// / Y-coordinate of the object's position in RTN
 func (rcv *CDMObject) Y_DOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
@@ -695,7 +695,7 @@ func (rcv *CDMObject) YDot() float64 {
 	return rcv.Y_DOT()
 }
 
-/// Y-coordinate of the object's position in RTN
+// / Y-coordinate of the object's position in RTN
 func (rcv *CDMObject) MutateY_DOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(72, n)
 }
@@ -704,7 +704,7 @@ func (rcv *CDMObject) MutateYDot(n float64) bool {
 	return rcv.MutateY_DOT(n)
 }
 
-/// Z-coordinate of the object's position in RTN
+// / Z-coordinate of the object's position in RTN
 func (rcv *CDMObject) Z_DOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
 	if o != 0 {
@@ -717,7 +717,7 @@ func (rcv *CDMObject) ZDot() float64 {
 	return rcv.Z_DOT()
 }
 
-/// Z-coordinate of the object's position in RTN
+// / Z-coordinate of the object's position in RTN
 func (rcv *CDMObject) MutateZ_DOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(74, n)
 }
@@ -726,13 +726,13 @@ func (rcv *CDMObject) MutateZDot(n float64) bool {
 	return rcv.MutateZ_DOT(n)
 }
 
-/// Covariance matrix as flat array (9x9 lower triangular = 45 elements).
-/// Order: [CR_R, CT_R, CT_T, CN_R, CN_T, CN_N, CRDOT_R, CRDOT_T, CRDOT_N, CRDOT_RDOT,
-///         CTDOT_R, CTDOT_T, CTDOT_N, CTDOT_RDOT, CTDOT_TDOT,
-///         CNDOT_R, CNDOT_T, CNDOT_N, CNDOT_RDOT, CNDOT_TDOT, CNDOT_NDOT,
-///         CDRG_R, CDRG_T, CDRG_N, CDRG_RDOT, CDRG_TDOT, CDRG_NDOT, CDRG_DRG,
-///         CSRP_R, CSRP_T, CSRP_N, CSRP_RDOT, CSRP_TDOT, CSRP_NDOT, CSRP_DRG, CSRP_SRP,
-///         CTHR_R, CTHR_T, CTHR_N, CTHR_RDOT, CTHR_TDOT, CTHR_NDOT, CTHR_DRG, CTHR_SRP, CTHR_THR]
+// / Covariance matrix as flat array (9x9 lower triangular = 45 elements).
+// / Order: [CR_R, CT_R, CT_T, CN_R, CN_T, CN_N, CRDOT_R, CRDOT_T, CRDOT_N, CRDOT_RDOT,
+// /         CTDOT_R, CTDOT_T, CTDOT_N, CTDOT_RDOT, CTDOT_TDOT,
+// /         CNDOT_R, CNDOT_T, CNDOT_N, CNDOT_RDOT, CNDOT_TDOT, CNDOT_NDOT,
+// /         CDRG_R, CDRG_T, CDRG_N, CDRG_RDOT, CDRG_TDOT, CDRG_NDOT, CDRG_DRG,
+// /         CSRP_R, CSRP_T, CSRP_N, CSRP_RDOT, CSRP_TDOT, CSRP_NDOT, CSRP_DRG, CSRP_SRP,
+// /         CTHR_R, CTHR_T, CTHR_N, CTHR_RDOT, CTHR_TDOT, CTHR_NDOT, CTHR_DRG, CTHR_SRP, CTHR_THR]
 func (rcv *CDMObject) COVARIANCE(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
 	if o != 0 {
@@ -758,13 +758,13 @@ func (rcv *CDMObject) CovarianceLength() int {
 	return rcv.COVARIANCELength()
 }
 
-/// Covariance matrix as flat array (9x9 lower triangular = 45 elements).
-/// Order: [CR_R, CT_R, CT_T, CN_R, CN_T, CN_N, CRDOT_R, CRDOT_T, CRDOT_N, CRDOT_RDOT,
-///         CTDOT_R, CTDOT_T, CTDOT_N, CTDOT_RDOT, CTDOT_TDOT,
-///         CNDOT_R, CNDOT_T, CNDOT_N, CNDOT_RDOT, CNDOT_TDOT, CNDOT_NDOT,
-///         CDRG_R, CDRG_T, CDRG_N, CDRG_RDOT, CDRG_TDOT, CDRG_NDOT, CDRG_DRG,
-///         CSRP_R, CSRP_T, CSRP_N, CSRP_RDOT, CSRP_TDOT, CSRP_NDOT, CSRP_DRG, CSRP_SRP,
-///         CTHR_R, CTHR_T, CTHR_N, CTHR_RDOT, CTHR_TDOT, CTHR_NDOT, CTHR_DRG, CTHR_SRP, CTHR_THR]
+// / Covariance matrix as flat array (9x9 lower triangular = 45 elements).
+// / Order: [CR_R, CT_R, CT_T, CN_R, CN_T, CN_N, CRDOT_R, CRDOT_T, CRDOT_N, CRDOT_RDOT,
+// /         CTDOT_R, CTDOT_T, CTDOT_N, CTDOT_RDOT, CTDOT_TDOT,
+// /         CNDOT_R, CNDOT_T, CNDOT_N, CNDOT_RDOT, CNDOT_TDOT, CNDOT_NDOT,
+// /         CDRG_R, CDRG_T, CDRG_N, CDRG_RDOT, CDRG_TDOT, CDRG_NDOT, CDRG_DRG,
+// /         CSRP_R, CSRP_T, CSRP_N, CSRP_RDOT, CSRP_TDOT, CSRP_NDOT, CSRP_DRG, CSRP_SRP,
+// /         CTHR_R, CTHR_T, CTHR_N, CTHR_RDOT, CTHR_TDOT, CTHR_NDOT, CTHR_DRG, CTHR_SRP, CTHR_THR]
 func (rcv *CDMObject) MutateCOVARIANCE(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
 	if o != 0 {

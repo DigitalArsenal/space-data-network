@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// CCSDS time-code payload and preamble metadata.
+// / CCSDS time-code payload and preamble metadata.
 type TIMCcsdsTimeCode struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *TIMCcsdsTimeCode) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// CCSDS time-code family.
+// / CCSDS time-code family.
 func (rcv *TIMCcsdsTimeCode) CODE_KIND() timCcsdsTimeCodeKind {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *TIMCcsdsTimeCode) CodeKind() timCcsdsTimeCodeKind {
 	return rcv.CODE_KIND()
 }
 
-/// CCSDS time-code family.
+// / CCSDS time-code family.
 func (rcv *TIMCcsdsTimeCode) MutateCODE_KIND(n timCcsdsTimeCodeKind) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *TIMCcsdsTimeCode) MutateCodeKind(n timCcsdsTimeCodeKind) bool {
 	return rcv.MutateCODE_KIND(n)
 }
 
-/// First CCSDS preamble field octet.
+// / First CCSDS preamble field octet.
 func (rcv *TIMCcsdsTimeCode) PREAMBLE_FIELD1() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *TIMCcsdsTimeCode) PreambleField1() byte {
 	return rcv.PREAMBLE_FIELD1()
 }
 
-/// First CCSDS preamble field octet.
+// / First CCSDS preamble field octet.
 func (rcv *TIMCcsdsTimeCode) MutatePREAMBLE_FIELD1(n byte) bool {
 	return rcv._tab.MutateByteSlot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *TIMCcsdsTimeCode) MutatePreambleField1(n byte) bool {
 	return rcv.MutatePREAMBLE_FIELD1(n)
 }
 
-/// Second CCSDS preamble field octet; ignored when not signaled by preamble 1.
+// / Second CCSDS preamble field octet; ignored when not signaled by preamble 1.
 func (rcv *TIMCcsdsTimeCode) PREAMBLE_FIELD2() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *TIMCcsdsTimeCode) PreambleField2() byte {
 	return rcv.PREAMBLE_FIELD2()
 }
 
-/// Second CCSDS preamble field octet; ignored when not signaled by preamble 1.
+// / Second CCSDS preamble field octet; ignored when not signaled by preamble 1.
 func (rcv *TIMCcsdsTimeCode) MutatePREAMBLE_FIELD2(n byte) bool {
 	return rcv._tab.MutateByteSlot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *TIMCcsdsTimeCode) MutatePreambleField2(n byte) bool {
 	return rcv.MutatePREAMBLE_FIELD2(n)
 }
 
-/// Raw CCSDS time field octets.
+// / Raw CCSDS time field octets.
 func (rcv *TIMCcsdsTimeCode) TIME_FIELD(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -146,7 +146,7 @@ func (rcv *TIMCcsdsTimeCode) TimeFieldBytes() []byte {
 	return rcv.TIME_FIELDBytes()
 }
 
-/// Raw CCSDS time field octets.
+// / Raw CCSDS time field octets.
 func (rcv *TIMCcsdsTimeCode) MutateTIME_FIELD(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -160,7 +160,7 @@ func (rcv *TIMCcsdsTimeCode) MutateTimeField(j int, n byte) bool {
 	return rcv.MutateTIME_FIELD(j, n)
 }
 
-/// Optional agency-defined epoch timestamp for agency epoch time codes.
+// / Optional agency-defined epoch timestamp for agency epoch time codes.
 func (rcv *TIMCcsdsTimeCode) AGENCY_DEFINED_EPOCH_ISO8601() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -173,8 +173,8 @@ func (rcv *TIMCcsdsTimeCode) AgencyDefinedEpochIso8601() []byte {
 	return rcv.AGENCY_DEFINED_EPOCH_ISO8601()
 }
 
-/// Optional agency-defined epoch timestamp for agency epoch time codes.
-/// Optional CCSDS epoch override timestamp; defaults to 1958-01-01T00:00:00 TAI.
+// / Optional agency-defined epoch timestamp for agency epoch time codes.
+// / Optional CCSDS epoch override timestamp; defaults to 1958-01-01T00:00:00 TAI.
 func (rcv *TIMCcsdsTimeCode) CCSDS_EPOCH_ISO8601() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -187,7 +187,7 @@ func (rcv *TIMCcsdsTimeCode) CcsdsEpochIso8601() []byte {
 	return rcv.CCSDS_EPOCH_ISO8601()
 }
 
-/// Optional CCSDS epoch override timestamp; defaults to 1958-01-01T00:00:00 TAI.
+// / Optional CCSDS epoch override timestamp; defaults to 1958-01-01T00:00:00 TAI.
 func TIMCcsdsTimeCodeStart(builder *flatbuffers.Builder) {
 	builder.StartObject(6)
 }

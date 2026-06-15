@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// KML Document
+// / KML Document
 type KML struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *KML) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Document name
+// / Document name
 func (rcv *KML) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *KML) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Document name
-/// Document description
+// / Document name
+// / Document description
 func (rcv *KML) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *KML) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-/// Document description
-/// Whether document is visible
+// / Document description
+// / Whether document is visible
 func (rcv *KML) VISIBILITY() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,7 +95,7 @@ func (rcv *KML) Visibility() bool {
 	return rcv.VISIBILITY()
 }
 
-/// Whether document is visible
+// / Whether document is visible
 func (rcv *KML) MutateVISIBILITY(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }
@@ -104,7 +104,7 @@ func (rcv *KML) MutateVisibility(n bool) bool {
 	return rcv.MutateVISIBILITY(n)
 }
 
-/// Whether document is open in tree view
+// / Whether document is open in tree view
 func (rcv *KML) OPEN() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,7 +117,7 @@ func (rcv *KML) Open() bool {
 	return rcv.OPEN()
 }
 
-/// Whether document is open in tree view
+// / Whether document is open in tree view
 func (rcv *KML) MutateOPEN(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }
@@ -126,7 +126,7 @@ func (rcv *KML) MutateOpen(n bool) bool {
 	return rcv.MutateOPEN(n)
 }
 
-/// Shared styles
+// / Shared styles
 func (rcv *KML) STYLES(obj *KMLStyle, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -158,8 +158,8 @@ func (rcv *KML) StylesLength() int {
 	return rcv.STYLESLength()
 }
 
-/// Shared styles
-/// Style maps
+// / Shared styles
+// / Style maps
 func (rcv *KML) STYLE_MAPS(obj *KMLStyleMap, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -191,8 +191,8 @@ func (rcv *KML) StyleMapsLength() int {
 	return rcv.STYLE_MAPSLength()
 }
 
-/// Style maps
-/// Top-level placemarks
+// / Style maps
+// / Top-level placemarks
 func (rcv *KML) PLACEMARKS(obj *KMLPlacemark, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -224,8 +224,8 @@ func (rcv *KML) PlacemarksLength() int {
 	return rcv.PLACEMARKSLength()
 }
 
-/// Top-level placemarks
-/// Top-level folders
+// / Top-level placemarks
+// / Top-level folders
 func (rcv *KML) FOLDERS(obj *KMLFolder, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -257,8 +257,8 @@ func (rcv *KML) FoldersLength() int {
 	return rcv.FOLDERSLength()
 }
 
-/// Top-level folders
-/// Network links
+// / Top-level folders
+// / Network links
 func (rcv *KML) NETWORK_LINKS(obj *KMLNetworkLink, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -290,8 +290,8 @@ func (rcv *KML) NetworkLinksLength() int {
 	return rcv.NETWORK_LINKSLength()
 }
 
-/// Network links
-/// Ground overlays
+// / Network links
+// / Ground overlays
 func (rcv *KML) GROUND_OVERLAYS(obj *KMLGroundOverlay, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -323,8 +323,8 @@ func (rcv *KML) GroundOverlaysLength() int {
 	return rcv.GROUND_OVERLAYSLength()
 }
 
-/// Ground overlays
-/// Schemas
+// / Ground overlays
+// / Schemas
 func (rcv *KML) SCHEMAS(obj *KMLSchema, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -356,8 +356,8 @@ func (rcv *KML) SchemasLength() int {
 	return rcv.SCHEMASLength()
 }
 
-/// Schemas
-/// Screen overlays
+// / Schemas
+// / Screen overlays
 func (rcv *KML) SCREEN_OVERLAYS(obj *KMLScreenOverlay, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -389,8 +389,8 @@ func (rcv *KML) ScreenOverlaysLength() int {
 	return rcv.SCREEN_OVERLAYSLength()
 }
 
-/// Screen overlays
-/// Photo overlays
+// / Screen overlays
+// / Photo overlays
 func (rcv *KML) PHOTO_OVERLAYS(obj *KMLPhotoOverlay, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -422,8 +422,8 @@ func (rcv *KML) PhotoOverlaysLength() int {
 	return rcv.PHOTO_OVERLAYSLength()
 }
 
-/// Photo overlays
-/// Tours
+// / Photo overlays
+// / Tours
 func (rcv *KML) TOURS(obj *KMLTour, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -455,8 +455,8 @@ func (rcv *KML) ToursLength() int {
 	return rcv.TOURSLength()
 }
 
-/// Tours
-/// NetworkLinkControl
+// / Tours
+// / NetworkLinkControl
 func (rcv *KML) NETWORK_LINK_CONTROL(obj *KMLNetworkLinkControl) *KMLNetworkLinkControl {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -474,7 +474,7 @@ func (rcv *KML) NetworkLinkControl(obj *KMLNetworkLinkControl) *KMLNetworkLinkCo
 	return rcv.NETWORK_LINK_CONTROL(obj)
 }
 
-/// NetworkLinkControl
+// / NetworkLinkControl
 func KMLStart(builder *flatbuffers.Builder) {
 	builder.StartObject(15)
 }

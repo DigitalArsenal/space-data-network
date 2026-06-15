@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Near/Far scalar for distance-based display
+// / Near/Far scalar for distance-based display
 type CZMNearFarScalar struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMNearFarScalar) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Near distance in meters
+// / Near distance in meters
 func (rcv *CZMNearFarScalar) NEAR_DISTANCE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMNearFarScalar) NearDistance() float64 {
 	return rcv.NEAR_DISTANCE()
 }
 
-/// Near distance in meters
+// / Near distance in meters
 func (rcv *CZMNearFarScalar) MutateNEAR_DISTANCE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMNearFarScalar) MutateNearDistance(n float64) bool {
 	return rcv.MutateNEAR_DISTANCE(n)
 }
 
-/// Value at near distance
+// / Value at near distance
 func (rcv *CZMNearFarScalar) NEAR_VALUE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *CZMNearFarScalar) NearValue() float64 {
 	return rcv.NEAR_VALUE()
 }
 
-/// Value at near distance
+// / Value at near distance
 func (rcv *CZMNearFarScalar) MutateNEAR_VALUE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *CZMNearFarScalar) MutateNearValue(n float64) bool {
 	return rcv.MutateNEAR_VALUE(n)
 }
 
-/// Far distance in meters
+// / Far distance in meters
 func (rcv *CZMNearFarScalar) FAR_DISTANCE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *CZMNearFarScalar) FarDistance() float64 {
 	return rcv.FAR_DISTANCE()
 }
 
-/// Far distance in meters
+// / Far distance in meters
 func (rcv *CZMNearFarScalar) MutateFAR_DISTANCE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *CZMNearFarScalar) MutateFarDistance(n float64) bool {
 	return rcv.MutateFAR_DISTANCE(n)
 }
 
-/// Value at far distance
+// / Value at far distance
 func (rcv *CZMNearFarScalar) FAR_VALUE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *CZMNearFarScalar) FarValue() float64 {
 	return rcv.FAR_VALUE()
 }
 
-/// Value at far distance
+// / Value at far distance
 func (rcv *CZMNearFarScalar) MutateFAR_VALUE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }

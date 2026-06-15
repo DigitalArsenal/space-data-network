@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Beam Contour Point (gain pattern boundary)
+// / Beam Contour Point (gain pattern boundary)
 type beamContourPoint struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *beamContourPoint) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Latitude in degrees
+// / Latitude in degrees
 func (rcv *beamContourPoint) LATITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *beamContourPoint) Latitude() float64 {
 	return rcv.LATITUDE()
 }
 
-/// Latitude in degrees
+// / Latitude in degrees
 func (rcv *beamContourPoint) MutateLATITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *beamContourPoint) MutateLatitude(n float64) bool {
 	return rcv.MutateLATITUDE(n)
 }
 
-/// Longitude in degrees
+// / Longitude in degrees
 func (rcv *beamContourPoint) LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *beamContourPoint) Longitude() float64 {
 	return rcv.LONGITUDE()
 }
 
-/// Longitude in degrees
+// / Longitude in degrees
 func (rcv *beamContourPoint) MutateLONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *beamContourPoint) MutateLongitude(n float64) bool {
 	return rcv.MutateLONGITUDE(n)
 }
 
-/// Gain level in dBi at this contour
+// / Gain level in dBi at this contour
 func (rcv *beamContourPoint) GAIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *beamContourPoint) Gain() float64 {
 	return rcv.GAIN()
 }
 
-/// Gain level in dBi at this contour
+// / Gain level in dBi at this contour
 func (rcv *beamContourPoint) MutateGAIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }

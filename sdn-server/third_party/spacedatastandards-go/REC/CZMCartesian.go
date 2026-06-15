@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Cartesian position (X, Y, Z in meters)
+// / Cartesian position (X, Y, Z in meters)
 type CZMCartesian struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMCartesian) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// X component in meters (Earth-fixed)
+// / X component in meters (Earth-fixed)
 func (rcv *CZMCartesian) X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -51,12 +51,12 @@ func (rcv *CZMCartesian) X() float64 {
 	return 0.0
 }
 
-/// X component in meters (Earth-fixed)
+// / X component in meters (Earth-fixed)
 func (rcv *CZMCartesian) MutateX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
 
-/// Y component in meters (Earth-fixed)
+// / Y component in meters (Earth-fixed)
 func (rcv *CZMCartesian) Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -65,12 +65,12 @@ func (rcv *CZMCartesian) Y() float64 {
 	return 0.0
 }
 
-/// Y component in meters (Earth-fixed)
+// / Y component in meters (Earth-fixed)
 func (rcv *CZMCartesian) MutateY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
 
-/// Z component in meters (Earth-fixed)
+// / Z component in meters (Earth-fixed)
 func (rcv *CZMCartesian) Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -79,7 +79,7 @@ func (rcv *CZMCartesian) Z() float64 {
 	return 0.0
 }
 
-/// Z component in meters (Earth-fixed)
+// / Z component in meters (Earth-fixed)
 func (rcv *CZMCartesian) MutateZ(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }

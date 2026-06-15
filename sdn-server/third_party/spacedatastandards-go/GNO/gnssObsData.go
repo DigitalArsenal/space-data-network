@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// GNSS Observation Data Point
+// / GNSS Observation Data Point
 type gnssObsData struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *gnssObsData) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Signal type code (e.g., L1C, L2P, L5Q, E1B)
+// / Signal type code (e.g., L1C, L2P, L5Q, E1B)
 func (rcv *gnssObsData) SIGNAL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *gnssObsData) Signal() []byte {
 	return rcv.SIGNAL()
 }
 
-/// Signal type code (e.g., L1C, L2P, L5Q, E1B)
-/// Observation type
+// / Signal type code (e.g., L1C, L2P, L5Q, E1B)
+// / Observation type
 func (rcv *gnssObsData) OBS_TYPE() gnssObsType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *gnssObsData) ObsType() gnssObsType {
 	return rcv.OBS_TYPE()
 }
 
-/// Observation type
+// / Observation type
 func (rcv *gnssObsData) MutateOBS_TYPE(n gnssObsType) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -78,7 +78,7 @@ func (rcv *gnssObsData) MutateObsType(n gnssObsType) bool {
 	return rcv.MutateOBS_TYPE(n)
 }
 
-/// Observation value (units depend on type: m, cycles, Hz, dB-Hz)
+// / Observation value (units depend on type: m, cycles, Hz, dB-Hz)
 func (rcv *gnssObsData) VALUE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *gnssObsData) Value() float64 {
 	return rcv.VALUE()
 }
 
-/// Observation value (units depend on type: m, cycles, Hz, dB-Hz)
+// / Observation value (units depend on type: m, cycles, Hz, dB-Hz)
 func (rcv *gnssObsData) MutateVALUE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -100,7 +100,7 @@ func (rcv *gnssObsData) MutateValue(n float64) bool {
 	return rcv.MutateVALUE(n)
 }
 
-/// Loss of lock indicator
+// / Loss of lock indicator
 func (rcv *gnssObsData) LLI() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -113,7 +113,7 @@ func (rcv *gnssObsData) Lli() byte {
 	return rcv.LLI()
 }
 
-/// Loss of lock indicator
+// / Loss of lock indicator
 func (rcv *gnssObsData) MutateLLI(n byte) bool {
 	return rcv._tab.MutateByteSlot(10, n)
 }
@@ -122,7 +122,7 @@ func (rcv *gnssObsData) MutateLli(n byte) bool {
 	return rcv.MutateLLI(n)
 }
 
-/// Signal strength indicator (1-9)
+// / Signal strength indicator (1-9)
 func (rcv *gnssObsData) SSI() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -135,7 +135,7 @@ func (rcv *gnssObsData) Ssi() byte {
 	return rcv.SSI()
 }
 
-/// Signal strength indicator (1-9)
+// / Signal strength indicator (1-9)
 func (rcv *gnssObsData) MutateSSI(n byte) bool {
 	return rcv._tab.MutateByteSlot(12, n)
 }

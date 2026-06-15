@@ -6,14 +6,14 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Propagator initialization request — assigns TLE / OMM / Keplerian /
-/// polynomial inputs to entity handles.
-///
-/// The actual per-entity source record is carried inline as raw bytes
-/// tagged with SOURCE_KIND and, where useful, a SDS file_identifier.
-/// Callers encode `OMM`, `OCM`, or a one-off Keplerian set and pass the
-/// bytes verbatim; the propagator uses SOURCE_KIND to decide how to
-/// consume them.
+// / Propagator initialization request — assigns TLE / OMM / Keplerian /
+// / polynomial inputs to entity handles.
+// /
+// / The actual per-entity source record is carried inline as raw bytes
+// / tagged with SOURCE_KIND and, where useful, a SDS file_identifier.
+// / Callers encode `OMM`, `OCM`, or a one-off Keplerian set and pass the
+// / bytes verbatim; the propagator uses SOURCE_KIND to decide how to
+// / consume them.
 type PRWInit struct {
 	_tab flatbuffers.Table
 }
@@ -49,7 +49,7 @@ func (rcv *PRWInit) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Entity handles to assign results to (same order as SOURCES[]).
+// / Entity handles to assign results to (same order as SOURCES[]).
 func (rcv *PRWInit) ENTITY_HANDLES(j int) uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -75,7 +75,7 @@ func (rcv *PRWInit) EntityHandlesLength() int {
 	return rcv.ENTITY_HANDLESLength()
 }
 
-/// Entity handles to assign results to (same order as SOURCES[]).
+// / Entity handles to assign results to (same order as SOURCES[]).
 func (rcv *PRWInit) MutateENTITY_HANDLES(j int, n uint32) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -89,7 +89,7 @@ func (rcv *PRWInit) MutateEntityHandles(j int, n uint32) bool {
 	return rcv.MutateENTITY_HANDLES(j, n)
 }
 
-/// Per-entity source records, encoded as SDS FlatBuffers.
+// / Per-entity source records, encoded as SDS FlatBuffers.
 func (rcv *PRWInit) SOURCES(obj *PRWInitSource, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *PRWInit) SourcesLength() int {
 	return rcv.SOURCESLength()
 }
 
-/// Per-entity source records, encoded as SDS FlatBuffers.
+// / Per-entity source records, encoded as SDS FlatBuffers.
 func PRWInitStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

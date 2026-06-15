@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Engine Details
+// / Engine Details
 type ENGINE struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ENGINE) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Engine Name
+// / Engine Name
 func (rcv *ENGINE) ENGINE_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *ENGINE) EngineName() []byte {
 	return rcv.ENGINE_NAME()
 }
 
-/// Engine Name
-/// Type of Engine
+// / Engine Name
+// / Type of Engine
 func (rcv *ENGINE) TYPE() ENGINE_TYPE {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *ENGINE) Type() ENGINE_TYPE {
 	return rcv.TYPE()
 }
 
-/// Type of Engine
+// / Type of Engine
 func (rcv *ENGINE) MutateTYPE(n ENGINE_TYPE) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -78,7 +78,7 @@ func (rcv *ENGINE) MutateType(n ENGINE_TYPE) bool {
 	return rcv.MutateTYPE(n)
 }
 
-/// Thrust Produced by the Engine (in Newtons)
+// / Thrust Produced by the Engine (in Newtons)
 func (rcv *ENGINE) THRUST() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *ENGINE) Thrust() float64 {
 	return rcv.THRUST()
 }
 
-/// Thrust Produced by the Engine (in Newtons)
+// / Thrust Produced by the Engine (in Newtons)
 func (rcv *ENGINE) MutateTHRUST(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }

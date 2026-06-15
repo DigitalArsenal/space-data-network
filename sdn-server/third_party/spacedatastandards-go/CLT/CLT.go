@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Command Link Transmission Unit Service (CCSDS 912.3-B-2)
+// / Command Link Transmission Unit Service (CCSDS 912.3-B-2)
 type CLT struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *CLT) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// PDU type
+// / PDU type
 func (rcv *CLT) PDU_TYPE() cltuPduType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *CLT) PduType() cltuPduType {
 	return rcv.PDU_TYPE()
 }
 
-/// PDU type
+// / PDU type
 func (rcv *CLT) MutatePDU_TYPE(n cltuPduType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -76,7 +76,7 @@ func (rcv *CLT) MutatePduType(n cltuPduType) bool {
 	return rcv.MutatePDU_TYPE(n)
 }
 
-/// Initiator identifier
+// / Initiator identifier
 func (rcv *CLT) INITIATOR_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,8 +89,8 @@ func (rcv *CLT) InitiatorId() []byte {
 	return rcv.INITIATOR_ID()
 }
 
-/// Initiator identifier
-/// Responder port identifier
+// / Initiator identifier
+// / Responder port identifier
 func (rcv *CLT) RESPONDER_PORT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,8 +103,8 @@ func (rcv *CLT) ResponderPortId() []byte {
 	return rcv.RESPONDER_PORT_ID()
 }
 
-/// Responder port identifier
-/// Service type
+// / Responder port identifier
+// / Service type
 func (rcv *CLT) SERVICE_TYPE() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,7 +117,7 @@ func (rcv *CLT) ServiceType() byte {
 	return rcv.SERVICE_TYPE()
 }
 
-/// Service type
+// / Service type
 func (rcv *CLT) MutateSERVICE_TYPE(n byte) bool {
 	return rcv._tab.MutateByteSlot(10, n)
 }
@@ -126,7 +126,7 @@ func (rcv *CLT) MutateServiceType(n byte) bool {
 	return rcv.MutateSERVICE_TYPE(n)
 }
 
-/// Version number
+// / Version number
 func (rcv *CLT) VERSION() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -139,7 +139,7 @@ func (rcv *CLT) Version() uint16 {
 	return rcv.VERSION()
 }
 
-/// Version number
+// / Version number
 func (rcv *CLT) MutateVERSION(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(12, n)
 }
@@ -148,7 +148,7 @@ func (rcv *CLT) MutateVersion(n uint16) bool {
 	return rcv.MutateVERSION(n)
 }
 
-/// Invoke ID
+// / Invoke ID
 func (rcv *CLT) INVOKE_ID() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -161,7 +161,7 @@ func (rcv *CLT) InvokeId() uint32 {
 	return rcv.INVOKE_ID()
 }
 
-/// Invoke ID
+// / Invoke ID
 func (rcv *CLT) MutateINVOKE_ID(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(14, n)
 }
@@ -170,7 +170,7 @@ func (rcv *CLT) MutateInvokeId(n uint32) bool {
 	return rcv.MutateINVOKE_ID(n)
 }
 
-/// CLTU data
+// / CLTU data
 func (rcv *CLT) DATA(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -208,7 +208,7 @@ func (rcv *CLT) DataBytes() []byte {
 	return rcv.DATABytes()
 }
 
-/// CLTU data
+// / CLTU data
 func (rcv *CLT) MutateDATA(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {

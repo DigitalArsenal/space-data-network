@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Polygon style
+// / Polygon style
 type KMLPolyStyle struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLPolyStyle) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// KML color in aabbggrr hex format
+// / KML color in aabbggrr hex format
 func (rcv *KMLPolyStyle) COLOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLPolyStyle) Color() []byte {
 	return rcv.COLOR()
 }
 
-/// KML color in aabbggrr hex format
-/// Color mode
+// / KML color in aabbggrr hex format
+// / Color mode
 func (rcv *KMLPolyStyle) COLOR_MODE() KMLColorMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *KMLPolyStyle) ColorMode() KMLColorMode {
 	return rcv.COLOR_MODE()
 }
 
-/// Color mode
+// / Color mode
 func (rcv *KMLPolyStyle) MutateCOLOR_MODE(n KMLColorMode) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -78,7 +78,7 @@ func (rcv *KMLPolyStyle) MutateColorMode(n KMLColorMode) bool {
 	return rcv.MutateCOLOR_MODE(n)
 }
 
-/// Whether to fill
+// / Whether to fill
 func (rcv *KMLPolyStyle) FILL() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *KMLPolyStyle) Fill() bool {
 	return rcv.FILL()
 }
 
-/// Whether to fill
+// / Whether to fill
 func (rcv *KMLPolyStyle) MutateFILL(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }
@@ -100,7 +100,7 @@ func (rcv *KMLPolyStyle) MutateFill(n bool) bool {
 	return rcv.MutateFILL(n)
 }
 
-/// Whether to outline
+// / Whether to outline
 func (rcv *KMLPolyStyle) OUTLINE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -113,7 +113,7 @@ func (rcv *KMLPolyStyle) Outline() bool {
 	return rcv.OUTLINE()
 }
 
-/// Whether to outline
+// / Whether to outline
 func (rcv *KMLPolyStyle) MutateOUTLINE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }

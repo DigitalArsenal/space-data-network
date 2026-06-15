@@ -4,12 +4,12 @@ package REC
 
 import "strconv"
 
-/// Rate basis for stream rate specifications
+// / Rate basis for stream rate specifications
 type RateBasisType int8
 
 const (
 	/// Rate per second
-	RateBasisTypePER_SECOND    RateBasisType = 0
+	RateBasisTypePER_SECOND RateBasisType = 0
 	/// Rate per container occurrence
 	RateBasisTypePER_CONTAINER RateBasisType = 1
 )

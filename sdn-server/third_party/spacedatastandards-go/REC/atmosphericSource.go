@@ -4,7 +4,7 @@ package REC
 
 import "strconv"
 
-/// Enum to represent common atmospheric models
+// / Enum to represent common atmospheric models
 type atmosphericSource int8
 
 const (

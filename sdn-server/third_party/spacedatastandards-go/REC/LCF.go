@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Licensing Configuration Frame
+// / Licensing Configuration Frame
 type LCF struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *LCF) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Distinguishes configuration inputs from runtime status outputs.
+// / Distinguishes configuration inputs from runtime status outputs.
 func (rcv *LCF) MESSAGE_TYPE() licensingConfigMessageType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *LCF) MessageType() licensingConfigMessageType {
 	return rcv.MESSAGE_TYPE()
 }
 
-/// Distinguishes configuration inputs from runtime status outputs.
+// / Distinguishes configuration inputs from runtime status outputs.
 func (rcv *LCF) MutateMESSAGE_TYPE(n licensingConfigMessageType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -76,7 +76,7 @@ func (rcv *LCF) MutateMessageType(n licensingConfigMessageType) bool {
 	return rcv.MutateMESSAGE_TYPE(n)
 }
 
-/// Indicates whether the configuration/status applies to server/provider or requester/client behavior.
+// / Indicates whether the configuration/status applies to server/provider or requester/client behavior.
 func (rcv *LCF) ROLE() licensingConfigRole {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,7 +89,7 @@ func (rcv *LCF) Role() licensingConfigRole {
 	return rcv.ROLE()
 }
 
-/// Indicates whether the configuration/status applies to server/provider or requester/client behavior.
+// / Indicates whether the configuration/status applies to server/provider or requester/client behavior.
 func (rcv *LCF) MutateROLE(n licensingConfigRole) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -98,7 +98,7 @@ func (rcv *LCF) MutateRole(n licensingConfigRole) bool {
 	return rcv.MutateROLE(n)
 }
 
-/// Peer ID advertised by the licensing provider.
+// / Peer ID advertised by the licensing provider.
 func (rcv *LCF) PROVIDER_PEER_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -111,8 +111,8 @@ func (rcv *LCF) ProviderPeerId() []byte {
 	return rcv.PROVIDER_PEER_ID()
 }
 
-/// Peer ID advertised by the licensing provider.
-/// Host-managed long-lived signing key used for grant signatures.
+// / Peer ID advertised by the licensing provider.
+// / Host-managed long-lived signing key used for grant signatures.
 func (rcv *LCF) PROVIDER_SIGNING_KEY(obj *KRF) *KRF {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -130,8 +130,8 @@ func (rcv *LCF) ProviderSigningKey(obj *KRF) *KRF {
 	return rcv.PROVIDER_SIGNING_KEY(obj)
 }
 
-/// Host-managed long-lived signing key used for grant signatures.
-/// Host-managed wrapping key used to protect per-publication content keys for requesters.
+// / Host-managed long-lived signing key used for grant signatures.
+// / Host-managed wrapping key used to protect per-publication content keys for requesters.
 func (rcv *LCF) PROVIDER_WRAPPING_KEY(obj *KRF) *KRF {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -149,8 +149,8 @@ func (rcv *LCF) ProviderWrappingKey(obj *KRF) *KRF {
 	return rcv.PROVIDER_WRAPPING_KEY(obj)
 }
 
-/// Host-managed wrapping key used to protect per-publication content keys for requesters.
-/// Optional requester signing key reference for requester-hosted flows.
+// / Host-managed wrapping key used to protect per-publication content keys for requesters.
+// / Optional requester signing key reference for requester-hosted flows.
 func (rcv *LCF) REQUESTER_SIGNING_KEY(obj *KRF) *KRF {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -168,8 +168,8 @@ func (rcv *LCF) RequesterSigningKey(obj *KRF) *KRF {
 	return rcv.REQUESTER_SIGNING_KEY(obj)
 }
 
-/// Optional requester signing key reference for requester-hosted flows.
-/// Logical active publication/grant key version.
+// / Optional requester signing key reference for requester-hosted flows.
+// / Logical active publication/grant key version.
 func (rcv *LCF) ACTIVE_KEY_VERSION() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -182,7 +182,7 @@ func (rcv *LCF) ActiveKeyVersion() uint32 {
 	return rcv.ACTIVE_KEY_VERSION()
 }
 
-/// Logical active publication/grant key version.
+// / Logical active publication/grant key version.
 func (rcv *LCF) MutateACTIVE_KEY_VERSION(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(16, n)
 }
@@ -191,7 +191,7 @@ func (rcv *LCF) MutateActiveKeyVersion(n uint32) bool {
 	return rcv.MutateACTIVE_KEY_VERSION(n)
 }
 
-/// Runtime expiry in unix milliseconds, or 0 if unbounded.
+// / Runtime expiry in unix milliseconds, or 0 if unbounded.
 func (rcv *LCF) EXPIRES_AT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -204,7 +204,7 @@ func (rcv *LCF) ExpiresAt() uint64 {
 	return rcv.EXPIRES_AT()
 }
 
-/// Runtime expiry in unix milliseconds, or 0 if unbounded.
+// / Runtime expiry in unix milliseconds, or 0 if unbounded.
 func (rcv *LCF) MutateEXPIRES_AT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(18, n)
 }
@@ -213,7 +213,7 @@ func (rcv *LCF) MutateExpiresAt(n uint64) bool {
 	return rcv.MutateEXPIRES_AT(n)
 }
 
-/// Maximum accepted requester/provider clock skew in milliseconds.
+// / Maximum accepted requester/provider clock skew in milliseconds.
 func (rcv *LCF) MAX_CLOCK_SKEW_MS() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -226,7 +226,7 @@ func (rcv *LCF) MaxClockSkewMs() uint64 {
 	return rcv.MAX_CLOCK_SKEW_MS()
 }
 
-/// Maximum accepted requester/provider clock skew in milliseconds.
+// / Maximum accepted requester/provider clock skew in milliseconds.
 func (rcv *LCF) MutateMAX_CLOCK_SKEW_MS(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(20, n)
 }
@@ -235,7 +235,7 @@ func (rcv *LCF) MutateMaxClockSkewMs(n uint64) bool {
 	return rcv.MutateMAX_CLOCK_SKEW_MS(n)
 }
 
-/// Challenge time-to-live in milliseconds.
+// / Challenge time-to-live in milliseconds.
 func (rcv *LCF) CHALLENGE_TTL_MS() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -248,7 +248,7 @@ func (rcv *LCF) ChallengeTtlMs() uint64 {
 	return rcv.CHALLENGE_TTL_MS()
 }
 
-/// Challenge time-to-live in milliseconds.
+// / Challenge time-to-live in milliseconds.
 func (rcv *LCF) MutateCHALLENGE_TTL_MS(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(22, n)
 }
@@ -257,7 +257,7 @@ func (rcv *LCF) MutateChallengeTtlMs(n uint64) bool {
 	return rcv.MutateCHALLENGE_TTL_MS(n)
 }
 
-/// Optional capability token bytes returned with successful grants.
+// / Optional capability token bytes returned with successful grants.
 func (rcv *LCF) CAPABILITY_TOKEN(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -295,7 +295,7 @@ func (rcv *LCF) CapabilityTokenBytes() []byte {
 	return rcv.CAPABILITY_TOKENBytes()
 }
 
-/// Optional capability token bytes returned with successful grants.
+// / Optional capability token bytes returned with successful grants.
 func (rcv *LCF) MutateCAPABILITY_TOKEN(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -309,7 +309,7 @@ func (rcv *LCF) MutateCapabilityToken(j int, n byte) bool {
 	return rcv.MutateCAPABILITY_TOKEN(j, n)
 }
 
-/// Whether the runtime has been initialized successfully.
+// / Whether the runtime has been initialized successfully.
 func (rcv *LCF) INITIALIZED() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -322,7 +322,7 @@ func (rcv *LCF) Initialized() bool {
 	return rcv.INITIALIZED()
 }
 
-/// Whether the runtime has been initialized successfully.
+// / Whether the runtime has been initialized successfully.
 func (rcv *LCF) MutateINITIALIZED(n bool) bool {
 	return rcv._tab.MutateBoolSlot(26, n)
 }
@@ -331,7 +331,7 @@ func (rcv *LCF) MutateInitialized(n bool) bool {
 	return rcv.MutateINITIALIZED(n)
 }
 
-/// Whether the runtime needs issuer key rotation or refreshed configuration.
+// / Whether the runtime needs issuer key rotation or refreshed configuration.
 func (rcv *LCF) NEEDS_ROTATION() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -344,7 +344,7 @@ func (rcv *LCF) NeedsRotation() bool {
 	return rcv.NEEDS_ROTATION()
 }
 
-/// Whether the runtime needs issuer key rotation or refreshed configuration.
+// / Whether the runtime needs issuer key rotation or refreshed configuration.
 func (rcv *LCF) MutateNEEDS_ROTATION(n bool) bool {
 	return rcv._tab.MutateBoolSlot(28, n)
 }
@@ -353,7 +353,7 @@ func (rcv *LCF) MutateNeedsRotation(n bool) bool {
 	return rcv.MutateNEEDS_ROTATION(n)
 }
 
-/// Optional machine-readable status code for status/error responses.
+// / Optional machine-readable status code for status/error responses.
 func (rcv *LCF) STATUS_CODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -366,8 +366,8 @@ func (rcv *LCF) StatusCode() []byte {
 	return rcv.STATUS_CODE()
 }
 
-/// Optional machine-readable status code for status/error responses.
-/// Optional human-readable status or error message.
+// / Optional machine-readable status code for status/error responses.
+// / Optional human-readable status or error message.
 func (rcv *LCF) STATUS_MESSAGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -380,7 +380,7 @@ func (rcv *LCF) StatusMessage() []byte {
 	return rcv.STATUS_MESSAGE()
 }
 
-/// Optional human-readable status or error message.
+// / Optional human-readable status or error message.
 func LCFStart(builder *flatbuffers.Builder) {
 	builder.StartObject(15)
 }

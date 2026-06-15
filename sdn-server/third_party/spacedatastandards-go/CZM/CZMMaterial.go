@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Surface material (used by polygon, ellipse, box, etc.)
+// / Surface material (used by polygon, ellipse, box, etc.)
 type CZMMaterial struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMMaterial) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Solid color material
+// / Solid color material
 func (rcv *CZMMaterial) SOLID_COLOR(obj *CZMSolidColorMaterial) *CZMSolidColorMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *CZMMaterial) SolidColor(obj *CZMSolidColorMaterial) *CZMSolidColorMat
 	return rcv.SOLID_COLOR(obj)
 }
 
-/// Solid color material
-/// Image material
+// / Solid color material
+// / Image material
 func (rcv *CZMMaterial) IMAGE(obj *CZMImageMaterial) *CZMImageMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -79,8 +79,8 @@ func (rcv *CZMMaterial) Image(obj *CZMImageMaterial) *CZMImageMaterial {
 	return rcv.IMAGE(obj)
 }
 
-/// Image material
-/// Grid material
+// / Image material
+// / Grid material
 func (rcv *CZMMaterial) GRID(obj *CZMGridMaterial) *CZMGridMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -98,8 +98,8 @@ func (rcv *CZMMaterial) Grid(obj *CZMGridMaterial) *CZMGridMaterial {
 	return rcv.GRID(obj)
 }
 
-/// Grid material
-/// Stripe material
+// / Grid material
+// / Stripe material
 func (rcv *CZMMaterial) STRIPE(obj *CZMStripeMaterial) *CZMStripeMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *CZMMaterial) Stripe(obj *CZMStripeMaterial) *CZMStripeMaterial {
 	return rcv.STRIPE(obj)
 }
 
-/// Stripe material
-/// Checkerboard material
+// / Stripe material
+// / Checkerboard material
 func (rcv *CZMMaterial) CHECKERBOARD(obj *CZMCheckerboardMaterial) *CZMCheckerboardMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -136,7 +136,7 @@ func (rcv *CZMMaterial) Checkerboard(obj *CZMCheckerboardMaterial) *CZMCheckerbo
 	return rcv.CHECKERBOARD(obj)
 }
 
-/// Checkerboard material
+// / Checkerboard material
 func CZMMaterialStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Base container reference with restriction
+// / Base container reference with restriction
 type BaseContainer struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *BaseContainer) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Container reference path
+// / Container reference path
 func (rcv *BaseContainer) CONTAINER_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *BaseContainer) ContainerRef() []byte {
 	return rcv.CONTAINER_REF()
 }
 
-/// Container reference path
-/// Restriction criteria
+// / Container reference path
+// / Restriction criteria
 func (rcv *BaseContainer) RESTRICTION_CRITERIA(obj *MatchCriteria) *MatchCriteria {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -74,7 +74,7 @@ func (rcv *BaseContainer) RestrictionCriteria(obj *MatchCriteria) *MatchCriteria
 	return rcv.RESTRICTION_CRITERIA(obj)
 }
 
-/// Restriction criteria
+// / Restriction criteria
 func BaseContainerStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

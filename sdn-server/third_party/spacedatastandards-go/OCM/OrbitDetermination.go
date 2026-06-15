@@ -41,7 +41,7 @@ func (rcv *OrbitDetermination) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique identifier for the orbit determination.
+// / Unique identifier for the orbit determination.
 func (rcv *OrbitDetermination) OD_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -54,8 +54,8 @@ func (rcv *OrbitDetermination) OdId() []byte {
 	return rcv.OD_ID()
 }
 
-/// Unique identifier for the orbit determination.
-/// Identifier of the previous orbit determination.
+// / Unique identifier for the orbit determination.
+// / Identifier of the previous orbit determination.
 func (rcv *OrbitDetermination) OD_PREV_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -68,8 +68,8 @@ func (rcv *OrbitDetermination) OdPrevId() []byte {
 	return rcv.OD_PREV_ID()
 }
 
-/// Identifier of the previous orbit determination.
-/// Algorithm used for orbit determination.
+// / Identifier of the previous orbit determination.
+// / Algorithm used for orbit determination.
 func (rcv *OrbitDetermination) OD_ALGORITHM() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -82,8 +82,8 @@ func (rcv *OrbitDetermination) OdAlgorithm() []byte {
 	return rcv.OD_ALGORITHM()
 }
 
-/// Algorithm used for orbit determination.
-/// Method used for orbit determination.
+// / Algorithm used for orbit determination.
+// / Method used for orbit determination.
 func (rcv *OrbitDetermination) OD_METHOD() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -96,8 +96,8 @@ func (rcv *OrbitDetermination) OdMethod() []byte {
 	return rcv.OD_METHOD()
 }
 
-/// Method used for orbit determination.
-/// Epoch of the orbit determination.
+// / Method used for orbit determination.
+// / Epoch of the orbit determination.
 func (rcv *OrbitDetermination) OD_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -110,8 +110,8 @@ func (rcv *OrbitDetermination) OdEpoch() []byte {
 	return rcv.OD_EPOCH()
 }
 
-/// Epoch of the orbit determination.
-/// Time tag of the orbit determination.
+// / Epoch of the orbit determination.
+// / Time tag of the orbit determination.
 func (rcv *OrbitDetermination) OD_TIME_TAG() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -124,8 +124,8 @@ func (rcv *OrbitDetermination) OdTimeTag() []byte {
 	return rcv.OD_TIME_TAG()
 }
 
-/// Time tag of the orbit determination.
-/// Process noise model used.
+// / Time tag of the orbit determination.
+// / Process noise model used.
 func (rcv *OrbitDetermination) OD_PROCESS_NOISE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -138,8 +138,8 @@ func (rcv *OrbitDetermination) OdProcessNoise() []byte {
 	return rcv.OD_PROCESS_NOISE()
 }
 
-/// Process noise model used.
-/// Covariance reduction techniques used.
+// / Process noise model used.
+// / Covariance reduction techniques used.
 func (rcv *OrbitDetermination) OD_COV_REDUCTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -152,8 +152,8 @@ func (rcv *OrbitDetermination) OdCovReduction() []byte {
 	return rcv.OD_COV_REDUCTION()
 }
 
-/// Covariance reduction techniques used.
-/// Noise models used.
+// / Covariance reduction techniques used.
+// / Noise models used.
 func (rcv *OrbitDetermination) OD_NOISE_MODELS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -166,8 +166,8 @@ func (rcv *OrbitDetermination) OdNoiseModels() []byte {
 	return rcv.OD_NOISE_MODELS()
 }
 
-/// Noise models used.
-/// Types of observations used (e.g., RANGE, DOPPLER).
+// / Noise models used.
+// / Types of observations used (e.g., RANGE, DOPPLER).
 func (rcv *OrbitDetermination) OD_OBSERVATIONS_TYPE(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -193,8 +193,8 @@ func (rcv *OrbitDetermination) OdObservationsTypeLength() int {
 	return rcv.OD_OBSERVATIONS_TYPELength()
 }
 
-/// Types of observations used (e.g., RANGE, DOPPLER).
-/// Number of observations used.
+// / Types of observations used (e.g., RANGE, DOPPLER).
+// / Number of observations used.
 func (rcv *OrbitDetermination) OD_OBSERVATIONS_USED() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -207,7 +207,7 @@ func (rcv *OrbitDetermination) OdObservationsUsed() int32 {
 	return rcv.OD_OBSERVATIONS_USED()
 }
 
-/// Number of observations used.
+// / Number of observations used.
 func (rcv *OrbitDetermination) MutateOD_OBSERVATIONS_USED(n int32) bool {
 	return rcv._tab.MutateInt32Slot(24, n)
 }
@@ -216,7 +216,7 @@ func (rcv *OrbitDetermination) MutateOdObservationsUsed(n int32) bool {
 	return rcv.MutateOD_OBSERVATIONS_USED(n)
 }
 
-/// Number of tracks used.
+// / Number of tracks used.
 func (rcv *OrbitDetermination) OD_TRACKS_USED() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -229,7 +229,7 @@ func (rcv *OrbitDetermination) OdTracksUsed() int32 {
 	return rcv.OD_TRACKS_USED()
 }
 
-/// Number of tracks used.
+// / Number of tracks used.
 func (rcv *OrbitDetermination) MutateOD_TRACKS_USED(n int32) bool {
 	return rcv._tab.MutateInt32Slot(26, n)
 }
@@ -238,7 +238,7 @@ func (rcv *OrbitDetermination) MutateOdTracksUsed(n int32) bool {
 	return rcv.MutateOD_TRACKS_USED(n)
 }
 
-/// Data weighting scheme used.
+// / Data weighting scheme used.
 func (rcv *OrbitDetermination) OD_DATA_WEIGHTING() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -251,8 +251,8 @@ func (rcv *OrbitDetermination) OdDataWeighting() []byte {
 	return rcv.OD_DATA_WEIGHTING()
 }
 
-/// Data weighting scheme used.
-/// Convergence criteria used.
+// / Data weighting scheme used.
+// / Convergence criteria used.
 func (rcv *OrbitDetermination) OD_CONVERGENCE_CRITERIA() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -265,8 +265,8 @@ func (rcv *OrbitDetermination) OdConvergenceCriteria() []byte {
 	return rcv.OD_CONVERGENCE_CRITERIA()
 }
 
-/// Convergence criteria used.
-/// Parameters estimated during orbit determination.
+// / Convergence criteria used.
+// / Parameters estimated during orbit determination.
 func (rcv *OrbitDetermination) OD_EST_PARAMETERS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -292,8 +292,8 @@ func (rcv *OrbitDetermination) OdEstParametersLength() int {
 	return rcv.OD_EST_PARAMETERSLength()
 }
 
-/// Parameters estimated during orbit determination.
-/// A priori data used for orbit determination.
+// / Parameters estimated during orbit determination.
+// / A priori data used for orbit determination.
 func (rcv *OrbitDetermination) OD_APRIORI_DATA() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -306,8 +306,8 @@ func (rcv *OrbitDetermination) OdAprioriData() []byte {
 	return rcv.OD_APRIORI_DATA()
 }
 
-/// A priori data used for orbit determination.
-/// Residuals from the orbit determination.
+// / A priori data used for orbit determination.
+// / Residuals from the orbit determination.
 func (rcv *OrbitDetermination) OD_RESIDUALS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -320,7 +320,7 @@ func (rcv *OrbitDetermination) OdResiduals() []byte {
 	return rcv.OD_RESIDUALS()
 }
 
-/// Residuals from the orbit determination.
+// / Residuals from the orbit determination.
 func OrbitDeterminationStart(builder *flatbuffers.Builder) {
 	builder.StartObject(17)
 }

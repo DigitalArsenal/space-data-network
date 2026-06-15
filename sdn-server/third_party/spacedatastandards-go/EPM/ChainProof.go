@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Proves a blockchain key derives from the same HD wallet as the signing key
+// / Proves a blockchain key derives from the same HD wallet as the signing key
 type ChainProof struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ChainProof) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Chain identifier (e.g., "bitcoin", "ethereum", "solana")
+// / Chain identifier (e.g., "bitcoin", "ethereum", "solana")
 func (rcv *ChainProof) CHAIN() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *ChainProof) Chain() []byte {
 	return rcv.CHAIN()
 }
 
-/// Chain identifier (e.g., "bitcoin", "ethereum", "solana")
-/// Derived blockchain address
+// / Chain identifier (e.g., "bitcoin", "ethereum", "solana")
+// / Derived blockchain address
 func (rcv *ChainProof) ADDRESS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *ChainProof) Address() []byte {
 	return rcv.ADDRESS()
 }
 
-/// Derived blockchain address
-/// Public key for this chain (hex-encoded)
+// / Derived blockchain address
+// / Public key for this chain (hex-encoded)
 func (rcv *ChainProof) PUBLIC_KEY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *ChainProof) PublicKey() []byte {
 	return rcv.PUBLIC_KEY()
 }
 
-/// Public key for this chain (hex-encoded)
-/// BIP-44 derivation path (e.g., "m/44'/0'/0'/0/0")
+// / Public key for this chain (hex-encoded)
+// / BIP-44 derivation path (e.g., "m/44'/0'/0'/0/0")
 func (rcv *ChainProof) KEY_PATH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *ChainProof) KeyPath() []byte {
 	return rcv.KEY_PATH()
 }
 
-/// BIP-44 derivation path (e.g., "m/44'/0'/0'/0/0")
-/// Signature over the attestation payload (hex-encoded)
+// / BIP-44 derivation path (e.g., "m/44'/0'/0'/0/0")
+// / Signature over the attestation payload (hex-encoded)
 func (rcv *ChainProof) SIGNATURE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -111,8 +111,8 @@ func (rcv *ChainProof) Signature() []byte {
 	return rcv.SIGNATURE()
 }
 
-/// Signature over the attestation payload (hex-encoded)
-/// The canonical payload that was signed (hex-encoded)
+// / Signature over the attestation payload (hex-encoded)
+// / The canonical payload that was signed (hex-encoded)
 func (rcv *ChainProof) SIGNED_PAYLOAD() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -125,8 +125,8 @@ func (rcv *ChainProof) SignedPayload() []byte {
 	return rcv.SIGNED_PAYLOAD()
 }
 
-/// The canonical payload that was signed (hex-encoded)
-/// Signature algorithm (e.g., "secp256k1-compact-bitcoin", "secp256k1-compact-ethereum", "ed25519")
+// / The canonical payload that was signed (hex-encoded)
+// / Signature algorithm (e.g., "secp256k1-compact-bitcoin", "secp256k1-compact-ethereum", "ed25519")
 func (rcv *ChainProof) ALGORITHM() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -139,8 +139,8 @@ func (rcv *ChainProof) Algorithm() []byte {
 	return rcv.ALGORITHM()
 }
 
-/// Signature algorithm (e.g., "secp256k1-compact-bitcoin", "secp256k1-compact-ethereum", "ed25519")
-/// Signature encoding format (e.g., "compact", "raw-ed25519")
+// / Signature algorithm (e.g., "secp256k1-compact-bitcoin", "secp256k1-compact-ethereum", "ed25519")
+// / Signature encoding format (e.g., "compact", "raw-ed25519")
 func (rcv *ChainProof) ENCODING() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -153,7 +153,7 @@ func (rcv *ChainProof) Encoding() []byte {
 	return rcv.ENCODING()
 }
 
-/// Signature encoding format (e.g., "compact", "raw-ed25519")
+// / Signature encoding format (e.g., "compact", "raw-ed25519")
 func ChainProofStart(builder *flatbuffers.Builder) {
 	builder.StartObject(8)
 }

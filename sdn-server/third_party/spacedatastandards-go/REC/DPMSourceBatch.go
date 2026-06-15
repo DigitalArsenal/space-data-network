@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Source batch metadata bound into the dataset publication.
+// / Source batch metadata bound into the dataset publication.
 type DPMSourceBatch struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *DPMSourceBatch) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Provider-controlled source name.
+// / Provider-controlled source name.
 func (rcv *DPMSourceBatch) SOURCE_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *DPMSourceBatch) SourceName() []byte {
 	return rcv.SOURCE_NAME()
 }
 
-/// Provider-controlled source name.
-/// Original source URL.
+// / Provider-controlled source name.
+// / Original source URL.
 func (rcv *DPMSourceBatch) SOURCE_URL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *DPMSourceBatch) SourceUrl() []byte {
 	return rcv.SOURCE_URL()
 }
 
-/// Original source URL.
-/// SHA-256 hash of raw source bytes, lowercase hex.
+// / Original source URL.
+// / SHA-256 hash of raw source bytes, lowercase hex.
 func (rcv *DPMSourceBatch) SOURCE_SHA256() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *DPMSourceBatch) SourceSha256() []byte {
 	return rcv.SOURCE_SHA256()
 }
 
-/// SHA-256 hash of raw source bytes, lowercase hex.
-/// HTTP ETag observed during retrieval.
+// / SHA-256 hash of raw source bytes, lowercase hex.
+// / HTTP ETag observed during retrieval.
 func (rcv *DPMSourceBatch) HTTP_ETAG() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *DPMSourceBatch) HttpEtag() []byte {
 	return rcv.HTTP_ETAG()
 }
 
-/// HTTP ETag observed during retrieval.
-/// HTTP Last-Modified value observed during retrieval.
+// / HTTP ETag observed during retrieval.
+// / HTTP Last-Modified value observed during retrieval.
 func (rcv *DPMSourceBatch) HTTP_LAST_MODIFIED() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -111,8 +111,8 @@ func (rcv *DPMSourceBatch) HttpLastModified() []byte {
 	return rcv.HTTP_LAST_MODIFIED()
 }
 
-/// HTTP Last-Modified value observed during retrieval.
-/// Retrieval timestamp in ISO 8601 UTC.
+// / HTTP Last-Modified value observed during retrieval.
+// / Retrieval timestamp in ISO 8601 UTC.
 func (rcv *DPMSourceBatch) RETRIEVED_AT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -125,8 +125,8 @@ func (rcv *DPMSourceBatch) RetrievedAt() []byte {
 	return rcv.RETRIEVED_AT()
 }
 
-/// Retrieval timestamp in ISO 8601 UTC.
-/// Parser or transform version.
+// / Retrieval timestamp in ISO 8601 UTC.
+// / Parser or transform version.
 func (rcv *DPMSourceBatch) PARSER_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -139,8 +139,8 @@ func (rcv *DPMSourceBatch) ParserVersion() []byte {
 	return rcv.PARSER_VERSION()
 }
 
-/// Parser or transform version.
-/// Number of normalized records emitted from this source.
+// / Parser or transform version.
+// / Number of normalized records emitted from this source.
 func (rcv *DPMSourceBatch) RECORD_COUNT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -153,7 +153,7 @@ func (rcv *DPMSourceBatch) RecordCount() uint64 {
 	return rcv.RECORD_COUNT()
 }
 
-/// Number of normalized records emitted from this source.
+// / Number of normalized records emitted from this source.
 func (rcv *DPMSourceBatch) MutateRECORD_COUNT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(18, n)
 }
@@ -162,7 +162,7 @@ func (rcv *DPMSourceBatch) MutateRecordCount(n uint64) bool {
 	return rcv.MutateRECORD_COUNT(n)
 }
 
-/// Warnings or policy notes produced during normalization.
+// / Warnings or policy notes produced during normalization.
 func (rcv *DPMSourceBatch) WARNINGS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -188,7 +188,7 @@ func (rcv *DPMSourceBatch) WarningsLength() int {
 	return rcv.WARNINGSLength()
 }
 
-/// Warnings or policy notes produced during normalization.
+// / Warnings or policy notes produced during normalization.
 func DPMSourceBatchStart(builder *flatbuffers.Builder) {
 	builder.StartObject(9)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Star Catalog Entry
+// / Star Catalog Entry
 type STR struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *STR) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique internal identifier
+// / Unique internal identifier
 func (rcv *STR) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *STR) Id() []byte {
 	return rcv.ID()
 }
 
-/// Unique internal identifier
-/// CelesTrak Star catalog identifier
+// / Unique internal identifier
+// / CelesTrak Star catalog identifier
 func (rcv *STR) CS_ID() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,7 +81,7 @@ func (rcv *STR) CsId() int64 {
 	return rcv.CS_ID()
 }
 
-/// CelesTrak Star catalog identifier
+// / CelesTrak Star catalog identifier
 func (rcv *STR) MutateCS_ID(n int64) bool {
 	return rcv._tab.MutateInt64Slot(6, n)
 }
@@ -90,7 +90,7 @@ func (rcv *STR) MutateCsId(n int64) bool {
 	return rcv.MutateCS_ID(n)
 }
 
-/// GNC star catalog identifier
+// / GNC star catalog identifier
 func (rcv *STR) GNC_CAT_ID() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,7 +103,7 @@ func (rcv *STR) GncCatId() uint32 {
 	return rcv.GNC_CAT_ID()
 }
 
-/// GNC star catalog identifier
+// / GNC star catalog identifier
 func (rcv *STR) MutateGNC_CAT_ID(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -112,7 +112,7 @@ func (rcv *STR) MutateGncCatId(n uint32) bool {
 	return rcv.MutateGNC_CAT_ID(n)
 }
 
-/// Gaia DR3 source identifier
+// / Gaia DR3 source identifier
 func (rcv *STR) GAIADR3_CAT_ID() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -125,7 +125,7 @@ func (rcv *STR) Gaiadr3CatId() int64 {
 	return rcv.GAIADR3_CAT_ID()
 }
 
-/// Gaia DR3 source identifier
+// / Gaia DR3 source identifier
 func (rcv *STR) MutateGAIADR3_CAT_ID(n int64) bool {
 	return rcv._tab.MutateInt64Slot(10, n)
 }
@@ -134,7 +134,7 @@ func (rcv *STR) MutateGaiadr3CatId(n int64) bool {
 	return rcv.MutateGAIADR3_CAT_ID(n)
 }
 
-/// Hipparcos catalog identifier
+// / Hipparcos catalog identifier
 func (rcv *STR) HIP_CAT_ID() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -147,7 +147,7 @@ func (rcv *STR) HipCatId() uint32 {
 	return rcv.HIP_CAT_ID()
 }
 
-/// Hipparcos catalog identifier
+// / Hipparcos catalog identifier
 func (rcv *STR) MutateHIP_CAT_ID(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(12, n)
 }
@@ -156,7 +156,7 @@ func (rcv *STR) MutateHipCatId(n uint32) bool {
 	return rcv.MutateHIP_CAT_ID(n)
 }
 
-/// Catalog version string
+// / Catalog version string
 func (rcv *STR) CAT_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -169,8 +169,8 @@ func (rcv *STR) CatVersion() []byte {
 	return rcv.CAT_VERSION()
 }
 
-/// Catalog version string
-/// Astrometry source description
+// / Catalog version string
+// / Astrometry source description
 func (rcv *STR) ASTROMETRY_ORIGIN() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -183,8 +183,8 @@ func (rcv *STR) AstrometryOrigin() []byte {
 	return rcv.ASTROMETRY_ORIGIN()
 }
 
-/// Astrometry source description
-/// Epoch of stellar position (Julian years)
+// / Astrometry source description
+// / Epoch of stellar position (Julian years)
 func (rcv *STR) STAR_EPOCH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -197,7 +197,7 @@ func (rcv *STR) StarEpoch() float64 {
 	return rcv.STAR_EPOCH()
 }
 
-/// Epoch of stellar position (Julian years)
+// / Epoch of stellar position (Julian years)
 func (rcv *STR) MutateSTAR_EPOCH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -206,7 +206,7 @@ func (rcv *STR) MutateStarEpoch(n float64) bool {
 	return rcv.MutateSTAR_EPOCH(n)
 }
 
-/// Right ascension (degrees, ICRS)
+// / Right ascension (degrees, ICRS)
 func (rcv *STR) RA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -219,7 +219,7 @@ func (rcv *STR) Ra() float64 {
 	return rcv.RA()
 }
 
-/// Right ascension (degrees, ICRS)
+// / Right ascension (degrees, ICRS)
 func (rcv *STR) MutateRA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -228,7 +228,7 @@ func (rcv *STR) MutateRa(n float64) bool {
 	return rcv.MutateRA(n)
 }
 
-/// Right ascension uncertainty (arcseconds)
+// / Right ascension uncertainty (arcseconds)
 func (rcv *STR) RA_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -241,7 +241,7 @@ func (rcv *STR) RaUnc() float64 {
 	return rcv.RA_UNC()
 }
 
-/// Right ascension uncertainty (arcseconds)
+// / Right ascension uncertainty (arcseconds)
 func (rcv *STR) MutateRA_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -250,7 +250,7 @@ func (rcv *STR) MutateRaUnc(n float64) bool {
 	return rcv.MutateRA_UNC(n)
 }
 
-/// Declination (degrees, ICRS)
+// / Declination (degrees, ICRS)
 func (rcv *STR) DEC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -263,7 +263,7 @@ func (rcv *STR) Dec() float64 {
 	return rcv.DEC()
 }
 
-/// Declination (degrees, ICRS)
+// / Declination (degrees, ICRS)
 func (rcv *STR) MutateDEC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -272,7 +272,7 @@ func (rcv *STR) MutateDec(n float64) bool {
 	return rcv.MutateDEC(n)
 }
 
-/// Declination uncertainty (arcseconds)
+// / Declination uncertainty (arcseconds)
 func (rcv *STR) DEC_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -285,7 +285,7 @@ func (rcv *STR) DecUnc() float64 {
 	return rcv.DEC_UNC()
 }
 
-/// Declination uncertainty (arcseconds)
+// / Declination uncertainty (arcseconds)
 func (rcv *STR) MutateDEC_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -294,7 +294,7 @@ func (rcv *STR) MutateDecUnc(n float64) bool {
 	return rcv.MutateDEC_UNC(n)
 }
 
-/// True if position uncertainty is flagged
+// / True if position uncertainty is flagged
 func (rcv *STR) POS_UNC_FLAG() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -307,7 +307,7 @@ func (rcv *STR) PosUncFlag() bool {
 	return rcv.POS_UNC_FLAG()
 }
 
-/// True if position uncertainty is flagged
+// / True if position uncertainty is flagged
 func (rcv *STR) MutatePOS_UNC_FLAG(n bool) bool {
 	return rcv._tab.MutateBoolSlot(28, n)
 }
@@ -316,7 +316,7 @@ func (rcv *STR) MutatePosUncFlag(n bool) bool {
 	return rcv.MutatePOS_UNC_FLAG(n)
 }
 
-/// Parallax (milliarcseconds)
+// / Parallax (milliarcseconds)
 func (rcv *STR) PARALLAX() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -329,7 +329,7 @@ func (rcv *STR) Parallax() float64 {
 	return rcv.PARALLAX()
 }
 
-/// Parallax (milliarcseconds)
+// / Parallax (milliarcseconds)
 func (rcv *STR) MutatePARALLAX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -338,7 +338,7 @@ func (rcv *STR) MutateParallax(n float64) bool {
 	return rcv.MutatePARALLAX(n)
 }
 
-/// Parallax uncertainty (milliarcseconds)
+// / Parallax uncertainty (milliarcseconds)
 func (rcv *STR) PARALLAX_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -351,7 +351,7 @@ func (rcv *STR) ParallaxUnc() float64 {
 	return rcv.PARALLAX_UNC()
 }
 
-/// Parallax uncertainty (milliarcseconds)
+// / Parallax uncertainty (milliarcseconds)
 func (rcv *STR) MutatePARALLAX_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -360,7 +360,7 @@ func (rcv *STR) MutateParallaxUnc(n float64) bool {
 	return rcv.MutatePARALLAX_UNC(n)
 }
 
-/// Proper motion in RA (milliarcseconds/year)
+// / Proper motion in RA (milliarcseconds/year)
 func (rcv *STR) PMRA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -373,7 +373,7 @@ func (rcv *STR) Pmra() float64 {
 	return rcv.PMRA()
 }
 
-/// Proper motion in RA (milliarcseconds/year)
+// / Proper motion in RA (milliarcseconds/year)
 func (rcv *STR) MutatePMRA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -382,7 +382,7 @@ func (rcv *STR) MutatePmra(n float64) bool {
 	return rcv.MutatePMRA(n)
 }
 
-/// Proper motion in RA uncertainty (milliarcseconds/year)
+// / Proper motion in RA uncertainty (milliarcseconds/year)
 func (rcv *STR) PMRA_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -395,7 +395,7 @@ func (rcv *STR) PmraUnc() float64 {
 	return rcv.PMRA_UNC()
 }
 
-/// Proper motion in RA uncertainty (milliarcseconds/year)
+// / Proper motion in RA uncertainty (milliarcseconds/year)
 func (rcv *STR) MutatePMRA_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -404,7 +404,7 @@ func (rcv *STR) MutatePmraUnc(n float64) bool {
 	return rcv.MutatePMRA_UNC(n)
 }
 
-/// Proper motion in DEC (milliarcseconds/year)
+// / Proper motion in DEC (milliarcseconds/year)
 func (rcv *STR) PMDEC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -417,7 +417,7 @@ func (rcv *STR) Pmdec() float64 {
 	return rcv.PMDEC()
 }
 
-/// Proper motion in DEC (milliarcseconds/year)
+// / Proper motion in DEC (milliarcseconds/year)
 func (rcv *STR) MutatePMDEC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -426,7 +426,7 @@ func (rcv *STR) MutatePmdec(n float64) bool {
 	return rcv.MutatePMDEC(n)
 }
 
-/// Proper motion in DEC uncertainty (milliarcseconds/year)
+// / Proper motion in DEC uncertainty (milliarcseconds/year)
 func (rcv *STR) PMDEC_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -439,7 +439,7 @@ func (rcv *STR) PmdecUnc() float64 {
 	return rcv.PMDEC_UNC()
 }
 
-/// Proper motion in DEC uncertainty (milliarcseconds/year)
+// / Proper motion in DEC uncertainty (milliarcseconds/year)
 func (rcv *STR) MutatePMDEC_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -448,7 +448,7 @@ func (rcv *STR) MutatePmdecUnc(n float64) bool {
 	return rcv.MutatePMDEC_UNC(n)
 }
 
-/// True if proper motion uncertainty is flagged
+// / True if proper motion uncertainty is flagged
 func (rcv *STR) PM_UNC_FLAG() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -461,7 +461,7 @@ func (rcv *STR) PmUncFlag() bool {
 	return rcv.PM_UNC_FLAG()
 }
 
-/// True if proper motion uncertainty is flagged
+// / True if proper motion uncertainty is flagged
 func (rcv *STR) MutatePM_UNC_FLAG(n bool) bool {
 	return rcv._tab.MutateBoolSlot(42, n)
 }
@@ -470,7 +470,7 @@ func (rcv *STR) MutatePmUncFlag(n bool) bool {
 	return rcv.MutatePM_UNC_FLAG(n)
 }
 
-/// Gaia G-band magnitude
+// / Gaia G-band magnitude
 func (rcv *STR) GMAG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -483,7 +483,7 @@ func (rcv *STR) Gmag() float64 {
 	return rcv.GMAG()
 }
 
-/// Gaia G-band magnitude
+// / Gaia G-band magnitude
 func (rcv *STR) MutateGMAG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(44, n)
 }
@@ -492,7 +492,7 @@ func (rcv *STR) MutateGmag(n float64) bool {
 	return rcv.MutateGMAG(n)
 }
 
-/// Gaia G-band magnitude uncertainty
+// / Gaia G-band magnitude uncertainty
 func (rcv *STR) GMAG_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -505,7 +505,7 @@ func (rcv *STR) GmagUnc() float64 {
 	return rcv.GMAG_UNC()
 }
 
-/// Gaia G-band magnitude uncertainty
+// / Gaia G-band magnitude uncertainty
 func (rcv *STR) MutateGMAG_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(46, n)
 }
@@ -514,7 +514,7 @@ func (rcv *STR) MutateGmagUnc(n float64) bool {
 	return rcv.MutateGMAG_UNC(n)
 }
 
-/// Gaia BP-band magnitude (blue photometer)
+// / Gaia BP-band magnitude (blue photometer)
 func (rcv *STR) BPMAG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -527,7 +527,7 @@ func (rcv *STR) Bpmag() float64 {
 	return rcv.BPMAG()
 }
 
-/// Gaia BP-band magnitude (blue photometer)
+// / Gaia BP-band magnitude (blue photometer)
 func (rcv *STR) MutateBPMAG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(48, n)
 }
@@ -536,7 +536,7 @@ func (rcv *STR) MutateBpmag(n float64) bool {
 	return rcv.MutateBPMAG(n)
 }
 
-/// Gaia BP-band magnitude uncertainty
+// / Gaia BP-band magnitude uncertainty
 func (rcv *STR) BPMAG_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -549,7 +549,7 @@ func (rcv *STR) BpmagUnc() float64 {
 	return rcv.BPMAG_UNC()
 }
 
-/// Gaia BP-band magnitude uncertainty
+// / Gaia BP-band magnitude uncertainty
 func (rcv *STR) MutateBPMAG_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(50, n)
 }
@@ -558,7 +558,7 @@ func (rcv *STR) MutateBpmagUnc(n float64) bool {
 	return rcv.MutateBPMAG_UNC(n)
 }
 
-/// Gaia RP-band magnitude (red photometer)
+// / Gaia RP-band magnitude (red photometer)
 func (rcv *STR) RPMAG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -571,7 +571,7 @@ func (rcv *STR) Rpmag() float64 {
 	return rcv.RPMAG()
 }
 
-/// Gaia RP-band magnitude (red photometer)
+// / Gaia RP-band magnitude (red photometer)
 func (rcv *STR) MutateRPMAG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(52, n)
 }
@@ -580,7 +580,7 @@ func (rcv *STR) MutateRpmag(n float64) bool {
 	return rcv.MutateRPMAG(n)
 }
 
-/// Gaia RP-band magnitude uncertainty
+// / Gaia RP-band magnitude uncertainty
 func (rcv *STR) RPMAG_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -593,7 +593,7 @@ func (rcv *STR) RpmagUnc() float64 {
 	return rcv.RPMAG_UNC()
 }
 
-/// Gaia RP-band magnitude uncertainty
+// / Gaia RP-band magnitude uncertainty
 func (rcv *STR) MutateRPMAG_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(54, n)
 }
@@ -602,7 +602,7 @@ func (rcv *STR) MutateRpmagUnc(n float64) bool {
 	return rcv.MutateRPMAG_UNC(n)
 }
 
-/// 2MASS J-band magnitude (1.25 um)
+// / 2MASS J-band magnitude (1.25 um)
 func (rcv *STR) JMAG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -615,7 +615,7 @@ func (rcv *STR) Jmag() float64 {
 	return rcv.JMAG()
 }
 
-/// 2MASS J-band magnitude (1.25 um)
+// / 2MASS J-band magnitude (1.25 um)
 func (rcv *STR) MutateJMAG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(56, n)
 }
@@ -624,7 +624,7 @@ func (rcv *STR) MutateJmag(n float64) bool {
 	return rcv.MutateJMAG(n)
 }
 
-/// J-band magnitude uncertainty
+// / J-band magnitude uncertainty
 func (rcv *STR) JMAG_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -637,7 +637,7 @@ func (rcv *STR) JmagUnc() float64 {
 	return rcv.JMAG_UNC()
 }
 
-/// J-band magnitude uncertainty
+// / J-band magnitude uncertainty
 func (rcv *STR) MutateJMAG_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(58, n)
 }
@@ -646,7 +646,7 @@ func (rcv *STR) MutateJmagUnc(n float64) bool {
 	return rcv.MutateJMAG_UNC(n)
 }
 
-/// 2MASS K-band magnitude (2.17 um)
+// / 2MASS K-band magnitude (2.17 um)
 func (rcv *STR) KMAG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -659,7 +659,7 @@ func (rcv *STR) Kmag() float64 {
 	return rcv.KMAG()
 }
 
-/// 2MASS K-band magnitude (2.17 um)
+// / 2MASS K-band magnitude (2.17 um)
 func (rcv *STR) MutateKMAG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(60, n)
 }
@@ -668,7 +668,7 @@ func (rcv *STR) MutateKmag(n float64) bool {
 	return rcv.MutateKMAG(n)
 }
 
-/// K-band magnitude uncertainty
+// / K-band magnitude uncertainty
 func (rcv *STR) KMAG_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -681,7 +681,7 @@ func (rcv *STR) KmagUnc() float64 {
 	return rcv.KMAG_UNC()
 }
 
-/// K-band magnitude uncertainty
+// / K-band magnitude uncertainty
 func (rcv *STR) MutateKMAG_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(62, n)
 }
@@ -690,7 +690,7 @@ func (rcv *STR) MutateKmagUnc(n float64) bool {
 	return rcv.MutateKMAG_UNC(n)
 }
 
-/// 2MASS H-band magnitude (1.65 um)
+// / 2MASS H-band magnitude (1.65 um)
 func (rcv *STR) HMAG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -703,7 +703,7 @@ func (rcv *STR) Hmag() float64 {
 	return rcv.HMAG()
 }
 
-/// 2MASS H-band magnitude (1.65 um)
+// / 2MASS H-band magnitude (1.65 um)
 func (rcv *STR) MutateHMAG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(64, n)
 }
@@ -712,7 +712,7 @@ func (rcv *STR) MutateHmag(n float64) bool {
 	return rcv.MutateHMAG(n)
 }
 
-/// H-band magnitude uncertainty
+// / H-band magnitude uncertainty
 func (rcv *STR) HMAG_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
@@ -725,7 +725,7 @@ func (rcv *STR) HmagUnc() float64 {
 	return rcv.HMAG_UNC()
 }
 
-/// H-band magnitude uncertainty
+// / H-band magnitude uncertainty
 func (rcv *STR) MutateHMAG_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(66, n)
 }
@@ -734,7 +734,7 @@ func (rcv *STR) MutateHmagUnc(n float64) bool {
 	return rcv.MutateHMAG_UNC(n)
 }
 
-/// True if star is variable
+// / True if star is variable
 func (rcv *STR) VAR_FLAG() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
@@ -747,7 +747,7 @@ func (rcv *STR) VarFlag() bool {
 	return rcv.VAR_FLAG()
 }
 
-/// True if star is variable
+// / True if star is variable
 func (rcv *STR) MutateVAR_FLAG(n bool) bool {
 	return rcv._tab.MutateBoolSlot(68, n)
 }
@@ -756,7 +756,7 @@ func (rcv *STR) MutateVarFlag(n bool) bool {
 	return rcv.MutateVAR_FLAG(n)
 }
 
-/// True if star is in a multiple system
+// / True if star is in a multiple system
 func (rcv *STR) MULT_FLAG() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
 	if o != 0 {
@@ -769,7 +769,7 @@ func (rcv *STR) MultFlag() bool {
 	return rcv.MULT_FLAG()
 }
 
-/// True if star is in a multiple system
+// / True if star is in a multiple system
 func (rcv *STR) MutateMULT_FLAG(n bool) bool {
 	return rcv._tab.MutateBoolSlot(70, n)
 }
@@ -778,7 +778,7 @@ func (rcv *STR) MutateMultFlag(n bool) bool {
 	return rcv.MutateMULT_FLAG(n)
 }
 
-/// Nearest neighbor catalog identifier
+// / Nearest neighbor catalog identifier
 func (rcv *STR) NEIGHBOR_ID() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
@@ -791,7 +791,7 @@ func (rcv *STR) NeighborId() uint32 {
 	return rcv.NEIGHBOR_ID()
 }
 
-/// Nearest neighbor catalog identifier
+// / Nearest neighbor catalog identifier
 func (rcv *STR) MutateNEIGHBOR_ID(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(72, n)
 }
@@ -800,7 +800,7 @@ func (rcv *STR) MutateNeighborId(n uint32) bool {
 	return rcv.MutateNEIGHBOR_ID(n)
 }
 
-/// True if nearest neighbor is within confusion radius
+// / True if nearest neighbor is within confusion radius
 func (rcv *STR) NEIGHBOR_FLAG() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
 	if o != 0 {
@@ -813,7 +813,7 @@ func (rcv *STR) NeighborFlag() bool {
 	return rcv.NEIGHBOR_FLAG()
 }
 
-/// True if nearest neighbor is within confusion radius
+// / True if nearest neighbor is within confusion radius
 func (rcv *STR) MutateNEIGHBOR_FLAG(n bool) bool {
 	return rcv._tab.MutateBoolSlot(74, n)
 }
@@ -822,7 +822,7 @@ func (rcv *STR) MutateNeighborFlag(n bool) bool {
 	return rcv.MutateNEIGHBOR_FLAG(n)
 }
 
-/// Distance to nearest neighbor (arcseconds)
+// / Distance to nearest neighbor (arcseconds)
 func (rcv *STR) NEIGHBOR_DISTANCE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
 	if o != 0 {
@@ -835,7 +835,7 @@ func (rcv *STR) NeighborDistance() float64 {
 	return rcv.NEIGHBOR_DISTANCE()
 }
 
-/// Distance to nearest neighbor (arcseconds)
+// / Distance to nearest neighbor (arcseconds)
 func (rcv *STR) MutateNEIGHBOR_DISTANCE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(76, n)
 }
@@ -844,7 +844,7 @@ func (rcv *STR) MutateNeighborDistance(n float64) bool {
 	return rcv.MutateNEIGHBOR_DISTANCE(n)
 }
 
-/// True if position shift detected between catalogs
+// / True if position shift detected between catalogs
 func (rcv *STR) SHIFT_FLAG() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
 	if o != 0 {
@@ -857,7 +857,7 @@ func (rcv *STR) ShiftFlag() bool {
 	return rcv.SHIFT_FLAG()
 }
 
-/// True if position shift detected between catalogs
+// / True if position shift detected between catalogs
 func (rcv *STR) MutateSHIFT_FLAG(n bool) bool {
 	return rcv._tab.MutateBoolSlot(78, n)
 }
@@ -866,7 +866,7 @@ func (rcv *STR) MutateShiftFlag(n bool) bool {
 	return rcv.MutateSHIFT_FLAG(n)
 }
 
-/// Position shift magnitude (arcseconds)
+// / Position shift magnitude (arcseconds)
 func (rcv *STR) SHIFT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(80))
 	if o != 0 {
@@ -879,7 +879,7 @@ func (rcv *STR) Shift() float64 {
 	return rcv.SHIFT()
 }
 
-/// Position shift magnitude (arcseconds)
+// / Position shift magnitude (arcseconds)
 func (rcv *STR) MutateSHIFT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(80, n)
 }

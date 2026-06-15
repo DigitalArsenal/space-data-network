@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Stage Details
+// / Stage Details
 type STAGE struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *STAGE) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Stage Number
+// / Stage Number
 func (rcv *STAGE) STAGE_NUMBER() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *STAGE) StageNumber() int32 {
 	return rcv.STAGE_NUMBER()
 }
 
-/// Stage Number
+// / Stage Number
 func (rcv *STAGE) MutateSTAGE_NUMBER(n int32) bool {
 	return rcv._tab.MutateInt32Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *STAGE) MutateStageNumber(n int32) bool {
 	return rcv.MutateSTAGE_NUMBER(n)
 }
 
-/// Engines Used in This Stage
+// / Engines Used in This Stage
 func (rcv *STAGE) ENGINES(obj *ENGINE, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -96,8 +96,8 @@ func (rcv *STAGE) EnginesLength() int {
 	return rcv.ENGINESLength()
 }
 
-/// Engines Used in This Stage
-/// Fuel Type Used in This Stage
+// / Engines Used in This Stage
+// / Fuel Type Used in This Stage
 func (rcv *STAGE) FUEL_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -110,8 +110,8 @@ func (rcv *STAGE) FuelType() []byte {
 	return rcv.FUEL_TYPE()
 }
 
-/// Fuel Type Used in This Stage
-/// Thrust Produced by This Stage (in Newtons)
+// / Fuel Type Used in This Stage
+// / Thrust Produced by This Stage (in Newtons)
 func (rcv *STAGE) THRUST() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -124,7 +124,7 @@ func (rcv *STAGE) Thrust() float64 {
 	return rcv.THRUST()
 }
 
-/// Thrust Produced by This Stage (in Newtons)
+// / Thrust Produced by This Stage (in Newtons)
 func (rcv *STAGE) MutateTHRUST(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -133,7 +133,7 @@ func (rcv *STAGE) MutateThrust(n float64) bool {
 	return rcv.MutateTHRUST(n)
 }
 
-/// Duration of the Burn (in Seconds)
+// / Duration of the Burn (in Seconds)
 func (rcv *STAGE) BURN_DURATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -146,7 +146,7 @@ func (rcv *STAGE) BurnDuration() float64 {
 	return rcv.BURN_DURATION()
 }
 
-/// Duration of the Burn (in Seconds)
+// / Duration of the Burn (in Seconds)
 func (rcv *STAGE) MutateBURN_DURATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }

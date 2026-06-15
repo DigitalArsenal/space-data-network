@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Sensor Maintenance Event
+// / Sensor Maintenance Event
 type sensorMaintenanceEvent struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *sensorMaintenanceEvent) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Maintenance start time (ISO 8601)
+// / Maintenance start time (ISO 8601)
 func (rcv *sensorMaintenanceEvent) START_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *sensorMaintenanceEvent) StartTime() []byte {
 	return rcv.START_TIME()
 }
 
-/// Maintenance start time (ISO 8601)
-/// Maintenance end time (ISO 8601)
+// / Maintenance start time (ISO 8601)
+// / Maintenance end time (ISO 8601)
 func (rcv *sensorMaintenanceEvent) END_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *sensorMaintenanceEvent) EndTime() []byte {
 	return rcv.END_TIME()
 }
 
-/// Maintenance end time (ISO 8601)
-/// Type of maintenance
+// / Maintenance end time (ISO 8601)
+// / Type of maintenance
 func (rcv *sensorMaintenanceEvent) TYPE() maintenanceType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *sensorMaintenanceEvent) Type() maintenanceType {
 	return rcv.TYPE()
 }
 
-/// Type of maintenance
+// / Type of maintenance
 func (rcv *sensorMaintenanceEvent) MutateTYPE(n maintenanceType) bool {
 	return rcv._tab.MutateInt8Slot(8, int8(n))
 }
@@ -92,7 +92,7 @@ func (rcv *sensorMaintenanceEvent) MutateType(n maintenanceType) bool {
 	return rcv.MutateTYPE(n)
 }
 
-/// Description of maintenance performed
+// / Description of maintenance performed
 func (rcv *sensorMaintenanceEvent) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,8 +105,8 @@ func (rcv *sensorMaintenanceEvent) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-/// Description of maintenance performed
-/// Components affected
+// / Description of maintenance performed
+// / Components affected
 func (rcv *sensorMaintenanceEvent) COMPONENTS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -132,7 +132,7 @@ func (rcv *sensorMaintenanceEvent) ComponentsLength() int {
 	return rcv.COMPONENTSLength()
 }
 
-/// Components affected
+// / Components affected
 func sensorMaintenanceEventStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Numerical utility envelope.
+// / Numerical utility envelope.
 type NUM struct {
 	_tab flatbuffers.Table
 }

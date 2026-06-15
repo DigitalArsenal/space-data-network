@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Propagator Configuration
+// / Propagator Configuration
 type PCF struct {
 	_tab flatbuffers.Table
 }

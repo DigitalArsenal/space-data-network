@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Polynomial calibrator - converts raw to engineering using polynomial
+// / Polynomial calibrator - converts raw to engineering using polynomial
 type PolynomialCalibrator struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *PolynomialCalibrator) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Polynomial terms (index is power, value is coefficient)
+// / Polynomial terms (index is power, value is coefficient)
 func (rcv *PolynomialCalibrator) COEFFICIENTS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -68,7 +68,7 @@ func (rcv *PolynomialCalibrator) CoefficientsLength() int {
 	return rcv.COEFFICIENTSLength()
 }
 
-/// Polynomial terms (index is power, value is coefficient)
+// / Polynomial terms (index is power, value is coefficient)
 func (rcv *PolynomialCalibrator) MutateCOEFFICIENTS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {

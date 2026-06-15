@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Schema definition
+// / Schema definition
 type KMLSchema struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLSchema) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Schema name
+// / Schema name
 func (rcv *KMLSchema) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLSchema) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Schema name
-/// Schema ID
+// / Schema name
+// / Schema ID
 func (rcv *KMLSchema) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *KMLSchema) Id() []byte {
 	return rcv.ID()
 }
 
-/// Schema ID
-/// Simple field definitions
+// / Schema ID
+// / Simple field definitions
 func (rcv *KMLSchema) SIMPLE_FIELDS(obj *KMLSimpleField, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -102,7 +102,7 @@ func (rcv *KMLSchema) SimpleFieldsLength() int {
 	return rcv.SIMPLE_FIELDSLength()
 }
 
-/// Simple field definitions
+// / Simple field definitions
 func KMLSchemaStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

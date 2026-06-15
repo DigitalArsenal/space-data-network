@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Result of one component-wise vector saturation operation.
+// / Result of one component-wise vector saturation operation.
 type NUMVectorSaturateResult struct {
 	_tab flatbuffers.Table
 }
@@ -74,7 +74,7 @@ func (rcv *NUMVectorSaturateResult) ErrorMessage() []byte {
 	return rcv.ERROR_MESSAGE()
 }
 
-/// Saturated output vector.
+// / Saturated output vector.
 func (rcv *NUMVectorSaturateResult) SATURATED_STATE(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -100,7 +100,7 @@ func (rcv *NUMVectorSaturateResult) SaturatedStateLength() int {
 	return rcv.SATURATED_STATELength()
 }
 
-/// Saturated output vector.
+// / Saturated output vector.
 func (rcv *NUMVectorSaturateResult) MutateSATURATED_STATE(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -114,7 +114,7 @@ func (rcv *NUMVectorSaturateResult) MutateSaturatedState(j int, n float64) bool 
 	return rcv.MutateSATURATED_STATE(j, n)
 }
 
-/// Caller trace/correlation identifier copied from the request when present.
+// / Caller trace/correlation identifier copied from the request when present.
 func (rcv *NUMVectorSaturateResult) TRACE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -127,7 +127,7 @@ func (rcv *NUMVectorSaturateResult) TraceId() []byte {
 	return rcv.TRACE_ID()
 }
 
-/// Caller trace/correlation identifier copied from the request when present.
+// / Caller trace/correlation identifier copied from the request when present.
 func NUMVectorSaturateResultStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

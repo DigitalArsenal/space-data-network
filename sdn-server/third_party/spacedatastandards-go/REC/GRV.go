@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Gravity Models
+// / Gravity Models
 type GRV struct {
 	_tab flatbuffers.Table
 }

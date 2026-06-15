@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Item icon for ListStyle
+// / Item icon for ListStyle
 type KMLItemIcon struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLItemIcon) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// State (open, closed, error, fetching0-2)
+// / State (open, closed, error, fetching0-2)
 func (rcv *KMLItemIcon) STATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLItemIcon) State() []byte {
 	return rcv.STATE()
 }
 
-/// State (open, closed, error, fetching0-2)
-/// Icon URL
+// / State (open, closed, error, fetching0-2)
+// / Icon URL
 func (rcv *KMLItemIcon) HREF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *KMLItemIcon) Href() []byte {
 	return rcv.HREF()
 }
 
-/// Icon URL
+// / Icon URL
 func KMLItemIconStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Mathematical operation for math operation calibrator
+// / Mathematical operation for math operation calibrator
 type MathOperation struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *MathOperation) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Operation in Reverse Polish Notation (RPN)
+// / Operation in Reverse Polish Notation (RPN)
 func (rcv *MathOperation) RPN_EXPRESSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *MathOperation) RpnExpression() []byte {
 	return rcv.RPN_EXPRESSION()
 }
 
-/// Operation in Reverse Polish Notation (RPN)
+// / Operation in Reverse Polish Notation (RPN)
 func MathOperationStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }

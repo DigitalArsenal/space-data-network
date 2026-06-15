@@ -4,22 +4,22 @@ package REC
 
 import "strconv"
 
-/// Coarse envelope status for an invoke response. Per-method numeric
-/// return codes travel in STATUS_CODE; STATUS categorizes the outcome
-/// for host routing (retry, yield-and-resume, fail-closed) without the
-/// host having to decode method-specific numbers.
+// / Coarse envelope status for an invoke response. Per-method numeric
+// / return codes travel in STATUS_CODE; STATUS categorizes the outcome
+// / for host routing (retry, yield-and-resume, fail-closed) without the
+// / host having to decode method-specific numbers.
 type pivStatus int32
 
 const (
 	/// Invocation completed; STATUS_CODE carries the method-specific value.
-	pivStatusOK        pivStatus = 0
+	pivStatusOK pivStatus = 0
 	/// Method id not registered on the target plugin.
 	pivStatusNOT_FOUND pivStatus = 1
 	/// Invocation succeeded but yielded before draining queued work.
 	/// Caller should inspect BACKLOG_REMAINING and re-invoke to continue.
-	pivStatusYIELDED   pivStatus = 2
+	pivStatusYIELDED pivStatus = 2
 	/// Invocation failed; ERROR_CODE + ERROR_MESSAGE describe the failure.
-	pivStatusFAILED    pivStatus = 3
+	pivStatusFAILED pivStatus = 3
 )
 
 var EnumNamespivStatus = map[pivStatus]string{

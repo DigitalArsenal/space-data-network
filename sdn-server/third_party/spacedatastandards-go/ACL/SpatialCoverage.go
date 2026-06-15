@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Spatial coverage definition
+// / Spatial coverage definition
 type SpatialCoverage struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *SpatialCoverage) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Type of coverage: "global", "region", "object_list"
+// / Type of coverage: "global", "region", "object_list"
 func (rcv *SpatialCoverage) TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *SpatialCoverage) Type() []byte {
 	return rcv.TYPE()
 }
 
-/// Type of coverage: "global", "region", "object_list"
-/// Regions covered, e.g., ["LEO", "GEO", "MEO"]
+// / Type of coverage: "global", "region", "object_list"
+// / Regions covered, e.g., ["LEO", "GEO", "MEO"]
 func (rcv *SpatialCoverage) REGIONS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -82,8 +82,8 @@ func (rcv *SpatialCoverage) RegionsLength() int {
 	return rcv.REGIONSLength()
 }
 
-/// Regions covered, e.g., ["LEO", "GEO", "MEO"]
-/// Specific NORAD IDs or catalog numbers
+// / Regions covered, e.g., ["LEO", "GEO", "MEO"]
+// / Specific NORAD IDs or catalog numbers
 func (rcv *SpatialCoverage) OBJECT_IDS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -109,7 +109,7 @@ func (rcv *SpatialCoverage) ObjectIdsLength() int {
 	return rcv.OBJECT_IDSLength()
 }
 
-/// Specific NORAD IDs or catalog numbers
+// / Specific NORAD IDs or catalog numbers
 func SpatialCoverageStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

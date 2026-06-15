@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Entity Profile Message
+// / Entity Profile Message
 type EPM struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *EPM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Distinguished Name of the entity
+// / Distinguished Name of the entity
 func (rcv *EPM) DN() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *EPM) Dn() []byte {
 	return rcv.DN()
 }
 
-/// Distinguished Name of the entity
-/// Common name of the entity (person or organization)
+// / Distinguished Name of the entity
+// / Common name of the entity (person or organization)
 func (rcv *EPM) LEGAL_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *EPM) LegalName() []byte {
 	return rcv.LEGAL_NAME()
 }
 
-/// Common name of the entity (person or organization)
-/// Family name or surname of the person
+// / Common name of the entity (person or organization)
+// / Family name or surname of the person
 func (rcv *EPM) FAMILY_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *EPM) FamilyName() []byte {
 	return rcv.FAMILY_NAME()
 }
 
-/// Family name or surname of the person
-/// Given name or first name of the person
+// / Family name or surname of the person
+// / Given name or first name of the person
 func (rcv *EPM) GIVEN_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *EPM) GivenName() []byte {
 	return rcv.GIVEN_NAME()
 }
 
-/// Given name or first name of the person
-/// Additional name or middle name of the person
+// / Given name or first name of the person
+// / Additional name or middle name of the person
 func (rcv *EPM) ADDITIONAL_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *EPM) AdditionalName() []byte {
 	return rcv.ADDITIONAL_NAME()
 }
 
-/// Additional name or middle name of the person
-/// Honorific prefix preceding the person's name (e.g., Mr., Dr.)
+// / Additional name or middle name of the person
+// / Honorific prefix preceding the person's name (e.g., Mr., Dr.)
 func (rcv *EPM) HONORIFIC_PREFIX() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,8 +137,8 @@ func (rcv *EPM) HonorificPrefix() []byte {
 	return rcv.HONORIFIC_PREFIX()
 }
 
-/// Honorific prefix preceding the person's name (e.g., Mr., Dr.)
-/// Honorific suffix following the person's name (e.g., Jr., Sr.)
+// / Honorific prefix preceding the person's name (e.g., Mr., Dr.)
+// / Honorific suffix following the person's name (e.g., Jr., Sr.)
 func (rcv *EPM) HONORIFIC_SUFFIX() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -151,8 +151,8 @@ func (rcv *EPM) HonorificSuffix() []byte {
 	return rcv.HONORIFIC_SUFFIX()
 }
 
-/// Honorific suffix following the person's name (e.g., Jr., Sr.)
-/// Job title of the person
+// / Honorific suffix following the person's name (e.g., Jr., Sr.)
+// / Job title of the person
 func (rcv *EPM) JOB_TITLE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -165,8 +165,8 @@ func (rcv *EPM) JobTitle() []byte {
 	return rcv.JOB_TITLE()
 }
 
-/// Job title of the person
-/// Occupation of the person
+// / Job title of the person
+// / Occupation of the person
 func (rcv *EPM) OCCUPATION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -179,8 +179,8 @@ func (rcv *EPM) Occupation() []byte {
 	return rcv.OCCUPATION()
 }
 
-/// Occupation of the person
-/// Physical Address
+// / Occupation of the person
+// / Physical Address
 func (rcv *EPM) ADDRESS(obj *Address) *Address {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -198,8 +198,8 @@ func (rcv *EPM) Address(obj *Address) *Address {
 	return rcv.ADDRESS(obj)
 }
 
-/// Physical Address
-/// Alternate names for the entity
+// / Physical Address
+// / Alternate names for the entity
 func (rcv *EPM) ALTERNATE_NAMES(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -225,8 +225,8 @@ func (rcv *EPM) AlternateNamesLength() int {
 	return rcv.ALTERNATE_NAMESLength()
 }
 
-/// Alternate names for the entity
-/// Email address of the entity
+// / Alternate names for the entity
+// / Email address of the entity
 func (rcv *EPM) EMAIL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -239,8 +239,8 @@ func (rcv *EPM) Email() []byte {
 	return rcv.EMAIL()
 }
 
-/// Email address of the entity
-/// Telephone number of the entity
+// / Email address of the entity
+// / Telephone number of the entity
 func (rcv *EPM) TELEPHONE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -253,8 +253,8 @@ func (rcv *EPM) Telephone() []byte {
 	return rcv.TELEPHONE()
 }
 
-/// Telephone number of the entity
-/// Cryptographic keys associated with the entity
+// / Telephone number of the entity
+// / Cryptographic keys associated with the entity
 func (rcv *EPM) KEYS(obj *CryptoKey, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -286,8 +286,8 @@ func (rcv *EPM) KeysLength() int {
 	return rcv.KEYSLength()
 }
 
-/// Cryptographic keys associated with the entity
-/// Multiformat addresses associated with the entity
+// / Cryptographic keys associated with the entity
+// / Multiformat addresses associated with the entity
 func (rcv *EPM) MULTIFORMAT_ADDRESS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -313,8 +313,8 @@ func (rcv *EPM) MultiformatAddressLength() int {
 	return rcv.MULTIFORMAT_ADDRESSLength()
 }
 
-/// Multiformat addresses associated with the entity
-/// Ed25519 signature over canonical EPM content (hex), signed by the first signing key in KEYS
+// / Multiformat addresses associated with the entity
+// / Ed25519 signature over canonical EPM content (hex), signed by the first signing key in KEYS
 func (rcv *EPM) SIGNATURE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -327,8 +327,8 @@ func (rcv *EPM) Signature() []byte {
 	return rcv.SIGNATURE()
 }
 
-/// Ed25519 signature over canonical EPM content (hex), signed by the first signing key in KEYS
-/// Unix timestamp (seconds) when the EPM was signed
+// / Ed25519 signature over canonical EPM content (hex), signed by the first signing key in KEYS
+// / Unix timestamp (seconds) when the EPM was signed
 func (rcv *EPM) SIGNATURE_TIMESTAMP() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -341,7 +341,7 @@ func (rcv *EPM) SignatureTimestamp() int64 {
 	return rcv.SIGNATURE_TIMESTAMP()
 }
 
-/// Unix timestamp (seconds) when the EPM was signed
+// / Unix timestamp (seconds) when the EPM was signed
 func (rcv *EPM) MutateSIGNATURE_TIMESTAMP(n int64) bool {
 	return rcv._tab.MutateInt64Slot(36, n)
 }
@@ -350,7 +350,7 @@ func (rcv *EPM) MutateSignatureTimestamp(n int64) bool {
 	return rcv.MutateSIGNATURE_TIMESTAMP(n)
 }
 
-/// Chain binding proofs linking blockchain keys to the same HD wallet
+// / Chain binding proofs linking blockchain keys to the same HD wallet
 func (rcv *EPM) CHAIN_PROOFS(obj *ChainProof, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -382,8 +382,8 @@ func (rcv *EPM) ChainProofsLength() int {
 	return rcv.CHAIN_PROOFSLength()
 }
 
-/// Chain binding proofs linking blockchain keys to the same HD wallet
-/// Type of entity represented by this profile
+// / Chain binding proofs linking blockchain keys to the same HD wallet
+// / Type of entity represented by this profile
 func (rcv *EPM) ENTITY_TYPE() EntityType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -396,7 +396,7 @@ func (rcv *EPM) EntityType() EntityType {
 	return rcv.ENTITY_TYPE()
 }
 
-/// Type of entity represented by this profile
+// / Type of entity represented by this profile
 func (rcv *EPM) MutateENTITY_TYPE(n EntityType) bool {
 	return rcv._tab.MutateInt8Slot(40, int8(n))
 }

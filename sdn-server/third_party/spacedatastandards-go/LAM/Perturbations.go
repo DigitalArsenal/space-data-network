@@ -41,7 +41,7 @@ func (rcv *Perturbations) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Comments in the Perturbations section.
+// / Comments in the Perturbations section.
 func (rcv *Perturbations) COMMENT(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *Perturbations) CommentLength() int {
 	return rcv.COMMENTLength()
 }
 
-/// Comments in the Perturbations section.
-/// Atmospheric model used.
+// / Comments in the Perturbations section.
+// / Atmospheric model used.
 func (rcv *Perturbations) ATMOSPHERIC_MODEL(obj *ATM) *ATM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -86,8 +86,8 @@ func (rcv *Perturbations) AtmosphericModel(obj *ATM) *ATM {
 	return rcv.ATMOSPHERIC_MODEL(obj)
 }
 
-/// Atmospheric model used.
-/// Gravity model used.
+// / Atmospheric model used.
+// / Gravity model used.
 func (rcv *Perturbations) GRAVITY_MODEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -100,8 +100,8 @@ func (rcv *Perturbations) GravityModel() []byte {
 	return rcv.GRAVITY_MODEL()
 }
 
-/// Gravity model used.
-/// Degree of the gravity model.
+// / Gravity model used.
+// / Degree of the gravity model.
 func (rcv *Perturbations) GRAVITY_DEGREE() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -114,7 +114,7 @@ func (rcv *Perturbations) GravityDegree() int32 {
 	return rcv.GRAVITY_DEGREE()
 }
 
-/// Degree of the gravity model.
+// / Degree of the gravity model.
 func (rcv *Perturbations) MutateGRAVITY_DEGREE(n int32) bool {
 	return rcv._tab.MutateInt32Slot(10, n)
 }
@@ -123,7 +123,7 @@ func (rcv *Perturbations) MutateGravityDegree(n int32) bool {
 	return rcv.MutateGRAVITY_DEGREE(n)
 }
 
-/// Order of the gravity model.
+// / Order of the gravity model.
 func (rcv *Perturbations) GRAVITY_ORDER() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -136,7 +136,7 @@ func (rcv *Perturbations) GravityOrder() int32 {
 	return rcv.GRAVITY_ORDER()
 }
 
-/// Order of the gravity model.
+// / Order of the gravity model.
 func (rcv *Perturbations) MutateGRAVITY_ORDER(n int32) bool {
 	return rcv._tab.MutateInt32Slot(12, n)
 }
@@ -145,7 +145,7 @@ func (rcv *Perturbations) MutateGravityOrder(n int32) bool {
 	return rcv.MutateGRAVITY_ORDER(n)
 }
 
-/// Gravitational constant times the mass of the central body.
+// / Gravitational constant times the mass of the central body.
 func (rcv *Perturbations) GM() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -158,7 +158,7 @@ func (rcv *Perturbations) Gm() float64 {
 	return rcv.GM()
 }
 
-/// Gravitational constant times the mass of the central body.
+// / Gravitational constant times the mass of the central body.
 func (rcv *Perturbations) MutateGM(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -167,7 +167,7 @@ func (rcv *Perturbations) MutateGm(n float64) bool {
 	return rcv.MutateGM(n)
 }
 
-/// List of celestial bodies included in n-body perturbations.
+// / List of celestial bodies included in n-body perturbations.
 func (rcv *Perturbations) N_BODY_PERTURBATIONS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -193,8 +193,8 @@ func (rcv *Perturbations) NBodyPerturbationsLength() int {
 	return rcv.N_BODY_PERTURBATIONSLength()
 }
 
-/// List of celestial bodies included in n-body perturbations.
-/// Ocean tides model used.
+// / List of celestial bodies included in n-body perturbations.
+// / Ocean tides model used.
 func (rcv *Perturbations) OCEAN_TIDES_MODEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -207,8 +207,8 @@ func (rcv *Perturbations) OceanTidesModel() []byte {
 	return rcv.OCEAN_TIDES_MODEL()
 }
 
-/// Ocean tides model used.
-/// Solid tides model used.
+// / Ocean tides model used.
+// / Solid tides model used.
 func (rcv *Perturbations) SOLID_TIDES_MODEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -221,8 +221,8 @@ func (rcv *Perturbations) SolidTidesModel() []byte {
 	return rcv.SOLID_TIDES_MODEL()
 }
 
-/// Solid tides model used.
-/// Atmospheric tides model used.
+// / Solid tides model used.
+// / Atmospheric tides model used.
 func (rcv *Perturbations) ATMOSPHERIC_TIDES_MODEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -235,8 +235,8 @@ func (rcv *Perturbations) AtmosphericTidesModel() []byte {
 	return rcv.ATMOSPHERIC_TIDES_MODEL()
 }
 
-/// Atmospheric tides model used.
-/// Geopotential model used.
+// / Atmospheric tides model used.
+// / Geopotential model used.
 func (rcv *Perturbations) GEOPOTENTIAL_MODEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -249,8 +249,8 @@ func (rcv *Perturbations) GeopotentialModel() []byte {
 	return rcv.GEOPOTENTIAL_MODEL()
 }
 
-/// Geopotential model used.
-/// Solar radiation pressure model used.
+// / Geopotential model used.
+// / Solar radiation pressure model used.
 func (rcv *Perturbations) SOLAR_RAD_PRESSURE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -263,8 +263,8 @@ func (rcv *Perturbations) SolarRadPressure() []byte {
 	return rcv.SOLAR_RAD_PRESSURE()
 }
 
-/// Solar radiation pressure model used.
-/// Albedo model used.
+// / Solar radiation pressure model used.
+// / Albedo model used.
 func (rcv *Perturbations) ALBEDO() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -277,8 +277,8 @@ func (rcv *Perturbations) Albedo() []byte {
 	return rcv.ALBEDO()
 }
 
-/// Albedo model used.
-/// Thermal model used.
+// / Albedo model used.
+// / Thermal model used.
 func (rcv *Perturbations) THERMAL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -291,8 +291,8 @@ func (rcv *Perturbations) Thermal() []byte {
 	return rcv.THERMAL()
 }
 
-/// Thermal model used.
-/// Relativity model used.
+// / Thermal model used.
+// / Relativity model used.
 func (rcv *Perturbations) RELATIVITY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -305,8 +305,8 @@ func (rcv *Perturbations) Relativity() []byte {
 	return rcv.RELATIVITY()
 }
 
-/// Relativity model used.
-/// Atmospheric drag model used.
+// / Relativity model used.
+// / Atmospheric drag model used.
 func (rcv *Perturbations) ATMOSPHERIC_DRAG() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -319,8 +319,8 @@ func (rcv *Perturbations) AtmosphericDrag() []byte {
 	return rcv.ATMOSPHERIC_DRAG()
 }
 
-/// Atmospheric drag model used.
-/// Fixed geomagnetic Kp index used.
+// / Atmospheric drag model used.
+// / Fixed geomagnetic Kp index used.
 func (rcv *Perturbations) FIXED_GEOMAG_KP() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -333,7 +333,7 @@ func (rcv *Perturbations) FixedGeomagKp() float64 {
 	return rcv.FIXED_GEOMAG_KP()
 }
 
-/// Fixed geomagnetic Kp index used.
+// / Fixed geomagnetic Kp index used.
 func (rcv *Perturbations) MutateFIXED_GEOMAG_KP(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -342,7 +342,7 @@ func (rcv *Perturbations) MutateFixedGeomagKp(n float64) bool {
 	return rcv.MutateFIXED_GEOMAG_KP(n)
 }
 
-/// Fixed F10.7 solar flux value used.
+// / Fixed F10.7 solar flux value used.
 func (rcv *Perturbations) FIXED_F10P7() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -355,7 +355,7 @@ func (rcv *Perturbations) FixedF10p7() float64 {
 	return rcv.FIXED_F10P7()
 }
 
-/// Fixed F10.7 solar flux value used.
+// / Fixed F10.7 solar flux value used.
 func (rcv *Perturbations) MutateFIXED_F10P7(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -364,7 +364,7 @@ func (rcv *Perturbations) MutateFixedF10p7(n float64) bool {
 	return rcv.MutateFIXED_F10P7(n)
 }
 
-/// Fixed mean F10.7 solar flux value used.
+// / Fixed mean F10.7 solar flux value used.
 func (rcv *Perturbations) FIXED_F10P7_MEAN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -377,7 +377,7 @@ func (rcv *Perturbations) FixedF10p7Mean() float64 {
 	return rcv.FIXED_F10P7_MEAN()
 }
 
-/// Fixed mean F10.7 solar flux value used.
+// / Fixed mean F10.7 solar flux value used.
 func (rcv *Perturbations) MutateFIXED_F10P7_MEAN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }

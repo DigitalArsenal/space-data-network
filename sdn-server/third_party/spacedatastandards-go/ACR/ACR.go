@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Aircraft Dynamics
+// / Aircraft Dynamics
 type ACR struct {
 	_tab flatbuffers.Table
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Encryption Header containing all parameters needed for decryption
+// / Encryption Header containing all parameters needed for decryption
 type ENC struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *ENC) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Schema version for forward compatibility
+// / Schema version for forward compatibility
 func (rcv *ENC) VERSION() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *ENC) Version() byte {
 	return rcv.VERSION()
 }
 
-/// Schema version for forward compatibility
+// / Schema version for forward compatibility
 func (rcv *ENC) MutateVERSION(n byte) bool {
 	return rcv._tab.MutateByteSlot(4, n)
 }
@@ -76,7 +76,7 @@ func (rcv *ENC) MutateVersion(n byte) bool {
 	return rcv.MutateVERSION(n)
 }
 
-/// Key exchange algorithm used
+// / Key exchange algorithm used
 func (rcv *ENC) KEY_EXCHANGE() KeyExchange {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,7 +89,7 @@ func (rcv *ENC) KeyExchange() KeyExchange {
 	return rcv.KEY_EXCHANGE()
 }
 
-/// Key exchange algorithm used
+// / Key exchange algorithm used
 func (rcv *ENC) MutateKEY_EXCHANGE(n KeyExchange) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -98,7 +98,7 @@ func (rcv *ENC) MutateKeyExchange(n KeyExchange) bool {
 	return rcv.MutateKEY_EXCHANGE(n)
 }
 
-/// Symmetric encryption algorithm used
+// / Symmetric encryption algorithm used
 func (rcv *ENC) SYMMETRIC() SymmetricAlgo {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -111,7 +111,7 @@ func (rcv *ENC) Symmetric() SymmetricAlgo {
 	return rcv.SYMMETRIC()
 }
 
-/// Symmetric encryption algorithm used
+// / Symmetric encryption algorithm used
 func (rcv *ENC) MutateSYMMETRIC(n SymmetricAlgo) bool {
 	return rcv._tab.MutateInt8Slot(8, int8(n))
 }
@@ -120,7 +120,7 @@ func (rcv *ENC) MutateSymmetric(n SymmetricAlgo) bool {
 	return rcv.MutateSYMMETRIC(n)
 }
 
-/// Key derivation function used
+// / Key derivation function used
 func (rcv *ENC) KEY_DERIVATION() KDF {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -133,7 +133,7 @@ func (rcv *ENC) KeyDerivation() KDF {
 	return rcv.KEY_DERIVATION()
 }
 
-/// Key derivation function used
+// / Key derivation function used
 func (rcv *ENC) MutateKEY_DERIVATION(n KDF) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
@@ -142,7 +142,7 @@ func (rcv *ENC) MutateKeyDerivation(n KDF) bool {
 	return rcv.MutateKEY_DERIVATION(n)
 }
 
-/// Ephemeral public key for ECDH key agreement (32-65 bytes depending on algorithm)
+// / Ephemeral public key for ECDH key agreement (32-65 bytes depending on algorithm)
 func (rcv *ENC) EPHEMERAL_PUBLIC_KEY(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -180,7 +180,7 @@ func (rcv *ENC) EphemeralPublicKeyBytes() []byte {
 	return rcv.EPHEMERAL_PUBLIC_KEYBytes()
 }
 
-/// Ephemeral public key for ECDH key agreement (32-65 bytes depending on algorithm)
+// / Ephemeral public key for ECDH key agreement (32-65 bytes depending on algorithm)
 func (rcv *ENC) MutateEPHEMERAL_PUBLIC_KEY(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -194,7 +194,7 @@ func (rcv *ENC) MutateEphemeralPublicKey(j int, n byte) bool {
 	return rcv.MutateEPHEMERAL_PUBLIC_KEY(j, n)
 }
 
-/// Random 12-byte nonce starting value. Incremented for each record in the stream to ensure unique nonces.
+// / Random 12-byte nonce starting value. Incremented for each record in the stream to ensure unique nonces.
 func (rcv *ENC) NONCE_START(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -232,7 +232,7 @@ func (rcv *ENC) NonceStartBytes() []byte {
 	return rcv.NONCE_STARTBytes()
 }
 
-/// Random 12-byte nonce starting value. Incremented for each record in the stream to ensure unique nonces.
+// / Random 12-byte nonce starting value. Incremented for each record in the stream to ensure unique nonces.
 func (rcv *ENC) MutateNONCE_START(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -246,7 +246,7 @@ func (rcv *ENC) MutateNonceStart(j int, n byte) bool {
 	return rcv.MutateNONCE_START(j, n)
 }
 
-/// Optional identifier for the recipient's public key (up to 32 bytes)
+// / Optional identifier for the recipient's public key (up to 32 bytes)
 func (rcv *ENC) RECIPIENT_KEY_ID(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -284,7 +284,7 @@ func (rcv *ENC) RecipientKeyIdBytes() []byte {
 	return rcv.RECIPIENT_KEY_IDBytes()
 }
 
-/// Optional identifier for the recipient's public key (up to 32 bytes)
+// / Optional identifier for the recipient's public key (up to 32 bytes)
 func (rcv *ENC) MutateRECIPIENT_KEY_ID(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -298,7 +298,7 @@ func (rcv *ENC) MutateRecipientKeyId(j int, n byte) bool {
 	return rcv.MutateRECIPIENT_KEY_ID(j, n)
 }
 
-/// Optional domain separation context string
+// / Optional domain separation context string
 func (rcv *ENC) CONTEXT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -311,8 +311,8 @@ func (rcv *ENC) Context() []byte {
 	return rcv.CONTEXT()
 }
 
-/// Optional domain separation context string
-/// Optional SHA-256 hash of the FlatBuffers schema (32 bytes)
+// / Optional domain separation context string
+// / Optional SHA-256 hash of the FlatBuffers schema (32 bytes)
 func (rcv *ENC) SCHEMA_HASH(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -350,7 +350,7 @@ func (rcv *ENC) SchemaHashBytes() []byte {
 	return rcv.SCHEMA_HASHBytes()
 }
 
-/// Optional SHA-256 hash of the FlatBuffers schema (32 bytes)
+// / Optional SHA-256 hash of the FlatBuffers schema (32 bytes)
 func (rcv *ENC) MutateSCHEMA_HASH(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -364,7 +364,7 @@ func (rcv *ENC) MutateSchemaHash(j int, n byte) bool {
 	return rcv.MutateSCHEMA_HASH(j, n)
 }
 
-/// Optional root type name from the schema
+// / Optional root type name from the schema
 func (rcv *ENC) ROOT_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -377,8 +377,8 @@ func (rcv *ENC) RootType() []byte {
 	return rcv.ROOT_TYPE()
 }
 
-/// Optional root type name from the schema
-/// Optional Unix timestamp (milliseconds) when encryption was performed
+// / Optional root type name from the schema
+// / Optional Unix timestamp (milliseconds) when encryption was performed
 func (rcv *ENC) TIMESTAMP() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -391,7 +391,7 @@ func (rcv *ENC) Timestamp() uint64 {
 	return rcv.TIMESTAMP()
 }
 
-/// Optional Unix timestamp (milliseconds) when encryption was performed
+// / Optional Unix timestamp (milliseconds) when encryption was performed
 func (rcv *ENC) MutateTIMESTAMP(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(24, n)
 }

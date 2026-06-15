@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Context-dependent calibrator selection
+// / Context-dependent calibrator selection
 type ContextCalibrator struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ContextCalibrator) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Match criteria for selecting this calibrator
+// / Match criteria for selecting this calibrator
 func (rcv *ContextCalibrator) MATCH_CRITERIA(obj *MatchCriteria) *MatchCriteria {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *ContextCalibrator) MatchCriteria(obj *MatchCriteria) *MatchCriteria {
 	return rcv.MATCH_CRITERIA(obj)
 }
 
-/// Match criteria for selecting this calibrator
-/// Polynomial calibrator (if used)
+// / Match criteria for selecting this calibrator
+// / Polynomial calibrator (if used)
 func (rcv *ContextCalibrator) POLYNOMIAL(obj *PolynomialCalibrator) *PolynomialCalibrator {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -79,8 +79,8 @@ func (rcv *ContextCalibrator) Polynomial(obj *PolynomialCalibrator) *PolynomialC
 	return rcv.POLYNOMIAL(obj)
 }
 
-/// Polynomial calibrator (if used)
-/// Spline calibrator (if used)
+// / Polynomial calibrator (if used)
+// / Spline calibrator (if used)
 func (rcv *ContextCalibrator) SPLINE(obj *SplineCalibrator) *SplineCalibrator {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -98,8 +98,8 @@ func (rcv *ContextCalibrator) Spline(obj *SplineCalibrator) *SplineCalibrator {
 	return rcv.SPLINE(obj)
 }
 
-/// Spline calibrator (if used)
-/// Math operation calibrator (if used)
+// / Spline calibrator (if used)
+// / Math operation calibrator (if used)
 func (rcv *ContextCalibrator) MATH_OPERATION(obj *MathOperation) *MathOperation {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,7 +117,7 @@ func (rcv *ContextCalibrator) MathOperation(obj *MathOperation) *MathOperation {
 	return rcv.MATH_OPERATION(obj)
 }
 
-/// Math operation calibrator (if used)
+// / Math operation calibrator (if used)
 func ContextCalibratorStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

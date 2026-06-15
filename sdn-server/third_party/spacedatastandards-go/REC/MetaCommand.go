@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// MetaCommand definition
+// / MetaCommand definition
 type MetaCommand struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *MetaCommand) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Command name
+// / Command name
 func (rcv *MetaCommand) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *MetaCommand) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Command name
-/// Short description
+// / Command name
+// / Short description
 func (rcv *MetaCommand) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *MetaCommand) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-/// Short description
-/// Long description
+// / Short description
+// / Long description
 func (rcv *MetaCommand) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *MetaCommand) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-/// Long description
-/// Abstract command (base only)
+// / Long description
+// / Abstract command (base only)
 func (rcv *MetaCommand) ABSTRACT() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *MetaCommand) Abstract() bool {
 	return rcv.ABSTRACT()
 }
 
-/// Abstract command (base only)
+// / Abstract command (base only)
 func (rcv *MetaCommand) MutateABSTRACT(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }
@@ -106,7 +106,7 @@ func (rcv *MetaCommand) MutateAbstract(n bool) bool {
 	return rcv.MutateABSTRACT(n)
 }
 
-/// Argument list
+// / Argument list
 func (rcv *MetaCommand) ARGUMENTS(obj *Argument, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -138,8 +138,8 @@ func (rcv *MetaCommand) ArgumentsLength() int {
 	return rcv.ARGUMENTSLength()
 }
 
-/// Argument list
-/// Command container
+// / Argument list
+// / Command container
 func (rcv *MetaCommand) COMMAND_CONTAINER(obj *CommandContainer) *CommandContainer {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -157,8 +157,8 @@ func (rcv *MetaCommand) CommandContainer(obj *CommandContainer) *CommandContaine
 	return rcv.COMMAND_CONTAINER(obj)
 }
 
-/// Command container
-/// Base metacommand (inheritance)
+// / Command container
+// / Base metacommand (inheritance)
 func (rcv *MetaCommand) BASE_META_COMMAND(obj *BaseMetaCommand) *BaseMetaCommand {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -176,8 +176,8 @@ func (rcv *MetaCommand) BaseMetaCommand(obj *BaseMetaCommand) *BaseMetaCommand {
 	return rcv.BASE_META_COMMAND(obj)
 }
 
-/// Base metacommand (inheritance)
-/// Command verifiers
+// / Base metacommand (inheritance)
+// / Command verifiers
 func (rcv *MetaCommand) VERIFIERS(obj *CommandVerifier, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -209,8 +209,8 @@ func (rcv *MetaCommand) VerifiersLength() int {
 	return rcv.VERIFIERSLength()
 }
 
-/// Command verifiers
-/// Command significance
+// / Command verifiers
+// / Command significance
 func (rcv *MetaCommand) SIGNIFICANCE(obj *CommandSignificance) *CommandSignificance {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -228,8 +228,8 @@ func (rcv *MetaCommand) Significance(obj *CommandSignificance) *CommandSignifica
 	return rcv.SIGNIFICANCE(obj)
 }
 
-/// Command significance
-/// Interlock constraints
+// / Command significance
+// / Interlock constraints
 func (rcv *MetaCommand) INTERLOCKS(obj *Interlock, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -261,8 +261,8 @@ func (rcv *MetaCommand) InterlocksLength() int {
 	return rcv.INTERLOCKSLength()
 }
 
-/// Interlock constraints
-/// Default significance
+// / Interlock constraints
+// / Default significance
 func (rcv *MetaCommand) DEFAULT_SIGNIFICANCE(obj *CommandSignificance) *CommandSignificance {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -280,7 +280,7 @@ func (rcv *MetaCommand) DefaultSignificance(obj *CommandSignificance) *CommandSi
 	return rcv.DEFAULT_SIGNIFICANCE(obj)
 }
 
-/// Default significance
+// / Default significance
 func MetaCommandStart(builder *flatbuffers.Builder) {
 	builder.StartObject(11)
 }

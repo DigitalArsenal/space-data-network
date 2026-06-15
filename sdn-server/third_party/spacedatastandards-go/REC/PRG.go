@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Program Description Message
+// / Program Description Message
 type PRG struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *PRG) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// The name of the program
+// / The name of the program
 func (rcv *PRG) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *PRG) Name() []byte {
 	return rcv.NAME()
 }
 
-/// The name of the program
-/// Hierarchical Deterministic (HD) derivation path for the program's key, used in cryptocurrency wallets
+// / The name of the program
+// / Hierarchical Deterministic (HD) derivation path for the program's key, used in cryptocurrency wallets
 func (rcv *PRG) HD_KEY_PATH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *PRG) HdKeyPath() []byte {
 	return rcv.HD_KEY_PATH()
 }
 
-/// Hierarchical Deterministic (HD) derivation path for the program's key, used in cryptocurrency wallets
-/// Vector of standard message types used by the program
+// / Hierarchical Deterministic (HD) derivation path for the program's key, used in cryptocurrency wallets
+// / Vector of standard message types used by the program
 func (rcv *PRG) MESSAGE_TYPES(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -108,8 +108,8 @@ func (rcv *PRG) MessageTypesLength() int {
 	return rcv.MESSAGE_TYPESLength()
 }
 
-/// Vector of standard message types used by the program
-/// Vector of users associated with the program, each user can have assigned message types
+// / Vector of standard message types used by the program
+// / Vector of users associated with the program, each user can have assigned message types
 func (rcv *PRG) USERS(obj *USR, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -141,7 +141,7 @@ func (rcv *PRG) UsersLength() int {
 	return rcv.USERSLength()
 }
 
-/// Vector of users associated with the program, each user can have assigned message types
+// / Vector of users associated with the program, each user can have assigned message types
 func PRGStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

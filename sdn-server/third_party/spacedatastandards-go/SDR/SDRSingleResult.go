@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Compact single-frame detection result.
+// / Compact single-frame detection result.
 type SDRSingleResult struct {
 	_tab flatbuffers.Table
 }
@@ -62,7 +62,7 @@ func (rcv *SDRSingleResult) MutateDetected(n bool) bool {
 	return rcv.MutateDETECTED(n)
 }
 
-/// Range to target (meters).
+// / Range to target (meters).
 func (rcv *SDRSingleResult) RANGE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -75,7 +75,7 @@ func (rcv *SDRSingleResult) Range() float64 {
 	return rcv.RANGE()
 }
 
-/// Range to target (meters).
+// / Range to target (meters).
 func (rcv *SDRSingleResult) MutateRANGE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -84,7 +84,7 @@ func (rcv *SDRSingleResult) MutateRange(n float64) bool {
 	return rcv.MutateRANGE(n)
 }
 
-/// Signal-to-noise ratio (dB).
+// / Signal-to-noise ratio (dB).
 func (rcv *SDRSingleResult) SNR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *SDRSingleResult) Snr() float64 {
 	return rcv.SNR()
 }
 
-/// Signal-to-noise ratio (dB).
+// / Signal-to-noise ratio (dB).
 func (rcv *SDRSingleResult) MutateSNR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -106,7 +106,7 @@ func (rcv *SDRSingleResult) MutateSnr(n float64) bool {
 	return rcv.MutateSNR(n)
 }
 
-/// Azimuth angle to target (radians).
+// / Azimuth angle to target (radians).
 func (rcv *SDRSingleResult) AZIMUTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -119,7 +119,7 @@ func (rcv *SDRSingleResult) Azimuth() float64 {
 	return rcv.AZIMUTH()
 }
 
-/// Azimuth angle to target (radians).
+// / Azimuth angle to target (radians).
 func (rcv *SDRSingleResult) MutateAZIMUTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -128,7 +128,7 @@ func (rcv *SDRSingleResult) MutateAzimuth(n float64) bool {
 	return rcv.MutateAZIMUTH(n)
 }
 
-/// Elevation angle to target (radians).
+// / Elevation angle to target (radians).
 func (rcv *SDRSingleResult) ELEVATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -141,7 +141,7 @@ func (rcv *SDRSingleResult) Elevation() float64 {
 	return rcv.ELEVATION()
 }
 
-/// Elevation angle to target (radians).
+// / Elevation angle to target (radians).
 func (rcv *SDRSingleResult) MutateELEVATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -150,7 +150,7 @@ func (rcv *SDRSingleResult) MutateElevation(n float64) bool {
 	return rcv.MutateELEVATION(n)
 }
 
-/// Range rate / Doppler velocity (m/s).
+// / Range rate / Doppler velocity (m/s).
 func (rcv *SDRSingleResult) RANGE_RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -163,7 +163,7 @@ func (rcv *SDRSingleResult) RangeRate() float64 {
 	return rcv.RANGE_RATE()
 }
 
-/// Range rate / Doppler velocity (m/s).
+// / Range rate / Doppler velocity (m/s).
 func (rcv *SDRSingleResult) MutateRANGE_RATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -172,7 +172,7 @@ func (rcv *SDRSingleResult) MutateRangeRate(n float64) bool {
 	return rcv.MutateRANGE_RATE(n)
 }
 
-/// Detection timestamp (milliseconds since epoch).
+// / Detection timestamp (milliseconds since epoch).
 func (rcv *SDRSingleResult) TIMESTAMP_MS() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -185,7 +185,7 @@ func (rcv *SDRSingleResult) TimestampMs() uint64 {
 	return rcv.TIMESTAMP_MS()
 }
 
-/// Detection timestamp (milliseconds since epoch).
+// / Detection timestamp (milliseconds since epoch).
 func (rcv *SDRSingleResult) MutateTIMESTAMP_MS(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(16, n)
 }
@@ -194,7 +194,7 @@ func (rcv *SDRSingleResult) MutateTimestampMs(n uint64) bool {
 	return rcv.MutateTIMESTAMP_MS(n)
 }
 
-/// Track identifier (0 if not tracking).
+// / Track identifier (0 if not tracking).
 func (rcv *SDRSingleResult) TRACK_ID() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -207,7 +207,7 @@ func (rcv *SDRSingleResult) TrackId() uint32 {
 	return rcv.TRACK_ID()
 }
 
-/// Track identifier (0 if not tracking).
+// / Track identifier (0 if not tracking).
 func (rcv *SDRSingleResult) MutateTRACK_ID(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(18, n)
 }

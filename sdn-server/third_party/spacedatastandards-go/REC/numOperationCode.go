@@ -7,15 +7,15 @@ import "strconv"
 type numOperationCode int8
 
 const (
-	numOperationCodeUNKNOWN                numOperationCode = 0
+	numOperationCodeUNKNOWN numOperationCode = 0
 	/// Solve for a scalar root using Newton-Raphson iteration.
-	numOperationCodeNEWTON_RAPHSON         numOperationCode = 1
+	numOperationCodeNEWTON_RAPHSON numOperationCode = 1
 	/// Linearly interpolate one scalar between two scalar samples.
-	numOperationCodeLINEAR_INTERPOLATION   numOperationCode = 2
+	numOperationCodeLINEAR_INTERPOLATION numOperationCode = 2
 	/// Bilinearly interpolate one scalar from four rectangular-corner samples.
 	numOperationCodeBILINEAR_INTERPOLATION numOperationCode = 3
 	/// Generate a bounded Gauss-Markov random sequence and summary statistics.
-	numOperationCodeGAUSS_MARKOV_SEQUENCE  numOperationCode = 4
+	numOperationCodeGAUSS_MARKOV_SEQUENCE numOperationCode = 4
 )
 
 var EnumNamesnumOperationCode = map[numOperationCode]string{

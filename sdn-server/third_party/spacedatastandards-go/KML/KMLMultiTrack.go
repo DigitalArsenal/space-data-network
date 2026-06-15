@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// gx:MultiTrack
+// / gx:MultiTrack
 type KMLMultiTrack struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLMultiTrack) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Altitude mode
+// / Altitude mode
 func (rcv *KMLMultiTrack) ALTITUDE_MODE() KMLAltitudeMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *KMLMultiTrack) AltitudeMode() KMLAltitudeMode {
 	return rcv.ALTITUDE_MODE()
 }
 
-/// Altitude mode
+// / Altitude mode
 func (rcv *KMLMultiTrack) MutateALTITUDE_MODE(n KMLAltitudeMode) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *KMLMultiTrack) MutateAltitudeMode(n KMLAltitudeMode) bool {
 	return rcv.MutateALTITUDE_MODE(n)
 }
 
-/// Whether to interpolate between tracks
+// / Whether to interpolate between tracks
 func (rcv *KMLMultiTrack) INTERPOLATE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *KMLMultiTrack) Interpolate() bool {
 	return rcv.INTERPOLATE()
 }
 
-/// Whether to interpolate between tracks
+// / Whether to interpolate between tracks
 func (rcv *KMLMultiTrack) MutateINTERPOLATE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *KMLMultiTrack) MutateInterpolate(n bool) bool {
 	return rcv.MutateINTERPOLATE(n)
 }
 
-/// Child tracks
+// / Child tracks
 func (rcv *KMLMultiTrack) TRACKS(obj *KMLTrack, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -118,7 +118,7 @@ func (rcv *KMLMultiTrack) TracksLength() int {
 	return rcv.TRACKSLength()
 }
 
-/// Child tracks
+// / Child tracks
 func KMLMultiTrackStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

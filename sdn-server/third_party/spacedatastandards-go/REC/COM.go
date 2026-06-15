@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Communications Systems
+// / Communications Systems
 type COM struct {
 	_tab flatbuffers.Table
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// One host capability dependency (richer form of PluginCapability).
+// / One host capability dependency (richer form of PluginCapability).
 type PLGHostCapability struct {
 	_tab flatbuffers.Table
 }

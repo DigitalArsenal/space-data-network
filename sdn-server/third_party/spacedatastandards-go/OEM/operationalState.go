@@ -8,21 +8,21 @@ type operationalState int8
 
 const (
 	/// +
-	operationalStateOPERATIONAL           operationalState = 0
+	operationalStateOPERATIONAL operationalState = 0
 	/// -
-	operationalStateNONOPERATIONAL        operationalState = 1
+	operationalStateNONOPERATIONAL operationalState = 1
 	/// P
 	operationalStatePARTIALLY_OPERATIONAL operationalState = 2
 	/// B
-	operationalStateBACKUP_STANDBY        operationalState = 3
+	operationalStateBACKUP_STANDBY operationalState = 3
 	/// S
-	operationalStateSPARE                 operationalState = 4
+	operationalStateSPARE operationalState = 4
 	/// X
-	operationalStateEXTENDED_MISSION      operationalState = 5
+	operationalStateEXTENDED_MISSION operationalState = 5
 	/// D
-	operationalStateDECAYED               operationalState = 6
+	operationalStateDECAYED operationalState = 6
 	/// ?
-	operationalStateUNKNOWN               operationalState = 7
+	operationalStateUNKNOWN operationalState = 7
 )
 
 var EnumNamesoperationalState = map[operationalState]string{

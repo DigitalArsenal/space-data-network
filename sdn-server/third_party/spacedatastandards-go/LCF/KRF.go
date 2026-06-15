@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Key Reference Frame
+// / Key Reference Frame
 type KRF struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *KRF) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Logical key identifier used across publication and grant records.
+// / Logical key identifier used across publication and grant records.
 func (rcv *KRF) KEY_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *KRF) KeyId() []byte {
 	return rcv.KEY_ID()
 }
 
-/// Logical key identifier used across publication and grant records.
-/// Host-managed key slot or key handle identifier.
+// / Logical key identifier used across publication and grant records.
+// / Host-managed key slot or key handle identifier.
 func (rcv *KRF) SLOT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *KRF) SlotId() []byte {
 	return rcv.SLOT_ID()
 }
 
-/// Host-managed key slot or key handle identifier.
-/// Role the referenced key fulfills for the module flow.
+// / Host-managed key slot or key handle identifier.
+// / Role the referenced key fulfills for the module flow.
 func (rcv *KRF) ROLE() keyReferenceRole {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,7 +95,7 @@ func (rcv *KRF) Role() keyReferenceRole {
 	return rcv.ROLE()
 }
 
-/// Role the referenced key fulfills for the module flow.
+// / Role the referenced key fulfills for the module flow.
 func (rcv *KRF) MutateROLE(n keyReferenceRole) bool {
 	return rcv._tab.MutateInt8Slot(8, int8(n))
 }
@@ -104,7 +104,7 @@ func (rcv *KRF) MutateRole(n keyReferenceRole) bool {
 	return rcv.MutateROLE(n)
 }
 
-/// Algorithm or key family for the referenced key.
+// / Algorithm or key family for the referenced key.
 func (rcv *KRF) ALGORITHM() keyReferenceAlgorithm {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,7 +117,7 @@ func (rcv *KRF) Algorithm() keyReferenceAlgorithm {
 	return rcv.ALGORITHM()
 }
 
-/// Algorithm or key family for the referenced key.
+// / Algorithm or key family for the referenced key.
 func (rcv *KRF) MutateALGORITHM(n keyReferenceAlgorithm) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
@@ -126,7 +126,7 @@ func (rcv *KRF) MutateAlgorithm(n keyReferenceAlgorithm) bool {
 	return rcv.MutateALGORITHM(n)
 }
 
-/// Optional public bytes for verification or peer identity binding.
+// / Optional public bytes for verification or peer identity binding.
 func (rcv *KRF) PUBLIC_KEY(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -164,7 +164,7 @@ func (rcv *KRF) PublicKeyBytes() []byte {
 	return rcv.PUBLIC_KEYBytes()
 }
 
-/// Optional public bytes for verification or peer identity binding.
+// / Optional public bytes for verification or peer identity binding.
 func (rcv *KRF) MutatePUBLIC_KEY(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -178,7 +178,7 @@ func (rcv *KRF) MutatePublicKey(j int, n byte) bool {
 	return rcv.MutatePUBLIC_KEY(j, n)
 }
 
-/// Logical version of the referenced key.
+// / Logical version of the referenced key.
 func (rcv *KRF) VERSION() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -191,7 +191,7 @@ func (rcv *KRF) Version() uint32 {
 	return rcv.VERSION()
 }
 
-/// Logical version of the referenced key.
+// / Logical version of the referenced key.
 func (rcv *KRF) MutateVERSION(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(14, n)
 }
@@ -200,7 +200,7 @@ func (rcv *KRF) MutateVersion(n uint32) bool {
 	return rcv.MutateVERSION(n)
 }
 
-/// Expiration time in unix milliseconds, or 0 if unbounded.
+// / Expiration time in unix milliseconds, or 0 if unbounded.
 func (rcv *KRF) EXPIRES_AT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -213,7 +213,7 @@ func (rcv *KRF) ExpiresAt() uint64 {
 	return rcv.EXPIRES_AT()
 }
 
-/// Expiration time in unix milliseconds, or 0 if unbounded.
+// / Expiration time in unix milliseconds, or 0 if unbounded.
 func (rcv *KRF) MutateEXPIRES_AT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(16, n)
 }
@@ -222,7 +222,7 @@ func (rcv *KRF) MutateExpiresAt(n uint64) bool {
 	return rcv.MutateEXPIRES_AT(n)
 }
 
-/// True when the secret material remains in the host key slot.
+// / True when the secret material remains in the host key slot.
 func (rcv *KRF) HOST_MANAGED() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -235,7 +235,7 @@ func (rcv *KRF) HostManaged() bool {
 	return rcv.HOST_MANAGED()
 }
 
-/// True when the secret material remains in the host key slot.
+// / True when the secret material remains in the host key slot.
 func (rcv *KRF) MutateHOST_MANAGED(n bool) bool {
 	return rcv._tab.MutateBoolSlot(18, n)
 }

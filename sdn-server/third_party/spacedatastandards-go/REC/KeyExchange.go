@@ -4,8 +4,8 @@ package REC
 
 import "strconv"
 
-/// Encryption Header for FlatBuffers field-level encryption
-/// Key exchange algorithm used to derive the shared secret
+// / Encryption Header for FlatBuffers field-level encryption
+// / Key exchange algorithm used to derive the shared secret
 type KeyExchange int8
 
 const (

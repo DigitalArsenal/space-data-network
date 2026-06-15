@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Polyline arrow material
+// / Polyline arrow material
 type CZMPolylineArrowMaterial struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMPolylineArrowMaterial) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Arrow color
+// / Arrow color
 func (rcv *CZMPolylineArrowMaterial) COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,7 +60,7 @@ func (rcv *CZMPolylineArrowMaterial) Color(obj *CZMColor) *CZMColor {
 	return rcv.COLOR(obj)
 }
 
-/// Arrow color
+// / Arrow color
 func CZMPolylineArrowMaterialStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }

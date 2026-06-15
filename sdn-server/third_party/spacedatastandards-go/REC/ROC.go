@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Rocket Configuration
+// / Rocket Configuration
 type ROC struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *ROC) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Rocket Name
+// / Rocket Name
 func (rcv *ROC) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *ROC) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Rocket Name
-/// Rocket Family
+// / Rocket Name
+// / Rocket Family
 func (rcv *ROC) FAMILY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *ROC) Family() []byte {
 	return rcv.FAMILY()
 }
 
-/// Rocket Family
-/// Rocket Variant
+// / Rocket Family
+// / Rocket Variant
 func (rcv *ROC) VARIANT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *ROC) Variant() []byte {
 	return rcv.VARIANT()
 }
 
-/// Rocket Variant
-/// Stages in the Rocket
+// / Rocket Variant
+// / Stages in the Rocket
 func (rcv *ROC) STAGES(obj *STAGE, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -128,8 +128,8 @@ func (rcv *ROC) StagesLength() int {
 	return rcv.STAGESLength()
 }
 
-/// Stages in the Rocket
-/// Sustainers in the Rocket
+// / Stages in the Rocket
+// / Sustainers in the Rocket
 func (rcv *ROC) SUSTAINERS(obj *SUSTAINER, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -161,7 +161,7 @@ func (rcv *ROC) SustainersLength() int {
 	return rcv.SUSTAINERSLength()
 }
 
-/// Sustainers in the Rocket
+// / Sustainers in the Rocket
 func ROCStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

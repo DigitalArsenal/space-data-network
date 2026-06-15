@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Boolean parameter type
+// / Boolean parameter type
 type BooleanParameterType struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *BooleanParameterType) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Type name
+// / Type name
 func (rcv *BooleanParameterType) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *BooleanParameterType) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Type name
-/// Short description
+// / Type name
+// / Short description
 func (rcv *BooleanParameterType) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *BooleanParameterType) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-/// Short description
-/// Long description
+// / Short description
+// / Long description
 func (rcv *BooleanParameterType) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *BooleanParameterType) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-/// Long description
-/// Data encoding (typically IntegerDataEncoding with 1 bit)
+// / Long description
+// / Data encoding (typically IntegerDataEncoding with 1 bit)
 func (rcv *BooleanParameterType) DATA_ENCODING(obj *IntegerDataEncoding) *IntegerDataEncoding {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -102,8 +102,8 @@ func (rcv *BooleanParameterType) DataEncoding(obj *IntegerDataEncoding) *Integer
 	return rcv.DATA_ENCODING(obj)
 }
 
-/// Data encoding (typically IntegerDataEncoding with 1 bit)
-/// String representation of true value
+// / Data encoding (typically IntegerDataEncoding with 1 bit)
+// / String representation of true value
 func (rcv *BooleanParameterType) ONE_STRING_VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -116,8 +116,8 @@ func (rcv *BooleanParameterType) OneStringValue() []byte {
 	return rcv.ONE_STRING_VALUE()
 }
 
-/// String representation of true value
-/// String representation of false value
+// / String representation of true value
+// / String representation of false value
 func (rcv *BooleanParameterType) ZERO_STRING_VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -130,8 +130,8 @@ func (rcv *BooleanParameterType) ZeroStringValue() []byte {
 	return rcv.ZERO_STRING_VALUE()
 }
 
-/// String representation of false value
-/// Initial/default value
+// / String representation of false value
+// / Initial/default value
 func (rcv *BooleanParameterType) INITIAL_VALUE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -144,7 +144,7 @@ func (rcv *BooleanParameterType) InitialValue() bool {
 	return rcv.INITIAL_VALUE()
 }
 
-/// Initial/default value
+// / Initial/default value
 func (rcv *BooleanParameterType) MutateINITIAL_VALUE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(16, n)
 }

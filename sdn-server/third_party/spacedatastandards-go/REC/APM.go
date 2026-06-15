@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Attitude Parameter Message
+// / Attitude Parameter Message
 type APM struct {
 	_tab flatbuffers.Table
 }

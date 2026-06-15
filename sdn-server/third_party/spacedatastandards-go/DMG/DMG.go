@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Damage Models
+// / Damage Models
 type DMG struct {
 	_tab flatbuffers.Table
 }

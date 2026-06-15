@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Module fetch/register/load control message
+// / Module fetch/register/load control message
 type LMR struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *LMR) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Action being requested or reported
+// / Action being requested or reported
 func (rcv *LMR) ACTION() licensingModuleRequestAction {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *LMR) Action() licensingModuleRequestAction {
 	return rcv.ACTION()
 }
 
-/// Action being requested or reported
+// / Action being requested or reported
 func (rcv *LMR) MutateACTION(n licensingModuleRequestAction) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -76,7 +76,7 @@ func (rcv *LMR) MutateAction(n licensingModuleRequestAction) bool {
 	return rcv.MutateACTION(n)
 }
 
-/// Unique request identifier
+// / Unique request identifier
 func (rcv *LMR) REQUEST_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,8 +89,8 @@ func (rcv *LMR) RequestId() []byte {
 	return rcv.REQUEST_ID()
 }
 
-/// Unique request identifier
-/// Canonical module identifier
+// / Unique request identifier
+// / Canonical module identifier
 func (rcv *LMR) MODULE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,8 +103,8 @@ func (rcv *LMR) ModuleId() []byte {
 	return rcv.MODULE_ID()
 }
 
-/// Canonical module identifier
-/// Optional module version
+// / Canonical module identifier
+// / Optional module version
 func (rcv *LMR) MODULE_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *LMR) ModuleVersion() []byte {
 	return rcv.MODULE_VERSION()
 }
 
-/// Optional module version
-/// IPFS CID of the encrypted module artifact
+// / Optional module version
+// / IPFS CID of the encrypted module artifact
 func (rcv *LMR) WASM_CID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *LMR) WasmCid() []byte {
 	return rcv.WASM_CID()
 }
 
-/// IPFS CID of the encrypted module artifact
-/// SHA-256 hash of the decrypted module bytes
+// / IPFS CID of the encrypted module artifact
+// / SHA-256 hash of the decrypted module bytes
 func (rcv *LMR) MODULE_HASH(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -170,7 +170,7 @@ func (rcv *LMR) ModuleHashBytes() []byte {
 	return rcv.MODULE_HASHBytes()
 }
 
-/// SHA-256 hash of the decrypted module bytes
+// / SHA-256 hash of the decrypted module bytes
 func (rcv *LMR) MutateMODULE_HASH(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -184,7 +184,7 @@ func (rcv *LMR) MutateModuleHash(j int, n byte) bool {
 	return rcv.MutateMODULE_HASH(j, n)
 }
 
-/// Human-readable status
+// / Human-readable status
 func (rcv *LMR) STATUS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -197,8 +197,8 @@ func (rcv *LMR) Status() []byte {
 	return rcv.STATUS()
 }
 
-/// Human-readable status
-/// Structured error code
+// / Human-readable status
+// / Structured error code
 func (rcv *LMR) ERROR_CODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -211,8 +211,8 @@ func (rcv *LMR) ErrorCode() []byte {
 	return rcv.ERROR_CODE()
 }
 
-/// Structured error code
-/// Structured error message
+// / Structured error code
+// / Structured error message
 func (rcv *LMR) ERROR_MESSAGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -225,7 +225,7 @@ func (rcv *LMR) ErrorMessage() []byte {
 	return rcv.ERROR_MESSAGE()
 }
 
-/// Structured error message
+// / Structured error message
 func LMRStart(builder *flatbuffers.Builder) {
 	builder.StartObject(9)
 }

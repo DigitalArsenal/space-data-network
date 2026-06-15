@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Enumeration value mapping
+// / Enumeration value mapping
 type EnumerationValue struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *EnumerationValue) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Label/name for this value
+// / Label/name for this value
 func (rcv *EnumerationValue) LABEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *EnumerationValue) Label() []byte {
 	return rcv.LABEL()
 }
 
-/// Label/name for this value
-/// Numeric value
+// / Label/name for this value
+// / Numeric value
 func (rcv *EnumerationValue) VALUE() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *EnumerationValue) Value() int64 {
 	return rcv.VALUE()
 }
 
-/// Numeric value
+// / Numeric value
 func (rcv *EnumerationValue) MutateVALUE(n int64) bool {
 	return rcv._tab.MutateInt64Slot(6, n)
 }
@@ -78,7 +78,7 @@ func (rcv *EnumerationValue) MutateValue(n int64) bool {
 	return rcv.MutateVALUE(n)
 }
 
-/// Maximum value (for ranges)
+// / Maximum value (for ranges)
 func (rcv *EnumerationValue) MAX_VALUE() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *EnumerationValue) MaxValue() int64 {
 	return rcv.MAX_VALUE()
 }
 
-/// Maximum value (for ranges)
+// / Maximum value (for ranges)
 func (rcv *EnumerationValue) MutateMAX_VALUE(n int64) bool {
 	return rcv._tab.MutateInt64Slot(8, n)
 }
@@ -100,7 +100,7 @@ func (rcv *EnumerationValue) MutateMaxValue(n int64) bool {
 	return rcv.MutateMAX_VALUE(n)
 }
 
-/// Description of this enumeration value
+// / Description of this enumeration value
 func (rcv *EnumerationValue) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -113,7 +113,7 @@ func (rcv *EnumerationValue) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-/// Description of this enumeration value
+// / Description of this enumeration value
 func EnumerationValueStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

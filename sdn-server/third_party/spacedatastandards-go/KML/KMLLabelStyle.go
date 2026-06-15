@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Label style
+// / Label style
 type KMLLabelStyle struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLLabelStyle) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// KML color in aabbggrr hex format
+// / KML color in aabbggrr hex format
 func (rcv *KMLLabelStyle) COLOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLLabelStyle) Color() []byte {
 	return rcv.COLOR()
 }
 
-/// KML color in aabbggrr hex format
-/// Color mode
+// / KML color in aabbggrr hex format
+// / Color mode
 func (rcv *KMLLabelStyle) COLOR_MODE() KMLColorMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *KMLLabelStyle) ColorMode() KMLColorMode {
 	return rcv.COLOR_MODE()
 }
 
-/// Color mode
+// / Color mode
 func (rcv *KMLLabelStyle) MutateCOLOR_MODE(n KMLColorMode) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -78,7 +78,7 @@ func (rcv *KMLLabelStyle) MutateColorMode(n KMLColorMode) bool {
 	return rcv.MutateCOLOR_MODE(n)
 }
 
-/// Scale factor
+// / Scale factor
 func (rcv *KMLLabelStyle) SCALE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *KMLLabelStyle) Scale() float64 {
 	return rcv.SCALE()
 }
 
-/// Scale factor
+// / Scale factor
 func (rcv *KMLLabelStyle) MutateSCALE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }

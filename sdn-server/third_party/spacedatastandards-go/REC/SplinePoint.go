@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Spline point for spline calibration
+// / Spline point for spline calibration
 type SplinePoint struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *SplinePoint) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Raw value
+// / Raw value
 func (rcv *SplinePoint) RAW() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *SplinePoint) Raw() float64 {
 	return rcv.RAW()
 }
 
-/// Raw value
+// / Raw value
 func (rcv *SplinePoint) MutateRAW(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *SplinePoint) MutateRaw(n float64) bool {
 	return rcv.MutateRAW(n)
 }
 
-/// Calibrated/engineering value
+// / Calibrated/engineering value
 func (rcv *SplinePoint) CALIBRATED() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *SplinePoint) Calibrated() float64 {
 	return rcv.CALIBRATED()
 }
 
-/// Calibrated/engineering value
+// / Calibrated/engineering value
 func (rcv *SplinePoint) MutateCALIBRATED(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Math algorithm (inline calculation)
+// / Math algorithm (inline calculation)
 type MathAlgorithm struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *MathAlgorithm) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Algorithm name
+// / Algorithm name
 func (rcv *MathAlgorithm) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *MathAlgorithm) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Algorithm name
-/// Short description
+// / Algorithm name
+// / Short description
 func (rcv *MathAlgorithm) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *MathAlgorithm) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-/// Short description
-/// Math operation in RPN
+// / Short description
+// / Math operation in RPN
 func (rcv *MathAlgorithm) MATH_OPERATION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *MathAlgorithm) MathOperation() []byte {
 	return rcv.MATH_OPERATION()
 }
 
-/// Math operation in RPN
-/// Output parameter reference
+// / Math operation in RPN
+// / Output parameter reference
 func (rcv *MathAlgorithm) OUTPUT_PARAMETER_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *MathAlgorithm) OutputParameterRef() []byte {
 	return rcv.OUTPUT_PARAMETER_REF()
 }
 
-/// Output parameter reference
-/// Trigger conditions
+// / Output parameter reference
+// / Trigger conditions
 func (rcv *MathAlgorithm) TRIGGERS(obj *AlgorithmTrigger, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -130,7 +130,7 @@ func (rcv *MathAlgorithm) TriggersLength() int {
 	return rcv.TRIGGERSLength()
 }
 
-/// Trigger conditions
+// / Trigger conditions
 func MathAlgorithmStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

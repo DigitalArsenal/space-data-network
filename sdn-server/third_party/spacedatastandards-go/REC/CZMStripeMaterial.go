@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Stripe material
+// / Stripe material
 type CZMStripeMaterial struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMStripeMaterial) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Stripe orientation
+// / Stripe orientation
 func (rcv *CZMStripeMaterial) ORIENTATION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *CZMStripeMaterial) Orientation() []byte {
 	return rcv.ORIENTATION()
 }
 
-/// Stripe orientation
-/// Even color
+// / Stripe orientation
+// / Even color
 func (rcv *CZMStripeMaterial) EVEN_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *CZMStripeMaterial) EvenColor(obj *CZMColor) *CZMColor {
 	return rcv.EVEN_COLOR(obj)
 }
 
-/// Even color
-/// Odd color
+// / Even color
+// / Odd color
 func (rcv *CZMStripeMaterial) ODD_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -93,8 +93,8 @@ func (rcv *CZMStripeMaterial) OddColor(obj *CZMColor) *CZMColor {
 	return rcv.ODD_COLOR(obj)
 }
 
-/// Odd color
-/// Offset
+// / Odd color
+// / Offset
 func (rcv *CZMStripeMaterial) OFFSET() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -107,7 +107,7 @@ func (rcv *CZMStripeMaterial) Offset() float64 {
 	return rcv.OFFSET()
 }
 
-/// Offset
+// / Offset
 func (rcv *CZMStripeMaterial) MutateOFFSET(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -116,7 +116,7 @@ func (rcv *CZMStripeMaterial) MutateOffset(n float64) bool {
 	return rcv.MutateOFFSET(n)
 }
 
-/// Number of times to repeat
+// / Number of times to repeat
 func (rcv *CZMStripeMaterial) REPEAT_COUNT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -129,7 +129,7 @@ func (rcv *CZMStripeMaterial) RepeatCount() float64 {
 	return rcv.REPEAT_COUNT()
 }
 
-/// Number of times to repeat
+// / Number of times to repeat
 func (rcv *CZMStripeMaterial) MutateREPEAT_COUNT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }

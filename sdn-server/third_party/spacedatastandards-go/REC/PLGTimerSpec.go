@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Timer entry declared by a plugin.
+// / Timer entry declared by a plugin.
 type PLGTimerSpec struct {
 	_tab flatbuffers.Table
 }

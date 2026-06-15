@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Space Data Link Security (CCSDS 355.0-B-1)
+// / Space Data Link Security (CCSDS 355.0-B-1)
 type SDL struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *SDL) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Security Parameter Index
+// / Security Parameter Index
 func (rcv *SDL) SPI() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *SDL) Spi() uint16 {
 	return rcv.SPI()
 }
 
-/// Security Parameter Index
+// / Security Parameter Index
 func (rcv *SDL) MutateSPI(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(4, n)
 }
@@ -76,7 +76,7 @@ func (rcv *SDL) MutateSpi(n uint16) bool {
 	return rcv.MutateSPI(n)
 }
 
-/// Initialization vector length in bytes
+// / Initialization vector length in bytes
 func (rcv *SDL) IV_LENGTH() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,7 +89,7 @@ func (rcv *SDL) IvLength() byte {
 	return rcv.IV_LENGTH()
 }
 
-/// Initialization vector length in bytes
+// / Initialization vector length in bytes
 func (rcv *SDL) MutateIV_LENGTH(n byte) bool {
 	return rcv._tab.MutateByteSlot(6, n)
 }
@@ -98,7 +98,7 @@ func (rcv *SDL) MutateIvLength(n byte) bool {
 	return rcv.MutateIV_LENGTH(n)
 }
 
-/// Initialization vector
+// / Initialization vector
 func (rcv *SDL) IV(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -136,7 +136,7 @@ func (rcv *SDL) IvBytes() []byte {
 	return rcv.IVBytes()
 }
 
-/// Initialization vector
+// / Initialization vector
 func (rcv *SDL) MutateIV(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -150,7 +150,7 @@ func (rcv *SDL) MutateIv(j int, n byte) bool {
 	return rcv.MutateIV(j, n)
 }
 
-/// MAC length in bytes
+// / MAC length in bytes
 func (rcv *SDL) MAC_LENGTH() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -163,7 +163,7 @@ func (rcv *SDL) MacLength() byte {
 	return rcv.MAC_LENGTH()
 }
 
-/// MAC length in bytes
+// / MAC length in bytes
 func (rcv *SDL) MutateMAC_LENGTH(n byte) bool {
 	return rcv._tab.MutateByteSlot(10, n)
 }
@@ -172,7 +172,7 @@ func (rcv *SDL) MutateMacLength(n byte) bool {
 	return rcv.MutateMAC_LENGTH(n)
 }
 
-/// Message authentication code
+// / Message authentication code
 func (rcv *SDL) MAC(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -210,7 +210,7 @@ func (rcv *SDL) MacBytes() []byte {
 	return rcv.MACBytes()
 }
 
-/// Message authentication code
+// / Message authentication code
 func (rcv *SDL) MutateMAC(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -224,7 +224,7 @@ func (rcv *SDL) MutateMac(j int, n byte) bool {
 	return rcv.MutateMAC(j, n)
 }
 
-/// Pad length
+// / Pad length
 func (rcv *SDL) PAD_LENGTH() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -237,7 +237,7 @@ func (rcv *SDL) PadLength() byte {
 	return rcv.PAD_LENGTH()
 }
 
-/// Pad length
+// / Pad length
 func (rcv *SDL) MutatePAD_LENGTH(n byte) bool {
 	return rcv._tab.MutateByteSlot(14, n)
 }
@@ -246,7 +246,7 @@ func (rcv *SDL) MutatePadLength(n byte) bool {
 	return rcv.MutatePAD_LENGTH(n)
 }
 
-/// Security payload
+// / Security payload
 func (rcv *SDL) PAYLOAD(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -284,7 +284,7 @@ func (rcv *SDL) PayloadBytes() []byte {
 	return rcv.PAYLOADBytes()
 }
 
-/// Security payload
+// / Security payload
 func (rcv *SDL) MutatePAYLOAD(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Billboard (icon) properties
+// / Billboard (icon) properties
 type CZMBillboard struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMBillboard) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Whether the billboard is displayed
+// / Whether the billboard is displayed
 func (rcv *CZMBillboard) SHOW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMBillboard) Show() bool {
 	return rcv.SHOW()
 }
 
-/// Whether the billboard is displayed
+// / Whether the billboard is displayed
 func (rcv *CZMBillboard) MutateSHOW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMBillboard) MutateShow(n bool) bool {
 	return rcv.MutateSHOW(n)
 }
 
-/// URI of the billboard image
+// / URI of the billboard image
 func (rcv *CZMBillboard) IMAGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,8 +77,8 @@ func (rcv *CZMBillboard) Image() []byte {
 	return rcv.IMAGE()
 }
 
-/// URI of the billboard image
-/// Scale factor
+// / URI of the billboard image
+// / Scale factor
 func (rcv *CZMBillboard) SCALE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *CZMBillboard) Scale() float64 {
 	return rcv.SCALE()
 }
 
-/// Scale factor
+// / Scale factor
 func (rcv *CZMBillboard) MutateSCALE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -100,7 +100,7 @@ func (rcv *CZMBillboard) MutateScale(n float64) bool {
 	return rcv.MutateSCALE(n)
 }
 
-/// Billboard color tint
+// / Billboard color tint
 func (rcv *CZMBillboard) COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -118,8 +118,8 @@ func (rcv *CZMBillboard) Color(obj *CZMColor) *CZMColor {
 	return rcv.COLOR(obj)
 }
 
-/// Billboard color tint
-/// Height reference
+// / Billboard color tint
+// / Height reference
 func (rcv *CZMBillboard) HEIGHT_REFERENCE() CZMHeightReference {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -132,7 +132,7 @@ func (rcv *CZMBillboard) HeightReference() CZMHeightReference {
 	return rcv.HEIGHT_REFERENCE()
 }
 
-/// Height reference
+// / Height reference
 func (rcv *CZMBillboard) MutateHEIGHT_REFERENCE(n CZMHeightReference) bool {
 	return rcv._tab.MutateInt8Slot(12, int8(n))
 }
@@ -141,7 +141,7 @@ func (rcv *CZMBillboard) MutateHeightReference(n CZMHeightReference) bool {
 	return rcv.MutateHEIGHT_REFERENCE(n)
 }
 
-/// Pixel offset X
+// / Pixel offset X
 func (rcv *CZMBillboard) PIXEL_OFFSET_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -154,7 +154,7 @@ func (rcv *CZMBillboard) PixelOffsetX() float64 {
 	return rcv.PIXEL_OFFSET_X()
 }
 
-/// Pixel offset X
+// / Pixel offset X
 func (rcv *CZMBillboard) MutatePIXEL_OFFSET_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -163,7 +163,7 @@ func (rcv *CZMBillboard) MutatePixelOffsetX(n float64) bool {
 	return rcv.MutatePIXEL_OFFSET_X(n)
 }
 
-/// Pixel offset Y
+// / Pixel offset Y
 func (rcv *CZMBillboard) PIXEL_OFFSET_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -176,7 +176,7 @@ func (rcv *CZMBillboard) PixelOffsetY() float64 {
 	return rcv.PIXEL_OFFSET_Y()
 }
 
-/// Pixel offset Y
+// / Pixel offset Y
 func (rcv *CZMBillboard) MutatePIXEL_OFFSET_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -185,7 +185,7 @@ func (rcv *CZMBillboard) MutatePixelOffsetY(n float64) bool {
 	return rcv.MutatePIXEL_OFFSET_Y(n)
 }
 
-/// Horizontal origin
+// / Horizontal origin
 func (rcv *CZMBillboard) HORIZONTAL_ORIGIN() CZMHorizontalOrigin {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -198,7 +198,7 @@ func (rcv *CZMBillboard) HorizontalOrigin() CZMHorizontalOrigin {
 	return rcv.HORIZONTAL_ORIGIN()
 }
 
-/// Horizontal origin
+// / Horizontal origin
 func (rcv *CZMBillboard) MutateHORIZONTAL_ORIGIN(n CZMHorizontalOrigin) bool {
 	return rcv._tab.MutateInt8Slot(18, int8(n))
 }
@@ -207,7 +207,7 @@ func (rcv *CZMBillboard) MutateHorizontalOrigin(n CZMHorizontalOrigin) bool {
 	return rcv.MutateHORIZONTAL_ORIGIN(n)
 }
 
-/// Vertical origin
+// / Vertical origin
 func (rcv *CZMBillboard) VERTICAL_ORIGIN() CZMVerticalOrigin {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -220,7 +220,7 @@ func (rcv *CZMBillboard) VerticalOrigin() CZMVerticalOrigin {
 	return rcv.VERTICAL_ORIGIN()
 }
 
-/// Vertical origin
+// / Vertical origin
 func (rcv *CZMBillboard) MutateVERTICAL_ORIGIN(n CZMVerticalOrigin) bool {
 	return rcv._tab.MutateInt8Slot(20, int8(n))
 }
@@ -229,7 +229,7 @@ func (rcv *CZMBillboard) MutateVerticalOrigin(n CZMVerticalOrigin) bool {
 	return rcv.MutateVERTICAL_ORIGIN(n)
 }
 
-/// Translucency by distance
+// / Translucency by distance
 func (rcv *CZMBillboard) TRANSLUCENCY_BY_DISTANCE(obj *CZMNearFarScalar) *CZMNearFarScalar {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -247,8 +247,8 @@ func (rcv *CZMBillboard) TranslucencyByDistance(obj *CZMNearFarScalar) *CZMNearF
 	return rcv.TRANSLUCENCY_BY_DISTANCE(obj)
 }
 
-/// Translucency by distance
-/// Rotation in radians
+// / Translucency by distance
+// / Rotation in radians
 func (rcv *CZMBillboard) ROTATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -261,7 +261,7 @@ func (rcv *CZMBillboard) Rotation() float64 {
 	return rcv.ROTATION()
 }
 
-/// Rotation in radians
+// / Rotation in radians
 func (rcv *CZMBillboard) MutateROTATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -270,7 +270,7 @@ func (rcv *CZMBillboard) MutateRotation(n float64) bool {
 	return rcv.MutateROTATION(n)
 }
 
-/// Whether size is in meters
+// / Whether size is in meters
 func (rcv *CZMBillboard) SIZE_IN_METERS() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -283,7 +283,7 @@ func (rcv *CZMBillboard) SizeInMeters() bool {
 	return rcv.SIZE_IN_METERS()
 }
 
-/// Whether size is in meters
+// / Whether size is in meters
 func (rcv *CZMBillboard) MutateSIZE_IN_METERS(n bool) bool {
 	return rcv._tab.MutateBoolSlot(26, n)
 }
@@ -292,7 +292,7 @@ func (rcv *CZMBillboard) MutateSizeInMeters(n bool) bool {
 	return rcv.MutateSIZE_IN_METERS(n)
 }
 
-/// Width in pixels
+// / Width in pixels
 func (rcv *CZMBillboard) WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -305,7 +305,7 @@ func (rcv *CZMBillboard) Width() float64 {
 	return rcv.WIDTH()
 }
 
-/// Width in pixels
+// / Width in pixels
 func (rcv *CZMBillboard) MutateWIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -314,7 +314,7 @@ func (rcv *CZMBillboard) MutateWidth(n float64) bool {
 	return rcv.MutateWIDTH(n)
 }
 
-/// Height in pixels
+// / Height in pixels
 func (rcv *CZMBillboard) HEIGHT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -327,7 +327,7 @@ func (rcv *CZMBillboard) Height() float64 {
 	return rcv.HEIGHT()
 }
 
-/// Height in pixels
+// / Height in pixels
 func (rcv *CZMBillboard) MutateHEIGHT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -336,7 +336,7 @@ func (rcv *CZMBillboard) MutateHeight(n float64) bool {
 	return rcv.MutateHEIGHT(n)
 }
 
-/// Eye offset X in meters
+// / Eye offset X in meters
 func (rcv *CZMBillboard) EYE_OFFSET_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -349,7 +349,7 @@ func (rcv *CZMBillboard) EyeOffsetX() float64 {
 	return rcv.EYE_OFFSET_X()
 }
 
-/// Eye offset X in meters
+// / Eye offset X in meters
 func (rcv *CZMBillboard) MutateEYE_OFFSET_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -358,7 +358,7 @@ func (rcv *CZMBillboard) MutateEyeOffsetX(n float64) bool {
 	return rcv.MutateEYE_OFFSET_X(n)
 }
 
-/// Eye offset Y in meters
+// / Eye offset Y in meters
 func (rcv *CZMBillboard) EYE_OFFSET_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -371,7 +371,7 @@ func (rcv *CZMBillboard) EyeOffsetY() float64 {
 	return rcv.EYE_OFFSET_Y()
 }
 
-/// Eye offset Y in meters
+// / Eye offset Y in meters
 func (rcv *CZMBillboard) MutateEYE_OFFSET_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -380,7 +380,7 @@ func (rcv *CZMBillboard) MutateEyeOffsetY(n float64) bool {
 	return rcv.MutateEYE_OFFSET_Y(n)
 }
 
-/// Eye offset Z in meters
+// / Eye offset Z in meters
 func (rcv *CZMBillboard) EYE_OFFSET_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -393,7 +393,7 @@ func (rcv *CZMBillboard) EyeOffsetZ() float64 {
 	return rcv.EYE_OFFSET_Z()
 }
 
-/// Eye offset Z in meters
+// / Eye offset Z in meters
 func (rcv *CZMBillboard) MutateEYE_OFFSET_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -402,7 +402,7 @@ func (rcv *CZMBillboard) MutateEyeOffsetZ(n float64) bool {
 	return rcv.MutateEYE_OFFSET_Z(n)
 }
 
-/// Scale by distance
+// / Scale by distance
 func (rcv *CZMBillboard) SCALE_BY_DISTANCE(obj *CZMNearFarScalar) *CZMNearFarScalar {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -420,8 +420,8 @@ func (rcv *CZMBillboard) ScaleByDistance(obj *CZMNearFarScalar) *CZMNearFarScala
 	return rcv.SCALE_BY_DISTANCE(obj)
 }
 
-/// Scale by distance
-/// Pixel offset scale by distance
+// / Scale by distance
+// / Pixel offset scale by distance
 func (rcv *CZMBillboard) PIXEL_OFFSET_SCALE_BY_DISTANCE(obj *CZMNearFarScalar) *CZMNearFarScalar {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -439,8 +439,8 @@ func (rcv *CZMBillboard) PixelOffsetScaleByDistance(obj *CZMNearFarScalar) *CZMN
 	return rcv.PIXEL_OFFSET_SCALE_BY_DISTANCE(obj)
 }
 
-/// Pixel offset scale by distance
-/// Distance display condition near
+// / Pixel offset scale by distance
+// / Distance display condition near
 func (rcv *CZMBillboard) DISTANCE_DISPLAY_CONDITION_NEAR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -453,7 +453,7 @@ func (rcv *CZMBillboard) DistanceDisplayConditionNear() float64 {
 	return rcv.DISTANCE_DISPLAY_CONDITION_NEAR()
 }
 
-/// Distance display condition near
+// / Distance display condition near
 func (rcv *CZMBillboard) MutateDISTANCE_DISPLAY_CONDITION_NEAR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -462,7 +462,7 @@ func (rcv *CZMBillboard) MutateDistanceDisplayConditionNear(n float64) bool {
 	return rcv.MutateDISTANCE_DISPLAY_CONDITION_NEAR(n)
 }
 
-/// Distance display condition far
+// / Distance display condition far
 func (rcv *CZMBillboard) DISTANCE_DISPLAY_CONDITION_FAR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -475,7 +475,7 @@ func (rcv *CZMBillboard) DistanceDisplayConditionFar() float64 {
 	return rcv.DISTANCE_DISPLAY_CONDITION_FAR()
 }
 
-/// Distance display condition far
+// / Distance display condition far
 func (rcv *CZMBillboard) MutateDISTANCE_DISPLAY_CONDITION_FAR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(44, n)
 }
@@ -484,7 +484,7 @@ func (rcv *CZMBillboard) MutateDistanceDisplayConditionFar(n float64) bool {
 	return rcv.MutateDISTANCE_DISPLAY_CONDITION_FAR(n)
 }
 
-/// Disable depth test distance
+// / Disable depth test distance
 func (rcv *CZMBillboard) DISABLE_DEPTH_TEST_DISTANCE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -497,7 +497,7 @@ func (rcv *CZMBillboard) DisableDepthTestDistance() float64 {
 	return rcv.DISABLE_DEPTH_TEST_DISTANCE()
 }
 
-/// Disable depth test distance
+// / Disable depth test distance
 func (rcv *CZMBillboard) MutateDISABLE_DEPTH_TEST_DISTANCE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(46, n)
 }

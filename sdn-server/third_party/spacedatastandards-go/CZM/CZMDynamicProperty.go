@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// A single time-dynamic property (non-static value)
+// / A single time-dynamic property (non-static value)
 type CZMDynamicProperty struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMDynamicProperty) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Dotted path name, e.g. "billboard.scale", "point.color"
+// / Dotted path name, e.g. "billboard.scale", "point.color"
 func (rcv *CZMDynamicProperty) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *CZMDynamicProperty) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Dotted path name, e.g. "billboard.scale", "point.color"
-/// Sampled data (when property uses epoch + data array)
+// / Dotted path name, e.g. "billboard.scale", "point.color"
+// / Sampled data (when property uses epoch + data array)
 func (rcv *CZMDynamicProperty) SAMPLED(obj *CZMDynSampled) *CZMDynSampled {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *CZMDynamicProperty) Sampled(obj *CZMDynSampled) *CZMDynSampled {
 	return rcv.SAMPLED(obj)
 }
 
-/// Sampled data (when property uses epoch + data array)
-/// Interval-based values
+// / Sampled data (when property uses epoch + data array)
+// / Interval-based values
 func (rcv *CZMDynamicProperty) INTERVALS(obj *CZMDynInterval, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -107,8 +107,8 @@ func (rcv *CZMDynamicProperty) IntervalsLength() int {
 	return rcv.INTERVALSLength()
 }
 
-/// Interval-based values
-/// Reference to another entity's property
+// / Interval-based values
+// / Reference to another entity's property
 func (rcv *CZMDynamicProperty) REFERENCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *CZMDynamicProperty) Reference() []byte {
 	return rcv.REFERENCE()
 }
 
-/// Reference to another entity's property
+// / Reference to another entity's property
 func CZMDynamicPropertyStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

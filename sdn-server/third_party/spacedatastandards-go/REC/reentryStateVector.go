@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Reentry State Vector
+// / Reentry State Vector
 type reentryStateVector struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *reentryStateVector) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Epoch (ISO 8601)
+// / Epoch (ISO 8601)
 func (rcv *reentryStateVector) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *reentryStateVector) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-/// Epoch (ISO 8601)
-/// Reference frame
+// / Epoch (ISO 8601)
+// / Reference frame
 func (rcv *reentryStateVector) REF_FRAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *reentryStateVector) RefFrame() []byte {
 	return rcv.REF_FRAME()
 }
 
-/// Reference frame
-/// Position X in km
+// / Reference frame
+// / Position X in km
 func (rcv *reentryStateVector) X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -79,12 +79,12 @@ func (rcv *reentryStateVector) X() float64 {
 	return 0.0
 }
 
-/// Position X in km
+// / Position X in km
 func (rcv *reentryStateVector) MutateX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
 
-/// Position Y in km
+// / Position Y in km
 func (rcv *reentryStateVector) Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -93,12 +93,12 @@ func (rcv *reentryStateVector) Y() float64 {
 	return 0.0
 }
 
-/// Position Y in km
+// / Position Y in km
 func (rcv *reentryStateVector) MutateY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
 
-/// Position Z in km
+// / Position Z in km
 func (rcv *reentryStateVector) Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -107,12 +107,12 @@ func (rcv *reentryStateVector) Z() float64 {
 	return 0.0
 }
 
-/// Position Z in km
+// / Position Z in km
 func (rcv *reentryStateVector) MutateZ(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
 
-/// Velocity X in km/s
+// / Velocity X in km/s
 func (rcv *reentryStateVector) X_DOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -125,7 +125,7 @@ func (rcv *reentryStateVector) XDot() float64 {
 	return rcv.X_DOT()
 }
 
-/// Velocity X in km/s
+// / Velocity X in km/s
 func (rcv *reentryStateVector) MutateX_DOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -134,7 +134,7 @@ func (rcv *reentryStateVector) MutateXDot(n float64) bool {
 	return rcv.MutateX_DOT(n)
 }
 
-/// Velocity Y in km/s
+// / Velocity Y in km/s
 func (rcv *reentryStateVector) Y_DOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -147,7 +147,7 @@ func (rcv *reentryStateVector) YDot() float64 {
 	return rcv.Y_DOT()
 }
 
-/// Velocity Y in km/s
+// / Velocity Y in km/s
 func (rcv *reentryStateVector) MutateY_DOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -156,7 +156,7 @@ func (rcv *reentryStateVector) MutateYDot(n float64) bool {
 	return rcv.MutateY_DOT(n)
 }
 
-/// Velocity Z in km/s
+// / Velocity Z in km/s
 func (rcv *reentryStateVector) Z_DOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -169,7 +169,7 @@ func (rcv *reentryStateVector) ZDot() float64 {
 	return rcv.Z_DOT()
 }
 
-/// Velocity Z in km/s
+// / Velocity Z in km/s
 func (rcv *reentryStateVector) MutateZ_DOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }

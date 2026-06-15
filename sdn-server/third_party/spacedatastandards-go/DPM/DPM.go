@@ -6,9 +6,9 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Dataset Publication Manifest binding data/index CIDs, query replay,
-/// source hashes, schema hashes, encryption metadata, provider-mediated query
-/// protocols, completeness roots, and provider signature.
+// / Dataset Publication Manifest binding data/index CIDs, query replay,
+// / source hashes, schema hashes, encryption metadata, provider-mediated query
+// / protocols, completeness roots, and provider signature.
 type DPM struct {
 	_tab flatbuffers.Table
 }
@@ -56,7 +56,7 @@ func (rcv *DPM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Manifest format version.
+// / Manifest format version.
 func (rcv *DPM) VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *DPM) Version() []byte {
 	return rcv.VERSION()
 }
 
-/// Manifest format version.
-/// Stable dataset identifier.
+// / Manifest format version.
+// / Stable dataset identifier.
 func (rcv *DPM) DATASET_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *DPM) DatasetId() []byte {
 	return rcv.DATASET_ID()
 }
 
-/// Stable dataset identifier.
-/// Dataset update or batch identifier.
+// / Stable dataset identifier.
+// / Dataset update or batch identifier.
 func (rcv *DPM) UPDATE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -97,17 +97,17 @@ func (rcv *DPM) UpdateId() []byte {
 	return rcv.UPDATE_ID()
 }
 
-/// Dataset update or batch identifier.
-/// Canonical publication/update partition identity. FILE_ID is the key used
-/// everywhere a subscriber, provider, PNM, asset, entitlement, cache, audit
-/// log, or query protocol refers to this exact update. It is not merely a
-/// human filename and it is not the FlatBuffer file_identifier. For
-/// completeness-verifiable streams, all returned records MUST belong to this
-/// FILE_ID and prove inclusion under this DPM's signed roots, normally through
-/// a declared file_id completeness index. Use this field for all update
-/// addressing instead of inventing per-protocol IDs; provider responses,
-/// Merkle leaves, proof paths, PNM.FILE_ID, and DPMAsset.FILE_ID must all bind
-/// to the same value.
+// / Dataset update or batch identifier.
+// / Canonical publication/update partition identity. FILE_ID is the key used
+// / everywhere a subscriber, provider, PNM, asset, entitlement, cache, audit
+// / log, or query protocol refers to this exact update. It is not merely a
+// / human filename and it is not the FlatBuffer file_identifier. For
+// / completeness-verifiable streams, all returned records MUST belong to this
+// / FILE_ID and prove inclusion under this DPM's signed roots, normally through
+// / a declared file_id completeness index. Use this field for all update
+// / addressing instead of inventing per-protocol IDs; provider responses,
+// / Merkle leaves, proof paths, PNM.FILE_ID, and DPMAsset.FILE_ID must all bind
+// / to the same value.
 func (rcv *DPM) FILE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -120,17 +120,17 @@ func (rcv *DPM) FileId() []byte {
 	return rcv.FILE_ID()
 }
 
-/// Canonical publication/update partition identity. FILE_ID is the key used
-/// everywhere a subscriber, provider, PNM, asset, entitlement, cache, audit
-/// log, or query protocol refers to this exact update. It is not merely a
-/// human filename and it is not the FlatBuffer file_identifier. For
-/// completeness-verifiable streams, all returned records MUST belong to this
-/// FILE_ID and prove inclusion under this DPM's signed roots, normally through
-/// a declared file_id completeness index. Use this field for all update
-/// addressing instead of inventing per-protocol IDs; provider responses,
-/// Merkle leaves, proof paths, PNM.FILE_ID, and DPMAsset.FILE_ID must all bind
-/// to the same value.
-/// Provider peer ID.
+// / Canonical publication/update partition identity. FILE_ID is the key used
+// / everywhere a subscriber, provider, PNM, asset, entitlement, cache, audit
+// / log, or query protocol refers to this exact update. It is not merely a
+// / human filename and it is not the FlatBuffer file_identifier. For
+// / completeness-verifiable streams, all returned records MUST belong to this
+// / FILE_ID and prove inclusion under this DPM's signed roots, normally through
+// / a declared file_id completeness index. Use this field for all update
+// / addressing instead of inventing per-protocol IDs; provider responses,
+// / Merkle leaves, proof paths, PNM.FILE_ID, and DPMAsset.FILE_ID must all bind
+// / to the same value.
+// / Provider peer ID.
 func (rcv *DPM) PROVIDER_PEER_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,8 +143,8 @@ func (rcv *DPM) ProviderPeerId() []byte {
 	return rcv.PROVIDER_PEER_ID()
 }
 
-/// Provider peer ID.
-/// Provider EPM CID.
+// / Provider peer ID.
+// / Provider EPM CID.
 func (rcv *DPM) PROVIDER_EPM_CID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -157,8 +157,8 @@ func (rcv *DPM) ProviderEpmCid() []byte {
 	return rcv.PROVIDER_EPM_CID()
 }
 
-/// Provider EPM CID.
-/// Publication timestamp in ISO 8601 UTC.
+// / Provider EPM CID.
+// / Publication timestamp in ISO 8601 UTC.
 func (rcv *DPM) PUBLISH_TIMESTAMP() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -171,8 +171,8 @@ func (rcv *DPM) PublishTimestamp() []byte {
 	return rcv.PUBLISH_TIMESTAMP()
 }
 
-/// Publication timestamp in ISO 8601 UTC.
-/// Published shard, index, and auxiliary artifacts.
+// / Publication timestamp in ISO 8601 UTC.
+// / Published shard, index, and auxiliary artifacts.
 func (rcv *DPM) ASSETS(obj *DPMAsset, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -204,8 +204,8 @@ func (rcv *DPM) AssetsLength() int {
 	return rcv.ASSETSLength()
 }
 
-/// Published shard, index, and auxiliary artifacts.
-/// Source batches used to build the dataset.
+// / Published shard, index, and auxiliary artifacts.
+// / Source batches used to build the dataset.
 func (rcv *DPM) SOURCES(obj *DPMSourceBatch, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -237,8 +237,8 @@ func (rcv *DPM) SourcesLength() int {
 	return rcv.SOURCESLength()
 }
 
-/// Source batches used to build the dataset.
-/// Replayable query binding.
+// / Source batches used to build the dataset.
+// / Replayable query binding.
 func (rcv *DPM) QUERY(obj *DPMQueryBinding) *DPMQueryBinding {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -256,11 +256,11 @@ func (rcv *DPM) Query(obj *DPMQueryBinding) *DPMQueryBinding {
 	return rcv.QUERY(obj)
 }
 
-/// Replayable query binding.
-/// Signed completeness-capable indexes. Inclusion proofs prove that returned
-/// records are authentic members of DATA_ROOT. Range-completeness proofs also
-/// prove that no matching records were omitted, but only for predicates
-/// expressible against these declared indexes.
+// / Replayable query binding.
+// / Signed completeness-capable indexes. Inclusion proofs prove that returned
+// / records are authentic members of DATA_ROOT. Range-completeness proofs also
+// / prove that no matching records were omitted, but only for predicates
+// / expressible against these declared indexes.
 func (rcv *DPM) INDEXES(obj *DPMCompletenessIndex, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -292,11 +292,11 @@ func (rcv *DPM) IndexesLength() int {
 	return rcv.INDEXESLength()
 }
 
-/// Signed completeness-capable indexes. Inclusion proofs prove that returned
-/// records are authentic members of DATA_ROOT. Range-completeness proofs also
-/// prove that no matching records were omitted, but only for predicates
-/// expressible against these declared indexes.
-/// Encryption/key metadata.
+// / Signed completeness-capable indexes. Inclusion proofs prove that returned
+// / records are authentic members of DATA_ROOT. Range-completeness proofs also
+// / prove that no matching records were omitted, but only for predicates
+// / expressible against these declared indexes.
+// / Encryption/key metadata.
 func (rcv *DPM) ENCRYPTION(obj *DPMEncryptionBinding) *DPMEncryptionBinding {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -314,8 +314,8 @@ func (rcv *DPM) Encryption(obj *DPMEncryptionBinding) *DPMEncryptionBinding {
 	return rcv.ENCRYPTION(obj)
 }
 
-/// Encryption/key metadata.
-/// Provider signature over the canonical manifest bytes or manifest digest.
+// / Encryption/key metadata.
+// / Provider signature over the canonical manifest bytes or manifest digest.
 func (rcv *DPM) PROVIDER_SIGNATURE(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -353,7 +353,7 @@ func (rcv *DPM) ProviderSignatureBytes() []byte {
 	return rcv.PROVIDER_SIGNATUREBytes()
 }
 
-/// Provider signature over the canonical manifest bytes or manifest digest.
+// / Provider signature over the canonical manifest bytes or manifest digest.
 func (rcv *DPM) MutatePROVIDER_SIGNATURE(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -367,7 +367,7 @@ func (rcv *DPM) MutateProviderSignature(j int, n byte) bool {
 	return rcv.MutatePROVIDER_SIGNATURE(j, n)
 }
 
-/// Signature algorithm, e.g. Ed25519.
+// / Signature algorithm, e.g. Ed25519.
 func (rcv *DPM) SIGNATURE_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -380,7 +380,7 @@ func (rcv *DPM) SignatureType() []byte {
 	return rcv.SIGNATURE_TYPE()
 }
 
-/// Signature algorithm, e.g. Ed25519.
+// / Signature algorithm, e.g. Ed25519.
 func DPMStart(builder *flatbuffers.Builder) {
 	builder.StartObject(14)
 }

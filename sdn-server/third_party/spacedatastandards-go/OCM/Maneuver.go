@@ -41,7 +41,7 @@ func (rcv *Maneuver) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique identifier for the maneuver.
+// / Unique identifier for the maneuver.
 func (rcv *Maneuver) MAN_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -54,8 +54,8 @@ func (rcv *Maneuver) ManId() []byte {
 	return rcv.MAN_ID()
 }
 
-/// Unique identifier for the maneuver.
-/// Basis of the maneuver plan (e.g., planned, predicted, estimated).
+// / Unique identifier for the maneuver.
+// / Basis of the maneuver plan (e.g., planned, predicted, estimated).
 func (rcv *Maneuver) MAN_BASIS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -68,8 +68,8 @@ func (rcv *Maneuver) ManBasis() []byte {
 	return rcv.MAN_BASIS()
 }
 
-/// Basis of the maneuver plan (e.g., planned, predicted, estimated).
-/// Identifier of the maneuver device.
+// / Basis of the maneuver plan (e.g., planned, predicted, estimated).
+// / Identifier of the maneuver device.
 func (rcv *Maneuver) MAN_DEVICE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -82,8 +82,8 @@ func (rcv *Maneuver) ManDeviceId() []byte {
 	return rcv.MAN_DEVICE_ID()
 }
 
-/// Identifier of the maneuver device.
-/// Identifier of the previous maneuver.
+// / Identifier of the maneuver device.
+// / Identifier of the previous maneuver.
 func (rcv *Maneuver) MAN_PREV_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -96,8 +96,8 @@ func (rcv *Maneuver) ManPrevId() []byte {
 	return rcv.MAN_PREV_ID()
 }
 
-/// Identifier of the previous maneuver.
-/// Purpose of the maneuver.
+// / Identifier of the previous maneuver.
+// / Purpose of the maneuver.
 func (rcv *Maneuver) MAN_PURPOSE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -110,8 +110,8 @@ func (rcv *Maneuver) ManPurpose() []byte {
 	return rcv.MAN_PURPOSE()
 }
 
-/// Purpose of the maneuver.
-/// Reference frame for the maneuver data.
+// / Purpose of the maneuver.
+// / Reference frame for the maneuver data.
 func (rcv *Maneuver) MAN_REF_FRAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -124,8 +124,8 @@ func (rcv *Maneuver) ManRefFrame() []byte {
 	return rcv.MAN_REF_FRAME()
 }
 
-/// Reference frame for the maneuver data.
-/// Epoch of the maneuver reference frame.
+// / Reference frame for the maneuver data.
+// / Epoch of the maneuver reference frame.
 func (rcv *Maneuver) MAN_FRAME_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -138,8 +138,8 @@ func (rcv *Maneuver) ManFrameEpoch() []byte {
 	return rcv.MAN_FRAME_EPOCH()
 }
 
-/// Epoch of the maneuver reference frame.
-/// Type of maneuver (e.g., IMPULSIVE, FINITE).
+// / Epoch of the maneuver reference frame.
+// / Type of maneuver (e.g., IMPULSIVE, FINITE).
 func (rcv *Maneuver) MAN_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -152,8 +152,8 @@ func (rcv *Maneuver) ManType() []byte {
 	return rcv.MAN_TYPE()
 }
 
-/// Type of maneuver (e.g., IMPULSIVE, FINITE).
-/// Start epoch of the maneuver.
+// / Type of maneuver (e.g., IMPULSIVE, FINITE).
+// / Start epoch of the maneuver.
 func (rcv *Maneuver) MAN_EPOCH_START() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -166,8 +166,8 @@ func (rcv *Maneuver) ManEpochStart() []byte {
 	return rcv.MAN_EPOCH_START()
 }
 
-/// Start epoch of the maneuver.
-/// Duration of the maneuver.
+// / Start epoch of the maneuver.
+// / Duration of the maneuver.
 func (rcv *Maneuver) MAN_DURATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -180,7 +180,7 @@ func (rcv *Maneuver) ManDuration() float64 {
 	return rcv.MAN_DURATION()
 }
 
-/// Duration of the maneuver.
+// / Duration of the maneuver.
 func (rcv *Maneuver) MutateMAN_DURATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -189,7 +189,7 @@ func (rcv *Maneuver) MutateManDuration(n float64) bool {
 	return rcv.MutateMAN_DURATION(n)
 }
 
-/// Units for the maneuver data values.
+// / Units for the maneuver data values.
 func (rcv *Maneuver) MAN_UNITS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -215,8 +215,8 @@ func (rcv *Maneuver) ManUnitsLength() int {
 	return rcv.MAN_UNITSLength()
 }
 
-/// Units for the maneuver data values.
-/// Data associated with the maneuver.
+// / Units for the maneuver data values.
+// / Data associated with the maneuver.
 func (rcv *Maneuver) DATA(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -242,8 +242,8 @@ func (rcv *Maneuver) DataLength() int {
 	return rcv.DATALength()
 }
 
-/// Data associated with the maneuver.
-/// Comments related to the maneuver.
+// / Data associated with the maneuver.
+// / Comments related to the maneuver.
 func (rcv *Maneuver) MAN_COMMENT(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -269,7 +269,7 @@ func (rcv *Maneuver) ManCommentLength() int {
 	return rcv.MAN_COMMENTLength()
 }
 
-/// Comments related to the maneuver.
+// / Comments related to the maneuver.
 func ManeuverStart(builder *flatbuffers.Builder) {
 	builder.StartObject(13)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Level of Detail parameters
+// / Level of Detail parameters
 type KMLLod struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLLod) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Minimum LOD pixels
+// / Minimum LOD pixels
 func (rcv *KMLLod) MIN_LOD_PIXELS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *KMLLod) MinLodPixels() float64 {
 	return rcv.MIN_LOD_PIXELS()
 }
 
-/// Minimum LOD pixels
+// / Minimum LOD pixels
 func (rcv *KMLLod) MutateMIN_LOD_PIXELS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *KMLLod) MutateMinLodPixels(n float64) bool {
 	return rcv.MutateMIN_LOD_PIXELS(n)
 }
 
-/// Maximum LOD pixels (-1 = infinite)
+// / Maximum LOD pixels (-1 = infinite)
 func (rcv *KMLLod) MAX_LOD_PIXELS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *KMLLod) MaxLodPixels() float64 {
 	return rcv.MAX_LOD_PIXELS()
 }
 
-/// Maximum LOD pixels (-1 = infinite)
+// / Maximum LOD pixels (-1 = infinite)
 func (rcv *KMLLod) MutateMAX_LOD_PIXELS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *KMLLod) MutateMaxLodPixels(n float64) bool {
 	return rcv.MutateMAX_LOD_PIXELS(n)
 }
 
-/// Minimum fade extent
+// / Minimum fade extent
 func (rcv *KMLLod) MIN_FADE_EXTENT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *KMLLod) MinFadeExtent() float64 {
 	return rcv.MIN_FADE_EXTENT()
 }
 
-/// Minimum fade extent
+// / Minimum fade extent
 func (rcv *KMLLod) MutateMIN_FADE_EXTENT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *KMLLod) MutateMinFadeExtent(n float64) bool {
 	return rcv.MutateMIN_FADE_EXTENT(n)
 }
 
-/// Maximum fade extent
+// / Maximum fade extent
 func (rcv *KMLLod) MAX_FADE_EXTENT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *KMLLod) MaxFadeExtent() float64 {
 	return rcv.MAX_FADE_EXTENT()
 }
 
-/// Maximum fade extent
+// / Maximum fade extent
 func (rcv *KMLLod) MutateMAX_FADE_EXTENT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }

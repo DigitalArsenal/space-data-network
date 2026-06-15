@@ -4,7 +4,7 @@ package REC
 
 import "strconv"
 
-/// Dominant breakup or demise mechanism.
+// / Dominant breakup or demise mechanism.
 type remBreakupMode int8
 
 const (

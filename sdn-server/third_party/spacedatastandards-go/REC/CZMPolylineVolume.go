@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Polyline volume (extruded 2D shape)
+// / Polyline volume (extruded 2D shape)
 type CZMPolylineVolume struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMPolylineVolume) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Whether displayed
+// / Whether displayed
 func (rcv *CZMPolylineVolume) SHOW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMPolylineVolume) Show() bool {
 	return rcv.SHOW()
 }
 
-/// Whether displayed
+// / Whether displayed
 func (rcv *CZMPolylineVolume) MutateSHOW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMPolylineVolume) MutateShow(n bool) bool {
 	return rcv.MutateSHOW(n)
 }
 
-/// Positions as cartographic degrees
+// / Positions as cartographic degrees
 func (rcv *CZMPolylineVolume) POSITIONS_CARTOGRAPHIC_DEGREES(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -90,7 +90,7 @@ func (rcv *CZMPolylineVolume) PositionsCartographicDegreesLength() int {
 	return rcv.POSITIONS_CARTOGRAPHIC_DEGREESLength()
 }
 
-/// Positions as cartographic degrees
+// / Positions as cartographic degrees
 func (rcv *CZMPolylineVolume) MutatePOSITIONS_CARTOGRAPHIC_DEGREES(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -104,7 +104,7 @@ func (rcv *CZMPolylineVolume) MutatePositionsCartographicDegrees(j int, n float6
 	return rcv.MutatePOSITIONS_CARTOGRAPHIC_DEGREES(j, n)
 }
 
-/// Positions as Cartesian
+// / Positions as Cartesian
 func (rcv *CZMPolylineVolume) POSITIONS_CARTESIAN(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -130,7 +130,7 @@ func (rcv *CZMPolylineVolume) PositionsCartesianLength() int {
 	return rcv.POSITIONS_CARTESIANLength()
 }
 
-/// Positions as Cartesian
+// / Positions as Cartesian
 func (rcv *CZMPolylineVolume) MutatePOSITIONS_CARTESIAN(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -144,7 +144,7 @@ func (rcv *CZMPolylineVolume) MutatePositionsCartesian(j int, n float64) bool {
 	return rcv.MutatePOSITIONS_CARTESIAN(j, n)
 }
 
-/// 2D shape [x, y, x, y, ...]
+// / 2D shape [x, y, x, y, ...]
 func (rcv *CZMPolylineVolume) SHAPE(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -170,7 +170,7 @@ func (rcv *CZMPolylineVolume) ShapeLength() int {
 	return rcv.SHAPELength()
 }
 
-/// 2D shape [x, y, x, y, ...]
+// / 2D shape [x, y, x, y, ...]
 func (rcv *CZMPolylineVolume) MutateSHAPE(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -184,7 +184,7 @@ func (rcv *CZMPolylineVolume) MutateShape(j int, n float64) bool {
 	return rcv.MutateSHAPE(j, n)
 }
 
-/// Corner type
+// / Corner type
 func (rcv *CZMPolylineVolume) CORNER_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -197,8 +197,8 @@ func (rcv *CZMPolylineVolume) CornerType() []byte {
 	return rcv.CORNER_TYPE()
 }
 
-/// Corner type
-/// Granularity in radians
+// / Corner type
+// / Granularity in radians
 func (rcv *CZMPolylineVolume) GRANULARITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -211,7 +211,7 @@ func (rcv *CZMPolylineVolume) Granularity() float64 {
 	return rcv.GRANULARITY()
 }
 
-/// Granularity in radians
+// / Granularity in radians
 func (rcv *CZMPolylineVolume) MutateGRANULARITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -220,7 +220,7 @@ func (rcv *CZMPolylineVolume) MutateGranularity(n float64) bool {
 	return rcv.MutateGRANULARITY(n)
 }
 
-/// Fill flag
+// / Fill flag
 func (rcv *CZMPolylineVolume) FILL() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -233,7 +233,7 @@ func (rcv *CZMPolylineVolume) Fill() bool {
 	return rcv.FILL()
 }
 
-/// Fill flag
+// / Fill flag
 func (rcv *CZMPolylineVolume) MutateFILL(n bool) bool {
 	return rcv._tab.MutateBoolSlot(16, n)
 }
@@ -242,7 +242,7 @@ func (rcv *CZMPolylineVolume) MutateFill(n bool) bool {
 	return rcv.MutateFILL(n)
 }
 
-/// Surface material
+// / Surface material
 func (rcv *CZMPolylineVolume) MATERIAL(obj *CZMMaterial) *CZMMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -260,8 +260,8 @@ func (rcv *CZMPolylineVolume) Material(obj *CZMMaterial) *CZMMaterial {
 	return rcv.MATERIAL(obj)
 }
 
-/// Surface material
-/// Outline flag
+// / Surface material
+// / Outline flag
 func (rcv *CZMPolylineVolume) OUTLINE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -274,7 +274,7 @@ func (rcv *CZMPolylineVolume) Outline() bool {
 	return rcv.OUTLINE()
 }
 
-/// Outline flag
+// / Outline flag
 func (rcv *CZMPolylineVolume) MutateOUTLINE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(20, n)
 }
@@ -283,7 +283,7 @@ func (rcv *CZMPolylineVolume) MutateOutline(n bool) bool {
 	return rcv.MutateOUTLINE(n)
 }
 
-/// Outline color
+// / Outline color
 func (rcv *CZMPolylineVolume) OUTLINE_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -301,8 +301,8 @@ func (rcv *CZMPolylineVolume) OutlineColor(obj *CZMColor) *CZMColor {
 	return rcv.OUTLINE_COLOR(obj)
 }
 
-/// Outline color
-/// Outline width
+// / Outline color
+// / Outline width
 func (rcv *CZMPolylineVolume) OUTLINE_WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -315,7 +315,7 @@ func (rcv *CZMPolylineVolume) OutlineWidth() float64 {
 	return rcv.OUTLINE_WIDTH()
 }
 
-/// Outline width
+// / Outline width
 func (rcv *CZMPolylineVolume) MutateOUTLINE_WIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -324,7 +324,7 @@ func (rcv *CZMPolylineVolume) MutateOutlineWidth(n float64) bool {
 	return rcv.MutateOUTLINE_WIDTH(n)
 }
 
-/// Shadow mode
+// / Shadow mode
 func (rcv *CZMPolylineVolume) SHADOWS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -337,7 +337,7 @@ func (rcv *CZMPolylineVolume) Shadows() []byte {
 	return rcv.SHADOWS()
 }
 
-/// Shadow mode
+// / Shadow mode
 func CZMPolylineVolumeStart(builder *flatbuffers.Builder) {
 	builder.StartObject(12)
 }

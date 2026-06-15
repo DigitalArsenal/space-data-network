@@ -4,28 +4,28 @@ package LGR
 
 import "strconv"
 
-/// Plugin type category
+// / Plugin type category
 type pluginCategory int8
 
 const (
 	/// Sensor simulation and analysis
-	pluginCategorySensor     pluginCategory = 0
+	pluginCategorySensor pluginCategory = 0
 	/// Orbital propagation algorithms
 	pluginCategoryPropagator pluginCategory = 1
 	/// Custom rendering/visualization
-	pluginCategoryRenderer   pluginCategory = 2
+	pluginCategoryRenderer pluginCategory = 2
 	/// Data analysis and processing
-	pluginCategoryAnalysis   pluginCategory = 3
+	pluginCategoryAnalysis pluginCategory = 3
 	/// External data source integration
 	pluginCategoryDataSource pluginCategory = 4
 	/// Electronic warfare simulation
-	pluginCategoryEW         pluginCategory = 5
+	pluginCategoryEW pluginCategory = 5
 	/// Communications modeling
-	pluginCategoryComms      pluginCategory = 6
+	pluginCategoryComms pluginCategory = 6
 	/// Physics simulation
-	pluginCategoryPhysics    pluginCategory = 7
+	pluginCategoryPhysics pluginCategory = 7
 	/// GLSL shader plugins for custom visualization
-	pluginCategoryShader     pluginCategory = 8
+	pluginCategoryShader pluginCategory = 8
 )
 
 var EnumNamespluginCategory = map[pluginCategory]string{

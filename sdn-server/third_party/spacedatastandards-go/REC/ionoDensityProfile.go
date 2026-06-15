@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Ionospheric Electron Density Profile
+// / Ionospheric Electron Density Profile
 type ionoDensityProfile struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ionoDensityProfile) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Observation epoch (ISO 8601)
+// / Observation epoch (ISO 8601)
 func (rcv *ionoDensityProfile) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *ionoDensityProfile) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-/// Observation epoch (ISO 8601)
-/// Altitudes in km
+// / Observation epoch (ISO 8601)
+// / Altitudes in km
 func (rcv *ionoDensityProfile) ALTITUDES(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -82,7 +82,7 @@ func (rcv *ionoDensityProfile) AltitudesLength() int {
 	return rcv.ALTITUDESLength()
 }
 
-/// Altitudes in km
+// / Altitudes in km
 func (rcv *ionoDensityProfile) MutateALTITUDES(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -96,7 +96,7 @@ func (rcv *ionoDensityProfile) MutateAltitudes(j int, n float64) bool {
 	return rcv.MutateALTITUDES(j, n)
 }
 
-/// Electron densities at each altitude in electrons/m^3
+// / Electron densities at each altitude in electrons/m^3
 func (rcv *ionoDensityProfile) DENSITIES(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -122,7 +122,7 @@ func (rcv *ionoDensityProfile) DensitiesLength() int {
 	return rcv.DENSITIESLength()
 }
 
-/// Electron densities at each altitude in electrons/m^3
+// / Electron densities at each altitude in electrons/m^3
 func (rcv *ionoDensityProfile) MutateDENSITIES(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
