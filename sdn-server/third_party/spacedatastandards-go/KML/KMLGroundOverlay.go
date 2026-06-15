@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Ground overlay
+// / Ground overlay
 type KMLGroundOverlay struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLGroundOverlay) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Name
+// / Name
 func (rcv *KMLGroundOverlay) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLGroundOverlay) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Name
-/// Description
+// / Name
+// / Description
 func (rcv *KMLGroundOverlay) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *KMLGroundOverlay) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-/// Description
-/// Visibility
+// / Description
+// / Visibility
 func (rcv *KMLGroundOverlay) VISIBILITY() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *KMLGroundOverlay) Visibility() bool {
 	return rcv.VISIBILITY()
 }
 
-/// Visibility
+// / Visibility
 func (rcv *KMLGroundOverlay) MutateVISIBILITY(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }
@@ -92,7 +92,7 @@ func (rcv *KMLGroundOverlay) MutateVisibility(n bool) bool {
 	return rcv.MutateVISIBILITY(n)
 }
 
-/// Whether open in tree view
+// / Whether open in tree view
 func (rcv *KMLGroundOverlay) OPEN() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,7 +105,7 @@ func (rcv *KMLGroundOverlay) Open() bool {
 	return rcv.OPEN()
 }
 
-/// Whether open in tree view
+// / Whether open in tree view
 func (rcv *KMLGroundOverlay) MutateOPEN(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }
@@ -114,7 +114,7 @@ func (rcv *KMLGroundOverlay) MutateOpen(n bool) bool {
 	return rcv.MutateOPEN(n)
 }
 
-/// Icon/image URL
+// / Icon/image URL
 func (rcv *KMLGroundOverlay) ICON_HREF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -127,8 +127,8 @@ func (rcv *KMLGroundOverlay) IconHref() []byte {
 	return rcv.ICON_HREF()
 }
 
-/// Icon/image URL
-/// Color in aabbggrr hex format
+// / Icon/image URL
+// / Color in aabbggrr hex format
 func (rcv *KMLGroundOverlay) COLOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -141,8 +141,8 @@ func (rcv *KMLGroundOverlay) Color() []byte {
 	return rcv.COLOR()
 }
 
-/// Color in aabbggrr hex format
-/// North latitude of bounding box
+// / Color in aabbggrr hex format
+// / North latitude of bounding box
 func (rcv *KMLGroundOverlay) NORTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -155,7 +155,7 @@ func (rcv *KMLGroundOverlay) North() float64 {
 	return rcv.NORTH()
 }
 
-/// North latitude of bounding box
+// / North latitude of bounding box
 func (rcv *KMLGroundOverlay) MutateNORTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -164,7 +164,7 @@ func (rcv *KMLGroundOverlay) MutateNorth(n float64) bool {
 	return rcv.MutateNORTH(n)
 }
 
-/// South latitude of bounding box
+// / South latitude of bounding box
 func (rcv *KMLGroundOverlay) SOUTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -177,7 +177,7 @@ func (rcv *KMLGroundOverlay) South() float64 {
 	return rcv.SOUTH()
 }
 
-/// South latitude of bounding box
+// / South latitude of bounding box
 func (rcv *KMLGroundOverlay) MutateSOUTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -186,7 +186,7 @@ func (rcv *KMLGroundOverlay) MutateSouth(n float64) bool {
 	return rcv.MutateSOUTH(n)
 }
 
-/// East longitude of bounding box
+// / East longitude of bounding box
 func (rcv *KMLGroundOverlay) EAST() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -199,7 +199,7 @@ func (rcv *KMLGroundOverlay) East() float64 {
 	return rcv.EAST()
 }
 
-/// East longitude of bounding box
+// / East longitude of bounding box
 func (rcv *KMLGroundOverlay) MutateEAST(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -208,7 +208,7 @@ func (rcv *KMLGroundOverlay) MutateEast(n float64) bool {
 	return rcv.MutateEAST(n)
 }
 
-/// West longitude of bounding box
+// / West longitude of bounding box
 func (rcv *KMLGroundOverlay) WEST() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -221,7 +221,7 @@ func (rcv *KMLGroundOverlay) West() float64 {
 	return rcv.WEST()
 }
 
-/// West longitude of bounding box
+// / West longitude of bounding box
 func (rcv *KMLGroundOverlay) MutateWEST(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -230,7 +230,7 @@ func (rcv *KMLGroundOverlay) MutateWest(n float64) bool {
 	return rcv.MutateWEST(n)
 }
 
-/// Rotation in degrees
+// / Rotation in degrees
 func (rcv *KMLGroundOverlay) ROTATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -243,7 +243,7 @@ func (rcv *KMLGroundOverlay) Rotation() float64 {
 	return rcv.ROTATION()
 }
 
-/// Rotation in degrees
+// / Rotation in degrees
 func (rcv *KMLGroundOverlay) MutateROTATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -252,7 +252,7 @@ func (rcv *KMLGroundOverlay) MutateRotation(n float64) bool {
 	return rcv.MutateROTATION(n)
 }
 
-/// Altitude in meters
+// / Altitude in meters
 func (rcv *KMLGroundOverlay) ALTITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -265,7 +265,7 @@ func (rcv *KMLGroundOverlay) Altitude() float64 {
 	return rcv.ALTITUDE()
 }
 
-/// Altitude in meters
+// / Altitude in meters
 func (rcv *KMLGroundOverlay) MutateALTITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -274,7 +274,7 @@ func (rcv *KMLGroundOverlay) MutateAltitude(n float64) bool {
 	return rcv.MutateALTITUDE(n)
 }
 
-/// Altitude mode
+// / Altitude mode
 func (rcv *KMLGroundOverlay) ALTITUDE_MODE() KMLAltitudeMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -287,7 +287,7 @@ func (rcv *KMLGroundOverlay) AltitudeMode() KMLAltitudeMode {
 	return rcv.ALTITUDE_MODE()
 }
 
-/// Altitude mode
+// / Altitude mode
 func (rcv *KMLGroundOverlay) MutateALTITUDE_MODE(n KMLAltitudeMode) bool {
 	return rcv._tab.MutateInt8Slot(28, int8(n))
 }
@@ -296,7 +296,7 @@ func (rcv *KMLGroundOverlay) MutateAltitudeMode(n KMLAltitudeMode) bool {
 	return rcv.MutateALTITUDE_MODE(n)
 }
 
-/// Draw order
+// / Draw order
 func (rcv *KMLGroundOverlay) DRAW_ORDER() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -309,7 +309,7 @@ func (rcv *KMLGroundOverlay) DrawOrder() int32 {
 	return rcv.DRAW_ORDER()
 }
 
-/// Draw order
+// / Draw order
 func (rcv *KMLGroundOverlay) MutateDRAW_ORDER(n int32) bool {
 	return rcv._tab.MutateInt32Slot(30, n)
 }
@@ -318,7 +318,7 @@ func (rcv *KMLGroundOverlay) MutateDrawOrder(n int32) bool {
 	return rcv.MutateDRAW_ORDER(n)
 }
 
-/// LatLonQuad (non-rectangular overlay)
+// / LatLonQuad (non-rectangular overlay)
 func (rcv *KMLGroundOverlay) LAT_LON_QUAD(obj *KMLLatLonQuad) *KMLLatLonQuad {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -336,8 +336,8 @@ func (rcv *KMLGroundOverlay) LatLonQuad(obj *KMLLatLonQuad) *KMLLatLonQuad {
 	return rcv.LAT_LON_QUAD(obj)
 }
 
-/// LatLonQuad (non-rectangular overlay)
-/// Style URL reference
+// / LatLonQuad (non-rectangular overlay)
+// / Style URL reference
 func (rcv *KMLGroundOverlay) STYLE_URL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -350,8 +350,8 @@ func (rcv *KMLGroundOverlay) StyleUrl() []byte {
 	return rcv.STYLE_URL()
 }
 
-/// Style URL reference
-/// Region
+// / Style URL reference
+// / Region
 func (rcv *KMLGroundOverlay) REGION(obj *KMLRegion) *KMLRegion {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -369,7 +369,7 @@ func (rcv *KMLGroundOverlay) Region(obj *KMLRegion) *KMLRegion {
 	return rcv.REGION(obj)
 }
 
-/// Region
+// / Region
 func KMLGroundOverlayStart(builder *flatbuffers.Builder) {
 	builder.StartObject(17)
 }

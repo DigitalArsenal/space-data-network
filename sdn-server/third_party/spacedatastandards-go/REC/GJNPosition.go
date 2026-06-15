@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// A single position (longitude, latitude, optional altitude)
+// / A single position (longitude, latitude, optional altitude)
 type GJNPosition struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *GJNPosition) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Longitude in decimal degrees (WGS84)
+// / Longitude in decimal degrees (WGS84)
 func (rcv *GJNPosition) LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *GJNPosition) Longitude() float64 {
 	return rcv.LONGITUDE()
 }
 
-/// Longitude in decimal degrees (WGS84)
+// / Longitude in decimal degrees (WGS84)
 func (rcv *GJNPosition) MutateLONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *GJNPosition) MutateLongitude(n float64) bool {
 	return rcv.MutateLONGITUDE(n)
 }
 
-/// Latitude in decimal degrees (WGS84)
+// / Latitude in decimal degrees (WGS84)
 func (rcv *GJNPosition) LATITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *GJNPosition) Latitude() float64 {
 	return rcv.LATITUDE()
 }
 
-/// Latitude in decimal degrees (WGS84)
+// / Latitude in decimal degrees (WGS84)
 func (rcv *GJNPosition) MutateLATITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *GJNPosition) MutateLatitude(n float64) bool {
 	return rcv.MutateLATITUDE(n)
 }
 
-/// Altitude in meters above WGS84 ellipsoid (optional)
+// / Altitude in meters above WGS84 ellipsoid (optional)
 func (rcv *GJNPosition) ALTITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *GJNPosition) Altitude() float64 {
 	return rcv.ALTITUDE()
 }
 
-/// Altitude in meters above WGS84 ellipsoid (optional)
+// / Altitude in meters above WGS84 ellipsoid (optional)
 func (rcv *GJNPosition) MutateALTITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *GJNPosition) MutateAltitude(n float64) bool {
 	return rcv.MutateALTITUDE(n)
 }
 
-/// True if altitude was explicitly provided (distinguishes 0 from absent)
+// / True if altitude was explicitly provided (distinguishes 0 from absent)
 func (rcv *GJNPosition) HAS_ALTITUDE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *GJNPosition) HasAltitude() bool {
 	return rcv.HAS_ALTITUDE()
 }
 
-/// True if altitude was explicitly provided (distinguishes 0 from absent)
+// / True if altitude was explicitly provided (distinguishes 0 from absent)
 func (rcv *GJNPosition) MutateHAS_ALTITUDE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Purchase Request - Request to purchase data from a storefront listing
+// / Purchase Request - Request to purchase data from a storefront listing
 type PUR struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *PUR) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique identifier for this purchase request
+// / Unique identifier for this purchase request
 func (rcv *PUR) REQUEST_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *PUR) RequestId() []byte {
 	return rcv.REQUEST_ID()
 }
 
-/// Unique identifier for this purchase request
-/// ID of the listing being purchased
+// / Unique identifier for this purchase request
+// / ID of the listing being purchased
 func (rcv *PUR) LISTING_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *PUR) ListingId() []byte {
 	return rcv.LISTING_ID()
 }
 
-/// ID of the listing being purchased
-/// Name of the pricing tier selected
+// / ID of the listing being purchased
+// / Name of the pricing tier selected
 func (rcv *PUR) TIER_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *PUR) TierName() []byte {
 	return rcv.TIER_NAME()
 }
 
-/// Name of the pricing tier selected
-/// Peer ID of the buyer
+// / Name of the pricing tier selected
+// / Peer ID of the buyer
 func (rcv *PUR) BUYER_PEER_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *PUR) BuyerPeerId() []byte {
 	return rcv.BUYER_PEER_ID()
 }
 
-/// Peer ID of the buyer
-/// Buyer's encryption public key for encrypted delivery
+// / Peer ID of the buyer
+// / Buyer's encryption public key for encrypted delivery
 func (rcv *PUR) BUYER_ENCRYPTION_PUBKEY(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -148,7 +148,7 @@ func (rcv *PUR) BuyerEncryptionPubkeyBytes() []byte {
 	return rcv.BUYER_ENCRYPTION_PUBKEYBytes()
 }
 
-/// Buyer's encryption public key for encrypted delivery
+// / Buyer's encryption public key for encrypted delivery
 func (rcv *PUR) MutateBUYER_ENCRYPTION_PUBKEY(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -162,7 +162,7 @@ func (rcv *PUR) MutateBuyerEncryptionPubkey(j int, n byte) bool {
 	return rcv.MutateBUYER_ENCRYPTION_PUBKEY(j, n)
 }
 
-/// Payment method used
+// / Payment method used
 func (rcv *PUR) PAYMENT_METHOD() paymentMethod {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -175,7 +175,7 @@ func (rcv *PUR) PaymentMethod() paymentMethod {
 	return rcv.PAYMENT_METHOD()
 }
 
-/// Payment method used
+// / Payment method used
 func (rcv *PUR) MutatePAYMENT_METHOD(n paymentMethod) bool {
 	return rcv._tab.MutateInt8Slot(14, int8(n))
 }
@@ -184,7 +184,7 @@ func (rcv *PUR) MutatePaymentMethod(n paymentMethod) bool {
 	return rcv.MutatePAYMENT_METHOD(n)
 }
 
-/// Payment amount in smallest unit
+// / Payment amount in smallest unit
 func (rcv *PUR) PAYMENT_AMOUNT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -197,7 +197,7 @@ func (rcv *PUR) PaymentAmount() uint64 {
 	return rcv.PAYMENT_AMOUNT()
 }
 
-/// Payment amount in smallest unit
+// / Payment amount in smallest unit
 func (rcv *PUR) MutatePAYMENT_AMOUNT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(16, n)
 }
@@ -206,7 +206,7 @@ func (rcv *PUR) MutatePaymentAmount(n uint64) bool {
 	return rcv.MutatePAYMENT_AMOUNT(n)
 }
 
-/// Currency of payment
+// / Currency of payment
 func (rcv *PUR) PAYMENT_CURRENCY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -219,8 +219,8 @@ func (rcv *PUR) PaymentCurrency() []byte {
 	return rcv.PAYMENT_CURRENCY()
 }
 
-/// Currency of payment
-/// Transaction hash for cryptocurrency payments
+// / Currency of payment
+// / Transaction hash for cryptocurrency payments
 func (rcv *PUR) PAYMENT_TX_HASH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -233,8 +233,8 @@ func (rcv *PUR) PaymentTxHash() []byte {
 	return rcv.PAYMENT_TX_HASH()
 }
 
-/// Transaction hash for cryptocurrency payments
-/// Blockchain network: "ethereum", "solana", "bitcoin"
+// / Transaction hash for cryptocurrency payments
+// / Blockchain network: "ethereum", "solana", "bitcoin"
 func (rcv *PUR) PAYMENT_CHAIN() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -247,8 +247,8 @@ func (rcv *PUR) PaymentChain() []byte {
 	return rcv.PAYMENT_CHAIN()
 }
 
-/// Blockchain network: "ethereum", "solana", "bitcoin"
-/// Reference ID for credit/fiat payments
+// / Blockchain network: "ethereum", "solana", "bitcoin"
+// / Reference ID for credit/fiat payments
 func (rcv *PUR) PAYMENT_REFERENCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -261,8 +261,8 @@ func (rcv *PUR) PaymentReference() []byte {
 	return rcv.PAYMENT_REFERENCE()
 }
 
-/// Reference ID for credit/fiat payments
-/// Ed25519 signature from buyer
+// / Reference ID for credit/fiat payments
+// / Ed25519 signature from buyer
 func (rcv *PUR) BUYER_SIGNATURE(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -300,7 +300,7 @@ func (rcv *PUR) BuyerSignatureBytes() []byte {
 	return rcv.BUYER_SIGNATUREBytes()
 }
 
-/// Ed25519 signature from buyer
+// / Ed25519 signature from buyer
 func (rcv *PUR) MutateBUYER_SIGNATURE(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -314,7 +314,7 @@ func (rcv *PUR) MutateBuyerSignature(j int, n byte) bool {
 	return rcv.MutateBUYER_SIGNATURE(j, n)
 }
 
-/// Unix timestamp of the request
+// / Unix timestamp of the request
 func (rcv *PUR) TIMESTAMP() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -327,7 +327,7 @@ func (rcv *PUR) Timestamp() uint64 {
 	return rcv.TIMESTAMP()
 }
 
-/// Unix timestamp of the request
+// / Unix timestamp of the request
 func (rcv *PUR) MutateTIMESTAMP(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(28, n)
 }

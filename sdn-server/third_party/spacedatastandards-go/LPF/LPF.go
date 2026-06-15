@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Licensing proof message
+// / Licensing proof message
 type LPF struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *LPF) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Message type
+// / Message type
 func (rcv *LPF) MESSAGE_TYPE() licensingProofMessageType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *LPF) MessageType() licensingProofMessageType {
 	return rcv.MESSAGE_TYPE()
 }
 
-/// Message type
+// / Message type
 func (rcv *LPF) MutateMESSAGE_TYPE(n licensingProofMessageType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -76,7 +76,7 @@ func (rcv *LPF) MutateMessageType(n licensingProofMessageType) bool {
 	return rcv.MutateMESSAGE_TYPE(n)
 }
 
-/// Unique request identifier
+// / Unique request identifier
 func (rcv *LPF) REQUEST_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,8 +89,8 @@ func (rcv *LPF) RequestId() []byte {
 	return rcv.REQUEST_ID()
 }
 
-/// Unique request identifier
-/// Canonical module identifier
+// / Unique request identifier
+// / Canonical module identifier
 func (rcv *LPF) MODULE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,8 +103,8 @@ func (rcv *LPF) ModuleId() []byte {
 	return rcv.MODULE_ID()
 }
 
-/// Canonical module identifier
-/// Optional requested module version
+// / Canonical module identifier
+// / Optional requested module version
 func (rcv *LPF) MODULE_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *LPF) ModuleVersion() []byte {
 	return rcv.MODULE_VERSION()
 }
 
-/// Optional requested module version
-/// Requester peer identifier
+// / Optional requested module version
+// / Requester peer identifier
 func (rcv *LPF) REQUESTER_PEER_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *LPF) RequesterPeerId() []byte {
 	return rcv.REQUESTER_PEER_ID()
 }
 
-/// Requester peer identifier
-/// Requester account identity or wallet xpub
+// / Requester peer identifier
+// / Requester account identity or wallet xpub
 func (rcv *LPF) REQUESTER_XPUB() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,8 +145,8 @@ func (rcv *LPF) RequesterXpub() []byte {
 	return rcv.REQUESTER_XPUB()
 }
 
-/// Requester account identity or wallet xpub
-/// Requested domain proved for policy evaluation
+// / Requester account identity or wallet xpub
+// / Requested domain proved for policy evaluation
 func (rcv *LPF) REQUESTED_DOMAIN() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,8 +159,8 @@ func (rcv *LPF) RequestedDomain() []byte {
 	return rcv.REQUESTED_DOMAIN()
 }
 
-/// Requested domain proved for policy evaluation
-/// Requested timeout in milliseconds
+// / Requested domain proved for policy evaluation
+// / Requested timeout in milliseconds
 func (rcv *LPF) REQUESTED_TIMEOUT_MS() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -173,7 +173,7 @@ func (rcv *LPF) RequestedTimeoutMs() uint64 {
 	return rcv.REQUESTED_TIMEOUT_MS()
 }
 
-/// Requested timeout in milliseconds
+// / Requested timeout in milliseconds
 func (rcv *LPF) MutateREQUESTED_TIMEOUT_MS(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(18, n)
 }
@@ -182,7 +182,7 @@ func (rcv *LPF) MutateRequestedTimeoutMs(n uint64) bool {
 	return rcv.MutateREQUESTED_TIMEOUT_MS(n)
 }
 
-/// Requester ephemeral X25519 public key
+// / Requester ephemeral X25519 public key
 func (rcv *LPF) REQUESTER_EPHEMERAL_PUBKEY(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -220,7 +220,7 @@ func (rcv *LPF) RequesterEphemeralPubkeyBytes() []byte {
 	return rcv.REQUESTER_EPHEMERAL_PUBKEYBytes()
 }
 
-/// Requester ephemeral X25519 public key
+// / Requester ephemeral X25519 public key
 func (rcv *LPF) MutateREQUESTER_EPHEMERAL_PUBKEY(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -234,7 +234,7 @@ func (rcv *LPF) MutateRequesterEphemeralPubkey(j int, n byte) bool {
 	return rcv.MutateREQUESTER_EPHEMERAL_PUBKEY(j, n)
 }
 
-/// Provider-issued challenge nonce being proved
+// / Provider-issued challenge nonce being proved
 func (rcv *LPF) CHALLENGE_NONCE(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -272,7 +272,7 @@ func (rcv *LPF) ChallengeNonceBytes() []byte {
 	return rcv.CHALLENGE_NONCEBytes()
 }
 
-/// Provider-issued challenge nonce being proved
+// / Provider-issued challenge nonce being proved
 func (rcv *LPF) MutateCHALLENGE_NONCE(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -286,7 +286,7 @@ func (rcv *LPF) MutateChallengeNonce(j int, n byte) bool {
 	return rcv.MutateCHALLENGE_NONCE(j, n)
 }
 
-/// Challenge expiration time being acknowledged
+// / Challenge expiration time being acknowledged
 func (rcv *LPF) CHALLENGE_EXPIRES_AT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -299,7 +299,7 @@ func (rcv *LPF) ChallengeExpiresAt() uint64 {
 	return rcv.CHALLENGE_EXPIRES_AT()
 }
 
-/// Challenge expiration time being acknowledged
+// / Challenge expiration time being acknowledged
 func (rcv *LPF) MutateCHALLENGE_EXPIRES_AT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(24, n)
 }
@@ -308,7 +308,7 @@ func (rcv *LPF) MutateChallengeExpiresAt(n uint64) bool {
 	return rcv.MutateCHALLENGE_EXPIRES_AT(n)
 }
 
-/// Provider peer identifier that issued the challenge
+// / Provider peer identifier that issued the challenge
 func (rcv *LPF) PROVIDER_PEER_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -321,8 +321,8 @@ func (rcv *LPF) ProviderPeerId() []byte {
 	return rcv.PROVIDER_PEER_ID()
 }
 
-/// Provider peer identifier that issued the challenge
-/// Detached requester signature over the challenge payload
+// / Provider peer identifier that issued the challenge
+// / Detached requester signature over the challenge payload
 func (rcv *LPF) SIGNATURE(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -360,7 +360,7 @@ func (rcv *LPF) SignatureBytes() []byte {
 	return rcv.SIGNATUREBytes()
 }
 
-/// Detached requester signature over the challenge payload
+// / Detached requester signature over the challenge payload
 func (rcv *LPF) MutateSIGNATURE(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -374,7 +374,7 @@ func (rcv *LPF) MutateSignature(j int, n byte) bool {
 	return rcv.MutateSIGNATURE(j, n)
 }
 
-/// Requester signing public key
+// / Requester signing public key
 func (rcv *LPF) SIGNING_PUBKEY(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -412,7 +412,7 @@ func (rcv *LPF) SigningPubkeyBytes() []byte {
 	return rcv.SIGNING_PUBKEYBytes()
 }
 
-/// Requester signing public key
+// / Requester signing public key
 func (rcv *LPF) MutateSIGNING_PUBKEY(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -426,7 +426,7 @@ func (rcv *LPF) MutateSigningPubkey(j int, n byte) bool {
 	return rcv.MutateSIGNING_PUBKEY(j, n)
 }
 
-/// Proof timestamp in milliseconds since epoch
+// / Proof timestamp in milliseconds since epoch
 func (rcv *LPF) TIMESTAMP_MS() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -439,7 +439,7 @@ func (rcv *LPF) TimestampMs() uint64 {
 	return rcv.TIMESTAMP_MS()
 }
 
-/// Proof timestamp in milliseconds since epoch
+// / Proof timestamp in milliseconds since epoch
 func (rcv *LPF) MutateTIMESTAMP_MS(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(32, n)
 }
@@ -448,7 +448,7 @@ func (rcv *LPF) MutateTimestampMs(n uint64) bool {
 	return rcv.MutateTIMESTAMP_MS(n)
 }
 
-/// Structured rejection code
+// / Structured rejection code
 func (rcv *LPF) REJECTION_CODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -461,8 +461,8 @@ func (rcv *LPF) RejectionCode() []byte {
 	return rcv.REJECTION_CODE()
 }
 
-/// Structured rejection code
-/// Structured rejection message
+// / Structured rejection code
+// / Structured rejection message
 func (rcv *LPF) REJECTION_MESSAGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -475,7 +475,7 @@ func (rcv *LPF) RejectionMessage() []byte {
 	return rcv.REJECTION_MESSAGE()
 }
 
-/// Structured rejection message
+// / Structured rejection message
 func LPFStart(builder *flatbuffers.Builder) {
 	builder.StartObject(17)
 }

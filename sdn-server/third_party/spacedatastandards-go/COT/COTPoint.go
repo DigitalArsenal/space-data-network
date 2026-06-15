@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// CoT Point - geographical point with error estimates
+// / CoT Point - geographical point with error estimates
 type COTPoint struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *COTPoint) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Latitude in decimal degrees (WGS84)
+// / Latitude in decimal degrees (WGS84)
 func (rcv *COTPoint) LATITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *COTPoint) Latitude() float64 {
 	return rcv.LATITUDE()
 }
 
-/// Latitude in decimal degrees (WGS84)
+// / Latitude in decimal degrees (WGS84)
 func (rcv *COTPoint) MutateLATITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *COTPoint) MutateLatitude(n float64) bool {
 	return rcv.MutateLATITUDE(n)
 }
 
-/// Longitude in decimal degrees (WGS84)
+// / Longitude in decimal degrees (WGS84)
 func (rcv *COTPoint) LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *COTPoint) Longitude() float64 {
 	return rcv.LONGITUDE()
 }
 
-/// Longitude in decimal degrees (WGS84)
+// / Longitude in decimal degrees (WGS84)
 func (rcv *COTPoint) MutateLONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *COTPoint) MutateLongitude(n float64) bool {
 	return rcv.MutateLONGITUDE(n)
 }
 
-/// Height above WGS84 ellipsoid in meters
+// / Height above WGS84 ellipsoid in meters
 func (rcv *COTPoint) HAE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *COTPoint) Hae() float64 {
 	return rcv.HAE()
 }
 
-/// Height above WGS84 ellipsoid in meters
+// / Height above WGS84 ellipsoid in meters
 func (rcv *COTPoint) MutateHAE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *COTPoint) MutateHae(n float64) bool {
 	return rcv.MutateHAE(n)
 }
 
-/// Circular error in meters (95% confidence)
+// / Circular error in meters (95% confidence)
 func (rcv *COTPoint) CE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *COTPoint) Ce() float64 {
 	return rcv.CE()
 }
 
-/// Circular error in meters (95% confidence)
+// / Circular error in meters (95% confidence)
 func (rcv *COTPoint) MutateCE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *COTPoint) MutateCe(n float64) bool {
 	return rcv.MutateCE(n)
 }
 
-/// Linear error (vertical) in meters (95% confidence)
+// / Linear error (vertical) in meters (95% confidence)
 func (rcv *COTPoint) LE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,7 +143,7 @@ func (rcv *COTPoint) Le() float64 {
 	return rcv.LE()
 }
 
-/// Linear error (vertical) in meters (95% confidence)
+// / Linear error (vertical) in meters (95% confidence)
 func (rcv *COTPoint) MutateLE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Polygon properties
+// / Polygon properties
 type CZMPolygon struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMPolygon) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Whether the polygon is displayed
+// / Whether the polygon is displayed
 func (rcv *CZMPolygon) SHOW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMPolygon) Show() bool {
 	return rcv.SHOW()
 }
 
-/// Whether the polygon is displayed
+// / Whether the polygon is displayed
 func (rcv *CZMPolygon) MutateSHOW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMPolygon) MutateShow(n bool) bool {
 	return rcv.MutateSHOW(n)
 }
 
-/// Positions as cartographic degrees [lon, lat, height, ...]
+// / Positions as cartographic degrees [lon, lat, height, ...]
 func (rcv *CZMPolygon) POSITIONS_CARTOGRAPHIC_DEGREES(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -90,7 +90,7 @@ func (rcv *CZMPolygon) PositionsCartographicDegreesLength() int {
 	return rcv.POSITIONS_CARTOGRAPHIC_DEGREESLength()
 }
 
-/// Positions as cartographic degrees [lon, lat, height, ...]
+// / Positions as cartographic degrees [lon, lat, height, ...]
 func (rcv *CZMPolygon) MutatePOSITIONS_CARTOGRAPHIC_DEGREES(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -104,7 +104,7 @@ func (rcv *CZMPolygon) MutatePositionsCartographicDegrees(j int, n float64) bool
 	return rcv.MutatePOSITIONS_CARTOGRAPHIC_DEGREES(j, n)
 }
 
-/// Positions as Cartesian [X, Y, Z, ...]
+// / Positions as Cartesian [X, Y, Z, ...]
 func (rcv *CZMPolygon) POSITIONS_CARTESIAN(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -130,7 +130,7 @@ func (rcv *CZMPolygon) PositionsCartesianLength() int {
 	return rcv.POSITIONS_CARTESIANLength()
 }
 
-/// Positions as Cartesian [X, Y, Z, ...]
+// / Positions as Cartesian [X, Y, Z, ...]
 func (rcv *CZMPolygon) MutatePOSITIONS_CARTESIAN(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -144,7 +144,7 @@ func (rcv *CZMPolygon) MutatePositionsCartesian(j int, n float64) bool {
 	return rcv.MutatePOSITIONS_CARTESIAN(j, n)
 }
 
-/// Fill flag
+// / Fill flag
 func (rcv *CZMPolygon) FILL() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *CZMPolygon) Fill() bool {
 	return rcv.FILL()
 }
 
-/// Fill flag
+// / Fill flag
 func (rcv *CZMPolygon) MutateFILL(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }
@@ -166,7 +166,7 @@ func (rcv *CZMPolygon) MutateFill(n bool) bool {
 	return rcv.MutateFILL(n)
 }
 
-/// Fill color (solid color material, legacy)
+// / Fill color (solid color material, legacy)
 func (rcv *CZMPolygon) COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -184,8 +184,8 @@ func (rcv *CZMPolygon) Color(obj *CZMColor) *CZMColor {
 	return rcv.COLOR(obj)
 }
 
-/// Fill color (solid color material, legacy)
-/// Outline flag
+// / Fill color (solid color material, legacy)
+// / Outline flag
 func (rcv *CZMPolygon) OUTLINE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -198,7 +198,7 @@ func (rcv *CZMPolygon) Outline() bool {
 	return rcv.OUTLINE()
 }
 
-/// Outline flag
+// / Outline flag
 func (rcv *CZMPolygon) MutateOUTLINE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(14, n)
 }
@@ -207,7 +207,7 @@ func (rcv *CZMPolygon) MutateOutline(n bool) bool {
 	return rcv.MutateOUTLINE(n)
 }
 
-/// Outline color
+// / Outline color
 func (rcv *CZMPolygon) OUTLINE_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -225,8 +225,8 @@ func (rcv *CZMPolygon) OutlineColor(obj *CZMColor) *CZMColor {
 	return rcv.OUTLINE_COLOR(obj)
 }
 
-/// Outline color
-/// Extruded height in meters
+// / Outline color
+// / Extruded height in meters
 func (rcv *CZMPolygon) EXTRUDED_HEIGHT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -239,7 +239,7 @@ func (rcv *CZMPolygon) ExtrudedHeight() float64 {
 	return rcv.EXTRUDED_HEIGHT()
 }
 
-/// Extruded height in meters
+// / Extruded height in meters
 func (rcv *CZMPolygon) MutateEXTRUDED_HEIGHT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -248,7 +248,7 @@ func (rcv *CZMPolygon) MutateExtrudedHeight(n float64) bool {
 	return rcv.MutateEXTRUDED_HEIGHT(n)
 }
 
-/// Height reference
+// / Height reference
 func (rcv *CZMPolygon) HEIGHT_REFERENCE() CZMHeightReference {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -261,7 +261,7 @@ func (rcv *CZMPolygon) HeightReference() CZMHeightReference {
 	return rcv.HEIGHT_REFERENCE()
 }
 
-/// Height reference
+// / Height reference
 func (rcv *CZMPolygon) MutateHEIGHT_REFERENCE(n CZMHeightReference) bool {
 	return rcv._tab.MutateInt8Slot(20, int8(n))
 }
@@ -270,7 +270,7 @@ func (rcv *CZMPolygon) MutateHeightReference(n CZMHeightReference) bool {
 	return rcv.MutateHEIGHT_REFERENCE(n)
 }
 
-/// Classification type
+// / Classification type
 func (rcv *CZMPolygon) CLASSIFICATION_TYPE() CZMClassificationType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -283,7 +283,7 @@ func (rcv *CZMPolygon) ClassificationType() CZMClassificationType {
 	return rcv.CLASSIFICATION_TYPE()
 }
 
-/// Classification type
+// / Classification type
 func (rcv *CZMPolygon) MutateCLASSIFICATION_TYPE(n CZMClassificationType) bool {
 	return rcv._tab.MutateInt8Slot(22, int8(n))
 }
@@ -292,7 +292,7 @@ func (rcv *CZMPolygon) MutateClassificationType(n CZMClassificationType) bool {
 	return rcv.MutateCLASSIFICATION_TYPE(n)
 }
 
-/// Holes (position lists: each hole is [lon,lat,h,...])
+// / Holes (position lists: each hole is [lon,lat,h,...])
 func (rcv *CZMPolygon) HOLES(obj *CZMPolygonHole, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -324,8 +324,8 @@ func (rcv *CZMPolygon) HolesLength() int {
 	return rcv.HOLESLength()
 }
 
-/// Holes (position lists: each hole is [lon,lat,h,...])
-/// Arc type
+// / Holes (position lists: each hole is [lon,lat,h,...])
+// / Arc type
 func (rcv *CZMPolygon) ARC_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -338,8 +338,8 @@ func (rcv *CZMPolygon) ArcType() []byte {
 	return rcv.ARC_TYPE()
 }
 
-/// Arc type
-/// Height in meters
+// / Arc type
+// / Height in meters
 func (rcv *CZMPolygon) HEIGHT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -352,7 +352,7 @@ func (rcv *CZMPolygon) Height() float64 {
 	return rcv.HEIGHT()
 }
 
-/// Height in meters
+// / Height in meters
 func (rcv *CZMPolygon) MutateHEIGHT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -361,7 +361,7 @@ func (rcv *CZMPolygon) MutateHeight(n float64) bool {
 	return rcv.MutateHEIGHT(n)
 }
 
-/// Extruded height reference
+// / Extruded height reference
 func (rcv *CZMPolygon) EXTRUDED_HEIGHT_REFERENCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -374,8 +374,8 @@ func (rcv *CZMPolygon) ExtrudedHeightReference() []byte {
 	return rcv.EXTRUDED_HEIGHT_REFERENCE()
 }
 
-/// Extruded height reference
-/// Texture rotation in radians
+// / Extruded height reference
+// / Texture rotation in radians
 func (rcv *CZMPolygon) ST_ROTATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -388,7 +388,7 @@ func (rcv *CZMPolygon) StRotation() float64 {
 	return rcv.ST_ROTATION()
 }
 
-/// Texture rotation in radians
+// / Texture rotation in radians
 func (rcv *CZMPolygon) MutateST_ROTATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -397,7 +397,7 @@ func (rcv *CZMPolygon) MutateStRotation(n float64) bool {
 	return rcv.MutateST_ROTATION(n)
 }
 
-/// Granularity in radians
+// / Granularity in radians
 func (rcv *CZMPolygon) GRANULARITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -410,7 +410,7 @@ func (rcv *CZMPolygon) Granularity() float64 {
 	return rcv.GRANULARITY()
 }
 
-/// Granularity in radians
+// / Granularity in radians
 func (rcv *CZMPolygon) MutateGRANULARITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -419,7 +419,7 @@ func (rcv *CZMPolygon) MutateGranularity(n float64) bool {
 	return rcv.MutateGRANULARITY(n)
 }
 
-/// Full surface material
+// / Full surface material
 func (rcv *CZMPolygon) MATERIAL(obj *CZMMaterial) *CZMMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -437,8 +437,8 @@ func (rcv *CZMPolygon) Material(obj *CZMMaterial) *CZMMaterial {
 	return rcv.MATERIAL(obj)
 }
 
-/// Full surface material
-/// Outline width in pixels
+// / Full surface material
+// / Outline width in pixels
 func (rcv *CZMPolygon) OUTLINE_WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -451,7 +451,7 @@ func (rcv *CZMPolygon) OutlineWidth() float64 {
 	return rcv.OUTLINE_WIDTH()
 }
 
-/// Outline width in pixels
+// / Outline width in pixels
 func (rcv *CZMPolygon) MutateOUTLINE_WIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -460,7 +460,7 @@ func (rcv *CZMPolygon) MutateOutlineWidth(n float64) bool {
 	return rcv.MutateOUTLINE_WIDTH(n)
 }
 
-/// Whether to use per-position heights
+// / Whether to use per-position heights
 func (rcv *CZMPolygon) PER_POSITION_HEIGHT() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -473,7 +473,7 @@ func (rcv *CZMPolygon) PerPositionHeight() bool {
 	return rcv.PER_POSITION_HEIGHT()
 }
 
-/// Whether to use per-position heights
+// / Whether to use per-position heights
 func (rcv *CZMPolygon) MutatePER_POSITION_HEIGHT(n bool) bool {
 	return rcv._tab.MutateBoolSlot(40, n)
 }
@@ -482,7 +482,7 @@ func (rcv *CZMPolygon) MutatePerPositionHeight(n bool) bool {
 	return rcv.MutatePER_POSITION_HEIGHT(n)
 }
 
-/// Whether to close the top of extruded polygon
+// / Whether to close the top of extruded polygon
 func (rcv *CZMPolygon) CLOSE_TOP() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -495,7 +495,7 @@ func (rcv *CZMPolygon) CloseTop() bool {
 	return rcv.CLOSE_TOP()
 }
 
-/// Whether to close the top of extruded polygon
+// / Whether to close the top of extruded polygon
 func (rcv *CZMPolygon) MutateCLOSE_TOP(n bool) bool {
 	return rcv._tab.MutateBoolSlot(42, n)
 }
@@ -504,7 +504,7 @@ func (rcv *CZMPolygon) MutateCloseTop(n bool) bool {
 	return rcv.MutateCLOSE_TOP(n)
 }
 
-/// Whether to close the bottom of extruded polygon
+// / Whether to close the bottom of extruded polygon
 func (rcv *CZMPolygon) CLOSE_BOTTOM() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -517,7 +517,7 @@ func (rcv *CZMPolygon) CloseBottom() bool {
 	return rcv.CLOSE_BOTTOM()
 }
 
-/// Whether to close the bottom of extruded polygon
+// / Whether to close the bottom of extruded polygon
 func (rcv *CZMPolygon) MutateCLOSE_BOTTOM(n bool) bool {
 	return rcv._tab.MutateBoolSlot(44, n)
 }
@@ -526,7 +526,7 @@ func (rcv *CZMPolygon) MutateCloseBottom(n bool) bool {
 	return rcv.MutateCLOSE_BOTTOM(n)
 }
 
-/// Shadow mode
+// / Shadow mode
 func (rcv *CZMPolygon) SHADOWS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -539,8 +539,8 @@ func (rcv *CZMPolygon) Shadows() []byte {
 	return rcv.SHADOWS()
 }
 
-/// Shadow mode
-/// Z-index for ordering
+// / Shadow mode
+// / Z-index for ordering
 func (rcv *CZMPolygon) Z_INDEX() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -553,7 +553,7 @@ func (rcv *CZMPolygon) ZIndex() int32 {
 	return rcv.Z_INDEX()
 }
 
-/// Z-index for ordering
+// / Z-index for ordering
 func (rcv *CZMPolygon) MutateZ_INDEX(n int32) bool {
 	return rcv._tab.MutateInt32Slot(48, n)
 }

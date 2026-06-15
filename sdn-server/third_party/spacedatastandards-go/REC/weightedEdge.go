@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Weighted directed edge (16 bytes, 8-byte aligned for zero-copy ingestion).
+// / Weighted directed edge (16 bytes, 8-byte aligned for zero-copy ingestion).
 type weightedEdge struct {
 	_tab flatbuffers.Struct
 }

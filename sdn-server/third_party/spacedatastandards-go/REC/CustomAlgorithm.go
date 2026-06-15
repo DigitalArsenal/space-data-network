@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Custom algorithm definition
+// / Custom algorithm definition
 type CustomAlgorithm struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CustomAlgorithm) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Algorithm name
+// / Algorithm name
 func (rcv *CustomAlgorithm) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *CustomAlgorithm) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Algorithm name
-/// Short description
+// / Algorithm name
+// / Short description
 func (rcv *CustomAlgorithm) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *CustomAlgorithm) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-/// Short description
-/// Long description
+// / Short description
+// / Long description
 func (rcv *CustomAlgorithm) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *CustomAlgorithm) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-/// Long description
-/// Programming language
+// / Long description
+// / Programming language
 func (rcv *CustomAlgorithm) LANGUAGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *CustomAlgorithm) Language() []byte {
 	return rcv.LANGUAGE()
 }
 
-/// Programming language
-/// Algorithm text/code
+// / Programming language
+// / Algorithm text/code
 func (rcv *CustomAlgorithm) ALGORITHM_TEXT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -111,8 +111,8 @@ func (rcv *CustomAlgorithm) AlgorithmText() []byte {
 	return rcv.ALGORITHM_TEXT()
 }
 
-/// Algorithm text/code
-/// External algorithm reference
+// / Algorithm text/code
+// / External algorithm reference
 func (rcv *CustomAlgorithm) EXTERNAL_ALGORITHM_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -125,8 +125,8 @@ func (rcv *CustomAlgorithm) ExternalAlgorithmRef() []byte {
 	return rcv.EXTERNAL_ALGORITHM_REF()
 }
 
-/// External algorithm reference
-/// Input bindings
+// / External algorithm reference
+// / Input bindings
 func (rcv *CustomAlgorithm) INPUTS(obj *AlgorithmInput, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -158,8 +158,8 @@ func (rcv *CustomAlgorithm) InputsLength() int {
 	return rcv.INPUTSLength()
 }
 
-/// Input bindings
-/// Output bindings
+// / Input bindings
+// / Output bindings
 func (rcv *CustomAlgorithm) OUTPUTS(obj *AlgorithmOutput, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -191,8 +191,8 @@ func (rcv *CustomAlgorithm) OutputsLength() int {
 	return rcv.OUTPUTSLength()
 }
 
-/// Output bindings
-/// Trigger conditions
+// / Output bindings
+// / Trigger conditions
 func (rcv *CustomAlgorithm) TRIGGERS(obj *AlgorithmTrigger, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -224,7 +224,7 @@ func (rcv *CustomAlgorithm) TriggersLength() int {
 	return rcv.TRIGGERSLength()
 }
 
-/// Trigger conditions
+// / Trigger conditions
 func CustomAlgorithmStart(builder *flatbuffers.Builder) {
 	builder.StartObject(9)
 }

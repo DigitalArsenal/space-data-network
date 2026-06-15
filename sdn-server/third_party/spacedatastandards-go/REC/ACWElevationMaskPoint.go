@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Azimuth-dependent minimum elevation mask point.
+// / Azimuth-dependent minimum elevation mask point.
 type ACWElevationMaskPoint struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ACWElevationMaskPoint) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Azimuth, radians in the TopocentricFrame convention.
+// / Azimuth, radians in the TopocentricFrame convention.
 func (rcv *ACWElevationMaskPoint) AZIMUTH_RAD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *ACWElevationMaskPoint) AzimuthRad() float64 {
 	return rcv.AZIMUTH_RAD()
 }
 
-/// Azimuth, radians in the TopocentricFrame convention.
+// / Azimuth, radians in the TopocentricFrame convention.
 func (rcv *ACWElevationMaskPoint) MutateAZIMUTH_RAD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *ACWElevationMaskPoint) MutateAzimuthRad(n float64) bool {
 	return rcv.MutateAZIMUTH_RAD(n)
 }
 
-/// Minimum visible elevation at the azimuth, radians.
+// / Minimum visible elevation at the azimuth, radians.
 func (rcv *ACWElevationMaskPoint) ELEVATION_RAD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *ACWElevationMaskPoint) ElevationRad() float64 {
 	return rcv.ELEVATION_RAD()
 }
 
-/// Minimum visible elevation at the azimuth, radians.
+// / Minimum visible elevation at the azimuth, radians.
 func (rcv *ACWElevationMaskPoint) MutateELEVATION_RAD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }

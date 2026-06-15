@@ -6,9 +6,9 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Plugin License Key - Issued license for plugin access
-/// Uses ECIES: both parties derive symmetric key via X25519 ECDH
-/// Key derivation: X25519(private, peer_public) → HKDF-SHA256 → AES-256-GCM
+// / Plugin License Key - Issued license for plugin access
+// / Uses ECIES: both parties derive symmetric key via X25519 ECDH
+// / Key derivation: X25519(private, peer_public) → HKDF-SHA256 → AES-256-GCM
 type PLK struct {
 	_tab flatbuffers.Table
 }
@@ -56,7 +56,7 @@ func (rcv *PLK) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique license key identifier
+// / Unique license key identifier
 func (rcv *PLK) LICENSE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *PLK) LicenseId() []byte {
 	return rcv.LICENSE_ID()
 }
 
-/// Unique license key identifier
-/// Plugin ID this license is for
+// / Unique license key identifier
+// / Plugin ID this license is for
 func (rcv *PLK) PLUGIN_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *PLK) PluginId() []byte {
 	return rcv.PLUGIN_ID()
 }
 
-/// Plugin ID this license is for
-/// Plugin version or version range (semver)
+// / Plugin ID this license is for
+// / Plugin version or version range (semver)
 func (rcv *PLK) PLUGIN_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *PLK) PluginVersion() []byte {
 	return rcv.PLUGIN_VERSION()
 }
 
-/// Plugin version or version range (semver)
-/// Licensee organization name
+// / Plugin version or version range (semver)
+// / Licensee organization name
 func (rcv *PLK) LICENSEE_ORG() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -111,8 +111,8 @@ func (rcv *PLK) LicenseeOrg() []byte {
 	return rcv.LICENSEE_ORG()
 }
 
-/// Licensee organization name
-/// Licensee contact email
+// / Licensee organization name
+// / Licensee contact email
 func (rcv *PLK) LICENSEE_EMAIL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -125,8 +125,8 @@ func (rcv *PLK) LicenseeEmail() []byte {
 	return rcv.LICENSEE_EMAIL()
 }
 
-/// Licensee contact email
-/// Licensee's SDN Peer ID
+// / Licensee contact email
+// / Licensee's SDN Peer ID
 func (rcv *PLK) LICENSEE_PEER_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -139,8 +139,8 @@ func (rcv *PLK) LicenseePeerId() []byte {
 	return rcv.LICENSEE_PEER_ID()
 }
 
-/// Licensee's SDN Peer ID
-/// Licensee's X25519 public key (32 bytes)
+// / Licensee's SDN Peer ID
+// / Licensee's X25519 public key (32 bytes)
 func (rcv *PLK) LICENSEE_PUBKEY(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -178,7 +178,7 @@ func (rcv *PLK) LicenseePubkeyBytes() []byte {
 	return rcv.LICENSEE_PUBKEYBytes()
 }
 
-/// Licensee's X25519 public key (32 bytes)
+// / Licensee's X25519 public key (32 bytes)
 func (rcv *PLK) MutateLICENSEE_PUBKEY(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -192,8 +192,8 @@ func (rcv *PLK) MutateLicenseePubkey(j int, n byte) bool {
 	return rcv.MutateLICENSEE_PUBKEY(j, n)
 }
 
-/// Issuer's X25519 public key (32 bytes)
-/// Used with licensee's private key to derive shared secret via ECDH
+// / Issuer's X25519 public key (32 bytes)
+// / Used with licensee's private key to derive shared secret via ECDH
 func (rcv *PLK) ISSUER_PUBKEY(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -231,8 +231,8 @@ func (rcv *PLK) IssuerPubkeyBytes() []byte {
 	return rcv.ISSUER_PUBKEYBytes()
 }
 
-/// Issuer's X25519 public key (32 bytes)
-/// Used with licensee's private key to derive shared secret via ECDH
+// / Issuer's X25519 public key (32 bytes)
+// / Used with licensee's private key to derive shared secret via ECDH
 func (rcv *PLK) MutateISSUER_PUBKEY(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -246,7 +246,7 @@ func (rcv *PLK) MutateIssuerPubkey(j int, n byte) bool {
 	return rcv.MutateISSUER_PUBKEY(j, n)
 }
 
-/// Domain restrictions (empty = any domain allowed)
+// / Domain restrictions (empty = any domain allowed)
 func (rcv *PLK) ALLOWED_DOMAINS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -272,8 +272,8 @@ func (rcv *PLK) AllowedDomainsLength() int {
 	return rcv.ALLOWED_DOMAINSLength()
 }
 
-/// Domain restrictions (empty = any domain allowed)
-/// TLD restrictions (e.g., ".gov", ".mil", ".edu")
+// / Domain restrictions (empty = any domain allowed)
+// / TLD restrictions (e.g., ".gov", ".mil", ".edu")
 func (rcv *PLK) ALLOWED_TLDS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -299,8 +299,8 @@ func (rcv *PLK) AllowedTldsLength() int {
 	return rcv.ALLOWED_TLDSLength()
 }
 
-/// TLD restrictions (e.g., ".gov", ".mil", ".edu")
-/// Type of license
+// / TLD restrictions (e.g., ".gov", ".mil", ".edu")
+// / Type of license
 func (rcv *PLK) LICENSE_TYPE() licenseCategory {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -313,7 +313,7 @@ func (rcv *PLK) LicenseType() licenseCategory {
 	return rcv.LICENSE_TYPE()
 }
 
-/// Type of license
+// / Type of license
 func (rcv *PLK) MutateLICENSE_TYPE(n licenseCategory) bool {
 	return rcv._tab.MutateInt8Slot(24, int8(n))
 }
@@ -322,7 +322,7 @@ func (rcv *PLK) MutateLicenseType(n licenseCategory) bool {
 	return rcv.MutateLICENSE_TYPE(n)
 }
 
-/// Maximum concurrent activations (0 = unlimited)
+// / Maximum concurrent activations (0 = unlimited)
 func (rcv *PLK) MAX_ACTIVATIONS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -335,7 +335,7 @@ func (rcv *PLK) MaxActivations() uint32 {
 	return rcv.MAX_ACTIVATIONS()
 }
 
-/// Maximum concurrent activations (0 = unlimited)
+// / Maximum concurrent activations (0 = unlimited)
 func (rcv *PLK) MutateMAX_ACTIVATIONS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(26, n)
 }
@@ -344,7 +344,7 @@ func (rcv *PLK) MutateMaxActivations(n uint32) bool {
 	return rcv.MutateMAX_ACTIVATIONS(n)
 }
 
-/// Unix timestamp when license was issued
+// / Unix timestamp when license was issued
 func (rcv *PLK) ISSUED_AT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -357,7 +357,7 @@ func (rcv *PLK) IssuedAt() uint64 {
 	return rcv.ISSUED_AT()
 }
 
-/// Unix timestamp when license was issued
+// / Unix timestamp when license was issued
 func (rcv *PLK) MutateISSUED_AT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(28, n)
 }
@@ -366,7 +366,7 @@ func (rcv *PLK) MutateIssuedAt(n uint64) bool {
 	return rcv.MutateISSUED_AT(n)
 }
 
-/// Unix timestamp when license becomes valid
+// / Unix timestamp when license becomes valid
 func (rcv *PLK) VALID_FROM() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -379,7 +379,7 @@ func (rcv *PLK) ValidFrom() uint64 {
 	return rcv.VALID_FROM()
 }
 
-/// Unix timestamp when license becomes valid
+// / Unix timestamp when license becomes valid
 func (rcv *PLK) MutateVALID_FROM(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(30, n)
 }
@@ -388,7 +388,7 @@ func (rcv *PLK) MutateValidFrom(n uint64) bool {
 	return rcv.MutateVALID_FROM(n)
 }
 
-/// Unix timestamp when license expires (0 = never expires)
+// / Unix timestamp when license expires (0 = never expires)
 func (rcv *PLK) EXPIRES_AT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -401,7 +401,7 @@ func (rcv *PLK) ExpiresAt() uint64 {
 	return rcv.EXPIRES_AT()
 }
 
-/// Unix timestamp when license expires (0 = never expires)
+// / Unix timestamp when license expires (0 = never expires)
 func (rcv *PLK) MutateEXPIRES_AT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(32, n)
 }
@@ -410,7 +410,7 @@ func (rcv *PLK) MutateExpiresAt(n uint64) bool {
 	return rcv.MutateEXPIRES_AT(n)
 }
 
-/// Peer ID of the license issuer (OrbPro)
+// / Peer ID of the license issuer (OrbPro)
 func (rcv *PLK) ISSUER_PEER_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -423,8 +423,8 @@ func (rcv *PLK) IssuerPeerId() []byte {
 	return rcv.ISSUER_PEER_ID()
 }
 
-/// Peer ID of the license issuer (OrbPro)
-/// Ed25519 signature from issuer over all fields (except SIGNATURE)
+// / Peer ID of the license issuer (OrbPro)
+// / Ed25519 signature from issuer over all fields (except SIGNATURE)
 func (rcv *PLK) SIGNATURE(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -462,7 +462,7 @@ func (rcv *PLK) SignatureBytes() []byte {
 	return rcv.SIGNATUREBytes()
 }
 
-/// Ed25519 signature from issuer over all fields (except SIGNATURE)
+// / Ed25519 signature from issuer over all fields (except SIGNATURE)
 func (rcv *PLK) MutateSIGNATURE(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {

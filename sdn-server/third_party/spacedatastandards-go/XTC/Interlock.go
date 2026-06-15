@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Interlock constraint
+// / Interlock constraint
 type Interlock struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *Interlock) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Parameter reference
+// / Parameter reference
 func (rcv *Interlock) PARAMETER_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *Interlock) ParameterRef() []byte {
 	return rcv.PARAMETER_REF()
 }
 
-/// Parameter reference
-/// Required value
+// / Parameter reference
+// / Required value
 func (rcv *Interlock) VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *Interlock) Value() []byte {
 	return rcv.VALUE()
 }
 
-/// Required value
-/// Operator for comparison
+// / Required value
+// / Operator for comparison
 func (rcv *Interlock) OPERATOR() ComparisonOperator {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *Interlock) Operator() ComparisonOperator {
 	return rcv.OPERATOR()
 }
 
-/// Operator for comparison
+// / Operator for comparison
 func (rcv *Interlock) MutateOPERATOR(n ComparisonOperator) bool {
 	return rcv._tab.MutateInt8Slot(8, int8(n))
 }

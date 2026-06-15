@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Licensing challenge message
+// / Licensing challenge message
 type LCH struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *LCH) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Message type
+// / Message type
 func (rcv *LCH) MESSAGE_TYPE() licensingChallengeMessageType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *LCH) MessageType() licensingChallengeMessageType {
 	return rcv.MESSAGE_TYPE()
 }
 
-/// Message type
+// / Message type
 func (rcv *LCH) MutateMESSAGE_TYPE(n licensingChallengeMessageType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -76,7 +76,7 @@ func (rcv *LCH) MutateMessageType(n licensingChallengeMessageType) bool {
 	return rcv.MutateMESSAGE_TYPE(n)
 }
 
-/// Sender role
+// / Sender role
 func (rcv *LCH) ROLE() licensingChallengeRole {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,7 +89,7 @@ func (rcv *LCH) Role() licensingChallengeRole {
 	return rcv.ROLE()
 }
 
-/// Sender role
+// / Sender role
 func (rcv *LCH) MutateROLE(n licensingChallengeRole) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -98,7 +98,7 @@ func (rcv *LCH) MutateRole(n licensingChallengeRole) bool {
 	return rcv.MutateROLE(n)
 }
 
-/// Unique request identifier
+// / Unique request identifier
 func (rcv *LCH) REQUEST_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -111,8 +111,8 @@ func (rcv *LCH) RequestId() []byte {
 	return rcv.REQUEST_ID()
 }
 
-/// Unique request identifier
-/// Canonical module identifier
+// / Unique request identifier
+// / Canonical module identifier
 func (rcv *LCH) MODULE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -125,8 +125,8 @@ func (rcv *LCH) ModuleId() []byte {
 	return rcv.MODULE_ID()
 }
 
-/// Canonical module identifier
-/// Optional requested module version
+// / Canonical module identifier
+// / Optional requested module version
 func (rcv *LCH) MODULE_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -139,8 +139,8 @@ func (rcv *LCH) ModuleVersion() []byte {
 	return rcv.MODULE_VERSION()
 }
 
-/// Optional requested module version
-/// Requester peer identifier
+// / Optional requested module version
+// / Requester peer identifier
 func (rcv *LCH) REQUESTER_PEER_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -153,8 +153,8 @@ func (rcv *LCH) RequesterPeerId() []byte {
 	return rcv.REQUESTER_PEER_ID()
 }
 
-/// Requester peer identifier
-/// Requester account identity or wallet xpub
+// / Requester peer identifier
+// / Requester account identity or wallet xpub
 func (rcv *LCH) REQUESTER_XPUB() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -167,8 +167,8 @@ func (rcv *LCH) RequesterXpub() []byte {
 	return rcv.REQUESTER_XPUB()
 }
 
-/// Requester account identity or wallet xpub
-/// Requester Ed25519 signing public key
+// / Requester account identity or wallet xpub
+// / Requester Ed25519 signing public key
 func (rcv *LCH) REQUESTER_SIGNING_PUBKEY(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -206,7 +206,7 @@ func (rcv *LCH) RequesterSigningPubkeyBytes() []byte {
 	return rcv.REQUESTER_SIGNING_PUBKEYBytes()
 }
 
-/// Requester Ed25519 signing public key
+// / Requester Ed25519 signing public key
 func (rcv *LCH) MutateREQUESTER_SIGNING_PUBKEY(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -220,7 +220,7 @@ func (rcv *LCH) MutateRequesterSigningPubkey(j int, n byte) bool {
 	return rcv.MutateREQUESTER_SIGNING_PUBKEY(j, n)
 }
 
-/// Requester ephemeral X25519 public key
+// / Requester ephemeral X25519 public key
 func (rcv *LCH) REQUESTER_EPHEMERAL_PUBKEY(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -258,7 +258,7 @@ func (rcv *LCH) RequesterEphemeralPubkeyBytes() []byte {
 	return rcv.REQUESTER_EPHEMERAL_PUBKEYBytes()
 }
 
-/// Requester ephemeral X25519 public key
+// / Requester ephemeral X25519 public key
 func (rcv *LCH) MutateREQUESTER_EPHEMERAL_PUBKEY(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -272,7 +272,7 @@ func (rcv *LCH) MutateRequesterEphemeralPubkey(j int, n byte) bool {
 	return rcv.MutateREQUESTER_EPHEMERAL_PUBKEY(j, n)
 }
 
-/// Requested domain for policy evaluation
+// / Requested domain for policy evaluation
 func (rcv *LCH) REQUESTED_DOMAIN() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -285,8 +285,8 @@ func (rcv *LCH) RequestedDomain() []byte {
 	return rcv.REQUESTED_DOMAIN()
 }
 
-/// Requested domain for policy evaluation
-/// Requested timeout in milliseconds
+// / Requested domain for policy evaluation
+// / Requested timeout in milliseconds
 func (rcv *LCH) REQUESTED_TIMEOUT_MS() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -299,7 +299,7 @@ func (rcv *LCH) RequestedTimeoutMs() uint64 {
 	return rcv.REQUESTED_TIMEOUT_MS()
 }
 
-/// Requested timeout in milliseconds
+// / Requested timeout in milliseconds
 func (rcv *LCH) MutateREQUESTED_TIMEOUT_MS(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(24, n)
 }
@@ -308,7 +308,7 @@ func (rcv *LCH) MutateRequestedTimeoutMs(n uint64) bool {
 	return rcv.MutateREQUESTED_TIMEOUT_MS(n)
 }
 
-/// Request timestamp in milliseconds since epoch
+// / Request timestamp in milliseconds since epoch
 func (rcv *LCH) REQUESTED_AT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -321,7 +321,7 @@ func (rcv *LCH) RequestedAt() uint64 {
 	return rcv.REQUESTED_AT()
 }
 
-/// Request timestamp in milliseconds since epoch
+// / Request timestamp in milliseconds since epoch
 func (rcv *LCH) MutateREQUESTED_AT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(26, n)
 }
@@ -330,7 +330,7 @@ func (rcv *LCH) MutateRequestedAt(n uint64) bool {
 	return rcv.MutateREQUESTED_AT(n)
 }
 
-/// Provider-issued challenge nonce
+// / Provider-issued challenge nonce
 func (rcv *LCH) CHALLENGE_NONCE(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -368,7 +368,7 @@ func (rcv *LCH) ChallengeNonceBytes() []byte {
 	return rcv.CHALLENGE_NONCEBytes()
 }
 
-/// Provider-issued challenge nonce
+// / Provider-issued challenge nonce
 func (rcv *LCH) MutateCHALLENGE_NONCE(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -382,7 +382,7 @@ func (rcv *LCH) MutateChallengeNonce(j int, n byte) bool {
 	return rcv.MutateCHALLENGE_NONCE(j, n)
 }
 
-/// Challenge expiration time in milliseconds since epoch
+// / Challenge expiration time in milliseconds since epoch
 func (rcv *LCH) EXPIRES_AT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -395,7 +395,7 @@ func (rcv *LCH) ExpiresAt() uint64 {
 	return rcv.EXPIRES_AT()
 }
 
-/// Challenge expiration time in milliseconds since epoch
+// / Challenge expiration time in milliseconds since epoch
 func (rcv *LCH) MutateEXPIRES_AT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(30, n)
 }
@@ -404,7 +404,7 @@ func (rcv *LCH) MutateExpiresAt(n uint64) bool {
 	return rcv.MutateEXPIRES_AT(n)
 }
 
-/// Provider peer identifier
+// / Provider peer identifier
 func (rcv *LCH) PROVIDER_PEER_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -417,8 +417,8 @@ func (rcv *LCH) ProviderPeerId() []byte {
 	return rcv.PROVIDER_PEER_ID()
 }
 
-/// Provider peer identifier
-/// Structured error code
+// / Provider peer identifier
+// / Structured error code
 func (rcv *LCH) ERROR_CODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -431,8 +431,8 @@ func (rcv *LCH) ErrorCode() []byte {
 	return rcv.ERROR_CODE()
 }
 
-/// Structured error code
-/// Structured error message
+// / Structured error code
+// / Structured error message
 func (rcv *LCH) ERROR_MESSAGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -445,7 +445,7 @@ func (rcv *LCH) ErrorMessage() []byte {
 	return rcv.ERROR_MESSAGE()
 }
 
-/// Structured error message
+// / Structured error message
 func LCHStart(builder *flatbuffers.Builder) {
 	builder.StartObject(17)
 }

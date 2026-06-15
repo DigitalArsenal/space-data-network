@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Astrodynamics
+// / Astrodynamics
 type AST struct {
 	_tab flatbuffers.Table
 }

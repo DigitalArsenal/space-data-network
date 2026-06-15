@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Metadata stored in the REC trailer for one module delivery artifact.
+// / Metadata stored in the REC trailer for one module delivery artifact.
 type MBL struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *MBL) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Bundle schema version.
+// / Bundle schema version.
 func (rcv *MBL) bundle_version() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *MBL) BundleVersion() uint16 {
 	return rcv.bundle_version()
 }
 
-/// Bundle schema version.
+// / Bundle schema version.
 func (rcv *MBL) Mutatebundle_version(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(4, n)
 }
@@ -76,7 +76,7 @@ func (rcv *MBL) MutateBundleVersion(n uint16) bool {
 	return rcv.Mutatebundle_version(n)
 }
 
-/// Human-readable package format label.
+// / Human-readable package format label.
 func (rcv *MBL) module_format() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,8 +89,8 @@ func (rcv *MBL) ModuleFormat() []byte {
 	return rcv.module_format()
 }
 
-/// Human-readable package format label.
-/// Canonicalization rule used to compute module hashes.
+// / Human-readable package format label.
+// / Canonicalization rule used to compute module hashes.
 func (rcv *MBL) canonicalization(obj *CanonicalizationRule) *CanonicalizationRule {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -108,8 +108,8 @@ func (rcv *MBL) Canonicalization(obj *CanonicalizationRule) *CanonicalizationRul
 	return rcv.canonicalization(obj)
 }
 
-/// Canonicalization rule used to compute module hashes.
-/// SHA-256 of the wasm module after stripping SDS-owned custom sections.
+// / Canonicalization rule used to compute module hashes.
+// / SHA-256 of the wasm module after stripping SDS-owned custom sections.
 func (rcv *MBL) canonical_module_hash(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -147,7 +147,7 @@ func (rcv *MBL) CanonicalModuleHashBytes() []byte {
 	return rcv.canonical_module_hashBytes()
 }
 
-/// SHA-256 of the wasm module after stripping SDS-owned custom sections.
+// / SHA-256 of the wasm module after stripping SDS-owned custom sections.
 func (rcv *MBL) Mutatecanonical_module_hash(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -161,7 +161,7 @@ func (rcv *MBL) MutateCanonicalModuleHash(j int, n byte) bool {
 	return rcv.Mutatecanonical_module_hash(j, n)
 }
 
-/// SHA-256 of the canonical plugin manifest bytes.
+// / SHA-256 of the canonical plugin manifest bytes.
 func (rcv *MBL) manifest_hash(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -199,7 +199,7 @@ func (rcv *MBL) ManifestHashBytes() []byte {
 	return rcv.manifest_hashBytes()
 }
 
-/// SHA-256 of the canonical plugin manifest bytes.
+// / SHA-256 of the canonical plugin manifest bytes.
 func (rcv *MBL) Mutatemanifest_hash(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -213,7 +213,7 @@ func (rcv *MBL) MutateManifestHash(j int, n byte) bool {
 	return rcv.Mutatemanifest_hash(j, n)
 }
 
-/// Legacy ABI export retained for backward compatibility.
+// / Legacy ABI export retained for backward compatibility.
 func (rcv *MBL) manifest_export_symbol() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -226,8 +226,8 @@ func (rcv *MBL) ManifestExportSymbol() []byte {
 	return rcv.manifest_export_symbol()
 }
 
-/// Legacy ABI export retained for backward compatibility.
-/// Legacy ABI export retained for backward compatibility.
+// / Legacy ABI export retained for backward compatibility.
+// / Legacy ABI export retained for backward compatibility.
 func (rcv *MBL) manifest_size_symbol() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -240,8 +240,8 @@ func (rcv *MBL) ManifestSizeSymbol() []byte {
 	return rcv.manifest_size_symbol()
 }
 
-/// Legacy ABI export retained for backward compatibility.
-/// Payloads embedded in the bundle.
+// / Legacy ABI export retained for backward compatibility.
+// / Payloads embedded in the bundle.
 func (rcv *MBL) entries(obj *ModuleBundleEntry, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -286,7 +286,7 @@ func (rcv *MBL) EntriesLength() int {
 	return rcv.entriesLength()
 }
 
-/// Payloads embedded in the bundle.
+// / Payloads embedded in the bundle.
 func MBLStart(builder *flatbuffers.Builder) {
 	builder.StartObject(8)
 }

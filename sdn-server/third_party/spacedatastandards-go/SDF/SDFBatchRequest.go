@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Batch SDF evaluation request (arena-addressed, zero-copy).
+// / Batch SDF evaluation request (arena-addressed, zero-copy).
 type SDFBatchRequest struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *SDFBatchRequest) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Input buffer offset (arena bytes) where the Vec3[] of world points begins.
+// / Input buffer offset (arena bytes) where the Vec3[] of world points begins.
 func (rcv *SDFBatchRequest) INPUT_OFFSET() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *SDFBatchRequest) InputOffset() uint32 {
 	return rcv.INPUT_OFFSET()
 }
 
-/// Input buffer offset (arena bytes) where the Vec3[] of world points begins.
+// / Input buffer offset (arena bytes) where the Vec3[] of world points begins.
 func (rcv *SDFBatchRequest) MutateINPUT_OFFSET(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *SDFBatchRequest) MutateInputOffset(n uint32) bool {
 	return rcv.MutateINPUT_OFFSET(n)
 }
 
-/// Number of points to evaluate.
+// / Number of points to evaluate.
 func (rcv *SDFBatchRequest) POINT_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *SDFBatchRequest) PointCount() uint32 {
 	return rcv.POINT_COUNT()
 }
 
-/// Number of points to evaluate.
+// / Number of points to evaluate.
 func (rcv *SDFBatchRequest) MutatePOINT_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *SDFBatchRequest) MutatePointCount(n uint32) bool {
 	return rcv.MutatePOINT_COUNT(n)
 }
 
-/// Entity-ids buffer offset corresponding to each point (optional).
+// / Entity-ids buffer offset corresponding to each point (optional).
 func (rcv *SDFBatchRequest) ENTITY_IDS_OFFSET() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *SDFBatchRequest) EntityIdsOffset() uint32 {
 	return rcv.ENTITY_IDS_OFFSET()
 }
 
-/// Entity-ids buffer offset corresponding to each point (optional).
+// / Entity-ids buffer offset corresponding to each point (optional).
 func (rcv *SDFBatchRequest) MutateENTITY_IDS_OFFSET(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *SDFBatchRequest) MutateEntityIdsOffset(n uint32) bool {
 	return rcv.MutateENTITY_IDS_OFFSET(n)
 }
 
-/// Output buffer offset where sdfResult[] is written.
+// / Output buffer offset where sdfResult[] is written.
 func (rcv *SDFBatchRequest) OUTPUT_OFFSET() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *SDFBatchRequest) OutputOffset() uint32 {
 	return rcv.OUTPUT_OFFSET()
 }
 
-/// Output buffer offset where sdfResult[] is written.
+// / Output buffer offset where sdfResult[] is written.
 func (rcv *SDFBatchRequest) MutateOUTPUT_OFFSET(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *SDFBatchRequest) MutateOutputOffset(n uint32) bool {
 	return rcv.MutateOUTPUT_OFFSET(n)
 }
 
-/// Inverse-transform buffer offset (4x4 matrix, 128 bytes).
+// / Inverse-transform buffer offset (4x4 matrix, 128 bytes).
 func (rcv *SDFBatchRequest) INVERSE_TRANSFORM_OFFSET() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,7 +143,7 @@ func (rcv *SDFBatchRequest) InverseTransformOffset() uint32 {
 	return rcv.INVERSE_TRANSFORM_OFFSET()
 }
 
-/// Inverse-transform buffer offset (4x4 matrix, 128 bytes).
+// / Inverse-transform buffer offset (4x4 matrix, 128 bytes).
 func (rcv *SDFBatchRequest) MutateINVERSE_TRANSFORM_OFFSET(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(12, n)
 }

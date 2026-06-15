@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Integrated Device Message
+// / Integrated Device Message
 type IDM struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *IDM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique identifier for the EMT
+// / Unique identifier for the EMT
 func (rcv *IDM) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *IDM) Id() []byte {
 	return rcv.ID()
 }
 
-/// Unique identifier for the EMT
-/// Name of the EMT
+// / Unique identifier for the EMT
+// / Name of the EMT
 func (rcv *IDM) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *IDM) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Name of the EMT
-/// Mode of the data (real, simulated, synthetic)
+// / Name of the EMT
+// / Mode of the data (real, simulated, synthetic)
 func (rcv *IDM) DATA_MODE() DataMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,7 +95,7 @@ func (rcv *IDM) DataMode() DataMode {
 	return rcv.DATA_MODE()
 }
 
-/// Mode of the data (real, simulated, synthetic)
+// / Mode of the data (real, simulated, synthetic)
 func (rcv *IDM) MutateDATA_MODE(n DataMode) bool {
 	return rcv._tab.MutateInt8Slot(8, int8(n))
 }
@@ -104,7 +104,7 @@ func (rcv *IDM) MutateDataMode(n DataMode) bool {
 	return rcv.MutateDATA_MODE(n)
 }
 
-/// Uplink frequency range
+// / Uplink frequency range
 func (rcv *IDM) UPLINK(obj *FrequencyRange) *FrequencyRange {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -122,8 +122,8 @@ func (rcv *IDM) Uplink(obj *FrequencyRange) *FrequencyRange {
 	return rcv.UPLINK(obj)
 }
 
-/// Uplink frequency range
-/// Downlink frequency range
+// / Uplink frequency range
+// / Downlink frequency range
 func (rcv *IDM) DOWNLINK(obj *FrequencyRange) *FrequencyRange {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -141,8 +141,8 @@ func (rcv *IDM) Downlink(obj *FrequencyRange) *FrequencyRange {
 	return rcv.DOWNLINK(obj)
 }
 
-/// Downlink frequency range
-/// Beacon frequency range
+// / Downlink frequency range
+// / Beacon frequency range
 func (rcv *IDM) BEACON(obj *FrequencyRange) *FrequencyRange {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -160,8 +160,8 @@ func (rcv *IDM) Beacon(obj *FrequencyRange) *FrequencyRange {
 	return rcv.BEACON(obj)
 }
 
-/// Beacon frequency range
-/// Bands associated with the EMT
+// / Beacon frequency range
+// / Bands associated with the EMT
 func (rcv *IDM) BAND(obj *Band, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -193,8 +193,8 @@ func (rcv *IDM) BandLength() int {
 	return rcv.BANDLength()
 }
 
-/// Bands associated with the EMT
-/// Type of polarization used
+// / Bands associated with the EMT
+// / Type of polarization used
 func (rcv *IDM) POLARIZATION_TYPE() PolarizationType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -207,7 +207,7 @@ func (rcv *IDM) PolarizationType() PolarizationType {
 	return rcv.POLARIZATION_TYPE()
 }
 
-/// Type of polarization used
+// / Type of polarization used
 func (rcv *IDM) MutatePOLARIZATION_TYPE(n PolarizationType) bool {
 	return rcv._tab.MutateInt8Slot(18, int8(n))
 }
@@ -216,7 +216,7 @@ func (rcv *IDM) MutatePolarizationType(n PolarizationType) bool {
 	return rcv.MutatePOLARIZATION_TYPE(n)
 }
 
-/// Simple polarization configuration
+// / Simple polarization configuration
 func (rcv *IDM) SIMPLE_POLARIZATION() SimplePolarization {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -229,7 +229,7 @@ func (rcv *IDM) SimplePolarization() SimplePolarization {
 	return rcv.SIMPLE_POLARIZATION()
 }
 
-/// Simple polarization configuration
+// / Simple polarization configuration
 func (rcv *IDM) MutateSIMPLE_POLARIZATION(n SimplePolarization) bool {
 	return rcv._tab.MutateInt8Slot(20, int8(n))
 }
@@ -238,7 +238,7 @@ func (rcv *IDM) MutateSimplePolarization(n SimplePolarization) bool {
 	return rcv.MutateSIMPLE_POLARIZATION(n)
 }
 
-/// Stokes parameters for polarization characterization
+// / Stokes parameters for polarization characterization
 func (rcv *IDM) STOKES_PARAMETERS(obj *StokesParameters) *StokesParameters {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -256,8 +256,8 @@ func (rcv *IDM) StokesParameters(obj *StokesParameters) *StokesParameters {
 	return rcv.STOKES_PARAMETERS(obj)
 }
 
-/// Stokes parameters for polarization characterization
-/// Power required in Watts
+// / Stokes parameters for polarization characterization
+// / Power required in Watts
 func (rcv *IDM) POWER_REQUIRED() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -270,7 +270,7 @@ func (rcv *IDM) PowerRequired() float64 {
 	return rcv.POWER_REQUIRED()
 }
 
-/// Power required in Watts
+// / Power required in Watts
 func (rcv *IDM) MutatePOWER_REQUIRED(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -279,7 +279,7 @@ func (rcv *IDM) MutatePowerRequired(n float64) bool {
 	return rcv.MutatePOWER_REQUIRED(n)
 }
 
-/// Type of power (eg. AC or DC)
+// / Type of power (eg. AC or DC)
 func (rcv *IDM) POWER_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -292,8 +292,8 @@ func (rcv *IDM) PowerType() []byte {
 	return rcv.POWER_TYPE()
 }
 
-/// Type of power (eg. AC or DC)
-/// Indicates if the EMT can transmit
+// / Type of power (eg. AC or DC)
+// / Indicates if the EMT can transmit
 func (rcv *IDM) TRANSMIT() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -306,7 +306,7 @@ func (rcv *IDM) Transmit() bool {
 	return rcv.TRANSMIT()
 }
 
-/// Indicates if the EMT can transmit
+// / Indicates if the EMT can transmit
 func (rcv *IDM) MutateTRANSMIT(n bool) bool {
 	return rcv._tab.MutateBoolSlot(28, n)
 }
@@ -315,7 +315,7 @@ func (rcv *IDM) MutateTransmit(n bool) bool {
 	return rcv.MutateTRANSMIT(n)
 }
 
-/// Indicates if the EMT can receive
+// / Indicates if the EMT can receive
 func (rcv *IDM) RECEIVE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -328,7 +328,7 @@ func (rcv *IDM) Receive() bool {
 	return rcv.RECEIVE()
 }
 
-/// Indicates if the EMT can receive
+// / Indicates if the EMT can receive
 func (rcv *IDM) MutateRECEIVE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(30, n)
 }
@@ -337,7 +337,7 @@ func (rcv *IDM) MutateReceive(n bool) bool {
 	return rcv.MutateRECEIVE(n)
 }
 
-/// Type of the sensor
+// / Type of the sensor
 func (rcv *IDM) SENSOR_TYPE() DeviceType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -350,7 +350,7 @@ func (rcv *IDM) SensorType() DeviceType {
 	return rcv.SENSOR_TYPE()
 }
 
-/// Type of the sensor
+// / Type of the sensor
 func (rcv *IDM) MutateSENSOR_TYPE(n DeviceType) bool {
 	return rcv._tab.MutateInt8Slot(32, int8(n))
 }
@@ -359,7 +359,7 @@ func (rcv *IDM) MutateSensorType(n DeviceType) bool {
 	return rcv.MutateSENSOR_TYPE(n)
 }
 
-/// Source of the data
+// / Source of the data
 func (rcv *IDM) SOURCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -372,8 +372,8 @@ func (rcv *IDM) Source() []byte {
 	return rcv.SOURCE()
 }
 
-/// Source of the data
-/// Timestamp of the last observation
+// / Source of the data
+// / Timestamp of the last observation
 func (rcv *IDM) LAST_OB_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -386,8 +386,8 @@ func (rcv *IDM) LastObTime() []byte {
 	return rcv.LAST_OB_TIME()
 }
 
-/// Timestamp of the last observation
-/// Lower left elevation limit
+// / Timestamp of the last observation
+// / Lower left elevation limit
 func (rcv *IDM) LOWER_LEFT_ELEVATION_LIMIT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -400,7 +400,7 @@ func (rcv *IDM) LowerLeftElevationLimit() float64 {
 	return rcv.LOWER_LEFT_ELEVATION_LIMIT()
 }
 
-/// Lower left elevation limit
+// / Lower left elevation limit
 func (rcv *IDM) MutateLOWER_LEFT_ELEVATION_LIMIT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -409,7 +409,7 @@ func (rcv *IDM) MutateLowerLeftElevationLimit(n float64) bool {
 	return rcv.MutateLOWER_LEFT_ELEVATION_LIMIT(n)
 }
 
-/// Upper left azimuth limit
+// / Upper left azimuth limit
 func (rcv *IDM) UPPER_LEFT_AZIMUTH_LIMIT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -422,7 +422,7 @@ func (rcv *IDM) UpperLeftAzimuthLimit() float64 {
 	return rcv.UPPER_LEFT_AZIMUTH_LIMIT()
 }
 
-/// Upper left azimuth limit
+// / Upper left azimuth limit
 func (rcv *IDM) MutateUPPER_LEFT_AZIMUTH_LIMIT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -431,7 +431,7 @@ func (rcv *IDM) MutateUpperLeftAzimuthLimit(n float64) bool {
 	return rcv.MutateUPPER_LEFT_AZIMUTH_LIMIT(n)
 }
 
-/// Lower right elevation limit
+// / Lower right elevation limit
 func (rcv *IDM) LOWER_RIGHT_ELEVATION_LIMIT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -444,7 +444,7 @@ func (rcv *IDM) LowerRightElevationLimit() float64 {
 	return rcv.LOWER_RIGHT_ELEVATION_LIMIT()
 }
 
-/// Lower right elevation limit
+// / Lower right elevation limit
 func (rcv *IDM) MutateLOWER_RIGHT_ELEVATION_LIMIT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -453,7 +453,7 @@ func (rcv *IDM) MutateLowerRightElevationLimit(n float64) bool {
 	return rcv.MutateLOWER_RIGHT_ELEVATION_LIMIT(n)
 }
 
-/// Lower left azimuth limit
+// / Lower left azimuth limit
 func (rcv *IDM) LOWER_LEFT_AZIMUTH_LIMIT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -466,7 +466,7 @@ func (rcv *IDM) LowerLeftAzimuthLimit() float64 {
 	return rcv.LOWER_LEFT_AZIMUTH_LIMIT()
 }
 
-/// Lower left azimuth limit
+// / Lower left azimuth limit
 func (rcv *IDM) MutateLOWER_LEFT_AZIMUTH_LIMIT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(44, n)
 }
@@ -475,7 +475,7 @@ func (rcv *IDM) MutateLowerLeftAzimuthLimit(n float64) bool {
 	return rcv.MutateLOWER_LEFT_AZIMUTH_LIMIT(n)
 }
 
-/// Upper right elevation limit
+// / Upper right elevation limit
 func (rcv *IDM) UPPER_RIGHT_ELEVATION_LIMIT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -488,7 +488,7 @@ func (rcv *IDM) UpperRightElevationLimit() float64 {
 	return rcv.UPPER_RIGHT_ELEVATION_LIMIT()
 }
 
-/// Upper right elevation limit
+// / Upper right elevation limit
 func (rcv *IDM) MutateUPPER_RIGHT_ELEVATION_LIMIT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(46, n)
 }
@@ -497,7 +497,7 @@ func (rcv *IDM) MutateUpperRightElevationLimit(n float64) bool {
 	return rcv.MutateUPPER_RIGHT_ELEVATION_LIMIT(n)
 }
 
-/// Upper right azimuth limit
+// / Upper right azimuth limit
 func (rcv *IDM) UPPER_RIGHT_AZIMUTH_LIMIT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -510,7 +510,7 @@ func (rcv *IDM) UpperRightAzimuthLimit() float64 {
 	return rcv.UPPER_RIGHT_AZIMUTH_LIMIT()
 }
 
-/// Upper right azimuth limit
+// / Upper right azimuth limit
 func (rcv *IDM) MutateUPPER_RIGHT_AZIMUTH_LIMIT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(48, n)
 }
@@ -519,7 +519,7 @@ func (rcv *IDM) MutateUpperRightAzimuthLimit(n float64) bool {
 	return rcv.MutateUPPER_RIGHT_AZIMUTH_LIMIT(n)
 }
 
-/// Lower right azimuth limit
+// / Lower right azimuth limit
 func (rcv *IDM) LOWER_RIGHT_AZIMUTH_LIMIT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -532,7 +532,7 @@ func (rcv *IDM) LowerRightAzimuthLimit() float64 {
 	return rcv.LOWER_RIGHT_AZIMUTH_LIMIT()
 }
 
-/// Lower right azimuth limit
+// / Lower right azimuth limit
 func (rcv *IDM) MutateLOWER_RIGHT_AZIMUTH_LIMIT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(50, n)
 }
@@ -541,7 +541,7 @@ func (rcv *IDM) MutateLowerRightAzimuthLimit(n float64) bool {
 	return rcv.MutateLOWER_RIGHT_AZIMUTH_LIMIT(n)
 }
 
-/// Upper left elevation limit
+// / Upper left elevation limit
 func (rcv *IDM) UPPER_LEFT_ELEVATION_LIMIT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -554,7 +554,7 @@ func (rcv *IDM) UpperLeftElevationLimit() float64 {
 	return rcv.UPPER_LEFT_ELEVATION_LIMIT()
 }
 
-/// Upper left elevation limit
+// / Upper left elevation limit
 func (rcv *IDM) MutateUPPER_LEFT_ELEVATION_LIMIT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(52, n)
 }
@@ -563,7 +563,7 @@ func (rcv *IDM) MutateUpperLeftElevationLimit(n float64) bool {
 	return rcv.MutateUPPER_LEFT_ELEVATION_LIMIT(n)
 }
 
-/// Right geostationary belt limit
+// / Right geostationary belt limit
 func (rcv *IDM) RIGHT_GEO_BELT_LIMIT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -576,7 +576,7 @@ func (rcv *IDM) RightGeoBeltLimit() float64 {
 	return rcv.RIGHT_GEO_BELT_LIMIT()
 }
 
-/// Right geostationary belt limit
+// / Right geostationary belt limit
 func (rcv *IDM) MutateRIGHT_GEO_BELT_LIMIT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(54, n)
 }
@@ -585,7 +585,7 @@ func (rcv *IDM) MutateRightGeoBeltLimit(n float64) bool {
 	return rcv.MutateRIGHT_GEO_BELT_LIMIT(n)
 }
 
-/// Left geostationary belt limit
+// / Left geostationary belt limit
 func (rcv *IDM) LEFT_GEO_BELT_LIMIT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -598,7 +598,7 @@ func (rcv *IDM) LeftGeoBeltLimit() float64 {
 	return rcv.LEFT_GEO_BELT_LIMIT()
 }
 
-/// Left geostationary belt limit
+// / Left geostationary belt limit
 func (rcv *IDM) MutateLEFT_GEO_BELT_LIMIT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(56, n)
 }
@@ -607,7 +607,7 @@ func (rcv *IDM) MutateLeftGeoBeltLimit(n float64) bool {
 	return rcv.MutateLEFT_GEO_BELT_LIMIT(n)
 }
 
-/// Magnitude limit of the sensor
+// / Magnitude limit of the sensor
 func (rcv *IDM) MAGNITUDE_LIMIT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -620,7 +620,7 @@ func (rcv *IDM) MagnitudeLimit() float64 {
 	return rcv.MAGNITUDE_LIMIT()
 }
 
-/// Magnitude limit of the sensor
+// / Magnitude limit of the sensor
 func (rcv *IDM) MutateMAGNITUDE_LIMIT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(58, n)
 }
@@ -629,7 +629,7 @@ func (rcv *IDM) MutateMagnitudeLimit(n float64) bool {
 	return rcv.MutateMAGNITUDE_LIMIT(n)
 }
 
-/// Indicates if the site is taskable
+// / Indicates if the site is taskable
 func (rcv *IDM) TASKABLE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -642,7 +642,7 @@ func (rcv *IDM) Taskable() bool {
 	return rcv.TASKABLE()
 }
 
-/// Indicates if the site is taskable
+// / Indicates if the site is taskable
 func (rcv *IDM) MutateTASKABLE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(60, n)
 }

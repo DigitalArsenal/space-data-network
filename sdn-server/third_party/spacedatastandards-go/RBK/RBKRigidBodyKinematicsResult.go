@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Result for one rigid-body kinematics utility operation.
+// / Result for one rigid-body kinematics utility operation.
 type RBKRigidBodyKinematicsResult struct {
 	_tab flatbuffers.Table
 }

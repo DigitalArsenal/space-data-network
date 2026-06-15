@@ -8,41 +8,41 @@ type timingStandard int8
 
 const (
 	/// Greenwich Mean Sidereal Time
-	timingStandardGMST    timingStandard = 0
+	timingStandardGMST timingStandard = 0
 	/// Global Positioning System
-	timingStandardGPS     timingStandard = 1
+	timingStandardGPS timingStandard = 1
 	/// Mission Elapsed Time
-	timingStandardMET     timingStandard = 2
+	timingStandardMET timingStandard = 2
 	/// Mission Relative Time
-	timingStandardMRT     timingStandard = 3
+	timingStandardMRT timingStandard = 3
 	/// Spacecraft Clock (receiver) (requires rules for interpretation in ICD)
-	timingStandardSCLK    timingStandard = 4
+	timingStandardSCLK timingStandard = 4
 	/// International Atomic Time
-	timingStandardTAI     timingStandard = 5
+	timingStandardTAI timingStandard = 5
 	/// Barycentric Coordinate Time
-	timingStandardTCB     timingStandard = 6
+	timingStandardTCB timingStandard = 6
 	/// Barycentric Dynamical Time
-	timingStandardTDB     timingStandard = 7
+	timingStandardTDB timingStandard = 7
 	/// Geocentric Coordinate Time
-	timingStandardTCG     timingStandard = 8
+	timingStandardTCG timingStandard = 8
 	/// Terrestrial Time
-	timingStandardTT      timingStandard = 9
+	timingStandardTT timingStandard = 9
 	/// Universal Time
-	timingStandardUT1     timingStandard = 10
+	timingStandardUT1 timingStandard = 10
 	/// Coordinated Universal Time
-	timingStandardUTC     timingStandard = 11
+	timingStandardUTC timingStandard = 11
 	/// GLONASS Time
 	timingStandardGLONASS timingStandard = 12
 	/// Galileo System Time
-	timingStandardGST     timingStandard = 13
+	timingStandardGST timingStandard = 13
 	/// Quasi-Zenith Satellite System Time
-	timingStandardQZSS    timingStandard = 14
+	timingStandardQZSS timingStandard = 14
 	/// BeiDou Time
-	timingStandardBDT     timingStandard = 15
+	timingStandardBDT timingStandard = 15
 	/// Navigation with Indian Constellation Time
-	timingStandardNAVIC   timingStandard = 16
+	timingStandardNAVIC timingStandard = 16
 	/// Satellite-Based Augmentation System Time
-	timingStandardSBAS    timingStandard = 17
+	timingStandardSBAS timingStandard = 17
 )
 
 var EnumNamestimingStandard = map[timingStandard]string{

@@ -4,7 +4,7 @@ package SHW
 
 import "strconv"
 
-/// Scalar / vector type of a uniform value.
+// / Scalar / vector type of a uniform value.
 type shaderUniformType byte
 
 const (

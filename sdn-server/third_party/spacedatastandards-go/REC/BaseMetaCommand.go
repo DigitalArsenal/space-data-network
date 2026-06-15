@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Base metacommand reference
+// / Base metacommand reference
 type BaseMetaCommand struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *BaseMetaCommand) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// MetaCommand reference
+// / MetaCommand reference
 func (rcv *BaseMetaCommand) META_COMMAND_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *BaseMetaCommand) MetaCommandRef() []byte {
 	return rcv.META_COMMAND_REF()
 }
 
-/// MetaCommand reference
-/// Argument assignments for inherited arguments
+// / MetaCommand reference
+// / Argument assignments for inherited arguments
 func (rcv *BaseMetaCommand) ARGUMENT_ASSIGNMENTS(obj *ArgumentAssignment, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -88,7 +88,7 @@ func (rcv *BaseMetaCommand) ArgumentAssignmentsLength() int {
 	return rcv.ARGUMENT_ASSIGNMENTSLength()
 }
 
-/// Argument assignments for inherited arguments
+// / Argument assignments for inherited arguments
 func BaseMetaCommandStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

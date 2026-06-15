@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Time interval for time-dynamic properties
+// / Time interval for time-dynamic properties
 type CZMInterval struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMInterval) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// ISO 8601 interval string (e.g. "2012-03-15T10:00:00Z/2012-03-16T10:00:00Z")
+// / ISO 8601 interval string (e.g. "2012-03-15T10:00:00Z/2012-03-16T10:00:00Z")
 func (rcv *CZMInterval) INTERVAL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMInterval) Interval() []byte {
 	return rcv.INTERVAL()
 }
 
-/// ISO 8601 interval string (e.g. "2012-03-15T10:00:00Z/2012-03-16T10:00:00Z")
+// / ISO 8601 interval string (e.g. "2012-03-15T10:00:00Z/2012-03-16T10:00:00Z")
 func CZMIntervalStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }

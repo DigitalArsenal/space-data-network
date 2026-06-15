@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Hypothesis Message
+// / Hypothesis Message
 type HYP struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *HYP) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Space Objects Involved
+// / Space Objects Involved
 func (rcv *HYP) CAT_IDS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -80,8 +80,8 @@ func (rcv *HYP) CatIdsLength() int {
 	return rcv.CAT_IDSLength()
 }
 
-/// Space Objects Involved
-/// Space Objects Involved
+// / Space Objects Involved
+// / Space Objects Involved
 func (rcv *HYP) SIT_IDS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -107,8 +107,8 @@ func (rcv *HYP) SitIdsLength() int {
 	return rcv.SIT_IDSLength()
 }
 
-/// Space Objects Involved
-/// Name of the hypothesis
+// / Space Objects Involved
+// / Name of the hypothesis
 func (rcv *HYP) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -121,8 +121,8 @@ func (rcv *HYP) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Name of the hypothesis
-/// Category of the hypothesis
+// / Name of the hypothesis
+// / Category of the hypothesis
 func (rcv *HYP) CATEGORY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -135,8 +135,8 @@ func (rcv *HYP) Category() []byte {
 	return rcv.CATEGORY()
 }
 
-/// Category of the hypothesis
-/// Row indicators for the hypothesis matrix
+// / Category of the hypothesis
+// / Row indicators for the hypothesis matrix
 func (rcv *HYP) ROW_INDICATORS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -162,8 +162,8 @@ func (rcv *HYP) RowIndicatorsLength() int {
 	return rcv.ROW_INDICATORSLength()
 }
 
-/// Row indicators for the hypothesis matrix
-/// Column indicators for the hypothesis matrix
+// / Row indicators for the hypothesis matrix
+// / Column indicators for the hypothesis matrix
 func (rcv *HYP) COL_INDICATORS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -189,8 +189,8 @@ func (rcv *HYP) ColIndicatorsLength() int {
 	return rcv.COL_INDICATORSLength()
 }
 
-/// Column indicators for the hypothesis matrix
-/// Matrix data as a boolean array in row major format; if overflow, adds additional rows
+// / Column indicators for the hypothesis matrix
+// / Matrix data as a boolean array in row major format; if overflow, adds additional rows
 func (rcv *HYP) MATRIX(j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -216,7 +216,7 @@ func (rcv *HYP) MatrixLength() int {
 	return rcv.MATRIXLength()
 }
 
-/// Matrix data as a boolean array in row major format; if overflow, adds additional rows
+// / Matrix data as a boolean array in row major format; if overflow, adds additional rows
 func (rcv *HYP) MutateMATRIX(j int, n bool) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -230,7 +230,7 @@ func (rcv *HYP) MutateMatrix(j int, n bool) bool {
 	return rcv.MutateMATRIX(j, n)
 }
 
-/// Scores for objects
+// / Scores for objects
 func (rcv *HYP) SCORE(obj *Score, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -262,8 +262,8 @@ func (rcv *HYP) ScoreLength() int {
 	return rcv.SCORELength()
 }
 
-/// Scores for objects
-/// Analysis methodology used to form the hypothesis
+// / Scores for objects
+// / Analysis methodology used to form the hypothesis
 func (rcv *HYP) ANALYSIS_METHOD() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -276,7 +276,7 @@ func (rcv *HYP) AnalysisMethod() []byte {
 	return rcv.ANALYSIS_METHOD()
 }
 
-/// Analysis methodology used to form the hypothesis
+// / Analysis methodology used to form the hypothesis
 func (rcv *HYP) EVENT_START_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {

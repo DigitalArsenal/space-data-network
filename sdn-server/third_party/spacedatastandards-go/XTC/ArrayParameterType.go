@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Array parameter type
+// / Array parameter type
 type ArrayParameterType struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ArrayParameterType) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Type name
+// / Type name
 func (rcv *ArrayParameterType) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *ArrayParameterType) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Type name
-/// Short description
+// / Type name
+// / Short description
 func (rcv *ArrayParameterType) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *ArrayParameterType) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-/// Short description
-/// Long description
+// / Short description
+// / Long description
 func (rcv *ArrayParameterType) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *ArrayParameterType) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-/// Long description
-/// Reference to the array element type
+// / Long description
+// / Reference to the array element type
 func (rcv *ArrayParameterType) ARRAY_TYPE_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *ArrayParameterType) ArrayTypeRef() []byte {
 	return rcv.ARRAY_TYPE_REF()
 }
 
-/// Reference to the array element type
-/// Dimension list
+// / Reference to the array element type
+// / Dimension list
 func (rcv *ArrayParameterType) DIMENSIONS(obj *ArrayDimension, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -130,7 +130,7 @@ func (rcv *ArrayParameterType) DimensionsLength() int {
 	return rcv.DIMENSIONSLength()
 }
 
-/// Dimension list
+// / Dimension list
 func ArrayParameterTypeStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

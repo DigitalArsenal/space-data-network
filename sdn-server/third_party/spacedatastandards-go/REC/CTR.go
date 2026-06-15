@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Country Identity Message
+// / Country Identity Message
 type CTR struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *CTR) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// ISO 3166 Numeric code
+// / ISO 3166 Numeric code
 func (rcv *CTR) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *CTR) Id() []byte {
 	return rcv.ID()
 }
 
-/// ISO 3166 Numeric code
-/// Country name
+// / ISO 3166 Numeric code
+// / Country name
 func (rcv *CTR) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *CTR) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Country name
-/// GENC code
+// / Country name
+// / GENC code
 func (rcv *CTR) GENC_CODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *CTR) GencCode() []byte {
 	return rcv.GENC_CODE()
 }
 
-/// GENC code
-/// ISO 3166 Alpha-2 code
+// / GENC code
+// / ISO 3166 Alpha-2 code
 func (rcv *CTR) ALPHA_2_CODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *CTR) Alpha2Code() []byte {
 	return rcv.ALPHA_2_CODE()
 }
 
-/// ISO 3166 Alpha-2 code
-/// ISO 3166 Alpha-3 code
+// / ISO 3166 Alpha-2 code
+// / ISO 3166 Alpha-3 code
 func (rcv *CTR) ALPHA_3_CODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *CTR) Alpha3Code() []byte {
 	return rcv.ALPHA_3_CODE()
 }
 
-/// ISO 3166 Alpha-3 code
-/// Stanag code
+// / ISO 3166 Alpha-3 code
+// / Stanag code
 func (rcv *CTR) STANAG_CODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,8 +137,8 @@ func (rcv *CTR) StanagCode() []byte {
 	return rcv.STANAG_CODE()
 }
 
-/// Stanag code
-/// Internet country code top-level domain (ccTLD)
+// / Stanag code
+// / Internet country code top-level domain (ccTLD)
 func (rcv *CTR) INTERNET_CCTLD() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -151,8 +151,8 @@ func (rcv *CTR) InternetCctld() []byte {
 	return rcv.INTERNET_CCTLD()
 }
 
-/// Internet country code top-level domain (ccTLD)
-/// Additional comments
+// / Internet country code top-level domain (ccTLD)
+// / Additional comments
 func (rcv *CTR) COMMENT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -165,7 +165,7 @@ func (rcv *CTR) Comment() []byte {
 	return rcv.COMMENT()
 }
 
-/// Additional comments
+// / Additional comments
 func CTRStart(builder *flatbuffers.Builder) {
 	builder.StartObject(8)
 }

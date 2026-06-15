@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Moving Target Indicator
+// / Moving Target Indicator
 type MTI struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *MTI) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique identifier
+// / Unique identifier
 func (rcv *MTI) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *MTI) Id() []byte {
 	return rcv.ID()
 }
 
-/// Unique identifier
-/// MTI standard (e.g., STANAG 4607)
+// / Unique identifier
+// / MTI standard (e.g., STANAG 4607)
 func (rcv *MTI) STANDARD() mtiStandard {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,7 +81,7 @@ func (rcv *MTI) Standard() mtiStandard {
 	return rcv.STANDARD()
 }
 
-/// MTI standard (e.g., STANAG 4607)
+// / MTI standard (e.g., STANAG 4607)
 func (rcv *MTI) MutateSTANDARD(n mtiStandard) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -90,7 +90,7 @@ func (rcv *MTI) MutateStandard(n mtiStandard) bool {
 	return rcv.MutateSTANDARD(n)
 }
 
-/// Platform type (P3 field)
+// / Platform type (P3 field)
 func (rcv *MTI) P3() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,8 +99,8 @@ func (rcv *MTI) P3() []byte {
 	return nil
 }
 
-/// Platform type (P3 field)
-/// Platform activity (P6 field)
+// / Platform type (P3 field)
+// / Platform activity (P6 field)
 func (rcv *MTI) P6() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *MTI) P6() []byte {
 	return nil
 }
 
-/// Platform activity (P6 field)
-/// Sensor type (P7 field)
+// / Platform activity (P6 field)
+// / Sensor type (P7 field)
 func (rcv *MTI) P7() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -119,8 +119,8 @@ func (rcv *MTI) P7() []byte {
 	return nil
 }
 
-/// Sensor type (P7 field)
-/// Sensor model (P8 field)
+// / Sensor type (P7 field)
+// / Sensor model (P8 field)
 func (rcv *MTI) P8() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -129,8 +129,8 @@ func (rcv *MTI) P8() []byte {
 	return nil
 }
 
-/// Sensor model (P8 field)
-/// Reference time code (P9)
+// / Sensor model (P8 field)
+// / Reference time code (P9)
 func (rcv *MTI) P9() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -139,12 +139,12 @@ func (rcv *MTI) P9() uint32 {
 	return 0
 }
 
-/// Reference time code (P9)
+// / Reference time code (P9)
 func (rcv *MTI) MutateP9(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(16, n)
 }
 
-/// Security classification (P10)
+// / Security classification (P10)
 func (rcv *MTI) P10() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -153,12 +153,12 @@ func (rcv *MTI) P10() uint16 {
 	return 0
 }
 
-/// Security classification (P10)
+// / Security classification (P10)
 func (rcv *MTI) MutateP10(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(18, n)
 }
 
-/// Mission segment identifiers
+// / Mission segment identifiers
 func (rcv *MTI) MISSIONS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -184,8 +184,8 @@ func (rcv *MTI) MissionsLength() int {
 	return rcv.MISSIONSLength()
 }
 
-/// Mission segment identifiers
-/// Dwell segment data references
+// / Mission segment identifiers
+// / Dwell segment data references
 func (rcv *MTI) DWELLS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -211,8 +211,8 @@ func (rcv *MTI) DwellsLength() int {
 	return rcv.DWELLSLength()
 }
 
-/// Dwell segment data references
-/// High range resolution profile references
+// / Dwell segment data references
+// / High range resolution profile references
 func (rcv *MTI) HRRS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -238,8 +238,8 @@ func (rcv *MTI) HrrsLength() int {
 	return rcv.HRRSLength()
 }
 
-/// High range resolution profile references
-/// Job definition references
+// / High range resolution profile references
+// / Job definition references
 func (rcv *MTI) JOB_DEFS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -265,8 +265,8 @@ func (rcv *MTI) JobDefsLength() int {
 	return rcv.JOB_DEFSLength()
 }
 
-/// Job definition references
-/// Free text entries
+// / Job definition references
+// / Free text entries
 func (rcv *MTI) FREE_TEXTS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -292,8 +292,8 @@ func (rcv *MTI) FreeTextsLength() int {
 	return rcv.FREE_TEXTSLength()
 }
 
-/// Free text entries
-/// Platform location data references
+// / Free text entries
+// / Platform location data references
 func (rcv *MTI) PLATFORM_LOCS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -319,8 +319,8 @@ func (rcv *MTI) PlatformLocsLength() int {
 	return rcv.PLATFORM_LOCSLength()
 }
 
-/// Platform location data references
-/// Job request references
+// / Platform location data references
+// / Job request references
 func (rcv *MTI) JOB_REQUESTS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -346,7 +346,7 @@ func (rcv *MTI) JobRequestsLength() int {
 	return rcv.JOB_REQUESTSLength()
 }
 
-/// Job request references
+// / Job request references
 func MTIStart(builder *flatbuffers.Builder) {
 	builder.StartObject(15)
 }

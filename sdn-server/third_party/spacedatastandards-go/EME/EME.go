@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Encrypted Message Envelope
+// / Encrypted Message Envelope
 type EME struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *EME) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Encrypted data blob, containing the ciphertext of the original plaintext message.
+// / Encrypted data blob, containing the ciphertext of the original plaintext message.
 func (rcv *EME) ENCRYPTED_BLOB(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -92,7 +92,7 @@ func (rcv *EME) EncryptedBlobBytes() []byte {
 	return rcv.ENCRYPTED_BLOBBytes()
 }
 
-/// Encrypted data blob, containing the ciphertext of the original plaintext message.
+// / Encrypted data blob, containing the ciphertext of the original plaintext message.
 func (rcv *EME) MutateENCRYPTED_BLOB(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -106,7 +106,7 @@ func (rcv *EME) MutateEncryptedBlob(j int, n byte) bool {
 	return rcv.MutateENCRYPTED_BLOB(j, n)
 }
 
-/// Temporary public key used for the encryption session, contributing to the derivation of the shared secret.
+// / Temporary public key used for the encryption session, contributing to the derivation of the shared secret.
 func (rcv *EME) EPHEMERAL_PUBLIC_KEY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -119,8 +119,8 @@ func (rcv *EME) EphemeralPublicKey() []byte {
 	return rcv.EPHEMERAL_PUBLIC_KEY()
 }
 
-/// Temporary public key used for the encryption session, contributing to the derivation of the shared secret.
-/// Message Authentication Code to verify the integrity and authenticity of the encrypted message.
+// / Temporary public key used for the encryption session, contributing to the derivation of the shared secret.
+// / Message Authentication Code to verify the integrity and authenticity of the encrypted message.
 func (rcv *EME) MAC() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -133,8 +133,8 @@ func (rcv *EME) Mac() []byte {
 	return rcv.MAC()
 }
 
-/// Message Authentication Code to verify the integrity and authenticity of the encrypted message.
-/// Random 12-byte nonce starting value. Incremented for each record in the stream to ensure unique nonces.
+// / Message Authentication Code to verify the integrity and authenticity of the encrypted message.
+// / Random 12-byte nonce starting value. Incremented for each record in the stream to ensure unique nonces.
 func (rcv *EME) NONCE_START(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -172,7 +172,7 @@ func (rcv *EME) NonceStartBytes() []byte {
 	return rcv.NONCE_STARTBytes()
 }
 
-/// Random 12-byte nonce starting value. Incremented for each record in the stream to ensure unique nonces.
+// / Random 12-byte nonce starting value. Incremented for each record in the stream to ensure unique nonces.
 func (rcv *EME) MutateNONCE_START(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -186,7 +186,7 @@ func (rcv *EME) MutateNonceStart(j int, n byte) bool {
 	return rcv.MutateNONCE_START(j, n)
 }
 
-/// Additional authentication tag used in some encryption schemes for integrity and authenticity verification.
+// / Additional authentication tag used in some encryption schemes for integrity and authenticity verification.
 func (rcv *EME) TAG() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -199,8 +199,8 @@ func (rcv *EME) Tag() []byte {
 	return rcv.TAG()
 }
 
-/// Additional authentication tag used in some encryption schemes for integrity and authenticity verification.
-/// Initialization vector used to introduce randomness in the encryption process, enhancing security.
+// / Additional authentication tag used in some encryption schemes for integrity and authenticity verification.
+// / Initialization vector used to introduce randomness in the encryption process, enhancing security.
 func (rcv *EME) IV() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -213,8 +213,8 @@ func (rcv *EME) Iv() []byte {
 	return rcv.IV()
 }
 
-/// Initialization vector used to introduce randomness in the encryption process, enhancing security.
-/// Cryptographic salt used in key derivation (e.g. HKDF) to ensure unique key material per session.
+// / Initialization vector used to introduce randomness in the encryption process, enhancing security.
+// / Cryptographic salt used in key derivation (e.g. HKDF) to ensure unique key material per session.
 func (rcv *EME) SALT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -227,8 +227,8 @@ func (rcv *EME) Salt() []byte {
 	return rcv.SALT()
 }
 
-/// Cryptographic salt used in key derivation (e.g. HKDF) to ensure unique key material per session.
-/// Identifier for the public key used, aiding in recipient key management and message decryption.
+// / Cryptographic salt used in key derivation (e.g. HKDF) to ensure unique key material per session.
+// / Identifier for the public key used, aiding in recipient key management and message decryption.
 func (rcv *EME) PUBLIC_KEY_IDENTIFIER() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -241,8 +241,8 @@ func (rcv *EME) PublicKeyIdentifier() []byte {
 	return rcv.PUBLIC_KEY_IDENTIFIER()
 }
 
-/// Identifier for the public key used, aiding in recipient key management and message decryption.
-/// Specifies the set of cryptographic algorithms used in the encryption process.
+// / Identifier for the public key used, aiding in recipient key management and message decryption.
+// / Specifies the set of cryptographic algorithms used in the encryption process.
 func (rcv *EME) CIPHER_SUITE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -255,8 +255,8 @@ func (rcv *EME) CipherSuite() []byte {
 	return rcv.CIPHER_SUITE()
 }
 
-/// Specifies the set of cryptographic algorithms used in the encryption process.
-/// Parameters for the Key Derivation Function, guiding the process of deriving keys from the shared secret.
+// / Specifies the set of cryptographic algorithms used in the encryption process.
+// / Parameters for the Key Derivation Function, guiding the process of deriving keys from the shared secret.
 func (rcv *EME) KDF_PARAMETERS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -269,8 +269,8 @@ func (rcv *EME) KdfParameters() []byte {
 	return rcv.KDF_PARAMETERS()
 }
 
-/// Parameters for the Key Derivation Function, guiding the process of deriving keys from the shared secret.
-/// Parameters defining specific settings for the encryption algorithm, such as block size or operation mode.
+// / Parameters for the Key Derivation Function, guiding the process of deriving keys from the shared secret.
+// / Parameters defining specific settings for the encryption algorithm, such as block size or operation mode.
 func (rcv *EME) ENCRYPTION_ALGORITHM_PARAMETERS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -283,7 +283,7 @@ func (rcv *EME) EncryptionAlgorithmParameters() []byte {
 	return rcv.ENCRYPTION_ALGORITHM_PARAMETERS()
 }
 
-/// Parameters defining specific settings for the encryption algorithm, such as block size or operation mode.
+// / Parameters defining specific settings for the encryption algorithm, such as block size or operation mode.
 func EMEStart(builder *flatbuffers.Builder) {
 	builder.StartObject(11)
 }

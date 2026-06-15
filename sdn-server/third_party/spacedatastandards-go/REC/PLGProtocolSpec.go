@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Protocol handler declared by a plugin.
+// / Protocol handler declared by a plugin.
 type PLGProtocolSpec struct {
 	_tab flatbuffers.Table
 }

@@ -4,14 +4,14 @@ package REM
 
 import "strconv"
 
-/// Anomaly type flag for orbital element records.
+// / Anomaly type flag for orbital element records.
 type ppeAnomalyType int8
 
 const (
 	/// True anomaly (geometric angle from periapsis).
-	ppeAnomalyTypeTRUE_ANOMALY      ppeAnomalyType = 0
+	ppeAnomalyTypeTRUE_ANOMALY ppeAnomalyType = 0
 	/// Mean anomaly (linear in time for Keplerian motion).
-	ppeAnomalyTypeMEAN_ANOMALY      ppeAnomalyType = 1
+	ppeAnomalyTypeMEAN_ANOMALY ppeAnomalyType = 1
 	/// Eccentric anomaly (auxiliary angle in the Kepler equation).
 	ppeAnomalyTypeECCENTRIC_ANOMALY ppeAnomalyType = 2
 )

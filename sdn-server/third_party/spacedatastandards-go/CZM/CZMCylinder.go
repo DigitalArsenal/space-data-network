@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Cylinder or cone
+// / Cylinder or cone
 type CZMCylinder struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMCylinder) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Whether the cylinder is displayed
+// / Whether the cylinder is displayed
 func (rcv *CZMCylinder) SHOW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMCylinder) Show() bool {
 	return rcv.SHOW()
 }
 
-/// Whether the cylinder is displayed
+// / Whether the cylinder is displayed
 func (rcv *CZMCylinder) MutateSHOW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMCylinder) MutateShow(n bool) bool {
 	return rcv.MutateSHOW(n)
 }
 
-/// Length in meters
+// / Length in meters
 func (rcv *CZMCylinder) LENGTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *CZMCylinder) Length() float64 {
 	return rcv.LENGTH()
 }
 
-/// Length in meters
+// / Length in meters
 func (rcv *CZMCylinder) MutateLENGTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *CZMCylinder) MutateLength(n float64) bool {
 	return rcv.MutateLENGTH(n)
 }
 
-/// Top radius in meters
+// / Top radius in meters
 func (rcv *CZMCylinder) TOP_RADIUS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *CZMCylinder) TopRadius() float64 {
 	return rcv.TOP_RADIUS()
 }
 
-/// Top radius in meters
+// / Top radius in meters
 func (rcv *CZMCylinder) MutateTOP_RADIUS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *CZMCylinder) MutateTopRadius(n float64) bool {
 	return rcv.MutateTOP_RADIUS(n)
 }
 
-/// Bottom radius in meters
+// / Bottom radius in meters
 func (rcv *CZMCylinder) BOTTOM_RADIUS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *CZMCylinder) BottomRadius() float64 {
 	return rcv.BOTTOM_RADIUS()
 }
 
-/// Bottom radius in meters
+// / Bottom radius in meters
 func (rcv *CZMCylinder) MutateBOTTOM_RADIUS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *CZMCylinder) MutateBottomRadius(n float64) bool {
 	return rcv.MutateBOTTOM_RADIUS(n)
 }
 
-/// Height reference
+// / Height reference
 func (rcv *CZMCylinder) HEIGHT_REFERENCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,8 +143,8 @@ func (rcv *CZMCylinder) HeightReference() []byte {
 	return rcv.HEIGHT_REFERENCE()
 }
 
-/// Height reference
-/// Fill flag
+// / Height reference
+// / Fill flag
 func (rcv *CZMCylinder) FILL() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *CZMCylinder) Fill() bool {
 	return rcv.FILL()
 }
 
-/// Fill flag
+// / Fill flag
 func (rcv *CZMCylinder) MutateFILL(n bool) bool {
 	return rcv._tab.MutateBoolSlot(14, n)
 }
@@ -166,7 +166,7 @@ func (rcv *CZMCylinder) MutateFill(n bool) bool {
 	return rcv.MutateFILL(n)
 }
 
-/// Surface material
+// / Surface material
 func (rcv *CZMCylinder) MATERIAL(obj *CZMMaterial) *CZMMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -184,8 +184,8 @@ func (rcv *CZMCylinder) Material(obj *CZMMaterial) *CZMMaterial {
 	return rcv.MATERIAL(obj)
 }
 
-/// Surface material
-/// Outline flag
+// / Surface material
+// / Outline flag
 func (rcv *CZMCylinder) OUTLINE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -198,7 +198,7 @@ func (rcv *CZMCylinder) Outline() bool {
 	return rcv.OUTLINE()
 }
 
-/// Outline flag
+// / Outline flag
 func (rcv *CZMCylinder) MutateOUTLINE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(18, n)
 }
@@ -207,7 +207,7 @@ func (rcv *CZMCylinder) MutateOutline(n bool) bool {
 	return rcv.MutateOUTLINE(n)
 }
 
-/// Outline color
+// / Outline color
 func (rcv *CZMCylinder) OUTLINE_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -225,8 +225,8 @@ func (rcv *CZMCylinder) OutlineColor(obj *CZMColor) *CZMColor {
 	return rcv.OUTLINE_COLOR(obj)
 }
 
-/// Outline color
-/// Outline width
+// / Outline color
+// / Outline width
 func (rcv *CZMCylinder) OUTLINE_WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -239,7 +239,7 @@ func (rcv *CZMCylinder) OutlineWidth() float64 {
 	return rcv.OUTLINE_WIDTH()
 }
 
-/// Outline width
+// / Outline width
 func (rcv *CZMCylinder) MutateOUTLINE_WIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -248,7 +248,7 @@ func (rcv *CZMCylinder) MutateOutlineWidth(n float64) bool {
 	return rcv.MutateOUTLINE_WIDTH(n)
 }
 
-/// Number of vertical lines
+// / Number of vertical lines
 func (rcv *CZMCylinder) NUMBER_OF_VERTICAL_LINES() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -261,7 +261,7 @@ func (rcv *CZMCylinder) NumberOfVerticalLines() int32 {
 	return rcv.NUMBER_OF_VERTICAL_LINES()
 }
 
-/// Number of vertical lines
+// / Number of vertical lines
 func (rcv *CZMCylinder) MutateNUMBER_OF_VERTICAL_LINES(n int32) bool {
 	return rcv._tab.MutateInt32Slot(24, n)
 }
@@ -270,7 +270,7 @@ func (rcv *CZMCylinder) MutateNumberOfVerticalLines(n int32) bool {
 	return rcv.MutateNUMBER_OF_VERTICAL_LINES(n)
 }
 
-/// Number of slices
+// / Number of slices
 func (rcv *CZMCylinder) SLICES() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -283,7 +283,7 @@ func (rcv *CZMCylinder) Slices() int32 {
 	return rcv.SLICES()
 }
 
-/// Number of slices
+// / Number of slices
 func (rcv *CZMCylinder) MutateSLICES(n int32) bool {
 	return rcv._tab.MutateInt32Slot(26, n)
 }
@@ -292,7 +292,7 @@ func (rcv *CZMCylinder) MutateSlices(n int32) bool {
 	return rcv.MutateSLICES(n)
 }
 
-/// Shadow mode
+// / Shadow mode
 func (rcv *CZMCylinder) SHADOWS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -305,7 +305,7 @@ func (rcv *CZMCylinder) Shadows() []byte {
 	return rcv.SHADOWS()
 }
 
-/// Shadow mode
+// / Shadow mode
 func CZMCylinderStart(builder *flatbuffers.Builder) {
 	builder.StartObject(13)
 }

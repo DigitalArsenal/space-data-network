@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// One computed access interval.
+// / One computed access interval.
 type ACWAccessWindow struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *ACWAccessWindow) StationId() []byte {
 	return rcv.STATION_ID()
 }
 
-/// Access start as Julian Date in TT.
+// / Access start as Julian Date in TT.
 func (rcv *ACWAccessWindow) START_JULIAN_DATE_TT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *ACWAccessWindow) StartJulianDateTt() float64 {
 	return rcv.START_JULIAN_DATE_TT()
 }
 
-/// Access start as Julian Date in TT.
+// / Access start as Julian Date in TT.
 func (rcv *ACWAccessWindow) MutateSTART_JULIAN_DATE_TT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -76,7 +76,7 @@ func (rcv *ACWAccessWindow) MutateStartJulianDateTt(n float64) bool {
 	return rcv.MutateSTART_JULIAN_DATE_TT(n)
 }
 
-/// Access end as Julian Date in TT.
+// / Access end as Julian Date in TT.
 func (rcv *ACWAccessWindow) END_JULIAN_DATE_TT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -89,7 +89,7 @@ func (rcv *ACWAccessWindow) EndJulianDateTt() float64 {
 	return rcv.END_JULIAN_DATE_TT()
 }
 
-/// Access end as Julian Date in TT.
+// / Access end as Julian Date in TT.
 func (rcv *ACWAccessWindow) MutateEND_JULIAN_DATE_TT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -98,7 +98,7 @@ func (rcv *ACWAccessWindow) MutateEndJulianDateTt(n float64) bool {
 	return rcv.MutateEND_JULIAN_DATE_TT(n)
 }
 
-/// Maximum elevation sampled or interpolated during the pass, radians.
+// / Maximum elevation sampled or interpolated during the pass, radians.
 func (rcv *ACWAccessWindow) MAX_ELEVATION_RAD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -111,7 +111,7 @@ func (rcv *ACWAccessWindow) MaxElevationRad() float64 {
 	return rcv.MAX_ELEVATION_RAD()
 }
 
-/// Maximum elevation sampled or interpolated during the pass, radians.
+// / Maximum elevation sampled or interpolated during the pass, radians.
 func (rcv *ACWAccessWindow) MutateMAX_ELEVATION_RAD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -120,7 +120,7 @@ func (rcv *ACWAccessWindow) MutateMaxElevationRad(n float64) bool {
 	return rcv.MutateMAX_ELEVATION_RAD(n)
 }
 
-/// Number of visible input samples contributing to the window.
+// / Number of visible input samples contributing to the window.
 func (rcv *ACWAccessWindow) SAMPLE_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -133,7 +133,7 @@ func (rcv *ACWAccessWindow) SampleCount() uint32 {
 	return rcv.SAMPLE_COUNT()
 }
 
-/// Number of visible input samples contributing to the window.
+// / Number of visible input samples contributing to the window.
 func (rcv *ACWAccessWindow) MutateSAMPLE_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(12, n)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Argument assignment (value binding)
+// / Argument assignment (value binding)
 type ArgumentAssignment struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ArgumentAssignment) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Argument name
+// / Argument name
 func (rcv *ArgumentAssignment) ARGUMENT_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *ArgumentAssignment) ArgumentName() []byte {
 	return rcv.ARGUMENT_NAME()
 }
 
-/// Argument name
-/// Assigned value
+// / Argument name
+// / Assigned value
 func (rcv *ArgumentAssignment) VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *ArgumentAssignment) Value() []byte {
 	return rcv.VALUE()
 }
 
-/// Assigned value
+// / Assigned value
 func ArgumentAssignmentStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

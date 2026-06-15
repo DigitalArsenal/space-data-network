@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Tracking and Data Fusion
+// / Tracking and Data Fusion
 type TKG struct {
 	_tab flatbuffers.Table
 }

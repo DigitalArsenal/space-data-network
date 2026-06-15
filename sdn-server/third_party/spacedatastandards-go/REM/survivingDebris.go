@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Surviving Debris Prediction
+// / Surviving Debris Prediction
 type survivingDebris struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *survivingDebris) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Fragment identifier
+// / Fragment identifier
 func (rcv *survivingDebris) FRAGMENT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *survivingDebris) FragmentId() []byte {
 	return rcv.FRAGMENT_ID()
 }
 
-/// Fragment identifier
-/// Material type
+// / Fragment identifier
+// / Material type
 func (rcv *survivingDebris) MATERIAL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *survivingDebris) Material() []byte {
 	return rcv.MATERIAL()
 }
 
-/// Material type
-/// Fragment mass in kg
+// / Material type
+// / Fragment mass in kg
 func (rcv *survivingDebris) MASS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *survivingDebris) Mass() float64 {
 	return rcv.MASS()
 }
 
-/// Fragment mass in kg
+// / Fragment mass in kg
 func (rcv *survivingDebris) MutateMASS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -92,7 +92,7 @@ func (rcv *survivingDebris) MutateMass(n float64) bool {
 	return rcv.MutateMASS(n)
 }
 
-/// Casualty area in m^2
+// / Casualty area in m^2
 func (rcv *survivingDebris) CASUALTY_AREA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,7 +105,7 @@ func (rcv *survivingDebris) CasualtyArea() float64 {
 	return rcv.CASUALTY_AREA()
 }
 
-/// Casualty area in m^2
+// / Casualty area in m^2
 func (rcv *survivingDebris) MutateCASUALTY_AREA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -114,7 +114,7 @@ func (rcv *survivingDebris) MutateCasualtyArea(n float64) bool {
 	return rcv.MutateCASUALTY_AREA(n)
 }
 
-/// Survival probability (0.0-1.0)
+// / Survival probability (0.0-1.0)
 func (rcv *survivingDebris) SURVIVAL_PROBABILITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -127,7 +127,7 @@ func (rcv *survivingDebris) SurvivalProbability() float64 {
 	return rcv.SURVIVAL_PROBABILITY()
 }
 
-/// Survival probability (0.0-1.0)
+// / Survival probability (0.0-1.0)
 func (rcv *survivingDebris) MutateSURVIVAL_PROBABILITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }

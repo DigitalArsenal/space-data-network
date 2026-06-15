@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Lambert boundary-value solve request.
+// / Lambert boundary-value solve request.
 type LMS struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *LMS) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Caller-supplied request identifier for result correlation.
+// / Caller-supplied request identifier for result correlation.
 func (rcv *LMS) REQUEST_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *LMS) RequestId() []byte {
 	return rcv.REQUEST_ID()
 }
 
-/// Caller-supplied request identifier for result correlation.
-/// Initial position X component (km).
+// / Caller-supplied request identifier for result correlation.
+// / Initial position X component (km).
 func (rcv *LMS) R1_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,7 +81,7 @@ func (rcv *LMS) R1X() float64 {
 	return rcv.R1_X()
 }
 
-/// Initial position X component (km).
+// / Initial position X component (km).
 func (rcv *LMS) MutateR1_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -90,7 +90,7 @@ func (rcv *LMS) MutateR1X(n float64) bool {
 	return rcv.MutateR1_X(n)
 }
 
-/// Initial position Y component (km).
+// / Initial position Y component (km).
 func (rcv *LMS) R1_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,7 +103,7 @@ func (rcv *LMS) R1Y() float64 {
 	return rcv.R1_Y()
 }
 
-/// Initial position Y component (km).
+// / Initial position Y component (km).
 func (rcv *LMS) MutateR1_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -112,7 +112,7 @@ func (rcv *LMS) MutateR1Y(n float64) bool {
 	return rcv.MutateR1_Y(n)
 }
 
-/// Initial position Z component (km).
+// / Initial position Z component (km).
 func (rcv *LMS) R1_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -125,7 +125,7 @@ func (rcv *LMS) R1Z() float64 {
 	return rcv.R1_Z()
 }
 
-/// Initial position Z component (km).
+// / Initial position Z component (km).
 func (rcv *LMS) MutateR1_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -134,7 +134,7 @@ func (rcv *LMS) MutateR1Z(n float64) bool {
 	return rcv.MutateR1_Z(n)
 }
 
-/// Final position X component (km).
+// / Final position X component (km).
 func (rcv *LMS) R2_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -147,7 +147,7 @@ func (rcv *LMS) R2X() float64 {
 	return rcv.R2_X()
 }
 
-/// Final position X component (km).
+// / Final position X component (km).
 func (rcv *LMS) MutateR2_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -156,7 +156,7 @@ func (rcv *LMS) MutateR2X(n float64) bool {
 	return rcv.MutateR2_X(n)
 }
 
-/// Final position Y component (km).
+// / Final position Y component (km).
 func (rcv *LMS) R2_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -169,7 +169,7 @@ func (rcv *LMS) R2Y() float64 {
 	return rcv.R2_Y()
 }
 
-/// Final position Y component (km).
+// / Final position Y component (km).
 func (rcv *LMS) MutateR2_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -178,7 +178,7 @@ func (rcv *LMS) MutateR2Y(n float64) bool {
 	return rcv.MutateR2_Y(n)
 }
 
-/// Final position Z component (km).
+// / Final position Z component (km).
 func (rcv *LMS) R2_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -191,7 +191,7 @@ func (rcv *LMS) R2Z() float64 {
 	return rcv.R2_Z()
 }
 
-/// Final position Z component (km).
+// / Final position Z component (km).
 func (rcv *LMS) MutateR2_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -200,7 +200,7 @@ func (rcv *LMS) MutateR2Z(n float64) bool {
 	return rcv.MutateR2_Z(n)
 }
 
-/// Time of flight (seconds). Must be greater than zero.
+// / Time of flight (seconds). Must be greater than zero.
 func (rcv *LMS) TOF_SEC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -213,7 +213,7 @@ func (rcv *LMS) TofSec() float64 {
 	return rcv.TOF_SEC()
 }
 
-/// Time of flight (seconds). Must be greater than zero.
+// / Time of flight (seconds). Must be greater than zero.
 func (rcv *LMS) MutateTOF_SEC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -222,7 +222,7 @@ func (rcv *LMS) MutateTofSec(n float64) bool {
 	return rcv.MutateTOF_SEC(n)
 }
 
-/// Central-body gravitational parameter (km^3/s^2). Must be greater than zero.
+// / Central-body gravitational parameter (km^3/s^2). Must be greater than zero.
 func (rcv *LMS) MU_KM3_S2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -235,7 +235,7 @@ func (rcv *LMS) MuKm3S2() float64 {
 	return rcv.MU_KM3_S2()
 }
 
-/// Central-body gravitational parameter (km^3/s^2). Must be greater than zero.
+// / Central-body gravitational parameter (km^3/s^2). Must be greater than zero.
 func (rcv *LMS) MutateMU_KM3_S2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -244,7 +244,7 @@ func (rcv *LMS) MutateMuKm3S2(n float64) bool {
 	return rcv.MutateMU_KM3_S2(n)
 }
 
-/// Short-way or long-way transfer selection.
+// / Short-way or long-way transfer selection.
 func (rcv *LMS) TRANSFER_WAY() lambertTransferPath {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -257,7 +257,7 @@ func (rcv *LMS) TransferWay() lambertTransferPath {
 	return rcv.TRANSFER_WAY()
 }
 
-/// Short-way or long-way transfer selection.
+// / Short-way or long-way transfer selection.
 func (rcv *LMS) MutateTRANSFER_WAY(n lambertTransferPath) bool {
 	return rcv._tab.MutateInt8Slot(22, int8(n))
 }
@@ -266,7 +266,7 @@ func (rcv *LMS) MutateTransferWay(n lambertTransferPath) bool {
 	return rcv.MutateTRANSFER_WAY(n)
 }
 
-/// Maximum complete revolutions to search. Zero means single-revolution only.
+// / Maximum complete revolutions to search. Zero means single-revolution only.
 func (rcv *LMS) MAX_REVS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -279,7 +279,7 @@ func (rcv *LMS) MaxRevs() uint16 {
 	return rcv.MAX_REVS()
 }
 
-/// Maximum complete revolutions to search. Zero means single-revolution only.
+// / Maximum complete revolutions to search. Zero means single-revolution only.
 func (rcv *LMS) MutateMAX_REVS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(24, n)
 }
@@ -288,7 +288,7 @@ func (rcv *LMS) MutateMaxRevs(n uint16) bool {
 	return rcv.MutateMAX_REVS(n)
 }
 
-/// Inertial reference frame label for both position vectors (for example GCRF, EME2000, ICRF).
+// / Inertial reference frame label for both position vectors (for example GCRF, EME2000, ICRF).
 func (rcv *LMS) REF_FRAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -301,8 +301,8 @@ func (rcv *LMS) RefFrame() []byte {
 	return rcv.REF_FRAME()
 }
 
-/// Inertial reference frame label for both position vectors (for example GCRF, EME2000, ICRF).
-/// Optional epoch/time-scale label for provenance. The solver uses TOF, not epoch, internally.
+// / Inertial reference frame label for both position vectors (for example GCRF, EME2000, ICRF).
+// / Optional epoch/time-scale label for provenance. The solver uses TOF, not epoch, internally.
 func (rcv *LMS) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -315,8 +315,8 @@ func (rcv *LMS) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-/// Optional epoch/time-scale label for provenance. The solver uses TOF, not epoch, internally.
-/// Request flags reserved for future compatibility.
+// / Optional epoch/time-scale label for provenance. The solver uses TOF, not epoch, internally.
+// / Request flags reserved for future compatibility.
 func (rcv *LMS) FLAGS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -329,7 +329,7 @@ func (rcv *LMS) Flags() uint16 {
 	return rcv.FLAGS()
 }
 
-/// Request flags reserved for future compatibility.
+// / Request flags reserved for future compatibility.
 func (rcv *LMS) MutateFLAGS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(30, n)
 }

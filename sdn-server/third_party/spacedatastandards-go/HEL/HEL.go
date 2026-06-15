@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Helicopter Dynamics
+// / Helicopter Dynamics
 type HEL struct {
 	_tab flatbuffers.Table
 }

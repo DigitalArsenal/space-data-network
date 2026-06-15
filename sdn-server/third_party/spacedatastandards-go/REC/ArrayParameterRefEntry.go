@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Array parameter reference entry
+// / Array parameter reference entry
 type ArrayParameterRefEntry struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ArrayParameterRefEntry) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Parameter reference path
+// / Parameter reference path
 func (rcv *ArrayParameterRefEntry) PARAMETER_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *ArrayParameterRefEntry) ParameterRef() []byte {
 	return rcv.PARAMETER_REF()
 }
 
-/// Parameter reference path
-/// Location in container
+// / Parameter reference path
+// / Location in container
 func (rcv *ArrayParameterRefEntry) LOCATION(obj *LocationInContainer) *LocationInContainer {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *ArrayParameterRefEntry) Location(obj *LocationInContainer) *LocationI
 	return rcv.LOCATION(obj)
 }
 
-/// Location in container
-/// First index to include
+// / Location in container
+// / First index to include
 func (rcv *ArrayParameterRefEntry) FIRST_INDEX() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -88,7 +88,7 @@ func (rcv *ArrayParameterRefEntry) FirstIndex() uint32 {
 	return rcv.FIRST_INDEX()
 }
 
-/// First index to include
+// / First index to include
 func (rcv *ArrayParameterRefEntry) MutateFIRST_INDEX(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -97,7 +97,7 @@ func (rcv *ArrayParameterRefEntry) MutateFirstIndex(n uint32) bool {
 	return rcv.MutateFIRST_INDEX(n)
 }
 
-/// Last index to include
+// / Last index to include
 func (rcv *ArrayParameterRefEntry) LAST_INDEX() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -110,7 +110,7 @@ func (rcv *ArrayParameterRefEntry) LastIndex() uint32 {
 	return rcv.LAST_INDEX()
 }
 
-/// Last index to include
+// / Last index to include
 func (rcv *ArrayParameterRefEntry) MutateLAST_INDEX(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }

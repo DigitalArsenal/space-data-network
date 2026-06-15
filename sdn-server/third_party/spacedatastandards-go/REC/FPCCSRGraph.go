@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Pre-built CSR graph ingestion request.
+// / Pre-built CSR graph ingestion request.
 type FPCCSRGraph struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *FPCCSRGraph) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Number of vertices in the graph.
+// / Number of vertices in the graph.
 func (rcv *FPCCSRGraph) VERTEX_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *FPCCSRGraph) VertexCount() uint32 {
 	return rcv.VERTEX_COUNT()
 }
 
-/// Number of vertices in the graph.
+// / Number of vertices in the graph.
 func (rcv *FPCCSRGraph) MutateVERTEX_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *FPCCSRGraph) MutateVertexCount(n uint32) bool {
 	return rcv.MutateVERTEX_COUNT(n)
 }
 
-/// CSR row offsets (V + 1 entries).
+// / CSR row offsets (V + 1 entries).
 func (rcv *FPCCSRGraph) OFFSETS(j int) uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -90,7 +90,7 @@ func (rcv *FPCCSRGraph) OffsetsLength() int {
 	return rcv.OFFSETSLength()
 }
 
-/// CSR row offsets (V + 1 entries).
+// / CSR row offsets (V + 1 entries).
 func (rcv *FPCCSRGraph) MutateOFFSETS(j int, n uint32) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -104,7 +104,7 @@ func (rcv *FPCCSRGraph) MutateOffsets(j int, n uint32) bool {
 	return rcv.MutateOFFSETS(j, n)
 }
 
-/// CSR destination indices.
+// / CSR destination indices.
 func (rcv *FPCCSRGraph) DESTINATIONS(j int) uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -130,7 +130,7 @@ func (rcv *FPCCSRGraph) DestinationsLength() int {
 	return rcv.DESTINATIONSLength()
 }
 
-/// CSR destination indices.
+// / CSR destination indices.
 func (rcv *FPCCSRGraph) MutateDESTINATIONS(j int, n uint32) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -144,7 +144,7 @@ func (rcv *FPCCSRGraph) MutateDestinations(j int, n uint32) bool {
 	return rcv.MutateDESTINATIONS(j, n)
 }
 
-/// CSR edge weights.
+// / CSR edge weights.
 func (rcv *FPCCSRGraph) WEIGHTS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -170,7 +170,7 @@ func (rcv *FPCCSRGraph) WeightsLength() int {
 	return rcv.WEIGHTSLength()
 }
 
-/// CSR edge weights.
+// / CSR edge weights.
 func (rcv *FPCCSRGraph) MutateWEIGHTS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {

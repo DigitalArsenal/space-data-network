@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Catalog query envelope — carries either a request or a result payload.
+// / Catalog query envelope — carries either a request or a result payload.
 type CAQ struct {
 	_tab flatbuffers.Table
 }

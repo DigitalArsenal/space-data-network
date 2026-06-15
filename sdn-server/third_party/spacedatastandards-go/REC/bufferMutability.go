@@ -4,16 +4,16 @@ package REC
 
 import "strconv"
 
-/// Buffer mutability contract advertised by a stream port.
+// / Buffer mutability contract advertised by a stream port.
 type bufferMutability byte
 
 const (
 	/// Buffer is immutable after produce.
-	bufferMutabilityIMMUTABLE             bufferMutability = 0
+	bufferMutabilityIMMUTABLE bufferMutability = 0
 	/// Buffer may be written in place by the owner (single writer).
 	bufferMutabilitySINGLE_WRITER_MUTABLE bufferMutability = 1
 	/// Buffer is append-only (rings / logs).
-	bufferMutabilityAPPEND_ONLY           bufferMutability = 2
+	bufferMutabilityAPPEND_ONLY bufferMutability = 2
 )
 
 var EnumNamesbufferMutability = map[bufferMutability]string{

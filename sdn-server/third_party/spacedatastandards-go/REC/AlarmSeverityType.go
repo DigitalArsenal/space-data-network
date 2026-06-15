@@ -4,22 +4,22 @@ package REC
 
 import "strconv"
 
-/// Alarm severity levels
+// / Alarm severity levels
 type AlarmSeverityType int8
 
 const (
 	/// Normal operation
-	AlarmSeverityTypeNORMAL   AlarmSeverityType = 0
+	AlarmSeverityTypeNORMAL AlarmSeverityType = 0
 	/// Watch level - early warning
-	AlarmSeverityTypeWATCH    AlarmSeverityType = 1
+	AlarmSeverityTypeWATCH AlarmSeverityType = 1
 	/// Warning level
-	AlarmSeverityTypeWARNING  AlarmSeverityType = 2
+	AlarmSeverityTypeWARNING AlarmSeverityType = 2
 	/// Distress level - significant issue
 	AlarmSeverityTypeDISTRESS AlarmSeverityType = 3
 	/// Critical level - immediate action required
 	AlarmSeverityTypeCRITICAL AlarmSeverityType = 4
 	/// Severe level - system failure
-	AlarmSeverityTypeSEVERE   AlarmSeverityType = 5
+	AlarmSeverityTypeSEVERE AlarmSeverityType = 5
 )
 
 var EnumNamesAlarmSeverityType = map[AlarmSeverityType]string{

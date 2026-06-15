@@ -4,7 +4,7 @@ package SDR
 
 import "strconv"
 
-/// Detection result bit flags.
+// / Detection result bit flags.
 type detectionResultFlags uint32
 
 const (

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Command container definition
+// / Command container definition
 type CommandContainer struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CommandContainer) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Container name
+// / Container name
 func (rcv *CommandContainer) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *CommandContainer) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Container name
-/// Entry list
+// / Container name
+// / Entry list
 func (rcv *CommandContainer) ENTRY_LIST(obj *CommandContainerEntry, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -88,8 +88,8 @@ func (rcv *CommandContainer) EntryListLength() int {
 	return rcv.ENTRY_LISTLength()
 }
 
-/// Entry list
-/// Base container reference
+// / Entry list
+// / Base container reference
 func (rcv *CommandContainer) BASE_CONTAINER(obj *BaseContainer) *BaseContainer {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -107,7 +107,7 @@ func (rcv *CommandContainer) BaseContainer(obj *BaseContainer) *BaseContainer {
 	return rcv.BASE_CONTAINER(obj)
 }
 
-/// Base container reference
+// / Base container reference
 func CommandContainerStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

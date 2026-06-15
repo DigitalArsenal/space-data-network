@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Reentry Ground Impact Prediction
+// / Reentry Ground Impact Prediction
 type reentryImpact struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *reentryImpact) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Predicted impact epoch (ISO 8601)
+// / Predicted impact epoch (ISO 8601)
 func (rcv *reentryImpact) IMPACT_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *reentryImpact) ImpactEpoch() []byte {
 	return rcv.IMPACT_EPOCH()
 }
 
-/// Predicted impact epoch (ISO 8601)
-/// Epoch uncertainty window in seconds
+// / Predicted impact epoch (ISO 8601)
+// / Epoch uncertainty window in seconds
 func (rcv *reentryImpact) EPOCH_UNCERTAINTY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *reentryImpact) EpochUncertainty() float64 {
 	return rcv.EPOCH_UNCERTAINTY()
 }
 
-/// Epoch uncertainty window in seconds
+// / Epoch uncertainty window in seconds
 func (rcv *reentryImpact) MutateEPOCH_UNCERTAINTY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -78,7 +78,7 @@ func (rcv *reentryImpact) MutateEpochUncertainty(n float64) bool {
 	return rcv.MutateEPOCH_UNCERTAINTY(n)
 }
 
-/// Impact latitude in degrees
+// / Impact latitude in degrees
 func (rcv *reentryImpact) LATITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *reentryImpact) Latitude() float64 {
 	return rcv.LATITUDE()
 }
 
-/// Impact latitude in degrees
+// / Impact latitude in degrees
 func (rcv *reentryImpact) MutateLATITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -100,7 +100,7 @@ func (rcv *reentryImpact) MutateLatitude(n float64) bool {
 	return rcv.MutateLATITUDE(n)
 }
 
-/// Impact longitude in degrees
+// / Impact longitude in degrees
 func (rcv *reentryImpact) LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -113,7 +113,7 @@ func (rcv *reentryImpact) Longitude() float64 {
 	return rcv.LONGITUDE()
 }
 
-/// Impact longitude in degrees
+// / Impact longitude in degrees
 func (rcv *reentryImpact) MutateLONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -122,7 +122,7 @@ func (rcv *reentryImpact) MutateLongitude(n float64) bool {
 	return rcv.MutateLONGITUDE(n)
 }
 
-/// Along-track uncertainty in km
+// / Along-track uncertainty in km
 func (rcv *reentryImpact) ALONG_TRACK_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -135,7 +135,7 @@ func (rcv *reentryImpact) AlongTrackUnc() float64 {
 	return rcv.ALONG_TRACK_UNC()
 }
 
-/// Along-track uncertainty in km
+// / Along-track uncertainty in km
 func (rcv *reentryImpact) MutateALONG_TRACK_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -144,7 +144,7 @@ func (rcv *reentryImpact) MutateAlongTrackUnc(n float64) bool {
 	return rcv.MutateALONG_TRACK_UNC(n)
 }
 
-/// Cross-track uncertainty in km
+// / Cross-track uncertainty in km
 func (rcv *reentryImpact) CROSS_TRACK_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *reentryImpact) CrossTrackUnc() float64 {
 	return rcv.CROSS_TRACK_UNC()
 }
 
-/// Cross-track uncertainty in km
+// / Cross-track uncertainty in km
 func (rcv *reentryImpact) MutateCROSS_TRACK_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -166,7 +166,7 @@ func (rcv *reentryImpact) MutateCrossTrackUnc(n float64) bool {
 	return rcv.MutateCROSS_TRACK_UNC(n)
 }
 
-/// Impact probability (0.0-1.0)
+// / Impact probability (0.0-1.0)
 func (rcv *reentryImpact) IMPACT_PROBABILITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -179,7 +179,7 @@ func (rcv *reentryImpact) ImpactProbability() float64 {
 	return rcv.IMPACT_PROBABILITY()
 }
 
-/// Impact probability (0.0-1.0)
+// / Impact probability (0.0-1.0)
 func (rcv *reentryImpact) MutateIMPACT_PROBABILITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }

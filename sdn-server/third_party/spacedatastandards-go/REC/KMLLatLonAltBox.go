@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// LatLonAltBox for Region
+// / LatLonAltBox for Region
 type KMLLatLonAltBox struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLLatLonAltBox) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// North latitude
+// / North latitude
 func (rcv *KMLLatLonAltBox) NORTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *KMLLatLonAltBox) North() float64 {
 	return rcv.NORTH()
 }
 
-/// North latitude
+// / North latitude
 func (rcv *KMLLatLonAltBox) MutateNORTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *KMLLatLonAltBox) MutateNorth(n float64) bool {
 	return rcv.MutateNORTH(n)
 }
 
-/// South latitude
+// / South latitude
 func (rcv *KMLLatLonAltBox) SOUTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *KMLLatLonAltBox) South() float64 {
 	return rcv.SOUTH()
 }
 
-/// South latitude
+// / South latitude
 func (rcv *KMLLatLonAltBox) MutateSOUTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *KMLLatLonAltBox) MutateSouth(n float64) bool {
 	return rcv.MutateSOUTH(n)
 }
 
-/// East longitude
+// / East longitude
 func (rcv *KMLLatLonAltBox) EAST() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *KMLLatLonAltBox) East() float64 {
 	return rcv.EAST()
 }
 
-/// East longitude
+// / East longitude
 func (rcv *KMLLatLonAltBox) MutateEAST(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *KMLLatLonAltBox) MutateEast(n float64) bool {
 	return rcv.MutateEAST(n)
 }
 
-/// West longitude
+// / West longitude
 func (rcv *KMLLatLonAltBox) WEST() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *KMLLatLonAltBox) West() float64 {
 	return rcv.WEST()
 }
 
-/// West longitude
+// / West longitude
 func (rcv *KMLLatLonAltBox) MutateWEST(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *KMLLatLonAltBox) MutateWest(n float64) bool {
 	return rcv.MutateWEST(n)
 }
 
-/// Minimum altitude
+// / Minimum altitude
 func (rcv *KMLLatLonAltBox) MIN_ALTITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,7 +143,7 @@ func (rcv *KMLLatLonAltBox) MinAltitude() float64 {
 	return rcv.MIN_ALTITUDE()
 }
 
-/// Minimum altitude
+// / Minimum altitude
 func (rcv *KMLLatLonAltBox) MutateMIN_ALTITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -152,7 +152,7 @@ func (rcv *KMLLatLonAltBox) MutateMinAltitude(n float64) bool {
 	return rcv.MutateMIN_ALTITUDE(n)
 }
 
-/// Maximum altitude
+// / Maximum altitude
 func (rcv *KMLLatLonAltBox) MAX_ALTITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -165,7 +165,7 @@ func (rcv *KMLLatLonAltBox) MaxAltitude() float64 {
 	return rcv.MAX_ALTITUDE()
 }
 
-/// Maximum altitude
+// / Maximum altitude
 func (rcv *KMLLatLonAltBox) MutateMAX_ALTITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -174,7 +174,7 @@ func (rcv *KMLLatLonAltBox) MutateMaxAltitude(n float64) bool {
 	return rcv.MutateMAX_ALTITUDE(n)
 }
 
-/// Altitude mode
+// / Altitude mode
 func (rcv *KMLLatLonAltBox) ALTITUDE_MODE() KMLAltitudeMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -187,7 +187,7 @@ func (rcv *KMLLatLonAltBox) AltitudeMode() KMLAltitudeMode {
 	return rcv.ALTITUDE_MODE()
 }
 
-/// Altitude mode
+// / Altitude mode
 func (rcv *KMLLatLonAltBox) MutateALTITUDE_MODE(n KMLAltitudeMode) bool {
 	return rcv._tab.MutateInt8Slot(16, int8(n))
 }

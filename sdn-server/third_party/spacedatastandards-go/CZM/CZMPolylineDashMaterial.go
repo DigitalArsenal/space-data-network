@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Polyline dash material
+// / Polyline dash material
 type CZMPolylineDashMaterial struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMPolylineDashMaterial) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Dash color
+// / Dash color
 func (rcv *CZMPolylineDashMaterial) COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *CZMPolylineDashMaterial) Color(obj *CZMColor) *CZMColor {
 	return rcv.COLOR(obj)
 }
 
-/// Dash color
-/// Gap color
+// / Dash color
+// / Gap color
 func (rcv *CZMPolylineDashMaterial) GAP_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -79,8 +79,8 @@ func (rcv *CZMPolylineDashMaterial) GapColor(obj *CZMColor) *CZMColor {
 	return rcv.GAP_COLOR(obj)
 }
 
-/// Gap color
-/// Dash length in pixels
+// / Gap color
+// / Dash length in pixels
 func (rcv *CZMPolylineDashMaterial) DASH_LENGTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -93,7 +93,7 @@ func (rcv *CZMPolylineDashMaterial) DashLength() float64 {
 	return rcv.DASH_LENGTH()
 }
 
-/// Dash length in pixels
+// / Dash length in pixels
 func (rcv *CZMPolylineDashMaterial) MutateDASH_LENGTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -102,7 +102,7 @@ func (rcv *CZMPolylineDashMaterial) MutateDashLength(n float64) bool {
 	return rcv.MutateDASH_LENGTH(n)
 }
 
-/// Dash pattern (bitmask)
+// / Dash pattern (bitmask)
 func (rcv *CZMPolylineDashMaterial) DASH_PATTERN() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -115,7 +115,7 @@ func (rcv *CZMPolylineDashMaterial) DashPattern() int32 {
 	return rcv.DASH_PATTERN()
 }
 
-/// Dash pattern (bitmask)
+// / Dash pattern (bitmask)
 func (rcv *CZMPolylineDashMaterial) MutateDASH_PATTERN(n int32) bool {
 	return rcv._tab.MutateInt32Slot(10, n)
 }

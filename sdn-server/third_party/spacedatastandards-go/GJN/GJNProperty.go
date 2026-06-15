@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// A key-value property entry for Feature properties
+// / A key-value property entry for Feature properties
 type GJNProperty struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *GJNProperty) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Property key
+// / Property key
 func (rcv *GJNProperty) KEY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *GJNProperty) Key() []byte {
 	return rcv.KEY()
 }
 
-/// Property key
-/// Property value as string
+// / Property key
+// / Property value as string
 func (rcv *GJNProperty) VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *GJNProperty) Value() []byte {
 	return rcv.VALUE()
 }
 
-/// Property value as string
-/// Property value as number (use if numeric)
+// / Property value as string
+// / Property value as number (use if numeric)
 func (rcv *GJNProperty) NUM_VALUE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *GJNProperty) NumValue() float64 {
 	return rcv.NUM_VALUE()
 }
 
-/// Property value as number (use if numeric)
+// / Property value as number (use if numeric)
 func (rcv *GJNProperty) MutateNUM_VALUE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -92,7 +92,7 @@ func (rcv *GJNProperty) MutateNumValue(n float64) bool {
 	return rcv.MutateNUM_VALUE(n)
 }
 
-/// True if NUM_VALUE should be used instead of VALUE
+// / True if NUM_VALUE should be used instead of VALUE
 func (rcv *GJNProperty) IS_NUMERIC() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,7 +105,7 @@ func (rcv *GJNProperty) IsNumeric() bool {
 	return rcv.IS_NUMERIC()
 }
 
-/// True if NUM_VALUE should be used instead of VALUE
+// / True if NUM_VALUE should be used instead of VALUE
 func (rcv *GJNProperty) MutateIS_NUMERIC(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }
@@ -114,7 +114,7 @@ func (rcv *GJNProperty) MutateIsNumeric(n bool) bool {
 	return rcv.MutateIS_NUMERIC(n)
 }
 
-/// True if this property value is a boolean
+// / True if this property value is a boolean
 func (rcv *GJNProperty) IS_BOOL() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -127,7 +127,7 @@ func (rcv *GJNProperty) IsBool() bool {
 	return rcv.IS_BOOL()
 }
 
-/// True if this property value is a boolean
+// / True if this property value is a boolean
 func (rcv *GJNProperty) MutateIS_BOOL(n bool) bool {
 	return rcv._tab.MutateBoolSlot(12, n)
 }
@@ -136,7 +136,7 @@ func (rcv *GJNProperty) MutateIsBool(n bool) bool {
 	return rcv.MutateIS_BOOL(n)
 }
 
-/// Boolean value (use when IS_BOOL is true)
+// / Boolean value (use when IS_BOOL is true)
 func (rcv *GJNProperty) BOOL_VALUE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -149,7 +149,7 @@ func (rcv *GJNProperty) BoolValue() bool {
 	return rcv.BOOL_VALUE()
 }
 
-/// Boolean value (use when IS_BOOL is true)
+// / Boolean value (use when IS_BOOL is true)
 func (rcv *GJNProperty) MutateBOOL_VALUE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(14, n)
 }
@@ -158,7 +158,7 @@ func (rcv *GJNProperty) MutateBoolValue(n bool) bool {
 	return rcv.MutateBOOL_VALUE(n)
 }
 
-/// True if this property value is JSON null
+// / True if this property value is JSON null
 func (rcv *GJNProperty) IS_NULL() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -171,7 +171,7 @@ func (rcv *GJNProperty) IsNull() bool {
 	return rcv.IS_NULL()
 }
 
-/// True if this property value is JSON null
+// / True if this property value is JSON null
 func (rcv *GJNProperty) MutateIS_NULL(n bool) bool {
 	return rcv._tab.MutateBoolSlot(16, n)
 }
@@ -180,7 +180,7 @@ func (rcv *GJNProperty) MutateIsNull(n bool) bool {
 	return rcv.MutateIS_NULL(n)
 }
 
-/// Raw JSON string for complex values (objects, arrays)
+// / Raw JSON string for complex values (objects, arrays)
 func (rcv *GJNProperty) JSON_VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -193,7 +193,7 @@ func (rcv *GJNProperty) JsonValue() []byte {
 	return rcv.JSON_VALUE()
 }
 
-/// Raw JSON string for complex values (objects, arrays)
+// / Raw JSON string for complex values (objects, arrays)
 func GJNPropertyStart(builder *flatbuffers.Builder) {
 	builder.StartObject(8)
 }

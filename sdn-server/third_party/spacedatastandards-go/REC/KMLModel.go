@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// 3D Model geometry
+// / 3D Model geometry
 type KMLModel struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLModel) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Altitude mode
+// / Altitude mode
 func (rcv *KMLModel) ALTITUDE_MODE() KMLAltitudeMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *KMLModel) AltitudeMode() KMLAltitudeMode {
 	return rcv.ALTITUDE_MODE()
 }
 
-/// Altitude mode
+// / Altitude mode
 func (rcv *KMLModel) MutateALTITUDE_MODE(n KMLAltitudeMode) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *KMLModel) MutateAltitudeMode(n KMLAltitudeMode) bool {
 	return rcv.MutateALTITUDE_MODE(n)
 }
 
-/// Location longitude
+// / Location longitude
 func (rcv *KMLModel) LOCATION_LON() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *KMLModel) LocationLon() float64 {
 	return rcv.LOCATION_LON()
 }
 
-/// Location longitude
+// / Location longitude
 func (rcv *KMLModel) MutateLOCATION_LON(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *KMLModel) MutateLocationLon(n float64) bool {
 	return rcv.MutateLOCATION_LON(n)
 }
 
-/// Location latitude
+// / Location latitude
 func (rcv *KMLModel) LOCATION_LAT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *KMLModel) LocationLat() float64 {
 	return rcv.LOCATION_LAT()
 }
 
-/// Location latitude
+// / Location latitude
 func (rcv *KMLModel) MutateLOCATION_LAT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *KMLModel) MutateLocationLat(n float64) bool {
 	return rcv.MutateLOCATION_LAT(n)
 }
 
-/// Location altitude
+// / Location altitude
 func (rcv *KMLModel) LOCATION_ALT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *KMLModel) LocationAlt() float64 {
 	return rcv.LOCATION_ALT()
 }
 
-/// Location altitude
+// / Location altitude
 func (rcv *KMLModel) MutateLOCATION_ALT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *KMLModel) MutateLocationAlt(n float64) bool {
 	return rcv.MutateLOCATION_ALT(n)
 }
 
-/// Orientation heading
+// / Orientation heading
 func (rcv *KMLModel) ORIENTATION_HEADING() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,7 +143,7 @@ func (rcv *KMLModel) OrientationHeading() float64 {
 	return rcv.ORIENTATION_HEADING()
 }
 
-/// Orientation heading
+// / Orientation heading
 func (rcv *KMLModel) MutateORIENTATION_HEADING(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -152,7 +152,7 @@ func (rcv *KMLModel) MutateOrientationHeading(n float64) bool {
 	return rcv.MutateORIENTATION_HEADING(n)
 }
 
-/// Orientation tilt
+// / Orientation tilt
 func (rcv *KMLModel) ORIENTATION_TILT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -165,7 +165,7 @@ func (rcv *KMLModel) OrientationTilt() float64 {
 	return rcv.ORIENTATION_TILT()
 }
 
-/// Orientation tilt
+// / Orientation tilt
 func (rcv *KMLModel) MutateORIENTATION_TILT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -174,7 +174,7 @@ func (rcv *KMLModel) MutateOrientationTilt(n float64) bool {
 	return rcv.MutateORIENTATION_TILT(n)
 }
 
-/// Orientation roll
+// / Orientation roll
 func (rcv *KMLModel) ORIENTATION_ROLL() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -187,7 +187,7 @@ func (rcv *KMLModel) OrientationRoll() float64 {
 	return rcv.ORIENTATION_ROLL()
 }
 
-/// Orientation roll
+// / Orientation roll
 func (rcv *KMLModel) MutateORIENTATION_ROLL(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -196,7 +196,7 @@ func (rcv *KMLModel) MutateOrientationRoll(n float64) bool {
 	return rcv.MutateORIENTATION_ROLL(n)
 }
 
-/// Scale X
+// / Scale X
 func (rcv *KMLModel) SCALE_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -209,7 +209,7 @@ func (rcv *KMLModel) ScaleX() float64 {
 	return rcv.SCALE_X()
 }
 
-/// Scale X
+// / Scale X
 func (rcv *KMLModel) MutateSCALE_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -218,7 +218,7 @@ func (rcv *KMLModel) MutateScaleX(n float64) bool {
 	return rcv.MutateSCALE_X(n)
 }
 
-/// Scale Y
+// / Scale Y
 func (rcv *KMLModel) SCALE_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -231,7 +231,7 @@ func (rcv *KMLModel) ScaleY() float64 {
 	return rcv.SCALE_Y()
 }
 
-/// Scale Y
+// / Scale Y
 func (rcv *KMLModel) MutateSCALE_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -240,7 +240,7 @@ func (rcv *KMLModel) MutateScaleY(n float64) bool {
 	return rcv.MutateSCALE_Y(n)
 }
 
-/// Scale Z
+// / Scale Z
 func (rcv *KMLModel) SCALE_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -253,7 +253,7 @@ func (rcv *KMLModel) ScaleZ() float64 {
 	return rcv.SCALE_Z()
 }
 
-/// Scale Z
+// / Scale Z
 func (rcv *KMLModel) MutateSCALE_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -262,7 +262,7 @@ func (rcv *KMLModel) MutateScaleZ(n float64) bool {
 	return rcv.MutateSCALE_Z(n)
 }
 
-/// Link to 3D model file
+// / Link to 3D model file
 func (rcv *KMLModel) LINK_HREF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -275,8 +275,8 @@ func (rcv *KMLModel) LinkHref() []byte {
 	return rcv.LINK_HREF()
 }
 
-/// Link to 3D model file
-/// Resource map aliases
+// / Link to 3D model file
+// / Resource map aliases
 func (rcv *KMLModel) RESOURCE_MAP(obj *KMLResourceMapAlias, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -308,7 +308,7 @@ func (rcv *KMLModel) ResourceMapLength() int {
 	return rcv.RESOURCE_MAPLength()
 }
 
-/// Resource map aliases
+// / Resource map aliases
 func KMLModelStart(builder *flatbuffers.Builder) {
 	builder.StartObject(12)
 }

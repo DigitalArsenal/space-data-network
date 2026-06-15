@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Fixed value entry (static padding/header)
+// / Fixed value entry (static padding/header)
 type FixedValueEntry struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *FixedValueEntry) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Binary value (hex string)
+// / Binary value (hex string)
 func (rcv *FixedValueEntry) BINARY_VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *FixedValueEntry) BinaryValue() []byte {
 	return rcv.BINARY_VALUE()
 }
 
-/// Binary value (hex string)
-/// Size in bits
+// / Binary value (hex string)
+// / Size in bits
 func (rcv *FixedValueEntry) SIZE_IN_BITS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *FixedValueEntry) SizeInBits() uint16 {
 	return rcv.SIZE_IN_BITS()
 }
 
-/// Size in bits
+// / Size in bits
 func (rcv *FixedValueEntry) MutateSIZE_IN_BITS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(6, n)
 }
@@ -78,7 +78,7 @@ func (rcv *FixedValueEntry) MutateSizeInBits(n uint16) bool {
 	return rcv.MutateSIZE_IN_BITS(n)
 }
 
-/// Name/description
+// / Name/description
 func (rcv *FixedValueEntry) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,8 +91,8 @@ func (rcv *FixedValueEntry) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Name/description
-/// Location in container
+// / Name/description
+// / Location in container
 func (rcv *FixedValueEntry) LOCATION(obj *LocationInContainer) *LocationInContainer {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -110,7 +110,7 @@ func (rcv *FixedValueEntry) Location(obj *LocationInContainer) *LocationInContai
 	return rcv.LOCATION(obj)
 }
 
-/// Location in container
+// / Location in container
 func FixedValueEntryStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

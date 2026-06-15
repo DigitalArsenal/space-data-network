@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Frequency range with lower and upper limits
+// / Frequency range with lower and upper limits
 type FrequencyRange struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *FrequencyRange) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Lower frequency in MHz
+// / Lower frequency in MHz
 func (rcv *FrequencyRange) LOWER() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *FrequencyRange) Lower() float64 {
 	return rcv.LOWER()
 }
 
-/// Lower frequency in MHz
+// / Lower frequency in MHz
 func (rcv *FrequencyRange) MutateLOWER(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *FrequencyRange) MutateLower(n float64) bool {
 	return rcv.MutateLOWER(n)
 }
 
-/// Upper frequency in MHz
+// / Upper frequency in MHz
 func (rcv *FrequencyRange) UPPER() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *FrequencyRange) Upper() float64 {
 	return rcv.UPPER()
 }
 
-/// Upper frequency in MHz
+// / Upper frequency in MHz
 func (rcv *FrequencyRange) MutateUPPER(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }

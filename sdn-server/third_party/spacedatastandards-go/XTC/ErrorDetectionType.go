@@ -4,18 +4,18 @@ package XTC
 
 import "strconv"
 
-/// Error detection/correction algorithms
+// / Error detection/correction algorithms
 type ErrorDetectionType int8
 
 const (
 	/// No error detection
-	ErrorDetectionTypeNONE     ErrorDetectionType = 0
+	ErrorDetectionTypeNONE ErrorDetectionType = 0
 	/// Cyclic redundancy check
-	ErrorDetectionTypeCRC      ErrorDetectionType = 1
+	ErrorDetectionTypeCRC ErrorDetectionType = 1
 	/// Checksum
 	ErrorDetectionTypeCHECKSUM ErrorDetectionType = 2
 	/// Parity
-	ErrorDetectionTypePARITY   ErrorDetectionType = 3
+	ErrorDetectionTypePARITY ErrorDetectionType = 3
 )
 
 var EnumNamesErrorDetectionType = map[ErrorDetectionType]string{

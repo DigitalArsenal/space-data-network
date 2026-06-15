@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Schema Standard Definition
+// / Schema Standard Definition
 type SCHEMA_STANDARD struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *SCHEMA_STANDARD) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique identifier for the standard
+// / Unique identifier for the standard
 func (rcv *SCHEMA_STANDARD) key() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *SCHEMA_STANDARD) Key() []byte {
 	return rcv.key()
 }
 
-/// Unique identifier for the standard
-/// IDL
+// / Unique identifier for the standard
+// / IDL
 func (rcv *SCHEMA_STANDARD) idl() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *SCHEMA_STANDARD) Idl() []byte {
 	return rcv.idl()
 }
 
-/// IDL
-/// List Of File Paths
+// / IDL
+// / List Of File Paths
 func (rcv *SCHEMA_STANDARD) files(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -96,7 +96,7 @@ func (rcv *SCHEMA_STANDARD) FilesLength() int {
 	return rcv.filesLength()
 }
 
-/// List Of File Paths
+// / List Of File Paths
 func SCHEMA_STANDARDStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

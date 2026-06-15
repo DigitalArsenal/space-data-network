@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Hypersonic Flight Conditions
+// / Hypersonic Flight Conditions
 type HFC struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *HFC) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Producer-defined message identifier.
+// / Producer-defined message identifier.
 func (rcv *HFC) MESSAGE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *HFC) MessageId() []byte {
 	return rcv.MESSAGE_ID()
 }
 
-/// Producer-defined message identifier.
-/// Message creation date in ISO 8601 UTC format.
+// / Producer-defined message identifier.
+// / Message creation date in ISO 8601 UTC format.
 func (rcv *HFC) CREATION_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *HFC) CreationDate() []byte {
 	return rcv.CREATION_DATE()
 }
 
-/// Message creation date in ISO 8601 UTC format.
-/// Creating agency, application, or service.
+// / Message creation date in ISO 8601 UTC format.
+// / Creating agency, application, or service.
 func (rcv *HFC) ORIGINATOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *HFC) Originator() []byte {
 	return rcv.ORIGINATOR()
 }
 
-/// Creating agency, application, or service.
-/// Object, vehicle, or trajectory name.
+// / Creating agency, application, or service.
+// / Object, vehicle, or trajectory name.
 func (rcv *HFC) OBJECT_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *HFC) ObjectName() []byte {
 	return rcv.OBJECT_NAME()
 }
 
-/// Object, vehicle, or trajectory name.
-/// Time system used by all epochs.
+// / Object, vehicle, or trajectory name.
+// / Time system used by all epochs.
 func (rcv *HFC) TIME_SYSTEM() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *HFC) TimeSystem() []byte {
 	return rcv.TIME_SYSTEM()
 }
 
-/// Time system used by all epochs.
-/// Reference frame for state vectors.
+// / Time system used by all epochs.
+// / Reference frame for state vectors.
 func (rcv *HFC) REF_FRAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,8 +137,8 @@ func (rcv *HFC) RefFrame() []byte {
 	return rcv.REF_FRAME()
 }
 
-/// Reference frame for state vectors.
-/// Start epoch for compact trajectory and condition arrays.
+// / Reference frame for state vectors.
+// / Start epoch for compact trajectory and condition arrays.
 func (rcv *HFC) START_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -151,8 +151,8 @@ func (rcv *HFC) StartTime() []byte {
 	return rcv.START_TIME()
 }
 
-/// Start epoch for compact trajectory and condition arrays.
-/// Stop epoch for compact trajectory and condition arrays.
+// / Start epoch for compact trajectory and condition arrays.
+// / Stop epoch for compact trajectory and condition arrays.
 func (rcv *HFC) STOP_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -165,8 +165,8 @@ func (rcv *HFC) StopTime() []byte {
 	return rcv.STOP_TIME()
 }
 
-/// Stop epoch for compact trajectory and condition arrays.
-/// Uniform step size in seconds. Use zero when samples are epoch-tagged elsewhere.
+// / Stop epoch for compact trajectory and condition arrays.
+// / Uniform step size in seconds. Use zero when samples are epoch-tagged elsewhere.
 func (rcv *HFC) STEP_SIZE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -179,7 +179,7 @@ func (rcv *HFC) StepSize() float64 {
 	return rcv.STEP_SIZE()
 }
 
-/// Uniform step size in seconds. Use zero when samples are epoch-tagged elsewhere.
+// / Uniform step size in seconds. Use zero when samples are epoch-tagged elsewhere.
 func (rcv *HFC) MutateSTEP_SIZE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -188,7 +188,7 @@ func (rcv *HFC) MutateStepSize(n float64) bool {
 	return rcv.MutateSTEP_SIZE(n)
 }
 
-/// Source OEM ephemeris when conditions were evaluated from orbit ephemeris data.
+// / Source OEM ephemeris when conditions were evaluated from orbit ephemeris data.
 func (rcv *HFC) SOURCE_OEM(obj *OEM) *OEM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -206,8 +206,8 @@ func (rcv *HFC) SourceOem(obj *OEM) *OEM {
 	return rcv.SOURCE_OEM(obj)
 }
 
-/// Source OEM ephemeris when conditions were evaluated from orbit ephemeris data.
-/// Source OCM trajectory when conditions were evaluated from comprehensive orbit data.
+// / Source OEM ephemeris when conditions were evaluated from orbit ephemeris data.
+// / Source OCM trajectory when conditions were evaluated from comprehensive orbit data.
 func (rcv *HFC) SOURCE_OCM(obj *OCM) *OCM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -225,8 +225,8 @@ func (rcv *HFC) SourceOcm(obj *OCM) *OCM {
 	return rcv.SOURCE_OCM(obj)
 }
 
-/// Source OCM trajectory when conditions were evaluated from comprehensive orbit data.
-/// Atmosphere model request used by the propagator.
+// / Source OCM trajectory when conditions were evaluated from comprehensive orbit data.
+// / Atmosphere model request used by the propagator.
 func (rcv *HFC) ATMOSPHERE(obj *ATM) *ATM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -244,8 +244,8 @@ func (rcv *HFC) Atmosphere(obj *ATM) *ATM {
 	return rcv.ATMOSPHERE(obj)
 }
 
-/// Atmosphere model request used by the propagator.
-/// Atmosphere provider or module identifier.
+// / Atmosphere model request used by the propagator.
+// / Atmosphere provider or module identifier.
 func (rcv *HFC) ATMOSPHERE_PROVIDER() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -258,8 +258,8 @@ func (rcv *HFC) AtmosphereProvider() []byte {
 	return rcv.ATMOSPHERE_PROVIDER()
 }
 
-/// Atmosphere provider or module identifier.
-/// Atmosphere model revision, data release, or configuration hash.
+// / Atmosphere provider or module identifier.
+// / Atmosphere model revision, data release, or configuration hash.
 func (rcv *HFC) ATMOSPHERE_MODEL_REVISION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -272,8 +272,8 @@ func (rcv *HFC) AtmosphereModelRevision() []byte {
 	return rcv.ATMOSPHERE_MODEL_REVISION()
 }
 
-/// Atmosphere model revision, data release, or configuration hash.
-/// Coupling mode used between the propagator and atmosphere provider.
+// / Atmosphere model revision, data release, or configuration hash.
+// / Coupling mode used between the propagator and atmosphere provider.
 func (rcv *HFC) ATMOSPHERE_COUPLING() hfcAtmosphereCouplingMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -286,7 +286,7 @@ func (rcv *HFC) AtmosphereCoupling() hfcAtmosphereCouplingMode {
 	return rcv.ATMOSPHERE_COUPLING()
 }
 
-/// Coupling mode used between the propagator and atmosphere provider.
+// / Coupling mode used between the propagator and atmosphere provider.
 func (rcv *HFC) MutateATMOSPHERE_COUPLING(n hfcAtmosphereCouplingMode) bool {
 	return rcv._tab.MutateInt8Slot(32, int8(n))
 }
@@ -295,7 +295,7 @@ func (rcv *HFC) MutateAtmosphereCoupling(n hfcAtmosphereCouplingMode) bool {
 	return rcv.MutateATMOSPHERE_COUPLING(n)
 }
 
-/// Aerothermal model name.
+// / Aerothermal model name.
 func (rcv *HFC) AEROTHERMAL_MODEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -308,8 +308,8 @@ func (rcv *HFC) AerothermalModel() []byte {
 	return rcv.AEROTHERMAL_MODEL()
 }
 
-/// Aerothermal model name.
-/// Gas model name.
+// / Aerothermal model name.
+// / Gas model name.
 func (rcv *HFC) GAS_MODEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -322,8 +322,8 @@ func (rcv *HFC) GasModel() []byte {
 	return rcv.GAS_MODEL()
 }
 
-/// Gas model name.
-/// Flow regime classification for the sampled trajectory.
+// / Gas model name.
+// / Flow regime classification for the sampled trajectory.
 func (rcv *HFC) FLOW_REGIME() hfcFlowRegime {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -336,7 +336,7 @@ func (rcv *HFC) FlowRegime() hfcFlowRegime {
 	return rcv.FLOW_REGIME()
 }
 
-/// Flow regime classification for the sampled trajectory.
+// / Flow regime classification for the sampled trajectory.
 func (rcv *HFC) MutateFLOW_REGIME(n hfcFlowRegime) bool {
 	return rcv._tab.MutateInt8Slot(38, int8(n))
 }
@@ -345,7 +345,7 @@ func (rcv *HFC) MutateFlowRegime(n hfcFlowRegime) bool {
 	return rcv.MutateFLOW_REGIME(n)
 }
 
-/// Number of position/velocity components per state sample.
+// / Number of position/velocity components per state sample.
 func (rcv *HFC) STATE_VECTOR_SIZE() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -358,7 +358,7 @@ func (rcv *HFC) StateVectorSize() uint32 {
 	return rcv.STATE_VECTOR_SIZE()
 }
 
-/// Number of position/velocity components per state sample.
+// / Number of position/velocity components per state sample.
 func (rcv *HFC) MutateSTATE_VECTOR_SIZE(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(40, n)
 }
@@ -367,7 +367,7 @@ func (rcv *HFC) MutateStateVectorSize(n uint32) bool {
 	return rcv.MutateSTATE_VECTOR_SIZE(n)
 }
 
-/// Flat state array [x, y, z, vx, vy, vz, ...] in km and km/s.
+// / Flat state array [x, y, z, vx, vy, vz, ...] in km and km/s.
 func (rcv *HFC) STATE_DATA(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -393,7 +393,7 @@ func (rcv *HFC) StateDataLength() int {
 	return rcv.STATE_DATALength()
 }
 
-/// Flat state array [x, y, z, vx, vy, vz, ...] in km and km/s.
+// / Flat state array [x, y, z, vx, vy, vz, ...] in km and km/s.
 func (rcv *HFC) MutateSTATE_DATA(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -407,7 +407,7 @@ func (rcv *HFC) MutateStateData(j int, n float64) bool {
 	return rcv.MutateSTATE_DATA(j, n)
 }
 
-/// Epochs for irregularly sampled condition arrays.
+// / Epochs for irregularly sampled condition arrays.
 func (rcv *HFC) SAMPLE_EPOCHS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -433,8 +433,8 @@ func (rcv *HFC) SampleEpochsLength() int {
 	return rcv.SAMPLE_EPOCHSLength()
 }
 
-/// Epochs for irregularly sampled condition arrays.
-/// Geodetic latitude samples in degrees.
+// / Epochs for irregularly sampled condition arrays.
+// / Geodetic latitude samples in degrees.
 func (rcv *HFC) LATITUDE_DEG(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -460,7 +460,7 @@ func (rcv *HFC) LatitudeDegLength() int {
 	return rcv.LATITUDE_DEGLength()
 }
 
-/// Geodetic latitude samples in degrees.
+// / Geodetic latitude samples in degrees.
 func (rcv *HFC) MutateLATITUDE_DEG(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -474,7 +474,7 @@ func (rcv *HFC) MutateLatitudeDeg(j int, n float64) bool {
 	return rcv.MutateLATITUDE_DEG(j, n)
 }
 
-/// Geodetic longitude samples in degrees.
+// / Geodetic longitude samples in degrees.
 func (rcv *HFC) LONGITUDE_DEG(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -500,7 +500,7 @@ func (rcv *HFC) LongitudeDegLength() int {
 	return rcv.LONGITUDE_DEGLength()
 }
 
-/// Geodetic longitude samples in degrees.
+// / Geodetic longitude samples in degrees.
 func (rcv *HFC) MutateLONGITUDE_DEG(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -514,7 +514,7 @@ func (rcv *HFC) MutateLongitudeDeg(j int, n float64) bool {
 	return rcv.MutateLONGITUDE_DEG(j, n)
 }
 
-/// Altitude samples in meters.
+// / Altitude samples in meters.
 func (rcv *HFC) ALTITUDE_M(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -540,7 +540,7 @@ func (rcv *HFC) AltitudeMLength() int {
 	return rcv.ALTITUDE_MLength()
 }
 
-/// Altitude samples in meters.
+// / Altitude samples in meters.
 func (rcv *HFC) MutateALTITUDE_M(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -554,7 +554,7 @@ func (rcv *HFC) MutateAltitudeM(j int, n float64) bool {
 	return rcv.MutateALTITUDE_M(j, n)
 }
 
-/// Inertial or relative speed samples in meters per second.
+// / Inertial or relative speed samples in meters per second.
 func (rcv *HFC) SPEED_M_PER_S(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -580,7 +580,7 @@ func (rcv *HFC) SpeedMPerSLength() int {
 	return rcv.SPEED_M_PER_SLength()
 }
 
-/// Inertial or relative speed samples in meters per second.
+// / Inertial or relative speed samples in meters per second.
 func (rcv *HFC) MutateSPEED_M_PER_S(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -594,7 +594,7 @@ func (rcv *HFC) MutateSpeedMPerS(j int, n float64) bool {
 	return rcv.MutateSPEED_M_PER_S(j, n)
 }
 
-/// Mach number samples.
+// / Mach number samples.
 func (rcv *HFC) MACH(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -620,7 +620,7 @@ func (rcv *HFC) MachLength() int {
 	return rcv.MACHLength()
 }
 
-/// Mach number samples.
+// / Mach number samples.
 func (rcv *HFC) MutateMACH(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -634,7 +634,7 @@ func (rcv *HFC) MutateMach(j int, n float64) bool {
 	return rcv.MutateMACH(j, n)
 }
 
-/// Dynamic pressure samples in pascals.
+// / Dynamic pressure samples in pascals.
 func (rcv *HFC) DYNAMIC_PRESSURE_PA(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -660,7 +660,7 @@ func (rcv *HFC) DynamicPressurePaLength() int {
 	return rcv.DYNAMIC_PRESSURE_PALength()
 }
 
-/// Dynamic pressure samples in pascals.
+// / Dynamic pressure samples in pascals.
 func (rcv *HFC) MutateDYNAMIC_PRESSURE_PA(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -674,7 +674,7 @@ func (rcv *HFC) MutateDynamicPressurePa(j int, n float64) bool {
 	return rcv.MutateDYNAMIC_PRESSURE_PA(j, n)
 }
 
-/// Atmospheric density samples in kilograms per cubic meter.
+// / Atmospheric density samples in kilograms per cubic meter.
 func (rcv *HFC) DENSITY_KG_PER_M3(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -700,7 +700,7 @@ func (rcv *HFC) DensityKgPerM3Length() int {
 	return rcv.DENSITY_KG_PER_M3Length()
 }
 
-/// Atmospheric density samples in kilograms per cubic meter.
+// / Atmospheric density samples in kilograms per cubic meter.
 func (rcv *HFC) MutateDENSITY_KG_PER_M3(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -714,7 +714,7 @@ func (rcv *HFC) MutateDensityKgPerM3(j int, n float64) bool {
 	return rcv.MutateDENSITY_KG_PER_M3(j, n)
 }
 
-/// Atmospheric temperature samples in kelvin.
+// / Atmospheric temperature samples in kelvin.
 func (rcv *HFC) TEMPERATURE_K(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -740,7 +740,7 @@ func (rcv *HFC) TemperatureKLength() int {
 	return rcv.TEMPERATURE_KLength()
 }
 
-/// Atmospheric temperature samples in kelvin.
+// / Atmospheric temperature samples in kelvin.
 func (rcv *HFC) MutateTEMPERATURE_K(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -754,7 +754,7 @@ func (rcv *HFC) MutateTemperatureK(j int, n float64) bool {
 	return rcv.MutateTEMPERATURE_K(j, n)
 }
 
-/// Static pressure samples in pascals.
+// / Static pressure samples in pascals.
 func (rcv *HFC) PRESSURE_PA(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -780,7 +780,7 @@ func (rcv *HFC) PressurePaLength() int {
 	return rcv.PRESSURE_PALength()
 }
 
-/// Static pressure samples in pascals.
+// / Static pressure samples in pascals.
 func (rcv *HFC) MutatePRESSURE_PA(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -794,7 +794,7 @@ func (rcv *HFC) MutatePressurePa(j int, n float64) bool {
 	return rcv.MutatePRESSURE_PA(j, n)
 }
 
-/// Speed of sound samples in meters per second.
+// / Speed of sound samples in meters per second.
 func (rcv *HFC) SPEED_OF_SOUND_M_PER_S(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -820,7 +820,7 @@ func (rcv *HFC) SpeedOfSoundMPerSLength() int {
 	return rcv.SPEED_OF_SOUND_M_PER_SLength()
 }
 
-/// Speed of sound samples in meters per second.
+// / Speed of sound samples in meters per second.
 func (rcv *HFC) MutateSPEED_OF_SOUND_M_PER_S(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -834,7 +834,7 @@ func (rcv *HFC) MutateSpeedOfSoundMPerS(j int, n float64) bool {
 	return rcv.MutateSPEED_OF_SOUND_M_PER_S(j, n)
 }
 
-/// Knudsen number samples.
+// / Knudsen number samples.
 func (rcv *HFC) KNUDSEN_NUMBER(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
@@ -860,7 +860,7 @@ func (rcv *HFC) KnudsenNumberLength() int {
 	return rcv.KNUDSEN_NUMBERLength()
 }
 
-/// Knudsen number samples.
+// / Knudsen number samples.
 func (rcv *HFC) MutateKNUDSEN_NUMBER(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
@@ -874,7 +874,7 @@ func (rcv *HFC) MutateKnudsenNumber(j int, n float64) bool {
 	return rcv.MutateKNUDSEN_NUMBER(j, n)
 }
 
-/// Reynolds number samples.
+// / Reynolds number samples.
 func (rcv *HFC) REYNOLDS_NUMBER(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
@@ -900,7 +900,7 @@ func (rcv *HFC) ReynoldsNumberLength() int {
 	return rcv.REYNOLDS_NUMBERLength()
 }
 
-/// Reynolds number samples.
+// / Reynolds number samples.
 func (rcv *HFC) MutateREYNOLDS_NUMBER(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
@@ -914,7 +914,7 @@ func (rcv *HFC) MutateReynoldsNumber(j int, n float64) bool {
 	return rcv.MutateREYNOLDS_NUMBER(j, n)
 }
 
-/// Convective heat flux samples in watts per square meter.
+// / Convective heat flux samples in watts per square meter.
 func (rcv *HFC) CONVECTIVE_HEAT_FLUX_W_PER_M2(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
 	if o != 0 {
@@ -940,7 +940,7 @@ func (rcv *HFC) ConvectiveHeatFluxWPerM2Length() int {
 	return rcv.CONVECTIVE_HEAT_FLUX_W_PER_M2Length()
 }
 
-/// Convective heat flux samples in watts per square meter.
+// / Convective heat flux samples in watts per square meter.
 func (rcv *HFC) MutateCONVECTIVE_HEAT_FLUX_W_PER_M2(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
 	if o != 0 {
@@ -954,7 +954,7 @@ func (rcv *HFC) MutateConvectiveHeatFluxWPerM2(j int, n float64) bool {
 	return rcv.MutateCONVECTIVE_HEAT_FLUX_W_PER_M2(j, n)
 }
 
-/// Radiative heat flux samples in watts per square meter.
+// / Radiative heat flux samples in watts per square meter.
 func (rcv *HFC) RADIATIVE_HEAT_FLUX_W_PER_M2(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
@@ -980,7 +980,7 @@ func (rcv *HFC) RadiativeHeatFluxWPerM2Length() int {
 	return rcv.RADIATIVE_HEAT_FLUX_W_PER_M2Length()
 }
 
-/// Radiative heat flux samples in watts per square meter.
+// / Radiative heat flux samples in watts per square meter.
 func (rcv *HFC) MutateRADIATIVE_HEAT_FLUX_W_PER_M2(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
@@ -994,7 +994,7 @@ func (rcv *HFC) MutateRadiativeHeatFluxWPerM2(j int, n float64) bool {
 	return rcv.MutateRADIATIVE_HEAT_FLUX_W_PER_M2(j, n)
 }
 
-/// Stagnation heat flux samples in watts per square meter.
+// / Stagnation heat flux samples in watts per square meter.
 func (rcv *HFC) STAGNATION_HEAT_FLUX_W_PER_M2(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
 	if o != 0 {
@@ -1020,7 +1020,7 @@ func (rcv *HFC) StagnationHeatFluxWPerM2Length() int {
 	return rcv.STAGNATION_HEAT_FLUX_W_PER_M2Length()
 }
 
-/// Stagnation heat flux samples in watts per square meter.
+// / Stagnation heat flux samples in watts per square meter.
 func (rcv *HFC) MutateSTAGNATION_HEAT_FLUX_W_PER_M2(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
 	if o != 0 {
@@ -1034,7 +1034,7 @@ func (rcv *HFC) MutateStagnationHeatFluxWPerM2(j int, n float64) bool {
 	return rcv.MutateSTAGNATION_HEAT_FLUX_W_PER_M2(j, n)
 }
 
-/// Normal load factor samples in g.
+// / Normal load factor samples in g.
 func (rcv *HFC) LOAD_FACTOR_G(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
 	if o != 0 {
@@ -1060,7 +1060,7 @@ func (rcv *HFC) LoadFactorGLength() int {
 	return rcv.LOAD_FACTOR_GLength()
 }
 
-/// Normal load factor samples in g.
+// / Normal load factor samples in g.
 func (rcv *HFC) MutateLOAD_FACTOR_G(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
 	if o != 0 {
@@ -1074,7 +1074,7 @@ func (rcv *HFC) MutateLoadFactorG(j int, n float64) bool {
 	return rcv.MutateLOAD_FACTOR_G(j, n)
 }
 
-/// Angle of attack samples in degrees.
+// / Angle of attack samples in degrees.
 func (rcv *HFC) ANGLE_OF_ATTACK_DEG(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
 	if o != 0 {
@@ -1100,7 +1100,7 @@ func (rcv *HFC) AngleOfAttackDegLength() int {
 	return rcv.ANGLE_OF_ATTACK_DEGLength()
 }
 
-/// Angle of attack samples in degrees.
+// / Angle of attack samples in degrees.
 func (rcv *HFC) MutateANGLE_OF_ATTACK_DEG(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
 	if o != 0 {
@@ -1114,7 +1114,7 @@ func (rcv *HFC) MutateAngleOfAttackDeg(j int, n float64) bool {
 	return rcv.MutateANGLE_OF_ATTACK_DEG(j, n)
 }
 
-/// Sideslip angle samples in degrees.
+// / Sideslip angle samples in degrees.
 func (rcv *HFC) SIDESLIP_DEG(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(80))
 	if o != 0 {
@@ -1140,7 +1140,7 @@ func (rcv *HFC) SideslipDegLength() int {
 	return rcv.SIDESLIP_DEGLength()
 }
 
-/// Sideslip angle samples in degrees.
+// / Sideslip angle samples in degrees.
 func (rcv *HFC) MutateSIDESLIP_DEG(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(80))
 	if o != 0 {
@@ -1154,7 +1154,7 @@ func (rcv *HFC) MutateSideslipDeg(j int, n float64) bool {
 	return rcv.MutateSIDESLIP_DEG(j, n)
 }
 
-/// Bank angle samples in degrees.
+// / Bank angle samples in degrees.
 func (rcv *HFC) BANK_ANGLE_DEG(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(82))
 	if o != 0 {
@@ -1180,7 +1180,7 @@ func (rcv *HFC) BankAngleDegLength() int {
 	return rcv.BANK_ANGLE_DEGLength()
 }
 
-/// Bank angle samples in degrees.
+// / Bank angle samples in degrees.
 func (rcv *HFC) MutateBANK_ANGLE_DEG(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(82))
 	if o != 0 {
@@ -1194,7 +1194,7 @@ func (rcv *HFC) MutateBankAngleDeg(j int, n float64) bool {
 	return rcv.MutateBANK_ANGLE_DEG(j, n)
 }
 
-/// Vehicle reference area in square meters.
+// / Vehicle reference area in square meters.
 func (rcv *HFC) REFERENCE_AREA_M2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(84))
 	if o != 0 {
@@ -1207,7 +1207,7 @@ func (rcv *HFC) ReferenceAreaM2() float64 {
 	return rcv.REFERENCE_AREA_M2()
 }
 
-/// Vehicle reference area in square meters.
+// / Vehicle reference area in square meters.
 func (rcv *HFC) MutateREFERENCE_AREA_M2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(84, n)
 }
@@ -1216,7 +1216,7 @@ func (rcv *HFC) MutateReferenceAreaM2(n float64) bool {
 	return rcv.MutateREFERENCE_AREA_M2(n)
 }
 
-/// Vehicle reference length in meters.
+// / Vehicle reference length in meters.
 func (rcv *HFC) REFERENCE_LENGTH_M() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(86))
 	if o != 0 {
@@ -1229,7 +1229,7 @@ func (rcv *HFC) ReferenceLengthM() float64 {
 	return rcv.REFERENCE_LENGTH_M()
 }
 
-/// Vehicle reference length in meters.
+// / Vehicle reference length in meters.
 func (rcv *HFC) MutateREFERENCE_LENGTH_M(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(86, n)
 }
@@ -1238,7 +1238,7 @@ func (rcv *HFC) MutateReferenceLengthM(n float64) bool {
 	return rcv.MutateREFERENCE_LENGTH_M(n)
 }
 
-/// Nose radius in meters.
+// / Nose radius in meters.
 func (rcv *HFC) NOSE_RADIUS_M() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(88))
 	if o != 0 {
@@ -1251,7 +1251,7 @@ func (rcv *HFC) NoseRadiusM() float64 {
 	return rcv.NOSE_RADIUS_M()
 }
 
-/// Nose radius in meters.
+// / Nose radius in meters.
 func (rcv *HFC) MutateNOSE_RADIUS_M(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(88, n)
 }
@@ -1260,7 +1260,7 @@ func (rcv *HFC) MutateNoseRadiusM(n float64) bool {
 	return rcv.MutateNOSE_RADIUS_M(n)
 }
 
-/// Vehicle mass in kilograms.
+// / Vehicle mass in kilograms.
 func (rcv *HFC) MASS_KG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(90))
 	if o != 0 {
@@ -1273,7 +1273,7 @@ func (rcv *HFC) MassKg() float64 {
 	return rcv.MASS_KG()
 }
 
-/// Vehicle mass in kilograms.
+// / Vehicle mass in kilograms.
 func (rcv *HFC) MutateMASS_KG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(90, n)
 }
@@ -1282,7 +1282,7 @@ func (rcv *HFC) MutateMassKg(n float64) bool {
 	return rcv.MutateMASS_KG(n)
 }
 
-/// Wall or surface temperature in kelvin.
+// / Wall or surface temperature in kelvin.
 func (rcv *HFC) SURFACE_TEMPERATURE_K() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(92))
 	if o != 0 {
@@ -1295,7 +1295,7 @@ func (rcv *HFC) SurfaceTemperatureK() float64 {
 	return rcv.SURFACE_TEMPERATURE_K()
 }
 
-/// Wall or surface temperature in kelvin.
+// / Wall or surface temperature in kelvin.
 func (rcv *HFC) MutateSURFACE_TEMPERATURE_K(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(92, n)
 }
@@ -1304,7 +1304,7 @@ func (rcv *HFC) MutateSurfaceTemperatureK(n float64) bool {
 	return rcv.MutateSURFACE_TEMPERATURE_K(n)
 }
 
-/// Free-form model assumptions or limitations.
+// / Free-form model assumptions or limitations.
 func (rcv *HFC) ASSUMPTIONS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(94))
 	if o != 0 {
@@ -1330,8 +1330,8 @@ func (rcv *HFC) AssumptionsLength() int {
 	return rcv.ASSUMPTIONSLength()
 }
 
-/// Free-form model assumptions or limitations.
-/// Additional comments.
+// / Free-form model assumptions or limitations.
+// / Additional comments.
 func (rcv *HFC) COMMENT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(96))
 	if o != 0 {
@@ -1344,7 +1344,7 @@ func (rcv *HFC) Comment() []byte {
 	return rcv.COMMENT()
 }
 
-/// Additional comments.
+// / Additional comments.
 func HFCStart(builder *flatbuffers.Builder) {
 	builder.StartObject(47)
 }

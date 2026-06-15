@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// RF Emitter Detail Record
+// / RF Emitter Detail Record
 type rfEmitterDetail struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *rfEmitterDetail) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Mode name or identifier
+// / Mode name or identifier
 func (rcv *rfEmitterDetail) MODE_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *rfEmitterDetail) ModeName() []byte {
 	return rcv.MODE_NAME()
 }
 
-/// Mode name or identifier
-/// Center frequency in MHz
+// / Mode name or identifier
+// / Center frequency in MHz
 func (rcv *rfEmitterDetail) FREQUENCY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *rfEmitterDetail) Frequency() float64 {
 	return rcv.FREQUENCY()
 }
 
-/// Center frequency in MHz
+// / Center frequency in MHz
 func (rcv *rfEmitterDetail) MutateFREQUENCY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -78,7 +78,7 @@ func (rcv *rfEmitterDetail) MutateFrequency(n float64) bool {
 	return rcv.MutateFREQUENCY(n)
 }
 
-/// Frequency minimum in MHz
+// / Frequency minimum in MHz
 func (rcv *rfEmitterDetail) FREQ_MIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *rfEmitterDetail) FreqMin() float64 {
 	return rcv.FREQ_MIN()
 }
 
-/// Frequency minimum in MHz
+// / Frequency minimum in MHz
 func (rcv *rfEmitterDetail) MutateFREQ_MIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -100,7 +100,7 @@ func (rcv *rfEmitterDetail) MutateFreqMin(n float64) bool {
 	return rcv.MutateFREQ_MIN(n)
 }
 
-/// Frequency maximum in MHz
+// / Frequency maximum in MHz
 func (rcv *rfEmitterDetail) FREQ_MAX() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -113,7 +113,7 @@ func (rcv *rfEmitterDetail) FreqMax() float64 {
 	return rcv.FREQ_MAX()
 }
 
-/// Frequency maximum in MHz
+// / Frequency maximum in MHz
 func (rcv *rfEmitterDetail) MutateFREQ_MAX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -122,7 +122,7 @@ func (rcv *rfEmitterDetail) MutateFreqMax(n float64) bool {
 	return rcv.MutateFREQ_MAX(n)
 }
 
-/// Pulse repetition interval in microseconds
+// / Pulse repetition interval in microseconds
 func (rcv *rfEmitterDetail) PRI() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -135,7 +135,7 @@ func (rcv *rfEmitterDetail) Pri() float64 {
 	return rcv.PRI()
 }
 
-/// Pulse repetition interval in microseconds
+// / Pulse repetition interval in microseconds
 func (rcv *rfEmitterDetail) MutatePRI(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -144,7 +144,7 @@ func (rcv *rfEmitterDetail) MutatePri(n float64) bool {
 	return rcv.MutatePRI(n)
 }
 
-/// PRI minimum in microseconds
+// / PRI minimum in microseconds
 func (rcv *rfEmitterDetail) PRI_MIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *rfEmitterDetail) PriMin() float64 {
 	return rcv.PRI_MIN()
 }
 
-/// PRI minimum in microseconds
+// / PRI minimum in microseconds
 func (rcv *rfEmitterDetail) MutatePRI_MIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -166,7 +166,7 @@ func (rcv *rfEmitterDetail) MutatePriMin(n float64) bool {
 	return rcv.MutatePRI_MIN(n)
 }
 
-/// PRI maximum in microseconds
+// / PRI maximum in microseconds
 func (rcv *rfEmitterDetail) PRI_MAX() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -179,7 +179,7 @@ func (rcv *rfEmitterDetail) PriMax() float64 {
 	return rcv.PRI_MAX()
 }
 
-/// PRI maximum in microseconds
+// / PRI maximum in microseconds
 func (rcv *rfEmitterDetail) MutatePRI_MAX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -188,7 +188,7 @@ func (rcv *rfEmitterDetail) MutatePriMax(n float64) bool {
 	return rcv.MutatePRI_MAX(n)
 }
 
-/// Pulse width in microseconds
+// / Pulse width in microseconds
 func (rcv *rfEmitterDetail) PULSE_WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -201,7 +201,7 @@ func (rcv *rfEmitterDetail) PulseWidth() float64 {
 	return rcv.PULSE_WIDTH()
 }
 
-/// Pulse width in microseconds
+// / Pulse width in microseconds
 func (rcv *rfEmitterDetail) MutatePULSE_WIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -210,7 +210,7 @@ func (rcv *rfEmitterDetail) MutatePulseWidth(n float64) bool {
 	return rcv.MutatePULSE_WIDTH(n)
 }
 
-/// Pulse width minimum in microseconds
+// / Pulse width minimum in microseconds
 func (rcv *rfEmitterDetail) PW_MIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -223,7 +223,7 @@ func (rcv *rfEmitterDetail) PwMin() float64 {
 	return rcv.PW_MIN()
 }
 
-/// Pulse width minimum in microseconds
+// / Pulse width minimum in microseconds
 func (rcv *rfEmitterDetail) MutatePW_MIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -232,7 +232,7 @@ func (rcv *rfEmitterDetail) MutatePwMin(n float64) bool {
 	return rcv.MutatePW_MIN(n)
 }
 
-/// Pulse width maximum in microseconds
+// / Pulse width maximum in microseconds
 func (rcv *rfEmitterDetail) PW_MAX() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -245,7 +245,7 @@ func (rcv *rfEmitterDetail) PwMax() float64 {
 	return rcv.PW_MAX()
 }
 
-/// Pulse width maximum in microseconds
+// / Pulse width maximum in microseconds
 func (rcv *rfEmitterDetail) MutatePW_MAX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -254,7 +254,7 @@ func (rcv *rfEmitterDetail) MutatePwMax(n float64) bool {
 	return rcv.MutatePW_MAX(n)
 }
 
-/// Scan period in seconds
+// / Scan period in seconds
 func (rcv *rfEmitterDetail) SCAN_PERIOD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -267,7 +267,7 @@ func (rcv *rfEmitterDetail) ScanPeriod() float64 {
 	return rcv.SCAN_PERIOD()
 }
 
-/// Scan period in seconds
+// / Scan period in seconds
 func (rcv *rfEmitterDetail) MutateSCAN_PERIOD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -276,7 +276,7 @@ func (rcv *rfEmitterDetail) MutateScanPeriod(n float64) bool {
 	return rcv.MutateSCAN_PERIOD(n)
 }
 
-/// Effective radiated power in dBW
+// / Effective radiated power in dBW
 func (rcv *rfEmitterDetail) ERP() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -289,7 +289,7 @@ func (rcv *rfEmitterDetail) Erp() float64 {
 	return rcv.ERP()
 }
 
-/// Effective radiated power in dBW
+// / Effective radiated power in dBW
 func (rcv *rfEmitterDetail) MutateERP(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -298,7 +298,7 @@ func (rcv *rfEmitterDetail) MutateErp(n float64) bool {
 	return rcv.MutateERP(n)
 }
 
-/// Signal modulation
+// / Signal modulation
 func (rcv *rfEmitterDetail) MODULATION() signalModulation {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -311,7 +311,7 @@ func (rcv *rfEmitterDetail) Modulation() signalModulation {
 	return rcv.MODULATION()
 }
 
-/// Signal modulation
+// / Signal modulation
 func (rcv *rfEmitterDetail) MutateMODULATION(n signalModulation) bool {
 	return rcv._tab.MutateInt8Slot(28, int8(n))
 }
@@ -320,7 +320,7 @@ func (rcv *rfEmitterDetail) MutateModulation(n signalModulation) bool {
 	return rcv.MutateMODULATION(n)
 }
 
-/// Antenna pattern type
+// / Antenna pattern type
 func (rcv *rfEmitterDetail) ANTENNA_PATTERN() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -333,8 +333,8 @@ func (rcv *rfEmitterDetail) AntennaPattern() []byte {
 	return rcv.ANTENNA_PATTERN()
 }
 
-/// Antenna pattern type
-/// 3dB beamwidth in degrees
+// / Antenna pattern type
+// / 3dB beamwidth in degrees
 func (rcv *rfEmitterDetail) BEAMWIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -347,7 +347,7 @@ func (rcv *rfEmitterDetail) Beamwidth() float64 {
 	return rcv.BEAMWIDTH()
 }
 
-/// 3dB beamwidth in degrees
+// / 3dB beamwidth in degrees
 func (rcv *rfEmitterDetail) MutateBEAMWIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }

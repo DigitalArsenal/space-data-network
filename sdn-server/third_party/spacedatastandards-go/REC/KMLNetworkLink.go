@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Network link
+// / Network link
 type KMLNetworkLink struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLNetworkLink) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Name of the network link
+// / Name of the network link
 func (rcv *KMLNetworkLink) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLNetworkLink) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Name of the network link
-/// Description
+// / Name of the network link
+// / Description
 func (rcv *KMLNetworkLink) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *KMLNetworkLink) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-/// Description
-/// Whether the link is visible
+// / Description
+// / Whether the link is visible
 func (rcv *KMLNetworkLink) VISIBILITY() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *KMLNetworkLink) Visibility() bool {
 	return rcv.VISIBILITY()
 }
 
-/// Whether the link is visible
+// / Whether the link is visible
 func (rcv *KMLNetworkLink) MutateVISIBILITY(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }
@@ -92,7 +92,7 @@ func (rcv *KMLNetworkLink) MutateVisibility(n bool) bool {
 	return rcv.MutateVISIBILITY(n)
 }
 
-/// Whether open in tree view
+// / Whether open in tree view
 func (rcv *KMLNetworkLink) OPEN() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,7 +105,7 @@ func (rcv *KMLNetworkLink) Open() bool {
 	return rcv.OPEN()
 }
 
-/// Whether open in tree view
+// / Whether open in tree view
 func (rcv *KMLNetworkLink) MutateOPEN(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }
@@ -114,7 +114,7 @@ func (rcv *KMLNetworkLink) MutateOpen(n bool) bool {
 	return rcv.MutateOPEN(n)
 }
 
-/// Link URL
+// / Link URL
 func (rcv *KMLNetworkLink) HREF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -127,8 +127,8 @@ func (rcv *KMLNetworkLink) Href() []byte {
 	return rcv.HREF()
 }
 
-/// Link URL
-/// Refresh mode
+// / Link URL
+// / Refresh mode
 func (rcv *KMLNetworkLink) REFRESH_MODE() KMLRefreshMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -141,7 +141,7 @@ func (rcv *KMLNetworkLink) RefreshMode() KMLRefreshMode {
 	return rcv.REFRESH_MODE()
 }
 
-/// Refresh mode
+// / Refresh mode
 func (rcv *KMLNetworkLink) MutateREFRESH_MODE(n KMLRefreshMode) bool {
 	return rcv._tab.MutateInt8Slot(14, int8(n))
 }
@@ -150,7 +150,7 @@ func (rcv *KMLNetworkLink) MutateRefreshMode(n KMLRefreshMode) bool {
 	return rcv.MutateREFRESH_MODE(n)
 }
 
-/// Refresh interval in seconds
+// / Refresh interval in seconds
 func (rcv *KMLNetworkLink) REFRESH_INTERVAL() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -163,7 +163,7 @@ func (rcv *KMLNetworkLink) RefreshInterval() float64 {
 	return rcv.REFRESH_INTERVAL()
 }
 
-/// Refresh interval in seconds
+// / Refresh interval in seconds
 func (rcv *KMLNetworkLink) MutateREFRESH_INTERVAL(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -172,7 +172,7 @@ func (rcv *KMLNetworkLink) MutateRefreshInterval(n float64) bool {
 	return rcv.MutateREFRESH_INTERVAL(n)
 }
 
-/// View refresh mode
+// / View refresh mode
 func (rcv *KMLNetworkLink) VIEW_REFRESH_MODE() KMLViewRefreshMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -185,7 +185,7 @@ func (rcv *KMLNetworkLink) ViewRefreshMode() KMLViewRefreshMode {
 	return rcv.VIEW_REFRESH_MODE()
 }
 
-/// View refresh mode
+// / View refresh mode
 func (rcv *KMLNetworkLink) MutateVIEW_REFRESH_MODE(n KMLViewRefreshMode) bool {
 	return rcv._tab.MutateInt8Slot(18, int8(n))
 }
@@ -194,7 +194,7 @@ func (rcv *KMLNetworkLink) MutateViewRefreshMode(n KMLViewRefreshMode) bool {
 	return rcv.MutateVIEW_REFRESH_MODE(n)
 }
 
-/// View refresh time in seconds
+// / View refresh time in seconds
 func (rcv *KMLNetworkLink) VIEW_REFRESH_TIME() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -207,7 +207,7 @@ func (rcv *KMLNetworkLink) ViewRefreshTime() float64 {
 	return rcv.VIEW_REFRESH_TIME()
 }
 
-/// View refresh time in seconds
+// / View refresh time in seconds
 func (rcv *KMLNetworkLink) MutateVIEW_REFRESH_TIME(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -216,7 +216,7 @@ func (rcv *KMLNetworkLink) MutateViewRefreshTime(n float64) bool {
 	return rcv.MutateVIEW_REFRESH_TIME(n)
 }
 
-/// Whether to refresh on visibility change
+// / Whether to refresh on visibility change
 func (rcv *KMLNetworkLink) REFRESH_VISIBILITY() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -229,7 +229,7 @@ func (rcv *KMLNetworkLink) RefreshVisibility() bool {
 	return rcv.REFRESH_VISIBILITY()
 }
 
-/// Whether to refresh on visibility change
+// / Whether to refresh on visibility change
 func (rcv *KMLNetworkLink) MutateREFRESH_VISIBILITY(n bool) bool {
 	return rcv._tab.MutateBoolSlot(22, n)
 }
@@ -238,7 +238,7 @@ func (rcv *KMLNetworkLink) MutateRefreshVisibility(n bool) bool {
 	return rcv.MutateREFRESH_VISIBILITY(n)
 }
 
-/// Whether to fly to view on refresh
+// / Whether to fly to view on refresh
 func (rcv *KMLNetworkLink) FLY_TO_VIEW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -251,7 +251,7 @@ func (rcv *KMLNetworkLink) FlyToView() bool {
 	return rcv.FLY_TO_VIEW()
 }
 
-/// Whether to fly to view on refresh
+// / Whether to fly to view on refresh
 func (rcv *KMLNetworkLink) MutateFLY_TO_VIEW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(24, n)
 }
@@ -260,7 +260,7 @@ func (rcv *KMLNetworkLink) MutateFlyToView(n bool) bool {
 	return rcv.MutateFLY_TO_VIEW(n)
 }
 
-/// Full link element
+// / Full link element
 func (rcv *KMLNetworkLink) LINK(obj *KMLLink) *KMLLink {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -278,7 +278,7 @@ func (rcv *KMLNetworkLink) Link(obj *KMLLink) *KMLLink {
 	return rcv.LINK(obj)
 }
 
-/// Full link element
+// / Full link element
 func KMLNetworkLinkStart(builder *flatbuffers.Builder) {
 	builder.StartObject(12)
 }

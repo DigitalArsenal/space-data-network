@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Observation Stability Message
+// / Observation Stability Message
 type OSM struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *OSM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Indicates whether the observation is stable or not
+// / Indicates whether the observation is stable or not
 func (rcv *OSM) IS_STABLE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *OSM) IsStable() bool {
 	return rcv.IS_STABLE()
 }
 
-/// Indicates whether the observation is stable or not
+// / Indicates whether the observation is stable or not
 func (rcv *OSM) MutateIS_STABLE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -76,7 +76,7 @@ func (rcv *OSM) MutateIsStable(n bool) bool {
 	return rcv.MutateIS_STABLE(n)
 }
 
-/// The number of observations
+// / The number of observations
 func (rcv *OSM) NUM_OBS() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,7 +89,7 @@ func (rcv *OSM) NumObs() int32 {
 	return rcv.NUM_OBS()
 }
 
-/// The number of observations
+// / The number of observations
 func (rcv *OSM) MutateNUM_OBS(n int32) bool {
 	return rcv._tab.MutateInt32Slot(6, n)
 }
@@ -98,7 +98,7 @@ func (rcv *OSM) MutateNumObs(n int32) bool {
 	return rcv.MutateNUM_OBS(n)
 }
 
-/// Unique identifier for the object being observed
+// / Unique identifier for the object being observed
 func (rcv *OSM) OBJECT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -111,8 +111,8 @@ func (rcv *OSM) ObjectId() []byte {
 	return rcv.OBJECT_ID()
 }
 
-/// Unique identifier for the object being observed
-/// Identifier of the sensor
+// / Unique identifier for the object being observed
+// / Identifier of the sensor
 func (rcv *OSM) ID_SENSOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -125,8 +125,8 @@ func (rcv *OSM) IdSensor() []byte {
 	return rcv.ID_SENSOR()
 }
 
-/// Identifier of the sensor
-/// Timestamp of data creation
+// / Identifier of the sensor
+// / Timestamp of data creation
 func (rcv *OSM) PASS_START() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -139,8 +139,8 @@ func (rcv *OSM) PassStart() []byte {
 	return rcv.PASS_START()
 }
 
-/// Timestamp of data creation
-/// Duration of the observation pass in seconds
+// / Timestamp of data creation
+// / Duration of the observation pass in seconds
 func (rcv *OSM) PASS_DURATION() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -153,7 +153,7 @@ func (rcv *OSM) PassDuration() int32 {
 	return rcv.PASS_DURATION()
 }
 
-/// Duration of the observation pass in seconds
+// / Duration of the observation pass in seconds
 func (rcv *OSM) MutatePASS_DURATION(n int32) bool {
 	return rcv._tab.MutateInt32Slot(14, n)
 }

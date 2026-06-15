@@ -4,7 +4,7 @@ package REC
 
 import "strconv"
 
-/// Licensing grant message type
+// / Licensing grant message type
 type licensingGrantMessageType int8
 
 const (

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Ellipsoid (3D shape)
+// / Ellipsoid (3D shape)
 type CZMEllipsoid struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMEllipsoid) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Whether the ellipsoid is displayed
+// / Whether the ellipsoid is displayed
 func (rcv *CZMEllipsoid) SHOW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMEllipsoid) Show() bool {
 	return rcv.SHOW()
 }
 
-/// Whether the ellipsoid is displayed
+// / Whether the ellipsoid is displayed
 func (rcv *CZMEllipsoid) MutateSHOW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMEllipsoid) MutateShow(n bool) bool {
 	return rcv.MutateSHOW(n)
 }
 
-/// X radius in meters
+// / X radius in meters
 func (rcv *CZMEllipsoid) RADII_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *CZMEllipsoid) RadiiX() float64 {
 	return rcv.RADII_X()
 }
 
-/// X radius in meters
+// / X radius in meters
 func (rcv *CZMEllipsoid) MutateRADII_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *CZMEllipsoid) MutateRadiiX(n float64) bool {
 	return rcv.MutateRADII_X(n)
 }
 
-/// Y radius in meters
+// / Y radius in meters
 func (rcv *CZMEllipsoid) RADII_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *CZMEllipsoid) RadiiY() float64 {
 	return rcv.RADII_Y()
 }
 
-/// Y radius in meters
+// / Y radius in meters
 func (rcv *CZMEllipsoid) MutateRADII_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *CZMEllipsoid) MutateRadiiY(n float64) bool {
 	return rcv.MutateRADII_Y(n)
 }
 
-/// Z radius in meters
+// / Z radius in meters
 func (rcv *CZMEllipsoid) RADII_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *CZMEllipsoid) RadiiZ() float64 {
 	return rcv.RADII_Z()
 }
 
-/// Z radius in meters
+// / Z radius in meters
 func (rcv *CZMEllipsoid) MutateRADII_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *CZMEllipsoid) MutateRadiiZ(n float64) bool {
 	return rcv.MutateRADII_Z(n)
 }
 
-/// Inner X radius
+// / Inner X radius
 func (rcv *CZMEllipsoid) INNER_RADII_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,7 +143,7 @@ func (rcv *CZMEllipsoid) InnerRadiiX() float64 {
 	return rcv.INNER_RADII_X()
 }
 
-/// Inner X radius
+// / Inner X radius
 func (rcv *CZMEllipsoid) MutateINNER_RADII_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -152,7 +152,7 @@ func (rcv *CZMEllipsoid) MutateInnerRadiiX(n float64) bool {
 	return rcv.MutateINNER_RADII_X(n)
 }
 
-/// Inner Y radius
+// / Inner Y radius
 func (rcv *CZMEllipsoid) INNER_RADII_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -165,7 +165,7 @@ func (rcv *CZMEllipsoid) InnerRadiiY() float64 {
 	return rcv.INNER_RADII_Y()
 }
 
-/// Inner Y radius
+// / Inner Y radius
 func (rcv *CZMEllipsoid) MutateINNER_RADII_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -174,7 +174,7 @@ func (rcv *CZMEllipsoid) MutateInnerRadiiY(n float64) bool {
 	return rcv.MutateINNER_RADII_Y(n)
 }
 
-/// Inner Z radius
+// / Inner Z radius
 func (rcv *CZMEllipsoid) INNER_RADII_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -187,7 +187,7 @@ func (rcv *CZMEllipsoid) InnerRadiiZ() float64 {
 	return rcv.INNER_RADII_Z()
 }
 
-/// Inner Z radius
+// / Inner Z radius
 func (rcv *CZMEllipsoid) MutateINNER_RADII_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -196,7 +196,7 @@ func (rcv *CZMEllipsoid) MutateInnerRadiiZ(n float64) bool {
 	return rcv.MutateINNER_RADII_Z(n)
 }
 
-/// Minimum clock angle in radians
+// / Minimum clock angle in radians
 func (rcv *CZMEllipsoid) MINIMUM_CLOCK() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -209,7 +209,7 @@ func (rcv *CZMEllipsoid) MinimumClock() float64 {
 	return rcv.MINIMUM_CLOCK()
 }
 
-/// Minimum clock angle in radians
+// / Minimum clock angle in radians
 func (rcv *CZMEllipsoid) MutateMINIMUM_CLOCK(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -218,7 +218,7 @@ func (rcv *CZMEllipsoid) MutateMinimumClock(n float64) bool {
 	return rcv.MutateMINIMUM_CLOCK(n)
 }
 
-/// Maximum clock angle in radians
+// / Maximum clock angle in radians
 func (rcv *CZMEllipsoid) MAXIMUM_CLOCK() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -231,7 +231,7 @@ func (rcv *CZMEllipsoid) MaximumClock() float64 {
 	return rcv.MAXIMUM_CLOCK()
 }
 
-/// Maximum clock angle in radians
+// / Maximum clock angle in radians
 func (rcv *CZMEllipsoid) MutateMAXIMUM_CLOCK(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -240,7 +240,7 @@ func (rcv *CZMEllipsoid) MutateMaximumClock(n float64) bool {
 	return rcv.MutateMAXIMUM_CLOCK(n)
 }
 
-/// Minimum cone angle in radians
+// / Minimum cone angle in radians
 func (rcv *CZMEllipsoid) MINIMUM_CONE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -253,7 +253,7 @@ func (rcv *CZMEllipsoid) MinimumCone() float64 {
 	return rcv.MINIMUM_CONE()
 }
 
-/// Minimum cone angle in radians
+// / Minimum cone angle in radians
 func (rcv *CZMEllipsoid) MutateMINIMUM_CONE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -262,7 +262,7 @@ func (rcv *CZMEllipsoid) MutateMinimumCone(n float64) bool {
 	return rcv.MutateMINIMUM_CONE(n)
 }
 
-/// Maximum cone angle in radians
+// / Maximum cone angle in radians
 func (rcv *CZMEllipsoid) MAXIMUM_CONE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -275,7 +275,7 @@ func (rcv *CZMEllipsoid) MaximumCone() float64 {
 	return rcv.MAXIMUM_CONE()
 }
 
-/// Maximum cone angle in radians
+// / Maximum cone angle in radians
 func (rcv *CZMEllipsoid) MutateMAXIMUM_CONE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -284,7 +284,7 @@ func (rcv *CZMEllipsoid) MutateMaximumCone(n float64) bool {
 	return rcv.MutateMAXIMUM_CONE(n)
 }
 
-/// Height reference
+// / Height reference
 func (rcv *CZMEllipsoid) HEIGHT_REFERENCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -297,8 +297,8 @@ func (rcv *CZMEllipsoid) HeightReference() []byte {
 	return rcv.HEIGHT_REFERENCE()
 }
 
-/// Height reference
-/// Fill flag
+// / Height reference
+// / Fill flag
 func (rcv *CZMEllipsoid) FILL() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -311,7 +311,7 @@ func (rcv *CZMEllipsoid) Fill() bool {
 	return rcv.FILL()
 }
 
-/// Fill flag
+// / Fill flag
 func (rcv *CZMEllipsoid) MutateFILL(n bool) bool {
 	return rcv._tab.MutateBoolSlot(28, n)
 }
@@ -320,7 +320,7 @@ func (rcv *CZMEllipsoid) MutateFill(n bool) bool {
 	return rcv.MutateFILL(n)
 }
 
-/// Surface material
+// / Surface material
 func (rcv *CZMEllipsoid) MATERIAL(obj *CZMMaterial) *CZMMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -338,8 +338,8 @@ func (rcv *CZMEllipsoid) Material(obj *CZMMaterial) *CZMMaterial {
 	return rcv.MATERIAL(obj)
 }
 
-/// Surface material
-/// Outline flag
+// / Surface material
+// / Outline flag
 func (rcv *CZMEllipsoid) OUTLINE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -352,7 +352,7 @@ func (rcv *CZMEllipsoid) Outline() bool {
 	return rcv.OUTLINE()
 }
 
-/// Outline flag
+// / Outline flag
 func (rcv *CZMEllipsoid) MutateOUTLINE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(32, n)
 }
@@ -361,7 +361,7 @@ func (rcv *CZMEllipsoid) MutateOutline(n bool) bool {
 	return rcv.MutateOUTLINE(n)
 }
 
-/// Outline color
+// / Outline color
 func (rcv *CZMEllipsoid) OUTLINE_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -379,8 +379,8 @@ func (rcv *CZMEllipsoid) OutlineColor(obj *CZMColor) *CZMColor {
 	return rcv.OUTLINE_COLOR(obj)
 }
 
-/// Outline color
-/// Outline width
+// / Outline color
+// / Outline width
 func (rcv *CZMEllipsoid) OUTLINE_WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -393,7 +393,7 @@ func (rcv *CZMEllipsoid) OutlineWidth() float64 {
 	return rcv.OUTLINE_WIDTH()
 }
 
-/// Outline width
+// / Outline width
 func (rcv *CZMEllipsoid) MutateOUTLINE_WIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -402,7 +402,7 @@ func (rcv *CZMEllipsoid) MutateOutlineWidth(n float64) bool {
 	return rcv.MutateOUTLINE_WIDTH(n)
 }
 
-/// Stack partitions
+// / Stack partitions
 func (rcv *CZMEllipsoid) STACK_PARTITIONS() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -415,7 +415,7 @@ func (rcv *CZMEllipsoid) StackPartitions() int32 {
 	return rcv.STACK_PARTITIONS()
 }
 
-/// Stack partitions
+// / Stack partitions
 func (rcv *CZMEllipsoid) MutateSTACK_PARTITIONS(n int32) bool {
 	return rcv._tab.MutateInt32Slot(38, n)
 }
@@ -424,7 +424,7 @@ func (rcv *CZMEllipsoid) MutateStackPartitions(n int32) bool {
 	return rcv.MutateSTACK_PARTITIONS(n)
 }
 
-/// Slice partitions
+// / Slice partitions
 func (rcv *CZMEllipsoid) SLICE_PARTITIONS() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -437,7 +437,7 @@ func (rcv *CZMEllipsoid) SlicePartitions() int32 {
 	return rcv.SLICE_PARTITIONS()
 }
 
-/// Slice partitions
+// / Slice partitions
 func (rcv *CZMEllipsoid) MutateSLICE_PARTITIONS(n int32) bool {
 	return rcv._tab.MutateInt32Slot(40, n)
 }
@@ -446,7 +446,7 @@ func (rcv *CZMEllipsoid) MutateSlicePartitions(n int32) bool {
 	return rcv.MutateSLICE_PARTITIONS(n)
 }
 
-/// Subdivisions
+// / Subdivisions
 func (rcv *CZMEllipsoid) SUBDIVISIONS() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -459,7 +459,7 @@ func (rcv *CZMEllipsoid) Subdivisions() int32 {
 	return rcv.SUBDIVISIONS()
 }
 
-/// Subdivisions
+// / Subdivisions
 func (rcv *CZMEllipsoid) MutateSUBDIVISIONS(n int32) bool {
 	return rcv._tab.MutateInt32Slot(42, n)
 }
@@ -468,7 +468,7 @@ func (rcv *CZMEllipsoid) MutateSubdivisions(n int32) bool {
 	return rcv.MutateSUBDIVISIONS(n)
 }
 
-/// Shadow mode
+// / Shadow mode
 func (rcv *CZMEllipsoid) SHADOWS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -481,7 +481,7 @@ func (rcv *CZMEllipsoid) Shadows() []byte {
 	return rcv.SHADOWS()
 }
 
-/// Shadow mode
+// / Shadow mode
 func CZMEllipsoidStart(builder *flatbuffers.Builder) {
 	builder.StartObject(21)
 }

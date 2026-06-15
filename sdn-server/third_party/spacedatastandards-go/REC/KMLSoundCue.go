@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// gx:SoundCue tour primitive
+// / gx:SoundCue tour primitive
 type KMLSoundCue struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLSoundCue) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Audio file URL
+// / Audio file URL
 func (rcv *KMLSoundCue) HREF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLSoundCue) Href() []byte {
 	return rcv.HREF()
 }
 
-/// Audio file URL
-/// Delayed start in seconds
+// / Audio file URL
+// / Delayed start in seconds
 func (rcv *KMLSoundCue) DELAYED_START() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *KMLSoundCue) DelayedStart() float64 {
 	return rcv.DELAYED_START()
 }
 
-/// Delayed start in seconds
+// / Delayed start in seconds
 func (rcv *KMLSoundCue) MutateDELAYED_START(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }

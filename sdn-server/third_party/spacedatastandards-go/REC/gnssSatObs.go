@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// GNSS Satellite Observation
+// / GNSS Satellite Observation
 type gnssSatObs struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *gnssSatObs) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// GNSS satellite identifier (e.g., G01, R24, E05, C03)
+// / GNSS satellite identifier (e.g., G01, R24, E05, C03)
 func (rcv *gnssSatObs) GNSS_SAT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *gnssSatObs) GnssSatId() []byte {
 	return rcv.GNSS_SAT_ID()
 }
 
-/// GNSS satellite identifier (e.g., G01, R24, E05, C03)
-/// Constellation
+// / GNSS satellite identifier (e.g., G01, R24, E05, C03)
+// / Constellation
 func (rcv *gnssSatObs) CONSTELLATION() gnssConstellation {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *gnssSatObs) Constellation() gnssConstellation {
 	return rcv.CONSTELLATION()
 }
 
-/// Constellation
+// / Constellation
 func (rcv *gnssSatObs) MutateCONSTELLATION(n gnssConstellation) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -78,7 +78,7 @@ func (rcv *gnssSatObs) MutateConstellation(n gnssConstellation) bool {
 	return rcv.MutateCONSTELLATION(n)
 }
 
-/// Elevation angle in degrees
+// / Elevation angle in degrees
 func (rcv *gnssSatObs) ELEVATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *gnssSatObs) Elevation() float64 {
 	return rcv.ELEVATION()
 }
 
-/// Elevation angle in degrees
+// / Elevation angle in degrees
 func (rcv *gnssSatObs) MutateELEVATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -100,7 +100,7 @@ func (rcv *gnssSatObs) MutateElevation(n float64) bool {
 	return rcv.MutateELEVATION(n)
 }
 
-/// Azimuth angle in degrees
+// / Azimuth angle in degrees
 func (rcv *gnssSatObs) AZIMUTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -113,7 +113,7 @@ func (rcv *gnssSatObs) Azimuth() float64 {
 	return rcv.AZIMUTH()
 }
 
-/// Azimuth angle in degrees
+// / Azimuth angle in degrees
 func (rcv *gnssSatObs) MutateAZIMUTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -122,7 +122,7 @@ func (rcv *gnssSatObs) MutateAzimuth(n float64) bool {
 	return rcv.MutateAZIMUTH(n)
 }
 
-/// Tracking status (0=not tracked, 1=tracking, 2=locked)
+// / Tracking status (0=not tracked, 1=tracking, 2=locked)
 func (rcv *gnssSatObs) TRACKING_STATUS() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -135,7 +135,7 @@ func (rcv *gnssSatObs) TrackingStatus() int32 {
 	return rcv.TRACKING_STATUS()
 }
 
-/// Tracking status (0=not tracked, 1=tracking, 2=locked)
+// / Tracking status (0=not tracked, 1=tracking, 2=locked)
 func (rcv *gnssSatObs) MutateTRACKING_STATUS(n int32) bool {
 	return rcv._tab.MutateInt32Slot(12, n)
 }
@@ -144,7 +144,7 @@ func (rcv *gnssSatObs) MutateTrackingStatus(n int32) bool {
 	return rcv.MutateTRACKING_STATUS(n)
 }
 
-/// AGC state
+// / AGC state
 func (rcv *gnssSatObs) AGC_STATE() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *gnssSatObs) AgcState() int32 {
 	return rcv.AGC_STATE()
 }
 
-/// AGC state
+// / AGC state
 func (rcv *gnssSatObs) MutateAGC_STATE(n int32) bool {
 	return rcv._tab.MutateInt32Slot(14, n)
 }
@@ -166,7 +166,7 @@ func (rcv *gnssSatObs) MutateAgcState(n int32) bool {
 	return rcv.MutateAGC_STATE(n)
 }
 
-/// Observations for this satellite
+// / Observations for this satellite
 func (rcv *gnssSatObs) OBSERVATIONS(obj *gnssObsData, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -198,7 +198,7 @@ func (rcv *gnssSatObs) ObservationsLength() int {
 	return rcv.OBSERVATIONSLength()
 }
 
-/// Observations for this satellite
+// / Observations for this satellite
 func gnssSatObsStart(builder *flatbuffers.Builder) {
 	builder.StartObject(7)
 }

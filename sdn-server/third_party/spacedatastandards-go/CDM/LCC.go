@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Legacy Country Code
+// / Legacy Country Code
 type LCC struct {
 	_tab flatbuffers.Table
 }

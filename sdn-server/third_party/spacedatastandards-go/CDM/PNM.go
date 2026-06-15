@@ -6,20 +6,20 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Publish Notification Message.
-///
-/// PNM is the compact network announcement for a published record, manifest, or
-/// dataset update. For dataset updates, FILE_ID is the complete canonical
-/// identity for the published update and CID usually points to a small DPM
-/// manifest or digest. The DPM carries the full verification contract:
-/// provider identity, retrieval protocol, canonical query, result hash, Merkle
-/// roots, completeness-capable indexes, file_id partition key, and signature.
-/// Large or paid dataset updates do not need to be published as globally
-/// discoverable IPFS files; a PNM may instead advertise a provider-mediated SDN
-/// query protocol. In that mode the PNM is only the announcement. The DPM is
-/// the signed commitment, and each provider response carries records plus
-/// Merkle proof material that the subscriber verifies against the DPM roots and
-/// the announced FILE_ID before import.
+// / Publish Notification Message.
+// /
+// / PNM is the compact network announcement for a published record, manifest, or
+// / dataset update. For dataset updates, FILE_ID is the complete canonical
+// / identity for the published update and CID usually points to a small DPM
+// / manifest or digest. The DPM carries the full verification contract:
+// / provider identity, retrieval protocol, canonical query, result hash, Merkle
+// / roots, completeness-capable indexes, file_id partition key, and signature.
+// / Large or paid dataset updates do not need to be published as globally
+// / discoverable IPFS files; a PNM may instead advertise a provider-mediated SDN
+// / query protocol. In that mode the PNM is only the announcement. The DPM is
+// / the signed commitment, and each provider response carries records plus
+// / Merkle proof material that the subscriber verifies against the DPM roots and
+// / the announced FILE_ID before import.
 type PNM struct {
 	_tab flatbuffers.Table
 }
@@ -67,13 +67,13 @@ func (rcv *PNM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Multiformat Address
-/// https://multiformats.io/multiaddr/
-/// A universal address format for representing multiple network protocols. Examples include:
-/// - /ip4/192.168.1.1/tcp/80 for an IPv4 address with TCP protocol
-/// - /ip6zone/x/ip6/::1 for an IPv6 address with a zone
-/// - /dns4/example.com for a domain name resolvable only to IPv4 addresses
-/// - /ipfs/bafybeiccfclkdtucu6y4yc5cpr6y3yuinr67svmii46v5cfcrkp47ihehy/README.txt -IPFS address w/CID and path to `README.txt`.
+// / Multiformat Address
+// / https://multiformats.io/multiaddr/
+// / A universal address format for representing multiple network protocols. Examples include:
+// / - /ip4/192.168.1.1/tcp/80 for an IPv4 address with TCP protocol
+// / - /ip6zone/x/ip6/::1 for an IPv6 address with a zone
+// / - /dns4/example.com for a domain name resolvable only to IPv4 addresses
+// / - /ipfs/bafybeiccfclkdtucu6y4yc5cpr6y3yuinr67svmii46v5cfcrkp47ihehy/README.txt -IPFS address w/CID and path to `README.txt`.
 func (rcv *PNM) MULTIFORMAT_ADDRESS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -86,14 +86,14 @@ func (rcv *PNM) MultiformatAddress() []byte {
 	return rcv.MULTIFORMAT_ADDRESS()
 }
 
-/// Multiformat Address
-/// https://multiformats.io/multiaddr/
-/// A universal address format for representing multiple network protocols. Examples include:
-/// - /ip4/192.168.1.1/tcp/80 for an IPv4 address with TCP protocol
-/// - /ip6zone/x/ip6/::1 for an IPv6 address with a zone
-/// - /dns4/example.com for a domain name resolvable only to IPv4 addresses
-/// - /ipfs/bafybeiccfclkdtucu6y4yc5cpr6y3yuinr67svmii46v5cfcrkp47ihehy/README.txt -IPFS address w/CID and path to `README.txt`.
-/// Publish Time OF THE Publish Notification Message
+// / Multiformat Address
+// / https://multiformats.io/multiaddr/
+// / A universal address format for representing multiple network protocols. Examples include:
+// / - /ip4/192.168.1.1/tcp/80 for an IPv4 address with TCP protocol
+// / - /ip6zone/x/ip6/::1 for an IPv6 address with a zone
+// / - /dns4/example.com for a domain name resolvable only to IPv4 addresses
+// / - /ipfs/bafybeiccfclkdtucu6y4yc5cpr6y3yuinr67svmii46v5cfcrkp47ihehy/README.txt -IPFS address w/CID and path to `README.txt`.
+// / Publish Time OF THE Publish Notification Message
 func (rcv *PNM) PUBLISH_TIMESTAMP() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -106,13 +106,13 @@ func (rcv *PNM) PublishTimestamp() []byte {
 	return rcv.PUBLISH_TIMESTAMP()
 }
 
-/// Publish Time OF THE Publish Notification Message
-/// Concatenated Content Identifier (CID)
-/// This field is a unique ID for distributed systems (CID).
-/// The CID provides a unique identifier within distributed systems, as detailed at https://github.com/multiformats/cid.
-/// For dataset-update PNMs this SHOULD identify a compact DPM manifest,
-/// manifest digest, or other small verification object, not necessarily the
-/// full dataset bytes.
+// / Publish Time OF THE Publish Notification Message
+// / Concatenated Content Identifier (CID)
+// / This field is a unique ID for distributed systems (CID).
+// / The CID provides a unique identifier within distributed systems, as detailed at https://github.com/multiformats/cid.
+// / For dataset-update PNMs this SHOULD identify a compact DPM manifest,
+// / manifest digest, or other small verification object, not necessarily the
+// / full dataset bytes.
 func (rcv *PNM) CID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -125,14 +125,14 @@ func (rcv *PNM) Cid() []byte {
 	return rcv.CID()
 }
 
-/// Concatenated Content Identifier (CID)
-/// This field is a unique ID for distributed systems (CID).
-/// The CID provides a unique identifier within distributed systems, as detailed at https://github.com/multiformats/cid.
-/// For dataset-update PNMs this SHOULD identify a compact DPM manifest,
-/// manifest digest, or other small verification object, not necessarily the
-/// full dataset bytes.
-/// File ID
-/// This field is the Name
+// / Concatenated Content Identifier (CID)
+// / This field is a unique ID for distributed systems (CID).
+// / The CID provides a unique identifier within distributed systems, as detailed at https://github.com/multiformats/cid.
+// / For dataset-update PNMs this SHOULD identify a compact DPM manifest,
+// / manifest digest, or other small verification object, not necessarily the
+// / full dataset bytes.
+// / File ID
+// / This field is the Name
 func (rcv *PNM) FILE_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -145,17 +145,17 @@ func (rcv *PNM) FileName() []byte {
 	return rcv.FILE_NAME()
 }
 
-/// File ID
-/// This field is the Name
-/// File ID
-/// Canonical publication/update partition identity. For dataset-update PNMs,
-/// this MUST match DPM.FILE_ID and is the stable key used everywhere an SDN
-/// component refers to the update: PNMs, DPMs, assets, entitlements, provider
-/// query requests, subscriber caches, replay, audit, and completeness
-/// verification. Provider-mediated query requests and responses MUST bind
-/// their Merkle leaves and proof paths to this FILE_ID, and subscribers MUST
-/// reject responses whose DPM, records, or proofs bind to a different FILE_ID.
-/// Example: celestrak:gp:OMM.fbs:2026-05-06T03:00:00Z.
+// / File ID
+// / This field is the Name
+// / File ID
+// / Canonical publication/update partition identity. For dataset-update PNMs,
+// / this MUST match DPM.FILE_ID and is the stable key used everywhere an SDN
+// / component refers to the update: PNMs, DPMs, assets, entitlements, provider
+// / query requests, subscriber caches, replay, audit, and completeness
+// / verification. Provider-mediated query requests and responses MUST bind
+// / their Merkle leaves and proof paths to this FILE_ID, and subscribers MUST
+// / reject responses whose DPM, records, or proofs bind to a different FILE_ID.
+// / Example: celestrak:gp:OMM.fbs:2026-05-06T03:00:00Z.
 func (rcv *PNM) FILE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -168,17 +168,17 @@ func (rcv *PNM) FileId() []byte {
 	return rcv.FILE_ID()
 }
 
-/// File ID
-/// Canonical publication/update partition identity. For dataset-update PNMs,
-/// this MUST match DPM.FILE_ID and is the stable key used everywhere an SDN
-/// component refers to the update: PNMs, DPMs, assets, entitlements, provider
-/// query requests, subscriber caches, replay, audit, and completeness
-/// verification. Provider-mediated query requests and responses MUST bind
-/// their Merkle leaves and proof paths to this FILE_ID, and subscribers MUST
-/// reject responses whose DPM, records, or proofs bind to a different FILE_ID.
-/// Example: celestrak:gp:OMM.fbs:2026-05-06T03:00:00Z.
-/// Digital Signature of the CID
-/// This is the digital signature of the CID, signed using the specified cryptographic method.
+// / File ID
+// / Canonical publication/update partition identity. For dataset-update PNMs,
+// / this MUST match DPM.FILE_ID and is the stable key used everywhere an SDN
+// / component refers to the update: PNMs, DPMs, assets, entitlements, provider
+// / query requests, subscriber caches, replay, audit, and completeness
+// / verification. Provider-mediated query requests and responses MUST bind
+// / their Merkle leaves and proof paths to this FILE_ID, and subscribers MUST
+// / reject responses whose DPM, records, or proofs bind to a different FILE_ID.
+// / Example: celestrak:gp:OMM.fbs:2026-05-06T03:00:00Z.
+// / Digital Signature of the CID
+// / This is the digital signature of the CID, signed using the specified cryptographic method.
 func (rcv *PNM) SIGNATURE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -191,10 +191,10 @@ func (rcv *PNM) Signature() []byte {
 	return rcv.SIGNATURE()
 }
 
-/// Digital Signature of the CID
-/// This is the digital signature of the CID, signed using the specified cryptographic method.
-/// Timestamp Signature
-/// Digital signature of the publish timestamp, using the specified cryptographic method for timestamp verification.
+// / Digital Signature of the CID
+// / This is the digital signature of the CID, signed using the specified cryptographic method.
+// / Timestamp Signature
+// / Digital signature of the publish timestamp, using the specified cryptographic method for timestamp verification.
 func (rcv *PNM) TIMESTAMP_SIGNATURE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -207,10 +207,10 @@ func (rcv *PNM) TimestampSignature() []byte {
 	return rcv.TIMESTAMP_SIGNATURE()
 }
 
-/// Timestamp Signature
-/// Digital signature of the publish timestamp, using the specified cryptographic method for timestamp verification.
-/// Type of Cryptographic Signature Used
-/// Specifies the type of cryptographic signature used for the SIGNATURE field, indicating the specific blockchain technology, such as Ethereum or BTC.
+// / Timestamp Signature
+// / Digital signature of the publish timestamp, using the specified cryptographic method for timestamp verification.
+// / Type of Cryptographic Signature Used
+// / Specifies the type of cryptographic signature used for the SIGNATURE field, indicating the specific blockchain technology, such as Ethereum or BTC.
 func (rcv *PNM) SIGNATURE_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -223,10 +223,10 @@ func (rcv *PNM) SignatureType() []byte {
 	return rcv.SIGNATURE_TYPE()
 }
 
-/// Type of Cryptographic Signature Used
-/// Specifies the type of cryptographic signature used for the SIGNATURE field, indicating the specific blockchain technology, such as Ethereum or BTC.
-/// Type of Cryptographic Signature Used for Timestamp
-/// Specifies the type of cryptographic signature used for the TIMESTAMP_SIGNATURE field, indicating the specific blockchain technology, such as Ethereum or BTC.
+// / Type of Cryptographic Signature Used
+// / Specifies the type of cryptographic signature used for the SIGNATURE field, indicating the specific blockchain technology, such as Ethereum or BTC.
+// / Type of Cryptographic Signature Used for Timestamp
+// / Specifies the type of cryptographic signature used for the TIMESTAMP_SIGNATURE field, indicating the specific blockchain technology, such as Ethereum or BTC.
 func (rcv *PNM) TIMESTAMP_SIGNATURE_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -239,8 +239,8 @@ func (rcv *PNM) TimestampSignatureType() []byte {
 	return rcv.TIMESTAMP_SIGNATURE_TYPE()
 }
 
-/// Type of Cryptographic Signature Used for Timestamp
-/// Specifies the type of cryptographic signature used for the TIMESTAMP_SIGNATURE field, indicating the specific blockchain technology, such as Ethereum or BTC.
+// / Type of Cryptographic Signature Used for Timestamp
+// / Specifies the type of cryptographic signature used for the TIMESTAMP_SIGNATURE field, indicating the specific blockchain technology, such as Ethereum or BTC.
 func PNMStart(builder *flatbuffers.Builder) {
 	builder.StartObject(9)
 }

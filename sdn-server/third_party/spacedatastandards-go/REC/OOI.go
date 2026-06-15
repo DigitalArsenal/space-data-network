@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Object of Interest
+// / Object of Interest
 type OOI struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *OOI) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique identifier
+// / Unique identifier
 func (rcv *OOI) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *OOI) Id() []byte {
 	return rcv.ID()
 }
 
-/// Unique identifier
-/// Satellite catalog number
+// / Unique identifier
+// / Satellite catalog number
 func (rcv *OOI) SAT_NO() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,7 +81,7 @@ func (rcv *OOI) SatNo() uint32 {
 	return rcv.SAT_NO()
 }
 
-/// Satellite catalog number
+// / Satellite catalog number
 func (rcv *OOI) MutateSAT_NO(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -90,7 +90,7 @@ func (rcv *OOI) MutateSatNo(n uint32) bool {
 	return rcv.MutateSAT_NO(n)
 }
 
-/// Object name or designator
+// / Object name or designator
 func (rcv *OOI) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,8 +103,8 @@ func (rcv *OOI) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Object name or designator
-/// On-orbit reference
+// / Object name or designator
+// / On-orbit reference
 func (rcv *OOI) ON_ORBIT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *OOI) OnOrbit() []byte {
 	return rcv.ON_ORBIT()
 }
 
-/// On-orbit reference
-/// Tasking status
+// / On-orbit reference
+// / Tasking status
 func (rcv *OOI) STATUS() ooiStatus {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,7 +131,7 @@ func (rcv *OOI) Status() ooiStatus {
 	return rcv.STATUS()
 }
 
-/// Tasking status
+// / Tasking status
 func (rcv *OOI) MutateSTATUS(n ooiStatus) bool {
 	return rcv._tab.MutateInt8Slot(12, int8(n))
 }
@@ -140,7 +140,7 @@ func (rcv *OOI) MutateStatus(n ooiStatus) bool {
 	return rcv.MutateSTATUS(n)
 }
 
-/// Status update date (ISO 8601)
+// / Status update date (ISO 8601)
 func (rcv *OOI) STATUS_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -153,8 +153,8 @@ func (rcv *OOI) StatusDate() []byte {
 	return rcv.STATUS_DATE()
 }
 
-/// Status update date (ISO 8601)
-/// Collection priority
+// / Status update date (ISO 8601)
+// / Collection priority
 func (rcv *OOI) PRIORITY() ooiPriority {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -167,7 +167,7 @@ func (rcv *OOI) Priority() ooiPriority {
 	return rcv.PRIORITY()
 }
 
-/// Collection priority
+// / Collection priority
 func (rcv *OOI) MutatePRIORITY(n ooiPriority) bool {
 	return rcv._tab.MutateInt8Slot(16, int8(n))
 }
@@ -176,7 +176,7 @@ func (rcv *OOI) MutatePriority(n ooiPriority) bool {
 	return rcv.MutatePRIORITY(n)
 }
 
-/// Description of why object is of interest
+// / Description of why object is of interest
 func (rcv *OOI) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -189,8 +189,8 @@ func (rcv *OOI) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-/// Description of why object is of interest
-/// Sensor tasking start time (ISO 8601)
+// / Description of why object is of interest
+// / Sensor tasking start time (ISO 8601)
 func (rcv *OOI) SENSOR_TASKING_START_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -203,8 +203,8 @@ func (rcv *OOI) SensorTaskingStartTime() []byte {
 	return rcv.SENSOR_TASKING_START_TIME()
 }
 
-/// Sensor tasking start time (ISO 8601)
-/// Sensor tasking stop time (ISO 8601)
+// / Sensor tasking start time (ISO 8601)
+// / Sensor tasking stop time (ISO 8601)
 func (rcv *OOI) SENSOR_TASKING_STOP_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -217,8 +217,8 @@ func (rcv *OOI) SensorTaskingStopTime() []byte {
 	return rcv.SENSOR_TASKING_STOP_TIME()
 }
 
-/// Sensor tasking stop time (ISO 8601)
-/// Last observation time (ISO 8601)
+// / Sensor tasking stop time (ISO 8601)
+// / Last observation time (ISO 8601)
 func (rcv *OOI) LAST_OB_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -231,8 +231,8 @@ func (rcv *OOI) LastObTime() []byte {
 	return rcv.LAST_OB_TIME()
 }
 
-/// Last observation time (ISO 8601)
-/// Last missed observation time (ISO 8601)
+// / Last observation time (ISO 8601)
+// / Last missed observation time (ISO 8601)
 func (rcv *OOI) MISSED_OB_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -245,8 +245,8 @@ func (rcv *OOI) MissedObTime() []byte {
 	return rcv.MISSED_OB_TIME()
 }
 
-/// Last missed observation time (ISO 8601)
-/// State vector epoch (ISO 8601)
+// / Last missed observation time (ISO 8601)
+// / State vector epoch (ISO 8601)
 func (rcv *OOI) SV_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -259,8 +259,8 @@ func (rcv *OOI) SvEpoch() []byte {
 	return rcv.SV_EPOCH()
 }
 
-/// State vector epoch (ISO 8601)
-/// Position X (km, TEME)
+// / State vector epoch (ISO 8601)
+// / Position X (km, TEME)
 func (rcv *OOI) X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -269,12 +269,12 @@ func (rcv *OOI) X() float64 {
 	return 0.0
 }
 
-/// Position X (km, TEME)
+// / Position X (km, TEME)
 func (rcv *OOI) MutateX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
 
-/// Position Y (km, TEME)
+// / Position Y (km, TEME)
 func (rcv *OOI) Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -283,12 +283,12 @@ func (rcv *OOI) Y() float64 {
 	return 0.0
 }
 
-/// Position Y (km, TEME)
+// / Position Y (km, TEME)
 func (rcv *OOI) MutateY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
 
-/// Position Z (km, TEME)
+// / Position Z (km, TEME)
 func (rcv *OOI) Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -297,12 +297,12 @@ func (rcv *OOI) Z() float64 {
 	return 0.0
 }
 
-/// Position Z (km, TEME)
+// / Position Z (km, TEME)
 func (rcv *OOI) MutateZ(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
 
-/// Velocity X (km/s, TEME)
+// / Velocity X (km/s, TEME)
 func (rcv *OOI) XVEL() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -315,7 +315,7 @@ func (rcv *OOI) Xvel() float64 {
 	return rcv.XVEL()
 }
 
-/// Velocity X (km/s, TEME)
+// / Velocity X (km/s, TEME)
 func (rcv *OOI) MutateXVEL(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -324,7 +324,7 @@ func (rcv *OOI) MutateXvel(n float64) bool {
 	return rcv.MutateXVEL(n)
 }
 
-/// Velocity Y (km/s, TEME)
+// / Velocity Y (km/s, TEME)
 func (rcv *OOI) YVEL() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -337,7 +337,7 @@ func (rcv *OOI) Yvel() float64 {
 	return rcv.YVEL()
 }
 
-/// Velocity Y (km/s, TEME)
+// / Velocity Y (km/s, TEME)
 func (rcv *OOI) MutateYVEL(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -346,7 +346,7 @@ func (rcv *OOI) MutateYvel(n float64) bool {
 	return rcv.MutateYVEL(n)
 }
 
-/// Velocity Z (km/s, TEME)
+// / Velocity Z (km/s, TEME)
 func (rcv *OOI) ZVEL() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -359,7 +359,7 @@ func (rcv *OOI) Zvel() float64 {
 	return rcv.ZVEL()
 }
 
-/// Velocity Z (km/s, TEME)
+// / Velocity Z (km/s, TEME)
 func (rcv *OOI) MutateZVEL(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -368,7 +368,7 @@ func (rcv *OOI) MutateZvel(n float64) bool {
 	return rcv.MutateZVEL(n)
 }
 
-/// Element set epoch (ISO 8601)
+// / Element set epoch (ISO 8601)
 func (rcv *OOI) ELSET_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -381,8 +381,8 @@ func (rcv *OOI) ElsetEpoch() []byte {
 	return rcv.ELSET_EPOCH()
 }
 
-/// Element set epoch (ISO 8601)
-/// Mean motion (rev/day)
+// / Element set epoch (ISO 8601)
+// / Mean motion (rev/day)
 func (rcv *OOI) MEAN_MOTION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -395,7 +395,7 @@ func (rcv *OOI) MeanMotion() float64 {
 	return rcv.MEAN_MOTION()
 }
 
-/// Mean motion (rev/day)
+// / Mean motion (rev/day)
 func (rcv *OOI) MutateMEAN_MOTION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(44, n)
 }
@@ -404,7 +404,7 @@ func (rcv *OOI) MutateMeanMotion(n float64) bool {
 	return rcv.MutateMEAN_MOTION(n)
 }
 
-/// Eccentricity
+// / Eccentricity
 func (rcv *OOI) ECCENTRICITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -417,7 +417,7 @@ func (rcv *OOI) Eccentricity() float64 {
 	return rcv.ECCENTRICITY()
 }
 
-/// Eccentricity
+// / Eccentricity
 func (rcv *OOI) MutateECCENTRICITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(46, n)
 }
@@ -426,7 +426,7 @@ func (rcv *OOI) MutateEccentricity(n float64) bool {
 	return rcv.MutateECCENTRICITY(n)
 }
 
-/// Inclination (degrees)
+// / Inclination (degrees)
 func (rcv *OOI) INCLINATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -439,7 +439,7 @@ func (rcv *OOI) Inclination() float64 {
 	return rcv.INCLINATION()
 }
 
-/// Inclination (degrees)
+// / Inclination (degrees)
 func (rcv *OOI) MutateINCLINATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(48, n)
 }
@@ -448,7 +448,7 @@ func (rcv *OOI) MutateInclination(n float64) bool {
 	return rcv.MutateINCLINATION(n)
 }
 
-/// Right ascension of ascending node (degrees)
+// / Right ascension of ascending node (degrees)
 func (rcv *OOI) RAAN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -461,7 +461,7 @@ func (rcv *OOI) Raan() float64 {
 	return rcv.RAAN()
 }
 
-/// Right ascension of ascending node (degrees)
+// / Right ascension of ascending node (degrees)
 func (rcv *OOI) MutateRAAN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(50, n)
 }
@@ -470,7 +470,7 @@ func (rcv *OOI) MutateRaan(n float64) bool {
 	return rcv.MutateRAAN(n)
 }
 
-/// Argument of perigee (degrees)
+// / Argument of perigee (degrees)
 func (rcv *OOI) ARG_OF_PERIGEE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -483,7 +483,7 @@ func (rcv *OOI) ArgOfPerigee() float64 {
 	return rcv.ARG_OF_PERIGEE()
 }
 
-/// Argument of perigee (degrees)
+// / Argument of perigee (degrees)
 func (rcv *OOI) MutateARG_OF_PERIGEE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(52, n)
 }
@@ -492,7 +492,7 @@ func (rcv *OOI) MutateArgOfPerigee(n float64) bool {
 	return rcv.MutateARG_OF_PERIGEE(n)
 }
 
-/// Mean anomaly (degrees)
+// / Mean anomaly (degrees)
 func (rcv *OOI) MEAN_ANOMALY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -505,7 +505,7 @@ func (rcv *OOI) MeanAnomaly() float64 {
 	return rcv.MEAN_ANOMALY()
 }
 
-/// Mean anomaly (degrees)
+// / Mean anomaly (degrees)
 func (rcv *OOI) MutateMEAN_ANOMALY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(54, n)
 }
@@ -514,7 +514,7 @@ func (rcv *OOI) MutateMeanAnomaly(n float64) bool {
 	return rcv.MutateMEAN_ANOMALY(n)
 }
 
-/// Revolution number at epoch
+// / Revolution number at epoch
 func (rcv *OOI) REV_NO() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -527,7 +527,7 @@ func (rcv *OOI) RevNo() uint32 {
 	return rcv.REV_NO()
 }
 
-/// Revolution number at epoch
+// / Revolution number at epoch
 func (rcv *OOI) MutateREV_NO(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(56, n)
 }
@@ -536,7 +536,7 @@ func (rcv *OOI) MutateRevNo(n uint32) bool {
 	return rcv.MutateREV_NO(n)
 }
 
-/// BSTAR drag term (1/Earth radii)
+// / BSTAR drag term (1/Earth radii)
 func (rcv *OOI) B_STAR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -549,7 +549,7 @@ func (rcv *OOI) BStar() float64 {
 	return rcv.B_STAR()
 }
 
-/// BSTAR drag term (1/Earth radii)
+// / BSTAR drag term (1/Earth radii)
 func (rcv *OOI) MutateB_STAR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(58, n)
 }
@@ -558,7 +558,7 @@ func (rcv *OOI) MutateBStar(n float64) bool {
 	return rcv.MutateB_STAR(n)
 }
 
-/// Mean motion first derivative (rev/day^2)
+// / Mean motion first derivative (rev/day^2)
 func (rcv *OOI) MEAN_MOTION_DOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -571,7 +571,7 @@ func (rcv *OOI) MeanMotionDot() float64 {
 	return rcv.MEAN_MOTION_DOT()
 }
 
-/// Mean motion first derivative (rev/day^2)
+// / Mean motion first derivative (rev/day^2)
 func (rcv *OOI) MutateMEAN_MOTION_DOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(60, n)
 }
@@ -580,7 +580,7 @@ func (rcv *OOI) MutateMeanMotionDot(n float64) bool {
 	return rcv.MutateMEAN_MOTION_DOT(n)
 }
 
-/// Mean motion second derivative (rev/day^3)
+// / Mean motion second derivative (rev/day^3)
 func (rcv *OOI) MEAN_MOTION_DDOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -593,7 +593,7 @@ func (rcv *OOI) MeanMotionDdot() float64 {
 	return rcv.MEAN_MOTION_DDOT()
 }
 
-/// Mean motion second derivative (rev/day^3)
+// / Mean motion second derivative (rev/day^3)
 func (rcv *OOI) MutateMEAN_MOTION_DDOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(62, n)
 }
@@ -602,7 +602,7 @@ func (rcv *OOI) MutateMeanMotionDdot(n float64) bool {
 	return rcv.MutateMEAN_MOTION_DDOT(n)
 }
 
-/// Semi-major axis (km)
+// / Semi-major axis (km)
 func (rcv *OOI) SEMI_MAJOR_AXIS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -615,7 +615,7 @@ func (rcv *OOI) SemiMajorAxis() float64 {
 	return rcv.SEMI_MAJOR_AXIS()
 }
 
-/// Semi-major axis (km)
+// / Semi-major axis (km)
 func (rcv *OOI) MutateSEMI_MAJOR_AXIS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(64, n)
 }
@@ -624,7 +624,7 @@ func (rcv *OOI) MutateSemiMajorAxis(n float64) bool {
 	return rcv.MutateSEMI_MAJOR_AXIS(n)
 }
 
-/// Orbital period (minutes)
+// / Orbital period (minutes)
 func (rcv *OOI) PERIOD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
@@ -637,7 +637,7 @@ func (rcv *OOI) Period() float64 {
 	return rcv.PERIOD()
 }
 
-/// Orbital period (minutes)
+// / Orbital period (minutes)
 func (rcv *OOI) MutatePERIOD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(66, n)
 }
@@ -646,7 +646,7 @@ func (rcv *OOI) MutatePeriod(n float64) bool {
 	return rcv.MutatePERIOD(n)
 }
 
-/// Apogee altitude (km)
+// / Apogee altitude (km)
 func (rcv *OOI) APOGEE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
@@ -659,7 +659,7 @@ func (rcv *OOI) Apogee() float64 {
 	return rcv.APOGEE()
 }
 
-/// Apogee altitude (km)
+// / Apogee altitude (km)
 func (rcv *OOI) MutateAPOGEE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(68, n)
 }
@@ -668,7 +668,7 @@ func (rcv *OOI) MutateApogee(n float64) bool {
 	return rcv.MutateAPOGEE(n)
 }
 
-/// Perigee altitude (km)
+// / Perigee altitude (km)
 func (rcv *OOI) PERIGEE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
 	if o != 0 {
@@ -681,7 +681,7 @@ func (rcv *OOI) Perigee() float64 {
 	return rcv.PERIGEE()
 }
 
-/// Perigee altitude (km)
+// / Perigee altitude (km)
 func (rcv *OOI) MutatePERIGEE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(70, n)
 }
@@ -690,7 +690,7 @@ func (rcv *OOI) MutatePerigee(n float64) bool {
 	return rcv.MutatePERIGEE(n)
 }
 
-/// Delta-V estimates for maneuver hypotheses (m/s)
+// / Delta-V estimates for maneuver hypotheses (m/s)
 func (rcv *OOI) DELTA_VS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
@@ -716,7 +716,7 @@ func (rcv *OOI) DeltaVsLength() int {
 	return rcv.DELTA_VSLength()
 }
 
-/// Delta-V estimates for maneuver hypotheses (m/s)
+// / Delta-V estimates for maneuver hypotheses (m/s)
 func (rcv *OOI) MutateDELTA_VS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
@@ -730,7 +730,7 @@ func (rcv *OOI) MutateDeltaVs(j int, n float64) bool {
 	return rcv.MutateDELTA_VS(j, n)
 }
 
-/// Delta-T estimates for maneuver timing (seconds)
+// / Delta-T estimates for maneuver timing (seconds)
 func (rcv *OOI) DELTA_TS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
 	if o != 0 {
@@ -756,7 +756,7 @@ func (rcv *OOI) DeltaTsLength() int {
 	return rcv.DELTA_TSLength()
 }
 
-/// Delta-T estimates for maneuver timing (seconds)
+// / Delta-T estimates for maneuver timing (seconds)
 func (rcv *OOI) MutateDELTA_TS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
 	if o != 0 {
@@ -770,7 +770,7 @@ func (rcv *OOI) MutateDeltaTs(j int, n float64) bool {
 	return rcv.MutateDELTA_TS(j, n)
 }
 
-/// Other affected satellite catalog numbers
+// / Other affected satellite catalog numbers
 func (rcv *OOI) AFFECTED_OBJECTS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
 	if o != 0 {
@@ -796,8 +796,8 @@ func (rcv *OOI) AffectedObjectsLength() int {
 	return rcv.AFFECTED_OBJECTSLength()
 }
 
-/// Other affected satellite catalog numbers
-/// Associated orbit manifold identifiers
+// / Other affected satellite catalog numbers
+// / Associated orbit manifold identifiers
 func (rcv *OOI) MANIFOLDS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
 	if o != 0 {
@@ -823,7 +823,7 @@ func (rcv *OOI) ManifoldsLength() int {
 	return rcv.MANIFOLDSLength()
 }
 
-/// Associated orbit manifold identifiers
+// / Associated orbit manifold identifiers
 func OOIStart(builder *flatbuffers.Builder) {
 	builder.StartObject(38)
 }

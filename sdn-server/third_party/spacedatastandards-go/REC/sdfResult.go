@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Result of a single SDF point-in-volume query (24 bytes, 8-byte aligned).
+// / Result of a single SDF point-in-volume query (24 bytes, 8-byte aligned).
 type sdfResult struct {
 	_tab flatbuffers.Struct
 }
@@ -20,7 +20,7 @@ func (rcv *sdfResult) Table() flatbuffers.Table {
 	return rcv._tab.Table
 }
 
-/// Entity identifier.
+// / Entity identifier.
 func (rcv *sdfResult) ENTITY_ID() uint32 {
 	return rcv._tab.GetUint32(rcv._tab.Pos + flatbuffers.UOffsetT(0))
 }
@@ -28,7 +28,8 @@ func (rcv *sdfResult) ENTITY_ID() uint32 {
 func (rcv *sdfResult) EntityId() uint32 {
 	return rcv.ENTITY_ID()
 }
-/// Entity identifier.
+
+// / Entity identifier.
 func (rcv *sdfResult) MutateENTITY_ID(n uint32) bool {
 	return rcv._tab.MutateUint32(rcv._tab.Pos+flatbuffers.UOffsetT(0), n)
 }
@@ -37,7 +38,7 @@ func (rcv *sdfResult) MutateEntityId(n uint32) bool {
 	return rcv.MutateENTITY_ID(n)
 }
 
-/// Detection flag (1 == inside, 0 == outside).
+// / Detection flag (1 == inside, 0 == outside).
 func (rcv *sdfResult) DETECTED() uint32 {
 	return rcv._tab.GetUint32(rcv._tab.Pos + flatbuffers.UOffsetT(4))
 }
@@ -45,7 +46,8 @@ func (rcv *sdfResult) DETECTED() uint32 {
 func (rcv *sdfResult) Detected() uint32 {
 	return rcv.DETECTED()
 }
-/// Detection flag (1 == inside, 0 == outside).
+
+// / Detection flag (1 == inside, 0 == outside).
 func (rcv *sdfResult) MutateDETECTED(n uint32) bool {
 	return rcv._tab.MutateUint32(rcv._tab.Pos+flatbuffers.UOffsetT(4), n)
 }
@@ -54,7 +56,7 @@ func (rcv *sdfResult) MutateDetected(n uint32) bool {
 	return rcv.MutateDETECTED(n)
 }
 
-/// Signed distance (negative inside, zero on boundary, positive outside).
+// / Signed distance (negative inside, zero on boundary, positive outside).
 func (rcv *sdfResult) SIGNED_DISTANCE() float64 {
 	return rcv._tab.GetFloat64(rcv._tab.Pos + flatbuffers.UOffsetT(8))
 }
@@ -62,7 +64,8 @@ func (rcv *sdfResult) SIGNED_DISTANCE() float64 {
 func (rcv *sdfResult) SignedDistance() float64 {
 	return rcv.SIGNED_DISTANCE()
 }
-/// Signed distance (negative inside, zero on boundary, positive outside).
+
+// / Signed distance (negative inside, zero on boundary, positive outside).
 func (rcv *sdfResult) MutateSIGNED_DISTANCE(n float64) bool {
 	return rcv._tab.MutateFloat64(rcv._tab.Pos+flatbuffers.UOffsetT(8), n)
 }
@@ -71,7 +74,7 @@ func (rcv *sdfResult) MutateSignedDistance(n float64) bool {
 	return rcv.MutateSIGNED_DISTANCE(n)
 }
 
-/// Distance to the closest boundary point (always positive).
+// / Distance to the closest boundary point (always positive).
 func (rcv *sdfResult) CLOSEST_DISTANCE() float64 {
 	return rcv._tab.GetFloat64(rcv._tab.Pos + flatbuffers.UOffsetT(16))
 }
@@ -79,7 +82,8 @@ func (rcv *sdfResult) CLOSEST_DISTANCE() float64 {
 func (rcv *sdfResult) ClosestDistance() float64 {
 	return rcv.CLOSEST_DISTANCE()
 }
-/// Distance to the closest boundary point (always positive).
+
+// / Distance to the closest boundary point (always positive).
 func (rcv *sdfResult) MutateCLOSEST_DISTANCE(n float64) bool {
 	return rcv._tab.MutateFloat64(rcv._tab.Pos+flatbuffers.UOffsetT(16), n)
 }

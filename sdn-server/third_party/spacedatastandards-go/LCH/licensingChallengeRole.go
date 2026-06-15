@@ -4,7 +4,7 @@ package LCH
 
 import "strconv"
 
-/// Licensing challenge participant role
+// / Licensing challenge participant role
 type licensingChallengeRole int8
 
 const (

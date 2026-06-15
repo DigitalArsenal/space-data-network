@@ -6,9 +6,9 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Standards Record Index — local wrapper for a standards payload's identity
-/// and mutation metadata, participating in shared FlatSQL query and cascade
-/// paths across plugins that read the same record universe.
+// / Standards Record Index — local wrapper for a standards payload's identity
+// / and mutation metadata, participating in shared FlatSQL query and cascade
+// / paths across plugins that read the same record universe.
 type SRI struct {
 	_tab flatbuffers.Table
 }
@@ -56,7 +56,7 @@ func (rcv *SRI) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Stable host-local record key for one standards payload.
+// / Stable host-local record key for one standards payload.
 func (rcv *SRI) RECORD_KEY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *SRI) RecordKey() []byte {
 	return rcv.RECORD_KEY()
 }
 
-/// Stable host-local record key for one standards payload.
-/// SDS schema family for the record (`OMM`, `CAT`, `OEM`, `CDM`, etc.).
+// / Stable host-local record key for one standards payload.
+// / SDS schema family for the record (`OMM`, `CAT`, `OEM`, `CDM`, etc.).
 func (rcv *SRI) SCHEMA_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *SRI) SchemaName() []byte {
 	return rcv.SCHEMA_NAME()
 }
 
-/// SDS schema family for the record (`OMM`, `CAT`, `OEM`, `CDM`, etc.).
-/// Attachment role when one standards message produces multiple entity records.
+// / SDS schema family for the record (`OMM`, `CAT`, `OEM`, `CDM`, etc.).
+// / Attachment role when one standards message produces multiple entity records.
 func (rcv *SRI) ROLE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *SRI) Role() []byte {
 	return rcv.ROLE()
 }
 
-/// Attachment role when one standards message produces multiple entity records.
-/// Ingest path that registered this record (`stream-*`, `manual-api`, etc.).
+// / Attachment role when one standards message produces multiple entity records.
+// / Ingest path that registered this record (`stream-*`, `manual-api`, etc.).
 func (rcv *SRI) ATTACHED_VIA() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -111,8 +111,8 @@ func (rcv *SRI) AttachedVia() []byte {
 	return rcv.ATTACHED_VIA()
 }
 
-/// Ingest path that registered this record (`stream-*`, `manual-api`, etc.).
-/// High-level payload representation retained by the mutation registry.
+// / Ingest path that registered this record (`stream-*`, `manual-api`, etc.).
+// / High-level payload representation retained by the mutation registry.
 func (rcv *SRI) PAYLOAD_KIND() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -125,8 +125,8 @@ func (rcv *SRI) PayloadKind() []byte {
 	return rcv.PAYLOAD_KIND()
 }
 
-/// High-level payload representation retained by the mutation registry.
-/// Milliseconds since epoch when the local mutation record was last refreshed.
+// / High-level payload representation retained by the mutation registry.
+// / Milliseconds since epoch when the local mutation record was last refreshed.
 func (rcv *SRI) UPDATED_AT_MS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -139,7 +139,7 @@ func (rcv *SRI) UpdatedAtMs() float64 {
 	return rcv.UPDATED_AT_MS()
 }
 
-/// Milliseconds since epoch when the local mutation record was last refreshed.
+// / Milliseconds since epoch when the local mutation record was last refreshed.
 func (rcv *SRI) MutateUPDATED_AT_MS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -148,7 +148,7 @@ func (rcv *SRI) MutateUpdatedAtMs(n float64) bool {
 	return rcv.MutateUPDATED_AT_MS(n)
 }
 
-/// Reserved for forward-compatible growth.
+// / Reserved for forward-compatible growth.
 func (rcv *SRI) RESERVED(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -186,7 +186,7 @@ func (rcv *SRI) ReservedBytes() []byte {
 	return rcv.RESERVEDBytes()
 }
 
-/// Reserved for forward-compatible growth.
+// / Reserved for forward-compatible growth.
 func (rcv *SRI) MutateRESERVED(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {

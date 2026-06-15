@@ -4,13 +4,13 @@ package REC
 
 import "strconv"
 
-/// Canonical invoke surfaces a plugin artifact can expose. A single
-/// artifact can support multiple.
+// / Canonical invoke surfaces a plugin artifact can expose. A single
+// / artifact can support multiple.
 type invokeSurfaceKind byte
 
 const (
 	/// Direct ABI — host calls `plugin_invoke_stream` in-process.
-	invokeSurfaceKindDIRECT  invokeSurfaceKind = 0
+	invokeSurfaceKindDIRECT invokeSurfaceKind = 0
 	/// Command surface — envelope is queued by a runtime host.
 	invokeSurfaceKindCOMMAND invokeSurfaceKind = 1
 )

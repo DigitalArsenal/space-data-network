@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Uniform descriptor — name + type + optional default value.
+// / Uniform descriptor — name + type + optional default value.
 type SHWUniform struct {
 	_tab flatbuffers.Table
 }
@@ -74,7 +74,7 @@ func (rcv *SHWUniform) MutateUniformType(n shaderUniformType) bool {
 	return rcv.MutateUNIFORM_TYPE(n)
 }
 
-/// Optional human-readable description.
+// / Optional human-readable description.
 func (rcv *SHWUniform) UNIFORM_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -87,8 +87,8 @@ func (rcv *SHWUniform) UniformDescription() []byte {
 	return rcv.UNIFORM_DESCRIPTION()
 }
 
-/// Optional human-readable description.
-/// Optional default value encoded as bytes in the native type layout.
+// / Optional human-readable description.
+// / Optional default value encoded as bytes in the native type layout.
 func (rcv *SHWUniform) UNIFORM_DEFAULT_VALUE(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -126,7 +126,7 @@ func (rcv *SHWUniform) UniformDefaultValueBytes() []byte {
 	return rcv.UNIFORM_DEFAULT_VALUEBytes()
 }
 
-/// Optional default value encoded as bytes in the native type layout.
+// / Optional default value encoded as bytes in the native type layout.
 func (rcv *SHWUniform) MutateUNIFORM_DEFAULT_VALUE(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {

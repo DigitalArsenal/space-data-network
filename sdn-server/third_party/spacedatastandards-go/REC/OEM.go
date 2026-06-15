@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Orbit Ephemeris Message
+// / Orbit Ephemeris Message
 type OEM struct {
 	_tab flatbuffers.Table
 }
@@ -54,8 +54,8 @@ func (rcv *OEM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// OEM Header
-/// Classification marking of the data in IC/CAPCO Portion-marked format.
+// / OEM Header
+// / Classification marking of the data in IC/CAPCO Portion-marked format.
 func (rcv *OEM) CLASSIFICATION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -68,9 +68,9 @@ func (rcv *OEM) Classification() []byte {
 	return rcv.CLASSIFICATION()
 }
 
-/// OEM Header
-/// Classification marking of the data in IC/CAPCO Portion-marked format.
-/// OEM Version
+// / OEM Header
+// / Classification marking of the data in IC/CAPCO Portion-marked format.
+// / OEM Version
 func (rcv *OEM) CCSDS_OEM_VERS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *OEM) CcsdsOemVers() float64 {
 	return rcv.CCSDS_OEM_VERS()
 }
 
-/// OEM Version
+// / OEM Version
 func (rcv *OEM) MutateCCSDS_OEM_VERS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -92,7 +92,7 @@ func (rcv *OEM) MutateCcsdsOemVers(n float64) bool {
 	return rcv.MutateCCSDS_OEM_VERS(n)
 }
 
-/// Creation Date
+// / Creation Date
 func (rcv *OEM) CREATION_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -105,8 +105,8 @@ func (rcv *OEM) CreationDate() []byte {
 	return rcv.CREATION_DATE()
 }
 
-/// Creation Date
-/// Originator
+// / Creation Date
+// / Originator
 func (rcv *OEM) ORIGINATOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -119,8 +119,8 @@ func (rcv *OEM) Originator() []byte {
 	return rcv.ORIGINATOR()
 }
 
-/// Originator
-/// Array of ephemeris data blocks
+// / Originator
+// / Array of ephemeris data blocks
 func (rcv *OEM) EPHEMERIS_DATA_BLOCK(obj *ephemerisDataBlock, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -152,7 +152,7 @@ func (rcv *OEM) EphemerisDataBlockLength() int {
 	return rcv.EPHEMERIS_DATA_BLOCKLength()
 }
 
-/// Array of ephemeris data blocks
+// / Array of ephemeris data blocks
 func OEMStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

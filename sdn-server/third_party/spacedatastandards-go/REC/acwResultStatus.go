@@ -8,9 +8,9 @@ type acwResultStatus int8
 
 const (
 	/// Operation completed.
-	acwResultStatusOK                    acwResultStatus = 0
+	acwResultStatusOK acwResultStatus = 0
 	/// Request fields are missing, non-finite, or numerically invalid.
-	acwResultStatusINVALID_INPUT         acwResultStatus = 1
+	acwResultStatusINVALID_INPUT acwResultStatus = 1
 	/// The requested operation is not supported by the module.
 	acwResultStatusUNSUPPORTED_OPERATION acwResultStatus = 2
 )

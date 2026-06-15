@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// RGBA color
+// / RGBA color
 type CZMColor struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMColor) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Red component (0-255)
+// / Red component (0-255)
 func (rcv *CZMColor) RED() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMColor) Red() byte {
 	return rcv.RED()
 }
 
-/// Red component (0-255)
+// / Red component (0-255)
 func (rcv *CZMColor) MutateRED(n byte) bool {
 	return rcv._tab.MutateByteSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMColor) MutateRed(n byte) bool {
 	return rcv.MutateRED(n)
 }
 
-/// Green component (0-255)
+// / Green component (0-255)
 func (rcv *CZMColor) GREEN() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *CZMColor) Green() byte {
 	return rcv.GREEN()
 }
 
-/// Green component (0-255)
+// / Green component (0-255)
 func (rcv *CZMColor) MutateGREEN(n byte) bool {
 	return rcv._tab.MutateByteSlot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *CZMColor) MutateGreen(n byte) bool {
 	return rcv.MutateGREEN(n)
 }
 
-/// Blue component (0-255)
+// / Blue component (0-255)
 func (rcv *CZMColor) BLUE() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *CZMColor) Blue() byte {
 	return rcv.BLUE()
 }
 
-/// Blue component (0-255)
+// / Blue component (0-255)
 func (rcv *CZMColor) MutateBLUE(n byte) bool {
 	return rcv._tab.MutateByteSlot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *CZMColor) MutateBlue(n byte) bool {
 	return rcv.MutateBLUE(n)
 }
 
-/// Alpha component (0-255)
+// / Alpha component (0-255)
 func (rcv *CZMColor) ALPHA() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *CZMColor) Alpha() byte {
 	return rcv.ALPHA()
 }
 
-/// Alpha component (0-255)
+// / Alpha component (0-255)
 func (rcv *CZMColor) MutateALPHA(n byte) bool {
 	return rcv._tab.MutateByteSlot(10, n)
 }

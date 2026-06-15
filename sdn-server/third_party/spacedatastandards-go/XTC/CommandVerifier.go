@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Command verifier definition
+// / Command verifier definition
 type CommandVerifier struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CommandVerifier) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Verifier name
+// / Verifier name
 func (rcv *CommandVerifier) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *CommandVerifier) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Verifier name
-/// Verifier type
+// / Verifier name
+// / Verifier type
 func (rcv *CommandVerifier) VERIFIER_TYPE() VerifierType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *CommandVerifier) VerifierType() VerifierType {
 	return rcv.VERIFIER_TYPE()
 }
 
-/// Verifier type
+// / Verifier type
 func (rcv *CommandVerifier) MutateVERIFIER_TYPE(n VerifierType) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -78,7 +78,7 @@ func (rcv *CommandVerifier) MutateVerifierType(n VerifierType) bool {
 	return rcv.MutateVERIFIER_TYPE(n)
 }
 
-/// Verification condition
+// / Verification condition
 func (rcv *CommandVerifier) CONDITION(obj *MatchCriteria) *MatchCriteria {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -96,8 +96,8 @@ func (rcv *CommandVerifier) Condition(obj *MatchCriteria) *MatchCriteria {
 	return rcv.CONDITION(obj)
 }
 
-/// Verification condition
-/// Container reference for verification
+// / Verification condition
+// / Container reference for verification
 func (rcv *CommandVerifier) CONTAINER_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -110,8 +110,8 @@ func (rcv *CommandVerifier) ContainerRef() []byte {
 	return rcv.CONTAINER_REF()
 }
 
-/// Container reference for verification
-/// Time window start (seconds)
+// / Container reference for verification
+// / Time window start (seconds)
 func (rcv *CommandVerifier) TIME_WINDOW_START() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -124,7 +124,7 @@ func (rcv *CommandVerifier) TimeWindowStart() float64 {
 	return rcv.TIME_WINDOW_START()
 }
 
-/// Time window start (seconds)
+// / Time window start (seconds)
 func (rcv *CommandVerifier) MutateTIME_WINDOW_START(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -133,7 +133,7 @@ func (rcv *CommandVerifier) MutateTimeWindowStart(n float64) bool {
 	return rcv.MutateTIME_WINDOW_START(n)
 }
 
-/// Time window stop (seconds)
+// / Time window stop (seconds)
 func (rcv *CommandVerifier) TIME_WINDOW_STOP() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -146,7 +146,7 @@ func (rcv *CommandVerifier) TimeWindowStop() float64 {
 	return rcv.TIME_WINDOW_STOP()
 }
 
-/// Time window stop (seconds)
+// / Time window stop (seconds)
 func (rcv *CommandVerifier) MutateTIME_WINDOW_STOP(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -155,7 +155,7 @@ func (rcv *CommandVerifier) MutateTimeWindowStop(n float64) bool {
 	return rcv.MutateTIME_WINDOW_STOP(n)
 }
 
-/// Time window reference type
+// / Time window reference type
 func (rcv *CommandVerifier) TIME_WINDOW_REF() TimeWindowRefType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -168,7 +168,7 @@ func (rcv *CommandVerifier) TimeWindowRef() TimeWindowRefType {
 	return rcv.TIME_WINDOW_REF()
 }
 
-/// Time window reference type
+// / Time window reference type
 func (rcv *CommandVerifier) MutateTIME_WINDOW_REF(n TimeWindowRefType) bool {
 	return rcv._tab.MutateInt8Slot(16, int8(n))
 }

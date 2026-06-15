@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Model properties (glTF)
+// / Model properties (glTF)
 type CZMModel struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMModel) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Whether the model is displayed
+// / Whether the model is displayed
 func (rcv *CZMModel) SHOW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMModel) Show() bool {
 	return rcv.SHOW()
 }
 
-/// Whether the model is displayed
+// / Whether the model is displayed
 func (rcv *CZMModel) MutateSHOW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMModel) MutateShow(n bool) bool {
 	return rcv.MutateSHOW(n)
 }
 
-/// URI to the glTF model
+// / URI to the glTF model
 func (rcv *CZMModel) GLTF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,8 +77,8 @@ func (rcv *CZMModel) Gltf() []byte {
 	return rcv.GLTF()
 }
 
-/// URI to the glTF model
-/// Scale factor
+// / URI to the glTF model
+// / Scale factor
 func (rcv *CZMModel) SCALE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *CZMModel) Scale() float64 {
 	return rcv.SCALE()
 }
 
-/// Scale factor
+// / Scale factor
 func (rcv *CZMModel) MutateSCALE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -100,7 +100,7 @@ func (rcv *CZMModel) MutateScale(n float64) bool {
 	return rcv.MutateSCALE(n)
 }
 
-/// Minimum pixel size
+// / Minimum pixel size
 func (rcv *CZMModel) MINIMUM_PIXEL_SIZE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -113,7 +113,7 @@ func (rcv *CZMModel) MinimumPixelSize() float64 {
 	return rcv.MINIMUM_PIXEL_SIZE()
 }
 
-/// Minimum pixel size
+// / Minimum pixel size
 func (rcv *CZMModel) MutateMINIMUM_PIXEL_SIZE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -122,7 +122,7 @@ func (rcv *CZMModel) MutateMinimumPixelSize(n float64) bool {
 	return rcv.MutateMINIMUM_PIXEL_SIZE(n)
 }
 
-/// Maximum scale
+// / Maximum scale
 func (rcv *CZMModel) MAXIMUM_SCALE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -135,7 +135,7 @@ func (rcv *CZMModel) MaximumScale() float64 {
 	return rcv.MAXIMUM_SCALE()
 }
 
-/// Maximum scale
+// / Maximum scale
 func (rcv *CZMModel) MutateMAXIMUM_SCALE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -144,7 +144,7 @@ func (rcv *CZMModel) MutateMaximumScale(n float64) bool {
 	return rcv.MutateMAXIMUM_SCALE(n)
 }
 
-/// Height reference
+// / Height reference
 func (rcv *CZMModel) HEIGHT_REFERENCE() CZMHeightReference {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *CZMModel) HeightReference() CZMHeightReference {
 	return rcv.HEIGHT_REFERENCE()
 }
 
-/// Height reference
+// / Height reference
 func (rcv *CZMModel) MutateHEIGHT_REFERENCE(n CZMHeightReference) bool {
 	return rcv._tab.MutateInt8Slot(14, int8(n))
 }
@@ -166,7 +166,7 @@ func (rcv *CZMModel) MutateHeightReference(n CZMHeightReference) bool {
 	return rcv.MutateHEIGHT_REFERENCE(n)
 }
 
-/// Color tint
+// / Color tint
 func (rcv *CZMModel) COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -184,8 +184,8 @@ func (rcv *CZMModel) Color(obj *CZMColor) *CZMColor {
 	return rcv.COLOR(obj)
 }
 
-/// Color tint
-/// Whether to incrementally load textures
+// / Color tint
+// / Whether to incrementally load textures
 func (rcv *CZMModel) INCREMENTALLY_LOAD_TEXTURES() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -198,7 +198,7 @@ func (rcv *CZMModel) IncrementallyLoadTextures() bool {
 	return rcv.INCREMENTALLY_LOAD_TEXTURES()
 }
 
-/// Whether to incrementally load textures
+// / Whether to incrementally load textures
 func (rcv *CZMModel) MutateINCREMENTALLY_LOAD_TEXTURES(n bool) bool {
 	return rcv._tab.MutateBoolSlot(18, n)
 }
@@ -207,7 +207,7 @@ func (rcv *CZMModel) MutateIncrementallyLoadTextures(n bool) bool {
 	return rcv.MutateINCREMENTALLY_LOAD_TEXTURES(n)
 }
 
-/// Whether to run animations
+// / Whether to run animations
 func (rcv *CZMModel) RUN_ANIMATIONS() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -220,7 +220,7 @@ func (rcv *CZMModel) RunAnimations() bool {
 	return rcv.RUN_ANIMATIONS()
 }
 
-/// Whether to run animations
+// / Whether to run animations
 func (rcv *CZMModel) MutateRUN_ANIMATIONS(n bool) bool {
 	return rcv._tab.MutateBoolSlot(20, n)
 }
@@ -229,7 +229,7 @@ func (rcv *CZMModel) MutateRunAnimations(n bool) bool {
 	return rcv.MutateRUN_ANIMATIONS(n)
 }
 
-/// Shadow mode
+// / Shadow mode
 func (rcv *CZMModel) SHADOWS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -242,8 +242,8 @@ func (rcv *CZMModel) Shadows() []byte {
 	return rcv.SHADOWS()
 }
 
-/// Shadow mode
-/// Silhouette color
+// / Shadow mode
+// / Silhouette color
 func (rcv *CZMModel) SILHOUETTE_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -261,8 +261,8 @@ func (rcv *CZMModel) SilhouetteColor(obj *CZMColor) *CZMColor {
 	return rcv.SILHOUETTE_COLOR(obj)
 }
 
-/// Silhouette color
-/// Silhouette size in pixels
+// / Silhouette color
+// / Silhouette size in pixels
 func (rcv *CZMModel) SILHOUETTE_SIZE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -275,7 +275,7 @@ func (rcv *CZMModel) SilhouetteSize() float64 {
 	return rcv.SILHOUETTE_SIZE()
 }
 
-/// Silhouette size in pixels
+// / Silhouette size in pixels
 func (rcv *CZMModel) MutateSILHOUETTE_SIZE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -284,7 +284,7 @@ func (rcv *CZMModel) MutateSilhouetteSize(n float64) bool {
 	return rcv.MutateSILHOUETTE_SIZE(n)
 }
 
-/// Color blend mode
+// / Color blend mode
 func (rcv *CZMModel) COLOR_BLEND_MODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -297,8 +297,8 @@ func (rcv *CZMModel) ColorBlendMode() []byte {
 	return rcv.COLOR_BLEND_MODE()
 }
 
-/// Color blend mode
-/// Color blend amount (0-1)
+// / Color blend mode
+// / Color blend amount (0-1)
 func (rcv *CZMModel) COLOR_BLEND_AMOUNT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -311,7 +311,7 @@ func (rcv *CZMModel) ColorBlendAmount() float64 {
 	return rcv.COLOR_BLEND_AMOUNT()
 }
 
-/// Color blend amount (0-1)
+// / Color blend amount (0-1)
 func (rcv *CZMModel) MutateCOLOR_BLEND_AMOUNT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }

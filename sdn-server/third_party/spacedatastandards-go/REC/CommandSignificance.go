@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Significance of command execution
+// / Significance of command execution
 type CommandSignificance struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CommandSignificance) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Consequence level (1=lowest, higher=more severe)
+// / Consequence level (1=lowest, higher=more severe)
 func (rcv *CommandSignificance) CONSEQUENCE_LEVEL() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CommandSignificance) ConsequenceLevel() byte {
 	return rcv.CONSEQUENCE_LEVEL()
 }
 
-/// Consequence level (1=lowest, higher=more severe)
+// / Consequence level (1=lowest, higher=more severe)
 func (rcv *CommandSignificance) MutateCONSEQUENCE_LEVEL(n byte) bool {
 	return rcv._tab.MutateByteSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CommandSignificance) MutateConsequenceLevel(n byte) bool {
 	return rcv.MutateCONSEQUENCE_LEVEL(n)
 }
 
-/// Reason for significance
+// / Reason for significance
 func (rcv *CommandSignificance) REASON_FOR_WARNING() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *CommandSignificance) ReasonForWarning() []byte {
 	return rcv.REASON_FOR_WARNING()
 }
 
-/// Reason for significance
+// / Reason for significance
 func CommandSignificanceStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

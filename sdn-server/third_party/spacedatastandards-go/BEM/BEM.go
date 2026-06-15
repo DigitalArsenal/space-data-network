@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Antenna Beam
+// / Antenna Beam
 type BEM struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *BEM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique beam identifier
+// / Unique beam identifier
 func (rcv *BEM) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *BEM) Id() []byte {
 	return rcv.ID()
 }
 
-/// Unique beam identifier
-/// Beam name or designation
+// / Unique beam identifier
+// / Beam name or designation
 func (rcv *BEM) BEAM_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *BEM) BeamName() []byte {
 	return rcv.BEAM_NAME()
 }
 
-/// Beam name or designation
-/// Reference to parent entity (satellite/transponder)
+// / Beam name or designation
+// / Reference to parent entity (satellite/transponder)
 func (rcv *BEM) ID_ENTITY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *BEM) IdEntity() []byte {
 	return rcv.ID_ENTITY()
 }
 
-/// Reference to parent entity (satellite/transponder)
-/// Reference to parent antenna
+// / Reference to parent entity (satellite/transponder)
+// / Reference to parent antenna
 func (rcv *BEM) ID_ANTENNA() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *BEM) IdAntenna() []byte {
 	return rcv.ID_ANTENNA()
 }
 
-/// Reference to parent antenna
-/// Beam type
+// / Reference to parent antenna
+// / Beam type
 func (rcv *BEM) TYPE() beamType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,7 +123,7 @@ func (rcv *BEM) Type() beamType {
 	return rcv.TYPE()
 }
 
-/// Beam type
+// / Beam type
 func (rcv *BEM) MutateTYPE(n beamType) bool {
 	return rcv._tab.MutateInt8Slot(12, int8(n))
 }
@@ -132,7 +132,7 @@ func (rcv *BEM) MutateType(n beamType) bool {
 	return rcv.MutateTYPE(n)
 }
 
-/// Beam polarization
+// / Beam polarization
 func (rcv *BEM) POLARIZATION() beamPolarization {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,7 +145,7 @@ func (rcv *BEM) Polarization() beamPolarization {
 	return rcv.POLARIZATION()
 }
 
-/// Beam polarization
+// / Beam polarization
 func (rcv *BEM) MutatePOLARIZATION(n beamPolarization) bool {
 	return rcv._tab.MutateInt8Slot(14, int8(n))
 }
@@ -154,7 +154,7 @@ func (rcv *BEM) MutatePolarization(n beamPolarization) bool {
 	return rcv.MutatePOLARIZATION(n)
 }
 
-/// Peak gain in dBi
+// / Peak gain in dBi
 func (rcv *BEM) PEAK_GAIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -167,7 +167,7 @@ func (rcv *BEM) PeakGain() float64 {
 	return rcv.PEAK_GAIN()
 }
 
-/// Peak gain in dBi
+// / Peak gain in dBi
 func (rcv *BEM) MutatePEAK_GAIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -176,7 +176,7 @@ func (rcv *BEM) MutatePeakGain(n float64) bool {
 	return rcv.MutatePEAK_GAIN(n)
 }
 
-/// Edge-of-coverage gain in dBi
+// / Edge-of-coverage gain in dBi
 func (rcv *BEM) EOC_GAIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -189,7 +189,7 @@ func (rcv *BEM) EocGain() float64 {
 	return rcv.EOC_GAIN()
 }
 
-/// Edge-of-coverage gain in dBi
+// / Edge-of-coverage gain in dBi
 func (rcv *BEM) MutateEOC_GAIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -198,7 +198,7 @@ func (rcv *BEM) MutateEocGain(n float64) bool {
 	return rcv.MutateEOC_GAIN(n)
 }
 
-/// Beam center latitude in degrees
+// / Beam center latitude in degrees
 func (rcv *BEM) CENTER_LATITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -211,7 +211,7 @@ func (rcv *BEM) CenterLatitude() float64 {
 	return rcv.CENTER_LATITUDE()
 }
 
-/// Beam center latitude in degrees
+// / Beam center latitude in degrees
 func (rcv *BEM) MutateCENTER_LATITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -220,7 +220,7 @@ func (rcv *BEM) MutateCenterLatitude(n float64) bool {
 	return rcv.MutateCENTER_LATITUDE(n)
 }
 
-/// Beam center longitude in degrees
+// / Beam center longitude in degrees
 func (rcv *BEM) CENTER_LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -233,7 +233,7 @@ func (rcv *BEM) CenterLongitude() float64 {
 	return rcv.CENTER_LONGITUDE()
 }
 
-/// Beam center longitude in degrees
+// / Beam center longitude in degrees
 func (rcv *BEM) MutateCENTER_LONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -242,7 +242,7 @@ func (rcv *BEM) MutateCenterLongitude(n float64) bool {
 	return rcv.MutateCENTER_LONGITUDE(n)
 }
 
-/// Beamwidth (3dB) in degrees
+// / Beamwidth (3dB) in degrees
 func (rcv *BEM) BEAMWIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -255,7 +255,7 @@ func (rcv *BEM) Beamwidth() float64 {
 	return rcv.BEAMWIDTH()
 }
 
-/// Beamwidth (3dB) in degrees
+// / Beamwidth (3dB) in degrees
 func (rcv *BEM) MutateBEAMWIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -264,7 +264,7 @@ func (rcv *BEM) MutateBeamwidth(n float64) bool {
 	return rcv.MutateBEAMWIDTH(n)
 }
 
-/// Operating frequency in MHz
+// / Operating frequency in MHz
 func (rcv *BEM) FREQUENCY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -277,7 +277,7 @@ func (rcv *BEM) Frequency() float64 {
 	return rcv.FREQUENCY()
 }
 
-/// Operating frequency in MHz
+// / Operating frequency in MHz
 func (rcv *BEM) MutateFREQUENCY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -286,7 +286,7 @@ func (rcv *BEM) MutateFrequency(n float64) bool {
 	return rcv.MutateFREQUENCY(n)
 }
 
-/// EIRP at beam center in dBW
+// / EIRP at beam center in dBW
 func (rcv *BEM) EIRP() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -299,7 +299,7 @@ func (rcv *BEM) Eirp() float64 {
 	return rcv.EIRP()
 }
 
-/// EIRP at beam center in dBW
+// / EIRP at beam center in dBW
 func (rcv *BEM) MutateEIRP(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -308,7 +308,7 @@ func (rcv *BEM) MutateEirp(n float64) bool {
 	return rcv.MutateEIRP(n)
 }
 
-/// G/T at beam center in dB/K
+// / G/T at beam center in dB/K
 func (rcv *BEM) G_OVER_T() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -321,7 +321,7 @@ func (rcv *BEM) GOverT() float64 {
 	return rcv.G_OVER_T()
 }
 
-/// G/T at beam center in dB/K
+// / G/T at beam center in dB/K
 func (rcv *BEM) MutateG_OVER_T(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -330,7 +330,7 @@ func (rcv *BEM) MutateGOverT(n float64) bool {
 	return rcv.MutateG_OVER_T(n)
 }
 
-/// Beam footprint area in km^2
+// / Beam footprint area in km^2
 func (rcv *BEM) FOOTPRINT_AREA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -343,7 +343,7 @@ func (rcv *BEM) FootprintArea() float64 {
 	return rcv.FOOTPRINT_AREA()
 }
 
-/// Beam footprint area in km^2
+// / Beam footprint area in km^2
 func (rcv *BEM) MutateFOOTPRINT_AREA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -352,7 +352,7 @@ func (rcv *BEM) MutateFootprintArea(n float64) bool {
 	return rcv.MutateFOOTPRINT_AREA(n)
 }
 
-/// Beam contour definitions
+// / Beam contour definitions
 func (rcv *BEM) BEAM_CONTOURS(obj *beamContour, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -384,8 +384,8 @@ func (rcv *BEM) BeamContoursLength() int {
 	return rcv.BEAM_CONTOURSLength()
 }
 
-/// Beam contour definitions
-/// Additional notes
+// / Beam contour definitions
+// / Additional notes
 func (rcv *BEM) NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -398,7 +398,7 @@ func (rcv *BEM) Notes() []byte {
 	return rcv.NOTES()
 }
 
-/// Additional notes
+// / Additional notes
 func BEMStart(builder *flatbuffers.Builder) {
 	builder.StartObject(17)
 }

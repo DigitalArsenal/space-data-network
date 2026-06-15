@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Result for one access-window compute request.
+// / Result for one access-window compute request.
 type ACWResult struct {
 	_tab flatbuffers.Table
 }
@@ -105,7 +105,7 @@ func (rcv *ACWResult) WindowsLength() int {
 	return rcv.WINDOWSLength()
 }
 
-/// Caller trace/correlation identifier copied from the request when present.
+// / Caller trace/correlation identifier copied from the request when present.
 func (rcv *ACWResult) TRACE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -118,7 +118,7 @@ func (rcv *ACWResult) TraceId() []byte {
 	return rcv.TRACE_ID()
 }
 
-/// Caller trace/correlation identifier copied from the request when present.
+// / Caller trace/correlation identifier copied from the request when present.
 func ACWResultStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

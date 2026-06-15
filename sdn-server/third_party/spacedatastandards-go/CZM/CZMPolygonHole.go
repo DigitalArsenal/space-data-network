@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Polygon hole position list
+// / Polygon hole position list
 type CZMPolygonHole struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMPolygonHole) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Positions as cartographic degrees [lon, lat, height, ...]
+// / Positions as cartographic degrees [lon, lat, height, ...]
 func (rcv *CZMPolygonHole) POSITIONS_CARTOGRAPHIC_DEGREES(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -68,7 +68,7 @@ func (rcv *CZMPolygonHole) PositionsCartographicDegreesLength() int {
 	return rcv.POSITIONS_CARTOGRAPHIC_DEGREESLength()
 }
 
-/// Positions as cartographic degrees [lon, lat, height, ...]
+// / Positions as cartographic degrees [lon, lat, height, ...]
 func (rcv *CZMPolygonHole) MutatePOSITIONS_CARTOGRAPHIC_DEGREES(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -82,7 +82,7 @@ func (rcv *CZMPolygonHole) MutatePositionsCartographicDegrees(j int, n float64) 
 	return rcv.MutatePOSITIONS_CARTOGRAPHIC_DEGREES(j, n)
 }
 
-/// Positions as Cartesian [X, Y, Z, ...]
+// / Positions as Cartesian [X, Y, Z, ...]
 func (rcv *CZMPolygonHole) POSITIONS_CARTESIAN(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -108,7 +108,7 @@ func (rcv *CZMPolygonHole) PositionsCartesianLength() int {
 	return rcv.POSITIONS_CARTESIANLength()
 }
 
-/// Positions as Cartesian [X, Y, Z, ...]
+// / Positions as Cartesian [X, Y, Z, ...]
 func (rcv *CZMPolygonHole) MutatePOSITIONS_CARTESIAN(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {

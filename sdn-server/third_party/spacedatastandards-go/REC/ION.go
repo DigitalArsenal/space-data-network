@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Ionospheric Observation
+// / Ionospheric Observation
 type ION struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *ION) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique identifier
+// / Unique identifier
 func (rcv *ION) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *ION) Id() []byte {
 	return rcv.ID()
 }
 
-/// Unique identifier
-/// Data source type
+// / Unique identifier
+// / Data source type
 func (rcv *ION) SOURCE() ionoSource {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,7 +81,7 @@ func (rcv *ION) Source() ionoSource {
 	return rcv.SOURCE()
 }
 
-/// Data source type
+// / Data source type
 func (rcv *ION) MutateSOURCE(n ionoSource) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -90,7 +90,7 @@ func (rcv *ION) MutateSource(n ionoSource) bool {
 	return rcv.MutateSOURCE(n)
 }
 
-/// Station or sensor identifier
+// / Station or sensor identifier
 func (rcv *ION) STATION_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,8 +103,8 @@ func (rcv *ION) StationId() []byte {
 	return rcv.STATION_ID()
 }
 
-/// Station or sensor identifier
-/// Station name
+// / Station or sensor identifier
+// / Station name
 func (rcv *ION) STATION_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *ION) StationName() []byte {
 	return rcv.STATION_NAME()
 }
 
-/// Station name
-/// Station geodetic latitude in degrees
+// / Station name
+// / Station geodetic latitude in degrees
 func (rcv *ION) LATITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,7 +131,7 @@ func (rcv *ION) Latitude() float64 {
 	return rcv.LATITUDE()
 }
 
-/// Station geodetic latitude in degrees
+// / Station geodetic latitude in degrees
 func (rcv *ION) MutateLATITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -140,7 +140,7 @@ func (rcv *ION) MutateLatitude(n float64) bool {
 	return rcv.MutateLATITUDE(n)
 }
 
-/// Station geodetic longitude in degrees
+// / Station geodetic longitude in degrees
 func (rcv *ION) LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -153,7 +153,7 @@ func (rcv *ION) Longitude() float64 {
 	return rcv.LONGITUDE()
 }
 
-/// Station geodetic longitude in degrees
+// / Station geodetic longitude in degrees
 func (rcv *ION) MutateLONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -162,7 +162,7 @@ func (rcv *ION) MutateLongitude(n float64) bool {
 	return rcv.MutateLONGITUDE(n)
 }
 
-/// Station altitude in meters
+// / Station altitude in meters
 func (rcv *ION) ALTITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -175,7 +175,7 @@ func (rcv *ION) Altitude() float64 {
 	return rcv.ALTITUDE()
 }
 
-/// Station altitude in meters
+// / Station altitude in meters
 func (rcv *ION) MutateALTITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -184,7 +184,7 @@ func (rcv *ION) MutateAltitude(n float64) bool {
 	return rcv.MutateALTITUDE(n)
 }
 
-/// Observation start time (ISO 8601)
+// / Observation start time (ISO 8601)
 func (rcv *ION) START_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -197,8 +197,8 @@ func (rcv *ION) StartTime() []byte {
 	return rcv.START_TIME()
 }
 
-/// Observation start time (ISO 8601)
-/// Observation stop time (ISO 8601)
+// / Observation start time (ISO 8601)
+// / Observation stop time (ISO 8601)
 func (rcv *ION) STOP_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -211,8 +211,8 @@ func (rcv *ION) StopTime() []byte {
 	return rcv.STOP_TIME()
 }
 
-/// Observation stop time (ISO 8601)
-/// foF2 critical frequency in MHz
+// / Observation stop time (ISO 8601)
+// / foF2 critical frequency in MHz
 func (rcv *ION) FOF2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -225,7 +225,7 @@ func (rcv *ION) Fof2() float64 {
 	return rcv.FOF2()
 }
 
-/// foF2 critical frequency in MHz
+// / foF2 critical frequency in MHz
 func (rcv *ION) MutateFOF2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -234,7 +234,7 @@ func (rcv *ION) MutateFof2(n float64) bool {
 	return rcv.MutateFOF2(n)
 }
 
-/// foF1 critical frequency in MHz
+// / foF1 critical frequency in MHz
 func (rcv *ION) FOF1() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -247,7 +247,7 @@ func (rcv *ION) Fof1() float64 {
 	return rcv.FOF1()
 }
 
-/// foF1 critical frequency in MHz
+// / foF1 critical frequency in MHz
 func (rcv *ION) MutateFOF1(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -256,7 +256,7 @@ func (rcv *ION) MutateFof1(n float64) bool {
 	return rcv.MutateFOF1(n)
 }
 
-/// foE critical frequency in MHz
+// / foE critical frequency in MHz
 func (rcv *ION) FOE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -269,7 +269,7 @@ func (rcv *ION) Foe() float64 {
 	return rcv.FOE()
 }
 
-/// foE critical frequency in MHz
+// / foE critical frequency in MHz
 func (rcv *ION) MutateFOE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -278,7 +278,7 @@ func (rcv *ION) MutateFoe(n float64) bool {
 	return rcv.MutateFOE(n)
 }
 
-/// foEs sporadic E critical frequency in MHz
+// / foEs sporadic E critical frequency in MHz
 func (rcv *ION) FOES() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -291,7 +291,7 @@ func (rcv *ION) Foes() float64 {
 	return rcv.FOES()
 }
 
-/// foEs sporadic E critical frequency in MHz
+// / foEs sporadic E critical frequency in MHz
 func (rcv *ION) MutateFOES(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -300,7 +300,7 @@ func (rcv *ION) MutateFoes(n float64) bool {
 	return rcv.MutateFOES(n)
 }
 
-/// hmF2 peak height of F2 layer in km
+// / hmF2 peak height of F2 layer in km
 func (rcv *ION) HMF2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -313,7 +313,7 @@ func (rcv *ION) Hmf2() float64 {
 	return rcv.HMF2()
 }
 
-/// hmF2 peak height of F2 layer in km
+// / hmF2 peak height of F2 layer in km
 func (rcv *ION) MutateHMF2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -322,7 +322,7 @@ func (rcv *ION) MutateHmf2(n float64) bool {
 	return rcv.MutateHMF2(n)
 }
 
-/// hmF1 peak height of F1 layer in km
+// / hmF1 peak height of F1 layer in km
 func (rcv *ION) HMF1() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -335,7 +335,7 @@ func (rcv *ION) Hmf1() float64 {
 	return rcv.HMF1()
 }
 
-/// hmF1 peak height of F1 layer in km
+// / hmF1 peak height of F1 layer in km
 func (rcv *ION) MutateHMF1(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -344,7 +344,7 @@ func (rcv *ION) MutateHmf1(n float64) bool {
 	return rcv.MutateHMF1(n)
 }
 
-/// hmE peak height of E layer in km
+// / hmE peak height of E layer in km
 func (rcv *ION) HME() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -357,7 +357,7 @@ func (rcv *ION) Hme() float64 {
 	return rcv.HME()
 }
 
-/// hmE peak height of E layer in km
+// / hmE peak height of E layer in km
 func (rcv *ION) MutateHME(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -366,7 +366,7 @@ func (rcv *ION) MutateHme(n float64) bool {
 	return rcv.MutateHME(n)
 }
 
-/// NmF2 peak density of F2 layer in electrons/m^3
+// / NmF2 peak density of F2 layer in electrons/m^3
 func (rcv *ION) NMF2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -379,7 +379,7 @@ func (rcv *ION) Nmf2() float64 {
 	return rcv.NMF2()
 }
 
-/// NmF2 peak density of F2 layer in electrons/m^3
+// / NmF2 peak density of F2 layer in electrons/m^3
 func (rcv *ION) MutateNMF2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -388,7 +388,7 @@ func (rcv *ION) MutateNmf2(n float64) bool {
 	return rcv.MutateNMF2(n)
 }
 
-/// Vertical TEC in TECU
+// / Vertical TEC in TECU
 func (rcv *ION) VTEC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -401,7 +401,7 @@ func (rcv *ION) Vtec() float64 {
 	return rcv.VTEC()
 }
 
-/// Vertical TEC in TECU
+// / Vertical TEC in TECU
 func (rcv *ION) MutateVTEC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -410,7 +410,7 @@ func (rcv *ION) MutateVtec(n float64) bool {
 	return rcv.MutateVTEC(n)
 }
 
-/// Slant TEC in TECU
+// / Slant TEC in TECU
 func (rcv *ION) STEC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -423,7 +423,7 @@ func (rcv *ION) Stec() float64 {
 	return rcv.STEC()
 }
 
-/// Slant TEC in TECU
+// / Slant TEC in TECU
 func (rcv *ION) MutateSTEC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -432,7 +432,7 @@ func (rcv *ION) MutateStec(n float64) bool {
 	return rcv.MutateSTEC(n)
 }
 
-/// Scintillation index S4
+// / Scintillation index S4
 func (rcv *ION) S4() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -441,12 +441,12 @@ func (rcv *ION) S4() float64 {
 	return 0.0
 }
 
-/// Scintillation index S4
+// / Scintillation index S4
 func (rcv *ION) MutateS4(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
 
-/// Observation data points
+// / Observation data points
 func (rcv *ION) DATA_POINTS(obj *ionoDataPoint, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -478,8 +478,8 @@ func (rcv *ION) DataPointsLength() int {
 	return rcv.DATA_POINTSLength()
 }
 
-/// Observation data points
-/// Electron density profiles
+// / Observation data points
+// / Electron density profiles
 func (rcv *ION) DENSITY_PROFILES(obj *ionoDensityProfile, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -511,8 +511,8 @@ func (rcv *ION) DensityProfilesLength() int {
 	return rcv.DENSITY_PROFILESLength()
 }
 
-/// Electron density profiles
-/// Data quality indicator (0-9, 9=best)
+// / Electron density profiles
+// / Data quality indicator (0-9, 9=best)
 func (rcv *ION) QUALITY() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -525,7 +525,7 @@ func (rcv *ION) Quality() byte {
 	return rcv.QUALITY()
 }
 
-/// Data quality indicator (0-9, 9=best)
+// / Data quality indicator (0-9, 9=best)
 func (rcv *ION) MutateQUALITY(n byte) bool {
 	return rcv._tab.MutateByteSlot(48, n)
 }
@@ -534,7 +534,7 @@ func (rcv *ION) MutateQuality(n byte) bool {
 	return rcv.MutateQUALITY(n)
 }
 
-/// Additional notes
+// / Additional notes
 func (rcv *ION) NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -547,7 +547,7 @@ func (rcv *ION) Notes() []byte {
 	return rcv.NOTES()
 }
 
-/// Additional notes
+// / Additional notes
 func IONStart(builder *flatbuffers.Builder) {
 	builder.StartObject(24)
 }

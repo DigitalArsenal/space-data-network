@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Parameter reference entry in container
+// / Parameter reference entry in container
 type ParameterRefEntry struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ParameterRefEntry) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Parameter reference path
+// / Parameter reference path
 func (rcv *ParameterRefEntry) PARAMETER_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *ParameterRefEntry) ParameterRef() []byte {
 	return rcv.PARAMETER_REF()
 }
 
-/// Parameter reference path
-/// Location in container
+// / Parameter reference path
+// / Location in container
 func (rcv *ParameterRefEntry) LOCATION(obj *LocationInContainer) *LocationInContainer {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *ParameterRefEntry) Location(obj *LocationInContainer) *LocationInCont
 	return rcv.LOCATION(obj)
 }
 
-/// Location in container
-/// Repeat specification
+// / Location in container
+// / Repeat specification
 func (rcv *ParameterRefEntry) REPEAT(obj *RepeatEntry) *RepeatEntry {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -93,8 +93,8 @@ func (rcv *ParameterRefEntry) Repeat(obj *RepeatEntry) *RepeatEntry {
 	return rcv.REPEAT(obj)
 }
 
-/// Repeat specification
-/// Include condition
+// / Repeat specification
+// / Include condition
 func (rcv *ParameterRefEntry) INCLUDE_CONDITION(obj *MatchCriteria) *MatchCriteria {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -112,8 +112,8 @@ func (rcv *ParameterRefEntry) IncludeCondition(obj *MatchCriteria) *MatchCriteri
 	return rcv.INCLUDE_CONDITION(obj)
 }
 
-/// Include condition
-/// Short description
+// / Include condition
+// / Short description
 func (rcv *ParameterRefEntry) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -126,7 +126,7 @@ func (rcv *ParameterRefEntry) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-/// Short description
+// / Short description
 func ParameterRefEntryStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

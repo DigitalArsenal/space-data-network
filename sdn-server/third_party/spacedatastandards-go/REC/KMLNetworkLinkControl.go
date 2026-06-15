@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// NetworkLinkControl
+// / NetworkLinkControl
 type KMLNetworkLinkControl struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLNetworkLinkControl) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Minimum refresh period in seconds
+// / Minimum refresh period in seconds
 func (rcv *KMLNetworkLinkControl) MIN_REFRESH_PERIOD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *KMLNetworkLinkControl) MinRefreshPeriod() float64 {
 	return rcv.MIN_REFRESH_PERIOD()
 }
 
-/// Minimum refresh period in seconds
+// / Minimum refresh period in seconds
 func (rcv *KMLNetworkLinkControl) MutateMIN_REFRESH_PERIOD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *KMLNetworkLinkControl) MutateMinRefreshPeriod(n float64) bool {
 	return rcv.MutateMIN_REFRESH_PERIOD(n)
 }
 
-/// Maximum session length in seconds
+// / Maximum session length in seconds
 func (rcv *KMLNetworkLinkControl) MAX_SESSION_LENGTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *KMLNetworkLinkControl) MaxSessionLength() float64 {
 	return rcv.MAX_SESSION_LENGTH()
 }
 
-/// Maximum session length in seconds
+// / Maximum session length in seconds
 func (rcv *KMLNetworkLinkControl) MutateMAX_SESSION_LENGTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *KMLNetworkLinkControl) MutateMaxSessionLength(n float64) bool {
 	return rcv.MutateMAX_SESSION_LENGTH(n)
 }
 
-/// Cookie
+// / Cookie
 func (rcv *KMLNetworkLinkControl) COOKIE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,8 +99,8 @@ func (rcv *KMLNetworkLinkControl) Cookie() []byte {
 	return rcv.COOKIE()
 }
 
-/// Cookie
-/// Message to display
+// / Cookie
+// / Message to display
 func (rcv *KMLNetworkLinkControl) MESSAGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -113,8 +113,8 @@ func (rcv *KMLNetworkLinkControl) Message() []byte {
 	return rcv.MESSAGE()
 }
 
-/// Message to display
-/// Link name override
+// / Message to display
+// / Link name override
 func (rcv *KMLNetworkLinkControl) LINK_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -127,8 +127,8 @@ func (rcv *KMLNetworkLinkControl) LinkName() []byte {
 	return rcv.LINK_NAME()
 }
 
-/// Link name override
-/// Link description override
+// / Link name override
+// / Link description override
 func (rcv *KMLNetworkLinkControl) LINK_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -141,8 +141,8 @@ func (rcv *KMLNetworkLinkControl) LinkDescription() []byte {
 	return rcv.LINK_DESCRIPTION()
 }
 
-/// Link description override
-/// Link snippet override
+// / Link description override
+// / Link snippet override
 func (rcv *KMLNetworkLinkControl) LINK_SNIPPET() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -155,8 +155,8 @@ func (rcv *KMLNetworkLinkControl) LinkSnippet() []byte {
 	return rcv.LINK_SNIPPET()
 }
 
-/// Link snippet override
-/// Expiration time (ISO 8601)
+// / Link snippet override
+// / Expiration time (ISO 8601)
 func (rcv *KMLNetworkLinkControl) EXPIRES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -169,8 +169,8 @@ func (rcv *KMLNetworkLinkControl) Expires() []byte {
 	return rcv.EXPIRES()
 }
 
-/// Expiration time (ISO 8601)
-/// Update
+// / Expiration time (ISO 8601)
+// / Update
 func (rcv *KMLNetworkLinkControl) UPDATE(obj *KMLUpdate) *KMLUpdate {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -188,8 +188,8 @@ func (rcv *KMLNetworkLinkControl) Update(obj *KMLUpdate) *KMLUpdate {
 	return rcv.UPDATE(obj)
 }
 
-/// Update
-/// LookAt
+// / Update
+// / LookAt
 func (rcv *KMLNetworkLinkControl) LOOK_AT(obj *KMLLookAt) *KMLLookAt {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -207,8 +207,8 @@ func (rcv *KMLNetworkLinkControl) LookAt(obj *KMLLookAt) *KMLLookAt {
 	return rcv.LOOK_AT(obj)
 }
 
-/// LookAt
-/// Camera
+// / LookAt
+// / Camera
 func (rcv *KMLNetworkLinkControl) CAMERA(obj *KMLCamera) *KMLCamera {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -226,7 +226,7 @@ func (rcv *KMLNetworkLinkControl) Camera(obj *KMLCamera) *KMLCamera {
 	return rcv.CAMERA(obj)
 }
 
-/// Camera
+// / Camera
 func KMLNetworkLinkControlStart(builder *flatbuffers.Builder) {
 	builder.StartObject(11)
 }

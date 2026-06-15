@@ -8,13 +8,13 @@ type meanElementSource int8
 
 const (
 	/// Simplified General Perturbation Model 4
-	meanElementSourceSGP4   meanElementSource = 0
+	meanElementSourceSGP4 meanElementSource = 0
 	/// Simplified General Perturbation Model 4 eXtended Perturbations (https://amostech.com/TechnicalPapers/2022/Astrodynamics/Payne_2.pdf)
 	meanElementSourceSGP4XP meanElementSource = 1
 	/// Draper Semi-analytical Satellite Theory
-	meanElementSourceDSST   meanElementSource = 2
+	meanElementSourceDSST meanElementSource = 2
 	/// Universal Semianalytical Method
-	meanElementSourceUSM    meanElementSource = 3
+	meanElementSourceUSM meanElementSource = 3
 )
 
 var EnumNamesmeanElementSource = map[meanElementSource]string{

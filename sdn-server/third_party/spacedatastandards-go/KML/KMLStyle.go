@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Style definition
+// / Style definition
 type KMLStyle struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLStyle) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Style identifier
+// / Style identifier
 func (rcv *KMLStyle) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLStyle) Id() []byte {
 	return rcv.ID()
 }
 
-/// Style identifier
-/// Icon style
+// / Style identifier
+// / Icon style
 func (rcv *KMLStyle) ICON_STYLE(obj *KMLIconStyle) *KMLIconStyle {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *KMLStyle) IconStyle(obj *KMLIconStyle) *KMLIconStyle {
 	return rcv.ICON_STYLE(obj)
 }
 
-/// Icon style
-/// Label style
+// / Icon style
+// / Label style
 func (rcv *KMLStyle) LABEL_STYLE(obj *KMLLabelStyle) *KMLLabelStyle {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -93,8 +93,8 @@ func (rcv *KMLStyle) LabelStyle(obj *KMLLabelStyle) *KMLLabelStyle {
 	return rcv.LABEL_STYLE(obj)
 }
 
-/// Label style
-/// Line style
+// / Label style
+// / Line style
 func (rcv *KMLStyle) LINE_STYLE(obj *KMLLineStyle) *KMLLineStyle {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -112,8 +112,8 @@ func (rcv *KMLStyle) LineStyle(obj *KMLLineStyle) *KMLLineStyle {
 	return rcv.LINE_STYLE(obj)
 }
 
-/// Line style
-/// Polygon style
+// / Line style
+// / Polygon style
 func (rcv *KMLStyle) POLY_STYLE(obj *KMLPolyStyle) *KMLPolyStyle {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *KMLStyle) PolyStyle(obj *KMLPolyStyle) *KMLPolyStyle {
 	return rcv.POLY_STYLE(obj)
 }
 
-/// Polygon style
-/// Balloon style
+// / Polygon style
+// / Balloon style
 func (rcv *KMLStyle) BALLOON_STYLE(obj *KMLBalloonStyle) *KMLBalloonStyle {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -150,8 +150,8 @@ func (rcv *KMLStyle) BalloonStyle(obj *KMLBalloonStyle) *KMLBalloonStyle {
 	return rcv.BALLOON_STYLE(obj)
 }
 
-/// Balloon style
-/// List style
+// / Balloon style
+// / List style
 func (rcv *KMLStyle) LIST_STYLE(obj *KMLListStyle) *KMLListStyle {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -169,7 +169,7 @@ func (rcv *KMLStyle) ListStyle(obj *KMLListStyle) *KMLListStyle {
 	return rcv.LIST_STYLE(obj)
 }
 
-/// List style
+// / List style
 func KMLStyleStart(builder *flatbuffers.Builder) {
 	builder.StartObject(7)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Transponder
+// / Transponder
 type TPN struct {
 	_tab flatbuffers.Table
 }

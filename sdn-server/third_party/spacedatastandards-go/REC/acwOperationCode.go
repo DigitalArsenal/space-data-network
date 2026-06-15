@@ -7,7 +7,7 @@ import "strconv"
 type acwOperationCode int8
 
 const (
-	acwOperationCodeUNKNOWN                acwOperationCode = 0
+	acwOperationCodeUNKNOWN acwOperationCode = 0
 	/// Compute access windows from pre-sampled target Cartesian states.
 	acwOperationCodeCOMPUTE_ACCESS_WINDOWS acwOperationCode = 1
 )

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Grid material
+// / Grid material
 type CZMGridMaterial struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMGridMaterial) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Grid line color
+// / Grid line color
 func (rcv *CZMGridMaterial) COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *CZMGridMaterial) Color(obj *CZMColor) *CZMColor {
 	return rcv.COLOR(obj)
 }
 
-/// Grid line color
-/// Cell alpha
+// / Grid line color
+// / Cell alpha
 func (rcv *CZMGridMaterial) CELL_ALPHA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -74,7 +74,7 @@ func (rcv *CZMGridMaterial) CellAlpha() float64 {
 	return rcv.CELL_ALPHA()
 }
 
-/// Cell alpha
+// / Cell alpha
 func (rcv *CZMGridMaterial) MutateCELL_ALPHA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -83,7 +83,7 @@ func (rcv *CZMGridMaterial) MutateCellAlpha(n float64) bool {
 	return rcv.MutateCELL_ALPHA(n)
 }
 
-/// Number of grid lines along X
+// / Number of grid lines along X
 func (rcv *CZMGridMaterial) LINE_COUNT_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -96,7 +96,7 @@ func (rcv *CZMGridMaterial) LineCountX() float64 {
 	return rcv.LINE_COUNT_X()
 }
 
-/// Number of grid lines along X
+// / Number of grid lines along X
 func (rcv *CZMGridMaterial) MutateLINE_COUNT_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -105,7 +105,7 @@ func (rcv *CZMGridMaterial) MutateLineCountX(n float64) bool {
 	return rcv.MutateLINE_COUNT_X(n)
 }
 
-/// Number of grid lines along Y
+// / Number of grid lines along Y
 func (rcv *CZMGridMaterial) LINE_COUNT_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -118,7 +118,7 @@ func (rcv *CZMGridMaterial) LineCountY() float64 {
 	return rcv.LINE_COUNT_Y()
 }
 
-/// Number of grid lines along Y
+// / Number of grid lines along Y
 func (rcv *CZMGridMaterial) MutateLINE_COUNT_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -127,7 +127,7 @@ func (rcv *CZMGridMaterial) MutateLineCountY(n float64) bool {
 	return rcv.MutateLINE_COUNT_Y(n)
 }
 
-/// Thickness of grid lines along X
+// / Thickness of grid lines along X
 func (rcv *CZMGridMaterial) LINE_THICKNESS_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -140,7 +140,7 @@ func (rcv *CZMGridMaterial) LineThicknessX() float64 {
 	return rcv.LINE_THICKNESS_X()
 }
 
-/// Thickness of grid lines along X
+// / Thickness of grid lines along X
 func (rcv *CZMGridMaterial) MutateLINE_THICKNESS_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -149,7 +149,7 @@ func (rcv *CZMGridMaterial) MutateLineThicknessX(n float64) bool {
 	return rcv.MutateLINE_THICKNESS_X(n)
 }
 
-/// Thickness of grid lines along Y
+// / Thickness of grid lines along Y
 func (rcv *CZMGridMaterial) LINE_THICKNESS_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -162,7 +162,7 @@ func (rcv *CZMGridMaterial) LineThicknessY() float64 {
 	return rcv.LINE_THICKNESS_Y()
 }
 
-/// Thickness of grid lines along Y
+// / Thickness of grid lines along Y
 func (rcv *CZMGridMaterial) MutateLINE_THICKNESS_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -171,7 +171,7 @@ func (rcv *CZMGridMaterial) MutateLineThicknessY(n float64) bool {
 	return rcv.MutateLINE_THICKNESS_Y(n)
 }
 
-/// Offset of grid lines along X
+// / Offset of grid lines along X
 func (rcv *CZMGridMaterial) LINE_OFFSET_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -184,7 +184,7 @@ func (rcv *CZMGridMaterial) LineOffsetX() float64 {
 	return rcv.LINE_OFFSET_X()
 }
 
-/// Offset of grid lines along X
+// / Offset of grid lines along X
 func (rcv *CZMGridMaterial) MutateLINE_OFFSET_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -193,7 +193,7 @@ func (rcv *CZMGridMaterial) MutateLineOffsetX(n float64) bool {
 	return rcv.MutateLINE_OFFSET_X(n)
 }
 
-/// Offset of grid lines along Y
+// / Offset of grid lines along Y
 func (rcv *CZMGridMaterial) LINE_OFFSET_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -206,7 +206,7 @@ func (rcv *CZMGridMaterial) LineOffsetY() float64 {
 	return rcv.LINE_OFFSET_Y()
 }
 
-/// Offset of grid lines along Y
+// / Offset of grid lines along Y
 func (rcv *CZMGridMaterial) MutateLINE_OFFSET_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }

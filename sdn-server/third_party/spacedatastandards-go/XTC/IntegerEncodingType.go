@@ -4,22 +4,22 @@ package XTC
 
 import "strconv"
 
-/// Integer encoding types
+// / Integer encoding types
 type IntegerEncodingType int8
 
 const (
 	/// Unsigned binary
-	IntegerEncodingTypeUNSIGNED        IntegerEncodingType = 0
+	IntegerEncodingTypeUNSIGNED IntegerEncodingType = 0
 	/// Two's complement signed
 	IntegerEncodingTypeTWOS_COMPLEMENT IntegerEncodingType = 1
 	/// Sign-magnitude representation
-	IntegerEncodingTypeSIGN_MAGNITUDE  IntegerEncodingType = 2
+	IntegerEncodingTypeSIGN_MAGNITUDE IntegerEncodingType = 2
 	/// Ones' complement signed
 	IntegerEncodingTypeONES_COMPLEMENT IntegerEncodingType = 3
 	/// Binary Coded Decimal
-	IntegerEncodingTypeBCD             IntegerEncodingType = 4
+	IntegerEncodingTypeBCD IntegerEncodingType = 4
 	/// Packed BCD
-	IntegerEncodingTypePACKED_BCD      IntegerEncodingType = 5
+	IntegerEncodingTypePACKED_BCD IntegerEncodingType = 5
 )
 
 var EnumNamesIntegerEncodingType = map[IntegerEncodingType]string{

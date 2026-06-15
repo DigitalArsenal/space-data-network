@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Transponder
+// / Transponder
 type commsTransponder struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *commsTransponder) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Transponder identifier
+// / Transponder identifier
 func (rcv *commsTransponder) TRANSPONDER_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *commsTransponder) TransponderId() []byte {
 	return rcv.TRANSPONDER_ID()
 }
 
-/// Transponder identifier
-/// Transponder name
+// / Transponder identifier
+// / Transponder name
 func (rcv *commsTransponder) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *commsTransponder) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Transponder name
-/// Transponder type (e.g., BENT_PIPE, REGENERATIVE, OBP)
+// / Transponder name
+// / Transponder type (e.g., BENT_PIPE, REGENERATIVE, OBP)
 func (rcv *commsTransponder) TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *commsTransponder) Type() []byte {
 	return rcv.TYPE()
 }
 
-/// Transponder type (e.g., BENT_PIPE, REGENERATIVE, OBP)
-/// Operating band (e.g., C, Ku, Ka, L, S, X)
+// / Transponder type (e.g., BENT_PIPE, REGENERATIVE, OBP)
+// / Operating band (e.g., C, Ku, Ka, L, S, X)
 func (rcv *commsTransponder) BAND() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *commsTransponder) Band() []byte {
 	return rcv.BAND()
 }
 
-/// Operating band (e.g., C, Ku, Ka, L, S, X)
-/// Uplink frequency range minimum in MHz
+// / Operating band (e.g., C, Ku, Ka, L, S, X)
+// / Uplink frequency range minimum in MHz
 func (rcv *commsTransponder) UPLINK_FREQ_MIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -111,7 +111,7 @@ func (rcv *commsTransponder) UplinkFreqMin() float64 {
 	return rcv.UPLINK_FREQ_MIN()
 }
 
-/// Uplink frequency range minimum in MHz
+// / Uplink frequency range minimum in MHz
 func (rcv *commsTransponder) MutateUPLINK_FREQ_MIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -120,7 +120,7 @@ func (rcv *commsTransponder) MutateUplinkFreqMin(n float64) bool {
 	return rcv.MutateUPLINK_FREQ_MIN(n)
 }
 
-/// Uplink frequency range maximum in MHz
+// / Uplink frequency range maximum in MHz
 func (rcv *commsTransponder) UPLINK_FREQ_MAX() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -133,7 +133,7 @@ func (rcv *commsTransponder) UplinkFreqMax() float64 {
 	return rcv.UPLINK_FREQ_MAX()
 }
 
-/// Uplink frequency range maximum in MHz
+// / Uplink frequency range maximum in MHz
 func (rcv *commsTransponder) MutateUPLINK_FREQ_MAX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -142,7 +142,7 @@ func (rcv *commsTransponder) MutateUplinkFreqMax(n float64) bool {
 	return rcv.MutateUPLINK_FREQ_MAX(n)
 }
 
-/// Downlink frequency range minimum in MHz
+// / Downlink frequency range minimum in MHz
 func (rcv *commsTransponder) DOWNLINK_FREQ_MIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -155,7 +155,7 @@ func (rcv *commsTransponder) DownlinkFreqMin() float64 {
 	return rcv.DOWNLINK_FREQ_MIN()
 }
 
-/// Downlink frequency range minimum in MHz
+// / Downlink frequency range minimum in MHz
 func (rcv *commsTransponder) MutateDOWNLINK_FREQ_MIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -164,7 +164,7 @@ func (rcv *commsTransponder) MutateDownlinkFreqMin(n float64) bool {
 	return rcv.MutateDOWNLINK_FREQ_MIN(n)
 }
 
-/// Downlink frequency range maximum in MHz
+// / Downlink frequency range maximum in MHz
 func (rcv *commsTransponder) DOWNLINK_FREQ_MAX() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -177,7 +177,7 @@ func (rcv *commsTransponder) DownlinkFreqMax() float64 {
 	return rcv.DOWNLINK_FREQ_MAX()
 }
 
-/// Downlink frequency range maximum in MHz
+// / Downlink frequency range maximum in MHz
 func (rcv *commsTransponder) MutateDOWNLINK_FREQ_MAX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -186,7 +186,7 @@ func (rcv *commsTransponder) MutateDownlinkFreqMax(n float64) bool {
 	return rcv.MutateDOWNLINK_FREQ_MAX(n)
 }
 
-/// Saturated EIRP in dBW
+// / Saturated EIRP in dBW
 func (rcv *commsTransponder) EIRP() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -199,7 +199,7 @@ func (rcv *commsTransponder) Eirp() float64 {
 	return rcv.EIRP()
 }
 
-/// Saturated EIRP in dBW
+// / Saturated EIRP in dBW
 func (rcv *commsTransponder) MutateEIRP(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -208,7 +208,7 @@ func (rcv *commsTransponder) MutateEirp(n float64) bool {
 	return rcv.MutateEIRP(n)
 }
 
-/// G/T in dB/K
+// / G/T in dB/K
 func (rcv *commsTransponder) G_OVER_T() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -221,7 +221,7 @@ func (rcv *commsTransponder) GOverT() float64 {
 	return rcv.G_OVER_T()
 }
 
-/// G/T in dB/K
+// / G/T in dB/K
 func (rcv *commsTransponder) MutateG_OVER_T(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -230,7 +230,7 @@ func (rcv *commsTransponder) MutateGOverT(n float64) bool {
 	return rcv.MutateG_OVER_T(n)
 }
 
-/// Total bandwidth in MHz
+// / Total bandwidth in MHz
 func (rcv *commsTransponder) BANDWIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -243,7 +243,7 @@ func (rcv *commsTransponder) Bandwidth() float64 {
 	return rcv.BANDWIDTH()
 }
 
-/// Total bandwidth in MHz
+// / Total bandwidth in MHz
 func (rcv *commsTransponder) MutateBANDWIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -252,7 +252,7 @@ func (rcv *commsTransponder) MutateBandwidth(n float64) bool {
 	return rcv.MutateBANDWIDTH(n)
 }
 
-/// Number of channels
+// / Number of channels
 func (rcv *commsTransponder) NUM_CHANNELS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -265,7 +265,7 @@ func (rcv *commsTransponder) NumChannels() uint32 {
 	return rcv.NUM_CHANNELS()
 }
 
-/// Number of channels
+// / Number of channels
 func (rcv *commsTransponder) MutateNUM_CHANNELS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(26, n)
 }
@@ -274,7 +274,7 @@ func (rcv *commsTransponder) MutateNumChannels(n uint32) bool {
 	return rcv.MutateNUM_CHANNELS(n)
 }
 
-/// Channels on this transponder
+// / Channels on this transponder
 func (rcv *commsTransponder) CHANNELS(obj *commsChannel, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -306,8 +306,8 @@ func (rcv *commsTransponder) ChannelsLength() int {
 	return rcv.CHANNELSLength()
 }
 
-/// Channels on this transponder
-/// Polarization (e.g., RHCP, LHCP, LINEAR_H, LINEAR_V)
+// / Channels on this transponder
+// / Polarization (e.g., RHCP, LHCP, LINEAR_H, LINEAR_V)
 func (rcv *commsTransponder) POLARIZATION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -320,7 +320,7 @@ func (rcv *commsTransponder) Polarization() []byte {
 	return rcv.POLARIZATION()
 }
 
-/// Polarization (e.g., RHCP, LHCP, LINEAR_H, LINEAR_V)
+// / Polarization (e.g., RHCP, LHCP, LINEAR_H, LINEAR_V)
 func commsTransponderStart(builder *flatbuffers.Builder) {
 	builder.StartObject(14)
 }

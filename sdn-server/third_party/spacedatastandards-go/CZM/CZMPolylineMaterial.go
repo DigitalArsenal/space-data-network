@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Polyline material (used by polyline, path)
+// / Polyline material (used by polyline, path)
 type CZMPolylineMaterial struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMPolylineMaterial) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Solid color material
+// / Solid color material
 func (rcv *CZMPolylineMaterial) SOLID_COLOR(obj *CZMSolidColorMaterial) *CZMSolidColorMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *CZMPolylineMaterial) SolidColor(obj *CZMSolidColorMaterial) *CZMSolid
 	return rcv.SOLID_COLOR(obj)
 }
 
-/// Solid color material
-/// Polyline outline material
+// / Solid color material
+// / Polyline outline material
 func (rcv *CZMPolylineMaterial) POLYLINE_OUTLINE(obj *CZMPolylineOutlineMaterial) *CZMPolylineOutlineMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -79,8 +79,8 @@ func (rcv *CZMPolylineMaterial) PolylineOutline(obj *CZMPolylineOutlineMaterial)
 	return rcv.POLYLINE_OUTLINE(obj)
 }
 
-/// Polyline outline material
-/// Polyline arrow material
+// / Polyline outline material
+// / Polyline arrow material
 func (rcv *CZMPolylineMaterial) POLYLINE_ARROW(obj *CZMPolylineArrowMaterial) *CZMPolylineArrowMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -98,8 +98,8 @@ func (rcv *CZMPolylineMaterial) PolylineArrow(obj *CZMPolylineArrowMaterial) *CZ
 	return rcv.POLYLINE_ARROW(obj)
 }
 
-/// Polyline arrow material
-/// Polyline dash material
+// / Polyline arrow material
+// / Polyline dash material
 func (rcv *CZMPolylineMaterial) POLYLINE_DASH(obj *CZMPolylineDashMaterial) *CZMPolylineDashMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *CZMPolylineMaterial) PolylineDash(obj *CZMPolylineDashMaterial) *CZMP
 	return rcv.POLYLINE_DASH(obj)
 }
 
-/// Polyline dash material
-/// Polyline glow material
+// / Polyline dash material
+// / Polyline glow material
 func (rcv *CZMPolylineMaterial) POLYLINE_GLOW(obj *CZMPolylineGlowMaterial) *CZMPolylineGlowMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -136,7 +136,7 @@ func (rcv *CZMPolylineMaterial) PolylineGlow(obj *CZMPolylineGlowMaterial) *CZMP
 	return rcv.POLYLINE_GLOW(obj)
 }
 
-/// Polyline glow material
+// / Polyline glow material
 func CZMPolylineMaterialStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

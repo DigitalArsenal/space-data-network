@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Collection of argument types
+// / Collection of argument types
 type ArgumentTypeSet struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ArgumentTypeSet) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Integer argument types
+// / Integer argument types
 func (rcv *ArgumentTypeSet) INTEGER_TYPES(obj *IntegerArgumentType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *ArgumentTypeSet) IntegerTypesLength() int {
 	return rcv.INTEGER_TYPESLength()
 }
 
-/// Integer argument types
-/// Float argument types
+// / Integer argument types
+// / Float argument types
 func (rcv *ArgumentTypeSet) FLOAT_TYPES(obj *FloatArgumentType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -107,8 +107,8 @@ func (rcv *ArgumentTypeSet) FloatTypesLength() int {
 	return rcv.FLOAT_TYPESLength()
 }
 
-/// Float argument types
-/// String argument types
+// / Float argument types
+// / String argument types
 func (rcv *ArgumentTypeSet) STRING_TYPES(obj *StringArgumentType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -140,8 +140,8 @@ func (rcv *ArgumentTypeSet) StringTypesLength() int {
 	return rcv.STRING_TYPESLength()
 }
 
-/// String argument types
-/// Boolean argument types
+// / String argument types
+// / Boolean argument types
 func (rcv *ArgumentTypeSet) BOOLEAN_TYPES(obj *BooleanArgumentType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -173,8 +173,8 @@ func (rcv *ArgumentTypeSet) BooleanTypesLength() int {
 	return rcv.BOOLEAN_TYPESLength()
 }
 
-/// Boolean argument types
-/// Enumerated argument types
+// / Boolean argument types
+// / Enumerated argument types
 func (rcv *ArgumentTypeSet) ENUMERATED_TYPES(obj *EnumeratedArgumentType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -206,8 +206,8 @@ func (rcv *ArgumentTypeSet) EnumeratedTypesLength() int {
 	return rcv.ENUMERATED_TYPESLength()
 }
 
-/// Enumerated argument types
-/// Binary argument types
+// / Enumerated argument types
+// / Binary argument types
 func (rcv *ArgumentTypeSet) BINARY_TYPES(obj *BinaryArgumentType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -239,8 +239,8 @@ func (rcv *ArgumentTypeSet) BinaryTypesLength() int {
 	return rcv.BINARY_TYPESLength()
 }
 
-/// Binary argument types
-/// Aggregate argument types
+// / Binary argument types
+// / Aggregate argument types
 func (rcv *ArgumentTypeSet) AGGREGATE_TYPES(obj *AggregateArgumentType, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -272,7 +272,7 @@ func (rcv *ArgumentTypeSet) AggregateTypesLength() int {
 	return rcv.AGGREGATE_TYPESLength()
 }
 
-/// Aggregate argument types
+// / Aggregate argument types
 func ArgumentTypeSetStart(builder *flatbuffers.Builder) {
 	builder.StartObject(7)
 }

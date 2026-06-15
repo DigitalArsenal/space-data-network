@@ -4,9 +4,9 @@ package PLG
 
 import "strconv"
 
-/// Host capability classes a plugin may request. Extends the simpler
-/// `PluginCapability` (which is name+version metadata) with the richer
-/// enum-based surface that runtime hosts gate on.
+// / Host capability classes a plugin may request. Extends the simpler
+// / `PluginCapability` (which is name+version metadata) with the richer
+// / enum-based surface that runtime hosts gate on.
 type hostCapabilityKind uint16
 
 const (

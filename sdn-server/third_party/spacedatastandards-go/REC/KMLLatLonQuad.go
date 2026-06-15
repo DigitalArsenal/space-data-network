@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// LatLonQuad — four corner coordinates for ground overlay
+// / LatLonQuad — four corner coordinates for ground overlay
 type KMLLatLonQuad struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLLatLonQuad) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Four corner coordinates
+// / Four corner coordinates
 func (rcv *KMLLatLonQuad) COORDINATES(obj *KMLCoordinate, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -74,7 +74,7 @@ func (rcv *KMLLatLonQuad) CoordinatesLength() int {
 	return rcv.COORDINATESLength()
 }
 
-/// Four corner coordinates
+// / Four corner coordinates
 func KMLLatLonQuadStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }

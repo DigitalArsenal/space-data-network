@@ -7,7 +7,7 @@ import "strconv"
 type numFunctionCode int8
 
 const (
-	numFunctionCodeUNKNOWN                  numFunctionCode = 0
+	numFunctionCodeUNKNOWN numFunctionCode = 0
 	/// f(x) = x * x - TARGET_VALUE, with derivative f'(x) = 2 * x.
 	numFunctionCodeQUADRATIC_MINUS_CONSTANT numFunctionCode = 1
 )

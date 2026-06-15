@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Site Information Message
+// / Site Information Message
 type SIT struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *SIT) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique identifier for the site, BE_NUMBER
+// / Unique identifier for the site, BE_NUMBER
 func (rcv *SIT) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *SIT) Id() []byte {
 	return rcv.ID()
 }
 
-/// Unique identifier for the site, BE_NUMBER
-/// Name of the site
+// / Unique identifier for the site, BE_NUMBER
+// / Name of the site
 func (rcv *SIT) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *SIT) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Name of the site
-/// Abbreviation
+// / Name of the site
+// / Abbreviation
 func (rcv *SIT) ABBREVIATION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *SIT) Abbreviation() []byte {
 	return rcv.ABBREVIATION()
 }
 
-/// Abbreviation
-/// Site type as defined in SiteType enum
+// / Abbreviation
+// / Site type as defined in SiteType enum
 func (rcv *SIT) SITE_TYPE() SiteType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,7 +109,7 @@ func (rcv *SIT) SiteType() SiteType {
 	return rcv.SITE_TYPE()
 }
 
-/// Site type as defined in SiteType enum
+// / Site type as defined in SiteType enum
 func (rcv *SIT) MutateSITE_TYPE(n SiteType) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
@@ -118,7 +118,7 @@ func (rcv *SIT) MutateSiteType(n SiteType) bool {
 	return rcv.MutateSITE_TYPE(n)
 }
 
-/// Site type CATCODE
+// / Site type CATCODE
 func (rcv *SIT) CATCODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *SIT) Catcode() []byte {
 	return rcv.CATCODE()
 }
 
-/// Site type CATCODE
-/// Network identifier
+// / Site type CATCODE
+// / Network identifier
 func (rcv *SIT) NETWORK() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,8 +145,8 @@ func (rcv *SIT) Network() []byte {
 	return rcv.NETWORK()
 }
 
-/// Network identifier
-/// Latitude of the site
+// / Network identifier
+// / Latitude of the site
 func (rcv *SIT) LATITUDE() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,7 +159,7 @@ func (rcv *SIT) Latitude() float32 {
 	return rcv.LATITUDE()
 }
 
-/// Latitude of the site
+// / Latitude of the site
 func (rcv *SIT) MutateLATITUDE(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(16, n)
 }
@@ -168,7 +168,7 @@ func (rcv *SIT) MutateLatitude(n float32) bool {
 	return rcv.MutateLATITUDE(n)
 }
 
-/// Longitude of the site
+// / Longitude of the site
 func (rcv *SIT) LONGITUDE() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -181,7 +181,7 @@ func (rcv *SIT) Longitude() float32 {
 	return rcv.LONGITUDE()
 }
 
-/// Longitude of the site
+// / Longitude of the site
 func (rcv *SIT) MutateLONGITUDE(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(18, n)
 }
@@ -190,7 +190,7 @@ func (rcv *SIT) MutateLongitude(n float32) bool {
 	return rcv.MutateLONGITUDE(n)
 }
 
-/// Altitude of the site
+// / Altitude of the site
 func (rcv *SIT) ALTITUDE() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -203,7 +203,7 @@ func (rcv *SIT) Altitude() float32 {
 	return rcv.ALTITUDE()
 }
 
-/// Altitude of the site
+// / Altitude of the site
 func (rcv *SIT) MutateALTITUDE(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(20, n)
 }
@@ -212,7 +212,7 @@ func (rcv *SIT) MutateAltitude(n float32) bool {
 	return rcv.MutateALTITUDE(n)
 }
 
-/// Geometry of the site
+// / Geometry of the site
 func (rcv *SIT) GEOMETRY(obj *Geometry) *Geometry {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -230,8 +230,8 @@ func (rcv *SIT) Geometry(obj *Geometry) *Geometry {
 	return rcv.GEOMETRY(obj)
 }
 
-/// Geometry of the site
-/// Center point geometry coordinates
+// / Geometry of the site
+// / Center point geometry coordinates
 func (rcv *SIT) CENTER_POINT_GEOMETRY(j int) float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -257,7 +257,7 @@ func (rcv *SIT) CenterPointGeometryLength() int {
 	return rcv.CENTER_POINT_GEOMETRYLength()
 }
 
-/// Center point geometry coordinates
+// / Center point geometry coordinates
 func (rcv *SIT) MutateCENTER_POINT_GEOMETRY(j int, n float32) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -271,7 +271,7 @@ func (rcv *SIT) MutateCenterPointGeometry(j int, n float32) bool {
 	return rcv.MutateCENTER_POINT_GEOMETRY(j, n)
 }
 
-/// Classification marking of the site
+// / Classification marking of the site
 func (rcv *SIT) CLASSIFICATION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -284,8 +284,8 @@ func (rcv *SIT) Classification() []byte {
 	return rcv.CLASSIFICATION()
 }
 
-/// Classification marking of the site
-/// CTR ISO 3166 Numeric code as string
+// / Classification marking of the site
+// / CTR ISO 3166 Numeric code as string
 func (rcv *SIT) CTR_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -298,8 +298,8 @@ func (rcv *SIT) CtrId() []byte {
 	return rcv.CTR_ID()
 }
 
-/// CTR ISO 3166 Numeric code as string
-/// Identifier of the user who created the site data
+// / CTR ISO 3166 Numeric code as string
+// / Identifier of the user who created the site data
 func (rcv *SIT) CREATED_BY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -312,8 +312,8 @@ func (rcv *SIT) CreatedBy() []byte {
 	return rcv.CREATED_BY()
 }
 
-/// Identifier of the user who created the site data
-/// Description of the site
+// / Identifier of the user who created the site data
+// / Description of the site
 func (rcv *SIT) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -326,8 +326,8 @@ func (rcv *SIT) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-/// Description of the site
-/// URL for the 3D model of the site
+// / Description of the site
+// / URL for the 3D model of the site
 func (rcv *SIT) MODEL_URL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -340,8 +340,8 @@ func (rcv *SIT) ModelUrl() []byte {
 	return rcv.MODEL_URL()
 }
 
-/// URL for the 3D model of the site
-/// Source of the site data
+// / URL for the 3D model of the site
+// / Source of the site data
 func (rcv *SIT) SOURCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -354,8 +354,8 @@ func (rcv *SIT) Source() []byte {
 	return rcv.SOURCE()
 }
 
-/// Source of the site data
-/// Indicates if the site is taskable
+// / Source of the site data
+// / Indicates if the site is taskable
 func (rcv *SIT) TASKABLE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -368,7 +368,7 @@ func (rcv *SIT) Taskable() bool {
 	return rcv.TASKABLE()
 }
 
-/// Indicates if the site is taskable
+// / Indicates if the site is taskable
 func (rcv *SIT) MutateTASKABLE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(38, n)
 }
@@ -377,7 +377,7 @@ func (rcv *SIT) MutateTaskable(n bool) bool {
 	return rcv.MutateTASKABLE(n)
 }
 
-/// Operational status of the site (e.g., active, inactive, under construction)
+// / Operational status of the site (e.g., active, inactive, under construction)
 func (rcv *SIT) OPERATIONAL_STATUS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -390,8 +390,8 @@ func (rcv *SIT) OperationalStatus() []byte {
 	return rcv.OPERATIONAL_STATUS()
 }
 
-/// Operational status of the site (e.g., active, inactive, under construction)
-/// Date of establishment
+// / Operational status of the site (e.g., active, inactive, under construction)
+// / Date of establishment
 func (rcv *SIT) ESTABLISHMENT_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -404,8 +404,8 @@ func (rcv *SIT) EstablishmentDate() []byte {
 	return rcv.ESTABLISHMENT_DATE()
 }
 
-/// Date of establishment
-/// Contact information for the site
+// / Date of establishment
+// / Contact information for the site
 func (rcv *SIT) CONTACT_INFO() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -418,8 +418,8 @@ func (rcv *SIT) ContactInfo() []byte {
 	return rcv.CONTACT_INFO()
 }
 
-/// Contact information for the site
-/// Environmental impact or considerations
+// / Contact information for the site
+// / Environmental impact or considerations
 func (rcv *SIT) ENVIRONMENTAL_IMPACT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -432,8 +432,8 @@ func (rcv *SIT) EnvironmentalImpact() []byte {
 	return rcv.ENVIRONMENTAL_IMPACT()
 }
 
-/// Environmental impact or considerations
-/// Accessibility and infrastructure details
+// / Environmental impact or considerations
+// / Accessibility and infrastructure details
 func (rcv *SIT) ACCESSIBILITY_INFRA() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -446,8 +446,8 @@ func (rcv *SIT) AccessibilityInfra() []byte {
 	return rcv.ACCESSIBILITY_INFRA()
 }
 
-/// Accessibility and infrastructure details
-/// Vector of Integrated Devices (IDM)
+// / Accessibility and infrastructure details
+// / Vector of Integrated Devices (IDM)
 func (rcv *SIT) INTEGRATED_DEVICES(obj *IDM, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -479,7 +479,7 @@ func (rcv *SIT) IntegratedDevicesLength() int {
 	return rcv.INTEGRATED_DEVICESLength()
 }
 
-/// Vector of Integrated Devices (IDM)
+// / Vector of Integrated Devices (IDM)
 func SITStart(builder *flatbuffers.Builder) {
 	builder.StartObject(24)
 }

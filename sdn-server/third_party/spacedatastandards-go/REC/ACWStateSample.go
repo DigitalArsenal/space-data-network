@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Target Cartesian state sample in an Earth-fixed frame.
+// / Target Cartesian state sample in an Earth-fixed frame.
 type ACWStateSample struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ACWStateSample) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Sample epoch as Julian Date in TT.
+// / Sample epoch as Julian Date in TT.
 func (rcv *ACWStateSample) JULIAN_DATE_TT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *ACWStateSample) JulianDateTt() float64 {
 	return rcv.JULIAN_DATE_TT()
 }
 
-/// Sample epoch as Julian Date in TT.
+// / Sample epoch as Julian Date in TT.
 func (rcv *ACWStateSample) MutateJULIAN_DATE_TT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *ACWStateSample) MutateJulianDateTt(n float64) bool {
 	return rcv.MutateJULIAN_DATE_TT(n)
 }
 
-/// Earth-fixed X position, meters.
+// / Earth-fixed X position, meters.
 func (rcv *ACWStateSample) POSITION_X_M() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *ACWStateSample) PositionXM() float64 {
 	return rcv.POSITION_X_M()
 }
 
-/// Earth-fixed X position, meters.
+// / Earth-fixed X position, meters.
 func (rcv *ACWStateSample) MutatePOSITION_X_M(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *ACWStateSample) MutatePositionXM(n float64) bool {
 	return rcv.MutatePOSITION_X_M(n)
 }
 
-/// Earth-fixed Y position, meters.
+// / Earth-fixed Y position, meters.
 func (rcv *ACWStateSample) POSITION_Y_M() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *ACWStateSample) PositionYM() float64 {
 	return rcv.POSITION_Y_M()
 }
 
-/// Earth-fixed Y position, meters.
+// / Earth-fixed Y position, meters.
 func (rcv *ACWStateSample) MutatePOSITION_Y_M(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *ACWStateSample) MutatePositionYM(n float64) bool {
 	return rcv.MutatePOSITION_Y_M(n)
 }
 
-/// Earth-fixed Z position, meters.
+// / Earth-fixed Z position, meters.
 func (rcv *ACWStateSample) POSITION_Z_M() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *ACWStateSample) PositionZM() float64 {
 	return rcv.POSITION_Z_M()
 }
 
-/// Earth-fixed Z position, meters.
+// / Earth-fixed Z position, meters.
 func (rcv *ACWStateSample) MutatePOSITION_Z_M(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }

@@ -4,7 +4,7 @@ package REC
 
 import "strconv"
 
-/// Launch-ascent constraint status.
+// / Launch-ascent constraint status.
 type lamConstraintStatus int8
 
 const (

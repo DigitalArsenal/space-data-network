@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Completeness-capable signed index over a dataset update.
+// / Completeness-capable signed index over a dataset update.
 type DPMCompletenessIndex struct {
 	_tab flatbuffers.Table
 }
@@ -42,11 +42,11 @@ func (rcv *DPMCompletenessIndex) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Stable index name, e.g. file_id, norad_cat_id, epoch, source_batch. Every
-/// completeness-verifiable dataset update SHOULD include a file_id index so
-/// subscribers can prove that all returned records belong to the announced
-/// FILE_ID partition. The file_id index is the preferred completeness anchor
-/// for provider-mediated data that is not published as a discoverable file.
+// / Stable index name, e.g. file_id, norad_cat_id, epoch, source_batch. Every
+// / completeness-verifiable dataset update SHOULD include a file_id index so
+// / subscribers can prove that all returned records belong to the announced
+// / FILE_ID partition. The file_id index is the preferred completeness anchor
+// / for provider-mediated data that is not published as a discoverable file.
 func (rcv *DPMCompletenessIndex) INDEX_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -59,15 +59,15 @@ func (rcv *DPMCompletenessIndex) IndexName() []byte {
 	return rcv.INDEX_NAME()
 }
 
-/// Stable index name, e.g. file_id, norad_cat_id, epoch, source_batch. Every
-/// completeness-verifiable dataset update SHOULD include a file_id index so
-/// subscribers can prove that all returned records belong to the announced
-/// FILE_ID partition. The file_id index is the preferred completeness anchor
-/// for provider-mediated data that is not published as a discoverable file.
-/// Deterministic ordering expression for the index. Providers and
-/// subscribers MUST use this ordering when building or verifying range
-/// proofs. A query is completeness-verifiable only when its predicate can be
-/// expressed against one or more declared indexes.
+// / Stable index name, e.g. file_id, norad_cat_id, epoch, source_batch. Every
+// / completeness-verifiable dataset update SHOULD include a file_id index so
+// / subscribers can prove that all returned records belong to the announced
+// / FILE_ID partition. The file_id index is the preferred completeness anchor
+// / for provider-mediated data that is not published as a discoverable file.
+// / Deterministic ordering expression for the index. Providers and
+// / subscribers MUST use this ordering when building or verifying range
+// / proofs. A query is completeness-verifiable only when its predicate can be
+// / expressed against one or more declared indexes.
 func (rcv *DPMCompletenessIndex) CANONICAL_ORDER() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -80,18 +80,18 @@ func (rcv *DPMCompletenessIndex) CanonicalOrder() []byte {
 	return rcv.CANONICAL_ORDER()
 }
 
-/// Deterministic ordering expression for the index. Providers and
-/// subscribers MUST use this ordering when building or verifying range
-/// proofs. A query is completeness-verifiable only when its predicate can be
-/// expressed against one or more declared indexes.
-/// SHA-256 or Merkle root of the ordered index, lowercase hex. This root is
-/// signed by the DPM provider signature and is the verifier's commitment for
-/// inclusion and range-completeness proofs. To verify a provider-mediated
-/// response, the subscriber recomputes each returned leaf, walks the supplied
-/// sibling hashes using MERKLE_PROFILE, confirms the root equals INDEX_ROOT,
-/// confirms the leaf material includes the DPM.FILE_ID partition when this is
-/// the file_id index, and confirms any range-boundary proofs required by
-/// CANONICAL_ORDER.
+// / Deterministic ordering expression for the index. Providers and
+// / subscribers MUST use this ordering when building or verifying range
+// / proofs. A query is completeness-verifiable only when its predicate can be
+// / expressed against one or more declared indexes.
+// / SHA-256 or Merkle root of the ordered index, lowercase hex. This root is
+// / signed by the DPM provider signature and is the verifier's commitment for
+// / inclusion and range-completeness proofs. To verify a provider-mediated
+// / response, the subscriber recomputes each returned leaf, walks the supplied
+// / sibling hashes using MERKLE_PROFILE, confirms the root equals INDEX_ROOT,
+// / confirms the leaf material includes the DPM.FILE_ID partition when this is
+// / the file_id index, and confirms any range-boundary proofs required by
+// / CANONICAL_ORDER.
 func (rcv *DPMCompletenessIndex) INDEX_ROOT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -104,17 +104,17 @@ func (rcv *DPMCompletenessIndex) IndexRoot() []byte {
 	return rcv.INDEX_ROOT()
 }
 
-/// SHA-256 or Merkle root of the ordered index, lowercase hex. This root is
-/// signed by the DPM provider signature and is the verifier's commitment for
-/// inclusion and range-completeness proofs. To verify a provider-mediated
-/// response, the subscriber recomputes each returned leaf, walks the supplied
-/// sibling hashes using MERKLE_PROFILE, confirms the root equals INDEX_ROOT,
-/// confirms the leaf material includes the DPM.FILE_ID partition when this is
-/// the file_id index, and confirms any range-boundary proofs required by
-/// CANONICAL_ORDER.
-/// Hash profile for leaves and internal nodes, e.g.
-/// SDN-MERKLE-SHA256-v1. Profiles define domain separators, leaf material,
-/// pair ordering, duplicate handling, and odd-leaf promotion.
+// / SHA-256 or Merkle root of the ordered index, lowercase hex. This root is
+// / signed by the DPM provider signature and is the verifier's commitment for
+// / inclusion and range-completeness proofs. To verify a provider-mediated
+// / response, the subscriber recomputes each returned leaf, walks the supplied
+// / sibling hashes using MERKLE_PROFILE, confirms the root equals INDEX_ROOT,
+// / confirms the leaf material includes the DPM.FILE_ID partition when this is
+// / the file_id index, and confirms any range-boundary proofs required by
+// / CANONICAL_ORDER.
+// / Hash profile for leaves and internal nodes, e.g.
+// / SDN-MERKLE-SHA256-v1. Profiles define domain separators, leaf material,
+// / pair ordering, duplicate handling, and odd-leaf promotion.
 func (rcv *DPMCompletenessIndex) MERKLE_PROFILE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -127,12 +127,12 @@ func (rcv *DPMCompletenessIndex) MerkleProfile() []byte {
 	return rcv.MERKLE_PROFILE()
 }
 
-/// Hash profile for leaves and internal nodes, e.g.
-/// SDN-MERKLE-SHA256-v1. Profiles define domain separators, leaf material,
-/// pair ordering, duplicate handling, and odd-leaf promotion.
-/// Whether this index can prove that no matching records were omitted for a
-/// supported range query. Inclusion proofs alone prove authenticity, not
-/// completeness.
+// / Hash profile for leaves and internal nodes, e.g.
+// / SDN-MERKLE-SHA256-v1. Profiles define domain separators, leaf material,
+// / pair ordering, duplicate handling, and odd-leaf promotion.
+// / Whether this index can prove that no matching records were omitted for a
+// / supported range query. Inclusion proofs alone prove authenticity, not
+// / completeness.
 func (rcv *DPMCompletenessIndex) SUPPORTS_RANGE_COMPLETENESS() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -145,9 +145,9 @@ func (rcv *DPMCompletenessIndex) SupportsRangeCompleteness() bool {
 	return rcv.SUPPORTS_RANGE_COMPLETENESS()
 }
 
-/// Whether this index can prove that no matching records were omitted for a
-/// supported range query. Inclusion proofs alone prove authenticity, not
-/// completeness.
+// / Whether this index can prove that no matching records were omitted for a
+// / supported range query. Inclusion proofs alone prove authenticity, not
+// / completeness.
 func (rcv *DPMCompletenessIndex) MutateSUPPORTS_RANGE_COMPLETENESS(n bool) bool {
 	return rcv._tab.MutateBoolSlot(12, n)
 }

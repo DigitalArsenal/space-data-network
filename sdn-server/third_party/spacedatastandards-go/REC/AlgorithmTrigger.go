@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Trigger condition for algorithm execution
+// / Trigger condition for algorithm execution
 type AlgorithmTrigger struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *AlgorithmTrigger) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Trigger on parameter update
+// / Trigger on parameter update
 func (rcv *AlgorithmTrigger) PARAMETER_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *AlgorithmTrigger) ParameterRef() []byte {
 	return rcv.PARAMETER_REF()
 }
 
-/// Trigger on parameter update
-/// Trigger on container reception
+// / Trigger on parameter update
+// / Trigger on container reception
 func (rcv *AlgorithmTrigger) CONTAINER_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *AlgorithmTrigger) ContainerRef() []byte {
 	return rcv.CONTAINER_REF()
 }
 
-/// Trigger on container reception
-/// Trigger rate (per second)
+// / Trigger on container reception
+// / Trigger rate (per second)
 func (rcv *AlgorithmTrigger) RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *AlgorithmTrigger) Rate() float64 {
 	return rcv.RATE()
 }
 
-/// Trigger rate (per second)
+// / Trigger rate (per second)
 func (rcv *AlgorithmTrigger) MutateRATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }

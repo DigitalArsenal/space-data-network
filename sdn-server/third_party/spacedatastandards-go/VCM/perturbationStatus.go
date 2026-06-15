@@ -4,7 +4,7 @@ package VCM
 
 import "strconv"
 
-/// Enum to represent the status of various perturbations (ON/OFF)
+// / Enum to represent the status of various perturbations (ON/OFF)
 type perturbationStatus int8
 
 const (

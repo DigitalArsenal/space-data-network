@@ -8,13 +8,13 @@ type orbitRegime int8
 
 const (
 	/// 0
-	orbitRegimeORBIT     orbitRegime = 0
+	orbitRegimeORBIT orbitRegime = 0
 	/// 1
-	orbitRegimeLANDING   orbitRegime = 1
+	orbitRegimeLANDING orbitRegime = 1
 	/// 2
-	orbitRegimeIMPACT    orbitRegime = 2
+	orbitRegimeIMPACT orbitRegime = 2
 	/// 3
-	orbitRegimeDOCKED    orbitRegime = 3
+	orbitRegimeDOCKED orbitRegime = 3
 	/// 4
 	orbitRegimeROUNDTRIP orbitRegime = 4
 )

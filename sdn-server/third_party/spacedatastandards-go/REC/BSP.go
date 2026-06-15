@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// B-spline interpolation envelope.
+// / B-spline interpolation envelope.
 type BSP struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *BSP) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// B-spline interpolation request.
+// / B-spline interpolation request.
 func (rcv *BSP) INTERPOLATION_REQUEST(obj *BSPInterpolationRequest) *BSPInterpolationRequest {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -72,8 +72,8 @@ func (rcv *BSP) InterpolationRequest(obj *BSPInterpolationRequest) *BSPInterpola
 	return rcv.INTERPOLATION_REQUEST(obj)
 }
 
-/// B-spline interpolation request.
-/// B-spline interpolation result.
+// / B-spline interpolation request.
+// / B-spline interpolation result.
 func (rcv *BSP) INTERPOLATION_RESULT(obj *BSPInterpolationResult) *BSPInterpolationResult {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *BSP) InterpolationResult(obj *BSPInterpolationResult) *BSPInterpolati
 	return rcv.INTERPOLATION_RESULT(obj)
 }
 
-/// B-spline interpolation result.
+// / B-spline interpolation result.
 func BSPStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

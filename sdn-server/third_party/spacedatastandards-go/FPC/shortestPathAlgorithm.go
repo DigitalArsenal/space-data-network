@@ -4,12 +4,12 @@ package FPC
 
 import "strconv"
 
-/// Algorithm selection hint for single-source shortest-path solves.
+// / Algorithm selection hint for single-source shortest-path solves.
 type shortestPathAlgorithm byte
 
 const (
 	/// Let the runtime choose.
-	shortestPathAlgorithmAUTO     shortestPathAlgorithm = 0
+	shortestPathAlgorithmAUTO shortestPathAlgorithm = 0
 	/// Frontier-shrinking solver.
 	shortestPathAlgorithmFRONTIER shortestPathAlgorithm = 1
 	/// Dijkstra's algorithm.

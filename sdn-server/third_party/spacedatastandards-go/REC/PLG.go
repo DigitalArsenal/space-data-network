@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Plugin Manifest - canonical signed storefront and WASM distribution record
+// / Plugin Manifest - canonical signed storefront and WASM distribution record
 type PLG struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *PLG) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique identifier for the plugin
+// / Unique identifier for the plugin
 func (rcv *PLG) PLUGIN_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *PLG) PluginId() []byte {
 	return rcv.PLUGIN_ID()
 }
 
-/// Unique identifier for the plugin
-/// Human-readable plugin name
+// / Unique identifier for the plugin
+// / Human-readable plugin name
 func (rcv *PLG) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *PLG) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Human-readable plugin name
-/// Plugin version (semver format)
+// / Human-readable plugin name
+// / Plugin version (semver format)
 func (rcv *PLG) VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *PLG) Version() []byte {
 	return rcv.VERSION()
 }
 
-/// Plugin version (semver format)
-/// Detailed description of plugin functionality
+// / Plugin version (semver format)
+// / Detailed description of plugin functionality
 func (rcv *PLG) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *PLG) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-/// Detailed description of plugin functionality
-/// Short marketing summary shown in storefront listings
+// / Detailed description of plugin functionality
+// / Short marketing summary shown in storefront listings
 func (rcv *PLG) TAGLINE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *PLG) Tagline() []byte {
 	return rcv.TAGLINE()
 }
 
-/// Short marketing summary shown in storefront listings
-/// Type/category of the plugin
+// / Short marketing summary shown in storefront listings
+// / Type/category of the plugin
 func (rcv *PLG) PLUGIN_TYPE() pluginCategory {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,7 +137,7 @@ func (rcv *PLG) PluginType() pluginCategory {
 	return rcv.PLUGIN_TYPE()
 }
 
-/// Type/category of the plugin
+// / Type/category of the plugin
 func (rcv *PLG) MutatePLUGIN_TYPE(n pluginCategory) bool {
 	return rcv._tab.MutateInt8Slot(14, int8(n))
 }
@@ -146,7 +146,7 @@ func (rcv *PLG) MutatePluginType(n pluginCategory) bool {
 	return rcv.MutatePLUGIN_TYPE(n)
 }
 
-/// Human-readable publisher or organization name
+// / Human-readable publisher or organization name
 func (rcv *PLG) PUBLISHER_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,8 +159,8 @@ func (rcv *PLG) PublisherName() []byte {
 	return rcv.PUBLISHER_NAME()
 }
 
-/// Human-readable publisher or organization name
-/// Publisher handle or username
+// / Human-readable publisher or organization name
+// / Publisher handle or username
 func (rcv *PLG) PUBLISHER_HANDLE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -173,8 +173,8 @@ func (rcv *PLG) PublisherHandle() []byte {
 	return rcv.PUBLISHER_HANDLE()
 }
 
-/// Publisher handle or username
-/// Canonical publisher website
+// / Publisher handle or username
+// / Canonical publisher website
 func (rcv *PLG) PUBLISHER_URL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -187,8 +187,8 @@ func (rcv *PLG) PublisherUrl() []byte {
 	return rcv.PUBLISHER_URL()
 }
 
-/// Canonical publisher website
-/// Support or helpdesk URL for this plugin
+// / Canonical publisher website
+// / Support or helpdesk URL for this plugin
 func (rcv *PLG) SUPPORT_URL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -201,8 +201,8 @@ func (rcv *PLG) SupportUrl() []byte {
 	return rcv.SUPPORT_URL()
 }
 
-/// Support or helpdesk URL for this plugin
-/// Search and categorization tags for discovery
+// / Support or helpdesk URL for this plugin
+// / Search and categorization tags for discovery
 func (rcv *PLG) TAGS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -228,8 +228,8 @@ func (rcv *PLG) TagsLength() int {
 	return rcv.TAGSLength()
 }
 
-/// Search and categorization tags for discovery
-/// Short feature bullets highlighted in storefront listings
+// / Search and categorization tags for discovery
+// / Short feature bullets highlighted in storefront listings
 func (rcv *PLG) FEATURES(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -255,8 +255,8 @@ func (rcv *PLG) FeaturesLength() int {
 	return rcv.FEATURESLength()
 }
 
-/// Short feature bullets highlighted in storefront listings
-/// Screenshot URLs showing the plugin in use
+// / Short feature bullets highlighted in storefront listings
+// / Screenshot URLs showing the plugin in use
 func (rcv *PLG) SCREENSHOT_URLS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -282,8 +282,8 @@ func (rcv *PLG) ScreenshotUrlsLength() int {
 	return rcv.SCREENSHOT_URLSLength()
 }
 
-/// Screenshot URLs showing the plugin in use
-/// Optional hero/banner image URL for the listing
+// / Screenshot URLs showing the plugin in use
+// / Optional hero/banner image URL for the listing
 func (rcv *PLG) BANNER_URL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -296,8 +296,8 @@ func (rcv *PLG) BannerUrl() []byte {
 	return rcv.BANNER_URL()
 }
 
-/// Optional hero/banner image URL for the listing
-/// ABI version for compatibility checking
+// / Optional hero/banner image URL for the listing
+// / ABI version for compatibility checking
 func (rcv *PLG) ABI_VERSION() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -310,7 +310,7 @@ func (rcv *PLG) AbiVersion() uint32 {
 	return rcv.ABI_VERSION()
 }
 
-/// ABI version for compatibility checking
+// / ABI version for compatibility checking
 func (rcv *PLG) MutateABI_VERSION(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(32, n)
 }
@@ -319,7 +319,7 @@ func (rcv *PLG) MutateAbiVersion(n uint32) bool {
 	return rcv.MutateABI_VERSION(n)
 }
 
-/// SHA256 hash of the decrypted WASM binary
+// / SHA256 hash of the decrypted WASM binary
 func (rcv *PLG) WASM_HASH(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -357,7 +357,7 @@ func (rcv *PLG) WasmHashBytes() []byte {
 	return rcv.WASM_HASHBytes()
 }
 
-/// SHA256 hash of the decrypted WASM binary
+// / SHA256 hash of the decrypted WASM binary
 func (rcv *PLG) MutateWASM_HASH(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -371,7 +371,7 @@ func (rcv *PLG) MutateWasmHash(j int, n byte) bool {
 	return rcv.MutateWASM_HASH(j, n)
 }
 
-/// Size of decrypted WASM binary in bytes
+// / Size of decrypted WASM binary in bytes
 func (rcv *PLG) WASM_SIZE() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -384,7 +384,7 @@ func (rcv *PLG) WasmSize() uint64 {
 	return rcv.WASM_SIZE()
 }
 
-/// Size of decrypted WASM binary in bytes
+// / Size of decrypted WASM binary in bytes
 func (rcv *PLG) MutateWASM_SIZE(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(36, n)
 }
@@ -393,7 +393,7 @@ func (rcv *PLG) MutateWasmSize(n uint64) bool {
 	return rcv.MutateWASM_SIZE(n)
 }
 
-/// IPFS CID of the encrypted WASM binary
+// / IPFS CID of the encrypted WASM binary
 func (rcv *PLG) WASM_CID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -406,8 +406,8 @@ func (rcv *PLG) WasmCid() []byte {
 	return rcv.WASM_CID()
 }
 
-/// IPFS CID of the encrypted WASM binary
-/// SHA256 hash of the encrypted delivery artifact bytes
+// / IPFS CID of the encrypted WASM binary
+// / SHA256 hash of the encrypted delivery artifact bytes
 func (rcv *PLG) ENCRYPTED_WASM_HASH(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -445,7 +445,7 @@ func (rcv *PLG) EncryptedWasmHashBytes() []byte {
 	return rcv.ENCRYPTED_WASM_HASHBytes()
 }
 
-/// SHA256 hash of the encrypted delivery artifact bytes
+// / SHA256 hash of the encrypted delivery artifact bytes
 func (rcv *PLG) MutateENCRYPTED_WASM_HASH(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -459,7 +459,7 @@ func (rcv *PLG) MutateEncryptedWasmHash(j int, n byte) bool {
 	return rcv.MutateENCRYPTED_WASM_HASH(j, n)
 }
 
-/// Size of the encrypted delivery artifact in bytes
+// / Size of the encrypted delivery artifact in bytes
 func (rcv *PLG) ENCRYPTED_WASM_SIZE() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -472,7 +472,7 @@ func (rcv *PLG) EncryptedWasmSize() uint64 {
 	return rcv.ENCRYPTED_WASM_SIZE()
 }
 
-/// Size of the encrypted delivery artifact in bytes
+// / Size of the encrypted delivery artifact in bytes
 func (rcv *PLG) MutateENCRYPTED_WASM_SIZE(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(42, n)
 }
@@ -481,7 +481,7 @@ func (rcv *PLG) MutateEncryptedWasmSize(n uint64) bool {
 	return rcv.MutateENCRYPTED_WASM_SIZE(n)
 }
 
-/// Entry point functions exported by the plugin
+// / Entry point functions exported by the plugin
 func (rcv *PLG) ENTRY_FUNCTIONS(obj *EntryFunction, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -513,8 +513,8 @@ func (rcv *PLG) EntryFunctionsLength() int {
 	return rcv.ENTRY_FUNCTIONSLength()
 }
 
-/// Entry point functions exported by the plugin
-/// FlatBuffer schemas required by this plugin
+// / Entry point functions exported by the plugin
+// / FlatBuffer schemas required by this plugin
 func (rcv *PLG) REQUIRED_SCHEMAS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -540,8 +540,8 @@ func (rcv *PLG) RequiredSchemasLength() int {
 	return rcv.REQUIRED_SCHEMASLength()
 }
 
-/// FlatBuffer schemas required by this plugin
-/// Other plugins this depends on
+// / FlatBuffer schemas required by this plugin
+// / Other plugins this depends on
 func (rcv *PLG) DEPENDENCIES(obj *PluginDependency, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -573,8 +573,8 @@ func (rcv *PLG) DependenciesLength() int {
 	return rcv.DEPENDENCIESLength()
 }
 
-/// Other plugins this depends on
-/// Capabilities provided by this plugin
+// / Other plugins this depends on
+// / Capabilities provided by this plugin
 func (rcv *PLG) CAPABILITIES(obj *PluginCapability, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -606,8 +606,8 @@ func (rcv *PLG) CapabilitiesLength() int {
 	return rcv.CAPABILITIESLength()
 }
 
-/// Capabilities provided by this plugin
-/// Peer ID of the plugin provider
+// / Capabilities provided by this plugin
+// / Peer ID of the plugin provider
 func (rcv *PLG) PROVIDER_PEER_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -620,8 +620,8 @@ func (rcv *PLG) ProviderPeerId() []byte {
 	return rcv.PROVIDER_PEER_ID()
 }
 
-/// Peer ID of the plugin provider
-/// IPFS CID of provider's EPM (Entity Profile Message)
+// / Peer ID of the plugin provider
+// / IPFS CID of provider's EPM (Entity Profile Message)
 func (rcv *PLG) PROVIDER_EPM_CID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -634,8 +634,8 @@ func (rcv *PLG) ProviderEpmCid() []byte {
 	return rcv.PROVIDER_EPM_CID()
 }
 
-/// IPFS CID of provider's EPM (Entity Profile Message)
-/// Whether the WASM binary is encrypted
+// / IPFS CID of provider's EPM (Entity Profile Message)
+// / Whether the WASM binary is encrypted
 func (rcv *PLG) ENCRYPTED() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -648,7 +648,7 @@ func (rcv *PLG) Encrypted() bool {
 	return rcv.ENCRYPTED()
 }
 
-/// Whether the WASM binary is encrypted
+// / Whether the WASM binary is encrypted
 func (rcv *PLG) MutateENCRYPTED(n bool) bool {
 	return rcv._tab.MutateBoolSlot(56, n)
 }
@@ -657,7 +657,7 @@ func (rcv *PLG) MutateEncrypted(n bool) bool {
 	return rcv.MutateENCRYPTED(n)
 }
 
-/// Canonical required scope for grant issuance
+// / Canonical required scope for grant issuance
 func (rcv *PLG) REQUIRED_SCOPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -670,8 +670,8 @@ func (rcv *PLG) RequiredScope() []byte {
 	return rcv.REQUIRED_SCOPE()
 }
 
-/// Canonical required scope for grant issuance
-/// Provider-local identifier for the module content key
+// / Canonical required scope for grant issuance
+// / Provider-local identifier for the module content key
 func (rcv *PLG) KEY_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -684,8 +684,8 @@ func (rcv *PLG) KeyId() []byte {
 	return rcv.KEY_ID()
 }
 
-/// Provider-local identifier for the module content key
-/// Allowed requester domains for module grants
+// / Provider-local identifier for the module content key
+// / Allowed requester domains for module grants
 func (rcv *PLG) ALLOWED_DOMAINS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -711,8 +711,8 @@ func (rcv *PLG) AllowedDomainsLength() int {
 	return rcv.ALLOWED_DOMAINSLength()
 }
 
-/// Allowed requester domains for module grants
-/// Maximum grant timeout allowed for this module publication
+// / Allowed requester domains for module grants
+// / Maximum grant timeout allowed for this module publication
 func (rcv *PLG) MAX_GRANT_TIMEOUT_MS() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -725,7 +725,7 @@ func (rcv *PLG) MaxGrantTimeoutMs() uint64 {
 	return rcv.MAX_GRANT_TIMEOUT_MS()
 }
 
-/// Maximum grant timeout allowed for this module publication
+// / Maximum grant timeout allowed for this module publication
 func (rcv *PLG) MutateMAX_GRANT_TIMEOUT_MS(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(64, n)
 }
@@ -734,7 +734,7 @@ func (rcv *PLG) MutateMaxGrantTimeoutMs(n uint64) bool {
 	return rcv.MutateMAX_GRANT_TIMEOUT_MS(n)
 }
 
-/// Minimum permissions required to run
+// / Minimum permissions required to run
 func (rcv *PLG) MIN_PERMISSIONS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
@@ -760,8 +760,8 @@ func (rcv *PLG) MinPermissionsLength() int {
 	return rcv.MIN_PERMISSIONSLength()
 }
 
-/// Minimum permissions required to run
-/// Unix timestamp when plugin was created
+// / Minimum permissions required to run
+// / Unix timestamp when plugin was created
 func (rcv *PLG) CREATED_AT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
@@ -774,7 +774,7 @@ func (rcv *PLG) CreatedAt() uint64 {
 	return rcv.CREATED_AT()
 }
 
-/// Unix timestamp when plugin was created
+// / Unix timestamp when plugin was created
 func (rcv *PLG) MutateCREATED_AT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(68, n)
 }
@@ -783,7 +783,7 @@ func (rcv *PLG) MutateCreatedAt(n uint64) bool {
 	return rcv.MutateCREATED_AT(n)
 }
 
-/// Unix timestamp when plugin was last updated
+// / Unix timestamp when plugin was last updated
 func (rcv *PLG) UPDATED_AT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
 	if o != 0 {
@@ -796,7 +796,7 @@ func (rcv *PLG) UpdatedAt() uint64 {
 	return rcv.UPDATED_AT()
 }
 
-/// Unix timestamp when plugin was last updated
+// / Unix timestamp when plugin was last updated
 func (rcv *PLG) MutateUPDATED_AT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(70, n)
 }
@@ -805,7 +805,7 @@ func (rcv *PLG) MutateUpdatedAt(n uint64) bool {
 	return rcv.MutateUPDATED_AT(n)
 }
 
-/// URL to plugin documentation
+// / URL to plugin documentation
 func (rcv *PLG) DOCUMENTATION_URL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
@@ -818,8 +818,8 @@ func (rcv *PLG) DocumentationUrl() []byte {
 	return rcv.DOCUMENTATION_URL()
 }
 
-/// URL to plugin documentation
-/// URL to plugin changelog or release notes
+// / URL to plugin documentation
+// / URL to plugin changelog or release notes
 func (rcv *PLG) CHANGELOG_URL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
 	if o != 0 {
@@ -832,8 +832,8 @@ func (rcv *PLG) ChangelogUrl() []byte {
 	return rcv.CHANGELOG_URL()
 }
 
-/// URL to plugin changelog or release notes
-/// URL to plugin icon/logo
+// / URL to plugin changelog or release notes
+// / URL to plugin icon/logo
 func (rcv *PLG) ICON_URL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
 	if o != 0 {
@@ -846,8 +846,8 @@ func (rcv *PLG) IconUrl() []byte {
 	return rcv.ICON_URL()
 }
 
-/// URL to plugin icon/logo
-/// License identifier (SPDX format)
+// / URL to plugin icon/logo
+// / License identifier (SPDX format)
 func (rcv *PLG) LICENSE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
 	if o != 0 {
@@ -860,8 +860,8 @@ func (rcv *PLG) License() []byte {
 	return rcv.LICENSE()
 }
 
-/// License identifier (SPDX format)
-/// Commercial model used for storefront purchase flows
+// / License identifier (SPDX format)
+// / Commercial model used for storefront purchase flows
 func (rcv *PLG) PAYMENT_MODEL() purchaseTier {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(80))
 	if o != 0 {
@@ -874,7 +874,7 @@ func (rcv *PLG) PaymentModel() purchaseTier {
 	return rcv.PAYMENT_MODEL()
 }
 
-/// Commercial model used for storefront purchase flows
+// / Commercial model used for storefront purchase flows
 func (rcv *PLG) MutatePAYMENT_MODEL(n purchaseTier) bool {
 	return rcv._tab.MutateInt8Slot(80, int8(n))
 }
@@ -883,7 +883,7 @@ func (rcv *PLG) MutatePaymentModel(n purchaseTier) bool {
 	return rcv.MutatePAYMENT_MODEL(n)
 }
 
-/// Price in USD cents for one-time purchase or subscription period
+// / Price in USD cents for one-time purchase or subscription period
 func (rcv *PLG) PRICE_USD_CENTS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(82))
 	if o != 0 {
@@ -896,7 +896,7 @@ func (rcv *PLG) PriceUsdCents() uint32 {
 	return rcv.PRICE_USD_CENTS()
 }
 
-/// Price in USD cents for one-time purchase or subscription period
+// / Price in USD cents for one-time purchase or subscription period
 func (rcv *PLG) MutatePRICE_USD_CENTS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(82, n)
 }
@@ -905,7 +905,7 @@ func (rcv *PLG) MutatePriceUsdCents(n uint32) bool {
 	return rcv.MutatePRICE_USD_CENTS(n)
 }
 
-/// Subscription billing period length in days
+// / Subscription billing period length in days
 func (rcv *PLG) SUBSCRIPTION_PERIOD_DAYS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(84))
 	if o != 0 {
@@ -918,7 +918,7 @@ func (rcv *PLG) SubscriptionPeriodDays() uint32 {
 	return rcv.SUBSCRIPTION_PERIOD_DAYS()
 }
 
-/// Subscription billing period length in days
+// / Subscription billing period length in days
 func (rcv *PLG) MutateSUBSCRIPTION_PERIOD_DAYS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(84, n)
 }
@@ -927,7 +927,7 @@ func (rcv *PLG) MutateSubscriptionPeriodDays(n uint32) bool {
 	return rcv.MutateSUBSCRIPTION_PERIOD_DAYS(n)
 }
 
-/// Accepted payment methods, e.g. "stripe", "sol", "usdc"
+// / Accepted payment methods, e.g. "stripe", "sol", "usdc"
 func (rcv *PLG) ACCEPTED_PAYMENT_METHODS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(86))
 	if o != 0 {
@@ -953,8 +953,8 @@ func (rcv *PLG) AcceptedPaymentMethodsLength() int {
 	return rcv.ACCEPTED_PAYMENT_METHODSLength()
 }
 
-/// Accepted payment methods, e.g. "stripe", "sol", "usdc"
-/// Storefront publication state for this manifest version
+// / Accepted payment methods, e.g. "stripe", "sol", "usdc"
+// / Storefront publication state for this manifest version
 func (rcv *PLG) LISTING_STATUS() publicationState {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(88))
 	if o != 0 {
@@ -967,7 +967,7 @@ func (rcv *PLG) ListingStatus() publicationState {
 	return rcv.LISTING_STATUS()
 }
 
-/// Storefront publication state for this manifest version
+// / Storefront publication state for this manifest version
 func (rcv *PLG) MutateLISTING_STATUS(n publicationState) bool {
 	return rcv._tab.MutateInt8Slot(88, int8(n))
 }
@@ -976,7 +976,7 @@ func (rcv *PLG) MutateListingStatus(n publicationState) bool {
 	return rcv.MutateLISTING_STATUS(n)
 }
 
-/// Ed25519 signature from provider over manifest
+// / Ed25519 signature from provider over manifest
 func (rcv *PLG) SIGNATURE(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(90))
 	if o != 0 {
@@ -1014,7 +1014,7 @@ func (rcv *PLG) SignatureBytes() []byte {
 	return rcv.SIGNATUREBytes()
 }
 
-/// Ed25519 signature from provider over manifest
+// / Ed25519 signature from provider over manifest
 func (rcv *PLG) MutateSIGNATURE(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(90))
 	if o != 0 {
@@ -1028,8 +1028,8 @@ func (rcv *PLG) MutateSignature(j int, n byte) bool {
 	return rcv.MutateSIGNATURE(j, n)
 }
 
-/// Canonical invoke surfaces this artifact exposes. A single plugin
-/// MAY list both DIRECT and COMMAND when it supports both.
+// / Canonical invoke surfaces this artifact exposes. A single plugin
+// / MAY list both DIRECT and COMMAND when it supports both.
 func (rcv *PLG) INVOKE_SURFACES(j int) invokeSurfaceKind {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(92))
 	if o != 0 {
@@ -1067,8 +1067,8 @@ func (rcv *PLG) InvokeSurfacesBytes() []byte {
 	return rcv.INVOKE_SURFACESBytes()
 }
 
-/// Canonical invoke surfaces this artifact exposes. A single plugin
-/// MAY list both DIRECT and COMMAND when it supports both.
+// / Canonical invoke surfaces this artifact exposes. A single plugin
+// / MAY list both DIRECT and COMMAND when it supports both.
 func (rcv *PLG) MutateINVOKE_SURFACES(j int, n invokeSurfaceKind) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(92))
 	if o != 0 {
@@ -1082,10 +1082,10 @@ func (rcv *PLG) MutateInvokeSurfaces(j int, n invokeSurfaceKind) bool {
 	return rcv.MutateINVOKE_SURFACES(j, n)
 }
 
-/// Rich per-method invoke manifests (port shape, drain semantics,
-/// accepted wire formats). ENTRY_FUNCTIONS retains the slim
-/// name+input_schemas+output_schema summary; METHODS carries the full
-/// invoke-surface detail including aligned-binary advertisement.
+// / Rich per-method invoke manifests (port shape, drain semantics,
+// / accepted wire formats). ENTRY_FUNCTIONS retains the slim
+// / name+input_schemas+output_schema summary; METHODS carries the full
+// / invoke-surface detail including aligned-binary advertisement.
 func (rcv *PLG) METHODS(obj *PLGMethodManifest, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(94))
 	if o != 0 {
@@ -1117,12 +1117,12 @@ func (rcv *PLG) MethodsLength() int {
 	return rcv.METHODSLength()
 }
 
-/// Rich per-method invoke manifests (port shape, drain semantics,
-/// accepted wire formats). ENTRY_FUNCTIONS retains the slim
-/// name+input_schemas+output_schema summary; METHODS carries the full
-/// invoke-surface detail including aligned-binary advertisement.
-/// Enum-typed host capability dependencies (richer than CAPABILITIES,
-/// which is string-tagged metadata).
+// / Rich per-method invoke manifests (port shape, drain semantics,
+// / accepted wire formats). ENTRY_FUNCTIONS retains the slim
+// / name+input_schemas+output_schema summary; METHODS carries the full
+// / invoke-surface detail including aligned-binary advertisement.
+// / Enum-typed host capability dependencies (richer than CAPABILITIES,
+// / which is string-tagged metadata).
 func (rcv *PLG) HOST_CAPABILITIES(obj *PLGHostCapability, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(96))
 	if o != 0 {
@@ -1154,9 +1154,9 @@ func (rcv *PLG) HostCapabilitiesLength() int {
 	return rcv.HOST_CAPABILITIESLength()
 }
 
-/// Enum-typed host capability dependencies (richer than CAPABILITIES,
-/// which is string-tagged metadata).
-/// Timer declarations for scheduled invocations.
+// / Enum-typed host capability dependencies (richer than CAPABILITIES,
+// / which is string-tagged metadata).
+// / Timer declarations for scheduled invocations.
 func (rcv *PLG) TIMERS(obj *PLGTimerSpec, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(98))
 	if o != 0 {
@@ -1188,8 +1188,8 @@ func (rcv *PLG) TimersLength() int {
 	return rcv.TIMERSLength()
 }
 
-/// Timer declarations for scheduled invocations.
-/// Protocol handler declarations.
+// / Timer declarations for scheduled invocations.
+// / Protocol handler declarations.
 func (rcv *PLG) PROTOCOLS(obj *PLGProtocolSpec, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(100))
 	if o != 0 {
@@ -1221,8 +1221,8 @@ func (rcv *PLG) ProtocolsLength() int {
 	return rcv.PROTOCOLSLength()
 }
 
-/// Protocol handler declarations.
-/// FlatBuffer schemas this plugin depends on at the invoke surface.
+// / Protocol handler declarations.
+// / FlatBuffer schemas this plugin depends on at the invoke surface.
 func (rcv *PLG) SCHEMAS_USED(obj *FlatBufferTypeRef, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(102))
 	if o != 0 {
@@ -1254,8 +1254,8 @@ func (rcv *PLG) SchemasUsedLength() int {
 	return rcv.SCHEMAS_USEDLength()
 }
 
-/// FlatBuffer schemas this plugin depends on at the invoke surface.
-/// Build artifacts emitted by the toolchain (WASM, bindings, etc.).
+// / FlatBuffer schemas this plugin depends on at the invoke surface.
+// / Build artifacts emitted by the toolchain (WASM, bindings, etc.).
 func (rcv *PLG) BUILD_ARTIFACTS(obj *PLGBuildArtifact, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(104))
 	if o != 0 {
@@ -1287,8 +1287,8 @@ func (rcv *PLG) BuildArtifactsLength() int {
 	return rcv.BUILD_ARTIFACTSLength()
 }
 
-/// Build artifacts emitted by the toolchain (WASM, bindings, etc.).
-/// Opaque runtime-target tags (e.g. "wasmtime", "wasmedge", "browser").
+// / Build artifacts emitted by the toolchain (WASM, bindings, etc.).
+// / Opaque runtime-target tags (e.g. "wasmtime", "wasmedge", "browser").
 func (rcv *PLG) RUNTIME_TARGETS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(106))
 	if o != 0 {
@@ -1314,7 +1314,7 @@ func (rcv *PLG) RuntimeTargetsLength() int {
 	return rcv.RUNTIME_TARGETSLength()
 }
 
-/// Opaque runtime-target tags (e.g. "wasmtime", "wasmedge", "browser").
+// / Opaque runtime-target tags (e.g. "wasmtime", "wasmedge", "browser").
 func PLGStart(builder *flatbuffers.Builder) {
 	builder.StartObject(52)
 }

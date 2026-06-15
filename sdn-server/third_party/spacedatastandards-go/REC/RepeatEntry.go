@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Repeat entry specification
+// / Repeat entry specification
 type RepeatEntry struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *RepeatEntry) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Fixed repeat count
+// / Fixed repeat count
 func (rcv *RepeatEntry) COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *RepeatEntry) Count() uint32 {
 	return rcv.COUNT()
 }
 
-/// Fixed repeat count
+// / Fixed repeat count
 func (rcv *RepeatEntry) MutateCOUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *RepeatEntry) MutateCount(n uint32) bool {
 	return rcv.MutateCOUNT(n)
 }
 
-/// Dynamic count from parameter reference
+// / Dynamic count from parameter reference
 func (rcv *RepeatEntry) COUNT_PARAMETER_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,8 +77,8 @@ func (rcv *RepeatEntry) CountParameterRef() []byte {
 	return rcv.COUNT_PARAMETER_REF()
 }
 
-/// Dynamic count from parameter reference
-/// Offset in bits between repetitions
+// / Dynamic count from parameter reference
+// / Offset in bits between repetitions
 func (rcv *RepeatEntry) OFFSET_IN_BITS() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *RepeatEntry) OffsetInBits() int32 {
 	return rcv.OFFSET_IN_BITS()
 }
 
-/// Offset in bits between repetitions
+// / Offset in bits between repetitions
 func (rcv *RepeatEntry) MutateOFFSET_IN_BITS(n int32) bool {
 	return rcv._tab.MutateInt32Slot(8, n)
 }

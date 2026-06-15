@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Attitude Physical Characteristics
+// / Attitude Physical Characteristics
 type attPhysicalProperties struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *attPhysicalProperties) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Drag coefficient
+// / Drag coefficient
 func (rcv *attPhysicalProperties) DRAG_COEFF() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *attPhysicalProperties) DragCoeff() float64 {
 	return rcv.DRAG_COEFF()
 }
 
-/// Drag coefficient
+// / Drag coefficient
 func (rcv *attPhysicalProperties) MutateDRAG_COEFF(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *attPhysicalProperties) MutateDragCoeff(n float64) bool {
 	return rcv.MutateDRAG_COEFF(n)
 }
 
-/// Wet mass in kg
+// / Wet mass in kg
 func (rcv *attPhysicalProperties) WET_MASS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *attPhysicalProperties) WetMass() float64 {
 	return rcv.WET_MASS()
 }
 
-/// Wet mass in kg
+// / Wet mass in kg
 func (rcv *attPhysicalProperties) MutateWET_MASS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *attPhysicalProperties) MutateWetMass(n float64) bool {
 	return rcv.MutateWET_MASS(n)
 }
 
-/// Dry mass in kg
+// / Dry mass in kg
 func (rcv *attPhysicalProperties) DRY_MASS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *attPhysicalProperties) DryMass() float64 {
 	return rcv.DRY_MASS()
 }
 
-/// Dry mass in kg
+// / Dry mass in kg
 func (rcv *attPhysicalProperties) MutateDRY_MASS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *attPhysicalProperties) MutateDryMass(n float64) bool {
 	return rcv.MutateDRY_MASS(n)
 }
 
-/// Center of pressure reference frame
+// / Center of pressure reference frame
 func (rcv *attPhysicalProperties) CP_REF_FRAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,8 +121,8 @@ func (rcv *attPhysicalProperties) CpRefFrame() []byte {
 	return rcv.CP_REF_FRAME()
 }
 
-/// Center of pressure reference frame
-/// Center of pressure X in m
+// / Center of pressure reference frame
+// / Center of pressure X in m
 func (rcv *attPhysicalProperties) CP_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -135,7 +135,7 @@ func (rcv *attPhysicalProperties) CpX() float64 {
 	return rcv.CP_X()
 }
 
-/// Center of pressure X in m
+// / Center of pressure X in m
 func (rcv *attPhysicalProperties) MutateCP_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -144,7 +144,7 @@ func (rcv *attPhysicalProperties) MutateCpX(n float64) bool {
 	return rcv.MutateCP_X(n)
 }
 
-/// Center of pressure Y in m
+// / Center of pressure Y in m
 func (rcv *attPhysicalProperties) CP_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *attPhysicalProperties) CpY() float64 {
 	return rcv.CP_Y()
 }
 
-/// Center of pressure Y in m
+// / Center of pressure Y in m
 func (rcv *attPhysicalProperties) MutateCP_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -166,7 +166,7 @@ func (rcv *attPhysicalProperties) MutateCpY(n float64) bool {
 	return rcv.MutateCP_Y(n)
 }
 
-/// Center of pressure Z in m
+// / Center of pressure Z in m
 func (rcv *attPhysicalProperties) CP_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -179,7 +179,7 @@ func (rcv *attPhysicalProperties) CpZ() float64 {
 	return rcv.CP_Z()
 }
 
-/// Center of pressure Z in m
+// / Center of pressure Z in m
 func (rcv *attPhysicalProperties) MutateCP_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -188,7 +188,7 @@ func (rcv *attPhysicalProperties) MutateCpZ(n float64) bool {
 	return rcv.MutateCP_Z(n)
 }
 
-/// Inertia reference frame
+// / Inertia reference frame
 func (rcv *attPhysicalProperties) INERTIA_REF_FRAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -201,8 +201,8 @@ func (rcv *attPhysicalProperties) InertiaRefFrame() []byte {
 	return rcv.INERTIA_REF_FRAME()
 }
 
-/// Inertia reference frame
-/// Moment of inertia about X axis in kg*m^2
+// / Inertia reference frame
+// / Moment of inertia about X axis in kg*m^2
 func (rcv *attPhysicalProperties) IXX() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -215,7 +215,7 @@ func (rcv *attPhysicalProperties) Ixx() float64 {
 	return rcv.IXX()
 }
 
-/// Moment of inertia about X axis in kg*m^2
+// / Moment of inertia about X axis in kg*m^2
 func (rcv *attPhysicalProperties) MutateIXX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -224,7 +224,7 @@ func (rcv *attPhysicalProperties) MutateIxx(n float64) bool {
 	return rcv.MutateIXX(n)
 }
 
-/// Moment of inertia about Y axis in kg*m^2
+// / Moment of inertia about Y axis in kg*m^2
 func (rcv *attPhysicalProperties) IYY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -237,7 +237,7 @@ func (rcv *attPhysicalProperties) Iyy() float64 {
 	return rcv.IYY()
 }
 
-/// Moment of inertia about Y axis in kg*m^2
+// / Moment of inertia about Y axis in kg*m^2
 func (rcv *attPhysicalProperties) MutateIYY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -246,7 +246,7 @@ func (rcv *attPhysicalProperties) MutateIyy(n float64) bool {
 	return rcv.MutateIYY(n)
 }
 
-/// Moment of inertia about Z axis in kg*m^2
+// / Moment of inertia about Z axis in kg*m^2
 func (rcv *attPhysicalProperties) IZZ() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -259,7 +259,7 @@ func (rcv *attPhysicalProperties) Izz() float64 {
 	return rcv.IZZ()
 }
 
-/// Moment of inertia about Z axis in kg*m^2
+// / Moment of inertia about Z axis in kg*m^2
 func (rcv *attPhysicalProperties) MutateIZZ(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -268,7 +268,7 @@ func (rcv *attPhysicalProperties) MutateIzz(n float64) bool {
 	return rcv.MutateIZZ(n)
 }
 
-/// Product of inertia XY in kg*m^2
+// / Product of inertia XY in kg*m^2
 func (rcv *attPhysicalProperties) IXY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -281,7 +281,7 @@ func (rcv *attPhysicalProperties) Ixy() float64 {
 	return rcv.IXY()
 }
 
-/// Product of inertia XY in kg*m^2
+// / Product of inertia XY in kg*m^2
 func (rcv *attPhysicalProperties) MutateIXY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -290,7 +290,7 @@ func (rcv *attPhysicalProperties) MutateIxy(n float64) bool {
 	return rcv.MutateIXY(n)
 }
 
-/// Product of inertia XZ in kg*m^2
+// / Product of inertia XZ in kg*m^2
 func (rcv *attPhysicalProperties) IXZ() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -303,7 +303,7 @@ func (rcv *attPhysicalProperties) Ixz() float64 {
 	return rcv.IXZ()
 }
 
-/// Product of inertia XZ in kg*m^2
+// / Product of inertia XZ in kg*m^2
 func (rcv *attPhysicalProperties) MutateIXZ(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -312,7 +312,7 @@ func (rcv *attPhysicalProperties) MutateIxz(n float64) bool {
 	return rcv.MutateIXZ(n)
 }
 
-/// Product of inertia YZ in kg*m^2
+// / Product of inertia YZ in kg*m^2
 func (rcv *attPhysicalProperties) IYZ() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -325,7 +325,7 @@ func (rcv *attPhysicalProperties) Iyz() float64 {
 	return rcv.IYZ()
 }
 
-/// Product of inertia YZ in kg*m^2
+// / Product of inertia YZ in kg*m^2
 func (rcv *attPhysicalProperties) MutateIYZ(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }

@@ -6,8 +6,8 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Envelope — carries either a request or a response. Either REQUEST or
-/// RESPONSE is populated per message; both populated is undefined.
+// / Envelope — carries either a request or a response. Either REQUEST or
+// / RESPONSE is populated per message; both populated is undefined.
 type PIV struct {
 	_tab flatbuffers.Table
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Infrared Observation
+// / Infrared Observation
 type IRO struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *IRO) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique identifier
+// / Unique identifier
 func (rcv *IRO) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *IRO) Id() []byte {
 	return rcv.ID()
 }
 
-/// Unique identifier
-/// Reference to source entity
+// / Unique identifier
+// / Reference to source entity
 func (rcv *IRO) ID_ENTITY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *IRO) IdEntity() []byte {
 	return rcv.ID_ENTITY()
 }
 
-/// Reference to source entity
-/// Sensor or observation name
+// / Reference to source entity
+// / Sensor or observation name
 func (rcv *IRO) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *IRO) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Sensor or observation name
-/// Description of observation
+// / Sensor or observation name
+// / Description of observation
 func (rcv *IRO) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *IRO) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-/// Description of observation
-/// Source entity designator
+// / Description of observation
+// / Source entity designator
 func (rcv *IRO) ENTITY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *IRO) Entity() []byte {
 	return rcv.ENTITY()
 }
 
-/// Source entity designator
-/// Observation epoch (ISO 8601)
+// / Source entity designator
+// / Observation epoch (ISO 8601)
 func (rcv *IRO) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,8 +137,8 @@ func (rcv *IRO) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-/// Observation epoch (ISO 8601)
-/// Sensor identifier
+// / Observation epoch (ISO 8601)
+// / Sensor identifier
 func (rcv *IRO) SENSOR_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -151,8 +151,8 @@ func (rcv *IRO) SensorId() []byte {
 	return rcv.SENSOR_ID()
 }
 
-/// Sensor identifier
-/// Target satellite number (if identified)
+// / Sensor identifier
+// / Target satellite number (if identified)
 func (rcv *IRO) SAT_NO() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -165,7 +165,7 @@ func (rcv *IRO) SatNo() uint32 {
 	return rcv.SAT_NO()
 }
 
-/// Target satellite number (if identified)
+// / Target satellite number (if identified)
 func (rcv *IRO) MutateSAT_NO(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(18, n)
 }
@@ -174,7 +174,7 @@ func (rcv *IRO) MutateSatNo(n uint32) bool {
 	return rcv.MutateSAT_NO(n)
 }
 
-/// Target object designator
+// / Target object designator
 func (rcv *IRO) OBJECT_DESIGNATOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -187,8 +187,8 @@ func (rcv *IRO) ObjectDesignator() []byte {
 	return rcv.OBJECT_DESIGNATOR()
 }
 
-/// Target object designator
-/// IR spectral band
+// / Target object designator
+// / IR spectral band
 func (rcv *IRO) BAND() irBand {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -201,7 +201,7 @@ func (rcv *IRO) Band() irBand {
 	return rcv.BAND()
 }
 
-/// IR spectral band
+// / IR spectral band
 func (rcv *IRO) MutateBAND(n irBand) bool {
 	return rcv._tab.MutateInt8Slot(22, int8(n))
 }
@@ -210,7 +210,7 @@ func (rcv *IRO) MutateBand(n irBand) bool {
 	return rcv.MutateBAND(n)
 }
 
-/// Detection type
+// / Detection type
 func (rcv *IRO) DETECTION_TYPE() irDetectionType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -223,7 +223,7 @@ func (rcv *IRO) DetectionType() irDetectionType {
 	return rcv.DETECTION_TYPE()
 }
 
-/// Detection type
+// / Detection type
 func (rcv *IRO) MutateDETECTION_TYPE(n irDetectionType) bool {
 	return rcv._tab.MutateInt8Slot(24, int8(n))
 }
@@ -232,7 +232,7 @@ func (rcv *IRO) MutateDetectionType(n irDetectionType) bool {
 	return rcv.MutateDETECTION_TYPE(n)
 }
 
-/// Right ascension in degrees
+// / Right ascension in degrees
 func (rcv *IRO) RA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -245,7 +245,7 @@ func (rcv *IRO) Ra() float64 {
 	return rcv.RA()
 }
 
-/// Right ascension in degrees
+// / Right ascension in degrees
 func (rcv *IRO) MutateRA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -254,7 +254,7 @@ func (rcv *IRO) MutateRa(n float64) bool {
 	return rcv.MutateRA(n)
 }
 
-/// Declination in degrees
+// / Declination in degrees
 func (rcv *IRO) DEC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -267,7 +267,7 @@ func (rcv *IRO) Dec() float64 {
 	return rcv.DEC()
 }
 
-/// Declination in degrees
+// / Declination in degrees
 func (rcv *IRO) MutateDEC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -276,7 +276,7 @@ func (rcv *IRO) MutateDec(n float64) bool {
 	return rcv.MutateDEC(n)
 }
 
-/// Right ascension uncertainty in arcseconds
+// / Right ascension uncertainty in arcseconds
 func (rcv *IRO) RA_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -289,7 +289,7 @@ func (rcv *IRO) RaUnc() float64 {
 	return rcv.RA_UNC()
 }
 
-/// Right ascension uncertainty in arcseconds
+// / Right ascension uncertainty in arcseconds
 func (rcv *IRO) MutateRA_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -298,7 +298,7 @@ func (rcv *IRO) MutateRaUnc(n float64) bool {
 	return rcv.MutateRA_UNC(n)
 }
 
-/// Declination uncertainty in arcseconds
+// / Declination uncertainty in arcseconds
 func (rcv *IRO) DEC_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -311,7 +311,7 @@ func (rcv *IRO) DecUnc() float64 {
 	return rcv.DEC_UNC()
 }
 
-/// Declination uncertainty in arcseconds
+// / Declination uncertainty in arcseconds
 func (rcv *IRO) MutateDEC_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -320,7 +320,7 @@ func (rcv *IRO) MutateDecUnc(n float64) bool {
 	return rcv.MutateDEC_UNC(n)
 }
 
-/// Azimuth angle in degrees
+// / Azimuth angle in degrees
 func (rcv *IRO) AZIMUTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -333,7 +333,7 @@ func (rcv *IRO) Azimuth() float64 {
 	return rcv.AZIMUTH()
 }
 
-/// Azimuth angle in degrees
+// / Azimuth angle in degrees
 func (rcv *IRO) MutateAZIMUTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -342,7 +342,7 @@ func (rcv *IRO) MutateAzimuth(n float64) bool {
 	return rcv.MutateAZIMUTH(n)
 }
 
-/// Elevation angle in degrees
+// / Elevation angle in degrees
 func (rcv *IRO) ELEVATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -355,7 +355,7 @@ func (rcv *IRO) Elevation() float64 {
 	return rcv.ELEVATION()
 }
 
-/// Elevation angle in degrees
+// / Elevation angle in degrees
 func (rcv *IRO) MutateELEVATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -364,7 +364,7 @@ func (rcv *IRO) MutateElevation(n float64) bool {
 	return rcv.MutateELEVATION(n)
 }
 
-/// Range in km (if available)
+// / Range in km (if available)
 func (rcv *IRO) RANGE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -377,7 +377,7 @@ func (rcv *IRO) Range() float64 {
 	return rcv.RANGE()
 }
 
-/// Range in km (if available)
+// / Range in km (if available)
 func (rcv *IRO) MutateRANGE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -386,7 +386,7 @@ func (rcv *IRO) MutateRange(n float64) bool {
 	return rcv.MutateRANGE(n)
 }
 
-/// Irradiance in W/m^2
+// / Irradiance in W/m^2
 func (rcv *IRO) IRRADIANCE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -399,7 +399,7 @@ func (rcv *IRO) Irradiance() float64 {
 	return rcv.IRRADIANCE()
 }
 
-/// Irradiance in W/m^2
+// / Irradiance in W/m^2
 func (rcv *IRO) MutateIRRADIANCE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -408,7 +408,7 @@ func (rcv *IRO) MutateIrradiance(n float64) bool {
 	return rcv.MutateIRRADIANCE(n)
 }
 
-/// Irradiance uncertainty in W/m^2
+// / Irradiance uncertainty in W/m^2
 func (rcv *IRO) IRRADIANCE_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -421,7 +421,7 @@ func (rcv *IRO) IrradianceUnc() float64 {
 	return rcv.IRRADIANCE_UNC()
 }
 
-/// Irradiance uncertainty in W/m^2
+// / Irradiance uncertainty in W/m^2
 func (rcv *IRO) MutateIRRADIANCE_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -430,7 +430,7 @@ func (rcv *IRO) MutateIrradianceUnc(n float64) bool {
 	return rcv.MutateIRRADIANCE_UNC(n)
 }
 
-/// Apparent IR magnitude
+// / Apparent IR magnitude
 func (rcv *IRO) IR_MAG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -443,7 +443,7 @@ func (rcv *IRO) IrMag() float64 {
 	return rcv.IR_MAG()
 }
 
-/// Apparent IR magnitude
+// / Apparent IR magnitude
 func (rcv *IRO) MutateIR_MAG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(44, n)
 }
@@ -452,7 +452,7 @@ func (rcv *IRO) MutateIrMag(n float64) bool {
 	return rcv.MutateIR_MAG(n)
 }
 
-/// Magnitude uncertainty
+// / Magnitude uncertainty
 func (rcv *IRO) MAG_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -465,7 +465,7 @@ func (rcv *IRO) MagUnc() float64 {
 	return rcv.MAG_UNC()
 }
 
-/// Magnitude uncertainty
+// / Magnitude uncertainty
 func (rcv *IRO) MutateMAG_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(46, n)
 }
@@ -474,7 +474,7 @@ func (rcv *IRO) MutateMagUnc(n float64) bool {
 	return rcv.MutateMAG_UNC(n)
 }
 
-/// Effective temperature in Kelvin
+// / Effective temperature in Kelvin
 func (rcv *IRO) TEMPERATURE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -487,7 +487,7 @@ func (rcv *IRO) Temperature() float64 {
 	return rcv.TEMPERATURE()
 }
 
-/// Effective temperature in Kelvin
+// / Effective temperature in Kelvin
 func (rcv *IRO) MutateTEMPERATURE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(48, n)
 }
@@ -496,7 +496,7 @@ func (rcv *IRO) MutateTemperature(n float64) bool {
 	return rcv.MutateTEMPERATURE(n)
 }
 
-/// Integration time in seconds
+// / Integration time in seconds
 func (rcv *IRO) INTEGRATION_TIME() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -509,7 +509,7 @@ func (rcv *IRO) IntegrationTime() float64 {
 	return rcv.INTEGRATION_TIME()
 }
 
-/// Integration time in seconds
+// / Integration time in seconds
 func (rcv *IRO) MutateINTEGRATION_TIME(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(50, n)
 }
@@ -518,7 +518,7 @@ func (rcv *IRO) MutateIntegrationTime(n float64) bool {
 	return rcv.MutateINTEGRATION_TIME(n)
 }
 
-/// Background irradiance in W/m^2/sr
+// / Background irradiance in W/m^2/sr
 func (rcv *IRO) BACKGROUND() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -531,7 +531,7 @@ func (rcv *IRO) Background() float64 {
 	return rcv.BACKGROUND()
 }
 
-/// Background irradiance in W/m^2/sr
+// / Background irradiance in W/m^2/sr
 func (rcv *IRO) MutateBACKGROUND(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(52, n)
 }
@@ -540,7 +540,7 @@ func (rcv *IRO) MutateBackground(n float64) bool {
 	return rcv.MutateBACKGROUND(n)
 }
 
-/// Signal-to-noise ratio
+// / Signal-to-noise ratio
 func (rcv *IRO) SNR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -553,7 +553,7 @@ func (rcv *IRO) Snr() float64 {
 	return rcv.SNR()
 }
 
-/// Signal-to-noise ratio
+// / Signal-to-noise ratio
 func (rcv *IRO) MutateSNR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(54, n)
 }
@@ -562,7 +562,7 @@ func (rcv *IRO) MutateSnr(n float64) bool {
 	return rcv.MutateSNR(n)
 }
 
-/// Spectral data wavelengths in micrometers
+// / Spectral data wavelengths in micrometers
 func (rcv *IRO) WAVELENGTHS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -588,7 +588,7 @@ func (rcv *IRO) WavelengthsLength() int {
 	return rcv.WAVELENGTHSLength()
 }
 
-/// Spectral data wavelengths in micrometers
+// / Spectral data wavelengths in micrometers
 func (rcv *IRO) MutateWAVELENGTHS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -602,7 +602,7 @@ func (rcv *IRO) MutateWavelengths(j int, n float64) bool {
 	return rcv.MutateWAVELENGTHS(j, n)
 }
 
-/// Spectral data values in W/m^2/um
+// / Spectral data values in W/m^2/um
 func (rcv *IRO) SPECTRAL_VALUES(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -628,7 +628,7 @@ func (rcv *IRO) SpectralValuesLength() int {
 	return rcv.SPECTRAL_VALUESLength()
 }
 
-/// Spectral data values in W/m^2/um
+// / Spectral data values in W/m^2/um
 func (rcv *IRO) MutateSPECTRAL_VALUES(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -642,7 +642,7 @@ func (rcv *IRO) MutateSpectralValues(j int, n float64) bool {
 	return rcv.MutateSPECTRAL_VALUES(j, n)
 }
 
-/// Data quality indicator (0-9, 9=best)
+// / Data quality indicator (0-9, 9=best)
 func (rcv *IRO) QUALITY() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -655,7 +655,7 @@ func (rcv *IRO) Quality() byte {
 	return rcv.QUALITY()
 }
 
-/// Data quality indicator (0-9, 9=best)
+// / Data quality indicator (0-9, 9=best)
 func (rcv *IRO) MutateQUALITY(n byte) bool {
 	return rcv._tab.MutateByteSlot(60, n)
 }
@@ -664,7 +664,7 @@ func (rcv *IRO) MutateQuality(n byte) bool {
 	return rcv.MutateQUALITY(n)
 }
 
-/// Additional notes
+// / Additional notes
 func (rcv *IRO) NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -677,7 +677,7 @@ func (rcv *IRO) Notes() []byte {
 	return rcv.NOTES()
 }
 
-/// Additional notes
+// / Additional notes
 func IROStart(builder *flatbuffers.Builder) {
 	builder.StartObject(30)
 }

@@ -4,7 +4,7 @@ package REC
 
 import "strconv"
 
-/// Enum to represent common lunar perturbation models
+// / Enum to represent common lunar perturbation models
 type lunarPerturbationSource int8
 
 const (

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Float argument type
+// / Float argument type
 type FloatArgumentType struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *FloatArgumentType) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Type name
+// / Type name
 func (rcv *FloatArgumentType) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *FloatArgumentType) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Type name
-/// Short description
+// / Type name
+// / Short description
 func (rcv *FloatArgumentType) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *FloatArgumentType) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-/// Short description
-/// Long description
+// / Short description
+// / Long description
 func (rcv *FloatArgumentType) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *FloatArgumentType) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-/// Long description
-/// Units
+// / Long description
+// / Units
 func (rcv *FloatArgumentType) UNITS(obj *Unit, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -116,8 +116,8 @@ func (rcv *FloatArgumentType) UnitsLength() int {
 	return rcv.UNITSLength()
 }
 
-/// Units
-/// Data encoding
+// / Units
+// / Data encoding
 func (rcv *FloatArgumentType) DATA_ENCODING(obj *FloatDataEncoding) *FloatDataEncoding {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -135,8 +135,8 @@ func (rcv *FloatArgumentType) DataEncoding(obj *FloatDataEncoding) *FloatDataEnc
 	return rcv.DATA_ENCODING(obj)
 }
 
-/// Data encoding
-/// Minimum valid value
+// / Data encoding
+// / Minimum valid value
 func (rcv *FloatArgumentType) VALID_MIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -149,7 +149,7 @@ func (rcv *FloatArgumentType) ValidMin() float64 {
 	return rcv.VALID_MIN()
 }
 
-/// Minimum valid value
+// / Minimum valid value
 func (rcv *FloatArgumentType) MutateVALID_MIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -158,7 +158,7 @@ func (rcv *FloatArgumentType) MutateValidMin(n float64) bool {
 	return rcv.MutateVALID_MIN(n)
 }
 
-/// Maximum valid value
+// / Maximum valid value
 func (rcv *FloatArgumentType) VALID_MAX() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -171,7 +171,7 @@ func (rcv *FloatArgumentType) ValidMax() float64 {
 	return rcv.VALID_MAX()
 }
 
-/// Maximum valid value
+// / Maximum valid value
 func (rcv *FloatArgumentType) MutateVALID_MAX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -180,7 +180,7 @@ func (rcv *FloatArgumentType) MutateValidMax(n float64) bool {
 	return rcv.MutateVALID_MAX(n)
 }
 
-/// Size in bits
+// / Size in bits
 func (rcv *FloatArgumentType) SIZE_IN_BITS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -193,7 +193,7 @@ func (rcv *FloatArgumentType) SizeInBits() uint16 {
 	return rcv.SIZE_IN_BITS()
 }
 
-/// Size in bits
+// / Size in bits
 func (rcv *FloatArgumentType) MutateSIZE_IN_BITS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(18, n)
 }
@@ -202,7 +202,7 @@ func (rcv *FloatArgumentType) MutateSizeInBits(n uint16) bool {
 	return rcv.MutateSIZE_IN_BITS(n)
 }
 
-/// Initial/default value
+// / Initial/default value
 func (rcv *FloatArgumentType) INITIAL_VALUE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -215,7 +215,7 @@ func (rcv *FloatArgumentType) InitialValue() float64 {
 	return rcv.INITIAL_VALUE()
 }
 
-/// Initial/default value
+// / Initial/default value
 func (rcv *FloatArgumentType) MutateINITIAL_VALUE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }

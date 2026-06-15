@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Build artifact emitted by the plugin toolchain.
+// / Build artifact emitted by the plugin toolchain.
 type PLGBuildArtifact struct {
 	_tab flatbuffers.Table
 }

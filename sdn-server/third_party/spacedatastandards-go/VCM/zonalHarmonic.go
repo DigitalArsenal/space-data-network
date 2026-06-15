@@ -4,7 +4,7 @@ package VCM
 
 import "strconv"
 
-/// Enum to represent zonal harmonics
+// / Enum to represent zonal harmonics
 type zonalHarmonic int8
 
 const (

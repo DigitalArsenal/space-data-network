@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// GeoJSON Bounding Box [west, south, east, north] or [west, south, min-alt, east, north, max-alt]
+// / GeoJSON Bounding Box [west, south, east, north] or [west, south, min-alt, east, north, max-alt]
 type GJNBoundingBox struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *GJNBoundingBox) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Western longitude
+// / Western longitude
 func (rcv *GJNBoundingBox) WEST() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *GJNBoundingBox) West() float64 {
 	return rcv.WEST()
 }
 
-/// Western longitude
+// / Western longitude
 func (rcv *GJNBoundingBox) MutateWEST(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *GJNBoundingBox) MutateWest(n float64) bool {
 	return rcv.MutateWEST(n)
 }
 
-/// Southern latitude
+// / Southern latitude
 func (rcv *GJNBoundingBox) SOUTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *GJNBoundingBox) South() float64 {
 	return rcv.SOUTH()
 }
 
-/// Southern latitude
+// / Southern latitude
 func (rcv *GJNBoundingBox) MutateSOUTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *GJNBoundingBox) MutateSouth(n float64) bool {
 	return rcv.MutateSOUTH(n)
 }
 
-/// Eastern longitude
+// / Eastern longitude
 func (rcv *GJNBoundingBox) EAST() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *GJNBoundingBox) East() float64 {
 	return rcv.EAST()
 }
 
-/// Eastern longitude
+// / Eastern longitude
 func (rcv *GJNBoundingBox) MutateEAST(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *GJNBoundingBox) MutateEast(n float64) bool {
 	return rcv.MutateEAST(n)
 }
 
-/// Northern latitude
+// / Northern latitude
 func (rcv *GJNBoundingBox) NORTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *GJNBoundingBox) North() float64 {
 	return rcv.NORTH()
 }
 
-/// Northern latitude
+// / Northern latitude
 func (rcv *GJNBoundingBox) MutateNORTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *GJNBoundingBox) MutateNorth(n float64) bool {
 	return rcv.MutateNORTH(n)
 }
 
-/// Minimum altitude (optional)
+// / Minimum altitude (optional)
 func (rcv *GJNBoundingBox) MIN_ALTITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,7 +143,7 @@ func (rcv *GJNBoundingBox) MinAltitude() float64 {
 	return rcv.MIN_ALTITUDE()
 }
 
-/// Minimum altitude (optional)
+// / Minimum altitude (optional)
 func (rcv *GJNBoundingBox) MutateMIN_ALTITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -152,7 +152,7 @@ func (rcv *GJNBoundingBox) MutateMinAltitude(n float64) bool {
 	return rcv.MutateMIN_ALTITUDE(n)
 }
 
-/// Maximum altitude (optional)
+// / Maximum altitude (optional)
 func (rcv *GJNBoundingBox) MAX_ALTITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -165,7 +165,7 @@ func (rcv *GJNBoundingBox) MaxAltitude() float64 {
 	return rcv.MAX_ALTITUDE()
 }
 
-/// Maximum altitude (optional)
+// / Maximum altitude (optional)
 func (rcv *GJNBoundingBox) MutateMAX_ALTITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -174,7 +174,7 @@ func (rcv *GJNBoundingBox) MutateMaxAltitude(n float64) bool {
 	return rcv.MutateMAX_ALTITUDE(n)
 }
 
-/// True if the bbox includes altitude (6 values vs 4)
+// / True if the bbox includes altitude (6 values vs 4)
 func (rcv *GJNBoundingBox) HAS_ALTITUDE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -187,7 +187,7 @@ func (rcv *GJNBoundingBox) HasAltitude() bool {
 	return rcv.HAS_ALTITUDE()
 }
 
-/// True if the bbox includes altitude (6 values vs 4)
+// / True if the bbox includes altitude (6 values vs 4)
 func (rcv *GJNBoundingBox) MutateHAS_ALTITUDE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(16, n)
 }

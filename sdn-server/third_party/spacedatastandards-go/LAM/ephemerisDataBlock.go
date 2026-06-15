@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// OEM Ephemeris Data Block
+// / OEM Ephemeris Data Block
 type ephemerisDataBlock struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ephemerisDataBlock) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Plain-Text Comment
+// / Plain-Text Comment
 func (rcv *ephemerisDataBlock) COMMENT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *ephemerisDataBlock) Comment() []byte {
 	return rcv.COMMENT()
 }
 
-/// Plain-Text Comment
-/// Satellite name for the first object
+// / Plain-Text Comment
+// / Satellite name for the first object
 func (rcv *ephemerisDataBlock) OBJECT(obj *CAT) *CAT {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *ephemerisDataBlock) Object(obj *CAT) *CAT {
 	return rcv.OBJECT(obj)
 }
 
-/// Satellite name for the first object
-/// Origin of reference frame (EARTH, MARS, MOON, etc.)
+// / Satellite name for the first object
+// / Origin of reference frame (EARTH, MARS, MOON, etc.)
 func (rcv *ephemerisDataBlock) CENTER_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -88,8 +88,8 @@ func (rcv *ephemerisDataBlock) CenterName() []byte {
 	return rcv.CENTER_NAME()
 }
 
-/// Origin of reference frame (EARTH, MARS, MOON, etc.)
-/// Name of the reference frame (TEME, EME2000, etc.)
+// / Origin of reference frame (EARTH, MARS, MOON, etc.)
+// / Name of the reference frame (TEME, EME2000, etc.)
 func (rcv *ephemerisDataBlock) REFERENCE_FRAME(obj *RFM) *RFM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -107,8 +107,8 @@ func (rcv *ephemerisDataBlock) ReferenceFrame(obj *RFM) *RFM {
 	return rcv.REFERENCE_FRAME(obj)
 }
 
-/// Name of the reference frame (TEME, EME2000, etc.)
-/// Epoch of reference frame, if not intrinsic to the definition of the reference frame
+// / Name of the reference frame (TEME, EME2000, etc.)
+// / Epoch of reference frame, if not intrinsic to the definition of the reference frame
 func (rcv *ephemerisDataBlock) REFERENCE_FRAME_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -121,8 +121,8 @@ func (rcv *ephemerisDataBlock) ReferenceFrameEpoch() []byte {
 	return rcv.REFERENCE_FRAME_EPOCH()
 }
 
-/// Epoch of reference frame, if not intrinsic to the definition of the reference frame
-/// Reference frame for the covariance matrix
+// / Epoch of reference frame, if not intrinsic to the definition of the reference frame
+// / Reference frame for the covariance matrix
 func (rcv *ephemerisDataBlock) COV_REFERENCE_FRAME(obj *RFM) *RFM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -140,8 +140,8 @@ func (rcv *ephemerisDataBlock) CovReferenceFrame(obj *RFM) *RFM {
 	return rcv.COV_REFERENCE_FRAME(obj)
 }
 
-/// Reference frame for the covariance matrix
-/// Time system used for the orbit state and covariance matrix. (UTC)
+// / Reference frame for the covariance matrix
+// / Time system used for the orbit state and covariance matrix. (UTC)
 func (rcv *ephemerisDataBlock) TIME_SYSTEM() timingStandard {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -154,7 +154,7 @@ func (rcv *ephemerisDataBlock) TimeSystem() timingStandard {
 	return rcv.TIME_SYSTEM()
 }
 
-/// Time system used for the orbit state and covariance matrix. (UTC)
+// / Time system used for the orbit state and covariance matrix. (UTC)
 func (rcv *ephemerisDataBlock) MutateTIME_SYSTEM(n timingStandard) bool {
 	return rcv._tab.MutateInt8Slot(16, int8(n))
 }
@@ -163,7 +163,7 @@ func (rcv *ephemerisDataBlock) MutateTimeSystem(n timingStandard) bool {
 	return rcv.MutateTIME_SYSTEM(n)
 }
 
-/// Start of TOTAL time span covered by ephemeris data and covariance data (ISO 8601)
+// / Start of TOTAL time span covered by ephemeris data and covariance data (ISO 8601)
 func (rcv *ephemerisDataBlock) START_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -176,8 +176,8 @@ func (rcv *ephemerisDataBlock) StartTime() []byte {
 	return rcv.START_TIME()
 }
 
-/// Start of TOTAL time span covered by ephemeris data and covariance data (ISO 8601)
-/// Optional start USEABLE time span covered by ephemeris data (ISO 8601)
+// / Start of TOTAL time span covered by ephemeris data and covariance data (ISO 8601)
+// / Optional start USEABLE time span covered by ephemeris data (ISO 8601)
 func (rcv *ephemerisDataBlock) USEABLE_START_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -190,8 +190,8 @@ func (rcv *ephemerisDataBlock) UseableStartTime() []byte {
 	return rcv.USEABLE_START_TIME()
 }
 
-/// Optional start USEABLE time span covered by ephemeris data (ISO 8601)
-/// Optional end of USEABLE time span covered by ephemeris data (ISO 8601)
+// / Optional start USEABLE time span covered by ephemeris data (ISO 8601)
+// / Optional end of USEABLE time span covered by ephemeris data (ISO 8601)
 func (rcv *ephemerisDataBlock) USEABLE_STOP_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -204,8 +204,8 @@ func (rcv *ephemerisDataBlock) UseableStopTime() []byte {
 	return rcv.USEABLE_STOP_TIME()
 }
 
-/// Optional end of USEABLE time span covered by ephemeris data (ISO 8601)
-/// End of TOTAL time span covered by ephemeris data and covariance data (ISO 8601)
+// / Optional end of USEABLE time span covered by ephemeris data (ISO 8601)
+// / End of TOTAL time span covered by ephemeris data and covariance data (ISO 8601)
 func (rcv *ephemerisDataBlock) STOP_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -218,12 +218,12 @@ func (rcv *ephemerisDataBlock) StopTime() []byte {
 	return rcv.STOP_TIME()
 }
 
-/// End of TOTAL time span covered by ephemeris data and covariance data (ISO 8601)
-/// Recommended interpolation method for ephemeris data.
-/// Supported methods: Hermite, Linear, Lagrange, Chebyshev.
-/// When set to "Chebyshev", parsers should use POLYNOMIAL_POSITION_RECORDS
-/// for high-fidelity polynomial interpolation instead of interpolating across
-/// discrete state vectors.
+// / End of TOTAL time span covered by ephemeris data and covariance data (ISO 8601)
+// / Recommended interpolation method for ephemeris data.
+// / Supported methods: Hermite, Linear, Lagrange, Chebyshev.
+// / When set to "Chebyshev", parsers should use POLYNOMIAL_POSITION_RECORDS
+// / for high-fidelity polynomial interpolation instead of interpolating across
+// / discrete state vectors.
 func (rcv *ephemerisDataBlock) INTERPOLATION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -236,12 +236,12 @@ func (rcv *ephemerisDataBlock) Interpolation() []byte {
 	return rcv.INTERPOLATION()
 }
 
-/// Recommended interpolation method for ephemeris data.
-/// Supported methods: Hermite, Linear, Lagrange, Chebyshev.
-/// When set to "Chebyshev", parsers should use POLYNOMIAL_POSITION_RECORDS
-/// for high-fidelity polynomial interpolation instead of interpolating across
-/// discrete state vectors.
-/// Recommended interpolation degree for ephemeris data
+// / Recommended interpolation method for ephemeris data.
+// / Supported methods: Hermite, Linear, Lagrange, Chebyshev.
+// / When set to "Chebyshev", parsers should use POLYNOMIAL_POSITION_RECORDS
+// / for high-fidelity polynomial interpolation instead of interpolating across
+// / discrete state vectors.
+// / Recommended interpolation degree for ephemeris data
 func (rcv *ephemerisDataBlock) INTERPOLATION_DEGREE() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -254,7 +254,7 @@ func (rcv *ephemerisDataBlock) InterpolationDegree() uint32 {
 	return rcv.INTERPOLATION_DEGREE()
 }
 
-/// Recommended interpolation degree for ephemeris data
+// / Recommended interpolation degree for ephemeris data
 func (rcv *ephemerisDataBlock) MutateINTERPOLATION_DEGREE(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(28, n)
 }
@@ -263,9 +263,9 @@ func (rcv *ephemerisDataBlock) MutateInterpolationDegree(n uint32) bool {
 	return rcv.MutateINTERPOLATION_DEGREE(n)
 }
 
-/// Time interval between ephemeris states in seconds.
-/// If > 0: Use compact EPHEMERIS_DATA array (times are implicit).
-/// If 0 or omitted: Use EPHEMERIS_DATA_LINES with explicit epochs.
+// / Time interval between ephemeris states in seconds.
+// / If > 0: Use compact EPHEMERIS_DATA array (times are implicit).
+// / If 0 or omitted: Use EPHEMERIS_DATA_LINES with explicit epochs.
 func (rcv *ephemerisDataBlock) STEP_SIZE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -278,9 +278,9 @@ func (rcv *ephemerisDataBlock) StepSize() float64 {
 	return rcv.STEP_SIZE()
 }
 
-/// Time interval between ephemeris states in seconds.
-/// If > 0: Use compact EPHEMERIS_DATA array (times are implicit).
-/// If 0 or omitted: Use EPHEMERIS_DATA_LINES with explicit epochs.
+// / Time interval between ephemeris states in seconds.
+// / If > 0: Use compact EPHEMERIS_DATA array (times are implicit).
+// / If 0 or omitted: Use EPHEMERIS_DATA_LINES with explicit epochs.
 func (rcv *ephemerisDataBlock) MutateSTEP_SIZE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -289,10 +289,10 @@ func (rcv *ephemerisDataBlock) MutateStepSize(n float64) bool {
 	return rcv.MutateSTEP_SIZE(n)
 }
 
-/// Number of components per state vector in EPHEMERIS_DATA array.
-/// 6 = position + velocity (X, Y, Z, X_DOT, Y_DOT, Z_DOT)
-/// 9 = position + velocity + acceleration (adds X_DDOT, Y_DDOT, Z_DDOT)
-/// Only used when STEP_SIZE > 0. Default is 6.
+// / Number of components per state vector in EPHEMERIS_DATA array.
+// / 6 = position + velocity (X, Y, Z, X_DOT, Y_DOT, Z_DOT)
+// / 9 = position + velocity + acceleration (adds X_DDOT, Y_DDOT, Z_DDOT)
+// / Only used when STEP_SIZE > 0. Default is 6.
 func (rcv *ephemerisDataBlock) STATE_VECTOR_SIZE() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -305,10 +305,10 @@ func (rcv *ephemerisDataBlock) StateVectorSize() byte {
 	return rcv.STATE_VECTOR_SIZE()
 }
 
-/// Number of components per state vector in EPHEMERIS_DATA array.
-/// 6 = position + velocity (X, Y, Z, X_DOT, Y_DOT, Z_DOT)
-/// 9 = position + velocity + acceleration (adds X_DDOT, Y_DDOT, Z_DDOT)
-/// Only used when STEP_SIZE > 0. Default is 6.
+// / Number of components per state vector in EPHEMERIS_DATA array.
+// / 6 = position + velocity (X, Y, Z, X_DOT, Y_DOT, Z_DOT)
+// / 9 = position + velocity + acceleration (adds X_DDOT, Y_DDOT, Z_DDOT)
+// / Only used when STEP_SIZE > 0. Default is 6.
 func (rcv *ephemerisDataBlock) MutateSTATE_VECTOR_SIZE(n byte) bool {
 	return rcv._tab.MutateByteSlot(32, n)
 }
@@ -317,12 +317,12 @@ func (rcv *ephemerisDataBlock) MutateStateVectorSize(n byte) bool {
 	return rcv.MutateSTATE_VECTOR_SIZE(n)
 }
 
-/// Compact ephemeris data as row-major array of doubles.
-/// Only used when STEP_SIZE > 0.
-/// Layout: [x0,y0,z0,xdot0,ydot0,zdot0, x1,y1,z1,xdot1,ydot1,zdot1, ...]
-/// Units: position in km, velocity in km/s, acceleration in km/s²
-/// Length must be divisible by STATE_VECTOR_SIZE.
-/// Number of states = length(EPHEMERIS_DATA) / STATE_VECTOR_SIZE
+// / Compact ephemeris data as row-major array of doubles.
+// / Only used when STEP_SIZE > 0.
+// / Layout: [x0,y0,z0,xdot0,ydot0,zdot0, x1,y1,z1,xdot1,ydot1,zdot1, ...]
+// / Units: position in km, velocity in km/s, acceleration in km/s²
+// / Length must be divisible by STATE_VECTOR_SIZE.
+// / Number of states = length(EPHEMERIS_DATA) / STATE_VECTOR_SIZE
 func (rcv *ephemerisDataBlock) EPHEMERIS_DATA(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -348,12 +348,12 @@ func (rcv *ephemerisDataBlock) EphemerisDataLength() int {
 	return rcv.EPHEMERIS_DATALength()
 }
 
-/// Compact ephemeris data as row-major array of doubles.
-/// Only used when STEP_SIZE > 0.
-/// Layout: [x0,y0,z0,xdot0,ydot0,zdot0, x1,y1,z1,xdot1,ydot1,zdot1, ...]
-/// Units: position in km, velocity in km/s, acceleration in km/s²
-/// Length must be divisible by STATE_VECTOR_SIZE.
-/// Number of states = length(EPHEMERIS_DATA) / STATE_VECTOR_SIZE
+// / Compact ephemeris data as row-major array of doubles.
+// / Only used when STEP_SIZE > 0.
+// / Layout: [x0,y0,z0,xdot0,ydot0,zdot0, x1,y1,z1,xdot1,ydot1,zdot1, ...]
+// / Units: position in km, velocity in km/s, acceleration in km/s²
+// / Length must be divisible by STATE_VECTOR_SIZE.
+// / Number of states = length(EPHEMERIS_DATA) / STATE_VECTOR_SIZE
 func (rcv *ephemerisDataBlock) MutateEPHEMERIS_DATA(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -367,9 +367,9 @@ func (rcv *ephemerisDataBlock) MutateEphemerisData(j int, n float64) bool {
 	return rcv.MutateEPHEMERIS_DATA(j, n)
 }
 
-/// Array of ephemeris data lines with explicit epochs.
-/// Only used when STEP_SIZE == 0 or omitted (non-uniform time steps).
-/// Each line contains its own EPOCH timestamp.
+// / Array of ephemeris data lines with explicit epochs.
+// / Only used when STEP_SIZE == 0 or omitted (non-uniform time steps).
+// / Each line contains its own EPOCH timestamp.
 func (rcv *ephemerisDataBlock) EPHEMERIS_DATA_LINES(obj *ephemerisDataLine, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -401,10 +401,10 @@ func (rcv *ephemerisDataBlock) EphemerisDataLinesLength() int {
 	return rcv.EPHEMERIS_DATA_LINESLength()
 }
 
-/// Array of ephemeris data lines with explicit epochs.
-/// Only used when STEP_SIZE == 0 or omitted (non-uniform time steps).
-/// Each line contains its own EPOCH timestamp.
-/// Array of covariance matrix lines (optional)
+// / Array of ephemeris data lines with explicit epochs.
+// / Only used when STEP_SIZE == 0 or omitted (non-uniform time steps).
+// / Each line contains its own EPOCH timestamp.
+// / Array of covariance matrix lines (optional)
 func (rcv *ephemerisDataBlock) COVARIANCE_MATRIX_LINES(obj *covarianceMatrixLine, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -436,11 +436,11 @@ func (rcv *ephemerisDataBlock) CovarianceMatrixLinesLength() int {
 	return rcv.COVARIANCE_MATRIX_LINESLength()
 }
 
-/// Array of covariance matrix lines (optional)
-/// Optional polynomial position records for high-fidelity interpolation.
-/// Used when INTERPOLATION is "Chebyshev". Each record covers a time segment with
-/// polynomial coefficients for continuous position (and optionally velocity) evaluation.
-/// See PPE schema for record structure and evaluation procedure.
+// / Array of covariance matrix lines (optional)
+// / Optional polynomial position records for high-fidelity interpolation.
+// / Used when INTERPOLATION is "Chebyshev". Each record covers a time segment with
+// / polynomial coefficients for continuous position (and optionally velocity) evaluation.
+// / See PPE schema for record structure and evaluation procedure.
 func (rcv *ephemerisDataBlock) POLYNOMIAL_POSITION_RECORDS(obj *PPEPositionRecord, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -472,10 +472,10 @@ func (rcv *ephemerisDataBlock) PolynomialPositionRecordsLength() int {
 	return rcv.POLYNOMIAL_POSITION_RECORDSLength()
 }
 
-/// Optional polynomial position records for high-fidelity interpolation.
-/// Used when INTERPOLATION is "Chebyshev". Each record covers a time segment with
-/// polynomial coefficients for continuous position (and optionally velocity) evaluation.
-/// See PPE schema for record structure and evaluation procedure.
+// / Optional polynomial position records for high-fidelity interpolation.
+// / Used when INTERPOLATION is "Chebyshev". Each record covers a time segment with
+// / polynomial coefficients for continuous position (and optionally velocity) evaluation.
+// / See PPE schema for record structure and evaluation procedure.
 func ephemerisDataBlockStart(builder *flatbuffers.Builder) {
 	builder.StartObject(19)
 }

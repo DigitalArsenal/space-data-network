@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Launch Data Message
+// / Launch Data Message
 type LDM struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *LDM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Launch Site Information
+// / Launch Site Information
 func (rcv *LDM) SITE(obj *SIT) *SIT {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -72,8 +72,8 @@ func (rcv *LDM) Site(obj *SIT) *SIT {
 	return rcv.SITE(obj)
 }
 
-/// Launch Site Information
-/// Azimuth at Launch (in Degrees)
+// / Launch Site Information
+// / Azimuth at Launch (in Degrees)
 func (rcv *LDM) AZIMUTH() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -86,7 +86,7 @@ func (rcv *LDM) Azimuth() float32 {
 	return rcv.AZIMUTH()
 }
 
-/// Azimuth at Launch (in Degrees)
+// / Azimuth at Launch (in Degrees)
 func (rcv *LDM) MutateAZIMUTH(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(6, n)
 }
@@ -95,7 +95,7 @@ func (rcv *LDM) MutateAzimuth(n float32) bool {
 	return rcv.MutateAZIMUTH(n)
 }
 
-/// References for Launch Data
+// / References for Launch Data
 func (rcv *LDM) REFERENCES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -108,8 +108,8 @@ func (rcv *LDM) References() []byte {
 	return rcv.REFERENCES()
 }
 
-/// References for Launch Data
-/// Launching Agency Name
+// / References for Launch Data
+// / Launching Agency Name
 func (rcv *LDM) AGENCY_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -122,8 +122,8 @@ func (rcv *LDM) AgencyName() []byte {
 	return rcv.AGENCY_NAME()
 }
 
-/// Launching Agency Name
-/// Points of Contact for Launch
+// / Launching Agency Name
+// / Points of Contact for Launch
 func (rcv *LDM) POINTS_OF_CONTACT(obj *EPM, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -155,8 +155,8 @@ func (rcv *LDM) PointsOfContactLength() int {
 	return rcv.POINTS_OF_CONTACTLength()
 }
 
-/// Points of Contact for Launch
-/// Operations Points of Contact for Launch
+// / Points of Contact for Launch
+// / Operations Points of Contact for Launch
 func (rcv *LDM) OPERATIONS_POINTS_OF_CONTACT(obj *EPM, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -188,8 +188,8 @@ func (rcv *LDM) OperationsPointsOfContactLength() int {
 	return rcv.OPERATIONS_POINTS_OF_CONTACTLength()
 }
 
-/// Operations Points of Contact for Launch
-/// Net Launch Time (UTC Format)
+// / Operations Points of Contact for Launch
+// / Net Launch Time (UTC Format)
 func (rcv *LDM) NET() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -202,8 +202,8 @@ func (rcv *LDM) Net() []byte {
 	return rcv.NET()
 }
 
-/// Net Launch Time (UTC Format)
-/// Rocket Configuration Details
+// / Net Launch Time (UTC Format)
+// / Rocket Configuration Details
 func (rcv *LDM) ROCKET_CONFIGURATION(obj *ROC) *ROC {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -221,8 +221,8 @@ func (rcv *LDM) RocketConfiguration(obj *ROC) *ROC {
 	return rcv.ROCKET_CONFIGURATION(obj)
 }
 
-/// Rocket Configuration Details
-/// Mission Name
+// / Rocket Configuration Details
+// / Mission Name
 func (rcv *LDM) MISSION_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -235,8 +235,8 @@ func (rcv *LDM) MissionName() []byte {
 	return rcv.MISSION_NAME()
 }
 
-/// Mission Name
-/// Description of the Mission
+// / Mission Name
+// / Description of the Mission
 func (rcv *LDM) MISSION_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -249,8 +249,8 @@ func (rcv *LDM) MissionDescription() []byte {
 	return rcv.MISSION_DESCRIPTION()
 }
 
-/// Description of the Mission
-/// Type of the Mission (e.g., Test Flight, Satellite Deployment)
+// / Description of the Mission
+// / Type of the Mission (e.g., Test Flight, Satellite Deployment)
 func (rcv *LDM) MISSION_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -263,8 +263,8 @@ func (rcv *LDM) MissionType() []byte {
 	return rcv.MISSION_TYPE()
 }
 
-/// Type of the Mission (e.g., Test Flight, Satellite Deployment)
-/// Target Orbit Type (e.g., LEO, GEO)
+// / Type of the Mission (e.g., Test Flight, Satellite Deployment)
+// / Target Orbit Type (e.g., LEO, GEO)
 func (rcv *LDM) ORBIT_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -277,8 +277,8 @@ func (rcv *LDM) OrbitType() []byte {
 	return rcv.ORBIT_TYPE()
 }
 
-/// Target Orbit Type (e.g., LEO, GEO)
-/// Weather and Environmental Conditions at Launch
+// / Target Orbit Type (e.g., LEO, GEO)
+// / Weather and Environmental Conditions at Launch
 func (rcv *LDM) WEATHER_CONDITIONS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -291,8 +291,8 @@ func (rcv *LDM) WeatherConditions() []byte {
 	return rcv.WEATHER_CONDITIONS()
 }
 
-/// Weather and Environmental Conditions at Launch
-/// Launch Outcome and Status (e.g., Successful, Failed)
+// / Weather and Environmental Conditions at Launch
+// / Launch Outcome and Status (e.g., Successful, Failed)
 func (rcv *LDM) LAUNCH_STATUS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -305,8 +305,8 @@ func (rcv *LDM) LaunchStatus() []byte {
 	return rcv.LAUNCH_STATUS()
 }
 
-/// Launch Outcome and Status (e.g., Successful, Failed)
-/// Webcast URL for the Launch
+// / Launch Outcome and Status (e.g., Successful, Failed)
+// / Webcast URL for the Launch
 func (rcv *LDM) WEBCAST_URL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -319,8 +319,8 @@ func (rcv *LDM) WebcastUrl() []byte {
 	return rcv.WEBCAST_URL()
 }
 
-/// Webcast URL for the Launch
-/// Media Links Related to the Launch
+// / Webcast URL for the Launch
+// / Media Links Related to the Launch
 func (rcv *LDM) MEDIA_LINKS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -346,8 +346,8 @@ func (rcv *LDM) MediaLinksLength() int {
 	return rcv.MEDIA_LINKSLength()
 }
 
-/// Media Links Related to the Launch
-/// Earliest Possible Launch Times
+// / Media Links Related to the Launch
+// / Earliest Possible Launch Times
 func (rcv *LDM) EARLIEST_LAUNCH_TIMES(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -373,8 +373,8 @@ func (rcv *LDM) EarliestLaunchTimesLength() int {
 	return rcv.EARLIEST_LAUNCH_TIMESLength()
 }
 
-/// Earliest Possible Launch Times
-/// Latest Possible Launch Times
+// / Earliest Possible Launch Times
+// / Latest Possible Launch Times
 func (rcv *LDM) LATEST_LAUNCH_TIMES(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -400,8 +400,8 @@ func (rcv *LDM) LatestLaunchTimesLength() int {
 	return rcv.LATEST_LAUNCH_TIMESLength()
 }
 
-/// Latest Possible Launch Times
-/// Launch Collision Avoidance Information
+// / Latest Possible Launch Times
+// / Launch Collision Avoidance Information
 func (rcv *LDM) LCOLA_WINDOW_CLOSURES(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -427,8 +427,8 @@ func (rcv *LDM) LcolaWindowClosuresLength() int {
 	return rcv.LCOLA_WINDOW_CLOSURESLength()
 }
 
-/// Launch Collision Avoidance Information
-/// Payload Information (Catalog Entities)
+// / Launch Collision Avoidance Information
+// / Payload Information (Catalog Entities)
 func (rcv *LDM) OBJECTS(obj *CAT, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -460,8 +460,8 @@ func (rcv *LDM) ObjectsLength() int {
 	return rcv.OBJECTSLength()
 }
 
-/// Payload Information (Catalog Entities)
-/// Tracking and Collision Avoidance Requirements
+// / Payload Information (Catalog Entities)
+// / Tracking and Collision Avoidance Requirements
 func (rcv *LDM) TRACKING_REQUIREMENTS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -487,8 +487,8 @@ func (rcv *LDM) TrackingRequirementsLength() int {
 	return rcv.TRACKING_REQUIREMENTSLength()
 }
 
-/// Tracking and Collision Avoidance Requirements
-/// Duration of Collision Avoidance Screen (in Seconds)
+// / Tracking and Collision Avoidance Requirements
+// / Duration of Collision Avoidance Screen (in Seconds)
 func (rcv *LDM) COLA_SCREEN_DURATION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -501,8 +501,8 @@ func (rcv *LDM) ColaScreenDuration() []byte {
 	return rcv.COLA_SCREEN_DURATION()
 }
 
-/// Duration of Collision Avoidance Screen (in Seconds)
-/// Probability of Collision Threshold (Percentage)
+// / Duration of Collision Avoidance Screen (in Seconds)
+// / Probability of Collision Threshold (Percentage)
 func (rcv *LDM) PROBABILITY_OF_COLLISION_THRESHOLD() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -515,8 +515,8 @@ func (rcv *LDM) ProbabilityOfCollisionThreshold() []byte {
 	return rcv.PROBABILITY_OF_COLLISION_THRESHOLD()
 }
 
-/// Probability of Collision Threshold (Percentage)
-/// Number of Required Collision Avoidance Runs
+// / Probability of Collision Threshold (Percentage)
+// / Number of Required Collision Avoidance Runs
 func (rcv *LDM) COLA_RUNS_REQUIRED() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -529,8 +529,8 @@ func (rcv *LDM) ColaRunsRequired() []byte {
 	return rcv.COLA_RUNS_REQUIRED()
 }
 
-/// Number of Required Collision Avoidance Runs
-/// Points of Contact for Collision Avoidance
+// / Number of Required Collision Avoidance Runs
+// / Points of Contact for Collision Avoidance
 func (rcv *LDM) COLA_POINTS_OF_CONTACT(obj *EPM, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -562,8 +562,8 @@ func (rcv *LDM) ColaPointsOfContactLength() int {
 	return rcv.COLA_POINTS_OF_CONTACTLength()
 }
 
-/// Points of Contact for Collision Avoidance
-/// Orbital Parameters of the Launch
+// / Points of Contact for Collision Avoidance
+// / Orbital Parameters of the Launch
 func (rcv *LDM) ORBITAL_PARAMETERS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -589,8 +589,8 @@ func (rcv *LDM) OrbitalParametersLength() int {
 	return rcv.ORBITAL_PARAMETERSLength()
 }
 
-/// Orbital Parameters of the Launch
-/// Burn Out Vectors for the Launch
+// / Orbital Parameters of the Launch
+// / Burn Out Vectors for the Launch
 func (rcv *LDM) BURN_OUT_VECTORS(obj *BOV, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -622,7 +622,7 @@ func (rcv *LDM) BurnOutVectorsLength() int {
 	return rcv.BURN_OUT_VECTORSLength()
 }
 
-/// Burn Out Vectors for the Launch
+// / Burn Out Vectors for the Launch
 func LDMStart(builder *flatbuffers.Builder) {
 	builder.StartObject(27)
 }

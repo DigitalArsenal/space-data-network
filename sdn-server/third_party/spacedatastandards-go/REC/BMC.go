@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Beam Contour
+// / Beam Contour
 type BMC struct {
 	_tab flatbuffers.Table
 }

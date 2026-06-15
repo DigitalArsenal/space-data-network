@@ -4,7 +4,7 @@ package LGR
 
 import "strconv"
 
-/// Key derivation function
+// / Key derivation function
 type KDF int8
 
 const (

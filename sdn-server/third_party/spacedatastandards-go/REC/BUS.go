@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Satellite Bus Specification
+// / Satellite Bus Specification
 type BUS struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *BUS) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Unique identifier
+// / Unique identifier
 func (rcv *BUS) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *BUS) Id() []byte {
 	return rcv.ID()
 }
 
-/// Unique identifier
-/// Bus name or model
+// / Unique identifier
+// / Bus name or model
 func (rcv *BUS) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *BUS) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Bus name or model
-/// Manufacturer
+// / Bus name or model
+// / Manufacturer
 func (rcv *BUS) MANUFACTURER() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *BUS) Manufacturer() []byte {
 	return rcv.MANUFACTURER()
 }
 
-/// Manufacturer
-/// Bus size category
+// / Manufacturer
+// / Bus size category
 func (rcv *BUS) SIZE() busSize {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,7 +109,7 @@ func (rcv *BUS) Size() busSize {
 	return rcv.SIZE()
 }
 
-/// Bus size category
+// / Bus size category
 func (rcv *BUS) MutateSIZE(n busSize) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
@@ -118,7 +118,7 @@ func (rcv *BUS) MutateSize(n busSize) bool {
 	return rcv.MutateSIZE(n)
 }
 
-/// Dry mass in kg
+// / Dry mass in kg
 func (rcv *BUS) DRY_MASS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,7 +131,7 @@ func (rcv *BUS) DryMass() float64 {
 	return rcv.DRY_MASS()
 }
 
-/// Dry mass in kg
+// / Dry mass in kg
 func (rcv *BUS) MutateDRY_MASS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -140,7 +140,7 @@ func (rcv *BUS) MutateDryMass(n float64) bool {
 	return rcv.MutateDRY_MASS(n)
 }
 
-/// Maximum wet mass (with propellant) in kg
+// / Maximum wet mass (with propellant) in kg
 func (rcv *BUS) WET_MASS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -153,7 +153,7 @@ func (rcv *BUS) WetMass() float64 {
 	return rcv.WET_MASS()
 }
 
-/// Maximum wet mass (with propellant) in kg
+// / Maximum wet mass (with propellant) in kg
 func (rcv *BUS) MutateWET_MASS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -162,7 +162,7 @@ func (rcv *BUS) MutateWetMass(n float64) bool {
 	return rcv.MutateWET_MASS(n)
 }
 
-/// Maximum payload mass in kg
+// / Maximum payload mass in kg
 func (rcv *BUS) PAYLOAD_MASS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -175,7 +175,7 @@ func (rcv *BUS) PayloadMass() float64 {
 	return rcv.PAYLOAD_MASS()
 }
 
-/// Maximum payload mass in kg
+// / Maximum payload mass in kg
 func (rcv *BUS) MutatePAYLOAD_MASS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -184,7 +184,7 @@ func (rcv *BUS) MutatePayloadMass(n float64) bool {
 	return rcv.MutatePAYLOAD_MASS(n)
 }
 
-/// Bus dimensions X in meters
+// / Bus dimensions X in meters
 func (rcv *BUS) DIM_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -197,7 +197,7 @@ func (rcv *BUS) DimX() float64 {
 	return rcv.DIM_X()
 }
 
-/// Bus dimensions X in meters
+// / Bus dimensions X in meters
 func (rcv *BUS) MutateDIM_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -206,7 +206,7 @@ func (rcv *BUS) MutateDimX(n float64) bool {
 	return rcv.MutateDIM_X(n)
 }
 
-/// Bus dimensions Y in meters
+// / Bus dimensions Y in meters
 func (rcv *BUS) DIM_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -219,7 +219,7 @@ func (rcv *BUS) DimY() float64 {
 	return rcv.DIM_Y()
 }
 
-/// Bus dimensions Y in meters
+// / Bus dimensions Y in meters
 func (rcv *BUS) MutateDIM_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -228,7 +228,7 @@ func (rcv *BUS) MutateDimY(n float64) bool {
 	return rcv.MutateDIM_Y(n)
 }
 
-/// Bus dimensions Z in meters
+// / Bus dimensions Z in meters
 func (rcv *BUS) DIM_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -241,7 +241,7 @@ func (rcv *BUS) DimZ() float64 {
 	return rcv.DIM_Z()
 }
 
-/// Bus dimensions Z in meters
+// / Bus dimensions Z in meters
 func (rcv *BUS) MutateDIM_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -250,7 +250,7 @@ func (rcv *BUS) MutateDimZ(n float64) bool {
 	return rcv.MutateDIM_Z(n)
 }
 
-/// Stowed dimensions X in meters
+// / Stowed dimensions X in meters
 func (rcv *BUS) STOWED_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -263,7 +263,7 @@ func (rcv *BUS) StowedX() float64 {
 	return rcv.STOWED_X()
 }
 
-/// Stowed dimensions X in meters
+// / Stowed dimensions X in meters
 func (rcv *BUS) MutateSTOWED_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -272,7 +272,7 @@ func (rcv *BUS) MutateStowedX(n float64) bool {
 	return rcv.MutateSTOWED_X(n)
 }
 
-/// Stowed dimensions Y in meters
+// / Stowed dimensions Y in meters
 func (rcv *BUS) STOWED_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -285,7 +285,7 @@ func (rcv *BUS) StowedY() float64 {
 	return rcv.STOWED_Y()
 }
 
-/// Stowed dimensions Y in meters
+// / Stowed dimensions Y in meters
 func (rcv *BUS) MutateSTOWED_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -294,7 +294,7 @@ func (rcv *BUS) MutateStowedY(n float64) bool {
 	return rcv.MutateSTOWED_Y(n)
 }
 
-/// Stowed dimensions Z in meters
+// / Stowed dimensions Z in meters
 func (rcv *BUS) STOWED_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -307,7 +307,7 @@ func (rcv *BUS) StowedZ() float64 {
 	return rcv.STOWED_Z()
 }
 
-/// Stowed dimensions Z in meters
+// / Stowed dimensions Z in meters
 func (rcv *BUS) MutateSTOWED_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -316,7 +316,7 @@ func (rcv *BUS) MutateStowedZ(n float64) bool {
 	return rcv.MutateSTOWED_Z(n)
 }
 
-/// Total power generation in Watts
+// / Total power generation in Watts
 func (rcv *BUS) POWER_GENERATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -329,7 +329,7 @@ func (rcv *BUS) PowerGeneration() float64 {
 	return rcv.POWER_GENERATION()
 }
 
-/// Total power generation in Watts
+// / Total power generation in Watts
 func (rcv *BUS) MutatePOWER_GENERATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -338,7 +338,7 @@ func (rcv *BUS) MutatePowerGeneration(n float64) bool {
 	return rcv.MutatePOWER_GENERATION(n)
 }
 
-/// Available payload power in Watts
+// / Available payload power in Watts
 func (rcv *BUS) PAYLOAD_POWER() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -351,7 +351,7 @@ func (rcv *BUS) PayloadPower() float64 {
 	return rcv.PAYLOAD_POWER()
 }
 
-/// Available payload power in Watts
+// / Available payload power in Watts
 func (rcv *BUS) MutatePAYLOAD_POWER(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -360,7 +360,7 @@ func (rcv *BUS) MutatePayloadPower(n float64) bool {
 	return rcv.MutatePAYLOAD_POWER(n)
 }
 
-/// Battery capacity in Watt-hours
+// / Battery capacity in Watt-hours
 func (rcv *BUS) BATTERY_CAPACITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -373,7 +373,7 @@ func (rcv *BUS) BatteryCapacity() float64 {
 	return rcv.BATTERY_CAPACITY()
 }
 
-/// Battery capacity in Watt-hours
+// / Battery capacity in Watt-hours
 func (rcv *BUS) MutateBATTERY_CAPACITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -382,7 +382,7 @@ func (rcv *BUS) MutateBatteryCapacity(n float64) bool {
 	return rcv.MutateBATTERY_CAPACITY(n)
 }
 
-/// Stabilization method
+// / Stabilization method
 func (rcv *BUS) STABILIZATION() BusStabilizationType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -395,7 +395,7 @@ func (rcv *BUS) Stabilization() BusStabilizationType {
 	return rcv.STABILIZATION()
 }
 
-/// Stabilization method
+// / Stabilization method
 func (rcv *BUS) MutateSTABILIZATION(n BusStabilizationType) bool {
 	return rcv._tab.MutateInt8Slot(36, int8(n))
 }
@@ -404,7 +404,7 @@ func (rcv *BUS) MutateStabilization(n BusStabilizationType) bool {
 	return rcv.MutateSTABILIZATION(n)
 }
 
-/// Pointing accuracy in degrees
+// / Pointing accuracy in degrees
 func (rcv *BUS) POINTING_ACCURACY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -417,7 +417,7 @@ func (rcv *BUS) PointingAccuracy() float64 {
 	return rcv.POINTING_ACCURACY()
 }
 
-/// Pointing accuracy in degrees
+// / Pointing accuracy in degrees
 func (rcv *BUS) MutatePOINTING_ACCURACY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -426,7 +426,7 @@ func (rcv *BUS) MutatePointingAccuracy(n float64) bool {
 	return rcv.MutatePOINTING_ACCURACY(n)
 }
 
-/// Pointing knowledge in degrees
+// / Pointing knowledge in degrees
 func (rcv *BUS) POINTING_KNOWLEDGE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -439,7 +439,7 @@ func (rcv *BUS) PointingKnowledge() float64 {
 	return rcv.POINTING_KNOWLEDGE()
 }
 
-/// Pointing knowledge in degrees
+// / Pointing knowledge in degrees
 func (rcv *BUS) MutatePOINTING_KNOWLEDGE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -448,7 +448,7 @@ func (rcv *BUS) MutatePointingKnowledge(n float64) bool {
 	return rcv.MutatePOINTING_KNOWLEDGE(n)
 }
 
-/// Design life in years
+// / Design life in years
 func (rcv *BUS) DESIGN_LIFE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -461,7 +461,7 @@ func (rcv *BUS) DesignLife() float64 {
 	return rcv.DESIGN_LIFE()
 }
 
-/// Design life in years
+// / Design life in years
 func (rcv *BUS) MutateDESIGN_LIFE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -470,7 +470,7 @@ func (rcv *BUS) MutateDesignLife(n float64) bool {
 	return rcv.MutateDESIGN_LIFE(n)
 }
 
-/// Data storage capacity in Gbits
+// / Data storage capacity in Gbits
 func (rcv *BUS) DATA_STORAGE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -483,7 +483,7 @@ func (rcv *BUS) DataStorage() float64 {
 	return rcv.DATA_STORAGE()
 }
 
-/// Data storage capacity in Gbits
+// / Data storage capacity in Gbits
 func (rcv *BUS) MutateDATA_STORAGE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(44, n)
 }
@@ -492,7 +492,7 @@ func (rcv *BUS) MutateDataStorage(n float64) bool {
 	return rcv.MutateDATA_STORAGE(n)
 }
 
-/// Downlink data rate in Mbps
+// / Downlink data rate in Mbps
 func (rcv *BUS) DOWNLINK_RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -505,7 +505,7 @@ func (rcv *BUS) DownlinkRate() float64 {
 	return rcv.DOWNLINK_RATE()
 }
 
-/// Downlink data rate in Mbps
+// / Downlink data rate in Mbps
 func (rcv *BUS) MutateDOWNLINK_RATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(46, n)
 }
@@ -514,7 +514,7 @@ func (rcv *BUS) MutateDownlinkRate(n float64) bool {
 	return rcv.MutateDOWNLINK_RATE(n)
 }
 
-/// Number of payload slots/interfaces
+// / Number of payload slots/interfaces
 func (rcv *BUS) PAYLOAD_SLOTS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -527,7 +527,7 @@ func (rcv *BUS) PayloadSlots() uint32 {
 	return rcv.PAYLOAD_SLOTS()
 }
 
-/// Number of payload slots/interfaces
+// / Number of payload slots/interfaces
 func (rcv *BUS) MutatePAYLOAD_SLOTS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(48, n)
 }
@@ -536,7 +536,7 @@ func (rcv *BUS) MutatePayloadSlots(n uint32) bool {
 	return rcv.MutatePAYLOAD_SLOTS(n)
 }
 
-/// Heritage missions count
+// / Heritage missions count
 func (rcv *BUS) HERITAGE_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -549,7 +549,7 @@ func (rcv *BUS) HeritageCount() uint32 {
 	return rcv.HERITAGE_COUNT()
 }
 
-/// Heritage missions count
+// / Heritage missions count
 func (rcv *BUS) MutateHERITAGE_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(50, n)
 }
@@ -558,7 +558,7 @@ func (rcv *BUS) MutateHeritageCount(n uint32) bool {
 	return rcv.MutateHERITAGE_COUNT(n)
 }
 
-/// Additional notes
+// / Additional notes
 func (rcv *BUS) NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -571,7 +571,7 @@ func (rcv *BUS) Notes() []byte {
 	return rcv.NOTES()
 }
 
-/// Additional notes
+// / Additional notes
 func BUSStart(builder *flatbuffers.Builder) {
 	builder.StartObject(25)
 }

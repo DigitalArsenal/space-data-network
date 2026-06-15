@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Batch SDF evaluation response header.
+// / Batch SDF evaluation response header.
 type SDFBatchResponse struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *SDFBatchResponse) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Number of results written.
+// / Number of results written.
 func (rcv *SDFBatchResponse) COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *SDFBatchResponse) Count() uint32 {
 	return rcv.COUNT()
 }
 
-/// Number of results written.
+// / Number of results written.
 func (rcv *SDFBatchResponse) MutateCOUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *SDFBatchResponse) MutateCount(n uint32) bool {
 	return rcv.MutateCOUNT(n)
 }
 
-/// Number of points inside the volume.
+// / Number of points inside the volume.
 func (rcv *SDFBatchResponse) INSIDE_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *SDFBatchResponse) InsideCount() uint32 {
 	return rcv.INSIDE_COUNT()
 }
 
-/// Number of points inside the volume.
+// / Number of points inside the volume.
 func (rcv *SDFBatchResponse) MutateINSIDE_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *SDFBatchResponse) MutateInsideCount(n uint32) bool {
 	return rcv.MutateINSIDE_COUNT(n)
 }
 
-/// Output offset where sdfResult[] starts.
+// / Output offset where sdfResult[] starts.
 func (rcv *SDFBatchResponse) OUTPUT_OFFSET() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *SDFBatchResponse) OutputOffset() uint32 {
 	return rcv.OUTPUT_OFFSET()
 }
 
-/// Output offset where sdfResult[] starts.
+// / Output offset where sdfResult[] starts.
 func (rcv *SDFBatchResponse) MutateOUTPUT_OFFSET(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *SDFBatchResponse) MutateOutputOffset(n uint32) bool {
 	return rcv.MutateOUTPUT_OFFSET(n)
 }
 
-/// Error code (0 == success).
+// / Error code (0 == success).
 func (rcv *SDFBatchResponse) ERROR_CODE() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *SDFBatchResponse) ErrorCode() int32 {
 	return rcv.ERROR_CODE()
 }
 
-/// Error code (0 == success).
+// / Error code (0 == success).
 func (rcv *SDFBatchResponse) MutateERROR_CODE(n int32) bool {
 	return rcv._tab.MutateInt32Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *SDFBatchResponse) MutateErrorCode(n int32) bool {
 	return rcv.MutateERROR_CODE(n)
 }
 
-/// Optional error message when ERROR_CODE != 0.
+// / Optional error message when ERROR_CODE != 0.
 func (rcv *SDFBatchResponse) ERROR_MESSAGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,7 +143,7 @@ func (rcv *SDFBatchResponse) ErrorMessage() []byte {
 	return rcv.ERROR_MESSAGE()
 }
 
-/// Optional error message when ERROR_CODE != 0.
+// / Optional error message when ERROR_CODE != 0.
 func SDFBatchResponseStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

@@ -8,13 +8,13 @@ type KMLAltitudeMode int8
 
 const (
 	/// Altitude relative to ground surface
-	KMLAltitudeModeCLAMP_TO_GROUND       KMLAltitudeMode = 0
+	KMLAltitudeModeCLAMP_TO_GROUND KMLAltitudeMode = 0
 	/// Altitude relative to ground elevation
-	KMLAltitudeModeRELATIVE_TO_GROUND    KMLAltitudeMode = 1
+	KMLAltitudeModeRELATIVE_TO_GROUND KMLAltitudeMode = 1
 	/// Altitude as absolute meters above WGS84 ellipsoid
-	KMLAltitudeModeABSOLUTE              KMLAltitudeMode = 2
+	KMLAltitudeModeABSOLUTE KMLAltitudeMode = 2
 	/// Clamp to sea floor
-	KMLAltitudeModeCLAMP_TO_SEA_FLOOR    KMLAltitudeMode = 3
+	KMLAltitudeModeCLAMP_TO_SEA_FLOOR KMLAltitudeMode = 3
 	/// Relative to sea floor
 	KMLAltitudeModeRELATIVE_TO_SEA_FLOOR KMLAltitudeMode = 4
 )

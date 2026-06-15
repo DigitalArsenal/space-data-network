@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// List style
+// / List style
 type KMLListStyle struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLListStyle) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// List item type
+// / List item type
 func (rcv *KMLListStyle) LIST_ITEM_TYPE() KMLListItemType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *KMLListStyle) ListItemType() KMLListItemType {
 	return rcv.LIST_ITEM_TYPE()
 }
 
-/// List item type
+// / List item type
 func (rcv *KMLListStyle) MutateLIST_ITEM_TYPE(n KMLListItemType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *KMLListStyle) MutateListItemType(n KMLListItemType) bool {
 	return rcv.MutateLIST_ITEM_TYPE(n)
 }
 
-/// Background color
+// / Background color
 func (rcv *KMLListStyle) BG_COLOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,8 +77,8 @@ func (rcv *KMLListStyle) BgColor() []byte {
 	return rcv.BG_COLOR()
 }
 
-/// Background color
-/// Item icons
+// / Background color
+// / Item icons
 func (rcv *KMLListStyle) ITEM_ICONS(obj *KMLItemIcon, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -110,8 +110,8 @@ func (rcv *KMLListStyle) ItemIconsLength() int {
 	return rcv.ITEM_ICONSLength()
 }
 
-/// Item icons
-/// Maximum snippet lines
+// / Item icons
+// / Maximum snippet lines
 func (rcv *KMLListStyle) MAX_SNIPPET_LINES() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -124,7 +124,7 @@ func (rcv *KMLListStyle) MaxSnippetLines() int32 {
 	return rcv.MAX_SNIPPET_LINES()
 }
 
-/// Maximum snippet lines
+// / Maximum snippet lines
 func (rcv *KMLListStyle) MutateMAX_SNIPPET_LINES(n int32) bool {
 	return rcv._tab.MutateInt32Slot(10, n)
 }

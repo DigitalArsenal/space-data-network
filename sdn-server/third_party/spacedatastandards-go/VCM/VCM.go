@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Vector Covariance Message
+// / Vector Covariance Message
 type VCM struct {
 	_tab flatbuffers.Table
 }
@@ -532,12 +532,12 @@ func (rcv *VCM) CovReferenceFrame() []byte {
 	return rcv.COV_REFERENCE_FRAME()
 }
 
-/// Covariance matrix as flat array (6x6 lower triangular = 21 elements).
-/// Order: [CX_X, CY_X, CY_Y, CZ_X, CZ_Y, CZ_Z,
-///         CX_DOT_X, CX_DOT_Y, CX_DOT_Z, CX_DOT_X_DOT,
-///         CY_DOT_X, CY_DOT_Y, CY_DOT_Z, CY_DOT_X_DOT, CY_DOT_Y_DOT,
-///         CZ_DOT_X, CZ_DOT_Y, CZ_DOT_Z, CZ_DOT_X_DOT, CZ_DOT_Y_DOT, CZ_DOT_Z_DOT]
-/// Units: position in km**2, velocity in km**2/s**2, cross in km**2/s
+// / Covariance matrix as flat array (6x6 lower triangular = 21 elements).
+// / Order: [CX_X, CY_X, CY_Y, CZ_X, CZ_Y, CZ_Z,
+// /         CX_DOT_X, CX_DOT_Y, CX_DOT_Z, CX_DOT_X_DOT,
+// /         CY_DOT_X, CY_DOT_Y, CY_DOT_Z, CY_DOT_X_DOT, CY_DOT_Y_DOT,
+// /         CZ_DOT_X, CZ_DOT_Y, CZ_DOT_Z, CZ_DOT_X_DOT, CZ_DOT_Y_DOT, CZ_DOT_Z_DOT]
+// / Units: position in km**2, velocity in km**2/s**2, cross in km**2/s
 func (rcv *VCM) COVARIANCE(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -563,12 +563,12 @@ func (rcv *VCM) CovarianceLength() int {
 	return rcv.COVARIANCELength()
 }
 
-/// Covariance matrix as flat array (6x6 lower triangular = 21 elements).
-/// Order: [CX_X, CY_X, CY_Y, CZ_X, CZ_Y, CZ_Z,
-///         CX_DOT_X, CX_DOT_Y, CX_DOT_Z, CX_DOT_X_DOT,
-///         CY_DOT_X, CY_DOT_Y, CY_DOT_Z, CY_DOT_X_DOT, CY_DOT_Y_DOT,
-///         CZ_DOT_X, CZ_DOT_Y, CZ_DOT_Z, CZ_DOT_X_DOT, CZ_DOT_Y_DOT, CZ_DOT_Z_DOT]
-/// Units: position in km**2, velocity in km**2/s**2, cross in km**2/s
+// / Covariance matrix as flat array (6x6 lower triangular = 21 elements).
+// / Order: [CX_X, CY_X, CY_Y, CZ_X, CZ_Y, CZ_Z,
+// /         CX_DOT_X, CX_DOT_Y, CX_DOT_Z, CX_DOT_X_DOT,
+// /         CY_DOT_X, CY_DOT_Y, CY_DOT_Z, CY_DOT_X_DOT, CY_DOT_Y_DOT,
+// /         CZ_DOT_X, CZ_DOT_Y, CZ_DOT_Z, CZ_DOT_X_DOT, CZ_DOT_Y_DOT, CZ_DOT_Z_DOT]
+// / Units: position in km**2, velocity in km**2/s**2, cross in km**2/s
 func (rcv *VCM) MutateCOVARIANCE(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {

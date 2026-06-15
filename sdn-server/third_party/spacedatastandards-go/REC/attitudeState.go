@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Attitude State Data
+// / Attitude State Data
 type attitudeState struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *attitudeState) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Attitude state type
+// / Attitude state type
 func (rcv *attitudeState) ATT_TYPE() attitudeStateType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *attitudeState) AttType() attitudeStateType {
 	return rcv.ATT_TYPE()
 }
 
-/// Attitude state type
+// / Attitude state type
 func (rcv *attitudeState) MutateATT_TYPE(n attitudeStateType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *attitudeState) MutateAttType(n attitudeStateType) bool {
 	return rcv.MutateATT_TYPE(n)
 }
 
-/// Reference frame A
+// / Reference frame A
 func (rcv *attitudeState) REF_FRAME_A() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,8 +77,8 @@ func (rcv *attitudeState) RefFrameA() []byte {
 	return rcv.REF_FRAME_A()
 }
 
-/// Reference frame A
-/// Reference frame B
+// / Reference frame A
+// / Reference frame B
 func (rcv *attitudeState) REF_FRAME_B() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,8 +91,8 @@ func (rcv *attitudeState) RefFrameB() []byte {
 	return rcv.REF_FRAME_B()
 }
 
-/// Reference frame B
-/// Attitude direction (A2B or B2A)
+// / Reference frame B
+// / Attitude direction (A2B or B2A)
 func (rcv *attitudeState) ATT_DIR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,8 +105,8 @@ func (rcv *attitudeState) AttDir() []byte {
 	return rcv.ATT_DIR()
 }
 
-/// Attitude direction (A2B or B2A)
-/// Epoch (ISO 8601)
+// / Attitude direction (A2B or B2A)
+// / Epoch (ISO 8601)
 func (rcv *attitudeState) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -119,8 +119,8 @@ func (rcv *attitudeState) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-/// Epoch (ISO 8601)
-/// Quaternion scalar component (q0 or qc)
+// / Epoch (ISO 8601)
+// / Quaternion scalar component (q0 or qc)
 func (rcv *attitudeState) Q1() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -129,12 +129,12 @@ func (rcv *attitudeState) Q1() float64 {
 	return 0.0
 }
 
-/// Quaternion scalar component (q0 or qc)
+// / Quaternion scalar component (q0 or qc)
 func (rcv *attitudeState) MutateQ1(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
 
-/// Quaternion vector component i
+// / Quaternion vector component i
 func (rcv *attitudeState) Q2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -143,12 +143,12 @@ func (rcv *attitudeState) Q2() float64 {
 	return 0.0
 }
 
-/// Quaternion vector component i
+// / Quaternion vector component i
 func (rcv *attitudeState) MutateQ2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
 
-/// Quaternion vector component j
+// / Quaternion vector component j
 func (rcv *attitudeState) Q3() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -157,12 +157,12 @@ func (rcv *attitudeState) Q3() float64 {
 	return 0.0
 }
 
-/// Quaternion vector component j
+// / Quaternion vector component j
 func (rcv *attitudeState) MutateQ3(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
 
-/// Quaternion vector component k
+// / Quaternion vector component k
 func (rcv *attitudeState) QC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -175,7 +175,7 @@ func (rcv *attitudeState) Qc() float64 {
 	return rcv.QC()
 }
 
-/// Quaternion vector component k
+// / Quaternion vector component k
 func (rcv *attitudeState) MutateQC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -184,7 +184,7 @@ func (rcv *attitudeState) MutateQc(n float64) bool {
 	return rcv.MutateQC(n)
 }
 
-/// Euler angle X in degrees
+// / Euler angle X in degrees
 func (rcv *attitudeState) ANGLE_1() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -197,7 +197,7 @@ func (rcv *attitudeState) Angle1() float64 {
 	return rcv.ANGLE_1()
 }
 
-/// Euler angle X in degrees
+// / Euler angle X in degrees
 func (rcv *attitudeState) MutateANGLE_1(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -206,7 +206,7 @@ func (rcv *attitudeState) MutateAngle1(n float64) bool {
 	return rcv.MutateANGLE_1(n)
 }
 
-/// Euler angle Y in degrees
+// / Euler angle Y in degrees
 func (rcv *attitudeState) ANGLE_2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -219,7 +219,7 @@ func (rcv *attitudeState) Angle2() float64 {
 	return rcv.ANGLE_2()
 }
 
-/// Euler angle Y in degrees
+// / Euler angle Y in degrees
 func (rcv *attitudeState) MutateANGLE_2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -228,7 +228,7 @@ func (rcv *attitudeState) MutateAngle2(n float64) bool {
 	return rcv.MutateANGLE_2(n)
 }
 
-/// Euler angle Z in degrees
+// / Euler angle Z in degrees
 func (rcv *attitudeState) ANGLE_3() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -241,7 +241,7 @@ func (rcv *attitudeState) Angle3() float64 {
 	return rcv.ANGLE_3()
 }
 
-/// Euler angle Z in degrees
+// / Euler angle Z in degrees
 func (rcv *attitudeState) MutateANGLE_3(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -250,7 +250,7 @@ func (rcv *attitudeState) MutateAngle3(n float64) bool {
 	return rcv.MutateANGLE_3(n)
 }
 
-/// Euler rotation sequence (e.g., 321, 313)
+// / Euler rotation sequence (e.g., 321, 313)
 func (rcv *attitudeState) EULER_ROT_SEQ() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -263,8 +263,8 @@ func (rcv *attitudeState) EulerRotSeq() []byte {
 	return rcv.EULER_ROT_SEQ()
 }
 
-/// Euler rotation sequence (e.g., 321, 313)
-/// Angular velocity X in deg/s
+// / Euler rotation sequence (e.g., 321, 313)
+// / Angular velocity X in deg/s
 func (rcv *attitudeState) ANGVEL_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -277,7 +277,7 @@ func (rcv *attitudeState) AngvelX() float64 {
 	return rcv.ANGVEL_X()
 }
 
-/// Angular velocity X in deg/s
+// / Angular velocity X in deg/s
 func (rcv *attitudeState) MutateANGVEL_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -286,7 +286,7 @@ func (rcv *attitudeState) MutateAngvelX(n float64) bool {
 	return rcv.MutateANGVEL_X(n)
 }
 
-/// Angular velocity Y in deg/s
+// / Angular velocity Y in deg/s
 func (rcv *attitudeState) ANGVEL_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -299,7 +299,7 @@ func (rcv *attitudeState) AngvelY() float64 {
 	return rcv.ANGVEL_Y()
 }
 
-/// Angular velocity Y in deg/s
+// / Angular velocity Y in deg/s
 func (rcv *attitudeState) MutateANGVEL_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -308,7 +308,7 @@ func (rcv *attitudeState) MutateAngvelY(n float64) bool {
 	return rcv.MutateANGVEL_Y(n)
 }
 
-/// Angular velocity Z in deg/s
+// / Angular velocity Z in deg/s
 func (rcv *attitudeState) ANGVEL_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -321,7 +321,7 @@ func (rcv *attitudeState) AngvelZ() float64 {
 	return rcv.ANGVEL_Z()
 }
 
-/// Angular velocity Z in deg/s
+// / Angular velocity Z in deg/s
 func (rcv *attitudeState) MutateANGVEL_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -330,7 +330,7 @@ func (rcv *attitudeState) MutateAngvelZ(n float64) bool {
 	return rcv.MutateANGVEL_Z(n)
 }
 
-/// Spin alpha in degrees
+// / Spin alpha in degrees
 func (rcv *attitudeState) SPIN_ALPHA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -343,7 +343,7 @@ func (rcv *attitudeState) SpinAlpha() float64 {
 	return rcv.SPIN_ALPHA()
 }
 
-/// Spin alpha in degrees
+// / Spin alpha in degrees
 func (rcv *attitudeState) MutateSPIN_ALPHA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -352,7 +352,7 @@ func (rcv *attitudeState) MutateSpinAlpha(n float64) bool {
 	return rcv.MutateSPIN_ALPHA(n)
 }
 
-/// Spin delta in degrees
+// / Spin delta in degrees
 func (rcv *attitudeState) SPIN_DELTA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -365,7 +365,7 @@ func (rcv *attitudeState) SpinDelta() float64 {
 	return rcv.SPIN_DELTA()
 }
 
-/// Spin delta in degrees
+// / Spin delta in degrees
 func (rcv *attitudeState) MutateSPIN_DELTA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -374,7 +374,7 @@ func (rcv *attitudeState) MutateSpinDelta(n float64) bool {
 	return rcv.MutateSPIN_DELTA(n)
 }
 
-/// Spin angle in degrees
+// / Spin angle in degrees
 func (rcv *attitudeState) SPIN_ANGLE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -387,7 +387,7 @@ func (rcv *attitudeState) SpinAngle() float64 {
 	return rcv.SPIN_ANGLE()
 }
 
-/// Spin angle in degrees
+// / Spin angle in degrees
 func (rcv *attitudeState) MutateSPIN_ANGLE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -396,7 +396,7 @@ func (rcv *attitudeState) MutateSpinAngle(n float64) bool {
 	return rcv.MutateSPIN_ANGLE(n)
 }
 
-/// Spin angle velocity in deg/s
+// / Spin angle velocity in deg/s
 func (rcv *attitudeState) SPIN_ANGLE_VEL() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -409,7 +409,7 @@ func (rcv *attitudeState) SpinAngleVel() float64 {
 	return rcv.SPIN_ANGLE_VEL()
 }
 
-/// Spin angle velocity in deg/s
+// / Spin angle velocity in deg/s
 func (rcv *attitudeState) MutateSPIN_ANGLE_VEL(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -418,7 +418,7 @@ func (rcv *attitudeState) MutateSpinAngleVel(n float64) bool {
 	return rcv.MutateSPIN_ANGLE_VEL(n)
 }
 
-/// Nutation angle in degrees
+// / Nutation angle in degrees
 func (rcv *attitudeState) NUTATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -431,7 +431,7 @@ func (rcv *attitudeState) Nutation() float64 {
 	return rcv.NUTATION()
 }
 
-/// Nutation angle in degrees
+// / Nutation angle in degrees
 func (rcv *attitudeState) MutateNUTATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(44, n)
 }
@@ -440,7 +440,7 @@ func (rcv *attitudeState) MutateNutation(n float64) bool {
 	return rcv.MutateNUTATION(n)
 }
 
-/// Nutation period in seconds
+// / Nutation period in seconds
 func (rcv *attitudeState) NUTATION_PERIOD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -453,7 +453,7 @@ func (rcv *attitudeState) NutationPeriod() float64 {
 	return rcv.NUTATION_PERIOD()
 }
 
-/// Nutation period in seconds
+// / Nutation period in seconds
 func (rcv *attitudeState) MutateNUTATION_PERIOD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(46, n)
 }
@@ -462,7 +462,7 @@ func (rcv *attitudeState) MutateNutationPeriod(n float64) bool {
 	return rcv.MutateNUTATION_PERIOD(n)
 }
 
-/// Nutation phase in degrees
+// / Nutation phase in degrees
 func (rcv *attitudeState) NUTATION_PHASE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -475,7 +475,7 @@ func (rcv *attitudeState) NutationPhase() float64 {
 	return rcv.NUTATION_PHASE()
 }
 
-/// Nutation phase in degrees
+// / Nutation phase in degrees
 func (rcv *attitudeState) MutateNUTATION_PHASE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(48, n)
 }

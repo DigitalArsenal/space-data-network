@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Burn Out Vector Message
+// / Burn Out Vector Message
 type BOV struct {
 	_tab flatbuffers.Table
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// KML coordinate (longitude, latitude, optional altitude)
+// / KML coordinate (longitude, latitude, optional altitude)
 type KMLCoordinate struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLCoordinate) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Longitude in decimal degrees
+// / Longitude in decimal degrees
 func (rcv *KMLCoordinate) LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *KMLCoordinate) Longitude() float64 {
 	return rcv.LONGITUDE()
 }
 
-/// Longitude in decimal degrees
+// / Longitude in decimal degrees
 func (rcv *KMLCoordinate) MutateLONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *KMLCoordinate) MutateLongitude(n float64) bool {
 	return rcv.MutateLONGITUDE(n)
 }
 
-/// Latitude in decimal degrees
+// / Latitude in decimal degrees
 func (rcv *KMLCoordinate) LATITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *KMLCoordinate) Latitude() float64 {
 	return rcv.LATITUDE()
 }
 
-/// Latitude in decimal degrees
+// / Latitude in decimal degrees
 func (rcv *KMLCoordinate) MutateLATITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *KMLCoordinate) MutateLatitude(n float64) bool {
 	return rcv.MutateLATITUDE(n)
 }
 
-/// Altitude in meters
+// / Altitude in meters
 func (rcv *KMLCoordinate) ALTITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *KMLCoordinate) Altitude() float64 {
 	return rcv.ALTITUDE()
 }
 
-/// Altitude in meters
+// / Altitude in meters
 func (rcv *KMLCoordinate) MutateALTITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }

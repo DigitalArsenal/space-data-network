@@ -4,14 +4,14 @@ package XTC
 
 import "strconv"
 
-/// Boolean operators for combining conditions
+// / Boolean operators for combining conditions
 type BooleanOperatorType int8
 
 const (
 	/// Logical AND
 	BooleanOperatorTypeAND BooleanOperatorType = 0
 	/// Logical OR
-	BooleanOperatorTypeOR  BooleanOperatorType = 1
+	BooleanOperatorTypeOR BooleanOperatorType = 1
 	/// Logical XOR
 	BooleanOperatorTypeXOR BooleanOperatorType = 2
 )

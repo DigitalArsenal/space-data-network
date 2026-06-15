@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// VCM Atmospheric and Perturbation Model Data
+// / VCM Atmospheric and Perturbation Model Data
 type VCMAtmosphericModelData struct {
 	_tab flatbuffers.Table
 }

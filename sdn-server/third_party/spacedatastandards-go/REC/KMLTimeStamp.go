@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// TimeStamp
+// / TimeStamp
 type KMLTimeStamp struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLTimeStamp) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Time (ISO 8601)
+// / Time (ISO 8601)
 func (rcv *KMLTimeStamp) WHEN() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *KMLTimeStamp) When() []byte {
 	return rcv.WHEN()
 }
 
-/// Time (ISO 8601)
+// / Time (ISO 8601)
 func KMLTimeStampStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// CZML Document
+// / CZML Document
 type CZM struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *CZM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Document-level name
+// / Document-level name
 func (rcv *CZM) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *CZM) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Document-level name
-/// Document-level version
+// / Document-level name
+// / Document-level version
 func (rcv *CZM) VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *CZM) Version() []byte {
 	return rcv.VERSION()
 }
 
-/// Document-level version
-/// Clock settings - current time (ISO 8601)
+// / Document-level version
+// / Clock settings - current time (ISO 8601)
 func (rcv *CZM) CLOCK_CURRENT_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *CZM) ClockCurrentTime() []byte {
 	return rcv.CLOCK_CURRENT_TIME()
 }
 
-/// Clock settings - current time (ISO 8601)
-/// Clock settings - interval (ISO 8601 interval)
+// / Clock settings - current time (ISO 8601)
+// / Clock settings - interval (ISO 8601 interval)
 func (rcv *CZM) CLOCK_INTERVAL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *CZM) ClockInterval() []byte {
 	return rcv.CLOCK_INTERVAL()
 }
 
-/// Clock settings - interval (ISO 8601 interval)
-/// Clock settings - multiplier
+// / Clock settings - interval (ISO 8601 interval)
+// / Clock settings - multiplier
 func (rcv *CZM) CLOCK_MULTIPLIER() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,7 +123,7 @@ func (rcv *CZM) ClockMultiplier() float64 {
 	return rcv.CLOCK_MULTIPLIER()
 }
 
-/// Clock settings - multiplier
+// / Clock settings - multiplier
 func (rcv *CZM) MutateCLOCK_MULTIPLIER(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -132,7 +132,7 @@ func (rcv *CZM) MutateClockMultiplier(n float64) bool {
 	return rcv.MutateCLOCK_MULTIPLIER(n)
 }
 
-/// Clock range
+// / Clock range
 func (rcv *CZM) CLOCK_RANGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,8 +145,8 @@ func (rcv *CZM) ClockRange() []byte {
 	return rcv.CLOCK_RANGE()
 }
 
-/// Clock range
-/// Clock step
+// / Clock range
+// / Clock step
 func (rcv *CZM) CLOCK_STEP() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,8 +159,8 @@ func (rcv *CZM) ClockStep() []byte {
 	return rcv.CLOCK_STEP()
 }
 
-/// Clock step
-/// All packets in the document
+// / Clock step
+// / All packets in the document
 func (rcv *CZM) PACKETS(obj *CZMPacket, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -192,7 +192,7 @@ func (rcv *CZM) PacketsLength() int {
 	return rcv.PACKETSLength()
 }
 
-/// All packets in the document
+// / All packets in the document
 func CZMStart(builder *flatbuffers.Builder) {
 	builder.StartObject(8)
 }

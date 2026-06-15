@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// GPX link to an external resource
+// / GPX link to an external resource
 type GPXLink struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *GPXLink) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// URL
+// / URL
 func (rcv *GPXLink) HREF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *GPXLink) Href() []byte {
 	return rcv.HREF()
 }
 
-/// URL
-/// Link text
+// / URL
+// / Link text
 func (rcv *GPXLink) TEXT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *GPXLink) Text() []byte {
 	return rcv.TEXT()
 }
 
-/// Link text
-/// MIME type
+// / Link text
+// / MIME type
 func (rcv *GPXLink) TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *GPXLink) Type() []byte {
 	return rcv.TYPE()
 }
 
-/// MIME type
+// / MIME type
 func GPXLinkStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

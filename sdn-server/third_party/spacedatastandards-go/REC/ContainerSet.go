@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Collection of sequence containers
+// / Collection of sequence containers
 type ContainerSet struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ContainerSet) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Sequence containers
+// / Sequence containers
 func (rcv *ContainerSet) CONTAINERS(obj *SequenceContainer, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -74,7 +74,7 @@ func (rcv *ContainerSet) ContainersLength() int {
 	return rcv.CONTAINERSLength()
 }
 
-/// Sequence containers
+// / Sequence containers
 func ContainerSetStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }

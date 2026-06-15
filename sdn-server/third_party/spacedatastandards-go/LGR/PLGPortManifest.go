@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// One input or output port on a method.
+// / One input or output port on a method.
 type PLGPortManifest struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *PLGPortManifest) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Stable port identifier within the method.
+// / Stable port identifier within the method.
 func (rcv *PLGPortManifest) PORT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *PLGPortManifest) PortId() []byte {
 	return rcv.PORT_ID()
 }
 
-/// Stable port identifier within the method.
-/// Human-readable name for UIs.
+// / Stable port identifier within the method.
+// / Human-readable name for UIs.
 func (rcv *PLGPortManifest) DISPLAY_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *PLGPortManifest) DisplayName() []byte {
 	return rcv.DISPLAY_NAME()
 }
 
-/// Human-readable name for UIs.
-/// Type sets accepted on this port.
+// / Human-readable name for UIs.
+// / Type sets accepted on this port.
 func (rcv *PLGPortManifest) ACCEPTED_TYPE_SETS(obj *PLGAcceptedTypeSet, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -102,8 +102,8 @@ func (rcv *PLGPortManifest) AcceptedTypeSetsLength() int {
 	return rcv.ACCEPTED_TYPE_SETSLength()
 }
 
-/// Type sets accepted on this port.
-/// Minimum number of streams that must be connected.
+// / Type sets accepted on this port.
+// / Minimum number of streams that must be connected.
 func (rcv *PLGPortManifest) MIN_STREAMS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -116,7 +116,7 @@ func (rcv *PLGPortManifest) MinStreams() uint16 {
 	return rcv.MIN_STREAMS()
 }
 
-/// Minimum number of streams that must be connected.
+// / Minimum number of streams that must be connected.
 func (rcv *PLGPortManifest) MutateMIN_STREAMS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(10, n)
 }
@@ -125,7 +125,7 @@ func (rcv *PLGPortManifest) MutateMinStreams(n uint16) bool {
 	return rcv.MutateMIN_STREAMS(n)
 }
 
-/// Maximum number of streams that may be connected.
+// / Maximum number of streams that may be connected.
 func (rcv *PLGPortManifest) MAX_STREAMS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -138,7 +138,7 @@ func (rcv *PLGPortManifest) MaxStreams() uint16 {
 	return rcv.MAX_STREAMS()
 }
 
-/// Maximum number of streams that may be connected.
+// / Maximum number of streams that may be connected.
 func (rcv *PLGPortManifest) MutateMAX_STREAMS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(12, n)
 }
@@ -147,7 +147,7 @@ func (rcv *PLGPortManifest) MutateMaxStreams(n uint16) bool {
 	return rcv.MutateMAX_STREAMS(n)
 }
 
-/// Whether the port must be connected for invocation.
+// / Whether the port must be connected for invocation.
 func (rcv *PLGPortManifest) REQUIRED() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -160,7 +160,7 @@ func (rcv *PLGPortManifest) Required() bool {
 	return rcv.REQUIRED()
 }
 
-/// Whether the port must be connected for invocation.
+// / Whether the port must be connected for invocation.
 func (rcv *PLGPortManifest) MutateREQUIRED(n bool) bool {
 	return rcv._tab.MutateBoolSlot(14, n)
 }
@@ -169,7 +169,7 @@ func (rcv *PLGPortManifest) MutateRequired(n bool) bool {
 	return rcv.MutateREQUIRED(n)
 }
 
-/// Optional human-readable description.
+// / Optional human-readable description.
 func (rcv *PLGPortManifest) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -182,7 +182,7 @@ func (rcv *PLGPortManifest) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-/// Optional human-readable description.
+// / Optional human-readable description.
 func PLGPortManifestStart(builder *flatbuffers.Builder) {
 	builder.StartObject(7)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Space Weather Data Record
+// / Space Weather Data Record
 type SPW struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *SPW) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Date in ISO 8601 format
+// / Date in ISO 8601 format
 func (rcv *SPW) DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *SPW) Date() []byte {
 	return rcv.DATE()
 }
 
-/// Date in ISO 8601 format
-/// Bartels Solar Rotation Number
+// / Date in ISO 8601 format
+// / Bartels Solar Rotation Number
 func (rcv *SPW) BSRN() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,7 +81,7 @@ func (rcv *SPW) Bsrn() int32 {
 	return rcv.BSRN()
 }
 
-/// Bartels Solar Rotation Number
+// / Bartels Solar Rotation Number
 func (rcv *SPW) MutateBSRN(n int32) bool {
 	return rcv._tab.MutateInt32Slot(6, n)
 }
@@ -90,7 +90,7 @@ func (rcv *SPW) MutateBsrn(n int32) bool {
 	return rcv.MutateBSRN(n)
 }
 
-/// Day within Bartels cycle (1-27)
+// / Day within Bartels cycle (1-27)
 func (rcv *SPW) ND() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,7 +103,7 @@ func (rcv *SPW) Nd() int32 {
 	return rcv.ND()
 }
 
-/// Day within Bartels cycle (1-27)
+// / Day within Bartels cycle (1-27)
 func (rcv *SPW) MutateND(n int32) bool {
 	return rcv._tab.MutateInt32Slot(8, n)
 }
@@ -112,7 +112,7 @@ func (rcv *SPW) MutateNd(n int32) bool {
 	return rcv.MutateND(n)
 }
 
-/// Planetary 3-hour Range Index (Kp) for 0000-0300 UT, multiplied by 10
+// / Planetary 3-hour Range Index (Kp) for 0000-0300 UT, multiplied by 10
 func (rcv *SPW) KP1() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -125,7 +125,7 @@ func (rcv *SPW) Kp1() int32 {
 	return rcv.KP1()
 }
 
-/// Planetary 3-hour Range Index (Kp) for 0000-0300 UT, multiplied by 10
+// / Planetary 3-hour Range Index (Kp) for 0000-0300 UT, multiplied by 10
 func (rcv *SPW) MutateKP1(n int32) bool {
 	return rcv._tab.MutateInt32Slot(10, n)
 }
@@ -134,7 +134,7 @@ func (rcv *SPW) MutateKp1(n int32) bool {
 	return rcv.MutateKP1(n)
 }
 
-/// Planetary 3-hour Range Index (Kp) for 0300-0600 UT, multiplied by 10
+// / Planetary 3-hour Range Index (Kp) for 0300-0600 UT, multiplied by 10
 func (rcv *SPW) KP2() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -147,7 +147,7 @@ func (rcv *SPW) Kp2() int32 {
 	return rcv.KP2()
 }
 
-/// Planetary 3-hour Range Index (Kp) for 0300-0600 UT, multiplied by 10
+// / Planetary 3-hour Range Index (Kp) for 0300-0600 UT, multiplied by 10
 func (rcv *SPW) MutateKP2(n int32) bool {
 	return rcv._tab.MutateInt32Slot(12, n)
 }
@@ -156,7 +156,7 @@ func (rcv *SPW) MutateKp2(n int32) bool {
 	return rcv.MutateKP2(n)
 }
 
-/// Planetary 3-hour Range Index (Kp) for 0600-0900 UT, multiplied by 10
+// / Planetary 3-hour Range Index (Kp) for 0600-0900 UT, multiplied by 10
 func (rcv *SPW) KP3() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -169,7 +169,7 @@ func (rcv *SPW) Kp3() int32 {
 	return rcv.KP3()
 }
 
-/// Planetary 3-hour Range Index (Kp) for 0600-0900 UT, multiplied by 10
+// / Planetary 3-hour Range Index (Kp) for 0600-0900 UT, multiplied by 10
 func (rcv *SPW) MutateKP3(n int32) bool {
 	return rcv._tab.MutateInt32Slot(14, n)
 }
@@ -178,7 +178,7 @@ func (rcv *SPW) MutateKp3(n int32) bool {
 	return rcv.MutateKP3(n)
 }
 
-/// Planetary 3-hour Range Index (Kp) for 0900-1200 UT, multiplied by 10
+// / Planetary 3-hour Range Index (Kp) for 0900-1200 UT, multiplied by 10
 func (rcv *SPW) KP4() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -191,7 +191,7 @@ func (rcv *SPW) Kp4() int32 {
 	return rcv.KP4()
 }
 
-/// Planetary 3-hour Range Index (Kp) for 0900-1200 UT, multiplied by 10
+// / Planetary 3-hour Range Index (Kp) for 0900-1200 UT, multiplied by 10
 func (rcv *SPW) MutateKP4(n int32) bool {
 	return rcv._tab.MutateInt32Slot(16, n)
 }
@@ -200,7 +200,7 @@ func (rcv *SPW) MutateKp4(n int32) bool {
 	return rcv.MutateKP4(n)
 }
 
-/// Planetary 3-hour Range Index (Kp) for 1200-1500 UT, multiplied by 10
+// / Planetary 3-hour Range Index (Kp) for 1200-1500 UT, multiplied by 10
 func (rcv *SPW) KP5() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -213,7 +213,7 @@ func (rcv *SPW) Kp5() int32 {
 	return rcv.KP5()
 }
 
-/// Planetary 3-hour Range Index (Kp) for 1200-1500 UT, multiplied by 10
+// / Planetary 3-hour Range Index (Kp) for 1200-1500 UT, multiplied by 10
 func (rcv *SPW) MutateKP5(n int32) bool {
 	return rcv._tab.MutateInt32Slot(18, n)
 }
@@ -222,7 +222,7 @@ func (rcv *SPW) MutateKp5(n int32) bool {
 	return rcv.MutateKP5(n)
 }
 
-/// Planetary 3-hour Range Index (Kp) for 1500-1800 UT, multiplied by 10
+// / Planetary 3-hour Range Index (Kp) for 1500-1800 UT, multiplied by 10
 func (rcv *SPW) KP6() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -235,7 +235,7 @@ func (rcv *SPW) Kp6() int32 {
 	return rcv.KP6()
 }
 
-/// Planetary 3-hour Range Index (Kp) for 1500-1800 UT, multiplied by 10
+// / Planetary 3-hour Range Index (Kp) for 1500-1800 UT, multiplied by 10
 func (rcv *SPW) MutateKP6(n int32) bool {
 	return rcv._tab.MutateInt32Slot(20, n)
 }
@@ -244,7 +244,7 @@ func (rcv *SPW) MutateKp6(n int32) bool {
 	return rcv.MutateKP6(n)
 }
 
-/// Planetary 3-hour Range Index (Kp) for 1800-2100 UT, multiplied by 10
+// / Planetary 3-hour Range Index (Kp) for 1800-2100 UT, multiplied by 10
 func (rcv *SPW) KP7() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -257,7 +257,7 @@ func (rcv *SPW) Kp7() int32 {
 	return rcv.KP7()
 }
 
-/// Planetary 3-hour Range Index (Kp) for 1800-2100 UT, multiplied by 10
+// / Planetary 3-hour Range Index (Kp) for 1800-2100 UT, multiplied by 10
 func (rcv *SPW) MutateKP7(n int32) bool {
 	return rcv._tab.MutateInt32Slot(22, n)
 }
@@ -266,7 +266,7 @@ func (rcv *SPW) MutateKp7(n int32) bool {
 	return rcv.MutateKP7(n)
 }
 
-/// Planetary 3-hour Range Index (Kp) for 2100-0000 UT, multiplied by 10
+// / Planetary 3-hour Range Index (Kp) for 2100-0000 UT, multiplied by 10
 func (rcv *SPW) KP8() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -279,7 +279,7 @@ func (rcv *SPW) Kp8() int32 {
 	return rcv.KP8()
 }
 
-/// Planetary 3-hour Range Index (Kp) for 2100-0000 UT, multiplied by 10
+// / Planetary 3-hour Range Index (Kp) for 2100-0000 UT, multiplied by 10
 func (rcv *SPW) MutateKP8(n int32) bool {
 	return rcv._tab.MutateInt32Slot(24, n)
 }
@@ -288,7 +288,7 @@ func (rcv *SPW) MutateKp8(n int32) bool {
 	return rcv.MutateKP8(n)
 }
 
-/// Sum of the 8 Kp indices for the day
+// / Sum of the 8 Kp indices for the day
 func (rcv *SPW) KP_SUM() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -301,7 +301,7 @@ func (rcv *SPW) KpSum() int32 {
 	return rcv.KP_SUM()
 }
 
-/// Sum of the 8 Kp indices for the day
+// / Sum of the 8 Kp indices for the day
 func (rcv *SPW) MutateKP_SUM(n int32) bool {
 	return rcv._tab.MutateInt32Slot(26, n)
 }
@@ -310,7 +310,7 @@ func (rcv *SPW) MutateKpSum(n int32) bool {
 	return rcv.MutateKP_SUM(n)
 }
 
-/// Planetary Equivalent Amplitude (Ap) for 0000-0300 UT
+// / Planetary Equivalent Amplitude (Ap) for 0000-0300 UT
 func (rcv *SPW) AP1() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -323,7 +323,7 @@ func (rcv *SPW) Ap1() int32 {
 	return rcv.AP1()
 }
 
-/// Planetary Equivalent Amplitude (Ap) for 0000-0300 UT
+// / Planetary Equivalent Amplitude (Ap) for 0000-0300 UT
 func (rcv *SPW) MutateAP1(n int32) bool {
 	return rcv._tab.MutateInt32Slot(28, n)
 }
@@ -332,7 +332,7 @@ func (rcv *SPW) MutateAp1(n int32) bool {
 	return rcv.MutateAP1(n)
 }
 
-/// Planetary Equivalent Amplitude (Ap) for 0300-0600 UT
+// / Planetary Equivalent Amplitude (Ap) for 0300-0600 UT
 func (rcv *SPW) AP2() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -345,7 +345,7 @@ func (rcv *SPW) Ap2() int32 {
 	return rcv.AP2()
 }
 
-/// Planetary Equivalent Amplitude (Ap) for 0300-0600 UT
+// / Planetary Equivalent Amplitude (Ap) for 0300-0600 UT
 func (rcv *SPW) MutateAP2(n int32) bool {
 	return rcv._tab.MutateInt32Slot(30, n)
 }
@@ -354,7 +354,7 @@ func (rcv *SPW) MutateAp2(n int32) bool {
 	return rcv.MutateAP2(n)
 }
 
-/// Planetary Equivalent Amplitude (Ap) for 0600-0900 UT
+// / Planetary Equivalent Amplitude (Ap) for 0600-0900 UT
 func (rcv *SPW) AP3() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -367,7 +367,7 @@ func (rcv *SPW) Ap3() int32 {
 	return rcv.AP3()
 }
 
-/// Planetary Equivalent Amplitude (Ap) for 0600-0900 UT
+// / Planetary Equivalent Amplitude (Ap) for 0600-0900 UT
 func (rcv *SPW) MutateAP3(n int32) bool {
 	return rcv._tab.MutateInt32Slot(32, n)
 }
@@ -376,7 +376,7 @@ func (rcv *SPW) MutateAp3(n int32) bool {
 	return rcv.MutateAP3(n)
 }
 
-/// Planetary Equivalent Amplitude (Ap) for 0900-1200 UT
+// / Planetary Equivalent Amplitude (Ap) for 0900-1200 UT
 func (rcv *SPW) AP4() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -389,7 +389,7 @@ func (rcv *SPW) Ap4() int32 {
 	return rcv.AP4()
 }
 
-/// Planetary Equivalent Amplitude (Ap) for 0900-1200 UT
+// / Planetary Equivalent Amplitude (Ap) for 0900-1200 UT
 func (rcv *SPW) MutateAP4(n int32) bool {
 	return rcv._tab.MutateInt32Slot(34, n)
 }
@@ -398,7 +398,7 @@ func (rcv *SPW) MutateAp4(n int32) bool {
 	return rcv.MutateAP4(n)
 }
 
-/// Planetary Equivalent Amplitude (Ap) for 1200-1500 UT
+// / Planetary Equivalent Amplitude (Ap) for 1200-1500 UT
 func (rcv *SPW) AP5() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -411,7 +411,7 @@ func (rcv *SPW) Ap5() int32 {
 	return rcv.AP5()
 }
 
-/// Planetary Equivalent Amplitude (Ap) for 1200-1500 UT
+// / Planetary Equivalent Amplitude (Ap) for 1200-1500 UT
 func (rcv *SPW) MutateAP5(n int32) bool {
 	return rcv._tab.MutateInt32Slot(36, n)
 }
@@ -420,7 +420,7 @@ func (rcv *SPW) MutateAp5(n int32) bool {
 	return rcv.MutateAP5(n)
 }
 
-/// Planetary Equivalent Amplitude (Ap) for 1500-1800 UT
+// / Planetary Equivalent Amplitude (Ap) for 1500-1800 UT
 func (rcv *SPW) AP6() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -433,7 +433,7 @@ func (rcv *SPW) Ap6() int32 {
 	return rcv.AP6()
 }
 
-/// Planetary Equivalent Amplitude (Ap) for 1500-1800 UT
+// / Planetary Equivalent Amplitude (Ap) for 1500-1800 UT
 func (rcv *SPW) MutateAP6(n int32) bool {
 	return rcv._tab.MutateInt32Slot(38, n)
 }
@@ -442,7 +442,7 @@ func (rcv *SPW) MutateAp6(n int32) bool {
 	return rcv.MutateAP6(n)
 }
 
-/// Planetary Equivalent Amplitude (Ap) for 1800-2100 UT
+// / Planetary Equivalent Amplitude (Ap) for 1800-2100 UT
 func (rcv *SPW) AP7() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -455,7 +455,7 @@ func (rcv *SPW) Ap7() int32 {
 	return rcv.AP7()
 }
 
-/// Planetary Equivalent Amplitude (Ap) for 1800-2100 UT
+// / Planetary Equivalent Amplitude (Ap) for 1800-2100 UT
 func (rcv *SPW) MutateAP7(n int32) bool {
 	return rcv._tab.MutateInt32Slot(40, n)
 }
@@ -464,7 +464,7 @@ func (rcv *SPW) MutateAp7(n int32) bool {
 	return rcv.MutateAP7(n)
 }
 
-/// Planetary Equivalent Amplitude (Ap) for 2100-0000 UT
+// / Planetary Equivalent Amplitude (Ap) for 2100-0000 UT
 func (rcv *SPW) AP8() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -477,7 +477,7 @@ func (rcv *SPW) Ap8() int32 {
 	return rcv.AP8()
 }
 
-/// Planetary Equivalent Amplitude (Ap) for 2100-0000 UT
+// / Planetary Equivalent Amplitude (Ap) for 2100-0000 UT
 func (rcv *SPW) MutateAP8(n int32) bool {
 	return rcv._tab.MutateInt32Slot(42, n)
 }
@@ -486,7 +486,7 @@ func (rcv *SPW) MutateAp8(n int32) bool {
 	return rcv.MutateAP8(n)
 }
 
-/// Arithmetic average of the 8 Ap indices for the day
+// / Arithmetic average of the 8 Ap indices for the day
 func (rcv *SPW) AP_AVG() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -499,7 +499,7 @@ func (rcv *SPW) ApAvg() int32 {
 	return rcv.AP_AVG()
 }
 
-/// Arithmetic average of the 8 Ap indices for the day
+// / Arithmetic average of the 8 Ap indices for the day
 func (rcv *SPW) MutateAP_AVG(n int32) bool {
 	return rcv._tab.MutateInt32Slot(44, n)
 }
@@ -508,7 +508,7 @@ func (rcv *SPW) MutateApAvg(n int32) bool {
 	return rcv.MutateAP_AVG(n)
 }
 
-/// Planetary Daily Character Figure (0.0 to 2.5)
+// / Planetary Daily Character Figure (0.0 to 2.5)
 func (rcv *SPW) CP() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -521,7 +521,7 @@ func (rcv *SPW) Cp() float32 {
 	return rcv.CP()
 }
 
-/// Planetary Daily Character Figure (0.0 to 2.5)
+// / Planetary Daily Character Figure (0.0 to 2.5)
 func (rcv *SPW) MutateCP(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(46, n)
 }
@@ -530,7 +530,7 @@ func (rcv *SPW) MutateCp(n float32) bool {
 	return rcv.MutateCP(n)
 }
 
-/// C9 index (0-9)
+// / C9 index (0-9)
 func (rcv *SPW) C9() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -539,12 +539,12 @@ func (rcv *SPW) C9() int32 {
 	return 0
 }
 
-/// C9 index (0-9)
+// / C9 index (0-9)
 func (rcv *SPW) MutateC9(n int32) bool {
 	return rcv._tab.MutateInt32Slot(48, n)
 }
 
-/// International Sunspot Number
+// / International Sunspot Number
 func (rcv *SPW) ISN() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -557,7 +557,7 @@ func (rcv *SPW) Isn() int32 {
 	return rcv.ISN()
 }
 
-/// International Sunspot Number
+// / International Sunspot Number
 func (rcv *SPW) MutateISN(n int32) bool {
 	return rcv._tab.MutateInt32Slot(50, n)
 }
@@ -566,7 +566,7 @@ func (rcv *SPW) MutateIsn(n int32) bool {
 	return rcv.MutateISN(n)
 }
 
-/// Observed 10.7cm Solar Radio Flux
+// / Observed 10.7cm Solar Radio Flux
 func (rcv *SPW) F107_OBS() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -579,7 +579,7 @@ func (rcv *SPW) F107Obs() float32 {
 	return rcv.F107_OBS()
 }
 
-/// Observed 10.7cm Solar Radio Flux
+// / Observed 10.7cm Solar Radio Flux
 func (rcv *SPW) MutateF107_OBS(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(52, n)
 }
@@ -588,7 +588,7 @@ func (rcv *SPW) MutateF107Obs(n float32) bool {
 	return rcv.MutateF107_OBS(n)
 }
 
-/// Adjusted 10.7cm Solar Radio Flux (to 1 AU)
+// / Adjusted 10.7cm Solar Radio Flux (to 1 AU)
 func (rcv *SPW) F107_ADJ() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -601,7 +601,7 @@ func (rcv *SPW) F107Adj() float32 {
 	return rcv.F107_ADJ()
 }
 
-/// Adjusted 10.7cm Solar Radio Flux (to 1 AU)
+// / Adjusted 10.7cm Solar Radio Flux (to 1 AU)
 func (rcv *SPW) MutateF107_ADJ(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(54, n)
 }
@@ -610,7 +610,7 @@ func (rcv *SPW) MutateF107Adj(n float32) bool {
 	return rcv.MutateF107_ADJ(n)
 }
 
-/// F10.7 Data Type
+// / F10.7 Data Type
 func (rcv *SPW) F107_DATA_TYPE() F107DataType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -623,7 +623,7 @@ func (rcv *SPW) F107DataType() F107DataType {
 	return rcv.F107_DATA_TYPE()
 }
 
-/// F10.7 Data Type
+// / F10.7 Data Type
 func (rcv *SPW) MutateF107_DATA_TYPE(n F107DataType) bool {
 	return rcv._tab.MutateInt8Slot(56, int8(n))
 }
@@ -632,7 +632,7 @@ func (rcv *SPW) MutateF107DataType(n F107DataType) bool {
 	return rcv.MutateF107_DATA_TYPE(n)
 }
 
-/// 81-day centered average of observed F10.7
+// / 81-day centered average of observed F10.7
 func (rcv *SPW) F107_OBS_CENTER81() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -645,7 +645,7 @@ func (rcv *SPW) F107ObsCenter81() float32 {
 	return rcv.F107_OBS_CENTER81()
 }
 
-/// 81-day centered average of observed F10.7
+// / 81-day centered average of observed F10.7
 func (rcv *SPW) MutateF107_OBS_CENTER81(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(58, n)
 }
@@ -654,7 +654,7 @@ func (rcv *SPW) MutateF107ObsCenter81(n float32) bool {
 	return rcv.MutateF107_OBS_CENTER81(n)
 }
 
-/// 81-day trailing average of observed F10.7
+// / 81-day trailing average of observed F10.7
 func (rcv *SPW) F107_OBS_LAST81() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -667,7 +667,7 @@ func (rcv *SPW) F107ObsLast81() float32 {
 	return rcv.F107_OBS_LAST81()
 }
 
-/// 81-day trailing average of observed F10.7
+// / 81-day trailing average of observed F10.7
 func (rcv *SPW) MutateF107_OBS_LAST81(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(60, n)
 }
@@ -676,7 +676,7 @@ func (rcv *SPW) MutateF107ObsLast81(n float32) bool {
 	return rcv.MutateF107_OBS_LAST81(n)
 }
 
-/// 81-day centered average of adjusted F10.7
+// / 81-day centered average of adjusted F10.7
 func (rcv *SPW) F107_ADJ_CENTER81() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -689,7 +689,7 @@ func (rcv *SPW) F107AdjCenter81() float32 {
 	return rcv.F107_ADJ_CENTER81()
 }
 
-/// 81-day centered average of adjusted F10.7
+// / 81-day centered average of adjusted F10.7
 func (rcv *SPW) MutateF107_ADJ_CENTER81(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(62, n)
 }
@@ -698,7 +698,7 @@ func (rcv *SPW) MutateF107AdjCenter81(n float32) bool {
 	return rcv.MutateF107_ADJ_CENTER81(n)
 }
 
-/// 81-day trailing average of adjusted F10.7
+// / 81-day trailing average of adjusted F10.7
 func (rcv *SPW) F107_ADJ_LAST81() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -711,7 +711,7 @@ func (rcv *SPW) F107AdjLast81() float32 {
 	return rcv.F107_ADJ_LAST81()
 }
 
-/// 81-day trailing average of adjusted F10.7
+// / 81-day trailing average of adjusted F10.7
 func (rcv *SPW) MutateF107_ADJ_LAST81(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(64, n)
 }

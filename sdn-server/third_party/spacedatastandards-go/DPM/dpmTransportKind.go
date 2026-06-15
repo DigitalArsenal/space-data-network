@@ -4,7 +4,7 @@ package DPM
 
 import "strconv"
 
-/// Transport profile used to resolve a dataset update asset.
+// / Transport profile used to resolve a dataset update asset.
 type dpmTransportKind int8
 
 const (
@@ -13,9 +13,9 @@ const (
 	/// Asset bytes are resolved from the provider through a signed SDN query
 	/// protocol. This mode is used when the update is not published as a
 	/// globally discoverable file.
-	dpmTransportKindSDN_QUERY       dpmTransportKind = 1
+	dpmTransportKindSDN_QUERY dpmTransportKind = 1
 	/// Asset bytes are resolved by another protocol named in TRANSPORT_PROTOCOL.
-	dpmTransportKindOTHER           dpmTransportKind = 2
+	dpmTransportKindOTHER dpmTransportKind = 2
 )
 
 var EnumNamesdpmTransportKind = map[dpmTransportKind]string{

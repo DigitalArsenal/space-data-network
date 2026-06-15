@@ -4,18 +4,18 @@ package XTC
 
 import "strconv"
 
-/// Verifier type for command verification
+// / Verifier type for command verification
 type VerifierType int8
 
 const (
 	/// Execution started
-	VerifierTypeSTART    VerifierType = 0
+	VerifierTypeSTART VerifierType = 0
 	/// Progress update
 	VerifierTypePROGRESS VerifierType = 1
 	/// Execution complete
 	VerifierTypeCOMPLETE VerifierType = 2
 	/// Command failed
-	VerifierTypeFAILED   VerifierType = 3
+	VerifierTypeFAILED VerifierType = 3
 )
 
 var EnumNamesVerifierType = map[VerifierType]string{

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// GeoJSON Geometry object
+// / GeoJSON Geometry object
 type GJNGeometry struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *GJNGeometry) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Geometry type
+// / Geometry type
 func (rcv *GJNGeometry) TYPE() GJNGeometryType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *GJNGeometry) Type() GJNGeometryType {
 	return rcv.TYPE()
 }
 
-/// Geometry type
+// / Geometry type
 func (rcv *GJNGeometry) MutateTYPE(n GJNGeometryType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *GJNGeometry) MutateType(n GJNGeometryType) bool {
 	return rcv.MutateTYPE(n)
 }
 
-/// Single position (for Point)
+// / Single position (for Point)
 func (rcv *GJNGeometry) POINT(obj *GJNPosition) *GJNPosition {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -82,8 +82,8 @@ func (rcv *GJNGeometry) Point(obj *GJNPosition) *GJNPosition {
 	return rcv.POINT(obj)
 }
 
-/// Single position (for Point)
-/// Array of positions (for MultiPoint, LineString)
+// / Single position (for Point)
+// / Array of positions (for MultiPoint, LineString)
 func (rcv *GJNGeometry) POSITIONS(obj *GJNPosition, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -115,8 +115,8 @@ func (rcv *GJNGeometry) PositionsLength() int {
 	return rcv.POSITIONSLength()
 }
 
-/// Array of positions (for MultiPoint, LineString)
-/// Array of position arrays (for MultiLineString, Polygon rings)
+// / Array of positions (for MultiPoint, LineString)
+// / Array of position arrays (for MultiLineString, Polygon rings)
 func (rcv *GJNGeometry) RINGS(obj *GJNLinearRing, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -148,8 +148,8 @@ func (rcv *GJNGeometry) RingsLength() int {
 	return rcv.RINGSLength()
 }
 
-/// Array of position arrays (for MultiLineString, Polygon rings)
-/// Array of polygons each as array of rings (for MultiPolygon)
+// / Array of position arrays (for MultiLineString, Polygon rings)
+// / Array of polygons each as array of rings (for MultiPolygon)
 func (rcv *GJNGeometry) POLYGON_RINGS(obj *GJNPolygonRings, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -181,8 +181,8 @@ func (rcv *GJNGeometry) PolygonRingsLength() int {
 	return rcv.POLYGON_RINGSLength()
 }
 
-/// Array of polygons each as array of rings (for MultiPolygon)
-/// Child geometries (for GeometryCollection)
+// / Array of polygons each as array of rings (for MultiPolygon)
+// / Child geometries (for GeometryCollection)
 func (rcv *GJNGeometry) GEOMETRIES(obj *GJNGeometry, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -214,8 +214,8 @@ func (rcv *GJNGeometry) GeometriesLength() int {
 	return rcv.GEOMETRIESLength()
 }
 
-/// Child geometries (for GeometryCollection)
-/// Bounding box (optional, per RFC 7946 Section 5)
+// / Child geometries (for GeometryCollection)
+// / Bounding box (optional, per RFC 7946 Section 5)
 func (rcv *GJNGeometry) BBOX(obj *GJNBoundingBox) *GJNBoundingBox {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -233,7 +233,7 @@ func (rcv *GJNGeometry) Bbox(obj *GJNBoundingBox) *GJNBoundingBox {
 	return rcv.BBOX(obj)
 }
 
-/// Bounding box (optional, per RFC 7946 Section 5)
+// / Bounding box (optional, per RFC 7946 Section 5)
 func GJNGeometryStart(builder *flatbuffers.Builder) {
 	builder.StartObject(7)
 }

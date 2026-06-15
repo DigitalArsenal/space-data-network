@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Box (rectangular cuboid)
+// / Box (rectangular cuboid)
 type CZMBox struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMBox) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Whether the box is displayed
+// / Whether the box is displayed
 func (rcv *CZMBox) SHOW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMBox) Show() bool {
 	return rcv.SHOW()
 }
 
-/// Whether the box is displayed
+// / Whether the box is displayed
 func (rcv *CZMBox) MutateSHOW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMBox) MutateShow(n bool) bool {
 	return rcv.MutateSHOW(n)
 }
 
-/// Width (X) in meters
+// / Width (X) in meters
 func (rcv *CZMBox) DIMENSIONS_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *CZMBox) DimensionsX() float64 {
 	return rcv.DIMENSIONS_X()
 }
 
-/// Width (X) in meters
+// / Width (X) in meters
 func (rcv *CZMBox) MutateDIMENSIONS_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *CZMBox) MutateDimensionsX(n float64) bool {
 	return rcv.MutateDIMENSIONS_X(n)
 }
 
-/// Depth (Y) in meters
+// / Depth (Y) in meters
 func (rcv *CZMBox) DIMENSIONS_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *CZMBox) DimensionsY() float64 {
 	return rcv.DIMENSIONS_Y()
 }
 
-/// Depth (Y) in meters
+// / Depth (Y) in meters
 func (rcv *CZMBox) MutateDIMENSIONS_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *CZMBox) MutateDimensionsY(n float64) bool {
 	return rcv.MutateDIMENSIONS_Y(n)
 }
 
-/// Height (Z) in meters
+// / Height (Z) in meters
 func (rcv *CZMBox) DIMENSIONS_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *CZMBox) DimensionsZ() float64 {
 	return rcv.DIMENSIONS_Z()
 }
 
-/// Height (Z) in meters
+// / Height (Z) in meters
 func (rcv *CZMBox) MutateDIMENSIONS_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *CZMBox) MutateDimensionsZ(n float64) bool {
 	return rcv.MutateDIMENSIONS_Z(n)
 }
 
-/// Height reference
+// / Height reference
 func (rcv *CZMBox) HEIGHT_REFERENCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,8 +143,8 @@ func (rcv *CZMBox) HeightReference() []byte {
 	return rcv.HEIGHT_REFERENCE()
 }
 
-/// Height reference
-/// Fill flag
+// / Height reference
+// / Fill flag
 func (rcv *CZMBox) FILL() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *CZMBox) Fill() bool {
 	return rcv.FILL()
 }
 
-/// Fill flag
+// / Fill flag
 func (rcv *CZMBox) MutateFILL(n bool) bool {
 	return rcv._tab.MutateBoolSlot(14, n)
 }
@@ -166,7 +166,7 @@ func (rcv *CZMBox) MutateFill(n bool) bool {
 	return rcv.MutateFILL(n)
 }
 
-/// Surface material
+// / Surface material
 func (rcv *CZMBox) MATERIAL(obj *CZMMaterial) *CZMMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -184,8 +184,8 @@ func (rcv *CZMBox) Material(obj *CZMMaterial) *CZMMaterial {
 	return rcv.MATERIAL(obj)
 }
 
-/// Surface material
-/// Outline flag
+// / Surface material
+// / Outline flag
 func (rcv *CZMBox) OUTLINE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -198,7 +198,7 @@ func (rcv *CZMBox) Outline() bool {
 	return rcv.OUTLINE()
 }
 
-/// Outline flag
+// / Outline flag
 func (rcv *CZMBox) MutateOUTLINE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(18, n)
 }
@@ -207,7 +207,7 @@ func (rcv *CZMBox) MutateOutline(n bool) bool {
 	return rcv.MutateOUTLINE(n)
 }
 
-/// Outline color
+// / Outline color
 func (rcv *CZMBox) OUTLINE_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -225,8 +225,8 @@ func (rcv *CZMBox) OutlineColor(obj *CZMColor) *CZMColor {
 	return rcv.OUTLINE_COLOR(obj)
 }
 
-/// Outline color
-/// Outline width
+// / Outline color
+// / Outline width
 func (rcv *CZMBox) OUTLINE_WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -239,7 +239,7 @@ func (rcv *CZMBox) OutlineWidth() float64 {
 	return rcv.OUTLINE_WIDTH()
 }
 
-/// Outline width
+// / Outline width
 func (rcv *CZMBox) MutateOUTLINE_WIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -248,7 +248,7 @@ func (rcv *CZMBox) MutateOutlineWidth(n float64) bool {
 	return rcv.MutateOUTLINE_WIDTH(n)
 }
 
-/// Shadow mode
+// / Shadow mode
 func (rcv *CZMBox) SHADOWS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -261,8 +261,8 @@ func (rcv *CZMBox) Shadows() []byte {
 	return rcv.SHADOWS()
 }
 
-/// Shadow mode
-/// Distance display condition near
+// / Shadow mode
+// / Distance display condition near
 func (rcv *CZMBox) DISTANCE_DISPLAY_CONDITION_NEAR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -275,7 +275,7 @@ func (rcv *CZMBox) DistanceDisplayConditionNear() float64 {
 	return rcv.DISTANCE_DISPLAY_CONDITION_NEAR()
 }
 
-/// Distance display condition near
+// / Distance display condition near
 func (rcv *CZMBox) MutateDISTANCE_DISPLAY_CONDITION_NEAR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -284,7 +284,7 @@ func (rcv *CZMBox) MutateDistanceDisplayConditionNear(n float64) bool {
 	return rcv.MutateDISTANCE_DISPLAY_CONDITION_NEAR(n)
 }
 
-/// Distance display condition far
+// / Distance display condition far
 func (rcv *CZMBox) DISTANCE_DISPLAY_CONDITION_FAR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -297,7 +297,7 @@ func (rcv *CZMBox) DistanceDisplayConditionFar() float64 {
 	return rcv.DISTANCE_DISPLAY_CONDITION_FAR()
 }
 
-/// Distance display condition far
+// / Distance display condition far
 func (rcv *CZMBox) MutateDISTANCE_DISPLAY_CONDITION_FAR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }

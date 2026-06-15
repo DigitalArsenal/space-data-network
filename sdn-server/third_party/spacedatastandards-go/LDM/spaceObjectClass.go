@@ -8,13 +8,13 @@ type spaceObjectClass int8
 
 const (
 	/// 0
-	spaceObjectClassPAYLOAD     spaceObjectClass = 0
+	spaceObjectClassPAYLOAD spaceObjectClass = 0
 	/// 1
 	spaceObjectClassROCKET_BODY spaceObjectClass = 1
 	/// 2
-	spaceObjectClassDEBRIS      spaceObjectClass = 2
+	spaceObjectClassDEBRIS spaceObjectClass = 2
 	/// 3
-	spaceObjectClassUNKNOWN     spaceObjectClass = 3
+	spaceObjectClassUNKNOWN spaceObjectClass = 3
 )
 
 var EnumNamesspaceObjectClass = map[spaceObjectClass]string{

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Payload-schema identity for a stream frame or an accepted port type.
+// / Payload-schema identity for a stream frame or an accepted port type.
 type FlatBufferTypeRef struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *FlatBufferTypeRef) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Logical schema name (for example `OMM.fbs` or `OCM.fbs`).
+// / Logical schema name (for example `OMM.fbs` or `OCM.fbs`).
 func (rcv *FlatBufferTypeRef) SCHEMA_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *FlatBufferTypeRef) SchemaName() []byte {
 	return rcv.SCHEMA_NAME()
 }
 
-/// Logical schema name (for example `OMM.fbs` or `OCM.fbs`).
-/// Optional 4-byte FlatBuffer file identifier.
+// / Logical schema name (for example `OMM.fbs` or `OCM.fbs`).
+// / Optional 4-byte FlatBuffer file identifier.
 func (rcv *FlatBufferTypeRef) FILE_IDENTIFIER() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *FlatBufferTypeRef) FileIdentifier() []byte {
 	return rcv.FILE_IDENTIFIER()
 }
 
-/// Optional 4-byte FlatBuffer file identifier.
-/// Optional semver or schema revision string.
+// / Optional 4-byte FlatBuffer file identifier.
+// / Optional semver or schema revision string.
 func (rcv *FlatBufferTypeRef) SCHEMA_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *FlatBufferTypeRef) SchemaVersion() []byte {
 	return rcv.SCHEMA_VERSION()
 }
 
-/// Optional semver or schema revision string.
-/// Optional root type name within the schema.
+// / Optional semver or schema revision string.
+// / Optional root type name within the schema.
 func (rcv *FlatBufferTypeRef) ROOT_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *FlatBufferTypeRef) RootType() []byte {
 	return rcv.ROOT_TYPE()
 }
 
-/// Optional root type name within the schema.
+// / Optional root type name within the schema.
 func FlatBufferTypeRefStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

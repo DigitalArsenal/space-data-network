@@ -4,18 +4,18 @@ package PUR
 
 import "strconv"
 
-/// Access type for data listings
+// / Access type for data listings
 type accessCategory int8
 
 const (
 	/// One-time purchase
-	accessCategoryOneTime      accessCategory = 0
+	accessCategoryOneTime accessCategory = 0
 	/// Recurring subscription
 	accessCategorySubscription accessCategory = 1
 	/// Real-time streaming access
-	accessCategoryStreaming    accessCategory = 2
+	accessCategoryStreaming accessCategory = 2
 	/// Query-based access
-	accessCategoryQuery        accessCategory = 3
+	accessCategoryQuery accessCategory = 3
 )
 
 var EnumNamesaccessCategory = map[accessCategory]string{

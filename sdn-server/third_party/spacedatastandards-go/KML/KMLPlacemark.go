@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Placemark feature
+// / Placemark feature
 type KMLPlacemark struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLPlacemark) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Placemark name
+// / Placemark name
 func (rcv *KMLPlacemark) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLPlacemark) Name() []byte {
 	return rcv.NAME()
 }
 
-/// Placemark name
-/// Description (may contain HTML)
+// / Placemark name
+// / Description (may contain HTML)
 func (rcv *KMLPlacemark) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *KMLPlacemark) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-/// Description (may contain HTML)
-/// Visibility flag
+// / Description (may contain HTML)
+// / Visibility flag
 func (rcv *KMLPlacemark) VISIBILITY() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *KMLPlacemark) Visibility() bool {
 	return rcv.VISIBILITY()
 }
 
-/// Visibility flag
+// / Visibility flag
 func (rcv *KMLPlacemark) MutateVISIBILITY(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }
@@ -92,7 +92,7 @@ func (rcv *KMLPlacemark) MutateVisibility(n bool) bool {
 	return rcv.MutateVISIBILITY(n)
 }
 
-/// Style URL reference
+// / Style URL reference
 func (rcv *KMLPlacemark) STYLE_URL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,8 +105,8 @@ func (rcv *KMLPlacemark) StyleUrl() []byte {
 	return rcv.STYLE_URL()
 }
 
-/// Style URL reference
-/// Inline style
+// / Style URL reference
+// / Inline style
 func (rcv *KMLPlacemark) STYLE(obj *KMLStyle) *KMLStyle {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -124,8 +124,8 @@ func (rcv *KMLPlacemark) Style(obj *KMLStyle) *KMLStyle {
 	return rcv.STYLE(obj)
 }
 
-/// Inline style
-/// Snippet (short description)
+// / Inline style
+// / Snippet (short description)
 func (rcv *KMLPlacemark) SNIPPET() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -138,8 +138,8 @@ func (rcv *KMLPlacemark) Snippet() []byte {
 	return rcv.SNIPPET()
 }
 
-/// Snippet (short description)
-/// Whether open in tree view
+// / Snippet (short description)
+// / Whether open in tree view
 func (rcv *KMLPlacemark) OPEN() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -152,7 +152,7 @@ func (rcv *KMLPlacemark) Open() bool {
 	return rcv.OPEN()
 }
 
-/// Whether open in tree view
+// / Whether open in tree view
 func (rcv *KMLPlacemark) MutateOPEN(n bool) bool {
 	return rcv._tab.MutateBoolSlot(16, n)
 }
@@ -161,7 +161,7 @@ func (rcv *KMLPlacemark) MutateOpen(n bool) bool {
 	return rcv.MutateOPEN(n)
 }
 
-/// Address
+// / Address
 func (rcv *KMLPlacemark) ADDRESS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -174,8 +174,8 @@ func (rcv *KMLPlacemark) Address() []byte {
 	return rcv.ADDRESS()
 }
 
-/// Address
-/// Point geometry
+// / Address
+// / Point geometry
 func (rcv *KMLPlacemark) POINT(obj *KMLPoint) *KMLPoint {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -193,8 +193,8 @@ func (rcv *KMLPlacemark) Point(obj *KMLPoint) *KMLPoint {
 	return rcv.POINT(obj)
 }
 
-/// Point geometry
-/// LineString geometry
+// / Point geometry
+// / LineString geometry
 func (rcv *KMLPlacemark) LINE_STRING(obj *KMLLineString) *KMLLineString {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -212,8 +212,8 @@ func (rcv *KMLPlacemark) LineString(obj *KMLLineString) *KMLLineString {
 	return rcv.LINE_STRING(obj)
 }
 
-/// LineString geometry
-/// Polygon geometry
+// / LineString geometry
+// / Polygon geometry
 func (rcv *KMLPlacemark) POLYGON(obj *KMLPolygon) *KMLPolygon {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -231,8 +231,8 @@ func (rcv *KMLPlacemark) Polygon(obj *KMLPolygon) *KMLPolygon {
 	return rcv.POLYGON(obj)
 }
 
-/// Polygon geometry
-/// LinearRing geometry (standalone)
+// / Polygon geometry
+// / LinearRing geometry (standalone)
 func (rcv *KMLPlacemark) LINEAR_RING(obj *KMLLinearRing) *KMLLinearRing {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -250,8 +250,8 @@ func (rcv *KMLPlacemark) LinearRing(obj *KMLLinearRing) *KMLLinearRing {
 	return rcv.LINEAR_RING(obj)
 }
 
-/// LinearRing geometry (standalone)
-/// MultiGeometry
+// / LinearRing geometry (standalone)
+// / MultiGeometry
 func (rcv *KMLPlacemark) MULTI_GEOMETRY(obj *KMLMultiGeometry) *KMLMultiGeometry {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -269,8 +269,8 @@ func (rcv *KMLPlacemark) MultiGeometry(obj *KMLMultiGeometry) *KMLMultiGeometry 
 	return rcv.MULTI_GEOMETRY(obj)
 }
 
-/// MultiGeometry
-/// 3D Model
+// / MultiGeometry
+// / 3D Model
 func (rcv *KMLPlacemark) MODEL(obj *KMLModel) *KMLModel {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -288,8 +288,8 @@ func (rcv *KMLPlacemark) Model(obj *KMLModel) *KMLModel {
 	return rcv.MODEL(obj)
 }
 
-/// 3D Model
-/// gx:Track
+// / 3D Model
+// / gx:Track
 func (rcv *KMLPlacemark) TRACK(obj *KMLTrack) *KMLTrack {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -307,8 +307,8 @@ func (rcv *KMLPlacemark) Track(obj *KMLTrack) *KMLTrack {
 	return rcv.TRACK(obj)
 }
 
-/// gx:Track
-/// gx:MultiTrack
+// / gx:Track
+// / gx:MultiTrack
 func (rcv *KMLPlacemark) MULTI_TRACK(obj *KMLMultiTrack) *KMLMultiTrack {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -326,8 +326,8 @@ func (rcv *KMLPlacemark) MultiTrack(obj *KMLMultiTrack) *KMLMultiTrack {
 	return rcv.MULTI_TRACK(obj)
 }
 
-/// gx:MultiTrack
-/// LookAt viewpoint
+// / gx:MultiTrack
+// / LookAt viewpoint
 func (rcv *KMLPlacemark) LOOK_AT(obj *KMLLookAt) *KMLLookAt {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -345,8 +345,8 @@ func (rcv *KMLPlacemark) LookAt(obj *KMLLookAt) *KMLLookAt {
 	return rcv.LOOK_AT(obj)
 }
 
-/// LookAt viewpoint
-/// Camera viewpoint
+// / LookAt viewpoint
+// / Camera viewpoint
 func (rcv *KMLPlacemark) CAMERA(obj *KMLCamera) *KMLCamera {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -364,8 +364,8 @@ func (rcv *KMLPlacemark) Camera(obj *KMLCamera) *KMLCamera {
 	return rcv.CAMERA(obj)
 }
 
-/// Camera viewpoint
-/// TimeSpan
+// / Camera viewpoint
+// / TimeSpan
 func (rcv *KMLPlacemark) TIME_SPAN(obj *KMLTimeSpan) *KMLTimeSpan {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -383,8 +383,8 @@ func (rcv *KMLPlacemark) TimeSpan(obj *KMLTimeSpan) *KMLTimeSpan {
 	return rcv.TIME_SPAN(obj)
 }
 
-/// TimeSpan
-/// TimeStamp
+// / TimeSpan
+// / TimeStamp
 func (rcv *KMLPlacemark) TIME_STAMP(obj *KMLTimeStamp) *KMLTimeStamp {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -402,8 +402,8 @@ func (rcv *KMLPlacemark) TimeStamp(obj *KMLTimeStamp) *KMLTimeStamp {
 	return rcv.TIME_STAMP(obj)
 }
 
-/// TimeStamp
-/// Extended data
+// / TimeStamp
+// / Extended data
 func (rcv *KMLPlacemark) EXTENDED_DATA(obj *KMLData, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -435,8 +435,8 @@ func (rcv *KMLPlacemark) ExtendedDataLength() int {
 	return rcv.EXTENDED_DATALength()
 }
 
-/// Extended data
-/// Schema data
+// / Extended data
+// / Schema data
 func (rcv *KMLPlacemark) SCHEMA_DATA(obj *KMLSchemaData) *KMLSchemaData {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -454,8 +454,8 @@ func (rcv *KMLPlacemark) SchemaData(obj *KMLSchemaData) *KMLSchemaData {
 	return rcv.SCHEMA_DATA(obj)
 }
 
-/// Schema data
-/// Region
+// / Schema data
+// / Region
 func (rcv *KMLPlacemark) REGION(obj *KMLRegion) *KMLRegion {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -473,8 +473,8 @@ func (rcv *KMLPlacemark) Region(obj *KMLRegion) *KMLRegion {
 	return rcv.REGION(obj)
 }
 
-/// Region
-/// StyleMap (inline)
+// / Region
+// / StyleMap (inline)
 func (rcv *KMLPlacemark) STYLE_MAP(obj *KMLStyleMap) *KMLStyleMap {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -492,7 +492,7 @@ func (rcv *KMLPlacemark) StyleMap(obj *KMLStyleMap) *KMLStyleMap {
 	return rcv.STYLE_MAP(obj)
 }
 
-/// StyleMap (inline)
+// / StyleMap (inline)
 func KMLPlacemarkStart(builder *flatbuffers.Builder) {
 	builder.StartObject(24)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Fire Control Systems
+// / Fire Control Systems
 type FCS struct {
 	_tab flatbuffers.Table
 }

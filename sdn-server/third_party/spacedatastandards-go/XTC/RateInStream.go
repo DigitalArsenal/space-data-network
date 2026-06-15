@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Rate specification for container in stream
+// / Rate specification for container in stream
 type RateInStream struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *RateInStream) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Stream reference
+// / Stream reference
 func (rcv *RateInStream) STREAM_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *RateInStream) StreamRef() []byte {
 	return rcv.STREAM_REF()
 }
 
-/// Stream reference
-/// Rate value
+// / Stream reference
+// / Rate value
 func (rcv *RateInStream) RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *RateInStream) Rate() float64 {
 	return rcv.RATE()
 }
 
-/// Rate value
+// / Rate value
 func (rcv *RateInStream) MutateRATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -78,7 +78,7 @@ func (rcv *RateInStream) MutateRate(n float64) bool {
 	return rcv.MutateRATE(n)
 }
 
-/// Rate basis
+// / Rate basis
 func (rcv *RateInStream) BASIS() RateBasisType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *RateInStream) Basis() RateBasisType {
 	return rcv.BASIS()
 }
 
-/// Rate basis
+// / Rate basis
 func (rcv *RateInStream) MutateBASIS(n RateBasisType) bool {
 	return rcv._tab.MutateInt8Slot(8, int8(n))
 }

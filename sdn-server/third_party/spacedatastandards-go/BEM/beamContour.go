@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Beam Contour (iso-gain boundary)
+// / Beam Contour (iso-gain boundary)
 type beamContour struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *beamContour) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Contour level identifier
+// / Contour level identifier
 func (rcv *beamContour) CONTOUR_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *beamContour) ContourId() []byte {
 	return rcv.CONTOUR_ID()
 }
 
-/// Contour level identifier
-/// Gain level in dBi
+// / Contour level identifier
+// / Gain level in dBi
 func (rcv *beamContour) GAIN_LEVEL() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *beamContour) GainLevel() float64 {
 	return rcv.GAIN_LEVEL()
 }
 
-/// Gain level in dBi
+// / Gain level in dBi
 func (rcv *beamContour) MutateGAIN_LEVEL(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -78,7 +78,7 @@ func (rcv *beamContour) MutateGainLevel(n float64) bool {
 	return rcv.MutateGAIN_LEVEL(n)
 }
 
-/// Contour boundary points
+// / Contour boundary points
 func (rcv *beamContour) POINTS(obj *beamContourPoint, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -110,7 +110,7 @@ func (rcv *beamContour) PointsLength() int {
 	return rcv.POINTSLength()
 }
 
-/// Contour boundary points
+// / Contour boundary points
 func beamContourStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

@@ -41,7 +41,7 @@ func (rcv *UserDefinedParameters) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-/// Name of the user-defined parameter.
+// / Name of the user-defined parameter.
 func (rcv *UserDefinedParameters) PARAM_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -54,8 +54,8 @@ func (rcv *UserDefinedParameters) ParamName() []byte {
 	return rcv.PARAM_NAME()
 }
 
-/// Name of the user-defined parameter.
-/// Value of the user-defined parameter.
+// / Name of the user-defined parameter.
+// / Value of the user-defined parameter.
 func (rcv *UserDefinedParameters) PARAM_VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -68,7 +68,7 @@ func (rcv *UserDefinedParameters) ParamValue() []byte {
 	return rcv.PARAM_VALUE()
 }
 
-/// Value of the user-defined parameter.
+// / Value of the user-defined parameter.
 func UserDefinedParametersStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

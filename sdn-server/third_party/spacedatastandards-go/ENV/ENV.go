@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Atmosphere and Environment
+// / Atmosphere and Environment
 type ENV struct {
 	_tab flatbuffers.Table
 }

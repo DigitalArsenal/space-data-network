@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-/// Cylindrical SDF parameters.
+// / Cylindrical SDF parameters.
 type SDFCylindrical struct {
 	_tab flatbuffers.Table
 }

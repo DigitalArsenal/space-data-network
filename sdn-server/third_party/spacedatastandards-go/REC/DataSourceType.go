@@ -4,20 +4,20 @@ package REC
 
 import "strconv"
 
-/// Data source types for telemetry parameters
+// / Data source types for telemetry parameters
 type DataSourceType int8
 
 const (
 	/// Data received from spacecraft telemetry
 	DataSourceTypeTELEMETERED DataSourceType = 0
 	/// Computed from other parameters
-	DataSourceTypeDERIVED     DataSourceType = 1
+	DataSourceTypeDERIVED DataSourceType = 1
 	/// Fixed constant value
-	DataSourceTypeCONSTANT    DataSourceType = 2
+	DataSourceTypeCONSTANT DataSourceType = 2
 	/// Local ground system value
-	DataSourceTypeLOCAL       DataSourceType = 3
+	DataSourceTypeLOCAL DataSourceType = 3
 	/// Ground-generated data
-	DataSourceTypeGROUND      DataSourceType = 4
+	DataSourceTypeGROUND DataSourceType = 4
 )
 
 var EnumNamesDataSourceType = map[DataSourceType]string{
