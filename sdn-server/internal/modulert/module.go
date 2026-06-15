@@ -173,7 +173,6 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 		wasmrt.WithHostModule("sdn", wasmrt.SharedHostFuncs("sdn", logFunc)),
 		wasmrt.WithHostModule("env", wasmrt.SharedHostFuncs("env", logFunc)),
 		wasmrt.WithHostModule(HostcallImportModule, bridge.BuildWasmEdgeHostFuncs()),
-		wasmrt.WithHostModule(LegacyHostcallImportModule, bridge.BuildWasmEdgeHostFuncs()),
 	)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create WASM module: %w", err)
