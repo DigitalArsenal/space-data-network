@@ -86,6 +86,7 @@ var SupportedSchemas = []string{
 	"ACL.fbs",  // Access Control List - Data access grants
 	"ACM.fbs",  // Attitude Comprehensive Message
 	"ACR.fbs",  // Aircraft Dynamics
+	"ACW.fbs",  // Access Windows
 	"AEM.fbs",  // Attitude Ephemeris Message
 	"ANI.fbs",  // Analytic Imagery Product
 	"AOF.fbs",  // AOS Transfer Frame (CCSDS 732.0-B-3)
@@ -98,6 +99,7 @@ var SupportedSchemas = []string{
 	"BEM.fbs",  // Antenna Beam
 	"BMC.fbs",  // Beam Contour
 	"BOV.fbs",  // Body Orientation and Velocity
+	"BSP.fbs",  // Body State Propagation
 	"BUS.fbs",  // Satellite Bus Specification
 	"CAQ.fbs",  // Catalog Query - Catalog query envelope
 	"CAT.fbs",  // Catalog
@@ -129,6 +131,7 @@ var SupportedSchemas = []string{
 	"EWR.fbs",  // Electronic Warfare
 	"FCS.fbs",  // Fire Control Systems
 	"FPC.fbs",  // Fastest Path Compute
+	"FRM.fbs",  // Frame Transform
 	"GDI.fbs",  // Ground Imagery
 	"GEO.fbs",  // GEO Spacecraft Status
 	"GJN.fbs",  // GeoJSON FeatureCollection
@@ -169,6 +172,7 @@ var SupportedSchemas = []string{
 	"MST.fbs",  // Missile Track
 	"MTI.fbs",  // Moving Target Indicator
 	"NAV.fbs",  // Naval Vessels
+	"NUM.fbs",  // Numerical Methods
 	"OBD.fbs",  // Orbit Determination Results
 	"OBT.fbs",  // Orbit Track
 	"OCM.fbs",  // Orbit Comprehensive Message
@@ -200,6 +204,7 @@ var SupportedSchemas = []string{
 	"PRW.fbs",  // Propagator Runtime Wire
 	"PUR.fbs",  // Purchase Request - Marketplace purchases
 	"RAF.fbs",  // Return All Frames Service (CCSDS 913.1-B-2)
+	"RBK.fbs",  // Rigid Body Kinematics
 	"RCF.fbs",  // Return Channel Frames Service (CCSDS 913.5-B-2)
 	"RDM.fbs",  // Reentry Data Message
 	"RDO.fbs",  // Radar Observation
@@ -214,6 +219,7 @@ var SupportedSchemas = []string{
 	"ROC.fbs",  // Re-entry Operations Corridor
 	"SAR.fbs",  // SAR Observation
 	"SCM.fbs",  // Spacecraft Message
+	"SCV.fbs",  // Sensor Coverage
 	"SDF.fbs",  // Signed Distance Field
 	"SDL.fbs",  // Space Data Link Security (CCSDS 355.0-B-1)
 	"SDR.fbs",  // Sensor Detection Report

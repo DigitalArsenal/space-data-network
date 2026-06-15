@@ -169,6 +169,22 @@ func TestBuildPublicationContentKeyFrameUsesDecryptKeyForRecProtectedArtifacts(t
 	}
 }
 
+func TestPublicationContentKeyFrameEmitsKMFIdentifier(t *testing.T) {
+	t.Parallel()
+
+	asset := &license.PluginAsset{
+		ID:      "com.orbpro.rec-protected",
+		Version: "2.0.0",
+	}
+	frame, err := buildPublicationContentKeyFrame(asset, buildRecProtectedContentFixture(t), bytes.Repeat([]byte{0x42}, 32))
+	if err != nil {
+		t.Fatalf("buildPublicationContentKeyFrame() failed: %v", err)
+	}
+	if !kmf.KMFBufferHasIdentifier(frame) {
+		t.Fatalf("publication content key frame is not a $KMF FlatBuffer")
+	}
+}
+
 func TestFindPluginDecryptPrivateKeyFallsBackToServerIdentity(t *testing.T) {
 	t.Parallel()
 
