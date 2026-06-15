@@ -91,6 +91,12 @@ func (c *ipfsCapClient) handle(operation string, payload []byte) ([]byte, error)
 				return errCapJSON("invalid base64 payload"), nil
 			}
 			content = decoded
+		} else if raw := str("content"); raw != "" {
+			decoded, err := base64.StdEncoding.DecodeString(raw)
+			if err != nil {
+				return errCapJSON("invalid content payload"), nil
+			}
+			content = decoded
 		} else if raw := str("data"); raw != "" {
 			content = []byte(raw)
 		}
