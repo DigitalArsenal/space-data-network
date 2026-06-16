@@ -144,9 +144,10 @@ correct; most need to go.
 - `scripts/build-embedded.mjs` (SDK embeds the manifest itself)
 - `src/plugin_entry.cpp` (SDK generates `plugin_invoke_stream` + alloc/free)
 - `src/methods.hpp` (SDK generates the dispatch table)
-- `src/sdn_host.hpp` (wrong import shape — sdn_host bridge surface is
-  `call_json` / `response_len` / `read_response` / `last_status_code` /
-  `clear_response`; expose only what methods need)
+- `src/sdn_host.hpp` (wrong import namespace and old bridge shape — the
+  canonical bridge imports `space_data_module_host.call` with the binary
+  hostcall envelope plus `response_len` / `read_response` /
+  `last_status_code` / `clear_response`; expose only what methods need)
 - `src/methods/check_for_updates.cpp`
 - `generated/` (whole directory)
 - `test/smoke.test.mjs` (assumes wasi-sdk artifact + hand-rolled FlatBuffer
@@ -222,11 +223,11 @@ correct; most need to go.
 - `node_modules/space-data-module-sdk/schemas/PluginInvokeResponse.fbs` (file id `PINS`)
 - `node_modules/space-data-module-sdk/schemas/TypedArenaBuffer.fbs`
 
-## `sdn_host` import ABI (for when methods actually call out)
+## `space_data_module_host` import ABI (for when methods actually call out)
 
-Imports under module `sdn_host` (per SDK README §Host ABI):
+Imports under module `space_data_module_host` (per SDK README §Host ABI):
 
-- `call_json(operation_ptr, operation_len, payload_ptr, payload_len) -> i32`
+- `call(request_ptr, request_len) -> i32`
 - `response_len() -> i32`
 - `read_response(dst_ptr, dst_len) -> i32`
 - `last_status_code() -> i32`

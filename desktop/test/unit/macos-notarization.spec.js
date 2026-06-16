@@ -1,0 +1,18 @@
+const fs = require('fs')
+const path = require('path')
+const { test, expect } = require('@playwright/test')
+
+test.describe('macOS notarization configuration', () => {
+  test('uses SDN bundle identity and environment-scoped Apple credentials', () => {
+    const builderConfig = fs.readFileSync(path.join(__dirname, '../../electron-builder.yml'), 'utf8')
+    const notarizeSource = fs.readFileSync(path.join(__dirname, '../../pkgs/macos/notarize-build.js'), 'utf8')
+
+    expect(builderConfig).toContain('appId: org.spacedatanetwork.desktop')
+    expect(notarizeSource).toContain('appBundleId: appId')
+    expect(notarizeSource).toContain('teamId: process.env.APPLE_TEAM_ID')
+    expect(notarizeSource).toContain('process.env.APPLE_ID')
+    expect(notarizeSource).toContain('process.env.APPLE_APP_SPECIFIC_PASSWORD')
+    expect(notarizeSource).not.toContain('io.ipfs.desktop')
+    expect(notarizeSource).not.toContain('7Y229E2YRL')
+  })
+})

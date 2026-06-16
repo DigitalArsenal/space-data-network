@@ -182,9 +182,9 @@ The SDN runtime provides these imports under the `space_data_module_host` namesp
 
 | Import | Signature | Purpose |
 |--------|-----------|---------|
-| `call_json` | `(op_ptr: i32, op_len: i32, payload_ptr: i32, payload_len: i32) → status: i32` | Execute one sync hostcall |
-| `response_len` | `() → len: i32` | Length of the last hostcall JSON response envelope |
-| `read_response` | `(dst_ptr: i32, dst_len: i32) → copied: i32` | Copy the last hostcall response envelope into guest memory |
+| `call` | `(request_ptr: i32, request_len: i32) → status: i32` | Execute one sync hostcall using the binary hostcall envelope |
+| `response_len` | `() → len: i32` | Length of the last binary hostcall response envelope |
+| `read_response` | `(dst_ptr: i32, dst_len: i32) → copied: i32` | Copy the last binary hostcall response envelope into guest memory |
 | `clear_response` | `() → status: i32` | Clear the cached hostcall response |
 | `last_status_code` | `() → status: i32` | Return the previous hostcall status code |
 
@@ -200,8 +200,8 @@ The currently supported hostcall operations are:
 - `clock.nowIso`
 - `random.bytes`
 
-Binary hostcall results use the canonical JSON wrapper
-`{ "__type": "bytes", "base64": "..." }`.
+Binary hostcall results are returned in the canonical binary hostcall response
+envelope.
 
 Plus standard `wasi_snapshot_preview1` imports.
 
