@@ -1501,6 +1501,19 @@ type DataSourceSummary struct {
 	TotalBytes        int64
 }
 
+// SourceBatchHead identifies one materialized provider/source batch for
+// snapshot catalog reads and response cache keys.
+type SourceBatchHead struct {
+	SchemaName string
+	ProviderID string
+	SourceName string
+	BatchID    string
+	Count      int64
+	TotalBytes int64
+	MaxRowID   int64
+	UpdatedAt  time.Time
+}
+
 // RawRecordQuery filters raw FlatBuffer records for UI and node-to-node reads.
 type RawRecordQuery struct {
 	SchemaName        string
@@ -3054,18 +3067,73 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 	return records, nil
 }
 
-// QueryLatestSourceBatchRecords returns records from the newest materialized
-// provider/source batch for a live catalog source.
+// LatestSourceBatchHead returns the newest materialized provider/source batch
+// without hydrating FlatBuffer payloads.
+func (s *FlatSQLStore) LatestSourceBatchHead(schemaName, sourceName string) (SourceBatchHead, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.latestSourceBatchHeadLocked(schemaName, sourceName)
+}
+
+func (s *FlatSQLStore) latestSourceBatchHeadLocked(schemaName, sourceName string) (SourceBatchHead, bool, error) {
+	schemaName = strings.TrimSpace(schemaName)
+	sourceName = strings.TrimSpace(sourceName)
+	if sourceName == "" {
+		return SourceBatchHead{}, false, errors.New("source name is required")
+	}
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return SourceBatchHead{}, false, fmt.Errorf("invalid schema name: %w", err)
+	}
+	_ = tableName
+
+	var head SourceBatchHead
+	var updatedAtUnix int64
+	err = s.db.QueryRow(`
+		SELECT schema_name, provider_id, source_name, batch_id,
+		       record_count, total_bytes, max_rowid, updated_at
+		FROM sdn_record_source_summary
+		WHERE schema_name = ?
+		  AND source_name = ?
+		  AND batch_id <> ''
+		  AND record_count > 0
+		ORDER BY max_rowid DESC, updated_at DESC, provider_id ASC, batch_id DESC
+		LIMIT 1
+	`, schemaName, sourceName).Scan(
+		&head.SchemaName,
+		&head.ProviderID,
+		&head.SourceName,
+		&head.BatchID,
+		&head.Count,
+		&head.TotalBytes,
+		&head.MaxRowID,
+		&updatedAtUnix,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SourceBatchHead{}, false, nil
+	}
+	if err != nil {
+		return SourceBatchHead{}, false, fmt.Errorf("latest source batch query failed: %w", err)
+	}
+	head.UpdatedAt = time.Unix(updatedAtUnix, 0).UTC()
+	return head, true, nil
+}
+
+// QueryLatestSourceBatchRecords returns one closest-epoch record per entity
+// from the newest materialized provider/source batch for a live catalog source.
 func (s *FlatSQLStore) QueryLatestSourceBatchRecords(schemaName, sourceName string, limit int) ([]*Record, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	schemaName = strings.TrimSpace(schemaName)
-	sourceName = strings.TrimSpace(sourceName)
-	if sourceName == "" {
-		return nil, false, errors.New("source name is required")
+	head, ok, err := s.latestSourceBatchHeadLocked(schemaName, sourceName)
+	if err != nil {
+		return nil, false, err
 	}
-	tableName, err := sds.SchemaNameToTable(schemaName)
+	if !ok {
+		return nil, false, nil
+	}
+	tableName, err := sds.SchemaNameToTable(head.SchemaName)
 	if err != nil {
 		return nil, false, fmt.Errorf("invalid schema name: %w", err)
 	}
@@ -3075,39 +3143,53 @@ func (s *FlatSQLStore) QueryLatestSourceBatchRecords(schemaName, sourceName stri
 	if limit > 250000 {
 		limit = 250000
 	}
-
-	var providerID, batchID string
-	err = s.db.QueryRow(`
-		SELECT provider_id, batch_id
-		FROM sdn_record_source_summary
-		WHERE schema_name = ?
-		  AND source_name = ?
-		  AND batch_id <> ''
-		  AND record_count > 0
-		ORDER BY max_rowid DESC, updated_at DESC, provider_id ASC, batch_id DESC
-		LIMIT 1
-	`, schemaName, sourceName).Scan(&providerID, &batchID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("latest source batch query failed: %w", err)
-	}
+	targetUnix := head.UpdatedAt.Unix()
 
 	rows, err := s.db.Query(fmt.Sprintf(`
-		SELECT d.cid, d.peer_id, d.timestamp,
-		       d.stream_path, d.stream_offset, d.record_length, d.signature_hex,
-		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
-		       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key, tags.created_at
-		FROM sdn_record_source_tags tags
-		INNER JOIN %s d ON d.cid = tags.cid
-		WHERE tags.schema_name = ?
-		  AND tags.provider_id = ?
-		  AND tags.source_name = ?
-		  AND tags.batch_id = ?
-		ORDER BY d.rowid ASC, d.cid ASC
+		WITH candidates AS (
+			SELECT d.cid, d.peer_id, d.timestamp,
+			       d.stream_path, d.stream_offset, d.record_length, d.signature_hex,
+			       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
+			       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key,
+			       tags.created_at,
+			       COALESCE(
+			         CASE WHEN idx.norad_cat_id IS NOT NULL THEN CAST(idx.norad_cat_id AS TEXT) END,
+			         NULLIF(idx.entity_id, ''),
+			         d.cid
+			       ) AS entity_key,
+			       idx.epoch_unix AS matched_epoch_unix,
+			       d.rowid AS record_rowid
+			FROM sdn_record_source_tags tags
+			INNER JOIN %s d ON d.cid = tags.cid
+			INNER JOIN sdn_record_index idx ON idx.schema_name = tags.schema_name AND idx.cid = tags.cid
+			WHERE tags.schema_name = ?
+			  AND tags.provider_id = ?
+			  AND tags.source_name = ?
+			  AND tags.batch_id = ?
+		),
+		ranked AS (
+			SELECT *,
+			       ROW_NUMBER() OVER (
+			         PARTITION BY entity_key
+			         ORDER BY ABS(matched_epoch_unix - ?) ASC,
+			                  CASE WHEN matched_epoch_unix <= ? THEN 0 ELSE 1 END ASC,
+			                  matched_epoch_unix DESC,
+			                  record_rowid DESC,
+			                  cid ASC
+			       ) AS rn
+			FROM candidates
+		)
+		SELECT cid, peer_id, timestamp,
+		       stream_path, stream_offset, record_length, signature_hex,
+		       provider_id, source_name, source_url, batch_id,
+		       content_key_id, producer_peer_id, producer_public_key, created_at
+		FROM ranked
+		WHERE rn = 1
+		  AND entity_key IS NOT NULL
+		  AND entity_key != ''
+		ORDER BY entity_key ASC
 		LIMIT ?
-	`, tableName), schemaName, providerID, sourceName, batchID, limit)
+	`, tableName), head.SchemaName, head.ProviderID, head.SourceName, head.BatchID, targetUnix, targetUnix, limit)
 	if err != nil {
 		return nil, false, fmt.Errorf("latest source batch records query failed: %w", err)
 	}
