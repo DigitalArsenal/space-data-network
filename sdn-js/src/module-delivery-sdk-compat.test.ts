@@ -28,6 +28,10 @@ import {
   decodeLicensingProofMessage,
   validateLicensingGrant,
 } from 'space-data-module-sdk/licensing';
+import {
+  cleanupCompilation,
+  compileModuleFromSource,
+} from 'space-data-module-sdk/compiler';
 
 vi.mock('./crypto/hd-wallet', async () => {
   const actual = await vi.importActual<typeof import('./crypto/hd-wallet')>('./crypto/hd-wallet');
@@ -48,8 +52,67 @@ import { requestModuleGrant } from './module-delivery';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DIRECT_INVOKE_WASM_BASE64 =
-  'AGFzbQEAAAABEgNgAX8Bf2ACf38AYAN/f38BfwMEAwABAgUDAQABBz4EBm1lbW9yeQIADHBsdWdpbl9hbGxvYwAAC3BsdWdpbl9mcmVlAAEUcGx1Z2luX2ludm9rZV9zdHJlYW0AAgoYAwUAQYAgCwIACw0AIAJB9AA2AgBBgAgLC3sBAEGACAt0GAAAAFBJTlMAAA4ADAAAAAAAAAAIAAQADgAAAAgAAAAYAAAAEAAAAHB1YmxpYy1oZWxwZXItb2sBAAAAFAAAAAAADgAOAAgAAAAAAAAABAAOAAAAEAAAABAAAAAAAAoACAAAAAAABAAKAAAABAAAAAAAAAA=';
+
+async function compilePublicHelperModule() {
+  return compileModuleFromSource({
+    language: 'c',
+    manifest: {
+      pluginId: 'com.example.public-helper',
+      name: 'Public Helper',
+      version: '1.0.0',
+      pluginFamily: 'analysis',
+      invokeSurfaces: ['direct'],
+      capabilities: [],
+      externalInterfaces: [],
+      methods: [
+        {
+          methodId: 'echo',
+          displayName: 'Echo',
+          inputPorts: [
+            {
+              portId: 'request',
+              acceptedTypeSets: [
+                {
+                  setId: 'request-any',
+                  allowedTypes: [{ acceptsAnyFlatbuffer: true }],
+                },
+              ],
+              minStreams: 0,
+              maxStreams: 1,
+              required: false,
+            },
+          ],
+          outputPorts: [
+            {
+              portId: 'response',
+              acceptedTypeSets: [
+                {
+                  setId: 'response-any',
+                  allowedTypes: [{ acceptsAnyFlatbuffer: true }],
+                },
+              ],
+              minStreams: 0,
+              maxStreams: 1,
+              required: false,
+            },
+          ],
+          maxBatch: 1,
+          drainPolicy: 'single-shot',
+        },
+      ],
+    },
+    sourceCode: `
+#include <stdint.h>
+#include "space_data_module_invoke.h"
+
+int echo(void) {
+  static const uint8_t output[] = "public-helper-ok";
+  plugin_push_output("response", 0, 0, output, sizeof(output) - 1);
+  return 0;
+}
+`,
+  });
+}
 
 describe('module-delivery SDK compatibility', () => {
   it('declares the SDK as a direct dependency of sdn-js', async () => {
@@ -79,85 +142,90 @@ describe('module-delivery SDK compatibility', () => {
       import('@spacedatanetwork/sdn-js'),
       import('@spacedatanetwork/sdn-js/ui'),
     ]);
+    const compilation = await compilePublicHelperModule();
     const contentKey = new Uint8Array(32).fill(0x37);
-    const wasmBytes = Uint8Array.from(Buffer.from(DIRECT_INVOKE_WASM_BASE64, 'base64'));
-    const encryptedBundleBytes = await encryptBundleBytes(wasmBytes, contentKey);
-    const contentHash = await sha256(encryptedBundleBytes);
-    const fetched = await fetchEncryptedModuleBundle(
-      {
-        async fetchCIDBytes(cid: string) {
-          expect(cid).toBe('bafypublichelpers');
-          return encryptedBundleBytes;
+    try {
+      const wasmBytes = compilation.wasmBytes;
+      const encryptedBundleBytes = await encryptBundleBytes(wasmBytes, contentKey);
+      const contentHash = await sha256(encryptedBundleBytes);
+      const fetched = await fetchEncryptedModuleBundle(
+        {
+          async fetchCIDBytes(cid: string) {
+            expect(cid).toBe('bafypublichelpers');
+            return encryptedBundleBytes;
+          },
         },
-      },
-      {
-        provider: {
-          peerId: 'provider-peer-id',
-          publicKey: new Uint8Array(33).fill(2),
-          publicKeyHex: '02'.padEnd(66, '1'),
-          relayAddresses: ['/ip4/159.203.150.8/tcp/4001/ws/p2p/provider-peer-id'],
-          source: 'descriptor',
-        },
-        grant: {
-          reqId: 'req-public-helper-flow',
-          moduleId: 'com.example.public-helper',
-          requestedTimeoutMs: 300_000,
-          grantedDomain: 'app.example.com',
-          grantedTimeoutMs: 300_000,
-          expiresAtMs: 1_700_003_600_000,
-          capabilityToken: new Uint8Array(),
-          grantVerifierPublicKey: new Uint8Array(),
-          providerSignature: new Uint8Array(),
-          bundleDescriptor: {
-            cid: 'bafypublichelpers',
-            contentHash,
-            sizeBytes: encryptedBundleBytes.length,
+        {
+          provider: {
+            peerId: 'provider-peer-id',
+            publicKey: new Uint8Array(33).fill(2),
+            publicKeyHex: '02'.padEnd(66, '1'),
+            relayAddresses: ['/ip4/159.203.150.8/tcp/4001/ws/p2p/provider-peer-id'],
+            source: 'descriptor',
+          },
+          grant: {
+            reqId: 'req-public-helper-flow',
             moduleId: 'com.example.public-helper',
-            moduleVersion: '1.0.0',
-            allowedDomains: ['app.example.com'],
-            maxGrantTimeoutMs: 300_000,
-            encrypted: true,
-          },
-          wrappedContentKey: {
-            wrappingAlgorithm: 'direct-test-fixture',
-            keyBytes: contentKey,
-            requesterEphemeralPublicKey: new Uint8Array(),
-            providerEphemeralPublicKey: new Uint8Array(),
-            hkdfSalt: new Uint8Array(),
-            iv: new Uint8Array(),
-            ciphertext: new Uint8Array(),
-            tag: new Uint8Array(),
+            requestedTimeoutMs: 300_000,
+            grantedDomain: 'app.example.com',
+            grantedTimeoutMs: 300_000,
             expiresAtMs: 1_700_003_600_000,
-            recipientPublicKey: new Uint8Array(),
-            ephemeralPublicKey: new Uint8Array(),
-            nonce: new Uint8Array(),
+            capabilityToken: new Uint8Array(),
+            grantVerifierPublicKey: new Uint8Array(),
+            providerSignature: new Uint8Array(),
+            bundleDescriptor: {
+              cid: 'bafypublichelpers',
+              contentHash,
+              sizeBytes: encryptedBundleBytes.length,
+              moduleId: 'com.example.public-helper',
+              moduleVersion: '1.0.0',
+              allowedDomains: ['app.example.com'],
+              maxGrantTimeoutMs: 300_000,
+              encrypted: true,
+            },
+            wrappedContentKey: {
+              wrappingAlgorithm: 'direct-test-fixture',
+              keyBytes: contentKey,
+              requesterEphemeralPublicKey: new Uint8Array(),
+              providerEphemeralPublicKey: new Uint8Array(),
+              hkdfSalt: new Uint8Array(),
+              iv: new Uint8Array(),
+              ciphertext: new Uint8Array(),
+              tag: new Uint8Array(),
+              expiresAtMs: 1_700_003_600_000,
+              recipientPublicKey: new Uint8Array(),
+              ephemeralPublicKey: new Uint8Array(),
+              nonce: new Uint8Array(),
+            },
           },
+          grantResponseBytes: new Uint8Array(),
         },
-        grantResponseBytes: new Uint8Array(),
-      },
-    );
+      );
 
-    const unwrappedKey = await ui.unwrapGrantContentKey(
-      fetched.grant.wrappedContentKey,
-      new Uint8Array(32),
-    );
-    const decryptedWasm = await ui.decryptEncryptedModuleBundle(
-      fetched.encryptedBundleBytes,
-      unwrappedKey,
-    );
-    const harness = await ui.loadDecryptedModule(decryptedWasm);
-    const response = await ui.invokeLoadedModule<{
-      statusCode: number;
-      outputs: Array<{ payload: Uint8Array }>;
-    }>(harness, {
-      methodId: 'echo',
-      inputs: [],
-    });
+      const unwrappedKey = await ui.unwrapGrantContentKey(
+        fetched.grant.wrappedContentKey,
+        new Uint8Array(32),
+      );
+      const decryptedWasm = await ui.decryptEncryptedModuleBundle(
+        fetched.encryptedBundleBytes,
+        unwrappedKey,
+      );
+      const harness = await ui.loadDecryptedModule(decryptedWasm);
+      const response = await ui.invokeLoadedModule<{
+        statusCode: number;
+        outputs: Array<{ payload: Uint8Array }>;
+      }>(harness, {
+        methodId: 'echo',
+        inputs: [],
+      });
 
-    expect(decryptedWasm).toEqual(wasmBytes);
-    expect(response.statusCode).toBe(0);
-    expect(new TextDecoder().decode(response.outputs[0].payload)).toBe('public-helper-ok');
-    harness.destroy?.();
+      expect(decryptedWasm).toEqual(wasmBytes);
+      expect(response.statusCode).toBe(0);
+      expect(new TextDecoder().decode(response.outputs[0].payload)).toBe('public-helper-ok');
+      harness.destroy?.();
+    } finally {
+      await cleanupCompilation(compilation);
+    }
   });
 
   it('emits requester bytes and consumes grant bytes that remain valid under the SDK licensing helpers', async () => {

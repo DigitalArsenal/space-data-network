@@ -4,12 +4,12 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	piv "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PIV"
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
 const (
-	pluginInvokeRequestIdentifier  = "PINQ"
-	pluginInvokeResponseIdentifier = "PINS"
+	invokeArenaAlignment = 8
 
 	payloadWireFormatFlatbuffer    = 0
 	payloadWireFormatAlignedBinary = 1
@@ -58,7 +58,7 @@ func encodePluginInvokeRequestFrames(methodID string, frames []InvokeInputFrame)
 		return nil, fmt.Errorf("method id is required")
 	}
 
-	packedFrames, payloadArena, err := packInvokeInputFrames(frames)
+	packedFrames, payloadArena, arenaAlignment, err := packInvokeInputFrames(frames)
 	if err != nil {
 		return nil, err
 	}
@@ -66,69 +66,52 @@ func encodePluginInvokeRequestFrames(methodID string, frames []InvokeInputFrame)
 	builder := flatbuffers.NewBuilder(256 + len(payloadArena))
 
 	methodIDOffset := builder.CreateString(methodID)
-	payloadArenaOffset := builder.CreateByteVector(payloadArena)
+	payloadArenaOffset := createAlignedPIVByteVector(builder, payloadArena, arenaAlignment)
 
 	inputFrameOffsets := make([]flatbuffers.UOffsetT, 0, len(packedFrames))
 	for _, frame := range packedFrames {
-		typeRefOffset := buildFlatBufferTypeRef(builder, frame)
-		portIDOffset := flatbuffers.UOffsetT(0)
-		if frame.PortID != "" {
-			portIDOffset = builder.CreateString(frame.PortID)
-		}
-
-		builder.StartObject(12)
-		builder.PrependUOffsetTSlot(0, typeRefOffset, 0)
-		builder.PrependUOffsetTSlot(1, portIDOffset, 0)
-		builder.PrependUint16Slot(2, frame.Alignment, 8)
-		builder.PrependUint32Slot(3, frame.Offset, 0)
-		builder.PrependUint32Slot(4, frame.Size, 0)
-		builder.PrependByteSlot(5, 0, 0)
-		builder.PrependUint32Slot(6, 0, 0)
-		builder.PrependByteSlot(7, 0, 0)
-		builder.PrependUint64Slot(8, 0, 0)
-		builder.PrependUint32Slot(9, 0, 0)
-		builder.PrependUint64Slot(10, 0, 0)
-		builder.PrependBoolSlot(11, false, false)
-		inputFrameOffsets = append(inputFrameOffsets, builder.EndObject())
+		inputFrameOffsets = append(inputFrameOffsets, buildPIVTAB(builder, frame))
 	}
 
-	builder.StartVector(4, len(inputFrameOffsets), 4)
+	piv.PIVRequestStartInputsVector(builder, len(inputFrameOffsets))
 	for index := len(inputFrameOffsets) - 1; index >= 0; index -= 1 {
 		builder.PrependUOffsetT(inputFrameOffsets[index])
 	}
 	inputFramesOffset := builder.EndVector(len(inputFrameOffsets))
 
-	builder.StartObject(3)
-	builder.PrependUOffsetTSlot(0, methodIDOffset, 0)
-	builder.PrependUOffsetTSlot(1, inputFramesOffset, 0)
-	builder.PrependUOffsetTSlot(2, payloadArenaOffset, 0)
-	root := builder.EndObject()
-	builder.FinishWithFileIdentifier(root, []byte(pluginInvokeRequestIdentifier))
+	piv.PIVRequestStart(builder)
+	piv.PIVRequestAddMethodId(builder, methodIDOffset)
+	piv.PIVRequestAddInputs(builder, inputFramesOffset)
+	piv.PIVRequestAddPayloadArena(builder, payloadArenaOffset)
+	requestOffset := piv.PIVRequestEnd(builder)
+
+	piv.PIVStart(builder)
+	piv.PIVAddRequest(builder, requestOffset)
+	root := piv.PIVEnd(builder)
+	piv.FinishPIVBuffer(builder, root)
 
 	return builder.FinishedBytes(), nil
 }
 
-func packInvokeInputFrames(frames []InvokeInputFrame) ([]InvokeInputFrame, []byte, error) {
+func packInvokeInputFrames(frames []InvokeInputFrame) ([]InvokeInputFrame, []byte, uint32, error) {
 	if len(frames) == 0 {
-		return nil, nil, fmt.Errorf("at least one input frame is required")
+		return nil, nil, 0, fmt.Errorf("at least one input frame is required")
 	}
 
 	packed := make([]InvokeInputFrame, 0, len(frames))
 	payloadArena := make([]byte, 0)
 	var offset uint32
+	arenaAlignment := uint32(invokeArenaAlignment)
 
 	for _, frame := range frames {
 		if frame.PortID == "" {
-			return nil, nil, fmt.Errorf("input frame port id is required")
+			return nil, nil, 0, fmt.Errorf("input frame port id is required")
 		}
 
 		payload := append([]byte(nil), frame.Payload...)
-		alignment := frame.Alignment
-		if alignment == 0 {
-			alignment = frame.RequiredAlignment
-		}
-		if alignment == 0 {
-			alignment = 8
+		alignment := normalizeInvokeAlignment(frame.Alignment, frame.RequiredAlignment)
+		if uint32(alignment) > arenaAlignment {
+			arenaAlignment = uint32(alignment)
 		}
 		alignedOffset := alignInvokeOffset(offset, alignment)
 		padding := int(alignedOffset - offset)
@@ -151,10 +134,68 @@ func packInvokeInputFrames(frames []InvokeInputFrame) ([]InvokeInputFrame, []byt
 		offset = alignedOffset + uint32(len(payload))
 	}
 
-	return packed, payloadArena, nil
+	return packed, payloadArena, arenaAlignment, nil
+}
+
+func normalizeInvokeAlignment(alignment uint16, requiredAlignment uint16) uint16 {
+	normalized := alignment
+	if requiredAlignment > normalized {
+		normalized = requiredAlignment
+	}
+	if normalized < invokeArenaAlignment {
+		return invokeArenaAlignment
+	}
+	return normalized
+}
+
+func createAlignedPIVByteVector(
+	builder *flatbuffers.Builder,
+	payload []byte,
+	alignment uint32,
+) flatbuffers.UOffsetT {
+	if alignment == 0 {
+		alignment = 1
+	}
+	builder.StartVector(1, len(payload), int(alignment))
+	for index := len(payload) - 1; index >= 0; index -= 1 {
+		builder.PrependByte(payload[index])
+	}
+	return builder.EndVector(len(payload))
+}
+
+func buildPIVTAB(builder *flatbuffers.Builder, frame InvokeInputFrame) flatbuffers.UOffsetT {
+	typeRefOffset := buildFlatBufferTypeRef(builder, frame)
+	portIDOffset := flatbuffers.UOffsetT(0)
+	if frame.PortID != "" {
+		portIDOffset = builder.CreateString(frame.PortID)
+	}
+
+	wireFormat := piv.EnumValuespayloadWireFormat["FLATBUFFER"]
+	if frame.WireFormat == payloadWireFormatAlignedBinary {
+		wireFormat = piv.EnumValuespayloadWireFormat["ALIGNED_BINARY"]
+	}
+
+	piv.TABStart(builder)
+	piv.TABAddOffset(builder, frame.Offset)
+	piv.TABAddSize(builder, frame.Size)
+	piv.TABAddAlignment(builder, uint32(frame.Alignment))
+	piv.TABAddWireFormat(builder, wireFormat)
+	if typeRefOffset != 0 {
+		piv.TABAddTypeRef(builder, typeRefOffset)
+	}
+	piv.TABAddMutability(builder, piv.EnumValuesbufferMutability["IMMUTABLE"])
+	piv.TABAddOwnership(builder, piv.EnumValuesbufferOwnership["HOST_OWNED"])
+	if portIDOffset != 0 {
+		piv.TABAddPortId(builder, portIDOffset)
+	}
+	return piv.TABEnd(builder)
 }
 
 func buildFlatBufferTypeRef(builder *flatbuffers.Builder, frame InvokeInputFrame) flatbuffers.UOffsetT {
+	if frame.SchemaName == "" && frame.FileIdentifier == "" && frame.RootTypeName == "" {
+		return 0
+	}
+
 	schemaNameOffset := flatbuffers.UOffsetT(0)
 	if frame.SchemaName != "" {
 		schemaNameOffset = builder.CreateString(frame.SchemaName)
@@ -168,17 +209,17 @@ func buildFlatBufferTypeRef(builder *flatbuffers.Builder, frame InvokeInputFrame
 		rootTypeNameOffset = builder.CreateString(frame.RootTypeName)
 	}
 
-	builder.StartObject(9)
-	builder.PrependUOffsetTSlot(0, schemaNameOffset, 0)
-	builder.PrependUOffsetTSlot(1, fileIdentifierOffset, 0)
-	builder.PrependUOffsetTSlot(2, 0, 0)
-	builder.PrependBoolSlot(3, false, false)
-	builder.PrependByteSlot(4, frame.WireFormat, payloadWireFormatFlatbuffer)
-	builder.PrependUOffsetTSlot(5, rootTypeNameOffset, 0)
-	builder.PrependUint16Slot(6, frame.FixedStringLength, 0)
-	builder.PrependUint32Slot(7, frame.ByteLength, 0)
-	builder.PrependUint16Slot(8, frame.RequiredAlignment, 0)
-	return builder.EndObject()
+	piv.FlatBufferTypeRefStart(builder)
+	if schemaNameOffset != 0 {
+		piv.FlatBufferTypeRefAddSchemaName(builder, schemaNameOffset)
+	}
+	if fileIdentifierOffset != 0 {
+		piv.FlatBufferTypeRefAddFileIdentifier(builder, fileIdentifierOffset)
+	}
+	if rootTypeNameOffset != 0 {
+		piv.FlatBufferTypeRefAddRootType(builder, rootTypeNameOffset)
+	}
+	return piv.FlatBufferTypeRefEnd(builder)
 }
 
 func alignInvokeOffset(offset uint32, alignment uint16) uint32 {
@@ -193,54 +234,35 @@ func alignInvokeOffset(offset uint32, alignment uint16) uint32 {
 }
 
 func decodePluginInvokeResponseBytes(data []byte) (*pluginInvokeResponse, error) {
-	if !flatbuffers.BufferHasIdentifier(data, pluginInvokeResponseIdentifier) {
-		return nil, fmt.Errorf("plugin invoke response buffer identifier mismatch")
+	if !piv.PIVBufferHasIdentifier(data) {
+		return nil, fmt.Errorf("SDS PIV invoke response buffer identifier mismatch")
 	}
 
-	root := &flatbuffers.Table{}
-	root.Bytes = data
-	root.Pos = flatbuffers.GetUOffsetT(data)
+	root := piv.GetRootAsPIV(data, 0)
+	envelope := root.Response(nil)
+	if envelope == nil {
+		return nil, fmt.Errorf("SDS PIV invoke envelope does not contain a response")
+	}
 
-	response := &pluginInvokeResponse{}
-	if o := root.Offset(4); o != 0 {
-		offset := flatbuffers.UOffsetT(o)
-		response.StatusCode = root.GetInt32(offset + root.Pos)
+	response := &pluginInvokeResponse{
+		StatusCode:   envelope.StatusCode(),
+		ErrorCode:    string(envelope.ErrorCode()),
+		ErrorMessage: string(envelope.ErrorMessage()),
+		PayloadArena: append([]byte(nil), envelope.PayloadArenaBytes()...),
 	}
-	if o := root.Offset(12); o != 0 {
-		offset := flatbuffers.UOffsetT(o)
-		response.PayloadArena = append([]byte(nil), root.ByteVector(offset+root.Pos)...)
-	}
-	if o := root.Offset(14); o != 0 {
-		offset := flatbuffers.UOffsetT(o)
-		response.ErrorCode = string(root.ByteVector(offset + root.Pos))
-	}
-	if o := root.Offset(16); o != 0 {
-		offset := flatbuffers.UOffsetT(o)
-		response.ErrorMessage = string(root.ByteVector(offset + root.Pos))
-	}
-	if o := root.Offset(10); o != 0 {
-		offset := flatbuffers.UOffsetT(o)
-		vectorStart := root.Vector(offset)
-		vectorLen := root.VectorLen(offset)
-		response.OutputFrames = make([]pluginInvokeFrame, 0, vectorLen)
-		for index := 0; index < vectorLen; index += 1 {
-			framePos := root.Indirect(vectorStart + flatbuffers.UOffsetT(index*4))
-			frameTable := &flatbuffers.Table{Bytes: data, Pos: framePos}
-			frame := pluginInvokeFrame{}
-			if fo := frameTable.Offset(6); fo != 0 {
-				frameOffset := flatbuffers.UOffsetT(fo)
-				frame.PortID = string(frameTable.ByteVector(frameOffset + frameTable.Pos))
-			}
-			if fo := frameTable.Offset(10); fo != 0 {
-				frameOffset := flatbuffers.UOffsetT(fo)
-				frame.Offset = frameTable.GetUint32(frameOffset + frameTable.Pos)
-			}
-			if fo := frameTable.Offset(12); fo != 0 {
-				frameOffset := flatbuffers.UOffsetT(fo)
-				frame.Size = frameTable.GetUint32(frameOffset + frameTable.Pos)
-			}
-			response.OutputFrames = append(response.OutputFrames, frame)
+
+	outputCount := envelope.OutputsLength()
+	response.OutputFrames = make([]pluginInvokeFrame, 0, outputCount)
+	for index := 0; index < outputCount; index += 1 {
+		var frameTable piv.TAB
+		if !envelope.Outputs(&frameTable, index) {
+			continue
 		}
+		response.OutputFrames = append(response.OutputFrames, pluginInvokeFrame{
+			PortID: string(frameTable.PortId()),
+			Offset: frameTable.Offset(),
+			Size:   frameTable.Size(),
+		})
 	}
 
 	return response, nil
