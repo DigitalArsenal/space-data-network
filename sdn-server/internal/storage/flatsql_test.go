@@ -708,6 +708,63 @@ func TestFlatSQLStoreQueryRecentRecordsPrefersLatestSourceTagMaterialization(t *
 	}
 }
 
+func TestFlatSQLStoreQueryLatestSourceBatchRecords(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-latest-source-batch-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	oldTags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "old-batch"}
+	newTags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "new-batch"}
+	oldISS := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS OLD").WithEpoch("2026-05-10T12:00:00Z").Build()
+	oldStarlink := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK OLD").WithEpoch("2026-05-10T12:00:00Z").Build()
+	newISS := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS NEW").WithEpoch("2026-05-15T12:00:00Z").Build()
+	newStarlink := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK NEW").WithEpoch("2026-05-15T12:00:00Z").Build()
+	if _, err := store.StoreWithSourceTags("OMM.fbs", oldISS, "provider", nil, oldTags); err != nil {
+		t.Fatalf("store old ISS failed: %v", err)
+	}
+	if _, err := store.StoreWithSourceTags("OMM.fbs", oldStarlink, "provider", nil, oldTags); err != nil {
+		t.Fatalf("store old Starlink failed: %v", err)
+	}
+	if _, err := store.StoreWithSourceTags("OMM.fbs", newISS, "provider", nil, newTags); err != nil {
+		t.Fatalf("store new ISS failed: %v", err)
+	}
+	if _, err := store.StoreWithSourceTags("OMM.fbs", newStarlink, "provider", nil, newTags); err != nil {
+		t.Fatalf("store new Starlink failed: %v", err)
+	}
+
+	records, ok, err := store.QueryLatestSourceBatchRecords("OMM.fbs", "celestrak-gp", 10)
+	if err != nil {
+		t.Fatalf("QueryLatestSourceBatchRecords failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("QueryLatestSourceBatchRecords did not find latest batch")
+	}
+	if len(records) != 2 {
+		t.Fatalf("len(records) = %d, want latest batch count 2", len(records))
+	}
+	for _, record := range records {
+		if record.SourceTags.BatchID != "new-batch" {
+			t.Fatalf("record batch = %q, want new-batch", record.SourceTags.BatchID)
+		}
+		if string(record.Data) == string(oldISS) || string(record.Data) == string(oldStarlink) {
+			t.Fatal("latest source batch query returned old batch data")
+		}
+	}
+}
+
 func TestFlatSQLStoreDataSummaryGroupsBySchemaAndSource(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-data-summary-test-*")
 	if err != nil {

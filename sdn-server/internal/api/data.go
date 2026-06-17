@@ -1298,6 +1298,15 @@ func (h *DataQueryHandler) bulkRecords(schemaName, day string, limit int) ([]*st
 	if strings.TrimSpace(day) != "" {
 		return h.store.QueryByIndexedFields(schemaName, day, nil, "", limit)
 	}
+	if schemaName == "OMM.fbs" {
+		records, ok, err := h.store.QueryLatestSourceBatchRecords(schemaName, "celestrak-gp", limit)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			return records, nil
+		}
+	}
 	return h.store.QueryRecentRecords(schemaName, limit)
 }
 

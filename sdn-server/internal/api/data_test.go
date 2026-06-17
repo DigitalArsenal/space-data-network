@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/SPW"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -47,6 +48,38 @@ func TestOMMBulkReturnsFullCatalogFlatBufferStream(t *testing.T) {
 	records := readLengthPrefixedRecords(t, rec.Body.Bytes())
 	if len(records) != 2 {
 		t.Fatalf("stream record count = %d, want 2", len(records))
+	}
+}
+
+func TestOMMBulkReturnsLatestCelestrakCatalogBatch(t *testing.T) {
+	store := newDataAPITestStore(t)
+	storeDataAPITestOMMWithBatch(t, store, 25544, "ISS (ZARYA)", "2026-05-10", "old-batch")
+	storeDataAPITestOMMWithBatch(t, store, 40909, "STARLINK-1001", "2026-05-10", "old-batch")
+	storeDataAPITestOMMWithBatch(t, store, 25544, "ISS (ZARYA)", "2026-05-15", "new-batch")
+	storeDataAPITestOMMWithBatch(t, store, 40909, "STARLINK-1001", "2026-05-15", "new-batch")
+
+	mux := http.NewServeMux()
+	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/omm/bulk?limit=10", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-SDN-Record-Count"); got != "2" {
+		t.Fatalf("X-SDN-Record-Count = %q, want latest catalog batch count 2", got)
+	}
+	records := readLengthPrefixedRecords(t, rec.Body.Bytes())
+	if len(records) != 2 {
+		t.Fatalf("stream record count = %d, want latest catalog batch count 2", len(records))
+	}
+	for _, payload := range records {
+		omm := OMM.GetSizePrefixedRootAsOMM(payload, 0)
+		if got := string(omm.EPOCH()); got != "2026-05-15T12:00:00Z" {
+			t.Fatalf("bulk OMM epoch = %q, want latest batch epoch", got)
+		}
 	}
 }
 
@@ -1068,6 +1101,11 @@ func apiSourceCount(sources []apiSourceSummaryRow, schema, providerID, sourceNam
 
 func storeDataAPITestOMM(t *testing.T, store *storage.FlatSQLStore, norad uint32, objectName, day string) []byte {
 	t.Helper()
+	return storeDataAPITestOMMWithBatch(t, store, norad, objectName, day, "test-batch")
+}
+
+func storeDataAPITestOMMWithBatch(t *testing.T, store *storage.FlatSQLStore, norad uint32, objectName, day, batchID string) []byte {
+	t.Helper()
 
 	epoch, err := time.Parse(time.RFC3339, day+"T12:00:00Z")
 	if err != nil {
@@ -1082,7 +1120,7 @@ func storeDataAPITestOMM(t *testing.T, store *storage.FlatSQLStore, norad uint32
 		ProviderID: "space-data-network-02",
 		SourceName: "celestrak-gp",
 		SourceURL:  "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
-		BatchID:    "test-batch",
+		BatchID:    batchID,
 	}
 	if _, err := store.StoreWithSourceTags("OMM.fbs", payload, "source:celestrak", nil, tags); err != nil {
 		t.Fatalf("store OMM failed: %v", err)
