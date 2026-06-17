@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
@@ -26,8 +27,18 @@ import (
 
 // DataQueryHandler serves read-only, cache-friendly schema query APIs.
 type DataQueryHandler struct {
-	store    *storage.FlatSQLStore
-	verifier *license.TokenVerifier
+	store        *storage.FlatSQLStore
+	verifier     *license.TokenVerifier
+	cacheMu      sync.RWMutex
+	ommBulkCache map[string]cachedFlatBufferStream
+}
+
+type cachedFlatBufferStream struct {
+	key          string
+	schema       string
+	bytes        []byte
+	recordCount  int
+	lastModified time.Time
 }
 
 const (
@@ -41,8 +52,9 @@ const (
 // NewDataQueryHandler creates a new data query handler.
 func NewDataQueryHandler(store *storage.FlatSQLStore, verifier *license.TokenVerifier) *DataQueryHandler {
 	return &DataQueryHandler{
-		store:    store,
-		verifier: verifier,
+		store:        store,
+		verifier:     verifier,
+		ommBulkCache: make(map[string]cachedFlatBufferStream),
 	}
 }
 
@@ -442,6 +454,23 @@ func (h *DataQueryHandler) handleOMMBulk(w http.ResponseWriter, r *http.Request)
 	limit := parseLimit(r, 50000, 250000)
 	includeData := parseBool(r, "include_data")
 	format := requestedDataFormat(r)
+
+	if day == "" && format == dataFormatFlatBuffers && !includeData {
+		stream, ok, err := h.cachedOMMBulkFlatBufferStream(limit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if ok {
+			setCachePolicy(w, day)
+			if handleConditionalFlatBufferCache(w, r, stream.key, stream.lastModified) {
+				return
+			}
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", ommBulkFilename(day)))
+			writeCachedFlatBufferPayloadStream(w, stream)
+			return
+		}
+	}
 
 	records, err := h.bulkRecords("OMM.fbs", day, limit)
 	if err != nil {
@@ -1294,6 +1323,58 @@ func (h *DataQueryHandler) storeForDatastoreKey(key string) (*storage.FlatSQLSto
 	return store, func() { _ = store.Close() }, nil
 }
 
+func (h *DataQueryHandler) cachedOMMBulkFlatBufferStream(limit int) (cachedFlatBufferStream, bool, error) {
+	head, ok, err := h.store.LatestSourceBatchHead("OMM.fbs", "celestrak-gp")
+	if err != nil {
+		return cachedFlatBufferStream{}, false, err
+	}
+	if !ok {
+		return cachedFlatBufferStream{}, false, nil
+	}
+	key := latestOMMBulkCacheKey(head, limit)
+
+	h.cacheMu.RLock()
+	if stream, ok := h.ommBulkCache[key]; ok {
+		h.cacheMu.RUnlock()
+		return stream, true, nil
+	}
+	h.cacheMu.RUnlock()
+
+	records, ok, err := h.store.QueryLatestSourceBatchRecords("OMM.fbs", "celestrak-gp", limit)
+	if err != nil {
+		return cachedFlatBufferStream{}, false, err
+	}
+	if !ok {
+		return cachedFlatBufferStream{}, false, nil
+	}
+	stream := cachedFlatBufferStream{
+		key:          key,
+		schema:       "OMM.fbs",
+		bytes:        flatBufferPayloadStreamBytes(recordsToPayloads(records)),
+		recordCount:  len(records),
+		lastModified: head.UpdatedAt,
+	}
+
+	h.cacheMu.Lock()
+	h.ommBulkCache = map[string]cachedFlatBufferStream{key: stream}
+	h.cacheMu.Unlock()
+	return stream, true, nil
+}
+
+func latestOMMBulkCacheKey(head storage.SourceBatchHead, limit int) string {
+	return fmt.Sprintf(
+		"omm-bulk|%s|%s|%s|%s|%d|%d|%d|%d",
+		head.SchemaName,
+		head.ProviderID,
+		head.SourceName,
+		head.BatchID,
+		head.Count,
+		head.MaxRowID,
+		head.UpdatedAt.Unix(),
+		limit,
+	)
+}
+
 func (h *DataQueryHandler) bulkRecords(schemaName, day string, limit int) ([]*storage.Record, error) {
 	if strings.TrimSpace(day) != "" {
 		return h.store.QueryByIndexedFields(schemaName, day, nil, "", limit)
@@ -1529,6 +1610,20 @@ func handleConditionalCache(w http.ResponseWriter, r *http.Request, schema, day,
 	return false
 }
 
+func handleConditionalFlatBufferCache(w http.ResponseWriter, r *http.Request, cacheKey string, lastModified time.Time) bool {
+	sum := sha256.Sum256([]byte(cacheKey))
+	tag := `"` + hex.EncodeToString(sum[:]) + `"`
+	w.Header().Set("ETag", tag)
+	if !lastModified.IsZero() {
+		w.Header().Set("Last-Modified", lastModified.UTC().Format(http.TimeFormat))
+	}
+	if inm := strings.TrimSpace(r.Header.Get("If-None-Match")); inm != "" && inm == tag {
+		w.WriteHeader(http.StatusNotModified)
+		return true
+	}
+	return false
+}
+
 type dataFormat int
 
 const (
@@ -1587,16 +1682,32 @@ func writeFlatBufferPayloadStreamWithContentType(w http.ResponseWriter, schema s
 	w.Header().Set("X-SDN-Stream-Format", "flatsql-size-prefixed-le-u32")
 	w.WriteHeader(http.StatusOK)
 
+	_, _ = w.Write(flatBufferPayloadStreamBytes(payloads))
+}
+
+func flatBufferPayloadStreamBytes(payloads [][]byte) []byte {
+	total := 0
+	for _, payload := range payloads {
+		total += 4 + len(payload)
+	}
+	stream := make([]byte, 0, total)
 	var lenBuf [4]byte
 	for _, payload := range payloads {
 		binary.LittleEndian.PutUint32(lenBuf[:], uint32(len(payload)))
-		if _, err := w.Write(lenBuf[:]); err != nil {
-			return
-		}
-		if _, err := w.Write(payload); err != nil {
-			return
-		}
+		stream = append(stream, lenBuf[:]...)
+		stream = append(stream, payload...)
 	}
+	return stream
+}
+
+func writeCachedFlatBufferPayloadStream(w http.ResponseWriter, stream cachedFlatBufferStream) {
+	w.Header().Set("Content-Type", "application/x-flatbuffers")
+	w.Header().Set("X-SDN-Schema", stream.schema)
+	w.Header().Set("X-SDN-Record-Count", strconv.Itoa(stream.recordCount))
+	w.Header().Set("X-SDN-Stream-Format", "flatsql-size-prefixed-le-u32")
+	w.Header().Set("Content-Length", strconv.Itoa(len(stream.bytes)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(stream.bytes)
 }
 
 func writeFlatBufferRecordStreamWithContentType(w http.ResponseWriter, schema string, records []*storage.Record, contentType string, store *storage.FlatSQLStore) {

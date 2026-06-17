@@ -83,6 +83,39 @@ func TestOMMBulkReturnsLatestCelestrakCatalogBatch(t *testing.T) {
 	}
 }
 
+func TestOMMBulkCachesFlatBufferStreamUntilSourceUpdate(t *testing.T) {
+	store, basePath, _ := newDataAPITestStoreWithBasePath(t)
+	storeDataAPITestOMMWithBatch(t, store, 25544, "ISS (ZARYA)", "2026-05-15", "batch-a")
+	storeDataAPITestOMMWithBatch(t, store, 40909, "STARLINK-1001", "2026-05-15", "batch-a")
+
+	mux := http.NewServeMux()
+	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/omm/bulk?limit=10", nil)
+	first := httptest.NewRecorder()
+	mux.ServeHTTP(first, req)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first status = %d, body=%s", first.Code, first.Body.String())
+	}
+	firstBody := append([]byte(nil), first.Body.Bytes()...)
+	if len(readLengthPrefixedRecords(t, firstBody)) != 2 {
+		t.Fatalf("first cached stream record count != 2")
+	}
+
+	if err := os.RemoveAll(filepath.Join(basePath, "flatsql-streams")); err != nil {
+		t.Fatalf("remove backing stream files failed: %v", err)
+	}
+
+	second := httptest.NewRecorder()
+	mux.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/api/v1/data/omm/bulk?limit=10", nil))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second status = %d, body=%s", second.Code, second.Body.String())
+	}
+	if !bytes.Equal(second.Body.Bytes(), firstBody) {
+		t.Fatal("second OMM bulk stream was not served from the source-update cache")
+	}
+}
+
 func TestOMMBulkJSONIncludesDataForFullCatalogConsumers(t *testing.T) {
 	store := newDataAPITestStore(t)
 	day := "2026-05-05"
