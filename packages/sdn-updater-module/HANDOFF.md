@@ -171,8 +171,8 @@ correct; most need to go.
 - `test/smoke.test.mjs` — instantiates the built `.wasm` under Node's `wasi`
   (no real host capabilities needed), verifies exports include
   `plugin_invoke_stream` + `plugin_get_manifest_flatbuffer`, builds a minimal
-  `PluginInvokeRequest` (file id `PINQ`) with `method_id: "checkForUpdates"`
-  and asserts the response (file id `PINS`) has status_code 0.
+  SDS `$PIV` request envelope with `method_id: "checkForUpdates"` and asserts
+  the SDS `$PIV` response has status_code 0.
 - Updated `README.md` Build section: `npm run build`, `npm run check`,
   `npm test`. Drop the wasi-sdk / Makefile instructions.
 
@@ -219,9 +219,8 @@ correct; most need to go.
 ## SDK FlatBuffer schemas (for reference)
 
 - `node_modules/space-data-module-sdk/schemas/PluginManifest.fbs` (file id `PMAN`)
-- `node_modules/space-data-module-sdk/schemas/PluginInvokeRequest.fbs` (file id `PINQ`)
-- `node_modules/space-data-module-sdk/schemas/PluginInvokeResponse.fbs` (file id `PINS`)
-- `node_modules/space-data-module-sdk/schemas/TypedArenaBuffer.fbs`
+- `node_modules/spacedatastandards.org/schema/PIV/main.fbs` (file id `$PIV`)
+- `node_modules/spacedatastandards.org/schema/TAB/main.fbs`
 
 ## `space_data_module_host` import ABI (for when methods actually call out)
 

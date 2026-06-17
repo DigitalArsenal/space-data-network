@@ -209,8 +209,8 @@ Plus standard `wasi_snapshot_preview1` imports.
 
 1. Host calls `plugin_alloc(N)` to allocate N bytes in guest memory
 2. Host writes input data at the returned pointer
-3. Host encodes a `PluginInvokeRequest` FlatBuffer and passes it to `plugin_invoke_stream`
-4. Guest returns a pointer to a `PluginInvokeResponse` FlatBuffer and writes its size to `out_len_ptr`
+3. Host encodes a SDS `$PIV` request envelope and passes it to `plugin_invoke_stream`
+4. Guest returns a pointer to a SDS `$PIV` response envelope and writes its size to `out_len_ptr`
 5. Host copies the response bytes, then calls `plugin_free(ptr, size)` on guest-owned allocations
 
 ### Plugin Lifecycle

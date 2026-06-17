@@ -1,9 +1,10 @@
 import {
   createModuleFlatBufferStreamPump,
-  type ModuleFlatBufferStreamPump,
-  type ModuleFlatBufferStreamPumpStats,
-  type PluginInvokeRequestEnvelope,
-  type PluginInvokeResponseEnvelope,
+} from 'space-data-module-sdk/testing/module-flatbuffer-stream-pump';
+import type {
+  ModuleFlatBufferStreamPumpStats,
+  PluginInvokeRequestEnvelope,
+  PluginInvokeResponseEnvelope,
 } from 'space-data-module-sdk';
 
 export interface ChannelModuleStreamPump {
@@ -22,7 +23,7 @@ export interface ChannelModuleStreamPumpOptions {
 }
 
 export function createChannelModuleStreamPump(options: ChannelModuleStreamPumpOptions): ChannelModuleStreamPump {
-  const pump: ModuleFlatBufferStreamPump = createModuleFlatBufferStreamPump({
+  const pump = createModuleFlatBufferStreamPump({
     methodId: options.methodId,
     portId: options.portId,
     maxFramesPerInvoke: options.maxFramesPerInvoke,
@@ -34,11 +35,11 @@ export function createChannelModuleStreamPump(options: ChannelModuleStreamPumpOp
     pushChunk(chunk) {
       return pump.pushBytes(chunk);
     },
-    finish() {
-      return pump.finish();
+    async finish() {
+      return (await pump.finish()) as PluginInvokeResponseEnvelope | null;
     },
     stats() {
-      return { ...pump.stats };
+      return { ...pump.stats } as ModuleFlatBufferStreamPumpStats;
     },
   };
 }
