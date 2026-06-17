@@ -2987,8 +2987,8 @@ func (s *FlatSQLStore) QueryByIndexedFields(schemaName, day string, noradCatID *
 }
 
 // QueryRecentRecords returns recent records directly from the schema table.
-// It avoids the materialized index join for unfiltered bulk consumers that need
-// the latest catalog stream and do not require day/object predicates.
+// It avoids the materialized index join for unfiltered consumers that do not
+// require day/object predicates or source-batch snapshot semantics.
 func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Record, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -3052,6 +3052,70 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 	}
 	records = append(records, untagged...)
 	return records, nil
+}
+
+// QueryLatestSourceBatchRecords returns records from the newest materialized
+// provider/source batch for a live catalog source.
+func (s *FlatSQLStore) QueryLatestSourceBatchRecords(schemaName, sourceName string, limit int) ([]*Record, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	schemaName = strings.TrimSpace(schemaName)
+	sourceName = strings.TrimSpace(sourceName)
+	if sourceName == "" {
+		return nil, false, errors.New("source name is required")
+	}
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return nil, false, fmt.Errorf("invalid schema name: %w", err)
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 250000 {
+		limit = 250000
+	}
+
+	var providerID, batchID string
+	err = s.db.QueryRow(`
+		SELECT provider_id, batch_id
+		FROM sdn_record_source_summary
+		WHERE schema_name = ?
+		  AND source_name = ?
+		  AND batch_id <> ''
+		  AND record_count > 0
+		ORDER BY max_rowid DESC, updated_at DESC, provider_id ASC, batch_id DESC
+		LIMIT 1
+	`, schemaName, sourceName).Scan(&providerID, &batchID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("latest source batch query failed: %w", err)
+	}
+
+	rows, err := s.db.Query(fmt.Sprintf(`
+		SELECT d.cid, d.peer_id, d.timestamp,
+		       d.stream_path, d.stream_offset, d.record_length, d.signature_hex,
+		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
+		       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key, tags.created_at
+		FROM sdn_record_source_tags tags
+		INNER JOIN %s d ON d.cid = tags.cid
+		WHERE tags.schema_name = ?
+		  AND tags.provider_id = ?
+		  AND tags.source_name = ?
+		  AND tags.batch_id = ?
+		ORDER BY d.rowid ASC, d.cid ASC
+		LIMIT ?
+	`, tableName), schemaName, providerID, sourceName, batchID, limit)
+	if err != nil {
+		return nil, false, fmt.Errorf("latest source batch records query failed: %w", err)
+	}
+	records, err := s.scanRecentRecords(rows)
+	if err != nil {
+		return nil, false, err
+	}
+	return records, true, nil
 }
 
 // DataSummary returns aggregate FlatSQL record counts and raw byte totals.
