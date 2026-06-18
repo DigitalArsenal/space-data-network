@@ -187,6 +187,16 @@ describe('sdn-js package build', () => {
     },
   );
 
+  it('keeps FlatSQL WASI URL resolution lazy for downstream browser bundles', async () => {
+    const source = await fs.readFile(path.resolve(__dirname, 'flatsql.ts'), 'utf8');
+    const dist = await fs.readFile(DIST_INDEX_PATH, 'utf8');
+
+    expect(source).toContain("const DEFAULT_WASI_RELATIVE_PATH = '../wasm/flatsql-wasi.wasm'");
+    expect(source).toContain('function getDefaultWASIURL()');
+    expect(source).not.toContain("const DEFAULT_WASI_URL = new URL('../wasm/flatsql-wasi.wasm', import.meta.url)");
+    expect(dist).not.toMatch(/DEFAULT_WASI_URL\s*=\s*new URL\([^)]*import_meta/u);
+  });
+
   it(
     'imports the built canonical root entry successfully',
     { timeout: 60_000 },
