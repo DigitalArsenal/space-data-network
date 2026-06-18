@@ -97,7 +97,7 @@
     "multiformats": "^13.3.7",
     "qrcode": "^1.5.3",
     "satellite.js": "^7.0.1",
-    "space-data-module-sdk": "github:DigitalArsenal/space-data-module-sdk#9dec39fa022da00b6cabd684be43a491caac969f",
+    "space-data-module-sdk": "github:DigitalArsenal/space-data-module-sdk#2e4461b74dd5bcdf53aad828b586c8f303f834ea",
     "spacedatastandards.org": "https://github.com/DigitalArsenal/spacedatastandards.org/archive/refs/tags/v1.131.0.tar.gz",
     "uint8arraylist": "^2.4.8",
     "uint8arrays": "^5.0.0",
