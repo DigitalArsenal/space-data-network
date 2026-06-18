@@ -33,6 +33,7 @@ const licensingMocks = vi.hoisted(() => ({
     providerSignature: new Uint8Array(64).fill(9),
   })),
   validateLicensingGrant: vi.fn((grant) => grant),
+  verifyLicensingGrantProviderSignature: vi.fn(async () => undefined),
   extractGrantModuleDescriptor: vi.fn(() => ({
     cid: 'bafyencryptedmodule',
     contentHash: new Uint8Array(32).fill(7),
@@ -97,6 +98,8 @@ vi.mock('space-data-module-sdk/licensing', () => ({
   extractGrantModuleDescriptor: licensingMocks.extractGrantModuleDescriptor,
   extractWrappedContentKey: licensingMocks.extractWrappedContentKey,
   validateLicensingGrant: licensingMocks.validateLicensingGrant,
+  verifyLicensingGrantProviderSignature:
+    licensingMocks.verifyLicensingGrantProviderSignature,
 }));
 
 vi.mock('./crypto/hd-wallet', () => ({
