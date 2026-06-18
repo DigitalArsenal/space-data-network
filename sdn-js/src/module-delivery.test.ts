@@ -48,6 +48,7 @@ vi.mock('./crypto/hd-wallet', () => {
   };
 });
 
+import { verify } from './crypto/hd-wallet';
 import { MODULE_DELIVERY_DISCOVERY_NAMESPACE } from './discovery';
 import {
   MODULE_DELIVERY_PROTOCOL_ID,
@@ -619,6 +620,86 @@ describe('module-delivery', () => {
     });
   });
 
+  it('verifies provider signatures over the complete PLG descriptor', async () => {
+    const createdAtMs = 1_700_000_123_456n;
+    const updatedAtMs = 1_700_000_234_567n;
+    const verifyMock = vi.mocked(verify);
+    const firstVerifyCall = verifyMock.mock.calls.length;
+    const transport = {
+      async dialProtocol(
+        _targetPeerId: string,
+        _protocolId: string,
+        payload: Uint8Array,
+      ) {
+        if (isLCH(payload)) {
+          const request = decodeLCH(payload);
+          return encodeChallengeResponse({
+            reqId: request.REQUEST_ID() ?? '',
+            moduleId: request.MODULE_ID() ?? '',
+            moduleVersion: request.MODULE_VERSION() ?? undefined,
+            providerPeerId: 'provider-peer-id',
+            challengeNonce: new Uint8Array([1, 2, 3, 4]),
+            expiresAtMs: 1_700_000_900_000n,
+          });
+        }
+
+        const proof = decodeLPF(payload);
+        return encodeGrantResponse({
+          reqId: proof.REQUEST_ID() ?? '',
+          moduleId: proof.MODULE_ID() ?? '',
+          moduleVersion: proof.MODULE_VERSION() ?? undefined,
+          requesterPeerId: proof.REQUESTER_PEER_ID() ?? undefined,
+          requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
+          requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
+          requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          grantedDomain: 'app.example.com',
+          grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          expiresAtMs: 1_700_003_600_000n,
+          contentHash: new Uint8Array(32).fill(7),
+          createdAtMs,
+          updatedAtMs,
+        });
+      },
+      async fetchCIDBytes() {
+        return new Uint8Array([1, 2, 3, 4]);
+      },
+    };
+
+    await requestModuleGrant(transport, {
+      serverDescriptor: {
+        publicKey: '02'.padEnd(66, '1'),
+        relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
+      },
+      requesterIdentity: {
+        peerId: 'requester-peer-id',
+        xpub: 'xpub-requester',
+        signingKey: {
+          privateKey: new Uint8Array(32).fill(5),
+          publicKey: new Uint8Array(32).fill(6),
+        },
+        encryptionKey: {
+          privateKey: new Uint8Array(32).fill(7),
+          publicKey: new Uint8Array(32).fill(8),
+        },
+      },
+      moduleId: 'com.space-data-network.fastest-path',
+      moduleVersion: '0.5.22',
+      requesterDomain: 'app.example.com',
+      requestedTimeoutMs: 30_000,
+      reqId: 'req-complete-plg-signature',
+      requestedAtMs: 1_700_000_000_000,
+    });
+
+    const verificationMessage = verifyMock.mock.calls[firstVerifyCall]?.[1];
+    expect(verificationMessage).toBeInstanceOf(Uint8Array);
+    const unsignedGrant = LGR.getRootAsLGR(
+      new flatbuffers.ByteBuffer(verificationMessage as Uint8Array),
+    );
+    const descriptor = unsignedGrant.MODULE_DESCRIPTOR();
+    expect(descriptor?.CREATED_AT()).toBe(createdAtMs);
+    expect(descriptor?.UPDATED_AT()).toBe(updatedAtMs);
+  });
+
   it('rejects grants whose verifier key is not advertised by the resolved provider EPM', async () => {
     const transport = {
       async dialProtocol(
@@ -851,6 +932,8 @@ function encodeGrantResponse(options: {
   providerSignature?: Uint8Array | null;
   grantVerifierPublicKey?: Uint8Array;
   wrappedContentKeyPayload?: Uint8Array;
+  createdAtMs?: bigint;
+  updatedAtMs?: bigint;
 }): Uint8Array {
   if (options.providerSignature === undefined) {
     const unsignedGrant = encodeGrantResponse({
@@ -874,7 +957,7 @@ function encodeGrantResponse(options: {
   const requiredScopeOffset = builder.createString('orbpro.default');
   const grantStatusOffset = builder.createString(options.grantStatus ?? 'active');
   const capabilityTokenOffset = LGR.createCapabilityTokenVector(builder, new Uint8Array([1, 2, 3]));
-  const moduleDescriptorOffset = createModuleDescriptorOffset(builder, options.contentHash);
+  const moduleDescriptorOffset = createModuleDescriptorOffset(builder, options.contentHash, options);
   const wrappedContentKeyHeaderOffset = createWrappedContentKeyHeaderOffset(builder, options);
   const wrappedContentKeyPayloadOffset = LGR.createWrappedContentKeyPayloadVector(
     builder,
@@ -965,6 +1048,7 @@ function createOffsetVector(builder: flatbuffers.Builder, offsets: number[]): nu
 function createModuleDescriptorOffset(
   builder: flatbuffers.Builder,
   contentHash: Uint8Array,
+  options: Pick<GrantFixtureOptions, 'createdAtMs' | 'updatedAtMs'> = {},
 ): flatbuffers.Offset {
   const moduleId = 'com.space-data-network.fastest-path';
   const moduleVersion = '0.5.22';
@@ -996,6 +1080,12 @@ function createModuleDescriptorOffset(
   PLG.addKeyId(builder, keyIdOffset);
   PLG.addAllowedDomains(builder, allowedDomainsOffset);
   PLG.addMaxGrantTimeoutMs(builder, 300_000n);
+  if (options.createdAtMs !== undefined) {
+    PLG.addCreatedAt(builder, options.createdAtMs);
+  }
+  if (options.updatedAtMs !== undefined) {
+    PLG.addUpdatedAt(builder, options.updatedAtMs);
+  }
   return PLG.endPLG(builder);
 }
 
