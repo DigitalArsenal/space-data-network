@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Ellipse properties (for ground circles/ellipses)
+/// Ellipse properties (for ground circles/ellipses)
 type CZMEllipse struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMEllipse) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Whether the ellipse is displayed
+/// Whether the ellipse is displayed
 func (rcv *CZMEllipse) SHOW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMEllipse) Show() bool {
 	return rcv.SHOW()
 }
 
-// / Whether the ellipse is displayed
+/// Whether the ellipse is displayed
 func (rcv *CZMEllipse) MutateSHOW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMEllipse) MutateShow(n bool) bool {
 	return rcv.MutateSHOW(n)
 }
 
-// / Semi-major axis in meters
+/// Semi-major axis in meters
 func (rcv *CZMEllipse) SEMI_MAJOR_AXIS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *CZMEllipse) SemiMajorAxis() float64 {
 	return rcv.SEMI_MAJOR_AXIS()
 }
 
-// / Semi-major axis in meters
+/// Semi-major axis in meters
 func (rcv *CZMEllipse) MutateSEMI_MAJOR_AXIS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *CZMEllipse) MutateSemiMajorAxis(n float64) bool {
 	return rcv.MutateSEMI_MAJOR_AXIS(n)
 }
 
-// / Semi-minor axis in meters
+/// Semi-minor axis in meters
 func (rcv *CZMEllipse) SEMI_MINOR_AXIS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *CZMEllipse) SemiMinorAxis() float64 {
 	return rcv.SEMI_MINOR_AXIS()
 }
 
-// / Semi-minor axis in meters
+/// Semi-minor axis in meters
 func (rcv *CZMEllipse) MutateSEMI_MINOR_AXIS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *CZMEllipse) MutateSemiMinorAxis(n float64) bool {
 	return rcv.MutateSEMI_MINOR_AXIS(n)
 }
 
-// / Rotation from north in radians
+/// Rotation from north in radians
 func (rcv *CZMEllipse) ROTATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *CZMEllipse) Rotation() float64 {
 	return rcv.ROTATION()
 }
 
-// / Rotation from north in radians
+/// Rotation from north in radians
 func (rcv *CZMEllipse) MutateROTATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *CZMEllipse) MutateRotation(n float64) bool {
 	return rcv.MutateROTATION(n)
 }
 
-// / Fill flag
+/// Fill flag
 func (rcv *CZMEllipse) FILL() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,7 +143,7 @@ func (rcv *CZMEllipse) Fill() bool {
 	return rcv.FILL()
 }
 
-// / Fill flag
+/// Fill flag
 func (rcv *CZMEllipse) MutateFILL(n bool) bool {
 	return rcv._tab.MutateBoolSlot(12, n)
 }
@@ -152,7 +152,7 @@ func (rcv *CZMEllipse) MutateFill(n bool) bool {
 	return rcv.MutateFILL(n)
 }
 
-// / Fill color (legacy solid color)
+/// Fill color (legacy solid color)
 func (rcv *CZMEllipse) COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -170,8 +170,8 @@ func (rcv *CZMEllipse) Color(obj *CZMColor) *CZMColor {
 	return rcv.COLOR(obj)
 }
 
-// / Fill color (legacy solid color)
-// / Outline flag
+/// Fill color (legacy solid color)
+/// Outline flag
 func (rcv *CZMEllipse) OUTLINE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -184,7 +184,7 @@ func (rcv *CZMEllipse) Outline() bool {
 	return rcv.OUTLINE()
 }
 
-// / Outline flag
+/// Outline flag
 func (rcv *CZMEllipse) MutateOUTLINE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(16, n)
 }
@@ -193,7 +193,7 @@ func (rcv *CZMEllipse) MutateOutline(n bool) bool {
 	return rcv.MutateOUTLINE(n)
 }
 
-// / Outline color
+/// Outline color
 func (rcv *CZMEllipse) OUTLINE_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -211,8 +211,8 @@ func (rcv *CZMEllipse) OutlineColor(obj *CZMColor) *CZMColor {
 	return rcv.OUTLINE_COLOR(obj)
 }
 
-// / Outline color
-// / Height in meters
+/// Outline color
+/// Height in meters
 func (rcv *CZMEllipse) HEIGHT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -225,7 +225,7 @@ func (rcv *CZMEllipse) Height() float64 {
 	return rcv.HEIGHT()
 }
 
-// / Height in meters
+/// Height in meters
 func (rcv *CZMEllipse) MutateHEIGHT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -234,7 +234,7 @@ func (rcv *CZMEllipse) MutateHeight(n float64) bool {
 	return rcv.MutateHEIGHT(n)
 }
 
-// / Height reference
+/// Height reference
 func (rcv *CZMEllipse) HEIGHT_REFERENCE() CZMHeightReference {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -247,7 +247,7 @@ func (rcv *CZMEllipse) HeightReference() CZMHeightReference {
 	return rcv.HEIGHT_REFERENCE()
 }
 
-// / Height reference
+/// Height reference
 func (rcv *CZMEllipse) MutateHEIGHT_REFERENCE(n CZMHeightReference) bool {
 	return rcv._tab.MutateInt8Slot(22, int8(n))
 }
@@ -256,7 +256,7 @@ func (rcv *CZMEllipse) MutateHeightReference(n CZMHeightReference) bool {
 	return rcv.MutateHEIGHT_REFERENCE(n)
 }
 
-// / Extruded height in meters
+/// Extruded height in meters
 func (rcv *CZMEllipse) EXTRUDED_HEIGHT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -269,7 +269,7 @@ func (rcv *CZMEllipse) ExtrudedHeight() float64 {
 	return rcv.EXTRUDED_HEIGHT()
 }
 
-// / Extruded height in meters
+/// Extruded height in meters
 func (rcv *CZMEllipse) MutateEXTRUDED_HEIGHT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -278,7 +278,7 @@ func (rcv *CZMEllipse) MutateExtrudedHeight(n float64) bool {
 	return rcv.MutateEXTRUDED_HEIGHT(n)
 }
 
-// / Extruded height reference
+/// Extruded height reference
 func (rcv *CZMEllipse) EXTRUDED_HEIGHT_REFERENCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -291,8 +291,8 @@ func (rcv *CZMEllipse) ExtrudedHeightReference() []byte {
 	return rcv.EXTRUDED_HEIGHT_REFERENCE()
 }
 
-// / Extruded height reference
-// / Texture rotation in radians
+/// Extruded height reference
+/// Texture rotation in radians
 func (rcv *CZMEllipse) ST_ROTATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -305,7 +305,7 @@ func (rcv *CZMEllipse) StRotation() float64 {
 	return rcv.ST_ROTATION()
 }
 
-// / Texture rotation in radians
+/// Texture rotation in radians
 func (rcv *CZMEllipse) MutateST_ROTATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -314,7 +314,7 @@ func (rcv *CZMEllipse) MutateStRotation(n float64) bool {
 	return rcv.MutateST_ROTATION(n)
 }
 
-// / Granularity in radians
+/// Granularity in radians
 func (rcv *CZMEllipse) GRANULARITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -327,7 +327,7 @@ func (rcv *CZMEllipse) Granularity() float64 {
 	return rcv.GRANULARITY()
 }
 
-// / Granularity in radians
+/// Granularity in radians
 func (rcv *CZMEllipse) MutateGRANULARITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -336,7 +336,7 @@ func (rcv *CZMEllipse) MutateGranularity(n float64) bool {
 	return rcv.MutateGRANULARITY(n)
 }
 
-// / Full surface material
+/// Full surface material
 func (rcv *CZMEllipse) MATERIAL(obj *CZMMaterial) *CZMMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -354,8 +354,8 @@ func (rcv *CZMEllipse) Material(obj *CZMMaterial) *CZMMaterial {
 	return rcv.MATERIAL(obj)
 }
 
-// / Full surface material
-// / Outline width in pixels
+/// Full surface material
+/// Outline width in pixels
 func (rcv *CZMEllipse) OUTLINE_WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -368,7 +368,7 @@ func (rcv *CZMEllipse) OutlineWidth() float64 {
 	return rcv.OUTLINE_WIDTH()
 }
 
-// / Outline width in pixels
+/// Outline width in pixels
 func (rcv *CZMEllipse) MutateOUTLINE_WIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -377,7 +377,7 @@ func (rcv *CZMEllipse) MutateOutlineWidth(n float64) bool {
 	return rcv.MutateOUTLINE_WIDTH(n)
 }
 
-// / Number of vertical lines
+/// Number of vertical lines
 func (rcv *CZMEllipse) NUMBER_OF_VERTICAL_LINES() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -390,7 +390,7 @@ func (rcv *CZMEllipse) NumberOfVerticalLines() int32 {
 	return rcv.NUMBER_OF_VERTICAL_LINES()
 }
 
-// / Number of vertical lines
+/// Number of vertical lines
 func (rcv *CZMEllipse) MutateNUMBER_OF_VERTICAL_LINES(n int32) bool {
 	return rcv._tab.MutateInt32Slot(36, n)
 }
@@ -399,7 +399,7 @@ func (rcv *CZMEllipse) MutateNumberOfVerticalLines(n int32) bool {
 	return rcv.MutateNUMBER_OF_VERTICAL_LINES(n)
 }
 
-// / Shadow mode
+/// Shadow mode
 func (rcv *CZMEllipse) SHADOWS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -412,8 +412,8 @@ func (rcv *CZMEllipse) Shadows() []byte {
 	return rcv.SHADOWS()
 }
 
-// / Shadow mode
-// / Classification type
+/// Shadow mode
+/// Classification type
 func (rcv *CZMEllipse) CLASSIFICATION_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -426,8 +426,8 @@ func (rcv *CZMEllipse) ClassificationType() []byte {
 	return rcv.CLASSIFICATION_TYPE()
 }
 
-// / Classification type
-// / Z-index for ordering
+/// Classification type
+/// Z-index for ordering
 func (rcv *CZMEllipse) Z_INDEX() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -440,7 +440,7 @@ func (rcv *CZMEllipse) ZIndex() int32 {
 	return rcv.Z_INDEX()
 }
 
-// / Z-index for ordering
+/// Z-index for ordering
 func (rcv *CZMEllipse) MutateZ_INDEX(n int32) bool {
 	return rcv._tab.MutateInt32Slot(42, n)
 }

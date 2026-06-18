@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / On-Orbit Event
+/// On-Orbit Event
 type OOE struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *OOE) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier
+/// Unique identifier
 func (rcv *OOE) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *OOE) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique identifier
-// / Satellite catalog number
+/// Unique identifier
+/// Satellite catalog number
 func (rcv *OOE) SAT_NO() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,7 +81,7 @@ func (rcv *OOE) SatNo() uint32 {
 	return rcv.SAT_NO()
 }
 
-// / Satellite catalog number
+/// Satellite catalog number
 func (rcv *OOE) MutateSAT_NO(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -90,7 +90,7 @@ func (rcv *OOE) MutateSatNo(n uint32) bool {
 	return rcv.MutateSAT_NO(n)
 }
 
-// / International designator
+/// International designator
 func (rcv *OOE) ORIG_OBJECT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,8 +103,8 @@ func (rcv *OOE) OrigObjectId() []byte {
 	return rcv.ORIG_OBJECT_ID()
 }
 
-// / International designator
-// / Source record this was derived from
+/// International designator
+/// Source record this was derived from
 func (rcv *OOE) DERIVED_FROM() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *OOE) DerivedFrom() []byte {
 	return rcv.DERIVED_FROM()
 }
 
-// / Source record this was derived from
-// / Classification date (ISO 8601)
+/// Source record this was derived from
+/// Classification date (ISO 8601)
 func (rcv *OOE) DECLASSIFICATION_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *OOE) DeclassificationDate() []byte {
 	return rcv.DECLASSIFICATION_DATE()
 }
 
-// / Classification date (ISO 8601)
-// / Classification marking
+/// Classification date (ISO 8601)
+/// Classification marking
 func (rcv *OOE) DECLASSIFICATION_STRING() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,8 +145,8 @@ func (rcv *OOE) DeclassificationString() []byte {
 	return rcv.DECLASSIFICATION_STRING()
 }
 
-// / Classification marking
-// / Event time (ISO 8601)
+/// Classification marking
+/// Event time (ISO 8601)
 func (rcv *OOE) EVENT_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,8 +159,8 @@ func (rcv *OOE) EventTime() []byte {
 	return rcv.EVENT_TIME()
 }
 
-// / Event time (ISO 8601)
-// / Notes on event time accuracy
+/// Event time (ISO 8601)
+/// Notes on event time accuracy
 func (rcv *OOE) EVENT_TIME_NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -173,8 +173,8 @@ func (rcv *OOE) EventTimeNotes() []byte {
 	return rcv.EVENT_TIME_NOTES()
 }
 
-// / Notes on event time accuracy
-// / Event category
+/// Notes on event time accuracy
+/// Event category
 func (rcv *OOE) CATEGORY() eventCategory {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -187,7 +187,7 @@ func (rcv *OOE) Category() eventCategory {
 	return rcv.CATEGORY()
 }
 
-// / Event category
+/// Event category
 func (rcv *OOE) MutateCATEGORY(n eventCategory) bool {
 	return rcv._tab.MutateInt8Slot(20, int8(n))
 }
@@ -196,7 +196,7 @@ func (rcv *OOE) MutateCategory(n eventCategory) bool {
 	return rcv.MutateCATEGORY(n)
 }
 
-// / Event result/outcome
+/// Event result/outcome
 func (rcv *OOE) RESULT() eventResult {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -209,7 +209,7 @@ func (rcv *OOE) Result() eventResult {
 	return rcv.RESULT()
 }
 
-// / Event result/outcome
+/// Event result/outcome
 func (rcv *OOE) MutateRESULT(n eventResult) bool {
 	return rcv._tab.MutateInt8Slot(22, int8(n))
 }
@@ -218,7 +218,7 @@ func (rcv *OOE) MutateResult(n eventResult) bool {
 	return rcv.MutateRESULT(n)
 }
 
-// / Event type detail
+/// Event type detail
 func (rcv *OOE) EVENT_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -231,8 +231,8 @@ func (rcv *OOE) EventType() []byte {
 	return rcv.EVENT_TYPE()
 }
 
-// / Event type detail
-// / Operator organization identifier
+/// Event type detail
+/// Operator organization identifier
 func (rcv *OOE) OPERATOR_ORG_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -245,8 +245,8 @@ func (rcv *OOE) OperatorOrgId() []byte {
 	return rcv.OPERATOR_ORG_ID()
 }
 
-// / Operator organization identifier
-// / Owner organization identifier
+/// Operator organization identifier
+/// Owner organization identifier
 func (rcv *OOE) OWNER_ORG_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -259,8 +259,8 @@ func (rcv *OOE) OwnerOrgId() []byte {
 	return rcv.OWNER_ORG_ID()
 }
 
-// / Owner organization identifier
-// / Lessee organization identifier
+/// Owner organization identifier
+/// Lessee organization identifier
 func (rcv *OOE) LESSEE_ORG_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -273,8 +273,8 @@ func (rcv *OOE) LesseeOrgId() []byte {
 	return rcv.LESSEE_ORG_ID()
 }
 
-// / Lessee organization identifier
-// / Operated on behalf of organization
+/// Lessee organization identifier
+/// Operated on behalf of organization
 func (rcv *OOE) OPERATED_ON_BEHALF_OF_ORG_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -287,8 +287,8 @@ func (rcv *OOE) OperatedOnBehalfOfOrgId() []byte {
 	return rcv.OPERATED_ON_BEHALF_OF_ORG_ID()
 }
 
-// / Operated on behalf of organization
-// / GEO longitude at event time (degrees east)
+/// Operated on behalf of organization
+/// GEO longitude at event time (degrees east)
 func (rcv *OOE) GEO_POSITION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -301,7 +301,7 @@ func (rcv *OOE) GeoPosition() float64 {
 	return rcv.GEO_POSITION()
 }
 
-// / GEO longitude at event time (degrees east)
+/// GEO longitude at event time (degrees east)
 func (rcv *OOE) MutateGEO_POSITION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -310,7 +310,7 @@ func (rcv *OOE) MutateGeoPosition(n float64) bool {
 	return rcv.MutateGEO_POSITION(n)
 }
 
-// / Orbital plane slot
+/// Orbital plane slot
 func (rcv *OOE) PLANE_SLOT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -323,8 +323,8 @@ func (rcv *OOE) PlaneSlot() []byte {
 	return rcv.PLANE_SLOT()
 }
 
-// / Orbital plane slot
-// / Orbital plane number
+/// Orbital plane slot
+/// Orbital plane number
 func (rcv *OOE) PLANE_NUMBER() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -337,8 +337,8 @@ func (rcv *OOE) PlaneNumber() []byte {
 	return rcv.PLANE_NUMBER()
 }
 
-// / Orbital plane number
-// / Position status at event time
+/// Orbital plane number
+/// Position status at event time
 func (rcv *OOE) POSITION_STATUS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -351,8 +351,8 @@ func (rcv *OOE) PositionStatus() []byte {
 	return rcv.POSITION_STATUS()
 }
 
-// / Position status at event time
-// / Time until expected recovery (ISO 8601)
+/// Position status at event time
+/// Time until expected recovery (ISO 8601)
 func (rcv *OOE) UNTIL_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -365,8 +365,8 @@ func (rcv *OOE) UntilTime() []byte {
 	return rcv.UNTIL_TIME()
 }
 
-// / Time until expected recovery (ISO 8601)
-// / Official loss date (ISO 8601)
+/// Time until expected recovery (ISO 8601)
+/// Official loss date (ISO 8601)
 func (rcv *OOE) OFFICIAL_LOSS_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -379,8 +379,8 @@ func (rcv *OOE) OfficialLossDate() []byte {
 	return rcv.OFFICIAL_LOSS_DATE()
 }
 
-// / Official loss date (ISO 8601)
-// / Financial loss amount (USD)
+/// Official loss date (ISO 8601)
+/// Financial loss amount (USD)
 func (rcv *OOE) NET_AMOUNT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -393,7 +393,7 @@ func (rcv *OOE) NetAmount() float64 {
 	return rcv.NET_AMOUNT()
 }
 
-// / Financial loss amount (USD)
+/// Financial loss amount (USD)
 func (rcv *OOE) MutateNET_AMOUNT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(46, n)
 }
@@ -402,7 +402,7 @@ func (rcv *OOE) MutateNetAmount(n float64) bool {
 	return rcv.MutateNET_AMOUNT(n)
 }
 
-// / Root cause description
+/// Root cause description
 func (rcv *OOE) UNDERLYING_CAUSE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -415,8 +415,8 @@ func (rcv *OOE) UnderlyingCause() []byte {
 	return rcv.UNDERLYING_CAUSE()
 }
 
-// / Root cause description
-// / Capability loss fraction (0-1)
+/// Root cause description
+/// Capability loss fraction (0-1)
 func (rcv *OOE) CAPABILITY_LOSS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -429,7 +429,7 @@ func (rcv *OOE) CapabilityLoss() float64 {
 	return rcv.CAPABILITY_LOSS()
 }
 
-// / Capability loss fraction (0-1)
+/// Capability loss fraction (0-1)
 func (rcv *OOE) MutateCAPABILITY_LOSS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(50, n)
 }
@@ -438,7 +438,7 @@ func (rcv *OOE) MutateCapabilityLoss(n float64) bool {
 	return rcv.MutateCAPABILITY_LOSS(n)
 }
 
-// / Capacity loss fraction (0-1)
+/// Capacity loss fraction (0-1)
 func (rcv *OOE) CAPACITY_LOSS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -451,7 +451,7 @@ func (rcv *OOE) CapacityLoss() float64 {
 	return rcv.CAPACITY_LOSS()
 }
 
-// / Capacity loss fraction (0-1)
+/// Capacity loss fraction (0-1)
 func (rcv *OOE) MutateCAPACITY_LOSS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(52, n)
 }
@@ -460,7 +460,7 @@ func (rcv *OOE) MutateCapacityLoss(n float64) bool {
 	return rcv.MutateCAPACITY_LOSS(n)
 }
 
-// / Insurance loss amount (USD)
+/// Insurance loss amount (USD)
 func (rcv *OOE) INSURANCE_LOSS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -473,7 +473,7 @@ func (rcv *OOE) InsuranceLoss() float64 {
 	return rcv.INSURANCE_LOSS()
 }
 
-// / Insurance loss amount (USD)
+/// Insurance loss amount (USD)
 func (rcv *OOE) MutateINSURANCE_LOSS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(54, n)
 }
@@ -482,7 +482,7 @@ func (rcv *OOE) MutateInsuranceLoss(n float64) bool {
 	return rcv.MutateINSURANCE_LOSS(n)
 }
 
-// / Third-party insurance loss (USD)
+/// Third-party insurance loss (USD)
 func (rcv *OOE) THIRD_PARTY_INSURANCE_LOSS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -495,7 +495,7 @@ func (rcv *OOE) ThirdPartyInsuranceLoss() float64 {
 	return rcv.THIRD_PARTY_INSURANCE_LOSS()
 }
 
-// / Third-party insurance loss (USD)
+/// Third-party insurance loss (USD)
 func (rcv *OOE) MutateTHIRD_PARTY_INSURANCE_LOSS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(56, n)
 }
@@ -504,7 +504,7 @@ func (rcv *OOE) MutateThirdPartyInsuranceLoss(n float64) bool {
 	return rcv.MutateTHIRD_PARTY_INSURANCE_LOSS(n)
 }
 
-// / Number of personnel injured
+/// Number of personnel injured
 func (rcv *OOE) INJURED() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -517,7 +517,7 @@ func (rcv *OOE) Injured() uint16 {
 	return rcv.INJURED()
 }
 
-// / Number of personnel injured
+/// Number of personnel injured
 func (rcv *OOE) MutateINJURED(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(58, n)
 }
@@ -526,7 +526,7 @@ func (rcv *OOE) MutateInjured(n uint16) bool {
 	return rcv.MutateINJURED(n)
 }
 
-// / Number of fatalities
+/// Number of fatalities
 func (rcv *OOE) KILLED() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -539,7 +539,7 @@ func (rcv *OOE) Killed() uint16 {
 	return rcv.KILLED()
 }
 
-// / Number of fatalities
+/// Number of fatalities
 func (rcv *OOE) MutateKILLED(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(60, n)
 }
@@ -548,7 +548,7 @@ func (rcv *OOE) MutateKilled(n uint16) bool {
 	return rcv.MutateKILLED(n)
 }
 
-// / Spacecraft age at event (years)
+/// Spacecraft age at event (years)
 func (rcv *OOE) AGE_AT_EVENT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -561,7 +561,7 @@ func (rcv *OOE) AgeAtEvent() float64 {
 	return rcv.AGE_AT_EVENT()
 }
 
-// / Spacecraft age at event (years)
+/// Spacecraft age at event (years)
 func (rcv *OOE) MutateAGE_AT_EVENT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(62, n)
 }
@@ -570,7 +570,7 @@ func (rcv *OOE) MutateAgeAtEvent(n float64) bool {
 	return rcv.MutateAGE_AT_EVENT(n)
 }
 
-// / Design life remaining at event (years)
+/// Design life remaining at event (years)
 func (rcv *OOE) LIFE_LOST() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -583,7 +583,7 @@ func (rcv *OOE) LifeLost() float64 {
 	return rcv.LIFE_LOST()
 }
 
-// / Design life remaining at event (years)
+/// Design life remaining at event (years)
 func (rcv *OOE) MutateLIFE_LOST(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(64, n)
 }
@@ -592,7 +592,7 @@ func (rcv *OOE) MutateLifeLost(n float64) bool {
 	return rcv.MutateLIFE_LOST(n)
 }
 
-// / Flight phase achieved
+/// Flight phase achieved
 func (rcv *OOE) ACHIEVED_FLIGHT_PHASE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
@@ -605,8 +605,8 @@ func (rcv *OOE) AchievedFlightPhase() []byte {
 	return rcv.ACHIEVED_FLIGHT_PHASE()
 }
 
-// / Flight phase achieved
-// / Flight phase at occurrence
+/// Flight phase achieved
+/// Flight phase at occurrence
 func (rcv *OOE) OCCURRENCE_FLIGHT_PHASE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
@@ -619,8 +619,8 @@ func (rcv *OOE) OccurrenceFlightPhase() []byte {
 	return rcv.OCCURRENCE_FLIGHT_PHASE()
 }
 
-// / Flight phase at occurrence
-// / Stage at fault
+/// Flight phase at occurrence
+/// Stage at fault
 func (rcv *OOE) STAGE_AT_FAULT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
 	if o != 0 {
@@ -633,8 +633,8 @@ func (rcv *OOE) StageAtFault() []byte {
 	return rcv.STAGE_AT_FAULT()
 }
 
-// / Stage at fault
-// / Equipment at fault
+/// Stage at fault
+/// Equipment at fault
 func (rcv *OOE) EQUIPMENT_AT_FAULT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
@@ -647,8 +647,8 @@ func (rcv *OOE) EquipmentAtFault() []byte {
 	return rcv.EQUIPMENT_AT_FAULT()
 }
 
-// / Equipment at fault
-// / Equipment type at fault
+/// Equipment at fault
+/// Equipment type at fault
 func (rcv *OOE) EQUIPMENT_TYPE_AT_FAULT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
 	if o != 0 {
@@ -661,8 +661,8 @@ func (rcv *OOE) EquipmentTypeAtFault() []byte {
 	return rcv.EQUIPMENT_TYPE_AT_FAULT()
 }
 
-// / Equipment type at fault
-// / Equipment part at fault
+/// Equipment type at fault
+/// Equipment part at fault
 func (rcv *OOE) EQUIPMENT_PART_AT_FAULT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
 	if o != 0 {
@@ -675,8 +675,8 @@ func (rcv *OOE) EquipmentPartAtFault() []byte {
 	return rcv.EQUIPMENT_PART_AT_FAULT()
 }
 
-// / Equipment part at fault
-// / Consequential equipment failure
+/// Equipment part at fault
+/// Consequential equipment failure
 func (rcv *OOE) CONSEQUENTIAL_EQUIPMENT_FAILURE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
 	if o != 0 {
@@ -689,8 +689,8 @@ func (rcv *OOE) ConsequentialEquipmentFailure() []byte {
 	return rcv.CONSEQUENTIAL_EQUIPMENT_FAILURE()
 }
 
-// / Consequential equipment failure
-// / True if orbit is inclined
+/// Consequential equipment failure
+/// True if orbit is inclined
 func (rcv *OOE) INCLINED() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(80))
 	if o != 0 {
@@ -703,7 +703,7 @@ func (rcv *OOE) Inclined() bool {
 	return rcv.INCLINED()
 }
 
-// / True if orbit is inclined
+/// True if orbit is inclined
 func (rcv *OOE) MutateINCLINED(n bool) bool {
 	return rcv._tab.MutateBoolSlot(80, n)
 }
@@ -712,7 +712,7 @@ func (rcv *OOE) MutateInclined(n bool) bool {
 	return rcv.MutateINCLINED(n)
 }
 
-// / Event description
+/// Event description
 func (rcv *OOE) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(82))
 	if o != 0 {
@@ -725,8 +725,8 @@ func (rcv *OOE) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-// / Event description
-// / Additional remarks
+/// Event description
+/// Additional remarks
 func (rcv *OOE) REMARKS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(84))
 	if o != 0 {
@@ -739,8 +739,8 @@ func (rcv *OOE) Remarks() []byte {
 	return rcv.REMARKS()
 }
 
-// / Additional remarks
-// / Object status after event
+/// Additional remarks
+/// Object status after event
 func (rcv *OOE) OBJECT_STATUS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(86))
 	if o != 0 {
@@ -753,8 +753,8 @@ func (rcv *OOE) ObjectStatus() []byte {
 	return rcv.OBJECT_STATUS()
 }
 
-// / Object status after event
-// / Satellite position after event
+/// Object status after event
+/// Satellite position after event
 func (rcv *OOE) SATELLITE_POSITION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(88))
 	if o != 0 {
@@ -767,8 +767,8 @@ func (rcv *OOE) SatellitePosition() []byte {
 	return rcv.SATELLITE_POSITION()
 }
 
-// / Satellite position after event
-// / On-orbit reference
+/// Satellite position after event
+/// On-orbit reference
 func (rcv *OOE) ON_ORBIT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(90))
 	if o != 0 {
@@ -781,7 +781,7 @@ func (rcv *OOE) OnOrbit() []byte {
 	return rcv.ON_ORBIT()
 }
 
-// / On-orbit reference
+/// On-orbit reference
 func OOEStart(builder *flatbuffers.Builder) {
 	builder.StartObject(44)
 }

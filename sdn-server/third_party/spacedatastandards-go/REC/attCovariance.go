@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Attitude Covariance
+/// Attitude Covariance
 type attCovariance struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *attCovariance) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Covariance type
+/// Covariance type
 func (rcv *attCovariance) COV_TYPE() attCovType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *attCovariance) CovType() attCovType {
 	return rcv.COV_TYPE()
 }
 
-// / Covariance type
+/// Covariance type
 func (rcv *attCovariance) MutateCOV_TYPE(n attCovType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *attCovariance) MutateCovType(n attCovType) bool {
 	return rcv.MutateCOV_TYPE(n)
 }
 
-// / Reference frame
+/// Reference frame
 func (rcv *attCovariance) COV_REF_FRAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,8 +77,8 @@ func (rcv *attCovariance) CovRefFrame() []byte {
 	return rcv.COV_REF_FRAME()
 }
 
-// / Reference frame
-// / Epoch (ISO 8601)
+/// Reference frame
+/// Epoch (ISO 8601)
 func (rcv *attCovariance) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,8 +91,8 @@ func (rcv *attCovariance) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-// / Epoch (ISO 8601)
-// / Upper-triangular covariance matrix elements (row-major)
+/// Epoch (ISO 8601)
+/// Upper-triangular covariance matrix elements (row-major)
 func (rcv *attCovariance) COV(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -118,7 +118,7 @@ func (rcv *attCovariance) CovLength() int {
 	return rcv.COVLength()
 }
 
-// / Upper-triangular covariance matrix elements (row-major)
+/// Upper-triangular covariance matrix elements (row-major)
 func (rcv *attCovariance) MutateCOV(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Algorithm output binding
+/// Algorithm output binding
 type AlgorithmOutput struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *AlgorithmOutput) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Parameter reference
+/// Parameter reference
 func (rcv *AlgorithmOutput) PARAMETER_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *AlgorithmOutput) ParameterRef() []byte {
 	return rcv.PARAMETER_REF()
 }
 
-// / Parameter reference
-// / Output name in algorithm
+/// Parameter reference
+/// Output name in algorithm
 func (rcv *AlgorithmOutput) OUTPUT_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *AlgorithmOutput) OutputName() []byte {
 	return rcv.OUTPUT_NAME()
 }
 
-// / Output name in algorithm
+/// Output name in algorithm
 func AlgorithmOutputStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

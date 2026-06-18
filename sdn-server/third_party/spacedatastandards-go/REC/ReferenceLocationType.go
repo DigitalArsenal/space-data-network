@@ -4,18 +4,18 @@ package REC
 
 import "strconv"
 
-// / Reference location for positioning within containers
+/// Reference location for positioning within containers
 type ReferenceLocationType int8
 
 const (
 	/// Start of the container
 	ReferenceLocationTypeCONTAINER_START ReferenceLocationType = 0
 	/// End of the container
-	ReferenceLocationTypeCONTAINER_END ReferenceLocationType = 1
+	ReferenceLocationTypeCONTAINER_END   ReferenceLocationType = 1
 	/// End of previous entry
-	ReferenceLocationTypePREVIOUS_ENTRY ReferenceLocationType = 2
+	ReferenceLocationTypePREVIOUS_ENTRY  ReferenceLocationType = 2
 	/// Start of next entry
-	ReferenceLocationTypeNEXT_ENTRY ReferenceLocationType = 3
+	ReferenceLocationTypeNEXT_ENTRY      ReferenceLocationType = 3
 )
 
 var EnumNamesReferenceLocationType = map[ReferenceLocationType]string{

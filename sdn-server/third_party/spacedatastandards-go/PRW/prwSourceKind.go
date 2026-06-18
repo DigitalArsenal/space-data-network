@@ -8,15 +8,15 @@ type prwSourceKind byte
 
 const (
 	/// Source is an OMM (CCSDS mean elements) FlatBuffer.
-	prwSourceKindOMM prwSourceKind = 0
+	prwSourceKindOMM       prwSourceKind = 0
 	/// Source is a raw TLE line pair (3LE supported via NAME).
-	prwSourceKindTLE prwSourceKind = 1
+	prwSourceKindTLE       prwSourceKind = 1
 	/// Source is an OCM FlatBuffer.
-	prwSourceKindOCM prwSourceKind = 2
+	prwSourceKindOCM       prwSourceKind = 2
 	/// Source is an OEM FlatBuffer.
-	prwSourceKindOEM prwSourceKind = 3
+	prwSourceKindOEM       prwSourceKind = 3
 	/// Source is a PPE (polynomial ephemeris) FlatBuffer.
-	prwSourceKindPPE prwSourceKind = 4
+	prwSourceKindPPE       prwSourceKind = 4
 	/// Source is a single classical Keplerian element set.
 	prwSourceKindKEPLERIAN prwSourceKind = 5
 )

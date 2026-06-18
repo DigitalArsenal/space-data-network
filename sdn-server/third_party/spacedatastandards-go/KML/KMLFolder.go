@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Folder container
+/// Folder container
 type KMLFolder struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLFolder) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Folder name
+/// Folder name
 func (rcv *KMLFolder) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLFolder) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Folder name
-// / Description
+/// Folder name
+/// Description
 func (rcv *KMLFolder) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *KMLFolder) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-// / Description
-// / Visibility flag
+/// Description
+/// Visibility flag
 func (rcv *KMLFolder) VISIBILITY() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *KMLFolder) Visibility() bool {
 	return rcv.VISIBILITY()
 }
 
-// / Visibility flag
+/// Visibility flag
 func (rcv *KMLFolder) MutateVISIBILITY(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }
@@ -92,7 +92,7 @@ func (rcv *KMLFolder) MutateVisibility(n bool) bool {
 	return rcv.MutateVISIBILITY(n)
 }
 
-// / Whether folder is open in tree view
+/// Whether folder is open in tree view
 func (rcv *KMLFolder) OPEN() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,7 +105,7 @@ func (rcv *KMLFolder) Open() bool {
 	return rcv.OPEN()
 }
 
-// / Whether folder is open in tree view
+/// Whether folder is open in tree view
 func (rcv *KMLFolder) MutateOPEN(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }
@@ -114,7 +114,7 @@ func (rcv *KMLFolder) MutateOpen(n bool) bool {
 	return rcv.MutateOPEN(n)
 }
 
-// / Placemarks in this folder
+/// Placemarks in this folder
 func (rcv *KMLFolder) PLACEMARKS(obj *KMLPlacemark, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -146,8 +146,8 @@ func (rcv *KMLFolder) PlacemarksLength() int {
 	return rcv.PLACEMARKSLength()
 }
 
-// / Placemarks in this folder
-// / Sub-folders
+/// Placemarks in this folder
+/// Sub-folders
 func (rcv *KMLFolder) FOLDERS(obj *KMLFolder, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -179,8 +179,8 @@ func (rcv *KMLFolder) FoldersLength() int {
 	return rcv.FOLDERSLength()
 }
 
-// / Sub-folders
-// / Network links
+/// Sub-folders
+/// Network links
 func (rcv *KMLFolder) NETWORK_LINKS(obj *KMLNetworkLink, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -212,8 +212,8 @@ func (rcv *KMLFolder) NetworkLinksLength() int {
 	return rcv.NETWORK_LINKSLength()
 }
 
-// / Network links
-// / Ground overlays
+/// Network links
+/// Ground overlays
 func (rcv *KMLFolder) GROUND_OVERLAYS(obj *KMLGroundOverlay, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -245,8 +245,8 @@ func (rcv *KMLFolder) GroundOverlaysLength() int {
 	return rcv.GROUND_OVERLAYSLength()
 }
 
-// / Ground overlays
-// / Shared styles
+/// Ground overlays
+/// Shared styles
 func (rcv *KMLFolder) STYLES(obj *KMLStyle, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -278,8 +278,8 @@ func (rcv *KMLFolder) StylesLength() int {
 	return rcv.STYLESLength()
 }
 
-// / Shared styles
-// / Style maps
+/// Shared styles
+/// Style maps
 func (rcv *KMLFolder) STYLE_MAPS(obj *KMLStyleMap, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -311,8 +311,8 @@ func (rcv *KMLFolder) StyleMapsLength() int {
 	return rcv.STYLE_MAPSLength()
 }
 
-// / Style maps
-// / Screen overlays
+/// Style maps
+/// Screen overlays
 func (rcv *KMLFolder) SCREEN_OVERLAYS(obj *KMLScreenOverlay, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -344,8 +344,8 @@ func (rcv *KMLFolder) ScreenOverlaysLength() int {
 	return rcv.SCREEN_OVERLAYSLength()
 }
 
-// / Screen overlays
-// / Photo overlays
+/// Screen overlays
+/// Photo overlays
 func (rcv *KMLFolder) PHOTO_OVERLAYS(obj *KMLPhotoOverlay, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -377,8 +377,8 @@ func (rcv *KMLFolder) PhotoOverlaysLength() int {
 	return rcv.PHOTO_OVERLAYSLength()
 }
 
-// / Photo overlays
-// / Tours
+/// Photo overlays
+/// Tours
 func (rcv *KMLFolder) TOURS(obj *KMLTour, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -410,8 +410,8 @@ func (rcv *KMLFolder) ToursLength() int {
 	return rcv.TOURSLength()
 }
 
-// / Tours
-// / Style URL reference
+/// Tours
+/// Style URL reference
 func (rcv *KMLFolder) STYLE_URL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -424,8 +424,8 @@ func (rcv *KMLFolder) StyleUrl() []byte {
 	return rcv.STYLE_URL()
 }
 
-// / Style URL reference
-// / Region
+/// Style URL reference
+/// Region
 func (rcv *KMLFolder) REGION(obj *KMLRegion) *KMLRegion {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -443,8 +443,8 @@ func (rcv *KMLFolder) Region(obj *KMLRegion) *KMLRegion {
 	return rcv.REGION(obj)
 }
 
-// / Region
-// / Extended data
+/// Region
+/// Extended data
 func (rcv *KMLFolder) EXTENDED_DATA(obj *KMLData, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -476,8 +476,8 @@ func (rcv *KMLFolder) ExtendedDataLength() int {
 	return rcv.EXTENDED_DATALength()
 }
 
-// / Extended data
-// / LookAt viewpoint
+/// Extended data
+/// LookAt viewpoint
 func (rcv *KMLFolder) LOOK_AT(obj *KMLLookAt) *KMLLookAt {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -495,8 +495,8 @@ func (rcv *KMLFolder) LookAt(obj *KMLLookAt) *KMLLookAt {
 	return rcv.LOOK_AT(obj)
 }
 
-// / LookAt viewpoint
-// / Camera viewpoint
+/// LookAt viewpoint
+/// Camera viewpoint
 func (rcv *KMLFolder) CAMERA(obj *KMLCamera) *KMLCamera {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -514,8 +514,8 @@ func (rcv *KMLFolder) Camera(obj *KMLCamera) *KMLCamera {
 	return rcv.CAMERA(obj)
 }
 
-// / Camera viewpoint
-// / TimeSpan
+/// Camera viewpoint
+/// TimeSpan
 func (rcv *KMLFolder) TIME_SPAN(obj *KMLTimeSpan) *KMLTimeSpan {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -533,8 +533,8 @@ func (rcv *KMLFolder) TimeSpan(obj *KMLTimeSpan) *KMLTimeSpan {
 	return rcv.TIME_SPAN(obj)
 }
 
-// / TimeSpan
-// / TimeStamp
+/// TimeSpan
+/// TimeStamp
 func (rcv *KMLFolder) TIME_STAMP(obj *KMLTimeStamp) *KMLTimeStamp {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -552,7 +552,7 @@ func (rcv *KMLFolder) TimeStamp(obj *KMLTimeStamp) *KMLTimeStamp {
 	return rcv.TIME_STAMP(obj)
 }
 
-// / TimeStamp
+/// TimeStamp
 func KMLFolderStart(builder *flatbuffers.Builder) {
 	builder.StartObject(20)
 }

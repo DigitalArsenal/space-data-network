@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Storefront Listing - Data marketplace listing
+/// Storefront Listing - Data marketplace listing
 type STF struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *STF) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier for the listing
+/// Unique identifier for the listing
 func (rcv *STF) LISTING_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *STF) ListingId() []byte {
 	return rcv.LISTING_ID()
 }
 
-// / Unique identifier for the listing
-// / Peer ID of the data provider
+/// Unique identifier for the listing
+/// Peer ID of the data provider
 func (rcv *STF) PROVIDER_PEER_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *STF) ProviderPeerId() []byte {
 	return rcv.PROVIDER_PEER_ID()
 }
 
-// / Peer ID of the data provider
-// / IPFS CID of provider's EPM (Entity Profile Message)
+/// Peer ID of the data provider
+/// IPFS CID of provider's EPM (Entity Profile Message)
 func (rcv *STF) PROVIDER_EPM_CID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *STF) ProviderEpmCid() []byte {
 	return rcv.PROVIDER_EPM_CID()
 }
 
-// / IPFS CID of provider's EPM (Entity Profile Message)
-// / Title of the data listing
+/// IPFS CID of provider's EPM (Entity Profile Message)
+/// Title of the data listing
 func (rcv *STF) TITLE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *STF) Title() []byte {
 	return rcv.TITLE()
 }
 
-// / Title of the data listing
-// / Detailed description of the data offering
+/// Title of the data listing
+/// Detailed description of the data offering
 func (rcv *STF) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *STF) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-// / Detailed description of the data offering
-// / SDS data types offered, e.g., ["OMM", "CDM", "TLE"]
+/// Detailed description of the data offering
+/// SDS data types offered, e.g., ["OMM", "CDM", "TLE"]
 func (rcv *STF) DATA_TYPES(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -150,8 +150,8 @@ func (rcv *STF) DataTypesLength() int {
 	return rcv.DATA_TYPESLength()
 }
 
-// / SDS data types offered, e.g., ["OMM", "CDM", "TLE"]
-// / Coverage information (spatial and temporal)
+/// SDS data types offered, e.g., ["OMM", "CDM", "TLE"]
+/// Coverage information (spatial and temporal)
 func (rcv *STF) COVERAGE(obj *DataCoverage) *DataCoverage {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -169,8 +169,8 @@ func (rcv *STF) Coverage(obj *DataCoverage) *DataCoverage {
 	return rcv.COVERAGE(obj)
 }
 
-// / Coverage information (spatial and temporal)
-// / IPFS CID of sample data
+/// Coverage information (spatial and temporal)
+/// IPFS CID of sample data
 func (rcv *STF) SAMPLE_CID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -183,8 +183,8 @@ func (rcv *STF) SampleCid() []byte {
 	return rcv.SAMPLE_CID()
 }
 
-// / IPFS CID of sample data
-// / Type of access offered
+/// IPFS CID of sample data
+/// Type of access offered
 func (rcv *STF) ACCESS_TYPE() accessCategory {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -197,7 +197,7 @@ func (rcv *STF) AccessType() accessCategory {
 	return rcv.ACCESS_TYPE()
 }
 
-// / Type of access offered
+/// Type of access offered
 func (rcv *STF) MutateACCESS_TYPE(n accessCategory) bool {
 	return rcv._tab.MutateInt8Slot(20, int8(n))
 }
@@ -206,7 +206,7 @@ func (rcv *STF) MutateAccessType(n accessCategory) bool {
 	return rcv.MutateACCESS_TYPE(n)
 }
 
-// / Whether encryption is required for data delivery
+/// Whether encryption is required for data delivery
 func (rcv *STF) ENCRYPTION_REQUIRED() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -219,7 +219,7 @@ func (rcv *STF) EncryptionRequired() bool {
 	return rcv.ENCRYPTION_REQUIRED()
 }
 
-// / Whether encryption is required for data delivery
+/// Whether encryption is required for data delivery
 func (rcv *STF) MutateENCRYPTION_REQUIRED(n bool) bool {
 	return rcv._tab.MutateBoolSlot(22, n)
 }
@@ -228,7 +228,7 @@ func (rcv *STF) MutateEncryptionRequired(n bool) bool {
 	return rcv.MutateENCRYPTION_REQUIRED(n)
 }
 
-// / Available pricing tiers
+/// Available pricing tiers
 func (rcv *STF) PRICING(obj *PricingTier, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -260,8 +260,8 @@ func (rcv *STF) PricingLength() int {
 	return rcv.PRICINGLength()
 }
 
-// / Available pricing tiers
-// / Payment methods accepted
+/// Available pricing tiers
+/// Payment methods accepted
 func (rcv *STF) ACCEPTED_PAYMENTS(j int) paymentMethod {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -287,7 +287,7 @@ func (rcv *STF) AcceptedPaymentsLength() int {
 	return rcv.ACCEPTED_PAYMENTSLength()
 }
 
-// / Payment methods accepted
+/// Payment methods accepted
 func (rcv *STF) MutateACCEPTED_PAYMENTS(j int, n paymentMethod) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -301,7 +301,7 @@ func (rcv *STF) MutateAcceptedPayments(j int, n paymentMethod) bool {
 	return rcv.MutateACCEPTED_PAYMENTS(j, n)
 }
 
-// / Unix timestamp when listing was created
+/// Unix timestamp when listing was created
 func (rcv *STF) CREATED_AT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -314,7 +314,7 @@ func (rcv *STF) CreatedAt() uint64 {
 	return rcv.CREATED_AT()
 }
 
-// / Unix timestamp when listing was created
+/// Unix timestamp when listing was created
 func (rcv *STF) MutateCREATED_AT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(28, n)
 }
@@ -323,7 +323,7 @@ func (rcv *STF) MutateCreatedAt(n uint64) bool {
 	return rcv.MutateCREATED_AT(n)
 }
 
-// / Unix timestamp when listing was last updated
+/// Unix timestamp when listing was last updated
 func (rcv *STF) UPDATED_AT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -336,7 +336,7 @@ func (rcv *STF) UpdatedAt() uint64 {
 	return rcv.UPDATED_AT()
 }
 
-// / Unix timestamp when listing was last updated
+/// Unix timestamp when listing was last updated
 func (rcv *STF) MutateUPDATED_AT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(30, n)
 }
@@ -345,7 +345,7 @@ func (rcv *STF) MutateUpdatedAt(n uint64) bool {
 	return rcv.MutateUPDATED_AT(n)
 }
 
-// / Whether the listing is currently active
+/// Whether the listing is currently active
 func (rcv *STF) ACTIVE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -358,7 +358,7 @@ func (rcv *STF) Active() bool {
 	return rcv.ACTIVE()
 }
 
-// / Whether the listing is currently active
+/// Whether the listing is currently active
 func (rcv *STF) MutateACTIVE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(32, n)
 }
@@ -367,7 +367,7 @@ func (rcv *STF) MutateActive(n bool) bool {
 	return rcv.MutateACTIVE(n)
 }
 
-// / Ed25519 signature from provider
+/// Ed25519 signature from provider
 func (rcv *STF) SIGNATURE(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -405,7 +405,7 @@ func (rcv *STF) SignatureBytes() []byte {
 	return rcv.SIGNATUREBytes()
 }
 
-// / Ed25519 signature from provider
+/// Ed25519 signature from provider
 func (rcv *STF) MutateSIGNATURE(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {

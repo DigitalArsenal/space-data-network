@@ -41,7 +41,7 @@ func (rcv *PRWInitSource) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Wire kind identifier for BYTES.
+/// Wire kind identifier for BYTES.
 func (rcv *PRWInitSource) KIND() prwSourceKind {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -54,7 +54,7 @@ func (rcv *PRWInitSource) Kind() prwSourceKind {
 	return rcv.KIND()
 }
 
-// / Wire kind identifier for BYTES.
+/// Wire kind identifier for BYTES.
 func (rcv *PRWInitSource) MutateKIND(n prwSourceKind) bool {
 	return rcv._tab.MutateByteSlot(4, byte(n))
 }
@@ -63,7 +63,7 @@ func (rcv *PRWInitSource) MutateKind(n prwSourceKind) bool {
 	return rcv.MutateKIND(n)
 }
 
-// / Optional SDS file_identifier for BYTES (`$OMM`, `$OCM`, `$OEM`, `$PPE`).
+/// Optional SDS file_identifier for BYTES (`$OMM`, `$OCM`, `$OEM`, `$PPE`).
 func (rcv *PRWInitSource) FILE_IDENTIFIER() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -76,8 +76,8 @@ func (rcv *PRWInitSource) FileIdentifier() []byte {
 	return rcv.FILE_IDENTIFIER()
 }
 
-// / Optional SDS file_identifier for BYTES (`$OMM`, `$OCM`, `$OEM`, `$PPE`).
-// / Encoded source record as a FlatBuffer (consumed per KIND).
+/// Optional SDS file_identifier for BYTES (`$OMM`, `$OCM`, `$OEM`, `$PPE`).
+/// Encoded source record as a FlatBuffer (consumed per KIND).
 func (rcv *PRWInitSource) BYTES(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -115,7 +115,7 @@ func (rcv *PRWInitSource) BytesBytes() []byte {
 	return rcv.BYTESBytes()
 }
 
-// / Encoded source record as a FlatBuffer (consumed per KIND).
+/// Encoded source record as a FlatBuffer (consumed per KIND).
 func (rcv *PRWInitSource) MutateBYTES(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -129,7 +129,7 @@ func (rcv *PRWInitSource) MutateBytes(j int, n byte) bool {
 	return rcv.MutateBYTES(j, n)
 }
 
-// / Convenience inline form when KIND == KEPLERIAN.
+/// Convenience inline form when KIND == KEPLERIAN.
 func (rcv *PRWInitSource) KEPLERIAN(obj *PRWKeplerianElements) *PRWKeplerianElements {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -147,8 +147,8 @@ func (rcv *PRWInitSource) Keplerian(obj *PRWKeplerianElements) *PRWKeplerianElem
 	return rcv.KEPLERIAN(obj)
 }
 
-// / Convenience inline form when KIND == KEPLERIAN.
-// / Convenience inline form when KIND == TLE.
+/// Convenience inline form when KIND == KEPLERIAN.
+/// Convenience inline form when KIND == TLE.
 func (rcv *PRWInitSource) TLE(obj *PRWTleLines) *PRWTleLines {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -166,7 +166,7 @@ func (rcv *PRWInitSource) Tle(obj *PRWTleLines) *PRWTleLines {
 	return rcv.TLE(obj)
 }
 
-// / Convenience inline form when KIND == TLE.
+/// Convenience inline form when KIND == TLE.
 func PRWInitSourceStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

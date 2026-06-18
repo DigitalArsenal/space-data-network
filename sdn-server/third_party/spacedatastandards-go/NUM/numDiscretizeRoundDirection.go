@@ -8,11 +8,11 @@ type numDiscretizeRoundDirection int8
 
 const (
 	/// Round magnitude toward zero before restoring sign.
-	numDiscretizeRoundDirectionTO_ZERO numDiscretizeRoundDirection = 0
+	numDiscretizeRoundDirectionTO_ZERO   numDiscretizeRoundDirection = 0
 	/// Round magnitude away from zero before restoring sign.
 	numDiscretizeRoundDirectionFROM_ZERO numDiscretizeRoundDirection = 1
 	/// Round magnitude to the nearest least-significant-bit multiple before restoring sign.
-	numDiscretizeRoundDirectionNEAR numDiscretizeRoundDirection = 2
+	numDiscretizeRoundDirectionNEAR      numDiscretizeRoundDirection = 2
 )
 
 var EnumNamesnumDiscretizeRoundDirection = map[numDiscretizeRoundDirection]string{

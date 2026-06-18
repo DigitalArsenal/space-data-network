@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Physics and Rigid Body Dynamics
+/// Physics and Rigid Body Dynamics
 type PHY struct {
 	_tab flatbuffers.Table
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Spacecraft Maneuver
+/// Spacecraft Maneuver
 type MNV struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *MNV) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier
+/// Unique identifier
 func (rcv *MNV) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *MNV) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique identifier
-// / Satellite catalog number
+/// Unique identifier
+/// Satellite catalog number
 func (rcv *MNV) SAT_NO() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,7 +81,7 @@ func (rcv *MNV) SatNo() uint32 {
 	return rcv.SAT_NO()
 }
 
-// / Satellite catalog number
+/// Satellite catalog number
 func (rcv *MNV) MutateSAT_NO(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -90,7 +90,7 @@ func (rcv *MNV) MutateSatNo(n uint32) bool {
 	return rcv.MutateSAT_NO(n)
 }
 
-// / International designator
+/// International designator
 func (rcv *MNV) ORIG_OBJECT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,8 +103,8 @@ func (rcv *MNV) OrigObjectId() []byte {
 	return rcv.ORIG_OBJECT_ID()
 }
 
-// / International designator
-// / On-orbit reference
+/// International designator
+/// On-orbit reference
 func (rcv *MNV) ON_ORBIT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *MNV) OnOrbit() []byte {
 	return rcv.ON_ORBIT()
 }
 
-// / On-orbit reference
-// / Maneuver status
+/// On-orbit reference
+/// Maneuver status
 func (rcv *MNV) STATUS() maneuverStatus {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,7 +131,7 @@ func (rcv *MNV) Status() maneuverStatus {
 	return rcv.STATUS()
 }
 
-// / Maneuver status
+/// Maneuver status
 func (rcv *MNV) MutateSTATUS(n maneuverStatus) bool {
 	return rcv._tab.MutateInt8Slot(12, int8(n))
 }
@@ -140,7 +140,7 @@ func (rcv *MNV) MutateStatus(n maneuverStatus) bool {
 	return rcv.MutateSTATUS(n)
 }
 
-// / Maneuver characterization
+/// Maneuver characterization
 func (rcv *MNV) CHARACTERIZATION() maneuverCharacterization {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -153,7 +153,7 @@ func (rcv *MNV) Characterization() maneuverCharacterization {
 	return rcv.CHARACTERIZATION()
 }
 
-// / Maneuver characterization
+/// Maneuver characterization
 func (rcv *MNV) MutateCHARACTERIZATION(n maneuverCharacterization) bool {
 	return rcv._tab.MutateInt8Slot(14, int8(n))
 }
@@ -162,7 +162,7 @@ func (rcv *MNV) MutateCharacterization(n maneuverCharacterization) bool {
 	return rcv.MutateCHARACTERIZATION(n)
 }
 
-// / Characterization uncertainty (0-1)
+/// Characterization uncertainty (0-1)
 func (rcv *MNV) CHARACTERIZATION_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -175,7 +175,7 @@ func (rcv *MNV) CharacterizationUnc() float64 {
 	return rcv.CHARACTERIZATION_UNC()
 }
 
-// / Characterization uncertainty (0-1)
+/// Characterization uncertainty (0-1)
 func (rcv *MNV) MutateCHARACTERIZATION_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -184,7 +184,7 @@ func (rcv *MNV) MutateCharacterizationUnc(n float64) bool {
 	return rcv.MutateCHARACTERIZATION_UNC(n)
 }
 
-// / Detection report time (ISO 8601)
+/// Detection report time (ISO 8601)
 func (rcv *MNV) REPORT_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -197,8 +197,8 @@ func (rcv *MNV) ReportTime() []byte {
 	return rcv.REPORT_TIME()
 }
 
-// / Detection report time (ISO 8601)
-// / Maneuver start time (ISO 8601)
+/// Detection report time (ISO 8601)
+/// Maneuver start time (ISO 8601)
 func (rcv *MNV) EVENT_START_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -211,8 +211,8 @@ func (rcv *MNV) EventStartTime() []byte {
 	return rcv.EVENT_START_TIME()
 }
 
-// / Maneuver start time (ISO 8601)
-// / Maneuver end time (ISO 8601)
+/// Maneuver start time (ISO 8601)
+/// Maneuver end time (ISO 8601)
 func (rcv *MNV) EVENT_END_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -225,8 +225,8 @@ func (rcv *MNV) EventEndTime() []byte {
 	return rcv.EVENT_END_TIME()
 }
 
-// / Maneuver end time (ISO 8601)
-// / Total burn time (seconds)
+/// Maneuver end time (ISO 8601)
+/// Total burn time (seconds)
 func (rcv *MNV) TOTAL_BURN_TIME() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -239,7 +239,7 @@ func (rcv *MNV) TotalBurnTime() float64 {
 	return rcv.TOTAL_BURN_TIME()
 }
 
-// / Total burn time (seconds)
+/// Total burn time (seconds)
 func (rcv *MNV) MutateTOTAL_BURN_TIME(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -248,7 +248,7 @@ func (rcv *MNV) MutateTotalBurnTime(n float64) bool {
 	return rcv.MutateTOTAL_BURN_TIME(n)
 }
 
-// / OD fit end time (ISO 8601)
+/// OD fit end time (ISO 8601)
 func (rcv *MNV) OD_FIT_END_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -261,8 +261,8 @@ func (rcv *MNV) OdFitEndTime() []byte {
 	return rcv.OD_FIT_END_TIME()
 }
 
-// / OD fit end time (ISO 8601)
-// / Detecting sensor identifier
+/// OD fit end time (ISO 8601)
+/// Detecting sensor identifier
 func (rcv *MNV) ID_SENSOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -275,8 +275,8 @@ func (rcv *MNV) IdSensor() []byte {
 	return rcv.ID_SENSOR()
 }
 
-// / Detecting sensor identifier
-// / Original sensor identifier
+/// Detecting sensor identifier
+/// Original sensor identifier
 func (rcv *MNV) ORIG_SENSOR_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -289,8 +289,8 @@ func (rcv *MNV) OrigSensorId() []byte {
 	return rcv.ORIG_SENSOR_ID()
 }
 
-// / Original sensor identifier
-// / Maneuver event identifier
+/// Original sensor identifier
+/// Maneuver event identifier
 func (rcv *MNV) EVENT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -303,8 +303,8 @@ func (rcv *MNV) EventId() []byte {
 	return rcv.EVENT_ID()
 }
 
-// / Maneuver event identifier
-// / True if object is uncorrelated
+/// Maneuver event identifier
+/// True if object is uncorrelated
 func (rcv *MNV) UCT() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -317,7 +317,7 @@ func (rcv *MNV) Uct() bool {
 	return rcv.UCT()
 }
 
-// / True if object is uncorrelated
+/// True if object is uncorrelated
 func (rcv *MNV) MutateUCT(n bool) bool {
 	return rcv._tab.MutateBoolSlot(34, n)
 }
@@ -326,7 +326,7 @@ func (rcv *MNV) MutateUct(n bool) bool {
 	return rcv.MutateUCT(n)
 }
 
-// / Maneuver detection uncertainty (km)
+/// Maneuver detection uncertainty (km)
 func (rcv *MNV) MANEUVER_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -339,7 +339,7 @@ func (rcv *MNV) ManeuverUnc() float64 {
 	return rcv.MANEUVER_UNC()
 }
 
-// / Maneuver detection uncertainty (km)
+/// Maneuver detection uncertainty (km)
 func (rcv *MNV) MutateMANEUVER_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -348,7 +348,7 @@ func (rcv *MNV) MutateManeuverUnc(n float64) bool {
 	return rcv.MutateMANEUVER_UNC(n)
 }
 
-// / Total delta-V magnitude (km/s)
+/// Total delta-V magnitude (km/s)
 func (rcv *MNV) DELTA_VEL() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -361,7 +361,7 @@ func (rcv *MNV) DeltaVel() float64 {
 	return rcv.DELTA_VEL()
 }
 
-// / Total delta-V magnitude (km/s)
+/// Total delta-V magnitude (km/s)
 func (rcv *MNV) MutateDELTA_VEL(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -370,7 +370,7 @@ func (rcv *MNV) MutateDeltaVel(n float64) bool {
 	return rcv.MutateDELTA_VEL(n)
 }
 
-// / Delta-V along-track/U component (km/s)
+/// Delta-V along-track/U component (km/s)
 func (rcv *MNV) DELTA_VEL_U() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -383,7 +383,7 @@ func (rcv *MNV) DeltaVelU() float64 {
 	return rcv.DELTA_VEL_U()
 }
 
-// / Delta-V along-track/U component (km/s)
+/// Delta-V along-track/U component (km/s)
 func (rcv *MNV) MutateDELTA_VEL_U(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -392,7 +392,7 @@ func (rcv *MNV) MutateDeltaVelU(n float64) bool {
 	return rcv.MutateDELTA_VEL_U(n)
 }
 
-// / Delta-V cross-track/V component (km/s)
+/// Delta-V cross-track/V component (km/s)
 func (rcv *MNV) DELTA_VEL_V() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -405,7 +405,7 @@ func (rcv *MNV) DeltaVelV() float64 {
 	return rcv.DELTA_VEL_V()
 }
 
-// / Delta-V cross-track/V component (km/s)
+/// Delta-V cross-track/V component (km/s)
 func (rcv *MNV) MutateDELTA_VEL_V(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -414,7 +414,7 @@ func (rcv *MNV) MutateDeltaVelV(n float64) bool {
 	return rcv.MutateDELTA_VEL_V(n)
 }
 
-// / Delta-V radial/W component (km/s)
+/// Delta-V radial/W component (km/s)
 func (rcv *MNV) DELTA_VEL_W() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -427,7 +427,7 @@ func (rcv *MNV) DeltaVelW() float64 {
 	return rcv.DELTA_VEL_W()
 }
 
-// / Delta-V radial/W component (km/s)
+/// Delta-V radial/W component (km/s)
 func (rcv *MNV) MutateDELTA_VEL_W(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(44, n)
 }
@@ -436,7 +436,7 @@ func (rcv *MNV) MutateDeltaVelW(n float64) bool {
 	return rcv.MutateDELTA_VEL_W(n)
 }
 
-// / Total delta position (km)
+/// Total delta position (km)
 func (rcv *MNV) DELTA_POS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -449,7 +449,7 @@ func (rcv *MNV) DeltaPos() float64 {
 	return rcv.DELTA_POS()
 }
 
-// / Total delta position (km)
+/// Total delta position (km)
 func (rcv *MNV) MutateDELTA_POS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(46, n)
 }
@@ -458,7 +458,7 @@ func (rcv *MNV) MutateDeltaPos(n float64) bool {
 	return rcv.MutateDELTA_POS(n)
 }
 
-// / Delta position U component (km)
+/// Delta position U component (km)
 func (rcv *MNV) DELTA_POS_U() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -471,7 +471,7 @@ func (rcv *MNV) DeltaPosU() float64 {
 	return rcv.DELTA_POS_U()
 }
 
-// / Delta position U component (km)
+/// Delta position U component (km)
 func (rcv *MNV) MutateDELTA_POS_U(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(48, n)
 }
@@ -480,7 +480,7 @@ func (rcv *MNV) MutateDeltaPosU(n float64) bool {
 	return rcv.MutateDELTA_POS_U(n)
 }
 
-// / Delta position V component (km)
+/// Delta position V component (km)
 func (rcv *MNV) DELTA_POS_V() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -493,7 +493,7 @@ func (rcv *MNV) DeltaPosV() float64 {
 	return rcv.DELTA_POS_V()
 }
 
-// / Delta position V component (km)
+/// Delta position V component (km)
 func (rcv *MNV) MutateDELTA_POS_V(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(50, n)
 }
@@ -502,7 +502,7 @@ func (rcv *MNV) MutateDeltaPosV(n float64) bool {
 	return rcv.MutateDELTA_POS_V(n)
 }
 
-// / Delta position W component (km)
+/// Delta position W component (km)
 func (rcv *MNV) DELTA_POS_W() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -515,7 +515,7 @@ func (rcv *MNV) DeltaPosW() float64 {
 	return rcv.DELTA_POS_W()
 }
 
-// / Delta position W component (km)
+/// Delta position W component (km)
 func (rcv *MNV) MutateDELTA_POS_W(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(52, n)
 }
@@ -524,7 +524,7 @@ func (rcv *MNV) MutateDeltaPosW(n float64) bool {
 	return rcv.MutateDELTA_POS_W(n)
 }
 
-// / Propellant mass consumed (kg)
+/// Propellant mass consumed (kg)
 func (rcv *MNV) DELTA_MASS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -537,7 +537,7 @@ func (rcv *MNV) DeltaMass() float64 {
 	return rcv.DELTA_MASS()
 }
 
-// / Propellant mass consumed (kg)
+/// Propellant mass consumed (kg)
 func (rcv *MNV) MutateDELTA_MASS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(54, n)
 }
@@ -546,7 +546,7 @@ func (rcv *MNV) MutateDeltaMass(n float64) bool {
 	return rcv.MutateDELTA_MASS(n)
 }
 
-// / Pre-maneuver orbital state
+/// Pre-maneuver orbital state
 func (rcv *MNV) PRE_EVENT(obj *mnvOrbitalState) *mnvOrbitalState {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -564,8 +564,8 @@ func (rcv *MNV) PreEvent(obj *mnvOrbitalState) *mnvOrbitalState {
 	return rcv.PRE_EVENT(obj)
 }
 
-// / Pre-maneuver orbital state
-// / Post-maneuver orbital state
+/// Pre-maneuver orbital state
+/// Post-maneuver orbital state
 func (rcv *MNV) POST_EVENT(obj *mnvOrbitalState) *mnvOrbitalState {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -583,8 +583,8 @@ func (rcv *MNV) PostEvent(obj *mnvOrbitalState) *mnvOrbitalState {
 	return rcv.POST_EVENT(obj)
 }
 
-// / Post-maneuver orbital state
-// / Post-maneuver mass (kg)
+/// Post-maneuver orbital state
+/// Post-maneuver mass (kg)
 func (rcv *MNV) POST_MASS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -597,7 +597,7 @@ func (rcv *MNV) PostMass() float64 {
 	return rcv.POST_MASS()
 }
 
-// / Post-maneuver mass (kg)
+/// Post-maneuver mass (kg)
 func (rcv *MNV) MutatePOST_MASS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(60, n)
 }
@@ -606,7 +606,7 @@ func (rcv *MNV) MutatePostMass(n float64) bool {
 	return rcv.MutatePOST_MASS(n)
 }
 
-// / Post-maneuver cross-sectional area (m^2)
+/// Post-maneuver cross-sectional area (m^2)
 func (rcv *MNV) POST_AREA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -619,7 +619,7 @@ func (rcv *MNV) PostArea() float64 {
 	return rcv.POST_AREA()
 }
 
-// / Post-maneuver cross-sectional area (m^2)
+/// Post-maneuver cross-sectional area (m^2)
 func (rcv *MNV) MutatePOST_AREA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(62, n)
 }
@@ -628,7 +628,7 @@ func (rcv *MNV) MutatePostArea(n float64) bool {
 	return rcv.MutatePOST_AREA(n)
 }
 
-// / 6x6 covariance matrix (upper triangle, row-major)
+/// 6x6 covariance matrix (upper triangle, row-major)
 func (rcv *MNV) COV(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -654,7 +654,7 @@ func (rcv *MNV) CovLength() int {
 	return rcv.COVLength()
 }
 
-// / 6x6 covariance matrix (upper triangle, row-major)
+/// 6x6 covariance matrix (upper triangle, row-major)
 func (rcv *MNV) MutateCOV(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -668,7 +668,7 @@ func (rcv *MNV) MutateCov(j int, n float64) bool {
 	return rcv.MutateCOV(j, n)
 }
 
-// / Number of observations used
+/// Number of observations used
 func (rcv *MNV) NUM_OBS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
@@ -681,7 +681,7 @@ func (rcv *MNV) NumObs() uint32 {
 	return rcv.NUM_OBS()
 }
 
-// / Number of observations used
+/// Number of observations used
 func (rcv *MNV) MutateNUM_OBS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(66, n)
 }
@@ -690,7 +690,7 @@ func (rcv *MNV) MutateNumObs(n uint32) bool {
 	return rcv.MutateNUM_OBS(n)
 }
 
-// / State model used
+/// State model used
 func (rcv *MNV) STATE_MODEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
@@ -703,8 +703,8 @@ func (rcv *MNV) StateModel() []byte {
 	return rcv.STATE_MODEL()
 }
 
-// / State model used
-// / State model version
+/// State model used
+/// State model version
 func (rcv *MNV) STATE_MODEL_VERSION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
 	if o != 0 {
@@ -717,7 +717,7 @@ func (rcv *MNV) StateModelVersion() float64 {
 	return rcv.STATE_MODEL_VERSION()
 }
 
-// / State model version
+/// State model version
 func (rcv *MNV) MutateSTATE_MODEL_VERSION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(70, n)
 }
@@ -726,7 +726,7 @@ func (rcv *MNV) MutateStateModelVersion(n float64) bool {
 	return rcv.MutateSTATE_MODEL_VERSION(n)
 }
 
-// / Number of acceleration profile points
+/// Number of acceleration profile points
 func (rcv *MNV) NUM_ACCEL_POINTS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
@@ -739,7 +739,7 @@ func (rcv *MNV) NumAccelPoints() uint16 {
 	return rcv.NUM_ACCEL_POINTS()
 }
 
-// / Number of acceleration profile points
+/// Number of acceleration profile points
 func (rcv *MNV) MutateNUM_ACCEL_POINTS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(72, n)
 }
@@ -748,7 +748,7 @@ func (rcv *MNV) MutateNumAccelPoints(n uint16) bool {
 	return rcv.MutateNUM_ACCEL_POINTS(n)
 }
 
-// / Acceleration profile times (ISO 8601)
+/// Acceleration profile times (ISO 8601)
 func (rcv *MNV) MNVR_ACCEL_TIMES(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
 	if o != 0 {
@@ -774,8 +774,8 @@ func (rcv *MNV) MnvrAccelTimesLength() int {
 	return rcv.MNVR_ACCEL_TIMESLength()
 }
 
-// / Acceleration profile times (ISO 8601)
-// / Acceleration values (km/s^2, 3 components per point)
+/// Acceleration profile times (ISO 8601)
+/// Acceleration values (km/s^2, 3 components per point)
 func (rcv *MNV) MNVR_ACCELS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
 	if o != 0 {
@@ -801,7 +801,7 @@ func (rcv *MNV) MnvrAccelsLength() int {
 	return rcv.MNVR_ACCELSLength()
 }
 
-// / Acceleration values (km/s^2, 3 components per point)
+/// Acceleration values (km/s^2, 3 components per point)
 func (rcv *MNV) MutateMNVR_ACCELS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
 	if o != 0 {
@@ -815,7 +815,7 @@ func (rcv *MNV) MutateMnvrAccels(j int, n float64) bool {
 	return rcv.MutateMNVR_ACCELS(j, n)
 }
 
-// / Acceleration uncertainties (km/s^2)
+/// Acceleration uncertainties (km/s^2)
 func (rcv *MNV) MNVR_ACCEL_UNCS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
 	if o != 0 {
@@ -841,7 +841,7 @@ func (rcv *MNV) MnvrAccelUncsLength() int {
 	return rcv.MNVR_ACCEL_UNCSLength()
 }
 
-// / Acceleration uncertainties (km/s^2)
+/// Acceleration uncertainties (km/s^2)
 func (rcv *MNV) MutateMNVR_ACCEL_UNCS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
 	if o != 0 {
@@ -855,7 +855,7 @@ func (rcv *MNV) MutateMnvrAccelUncs(j int, n float64) bool {
 	return rcv.MutateMNVR_ACCEL_UNCS(j, n)
 }
 
-// / Description
+/// Description
 func (rcv *MNV) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(80))
 	if o != 0 {
@@ -868,8 +868,8 @@ func (rcv *MNV) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-// / Description
-// / Event descriptor
+/// Description
+/// Event descriptor
 func (rcv *MNV) DESCRIPTOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(82))
 	if o != 0 {
@@ -882,8 +882,8 @@ func (rcv *MNV) Descriptor() []byte {
 	return rcv.DESCRIPTOR()
 }
 
-// / Event descriptor
-// / Algorithm used for detection
+/// Event descriptor
+/// Algorithm used for detection
 func (rcv *MNV) ALGORITHM() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(84))
 	if o != 0 {
@@ -896,8 +896,8 @@ func (rcv *MNV) Algorithm() []byte {
 	return rcv.ALGORITHM()
 }
 
-// / Algorithm used for detection
-// / Associated tags
+/// Algorithm used for detection
+/// Associated tags
 func (rcv *MNV) TAGS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(86))
 	if o != 0 {
@@ -923,8 +923,8 @@ func (rcv *MNV) TagsLength() int {
 	return rcv.TAGSLength()
 }
 
-// / Associated tags
-// / Sourced data references
+/// Associated tags
+/// Sourced data references
 func (rcv *MNV) SOURCED_DATA(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(88))
 	if o != 0 {
@@ -950,8 +950,8 @@ func (rcv *MNV) SourcedDataLength() int {
 	return rcv.SOURCED_DATALength()
 }
 
-// / Sourced data references
-// / Sourced data types
+/// Sourced data references
+/// Sourced data types
 func (rcv *MNV) SOURCED_DATA_TYPES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(90))
 	if o != 0 {
@@ -964,8 +964,8 @@ func (rcv *MNV) SourcedDataTypes() []byte {
 	return rcv.SOURCED_DATA_TYPES()
 }
 
-// / Sourced data types
-// / Transaction identifier
+/// Sourced data types
+/// Transaction identifier
 func (rcv *MNV) TRANSACTION_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(92))
 	if o != 0 {
@@ -978,7 +978,7 @@ func (rcv *MNV) TransactionId() []byte {
 	return rcv.TRANSACTION_ID()
 }
 
-// / Transaction identifier
+/// Transaction identifier
 func MNVStart(builder *flatbuffers.Builder) {
 	builder.StartObject(45)
 }

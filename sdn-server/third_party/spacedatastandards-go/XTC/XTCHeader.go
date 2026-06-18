@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Document header information
+/// Document header information
 type XTCHeader struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *XTCHeader) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Version of this XTCE document
+/// Version of this XTCE document
 func (rcv *XTCHeader) VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *XTCHeader) Version() []byte {
 	return rcv.VERSION()
 }
 
-// / Version of this XTCE document
-// / Date of document creation (ISO 8601)
+/// Version of this XTCE document
+/// Date of document creation (ISO 8601)
 func (rcv *XTCHeader) DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *XTCHeader) Date() []byte {
 	return rcv.DATE()
 }
 
-// / Date of document creation (ISO 8601)
-// / Classification level
+/// Date of document creation (ISO 8601)
+/// Classification level
 func (rcv *XTCHeader) CLASSIFICATION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *XTCHeader) Classification() []byte {
 	return rcv.CLASSIFICATION()
 }
 
-// / Classification level
-// / Validation status
+/// Classification level
+/// Validation status
 func (rcv *XTCHeader) VALIDATION_STATUS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *XTCHeader) ValidationStatus() []byte {
 	return rcv.VALIDATION_STATUS()
 }
 
-// / Validation status
-// / Author information
+/// Validation status
+/// Author information
 func (rcv *XTCHeader) AUTHOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -111,8 +111,8 @@ func (rcv *XTCHeader) Author() []byte {
 	return rcv.AUTHOR()
 }
 
-// / Author information
-// / Notes/comments
+/// Author information
+/// Notes/comments
 func (rcv *XTCHeader) NOTES(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -138,7 +138,7 @@ func (rcv *XTCHeader) NotesLength() int {
 	return rcv.NOTESLength()
 }
 
-// / Notes/comments
+/// Notes/comments
 func XTCHeaderStart(builder *flatbuffers.Builder) {
 	builder.StartObject(6)
 }

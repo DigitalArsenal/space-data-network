@@ -6,8 +6,8 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Compact single-frame detection input used by pluggable sensor models that
-// / do not drive arena-backed batches.
+/// Compact single-frame detection input used by pluggable sensor models that
+/// do not drive arena-backed batches.
 type SDRSingleInput struct {
 	_tab flatbuffers.Table
 }
@@ -43,7 +43,7 @@ func (rcv *SDRSingleInput) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Target position in ECEF (meters) — X.
+/// Target position in ECEF (meters) — X.
 func (rcv *SDRSingleInput) TARGET_POS_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -56,7 +56,7 @@ func (rcv *SDRSingleInput) TargetPosX() float64 {
 	return rcv.TARGET_POS_X()
 }
 
-// / Target position in ECEF (meters) — X.
+/// Target position in ECEF (meters) — X.
 func (rcv *SDRSingleInput) MutateTARGET_POS_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -105,7 +105,7 @@ func (rcv *SDRSingleInput) MutateTargetPosZ(n float64) bool {
 	return rcv.MutateTARGET_POS_Z(n)
 }
 
-// / Sensor position in ECEF (meters) — X.
+/// Sensor position in ECEF (meters) — X.
 func (rcv *SDRSingleInput) SENSOR_POS_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -118,7 +118,7 @@ func (rcv *SDRSingleInput) SensorPosX() float64 {
 	return rcv.SENSOR_POS_X()
 }
 
-// / Sensor position in ECEF (meters) — X.
+/// Sensor position in ECEF (meters) — X.
 func (rcv *SDRSingleInput) MutateSENSOR_POS_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -167,7 +167,7 @@ func (rcv *SDRSingleInput) MutateSensorPosZ(n float64) bool {
 	return rcv.MutateSENSOR_POS_Z(n)
 }
 
-// / Radar cross section (m^2).
+/// Radar cross section (m^2).
 func (rcv *SDRSingleInput) RCS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -180,7 +180,7 @@ func (rcv *SDRSingleInput) Rcs() float64 {
 	return rcv.RCS()
 }
 
-// / Radar cross section (m^2).
+/// Radar cross section (m^2).
 func (rcv *SDRSingleInput) MutateRCS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -189,7 +189,7 @@ func (rcv *SDRSingleInput) MutateRcs(n float64) bool {
 	return rcv.MutateRCS(n)
 }
 
-// / Sensor operating frequency (Hz).
+/// Sensor operating frequency (Hz).
 func (rcv *SDRSingleInput) FREQUENCY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -202,7 +202,7 @@ func (rcv *SDRSingleInput) Frequency() float64 {
 	return rcv.FREQUENCY()
 }
 
-// / Sensor operating frequency (Hz).
+/// Sensor operating frequency (Hz).
 func (rcv *SDRSingleInput) MutateFREQUENCY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -211,7 +211,7 @@ func (rcv *SDRSingleInput) MutateFrequency(n float64) bool {
 	return rcv.MutateFREQUENCY(n)
 }
 
-// / Transmit power (W).
+/// Transmit power (W).
 func (rcv *SDRSingleInput) TX_POWER() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -224,7 +224,7 @@ func (rcv *SDRSingleInput) TxPower() float64 {
 	return rcv.TX_POWER()
 }
 
-// / Transmit power (W).
+/// Transmit power (W).
 func (rcv *SDRSingleInput) MutateTX_POWER(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -233,7 +233,7 @@ func (rcv *SDRSingleInput) MutateTxPower(n float64) bool {
 	return rcv.MutateTX_POWER(n)
 }
 
-// / Unix timestamp (milliseconds since epoch).
+/// Unix timestamp (milliseconds since epoch).
 func (rcv *SDRSingleInput) TIMESTAMP_MS() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -246,7 +246,7 @@ func (rcv *SDRSingleInput) TimestampMs() uint64 {
 	return rcv.TIMESTAMP_MS()
 }
 
-// / Unix timestamp (milliseconds since epoch).
+/// Unix timestamp (milliseconds since epoch).
 func (rcv *SDRSingleInput) MutateTIMESTAMP_MS(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(22, n)
 }

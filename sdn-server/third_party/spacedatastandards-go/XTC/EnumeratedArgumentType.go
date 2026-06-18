@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Enumerated argument type
+/// Enumerated argument type
 type EnumeratedArgumentType struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *EnumeratedArgumentType) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Type name
+/// Type name
 func (rcv *EnumeratedArgumentType) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *EnumeratedArgumentType) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Type name
-// / Short description
+/// Type name
+/// Short description
 func (rcv *EnumeratedArgumentType) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *EnumeratedArgumentType) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-// / Short description
-// / Long description
+/// Short description
+/// Long description
 func (rcv *EnumeratedArgumentType) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *EnumeratedArgumentType) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-// / Long description
-// / Data encoding
+/// Long description
+/// Data encoding
 func (rcv *EnumeratedArgumentType) DATA_ENCODING(obj *IntegerDataEncoding) *IntegerDataEncoding {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -102,8 +102,8 @@ func (rcv *EnumeratedArgumentType) DataEncoding(obj *IntegerDataEncoding) *Integ
 	return rcv.DATA_ENCODING(obj)
 }
 
-// / Data encoding
-// / Enumeration values list
+/// Data encoding
+/// Enumeration values list
 func (rcv *EnumeratedArgumentType) ENUMERATION_LIST(obj *EnumerationValue, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -135,8 +135,8 @@ func (rcv *EnumeratedArgumentType) EnumerationListLength() int {
 	return rcv.ENUMERATION_LISTLength()
 }
 
-// / Enumeration values list
-// / Initial/default value label
+/// Enumeration values list
+/// Initial/default value label
 func (rcv *EnumeratedArgumentType) INITIAL_VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -149,7 +149,7 @@ func (rcv *EnumeratedArgumentType) InitialValue() []byte {
 	return rcv.INITIAL_VALUE()
 }
 
-// / Initial/default value label
+/// Initial/default value label
 func EnumeratedArgumentTypeStart(builder *flatbuffers.Builder) {
 	builder.StartObject(6)
 }

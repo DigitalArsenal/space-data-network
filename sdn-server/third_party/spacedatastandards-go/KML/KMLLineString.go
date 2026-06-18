@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / LineString geometry
+/// LineString geometry
 type KMLLineString struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLLineString) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Coordinates
+/// Coordinates
 func (rcv *KMLLineString) COORDINATES(obj *KMLCoordinate, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *KMLLineString) CoordinatesLength() int {
 	return rcv.COORDINATESLength()
 }
 
-// / Coordinates
-// / Altitude mode
+/// Coordinates
+/// Altitude mode
 func (rcv *KMLLineString) ALTITUDE_MODE() KMLAltitudeMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -88,7 +88,7 @@ func (rcv *KMLLineString) AltitudeMode() KMLAltitudeMode {
 	return rcv.ALTITUDE_MODE()
 }
 
-// / Altitude mode
+/// Altitude mode
 func (rcv *KMLLineString) MutateALTITUDE_MODE(n KMLAltitudeMode) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -97,7 +97,7 @@ func (rcv *KMLLineString) MutateAltitudeMode(n KMLAltitudeMode) bool {
 	return rcv.MutateALTITUDE_MODE(n)
 }
 
-// / Whether to extrude to ground
+/// Whether to extrude to ground
 func (rcv *KMLLineString) EXTRUDE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -110,7 +110,7 @@ func (rcv *KMLLineString) Extrude() bool {
 	return rcv.EXTRUDE()
 }
 
-// / Whether to extrude to ground
+/// Whether to extrude to ground
 func (rcv *KMLLineString) MutateEXTRUDE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }
@@ -119,7 +119,7 @@ func (rcv *KMLLineString) MutateExtrude(n bool) bool {
 	return rcv.MutateEXTRUDE(n)
 }
 
-// / Whether to tessellate (follow terrain)
+/// Whether to tessellate (follow terrain)
 func (rcv *KMLLineString) TESSELLATE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -132,7 +132,7 @@ func (rcv *KMLLineString) Tessellate() bool {
 	return rcv.TESSELLATE()
 }
 
-// / Whether to tessellate (follow terrain)
+/// Whether to tessellate (follow terrain)
 func (rcv *KMLLineString) MutateTESSELLATE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }
@@ -141,7 +141,7 @@ func (rcv *KMLLineString) MutateTessellate(n bool) bool {
 	return rcv.MutateTESSELLATE(n)
 }
 
-// / gx:drawOrder
+/// gx:drawOrder
 func (rcv *KMLLineString) GX_DRAW_ORDER() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -154,7 +154,7 @@ func (rcv *KMLLineString) GxDrawOrder() int32 {
 	return rcv.GX_DRAW_ORDER()
 }
 
-// / gx:drawOrder
+/// gx:drawOrder
 func (rcv *KMLLineString) MutateGX_DRAW_ORDER(n int32) bool {
 	return rcv._tab.MutateInt32Slot(12, n)
 }

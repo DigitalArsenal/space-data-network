@@ -4,7 +4,7 @@ package ENC
 
 import "strconv"
 
-// / Symmetric encryption algorithm
+/// Symmetric encryption algorithm
 type SymmetricAlgo int8
 
 const (

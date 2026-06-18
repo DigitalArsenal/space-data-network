@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / On-Orbit Thruster
+/// On-Orbit Thruster
 type OOT struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *OOT) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier
+/// Unique identifier
 func (rcv *OOT) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *OOT) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique identifier
-// / Reference to parent on-orbit object
+/// Unique identifier
+/// Reference to parent on-orbit object
 func (rcv *OOT) ID_ON_ORBIT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *OOT) IdOnOrbit() []byte {
 	return rcv.ID_ON_ORBIT()
 }
 
-// / Reference to parent on-orbit object
-// / Reference to thruster specification
+/// Reference to parent on-orbit object
+/// Reference to thruster specification
 func (rcv *OOT) ID_THRUSTER() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *OOT) IdThruster() []byte {
 	return rcv.ID_THRUSTER()
 }
 
-// / Reference to thruster specification
-// / Thruster name or designation
+/// Reference to thruster specification
+/// Thruster name or designation
 func (rcv *OOT) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *OOT) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Thruster name or designation
-// / Thruster type
+/// Thruster name or designation
+/// Thruster type
 func (rcv *OOT) TYPE() thrusterType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,7 +123,7 @@ func (rcv *OOT) Type() thrusterType {
 	return rcv.TYPE()
 }
 
-// / Thruster type
+/// Thruster type
 func (rcv *OOT) MutateTYPE(n thrusterType) bool {
 	return rcv._tab.MutateInt8Slot(12, int8(n))
 }
@@ -132,7 +132,7 @@ func (rcv *OOT) MutateType(n thrusterType) bool {
 	return rcv.MutateTYPE(n)
 }
 
-// / Number of thrusters of this type
+/// Number of thrusters of this type
 func (rcv *OOT) QUANTITY() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,7 +145,7 @@ func (rcv *OOT) Quantity() uint32 {
 	return rcv.QUANTITY()
 }
 
-// / Number of thrusters of this type
+/// Number of thrusters of this type
 func (rcv *OOT) MutateQUANTITY(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(14, n)
 }
@@ -154,7 +154,7 @@ func (rcv *OOT) MutateQuantity(n uint32) bool {
 	return rcv.MutateQUANTITY(n)
 }
 
-// / Thrust output in Newtons
+/// Thrust output in Newtons
 func (rcv *OOT) THRUST() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -167,7 +167,7 @@ func (rcv *OOT) Thrust() float64 {
 	return rcv.THRUST()
 }
 
-// / Thrust output in Newtons
+/// Thrust output in Newtons
 func (rcv *OOT) MutateTHRUST(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -176,7 +176,7 @@ func (rcv *OOT) MutateThrust(n float64) bool {
 	return rcv.MutateTHRUST(n)
 }
 
-// / Specific impulse in seconds
+/// Specific impulse in seconds
 func (rcv *OOT) ISP() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -189,7 +189,7 @@ func (rcv *OOT) Isp() float64 {
 	return rcv.ISP()
 }
 
-// / Specific impulse in seconds
+/// Specific impulse in seconds
 func (rcv *OOT) MutateISP(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -198,7 +198,7 @@ func (rcv *OOT) MutateIsp(n float64) bool {
 	return rcv.MutateISP(n)
 }
 
-// / Propellant type (e.g., HYDRAZINE, XENON, KRYPTON, MMH_NTO, N2, GN2)
+/// Propellant type (e.g., HYDRAZINE, XENON, KRYPTON, MMH_NTO, N2, GN2)
 func (rcv *OOT) PROPELLANT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -211,8 +211,8 @@ func (rcv *OOT) Propellant() []byte {
 	return rcv.PROPELLANT()
 }
 
-// / Propellant type (e.g., HYDRAZINE, XENON, KRYPTON, MMH_NTO, N2, GN2)
-// / Total propellant mass in kg
+/// Propellant type (e.g., HYDRAZINE, XENON, KRYPTON, MMH_NTO, N2, GN2)
+/// Total propellant mass in kg
 func (rcv *OOT) PROPELLANT_MASS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -225,7 +225,7 @@ func (rcv *OOT) PropellantMass() float64 {
 	return rcv.PROPELLANT_MASS()
 }
 
-// / Total propellant mass in kg
+/// Total propellant mass in kg
 func (rcv *OOT) MutatePROPELLANT_MASS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -234,7 +234,7 @@ func (rcv *OOT) MutatePropellantMass(n float64) bool {
 	return rcv.MutatePROPELLANT_MASS(n)
 }
 
-// / Remaining propellant mass in kg
+/// Remaining propellant mass in kg
 func (rcv *OOT) PROPELLANT_REMAINING() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -247,7 +247,7 @@ func (rcv *OOT) PropellantRemaining() float64 {
 	return rcv.PROPELLANT_REMAINING()
 }
 
-// / Remaining propellant mass in kg
+/// Remaining propellant mass in kg
 func (rcv *OOT) MutatePROPELLANT_REMAINING(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -256,7 +256,7 @@ func (rcv *OOT) MutatePropellantRemaining(n float64) bool {
 	return rcv.MutatePROPELLANT_REMAINING(n)
 }
 
-// / Total delta-V capability in m/s
+/// Total delta-V capability in m/s
 func (rcv *OOT) DELTA_V_TOTAL() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -269,7 +269,7 @@ func (rcv *OOT) DeltaVTotal() float64 {
 	return rcv.DELTA_V_TOTAL()
 }
 
-// / Total delta-V capability in m/s
+/// Total delta-V capability in m/s
 func (rcv *OOT) MutateDELTA_V_TOTAL(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -278,7 +278,7 @@ func (rcv *OOT) MutateDeltaVTotal(n float64) bool {
 	return rcv.MutateDELTA_V_TOTAL(n)
 }
 
-// / Remaining delta-V in m/s
+/// Remaining delta-V in m/s
 func (rcv *OOT) DELTA_V_REMAINING() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -291,7 +291,7 @@ func (rcv *OOT) DeltaVRemaining() float64 {
 	return rcv.DELTA_V_REMAINING()
 }
 
-// / Remaining delta-V in m/s
+/// Remaining delta-V in m/s
 func (rcv *OOT) MutateDELTA_V_REMAINING(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -300,7 +300,7 @@ func (rcv *OOT) MutateDeltaVRemaining(n float64) bool {
 	return rcv.MutateDELTA_V_REMAINING(n)
 }
 
-// / Total impulse in Newton-seconds
+/// Total impulse in Newton-seconds
 func (rcv *OOT) TOTAL_IMPULSE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -313,7 +313,7 @@ func (rcv *OOT) TotalImpulse() float64 {
 	return rcv.TOTAL_IMPULSE()
 }
 
-// / Total impulse in Newton-seconds
+/// Total impulse in Newton-seconds
 func (rcv *OOT) MutateTOTAL_IMPULSE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -322,7 +322,7 @@ func (rcv *OOT) MutateTotalImpulse(n float64) bool {
 	return rcv.MutateTOTAL_IMPULSE(n)
 }
 
-// / Thruster dry mass in kg
+/// Thruster dry mass in kg
 func (rcv *OOT) MASS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -335,7 +335,7 @@ func (rcv *OOT) Mass() float64 {
 	return rcv.MASS()
 }
 
-// / Thruster dry mass in kg
+/// Thruster dry mass in kg
 func (rcv *OOT) MutateMASS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -344,7 +344,7 @@ func (rcv *OOT) MutateMass(n float64) bool {
 	return rcv.MutateMASS(n)
 }
 
-// / Purpose (e.g., ORBIT_RAISING, STATION_KEEPING, ATTITUDE_CONTROL, DEORBIT)
+/// Purpose (e.g., ORBIT_RAISING, STATION_KEEPING, ATTITUDE_CONTROL, DEORBIT)
 func (rcv *OOT) PURPOSE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -357,8 +357,8 @@ func (rcv *OOT) Purpose() []byte {
 	return rcv.PURPOSE()
 }
 
-// / Purpose (e.g., ORBIT_RAISING, STATION_KEEPING, ATTITUDE_CONTROL, DEORBIT)
-// / Additional notes
+/// Purpose (e.g., ORBIT_RAISING, STATION_KEEPING, ATTITUDE_CONTROL, DEORBIT)
+/// Additional notes
 func (rcv *OOT) NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -371,7 +371,7 @@ func (rcv *OOT) Notes() []byte {
 	return rcv.NOTES()
 }
 
-// / Additional notes
+/// Additional notes
 func OOTStart(builder *flatbuffers.Builder) {
 	builder.StartObject(17)
 }

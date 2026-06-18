@@ -4,14 +4,14 @@ package XTC
 
 import "strconv"
 
-// / String size specification type
+/// String size specification type
 type StringSizeType int8
 
 const (
 	/// Fixed length string
-	StringSizeTypeFIXED StringSizeType = 0
+	StringSizeTypeFIXED            StringSizeType = 0
 	/// Variable with leading count
-	StringSizeTypeLEADING_SIZE StringSizeType = 1
+	StringSizeTypeLEADING_SIZE     StringSizeType = 1
 	/// Variable with termination character
 	StringSizeTypeTERMINATION_CHAR StringSizeType = 2
 )

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Request for one 3D B-spline interpolation.
+/// Request for one 3D B-spline interpolation.
 type BSPInterpolationRequest struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *BSPInterpolationRequest) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Waypoint times and coordinates. T, X1, X2, and X3 must have equal length.
+/// Waypoint times and coordinates. T, X1, X2, and X3 must have equal length.
 func (rcv *BSPInterpolationRequest) WAYPOINTS(obj *BSPVector3Series) *BSPVector3Series {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *BSPInterpolationRequest) Waypoints(obj *BSPVector3Series) *BSPVector3
 	return rcv.WAYPOINTS(obj)
 }
 
-// / Waypoint times and coordinates. T, X1, X2, and X3 must have equal length.
-// / Number of equally spaced output samples.
+/// Waypoint times and coordinates. T, X1, X2, and X3 must have equal length.
+/// Number of equally spaced output samples.
 func (rcv *BSPInterpolationRequest) SAMPLE_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -74,7 +74,7 @@ func (rcv *BSPInterpolationRequest) SampleCount() uint32 {
 	return rcv.SAMPLE_COUNT()
 }
 
-// / Number of equally spaced output samples.
+/// Number of equally spaced output samples.
 func (rcv *BSPInterpolationRequest) MutateSAMPLE_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -83,7 +83,7 @@ func (rcv *BSPInterpolationRequest) MutateSampleCount(n uint32) bool {
 	return rcv.MutateSAMPLE_COUNT(n)
 }
 
-// / Polynomial order of the B-spline basis.
+/// Polynomial order of the B-spline basis.
 func (rcv *BSPInterpolationRequest) POLYNOMIAL_ORDER() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -96,7 +96,7 @@ func (rcv *BSPInterpolationRequest) PolynomialOrder() uint16 {
 	return rcv.POLYNOMIAL_ORDER()
 }
 
-// / Polynomial order of the B-spline basis.
+/// Polynomial order of the B-spline basis.
 func (rcv *BSPInterpolationRequest) MutatePOLYNOMIAL_ORDER(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(8, n)
 }
@@ -105,7 +105,7 @@ func (rcv *BSPInterpolationRequest) MutatePolynomialOrder(n uint16) bool {
 	return rcv.MutatePOLYNOMIAL_ORDER(n)
 }
 
-// / Whether X_DOT_0 contains the first derivative at the first waypoint.
+/// Whether X_DOT_0 contains the first derivative at the first waypoint.
 func (rcv *BSPInterpolationRequest) HAS_X_DOT_0() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -118,7 +118,7 @@ func (rcv *BSPInterpolationRequest) HasXDot0() bool {
 	return rcv.HAS_X_DOT_0()
 }
 
-// / Whether X_DOT_0 contains the first derivative at the first waypoint.
+/// Whether X_DOT_0 contains the first derivative at the first waypoint.
 func (rcv *BSPInterpolationRequest) MutateHAS_X_DOT_0(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }
@@ -127,7 +127,7 @@ func (rcv *BSPInterpolationRequest) MutateHasXDot0(n bool) bool {
 	return rcv.MutateHAS_X_DOT_0(n)
 }
 
-// / Optional first derivative at the first waypoint, length 3.
+/// Optional first derivative at the first waypoint, length 3.
 func (rcv *BSPInterpolationRequest) X_DOT_0(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -153,7 +153,7 @@ func (rcv *BSPInterpolationRequest) XDot0Length() int {
 	return rcv.X_DOT_0Length()
 }
 
-// / Optional first derivative at the first waypoint, length 3.
+/// Optional first derivative at the first waypoint, length 3.
 func (rcv *BSPInterpolationRequest) MutateX_DOT_0(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -167,7 +167,7 @@ func (rcv *BSPInterpolationRequest) MutateXDot0(j int, n float64) bool {
 	return rcv.MutateX_DOT_0(j, n)
 }
 
-// / Whether X_DOT_N contains the first derivative at the last waypoint.
+/// Whether X_DOT_N contains the first derivative at the last waypoint.
 func (rcv *BSPInterpolationRequest) HAS_X_DOT_N() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -180,7 +180,7 @@ func (rcv *BSPInterpolationRequest) HasXDotN() bool {
 	return rcv.HAS_X_DOT_N()
 }
 
-// / Whether X_DOT_N contains the first derivative at the last waypoint.
+/// Whether X_DOT_N contains the first derivative at the last waypoint.
 func (rcv *BSPInterpolationRequest) MutateHAS_X_DOT_N(n bool) bool {
 	return rcv._tab.MutateBoolSlot(14, n)
 }
@@ -189,7 +189,7 @@ func (rcv *BSPInterpolationRequest) MutateHasXDotN(n bool) bool {
 	return rcv.MutateHAS_X_DOT_N(n)
 }
 
-// / Optional first derivative at the last waypoint, length 3.
+/// Optional first derivative at the last waypoint, length 3.
 func (rcv *BSPInterpolationRequest) X_DOT_N(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -215,7 +215,7 @@ func (rcv *BSPInterpolationRequest) XDotNLength() int {
 	return rcv.X_DOT_NLength()
 }
 
-// / Optional first derivative at the last waypoint, length 3.
+/// Optional first derivative at the last waypoint, length 3.
 func (rcv *BSPInterpolationRequest) MutateX_DOT_N(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -229,7 +229,7 @@ func (rcv *BSPInterpolationRequest) MutateXDotN(j int, n float64) bool {
 	return rcv.MutateX_DOT_N(j, n)
 }
 
-// / Whether X_D_DOT_0 contains the second derivative at the first waypoint.
+/// Whether X_D_DOT_0 contains the second derivative at the first waypoint.
 func (rcv *BSPInterpolationRequest) HAS_X_D_DOT_0() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -242,7 +242,7 @@ func (rcv *BSPInterpolationRequest) HasXDDot0() bool {
 	return rcv.HAS_X_D_DOT_0()
 }
 
-// / Whether X_D_DOT_0 contains the second derivative at the first waypoint.
+/// Whether X_D_DOT_0 contains the second derivative at the first waypoint.
 func (rcv *BSPInterpolationRequest) MutateHAS_X_D_DOT_0(n bool) bool {
 	return rcv._tab.MutateBoolSlot(18, n)
 }
@@ -251,7 +251,7 @@ func (rcv *BSPInterpolationRequest) MutateHasXDDot0(n bool) bool {
 	return rcv.MutateHAS_X_D_DOT_0(n)
 }
 
-// / Optional second derivative at the first waypoint, length 3.
+/// Optional second derivative at the first waypoint, length 3.
 func (rcv *BSPInterpolationRequest) X_D_DOT_0(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -277,7 +277,7 @@ func (rcv *BSPInterpolationRequest) XDDot0Length() int {
 	return rcv.X_D_DOT_0Length()
 }
 
-// / Optional second derivative at the first waypoint, length 3.
+/// Optional second derivative at the first waypoint, length 3.
 func (rcv *BSPInterpolationRequest) MutateX_D_DOT_0(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -291,7 +291,7 @@ func (rcv *BSPInterpolationRequest) MutateXDDot0(j int, n float64) bool {
 	return rcv.MutateX_D_DOT_0(j, n)
 }
 
-// / Whether X_D_DOT_N contains the second derivative at the last waypoint.
+/// Whether X_D_DOT_N contains the second derivative at the last waypoint.
 func (rcv *BSPInterpolationRequest) HAS_X_D_DOT_N() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -304,7 +304,7 @@ func (rcv *BSPInterpolationRequest) HasXDDotN() bool {
 	return rcv.HAS_X_D_DOT_N()
 }
 
-// / Whether X_D_DOT_N contains the second derivative at the last waypoint.
+/// Whether X_D_DOT_N contains the second derivative at the last waypoint.
 func (rcv *BSPInterpolationRequest) MutateHAS_X_D_DOT_N(n bool) bool {
 	return rcv._tab.MutateBoolSlot(22, n)
 }
@@ -313,7 +313,7 @@ func (rcv *BSPInterpolationRequest) MutateHasXDDotN(n bool) bool {
 	return rcv.MutateHAS_X_D_DOT_N(n)
 }
 
-// / Optional second derivative at the last waypoint, length 3.
+/// Optional second derivative at the last waypoint, length 3.
 func (rcv *BSPInterpolationRequest) X_D_DOT_N(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -339,7 +339,7 @@ func (rcv *BSPInterpolationRequest) XDDotNLength() int {
 	return rcv.X_D_DOT_NLength()
 }
 
-// / Optional second derivative at the last waypoint, length 3.
+/// Optional second derivative at the last waypoint, length 3.
 func (rcv *BSPInterpolationRequest) MutateX_D_DOT_N(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -353,7 +353,7 @@ func (rcv *BSPInterpolationRequest) MutateXDDotN(j int, n float64) bool {
 	return rcv.MutateX_D_DOT_N(j, n)
 }
 
-// / Optional trace/correlation identifier.
+/// Optional trace/correlation identifier.
 func (rcv *BSPInterpolationRequest) TRACE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -366,7 +366,7 @@ func (rcv *BSPInterpolationRequest) TraceId() []byte {
 	return rcv.TRACE_ID()
 }
 
-// / Optional trace/correlation identifier.
+/// Optional trace/correlation identifier.
 func BSPInterpolationRequestStart(builder *flatbuffers.Builder) {
 	builder.StartObject(12)
 }

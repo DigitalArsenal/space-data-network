@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Licensing grant message
+/// Licensing grant message
 type LGR struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *LGR) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Message type
+/// Message type
 func (rcv *LGR) MESSAGE_TYPE() licensingGrantMessageType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *LGR) MessageType() licensingGrantMessageType {
 	return rcv.MESSAGE_TYPE()
 }
 
-// / Message type
+/// Message type
 func (rcv *LGR) MutateMESSAGE_TYPE(n licensingGrantMessageType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -76,7 +76,7 @@ func (rcv *LGR) MutateMessageType(n licensingGrantMessageType) bool {
 	return rcv.MutateMESSAGE_TYPE(n)
 }
 
-// / Unique request identifier
+/// Unique request identifier
 func (rcv *LGR) REQUEST_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,8 +89,8 @@ func (rcv *LGR) RequestId() []byte {
 	return rcv.REQUEST_ID()
 }
 
-// / Unique request identifier
-// / Canonical module identifier
+/// Unique request identifier
+/// Canonical module identifier
 func (rcv *LGR) MODULE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,8 +103,8 @@ func (rcv *LGR) ModuleId() []byte {
 	return rcv.MODULE_ID()
 }
 
-// / Canonical module identifier
-// / Optional module version
+/// Canonical module identifier
+/// Optional module version
 func (rcv *LGR) MODULE_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *LGR) ModuleVersion() []byte {
 	return rcv.MODULE_VERSION()
 }
 
-// / Optional module version
-// / Requester peer identifier
+/// Optional module version
+/// Requester peer identifier
 func (rcv *LGR) REQUESTER_PEER_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *LGR) RequesterPeerId() []byte {
 	return rcv.REQUESTER_PEER_ID()
 }
 
-// / Requester peer identifier
-// / Requester account identity or wallet xpub
+/// Requester peer identifier
+/// Requester account identity or wallet xpub
 func (rcv *LGR) REQUESTER_XPUB() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,8 +145,8 @@ func (rcv *LGR) RequesterXpub() []byte {
 	return rcv.REQUESTER_XPUB()
 }
 
-// / Requester account identity or wallet xpub
-// / Requested domain
+/// Requester account identity or wallet xpub
+/// Requested domain
 func (rcv *LGR) REQUESTED_DOMAIN() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,8 +159,8 @@ func (rcv *LGR) RequestedDomain() []byte {
 	return rcv.REQUESTED_DOMAIN()
 }
 
-// / Requested domain
-// / Requested timeout in milliseconds
+/// Requested domain
+/// Requested timeout in milliseconds
 func (rcv *LGR) REQUESTED_TIMEOUT_MS() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -173,7 +173,7 @@ func (rcv *LGR) RequestedTimeoutMs() uint64 {
 	return rcv.REQUESTED_TIMEOUT_MS()
 }
 
-// / Requested timeout in milliseconds
+/// Requested timeout in milliseconds
 func (rcv *LGR) MutateREQUESTED_TIMEOUT_MS(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(18, n)
 }
@@ -182,7 +182,7 @@ func (rcv *LGR) MutateRequestedTimeoutMs(n uint64) bool {
 	return rcv.MutateREQUESTED_TIMEOUT_MS(n)
 }
 
-// / Granted domain
+/// Granted domain
 func (rcv *LGR) GRANTED_DOMAIN() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -195,8 +195,8 @@ func (rcv *LGR) GrantedDomain() []byte {
 	return rcv.GRANTED_DOMAIN()
 }
 
-// / Granted domain
-// / Granted timeout in milliseconds
+/// Granted domain
+/// Granted timeout in milliseconds
 func (rcv *LGR) GRANTED_TIMEOUT_MS() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -209,7 +209,7 @@ func (rcv *LGR) GrantedTimeoutMs() uint64 {
 	return rcv.GRANTED_TIMEOUT_MS()
 }
 
-// / Granted timeout in milliseconds
+/// Granted timeout in milliseconds
 func (rcv *LGR) MutateGRANTED_TIMEOUT_MS(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(22, n)
 }
@@ -218,7 +218,7 @@ func (rcv *LGR) MutateGrantedTimeoutMs(n uint64) bool {
 	return rcv.MutateGRANTED_TIMEOUT_MS(n)
 }
 
-// / Grant expiration time in milliseconds since epoch
+/// Grant expiration time in milliseconds since epoch
 func (rcv *LGR) EXPIRES_AT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -231,7 +231,7 @@ func (rcv *LGR) ExpiresAt() uint64 {
 	return rcv.EXPIRES_AT()
 }
 
-// / Grant expiration time in milliseconds since epoch
+/// Grant expiration time in milliseconds since epoch
 func (rcv *LGR) MutateEXPIRES_AT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(24, n)
 }
@@ -240,7 +240,7 @@ func (rcv *LGR) MutateExpiresAt(n uint64) bool {
 	return rcv.MutateEXPIRES_AT(n)
 }
 
-// / Required scope for the publication
+/// Required scope for the publication
 func (rcv *LGR) REQUIRED_SCOPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -253,8 +253,8 @@ func (rcv *LGR) RequiredScope() []byte {
 	return rcv.REQUIRED_SCOPE()
 }
 
-// / Required scope for the publication
-// / Grant status string
+/// Required scope for the publication
+/// Grant status string
 func (rcv *LGR) GRANT_STATUS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -267,8 +267,8 @@ func (rcv *LGR) GrantStatus() []byte {
 	return rcv.GRANT_STATUS()
 }
 
-// / Grant status string
-// / Structured denial reason
+/// Grant status string
+/// Structured denial reason
 func (rcv *LGR) DENIAL_REASON() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -281,8 +281,8 @@ func (rcv *LGR) DenialReason() []byte {
 	return rcv.DENIAL_REASON()
 }
 
-// / Structured denial reason
-// / Issued capability token bytes
+/// Structured denial reason
+/// Issued capability token bytes
 func (rcv *LGR) CAPABILITY_TOKEN(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -320,7 +320,7 @@ func (rcv *LGR) CapabilityTokenBytes() []byte {
 	return rcv.CAPABILITY_TOKENBytes()
 }
 
-// / Issued capability token bytes
+/// Issued capability token bytes
 func (rcv *LGR) MutateCAPABILITY_TOKEN(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -334,7 +334,7 @@ func (rcv *LGR) MutateCapabilityToken(j int, n byte) bool {
 	return rcv.MutateCAPABILITY_TOKEN(j, n)
 }
 
-// / Published module descriptor
+/// Published module descriptor
 func (rcv *LGR) MODULE_DESCRIPTOR(obj *PLG) *PLG {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -352,8 +352,8 @@ func (rcv *LGR) ModuleDescriptor(obj *PLG) *PLG {
 	return rcv.MODULE_DESCRIPTOR(obj)
 }
 
-// / Published module descriptor
-// / Encryption header for the recipient-specific wrapped content-key payload.
+/// Published module descriptor
+/// Encryption header for the recipient-specific wrapped content-key payload.
 func (rcv *LGR) WRAPPED_CONTENT_KEY_HEADER(obj *ENC) *ENC {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -371,10 +371,10 @@ func (rcv *LGR) WrappedContentKeyHeader(obj *ENC) *ENC {
 	return rcv.WRAPPED_CONTENT_KEY_HEADER(obj)
 }
 
-// / Encryption header for the recipient-specific wrapped content-key payload.
-// / Encrypted FlatBuffer payload containing the recipient-specific content key
-// / material. The payload currently uses `$KMF` semantics and is decrypted
-// / using `WRAPPED_CONTENT_KEY_HEADER` before reading the key bytes.
+/// Encryption header for the recipient-specific wrapped content-key payload.
+/// Encrypted FlatBuffer payload containing the recipient-specific content key
+/// material. The payload currently uses `$KMF` semantics and is decrypted
+/// using `WRAPPED_CONTENT_KEY_HEADER` before reading the key bytes.
 func (rcv *LGR) WRAPPED_CONTENT_KEY_PAYLOAD(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -412,9 +412,9 @@ func (rcv *LGR) WrappedContentKeyPayloadBytes() []byte {
 	return rcv.WRAPPED_CONTENT_KEY_PAYLOADBytes()
 }
 
-// / Encrypted FlatBuffer payload containing the recipient-specific content key
-// / material. The payload currently uses `$KMF` semantics and is decrypted
-// / using `WRAPPED_CONTENT_KEY_HEADER` before reading the key bytes.
+/// Encrypted FlatBuffer payload containing the recipient-specific content key
+/// material. The payload currently uses `$KMF` semantics and is decrypted
+/// using `WRAPPED_CONTENT_KEY_HEADER` before reading the key bytes.
 func (rcv *LGR) MutateWRAPPED_CONTENT_KEY_PAYLOAD(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -428,7 +428,7 @@ func (rcv *LGR) MutateWrappedContentKeyPayload(j int, n byte) bool {
 	return rcv.MutateWRAPPED_CONTENT_KEY_PAYLOAD(j, n)
 }
 
-// / Provider public key used to verify the grant signature
+/// Provider public key used to verify the grant signature
 func (rcv *LGR) GRANT_VERIFIER_PUBKEY(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -466,7 +466,7 @@ func (rcv *LGR) GrantVerifierPubkeyBytes() []byte {
 	return rcv.GRANT_VERIFIER_PUBKEYBytes()
 }
 
-// / Provider public key used to verify the grant signature
+/// Provider public key used to verify the grant signature
 func (rcv *LGR) MutateGRANT_VERIFIER_PUBKEY(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -480,7 +480,7 @@ func (rcv *LGR) MutateGrantVerifierPubkey(j int, n byte) bool {
 	return rcv.MutateGRANT_VERIFIER_PUBKEY(j, n)
 }
 
-// / Provider signature over the grant
+/// Provider signature over the grant
 func (rcv *LGR) PROVIDER_SIGNATURE(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -518,7 +518,7 @@ func (rcv *LGR) ProviderSignatureBytes() []byte {
 	return rcv.PROVIDER_SIGNATUREBytes()
 }
 
-// / Provider signature over the grant
+/// Provider signature over the grant
 func (rcv *LGR) MutatePROVIDER_SIGNATURE(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {

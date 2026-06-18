@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Collection of streams
+/// Collection of streams
 type StreamSet struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *StreamSet) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Fixed frame streams
+/// Fixed frame streams
 func (rcv *StreamSet) FIXED_FRAME_STREAMS(obj *FixedFrameStream, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *StreamSet) FixedFrameStreamsLength() int {
 	return rcv.FIXED_FRAME_STREAMSLength()
 }
 
-// / Fixed frame streams
-// / Variable frame streams
+/// Fixed frame streams
+/// Variable frame streams
 func (rcv *StreamSet) VARIABLE_FRAME_STREAMS(obj *VariableFrameStream, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -107,8 +107,8 @@ func (rcv *StreamSet) VariableFrameStreamsLength() int {
 	return rcv.VARIABLE_FRAME_STREAMSLength()
 }
 
-// / Variable frame streams
-// / Custom streams
+/// Variable frame streams
+/// Custom streams
 func (rcv *StreamSet) CUSTOM_STREAMS(obj *CustomStream, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -140,7 +140,7 @@ func (rcv *StreamSet) CustomStreamsLength() int {
 	return rcv.CUSTOM_STREAMSLength()
 }
 
-// / Custom streams
+/// Custom streams
 func StreamSetStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

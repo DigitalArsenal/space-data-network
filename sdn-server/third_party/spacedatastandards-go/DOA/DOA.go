@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Difference of Arrival Geolocation
+/// Difference of Arrival Geolocation
 type DOA struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *DOA) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier
+/// Unique identifier
 func (rcv *DOA) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *DOA) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique identifier
-// / Observation time (ISO 8601)
+/// Unique identifier
+/// Observation time (ISO 8601)
 func (rcv *DOA) OB_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *DOA) ObTime() []byte {
 	return rcv.OB_TIME()
 }
 
-// / Observation time (ISO 8601)
-// / Satellite catalog number
+/// Observation time (ISO 8601)
+/// Satellite catalog number
 func (rcv *DOA) SAT_NO() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,7 +95,7 @@ func (rcv *DOA) SatNo() uint32 {
 	return rcv.SAT_NO()
 }
 
-// / Satellite catalog number
+/// Satellite catalog number
 func (rcv *DOA) MutateSAT_NO(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -104,7 +104,7 @@ func (rcv *DOA) MutateSatNo(n uint32) bool {
 	return rcv.MutateSAT_NO(n)
 }
 
-// / International designator
+/// International designator
 func (rcv *DOA) ORIG_OBJECT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *DOA) OrigObjectId() []byte {
 	return rcv.ORIG_OBJECT_ID()
 }
 
-// / International designator
-// / On-orbit reference
+/// International designator
+/// On-orbit reference
 func (rcv *DOA) ON_ORBIT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *DOA) OnOrbit() []byte {
 	return rcv.ON_ORBIT()
 }
 
-// / On-orbit reference
-// / True if uncorrelated target
+/// On-orbit reference
+/// True if uncorrelated target
 func (rcv *DOA) UCT() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,7 +145,7 @@ func (rcv *DOA) Uct() bool {
 	return rcv.UCT()
 }
 
-// / True if uncorrelated target
+/// True if uncorrelated target
 func (rcv *DOA) MutateUCT(n bool) bool {
 	return rcv._tab.MutateBoolSlot(14, n)
 }
@@ -154,7 +154,7 @@ func (rcv *DOA) MutateUct(n bool) bool {
 	return rcv.MutateUCT(n)
 }
 
-// / Task identifier
+/// Task identifier
 func (rcv *DOA) TASK_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -167,8 +167,8 @@ func (rcv *DOA) TaskId() []byte {
 	return rcv.TASK_ID()
 }
 
-// / Task identifier
-// / Transaction identifier
+/// Task identifier
+/// Transaction identifier
 func (rcv *DOA) TRANSACTION_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -181,8 +181,8 @@ func (rcv *DOA) TransactionId() []byte {
 	return rcv.TRANSACTION_ID()
 }
 
-// / Transaction identifier
-// / Collection mode
+/// Transaction identifier
+/// Collection mode
 func (rcv *DOA) COLLECTION_MODE() doaCollectionMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -195,7 +195,7 @@ func (rcv *DOA) CollectionMode() doaCollectionMode {
 	return rcv.COLLECTION_MODE()
 }
 
-// / Collection mode
+/// Collection mode
 func (rcv *DOA) MutateCOLLECTION_MODE(n doaCollectionMode) bool {
 	return rcv._tab.MutateInt8Slot(20, int8(n))
 }
@@ -204,7 +204,7 @@ func (rcv *DOA) MutateCollectionMode(n doaCollectionMode) bool {
 	return rcv.MutateCOLLECTION_MODE(n)
 }
 
-// / Sensor 1 identifier
+/// Sensor 1 identifier
 func (rcv *DOA) ID_SENSOR1() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -217,8 +217,8 @@ func (rcv *DOA) IdSensor1() []byte {
 	return rcv.ID_SENSOR1()
 }
 
-// / Sensor 1 identifier
-// / Sensor 1 original identifier
+/// Sensor 1 identifier
+/// Sensor 1 original identifier
 func (rcv *DOA) ORIG_SENSOR_ID1() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -231,8 +231,8 @@ func (rcv *DOA) OrigSensorId1() []byte {
 	return rcv.ORIG_SENSOR_ID1()
 }
 
-// / Sensor 1 original identifier
-// / Sensor 1 latitude (degrees)
+/// Sensor 1 original identifier
+/// Sensor 1 latitude (degrees)
 func (rcv *DOA) SENLAT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -245,7 +245,7 @@ func (rcv *DOA) Senlat() float64 {
 	return rcv.SENLAT()
 }
 
-// / Sensor 1 latitude (degrees)
+/// Sensor 1 latitude (degrees)
 func (rcv *DOA) MutateSENLAT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -254,7 +254,7 @@ func (rcv *DOA) MutateSenlat(n float64) bool {
 	return rcv.MutateSENLAT(n)
 }
 
-// / Sensor 1 longitude (degrees)
+/// Sensor 1 longitude (degrees)
 func (rcv *DOA) SENLON() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -267,7 +267,7 @@ func (rcv *DOA) Senlon() float64 {
 	return rcv.SENLON()
 }
 
-// / Sensor 1 longitude (degrees)
+/// Sensor 1 longitude (degrees)
 func (rcv *DOA) MutateSENLON(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -276,7 +276,7 @@ func (rcv *DOA) MutateSenlon(n float64) bool {
 	return rcv.MutateSENLON(n)
 }
 
-// / Sensor 1 altitude (km)
+/// Sensor 1 altitude (km)
 func (rcv *DOA) SENALT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -289,7 +289,7 @@ func (rcv *DOA) Senalt() float64 {
 	return rcv.SENALT()
 }
 
-// / Sensor 1 altitude (km)
+/// Sensor 1 altitude (km)
 func (rcv *DOA) MutateSENALT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -298,7 +298,7 @@ func (rcv *DOA) MutateSenalt(n float64) bool {
 	return rcv.MutateSENALT(n)
 }
 
-// / Sensor 1 processing delay (seconds)
+/// Sensor 1 processing delay (seconds)
 func (rcv *DOA) SENSOR1_DELAY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -311,7 +311,7 @@ func (rcv *DOA) Sensor1Delay() float64 {
 	return rcv.SENSOR1_DELAY()
 }
 
-// / Sensor 1 processing delay (seconds)
+/// Sensor 1 processing delay (seconds)
 func (rcv *DOA) MutateSENSOR1_DELAY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -320,7 +320,7 @@ func (rcv *DOA) MutateSensor1Delay(n float64) bool {
 	return rcv.MutateSENSOR1_DELAY(n)
 }
 
-// / Sensor 2 identifier
+/// Sensor 2 identifier
 func (rcv *DOA) ID_SENSOR2() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -333,8 +333,8 @@ func (rcv *DOA) IdSensor2() []byte {
 	return rcv.ID_SENSOR2()
 }
 
-// / Sensor 2 identifier
-// / Sensor 2 original identifier
+/// Sensor 2 identifier
+/// Sensor 2 original identifier
 func (rcv *DOA) ORIG_SENSOR_ID2() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -347,8 +347,8 @@ func (rcv *DOA) OrigSensorId2() []byte {
 	return rcv.ORIG_SENSOR_ID2()
 }
 
-// / Sensor 2 original identifier
-// / Sensor 2 latitude (degrees)
+/// Sensor 2 original identifier
+/// Sensor 2 latitude (degrees)
 func (rcv *DOA) SEN2LAT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -361,7 +361,7 @@ func (rcv *DOA) Sen2lat() float64 {
 	return rcv.SEN2LAT()
 }
 
-// / Sensor 2 latitude (degrees)
+/// Sensor 2 latitude (degrees)
 func (rcv *DOA) MutateSEN2LAT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -370,7 +370,7 @@ func (rcv *DOA) MutateSen2lat(n float64) bool {
 	return rcv.MutateSEN2LAT(n)
 }
 
-// / Sensor 2 longitude (degrees)
+/// Sensor 2 longitude (degrees)
 func (rcv *DOA) SEN2LON() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -383,7 +383,7 @@ func (rcv *DOA) Sen2lon() float64 {
 	return rcv.SEN2LON()
 }
 
-// / Sensor 2 longitude (degrees)
+/// Sensor 2 longitude (degrees)
 func (rcv *DOA) MutateSEN2LON(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -392,7 +392,7 @@ func (rcv *DOA) MutateSen2lon(n float64) bool {
 	return rcv.MutateSEN2LON(n)
 }
 
-// / Sensor 2 altitude (km)
+/// Sensor 2 altitude (km)
 func (rcv *DOA) SEN2ALT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -405,7 +405,7 @@ func (rcv *DOA) Sen2alt() float64 {
 	return rcv.SEN2ALT()
 }
 
-// / Sensor 2 altitude (km)
+/// Sensor 2 altitude (km)
 func (rcv *DOA) MutateSEN2ALT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -414,7 +414,7 @@ func (rcv *DOA) MutateSen2alt(n float64) bool {
 	return rcv.MutateSEN2ALT(n)
 }
 
-// / Sensor 2 processing delay (seconds)
+/// Sensor 2 processing delay (seconds)
 func (rcv *DOA) SENSOR2_DELAY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -427,7 +427,7 @@ func (rcv *DOA) Sensor2Delay() float64 {
 	return rcv.SENSOR2_DELAY()
 }
 
-// / Sensor 2 processing delay (seconds)
+/// Sensor 2 processing delay (seconds)
 func (rcv *DOA) MutateSENSOR2_DELAY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(44, n)
 }
@@ -436,7 +436,7 @@ func (rcv *DOA) MutateSensor2Delay(n float64) bool {
 	return rcv.MutateSENSOR2_DELAY(n)
 }
 
-// / Measured frequency (MHz)
+/// Measured frequency (MHz)
 func (rcv *DOA) FREQUENCY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -449,7 +449,7 @@ func (rcv *DOA) Frequency() float64 {
 	return rcv.FREQUENCY()
 }
 
-// / Measured frequency (MHz)
+/// Measured frequency (MHz)
 func (rcv *DOA) MutateFREQUENCY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(46, n)
 }
@@ -458,7 +458,7 @@ func (rcv *DOA) MutateFrequency(n float64) bool {
 	return rcv.MutateFREQUENCY(n)
 }
 
-// / Measurement bandwidth (MHz)
+/// Measurement bandwidth (MHz)
 func (rcv *DOA) BANDWIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -471,7 +471,7 @@ func (rcv *DOA) Bandwidth() float64 {
 	return rcv.BANDWIDTH()
 }
 
-// / Measurement bandwidth (MHz)
+/// Measurement bandwidth (MHz)
 func (rcv *DOA) MutateBANDWIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(48, n)
 }
@@ -480,7 +480,7 @@ func (rcv *DOA) MutateBandwidth(n float64) bool {
 	return rcv.MutateBANDWIDTH(n)
 }
 
-// / Signal-to-noise ratio (dB)
+/// Signal-to-noise ratio (dB)
 func (rcv *DOA) SNR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -493,7 +493,7 @@ func (rcv *DOA) Snr() float64 {
 	return rcv.SNR()
 }
 
-// / Signal-to-noise ratio (dB)
+/// Signal-to-noise ratio (dB)
 func (rcv *DOA) MutateSNR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(50, n)
 }
@@ -502,7 +502,7 @@ func (rcv *DOA) MutateSnr(n float64) bool {
 	return rcv.MutateSNR(n)
 }
 
-// / Differential range (km)
+/// Differential range (km)
 func (rcv *DOA) DELTA_RANGE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -515,7 +515,7 @@ func (rcv *DOA) DeltaRange() float64 {
 	return rcv.DELTA_RANGE()
 }
 
-// / Differential range (km)
+/// Differential range (km)
 func (rcv *DOA) MutateDELTA_RANGE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(52, n)
 }
@@ -524,7 +524,7 @@ func (rcv *DOA) MutateDeltaRange(n float64) bool {
 	return rcv.MutateDELTA_RANGE(n)
 }
 
-// / Differential range uncertainty (km, 1-sigma)
+/// Differential range uncertainty (km, 1-sigma)
 func (rcv *DOA) DELTA_RANGE_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -537,7 +537,7 @@ func (rcv *DOA) DeltaRangeUnc() float64 {
 	return rcv.DELTA_RANGE_UNC()
 }
 
-// / Differential range uncertainty (km, 1-sigma)
+/// Differential range uncertainty (km, 1-sigma)
 func (rcv *DOA) MutateDELTA_RANGE_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(54, n)
 }
@@ -546,7 +546,7 @@ func (rcv *DOA) MutateDeltaRangeUnc(n float64) bool {
 	return rcv.MutateDELTA_RANGE_UNC(n)
 }
 
-// / Differential range rate (km/s)
+/// Differential range rate (km/s)
 func (rcv *DOA) DELTA_RANGE_RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -559,7 +559,7 @@ func (rcv *DOA) DeltaRangeRate() float64 {
 	return rcv.DELTA_RANGE_RATE()
 }
 
-// / Differential range rate (km/s)
+/// Differential range rate (km/s)
 func (rcv *DOA) MutateDELTA_RANGE_RATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(56, n)
 }
@@ -568,7 +568,7 @@ func (rcv *DOA) MutateDeltaRangeRate(n float64) bool {
 	return rcv.MutateDELTA_RANGE_RATE(n)
 }
 
-// / Differential range rate uncertainty (km/s, 1-sigma)
+/// Differential range rate uncertainty (km/s, 1-sigma)
 func (rcv *DOA) DELTA_RANGE_RATE_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -581,7 +581,7 @@ func (rcv *DOA) DeltaRangeRateUnc() float64 {
 	return rcv.DELTA_RANGE_RATE_UNC()
 }
 
-// / Differential range rate uncertainty (km/s, 1-sigma)
+/// Differential range rate uncertainty (km/s, 1-sigma)
 func (rcv *DOA) MutateDELTA_RANGE_RATE_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(58, n)
 }
@@ -590,7 +590,7 @@ func (rcv *DOA) MutateDeltaRangeRateUnc(n float64) bool {
 	return rcv.MutateDELTA_RANGE_RATE_UNC(n)
 }
 
-// / Time difference of arrival (seconds)
+/// Time difference of arrival (seconds)
 func (rcv *DOA) TDOA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -603,7 +603,7 @@ func (rcv *DOA) Tdoa() float64 {
 	return rcv.TDOA()
 }
 
-// / Time difference of arrival (seconds)
+/// Time difference of arrival (seconds)
 func (rcv *DOA) MutateTDOA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(60, n)
 }
@@ -612,7 +612,7 @@ func (rcv *DOA) MutateTdoa(n float64) bool {
 	return rcv.MutateTDOA(n)
 }
 
-// / TDOA uncertainty (seconds, 1-sigma)
+/// TDOA uncertainty (seconds, 1-sigma)
 func (rcv *DOA) TDOA_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -625,7 +625,7 @@ func (rcv *DOA) TdoaUnc() float64 {
 	return rcv.TDOA_UNC()
 }
 
-// / TDOA uncertainty (seconds, 1-sigma)
+/// TDOA uncertainty (seconds, 1-sigma)
 func (rcv *DOA) MutateTDOA_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(62, n)
 }
@@ -634,7 +634,7 @@ func (rcv *DOA) MutateTdoaUnc(n float64) bool {
 	return rcv.MutateTDOA_UNC(n)
 }
 
-// / Frequency difference of arrival (Hz)
+/// Frequency difference of arrival (Hz)
 func (rcv *DOA) FDOA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -647,7 +647,7 @@ func (rcv *DOA) Fdoa() float64 {
 	return rcv.FDOA()
 }
 
-// / Frequency difference of arrival (Hz)
+/// Frequency difference of arrival (Hz)
 func (rcv *DOA) MutateFDOA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(64, n)
 }
@@ -656,7 +656,7 @@ func (rcv *DOA) MutateFdoa(n float64) bool {
 	return rcv.MutateFDOA(n)
 }
 
-// / FDOA uncertainty (Hz, 1-sigma)
+/// FDOA uncertainty (Hz, 1-sigma)
 func (rcv *DOA) FDOA_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
@@ -669,7 +669,7 @@ func (rcv *DOA) FdoaUnc() float64 {
 	return rcv.FDOA_UNC()
 }
 
-// / FDOA uncertainty (Hz, 1-sigma)
+/// FDOA uncertainty (Hz, 1-sigma)
 func (rcv *DOA) MutateFDOA_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(66, n)
 }
@@ -678,7 +678,7 @@ func (rcv *DOA) MutateFdoaUnc(n float64) bool {
 	return rcv.MutateFDOA_UNC(n)
 }
 
-// / Reference to raw data file
+/// Reference to raw data file
 func (rcv *DOA) RAW_FILE_URI() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
@@ -691,8 +691,8 @@ func (rcv *DOA) RawFileUri() []byte {
 	return rcv.RAW_FILE_URI()
 }
 
-// / Reference to raw data file
-// / Event descriptor
+/// Reference to raw data file
+/// Event descriptor
 func (rcv *DOA) DESCRIPTOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
 	if o != 0 {
@@ -705,8 +705,8 @@ func (rcv *DOA) Descriptor() []byte {
 	return rcv.DESCRIPTOR()
 }
 
-// / Event descriptor
-// / Associated tags
+/// Event descriptor
+/// Associated tags
 func (rcv *DOA) TAGS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
@@ -732,7 +732,7 @@ func (rcv *DOA) TagsLength() int {
 	return rcv.TAGSLength()
 }
 
-// / Associated tags
+/// Associated tags
 func DOAStart(builder *flatbuffers.Builder) {
 	builder.StartObject(35)
 }

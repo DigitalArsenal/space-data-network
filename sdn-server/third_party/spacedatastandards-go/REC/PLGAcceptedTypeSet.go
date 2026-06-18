@@ -6,13 +6,13 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Accepted schema family for a port. When a port accepts multiple wire
-// / formats (canonical FlatBuffer + aligned-binary), each ALLOWED_TYPE
-// / entry carries its own TAB.FlatBufferTypeRef with the schema identity,
-// / and the enclosing PLGPortManifest advertises both wire formats via
-// / ALLOWED_WIRE_FORMATS. Per SDK contract: a port that advertises
-// / aligned-binary MUST also advertise the canonical flatbuffer fallback
-// / for the same schema and file identifier in the same set.
+/// Accepted schema family for a port. When a port accepts multiple wire
+/// formats (canonical FlatBuffer + aligned-binary), each ALLOWED_TYPE
+/// entry carries its own TAB.FlatBufferTypeRef with the schema identity,
+/// and the enclosing PLGPortManifest advertises both wire formats via
+/// ALLOWED_WIRE_FORMATS. Per SDK contract: a port that advertises
+/// aligned-binary MUST also advertise the canonical flatbuffer fallback
+/// for the same schema and file identifier in the same set.
 type PLGAcceptedTypeSet struct {
 	_tab flatbuffers.Table
 }
@@ -48,7 +48,7 @@ func (rcv *PLGAcceptedTypeSet) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Stable type-set identifier within the port.
+/// Stable type-set identifier within the port.
 func (rcv *PLGAcceptedTypeSet) SET_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -61,8 +61,8 @@ func (rcv *PLGAcceptedTypeSet) SetId() []byte {
 	return rcv.SET_ID()
 }
 
-// / Stable type-set identifier within the port.
-// / Specific FlatBuffer types accepted by the set.
+/// Stable type-set identifier within the port.
+/// Specific FlatBuffer types accepted by the set.
 func (rcv *PLGAcceptedTypeSet) ALLOWED_TYPES(obj *FlatBufferTypeRef, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -94,9 +94,9 @@ func (rcv *PLGAcceptedTypeSet) AllowedTypesLength() int {
 	return rcv.ALLOWED_TYPESLength()
 }
 
-// / Specific FlatBuffer types accepted by the set.
-// / Wire formats this set accepts. If ALIGNED_BINARY is present,
-// / FLATBUFFER MUST also be present for the same schemas.
+/// Specific FlatBuffer types accepted by the set.
+/// Wire formats this set accepts. If ALIGNED_BINARY is present,
+/// FLATBUFFER MUST also be present for the same schemas.
 func (rcv *PLGAcceptedTypeSet) ALLOWED_WIRE_FORMATS(j int) payloadWireFormat {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -134,8 +134,8 @@ func (rcv *PLGAcceptedTypeSet) AllowedWireFormatsBytes() []byte {
 	return rcv.ALLOWED_WIRE_FORMATSBytes()
 }
 
-// / Wire formats this set accepts. If ALIGNED_BINARY is present,
-// / FLATBUFFER MUST also be present for the same schemas.
+/// Wire formats this set accepts. If ALIGNED_BINARY is present,
+/// FLATBUFFER MUST also be present for the same schemas.
 func (rcv *PLGAcceptedTypeSet) MutateALLOWED_WIRE_FORMATS(j int, n payloadWireFormat) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -149,7 +149,7 @@ func (rcv *PLGAcceptedTypeSet) MutateAllowedWireFormats(j int, n payloadWireForm
 	return rcv.MutateALLOWED_WIRE_FORMATS(j, n)
 }
 
-// / Human-readable explanation of the accepted schema family.
+/// Human-readable explanation of the accepted schema family.
 func (rcv *PLGAcceptedTypeSet) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -162,7 +162,7 @@ func (rcv *PLGAcceptedTypeSet) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-// / Human-readable explanation of the accepted schema family.
+/// Human-readable explanation of the accepted schema family.
 func PLGAcceptedTypeSetStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

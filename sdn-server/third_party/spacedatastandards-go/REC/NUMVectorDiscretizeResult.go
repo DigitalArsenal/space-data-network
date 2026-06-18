@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Result of one component-wise vector discretization operation.
+/// Result of one component-wise vector discretization operation.
 type NUMVectorDiscretizeResult struct {
 	_tab flatbuffers.Table
 }
@@ -74,7 +74,7 @@ func (rcv *NUMVectorDiscretizeResult) ErrorMessage() []byte {
 	return rcv.ERROR_MESSAGE()
 }
 
-// / Quantized output vector.
+/// Quantized output vector.
 func (rcv *NUMVectorDiscretizeResult) DISCRETIZED_STATE(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -100,7 +100,7 @@ func (rcv *NUMVectorDiscretizeResult) DiscretizedStateLength() int {
 	return rcv.DISCRETIZED_STATELength()
 }
 
-// / Quantized output vector.
+/// Quantized output vector.
 func (rcv *NUMVectorDiscretizeResult) MutateDISCRETIZED_STATE(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -114,7 +114,7 @@ func (rcv *NUMVectorDiscretizeResult) MutateDiscretizedState(j int, n float64) b
 	return rcv.MutateDISCRETIZED_STATE(j, n)
 }
 
-// / Input-minus-output error after any requested carried error was applied.
+/// Input-minus-output error after any requested carried error was applied.
 func (rcv *NUMVectorDiscretizeResult) DISCRETIZATION_ERROR(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -140,7 +140,7 @@ func (rcv *NUMVectorDiscretizeResult) DiscretizationErrorLength() int {
 	return rcv.DISCRETIZATION_ERRORLength()
 }
 
-// / Input-minus-output error after any requested carried error was applied.
+/// Input-minus-output error after any requested carried error was applied.
 func (rcv *NUMVectorDiscretizeResult) MutateDISCRETIZATION_ERROR(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -154,7 +154,7 @@ func (rcv *NUMVectorDiscretizeResult) MutateDiscretizationError(j int, n float64
 	return rcv.MutateDISCRETIZATION_ERROR(j, n)
 }
 
-// / Caller trace/correlation identifier copied from the request when present.
+/// Caller trace/correlation identifier copied from the request when present.
 func (rcv *NUMVectorDiscretizeResult) TRACE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -167,7 +167,7 @@ func (rcv *NUMVectorDiscretizeResult) TraceId() []byte {
 	return rcv.TRACE_ID()
 }
 
-// / Caller trace/correlation identifier copied from the request when present.
+/// Caller trace/correlation identifier copied from the request when present.
 func NUMVectorDiscretizeResultStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

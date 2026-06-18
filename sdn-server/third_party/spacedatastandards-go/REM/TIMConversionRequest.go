@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Request to convert one instant into another time system/representation.
+/// Request to convert one instant into another time system/representation.
 type TIMConversionRequest struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *TIMConversionRequest) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Source instant to convert.
+/// Source instant to convert.
 func (rcv *TIMConversionRequest) SOURCE(obj *TIMInstant) *TIMInstant {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *TIMConversionRequest) Source(obj *TIMInstant) *TIMInstant {
 	return rcv.SOURCE(obj)
 }
 
-// / Source instant to convert.
-// / Target time system.
+/// Source instant to convert.
+/// Target time system.
 func (rcv *TIMConversionRequest) TARGET_TIME_SYSTEM() timingStandard {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -74,7 +74,7 @@ func (rcv *TIMConversionRequest) TargetTimeSystem() timingStandard {
 	return rcv.TARGET_TIME_SYSTEM()
 }
 
-// / Target time system.
+/// Target time system.
 func (rcv *TIMConversionRequest) MutateTARGET_TIME_SYSTEM(n timingStandard) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -83,7 +83,7 @@ func (rcv *TIMConversionRequest) MutateTargetTimeSystem(n timingStandard) bool {
 	return rcv.MutateTARGET_TIME_SYSTEM(n)
 }
 
-// / Preferred target representation.
+/// Preferred target representation.
 func (rcv *TIMConversionRequest) TARGET_EPOCH_FORMAT() timEpochRepresentation {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -96,7 +96,7 @@ func (rcv *TIMConversionRequest) TargetEpochFormat() timEpochRepresentation {
 	return rcv.TARGET_EPOCH_FORMAT()
 }
 
-// / Preferred target representation.
+/// Preferred target representation.
 func (rcv *TIMConversionRequest) MutateTARGET_EPOCH_FORMAT(n timEpochRepresentation) bool {
 	return rcv._tab.MutateInt8Slot(8, int8(n))
 }
@@ -105,7 +105,7 @@ func (rcv *TIMConversionRequest) MutateTargetEpochFormat(n timEpochRepresentatio
 	return rcv.MutateTARGET_EPOCH_FORMAT(n)
 }
 
-// / Optional TAI-UTC override in seconds for the source instant.
+/// Optional TAI-UTC override in seconds for the source instant.
 func (rcv *TIMConversionRequest) TAI_MINUS_UTC_SECONDS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -118,7 +118,7 @@ func (rcv *TIMConversionRequest) TaiMinusUtcSeconds() float64 {
 	return rcv.TAI_MINUS_UTC_SECONDS()
 }
 
-// / Optional TAI-UTC override in seconds for the source instant.
+/// Optional TAI-UTC override in seconds for the source instant.
 func (rcv *TIMConversionRequest) MutateTAI_MINUS_UTC_SECONDS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -127,7 +127,7 @@ func (rcv *TIMConversionRequest) MutateTaiMinusUtcSeconds(n float64) bool {
 	return rcv.MutateTAI_MINUS_UTC_SECONDS(n)
 }
 
-// / Whether TAI_MINUS_UTC_SECONDS should override runtime leap-second data.
+/// Whether TAI_MINUS_UTC_SECONDS should override runtime leap-second data.
 func (rcv *TIMConversionRequest) HAS_TAI_MINUS_UTC() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -140,7 +140,7 @@ func (rcv *TIMConversionRequest) HasTaiMinusUtc() bool {
 	return rcv.HAS_TAI_MINUS_UTC()
 }
 
-// / Whether TAI_MINUS_UTC_SECONDS should override runtime leap-second data.
+/// Whether TAI_MINUS_UTC_SECONDS should override runtime leap-second data.
 func (rcv *TIMConversionRequest) MutateHAS_TAI_MINUS_UTC(n bool) bool {
 	return rcv._tab.MutateBoolSlot(12, n)
 }
@@ -149,7 +149,7 @@ func (rcv *TIMConversionRequest) MutateHasTaiMinusUtc(n bool) bool {
 	return rcv.MutateHAS_TAI_MINUS_UTC(n)
 }
 
-// / Optional UT1-UTC override in seconds for UT1 conversions.
+/// Optional UT1-UTC override in seconds for UT1 conversions.
 func (rcv *TIMConversionRequest) DUT1_SECONDS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -162,7 +162,7 @@ func (rcv *TIMConversionRequest) Dut1Seconds() float64 {
 	return rcv.DUT1_SECONDS()
 }
 
-// / Optional UT1-UTC override in seconds for UT1 conversions.
+/// Optional UT1-UTC override in seconds for UT1 conversions.
 func (rcv *TIMConversionRequest) MutateDUT1_SECONDS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -171,7 +171,7 @@ func (rcv *TIMConversionRequest) MutateDut1Seconds(n float64) bool {
 	return rcv.MutateDUT1_SECONDS(n)
 }
 
-// / Whether DUT1_SECONDS should override runtime Earth-orientation data.
+/// Whether DUT1_SECONDS should override runtime Earth-orientation data.
 func (rcv *TIMConversionRequest) HAS_DUT1() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -184,7 +184,7 @@ func (rcv *TIMConversionRequest) HasDut1() bool {
 	return rcv.HAS_DUT1()
 }
 
-// / Whether DUT1_SECONDS should override runtime Earth-orientation data.
+/// Whether DUT1_SECONDS should override runtime Earth-orientation data.
 func (rcv *TIMConversionRequest) MutateHAS_DUT1(n bool) bool {
 	return rcv._tab.MutateBoolSlot(16, n)
 }
@@ -193,7 +193,7 @@ func (rcv *TIMConversionRequest) MutateHasDut1(n bool) bool {
 	return rcv.MutateHAS_DUT1(n)
 }
 
-// / Optional caller trace/correlation identifier.
+/// Optional caller trace/correlation identifier.
 func (rcv *TIMConversionRequest) TRACE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -206,7 +206,7 @@ func (rcv *TIMConversionRequest) TraceId() []byte {
 	return rcv.TRACE_ID()
 }
 
-// / Optional caller trace/correlation identifier.
+/// Optional caller trace/correlation identifier.
 func TIMConversionRequestStart(builder *flatbuffers.Builder) {
 	builder.StartObject(8)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Orbit Manifold
+/// Orbit Manifold
 type MNF struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *MNF) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique manifold identifier
+/// Unique manifold identifier
 func (rcv *MNF) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *MNF) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique manifold identifier
-// / Parent object satellite number
+/// Unique manifold identifier
+/// Parent object satellite number
 func (rcv *MNF) SAT_NO() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,7 +81,7 @@ func (rcv *MNF) SatNo() uint32 {
 	return rcv.SAT_NO()
 }
 
-// / Parent object satellite number
+/// Parent object satellite number
 func (rcv *MNF) MutateSAT_NO(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -90,7 +90,7 @@ func (rcv *MNF) MutateSatNo(n uint32) bool {
 	return rcv.MutateSAT_NO(n)
 }
 
-// / Object designator
+/// Object designator
 func (rcv *MNF) OBJECT_DESIGNATOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,8 +103,8 @@ func (rcv *MNF) ObjectDesignator() []byte {
 	return rcv.OBJECT_DESIGNATOR()
 }
 
-// / Object designator
-// / Manifold status
+/// Object designator
+/// Manifold status
 func (rcv *MNF) STATUS() manifoldStatus {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,7 +117,7 @@ func (rcv *MNF) Status() manifoldStatus {
 	return rcv.STATUS()
 }
 
-// / Manifold status
+/// Manifold status
 func (rcv *MNF) MutateSTATUS(n manifoldStatus) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
@@ -126,7 +126,7 @@ func (rcv *MNF) MutateStatus(n manifoldStatus) bool {
 	return rcv.MutateSTATUS(n)
 }
 
-// / Event epoch that spawned the manifold (ISO 8601)
+/// Event epoch that spawned the manifold (ISO 8601)
 func (rcv *MNF) EVENT_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -139,8 +139,8 @@ func (rcv *MNF) EventEpoch() []byte {
 	return rcv.EVENT_EPOCH()
 }
 
-// / Event epoch that spawned the manifold (ISO 8601)
-// / Source of detection (sensor ID or method)
+/// Event epoch that spawned the manifold (ISO 8601)
+/// Source of detection (sensor ID or method)
 func (rcv *MNF) SOURCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -153,8 +153,8 @@ func (rcv *MNF) Source() []byte {
 	return rcv.SOURCE()
 }
 
-// / Source of detection (sensor ID or method)
-// / Reference frame
+/// Source of detection (sensor ID or method)
+/// Reference frame
 func (rcv *MNF) REF_FRAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -167,8 +167,8 @@ func (rcv *MNF) RefFrame() []byte {
 	return rcv.REF_FRAME()
 }
 
-// / Reference frame
-// / Original pre-event semi-major axis in km
+/// Reference frame
+/// Original pre-event semi-major axis in km
 func (rcv *MNF) ORIG_SEMI_MAJOR_AXIS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -181,7 +181,7 @@ func (rcv *MNF) OrigSemiMajorAxis() float64 {
 	return rcv.ORIG_SEMI_MAJOR_AXIS()
 }
 
-// / Original pre-event semi-major axis in km
+/// Original pre-event semi-major axis in km
 func (rcv *MNF) MutateORIG_SEMI_MAJOR_AXIS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -190,7 +190,7 @@ func (rcv *MNF) MutateOrigSemiMajorAxis(n float64) bool {
 	return rcv.MutateORIG_SEMI_MAJOR_AXIS(n)
 }
 
-// / Original pre-event eccentricity
+/// Original pre-event eccentricity
 func (rcv *MNF) ORIG_ECCENTRICITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -203,7 +203,7 @@ func (rcv *MNF) OrigEccentricity() float64 {
 	return rcv.ORIG_ECCENTRICITY()
 }
 
-// / Original pre-event eccentricity
+/// Original pre-event eccentricity
 func (rcv *MNF) MutateORIG_ECCENTRICITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -212,7 +212,7 @@ func (rcv *MNF) MutateOrigEccentricity(n float64) bool {
 	return rcv.MutateORIG_ECCENTRICITY(n)
 }
 
-// / Original pre-event inclination in degrees
+/// Original pre-event inclination in degrees
 func (rcv *MNF) ORIG_INCLINATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -225,7 +225,7 @@ func (rcv *MNF) OrigInclination() float64 {
 	return rcv.ORIG_INCLINATION()
 }
 
-// / Original pre-event inclination in degrees
+/// Original pre-event inclination in degrees
 func (rcv *MNF) MutateORIG_INCLINATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -234,7 +234,7 @@ func (rcv *MNF) MutateOrigInclination(n float64) bool {
 	return rcv.MutateORIG_INCLINATION(n)
 }
 
-// / Minimum delta-V sampled in m/s
+/// Minimum delta-V sampled in m/s
 func (rcv *MNF) DELTA_V_MIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -247,7 +247,7 @@ func (rcv *MNF) DeltaVMin() float64 {
 	return rcv.DELTA_V_MIN()
 }
 
-// / Minimum delta-V sampled in m/s
+/// Minimum delta-V sampled in m/s
 func (rcv *MNF) MutateDELTA_V_MIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -256,7 +256,7 @@ func (rcv *MNF) MutateDeltaVMin(n float64) bool {
 	return rcv.MutateDELTA_V_MIN(n)
 }
 
-// / Maximum delta-V sampled in m/s
+/// Maximum delta-V sampled in m/s
 func (rcv *MNF) DELTA_V_MAX() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -269,7 +269,7 @@ func (rcv *MNF) DeltaVMax() float64 {
 	return rcv.DELTA_V_MAX()
 }
 
-// / Maximum delta-V sampled in m/s
+/// Maximum delta-V sampled in m/s
 func (rcv *MNF) MutateDELTA_V_MAX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -278,7 +278,7 @@ func (rcv *MNF) MutateDeltaVMax(n float64) bool {
 	return rcv.MutateDELTA_V_MAX(n)
 }
 
-// / Delta-V step size in m/s
+/// Delta-V step size in m/s
 func (rcv *MNF) DELTA_V_STEP() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -291,7 +291,7 @@ func (rcv *MNF) DeltaVStep() float64 {
 	return rcv.DELTA_V_STEP()
 }
 
-// / Delta-V step size in m/s
+/// Delta-V step size in m/s
 func (rcv *MNF) MutateDELTA_V_STEP(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -300,7 +300,7 @@ func (rcv *MNF) MutateDeltaVStep(n float64) bool {
 	return rcv.MutateDELTA_V_STEP(n)
 }
 
-// / Minimum delta-T sampled in seconds
+/// Minimum delta-T sampled in seconds
 func (rcv *MNF) DELTA_T_MIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -313,7 +313,7 @@ func (rcv *MNF) DeltaTMin() float64 {
 	return rcv.DELTA_T_MIN()
 }
 
-// / Minimum delta-T sampled in seconds
+/// Minimum delta-T sampled in seconds
 func (rcv *MNF) MutateDELTA_T_MIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -322,7 +322,7 @@ func (rcv *MNF) MutateDeltaTMin(n float64) bool {
 	return rcv.MutateDELTA_T_MIN(n)
 }
 
-// / Maximum delta-T sampled in seconds
+/// Maximum delta-T sampled in seconds
 func (rcv *MNF) DELTA_T_MAX() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -335,7 +335,7 @@ func (rcv *MNF) DeltaTMax() float64 {
 	return rcv.DELTA_T_MAX()
 }
 
-// / Maximum delta-T sampled in seconds
+/// Maximum delta-T sampled in seconds
 func (rcv *MNF) MutateDELTA_T_MAX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -344,7 +344,7 @@ func (rcv *MNF) MutateDeltaTMax(n float64) bool {
 	return rcv.MutateDELTA_T_MAX(n)
 }
 
-// / Delta-T step size in seconds
+/// Delta-T step size in seconds
 func (rcv *MNF) DELTA_T_STEP() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -357,7 +357,7 @@ func (rcv *MNF) DeltaTStep() float64 {
 	return rcv.DELTA_T_STEP()
 }
 
-// / Delta-T step size in seconds
+/// Delta-T step size in seconds
 func (rcv *MNF) MutateDELTA_T_STEP(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -366,7 +366,7 @@ func (rcv *MNF) MutateDeltaTStep(n float64) bool {
 	return rcv.MutateDELTA_T_STEP(n)
 }
 
-// / Total number of manifold elements
+/// Total number of manifold elements
 func (rcv *MNF) NUM_ELEMENTS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -379,7 +379,7 @@ func (rcv *MNF) NumElements() uint32 {
 	return rcv.NUM_ELEMENTS()
 }
 
-// / Total number of manifold elements
+/// Total number of manifold elements
 func (rcv *MNF) MutateNUM_ELEMENTS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(36, n)
 }
@@ -388,7 +388,7 @@ func (rcv *MNF) MutateNumElements(n uint32) bool {
 	return rcv.MutateNUM_ELEMENTS(n)
 }
 
-// / Theoretical element sets
+/// Theoretical element sets
 func (rcv *MNF) ELEMENTS(obj *manifoldElset, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -420,8 +420,8 @@ func (rcv *MNF) ElementsLength() int {
 	return rcv.ELEMENTSLength()
 }
 
-// / Theoretical element sets
-// / Correlated catalog object ID (if matched)
+/// Theoretical element sets
+/// Correlated catalog object ID (if matched)
 func (rcv *MNF) CORRELATED_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -434,8 +434,8 @@ func (rcv *MNF) CorrelatedId() []byte {
 	return rcv.CORRELATED_ID()
 }
 
-// / Correlated catalog object ID (if matched)
-// / Additional notes
+/// Correlated catalog object ID (if matched)
+/// Additional notes
 func (rcv *MNF) NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -448,7 +448,7 @@ func (rcv *MNF) Notes() []byte {
 	return rcv.NOTES()
 }
 
-// / Additional notes
+/// Additional notes
 func MNFStart(builder *flatbuffers.Builder) {
 	builder.StartObject(20)
 }

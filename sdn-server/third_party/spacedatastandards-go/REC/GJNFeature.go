@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / GeoJSON Feature object
+/// GeoJSON Feature object
 type GJNFeature struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *GJNFeature) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Feature identifier (optional, string form)
+/// Feature identifier (optional, string form)
 func (rcv *GJNFeature) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *GJNFeature) Id() []byte {
 	return rcv.ID()
 }
 
-// / Feature identifier (optional, string form)
-// / Geometry of the feature
+/// Feature identifier (optional, string form)
+/// Geometry of the feature
 func (rcv *GJNFeature) GEOMETRY(obj *GJNGeometry) *GJNGeometry {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *GJNFeature) Geometry(obj *GJNGeometry) *GJNGeometry {
 	return rcv.GEOMETRY(obj)
 }
 
-// / Geometry of the feature
-// / Properties as key-value pairs
+/// Geometry of the feature
+/// Properties as key-value pairs
 func (rcv *GJNFeature) PROPERTIES(obj *GJNProperty, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -107,8 +107,8 @@ func (rcv *GJNFeature) PropertiesLength() int {
 	return rcv.PROPERTIESLength()
 }
 
-// / Properties as key-value pairs
-// / Numeric feature identifier (use when ID_IS_NUMERIC is true)
+/// Properties as key-value pairs
+/// Numeric feature identifier (use when ID_IS_NUMERIC is true)
 func (rcv *GJNFeature) NUM_ID() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *GJNFeature) NumId() float64 {
 	return rcv.NUM_ID()
 }
 
-// / Numeric feature identifier (use when ID_IS_NUMERIC is true)
+/// Numeric feature identifier (use when ID_IS_NUMERIC is true)
 func (rcv *GJNFeature) MutateNUM_ID(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *GJNFeature) MutateNumId(n float64) bool {
 	return rcv.MutateNUM_ID(n)
 }
 
-// / True if the feature id is numeric rather than string
+/// True if the feature id is numeric rather than string
 func (rcv *GJNFeature) ID_IS_NUMERIC() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,7 +143,7 @@ func (rcv *GJNFeature) IdIsNumeric() bool {
 	return rcv.ID_IS_NUMERIC()
 }
 
-// / True if the feature id is numeric rather than string
+/// True if the feature id is numeric rather than string
 func (rcv *GJNFeature) MutateID_IS_NUMERIC(n bool) bool {
 	return rcv._tab.MutateBoolSlot(12, n)
 }
@@ -152,7 +152,7 @@ func (rcv *GJNFeature) MutateIdIsNumeric(n bool) bool {
 	return rcv.MutateID_IS_NUMERIC(n)
 }
 
-// / True if the feature has a geometry (false means geometry was JSON null)
+/// True if the feature has a geometry (false means geometry was JSON null)
 func (rcv *GJNFeature) HAS_GEOMETRY() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -165,7 +165,7 @@ func (rcv *GJNFeature) HasGeometry() bool {
 	return rcv.HAS_GEOMETRY()
 }
 
-// / True if the feature has a geometry (false means geometry was JSON null)
+/// True if the feature has a geometry (false means geometry was JSON null)
 func (rcv *GJNFeature) MutateHAS_GEOMETRY(n bool) bool {
 	return rcv._tab.MutateBoolSlot(14, n)
 }
@@ -174,7 +174,7 @@ func (rcv *GJNFeature) MutateHasGeometry(n bool) bool {
 	return rcv.MutateHAS_GEOMETRY(n)
 }
 
-// / True if properties was JSON null (vs empty object)
+/// True if properties was JSON null (vs empty object)
 func (rcv *GJNFeature) PROPERTIES_IS_NULL() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -187,7 +187,7 @@ func (rcv *GJNFeature) PropertiesIsNull() bool {
 	return rcv.PROPERTIES_IS_NULL()
 }
 
-// / True if properties was JSON null (vs empty object)
+/// True if properties was JSON null (vs empty object)
 func (rcv *GJNFeature) MutatePROPERTIES_IS_NULL(n bool) bool {
 	return rcv._tab.MutateBoolSlot(16, n)
 }
@@ -196,7 +196,7 @@ func (rcv *GJNFeature) MutatePropertiesIsNull(n bool) bool {
 	return rcv.MutatePROPERTIES_IS_NULL(n)
 }
 
-// / Bounding box (optional, per RFC 7946 Section 5)
+/// Bounding box (optional, per RFC 7946 Section 5)
 func (rcv *GJNFeature) BBOX(obj *GJNBoundingBox) *GJNBoundingBox {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -214,7 +214,7 @@ func (rcv *GJNFeature) Bbox(obj *GJNBoundingBox) *GJNBoundingBox {
 	return rcv.BBOX(obj)
 }
 
-// / Bounding box (optional, per RFC 7946 Section 5)
+/// Bounding box (optional, per RFC 7946 Section 5)
 func GJNFeatureStart(builder *flatbuffers.Builder) {
 	builder.StartObject(8)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Attitude Ephemeris Message
+/// Attitude Ephemeris Message
 type AEM struct {
 	_tab flatbuffers.Table
 }

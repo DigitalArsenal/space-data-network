@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Sensor Systems
+/// Sensor Systems
 type SNR struct {
 	_tab flatbuffers.Table
 }

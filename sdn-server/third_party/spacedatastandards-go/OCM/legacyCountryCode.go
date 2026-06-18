@@ -8,43 +8,43 @@ type legacyCountryCode int8
 
 const (
 	/// Arab Satellite Communications Organization
-	legacyCountryCodeAB legacyCountryCode = 0
+	legacyCountryCodeAB   legacyCountryCode = 0
 	/// Asia Broadcast Satellite
-	legacyCountryCodeABS legacyCountryCode = 1
+	legacyCountryCodeABS  legacyCountryCode = 1
 	/// Asia Satellite Telecommunications Company (ASIASAT)
-	legacyCountryCodeAC legacyCountryCode = 2
+	legacyCountryCodeAC   legacyCountryCode = 2
 	/// Algeria
-	legacyCountryCodeALG legacyCountryCode = 3
+	legacyCountryCodeALG  legacyCountryCode = 3
 	/// Angola
-	legacyCountryCodeANG legacyCountryCode = 4
+	legacyCountryCodeANG  legacyCountryCode = 4
 	/// Argentina
 	legacyCountryCodeARGN legacyCountryCode = 5
 	/// Republic of Armenia
-	legacyCountryCodeARM legacyCountryCode = 6
+	legacyCountryCodeARM  legacyCountryCode = 6
 	/// Austria
 	legacyCountryCodeASRA legacyCountryCode = 7
 	/// Australia
-	legacyCountryCodeAUS legacyCountryCode = 8
+	legacyCountryCodeAUS  legacyCountryCode = 8
 	/// Azerbaijan
 	legacyCountryCodeAZER legacyCountryCode = 9
 	/// Belgium
-	legacyCountryCodeBEL legacyCountryCode = 10
+	legacyCountryCodeBEL  legacyCountryCode = 10
 	/// Belarus
 	legacyCountryCodeBELA legacyCountryCode = 11
 	/// Bermuda
 	legacyCountryCodeBERM legacyCountryCode = 12
 	/// People's Republic of Bangladesh
-	legacyCountryCodeBGD legacyCountryCode = 13
+	legacyCountryCodeBGD  legacyCountryCode = 13
 	/// Kingdom of Bhutan
 	legacyCountryCodeBHUT legacyCountryCode = 14
 	/// Bolivia
-	legacyCountryCodeBOL legacyCountryCode = 15
+	legacyCountryCodeBOL  legacyCountryCode = 15
 	/// Brazil
 	legacyCountryCodeBRAZ legacyCountryCode = 16
 	/// Bulgaria
-	legacyCountryCodeBUL legacyCountryCode = 17
+	legacyCountryCodeBUL  legacyCountryCode = 17
 	/// Canada
-	legacyCountryCodeCA legacyCountryCode = 18
+	legacyCountryCodeCA   legacyCountryCode = 18
 	/// China/Brazil
 	legacyCountryCodeCHBZ legacyCountryCode = 19
 	/// China/Turkey
@@ -52,29 +52,29 @@ const (
 	/// Chile
 	legacyCountryCodeCHLE legacyCountryCode = 21
 	/// Commonwealth of Independent States (former USSR)
-	legacyCountryCodeCIS legacyCountryCode = 22
+	legacyCountryCodeCIS  legacyCountryCode = 22
 	/// Colombia
-	legacyCountryCodeCOL legacyCountryCode = 23
+	legacyCountryCodeCOL  legacyCountryCode = 23
 	/// Republic of Costa Rica
-	legacyCountryCodeCRI legacyCountryCode = 24
+	legacyCountryCodeCRI  legacyCountryCode = 24
 	/// Czech Republic (former Czechoslovakia)
 	legacyCountryCodeCZCH legacyCountryCode = 25
 	/// Denmark
-	legacyCountryCodeDEN legacyCountryCode = 26
+	legacyCountryCodeDEN  legacyCountryCode = 26
 	/// Republic of Djibouti
-	legacyCountryCodeDJI legacyCountryCode = 27
+	legacyCountryCodeDJI  legacyCountryCode = 27
 	/// Ecuador
-	legacyCountryCodeECU legacyCountryCode = 28
+	legacyCountryCodeECU  legacyCountryCode = 28
 	/// Egypt
 	legacyCountryCodeEGYP legacyCountryCode = 29
 	/// European Space Agency
-	legacyCountryCodeESA legacyCountryCode = 30
+	legacyCountryCodeESA  legacyCountryCode = 30
 	/// European Space Research Organization
 	legacyCountryCodeESRO legacyCountryCode = 31
 	/// Estonia
-	legacyCountryCodeEST legacyCountryCode = 32
+	legacyCountryCodeEST  legacyCountryCode = 32
 	/// Ethiopia
-	legacyCountryCodeETH legacyCountryCode = 33
+	legacyCountryCodeETH  legacyCountryCode = 33
 	/// European Organization for the Exploitation of Meteorological Satellites (EUMETSAT)
 	legacyCountryCodeEUME legacyCountryCode = 34
 	/// European Telecommunications Satellite Organization (EUTELSAT)
@@ -82,15 +82,15 @@ const (
 	/// France/Germany
 	legacyCountryCodeFGER legacyCountryCode = 36
 	/// Finland
-	legacyCountryCodeFIN legacyCountryCode = 37
+	legacyCountryCodeFIN  legacyCountryCode = 37
 	/// France
-	legacyCountryCodeFR legacyCountryCode = 38
+	legacyCountryCodeFR   legacyCountryCode = 38
 	/// France/Italy
 	legacyCountryCodeFRIT legacyCountryCode = 39
 	/// Germany
-	legacyCountryCodeGER legacyCountryCode = 40
+	legacyCountryCodeGER  legacyCountryCode = 40
 	/// Republic of Ghana
-	legacyCountryCodeGHA legacyCountryCode = 41
+	legacyCountryCodeGHA  legacyCountryCode = 41
 	/// Globalstar
 	legacyCountryCodeGLOB legacyCountryCode = 42
 	/// Greece
@@ -100,11 +100,11 @@ const (
 	/// Guatemala
 	legacyCountryCodeGUAT legacyCountryCode = 45
 	/// Hungary
-	legacyCountryCodeHUN legacyCountryCode = 46
+	legacyCountryCodeHUN  legacyCountryCode = 46
 	/// International Mobile Satellite Organization (INMARSAT)
-	legacyCountryCodeIM legacyCountryCode = 47
+	legacyCountryCodeIM   legacyCountryCode = 47
 	/// India
-	legacyCountryCodeIND legacyCountryCode = 48
+	legacyCountryCodeIND  legacyCountryCode = 48
 	/// Indonesia
 	legacyCountryCodeINDO legacyCountryCode = 49
 	/// Iran
@@ -114,47 +114,47 @@ const (
 	/// Iridium
 	legacyCountryCodeIRID legacyCountryCode = 52
 	/// Ireland
-	legacyCountryCodeIRL legacyCountryCode = 53
+	legacyCountryCodeIRL  legacyCountryCode = 53
 	/// Israel
 	legacyCountryCodeISRA legacyCountryCode = 54
 	/// Indian Space Research Organisation
 	legacyCountryCodeISRO legacyCountryCode = 55
 	/// International Space Station
-	legacyCountryCodeISS legacyCountryCode = 56
+	legacyCountryCodeISS  legacyCountryCode = 56
 	/// Italy
-	legacyCountryCodeIT legacyCountryCode = 57
+	legacyCountryCodeIT   legacyCountryCode = 57
 	/// International Telecommunications Satellite Organization (INTELSAT)
 	legacyCountryCodeITSO legacyCountryCode = 58
 	/// Japan
-	legacyCountryCodeJPN legacyCountryCode = 59
+	legacyCountryCodeJPN  legacyCountryCode = 59
 	/// Kazakhstan
-	legacyCountryCodeKAZ legacyCountryCode = 60
+	legacyCountryCodeKAZ  legacyCountryCode = 60
 	/// Republic of Kenya
-	legacyCountryCodeKEN legacyCountryCode = 61
+	legacyCountryCodeKEN  legacyCountryCode = 61
 	/// Laos
 	legacyCountryCodeLAOS legacyCountryCode = 62
 	/// Democratic Socialist Republic of Sri Lanka
-	legacyCountryCodeLKA legacyCountryCode = 63
+	legacyCountryCodeLKA  legacyCountryCode = 63
 	/// Lithuania
-	legacyCountryCodeLTU legacyCountryCode = 64
+	legacyCountryCodeLTU  legacyCountryCode = 64
 	/// Luxembourg
 	legacyCountryCodeLUXE legacyCountryCode = 65
 	/// Morocco
-	legacyCountryCodeMA legacyCountryCode = 66
+	legacyCountryCodeMA   legacyCountryCode = 66
 	/// Malaysia
 	legacyCountryCodeMALA legacyCountryCode = 67
 	/// Principality of Monaco
-	legacyCountryCodeMCO legacyCountryCode = 68
+	legacyCountryCodeMCO  legacyCountryCode = 68
 	/// Republic of Moldova
-	legacyCountryCodeMDA legacyCountryCode = 69
+	legacyCountryCodeMDA  legacyCountryCode = 69
 	/// Mexico
-	legacyCountryCodeMEX legacyCountryCode = 70
+	legacyCountryCodeMEX  legacyCountryCode = 70
 	/// Republic of the Union of Myanmar
-	legacyCountryCodeMMR legacyCountryCode = 71
+	legacyCountryCodeMMR  legacyCountryCode = 71
 	/// Mongolia
-	legacyCountryCodeMNG legacyCountryCode = 72
+	legacyCountryCodeMNG  legacyCountryCode = 72
 	/// Mauritius
-	legacyCountryCodeMUS legacyCountryCode = 73
+	legacyCountryCodeMUS  legacyCountryCode = 73
 	/// North Atlantic Treaty Organization
 	legacyCountryCodeNATO legacyCountryCode = 74
 	/// Netherlands
@@ -162,55 +162,55 @@ const (
 	/// New ICO
 	legacyCountryCodeNICO legacyCountryCode = 76
 	/// Nigeria
-	legacyCountryCodeNIG legacyCountryCode = 77
+	legacyCountryCodeNIG  legacyCountryCode = 77
 	/// Democratic People's Republic of Korea
 	legacyCountryCodeNKOR legacyCountryCode = 78
 	/// Norway
-	legacyCountryCodeNOR legacyCountryCode = 79
+	legacyCountryCodeNOR  legacyCountryCode = 79
 	/// Federal Democratic Republic of Nepal
-	legacyCountryCodeNPL legacyCountryCode = 80
+	legacyCountryCodeNPL  legacyCountryCode = 80
 	/// New Zealand
-	legacyCountryCodeNZ legacyCountryCode = 81
+	legacyCountryCodeNZ   legacyCountryCode = 81
 	/// O3b Networks
-	legacyCountryCodeO3B legacyCountryCode = 82
+	legacyCountryCodeO3B  legacyCountryCode = 82
 	/// ORBCOMM
-	legacyCountryCodeORB legacyCountryCode = 83
+	legacyCountryCodeORB  legacyCountryCode = 83
 	/// Pakistan
 	legacyCountryCodePAKI legacyCountryCode = 84
 	/// Peru
 	legacyCountryCodePERU legacyCountryCode = 85
 	/// Poland
-	legacyCountryCodePOL legacyCountryCode = 86
+	legacyCountryCodePOL  legacyCountryCode = 86
 	/// Portugal
-	legacyCountryCodePOR legacyCountryCode = 87
+	legacyCountryCodePOR  legacyCountryCode = 87
 	/// People's Republic of China
-	legacyCountryCodePRC legacyCountryCode = 88
+	legacyCountryCodePRC  legacyCountryCode = 88
 	/// Republic of Paraguay
-	legacyCountryCodePRY legacyCountryCode = 89
+	legacyCountryCodePRY  legacyCountryCode = 89
 	/// People's Republic of China/European Space Agency
 	legacyCountryCodePRES legacyCountryCode = 90
 	/// State of Qatar
-	legacyCountryCodeQAT legacyCountryCode = 91
+	legacyCountryCodeQAT  legacyCountryCode = 91
 	/// RascomStar-QAF
 	legacyCountryCodeRASC legacyCountryCode = 92
 	/// Taiwan (Republic of China)
-	legacyCountryCodeROC legacyCountryCode = 93
+	legacyCountryCodeROC  legacyCountryCode = 93
 	/// Romania
-	legacyCountryCodeROM legacyCountryCode = 94
+	legacyCountryCodeROM  legacyCountryCode = 94
 	/// Philippines (Republic of the Philippines)
-	legacyCountryCodeRP legacyCountryCode = 95
+	legacyCountryCodeRP   legacyCountryCode = 95
 	/// Republic of Rwanda
-	legacyCountryCodeRWA legacyCountryCode = 96
+	legacyCountryCodeRWA  legacyCountryCode = 96
 	/// South Africa
 	legacyCountryCodeSAFR legacyCountryCode = 97
 	/// Saudi Arabia
 	legacyCountryCodeSAUD legacyCountryCode = 98
 	/// Republic of Sudan
-	legacyCountryCodeSDN legacyCountryCode = 99
+	legacyCountryCodeSDN  legacyCountryCode = 99
 	/// Sea Launch
 	legacyCountryCodeSEAL legacyCountryCode = 100
 	/// SES
-	legacyCountryCodeSES legacyCountryCode = 101
+	legacyCountryCodeSES  legacyCountryCode = 101
 	/// Singapore/Japan
 	legacyCountryCodeSGJP legacyCountryCode = 102
 	/// Singapore
@@ -218,47 +218,47 @@ const (
 	/// Republic of Korea
 	legacyCountryCodeSKOR legacyCountryCode = 104
 	/// Spain
-	legacyCountryCodeSPN legacyCountryCode = 105
+	legacyCountryCodeSPN  legacyCountryCode = 105
 	/// Singapore/Taiwan
 	legacyCountryCodeSTCT legacyCountryCode = 106
 	/// Slovenia
-	legacyCountryCodeSVN legacyCountryCode = 107
+	legacyCountryCodeSVN  legacyCountryCode = 107
 	/// Sweden
 	legacyCountryCodeSWED legacyCountryCode = 108
 	/// Switzerland
 	legacyCountryCodeSWTZ legacyCountryCode = 109
 	/// To Be Determined
-	legacyCountryCodeTBD legacyCountryCode = 110
+	legacyCountryCodeTBD  legacyCountryCode = 110
 	/// Thailand
 	legacyCountryCodeTHAI legacyCountryCode = 111
 	/// Turkmenistan/Monaco
 	legacyCountryCodeTMMC legacyCountryCode = 112
 	/// Republic of Tunisia
-	legacyCountryCodeTUN legacyCountryCode = 113
+	legacyCountryCodeTUN  legacyCountryCode = 113
 	/// Turkey
 	legacyCountryCodeTURK legacyCountryCode = 114
 	/// United Arab Emirates
-	legacyCountryCodeUAE legacyCountryCode = 115
+	legacyCountryCodeUAE  legacyCountryCode = 115
 	/// United Kingdom
-	legacyCountryCodeUK legacyCountryCode = 116
+	legacyCountryCodeUK   legacyCountryCode = 116
 	/// Ukraine
-	legacyCountryCodeUKR legacyCountryCode = 117
+	legacyCountryCodeUKR  legacyCountryCode = 117
 	/// Unknown
-	legacyCountryCodeUNK legacyCountryCode = 118
+	legacyCountryCodeUNK  legacyCountryCode = 118
 	/// Uruguay
-	legacyCountryCodeURY legacyCountryCode = 119
+	legacyCountryCodeURY  legacyCountryCode = 119
 	/// United States
-	legacyCountryCodeUS legacyCountryCode = 120
+	legacyCountryCodeUS   legacyCountryCode = 120
 	/// United States/Brazil
 	legacyCountryCodeUSBZ legacyCountryCode = 121
 	/// Vatican City State
-	legacyCountryCodeVAT legacyCountryCode = 122
+	legacyCountryCodeVAT  legacyCountryCode = 122
 	/// Venezuela
 	legacyCountryCodeVENZ legacyCountryCode = 123
 	/// Vietnam
 	legacyCountryCodeVTNM legacyCountryCode = 124
 	/// Republic of Zimbabwe
-	legacyCountryCodeZWE legacyCountryCode = 125
+	legacyCountryCodeZWE  legacyCountryCode = 125
 )
 
 var EnumNameslegacyCountryCode = map[legacyCountryCode]string{

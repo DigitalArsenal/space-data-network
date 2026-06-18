@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Plugin dependency on another plugin
+/// Plugin dependency on another plugin
 type PluginDependency struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *PluginDependency) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Plugin ID of the dependency
+/// Plugin ID of the dependency
 func (rcv *PluginDependency) PLUGIN_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *PluginDependency) PluginId() []byte {
 	return rcv.PLUGIN_ID()
 }
 
-// / Plugin ID of the dependency
-// / Minimum version required (semver)
+/// Plugin ID of the dependency
+/// Minimum version required (semver)
 func (rcv *PluginDependency) MIN_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *PluginDependency) MinVersion() []byte {
 	return rcv.MIN_VERSION()
 }
 
-// / Minimum version required (semver)
-// / Maximum version allowed (optional)
+/// Minimum version required (semver)
+/// Maximum version allowed (optional)
 func (rcv *PluginDependency) MAX_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *PluginDependency) MaxVersion() []byte {
 	return rcv.MAX_VERSION()
 }
 
-// / Maximum version allowed (optional)
+/// Maximum version allowed (optional)
 func PluginDependencyStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

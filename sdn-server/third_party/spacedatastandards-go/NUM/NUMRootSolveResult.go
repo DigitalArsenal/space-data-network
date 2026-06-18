@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Result of one scalar numerical root-solving operation.
+/// Result of one scalar numerical root-solving operation.
 type NUMRootSolveResult struct {
 	_tab flatbuffers.Table
 }

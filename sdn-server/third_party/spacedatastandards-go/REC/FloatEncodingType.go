@@ -4,7 +4,7 @@ package REC
 
 import "strconv"
 
-// / Float encoding formats
+/// Float encoding formats
 type FloatEncodingType int8
 
 const (
@@ -13,11 +13,11 @@ const (
 	/// MIL-STD-1750A format
 	FloatEncodingTypeMILSTD_1750A FloatEncodingType = 1
 	/// DEC PDP format
-	FloatEncodingTypeDEC FloatEncodingType = 2
+	FloatEncodingTypeDEC          FloatEncodingType = 2
 	/// IBM System/360 format
-	FloatEncodingTypeIBM FloatEncodingType = 3
+	FloatEncodingTypeIBM          FloatEncodingType = 3
 	/// Texas Instruments TI format
-	FloatEncodingTypeTI FloatEncodingType = 4
+	FloatEncodingTypeTI           FloatEncodingType = 4
 )
 
 var EnumNamesFloatEncodingType = map[FloatEncodingType]string{

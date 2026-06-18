@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Short-Wave Infrared Observation
+/// Short-Wave Infrared Observation
 type SWR struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *SWR) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier
+/// Unique identifier
 func (rcv *SWR) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *SWR) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique identifier
-// / On-orbit reference
+/// Unique identifier
+/// On-orbit reference
 func (rcv *SWR) ON_ORBIT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *SWR) OnOrbit() []byte {
 	return rcv.ON_ORBIT()
 }
 
-// / On-orbit reference
-// / International designator
+/// On-orbit reference
+/// International designator
 func (rcv *SWR) ORIG_OBJECT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *SWR) OrigObjectId() []byte {
 	return rcv.ORIG_OBJECT_ID()
 }
 
-// / International designator
-// / Satellite catalog number
+/// International designator
+/// Satellite catalog number
 func (rcv *SWR) SAT_NO() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,7 +109,7 @@ func (rcv *SWR) SatNo() uint32 {
 	return rcv.SAT_NO()
 }
 
-// / Satellite catalog number
+/// Satellite catalog number
 func (rcv *SWR) MutateSAT_NO(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }
@@ -118,7 +118,7 @@ func (rcv *SWR) MutateSatNo(n uint32) bool {
 	return rcv.MutateSAT_NO(n)
 }
 
-// / Observation timestamp (ISO 8601)
+/// Observation timestamp (ISO 8601)
 func (rcv *SWR) TS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *SWR) Ts() []byte {
 	return rcv.TS()
 }
 
-// / Observation timestamp (ISO 8601)
-// / Solar phase angle (degrees)
+/// Observation timestamp (ISO 8601)
+/// Solar phase angle (degrees)
 func (rcv *SWR) SOLAR_PHASE_ANGLE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,7 +145,7 @@ func (rcv *SWR) SolarPhaseAngle() float64 {
 	return rcv.SOLAR_PHASE_ANGLE()
 }
 
-// / Solar phase angle (degrees)
+/// Solar phase angle (degrees)
 func (rcv *SWR) MutateSOLAR_PHASE_ANGLE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -154,7 +154,7 @@ func (rcv *SWR) MutateSolarPhaseAngle(n float64) bool {
 	return rcv.MutateSOLAR_PHASE_ANGLE(n)
 }
 
-// / Sub-observer latitude (degrees)
+/// Sub-observer latitude (degrees)
 func (rcv *SWR) LAT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -167,7 +167,7 @@ func (rcv *SWR) Lat() float64 {
 	return rcv.LAT()
 }
 
-// / Sub-observer latitude (degrees)
+/// Sub-observer latitude (degrees)
 func (rcv *SWR) MutateLAT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -176,7 +176,7 @@ func (rcv *SWR) MutateLat(n float64) bool {
 	return rcv.MutateLAT(n)
 }
 
-// / Sub-observer longitude (degrees)
+/// Sub-observer longitude (degrees)
 func (rcv *SWR) LON() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -189,7 +189,7 @@ func (rcv *SWR) Lon() float64 {
 	return rcv.LON()
 }
 
-// / Sub-observer longitude (degrees)
+/// Sub-observer longitude (degrees)
 func (rcv *SWR) MutateLON(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -198,7 +198,7 @@ func (rcv *SWR) MutateLon(n float64) bool {
 	return rcv.MutateLON(n)
 }
 
-// / Location name
+/// Location name
 func (rcv *SWR) LOCATION_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -211,8 +211,8 @@ func (rcv *SWR) LocationName() []byte {
 	return rcv.LOCATION_NAME()
 }
 
-// / Location name
-// / Bad wavelength flag or identifier
+/// Location name
+/// Bad wavelength flag or identifier
 func (rcv *SWR) BAD_WAVE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -225,8 +225,8 @@ func (rcv *SWR) BadWave() []byte {
 	return rcv.BAD_WAVE()
 }
 
-// / Bad wavelength flag or identifier
-// / Measured wavelengths (micrometers)
+/// Bad wavelength flag or identifier
+/// Measured wavelengths (micrometers)
 func (rcv *SWR) WAVELENGTHS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -252,7 +252,7 @@ func (rcv *SWR) WavelengthsLength() int {
 	return rcv.WAVELENGTHSLength()
 }
 
-// / Measured wavelengths (micrometers)
+/// Measured wavelengths (micrometers)
 func (rcv *SWR) MutateWAVELENGTHS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -266,7 +266,7 @@ func (rcv *SWR) MutateWavelengths(j int, n float64) bool {
 	return rcv.MutateWAVELENGTHS(j, n)
 }
 
-// / Absolute flux values (W/m^2/um)
+/// Absolute flux values (W/m^2/um)
 func (rcv *SWR) ABS_FLUXES(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -292,7 +292,7 @@ func (rcv *SWR) AbsFluxesLength() int {
 	return rcv.ABS_FLUXESLength()
 }
 
-// / Absolute flux values (W/m^2/um)
+/// Absolute flux values (W/m^2/um)
 func (rcv *SWR) MutateABS_FLUXES(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -306,7 +306,7 @@ func (rcv *SWR) MutateAbsFluxes(j int, n float64) bool {
 	return rcv.MutateABS_FLUXES(j, n)
 }
 
-// / Ratio reference wavelengths (micrometers)
+/// Ratio reference wavelengths (micrometers)
 func (rcv *SWR) RATIO_WAVELENGTHS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -332,7 +332,7 @@ func (rcv *SWR) RatioWavelengthsLength() int {
 	return rcv.RATIO_WAVELENGTHSLength()
 }
 
-// / Ratio reference wavelengths (micrometers)
+/// Ratio reference wavelengths (micrometers)
 func (rcv *SWR) MutateRATIO_WAVELENGTHS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -346,7 +346,7 @@ func (rcv *SWR) MutateRatioWavelengths(j int, n float64) bool {
 	return rcv.MutateRATIO_WAVELENGTHS(j, n)
 }
 
-// / Flux ratios (normalized)
+/// Flux ratios (normalized)
 func (rcv *SWR) FLUX_RATIOS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -372,7 +372,7 @@ func (rcv *SWR) FluxRatiosLength() int {
 	return rcv.FLUX_RATIOSLength()
 }
 
-// / Flux ratios (normalized)
+/// Flux ratios (normalized)
 func (rcv *SWR) MutateFLUX_RATIOS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -386,7 +386,7 @@ func (rcv *SWR) MutateFluxRatios(j int, n float64) bool {
 	return rcv.MutateFLUX_RATIOS(j, n)
 }
 
-// / Effective temperature (Kelvin)
+/// Effective temperature (Kelvin)
 func (rcv *SWR) TEMPERATURE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -399,7 +399,7 @@ func (rcv *SWR) Temperature() float64 {
 	return rcv.TEMPERATURE()
 }
 
-// / Effective temperature (Kelvin)
+/// Effective temperature (Kelvin)
 func (rcv *SWR) MutateTEMPERATURE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -408,7 +408,7 @@ func (rcv *SWR) MutateTemperature(n float64) bool {
 	return rcv.MutateTEMPERATURE(n)
 }
 
-// / Signal-to-noise ratio
+/// Signal-to-noise ratio
 func (rcv *SWR) SIGNAL_NOISE_RATIO() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -421,7 +421,7 @@ func (rcv *SWR) SignalNoiseRatio() float64 {
 	return rcv.SIGNAL_NOISE_RATIO()
 }
 
-// / Signal-to-noise ratio
+/// Signal-to-noise ratio
 func (rcv *SWR) MutateSIGNAL_NOISE_RATIO(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -430,7 +430,7 @@ func (rcv *SWR) MutateSignalNoiseRatio(n float64) bool {
 	return rcv.MutateSIGNAL_NOISE_RATIO(n)
 }
 
-// / Integration time (seconds)
+/// Integration time (seconds)
 func (rcv *SWR) INTEGRATION_TIME() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -443,7 +443,7 @@ func (rcv *SWR) IntegrationTime() float64 {
 	return rcv.INTEGRATION_TIME()
 }
 
-// / Integration time (seconds)
+/// Integration time (seconds)
 func (rcv *SWR) MutateINTEGRATION_TIME(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -452,7 +452,7 @@ func (rcv *SWR) MutateIntegrationTime(n float64) bool {
 	return rcv.MutateINTEGRATION_TIME(n)
 }
 
-// / Data quality (0-9, 9=best)
+/// Data quality (0-9, 9=best)
 func (rcv *SWR) QUALITY() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -465,7 +465,7 @@ func (rcv *SWR) Quality() byte {
 	return rcv.QUALITY()
 }
 
-// / Data quality (0-9, 9=best)
+/// Data quality (0-9, 9=best)
 func (rcv *SWR) MutateQUALITY(n byte) bool {
 	return rcv._tab.MutateByteSlot(38, n)
 }

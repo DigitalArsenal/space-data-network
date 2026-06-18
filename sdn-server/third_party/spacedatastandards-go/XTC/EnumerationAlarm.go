@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Enumerated alarm
+/// Enumerated alarm
 type EnumerationAlarm struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *EnumerationAlarm) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Enumerated value label
+/// Enumerated value label
 func (rcv *EnumerationAlarm) LABEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *EnumerationAlarm) Label() []byte {
 	return rcv.LABEL()
 }
 
-// / Enumerated value label
-// / Alarm level for this value
+/// Enumerated value label
+/// Alarm level for this value
 func (rcv *EnumerationAlarm) ALARM_LEVEL() AlarmSeverityType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *EnumerationAlarm) AlarmLevel() AlarmSeverityType {
 	return rcv.ALARM_LEVEL()
 }
 
-// / Alarm level for this value
+/// Alarm level for this value
 func (rcv *EnumerationAlarm) MutateALARM_LEVEL(n AlarmSeverityType) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }

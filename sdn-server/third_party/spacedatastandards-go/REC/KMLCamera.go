@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Camera viewpoint
+/// Camera viewpoint
 type KMLCamera struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLCamera) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Camera longitude
+/// Camera longitude
 func (rcv *KMLCamera) LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *KMLCamera) Longitude() float64 {
 	return rcv.LONGITUDE()
 }
 
-// / Camera longitude
+/// Camera longitude
 func (rcv *KMLCamera) MutateLONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *KMLCamera) MutateLongitude(n float64) bool {
 	return rcv.MutateLONGITUDE(n)
 }
 
-// / Camera latitude
+/// Camera latitude
 func (rcv *KMLCamera) LATITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *KMLCamera) Latitude() float64 {
 	return rcv.LATITUDE()
 }
 
-// / Camera latitude
+/// Camera latitude
 func (rcv *KMLCamera) MutateLATITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *KMLCamera) MutateLatitude(n float64) bool {
 	return rcv.MutateLATITUDE(n)
 }
 
-// / Camera altitude
+/// Camera altitude
 func (rcv *KMLCamera) ALTITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *KMLCamera) Altitude() float64 {
 	return rcv.ALTITUDE()
 }
 
-// / Camera altitude
+/// Camera altitude
 func (rcv *KMLCamera) MutateALTITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *KMLCamera) MutateAltitude(n float64) bool {
 	return rcv.MutateALTITUDE(n)
 }
 
-// / Heading in degrees (0=North)
+/// Heading in degrees (0=North)
 func (rcv *KMLCamera) HEADING() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *KMLCamera) Heading() float64 {
 	return rcv.HEADING()
 }
 
-// / Heading in degrees (0=North)
+/// Heading in degrees (0=North)
 func (rcv *KMLCamera) MutateHEADING(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *KMLCamera) MutateHeading(n float64) bool {
 	return rcv.MutateHEADING(n)
 }
 
-// / Tilt in degrees from vertical
+/// Tilt in degrees from vertical
 func (rcv *KMLCamera) TILT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,7 +143,7 @@ func (rcv *KMLCamera) Tilt() float64 {
 	return rcv.TILT()
 }
 
-// / Tilt in degrees from vertical
+/// Tilt in degrees from vertical
 func (rcv *KMLCamera) MutateTILT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -152,7 +152,7 @@ func (rcv *KMLCamera) MutateTilt(n float64) bool {
 	return rcv.MutateTILT(n)
 }
 
-// / Roll in degrees
+/// Roll in degrees
 func (rcv *KMLCamera) ROLL() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -165,7 +165,7 @@ func (rcv *KMLCamera) Roll() float64 {
 	return rcv.ROLL()
 }
 
-// / Roll in degrees
+/// Roll in degrees
 func (rcv *KMLCamera) MutateROLL(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -174,7 +174,7 @@ func (rcv *KMLCamera) MutateRoll(n float64) bool {
 	return rcv.MutateROLL(n)
 }
 
-// / Altitude mode
+/// Altitude mode
 func (rcv *KMLCamera) ALTITUDE_MODE() KMLAltitudeMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -187,7 +187,7 @@ func (rcv *KMLCamera) AltitudeMode() KMLAltitudeMode {
 	return rcv.ALTITUDE_MODE()
 }
 
-// / Altitude mode
+/// Altitude mode
 func (rcv *KMLCamera) MutateALTITUDE_MODE(n KMLAltitudeMode) bool {
 	return rcv._tab.MutateInt8Slot(16, int8(n))
 }

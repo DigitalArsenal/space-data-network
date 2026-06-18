@@ -8,13 +8,13 @@ type numResultStatus int8
 
 const (
 	/// Operation completed.
-	numResultStatusOK numResultStatus = 0
+	numResultStatusOK                    numResultStatus = 0
 	/// Request fields are missing, non-finite, or numerically invalid.
-	numResultStatusINVALID_INPUT numResultStatus = 1
+	numResultStatusINVALID_INPUT         numResultStatus = 1
 	/// The requested operation or function is not supported.
 	numResultStatusUNSUPPORTED_OPERATION numResultStatus = 2
 	/// Iteration did not reach ACCURACY within MAX_ITERATIONS.
-	numResultStatusDID_NOT_CONVERGE numResultStatus = 3
+	numResultStatusDID_NOT_CONVERGE      numResultStatus = 3
 )
 
 var EnumNamesnumResultStatus = map[numResultStatus]string{

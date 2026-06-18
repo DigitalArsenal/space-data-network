@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Binary encoding specification for container
+/// Binary encoding specification for container
 type ContainerBinaryEncoding struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ContainerBinaryEncoding) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Error detection type
+/// Error detection type
 func (rcv *ContainerBinaryEncoding) ERROR_DETECTION() ErrorDetectionType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *ContainerBinaryEncoding) ErrorDetection() ErrorDetectionType {
 	return rcv.ERROR_DETECTION()
 }
 
-// / Error detection type
+/// Error detection type
 func (rcv *ContainerBinaryEncoding) MutateERROR_DETECTION(n ErrorDetectionType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *ContainerBinaryEncoding) MutateErrorDetection(n ErrorDetectionType) b
 	return rcv.MutateERROR_DETECTION(n)
 }
 
-// / CRC polynomial (for CRC error detection)
+/// CRC polynomial (for CRC error detection)
 func (rcv *ContainerBinaryEncoding) CRC_POLYNOMIAL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,8 +77,8 @@ func (rcv *ContainerBinaryEncoding) CrcPolynomial() []byte {
 	return rcv.CRC_POLYNOMIAL()
 }
 
-// / CRC polynomial (for CRC error detection)
-// / Size in bits
+/// CRC polynomial (for CRC error detection)
+/// Size in bits
 func (rcv *ContainerBinaryEncoding) SIZE_IN_BITS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *ContainerBinaryEncoding) SizeInBits() uint32 {
 	return rcv.SIZE_IN_BITS()
 }
 
-// / Size in bits
+/// Size in bits
 func (rcv *ContainerBinaryEncoding) MutateSIZE_IN_BITS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }

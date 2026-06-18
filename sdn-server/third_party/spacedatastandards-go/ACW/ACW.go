@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Access-window analysis envelope.
+/// Access-window analysis envelope.
 type ACW struct {
 	_tab flatbuffers.Table
 }

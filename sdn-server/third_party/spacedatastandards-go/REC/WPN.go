@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Weapons and Munitions
+/// Weapons and Munitions
 type WPN struct {
 	_tab flatbuffers.Table
 }

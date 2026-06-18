@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Communications Channel
+/// Communications Channel
 type CHN struct {
 	_tab flatbuffers.Table
 }

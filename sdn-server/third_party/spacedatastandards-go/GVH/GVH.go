@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Ground Vehicles
+/// Ground Vehicles
 type GVH struct {
 	_tab flatbuffers.Table
 }

@@ -4,7 +4,7 @@ package LAM
 
 import "strconv"
 
-// / Launch-ascent mission phase.
+/// Launch-ascent mission phase.
 type lamMissionPhase int8
 
 const (

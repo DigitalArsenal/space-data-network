@@ -4,7 +4,7 @@ package CAT
 
 import "strconv"
 
-// / Simple polarization types
+/// Simple polarization types
 type SimplePolarization int8
 
 const (

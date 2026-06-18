@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / GeoJSON FeatureCollection
+/// GeoJSON FeatureCollection
 type GJN struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *GJN) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Features in the collection
+/// Features in the collection
 func (rcv *GJN) FEATURES(obj *GJNFeature, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -86,8 +86,8 @@ func (rcv *GJN) FeaturesLength() int {
 	return rcv.FEATURESLength()
 }
 
-// / Features in the collection
-// / Bounding box (optional)
+/// Features in the collection
+/// Bounding box (optional)
 func (rcv *GJN) BBOX(obj *GJNBoundingBox) *GJNBoundingBox {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -105,7 +105,7 @@ func (rcv *GJN) Bbox(obj *GJNBoundingBox) *GJNBoundingBox {
 	return rcv.BBOX(obj)
 }
 
-// / Bounding box (optional)
+/// Bounding box (optional)
 func GJNStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

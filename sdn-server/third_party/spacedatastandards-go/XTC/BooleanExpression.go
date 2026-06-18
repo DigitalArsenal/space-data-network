@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Boolean expression combining comparisons
+/// Boolean expression combining comparisons
 type BooleanExpression struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *BooleanExpression) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Boolean operator
+/// Boolean operator
 func (rcv *BooleanExpression) OPERATOR() BooleanOperatorType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *BooleanExpression) Operator() BooleanOperatorType {
 	return rcv.OPERATOR()
 }
 
-// / Boolean operator
+/// Boolean operator
 func (rcv *BooleanExpression) MutateOPERATOR(n BooleanOperatorType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *BooleanExpression) MutateOperator(n BooleanOperatorType) bool {
 	return rcv.MutateOPERATOR(n)
 }
 
-// / Comparison conditions
+/// Comparison conditions
 func (rcv *BooleanExpression) CONDITIONS(obj *ParameterComparison, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -96,8 +96,8 @@ func (rcv *BooleanExpression) ConditionsLength() int {
 	return rcv.CONDITIONSLength()
 }
 
-// / Comparison conditions
-// / Nested expressions
+/// Comparison conditions
+/// Nested expressions
 func (rcv *BooleanExpression) EXPRESSIONS(obj *BooleanExpression, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -129,7 +129,7 @@ func (rcv *BooleanExpression) ExpressionsLength() int {
 	return rcv.EXPRESSIONSLength()
 }
 
-// / Nested expressions
+/// Nested expressions
 func BooleanExpressionStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

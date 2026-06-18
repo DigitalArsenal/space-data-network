@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Line style
+/// Line style
 type KMLLineStyle struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLLineStyle) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / KML color in aabbggrr hex format
+/// KML color in aabbggrr hex format
 func (rcv *KMLLineStyle) COLOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLLineStyle) Color() []byte {
 	return rcv.COLOR()
 }
 
-// / KML color in aabbggrr hex format
-// / Color mode
+/// KML color in aabbggrr hex format
+/// Color mode
 func (rcv *KMLLineStyle) COLOR_MODE() KMLColorMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *KMLLineStyle) ColorMode() KMLColorMode {
 	return rcv.COLOR_MODE()
 }
 
-// / Color mode
+/// Color mode
 func (rcv *KMLLineStyle) MutateCOLOR_MODE(n KMLColorMode) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -78,7 +78,7 @@ func (rcv *KMLLineStyle) MutateColorMode(n KMLColorMode) bool {
 	return rcv.MutateCOLOR_MODE(n)
 }
 
-// / Width in pixels
+/// Width in pixels
 func (rcv *KMLLineStyle) WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *KMLLineStyle) Width() float64 {
 	return rcv.WIDTH()
 }
 
-// / Width in pixels
+/// Width in pixels
 func (rcv *KMLLineStyle) MutateWIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -100,7 +100,7 @@ func (rcv *KMLLineStyle) MutateWidth(n float64) bool {
 	return rcv.MutateWIDTH(n)
 }
 
-// / gx:outerColor
+/// gx:outerColor
 func (rcv *KMLLineStyle) GX_OUTER_COLOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -113,8 +113,8 @@ func (rcv *KMLLineStyle) GxOuterColor() []byte {
 	return rcv.GX_OUTER_COLOR()
 }
 
-// / gx:outerColor
-// / gx:outerWidth
+/// gx:outerColor
+/// gx:outerWidth
 func (rcv *KMLLineStyle) GX_OUTER_WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -127,7 +127,7 @@ func (rcv *KMLLineStyle) GxOuterWidth() float64 {
 	return rcv.GX_OUTER_WIDTH()
 }
 
-// / gx:outerWidth
+/// gx:outerWidth
 func (rcv *KMLLineStyle) MutateGX_OUTER_WIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -136,7 +136,7 @@ func (rcv *KMLLineStyle) MutateGxOuterWidth(n float64) bool {
 	return rcv.MutateGX_OUTER_WIDTH(n)
 }
 
-// / gx:physicalWidth
+/// gx:physicalWidth
 func (rcv *KMLLineStyle) GX_PHYSICAL_WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -149,7 +149,7 @@ func (rcv *KMLLineStyle) GxPhysicalWidth() float64 {
 	return rcv.GX_PHYSICAL_WIDTH()
 }
 
-// / gx:physicalWidth
+/// gx:physicalWidth
 func (rcv *KMLLineStyle) MutateGX_PHYSICAL_WIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -158,7 +158,7 @@ func (rcv *KMLLineStyle) MutateGxPhysicalWidth(n float64) bool {
 	return rcv.MutateGX_PHYSICAL_WIDTH(n)
 }
 
-// / gx:labelVisibility
+/// gx:labelVisibility
 func (rcv *KMLLineStyle) GX_LABEL_VISIBILITY() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -171,7 +171,7 @@ func (rcv *KMLLineStyle) GxLabelVisibility() bool {
 	return rcv.GX_LABEL_VISIBILITY()
 }
 
-// / gx:labelVisibility
+/// gx:labelVisibility
 func (rcv *KMLLineStyle) MutateGX_LABEL_VISIBILITY(n bool) bool {
 	return rcv._tab.MutateBoolSlot(16, n)
 }

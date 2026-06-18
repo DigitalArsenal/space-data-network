@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Numeric alarm range
+/// Numeric alarm range
 type AlarmRange struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *AlarmRange) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Minimum value (inclusive)
+/// Minimum value (inclusive)
 func (rcv *AlarmRange) MIN_INCLUSIVE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *AlarmRange) MinInclusive() float64 {
 	return rcv.MIN_INCLUSIVE()
 }
 
-// / Minimum value (inclusive)
+/// Minimum value (inclusive)
 func (rcv *AlarmRange) MutateMIN_INCLUSIVE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *AlarmRange) MutateMinInclusive(n float64) bool {
 	return rcv.MutateMIN_INCLUSIVE(n)
 }
 
-// / Maximum value (inclusive)
+/// Maximum value (inclusive)
 func (rcv *AlarmRange) MAX_INCLUSIVE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *AlarmRange) MaxInclusive() float64 {
 	return rcv.MAX_INCLUSIVE()
 }
 
-// / Maximum value (inclusive)
+/// Maximum value (inclusive)
 func (rcv *AlarmRange) MutateMAX_INCLUSIVE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *AlarmRange) MutateMaxInclusive(n float64) bool {
 	return rcv.MutateMAX_INCLUSIVE(n)
 }
 
-// / Minimum value (exclusive)
+/// Minimum value (exclusive)
 func (rcv *AlarmRange) MIN_EXCLUSIVE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *AlarmRange) MinExclusive() float64 {
 	return rcv.MIN_EXCLUSIVE()
 }
 
-// / Minimum value (exclusive)
+/// Minimum value (exclusive)
 func (rcv *AlarmRange) MutateMIN_EXCLUSIVE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *AlarmRange) MutateMinExclusive(n float64) bool {
 	return rcv.MutateMIN_EXCLUSIVE(n)
 }
 
-// / Maximum value (exclusive)
+/// Maximum value (exclusive)
 func (rcv *AlarmRange) MAX_EXCLUSIVE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *AlarmRange) MaxExclusive() float64 {
 	return rcv.MAX_EXCLUSIVE()
 }
 
-// / Maximum value (exclusive)
+/// Maximum value (exclusive)
 func (rcv *AlarmRange) MutateMAX_EXCLUSIVE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }

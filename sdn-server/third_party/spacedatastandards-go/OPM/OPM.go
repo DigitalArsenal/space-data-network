@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Orbit Parameter Message
+/// Orbit Parameter Message
 type OPM struct {
 	_tab flatbuffers.Table
 }

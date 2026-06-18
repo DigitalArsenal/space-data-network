@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Complete SDF configuration.
+/// Complete SDF configuration.
 type SDFConfig struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *SDFConfig) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Root primitive type (useful when COMPONENTS[] is empty).
+/// Root primitive type (useful when COMPONENTS[] is empty).
 func (rcv *SDFConfig) PRIMITIVE() sdfPrimitive {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *SDFConfig) Primitive() sdfPrimitive {
 	return rcv.PRIMITIVE()
 }
 
-// / Root primitive type (useful when COMPONENTS[] is empty).
+/// Root primitive type (useful when COMPONENTS[] is empty).
 func (rcv *SDFConfig) MutatePRIMITIVE(n sdfPrimitive) bool {
 	return rcv._tab.MutateByteSlot(4, byte(n))
 }
@@ -64,7 +64,7 @@ func (rcv *SDFConfig) MutatePrimitive(n sdfPrimitive) bool {
 	return rcv.MutatePRIMITIVE(n)
 }
 
-// / One or more components that may be combined via COMPOSITIONS[].
+/// One or more components that may be combined via COMPOSITIONS[].
 func (rcv *SDFConfig) COMPONENTS(obj *SDFComponent, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -96,8 +96,8 @@ func (rcv *SDFConfig) ComponentsLength() int {
 	return rcv.COMPONENTSLength()
 }
 
-// / One or more components that may be combined via COMPOSITIONS[].
-// / Composition tree over COMPONENTS[].
+/// One or more components that may be combined via COMPOSITIONS[].
+/// Composition tree over COMPONENTS[].
 func (rcv *SDFConfig) COMPOSITIONS(obj *SDFComposition, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -129,8 +129,8 @@ func (rcv *SDFConfig) CompositionsLength() int {
 	return rcv.COMPOSITIONSLength()
 }
 
-// / Composition tree over COMPONENTS[].
-// / World-to-local transform (4x4 column-major, 16 doubles).
+/// Composition tree over COMPONENTS[].
+/// World-to-local transform (4x4 column-major, 16 doubles).
 func (rcv *SDFConfig) INVERSE_TRANSFORM(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -156,7 +156,7 @@ func (rcv *SDFConfig) InverseTransformLength() int {
 	return rcv.INVERSE_TRANSFORMLength()
 }
 
-// / World-to-local transform (4x4 column-major, 16 doubles).
+/// World-to-local transform (4x4 column-major, 16 doubles).
 func (rcv *SDFConfig) MutateINVERSE_TRANSFORM(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {

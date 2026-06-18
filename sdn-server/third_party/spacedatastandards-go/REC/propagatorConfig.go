@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Propagator configuration structure to describe propagation settings
+/// Propagator configuration structure to describe propagation settings
 type propagatorConfig struct {
 	_tab flatbuffers.Table
 }

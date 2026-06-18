@@ -4,8 +4,8 @@ package REC
 
 import "strconv"
 
-// / Dataset Publication Manifest
-// / Published artifact role within a dataset update.
+/// Dataset Publication Manifest
+/// Published artifact role within a dataset update.
 type publicationAssetKind int8
 
 const (

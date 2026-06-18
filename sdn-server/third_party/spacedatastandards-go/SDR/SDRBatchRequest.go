@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Batch detection request (arena-addressed, zero-copy).
+/// Batch detection request (arena-addressed, zero-copy).
 type SDRBatchRequest struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *SDRBatchRequest) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Sensor position in ECEF (meters) — X.
+/// Sensor position in ECEF (meters) — X.
 func (rcv *SDRBatchRequest) SENSOR_POS_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *SDRBatchRequest) SensorPosX() float64 {
 	return rcv.SENSOR_POS_X()
 }
 
-// / Sensor position in ECEF (meters) — X.
+/// Sensor position in ECEF (meters) — X.
 func (rcv *SDRBatchRequest) MutateSENSOR_POS_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -104,7 +104,7 @@ func (rcv *SDRBatchRequest) MutateSensorPosZ(n float64) bool {
 	return rcv.MutateSENSOR_POS_Z(n)
 }
 
-// / Sensor orientation as quaternion (W, X, Y, Z).
+/// Sensor orientation as quaternion (W, X, Y, Z).
 func (rcv *SDRBatchRequest) SENSOR_ORIENT_W() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,7 +117,7 @@ func (rcv *SDRBatchRequest) SensorOrientW() float64 {
 	return rcv.SENSOR_ORIENT_W()
 }
 
-// / Sensor orientation as quaternion (W, X, Y, Z).
+/// Sensor orientation as quaternion (W, X, Y, Z).
 func (rcv *SDRBatchRequest) MutateSENSOR_ORIENT_W(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -186,7 +186,7 @@ func (rcv *SDRBatchRequest) MutateSensorOrientZ(n float64) bool {
 	return rcv.MutateSENSOR_ORIENT_Z(n)
 }
 
-// / Input buffer offset where targetState[] starts.
+/// Input buffer offset where targetState[] starts.
 func (rcv *SDRBatchRequest) INPUT_OFFSET() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -199,7 +199,7 @@ func (rcv *SDRBatchRequest) InputOffset() uint32 {
 	return rcv.INPUT_OFFSET()
 }
 
-// / Input buffer offset where targetState[] starts.
+/// Input buffer offset where targetState[] starts.
 func (rcv *SDRBatchRequest) MutateINPUT_OFFSET(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(18, n)
 }
@@ -208,7 +208,7 @@ func (rcv *SDRBatchRequest) MutateInputOffset(n uint32) bool {
 	return rcv.MutateINPUT_OFFSET(n)
 }
 
-// / Number of targets in the input buffer.
+/// Number of targets in the input buffer.
 func (rcv *SDRBatchRequest) TARGET_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -221,7 +221,7 @@ func (rcv *SDRBatchRequest) TargetCount() uint32 {
 	return rcv.TARGET_COUNT()
 }
 
-// / Number of targets in the input buffer.
+/// Number of targets in the input buffer.
 func (rcv *SDRBatchRequest) MutateTARGET_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(20, n)
 }
@@ -230,7 +230,7 @@ func (rcv *SDRBatchRequest) MutateTargetCount(n uint32) bool {
 	return rcv.MutateTARGET_COUNT(n)
 }
 
-// / Output buffer offset where detectionResult[] is written.
+/// Output buffer offset where detectionResult[] is written.
 func (rcv *SDRBatchRequest) OUTPUT_OFFSET() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -243,7 +243,7 @@ func (rcv *SDRBatchRequest) OutputOffset() uint32 {
 	return rcv.OUTPUT_OFFSET()
 }
 
-// / Output buffer offset where detectionResult[] is written.
+/// Output buffer offset where detectionResult[] is written.
 func (rcv *SDRBatchRequest) MutateOUTPUT_OFFSET(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(22, n)
 }
@@ -252,7 +252,7 @@ func (rcv *SDRBatchRequest) MutateOutputOffset(n uint32) bool {
 	return rcv.MutateOUTPUT_OFFSET(n)
 }
 
-// / Current time as a Julian date.
+/// Current time as a Julian date.
 func (rcv *SDRBatchRequest) EPOCH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -265,7 +265,7 @@ func (rcv *SDRBatchRequest) Epoch() float64 {
 	return rcv.EPOCH()
 }
 
-// / Current time as a Julian date.
+/// Current time as a Julian date.
 func (rcv *SDRBatchRequest) MutateEPOCH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }

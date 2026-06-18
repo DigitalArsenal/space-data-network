@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Armor and Protection
+/// Armor and Protection
 type ARM struct {
 	_tab flatbuffers.Table
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Request for component-wise vector discretization.
+/// Request for component-wise vector discretization.
 type NUMVectorDiscretizeRequest struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *NUMVectorDiscretizeRequest) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Input vector to quantize.
+/// Input vector to quantize.
 func (rcv *NUMVectorDiscretizeRequest) STATE(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -68,7 +68,7 @@ func (rcv *NUMVectorDiscretizeRequest) StateLength() int {
 	return rcv.STATELength()
 }
 
-// / Input vector to quantize.
+/// Input vector to quantize.
 func (rcv *NUMVectorDiscretizeRequest) MutateSTATE(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -82,7 +82,7 @@ func (rcv *NUMVectorDiscretizeRequest) MutateState(j int, n float64) bool {
 	return rcv.MutateSTATE(j, n)
 }
 
-// / Per-component least-significant-bit size. Length must match STATE.
+/// Per-component least-significant-bit size. Length must match STATE.
 func (rcv *NUMVectorDiscretizeRequest) LSB(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -108,7 +108,7 @@ func (rcv *NUMVectorDiscretizeRequest) LsbLength() int {
 	return rcv.LSBLength()
 }
 
-// / Per-component least-significant-bit size. Length must match STATE.
+/// Per-component least-significant-bit size. Length must match STATE.
 func (rcv *NUMVectorDiscretizeRequest) MutateLSB(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -122,7 +122,7 @@ func (rcv *NUMVectorDiscretizeRequest) MutateLsb(j int, n float64) bool {
 	return rcv.MutateLSB(j, n)
 }
 
-// / Rounding direction used before the original sign is restored.
+/// Rounding direction used before the original sign is restored.
 func (rcv *NUMVectorDiscretizeRequest) ROUND_DIRECTION() numDiscretizeRoundDirection {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -135,7 +135,7 @@ func (rcv *NUMVectorDiscretizeRequest) RoundDirection() numDiscretizeRoundDirect
 	return rcv.ROUND_DIRECTION()
 }
 
-// / Rounding direction used before the original sign is restored.
+/// Rounding direction used before the original sign is restored.
 func (rcv *NUMVectorDiscretizeRequest) MutateROUND_DIRECTION(n numDiscretizeRoundDirection) bool {
 	return rcv._tab.MutateInt8Slot(8, int8(n))
 }
@@ -144,7 +144,7 @@ func (rcv *NUMVectorDiscretizeRequest) MutateRoundDirection(n numDiscretizeRound
 	return rcv.MutateROUND_DIRECTION(n)
 }
 
-// / When true, PREVIOUS_ERROR is added to STATE before discretization.
+/// When true, PREVIOUS_ERROR is added to STATE before discretization.
 func (rcv *NUMVectorDiscretizeRequest) CARRY_ERROR() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *NUMVectorDiscretizeRequest) CarryError() bool {
 	return rcv.CARRY_ERROR()
 }
 
-// / When true, PREVIOUS_ERROR is added to STATE before discretization.
+/// When true, PREVIOUS_ERROR is added to STATE before discretization.
 func (rcv *NUMVectorDiscretizeRequest) MutateCARRY_ERROR(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }
@@ -166,7 +166,7 @@ func (rcv *NUMVectorDiscretizeRequest) MutateCarryError(n bool) bool {
 	return rcv.MutateCARRY_ERROR(n)
 }
 
-// / Optional prior discretization error vector from an earlier result.
+/// Optional prior discretization error vector from an earlier result.
 func (rcv *NUMVectorDiscretizeRequest) PREVIOUS_ERROR(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -192,7 +192,7 @@ func (rcv *NUMVectorDiscretizeRequest) PreviousErrorLength() int {
 	return rcv.PREVIOUS_ERRORLength()
 }
 
-// / Optional prior discretization error vector from an earlier result.
+/// Optional prior discretization error vector from an earlier result.
 func (rcv *NUMVectorDiscretizeRequest) MutatePREVIOUS_ERROR(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -206,7 +206,7 @@ func (rcv *NUMVectorDiscretizeRequest) MutatePreviousError(j int, n float64) boo
 	return rcv.MutatePREVIOUS_ERROR(j, n)
 }
 
-// / Optional trace/correlation identifier.
+/// Optional trace/correlation identifier.
 func (rcv *NUMVectorDiscretizeRequest) TRACE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -219,7 +219,7 @@ func (rcv *NUMVectorDiscretizeRequest) TraceId() []byte {
 	return rcv.TRACE_ID()
 }
 
-// / Optional trace/correlation identifier.
+/// Optional trace/correlation identifier.
 func NUMVectorDiscretizeRequestStart(builder *flatbuffers.Builder) {
 	builder.StartObject(6)
 }

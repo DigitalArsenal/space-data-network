@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Atmospheric refraction model for apparent-elevation access checks.
+/// Atmospheric refraction model for apparent-elevation access checks.
 type ACWRefractionModel struct {
 	_tab flatbuffers.Table
 }
@@ -62,7 +62,7 @@ func (rcv *ACWRefractionModel) MutateModelKind(n acwRefractionModelKind) bool {
 	return rcv.MutateMODEL_KIND(n)
 }
 
-// / Local pressure in pascals.
+/// Local pressure in pascals.
 func (rcv *ACWRefractionModel) PRESSURE_PA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -75,7 +75,7 @@ func (rcv *ACWRefractionModel) PressurePa() float64 {
 	return rcv.PRESSURE_PA()
 }
 
-// / Local pressure in pascals.
+/// Local pressure in pascals.
 func (rcv *ACWRefractionModel) MutatePRESSURE_PA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -84,7 +84,7 @@ func (rcv *ACWRefractionModel) MutatePressurePa(n float64) bool {
 	return rcv.MutatePRESSURE_PA(n)
 }
 
-// / Local temperature in kelvin.
+/// Local temperature in kelvin.
 func (rcv *ACWRefractionModel) TEMPERATURE_K() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *ACWRefractionModel) TemperatureK() float64 {
 	return rcv.TEMPERATURE_K()
 }
 
-// / Local temperature in kelvin.
+/// Local temperature in kelvin.
 func (rcv *ACWRefractionModel) MutateTEMPERATURE_K(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }

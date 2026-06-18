@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Launch-ascent event.
+/// Launch-ascent event.
 type lamAscentEvent struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *lamAscentEvent) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Event identifier.
+/// Event identifier.
 func (rcv *lamAscentEvent) EVENT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *lamAscentEvent) EventId() []byte {
 	return rcv.EVENT_ID()
 }
 
-// / Event identifier.
-// / Event type or name.
+/// Event identifier.
+/// Event type or name.
 func (rcv *lamAscentEvent) EVENT_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *lamAscentEvent) EventType() []byte {
 	return rcv.EVENT_TYPE()
 }
 
-// / Event type or name.
-// / Event epoch in ISO 8601 UTC format.
+/// Event type or name.
+/// Event epoch in ISO 8601 UTC format.
 func (rcv *lamAscentEvent) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *lamAscentEvent) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-// / Event epoch in ISO 8601 UTC format.
-// / Time from launch in seconds.
+/// Event epoch in ISO 8601 UTC format.
+/// Time from launch in seconds.
 func (rcv *lamAscentEvent) TIME_FROM_LAUNCH_S() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *lamAscentEvent) TimeFromLaunchS() float64 {
 	return rcv.TIME_FROM_LAUNCH_S()
 }
 
-// / Time from launch in seconds.
+/// Time from launch in seconds.
 func (rcv *lamAscentEvent) MutateTIME_FROM_LAUNCH_S(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -106,7 +106,7 @@ func (rcv *lamAscentEvent) MutateTimeFromLaunchS(n float64) bool {
 	return rcv.MutateTIME_FROM_LAUNCH_S(n)
 }
 
-// / Mission phase at the event.
+/// Mission phase at the event.
 func (rcv *lamAscentEvent) PHASE() lamMissionPhase {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -119,7 +119,7 @@ func (rcv *lamAscentEvent) Phase() lamMissionPhase {
 	return rcv.PHASE()
 }
 
-// / Mission phase at the event.
+/// Mission phase at the event.
 func (rcv *lamAscentEvent) MutatePHASE(n lamMissionPhase) bool {
 	return rcv._tab.MutateInt8Slot(12, int8(n))
 }
@@ -128,7 +128,7 @@ func (rcv *lamAscentEvent) MutatePhase(n lamMissionPhase) bool {
 	return rcv.MutatePHASE(n)
 }
 
-// / Altitude in meters.
+/// Altitude in meters.
 func (rcv *lamAscentEvent) ALTITUDE_M() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -141,7 +141,7 @@ func (rcv *lamAscentEvent) AltitudeM() float64 {
 	return rcv.ALTITUDE_M()
 }
 
-// / Altitude in meters.
+/// Altitude in meters.
 func (rcv *lamAscentEvent) MutateALTITUDE_M(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -150,7 +150,7 @@ func (rcv *lamAscentEvent) MutateAltitudeM(n float64) bool {
 	return rcv.MutateALTITUDE_M(n)
 }
 
-// / Speed in meters per second.
+/// Speed in meters per second.
 func (rcv *lamAscentEvent) SPEED_M_PER_S() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -163,7 +163,7 @@ func (rcv *lamAscentEvent) SpeedMPerS() float64 {
 	return rcv.SPEED_M_PER_S()
 }
 
-// / Speed in meters per second.
+/// Speed in meters per second.
 func (rcv *lamAscentEvent) MutateSPEED_M_PER_S(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -172,7 +172,7 @@ func (rcv *lamAscentEvent) MutateSpeedMPerS(n float64) bool {
 	return rcv.MutateSPEED_M_PER_S(n)
 }
 
-// / Vehicle mass in kilograms.
+/// Vehicle mass in kilograms.
 func (rcv *lamAscentEvent) MASS_KG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -185,7 +185,7 @@ func (rcv *lamAscentEvent) MassKg() float64 {
 	return rcv.MASS_KG()
 }
 
-// / Vehicle mass in kilograms.
+/// Vehicle mass in kilograms.
 func (rcv *lamAscentEvent) MutateMASS_KG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -194,7 +194,7 @@ func (rcv *lamAscentEvent) MutateMassKg(n float64) bool {
 	return rcv.MutateMASS_KG(n)
 }
 
-// / Free-form event description.
+/// Free-form event description.
 func (rcv *lamAscentEvent) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -207,7 +207,7 @@ func (rcv *lamAscentEvent) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-// / Free-form event description.
+/// Free-form event description.
 func lamAscentEventStart(builder *flatbuffers.Builder) {
 	builder.StartObject(9)
 }

@@ -6,9 +6,9 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Entity Metadata — generic queryable metadata for a host-local entity.
-// / Participates in shared FlatSQL/WASM runtimes where multiple plugins
-// / cross-query the same entity collection.
+/// Entity Metadata — generic queryable metadata for a host-local entity.
+/// Participates in shared FlatSQL/WASM runtimes where multiple plugins
+/// cross-query the same entity collection.
 type ETM struct {
 	_tab flatbuffers.Table
 }
@@ -56,7 +56,7 @@ func (rcv *ETM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Stable host-local entity identifier.
+/// Stable host-local entity identifier.
 func (rcv *ETM) ENTITY_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *ETM) EntityId() []byte {
 	return rcv.ENTITY_ID()
 }
 
-// / Stable host-local entity identifier.
-// / Human-readable entity name used for shared query/search surfaces.
+/// Stable host-local entity identifier.
+/// Human-readable entity name used for shared query/search surfaces.
 func (rcv *ETM) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *ETM) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Human-readable entity name used for shared query/search surfaces.
-// / Broad entity category.
+/// Human-readable entity name used for shared query/search surfaces.
+/// Broad entity category.
 func (rcv *ETM) KIND() entityKind {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *ETM) Kind() entityKind {
 	return rcv.KIND()
 }
 
-// / Broad entity category.
+/// Broad entity category.
 func (rcv *ETM) MutateKIND(n entityKind) bool {
 	return rcv._tab.MutateInt8Slot(8, int8(n))
 }
@@ -106,7 +106,7 @@ func (rcv *ETM) MutateKind(n entityKind) bool {
 	return rcv.MutateKIND(n)
 }
 
-// / More specific runtime subtype or class name.
+/// More specific runtime subtype or class name.
 func (rcv *ETM) SUBTYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -119,8 +119,8 @@ func (rcv *ETM) Subtype() []byte {
 	return rcv.SUBTYPE()
 }
 
-// / More specific runtime subtype or class name.
-// / Optional parent entity id for hierarchy / linkage queries.
+/// More specific runtime subtype or class name.
+/// Optional parent entity id for hierarchy / linkage queries.
 func (rcv *ETM) PARENT_ENTITY_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -133,8 +133,8 @@ func (rcv *ETM) ParentEntityId() []byte {
 	return rcv.PARENT_ENTITY_ID()
 }
 
-// / Optional parent entity id for hierarchy / linkage queries.
-// / Collection-scoped WASM handle used for batch visibility application.
+/// Optional parent entity id for hierarchy / linkage queries.
+/// Collection-scoped WASM handle used for batch visibility application.
 func (rcv *ETM) WASM_HANDLE() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -147,7 +147,7 @@ func (rcv *ETM) WasmHandle() uint32 {
 	return rcv.WASM_HANDLE()
 }
 
-// / Collection-scoped WASM handle used for batch visibility application.
+/// Collection-scoped WASM handle used for batch visibility application.
 func (rcv *ETM) MutateWASM_HANDLE(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(14, n)
 }
@@ -156,7 +156,7 @@ func (rcv *ETM) MutateWasmHandle(n uint32) bool {
 	return rcv.MutateWASM_HANDLE(n)
 }
 
-// / Optional NORAD catalog id for standards-backed entities.
+/// Optional NORAD catalog id for standards-backed entities.
 func (rcv *ETM) NORAD_CAT_ID() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -169,7 +169,7 @@ func (rcv *ETM) NoradCatId() uint32 {
 	return rcv.NORAD_CAT_ID()
 }
 
-// / Optional NORAD catalog id for standards-backed entities.
+/// Optional NORAD catalog id for standards-backed entities.
 func (rcv *ETM) MutateNORAD_CAT_ID(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(16, n)
 }
@@ -178,7 +178,7 @@ func (rcv *ETM) MutateNoradCatId(n uint32) bool {
 	return rcv.MutateNORAD_CAT_ID(n)
 }
 
-// / Primary object name surfaced by attached standards metadata.
+/// Primary object name surfaced by attached standards metadata.
 func (rcv *ETM) OBJECT_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -191,8 +191,8 @@ func (rcv *ETM) ObjectName() []byte {
 	return rcv.OBJECT_NAME()
 }
 
-// / Primary object name surfaced by attached standards metadata.
-// / Primary international / object designator surfaced by attached standards metadata.
+/// Primary object name surfaced by attached standards metadata.
+/// Primary international / object designator surfaced by attached standards metadata.
 func (rcv *ETM) OBJECT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -205,8 +205,8 @@ func (rcv *ETM) ObjectId() []byte {
 	return rcv.OBJECT_ID()
 }
 
-// / Primary international / object designator surfaced by attached standards metadata.
-// / Secondary CAT object name when different from the primary object name.
+/// Primary international / object designator surfaced by attached standards metadata.
+/// Secondary CAT object name when different from the primary object name.
 func (rcv *ETM) CAT_OBJECT_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -219,8 +219,8 @@ func (rcv *ETM) CatObjectName() []byte {
 	return rcv.CAT_OBJECT_NAME()
 }
 
-// / Secondary CAT object name when different from the primary object name.
-// / Secondary CAT object id when different from the primary object id.
+/// Secondary CAT object name when different from the primary object name.
+/// Secondary CAT object id when different from the primary object id.
 func (rcv *ETM) CAT_OBJECT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -233,8 +233,8 @@ func (rcv *ETM) CatObjectId() []byte {
 	return rcv.CAT_OBJECT_ID()
 }
 
-// / Secondary CAT object id when different from the primary object id.
-// / Ground / facility subtype metadata for non-space entity search.
+/// Secondary CAT object id when different from the primary object id.
+/// Ground / facility subtype metadata for non-space entity search.
 func (rcv *ETM) FACILITY_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -247,8 +247,8 @@ func (rcv *ETM) FacilityType() []byte {
 	return rcv.FACILITY_TYPE()
 }
 
-// / Ground / facility subtype metadata for non-space entity search.
-// / Pre-normalized phrase-search text for collection-wide shared queries.
+/// Ground / facility subtype metadata for non-space entity search.
+/// Pre-normalized phrase-search text for collection-wide shared queries.
 func (rcv *ETM) SEARCH_TEXT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -261,8 +261,8 @@ func (rcv *ETM) SearchText() []byte {
 	return rcv.SEARCH_TEXT()
 }
 
-// / Pre-normalized phrase-search text for collection-wide shared queries.
-// / CAT owner country code.
+/// Pre-normalized phrase-search text for collection-wide shared queries.
+/// CAT owner country code.
 func (rcv *ETM) OWNER() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -275,8 +275,8 @@ func (rcv *ETM) Owner() []byte {
 	return rcv.OWNER()
 }
 
-// / CAT owner country code.
-// / CAT operational status code.
+/// CAT owner country code.
+/// CAT operational status code.
 func (rcv *ETM) STATUS_CODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -289,8 +289,8 @@ func (rcv *ETM) StatusCode() []byte {
 	return rcv.STATUS_CODE()
 }
 
-// / CAT operational status code.
-// / CAT launch date.
+/// CAT operational status code.
+/// CAT launch date.
 func (rcv *ETM) LAUNCH_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -303,8 +303,8 @@ func (rcv *ETM) LaunchDate() []byte {
 	return rcv.LAUNCH_DATE()
 }
 
-// / CAT launch date.
-// / Launch year derived from launch date.
+/// CAT launch date.
+/// Launch year derived from launch date.
 func (rcv *ETM) LAUNCH_YEAR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -317,8 +317,8 @@ func (rcv *ETM) LaunchYear() []byte {
 	return rcv.LAUNCH_YEAR()
 }
 
-// / Launch year derived from launch date.
-// / Derived orbit regime classification.
+/// Launch year derived from launch date.
+/// Derived orbit regime classification.
 func (rcv *ETM) ORBIT_REGIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -331,8 +331,8 @@ func (rcv *ETM) OrbitRegime() []byte {
 	return rcv.ORBIT_REGIME()
 }
 
-// / Derived orbit regime classification.
-// / Orbital period in minutes.
+/// Derived orbit regime classification.
+/// Orbital period in minutes.
 func (rcv *ETM) PERIOD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -345,7 +345,7 @@ func (rcv *ETM) Period() float64 {
 	return rcv.PERIOD()
 }
 
-// / Orbital period in minutes.
+/// Orbital period in minutes.
 func (rcv *ETM) MutatePERIOD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -354,7 +354,7 @@ func (rcv *ETM) MutatePeriod(n float64) bool {
 	return rcv.MutatePERIOD(n)
 }
 
-// / Inclination in degrees.
+/// Inclination in degrees.
 func (rcv *ETM) INCLINATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -367,7 +367,7 @@ func (rcv *ETM) Inclination() float64 {
 	return rcv.INCLINATION()
 }
 
-// / Inclination in degrees.
+/// Inclination in degrees.
 func (rcv *ETM) MutateINCLINATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -376,7 +376,7 @@ func (rcv *ETM) MutateInclination(n float64) bool {
 	return rcv.MutateINCLINATION(n)
 }
 
-// / Apogee altitude in kilometers.
+/// Apogee altitude in kilometers.
 func (rcv *ETM) APOGEE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -389,7 +389,7 @@ func (rcv *ETM) Apogee() float64 {
 	return rcv.APOGEE()
 }
 
-// / Apogee altitude in kilometers.
+/// Apogee altitude in kilometers.
 func (rcv *ETM) MutateAPOGEE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(44, n)
 }
@@ -398,7 +398,7 @@ func (rcv *ETM) MutateApogee(n float64) bool {
 	return rcv.MutateAPOGEE(n)
 }
 
-// / Perigee altitude in kilometers.
+/// Perigee altitude in kilometers.
 func (rcv *ETM) PERIGEE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -411,7 +411,7 @@ func (rcv *ETM) Perigee() float64 {
 	return rcv.PERIGEE()
 }
 
-// / Perigee altitude in kilometers.
+/// Perigee altitude in kilometers.
 func (rcv *ETM) MutatePERIGEE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(46, n)
 }
@@ -420,7 +420,7 @@ func (rcv *ETM) MutatePerigee(n float64) bool {
 	return rcv.MutatePERIGEE(n)
 }
 
-// / Mean motion in revolutions per day.
+/// Mean motion in revolutions per day.
 func (rcv *ETM) MEAN_MOTION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -433,7 +433,7 @@ func (rcv *ETM) MeanMotion() float64 {
 	return rcv.MEAN_MOTION()
 }
 
-// / Mean motion in revolutions per day.
+/// Mean motion in revolutions per day.
 func (rcv *ETM) MutateMEAN_MOTION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(48, n)
 }
@@ -442,7 +442,7 @@ func (rcv *ETM) MutateMeanMotion(n float64) bool {
 	return rcv.MutateMEAN_MOTION(n)
 }
 
-// / Orbital eccentricity.
+/// Orbital eccentricity.
 func (rcv *ETM) ECCENTRICITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -455,7 +455,7 @@ func (rcv *ETM) Eccentricity() float64 {
 	return rcv.ECCENTRICITY()
 }
 
-// / Orbital eccentricity.
+/// Orbital eccentricity.
 func (rcv *ETM) MutateECCENTRICITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(50, n)
 }
@@ -464,7 +464,7 @@ func (rcv *ETM) MutateEccentricity(n float64) bool {
 	return rcv.MutateECCENTRICITY(n)
 }
 
-// / B* drag term from OMM.
+/// B* drag term from OMM.
 func (rcv *ETM) BSTAR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -477,7 +477,7 @@ func (rcv *ETM) Bstar() float64 {
 	return rcv.BSTAR()
 }
 
-// / B* drag term from OMM.
+/// B* drag term from OMM.
 func (rcv *ETM) MutateBSTAR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(52, n)
 }
@@ -486,7 +486,7 @@ func (rcv *ETM) MutateBstar(n float64) bool {
 	return rcv.MutateBSTAR(n)
 }
 
-// / Whether GP / OMM state is present for the entity.
+/// Whether GP / OMM state is present for the entity.
 func (rcv *ETM) HAS_GP() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -499,7 +499,7 @@ func (rcv *ETM) HasGp() bool {
 	return rcv.HAS_GP()
 }
 
-// / Whether GP / OMM state is present for the entity.
+/// Whether GP / OMM state is present for the entity.
 func (rcv *ETM) MutateHAS_GP(n bool) bool {
 	return rcv._tab.MutateBoolSlot(54, n)
 }
@@ -508,7 +508,7 @@ func (rcv *ETM) MutateHasGp(n bool) bool {
 	return rcv.MutateHAS_GP(n)
 }
 
-// / Reserved for forward-compatible growth.
+/// Reserved for forward-compatible growth.
 func (rcv *ETM) RESERVED(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -546,7 +546,7 @@ func (rcv *ETM) ReservedBytes() []byte {
 	return rcv.RESERVEDBytes()
 }
 
-// / Reserved for forward-compatible growth.
+/// Reserved for forward-compatible growth.
 func (rcv *ETM) MutateRESERVED(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {

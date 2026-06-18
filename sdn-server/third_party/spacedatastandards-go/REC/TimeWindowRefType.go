@@ -4,12 +4,12 @@ package REC
 
 import "strconv"
 
-// / Time window reference for command verification
+/// Time window reference for command verification
 type TimeWindowRefType int8
 
 const (
 	/// Relative to command release time
-	TimeWindowRefTypeCOMMAND_RELEASE TimeWindowRefType = 0
+	TimeWindowRefTypeCOMMAND_RELEASE           TimeWindowRefType = 0
 	/// Relative to last verifier passed
 	TimeWindowRefTypeTIME_LAST_VERIFIER_PASSED TimeWindowRefType = 1
 )

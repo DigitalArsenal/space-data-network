@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Pricing tier for a listing
+/// Pricing tier for a listing
 type PricingTier struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *PricingTier) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Tier name, e.g., "Basic", "Pro", "Enterprise"
+/// Tier name, e.g., "Basic", "Pro", "Enterprise"
 func (rcv *PricingTier) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *PricingTier) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Tier name, e.g., "Basic", "Pro", "Enterprise"
-// / Price in smallest unit (cents, satoshis, etc.)
+/// Tier name, e.g., "Basic", "Pro", "Enterprise"
+/// Price in smallest unit (cents, satoshis, etc.)
 func (rcv *PricingTier) PRICE_AMOUNT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *PricingTier) PriceAmount() uint64 {
 	return rcv.PRICE_AMOUNT()
 }
 
-// / Price in smallest unit (cents, satoshis, etc.)
+/// Price in smallest unit (cents, satoshis, etc.)
 func (rcv *PricingTier) MutatePRICE_AMOUNT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(6, n)
 }
@@ -78,7 +78,7 @@ func (rcv *PricingTier) MutatePriceAmount(n uint64) bool {
 	return rcv.MutatePRICE_AMOUNT(n)
 }
 
-// / Currency code: "USD", "ETH", "SOL", "SDN_CREDITS"
+/// Currency code: "USD", "ETH", "SOL", "SDN_CREDITS"
 func (rcv *PricingTier) PRICE_CURRENCY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,8 +91,8 @@ func (rcv *PricingTier) PriceCurrency() []byte {
 	return rcv.PRICE_CURRENCY()
 }
 
-// / Currency code: "USD", "ETH", "SOL", "SDN_CREDITS"
-// / Duration in days (0 = one-time purchase)
+/// Currency code: "USD", "ETH", "SOL", "SDN_CREDITS"
+/// Duration in days (0 = one-time purchase)
 func (rcv *PricingTier) DURATION_DAYS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,7 +105,7 @@ func (rcv *PricingTier) DurationDays() uint32 {
 	return rcv.DURATION_DAYS()
 }
 
-// / Duration in days (0 = one-time purchase)
+/// Duration in days (0 = one-time purchase)
 func (rcv *PricingTier) MutateDURATION_DAYS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }
@@ -114,7 +114,7 @@ func (rcv *PricingTier) MutateDurationDays(n uint32) bool {
 	return rcv.MutateDURATION_DAYS(n)
 }
 
-// / Rate limit in requests per hour
+/// Rate limit in requests per hour
 func (rcv *PricingTier) RATE_LIMIT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -127,7 +127,7 @@ func (rcv *PricingTier) RateLimit() uint32 {
 	return rcv.RATE_LIMIT()
 }
 
-// / Rate limit in requests per hour
+/// Rate limit in requests per hour
 func (rcv *PricingTier) MutateRATE_LIMIT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(12, n)
 }
@@ -136,7 +136,7 @@ func (rcv *PricingTier) MutateRateLimit(n uint32) bool {
 	return rcv.MutateRATE_LIMIT(n)
 }
 
-// / List of features included in this tier
+/// List of features included in this tier
 func (rcv *PricingTier) FEATURES(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -162,7 +162,7 @@ func (rcv *PricingTier) FeaturesLength() int {
 	return rcv.FEATURESLength()
 }
 
-// / List of features included in this tier
+/// List of features included in this tier
 func PricingTierStart(builder *flatbuffers.Builder) {
 	builder.StartObject(6)
 }

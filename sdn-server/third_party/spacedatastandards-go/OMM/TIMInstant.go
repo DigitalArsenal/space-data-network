@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Numeric or textual instant tagged with its time system and representation.
+/// Numeric or textual instant tagged with its time system and representation.
 type TIMInstant struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *TIMInstant) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Time system for this instant.
+/// Time system for this instant.
 func (rcv *TIMInstant) TIME_SYSTEM() timingStandard {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *TIMInstant) TimeSystem() timingStandard {
 	return rcv.TIME_SYSTEM()
 }
 
-// / Time system for this instant.
+/// Time system for this instant.
 func (rcv *TIMInstant) MutateTIME_SYSTEM(n timingStandard) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *TIMInstant) MutateTimeSystem(n timingStandard) bool {
 	return rcv.MutateTIME_SYSTEM(n)
 }
 
-// / Interpretation of JULIAN_DATE, SECONDS, and ISO8601.
+/// Interpretation of JULIAN_DATE, SECONDS, and ISO8601.
 func (rcv *TIMInstant) EPOCH_FORMAT() timEpochRepresentation {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *TIMInstant) EpochFormat() timEpochRepresentation {
 	return rcv.EPOCH_FORMAT()
 }
 
-// / Interpretation of JULIAN_DATE, SECONDS, and ISO8601.
+/// Interpretation of JULIAN_DATE, SECONDS, and ISO8601.
 func (rcv *TIMInstant) MutateEPOCH_FORMAT(n timEpochRepresentation) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -86,7 +86,7 @@ func (rcv *TIMInstant) MutateEpochFormat(n timEpochRepresentation) bool {
 	return rcv.MutateEPOCH_FORMAT(n)
 }
 
-// / Julian Date or Modified Julian Date day value, selected by EPOCH_FORMAT.
+/// Julian Date or Modified Julian Date day value, selected by EPOCH_FORMAT.
 func (rcv *TIMInstant) JULIAN_DATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *TIMInstant) JulianDate() float64 {
 	return rcv.JULIAN_DATE()
 }
 
-// / Julian Date or Modified Julian Date day value, selected by EPOCH_FORMAT.
+/// Julian Date or Modified Julian Date day value, selected by EPOCH_FORMAT.
 func (rcv *TIMInstant) MutateJULIAN_DATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *TIMInstant) MutateJulianDate(n float64) bool {
 	return rcv.MutateJULIAN_DATE(n)
 }
 
-// / Seconds for UNIX_SECONDS, GPS_SECONDS, GNSS_WEEK_SECONDS, or MISSION_ELAPSED_SECONDS.
+/// Seconds for UNIX_SECONDS, GPS_SECONDS, GNSS_WEEK_SECONDS, or MISSION_ELAPSED_SECONDS.
 func (rcv *TIMInstant) SECONDS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *TIMInstant) Seconds() float64 {
 	return rcv.SECONDS()
 }
 
-// / Seconds for UNIX_SECONDS, GPS_SECONDS, GNSS_WEEK_SECONDS, or MISSION_ELAPSED_SECONDS.
+/// Seconds for UNIX_SECONDS, GPS_SECONDS, GNSS_WEEK_SECONDS, or MISSION_ELAPSED_SECONDS.
 func (rcv *TIMInstant) MutateSECONDS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *TIMInstant) MutateSeconds(n float64) bool {
 	return rcv.MutateSECONDS(n)
 }
 
-// / ISO 8601 timestamp text for ISO8601 inputs or display outputs.
+/// ISO 8601 timestamp text for ISO8601 inputs or display outputs.
 func (rcv *TIMInstant) ISO8601() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,8 +143,8 @@ func (rcv *TIMInstant) Iso8601() []byte {
 	return rcv.ISO8601()
 }
 
-// / ISO 8601 timestamp text for ISO8601 inputs or display outputs.
-// / Additional nanoseconds beyond the fractional scalar/text value.
+/// ISO 8601 timestamp text for ISO8601 inputs or display outputs.
+/// Additional nanoseconds beyond the fractional scalar/text value.
 func (rcv *TIMInstant) SUBSECOND_NANOS() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *TIMInstant) SubsecondNanos() int32 {
 	return rcv.SUBSECOND_NANOS()
 }
 
-// / Additional nanoseconds beyond the fractional scalar/text value.
+/// Additional nanoseconds beyond the fractional scalar/text value.
 func (rcv *TIMInstant) MutateSUBSECOND_NANOS(n int32) bool {
 	return rcv._tab.MutateInt32Slot(14, n)
 }
@@ -166,7 +166,7 @@ func (rcv *TIMInstant) MutateSubsecondNanos(n int32) bool {
 	return rcv.MutateSUBSECOND_NANOS(n)
 }
 
-// / Optional application-defined epoch label for MET, MRT, or SCLK values.
+/// Optional application-defined epoch label for MET, MRT, or SCLK values.
 func (rcv *TIMInstant) EPOCH_LABEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -179,8 +179,8 @@ func (rcv *TIMInstant) EpochLabel() []byte {
 	return rcv.EPOCH_LABEL()
 }
 
-// / Optional application-defined epoch label for MET, MRT, or SCLK values.
-// / GNSS week number when EPOCH_FORMAT is GNSS_WEEK_SECONDS.
+/// Optional application-defined epoch label for MET, MRT, or SCLK values.
+/// GNSS week number when EPOCH_FORMAT is GNSS_WEEK_SECONDS.
 func (rcv *TIMInstant) GNSS_WEEK() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -193,7 +193,7 @@ func (rcv *TIMInstant) GnssWeek() int32 {
 	return rcv.GNSS_WEEK()
 }
 
-// / GNSS week number when EPOCH_FORMAT is GNSS_WEEK_SECONDS.
+/// GNSS week number when EPOCH_FORMAT is GNSS_WEEK_SECONDS.
 func (rcv *TIMInstant) MutateGNSS_WEEK(n int32) bool {
 	return rcv._tab.MutateInt32Slot(18, n)
 }
@@ -202,7 +202,7 @@ func (rcv *TIMInstant) MutateGnssWeek(n int32) bool {
 	return rcv.MutateGNSS_WEEK(n)
 }
 
-// / Whether GNSS_ROLLOVER_REFERENCE_ISO8601 should be applied.
+/// Whether GNSS_ROLLOVER_REFERENCE_ISO8601 should be applied.
 func (rcv *TIMInstant) HAS_GNSS_ROLLOVER_REFERENCE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -215,7 +215,7 @@ func (rcv *TIMInstant) HasGnssRolloverReference() bool {
 	return rcv.HAS_GNSS_ROLLOVER_REFERENCE()
 }
 
-// / Whether GNSS_ROLLOVER_REFERENCE_ISO8601 should be applied.
+/// Whether GNSS_ROLLOVER_REFERENCE_ISO8601 should be applied.
 func (rcv *TIMInstant) MutateHAS_GNSS_ROLLOVER_REFERENCE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(20, n)
 }
@@ -224,7 +224,7 @@ func (rcv *TIMInstant) MutateHasGnssRolloverReference(n bool) bool {
 	return rcv.MutateHAS_GNSS_ROLLOVER_REFERENCE(n)
 }
 
-// / Optional Orekit-style GNSS week rollover reference timestamp.
+/// Optional Orekit-style GNSS week rollover reference timestamp.
 func (rcv *TIMInstant) GNSS_ROLLOVER_REFERENCE_ISO8601() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -237,8 +237,8 @@ func (rcv *TIMInstant) GnssRolloverReferenceIso8601() []byte {
 	return rcv.GNSS_ROLLOVER_REFERENCE_ISO8601()
 }
 
-// / Optional Orekit-style GNSS week rollover reference timestamp.
-// / CCSDS time-code payload when EPOCH_FORMAT is CCSDS_TIME_CODE.
+/// Optional Orekit-style GNSS week rollover reference timestamp.
+/// CCSDS time-code payload when EPOCH_FORMAT is CCSDS_TIME_CODE.
 func (rcv *TIMInstant) CCSDS_TIME_CODE(obj *TIMCcsdsTimeCode) *TIMCcsdsTimeCode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -256,7 +256,7 @@ func (rcv *TIMInstant) CcsdsTimeCode(obj *TIMCcsdsTimeCode) *TIMCcsdsTimeCode {
 	return rcv.CCSDS_TIME_CODE(obj)
 }
 
-// / CCSDS time-code payload when EPOCH_FORMAT is CCSDS_TIME_CODE.
+/// CCSDS time-code payload when EPOCH_FORMAT is CCSDS_TIME_CODE.
 func TIMInstantStart(builder *flatbuffers.Builder) {
 	builder.StartObject(11)
 }

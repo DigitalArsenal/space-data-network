@@ -4,7 +4,7 @@ package REC
 
 import "strconv"
 
-// / Entity category for shared entity metadata index rows.
+/// Entity category for shared entity metadata index rows.
 type entityKind int8
 
 const (

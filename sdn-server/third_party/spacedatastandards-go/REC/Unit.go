@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Unit specification
+/// Unit specification
 type Unit struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *Unit) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unit description (e.g., "meters per second")
+/// Unit description (e.g., "meters per second")
 func (rcv *Unit) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *Unit) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-// / Unit description (e.g., "meters per second")
-// / Unit symbol (e.g., "m/s")
+/// Unit description (e.g., "meters per second")
+/// Unit symbol (e.g., "m/s")
 func (rcv *Unit) SYMBOL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *Unit) Symbol() []byte {
 	return rcv.SYMBOL()
 }
 
-// / Unit symbol (e.g., "m/s")
-// / Power/exponent for this unit
+/// Unit symbol (e.g., "m/s")
+/// Power/exponent for this unit
 func (rcv *Unit) POWER() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *Unit) Power() float64 {
 	return rcv.POWER()
 }
 
-// / Power/exponent for this unit
+/// Power/exponent for this unit
 func (rcv *Unit) MutatePOWER(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -92,7 +92,7 @@ func (rcv *Unit) MutatePower(n float64) bool {
 	return rcv.MutatePOWER(n)
 }
 
-// / Factor multiplier
+/// Factor multiplier
 func (rcv *Unit) FACTOR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,7 +105,7 @@ func (rcv *Unit) Factor() float64 {
 	return rcv.FACTOR()
 }
 
-// / Factor multiplier
+/// Factor multiplier
 func (rcv *Unit) MutateFACTOR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }

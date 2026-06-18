@@ -6,13 +6,13 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Batch target detection request.
-// /
-// / Sensor position and orientation are passed inline (not via an arena
-// / offset) because they are small and uniform across a batch. The target
-// / stream lives at INPUT_OFFSET as a tightly packed array of `targetState`
-// / structs from SDR; the output detection stream is written to
-// / OUTPUT_OFFSET as a tightly packed array of SDR `detectionResult` structs.
+/// Batch target detection request.
+///
+/// Sensor position and orientation are passed inline (not via an arena
+/// offset) because they are small and uniform across a batch. The target
+/// stream lives at INPUT_OFFSET as a tightly packed array of `targetState`
+/// structs from SDR; the output detection stream is written to
+/// OUTPUT_OFFSET as a tightly packed array of SDR `detectionResult` structs.
 type SNWBatchRequest struct {
 	_tab flatbuffers.Table
 }
@@ -48,7 +48,7 @@ func (rcv *SNWBatchRequest) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Sensor-configuration identifier assigned during sensor registration.
+/// Sensor-configuration identifier assigned during sensor registration.
 func (rcv *SNWBatchRequest) SENSOR_ID() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -61,7 +61,7 @@ func (rcv *SNWBatchRequest) SensorId() uint32 {
 	return rcv.SENSOR_ID()
 }
 
-// / Sensor-configuration identifier assigned during sensor registration.
+/// Sensor-configuration identifier assigned during sensor registration.
 func (rcv *SNWBatchRequest) MutateSENSOR_ID(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(4, n)
 }
@@ -70,7 +70,7 @@ func (rcv *SNWBatchRequest) MutateSensorId(n uint32) bool {
 	return rcv.MutateSENSOR_ID(n)
 }
 
-// / Sensor position in ECEF (meters).
+/// Sensor position in ECEF (meters).
 func (rcv *SNWBatchRequest) SENSOR_POS_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *SNWBatchRequest) SensorPosX() float64 {
 	return rcv.SENSOR_POS_X()
 }
 
-// / Sensor position in ECEF (meters).
+/// Sensor position in ECEF (meters).
 func (rcv *SNWBatchRequest) MutateSENSOR_POS_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -132,7 +132,7 @@ func (rcv *SNWBatchRequest) MutateSensorPosZ(n float64) bool {
 	return rcv.MutateSENSOR_POS_Z(n)
 }
 
-// / Sensor orientation as a unit quaternion (W, X, Y, Z).
+/// Sensor orientation as a unit quaternion (W, X, Y, Z).
 func (rcv *SNWBatchRequest) SENSOR_ORIENT_W() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -145,7 +145,7 @@ func (rcv *SNWBatchRequest) SensorOrientW() float64 {
 	return rcv.SENSOR_ORIENT_W()
 }
 
-// / Sensor orientation as a unit quaternion (W, X, Y, Z).
+/// Sensor orientation as a unit quaternion (W, X, Y, Z).
 func (rcv *SNWBatchRequest) MutateSENSOR_ORIENT_W(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -214,7 +214,7 @@ func (rcv *SNWBatchRequest) MutateSensorOrientZ(n float64) bool {
 	return rcv.MutateSENSOR_ORIENT_Z(n)
 }
 
-// / Byte offset in the arena where the targetState[] input stream begins.
+/// Byte offset in the arena where the targetState[] input stream begins.
 func (rcv *SNWBatchRequest) INPUT_OFFSET() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -227,7 +227,7 @@ func (rcv *SNWBatchRequest) InputOffset() uint32 {
 	return rcv.INPUT_OFFSET()
 }
 
-// / Byte offset in the arena where the targetState[] input stream begins.
+/// Byte offset in the arena where the targetState[] input stream begins.
 func (rcv *SNWBatchRequest) MutateINPUT_OFFSET(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(20, n)
 }
@@ -236,7 +236,7 @@ func (rcv *SNWBatchRequest) MutateInputOffset(n uint32) bool {
 	return rcv.MutateINPUT_OFFSET(n)
 }
 
-// / Required start alignment for INPUT_OFFSET (bytes).
+/// Required start alignment for INPUT_OFFSET (bytes).
 func (rcv *SNWBatchRequest) INPUT_ALIGNMENT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -249,7 +249,7 @@ func (rcv *SNWBatchRequest) InputAlignment() uint32 {
 	return rcv.INPUT_ALIGNMENT()
 }
 
-// / Required start alignment for INPUT_OFFSET (bytes).
+/// Required start alignment for INPUT_OFFSET (bytes).
 func (rcv *SNWBatchRequest) MutateINPUT_ALIGNMENT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(22, n)
 }
@@ -258,7 +258,7 @@ func (rcv *SNWBatchRequest) MutateInputAlignment(n uint32) bool {
 	return rcv.MutateINPUT_ALIGNMENT(n)
 }
 
-// / Number of target records at INPUT_OFFSET.
+/// Number of target records at INPUT_OFFSET.
 func (rcv *SNWBatchRequest) TARGET_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -271,7 +271,7 @@ func (rcv *SNWBatchRequest) TargetCount() uint32 {
 	return rcv.TARGET_COUNT()
 }
 
-// / Number of target records at INPUT_OFFSET.
+/// Number of target records at INPUT_OFFSET.
 func (rcv *SNWBatchRequest) MutateTARGET_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(24, n)
 }
@@ -280,8 +280,8 @@ func (rcv *SNWBatchRequest) MutateTargetCount(n uint32) bool {
 	return rcv.MutateTARGET_COUNT(n)
 }
 
-// / Byte offset in the arena where the detectionResult[] output stream
-// / will be written.
+/// Byte offset in the arena where the detectionResult[] output stream
+/// will be written.
 func (rcv *SNWBatchRequest) OUTPUT_OFFSET() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -294,8 +294,8 @@ func (rcv *SNWBatchRequest) OutputOffset() uint32 {
 	return rcv.OUTPUT_OFFSET()
 }
 
-// / Byte offset in the arena where the detectionResult[] output stream
-// / will be written.
+/// Byte offset in the arena where the detectionResult[] output stream
+/// will be written.
 func (rcv *SNWBatchRequest) MutateOUTPUT_OFFSET(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(26, n)
 }
@@ -304,7 +304,7 @@ func (rcv *SNWBatchRequest) MutateOutputOffset(n uint32) bool {
 	return rcv.MutateOUTPUT_OFFSET(n)
 }
 
-// / Required start alignment for OUTPUT_OFFSET (bytes).
+/// Required start alignment for OUTPUT_OFFSET (bytes).
 func (rcv *SNWBatchRequest) OUTPUT_ALIGNMENT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -317,7 +317,7 @@ func (rcv *SNWBatchRequest) OutputAlignment() uint32 {
 	return rcv.OUTPUT_ALIGNMENT()
 }
 
-// / Required start alignment for OUTPUT_OFFSET (bytes).
+/// Required start alignment for OUTPUT_OFFSET (bytes).
 func (rcv *SNWBatchRequest) MutateOUTPUT_ALIGNMENT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(28, n)
 }
@@ -326,7 +326,7 @@ func (rcv *SNWBatchRequest) MutateOutputAlignment(n uint32) bool {
 	return rcv.MutateOUTPUT_ALIGNMENT(n)
 }
 
-// / Current time as a Julian date.
+/// Current time as a Julian date.
 func (rcv *SNWBatchRequest) EPOCH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -339,7 +339,7 @@ func (rcv *SNWBatchRequest) Epoch() float64 {
 	return rcv.EPOCH()
 }
 
-// / Current time as a Julian date.
+/// Current time as a Julian date.
 func (rcv *SNWBatchRequest) MutateEPOCH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }

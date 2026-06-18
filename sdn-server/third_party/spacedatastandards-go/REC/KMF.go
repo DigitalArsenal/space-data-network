@@ -6,9 +6,9 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Key Material Frame
+/// Key Material Frame
 type KMF struct {
-	_tab          flatbuffers.Table
+	_tab flatbuffers.Table
 	encryptionCtx []byte
 }
 
@@ -58,7 +58,7 @@ func (rcv *KMF) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Logical key identifier used across publication and grant records.
+/// Logical key identifier used across publication and grant records.
 func (rcv *KMF) KEY_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -71,8 +71,8 @@ func (rcv *KMF) KeyId() []byte {
 	return rcv.KEY_ID()
 }
 
-// / Logical key identifier used across publication and grant records.
-// / Role the key bytes fulfill for the module flow.
+/// Logical key identifier used across publication and grant records.
+/// Role the key bytes fulfill for the module flow.
 func (rcv *KMF) ROLE() keyMaterialRole {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -85,7 +85,7 @@ func (rcv *KMF) Role() keyMaterialRole {
 	return rcv.ROLE()
 }
 
-// / Role the key bytes fulfill for the module flow.
+/// Role the key bytes fulfill for the module flow.
 func (rcv *KMF) MutateROLE(n keyMaterialRole) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -94,7 +94,7 @@ func (rcv *KMF) MutateRole(n keyMaterialRole) bool {
 	return rcv.MutateROLE(n)
 }
 
-// / Algorithm or key family for the key bytes.
+/// Algorithm or key family for the key bytes.
 func (rcv *KMF) ALGORITHM() keyMaterialAlgorithm {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -107,7 +107,7 @@ func (rcv *KMF) Algorithm() keyMaterialAlgorithm {
 	return rcv.ALGORITHM()
 }
 
-// / Algorithm or key family for the key bytes.
+/// Algorithm or key family for the key bytes.
 func (rcv *KMF) MutateALGORITHM(n keyMaterialAlgorithm) bool {
 	return rcv._tab.MutateInt8Slot(8, int8(n))
 }
@@ -116,7 +116,7 @@ func (rcv *KMF) MutateAlgorithm(n keyMaterialAlgorithm) bool {
 	return rcv.MutateALGORITHM(n)
 }
 
-// / Encoding of KEY_BYTES.
+/// Encoding of KEY_BYTES.
 func (rcv *KMF) ENCODING() keyMaterialEncoding {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -129,7 +129,7 @@ func (rcv *KMF) Encoding() keyMaterialEncoding {
 	return rcv.ENCODING()
 }
 
-// / Encoding of KEY_BYTES.
+/// Encoding of KEY_BYTES.
 func (rcv *KMF) MutateENCODING(n keyMaterialEncoding) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
@@ -138,9 +138,9 @@ func (rcv *KMF) MutateEncoding(n keyMaterialEncoding) bool {
 	return rcv.MutateENCODING(n)
 }
 
-// / Explicit key bytes when a module must receive them on a port.
-// / This may be field-encrypted using the SDS/da-flatbuffers header-first
-// / encryption flow when transported to a specific recipient.
+/// Explicit key bytes when a module must receive them on a port.
+/// This may be field-encrypted using the SDS/da-flatbuffers header-first
+/// encryption flow when transported to a specific recipient.
 func (rcv *KMF) KEY_BYTES(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -178,9 +178,9 @@ func (rcv *KMF) KeyBytesBytes() []byte {
 	return rcv.KEY_BYTESBytes()
 }
 
-// / Explicit key bytes when a module must receive them on a port.
-// / This may be field-encrypted using the SDS/da-flatbuffers header-first
-// / encryption flow when transported to a specific recipient.
+/// Explicit key bytes when a module must receive them on a port.
+/// This may be field-encrypted using the SDS/da-flatbuffers header-first
+/// encryption flow when transported to a specific recipient.
 func (rcv *KMF) MutateKEY_BYTES(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -194,7 +194,7 @@ func (rcv *KMF) MutateKeyBytes(j int, n byte) bool {
 	return rcv.MutateKEY_BYTES(j, n)
 }
 
-// / Logical version of the key material.
+/// Logical version of the key material.
 func (rcv *KMF) VERSION() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -207,7 +207,7 @@ func (rcv *KMF) Version() uint32 {
 	return rcv.VERSION()
 }
 
-// / Logical version of the key material.
+/// Logical version of the key material.
 func (rcv *KMF) MutateVERSION(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(14, n)
 }
@@ -216,7 +216,7 @@ func (rcv *KMF) MutateVersion(n uint32) bool {
 	return rcv.MutateVERSION(n)
 }
 
-// / Expiration time in unix milliseconds, or 0 if unbounded.
+/// Expiration time in unix milliseconds, or 0 if unbounded.
 func (rcv *KMF) EXPIRES_AT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -229,7 +229,7 @@ func (rcv *KMF) ExpiresAt() uint64 {
 	return rcv.EXPIRES_AT()
 }
 
-// / Expiration time in unix milliseconds, or 0 if unbounded.
+/// Expiration time in unix milliseconds, or 0 if unbounded.
 func (rcv *KMF) MutateEXPIRES_AT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(16, n)
 }

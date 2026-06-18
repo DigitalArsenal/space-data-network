@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Location specification within a container
+/// Location specification within a container
 type LocationInContainer struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *LocationInContainer) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Reference location type
+/// Reference location type
 func (rcv *LocationInContainer) REFERENCE_LOCATION() ReferenceLocationType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *LocationInContainer) ReferenceLocation() ReferenceLocationType {
 	return rcv.REFERENCE_LOCATION()
 }
 
-// / Reference location type
+/// Reference location type
 func (rcv *LocationInContainer) MutateREFERENCE_LOCATION(n ReferenceLocationType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *LocationInContainer) MutateReferenceLocation(n ReferenceLocationType)
 	return rcv.MutateREFERENCE_LOCATION(n)
 }
 
-// / Offset in bits from reference location
+/// Offset in bits from reference location
 func (rcv *LocationInContainer) OFFSET_IN_BITS() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *LocationInContainer) OffsetInBits() int32 {
 	return rcv.OFFSET_IN_BITS()
 }
 
-// / Offset in bits from reference location
+/// Offset in bits from reference location
 func (rcv *LocationInContainer) MutateOFFSET_IN_BITS(n int32) bool {
 	return rcv._tab.MutateInt32Slot(6, n)
 }

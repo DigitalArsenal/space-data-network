@@ -8,13 +8,13 @@ type bspInterpolationStatus int8
 
 const (
 	/// Interpolation completed.
-	bspInterpolationStatusOK bspInterpolationStatus = 0
+	bspInterpolationStatusOK                bspInterpolationStatus = 0
 	/// The request is missing required waypoint, time, order, or sample data.
-	bspInterpolationStatusINVALID_INPUT bspInterpolationStatus = 1
+	bspInterpolationStatusINVALID_INPUT     bspInterpolationStatus = 1
 	/// The requested polynomial order is outside the supported B-spline range.
 	bspInterpolationStatusUNSUPPORTED_ORDER bspInterpolationStatus = 2
 	/// The interpolation linear system is singular or numerically unstable.
-	bspInterpolationStatusSINGULAR_SYSTEM bspInterpolationStatus = 3
+	bspInterpolationStatusSINGULAR_SYSTEM   bspInterpolationStatus = 3
 )
 
 var EnumNamesbspInterpolationStatus = map[bspInterpolationStatus]string{

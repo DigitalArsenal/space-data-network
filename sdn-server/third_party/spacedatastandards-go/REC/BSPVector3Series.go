@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Three coordinate arrays sharing one time vector.
+/// Three coordinate arrays sharing one time vector.
 type BSPVector3Series struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *BSPVector3Series) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Sample or waypoint time tags in seconds.
+/// Sample or waypoint time tags in seconds.
 func (rcv *BSPVector3Series) T(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,7 +60,7 @@ func (rcv *BSPVector3Series) TLength() int {
 	return 0
 }
 
-// / Sample or waypoint time tags in seconds.
+/// Sample or waypoint time tags in seconds.
 func (rcv *BSPVector3Series) MutateT(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -70,7 +70,7 @@ func (rcv *BSPVector3Series) MutateT(j int, n float64) bool {
 	return false
 }
 
-// / Coordinate 1 samples.
+/// Coordinate 1 samples.
 func (rcv *BSPVector3Series) X1(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -88,7 +88,7 @@ func (rcv *BSPVector3Series) X1Length() int {
 	return 0
 }
 
-// / Coordinate 1 samples.
+/// Coordinate 1 samples.
 func (rcv *BSPVector3Series) MutateX1(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -98,7 +98,7 @@ func (rcv *BSPVector3Series) MutateX1(j int, n float64) bool {
 	return false
 }
 
-// / Coordinate 2 samples.
+/// Coordinate 2 samples.
 func (rcv *BSPVector3Series) X2(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -116,7 +116,7 @@ func (rcv *BSPVector3Series) X2Length() int {
 	return 0
 }
 
-// / Coordinate 2 samples.
+/// Coordinate 2 samples.
 func (rcv *BSPVector3Series) MutateX2(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -126,7 +126,7 @@ func (rcv *BSPVector3Series) MutateX2(j int, n float64) bool {
 	return false
 }
 
-// / Coordinate 3 samples.
+/// Coordinate 3 samples.
 func (rcv *BSPVector3Series) X3(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -144,7 +144,7 @@ func (rcv *BSPVector3Series) X3Length() int {
 	return 0
 }
 
-// / Coordinate 3 samples.
+/// Coordinate 3 samples.
 func (rcv *BSPVector3Series) MutateX3(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {

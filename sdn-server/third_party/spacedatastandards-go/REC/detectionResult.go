@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Detection result output (48 bytes, 8-byte aligned).
+/// Detection result output (48 bytes, 8-byte aligned).
 type detectionResult struct {
 	_tab flatbuffers.Struct
 }
@@ -20,7 +20,7 @@ func (rcv *detectionResult) Table() flatbuffers.Table {
 	return rcv._tab.Table
 }
 
-// / Index of target in input array.
+/// Index of target in input array.
 func (rcv *detectionResult) TARGET_INDEX() uint32 {
 	return rcv._tab.GetUint32(rcv._tab.Pos + flatbuffers.UOffsetT(0))
 }
@@ -28,8 +28,7 @@ func (rcv *detectionResult) TARGET_INDEX() uint32 {
 func (rcv *detectionResult) TargetIndex() uint32 {
 	return rcv.TARGET_INDEX()
 }
-
-// / Index of target in input array.
+/// Index of target in input array.
 func (rcv *detectionResult) MutateTARGET_INDEX(n uint32) bool {
 	return rcv._tab.MutateUint32(rcv._tab.Pos+flatbuffers.UOffsetT(0), n)
 }
@@ -38,7 +37,7 @@ func (rcv *detectionResult) MutateTargetIndex(n uint32) bool {
 	return rcv.MutateTARGET_INDEX(n)
 }
 
-// / Detection flag (1 == detected, 0 == not detected).
+/// Detection flag (1 == detected, 0 == not detected).
 func (rcv *detectionResult) DETECTED() uint32 {
 	return rcv._tab.GetUint32(rcv._tab.Pos + flatbuffers.UOffsetT(4))
 }
@@ -46,8 +45,7 @@ func (rcv *detectionResult) DETECTED() uint32 {
 func (rcv *detectionResult) Detected() uint32 {
 	return rcv.DETECTED()
 }
-
-// / Detection flag (1 == detected, 0 == not detected).
+/// Detection flag (1 == detected, 0 == not detected).
 func (rcv *detectionResult) MutateDETECTED(n uint32) bool {
 	return rcv._tab.MutateUint32(rcv._tab.Pos+flatbuffers.UOffsetT(4), n)
 }
@@ -56,7 +54,7 @@ func (rcv *detectionResult) MutateDetected(n uint32) bool {
 	return rcv.MutateDETECTED(n)
 }
 
-// / Range to target (meters).
+/// Range to target (meters).
 func (rcv *detectionResult) RANGE() float64 {
 	return rcv._tab.GetFloat64(rcv._tab.Pos + flatbuffers.UOffsetT(8))
 }
@@ -64,8 +62,7 @@ func (rcv *detectionResult) RANGE() float64 {
 func (rcv *detectionResult) Range() float64 {
 	return rcv.RANGE()
 }
-
-// / Range to target (meters).
+/// Range to target (meters).
 func (rcv *detectionResult) MutateRANGE(n float64) bool {
 	return rcv._tab.MutateFloat64(rcv._tab.Pos+flatbuffers.UOffsetT(8), n)
 }
@@ -74,7 +71,7 @@ func (rcv *detectionResult) MutateRange(n float64) bool {
 	return rcv.MutateRANGE(n)
 }
 
-// / Signal-to-noise ratio (dB).
+/// Signal-to-noise ratio (dB).
 func (rcv *detectionResult) SNR() float64 {
 	return rcv._tab.GetFloat64(rcv._tab.Pos + flatbuffers.UOffsetT(16))
 }
@@ -82,8 +79,7 @@ func (rcv *detectionResult) SNR() float64 {
 func (rcv *detectionResult) Snr() float64 {
 	return rcv.SNR()
 }
-
-// / Signal-to-noise ratio (dB).
+/// Signal-to-noise ratio (dB).
 func (rcv *detectionResult) MutateSNR(n float64) bool {
 	return rcv._tab.MutateFloat64(rcv._tab.Pos+flatbuffers.UOffsetT(16), n)
 }
@@ -92,7 +88,7 @@ func (rcv *detectionResult) MutateSnr(n float64) bool {
 	return rcv.MutateSNR(n)
 }
 
-// / Doppler shift (Hz).
+/// Doppler shift (Hz).
 func (rcv *detectionResult) DOPPLER() float64 {
 	return rcv._tab.GetFloat64(rcv._tab.Pos + flatbuffers.UOffsetT(24))
 }
@@ -100,8 +96,7 @@ func (rcv *detectionResult) DOPPLER() float64 {
 func (rcv *detectionResult) Doppler() float64 {
 	return rcv.DOPPLER()
 }
-
-// / Doppler shift (Hz).
+/// Doppler shift (Hz).
 func (rcv *detectionResult) MutateDOPPLER(n float64) bool {
 	return rcv._tab.MutateFloat64(rcv._tab.Pos+flatbuffers.UOffsetT(24), n)
 }
@@ -110,7 +105,7 @@ func (rcv *detectionResult) MutateDoppler(n float64) bool {
 	return rcv.MutateDOPPLER(n)
 }
 
-// / Probability of detection (0.0 – 1.0).
+/// Probability of detection (0.0 – 1.0).
 func (rcv *detectionResult) PROBABILITY() float64 {
 	return rcv._tab.GetFloat64(rcv._tab.Pos + flatbuffers.UOffsetT(32))
 }
@@ -118,8 +113,7 @@ func (rcv *detectionResult) PROBABILITY() float64 {
 func (rcv *detectionResult) Probability() float64 {
 	return rcv.PROBABILITY()
 }
-
-// / Probability of detection (0.0 – 1.0).
+/// Probability of detection (0.0 – 1.0).
 func (rcv *detectionResult) MutatePROBABILITY(n float64) bool {
 	return rcv._tab.MutateFloat64(rcv._tab.Pos+flatbuffers.UOffsetT(32), n)
 }
@@ -128,7 +122,7 @@ func (rcv *detectionResult) MutateProbability(n float64) bool {
 	return rcv.MutatePROBABILITY(n)
 }
 
-// / Detection flags (detectionResultFlags bitfield).
+/// Detection flags (detectionResultFlags bitfield).
 func (rcv *detectionResult) FLAGS() uint32 {
 	return rcv._tab.GetUint32(rcv._tab.Pos + flatbuffers.UOffsetT(40))
 }
@@ -136,8 +130,7 @@ func (rcv *detectionResult) FLAGS() uint32 {
 func (rcv *detectionResult) Flags() uint32 {
 	return rcv.FLAGS()
 }
-
-// / Detection flags (detectionResultFlags bitfield).
+/// Detection flags (detectionResultFlags bitfield).
 func (rcv *detectionResult) MutateFLAGS(n uint32) bool {
 	return rcv._tab.MutateUint32(rcv._tab.Pos+flatbuffers.UOffsetT(40), n)
 }
@@ -146,7 +139,7 @@ func (rcv *detectionResult) MutateFlags(n uint32) bool {
 	return rcv.MutateFLAGS(n)
 }
 
-// / Reserved for future use.
+/// Reserved for future use.
 func (rcv *detectionResult) RESERVED() uint32 {
 	return rcv._tab.GetUint32(rcv._tab.Pos + flatbuffers.UOffsetT(44))
 }
@@ -154,8 +147,7 @@ func (rcv *detectionResult) RESERVED() uint32 {
 func (rcv *detectionResult) Reserved() uint32 {
 	return rcv.RESERVED()
 }
-
-// / Reserved for future use.
+/// Reserved for future use.
 func (rcv *detectionResult) MutateRESERVED(n uint32) bool {
 	return rcv._tab.MutateUint32(rcv._tab.Pos+flatbuffers.UOffsetT(44), n)
 }

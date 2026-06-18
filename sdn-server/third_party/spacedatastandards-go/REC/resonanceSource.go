@@ -4,7 +4,7 @@ package REC
 
 import "strconv"
 
-// / Enum to represent resonance models
+/// Enum to represent resonance models
 type resonanceSource int8
 
 const (

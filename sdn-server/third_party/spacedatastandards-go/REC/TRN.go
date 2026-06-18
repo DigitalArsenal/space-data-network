@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Terrain Models
+/// Terrain Models
 type TRN struct {
 	_tab flatbuffers.Table
 }

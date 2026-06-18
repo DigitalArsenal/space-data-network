@@ -6,8 +6,8 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Fastest Path Compute — envelope message for weighted graph ingestion and
-// / single-source shortest path execution.
+/// Fastest Path Compute — envelope message for weighted graph ingestion and
+/// single-source shortest path execution.
 type FPC struct {
 	_tab flatbuffers.Table
 }

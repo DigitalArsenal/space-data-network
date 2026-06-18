@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Aggregate argument type
+/// Aggregate argument type
 type AggregateArgumentType struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *AggregateArgumentType) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Type name
+/// Type name
 func (rcv *AggregateArgumentType) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *AggregateArgumentType) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Type name
-// / Short description
+/// Type name
+/// Short description
 func (rcv *AggregateArgumentType) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *AggregateArgumentType) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-// / Short description
-// / Long description
+/// Short description
+/// Long description
 func (rcv *AggregateArgumentType) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *AggregateArgumentType) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-// / Long description
-// / Member list
+/// Long description
+/// Member list
 func (rcv *AggregateArgumentType) MEMBERS(obj *AggregateMember, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -116,7 +116,7 @@ func (rcv *AggregateArgumentType) MembersLength() int {
 	return rcv.MEMBERSLength()
 }
 
-// / Member list
+/// Member list
 func AggregateArgumentTypeStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

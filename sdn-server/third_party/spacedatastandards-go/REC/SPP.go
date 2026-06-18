@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Space Packet Protocol (CCSDS 133.0-B-1)
+/// Space Packet Protocol (CCSDS 133.0-B-1)
 type SPP struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *SPP) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Packet version number
+/// Packet version number
 func (rcv *SPP) VERSION() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *SPP) Version() byte {
 	return rcv.VERSION()
 }
 
-// / Packet version number
+/// Packet version number
 func (rcv *SPP) MutateVERSION(n byte) bool {
 	return rcv._tab.MutateByteSlot(4, n)
 }
@@ -76,7 +76,7 @@ func (rcv *SPP) MutateVersion(n byte) bool {
 	return rcv.MutateVERSION(n)
 }
 
-// / Packet type (TM or TC)
+/// Packet type (TM or TC)
 func (rcv *SPP) PACKET_TYPE() packetKind {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,7 +89,7 @@ func (rcv *SPP) PacketType() packetKind {
 	return rcv.PACKET_TYPE()
 }
 
-// / Packet type (TM or TC)
+/// Packet type (TM or TC)
 func (rcv *SPP) MutatePACKET_TYPE(n packetKind) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -98,7 +98,7 @@ func (rcv *SPP) MutatePacketType(n packetKind) bool {
 	return rcv.MutatePACKET_TYPE(n)
 }
 
-// / Secondary header flag
+/// Secondary header flag
 func (rcv *SPP) SEC_HDR_FLAG() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -111,7 +111,7 @@ func (rcv *SPP) SecHdrFlag() bool {
 	return rcv.SEC_HDR_FLAG()
 }
 
-// / Secondary header flag
+/// Secondary header flag
 func (rcv *SPP) MutateSEC_HDR_FLAG(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }
@@ -120,7 +120,7 @@ func (rcv *SPP) MutateSecHdrFlag(n bool) bool {
 	return rcv.MutateSEC_HDR_FLAG(n)
 }
 
-// / Application Process Identifier
+/// Application Process Identifier
 func (rcv *SPP) APID() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -133,7 +133,7 @@ func (rcv *SPP) Apid() uint16 {
 	return rcv.APID()
 }
 
-// / Application Process Identifier
+/// Application Process Identifier
 func (rcv *SPP) MutateAPID(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(10, n)
 }
@@ -142,7 +142,7 @@ func (rcv *SPP) MutateApid(n uint16) bool {
 	return rcv.MutateAPID(n)
 }
 
-// / Sequence flags (00=continuation, 01=first, 10=last, 11=standalone)
+/// Sequence flags (00=continuation, 01=first, 10=last, 11=standalone)
 func (rcv *SPP) SEQUENCE_FLAGS() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -155,7 +155,7 @@ func (rcv *SPP) SequenceFlags() byte {
 	return rcv.SEQUENCE_FLAGS()
 }
 
-// / Sequence flags (00=continuation, 01=first, 10=last, 11=standalone)
+/// Sequence flags (00=continuation, 01=first, 10=last, 11=standalone)
 func (rcv *SPP) MutateSEQUENCE_FLAGS(n byte) bool {
 	return rcv._tab.MutateByteSlot(12, n)
 }
@@ -164,7 +164,7 @@ func (rcv *SPP) MutateSequenceFlags(n byte) bool {
 	return rcv.MutateSEQUENCE_FLAGS(n)
 }
 
-// / Sequence count
+/// Sequence count
 func (rcv *SPP) SEQUENCE_COUNT() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -177,7 +177,7 @@ func (rcv *SPP) SequenceCount() uint16 {
 	return rcv.SEQUENCE_COUNT()
 }
 
-// / Sequence count
+/// Sequence count
 func (rcv *SPP) MutateSEQUENCE_COUNT(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(14, n)
 }
@@ -186,7 +186,7 @@ func (rcv *SPP) MutateSequenceCount(n uint16) bool {
 	return rcv.MutateSEQUENCE_COUNT(n)
 }
 
-// / Data length minus 1
+/// Data length minus 1
 func (rcv *SPP) DATA_LENGTH() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -199,7 +199,7 @@ func (rcv *SPP) DataLength() uint16 {
 	return rcv.DATA_LENGTH()
 }
 
-// / Data length minus 1
+/// Data length minus 1
 func (rcv *SPP) MutateDATA_LENGTH(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(16, n)
 }
@@ -208,7 +208,7 @@ func (rcv *SPP) MutateDataLength(n uint16) bool {
 	return rcv.MutateDATA_LENGTH(n)
 }
 
-// / Packet data zone
+/// Packet data zone
 func (rcv *SPP) DATA(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -246,7 +246,7 @@ func (rcv *SPP) DataBytes() []byte {
 	return rcv.DATABytes()
 }
 
-// / Packet data zone
+/// Packet data zone
 func (rcv *SPP) MutateDATA(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {

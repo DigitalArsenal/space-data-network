@@ -8,11 +8,11 @@ type timCcsdsTimeCodeKind int8
 
 const (
 	/// No CCSDS time code selected.
-	timCcsdsTimeCodeKindNONE timCcsdsTimeCodeKind = 0
+	timCcsdsTimeCodeKindNONE               timCcsdsTimeCodeKind = 0
 	/// CCSDS Unsegmented Time Code (CUC).
-	timCcsdsTimeCodeKindUNSEGMENTED timCcsdsTimeCodeKind = 1
+	timCcsdsTimeCodeKindUNSEGMENTED        timCcsdsTimeCodeKind = 1
 	/// CCSDS Day Segmented Time Code (CDS).
-	timCcsdsTimeCodeKindDAY_SEGMENTED timCcsdsTimeCodeKind = 2
+	timCcsdsTimeCodeKindDAY_SEGMENTED      timCcsdsTimeCodeKind = 2
 	/// CCSDS Calendar Segmented Time Code (CCS).
 	timCcsdsTimeCodeKindCALENDAR_SEGMENTED timCcsdsTimeCodeKind = 3
 )

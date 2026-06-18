@@ -4,22 +4,22 @@ package STF
 
 import "strconv"
 
-// / Payment method accepted
+/// Payment method accepted
 type paymentMethod int8
 
 const (
 	/// Ethereum cryptocurrency
-	paymentMethodCrypto_ETH paymentMethod = 0
+	paymentMethodCrypto_ETH  paymentMethod = 0
 	/// Solana cryptocurrency
-	paymentMethodCrypto_SOL paymentMethod = 1
+	paymentMethodCrypto_SOL  paymentMethod = 1
 	/// Bitcoin cryptocurrency
-	paymentMethodCrypto_BTC paymentMethod = 2
+	paymentMethodCrypto_BTC  paymentMethod = 2
 	/// Internal SDN credits system
 	paymentMethodSDN_Credits paymentMethod = 3
 	/// Fiat payment via Stripe
 	paymentMethodFiat_Stripe paymentMethod = 4
 	/// Free/open data
-	paymentMethodFree paymentMethod = 5
+	paymentMethodFree        paymentMethod = 5
 )
 
 var EnumNamespaymentMethod = map[paymentMethod]string{

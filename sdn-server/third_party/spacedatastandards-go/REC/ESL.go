@@ -6,9 +6,9 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Entity / Standards Link — join-table row connecting a host-local entity
-// / metadata record to a standards record index row, enabling cascade-safe
-// / mutation and cross-plugin query ownership.
+/// Entity / Standards Link — join-table row connecting a host-local entity
+/// metadata record to a standards record index row, enabling cascade-safe
+/// mutation and cross-plugin query ownership.
 type ESL struct {
 	_tab flatbuffers.Table
 }
@@ -56,7 +56,7 @@ func (rcv *ESL) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Stable local link key for one entity / record association.
+/// Stable local link key for one entity / record association.
 func (rcv *ESL) LINK_KEY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *ESL) LinkKey() []byte {
 	return rcv.LINK_KEY()
 }
 
-// / Stable local link key for one entity / record association.
-// / Stable host-local entity id on the entity side of the association.
+/// Stable local link key for one entity / record association.
+/// Stable host-local entity id on the entity side of the association.
 func (rcv *ESL) ENTITY_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *ESL) EntityId() []byte {
 	return rcv.ENTITY_ID()
 }
 
-// / Stable host-local entity id on the entity side of the association.
-// / Stable local entity metadata record key (for example `ENTITY:<id>`).
+/// Stable host-local entity id on the entity side of the association.
+/// Stable local entity metadata record key (for example `ENTITY:<id>`).
 func (rcv *ESL) ENTITY_RECORD_KEY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *ESL) EntityRecordKey() []byte {
 	return rcv.ENTITY_RECORD_KEY()
 }
 
-// / Stable local entity metadata record key (for example `ENTITY:<id>`).
-// / FlatSQL row id for the linked entity metadata row when known.
+/// Stable local entity metadata record key (for example `ENTITY:<id>`).
+/// FlatSQL row id for the linked entity metadata row when known.
 func (rcv *ESL) ENTITY_ROWID() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -111,7 +111,7 @@ func (rcv *ESL) EntityRowid() float64 {
 	return rcv.ENTITY_ROWID()
 }
 
-// / FlatSQL row id for the linked entity metadata row when known.
+/// FlatSQL row id for the linked entity metadata row when known.
 func (rcv *ESL) MutateENTITY_ROWID(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -120,7 +120,7 @@ func (rcv *ESL) MutateEntityRowid(n float64) bool {
 	return rcv.MutateENTITY_ROWID(n)
 }
 
-// / Stable local standards record key on the record side of the association.
+/// Stable local standards record key on the record side of the association.
 func (rcv *ESL) RECORD_KEY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -133,8 +133,8 @@ func (rcv *ESL) RecordKey() []byte {
 	return rcv.RECORD_KEY()
 }
 
-// / Stable local standards record key on the record side of the association.
-// / SDS schema family for the linked record (`OMM`, `CAT`, `OEM`, `CDM`, etc.).
+/// Stable local standards record key on the record side of the association.
+/// SDS schema family for the linked record (`OMM`, `CAT`, `OEM`, `CDM`, etc.).
 func (rcv *ESL) SCHEMA_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -147,8 +147,8 @@ func (rcv *ESL) SchemaName() []byte {
 	return rcv.SCHEMA_NAME()
 }
 
-// / SDS schema family for the linked record (`OMM`, `CAT`, `OEM`, `CDM`, etc.).
-// / FlatSQL row id for the linked standards record row when known.
+/// SDS schema family for the linked record (`OMM`, `CAT`, `OEM`, `CDM`, etc.).
+/// FlatSQL row id for the linked standards record row when known.
 func (rcv *ESL) RECORD_ROWID() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -161,7 +161,7 @@ func (rcv *ESL) RecordRowid() float64 {
 	return rcv.RECORD_ROWID()
 }
 
-// / FlatSQL row id for the linked standards record row when known.
+/// FlatSQL row id for the linked standards record row when known.
 func (rcv *ESL) MutateRECORD_ROWID(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -170,7 +170,7 @@ func (rcv *ESL) MutateRecordRowid(n float64) bool {
 	return rcv.MutateRECORD_ROWID(n)
 }
 
-// / Whether entity deletion should cascade to the linked standards record.
+/// Whether entity deletion should cascade to the linked standards record.
 func (rcv *ESL) CASCADE_DELETE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -183,7 +183,7 @@ func (rcv *ESL) CascadeDelete() bool {
 	return rcv.CASCADE_DELETE()
 }
 
-// / Whether entity deletion should cascade to the linked standards record.
+/// Whether entity deletion should cascade to the linked standards record.
 func (rcv *ESL) MutateCASCADE_DELETE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(18, n)
 }
@@ -192,7 +192,7 @@ func (rcv *ESL) MutateCascadeDelete(n bool) bool {
 	return rcv.MutateCASCADE_DELETE(n)
 }
 
-// / Milliseconds since epoch when the association was last refreshed.
+/// Milliseconds since epoch when the association was last refreshed.
 func (rcv *ESL) UPDATED_AT_MS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -205,7 +205,7 @@ func (rcv *ESL) UpdatedAtMs() float64 {
 	return rcv.UPDATED_AT_MS()
 }
 
-// / Milliseconds since epoch when the association was last refreshed.
+/// Milliseconds since epoch when the association was last refreshed.
 func (rcv *ESL) MutateUPDATED_AT_MS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -214,7 +214,7 @@ func (rcv *ESL) MutateUpdatedAtMs(n float64) bool {
 	return rcv.MutateUPDATED_AT_MS(n)
 }
 
-// / Reserved for forward-compatible growth.
+/// Reserved for forward-compatible growth.
 func (rcv *ESL) RESERVED(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -252,7 +252,7 @@ func (rcv *ESL) ReservedBytes() []byte {
 	return rcv.RESERVEDBytes()
 }
 
-// / Reserved for forward-compatible growth.
+/// Reserved for forward-compatible growth.
 func (rcv *ESL) MutateRESERVED(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {

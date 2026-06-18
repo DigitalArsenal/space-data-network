@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Point geometry
+/// Point geometry
 type KMLPoint struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLPoint) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Coordinate
+/// Coordinate
 func (rcv *KMLPoint) COORDINATES(obj *KMLCoordinate) *KMLCoordinate {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *KMLPoint) Coordinates(obj *KMLCoordinate) *KMLCoordinate {
 	return rcv.COORDINATES(obj)
 }
 
-// / Coordinate
-// / Altitude mode
+/// Coordinate
+/// Altitude mode
 func (rcv *KMLPoint) ALTITUDE_MODE() KMLAltitudeMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -74,7 +74,7 @@ func (rcv *KMLPoint) AltitudeMode() KMLAltitudeMode {
 	return rcv.ALTITUDE_MODE()
 }
 
-// / Altitude mode
+/// Altitude mode
 func (rcv *KMLPoint) MutateALTITUDE_MODE(n KMLAltitudeMode) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -83,7 +83,7 @@ func (rcv *KMLPoint) MutateAltitudeMode(n KMLAltitudeMode) bool {
 	return rcv.MutateALTITUDE_MODE(n)
 }
 
-// / Whether to extrude to ground
+/// Whether to extrude to ground
 func (rcv *KMLPoint) EXTRUDE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -96,7 +96,7 @@ func (rcv *KMLPoint) Extrude() bool {
 	return rcv.EXTRUDE()
 }
 
-// / Whether to extrude to ground
+/// Whether to extrude to ground
 func (rcv *KMLPoint) MutateEXTRUDE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }

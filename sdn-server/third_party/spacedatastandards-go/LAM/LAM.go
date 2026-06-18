@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Launch Ascent Message
+/// Launch Ascent Message
 type LAM struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *LAM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Producer-defined message identifier.
+/// Producer-defined message identifier.
 func (rcv *LAM) MESSAGE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *LAM) MessageId() []byte {
 	return rcv.MESSAGE_ID()
 }
 
-// / Producer-defined message identifier.
-// / Message creation date in ISO 8601 UTC format.
+/// Producer-defined message identifier.
+/// Message creation date in ISO 8601 UTC format.
 func (rcv *LAM) CREATION_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *LAM) CreationDate() []byte {
 	return rcv.CREATION_DATE()
 }
 
-// / Message creation date in ISO 8601 UTC format.
-// / Creating agency, application, or service.
+/// Message creation date in ISO 8601 UTC format.
+/// Creating agency, application, or service.
 func (rcv *LAM) ORIGINATOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *LAM) Originator() []byte {
 	return rcv.ORIGINATOR()
 }
 
-// / Creating agency, application, or service.
-// / Mission name.
+/// Creating agency, application, or service.
+/// Mission name.
 func (rcv *LAM) MISSION_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *LAM) MissionName() []byte {
 	return rcv.MISSION_NAME()
 }
 
-// / Mission name.
-// / Vehicle name.
+/// Mission name.
+/// Vehicle name.
 func (rcv *LAM) VEHICLE_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *LAM) VehicleName() []byte {
 	return rcv.VEHICLE_NAME()
 }
 
-// / Vehicle name.
-// / Time system used by all epochs.
+/// Vehicle name.
+/// Time system used by all epochs.
 func (rcv *LAM) TIME_SYSTEM() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,8 +137,8 @@ func (rcv *LAM) TimeSystem() []byte {
 	return rcv.TIME_SYSTEM()
 }
 
-// / Time system used by all epochs.
-// / Reference frame for trajectory data.
+/// Time system used by all epochs.
+/// Reference frame for trajectory data.
 func (rcv *LAM) REF_FRAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -151,8 +151,8 @@ func (rcv *LAM) RefFrame() []byte {
 	return rcv.REF_FRAME()
 }
 
-// / Reference frame for trajectory data.
-// / Launch epoch in ISO 8601 UTC format.
+/// Reference frame for trajectory data.
+/// Launch epoch in ISO 8601 UTC format.
 func (rcv *LAM) LAUNCH_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -165,8 +165,8 @@ func (rcv *LAM) LaunchEpoch() []byte {
 	return rcv.LAUNCH_EPOCH()
 }
 
-// / Launch epoch in ISO 8601 UTC format.
-// / Evaluation start epoch in ISO 8601 UTC format.
+/// Launch epoch in ISO 8601 UTC format.
+/// Evaluation start epoch in ISO 8601 UTC format.
 func (rcv *LAM) START_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -179,8 +179,8 @@ func (rcv *LAM) StartTime() []byte {
 	return rcv.START_TIME()
 }
 
-// / Evaluation start epoch in ISO 8601 UTC format.
-// / Evaluation stop epoch in ISO 8601 UTC format.
+/// Evaluation start epoch in ISO 8601 UTC format.
+/// Evaluation stop epoch in ISO 8601 UTC format.
 func (rcv *LAM) STOP_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -193,8 +193,8 @@ func (rcv *LAM) StopTime() []byte {
 	return rcv.STOP_TIME()
 }
 
-// / Evaluation stop epoch in ISO 8601 UTC format.
-// / Uniform propagation step size in seconds.
+/// Evaluation stop epoch in ISO 8601 UTC format.
+/// Uniform propagation step size in seconds.
 func (rcv *LAM) STEP_SIZE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -207,7 +207,7 @@ func (rcv *LAM) StepSize() float64 {
 	return rcv.STEP_SIZE()
 }
 
-// / Uniform propagation step size in seconds.
+/// Uniform propagation step size in seconds.
 func (rcv *LAM) MutateSTEP_SIZE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -216,7 +216,7 @@ func (rcv *LAM) MutateStepSize(n float64) bool {
 	return rcv.MutateSTEP_SIZE(n)
 }
 
-// / Source launch data message.
+/// Source launch data message.
 func (rcv *LAM) LAUNCH_DATA(obj *LDM) *LDM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -234,8 +234,8 @@ func (rcv *LAM) LaunchData(obj *LDM) *LDM {
 	return rcv.LAUNCH_DATA(obj)
 }
 
-// / Source launch data message.
-// / Rocket configuration used by the simulation.
+/// Source launch data message.
+/// Rocket configuration used by the simulation.
 func (rcv *LAM) ROCKET_CONFIGURATION(obj *ROC) *ROC {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -253,8 +253,8 @@ func (rcv *LAM) RocketConfiguration(obj *ROC) *ROC {
 	return rcv.ROCKET_CONFIGURATION(obj)
 }
 
-// / Rocket configuration used by the simulation.
-// / Launch event records used as source or result context.
+/// Rocket configuration used by the simulation.
+/// Launch event records used as source or result context.
 func (rcv *LAM) EVENT_RECORDS(obj *LNE, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -286,8 +286,8 @@ func (rcv *LAM) EventRecordsLength() int {
 	return rcv.EVENT_RECORDSLength()
 }
 
-// / Launch event records used as source or result context.
-// / Launch detection records used as source or result context.
+/// Launch event records used as source or result context.
+/// Launch detection records used as source or result context.
 func (rcv *LAM) DETECTIONS(obj *LND, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -319,8 +319,8 @@ func (rcv *LAM) DetectionsLength() int {
 	return rcv.DETECTIONSLength()
 }
 
-// / Launch detection records used as source or result context.
-// / Boost or missile-track style records used as source or result context.
+/// Launch detection records used as source or result context.
+/// Boost or missile-track style records used as source or result context.
 func (rcv *LAM) BOOST_TRACKS(obj *MST, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -352,8 +352,8 @@ func (rcv *LAM) BoostTracksLength() int {
 	return rcv.BOOST_TRACKSLength()
 }
 
-// / Boost or missile-track style records used as source or result context.
-// / Burnout vectors produced or consumed by the ascent simulation.
+/// Boost or missile-track style records used as source or result context.
+/// Burnout vectors produced or consumed by the ascent simulation.
 func (rcv *LAM) BURN_OUT_VECTORS(obj *BOV, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -385,8 +385,8 @@ func (rcv *LAM) BurnOutVectorsLength() int {
 	return rcv.BURN_OUT_VECTORSLength()
 }
 
-// / Burnout vectors produced or consumed by the ascent simulation.
-// / Produced or consumed ephemeris.
+/// Burnout vectors produced or consumed by the ascent simulation.
+/// Produced or consumed ephemeris.
 func (rcv *LAM) TRAJECTORY_OEM(obj *OEM) *OEM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -404,8 +404,8 @@ func (rcv *LAM) TrajectoryOem(obj *OEM) *OEM {
 	return rcv.TRAJECTORY_OEM(obj)
 }
 
-// / Produced or consumed ephemeris.
-// / Produced or consumed comprehensive trajectory.
+/// Produced or consumed ephemeris.
+/// Produced or consumed comprehensive trajectory.
 func (rcv *LAM) TRAJECTORY_OCM(obj *OCM) *OCM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -423,8 +423,8 @@ func (rcv *LAM) TrajectoryOcm(obj *OCM) *OCM {
 	return rcv.TRAJECTORY_OCM(obj)
 }
 
-// / Produced or consumed comprehensive trajectory.
-// / Atmosphere model request used by the ascent analysis.
+/// Produced or consumed comprehensive trajectory.
+/// Atmosphere model request used by the ascent analysis.
 func (rcv *LAM) ATMOSPHERE(obj *ATM) *ATM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -442,8 +442,8 @@ func (rcv *LAM) Atmosphere(obj *ATM) *ATM {
 	return rcv.ATMOSPHERE(obj)
 }
 
-// / Atmosphere model request used by the ascent analysis.
-// / Hypersonic conditions computed along the ascent trajectory.
+/// Atmosphere model request used by the ascent analysis.
+/// Hypersonic conditions computed along the ascent trajectory.
 func (rcv *LAM) HYPERSONIC_CONDITIONS(obj *HFC) *HFC {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -461,8 +461,8 @@ func (rcv *LAM) HypersonicConditions(obj *HFC) *HFC {
 	return rcv.HYPERSONIC_CONDITIONS(obj)
 }
 
-// / Hypersonic conditions computed along the ascent trajectory.
-// / Propagator module, engine, or adapter name.
+/// Hypersonic conditions computed along the ascent trajectory.
+/// Propagator module, engine, or adapter name.
 func (rcv *LAM) PROPAGATOR_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -475,8 +475,8 @@ func (rcv *LAM) PropagatorName() []byte {
 	return rcv.PROPAGATOR_NAME()
 }
 
-// / Propagator module, engine, or adapter name.
-// / Propagator module, engine, or adapter version.
+/// Propagator module, engine, or adapter name.
+/// Propagator module, engine, or adapter version.
 func (rcv *LAM) PROPAGATOR_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -489,8 +489,8 @@ func (rcv *LAM) PropagatorVersion() []byte {
 	return rcv.PROPAGATOR_VERSION()
 }
 
-// / Propagator module, engine, or adapter version.
-// / Guidance model name.
+/// Propagator module, engine, or adapter version.
+/// Guidance model name.
 func (rcv *LAM) GUIDANCE_MODEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -503,8 +503,8 @@ func (rcv *LAM) GuidanceModel() []byte {
 	return rcv.GUIDANCE_MODEL()
 }
 
-// / Guidance model name.
-// / Thrust model name.
+/// Guidance model name.
+/// Thrust model name.
 func (rcv *LAM) THRUST_MODEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -517,8 +517,8 @@ func (rcv *LAM) ThrustModel() []byte {
 	return rcv.THRUST_MODEL()
 }
 
-// / Thrust model name.
-// / Aerodynamic model name.
+/// Thrust model name.
+/// Aerodynamic model name.
 func (rcv *LAM) AERODYNAMIC_MODEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -531,8 +531,8 @@ func (rcv *LAM) AerodynamicModel() []byte {
 	return rcv.AERODYNAMIC_MODEL()
 }
 
-// / Aerodynamic model name.
-// / Current or terminal mission phase.
+/// Aerodynamic model name.
+/// Current or terminal mission phase.
 func (rcv *LAM) PHASE() lamMissionPhase {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -545,7 +545,7 @@ func (rcv *LAM) Phase() lamMissionPhase {
 	return rcv.PHASE()
 }
 
-// / Current or terminal mission phase.
+/// Current or terminal mission phase.
 func (rcv *LAM) MutatePHASE(n lamMissionPhase) bool {
 	return rcv._tab.MutateInt8Slot(56, int8(n))
 }
@@ -554,7 +554,7 @@ func (rcv *LAM) MutatePhase(n lamMissionPhase) bool {
 	return rcv.MutatePHASE(n)
 }
 
-// / Aggregate constraint status.
+/// Aggregate constraint status.
 func (rcv *LAM) CONSTRAINT_STATUS() lamConstraintStatus {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -567,7 +567,7 @@ func (rcv *LAM) ConstraintStatus() lamConstraintStatus {
 	return rcv.CONSTRAINT_STATUS()
 }
 
-// / Aggregate constraint status.
+/// Aggregate constraint status.
 func (rcv *LAM) MutateCONSTRAINT_STATUS(n lamConstraintStatus) bool {
 	return rcv._tab.MutateInt8Slot(58, int8(n))
 }
@@ -576,7 +576,7 @@ func (rcv *LAM) MutateConstraintStatus(n lamConstraintStatus) bool {
 	return rcv.MutateCONSTRAINT_STATUS(n)
 }
 
-// / Time from launch samples in seconds.
+/// Time from launch samples in seconds.
 func (rcv *LAM) TIME_FROM_LAUNCH_S(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -602,7 +602,7 @@ func (rcv *LAM) TimeFromLaunchSLength() int {
 	return rcv.TIME_FROM_LAUNCH_SLength()
 }
 
-// / Time from launch samples in seconds.
+/// Time from launch samples in seconds.
 func (rcv *LAM) MutateTIME_FROM_LAUNCH_S(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -616,7 +616,7 @@ func (rcv *LAM) MutateTimeFromLaunchS(j int, n float64) bool {
 	return rcv.MutateTIME_FROM_LAUNCH_S(j, n)
 }
 
-// / Geodetic latitude samples in degrees.
+/// Geodetic latitude samples in degrees.
 func (rcv *LAM) LATITUDE_DEG(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -642,7 +642,7 @@ func (rcv *LAM) LatitudeDegLength() int {
 	return rcv.LATITUDE_DEGLength()
 }
 
-// / Geodetic latitude samples in degrees.
+/// Geodetic latitude samples in degrees.
 func (rcv *LAM) MutateLATITUDE_DEG(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -656,7 +656,7 @@ func (rcv *LAM) MutateLatitudeDeg(j int, n float64) bool {
 	return rcv.MutateLATITUDE_DEG(j, n)
 }
 
-// / Geodetic longitude samples in degrees.
+/// Geodetic longitude samples in degrees.
 func (rcv *LAM) LONGITUDE_DEG(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -682,7 +682,7 @@ func (rcv *LAM) LongitudeDegLength() int {
 	return rcv.LONGITUDE_DEGLength()
 }
 
-// / Geodetic longitude samples in degrees.
+/// Geodetic longitude samples in degrees.
 func (rcv *LAM) MutateLONGITUDE_DEG(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -696,7 +696,7 @@ func (rcv *LAM) MutateLongitudeDeg(j int, n float64) bool {
 	return rcv.MutateLONGITUDE_DEG(j, n)
 }
 
-// / Altitude samples in meters.
+/// Altitude samples in meters.
 func (rcv *LAM) ALTITUDE_M(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
@@ -722,7 +722,7 @@ func (rcv *LAM) AltitudeMLength() int {
 	return rcv.ALTITUDE_MLength()
 }
 
-// / Altitude samples in meters.
+/// Altitude samples in meters.
 func (rcv *LAM) MutateALTITUDE_M(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
@@ -736,7 +736,7 @@ func (rcv *LAM) MutateAltitudeM(j int, n float64) bool {
 	return rcv.MutateALTITUDE_M(j, n)
 }
 
-// / Downrange distance samples in meters.
+/// Downrange distance samples in meters.
 func (rcv *LAM) DOWNRANGE_M(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
@@ -762,7 +762,7 @@ func (rcv *LAM) DownrangeMLength() int {
 	return rcv.DOWNRANGE_MLength()
 }
 
-// / Downrange distance samples in meters.
+/// Downrange distance samples in meters.
 func (rcv *LAM) MutateDOWNRANGE_M(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
@@ -776,7 +776,7 @@ func (rcv *LAM) MutateDownrangeM(j int, n float64) bool {
 	return rcv.MutateDOWNRANGE_M(j, n)
 }
 
-// / Speed samples in meters per second.
+/// Speed samples in meters per second.
 func (rcv *LAM) SPEED_M_PER_S(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
 	if o != 0 {
@@ -802,7 +802,7 @@ func (rcv *LAM) SpeedMPerSLength() int {
 	return rcv.SPEED_M_PER_SLength()
 }
 
-// / Speed samples in meters per second.
+/// Speed samples in meters per second.
 func (rcv *LAM) MutateSPEED_M_PER_S(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
 	if o != 0 {
@@ -816,7 +816,7 @@ func (rcv *LAM) MutateSpeedMPerS(j int, n float64) bool {
 	return rcv.MutateSPEED_M_PER_S(j, n)
 }
 
-// / Mach number samples.
+/// Mach number samples.
 func (rcv *LAM) MACH(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
@@ -842,7 +842,7 @@ func (rcv *LAM) MachLength() int {
 	return rcv.MACHLength()
 }
 
-// / Mach number samples.
+/// Mach number samples.
 func (rcv *LAM) MutateMACH(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
@@ -856,7 +856,7 @@ func (rcv *LAM) MutateMach(j int, n float64) bool {
 	return rcv.MutateMACH(j, n)
 }
 
-// / Dynamic pressure samples in pascals.
+/// Dynamic pressure samples in pascals.
 func (rcv *LAM) DYNAMIC_PRESSURE_PA(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
 	if o != 0 {
@@ -882,7 +882,7 @@ func (rcv *LAM) DynamicPressurePaLength() int {
 	return rcv.DYNAMIC_PRESSURE_PALength()
 }
 
-// / Dynamic pressure samples in pascals.
+/// Dynamic pressure samples in pascals.
 func (rcv *LAM) MutateDYNAMIC_PRESSURE_PA(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
 	if o != 0 {
@@ -896,7 +896,7 @@ func (rcv *LAM) MutateDynamicPressurePa(j int, n float64) bool {
 	return rcv.MutateDYNAMIC_PRESSURE_PA(j, n)
 }
 
-// / Heat flux samples in watts per square meter.
+/// Heat flux samples in watts per square meter.
 func (rcv *LAM) HEAT_FLUX_W_PER_M2(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
 	if o != 0 {
@@ -922,7 +922,7 @@ func (rcv *LAM) HeatFluxWPerM2Length() int {
 	return rcv.HEAT_FLUX_W_PER_M2Length()
 }
 
-// / Heat flux samples in watts per square meter.
+/// Heat flux samples in watts per square meter.
 func (rcv *LAM) MutateHEAT_FLUX_W_PER_M2(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
 	if o != 0 {
@@ -936,7 +936,7 @@ func (rcv *LAM) MutateHeatFluxWPerM2(j int, n float64) bool {
 	return rcv.MutateHEAT_FLUX_W_PER_M2(j, n)
 }
 
-// / Vehicle mass samples in kilograms.
+/// Vehicle mass samples in kilograms.
 func (rcv *LAM) MASS_KG(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
 	if o != 0 {
@@ -962,7 +962,7 @@ func (rcv *LAM) MassKgLength() int {
 	return rcv.MASS_KGLength()
 }
 
-// / Vehicle mass samples in kilograms.
+/// Vehicle mass samples in kilograms.
 func (rcv *LAM) MutateMASS_KG(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
 	if o != 0 {
@@ -976,7 +976,7 @@ func (rcv *LAM) MutateMassKg(j int, n float64) bool {
 	return rcv.MutateMASS_KG(j, n)
 }
 
-// / Thrust samples in newtons.
+/// Thrust samples in newtons.
 func (rcv *LAM) THRUST_N(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(80))
 	if o != 0 {
@@ -1002,7 +1002,7 @@ func (rcv *LAM) ThrustNLength() int {
 	return rcv.THRUST_NLength()
 }
 
-// / Thrust samples in newtons.
+/// Thrust samples in newtons.
 func (rcv *LAM) MutateTHRUST_N(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(80))
 	if o != 0 {
@@ -1016,7 +1016,7 @@ func (rcv *LAM) MutateThrustN(j int, n float64) bool {
 	return rcv.MutateTHRUST_N(j, n)
 }
 
-// / Acceleration samples in g.
+/// Acceleration samples in g.
 func (rcv *LAM) ACCELERATION_G(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(82))
 	if o != 0 {
@@ -1042,7 +1042,7 @@ func (rcv *LAM) AccelerationGLength() int {
 	return rcv.ACCELERATION_GLength()
 }
 
-// / Acceleration samples in g.
+/// Acceleration samples in g.
 func (rcv *LAM) MutateACCELERATION_G(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(82))
 	if o != 0 {
@@ -1056,7 +1056,7 @@ func (rcv *LAM) MutateAccelerationG(j int, n float64) bool {
 	return rcv.MutateACCELERATION_G(j, n)
 }
 
-// / Pitch angle samples in degrees.
+/// Pitch angle samples in degrees.
 func (rcv *LAM) PITCH_DEG(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(84))
 	if o != 0 {
@@ -1082,7 +1082,7 @@ func (rcv *LAM) PitchDegLength() int {
 	return rcv.PITCH_DEGLength()
 }
 
-// / Pitch angle samples in degrees.
+/// Pitch angle samples in degrees.
 func (rcv *LAM) MutatePITCH_DEG(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(84))
 	if o != 0 {
@@ -1096,7 +1096,7 @@ func (rcv *LAM) MutatePitchDeg(j int, n float64) bool {
 	return rcv.MutatePITCH_DEG(j, n)
 }
 
-// / Flight path angle samples in degrees.
+/// Flight path angle samples in degrees.
 func (rcv *LAM) FLIGHT_PATH_ANGLE_DEG(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(86))
 	if o != 0 {
@@ -1122,7 +1122,7 @@ func (rcv *LAM) FlightPathAngleDegLength() int {
 	return rcv.FLIGHT_PATH_ANGLE_DEGLength()
 }
 
-// / Flight path angle samples in degrees.
+/// Flight path angle samples in degrees.
 func (rcv *LAM) MutateFLIGHT_PATH_ANGLE_DEG(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(86))
 	if o != 0 {
@@ -1136,7 +1136,7 @@ func (rcv *LAM) MutateFlightPathAngleDeg(j int, n float64) bool {
 	return rcv.MutateFLIGHT_PATH_ANGLE_DEG(j, n)
 }
 
-// / Instantaneous impact point latitude samples in degrees.
+/// Instantaneous impact point latitude samples in degrees.
 func (rcv *LAM) IIP_LATITUDE_DEG(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(88))
 	if o != 0 {
@@ -1162,7 +1162,7 @@ func (rcv *LAM) IipLatitudeDegLength() int {
 	return rcv.IIP_LATITUDE_DEGLength()
 }
 
-// / Instantaneous impact point latitude samples in degrees.
+/// Instantaneous impact point latitude samples in degrees.
 func (rcv *LAM) MutateIIP_LATITUDE_DEG(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(88))
 	if o != 0 {
@@ -1176,7 +1176,7 @@ func (rcv *LAM) MutateIipLatitudeDeg(j int, n float64) bool {
 	return rcv.MutateIIP_LATITUDE_DEG(j, n)
 }
 
-// / Instantaneous impact point longitude samples in degrees.
+/// Instantaneous impact point longitude samples in degrees.
 func (rcv *LAM) IIP_LONGITUDE_DEG(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(90))
 	if o != 0 {
@@ -1202,7 +1202,7 @@ func (rcv *LAM) IipLongitudeDegLength() int {
 	return rcv.IIP_LONGITUDE_DEGLength()
 }
 
-// / Instantaneous impact point longitude samples in degrees.
+/// Instantaneous impact point longitude samples in degrees.
 func (rcv *LAM) MutateIIP_LONGITUDE_DEG(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(90))
 	if o != 0 {
@@ -1216,7 +1216,7 @@ func (rcv *LAM) MutateIipLongitudeDeg(j int, n float64) bool {
 	return rcv.MutateIIP_LONGITUDE_DEG(j, n)
 }
 
-// / Maximum dynamic pressure in pascals.
+/// Maximum dynamic pressure in pascals.
 func (rcv *LAM) MAX_DYNAMIC_PRESSURE_PA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(92))
 	if o != 0 {
@@ -1229,7 +1229,7 @@ func (rcv *LAM) MaxDynamicPressurePa() float64 {
 	return rcv.MAX_DYNAMIC_PRESSURE_PA()
 }
 
-// / Maximum dynamic pressure in pascals.
+/// Maximum dynamic pressure in pascals.
 func (rcv *LAM) MutateMAX_DYNAMIC_PRESSURE_PA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(92, n)
 }
@@ -1238,7 +1238,7 @@ func (rcv *LAM) MutateMaxDynamicPressurePa(n float64) bool {
 	return rcv.MutateMAX_DYNAMIC_PRESSURE_PA(n)
 }
 
-// / Epoch of maximum dynamic pressure in ISO 8601 UTC format.
+/// Epoch of maximum dynamic pressure in ISO 8601 UTC format.
 func (rcv *LAM) MAX_DYNAMIC_PRESSURE_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(94))
 	if o != 0 {
@@ -1251,8 +1251,8 @@ func (rcv *LAM) MaxDynamicPressureEpoch() []byte {
 	return rcv.MAX_DYNAMIC_PRESSURE_EPOCH()
 }
 
-// / Epoch of maximum dynamic pressure in ISO 8601 UTC format.
-// / Maximum heat flux in watts per square meter.
+/// Epoch of maximum dynamic pressure in ISO 8601 UTC format.
+/// Maximum heat flux in watts per square meter.
 func (rcv *LAM) MAX_HEAT_FLUX_W_PER_M2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(96))
 	if o != 0 {
@@ -1265,7 +1265,7 @@ func (rcv *LAM) MaxHeatFluxWPerM2() float64 {
 	return rcv.MAX_HEAT_FLUX_W_PER_M2()
 }
 
-// / Maximum heat flux in watts per square meter.
+/// Maximum heat flux in watts per square meter.
 func (rcv *LAM) MutateMAX_HEAT_FLUX_W_PER_M2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(96, n)
 }
@@ -1274,7 +1274,7 @@ func (rcv *LAM) MutateMaxHeatFluxWPerM2(n float64) bool {
 	return rcv.MutateMAX_HEAT_FLUX_W_PER_M2(n)
 }
 
-// / Epoch of maximum heat flux in ISO 8601 UTC format.
+/// Epoch of maximum heat flux in ISO 8601 UTC format.
 func (rcv *LAM) MAX_HEAT_FLUX_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(98))
 	if o != 0 {
@@ -1287,8 +1287,8 @@ func (rcv *LAM) MaxHeatFluxEpoch() []byte {
 	return rcv.MAX_HEAT_FLUX_EPOCH()
 }
 
-// / Epoch of maximum heat flux in ISO 8601 UTC format.
-// / Orbit insertion epoch in ISO 8601 UTC format.
+/// Epoch of maximum heat flux in ISO 8601 UTC format.
+/// Orbit insertion epoch in ISO 8601 UTC format.
 func (rcv *LAM) ORBIT_INSERTION_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(100))
 	if o != 0 {
@@ -1301,8 +1301,8 @@ func (rcv *LAM) OrbitInsertionEpoch() []byte {
 	return rcv.ORBIT_INSERTION_EPOCH()
 }
 
-// / Orbit insertion epoch in ISO 8601 UTC format.
-// / Achieved apoapsis in meters.
+/// Orbit insertion epoch in ISO 8601 UTC format.
+/// Achieved apoapsis in meters.
 func (rcv *LAM) APOAPSIS_M() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(102))
 	if o != 0 {
@@ -1315,7 +1315,7 @@ func (rcv *LAM) ApoapsisM() float64 {
 	return rcv.APOAPSIS_M()
 }
 
-// / Achieved apoapsis in meters.
+/// Achieved apoapsis in meters.
 func (rcv *LAM) MutateAPOAPSIS_M(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(102, n)
 }
@@ -1324,7 +1324,7 @@ func (rcv *LAM) MutateApoapsisM(n float64) bool {
 	return rcv.MutateAPOAPSIS_M(n)
 }
 
-// / Achieved periapsis in meters.
+/// Achieved periapsis in meters.
 func (rcv *LAM) PERIAPSIS_M() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(104))
 	if o != 0 {
@@ -1337,7 +1337,7 @@ func (rcv *LAM) PeriapsisM() float64 {
 	return rcv.PERIAPSIS_M()
 }
 
-// / Achieved periapsis in meters.
+/// Achieved periapsis in meters.
 func (rcv *LAM) MutatePERIAPSIS_M(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(104, n)
 }
@@ -1346,7 +1346,7 @@ func (rcv *LAM) MutatePeriapsisM(n float64) bool {
 	return rcv.MutatePERIAPSIS_M(n)
 }
 
-// / Achieved inclination in degrees.
+/// Achieved inclination in degrees.
 func (rcv *LAM) INCLINATION_DEG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(106))
 	if o != 0 {
@@ -1359,7 +1359,7 @@ func (rcv *LAM) InclinationDeg() float64 {
 	return rcv.INCLINATION_DEG()
 }
 
-// / Achieved inclination in degrees.
+/// Achieved inclination in degrees.
 func (rcv *LAM) MutateINCLINATION_DEG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(106, n)
 }
@@ -1368,7 +1368,7 @@ func (rcv *LAM) MutateInclinationDeg(n float64) bool {
 	return rcv.MutateINCLINATION_DEG(n)
 }
 
-// / Payload injection velocity error in meters per second.
+/// Payload injection velocity error in meters per second.
 func (rcv *LAM) PAYLOAD_INJECTION_ERROR_M_PER_S() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(108))
 	if o != 0 {
@@ -1381,7 +1381,7 @@ func (rcv *LAM) PayloadInjectionErrorMPerS() float64 {
 	return rcv.PAYLOAD_INJECTION_ERROR_M_PER_S()
 }
 
-// / Payload injection velocity error in meters per second.
+/// Payload injection velocity error in meters per second.
 func (rcv *LAM) MutatePAYLOAD_INJECTION_ERROR_M_PER_S(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(108, n)
 }
@@ -1390,7 +1390,7 @@ func (rcv *LAM) MutatePayloadInjectionErrorMPerS(n float64) bool {
 	return rcv.MutatePAYLOAD_INJECTION_ERROR_M_PER_S(n)
 }
 
-// / Key ascent events.
+/// Key ascent events.
 func (rcv *LAM) ASCENT_EVENTS(obj *lamAscentEvent, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(110))
 	if o != 0 {
@@ -1422,8 +1422,8 @@ func (rcv *LAM) AscentEventsLength() int {
 	return rcv.ASCENT_EVENTSLength()
 }
 
-// / Key ascent events.
-// / Constraint warnings and violations.
+/// Key ascent events.
+/// Constraint warnings and violations.
 func (rcv *LAM) CONSTRAINT_VIOLATIONS(obj *lamConstraintViolation, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(112))
 	if o != 0 {
@@ -1455,8 +1455,8 @@ func (rcv *LAM) ConstraintViolationsLength() int {
 	return rcv.CONSTRAINT_VIOLATIONSLength()
 }
 
-// / Constraint warnings and violations.
-// / Free-form model assumptions or limitations.
+/// Constraint warnings and violations.
+/// Free-form model assumptions or limitations.
 func (rcv *LAM) ASSUMPTIONS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(114))
 	if o != 0 {
@@ -1482,8 +1482,8 @@ func (rcv *LAM) AssumptionsLength() int {
 	return rcv.ASSUMPTIONSLength()
 }
 
-// / Free-form model assumptions or limitations.
-// / Additional comments.
+/// Free-form model assumptions or limitations.
+/// Additional comments.
 func (rcv *LAM) COMMENT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(116))
 	if o != 0 {
@@ -1496,7 +1496,7 @@ func (rcv *LAM) Comment() []byte {
 	return rcv.COMMENT()
 }
 
-// / Additional comments.
+/// Additional comments.
 func LAMStart(builder *flatbuffers.Builder) {
 	builder.StartObject(57)
 }

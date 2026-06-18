@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Suggested camera offset from entity
+/// Suggested camera offset from entity
 type CZMViewFrom struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMViewFrom) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / X offset in meters
+/// X offset in meters
 func (rcv *CZMViewFrom) X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -51,12 +51,12 @@ func (rcv *CZMViewFrom) X() float64 {
 	return 0.0
 }
 
-// / X offset in meters
+/// X offset in meters
 func (rcv *CZMViewFrom) MutateX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
 
-// / Y offset in meters
+/// Y offset in meters
 func (rcv *CZMViewFrom) Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -65,12 +65,12 @@ func (rcv *CZMViewFrom) Y() float64 {
 	return 0.0
 }
 
-// / Y offset in meters
+/// Y offset in meters
 func (rcv *CZMViewFrom) MutateY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
 
-// / Z offset in meters
+/// Z offset in meters
 func (rcv *CZMViewFrom) Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -79,7 +79,7 @@ func (rcv *CZMViewFrom) Z() float64 {
 	return 0.0
 }
 
-// / Z offset in meters
+/// Z offset in meters
 func (rcv *CZMViewFrom) MutateZ(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }

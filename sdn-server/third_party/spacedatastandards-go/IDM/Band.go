@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Table representing a frequency band with a name and frequency range
+/// Table representing a frequency band with a name and frequency range
 type Band struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *Band) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Name of the band
+/// Name of the band
 func (rcv *Band) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *Band) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Name of the band
-// / Frequency range of the band
+/// Name of the band
+/// Frequency range of the band
 func (rcv *Band) FREQUENCY_RANGE(obj *FrequencyRange) *FrequencyRange {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -74,7 +74,7 @@ func (rcv *Band) FrequencyRange(obj *FrequencyRange) *FrequencyRange {
 	return rcv.FREQUENCY_RANGE(obj)
 }
 
-// / Frequency range of the band
+/// Frequency range of the band
 func BandStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

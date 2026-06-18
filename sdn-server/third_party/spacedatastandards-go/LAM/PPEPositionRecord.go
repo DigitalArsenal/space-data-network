@@ -6,18 +6,18 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / A single time-segment record of polynomial coefficients for Cartesian position
-// / (and optionally velocity). Coefficients are stored per axis.
-// /
-// / To evaluate position at time t within this record's validity window:
-// /   1. Compute normalized time: tau = (t - EPOCH_MID) / EPOCH_HALF_SPAN
-// /      where tau is in [-1, +1].
-// /   2. Evaluate the polynomial basis of degree (NUM_COEFFICIENTS - 1) using
-// /      the coefficients for each axis.
-// /
-// / Velocity coefficients, if present, follow the same evaluation procedure.
-// / If HAS_VELOCITY_COEFFICIENTS is false, velocity can be obtained by
-// / analytically differentiating the position polynomial.
+/// A single time-segment record of polynomial coefficients for Cartesian position
+/// (and optionally velocity). Coefficients are stored per axis.
+///
+/// To evaluate position at time t within this record's validity window:
+///   1. Compute normalized time: tau = (t - EPOCH_MID) / EPOCH_HALF_SPAN
+///      where tau is in [-1, +1].
+///   2. Evaluate the polynomial basis of degree (NUM_COEFFICIENTS - 1) using
+///      the coefficients for each axis.
+///
+/// Velocity coefficients, if present, follow the same evaluation procedure.
+/// If HAS_VELOCITY_COEFFICIENTS is false, velocity can be obtained by
+/// analytically differentiating the position polynomial.
 type PPEPositionRecord struct {
 	_tab flatbuffers.Table
 }
@@ -53,9 +53,9 @@ func (rcv *PPEPositionRecord) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Midpoint epoch of this record's validity window (ISO 8601 UTC or TDB).
-// / Together with EPOCH_HALF_SPAN, defines the time interval:
-// /   [EPOCH_MID - EPOCH_HALF_SPAN, EPOCH_MID + EPOCH_HALF_SPAN]
+/// Midpoint epoch of this record's validity window (ISO 8601 UTC or TDB).
+/// Together with EPOCH_HALF_SPAN, defines the time interval:
+///   [EPOCH_MID - EPOCH_HALF_SPAN, EPOCH_MID + EPOCH_HALF_SPAN]
 func (rcv *PPEPositionRecord) EPOCH_MID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -68,11 +68,11 @@ func (rcv *PPEPositionRecord) EpochMid() []byte {
 	return rcv.EPOCH_MID()
 }
 
-// / Midpoint epoch of this record's validity window (ISO 8601 UTC or TDB).
-// / Together with EPOCH_HALF_SPAN, defines the time interval:
-// /   [EPOCH_MID - EPOCH_HALF_SPAN, EPOCH_MID + EPOCH_HALF_SPAN]
-// / Half-span of the validity window in seconds.
-// / The full span is 2 * EPOCH_HALF_SPAN seconds centered on EPOCH_MID.
+/// Midpoint epoch of this record's validity window (ISO 8601 UTC or TDB).
+/// Together with EPOCH_HALF_SPAN, defines the time interval:
+///   [EPOCH_MID - EPOCH_HALF_SPAN, EPOCH_MID + EPOCH_HALF_SPAN]
+/// Half-span of the validity window in seconds.
+/// The full span is 2 * EPOCH_HALF_SPAN seconds centered on EPOCH_MID.
 func (rcv *PPEPositionRecord) EPOCH_HALF_SPAN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -85,8 +85,8 @@ func (rcv *PPEPositionRecord) EpochHalfSpan() float64 {
 	return rcv.EPOCH_HALF_SPAN()
 }
 
-// / Half-span of the validity window in seconds.
-// / The full span is 2 * EPOCH_HALF_SPAN seconds centered on EPOCH_MID.
+/// Half-span of the validity window in seconds.
+/// The full span is 2 * EPOCH_HALF_SPAN seconds centered on EPOCH_MID.
 func (rcv *PPEPositionRecord) MutateEPOCH_HALF_SPAN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -95,9 +95,9 @@ func (rcv *PPEPositionRecord) MutateEpochHalfSpan(n float64) bool {
 	return rcv.MutateEPOCH_HALF_SPAN(n)
 }
 
-// / Number of polynomial coefficients per axis.
-// / The polynomial degree is (NUM_COEFFICIENTS - 1).
-// / Typical values: 8-32 for high-fidelity ephemeris fits.
+/// Number of polynomial coefficients per axis.
+/// The polynomial degree is (NUM_COEFFICIENTS - 1).
+/// Typical values: 8-32 for high-fidelity ephemeris fits.
 func (rcv *PPEPositionRecord) NUM_COEFFICIENTS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -110,9 +110,9 @@ func (rcv *PPEPositionRecord) NumCoefficients() uint16 {
 	return rcv.NUM_COEFFICIENTS()
 }
 
-// / Number of polynomial coefficients per axis.
-// / The polynomial degree is (NUM_COEFFICIENTS - 1).
-// / Typical values: 8-32 for high-fidelity ephemeris fits.
+/// Number of polynomial coefficients per axis.
+/// The polynomial degree is (NUM_COEFFICIENTS - 1).
+/// Typical values: 8-32 for high-fidelity ephemeris fits.
 func (rcv *PPEPositionRecord) MutateNUM_COEFFICIENTS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(8, n)
 }
@@ -121,7 +121,7 @@ func (rcv *PPEPositionRecord) MutateNumCoefficients(n uint16) bool {
 	return rcv.MutateNUM_COEFFICIENTS(n)
 }
 
-// / Polynomial basis type for interpreting the coefficient arrays.
+/// Polynomial basis type for interpreting the coefficient arrays.
 func (rcv *PPEPositionRecord) BASIS_TYPE() polynomialBasisType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -134,7 +134,7 @@ func (rcv *PPEPositionRecord) BasisType() polynomialBasisType {
 	return rcv.BASIS_TYPE()
 }
 
-// / Polynomial basis type for interpreting the coefficient arrays.
+/// Polynomial basis type for interpreting the coefficient arrays.
 func (rcv *PPEPositionRecord) MutateBASIS_TYPE(n polynomialBasisType) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
@@ -143,8 +143,8 @@ func (rcv *PPEPositionRecord) MutateBasisType(n polynomialBasisType) bool {
 	return rcv.MutateBASIS_TYPE(n)
 }
 
-// / Position coefficients for X-axis (km).
-// / Length must equal NUM_COEFFICIENTS. Ordered c0, c1, ..., c_{N-1}.
+/// Position coefficients for X-axis (km).
+/// Length must equal NUM_COEFFICIENTS. Ordered c0, c1, ..., c_{N-1}.
 func (rcv *PPEPositionRecord) POS_COEFF_X(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -170,8 +170,8 @@ func (rcv *PPEPositionRecord) PosCoeffXLength() int {
 	return rcv.POS_COEFF_XLength()
 }
 
-// / Position coefficients for X-axis (km).
-// / Length must equal NUM_COEFFICIENTS. Ordered c0, c1, ..., c_{N-1}.
+/// Position coefficients for X-axis (km).
+/// Length must equal NUM_COEFFICIENTS. Ordered c0, c1, ..., c_{N-1}.
 func (rcv *PPEPositionRecord) MutatePOS_COEFF_X(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -185,8 +185,8 @@ func (rcv *PPEPositionRecord) MutatePosCoeffX(j int, n float64) bool {
 	return rcv.MutatePOS_COEFF_X(j, n)
 }
 
-// / Position coefficients for Y-axis (km).
-// / Length must equal NUM_COEFFICIENTS.
+/// Position coefficients for Y-axis (km).
+/// Length must equal NUM_COEFFICIENTS.
 func (rcv *PPEPositionRecord) POS_COEFF_Y(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -212,8 +212,8 @@ func (rcv *PPEPositionRecord) PosCoeffYLength() int {
 	return rcv.POS_COEFF_YLength()
 }
 
-// / Position coefficients for Y-axis (km).
-// / Length must equal NUM_COEFFICIENTS.
+/// Position coefficients for Y-axis (km).
+/// Length must equal NUM_COEFFICIENTS.
 func (rcv *PPEPositionRecord) MutatePOS_COEFF_Y(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -227,8 +227,8 @@ func (rcv *PPEPositionRecord) MutatePosCoeffY(j int, n float64) bool {
 	return rcv.MutatePOS_COEFF_Y(j, n)
 }
 
-// / Position coefficients for Z-axis (km).
-// / Length must equal NUM_COEFFICIENTS.
+/// Position coefficients for Z-axis (km).
+/// Length must equal NUM_COEFFICIENTS.
 func (rcv *PPEPositionRecord) POS_COEFF_Z(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -254,8 +254,8 @@ func (rcv *PPEPositionRecord) PosCoeffZLength() int {
 	return rcv.POS_COEFF_ZLength()
 }
 
-// / Position coefficients for Z-axis (km).
-// / Length must equal NUM_COEFFICIENTS.
+/// Position coefficients for Z-axis (km).
+/// Length must equal NUM_COEFFICIENTS.
 func (rcv *PPEPositionRecord) MutatePOS_COEFF_Z(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -269,8 +269,8 @@ func (rcv *PPEPositionRecord) MutatePosCoeffZ(j int, n float64) bool {
 	return rcv.MutatePOS_COEFF_Z(j, n)
 }
 
-// / Whether explicit velocity coefficients are provided.
-// / If false, velocity should be derived by differentiating the position polynomial.
+/// Whether explicit velocity coefficients are provided.
+/// If false, velocity should be derived by differentiating the position polynomial.
 func (rcv *PPEPositionRecord) HAS_VELOCITY_COEFFICIENTS() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -283,8 +283,8 @@ func (rcv *PPEPositionRecord) HasVelocityCoefficients() bool {
 	return rcv.HAS_VELOCITY_COEFFICIENTS()
 }
 
-// / Whether explicit velocity coefficients are provided.
-// / If false, velocity should be derived by differentiating the position polynomial.
+/// Whether explicit velocity coefficients are provided.
+/// If false, velocity should be derived by differentiating the position polynomial.
 func (rcv *PPEPositionRecord) MutateHAS_VELOCITY_COEFFICIENTS(n bool) bool {
 	return rcv._tab.MutateBoolSlot(18, n)
 }
@@ -293,8 +293,8 @@ func (rcv *PPEPositionRecord) MutateHasVelocityCoefficients(n bool) bool {
 	return rcv.MutateHAS_VELOCITY_COEFFICIENTS(n)
 }
 
-// / Velocity coefficients for X-axis (km/s). Optional.
-// / Length must equal NUM_COEFFICIENTS if present.
+/// Velocity coefficients for X-axis (km/s). Optional.
+/// Length must equal NUM_COEFFICIENTS if present.
 func (rcv *PPEPositionRecord) VEL_COEFF_X(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -320,8 +320,8 @@ func (rcv *PPEPositionRecord) VelCoeffXLength() int {
 	return rcv.VEL_COEFF_XLength()
 }
 
-// / Velocity coefficients for X-axis (km/s). Optional.
-// / Length must equal NUM_COEFFICIENTS if present.
+/// Velocity coefficients for X-axis (km/s). Optional.
+/// Length must equal NUM_COEFFICIENTS if present.
 func (rcv *PPEPositionRecord) MutateVEL_COEFF_X(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -335,7 +335,7 @@ func (rcv *PPEPositionRecord) MutateVelCoeffX(j int, n float64) bool {
 	return rcv.MutateVEL_COEFF_X(j, n)
 }
 
-// / Velocity coefficients for Y-axis (km/s). Optional.
+/// Velocity coefficients for Y-axis (km/s). Optional.
 func (rcv *PPEPositionRecord) VEL_COEFF_Y(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -361,7 +361,7 @@ func (rcv *PPEPositionRecord) VelCoeffYLength() int {
 	return rcv.VEL_COEFF_YLength()
 }
 
-// / Velocity coefficients for Y-axis (km/s). Optional.
+/// Velocity coefficients for Y-axis (km/s). Optional.
 func (rcv *PPEPositionRecord) MutateVEL_COEFF_Y(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -375,7 +375,7 @@ func (rcv *PPEPositionRecord) MutateVelCoeffY(j int, n float64) bool {
 	return rcv.MutateVEL_COEFF_Y(j, n)
 }
 
-// / Velocity coefficients for Z-axis (km/s). Optional.
+/// Velocity coefficients for Z-axis (km/s). Optional.
 func (rcv *PPEPositionRecord) VEL_COEFF_Z(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -401,7 +401,7 @@ func (rcv *PPEPositionRecord) VelCoeffZLength() int {
 	return rcv.VEL_COEFF_ZLength()
 }
 
-// / Velocity coefficients for Z-axis (km/s). Optional.
+/// Velocity coefficients for Z-axis (km/s). Optional.
 func (rcv *PPEPositionRecord) MutateVEL_COEFF_Z(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -415,7 +415,7 @@ func (rcv *PPEPositionRecord) MutateVelCoeffZ(j int, n float64) bool {
 	return rcv.MutateVEL_COEFF_Z(j, n)
 }
 
-// / Maximum position fit residual over this segment (km). Optional quality metric.
+/// Maximum position fit residual over this segment (km). Optional quality metric.
 func (rcv *PPEPositionRecord) MAX_POSITION_RESIDUAL() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -428,7 +428,7 @@ func (rcv *PPEPositionRecord) MaxPositionResidual() float64 {
 	return rcv.MAX_POSITION_RESIDUAL()
 }
 
-// / Maximum position fit residual over this segment (km). Optional quality metric.
+/// Maximum position fit residual over this segment (km). Optional quality metric.
 func (rcv *PPEPositionRecord) MutateMAX_POSITION_RESIDUAL(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -437,7 +437,7 @@ func (rcv *PPEPositionRecord) MutateMaxPositionResidual(n float64) bool {
 	return rcv.MutateMAX_POSITION_RESIDUAL(n)
 }
 
-// / RMS position fit residual over this segment (km). Optional quality metric.
+/// RMS position fit residual over this segment (km). Optional quality metric.
 func (rcv *PPEPositionRecord) RMS_POSITION_RESIDUAL() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -450,7 +450,7 @@ func (rcv *PPEPositionRecord) RmsPositionResidual() float64 {
 	return rcv.RMS_POSITION_RESIDUAL()
 }
 
-// / RMS position fit residual over this segment (km). Optional quality metric.
+/// RMS position fit residual over this segment (km). Optional quality metric.
 func (rcv *PPEPositionRecord) MutateRMS_POSITION_RESIDUAL(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }

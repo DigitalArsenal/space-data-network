@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Integer parameter type
+/// Integer parameter type
 type IntegerParameterType struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *IntegerParameterType) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Type name
+/// Type name
 func (rcv *IntegerParameterType) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *IntegerParameterType) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Type name
-// / Short description
+/// Type name
+/// Short description
 func (rcv *IntegerParameterType) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *IntegerParameterType) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-// / Short description
-// / Long description
+/// Short description
+/// Long description
 func (rcv *IntegerParameterType) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *IntegerParameterType) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-// / Long description
-// / Units
+/// Long description
+/// Units
 func (rcv *IntegerParameterType) UNITS(obj *Unit, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -116,8 +116,8 @@ func (rcv *IntegerParameterType) UnitsLength() int {
 	return rcv.UNITSLength()
 }
 
-// / Units
-// / Data encoding
+/// Units
+/// Data encoding
 func (rcv *IntegerParameterType) DATA_ENCODING(obj *IntegerDataEncoding) *IntegerDataEncoding {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -135,8 +135,8 @@ func (rcv *IntegerParameterType) DataEncoding(obj *IntegerDataEncoding) *Integer
 	return rcv.DATA_ENCODING(obj)
 }
 
-// / Data encoding
-// / Default alarm
+/// Data encoding
+/// Default alarm
 func (rcv *IntegerParameterType) DEFAULT_ALARM(obj *DefaultAlarm) *DefaultAlarm {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -154,8 +154,8 @@ func (rcv *IntegerParameterType) DefaultAlarm(obj *DefaultAlarm) *DefaultAlarm {
 	return rcv.DEFAULT_ALARM(obj)
 }
 
-// / Default alarm
-// / Context alarms
+/// Default alarm
+/// Context alarms
 func (rcv *IntegerParameterType) CONTEXT_ALARMS(obj *ContextAlarm, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -187,8 +187,8 @@ func (rcv *IntegerParameterType) ContextAlarmsLength() int {
 	return rcv.CONTEXT_ALARMSLength()
 }
 
-// / Context alarms
-// / Minimum valid value
+/// Context alarms
+/// Minimum valid value
 func (rcv *IntegerParameterType) VALID_MIN() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -201,7 +201,7 @@ func (rcv *IntegerParameterType) ValidMin() int64 {
 	return rcv.VALID_MIN()
 }
 
-// / Minimum valid value
+/// Minimum valid value
 func (rcv *IntegerParameterType) MutateVALID_MIN(n int64) bool {
 	return rcv._tab.MutateInt64Slot(18, n)
 }
@@ -210,7 +210,7 @@ func (rcv *IntegerParameterType) MutateValidMin(n int64) bool {
 	return rcv.MutateVALID_MIN(n)
 }
 
-// / Maximum valid value
+/// Maximum valid value
 func (rcv *IntegerParameterType) VALID_MAX() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -223,7 +223,7 @@ func (rcv *IntegerParameterType) ValidMax() int64 {
 	return rcv.VALID_MAX()
 }
 
-// / Maximum valid value
+/// Maximum valid value
 func (rcv *IntegerParameterType) MutateVALID_MAX(n int64) bool {
 	return rcv._tab.MutateInt64Slot(20, n)
 }
@@ -232,7 +232,7 @@ func (rcv *IntegerParameterType) MutateValidMax(n int64) bool {
 	return rcv.MutateVALID_MAX(n)
 }
 
-// / Signed integer (true) or unsigned (false)
+/// Signed integer (true) or unsigned (false)
 func (rcv *IntegerParameterType) SIGNED() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -245,7 +245,7 @@ func (rcv *IntegerParameterType) Signed() bool {
 	return rcv.SIGNED()
 }
 
-// / Signed integer (true) or unsigned (false)
+/// Signed integer (true) or unsigned (false)
 func (rcv *IntegerParameterType) MutateSIGNED(n bool) bool {
 	return rcv._tab.MutateBoolSlot(22, n)
 }
@@ -254,7 +254,7 @@ func (rcv *IntegerParameterType) MutateSigned(n bool) bool {
 	return rcv.MutateSIGNED(n)
 }
 
-// / Size in bits
+/// Size in bits
 func (rcv *IntegerParameterType) SIZE_IN_BITS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -267,7 +267,7 @@ func (rcv *IntegerParameterType) SizeInBits() uint16 {
 	return rcv.SIZE_IN_BITS()
 }
 
-// / Size in bits
+/// Size in bits
 func (rcv *IntegerParameterType) MutateSIZE_IN_BITS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(24, n)
 }
@@ -276,7 +276,7 @@ func (rcv *IntegerParameterType) MutateSizeInBits(n uint16) bool {
 	return rcv.MutateSIZE_IN_BITS(n)
 }
 
-// / Initial/default value
+/// Initial/default value
 func (rcv *IntegerParameterType) INITIAL_VALUE() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -289,7 +289,7 @@ func (rcv *IntegerParameterType) InitialValue() int64 {
 	return rcv.INITIAL_VALUE()
 }
 
-// / Initial/default value
+/// Initial/default value
 func (rcv *IntegerParameterType) MutateINITIAL_VALUE(n int64) bool {
 	return rcv._tab.MutateInt64Slot(26, n)
 }

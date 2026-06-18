@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Keplerian Elements
+/// Keplerian Elements
 type keplerianElements struct {
 	_tab flatbuffers.Table
 }

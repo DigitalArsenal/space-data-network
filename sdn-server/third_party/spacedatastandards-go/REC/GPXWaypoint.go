@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / A waypoint, point of interest, or named feature
+/// A waypoint, point of interest, or named feature
 type GPXWaypoint struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *GPXWaypoint) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Latitude in decimal degrees (WGS84)
+/// Latitude in decimal degrees (WGS84)
 func (rcv *GPXWaypoint) LATITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *GPXWaypoint) Latitude() float64 {
 	return rcv.LATITUDE()
 }
 
-// / Latitude in decimal degrees (WGS84)
+/// Latitude in decimal degrees (WGS84)
 func (rcv *GPXWaypoint) MutateLATITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *GPXWaypoint) MutateLatitude(n float64) bool {
 	return rcv.MutateLATITUDE(n)
 }
 
-// / Longitude in decimal degrees (WGS84)
+/// Longitude in decimal degrees (WGS84)
 func (rcv *GPXWaypoint) LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *GPXWaypoint) Longitude() float64 {
 	return rcv.LONGITUDE()
 }
 
-// / Longitude in decimal degrees (WGS84)
+/// Longitude in decimal degrees (WGS84)
 func (rcv *GPXWaypoint) MutateLONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *GPXWaypoint) MutateLongitude(n float64) bool {
 	return rcv.MutateLONGITUDE(n)
 }
 
-// / Elevation in meters above WGS84 ellipsoid
+/// Elevation in meters above WGS84 ellipsoid
 func (rcv *GPXWaypoint) ELEVATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *GPXWaypoint) Elevation() float64 {
 	return rcv.ELEVATION()
 }
 
-// / Elevation in meters above WGS84 ellipsoid
+/// Elevation in meters above WGS84 ellipsoid
 func (rcv *GPXWaypoint) MutateELEVATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *GPXWaypoint) MutateElevation(n float64) bool {
 	return rcv.MutateELEVATION(n)
 }
 
-// / UTC timestamp (ISO 8601)
+/// UTC timestamp (ISO 8601)
 func (rcv *GPXWaypoint) TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,8 +121,8 @@ func (rcv *GPXWaypoint) Time() []byte {
 	return rcv.TIME()
 }
 
-// / UTC timestamp (ISO 8601)
-// / Magnetic variation in degrees
+/// UTC timestamp (ISO 8601)
+/// Magnetic variation in degrees
 func (rcv *GPXWaypoint) MAGVAR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -135,7 +135,7 @@ func (rcv *GPXWaypoint) Magvar() float64 {
 	return rcv.MAGVAR()
 }
 
-// / Magnetic variation in degrees
+/// Magnetic variation in degrees
 func (rcv *GPXWaypoint) MutateMAGVAR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -144,7 +144,7 @@ func (rcv *GPXWaypoint) MutateMagvar(n float64) bool {
 	return rcv.MutateMAGVAR(n)
 }
 
-// / Height of geoid above WGS84 ellipsoid in meters
+/// Height of geoid above WGS84 ellipsoid in meters
 func (rcv *GPXWaypoint) GEOID_HEIGHT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *GPXWaypoint) GeoidHeight() float64 {
 	return rcv.GEOID_HEIGHT()
 }
 
-// / Height of geoid above WGS84 ellipsoid in meters
+/// Height of geoid above WGS84 ellipsoid in meters
 func (rcv *GPXWaypoint) MutateGEOID_HEIGHT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -166,7 +166,7 @@ func (rcv *GPXWaypoint) MutateGeoidHeight(n float64) bool {
 	return rcv.MutateGEOID_HEIGHT(n)
 }
 
-// / Waypoint name
+/// Waypoint name
 func (rcv *GPXWaypoint) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -179,8 +179,8 @@ func (rcv *GPXWaypoint) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Waypoint name
-// / Comment
+/// Waypoint name
+/// Comment
 func (rcv *GPXWaypoint) COMMENT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -193,8 +193,8 @@ func (rcv *GPXWaypoint) Comment() []byte {
 	return rcv.COMMENT()
 }
 
-// / Comment
-// / Description
+/// Comment
+/// Description
 func (rcv *GPXWaypoint) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -207,8 +207,8 @@ func (rcv *GPXWaypoint) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-// / Description
-// / Source of data
+/// Description
+/// Source of data
 func (rcv *GPXWaypoint) SOURCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -221,8 +221,8 @@ func (rcv *GPXWaypoint) Source() []byte {
 	return rcv.SOURCE()
 }
 
-// / Source of data
-// / Links to additional information
+/// Source of data
+/// Links to additional information
 func (rcv *GPXWaypoint) LINKS(obj *GPXLink, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -254,8 +254,8 @@ func (rcv *GPXWaypoint) LinksLength() int {
 	return rcv.LINKSLength()
 }
 
-// / Links to additional information
-// / Symbol name
+/// Links to additional information
+/// Symbol name
 func (rcv *GPXWaypoint) SYMBOL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -268,8 +268,8 @@ func (rcv *GPXWaypoint) Symbol() []byte {
 	return rcv.SYMBOL()
 }
 
-// / Symbol name
-// / Type/category
+/// Symbol name
+/// Type/category
 func (rcv *GPXWaypoint) TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -282,8 +282,8 @@ func (rcv *GPXWaypoint) Type() []byte {
 	return rcv.TYPE()
 }
 
-// / Type/category
-// / Type of GPS fix
+/// Type/category
+/// Type of GPS fix
 func (rcv *GPXWaypoint) FIX() GPXFixType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -296,7 +296,7 @@ func (rcv *GPXWaypoint) Fix() GPXFixType {
 	return rcv.FIX()
 }
 
-// / Type of GPS fix
+/// Type of GPS fix
 func (rcv *GPXWaypoint) MutateFIX(n GPXFixType) bool {
 	return rcv._tab.MutateInt8Slot(30, int8(n))
 }
@@ -305,7 +305,7 @@ func (rcv *GPXWaypoint) MutateFix(n GPXFixType) bool {
 	return rcv.MutateFIX(n)
 }
 
-// / Number of satellites used for fix
+/// Number of satellites used for fix
 func (rcv *GPXWaypoint) SAT() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -318,7 +318,7 @@ func (rcv *GPXWaypoint) Sat() uint16 {
 	return rcv.SAT()
 }
 
-// / Number of satellites used for fix
+/// Number of satellites used for fix
 func (rcv *GPXWaypoint) MutateSAT(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(32, n)
 }
@@ -327,7 +327,7 @@ func (rcv *GPXWaypoint) MutateSat(n uint16) bool {
 	return rcv.MutateSAT(n)
 }
 
-// / Horizontal dilution of precision
+/// Horizontal dilution of precision
 func (rcv *GPXWaypoint) HDOP() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -340,7 +340,7 @@ func (rcv *GPXWaypoint) Hdop() float64 {
 	return rcv.HDOP()
 }
 
-// / Horizontal dilution of precision
+/// Horizontal dilution of precision
 func (rcv *GPXWaypoint) MutateHDOP(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -349,7 +349,7 @@ func (rcv *GPXWaypoint) MutateHdop(n float64) bool {
 	return rcv.MutateHDOP(n)
 }
 
-// / Vertical dilution of precision
+/// Vertical dilution of precision
 func (rcv *GPXWaypoint) VDOP() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -362,7 +362,7 @@ func (rcv *GPXWaypoint) Vdop() float64 {
 	return rcv.VDOP()
 }
 
-// / Vertical dilution of precision
+/// Vertical dilution of precision
 func (rcv *GPXWaypoint) MutateVDOP(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -371,7 +371,7 @@ func (rcv *GPXWaypoint) MutateVdop(n float64) bool {
 	return rcv.MutateVDOP(n)
 }
 
-// / Position dilution of precision
+/// Position dilution of precision
 func (rcv *GPXWaypoint) PDOP() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -384,7 +384,7 @@ func (rcv *GPXWaypoint) Pdop() float64 {
 	return rcv.PDOP()
 }
 
-// / Position dilution of precision
+/// Position dilution of precision
 func (rcv *GPXWaypoint) MutatePDOP(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -393,7 +393,7 @@ func (rcv *GPXWaypoint) MutatePdop(n float64) bool {
 	return rcv.MutatePDOP(n)
 }
 
-// / Age of DGPS data in seconds
+/// Age of DGPS data in seconds
 func (rcv *GPXWaypoint) AGE_OF_DGPS_DATA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -406,7 +406,7 @@ func (rcv *GPXWaypoint) AgeOfDgpsData() float64 {
 	return rcv.AGE_OF_DGPS_DATA()
 }
 
-// / Age of DGPS data in seconds
+/// Age of DGPS data in seconds
 func (rcv *GPXWaypoint) MutateAGE_OF_DGPS_DATA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -415,7 +415,7 @@ func (rcv *GPXWaypoint) MutateAgeOfDgpsData(n float64) bool {
 	return rcv.MutateAGE_OF_DGPS_DATA(n)
 }
 
-// / DGPS station ID
+/// DGPS station ID
 func (rcv *GPXWaypoint) DGPS_ID() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -428,7 +428,7 @@ func (rcv *GPXWaypoint) DgpsId() uint16 {
 	return rcv.DGPS_ID()
 }
 
-// / DGPS station ID
+/// DGPS station ID
 func (rcv *GPXWaypoint) MutateDGPS_ID(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(42, n)
 }
@@ -437,7 +437,7 @@ func (rcv *GPXWaypoint) MutateDgpsId(n uint16) bool {
 	return rcv.MutateDGPS_ID(n)
 }
 
-// / Speed in meters per second
+/// Speed in meters per second
 func (rcv *GPXWaypoint) SPEED() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -450,7 +450,7 @@ func (rcv *GPXWaypoint) Speed() float64 {
 	return rcv.SPEED()
 }
 
-// / Speed in meters per second
+/// Speed in meters per second
 func (rcv *GPXWaypoint) MutateSPEED(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(44, n)
 }
@@ -459,7 +459,7 @@ func (rcv *GPXWaypoint) MutateSpeed(n float64) bool {
 	return rcv.MutateSPEED(n)
 }
 
-// / Course/heading in degrees true
+/// Course/heading in degrees true
 func (rcv *GPXWaypoint) COURSE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -472,7 +472,7 @@ func (rcv *GPXWaypoint) Course() float64 {
 	return rcv.COURSE()
 }
 
-// / Course/heading in degrees true
+/// Course/heading in degrees true
 func (rcv *GPXWaypoint) MutateCOURSE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(46, n)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Image material
+/// Image material
 type CZMImageMaterial struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMImageMaterial) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Image URI
+/// Image URI
 func (rcv *CZMImageMaterial) IMAGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *CZMImageMaterial) Image() []byte {
 	return rcv.IMAGE()
 }
 
-// / Image URI
-// / Repeat X
+/// Image URI
+/// Repeat X
 func (rcv *CZMImageMaterial) REPEAT_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *CZMImageMaterial) RepeatX() float64 {
 	return rcv.REPEAT_X()
 }
 
-// / Repeat X
+/// Repeat X
 func (rcv *CZMImageMaterial) MutateREPEAT_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -78,7 +78,7 @@ func (rcv *CZMImageMaterial) MutateRepeatX(n float64) bool {
 	return rcv.MutateREPEAT_X(n)
 }
 
-// / Repeat Y
+/// Repeat Y
 func (rcv *CZMImageMaterial) REPEAT_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *CZMImageMaterial) RepeatY() float64 {
 	return rcv.REPEAT_Y()
 }
 
-// / Repeat Y
+/// Repeat Y
 func (rcv *CZMImageMaterial) MutateREPEAT_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -100,7 +100,7 @@ func (rcv *CZMImageMaterial) MutateRepeatY(n float64) bool {
 	return rcv.MutateREPEAT_Y(n)
 }
 
-// / Color tint
+/// Color tint
 func (rcv *CZMImageMaterial) COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -118,8 +118,8 @@ func (rcv *CZMImageMaterial) Color(obj *CZMColor) *CZMColor {
 	return rcv.COLOR(obj)
 }
 
-// / Color tint
-// / Whether the image has transparency
+/// Color tint
+/// Whether the image has transparency
 func (rcv *CZMImageMaterial) TRANSPARENT() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -132,7 +132,7 @@ func (rcv *CZMImageMaterial) Transparent() bool {
 	return rcv.TRANSPARENT()
 }
 
-// / Whether the image has transparency
+/// Whether the image has transparency
 func (rcv *CZMImageMaterial) MutateTRANSPARENT(n bool) bool {
 	return rcv._tab.MutateBoolSlot(12, n)
 }

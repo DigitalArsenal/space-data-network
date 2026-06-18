@@ -4,7 +4,7 @@ package CSM
 
 import "strconv"
 
-// / Different types of polarization in EMT
+/// Different types of polarization in EMT
 type PolarizationType int8
 
 const (

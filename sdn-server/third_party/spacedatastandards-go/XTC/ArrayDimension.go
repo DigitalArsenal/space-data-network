@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Array dimension specification
+/// Array dimension specification
 type ArrayDimension struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ArrayDimension) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Fixed size of this dimension
+/// Fixed size of this dimension
 func (rcv *ArrayDimension) SIZE() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *ArrayDimension) Size() uint32 {
 	return rcv.SIZE()
 }
 
-// / Fixed size of this dimension
+/// Fixed size of this dimension
 func (rcv *ArrayDimension) MutateSIZE(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *ArrayDimension) MutateSize(n uint32) bool {
 	return rcv.MutateSIZE(n)
 }
 
-// / Dynamic size from parameter reference
+/// Dynamic size from parameter reference
 func (rcv *ArrayDimension) SIZE_PARAMETER_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *ArrayDimension) SizeParameterRef() []byte {
 	return rcv.SIZE_PARAMETER_REF()
 }
 
-// / Dynamic size from parameter reference
+/// Dynamic size from parameter reference
 func ArrayDimensionStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

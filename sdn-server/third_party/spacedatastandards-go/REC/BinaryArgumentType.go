@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Binary argument type
+/// Binary argument type
 type BinaryArgumentType struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *BinaryArgumentType) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Type name
+/// Type name
 func (rcv *BinaryArgumentType) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *BinaryArgumentType) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Type name
-// / Short description
+/// Type name
+/// Short description
 func (rcv *BinaryArgumentType) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *BinaryArgumentType) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-// / Short description
-// / Long description
+/// Short description
+/// Long description
 func (rcv *BinaryArgumentType) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *BinaryArgumentType) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-// / Long description
-// / Data encoding
+/// Long description
+/// Data encoding
 func (rcv *BinaryArgumentType) DATA_ENCODING(obj *BinaryDataEncoding) *BinaryDataEncoding {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -102,8 +102,8 @@ func (rcv *BinaryArgumentType) DataEncoding(obj *BinaryDataEncoding) *BinaryData
 	return rcv.DATA_ENCODING(obj)
 }
 
-// / Data encoding
-// / Initial/default value (hex string)
+/// Data encoding
+/// Initial/default value (hex string)
 func (rcv *BinaryArgumentType) INITIAL_VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -116,7 +116,7 @@ func (rcv *BinaryArgumentType) InitialValue() []byte {
 	return rcv.INITIAL_VALUE()
 }
 
-// / Initial/default value (hex string)
+/// Initial/default value (hex string)
 func BinaryArgumentTypeStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

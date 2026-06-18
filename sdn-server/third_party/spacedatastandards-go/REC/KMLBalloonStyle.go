@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Balloon style
+/// Balloon style
 type KMLBalloonStyle struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLBalloonStyle) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Background color in aabbggrr hex format
+/// Background color in aabbggrr hex format
 func (rcv *KMLBalloonStyle) BG_COLOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLBalloonStyle) BgColor() []byte {
 	return rcv.BG_COLOR()
 }
 
-// / Background color in aabbggrr hex format
-// / Text color in aabbggrr hex format
+/// Background color in aabbggrr hex format
+/// Text color in aabbggrr hex format
 func (rcv *KMLBalloonStyle) TEXT_COLOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *KMLBalloonStyle) TextColor() []byte {
 	return rcv.TEXT_COLOR()
 }
 
-// / Text color in aabbggrr hex format
-// / Balloon text template (supports $[name], $[description])
+/// Text color in aabbggrr hex format
+/// Balloon text template (supports $[name], $[description])
 func (rcv *KMLBalloonStyle) TEXT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *KMLBalloonStyle) Text() []byte {
 	return rcv.TEXT()
 }
 
-// / Balloon text template (supports $[name], $[description])
-// / Display mode
+/// Balloon text template (supports $[name], $[description])
+/// Display mode
 func (rcv *KMLBalloonStyle) DISPLAY_MODE() KMLDisplayMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *KMLBalloonStyle) DisplayMode() KMLDisplayMode {
 	return rcv.DISPLAY_MODE()
 }
 
-// / Display mode
+/// Display mode
 func (rcv *KMLBalloonStyle) MutateDISPLAY_MODE(n KMLDisplayMode) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }

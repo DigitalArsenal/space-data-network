@@ -4,7 +4,7 @@ package LMR
 
 import "strconv"
 
-// / Module lifecycle request action
+/// Module lifecycle request action
 type licensingModuleRequestAction int8
 
 const (

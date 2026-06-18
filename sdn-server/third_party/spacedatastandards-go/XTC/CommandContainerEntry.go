@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Command container entry
+/// Command container entry
 type CommandContainerEntry struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CommandContainerEntry) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Argument reference entry
+/// Argument reference entry
 func (rcv *CommandContainerEntry) ARGUMENT_REF_ENTRY(obj *ArgumentRefEntry) *ArgumentRefEntry {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *CommandContainerEntry) ArgumentRefEntry(obj *ArgumentRefEntry) *Argum
 	return rcv.ARGUMENT_REF_ENTRY(obj)
 }
 
-// / Argument reference entry
-// / Parameter reference entry
+/// Argument reference entry
+/// Parameter reference entry
 func (rcv *CommandContainerEntry) PARAMETER_REF_ENTRY(obj *ParameterRefEntry) *ParameterRefEntry {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -79,8 +79,8 @@ func (rcv *CommandContainerEntry) ParameterRefEntry(obj *ParameterRefEntry) *Par
 	return rcv.PARAMETER_REF_ENTRY(obj)
 }
 
-// / Parameter reference entry
-// / Fixed value entry
+/// Parameter reference entry
+/// Fixed value entry
 func (rcv *CommandContainerEntry) FIXED_VALUE_ENTRY(obj *FixedValueEntry) *FixedValueEntry {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -98,7 +98,7 @@ func (rcv *CommandContainerEntry) FixedValueEntry(obj *FixedValueEntry) *FixedVa
 	return rcv.FIXED_VALUE_ENTRY(obj)
 }
 
-// / Fixed value entry
+/// Fixed value entry
 func CommandContainerEntryStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

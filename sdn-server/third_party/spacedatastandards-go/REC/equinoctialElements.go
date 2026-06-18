@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Equinoctial Elements
+/// Equinoctial Elements
 type equinoctialElements struct {
 	_tab flatbuffers.Table
 }

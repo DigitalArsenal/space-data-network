@@ -4,7 +4,7 @@ package VCM
 
 import "strconv"
 
-// / Enum to represent common geopotential models
+/// Enum to represent common geopotential models
 type geopotentialSource int8
 
 const (

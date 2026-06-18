@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / ViewVolume for PhotoOverlay
+/// ViewVolume for PhotoOverlay
 type KMLViewVolume struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLViewVolume) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Left field of view angle
+/// Left field of view angle
 func (rcv *KMLViewVolume) LEFT_FOV() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *KMLViewVolume) LeftFov() float64 {
 	return rcv.LEFT_FOV()
 }
 
-// / Left field of view angle
+/// Left field of view angle
 func (rcv *KMLViewVolume) MutateLEFT_FOV(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *KMLViewVolume) MutateLeftFov(n float64) bool {
 	return rcv.MutateLEFT_FOV(n)
 }
 
-// / Right field of view angle
+/// Right field of view angle
 func (rcv *KMLViewVolume) RIGHT_FOV() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *KMLViewVolume) RightFov() float64 {
 	return rcv.RIGHT_FOV()
 }
 
-// / Right field of view angle
+/// Right field of view angle
 func (rcv *KMLViewVolume) MutateRIGHT_FOV(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *KMLViewVolume) MutateRightFov(n float64) bool {
 	return rcv.MutateRIGHT_FOV(n)
 }
 
-// / Bottom field of view angle
+/// Bottom field of view angle
 func (rcv *KMLViewVolume) BOTTOM_FOV() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *KMLViewVolume) BottomFov() float64 {
 	return rcv.BOTTOM_FOV()
 }
 
-// / Bottom field of view angle
+/// Bottom field of view angle
 func (rcv *KMLViewVolume) MutateBOTTOM_FOV(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *KMLViewVolume) MutateBottomFov(n float64) bool {
 	return rcv.MutateBOTTOM_FOV(n)
 }
 
-// / Top field of view angle
+/// Top field of view angle
 func (rcv *KMLViewVolume) TOP_FOV() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *KMLViewVolume) TopFov() float64 {
 	return rcv.TOP_FOV()
 }
 
-// / Top field of view angle
+/// Top field of view angle
 func (rcv *KMLViewVolume) MutateTOP_FOV(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -130,7 +130,7 @@ func (rcv *KMLViewVolume) MutateTopFov(n float64) bool {
 	return rcv.MutateTOP_FOV(n)
 }
 
-// / Near clipping plane
+/// Near clipping plane
 func (rcv *KMLViewVolume) NEAR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,7 +143,7 @@ func (rcv *KMLViewVolume) Near() float64 {
 	return rcv.NEAR()
 }
 
-// / Near clipping plane
+/// Near clipping plane
 func (rcv *KMLViewVolume) MutateNEAR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }

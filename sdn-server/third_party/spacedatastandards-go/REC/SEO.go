@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Space Environment Observation
+/// Space Environment Observation
 type SEO struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *SEO) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier
+/// Unique identifier
 func (rcv *SEO) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *SEO) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique identifier
-// / Message type code
+/// Unique identifier
+/// Message type code
 func (rcv *SEO) MSG_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *SEO) MsgType() []byte {
 	return rcv.MSG_TYPE()
 }
 
-// / Message type code
-// / Generating system
+/// Message type code
+/// Generating system
 func (rcv *SEO) GEN_SYSTEM() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *SEO) GenSystem() []byte {
 	return rcv.GEN_SYSTEM()
 }
 
-// / Generating system
-// / External reference identifier
+/// Generating system
+/// External reference identifier
 func (rcv *SEO) EXTERNAL_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *SEO) ExternalId() []byte {
 	return rcv.EXTERNAL_ID()
 }
 
-// / External reference identifier
-// / Type of environmental data
+/// External reference identifier
+/// Type of environmental data
 func (rcv *SEO) DATA_TYPE() seoDataType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,7 +123,7 @@ func (rcv *SEO) DataType() seoDataType {
 	return rcv.DATA_TYPE()
 }
 
-// / Type of environmental data
+/// Type of environmental data
 func (rcv *SEO) MutateDATA_TYPE(n seoDataType) bool {
 	return rcv._tab.MutateInt8Slot(12, int8(n))
 }
@@ -132,7 +132,7 @@ func (rcv *SEO) MutateDataType(n seoDataType) bool {
 	return rcv.MutateDATA_TYPE(n)
 }
 
-// / Generation time (ISO 8601)
+/// Generation time (ISO 8601)
 func (rcv *SEO) GEN_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,8 +145,8 @@ func (rcv *SEO) GenTime() []byte {
 	return rcv.GEN_TIME()
 }
 
-// / Generation time (ISO 8601)
-// / True if this is a forecast
+/// Generation time (ISO 8601)
+/// True if this is a forecast
 func (rcv *SEO) FORECAST() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,7 +159,7 @@ func (rcv *SEO) Forecast() bool {
 	return rcv.FORECAST()
 }
 
-// / True if this is a forecast
+/// True if this is a forecast
 func (rcv *SEO) MutateFORECAST(n bool) bool {
 	return rcv._tab.MutateBoolSlot(16, n)
 }
@@ -168,7 +168,7 @@ func (rcv *SEO) MutateForecast(n bool) bool {
 	return rcv.MutateFORECAST(n)
 }
 
-// / True if derived from other measurements
+/// True if derived from other measurements
 func (rcv *SEO) DERIVED() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -181,7 +181,7 @@ func (rcv *SEO) Derived() bool {
 	return rcv.DERIVED()
 }
 
-// / True if derived from other measurements
+/// True if derived from other measurements
 func (rcv *SEO) MutateDERIVED(n bool) bool {
 	return rcv._tab.MutateBoolSlot(18, n)
 }
@@ -190,7 +190,7 @@ func (rcv *SEO) MutateDerived(n bool) bool {
 	return rcv.MutateDERIVED(n)
 }
 
-// / Satellite catalog number (if space-based)
+/// Satellite catalog number (if space-based)
 func (rcv *SEO) SAT_NO() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -203,7 +203,7 @@ func (rcv *SEO) SatNo() uint32 {
 	return rcv.SAT_NO()
 }
 
-// / Satellite catalog number (if space-based)
+/// Satellite catalog number (if space-based)
 func (rcv *SEO) MutateSAT_NO(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(20, n)
 }
@@ -212,7 +212,7 @@ func (rcv *SEO) MutateSatNo(n uint32) bool {
 	return rcv.MutateSAT_NO(n)
 }
 
-// / International designator
+/// International designator
 func (rcv *SEO) ORIG_OBJECT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -225,8 +225,8 @@ func (rcv *SEO) OrigObjectId() []byte {
 	return rcv.ORIG_OBJECT_ID()
 }
 
-// / International designator
-// / Sensor identifier
+/// International designator
+/// Sensor identifier
 func (rcv *SEO) ID_SENSOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -239,8 +239,8 @@ func (rcv *SEO) IdSensor() []byte {
 	return rcv.ID_SENSOR()
 }
 
-// / Sensor identifier
-// / Original sensor identifier
+/// Sensor identifier
+/// Original sensor identifier
 func (rcv *SEO) ORIG_SENSOR_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -253,8 +253,8 @@ func (rcv *SEO) OrigSensorId() []byte {
 	return rcv.ORIG_SENSOR_ID()
 }
 
-// / Original sensor identifier
-// / Observatory type
+/// Original sensor identifier
+/// Observatory type
 func (rcv *SEO) OBSERVATORY_TYPE() seoObservatoryType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -267,7 +267,7 @@ func (rcv *SEO) ObservatoryType() seoObservatoryType {
 	return rcv.OBSERVATORY_TYPE()
 }
 
-// / Observatory type
+/// Observatory type
 func (rcv *SEO) MutateOBSERVATORY_TYPE(n seoObservatoryType) bool {
 	return rcv._tab.MutateInt8Slot(28, int8(n))
 }
@@ -276,7 +276,7 @@ func (rcv *SEO) MutateObservatoryType(n seoObservatoryType) bool {
 	return rcv.MutateOBSERVATORY_TYPE(n)
 }
 
-// / Observatory name
+/// Observatory name
 func (rcv *SEO) OBSERVATORY_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -289,8 +289,8 @@ func (rcv *SEO) ObservatoryName() []byte {
 	return rcv.OBSERVATORY_NAME()
 }
 
-// / Observatory name
-// / Observatory notes
+/// Observatory name
+/// Observatory notes
 func (rcv *SEO) OBSERVATORY_NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -303,8 +303,8 @@ func (rcv *SEO) ObservatoryNotes() []byte {
 	return rcv.OBSERVATORY_NOTES()
 }
 
-// / Observatory notes
-// / Instrument type description
+/// Observatory notes
+/// Instrument type description
 func (rcv *SEO) INSTRUMENT_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -317,8 +317,8 @@ func (rcv *SEO) InstrumentType() []byte {
 	return rcv.INSTRUMENT_TYPE()
 }
 
-// / Instrument type description
-// / Observatory latitude (degrees)
+/// Instrument type description
+/// Observatory latitude (degrees)
 func (rcv *SEO) LAT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -331,7 +331,7 @@ func (rcv *SEO) Lat() float64 {
 	return rcv.LAT()
 }
 
-// / Observatory latitude (degrees)
+/// Observatory latitude (degrees)
 func (rcv *SEO) MutateLAT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -340,7 +340,7 @@ func (rcv *SEO) MutateLat(n float64) bool {
 	return rcv.MutateLAT(n)
 }
 
-// / Observatory longitude (degrees)
+/// Observatory longitude (degrees)
 func (rcv *SEO) LON() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -353,7 +353,7 @@ func (rcv *SEO) Lon() float64 {
 	return rcv.LON()
 }
 
-// / Observatory longitude (degrees)
+/// Observatory longitude (degrees)
 func (rcv *SEO) MutateLON(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -362,7 +362,7 @@ func (rcv *SEO) MutateLon(n float64) bool {
 	return rcv.MutateLON(n)
 }
 
-// / Observatory altitude (km)
+/// Observatory altitude (km)
 func (rcv *SEO) ALT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -375,7 +375,7 @@ func (rcv *SEO) Alt() float64 {
 	return rcv.ALT()
 }
 
-// / Observatory altitude (km)
+/// Observatory altitude (km)
 func (rcv *SEO) MutateALT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -384,7 +384,7 @@ func (rcv *SEO) MutateAlt(n float64) bool {
 	return rcv.MutateALT(n)
 }
 
-// / Sensor reference frame
+/// Sensor reference frame
 func (rcv *SEO) SEN_REFERENCE_FRAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -397,8 +397,8 @@ func (rcv *SEO) SenReferenceFrame() []byte {
 	return rcv.SEN_REFERENCE_FRAME()
 }
 
-// / Sensor reference frame
-// / Sensor position (km, 3 components)
+/// Sensor reference frame
+/// Sensor position (km, 3 components)
 func (rcv *SEO) SEN_POS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -424,7 +424,7 @@ func (rcv *SEO) SenPosLength() int {
 	return rcv.SEN_POSLength()
 }
 
-// / Sensor position (km, 3 components)
+/// Sensor position (km, 3 components)
 func (rcv *SEO) MutateSEN_POS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -438,7 +438,7 @@ func (rcv *SEO) MutateSenPos(j int, n float64) bool {
 	return rcv.MutateSEN_POS(j, n)
 }
 
-// / Sensor velocity (km/s, 3 components)
+/// Sensor velocity (km/s, 3 components)
 func (rcv *SEO) SEN_VEL(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -464,7 +464,7 @@ func (rcv *SEO) SenVelLength() int {
 	return rcv.SEN_VELLength()
 }
 
-// / Sensor velocity (km/s, 3 components)
+/// Sensor velocity (km/s, 3 components)
 func (rcv *SEO) MutateSEN_VEL(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -478,7 +478,7 @@ func (rcv *SEO) MutateSenVel(j int, n float64) bool {
 	return rcv.MutateSEN_VEL(j, n)
 }
 
-// / Measurement type description
+/// Measurement type description
 func (rcv *SEO) MEAS_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -491,8 +491,8 @@ func (rcv *SEO) MeasType() []byte {
 	return rcv.MEAS_TYPE()
 }
 
-// / Measurement type description
-// / Particle type measured
+/// Measurement type description
+/// Particle type measured
 func (rcv *SEO) PARTICLE_TYPE() seoParticleType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -505,7 +505,7 @@ func (rcv *SEO) ParticleType() seoParticleType {
 	return rcv.PARTICLE_TYPE()
 }
 
-// / Particle type measured
+/// Particle type measured
 func (rcv *SEO) MutatePARTICLE_TYPE(n seoParticleType) bool {
 	return rcv._tab.MutateInt8Slot(50, int8(n))
 }
@@ -514,7 +514,7 @@ func (rcv *SEO) MutateParticleType(n seoParticleType) bool {
 	return rcv.MutatePARTICLE_TYPE(n)
 }
 
-// / Energy level or range (keV or MeV)
+/// Energy level or range (keV or MeV)
 func (rcv *SEO) SEN_ENERGY_LEVEL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -527,8 +527,8 @@ func (rcv *SEO) SenEnergyLevel() []byte {
 	return rcv.SEN_ENERGY_LEVEL()
 }
 
-// / Energy level or range (keV or MeV)
-// / Observation set identifier
+/// Energy level or range (keV or MeV)
+/// Observation set identifier
 func (rcv *SEO) OB_SET_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -541,8 +541,8 @@ func (rcv *SEO) ObSetId() []byte {
 	return rcv.OB_SET_ID()
 }
 
-// / Observation set identifier
-// / Observation time (ISO 8601)
+/// Observation set identifier
+/// Observation time (ISO 8601)
 func (rcv *SEO) OB_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -555,8 +555,8 @@ func (rcv *SEO) ObTime() []byte {
 	return rcv.OB_TIME()
 }
 
-// / Observation time (ISO 8601)
-// / Measurement values
+/// Observation time (ISO 8601)
+/// Measurement values
 func (rcv *SEO) VALUES(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -582,7 +582,7 @@ func (rcv *SEO) ValuesLength() int {
 	return rcv.VALUESLength()
 }
 
-// / Measurement values
+/// Measurement values
 func (rcv *SEO) MutateVALUES(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -596,7 +596,7 @@ func (rcv *SEO) MutateValues(j int, n float64) bool {
 	return rcv.MutateVALUES(j, n)
 }
 
-// / Measurement uncertainties
+/// Measurement uncertainties
 func (rcv *SEO) UNCERTAINTIES(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -622,7 +622,7 @@ func (rcv *SEO) UncertaintiesLength() int {
 	return rcv.UNCERTAINTIESLength()
 }
 
-// / Measurement uncertainties
+/// Measurement uncertainties
 func (rcv *SEO) MutateUNCERTAINTIES(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -636,7 +636,7 @@ func (rcv *SEO) MutateUncertainties(j int, n float64) bool {
 	return rcv.MutateUNCERTAINTIES(j, n)
 }
 
-// / Units for measurement values
+/// Units for measurement values
 func (rcv *SEO) UNITS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -649,8 +649,8 @@ func (rcv *SEO) Units() []byte {
 	return rcv.UNITS()
 }
 
-// / Units for measurement values
-// / Data quality indicator
+/// Units for measurement values
+/// Data quality indicator
 func (rcv *SEO) QUALITY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -663,8 +663,8 @@ func (rcv *SEO) Quality() []byte {
 	return rcv.QUALITY()
 }
 
-// / Data quality indicator
-// / Description
+/// Data quality indicator
+/// Description
 func (rcv *SEO) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
@@ -677,8 +677,8 @@ func (rcv *SEO) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-// / Description
-// / Event descriptor
+/// Description
+/// Event descriptor
 func (rcv *SEO) DESCRIPTOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
@@ -691,8 +691,8 @@ func (rcv *SEO) Descriptor() []byte {
 	return rcv.DESCRIPTOR()
 }
 
-// / Event descriptor
-// / Source types
+/// Event descriptor
+/// Source types
 func (rcv *SEO) SRC_TYPS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
 	if o != 0 {
@@ -718,8 +718,8 @@ func (rcv *SEO) SrcTypsLength() int {
 	return rcv.SRC_TYPSLength()
 }
 
-// / Source types
-// / Source identifiers
+/// Source types
+/// Source identifiers
 func (rcv *SEO) SRC_IDS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
@@ -745,7 +745,7 @@ func (rcv *SEO) SrcIdsLength() int {
 	return rcv.SRC_IDSLength()
 }
 
-// / Source identifiers
+/// Source identifiers
 func SEOStart(builder *flatbuffers.Builder) {
 	builder.StartObject(35)
 }

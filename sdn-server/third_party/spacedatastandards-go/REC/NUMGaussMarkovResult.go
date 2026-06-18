@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Result of one Basilisk-compatible Gauss-Markov random sequence.
+/// Result of one Basilisk-compatible Gauss-Markov random sequence.
 type NUMGaussMarkovResult struct {
 	_tab flatbuffers.Table
 }
@@ -74,7 +74,7 @@ func (rcv *NUMGaussMarkovResult) ErrorMessage() []byte {
 	return rcv.ERROR_MESSAGE()
 }
 
-// / Post-warmup per-state sample means.
+/// Post-warmup per-state sample means.
 func (rcv *NUMGaussMarkovResult) MEAN(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -100,7 +100,7 @@ func (rcv *NUMGaussMarkovResult) MeanLength() int {
 	return rcv.MEANLength()
 }
 
-// / Post-warmup per-state sample means.
+/// Post-warmup per-state sample means.
 func (rcv *NUMGaussMarkovResult) MutateMEAN(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -114,7 +114,7 @@ func (rcv *NUMGaussMarkovResult) MutateMean(j int, n float64) bool {
 	return rcv.MutateMEAN(j, n)
 }
 
-// / Post-warmup per-state sample standard deviations with n - 1 denominator.
+/// Post-warmup per-state sample standard deviations with n - 1 denominator.
 func (rcv *NUMGaussMarkovResult) STANDARD_DEVIATION(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -140,7 +140,7 @@ func (rcv *NUMGaussMarkovResult) StandardDeviationLength() int {
 	return rcv.STANDARD_DEVIATIONLength()
 }
 
-// / Post-warmup per-state sample standard deviations with n - 1 denominator.
+/// Post-warmup per-state sample standard deviations with n - 1 denominator.
 func (rcv *NUMGaussMarkovResult) MutateSTANDARD_DEVIATION(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -154,7 +154,7 @@ func (rcv *NUMGaussMarkovResult) MutateStandardDeviation(j int, n float64) bool 
 	return rcv.MutateSTANDARD_DEVIATION(j, n)
 }
 
-// / Post-warmup per-state minima.
+/// Post-warmup per-state minima.
 func (rcv *NUMGaussMarkovResult) MINIMUM(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -180,7 +180,7 @@ func (rcv *NUMGaussMarkovResult) MinimumLength() int {
 	return rcv.MINIMUMLength()
 }
 
-// / Post-warmup per-state minima.
+/// Post-warmup per-state minima.
 func (rcv *NUMGaussMarkovResult) MutateMINIMUM(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -194,7 +194,7 @@ func (rcv *NUMGaussMarkovResult) MutateMinimum(j int, n float64) bool {
 	return rcv.MutateMINIMUM(j, n)
 }
 
-// / Post-warmup per-state maxima.
+/// Post-warmup per-state maxima.
 func (rcv *NUMGaussMarkovResult) MAXIMUM(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -220,7 +220,7 @@ func (rcv *NUMGaussMarkovResult) MaximumLength() int {
 	return rcv.MAXIMUMLength()
 }
 
-// / Post-warmup per-state maxima.
+/// Post-warmup per-state maxima.
 func (rcv *NUMGaussMarkovResult) MutateMAXIMUM(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -234,7 +234,7 @@ func (rcv *NUMGaussMarkovResult) MutateMaximum(j int, n float64) bool {
 	return rcv.MutateMAXIMUM(j, n)
 }
 
-// / State after the final generated sample.
+/// State after the final generated sample.
 func (rcv *NUMGaussMarkovResult) FINAL_STATE(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -260,7 +260,7 @@ func (rcv *NUMGaussMarkovResult) FinalStateLength() int {
 	return rcv.FINAL_STATELength()
 }
 
-// / State after the final generated sample.
+/// State after the final generated sample.
 func (rcv *NUMGaussMarkovResult) MutateFINAL_STATE(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -274,7 +274,7 @@ func (rcv *NUMGaussMarkovResult) MutateFinalState(j int, n float64) bool {
 	return rcv.MutateFINAL_STATE(j, n)
 }
 
-// / Optional flattened sample-major state history.
+/// Optional flattened sample-major state history.
 func (rcv *NUMGaussMarkovResult) SAMPLES(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -300,7 +300,7 @@ func (rcv *NUMGaussMarkovResult) SamplesLength() int {
 	return rcv.SAMPLESLength()
 }
 
-// / Optional flattened sample-major state history.
+/// Optional flattened sample-major state history.
 func (rcv *NUMGaussMarkovResult) MutateSAMPLES(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -314,7 +314,7 @@ func (rcv *NUMGaussMarkovResult) MutateSamples(j int, n float64) bool {
 	return rcv.MutateSAMPLES(j, n)
 }
 
-// / Caller trace/correlation identifier copied from the request when present.
+/// Caller trace/correlation identifier copied from the request when present.
 func (rcv *NUMGaussMarkovResult) TRACE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -327,7 +327,7 @@ func (rcv *NUMGaussMarkovResult) TraceId() []byte {
 	return rcv.TRACE_ID()
 }
 
-// / Caller trace/correlation identifier copied from the request when present.
+/// Caller trace/correlation identifier copied from the request when present.
 func NUMGaussMarkovResultStart(builder *flatbuffers.Builder) {
 	builder.StartObject(9)
 }

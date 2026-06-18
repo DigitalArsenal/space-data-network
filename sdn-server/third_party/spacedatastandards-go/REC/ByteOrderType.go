@@ -4,12 +4,12 @@ package REC
 
 import "strconv"
 
-// / Byte ordering for data encoding
+/// Byte ordering for data encoding
 type ByteOrderType int8
 
 const (
 	/// Most significant byte first
-	ByteOrderTypeBIG_ENDIAN ByteOrderType = 0
+	ByteOrderTypeBIG_ENDIAN    ByteOrderType = 0
 	/// Least significant byte first
 	ByteOrderTypeLITTLE_ENDIAN ByteOrderType = 1
 )

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Polyline properties
+/// Polyline properties
 type CZMPolyline struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMPolyline) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Whether the polyline is displayed
+/// Whether the polyline is displayed
 func (rcv *CZMPolyline) SHOW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMPolyline) Show() bool {
 	return rcv.SHOW()
 }
 
-// / Whether the polyline is displayed
+/// Whether the polyline is displayed
 func (rcv *CZMPolyline) MutateSHOW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMPolyline) MutateShow(n bool) bool {
 	return rcv.MutateSHOW(n)
 }
 
-// / Positions as cartographic degrees [lon, lat, height, lon, lat, height, ...]
+/// Positions as cartographic degrees [lon, lat, height, lon, lat, height, ...]
 func (rcv *CZMPolyline) POSITIONS_CARTOGRAPHIC_DEGREES(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -90,7 +90,7 @@ func (rcv *CZMPolyline) PositionsCartographicDegreesLength() int {
 	return rcv.POSITIONS_CARTOGRAPHIC_DEGREESLength()
 }
 
-// / Positions as cartographic degrees [lon, lat, height, lon, lat, height, ...]
+/// Positions as cartographic degrees [lon, lat, height, lon, lat, height, ...]
 func (rcv *CZMPolyline) MutatePOSITIONS_CARTOGRAPHIC_DEGREES(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -104,7 +104,7 @@ func (rcv *CZMPolyline) MutatePositionsCartographicDegrees(j int, n float64) boo
 	return rcv.MutatePOSITIONS_CARTOGRAPHIC_DEGREES(j, n)
 }
 
-// / Positions as Cartesian [X, Y, Z, X, Y, Z, ...]
+/// Positions as Cartesian [X, Y, Z, X, Y, Z, ...]
 func (rcv *CZMPolyline) POSITIONS_CARTESIAN(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -130,7 +130,7 @@ func (rcv *CZMPolyline) PositionsCartesianLength() int {
 	return rcv.POSITIONS_CARTESIANLength()
 }
 
-// / Positions as Cartesian [X, Y, Z, X, Y, Z, ...]
+/// Positions as Cartesian [X, Y, Z, X, Y, Z, ...]
 func (rcv *CZMPolyline) MutatePOSITIONS_CARTESIAN(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -144,7 +144,7 @@ func (rcv *CZMPolyline) MutatePositionsCartesian(j int, n float64) bool {
 	return rcv.MutatePOSITIONS_CARTESIAN(j, n)
 }
 
-// / Line width in pixels
+/// Line width in pixels
 func (rcv *CZMPolyline) WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *CZMPolyline) Width() float64 {
 	return rcv.WIDTH()
 }
 
-// / Line width in pixels
+/// Line width in pixels
 func (rcv *CZMPolyline) MutateWIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -166,7 +166,7 @@ func (rcv *CZMPolyline) MutateWidth(n float64) bool {
 	return rcv.MutateWIDTH(n)
 }
 
-// / Line color (solid color material, legacy)
+/// Line color (solid color material, legacy)
 func (rcv *CZMPolyline) COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -184,8 +184,8 @@ func (rcv *CZMPolyline) Color(obj *CZMColor) *CZMColor {
 	return rcv.COLOR(obj)
 }
 
-// / Line color (solid color material, legacy)
-// / Whether to clamp to ground
+/// Line color (solid color material, legacy)
+/// Whether to clamp to ground
 func (rcv *CZMPolyline) CLAMP_TO_GROUND() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -198,7 +198,7 @@ func (rcv *CZMPolyline) ClampToGround() bool {
 	return rcv.CLAMP_TO_GROUND()
 }
 
-// / Whether to clamp to ground
+/// Whether to clamp to ground
 func (rcv *CZMPolyline) MutateCLAMP_TO_GROUND(n bool) bool {
 	return rcv._tab.MutateBoolSlot(14, n)
 }
@@ -207,7 +207,7 @@ func (rcv *CZMPolyline) MutateClampToGround(n bool) bool {
 	return rcv.MutateCLAMP_TO_GROUND(n)
 }
 
-// / Arc type
+/// Arc type
 func (rcv *CZMPolyline) ARC_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -220,8 +220,8 @@ func (rcv *CZMPolyline) ArcType() []byte {
 	return rcv.ARC_TYPE()
 }
 
-// / Arc type
-// / Granularity in radians
+/// Arc type
+/// Granularity in radians
 func (rcv *CZMPolyline) GRANULARITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -234,7 +234,7 @@ func (rcv *CZMPolyline) Granularity() float64 {
 	return rcv.GRANULARITY()
 }
 
-// / Granularity in radians
+/// Granularity in radians
 func (rcv *CZMPolyline) MutateGRANULARITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -243,7 +243,7 @@ func (rcv *CZMPolyline) MutateGranularity(n float64) bool {
 	return rcv.MutateGRANULARITY(n)
 }
 
-// / Full polyline material
+/// Full polyline material
 func (rcv *CZMPolyline) MATERIAL(obj *CZMPolylineMaterial) *CZMPolylineMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -261,8 +261,8 @@ func (rcv *CZMPolyline) Material(obj *CZMPolylineMaterial) *CZMPolylineMaterial 
 	return rcv.MATERIAL(obj)
 }
 
-// / Full polyline material
-// / Shadow mode
+/// Full polyline material
+/// Shadow mode
 func (rcv *CZMPolyline) SHADOWS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -275,8 +275,8 @@ func (rcv *CZMPolyline) Shadows() []byte {
 	return rcv.SHADOWS()
 }
 
-// / Shadow mode
-// / Depth fail material
+/// Shadow mode
+/// Depth fail material
 func (rcv *CZMPolyline) DEPTH_FAIL_MATERIAL(obj *CZMPolylineMaterial) *CZMPolylineMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -294,8 +294,8 @@ func (rcv *CZMPolyline) DepthFailMaterial(obj *CZMPolylineMaterial) *CZMPolyline
 	return rcv.DEPTH_FAIL_MATERIAL(obj)
 }
 
-// / Depth fail material
-// / Classification type
+/// Depth fail material
+/// Classification type
 func (rcv *CZMPolyline) CLASSIFICATION_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -308,8 +308,8 @@ func (rcv *CZMPolyline) ClassificationType() []byte {
 	return rcv.CLASSIFICATION_TYPE()
 }
 
-// / Classification type
-// / Z-index for ordering
+/// Classification type
+/// Z-index for ordering
 func (rcv *CZMPolyline) Z_INDEX() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -322,7 +322,7 @@ func (rcv *CZMPolyline) ZIndex() int32 {
 	return rcv.Z_INDEX()
 }
 
-// / Z-index for ordering
+/// Z-index for ordering
 func (rcv *CZMPolyline) MutateZ_INDEX(n int32) bool {
 	return rcv._tab.MutateInt32Slot(28, n)
 }

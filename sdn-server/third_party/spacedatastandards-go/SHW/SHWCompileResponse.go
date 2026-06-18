@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Compile response — whether the shader compiled, with diagnostics.
+/// Compile response — whether the shader compiled, with diagnostics.
 type SHWCompileResponse struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *SHWCompileResponse) ShaderName() []byte {
 	return rcv.SHADER_NAME()
 }
 
-// / Whether compilation succeeded.
+/// Whether compilation succeeded.
 func (rcv *SHWCompileResponse) COMPILE_SUCCESS() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *SHWCompileResponse) CompileSuccess() bool {
 	return rcv.COMPILE_SUCCESS()
 }
 
-// / Whether compilation succeeded.
+/// Whether compilation succeeded.
 func (rcv *SHWCompileResponse) MutateCOMPILE_SUCCESS(n bool) bool {
 	return rcv._tab.MutateBoolSlot(6, n)
 }
@@ -76,7 +76,7 @@ func (rcv *SHWCompileResponse) MutateCompileSuccess(n bool) bool {
 	return rcv.MutateCOMPILE_SUCCESS(n)
 }
 
-// / Optional GLSL info log.
+/// Optional GLSL info log.
 func (rcv *SHWCompileResponse) INFO_LOG() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -89,8 +89,8 @@ func (rcv *SHWCompileResponse) InfoLog() []byte {
 	return rcv.INFO_LOG()
 }
 
-// / Optional GLSL info log.
-// / Optional compiled binary (if the compiler emits one).
+/// Optional GLSL info log.
+/// Optional compiled binary (if the compiler emits one).
 func (rcv *SHWCompileResponse) COMPILED_BINARY(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -128,7 +128,7 @@ func (rcv *SHWCompileResponse) CompiledBinaryBytes() []byte {
 	return rcv.COMPILED_BINARYBytes()
 }
 
-// / Optional compiled binary (if the compiler emits one).
+/// Optional compiled binary (if the compiler emits one).
 func (rcv *SHWCompileResponse) MutateCOMPILED_BINARY(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -142,7 +142,7 @@ func (rcv *SHWCompileResponse) MutateCompiledBinary(j int, n byte) bool {
 	return rcv.MutateCOMPILED_BINARY(j, n)
 }
 
-// / Echo of the uniforms the compiler actually linked.
+/// Echo of the uniforms the compiler actually linked.
 func (rcv *SHWCompileResponse) LINKED_UNIFORMS(obj *SHWUniform, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -174,7 +174,7 @@ func (rcv *SHWCompileResponse) LinkedUniformsLength() int {
 	return rcv.LINKED_UNIFORMSLength()
 }
 
-// / Echo of the uniforms the compiler actually linked.
+/// Echo of the uniforms the compiler actually linked.
 func SHWCompileResponseStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

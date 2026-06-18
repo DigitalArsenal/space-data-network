@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Sustainer Details
+/// Sustainer Details
 type SUSTAINER struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *SUSTAINER) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Name of the Sustainer
+/// Name of the Sustainer
 func (rcv *SUSTAINER) SUSTAINER_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *SUSTAINER) SustainerName() []byte {
 	return rcv.SUSTAINER_NAME()
 }
 
-// / Name of the Sustainer
-// / Thrust Produced by the Sustainer (in Newtons)
+/// Name of the Sustainer
+/// Thrust Produced by the Sustainer (in Newtons)
 func (rcv *SUSTAINER) THRUST() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *SUSTAINER) Thrust() float64 {
 	return rcv.THRUST()
 }
 
-// / Thrust Produced by the Sustainer (in Newtons)
+/// Thrust Produced by the Sustainer (in Newtons)
 func (rcv *SUSTAINER) MutateTHRUST(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -78,7 +78,7 @@ func (rcv *SUSTAINER) MutateThrust(n float64) bool {
 	return rcv.MutateTHRUST(n)
 }
 
-// / Duration of the Burn (in Seconds)
+/// Duration of the Burn (in Seconds)
 func (rcv *SUSTAINER) BURN_DURATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *SUSTAINER) BurnDuration() float64 {
 	return rcv.BURN_DURATION()
 }
 
-// / Duration of the Burn (in Seconds)
+/// Duration of the Burn (in Seconds)
 func (rcv *SUSTAINER) MutateBURN_DURATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }

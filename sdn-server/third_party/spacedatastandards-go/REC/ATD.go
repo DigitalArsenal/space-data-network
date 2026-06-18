@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Attitude Data Point
+/// Attitude Data Point
 type ATD struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *ATD) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier
+/// Unique identifier
 func (rcv *ATD) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *ATD) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique identifier
-// / Attitude set identifier (groups time-series points)
+/// Unique identifier
+/// Attitude set identifier (groups time-series points)
 func (rcv *ATD) AS_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *ATD) AsId() []byte {
 	return rcv.AS_ID()
 }
 
-// / Attitude set identifier (groups time-series points)
-// / Satellite catalog number
+/// Attitude set identifier (groups time-series points)
+/// Satellite catalog number
 func (rcv *ATD) SAT_NO() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,7 +95,7 @@ func (rcv *ATD) SatNo() uint32 {
 	return rcv.SAT_NO()
 }
 
-// / Satellite catalog number
+/// Satellite catalog number
 func (rcv *ATD) MutateSAT_NO(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -104,7 +104,7 @@ func (rcv *ATD) MutateSatNo(n uint32) bool {
 	return rcv.MutateSAT_NO(n)
 }
 
-// / International designator
+/// International designator
 func (rcv *ATD) ORIG_OBJECT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *ATD) OrigObjectId() []byte {
 	return rcv.ORIG_OBJECT_ID()
 }
 
-// / International designator
-// / Observation epoch (ISO 8601)
+/// International designator
+/// Observation epoch (ISO 8601)
 func (rcv *ATD) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *ATD) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-// / Observation epoch (ISO 8601)
-// / Attitude representation used
+/// Observation epoch (ISO 8601)
+/// Attitude representation used
 func (rcv *ATD) REPRESENTATION() attRepresentation {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,7 +145,7 @@ func (rcv *ATD) Representation() attRepresentation {
 	return rcv.REPRESENTATION()
 }
 
-// / Attitude representation used
+/// Attitude representation used
 func (rcv *ATD) MutateREPRESENTATION(n attRepresentation) bool {
 	return rcv._tab.MutateInt8Slot(14, int8(n))
 }
@@ -154,7 +154,7 @@ func (rcv *ATD) MutateRepresentation(n attRepresentation) bool {
 	return rcv.MutateREPRESENTATION(n)
 }
 
-// / Motion characterization
+/// Motion characterization
 func (rcv *ATD) MOTION_TYPE() attMotionType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -167,7 +167,7 @@ func (rcv *ATD) MotionType() attMotionType {
 	return rcv.MOTION_TYPE()
 }
 
-// / Motion characterization
+/// Motion characterization
 func (rcv *ATD) MutateMOTION_TYPE(n attMotionType) bool {
 	return rcv._tab.MutateInt8Slot(16, int8(n))
 }
@@ -176,7 +176,7 @@ func (rcv *ATD) MutateMotionType(n attMotionType) bool {
 	return rcv.MutateMOTION_TYPE(n)
 }
 
-// / Quaternion scalar component (q0 or qc)
+/// Quaternion scalar component (q0 or qc)
 func (rcv *ATD) QC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -189,7 +189,7 @@ func (rcv *ATD) Qc() float64 {
 	return rcv.QC()
 }
 
-// / Quaternion scalar component (q0 or qc)
+/// Quaternion scalar component (q0 or qc)
 func (rcv *ATD) MutateQC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -198,7 +198,7 @@ func (rcv *ATD) MutateQc(n float64) bool {
 	return rcv.MutateQC(n)
 }
 
-// / Quaternion vector component 1
+/// Quaternion vector component 1
 func (rcv *ATD) Q1() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -207,12 +207,12 @@ func (rcv *ATD) Q1() float64 {
 	return 0.0
 }
 
-// / Quaternion vector component 1
+/// Quaternion vector component 1
 func (rcv *ATD) MutateQ1(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
 
-// / Quaternion vector component 2
+/// Quaternion vector component 2
 func (rcv *ATD) Q2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -221,12 +221,12 @@ func (rcv *ATD) Q2() float64 {
 	return 0.0
 }
 
-// / Quaternion vector component 2
+/// Quaternion vector component 2
 func (rcv *ATD) MutateQ2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
 
-// / Quaternion vector component 3
+/// Quaternion vector component 3
 func (rcv *ATD) Q3() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -235,12 +235,12 @@ func (rcv *ATD) Q3() float64 {
 	return 0.0
 }
 
-// / Quaternion vector component 3
+/// Quaternion vector component 3
 func (rcv *ATD) MutateQ3(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
 
-// / Quaternion scalar rate (rad/s)
+/// Quaternion scalar rate (rad/s)
 func (rcv *ATD) QC_DOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -253,7 +253,7 @@ func (rcv *ATD) QcDot() float64 {
 	return rcv.QC_DOT()
 }
 
-// / Quaternion scalar rate (rad/s)
+/// Quaternion scalar rate (rad/s)
 func (rcv *ATD) MutateQC_DOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -262,7 +262,7 @@ func (rcv *ATD) MutateQcDot(n float64) bool {
 	return rcv.MutateQC_DOT(n)
 }
 
-// / Quaternion vector rate 1 (rad/s)
+/// Quaternion vector rate 1 (rad/s)
 func (rcv *ATD) Q1_DOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -275,7 +275,7 @@ func (rcv *ATD) Q1Dot() float64 {
 	return rcv.Q1_DOT()
 }
 
-// / Quaternion vector rate 1 (rad/s)
+/// Quaternion vector rate 1 (rad/s)
 func (rcv *ATD) MutateQ1_DOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -284,7 +284,7 @@ func (rcv *ATD) MutateQ1Dot(n float64) bool {
 	return rcv.MutateQ1_DOT(n)
 }
 
-// / Quaternion vector rate 2 (rad/s)
+/// Quaternion vector rate 2 (rad/s)
 func (rcv *ATD) Q2_DOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -297,7 +297,7 @@ func (rcv *ATD) Q2Dot() float64 {
 	return rcv.Q2_DOT()
 }
 
-// / Quaternion vector rate 2 (rad/s)
+/// Quaternion vector rate 2 (rad/s)
 func (rcv *ATD) MutateQ2_DOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -306,7 +306,7 @@ func (rcv *ATD) MutateQ2Dot(n float64) bool {
 	return rcv.MutateQ2_DOT(n)
 }
 
-// / Quaternion vector rate 3 (rad/s)
+/// Quaternion vector rate 3 (rad/s)
 func (rcv *ATD) Q3_DOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -319,7 +319,7 @@ func (rcv *ATD) Q3Dot() float64 {
 	return rcv.Q3_DOT()
 }
 
-// / Quaternion vector rate 3 (rad/s)
+/// Quaternion vector rate 3 (rad/s)
 func (rcv *ATD) MutateQ3_DOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -328,7 +328,7 @@ func (rcv *ATD) MutateQ3Dot(n float64) bool {
 	return rcv.MutateQ3_DOT(n)
 }
 
-// / Euler angle X (degrees)
+/// Euler angle X (degrees)
 func (rcv *ATD) X_ANGLE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -341,7 +341,7 @@ func (rcv *ATD) XAngle() float64 {
 	return rcv.X_ANGLE()
 }
 
-// / Euler angle X (degrees)
+/// Euler angle X (degrees)
 func (rcv *ATD) MutateX_ANGLE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -350,7 +350,7 @@ func (rcv *ATD) MutateXAngle(n float64) bool {
 	return rcv.MutateX_ANGLE(n)
 }
 
-// / Euler angle Y (degrees)
+/// Euler angle Y (degrees)
 func (rcv *ATD) Y_ANGLE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -363,7 +363,7 @@ func (rcv *ATD) YAngle() float64 {
 	return rcv.Y_ANGLE()
 }
 
-// / Euler angle Y (degrees)
+/// Euler angle Y (degrees)
 func (rcv *ATD) MutateY_ANGLE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -372,7 +372,7 @@ func (rcv *ATD) MutateYAngle(n float64) bool {
 	return rcv.MutateY_ANGLE(n)
 }
 
-// / Euler angle Z (degrees)
+/// Euler angle Z (degrees)
 func (rcv *ATD) Z_ANGLE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -385,7 +385,7 @@ func (rcv *ATD) ZAngle() float64 {
 	return rcv.Z_ANGLE()
 }
 
-// / Euler angle Z (degrees)
+/// Euler angle Z (degrees)
 func (rcv *ATD) MutateZ_ANGLE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -394,7 +394,7 @@ func (rcv *ATD) MutateZAngle(n float64) bool {
 	return rcv.MutateZ_ANGLE(n)
 }
 
-// / Angular rate about X (deg/s)
+/// Angular rate about X (deg/s)
 func (rcv *ATD) X_RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -407,7 +407,7 @@ func (rcv *ATD) XRate() float64 {
 	return rcv.X_RATE()
 }
 
-// / Angular rate about X (deg/s)
+/// Angular rate about X (deg/s)
 func (rcv *ATD) MutateX_RATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -416,7 +416,7 @@ func (rcv *ATD) MutateXRate(n float64) bool {
 	return rcv.MutateX_RATE(n)
 }
 
-// / Angular rate about Y (deg/s)
+/// Angular rate about Y (deg/s)
 func (rcv *ATD) Y_RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -429,7 +429,7 @@ func (rcv *ATD) YRate() float64 {
 	return rcv.Y_RATE()
 }
 
-// / Angular rate about Y (deg/s)
+/// Angular rate about Y (deg/s)
 func (rcv *ATD) MutateY_RATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -438,7 +438,7 @@ func (rcv *ATD) MutateYRate(n float64) bool {
 	return rcv.MutateY_RATE(n)
 }
 
-// / Angular rate about Z (deg/s)
+/// Angular rate about Z (deg/s)
 func (rcv *ATD) Z_RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -451,7 +451,7 @@ func (rcv *ATD) ZRate() float64 {
 	return rcv.Z_RATE()
 }
 
-// / Angular rate about Z (deg/s)
+/// Angular rate about Z (deg/s)
 func (rcv *ATD) MutateZ_RATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(44, n)
 }
@@ -460,7 +460,7 @@ func (rcv *ATD) MutateZRate(n float64) bool {
 	return rcv.MutateZ_RATE(n)
 }
 
-// / Right ascension of spin axis (degrees)
+/// Right ascension of spin axis (degrees)
 func (rcv *ATD) RA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -473,7 +473,7 @@ func (rcv *ATD) Ra() float64 {
 	return rcv.RA()
 }
 
-// / Right ascension of spin axis (degrees)
+/// Right ascension of spin axis (degrees)
 func (rcv *ATD) MutateRA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(46, n)
 }
@@ -482,7 +482,7 @@ func (rcv *ATD) MutateRa(n float64) bool {
 	return rcv.MutateRA(n)
 }
 
-// / Declination of spin axis (degrees)
+/// Declination of spin axis (degrees)
 func (rcv *ATD) DECLINATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -495,7 +495,7 @@ func (rcv *ATD) Declination() float64 {
 	return rcv.DECLINATION()
 }
 
-// / Declination of spin axis (degrees)
+/// Declination of spin axis (degrees)
 func (rcv *ATD) MutateDECLINATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(48, n)
 }
@@ -504,7 +504,7 @@ func (rcv *ATD) MutateDeclination(n float64) bool {
 	return rcv.MutateDECLINATION(n)
 }
 
-// / Coning half-angle (degrees)
+/// Coning half-angle (degrees)
 func (rcv *ATD) CONING_ANGLE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -517,7 +517,7 @@ func (rcv *ATD) ConingAngle() float64 {
 	return rcv.CONING_ANGLE()
 }
 
-// / Coning half-angle (degrees)
+/// Coning half-angle (degrees)
 func (rcv *ATD) MutateCONING_ANGLE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(50, n)
 }
@@ -526,7 +526,7 @@ func (rcv *ATD) MutateConingAngle(n float64) bool {
 	return rcv.MutateCONING_ANGLE(n)
 }
 
-// / Precession period (seconds)
+/// Precession period (seconds)
 func (rcv *ATD) PREC_PERIOD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -539,7 +539,7 @@ func (rcv *ATD) PrecPeriod() float64 {
 	return rcv.PREC_PERIOD()
 }
 
-// / Precession period (seconds)
+/// Precession period (seconds)
 func (rcv *ATD) MutatePREC_PERIOD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(52, n)
 }
@@ -548,7 +548,7 @@ func (rcv *ATD) MutatePrecPeriod(n float64) bool {
 	return rcv.MutatePREC_PERIOD(n)
 }
 
-// / Spin period (seconds)
+/// Spin period (seconds)
 func (rcv *ATD) SPIN_PERIOD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -561,7 +561,7 @@ func (rcv *ATD) SpinPeriod() float64 {
 	return rcv.SPIN_PERIOD()
 }
 
-// / Spin period (seconds)
+/// Spin period (seconds)
 func (rcv *ATD) MutateSPIN_PERIOD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(54, n)
 }
@@ -570,7 +570,7 @@ func (rcv *ATD) MutateSpinPeriod(n float64) bool {
 	return rcv.MutateSPIN_PERIOD(n)
 }
 
-// / Attitude uncertainty (degrees, 1-sigma)
+/// Attitude uncertainty (degrees, 1-sigma)
 func (rcv *ATD) ATTITUDE_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -583,7 +583,7 @@ func (rcv *ATD) AttitudeUnc() float64 {
 	return rcv.ATTITUDE_UNC()
 }
 
-// / Attitude uncertainty (degrees, 1-sigma)
+/// Attitude uncertainty (degrees, 1-sigma)
 func (rcv *ATD) MutateATTITUDE_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(56, n)
 }
@@ -592,7 +592,7 @@ func (rcv *ATD) MutateAttitudeUnc(n float64) bool {
 	return rcv.MutateATTITUDE_UNC(n)
 }
 
-// / Rate uncertainty (deg/s, 1-sigma)
+/// Rate uncertainty (deg/s, 1-sigma)
 func (rcv *ATD) RATE_UNC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -605,7 +605,7 @@ func (rcv *ATD) RateUnc() float64 {
 	return rcv.RATE_UNC()
 }
 
-// / Rate uncertainty (deg/s, 1-sigma)
+/// Rate uncertainty (deg/s, 1-sigma)
 func (rcv *ATD) MutateRATE_UNC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(58, n)
 }
@@ -614,7 +614,7 @@ func (rcv *ATD) MutateRateUnc(n float64) bool {
 	return rcv.MutateRATE_UNC(n)
 }
 
-// / Data quality (0-9, 9=best)
+/// Data quality (0-9, 9=best)
 func (rcv *ATD) QUALITY() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -627,7 +627,7 @@ func (rcv *ATD) Quality() byte {
 	return rcv.QUALITY()
 }
 
-// / Data quality (0-9, 9=best)
+/// Data quality (0-9, 9=best)
 func (rcv *ATD) MutateQUALITY(n byte) bool {
 	return rcv._tab.MutateByteSlot(60, n)
 }
@@ -636,7 +636,7 @@ func (rcv *ATD) MutateQuality(n byte) bool {
 	return rcv.MutateQUALITY(n)
 }
 
-// / Reference frame for attitude
+/// Reference frame for attitude
 func (rcv *ATD) REF_FRAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -649,8 +649,8 @@ func (rcv *ATD) RefFrame() []byte {
 	return rcv.REF_FRAME()
 }
 
-// / Reference frame for attitude
-// / Sensor identifier providing the observation
+/// Reference frame for attitude
+/// Sensor identifier providing the observation
 func (rcv *ATD) SENSOR_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -663,7 +663,7 @@ func (rcv *ATD) SensorId() []byte {
 	return rcv.SENSOR_ID()
 }
 
-// / Sensor identifier providing the observation
+/// Sensor identifier providing the observation
 func ATDStart(builder *flatbuffers.Builder) {
 	builder.StartObject(31)
 }

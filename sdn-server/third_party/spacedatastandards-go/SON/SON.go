@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Sonar and Underwater Acoustics
+/// Sonar and Underwater Acoustics
 type SON struct {
 	_tab flatbuffers.Table
 }

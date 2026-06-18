@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Communications Payload
+/// Communications Payload
 type CMS struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *CMS) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier
+/// Unique identifier
 func (rcv *CMS) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *CMS) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique identifier
-// / Reference to parent entity
+/// Unique identifier
+/// Reference to parent entity
 func (rcv *CMS) ID_ENTITY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *CMS) IdEntity() []byte {
 	return rcv.ID_ENTITY()
 }
 
-// / Reference to parent entity
-// / Communications payload name
+/// Reference to parent entity
+/// Communications payload name
 func (rcv *CMS) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *CMS) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Communications payload name
-// / Description
+/// Communications payload name
+/// Description
 func (rcv *CMS) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *CMS) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-// / Description
-// / Parent entity designator
+/// Description
+/// Parent entity designator
 func (rcv *CMS) ENTITY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *CMS) Entity() []byte {
 	return rcv.ENTITY()
 }
 
-// / Parent entity designator
-// / Satellite number
+/// Parent entity designator
+/// Satellite number
 func (rcv *CMS) SAT_NO() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,7 +137,7 @@ func (rcv *CMS) SatNo() uint32 {
 	return rcv.SAT_NO()
 }
 
-// / Satellite number
+/// Satellite number
 func (rcv *CMS) MutateSAT_NO(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(14, n)
 }
@@ -146,7 +146,7 @@ func (rcv *CMS) MutateSatNo(n uint32) bool {
 	return rcv.MutateSAT_NO(n)
 }
 
-// / Number of transponders
+/// Number of transponders
 func (rcv *CMS) NUM_TRANSPONDERS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,7 +159,7 @@ func (rcv *CMS) NumTransponders() uint32 {
 	return rcv.NUM_TRANSPONDERS()
 }
 
-// / Number of transponders
+/// Number of transponders
 func (rcv *CMS) MutateNUM_TRANSPONDERS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(16, n)
 }
@@ -168,7 +168,7 @@ func (rcv *CMS) MutateNumTransponders(n uint32) bool {
 	return rcv.MutateNUM_TRANSPONDERS(n)
 }
 
-// / Transponders
+/// Transponders
 func (rcv *CMS) TRANSPONDERS(obj *commsTransponder, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -200,8 +200,8 @@ func (rcv *CMS) TranspondersLength() int {
 	return rcv.TRANSPONDERSLength()
 }
 
-// / Transponders
-// / Total payload power in Watts
+/// Transponders
+/// Total payload power in Watts
 func (rcv *CMS) TOTAL_POWER() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -214,7 +214,7 @@ func (rcv *CMS) TotalPower() float64 {
 	return rcv.TOTAL_POWER()
 }
 
-// / Total payload power in Watts
+/// Total payload power in Watts
 func (rcv *CMS) MutateTOTAL_POWER(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -223,7 +223,7 @@ func (rcv *CMS) MutateTotalPower(n float64) bool {
 	return rcv.MutateTOTAL_POWER(n)
 }
 
-// / Total payload mass in kg
+/// Total payload mass in kg
 func (rcv *CMS) TOTAL_MASS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -236,7 +236,7 @@ func (rcv *CMS) TotalMass() float64 {
 	return rcv.TOTAL_MASS()
 }
 
-// / Total payload mass in kg
+/// Total payload mass in kg
 func (rcv *CMS) MutateTOTAL_MASS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -245,7 +245,7 @@ func (rcv *CMS) MutateTotalMass(n float64) bool {
 	return rcv.MutateTOTAL_MASS(n)
 }
 
-// / Total aggregate bandwidth in MHz
+/// Total aggregate bandwidth in MHz
 func (rcv *CMS) TOTAL_BANDWIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -258,7 +258,7 @@ func (rcv *CMS) TotalBandwidth() float64 {
 	return rcv.TOTAL_BANDWIDTH()
 }
 
-// / Total aggregate bandwidth in MHz
+/// Total aggregate bandwidth in MHz
 func (rcv *CMS) MutateTOTAL_BANDWIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -267,7 +267,7 @@ func (rcv *CMS) MutateTotalBandwidth(n float64) bool {
 	return rcv.MutateTOTAL_BANDWIDTH(n)
 }
 
-// / Primary mission (e.g., FIXED_SAT, BROADCAST, MOBILE, RELAY, MILSATCOM)
+/// Primary mission (e.g., FIXED_SAT, BROADCAST, MOBILE, RELAY, MILSATCOM)
 func (rcv *CMS) MISSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -280,8 +280,8 @@ func (rcv *CMS) Mission() []byte {
 	return rcv.MISSION()
 }
 
-// / Primary mission (e.g., FIXED_SAT, BROADCAST, MOBILE, RELAY, MILSATCOM)
-// / Coverage region description
+/// Primary mission (e.g., FIXED_SAT, BROADCAST, MOBILE, RELAY, MILSATCOM)
+/// Coverage region description
 func (rcv *CMS) COVERAGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -294,8 +294,8 @@ func (rcv *CMS) Coverage() []byte {
 	return rcv.COVERAGE()
 }
 
-// / Coverage region description
-// / Design lifetime in years
+/// Coverage region description
+/// Design lifetime in years
 func (rcv *CMS) DESIGN_LIFE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -308,7 +308,7 @@ func (rcv *CMS) DesignLife() float64 {
 	return rcv.DESIGN_LIFE()
 }
 
-// / Design lifetime in years
+/// Design lifetime in years
 func (rcv *CMS) MutateDESIGN_LIFE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -317,7 +317,7 @@ func (rcv *CMS) MutateDesignLife(n float64) bool {
 	return rcv.MutateDESIGN_LIFE(n)
 }
 
-// / Additional notes
+/// Additional notes
 func (rcv *CMS) NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -330,7 +330,7 @@ func (rcv *CMS) Notes() []byte {
 	return rcv.NOTES()
 }
 
-// / Additional notes
+/// Additional notes
 func CMSStart(builder *flatbuffers.Builder) {
 	builder.StartObject(15)
 }

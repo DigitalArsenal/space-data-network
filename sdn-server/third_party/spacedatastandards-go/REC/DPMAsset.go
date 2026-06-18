@@ -6,8 +6,8 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / One immutable asset or provider-mediated query contract published for a
-// / dataset update.
+/// One immutable asset or provider-mediated query contract published for a
+/// dataset update.
 type DPMAsset struct {
 	_tab flatbuffers.Table
 }
@@ -43,7 +43,7 @@ func (rcv *DPMAsset) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Asset role.
+/// Asset role.
 func (rcv *DPMAsset) ASSET_KIND() publicationAssetKind {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -56,7 +56,7 @@ func (rcv *DPMAsset) AssetKind() publicationAssetKind {
 	return rcv.ASSET_KIND()
 }
 
-// / Asset role.
+/// Asset role.
 func (rcv *DPMAsset) MutateASSET_KIND(n publicationAssetKind) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -65,10 +65,10 @@ func (rcv *DPMAsset) MutateAssetKind(n publicationAssetKind) bool {
 	return rcv.MutateASSET_KIND(n)
 }
 
-// / Transport profile for this asset. CONTENT_ADDRESS assets use CID and
-// / MULTIFORMAT_ADDRESS. SDN_QUERY assets use TRANSPORT_PROTOCOL plus the
-// / signed DPM query and root fields; they are not required to be published as
-// / discoverable IPFS files.
+/// Transport profile for this asset. CONTENT_ADDRESS assets use CID and
+/// MULTIFORMAT_ADDRESS. SDN_QUERY assets use TRANSPORT_PROTOCOL plus the
+/// signed DPM query and root fields; they are not required to be published as
+/// discoverable IPFS files.
 func (rcv *DPMAsset) TRANSPORT_KIND() dpmTransportKind {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,10 +81,10 @@ func (rcv *DPMAsset) TransportKind() dpmTransportKind {
 	return rcv.TRANSPORT_KIND()
 }
 
-// / Transport profile for this asset. CONTENT_ADDRESS assets use CID and
-// / MULTIFORMAT_ADDRESS. SDN_QUERY assets use TRANSPORT_PROTOCOL plus the
-// / signed DPM query and root fields; they are not required to be published as
-// / discoverable IPFS files.
+/// Transport profile for this asset. CONTENT_ADDRESS assets use CID and
+/// MULTIFORMAT_ADDRESS. SDN_QUERY assets use TRANSPORT_PROTOCOL plus the
+/// signed DPM query and root fields; they are not required to be published as
+/// discoverable IPFS files.
 func (rcv *DPMAsset) MutateTRANSPORT_KIND(n dpmTransportKind) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -93,9 +93,9 @@ func (rcv *DPMAsset) MutateTransportKind(n dpmTransportKind) bool {
 	return rcv.MutateTRANSPORT_KIND(n)
 }
 
-// / Optional IPFS CIDv1/multihash content identifier. This field is required
-// / for CONTENT_ADDRESS assets and SHOULD be empty for SDN_QUERY assets whose
-// / bytes are retrieved through a provider protocol.
+/// Optional IPFS CIDv1/multihash content identifier. This field is required
+/// for CONTENT_ADDRESS assets and SHOULD be empty for SDN_QUERY assets whose
+/// bytes are retrieved through a provider protocol.
 func (rcv *DPMAsset) CID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -108,12 +108,12 @@ func (rcv *DPMAsset) Cid() []byte {
 	return rcv.CID()
 }
 
-// / Optional IPFS CIDv1/multihash content identifier. This field is required
-// / for CONTENT_ADDRESS assets and SHOULD be empty for SDN_QUERY assets whose
-// / bytes are retrieved through a provider protocol.
-// / Multiformat address. For CONTENT_ADDRESS this is usually /ipfs/{CID}. For
-// / SDN_QUERY this MAY be a provider peer multiaddr, relay hint, or empty when
-// / provider routing is resolved from the DPM provider identity.
+/// Optional IPFS CIDv1/multihash content identifier. This field is required
+/// for CONTENT_ADDRESS assets and SHOULD be empty for SDN_QUERY assets whose
+/// bytes are retrieved through a provider protocol.
+/// Multiformat address. For CONTENT_ADDRESS this is usually /ipfs/{CID}. For
+/// SDN_QUERY this MAY be a provider peer multiaddr, relay hint, or empty when
+/// provider routing is resolved from the DPM provider identity.
 func (rcv *DPMAsset) MULTIFORMAT_ADDRESS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -126,10 +126,10 @@ func (rcv *DPMAsset) MultiformatAddress() []byte {
 	return rcv.MULTIFORMAT_ADDRESS()
 }
 
-// / Multiformat address. For CONTENT_ADDRESS this is usually /ipfs/{CID}. For
-// / SDN_QUERY this MAY be a provider peer multiaddr, relay hint, or empty when
-// / provider routing is resolved from the DPM provider identity.
-// / File name or logical artifact name.
+/// Multiformat address. For CONTENT_ADDRESS this is usually /ipfs/{CID}. For
+/// SDN_QUERY this MAY be a provider peer multiaddr, relay hint, or empty when
+/// provider routing is resolved from the DPM provider identity.
+/// File name or logical artifact name.
 func (rcv *DPMAsset) FILE_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -142,13 +142,13 @@ func (rcv *DPMAsset) FileName() []byte {
 	return rcv.FILE_NAME()
 }
 
-// / File name or logical artifact name.
-// / Canonical publication/update partition identity for this asset. FILE_ID is
-// / not a display filename; it is the stable identifier used everywhere this
-// / update is referenced: PNMs, DPMs, assets, manifests, entitlements, query
-// / requests, subscriber caches, replay, audit, and completeness proofs.
-// / Example:
-// / celestrak:gp:OMM.fbs:2026-05-06T03:00:00Z.
+/// File name or logical artifact name.
+/// Canonical publication/update partition identity for this asset. FILE_ID is
+/// not a display filename; it is the stable identifier used everywhere this
+/// update is referenced: PNMs, DPMs, assets, manifests, entitlements, query
+/// requests, subscriber caches, replay, audit, and completeness proofs.
+/// Example:
+/// celestrak:gp:OMM.fbs:2026-05-06T03:00:00Z.
 func (rcv *DPMAsset) FILE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -161,16 +161,16 @@ func (rcv *DPMAsset) FileId() []byte {
 	return rcv.FILE_ID()
 }
 
-// / Canonical publication/update partition identity for this asset. FILE_ID is
-// / not a display filename; it is the stable identifier used everywhere this
-// / update is referenced: PNMs, DPMs, assets, manifests, entitlements, query
-// / requests, subscriber caches, replay, audit, and completeness proofs.
-// / Example:
-// / celestrak:gp:OMM.fbs:2026-05-06T03:00:00Z.
-// / Provider protocol name/version used to fetch this asset when
-// / TRANSPORT_KIND is SDN_QUERY, e.g. /sdn/dataset-query/1.0.0. The protocol
-// / response MUST be verifiable against DATA_ROOT, INDEXES, QUERY, and the
-// / provider signature in this DPM.
+/// Canonical publication/update partition identity for this asset. FILE_ID is
+/// not a display filename; it is the stable identifier used everywhere this
+/// update is referenced: PNMs, DPMs, assets, manifests, entitlements, query
+/// requests, subscriber caches, replay, audit, and completeness proofs.
+/// Example:
+/// celestrak:gp:OMM.fbs:2026-05-06T03:00:00Z.
+/// Provider protocol name/version used to fetch this asset when
+/// TRANSPORT_KIND is SDN_QUERY, e.g. /sdn/dataset-query/1.0.0. The protocol
+/// response MUST be verifiable against DATA_ROOT, INDEXES, QUERY, and the
+/// provider signature in this DPM.
 func (rcv *DPMAsset) TRANSPORT_PROTOCOL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -183,11 +183,11 @@ func (rcv *DPMAsset) TransportProtocol() []byte {
 	return rcv.TRANSPORT_PROTOCOL()
 }
 
-// / Provider protocol name/version used to fetch this asset when
-// / TRANSPORT_KIND is SDN_QUERY, e.g. /sdn/dataset-query/1.0.0. The protocol
-// / response MUST be verifiable against DATA_ROOT, INDEXES, QUERY, and the
-// / provider signature in this DPM.
-// / Byte length of the published object.
+/// Provider protocol name/version used to fetch this asset when
+/// TRANSPORT_KIND is SDN_QUERY, e.g. /sdn/dataset-query/1.0.0. The protocol
+/// response MUST be verifiable against DATA_ROOT, INDEXES, QUERY, and the
+/// provider signature in this DPM.
+/// Byte length of the published object.
 func (rcv *DPMAsset) BYTE_LENGTH() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -200,7 +200,7 @@ func (rcv *DPMAsset) ByteLength() uint64 {
 	return rcv.BYTE_LENGTH()
 }
 
-// / Byte length of the published object.
+/// Byte length of the published object.
 func (rcv *DPMAsset) MutateBYTE_LENGTH(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(18, n)
 }
@@ -209,7 +209,7 @@ func (rcv *DPMAsset) MutateByteLength(n uint64) bool {
 	return rcv.MutateBYTE_LENGTH(n)
 }
 
-// / SHA-256 hash of the exact published bytes, lowercase hex.
+/// SHA-256 hash of the exact published bytes, lowercase hex.
 func (rcv *DPMAsset) BYTE_SHA256() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -222,12 +222,12 @@ func (rcv *DPMAsset) ByteSha256() []byte {
 	return rcv.BYTE_SHA256()
 }
 
-// / SHA-256 hash of the exact published bytes, lowercase hex.
-// / Merkle root over canonical records in this asset, lowercase hex. For
-// / provider-mediated query delivery, subscribers verify returned records and
-// / proof paths against this root before importing data. The proof material is
-// / carried by the provider query response, not by the DPM itself; this field
-// / is the signed root that makes those proofs meaningful.
+/// SHA-256 hash of the exact published bytes, lowercase hex.
+/// Merkle root over canonical records in this asset, lowercase hex. For
+/// provider-mediated query delivery, subscribers verify returned records and
+/// proof paths against this root before importing data. The proof material is
+/// carried by the provider query response, not by the DPM itself; this field
+/// is the signed root that makes those proofs meaningful.
 func (rcv *DPMAsset) DATA_ROOT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -240,12 +240,12 @@ func (rcv *DPMAsset) DataRoot() []byte {
 	return rcv.DATA_ROOT()
 }
 
-// / Merkle root over canonical records in this asset, lowercase hex. For
-// / provider-mediated query delivery, subscribers verify returned records and
-// / proof paths against this root before importing data. The proof material is
-// / carried by the provider query response, not by the DPM itself; this field
-// / is the signed root that makes those proofs meaningful.
-// / SDS schema name for data artifacts, e.g. OMM.fbs, CAT.fbs, SPW.fbs.
+/// Merkle root over canonical records in this asset, lowercase hex. For
+/// provider-mediated query delivery, subscribers verify returned records and
+/// proof paths against this root before importing data. The proof material is
+/// carried by the provider query response, not by the DPM itself; this field
+/// is the signed root that makes those proofs meaningful.
+/// SDS schema name for data artifacts, e.g. OMM.fbs, CAT.fbs, SPW.fbs.
 func (rcv *DPMAsset) SCHEMA_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -258,8 +258,8 @@ func (rcv *DPMAsset) SchemaName() []byte {
 	return rcv.SCHEMA_NAME()
 }
 
-// / SDS schema name for data artifacts, e.g. OMM.fbs, CAT.fbs, SPW.fbs.
-// / Hash of the SDS schema used to encode this object.
+/// SDS schema name for data artifacts, e.g. OMM.fbs, CAT.fbs, SPW.fbs.
+/// Hash of the SDS schema used to encode this object.
 func (rcv *DPMAsset) SCHEMA_HASH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -272,8 +272,8 @@ func (rcv *DPMAsset) SchemaHash() []byte {
 	return rcv.SCHEMA_HASH()
 }
 
-// / Hash of the SDS schema used to encode this object.
-// / Optional content-key identifier for encrypted artifacts.
+/// Hash of the SDS schema used to encode this object.
+/// Optional content-key identifier for encrypted artifacts.
 func (rcv *DPMAsset) CONTENT_KEY_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -286,7 +286,7 @@ func (rcv *DPMAsset) ContentKeyId() []byte {
 	return rcv.CONTENT_KEY_ID()
 }
 
-// / Optional content-key identifier for encrypted artifacts.
+/// Optional content-key identifier for encrypted artifacts.
 func DPMAssetStart(builder *flatbuffers.Builder) {
 	builder.StartObject(13)
 }

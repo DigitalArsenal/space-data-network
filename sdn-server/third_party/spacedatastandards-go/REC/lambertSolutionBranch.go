@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / One returned Lambert solution branch.
+/// One returned Lambert solution branch.
 type lambertSolutionBranch struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *lambertSolutionBranch) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Branch kind.
+/// Branch kind.
 func (rcv *lambertSolutionBranch) BRANCH_KIND() lambertBranchKind {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *lambertSolutionBranch) BranchKind() lambertBranchKind {
 	return rcv.BRANCH_KIND()
 }
 
-// / Branch kind.
+/// Branch kind.
 func (rcv *lambertSolutionBranch) MutateBRANCH_KIND(n lambertBranchKind) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *lambertSolutionBranch) MutateBranchKind(n lambertBranchKind) bool {
 	return rcv.MutateBRANCH_KIND(n)
 }
 
-// / Complete revolution count for this branch. Zero for single-revolution.
+/// Complete revolution count for this branch. Zero for single-revolution.
 func (rcv *lambertSolutionBranch) N_REVS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *lambertSolutionBranch) NRevs() uint16 {
 	return rcv.N_REVS()
 }
 
-// / Complete revolution count for this branch. Zero for single-revolution.
+/// Complete revolution count for this branch. Zero for single-revolution.
 func (rcv *lambertSolutionBranch) MutateN_REVS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *lambertSolutionBranch) MutateNRevs(n uint16) bool {
 	return rcv.MutateN_REVS(n)
 }
 
-// / Departure velocity at r1 (km/s).
+/// Departure velocity at r1 (km/s).
 func (rcv *lambertSolutionBranch) V1(obj *lambertVector3) *lambertVector3 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -100,8 +100,8 @@ func (rcv *lambertSolutionBranch) V1(obj *lambertVector3) *lambertVector3 {
 	return nil
 }
 
-// / Departure velocity at r1 (km/s).
-// / Arrival velocity at r2 (km/s).
+/// Departure velocity at r1 (km/s).
+/// Arrival velocity at r2 (km/s).
 func (rcv *lambertSolutionBranch) V2(obj *lambertVector3) *lambertVector3 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -115,8 +115,8 @@ func (rcv *lambertSolutionBranch) V2(obj *lambertVector3) *lambertVector3 {
 	return nil
 }
 
-// / Arrival velocity at r2 (km/s).
-// / Householder iteration count used to converge this branch.
+/// Arrival velocity at r2 (km/s).
+/// Householder iteration count used to converge this branch.
 func (rcv *lambertSolutionBranch) ITERATIONS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -129,7 +129,7 @@ func (rcv *lambertSolutionBranch) Iterations() uint32 {
 	return rcv.ITERATIONS()
 }
 
-// / Householder iteration count used to converge this branch.
+/// Householder iteration count used to converge this branch.
 func (rcv *lambertSolutionBranch) MutateITERATIONS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(12, n)
 }

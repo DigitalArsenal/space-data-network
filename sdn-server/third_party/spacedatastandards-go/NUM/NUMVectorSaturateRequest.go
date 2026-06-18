@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Request for component-wise vector saturation.
+/// Request for component-wise vector saturation.
 type NUMVectorSaturateRequest struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *NUMVectorSaturateRequest) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Input vector to clamp.
+/// Input vector to clamp.
 func (rcv *NUMVectorSaturateRequest) STATE(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -68,7 +68,7 @@ func (rcv *NUMVectorSaturateRequest) StateLength() int {
 	return rcv.STATELength()
 }
 
-// / Input vector to clamp.
+/// Input vector to clamp.
 func (rcv *NUMVectorSaturateRequest) MutateSTATE(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -82,7 +82,7 @@ func (rcv *NUMVectorSaturateRequest) MutateState(j int, n float64) bool {
 	return rcv.MutateSTATE(j, n)
 }
 
-// / Per-component lower bounds. Length must match STATE.
+/// Per-component lower bounds. Length must match STATE.
 func (rcv *NUMVectorSaturateRequest) LOWER_BOUNDS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -108,7 +108,7 @@ func (rcv *NUMVectorSaturateRequest) LowerBoundsLength() int {
 	return rcv.LOWER_BOUNDSLength()
 }
 
-// / Per-component lower bounds. Length must match STATE.
+/// Per-component lower bounds. Length must match STATE.
 func (rcv *NUMVectorSaturateRequest) MutateLOWER_BOUNDS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -122,7 +122,7 @@ func (rcv *NUMVectorSaturateRequest) MutateLowerBounds(j int, n float64) bool {
 	return rcv.MutateLOWER_BOUNDS(j, n)
 }
 
-// / Per-component upper bounds. Length must match STATE.
+/// Per-component upper bounds. Length must match STATE.
 func (rcv *NUMVectorSaturateRequest) UPPER_BOUNDS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -148,7 +148,7 @@ func (rcv *NUMVectorSaturateRequest) UpperBoundsLength() int {
 	return rcv.UPPER_BOUNDSLength()
 }
 
-// / Per-component upper bounds. Length must match STATE.
+/// Per-component upper bounds. Length must match STATE.
 func (rcv *NUMVectorSaturateRequest) MutateUPPER_BOUNDS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -162,7 +162,7 @@ func (rcv *NUMVectorSaturateRequest) MutateUpperBounds(j int, n float64) bool {
 	return rcv.MutateUPPER_BOUNDS(j, n)
 }
 
-// / Optional trace/correlation identifier.
+/// Optional trace/correlation identifier.
 func (rcv *NUMVectorSaturateRequest) TRACE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -175,7 +175,7 @@ func (rcv *NUMVectorSaturateRequest) TraceId() []byte {
 	return rcv.TRACE_ID()
 }
 
-// / Optional trace/correlation identifier.
+/// Optional trace/correlation identifier.
 func NUMVectorSaturateRequestStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

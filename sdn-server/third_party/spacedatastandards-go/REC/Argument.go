@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Command argument definition
+/// Command argument definition
 type Argument struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *Argument) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Argument name
+/// Argument name
 func (rcv *Argument) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *Argument) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Argument name
-// / Reference to argument type
+/// Argument name
+/// Reference to argument type
 func (rcv *Argument) ARGUMENT_TYPE_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *Argument) ArgumentTypeRef() []byte {
 	return rcv.ARGUMENT_TYPE_REF()
 }
 
-// / Reference to argument type
-// / Short description
+/// Reference to argument type
+/// Short description
 func (rcv *Argument) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *Argument) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-// / Short description
-// / Long description
+/// Short description
+/// Long description
 func (rcv *Argument) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *Argument) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-// / Long description
-// / Initial/default value
+/// Long description
+/// Initial/default value
 func (rcv *Argument) INITIAL_VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -111,7 +111,7 @@ func (rcv *Argument) InitialValue() []byte {
 	return rcv.INITIAL_VALUE()
 }
 
-// / Initial/default value
+/// Initial/default value
 func ArgumentStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

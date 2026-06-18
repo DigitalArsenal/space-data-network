@@ -4,18 +4,18 @@ package REC
 
 import "strconv"
 
-// / Constructive solid-geometry composition operation for SDFs.
+/// Constructive solid-geometry composition operation for SDFs.
 type sdfOperation byte
 
 const (
 	/// No composition (primitive only).
-	sdfOperationNONE sdfOperation = 0
+	sdfOperationNONE         sdfOperation = 0
 	/// Union (min of SDFs) — inside either.
-	sdfOperationUNION sdfOperation = 1
+	sdfOperationUNION        sdfOperation = 1
 	/// Intersection (max of SDFs) — inside both.
 	sdfOperationINTERSECTION sdfOperation = 2
 	/// Subtraction (A - B) — inside A but not B.
-	sdfOperationSUBTRACTION sdfOperation = 3
+	sdfOperationSUBTRACTION  sdfOperation = 3
 	/// Smooth union with a blend radius.
 	sdfOperationSMOOTH_UNION sdfOperation = 4
 )

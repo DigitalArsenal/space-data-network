@@ -4,7 +4,7 @@ package LMS
 
 import "strconv"
 
-// / Lambert transfer path selection.
+/// Lambert transfer path selection.
 type lambertTransferPath int8
 
 const (

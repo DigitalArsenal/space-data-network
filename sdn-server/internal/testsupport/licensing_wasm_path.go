@@ -7,13 +7,23 @@ import (
 	"testing"
 )
 
-var licensingWasmPathSuffix = []string{
-	"space-data-network-plugins",
-	"licensing",
-	"core",
-	"dist",
-	"isomorphic",
-	"module.wasm",
+var licensingWasmPathSuffixes = [][]string{
+	{
+		"space-data-network-modules",
+		"licensing",
+		"core",
+		"dist",
+		"isomorphic",
+		"module.wasm",
+	},
+	{
+		"space-data-network-plugins",
+		"licensing",
+		"core",
+		"dist",
+		"isomorphic",
+		"module.wasm",
+	},
 }
 
 // FindLicensingModuleWasmPath resolves the unified licensing module artifact
@@ -37,9 +47,12 @@ func findLicensingModuleWasmPath(t testing.TB, callerDepth int) (string, bool) {
 	}
 
 	anchorDir := filepath.Dir(callerFile)
-	candidates := []string{
-		filepath.Join(append([]string{anchorDir, "..", "..", "..", ".."}, licensingWasmPathSuffix...)...),
-		filepath.Join(append([]string{anchorDir, "..", "..", "..", "..", "..", ".."}, licensingWasmPathSuffix...)...),
+	var candidates []string
+	for _, suffix := range licensingWasmPathSuffixes {
+		candidates = append(candidates,
+			filepath.Join(append([]string{anchorDir, "..", "..", "..", ".."}, suffix...)...),
+			filepath.Join(append([]string{anchorDir, "..", "..", "..", "..", "..", ".."}, suffix...)...),
+		)
 	}
 
 	for _, candidate := range candidates {
@@ -63,7 +76,7 @@ func MustFindLicensingModuleWasmPath(t testing.TB) string {
 
 	t.Fatalf(
 		"could not find unified licensing artifact; checked %q",
-		licensingWasmPathSuffix,
+		licensingWasmPathSuffixes,
 	)
 	return ""
 }

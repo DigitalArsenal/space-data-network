@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Region — Level of Detail bounding region
+/// Region — Level of Detail bounding region
 type KMLRegion struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLRegion) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / LatLonAltBox
+/// LatLonAltBox
 func (rcv *KMLRegion) LAT_LON_ALT_BOX(obj *KMLLatLonAltBox) *KMLLatLonAltBox {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *KMLRegion) LatLonAltBox(obj *KMLLatLonAltBox) *KMLLatLonAltBox {
 	return rcv.LAT_LON_ALT_BOX(obj)
 }
 
-// / LatLonAltBox
-// / Level of detail
+/// LatLonAltBox
+/// Level of detail
 func (rcv *KMLRegion) LOD(obj *KMLLod) *KMLLod {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -79,7 +79,7 @@ func (rcv *KMLRegion) Lod(obj *KMLLod) *KMLLod {
 	return rcv.LOD(obj)
 }
 
-// / Level of detail
+/// Level of detail
 func KMLRegionStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

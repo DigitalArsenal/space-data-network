@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Interpolation settings for sampled data
+/// Interpolation settings for sampled data
 type CZMInterpolation struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMInterpolation) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Algorithm: LINEAR, LAGRANGE, HERMITE
+/// Algorithm: LINEAR, LAGRANGE, HERMITE
 func (rcv *CZMInterpolation) ALGORITHM() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *CZMInterpolation) Algorithm() []byte {
 	return rcv.ALGORITHM()
 }
 
-// / Algorithm: LINEAR, LAGRANGE, HERMITE
-// / Polynomial degree (1=linear, 5=typical Lagrange)
+/// Algorithm: LINEAR, LAGRANGE, HERMITE
+/// Polynomial degree (1=linear, 5=typical Lagrange)
 func (rcv *CZMInterpolation) DEGREE() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *CZMInterpolation) Degree() int32 {
 	return rcv.DEGREE()
 }
 
-// / Polynomial degree (1=linear, 5=typical Lagrange)
+/// Polynomial degree (1=linear, 5=typical Lagrange)
 func (rcv *CZMInterpolation) MutateDEGREE(n int32) bool {
 	return rcv._tab.MutateInt32Slot(6, n)
 }

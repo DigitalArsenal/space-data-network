@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / gx:TourControl tour primitive
+/// gx:TourControl tour primitive
 type KMLTourControl struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLTourControl) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Play mode (pause)
+/// Play mode (pause)
 func (rcv *KMLTourControl) PLAY_MODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *KMLTourControl) PlayMode() []byte {
 	return rcv.PLAY_MODE()
 }
 
-// / Play mode (pause)
+/// Play mode (pause)
 func KMLTourControlStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }

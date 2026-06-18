@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Wrapped module content key
+/// Wrapped module content key
 type LWK struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *LWK) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique request identifier
+/// Unique request identifier
 func (rcv *LWK) REQUEST_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *LWK) RequestId() []byte {
 	return rcv.REQUEST_ID()
 }
 
-// / Unique request identifier
-// / Canonical module identifier
+/// Unique request identifier
+/// Canonical module identifier
 func (rcv *LWK) MODULE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *LWK) ModuleId() []byte {
 	return rcv.MODULE_ID()
 }
 
-// / Canonical module identifier
-// / Optional module version
+/// Canonical module identifier
+/// Optional module version
 func (rcv *LWK) MODULE_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *LWK) ModuleVersion() []byte {
 	return rcv.MODULE_VERSION()
 }
 
-// / Optional module version
-// / Provider-local content key identifier
+/// Optional module version
+/// Provider-local content key identifier
 func (rcv *LWK) CONTENT_KEY_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *LWK) ContentKeyId() []byte {
 	return rcv.CONTENT_KEY_ID()
 }
 
-// / Provider-local content key identifier
-// / Recipient key identifier or fingerprint
+/// Provider-local content key identifier
+/// Recipient key identifier or fingerprint
 func (rcv *LWK) RECIPIENT_KEY_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *LWK) RecipientKeyId() []byte {
 	return rcv.RECIPIENT_KEY_ID()
 }
 
-// / Recipient key identifier or fingerprint
-// / Wrapped-key algorithm
+/// Recipient key identifier or fingerprint
+/// Wrapped-key algorithm
 func (rcv *LWK) ALGORITHM() licensingWrappedKeyAlgorithm {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,7 +137,7 @@ func (rcv *LWK) Algorithm() licensingWrappedKeyAlgorithm {
 	return rcv.ALGORITHM()
 }
 
-// / Wrapped-key algorithm
+/// Wrapped-key algorithm
 func (rcv *LWK) MutateALGORITHM(n licensingWrappedKeyAlgorithm) bool {
 	return rcv._tab.MutateInt8Slot(14, int8(n))
 }
@@ -146,7 +146,7 @@ func (rcv *LWK) MutateAlgorithm(n licensingWrappedKeyAlgorithm) bool {
 	return rcv.MutateALGORITHM(n)
 }
 
-// / Requester ephemeral X25519 public key
+/// Requester ephemeral X25519 public key
 func (rcv *LWK) REQUESTER_EPHEMERAL_PUBKEY(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -184,7 +184,7 @@ func (rcv *LWK) RequesterEphemeralPubkeyBytes() []byte {
 	return rcv.REQUESTER_EPHEMERAL_PUBKEYBytes()
 }
 
-// / Requester ephemeral X25519 public key
+/// Requester ephemeral X25519 public key
 func (rcv *LWK) MutateREQUESTER_EPHEMERAL_PUBKEY(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -198,7 +198,7 @@ func (rcv *LWK) MutateRequesterEphemeralPubkey(j int, n byte) bool {
 	return rcv.MutateREQUESTER_EPHEMERAL_PUBKEY(j, n)
 }
 
-// / Provider ephemeral X25519 public key
+/// Provider ephemeral X25519 public key
 func (rcv *LWK) PROVIDER_EPHEMERAL_PUBKEY(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -236,7 +236,7 @@ func (rcv *LWK) ProviderEphemeralPubkeyBytes() []byte {
 	return rcv.PROVIDER_EPHEMERAL_PUBKEYBytes()
 }
 
-// / Provider ephemeral X25519 public key
+/// Provider ephemeral X25519 public key
 func (rcv *LWK) MutatePROVIDER_EPHEMERAL_PUBKEY(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -250,7 +250,7 @@ func (rcv *LWK) MutateProviderEphemeralPubkey(j int, n byte) bool {
 	return rcv.MutatePROVIDER_EPHEMERAL_PUBKEY(j, n)
 }
 
-// / HKDF salt
+/// HKDF salt
 func (rcv *LWK) HKDF_SALT(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -288,7 +288,7 @@ func (rcv *LWK) HkdfSaltBytes() []byte {
 	return rcv.HKDF_SALTBytes()
 }
 
-// / HKDF salt
+/// HKDF salt
 func (rcv *LWK) MutateHKDF_SALT(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -302,7 +302,7 @@ func (rcv *LWK) MutateHkdfSalt(j int, n byte) bool {
 	return rcv.MutateHKDF_SALT(j, n)
 }
 
-// / AES-GCM IV
+/// AES-GCM IV
 func (rcv *LWK) IV(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -340,7 +340,7 @@ func (rcv *LWK) IvBytes() []byte {
 	return rcv.IVBytes()
 }
 
-// / AES-GCM IV
+/// AES-GCM IV
 func (rcv *LWK) MutateIV(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -354,7 +354,7 @@ func (rcv *LWK) MutateIv(j int, n byte) bool {
 	return rcv.MutateIV(j, n)
 }
 
-// / Wrapped key ciphertext
+/// Wrapped key ciphertext
 func (rcv *LWK) CIPHERTEXT(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -392,7 +392,7 @@ func (rcv *LWK) CiphertextBytes() []byte {
 	return rcv.CIPHERTEXTBytes()
 }
 
-// / Wrapped key ciphertext
+/// Wrapped key ciphertext
 func (rcv *LWK) MutateCIPHERTEXT(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -406,7 +406,7 @@ func (rcv *LWK) MutateCiphertext(j int, n byte) bool {
 	return rcv.MutateCIPHERTEXT(j, n)
 }
 
-// / AES-GCM authentication tag
+/// AES-GCM authentication tag
 func (rcv *LWK) TAG(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -444,7 +444,7 @@ func (rcv *LWK) TagBytes() []byte {
 	return rcv.TAGBytes()
 }
 
-// / AES-GCM authentication tag
+/// AES-GCM authentication tag
 func (rcv *LWK) MutateTAG(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -458,7 +458,7 @@ func (rcv *LWK) MutateTag(j int, n byte) bool {
 	return rcv.MutateTAG(j, n)
 }
 
-// / Envelope expiration time in milliseconds since epoch
+/// Envelope expiration time in milliseconds since epoch
 func (rcv *LWK) EXPIRES_AT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -471,7 +471,7 @@ func (rcv *LWK) ExpiresAt() uint64 {
 	return rcv.EXPIRES_AT()
 }
 
-// / Envelope expiration time in milliseconds since epoch
+/// Envelope expiration time in milliseconds since epoch
 func (rcv *LWK) MutateEXPIRES_AT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(28, n)
 }

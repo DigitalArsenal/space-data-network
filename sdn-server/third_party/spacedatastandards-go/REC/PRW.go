@@ -6,8 +6,8 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Propagator Runtime Wire — envelope that carries either an init request,
-// / a batch request, or a batch response across a runtime boundary.
+/// Propagator Runtime Wire — envelope that carries either an init request,
+/// a batch request, or a batch response across a runtime boundary.
 type PRW struct {
 	_tab flatbuffers.Table
 }

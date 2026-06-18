@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Wall (vertical curtain)
+/// Wall (vertical curtain)
 type CZMWall struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMWall) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Whether the wall is displayed
+/// Whether the wall is displayed
 func (rcv *CZMWall) SHOW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMWall) Show() bool {
 	return rcv.SHOW()
 }
 
-// / Whether the wall is displayed
+/// Whether the wall is displayed
 func (rcv *CZMWall) MutateSHOW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMWall) MutateShow(n bool) bool {
 	return rcv.MutateSHOW(n)
 }
 
-// / Positions as cartographic degrees
+/// Positions as cartographic degrees
 func (rcv *CZMWall) POSITIONS_CARTOGRAPHIC_DEGREES(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -90,7 +90,7 @@ func (rcv *CZMWall) PositionsCartographicDegreesLength() int {
 	return rcv.POSITIONS_CARTOGRAPHIC_DEGREESLength()
 }
 
-// / Positions as cartographic degrees
+/// Positions as cartographic degrees
 func (rcv *CZMWall) MutatePOSITIONS_CARTOGRAPHIC_DEGREES(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -104,7 +104,7 @@ func (rcv *CZMWall) MutatePositionsCartographicDegrees(j int, n float64) bool {
 	return rcv.MutatePOSITIONS_CARTOGRAPHIC_DEGREES(j, n)
 }
 
-// / Positions as Cartesian
+/// Positions as Cartesian
 func (rcv *CZMWall) POSITIONS_CARTESIAN(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -130,7 +130,7 @@ func (rcv *CZMWall) PositionsCartesianLength() int {
 	return rcv.POSITIONS_CARTESIANLength()
 }
 
-// / Positions as Cartesian
+/// Positions as Cartesian
 func (rcv *CZMWall) MutatePOSITIONS_CARTESIAN(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -144,7 +144,7 @@ func (rcv *CZMWall) MutatePositionsCartesian(j int, n float64) bool {
 	return rcv.MutatePOSITIONS_CARTESIAN(j, n)
 }
 
-// / Minimum heights per position
+/// Minimum heights per position
 func (rcv *CZMWall) MINIMUM_HEIGHTS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -170,7 +170,7 @@ func (rcv *CZMWall) MinimumHeightsLength() int {
 	return rcv.MINIMUM_HEIGHTSLength()
 }
 
-// / Minimum heights per position
+/// Minimum heights per position
 func (rcv *CZMWall) MutateMINIMUM_HEIGHTS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -184,7 +184,7 @@ func (rcv *CZMWall) MutateMinimumHeights(j int, n float64) bool {
 	return rcv.MutateMINIMUM_HEIGHTS(j, n)
 }
 
-// / Maximum heights per position
+/// Maximum heights per position
 func (rcv *CZMWall) MAXIMUM_HEIGHTS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -210,7 +210,7 @@ func (rcv *CZMWall) MaximumHeightsLength() int {
 	return rcv.MAXIMUM_HEIGHTSLength()
 }
 
-// / Maximum heights per position
+/// Maximum heights per position
 func (rcv *CZMWall) MutateMAXIMUM_HEIGHTS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -224,7 +224,7 @@ func (rcv *CZMWall) MutateMaximumHeights(j int, n float64) bool {
 	return rcv.MutateMAXIMUM_HEIGHTS(j, n)
 }
 
-// / Granularity in radians
+/// Granularity in radians
 func (rcv *CZMWall) GRANULARITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -237,7 +237,7 @@ func (rcv *CZMWall) Granularity() float64 {
 	return rcv.GRANULARITY()
 }
 
-// / Granularity in radians
+/// Granularity in radians
 func (rcv *CZMWall) MutateGRANULARITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -246,7 +246,7 @@ func (rcv *CZMWall) MutateGranularity(n float64) bool {
 	return rcv.MutateGRANULARITY(n)
 }
 
-// / Fill flag
+/// Fill flag
 func (rcv *CZMWall) FILL() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -259,7 +259,7 @@ func (rcv *CZMWall) Fill() bool {
 	return rcv.FILL()
 }
 
-// / Fill flag
+/// Fill flag
 func (rcv *CZMWall) MutateFILL(n bool) bool {
 	return rcv._tab.MutateBoolSlot(16, n)
 }
@@ -268,7 +268,7 @@ func (rcv *CZMWall) MutateFill(n bool) bool {
 	return rcv.MutateFILL(n)
 }
 
-// / Surface material
+/// Surface material
 func (rcv *CZMWall) MATERIAL(obj *CZMMaterial) *CZMMaterial {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -286,8 +286,8 @@ func (rcv *CZMWall) Material(obj *CZMMaterial) *CZMMaterial {
 	return rcv.MATERIAL(obj)
 }
 
-// / Surface material
-// / Outline flag
+/// Surface material
+/// Outline flag
 func (rcv *CZMWall) OUTLINE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -300,7 +300,7 @@ func (rcv *CZMWall) Outline() bool {
 	return rcv.OUTLINE()
 }
 
-// / Outline flag
+/// Outline flag
 func (rcv *CZMWall) MutateOUTLINE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(20, n)
 }
@@ -309,7 +309,7 @@ func (rcv *CZMWall) MutateOutline(n bool) bool {
 	return rcv.MutateOUTLINE(n)
 }
 
-// / Outline color
+/// Outline color
 func (rcv *CZMWall) OUTLINE_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -327,8 +327,8 @@ func (rcv *CZMWall) OutlineColor(obj *CZMColor) *CZMColor {
 	return rcv.OUTLINE_COLOR(obj)
 }
 
-// / Outline color
-// / Outline width
+/// Outline color
+/// Outline width
 func (rcv *CZMWall) OUTLINE_WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -341,7 +341,7 @@ func (rcv *CZMWall) OutlineWidth() float64 {
 	return rcv.OUTLINE_WIDTH()
 }
 
-// / Outline width
+/// Outline width
 func (rcv *CZMWall) MutateOUTLINE_WIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -350,7 +350,7 @@ func (rcv *CZMWall) MutateOutlineWidth(n float64) bool {
 	return rcv.MutateOUTLINE_WIDTH(n)
 }
 
-// / Shadow mode
+/// Shadow mode
 func (rcv *CZMWall) SHADOWS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -363,7 +363,7 @@ func (rcv *CZMWall) Shadows() []byte {
 	return rcv.SHADOWS()
 }
 
-// / Shadow mode
+/// Shadow mode
 func CZMWallStart(builder *flatbuffers.Builder) {
 	builder.StartObject(12)
 }

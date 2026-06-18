@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Track segment (continuous span of track points)
+/// Track segment (continuous span of track points)
 type GPXTrackSegment struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *GPXTrackSegment) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Ordered track points in this segment
+/// Ordered track points in this segment
 func (rcv *GPXTrackSegment) POINTS(obj *GPXWaypoint, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -74,7 +74,7 @@ func (rcv *GPXTrackSegment) PointsLength() int {
 	return rcv.POINTSLength()
 }
 
-// / Ordered track points in this segment
+/// Ordered track points in this segment
 func GPXTrackSegmentStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }

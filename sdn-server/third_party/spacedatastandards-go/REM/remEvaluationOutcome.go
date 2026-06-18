@@ -4,7 +4,7 @@ package REM
 
 import "strconv"
 
-// / Reentry evaluation outcome.
+/// Reentry evaluation outcome.
 type remEvaluationOutcome int8
 
 const (

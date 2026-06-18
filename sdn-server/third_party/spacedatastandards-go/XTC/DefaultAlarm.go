@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Default alarm definition
+/// Default alarm definition
 type DefaultAlarm struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *DefaultAlarm) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Minimum violations before alarm triggers
+/// Minimum violations before alarm triggers
 func (rcv *DefaultAlarm) MIN_VIOLATIONS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *DefaultAlarm) MinViolations() uint16 {
 	return rcv.MIN_VIOLATIONS()
 }
 
-// / Minimum violations before alarm triggers
+/// Minimum violations before alarm triggers
 func (rcv *DefaultAlarm) MutateMIN_VIOLATIONS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *DefaultAlarm) MutateMinViolations(n uint16) bool {
 	return rcv.MutateMIN_VIOLATIONS(n)
 }
 
-// / Static numeric alarm ranges
+/// Static numeric alarm ranges
 func (rcv *DefaultAlarm) STATIC_ALARM_RANGES(obj *StaticAlarmRanges) *StaticAlarmRanges {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -82,8 +82,8 @@ func (rcv *DefaultAlarm) StaticAlarmRanges(obj *StaticAlarmRanges) *StaticAlarmR
 	return rcv.STATIC_ALARM_RANGES(obj)
 }
 
-// / Static numeric alarm ranges
-// / Enumeration alarms for enumerated types
+/// Static numeric alarm ranges
+/// Enumeration alarms for enumerated types
 func (rcv *DefaultAlarm) ENUMERATION_ALARMS(obj *EnumerationAlarm, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -115,7 +115,7 @@ func (rcv *DefaultAlarm) EnumerationAlarmsLength() int {
 	return rcv.ENUMERATION_ALARMSLength()
 }
 
-// / Enumeration alarms for enumerated types
+/// Enumeration alarms for enumerated types
 func DefaultAlarmStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

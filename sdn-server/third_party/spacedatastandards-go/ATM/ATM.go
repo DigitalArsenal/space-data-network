@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Atmospheric Model Message
+/// Atmospheric Model Message
 type ATM struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *ATM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Canonical model family
+/// Canonical model family
 func (rcv *ATM) MODEL() AtmosphericModelFamily {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *ATM) Model() AtmosphericModelFamily {
 	return rcv.MODEL()
 }
 
-// / Canonical model family
+/// Canonical model family
 func (rcv *ATM) MutateMODEL(n AtmosphericModelFamily) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -76,7 +76,7 @@ func (rcv *ATM) MutateModel(n AtmosphericModelFamily) bool {
 	return rcv.MutateMODEL(n)
 }
 
-// / Four-digit year identifying the model version (e.g., 1970, 2008, 2020)
+/// Four-digit year identifying the model version (e.g., 1970, 2008, 2020)
 func (rcv *ATM) YEAR() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,7 +89,7 @@ func (rcv *ATM) Year() int32 {
 	return rcv.YEAR()
 }
 
-// / Four-digit year identifying the model version (e.g., 1970, 2008, 2020)
+/// Four-digit year identifying the model version (e.g., 1970, 2008, 2020)
 func (rcv *ATM) MutateYEAR(n int32) bool {
 	return rcv._tab.MutateInt32Slot(6, n)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Collection of metacommands
+/// Collection of metacommands
 type MetaCommandSet struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *MetaCommandSet) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / MetaCommands
+/// MetaCommands
 func (rcv *MetaCommandSet) META_COMMANDS(obj *MetaCommand, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -74,7 +74,7 @@ func (rcv *MetaCommandSet) MetaCommandsLength() int {
 	return rcv.META_COMMANDSLength()
 }
 
-// / MetaCommands
+/// MetaCommands
 func MetaCommandSetStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }

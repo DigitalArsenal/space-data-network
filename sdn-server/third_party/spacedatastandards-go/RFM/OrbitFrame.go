@@ -4,14 +4,14 @@ package RFM
 
 import "strconv"
 
-// / https://sanaregistry.org/r/orbit_relative_reference_frames/
-// / Orbit-Relative Reference Frames (SANA registry 1.3.112.4.57.3)
+/// https://sanaregistry.org/r/orbit_relative_reference_frames/
+/// Orbit-Relative Reference Frames (SANA registry 1.3.112.4.57.3)
 type OrbitFrame int8
 
 const (
 	/// OID: 1.3.112.4.57.3.1
 	/// Earth Equatorial Inertial frame aligned with J2000 epoch.
-	OrbitFrameEQW_INERTIAL OrbitFrame = 0
+	OrbitFrameEQW_INERTIAL  OrbitFrame = 0
 	/// OID: 1.3.112.4.57.3.3
 	/// Local Vertical Local Horizontal inertial frame.
 	OrbitFrameLVLH_INERTIAL OrbitFrame = 1
@@ -20,43 +20,43 @@ const (
 	OrbitFrameLVLH_ROTATING OrbitFrame = 2
 	/// OID: 1.3.112.4.57.3.5
 	/// Normal along-track cross-track inertial frame.
-	OrbitFrameNSW_INERTIAL OrbitFrame = 3
+	OrbitFrameNSW_INERTIAL  OrbitFrame = 3
 	/// OID: 1.3.112.4.57.3.4
 	/// Normal along-track cross-track rotating frame.
-	OrbitFrameNSW_ROTATING OrbitFrame = 4
+	OrbitFrameNSW_ROTATING  OrbitFrame = 4
 	/// OID: 1.3.112.4.57.3.7
 	/// Orbit normal Tangential cross-track inertial frame.
-	OrbitFrameNTW_INERTIAL OrbitFrame = 5
+	OrbitFrameNTW_INERTIAL  OrbitFrame = 5
 	/// OID: 1.3.112.4.57.3.6
 	/// Orbit normal Tangential cross-track rotating frame.
-	OrbitFrameNTW_ROTATING OrbitFrame = 6
+	OrbitFrameNTW_ROTATING  OrbitFrame = 6
 	/// OID: 1.3.112.4.57.3.8
 	/// Perifocal frame aligned with orbit's perigee.
-	OrbitFramePQW_INERTIAL OrbitFrame = 7
+	OrbitFramePQW_INERTIAL  OrbitFrame = 7
 	/// OID: 1.3.112.4.57.3.10
 	/// Radial along-track cross-track inertial frame.
-	OrbitFrameRSW_INERTIAL OrbitFrame = 8
+	OrbitFrameRSW_INERTIAL  OrbitFrame = 8
 	/// OID: 1.3.112.4.57.3.9
 	/// Radial along-track cross-track rotating frame.
-	OrbitFrameRSW_ROTATING OrbitFrame = 9
+	OrbitFrameRSW_ROTATING  OrbitFrame = 9
 	/// OID: 1.3.112.4.57.3.14
 	/// South-East-Zenith inertial (topocentric) frame.
-	OrbitFrameSEZ_INERTIAL OrbitFrame = 10
+	OrbitFrameSEZ_INERTIAL  OrbitFrame = 10
 	/// OID: 1.3.112.4.57.3.13
 	/// South-East-Zenith rotating (topocentric) frame.
-	OrbitFrameSEZ_ROTATING OrbitFrame = 11
+	OrbitFrameSEZ_ROTATING  OrbitFrame = 11
 	/// OID: 1.3.112.4.57.3.12
 	/// Transverse normal cross-track inertial frame.
-	OrbitFrameTNW_INERTIAL OrbitFrame = 12
+	OrbitFrameTNW_INERTIAL  OrbitFrame = 12
 	/// OID: 1.3.112.4.57.3.11
 	/// Transverse normal cross-track rotating frame.
-	OrbitFrameTNW_ROTATING OrbitFrame = 13
+	OrbitFrameTNW_ROTATING  OrbitFrame = 13
 	/// OID: 1.3.112.4.57.3.16
 	/// Velocity-normal co-normal inertial frame.
-	OrbitFrameVNC_INERTIAL OrbitFrame = 14
+	OrbitFrameVNC_INERTIAL  OrbitFrame = 14
 	/// OID: 1.3.112.4.57.3.15
 	/// Velocity-normal co-normal rotating frame.
-	OrbitFrameVNC_ROTATING OrbitFrame = 15
+	OrbitFrameVNC_ROTATING  OrbitFrame = 15
 )
 
 var EnumNamesOrbitFrame = map[OrbitFrame]string{

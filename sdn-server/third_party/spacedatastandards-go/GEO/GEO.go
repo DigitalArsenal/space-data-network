@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / GEO Spacecraft Status
+/// GEO Spacecraft Status
 type GEO struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *GEO) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier
+/// Unique identifier
 func (rcv *GEO) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *GEO) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique identifier
-// / International designator
+/// Unique identifier
+/// International designator
 func (rcv *GEO) ORIG_OBJECT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *GEO) OrigObjectId() []byte {
 	return rcv.ORIG_OBJECT_ID()
 }
 
-// / International designator
-// / Satellite catalog number
+/// International designator
+/// Satellite catalog number
 func (rcv *GEO) SAT_NO() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,7 +95,7 @@ func (rcv *GEO) SatNo() uint32 {
 	return rcv.SAT_NO()
 }
 
-// / Satellite catalog number
+/// Satellite catalog number
 func (rcv *GEO) MutateSAT_NO(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -104,7 +104,7 @@ func (rcv *GEO) MutateSatNo(n uint32) bool {
 	return rcv.MutateSAT_NO(n)
 }
 
-// / On-orbit reference identifier
+/// On-orbit reference identifier
 func (rcv *GEO) ON_ORBIT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *GEO) OnOrbit() []byte {
 	return rcv.ON_ORBIT()
 }
 
-// / On-orbit reference identifier
-// / Station-keeping status
+/// On-orbit reference identifier
+/// Station-keeping status
 func (rcv *GEO) STATION_KEEPING() geoStationKeeping {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,7 +131,7 @@ func (rcv *GEO) StationKeeping() geoStationKeeping {
 	return rcv.STATION_KEEPING()
 }
 
-// / Station-keeping status
+/// Station-keeping status
 func (rcv *GEO) MutateSTATION_KEEPING(n geoStationKeeping) bool {
 	return rcv._tab.MutateInt8Slot(12, int8(n))
 }
@@ -140,7 +140,7 @@ func (rcv *GEO) MutateStationKeeping(n geoStationKeeping) bool {
 	return rcv.MutateSTATION_KEEPING(n)
 }
 
-// / Subsatellite point longitude (degrees east)
+/// Subsatellite point longitude (degrees east)
 func (rcv *GEO) SS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -153,7 +153,7 @@ func (rcv *GEO) Ss() float64 {
 	return rcv.SS()
 }
 
-// / Subsatellite point longitude (degrees east)
+/// Subsatellite point longitude (degrees east)
 func (rcv *GEO) MutateSS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -162,7 +162,7 @@ func (rcv *GEO) MutateSs(n float64) bool {
 	return rcv.MutateSS(n)
 }
 
-// / Longitude of ascending node (degrees)
+/// Longitude of ascending node (degrees)
 func (rcv *GEO) SC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -175,7 +175,7 @@ func (rcv *GEO) Sc() float64 {
 	return rcv.SC()
 }
 
-// / Longitude of ascending node (degrees)
+/// Longitude of ascending node (degrees)
 func (rcv *GEO) MutateSC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -184,7 +184,7 @@ func (rcv *GEO) MutateSc(n float64) bool {
 	return rcv.MutateSC(n)
 }
 
-// / Relative energy (km^2/s^2)
+/// Relative energy (km^2/s^2)
 func (rcv *GEO) RELATIVE_ENERGY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -197,7 +197,7 @@ func (rcv *GEO) RelativeEnergy() float64 {
 	return rcv.RELATIVE_ENERGY()
 }
 
-// / Relative energy (km^2/s^2)
+/// Relative energy (km^2/s^2)
 func (rcv *GEO) MutateRELATIVE_ENERGY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -206,7 +206,7 @@ func (rcv *GEO) MutateRelativeEnergy(n float64) bool {
 	return rcv.MutateRELATIVE_ENERGY(n)
 }
 
-// / Longitude drift rate (degrees/day)
+/// Longitude drift rate (degrees/day)
 func (rcv *GEO) LONGITUDE_RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -219,7 +219,7 @@ func (rcv *GEO) LongitudeRate() float64 {
 	return rcv.LONGITUDE_RATE()
 }
 
-// / Longitude drift rate (degrees/day)
+/// Longitude drift rate (degrees/day)
 func (rcv *GEO) MutateLONGITUDE_RATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -228,7 +228,7 @@ func (rcv *GEO) MutateLongitudeRate(n float64) bool {
 	return rcv.MutateLONGITUDE_RATE(n)
 }
 
-// / Western longitude boundary of slot (degrees east)
+/// Western longitude boundary of slot (degrees east)
 func (rcv *GEO) LONGITUDE_MIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -241,7 +241,7 @@ func (rcv *GEO) LongitudeMin() float64 {
 	return rcv.LONGITUDE_MIN()
 }
 
-// / Western longitude boundary of slot (degrees east)
+/// Western longitude boundary of slot (degrees east)
 func (rcv *GEO) MutateLONGITUDE_MIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -250,7 +250,7 @@ func (rcv *GEO) MutateLongitudeMin(n float64) bool {
 	return rcv.MutateLONGITUDE_MIN(n)
 }
 
-// / Eastern longitude boundary of slot (degrees east)
+/// Eastern longitude boundary of slot (degrees east)
 func (rcv *GEO) LONGITUDE_MAX() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -263,7 +263,7 @@ func (rcv *GEO) LongitudeMax() float64 {
 	return rcv.LONGITUDE_MAX()
 }
 
-// / Eastern longitude boundary of slot (degrees east)
+/// Eastern longitude boundary of slot (degrees east)
 func (rcv *GEO) MutateLONGITUDE_MAX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -272,7 +272,7 @@ func (rcv *GEO) MutateLongitudeMax(n float64) bool {
 	return rcv.MutateLONGITUDE_MAX(n)
 }
 
-// / Assessment confidence level
+/// Assessment confidence level
 func (rcv *GEO) CONFIDENCE() geoConfidence {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -285,7 +285,7 @@ func (rcv *GEO) Confidence() geoConfidence {
 	return rcv.CONFIDENCE()
 }
 
-// / Assessment confidence level
+/// Assessment confidence level
 func (rcv *GEO) MutateCONFIDENCE(n geoConfidence) bool {
 	return rcv._tab.MutateInt8Slot(26, int8(n))
 }
@@ -294,7 +294,7 @@ func (rcv *GEO) MutateConfidence(n geoConfidence) bool {
 	return rcv.MutateCONFIDENCE(n)
 }
 
-// / Trough type (east/west gravitational well)
+/// Trough type (east/west gravitational well)
 func (rcv *GEO) TROUGH() troughType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -307,7 +307,7 @@ func (rcv *GEO) Trough() troughType {
 	return rcv.TROUGH()
 }
 
-// / Trough type (east/west gravitational well)
+/// Trough type (east/west gravitational well)
 func (rcv *GEO) MutateTROUGH(n troughType) bool {
 	return rcv._tab.MutateInt8Slot(28, int8(n))
 }
@@ -316,7 +316,7 @@ func (rcv *GEO) MutateTrough(n troughType) bool {
 	return rcv.MutateTROUGH(n)
 }
 
-// / Plane change status description
+/// Plane change status description
 func (rcv *GEO) PLANE_CHANGE_STATUS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -329,8 +329,8 @@ func (rcv *GEO) PlaneChangeStatus() []byte {
 	return rcv.PLANE_CHANGE_STATUS()
 }
 
-// / Plane change status description
-// / True if object is lost/not tracked
+/// Plane change status description
+/// True if object is lost/not tracked
 func (rcv *GEO) LOST_FLAG() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -343,7 +343,7 @@ func (rcv *GEO) LostFlag() bool {
 	return rcv.LOST_FLAG()
 }
 
-// / True if object is lost/not tracked
+/// True if object is lost/not tracked
 func (rcv *GEO) MutateLOST_FLAG(n bool) bool {
 	return rcv._tab.MutateBoolSlot(32, n)
 }
@@ -352,7 +352,7 @@ func (rcv *GEO) MutateLostFlag(n bool) bool {
 	return rcv.MutateLOST_FLAG(n)
 }
 
-// / True if semi-annual correction applied
+/// True if semi-annual correction applied
 func (rcv *GEO) SEMI_ANNUAL_CORR_FLAG() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -365,7 +365,7 @@ func (rcv *GEO) SemiAnnualCorrFlag() bool {
 	return rcv.SEMI_ANNUAL_CORR_FLAG()
 }
 
-// / True if semi-annual correction applied
+/// True if semi-annual correction applied
 func (rcv *GEO) MutateSEMI_ANNUAL_CORR_FLAG(n bool) bool {
 	return rcv._tab.MutateBoolSlot(34, n)
 }
@@ -374,7 +374,7 @@ func (rcv *GEO) MutateSemiAnnualCorrFlag(n bool) bool {
 	return rcv.MutateSEMI_ANNUAL_CORR_FLAG(n)
 }
 
-// / Current operational status
+/// Current operational status
 func (rcv *GEO) OBJECT_STATUS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -387,8 +387,8 @@ func (rcv *GEO) ObjectStatus() []byte {
 	return rcv.OBJECT_STATUS()
 }
 
-// / Current operational status
-// / Inclination (degrees)
+/// Current operational status
+/// Inclination (degrees)
 func (rcv *GEO) INCLINATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -401,7 +401,7 @@ func (rcv *GEO) Inclination() float64 {
 	return rcv.INCLINATION()
 }
 
-// / Inclination (degrees)
+/// Inclination (degrees)
 func (rcv *GEO) MutateINCLINATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -410,7 +410,7 @@ func (rcv *GEO) MutateInclination(n float64) bool {
 	return rcv.MutateINCLINATION(n)
 }
 
-// / Eccentricity
+/// Eccentricity
 func (rcv *GEO) ECCENTRICITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -423,7 +423,7 @@ func (rcv *GEO) Eccentricity() float64 {
 	return rcv.ECCENTRICITY()
 }
 
-// / Eccentricity
+/// Eccentricity
 func (rcv *GEO) MutateECCENTRICITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -432,7 +432,7 @@ func (rcv *GEO) MutateEccentricity(n float64) bool {
 	return rcv.MutateECCENTRICITY(n)
 }
 
-// / Epoch of status (ISO 8601)
+/// Epoch of status (ISO 8601)
 func (rcv *GEO) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -445,8 +445,8 @@ func (rcv *GEO) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-// / Epoch of status (ISO 8601)
-// / Reference to raw data file
+/// Epoch of status (ISO 8601)
+/// Reference to raw data file
 func (rcv *GEO) RAW_FILE_URI() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -459,7 +459,7 @@ func (rcv *GEO) RawFileUri() []byte {
 	return rcv.RAW_FILE_URI()
 }
 
-// / Reference to raw data file
+/// Reference to raw data file
 func GEOStart(builder *flatbuffers.Builder) {
 	builder.StartObject(21)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Data coverage combining spatial and temporal
+/// Data coverage combining spatial and temporal
 type DataCoverage struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *DataCoverage) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Spatial coverage definition
+/// Spatial coverage definition
 func (rcv *DataCoverage) SPATIAL(obj *SpatialCoverage) *SpatialCoverage {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *DataCoverage) Spatial(obj *SpatialCoverage) *SpatialCoverage {
 	return rcv.SPATIAL(obj)
 }
 
-// / Spatial coverage definition
-// / Temporal coverage definition
+/// Spatial coverage definition
+/// Temporal coverage definition
 func (rcv *DataCoverage) TEMPORAL(obj *TemporalCoverage) *TemporalCoverage {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -79,7 +79,7 @@ func (rcv *DataCoverage) Temporal(obj *TemporalCoverage) *TemporalCoverage {
 	return rcv.TEMPORAL(obj)
 }
 
-// / Temporal coverage definition
+/// Temporal coverage definition
 func DataCoverageStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

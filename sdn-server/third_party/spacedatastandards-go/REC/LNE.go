@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Launch Event
+/// Launch Event
 type LNE struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *LNE) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier
+/// Unique identifier
 func (rcv *LNE) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *LNE) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique identifier
-// / Satellite catalog number of launched object
+/// Unique identifier
+/// Satellite catalog number of launched object
 func (rcv *LNE) SAT_NO() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,7 +81,7 @@ func (rcv *LNE) SatNo() uint32 {
 	return rcv.SAT_NO()
 }
 
-// / Satellite catalog number of launched object
+/// Satellite catalog number of launched object
 func (rcv *LNE) MutateSAT_NO(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -90,7 +90,7 @@ func (rcv *LNE) MutateSatNo(n uint32) bool {
 	return rcv.MutateSAT_NO(n)
 }
 
-// / International designator (YYYY-NNNP)
+/// International designator (YYYY-NNNP)
 func (rcv *LNE) ORIG_OBJECT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,8 +103,8 @@ func (rcv *LNE) OrigObjectId() []byte {
 	return rcv.ORIG_OBJECT_ID()
 }
 
-// / International designator (YYYY-NNNP)
-// / Source record this event was derived from
+/// International designator (YYYY-NNNP)
+/// Source record this event was derived from
 func (rcv *LNE) DERIVED_FROM() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *LNE) DerivedFrom() []byte {
 	return rcv.DERIVED_FROM()
 }
 
-// / Source record this event was derived from
-// / Classification date (ISO 8601)
+/// Source record this event was derived from
+/// Classification date (ISO 8601)
 func (rcv *LNE) DECLASSIFICATION_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *LNE) DeclassificationDate() []byte {
 	return rcv.DECLASSIFICATION_DATE()
 }
 
-// / Classification date (ISO 8601)
-// / Classification marking
+/// Classification date (ISO 8601)
+/// Classification marking
 func (rcv *LNE) DECLASSIFICATION_STRING() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,8 +145,8 @@ func (rcv *LNE) DeclassificationString() []byte {
 	return rcv.DECLASSIFICATION_STRING()
 }
 
-// / Classification marking
-// / Message creation time (ISO 8601)
+/// Classification marking
+/// Message creation time (ISO 8601)
 func (rcv *LNE) MSG_CREATE_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,8 +159,8 @@ func (rcv *LNE) MsgCreateDate() []byte {
 	return rcv.MSG_CREATE_DATE()
 }
 
-// / Message creation time (ISO 8601)
-// / Launch date and time (ISO 8601)
+/// Message creation time (ISO 8601)
+/// Launch date and time (ISO 8601)
 func (rcv *LNE) LAUNCH_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -173,8 +173,8 @@ func (rcv *LNE) LaunchDate() []byte {
 	return rcv.LAUNCH_DATE()
 }
 
-// / Launch date and time (ISO 8601)
-// / Launch outcome
+/// Launch date and time (ISO 8601)
+/// Launch outcome
 func (rcv *LNE) OUTCOME() launchOutcome {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -187,7 +187,7 @@ func (rcv *LNE) Outcome() launchOutcome {
 	return rcv.OUTCOME()
 }
 
-// / Launch outcome
+/// Launch outcome
 func (rcv *LNE) MutateOUTCOME(n launchOutcome) bool {
 	return rcv._tab.MutateInt8Slot(20, int8(n))
 }
@@ -196,7 +196,7 @@ func (rcv *LNE) MutateOutcome(n launchOutcome) bool {
 	return rcv.MutateOUTCOME(n)
 }
 
-// / Launch failure code (if applicable)
+/// Launch failure code (if applicable)
 func (rcv *LNE) LAUNCH_FAILURE_CODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -209,8 +209,8 @@ func (rcv *LNE) LaunchFailureCode() []byte {
 	return rcv.LAUNCH_FAILURE_CODE()
 }
 
-// / Launch failure code (if applicable)
-// / Basic encyclopedia number
+/// Launch failure code (if applicable)
+/// Basic encyclopedia number
 func (rcv *LNE) BE_NUMBER() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -223,8 +223,8 @@ func (rcv *LNE) BeNumber() []byte {
 	return rcv.BE_NUMBER()
 }
 
-// / Basic encyclopedia number
-// / Object suffix identifier
+/// Basic encyclopedia number
+/// Object suffix identifier
 func (rcv *LNE) O_SUFFIX() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -237,8 +237,8 @@ func (rcv *LNE) OSuffix() []byte {
 	return rcv.O_SUFFIX()
 }
 
-// / Object suffix identifier
-// / Launch facility name
+/// Object suffix identifier
+/// Launch facility name
 func (rcv *LNE) LAUNCH_FACILITY_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -251,8 +251,8 @@ func (rcv *LNE) LaunchFacilityName() []byte {
 	return rcv.LAUNCH_FACILITY_NAME()
 }
 
-// / Launch facility name
-// / Launch facility code
+/// Launch facility name
+/// Launch facility code
 func (rcv *LNE) LAUNCH_FACILITY_CODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -265,8 +265,8 @@ func (rcv *LNE) LaunchFacilityCode() []byte {
 	return rcv.LAUNCH_FACILITY_CODE()
 }
 
-// / Launch facility code
-// / Launch vehicle type
+/// Launch facility code
+/// Launch vehicle type
 func (rcv *LNE) LAUNCH_VEHICLE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -279,8 +279,8 @@ func (rcv *LNE) LaunchVehicle() []byte {
 	return rcv.LAUNCH_VEHICLE()
 }
 
-// / Launch vehicle type
-// / Launch vehicle configuration
+/// Launch vehicle type
+/// Launch vehicle configuration
 func (rcv *LNE) LAUNCH_VEHICLE_CONFIG() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -293,8 +293,8 @@ func (rcv *LNE) LaunchVehicleConfig() []byte {
 	return rcv.LAUNCH_VEHICLE_CONFIG()
 }
 
-// / Launch vehicle configuration
-// / Target orbit type (LEO, MEO, GEO, HEO, SSO, etc.)
+/// Launch vehicle configuration
+/// Target orbit type (LEO, MEO, GEO, HEO, SSO, etc.)
 func (rcv *LNE) TARGET_ORBIT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -307,8 +307,8 @@ func (rcv *LNE) TargetOrbit() []byte {
 	return rcv.TARGET_ORBIT()
 }
 
-// / Target orbit type (LEO, MEO, GEO, HEO, SSO, etc.)
-// / Number of objects placed on orbit
+/// Target orbit type (LEO, MEO, GEO, HEO, SSO, etc.)
+/// Number of objects placed on orbit
 func (rcv *LNE) OBJECTS_ON_ORBIT() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -321,7 +321,7 @@ func (rcv *LNE) ObjectsOnOrbit() uint16 {
 	return rcv.OBJECTS_ON_ORBIT()
 }
 
-// / Number of objects placed on orbit
+/// Number of objects placed on orbit
 func (rcv *LNE) MutateOBJECTS_ON_ORBIT(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(38, n)
 }
@@ -330,7 +330,7 @@ func (rcv *LNE) MutateObjectsOnOrbit(n uint16) bool {
 	return rcv.MutateOBJECTS_ON_ORBIT(n)
 }
 
-// / On-orbit reference identifier
+/// On-orbit reference identifier
 func (rcv *LNE) ON_ORBIT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -343,8 +343,8 @@ func (rcv *LNE) OnOrbit() []byte {
 	return rcv.ON_ORBIT()
 }
 
-// / On-orbit reference identifier
-// / Launch country or operator
+/// On-orbit reference identifier
+/// Launch country or operator
 func (rcv *LNE) LAUNCH_COUNTRY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -357,8 +357,8 @@ func (rcv *LNE) LaunchCountry() []byte {
 	return rcv.LAUNCH_COUNTRY()
 }
 
-// / Launch country or operator
-// / Mission name or payload description
+/// Launch country or operator
+/// Mission name or payload description
 func (rcv *LNE) MISSION_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -371,8 +371,8 @@ func (rcv *LNE) MissionName() []byte {
 	return rcv.MISSION_NAME()
 }
 
-// / Mission name or payload description
-// / Additional remarks
+/// Mission name or payload description
+/// Additional remarks
 func (rcv *LNE) REMARKS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -385,7 +385,7 @@ func (rcv *LNE) Remarks() []byte {
 	return rcv.REMARKS()
 }
 
-// / Additional remarks
+/// Additional remarks
 func LNEStart(builder *flatbuffers.Builder) {
 	builder.StartObject(22)
 }

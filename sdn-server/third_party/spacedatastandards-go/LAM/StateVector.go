@@ -41,7 +41,7 @@ func (rcv *StateVector) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Epoch of the state vector.
+/// Epoch of the state vector.
 func (rcv *StateVector) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -54,8 +54,8 @@ func (rcv *StateVector) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-// / Epoch of the state vector.
-// / X component of position in the specified reference frame.
+/// Epoch of the state vector.
+/// X component of position in the specified reference frame.
 func (rcv *StateVector) X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -64,12 +64,12 @@ func (rcv *StateVector) X() float64 {
 	return 0.0
 }
 
-// / X component of position in the specified reference frame.
+/// X component of position in the specified reference frame.
 func (rcv *StateVector) MutateX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
 
-// / Y component of position.
+/// Y component of position.
 func (rcv *StateVector) Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -78,12 +78,12 @@ func (rcv *StateVector) Y() float64 {
 	return 0.0
 }
 
-// / Y component of position.
+/// Y component of position.
 func (rcv *StateVector) MutateY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
 
-// / Z component of position.
+/// Z component of position.
 func (rcv *StateVector) Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -92,12 +92,12 @@ func (rcv *StateVector) Z() float64 {
 	return 0.0
 }
 
-// / Z component of position.
+/// Z component of position.
 func (rcv *StateVector) MutateZ(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
 
-// / X component of velocity.
+/// X component of velocity.
 func (rcv *StateVector) X_DOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -110,7 +110,7 @@ func (rcv *StateVector) XDot() float64 {
 	return rcv.X_DOT()
 }
 
-// / X component of velocity.
+/// X component of velocity.
 func (rcv *StateVector) MutateX_DOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -119,7 +119,7 @@ func (rcv *StateVector) MutateXDot(n float64) bool {
 	return rcv.MutateX_DOT(n)
 }
 
-// / Y component of velocity.
+/// Y component of velocity.
 func (rcv *StateVector) Y_DOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -132,7 +132,7 @@ func (rcv *StateVector) YDot() float64 {
 	return rcv.Y_DOT()
 }
 
-// / Y component of velocity.
+/// Y component of velocity.
 func (rcv *StateVector) MutateY_DOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -141,7 +141,7 @@ func (rcv *StateVector) MutateYDot(n float64) bool {
 	return rcv.MutateY_DOT(n)
 }
 
-// / Z component of velocity.
+/// Z component of velocity.
 func (rcv *StateVector) Z_DOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -154,7 +154,7 @@ func (rcv *StateVector) ZDot() float64 {
 	return rcv.Z_DOT()
 }
 
-// / Z component of velocity.
+/// Z component of velocity.
 func (rcv *StateVector) MutateZ_DOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -163,7 +163,7 @@ func (rcv *StateVector) MutateZDot(n float64) bool {
 	return rcv.MutateZ_DOT(n)
 }
 
-// / X component of acceleration.
+/// X component of acceleration.
 func (rcv *StateVector) X_DDOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -176,7 +176,7 @@ func (rcv *StateVector) XDdot() float64 {
 	return rcv.X_DDOT()
 }
 
-// / X component of acceleration.
+/// X component of acceleration.
 func (rcv *StateVector) MutateX_DDOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -185,7 +185,7 @@ func (rcv *StateVector) MutateXDdot(n float64) bool {
 	return rcv.MutateX_DDOT(n)
 }
 
-// / Y component of acceleration.
+/// Y component of acceleration.
 func (rcv *StateVector) Y_DDOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -198,7 +198,7 @@ func (rcv *StateVector) YDdot() float64 {
 	return rcv.Y_DDOT()
 }
 
-// / Y component of acceleration.
+/// Y component of acceleration.
 func (rcv *StateVector) MutateY_DDOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -207,7 +207,7 @@ func (rcv *StateVector) MutateYDdot(n float64) bool {
 	return rcv.MutateY_DDOT(n)
 }
 
-// / Z component of acceleration.
+/// Z component of acceleration.
 func (rcv *StateVector) Z_DDOT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -220,7 +220,7 @@ func (rcv *StateVector) ZDdot() float64 {
 	return rcv.Z_DDOT()
 }
 
-// / Z component of acceleration.
+/// Z component of acceleration.
 func (rcv *StateVector) MutateZ_DDOT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }

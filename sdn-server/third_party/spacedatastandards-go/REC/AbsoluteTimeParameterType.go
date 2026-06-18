@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Absolute time parameter type
+/// Absolute time parameter type
 type AbsoluteTimeParameterType struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *AbsoluteTimeParameterType) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Type name
+/// Type name
 func (rcv *AbsoluteTimeParameterType) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *AbsoluteTimeParameterType) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Type name
-// / Short description
+/// Type name
+/// Short description
 func (rcv *AbsoluteTimeParameterType) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *AbsoluteTimeParameterType) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-// / Short description
-// / Long description
+/// Short description
+/// Long description
 func (rcv *AbsoluteTimeParameterType) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *AbsoluteTimeParameterType) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-// / Long description
-// / Reference epoch
+/// Long description
+/// Reference epoch
 func (rcv *AbsoluteTimeParameterType) EPOCH() EpochType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *AbsoluteTimeParameterType) Epoch() EpochType {
 	return rcv.EPOCH()
 }
 
-// / Reference epoch
+/// Reference epoch
 func (rcv *AbsoluteTimeParameterType) MutateEPOCH(n EpochType) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
@@ -106,7 +106,7 @@ func (rcv *AbsoluteTimeParameterType) MutateEpoch(n EpochType) bool {
 	return rcv.MutateEPOCH(n)
 }
 
-// / Custom epoch date (ISO 8601) when EPOCH=CUSTOM
+/// Custom epoch date (ISO 8601) when EPOCH=CUSTOM
 func (rcv *AbsoluteTimeParameterType) EPOCH_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -119,8 +119,8 @@ func (rcv *AbsoluteTimeParameterType) EpochDate() []byte {
 	return rcv.EPOCH_DATE()
 }
 
-// / Custom epoch date (ISO 8601) when EPOCH=CUSTOM
-// / Data encoding
+/// Custom epoch date (ISO 8601) when EPOCH=CUSTOM
+/// Data encoding
 func (rcv *AbsoluteTimeParameterType) DATA_ENCODING(obj *IntegerDataEncoding) *IntegerDataEncoding {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -138,8 +138,8 @@ func (rcv *AbsoluteTimeParameterType) DataEncoding(obj *IntegerDataEncoding) *In
 	return rcv.DATA_ENCODING(obj)
 }
 
-// / Data encoding
-// / Time unit scale factor
+/// Data encoding
+/// Time unit scale factor
 func (rcv *AbsoluteTimeParameterType) SCALE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -152,7 +152,7 @@ func (rcv *AbsoluteTimeParameterType) Scale() float64 {
 	return rcv.SCALE()
 }
 
-// / Time unit scale factor
+/// Time unit scale factor
 func (rcv *AbsoluteTimeParameterType) MutateSCALE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -161,7 +161,7 @@ func (rcv *AbsoluteTimeParameterType) MutateScale(n float64) bool {
 	return rcv.MutateSCALE(n)
 }
 
-// / Time unit offset
+/// Time unit offset
 func (rcv *AbsoluteTimeParameterType) OFFSET() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -174,7 +174,7 @@ func (rcv *AbsoluteTimeParameterType) Offset() float64 {
 	return rcv.OFFSET()
 }
 
-// / Time unit offset
+/// Time unit offset
 func (rcv *AbsoluteTimeParameterType) MutateOFFSET(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -183,7 +183,7 @@ func (rcv *AbsoluteTimeParameterType) MutateOffset(n float64) bool {
 	return rcv.MutateOFFSET(n)
 }
 
-// / Default alarm
+/// Default alarm
 func (rcv *AbsoluteTimeParameterType) DEFAULT_ALARM(obj *DefaultAlarm) *DefaultAlarm {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -201,8 +201,8 @@ func (rcv *AbsoluteTimeParameterType) DefaultAlarm(obj *DefaultAlarm) *DefaultAl
 	return rcv.DEFAULT_ALARM(obj)
 }
 
-// / Default alarm
-// / Context alarms
+/// Default alarm
+/// Context alarms
 func (rcv *AbsoluteTimeParameterType) CONTEXT_ALARMS(obj *ContextAlarm, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -234,7 +234,7 @@ func (rcv *AbsoluteTimeParameterType) ContextAlarmsLength() int {
 	return rcv.CONTEXT_ALARMSLength()
 }
 
-// / Context alarms
+/// Context alarms
 func AbsoluteTimeParameterTypeStart(builder *flatbuffers.Builder) {
 	builder.StartObject(10)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Bulk weighted-edge ingestion request.
+/// Bulk weighted-edge ingestion request.
 type FPCWeightedEdgeList struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *FPCWeightedEdgeList) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Optional vertex capacity for implicit graph creation.
+/// Optional vertex capacity for implicit graph creation.
 func (rcv *FPCWeightedEdgeList) VERTEX_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *FPCWeightedEdgeList) VertexCount() uint32 {
 	return rcv.VERTEX_COUNT()
 }
 
-// / Optional vertex capacity for implicit graph creation.
+/// Optional vertex capacity for implicit graph creation.
 func (rcv *FPCWeightedEdgeList) MutateVERTEX_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *FPCWeightedEdgeList) MutateVertexCount(n uint32) bool {
 	return rcv.MutateVERTEX_COUNT(n)
 }
 
-// / Weighted directed edge records.
+/// Weighted directed edge records.
 func (rcv *FPCWeightedEdgeList) EDGES(obj *weightedEdge, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *FPCWeightedEdgeList) EdgesLength() int {
 	return rcv.EDGESLength()
 }
 
-// / Weighted directed edge records.
-// / Build a CSR representation after ingest.
+/// Weighted directed edge records.
+/// Build a CSR representation after ingest.
 func (rcv *FPCWeightedEdgeList) BUILD_GRAPH() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -109,7 +109,7 @@ func (rcv *FPCWeightedEdgeList) BuildGraph() bool {
 	return rcv.BUILD_GRAPH()
 }
 
-// / Build a CSR representation after ingest.
+/// Build a CSR representation after ingest.
 func (rcv *FPCWeightedEdgeList) MutateBUILD_GRAPH(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }

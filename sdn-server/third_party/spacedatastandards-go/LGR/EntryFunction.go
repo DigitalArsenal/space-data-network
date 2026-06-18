@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Plugin entry point function definition
+/// Plugin entry point function definition
 type EntryFunction struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *EntryFunction) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Function name as exported from WASM
+/// Function name as exported from WASM
 func (rcv *EntryFunction) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *EntryFunction) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Function name as exported from WASM
-// / Human-readable description
+/// Function name as exported from WASM
+/// Human-readable description
 func (rcv *EntryFunction) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *EntryFunction) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-// / Human-readable description
-// / Input parameter types (FlatBuffer schema names)
+/// Human-readable description
+/// Input parameter types (FlatBuffer schema names)
 func (rcv *EntryFunction) INPUT_SCHEMAS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -96,8 +96,8 @@ func (rcv *EntryFunction) InputSchemasLength() int {
 	return rcv.INPUT_SCHEMASLength()
 }
 
-// / Input parameter types (FlatBuffer schema names)
-// / Output type (FlatBuffer schema name)
+/// Input parameter types (FlatBuffer schema names)
+/// Output type (FlatBuffer schema name)
 func (rcv *EntryFunction) OUTPUT_SCHEMA() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -110,7 +110,7 @@ func (rcv *EntryFunction) OutputSchema() []byte {
 	return rcv.OUTPUT_SCHEMA()
 }
 
-// / Output type (FlatBuffer schema name)
+/// Output type (FlatBuffer schema name)
 func EntryFunctionStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

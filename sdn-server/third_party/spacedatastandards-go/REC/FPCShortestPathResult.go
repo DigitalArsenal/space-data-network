@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Single-source shortest-path result.
+/// Single-source shortest-path result.
 type FPCShortestPathResult struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *FPCShortestPathResult) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Source vertex index.
+/// Source vertex index.
 func (rcv *FPCShortestPathResult) SOURCE() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *FPCShortestPathResult) Source() uint32 {
 	return rcv.SOURCE()
 }
 
-// / Source vertex index.
+/// Source vertex index.
 func (rcv *FPCShortestPathResult) MutateSOURCE(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *FPCShortestPathResult) MutateSource(n uint32) bool {
 	return rcv.MutateSOURCE(n)
 }
 
-// / Number of vertices in the solved graph.
+/// Number of vertices in the solved graph.
 func (rcv *FPCShortestPathResult) VERTEX_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *FPCShortestPathResult) VertexCount() uint32 {
 	return rcv.VERTEX_COUNT()
 }
 
-// / Number of vertices in the solved graph.
+/// Number of vertices in the solved graph.
 func (rcv *FPCShortestPathResult) MutateVERTEX_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *FPCShortestPathResult) MutateVertexCount(n uint32) bool {
 	return rcv.MutateVERTEX_COUNT(n)
 }
 
-// / Number of reachable vertices (finite distances).
+/// Number of reachable vertices (finite distances).
 func (rcv *FPCShortestPathResult) REACHABLE_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *FPCShortestPathResult) ReachableCount() uint32 {
 	return rcv.REACHABLE_COUNT()
 }
 
-// / Number of reachable vertices (finite distances).
+/// Number of reachable vertices (finite distances).
 func (rcv *FPCShortestPathResult) MutateREACHABLE_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *FPCShortestPathResult) MutateReachableCount(n uint32) bool {
 	return rcv.MutateREACHABLE_COUNT(n)
 }
 
-// / Distance array (length == VERTEX_COUNT).
+/// Distance array (length == VERTEX_COUNT).
 func (rcv *FPCShortestPathResult) DISTANCES(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -134,7 +134,7 @@ func (rcv *FPCShortestPathResult) DistancesLength() int {
 	return rcv.DISTANCESLength()
 }
 
-// / Distance array (length == VERTEX_COUNT).
+/// Distance array (length == VERTEX_COUNT).
 func (rcv *FPCShortestPathResult) MutateDISTANCES(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -148,7 +148,7 @@ func (rcv *FPCShortestPathResult) MutateDistances(j int, n float64) bool {
 	return rcv.MutateDISTANCES(j, n)
 }
 
-// / Predecessor array (length == VERTEX_COUNT; UINT32_MAX means none / source).
+/// Predecessor array (length == VERTEX_COUNT; UINT32_MAX means none / source).
 func (rcv *FPCShortestPathResult) PREDECESSORS(j int) uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -174,7 +174,7 @@ func (rcv *FPCShortestPathResult) PredecessorsLength() int {
 	return rcv.PREDECESSORSLength()
 }
 
-// / Predecessor array (length == VERTEX_COUNT; UINT32_MAX means none / source).
+/// Predecessor array (length == VERTEX_COUNT; UINT32_MAX means none / source).
 func (rcv *FPCShortestPathResult) MutatePREDECESSORS(j int, n uint32) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {

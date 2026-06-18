@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Aggregate member definition
+/// Aggregate member definition
 type AggregateMember struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *AggregateMember) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Member name
+/// Member name
 func (rcv *AggregateMember) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *AggregateMember) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Member name
-// / Reference to parameter type
+/// Member name
+/// Reference to parameter type
 func (rcv *AggregateMember) TYPE_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *AggregateMember) TypeRef() []byte {
 	return rcv.TYPE_REF()
 }
 
-// / Reference to parameter type
-// / Short description
+/// Reference to parameter type
+/// Short description
 func (rcv *AggregateMember) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *AggregateMember) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-// / Short description
+/// Short description
 func AggregateMemberStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

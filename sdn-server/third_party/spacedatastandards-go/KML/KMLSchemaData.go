@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Schema data reference
+/// Schema data reference
 type KMLSchemaData struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLSchemaData) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Schema URL reference
+/// Schema URL reference
 func (rcv *KMLSchemaData) SCHEMA_URL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLSchemaData) SchemaUrl() []byte {
 	return rcv.SCHEMA_URL()
 }
 
-// / Schema URL reference
-// / Simple data values
+/// Schema URL reference
+/// Simple data values
 func (rcv *KMLSchemaData) SIMPLE_DATA(obj *KMLSimpleData, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -88,7 +88,7 @@ func (rcv *KMLSchemaData) SimpleDataLength() int {
 	return rcv.SIMPLE_DATALength()
 }
 
-// / Simple data values
+/// Simple data values
 func KMLSchemaDataStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

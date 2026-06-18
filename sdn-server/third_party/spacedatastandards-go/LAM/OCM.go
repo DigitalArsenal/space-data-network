@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Orbit Comprehensive Message
+/// Orbit Comprehensive Message
 type OCM struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *OCM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Header section of the OCM.
+/// Header section of the OCM.
 func (rcv *OCM) HEADER(obj *Header) *Header {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -72,8 +72,8 @@ func (rcv *OCM) Header(obj *Header) *Header {
 	return rcv.HEADER(obj)
 }
 
-// / Header section of the OCM.
-// / Metadata section of the OCM.
+/// Header section of the OCM.
+/// Metadata section of the OCM.
 func (rcv *OCM) METADATA(obj *Metadata) *Metadata {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -91,11 +91,11 @@ func (rcv *OCM) Metadata(obj *Metadata) *Metadata {
 	return rcv.METADATA(obj)
 }
 
-// / Metadata section of the OCM.
-// / Trajectory state representation type.
-// / Determines how orbit state data is parameterized in this message.
-// / For CARTESIAN_PV/CARTESIAN_PVA, use STATE_DATA array.
-// / For POLYNOMIAL_POS/POLYNOMIAL_OE, use the corresponding polynomial record arrays.
+/// Metadata section of the OCM.
+/// Trajectory state representation type.
+/// Determines how orbit state data is parameterized in this message.
+/// For CARTESIAN_PV/CARTESIAN_PVA, use STATE_DATA array.
+/// For POLYNOMIAL_POS/POLYNOMIAL_OE, use the corresponding polynomial record arrays.
 func (rcv *OCM) TRAJ_TYPE() trajectoryType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -108,10 +108,10 @@ func (rcv *OCM) TrajType() trajectoryType {
 	return rcv.TRAJ_TYPE()
 }
 
-// / Trajectory state representation type.
-// / Determines how orbit state data is parameterized in this message.
-// / For CARTESIAN_PV/CARTESIAN_PVA, use STATE_DATA array.
-// / For POLYNOMIAL_POS/POLYNOMIAL_OE, use the corresponding polynomial record arrays.
+/// Trajectory state representation type.
+/// Determines how orbit state data is parameterized in this message.
+/// For CARTESIAN_PV/CARTESIAN_PVA, use STATE_DATA array.
+/// For POLYNOMIAL_POS/POLYNOMIAL_OE, use the corresponding polynomial record arrays.
 func (rcv *OCM) MutateTRAJ_TYPE(n trajectoryType) bool {
 	return rcv._tab.MutateInt8Slot(8, int8(n))
 }
@@ -120,8 +120,8 @@ func (rcv *OCM) MutateTrajType(n trajectoryType) bool {
 	return rcv.MutateTRAJ_TYPE(n)
 }
 
-// / Legacy trajectory type string for backward compatibility and extended types
-// / (e.g., "PROPAGATED", "ESTIMATED", "FILTERED").
+/// Legacy trajectory type string for backward compatibility and extended types
+/// (e.g., "PROPAGATED", "ESTIMATED", "FILTERED").
 func (rcv *OCM) TRAJ_TYPE_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -134,9 +134,9 @@ func (rcv *OCM) TrajTypeDescription() []byte {
 	return rcv.TRAJ_TYPE_DESCRIPTION()
 }
 
-// / Legacy trajectory type string for backward compatibility and extended types
-// / (e.g., "PROPAGATED", "ESTIMATED", "FILTERED").
-// / Time interval between state vectors in seconds (required for time-series data).
+/// Legacy trajectory type string for backward compatibility and extended types
+/// (e.g., "PROPAGATED", "ESTIMATED", "FILTERED").
+/// Time interval between state vectors in seconds (required for time-series data).
 func (rcv *OCM) STATE_STEP_SIZE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -149,7 +149,7 @@ func (rcv *OCM) StateStepSize() float64 {
 	return rcv.STATE_STEP_SIZE()
 }
 
-// / Time interval between state vectors in seconds (required for time-series data).
+/// Time interval between state vectors in seconds (required for time-series data).
 func (rcv *OCM) MutateSTATE_STEP_SIZE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -158,9 +158,9 @@ func (rcv *OCM) MutateStateStepSize(n float64) bool {
 	return rcv.MutateSTATE_STEP_SIZE(n)
 }
 
-// / Number of components per state vector.
-// / 6 = position + velocity (X, Y, Z, X_DOT, Y_DOT, Z_DOT)
-// / 9 = position + velocity + acceleration (adds X_DDOT, Y_DDOT, Z_DDOT)
+/// Number of components per state vector.
+/// 6 = position + velocity (X, Y, Z, X_DOT, Y_DOT, Z_DOT)
+/// 9 = position + velocity + acceleration (adds X_DDOT, Y_DDOT, Z_DDOT)
 func (rcv *OCM) STATE_VECTOR_SIZE() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -173,9 +173,9 @@ func (rcv *OCM) StateVectorSize() byte {
 	return rcv.STATE_VECTOR_SIZE()
 }
 
-// / Number of components per state vector.
-// / 6 = position + velocity (X, Y, Z, X_DOT, Y_DOT, Z_DOT)
-// / 9 = position + velocity + acceleration (adds X_DDOT, Y_DDOT, Z_DDOT)
+/// Number of components per state vector.
+/// 6 = position + velocity (X, Y, Z, X_DOT, Y_DOT, Z_DOT)
+/// 9 = position + velocity + acceleration (adds X_DDOT, Y_DDOT, Z_DDOT)
 func (rcv *OCM) MutateSTATE_VECTOR_SIZE(n byte) bool {
 	return rcv._tab.MutateByteSlot(14, n)
 }
@@ -184,10 +184,10 @@ func (rcv *OCM) MutateStateVectorSize(n byte) bool {
 	return rcv.MutateSTATE_VECTOR_SIZE(n)
 }
 
-// / State data as row-major array of doubles.
-// / Layout: [X0, Y0, Z0, X_DOT0, Y_DOT0, Z_DOT0, X1, Y1, Z1, ...]
-// / Time reconstruction: epoch[i] = METADATA.START_TIME + (i * STATE_STEP_SIZE)
-// / Length must be divisible by STATE_VECTOR_SIZE.
+/// State data as row-major array of doubles.
+/// Layout: [X0, Y0, Z0, X_DOT0, Y_DOT0, Z_DOT0, X1, Y1, Z1, ...]
+/// Time reconstruction: epoch[i] = METADATA.START_TIME + (i * STATE_STEP_SIZE)
+/// Length must be divisible by STATE_VECTOR_SIZE.
 func (rcv *OCM) STATE_DATA(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -213,10 +213,10 @@ func (rcv *OCM) StateDataLength() int {
 	return rcv.STATE_DATALength()
 }
 
-// / State data as row-major array of doubles.
-// / Layout: [X0, Y0, Z0, X_DOT0, Y_DOT0, Z_DOT0, X1, Y1, Z1, ...]
-// / Time reconstruction: epoch[i] = METADATA.START_TIME + (i * STATE_STEP_SIZE)
-// / Length must be divisible by STATE_VECTOR_SIZE.
+/// State data as row-major array of doubles.
+/// Layout: [X0, Y0, Z0, X_DOT0, Y_DOT0, Z_DOT0, X1, Y1, Z1, ...]
+/// Time reconstruction: epoch[i] = METADATA.START_TIME + (i * STATE_STEP_SIZE)
+/// Length must be divisible by STATE_VECTOR_SIZE.
 func (rcv *OCM) MutateSTATE_DATA(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -230,8 +230,8 @@ func (rcv *OCM) MutateStateData(j int, n float64) bool {
 	return rcv.MutateSTATE_DATA(j, n)
 }
 
-// / Covariance data as flat array (21 elements per epoch for 6x6 lower triangular).
-// / Time alignment matches STATE_DATA epochs.
+/// Covariance data as flat array (21 elements per epoch for 6x6 lower triangular).
+/// Time alignment matches STATE_DATA epochs.
 func (rcv *OCM) COVARIANCE_DATA(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -257,8 +257,8 @@ func (rcv *OCM) CovarianceDataLength() int {
 	return rcv.COVARIANCE_DATALength()
 }
 
-// / Covariance data as flat array (21 elements per epoch for 6x6 lower triangular).
-// / Time alignment matches STATE_DATA epochs.
+/// Covariance data as flat array (21 elements per epoch for 6x6 lower triangular).
+/// Time alignment matches STATE_DATA epochs.
 func (rcv *OCM) MutateCOVARIANCE_DATA(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -272,10 +272,10 @@ func (rcv *OCM) MutateCovarianceData(j int, n float64) bool {
 	return rcv.MutateCOVARIANCE_DATA(j, n)
 }
 
-// / Polynomial position records.
-// / Used when TRAJ_TYPE is POLYNOMIAL_POS. Each record covers a time segment
-// / with polynomial coefficients for X, Y, Z position (and optionally velocity).
-// / See PPE schema for record structure and evaluation procedure.
+/// Polynomial position records.
+/// Used when TRAJ_TYPE is POLYNOMIAL_POS. Each record covers a time segment
+/// with polynomial coefficients for X, Y, Z position (and optionally velocity).
+/// See PPE schema for record structure and evaluation procedure.
 func (rcv *OCM) POLYNOMIAL_POSITION_RECORDS(obj *PPEPositionRecord, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -307,14 +307,14 @@ func (rcv *OCM) PolynomialPositionRecordsLength() int {
 	return rcv.POLYNOMIAL_POSITION_RECORDSLength()
 }
 
-// / Polynomial position records.
-// / Used when TRAJ_TYPE is POLYNOMIAL_POS. Each record covers a time segment
-// / with polynomial coefficients for X, Y, Z position (and optionally velocity).
-// / See PPE schema for record structure and evaluation procedure.
-// / Polynomial orbital element records.
-// / Used when TRAJ_TYPE is POLYNOMIAL_OE. Each record covers a time segment
-// / with polynomial coefficients for classical orbital elements.
-// / See PPE schema for record structure and evaluation procedure.
+/// Polynomial position records.
+/// Used when TRAJ_TYPE is POLYNOMIAL_POS. Each record covers a time segment
+/// with polynomial coefficients for X, Y, Z position (and optionally velocity).
+/// See PPE schema for record structure and evaluation procedure.
+/// Polynomial orbital element records.
+/// Used when TRAJ_TYPE is POLYNOMIAL_OE. Each record covers a time segment
+/// with polynomial coefficients for classical orbital elements.
+/// See PPE schema for record structure and evaluation procedure.
 func (rcv *OCM) POLYNOMIAL_OE_RECORDS(obj *PPEOrbitalElementRecord, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -346,11 +346,11 @@ func (rcv *OCM) PolynomialOeRecordsLength() int {
 	return rcv.POLYNOMIAL_OE_RECORDSLength()
 }
 
-// / Polynomial orbital element records.
-// / Used when TRAJ_TYPE is POLYNOMIAL_OE. Each record covers a time segment
-// / with polynomial coefficients for classical orbital elements.
-// / See PPE schema for record structure and evaluation procedure.
-// / Physical properties of the space object.
+/// Polynomial orbital element records.
+/// Used when TRAJ_TYPE is POLYNOMIAL_OE. Each record covers a time segment
+/// with polynomial coefficients for classical orbital elements.
+/// See PPE schema for record structure and evaluation procedure.
+/// Physical properties of the space object.
 func (rcv *OCM) PHYSICAL_PROPERTIES(obj *PhysicalProperties) *PhysicalProperties {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -368,8 +368,8 @@ func (rcv *OCM) PhysicalProperties(obj *PhysicalProperties) *PhysicalProperties 
 	return rcv.PHYSICAL_PROPERTIES(obj)
 }
 
-// / Physical properties of the space object.
-// / Maneuver data.
+/// Physical properties of the space object.
+/// Maneuver data.
 func (rcv *OCM) MANEUVER_DATA(obj *Maneuver, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -401,8 +401,8 @@ func (rcv *OCM) ManeuverDataLength() int {
 	return rcv.MANEUVER_DATALength()
 }
 
-// / Maneuver data.
-// / Perturbations parameters used.
+/// Maneuver data.
+/// Perturbations parameters used.
 func (rcv *OCM) PERTURBATIONS(obj *Perturbations) *Perturbations {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -420,8 +420,8 @@ func (rcv *OCM) Perturbations(obj *Perturbations) *Perturbations {
 	return rcv.PERTURBATIONS(obj)
 }
 
-// / Perturbations parameters used.
-// / Orbit determination data.
+/// Perturbations parameters used.
+/// Orbit determination data.
 func (rcv *OCM) ORBIT_DETERMINATION(obj *OrbitDetermination) *OrbitDetermination {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -439,8 +439,8 @@ func (rcv *OCM) OrbitDetermination(obj *OrbitDetermination) *OrbitDetermination 
 	return rcv.ORBIT_DETERMINATION(obj)
 }
 
-// / Orbit determination data.
-// / User-defined parameters and supplemental comments.
+/// Orbit determination data.
+/// User-defined parameters and supplemental comments.
 func (rcv *OCM) USER_DEFINED_PARAMETERS(obj *UserDefinedParameters, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -472,7 +472,7 @@ func (rcv *OCM) UserDefinedParametersLength() int {
 	return rcv.USER_DEFINED_PARAMETERSLength()
 }
 
-// / User-defined parameters and supplemental comments.
+/// User-defined parameters and supplemental comments.
 func OCMStart(builder *flatbuffers.Builder) {
 	builder.StartObject(15)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Graph creation / reset request.
+/// Graph creation / reset request.
 type FPCGraphDefinition struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *FPCGraphDefinition) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Number of vertices in the graph.
+/// Number of vertices in the graph.
 func (rcv *FPCGraphDefinition) VERTEX_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *FPCGraphDefinition) VertexCount() uint32 {
 	return rcv.VERTEX_COUNT()
 }
 
-// / Number of vertices in the graph.
+/// Number of vertices in the graph.
 func (rcv *FPCGraphDefinition) MutateVERTEX_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(4, n)
 }

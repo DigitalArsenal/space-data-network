@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Three-component vector in the request frame.
+/// Three-component vector in the request frame.
 type lambertVector3 struct {
 	_tab flatbuffers.Struct
 }

@@ -4,59 +4,59 @@ package TDM
 
 import "strconv"
 
-// / https://sanaregistry.org/r/spacecraft_body_reference_frames/
-// / Spacecraft Body Reference Frames (SANA registry 1.3.112.4.57.8)
+/// https://sanaregistry.org/r/spacecraft_body_reference_frames/
+/// Spacecraft Body Reference Frames (SANA registry 1.3.112.4.57.8)
 type SpacecraftFrame int8
 
 const (
 	/// OID: 1.3.112.4.57.8.1
 	/// Accelerometer instrument frame.
-	SpacecraftFrameACC_i SpacecraftFrame = 0
+	SpacecraftFrameACC_i         SpacecraftFrame = 0
 	/// OID: 1.3.112.4.57.8.2
 	/// Actuator system frame.
-	SpacecraftFrameACTUATOR_i SpacecraftFrame = 1
+	SpacecraftFrameACTUATOR_i    SpacecraftFrame = 1
 	/// OID: 1.3.112.4.57.8.3
 	/// Attitude Sensor Target frame.
-	SpacecraftFrameAST_i SpacecraftFrame = 2
+	SpacecraftFrameAST_i         SpacecraftFrame = 2
 	/// OID: 1.3.112.4.57.8.4
 	/// Coarse Sun Sensor frame.
-	SpacecraftFrameCSS_i SpacecraftFrame = 3
+	SpacecraftFrameCSS_i         SpacecraftFrame = 3
 	/// OID: 1.3.112.4.57.8.5
 	/// Digital Sun Sensor frame.
-	SpacecraftFrameDSS_i SpacecraftFrame = 4
+	SpacecraftFrameDSS_i         SpacecraftFrame = 4
 	/// OID: 1.3.112.4.57.8.6
 	/// Earth Sensor Assembly frame.
-	SpacecraftFrameESA_i SpacecraftFrame = 5
+	SpacecraftFrameESA_i         SpacecraftFrame = 5
 	/// OID: 1.3.112.4.57.8.7
 	/// Gyroscope instrument frame.
-	SpacecraftFrameGYRO_FRAME_i SpacecraftFrame = 6
+	SpacecraftFrameGYRO_FRAME_i  SpacecraftFrame = 6
 	/// OID: 1.3.112.4.57.8.8
 	/// Inertial Measurement Unit frame.
-	SpacecraftFrameIMU_FRAME_i SpacecraftFrame = 7
+	SpacecraftFrameIMU_FRAME_i   SpacecraftFrame = 7
 	/// OID: 1.3.112.4.57.8.9
 	/// Generic instrument mounting frame.
-	SpacecraftFrameINSTRUMENT_i SpacecraftFrame = 8
+	SpacecraftFrameINSTRUMENT_i  SpacecraftFrame = 8
 	/// OID: 1.3.112.4.57.8.10
 	/// Magnetic Torquer Assembly frame.
-	SpacecraftFrameMTA_i SpacecraftFrame = 9
+	SpacecraftFrameMTA_i         SpacecraftFrame = 9
 	/// OID: 1.3.112.4.57.8.11
 	/// Reaction Wheel assembly frame.
-	SpacecraftFrameRW_i SpacecraftFrame = 10
+	SpacecraftFrameRW_i          SpacecraftFrame = 10
 	/// OID: 1.3.112.4.57.8.12
 	/// Solar Array frame.
-	SpacecraftFrameSA_i SpacecraftFrame = 11
+	SpacecraftFrameSA_i          SpacecraftFrame = 11
 	/// OID: 1.3.112.4.57.8.13
 	/// Spacecraft body fixed frame.
-	SpacecraftFrameSC_BODY_i SpacecraftFrame = 12
+	SpacecraftFrameSC_BODY_i     SpacecraftFrame = 12
 	/// OID: 1.3.112.4.57.8.14
 	/// Generic sensor assembly frame.
-	SpacecraftFrameSENSOR_i SpacecraftFrame = 13
+	SpacecraftFrameSENSOR_i      SpacecraftFrame = 13
 	/// OID: 1.3.112.4.57.8.15
 	/// Star Tracker instrument frame.
 	SpacecraftFrameSTARTRACKER_i SpacecraftFrame = 14
 	/// OID: 1.3.112.4.57.8.16
 	/// Thermal Assembly Module frame.
-	SpacecraftFrameTAM_i SpacecraftFrame = 15
+	SpacecraftFrameTAM_i         SpacecraftFrame = 15
 )
 
 var EnumNamesSpacecraftFrame = map[SpacecraftFrame]string{

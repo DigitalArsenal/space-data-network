@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Parameter comparison for match criteria
+/// Parameter comparison for match criteria
 type ParameterComparison struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ParameterComparison) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Parameter reference path
+/// Parameter reference path
 func (rcv *ParameterComparison) PARAMETER_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *ParameterComparison) ParameterRef() []byte {
 	return rcv.PARAMETER_REF()
 }
 
-// / Parameter reference path
-// / Comparison operator
+/// Parameter reference path
+/// Comparison operator
 func (rcv *ParameterComparison) OPERATOR() ComparisonOperator {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *ParameterComparison) Operator() ComparisonOperator {
 	return rcv.OPERATOR()
 }
 
-// / Comparison operator
+/// Comparison operator
 func (rcv *ParameterComparison) MutateOPERATOR(n ComparisonOperator) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -78,7 +78,7 @@ func (rcv *ParameterComparison) MutateOperator(n ComparisonOperator) bool {
 	return rcv.MutateOPERATOR(n)
 }
 
-// / Value to compare against
+/// Value to compare against
 func (rcv *ParameterComparison) VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,8 +91,8 @@ func (rcv *ParameterComparison) Value() []byte {
 	return rcv.VALUE()
 }
 
-// / Value to compare against
-// / Use calibrated value (true) or raw value (false)
+/// Value to compare against
+/// Use calibrated value (true) or raw value (false)
 func (rcv *ParameterComparison) USE_CALIBRATED_VALUE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,7 +105,7 @@ func (rcv *ParameterComparison) UseCalibratedValue() bool {
 	return rcv.USE_CALIBRATED_VALUE()
 }
 
-// / Use calibrated value (true) or raw value (false)
+/// Use calibrated value (true) or raw value (false)
 func (rcv *ParameterComparison) MutateUSE_CALIBRATED_VALUE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }

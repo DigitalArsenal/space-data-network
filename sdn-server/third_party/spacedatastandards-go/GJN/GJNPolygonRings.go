@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / A polygon represented as an array of rings (outer boundary + holes)
+/// A polygon represented as an array of rings (outer boundary + holes)
 type GJNPolygonRings struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *GJNPolygonRings) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Rings: first is outer boundary, rest are holes
+/// Rings: first is outer boundary, rest are holes
 func (rcv *GJNPolygonRings) RINGS(obj *GJNLinearRing, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -74,7 +74,7 @@ func (rcv *GJNPolygonRings) RingsLength() int {
 	return rcv.RINGSLength()
 }
 
-// / Rings: first is outer boundary, rest are holes
+/// Rings: first is outer boundary, rest are holes
 func GJNPolygonRingsStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }

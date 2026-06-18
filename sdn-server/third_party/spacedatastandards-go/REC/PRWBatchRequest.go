@@ -6,9 +6,9 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Batch propagation request — propagate every entity in ENTITY_HANDLES[] to
-// / EPOCH and write the result StateVector stream to OUTPUT_OFFSET in the
-// / shared arena.
+/// Batch propagation request — propagate every entity in ENTITY_HANDLES[] to
+/// EPOCH and write the result StateVector stream to OUTPUT_OFFSET in the
+/// shared arena.
 type PRWBatchRequest struct {
 	_tab flatbuffers.Table
 }
@@ -44,7 +44,7 @@ func (rcv *PRWBatchRequest) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Target epoch as a Julian date (TIME_SYSTEM is configured on the host).
+/// Target epoch as a Julian date (TIME_SYSTEM is configured on the host).
 func (rcv *PRWBatchRequest) EPOCH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -57,7 +57,7 @@ func (rcv *PRWBatchRequest) Epoch() float64 {
 	return rcv.EPOCH()
 }
 
-// / Target epoch as a Julian date (TIME_SYSTEM is configured on the host).
+/// Target epoch as a Julian date (TIME_SYSTEM is configured on the host).
 func (rcv *PRWBatchRequest) MutateEPOCH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -66,7 +66,7 @@ func (rcv *PRWBatchRequest) MutateEpoch(n float64) bool {
 	return rcv.MutateEPOCH(n)
 }
 
-// / Entity handles to propagate (empty = all initialized entities).
+/// Entity handles to propagate (empty = all initialized entities).
 func (rcv *PRWBatchRequest) ENTITY_HANDLES(j int) uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -92,7 +92,7 @@ func (rcv *PRWBatchRequest) EntityHandlesLength() int {
 	return rcv.ENTITY_HANDLESLength()
 }
 
-// / Entity handles to propagate (empty = all initialized entities).
+/// Entity handles to propagate (empty = all initialized entities).
 func (rcv *PRWBatchRequest) MutateENTITY_HANDLES(j int, n uint32) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -106,7 +106,7 @@ func (rcv *PRWBatchRequest) MutateEntityHandles(j int, n uint32) bool {
 	return rcv.MutateENTITY_HANDLES(j, n)
 }
 
-// / Output buffer offset in the arena where the StateVector stream begins.
+/// Output buffer offset in the arena where the StateVector stream begins.
 func (rcv *PRWBatchRequest) OUTPUT_OFFSET() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -119,7 +119,7 @@ func (rcv *PRWBatchRequest) OutputOffset() uint32 {
 	return rcv.OUTPUT_OFFSET()
 }
 
-// / Output buffer offset in the arena where the StateVector stream begins.
+/// Output buffer offset in the arena where the StateVector stream begins.
 func (rcv *PRWBatchRequest) MutateOUTPUT_OFFSET(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -128,7 +128,7 @@ func (rcv *PRWBatchRequest) MutateOutputOffset(n uint32) bool {
 	return rcv.MutateOUTPUT_OFFSET(n)
 }
 
-// / Maximum entities to process in this call (0 = unbounded).
+/// Maximum entities to process in this call (0 = unbounded).
 func (rcv *PRWBatchRequest) MAX_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -141,7 +141,7 @@ func (rcv *PRWBatchRequest) MaxCount() uint32 {
 	return rcv.MAX_COUNT()
 }
 
-// / Maximum entities to process in this call (0 = unbounded).
+/// Maximum entities to process in this call (0 = unbounded).
 func (rcv *PRWBatchRequest) MutateMAX_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }
@@ -150,8 +150,8 @@ func (rcv *PRWBatchRequest) MutateMaxCount(n uint32) bool {
 	return rcv.MutateMAX_COUNT(n)
 }
 
-// / Target reference frame for the output state stream. Matches enum
-// / values in SDS `RFM`. If zero, the propagator chooses its native frame.
+/// Target reference frame for the output state stream. Matches enum
+/// values in SDS `RFM`. If zero, the propagator chooses its native frame.
 func (rcv *PRWBatchRequest) TARGET_FRAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -164,8 +164,8 @@ func (rcv *PRWBatchRequest) TargetFrame() []byte {
 	return rcv.TARGET_FRAME()
 }
 
-// / Target reference frame for the output state stream. Matches enum
-// / values in SDS `RFM`. If zero, the propagator chooses its native frame.
+/// Target reference frame for the output state stream. Matches enum
+/// values in SDS `RFM`. If zero, the propagator chooses its native frame.
 func PRWBatchRequestStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

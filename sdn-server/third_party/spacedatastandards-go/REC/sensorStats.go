@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Sensor Operational Statistics
+/// Sensor Operational Statistics
 type sensorStats struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *sensorStats) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Statistics period start (ISO 8601)
+/// Statistics period start (ISO 8601)
 func (rcv *sensorStats) PERIOD_START() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *sensorStats) PeriodStart() []byte {
 	return rcv.PERIOD_START()
 }
 
-// / Statistics period start (ISO 8601)
-// / Statistics period end (ISO 8601)
+/// Statistics period start (ISO 8601)
+/// Statistics period end (ISO 8601)
 func (rcv *sensorStats) PERIOD_END() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *sensorStats) PeriodEnd() []byte {
 	return rcv.PERIOD_END()
 }
 
-// / Statistics period end (ISO 8601)
-// / Total observation attempts
+/// Statistics period end (ISO 8601)
+/// Total observation attempts
 func (rcv *sensorStats) OBS_ATTEMPTED() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *sensorStats) ObsAttempted() uint32 {
 	return rcv.OBS_ATTEMPTED()
 }
 
-// / Total observation attempts
+/// Total observation attempts
 func (rcv *sensorStats) MutateOBS_ATTEMPTED(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -92,7 +92,7 @@ func (rcv *sensorStats) MutateObsAttempted(n uint32) bool {
 	return rcv.MutateOBS_ATTEMPTED(n)
 }
 
-// / Successful observations
+/// Successful observations
 func (rcv *sensorStats) OBS_SUCCESSFUL() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,7 +105,7 @@ func (rcv *sensorStats) ObsSuccessful() uint32 {
 	return rcv.OBS_SUCCESSFUL()
 }
 
-// / Successful observations
+/// Successful observations
 func (rcv *sensorStats) MutateOBS_SUCCESSFUL(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }
@@ -114,7 +114,7 @@ func (rcv *sensorStats) MutateObsSuccessful(n uint32) bool {
 	return rcv.MutateOBS_SUCCESSFUL(n)
 }
 
-// / Failed observations
+/// Failed observations
 func (rcv *sensorStats) OBS_FAILED() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -127,7 +127,7 @@ func (rcv *sensorStats) ObsFailed() uint32 {
 	return rcv.OBS_FAILED()
 }
 
-// / Failed observations
+/// Failed observations
 func (rcv *sensorStats) MutateOBS_FAILED(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(12, n)
 }
@@ -136,7 +136,7 @@ func (rcv *sensorStats) MutateObsFailed(n uint32) bool {
 	return rcv.MutateOBS_FAILED(n)
 }
 
-// / Uptime fraction (0.0-1.0)
+/// Uptime fraction (0.0-1.0)
 func (rcv *sensorStats) UPTIME() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -149,7 +149,7 @@ func (rcv *sensorStats) Uptime() float64 {
 	return rcv.UPTIME()
 }
 
-// / Uptime fraction (0.0-1.0)
+/// Uptime fraction (0.0-1.0)
 func (rcv *sensorStats) MutateUPTIME(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -158,7 +158,7 @@ func (rcv *sensorStats) MutateUptime(n float64) bool {
 	return rcv.MutateUPTIME(n)
 }
 
-// / Average tracking accuracy in arcseconds
+/// Average tracking accuracy in arcseconds
 func (rcv *sensorStats) AVG_ACCURACY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -171,7 +171,7 @@ func (rcv *sensorStats) AvgAccuracy() float64 {
 	return rcv.AVG_ACCURACY()
 }
 
-// / Average tracking accuracy in arcseconds
+/// Average tracking accuracy in arcseconds
 func (rcv *sensorStats) MutateAVG_ACCURACY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -180,7 +180,7 @@ func (rcv *sensorStats) MutateAvgAccuracy(n float64) bool {
 	return rcv.MutateAVG_ACCURACY(n)
 }
 
-// / Detected objects count
+/// Detected objects count
 func (rcv *sensorStats) DETECTIONS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -193,7 +193,7 @@ func (rcv *sensorStats) Detections() uint32 {
 	return rcv.DETECTIONS()
 }
 
-// / Detected objects count
+/// Detected objects count
 func (rcv *sensorStats) MutateDETECTIONS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(18, n)
 }
@@ -202,7 +202,7 @@ func (rcv *sensorStats) MutateDetections(n uint32) bool {
 	return rcv.MutateDETECTIONS(n)
 }
 
-// / Uncorrelated tracks count
+/// Uncorrelated tracks count
 func (rcv *sensorStats) UCT_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -215,7 +215,7 @@ func (rcv *sensorStats) UctCount() uint32 {
 	return rcv.UCT_COUNT()
 }
 
-// / Uncorrelated tracks count
+/// Uncorrelated tracks count
 func (rcv *sensorStats) MutateUCT_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(20, n)
 }

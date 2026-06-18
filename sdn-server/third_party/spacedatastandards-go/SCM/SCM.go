@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Schema Manifest
+/// Schema Manifest
 type SCM struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *SCM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Version of Space Data Standards
+/// Version of Space Data Standards
 func (rcv *SCM) version() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *SCM) Version() []byte {
 	return rcv.version()
 }
 
-// / Version of Space Data Standards
-// / Standards Dictionary
+/// Version of Space Data Standards
+/// Standards Dictionary
 func (rcv *SCM) RECORDS(obj *SCHEMA_STANDARD, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -100,7 +100,7 @@ func (rcv *SCM) RecordsLength() int {
 	return rcv.RECORDSLength()
 }
 
-// / Standards Dictionary
+/// Standards Dictionary
 func SCMStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }
