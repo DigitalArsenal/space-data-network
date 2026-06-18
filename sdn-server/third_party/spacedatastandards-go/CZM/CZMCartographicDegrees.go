@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Cartographic position (longitude, latitude, height in radians/meters)
+/// Cartographic position (longitude, latitude, height in radians/meters)
 type CZMCartographicDegrees struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMCartographicDegrees) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Longitude in degrees
+/// Longitude in degrees
 func (rcv *CZMCartographicDegrees) LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMCartographicDegrees) Longitude() float64 {
 	return rcv.LONGITUDE()
 }
 
-// / Longitude in degrees
+/// Longitude in degrees
 func (rcv *CZMCartographicDegrees) MutateLONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMCartographicDegrees) MutateLongitude(n float64) bool {
 	return rcv.MutateLONGITUDE(n)
 }
 
-// / Latitude in degrees
+/// Latitude in degrees
 func (rcv *CZMCartographicDegrees) LATITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *CZMCartographicDegrees) Latitude() float64 {
 	return rcv.LATITUDE()
 }
 
-// / Latitude in degrees
+/// Latitude in degrees
 func (rcv *CZMCartographicDegrees) MutateLATITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *CZMCartographicDegrees) MutateLatitude(n float64) bool {
 	return rcv.MutateLATITUDE(n)
 }
 
-// / Height in meters above WGS84 ellipsoid
+/// Height in meters above WGS84 ellipsoid
 func (rcv *CZMCartographicDegrees) HEIGHT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *CZMCartographicDegrees) Height() float64 {
 	return rcv.HEIGHT()
 }
 
-// / Height in meters above WGS84 ellipsoid
+/// Height in meters above WGS84 ellipsoid
 func (rcv *CZMCartographicDegrees) MutateHEIGHT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }

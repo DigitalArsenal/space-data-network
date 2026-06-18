@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / A single interval in a time-varying property
+/// A single interval in a time-varying property
 type CZMDynInterval struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMDynInterval) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / ISO 8601 interval string
+/// ISO 8601 interval string
 func (rcv *CZMDynInterval) INTERVAL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *CZMDynInterval) Interval() []byte {
 	return rcv.INTERVAL()
 }
 
-// / ISO 8601 interval string
-// / Value type
+/// ISO 8601 interval string
+/// Value type
 func (rcv *CZMDynInterval) VALUE_TYPE() CZMDynValueType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *CZMDynInterval) ValueType() CZMDynValueType {
 	return rcv.VALUE_TYPE()
 }
 
-// / Value type
+/// Value type
 func (rcv *CZMDynInterval) MutateVALUE_TYPE(n CZMDynValueType) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -78,7 +78,7 @@ func (rcv *CZMDynInterval) MutateValueType(n CZMDynValueType) bool {
 	return rcv.MutateVALUE_TYPE(n)
 }
 
-// / Numeric value (when VALUE_TYPE is NUMBER)
+/// Numeric value (when VALUE_TYPE is NUMBER)
 func (rcv *CZMDynInterval) NUMBER_VALUE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *CZMDynInterval) NumberValue() float64 {
 	return rcv.NUMBER_VALUE()
 }
 
-// / Numeric value (when VALUE_TYPE is NUMBER)
+/// Numeric value (when VALUE_TYPE is NUMBER)
 func (rcv *CZMDynInterval) MutateNUMBER_VALUE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -100,7 +100,7 @@ func (rcv *CZMDynInterval) MutateNumberValue(n float64) bool {
 	return rcv.MutateNUMBER_VALUE(n)
 }
 
-// / Boolean value (when VALUE_TYPE is BOOLEAN)
+/// Boolean value (when VALUE_TYPE is BOOLEAN)
 func (rcv *CZMDynInterval) BOOLEAN_VALUE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -113,7 +113,7 @@ func (rcv *CZMDynInterval) BooleanValue() bool {
 	return rcv.BOOLEAN_VALUE()
 }
 
-// / Boolean value (when VALUE_TYPE is BOOLEAN)
+/// Boolean value (when VALUE_TYPE is BOOLEAN)
 func (rcv *CZMDynInterval) MutateBOOLEAN_VALUE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }
@@ -122,7 +122,7 @@ func (rcv *CZMDynInterval) MutateBooleanValue(n bool) bool {
 	return rcv.MutateBOOLEAN_VALUE(n)
 }
 
-// / String value (when VALUE_TYPE is STRING)
+/// String value (when VALUE_TYPE is STRING)
 func (rcv *CZMDynInterval) STRING_VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -135,8 +135,8 @@ func (rcv *CZMDynInterval) StringValue() []byte {
 	return rcv.STRING_VALUE()
 }
 
-// / String value (when VALUE_TYPE is STRING)
-// / Color value (when VALUE_TYPE is COLOR)
+/// String value (when VALUE_TYPE is STRING)
+/// Color value (when VALUE_TYPE is COLOR)
 func (rcv *CZMDynInterval) COLOR_VALUE(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -154,8 +154,8 @@ func (rcv *CZMDynInterval) ColorValue(obj *CZMColor) *CZMColor {
 	return rcv.COLOR_VALUE(obj)
 }
 
-// / Color value (when VALUE_TYPE is COLOR)
-// / Array value for cartesian/nearFarScalar types
+/// Color value (when VALUE_TYPE is COLOR)
+/// Array value for cartesian/nearFarScalar types
 func (rcv *CZMDynInterval) ARRAY_VALUE(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -181,7 +181,7 @@ func (rcv *CZMDynInterval) ArrayValueLength() int {
 	return rcv.ARRAY_VALUELength()
 }
 
-// / Array value for cartesian/nearFarScalar types
+/// Array value for cartesian/nearFarScalar types
 func (rcv *CZMDynInterval) MutateARRAY_VALUE(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {

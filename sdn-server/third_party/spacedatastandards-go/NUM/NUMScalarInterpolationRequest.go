@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Request for one scalar interpolation operation.
+/// Request for one scalar interpolation operation.
 type NUMScalarInterpolationRequest struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *NUMScalarInterpolationRequest) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / LINEAR_INTERPOLATION or BILINEAR_INTERPOLATION.
+/// LINEAR_INTERPOLATION or BILINEAR_INTERPOLATION.
 func (rcv *NUMScalarInterpolationRequest) OPERATION() numOperationCode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *NUMScalarInterpolationRequest) Operation() numOperationCode {
 	return rcv.OPERATION()
 }
 
-// / LINEAR_INTERPOLATION or BILINEAR_INTERPOLATION.
+/// LINEAR_INTERPOLATION or BILINEAR_INTERPOLATION.
 func (rcv *NUMScalarInterpolationRequest) MutateOPERATION(n numOperationCode) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *NUMScalarInterpolationRequest) MutateOperation(n numOperationCode) bo
 	return rcv.MutateOPERATION(n)
 }
 
-// / First x-coordinate bound.
+/// First x-coordinate bound.
 func (rcv *NUMScalarInterpolationRequest) X1() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -73,12 +73,12 @@ func (rcv *NUMScalarInterpolationRequest) X1() float64 {
 	return 0.0
 }
 
-// / First x-coordinate bound.
+/// First x-coordinate bound.
 func (rcv *NUMScalarInterpolationRequest) MutateX1(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
 
-// / Second x-coordinate bound.
+/// Second x-coordinate bound.
 func (rcv *NUMScalarInterpolationRequest) X2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -87,12 +87,12 @@ func (rcv *NUMScalarInterpolationRequest) X2() float64 {
 	return 0.0
 }
 
-// / Second x-coordinate bound.
+/// Second x-coordinate bound.
 func (rcv *NUMScalarInterpolationRequest) MutateX2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
 
-// / First y-coordinate bound for bilinear interpolation.
+/// First y-coordinate bound for bilinear interpolation.
 func (rcv *NUMScalarInterpolationRequest) Y1() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -101,12 +101,12 @@ func (rcv *NUMScalarInterpolationRequest) Y1() float64 {
 	return 0.0
 }
 
-// / First y-coordinate bound for bilinear interpolation.
+/// First y-coordinate bound for bilinear interpolation.
 func (rcv *NUMScalarInterpolationRequest) MutateY1(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
 
-// / Second y-coordinate bound for bilinear interpolation.
+/// Second y-coordinate bound for bilinear interpolation.
 func (rcv *NUMScalarInterpolationRequest) Y2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -115,12 +115,12 @@ func (rcv *NUMScalarInterpolationRequest) Y2() float64 {
 	return 0.0
 }
 
-// / Second y-coordinate bound for bilinear interpolation.
+/// Second y-coordinate bound for bilinear interpolation.
 func (rcv *NUMScalarInterpolationRequest) MutateY2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
 
-// / Linear interpolation value at X1.
+/// Linear interpolation value at X1.
 func (rcv *NUMScalarInterpolationRequest) VALUE1() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -133,7 +133,7 @@ func (rcv *NUMScalarInterpolationRequest) Value1() float64 {
 	return rcv.VALUE1()
 }
 
-// / Linear interpolation value at X1.
+/// Linear interpolation value at X1.
 func (rcv *NUMScalarInterpolationRequest) MutateVALUE1(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -142,7 +142,7 @@ func (rcv *NUMScalarInterpolationRequest) MutateValue1(n float64) bool {
 	return rcv.MutateVALUE1(n)
 }
 
-// / Linear interpolation value at X2.
+/// Linear interpolation value at X2.
 func (rcv *NUMScalarInterpolationRequest) VALUE2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -155,7 +155,7 @@ func (rcv *NUMScalarInterpolationRequest) Value2() float64 {
 	return rcv.VALUE2()
 }
 
-// / Linear interpolation value at X2.
+/// Linear interpolation value at X2.
 func (rcv *NUMScalarInterpolationRequest) MutateVALUE2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -164,7 +164,7 @@ func (rcv *NUMScalarInterpolationRequest) MutateValue2(n float64) bool {
 	return rcv.MutateVALUE2(n)
 }
 
-// / Bilinear corner value at X1,Y1.
+/// Bilinear corner value at X1,Y1.
 func (rcv *NUMScalarInterpolationRequest) Z11() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -173,12 +173,12 @@ func (rcv *NUMScalarInterpolationRequest) Z11() float64 {
 	return 0.0
 }
 
-// / Bilinear corner value at X1,Y1.
+/// Bilinear corner value at X1,Y1.
 func (rcv *NUMScalarInterpolationRequest) MutateZ11(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
 
-// / Bilinear corner value at X1,Y2.
+/// Bilinear corner value at X1,Y2.
 func (rcv *NUMScalarInterpolationRequest) Z12() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -187,12 +187,12 @@ func (rcv *NUMScalarInterpolationRequest) Z12() float64 {
 	return 0.0
 }
 
-// / Bilinear corner value at X1,Y2.
+/// Bilinear corner value at X1,Y2.
 func (rcv *NUMScalarInterpolationRequest) MutateZ12(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
 
-// / Bilinear corner value at X2,Y1.
+/// Bilinear corner value at X2,Y1.
 func (rcv *NUMScalarInterpolationRequest) Z21() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -201,12 +201,12 @@ func (rcv *NUMScalarInterpolationRequest) Z21() float64 {
 	return 0.0
 }
 
-// / Bilinear corner value at X2,Y1.
+/// Bilinear corner value at X2,Y1.
 func (rcv *NUMScalarInterpolationRequest) MutateZ21(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
 
-// / Bilinear corner value at X2,Y2.
+/// Bilinear corner value at X2,Y2.
 func (rcv *NUMScalarInterpolationRequest) Z22() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -215,12 +215,12 @@ func (rcv *NUMScalarInterpolationRequest) Z22() float64 {
 	return 0.0
 }
 
-// / Bilinear corner value at X2,Y2.
+/// Bilinear corner value at X2,Y2.
 func (rcv *NUMScalarInterpolationRequest) MutateZ22(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
 
-// / X coordinate to interpolate.
+/// X coordinate to interpolate.
 func (rcv *NUMScalarInterpolationRequest) INTERPOLATION_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -233,7 +233,7 @@ func (rcv *NUMScalarInterpolationRequest) InterpolationX() float64 {
 	return rcv.INTERPOLATION_X()
 }
 
-// / X coordinate to interpolate.
+/// X coordinate to interpolate.
 func (rcv *NUMScalarInterpolationRequest) MutateINTERPOLATION_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -242,7 +242,7 @@ func (rcv *NUMScalarInterpolationRequest) MutateInterpolationX(n float64) bool {
 	return rcv.MutateINTERPOLATION_X(n)
 }
 
-// / Y coordinate to interpolate for bilinear interpolation.
+/// Y coordinate to interpolate for bilinear interpolation.
 func (rcv *NUMScalarInterpolationRequest) INTERPOLATION_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -255,7 +255,7 @@ func (rcv *NUMScalarInterpolationRequest) InterpolationY() float64 {
 	return rcv.INTERPOLATION_Y()
 }
 
-// / Y coordinate to interpolate for bilinear interpolation.
+/// Y coordinate to interpolate for bilinear interpolation.
 func (rcv *NUMScalarInterpolationRequest) MutateINTERPOLATION_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -264,7 +264,7 @@ func (rcv *NUMScalarInterpolationRequest) MutateInterpolationY(n float64) bool {
 	return rcv.MutateINTERPOLATION_Y(n)
 }
 
-// / Optional trace/correlation identifier.
+/// Optional trace/correlation identifier.
 func (rcv *NUMScalarInterpolationRequest) TRACE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -277,7 +277,7 @@ func (rcv *NUMScalarInterpolationRequest) TraceId() []byte {
 	return rcv.TRACE_ID()
 }
 
-// / Optional trace/correlation identifier.
+/// Optional trace/correlation identifier.
 func NUMScalarInterpolationRequestStart(builder *flatbuffers.Builder) {
 	builder.StartObject(14)
 }

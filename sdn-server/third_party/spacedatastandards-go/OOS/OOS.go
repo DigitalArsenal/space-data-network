@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / On-Orbit Solar Array
+/// On-Orbit Solar Array
 type OOS struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *OOS) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier
+/// Unique identifier
 func (rcv *OOS) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *OOS) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique identifier
-// / Reference to parent on-orbit object
+/// Unique identifier
+/// Reference to parent on-orbit object
 func (rcv *OOS) ID_ON_ORBIT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *OOS) IdOnOrbit() []byte {
 	return rcv.ID_ON_ORBIT()
 }
 
-// / Reference to parent on-orbit object
-// / Reference to solar array specification
+/// Reference to parent on-orbit object
+/// Reference to solar array specification
 func (rcv *OOS) ID_SOLAR_ARRAY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *OOS) IdSolarArray() []byte {
 	return rcv.ID_SOLAR_ARRAY()
 }
 
-// / Reference to solar array specification
-// / Solar array name or designation
+/// Reference to solar array specification
+/// Solar array name or designation
 func (rcv *OOS) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *OOS) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Solar array name or designation
-// / Solar cell type (e.g., SILICON, GAAS, MULTI_JUNCTION, THIN_FILM, PEROVSKITE)
+/// Solar array name or designation
+/// Solar cell type (e.g., SILICON, GAAS, MULTI_JUNCTION, THIN_FILM, PEROVSKITE)
 func (rcv *OOS) CELL_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *OOS) CellType() []byte {
 	return rcv.CELL_TYPE()
 }
 
-// / Solar cell type (e.g., SILICON, GAAS, MULTI_JUNCTION, THIN_FILM, PEROVSKITE)
-// / Number of solar arrays of this type
+/// Solar cell type (e.g., SILICON, GAAS, MULTI_JUNCTION, THIN_FILM, PEROVSKITE)
+/// Number of solar arrays of this type
 func (rcv *OOS) QUANTITY() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,7 +137,7 @@ func (rcv *OOS) Quantity() uint32 {
 	return rcv.QUANTITY()
 }
 
-// / Number of solar arrays of this type
+/// Number of solar arrays of this type
 func (rcv *OOS) MutateQUANTITY(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(14, n)
 }
@@ -146,7 +146,7 @@ func (rcv *OOS) MutateQuantity(n uint32) bool {
 	return rcv.MutateQUANTITY(n)
 }
 
-// / Total array area in square meters
+/// Total array area in square meters
 func (rcv *OOS) AREA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,7 +159,7 @@ func (rcv *OOS) Area() float64 {
 	return rcv.AREA()
 }
 
-// / Total array area in square meters
+/// Total array area in square meters
 func (rcv *OOS) MutateAREA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -168,7 +168,7 @@ func (rcv *OOS) MutateArea(n float64) bool {
 	return rcv.MutateAREA(n)
 }
 
-// / Beginning of life power output in Watts
+/// Beginning of life power output in Watts
 func (rcv *OOS) POWER_BOL() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -181,7 +181,7 @@ func (rcv *OOS) PowerBol() float64 {
 	return rcv.POWER_BOL()
 }
 
-// / Beginning of life power output in Watts
+/// Beginning of life power output in Watts
 func (rcv *OOS) MutatePOWER_BOL(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -190,7 +190,7 @@ func (rcv *OOS) MutatePowerBol(n float64) bool {
 	return rcv.MutatePOWER_BOL(n)
 }
 
-// / End of life power output in Watts
+/// End of life power output in Watts
 func (rcv *OOS) POWER_EOL() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -203,7 +203,7 @@ func (rcv *OOS) PowerEol() float64 {
 	return rcv.POWER_EOL()
 }
 
-// / End of life power output in Watts
+/// End of life power output in Watts
 func (rcv *OOS) MutatePOWER_EOL(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -212,7 +212,7 @@ func (rcv *OOS) MutatePowerEol(n float64) bool {
 	return rcv.MutatePOWER_EOL(n)
 }
 
-// / Conversion efficiency as fraction (0.0-1.0)
+/// Conversion efficiency as fraction (0.0-1.0)
 func (rcv *OOS) EFFICIENCY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -225,7 +225,7 @@ func (rcv *OOS) Efficiency() float64 {
 	return rcv.EFFICIENCY()
 }
 
-// / Conversion efficiency as fraction (0.0-1.0)
+/// Conversion efficiency as fraction (0.0-1.0)
 func (rcv *OOS) MutateEFFICIENCY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -234,7 +234,7 @@ func (rcv *OOS) MutateEfficiency(n float64) bool {
 	return rcv.MutateEFFICIENCY(n)
 }
 
-// / Degradation rate per year as fraction
+/// Degradation rate per year as fraction
 func (rcv *OOS) DEGRADATION_RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -247,7 +247,7 @@ func (rcv *OOS) DegradationRate() float64 {
 	return rcv.DEGRADATION_RATE()
 }
 
-// / Degradation rate per year as fraction
+/// Degradation rate per year as fraction
 func (rcv *OOS) MutateDEGRADATION_RATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -256,7 +256,7 @@ func (rcv *OOS) MutateDegradationRate(n float64) bool {
 	return rcv.MutateDEGRADATION_RATE(n)
 }
 
-// / Number of panels per array
+/// Number of panels per array
 func (rcv *OOS) NUM_PANELS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -269,7 +269,7 @@ func (rcv *OOS) NumPanels() uint32 {
 	return rcv.NUM_PANELS()
 }
 
-// / Number of panels per array
+/// Number of panels per array
 func (rcv *OOS) MutateNUM_PANELS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(26, n)
 }
@@ -278,7 +278,7 @@ func (rcv *OOS) MutateNumPanels(n uint32) bool {
 	return rcv.MutateNUM_PANELS(n)
 }
 
-// / Whether the array is deployable
+/// Whether the array is deployable
 func (rcv *OOS) DEPLOYABLE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -291,7 +291,7 @@ func (rcv *OOS) Deployable() bool {
 	return rcv.DEPLOYABLE()
 }
 
-// / Whether the array is deployable
+/// Whether the array is deployable
 func (rcv *OOS) MutateDEPLOYABLE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(28, n)
 }
@@ -300,7 +300,7 @@ func (rcv *OOS) MutateDeployable(n bool) bool {
 	return rcv.MutateDEPLOYABLE(n)
 }
 
-// / Whether the array is articulable/tracking
+/// Whether the array is articulable/tracking
 func (rcv *OOS) TRACKING() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -313,7 +313,7 @@ func (rcv *OOS) Tracking() bool {
 	return rcv.TRACKING()
 }
 
-// / Whether the array is articulable/tracking
+/// Whether the array is articulable/tracking
 func (rcv *OOS) MutateTRACKING(n bool) bool {
 	return rcv._tab.MutateBoolSlot(30, n)
 }
@@ -322,7 +322,7 @@ func (rcv *OOS) MutateTracking(n bool) bool {
 	return rcv.MutateTRACKING(n)
 }
 
-// / Array mass in kg
+/// Array mass in kg
 func (rcv *OOS) MASS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -335,7 +335,7 @@ func (rcv *OOS) Mass() float64 {
 	return rcv.MASS()
 }
 
-// / Array mass in kg
+/// Array mass in kg
 func (rcv *OOS) MutateMASS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -344,7 +344,7 @@ func (rcv *OOS) MutateMass(n float64) bool {
 	return rcv.MutateMASS(n)
 }
 
-// / Additional notes
+/// Additional notes
 func (rcv *OOS) NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -357,7 +357,7 @@ func (rcv *OOS) Notes() []byte {
 	return rcv.NOTES()
 }
 
-// / Additional notes
+/// Additional notes
 func OOSStart(builder *flatbuffers.Builder) {
 	builder.StartObject(16)
 }

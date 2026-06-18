@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Update element for NetworkLinkControl
+/// Update element for NetworkLinkControl
 type KMLUpdate struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLUpdate) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Target href
+/// Target href
 func (rcv *KMLUpdate) TARGET_HREF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLUpdate) TargetHref() []byte {
 	return rcv.TARGET_HREF()
 }
 
-// / Target href
-// / Change KML (raw)
+/// Target href
+/// Change KML (raw)
 func (rcv *KMLUpdate) CHANGE_KML() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *KMLUpdate) ChangeKml() []byte {
 	return rcv.CHANGE_KML()
 }
 
-// / Change KML (raw)
-// / Create KML (raw)
+/// Change KML (raw)
+/// Create KML (raw)
 func (rcv *KMLUpdate) CREATE_KML() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *KMLUpdate) CreateKml() []byte {
 	return rcv.CREATE_KML()
 }
 
-// / Create KML (raw)
-// / Delete KML (raw)
+/// Create KML (raw)
+/// Delete KML (raw)
 func (rcv *KMLUpdate) DELETE_KML() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *KMLUpdate) DeleteKml() []byte {
 	return rcv.DELETE_KML()
 }
 
-// / Delete KML (raw)
+/// Delete KML (raw)
 func KMLUpdateStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

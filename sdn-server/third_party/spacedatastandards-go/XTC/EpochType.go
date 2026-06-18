@@ -4,18 +4,18 @@ package XTC
 
 import "strconv"
 
-// / Epoch reference for absolute time
+/// Epoch reference for absolute time
 type EpochType int8
 
 const (
 	/// TAI epoch (1958-01-01)
-	EpochTypeTAI EpochType = 0
+	EpochTypeTAI    EpochType = 0
 	/// J2000 epoch (2000-01-01 12:00:00 TT)
-	EpochTypeJ2000 EpochType = 1
+	EpochTypeJ2000  EpochType = 1
 	/// Unix epoch (1970-01-01)
-	EpochTypeUNIX EpochType = 2
+	EpochTypeUNIX   EpochType = 2
 	/// GPS epoch (1980-01-06)
-	EpochTypeGPS EpochType = 3
+	EpochTypeGPS    EpochType = 3
 	/// Custom epoch specified in offset
 	EpochTypeCUSTOM EpochType = 4
 )

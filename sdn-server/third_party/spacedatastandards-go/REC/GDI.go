@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Ground Imagery
+/// Ground Imagery
 type GDI struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *GDI) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier
+/// Unique identifier
 func (rcv *GDI) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *GDI) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique identifier
-// / Sensor identifier
+/// Unique identifier
+/// Sensor identifier
 func (rcv *GDI) ID_SENSOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *GDI) IdSensor() []byte {
 	return rcv.ID_SENSOR()
 }
 
-// / Sensor identifier
-// / Original sensor identifier
+/// Sensor identifier
+/// Original sensor identifier
 func (rcv *GDI) ORIG_SENSOR_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *GDI) OrigSensorId() []byte {
 	return rcv.ORIG_SENSOR_ID()
 }
 
-// / Original sensor identifier
-// / Image capture time (ISO 8601)
+/// Original sensor identifier
+/// Image capture time (ISO 8601)
 func (rcv *GDI) IMAGE_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *GDI) ImageTime() []byte {
 	return rcv.IMAGE_TIME()
 }
 
-// / Image capture time (ISO 8601)
-// / Image filename
+/// Image capture time (ISO 8601)
+/// Image filename
 func (rcv *GDI) FILENAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *GDI) Filename() []byte {
 	return rcv.FILENAME()
 }
 
-// / Image filename
-// / Image format
+/// Image filename
+/// Image format
 func (rcv *GDI) FORMAT() imageFormat {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,7 +137,7 @@ func (rcv *GDI) Format() imageFormat {
 	return rcv.FORMAT()
 }
 
-// / Image format
+/// Image format
 func (rcv *GDI) MutateFORMAT(n imageFormat) bool {
 	return rcv._tab.MutateInt8Slot(14, int8(n))
 }
@@ -146,7 +146,7 @@ func (rcv *GDI) MutateFormat(n imageFormat) bool {
 	return rcv.MutateFORMAT(n)
 }
 
-// / File size (bytes)
+/// File size (bytes)
 func (rcv *GDI) FILESIZE() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,7 +159,7 @@ func (rcv *GDI) Filesize() int64 {
 	return rcv.FILESIZE()
 }
 
-// / File size (bytes)
+/// File size (bytes)
 func (rcv *GDI) MutateFILESIZE(n int64) bool {
 	return rcv._tab.MutateInt64Slot(16, n)
 }
@@ -168,7 +168,7 @@ func (rcv *GDI) MutateFilesize(n int64) bool {
 	return rcv.MutateFILESIZE(n)
 }
 
-// / File checksum value
+/// File checksum value
 func (rcv *GDI) CHECKSUM_VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -181,8 +181,8 @@ func (rcv *GDI) ChecksumValue() []byte {
 	return rcv.CHECKSUM_VALUE()
 }
 
-// / File checksum value
-// / Region GeoJSON boundary
+/// File checksum value
+/// Region GeoJSON boundary
 func (rcv *GDI) REGION_GEO_JSON() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -195,8 +195,8 @@ func (rcv *GDI) RegionGeoJson() []byte {
 	return rcv.REGION_GEO_JSON()
 }
 
-// / Region GeoJSON boundary
-// / Region text description
+/// Region GeoJSON boundary
+/// Region text description
 func (rcv *GDI) REGION_TEXT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -209,8 +209,8 @@ func (rcv *GDI) RegionText() []byte {
 	return rcv.REGION_TEXT()
 }
 
-// / Region text description
-// / Region name
+/// Region text description
+/// Region name
 func (rcv *GDI) REGION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -223,8 +223,8 @@ func (rcv *GDI) Region() []byte {
 	return rcv.REGION()
 }
 
-// / Region name
-// / Region type
+/// Region name
+/// Region type
 func (rcv *GDI) REGION_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -237,8 +237,8 @@ func (rcv *GDI) RegionType() []byte {
 	return rcv.REGION_TYPE()
 }
 
-// / Region type
-// / Region geometry dimensions
+/// Region type
+/// Region geometry dimensions
 func (rcv *GDI) REGION_NDIMS() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -251,7 +251,7 @@ func (rcv *GDI) RegionNdims() byte {
 	return rcv.REGION_NDIMS()
 }
 
-// / Region geometry dimensions
+/// Region geometry dimensions
 func (rcv *GDI) MutateREGION_NDIMS(n byte) bool {
 	return rcv._tab.MutateByteSlot(28, n)
 }
@@ -260,7 +260,7 @@ func (rcv *GDI) MutateRegionNdims(n byte) bool {
 	return rcv.MutateREGION_NDIMS(n)
 }
 
-// / Region spatial reference ID
+/// Region spatial reference ID
 func (rcv *GDI) REGION_SRID() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -273,7 +273,7 @@ func (rcv *GDI) RegionSrid() uint16 {
 	return rcv.REGION_SRID()
 }
 
-// / Region spatial reference ID
+/// Region spatial reference ID
 func (rcv *GDI) MutateREGION_SRID(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(30, n)
 }
@@ -282,7 +282,7 @@ func (rcv *GDI) MutateRegionSrid(n uint16) bool {
 	return rcv.MutateREGION_SRID(n)
 }
 
-// / Subject object identifier
+/// Subject object identifier
 func (rcv *GDI) SUBJECT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -295,8 +295,8 @@ func (rcv *GDI) SubjectId() []byte {
 	return rcv.SUBJECT_ID()
 }
 
-// / Subject object identifier
-// / Image name or title
+/// Subject object identifier
+/// Image name or title
 func (rcv *GDI) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -309,8 +309,8 @@ func (rcv *GDI) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Image name or title
-// / Transaction identifier
+/// Image name or title
+/// Transaction identifier
 func (rcv *GDI) TRANSACTION_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -323,8 +323,8 @@ func (rcv *GDI) TransactionId() []byte {
 	return rcv.TRANSACTION_ID()
 }
 
-// / Transaction identifier
-// / Associated tags
+/// Transaction identifier
+/// Associated tags
 func (rcv *GDI) TAGS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -350,8 +350,8 @@ func (rcv *GDI) TagsLength() int {
 	return rcv.TAGSLength()
 }
 
-// / Associated tags
-// / Keywords for search/classification
+/// Associated tags
+/// Keywords for search/classification
 func (rcv *GDI) KEYWORDS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -377,8 +377,8 @@ func (rcv *GDI) KeywordsLength() int {
 	return rcv.KEYWORDSLength()
 }
 
-// / Keywords for search/classification
-// / Notes
+/// Keywords for search/classification
+/// Notes
 func (rcv *GDI) NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -391,7 +391,7 @@ func (rcv *GDI) Notes() []byte {
 	return rcv.NOTES()
 }
 
-// / Notes
+/// Notes
 func GDIStart(builder *flatbuffers.Builder) {
 	builder.StartObject(20)
 }

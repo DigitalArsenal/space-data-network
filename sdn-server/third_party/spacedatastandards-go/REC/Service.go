@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Service definition
+/// Service definition
 type Service struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *Service) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Service name
+/// Service name
 func (rcv *Service) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *Service) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Service name
-// / Short description
+/// Service name
+/// Short description
 func (rcv *Service) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *Service) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-// / Short description
-// / Long description
+/// Short description
+/// Long description
 func (rcv *Service) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *Service) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-// / Long description
-// / Container references provided by this service
+/// Long description
+/// Container references provided by this service
 func (rcv *Service) CONTAINER_REFS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -110,8 +110,8 @@ func (rcv *Service) ContainerRefsLength() int {
 	return rcv.CONTAINER_REFSLength()
 }
 
-// / Container references provided by this service
-// / Command references accepted by this service
+/// Container references provided by this service
+/// Command references accepted by this service
 func (rcv *Service) COMMAND_REFS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -137,7 +137,7 @@ func (rcv *Service) CommandRefsLength() int {
 	return rcv.COMMAND_REFSLength()
 }
 
-// / Command references accepted by this service
+/// Command references accepted by this service
 func ServiceStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

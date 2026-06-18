@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Manifold Element Set
+/// Manifold Element Set
 type manifoldElset struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *manifoldElset) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Epoch of element set (ISO 8601)
+/// Epoch of element set (ISO 8601)
 func (rcv *manifoldElset) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *manifoldElset) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-// / Epoch of element set (ISO 8601)
-// / Semi-major axis in km
+/// Epoch of element set (ISO 8601)
+/// Semi-major axis in km
 func (rcv *manifoldElset) SEMI_MAJOR_AXIS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *manifoldElset) SemiMajorAxis() float64 {
 	return rcv.SEMI_MAJOR_AXIS()
 }
 
-// / Semi-major axis in km
+/// Semi-major axis in km
 func (rcv *manifoldElset) MutateSEMI_MAJOR_AXIS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -78,7 +78,7 @@ func (rcv *manifoldElset) MutateSemiMajorAxis(n float64) bool {
 	return rcv.MutateSEMI_MAJOR_AXIS(n)
 }
 
-// / Eccentricity
+/// Eccentricity
 func (rcv *manifoldElset) ECCENTRICITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *manifoldElset) Eccentricity() float64 {
 	return rcv.ECCENTRICITY()
 }
 
-// / Eccentricity
+/// Eccentricity
 func (rcv *manifoldElset) MutateECCENTRICITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -100,7 +100,7 @@ func (rcv *manifoldElset) MutateEccentricity(n float64) bool {
 	return rcv.MutateECCENTRICITY(n)
 }
 
-// / Inclination in degrees
+/// Inclination in degrees
 func (rcv *manifoldElset) INCLINATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -113,7 +113,7 @@ func (rcv *manifoldElset) Inclination() float64 {
 	return rcv.INCLINATION()
 }
 
-// / Inclination in degrees
+/// Inclination in degrees
 func (rcv *manifoldElset) MutateINCLINATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -122,7 +122,7 @@ func (rcv *manifoldElset) MutateInclination(n float64) bool {
 	return rcv.MutateINCLINATION(n)
 }
 
-// / Right ascension of ascending node in degrees
+/// Right ascension of ascending node in degrees
 func (rcv *manifoldElset) RA_OF_ASC_NODE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -135,7 +135,7 @@ func (rcv *manifoldElset) RaOfAscNode() float64 {
 	return rcv.RA_OF_ASC_NODE()
 }
 
-// / Right ascension of ascending node in degrees
+/// Right ascension of ascending node in degrees
 func (rcv *manifoldElset) MutateRA_OF_ASC_NODE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -144,7 +144,7 @@ func (rcv *manifoldElset) MutateRaOfAscNode(n float64) bool {
 	return rcv.MutateRA_OF_ASC_NODE(n)
 }
 
-// / Argument of pericenter in degrees
+/// Argument of pericenter in degrees
 func (rcv *manifoldElset) ARG_OF_PERICENTER() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *manifoldElset) ArgOfPericenter() float64 {
 	return rcv.ARG_OF_PERICENTER()
 }
 
-// / Argument of pericenter in degrees
+/// Argument of pericenter in degrees
 func (rcv *manifoldElset) MutateARG_OF_PERICENTER(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -166,7 +166,7 @@ func (rcv *manifoldElset) MutateArgOfPericenter(n float64) bool {
 	return rcv.MutateARG_OF_PERICENTER(n)
 }
 
-// / Mean anomaly in degrees
+/// Mean anomaly in degrees
 func (rcv *manifoldElset) MEAN_ANOMALY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -179,7 +179,7 @@ func (rcv *manifoldElset) MeanAnomaly() float64 {
 	return rcv.MEAN_ANOMALY()
 }
 
-// / Mean anomaly in degrees
+/// Mean anomaly in degrees
 func (rcv *manifoldElset) MutateMEAN_ANOMALY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -188,7 +188,7 @@ func (rcv *manifoldElset) MutateMeanAnomaly(n float64) bool {
 	return rcv.MutateMEAN_ANOMALY(n)
 }
 
-// / Applied delta-V in m/s
+/// Applied delta-V in m/s
 func (rcv *manifoldElset) DELTA_V() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -201,7 +201,7 @@ func (rcv *manifoldElset) DeltaV() float64 {
 	return rcv.DELTA_V()
 }
 
-// / Applied delta-V in m/s
+/// Applied delta-V in m/s
 func (rcv *manifoldElset) MutateDELTA_V(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -210,7 +210,7 @@ func (rcv *manifoldElset) MutateDeltaV(n float64) bool {
 	return rcv.MutateDELTA_V(n)
 }
 
-// / Applied delta-T in seconds
+/// Applied delta-T in seconds
 func (rcv *manifoldElset) DELTA_T() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -223,7 +223,7 @@ func (rcv *manifoldElset) DeltaT() float64 {
 	return rcv.DELTA_T()
 }
 
-// / Applied delta-T in seconds
+/// Applied delta-T in seconds
 func (rcv *manifoldElset) MutateDELTA_T(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -232,7 +232,7 @@ func (rcv *manifoldElset) MutateDeltaT(n float64) bool {
 	return rcv.MutateDELTA_T(n)
 }
 
-// / Delta-V direction X (unit vector)
+/// Delta-V direction X (unit vector)
 func (rcv *manifoldElset) DV_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -245,7 +245,7 @@ func (rcv *manifoldElset) DvX() float64 {
 	return rcv.DV_X()
 }
 
-// / Delta-V direction X (unit vector)
+/// Delta-V direction X (unit vector)
 func (rcv *manifoldElset) MutateDV_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -254,7 +254,7 @@ func (rcv *manifoldElset) MutateDvX(n float64) bool {
 	return rcv.MutateDV_X(n)
 }
 
-// / Delta-V direction Y (unit vector)
+/// Delta-V direction Y (unit vector)
 func (rcv *manifoldElset) DV_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -267,7 +267,7 @@ func (rcv *manifoldElset) DvY() float64 {
 	return rcv.DV_Y()
 }
 
-// / Delta-V direction Y (unit vector)
+/// Delta-V direction Y (unit vector)
 func (rcv *manifoldElset) MutateDV_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -276,7 +276,7 @@ func (rcv *manifoldElset) MutateDvY(n float64) bool {
 	return rcv.MutateDV_Y(n)
 }
 
-// / Delta-V direction Z (unit vector)
+/// Delta-V direction Z (unit vector)
 func (rcv *manifoldElset) DV_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -289,7 +289,7 @@ func (rcv *manifoldElset) DvZ() float64 {
 	return rcv.DV_Z()
 }
 
-// / Delta-V direction Z (unit vector)
+/// Delta-V direction Z (unit vector)
 func (rcv *manifoldElset) MutateDV_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -298,7 +298,7 @@ func (rcv *manifoldElset) MutateDvZ(n float64) bool {
 	return rcv.MutateDV_Z(n)
 }
 
-// / Probability weight (0.0-1.0)
+/// Probability weight (0.0-1.0)
 func (rcv *manifoldElset) WEIGHT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -311,7 +311,7 @@ func (rcv *manifoldElset) Weight() float64 {
 	return rcv.WEIGHT()
 }
 
-// / Probability weight (0.0-1.0)
+/// Probability weight (0.0-1.0)
 func (rcv *manifoldElset) MutateWEIGHT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -320,7 +320,7 @@ func (rcv *manifoldElset) MutateWeight(n float64) bool {
 	return rcv.MutateWEIGHT(n)
 }
 
-// / Apogee altitude in km
+/// Apogee altitude in km
 func (rcv *manifoldElset) APOGEE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -333,7 +333,7 @@ func (rcv *manifoldElset) Apogee() float64 {
 	return rcv.APOGEE()
 }
 
-// / Apogee altitude in km
+/// Apogee altitude in km
 func (rcv *manifoldElset) MutateAPOGEE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -342,7 +342,7 @@ func (rcv *manifoldElset) MutateApogee(n float64) bool {
 	return rcv.MutateAPOGEE(n)
 }
 
-// / Perigee altitude in km
+/// Perigee altitude in km
 func (rcv *manifoldElset) PERIGEE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -355,7 +355,7 @@ func (rcv *manifoldElset) Perigee() float64 {
 	return rcv.PERIGEE()
 }
 
-// / Perigee altitude in km
+/// Perigee altitude in km
 func (rcv *manifoldElset) MutatePERIGEE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -364,7 +364,7 @@ func (rcv *manifoldElset) MutatePerigee(n float64) bool {
 	return rcv.MutatePERIGEE(n)
 }
 
-// / Period in minutes
+/// Period in minutes
 func (rcv *manifoldElset) PERIOD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -377,7 +377,7 @@ func (rcv *manifoldElset) Period() float64 {
 	return rcv.PERIOD()
 }
 
-// / Period in minutes
+/// Period in minutes
 func (rcv *manifoldElset) MutatePERIOD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }

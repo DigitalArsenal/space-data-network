@@ -8,19 +8,19 @@ type timEpochRepresentation int8
 
 const (
 	/// Julian Date day count.
-	timEpochRepresentationJULIAN_DATE timEpochRepresentation = 0
+	timEpochRepresentationJULIAN_DATE             timEpochRepresentation = 0
 	/// Modified Julian Date day count (JD - 2400000.5).
-	timEpochRepresentationMODIFIED_JULIAN_DATE timEpochRepresentation = 1
+	timEpochRepresentationMODIFIED_JULIAN_DATE    timEpochRepresentation = 1
 	/// Seconds since 1970-01-01T00:00:00 UTC.
-	timEpochRepresentationUNIX_SECONDS timEpochRepresentation = 2
+	timEpochRepresentationUNIX_SECONDS            timEpochRepresentation = 2
 	/// ISO 8601 timestamp text.
-	timEpochRepresentationISO8601 timEpochRepresentation = 3
+	timEpochRepresentationISO8601                 timEpochRepresentation = 3
 	/// Seconds since 1980-01-06T00:00:00 GPS.
-	timEpochRepresentationGPS_SECONDS timEpochRepresentation = 4
+	timEpochRepresentationGPS_SECONDS             timEpochRepresentation = 4
 	/// GNSS week number plus seconds within the week.
-	timEpochRepresentationGNSS_WEEK_SECONDS timEpochRepresentation = 5
+	timEpochRepresentationGNSS_WEEK_SECONDS       timEpochRepresentation = 5
 	/// CCSDS binary time-code field with preamble metadata.
-	timEpochRepresentationCCSDS_TIME_CODE timEpochRepresentation = 6
+	timEpochRepresentationCCSDS_TIME_CODE         timEpochRepresentation = 6
 	/// Seconds from an application-defined mission epoch.
 	timEpochRepresentationMISSION_ELAPSED_SECONDS timEpochRepresentation = 7
 )

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Pre/post-maneuver orbital state
+/// Pre/post-maneuver orbital state
 type mnvOrbitalState struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *mnvOrbitalState) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Element set identifier
+/// Element set identifier
 func (rcv *mnvOrbitalState) ID_ELSET() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *mnvOrbitalState) IdElset() []byte {
 	return rcv.ID_ELSET()
 }
 
-// / Element set identifier
-// / Element set data reference
+/// Element set identifier
+/// Element set data reference
 func (rcv *mnvOrbitalState) ELSET() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *mnvOrbitalState) Elset() []byte {
 	return rcv.ELSET()
 }
 
-// / Element set data reference
-// / State vector identifier
+/// Element set data reference
+/// State vector identifier
 func (rcv *mnvOrbitalState) ID_STATE_VECTOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *mnvOrbitalState) IdStateVector() []byte {
 	return rcv.ID_STATE_VECTOR()
 }
 
-// / State vector identifier
-// / State vector data reference
+/// State vector identifier
+/// State vector data reference
 func (rcv *mnvOrbitalState) STATE_VECTOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *mnvOrbitalState) StateVector() []byte {
 	return rcv.STATE_VECTOR()
 }
 
-// / State vector data reference
-// / Position X (km)
+/// State vector data reference
+/// Position X (km)
 func (rcv *mnvOrbitalState) POS_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -111,7 +111,7 @@ func (rcv *mnvOrbitalState) PosX() float64 {
 	return rcv.POS_X()
 }
 
-// / Position X (km)
+/// Position X (km)
 func (rcv *mnvOrbitalState) MutatePOS_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -120,7 +120,7 @@ func (rcv *mnvOrbitalState) MutatePosX(n float64) bool {
 	return rcv.MutatePOS_X(n)
 }
 
-// / Position Y (km)
+/// Position Y (km)
 func (rcv *mnvOrbitalState) POS_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -133,7 +133,7 @@ func (rcv *mnvOrbitalState) PosY() float64 {
 	return rcv.POS_Y()
 }
 
-// / Position Y (km)
+/// Position Y (km)
 func (rcv *mnvOrbitalState) MutatePOS_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -142,7 +142,7 @@ func (rcv *mnvOrbitalState) MutatePosY(n float64) bool {
 	return rcv.MutatePOS_Y(n)
 }
 
-// / Position Z (km)
+/// Position Z (km)
 func (rcv *mnvOrbitalState) POS_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -155,7 +155,7 @@ func (rcv *mnvOrbitalState) PosZ() float64 {
 	return rcv.POS_Z()
 }
 
-// / Position Z (km)
+/// Position Z (km)
 func (rcv *mnvOrbitalState) MutatePOS_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -164,7 +164,7 @@ func (rcv *mnvOrbitalState) MutatePosZ(n float64) bool {
 	return rcv.MutatePOS_Z(n)
 }
 
-// / Velocity X (km/s)
+/// Velocity X (km/s)
 func (rcv *mnvOrbitalState) VEL_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -177,7 +177,7 @@ func (rcv *mnvOrbitalState) VelX() float64 {
 	return rcv.VEL_X()
 }
 
-// / Velocity X (km/s)
+/// Velocity X (km/s)
 func (rcv *mnvOrbitalState) MutateVEL_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -186,7 +186,7 @@ func (rcv *mnvOrbitalState) MutateVelX(n float64) bool {
 	return rcv.MutateVEL_X(n)
 }
 
-// / Velocity Y (km/s)
+/// Velocity Y (km/s)
 func (rcv *mnvOrbitalState) VEL_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -199,7 +199,7 @@ func (rcv *mnvOrbitalState) VelY() float64 {
 	return rcv.VEL_Y()
 }
 
-// / Velocity Y (km/s)
+/// Velocity Y (km/s)
 func (rcv *mnvOrbitalState) MutateVEL_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -208,7 +208,7 @@ func (rcv *mnvOrbitalState) MutateVelY(n float64) bool {
 	return rcv.MutateVEL_Y(n)
 }
 
-// / Velocity Z (km/s)
+/// Velocity Z (km/s)
 func (rcv *mnvOrbitalState) VEL_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -221,7 +221,7 @@ func (rcv *mnvOrbitalState) VelZ() float64 {
 	return rcv.VEL_Z()
 }
 
-// / Velocity Z (km/s)
+/// Velocity Z (km/s)
 func (rcv *mnvOrbitalState) MutateVEL_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -230,7 +230,7 @@ func (rcv *mnvOrbitalState) MutateVelZ(n float64) bool {
 	return rcv.MutateVEL_Z(n)
 }
 
-// / Radiation pressure coefficient (Cr)
+/// Radiation pressure coefficient (Cr)
 func (rcv *mnvOrbitalState) RADIATION_PRESS_COEFF() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -243,7 +243,7 @@ func (rcv *mnvOrbitalState) RadiationPressCoeff() float64 {
 	return rcv.RADIATION_PRESS_COEFF()
 }
 
-// / Radiation pressure coefficient (Cr)
+/// Radiation pressure coefficient (Cr)
 func (rcv *mnvOrbitalState) MutateRADIATION_PRESS_COEFF(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -252,7 +252,7 @@ func (rcv *mnvOrbitalState) MutateRadiationPressCoeff(n float64) bool {
 	return rcv.MutateRADIATION_PRESS_COEFF(n)
 }
 
-// / Ballistic coefficient (m^2/kg)
+/// Ballistic coefficient (m^2/kg)
 func (rcv *mnvOrbitalState) BALLISTIC_COEFF() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -265,7 +265,7 @@ func (rcv *mnvOrbitalState) BallisticCoeff() float64 {
 	return rcv.BALLISTIC_COEFF()
 }
 
-// / Ballistic coefficient (m^2/kg)
+/// Ballistic coefficient (m^2/kg)
 func (rcv *mnvOrbitalState) MutateBALLISTIC_COEFF(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -274,7 +274,7 @@ func (rcv *mnvOrbitalState) MutateBallisticCoeff(n float64) bool {
 	return rcv.MutateBALLISTIC_COEFF(n)
 }
 
-// / Apogee altitude (km)
+/// Apogee altitude (km)
 func (rcv *mnvOrbitalState) APOGEE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -287,7 +287,7 @@ func (rcv *mnvOrbitalState) Apogee() float64 {
 	return rcv.APOGEE()
 }
 
-// / Apogee altitude (km)
+/// Apogee altitude (km)
 func (rcv *mnvOrbitalState) MutateAPOGEE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -296,7 +296,7 @@ func (rcv *mnvOrbitalState) MutateApogee(n float64) bool {
 	return rcv.MutateAPOGEE(n)
 }
 
-// / Perigee altitude (km)
+/// Perigee altitude (km)
 func (rcv *mnvOrbitalState) PERIGEE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -309,7 +309,7 @@ func (rcv *mnvOrbitalState) Perigee() float64 {
 	return rcv.PERIGEE()
 }
 
-// / Perigee altitude (km)
+/// Perigee altitude (km)
 func (rcv *mnvOrbitalState) MutatePERIGEE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -318,7 +318,7 @@ func (rcv *mnvOrbitalState) MutatePerigee(n float64) bool {
 	return rcv.MutatePERIGEE(n)
 }
 
-// / Inclination (degrees)
+/// Inclination (degrees)
 func (rcv *mnvOrbitalState) INCLINATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -331,7 +331,7 @@ func (rcv *mnvOrbitalState) Inclination() float64 {
 	return rcv.INCLINATION()
 }
 
-// / Inclination (degrees)
+/// Inclination (degrees)
 func (rcv *mnvOrbitalState) MutateINCLINATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -340,7 +340,7 @@ func (rcv *mnvOrbitalState) MutateInclination(n float64) bool {
 	return rcv.MutateINCLINATION(n)
 }
 
-// / Eccentricity
+/// Eccentricity
 func (rcv *mnvOrbitalState) ECCENTRICITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -353,7 +353,7 @@ func (rcv *mnvOrbitalState) Eccentricity() float64 {
 	return rcv.ECCENTRICITY()
 }
 
-// / Eccentricity
+/// Eccentricity
 func (rcv *mnvOrbitalState) MutateECCENTRICITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -362,7 +362,7 @@ func (rcv *mnvOrbitalState) MutateEccentricity(n float64) bool {
 	return rcv.MutateECCENTRICITY(n)
 }
 
-// / Orbital period (minutes)
+/// Orbital period (minutes)
 func (rcv *mnvOrbitalState) PERIOD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -375,7 +375,7 @@ func (rcv *mnvOrbitalState) Period() float64 {
 	return rcv.PERIOD()
 }
 
-// / Orbital period (minutes)
+/// Orbital period (minutes)
 func (rcv *mnvOrbitalState) MutatePERIOD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -384,7 +384,7 @@ func (rcv *mnvOrbitalState) MutatePeriod(n float64) bool {
 	return rcv.MutatePERIOD(n)
 }
 
-// / Right ascension of ascending node (degrees)
+/// Right ascension of ascending node (degrees)
 func (rcv *mnvOrbitalState) RAAN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -397,7 +397,7 @@ func (rcv *mnvOrbitalState) Raan() float64 {
 	return rcv.RAAN()
 }
 
-// / Right ascension of ascending node (degrees)
+/// Right ascension of ascending node (degrees)
 func (rcv *mnvOrbitalState) MutateRAAN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(38, n)
 }
@@ -406,7 +406,7 @@ func (rcv *mnvOrbitalState) MutateRaan(n float64) bool {
 	return rcv.MutateRAAN(n)
 }
 
-// / Semi-major axis (km)
+/// Semi-major axis (km)
 func (rcv *mnvOrbitalState) SMA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -419,7 +419,7 @@ func (rcv *mnvOrbitalState) Sma() float64 {
 	return rcv.SMA()
 }
 
-// / Semi-major axis (km)
+/// Semi-major axis (km)
 func (rcv *mnvOrbitalState) MutateSMA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -428,7 +428,7 @@ func (rcv *mnvOrbitalState) MutateSma(n float64) bool {
 	return rcv.MutateSMA(n)
 }
 
-// / GEO longitude (degrees east)
+/// GEO longitude (degrees east)
 func (rcv *mnvOrbitalState) GEO_LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -441,7 +441,7 @@ func (rcv *mnvOrbitalState) GeoLongitude() float64 {
 	return rcv.GEO_LONGITUDE()
 }
 
-// / GEO longitude (degrees east)
+/// GEO longitude (degrees east)
 func (rcv *mnvOrbitalState) MutateGEO_LONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -450,7 +450,7 @@ func (rcv *mnvOrbitalState) MutateGeoLongitude(n float64) bool {
 	return rcv.MutateGEO_LONGITUDE(n)
 }
 
-// / Longitude drift rate (degrees/day)
+/// Longitude drift rate (degrees/day)
 func (rcv *mnvOrbitalState) DRIFT_RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -463,7 +463,7 @@ func (rcv *mnvOrbitalState) DriftRate() float64 {
 	return rcv.DRIFT_RATE()
 }
 
-// / Longitude drift rate (degrees/day)
+/// Longitude drift rate (degrees/day)
 func (rcv *mnvOrbitalState) MutateDRIFT_RATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(44, n)
 }
@@ -472,7 +472,7 @@ func (rcv *mnvOrbitalState) MutateDriftRate(n float64) bool {
 	return rcv.MutateDRIFT_RATE(n)
 }
 
-// / Position uncertainty U (km, 1-sigma)
+/// Position uncertainty U (km, 1-sigma)
 func (rcv *mnvOrbitalState) SIGMA_U() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -485,7 +485,7 @@ func (rcv *mnvOrbitalState) SigmaU() float64 {
 	return rcv.SIGMA_U()
 }
 
-// / Position uncertainty U (km, 1-sigma)
+/// Position uncertainty U (km, 1-sigma)
 func (rcv *mnvOrbitalState) MutateSIGMA_U(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(46, n)
 }
@@ -494,7 +494,7 @@ func (rcv *mnvOrbitalState) MutateSigmaU(n float64) bool {
 	return rcv.MutateSIGMA_U(n)
 }
 
-// / Position uncertainty V (km, 1-sigma)
+/// Position uncertainty V (km, 1-sigma)
 func (rcv *mnvOrbitalState) SIGMA_V() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -507,7 +507,7 @@ func (rcv *mnvOrbitalState) SigmaV() float64 {
 	return rcv.SIGMA_V()
 }
 
-// / Position uncertainty V (km, 1-sigma)
+/// Position uncertainty V (km, 1-sigma)
 func (rcv *mnvOrbitalState) MutateSIGMA_V(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(48, n)
 }
@@ -516,7 +516,7 @@ func (rcv *mnvOrbitalState) MutateSigmaV(n float64) bool {
 	return rcv.MutateSIGMA_V(n)
 }
 
-// / Position uncertainty W (km, 1-sigma)
+/// Position uncertainty W (km, 1-sigma)
 func (rcv *mnvOrbitalState) SIGMA_W() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -529,7 +529,7 @@ func (rcv *mnvOrbitalState) SigmaW() float64 {
 	return rcv.SIGMA_W()
 }
 
-// / Position uncertainty W (km, 1-sigma)
+/// Position uncertainty W (km, 1-sigma)
 func (rcv *mnvOrbitalState) MutateSIGMA_W(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(50, n)
 }

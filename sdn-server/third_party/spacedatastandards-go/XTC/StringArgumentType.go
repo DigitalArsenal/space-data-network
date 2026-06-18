@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / String argument type
+/// String argument type
 type StringArgumentType struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *StringArgumentType) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Type name
+/// Type name
 func (rcv *StringArgumentType) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *StringArgumentType) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Type name
-// / Short description
+/// Type name
+/// Short description
 func (rcv *StringArgumentType) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *StringArgumentType) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-// / Short description
-// / Long description
+/// Short description
+/// Long description
 func (rcv *StringArgumentType) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *StringArgumentType) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-// / Long description
-// / Data encoding
+/// Long description
+/// Data encoding
 func (rcv *StringArgumentType) DATA_ENCODING(obj *StringDataEncoding) *StringDataEncoding {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -102,8 +102,8 @@ func (rcv *StringArgumentType) DataEncoding(obj *StringDataEncoding) *StringData
 	return rcv.DATA_ENCODING(obj)
 }
 
-// / Data encoding
-// / Initial/default value
+/// Data encoding
+/// Initial/default value
 func (rcv *StringArgumentType) INITIAL_VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -116,8 +116,8 @@ func (rcv *StringArgumentType) InitialValue() []byte {
 	return rcv.INITIAL_VALUE()
 }
 
-// / Initial/default value
-// / Restriction pattern (regex)
+/// Initial/default value
+/// Restriction pattern (regex)
 func (rcv *StringArgumentType) RESTRICTION_PATTERN() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -130,7 +130,7 @@ func (rcv *StringArgumentType) RestrictionPattern() []byte {
 	return rcv.RESTRICTION_PATTERN()
 }
 
-// / Restriction pattern (regex)
+/// Restriction pattern (regex)
 func StringArgumentTypeStart(builder *flatbuffers.Builder) {
 	builder.StartObject(6)
 }

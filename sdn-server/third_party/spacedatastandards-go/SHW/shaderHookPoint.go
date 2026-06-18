@@ -4,9 +4,9 @@ package SHW
 
 import "strconv"
 
-// / Logical location inside a host pipeline where a compiled shader
-// / fragment is meant to be spliced. A host maps these onto its own
-// / concrete splice points.
+/// Logical location inside a host pipeline where a compiled shader
+/// fragment is meant to be spliced. A host maps these onto its own
+/// concrete splice points.
 type shaderHookPoint byte
 
 const (

@@ -4,11 +4,11 @@ package REC
 
 import "strconv"
 
-// / Data Sync Status
-// /
-// / Runtime status envelope for a FlatSQL-backed dataset synchronization. This
-// / message is used for worker/backend-to-frontend status transport; record
-// / bytes themselves remain in their original SDS FlatBuffer schema.
+/// Data Sync Status
+///
+/// Runtime status envelope for a FlatSQL-backed dataset synchronization. This
+/// message is used for worker/backend-to-frontend status transport; record
+/// bytes themselves remain in their original SDS FlatBuffer schema.
 type dssSyncState int8
 
 const (

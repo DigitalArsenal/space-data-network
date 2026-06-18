@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / gx:Wait tour primitive
+/// gx:Wait tour primitive
 type KMLWait struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLWait) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Duration in seconds
+/// Duration in seconds
 func (rcv *KMLWait) DURATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *KMLWait) Duration() float64 {
 	return rcv.DURATION()
 }
 
-// / Duration in seconds
+/// Duration in seconds
 func (rcv *KMLWait) MutateDURATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }

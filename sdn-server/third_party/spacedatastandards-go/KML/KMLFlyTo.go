@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / gx:FlyTo tour primitive
+/// gx:FlyTo tour primitive
 type KMLFlyTo struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLFlyTo) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Duration in seconds
+/// Duration in seconds
 func (rcv *KMLFlyTo) DURATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *KMLFlyTo) Duration() float64 {
 	return rcv.DURATION()
 }
 
-// / Duration in seconds
+/// Duration in seconds
 func (rcv *KMLFlyTo) MutateDURATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *KMLFlyTo) MutateDuration(n float64) bool {
 	return rcv.MutateDURATION(n)
 }
 
-// / Fly-to mode
+/// Fly-to mode
 func (rcv *KMLFlyTo) FLY_TO_MODE() KMLFlyToMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *KMLFlyTo) FlyToMode() KMLFlyToMode {
 	return rcv.FLY_TO_MODE()
 }
 
-// / Fly-to mode
+/// Fly-to mode
 func (rcv *KMLFlyTo) MutateFLY_TO_MODE(n KMLFlyToMode) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -86,7 +86,7 @@ func (rcv *KMLFlyTo) MutateFlyToMode(n KMLFlyToMode) bool {
 	return rcv.MutateFLY_TO_MODE(n)
 }
 
-// / LookAt viewpoint
+/// LookAt viewpoint
 func (rcv *KMLFlyTo) LOOK_AT(obj *KMLLookAt) *KMLLookAt {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -104,8 +104,8 @@ func (rcv *KMLFlyTo) LookAt(obj *KMLLookAt) *KMLLookAt {
 	return rcv.LOOK_AT(obj)
 }
 
-// / LookAt viewpoint
-// / Camera viewpoint
+/// LookAt viewpoint
+/// Camera viewpoint
 func (rcv *KMLFlyTo) CAMERA(obj *KMLCamera) *KMLCamera {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -123,7 +123,7 @@ func (rcv *KMLFlyTo) Camera(obj *KMLCamera) *KMLCamera {
 	return rcv.CAMERA(obj)
 }
 
-// / Camera viewpoint
+/// Camera viewpoint
 func KMLFlyToStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

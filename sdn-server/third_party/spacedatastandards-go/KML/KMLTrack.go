@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / gx:Track — time-stamped position track
+/// gx:Track — time-stamped position track
 type KMLTrack struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLTrack) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Whether to extrude
+/// Whether to extrude
 func (rcv *KMLTrack) EXTRUDE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *KMLTrack) Extrude() bool {
 	return rcv.EXTRUDE()
 }
 
-// / Whether to extrude
+/// Whether to extrude
 func (rcv *KMLTrack) MutateEXTRUDE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *KMLTrack) MutateExtrude(n bool) bool {
 	return rcv.MutateEXTRUDE(n)
 }
 
-// / Whether to tessellate
+/// Whether to tessellate
 func (rcv *KMLTrack) TESSELLATE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *KMLTrack) Tessellate() bool {
 	return rcv.TESSELLATE()
 }
 
-// / Whether to tessellate
+/// Whether to tessellate
 func (rcv *KMLTrack) MutateTESSELLATE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *KMLTrack) MutateTessellate(n bool) bool {
 	return rcv.MutateTESSELLATE(n)
 }
 
-// / Altitude mode
+/// Altitude mode
 func (rcv *KMLTrack) ALTITUDE_MODE() KMLAltitudeMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *KMLTrack) AltitudeMode() KMLAltitudeMode {
 	return rcv.ALTITUDE_MODE()
 }
 
-// / Altitude mode
+/// Altitude mode
 func (rcv *KMLTrack) MutateALTITUDE_MODE(n KMLAltitudeMode) bool {
 	return rcv._tab.MutateInt8Slot(8, int8(n))
 }
@@ -108,7 +108,7 @@ func (rcv *KMLTrack) MutateAltitudeMode(n KMLAltitudeMode) bool {
 	return rcv.MutateALTITUDE_MODE(n)
 }
 
-// / Time stamps (ISO 8601)
+/// Time stamps (ISO 8601)
 func (rcv *KMLTrack) WHEN(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -134,8 +134,8 @@ func (rcv *KMLTrack) WhenLength() int {
 	return rcv.WHENLength()
 }
 
-// / Time stamps (ISO 8601)
-// / Coordinates (lon lat alt per entry)
+/// Time stamps (ISO 8601)
+/// Coordinates (lon lat alt per entry)
 func (rcv *KMLTrack) COORDS(obj *KMLCoordinate, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -167,8 +167,8 @@ func (rcv *KMLTrack) CoordsLength() int {
 	return rcv.COORDSLength()
 }
 
-// / Coordinates (lon lat alt per entry)
-// / Angles (heading tilt roll per entry)
+/// Coordinates (lon lat alt per entry)
+/// Angles (heading tilt roll per entry)
 func (rcv *KMLTrack) ANGLES(obj *KMLCoordinate, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -200,8 +200,8 @@ func (rcv *KMLTrack) AnglesLength() int {
 	return rcv.ANGLESLength()
 }
 
-// / Angles (heading tilt roll per entry)
-// / Model for track visualization
+/// Angles (heading tilt roll per entry)
+/// Model for track visualization
 func (rcv *KMLTrack) MODEL(obj *KMLModel) *KMLModel {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -219,7 +219,7 @@ func (rcv *KMLTrack) Model(obj *KMLModel) *KMLModel {
 	return rcv.MODEL(obj)
 }
 
-// / Model for track visualization
+/// Model for track visualization
 func KMLTrackStart(builder *flatbuffers.Builder) {
 	builder.StartObject(7)
 }

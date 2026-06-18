@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Return Channel Frames Service (CCSDS 913.5-B-2)
+/// Return Channel Frames Service (CCSDS 913.5-B-2)
 type RCF struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *RCF) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / PDU type
+/// PDU type
 func (rcv *RCF) PDU_TYPE() rcfPduType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *RCF) PduType() rcfPduType {
 	return rcv.PDU_TYPE()
 }
 
-// / PDU type
+/// PDU type
 func (rcv *RCF) MutatePDU_TYPE(n rcfPduType) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -76,7 +76,7 @@ func (rcv *RCF) MutatePduType(n rcfPduType) bool {
 	return rcv.MutatePDU_TYPE(n)
 }
 
-// / Initiator identifier
+/// Initiator identifier
 func (rcv *RCF) INITIATOR_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,8 +89,8 @@ func (rcv *RCF) InitiatorId() []byte {
 	return rcv.INITIATOR_ID()
 }
 
-// / Initiator identifier
-// / Responder port identifier
+/// Initiator identifier
+/// Responder port identifier
 func (rcv *RCF) RESPONDER_PORT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,8 +103,8 @@ func (rcv *RCF) ResponderPortId() []byte {
 	return rcv.RESPONDER_PORT_ID()
 }
 
-// / Responder port identifier
-// / Service type
+/// Responder port identifier
+/// Service type
 func (rcv *RCF) SERVICE_TYPE() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,7 +117,7 @@ func (rcv *RCF) ServiceType() byte {
 	return rcv.SERVICE_TYPE()
 }
 
-// / Service type
+/// Service type
 func (rcv *RCF) MutateSERVICE_TYPE(n byte) bool {
 	return rcv._tab.MutateByteSlot(10, n)
 }
@@ -126,7 +126,7 @@ func (rcv *RCF) MutateServiceType(n byte) bool {
 	return rcv.MutateSERVICE_TYPE(n)
 }
 
-// / Version number
+/// Version number
 func (rcv *RCF) VERSION() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -139,7 +139,7 @@ func (rcv *RCF) Version() uint16 {
 	return rcv.VERSION()
 }
 
-// / Version number
+/// Version number
 func (rcv *RCF) MutateVERSION(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(12, n)
 }
@@ -148,7 +148,7 @@ func (rcv *RCF) MutateVersion(n uint16) bool {
 	return rcv.MutateVERSION(n)
 }
 
-// / Invoke ID
+/// Invoke ID
 func (rcv *RCF) INVOKE_ID() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -161,7 +161,7 @@ func (rcv *RCF) InvokeId() uint32 {
 	return rcv.INVOKE_ID()
 }
 
-// / Invoke ID
+/// Invoke ID
 func (rcv *RCF) MutateINVOKE_ID(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(14, n)
 }
@@ -170,7 +170,7 @@ func (rcv *RCF) MutateInvokeId(n uint32) bool {
 	return rcv.MutateINVOKE_ID(n)
 }
 
-// / Spacecraft ID filter
+/// Spacecraft ID filter
 func (rcv *RCF) SPACECRAFT_ID() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -183,7 +183,7 @@ func (rcv *RCF) SpacecraftId() uint16 {
 	return rcv.SPACECRAFT_ID()
 }
 
-// / Spacecraft ID filter
+/// Spacecraft ID filter
 func (rcv *RCF) MutateSPACECRAFT_ID(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(16, n)
 }
@@ -192,7 +192,7 @@ func (rcv *RCF) MutateSpacecraftId(n uint16) bool {
 	return rcv.MutateSPACECRAFT_ID(n)
 }
 
-// / Virtual channel ID filter
+/// Virtual channel ID filter
 func (rcv *RCF) VIRTUAL_CHANNEL_ID() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -205,7 +205,7 @@ func (rcv *RCF) VirtualChannelId() byte {
 	return rcv.VIRTUAL_CHANNEL_ID()
 }
 
-// / Virtual channel ID filter
+/// Virtual channel ID filter
 func (rcv *RCF) MutateVIRTUAL_CHANNEL_ID(n byte) bool {
 	return rcv._tab.MutateByteSlot(18, n)
 }
@@ -214,7 +214,7 @@ func (rcv *RCF) MutateVirtualChannelId(n byte) bool {
 	return rcv.MutateVIRTUAL_CHANNEL_ID(n)
 }
 
-// / Data
+/// Data
 func (rcv *RCF) DATA(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -252,7 +252,7 @@ func (rcv *RCF) DataBytes() []byte {
 	return rcv.DATABytes()
 }
 
-// / Data
+/// Data
 func (rcv *RCF) MutateDATA(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {

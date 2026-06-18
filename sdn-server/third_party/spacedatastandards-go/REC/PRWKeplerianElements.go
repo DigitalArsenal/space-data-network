@@ -41,7 +41,7 @@ func (rcv *PRWKeplerianElements) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Gravitational parameter of the central body (km^3 / s^2).
+/// Gravitational parameter of the central body (km^3 / s^2).
 func (rcv *PRWKeplerianElements) MU() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -54,7 +54,7 @@ func (rcv *PRWKeplerianElements) Mu() float64 {
 	return rcv.MU()
 }
 
-// / Gravitational parameter of the central body (km^3 / s^2).
+/// Gravitational parameter of the central body (km^3 / s^2).
 func (rcv *PRWKeplerianElements) MutateMU(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -63,7 +63,7 @@ func (rcv *PRWKeplerianElements) MutateMu(n float64) bool {
 	return rcv.MutateMU(n)
 }
 
-// / Semi-major axis (km).
+/// Semi-major axis (km).
 func (rcv *PRWKeplerianElements) SEMI_MAJOR_AXIS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -76,7 +76,7 @@ func (rcv *PRWKeplerianElements) SemiMajorAxis() float64 {
 	return rcv.SEMI_MAJOR_AXIS()
 }
 
-// / Semi-major axis (km).
+/// Semi-major axis (km).
 func (rcv *PRWKeplerianElements) MutateSEMI_MAJOR_AXIS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -85,7 +85,7 @@ func (rcv *PRWKeplerianElements) MutateSemiMajorAxis(n float64) bool {
 	return rcv.MutateSEMI_MAJOR_AXIS(n)
 }
 
-// / Eccentricity (0 = circular, <1 = ellipse).
+/// Eccentricity (0 = circular, <1 = ellipse).
 func (rcv *PRWKeplerianElements) ECCENTRICITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -98,7 +98,7 @@ func (rcv *PRWKeplerianElements) Eccentricity() float64 {
 	return rcv.ECCENTRICITY()
 }
 
-// / Eccentricity (0 = circular, <1 = ellipse).
+/// Eccentricity (0 = circular, <1 = ellipse).
 func (rcv *PRWKeplerianElements) MutateECCENTRICITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -107,7 +107,7 @@ func (rcv *PRWKeplerianElements) MutateEccentricity(n float64) bool {
 	return rcv.MutateECCENTRICITY(n)
 }
 
-// / Inclination (radians).
+/// Inclination (radians).
 func (rcv *PRWKeplerianElements) INCLINATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -120,7 +120,7 @@ func (rcv *PRWKeplerianElements) Inclination() float64 {
 	return rcv.INCLINATION()
 }
 
-// / Inclination (radians).
+/// Inclination (radians).
 func (rcv *PRWKeplerianElements) MutateINCLINATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -129,7 +129,7 @@ func (rcv *PRWKeplerianElements) MutateInclination(n float64) bool {
 	return rcv.MutateINCLINATION(n)
 }
 
-// / Right ascension of the ascending node (radians).
+/// Right ascension of the ascending node (radians).
 func (rcv *PRWKeplerianElements) RAAN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -142,7 +142,7 @@ func (rcv *PRWKeplerianElements) Raan() float64 {
 	return rcv.RAAN()
 }
 
-// / Right ascension of the ascending node (radians).
+/// Right ascension of the ascending node (radians).
 func (rcv *PRWKeplerianElements) MutateRAAN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -151,7 +151,7 @@ func (rcv *PRWKeplerianElements) MutateRaan(n float64) bool {
 	return rcv.MutateRAAN(n)
 }
 
-// / Argument of periapsis (radians).
+/// Argument of periapsis (radians).
 func (rcv *PRWKeplerianElements) ARG_PERIAPSIS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -164,7 +164,7 @@ func (rcv *PRWKeplerianElements) ArgPeriapsis() float64 {
 	return rcv.ARG_PERIAPSIS()
 }
 
-// / Argument of periapsis (radians).
+/// Argument of periapsis (radians).
 func (rcv *PRWKeplerianElements) MutateARG_PERIAPSIS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -173,7 +173,7 @@ func (rcv *PRWKeplerianElements) MutateArgPeriapsis(n float64) bool {
 	return rcv.MutateARG_PERIAPSIS(n)
 }
 
-// / True anomaly (radians).
+/// True anomaly (radians).
 func (rcv *PRWKeplerianElements) TRUE_ANOMALY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -186,7 +186,7 @@ func (rcv *PRWKeplerianElements) TrueAnomaly() float64 {
 	return rcv.TRUE_ANOMALY()
 }
 
-// / True anomaly (radians).
+/// True anomaly (radians).
 func (rcv *PRWKeplerianElements) MutateTRUE_ANOMALY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -195,7 +195,7 @@ func (rcv *PRWKeplerianElements) MutateTrueAnomaly(n float64) bool {
 	return rcv.MutateTRUE_ANOMALY(n)
 }
 
-// / Epoch as Julian date.
+/// Epoch as Julian date.
 func (rcv *PRWKeplerianElements) EPOCH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -208,7 +208,7 @@ func (rcv *PRWKeplerianElements) Epoch() float64 {
 	return rcv.EPOCH()
 }
 
-// / Epoch as Julian date.
+/// Epoch as Julian date.
 func (rcv *PRWKeplerianElements) MutateEPOCH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Result of one scalar interpolation operation.
+/// Result of one scalar interpolation operation.
 type NUMScalarInterpolationResult struct {
 	_tab flatbuffers.Table
 }
@@ -74,7 +74,7 @@ func (rcv *NUMScalarInterpolationResult) ErrorMessage() []byte {
 	return rcv.ERROR_MESSAGE()
 }
 
-// / Interpolated scalar value.
+/// Interpolated scalar value.
 func (rcv *NUMScalarInterpolationResult) VALUE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -87,7 +87,7 @@ func (rcv *NUMScalarInterpolationResult) Value() float64 {
 	return rcv.VALUE()
 }
 
-// / Interpolated scalar value.
+/// Interpolated scalar value.
 func (rcv *NUMScalarInterpolationResult) MutateVALUE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -96,7 +96,7 @@ func (rcv *NUMScalarInterpolationResult) MutateValue(n float64) bool {
 	return rcv.MutateVALUE(n)
 }
 
-// / Caller trace/correlation identifier copied from the request when present.
+/// Caller trace/correlation identifier copied from the request when present.
 func (rcv *NUMScalarInterpolationResult) TRACE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,7 +109,7 @@ func (rcv *NUMScalarInterpolationResult) TraceId() []byte {
 	return rcv.TRACE_ID()
 }
 
-// / Caller trace/correlation identifier copied from the request when present.
+/// Caller trace/correlation identifier copied from the request when present.
 func NUMScalarInterpolationResultStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

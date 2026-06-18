@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Result of a time-range SDF query (40 bytes, 8-byte aligned).
+/// Result of a time-range SDF query (40 bytes, 8-byte aligned).
 type sdfTimeRangeResult struct {
 	_tab flatbuffers.Struct
 }
@@ -20,7 +20,7 @@ func (rcv *sdfTimeRangeResult) Table() flatbuffers.Table {
 	return rcv._tab.Table
 }
 
-// / Entity identifier.
+/// Entity identifier.
 func (rcv *sdfTimeRangeResult) ENTITY_ID() uint32 {
 	return rcv._tab.GetUint32(rcv._tab.Pos + flatbuffers.UOffsetT(0))
 }
@@ -28,8 +28,7 @@ func (rcv *sdfTimeRangeResult) ENTITY_ID() uint32 {
 func (rcv *sdfTimeRangeResult) EntityId() uint32 {
 	return rcv.ENTITY_ID()
 }
-
-// / Entity identifier.
+/// Entity identifier.
 func (rcv *sdfTimeRangeResult) MutateENTITY_ID(n uint32) bool {
 	return rcv._tab.MutateUint32(rcv._tab.Pos+flatbuffers.UOffsetT(0), n)
 }
@@ -38,7 +37,7 @@ func (rcv *sdfTimeRangeResult) MutateEntityId(n uint32) bool {
 	return rcv.MutateENTITY_ID(n)
 }
 
-// / Flags (reserved).
+/// Flags (reserved).
 func (rcv *sdfTimeRangeResult) FLAGS() uint32 {
 	return rcv._tab.GetUint32(rcv._tab.Pos + flatbuffers.UOffsetT(4))
 }
@@ -46,8 +45,7 @@ func (rcv *sdfTimeRangeResult) FLAGS() uint32 {
 func (rcv *sdfTimeRangeResult) Flags() uint32 {
 	return rcv.FLAGS()
 }
-
-// / Flags (reserved).
+/// Flags (reserved).
 func (rcv *sdfTimeRangeResult) MutateFLAGS(n uint32) bool {
 	return rcv._tab.MutateUint32(rcv._tab.Pos+flatbuffers.UOffsetT(4), n)
 }
@@ -56,7 +54,7 @@ func (rcv *sdfTimeRangeResult) MutateFlags(n uint32) bool {
 	return rcv.MutateFLAGS(n)
 }
 
-// / Julian date when the entity entered the volume (0 == never entered).
+/// Julian date when the entity entered the volume (0 == never entered).
 func (rcv *sdfTimeRangeResult) ENTRY_TIME() float64 {
 	return rcv._tab.GetFloat64(rcv._tab.Pos + flatbuffers.UOffsetT(8))
 }
@@ -64,8 +62,7 @@ func (rcv *sdfTimeRangeResult) ENTRY_TIME() float64 {
 func (rcv *sdfTimeRangeResult) EntryTime() float64 {
 	return rcv.ENTRY_TIME()
 }
-
-// / Julian date when the entity entered the volume (0 == never entered).
+/// Julian date when the entity entered the volume (0 == never entered).
 func (rcv *sdfTimeRangeResult) MutateENTRY_TIME(n float64) bool {
 	return rcv._tab.MutateFloat64(rcv._tab.Pos+flatbuffers.UOffsetT(8), n)
 }
@@ -74,7 +71,7 @@ func (rcv *sdfTimeRangeResult) MutateEntryTime(n float64) bool {
 	return rcv.MutateENTRY_TIME(n)
 }
 
-// / Julian date when the entity exited the volume (0 == still inside).
+/// Julian date when the entity exited the volume (0 == still inside).
 func (rcv *sdfTimeRangeResult) EXIT_TIME() float64 {
 	return rcv._tab.GetFloat64(rcv._tab.Pos + flatbuffers.UOffsetT(16))
 }
@@ -82,8 +79,7 @@ func (rcv *sdfTimeRangeResult) EXIT_TIME() float64 {
 func (rcv *sdfTimeRangeResult) ExitTime() float64 {
 	return rcv.EXIT_TIME()
 }
-
-// / Julian date when the entity exited the volume (0 == still inside).
+/// Julian date when the entity exited the volume (0 == still inside).
 func (rcv *sdfTimeRangeResult) MutateEXIT_TIME(n float64) bool {
 	return rcv._tab.MutateFloat64(rcv._tab.Pos+flatbuffers.UOffsetT(16), n)
 }
@@ -92,7 +88,7 @@ func (rcv *sdfTimeRangeResult) MutateExitTime(n float64) bool {
 	return rcv.MutateEXIT_TIME(n)
 }
 
-// / Most negative signed distance (closest approach to center).
+/// Most negative signed distance (closest approach to center).
 func (rcv *sdfTimeRangeResult) MIN_DISTANCE() float64 {
 	return rcv._tab.GetFloat64(rcv._tab.Pos + flatbuffers.UOffsetT(24))
 }
@@ -100,8 +96,7 @@ func (rcv *sdfTimeRangeResult) MIN_DISTANCE() float64 {
 func (rcv *sdfTimeRangeResult) MinDistance() float64 {
 	return rcv.MIN_DISTANCE()
 }
-
-// / Most negative signed distance (closest approach to center).
+/// Most negative signed distance (closest approach to center).
 func (rcv *sdfTimeRangeResult) MutateMIN_DISTANCE(n float64) bool {
 	return rcv._tab.MutateFloat64(rcv._tab.Pos+flatbuffers.UOffsetT(24), n)
 }
@@ -110,7 +105,7 @@ func (rcv *sdfTimeRangeResult) MutateMinDistance(n float64) bool {
 	return rcv.MutateMIN_DISTANCE(n)
 }
 
-// / Total time inside volume (seconds).
+/// Total time inside volume (seconds).
 func (rcv *sdfTimeRangeResult) DWELL_TIME() float64 {
 	return rcv._tab.GetFloat64(rcv._tab.Pos + flatbuffers.UOffsetT(32))
 }
@@ -118,8 +113,7 @@ func (rcv *sdfTimeRangeResult) DWELL_TIME() float64 {
 func (rcv *sdfTimeRangeResult) DwellTime() float64 {
 	return rcv.DWELL_TIME()
 }
-
-// / Total time inside volume (seconds).
+/// Total time inside volume (seconds).
 func (rcv *sdfTimeRangeResult) MutateDWELL_TIME(n float64) bool {
 	return rcv._tab.MutateFloat64(rcv._tab.Pos+flatbuffers.UOffsetT(32), n)
 }

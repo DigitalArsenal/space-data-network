@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Stokes parameters, representing different aspects of polarization
+/// Stokes parameters, representing different aspects of polarization
 type StokesParameters struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *StokesParameters) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Intensity
+/// Intensity
 func (rcv *StokesParameters) I() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -51,12 +51,12 @@ func (rcv *StokesParameters) I() float64 {
 	return 0.0
 }
 
-// / Intensity
+/// Intensity
 func (rcv *StokesParameters) MutateI(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
 
-// / Linear polarization
+/// Linear polarization
 func (rcv *StokesParameters) Q() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -65,12 +65,12 @@ func (rcv *StokesParameters) Q() float64 {
 	return 0.0
 }
 
-// / Linear polarization
+/// Linear polarization
 func (rcv *StokesParameters) MutateQ(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
 
-// / Another linear polarization, orthogonal to Q
+/// Another linear polarization, orthogonal to Q
 func (rcv *StokesParameters) U() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -79,12 +79,12 @@ func (rcv *StokesParameters) U() float64 {
 	return 0.0
 }
 
-// / Another linear polarization, orthogonal to Q
+/// Another linear polarization, orthogonal to Q
 func (rcv *StokesParameters) MutateU(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
 
-// / Circular polarization
+/// Circular polarization
 func (rcv *StokesParameters) V() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -93,7 +93,7 @@ func (rcv *StokesParameters) V() float64 {
 	return 0.0
 }
 
-// / Circular polarization
+/// Circular polarization
 func (rcv *StokesParameters) MutateV(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }

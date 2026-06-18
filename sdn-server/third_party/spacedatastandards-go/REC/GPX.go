@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / GPX Document
+/// GPX Document
 type GPX struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *GPX) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / GPX schema version
+/// GPX schema version
 func (rcv *GPX) VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *GPX) Version() []byte {
 	return rcv.VERSION()
 }
 
-// / GPX schema version
-// / Creator software/organization
+/// GPX schema version
+/// Creator software/organization
 func (rcv *GPX) CREATOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *GPX) Creator() []byte {
 	return rcv.CREATOR()
 }
 
-// / Creator software/organization
-// / File name
+/// Creator software/organization
+/// File name
 func (rcv *GPX) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *GPX) Name() []byte {
 	return rcv.NAME()
 }
 
-// / File name
-// / File description
+/// File name
+/// File description
 func (rcv *GPX) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *GPX) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-// / File description
-// / Person or organization who created the file
+/// File description
+/// Person or organization who created the file
 func (rcv *GPX) AUTHOR_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *GPX) AuthorName() []byte {
 	return rcv.AUTHOR_NAME()
 }
 
-// / Person or organization who created the file
-// / Author email
+/// Person or organization who created the file
+/// Author email
 func (rcv *GPX) AUTHOR_EMAIL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,8 +137,8 @@ func (rcv *GPX) AuthorEmail() []byte {
 	return rcv.AUTHOR_EMAIL()
 }
 
-// / Author email
-// / Author link
+/// Author email
+/// Author link
 func (rcv *GPX) AUTHOR_LINK(obj *GPXLink) *GPXLink {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -156,8 +156,8 @@ func (rcv *GPX) AuthorLink(obj *GPXLink) *GPXLink {
 	return rcv.AUTHOR_LINK(obj)
 }
 
-// / Author link
-// / Copyright holder
+/// Author link
+/// Copyright holder
 func (rcv *GPX) COPYRIGHT_AUTHOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -170,8 +170,8 @@ func (rcv *GPX) CopyrightAuthor() []byte {
 	return rcv.COPYRIGHT_AUTHOR()
 }
 
-// / Copyright holder
-// / Copyright year
+/// Copyright holder
+/// Copyright year
 func (rcv *GPX) COPYRIGHT_YEAR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -184,8 +184,8 @@ func (rcv *GPX) CopyrightYear() []byte {
 	return rcv.COPYRIGHT_YEAR()
 }
 
-// / Copyright year
-// / Copyright license URL
+/// Copyright year
+/// Copyright license URL
 func (rcv *GPX) COPYRIGHT_LICENSE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -198,8 +198,8 @@ func (rcv *GPX) CopyrightLicense() []byte {
 	return rcv.COPYRIGHT_LICENSE()
 }
 
-// / Copyright license URL
-// / Links to additional information
+/// Copyright license URL
+/// Links to additional information
 func (rcv *GPX) LINKS(obj *GPXLink, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -231,8 +231,8 @@ func (rcv *GPX) LinksLength() int {
 	return rcv.LINKSLength()
 }
 
-// / Links to additional information
-// / Creation timestamp (ISO 8601)
+/// Links to additional information
+/// Creation timestamp (ISO 8601)
 func (rcv *GPX) TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -245,8 +245,8 @@ func (rcv *GPX) Time() []byte {
 	return rcv.TIME()
 }
 
-// / Creation timestamp (ISO 8601)
-// / Keywords
+/// Creation timestamp (ISO 8601)
+/// Keywords
 func (rcv *GPX) KEYWORDS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -259,8 +259,8 @@ func (rcv *GPX) Keywords() []byte {
 	return rcv.KEYWORDS()
 }
 
-// / Keywords
-// / Minimum latitude of bounding box
+/// Keywords
+/// Minimum latitude of bounding box
 func (rcv *GPX) BOUNDS_MIN_LAT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -273,7 +273,7 @@ func (rcv *GPX) BoundsMinLat() float64 {
 	return rcv.BOUNDS_MIN_LAT()
 }
 
-// / Minimum latitude of bounding box
+/// Minimum latitude of bounding box
 func (rcv *GPX) MutateBOUNDS_MIN_LAT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -282,7 +282,7 @@ func (rcv *GPX) MutateBoundsMinLat(n float64) bool {
 	return rcv.MutateBOUNDS_MIN_LAT(n)
 }
 
-// / Minimum longitude of bounding box
+/// Minimum longitude of bounding box
 func (rcv *GPX) BOUNDS_MIN_LON() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -295,7 +295,7 @@ func (rcv *GPX) BoundsMinLon() float64 {
 	return rcv.BOUNDS_MIN_LON()
 }
 
-// / Minimum longitude of bounding box
+/// Minimum longitude of bounding box
 func (rcv *GPX) MutateBOUNDS_MIN_LON(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -304,7 +304,7 @@ func (rcv *GPX) MutateBoundsMinLon(n float64) bool {
 	return rcv.MutateBOUNDS_MIN_LON(n)
 }
 
-// / Maximum latitude of bounding box
+/// Maximum latitude of bounding box
 func (rcv *GPX) BOUNDS_MAX_LAT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -317,7 +317,7 @@ func (rcv *GPX) BoundsMaxLat() float64 {
 	return rcv.BOUNDS_MAX_LAT()
 }
 
-// / Maximum latitude of bounding box
+/// Maximum latitude of bounding box
 func (rcv *GPX) MutateBOUNDS_MAX_LAT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -326,7 +326,7 @@ func (rcv *GPX) MutateBoundsMaxLat(n float64) bool {
 	return rcv.MutateBOUNDS_MAX_LAT(n)
 }
 
-// / Maximum longitude of bounding box
+/// Maximum longitude of bounding box
 func (rcv *GPX) BOUNDS_MAX_LON() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -339,7 +339,7 @@ func (rcv *GPX) BoundsMaxLon() float64 {
 	return rcv.BOUNDS_MAX_LON()
 }
 
-// / Maximum longitude of bounding box
+/// Maximum longitude of bounding box
 func (rcv *GPX) MutateBOUNDS_MAX_LON(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(36, n)
 }
@@ -348,7 +348,7 @@ func (rcv *GPX) MutateBoundsMaxLon(n float64) bool {
 	return rcv.MutateBOUNDS_MAX_LON(n)
 }
 
-// / Waypoints
+/// Waypoints
 func (rcv *GPX) WAYPOINTS(obj *GPXWaypoint, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -380,8 +380,8 @@ func (rcv *GPX) WaypointsLength() int {
 	return rcv.WAYPOINTSLength()
 }
 
-// / Waypoints
-// / Routes
+/// Waypoints
+/// Routes
 func (rcv *GPX) ROUTES(obj *GPXRoute, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -413,8 +413,8 @@ func (rcv *GPX) RoutesLength() int {
 	return rcv.ROUTESLength()
 }
 
-// / Routes
-// / Tracks
+/// Routes
+/// Tracks
 func (rcv *GPX) TRACKS(obj *GPXTrack, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -446,7 +446,7 @@ func (rcv *GPX) TracksLength() int {
 	return rcv.TRACKSLength()
 }
 
-// / Tracks
+/// Tracks
 func GPXStart(builder *flatbuffers.Builder) {
 	builder.StartObject(20)
 }

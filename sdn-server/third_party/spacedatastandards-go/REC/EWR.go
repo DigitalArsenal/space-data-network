@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Electronic Warfare
+/// Electronic Warfare
 type EWR struct {
 	_tab flatbuffers.Table
 }

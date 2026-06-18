@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Attitude Comprehensive Message
+/// Attitude Comprehensive Message
 type ACM struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *ACM) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / CCSDS ACM version
+/// CCSDS ACM version
 func (rcv *ACM) CCSDS_ACM_VERS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *ACM) CcsdsAcmVers() []byte {
 	return rcv.CCSDS_ACM_VERS()
 }
 
-// / CCSDS ACM version
-// / Message creation date (ISO 8601)
+/// CCSDS ACM version
+/// Message creation date (ISO 8601)
 func (rcv *ACM) CREATION_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *ACM) CreationDate() []byte {
 	return rcv.CREATION_DATE()
 }
 
-// / Message creation date (ISO 8601)
-// / Creating organization
+/// Message creation date (ISO 8601)
+/// Creating organization
 func (rcv *ACM) ORIGINATOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *ACM) Originator() []byte {
 	return rcv.ORIGINATOR()
 }
 
-// / Creating organization
-// / Object name
+/// Creating organization
+/// Object name
 func (rcv *ACM) OBJECT_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *ACM) ObjectName() []byte {
 	return rcv.OBJECT_NAME()
 }
 
-// / Object name
-// / International designator
+/// Object name
+/// International designator
 func (rcv *ACM) OBJECT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *ACM) ObjectId() []byte {
 	return rcv.OBJECT_ID()
 }
 
-// / International designator
-// / Catalog name
+/// International designator
+/// Catalog name
 func (rcv *ACM) CATALOG_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,8 +137,8 @@ func (rcv *ACM) CatalogName() []byte {
 	return rcv.CATALOG_NAME()
 }
 
-// / Catalog name
-// / Epoch of state (ISO 8601)
+/// Catalog name
+/// Epoch of state (ISO 8601)
 func (rcv *ACM) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -151,8 +151,8 @@ func (rcv *ACM) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-// / Epoch of state (ISO 8601)
-// / Time system
+/// Epoch of state (ISO 8601)
+/// Time system
 func (rcv *ACM) TIME_SYSTEM() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -165,8 +165,8 @@ func (rcv *ACM) TimeSystem() []byte {
 	return rcv.TIME_SYSTEM()
 }
 
-// / Time system
-// / Attitude states
+/// Time system
+/// Attitude states
 func (rcv *ACM) ATT_STATES(obj *attitudeState, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -198,8 +198,8 @@ func (rcv *ACM) AttStatesLength() int {
 	return rcv.ATT_STATESLength()
 }
 
-// / Attitude states
-// / Physical properties
+/// Attitude states
+/// Physical properties
 func (rcv *ACM) PHYS_PROPERTIES(obj *attPhysicalProperties) *attPhysicalProperties {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -217,8 +217,8 @@ func (rcv *ACM) PhysProperties(obj *attPhysicalProperties) *attPhysicalPropertie
 	return rcv.PHYS_PROPERTIES(obj)
 }
 
-// / Physical properties
-// / Attitude covariance data
+/// Physical properties
+/// Attitude covariance data
 func (rcv *ACM) COV_DATA(obj *attCovariance, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -250,8 +250,8 @@ func (rcv *ACM) CovDataLength() int {
 	return rcv.COV_DATALength()
 }
 
-// / Attitude covariance data
-// / Attitude maneuvers
+/// Attitude covariance data
+/// Attitude maneuvers
 func (rcv *ACM) MANEUVERS(obj *attManeuver, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -283,8 +283,8 @@ func (rcv *ACM) ManeuversLength() int {
 	return rcv.MANEUVERSLength()
 }
 
-// / Attitude maneuvers
-// / Maneuverability status
+/// Attitude maneuvers
+/// Maneuverability status
 func (rcv *ACM) MANEUVERABLE() maneuverableFlag {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -297,7 +297,7 @@ func (rcv *ACM) Maneuverable() maneuverableFlag {
 	return rcv.MANEUVERABLE()
 }
 
-// / Maneuverability status
+/// Maneuverability status
 func (rcv *ACM) MutateMANEUVERABLE(n maneuverableFlag) bool {
 	return rcv._tab.MutateInt8Slot(28, int8(n))
 }
@@ -306,7 +306,7 @@ func (rcv *ACM) MutateManeuverable(n maneuverableFlag) bool {
 	return rcv.MutateMANEUVERABLE(n)
 }
 
-// / Additional comments
+/// Additional comments
 func (rcv *ACM) COMMENT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -319,7 +319,7 @@ func (rcv *ACM) Comment() []byte {
 	return rcv.COMMENT()
 }
 
-// / Additional comments
+/// Additional comments
 func ACMStart(builder *flatbuffers.Builder) {
 	builder.StartObject(14)
 }

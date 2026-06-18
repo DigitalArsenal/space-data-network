@@ -41,7 +41,7 @@ func (rcv *Header) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Format version in the form of 'x.y', where 'y' is incremented for minor changes, and 'x' for major changes.
+/// Format version in the form of 'x.y', where 'y' is incremented for minor changes, and 'x' for major changes.
 func (rcv *Header) CCSDS_OCM_VERS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -54,8 +54,8 @@ func (rcv *Header) CcsdsOcmVers() []byte {
 	return rcv.CCSDS_OCM_VERS()
 }
 
-// / Format version in the form of 'x.y', where 'y' is incremented for minor changes, and 'x' for major changes.
-// / Comments (a contiguous set of one or more comment lines may be provided immediately after the version number).
+/// Format version in the form of 'x.y', where 'y' is incremented for minor changes, and 'x' for major changes.
+/// Comments (a contiguous set of one or more comment lines may be provided immediately after the version number).
 func (rcv *Header) COMMENT(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *Header) CommentLength() int {
 	return rcv.COMMENTLength()
 }
 
-// / Comments (a contiguous set of one or more comment lines may be provided immediately after the version number).
-// / User-defined free-text message classification/caveats of this OCM.
+/// Comments (a contiguous set of one or more comment lines may be provided immediately after the version number).
+/// User-defined free-text message classification/caveats of this OCM.
 func (rcv *Header) CLASSIFICATION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *Header) Classification() []byte {
 	return rcv.CLASSIFICATION()
 }
 
-// / User-defined free-text message classification/caveats of this OCM.
-// / File creation date/time in UTC.
+/// User-defined free-text message classification/caveats of this OCM.
+/// File creation date/time in UTC.
 func (rcv *Header) CREATION_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *Header) CreationDate() []byte {
 	return rcv.CREATION_DATE()
 }
 
-// / File creation date/time in UTC.
-// / Creating agency or operator.
+/// File creation date/time in UTC.
+/// Creating agency or operator.
 func (rcv *Header) ORIGINATOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *Header) Originator() []byte {
 	return rcv.ORIGINATOR()
 }
 
-// / Creating agency or operator.
-// / Free-text field containing an ID that uniquely identifies a message from this originator.
+/// Creating agency or operator.
+/// Free-text field containing an ID that uniquely identifies a message from this originator.
 func (rcv *Header) MESSAGE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,7 +137,7 @@ func (rcv *Header) MessageId() []byte {
 	return rcv.MESSAGE_ID()
 }
 
-// / Free-text field containing an ID that uniquely identifies a message from this originator.
+/// Free-text field containing an ID that uniquely identifies a message from this originator.
 func HeaderStart(builder *flatbuffers.Builder) {
 	builder.StartObject(6)
 }

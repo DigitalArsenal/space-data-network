@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Transponder Channel
+/// Transponder Channel
 type commsChannel struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *commsChannel) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Channel identifier
+/// Channel identifier
 func (rcv *commsChannel) CHANNEL_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *commsChannel) ChannelId() []byte {
 	return rcv.CHANNEL_ID()
 }
 
-// / Channel identifier
-// / Channel name
+/// Channel identifier
+/// Channel name
 func (rcv *commsChannel) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *commsChannel) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Channel name
-// / Uplink frequency in MHz
+/// Channel name
+/// Uplink frequency in MHz
 func (rcv *commsChannel) UPLINK_FREQ() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *commsChannel) UplinkFreq() float64 {
 	return rcv.UPLINK_FREQ()
 }
 
-// / Uplink frequency in MHz
+/// Uplink frequency in MHz
 func (rcv *commsChannel) MutateUPLINK_FREQ(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -92,7 +92,7 @@ func (rcv *commsChannel) MutateUplinkFreq(n float64) bool {
 	return rcv.MutateUPLINK_FREQ(n)
 }
 
-// / Downlink frequency in MHz
+/// Downlink frequency in MHz
 func (rcv *commsChannel) DOWNLINK_FREQ() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,7 +105,7 @@ func (rcv *commsChannel) DownlinkFreq() float64 {
 	return rcv.DOWNLINK_FREQ()
 }
 
-// / Downlink frequency in MHz
+/// Downlink frequency in MHz
 func (rcv *commsChannel) MutateDOWNLINK_FREQ(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -114,7 +114,7 @@ func (rcv *commsChannel) MutateDownlinkFreq(n float64) bool {
 	return rcv.MutateDOWNLINK_FREQ(n)
 }
 
-// / Channel bandwidth in MHz
+/// Channel bandwidth in MHz
 func (rcv *commsChannel) BANDWIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -127,7 +127,7 @@ func (rcv *commsChannel) Bandwidth() float64 {
 	return rcv.BANDWIDTH()
 }
 
-// / Channel bandwidth in MHz
+/// Channel bandwidth in MHz
 func (rcv *commsChannel) MutateBANDWIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -136,7 +136,7 @@ func (rcv *commsChannel) MutateBandwidth(n float64) bool {
 	return rcv.MutateBANDWIDTH(n)
 }
 
-// / Modulation type
+/// Modulation type
 func (rcv *commsChannel) MODULATION() CmsModulationType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -149,7 +149,7 @@ func (rcv *commsChannel) Modulation() CmsModulationType {
 	return rcv.MODULATION()
 }
 
-// / Modulation type
+/// Modulation type
 func (rcv *commsChannel) MutateMODULATION(n CmsModulationType) bool {
 	return rcv._tab.MutateInt8Slot(14, int8(n))
 }
@@ -158,7 +158,7 @@ func (rcv *commsChannel) MutateModulation(n CmsModulationType) bool {
 	return rcv.MutateMODULATION(n)
 }
 
-// / Data rate in Mbps
+/// Data rate in Mbps
 func (rcv *commsChannel) DATA_RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -171,7 +171,7 @@ func (rcv *commsChannel) DataRate() float64 {
 	return rcv.DATA_RATE()
 }
 
-// / Data rate in Mbps
+/// Data rate in Mbps
 func (rcv *commsChannel) MutateDATA_RATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -180,7 +180,7 @@ func (rcv *commsChannel) MutateDataRate(n float64) bool {
 	return rcv.MutateDATA_RATE(n)
 }
 
-// / Encryption method
+/// Encryption method
 func (rcv *commsChannel) ENCRYPTION() encryptionType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -193,7 +193,7 @@ func (rcv *commsChannel) Encryption() encryptionType {
 	return rcv.ENCRYPTION()
 }
 
-// / Encryption method
+/// Encryption method
 func (rcv *commsChannel) MutateENCRYPTION(n encryptionType) bool {
 	return rcv._tab.MutateInt8Slot(18, int8(n))
 }
@@ -202,7 +202,7 @@ func (rcv *commsChannel) MutateEncryption(n encryptionType) bool {
 	return rcv.MutateENCRYPTION(n)
 }
 
-// / Forward error correction coding rate (e.g., 0.5, 0.75)
+/// Forward error correction coding rate (e.g., 0.5, 0.75)
 func (rcv *commsChannel) FEC_RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -215,7 +215,7 @@ func (rcv *commsChannel) FecRate() float64 {
 	return rcv.FEC_RATE()
 }
 
-// / Forward error correction coding rate (e.g., 0.5, 0.75)
+/// Forward error correction coding rate (e.g., 0.5, 0.75)
 func (rcv *commsChannel) MutateFEC_RATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -224,7 +224,7 @@ func (rcv *commsChannel) MutateFecRate(n float64) bool {
 	return rcv.MutateFEC_RATE(n)
 }
 
-// / Channel power in dBW
+/// Channel power in dBW
 func (rcv *commsChannel) POWER() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -237,7 +237,7 @@ func (rcv *commsChannel) Power() float64 {
 	return rcv.POWER()
 }
 
-// / Channel power in dBW
+/// Channel power in dBW
 func (rcv *commsChannel) MutatePOWER(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Canonicalization rule applied before hashing or signature verification.
+/// Canonicalization rule applied before hashing or signature verification.
 type CanonicalizationRule struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CanonicalizationRule) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Schema version for the canonicalization contract.
+/// Schema version for the canonicalization contract.
 func (rcv *CanonicalizationRule) version() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CanonicalizationRule) Version() uint16 {
 	return rcv.version()
 }
 
-// / Schema version for the canonicalization contract.
+/// Schema version for the canonicalization contract.
 func (rcv *CanonicalizationRule) Mutateversion(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(4, n)
 }
@@ -64,8 +64,8 @@ func (rcv *CanonicalizationRule) MutateVersion(n uint16) bool {
 	return rcv.Mutateversion(n)
 }
 
-// / Strip any custom section whose name starts with this prefix before
-// / hashing the module for signature verification.
+/// Strip any custom section whose name starts with this prefix before
+/// hashing the module for signature verification.
 func (rcv *CanonicalizationRule) stripped_custom_section_prefix() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -78,10 +78,10 @@ func (rcv *CanonicalizationRule) StrippedCustomSectionPrefix() []byte {
 	return rcv.stripped_custom_section_prefix()
 }
 
-// / Strip any custom section whose name starts with this prefix before
-// / hashing the module for signature verification.
-// / Logical container name used for the module bundle record within the
-// / delivery artifact.
+/// Strip any custom section whose name starts with this prefix before
+/// hashing the module for signature verification.
+/// Logical container name used for the module bundle record within the
+/// delivery artifact.
 func (rcv *CanonicalizationRule) bundle_section_name() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -94,9 +94,9 @@ func (rcv *CanonicalizationRule) BundleSectionName() []byte {
 	return rcv.bundle_section_name()
 }
 
-// / Logical container name used for the module bundle record within the
-// / delivery artifact.
-// / Hash function identifier, for example `sha256`.
+/// Logical container name used for the module bundle record within the
+/// delivery artifact.
+/// Hash function identifier, for example `sha256`.
 func (rcv *CanonicalizationRule) hash_algorithm() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,7 +109,7 @@ func (rcv *CanonicalizationRule) HashAlgorithm() []byte {
 	return rcv.hash_algorithm()
 }
 
-// / Hash function identifier, for example `sha256`.
+/// Hash function identifier, for example `sha256`.
 func CanonicalizationRuleStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

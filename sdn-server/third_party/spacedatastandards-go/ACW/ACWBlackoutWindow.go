@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Ground-station blackout interval.
+/// Ground-station blackout interval.
 type ACWBlackoutWindow struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ACWBlackoutWindow) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Interval start as Julian Date in TT.
+/// Interval start as Julian Date in TT.
 func (rcv *ACWBlackoutWindow) START_JULIAN_DATE_TT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *ACWBlackoutWindow) StartJulianDateTt() float64 {
 	return rcv.START_JULIAN_DATE_TT()
 }
 
-// / Interval start as Julian Date in TT.
+/// Interval start as Julian Date in TT.
 func (rcv *ACWBlackoutWindow) MutateSTART_JULIAN_DATE_TT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *ACWBlackoutWindow) MutateStartJulianDateTt(n float64) bool {
 	return rcv.MutateSTART_JULIAN_DATE_TT(n)
 }
 
-// / Interval end as Julian Date in TT.
+/// Interval end as Julian Date in TT.
 func (rcv *ACWBlackoutWindow) END_JULIAN_DATE_TT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *ACWBlackoutWindow) EndJulianDateTt() float64 {
 	return rcv.END_JULIAN_DATE_TT()
 }
 
-// / Interval end as Julian Date in TT.
+/// Interval end as Julian Date in TT.
 func (rcv *ACWBlackoutWindow) MutateEND_JULIAN_DATE_TT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }

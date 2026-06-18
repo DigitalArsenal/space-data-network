@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Sampled time-varying data
+/// Sampled time-varying data
 type CZMDynSampled struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMDynSampled) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Reference epoch (ISO 8601)
+/// Reference epoch (ISO 8601)
 func (rcv *CZMDynSampled) EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *CZMDynSampled) Epoch() []byte {
 	return rcv.EPOCH()
 }
 
-// / Reference epoch (ISO 8601)
-// / Value type determines stride through DATA
+/// Reference epoch (ISO 8601)
+/// Value type determines stride through DATA
 func (rcv *CZMDynSampled) VALUE_TYPE() CZMDynValueType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *CZMDynSampled) ValueType() CZMDynValueType {
 	return rcv.VALUE_TYPE()
 }
 
-// / Value type determines stride through DATA
+/// Value type determines stride through DATA
 func (rcv *CZMDynSampled) MutateVALUE_TYPE(n CZMDynValueType) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -78,7 +78,7 @@ func (rcv *CZMDynSampled) MutateValueType(n CZMDynValueType) bool {
 	return rcv.MutateVALUE_TYPE(n)
 }
 
-// / Interleaved [time, value(s), ...] — stride depends on VALUE_TYPE
+/// Interleaved [time, value(s), ...] — stride depends on VALUE_TYPE
 func (rcv *CZMDynSampled) DATA(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -104,7 +104,7 @@ func (rcv *CZMDynSampled) DataLength() int {
 	return rcv.DATALength()
 }
 
-// / Interleaved [time, value(s), ...] — stride depends on VALUE_TYPE
+/// Interleaved [time, value(s), ...] — stride depends on VALUE_TYPE
 func (rcv *CZMDynSampled) MutateDATA(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -118,7 +118,7 @@ func (rcv *CZMDynSampled) MutateData(j int, n float64) bool {
 	return rcv.MutateDATA(j, n)
 }
 
-// / Interpolation settings
+/// Interpolation settings
 func (rcv *CZMDynSampled) INTERPOLATION(obj *CZMInterpolation) *CZMInterpolation {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -136,7 +136,7 @@ func (rcv *CZMDynSampled) Interpolation(obj *CZMInterpolation) *CZMInterpolation
 	return rcv.INTERPOLATION(obj)
 }
 
-// / Interpolation settings
+/// Interpolation settings
 func CZMDynSampledStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

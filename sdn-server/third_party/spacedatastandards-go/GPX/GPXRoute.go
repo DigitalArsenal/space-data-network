@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Route (ordered list of waypoints for navigation)
+/// Route (ordered list of waypoints for navigation)
 type GPXRoute struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *GPXRoute) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Route name
+/// Route name
 func (rcv *GPXRoute) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *GPXRoute) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Route name
-// / Comment
+/// Route name
+/// Comment
 func (rcv *GPXRoute) COMMENT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *GPXRoute) Comment() []byte {
 	return rcv.COMMENT()
 }
 
-// / Comment
-// / Description
+/// Comment
+/// Description
 func (rcv *GPXRoute) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *GPXRoute) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-// / Description
-// / Source of data
+/// Description
+/// Source of data
 func (rcv *GPXRoute) SOURCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *GPXRoute) Source() []byte {
 	return rcv.SOURCE()
 }
 
-// / Source of data
-// / Links to additional information
+/// Source of data
+/// Links to additional information
 func (rcv *GPXRoute) LINKS(obj *GPXLink, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -130,8 +130,8 @@ func (rcv *GPXRoute) LinksLength() int {
 	return rcv.LINKSLength()
 }
 
-// / Links to additional information
-// / Route number
+/// Links to additional information
+/// Route number
 func (rcv *GPXRoute) NUMBER() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -144,7 +144,7 @@ func (rcv *GPXRoute) Number() uint32 {
 	return rcv.NUMBER()
 }
 
-// / Route number
+/// Route number
 func (rcv *GPXRoute) MutateNUMBER(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(14, n)
 }
@@ -153,7 +153,7 @@ func (rcv *GPXRoute) MutateNumber(n uint32) bool {
 	return rcv.MutateNUMBER(n)
 }
 
-// / Type/category
+/// Type/category
 func (rcv *GPXRoute) TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -166,8 +166,8 @@ func (rcv *GPXRoute) Type() []byte {
 	return rcv.TYPE()
 }
 
-// / Type/category
-// / Route points (ordered waypoints)
+/// Type/category
+/// Route points (ordered waypoints)
 func (rcv *GPXRoute) POINTS(obj *GPXWaypoint, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -199,7 +199,7 @@ func (rcv *GPXRoute) PointsLength() int {
 	return rcv.POINTSLength()
 }
 
-// / Route points (ordered waypoints)
+/// Route points (ordered waypoints)
 func GPXRouteStart(builder *flatbuffers.Builder) {
 	builder.StartObject(8)
 }

@@ -4,9 +4,9 @@ package SCV
 
 import "strconv"
 
-// / Sensor Coverage Analytics — canonical request/result/progress ABI for
-// / access, coverage, swath, and coverage-geometry products produced by SDN
-// / modules and consumed by OrbPro analytics sessions.
+/// Sensor Coverage Analytics — canonical request/result/progress ABI for
+/// access, coverage, swath, and coverage-geometry products produced by SDN
+/// modules and consumed by OrbPro analytics sessions.
 type scvEnvelopeKind byte
 
 const (

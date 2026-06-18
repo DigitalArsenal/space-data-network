@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Temporal coverage definition
+/// Temporal coverage definition
 type TemporalCoverage struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *TemporalCoverage) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Start epoch in ISO 8601 format
+/// Start epoch in ISO 8601 format
 func (rcv *TemporalCoverage) START_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *TemporalCoverage) StartEpoch() []byte {
 	return rcv.START_EPOCH()
 }
 
-// / Start epoch in ISO 8601 format
-// / End epoch in ISO 8601 format
+/// Start epoch in ISO 8601 format
+/// End epoch in ISO 8601 format
 func (rcv *TemporalCoverage) END_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *TemporalCoverage) EndEpoch() []byte {
 	return rcv.END_EPOCH()
 }
 
-// / End epoch in ISO 8601 format
-// / Update frequency: "realtime", "hourly", "daily"
+/// End epoch in ISO 8601 format
+/// Update frequency: "realtime", "hourly", "daily"
 func (rcv *TemporalCoverage) UPDATE_FREQUENCY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *TemporalCoverage) UpdateFrequency() []byte {
 	return rcv.UPDATE_FREQUENCY()
 }
 
-// / Update frequency: "realtime", "hourly", "daily"
-// / Days of historical data available
+/// Update frequency: "realtime", "hourly", "daily"
+/// Days of historical data available
 func (rcv *TemporalCoverage) HISTORICAL_DEPTH() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *TemporalCoverage) HistoricalDepth() uint32 {
 	return rcv.HISTORICAL_DEPTH()
 }
 
-// / Days of historical data available
+/// Days of historical data available
 func (rcv *TemporalCoverage) MutateHISTORICAL_DEPTH(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }

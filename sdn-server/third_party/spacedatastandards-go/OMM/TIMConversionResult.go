@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Result of a time conversion request.
+/// Result of a time conversion request.
 type TIMConversionResult struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *TIMConversionResult) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Original source instant.
+/// Original source instant.
 func (rcv *TIMConversionResult) SOURCE(obj *TIMInstant) *TIMInstant {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *TIMConversionResult) Source(obj *TIMInstant) *TIMInstant {
 	return rcv.SOURCE(obj)
 }
 
-// / Original source instant.
-// / Converted target instant.
+/// Original source instant.
+/// Converted target instant.
 func (rcv *TIMConversionResult) TARGET(obj *TIMInstant) *TIMInstant {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -79,8 +79,8 @@ func (rcv *TIMConversionResult) Target(obj *TIMInstant) *TIMInstant {
 	return rcv.TARGET(obj)
 }
 
-// / Converted target instant.
-// / Target minus source offset in SI seconds for the requested conversion.
+/// Converted target instant.
+/// Target minus source offset in SI seconds for the requested conversion.
 func (rcv *TIMConversionResult) DELTA_SECONDS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -93,7 +93,7 @@ func (rcv *TIMConversionResult) DeltaSeconds() float64 {
 	return rcv.DELTA_SECONDS()
 }
 
-// / Target minus source offset in SI seconds for the requested conversion.
+/// Target minus source offset in SI seconds for the requested conversion.
 func (rcv *TIMConversionResult) MutateDELTA_SECONDS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -102,7 +102,7 @@ func (rcv *TIMConversionResult) MutateDeltaSeconds(n float64) bool {
 	return rcv.MutateDELTA_SECONDS(n)
 }
 
-// / Conversion status.
+/// Conversion status.
 func (rcv *TIMConversionResult) STATUS() timConversionStatus {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -115,7 +115,7 @@ func (rcv *TIMConversionResult) Status() timConversionStatus {
 	return rcv.STATUS()
 }
 
-// / Conversion status.
+/// Conversion status.
 func (rcv *TIMConversionResult) MutateSTATUS(n timConversionStatus) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
@@ -124,7 +124,7 @@ func (rcv *TIMConversionResult) MutateStatus(n timConversionStatus) bool {
 	return rcv.MutateSTATUS(n)
 }
 
-// / Optional error detail when STATUS is not OK.
+/// Optional error detail when STATUS is not OK.
 func (rcv *TIMConversionResult) ERROR_MESSAGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -137,8 +137,8 @@ func (rcv *TIMConversionResult) ErrorMessage() []byte {
 	return rcv.ERROR_MESSAGE()
 }
 
-// / Optional error detail when STATUS is not OK.
-// / Caller trace/correlation identifier copied from the request when present.
+/// Optional error detail when STATUS is not OK.
+/// Caller trace/correlation identifier copied from the request when present.
 func (rcv *TIMConversionResult) TRACE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -151,7 +151,7 @@ func (rcv *TIMConversionResult) TraceId() []byte {
 	return rcv.TRACE_ID()
 }
 
-// / Caller trace/correlation identifier copied from the request when present.
+/// Caller trace/correlation identifier copied from the request when present.
 func TIMConversionResultStart(builder *flatbuffers.Builder) {
 	builder.StartObject(6)
 }

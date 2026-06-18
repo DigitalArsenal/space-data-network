@@ -4,16 +4,16 @@ package REC
 
 import "strconv"
 
-// / Publication visibility for the plugin listing
+/// Publication visibility for the plugin listing
 type publicationState int8
 
 const (
 	/// Discoverable in public storefront listings
-	publicationStatePublic publicationState = 0
+	publicationStatePublic   publicationState = 0
 	/// Addressable directly but hidden from public browse surfaces
 	publicationStateUnlisted publicationState = 1
 	/// No longer offered for new installs or purchases
-	publicationStateRetired publicationState = 2
+	publicationStateRetired  publicationState = 2
 )
 
 var EnumNamespublicationState = map[publicationState]string{

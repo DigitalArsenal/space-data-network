@@ -4,7 +4,7 @@ package HFC
 
 import "strconv"
 
-// / How the hypersonic propagator is coupled to atmosphere providers.
+/// How the hypersonic propagator is coupled to atmosphere providers.
 type hfcAtmosphereCouplingMode int8
 
 const (

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Rectangular (pyramidal) SDF parameters.
+/// Rectangular (pyramidal) SDF parameters.
 type SDFRectangular struct {
 	_tab flatbuffers.Table
 }

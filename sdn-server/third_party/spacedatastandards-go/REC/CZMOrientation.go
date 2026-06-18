@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Orientation as unit quaternion
+/// Orientation as unit quaternion
 type CZMOrientation struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMOrientation) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / X component
+/// X component
 func (rcv *CZMOrientation) UNIT_QUATERNION_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMOrientation) UnitQuaternionX() float64 {
 	return rcv.UNIT_QUATERNION_X()
 }
 
-// / X component
+/// X component
 func (rcv *CZMOrientation) MutateUNIT_QUATERNION_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMOrientation) MutateUnitQuaternionX(n float64) bool {
 	return rcv.MutateUNIT_QUATERNION_X(n)
 }
 
-// / Y component
+/// Y component
 func (rcv *CZMOrientation) UNIT_QUATERNION_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *CZMOrientation) UnitQuaternionY() float64 {
 	return rcv.UNIT_QUATERNION_Y()
 }
 
-// / Y component
+/// Y component
 func (rcv *CZMOrientation) MutateUNIT_QUATERNION_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *CZMOrientation) MutateUnitQuaternionY(n float64) bool {
 	return rcv.MutateUNIT_QUATERNION_Y(n)
 }
 
-// / Z component
+/// Z component
 func (rcv *CZMOrientation) UNIT_QUATERNION_Z() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *CZMOrientation) UnitQuaternionZ() float64 {
 	return rcv.UNIT_QUATERNION_Z()
 }
 
-// / Z component
+/// Z component
 func (rcv *CZMOrientation) MutateUNIT_QUATERNION_Z(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *CZMOrientation) MutateUnitQuaternionZ(n float64) bool {
 	return rcv.MutateUNIT_QUATERNION_Z(n)
 }
 
-// / W component
+/// W component
 func (rcv *CZMOrientation) UNIT_QUATERNION_W() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *CZMOrientation) UnitQuaternionW() float64 {
 	return rcv.UNIT_QUATERNION_W()
 }
 
-// / W component
+/// W component
 func (rcv *CZMOrientation) MutateUNIT_QUATERNION_W(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }

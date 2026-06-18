@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Reentry fragment evaluation.
+/// Reentry fragment evaluation.
 type remFragmentEvaluation struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *remFragmentEvaluation) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Fragment identifier.
+/// Fragment identifier.
 func (rcv *remFragmentEvaluation) FRAGMENT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *remFragmentEvaluation) FragmentId() []byte {
 	return rcv.FRAGMENT_ID()
 }
 
-// / Fragment identifier.
-// / Parent object or component identifier.
+/// Fragment identifier.
+/// Parent object or component identifier.
 func (rcv *remFragmentEvaluation) PARENT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *remFragmentEvaluation) ParentId() []byte {
 	return rcv.PARENT_ID()
 }
 
-// / Parent object or component identifier.
-// / Material name or class.
+/// Parent object or component identifier.
+/// Material name or class.
 func (rcv *remFragmentEvaluation) MATERIAL() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *remFragmentEvaluation) Material() []byte {
 	return rcv.MATERIAL()
 }
 
-// / Material name or class.
-// / Fragment mass in kilograms.
+/// Material name or class.
+/// Fragment mass in kilograms.
 func (rcv *remFragmentEvaluation) MASS_KG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *remFragmentEvaluation) MassKg() float64 {
 	return rcv.MASS_KG()
 }
 
-// / Fragment mass in kilograms.
+/// Fragment mass in kilograms.
 func (rcv *remFragmentEvaluation) MutateMASS_KG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -106,7 +106,7 @@ func (rcv *remFragmentEvaluation) MutateMassKg(n float64) bool {
 	return rcv.MutateMASS_KG(n)
 }
 
-// / Reference area in square meters.
+/// Reference area in square meters.
 func (rcv *remFragmentEvaluation) REFERENCE_AREA_M2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -119,7 +119,7 @@ func (rcv *remFragmentEvaluation) ReferenceAreaM2() float64 {
 	return rcv.REFERENCE_AREA_M2()
 }
 
-// / Reference area in square meters.
+/// Reference area in square meters.
 func (rcv *remFragmentEvaluation) MutateREFERENCE_AREA_M2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -128,7 +128,7 @@ func (rcv *remFragmentEvaluation) MutateReferenceAreaM2(n float64) bool {
 	return rcv.MutateREFERENCE_AREA_M2(n)
 }
 
-// / Ballistic coefficient in kilograms per square meter.
+/// Ballistic coefficient in kilograms per square meter.
 func (rcv *remFragmentEvaluation) BALLISTIC_COEFFICIENT_KG_PER_M2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -141,7 +141,7 @@ func (rcv *remFragmentEvaluation) BallisticCoefficientKgPerM2() float64 {
 	return rcv.BALLISTIC_COEFFICIENT_KG_PER_M2()
 }
 
-// / Ballistic coefficient in kilograms per square meter.
+/// Ballistic coefficient in kilograms per square meter.
 func (rcv *remFragmentEvaluation) MutateBALLISTIC_COEFFICIENT_KG_PER_M2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -150,7 +150,7 @@ func (rcv *remFragmentEvaluation) MutateBallisticCoefficientKgPerM2(n float64) b
 	return rcv.MutateBALLISTIC_COEFFICIENT_KG_PER_M2(n)
 }
 
-// / Demise probability from zero to one.
+/// Demise probability from zero to one.
 func (rcv *remFragmentEvaluation) DEMISE_PROBABILITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -163,7 +163,7 @@ func (rcv *remFragmentEvaluation) DemiseProbability() float64 {
 	return rcv.DEMISE_PROBABILITY()
 }
 
-// / Demise probability from zero to one.
+/// Demise probability from zero to one.
 func (rcv *remFragmentEvaluation) MutateDEMISE_PROBABILITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -172,7 +172,7 @@ func (rcv *remFragmentEvaluation) MutateDemiseProbability(n float64) bool {
 	return rcv.MutateDEMISE_PROBABILITY(n)
 }
 
-// / Survival probability from zero to one.
+/// Survival probability from zero to one.
 func (rcv *remFragmentEvaluation) SURVIVAL_PROBABILITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -185,7 +185,7 @@ func (rcv *remFragmentEvaluation) SurvivalProbability() float64 {
 	return rcv.SURVIVAL_PROBABILITY()
 }
 
-// / Survival probability from zero to one.
+/// Survival probability from zero to one.
 func (rcv *remFragmentEvaluation) MutateSURVIVAL_PROBABILITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -194,7 +194,7 @@ func (rcv *remFragmentEvaluation) MutateSurvivalProbability(n float64) bool {
 	return rcv.MutateSURVIVAL_PROBABILITY(n)
 }
 
-// / Predicted impact epoch in ISO 8601 UTC format.
+/// Predicted impact epoch in ISO 8601 UTC format.
 func (rcv *remFragmentEvaluation) IMPACT_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -207,8 +207,8 @@ func (rcv *remFragmentEvaluation) ImpactEpoch() []byte {
 	return rcv.IMPACT_EPOCH()
 }
 
-// / Predicted impact epoch in ISO 8601 UTC format.
-// / Predicted impact latitude in degrees.
+/// Predicted impact epoch in ISO 8601 UTC format.
+/// Predicted impact latitude in degrees.
 func (rcv *remFragmentEvaluation) IMPACT_LATITUDE_DEG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -221,7 +221,7 @@ func (rcv *remFragmentEvaluation) ImpactLatitudeDeg() float64 {
 	return rcv.IMPACT_LATITUDE_DEG()
 }
 
-// / Predicted impact latitude in degrees.
+/// Predicted impact latitude in degrees.
 func (rcv *remFragmentEvaluation) MutateIMPACT_LATITUDE_DEG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -230,7 +230,7 @@ func (rcv *remFragmentEvaluation) MutateImpactLatitudeDeg(n float64) bool {
 	return rcv.MutateIMPACT_LATITUDE_DEG(n)
 }
 
-// / Predicted impact longitude in degrees.
+/// Predicted impact longitude in degrees.
 func (rcv *remFragmentEvaluation) IMPACT_LONGITUDE_DEG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -243,7 +243,7 @@ func (rcv *remFragmentEvaluation) ImpactLongitudeDeg() float64 {
 	return rcv.IMPACT_LONGITUDE_DEG()
 }
 
-// / Predicted impact longitude in degrees.
+/// Predicted impact longitude in degrees.
 func (rcv *remFragmentEvaluation) MutateIMPACT_LONGITUDE_DEG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -252,7 +252,7 @@ func (rcv *remFragmentEvaluation) MutateImpactLongitudeDeg(n float64) bool {
 	return rcv.MutateIMPACT_LONGITUDE_DEG(n)
 }
 
-// / Impact kinetic energy in joules.
+/// Impact kinetic energy in joules.
 func (rcv *remFragmentEvaluation) IMPACT_ENERGY_J() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -265,7 +265,7 @@ func (rcv *remFragmentEvaluation) ImpactEnergyJ() float64 {
 	return rcv.IMPACT_ENERGY_J()
 }
 
-// / Impact kinetic energy in joules.
+/// Impact kinetic energy in joules.
 func (rcv *remFragmentEvaluation) MutateIMPACT_ENERGY_J(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -274,7 +274,7 @@ func (rcv *remFragmentEvaluation) MutateImpactEnergyJ(n float64) bool {
 	return rcv.MutateIMPACT_ENERGY_J(n)
 }
 
-// / Casualty area in square meters.
+/// Casualty area in square meters.
 func (rcv *remFragmentEvaluation) CASUALTY_AREA_M2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -287,7 +287,7 @@ func (rcv *remFragmentEvaluation) CasualtyAreaM2() float64 {
 	return rcv.CASUALTY_AREA_M2()
 }
 
-// / Casualty area in square meters.
+/// Casualty area in square meters.
 func (rcv *remFragmentEvaluation) MutateCASUALTY_AREA_M2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }

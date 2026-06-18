@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / String parameter type
+/// String parameter type
 type StringParameterType struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *StringParameterType) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Type name
+/// Type name
 func (rcv *StringParameterType) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *StringParameterType) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Type name
-// / Short description
+/// Type name
+/// Short description
 func (rcv *StringParameterType) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *StringParameterType) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-// / Short description
-// / Long description
+/// Short description
+/// Long description
 func (rcv *StringParameterType) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *StringParameterType) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-// / Long description
-// / Data encoding
+/// Long description
+/// Data encoding
 func (rcv *StringParameterType) DATA_ENCODING(obj *StringDataEncoding) *StringDataEncoding {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -102,8 +102,8 @@ func (rcv *StringParameterType) DataEncoding(obj *StringDataEncoding) *StringDat
 	return rcv.DATA_ENCODING(obj)
 }
 
-// / Data encoding
-// / Default alarm
+/// Data encoding
+/// Default alarm
 func (rcv *StringParameterType) DEFAULT_ALARM(obj *DefaultAlarm) *DefaultAlarm {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -121,8 +121,8 @@ func (rcv *StringParameterType) DefaultAlarm(obj *DefaultAlarm) *DefaultAlarm {
 	return rcv.DEFAULT_ALARM(obj)
 }
 
-// / Default alarm
-// / Context alarms
+/// Default alarm
+/// Context alarms
 func (rcv *StringParameterType) CONTEXT_ALARMS(obj *ContextAlarm, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -154,8 +154,8 @@ func (rcv *StringParameterType) ContextAlarmsLength() int {
 	return rcv.CONTEXT_ALARMSLength()
 }
 
-// / Context alarms
-// / Initial/default value
+/// Context alarms
+/// Initial/default value
 func (rcv *StringParameterType) INITIAL_VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -168,8 +168,8 @@ func (rcv *StringParameterType) InitialValue() []byte {
 	return rcv.INITIAL_VALUE()
 }
 
-// / Initial/default value
-// / Restriction pattern (regex)
+/// Initial/default value
+/// Restriction pattern (regex)
 func (rcv *StringParameterType) RESTRICTION_PATTERN() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -182,7 +182,7 @@ func (rcv *StringParameterType) RestrictionPattern() []byte {
 	return rcv.RESTRICTION_PATTERN()
 }
 
-// / Restriction pattern (regex)
+/// Restriction pattern (regex)
 func StringParameterTypeStart(builder *flatbuffers.Builder) {
 	builder.StartObject(8)
 }

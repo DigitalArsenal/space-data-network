@@ -4,7 +4,7 @@ package ROC
 
 import "strconv"
 
-// / Enumeration of Engine Types
+/// Enumeration of Engine Types
 type ENGINE_TYPE int8
 
 const (

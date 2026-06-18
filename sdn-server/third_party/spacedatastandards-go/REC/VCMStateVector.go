@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / VCM State Vector (position and velocity)
+/// VCM State Vector (position and velocity)
 type VCMStateVector struct {
 	_tab flatbuffers.Table
 }

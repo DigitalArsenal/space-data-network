@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Target state input (40 bytes, 8-byte aligned).
+/// Target state input (40 bytes, 8-byte aligned).
 type targetState struct {
 	_tab flatbuffers.Struct
 }
@@ -20,7 +20,7 @@ func (rcv *targetState) Table() flatbuffers.Table {
 	return rcv._tab.Table
 }
 
-// / Target position X in ECEF (meters).
+/// Target position X in ECEF (meters).
 func (rcv *targetState) POS_X() float64 {
 	return rcv._tab.GetFloat64(rcv._tab.Pos + flatbuffers.UOffsetT(0))
 }
@@ -28,8 +28,7 @@ func (rcv *targetState) POS_X() float64 {
 func (rcv *targetState) PosX() float64 {
 	return rcv.POS_X()
 }
-
-// / Target position X in ECEF (meters).
+/// Target position X in ECEF (meters).
 func (rcv *targetState) MutatePOS_X(n float64) bool {
 	return rcv._tab.MutateFloat64(rcv._tab.Pos+flatbuffers.UOffsetT(0), n)
 }
@@ -38,7 +37,7 @@ func (rcv *targetState) MutatePosX(n float64) bool {
 	return rcv.MutatePOS_X(n)
 }
 
-// / Target position Y in ECEF (meters).
+/// Target position Y in ECEF (meters).
 func (rcv *targetState) POS_Y() float64 {
 	return rcv._tab.GetFloat64(rcv._tab.Pos + flatbuffers.UOffsetT(8))
 }
@@ -46,8 +45,7 @@ func (rcv *targetState) POS_Y() float64 {
 func (rcv *targetState) PosY() float64 {
 	return rcv.POS_Y()
 }
-
-// / Target position Y in ECEF (meters).
+/// Target position Y in ECEF (meters).
 func (rcv *targetState) MutatePOS_Y(n float64) bool {
 	return rcv._tab.MutateFloat64(rcv._tab.Pos+flatbuffers.UOffsetT(8), n)
 }
@@ -56,7 +54,7 @@ func (rcv *targetState) MutatePosY(n float64) bool {
 	return rcv.MutatePOS_Y(n)
 }
 
-// / Target position Z in ECEF (meters).
+/// Target position Z in ECEF (meters).
 func (rcv *targetState) POS_Z() float64 {
 	return rcv._tab.GetFloat64(rcv._tab.Pos + flatbuffers.UOffsetT(16))
 }
@@ -64,8 +62,7 @@ func (rcv *targetState) POS_Z() float64 {
 func (rcv *targetState) PosZ() float64 {
 	return rcv.POS_Z()
 }
-
-// / Target position Z in ECEF (meters).
+/// Target position Z in ECEF (meters).
 func (rcv *targetState) MutatePOS_Z(n float64) bool {
 	return rcv._tab.MutateFloat64(rcv._tab.Pos+flatbuffers.UOffsetT(16), n)
 }
@@ -74,7 +71,7 @@ func (rcv *targetState) MutatePosZ(n float64) bool {
 	return rcv.MutatePOS_Z(n)
 }
 
-// / Radar cross section (m^2).
+/// Radar cross section (m^2).
 func (rcv *targetState) RCS() float64 {
 	return rcv._tab.GetFloat64(rcv._tab.Pos + flatbuffers.UOffsetT(24))
 }
@@ -82,8 +79,7 @@ func (rcv *targetState) RCS() float64 {
 func (rcv *targetState) Rcs() float64 {
 	return rcv.RCS()
 }
-
-// / Radar cross section (m^2).
+/// Radar cross section (m^2).
 func (rcv *targetState) MutateRCS(n float64) bool {
 	return rcv._tab.MutateFloat64(rcv._tab.Pos+flatbuffers.UOffsetT(24), n)
 }
@@ -92,7 +88,7 @@ func (rcv *targetState) MutateRcs(n float64) bool {
 	return rcv.MutateRCS(n)
 }
 
-// / Unique target identifier.
+/// Unique target identifier.
 func (rcv *targetState) TARGET_ID() uint32 {
 	return rcv._tab.GetUint32(rcv._tab.Pos + flatbuffers.UOffsetT(32))
 }
@@ -100,8 +96,7 @@ func (rcv *targetState) TARGET_ID() uint32 {
 func (rcv *targetState) TargetId() uint32 {
 	return rcv.TARGET_ID()
 }
-
-// / Unique target identifier.
+/// Unique target identifier.
 func (rcv *targetState) MutateTARGET_ID(n uint32) bool {
 	return rcv._tab.MutateUint32(rcv._tab.Pos+flatbuffers.UOffsetT(32), n)
 }
@@ -110,7 +105,7 @@ func (rcv *targetState) MutateTargetId(n uint32) bool {
 	return rcv.MutateTARGET_ID(n)
 }
 
-// / Target flags (reserved).
+/// Target flags (reserved).
 func (rcv *targetState) FLAGS() uint32 {
 	return rcv._tab.GetUint32(rcv._tab.Pos + flatbuffers.UOffsetT(36))
 }
@@ -118,8 +113,7 @@ func (rcv *targetState) FLAGS() uint32 {
 func (rcv *targetState) Flags() uint32 {
 	return rcv.FLAGS()
 }
-
-// / Target flags (reserved).
+/// Target flags (reserved).
 func (rcv *targetState) MutateFLAGS(n uint32) bool {
 	return rcv._tab.MutateUint32(rcv._tab.Pos+flatbuffers.UOffsetT(36), n)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Telemetry metadata collection
+/// Telemetry metadata collection
 type TelemetryMetaData struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *TelemetryMetaData) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Parameter type definitions
+/// Parameter type definitions
 func (rcv *TelemetryMetaData) PARAMETER_TYPE_SET(obj *ParameterTypeSet) *ParameterTypeSet {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *TelemetryMetaData) ParameterTypeSet(obj *ParameterTypeSet) *Parameter
 	return rcv.PARAMETER_TYPE_SET(obj)
 }
 
-// / Parameter type definitions
-// / Parameter definitions
+/// Parameter type definitions
+/// Parameter definitions
 func (rcv *TelemetryMetaData) PARAMETER_SET(obj *ParameterSet) *ParameterSet {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -79,8 +79,8 @@ func (rcv *TelemetryMetaData) ParameterSet(obj *ParameterSet) *ParameterSet {
 	return rcv.PARAMETER_SET(obj)
 }
 
-// / Parameter definitions
-// / Container definitions
+/// Parameter definitions
+/// Container definitions
 func (rcv *TelemetryMetaData) CONTAINER_SET(obj *ContainerSet) *ContainerSet {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -98,8 +98,8 @@ func (rcv *TelemetryMetaData) ContainerSet(obj *ContainerSet) *ContainerSet {
 	return rcv.CONTAINER_SET(obj)
 }
 
-// / Container definitions
-// / Algorithm definitions
+/// Container definitions
+/// Algorithm definitions
 func (rcv *TelemetryMetaData) ALGORITHM_SET(obj *AlgorithmSet) *AlgorithmSet {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *TelemetryMetaData) AlgorithmSet(obj *AlgorithmSet) *AlgorithmSet {
 	return rcv.ALGORITHM_SET(obj)
 }
 
-// / Algorithm definitions
-// / Stream definitions
+/// Algorithm definitions
+/// Stream definitions
 func (rcv *TelemetryMetaData) STREAM_SET(obj *StreamSet) *StreamSet {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -136,7 +136,7 @@ func (rcv *TelemetryMetaData) StreamSet(obj *StreamSet) *StreamSet {
 	return rcv.STREAM_SET(obj)
 }
 
-// / Stream definitions
+/// Stream definitions
 func TelemetryMetaDataStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

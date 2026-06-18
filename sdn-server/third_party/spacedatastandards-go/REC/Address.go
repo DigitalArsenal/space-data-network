@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Represents a geographic address
+/// Represents a geographic address
 type Address struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *Address) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Country of the address
+/// Country of the address
 func (rcv *Address) COUNTRY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *Address) Country() []byte {
 	return rcv.COUNTRY()
 }
 
-// / Country of the address
-// / Region of the address (e.g., state or province)
+/// Country of the address
+/// Region of the address (e.g., state or province)
 func (rcv *Address) REGION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *Address) Region() []byte {
 	return rcv.REGION()
 }
 
-// / Region of the address (e.g., state or province)
-// / Locality of the address (e.g., city or town)
+/// Region of the address (e.g., state or province)
+/// Locality of the address (e.g., city or town)
 func (rcv *Address) LOCALITY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *Address) Locality() []byte {
 	return rcv.LOCALITY()
 }
 
-// / Locality of the address (e.g., city or town)
-// / Postal code of the address
+/// Locality of the address (e.g., city or town)
+/// Postal code of the address
 func (rcv *Address) POSTAL_CODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *Address) PostalCode() []byte {
 	return rcv.POSTAL_CODE()
 }
 
-// / Postal code of the address
-// / Street address
+/// Postal code of the address
+/// Street address
 func (rcv *Address) STREET() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -111,8 +111,8 @@ func (rcv *Address) Street() []byte {
 	return rcv.STREET()
 }
 
-// / Street address
-// / Post office box number
+/// Street address
+/// Post office box number
 func (rcv *Address) POST_OFFICE_BOX_NUMBER() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -125,7 +125,7 @@ func (rcv *Address) PostOfficeBoxNumber() []byte {
 	return rcv.POST_OFFICE_BOX_NUMBER()
 }
 
-// / Post office box number
+/// Post office box number
 func AddressStart(builder *flatbuffers.Builder) {
 	builder.StartObject(6)
 }

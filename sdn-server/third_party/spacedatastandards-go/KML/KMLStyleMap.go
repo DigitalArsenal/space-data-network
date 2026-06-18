@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Style map (normal/highlight pair)
+/// Style map (normal/highlight pair)
 type KMLStyleMap struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLStyleMap) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Style map identifier
+/// Style map identifier
 func (rcv *KMLStyleMap) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLStyleMap) Id() []byte {
 	return rcv.ID()
 }
 
-// / Style map identifier
-// / Pairs
+/// Style map identifier
+/// Pairs
 func (rcv *KMLStyleMap) PAIRS(obj *KMLStyleMapPair, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -88,7 +88,7 @@ func (rcv *KMLStyleMap) PairsLength() int {
 	return rcv.PAIRSLength()
 }
 
-// / Pairs
+/// Pairs
 func KMLStyleMapStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Variable frame stream
+/// Variable frame stream
 type VariableFrameStream struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *VariableFrameStream) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Stream name
+/// Stream name
 func (rcv *VariableFrameStream) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *VariableFrameStream) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Stream name
-// / Short description
+/// Stream name
+/// Short description
 func (rcv *VariableFrameStream) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *VariableFrameStream) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-// / Short description
-// / Minimum frame size in bits
+/// Short description
+/// Minimum frame size in bits
 func (rcv *VariableFrameStream) MIN_FRAME_SIZE_IN_BITS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *VariableFrameStream) MinFrameSizeInBits() uint32 {
 	return rcv.MIN_FRAME_SIZE_IN_BITS()
 }
 
-// / Minimum frame size in bits
+/// Minimum frame size in bits
 func (rcv *VariableFrameStream) MutateMIN_FRAME_SIZE_IN_BITS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -92,7 +92,7 @@ func (rcv *VariableFrameStream) MutateMinFrameSizeInBits(n uint32) bool {
 	return rcv.MutateMIN_FRAME_SIZE_IN_BITS(n)
 }
 
-// / Maximum frame size in bits
+/// Maximum frame size in bits
 func (rcv *VariableFrameStream) MAX_FRAME_SIZE_IN_BITS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,7 +105,7 @@ func (rcv *VariableFrameStream) MaxFrameSizeInBits() uint32 {
 	return rcv.MAX_FRAME_SIZE_IN_BITS()
 }
 
-// / Maximum frame size in bits
+/// Maximum frame size in bits
 func (rcv *VariableFrameStream) MutateMAX_FRAME_SIZE_IN_BITS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }
@@ -114,7 +114,7 @@ func (rcv *VariableFrameStream) MutateMaxFrameSizeInBits(n uint32) bool {
 	return rcv.MutateMAX_FRAME_SIZE_IN_BITS(n)
 }
 
-// / Size field location in bits
+/// Size field location in bits
 func (rcv *VariableFrameStream) SIZE_FIELD_OFFSET() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -127,7 +127,7 @@ func (rcv *VariableFrameStream) SizeFieldOffset() uint32 {
 	return rcv.SIZE_FIELD_OFFSET()
 }
 
-// / Size field location in bits
+/// Size field location in bits
 func (rcv *VariableFrameStream) MutateSIZE_FIELD_OFFSET(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(12, n)
 }
@@ -136,7 +136,7 @@ func (rcv *VariableFrameStream) MutateSizeFieldOffset(n uint32) bool {
 	return rcv.MutateSIZE_FIELD_OFFSET(n)
 }
 
-// / Size field size in bits
+/// Size field size in bits
 func (rcv *VariableFrameStream) SIZE_FIELD_SIZE() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -149,7 +149,7 @@ func (rcv *VariableFrameStream) SizeFieldSize() uint16 {
 	return rcv.SIZE_FIELD_SIZE()
 }
 
-// / Size field size in bits
+/// Size field size in bits
 func (rcv *VariableFrameStream) MutateSIZE_FIELD_SIZE(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(14, n)
 }

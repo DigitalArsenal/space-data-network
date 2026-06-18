@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Minimum Propagatable Element Set
+/// Minimum Propagatable Element Set
 type MPE struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *MPE) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique ID as a String [no units]
+/// Unique ID as a String [no units]
 func (rcv *MPE) ENTITY_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *MPE) EntityId() []byte {
 	return rcv.ENTITY_ID()
 }
 
-// / Unique ID as a String [no units]
-// / Epoch of Mean Keplerian elements (UNIX timestamp) [numeric seconds since 1970-01-01T00:00:00 UTC]
+/// Unique ID as a String [no units]
+/// Epoch of Mean Keplerian elements (UNIX timestamp) [numeric seconds since 1970-01-01T00:00:00 UTC]
 func (rcv *MPE) EPOCH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,7 +81,7 @@ func (rcv *MPE) Epoch() float64 {
 	return rcv.EPOCH()
 }
 
-// / Epoch of Mean Keplerian elements (UNIX timestamp) [numeric seconds since 1970-01-01T00:00:00 UTC]
+/// Epoch of Mean Keplerian elements (UNIX timestamp) [numeric seconds since 1970-01-01T00:00:00 UTC]
 func (rcv *MPE) MutateEPOCH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -90,7 +90,7 @@ func (rcv *MPE) MutateEpoch(n float64) bool {
 	return rcv.MutateEPOCH(n)
 }
 
-// / Mean motion in rev/day [M if chosen to represent orbit size for SGP/SGP4 elements]
+/// Mean motion in rev/day [M if chosen to represent orbit size for SGP/SGP4 elements]
 func (rcv *MPE) MEAN_MOTION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,7 +103,7 @@ func (rcv *MPE) MeanMotion() float64 {
 	return rcv.MEAN_MOTION()
 }
 
-// / Mean motion in rev/day [M if chosen to represent orbit size for SGP/SGP4 elements]
+/// Mean motion in rev/day [M if chosen to represent orbit size for SGP/SGP4 elements]
 func (rcv *MPE) MutateMEAN_MOTION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -112,7 +112,7 @@ func (rcv *MPE) MutateMeanMotion(n float64) bool {
 	return rcv.MutateMEAN_MOTION(n)
 }
 
-// / Eccentricity (unitless)
+/// Eccentricity (unitless)
 func (rcv *MPE) ECCENTRICITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -125,7 +125,7 @@ func (rcv *MPE) Eccentricity() float64 {
 	return rcv.ECCENTRICITY()
 }
 
-// / Eccentricity (unitless)
+/// Eccentricity (unitless)
 func (rcv *MPE) MutateECCENTRICITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -134,7 +134,7 @@ func (rcv *MPE) MutateEccentricity(n float64) bool {
 	return rcv.MutateECCENTRICITY(n)
 }
 
-// / Inclination in degrees
+/// Inclination in degrees
 func (rcv *MPE) INCLINATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -147,7 +147,7 @@ func (rcv *MPE) Inclination() float64 {
 	return rcv.INCLINATION()
 }
 
-// / Inclination in degrees
+/// Inclination in degrees
 func (rcv *MPE) MutateINCLINATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -156,7 +156,7 @@ func (rcv *MPE) MutateInclination(n float64) bool {
 	return rcv.MutateINCLINATION(n)
 }
 
-// / Right ascension of ascending node in degrees
+/// Right ascension of ascending node in degrees
 func (rcv *MPE) RA_OF_ASC_NODE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -169,7 +169,7 @@ func (rcv *MPE) RaOfAscNode() float64 {
 	return rcv.RA_OF_ASC_NODE()
 }
 
-// / Right ascension of ascending node in degrees
+/// Right ascension of ascending node in degrees
 func (rcv *MPE) MutateRA_OF_ASC_NODE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -178,7 +178,7 @@ func (rcv *MPE) MutateRaOfAscNode(n float64) bool {
 	return rcv.MutateRA_OF_ASC_NODE(n)
 }
 
-// / Argument of pericenter in degrees
+/// Argument of pericenter in degrees
 func (rcv *MPE) ARG_OF_PERICENTER() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -191,7 +191,7 @@ func (rcv *MPE) ArgOfPericenter() float64 {
 	return rcv.ARG_OF_PERICENTER()
 }
 
-// / Argument of pericenter in degrees
+/// Argument of pericenter in degrees
 func (rcv *MPE) MutateARG_OF_PERICENTER(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -200,7 +200,7 @@ func (rcv *MPE) MutateArgOfPericenter(n float64) bool {
 	return rcv.MutateARG_OF_PERICENTER(n)
 }
 
-// / Mean anomaly in degrees
+/// Mean anomaly in degrees
 func (rcv *MPE) MEAN_ANOMALY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -213,7 +213,7 @@ func (rcv *MPE) MeanAnomaly() float64 {
 	return rcv.MEAN_ANOMALY()
 }
 
-// / Mean anomaly in degrees
+/// Mean anomaly in degrees
 func (rcv *MPE) MutateMEAN_ANOMALY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -222,7 +222,7 @@ func (rcv *MPE) MutateMeanAnomaly(n float64) bool {
 	return rcv.MutateMEAN_ANOMALY(n)
 }
 
-// / SGP/SGP4 drag-like coefficient (BSTAR) in units of 1/[Earth radii]
+/// SGP/SGP4 drag-like coefficient (BSTAR) in units of 1/[Earth radii]
 func (rcv *MPE) BSTAR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -235,7 +235,7 @@ func (rcv *MPE) Bstar() float64 {
 	return rcv.BSTAR()
 }
 
-// / SGP/SGP4 drag-like coefficient (BSTAR) in units of 1/[Earth radii]
+/// SGP/SGP4 drag-like coefficient (BSTAR) in units of 1/[Earth radii]
 func (rcv *MPE) MutateBSTAR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -244,7 +244,7 @@ func (rcv *MPE) MutateBstar(n float64) bool {
 	return rcv.MutateBSTAR(n)
 }
 
-// / Description of the Mean Element Theory (SGP4, DSST, USM)
+/// Description of the Mean Element Theory (SGP4, DSST, USM)
 func (rcv *MPE) MEAN_ELEMENT_THEORY() meanElementSource {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -257,7 +257,7 @@ func (rcv *MPE) MeanElementTheory() meanElementSource {
 	return rcv.MEAN_ELEMENT_THEORY()
 }
 
-// / Description of the Mean Element Theory (SGP4, DSST, USM)
+/// Description of the Mean Element Theory (SGP4, DSST, USM)
 func (rcv *MPE) MutateMEAN_ELEMENT_THEORY(n meanElementSource) bool {
 	return rcv._tab.MutateInt8Slot(22, int8(n))
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Ground-station geodetic definition and scheduling constraints.
+/// Ground-station geodetic definition and scheduling constraints.
 type ACWGroundStation struct {
 	_tab flatbuffers.Table
 }
@@ -66,7 +66,7 @@ func (rcv *ACWGroundStation) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Geodetic latitude, radians.
+/// Geodetic latitude, radians.
 func (rcv *ACWGroundStation) LATITUDE_RAD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -79,7 +79,7 @@ func (rcv *ACWGroundStation) LatitudeRad() float64 {
 	return rcv.LATITUDE_RAD()
 }
 
-// / Geodetic latitude, radians.
+/// Geodetic latitude, radians.
 func (rcv *ACWGroundStation) MutateLATITUDE_RAD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -88,7 +88,7 @@ func (rcv *ACWGroundStation) MutateLatitudeRad(n float64) bool {
 	return rcv.MutateLATITUDE_RAD(n)
 }
 
-// / Geodetic longitude, radians.
+/// Geodetic longitude, radians.
 func (rcv *ACWGroundStation) LONGITUDE_RAD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -101,7 +101,7 @@ func (rcv *ACWGroundStation) LongitudeRad() float64 {
 	return rcv.LONGITUDE_RAD()
 }
 
-// / Geodetic longitude, radians.
+/// Geodetic longitude, radians.
 func (rcv *ACWGroundStation) MutateLONGITUDE_RAD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -110,7 +110,7 @@ func (rcv *ACWGroundStation) MutateLongitudeRad(n float64) bool {
 	return rcv.MutateLONGITUDE_RAD(n)
 }
 
-// / Height above the WGS-84 ellipsoid, meters.
+/// Height above the WGS-84 ellipsoid, meters.
 func (rcv *ACWGroundStation) ALTITUDE_M() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,7 +123,7 @@ func (rcv *ACWGroundStation) AltitudeM() float64 {
 	return rcv.ALTITUDE_M()
 }
 
-// / Height above the WGS-84 ellipsoid, meters.
+/// Height above the WGS-84 ellipsoid, meters.
 func (rcv *ACWGroundStation) MutateALTITUDE_M(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -132,7 +132,7 @@ func (rcv *ACWGroundStation) MutateAltitudeM(n float64) bool {
 	return rcv.MutateALTITUDE_M(n)
 }
 
-// / Default minimum visible elevation, radians.
+/// Default minimum visible elevation, radians.
 func (rcv *ACWGroundStation) MIN_ELEVATION_RAD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,7 +145,7 @@ func (rcv *ACWGroundStation) MinElevationRad() float64 {
 	return rcv.MIN_ELEVATION_RAD()
 }
 
-// / Default minimum visible elevation, radians.
+/// Default minimum visible elevation, radians.
 func (rcv *ACWGroundStation) MutateMIN_ELEVATION_RAD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -154,7 +154,7 @@ func (rcv *ACWGroundStation) MutateMinElevationRad(n float64) bool {
 	return rcv.MutateMIN_ELEVATION_RAD(n)
 }
 
-// / Number of simultaneous contacts this station can schedule.
+/// Number of simultaneous contacts this station can schedule.
 func (rcv *ACWGroundStation) CHANNEL_CAPACITY() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -167,7 +167,7 @@ func (rcv *ACWGroundStation) ChannelCapacity() uint32 {
 	return rcv.CHANNEL_CAPACITY()
 }
 
-// / Number of simultaneous contacts this station can schedule.
+/// Number of simultaneous contacts this station can schedule.
 func (rcv *ACWGroundStation) MutateCHANNEL_CAPACITY(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(16, n)
 }
@@ -176,7 +176,7 @@ func (rcv *ACWGroundStation) MutateChannelCapacity(n uint32) bool {
 	return rcv.MutateCHANNEL_CAPACITY(n)
 }
 
-// / Station-specific unavailable intervals.
+/// Station-specific unavailable intervals.
 func (rcv *ACWGroundStation) BLACKOUT_WINDOWS(obj *ACWBlackoutWindow, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -208,7 +208,7 @@ func (rcv *ACWGroundStation) BlackoutWindowsLength() int {
 	return rcv.BLACKOUT_WINDOWSLength()
 }
 
-// / Station-specific unavailable intervals.
+/// Station-specific unavailable intervals.
 func ACWGroundStationStart(builder *flatbuffers.Builder) {
 	builder.StartObject(8)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Access Control Grant - Permission to access purchased data
+/// Access Control Grant - Permission to access purchased data
 type ACL struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *ACL) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier for this grant
+/// Unique identifier for this grant
 func (rcv *ACL) GRANT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *ACL) GrantId() []byte {
 	return rcv.GRANT_ID()
 }
 
-// / Unique identifier for this grant
-// / ID of the listing this grant applies to
+/// Unique identifier for this grant
+/// ID of the listing this grant applies to
 func (rcv *ACL) LISTING_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *ACL) ListingId() []byte {
 	return rcv.LISTING_ID()
 }
 
-// / ID of the listing this grant applies to
-// / Peer ID of the buyer/grantee
+/// ID of the listing this grant applies to
+/// Peer ID of the buyer/grantee
 func (rcv *ACL) BUYER_PEER_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *ACL) BuyerPeerId() []byte {
 	return rcv.BUYER_PEER_ID()
 }
 
-// / Peer ID of the buyer/grantee
-// / Buyer's encryption public key for encrypted delivery
+/// Peer ID of the buyer/grantee
+/// Buyer's encryption public key for encrypted delivery
 func (rcv *ACL) BUYER_ENCRYPTION_PUBKEY(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -134,7 +134,7 @@ func (rcv *ACL) BuyerEncryptionPubkeyBytes() []byte {
 	return rcv.BUYER_ENCRYPTION_PUBKEYBytes()
 }
 
-// / Buyer's encryption public key for encrypted delivery
+/// Buyer's encryption public key for encrypted delivery
 func (rcv *ACL) MutateBUYER_ENCRYPTION_PUBKEY(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -148,7 +148,7 @@ func (rcv *ACL) MutateBuyerEncryptionPubkey(j int, n byte) bool {
 	return rcv.MutateBUYER_ENCRYPTION_PUBKEY(j, n)
 }
 
-// / Type of access granted
+/// Type of access granted
 func (rcv *ACL) ACCESS_TYPE() accessCategory {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -161,7 +161,7 @@ func (rcv *ACL) AccessType() accessCategory {
 	return rcv.ACCESS_TYPE()
 }
 
-// / Type of access granted
+/// Type of access granted
 func (rcv *ACL) MutateACCESS_TYPE(n accessCategory) bool {
 	return rcv._tab.MutateInt8Slot(12, int8(n))
 }
@@ -170,7 +170,7 @@ func (rcv *ACL) MutateAccessType(n accessCategory) bool {
 	return rcv.MutateACCESS_TYPE(n)
 }
 
-// / Name of the pricing tier purchased
+/// Name of the pricing tier purchased
 func (rcv *ACL) TIER_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -183,8 +183,8 @@ func (rcv *ACL) TierName() []byte {
 	return rcv.TIER_NAME()
 }
 
-// / Name of the pricing tier purchased
-// / Unix timestamp when access was granted
+/// Name of the pricing tier purchased
+/// Unix timestamp when access was granted
 func (rcv *ACL) GRANTED_AT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -197,7 +197,7 @@ func (rcv *ACL) GrantedAt() uint64 {
 	return rcv.GRANTED_AT()
 }
 
-// / Unix timestamp when access was granted
+/// Unix timestamp when access was granted
 func (rcv *ACL) MutateGRANTED_AT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(16, n)
 }
@@ -206,7 +206,7 @@ func (rcv *ACL) MutateGrantedAt(n uint64) bool {
 	return rcv.MutateGRANTED_AT(n)
 }
 
-// / Unix timestamp when access expires (0 = never expires)
+/// Unix timestamp when access expires (0 = never expires)
 func (rcv *ACL) EXPIRES_AT() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -219,7 +219,7 @@ func (rcv *ACL) ExpiresAt() uint64 {
 	return rcv.EXPIRES_AT()
 }
 
-// / Unix timestamp when access expires (0 = never expires)
+/// Unix timestamp when access expires (0 = never expires)
 func (rcv *ACL) MutateEXPIRES_AT(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(18, n)
 }
@@ -228,7 +228,7 @@ func (rcv *ACL) MutateExpiresAt(n uint64) bool {
 	return rcv.MutateEXPIRES_AT(n)
 }
 
-// / Transaction hash or reference proving payment
+/// Transaction hash or reference proving payment
 func (rcv *ACL) PAYMENT_TX_HASH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -241,8 +241,8 @@ func (rcv *ACL) PaymentTxHash() []byte {
 	return rcv.PAYMENT_TX_HASH()
 }
 
-// / Transaction hash or reference proving payment
-// / Payment method used
+/// Transaction hash or reference proving payment
+/// Payment method used
 func (rcv *ACL) PAYMENT_METHOD() paymentMethod {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -255,7 +255,7 @@ func (rcv *ACL) PaymentMethod() paymentMethod {
 	return rcv.PAYMENT_METHOD()
 }
 
-// / Payment method used
+/// Payment method used
 func (rcv *ACL) MutatePAYMENT_METHOD(n paymentMethod) bool {
 	return rcv._tab.MutateInt8Slot(22, int8(n))
 }
@@ -264,7 +264,7 @@ func (rcv *ACL) MutatePaymentMethod(n paymentMethod) bool {
 	return rcv.MutatePAYMENT_METHOD(n)
 }
 
-// / Ed25519 signature from provider
+/// Ed25519 signature from provider
 func (rcv *ACL) PROVIDER_SIGNATURE(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -302,7 +302,7 @@ func (rcv *ACL) ProviderSignatureBytes() []byte {
 	return rcv.PROVIDER_SIGNATUREBytes()
 }
 
-// / Ed25519 signature from provider
+/// Ed25519 signature from provider
 func (rcv *ACL) MutatePROVIDER_SIGNATURE(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {

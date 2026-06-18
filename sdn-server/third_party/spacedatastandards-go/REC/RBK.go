@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Rigid-body kinematics utility envelope.
+/// Rigid-body kinematics utility envelope.
 type RBK struct {
 	_tab flatbuffers.Table
 }

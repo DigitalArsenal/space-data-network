@@ -4,7 +4,7 @@ package REC
 
 import "strconv"
 
-// / Sensor operational-state bit flags.
+/// Sensor operational-state bit flags.
 type sensorOperationalFlags uint32
 
 const (

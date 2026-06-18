@@ -4,7 +4,7 @@ package LCH
 
 import "strconv"
 
-// / Licensing challenge message type
+/// Licensing challenge message type
 type licensingChallengeMessageType int8
 
 const (

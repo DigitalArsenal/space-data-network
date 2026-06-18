@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Sensor Management
+/// Sensor Management
 type SEN struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *SEN) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique sensor identifier
+/// Unique sensor identifier
 func (rcv *SEN) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *SEN) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique sensor identifier
-// / Sensor name
+/// Unique sensor identifier
+/// Sensor name
 func (rcv *SEN) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *SEN) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Sensor name
-// / Sensor type
+/// Sensor name
+/// Sensor type
 func (rcv *SEN) TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *SEN) Type() []byte {
 	return rcv.TYPE()
 }
 
-// / Sensor type
-// / Current operational status
+/// Sensor type
+/// Current operational status
 func (rcv *SEN) STATUS() sensorStatus {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,7 +109,7 @@ func (rcv *SEN) Status() sensorStatus {
 	return rcv.STATUS()
 }
 
-// / Current operational status
+/// Current operational status
 func (rcv *SEN) MutateSTATUS(n sensorStatus) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
@@ -118,7 +118,7 @@ func (rcv *SEN) MutateStatus(n sensorStatus) bool {
 	return rcv.MutateSTATUS(n)
 }
 
-// / Site identifier
+/// Site identifier
 func (rcv *SEN) SITE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *SEN) SiteId() []byte {
 	return rcv.SITE_ID()
 }
 
-// / Site identifier
-// / Geodetic latitude in degrees
+/// Site identifier
+/// Geodetic latitude in degrees
 func (rcv *SEN) LATITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,7 +145,7 @@ func (rcv *SEN) Latitude() float64 {
 	return rcv.LATITUDE()
 }
 
-// / Geodetic latitude in degrees
+/// Geodetic latitude in degrees
 func (rcv *SEN) MutateLATITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -154,7 +154,7 @@ func (rcv *SEN) MutateLatitude(n float64) bool {
 	return rcv.MutateLATITUDE(n)
 }
 
-// / Geodetic longitude in degrees
+/// Geodetic longitude in degrees
 func (rcv *SEN) LONGITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -167,7 +167,7 @@ func (rcv *SEN) Longitude() float64 {
 	return rcv.LONGITUDE()
 }
 
-// / Geodetic longitude in degrees
+/// Geodetic longitude in degrees
 func (rcv *SEN) MutateLONGITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -176,7 +176,7 @@ func (rcv *SEN) MutateLongitude(n float64) bool {
 	return rcv.MutateLONGITUDE(n)
 }
 
-// / Altitude in meters above WGS-84
+/// Altitude in meters above WGS-84
 func (rcv *SEN) ALTITUDE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -189,7 +189,7 @@ func (rcv *SEN) Altitude() float64 {
 	return rcv.ALTITUDE()
 }
 
-// / Altitude in meters above WGS-84
+/// Altitude in meters above WGS-84
 func (rcv *SEN) MutateALTITUDE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -198,7 +198,7 @@ func (rcv *SEN) MutateAltitude(n float64) bool {
 	return rcv.MutateALTITUDE(n)
 }
 
-// / Last status update (ISO 8601)
+/// Last status update (ISO 8601)
 func (rcv *SEN) STATUS_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -211,8 +211,8 @@ func (rcv *SEN) StatusTime() []byte {
 	return rcv.STATUS_TIME()
 }
 
-// / Last status update (ISO 8601)
-// / Maintenance history
+/// Last status update (ISO 8601)
+/// Maintenance history
 func (rcv *SEN) MAINTENANCE(obj *sensorMaintenanceEvent, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -244,8 +244,8 @@ func (rcv *SEN) MaintenanceLength() int {
 	return rcv.MAINTENANCELength()
 }
 
-// / Maintenance history
-// / Observation plans/taskings
+/// Maintenance history
+/// Observation plans/taskings
 func (rcv *SEN) PLANS(obj *sensorPlan, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -277,8 +277,8 @@ func (rcv *SEN) PlansLength() int {
 	return rcv.PLANSLength()
 }
 
-// / Observation plans/taskings
-// / Operational statistics
+/// Observation plans/taskings
+/// Operational statistics
 func (rcv *SEN) STATISTICS(obj *sensorStats, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -310,8 +310,8 @@ func (rcv *SEN) StatisticsLength() int {
 	return rcv.STATISTICSLength()
 }
 
-// / Operational statistics
-// / Additional notes
+/// Operational statistics
+/// Additional notes
 func (rcv *SEN) NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -324,7 +324,7 @@ func (rcv *SEN) Notes() []byte {
 	return rcv.NOTES()
 }
 
-// / Additional notes
+/// Additional notes
 func SENStart(builder *flatbuffers.Builder) {
 	builder.StartObject(13)
 }

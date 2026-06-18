@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Polyline outline material
+/// Polyline outline material
 type CZMPolylineOutlineMaterial struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMPolylineOutlineMaterial) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Line color
+/// Line color
 func (rcv *CZMPolylineOutlineMaterial) COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *CZMPolylineOutlineMaterial) Color(obj *CZMColor) *CZMColor {
 	return rcv.COLOR(obj)
 }
 
-// / Line color
-// / Outline color
+/// Line color
+/// Outline color
 func (rcv *CZMPolylineOutlineMaterial) OUTLINE_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -79,8 +79,8 @@ func (rcv *CZMPolylineOutlineMaterial) OutlineColor(obj *CZMColor) *CZMColor {
 	return rcv.OUTLINE_COLOR(obj)
 }
 
-// / Outline color
-// / Outline width
+/// Outline color
+/// Outline width
 func (rcv *CZMPolylineOutlineMaterial) OUTLINE_WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -93,7 +93,7 @@ func (rcv *CZMPolylineOutlineMaterial) OutlineWidth() float64 {
 	return rcv.OUTLINE_WIDTH()
 }
 
-// / Outline width
+/// Outline width
 func (rcv *CZMPolylineOutlineMaterial) MutateOUTLINE_WIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }

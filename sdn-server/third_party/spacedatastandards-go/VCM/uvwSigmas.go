@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / UVW Sigmas (Covariance matrix in UVW frame)
+/// UVW Sigmas (Covariance matrix in UVW frame)
 type uvwSigmas struct {
 	_tab flatbuffers.Table
 }

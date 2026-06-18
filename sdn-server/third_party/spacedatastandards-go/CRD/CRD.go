@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Coordinate Systems
+/// Coordinate Systems
 type CRD struct {
 	_tab flatbuffers.Table
 }

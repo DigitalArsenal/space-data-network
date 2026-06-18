@@ -4,34 +4,34 @@ package REC
 
 import "strconv"
 
-// / Comparison operators for match criteria and conditions
+/// Comparison operators for match criteria and conditions
 type ComparisonOperator int8
 
 const (
 	/// Equal to
-	ComparisonOperatorEQ ComparisonOperator = 0
+	ComparisonOperatorEQ              ComparisonOperator = 0
 	/// Not equal to
-	ComparisonOperatorNE ComparisonOperator = 1
+	ComparisonOperatorNE              ComparisonOperator = 1
 	/// Greater than
-	ComparisonOperatorGT ComparisonOperator = 2
+	ComparisonOperatorGT              ComparisonOperator = 2
 	/// Less than
-	ComparisonOperatorLT ComparisonOperator = 3
+	ComparisonOperatorLT              ComparisonOperator = 3
 	/// Greater than or equal to
-	ComparisonOperatorGE ComparisonOperator = 4
+	ComparisonOperatorGE              ComparisonOperator = 4
 	/// Less than or equal to
-	ComparisonOperatorLE ComparisonOperator = 5
+	ComparisonOperatorLE              ComparisonOperator = 5
 	/// String starts with
-	ComparisonOperatorSTARTS_WITH ComparisonOperator = 6
+	ComparisonOperatorSTARTS_WITH     ComparisonOperator = 6
 	/// String ends with
-	ComparisonOperatorENDS_WITH ComparisonOperator = 7
+	ComparisonOperatorENDS_WITH       ComparisonOperator = 7
 	/// String contains
-	ComparisonOperatorCONTAINS ComparisonOperator = 8
+	ComparisonOperatorCONTAINS        ComparisonOperator = 8
 	/// String does not start with
 	ComparisonOperatorNOT_STARTS_WITH ComparisonOperator = 9
 	/// String does not end with
-	ComparisonOperatorNOT_ENDS_WITH ComparisonOperator = 10
+	ComparisonOperatorNOT_ENDS_WITH   ComparisonOperator = 10
 	/// String does not contain
-	ComparisonOperatorNOT_CONTAINS ComparisonOperator = 11
+	ComparisonOperatorNOT_CONTAINS    ComparisonOperator = 11
 )
 
 var EnumNamesComparisonOperator = map[ComparisonOperator]string{

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / SAR Observation
+/// SAR Observation
 type SAR struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *SAR) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier
+/// Unique identifier
 func (rcv *SAR) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *SAR) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique identifier
-// / Satellite catalog number (of SAR platform)
+/// Unique identifier
+/// Satellite catalog number (of SAR platform)
 func (rcv *SAR) SAT_NO() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,7 +81,7 @@ func (rcv *SAR) SatNo() uint32 {
 	return rcv.SAT_NO()
 }
 
-// / Satellite catalog number (of SAR platform)
+/// Satellite catalog number (of SAR platform)
 func (rcv *SAR) MutateSAT_NO(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -90,7 +90,7 @@ func (rcv *SAR) MutateSatNo(n uint32) bool {
 	return rcv.MutateSAT_NO(n)
 }
 
-// / International designator
+/// International designator
 func (rcv *SAR) ORIG_OBJECT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,8 +103,8 @@ func (rcv *SAR) OrigObjectId() []byte {
 	return rcv.ORIG_OBJECT_ID()
 }
 
-// / International designator
-// / On-orbit reference
+/// International designator
+/// On-orbit reference
 func (rcv *SAR) ON_ORBIT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *SAR) OnOrbit() []byte {
 	return rcv.ON_ORBIT()
 }
 
-// / On-orbit reference
-// / Sensor identifier
+/// On-orbit reference
+/// Sensor identifier
 func (rcv *SAR) ID_SENSOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *SAR) IdSensor() []byte {
 	return rcv.ID_SENSOR()
 }
 
-// / Sensor identifier
-// / Original sensor identifier
+/// Sensor identifier
+/// Original sensor identifier
 func (rcv *SAR) ORIG_SENSOR_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,8 +145,8 @@ func (rcv *SAR) OrigSensorId() []byte {
 	return rcv.ORIG_SENSOR_ID()
 }
 
-// / Original sensor identifier
-// / External reference identifier
+/// Original sensor identifier
+/// External reference identifier
 func (rcv *SAR) EXTERNAL_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,8 +159,8 @@ func (rcv *SAR) ExternalId() []byte {
 	return rcv.EXTERNAL_ID()
 }
 
-// / External reference identifier
-// / Collection identifier
+/// External reference identifier
+/// Collection identifier
 func (rcv *SAR) COLLECTION_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -173,8 +173,8 @@ func (rcv *SAR) CollectionId() []byte {
 	return rcv.COLLECTION_ID()
 }
 
-// / Collection identifier
-// / Detection identifier
+/// Collection identifier
+/// Detection identifier
 func (rcv *SAR) DETECTION_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -187,8 +187,8 @@ func (rcv *SAR) DetectionId() []byte {
 	return rcv.DETECTION_ID()
 }
 
-// / Detection identifier
-// / Collection start time (ISO 8601)
+/// Detection identifier
+/// Collection start time (ISO 8601)
 func (rcv *SAR) COLLECTION_START() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -201,8 +201,8 @@ func (rcv *SAR) CollectionStart() []byte {
 	return rcv.COLLECTION_START()
 }
 
-// / Collection start time (ISO 8601)
-// / Collection end time (ISO 8601)
+/// Collection start time (ISO 8601)
+/// Collection end time (ISO 8601)
 func (rcv *SAR) COLLECTION_END() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -215,8 +215,8 @@ func (rcv *SAR) CollectionEnd() []byte {
 	return rcv.COLLECTION_END()
 }
 
-// / Collection end time (ISO 8601)
-// / Center time of observation (ISO 8601)
+/// Collection end time (ISO 8601)
+/// Center time of observation (ISO 8601)
 func (rcv *SAR) CENTER_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -229,8 +229,8 @@ func (rcv *SAR) CenterTime() []byte {
 	return rcv.CENTER_TIME()
 }
 
-// / Center time of observation (ISO 8601)
-// / Detection start time (ISO 8601)
+/// Center time of observation (ISO 8601)
+/// Detection start time (ISO 8601)
 func (rcv *SAR) DETECTION_START() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -243,8 +243,8 @@ func (rcv *SAR) DetectionStart() []byte {
 	return rcv.DETECTION_START()
 }
 
-// / Detection start time (ISO 8601)
-// / Detection end time (ISO 8601)
+/// Detection start time (ISO 8601)
+/// Detection end time (ISO 8601)
 func (rcv *SAR) DETECTION_END() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -257,8 +257,8 @@ func (rcv *SAR) DetectionEnd() []byte {
 	return rcv.DETECTION_END()
 }
 
-// / Detection end time (ISO 8601)
-// / Integration/dwell time (seconds)
+/// Detection end time (ISO 8601)
+/// Integration/dwell time (seconds)
 func (rcv *SAR) DWELL_TIME() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -271,7 +271,7 @@ func (rcv *SAR) DwellTime() float64 {
 	return rcv.DWELL_TIME()
 }
 
-// / Integration/dwell time (seconds)
+/// Integration/dwell time (seconds)
 func (rcv *SAR) MutateDWELL_TIME(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -280,7 +280,7 @@ func (rcv *SAR) MutateDwellTime(n float64) bool {
 	return rcv.MutateDWELL_TIME(n)
 }
 
-// / Orbit state description
+/// Orbit state description
 func (rcv *SAR) ORBIT_STATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -293,8 +293,8 @@ func (rcv *SAR) OrbitState() []byte {
 	return rcv.ORBIT_STATE()
 }
 
-// / Orbit state description
-// / SAR imaging mode
+/// Orbit state description
+/// SAR imaging mode
 func (rcv *SAR) SAR_MODE() sarMission {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -307,7 +307,7 @@ func (rcv *SAR) SarMode() sarMission {
 	return rcv.SAR_MODE()
 }
 
-// / SAR imaging mode
+/// SAR imaging mode
 func (rcv *SAR) MutateSAR_MODE(n sarMission) bool {
 	return rcv._tab.MutateInt8Slot(36, int8(n))
 }
@@ -316,7 +316,7 @@ func (rcv *SAR) MutateSarMode(n sarMission) bool {
 	return rcv.MutateSAR_MODE(n)
 }
 
-// / Operating RF band (e.g., X, C, L, S, P)
+/// Operating RF band (e.g., X, C, L, S, P)
 func (rcv *SAR) OPERATING_BAND() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -329,8 +329,8 @@ func (rcv *SAR) OperatingBand() []byte {
 	return rcv.OPERATING_BAND()
 }
 
-// / Operating RF band (e.g., X, C, L, S, P)
-// / Operating frequency (GHz)
+/// Operating RF band (e.g., X, C, L, S, P)
+/// Operating frequency (GHz)
 func (rcv *SAR) OPERATING_FREQ() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -343,7 +343,7 @@ func (rcv *SAR) OperatingFreq() float64 {
 	return rcv.OPERATING_FREQ()
 }
 
-// / Operating frequency (GHz)
+/// Operating frequency (GHz)
 func (rcv *SAR) MutateOPERATING_FREQ(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -352,7 +352,7 @@ func (rcv *SAR) MutateOperatingFreq(n float64) bool {
 	return rcv.MutateOPERATING_FREQ(n)
 }
 
-// / Signal-to-noise ratio (dB)
+/// Signal-to-noise ratio (dB)
 func (rcv *SAR) SNR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -365,7 +365,7 @@ func (rcv *SAR) Snr() float64 {
 	return rcv.SNR()
 }
 
-// / Signal-to-noise ratio (dB)
+/// Signal-to-noise ratio (dB)
 func (rcv *SAR) MutateSNR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -374,7 +374,7 @@ func (rcv *SAR) MutateSnr(n float64) bool {
 	return rcv.MutateSNR(n)
 }
 
-// / Transmit polarization
+/// Transmit polarization
 func (rcv *SAR) TX_POLARIZATION() sarPolarization {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -387,7 +387,7 @@ func (rcv *SAR) TxPolarization() sarPolarization {
 	return rcv.TX_POLARIZATION()
 }
 
-// / Transmit polarization
+/// Transmit polarization
 func (rcv *SAR) MutateTX_POLARIZATION(n sarPolarization) bool {
 	return rcv._tab.MutateInt8Slot(44, int8(n))
 }
@@ -396,7 +396,7 @@ func (rcv *SAR) MutateTxPolarization(n sarPolarization) bool {
 	return rcv.MutateTX_POLARIZATION(n)
 }
 
-// / Receive polarization
+/// Receive polarization
 func (rcv *SAR) RX_POLARIZATION() sarPolarization {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -409,7 +409,7 @@ func (rcv *SAR) RxPolarization() sarPolarization {
 	return rcv.RX_POLARIZATION()
 }
 
-// / Receive polarization
+/// Receive polarization
 func (rcv *SAR) MutateRX_POLARIZATION(n sarPolarization) bool {
 	return rcv._tab.MutateInt8Slot(46, int8(n))
 }
@@ -418,7 +418,7 @@ func (rcv *SAR) MutateRxPolarization(n sarPolarization) bool {
 	return rcv.MutateRX_POLARIZATION(n)
 }
 
-// / Grazing angle (degrees)
+/// Grazing angle (degrees)
 func (rcv *SAR) GRAZE_ANGLE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -431,7 +431,7 @@ func (rcv *SAR) GrazeAngle() float64 {
 	return rcv.GRAZE_ANGLE()
 }
 
-// / Grazing angle (degrees)
+/// Grazing angle (degrees)
 func (rcv *SAR) MutateGRAZE_ANGLE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(48, n)
 }
@@ -440,7 +440,7 @@ func (rcv *SAR) MutateGrazeAngle(n float64) bool {
 	return rcv.MutateGRAZE_ANGLE(n)
 }
 
-// / Incidence angle (degrees)
+/// Incidence angle (degrees)
 func (rcv *SAR) INCIDENCE_ANGLE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
@@ -453,7 +453,7 @@ func (rcv *SAR) IncidenceAngle() float64 {
 	return rcv.INCIDENCE_ANGLE()
 }
 
-// / Incidence angle (degrees)
+/// Incidence angle (degrees)
 func (rcv *SAR) MutateINCIDENCE_ANGLE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(50, n)
 }
@@ -462,7 +462,7 @@ func (rcv *SAR) MutateIncidenceAngle(n float64) bool {
 	return rcv.MutateINCIDENCE_ANGLE(n)
 }
 
-// / Squint angle (degrees)
+/// Squint angle (degrees)
 func (rcv *SAR) SQUINT_ANGLE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -475,7 +475,7 @@ func (rcv *SAR) SquintAngle() float64 {
 	return rcv.SQUINT_ANGLE()
 }
 
-// / Squint angle (degrees)
+/// Squint angle (degrees)
 func (rcv *SAR) MutateSQUINT_ANGLE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(52, n)
 }
@@ -484,7 +484,7 @@ func (rcv *SAR) MutateSquintAngle(n float64) bool {
 	return rcv.MutateSQUINT_ANGLE(n)
 }
 
-// / Pulse bandwidth (MHz)
+/// Pulse bandwidth (MHz)
 func (rcv *SAR) PULSE_BANDWIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
@@ -497,7 +497,7 @@ func (rcv *SAR) PulseBandwidth() float64 {
 	return rcv.PULSE_BANDWIDTH()
 }
 
-// / Pulse bandwidth (MHz)
+/// Pulse bandwidth (MHz)
 func (rcv *SAR) MutatePULSE_BANDWIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(54, n)
 }
@@ -506,7 +506,7 @@ func (rcv *SAR) MutatePulseBandwidth(n float64) bool {
 	return rcv.MutatePULSE_BANDWIDTH(n)
 }
 
-// / Pulse duration (microseconds)
+/// Pulse duration (microseconds)
 func (rcv *SAR) PULSE_DURATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
@@ -519,7 +519,7 @@ func (rcv *SAR) PulseDuration() float64 {
 	return rcv.PULSE_DURATION()
 }
 
-// / Pulse duration (microseconds)
+/// Pulse duration (microseconds)
 func (rcv *SAR) MutatePULSE_DURATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(56, n)
 }
@@ -528,7 +528,7 @@ func (rcv *SAR) MutatePulseDuration(n float64) bool {
 	return rcv.MutatePULSE_DURATION(n)
 }
 
-// / Continuous spot angle (degrees)
+/// Continuous spot angle (degrees)
 func (rcv *SAR) CONTINUOUS_SPOT_ANGLE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
@@ -541,7 +541,7 @@ func (rcv *SAR) ContinuousSpotAngle() float64 {
 	return rcv.CONTINUOUS_SPOT_ANGLE()
 }
 
-// / Continuous spot angle (degrees)
+/// Continuous spot angle (degrees)
 func (rcv *SAR) MutateCONTINUOUS_SPOT_ANGLE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(58, n)
 }
@@ -550,7 +550,7 @@ func (rcv *SAR) MutateContinuousSpotAngle(n float64) bool {
 	return rcv.MutateCONTINUOUS_SPOT_ANGLE(n)
 }
 
-// / Slant range to target (km)
+/// Slant range to target (km)
 func (rcv *SAR) SLANT_RANGE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
@@ -563,7 +563,7 @@ func (rcv *SAR) SlantRange() float64 {
 	return rcv.SLANT_RANGE()
 }
 
-// / Slant range to target (km)
+/// Slant range to target (km)
 func (rcv *SAR) MutateSLANT_RANGE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(60, n)
 }
@@ -572,7 +572,7 @@ func (rcv *SAR) MutateSlantRange(n float64) bool {
 	return rcv.MutateSLANT_RANGE(n)
 }
 
-// / Near range (km)
+/// Near range (km)
 func (rcv *SAR) NEAR_RANGE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
@@ -585,7 +585,7 @@ func (rcv *SAR) NearRange() float64 {
 	return rcv.NEAR_RANGE()
 }
 
-// / Near range (km)
+/// Near range (km)
 func (rcv *SAR) MutateNEAR_RANGE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(62, n)
 }
@@ -594,7 +594,7 @@ func (rcv *SAR) MutateNearRange(n float64) bool {
 	return rcv.MutateNEAR_RANGE(n)
 }
 
-// / Far range (km)
+/// Far range (km)
 func (rcv *SAR) FAR_RANGE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
@@ -607,7 +607,7 @@ func (rcv *SAR) FarRange() float64 {
 	return rcv.FAR_RANGE()
 }
 
-// / Far range (km)
+/// Far range (km)
 func (rcv *SAR) MutateFAR_RANGE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(64, n)
 }
@@ -616,7 +616,7 @@ func (rcv *SAR) MutateFarRange(n float64) bool {
 	return rcv.MutateFAR_RANGE(n)
 }
 
-// / Swath length (km)
+/// Swath length (km)
 func (rcv *SAR) SWATH_LENGTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
@@ -629,7 +629,7 @@ func (rcv *SAR) SwathLength() float64 {
 	return rcv.SWATH_LENGTH()
 }
 
-// / Swath length (km)
+/// Swath length (km)
 func (rcv *SAR) MutateSWATH_LENGTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(66, n)
 }
@@ -638,7 +638,7 @@ func (rcv *SAR) MutateSwathLength(n float64) bool {
 	return rcv.MutateSWATH_LENGTH(n)
 }
 
-// / Image area GeoJSON
+/// Image area GeoJSON
 func (rcv *SAR) AGJSON() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
@@ -651,8 +651,8 @@ func (rcv *SAR) Agjson() []byte {
 	return rcv.AGJSON()
 }
 
-// / Image area GeoJSON
-// / Image area text description
+/// Image area GeoJSON
+/// Image area text description
 func (rcv *SAR) ATEXT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
 	if o != 0 {
@@ -665,8 +665,8 @@ func (rcv *SAR) Atext() []byte {
 	return rcv.ATEXT()
 }
 
-// / Image area text description
-// / Area type
+/// Image area text description
+/// Area type
 func (rcv *SAR) ATYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
@@ -679,8 +679,8 @@ func (rcv *SAR) Atype() []byte {
 	return rcv.ATYPE()
 }
 
-// / Area type
-// / Coordinate system
+/// Area type
+/// Coordinate system
 func (rcv *SAR) COORD_SYS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
 	if o != 0 {
@@ -693,8 +693,8 @@ func (rcv *SAR) CoordSys() []byte {
 	return rcv.COORD_SYS()
 }
 
-// / Coordinate system
-// / Range pixel spacing (meters)
+/// Coordinate system
+/// Range pixel spacing (meters)
 func (rcv *SAR) SPACING_RANGE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
 	if o != 0 {
@@ -707,7 +707,7 @@ func (rcv *SAR) SpacingRange() float64 {
 	return rcv.SPACING_RANGE()
 }
 
-// / Range pixel spacing (meters)
+/// Range pixel spacing (meters)
 func (rcv *SAR) MutateSPACING_RANGE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(76, n)
 }
@@ -716,7 +716,7 @@ func (rcv *SAR) MutateSpacingRange(n float64) bool {
 	return rcv.MutateSPACING_RANGE(n)
 }
 
-// / Azimuth pixel spacing (meters)
+/// Azimuth pixel spacing (meters)
 func (rcv *SAR) SPACING_AZIMUTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
 	if o != 0 {
@@ -729,7 +729,7 @@ func (rcv *SAR) SpacingAzimuth() float64 {
 	return rcv.SPACING_AZIMUTH()
 }
 
-// / Azimuth pixel spacing (meters)
+/// Azimuth pixel spacing (meters)
 func (rcv *SAR) MutateSPACING_AZIMUTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(78, n)
 }
@@ -738,7 +738,7 @@ func (rcv *SAR) MutateSpacingAzimuth(n float64) bool {
 	return rcv.MutateSPACING_AZIMUTH(n)
 }
 
-// / Number of azimuth looks
+/// Number of azimuth looks
 func (rcv *SAR) LOOKS_AZIMUTH() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(80))
 	if o != 0 {
@@ -751,7 +751,7 @@ func (rcv *SAR) LooksAzimuth() byte {
 	return rcv.LOOKS_AZIMUTH()
 }
 
-// / Number of azimuth looks
+/// Number of azimuth looks
 func (rcv *SAR) MutateLOOKS_AZIMUTH(n byte) bool {
 	return rcv._tab.MutateByteSlot(80, n)
 }
@@ -760,7 +760,7 @@ func (rcv *SAR) MutateLooksAzimuth(n byte) bool {
 	return rcv.MutateLOOKS_AZIMUTH(n)
 }
 
-// / Number of range looks
+/// Number of range looks
 func (rcv *SAR) LOOKS_RANGE() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(82))
 	if o != 0 {
@@ -773,7 +773,7 @@ func (rcv *SAR) LooksRange() byte {
 	return rcv.LOOKS_RANGE()
 }
 
-// / Number of range looks
+/// Number of range looks
 func (rcv *SAR) MutateLOOKS_RANGE(n byte) bool {
 	return rcv._tab.MutateByteSlot(82, n)
 }
@@ -782,7 +782,7 @@ func (rcv *SAR) MutateLooksRange(n byte) bool {
 	return rcv.MutateLOOKS_RANGE(n)
 }
 
-// / Range resolution (meters)
+/// Range resolution (meters)
 func (rcv *SAR) RESOLUTION_RANGE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(84))
 	if o != 0 {
@@ -795,7 +795,7 @@ func (rcv *SAR) ResolutionRange() float64 {
 	return rcv.RESOLUTION_RANGE()
 }
 
-// / Range resolution (meters)
+/// Range resolution (meters)
 func (rcv *SAR) MutateRESOLUTION_RANGE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(84, n)
 }
@@ -804,7 +804,7 @@ func (rcv *SAR) MutateResolutionRange(n float64) bool {
 	return rcv.MutateRESOLUTION_RANGE(n)
 }
 
-// / Azimuth resolution (meters)
+/// Azimuth resolution (meters)
 func (rcv *SAR) RESOLUTION_AZIMUTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(86))
 	if o != 0 {
@@ -817,7 +817,7 @@ func (rcv *SAR) ResolutionAzimuth() float64 {
 	return rcv.RESOLUTION_AZIMUTH()
 }
 
-// / Azimuth resolution (meters)
+/// Azimuth resolution (meters)
 func (rcv *SAR) MutateRESOLUTION_AZIMUTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(86, n)
 }
@@ -826,7 +826,7 @@ func (rcv *SAR) MutateResolutionAzimuth(n float64) bool {
 	return rcv.MutateRESOLUTION_AZIMUTH(n)
 }
 
-// / Observation direction (ASCENDING/DESCENDING)
+/// Observation direction (ASCENDING/DESCENDING)
 func (rcv *SAR) OB_DIRECTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(88))
 	if o != 0 {
@@ -839,8 +839,8 @@ func (rcv *SAR) ObDirection() []byte {
 	return rcv.OB_DIRECTION()
 }
 
-// / Observation direction (ASCENDING/DESCENDING)
-// / Target position X (km)
+/// Observation direction (ASCENDING/DESCENDING)
+/// Target position X (km)
 func (rcv *SAR) TARGETPOSX() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(90))
 	if o != 0 {
@@ -853,7 +853,7 @@ func (rcv *SAR) Targetposx() float64 {
 	return rcv.TARGETPOSX()
 }
 
-// / Target position X (km)
+/// Target position X (km)
 func (rcv *SAR) MutateTARGETPOSX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(90, n)
 }
@@ -862,7 +862,7 @@ func (rcv *SAR) MutateTargetposx(n float64) bool {
 	return rcv.MutateTARGETPOSX(n)
 }
 
-// / Target position Y (km)
+/// Target position Y (km)
 func (rcv *SAR) TARGETPOSY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(92))
 	if o != 0 {
@@ -875,7 +875,7 @@ func (rcv *SAR) Targetposy() float64 {
 	return rcv.TARGETPOSY()
 }
 
-// / Target position Y (km)
+/// Target position Y (km)
 func (rcv *SAR) MutateTARGETPOSY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(92, n)
 }
@@ -884,7 +884,7 @@ func (rcv *SAR) MutateTargetposy(n float64) bool {
 	return rcv.MutateTARGETPOSY(n)
 }
 
-// / Target position Z (km)
+/// Target position Z (km)
 func (rcv *SAR) TARGETPOSZ() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(94))
 	if o != 0 {
@@ -897,7 +897,7 @@ func (rcv *SAR) Targetposz() float64 {
 	return rcv.TARGETPOSZ()
 }
 
-// / Target position Z (km)
+/// Target position Z (km)
 func (rcv *SAR) MutateTARGETPOSZ(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(94, n)
 }
@@ -906,7 +906,7 @@ func (rcv *SAR) MutateTargetposz(n float64) bool {
 	return rcv.MutateTARGETPOSZ(n)
 }
 
-// / Sensor altitude (km)
+/// Sensor altitude (km)
 func (rcv *SAR) SENALT() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(96))
 	if o != 0 {
@@ -919,7 +919,7 @@ func (rcv *SAR) Senalt() float64 {
 	return rcv.SENALT()
 }
 
-// / Sensor altitude (km)
+/// Sensor altitude (km)
 func (rcv *SAR) MutateSENALT(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(96, n)
 }
@@ -928,7 +928,7 @@ func (rcv *SAR) MutateSenalt(n float64) bool {
 	return rcv.MutateSENALT(n)
 }
 
-// / Sensor velocity X (km/s)
+/// Sensor velocity X (km/s)
 func (rcv *SAR) SENVELX() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(98))
 	if o != 0 {
@@ -941,7 +941,7 @@ func (rcv *SAR) Senvelx() float64 {
 	return rcv.SENVELX()
 }
 
-// / Sensor velocity X (km/s)
+/// Sensor velocity X (km/s)
 func (rcv *SAR) MutateSENVELX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(98, n)
 }
@@ -950,7 +950,7 @@ func (rcv *SAR) MutateSenvelx(n float64) bool {
 	return rcv.MutateSENVELX(n)
 }
 
-// / Sensor velocity Y (km/s)
+/// Sensor velocity Y (km/s)
 func (rcv *SAR) SENVELY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(100))
 	if o != 0 {
@@ -963,7 +963,7 @@ func (rcv *SAR) Senvely() float64 {
 	return rcv.SENVELY()
 }
 
-// / Sensor velocity Y (km/s)
+/// Sensor velocity Y (km/s)
 func (rcv *SAR) MutateSENVELY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(100, n)
 }
@@ -972,7 +972,7 @@ func (rcv *SAR) MutateSenvely(n float64) bool {
 	return rcv.MutateSENVELY(n)
 }
 
-// / Sensor velocity Z (km/s)
+/// Sensor velocity Z (km/s)
 func (rcv *SAR) SENVELZ() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(102))
 	if o != 0 {
@@ -985,7 +985,7 @@ func (rcv *SAR) Senvelz() float64 {
 	return rcv.SENVELZ()
 }
 
-// / Sensor velocity Z (km/s)
+/// Sensor velocity Z (km/s)
 func (rcv *SAR) MutateSENVELZ(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(102, n)
 }
@@ -994,7 +994,7 @@ func (rcv *SAR) MutateSenvelz(n float64) bool {
 	return rcv.MutateSENVELZ(n)
 }
 
-// / Sensor latitude at start (degrees)
+/// Sensor latitude at start (degrees)
 func (rcv *SAR) SENLAT_START() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(104))
 	if o != 0 {
@@ -1007,7 +1007,7 @@ func (rcv *SAR) SenlatStart() float64 {
 	return rcv.SENLAT_START()
 }
 
-// / Sensor latitude at start (degrees)
+/// Sensor latitude at start (degrees)
 func (rcv *SAR) MutateSENLAT_START(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(104, n)
 }
@@ -1016,7 +1016,7 @@ func (rcv *SAR) MutateSenlatStart(n float64) bool {
 	return rcv.MutateSENLAT_START(n)
 }
 
-// / Sensor longitude at start (degrees)
+/// Sensor longitude at start (degrees)
 func (rcv *SAR) SENLON_START() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(106))
 	if o != 0 {
@@ -1029,7 +1029,7 @@ func (rcv *SAR) SenlonStart() float64 {
 	return rcv.SENLON_START()
 }
 
-// / Sensor longitude at start (degrees)
+/// Sensor longitude at start (degrees)
 func (rcv *SAR) MutateSENLON_START(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(106, n)
 }
@@ -1038,7 +1038,7 @@ func (rcv *SAR) MutateSenlonStart(n float64) bool {
 	return rcv.MutateSENLON_START(n)
 }
 
-// / Sensor latitude at end (degrees)
+/// Sensor latitude at end (degrees)
 func (rcv *SAR) SENLAT_END() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(108))
 	if o != 0 {
@@ -1051,7 +1051,7 @@ func (rcv *SAR) SenlatEnd() float64 {
 	return rcv.SENLAT_END()
 }
 
-// / Sensor latitude at end (degrees)
+/// Sensor latitude at end (degrees)
 func (rcv *SAR) MutateSENLAT_END(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(108, n)
 }
@@ -1060,7 +1060,7 @@ func (rcv *SAR) MutateSenlatEnd(n float64) bool {
 	return rcv.MutateSENLAT_END(n)
 }
 
-// / Sensor longitude at end (degrees)
+/// Sensor longitude at end (degrees)
 func (rcv *SAR) SENLON_END() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(110))
 	if o != 0 {
@@ -1073,7 +1073,7 @@ func (rcv *SAR) SenlonEnd() float64 {
 	return rcv.SENLON_END()
 }
 
-// / Sensor longitude at end (degrees)
+/// Sensor longitude at end (degrees)
 func (rcv *SAR) MutateSENLON_END(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(110, n)
 }
@@ -1082,7 +1082,7 @@ func (rcv *SAR) MutateSenlonEnd(n float64) bool {
 	return rcv.MutateSENLON_END(n)
 }
 
-// / Transaction identifier
+/// Transaction identifier
 func (rcv *SAR) TRANSACTION_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(112))
 	if o != 0 {
@@ -1095,8 +1095,8 @@ func (rcv *SAR) TransactionId() []byte {
 	return rcv.TRANSACTION_ID()
 }
 
-// / Transaction identifier
-// / Associated tags
+/// Transaction identifier
+/// Associated tags
 func (rcv *SAR) TAGS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(114))
 	if o != 0 {
@@ -1122,8 +1122,8 @@ func (rcv *SAR) TagsLength() int {
 	return rcv.TAGSLength()
 }
 
-// / Associated tags
-// / Source types
+/// Associated tags
+/// Source types
 func (rcv *SAR) SRC_TYPS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(116))
 	if o != 0 {
@@ -1149,8 +1149,8 @@ func (rcv *SAR) SrcTypsLength() int {
 	return rcv.SRC_TYPSLength()
 }
 
-// / Source types
-// / Source identifiers
+/// Source types
+/// Source identifiers
 func (rcv *SAR) SRC_IDS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(118))
 	if o != 0 {
@@ -1176,7 +1176,7 @@ func (rcv *SAR) SrcIdsLength() int {
 	return rcv.SRC_IDSLength()
 }
 
-// / Source identifiers
+/// Source identifiers
 func SARStart(builder *flatbuffers.Builder) {
 	builder.StartObject(58)
 }

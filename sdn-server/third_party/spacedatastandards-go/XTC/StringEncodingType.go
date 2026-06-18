@@ -4,24 +4,24 @@ package XTC
 
 import "strconv"
 
-// / String encoding character sets
+/// String encoding character sets
 type StringEncodingType int8
 
 const (
 	/// US-ASCII (7-bit)
-	StringEncodingTypeUS_ASCII StringEncodingType = 0
+	StringEncodingTypeUS_ASCII     StringEncodingType = 0
 	/// ISO 8859-1 Latin-1
-	StringEncodingTypeISO_8859_1 StringEncodingType = 1
+	StringEncodingTypeISO_8859_1   StringEncodingType = 1
 	/// Windows-1252
 	StringEncodingTypeWINDOWS_1252 StringEncodingType = 2
 	/// UTF-8
-	StringEncodingTypeUTF_8 StringEncodingType = 3
+	StringEncodingTypeUTF_8        StringEncodingType = 3
 	/// UTF-16
-	StringEncodingTypeUTF_16 StringEncodingType = 4
+	StringEncodingTypeUTF_16       StringEncodingType = 4
 	/// UTF-16 Big Endian
-	StringEncodingTypeUTF_16BE StringEncodingType = 5
+	StringEncodingTypeUTF_16BE     StringEncodingType = 5
 	/// UTF-16 Little Endian
-	StringEncodingTypeUTF_16LE StringEncodingType = 6
+	StringEncodingTypeUTF_16LE     StringEncodingType = 6
 )
 
 var EnumNamesStringEncodingType = map[StringEncodingType]string{

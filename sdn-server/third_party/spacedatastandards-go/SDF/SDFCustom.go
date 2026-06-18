@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Custom SDF defined by a set of unit boundary-direction vectors.
+/// Custom SDF defined by a set of unit boundary-direction vectors.
 type SDFCustom struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *SDFCustom) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unit vectors defining the boundary packed as [x0, y0, z0, x1, y1, z1, ...].
+/// Unit vectors defining the boundary packed as [x0, y0, z0, x1, y1, z1, ...].
 func (rcv *SDFCustom) DIRECTIONS(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -68,7 +68,7 @@ func (rcv *SDFCustom) DirectionsLength() int {
 	return rcv.DIRECTIONSLength()
 }
 
-// / Unit vectors defining the boundary packed as [x0, y0, z0, x1, y1, z1, ...].
+/// Unit vectors defining the boundary packed as [x0, y0, z0, x1, y1, z1, ...].
 func (rcv *SDFCustom) MutateDIRECTIONS(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {

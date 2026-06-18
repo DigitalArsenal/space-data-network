@@ -7,121 +7,121 @@ import "strconv"
 type rbkOperationCode int8
 
 const (
-	rbkOperationCodeUNKNOWN rbkOperationCode = 0
+	rbkOperationCodeUNKNOWN            rbkOperationCode = 0
 	/// Compose two Modified Rodrigues Parameter rotations.
-	rbkOperationCodeADD_MRP rbkOperationCode = 1
+	rbkOperationCodeADD_MRP            rbkOperationCode = 1
 	/// Compute the relative Modified Rodrigues Parameter rotation from VECTOR_B to VECTOR_A.
-	rbkOperationCodeSUB_MRP rbkOperationCode = 2
+	rbkOperationCodeSUB_MRP            rbkOperationCode = 2
 	/// Force a Modified Rodrigues Parameter vector to its shadow set.
-	rbkOperationCodeMRP_SHADOW rbkOperationCode = 3
+	rbkOperationCodeMRP_SHADOW         rbkOperationCode = 3
 	/// Switch to the MRP shadow set when norm exceeds SWITCH_THRESHOLD.
-	rbkOperationCodeMRP_SWITCH rbkOperationCode = 4
+	rbkOperationCodeMRP_SWITCH         rbkOperationCode = 4
 	/// Convert scalar-first Euler parameters/quaternion to MRP.
-	rbkOperationCodeEP_TO_MRP rbkOperationCode = 5
+	rbkOperationCodeEP_TO_MRP          rbkOperationCode = 5
 	/// Convert MRP to scalar-first Euler parameters/quaternion.
-	rbkOperationCodeMRP_TO_EP rbkOperationCode = 6
+	rbkOperationCodeMRP_TO_EP          rbkOperationCode = 6
 	/// Convert direction cosine matrix to scalar-first Euler parameters/quaternion.
-	rbkOperationCodeDCM_TO_EP rbkOperationCode = 7
+	rbkOperationCodeDCM_TO_EP          rbkOperationCode = 7
 	/// Convert scalar-first Euler parameters/quaternion to direction cosine matrix.
-	rbkOperationCodeEP_TO_DCM rbkOperationCode = 8
+	rbkOperationCodeEP_TO_DCM          rbkOperationCode = 8
 	/// Convert direction cosine matrix to Modified Rodrigues Parameters.
-	rbkOperationCodeDCM_TO_MRP rbkOperationCode = 9
+	rbkOperationCodeDCM_TO_MRP         rbkOperationCode = 9
 	/// Convert Modified Rodrigues Parameters to direction cosine matrix.
-	rbkOperationCodeMRP_TO_DCM rbkOperationCode = 10
+	rbkOperationCodeMRP_TO_DCM         rbkOperationCode = 10
 	/// Return the MRP B matrix that maps body angular rate to MRP derivative.
-	rbkOperationCodeB_MATRIX_MRP rbkOperationCode = 11
+	rbkOperationCodeB_MATRIX_MRP       rbkOperationCode = 11
 	/// Return the inverse MRP B matrix that maps MRP derivative to body angular rate.
-	rbkOperationCodeB_INV_MATRIX_MRP rbkOperationCode = 12
+	rbkOperationCodeB_INV_MATRIX_MRP   rbkOperationCode = 12
 	/// Compute MRP derivative from MRP and body angular rate vectors.
-	rbkOperationCodeD_MRP rbkOperationCode = 13
+	rbkOperationCodeD_MRP              rbkOperationCode = 13
 	/// Compute body angular rate from MRP and MRP derivative vectors.
-	rbkOperationCodeD_MRP_TO_OMEGA rbkOperationCode = 14
+	rbkOperationCodeD_MRP_TO_OMEGA     rbkOperationCode = 14
 	/// Return the MRP B-dot matrix from MRP and MRP derivative vectors.
-	rbkOperationCodeB_DOT_MATRIX_MRP rbkOperationCode = 15
+	rbkOperationCodeB_DOT_MATRIX_MRP   rbkOperationCode = 15
 	/// Compute second MRP derivative from MRP, MRP derivative, body rate, and body acceleration.
-	rbkOperationCodeDD_MRP rbkOperationCode = 16
+	rbkOperationCodeDD_MRP             rbkOperationCode = 16
 	/// Compute body angular acceleration from MRP, MRP derivative, and second MRP derivative.
-	rbkOperationCodeDD_MRP_TO_D_OMEGA rbkOperationCode = 17
+	rbkOperationCodeDD_MRP_TO_D_OMEGA  rbkOperationCode = 17
 	/// Compose two Gibbs-vector rotations.
-	rbkOperationCodeADD_GIBBS rbkOperationCode = 18
+	rbkOperationCodeADD_GIBBS          rbkOperationCode = 18
 	/// Compute the relative Gibbs-vector rotation from VECTOR_B to VECTOR_A.
-	rbkOperationCodeSUB_GIBBS rbkOperationCode = 19
+	rbkOperationCodeSUB_GIBBS          rbkOperationCode = 19
 	/// Convert scalar-first Euler parameters/quaternion to Gibbs vector.
-	rbkOperationCodeEP_TO_GIBBS rbkOperationCode = 20
+	rbkOperationCodeEP_TO_GIBBS        rbkOperationCode = 20
 	/// Convert Gibbs vector to scalar-first Euler parameters/quaternion.
-	rbkOperationCodeGIBBS_TO_EP rbkOperationCode = 21
+	rbkOperationCodeGIBBS_TO_EP        rbkOperationCode = 21
 	/// Convert direction cosine matrix to Gibbs vector.
-	rbkOperationCodeDCM_TO_GIBBS rbkOperationCode = 22
+	rbkOperationCodeDCM_TO_GIBBS       rbkOperationCode = 22
 	/// Convert Gibbs vector to direction cosine matrix.
-	rbkOperationCodeGIBBS_TO_DCM rbkOperationCode = 23
+	rbkOperationCodeGIBBS_TO_DCM       rbkOperationCode = 23
 	/// Convert Modified Rodrigues Parameters to Gibbs vector.
-	rbkOperationCodeMRP_TO_GIBBS rbkOperationCode = 24
+	rbkOperationCodeMRP_TO_GIBBS       rbkOperationCode = 24
 	/// Convert Gibbs vector to Modified Rodrigues Parameters.
-	rbkOperationCodeGIBBS_TO_MRP rbkOperationCode = 25
+	rbkOperationCodeGIBBS_TO_MRP       rbkOperationCode = 25
 	/// Return the Gibbs-vector B matrix that maps body angular rate to Gibbs derivative.
-	rbkOperationCodeB_MATRIX_GIBBS rbkOperationCode = 26
+	rbkOperationCodeB_MATRIX_GIBBS     rbkOperationCode = 26
 	/// Return the inverse Gibbs-vector B matrix that maps Gibbs derivative to body angular rate.
 	rbkOperationCodeB_INV_MATRIX_GIBBS rbkOperationCode = 27
 	/// Compute Gibbs derivative from Gibbs vector and body angular rate vectors.
-	rbkOperationCodeD_GIBBS rbkOperationCode = 28
+	rbkOperationCodeD_GIBBS            rbkOperationCode = 28
 	/// Compose two principal rotation vector rotations.
-	rbkOperationCodeADD_PRV rbkOperationCode = 29
+	rbkOperationCodeADD_PRV            rbkOperationCode = 29
 	/// Compute the relative principal rotation vector from VECTOR_B to VECTOR_A.
-	rbkOperationCodeSUB_PRV rbkOperationCode = 30
+	rbkOperationCodeSUB_PRV            rbkOperationCode = 30
 	/// Convert scalar-first Euler parameters/quaternion to principal rotation vector.
-	rbkOperationCodeEP_TO_PRV rbkOperationCode = 31
+	rbkOperationCodeEP_TO_PRV          rbkOperationCode = 31
 	/// Convert principal rotation vector to scalar-first Euler parameters/quaternion.
-	rbkOperationCodePRV_TO_EP rbkOperationCode = 32
+	rbkOperationCodePRV_TO_EP          rbkOperationCode = 32
 	/// Convert direction cosine matrix to principal rotation vector.
-	rbkOperationCodeDCM_TO_PRV rbkOperationCode = 33
+	rbkOperationCodeDCM_TO_PRV         rbkOperationCode = 33
 	/// Convert principal rotation vector to direction cosine matrix.
-	rbkOperationCodePRV_TO_DCM rbkOperationCode = 34
+	rbkOperationCodePRV_TO_DCM         rbkOperationCode = 34
 	/// Convert Modified Rodrigues Parameters to principal rotation vector.
-	rbkOperationCodeMRP_TO_PRV rbkOperationCode = 35
+	rbkOperationCodeMRP_TO_PRV         rbkOperationCode = 35
 	/// Convert principal rotation vector to Modified Rodrigues Parameters.
-	rbkOperationCodePRV_TO_MRP rbkOperationCode = 36
+	rbkOperationCodePRV_TO_MRP         rbkOperationCode = 36
 	/// Convert Gibbs vector to principal rotation vector.
-	rbkOperationCodeGIBBS_TO_PRV rbkOperationCode = 37
+	rbkOperationCodeGIBBS_TO_PRV       rbkOperationCode = 37
 	/// Convert principal rotation vector to Gibbs vector.
-	rbkOperationCodePRV_TO_GIBBS rbkOperationCode = 38
+	rbkOperationCodePRV_TO_GIBBS       rbkOperationCode = 38
 	/// Return the principal-rotation-vector B matrix that maps body angular rate to PRV derivative.
-	rbkOperationCodeB_MATRIX_PRV rbkOperationCode = 39
+	rbkOperationCodeB_MATRIX_PRV       rbkOperationCode = 39
 	/// Return the inverse principal-rotation-vector B matrix that maps PRV derivative to body angular rate.
-	rbkOperationCodeB_INV_MATRIX_PRV rbkOperationCode = 40
+	rbkOperationCodeB_INV_MATRIX_PRV   rbkOperationCode = 40
 	/// Compute principal rotation vector derivative from PRV and body angular rate vectors.
-	rbkOperationCodeD_PRV rbkOperationCode = 41
+	rbkOperationCodeD_PRV              rbkOperationCode = 41
 	/// Compose two Euler-angle rotations using EULER_SEQUENCE.
-	rbkOperationCodeADD_EULER rbkOperationCode = 42
+	rbkOperationCodeADD_EULER          rbkOperationCode = 42
 	/// Compute the relative Euler-angle rotation from VECTOR_B to VECTOR_A using EULER_SEQUENCE.
-	rbkOperationCodeSUB_EULER rbkOperationCode = 43
+	rbkOperationCodeSUB_EULER          rbkOperationCode = 43
 	/// Convert Euler angles to direction cosine matrix using EULER_SEQUENCE.
-	rbkOperationCodeEULER_TO_DCM rbkOperationCode = 44
+	rbkOperationCodeEULER_TO_DCM       rbkOperationCode = 44
 	/// Convert direction cosine matrix to Euler angles using EULER_SEQUENCE.
-	rbkOperationCodeDCM_TO_EULER rbkOperationCode = 45
+	rbkOperationCodeDCM_TO_EULER       rbkOperationCode = 45
 	/// Convert Euler angles to scalar-first Euler parameters/quaternion using EULER_SEQUENCE.
-	rbkOperationCodeEULER_TO_EP rbkOperationCode = 46
+	rbkOperationCodeEULER_TO_EP        rbkOperationCode = 46
 	/// Convert scalar-first Euler parameters/quaternion to Euler angles using EULER_SEQUENCE.
-	rbkOperationCodeEP_TO_EULER rbkOperationCode = 47
+	rbkOperationCodeEP_TO_EULER        rbkOperationCode = 47
 	/// Convert Euler angles to Modified Rodrigues Parameters using EULER_SEQUENCE.
-	rbkOperationCodeEULER_TO_MRP rbkOperationCode = 48
+	rbkOperationCodeEULER_TO_MRP       rbkOperationCode = 48
 	/// Convert Modified Rodrigues Parameters to Euler angles using EULER_SEQUENCE.
-	rbkOperationCodeMRP_TO_EULER rbkOperationCode = 49
+	rbkOperationCodeMRP_TO_EULER       rbkOperationCode = 49
 	/// Convert Euler angles to Gibbs vector using EULER_SEQUENCE.
-	rbkOperationCodeEULER_TO_GIBBS rbkOperationCode = 50
+	rbkOperationCodeEULER_TO_GIBBS     rbkOperationCode = 50
 	/// Convert Gibbs vector to Euler angles using EULER_SEQUENCE.
-	rbkOperationCodeGIBBS_TO_EULER rbkOperationCode = 51
+	rbkOperationCodeGIBBS_TO_EULER     rbkOperationCode = 51
 	/// Convert Euler angles to principal rotation vector using EULER_SEQUENCE.
-	rbkOperationCodeEULER_TO_PRV rbkOperationCode = 52
+	rbkOperationCodeEULER_TO_PRV       rbkOperationCode = 52
 	/// Convert principal rotation vector to Euler angles using EULER_SEQUENCE.
-	rbkOperationCodePRV_TO_EULER rbkOperationCode = 53
+	rbkOperationCodePRV_TO_EULER       rbkOperationCode = 53
 	/// Return the Euler-angle B matrix that maps body angular rate to Euler-angle derivative.
-	rbkOperationCodeB_MATRIX_EULER rbkOperationCode = 54
+	rbkOperationCodeB_MATRIX_EULER     rbkOperationCode = 54
 	/// Return the inverse Euler-angle B matrix that maps Euler-angle derivative to body angular rate.
 	rbkOperationCodeB_INV_MATRIX_EULER rbkOperationCode = 55
 	/// Compute Euler-angle derivative from Euler angles and body angular rate vectors.
-	rbkOperationCodeD_EULER rbkOperationCode = 56
+	rbkOperationCodeD_EULER            rbkOperationCode = 56
 	/// Return the skew-symmetric tilde matrix that maps VECTOR_A cross products.
-	rbkOperationCodeTILDE_MATRIX rbkOperationCode = 57
+	rbkOperationCodeTILDE_MATRIX       rbkOperationCode = 57
 	/// Return the Basilisk AVS one-axis elementary direction-cosine matrix for ANGLE_RAD.
 	rbkOperationCodeM1_ROTATION_MATRIX rbkOperationCode = 58
 	/// Return the Basilisk AVS two-axis elementary direction-cosine matrix for ANGLE_RAD.

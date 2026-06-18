@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / 3D Tileset
+/// 3D Tileset
 type CZMTileset struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMTileset) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Whether the tileset is displayed
+/// Whether the tileset is displayed
 func (rcv *CZMTileset) SHOW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMTileset) Show() bool {
 	return rcv.SHOW()
 }
 
-// / Whether the tileset is displayed
+/// Whether the tileset is displayed
 func (rcv *CZMTileset) MutateSHOW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMTileset) MutateShow(n bool) bool {
 	return rcv.MutateSHOW(n)
 }
 
-// / URI to the tileset
+/// URI to the tileset
 func (rcv *CZMTileset) URI() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,8 +77,8 @@ func (rcv *CZMTileset) Uri() []byte {
 	return rcv.URI()
 }
 
-// / URI to the tileset
-// / Maximum screen space error
+/// URI to the tileset
+/// Maximum screen space error
 func (rcv *CZMTileset) MAXIMUM_SCREEN_SPACE_ERROR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *CZMTileset) MaximumScreenSpaceError() float64 {
 	return rcv.MAXIMUM_SCREEN_SPACE_ERROR()
 }
 
-// / Maximum screen space error
+/// Maximum screen space error
 func (rcv *CZMTileset) MutateMAXIMUM_SCREEN_SPACE_ERROR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }

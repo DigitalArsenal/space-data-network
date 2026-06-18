@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Collection of services
+/// Collection of services
 type ServiceSet struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ServiceSet) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Services
+/// Services
 func (rcv *ServiceSet) SERVICES(obj *Service, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -74,7 +74,7 @@ func (rcv *ServiceSet) ServicesLength() int {
 	return rcv.SERVICESLength()
 }
 
-// / Services
+/// Services
 func ServiceSetStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }

@@ -7,7 +7,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / One payload carried inside the module bundle.
+/// One payload carried inside the module bundle.
 type ModuleBundleEntry struct {
 	_tab flatbuffers.Table
 }
@@ -43,7 +43,7 @@ func (rcv *ModuleBundleEntry) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Stable bundle-local identifier.
+/// Stable bundle-local identifier.
 func (rcv *ModuleBundleEntry) entry_id() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -56,7 +56,7 @@ func (rcv *ModuleBundleEntry) EntryId() []byte {
 	return rcv.entry_id()
 }
 
-// / Stable bundle-local identifier.
+/// Stable bundle-local identifier.
 func ModuleBundleEntryKeyCompare(o1, o2 flatbuffers.UOffsetT, buf []byte) bool {
 	obj1 := &ModuleBundleEntry{}
 	obj2 := &ModuleBundleEntry{}
@@ -89,7 +89,7 @@ func (rcv *ModuleBundleEntry) LookupByKey(key string, vectorLocation flatbuffers
 	return false
 }
 
-// / High-level semantic role of the payload.
+/// High-level semantic role of the payload.
 func (rcv *ModuleBundleEntry) role() ModuleBundleEntryRole {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -102,7 +102,7 @@ func (rcv *ModuleBundleEntry) Role() ModuleBundleEntryRole {
 	return rcv.role()
 }
 
-// / High-level semantic role of the payload.
+/// High-level semantic role of the payload.
 func (rcv *ModuleBundleEntry) Mutaterole(n ModuleBundleEntryRole) bool {
 	return rcv._tab.MutateByteSlot(6, byte(n))
 }
@@ -111,8 +111,8 @@ func (rcv *ModuleBundleEntry) MutateRole(n ModuleBundleEntryRole) bool {
 	return rcv.Mutaterole(n)
 }
 
-// / Optional logical section name within the bundle, for example
-// / `sds.authorization`.
+/// Optional logical section name within the bundle, for example
+/// `sds.authorization`.
 func (rcv *ModuleBundleEntry) section_name() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -125,10 +125,10 @@ func (rcv *ModuleBundleEntry) SectionName() []byte {
 	return rcv.section_name()
 }
 
-// / Optional logical section name within the bundle, for example
-// / `sds.authorization`.
-// / SDS/shared-module schema identity when the payload is itself a
-// / FlatBuffer. Stored as canonical JSON text for portability.
+/// Optional logical section name within the bundle, for example
+/// `sds.authorization`.
+/// SDS/shared-module schema identity when the payload is itself a
+/// FlatBuffer. Stored as canonical JSON text for portability.
 func (rcv *ModuleBundleEntry) type_ref() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -141,9 +141,9 @@ func (rcv *ModuleBundleEntry) TypeRef() []byte {
 	return rcv.type_ref()
 }
 
-// / SDS/shared-module schema identity when the payload is itself a
-// / FlatBuffer. Stored as canonical JSON text for portability.
-// / Encoding used for `payload`.
+/// SDS/shared-module schema identity when the payload is itself a
+/// FlatBuffer. Stored as canonical JSON text for portability.
+/// Encoding used for `payload`.
 func (rcv *ModuleBundleEntry) payload_encoding() ModulePayloadEncoding {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -156,7 +156,7 @@ func (rcv *ModuleBundleEntry) PayloadEncoding() ModulePayloadEncoding {
 	return rcv.payload_encoding()
 }
 
-// / Encoding used for `payload`.
+/// Encoding used for `payload`.
 func (rcv *ModuleBundleEntry) Mutatepayload_encoding(n ModulePayloadEncoding) bool {
 	return rcv._tab.MutateByteSlot(12, byte(n))
 }
@@ -165,7 +165,7 @@ func (rcv *ModuleBundleEntry) MutatePayloadEncoding(n ModulePayloadEncoding) boo
 	return rcv.Mutatepayload_encoding(n)
 }
 
-// / Optional media type for transitional payloads such as JSON envelopes.
+/// Optional media type for transitional payloads such as JSON envelopes.
 func (rcv *ModuleBundleEntry) media_type() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -178,8 +178,8 @@ func (rcv *ModuleBundleEntry) MediaType() []byte {
 	return rcv.media_type()
 }
 
-// / Optional media type for transitional payloads such as JSON envelopes.
-// / Implementation-defined bit flags for signed/encrypted/compressed state.
+/// Optional media type for transitional payloads such as JSON envelopes.
+/// Implementation-defined bit flags for signed/encrypted/compressed state.
 func (rcv *ModuleBundleEntry) flags() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -192,7 +192,7 @@ func (rcv *ModuleBundleEntry) Flags() uint32 {
 	return rcv.flags()
 }
 
-// / Implementation-defined bit flags for signed/encrypted/compressed state.
+/// Implementation-defined bit flags for signed/encrypted/compressed state.
 func (rcv *ModuleBundleEntry) Mutateflags(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(16, n)
 }
@@ -201,7 +201,7 @@ func (rcv *ModuleBundleEntry) MutateFlags(n uint32) bool {
 	return rcv.Mutateflags(n)
 }
 
-// / SHA-256 of the payload bytes.
+/// SHA-256 of the payload bytes.
 func (rcv *ModuleBundleEntry) sha256(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -239,7 +239,7 @@ func (rcv *ModuleBundleEntry) Sha256Bytes() []byte {
 	return rcv.sha256Bytes()
 }
 
-// / SHA-256 of the payload bytes.
+/// SHA-256 of the payload bytes.
 func (rcv *ModuleBundleEntry) Mutatesha256(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -253,8 +253,8 @@ func (rcv *ModuleBundleEntry) MutateSha256(j int, n byte) bool {
 	return rcv.Mutatesha256(j, n)
 }
 
-// / Embedded payload bytes. For single-file deployment this should be
-// / populated for every entry.
+/// Embedded payload bytes. For single-file deployment this should be
+/// populated for every entry.
 func (rcv *ModuleBundleEntry) payload(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -292,8 +292,8 @@ func (rcv *ModuleBundleEntry) PayloadBytes() []byte {
 	return rcv.payloadBytes()
 }
 
-// / Embedded payload bytes. For single-file deployment this should be
-// / populated for every entry.
+/// Embedded payload bytes. For single-file deployment this should be
+/// populated for every entry.
 func (rcv *ModuleBundleEntry) Mutatepayload(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -307,7 +307,7 @@ func (rcv *ModuleBundleEntry) MutatePayload(j int, n byte) bool {
 	return rcv.Mutatepayload(j, n)
 }
 
-// / Human-readable description for tooling and diagnostics.
+/// Human-readable description for tooling and diagnostics.
 func (rcv *ModuleBundleEntry) description() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -320,7 +320,7 @@ func (rcv *ModuleBundleEntry) Description() []byte {
 	return rcv.description()
 }
 
-// / Human-readable description for tooling and diagnostics.
+/// Human-readable description for tooling and diagnostics.
 func ModuleBundleEntryStart(builder *flatbuffers.Builder) {
 	builder.StartObject(10)
 }

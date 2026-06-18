@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Sensor contribution to an orbit determination solution
+/// Sensor contribution to an orbit determination solution
 type odSensorContribution struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *odSensorContribution) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Sensor identifier
+/// Sensor identifier
 func (rcv *odSensorContribution) SENSOR_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *odSensorContribution) SensorId() []byte {
 	return rcv.SENSOR_ID()
 }
 
-// / Sensor identifier
-// / Original sensor identifier
+/// Sensor identifier
+/// Original sensor identifier
 func (rcv *odSensorContribution) ORIG_SENSOR_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *odSensorContribution) OrigSensorId() []byte {
 	return rcv.ORIG_SENSOR_ID()
 }
 
-// / Original sensor identifier
-// / Number of accepted observations from this sensor
+/// Original sensor identifier
+/// Number of accepted observations from this sensor
 func (rcv *odSensorContribution) NUM_ACCEPTED() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *odSensorContribution) NumAccepted() uint32 {
 	return rcv.NUM_ACCEPTED()
 }
 
-// / Number of accepted observations from this sensor
+/// Number of accepted observations from this sensor
 func (rcv *odSensorContribution) MutateNUM_ACCEPTED(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -92,7 +92,7 @@ func (rcv *odSensorContribution) MutateNumAccepted(n uint32) bool {
 	return rcv.MutateNUM_ACCEPTED(n)
 }
 
-// / Number of rejected observations from this sensor
+/// Number of rejected observations from this sensor
 func (rcv *odSensorContribution) NUM_REJECTED() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,7 +105,7 @@ func (rcv *odSensorContribution) NumRejected() uint32 {
 	return rcv.NUM_REJECTED()
 }
 
-// / Number of rejected observations from this sensor
+/// Number of rejected observations from this sensor
 func (rcv *odSensorContribution) MutateNUM_REJECTED(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }
@@ -114,7 +114,7 @@ func (rcv *odSensorContribution) MutateNumRejected(n uint32) bool {
 	return rcv.MutateNUM_REJECTED(n)
 }
 
-// / Weighted RMS for this sensor's observations
+/// Weighted RMS for this sensor's observations
 func (rcv *odSensorContribution) WRMS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -127,7 +127,7 @@ func (rcv *odSensorContribution) Wrms() float64 {
 	return rcv.WRMS()
 }
 
-// / Weighted RMS for this sensor's observations
+/// Weighted RMS for this sensor's observations
 func (rcv *odSensorContribution) MutateWRMS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -136,7 +136,7 @@ func (rcv *odSensorContribution) MutateWrms(n float64) bool {
 	return rcv.MutateWRMS(n)
 }
 
-// / Observation types from this sensor
+/// Observation types from this sensor
 func (rcv *odSensorContribution) OB_TYPES(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -162,7 +162,7 @@ func (rcv *odSensorContribution) ObTypesLength() int {
 	return rcv.OB_TYPESLength()
 }
 
-// / Observation types from this sensor
+/// Observation types from this sensor
 func odSensorContributionStart(builder *flatbuffers.Builder) {
 	builder.StartObject(6)
 }

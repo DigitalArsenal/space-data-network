@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Full Link element
+/// Full Link element
 type KMLLink struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLLink) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / URL
+/// URL
 func (rcv *KMLLink) HREF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLLink) Href() []byte {
 	return rcv.HREF()
 }
 
-// / URL
-// / Refresh mode
+/// URL
+/// Refresh mode
 func (rcv *KMLLink) REFRESH_MODE() KMLRefreshMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *KMLLink) RefreshMode() KMLRefreshMode {
 	return rcv.REFRESH_MODE()
 }
 
-// / Refresh mode
+/// Refresh mode
 func (rcv *KMLLink) MutateREFRESH_MODE(n KMLRefreshMode) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -78,7 +78,7 @@ func (rcv *KMLLink) MutateRefreshMode(n KMLRefreshMode) bool {
 	return rcv.MutateREFRESH_MODE(n)
 }
 
-// / Refresh interval in seconds
+/// Refresh interval in seconds
 func (rcv *KMLLink) REFRESH_INTERVAL() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,7 +91,7 @@ func (rcv *KMLLink) RefreshInterval() float64 {
 	return rcv.REFRESH_INTERVAL()
 }
 
-// / Refresh interval in seconds
+/// Refresh interval in seconds
 func (rcv *KMLLink) MutateREFRESH_INTERVAL(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
@@ -100,7 +100,7 @@ func (rcv *KMLLink) MutateRefreshInterval(n float64) bool {
 	return rcv.MutateREFRESH_INTERVAL(n)
 }
 
-// / View refresh mode
+/// View refresh mode
 func (rcv *KMLLink) VIEW_REFRESH_MODE() KMLViewRefreshMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -113,7 +113,7 @@ func (rcv *KMLLink) ViewRefreshMode() KMLViewRefreshMode {
 	return rcv.VIEW_REFRESH_MODE()
 }
 
-// / View refresh mode
+/// View refresh mode
 func (rcv *KMLLink) MutateVIEW_REFRESH_MODE(n KMLViewRefreshMode) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
@@ -122,7 +122,7 @@ func (rcv *KMLLink) MutateViewRefreshMode(n KMLViewRefreshMode) bool {
 	return rcv.MutateVIEW_REFRESH_MODE(n)
 }
 
-// / View refresh time in seconds
+/// View refresh time in seconds
 func (rcv *KMLLink) VIEW_REFRESH_TIME() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -135,7 +135,7 @@ func (rcv *KMLLink) ViewRefreshTime() float64 {
 	return rcv.VIEW_REFRESH_TIME()
 }
 
-// / View refresh time in seconds
+/// View refresh time in seconds
 func (rcv *KMLLink) MutateVIEW_REFRESH_TIME(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -144,7 +144,7 @@ func (rcv *KMLLink) MutateViewRefreshTime(n float64) bool {
 	return rcv.MutateVIEW_REFRESH_TIME(n)
 }
 
-// / View bound scale
+/// View bound scale
 func (rcv *KMLLink) VIEW_BOUND_SCALE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -157,7 +157,7 @@ func (rcv *KMLLink) ViewBoundScale() float64 {
 	return rcv.VIEW_BOUND_SCALE()
 }
 
-// / View bound scale
+/// View bound scale
 func (rcv *KMLLink) MutateVIEW_BOUND_SCALE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -166,7 +166,7 @@ func (rcv *KMLLink) MutateViewBoundScale(n float64) bool {
 	return rcv.MutateVIEW_BOUND_SCALE(n)
 }
 
-// / View format string
+/// View format string
 func (rcv *KMLLink) VIEW_FORMAT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -179,8 +179,8 @@ func (rcv *KMLLink) ViewFormat() []byte {
 	return rcv.VIEW_FORMAT()
 }
 
-// / View format string
-// / HTTP query string
+/// View format string
+/// HTTP query string
 func (rcv *KMLLink) HTTP_QUERY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -193,7 +193,7 @@ func (rcv *KMLLink) HttpQuery() []byte {
 	return rcv.HTTP_QUERY()
 }
 
-// / HTTP query string
+/// HTTP query string
 func KMLLinkStart(builder *flatbuffers.Builder) {
 	builder.StartObject(8)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Static numeric alarm levels
+/// Static numeric alarm levels
 type StaticAlarmRanges struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *StaticAlarmRanges) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Watch range
+/// Watch range
 func (rcv *StaticAlarmRanges) WATCH_RANGE(obj *AlarmRange) *AlarmRange {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *StaticAlarmRanges) WatchRange(obj *AlarmRange) *AlarmRange {
 	return rcv.WATCH_RANGE(obj)
 }
 
-// / Watch range
-// / Warning range
+/// Watch range
+/// Warning range
 func (rcv *StaticAlarmRanges) WARNING_RANGE(obj *AlarmRange) *AlarmRange {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -79,8 +79,8 @@ func (rcv *StaticAlarmRanges) WarningRange(obj *AlarmRange) *AlarmRange {
 	return rcv.WARNING_RANGE(obj)
 }
 
-// / Warning range
-// / Distress range
+/// Warning range
+/// Distress range
 func (rcv *StaticAlarmRanges) DISTRESS_RANGE(obj *AlarmRange) *AlarmRange {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -98,8 +98,8 @@ func (rcv *StaticAlarmRanges) DistressRange(obj *AlarmRange) *AlarmRange {
 	return rcv.DISTRESS_RANGE(obj)
 }
 
-// / Distress range
-// / Critical range
+/// Distress range
+/// Critical range
 func (rcv *StaticAlarmRanges) CRITICAL_RANGE(obj *AlarmRange) *AlarmRange {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,8 +117,8 @@ func (rcv *StaticAlarmRanges) CriticalRange(obj *AlarmRange) *AlarmRange {
 	return rcv.CRITICAL_RANGE(obj)
 }
 
-// / Critical range
-// / Severe range
+/// Critical range
+/// Severe range
 func (rcv *StaticAlarmRanges) SEVERE_RANGE(obj *AlarmRange) *AlarmRange {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -136,7 +136,7 @@ func (rcv *StaticAlarmRanges) SevereRange(obj *AlarmRange) *AlarmRange {
 	return rcv.SEVERE_RANGE(obj)
 }
 
-// / Severe range
+/// Severe range
 func StaticAlarmRangesStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

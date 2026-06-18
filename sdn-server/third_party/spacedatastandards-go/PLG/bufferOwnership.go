@@ -4,16 +4,16 @@ package PLG
 
 import "strconv"
 
-// / Buffer ownership contract advertised by a stream port.
+/// Buffer ownership contract advertised by a stream port.
 type bufferOwnership byte
 
 const (
 	/// Arena / host owns the backing bytes; receiver must not free.
-	bufferOwnershipHOST_OWNED bufferOwnership = 0
+	bufferOwnershipHOST_OWNED   bufferOwnership = 0
 	/// Plugin owns the backing bytes; host must not free.
 	bufferOwnershipPLUGIN_OWNED bufferOwnership = 1
 	/// Ownership transfers with the frame (hand-off semantics).
-	bufferOwnershipTRANSFERRED bufferOwnership = 2
+	bufferOwnershipTRANSFERRED  bufferOwnership = 2
 )
 
 var EnumNamesbufferOwnership = map[bufferOwnership]string{

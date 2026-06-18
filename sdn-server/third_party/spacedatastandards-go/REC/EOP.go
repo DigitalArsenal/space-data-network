@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Earth Orientation Parameters
+/// Earth Orientation Parameters
 type EOP struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *EOP) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// /  Date in ISO 8601 format, e.g., "2018-01-01T00:00:00Z"
+///  Date in ISO 8601 format, e.g., "2018-01-01T00:00:00Z"
 func (rcv *EOP) DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *EOP) Date() []byte {
 	return rcv.DATE()
 }
 
-// /  Date in ISO 8601 format, e.g., "2018-01-01T00:00:00Z"
-// /  Modified Julian Date in UTC, e.g., 58119
+///  Date in ISO 8601 format, e.g., "2018-01-01T00:00:00Z"
+///  Modified Julian Date in UTC, e.g., 58119
 func (rcv *EOP) MJD() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,7 +81,7 @@ func (rcv *EOP) Mjd() uint32 {
 	return rcv.MJD()
 }
 
-// /  Modified Julian Date in UTC, e.g., 58119
+///  Modified Julian Date in UTC, e.g., 58119
 func (rcv *EOP) MutateMJD(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -90,7 +90,7 @@ func (rcv *EOP) MutateMjd(n uint32) bool {
 	return rcv.MutateMJD(n)
 }
 
-// /  x component of Pole Wander in radians, e.g., 2.872908911518888E-7
+///  x component of Pole Wander in radians, e.g., 2.872908911518888E-7
 func (rcv *EOP) X_POLE_WANDER_RADIANS() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -103,7 +103,7 @@ func (rcv *EOP) XPoleWanderRadians() float32 {
 	return rcv.X_POLE_WANDER_RADIANS()
 }
 
-// /  x component of Pole Wander in radians, e.g., 2.872908911518888E-7
+///  x component of Pole Wander in radians, e.g., 2.872908911518888E-7
 func (rcv *EOP) MutateX_POLE_WANDER_RADIANS(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(8, n)
 }
@@ -112,7 +112,7 @@ func (rcv *EOP) MutateXPoleWanderRadians(n float32) bool {
 	return rcv.MutateX_POLE_WANDER_RADIANS(n)
 }
 
-// /  y component of Pole Wander in radians, e.g., 1.2003259523750447E-6
+///  y component of Pole Wander in radians, e.g., 1.2003259523750447E-6
 func (rcv *EOP) Y_POLE_WANDER_RADIANS() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -125,7 +125,7 @@ func (rcv *EOP) YPoleWanderRadians() float32 {
 	return rcv.Y_POLE_WANDER_RADIANS()
 }
 
-// /  y component of Pole Wander in radians, e.g., 1.2003259523750447E-6
+///  y component of Pole Wander in radians, e.g., 1.2003259523750447E-6
 func (rcv *EOP) MutateY_POLE_WANDER_RADIANS(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(10, n)
 }
@@ -134,7 +134,7 @@ func (rcv *EOP) MutateYPoleWanderRadians(n float32) bool {
 	return rcv.MutateY_POLE_WANDER_RADIANS(n)
 }
 
-// /  x component of Celestial Pole Offset in radians, e.g., 5.720801437092525E-10
+///  x component of Celestial Pole Offset in radians, e.g., 5.720801437092525E-10
 func (rcv *EOP) X_CELESTIAL_POLE_OFFSET_RADIANS() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -147,7 +147,7 @@ func (rcv *EOP) XCelestialPoleOffsetRadians() float32 {
 	return rcv.X_CELESTIAL_POLE_OFFSET_RADIANS()
 }
 
-// /  x component of Celestial Pole Offset in radians, e.g., 5.720801437092525E-10
+///  x component of Celestial Pole Offset in radians, e.g., 5.720801437092525E-10
 func (rcv *EOP) MutateX_CELESTIAL_POLE_OFFSET_RADIANS(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(12, n)
 }
@@ -156,7 +156,7 @@ func (rcv *EOP) MutateXCelestialPoleOffsetRadians(n float32) bool {
 	return rcv.MutateX_CELESTIAL_POLE_OFFSET_RADIANS(n)
 }
 
-// /  y component of Celestial Pole Offset in radians, e.g., -8.484239419416879E-10
+///  y component of Celestial Pole Offset in radians, e.g., -8.484239419416879E-10
 func (rcv *EOP) Y_CELESTIAL_POLE_OFFSET_RADIANS() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -169,7 +169,7 @@ func (rcv *EOP) YCelestialPoleOffsetRadians() float32 {
 	return rcv.Y_CELESTIAL_POLE_OFFSET_RADIANS()
 }
 
-// /  y component of Celestial Pole Offset in radians, e.g., -8.484239419416879E-10
+///  y component of Celestial Pole Offset in radians, e.g., -8.484239419416879E-10
 func (rcv *EOP) MutateY_CELESTIAL_POLE_OFFSET_RADIANS(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(14, n)
 }
@@ -178,7 +178,7 @@ func (rcv *EOP) MutateYCelestialPoleOffsetRadians(n float32) bool {
 	return rcv.MutateY_CELESTIAL_POLE_OFFSET_RADIANS(n)
 }
 
-// /  UT1 minus UTC in seconds, e.g., 0.2163567
+///  UT1 minus UTC in seconds, e.g., 0.2163567
 func (rcv *EOP) UT1_MINUS_UTC_SECONDS() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -191,7 +191,7 @@ func (rcv *EOP) Ut1MinusUtcSeconds() float32 {
 	return rcv.UT1_MINUS_UTC_SECONDS()
 }
 
-// /  UT1 minus UTC in seconds, e.g., 0.2163567
+///  UT1 minus UTC in seconds, e.g., 0.2163567
 func (rcv *EOP) MutateUT1_MINUS_UTC_SECONDS(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(16, n)
 }
@@ -200,7 +200,7 @@ func (rcv *EOP) MutateUt1MinusUtcSeconds(n float32) bool {
 	return rcv.MutateUT1_MINUS_UTC_SECONDS(n)
 }
 
-// /  TAI minus UTC in seconds, e.g., 37
+///  TAI minus UTC in seconds, e.g., 37
 func (rcv *EOP) TAI_MINUS_UTC_SECONDS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -213,7 +213,7 @@ func (rcv *EOP) TaiMinusUtcSeconds() uint16 {
 	return rcv.TAI_MINUS_UTC_SECONDS()
 }
 
-// /  TAI minus UTC in seconds, e.g., 37
+///  TAI minus UTC in seconds, e.g., 37
 func (rcv *EOP) MutateTAI_MINUS_UTC_SECONDS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(18, n)
 }
@@ -222,7 +222,7 @@ func (rcv *EOP) MutateTaiMinusUtcSeconds(n uint16) bool {
 	return rcv.MutateTAI_MINUS_UTC_SECONDS(n)
 }
 
-// /  Correction to Length of Day in seconds, e.g., 8.094E-4
+///  Correction to Length of Day in seconds, e.g., 8.094E-4
 func (rcv *EOP) LENGTH_OF_DAY_CORRECTION_SECONDS() float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -235,7 +235,7 @@ func (rcv *EOP) LengthOfDayCorrectionSeconds() float32 {
 	return rcv.LENGTH_OF_DAY_CORRECTION_SECONDS()
 }
 
-// /  Correction to Length of Day in seconds, e.g., 8.094E-4
+///  Correction to Length of Day in seconds, e.g., 8.094E-4
 func (rcv *EOP) MutateLENGTH_OF_DAY_CORRECTION_SECONDS(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(20, n)
 }
@@ -244,7 +244,7 @@ func (rcv *EOP) MutateLengthOfDayCorrectionSeconds(n float32) bool {
 	return rcv.MutateLENGTH_OF_DAY_CORRECTION_SECONDS(n)
 }
 
-// /  Data type (O = Observed, P = Predicted)
+///  Data type (O = Observed, P = Predicted)
 func (rcv *EOP) DATA_TYPE() DataType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -257,7 +257,7 @@ func (rcv *EOP) DataType() DataType {
 	return rcv.DATA_TYPE()
 }
 
-// /  Data type (O = Observed, P = Predicted)
+///  Data type (O = Observed, P = Predicted)
 func (rcv *EOP) MutateDATA_TYPE(n DataType) bool {
 	return rcv._tab.MutateInt8Slot(22, int8(n))
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / On-Orbit Antenna
+/// On-Orbit Antenna
 type OOA struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *OOA) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier
+/// Unique identifier
 func (rcv *OOA) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *OOA) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique identifier
-// / Reference to parent on-orbit object
+/// Unique identifier
+/// Reference to parent on-orbit object
 func (rcv *OOA) ID_ON_ORBIT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *OOA) IdOnOrbit() []byte {
 	return rcv.ID_ON_ORBIT()
 }
 
-// / Reference to parent on-orbit object
-// / Reference to antenna specification
+/// Reference to parent on-orbit object
+/// Reference to antenna specification
 func (rcv *OOA) ID_ANTENNA() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *OOA) IdAntenna() []byte {
 	return rcv.ID_ANTENNA()
 }
 
-// / Reference to antenna specification
-// / Antenna name or designation
+/// Reference to antenna specification
+/// Antenna name or designation
 func (rcv *OOA) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *OOA) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Antenna name or designation
-// / Antenna type (e.g., PARABOLIC, PHASED_ARRAY, HORN, HELICAL, DIPOLE, PATCH, YAGI)
+/// Antenna name or designation
+/// Antenna type (e.g., PARABOLIC, PHASED_ARRAY, HORN, HELICAL, DIPOLE, PATCH, YAGI)
 func (rcv *OOA) ANTENNA_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *OOA) AntennaType() []byte {
 	return rcv.ANTENNA_TYPE()
 }
 
-// / Antenna type (e.g., PARABOLIC, PHASED_ARRAY, HORN, HELICAL, DIPOLE, PATCH, YAGI)
-// / Number of antennas of this type
+/// Antenna type (e.g., PARABOLIC, PHASED_ARRAY, HORN, HELICAL, DIPOLE, PATCH, YAGI)
+/// Number of antennas of this type
 func (rcv *OOA) QUANTITY() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,7 +137,7 @@ func (rcv *OOA) Quantity() uint32 {
 	return rcv.QUANTITY()
 }
 
-// / Number of antennas of this type
+/// Number of antennas of this type
 func (rcv *OOA) MutateQUANTITY(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(14, n)
 }
@@ -146,7 +146,7 @@ func (rcv *OOA) MutateQuantity(n uint32) bool {
 	return rcv.MutateQUANTITY(n)
 }
 
-// / Operating frequency band (e.g., UHF, L, S, C, X, Ku, Ka, V, W)
+/// Operating frequency band (e.g., UHF, L, S, C, X, Ku, Ka, V, W)
 func (rcv *OOA) BAND() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,8 +159,8 @@ func (rcv *OOA) Band() []byte {
 	return rcv.BAND()
 }
 
-// / Operating frequency band (e.g., UHF, L, S, C, X, Ku, Ka, V, W)
-// / Minimum operating frequency in MHz
+/// Operating frequency band (e.g., UHF, L, S, C, X, Ku, Ka, V, W)
+/// Minimum operating frequency in MHz
 func (rcv *OOA) FREQ_MIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -173,7 +173,7 @@ func (rcv *OOA) FreqMin() float64 {
 	return rcv.FREQ_MIN()
 }
 
-// / Minimum operating frequency in MHz
+/// Minimum operating frequency in MHz
 func (rcv *OOA) MutateFREQ_MIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -182,7 +182,7 @@ func (rcv *OOA) MutateFreqMin(n float64) bool {
 	return rcv.MutateFREQ_MIN(n)
 }
 
-// / Maximum operating frequency in MHz
+/// Maximum operating frequency in MHz
 func (rcv *OOA) FREQ_MAX() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -195,7 +195,7 @@ func (rcv *OOA) FreqMax() float64 {
 	return rcv.FREQ_MAX()
 }
 
-// / Maximum operating frequency in MHz
+/// Maximum operating frequency in MHz
 func (rcv *OOA) MutateFREQ_MAX(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -204,7 +204,7 @@ func (rcv *OOA) MutateFreqMax(n float64) bool {
 	return rcv.MutateFREQ_MAX(n)
 }
 
-// / Antenna gain in dBi
+/// Antenna gain in dBi
 func (rcv *OOA) GAIN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -217,7 +217,7 @@ func (rcv *OOA) Gain() float64 {
 	return rcv.GAIN()
 }
 
-// / Antenna gain in dBi
+/// Antenna gain in dBi
 func (rcv *OOA) MutateGAIN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -226,7 +226,7 @@ func (rcv *OOA) MutateGain(n float64) bool {
 	return rcv.MutateGAIN(n)
 }
 
-// / Antenna diameter or aperture in meters
+/// Antenna diameter or aperture in meters
 func (rcv *OOA) APERTURE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -239,7 +239,7 @@ func (rcv *OOA) Aperture() float64 {
 	return rcv.APERTURE()
 }
 
-// / Antenna diameter or aperture in meters
+/// Antenna diameter or aperture in meters
 func (rcv *OOA) MutateAPERTURE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -248,7 +248,7 @@ func (rcv *OOA) MutateAperture(n float64) bool {
 	return rcv.MutateAPERTURE(n)
 }
 
-// / Beamwidth in degrees
+/// Beamwidth in degrees
 func (rcv *OOA) BEAMWIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -261,7 +261,7 @@ func (rcv *OOA) Beamwidth() float64 {
 	return rcv.BEAMWIDTH()
 }
 
-// / Beamwidth in degrees
+/// Beamwidth in degrees
 func (rcv *OOA) MutateBEAMWIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -270,7 +270,7 @@ func (rcv *OOA) MutateBeamwidth(n float64) bool {
 	return rcv.MutateBEAMWIDTH(n)
 }
 
-// / Polarization type (e.g., LINEAR, CIRCULAR, DUAL, RHCP, LHCP)
+/// Polarization type (e.g., LINEAR, CIRCULAR, DUAL, RHCP, LHCP)
 func (rcv *OOA) POLARIZATION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -283,8 +283,8 @@ func (rcv *OOA) Polarization() []byte {
 	return rcv.POLARIZATION()
 }
 
-// / Polarization type (e.g., LINEAR, CIRCULAR, DUAL, RHCP, LHCP)
-// / Whether the antenna is steerable
+/// Polarization type (e.g., LINEAR, CIRCULAR, DUAL, RHCP, LHCP)
+/// Whether the antenna is steerable
 func (rcv *OOA) STEERABLE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -297,7 +297,7 @@ func (rcv *OOA) Steerable() bool {
 	return rcv.STEERABLE()
 }
 
-// / Whether the antenna is steerable
+/// Whether the antenna is steerable
 func (rcv *OOA) MutateSTEERABLE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(30, n)
 }
@@ -306,7 +306,7 @@ func (rcv *OOA) MutateSteerable(n bool) bool {
 	return rcv.MutateSTEERABLE(n)
 }
 
-// / Maximum slew rate in degrees per second
+/// Maximum slew rate in degrees per second
 func (rcv *OOA) SLEW_RATE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -319,7 +319,7 @@ func (rcv *OOA) SlewRate() float64 {
 	return rcv.SLEW_RATE()
 }
 
-// / Maximum slew rate in degrees per second
+/// Maximum slew rate in degrees per second
 func (rcv *OOA) MutateSLEW_RATE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -328,7 +328,7 @@ func (rcv *OOA) MutateSlewRate(n float64) bool {
 	return rcv.MutateSLEW_RATE(n)
 }
 
-// / Purpose or function (e.g., TT_C, PAYLOAD, CROSSLINK, GPS)
+/// Purpose or function (e.g., TT_C, PAYLOAD, CROSSLINK, GPS)
 func (rcv *OOA) PURPOSE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -341,8 +341,8 @@ func (rcv *OOA) Purpose() []byte {
 	return rcv.PURPOSE()
 }
 
-// / Purpose or function (e.g., TT_C, PAYLOAD, CROSSLINK, GPS)
-// / Additional notes
+/// Purpose or function (e.g., TT_C, PAYLOAD, CROSSLINK, GPS)
+/// Additional notes
 func (rcv *OOA) NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -355,7 +355,7 @@ func (rcv *OOA) Notes() []byte {
 	return rcv.NOTES()
 }
 
-// / Additional notes
+/// Additional notes
 func OOAStart(builder *flatbuffers.Builder) {
 	builder.StartObject(17)
 }

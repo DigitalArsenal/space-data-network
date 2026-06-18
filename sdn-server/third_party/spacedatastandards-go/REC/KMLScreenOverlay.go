@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Screen overlay
+/// Screen overlay
 type KMLScreenOverlay struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLScreenOverlay) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Name
+/// Name
 func (rcv *KMLScreenOverlay) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *KMLScreenOverlay) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Name
-// / Description
+/// Name
+/// Description
 func (rcv *KMLScreenOverlay) DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *KMLScreenOverlay) Description() []byte {
 	return rcv.DESCRIPTION()
 }
 
-// / Description
-// / Visibility
+/// Description
+/// Visibility
 func (rcv *KMLScreenOverlay) VISIBILITY() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *KMLScreenOverlay) Visibility() bool {
 	return rcv.VISIBILITY()
 }
 
-// / Visibility
+/// Visibility
 func (rcv *KMLScreenOverlay) MutateVISIBILITY(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }
@@ -92,7 +92,7 @@ func (rcv *KMLScreenOverlay) MutateVisibility(n bool) bool {
 	return rcv.MutateVISIBILITY(n)
 }
 
-// / Icon/image URL
+/// Icon/image URL
 func (rcv *KMLScreenOverlay) ICON_HREF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,8 +105,8 @@ func (rcv *KMLScreenOverlay) IconHref() []byte {
 	return rcv.ICON_HREF()
 }
 
-// / Icon/image URL
-// / Color
+/// Icon/image URL
+/// Color
 func (rcv *KMLScreenOverlay) COLOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -119,8 +119,8 @@ func (rcv *KMLScreenOverlay) Color() []byte {
 	return rcv.COLOR()
 }
 
-// / Color
-// / Draw order
+/// Color
+/// Draw order
 func (rcv *KMLScreenOverlay) DRAW_ORDER() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -133,7 +133,7 @@ func (rcv *KMLScreenOverlay) DrawOrder() int32 {
 	return rcv.DRAW_ORDER()
 }
 
-// / Draw order
+/// Draw order
 func (rcv *KMLScreenOverlay) MutateDRAW_ORDER(n int32) bool {
 	return rcv._tab.MutateInt32Slot(14, n)
 }
@@ -142,7 +142,7 @@ func (rcv *KMLScreenOverlay) MutateDrawOrder(n int32) bool {
 	return rcv.MutateDRAW_ORDER(n)
 }
 
-// / Overlay X position
+/// Overlay X position
 func (rcv *KMLScreenOverlay) OVERLAY_XY_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -155,7 +155,7 @@ func (rcv *KMLScreenOverlay) OverlayXyX() float64 {
 	return rcv.OVERLAY_XY_X()
 }
 
-// / Overlay X position
+/// Overlay X position
 func (rcv *KMLScreenOverlay) MutateOVERLAY_XY_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -164,7 +164,7 @@ func (rcv *KMLScreenOverlay) MutateOverlayXyX(n float64) bool {
 	return rcv.MutateOVERLAY_XY_X(n)
 }
 
-// / Overlay Y position
+/// Overlay Y position
 func (rcv *KMLScreenOverlay) OVERLAY_XY_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -177,7 +177,7 @@ func (rcv *KMLScreenOverlay) OverlayXyY() float64 {
 	return rcv.OVERLAY_XY_Y()
 }
 
-// / Overlay Y position
+/// Overlay Y position
 func (rcv *KMLScreenOverlay) MutateOVERLAY_XY_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -186,7 +186,7 @@ func (rcv *KMLScreenOverlay) MutateOverlayXyY(n float64) bool {
 	return rcv.MutateOVERLAY_XY_Y(n)
 }
 
-// / Overlay X units
+/// Overlay X units
 func (rcv *KMLScreenOverlay) OVERLAY_XY_XUNITS() KMLUnits {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -199,7 +199,7 @@ func (rcv *KMLScreenOverlay) OverlayXyXunits() KMLUnits {
 	return rcv.OVERLAY_XY_XUNITS()
 }
 
-// / Overlay X units
+/// Overlay X units
 func (rcv *KMLScreenOverlay) MutateOVERLAY_XY_XUNITS(n KMLUnits) bool {
 	return rcv._tab.MutateInt8Slot(20, int8(n))
 }
@@ -208,7 +208,7 @@ func (rcv *KMLScreenOverlay) MutateOverlayXyXunits(n KMLUnits) bool {
 	return rcv.MutateOVERLAY_XY_XUNITS(n)
 }
 
-// / Overlay Y units
+/// Overlay Y units
 func (rcv *KMLScreenOverlay) OVERLAY_XY_YUNITS() KMLUnits {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -221,7 +221,7 @@ func (rcv *KMLScreenOverlay) OverlayXyYunits() KMLUnits {
 	return rcv.OVERLAY_XY_YUNITS()
 }
 
-// / Overlay Y units
+/// Overlay Y units
 func (rcv *KMLScreenOverlay) MutateOVERLAY_XY_YUNITS(n KMLUnits) bool {
 	return rcv._tab.MutateInt8Slot(22, int8(n))
 }
@@ -230,7 +230,7 @@ func (rcv *KMLScreenOverlay) MutateOverlayXyYunits(n KMLUnits) bool {
 	return rcv.MutateOVERLAY_XY_YUNITS(n)
 }
 
-// / Screen X position
+/// Screen X position
 func (rcv *KMLScreenOverlay) SCREEN_XY_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -243,7 +243,7 @@ func (rcv *KMLScreenOverlay) ScreenXyX() float64 {
 	return rcv.SCREEN_XY_X()
 }
 
-// / Screen X position
+/// Screen X position
 func (rcv *KMLScreenOverlay) MutateSCREEN_XY_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -252,7 +252,7 @@ func (rcv *KMLScreenOverlay) MutateScreenXyX(n float64) bool {
 	return rcv.MutateSCREEN_XY_X(n)
 }
 
-// / Screen Y position
+/// Screen Y position
 func (rcv *KMLScreenOverlay) SCREEN_XY_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -265,7 +265,7 @@ func (rcv *KMLScreenOverlay) ScreenXyY() float64 {
 	return rcv.SCREEN_XY_Y()
 }
 
-// / Screen Y position
+/// Screen Y position
 func (rcv *KMLScreenOverlay) MutateSCREEN_XY_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -274,7 +274,7 @@ func (rcv *KMLScreenOverlay) MutateScreenXyY(n float64) bool {
 	return rcv.MutateSCREEN_XY_Y(n)
 }
 
-// / Screen X units
+/// Screen X units
 func (rcv *KMLScreenOverlay) SCREEN_XY_XUNITS() KMLUnits {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -287,7 +287,7 @@ func (rcv *KMLScreenOverlay) ScreenXyXunits() KMLUnits {
 	return rcv.SCREEN_XY_XUNITS()
 }
 
-// / Screen X units
+/// Screen X units
 func (rcv *KMLScreenOverlay) MutateSCREEN_XY_XUNITS(n KMLUnits) bool {
 	return rcv._tab.MutateInt8Slot(28, int8(n))
 }
@@ -296,7 +296,7 @@ func (rcv *KMLScreenOverlay) MutateScreenXyXunits(n KMLUnits) bool {
 	return rcv.MutateSCREEN_XY_XUNITS(n)
 }
 
-// / Screen Y units
+/// Screen Y units
 func (rcv *KMLScreenOverlay) SCREEN_XY_YUNITS() KMLUnits {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -309,7 +309,7 @@ func (rcv *KMLScreenOverlay) ScreenXyYunits() KMLUnits {
 	return rcv.SCREEN_XY_YUNITS()
 }
 
-// / Screen Y units
+/// Screen Y units
 func (rcv *KMLScreenOverlay) MutateSCREEN_XY_YUNITS(n KMLUnits) bool {
 	return rcv._tab.MutateInt8Slot(30, int8(n))
 }
@@ -318,7 +318,7 @@ func (rcv *KMLScreenOverlay) MutateScreenXyYunits(n KMLUnits) bool {
 	return rcv.MutateSCREEN_XY_YUNITS(n)
 }
 
-// / Rotation X
+/// Rotation X
 func (rcv *KMLScreenOverlay) ROTATION_XY_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -331,7 +331,7 @@ func (rcv *KMLScreenOverlay) RotationXyX() float64 {
 	return rcv.ROTATION_XY_X()
 }
 
-// / Rotation X
+/// Rotation X
 func (rcv *KMLScreenOverlay) MutateROTATION_XY_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -340,7 +340,7 @@ func (rcv *KMLScreenOverlay) MutateRotationXyX(n float64) bool {
 	return rcv.MutateROTATION_XY_X(n)
 }
 
-// / Rotation Y
+/// Rotation Y
 func (rcv *KMLScreenOverlay) ROTATION_XY_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -353,7 +353,7 @@ func (rcv *KMLScreenOverlay) RotationXyY() float64 {
 	return rcv.ROTATION_XY_Y()
 }
 
-// / Rotation Y
+/// Rotation Y
 func (rcv *KMLScreenOverlay) MutateROTATION_XY_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(34, n)
 }
@@ -362,7 +362,7 @@ func (rcv *KMLScreenOverlay) MutateRotationXyY(n float64) bool {
 	return rcv.MutateROTATION_XY_Y(n)
 }
 
-// / Rotation X units
+/// Rotation X units
 func (rcv *KMLScreenOverlay) ROTATION_XY_XUNITS() KMLUnits {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -375,7 +375,7 @@ func (rcv *KMLScreenOverlay) RotationXyXunits() KMLUnits {
 	return rcv.ROTATION_XY_XUNITS()
 }
 
-// / Rotation X units
+/// Rotation X units
 func (rcv *KMLScreenOverlay) MutateROTATION_XY_XUNITS(n KMLUnits) bool {
 	return rcv._tab.MutateInt8Slot(36, int8(n))
 }
@@ -384,7 +384,7 @@ func (rcv *KMLScreenOverlay) MutateRotationXyXunits(n KMLUnits) bool {
 	return rcv.MutateROTATION_XY_XUNITS(n)
 }
 
-// / Rotation Y units
+/// Rotation Y units
 func (rcv *KMLScreenOverlay) ROTATION_XY_YUNITS() KMLUnits {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -397,7 +397,7 @@ func (rcv *KMLScreenOverlay) RotationXyYunits() KMLUnits {
 	return rcv.ROTATION_XY_YUNITS()
 }
 
-// / Rotation Y units
+/// Rotation Y units
 func (rcv *KMLScreenOverlay) MutateROTATION_XY_YUNITS(n KMLUnits) bool {
 	return rcv._tab.MutateInt8Slot(38, int8(n))
 }
@@ -406,7 +406,7 @@ func (rcv *KMLScreenOverlay) MutateRotationXyYunits(n KMLUnits) bool {
 	return rcv.MutateROTATION_XY_YUNITS(n)
 }
 
-// / Size X
+/// Size X
 func (rcv *KMLScreenOverlay) SIZE_X() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -419,7 +419,7 @@ func (rcv *KMLScreenOverlay) SizeX() float64 {
 	return rcv.SIZE_X()
 }
 
-// / Size X
+/// Size X
 func (rcv *KMLScreenOverlay) MutateSIZE_X(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(40, n)
 }
@@ -428,7 +428,7 @@ func (rcv *KMLScreenOverlay) MutateSizeX(n float64) bool {
 	return rcv.MutateSIZE_X(n)
 }
 
-// / Size Y
+/// Size Y
 func (rcv *KMLScreenOverlay) SIZE_Y() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -441,7 +441,7 @@ func (rcv *KMLScreenOverlay) SizeY() float64 {
 	return rcv.SIZE_Y()
 }
 
-// / Size Y
+/// Size Y
 func (rcv *KMLScreenOverlay) MutateSIZE_Y(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -450,7 +450,7 @@ func (rcv *KMLScreenOverlay) MutateSizeY(n float64) bool {
 	return rcv.MutateSIZE_Y(n)
 }
 
-// / Size X units
+/// Size X units
 func (rcv *KMLScreenOverlay) SIZE_XUNITS() KMLUnits {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -463,7 +463,7 @@ func (rcv *KMLScreenOverlay) SizeXunits() KMLUnits {
 	return rcv.SIZE_XUNITS()
 }
 
-// / Size X units
+/// Size X units
 func (rcv *KMLScreenOverlay) MutateSIZE_XUNITS(n KMLUnits) bool {
 	return rcv._tab.MutateInt8Slot(44, int8(n))
 }
@@ -472,7 +472,7 @@ func (rcv *KMLScreenOverlay) MutateSizeXunits(n KMLUnits) bool {
 	return rcv.MutateSIZE_XUNITS(n)
 }
 
-// / Size Y units
+/// Size Y units
 func (rcv *KMLScreenOverlay) SIZE_YUNITS() KMLUnits {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -485,7 +485,7 @@ func (rcv *KMLScreenOverlay) SizeYunits() KMLUnits {
 	return rcv.SIZE_YUNITS()
 }
 
-// / Size Y units
+/// Size Y units
 func (rcv *KMLScreenOverlay) MutateSIZE_YUNITS(n KMLUnits) bool {
 	return rcv._tab.MutateInt8Slot(46, int8(n))
 }
@@ -494,7 +494,7 @@ func (rcv *KMLScreenOverlay) MutateSizeYunits(n KMLUnits) bool {
 	return rcv.MutateSIZE_YUNITS(n)
 }
 
-// / Rotation in degrees
+/// Rotation in degrees
 func (rcv *KMLScreenOverlay) ROTATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -507,7 +507,7 @@ func (rcv *KMLScreenOverlay) Rotation() float64 {
 	return rcv.ROTATION()
 }
 
-// / Rotation in degrees
+/// Rotation in degrees
 func (rcv *KMLScreenOverlay) MutateROTATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(48, n)
 }

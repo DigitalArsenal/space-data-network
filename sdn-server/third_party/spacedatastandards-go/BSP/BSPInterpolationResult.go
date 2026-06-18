@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Result of one 3D B-spline interpolation.
+/// Result of one 3D B-spline interpolation.
 type BSPInterpolationResult struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *BSPInterpolationResult) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Interpolation status.
+/// Interpolation status.
 func (rcv *BSPInterpolationResult) STATUS() bspInterpolationStatus {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *BSPInterpolationResult) Status() bspInterpolationStatus {
 	return rcv.STATUS()
 }
 
-// / Interpolation status.
+/// Interpolation status.
 func (rcv *BSPInterpolationResult) MutateSTATUS(n bspInterpolationStatus) bool {
 	return rcv._tab.MutateInt8Slot(4, int8(n))
 }
@@ -64,7 +64,7 @@ func (rcv *BSPInterpolationResult) MutateStatus(n bspInterpolationStatus) bool {
 	return rcv.MutateSTATUS(n)
 }
 
-// / Optional error detail when STATUS is not OK.
+/// Optional error detail when STATUS is not OK.
 func (rcv *BSPInterpolationResult) ERROR_MESSAGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,8 +77,8 @@ func (rcv *BSPInterpolationResult) ErrorMessage() []byte {
 	return rcv.ERROR_MESSAGE()
 }
 
-// / Optional error detail when STATUS is not OK.
-// / Output sample positions.
+/// Optional error detail when STATUS is not OK.
+/// Output sample positions.
 func (rcv *BSPInterpolationResult) SAMPLES(obj *BSPVector3Series) *BSPVector3Series {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -96,8 +96,8 @@ func (rcv *BSPInterpolationResult) Samples(obj *BSPVector3Series) *BSPVector3Ser
 	return rcv.SAMPLES(obj)
 }
 
-// / Output sample positions.
-// / First derivative of coordinate 1 at each output sample.
+/// Output sample positions.
+/// First derivative of coordinate 1 at each output sample.
 func (rcv *BSPInterpolationResult) XD1(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -123,7 +123,7 @@ func (rcv *BSPInterpolationResult) Xd1Length() int {
 	return rcv.XD1Length()
 }
 
-// / First derivative of coordinate 1 at each output sample.
+/// First derivative of coordinate 1 at each output sample.
 func (rcv *BSPInterpolationResult) MutateXD1(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -137,7 +137,7 @@ func (rcv *BSPInterpolationResult) MutateXd1(j int, n float64) bool {
 	return rcv.MutateXD1(j, n)
 }
 
-// / First derivative of coordinate 2 at each output sample.
+/// First derivative of coordinate 2 at each output sample.
 func (rcv *BSPInterpolationResult) XD2(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -163,7 +163,7 @@ func (rcv *BSPInterpolationResult) Xd2Length() int {
 	return rcv.XD2Length()
 }
 
-// / First derivative of coordinate 2 at each output sample.
+/// First derivative of coordinate 2 at each output sample.
 func (rcv *BSPInterpolationResult) MutateXD2(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -177,7 +177,7 @@ func (rcv *BSPInterpolationResult) MutateXd2(j int, n float64) bool {
 	return rcv.MutateXD2(j, n)
 }
 
-// / First derivative of coordinate 3 at each output sample.
+/// First derivative of coordinate 3 at each output sample.
 func (rcv *BSPInterpolationResult) XD3(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -203,7 +203,7 @@ func (rcv *BSPInterpolationResult) Xd3Length() int {
 	return rcv.XD3Length()
 }
 
-// / First derivative of coordinate 3 at each output sample.
+/// First derivative of coordinate 3 at each output sample.
 func (rcv *BSPInterpolationResult) MutateXD3(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -217,7 +217,7 @@ func (rcv *BSPInterpolationResult) MutateXd3(j int, n float64) bool {
 	return rcv.MutateXD3(j, n)
 }
 
-// / Second derivative of coordinate 1 at each output sample.
+/// Second derivative of coordinate 1 at each output sample.
 func (rcv *BSPInterpolationResult) XDD1(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -243,7 +243,7 @@ func (rcv *BSPInterpolationResult) Xdd1Length() int {
 	return rcv.XDD1Length()
 }
 
-// / Second derivative of coordinate 1 at each output sample.
+/// Second derivative of coordinate 1 at each output sample.
 func (rcv *BSPInterpolationResult) MutateXDD1(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -257,7 +257,7 @@ func (rcv *BSPInterpolationResult) MutateXdd1(j int, n float64) bool {
 	return rcv.MutateXDD1(j, n)
 }
 
-// / Second derivative of coordinate 2 at each output sample.
+/// Second derivative of coordinate 2 at each output sample.
 func (rcv *BSPInterpolationResult) XDD2(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -283,7 +283,7 @@ func (rcv *BSPInterpolationResult) Xdd2Length() int {
 	return rcv.XDD2Length()
 }
 
-// / Second derivative of coordinate 2 at each output sample.
+/// Second derivative of coordinate 2 at each output sample.
 func (rcv *BSPInterpolationResult) MutateXDD2(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -297,7 +297,7 @@ func (rcv *BSPInterpolationResult) MutateXdd2(j int, n float64) bool {
 	return rcv.MutateXDD2(j, n)
 }
 
-// / Second derivative of coordinate 3 at each output sample.
+/// Second derivative of coordinate 3 at each output sample.
 func (rcv *BSPInterpolationResult) XDD3(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -323,7 +323,7 @@ func (rcv *BSPInterpolationResult) Xdd3Length() int {
 	return rcv.XDD3Length()
 }
 
-// / Second derivative of coordinate 3 at each output sample.
+/// Second derivative of coordinate 3 at each output sample.
 func (rcv *BSPInterpolationResult) MutateXDD3(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -337,7 +337,7 @@ func (rcv *BSPInterpolationResult) MutateXdd3(j int, n float64) bool {
 	return rcv.MutateXDD3(j, n)
 }
 
-// / Caller trace/correlation identifier copied from the request when present.
+/// Caller trace/correlation identifier copied from the request when present.
 func (rcv *BSPInterpolationResult) TRACE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -350,7 +350,7 @@ func (rcv *BSPInterpolationResult) TraceId() []byte {
 	return rcv.TRACE_ID()
 }
 
-// / Caller trace/correlation identifier copied from the request when present.
+/// Caller trace/correlation identifier copied from the request when present.
 func BSPInterpolationResultStart(builder *flatbuffers.Builder) {
 	builder.StartObject(10)
 }

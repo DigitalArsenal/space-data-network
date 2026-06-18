@@ -4,20 +4,20 @@ package CAQ
 
 import "strconv"
 
-// / Catalog query discriminator. Callers and host plugins use this enum to
-// / select a query shape for in-memory catalog queries answered by a host
-// / runtime (for example the shared FlatSQL entity collection).
+/// Catalog query discriminator. Callers and host plugins use this enum to
+/// select a query shape for in-memory catalog queries answered by a host
+/// runtime (for example the shared FlatSQL entity collection).
 type catalogQueryKind byte
 
 const (
 	/// Return matched entity metadata rows.
-	catalogQueryKindROWS catalogQueryKind = 0
+	catalogQueryKindROWS            catalogQueryKind = 0
 	/// Return only the matched entity indices.
-	catalogQueryKindENTITY_INDICES catalogQueryKind = 1
+	catalogQueryKindENTITY_INDICES  catalogQueryKind = 1
 	/// Return a packed visibility mask (one byte per entity).
 	catalogQueryKindVISIBILITY_MASK catalogQueryKind = 2
 	/// Return a single catalog row by entity index.
-	catalogQueryKindCATALOG_ROW catalogQueryKind = 3
+	catalogQueryKindCATALOG_ROW     catalogQueryKind = 3
 )
 
 var EnumNamescatalogQueryKind = map[catalogQueryKind]string{

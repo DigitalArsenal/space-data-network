@@ -4,23 +4,23 @@ package LAM
 
 import "strconv"
 
-// / Polynomial basis type for coefficient interpretation.
-// / Determines how the coefficient arrays are evaluated.
+/// Polynomial basis type for coefficient interpretation.
+/// Determines how the coefficient arrays are evaluated.
 type polynomialBasisType int8
 
 const (
 	/// Chebyshev polynomials of the first kind T_n(x).
 	/// Most common for ephemeris fitting due to minimax approximation properties.
-	polynomialBasisTypeCHEBYSHEV polynomialBasisType = 0
+	polynomialBasisTypeCHEBYSHEV    polynomialBasisType = 0
 	/// Legendre polynomials P_n(x).
 	/// Orthogonal on [-1, 1] with unit weight function.
-	polynomialBasisTypeLEGENDRE polynomialBasisType = 1
+	polynomialBasisTypeLEGENDRE     polynomialBasisType = 1
 	/// Hermite interpolating polynomials.
 	/// Matches both function values and derivatives at nodes.
-	polynomialBasisTypeHERMITE polynomialBasisType = 2
+	polynomialBasisTypeHERMITE      polynomialBasisType = 2
 	/// Lagrange interpolating polynomials.
 	/// Exact interpolation through specified nodes.
-	polynomialBasisTypeLAGRANGE polynomialBasisType = 3
+	polynomialBasisTypeLAGRANGE     polynomialBasisType = 3
 	/// Standard power series (monomial basis): c0 + c1*x + c2*x^2 + ...
 	polynomialBasisTypePOWER_SERIES polynomialBasisType = 4
 )

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Guided Missiles
+/// Guided Missiles
 type MSL struct {
 	_tab flatbuffers.Table
 }

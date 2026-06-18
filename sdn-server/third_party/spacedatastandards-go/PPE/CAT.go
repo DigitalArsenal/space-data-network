@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Catalog Entity Message
+/// Catalog Entity Message
 type CAT struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *CAT) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Satellite Name(s)
+/// Satellite Name(s)
 func (rcv *CAT) OBJECT_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *CAT) ObjectName() []byte {
 	return rcv.OBJECT_NAME()
 }
 
-// / Satellite Name(s)
-// / International Designator (YYYY-NNNAAA)
+/// Satellite Name(s)
+/// International Designator (YYYY-NNNAAA)
 func (rcv *CAT) OBJECT_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *CAT) ObjectId() []byte {
 	return rcv.OBJECT_ID()
 }
 
-// / International Designator (YYYY-NNNAAA)
-// / NORAD Catalog Number
+/// International Designator (YYYY-NNNAAA)
+/// NORAD Catalog Number
 func (rcv *CAT) NORAD_CAT_ID() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,7 +95,7 @@ func (rcv *CAT) NoradCatId() uint32 {
 	return rcv.NORAD_CAT_ID()
 }
 
-// / NORAD Catalog Number
+/// NORAD Catalog Number
 func (rcv *CAT) MutateNORAD_CAT_ID(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -104,7 +104,7 @@ func (rcv *CAT) MutateNoradCatId(n uint32) bool {
 	return rcv.MutateNORAD_CAT_ID(n)
 }
 
-// / Object type (Payload, Rocket body, Debris, Unknown)
+/// Object type (Payload, Rocket body, Debris, Unknown)
 func (rcv *CAT) OBJECT_TYPE() spaceObjectClass {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -117,7 +117,7 @@ func (rcv *CAT) ObjectType() spaceObjectClass {
 	return rcv.OBJECT_TYPE()
 }
 
-// / Object type (Payload, Rocket body, Debris, Unknown)
+/// Object type (Payload, Rocket body, Debris, Unknown)
 func (rcv *CAT) MutateOBJECT_TYPE(n spaceObjectClass) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
@@ -126,7 +126,7 @@ func (rcv *CAT) MutateObjectType(n spaceObjectClass) bool {
 	return rcv.MutateOBJECT_TYPE(n)
 }
 
-// / Operational Status Code
+/// Operational Status Code
 func (rcv *CAT) OPS_STATUS_CODE() operationalState {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -139,7 +139,7 @@ func (rcv *CAT) OpsStatusCode() operationalState {
 	return rcv.OPS_STATUS_CODE()
 }
 
-// / Operational Status Code
+/// Operational Status Code
 func (rcv *CAT) MutateOPS_STATUS_CODE(n operationalState) bool {
 	return rcv._tab.MutateInt8Slot(12, int8(n))
 }
@@ -148,7 +148,7 @@ func (rcv *CAT) MutateOpsStatusCode(n operationalState) bool {
 	return rcv.MutateOPS_STATUS_CODE(n)
 }
 
-// / Ownership, typically country or company
+/// Ownership, typically country or company
 func (rcv *CAT) OWNER() legacyCountryCode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -161,7 +161,7 @@ func (rcv *CAT) Owner() legacyCountryCode {
 	return rcv.OWNER()
 }
 
-// / Ownership, typically country or company
+/// Ownership, typically country or company
 func (rcv *CAT) MutateOWNER(n legacyCountryCode) bool {
 	return rcv._tab.MutateInt8Slot(14, int8(n))
 }
@@ -170,7 +170,7 @@ func (rcv *CAT) MutateOwner(n legacyCountryCode) bool {
 	return rcv.MutateOWNER(n)
 }
 
-// / Launch Date [year-month-day] (ISO 8601)
+/// Launch Date [year-month-day] (ISO 8601)
 func (rcv *CAT) LAUNCH_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -183,8 +183,8 @@ func (rcv *CAT) LaunchDate() []byte {
 	return rcv.LAUNCH_DATE()
 }
 
-// / Launch Date [year-month-day] (ISO 8601)
-// / Launch Site
+/// Launch Date [year-month-day] (ISO 8601)
+/// Launch Site
 func (rcv *CAT) LAUNCH_SITE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -197,8 +197,8 @@ func (rcv *CAT) LaunchSite() []byte {
 	return rcv.LAUNCH_SITE()
 }
 
-// / Launch Site
-// / Decay Date, if applicable [year-month-day] (ISO 8601)
+/// Launch Site
+/// Decay Date, if applicable [year-month-day] (ISO 8601)
 func (rcv *CAT) DECAY_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -211,8 +211,8 @@ func (rcv *CAT) DecayDate() []byte {
 	return rcv.DECAY_DATE()
 }
 
-// / Decay Date, if applicable [year-month-day] (ISO 8601)
-// / Orbital period [minutes]
+/// Decay Date, if applicable [year-month-day] (ISO 8601)
+/// Orbital period [minutes]
 func (rcv *CAT) PERIOD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -225,7 +225,7 @@ func (rcv *CAT) Period() float64 {
 	return rcv.PERIOD()
 }
 
-// / Orbital period [minutes]
+/// Orbital period [minutes]
 func (rcv *CAT) MutatePERIOD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -234,7 +234,7 @@ func (rcv *CAT) MutatePeriod(n float64) bool {
 	return rcv.MutatePERIOD(n)
 }
 
-// / Inclination [degrees]
+/// Inclination [degrees]
 func (rcv *CAT) INCLINATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -247,7 +247,7 @@ func (rcv *CAT) Inclination() float64 {
 	return rcv.INCLINATION()
 }
 
-// / Inclination [degrees]
+/// Inclination [degrees]
 func (rcv *CAT) MutateINCLINATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -256,7 +256,7 @@ func (rcv *CAT) MutateInclination(n float64) bool {
 	return rcv.MutateINCLINATION(n)
 }
 
-// / Apogee Altitude [kilometers]
+/// Apogee Altitude [kilometers]
 func (rcv *CAT) APOGEE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -269,7 +269,7 @@ func (rcv *CAT) Apogee() float64 {
 	return rcv.APOGEE()
 }
 
-// / Apogee Altitude [kilometers]
+/// Apogee Altitude [kilometers]
 func (rcv *CAT) MutateAPOGEE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -278,7 +278,7 @@ func (rcv *CAT) MutateApogee(n float64) bool {
 	return rcv.MutateAPOGEE(n)
 }
 
-// / Perigee Altitude [kilometers]
+/// Perigee Altitude [kilometers]
 func (rcv *CAT) PERIGEE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -291,7 +291,7 @@ func (rcv *CAT) Perigee() float64 {
 	return rcv.PERIGEE()
 }
 
-// / Perigee Altitude [kilometers]
+/// Perigee Altitude [kilometers]
 func (rcv *CAT) MutatePERIGEE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -300,7 +300,7 @@ func (rcv *CAT) MutatePerigee(n float64) bool {
 	return rcv.MutatePERIGEE(n)
 }
 
-// / Radar Cross Section [meters2]; blank if no data available
+/// Radar Cross Section [meters2]; blank if no data available
 func (rcv *CAT) RCS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -313,7 +313,7 @@ func (rcv *CAT) Rcs() float64 {
 	return rcv.RCS()
 }
 
-// / Radar Cross Section [meters2]; blank if no data available
+/// Radar Cross Section [meters2]; blank if no data available
 func (rcv *CAT) MutateRCS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -322,7 +322,7 @@ func (rcv *CAT) MutateRcs(n float64) bool {
 	return rcv.MutateRCS(n)
 }
 
-// / Data status code; blank otherwise
+/// Data status code; blank otherwise
 func (rcv *CAT) DATA_STATUS_CODE() dataAvailability {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -335,7 +335,7 @@ func (rcv *CAT) DataStatusCode() dataAvailability {
 	return rcv.DATA_STATUS_CODE()
 }
 
-// / Data status code; blank otherwise
+/// Data status code; blank otherwise
 func (rcv *CAT) MutateDATA_STATUS_CODE(n dataAvailability) bool {
 	return rcv._tab.MutateInt8Slot(32, int8(n))
 }
@@ -344,7 +344,7 @@ func (rcv *CAT) MutateDataStatusCode(n dataAvailability) bool {
 	return rcv.MutateDATA_STATUS_CODE(n)
 }
 
-// / Orbit center
+/// Orbit center
 func (rcv *CAT) ORBIT_CENTER() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -357,8 +357,8 @@ func (rcv *CAT) OrbitCenter() []byte {
 	return rcv.ORBIT_CENTER()
 }
 
-// / Orbit center
-// / Orbit type (Orbit, Landing, Impact, Docked to RSO, roundtrip)
+/// Orbit center
+/// Orbit type (Orbit, Landing, Impact, Docked to RSO, roundtrip)
 func (rcv *CAT) ORBIT_TYPE() orbitRegime {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -371,7 +371,7 @@ func (rcv *CAT) OrbitType() orbitRegime {
 	return rcv.ORBIT_TYPE()
 }
 
-// / Orbit type (Orbit, Landing, Impact, Docked to RSO, roundtrip)
+/// Orbit type (Orbit, Landing, Impact, Docked to RSO, roundtrip)
 func (rcv *CAT) MutateORBIT_TYPE(n orbitRegime) bool {
 	return rcv._tab.MutateInt8Slot(36, int8(n))
 }
@@ -380,7 +380,7 @@ func (rcv *CAT) MutateOrbitType(n orbitRegime) bool {
 	return rcv.MutateORBIT_TYPE(n)
 }
 
-// / Deployment Date [year-month-day] (ISO 8601)
+/// Deployment Date [year-month-day] (ISO 8601)
 func (rcv *CAT) DEPLOYMENT_DATE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -393,8 +393,8 @@ func (rcv *CAT) DeploymentDate() []byte {
 	return rcv.DEPLOYMENT_DATE()
 }
 
-// / Deployment Date [year-month-day] (ISO 8601)
-// / Indicates if the object is maneuverable
+/// Deployment Date [year-month-day] (ISO 8601)
+/// Indicates if the object is maneuverable
 func (rcv *CAT) MANEUVERABLE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -407,7 +407,7 @@ func (rcv *CAT) Maneuverable() bool {
 	return rcv.MANEUVERABLE()
 }
 
-// / Indicates if the object is maneuverable
+/// Indicates if the object is maneuverable
 func (rcv *CAT) MutateMANEUVERABLE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(40, n)
 }
@@ -416,7 +416,7 @@ func (rcv *CAT) MutateManeuverable(n bool) bool {
 	return rcv.MutateMANEUVERABLE(n)
 }
 
-// / Size [meters]; blank if no data available
+/// Size [meters]; blank if no data available
 func (rcv *CAT) SIZE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -429,7 +429,7 @@ func (rcv *CAT) Size() float64 {
 	return rcv.SIZE()
 }
 
-// / Size [meters]; blank if no data available
+/// Size [meters]; blank if no data available
 func (rcv *CAT) MutateSIZE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -438,7 +438,7 @@ func (rcv *CAT) MutateSize(n float64) bool {
 	return rcv.MutateSIZE(n)
 }
 
-// / Mass [kilograms]; blank if no data available
+/// Mass [kilograms]; blank if no data available
 func (rcv *CAT) MASS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -451,7 +451,7 @@ func (rcv *CAT) Mass() float64 {
 	return rcv.MASS()
 }
 
-// / Mass [kilograms]; blank if no data available
+/// Mass [kilograms]; blank if no data available
 func (rcv *CAT) MutateMASS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(44, n)
 }
@@ -460,7 +460,7 @@ func (rcv *CAT) MutateMass(n float64) bool {
 	return rcv.MutateMASS(n)
 }
 
-// / Mass type (Dry, Wet)
+/// Mass type (Dry, Wet)
 func (rcv *CAT) MASS_TYPE() massCategory {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
@@ -473,7 +473,7 @@ func (rcv *CAT) MassType() massCategory {
 	return rcv.MASS_TYPE()
 }
 
-// / Mass type (Dry, Wet)
+/// Mass type (Dry, Wet)
 func (rcv *CAT) MutateMASS_TYPE(n massCategory) bool {
 	return rcv._tab.MutateInt8Slot(46, int8(n))
 }
@@ -482,7 +482,7 @@ func (rcv *CAT) MutateMassType(n massCategory) bool {
 	return rcv.MutateMASS_TYPE(n)
 }
 
-// / Vector of PAYLOADS
+/// Vector of PAYLOADS
 func (rcv *CAT) PAYLOADS(obj *PLD, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
@@ -514,7 +514,7 @@ func (rcv *CAT) PayloadsLength() int {
 	return rcv.PAYLOADSLength()
 }
 
-// / Vector of PAYLOADS
+/// Vector of PAYLOADS
 func CATStart(builder *flatbuffers.Builder) {
 	builder.StartObject(23)
 }

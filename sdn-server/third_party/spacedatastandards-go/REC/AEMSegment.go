@@ -149,7 +149,7 @@ func (rcv *AEMSegment) StopTime() []byte {
 	return rcv.STOP_TIME()
 }
 
-// / Time interval between attitude states in seconds (required).
+/// Time interval between attitude states in seconds (required).
 func (rcv *AEMSegment) STEP_SIZE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -162,7 +162,7 @@ func (rcv *AEMSegment) StepSize() float64 {
 	return rcv.STEP_SIZE()
 }
 
-// / Time interval between attitude states in seconds (required).
+/// Time interval between attitude states in seconds (required).
 func (rcv *AEMSegment) MutateSTEP_SIZE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -171,9 +171,9 @@ func (rcv *AEMSegment) MutateStepSize(n float64) bool {
 	return rcv.MutateSTEP_SIZE(n)
 }
 
-// / Number of components per attitude state.
-// / 7 = quaternion + angular rates (Q1, Q2, Q3, QC, RATE_X, RATE_Y, RATE_Z)
-// / 4 = quaternion only (Q1, Q2, Q3, QC)
+/// Number of components per attitude state.
+/// 7 = quaternion + angular rates (Q1, Q2, Q3, QC, RATE_X, RATE_Y, RATE_Z)
+/// 4 = quaternion only (Q1, Q2, Q3, QC)
 func (rcv *AEMSegment) ATTITUDE_COMPONENTS() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -186,9 +186,9 @@ func (rcv *AEMSegment) AttitudeComponents() byte {
 	return rcv.ATTITUDE_COMPONENTS()
 }
 
-// / Number of components per attitude state.
-// / 7 = quaternion + angular rates (Q1, Q2, Q3, QC, RATE_X, RATE_Y, RATE_Z)
-// / 4 = quaternion only (Q1, Q2, Q3, QC)
+/// Number of components per attitude state.
+/// 7 = quaternion + angular rates (Q1, Q2, Q3, QC, RATE_X, RATE_Y, RATE_Z)
+/// 4 = quaternion only (Q1, Q2, Q3, QC)
 func (rcv *AEMSegment) MutateATTITUDE_COMPONENTS(n byte) bool {
 	return rcv._tab.MutateByteSlot(24, n)
 }
@@ -197,10 +197,10 @@ func (rcv *AEMSegment) MutateAttitudeComponents(n byte) bool {
 	return rcv.MutateATTITUDE_COMPONENTS(n)
 }
 
-// / Attitude data as row-major array of doubles.
-// / Layout: [Q1_0, Q2_0, Q3_0, QC_0, RATE_X_0, RATE_Y_0, RATE_Z_0, Q1_1, ...]
-// / Time reconstruction: epoch[i] = START_TIME + (i * STEP_SIZE)
-// / Length must be divisible by ATTITUDE_COMPONENTS.
+/// Attitude data as row-major array of doubles.
+/// Layout: [Q1_0, Q2_0, Q3_0, QC_0, RATE_X_0, RATE_Y_0, RATE_Z_0, Q1_1, ...]
+/// Time reconstruction: epoch[i] = START_TIME + (i * STEP_SIZE)
+/// Length must be divisible by ATTITUDE_COMPONENTS.
 func (rcv *AEMSegment) ATTITUDE_DATA(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -226,10 +226,10 @@ func (rcv *AEMSegment) AttitudeDataLength() int {
 	return rcv.ATTITUDE_DATALength()
 }
 
-// / Attitude data as row-major array of doubles.
-// / Layout: [Q1_0, Q2_0, Q3_0, QC_0, RATE_X_0, RATE_Y_0, RATE_Z_0, Q1_1, ...]
-// / Time reconstruction: epoch[i] = START_TIME + (i * STEP_SIZE)
-// / Length must be divisible by ATTITUDE_COMPONENTS.
+/// Attitude data as row-major array of doubles.
+/// Layout: [Q1_0, Q2_0, Q3_0, QC_0, RATE_X_0, RATE_Y_0, RATE_Z_0, Q1_1, ...]
+/// Time reconstruction: epoch[i] = START_TIME + (i * STEP_SIZE)
+/// Length must be divisible by ATTITUDE_COMPONENTS.
 func (rcv *AEMSegment) MutateATTITUDE_DATA(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {

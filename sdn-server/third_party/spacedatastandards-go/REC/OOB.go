@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / On-Orbit Battery
+/// On-Orbit Battery
 type OOB struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *OOB) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier
+/// Unique identifier
 func (rcv *OOB) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *OOB) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique identifier
-// / Reference to parent on-orbit object
+/// Unique identifier
+/// Reference to parent on-orbit object
 func (rcv *OOB) ID_ON_ORBIT() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *OOB) IdOnOrbit() []byte {
 	return rcv.ID_ON_ORBIT()
 }
 
-// / Reference to parent on-orbit object
-// / Reference to battery specification
+/// Reference to parent on-orbit object
+/// Reference to battery specification
 func (rcv *OOB) ID_BATTERY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *OOB) IdBattery() []byte {
 	return rcv.ID_BATTERY()
 }
 
-// / Reference to battery specification
-// / Battery name or designation
+/// Reference to battery specification
+/// Battery name or designation
 func (rcv *OOB) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,8 +109,8 @@ func (rcv *OOB) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Battery name or designation
-// / Battery chemistry (e.g., LI_ION, NICD, NIMH, LIPO, SILVER_ZINC)
+/// Battery name or designation
+/// Battery chemistry (e.g., LI_ION, NICD, NIMH, LIPO, SILVER_ZINC)
 func (rcv *OOB) CHEMISTRY() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *OOB) Chemistry() []byte {
 	return rcv.CHEMISTRY()
 }
 
-// / Battery chemistry (e.g., LI_ION, NICD, NIMH, LIPO, SILVER_ZINC)
-// / Number of batteries of this type
+/// Battery chemistry (e.g., LI_ION, NICD, NIMH, LIPO, SILVER_ZINC)
+/// Number of batteries of this type
 func (rcv *OOB) QUANTITY() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -137,7 +137,7 @@ func (rcv *OOB) Quantity() uint32 {
 	return rcv.QUANTITY()
 }
 
-// / Number of batteries of this type
+/// Number of batteries of this type
 func (rcv *OOB) MutateQUANTITY(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(14, n)
 }
@@ -146,7 +146,7 @@ func (rcv *OOB) MutateQuantity(n uint32) bool {
 	return rcv.MutateQUANTITY(n)
 }
 
-// / Nominal voltage in Volts
+/// Nominal voltage in Volts
 func (rcv *OOB) VOLTAGE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,7 +159,7 @@ func (rcv *OOB) Voltage() float64 {
 	return rcv.VOLTAGE()
 }
 
-// / Nominal voltage in Volts
+/// Nominal voltage in Volts
 func (rcv *OOB) MutateVOLTAGE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }
@@ -168,7 +168,7 @@ func (rcv *OOB) MutateVoltage(n float64) bool {
 	return rcv.MutateVOLTAGE(n)
 }
 
-// / Capacity in Amp-hours
+/// Capacity in Amp-hours
 func (rcv *OOB) CAPACITY_AH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -181,7 +181,7 @@ func (rcv *OOB) CapacityAh() float64 {
 	return rcv.CAPACITY_AH()
 }
 
-// / Capacity in Amp-hours
+/// Capacity in Amp-hours
 func (rcv *OOB) MutateCAPACITY_AH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(18, n)
 }
@@ -190,7 +190,7 @@ func (rcv *OOB) MutateCapacityAh(n float64) bool {
 	return rcv.MutateCAPACITY_AH(n)
 }
 
-// / Energy capacity in Watt-hours
+/// Energy capacity in Watt-hours
 func (rcv *OOB) ENERGY_WH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -203,7 +203,7 @@ func (rcv *OOB) EnergyWh() float64 {
 	return rcv.ENERGY_WH()
 }
 
-// / Energy capacity in Watt-hours
+/// Energy capacity in Watt-hours
 func (rcv *OOB) MutateENERGY_WH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -212,7 +212,7 @@ func (rcv *OOB) MutateEnergyWh(n float64) bool {
 	return rcv.MutateENERGY_WH(n)
 }
 
-// / Maximum depth of discharge as fraction (0.0-1.0)
+/// Maximum depth of discharge as fraction (0.0-1.0)
 func (rcv *OOB) MAX_DOD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -225,7 +225,7 @@ func (rcv *OOB) MaxDod() float64 {
 	return rcv.MAX_DOD()
 }
 
-// / Maximum depth of discharge as fraction (0.0-1.0)
+/// Maximum depth of discharge as fraction (0.0-1.0)
 func (rcv *OOB) MutateMAX_DOD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -234,7 +234,7 @@ func (rcv *OOB) MutateMaxDod(n float64) bool {
 	return rcv.MutateMAX_DOD(n)
 }
 
-// / Number of charge/discharge cycles rated
+/// Number of charge/discharge cycles rated
 func (rcv *OOB) CYCLE_LIFE() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -247,7 +247,7 @@ func (rcv *OOB) CycleLife() uint32 {
 	return rcv.CYCLE_LIFE()
 }
 
-// / Number of charge/discharge cycles rated
+/// Number of charge/discharge cycles rated
 func (rcv *OOB) MutateCYCLE_LIFE(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(24, n)
 }
@@ -256,7 +256,7 @@ func (rcv *OOB) MutateCycleLife(n uint32) bool {
 	return rcv.MutateCYCLE_LIFE(n)
 }
 
-// / Battery mass in kg
+/// Battery mass in kg
 func (rcv *OOB) MASS() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -269,7 +269,7 @@ func (rcv *OOB) Mass() float64 {
 	return rcv.MASS()
 }
 
-// / Battery mass in kg
+/// Battery mass in kg
 func (rcv *OOB) MutateMASS(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -278,7 +278,7 @@ func (rcv *OOB) MutateMass(n float64) bool {
 	return rcv.MutateMASS(n)
 }
 
-// / Current state of health as fraction (0.0-1.0)
+/// Current state of health as fraction (0.0-1.0)
 func (rcv *OOB) STATE_OF_HEALTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -291,7 +291,7 @@ func (rcv *OOB) StateOfHealth() float64 {
 	return rcv.STATE_OF_HEALTH()
 }
 
-// / Current state of health as fraction (0.0-1.0)
+/// Current state of health as fraction (0.0-1.0)
 func (rcv *OOB) MutateSTATE_OF_HEALTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -300,7 +300,7 @@ func (rcv *OOB) MutateStateOfHealth(n float64) bool {
 	return rcv.MutateSTATE_OF_HEALTH(n)
 }
 
-// / Additional notes
+/// Additional notes
 func (rcv *OOB) NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -313,7 +313,7 @@ func (rcv *OOB) Notes() []byte {
 	return rcv.NOTES()
 }
 
-// / Additional notes
+/// Additional notes
 func OOBStart(builder *flatbuffers.Builder) {
 	builder.StartObject(14)
 }

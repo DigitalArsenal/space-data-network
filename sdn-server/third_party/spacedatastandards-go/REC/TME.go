@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Time Systems
+/// Time Systems
 type TME struct {
 	_tab flatbuffers.Table
 }

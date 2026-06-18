@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Argument reference entry in command container
+/// Argument reference entry in command container
 type ArgumentRefEntry struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *ArgumentRefEntry) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Argument reference
+/// Argument reference
 func (rcv *ArgumentRefEntry) ARGUMENT_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *ArgumentRefEntry) ArgumentRef() []byte {
 	return rcv.ARGUMENT_REF()
 }
 
-// / Argument reference
-// / Location in container
+/// Argument reference
+/// Location in container
 func (rcv *ArgumentRefEntry) LOCATION(obj *LocationInContainer) *LocationInContainer {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *ArgumentRefEntry) Location(obj *LocationInContainer) *LocationInConta
 	return rcv.LOCATION(obj)
 }
 
-// / Location in container
-// / Short description
+/// Location in container
+/// Short description
 func (rcv *ArgumentRefEntry) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -88,7 +88,7 @@ func (rcv *ArgumentRefEntry) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-// / Short description
+/// Short description
 func ArgumentRefEntryStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

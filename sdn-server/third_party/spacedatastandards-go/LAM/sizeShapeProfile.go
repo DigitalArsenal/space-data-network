@@ -4,12 +4,12 @@ package LAM
 
 import "strconv"
 
-// / Orbital element parameterization for the first element (size/shape).
+/// Orbital element parameterization for the first element (size/shape).
 type sizeShapeProfile int8
 
 const (
 	/// Semi-major axis (km). Standard for elliptical orbits.
-	sizeShapeProfileSMA sizeShapeProfile = 0
+	sizeShapeProfileSMA         sizeShapeProfile = 0
 	/// Radius of periapsis (km). Preferred for hyperbolic orbits.
 	sizeShapeProfileR_PERIAPSIS sizeShapeProfile = 1
 )

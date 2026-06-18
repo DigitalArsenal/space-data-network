@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / gx:Playlist
+/// gx:Playlist
 type KMLPlaylist struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLPlaylist) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Tour primitives
+/// Tour primitives
 func (rcv *KMLPlaylist) PRIMITIVES(obj *KMLTourPrimitive, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -74,7 +74,7 @@ func (rcv *KMLPlaylist) PrimitivesLength() int {
 	return rcv.PRIMITIVESLength()
 }
 
-// / Tour primitives
+/// Tour primitives
 func KMLPlaylistStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }

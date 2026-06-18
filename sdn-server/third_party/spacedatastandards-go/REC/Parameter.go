@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Parameter definition
+/// Parameter definition
 type Parameter struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *Parameter) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Parameter name
+/// Parameter name
 func (rcv *Parameter) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *Parameter) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Parameter name
-// / Reference to parameter type
+/// Parameter name
+/// Reference to parameter type
 func (rcv *Parameter) PARAMETER_TYPE_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *Parameter) ParameterTypeRef() []byte {
 	return rcv.PARAMETER_TYPE_REF()
 }
 
-// / Reference to parameter type
-// / Short description
+/// Reference to parameter type
+/// Short description
 func (rcv *Parameter) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *Parameter) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-// / Short description
-// / Long description
+/// Short description
+/// Long description
 func (rcv *Parameter) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,8 +97,8 @@ func (rcv *Parameter) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-// / Long description
-// / Parameter properties
+/// Long description
+/// Parameter properties
 func (rcv *Parameter) PROPERTIES(obj *ParameterProperties) *ParameterProperties {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -116,8 +116,8 @@ func (rcv *Parameter) Properties(obj *ParameterProperties) *ParameterProperties 
 	return rcv.PROPERTIES(obj)
 }
 
-// / Parameter properties
-// / Physical address mapping
+/// Parameter properties
+/// Physical address mapping
 func (rcv *Parameter) PHYSICAL_ADDRESS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -130,8 +130,8 @@ func (rcv *Parameter) PhysicalAddress() []byte {
 	return rcv.PHYSICAL_ADDRESS()
 }
 
-// / Physical address mapping
-// / Initial/default value
+/// Physical address mapping
+/// Initial/default value
 func (rcv *Parameter) INITIAL_VALUE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -144,7 +144,7 @@ func (rcv *Parameter) InitialValue() []byte {
 	return rcv.INITIAL_VALUE()
 }
 
-// / Initial/default value
+/// Initial/default value
 func ParameterStart(builder *flatbuffers.Builder) {
 	builder.StartObject(7)
 }

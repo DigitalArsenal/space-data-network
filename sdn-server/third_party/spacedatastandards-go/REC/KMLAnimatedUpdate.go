@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / gx:AnimatedUpdate tour primitive
+/// gx:AnimatedUpdate tour primitive
 type KMLAnimatedUpdate struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLAnimatedUpdate) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Duration in seconds
+/// Duration in seconds
 func (rcv *KMLAnimatedUpdate) DURATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *KMLAnimatedUpdate) Duration() float64 {
 	return rcv.DURATION()
 }
 
-// / Duration in seconds
+/// Duration in seconds
 func (rcv *KMLAnimatedUpdate) MutateDURATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *KMLAnimatedUpdate) MutateDuration(n float64) bool {
 	return rcv.MutateDURATION(n)
 }
 
-// / Delayed start in seconds
+/// Delayed start in seconds
 func (rcv *KMLAnimatedUpdate) DELAYED_START() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *KMLAnimatedUpdate) DelayedStart() float64 {
 	return rcv.DELAYED_START()
 }
 
-// / Delayed start in seconds
+/// Delayed start in seconds
 func (rcv *KMLAnimatedUpdate) MutateDELAYED_START(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *KMLAnimatedUpdate) MutateDelayedStart(n float64) bool {
 	return rcv.MutateDELAYED_START(n)
 }
 
-// / Update
+/// Update
 func (rcv *KMLAnimatedUpdate) UPDATE(obj *KMLUpdate) *KMLUpdate {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -104,7 +104,7 @@ func (rcv *KMLAnimatedUpdate) Update(obj *KMLUpdate) *KMLUpdate {
 	return rcv.UPDATE(obj)
 }
 
-// / Update
+/// Update
 func KMLAnimatedUpdateStart(builder *flatbuffers.Builder) {
 	builder.StartObject(3)
 }

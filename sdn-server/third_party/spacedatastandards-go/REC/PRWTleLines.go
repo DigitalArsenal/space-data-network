@@ -41,7 +41,7 @@ func (rcv *PRWTleLines) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / TLE line 1 (69 characters).
+/// TLE line 1 (69 characters).
 func (rcv *PRWTleLines) LINE1() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -54,8 +54,8 @@ func (rcv *PRWTleLines) Line1() []byte {
 	return rcv.LINE1()
 }
 
-// / TLE line 1 (69 characters).
-// / TLE line 2 (69 characters).
+/// TLE line 1 (69 characters).
+/// TLE line 2 (69 characters).
 func (rcv *PRWTleLines) LINE2() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -68,8 +68,8 @@ func (rcv *PRWTleLines) Line2() []byte {
 	return rcv.LINE2()
 }
 
-// / TLE line 2 (69 characters).
-// / Satellite name (optional, line 0 of 3LE).
+/// TLE line 2 (69 characters).
+/// Satellite name (optional, line 0 of 3LE).
 func (rcv *PRWTleLines) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -82,8 +82,8 @@ func (rcv *PRWTleLines) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Satellite name (optional, line 0 of 3LE).
-// / NORAD catalog number parsed from the TLE.
+/// Satellite name (optional, line 0 of 3LE).
+/// NORAD catalog number parsed from the TLE.
 func (rcv *PRWTleLines) NORAD_ID() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -96,7 +96,7 @@ func (rcv *PRWTleLines) NoradId() uint32 {
 	return rcv.NORAD_ID()
 }
 
-// / NORAD catalog number parsed from the TLE.
+/// NORAD catalog number parsed from the TLE.
 func (rcv *PRWTleLines) MutateNORAD_ID(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(10, n)
 }

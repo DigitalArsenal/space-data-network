@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Batch target detection response header.
+/// Batch target detection response header.
 type SNWBatchResponse struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *SNWBatchResponse) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Number of detection records written to OUTPUT_OFFSET.
+/// Number of detection records written to OUTPUT_OFFSET.
 func (rcv *SNWBatchResponse) COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *SNWBatchResponse) Count() uint32 {
 	return rcv.COUNT()
 }
 
-// / Number of detection records written to OUTPUT_OFFSET.
+/// Number of detection records written to OUTPUT_OFFSET.
 func (rcv *SNWBatchResponse) MutateCOUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *SNWBatchResponse) MutateCount(n uint32) bool {
 	return rcv.MutateCOUNT(n)
 }
 
-// / Number of targets whose SNR met the detection threshold.
+/// Number of targets whose SNR met the detection threshold.
 func (rcv *SNWBatchResponse) DETECTED_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *SNWBatchResponse) DetectedCount() uint32 {
 	return rcv.DETECTED_COUNT()
 }
 
-// / Number of targets whose SNR met the detection threshold.
+/// Number of targets whose SNR met the detection threshold.
 func (rcv *SNWBatchResponse) MutateDETECTED_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *SNWBatchResponse) MutateDetectedCount(n uint32) bool {
 	return rcv.MutateDETECTED_COUNT(n)
 }
 
-// / Byte offset where the detectionResult[] stream starts.
+/// Byte offset where the detectionResult[] stream starts.
 func (rcv *SNWBatchResponse) OUTPUT_OFFSET() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *SNWBatchResponse) OutputOffset() uint32 {
 	return rcv.OUTPUT_OFFSET()
 }
 
-// / Byte offset where the detectionResult[] stream starts.
+/// Byte offset where the detectionResult[] stream starts.
 func (rcv *SNWBatchResponse) MutateOUTPUT_OFFSET(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -108,7 +108,7 @@ func (rcv *SNWBatchResponse) MutateOutputOffset(n uint32) bool {
 	return rcv.MutateOUTPUT_OFFSET(n)
 }
 
-// / Error code (0 == OK).
+/// Error code (0 == OK).
 func (rcv *SNWBatchResponse) ERROR_CODE() snwErrorCode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -121,7 +121,7 @@ func (rcv *SNWBatchResponse) ErrorCode() snwErrorCode {
 	return rcv.ERROR_CODE()
 }
 
-// / Error code (0 == OK).
+/// Error code (0 == OK).
 func (rcv *SNWBatchResponse) MutateERROR_CODE(n snwErrorCode) bool {
 	return rcv._tab.MutateInt32Slot(10, int32(n))
 }
@@ -130,7 +130,7 @@ func (rcv *SNWBatchResponse) MutateErrorCode(n snwErrorCode) bool {
 	return rcv.MutateERROR_CODE(n)
 }
 
-// / Optional error message when ERROR_CODE != OK.
+/// Optional error message when ERROR_CODE != OK.
 func (rcv *SNWBatchResponse) ERROR_MESSAGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -143,7 +143,7 @@ func (rcv *SNWBatchResponse) ErrorMessage() []byte {
 	return rcv.ERROR_MESSAGE()
 }
 
-// / Optional error message when ERROR_CODE != OK.
+/// Optional error message when ERROR_CODE != OK.
 func SNWBatchResponseStart(builder *flatbuffers.Builder) {
 	builder.StartObject(5)
 }

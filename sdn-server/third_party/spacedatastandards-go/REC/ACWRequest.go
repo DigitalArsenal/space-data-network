@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / One access-window compute request.
+/// One access-window compute request.
 type ACWRequest struct {
 	_tab flatbuffers.Table
 }
@@ -62,7 +62,7 @@ func (rcv *ACWRequest) MutateOperation(n acwOperationCode) bool {
 	return rcv.MutateOPERATION(n)
 }
 
-// / Candidate ground stations.
+/// Candidate ground stations.
 func (rcv *ACWRequest) GROUND_STATIONS(obj *ACWGroundStation, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -94,8 +94,8 @@ func (rcv *ACWRequest) GroundStationsLength() int {
 	return rcv.GROUND_STATIONSLength()
 }
 
-// / Candidate ground stations.
-// / Pre-sampled target Earth-fixed Cartesian states.
+/// Candidate ground stations.
+/// Pre-sampled target Earth-fixed Cartesian states.
 func (rcv *ACWRequest) STATES(obj *ACWStateSample, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -127,8 +127,8 @@ func (rcv *ACWRequest) StatesLength() int {
 	return rcv.STATESLength()
 }
 
-// / Pre-sampled target Earth-fixed Cartesian states.
-// / Optional target station id. Empty means all stations when supported.
+/// Pre-sampled target Earth-fixed Cartesian states.
+/// Optional target station id. Empty means all stations when supported.
 func (rcv *ACWRequest) TARGET_STATION_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -141,8 +141,8 @@ func (rcv *ACWRequest) TargetStationId() []byte {
 	return rcv.TARGET_STATION_ID()
 }
 
-// / Optional target station id. Empty means all stations when supported.
-// / Optional caller override for minimum elevation, radians.
+/// Optional target station id. Empty means all stations when supported.
+/// Optional caller override for minimum elevation, radians.
 func (rcv *ACWRequest) MIN_ELEVATION_OVERRIDE_RAD() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -155,7 +155,7 @@ func (rcv *ACWRequest) MinElevationOverrideRad() float64 {
 	return rcv.MIN_ELEVATION_OVERRIDE_RAD()
 }
 
-// / Optional caller override for minimum elevation, radians.
+/// Optional caller override for minimum elevation, radians.
 func (rcv *ACWRequest) MutateMIN_ELEVATION_OVERRIDE_RAD(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -164,7 +164,7 @@ func (rcv *ACWRequest) MutateMinElevationOverrideRad(n float64) bool {
 	return rcv.MutateMIN_ELEVATION_OVERRIDE_RAD(n)
 }
 
-// / Optional trace/correlation identifier.
+/// Optional trace/correlation identifier.
 func (rcv *ACWRequest) TRACE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -177,8 +177,8 @@ func (rcv *ACWRequest) TraceId() []byte {
 	return rcv.TRACE_ID()
 }
 
-// / Optional trace/correlation identifier.
-// / Optional azimuth-dependent minimum elevation mask.
+/// Optional trace/correlation identifier.
+/// Optional azimuth-dependent minimum elevation mask.
 func (rcv *ACWRequest) ELEVATION_MASK(obj *ACWElevationMaskPoint, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -210,8 +210,8 @@ func (rcv *ACWRequest) ElevationMaskLength() int {
 	return rcv.ELEVATION_MASKLength()
 }
 
-// / Optional azimuth-dependent minimum elevation mask.
-// / Optional apparent-elevation refraction model.
+/// Optional azimuth-dependent minimum elevation mask.
+/// Optional apparent-elevation refraction model.
 func (rcv *ACWRequest) REFRACTION_MODEL(obj *ACWRefractionModel) *ACWRefractionModel {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -229,7 +229,7 @@ func (rcv *ACWRequest) RefractionModel(obj *ACWRefractionModel) *ACWRefractionMo
 	return rcv.REFRACTION_MODEL(obj)
 }
 
-// / Optional apparent-elevation refraction model.
+/// Optional apparent-elevation refraction model.
 func ACWRequestStart(builder *flatbuffers.Builder) {
 	builder.StartObject(8)
 }

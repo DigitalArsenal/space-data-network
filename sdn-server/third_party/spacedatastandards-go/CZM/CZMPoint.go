@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Point properties
+/// Point properties
 type CZMPoint struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *CZMPoint) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Whether the point is displayed
+/// Whether the point is displayed
 func (rcv *CZMPoint) SHOW() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *CZMPoint) Show() bool {
 	return rcv.SHOW()
 }
 
-// / Whether the point is displayed
+/// Whether the point is displayed
 func (rcv *CZMPoint) MutateSHOW(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *CZMPoint) MutateShow(n bool) bool {
 	return rcv.MutateSHOW(n)
 }
 
-// / Point color
+/// Point color
 func (rcv *CZMPoint) COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -82,8 +82,8 @@ func (rcv *CZMPoint) Color(obj *CZMColor) *CZMColor {
 	return rcv.COLOR(obj)
 }
 
-// / Point color
-// / Outline color
+/// Point color
+/// Outline color
 func (rcv *CZMPoint) OUTLINE_COLOR(obj *CZMColor) *CZMColor {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -101,8 +101,8 @@ func (rcv *CZMPoint) OutlineColor(obj *CZMColor) *CZMColor {
 	return rcv.OUTLINE_COLOR(obj)
 }
 
-// / Outline color
-// / Outline width in pixels
+/// Outline color
+/// Outline width in pixels
 func (rcv *CZMPoint) OUTLINE_WIDTH() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -115,7 +115,7 @@ func (rcv *CZMPoint) OutlineWidth() float64 {
 	return rcv.OUTLINE_WIDTH()
 }
 
-// / Outline width in pixels
+/// Outline width in pixels
 func (rcv *CZMPoint) MutateOUTLINE_WIDTH(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -124,7 +124,7 @@ func (rcv *CZMPoint) MutateOutlineWidth(n float64) bool {
 	return rcv.MutateOUTLINE_WIDTH(n)
 }
 
-// / Pixel size
+/// Pixel size
 func (rcv *CZMPoint) PIXEL_SIZE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -137,7 +137,7 @@ func (rcv *CZMPoint) PixelSize() float64 {
 	return rcv.PIXEL_SIZE()
 }
 
-// / Pixel size
+/// Pixel size
 func (rcv *CZMPoint) MutatePIXEL_SIZE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -146,7 +146,7 @@ func (rcv *CZMPoint) MutatePixelSize(n float64) bool {
 	return rcv.MutatePIXEL_SIZE(n)
 }
 
-// / Height reference
+/// Height reference
 func (rcv *CZMPoint) HEIGHT_REFERENCE() CZMHeightReference {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -159,7 +159,7 @@ func (rcv *CZMPoint) HeightReference() CZMHeightReference {
 	return rcv.HEIGHT_REFERENCE()
 }
 
-// / Height reference
+/// Height reference
 func (rcv *CZMPoint) MutateHEIGHT_REFERENCE(n CZMHeightReference) bool {
 	return rcv._tab.MutateInt8Slot(14, int8(n))
 }
@@ -168,7 +168,7 @@ func (rcv *CZMPoint) MutateHeightReference(n CZMHeightReference) bool {
 	return rcv.MutateHEIGHT_REFERENCE(n)
 }
 
-// / Scale by distance
+/// Scale by distance
 func (rcv *CZMPoint) SCALE_BY_DISTANCE(obj *CZMNearFarScalar) *CZMNearFarScalar {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -186,8 +186,8 @@ func (rcv *CZMPoint) ScaleByDistance(obj *CZMNearFarScalar) *CZMNearFarScalar {
 	return rcv.SCALE_BY_DISTANCE(obj)
 }
 
-// / Scale by distance
-// / Translucency by distance
+/// Scale by distance
+/// Translucency by distance
 func (rcv *CZMPoint) TRANSLUCENCY_BY_DISTANCE(obj *CZMNearFarScalar) *CZMNearFarScalar {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -205,8 +205,8 @@ func (rcv *CZMPoint) TranslucencyByDistance(obj *CZMNearFarScalar) *CZMNearFarSc
 	return rcv.TRANSLUCENCY_BY_DISTANCE(obj)
 }
 
-// / Translucency by distance
-// / Distance display condition near
+/// Translucency by distance
+/// Distance display condition near
 func (rcv *CZMPoint) DISTANCE_DISPLAY_CONDITION_NEAR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -219,7 +219,7 @@ func (rcv *CZMPoint) DistanceDisplayConditionNear() float64 {
 	return rcv.DISTANCE_DISPLAY_CONDITION_NEAR()
 }
 
-// / Distance display condition near
+/// Distance display condition near
 func (rcv *CZMPoint) MutateDISTANCE_DISPLAY_CONDITION_NEAR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(20, n)
 }
@@ -228,7 +228,7 @@ func (rcv *CZMPoint) MutateDistanceDisplayConditionNear(n float64) bool {
 	return rcv.MutateDISTANCE_DISPLAY_CONDITION_NEAR(n)
 }
 
-// / Distance display condition far
+/// Distance display condition far
 func (rcv *CZMPoint) DISTANCE_DISPLAY_CONDITION_FAR() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -241,7 +241,7 @@ func (rcv *CZMPoint) DistanceDisplayConditionFar() float64 {
 	return rcv.DISTANCE_DISPLAY_CONDITION_FAR()
 }
 
-// / Distance display condition far
+/// Distance display condition far
 func (rcv *CZMPoint) MutateDISTANCE_DISPLAY_CONDITION_FAR(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(22, n)
 }
@@ -250,7 +250,7 @@ func (rcv *CZMPoint) MutateDistanceDisplayConditionFar(n float64) bool {
 	return rcv.MutateDISTANCE_DISPLAY_CONDITION_FAR(n)
 }
 
-// / Disable depth test distance
+/// Disable depth test distance
 func (rcv *CZMPoint) DISABLE_DEPTH_TEST_DISTANCE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -263,7 +263,7 @@ func (rcv *CZMPoint) DisableDepthTestDistance() float64 {
 	return rcv.DISABLE_DEPTH_TEST_DISTANCE()
 }
 
-// / Disable depth test distance
+/// Disable depth test distance
 func (rcv *CZMPoint) MutateDISABLE_DEPTH_TEST_DISTANCE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }

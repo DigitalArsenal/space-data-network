@@ -6,10 +6,10 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / SpaceSystem - Root element for XTCE document
-// / A SpaceSystem defines the telemetry and command configuration for a space
-// / vehicle or subsystem. SpaceSystems can be nested hierarchically to represent
-// / the structure of a spacecraft (e.g., spacecraft -> subsystem -> payload).
+/// SpaceSystem - Root element for XTCE document
+/// A SpaceSystem defines the telemetry and command configuration for a space
+/// vehicle or subsystem. SpaceSystems can be nested hierarchically to represent
+/// the structure of a spacecraft (e.g., spacecraft -> subsystem -> payload).
 type XTC struct {
 	_tab flatbuffers.Table
 }
@@ -57,7 +57,7 @@ func (rcv *XTC) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Name of this space system
+/// Name of this space system
 func (rcv *XTC) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -70,8 +70,8 @@ func (rcv *XTC) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Name of this space system
-// / Short description
+/// Name of this space system
+/// Short description
 func (rcv *XTC) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -84,8 +84,8 @@ func (rcv *XTC) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-// / Short description
-// / Long description
+/// Short description
+/// Long description
 func (rcv *XTC) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -98,8 +98,8 @@ func (rcv *XTC) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-// / Long description
-// / Operational status
+/// Long description
+/// Operational status
 func (rcv *XTC) OPERATIONAL_STATUS() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -112,8 +112,8 @@ func (rcv *XTC) OperationalStatus() []byte {
 	return rcv.OPERATIONAL_STATUS()
 }
 
-// / Operational status
-// / Document header
+/// Operational status
+/// Document header
 func (rcv *XTC) HEADER(obj *XTCHeader) *XTCHeader {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *XTC) Header(obj *XTCHeader) *XTCHeader {
 	return rcv.HEADER(obj)
 }
 
-// / Document header
-// / Telemetry metadata
+/// Document header
+/// Telemetry metadata
 func (rcv *XTC) TELEMETRY_META_DATA(obj *TelemetryMetaData) *TelemetryMetaData {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -150,8 +150,8 @@ func (rcv *XTC) TelemetryMetaData(obj *TelemetryMetaData) *TelemetryMetaData {
 	return rcv.TELEMETRY_META_DATA(obj)
 }
 
-// / Telemetry metadata
-// / Command metadata
+/// Telemetry metadata
+/// Command metadata
 func (rcv *XTC) COMMAND_META_DATA(obj *CommandMetaData) *CommandMetaData {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -169,8 +169,8 @@ func (rcv *XTC) CommandMetaData(obj *CommandMetaData) *CommandMetaData {
 	return rcv.COMMAND_META_DATA(obj)
 }
 
-// / Command metadata
-// / Service definitions
+/// Command metadata
+/// Service definitions
 func (rcv *XTC) SERVICE_SET(obj *ServiceSet) *ServiceSet {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -188,8 +188,8 @@ func (rcv *XTC) ServiceSet(obj *ServiceSet) *ServiceSet {
 	return rcv.SERVICE_SET(obj)
 }
 
-// / Service definitions
-// / Child space systems (hierarchical structure)
+/// Service definitions
+/// Child space systems (hierarchical structure)
 func (rcv *XTC) CHILD_SYSTEMS(obj *XTC, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -221,7 +221,7 @@ func (rcv *XTC) ChildSystemsLength() int {
 	return rcv.CHILD_SYSTEMSLength()
 }
 
-// / Child space systems (hierarchical structure)
+/// Child space systems (hierarchical structure)
 func XTCStart(builder *flatbuffers.Builder) {
 	builder.StartObject(9)
 }

@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Algorithm input binding
+/// Algorithm input binding
 type AlgorithmInput struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *AlgorithmInput) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Parameter reference
+/// Parameter reference
 func (rcv *AlgorithmInput) PARAMETER_REF() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *AlgorithmInput) ParameterRef() []byte {
 	return rcv.PARAMETER_REF()
 }
 
-// / Parameter reference
-// / Input name in algorithm
+/// Parameter reference
+/// Input name in algorithm
 func (rcv *AlgorithmInput) INPUT_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *AlgorithmInput) InputName() []byte {
 	return rcv.INPUT_NAME()
 }
 
-// / Input name in algorithm
+/// Input name in algorithm
 func AlgorithmInputStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }

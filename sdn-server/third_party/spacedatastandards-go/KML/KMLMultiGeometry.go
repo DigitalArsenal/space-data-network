@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / MultiGeometry
+/// MultiGeometry
 type KMLMultiGeometry struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLMultiGeometry) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Child points
+/// Child points
 func (rcv *KMLMultiGeometry) POINTS(obj *KMLPoint, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *KMLMultiGeometry) PointsLength() int {
 	return rcv.POINTSLength()
 }
 
-// / Child points
-// / Child line strings
+/// Child points
+/// Child line strings
 func (rcv *KMLMultiGeometry) LINE_STRINGS(obj *KMLLineString, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -107,8 +107,8 @@ func (rcv *KMLMultiGeometry) LineStringsLength() int {
 	return rcv.LINE_STRINGSLength()
 }
 
-// / Child line strings
-// / Child polygons
+/// Child line strings
+/// Child polygons
 func (rcv *KMLMultiGeometry) POLYGONS(obj *KMLPolygon, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -140,8 +140,8 @@ func (rcv *KMLMultiGeometry) PolygonsLength() int {
 	return rcv.POLYGONSLength()
 }
 
-// / Child polygons
-// / Nested multi-geometries
+/// Child polygons
+/// Nested multi-geometries
 func (rcv *KMLMultiGeometry) MULTI_GEOMETRIES(obj *KMLMultiGeometry, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -173,8 +173,8 @@ func (rcv *KMLMultiGeometry) MultiGeometriesLength() int {
 	return rcv.MULTI_GEOMETRIESLength()
 }
 
-// / Nested multi-geometries
-// / Child linear rings (standalone)
+/// Nested multi-geometries
+/// Child linear rings (standalone)
 func (rcv *KMLMultiGeometry) LINEAR_RINGS(obj *KMLLinearRing, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -206,8 +206,8 @@ func (rcv *KMLMultiGeometry) LinearRingsLength() int {
 	return rcv.LINEAR_RINGSLength()
 }
 
-// / Child linear rings (standalone)
-// / Child 3D models
+/// Child linear rings (standalone)
+/// Child 3D models
 func (rcv *KMLMultiGeometry) MODELS(obj *KMLModel, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -239,8 +239,8 @@ func (rcv *KMLMultiGeometry) ModelsLength() int {
 	return rcv.MODELSLength()
 }
 
-// / Child 3D models
-// / Child tracks
+/// Child 3D models
+/// Child tracks
 func (rcv *KMLMultiGeometry) TRACKS(obj *KMLTrack, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -272,8 +272,8 @@ func (rcv *KMLMultiGeometry) TracksLength() int {
 	return rcv.TRACKSLength()
 }
 
-// / Child tracks
-// / Child multi-tracks
+/// Child tracks
+/// Child multi-tracks
 func (rcv *KMLMultiGeometry) MULTI_TRACKS(obj *KMLMultiTrack, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -305,7 +305,7 @@ func (rcv *KMLMultiGeometry) MultiTracksLength() int {
 	return rcv.MULTI_TRACKSLength()
 }
 
-// / Child multi-tracks
+/// Child multi-tracks
 func KMLMultiGeometryStart(builder *flatbuffers.Builder) {
 	builder.StartObject(8)
 }

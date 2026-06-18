@@ -8,96 +8,96 @@ type DeviceType int8
 
 const (
 	/// Basic or undefined sensor type
-	DeviceTypeUNKNOWN DeviceType = 0
+	DeviceTypeUNKNOWN                  DeviceType = 0
 	/// General optical sensors
-	DeviceTypeOPTICAL DeviceType = 1
+	DeviceTypeOPTICAL                  DeviceType = 1
 	/// Detects infrared radiation
-	DeviceTypeINFRARED_SENSOR DeviceType = 2
+	DeviceTypeINFRARED_SENSOR          DeviceType = 2
 	/// Sensitive to ultraviolet light
-	DeviceTypeULTRAVIOLET_SENSOR DeviceType = 3
+	DeviceTypeULTRAVIOLET_SENSOR       DeviceType = 3
 	/// For X-ray detection
-	DeviceTypeX_RAY_SENSOR DeviceType = 4
+	DeviceTypeX_RAY_SENSOR             DeviceType = 4
 	/// For gamma-ray detection
-	DeviceTypeGAMMA_RAY_SENSOR DeviceType = 5
+	DeviceTypeGAMMA_RAY_SENSOR         DeviceType = 5
 	/// Basic radar systems
-	DeviceTypeRADAR DeviceType = 6
+	DeviceTypeRADAR                    DeviceType = 6
 	/// Advanced radar with phased array technology
-	DeviceTypePHASED_ARRAY_RADAR DeviceType = 7
+	DeviceTypePHASED_ARRAY_RADAR       DeviceType = 7
 	/// For high-resolution imaging
 	DeviceTypeSYNTHETIC_APERTURE_RADAR DeviceType = 8
 	/// For astronomical observations using bistatic setup
 	DeviceTypeBISTATIC_RADIO_TELESCOPE DeviceType = 9
 	/// For radio astronomy
-	DeviceTypeRADIO_TELESCOPE DeviceType = 10
+	DeviceTypeRADIO_TELESCOPE          DeviceType = 10
 	/// For atmospheric studies
-	DeviceTypeATMOSPHERIC_SENSOR DeviceType = 11
+	DeviceTypeATMOSPHERIC_SENSOR       DeviceType = 11
 	/// For observing space weather phenomena
-	DeviceTypeSPACE_WEATHER_SENSOR DeviceType = 12
+	DeviceTypeSPACE_WEATHER_SENSOR     DeviceType = 12
 	/// General environmental monitoring
-	DeviceTypeENVIRONMENTAL_SENSOR DeviceType = 13
+	DeviceTypeENVIRONMENTAL_SENSOR     DeviceType = 13
 	/// For measuring seismic activities
-	DeviceTypeSEISMIC_SENSOR DeviceType = 14
+	DeviceTypeSEISMIC_SENSOR           DeviceType = 14
 	/// For gravity measurements
-	DeviceTypeGRAVIMETRIC_SENSOR DeviceType = 15
+	DeviceTypeGRAVIMETRIC_SENSOR       DeviceType = 15
 	/// For magnetic field detection
-	DeviceTypeMAGNETIC_SENSOR DeviceType = 16
+	DeviceTypeMAGNETIC_SENSOR          DeviceType = 16
 	/// For electromagnetic field analysis
-	DeviceTypeELECTROMAGNETIC_SENSOR DeviceType = 17
+	DeviceTypeELECTROMAGNETIC_SENSOR   DeviceType = 17
 	/// For temperature and heat detection
-	DeviceTypeTHERMAL_SENSOR DeviceType = 18
+	DeviceTypeTHERMAL_SENSOR           DeviceType = 18
 	/// For detecting chemicals and substances
-	DeviceTypeCHEMICAL_SENSOR DeviceType = 19
+	DeviceTypeCHEMICAL_SENSOR          DeviceType = 19
 	/// For biological research and detection
-	DeviceTypeBIOLOGICAL_SENSOR DeviceType = 20
+	DeviceTypeBIOLOGICAL_SENSOR        DeviceType = 20
 	/// For detecting ionizing radiation
-	DeviceTypeRADIATION_SENSOR DeviceType = 21
+	DeviceTypeRADIATION_SENSOR         DeviceType = 21
 	/// For detecting subatomic particles
-	DeviceTypePARTICLE_DETECTOR DeviceType = 22
+	DeviceTypePARTICLE_DETECTOR        DeviceType = 22
 	/// Light Detection and Ranging
-	DeviceTypeLIDAR DeviceType = 23
+	DeviceTypeLIDAR                    DeviceType = 23
 	/// Sound Navigation and Ranging
-	DeviceTypeSONAR DeviceType = 24
+	DeviceTypeSONAR                    DeviceType = 24
 	/// General telescopes for astronomical observations
-	DeviceTypeTELESCOPE DeviceType = 25
+	DeviceTypeTELESCOPE                DeviceType = 25
 	/// For spectral analysis
-	DeviceTypeSPECTROSCOPIC_SENSOR DeviceType = 26
+	DeviceTypeSPECTROSCOPIC_SENSOR     DeviceType = 26
 	/// For measuring light intensity
-	DeviceTypePHOTOMETRIC_SENSOR DeviceType = 27
+	DeviceTypePHOTOMETRIC_SENSOR       DeviceType = 27
 	/// For analyzing polarization of light
-	DeviceTypePOLARIMETRIC_SENSOR DeviceType = 28
+	DeviceTypePOLARIMETRIC_SENSOR      DeviceType = 28
 	/// For detailed imaging using interference
-	DeviceTypeINTERFEROMETRIC_SENSOR DeviceType = 29
+	DeviceTypeINTERFEROMETRIC_SENSOR   DeviceType = 29
 	/// Capturing image data at multiple wavelengths
-	DeviceTypeMULTISPECTRAL_SENSOR DeviceType = 30
+	DeviceTypeMULTISPECTRAL_SENSOR     DeviceType = 30
 	/// Advanced imaging across many spectral bands
-	DeviceTypeHYPERSPECTRAL_SENSOR DeviceType = 31
+	DeviceTypeHYPERSPECTRAL_SENSOR     DeviceType = 31
 	/// For Global Positioning System reception
-	DeviceTypeGPS_RECEIVER DeviceType = 32
+	DeviceTypeGPS_RECEIVER             DeviceType = 32
 	/// Standard radio communication device
-	DeviceTypeRADIO_COMMUNICATIONS DeviceType = 33
+	DeviceTypeRADIO_COMMUNICATIONS     DeviceType = 33
 	/// Advanced laser communication system
-	DeviceTypeLASER_COMMUNICATIONS DeviceType = 34
+	DeviceTypeLASER_COMMUNICATIONS     DeviceType = 34
 	/// Satellite communication system
 	DeviceTypeSATELLITE_COMMUNICATIONS DeviceType = 35
 	/// Device for laser-based experiments and measurements
-	DeviceTypeLASER_INSTRUMENT DeviceType = 36
+	DeviceTypeLASER_INSTRUMENT         DeviceType = 36
 	/// Radio frequency analysis and measurement device
-	DeviceTypeRF_ANALYZER DeviceType = 37
+	DeviceTypeRF_ANALYZER              DeviceType = 37
 	/// Device for ionospheric research
-	DeviceTypeIONOSPHERIC_SENSOR DeviceType = 38
+	DeviceTypeIONOSPHERIC_SENSOR       DeviceType = 38
 	/// Device for laser-based imaging
-	DeviceTypeLASER_IMAGING DeviceType = 39
+	DeviceTypeLASER_IMAGING            DeviceType = 39
 	/// Advanced optical telescope
-	DeviceTypeOPTICAL_TELESCOPE DeviceType = 40
+	DeviceTypeOPTICAL_TELESCOPE        DeviceType = 40
 	/// Device for high-resolution optical observations
-	DeviceTypeHIGH_RESOLUTION_OPTICAL DeviceType = 41
-	DeviceTypeRADIO                   DeviceType = 42
+	DeviceTypeHIGH_RESOLUTION_OPTICAL  DeviceType = 41
+	DeviceTypeRADIO                    DeviceType = 42
 	/// Microwave communication device
-	DeviceTypeMICROWAVE_TRANSMITTER DeviceType = 43
+	DeviceTypeMICROWAVE_TRANSMITTER    DeviceType = 43
 	/// Device for radio frequency monitoring
-	DeviceTypeRF_MONITOR DeviceType = 44
+	DeviceTypeRF_MONITOR               DeviceType = 44
 	/// High-frequency radio communication device
-	DeviceTypeHF_RADIO_COMMUNICATIONS DeviceType = 45
+	DeviceTypeHF_RADIO_COMMUNICATIONS  DeviceType = 45
 )
 
 var EnumNamesDeviceType = map[DeviceType]string{

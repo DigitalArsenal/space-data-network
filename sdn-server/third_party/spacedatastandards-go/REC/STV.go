@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / State Vector
+/// State Vector
 type STV struct {
 	_tab flatbuffers.Table
 }

@@ -6,9 +6,9 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Batch propagation response header — describes the stream written to
-// / OUTPUT_OFFSET and reports errors. The stream itself is
-// / `STATE_VECTOR_SIZE`-tuple rows in the SDS `OCM` STATE_DATA layout.
+/// Batch propagation response header — describes the stream written to
+/// OUTPUT_OFFSET and reports errors. The stream itself is
+/// `STATE_VECTOR_SIZE`-tuple rows in the SDS `OCM` STATE_DATA layout.
 type PRWBatchResponse struct {
 	_tab flatbuffers.Table
 }
@@ -44,7 +44,7 @@ func (rcv *PRWBatchResponse) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Number of state vectors written.
+/// Number of state vectors written.
 func (rcv *PRWBatchResponse) COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -57,7 +57,7 @@ func (rcv *PRWBatchResponse) Count() uint32 {
 	return rcv.COUNT()
 }
 
-// / Number of state vectors written.
+/// Number of state vectors written.
 func (rcv *PRWBatchResponse) MutateCOUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(4, n)
 }
@@ -66,7 +66,7 @@ func (rcv *PRWBatchResponse) MutateCount(n uint32) bool {
 	return rcv.MutateCOUNT(n)
 }
 
-// / Offset in the arena where the state-vector stream begins.
+/// Offset in the arena where the state-vector stream begins.
 func (rcv *PRWBatchResponse) OUTPUT_OFFSET() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -79,7 +79,7 @@ func (rcv *PRWBatchResponse) OutputOffset() uint32 {
 	return rcv.OUTPUT_OFFSET()
 }
 
-// / Offset in the arena where the state-vector stream begins.
+/// Offset in the arena where the state-vector stream begins.
 func (rcv *PRWBatchResponse) MutateOUTPUT_OFFSET(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(6, n)
 }
@@ -88,7 +88,7 @@ func (rcv *PRWBatchResponse) MutateOutputOffset(n uint32) bool {
 	return rcv.MutateOUTPUT_OFFSET(n)
 }
 
-// / Components per state vector (6 = PV, 9 = PVA). Mirrors OCM.STATE_VECTOR_SIZE.
+/// Components per state vector (6 = PV, 9 = PVA). Mirrors OCM.STATE_VECTOR_SIZE.
 func (rcv *PRWBatchResponse) STATE_VECTOR_SIZE() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -101,7 +101,7 @@ func (rcv *PRWBatchResponse) StateVectorSize() byte {
 	return rcv.STATE_VECTOR_SIZE()
 }
 
-// / Components per state vector (6 = PV, 9 = PVA). Mirrors OCM.STATE_VECTOR_SIZE.
+/// Components per state vector (6 = PV, 9 = PVA). Mirrors OCM.STATE_VECTOR_SIZE.
 func (rcv *PRWBatchResponse) MutateSTATE_VECTOR_SIZE(n byte) bool {
 	return rcv._tab.MutateByteSlot(8, n)
 }
@@ -110,7 +110,7 @@ func (rcv *PRWBatchResponse) MutateStateVectorSize(n byte) bool {
 	return rcv.MutateSTATE_VECTOR_SIZE(n)
 }
 
-// / Reference frame for the stream (SDS `RFM`-compatible string tag).
+/// Reference frame for the stream (SDS `RFM`-compatible string tag).
 func (rcv *PRWBatchResponse) REFERENCE_FRAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -123,8 +123,8 @@ func (rcv *PRWBatchResponse) ReferenceFrame() []byte {
 	return rcv.REFERENCE_FRAME()
 }
 
-// / Reference frame for the stream (SDS `RFM`-compatible string tag).
-// / Per-entity status flags (same cardinality as COUNT).
+/// Reference frame for the stream (SDS `RFM`-compatible string tag).
+/// Per-entity status flags (same cardinality as COUNT).
 func (rcv *PRWBatchResponse) FLAGS(j int) propagatorStateFlags {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -150,7 +150,7 @@ func (rcv *PRWBatchResponse) FlagsLength() int {
 	return rcv.FLAGSLength()
 }
 
-// / Per-entity status flags (same cardinality as COUNT).
+/// Per-entity status flags (same cardinality as COUNT).
 func (rcv *PRWBatchResponse) MutateFLAGS(j int, n propagatorStateFlags) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -164,7 +164,7 @@ func (rcv *PRWBatchResponse) MutateFlags(j int, n propagatorStateFlags) bool {
 	return rcv.MutateFLAGS(j, n)
 }
 
-// / Error code (0 == OK).
+/// Error code (0 == OK).
 func (rcv *PRWBatchResponse) ERROR_CODE() propagatorErrorCode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -177,7 +177,7 @@ func (rcv *PRWBatchResponse) ErrorCode() propagatorErrorCode {
 	return rcv.ERROR_CODE()
 }
 
-// / Error code (0 == OK).
+/// Error code (0 == OK).
 func (rcv *PRWBatchResponse) MutateERROR_CODE(n propagatorErrorCode) bool {
 	return rcv._tab.MutateInt32Slot(14, int32(n))
 }
@@ -186,7 +186,7 @@ func (rcv *PRWBatchResponse) MutateErrorCode(n propagatorErrorCode) bool {
 	return rcv.MutateERROR_CODE(n)
 }
 
-// / Optional error message when ERROR_CODE != OK.
+/// Optional error message when ERROR_CODE != OK.
 func (rcv *PRWBatchResponse) ERROR_MESSAGE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -199,7 +199,7 @@ func (rcv *PRWBatchResponse) ErrorMessage() []byte {
 	return rcv.ERROR_MESSAGE()
 }
 
-// / Optional error message when ERROR_CODE != OK.
+/// Optional error message when ERROR_CODE != OK.
 func PRWBatchResponseStart(builder *flatbuffers.Builder) {
 	builder.StartObject(7)
 }

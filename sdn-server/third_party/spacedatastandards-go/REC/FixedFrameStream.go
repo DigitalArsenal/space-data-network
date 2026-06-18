@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Fixed frame stream
+/// Fixed frame stream
 type FixedFrameStream struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *FixedFrameStream) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Stream name
+/// Stream name
 func (rcv *FixedFrameStream) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *FixedFrameStream) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Stream name
-// / Short description
+/// Stream name
+/// Short description
 func (rcv *FixedFrameStream) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *FixedFrameStream) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-// / Short description
-// / Frame size in bits
+/// Short description
+/// Frame size in bits
 func (rcv *FixedFrameStream) FRAME_SIZE_IN_BITS() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,7 +83,7 @@ func (rcv *FixedFrameStream) FrameSizeInBits() uint32 {
 	return rcv.FRAME_SIZE_IN_BITS()
 }
 
-// / Frame size in bits
+/// Frame size in bits
 func (rcv *FixedFrameStream) MutateFRAME_SIZE_IN_BITS(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(8, n)
 }
@@ -92,7 +92,7 @@ func (rcv *FixedFrameStream) MutateFrameSizeInBits(n uint32) bool {
 	return rcv.MutateFRAME_SIZE_IN_BITS(n)
 }
 
-// / Sync pattern (hex string)
+/// Sync pattern (hex string)
 func (rcv *FixedFrameStream) SYNC_PATTERN() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,7 +105,7 @@ func (rcv *FixedFrameStream) SyncPattern() []byte {
 	return rcv.SYNC_PATTERN()
 }
 
-// / Sync pattern (hex string)
+/// Sync pattern (hex string)
 func FixedFrameStreamStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

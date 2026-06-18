@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Sensor Detection Report envelope message.
+/// Sensor Detection Report envelope message.
 type SDR struct {
 	_tab flatbuffers.Table
 }

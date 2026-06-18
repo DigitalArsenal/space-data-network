@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / CCSDS File Delivery Protocol PDU (CCSDS 727.0-B-5)
+/// CCSDS File Delivery Protocol PDU (CCSDS 727.0-B-5)
 type CFP struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *CFP) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / PDU version
+/// PDU version
 func (rcv *CFP) VERSION() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *CFP) Version() byte {
 	return rcv.VERSION()
 }
 
-// / PDU version
+/// PDU version
 func (rcv *CFP) MutateVERSION(n byte) bool {
 	return rcv._tab.MutateByteSlot(4, n)
 }
@@ -76,7 +76,7 @@ func (rcv *CFP) MutateVersion(n byte) bool {
 	return rcv.MutateVERSION(n)
 }
 
-// / PDU type
+/// PDU type
 func (rcv *CFP) PDU_TYPE() pduKind {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,7 +89,7 @@ func (rcv *CFP) PduType() pduKind {
 	return rcv.PDU_TYPE()
 }
 
-// / PDU type
+/// PDU type
 func (rcv *CFP) MutatePDU_TYPE(n pduKind) bool {
 	return rcv._tab.MutateInt8Slot(6, int8(n))
 }
@@ -98,7 +98,7 @@ func (rcv *CFP) MutatePduType(n pduKind) bool {
 	return rcv.MutatePDU_TYPE(n)
 }
 
-// / Direction (toward receiver or sender)
+/// Direction (toward receiver or sender)
 func (rcv *CFP) DIRECTION() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -111,7 +111,7 @@ func (rcv *CFP) Direction() byte {
 	return rcv.DIRECTION()
 }
 
-// / Direction (toward receiver or sender)
+/// Direction (toward receiver or sender)
 func (rcv *CFP) MutateDIRECTION(n byte) bool {
 	return rcv._tab.MutateByteSlot(8, n)
 }
@@ -120,7 +120,7 @@ func (rcv *CFP) MutateDirection(n byte) bool {
 	return rcv.MutateDIRECTION(n)
 }
 
-// / Transmission mode
+/// Transmission mode
 func (rcv *CFP) TRANSMISSION_MODE() transmissionClass {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -133,7 +133,7 @@ func (rcv *CFP) TransmissionMode() transmissionClass {
 	return rcv.TRANSMISSION_MODE()
 }
 
-// / Transmission mode
+/// Transmission mode
 func (rcv *CFP) MutateTRANSMISSION_MODE(n transmissionClass) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
@@ -142,7 +142,7 @@ func (rcv *CFP) MutateTransmissionMode(n transmissionClass) bool {
 	return rcv.MutateTRANSMISSION_MODE(n)
 }
 
-// / CRC present flag
+/// CRC present flag
 func (rcv *CFP) CRC_FLAG() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -155,7 +155,7 @@ func (rcv *CFP) CrcFlag() bool {
 	return rcv.CRC_FLAG()
 }
 
-// / CRC present flag
+/// CRC present flag
 func (rcv *CFP) MutateCRC_FLAG(n bool) bool {
 	return rcv._tab.MutateBoolSlot(12, n)
 }
@@ -164,7 +164,7 @@ func (rcv *CFP) MutateCrcFlag(n bool) bool {
 	return rcv.MutateCRC_FLAG(n)
 }
 
-// / Large file flag
+/// Large file flag
 func (rcv *CFP) LARGE_FILE_FLAG() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -177,7 +177,7 @@ func (rcv *CFP) LargeFileFlag() bool {
 	return rcv.LARGE_FILE_FLAG()
 }
 
-// / Large file flag
+/// Large file flag
 func (rcv *CFP) MutateLARGE_FILE_FLAG(n bool) bool {
 	return rcv._tab.MutateBoolSlot(14, n)
 }
@@ -186,7 +186,7 @@ func (rcv *CFP) MutateLargeFileFlag(n bool) bool {
 	return rcv.MutateLARGE_FILE_FLAG(n)
 }
 
-// / Data field length
+/// Data field length
 func (rcv *CFP) DATA_FIELD_LENGTH() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -199,7 +199,7 @@ func (rcv *CFP) DataFieldLength() uint16 {
 	return rcv.DATA_FIELD_LENGTH()
 }
 
-// / Data field length
+/// Data field length
 func (rcv *CFP) MutateDATA_FIELD_LENGTH(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(16, n)
 }
@@ -208,7 +208,7 @@ func (rcv *CFP) MutateDataFieldLength(n uint16) bool {
 	return rcv.MutateDATA_FIELD_LENGTH(n)
 }
 
-// / Source entity ID
+/// Source entity ID
 func (rcv *CFP) SOURCE_ENTITY_ID() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -221,7 +221,7 @@ func (rcv *CFP) SourceEntityId() uint64 {
 	return rcv.SOURCE_ENTITY_ID()
 }
 
-// / Source entity ID
+/// Source entity ID
 func (rcv *CFP) MutateSOURCE_ENTITY_ID(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(18, n)
 }
@@ -230,7 +230,7 @@ func (rcv *CFP) MutateSourceEntityId(n uint64) bool {
 	return rcv.MutateSOURCE_ENTITY_ID(n)
 }
 
-// / Transaction sequence number
+/// Transaction sequence number
 func (rcv *CFP) TRANSACTION_SEQ_NUM() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -243,7 +243,7 @@ func (rcv *CFP) TransactionSeqNum() uint64 {
 	return rcv.TRANSACTION_SEQ_NUM()
 }
 
-// / Transaction sequence number
+/// Transaction sequence number
 func (rcv *CFP) MutateTRANSACTION_SEQ_NUM(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(20, n)
 }
@@ -252,7 +252,7 @@ func (rcv *CFP) MutateTransactionSeqNum(n uint64) bool {
 	return rcv.MutateTRANSACTION_SEQ_NUM(n)
 }
 
-// / Destination entity ID
+/// Destination entity ID
 func (rcv *CFP) DESTINATION_ENTITY_ID() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -265,7 +265,7 @@ func (rcv *CFP) DestinationEntityId() uint64 {
 	return rcv.DESTINATION_ENTITY_ID()
 }
 
-// / Destination entity ID
+/// Destination entity ID
 func (rcv *CFP) MutateDESTINATION_ENTITY_ID(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(22, n)
 }
@@ -274,7 +274,7 @@ func (rcv *CFP) MutateDestinationEntityId(n uint64) bool {
 	return rcv.MutateDESTINATION_ENTITY_ID(n)
 }
 
-// / File checksum type
+/// File checksum type
 func (rcv *CFP) CHECKSUM_TYPE() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -287,7 +287,7 @@ func (rcv *CFP) ChecksumType() byte {
 	return rcv.CHECKSUM_TYPE()
 }
 
-// / File checksum type
+/// File checksum type
 func (rcv *CFP) MutateCHECKSUM_TYPE(n byte) bool {
 	return rcv._tab.MutateByteSlot(24, n)
 }
@@ -296,7 +296,7 @@ func (rcv *CFP) MutateChecksumType(n byte) bool {
 	return rcv.MutateCHECKSUM_TYPE(n)
 }
 
-// / File size
+/// File size
 func (rcv *CFP) FILE_SIZE() uint64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -309,7 +309,7 @@ func (rcv *CFP) FileSize() uint64 {
 	return rcv.FILE_SIZE()
 }
 
-// / File size
+/// File size
 func (rcv *CFP) MutateFILE_SIZE(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(26, n)
 }
@@ -318,7 +318,7 @@ func (rcv *CFP) MutateFileSize(n uint64) bool {
 	return rcv.MutateFILE_SIZE(n)
 }
 
-// / Source filename
+/// Source filename
 func (rcv *CFP) SOURCE_FILENAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -331,8 +331,8 @@ func (rcv *CFP) SourceFilename() []byte {
 	return rcv.SOURCE_FILENAME()
 }
 
-// / Source filename
-// / Destination filename
+/// Source filename
+/// Destination filename
 func (rcv *CFP) DESTINATION_FILENAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -345,8 +345,8 @@ func (rcv *CFP) DestinationFilename() []byte {
 	return rcv.DESTINATION_FILENAME()
 }
 
-// / Destination filename
-// / PDU data
+/// Destination filename
+/// PDU data
 func (rcv *CFP) DATA(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -384,7 +384,7 @@ func (rcv *CFP) DataBytes() []byte {
 	return rcv.DATABytes()
 }
 
-// / PDU data
+/// PDU data
 func (rcv *CFP) MutateDATA(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {

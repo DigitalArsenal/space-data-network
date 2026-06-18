@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Encryption metadata for protected dataset artifacts.
+/// Encryption metadata for protected dataset artifacts.
 type DPMEncryptionBinding struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *DPMEncryptionBinding) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Whether any artifact in this manifest is encrypted.
+/// Whether any artifact in this manifest is encrypted.
 func (rcv *DPMEncryptionBinding) ENCRYPTED() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *DPMEncryptionBinding) Encrypted() bool {
 	return rcv.ENCRYPTED()
 }
 
-// / Whether any artifact in this manifest is encrypted.
+/// Whether any artifact in this manifest is encrypted.
 func (rcv *DPMEncryptionBinding) MutateENCRYPTED(n bool) bool {
 	return rcv._tab.MutateBoolSlot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *DPMEncryptionBinding) MutateEncrypted(n bool) bool {
 	return rcv.MutateENCRYPTED(n)
 }
 
-// / Encryption algorithm, e.g. AES-256-GCM.
+/// Encryption algorithm, e.g. AES-256-GCM.
 func (rcv *DPMEncryptionBinding) ALGORITHM() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,8 +77,8 @@ func (rcv *DPMEncryptionBinding) Algorithm() []byte {
 	return rcv.ALGORITHM()
 }
 
-// / Encryption algorithm, e.g. AES-256-GCM.
-// / Content-key identifier.
+/// Encryption algorithm, e.g. AES-256-GCM.
+/// Content-key identifier.
 func (rcv *DPMEncryptionBinding) CONTENT_KEY_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,8 +91,8 @@ func (rcv *DPMEncryptionBinding) ContentKeyId() []byte {
 	return rcv.CONTENT_KEY_ID()
 }
 
-// / Content-key identifier.
-// / Key epoch or rotation label.
+/// Content-key identifier.
+/// Key epoch or rotation label.
 func (rcv *DPMEncryptionBinding) KEY_EPOCH() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,8 +105,8 @@ func (rcv *DPMEncryptionBinding) KeyEpoch() []byte {
 	return rcv.KEY_EPOCH()
 }
 
-// / Key epoch or rotation label.
-// / Policy or listing identifier bound as AAD.
+/// Key epoch or rotation label.
+/// Policy or listing identifier bound as AAD.
 func (rcv *DPMEncryptionBinding) POLICY_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -119,8 +119,8 @@ func (rcv *DPMEncryptionBinding) PolicyId() []byte {
 	return rcv.POLICY_ID()
 }
 
-// / Policy or listing identifier bound as AAD.
-// / SHA-256 hash of canonical encryption AAD, lowercase hex.
+/// Policy or listing identifier bound as AAD.
+/// SHA-256 hash of canonical encryption AAD, lowercase hex.
 func (rcv *DPMEncryptionBinding) AAD_SHA256() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -133,7 +133,7 @@ func (rcv *DPMEncryptionBinding) AadSha256() []byte {
 	return rcv.AAD_SHA256()
 }
 
-// / SHA-256 hash of canonical encryption AAD, lowercase hex.
+/// SHA-256 hash of canonical encryption AAD, lowercase hex.
 func DPMEncryptionBindingStart(builder *flatbuffers.Builder) {
 	builder.StartObject(6)
 }

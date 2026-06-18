@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Canonical method declaration.
+/// Canonical method declaration.
 type PLGMethodManifest struct {
 	_tab flatbuffers.Table
 }

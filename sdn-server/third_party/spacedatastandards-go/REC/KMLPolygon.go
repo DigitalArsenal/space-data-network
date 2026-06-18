@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Polygon geometry
+/// Polygon geometry
 type KMLPolygon struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *KMLPolygon) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Outer boundary
+/// Outer boundary
 func (rcv *KMLPolygon) OUTER_BOUNDARY(obj *KMLLinearRing) *KMLLinearRing {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *KMLPolygon) OuterBoundary(obj *KMLLinearRing) *KMLLinearRing {
 	return rcv.OUTER_BOUNDARY(obj)
 }
 
-// / Outer boundary
-// / Inner boundaries (holes)
+/// Outer boundary
+/// Inner boundaries (holes)
 func (rcv *KMLPolygon) INNER_BOUNDARIES(obj *KMLLinearRing, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -93,8 +93,8 @@ func (rcv *KMLPolygon) InnerBoundariesLength() int {
 	return rcv.INNER_BOUNDARIESLength()
 }
 
-// / Inner boundaries (holes)
-// / Altitude mode
+/// Inner boundaries (holes)
+/// Altitude mode
 func (rcv *KMLPolygon) ALTITUDE_MODE() KMLAltitudeMode {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -107,7 +107,7 @@ func (rcv *KMLPolygon) AltitudeMode() KMLAltitudeMode {
 	return rcv.ALTITUDE_MODE()
 }
 
-// / Altitude mode
+/// Altitude mode
 func (rcv *KMLPolygon) MutateALTITUDE_MODE(n KMLAltitudeMode) bool {
 	return rcv._tab.MutateInt8Slot(8, int8(n))
 }
@@ -116,7 +116,7 @@ func (rcv *KMLPolygon) MutateAltitudeMode(n KMLAltitudeMode) bool {
 	return rcv.MutateALTITUDE_MODE(n)
 }
 
-// / Whether to extrude to ground
+/// Whether to extrude to ground
 func (rcv *KMLPolygon) EXTRUDE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -129,7 +129,7 @@ func (rcv *KMLPolygon) Extrude() bool {
 	return rcv.EXTRUDE()
 }
 
-// / Whether to extrude to ground
+/// Whether to extrude to ground
 func (rcv *KMLPolygon) MutateEXTRUDE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }
@@ -138,7 +138,7 @@ func (rcv *KMLPolygon) MutateExtrude(n bool) bool {
 	return rcv.MutateEXTRUDE(n)
 }
 
-// / Whether to tessellate
+/// Whether to tessellate
 func (rcv *KMLPolygon) TESSELLATE() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -151,7 +151,7 @@ func (rcv *KMLPolygon) Tessellate() bool {
 	return rcv.TESSELLATE()
 }
 
-// / Whether to tessellate
+/// Whether to tessellate
 func (rcv *KMLPolygon) MutateTESSELLATE(n bool) bool {
 	return rcv._tab.MutateBoolSlot(12, n)
 }

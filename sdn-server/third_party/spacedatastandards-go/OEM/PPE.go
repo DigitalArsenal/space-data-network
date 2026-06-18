@@ -6,12 +6,12 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Polynomial Ephemeris — top-level message containing metadata and
-// / one or more polynomial coefficient records for a single space object.
-// /
-// / A PPE message may contain position records, orbital element records, or both.
-// / Records should be ordered chronologically by EPOCH_MID and should collectively
-// / cover the time span [START_TIME, STOP_TIME] without gaps.
+/// Polynomial Ephemeris — top-level message containing metadata and
+/// one or more polynomial coefficient records for a single space object.
+///
+/// A PPE message may contain position records, orbital element records, or both.
+/// Records should be ordered chronologically by EPOCH_MID and should collectively
+/// cover the time span [START_TIME, STOP_TIME] without gaps.
 type PPE struct {
 	_tab flatbuffers.Table
 }
@@ -59,7 +59,7 @@ func (rcv *PPE) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Plain-text comments.
+/// Plain-text comments.
 func (rcv *PPE) COMMENT(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -85,8 +85,8 @@ func (rcv *PPE) CommentLength() int {
 	return rcv.COMMENTLength()
 }
 
-// / Plain-text comments.
-// / Space object identification.
+/// Plain-text comments.
+/// Space object identification.
 func (rcv *PPE) OBJECT(obj *CAT) *CAT {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -104,8 +104,8 @@ func (rcv *PPE) Object(obj *CAT) *CAT {
 	return rcv.OBJECT(obj)
 }
 
-// / Space object identification.
-// / Origin of the reference frame (e.g., EARTH, MOON, MARS).
+/// Space object identification.
+/// Origin of the reference frame (e.g., EARTH, MOON, MARS).
 func (rcv *PPE) CENTER_NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -118,8 +118,8 @@ func (rcv *PPE) CenterName() []byte {
 	return rcv.CENTER_NAME()
 }
 
-// / Origin of the reference frame (e.g., EARTH, MOON, MARS).
-// / Reference frame for position/velocity coefficients.
+/// Origin of the reference frame (e.g., EARTH, MOON, MARS).
+/// Reference frame for position/velocity coefficients.
 func (rcv *PPE) REFERENCE_FRAME(obj *RFM) *RFM {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -137,8 +137,8 @@ func (rcv *PPE) ReferenceFrame(obj *RFM) *RFM {
 	return rcv.REFERENCE_FRAME(obj)
 }
 
-// / Reference frame for position/velocity coefficients.
-// / Time system used for all epochs in this message.
+/// Reference frame for position/velocity coefficients.
+/// Time system used for all epochs in this message.
 func (rcv *PPE) TIME_SYSTEM() timingStandard {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -151,7 +151,7 @@ func (rcv *PPE) TimeSystem() timingStandard {
 	return rcv.TIME_SYSTEM()
 }
 
-// / Time system used for all epochs in this message.
+/// Time system used for all epochs in this message.
 func (rcv *PPE) MutateTIME_SYSTEM(n timingStandard) bool {
 	return rcv._tab.MutateInt8Slot(12, int8(n))
 }
@@ -160,7 +160,7 @@ func (rcv *PPE) MutateTimeSystem(n timingStandard) bool {
 	return rcv.MutateTIME_SYSTEM(n)
 }
 
-// / Start of the total time span covered by this ephemeris (ISO 8601).
+/// Start of the total time span covered by this ephemeris (ISO 8601).
 func (rcv *PPE) START_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -173,8 +173,8 @@ func (rcv *PPE) StartTime() []byte {
 	return rcv.START_TIME()
 }
 
-// / Start of the total time span covered by this ephemeris (ISO 8601).
-// / End of the total time span covered by this ephemeris (ISO 8601).
+/// Start of the total time span covered by this ephemeris (ISO 8601).
+/// End of the total time span covered by this ephemeris (ISO 8601).
 func (rcv *PPE) STOP_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -187,9 +187,9 @@ func (rcv *PPE) StopTime() []byte {
 	return rcv.STOP_TIME()
 }
 
-// / End of the total time span covered by this ephemeris (ISO 8601).
-// / Default polynomial basis type for all records in this message.
-// / Individual records may override this with their own BASIS_TYPE field.
+/// End of the total time span covered by this ephemeris (ISO 8601).
+/// Default polynomial basis type for all records in this message.
+/// Individual records may override this with their own BASIS_TYPE field.
 func (rcv *PPE) DEFAULT_BASIS_TYPE() polynomialBasisType {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -202,8 +202,8 @@ func (rcv *PPE) DefaultBasisType() polynomialBasisType {
 	return rcv.DEFAULT_BASIS_TYPE()
 }
 
-// / Default polynomial basis type for all records in this message.
-// / Individual records may override this with their own BASIS_TYPE field.
+/// Default polynomial basis type for all records in this message.
+/// Individual records may override this with their own BASIS_TYPE field.
 func (rcv *PPE) MutateDEFAULT_BASIS_TYPE(n polynomialBasisType) bool {
 	return rcv._tab.MutateInt8Slot(18, int8(n))
 }
@@ -212,8 +212,8 @@ func (rcv *PPE) MutateDefaultBasisType(n polynomialBasisType) bool {
 	return rcv.MutateDEFAULT_BASIS_TYPE(n)
 }
 
-// / Array of position polynomial records.
-// / Each record covers a time segment; together they span [START_TIME, STOP_TIME].
+/// Array of position polynomial records.
+/// Each record covers a time segment; together they span [START_TIME, STOP_TIME].
 func (rcv *PPE) POSITION_RECORDS(obj *PPEPositionRecord, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -245,10 +245,10 @@ func (rcv *PPE) PositionRecordsLength() int {
 	return rcv.POSITION_RECORDSLength()
 }
 
-// / Array of position polynomial records.
-// / Each record covers a time segment; together they span [START_TIME, STOP_TIME].
-// / Array of orbital element polynomial records.
-// / Each record covers a time segment; together they span [START_TIME, STOP_TIME].
+/// Array of position polynomial records.
+/// Each record covers a time segment; together they span [START_TIME, STOP_TIME].
+/// Array of orbital element polynomial records.
+/// Each record covers a time segment; together they span [START_TIME, STOP_TIME].
 func (rcv *PPE) ORBITAL_ELEMENT_RECORDS(obj *PPEOrbitalElementRecord, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -280,9 +280,9 @@ func (rcv *PPE) OrbitalElementRecordsLength() int {
 	return rcv.ORBITAL_ELEMENT_RECORDSLength()
 }
 
-// / Array of orbital element polynomial records.
-// / Each record covers a time segment; together they span [START_TIME, STOP_TIME].
-// / Generating ephemeris source (e.g., "JPL DE440", "HPOP v2.1", "Basilisk chebyPosEphem").
+/// Array of orbital element polynomial records.
+/// Each record covers a time segment; together they span [START_TIME, STOP_TIME].
+/// Generating ephemeris source (e.g., "JPL DE440", "HPOP v2.1", "Basilisk chebyPosEphem").
 func (rcv *PPE) EPHEMERIS_SOURCE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -295,9 +295,9 @@ func (rcv *PPE) EphemerisSource() []byte {
 	return rcv.EPHEMERIS_SOURCE()
 }
 
-// / Generating ephemeris source (e.g., "JPL DE440", "HPOP v2.1", "Basilisk chebyPosEphem").
-// / Fit span in seconds used to generate each polynomial segment.
-// / Informational; actual spans are in individual records.
+/// Generating ephemeris source (e.g., "JPL DE440", "HPOP v2.1", "Basilisk chebyPosEphem").
+/// Fit span in seconds used to generate each polynomial segment.
+/// Informational; actual spans are in individual records.
 func (rcv *PPE) NOMINAL_SEGMENT_SPAN() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -310,8 +310,8 @@ func (rcv *PPE) NominalSegmentSpan() float64 {
 	return rcv.NOMINAL_SEGMENT_SPAN()
 }
 
-// / Fit span in seconds used to generate each polynomial segment.
-// / Informational; actual spans are in individual records.
+/// Fit span in seconds used to generate each polynomial segment.
+/// Informational; actual spans are in individual records.
 func (rcv *PPE) MutateNOMINAL_SEGMENT_SPAN(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -320,8 +320,8 @@ func (rcv *PPE) MutateNominalSegmentSpan(n float64) bool {
 	return rcv.MutateNOMINAL_SEGMENT_SPAN(n)
 }
 
-// / Nominal number of coefficients per segment.
-// / Informational; actual counts are in individual records.
+/// Nominal number of coefficients per segment.
+/// Informational; actual counts are in individual records.
 func (rcv *PPE) NOMINAL_NUM_COEFFICIENTS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -334,8 +334,8 @@ func (rcv *PPE) NominalNumCoefficients() uint16 {
 	return rcv.NOMINAL_NUM_COEFFICIENTS()
 }
 
-// / Nominal number of coefficients per segment.
-// / Informational; actual counts are in individual records.
+/// Nominal number of coefficients per segment.
+/// Informational; actual counts are in individual records.
 func (rcv *PPE) MutateNOMINAL_NUM_COEFFICIENTS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(28, n)
 }

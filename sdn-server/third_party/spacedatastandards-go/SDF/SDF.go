@@ -6,8 +6,8 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Signed Distance Field envelope message — carries a configuration, a batch
-// / request, a batch response, or single / time-range result records.
+/// Signed Distance Field envelope message — carries a configuration, a batch
+/// request, a batch response, or single / time-range result records.
 type SDF struct {
 	_tab flatbuffers.Table
 }

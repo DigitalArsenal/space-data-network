@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Sensor Tasking Plan
+/// Sensor Tasking Plan
 type sensorPlan struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *sensorPlan) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Plan start time (ISO 8601)
+/// Plan start time (ISO 8601)
 func (rcv *sensorPlan) START_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *sensorPlan) StartTime() []byte {
 	return rcv.START_TIME()
 }
 
-// / Plan start time (ISO 8601)
-// / Plan end time (ISO 8601)
+/// Plan start time (ISO 8601)
+/// Plan end time (ISO 8601)
 func (rcv *sensorPlan) END_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *sensorPlan) EndTime() []byte {
 	return rcv.END_TIME()
 }
 
-// / Plan end time (ISO 8601)
-// / Target satellite number or designator
+/// Plan end time (ISO 8601)
+/// Target satellite number or designator
 func (rcv *sensorPlan) TARGET_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *sensorPlan) TargetId() []byte {
 	return rcv.TARGET_ID()
 }
 
-// / Target satellite number or designator
-// / Priority level (1=highest)
+/// Target satellite number or designator
+/// Priority level (1=highest)
 func (rcv *sensorPlan) PRIORITY() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *sensorPlan) Priority() byte {
 	return rcv.PRIORITY()
 }
 
-// / Priority level (1=highest)
+/// Priority level (1=highest)
 func (rcv *sensorPlan) MutatePRIORITY(n byte) bool {
 	return rcv._tab.MutateByteSlot(10, n)
 }
@@ -106,7 +106,7 @@ func (rcv *sensorPlan) MutatePriority(n byte) bool {
 	return rcv.MutatePRIORITY(n)
 }
 
-// / Requested observation mode
+/// Requested observation mode
 func (rcv *sensorPlan) MODE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -119,8 +119,8 @@ func (rcv *sensorPlan) Mode() []byte {
 	return rcv.MODE()
 }
 
-// / Requested observation mode
-// / Minimum elevation in degrees
+/// Requested observation mode
+/// Minimum elevation in degrees
 func (rcv *sensorPlan) MIN_ELEVATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -133,7 +133,7 @@ func (rcv *sensorPlan) MinElevation() float64 {
 	return rcv.MIN_ELEVATION()
 }
 
-// / Minimum elevation in degrees
+/// Minimum elevation in degrees
 func (rcv *sensorPlan) MutateMIN_ELEVATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
@@ -142,7 +142,7 @@ func (rcv *sensorPlan) MutateMinElevation(n float64) bool {
 	return rcv.MutateMIN_ELEVATION(n)
 }
 
-// / Maximum range in km
+/// Maximum range in km
 func (rcv *sensorPlan) MAX_RANGE() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -155,7 +155,7 @@ func (rcv *sensorPlan) MaxRange() float64 {
 	return rcv.MAX_RANGE()
 }
 
-// / Maximum range in km
+/// Maximum range in km
 func (rcv *sensorPlan) MutateMAX_RANGE(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(16, n)
 }

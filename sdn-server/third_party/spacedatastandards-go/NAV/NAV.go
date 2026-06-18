@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Naval Vessels
+/// Naval Vessels
 type NAV struct {
 	_tab flatbuffers.Table
 }

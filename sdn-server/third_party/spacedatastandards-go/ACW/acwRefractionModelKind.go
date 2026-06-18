@@ -7,7 +7,7 @@ import "strconv"
 type acwRefractionModelKind int8
 
 const (
-	acwRefractionModelKindNONE acwRefractionModelKind = 0
+	acwRefractionModelKindNONE                      acwRefractionModelKind = 0
 	/// Orekit-compatible EarthStandardAtmosphereRefraction correction.
 	acwRefractionModelKindEARTH_STANDARD_ATMOSPHERE acwRefractionModelKind = 1
 )

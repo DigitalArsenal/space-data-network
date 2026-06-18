@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Binary data encoding specification
+/// Binary data encoding specification
 type BinaryDataEncoding struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *BinaryDataEncoding) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Fixed size in bits
+/// Fixed size in bits
 func (rcv *BinaryDataEncoding) SIZE_IN_BITS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,7 +55,7 @@ func (rcv *BinaryDataEncoding) SizeInBits() uint16 {
 	return rcv.SIZE_IN_BITS()
 }
 
-// / Fixed size in bits
+/// Fixed size in bits
 func (rcv *BinaryDataEncoding) MutateSIZE_IN_BITS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(4, n)
 }
@@ -64,7 +64,7 @@ func (rcv *BinaryDataEncoding) MutateSizeInBits(n uint16) bool {
 	return rcv.MutateSIZE_IN_BITS(n)
 }
 
-// / Maximum size in bits (for variable length)
+/// Maximum size in bits (for variable length)
 func (rcv *BinaryDataEncoding) MAX_SIZE_IN_BITS() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -77,7 +77,7 @@ func (rcv *BinaryDataEncoding) MaxSizeInBits() uint16 {
 	return rcv.MAX_SIZE_IN_BITS()
 }
 
-// / Maximum size in bits (for variable length)
+/// Maximum size in bits (for variable length)
 func (rcv *BinaryDataEncoding) MutateMAX_SIZE_IN_BITS(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(6, n)
 }
@@ -86,7 +86,7 @@ func (rcv *BinaryDataEncoding) MutateMaxSizeInBits(n uint16) bool {
 	return rcv.MutateMAX_SIZE_IN_BITS(n)
 }
 
-// / Leading size field bits (for variable length)
+/// Leading size field bits (for variable length)
 func (rcv *BinaryDataEncoding) LEADING_SIZE_BITS() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -99,7 +99,7 @@ func (rcv *BinaryDataEncoding) LeadingSizeBits() byte {
 	return rcv.LEADING_SIZE_BITS()
 }
 
-// / Leading size field bits (for variable length)
+/// Leading size field bits (for variable length)
 func (rcv *BinaryDataEncoding) MutateLEADING_SIZE_BITS(n byte) bool {
 	return rcv._tab.MutateByteSlot(8, n)
 }

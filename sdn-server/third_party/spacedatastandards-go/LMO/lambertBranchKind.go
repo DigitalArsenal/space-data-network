@@ -4,7 +4,7 @@ package LMO
 
 import "strconv"
 
-// / Lambert solver branch kind.
+/// Lambert solver branch kind.
 type lambertBranchKind int8
 
 const (

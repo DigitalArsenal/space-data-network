@@ -4,7 +4,7 @@ package REC
 
 import "strconv"
 
-// / Serialization format used by an entry payload.
+/// Serialization format used by an entry payload.
 type ModulePayloadEncoding byte
 
 const (

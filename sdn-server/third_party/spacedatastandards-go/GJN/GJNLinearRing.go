@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / A linear ring is a closed LineString with 4+ positions (first = last)
+/// A linear ring is a closed LineString with 4+ positions (first = last)
 type GJNLinearRing struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *GJNLinearRing) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Ordered positions forming the ring
+/// Ordered positions forming the ring
 func (rcv *GJNLinearRing) POSITIONS(obj *GJNPosition, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -74,7 +74,7 @@ func (rcv *GJNLinearRing) PositionsLength() int {
 	return rcv.POSITIONSLength()
 }
 
-// / Ordered positions forming the ring
+/// Ordered positions forming the ring
 func GJNLinearRingStart(builder *flatbuffers.Builder) {
 	builder.StartObject(1)
 }

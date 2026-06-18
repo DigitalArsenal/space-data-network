@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Attitude Maneuver
+/// Attitude Maneuver
 type attManeuver struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *attManeuver) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Maneuver epoch start (ISO 8601)
+/// Maneuver epoch start (ISO 8601)
 func (rcv *attManeuver) MAN_EPOCH_START() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *attManeuver) ManEpochStart() []byte {
 	return rcv.MAN_EPOCH_START()
 }
 
-// / Maneuver epoch start (ISO 8601)
-// / Duration in seconds
+/// Maneuver epoch start (ISO 8601)
+/// Duration in seconds
 func (rcv *attManeuver) DURATION() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,7 +69,7 @@ func (rcv *attManeuver) Duration() float64 {
 	return rcv.DURATION()
 }
 
-// / Duration in seconds
+/// Duration in seconds
 func (rcv *attManeuver) MutateDURATION(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
@@ -78,7 +78,7 @@ func (rcv *attManeuver) MutateDuration(n float64) bool {
 	return rcv.MutateDURATION(n)
 }
 
-// / Reference frame
+/// Reference frame
 func (rcv *attManeuver) REF_FRAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -91,8 +91,8 @@ func (rcv *attManeuver) RefFrame() []byte {
 	return rcv.REF_FRAME()
 }
 
-// / Reference frame
-// / Torque about body X in N*m
+/// Reference frame
+/// Torque about body X in N*m
 func (rcv *attManeuver) TOR_1() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -105,7 +105,7 @@ func (rcv *attManeuver) Tor1() float64 {
 	return rcv.TOR_1()
 }
 
-// / Torque about body X in N*m
+/// Torque about body X in N*m
 func (rcv *attManeuver) MutateTOR_1(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
@@ -114,7 +114,7 @@ func (rcv *attManeuver) MutateTor1(n float64) bool {
 	return rcv.MutateTOR_1(n)
 }
 
-// / Torque about body Y in N*m
+/// Torque about body Y in N*m
 func (rcv *attManeuver) TOR_2() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -127,7 +127,7 @@ func (rcv *attManeuver) Tor2() float64 {
 	return rcv.TOR_2()
 }
 
-// / Torque about body Y in N*m
+/// Torque about body Y in N*m
 func (rcv *attManeuver) MutateTOR_2(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
@@ -136,7 +136,7 @@ func (rcv *attManeuver) MutateTor2(n float64) bool {
 	return rcv.MutateTOR_2(n)
 }
 
-// / Torque about body Z in N*m
+/// Torque about body Z in N*m
 func (rcv *attManeuver) TOR_3() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -149,7 +149,7 @@ func (rcv *attManeuver) Tor3() float64 {
 	return rcv.TOR_3()
 }
 
-// / Torque about body Z in N*m
+/// Torque about body Z in N*m
 func (rcv *attManeuver) MutateTOR_3(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }

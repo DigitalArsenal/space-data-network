@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Sequence container (packet definition)
+/// Sequence container (packet definition)
 type SequenceContainer struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *SequenceContainer) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Container name
+/// Container name
 func (rcv *SequenceContainer) NAME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *SequenceContainer) Name() []byte {
 	return rcv.NAME()
 }
 
-// / Container name
-// / Short description
+/// Container name
+/// Short description
 func (rcv *SequenceContainer) SHORT_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -69,8 +69,8 @@ func (rcv *SequenceContainer) ShortDescription() []byte {
 	return rcv.SHORT_DESCRIPTION()
 }
 
-// / Short description
-// / Long description
+/// Short description
+/// Long description
 func (rcv *SequenceContainer) LONG_DESCRIPTION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -83,8 +83,8 @@ func (rcv *SequenceContainer) LongDescription() []byte {
 	return rcv.LONG_DESCRIPTION()
 }
 
-// / Long description
-// / Abstract container (used as base only)
+/// Long description
+/// Abstract container (used as base only)
 func (rcv *SequenceContainer) ABSTRACT() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -97,7 +97,7 @@ func (rcv *SequenceContainer) Abstract() bool {
 	return rcv.ABSTRACT()
 }
 
-// / Abstract container (used as base only)
+/// Abstract container (used as base only)
 func (rcv *SequenceContainer) MutateABSTRACT(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }
@@ -106,7 +106,7 @@ func (rcv *SequenceContainer) MutateAbstract(n bool) bool {
 	return rcv.MutateABSTRACT(n)
 }
 
-// / Container entry list
+/// Container entry list
 func (rcv *SequenceContainer) ENTRY_LIST(obj *ContainerEntry, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -138,8 +138,8 @@ func (rcv *SequenceContainer) EntryListLength() int {
 	return rcv.ENTRY_LISTLength()
 }
 
-// / Container entry list
-// / Base container (inheritance)
+/// Container entry list
+/// Base container (inheritance)
 func (rcv *SequenceContainer) BASE_CONTAINER(obj *BaseContainer) *BaseContainer {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -157,8 +157,8 @@ func (rcv *SequenceContainer) BaseContainer(obj *BaseContainer) *BaseContainer {
 	return rcv.BASE_CONTAINER(obj)
 }
 
-// / Base container (inheritance)
-// / Binary encoding
+/// Base container (inheritance)
+/// Binary encoding
 func (rcv *SequenceContainer) BINARY_ENCODING(obj *ContainerBinaryEncoding) *ContainerBinaryEncoding {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -176,8 +176,8 @@ func (rcv *SequenceContainer) BinaryEncoding(obj *ContainerBinaryEncoding) *Cont
 	return rcv.BINARY_ENCODING(obj)
 }
 
-// / Binary encoding
-// / Rate in stream
+/// Binary encoding
+/// Rate in stream
 func (rcv *SequenceContainer) RATE_IN_STREAM(obj *RateInStream) *RateInStream {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -195,8 +195,8 @@ func (rcv *SequenceContainer) RateInStream(obj *RateInStream) *RateInStream {
 	return rcv.RATE_IN_STREAM(obj)
 }
 
-// / Rate in stream
-// / Idle pattern (hex string for padding)
+/// Rate in stream
+/// Idle pattern (hex string for padding)
 func (rcv *SequenceContainer) IDLE_PATTERN() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -209,7 +209,7 @@ func (rcv *SequenceContainer) IdlePattern() []byte {
 	return rcv.IDLE_PATTERN()
 }
 
-// / Idle pattern (hex string for padding)
+/// Idle pattern (hex string for padding)
 func SequenceContainerStart(builder *flatbuffers.Builder) {
 	builder.StartObject(9)
 }

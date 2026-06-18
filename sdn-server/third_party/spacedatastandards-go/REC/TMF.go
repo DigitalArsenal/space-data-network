@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Telemetry Transfer Frame (CCSDS 132.0-B-2)
+/// Telemetry Transfer Frame (CCSDS 132.0-B-2)
 type TMF struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *TMF) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Transfer frame version
+/// Transfer frame version
 func (rcv *TMF) VERSION() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,7 +67,7 @@ func (rcv *TMF) Version() byte {
 	return rcv.VERSION()
 }
 
-// / Transfer frame version
+/// Transfer frame version
 func (rcv *TMF) MutateVERSION(n byte) bool {
 	return rcv._tab.MutateByteSlot(4, n)
 }
@@ -76,7 +76,7 @@ func (rcv *TMF) MutateVersion(n byte) bool {
 	return rcv.MutateVERSION(n)
 }
 
-// / Spacecraft identifier
+/// Spacecraft identifier
 func (rcv *TMF) SPACECRAFT_ID() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -89,7 +89,7 @@ func (rcv *TMF) SpacecraftId() uint16 {
 	return rcv.SPACECRAFT_ID()
 }
 
-// / Spacecraft identifier
+/// Spacecraft identifier
 func (rcv *TMF) MutateSPACECRAFT_ID(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(6, n)
 }
@@ -98,7 +98,7 @@ func (rcv *TMF) MutateSpacecraftId(n uint16) bool {
 	return rcv.MutateSPACECRAFT_ID(n)
 }
 
-// / Virtual channel identifier
+/// Virtual channel identifier
 func (rcv *TMF) VIRTUAL_CHANNEL_ID() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -111,7 +111,7 @@ func (rcv *TMF) VirtualChannelId() byte {
 	return rcv.VIRTUAL_CHANNEL_ID()
 }
 
-// / Virtual channel identifier
+/// Virtual channel identifier
 func (rcv *TMF) MutateVIRTUAL_CHANNEL_ID(n byte) bool {
 	return rcv._tab.MutateByteSlot(8, n)
 }
@@ -120,7 +120,7 @@ func (rcv *TMF) MutateVirtualChannelId(n byte) bool {
 	return rcv.MutateVIRTUAL_CHANNEL_ID(n)
 }
 
-// / Operational control field flag
+/// Operational control field flag
 func (rcv *TMF) OCF_FLAG() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -133,7 +133,7 @@ func (rcv *TMF) OcfFlag() bool {
 	return rcv.OCF_FLAG()
 }
 
-// / Operational control field flag
+/// Operational control field flag
 func (rcv *TMF) MutateOCF_FLAG(n bool) bool {
 	return rcv._tab.MutateBoolSlot(10, n)
 }
@@ -142,7 +142,7 @@ func (rcv *TMF) MutateOcfFlag(n bool) bool {
 	return rcv.MutateOCF_FLAG(n)
 }
 
-// / Master channel frame count
+/// Master channel frame count
 func (rcv *TMF) MASTER_FRAME_COUNT() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -155,7 +155,7 @@ func (rcv *TMF) MasterFrameCount() byte {
 	return rcv.MASTER_FRAME_COUNT()
 }
 
-// / Master channel frame count
+/// Master channel frame count
 func (rcv *TMF) MutateMASTER_FRAME_COUNT(n byte) bool {
 	return rcv._tab.MutateByteSlot(12, n)
 }
@@ -164,7 +164,7 @@ func (rcv *TMF) MutateMasterFrameCount(n byte) bool {
 	return rcv.MutateMASTER_FRAME_COUNT(n)
 }
 
-// / Virtual channel frame count
+/// Virtual channel frame count
 func (rcv *TMF) VIRTUAL_FRAME_COUNT() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -177,7 +177,7 @@ func (rcv *TMF) VirtualFrameCount() byte {
 	return rcv.VIRTUAL_FRAME_COUNT()
 }
 
-// / Virtual channel frame count
+/// Virtual channel frame count
 func (rcv *TMF) MutateVIRTUAL_FRAME_COUNT(n byte) bool {
 	return rcv._tab.MutateByteSlot(14, n)
 }
@@ -186,7 +186,7 @@ func (rcv *TMF) MutateVirtualFrameCount(n byte) bool {
 	return rcv.MutateVIRTUAL_FRAME_COUNT(n)
 }
 
-// / Secondary header flag
+/// Secondary header flag
 func (rcv *TMF) SEC_HDR_FLAG() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -199,7 +199,7 @@ func (rcv *TMF) SecHdrFlag() bool {
 	return rcv.SEC_HDR_FLAG()
 }
 
-// / Secondary header flag
+/// Secondary header flag
 func (rcv *TMF) MutateSEC_HDR_FLAG(n bool) bool {
 	return rcv._tab.MutateBoolSlot(16, n)
 }
@@ -208,7 +208,7 @@ func (rcv *TMF) MutateSecHdrFlag(n bool) bool {
 	return rcv.MutateSEC_HDR_FLAG(n)
 }
 
-// / Synchronization flag
+/// Synchronization flag
 func (rcv *TMF) SYNCH_FLAG() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -221,7 +221,7 @@ func (rcv *TMF) SynchFlag() bool {
 	return rcv.SYNCH_FLAG()
 }
 
-// / Synchronization flag
+/// Synchronization flag
 func (rcv *TMF) MutateSYNCH_FLAG(n bool) bool {
 	return rcv._tab.MutateBoolSlot(18, n)
 }
@@ -230,7 +230,7 @@ func (rcv *TMF) MutateSynchFlag(n bool) bool {
 	return rcv.MutateSYNCH_FLAG(n)
 }
 
-// / Packet order flag
+/// Packet order flag
 func (rcv *TMF) PACKET_ORDER_FLAG() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -243,7 +243,7 @@ func (rcv *TMF) PacketOrderFlag() bool {
 	return rcv.PACKET_ORDER_FLAG()
 }
 
-// / Packet order flag
+/// Packet order flag
 func (rcv *TMF) MutatePACKET_ORDER_FLAG(n bool) bool {
 	return rcv._tab.MutateBoolSlot(20, n)
 }
@@ -252,7 +252,7 @@ func (rcv *TMF) MutatePacketOrderFlag(n bool) bool {
 	return rcv.MutatePACKET_ORDER_FLAG(n)
 }
 
-// / Segment length identifier
+/// Segment length identifier
 func (rcv *TMF) SEGMENT_LENGTH_ID() byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -265,7 +265,7 @@ func (rcv *TMF) SegmentLengthId() byte {
 	return rcv.SEGMENT_LENGTH_ID()
 }
 
-// / Segment length identifier
+/// Segment length identifier
 func (rcv *TMF) MutateSEGMENT_LENGTH_ID(n byte) bool {
 	return rcv._tab.MutateByteSlot(22, n)
 }
@@ -274,7 +274,7 @@ func (rcv *TMF) MutateSegmentLengthId(n byte) bool {
 	return rcv.MutateSEGMENT_LENGTH_ID(n)
 }
 
-// / First header pointer
+/// First header pointer
 func (rcv *TMF) FIRST_HDR_POINTER() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -287,7 +287,7 @@ func (rcv *TMF) FirstHdrPointer() uint16 {
 	return rcv.FIRST_HDR_POINTER()
 }
 
-// / First header pointer
+/// First header pointer
 func (rcv *TMF) MutateFIRST_HDR_POINTER(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(24, n)
 }
@@ -296,7 +296,7 @@ func (rcv *TMF) MutateFirstHdrPointer(n uint16) bool {
 	return rcv.MutateFIRST_HDR_POINTER(n)
 }
 
-// / Data field
+/// Data field
 func (rcv *TMF) DATA(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -334,7 +334,7 @@ func (rcv *TMF) DataBytes() []byte {
 	return rcv.DATABytes()
 }
 
-// / Data field
+/// Data field
 func (rcv *TMF) MutateDATA(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -348,7 +348,7 @@ func (rcv *TMF) MutateData(j int, n byte) bool {
 	return rcv.MutateDATA(j, n)
 }
 
-// / Operational control field
+/// Operational control field
 func (rcv *TMF) OCF(j int) byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -386,7 +386,7 @@ func (rcv *TMF) OcfBytes() []byte {
 	return rcv.OCFBytes()
 }
 
-// / Operational control field
+/// Operational control field
 func (rcv *TMF) MutateOCF(j int, n byte) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -400,7 +400,7 @@ func (rcv *TMF) MutateOcf(j int, n byte) bool {
 	return rcv.MutateOCF(j, n)
 }
 
-// / Frame error control field
+/// Frame error control field
 func (rcv *TMF) FECF() uint16 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -413,7 +413,7 @@ func (rcv *TMF) Fecf() uint16 {
 	return rcv.FECF()
 }
 
-// / Frame error control field
+/// Frame error control field
 func (rcv *TMF) MutateFECF(n uint16) bool {
 	return rcv._tab.MutateUint16Slot(30, n)
 }

@@ -4,22 +4,22 @@ package REC
 
 import "strconv"
 
-// / License type for plugin access
+/// License type for plugin access
 type licenseCategory int8
 
 const (
 	/// Evaluation/trial license
-	licenseCategoryTrial licenseCategory = 0
+	licenseCategoryTrial       licenseCategory = 0
 	/// Standard commercial license
-	licenseCategoryCommercial licenseCategory = 1
+	licenseCategoryCommercial  licenseCategory = 1
 	/// Enterprise site license
-	licenseCategoryEnterprise licenseCategory = 2
+	licenseCategoryEnterprise  licenseCategory = 2
 	/// Educational/academic license
 	licenseCategoryEducational licenseCategory = 3
 	/// Open source project license
-	licenseCategoryOpenSource licenseCategory = 4
+	licenseCategoryOpenSource  licenseCategory = 4
 	/// Internal OrbPro default plugins
-	licenseCategoryInternal licenseCategory = 5
+	licenseCategoryInternal    licenseCategory = 5
 )
 
 var EnumNameslicenseCategory = map[licenseCategory]string{

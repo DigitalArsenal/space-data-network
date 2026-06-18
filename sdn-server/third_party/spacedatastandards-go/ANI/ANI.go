@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Analytic Imagery Product
+/// Analytic Imagery Product
 type ANI struct {
 	_tab flatbuffers.Table
 }
@@ -54,7 +54,7 @@ func (rcv *ANI) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Unique identifier
+/// Unique identifier
 func (rcv *ANI) ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -67,8 +67,8 @@ func (rcv *ANI) Id() []byte {
 	return rcv.ID()
 }
 
-// / Unique identifier
-// / Reference to source imagery (e.g., SKI, GDI, EOO)
+/// Unique identifier
+/// Reference to source imagery (e.g., SKI, GDI, EOO)
 func (rcv *ANI) SOURCE_ID() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -81,8 +81,8 @@ func (rcv *ANI) SourceId() []byte {
 	return rcv.SOURCE_ID()
 }
 
-// / Reference to source imagery (e.g., SKI, GDI, EOO)
-// / Source imagery type
+/// Reference to source imagery (e.g., SKI, GDI, EOO)
+/// Source imagery type
 func (rcv *ANI) SOURCE_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -95,8 +95,8 @@ func (rcv *ANI) SourceType() []byte {
 	return rcv.SOURCE_TYPE()
 }
 
-// / Source imagery type
-// / Analytic product type
+/// Source imagery type
+/// Analytic product type
 func (rcv *ANI) ANALYTIC_TYPE() analyticProfile {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -109,7 +109,7 @@ func (rcv *ANI) AnalyticType() analyticProfile {
 	return rcv.ANALYTIC_TYPE()
 }
 
-// / Analytic product type
+/// Analytic product type
 func (rcv *ANI) MutateANALYTIC_TYPE(n analyticProfile) bool {
 	return rcv._tab.MutateInt8Slot(10, int8(n))
 }
@@ -118,7 +118,7 @@ func (rcv *ANI) MutateAnalyticType(n analyticProfile) bool {
 	return rcv.MutateANALYTIC_TYPE(n)
 }
 
-// / Processing algorithm or pipeline name
+/// Processing algorithm or pipeline name
 func (rcv *ANI) ALGORITHM() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
@@ -131,8 +131,8 @@ func (rcv *ANI) Algorithm() []byte {
 	return rcv.ALGORITHM()
 }
 
-// / Processing algorithm or pipeline name
-// / Algorithm version
+/// Processing algorithm or pipeline name
+/// Algorithm version
 func (rcv *ANI) ALGORITHM_VERSION() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
@@ -145,8 +145,8 @@ func (rcv *ANI) AlgorithmVersion() []byte {
 	return rcv.ALGORITHM_VERSION()
 }
 
-// / Algorithm version
-// / Processing epoch (ISO 8601)
+/// Algorithm version
+/// Processing epoch (ISO 8601)
 func (rcv *ANI) PROCESSING_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
@@ -159,8 +159,8 @@ func (rcv *ANI) ProcessingTime() []byte {
 	return rcv.PROCESSING_TIME()
 }
 
-// / Processing epoch (ISO 8601)
-// / Original observation epoch (ISO 8601)
+/// Processing epoch (ISO 8601)
+/// Original observation epoch (ISO 8601)
 func (rcv *ANI) OBS_TIME() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
@@ -173,8 +173,8 @@ func (rcv *ANI) ObsTime() []byte {
 	return rcv.OBS_TIME()
 }
 
-// / Original observation epoch (ISO 8601)
-// / Target satellite number (if applicable)
+/// Original observation epoch (ISO 8601)
+/// Target satellite number (if applicable)
 func (rcv *ANI) SAT_NO() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
@@ -187,7 +187,7 @@ func (rcv *ANI) SatNo() uint32 {
 	return rcv.SAT_NO()
 }
 
-// / Target satellite number (if applicable)
+/// Target satellite number (if applicable)
 func (rcv *ANI) MutateSAT_NO(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(20, n)
 }
@@ -196,7 +196,7 @@ func (rcv *ANI) MutateSatNo(n uint32) bool {
 	return rcv.MutateSAT_NO(n)
 }
 
-// / Target object designator
+/// Target object designator
 func (rcv *ANI) OBJECT_DESIGNATOR() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
@@ -209,8 +209,8 @@ func (rcv *ANI) ObjectDesignator() []byte {
 	return rcv.OBJECT_DESIGNATOR()
 }
 
-// / Target object designator
-// / Center right ascension in degrees
+/// Target object designator
+/// Center right ascension in degrees
 func (rcv *ANI) RA() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
@@ -223,7 +223,7 @@ func (rcv *ANI) Ra() float64 {
 	return rcv.RA()
 }
 
-// / Center right ascension in degrees
+/// Center right ascension in degrees
 func (rcv *ANI) MutateRA(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(24, n)
 }
@@ -232,7 +232,7 @@ func (rcv *ANI) MutateRa(n float64) bool {
 	return rcv.MutateRA(n)
 }
 
-// / Center declination in degrees
+/// Center declination in degrees
 func (rcv *ANI) DEC() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
@@ -245,7 +245,7 @@ func (rcv *ANI) Dec() float64 {
 	return rcv.DEC()
 }
 
-// / Center declination in degrees
+/// Center declination in degrees
 func (rcv *ANI) MutateDEC(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(26, n)
 }
@@ -254,7 +254,7 @@ func (rcv *ANI) MutateDec(n float64) bool {
 	return rcv.MutateDEC(n)
 }
 
-// / Field of view in degrees
+/// Field of view in degrees
 func (rcv *ANI) FOV() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
@@ -267,7 +267,7 @@ func (rcv *ANI) Fov() float64 {
 	return rcv.FOV()
 }
 
-// / Field of view in degrees
+/// Field of view in degrees
 func (rcv *ANI) MutateFOV(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
@@ -276,7 +276,7 @@ func (rcv *ANI) MutateFov(n float64) bool {
 	return rcv.MutateFOV(n)
 }
 
-// / Visual magnitude estimate
+/// Visual magnitude estimate
 func (rcv *ANI) VISUAL_MAG() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
@@ -289,7 +289,7 @@ func (rcv *ANI) VisualMag() float64 {
 	return rcv.VISUAL_MAG()
 }
 
-// / Visual magnitude estimate
+/// Visual magnitude estimate
 func (rcv *ANI) MutateVISUAL_MAG(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(30, n)
 }
@@ -298,7 +298,7 @@ func (rcv *ANI) MutateVisualMag(n float64) bool {
 	return rcv.MutateVISUAL_MAG(n)
 }
 
-// / Magnitude uncertainty
+/// Magnitude uncertainty
 func (rcv *ANI) MAG_UNCERTAINTY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
@@ -311,7 +311,7 @@ func (rcv *ANI) MagUncertainty() float64 {
 	return rcv.MAG_UNCERTAINTY()
 }
 
-// / Magnitude uncertainty
+/// Magnitude uncertainty
 func (rcv *ANI) MutateMAG_UNCERTAINTY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
@@ -320,7 +320,7 @@ func (rcv *ANI) MutateMagUncertainty(n float64) bool {
 	return rcv.MutateMAG_UNCERTAINTY(n)
 }
 
-// / Detected object count
+/// Detected object count
 func (rcv *ANI) OBJECT_COUNT() uint32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
@@ -333,7 +333,7 @@ func (rcv *ANI) ObjectCount() uint32 {
 	return rcv.OBJECT_COUNT()
 }
 
-// / Detected object count
+/// Detected object count
 func (rcv *ANI) MutateOBJECT_COUNT(n uint32) bool {
 	return rcv._tab.MutateUint32Slot(34, n)
 }
@@ -342,7 +342,7 @@ func (rcv *ANI) MutateObjectCount(n uint32) bool {
 	return rcv.MutateOBJECT_COUNT(n)
 }
 
-// / Classification labels
+/// Classification labels
 func (rcv *ANI) LABELS(j int) []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
@@ -368,8 +368,8 @@ func (rcv *ANI) LabelsLength() int {
 	return rcv.LABELSLength()
 }
 
-// / Classification labels
-// / Classification confidence scores (0.0-1.0)
+/// Classification labels
+/// Classification confidence scores (0.0-1.0)
 func (rcv *ANI) CONFIDENCE(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -395,7 +395,7 @@ func (rcv *ANI) ConfidenceLength() int {
 	return rcv.CONFIDENCELength()
 }
 
-// / Classification confidence scores (0.0-1.0)
+/// Classification confidence scores (0.0-1.0)
 func (rcv *ANI) MutateCONFIDENCE(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
@@ -409,7 +409,7 @@ func (rcv *ANI) MutateConfidence(j int, n float64) bool {
 	return rcv.MutateCONFIDENCE(j, n)
 }
 
-// / Feature vector or extracted parameters
+/// Feature vector or extracted parameters
 func (rcv *ANI) FEATURES(j int) float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -435,7 +435,7 @@ func (rcv *ANI) FeaturesLength() int {
 	return rcv.FEATURESLength()
 }
 
-// / Feature vector or extracted parameters
+/// Feature vector or extracted parameters
 func (rcv *ANI) MutateFEATURES(j int, n float64) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
@@ -449,7 +449,7 @@ func (rcv *ANI) MutateFeatures(j int, n float64) bool {
 	return rcv.MutateFEATURES(j, n)
 }
 
-// / Quality score (0.0-1.0)
+/// Quality score (0.0-1.0)
 func (rcv *ANI) QUALITY() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
@@ -462,7 +462,7 @@ func (rcv *ANI) Quality() float64 {
 	return rcv.QUALITY()
 }
 
-// / Quality score (0.0-1.0)
+/// Quality score (0.0-1.0)
 func (rcv *ANI) MutateQUALITY(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(42, n)
 }
@@ -471,7 +471,7 @@ func (rcv *ANI) MutateQuality(n float64) bool {
 	return rcv.MutateQUALITY(n)
 }
 
-// / Additional notes
+/// Additional notes
 func (rcv *ANI) NOTES() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
@@ -484,7 +484,7 @@ func (rcv *ANI) Notes() []byte {
 	return rcv.NOTES()
 }
 
-// / Additional notes
+/// Additional notes
 func ANIStart(builder *flatbuffers.Builder) {
 	builder.StartObject(21)
 }

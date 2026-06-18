@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Geometry table with information about geometric properties
+/// Geometry table with information about geometric properties
 type Geometry struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *Geometry) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Type of geometry
+/// Type of geometry
 func (rcv *Geometry) GEOMETRY_TYPE() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -55,8 +55,8 @@ func (rcv *Geometry) GeometryType() []byte {
 	return rcv.GEOMETRY_TYPE()
 }
 
-// / Type of geometry
-// / Coordinates of the geometry
+/// Type of geometry
+/// Coordinates of the geometry
 func (rcv *Geometry) COORDINATES(j int) float32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -82,7 +82,7 @@ func (rcv *Geometry) CoordinatesLength() int {
 	return rcv.COORDINATESLength()
 }
 
-// / Coordinates of the geometry
+/// Coordinates of the geometry
 func (rcv *Geometry) MutateCOORDINATES(j int, n float32) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {

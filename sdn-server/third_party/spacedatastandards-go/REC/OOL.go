@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / On-Orbit Object List
+/// On-Orbit Object List
 type OOL struct {
 	_tab flatbuffers.Table
 }

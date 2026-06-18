@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Match criteria for conditional logic
+/// Match criteria for conditional logic
 type MatchCriteria struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *MatchCriteria) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Single comparison
+/// Single comparison
 func (rcv *MatchCriteria) COMPARISON(obj *ParameterComparison) *ParameterComparison {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -60,8 +60,8 @@ func (rcv *MatchCriteria) Comparison(obj *ParameterComparison) *ParameterCompari
 	return rcv.COMPARISON(obj)
 }
 
-// / Single comparison
-// / List of comparisons (implicit AND)
+/// Single comparison
+/// List of comparisons (implicit AND)
 func (rcv *MatchCriteria) COMPARISON_LIST(obj *ParameterComparison, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -93,8 +93,8 @@ func (rcv *MatchCriteria) ComparisonListLength() int {
 	return rcv.COMPARISON_LISTLength()
 }
 
-// / List of comparisons (implicit AND)
-// / Boolean expression
+/// List of comparisons (implicit AND)
+/// Boolean expression
 func (rcv *MatchCriteria) BOOLEAN_EXPRESSION(obj *BooleanExpression) *BooleanExpression {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
@@ -112,8 +112,8 @@ func (rcv *MatchCriteria) BooleanExpression(obj *BooleanExpression) *BooleanExpr
 	return rcv.BOOLEAN_EXPRESSION(obj)
 }
 
-// / Boolean expression
-// / Custom algorithm reference
+/// Boolean expression
+/// Custom algorithm reference
 func (rcv *MatchCriteria) CUSTOM_ALGORITHM() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
@@ -126,7 +126,7 @@ func (rcv *MatchCriteria) CustomAlgorithm() []byte {
 	return rcv.CUSTOM_ALGORITHM()
 }
 
-// / Custom algorithm reference
+/// Custom algorithm reference
 func MatchCriteriaStart(builder *flatbuffers.Builder) {
 	builder.StartObject(4)
 }

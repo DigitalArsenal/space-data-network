@@ -4,39 +4,39 @@ package PRW
 
 import "strconv"
 
-// / Propagator Runtime Wire — arena-addressed init / batch request / batch
-// / response envelopes for orbital propagators that produce state vectors
-// / into a shared memory arena.
-// /
-// / Data interchange for the underlying content (state vectors, covariance,
-// / maneuvers, force models, Keplerian / TLE inputs, polynomial ephemeris)
-// / lives in SDS `OCM` + `OMM` + `PPE` + `RFM` + `ATM`. PRW is the runtime
-// / wire that moves those across a JS ↔ WASM boundary, not a substitute for
-// / any of them.
-// / Runtime state-flag bitfield (sized to match a single uint).
-// / Data-interchange equivalents: MANEUVERING is subsumed by OCM.Maneuver;
-// / HAS_COVARIANCE is implicit from OCM.COVARIANCE_DATA. The remaining
-// / flags live here because they describe runtime propagation health, not
-// / a persisted record.
+/// Propagator Runtime Wire — arena-addressed init / batch request / batch
+/// response envelopes for orbital propagators that produce state vectors
+/// into a shared memory arena.
+///
+/// Data interchange for the underlying content (state vectors, covariance,
+/// maneuvers, force models, Keplerian / TLE inputs, polynomial ephemeris)
+/// lives in SDS `OCM` + `OMM` + `PPE` + `RFM` + `ATM`. PRW is the runtime
+/// wire that moves those across a JS ↔ WASM boundary, not a substitute for
+/// any of them.
+/// Runtime state-flag bitfield (sized to match a single uint).
+/// Data-interchange equivalents: MANEUVERING is subsumed by OCM.Maneuver;
+/// HAS_COVARIANCE is implicit from OCM.COVARIANCE_DATA. The remaining
+/// flags live here because they describe runtime propagation health, not
+/// a persisted record.
 type propagatorStateFlags uint32
 
 const (
 	/// State vector data is valid.
-	propagatorStateFlagsVALID propagatorStateFlags = 1
+	propagatorStateFlagsVALID        propagatorStateFlags = 1
 	/// Satellite is in Earth's shadow at this epoch.
-	propagatorStateFlagsIN_ECLIPSE propagatorStateFlags = 2
+	propagatorStateFlagsIN_ECLIPSE   propagatorStateFlags = 2
 	/// Orbit has decayed (re-entry imminent or complete).
-	propagatorStateFlagsDECAYED propagatorStateFlags = 4
+	propagatorStateFlagsDECAYED      propagatorStateFlags = 4
 	/// Propagation extrapolated beyond the input epoch.
 	propagatorStateFlagsEXTRAPOLATED propagatorStateFlags = 8
 	/// Reserved.
-	propagatorStateFlagsRESERVED_4 propagatorStateFlags = 16
+	propagatorStateFlagsRESERVED_4   propagatorStateFlags = 16
 	/// Reserved.
-	propagatorStateFlagsRESERVED_5 propagatorStateFlags = 32
+	propagatorStateFlagsRESERVED_5   propagatorStateFlags = 32
 	/// Reserved.
-	propagatorStateFlagsRESERVED_6 propagatorStateFlags = 64
+	propagatorStateFlagsRESERVED_6   propagatorStateFlags = 64
 	/// Reserved.
-	propagatorStateFlagsRESERVED_7 propagatorStateFlags = 128
+	propagatorStateFlagsRESERVED_7   propagatorStateFlags = 128
 )
 
 var EnumNamespropagatorStateFlags = map[propagatorStateFlags]string{

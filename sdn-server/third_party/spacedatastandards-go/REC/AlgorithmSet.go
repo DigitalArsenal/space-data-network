@@ -6,7 +6,7 @@ import (
 	flatbuffers "github.com/google/flatbuffers/go"
 )
 
-// / Collection of algorithms
+/// Collection of algorithms
 type AlgorithmSet struct {
 	_tab flatbuffers.Table
 }
@@ -42,7 +42,7 @@ func (rcv *AlgorithmSet) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-// / Custom algorithms
+/// Custom algorithms
 func (rcv *AlgorithmSet) CUSTOM_ALGORITHMS(obj *CustomAlgorithm, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
@@ -74,8 +74,8 @@ func (rcv *AlgorithmSet) CustomAlgorithmsLength() int {
 	return rcv.CUSTOM_ALGORITHMSLength()
 }
 
-// / Custom algorithms
-// / Math algorithms
+/// Custom algorithms
+/// Math algorithms
 func (rcv *AlgorithmSet) MATH_ALGORITHMS(obj *MathAlgorithm, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
@@ -107,7 +107,7 @@ func (rcv *AlgorithmSet) MathAlgorithmsLength() int {
 	return rcv.MATH_ALGORITHMSLength()
 }
 
-// / Math algorithms
+/// Math algorithms
 func AlgorithmSetStart(builder *flatbuffers.Builder) {
 	builder.StartObject(2)
 }
