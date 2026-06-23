@@ -96,6 +96,30 @@ jobs:
             dist/ipfs/sdn-admin
             dist/ipfs/ipfs-webui
 
+  updater-wasm:
+    name: Build updater module wasm
+    runs-on: ubuntu-latest
+    needs: preflight
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install root JS dependencies
+        run: npm ci
+      - name: Build updater module wasm
+        run: npm --prefix packages/sdn-updater-module run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: updater-module-wasm
+          path: packages/sdn-updater-module/dist/isomorphic/module.wasm
+          if-no-files-found: error
+
   docker:
     name: Build beta container image
     runs-on: ubuntu-latest
@@ -178,7 +202,7 @@ jobs:
   cli:
     name: Build self-contained CLI archives (${{ matrix.target_os }}-${{ matrix.target_arch }})
     runs-on: ${{ matrix.runner }}
-    needs: [beta-version, ipfs]
+    needs: [beta-version, ipfs, updater-wasm]
     defaults:
       run:
         shell: bash
@@ -253,8 +277,12 @@ jobs:
           cache-dependency-path: sdn-server/go.sum
       - name: Install root JS dependencies
         run: npm ci
-      - name: Build updater module wasm
-        run: npm --prefix packages/sdn-updater-module run build
+      - uses: actions/download-artifact@v4
+        with:
+          name: updater-module-wasm
+          path: packages/sdn-updater-module/dist/isomorphic
+      - name: Verify updater module wasm
+        run: test -f packages/sdn-updater-module/dist/isomorphic/module.wasm
       - name: Install Windows CLI build tools
         if: matrix.target_os == 'windows'
         run: |

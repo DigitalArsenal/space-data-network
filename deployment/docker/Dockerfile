@@ -23,6 +23,7 @@ ENV CGO_CFLAGS="-I/root/.wasmedge/include"
 ENV CGO_LDFLAGS="-L/root/.wasmedge/lib -Wl,-rpath,/root/.wasmedge/lib"
 
 COPY sdn-server/go.mod sdn-server/go.sum ./sdn-server/
+COPY sdn-server/third_party/spacedatastandards-go/go.mod ./sdn-server/third_party/spacedatastandards-go/go.mod
 WORKDIR /build/sdn-server
 RUN go mod download
 
