@@ -21,9 +21,37 @@ env:
   WASMEDGE_VERSION: 0.14.0
 
 jobs:
+  build-updater-wasm:
+    name: Build updater module wasm
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install root JS dependencies
+        run: npm ci
+
+      - name: Build updater module wasm
+        run: npm --prefix packages/sdn-updater-module run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: updater-module-wasm
+          path: packages/sdn-updater-module/dist/isomorphic/module.wasm
+          if-no-files-found: error
+
   build-cli:
     name: Build CLI archive (${{ matrix.target_os }}-${{ matrix.target_arch }})
     runs-on: ${{ matrix.runner }}
+    needs: build-updater-wasm
     defaults:
       run:
         shell: bash
@@ -80,8 +108,13 @@ jobs:
       - name: Install root JS dependencies
         run: npm ci
 
-      - name: Build updater module wasm
-        run: npm --prefix packages/sdn-updater-module run build
+      - uses: actions/download-artifact@v4
+        with:
+          name: updater-module-wasm
+          path: packages/sdn-updater-module/dist/isomorphic
+
+      - name: Verify updater module wasm
+        run: test -f packages/sdn-updater-module/dist/isomorphic/module.wasm
 
       - name: Prepare smoke UI assets
         run: |
