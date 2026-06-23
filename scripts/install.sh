@@ -6,6 +6,7 @@
 #   SDN_VERSION     Release tag or version to install (default: latest)
 #   SDN_INSTALL_DIR Command link directory (default: /usr/local/bin)
 #   SDN_BUNDLE_DIR  Bundle parent directory (default: ~/.spacedatanetwork/bundles)
+#   SDN_SKIP_INIT   Set to 1 to skip first-run node identity initialization
 
 set -e
 
@@ -254,6 +255,11 @@ extract_archive() {
         exit 1
     fi
 
+    if [ ! -f "${BUNDLE_ROOT}/runtime/modules/hd-wallet-wasi.wasm" ]; then
+        log_error "Extracted bundle is missing the SDN HD wallet module"
+        exit 1
+    fi
+
     if [ ! -f "${BUNDLE_ROOT}/manifest.json" ]; then
         log_error "Extracted bundle is missing manifest.json"
         exit 1
@@ -298,6 +304,23 @@ install_bundle() {
     fi
 }
 
+initialize_unix_node() {
+    if [ "$OS" = "windows" ]; then
+        return
+    fi
+    if [ "${SDN_SKIP_INIT:-}" = "1" ]; then
+        log_info "Skipping node identity initialization because SDN_SKIP_INIT=1"
+        return
+    fi
+    if ! command -v "$PRIMARY_BINARY_NAME" &> /dev/null; then
+        log_warn "Cannot initialize node identity because $PRIMARY_BINARY_NAME is not in PATH"
+        return
+    fi
+
+    log_info "Initializing local node identity..."
+    "$PRIMARY_BINARY_NAME" init
+}
+
 verify_installation() {
     if [ "$OS" = "windows" ]; then
         return
@@ -332,6 +355,7 @@ main() {
     verify_checksum
     extract_archive
     install_bundle
+    initialize_unix_node
     verify_installation
 
     echo ""

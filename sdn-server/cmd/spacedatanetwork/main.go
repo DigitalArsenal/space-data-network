@@ -7,12 +7,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"database/sql"
 	_ "embed"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -31,6 +34,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/multiformats/go-multiaddr"
+	qrgen "github.com/skip2/go-qrcode"
 	"github.com/spf13/cobra"
 
 	"github.com/spacedatanetwork/sdn-server/internal/adminui"
@@ -155,12 +159,24 @@ Password is resolved from SDN_KEY_PASSWORD env, config, or machine default.`,
 	RunE: runShowIdentity,
 }
 
+var identityCmd = &cobra.Command{
+	Use:   "identity",
+	Short: "Inspect and export the node's public identity records",
+}
+
+var identityExportCmd = &cobra.Command{
+	Use:   "export",
+	Short: "Print the node's public EPM contact record",
+	RunE:  runIdentityExport,
+}
+
 var (
-	configPath   string
-	listenAddr   string
-	debug        bool
-	wasmPath     string
-	showMnemonic bool
+	configPath           string
+	listenAddr           string
+	debug                bool
+	wasmPath             string
+	showMnemonic         bool
+	identityExportFormat string
 )
 
 func init() {
@@ -169,8 +185,11 @@ func init() {
 
 	daemonCmd.Flags().StringVarP(&listenAddr, "listen", "l", "", "override listen address")
 	deriveXPubCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet-wasi.wasm (default: $HD_WALLET_WASM_PATH or ../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm)")
+	initCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet-wasi.wasm")
 	showIdentityCmd.Flags().BoolVar(&showMnemonic, "show-mnemonic", false, "display the decrypted mnemonic phrase (SENSITIVE)")
 	showIdentityCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet-wasi.wasm")
+	identityExportCmd.Flags().StringVar(&identityExportFormat, "format", "text", "output format: text, json, csv, qrcode")
+	identityCmd.AddCommand(identityExportCmd)
 
 	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(initCmd)
@@ -181,6 +200,7 @@ func init() {
 	rootCmd.AddCommand(reindexCmd)
 	rootCmd.AddCommand(deriveXPubCmd)
 	rootCmd.AddCommand(showIdentityCmd)
+	rootCmd.AddCommand(identityCmd)
 }
 
 func main() {
@@ -204,6 +224,155 @@ func runStatus(cmd *cobra.Command) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "admin_url=%s\n", adminURL(cfg))
 	fmt.Fprintln(cmd.OutOrStdout(), "daemon_status=unknown")
 	return nil
+}
+
+func runIdentityExport(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+	return exportIdentity(cmd.Context(), cmd.OutOrStdout(), adminURL(cfg), identityExportFormat)
+}
+
+func exportIdentity(ctx context.Context, out io.Writer, baseURL string, format string) error {
+	switch normalizeIdentityExportFormat(format) {
+	case "text":
+		vcardBytes, err := fetchLocalIdentityEndpoint(ctx, baseURL, "/api/node/epm/vcard")
+		if err != nil {
+			return err
+		}
+		_, err = out.Write(ensureTrailingNewline(vcardBytes))
+		return err
+	case "json":
+		jsonBytes, err := fetchLocalIdentityEndpoint(ctx, baseURL, "/api/node/epm/json")
+		if err != nil {
+			return err
+		}
+		return writeIndentedJSON(out, jsonBytes)
+	case "csv":
+		jsonBytes, err := fetchLocalIdentityEndpoint(ctx, baseURL, "/api/node/epm/json")
+		if err != nil {
+			return err
+		}
+		return writeIdentityCSV(out, jsonBytes)
+	case "qrcode":
+		vcardBytes, err := fetchLocalIdentityEndpoint(ctx, baseURL, "/api/node/epm/vcard")
+		if err != nil {
+			return err
+		}
+		qr, err := qrgen.New(string(vcardBytes), qrgen.Medium)
+		if err != nil {
+			return fmt.Errorf("encode EPM vCard QR code: %w", err)
+		}
+		_, err = io.WriteString(out, qr.ToSmallString(false))
+		return err
+	default:
+		return fmt.Errorf("unsupported identity export format %q (use text, json, csv, or qrcode)", format)
+	}
+}
+
+func normalizeIdentityExportFormat(format string) string {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", "text", "vcard", "vcf":
+		return "text"
+	case "json":
+		return "json"
+	case "csv":
+		return "csv"
+	case "qr", "qrcode", "qr-code":
+		return "qrcode"
+	default:
+		return strings.ToLower(strings.TrimSpace(format))
+	}
+}
+
+func fetchLocalIdentityEndpoint(ctx context.Context, baseURL string, endpoint string) ([]byte, error) {
+	requestURL := strings.TrimRight(baseURL, "/") + endpoint
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("connect to local SDN daemon at %s: %w", baseURL, err)
+	}
+	defer resp.Body.Close()
+	body, readErr := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		detail := strings.TrimSpace(string(body))
+		if detail == "" {
+			detail = resp.Status
+		}
+		return nil, fmt.Errorf("local SDN daemon returned %s for %s: %s", resp.Status, endpoint, detail)
+	}
+	if readErr != nil {
+		return nil, readErr
+	}
+	return body, nil
+}
+
+func writeIndentedJSON(out io.Writer, data []byte) error {
+	var payload any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return fmt.Errorf("decode EPM JSON: %w", err)
+	}
+	encoder := json.NewEncoder(out)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(payload)
+}
+
+func writeIdentityCSV(out io.Writer, data []byte) error {
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return fmt.Errorf("decode EPM JSON: %w", err)
+	}
+	fields := []string{
+		"peer_id",
+		"dn",
+		"legal_name",
+		"xpub",
+		"bitcoin_address",
+		"ethereum_address",
+		"solana_address",
+		"signing_pubkey_hex",
+		"encryption_pubkey_hex",
+		"epm_cid",
+	}
+	writer := csv.NewWriter(out)
+	if err := writer.Write(fields); err != nil {
+		return err
+	}
+	row := make([]string, 0, len(fields))
+	for _, field := range fields {
+		row = append(row, identityCSVString(payload[field]))
+	}
+	if err := writer.Write(row); err != nil {
+		return err
+	}
+	writer.Flush()
+	return writer.Error()
+}
+
+func identityCSVString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case nil:
+		return ""
+	default:
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			return fmt.Sprint(typed)
+		}
+		return string(raw)
+	}
+}
+
+func ensureTrailingNewline(data []byte) []byte {
+	if len(data) == 0 || data[len(data)-1] == '\n' {
+		return data
+	}
+	return append(append([]byte(nil), data...), '\n')
 }
 
 func adminURL(cfg *config.Config) string {
@@ -247,6 +416,52 @@ func pathExists(pathValue string) bool {
 	}
 	_, err := os.Stat(pathValue)
 	return err == nil
+}
+
+func resolveHDWalletWasmPath() (string, error) {
+	return resolveHDWalletWasmPathFromInputs(
+		strings.TrimSpace(wasmPath),
+		strings.TrimSpace(os.Getenv("HD_WALLET_WASM_PATH")),
+		bundle.ResolveCurrent(),
+		defaultHDWalletWasmCandidates(),
+	)
+}
+
+func resolveHDWalletWasmPathFromInputs(explicit, envPath string, layout bundle.Layout, candidates []string) (string, error) {
+	if explicit != "" {
+		if pathExists(explicit) {
+			return explicit, nil
+		}
+		return "", fmt.Errorf("hd-wallet-wasi.wasm not found at %q", explicit)
+	}
+	if envPath != "" {
+		if pathExists(envPath) {
+			return envPath, nil
+		}
+		return "", fmt.Errorf("hd-wallet-wasi.wasm not found at %q from HD_WALLET_WASM_PATH", envPath)
+	}
+	if pathExists(layout.HDWalletWASM) {
+		return layout.HDWalletWASM, nil
+	}
+	for _, candidate := range candidates {
+		if pathExists(candidate) {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("hd-wallet-wasi.wasm not found; set --wasm or HD_WALLET_WASM_PATH")
+}
+
+func defaultHDWalletWasmCandidates() []string {
+	return []string{
+		"sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
+		"node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
+		"../../sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
+		"../../../sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
+		"../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
+		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
+		"/opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm",
+		"/usr/local/lib/hd-wallet-wasi.wasm",
+	}
 }
 
 func runDaemon(cmd *cobra.Command, args []string) error {
@@ -1234,6 +1449,10 @@ func isPublicReadAPIPath(path string) bool {
 	case "/api/module-delivery/provider",
 		"/api/module-delivery/listings",
 		"/api/node/info",
+		"/api/node/epm",
+		"/api/node/epm/json",
+		"/api/node/epm/vcard",
+		"/api/node/epm/qr",
 		"/api/relay/status",
 		"/api/auth/status",
 		"/api/storefront/listings",
@@ -2758,14 +2977,111 @@ var defaultFaviconPNG = []byte{
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
-	cfg := config.Default()
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
 
 	if err := config.Save(configPath, cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	log.Infof("Initialized SDN configuration at %s", config.DefaultPath())
+	wp, err := resolveHDWalletWasmPath()
+	if err != nil {
+		return err
+	}
+	result, err := ensureNodeMnemonic(cmd.Context(), cfg, newHDWalletMnemonicGenerator(wp))
+	if err != nil {
+		return err
+	}
+
+	configFile := configPath
+	if strings.TrimSpace(configFile) == "" {
+		configFile = config.DefaultPath()
+	}
+	log.Infof("Initialized SDN configuration at %s", configFile)
+	if result.Created {
+		log.Infof("Initialized encrypted SDN node mnemonic at %s", result.Path)
+	} else {
+		log.Infof("SDN node mnemonic already exists at %s", result.Path)
+	}
 	return nil
+}
+
+type nodeMnemonicInitResult struct {
+	Path    string
+	Created bool
+}
+
+func ensureNodeMnemonic(ctx context.Context, cfg *config.Config, generateMnemonic func(context.Context) (string, error)) (nodeMnemonicInitResult, error) {
+	if cfg == nil {
+		return nodeMnemonicInitResult{}, fmt.Errorf("config is required")
+	}
+	if generateMnemonic == nil {
+		return nodeMnemonicInitResult{}, fmt.Errorf("mnemonic generator is required")
+	}
+
+	keyDir := filepath.Join(filepath.Dir(cfg.Storage.Path), "keys")
+	mnemonicPath := filepath.Join(keyDir, "mnemonic")
+	if data, err := os.ReadFile(mnemonicPath); err == nil {
+		if strings.TrimSpace(string(data)) == "" {
+			return nodeMnemonicInitResult{}, fmt.Errorf("mnemonic file %s is empty", mnemonicPath)
+		}
+		return nodeMnemonicInitResult{Path: mnemonicPath, Created: false}, nil
+	} else if !os.IsNotExist(err) {
+		return nodeMnemonicInitResult{}, fmt.Errorf("read mnemonic file %s: %w", mnemonicPath, err)
+	}
+
+	mnemonic, err := generateMnemonic(ctx)
+	if err != nil {
+		return nodeMnemonicInitResult{}, fmt.Errorf("generate node mnemonic: %w", err)
+	}
+	if strings.TrimSpace(mnemonic) == "" {
+		return nodeMnemonicInitResult{}, fmt.Errorf("generated mnemonic is empty")
+	}
+
+	keyPassword := os.Getenv("SDN_KEY_PASSWORD")
+	if keyPassword == "" {
+		keyPassword = cfg.Security.KeyPassword
+	}
+	if keyPassword == "" {
+		keyPassword = keys.DeriveDefaultPassword()
+	}
+	encrypted, err := keys.EncryptMnemonic(strings.TrimSpace(mnemonic), keyPassword)
+	if err != nil {
+		return nodeMnemonicInitResult{}, fmt.Errorf("encrypt node mnemonic: %w", err)
+	}
+	if err := os.MkdirAll(keyDir, 0o700); err != nil {
+		return nodeMnemonicInitResult{}, fmt.Errorf("create key directory %s: %w", keyDir, err)
+	}
+	if err := os.WriteFile(mnemonicPath, encrypted, 0o600); err != nil {
+		return nodeMnemonicInitResult{}, fmt.Errorf("write mnemonic file %s: %w", mnemonicPath, err)
+	}
+	return nodeMnemonicInitResult{Path: mnemonicPath, Created: true}, nil
+}
+
+func newHDWalletMnemonicGenerator(wp string) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		hw, err := wasm.NewHDWalletModule(ctx, wp)
+		if err != nil {
+			return "", fmt.Errorf("failed to load HD wallet WASM: %w", err)
+		}
+		defer hw.Close(ctx)
+
+		entropy := make([]byte, 64)
+		if _, err := rand.Read(entropy); err != nil {
+			return "", fmt.Errorf("read entropy: %w", err)
+		}
+		if err := hw.InjectEntropy(ctx, entropy); err != nil {
+			return "", fmt.Errorf("inject entropy: %w", err)
+		}
+
+		mnemonic, _, err := hw.GenerateNewIdentity(ctx, 24)
+		if err != nil {
+			return "", err
+		}
+		return mnemonic, nil
+	}
 }
 
 func runReindex(cmd *cobra.Command, args []string) error {
@@ -2801,16 +3117,9 @@ func runReindex(cmd *cobra.Command, args []string) error {
 }
 
 func runDeriveXPub(cmd *cobra.Command, args []string) error {
-	// Resolve WASM path
-	wp := strings.TrimSpace(wasmPath)
-	if wp == "" {
-		wp = os.Getenv("HD_WALLET_WASM_PATH")
-	}
-	if wp == "" {
-		wp = "../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm"
-	}
-	if _, err := os.Stat(wp); err != nil {
-		return fmt.Errorf("hd-wallet-wasi.wasm not found at %q (set --wasm or HD_WALLET_WASM_PATH)", wp)
+	wp, err := resolveHDWalletWasmPath()
+	if err != nil {
+		return err
 	}
 
 	ctx := context.Background()
@@ -2900,15 +3209,9 @@ func runShowIdentity(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve WASM path
-	wp := strings.TrimSpace(wasmPath)
-	if wp == "" {
-		wp = os.Getenv("HD_WALLET_WASM_PATH")
-	}
-	if wp == "" {
-		wp = "../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm"
-	}
-	if _, err := os.Stat(wp); err != nil {
-		return fmt.Errorf("hd-wallet-wasi.wasm not found at %q (set --wasm or HD_WALLET_WASM_PATH)", wp)
+	wp, err := resolveHDWalletWasmPath()
+	if err != nil {
+		return err
 	}
 
 	ctx := context.Background()

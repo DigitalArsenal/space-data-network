@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"database/sql"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -29,6 +30,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
+	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
@@ -230,11 +232,175 @@ func TestApplyPublicAPICORSHeadersFallsBackToWildcard(t *testing.T) {
 	}
 }
 
+func TestResolveHDWalletWasmPathUsesBundleLayout(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	walletPath := filepath.Join(root, "runtime", "modules", "hd-wallet-wasi.wasm")
+	if err := os.MkdirAll(filepath.Dir(walletPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(walletPath, []byte("\x00asm"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolveHDWalletWasmPathFromInputs("", "", bundle.Layout{HDWalletWASM: walletPath}, nil)
+	if err != nil {
+		t.Fatalf("resolveHDWalletWasmPathFromInputs failed: %v", err)
+	}
+	if got != walletPath {
+		t.Fatalf("wallet path = %q, want %q", got, walletPath)
+	}
+}
+
+func TestEnsureNodeMnemonicCreatesEncryptedMnemonic(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.Storage.Path = filepath.Join(t.TempDir(), "data")
+
+	result, err := ensureNodeMnemonic(context.Background(), cfg, func(context.Context) (string, error) {
+		return "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about", nil
+	})
+	if err != nil {
+		t.Fatalf("ensureNodeMnemonic failed: %v", err)
+	}
+	if !result.Created {
+		t.Fatal("Created = false, want true")
+	}
+	if result.Path != filepath.Join(filepath.Dir(cfg.Storage.Path), "keys", "mnemonic") {
+		t.Fatalf("Path = %q", result.Path)
+	}
+	data, err := os.ReadFile(result.Path)
+	if err != nil {
+		t.Fatalf("read mnemonic: %v", err)
+	}
+	if !keys.IsMnemonicEncrypted(data) {
+		t.Fatalf("mnemonic file is not encrypted: %q", string(data))
+	}
+}
+
+func TestEnsureNodeMnemonicPreservesExistingMnemonic(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.Storage.Path = filepath.Join(t.TempDir(), "data")
+	mnemonicPath := filepath.Join(filepath.Dir(cfg.Storage.Path), "keys", "mnemonic")
+	if err := os.MkdirAll(filepath.Dir(mnemonicPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	existing := []byte("existing encrypted mnemonic bytes")
+	if err := os.WriteFile(mnemonicPath, existing, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	called := false
+	result, err := ensureNodeMnemonic(context.Background(), cfg, func(context.Context) (string, error) {
+		called = true
+		return "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about", nil
+	})
+	if err != nil {
+		t.Fatalf("ensureNodeMnemonic failed: %v", err)
+	}
+	if result.Created {
+		t.Fatal("Created = true, want false")
+	}
+	if called {
+		t.Fatal("generator was called for an existing mnemonic")
+	}
+	data, err := os.ReadFile(mnemonicPath)
+	if err != nil {
+		t.Fatalf("read mnemonic: %v", err)
+	}
+	if !bytes.Equal(data, existing) {
+		t.Fatalf("mnemonic was overwritten: %q", string(data))
+	}
+}
+
 func TestIPFSGatewayPathDoesNotUsePublicAPICORS(t *testing.T) {
 	t.Parallel()
 
 	if isPublicAPIPath("/ipfs/QmExample") {
 		t.Fatal("/ipfs gateway responses must use only the normalized gateway CORS headers")
+	}
+}
+
+func TestNodeEPMRoutesArePublicReadAPIPaths(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"/api/node/epm", "/api/node/epm/json", "/api/node/epm/vcard", "/api/node/epm/qr"} {
+		if !isPublicAPIRequest(http.MethodGet, path) {
+			t.Fatalf("expected %q to be a public EPM read path", path)
+		}
+	}
+}
+
+func TestExportIdentityTextUsesNodeVCardEndpoint(t *testing.T) {
+	t.Parallel()
+
+	server := newIdentityExportTestServer(t)
+	var out bytes.Buffer
+	if err := exportIdentity(context.Background(), &out, server.URL, "text"); err != nil {
+		t.Fatalf("exportIdentity failed: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "BEGIN:VCARD") || !strings.Contains(got, "X-SDN-PEER-ID:12D3KooWExport") {
+		t.Fatalf("text export = %q", got)
+	}
+}
+
+func TestExportIdentityJSONUsesNodeEPMJSONEndpoint(t *testing.T) {
+	t.Parallel()
+
+	server := newIdentityExportTestServer(t)
+	var out bytes.Buffer
+	if err := exportIdentity(context.Background(), &out, server.URL, "json"); err != nil {
+		t.Fatalf("exportIdentity failed: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("json export is invalid JSON: %v", err)
+	}
+	if payload["peer_id"] != "12D3KooWExport" || payload["bitcoin_address"] != "bc1qexport" {
+		t.Fatalf("json export = %#v", payload)
+	}
+}
+
+func TestExportIdentityCSVUsesCommonEPMFields(t *testing.T) {
+	t.Parallel()
+
+	server := newIdentityExportTestServer(t)
+	var out bytes.Buffer
+	if err := exportIdentity(context.Background(), &out, server.URL, "csv"); err != nil {
+		t.Fatalf("exportIdentity failed: %v", err)
+	}
+	records, err := csv.NewReader(strings.NewReader(out.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("csv export is invalid CSV: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("csv records len = %d, want 2: %#v", len(records), records)
+	}
+	if records[0][0] != "peer_id" || records[1][0] != "12D3KooWExport" {
+		t.Fatalf("csv export = %#v", records)
+	}
+	if records[0][2] != "legal_name" || records[1][2] != "Space Data Network Export" {
+		t.Fatalf("csv export = %#v", records)
+	}
+}
+
+func TestExportIdentityQRCodeUsesNodeVCardPayload(t *testing.T) {
+	t.Parallel()
+
+	server := newIdentityExportTestServer(t)
+	var out bytes.Buffer
+	if err := exportIdentity(context.Background(), &out, server.URL, "qrcode"); err != nil {
+		t.Fatalf("exportIdentity failed: %v", err)
+	}
+	if out.Len() < 100 {
+		t.Fatalf("qrcode export too small: %q", out.String())
+	}
+	if strings.Contains(out.String(), "BEGIN:VCARD") {
+		t.Fatalf("qrcode export printed raw vCard: %q", out.String())
 	}
 }
 
@@ -265,6 +431,20 @@ func TestNormalizeIPFSGatewayCORSHeadersCollapsesDuplicateValues(t *testing.T) {
 	if got := header.Values("Access-Control-Expose-Headers"); len(got) != 1 || got[0] != "Content-Length, Content-Range, X-Chunked-Output, X-Ipfs-Path, X-Ipfs-Roots, X-Stream-Output" {
 		t.Fatalf("Access-Control-Expose-Headers values = %#v", got)
 	}
+}
+
+func newIdentityExportTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/node/epm/vcard", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/vcard")
+		_, _ = w.Write([]byte("BEGIN:VCARD\nVERSION:4.0\nFN:Export Node\nX-SDN-PEER-ID:12D3KooWExport\nEND:VCARD\n"))
+	})
+	mux.HandleFunc("/api/node/epm/json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"peer_id":"12D3KooWExport","dn":"Export Node","legal_name":"Space Data Network Export","bitcoin_address":"bc1qexport","xpub":"xpub-export","signing_pubkey_hex":"signing","encryption_pubkey_hex":"encryption"}`))
+	})
+	return httptest.NewServer(mux)
 }
 
 func TestHandleProviderDescriptorReturnsBrowserSafeDescriptor(t *testing.T) {

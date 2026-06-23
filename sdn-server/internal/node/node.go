@@ -41,6 +41,7 @@ import (
 	mh "github.com/multiformats/go-multihash"
 
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
+	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
@@ -49,8 +50,8 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt/capabilities"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
-	"github.com/spacedatanetwork/sdn-server/internal/metrics"
 	"github.com/spacedatanetwork/sdn-server/internal/logservice"
+	"github.com/spacedatanetwork/sdn-server/internal/metrics"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
@@ -862,6 +863,11 @@ func (n *Node) findHDWalletWasmPath() string {
 	if envPath := os.Getenv("HD_WALLET_WASM_PATH"); envPath != "" {
 		if _, err := os.Stat(envPath); err == nil {
 			return envPath
+		}
+	}
+	if layout := bundle.ResolveCurrent(); layout.HDWalletWASM != "" {
+		if _, err := os.Stat(layout.HDWalletWASM); err == nil {
+			return layout.HDWalletWASM
 		}
 	}
 	// Look for the pure WASI wallet artifact. The browser hd-wallet.wasm package

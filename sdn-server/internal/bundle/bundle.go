@@ -13,6 +13,7 @@ type Layout struct {
 	SDNUIPath    string
 	WebUIPath    string
 	UpdaterWASM  string
+	HDWalletWASM string
 	ManifestPath string
 }
 
@@ -60,6 +61,7 @@ func ResolveFromExecutable(executablePath string) Layout {
 		SDNUIPath:    filepath.Join(root, "runtime", "ui", "sdn"),
 		WebUIPath:    filepath.Join(root, "runtime", "ui", "webui"),
 		UpdaterWASM:  filepath.Join(root, "runtime", "modules", "org.spacedatanetwork.updater.wasm"),
+		HDWalletWASM: filepath.Join(root, "runtime", "modules", "hd-wallet-wasi.wasm"),
 		ManifestPath: manifestPath,
 	}
 }

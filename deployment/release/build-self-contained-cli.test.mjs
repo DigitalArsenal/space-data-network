@@ -21,6 +21,7 @@ test('stageBundle creates expected portable archive layout', async () => {
   await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
   await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
   await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
+  await writeFile(join(inputs, 'modules', 'hd-wallet-wasi.wasm'), 'wallet-wasm');
   await writeFile(join(inputs, 'wasmedge', 'bin', 'wasmedge'), '#!/bin/sh\n');
   await writeFile(join(inputs, 'wasmedge', 'lib', 'libwasmedge.so.0.1.0'), 'libwasmedge');
   await symlink(
@@ -45,6 +46,7 @@ test('stageBundle creates expected portable archive layout', async () => {
     sdnUiPath: join(inputs, 'sdn-ui'),
     webUiPath: join(inputs, 'webui'),
     updaterWasmPath: join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'),
+    hdWalletWasmPath: join(inputs, 'modules', 'hd-wallet-wasi.wasm'),
     wasmedgePath: join(inputs, 'wasmedge'),
     licensePath: join(inputs, 'LICENSE'),
     readmePath: join(inputs, 'README.md'),
@@ -59,6 +61,7 @@ test('stageBundle creates expected portable archive layout', async () => {
   await stat(join(staged.root, 'runtime', 'ui', 'sdn', 'index.html'));
   await stat(join(staged.root, 'runtime', 'ui', 'webui', 'index.html'));
   await stat(join(staged.root, 'runtime', 'modules', 'org.spacedatanetwork.updater.wasm'));
+  await stat(join(staged.root, 'runtime', 'modules', 'hd-wallet-wasi.wasm'));
   await stat(join(staged.root, 'runtime', 'wasmedge', 'bin', 'wasmedge'));
   await stat(join(staged.root, 'runtime', 'wasmedge', 'lib', 'libwasmedge.so.0'));
   assert.equal(await readlink(join(staged.root, 'runtime', 'wasmedge', 'lib', 'libwasmedge.so')), 'libwasmedge.so.0');
@@ -102,6 +105,7 @@ test('stageBundle creates expected portable archive layout', async () => {
     'bin/sdn',
     'bin/spacedatanetwork',
     'runtime/kubo/ipfs',
+    'runtime/modules/hd-wallet-wasi.wasm',
     'runtime/modules/org.spacedatanetwork.updater.wasm',
     'runtime/sdn/spacedatanetwork',
     'runtime/ui/sdn/index.html',
@@ -137,6 +141,7 @@ test('stageBundle creates Windows executable names and copied alias', async () =
   await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
   await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
   await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
+  await writeFile(join(inputs, 'modules', 'hd-wallet-wasi.wasm'), 'wallet-wasm');
   await writeFile(join(inputs, 'wasmedge', 'bin', 'wasmedge.dll'), 'dll');
   await writeFile(join(inputs, 'wasmedge', 'bin', 'wasmedge.exe'), 'exe');
   await writeFile(join(inputs, 'LICENSE'), 'license');
@@ -152,6 +157,7 @@ test('stageBundle creates Windows executable names and copied alias', async () =
     sdnUIPath: join(inputs, 'sdn-ui'),
     webUIPath: join(inputs, 'webui'),
     updaterWasmPath: join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'),
+    hdWalletWasmPath: join(inputs, 'modules', 'hd-wallet-wasi.wasm'),
     wasmedgePath: join(inputs, 'wasmedge'),
     licensePath: join(inputs, 'LICENSE'),
     readmePath: join(inputs, 'README.md'),
@@ -162,6 +168,7 @@ test('stageBundle creates Windows executable names and copied alias', async () =
   await stat(join(staged.root, 'bin', 'sdn.exe'));
   await stat(join(staged.root, 'bin', 'wasmedge.dll'));
   await stat(join(staged.root, 'runtime', 'kubo', 'ipfs.exe'));
+  await stat(join(staged.root, 'runtime', 'modules', 'hd-wallet-wasi.wasm'));
   await stat(join(staged.root, 'runtime', 'wasmedge', 'bin', 'wasmedge.dll'));
   const alias = await readFile(join(staged.root, 'bin', 'sdn.exe'), 'utf8');
   assert.equal(alias, 'exe');
@@ -180,6 +187,7 @@ test('stageBundle creates Windows executable names and copied alias', async () =
     'bin/spacedatanetwork.exe',
     'bin/wasmedge.dll',
     'runtime/kubo/ipfs.exe',
+    'runtime/modules/hd-wallet-wasi.wasm',
     'runtime/modules/org.spacedatanetwork.updater.wasm',
     'runtime/ui/sdn/index.html',
     'runtime/ui/webui/index.html',
@@ -195,11 +203,14 @@ test('stageBundle stages trust roots outside manifest artifacts and checksums', 
   await mkdir(join(inputs, 'sdn-ui'), { recursive: true });
   await mkdir(join(inputs, 'webui'), { recursive: true });
   await mkdir(join(inputs, 'modules'), { recursive: true });
+  await mkdir(join(inputs, 'wasmedge', 'bin'), { recursive: true });
   await writeFile(join(inputs, 'spacedatanetwork'), '#!/bin/sh\n');
   await writeFile(join(inputs, 'ipfs'), '#!/bin/sh\n');
   await writeFile(join(inputs, 'sdn-ui', 'index.html'), '<html>sdn</html>');
   await writeFile(join(inputs, 'webui', 'index.html'), '<html>webui</html>');
   await writeFile(join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'), 'wasm');
+  await writeFile(join(inputs, 'modules', 'hd-wallet-wasi.wasm'), 'wallet-wasm');
+  await writeFile(join(inputs, 'wasmedge', 'bin', 'wasmedge'), '#!/bin/sh\n');
   await writeFile(join(inputs, 'LICENSE'), 'license');
   await writeFile(join(inputs, 'README.md'), 'readme');
   const trustRoots = { 'sdn-test-root': 'MCowBQYDK2VwAyEA' };
@@ -216,6 +227,8 @@ test('stageBundle stages trust roots outside manifest artifacts and checksums', 
     sdnUIPath: join(inputs, 'sdn-ui'),
     webUIPath: join(inputs, 'webui'),
     updaterWasmPath: join(inputs, 'modules', 'org.spacedatanetwork.updater.wasm'),
+    hdWalletWasmPath: join(inputs, 'modules', 'hd-wallet-wasi.wasm'),
+    wasmedgePath: join(inputs, 'wasmedge'),
     licensePath: join(inputs, 'LICENSE'),
     readmePath: join(inputs, 'README.md'),
     manifestSignature: 'test-signature',
@@ -232,9 +245,12 @@ test('stageBundle stages trust roots outside manifest artifacts and checksums', 
     'bin/sdn',
     'bin/spacedatanetwork',
     'runtime/kubo/ipfs',
+    'runtime/modules/hd-wallet-wasi.wasm',
     'runtime/modules/org.spacedatanetwork.updater.wasm',
+    'runtime/sdn/spacedatanetwork',
     'runtime/ui/sdn/index.html',
     'runtime/ui/webui/index.html',
+    'runtime/wasmedge/bin/wasmedge',
   ]);
   const checksums = await readFile(join(staged.root, 'checksums.txt'), 'utf8');
   assert.equal(checksums.includes('trust/'), false);

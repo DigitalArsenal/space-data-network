@@ -30,6 +30,12 @@ test('install script verifies both Unix commands are available after linking', (
   assert.match(script, /"\$ALIAS_BINARY_NAME" status/);
 });
 
+test('install script initializes the local node identity after Unix install', () => {
+  assert.match(script, /SDN_SKIP_INIT/);
+  assert.match(script, /"\$PRIMARY_BINARY_NAME" init/);
+  assert.match(script, /Run '\$PRIMARY_BINARY_NAME daemon' to start the node/);
+});
+
 test('install script leaves Windows ZIP usage portable', () => {
   assert.match(script, /\[ "\$OS" = "windows" \]/);
   assert.match(script, /Add .*\$\{BUNDLE_ROOT\}\/bin.* to your PATH/);
