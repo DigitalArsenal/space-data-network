@@ -3,10 +3,6 @@ name: SDN Live DHT Cross-Platform Smoke
 on:
   workflow_dispatch:
     inputs:
-      release_tag:
-        description: Release tag to test. Leave blank to use the latest release.
-        required: false
-        type: string
       timeout_minutes:
         description: Per-client smoke timeout. Must exceed the five-minute DHT registration wait.
         required: false
@@ -21,11 +17,142 @@ env:
   SDN_LIVE_DHT_EXPECT_ROLES: linux-docker,macos-native,windows-native
   SDN_LIVE_DHT_REGISTRATION_WAIT_MS: '300000'
   SDN_LIVE_DHT_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes || '20' }}
+  KUBO_VERSION: v0.39.0
+  WASMEDGE_VERSION: 0.14.0
 
 jobs:
+  build-cli:
+    name: Build CLI archive (${{ matrix.target_os }}-${{ matrix.target_arch }})
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_os: linux
+            target_arch: amd64
+            runner: ubuntu-latest
+            kubo_platform: linux-amd64
+            kubo_archive: tar.gz
+            archive_extension: tar.gz
+            binary_name: spacedatanetwork
+            kubo_binary_name: ipfs
+          - target_os: darwin
+            target_arch: arm64
+            runner: macos-14
+            kubo_platform: darwin-arm64
+            kubo_archive: tar.gz
+            archive_extension: tar.gz
+            binary_name: spacedatanetwork
+            kubo_binary_name: ipfs
+          - target_os: windows
+            target_arch: amd64
+            runner: windows-latest
+            kubo_platform: windows-amd64
+            kubo_archive: zip
+            archive_extension: zip
+            binary_name: spacedatanetwork.exe
+            kubo_binary_name: ipfs.exe
+    env:
+      TARGET_OS: ${{ matrix.target_os }}
+      TARGET_ARCH: ${{ matrix.target_arch }}
+      KUBO_PLATFORM: ${{ matrix.kubo_platform }}
+      KUBO_ARCHIVE: ${{ matrix.kubo_archive }}
+      BINARY_NAME: ${{ matrix.binary_name }}
+      KUBO_BINARY_NAME: ${{ matrix.kubo_binary_name }}
+      WASMEDGE_DIR: ${{ github.workspace }}/dist/.wasmedge
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache-dependency-path: sdn-server/go.sum
+
+      - name: Install root JS dependencies
+        run: npm ci
+
+      - name: Build updater module wasm
+        run: npm --prefix packages/sdn-updater-module run build
+
+      - name: Prepare smoke UI assets
+        run: |
+          mkdir -p dist/live-dht-ui/sdn-admin dist/live-dht-ui/ipfs-webui
+          printf '<!doctype html><title>SDN live DHT smoke</title>\n' > dist/live-dht-ui/sdn-admin/index.html
+          printf '<!doctype html><title>IPFS WebUI live DHT smoke</title>\n' > dist/live-dht-ui/ipfs-webui/index.html
+
+      - name: Resolve smoke version
+        run: |
+          package_version="$(node -p "require('./package.json').version")"
+          echo "PACKAGE_VERSION=${package_version}-live-dht.${GITHUB_RUN_NUMBER}" >> "${GITHUB_ENV}"
+
+      - name: Install Windows CLI build tools
+        if: matrix.target_os == 'windows'
+        run: |
+          choco install zip -y --no-progress
+          echo "/c/msys64/mingw64/bin" >> "${GITHUB_PATH}"
+
+      - name: Install Windows WasmEdge runtime
+        if: matrix.target_os == 'windows'
+        run: |
+          mkdir -p dist/wasmedge
+          curl -L -o dist/wasmedge/wasmedge.zip "https://github.com/WasmEdge/WasmEdge/releases/download/${WASMEDGE_VERSION}/WasmEdge-${WASMEDGE_VERSION}-windows.zip"
+          unzip -q dist/wasmedge/wasmedge.zip -d dist/wasmedge
+          rm -rf "${WASMEDGE_DIR}"
+          mkdir -p "${WASMEDGE_DIR}"
+          cp -R "dist/wasmedge/WasmEdge-${WASMEDGE_VERSION}-Windows/." "${WASMEDGE_DIR}/"
+          test -f "${WASMEDGE_DIR}/bin/wasmedge.dll"
+
+      - name: Download target Kubo binary
+        run: |
+          mkdir -p dist/kubo
+          if [ "${KUBO_ARCHIVE}" = "zip" ]; then
+            curl -L -o dist/kubo/kubo.zip "https://dist.ipfs.tech/kubo/${KUBO_VERSION}/kubo_${KUBO_VERSION}_${KUBO_PLATFORM}.zip"
+            unzip -q dist/kubo/kubo.zip -d dist/kubo
+          else
+            curl -L "https://dist.ipfs.tech/kubo/${KUBO_VERSION}/kubo_${KUBO_VERSION}_${KUBO_PLATFORM}.tar.gz" | tar -xz -C dist/kubo
+          fi
+
+      - name: Build target SDN binary
+        run: |
+          mkdir -p dist/cli-input
+          GOOS="${TARGET_OS}" GOARCH="${TARGET_ARCH}" ./scripts/go-with-wasmedge.sh build -o "${PWD}/dist/cli-input/${BINARY_NAME}" ./cmd/spacedatanetwork
+
+      - name: Build self-contained CLI archive
+        run: |
+          node deployment/release/build-self-contained-cli.mjs \
+            --version "${PACKAGE_VERSION}" \
+            --os "${TARGET_OS}" \
+            --arch "${TARGET_ARCH}" \
+            --channel live-dht \
+            --output-dir dist/cli \
+            --binary-path "${PWD}/dist/cli-input/${BINARY_NAME}" \
+            --kubo-path "${PWD}/dist/kubo/kubo/${KUBO_BINARY_NAME}" \
+            --sdnUIPath "${PWD}/dist/live-dht-ui/sdn-admin" \
+            --webUIPath "${PWD}/dist/live-dht-ui/ipfs-webui" \
+            --updater-wasm-path "${PWD}/packages/sdn-updater-module/dist/isomorphic/module.wasm" \
+            --wasmedge-path "${WASMEDGE_DIR}" \
+            --license-path "${PWD}/LICENSE" \
+            --readme-path "${PWD}/README.md" \
+            --manifest-signature "github-actions:${GITHUB_RUN_ID}:${GITHUB_SHA}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target_os }}-${{ matrix.target_arch }}
+          path: dist/cli/spacedatanetwork-*-${{ matrix.target_os }}-${{ matrix.target_arch }}.${{ matrix.archive_extension }}
+
   live-dht-smoke:
     name: ${{ matrix.role }}
     runs-on: ${{ matrix.runner }}
+    needs: build-cli
     timeout-minutes: 25
     defaults:
       run:
@@ -53,7 +180,6 @@ jobs:
             archive_extension: zip
             mode: native
     env:
-      GH_TOKEN: ${{ github.token }}
       ROLE: ${{ matrix.role }}
       TARGET_OS: ${{ matrix.target_os }}
       TARGET_ARCH: ${{ matrix.target_arch }}
@@ -70,34 +196,16 @@ jobs:
           go-version: '1.24.x'
           cache-dependency-path: sdn-server/go.sum
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli-${{ matrix.target_os }}-${{ matrix.target_arch }}
+          path: dist/live-dht
+
       - name: Install Windows archive tools
         if: runner.os == 'Windows'
         run: |
           choco install unzip -y --no-progress
           echo "/c/msys64/mingw64/bin" >> "${GITHUB_PATH}"
-
-      - id: release
-        name: Resolve release tag
-        env:
-          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          if [ -n "${INPUT_RELEASE_TAG}" ]; then
-            tag="${INPUT_RELEASE_TAG}"
-          else
-            tag="$(gh release view --repo "${GITHUB_REPOSITORY}" --json tagName -q .tagName)"
-          fi
-          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
-          echo "Testing ${tag}"
-
-      - name: Download CLI archive
-        run: |
-          mkdir -p dist/live-dht
-          gh release download "${{ steps.release.outputs.tag }}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --pattern "spacedatanetwork-*-${{ matrix.target_os }}-${{ matrix.target_arch }}.${{ matrix.archive_extension }}" \
-            --dir dist/live-dht \
-            --clobber
-          ls -la dist/live-dht
 
       - id: smoke-pnm
         name: Generate smoke PNM

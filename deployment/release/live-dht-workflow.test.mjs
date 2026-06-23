@@ -14,11 +14,14 @@ test('live DHT workflow covers Linux Docker, native macOS, and native Windows', 
   assert.match(workflow, /windows-latest/);
 });
 
-test('live DHT workflow uses release CLI artifacts and public Kademlia DHT', () => {
-  assert.match(workflow, /gh release download/);
-  assert.match(workflow, /spacedatanetwork-\*-\$\{\{\s*matrix\.target_os\s*\}\}-\$\{\{\s*matrix\.target_arch\s*\}\}/);
+test('live DHT workflow builds current-ref CLI artifacts and uses public Kademlia DHT', () => {
+  assert.match(workflow, /build-cli:/);
+  assert.match(workflow, /Build target SDN binary/);
+  assert.match(workflow, /build-self-contained-cli\.mjs/);
+  assert.match(workflow, /actions\/download-artifact@v4/);
   assert.match(workflow, /node:24-bookworm/);
   assert.match(workflow, /SDN_LIVE_DHT_EXPECT_ROLES/);
   assert.match(workflow, /300000/);
+  assert.doesNotMatch(workflow, /gh release download/);
   assert.doesNotMatch(workflow, /tailscale/i);
 });
