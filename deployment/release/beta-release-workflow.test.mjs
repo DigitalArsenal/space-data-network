@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -132,6 +132,24 @@ test('beta release workflow builds every required portable CLI target', () => {
       `${target.os}-${target.arch} must declare ${target.archive} as its portable CLI archive extension`,
     );
   }
+});
+
+test('beta release workflow downloads Kubo archives with retries and validation', () => {
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+  const downloaderPath = 'deployment/release/download-kubo.sh';
+
+  assert.equal(existsSync(join(repoRoot, downloaderPath)), true);
+
+  const downloader = readRepoFile(downloaderPath);
+
+  assert.match(workflow, /deployment\/release\/download-kubo\.sh[\s\S]*--platform linux-amd64[\s\S]*--archive tar\.gz/);
+  assert.match(workflow, /deployment\/release\/download-kubo\.sh[\s\S]*--platform "\$\{KUBO_PLATFORM\}"[\s\S]*--archive "\$\{KUBO_ARCHIVE\}"/);
+  assert.doesNotMatch(workflow, /curl -L https:\/\/dist\.ipfs\.tech\/kubo\/\$\{KUBO_VERSION\}\/kubo_\$\{KUBO_VERSION\}_linux-amd64\.tar\.gz \| tar/);
+  assert.doesNotMatch(workflow, /curl -L "https:\/\/dist\.ipfs\.tech\/kubo\/\$\{KUBO_VERSION\}\/kubo_\$\{KUBO_VERSION\}_\$\{KUBO_PLATFORM\}\.tar\.gz" \| tar/);
+  assert.match(downloader, /curl -fL/);
+  assert.match(downloader, /--retry-all-errors/);
+  assert.match(downloader, /tar -tzf/);
+  assert.match(downloader, /unzip -tq/);
 });
 
 test('beta release workflow builds the Windows CLI with the Windows WasmEdge runtime', () => {

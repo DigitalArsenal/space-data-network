@@ -81,8 +81,12 @@ jobs:
           cache-dependency-path: sdn-js/package-lock.json
       - name: Install Kubo
         run: |
-          curl -L https://dist.ipfs.tech/kubo/${KUBO_VERSION}/kubo_${KUBO_VERSION}_linux-amd64.tar.gz | tar -xz
-          sudo install kubo/ipfs /usr/local/bin/ipfs
+          deployment/release/download-kubo.sh \
+            --version "${KUBO_VERSION}" \
+            --platform linux-amd64 \
+            --archive tar.gz \
+            --output-dir dist/bootstrap-kubo
+          sudo install dist/bootstrap-kubo/kubo/ipfs /usr/local/bin/ipfs
           ipfs init --profile=server
           ipfs daemon > /tmp/ipfs.log 2>&1 &
           until ipfs id >/dev/null 2>&1; do sleep 1; done
@@ -300,13 +304,11 @@ jobs:
           test -f "${WASMEDGE_DIR}/bin/wasmedge.dll"
       - name: Download target Kubo binary
         run: |
-          mkdir -p dist/kubo
-          if [ "${KUBO_ARCHIVE}" = "zip" ]; then
-            curl -L -o dist/kubo/kubo.zip "https://dist.ipfs.tech/kubo/${KUBO_VERSION}/kubo_${KUBO_VERSION}_${KUBO_PLATFORM}.zip"
-            unzip -q dist/kubo/kubo.zip -d dist/kubo
-          else
-            curl -L "https://dist.ipfs.tech/kubo/${KUBO_VERSION}/kubo_${KUBO_VERSION}_${KUBO_PLATFORM}.tar.gz" | tar -xz -C dist/kubo
-          fi
+          deployment/release/download-kubo.sh \
+            --version "${KUBO_VERSION}" \
+            --platform "${KUBO_PLATFORM}" \
+            --archive "${KUBO_ARCHIVE}" \
+            --output-dir dist/kubo
       - name: Build target SDN binary
         run: |
           mkdir -p dist/cli-input
