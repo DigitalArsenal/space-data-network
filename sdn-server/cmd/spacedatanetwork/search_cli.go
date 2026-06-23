@@ -11,7 +11,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/spf13/cobra"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
@@ -379,7 +378,6 @@ func buildSearchProviderRows(store *storage.FlatSQLStore, options searchProvider
 	}
 	stats, err := localSearchReplicaStats(store, storage.LocalReplicaStatsQuery{
 		SchemaName:   schemaName,
-		ProviderID:   searchProviderIDStatsFilter(options.ProviderID),
 		SourceName:   strings.TrimSpace(options.SourceName),
 		BatchID:      strings.TrimSpace(options.BatchID),
 		QueryProfile: strings.TrimSpace(options.QueryProfile),
@@ -441,49 +439,6 @@ func buildSearchProviderRows(store *storage.FlatSQLStore, options searchProvider
 		}
 	}
 	return rows, nil
-}
-
-func searchProviderIDStatsFilter(input string) string {
-	value := strings.TrimSpace(input)
-	if value == "" || classifySyncProviderIdentifier(value) != syncProviderKindProviderID {
-		return ""
-	}
-	if strings.Contains(value, ".") {
-		return ""
-	}
-	if looksLikeSearchPeerID(value) {
-		return ""
-	}
-	if looksLikeSearchProviderPublicKey(value) {
-		return ""
-	}
-	return value
-}
-
-func looksLikeSearchPeerID(value string) bool {
-	if _, err := peer.Decode(value); err == nil {
-		return true
-	}
-	return strings.HasPrefix(value, "12D3KooW") ||
-		strings.HasPrefix(value, "16Uiu") ||
-		(strings.HasPrefix(value, "Qm") && len(value) == 46)
-}
-
-func looksLikeSearchProviderPublicKey(value string) bool {
-	trimmed := strings.TrimSpace(value)
-	lower := strings.ToLower(trimmed)
-	if strings.Contains(lower, "public-key") || strings.Contains(lower, "pubkey") {
-		return true
-	}
-	if len(trimmed) == 64 || len(trimmed) == 66 || len(trimmed) == 128 || len(trimmed) == 130 {
-		for _, r := range trimmed {
-			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
-				return false
-			}
-		}
-		return true
-	}
-	return false
 }
 
 func searchProviderReplicaFiltersActive(options searchProviderOptions) bool {
