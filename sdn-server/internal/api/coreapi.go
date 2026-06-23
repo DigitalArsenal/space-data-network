@@ -10,15 +10,16 @@ import (
 	"strings"
 	"time"
 
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/spacedatanetwork/sdn-server/internal/abac"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
@@ -27,6 +28,18 @@ import (
 // topicPublisher is the minimal interface needed to publish to a named topic.
 type topicPublisher interface {
 	PublishToTopic(ctx context.Context, topicName string, data []byte) error
+}
+
+type schemaPublisher interface {
+	Publish(schema string, data []byte) error
+}
+
+func publishSchemaPubSubMessage(ctx context.Context, publisher topicPublisher, schema string, data []byte) (string, error) {
+	topicName := sdnpubsub.TopicName(schema)
+	if schemaPub, ok := publisher.(schemaPublisher); ok {
+		return topicName, schemaPub.Publish(schema, data)
+	}
+	return topicName, publisher.PublishToTopic(ctx, topicName, data)
 }
 
 // CoreAPIHandler handles the /api/v1/ identity, stats, peers, and pubsub endpoints.
@@ -147,11 +160,11 @@ func (h *CoreAPIHandler) handleID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"peer_id":            h.peerID.String(),
-		"listen_addresses":   addrs,
-		"agent_version":      versioninfo.AgentVersion,
-		"suite_version":      versioninfo.SuiteVersion,
-		"standards_version":  versioninfo.SpaceDataStandardsVersion,
+		"peer_id":           h.peerID.String(),
+		"listen_addresses":  addrs,
+		"agent_version":     versioninfo.AgentVersion,
+		"suite_version":     versioninfo.SuiteVersion,
+		"standards_version": versioninfo.SpaceDataStandardsVersion,
 	})
 }
 
@@ -194,9 +207,9 @@ func (h *CoreAPIHandler) handleStats(w http.ResponseWriter, r *http.Request) {
 			schemaList := make([]map[string]interface{}, 0, len(summary.Schemas))
 			for _, sc := range summary.Schemas {
 				schemaList = append(schemaList, map[string]interface{}{
-					"schema":       sc.SchemaName,
-					"count":        sc.Count,
-					"total_bytes":  sc.TotalBytes,
+					"schema":      sc.SchemaName,
+					"count":       sc.Count,
+					"total_bytes": sc.TotalBytes,
 				})
 			}
 			resp["total_records"] = summary.TotalRecords
@@ -281,8 +294,8 @@ func (h *CoreAPIHandler) getPeer(w http.ResponseWriter, peerIDStr string) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"peer_id":    pid.String(),
-		"addrs":      addrStrs,
+		"peer_id":          pid.String(),
+		"addrs":            addrStrs,
 		"connection_count": len(conns),
 	})
 }
@@ -451,16 +464,16 @@ func (h *CoreAPIHandler) handlePubSubPublish(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	topicName := "/sdn/data/" + req.Schema
-	if err := h.publisher.PublishToTopic(r.Context(), topicName, data); err != nil {
+	topicName, err := publishSchemaPubSubMessage(r.Context(), h.publisher, req.Schema, data)
+	if err != nil {
 		writeCoreAPIError(w, http.StatusInternalServerError, "PUBLISH_FAILED", "failed to publish: "+err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"schema":     req.Schema,
-		"topic":      topicName,
-		"bytes":      len(data),
+		"schema":       req.Schema,
+		"topic":        topicName,
+		"bytes":        len(data),
 		"published_at": time.Now().UTC().Format(time.RFC3339),
 	})
 }
