@@ -54,7 +54,7 @@ test('beta release workflow publishes public beta artifacts', () => {
   assert.match(workflow, /spacedatanetwork-container-\$\{NATIVE_PACKAGE_VERSION\}-linux-amd64\.tar\.gz/);
   assert.match(workflow, /Build self-contained CLI archives/);
   assert.match(workflow, /build-self-contained-cli\.mjs/);
-  assert.match(workflow, /--hd-wallet-wasm-path "\$\{PWD\}\/sdn-js\/node_modules\/hd-wallet-wasm\/dist\/hd-wallet-wasi\.wasm"/);
+  assert.match(workflow, /--hd-wallet-wasm-path "\$\{PWD\}\/node_modules\/hd-wallet-wasm\/dist\/hd-wallet-wasi\.wasm"/);
   assert.match(workflow, /--license-path "\$\{PWD\}\/LICENSE"/);
   assert.match(license, /MIT License/);
   assert.match(license, /Space Data Network/);
