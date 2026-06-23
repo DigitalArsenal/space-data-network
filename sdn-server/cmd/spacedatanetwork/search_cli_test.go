@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -12,6 +14,22 @@ func TestRootHelpListsSearchCommand(t *testing.T) {
 	help := rootCmd.UsageString()
 	if !strings.Contains(help, "search") {
 		t.Fatalf("root help did not list search:\n%s", help)
+	}
+
+	searchSource, err := os.ReadFile("search_cli.go")
+	if err != nil {
+		t.Fatalf("read search_cli.go: %v", err)
+	}
+	if strings.Contains(string(searchSource), "rootCmd.AddCommand(searchCmd)") {
+		t.Fatalf("search root registration should live in main.go, not search_cli.go")
+	}
+
+	mainSource, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	if !strings.Contains(string(mainSource), "rootCmd.AddCommand(searchCmd)") {
+		t.Fatalf("main.go does not register search root command")
 	}
 }
 
@@ -63,6 +81,22 @@ func TestWriteSearchResultJSONAndCSV(t *testing.T) {
 	if err := writeSearchResult(&jsonOut, result, fields, searchOutputJSON); err != nil {
 		t.Fatalf("write JSON search result: %v", err)
 	}
+	wantJSON := `{
+  "count": 1,
+  "results": [
+    {
+      "cached_bytes": 2048,
+      "local_rows": 42,
+      "provider_id": "space-data-network-02",
+      "schema_name": "OMM.fbs",
+      "source_name": "celestrak-gp"
+    }
+  ]
+}
+`
+	if got := jsonOut.String(); got != wantJSON {
+		t.Fatalf("JSON output = %q, want %q", got, wantJSON)
+	}
 	var decoded searchResult
 	if err := json.Unmarshal(jsonOut.Bytes(), &decoded); err != nil {
 		t.Fatalf("search JSON invalid: %v\n%s", err, jsonOut.String())
@@ -79,7 +113,11 @@ func TestWriteSearchResultJSONAndCSV(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search CSV invalid: %v\n%s", err, csvOut.String())
 	}
-	if len(records) != 2 || records[0][0] != "schema_name" || records[1][1] != "space-data-network-02" {
-		t.Fatalf("CSV records = %#v", records)
+	wantRecords := [][]string{
+		{"schema_name", "provider_id", "source_name", "local_rows", "cached_bytes"},
+		{"OMM.fbs", "space-data-network-02", "celestrak-gp", "42", "2048"},
+	}
+	if !reflect.DeepEqual(records, wantRecords) {
+		t.Fatalf("CSV records = %#v, want %#v", records, wantRecords)
 	}
 }

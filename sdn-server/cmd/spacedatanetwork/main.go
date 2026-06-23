@@ -201,6 +201,7 @@ func init() {
 	rootCmd.AddCommand(deriveXPubCmd)
 	rootCmd.AddCommand(showIdentityCmd)
 	rootCmd.AddCommand(identityCmd)
+	rootCmd.AddCommand(searchCmd)
 }
 
 func main() {
