@@ -109,6 +109,7 @@ test('sdn-js install Dockerfile imports all published package subpaths on Node 2
   });
 
   assert.match(sdnJs, /FROM node:24-bookworm-slim/);
+  assert.match(sdnJs, /apt-get install -y --no-install-recommends git/);
   assert.match(sdnJs, /npm install --no-audit --no-fund \/tmp\/spacedatanetwork-sdn-js-2\.0\.12\.tgz/);
   assert.match(sdnJs, /import\('@spacedatanetwork\/sdn-js'\)/);
   assert.match(sdnJs, /import\('@spacedatanetwork\/sdn-js\/ui'\)/);
