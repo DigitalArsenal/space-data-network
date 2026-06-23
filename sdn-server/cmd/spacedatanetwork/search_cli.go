@@ -108,7 +108,6 @@ func init() {
 	searchCmd.AddCommand(searchProvidersCmd)
 	searchCmd.AddCommand(searchStandardsCmd)
 	searchCmd.AddCommand(searchDataCmd)
-	rootCmd.AddCommand(searchCmd)
 }
 
 func addSearchProviderFlags(cmd *cobra.Command, options *searchProviderOptions) {
