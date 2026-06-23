@@ -332,7 +332,8 @@ verify_installation() {
         "$PRIMARY_BINARY_NAME" version || log_warn "Installed binary did not print a version"
         "$ALIAS_BINARY_NAME" status >/dev/null 2>&1 || log_warn "Alias command did not print local status"
         echo ""
-        log_info "Run '$PRIMARY_BINARY_NAME daemon' to start the node"
+        log_info "Run '$PRIMARY_BINARY_NAME start' to start the node as a persistent background service"
+        log_info "Run '$PRIMARY_BINARY_NAME daemon' for foreground/manual mode"
         log_info "Run '$ALIAS_BINARY_NAME status' to inspect the local node"
     else
         log_warn "Command links installed but not in PATH"
