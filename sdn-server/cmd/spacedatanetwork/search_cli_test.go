@@ -236,6 +236,36 @@ func TestSearchProvidersProviderIDAliasResolvesBeforeStatsFilter(t *testing.T) {
 	}
 }
 
+func TestSearchProvidersDottedProviderAliasResolvesBeforeStatsFilter(t *testing.T) {
+	cfgPath, store := newSyncCLITestStore(t)
+	seedSyncCLITestData(t, store)
+	seedSearchCLIDottedAlias(t, store)
+	withSyncCLITestConfig(t, cfgPath)
+
+	var out bytes.Buffer
+	err := runSearchProviders(&out, searchProviderOptions{
+		ProviderID:   "sdn.spaceaware",
+		Schema:       "OMM",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Format:       "json",
+	})
+	if err != nil {
+		t.Fatalf("runSearchProviders failed: %v", err)
+	}
+
+	var body searchResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode provider search JSON: %v\n%s", err, out.String())
+	}
+	if body.Count != 1 || len(body.Results) != 1 {
+		t.Fatalf("provider result count = %#v", body)
+	}
+	row := body.Results[0]
+	if row["peer_id"] != "16Uiu2HCelesTrak" || row["provider_id"] != "space-data-network-02" || row["schema_name"] != "OMM.fbs" {
+		t.Fatalf("unexpected provider row: %#v", row)
+	}
+}
+
 func TestSearchProvidersReplicaFiltersSkipDirectoryOnlyRows(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
@@ -374,5 +404,27 @@ func TestSearchDataFiltersBySchemaAndProvider(t *testing.T) {
 	}
 	if body.Count != 1 || body.Results[0]["source_name"] != "celestrak-gp" {
 		t.Fatalf("unexpected data search body: %#v", body)
+	}
+}
+
+func seedSearchCLIDottedAlias(t *testing.T, store *storage.FlatSQLStore) {
+	t.Helper()
+
+	if err := store.UpsertDirectoryRecord(storage.DirectoryRecord{
+		Kind:           "node",
+		PeerID:         "16Uiu2HCelesTrak",
+		DN:             "CelesTrak",
+		LegalName:      "CelesTrak",
+		BitcoinAddress: "bc1qspacedatanetwork000000000000000000000000",
+		EPMCID:         "bafkreigh2akiscaildcagqrb7hf7vsgkl2kpdx3obxxm2pvshpwrsp7m2a",
+		Source:         "test",
+		EPMJSON: `{
+			"xpub": "xpub661MyMwAqRbcFexample",
+			"aliases": ["sdn.spaceaware"],
+			"ens_names": ["celestrak.eth"]
+		}`,
+		UpdatedAt: 1779689334,
+	}); err != nil {
+		t.Fatalf("upsert dotted alias directory record failed: %v", err)
 	}
 }

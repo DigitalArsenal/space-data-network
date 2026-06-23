@@ -409,6 +409,9 @@ func searchProviderIDStatsFilter(input string) string {
 	if value == "" || classifySyncProviderIdentifier(value) != syncProviderKindProviderID {
 		return ""
 	}
+	if strings.Contains(value, ".") {
+		return ""
+	}
 	if looksLikeSearchPeerID(value) {
 		return ""
 	}
