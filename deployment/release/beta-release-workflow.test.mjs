@@ -73,6 +73,18 @@ test('beta release workflow publishes public beta artifacts', () => {
   assert.doesNotMatch(workflow, /space-data-network-edge/);
 });
 
+test('IPFS asset release script skips browser downloads and bounds dependency installs', () => {
+  const script = readRepoFile('deployment/ipfs/ipfs-deploy.sh');
+
+  assert.match(script, /PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD/);
+  assert.match(script, /PUPPETEER_SKIP_DOWNLOAD/);
+  assert.match(script, /CYPRESS_INSTALL_BINARY/);
+  assert.match(script, /run_with_timeout/);
+  assert.match(script, /WEBUI_NPM_CI_TIMEOUT_SECONDS/);
+  assert.match(script, /npm ci --no-audit --fund=false/);
+  assert.match(script, /log "Installing IPFS WebUI dependencies"/);
+});
+
 test('beta release workflow builds every required portable CLI target', () => {
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
 
