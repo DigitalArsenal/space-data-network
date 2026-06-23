@@ -55,17 +55,23 @@ func TestSearchCommandHelpListsSubcommands(t *testing.T) {
 }
 
 func TestSearchProviderRunEResetsPositionalQuery(t *testing.T) {
+	cfgPath, _ := newSyncCLITestStore(t)
+	withSyncCLITestConfig(t, cfgPath)
+
 	oldOptions := searchOptionsState.Provider
 	searchOptionsState.Provider = searchProviderOptions{Format: "table", Limit: 100}
 	t.Cleanup(func() { searchOptionsState.Provider = oldOptions })
 
-	searchProvidersCmd.SetOut(ioDiscard{})
-	searchProvidersCmd.SetArgs([]string{"first"})
-	if err := searchProvidersCmd.Execute(); err != nil {
+	var out bytes.Buffer
+	searchProvidersCmd.SetOut(&out)
+	t.Cleanup(func() {
+		searchProvidersCmd.SetOut(nil)
+		searchProvidersCmd.SetArgs(nil)
+	})
+	if err := searchProvidersCmd.RunE(searchProvidersCmd, []string{"first"}); err != nil {
 		t.Fatalf("first search providers execute failed: %v", err)
 	}
-	searchProvidersCmd.SetArgs([]string{})
-	if err := searchProvidersCmd.Execute(); err != nil {
+	if err := searchProvidersCmd.RunE(searchProvidersCmd, []string{}); err != nil {
 		t.Fatalf("second search providers execute failed: %v", err)
 	}
 	if searchOptionsState.Provider.Query != "" {
@@ -196,6 +202,118 @@ func TestSearchProvidersJSONEnrichesDirectoryWithReplicaStats(t *testing.T) {
 	}
 }
 
+func TestSearchProvidersProviderIDAliasResolvesBeforeStatsFilter(t *testing.T) {
+	tests := []string{"celestrak.eth", "16Uiu2HCelesTrak"}
+	for _, providerID := range tests {
+		t.Run(providerID, func(t *testing.T) {
+			cfgPath, store := newSyncCLITestStore(t)
+			seedSyncCLITestData(t, store)
+			withSyncCLITestConfig(t, cfgPath)
+
+			var out bytes.Buffer
+			err := runSearchProviders(&out, searchProviderOptions{
+				ProviderID:   providerID,
+				Schema:       "OMM",
+				QueryProfile: storage.DatasetPublicationQueryProfile,
+				Format:       "json",
+			})
+			if err != nil {
+				t.Fatalf("runSearchProviders failed: %v", err)
+			}
+
+			var body searchResult
+			if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+				t.Fatalf("decode provider search JSON: %v\n%s", err, out.String())
+			}
+			if body.Count != 1 || len(body.Results) != 1 {
+				t.Fatalf("provider result count = %#v", body)
+			}
+			row := body.Results[0]
+			if row["peer_id"] != "16Uiu2HCelesTrak" || row["provider_id"] != "space-data-network-02" || row["schema_name"] != "OMM.fbs" {
+				t.Fatalf("unexpected provider row for %q: %#v", providerID, row)
+			}
+		})
+	}
+}
+
+func TestSearchProvidersReplicaFiltersSkipDirectoryOnlyRows(t *testing.T) {
+	cfgPath, store := newSyncCLITestStore(t)
+	seedSyncCLITestData(t, store)
+	if err := store.UpsertDirectoryRecord(storage.DirectoryRecord{
+		Kind:      "node",
+		PeerID:    "16Uiu2HNoReplica",
+		DN:        "No Replica Provider",
+		LegalName: "No Replica LLC",
+		Source:    "test",
+		UpdatedAt: 1,
+	}); err != nil {
+		t.Fatalf("upsert unrelated directory record failed: %v", err)
+	}
+	withSyncCLITestConfig(t, cfgPath)
+
+	var out bytes.Buffer
+	err := runSearchProviders(&out, searchProviderOptions{
+		Schema:       "OMM",
+		SourceName:   "celestrak-gp",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Format:       "json",
+	})
+	if err != nil {
+		t.Fatalf("runSearchProviders failed: %v", err)
+	}
+
+	var body searchResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode provider search JSON: %v\n%s", err, out.String())
+	}
+	if body.Count != 1 || len(body.Results) != 1 || body.Results[0]["peer_id"] != "16Uiu2HCelesTrak" {
+		t.Fatalf("provider rows with replica filter = %#v", body)
+	}
+}
+
+func TestSearchProvidersAppliesLimitAfterSort(t *testing.T) {
+	cfgPath, store := newSyncCLITestStore(t)
+	if err := store.UpsertDirectoryRecord(storage.DirectoryRecord{
+		Kind:      "node",
+		PeerID:    "peer-z",
+		DN:        "Z Provider",
+		LegalName: "Z Provider LLC",
+		Source:    "test",
+		UpdatedAt: 3,
+	}); err != nil {
+		t.Fatalf("upsert Z provider failed: %v", err)
+	}
+	if err := store.UpsertDirectoryRecord(storage.DirectoryRecord{
+		Kind:      "node",
+		PeerID:    "peer-a",
+		DN:        "A Provider",
+		LegalName: "A Provider LLC",
+		Source:    "test",
+		UpdatedAt: 1,
+	}); err != nil {
+		t.Fatalf("upsert A provider failed: %v", err)
+	}
+	withSyncCLITestConfig(t, cfgPath)
+
+	var out bytes.Buffer
+	err := runSearchProviders(&out, searchProviderOptions{
+		Query:  "Provider",
+		Format: "json",
+		Limit:  1,
+	})
+	if err != nil {
+		t.Fatalf("runSearchProviders failed: %v", err)
+	}
+
+	var body searchResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode provider search JSON: %v\n%s", err, out.String())
+	}
+	if body.Count != 1 || len(body.Results) != 1 || body.Results[0]["peer_id"] != "peer-a" {
+		t.Fatalf("provider limit result = %#v", body)
+	}
+}
+
 func TestSearchProvidersCSVUsesStableColumns(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
@@ -257,10 +375,4 @@ func TestSearchDataFiltersBySchemaAndProvider(t *testing.T) {
 	if body.Count != 1 || body.Results[0]["source_name"] != "celestrak-gp" {
 		t.Fatalf("unexpected data search body: %#v", body)
 	}
-}
-
-type ioDiscard struct{}
-
-func (ioDiscard) Write(p []byte) (int, error) {
-	return len(p), nil
 }
