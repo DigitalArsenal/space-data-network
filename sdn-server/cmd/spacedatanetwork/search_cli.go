@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/spf13/cobra"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
@@ -345,17 +346,17 @@ func buildSearchProviderRows(store *storage.FlatSQLStore, options searchProvider
 	if providerQuery == "" {
 		providerQuery = query
 	}
+	resolution, err := resolveSyncProviderIdentifier(store, providerQuery)
+	if err != nil {
+		return nil, err
+	}
 	stats, err := localSearchReplicaStats(store, storage.LocalReplicaStatsQuery{
 		SchemaName:   schemaName,
-		ProviderID:   strings.TrimSpace(options.ProviderID),
+		ProviderID:   searchProviderIDStatsFilter(options.ProviderID),
 		SourceName:   strings.TrimSpace(options.SourceName),
 		BatchID:      strings.TrimSpace(options.BatchID),
 		QueryProfile: strings.TrimSpace(options.QueryProfile),
 	})
-	if err != nil {
-		return nil, err
-	}
-	resolution, err := resolveSyncProviderIdentifier(store, providerQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -364,17 +365,21 @@ func buildSearchProviderRows(store *storage.FlatSQLStore, options searchProvider
 	directoryRecords, err := store.QueryDirectory(storage.DirectoryQuery{
 		Kind:   "node",
 		Search: providerQuery,
-		Limit:  options.Limit,
+		Limit:  providerDirectoryCandidateLimit(options.Limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("query provider directory: %w", err)
 	}
 
+	replicaFiltersActive := searchProviderReplicaFiltersActive(options)
 	rows := make([]map[string]any, 0, len(directoryRecords)+len(matchingStats))
 	seenStats := map[string]bool{}
 	for _, record := range directoryRecords {
 		recordStats := searchStatsForDirectoryRecord(record, matchingStats)
 		if len(recordStats) == 0 {
+			if replicaFiltersActive {
+				continue
+			}
 			row := searchDirectoryRow(record)
 			rows = append(rows, row)
 			continue
@@ -397,6 +402,64 @@ func buildSearchProviderRows(store *storage.FlatSQLStore, options searchProvider
 		}
 	}
 	return rows, nil
+}
+
+func searchProviderIDStatsFilter(input string) string {
+	value := strings.TrimSpace(input)
+	if value == "" || classifySyncProviderIdentifier(value) != syncProviderKindProviderID {
+		return ""
+	}
+	if looksLikeSearchPeerID(value) {
+		return ""
+	}
+	if looksLikeSearchProviderPublicKey(value) {
+		return ""
+	}
+	return value
+}
+
+func looksLikeSearchPeerID(value string) bool {
+	if _, err := peer.Decode(value); err == nil {
+		return true
+	}
+	return strings.HasPrefix(value, "12D3KooW") ||
+		strings.HasPrefix(value, "16Uiu") ||
+		(strings.HasPrefix(value, "Qm") && len(value) == 46)
+}
+
+func looksLikeSearchProviderPublicKey(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, "public-key") || strings.Contains(lower, "pubkey") {
+		return true
+	}
+	if len(trimmed) == 64 || len(trimmed) == 66 || len(trimmed) == 128 || len(trimmed) == 130 {
+		for _, r := range trimmed {
+			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func searchProviderReplicaFiltersActive(options searchProviderOptions) bool {
+	return strings.TrimSpace(options.Schema) != "" ||
+		strings.TrimSpace(options.ProviderID) != "" ||
+		strings.TrimSpace(options.SourceName) != "" ||
+		strings.TrimSpace(options.BatchID) != "" ||
+		strings.TrimSpace(options.QueryProfile) != ""
+}
+
+func providerDirectoryCandidateLimit(finalLimit int) int {
+	// QueryDirectory orders by updated_at, while the CLI sorts enriched rows by
+	// display fields. Keep a candidate window so small --limit values apply only
+	// after the CLI's deterministic sort.
+	if finalLimit > 1000 {
+		return finalLimit
+	}
+	return 1000
 }
 
 func buildSearchDataRows(store *storage.FlatSQLStore, options searchDataOptions) ([]map[string]any, error) {
