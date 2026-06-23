@@ -54,7 +54,7 @@ Marketplace discovery is driven by the canonical `PLG` manifest from `spacedatas
 
 ```bash
 # Download latest release
-curl -sSL https://digitalarsenal.github.io/space-data-network//install.sh | bash
+curl -sSL https://digitalarsenal.github.io/space-data-network/install.sh | bash
 
 # Or build from source
 git clone https://github.com/DigitalArsenal/space-data-network.git
