@@ -326,7 +326,7 @@ jobs:
             --sdnUIPath "${PWD}/dist/ipfs/sdn-admin" \
             --webUIPath "${PWD}/dist/ipfs/ipfs-webui" \
             --updater-wasm-path "${PWD}/packages/sdn-updater-module/dist/isomorphic/module.wasm" \
-            --hd-wallet-wasm-path "${PWD}/sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm" \
+            --hd-wallet-wasm-path "${PWD}/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm" \
             --wasmedge-path "${WASMEDGE_DIR}" \
             --license-path "${PWD}/LICENSE" \
             --readme-path "${PWD}/README.md" \
