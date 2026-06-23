@@ -85,6 +85,37 @@ test('IPFS asset release script skips browser downloads and bounds dependency in
   assert.match(script, /log "Installing IPFS WebUI dependencies"/);
 });
 
+test('Docker release image copies local Go replacement modules before dependency download', () => {
+  const dockerfile = readRepoFile('deployment/docker/Dockerfile');
+  const goMod = readRepoFile('sdn-server/go.mod');
+
+  const replacementModuleCopy = 'COPY sdn-server/third_party/spacedatastandards-go/go.mod ./sdn-server/third_party/spacedatastandards-go/go.mod';
+  const goModDownload = 'RUN go mod download';
+
+  assert.match(goMod, /replace github\.com\/DigitalArsenal\/spacedatastandards\.org\/lib\/go => \.\/third_party\/spacedatastandards-go/);
+  assert.ok(
+    dockerfile.indexOf(replacementModuleCopy) > -1,
+    'Dockerfile must copy the local SDS replacement module go.mod before go mod download',
+  );
+  assert.ok(
+    dockerfile.indexOf(replacementModuleCopy) < dockerfile.indexOf(goModDownload),
+    'local replacement module go.mod must be available before go mod download runs',
+  );
+});
+
+test('beta release workflow builds updater wasm once before platform CLI archives', () => {
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+
+  assert.match(workflow, /updater-wasm:\s*\n\s*name:\s*Build updater module wasm/);
+  assert.match(workflow, /name:\s*updater-module-wasm[\s\S]*path:\s*packages\/sdn-updater-module\/dist\/isomorphic\/module\.wasm/);
+  assert.match(workflow, /needs:\s*\[beta-version, ipfs, updater-wasm\]/);
+  assert.match(workflow, /name:\s*updater-module-wasm[\s\S]*path:\s*packages\/sdn-updater-module\/dist\/isomorphic/);
+  assert.match(workflow, /name:\s*Verify updater module wasm[\s\S]*test -f packages\/sdn-updater-module\/dist\/isomorphic\/module\.wasm/);
+
+  const cliJob = workflow.slice(workflow.indexOf('  cli:'), workflow.indexOf('  packages:'));
+  assert.doesNotMatch(cliJob, /name:\s*Build updater module wasm/);
+});
+
 test('beta release workflow builds every required portable CLI target', () => {
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
 
