@@ -7,6 +7,7 @@ import {
   LIVE_DHT_BOOTSTRAP_PEERS,
   buildDockerSmokeCommand,
   buildSmokeFileID,
+  buildWindowsExpandArchiveCommand,
   extractSmokeRolesFromDatasetPNMEntries,
   generateLiveDHTDaemonConfig,
   normalizeExpectedRoles,
@@ -86,4 +87,16 @@ test('Linux Docker command runs the same smoke harness from a Node container', (
   assert(command.includes('--dht-registration-wait-ms'));
   assert(command.includes(String(DEFAULT_DHT_REGISTRATION_WAIT_MS)));
   assert.doesNotMatch(command.join(' '), /tailscale/i);
+});
+
+test('Windows archive extraction does not depend on dropped PowerShell positional args', () => {
+  const command = buildWindowsExpandArchiveCommand(
+    String.raw`D:\a\space-data-network\dist\live-dht\spacedatanetwork-windows-amd64.zip`,
+    String.raw`C:\Users\RUNNER~1\AppData\Local\Temp\sdn-live-dht-windows-native-oCCkLz\bundle`
+  );
+
+  assert.match(command, /Expand-Archive/);
+  assert.match(command, /-LiteralPath 'D:\\a\\space-data-network\\dist\\live-dht\\spacedatanetwork-windows-amd64\.zip'/);
+  assert.match(command, /-DestinationPath 'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\sdn-live-dht-windows-native-oCCkLz\\bundle'/);
+  assert.doesNotMatch(command, /\$args/);
 });
