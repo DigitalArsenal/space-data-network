@@ -153,6 +153,17 @@ func TestWriteSearchResultJSONAndCSV(t *testing.T) {
 	}
 }
 
+func TestDataSearchFieldsMatchTaskStep4Order(t *testing.T) {
+	want := []string{
+		"schema_name", "provider_id", "source_name", "batch_id", "query_profile",
+		"provider_peer_id", "provider_public_key", "local_rows", "pinned_rows",
+		"cached_bytes", "pinned_bytes", "snapshot_id", "head", "high_water_mark", "last_synced_at",
+	}
+	if got := dataSearchFields(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("data search fields = %#v, want %#v", got, want)
+	}
+}
+
 func TestSearchProvidersJSONEnrichesDirectoryWithReplicaStats(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
@@ -204,6 +215,23 @@ func TestSearchProvidersCSVUsesStableColumns(t *testing.T) {
 	}
 	if len(records) != 2 || records[0][0] != "peer_id" || records[1][0] != "16Uiu2HCelesTrak" {
 		t.Fatalf("provider CSV = %#v", records)
+	}
+	wantHeader := []string{
+		"peer_id", "dn", "legal_name", "bitcoin_address", "epm_cid", "source", "updated_at",
+		"schema_name", "provider_peer_id", "provider_public_key", "provider_id", "source_name", "batch_id", "query_profile",
+		"local_rows", "pinned_rows", "cached_bytes", "pinned_bytes", "snapshot_id", "head", "high_water_mark", "last_synced_at",
+	}
+	if !reflect.DeepEqual(records[0], wantHeader) {
+		t.Fatalf("provider CSV header = %#v, want %#v", records[0], wantHeader)
+	}
+	headerIndex := map[string]int{}
+	for i, field := range records[0] {
+		headerIndex[field] = i
+	}
+	if records[1][headerIndex["provider_peer_id"]] != "16Uiu2HCelesTrak" ||
+		records[1][headerIndex["provider_public_key"]] != "provider-public-key" ||
+		records[1][headerIndex["snapshot_id"]] != "head-2" {
+		t.Fatalf("provider CSV row missing replica identity fields: %#v", records)
 	}
 }
 
