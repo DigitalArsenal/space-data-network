@@ -3,7 +3,7 @@ package sds
 
 import (
 	"context"
-	"path/filepath"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -338,6 +338,22 @@ func TestSupportedSchemasMatchEmbedded(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSchemaPathUsesSlashSeparator(t *testing.T) {
+	if got, want := embeddedSchemaPath("PNM.fbs"), "schemas/PNM.fbs"; got != want {
+		t.Fatalf("embeddedSchemaPath() = %q, want %q", got, want)
+	}
+}
+
+func TestEmbeddedSchemaPathDoesNotUseOSPathPackage(t *testing.T) {
+	source, err := os.ReadFile("embed_path.go")
+	if err != nil {
+		t.Fatalf("failed to read embed path helper source: %v", err)
+	}
+	if strings.Contains(string(source), `"path/filepath"`) {
+		t.Fatal("embedded schema paths must use forward slash paths for embed.FS, not OS-specific filepath paths")
+	}
+}
+
 // includeRegex matches FlatBuffers include directives of the form:
 // include "../XXX/main.fbs";
 var includeRegex = regexp.MustCompile(`(?m)^include\s+"\.\./(\w+)/main\.fbs"`)
@@ -349,7 +365,7 @@ func TestEmbeddedSchemasParse(t *testing.T) {
 	}
 
 	for _, name := range SupportedSchemas {
-		content, err := schemasFS.ReadFile(filepath.Join("schemas", name))
+		content, err := schemasFS.ReadFile(embeddedSchemaPath(name))
 		if err != nil {
 			t.Errorf("Failed to read embedded schema %s: %v", name, err)
 			continue

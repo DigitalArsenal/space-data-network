@@ -6,7 +6,6 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -292,7 +291,7 @@ func (v *Validator) loadEmbeddedSchemas(ctx context.Context) error {
 			continue
 		}
 
-		content, err := schemasFS.ReadFile(filepath.Join("schemas", entry.Name()))
+		content, err := schemasFS.ReadFile(embeddedSchemaPath(entry.Name()))
 		if err != nil {
 			log.Warnf("Failed to read schema %s: %v", entry.Name(), err)
 			continue
