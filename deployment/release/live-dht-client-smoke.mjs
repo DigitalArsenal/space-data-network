@@ -235,6 +235,14 @@ function runCommand(command, args, options = {}) {
   };
 }
 
+function powershellLiteral(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+export function buildWindowsExpandArchiveCommand(archivePath, extractDir) {
+  return `Expand-Archive -LiteralPath ${powershellLiteral(archivePath)} -DestinationPath ${powershellLiteral(extractDir)} -Force`;
+}
+
 function extractArchive(archivePath, extractDir) {
   if (/\.tar\.gz$/.test(archivePath)) {
     runCommand('tar', ['-xzf', archivePath, '-C', extractDir]);
@@ -246,9 +254,7 @@ function extractArchive(archivePath, extractDir) {
         '-NoLogo',
         '-NoProfile',
         '-Command',
-        'Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force',
-        archivePath,
-        extractDir
+        buildWindowsExpandArchiveCommand(archivePath, extractDir)
       ]);
       return;
     }
