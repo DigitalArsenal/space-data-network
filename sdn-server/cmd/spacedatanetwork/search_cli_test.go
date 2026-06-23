@@ -170,6 +170,68 @@ func TestDataSearchFieldsMatchTaskStep4Order(t *testing.T) {
 	}
 }
 
+func TestSearchProviderSortUsesStableTieBreakers(t *testing.T) {
+	rows := []map[string]any{
+		{
+			"dn":                  "CelesTrak",
+			"provider_id":         "space-data-network-02",
+			"source_name":         "celestrak-gp",
+			"schema_name":         "OMM.fbs",
+			"batch_id":            "batch-b",
+			"query_profile":       storage.DatasetPublicationQueryProfile,
+			"provider_peer_id":    "peer-b",
+			"provider_public_key": "key-b",
+			"snapshot_id":         "snapshot-b",
+		},
+		{
+			"dn":                  "CelesTrak",
+			"provider_id":         "space-data-network-02",
+			"source_name":         "celestrak-gp",
+			"schema_name":         "OMM.fbs",
+			"batch_id":            "batch-a",
+			"query_profile":       storage.DatasetPublicationQueryProfile,
+			"provider_peer_id":    "peer-a",
+			"provider_public_key": "key-a",
+			"snapshot_id":         "snapshot-a",
+		},
+	}
+
+	sortSearchRows(rows, providerSearchSortFields()...)
+	if got := []string{searchValueString(rows[0]["batch_id"]), searchValueString(rows[1]["batch_id"])}; !reflect.DeepEqual(got, []string{"batch-a", "batch-b"}) {
+		t.Fatalf("provider sort batch order = %#v, rows = %#v", got, rows)
+	}
+}
+
+func TestSearchDataSortUsesStableTieBreakers(t *testing.T) {
+	rows := []map[string]any{
+		{
+			"schema_name":         "OMM.fbs",
+			"provider_id":         "space-data-network-02",
+			"source_name":         "celestrak-gp",
+			"batch_id":            "test-batch",
+			"query_profile":       "profile-b",
+			"provider_peer_id":    "peer-b",
+			"provider_public_key": "key-b",
+			"snapshot_id":         "snapshot-b",
+		},
+		{
+			"schema_name":         "OMM.fbs",
+			"provider_id":         "space-data-network-02",
+			"source_name":         "celestrak-gp",
+			"batch_id":            "test-batch",
+			"query_profile":       "profile-a",
+			"provider_peer_id":    "peer-a",
+			"provider_public_key": "key-a",
+			"snapshot_id":         "snapshot-a",
+		},
+	}
+
+	sortSearchRows(rows, dataSearchSortFields()...)
+	if got := []string{searchValueString(rows[0]["query_profile"]), searchValueString(rows[1]["query_profile"])}; !reflect.DeepEqual(got, []string{"profile-a", "profile-b"}) {
+		t.Fatalf("data sort query profile order = %#v, rows = %#v", got, rows)
+	}
+}
+
 func TestSearchProvidersJSONEnrichesDirectoryWithReplicaStats(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
@@ -263,6 +325,36 @@ func TestSearchProvidersDottedProviderAliasResolvesBeforeStatsFilter(t *testing.
 	row := body.Results[0]
 	if row["peer_id"] != "16Uiu2HCelesTrak" || row["provider_id"] != "space-data-network-02" || row["schema_name"] != "OMM.fbs" {
 		t.Fatalf("unexpected provider row: %#v", row)
+	}
+}
+
+func TestSearchProvidersCanonicalIDEnrichesDirectoryByMatchedPeer(t *testing.T) {
+	cfgPath, store := newSyncCLITestStore(t)
+	seedSyncCLITestData(t, store)
+	seedSearchCLIDirectoryWithoutProviderID(t, store)
+	withSyncCLITestConfig(t, cfgPath)
+
+	var out bytes.Buffer
+	err := runSearchProviders(&out, searchProviderOptions{
+		ProviderID:   "space-data-network-02",
+		Schema:       "OMM",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Format:       "json",
+	})
+	if err != nil {
+		t.Fatalf("runSearchProviders failed: %v", err)
+	}
+
+	var body searchResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode provider search JSON: %v\n%s", err, out.String())
+	}
+	if body.Count != 1 || len(body.Results) != 1 {
+		t.Fatalf("provider result count = %#v", body)
+	}
+	row := body.Results[0]
+	if row["peer_id"] != "16Uiu2HCelesTrak" || row["dn"] != "CelesTrak No Provider ID" || row["provider_id"] != "space-data-network-02" {
+		t.Fatalf("canonical provider ID row was not directory enriched: %#v", row)
 	}
 }
 
@@ -426,5 +518,26 @@ func seedSearchCLIDottedAlias(t *testing.T, store *storage.FlatSQLStore) {
 		UpdatedAt: 1779689334,
 	}); err != nil {
 		t.Fatalf("upsert dotted alias directory record failed: %v", err)
+	}
+}
+
+func seedSearchCLIDirectoryWithoutProviderID(t *testing.T, store *storage.FlatSQLStore) {
+	t.Helper()
+
+	if err := store.UpsertDirectoryRecord(storage.DirectoryRecord{
+		Kind:           "node",
+		PeerID:         "16Uiu2HCelesTrak",
+		DN:             "CelesTrak No Provider ID",
+		LegalName:      "CelesTrak",
+		BitcoinAddress: "bc1qspacedatanetwork000000000000000000000000",
+		EPMCID:         "bafkreigh2akiscaildcagqrb7hf7vsgkl2kpdx3obxxm2pvshpwrsp7m2a",
+		Source:         "test",
+		EPMJSON: `{
+			"xpub": "xpub661MyMwAqRbcFexample",
+			"ens_names": ["celestrak.eth"]
+		}`,
+		UpdatedAt: 1779689334,
+	}); err != nil {
+		t.Fatalf("upsert directory record without provider id failed: %v", err)
 	}
 }

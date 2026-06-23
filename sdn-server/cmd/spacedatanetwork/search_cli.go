@@ -267,7 +267,7 @@ func runSearchProviders(out io.Writer, options searchProviderOptions) error {
 	if err != nil {
 		return err
 	}
-	sortSearchRows(rows, "dn", "provider_id", "source_name", "schema_name")
+	sortSearchRows(rows, providerSearchSortFields()...)
 	rows = applySearchLimit(rows, options.Limit)
 	return writeSearchResult(out, searchResult{Count: len(rows), Results: rows}, providerSearchFields(), format)
 }
@@ -295,7 +295,7 @@ func runSearchData(out io.Writer, options searchDataOptions) error {
 	if err != nil {
 		return err
 	}
-	sortSearchRows(rows, "schema_name", "provider_id", "source_name", "batch_id")
+	sortSearchRows(rows, dataSearchSortFields()...)
 	rows = applySearchLimit(rows, options.Limit)
 	return writeSearchResult(out, searchResult{Count: len(rows), Results: rows}, dataSearchFields(), format)
 }
@@ -318,6 +318,33 @@ func dataSearchFields() []string {
 		"provider_peer_id", "provider_public_key", "local_rows", "pinned_rows",
 		"cached_bytes", "pinned_bytes", "snapshot_id", "head", "high_water_mark", "last_synced_at",
 	}
+}
+
+func providerSearchSortFields() []string {
+	return searchSortFieldsWithLeading(
+		[]string{"dn", "provider_id", "source_name", "schema_name"},
+		providerSearchFields(),
+	)
+}
+
+func dataSearchSortFields() []string {
+	return searchSortFieldsWithLeading(
+		[]string{"schema_name", "provider_id", "source_name", "batch_id"},
+		dataSearchFields(),
+	)
+}
+
+func searchSortFieldsWithLeading(leading, fields []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(leading)+len(fields))
+	for _, field := range append(append([]string{}, leading...), fields...) {
+		if strings.TrimSpace(field) == "" || seen[field] {
+			continue
+		}
+		seen[field] = true
+		out = append(out, field)
+	}
+	return out
 }
 
 func openSearchStore() (*storage.FlatSQLStore, error) {
@@ -374,7 +401,11 @@ func buildSearchProviderRows(store *storage.FlatSQLStore, options searchProvider
 	replicaFiltersActive := searchProviderReplicaFiltersActive(options)
 	rows := make([]map[string]any, 0, len(directoryRecords)+len(matchingStats))
 	seenStats := map[string]bool{}
+	directoryByPeerID := map[string]storage.DirectoryRecord{}
 	for _, record := range directoryRecords {
+		if strings.TrimSpace(record.PeerID) != "" {
+			directoryByPeerID[record.PeerID] = record
+		}
 		recordStats := searchStatsForDirectoryRecord(record, matchingStats)
 		if len(recordStats) == 0 {
 			if replicaFiltersActive {
@@ -393,6 +424,14 @@ func buildSearchProviderRows(store *storage.FlatSQLStore, options searchProvider
 	}
 	for _, stat := range matchingStats {
 		if seenStats[searchStatKey(stat)] {
+			continue
+		}
+		if record, ok, err := searchDirectoryRecordForStat(store, directoryByPeerID, stat); err != nil {
+			return nil, err
+		} else if ok {
+			row := searchDirectoryRow(record)
+			addSearchReplicaStats(row, stat)
+			rows = append(rows, row)
 			continue
 		}
 		row := map[string]any{}
@@ -458,7 +497,8 @@ func searchProviderReplicaFiltersActive(options searchProviderOptions) bool {
 func providerDirectoryCandidateLimit(finalLimit int) int {
 	// QueryDirectory orders by updated_at, while the CLI sorts enriched rows by
 	// display fields. Keep a candidate window so small --limit values apply only
-	// after the CLI's deterministic sort.
+	// after the CLI's deterministic sort. Full correctness beyond the storage
+	// candidate cap needs a paged or display-sorted directory query API.
 	if finalLimit > 1000 {
 		return finalLimit
 	}
@@ -533,6 +573,29 @@ func searchStatsForDirectoryRecord(record storage.DirectoryRecord, stats []stora
 		}
 	}
 	return matches
+}
+
+func searchDirectoryRecordForStat(store *storage.FlatSQLStore, directoryByPeerID map[string]storage.DirectoryRecord, stat storage.LocalReplicaStats) (storage.DirectoryRecord, bool, error) {
+	peerID := strings.TrimSpace(stat.ProviderPeerID)
+	if peerID == "" {
+		return storage.DirectoryRecord{}, false, nil
+	}
+	if record, ok := directoryByPeerID[peerID]; ok {
+		return record, true, nil
+	}
+	records, err := store.QueryDirectory(storage.DirectoryQuery{
+		Kind:   "node",
+		PeerID: peerID,
+		Limit:  1,
+	})
+	if err != nil {
+		return storage.DirectoryRecord{}, false, fmt.Errorf("query provider directory by peer id: %w", err)
+	}
+	if len(records) == 0 {
+		return storage.DirectoryRecord{}, false, nil
+	}
+	directoryByPeerID[peerID] = records[0]
+	return records[0], true, nil
 }
 
 func searchDirectoryRow(record storage.DirectoryRecord) map[string]any {
