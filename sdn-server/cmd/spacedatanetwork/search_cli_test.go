@@ -8,7 +8,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -358,6 +360,35 @@ func TestSearchProvidersCanonicalIDEnrichesDirectoryByMatchedPeer(t *testing.T) 
 	}
 }
 
+func TestSearchProvidersCanonicalIDMatchesStatsWithoutProviderID(t *testing.T) {
+	cfgPath, store := newSyncCLITestStore(t)
+	seedSearchCLIReplicaWithoutProviderID(t, store)
+	withSyncCLITestConfig(t, cfgPath)
+
+	var out bytes.Buffer
+	err := runSearchProviders(&out, searchProviderOptions{
+		ProviderID:   "space-data-network-02",
+		Schema:       "OMM",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Format:       "json",
+	})
+	if err != nil {
+		t.Fatalf("runSearchProviders failed: %v", err)
+	}
+
+	var body searchResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode provider search JSON: %v\n%s", err, out.String())
+	}
+	if body.Count != 1 || len(body.Results) != 1 {
+		t.Fatalf("provider result count = %#v", body)
+	}
+	row := body.Results[0]
+	if row["peer_id"] != "16Uiu2HCelesTrak" || row["dn"] != "CelesTrak" || row["provider_id"] != "" || row["local_rows"] != float64(1) || row["pinned_rows"] != float64(1) {
+		t.Fatalf("canonical provider ID did not match peer-only stats: %#v", row)
+	}
+}
+
 func TestSearchProvidersReplicaFiltersSkipDirectoryOnlyRows(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
@@ -539,5 +570,62 @@ func seedSearchCLIDirectoryWithoutProviderID(t *testing.T, store *storage.FlatSQ
 		UpdatedAt: 1779689334,
 	}); err != nil {
 		t.Fatalf("upsert directory record without provider id failed: %v", err)
+	}
+}
+
+func seedSearchCLIReplicaWithoutProviderID(t *testing.T, store *storage.FlatSQLStore) {
+	t.Helper()
+
+	payload := sds.NewOMMBuilder().
+		WithNoradCatID(56775).
+		WithObjectName("STARLINK-6292").
+		WithEpoch("2026-05-25T06:08:54Z").
+		Build()
+	if _, err := store.StoreWithSourceTags("OMM.fbs", payload, "16Uiu2HCelesTrak", nil, storage.SourceTags{
+		ProviderID:        "source-tags-provider-only",
+		SourceName:        "celestrak-gp",
+		BatchID:           "test-batch",
+		ProducerPeerID:    "16Uiu2HCelesTrak",
+		ProducerPublicKey: "provider-public-key",
+	}); err != nil {
+		t.Fatalf("store OMM failed: %v", err)
+	}
+	verifiedAt := time.Date(2026, 5, 25, 6, 8, 54, 0, time.UTC)
+	if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
+		CID:               "bafkshard-omm-peer-only",
+		SchemaName:        "OMM.fbs",
+		ProviderPeerID:    "16Uiu2HCelesTrak",
+		ProviderPublicKey: "provider-public-key",
+		SourceName:        "celestrak-gp",
+		BatchID:           "test-batch",
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		SnapshotID:        "head-peer-only",
+		Head:              "head-peer-only",
+		HighWaterMark:     "published-feed-v1:1779689334:1:1:1024",
+		ByteHash:          "sha256:shard",
+		Role:              "shard",
+		RowCount:          1,
+		ByteCount:         1024,
+		VerificationState: "verified",
+		VerifiedAt:        verifiedAt,
+	}); err != nil {
+		t.Fatalf("upsert pin ledger entry failed: %v", err)
+	}
+	if err := store.UpsertDirectoryRecord(storage.DirectoryRecord{
+		Kind:           "node",
+		PeerID:         "16Uiu2HCelesTrak",
+		DN:             "CelesTrak",
+		LegalName:      "CelesTrak",
+		BitcoinAddress: "bc1qspacedatanetwork000000000000000000000000",
+		EPMCID:         "bafkreigh2akiscaildcagqrb7hf7vsgkl2kpdx3obxxm2pvshpwrsp7m2a",
+		Source:         "test",
+		EPMJSON: `{
+			"provider_id": "space-data-network-02",
+			"peer_id": "16Uiu2HCelesTrak",
+			"signing_public_key": "provider-public-key"
+		}`,
+		UpdatedAt: verifiedAt.Unix(),
+	}); err != nil {
+		t.Fatalf("upsert directory record failed: %v", err)
 	}
 }
