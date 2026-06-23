@@ -33,7 +33,8 @@ test('install script verifies both Unix commands are available after linking', (
 test('install script initializes the local node identity after Unix install', () => {
   assert.match(script, /SDN_SKIP_INIT/);
   assert.match(script, /"\$PRIMARY_BINARY_NAME" init/);
-  assert.match(script, /Run '\$PRIMARY_BINARY_NAME daemon' to start the node/);
+  assert.match(script, /Run '\$PRIMARY_BINARY_NAME start' to start the node as a persistent background service/);
+  assert.match(script, /Run '\$PRIMARY_BINARY_NAME daemon' for foreground\/manual mode/);
 });
 
 test('install script leaves Windows ZIP usage portable', () => {

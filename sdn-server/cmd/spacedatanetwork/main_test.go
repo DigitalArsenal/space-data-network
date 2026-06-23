@@ -958,7 +958,7 @@ func TestResolveFrontendPathRespectsExplicitConfiguredPath(t *testing.T) {
 }
 
 func TestUserFacingCLICommandsAreRegistered(t *testing.T) {
-	want := []string{"daemon", "init", "status", "open", "update", "sync", "version", "config"}
+	want := []string{"daemon", "init", "status", "open", "update", "sync", "version", "config", "start", "stop", "restart", "remove", "service"}
 	for _, name := range want {
 		requireCommand(t, []string{name}, name)
 	}
@@ -966,6 +966,9 @@ func TestUserFacingCLICommandsAreRegistered(t *testing.T) {
 	requireCommand(t, []string{"update", "apply"}, "apply")
 	requireCommand(t, []string{"sync", "status"}, "status")
 	requireCommand(t, []string{"sync", "watch"}, "watch")
+	requireCommand(t, []string{"service", "status"}, "status")
+	requireCommand(t, []string{"service", "install"}, "install")
+	requireCommand(t, []string{"service", "uninstall"}, "uninstall")
 }
 
 func TestChannelHandlerOptionsForIdentityWiresEncryptedStreamDecryptor(t *testing.T) {

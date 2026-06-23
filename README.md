@@ -78,12 +78,47 @@ npm run build
 ### Run a Full Node
 
 ```bash
-# Initialize configuration
-./spacedatanetwork init
+# Initialize configuration and node identity
+spacedatanetwork init
 
-# Start the node
-./spacedatanetwork daemon
+# Start the node as a persistent background service
+spacedatanetwork start
+
+# Check the local daemon
+spacedatanetwork status
 ```
+
+`spacedatanetwork start` installs and starts a user-scoped background service
+that persists across login/restart. It uses launchd on macOS, `systemd --user`
+on Linux, and a per-user Scheduled Task on Windows, so the daemon uses the same
+config, mnemonic, and data directory as the interactive CLI.
+
+Foreground/manual mode is still available:
+
+```bash
+spacedatanetwork daemon
+```
+
+Service controls:
+
+```bash
+spacedatanetwork stop
+spacedatanetwork restart
+spacedatanetwork service status
+spacedatanetwork service install
+spacedatanetwork service uninstall
+```
+
+Remove the current self-contained install and aliases:
+
+```bash
+spacedatanetwork remove --dry-run
+spacedatanetwork remove
+```
+
+`remove` preserves `~/.spacedatanetwork` by default so node identity and data
+survive reinstall. Use `spacedatanetwork remove --purge-data` only when you
+want to delete the local config, mnemonic, and data as well.
 
 ### Browser Usage
 
@@ -194,6 +229,10 @@ as `sdn-js-v...`. The portable CLI archive is the primary cross-platform native
 download and includes `spacedatanetwork`, the `sdn` alias, bundled Kubo, SDN UI,
 IPFS WebUI, and the updater module. Existing Linux packages, VM bundles, Docker
 tarballs, and the macOS ARM64 full-node bundle remain available for operators.
+
+After installing a portable CLI archive, use `spacedatanetwork start` for the
+persistent background node, `spacedatanetwork daemon` for foreground/manual
+mode, and `spacedatanetwork remove` to remove the current installed bundle.
 
 macOS ARM64 direct download:
 [spacedatanetwork-darwin-arm64.tar.gz](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-darwin-arm64.tar.gz)
