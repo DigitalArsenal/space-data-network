@@ -1,0 +1,204 @@
+name: SDN Live DHT Cross-Platform Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to test. Leave blank to use the latest release.
+        required: false
+        type: string
+      timeout_minutes:
+        description: Per-client smoke timeout. Must exceed the five-minute DHT registration wait.
+        required: false
+        default: '20'
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  SDN_LIVE_DHT_EXPECT_ROLES: linux-docker,macos-native,windows-native
+  SDN_LIVE_DHT_REGISTRATION_WAIT_MS: '300000'
+  SDN_LIVE_DHT_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes || '20' }}
+
+jobs:
+  live-dht-smoke:
+    name: ${{ matrix.role }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - role: linux-docker
+            runner: ubuntu-latest
+            target_os: linux
+            target_arch: amd64
+            archive_extension: tar.gz
+            mode: docker
+          - role: macos-native
+            runner: macos-14
+            target_os: darwin
+            target_arch: arm64
+            archive_extension: tar.gz
+            mode: native
+          - role: windows-native
+            runner: windows-latest
+            target_os: windows
+            target_arch: amd64
+            archive_extension: zip
+            mode: native
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ROLE: ${{ matrix.role }}
+      TARGET_OS: ${{ matrix.target_os }}
+      TARGET_ARCH: ${{ matrix.target_arch }}
+      ARCHIVE_EXTENSION: ${{ matrix.archive_extension }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache-dependency-path: sdn-server/go.sum
+
+      - name: Install Windows archive tools
+        if: runner.os == 'Windows'
+        run: |
+          choco install unzip -y --no-progress
+          echo "/c/msys64/mingw64/bin" >> "${GITHUB_PATH}"
+
+      - id: release
+        name: Resolve release tag
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [ -n "${INPUT_RELEASE_TAG}" ]; then
+            tag="${INPUT_RELEASE_TAG}"
+          else
+            tag="$(gh release view --repo "${GITHUB_REPOSITORY}" --json tagName -q .tagName)"
+          fi
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "Testing ${tag}"
+
+      - name: Download CLI archive
+        run: |
+          mkdir -p dist/live-dht
+          gh release download "${{ steps.release.outputs.tag }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "spacedatanetwork-*-${{ matrix.target_os }}-${{ matrix.target_arch }}.${{ matrix.archive_extension }}" \
+            --dir dist/live-dht \
+            --clobber
+          ls -la dist/live-dht
+
+      - id: smoke-pnm
+        name: Generate smoke PNM
+        run: |
+          mkdir -p dist/live-dht/reports dist/live-dht/logs
+          run_token="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          nonce="${GITHUB_SHA:0:12}-${ROLE}"
+          file_id="sdn-ci:${run_token}:${ROLE}:PNM.fbs:${nonce}"
+          (
+            cd sdn-server
+            ../scripts/go-with-wasmedge.sh run ./cmd/sdn-ci-pnm --file-id "${file_id}"
+          ) > dist/live-dht/pnm.b64
+          echo "run_token=${run_token}" >> "${GITHUB_OUTPUT}"
+          echo "file_id=${file_id}" >> "${GITHUB_OUTPUT}"
+
+      - name: Run native live DHT smoke
+        if: matrix.mode == 'native'
+        run: |
+          matches=(dist/live-dht/spacedatanetwork-*-"${TARGET_OS}"-"${TARGET_ARCH}"."${ARCHIVE_EXTENSION}")
+          if [ "${#matches[@]}" -ne 1 ] || [ ! -f "${matches[0]}" ]; then
+            printf 'Expected exactly one CLI archive, found %s\n' "${#matches[@]}" >&2
+            printf '%s\n' "${matches[@]}" >&2
+            exit 1
+          fi
+          archive_path="${matches[0]}"
+          export SDN_CI_PNM_BASE64="$(cat dist/live-dht/pnm.b64)"
+          timeout_ms=$(( SDN_LIVE_DHT_TIMEOUT_MINUTES * 60 * 1000 ))
+          node deployment/release/live-dht-client-smoke.mjs \
+            --archive "${archive_path}" \
+            --role "${ROLE}" \
+            --report "dist/live-dht/reports/${ROLE}.json" \
+            --log "dist/live-dht/logs/${ROLE}.log" \
+            --run-id "${{ steps.smoke-pnm.outputs.run_token }}" \
+            --pnm-base64-env SDN_CI_PNM_BASE64 \
+            --expect-roles "${SDN_LIVE_DHT_EXPECT_ROLES}" \
+            --dht-registration-wait-ms "${SDN_LIVE_DHT_REGISTRATION_WAIT_MS}" \
+            --timeout-ms "${timeout_ms}"
+
+      - name: Run Linux Docker live DHT smoke
+        if: matrix.mode == 'docker'
+        run: |
+          matches=(dist/live-dht/spacedatanetwork-*-"${TARGET_OS}"-"${TARGET_ARCH}"."${ARCHIVE_EXTENSION}")
+          if [ "${#matches[@]}" -ne 1 ] || [ ! -f "${matches[0]}" ]; then
+            printf 'Expected exactly one CLI archive, found %s\n' "${#matches[@]}" >&2
+            printf '%s\n' "${matches[@]}" >&2
+            exit 1
+          fi
+          archive_path="${matches[0]}"
+          export SDN_CI_PNM_BASE64="$(cat dist/live-dht/pnm.b64)"
+          timeout_ms=$(( SDN_LIVE_DHT_TIMEOUT_MINUTES * 60 * 1000 ))
+          docker run --rm \
+            -e SDN_CI_PNM_BASE64 \
+            -e SDN_LIVE_DHT_EXPECT_ROLES \
+            -v "${PWD}:/workspace" \
+            -w /workspace \
+            node:24-bookworm \
+            node deployment/release/live-dht-client-smoke.mjs \
+              --archive "/workspace/${archive_path}" \
+              --role "${ROLE}" \
+              --report "/workspace/dist/live-dht/reports/${ROLE}.json" \
+              --log "/workspace/dist/live-dht/logs/${ROLE}.log" \
+              --run-id "${{ steps.smoke-pnm.outputs.run_token }}" \
+              --pnm-base64-env SDN_CI_PNM_BASE64 \
+              --expect-roles "${SDN_LIVE_DHT_EXPECT_ROLES}" \
+              --dht-registration-wait-ms "${SDN_LIVE_DHT_REGISTRATION_WAIT_MS}" \
+              --timeout-ms "${timeout_ms}"
+
+      - name: Upload live DHT report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-dht-${{ matrix.role }}
+          path: |
+            dist/live-dht/reports/*.json
+            dist/live-dht/logs/*.log
+            dist/live-dht/pnm.b64
+          if-no-files-found: ignore
+
+  summarize:
+    name: Summarize live DHT reports
+    runs-on: ubuntu-latest
+    needs: live-dht-smoke
+    if: always()
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/live-dht/downloaded-reports
+          pattern: live-dht-*
+          merge-multiple: true
+
+      - name: Summarize reports
+        run: |
+          node deployment/release/live-dht-summary.mjs \
+            --reports dist/live-dht/downloaded-reports \
+            --expect-roles "${SDN_LIVE_DHT_EXPECT_ROLES}"
