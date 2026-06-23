@@ -4,7 +4,6 @@ package sds
 import (
 	"embed"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -57,7 +56,7 @@ func (r *SchemaRegistry) loadEmbedded() error {
 			continue
 		}
 
-		content, err := sdsSchemasFS.ReadFile(filepath.Join("schemas", entry.Name()))
+		content, err := sdsSchemasFS.ReadFile(embeddedSchemaPath(entry.Name()))
 		if err != nil {
 			log.Warnf("Failed to read schema %s: %v", entry.Name(), err)
 			continue
