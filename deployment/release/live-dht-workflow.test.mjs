@@ -15,7 +15,11 @@ test('live DHT workflow covers Linux Docker, native macOS, and native Windows', 
 });
 
 test('live DHT workflow builds current-ref CLI artifacts and uses public Kademlia DHT', () => {
+  assert.match(workflow, /build-updater-wasm:/);
   assert.match(workflow, /build-cli:/);
+  assert.match(workflow, /needs: build-updater-wasm/);
+  assert.match(workflow, /updater-module-wasm/);
+  assert.match(workflow, /packages\/sdn-updater-module\/dist\/isomorphic/);
   assert.match(workflow, /Build target SDN binary/);
   assert.match(workflow, /build-self-contained-cli\.mjs/);
   assert.match(workflow, /actions\/download-artifact@v4/);
