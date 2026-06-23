@@ -302,8 +302,8 @@ func runSearchData(out io.Writer, options searchDataOptions) error {
 func providerSearchFields() []string {
 	return []string{
 		"peer_id", "dn", "legal_name", "bitcoin_address", "epm_cid", "source", "updated_at",
-		"schema_name", "provider_id", "source_name", "batch_id", "query_profile",
-		"local_rows", "pinned_rows", "cached_bytes", "pinned_bytes", "head", "high_water_mark", "last_synced_at",
+		"schema_name", "provider_peer_id", "provider_public_key", "provider_id", "source_name", "batch_id", "query_profile",
+		"local_rows", "pinned_rows", "cached_bytes", "pinned_bytes", "snapshot_id", "head", "high_water_mark", "last_synced_at",
 	}
 }
 
@@ -347,6 +347,7 @@ func buildSearchProviderRows(store *storage.FlatSQLStore, options searchProvider
 	}
 	stats, err := localSearchReplicaStats(store, storage.LocalReplicaStatsQuery{
 		SchemaName:   schemaName,
+		ProviderID:   strings.TrimSpace(options.ProviderID),
 		SourceName:   strings.TrimSpace(options.SourceName),
 		BatchID:      strings.TrimSpace(options.BatchID),
 		QueryProfile: strings.TrimSpace(options.QueryProfile),
@@ -363,7 +364,7 @@ func buildSearchProviderRows(store *storage.FlatSQLStore, options searchProvider
 	directoryRecords, err := store.QueryDirectory(storage.DirectoryQuery{
 		Kind:   "node",
 		Search: providerQuery,
-		Limit:  directorySearchLimit(options.Limit),
+		Limit:  options.Limit,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("query provider directory: %w", err)
@@ -514,16 +515,6 @@ func searchRowContains(row map[string]any, query string) bool {
 		}
 	}
 	return false
-}
-
-func directorySearchLimit(limit int) int {
-	if limit <= 0 {
-		return 1000
-	}
-	if limit > 1000 {
-		return 1000
-	}
-	return limit
 }
 
 func searchStatKey(stat storage.LocalReplicaStats) string {
