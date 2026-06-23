@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 func TestRootHelpListsSearchCommand(t *testing.T) {
@@ -34,11 +36,40 @@ func TestRootHelpListsSearchCommand(t *testing.T) {
 }
 
 func TestSearchCommandHelpListsSubcommands(t *testing.T) {
+	commands := searchCmd.Commands()
+	got := make([]string, 0, len(commands))
+	for _, command := range commands {
+		got = append(got, command.Name())
+	}
+	want := []string{"data", "providers", "standards"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("search subcommands = %#v, want %#v", got, want)
+	}
+
 	help := searchCmd.UsageString()
 	for _, want := range []string{"providers", "standards", "data"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("search help did not list %q:\n%s", want, help)
 		}
+	}
+}
+
+func TestSearchProviderRunEResetsPositionalQuery(t *testing.T) {
+	oldOptions := searchOptionsState.Provider
+	searchOptionsState.Provider = searchProviderOptions{Format: "table", Limit: 100}
+	t.Cleanup(func() { searchOptionsState.Provider = oldOptions })
+
+	searchProvidersCmd.SetOut(ioDiscard{})
+	searchProvidersCmd.SetArgs([]string{"first"})
+	if err := searchProvidersCmd.Execute(); err != nil {
+		t.Fatalf("first search providers execute failed: %v", err)
+	}
+	searchProvidersCmd.SetArgs([]string{})
+	if err := searchProvidersCmd.Execute(); err != nil {
+		t.Fatalf("second search providers execute failed: %v", err)
+	}
+	if searchOptionsState.Provider.Query != "" {
+		t.Fatalf("provider query leaked across executions: %q", searchOptionsState.Provider.Query)
 	}
 }
 
@@ -120,4 +151,88 @@ func TestWriteSearchResultJSONAndCSV(t *testing.T) {
 	if !reflect.DeepEqual(records, wantRecords) {
 		t.Fatalf("CSV records = %#v, want %#v", records, wantRecords)
 	}
+}
+
+func TestSearchProvidersJSONEnrichesDirectoryWithReplicaStats(t *testing.T) {
+	cfgPath, store := newSyncCLITestStore(t)
+	seedSyncCLITestData(t, store)
+	withSyncCLITestConfig(t, cfgPath)
+
+	var out bytes.Buffer
+	err := runSearchProviders(&out, searchProviderOptions{
+		Query:        "celestrak.eth",
+		Schema:       "OMM",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Format:       "json",
+	})
+	if err != nil {
+		t.Fatalf("runSearchProviders failed: %v", err)
+	}
+
+	var body searchResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode provider search JSON: %v\n%s", err, out.String())
+	}
+	if body.Count != 1 || len(body.Results) != 1 {
+		t.Fatalf("provider result count = %#v", body)
+	}
+	row := body.Results[0]
+	if row["peer_id"] != "16Uiu2HCelesTrak" || row["provider_id"] != "space-data-network-02" || row["schema_name"] != "OMM.fbs" {
+		t.Fatalf("unexpected provider row: %#v", row)
+	}
+	if row["local_rows"] != float64(1) && row["local_rows"] != int64(1) {
+		t.Fatalf("local_rows = %#v, want 1", row["local_rows"])
+	}
+}
+
+func TestSearchProvidersCSVUsesStableColumns(t *testing.T) {
+	cfgPath, store := newSyncCLITestStore(t)
+	seedSyncCLITestData(t, store)
+	withSyncCLITestConfig(t, cfgPath)
+
+	var out bytes.Buffer
+	err := runSearchProviders(&out, searchProviderOptions{
+		Query:  "CelesTrak",
+		Format: "csv",
+	})
+	if err != nil {
+		t.Fatalf("runSearchProviders failed: %v", err)
+	}
+	records, err := csv.NewReader(strings.NewReader(out.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("decode provider CSV: %v\n%s", err, out.String())
+	}
+	if len(records) != 2 || records[0][0] != "peer_id" || records[1][0] != "16Uiu2HCelesTrak" {
+		t.Fatalf("provider CSV = %#v", records)
+	}
+}
+
+func TestSearchDataFiltersBySchemaAndProvider(t *testing.T) {
+	cfgPath, store := newSyncCLITestStore(t)
+	seedSyncCLITestData(t, store)
+	withSyncCLITestConfig(t, cfgPath)
+
+	var out bytes.Buffer
+	err := runSearchData(&out, searchDataOptions{
+		Schema:       "OMM",
+		ProviderID:   "space-data-network-02",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Format:       "json",
+	})
+	if err != nil {
+		t.Fatalf("runSearchData failed: %v", err)
+	}
+	var body searchResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode data search JSON: %v\n%s", err, out.String())
+	}
+	if body.Count != 1 || body.Results[0]["source_name"] != "celestrak-gp" {
+		t.Fatalf("unexpected data search body: %#v", body)
+	}
+}
+
+type ioDiscard struct{}
+
+func (ioDiscard) Write(p []byte) (int, error) {
+	return len(p), nil
 }

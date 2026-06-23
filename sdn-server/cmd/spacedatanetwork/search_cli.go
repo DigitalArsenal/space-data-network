@@ -9,8 +9,13 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 type searchOutputFormat string
@@ -70,6 +75,7 @@ var searchProvidersCmd = &cobra.Command{
 	Short: "Search provider EPM directory records",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		searchOptionsState.Provider.Query = ""
 		if len(args) > 0 {
 			searchOptionsState.Provider.Query = args[0]
 		}
@@ -82,6 +88,7 @@ var searchStandardsCmd = &cobra.Command{
 	Short: "Search Space Data Standards schemas",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		searchOptionsState.Standard.Query = ""
 		if len(args) > 0 {
 			searchOptionsState.Standard.Query = args[0]
 		}
@@ -94,6 +101,7 @@ var searchDataCmd = &cobra.Command{
 	Short: "Search local data-source metadata",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		searchOptionsState.Data.Query = ""
 		if len(args) > 0 {
 			searchOptionsState.Data.Query = args[0]
 		}
@@ -211,6 +219,8 @@ func searchValueString(value any) string {
 		return strconv.FormatBool(typed)
 	case []string:
 		return strings.Join(typed, ";")
+	case time.Time:
+		return formatSearchTime(typed)
 	default:
 		raw, err := json.Marshal(typed)
 		if err != nil {
@@ -246,7 +256,19 @@ func runSearchProviders(out io.Writer, options searchProviderOptions) error {
 	if err != nil {
 		return err
 	}
-	return writeSearchResult(out, searchResult{Results: []map[string]any{}}, providerSearchFields(), format)
+	store, err := openSearchStore()
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	rows, err := buildSearchProviderRows(store, options)
+	if err != nil {
+		return err
+	}
+	sortSearchRows(rows, "dn", "provider_id", "source_name", "schema_name")
+	rows = applySearchLimit(rows, options.Limit)
+	return writeSearchResult(out, searchResult{Count: len(rows), Results: rows}, providerSearchFields(), format)
 }
 
 func runSearchStandards(out io.Writer, options searchStandardsOptions) error {
@@ -262,11 +284,27 @@ func runSearchData(out io.Writer, options searchDataOptions) error {
 	if err != nil {
 		return err
 	}
-	return writeSearchResult(out, searchResult{Results: []map[string]any{}}, dataSearchFields(), format)
+	store, err := openSearchStore()
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	rows, err := buildSearchDataRows(store, options)
+	if err != nil {
+		return err
+	}
+	sortSearchRows(rows, "schema_name", "provider_id", "source_name", "batch_id")
+	rows = applySearchLimit(rows, options.Limit)
+	return writeSearchResult(out, searchResult{Count: len(rows), Results: rows}, dataSearchFields(), format)
 }
 
 func providerSearchFields() []string {
-	return []string{"peer_id", "dn", "legal_name", "provider_id", "source_name", "schema_name", "local_rows", "pinned_rows", "updated_at"}
+	return []string{
+		"peer_id", "dn", "legal_name", "bitcoin_address", "epm_cid", "source", "updated_at",
+		"schema_name", "provider_id", "source_name", "batch_id", "query_profile",
+		"local_rows", "pinned_rows", "cached_bytes", "pinned_bytes", "head", "high_water_mark", "last_synced_at",
+	}
 }
 
 func standardsSearchFields() []string {
@@ -274,5 +312,242 @@ func standardsSearchFields() []string {
 }
 
 func dataSearchFields() []string {
-	return []string{"schema_name", "provider_id", "source_name", "batch_id", "query_profile", "local_rows", "pinned_rows", "cached_bytes", "pinned_bytes"}
+	return []string{
+		"schema_name", "provider_id", "source_name", "batch_id", "query_profile",
+		"provider_peer_id", "provider_public_key", "local_rows", "pinned_rows",
+		"cached_bytes", "pinned_bytes", "snapshot_id", "head", "high_water_mark", "last_synced_at",
+	}
+}
+
+func openSearchStore() (*storage.FlatSQLStore, error) {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize schema validator: %w", err)
+	}
+	store, err := storage.NewFlatSQLStore(cfg.Storage.Path, validator)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open storage: %w", err)
+	}
+	return store, nil
+}
+
+func buildSearchProviderRows(store *storage.FlatSQLStore, options searchProviderOptions) ([]map[string]any, error) {
+	schemaName, err := normalizeSyncSchemaName(options.Schema)
+	if err != nil {
+		return nil, err
+	}
+	query := strings.TrimSpace(options.Query)
+	providerQuery := strings.TrimSpace(options.ProviderID)
+	if providerQuery == "" {
+		providerQuery = query
+	}
+	stats, err := localSearchReplicaStats(store, storage.LocalReplicaStatsQuery{
+		SchemaName:   schemaName,
+		SourceName:   strings.TrimSpace(options.SourceName),
+		BatchID:      strings.TrimSpace(options.BatchID),
+		QueryProfile: strings.TrimSpace(options.QueryProfile),
+	})
+	if err != nil {
+		return nil, err
+	}
+	resolution, err := resolveSyncProviderIdentifier(store, providerQuery)
+	if err != nil {
+		return nil, err
+	}
+	matchingStats := filterSearchStatsByResolution(stats, resolution)
+
+	directoryRecords, err := store.QueryDirectory(storage.DirectoryQuery{
+		Kind:   "node",
+		Search: providerQuery,
+		Limit:  directorySearchLimit(options.Limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query provider directory: %w", err)
+	}
+
+	rows := make([]map[string]any, 0, len(directoryRecords)+len(matchingStats))
+	seenStats := map[string]bool{}
+	for _, record := range directoryRecords {
+		recordStats := searchStatsForDirectoryRecord(record, matchingStats)
+		if len(recordStats) == 0 {
+			row := searchDirectoryRow(record)
+			rows = append(rows, row)
+			continue
+		}
+		for _, stat := range recordStats {
+			row := searchDirectoryRow(record)
+			addSearchReplicaStats(row, stat)
+			rows = append(rows, row)
+			seenStats[searchStatKey(stat)] = true
+		}
+	}
+	for _, stat := range matchingStats {
+		if seenStats[searchStatKey(stat)] {
+			continue
+		}
+		row := map[string]any{}
+		addSearchReplicaStats(row, stat)
+		if searchRowContains(row, query) || providerQuery != "" {
+			rows = append(rows, row)
+		}
+	}
+	return rows, nil
+}
+
+func buildSearchDataRows(store *storage.FlatSQLStore, options searchDataOptions) ([]map[string]any, error) {
+	schemaName, err := normalizeSyncSchemaName(options.Schema)
+	if err != nil {
+		return nil, err
+	}
+	stats, err := localSearchReplicaStats(store, storage.LocalReplicaStatsQuery{
+		SchemaName:   schemaName,
+		ProviderID:   strings.TrimSpace(options.ProviderID),
+		SourceName:   strings.TrimSpace(options.SourceName),
+		BatchID:      strings.TrimSpace(options.BatchID),
+		QueryProfile: strings.TrimSpace(options.QueryProfile),
+	})
+	if err != nil {
+		return nil, err
+	}
+	query := strings.TrimSpace(options.Query)
+	rows := make([]map[string]any, 0, len(stats))
+	for _, stat := range stats {
+		row := map[string]any{}
+		addSearchReplicaStats(row, stat)
+		if !searchRowContains(row, query) {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func localSearchReplicaStats(store *storage.FlatSQLStore, query storage.LocalReplicaStatsQuery) ([]storage.LocalReplicaStats, error) {
+	stats, err := store.LocalReplicaStats(query)
+	if err != nil {
+		return nil, fmt.Errorf("query local replica stats: %w", err)
+	}
+	filtered := stats[:0]
+	for _, stat := range stats {
+		if searchReplicaStatHasEvidence(stat) {
+			filtered = append(filtered, stat)
+		}
+	}
+	return filtered, nil
+}
+
+func filterSearchStatsByResolution(stats []storage.LocalReplicaStats, resolution syncProviderResolution) []storage.LocalReplicaStats {
+	filtered := make([]storage.LocalReplicaStats, 0, len(stats))
+	for _, stat := range stats {
+		if _, ok := resolution.matchStat(stat); ok {
+			filtered = append(filtered, stat)
+		}
+	}
+	return filtered
+}
+
+func searchStatsForDirectoryRecord(record storage.DirectoryRecord, stats []storage.LocalReplicaStats) []storage.LocalReplicaStats {
+	resolution := syncProviderResolution{
+		input:      record.PeerID,
+		kind:       syncProviderKindProviderID,
+		providers:  newSyncIdentifierSet(),
+		peers:      newSyncIdentifierSet(),
+		publicKeys: newSyncIdentifierSet(),
+	}
+	addDirectoryRecordToSyncResolution(&resolution, record)
+	matches := make([]storage.LocalReplicaStats, 0, len(stats))
+	for _, stat := range stats {
+		if _, ok := resolution.matchStat(stat); ok {
+			matches = append(matches, stat)
+		}
+	}
+	return matches
+}
+
+func searchDirectoryRow(record storage.DirectoryRecord) map[string]any {
+	return map[string]any{
+		"peer_id":         record.PeerID,
+		"dn":              record.DN,
+		"legal_name":      record.LegalName,
+		"bitcoin_address": record.BitcoinAddress,
+		"epm_cid":         record.EPMCID,
+		"source":          record.Source,
+		"updated_at":      formatSearchUnix(record.UpdatedAt),
+	}
+}
+
+func addSearchReplicaStats(row map[string]any, stat storage.LocalReplicaStats) {
+	row["schema_name"] = stat.SchemaName
+	row["provider_peer_id"] = stat.ProviderPeerID
+	row["provider_public_key"] = stat.ProviderPublicKey
+	row["provider_id"] = stat.ProviderID
+	row["source_name"] = stat.SourceName
+	row["batch_id"] = stat.BatchID
+	row["query_profile"] = stat.QueryProfile
+	row["local_rows"] = stat.LocalRows
+	row["pinned_rows"] = stat.PinnedRows
+	row["cached_bytes"] = stat.CachedBytes
+	row["pinned_bytes"] = stat.PinnedBytes
+	row["snapshot_id"] = stat.SnapshotID
+	row["head"] = stat.Head
+	row["high_water_mark"] = stat.HighWaterMark
+	row["last_synced_at"] = formatSearchTime(stat.LastSyncedAt)
+}
+
+func searchReplicaStatHasEvidence(stat storage.LocalReplicaStats) bool {
+	return stat.LocalRows > 0 || stat.PinnedRows > 0 || stat.CachedBytes > 0 || stat.PinnedBytes > 0 ||
+		strings.TrimSpace(stat.Head) != "" || strings.TrimSpace(stat.SnapshotID) != "" || !stat.LastSyncedAt.IsZero()
+}
+
+func searchRowContains(row map[string]any, query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return true
+	}
+	for _, value := range row {
+		if strings.Contains(strings.ToLower(searchValueString(value)), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func directorySearchLimit(limit int) int {
+	if limit <= 0 {
+		return 1000
+	}
+	if limit > 1000 {
+		return 1000
+	}
+	return limit
+}
+
+func searchStatKey(stat storage.LocalReplicaStats) string {
+	return strings.Join([]string{
+		stat.SchemaName,
+		stat.ProviderPeerID,
+		stat.ProviderPublicKey,
+		stat.ProviderID,
+		stat.SourceName,
+		stat.BatchID,
+		stat.QueryProfile,
+	}, "\x00")
+}
+
+func formatSearchUnix(unix int64) string {
+	if unix <= 0 {
+		return ""
+	}
+	return time.Unix(unix, 0).UTC().Format(time.RFC3339)
+}
+
+func formatSearchTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339)
 }
