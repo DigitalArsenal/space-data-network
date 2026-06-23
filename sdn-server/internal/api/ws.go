@@ -28,7 +28,7 @@ type wsClientMsg struct {
 
 // wsServerMsg is the envelope sent from the server to the client.
 type wsServerMsg struct {
-	Type   string `json:"type"`   // "message" | "subscribed" | "unsubscribed" | "error"
+	Type   string `json:"type"` // "message" | "subscribed" | "unsubscribed" | "error"
 	Schema string `json:"schema,omitempty"`
 	Data   string `json:"data,omitempty"` // base64-encoded bytes
 	From   string `json:"from,omitempty"` // originating peer ID string
@@ -214,8 +214,7 @@ func (wh *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			// Then propagate over libp2p pubsub if available.
 			if wh.hub.publisher != nil {
-				topicName := "/sdn/data/" + msg.Schema
-				_ = wh.hub.publisher.PublishToTopic(r.Context(), topicName, data)
+				_, _ = publishSchemaPubSubMessage(r.Context(), wh.hub.publisher, msg.Schema, data)
 			}
 
 		default:

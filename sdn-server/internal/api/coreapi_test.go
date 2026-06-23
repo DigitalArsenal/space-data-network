@@ -12,14 +12,23 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 
+	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
 // fakePublisher implements topicPublisher for tests.
 type fakePublisher struct {
-	lastTopic string
-	lastData  []byte
-	err       error
+	lastSchema string
+	lastTopic  string
+	lastData   []byte
+	err        error
+}
+
+func (f *fakePublisher) Publish(schema string, data []byte) error {
+	f.lastSchema = schema
+	f.lastTopic = sdnpubsub.TopicName(schema)
+	f.lastData = data
+	return f.err
 }
 
 func (f *fakePublisher) PublishToTopic(_ context.Context, topic string, data []byte) error {
@@ -224,10 +233,13 @@ func TestCoreAPI_PubSubPublish_ValidData(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	if pub.lastTopic == "" {
-		t.Error("expected PublishToTopic to be called")
+		t.Error("expected pubsub publish to be called")
 	}
-	if pub.lastTopic != "/sdn/data/OMM.fbs" {
-		t.Errorf("topic = %q, want /sdn/data/OMM.fbs", pub.lastTopic)
+	if pub.lastSchema != "OMM.fbs" {
+		t.Errorf("schema publish = %q, want OMM.fbs", pub.lastSchema)
+	}
+	if pub.lastTopic != "/spacedatanetwork/sds/OMM.fbs" {
+		t.Errorf("topic = %q, want /spacedatanetwork/sds/OMM.fbs", pub.lastTopic)
 	}
 }
 
