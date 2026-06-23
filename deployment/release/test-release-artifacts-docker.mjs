@@ -193,6 +193,7 @@ ENV LD_LIBRARY_PATH=/opt/${bundleRoot}/runtime/wasmedge/lib
 RUN test -x /opt/${bundleRoot}/bin/spacedatanetwork \\
   && test -x /opt/${bundleRoot}/bin/sdn \\
   && test -x /opt/${bundleRoot}/runtime/kubo/ipfs \\
+  && test -f /opt/${bundleRoot}/runtime/modules/hd-wallet-wasi.wasm \\
   && test -f /opt/${bundleRoot}/runtime/modules/org.spacedatanetwork.updater.wasm \\
   && test -d /opt/${bundleRoot}/runtime/ui/sdn \\
   && test -d /opt/${bundleRoot}/runtime/ui/webui \\

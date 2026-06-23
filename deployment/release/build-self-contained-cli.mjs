@@ -8,6 +8,7 @@ const executableMode = 0o755;
 const defaultUpdateFeedBaseUrl = 'https://updates.spacedatanetwork.org';
 const updaterModuleId = 'org.spacedatanetwork.updater';
 const updaterWasmPath = 'runtime/modules/org.spacedatanetwork.updater.wasm';
+const hdWalletWasmPath = 'runtime/modules/hd-wallet-wasi.wasm';
 
 export async function stageBundle(options) {
   const version = safeToken(options.version, 'version');
@@ -47,7 +48,11 @@ export async function stageBundle(options) {
   await cp(required(options.webUIPath ?? options.webUiPath, 'webUIPath'), join(root, 'runtime', 'ui', 'webui'), { recursive: true });
   await cp(
     required(options.updaterWasmPath, 'updaterWasmPath'),
-    join(root, 'runtime', 'modules', 'org.spacedatanetwork.updater.wasm'),
+    join(root, updaterWasmPath),
+  );
+  await cp(
+    required(options.hdWalletWasmPath, 'hdWalletWasmPath'),
+    join(root, hdWalletWasmPath),
   );
   await cp(required(options.licensePath, 'licensePath'), join(root, 'LICENSE'));
   await cp(required(options.readmePath, 'readmePath'), join(root, 'README.md'));
