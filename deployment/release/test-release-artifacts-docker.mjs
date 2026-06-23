@@ -205,9 +205,6 @@ RUN test -x /opt/${bundleRoot}/bin/spacedatanetwork \\
       return `FROM node:24-bookworm-slim
 WORKDIR /app
 COPY ${artifactName} /tmp/${artifactName}
-RUN apt-get update \\
-  && apt-get install -y --no-install-recommends git \\
-  && rm -rf /var/lib/apt/lists/*
 RUN npm init -y >/dev/null 2>&1 \\
   && npm install --no-audit --no-fund /tmp/${artifactName}
 RUN node --input-type=module -e "const root = await import('@spacedatanetwork/sdn-js'); const ui = await import('@spacedatanetwork/sdn-js/ui'); const storefront = await import('@spacedatanetwork/sdn-js/storefront'); if (typeof root.SDNNode?.create !== 'function') throw new Error('sdn-js root export missing SDNNode.create'); if (typeof ui.mountWalletUI !== 'function') throw new Error('sdn-js UI export missing mountWalletUI'); if (typeof storefront.createStorefrontClient !== 'function') throw new Error('sdn-js storefront export missing createStorefrontClient'); console.log('sdn-js published imports ok')"
