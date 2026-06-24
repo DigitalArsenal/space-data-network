@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	libp2phost "github.com/libp2p/go-libp2p/core/host"
@@ -33,6 +34,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 	"github.com/spacedatanetwork/sdn-server/plugins"
 )
@@ -401,6 +403,31 @@ func TestExportIdentityQRCodeUsesNodeVCardPayload(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "BEGIN:VCARD") {
 		t.Fatalf("qrcode export printed raw vCard: %q", out.String())
+	}
+}
+
+func TestExportIdentityFlatBufferUsesNodeEPMEndpoint(t *testing.T) {
+	t.Parallel()
+
+	epmBytes := sds.NewEPMBuilder().WithDN("FlatBuffer Export").Build()
+	if !EPM.SizePrefixedEPMBufferHasIdentifier(epmBytes) {
+		t.Fatal("test EPM bytes are invalid")
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/node/epm", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-flatbuffers")
+		_, _ = w.Write(epmBytes)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var out bytes.Buffer
+	if err := exportIdentity(context.Background(), &out, server.URL, "flatbuffer"); err != nil {
+		t.Fatalf("exportIdentity failed: %v", err)
+	}
+	if !bytes.Equal(out.Bytes(), epmBytes) {
+		t.Fatalf("flatbuffer export bytes differ: got %x want %x", out.Bytes(), epmBytes)
 	}
 }
 
