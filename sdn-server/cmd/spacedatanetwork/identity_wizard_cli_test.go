@@ -152,6 +152,44 @@ func TestIdentityWizardCSVAndFlatBufferOutputs(t *testing.T) {
 	}
 }
 
+func TestExportLocalIdentityFlatBufferWritesOutputPath(t *testing.T) {
+	_, store, peerID, dataDir := newIdentityWizardTestStore(t)
+	if err := runIdentityWizardWithIO(
+		strings.NewReader("y\n"),
+		io.Discard,
+		identityWizardOptions{
+			Sets: []string{
+				"dn=Local Export Provider",
+				"legal_name=Local Export LLC",
+			},
+			Format: "json",
+		},
+		store,
+		identityWizardNodeIdentity{PeerID: peerID},
+		dataDir,
+	); err != nil {
+		t.Fatalf("runIdentityWizardWithIO failed: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Storage.Path = dataDir
+	epmPath := filepath.Join(t.TempDir(), "local-epm.fbs")
+	var out bytes.Buffer
+	if err := exportLocalIdentity(t.Context(), &out, cfg, "flatbuffer", epmPath); err != nil {
+		t.Fatalf("exportLocalIdentity failed: %v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("flatbuffer file export should not write stdout, got %q", out.String())
+	}
+	raw, err := os.ReadFile(epmPath)
+	if err != nil {
+		t.Fatalf("read flatbuffer output %s: %v", epmPath, err)
+	}
+	if !EPM.SizePrefixedEPMBufferHasIdentifier(raw) {
+		t.Fatalf("flatbuffer output has invalid EPM identifier: %x", raw[:min(len(raw), 16)])
+	}
+}
+
 func TestIdentityWizardPreservesIdentityBackedPublicKeys(t *testing.T) {
 	_, store, _, dataDir := newIdentityWizardTestStore(t)
 	identity, err := testProviderDerivedIdentity()

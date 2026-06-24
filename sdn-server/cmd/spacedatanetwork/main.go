@@ -56,6 +56,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storefront"
 	"github.com/spacedatanetwork/sdn-server/internal/tlsmgr"
 	"github.com/spacedatanetwork/sdn-server/internal/tor"
+	sdnvcard "github.com/spacedatanetwork/sdn-server/internal/vcard"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 	"github.com/spacedatanetwork/sdn-server/plugins"
@@ -177,6 +178,7 @@ var (
 	wasmPath             string
 	showMnemonic         bool
 	identityExportFormat string
+	identityExportOutput string
 )
 
 func init() {
@@ -189,6 +191,7 @@ func init() {
 	showIdentityCmd.Flags().BoolVar(&showMnemonic, "show-mnemonic", false, "display the decrypted mnemonic phrase (SENSITIVE)")
 	showIdentityCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet-wasi.wasm")
 	identityExportCmd.Flags().StringVar(&identityExportFormat, "format", "text", "output format: text, json, csv, flatbuffer, qrcode")
+	identityExportCmd.Flags().StringVarP(&identityExportOutput, "output", "o", "", "write FlatBuffer output to path")
 	identityCmd.AddCommand(identityExportCmd)
 
 	rootCmd.AddCommand(daemonCmd)
@@ -232,10 +235,25 @@ func runIdentityExport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return exportIdentity(cmd.Context(), cmd.OutOrStdout(), adminURL(cfg), identityExportFormat)
+	return exportIdentityWithLocalFallback(cmd.Context(), cmd.OutOrStdout(), cfg, identityExportFormat, identityExportOutput)
 }
 
 func exportIdentity(ctx context.Context, out io.Writer, baseURL string, format string) error {
+	return exportIdentityWithOutput(ctx, out, baseURL, format, "")
+}
+
+func exportIdentityWithLocalFallback(ctx context.Context, out io.Writer, cfg *config.Config, format, outputPath string) error {
+	daemonErr := exportIdentityWithOutput(ctx, out, adminURL(cfg), format, outputPath)
+	if daemonErr == nil {
+		return nil
+	}
+	if localErr := exportLocalIdentity(ctx, out, cfg, format, outputPath); localErr == nil {
+		return nil
+	}
+	return daemonErr
+}
+
+func exportIdentityWithOutput(ctx context.Context, out io.Writer, baseURL string, format string, outputPath string) error {
 	switch normalizeIdentityExportFormat(format) {
 	case "text":
 		vcardBytes, err := fetchLocalIdentityEndpoint(ctx, baseURL, "/api/node/epm/vcard")
@@ -261,13 +279,90 @@ func exportIdentity(ctx context.Context, out io.Writer, baseURL string, format s
 		if err != nil {
 			return err
 		}
-		return writeIdentityFlatBufferOutput(out, epmBytes, "")
+		return writeIdentityFlatBufferOutput(out, epmBytes, outputPath)
 	case "qrcode":
 		vcardBytes, err := fetchLocalIdentityEndpoint(ctx, baseURL, "/api/node/epm/vcard")
 		if err != nil {
 			return err
 		}
 		qr, err := qrgen.New(string(vcardBytes), qrgen.Medium)
+		if err != nil {
+			return fmt.Errorf("encode EPM vCard QR code: %w", err)
+		}
+		_, err = io.WriteString(out, qr.ToSmallString(false))
+		return err
+	default:
+		return fmt.Errorf("unsupported identity export format %q (use text, json, csv, flatbuffer, or qrcode)", format)
+	}
+}
+
+func exportLocalIdentity(ctx context.Context, out io.Writer, cfg *config.Config, format string, outputPath string) error {
+	if cfg == nil {
+		return fmt.Errorf("config is required")
+	}
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		return fmt.Errorf("failed to initialize schema validator: %w", err)
+	}
+	store, err := storage.NewFlatSQLStore(cfg.Storage.Path, validator)
+	if err != nil {
+		return fmt.Errorf("failed to open storage: %w", err)
+	}
+	defer store.Close()
+
+	records, err := store.QueryRawRecords(storage.RawRecordQuery{
+		SchemaName: "EPM.fbs",
+		ProviderID: "local-node",
+		SourceName: "local-epm",
+		BatchID:    "local",
+		Limit:      1,
+	})
+	if err != nil {
+		return fmt.Errorf("load local public EPM identity: %w", err)
+	}
+	if len(records) == 0 || len(records[0].Data) == 0 {
+		return fmt.Errorf("no local public EPM identity found; run spacedatanetwork identity wizard or start the daemon once")
+	}
+	return writeLocalIdentityExport(ctx, out, records[0].Data, records[0].PeerID, format, outputPath)
+}
+
+func writeLocalIdentityExport(ctx context.Context, out io.Writer, epmBytes []byte, peerID string, format string, outputPath string) error {
+	switch normalizeIdentityExportFormat(format) {
+	case "text":
+		vcardText, err := sdnvcard.EPMToVCard(epmBytes)
+		if err != nil {
+			return fmt.Errorf("build EPM vCard: %w", err)
+		}
+		_, err = io.WriteString(out, string(ensureTrailingNewline([]byte(vcardText))))
+		return err
+	case "json":
+		epmJSON, err := epm.DirectoryRecordJSONFromEPM(epmBytes, peerID)
+		if err != nil {
+			return fmt.Errorf("build EPM directory JSON: %w", err)
+		}
+		jsonBytes, err := json.Marshal(epmJSON)
+		if err != nil {
+			return fmt.Errorf("encode EPM JSON: %w", err)
+		}
+		return writeIndentedJSON(out, jsonBytes)
+	case "csv":
+		epmJSON, err := epm.DirectoryRecordJSONFromEPM(epmBytes, peerID)
+		if err != nil {
+			return fmt.Errorf("build EPM directory JSON: %w", err)
+		}
+		jsonBytes, err := json.Marshal(epmJSON)
+		if err != nil {
+			return fmt.Errorf("encode EPM JSON: %w", err)
+		}
+		return writeIdentityCSV(out, jsonBytes)
+	case "flatbuffer":
+		return writeIdentityFlatBufferOutput(out, epmBytes, outputPath)
+	case "qrcode":
+		vcardText, err := sdnvcard.EPMToVCard(epmBytes)
+		if err != nil {
+			return fmt.Errorf("build EPM vCard: %w", err)
+		}
+		qr, err := qrgen.New(vcardText, qrgen.Medium)
 		if err != nil {
 			return fmt.Errorf("encode EPM vCard QR code: %w", err)
 		}
