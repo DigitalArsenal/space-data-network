@@ -34,6 +34,7 @@ let serverPromise = null
 const HOSTED_EPM_STORE_VERSION = 1
 const HOSTED_EPM_STORE_FILE = 'sdn-hosted-epms.enc.json'
 const HOSTED_EPM_STORE_SALT = 'space-data-network-hosted-epm-store-v1'
+const DESKTOP_AUTH_USERS_FILE = 'desktop-auth-users.json'
 const NODE_IDENTITY_SETTINGS_FILE = 'sdn-node-identity-settings.json'
 const NODE_IDENTITY_SESSION_FILE = 'sdn-node-identity-session.json'
 const NODE_WALLET_STORAGE_FILE = 'sdn-wallet-local-storage.enc.json'
@@ -1602,6 +1603,138 @@ async function serveDesktopIdentityAPI (req, res) {
   return true
 }
 
+async function serveDesktopPeerEPMAPI (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+  const match = parsed.pathname.match(/^\/api\/peers\/([^/]+)\/epm(?:\/vcard)?$/)
+  if (!match) return false
+
+  if (req.method !== 'GET') {
+    sendJSON(res, 405, { error: 'method not allowed' })
+    return true
+  }
+
+  let peerId
+  try {
+    peerId = decodeURIComponent(match[1])
+  } catch {
+    sendJSON(res, 400, { error: 'invalid peer ID' })
+    return true
+  }
+
+  const record = (await listIdentityRecords())
+    .find(candidate => candidate.peerId === peerId)
+  if (!record) {
+    sendJSON(res, 404, { error: 'peer EPM not found' })
+    return true
+  }
+
+  if (parsed.pathname.endsWith('/vcard')) {
+    sendText(res, 200, 'text/vcard; charset=utf-8', identityRecordToVCard(record))
+    return true
+  }
+
+  sendBuffer(res, 200, 'application/x-flatbuffers', await buildDesktopNodeEPM(record.epmJson))
+  return true
+}
+
+function desktopAuthUsersPath () {
+  return path.join(app.getPath('userData'), DESKTOP_AUTH_USERS_FILE)
+}
+
+async function readDesktopAuthUsers () {
+  try {
+    const parsed = JSON.parse(await fs.promises.readFile(desktopAuthUsersPath(), 'utf8'))
+    return Array.isArray(parsed.users) ? parsed.users : []
+  } catch {
+    return []
+  }
+}
+
+async function writeDesktopAuthUsers (users) {
+  await fs.promises.mkdir(path.dirname(desktopAuthUsersPath()), { recursive: true })
+  await fs.promises.writeFile(desktopAuthUsersPath(), JSON.stringify({ users }, null, 2))
+}
+
+function sanitizeDesktopAuthUser (payload) {
+  return {
+    xpub: readEpmString(payload, ['xpub']),
+    label: readEpmString(payload, ['label', 'name', 'dn']),
+    role: readEpmString(payload, ['role']) || 'admin',
+    trust_level: readEpmString(payload, ['trust_level', 'trustLevel']) || 'local'
+  }
+}
+
+async function readDesktopAuthUserPayload (req, res) {
+  try {
+    const body = typeof req === 'string' ? req : await readRequestBody(req)
+    return JSON.parse(body || '{}')
+  } catch {
+    sendJSON(res, 400, { error: 'invalid JSON auth user' })
+    return null
+  }
+}
+
+async function serveDesktopAuthUsersAPI (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+  if (parsed.pathname !== '/api/auth/users' && !parsed.pathname.startsWith('/api/auth/users/')) {
+    return false
+  }
+
+  const bodyPromise = req.method === 'POST' || req.method === 'PUT'
+    ? readRequestBody(req)
+    : null
+  const users = await readDesktopAuthUsers()
+
+  if (req.method === 'GET' && parsed.pathname === '/api/auth/users') {
+    sendJSON(res, 200, { users })
+    return true
+  }
+
+  if (req.method === 'POST' && parsed.pathname === '/api/auth/users') {
+    const payload = await readDesktopAuthUserPayload(await bodyPromise, res)
+    if (!payload) return true
+    const user = sanitizeDesktopAuthUser(payload)
+    if (!user.xpub) {
+      sendJSON(res, 400, { error: 'xpub is required' })
+      return true
+    }
+    if (users.some(existing => existing.xpub === user.xpub)) {
+      sendJSON(res, 409, { error: 'user already exists' })
+      return true
+    }
+    users.push(user)
+    await writeDesktopAuthUsers(users)
+    sendJSON(res, 200, { user })
+    return true
+  }
+
+  if (req.method === 'PUT' && parsed.pathname.startsWith('/api/auth/users/')) {
+    let xpub
+    try {
+      xpub = decodeURIComponent(parsed.pathname.slice('/api/auth/users/'.length))
+    } catch {
+      sendJSON(res, 400, { error: 'invalid xpub' })
+      return true
+    }
+    const payload = await readDesktopAuthUserPayload(await bodyPromise, res)
+    if (!payload) return true
+    const user = sanitizeDesktopAuthUser({ ...payload, xpub })
+    if (!user.xpub) {
+      sendJSON(res, 400, { error: 'xpub is required' })
+      return true
+    }
+    const index = users.findIndex(existing => existing.xpub === user.xpub)
+    if (index === -1) users.push(user)
+    else users[index] = user
+    await writeDesktopAuthUsers(users)
+    sendJSON(res, 200, { user })
+    return true
+  }
+
+  sendJSON(res, 405, { error: 'method not allowed' })
+  return true
+}
+
 async function serveDesktopNodeIdentityAPI (req, res) {
   const parsed = new URL(req.url || '/', `http://${HOST}`)
 
@@ -1845,12 +1978,21 @@ function epmPublicKeyType (key) {
 
 async function serveDesktopNodeEPMAPI (req, res) {
   const parsed = new URL(req.url || '/', `http://${HOST}`)
-  if (parsed.pathname !== '/api/node/epm/json' && parsed.pathname !== '/api/node/epm') {
+  if (
+    parsed.pathname !== '/api/node/epm/json' &&
+    parsed.pathname !== '/api/node/epm/vcard' &&
+    parsed.pathname !== '/api/node/epm'
+  ) {
     return false
   }
 
   if (req.method === 'GET' && parsed.pathname === '/api/node/epm/json') {
     sendJSON(res, 200, await normalizeEpmPublicIdentityKeys(await readDesktopNodeProfile()))
+    return true
+  }
+
+  if (req.method === 'GET' && parsed.pathname === '/api/node/epm/vcard') {
+    sendText(res, 200, 'text/vcard; charset=utf-8', identityRecordToVCard(await publicIdentityRecord('self', 'node-self', await readDesktopNodeProfile())))
     return true
   }
 
@@ -2107,6 +2249,8 @@ async function startDesktopStaticServer () {
         .then(() => serveDesktopPeerAPI(req, res))
         .then(handled => handled || serveDesktopDirectoryAPI(req, res))
         .then(handled => handled || serveDesktopIdentityAPI(req, res))
+        .then(handled => handled || serveDesktopPeerEPMAPI(req, res))
+        .then(handled => handled || serveDesktopAuthUsersAPI(req, res))
         .then(handled => handled || serveDesktopNodeIdentityAPI(req, res))
         .then(handled => handled || serveDesktopNodeEPMAPI(req, res))
         .then(handled => handled || serveDesktopFlatSqlPersistenceAPI(req, res))
@@ -2177,6 +2321,8 @@ module.exports = {
   kuboSwarmPeersToDesktopSdnPeers,
   serveDesktopDirectoryAPI,
   serveDesktopIdentityAPI,
+  serveDesktopPeerEPMAPI,
+  serveDesktopAuthUsersAPI,
   serveDesktopLocalDataAPI,
   serveDesktopNodeIdentityAPI,
   serveDesktopNodeEPMAPI,
