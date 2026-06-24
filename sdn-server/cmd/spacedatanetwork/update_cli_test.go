@@ -1,6 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -8,6 +12,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/update"
 )
 
 func TestLoadBundleManifestAcceptsSignedManifest(t *testing.T) {
@@ -171,6 +178,83 @@ func TestReadHTTPSURLRejectsOversizedResponse(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "exceeds 4 bytes") {
 		t.Fatalf("readHTTPSURL error = %v, want size rejection", err)
 	}
+}
+
+func TestHelperPostApplyRestartRollsBackWhenDaemonHealthFails(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	var starts [][]string
+	var killed int
+	var rolledBack bool
+
+	healthAttempts := 0
+	err := helperPostApplyRestart(context.Background(), helperPostApplyOptions{
+		Paths:       update.PathsFor(t.TempDir()),
+		RestartArgv: []string{"/opt/sdn/bin/spacedatanetwork", "daemon"},
+		AdminURL:    "http://127.0.0.1:5080",
+		Out:         &out,
+		Err:         &errOut,
+		StartDaemon: func(argv []string, stdout io.Writer, stderr io.Writer) (helperStartedProcess, error) {
+			starts = append(starts, append([]string(nil), argv...))
+			return fakeHelperProcess{
+				pid: 1000 + len(starts),
+				kill: func() error {
+					killed++
+					return nil
+				},
+			}, nil
+		},
+		WaitHealth: func(ctx context.Context, client *http.Client, adminURL string, timeout time.Duration) error {
+			healthAttempts++
+			if healthAttempts == 1 {
+				return errors.New("new daemon health failed")
+			}
+			return nil
+		},
+		Rollback: func(paths update.Paths) (*update.RollbackResult, error) {
+			rolledBack = true
+			return &update.RollbackResult{
+				RestoredVersion: "1.0.0",
+				FailedPath:      filepath.Join(paths.Failed, "cli-bundle-beta-bad"),
+			}, nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "rolled back to 1.0.0") {
+		t.Fatalf("helperPostApplyRestart error = %v, want rollback error", err)
+	}
+	if len(starts) != 2 {
+		t.Fatalf("starts = %#v, want failed daemon start and rollback restart", starts)
+	}
+	if killed != 1 {
+		t.Fatalf("killed failed daemon %d times, want 1", killed)
+	}
+	if !rolledBack {
+		t.Fatal("rollback was not invoked after daemon health failure")
+	}
+	if !strings.Contains(out.String(), "restart=started pid=1001") ||
+		!strings.Contains(out.String(), "rollback=applied restored_version=1.0.0") ||
+		!strings.Contains(out.String(), "restart=started pid=1002") {
+		t.Fatalf("stdout = %q, want restart and rollback status", out.String())
+	}
+	if !strings.Contains(errOut.String(), "daemon_health=unhealthy") {
+		t.Fatalf("stderr = %q, want unhealthy daemon health", errOut.String())
+	}
+}
+
+type fakeHelperProcess struct {
+	pid  int
+	kill func() error
+}
+
+func (p fakeHelperProcess) PID() int {
+	return p.pid
+}
+
+func (p fakeHelperProcess) Kill() error {
+	if p.kill == nil {
+		return nil
+	}
+	return p.kill()
 }
 
 func writeBundleManifest(t *testing.T, contents string) string {

@@ -532,6 +532,57 @@ func TestApplyDryRunDoesNotTouchBundle(t *testing.T) {
 	}
 }
 
+func TestRollbackLastRestoresPreviousBundleAndQuarantinesFailedUpdate(t *testing.T) {
+	signer := newTestSigner(t)
+	paths, root := setupBundleRoot(t, signer)
+	stageSignedUpdate(t, paths, signer, "9.9.9", map[string]string{
+		"bin/spacedatanetwork": "new-binary",
+		"runtime/asset.txt":    "new-asset",
+	})
+
+	applied, err := Apply(paths, ApplyOptions{})
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	result, err := RollbackLast(paths, RollbackOptions{Reason: "daemon health failed"})
+	if err != nil {
+		t.Fatalf("RollbackLast returned error: %v", err)
+	}
+	if result.RestoredVersion != "1.0.0" {
+		t.Fatalf("RestoredVersion = %s, want 1.0.0", result.RestoredVersion)
+	}
+	if result.FailedPath == "" {
+		t.Fatal("RollbackLast did not report a failed update quarantine path")
+	}
+
+	binary, err := os.ReadFile(filepath.Join(root, "bin", "spacedatanetwork"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(binary) != "old-binary" {
+		t.Fatalf("rollback restored binary = %q, want old-binary", binary)
+	}
+	failedBinary, err := os.ReadFile(filepath.Join(result.FailedPath, "bin", "spacedatanetwork"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(failedBinary) != "new-binary" {
+		t.Fatalf("failed quarantine binary = %q, want new-binary", failedBinary)
+	}
+	if _, err := os.Stat(applied.RollbackPath); !os.IsNotExist(err) {
+		t.Fatalf("previous rollback payload should have been consumed, stat err=%v", err)
+	}
+
+	state, err := LoadState(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Sequence != 0 || state.Version != "1.0.0" || state.UpdateID != "" {
+		t.Fatalf("state after rollback = %+v, want previous version 1.0.0 at sequence 0", state)
+	}
+}
+
 func TestApplyRejectsBundleWithProtectedEntries(t *testing.T) {
 	signer := newTestSigner(t)
 	paths, _ := setupBundleRoot(t, signer)

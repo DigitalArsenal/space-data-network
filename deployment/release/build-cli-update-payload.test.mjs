@@ -124,6 +124,39 @@ test('buildCliUpdatePayload records Windows ZIP bundles as zip format', async ()
   assert.deepEqual(extractBundleBytes(wasmBytes), archiveBytes);
 });
 
+test('buildCliUpdatePayload records wrapped upstream Kubo provenance inside the SDN-signed manifest', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sdn-cli-update-payload-upstream-'));
+  const keys = generateKeyPairSync('ed25519');
+  const { archivePath } = await fixtureArchive(root);
+  const outDir = join(root, 'dist', 'update');
+
+  const result = await buildCliUpdatePayload({
+    bundleArchive: archivePath,
+    version: '1.2.3',
+    sequence: 7,
+    channel: 'beta',
+    platform: 'linux',
+    arch: 'amd64',
+    keyId: 'sdn-test-root',
+    privateKey: keys.privateKey,
+    createdAt: '2026-06-10T00:00:00.000Z',
+    outDir,
+    upstreamKuboVersion: 'v0.35.0',
+    upstreamKuboSource: 'ipfs/kubo',
+  });
+
+  assert.deepEqual(result.manifest.upstream, {
+    kubo: {
+      source: 'ipfs/kubo',
+      version: 'v0.35.0',
+    },
+  });
+  assert.equal(
+    verify(null, canonicalManifestBytes(result.manifest), keys.publicKey, Buffer.from(result.manifest.signing.signature, 'base64')),
+    true,
+  );
+});
+
 test('buildCliUpdatePayload requires created-at and an integer sequence', async () => {
   const root = await mkdtemp(join(tmpdir(), 'sdn-cli-update-payload-invalid-'));
   const keys = generateKeyPairSync('ed25519');

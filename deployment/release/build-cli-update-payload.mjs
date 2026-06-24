@@ -46,24 +46,34 @@ export async function buildCliUpdatePayload(options) {
   const expiresAt = new Date(createdAtMs + EXPIRES_AFTER_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const updateId = options.updateId || `${CLI_BUNDLE_KIND}-${channel}-${platform}-${arch}-${version}`;
 
+  const unsignedManifest = buildUpdateManifest({
+    updateId,
+    version,
+    sequence,
+    channel,
+    platform,
+    arch,
+    kind: CLI_BUNDLE_KIND,
+    format: bundleFormat,
+    bundleBytes,
+    wasmBytes,
+    keyId,
+    publicKey,
+    createdAt,
+    expiresAt,
+    rollback: options.rollback,
+  });
+  if (options.upstreamKuboVersion || options.upstreamKuboSource) {
+    unsignedManifest.upstream = {
+      kubo: {
+        source: options.upstreamKuboSource || 'ipfs/kubo',
+        version: required(options.upstreamKuboVersion, 'upstreamKuboVersion'),
+      },
+    };
+  }
+
   const manifest = signUpdateManifest({
-    manifest: buildUpdateManifest({
-      updateId,
-      version,
-      sequence,
-      channel,
-      platform,
-      arch,
-      kind: CLI_BUNDLE_KIND,
-      format: bundleFormat,
-      bundleBytes,
-      wasmBytes,
-      keyId,
-      publicKey,
-      createdAt,
-      expiresAt,
-      rollback: options.rollback,
-    }),
+    manifest: unsignedManifest,
     privateKey,
   });
 

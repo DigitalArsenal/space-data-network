@@ -75,6 +75,7 @@ type StatePrevious struct {
 	Sequence int64  `json:"sequence"`
 	UpdateID string `json:"update_id,omitempty"`
 	Version  string `json:"version,omitempty"`
+	Channel  string `json:"channel,omitempty"`
 	Rollback string `json:"rollback_path,omitempty"`
 }
 

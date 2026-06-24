@@ -950,12 +950,23 @@ with `npm --prefix desktop exec -- playwright test test/unit/static-http-server-
 - Modify: `deployment/release/build-cli-update-payload.mjs`
 - Modify: `deployment/release/build-cli-update-payload.test.mjs`
 
-- [ ] Add failing tests for provider-server feed check, stage, in-place daemon
+- [x] Add failing tests for provider-server feed check, stage, in-place daemon
   stop/swap/restart, health verification, and rollback.
-- [ ] Implement the wrapped SDN update path around upstream IPFS/Kubo payloads.
-- [ ] Wire Desktop updater to the same trust/feed path.
-- [ ] Run focused update tests and commit with message
+- [x] Implement the wrapped SDN update path around upstream IPFS/Kubo payloads.
+- [x] Wire Desktop updater to the same trust/feed path.
+- [x] Run focused update tests and commit with message
   `feat: add SDN daemon in-place updates`.
+
+  Verification (2026-06-24):
+  - RED: `../scripts/go-with-wasmedge.sh test ./internal/update -run 'TestRollbackLastRestoresPreviousBundleAndQuarantinesFailedUpdate' -count=1`
+  - RED: `../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run 'TestHelperPostApplyRestartRollsBackWhenDaemonHealthFails' -count=1`
+  - RED: `npm --prefix desktop exec -- playwright test test/unit/sdn-updater-staged-install.spec.js -g 'verifies daemon health after restarting the updated daemon'`
+  - RED: `node --test deployment/release/build-cli-update-payload.test.mjs --test-name-pattern 'records wrapped upstream Kubo provenance'`
+  - GREEN: `../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run 'Test(LoadBundleManifest|ProviderFeedIndexURL|FetchProviderUpdateCandidate|ReadHTTPSURL|HelperPostApplyRestart)' -count=1`
+  - GREEN: `../scripts/go-with-wasmedge.sh test ./internal/update -count=1`
+  - GREEN: `npm --prefix desktop exec -- playwright test test/unit/sdn-updater-staged-install.spec.js test/unit/feed-updater.spec.js test/unit/sdn-updater-release-feed.spec.js test/unit/sdn-updater-runtime-feeds.spec.js`
+  - GREEN: `node --test deployment/release/build-cli-update-payload.test.mjs`
+  - GREEN: `git diff --check`
 
 ---
 
