@@ -662,3 +662,27 @@ jobs:
           prerelease: false
           make_latest: true
           files: dist/release/*
+
+  published-installer-smoke:
+    name: Smoke published installers (${{ matrix.target_os }})
+    runs-on: ${{ matrix.runner }}
+    needs: [beta-version, release]
+    env:
+      SDN_VERSION: ${{ needs.beta-version.outputs.release_tag }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_os: linux
+            runner: ubuntu-latest
+          - target_os: macos
+            runner: macos-14
+          - target_os: windows
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Smoke clean-user published installer
+        run: node deployment/release/published-install-smoke.mjs --platform ${{ matrix.target_os }}

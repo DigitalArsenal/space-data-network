@@ -200,6 +200,18 @@ test('beta release workflow builds desktop app artifacts for every supported OS'
   assert.match(workflow, /pattern:\s*desktop-\*[\s\S]*path:\s*dist\/desktop[\s\S]*merge-multiple:\s*true/);
 });
 
+test('beta release workflow smoke-tests published installers after release', () => {
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+
+  assert.match(workflow, /published-installer-smoke:\s*\n\s*name:\s*Smoke published installers/);
+  assert.match(workflow, /published-installer-smoke:[\s\S]*needs:\s*\[beta-version, release\]/);
+  assert.match(workflow, /SDN_VERSION:\s*\$\{\{ needs\.beta-version\.outputs\.release_tag \}\}/);
+  assert.match(workflow, /target_os:\s*linux[\s\S]*runner:\s*ubuntu-latest/);
+  assert.match(workflow, /target_os:\s*macos[\s\S]*runner:\s*macos-14/);
+  assert.match(workflow, /target_os:\s*windows[\s\S]*runner:\s*windows-latest/);
+  assert.match(workflow, /node deployment\/release\/published-install-smoke\.mjs --platform \$\{\{ matrix\.target_os \}\}/);
+});
+
 test('npm release publishing maps beta releases to the beta dist-tag', () => {
   const workflow = readRepoFile('.github/workflows/npm-publish-sdn-js.yml');
 

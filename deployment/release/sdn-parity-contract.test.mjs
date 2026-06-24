@@ -115,6 +115,10 @@ test('search, installer, update, and live-DHT capabilities encode required modes
   ]);
   assert.equal(installer.requiresGh, false);
   assert.equal(installer.requiresElevatedPrivileges, false);
+  assert.ok(
+    installer.tests.includes('deployment/release/published-install-smoke.test.mjs'),
+    'installer parity must include published-endpoint smoke coverage'
+  );
 
   const update = capabilities.get('update.daemon_in_place');
   assert.ok(update);

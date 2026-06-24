@@ -84,7 +84,10 @@
         "installers initialize node identity without manual init",
         "installers do not require gh, sudo, or administrator privileges for user-scoped installs"
       ],
-      "tests": ["deployment/release/install-script.test.mjs"]
+      "tests": [
+        "deployment/release/install-script.test.mjs",
+        "deployment/release/published-install-smoke.test.mjs"
+      ]
     },
     {
       "id": "identity.bootstrap",
