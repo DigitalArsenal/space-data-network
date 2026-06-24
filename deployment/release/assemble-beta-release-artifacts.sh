@@ -32,6 +32,7 @@ copy_matches "${dist_dir}/linux-vm/*.tar.gz"
 copy_matches "${dist_dir}/container-images/*.tar.gz"
 copy_matches "${dist_dir}/cli/*.tar.gz"
 copy_matches "${dist_dir}/cli/*.zip"
+copy_matches "${dist_dir}/desktop/*"
 copy_matches "${dist_dir}/update-feed/*.tar.gz"
 copy_matches "${dist_dir}/sdn-js/*.tgz"
 copy_matches "${dist_dir}/sbom/*.json"
@@ -49,6 +50,31 @@ for required_cli_artifact in "${required_cli_artifacts[@]}"; do
     echo "missing required CLI release artifact: ${required_cli_artifact}" >&2
     exit 1
   fi
+done
+
+require_match() {
+  local pattern="$1"
+  shopt -s nullglob
+  local matches=( "${release_dir}"/${pattern} )
+  shopt -u nullglob
+  if [[ ${#matches[@]} -eq 0 ]]; then
+    echo "missing required desktop release artifact matching: ${pattern}" >&2
+    exit 1
+  fi
+}
+
+required_desktop_artifact_patterns=(
+  "space-data-network-desktop-*-mac.dmg"
+  "space-data-network-desktop-*-squirrel.zip"
+  "space-data-network-desktop-setup-*-windows-*.exe"
+  "space-data-network-desktop-portable-*-windows-*.exe"
+  "space-data-network-desktop-*-linux-*.AppImage"
+  "space-data-network-desktop-*-linux-*.deb"
+  "space-data-network-desktop-*-linux-*.rpm"
+)
+
+for required_desktop_artifact_pattern in "${required_desktop_artifact_patterns[@]}"; do
+  require_match "${required_desktop_artifact_pattern}"
 done
 
 if [[ -n "${SDN_UPDATE_SIGNING_KEY_PEM:-}" ]]; then

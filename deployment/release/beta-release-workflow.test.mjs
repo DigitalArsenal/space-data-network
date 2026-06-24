@@ -177,7 +177,27 @@ test('beta release workflow builds signed CLI update feed artifacts', () => {
   assert.match(workflow, /name:\s*cli-update-feed[\s\S]*path:\s*dist\/update-feed\/spacedatanetwork-update-feed-\$\{\{ needs\.beta-version\.outputs\.package_version \}\}\.tar\.gz/);
   assert.match(workflow, /name:\s*cli-update-feed[\s\S]*path:\s*dist\/update-feed/);
   assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, cli, cli-update-feed, packages, sdn-js-package\]/);
-  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, cli, cli-update-feed, packages, sdn-js-package, artifact-docker-test\]/);
+  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, cli, cli-update-feed, desktop, packages, sdn-js-package, artifact-docker-test\]/);
+});
+
+test('beta release workflow builds desktop app artifacts for every supported OS', () => {
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+
+  assert.match(workflow, /desktop:\s*\n\s*name:\s*Build desktop app artifacts/);
+  assert.match(workflow, /needs:\s*\[beta-version, ipfs\]/);
+  assert.match(workflow, /target_os:\s*macos[\s\S]*runner:\s*macos-14/);
+  assert.match(workflow, /target_os:\s*windows[\s\S]*runner:\s*windows-latest/);
+  assert.match(workflow, /target_os:\s*linux[\s\S]*runner:\s*ubuntu-latest/);
+  assert.match(workflow, /npm --prefix desktop ci/);
+  assert.match(workflow, /cp -R dist\/ipfs\/sdn-admin\/\. desktop\/assets\/sdn-ui\//);
+  assert.match(workflow, /cp -R dist\/ipfs\/ipfs-webui\/\. desktop\/assets\/webui\//);
+  assert.match(workflow, /electron-builder --publish never --mac dmg zip/);
+  assert.match(workflow, /electron-builder --publish never --win nsis portable/);
+  assert.match(workflow, /electron-builder --publish never --linux AppImage deb rpm/);
+  assert.match(workflow, /name:\s*desktop-\$\{\{ matrix\.target_os \}\}/);
+  assert.match(workflow, /path:\s*dist\/desktop\/\*/);
+  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, cli, cli-update-feed, desktop, packages, sdn-js-package, artifact-docker-test\]/);
+  assert.match(workflow, /pattern:\s*desktop-\*[\s\S]*path:\s*dist\/desktop[\s\S]*merge-multiple:\s*true/);
 });
 
 test('npm release publishing maps beta releases to the beta dist-tag', () => {

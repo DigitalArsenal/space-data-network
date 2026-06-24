@@ -30,6 +30,13 @@ test('assembles beta release files, manifest, body, and checksums', () => {
   writeFixture(distDir, 'cli/spacedatanetwork-1.0.3-beta.42-darwin-amd64.tar.gz', 'cli');
   writeFixture(distDir, 'cli/spacedatanetwork-1.0.3-beta.42-darwin-arm64.tar.gz', 'cli');
   writeFixture(distDir, 'cli/spacedatanetwork-1.0.3-beta.42-windows-amd64.zip', 'cli');
+  writeFixture(distDir, 'desktop/space-data-network-desktop-0.47.0-mac.dmg', 'desktop dmg');
+  writeFixture(distDir, 'desktop/space-data-network-desktop-0.47.0-squirrel.zip', 'desktop mac zip');
+  writeFixture(distDir, 'desktop/space-data-network-desktop-setup-0.47.0-windows-x64.exe', 'desktop windows installer');
+  writeFixture(distDir, 'desktop/space-data-network-desktop-portable-0.47.0-windows-x64.exe', 'desktop windows portable');
+  writeFixture(distDir, 'desktop/space-data-network-desktop-0.47.0-linux-x86_64.AppImage', 'desktop appimage');
+  writeFixture(distDir, 'desktop/space-data-network-desktop-0.47.0-linux-amd64.deb', 'desktop deb');
+  writeFixture(distDir, 'desktop/space-data-network-desktop-0.47.0-linux-x86_64.rpm', 'desktop rpm');
   writeFixture(distDir, 'sdn-js/spacedatanetwork-sdn-js-2.0.12.tgz', 'sdn js');
   writeFixture(distDir, 'sbom/spacedatanetwork-sbom.cdx.json', '{"bomFormat":"CycloneDX"}');
   writeFixture(distDir, 'ipfs/ipfs-deployment.json', '{"cid":"bafyfixture"}');
@@ -58,6 +65,13 @@ test('assembles beta release files, manifest, body, and checksums', () => {
     'spacedatanetwork-1.0.3-beta.42-darwin-amd64.tar.gz',
     'spacedatanetwork-1.0.3-beta.42-darwin-arm64.tar.gz',
     'spacedatanetwork-1.0.3-beta.42-windows-amd64.zip',
+    'space-data-network-desktop-0.47.0-mac.dmg',
+    'space-data-network-desktop-0.47.0-squirrel.zip',
+    'space-data-network-desktop-setup-0.47.0-windows-x64.exe',
+    'space-data-network-desktop-portable-0.47.0-windows-x64.exe',
+    'space-data-network-desktop-0.47.0-linux-x86_64.AppImage',
+    'space-data-network-desktop-0.47.0-linux-amd64.deb',
+    'space-data-network-desktop-0.47.0-linux-x86_64.rpm',
     'spacedatanetwork-sdn-js-2.0.12.tgz',
     'spacedatanetwork-sbom.cdx.json',
     'ipfs-deployment.json',
@@ -83,6 +97,9 @@ test('assembles beta release files, manifest, body, and checksums', () => {
   assert(manifest.artifacts.some((artifact) => artifact.name === 'spacedatanetwork-1.0.3-beta.42-darwin-amd64.tar.gz'));
   assert(manifest.artifacts.some((artifact) => artifact.name === 'spacedatanetwork-1.0.3-beta.42-darwin-arm64.tar.gz'));
   assert(manifest.artifacts.some((artifact) => artifact.name === 'spacedatanetwork-1.0.3-beta.42-windows-amd64.zip'));
+  assert(manifest.artifacts.some((artifact) => artifact.name === 'space-data-network-desktop-0.47.0-mac.dmg'));
+  assert(manifest.artifacts.some((artifact) => artifact.name === 'space-data-network-desktop-setup-0.47.0-windows-x64.exe'));
+  assert(manifest.artifacts.some((artifact) => artifact.name === 'space-data-network-desktop-0.47.0-linux-x86_64.AppImage'));
 
   const releaseBody = readFileSync(join(releaseDir, 'SDN-BETA-RELEASE.md'), 'utf8');
   assert.match(releaseBody, /Space Data Network v1\.0\.3-beta\.42 Beta/);
@@ -91,6 +108,9 @@ test('assembles beta release files, manifest, body, and checksums', () => {
   assert.match(releaseBody, /spacedatanetwork-container-1\.0\.3\.beta\.42-linux-amd64\.tar\.gz/);
   assert.match(releaseBody, /spacedatanetwork-1\.0\.3-beta\.42-linux-amd64\.tar\.gz/);
   assert.match(releaseBody, /spacedatanetwork-1\.0\.3-beta\.42-windows-amd64\.zip/);
+  assert.match(releaseBody, /space-data-network-desktop-0\.47\.0-mac\.dmg/);
+  assert.match(releaseBody, /space-data-network-desktop-setup-0\.47\.0-windows-x64\.exe/);
+  assert.match(releaseBody, /space-data-network-desktop-0\.47\.0-linux-x86_64\.AppImage/);
   assert.doesNotMatch(releaseBody, /space-data-network-full/);
   assert.doesNotMatch(releaseBody, /space-data-network-edge/);
 
@@ -99,6 +119,9 @@ test('assembles beta release files, manifest, body, and checksums', () => {
   assert.match(checksums, /spacedatanetwork-container-1\.0\.3\.beta\.42-linux-amd64\.tar\.gz/);
   assert.match(checksums, /spacedatanetwork-1\.0\.3-beta\.42-linux-amd64\.tar\.gz/);
   assert.match(checksums, /spacedatanetwork-1\.0\.3-beta\.42-windows-amd64\.zip/);
+  assert.match(checksums, /space-data-network-desktop-0\.47\.0-mac\.dmg/);
+  assert.match(checksums, /space-data-network-desktop-setup-0\.47\.0-windows-x64\.exe/);
+  assert.match(checksums, /space-data-network-desktop-0\.47\.0-linux-x86_64\.AppImage/);
   assert.doesNotMatch(checksums, /spacedatanetwork-checksums\.txt/);
 });
 
@@ -128,6 +151,43 @@ test('fails when a required CLI release artifact is missing', () => {
   }, /missing required CLI release artifact: spacedatanetwork-1\.0\.3-beta\.42-windows-amd64\.zip/);
 });
 
+test('fails when a required desktop release artifact class is missing', () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'sdn-beta-release-missing-desktop-'));
+  const distDir = join(tempRoot, 'dist');
+  const releaseDir = join(distDir, 'release');
+
+  for (const artifact of [
+    'cli/spacedatanetwork-1.0.3-beta.42-linux-amd64.tar.gz',
+    'cli/spacedatanetwork-1.0.3-beta.42-linux-arm64.tar.gz',
+    'cli/spacedatanetwork-1.0.3-beta.42-darwin-amd64.tar.gz',
+    'cli/spacedatanetwork-1.0.3-beta.42-darwin-arm64.tar.gz',
+    'cli/spacedatanetwork-1.0.3-beta.42-windows-amd64.zip',
+    'desktop/space-data-network-desktop-0.47.0-mac.dmg',
+    'desktop/space-data-network-desktop-0.47.0-squirrel.zip',
+    'desktop/space-data-network-desktop-setup-0.47.0-windows-x64.exe',
+    'desktop/space-data-network-desktop-portable-0.47.0-windows-x64.exe',
+    'desktop/space-data-network-desktop-0.47.0-linux-x86_64.AppImage',
+    'desktop/space-data-network-desktop-0.47.0-linux-amd64.deb'
+  ]) {
+    writeFixture(distDir, artifact, `fixture ${artifact}`);
+  }
+
+  assert.throws(() => {
+    execFileSync('bash', [scriptPath], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        DIST_DIR: distDir,
+        RELEASE_DIR: releaseDir,
+        VERSION: '1.0.3-beta.42',
+        RELEASE_TAG: 'v1.0.3-beta.42',
+        GITHUB_SHA: '0123456789abcdef0123456789abcdef01234567'
+      },
+      stdio: 'pipe'
+    });
+  }, /missing required desktop release artifact matching: space-data-network-desktop-\*-linux-\*\.rpm/);
+});
+
 test('assembles signed CLI update feed artifacts when signing key is configured', () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'sdn-beta-release-feed-'));
   const distDir = join(tempRoot, 'dist');
@@ -141,6 +201,13 @@ test('assembles signed CLI update feed artifacts when signing key is configured'
     'cli/spacedatanetwork-1.0.3-beta.42-darwin-amd64.tar.gz',
     'cli/spacedatanetwork-1.0.3-beta.42-darwin-arm64.tar.gz',
     'cli/spacedatanetwork-1.0.3-beta.42-windows-amd64.zip',
+    'desktop/space-data-network-desktop-0.47.0-mac.dmg',
+    'desktop/space-data-network-desktop-0.47.0-squirrel.zip',
+    'desktop/space-data-network-desktop-setup-0.47.0-windows-x64.exe',
+    'desktop/space-data-network-desktop-portable-0.47.0-windows-x64.exe',
+    'desktop/space-data-network-desktop-0.47.0-linux-x86_64.AppImage',
+    'desktop/space-data-network-desktop-0.47.0-linux-amd64.deb',
+    'desktop/space-data-network-desktop-0.47.0-linux-x86_64.rpm',
   ]) {
     writeFixture(distDir, artifact, `fixture ${artifact}`);
   }

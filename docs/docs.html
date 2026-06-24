@@ -1073,7 +1073,7 @@ curl -fsSL https://spacedatanetwork.org/install.sh | bash
 # Windows PowerShell
 irm https://spacedatanetwork.org/install.ps1 | iex</code></pre>
 
-        <p>Native artifacts are attached to versioned SDN release tags, not SDK-only tags such as <code>sdn-js-v...</code>. Release <code>v1.0.3-beta.1</code> currently publishes self-contained CLI archives, Linux amd64 full-node packages, a Docker image tarball, a Linux VM bundle, and a macOS ARM64 full-node bundle.</p>
+        <p>Native artifacts are attached to versioned SDN release tags, not SDK-only tags such as <code>sdn-js-v...</code>. Release <code>v1.0.3-beta.1</code> currently publishes self-contained CLI archives, Desktop installers, Linux amd64 full-node packages, a Docker image tarball, a Linux VM bundle, and a macOS ARM64 full-node bundle.</p>
 
         <h3>Versioned Release</h3>
         <p>Pick the newest numbered release from <a href="https://github.com/DigitalArsenal/space-data-network/releases/tag/v1.0.3-beta.1" target="_blank">Space Data Network v1.0.3-beta.1 release</a>, then use that release number for package and SDK downloads.</p>
@@ -1097,6 +1097,11 @@ curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download
 
 # Windows AMD64 self-contained CLI archive
 curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_VERSION}/spacedatanetwork-1.0.3-beta.1-windows-amd64.zip"
+
+# Desktop app installers
+curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_VERSION}/space-data-network-desktop-0.47.0-mac.dmg"
+curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_VERSION}/space-data-network-desktop-setup-0.47.0-windows-x64.exe"
+curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_VERSION}/space-data-network-desktop-0.47.0-linux-x86_64.AppImage"
 
 # Browser and Node JavaScript SDK tarball
 curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_VERSION}/spacedatanetwork-sdn-js-&lt;sdk-version&gt;.tgz"</code></pre>

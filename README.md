@@ -239,6 +239,7 @@ Use the newest release number as `<beta-version>` when downloading assets.
 | `spacedatanetwork-full_<native-package-version>_amd64.deb` / `.rpm` | Linux full-node packages |
 | `spacedatanetwork-linux-vm-<native-package-version>.tar.gz` | Linux VM/full-node bundle |
 | `spacedatanetwork-<beta-version>-<os>-<arch>.tar.gz` / `.zip` | Self-contained native CLI bundle with SDN, Kubo, UI assets, updater module |
+| `space-data-network-desktop-<desktop-version>-<platform artifact>` | Desktop app installers for macOS, Windows, and Linux |
 | `spacedatanetwork-container-<native-package-version>-linux-amd64.tar.gz` | Docker image tarball |
 | `spacedatanetwork-darwin-arm64.tar.gz` | macOS Apple Silicon full-node bundle |
 | `spacedatanetwork-sdn-js-<sdk-version>.tgz` | Browser and Node JavaScript SDK package tarball |
@@ -284,6 +285,9 @@ Beta `v1.0.3-beta.1` direct downloads:
 - [macOS Apple Silicon self-contained CLI](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-1.0.3-beta.1-darwin-arm64.tar.gz)
 - [Linux 64-bit Intel/AMD self-contained CLI](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-1.0.3-beta.1-linux-amd64.tar.gz)
 - [Windows 64-bit Intel/AMD self-contained CLI](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-1.0.3-beta.1-windows-amd64.zip)
+- [macOS Desktop app (DMG)](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/space-data-network-desktop-0.47.0-mac.dmg)
+- [Windows Desktop installer](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/space-data-network-desktop-setup-0.47.0-windows-x64.exe)
+- [Linux Desktop AppImage](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/space-data-network-desktop-0.47.0-linux-x86_64.AppImage)
 - [Linux 64-bit Intel/AMD full node DEB](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-full_1.0.3.beta.1_amd64.deb)
 - [Linux 64-bit Intel/AMD full node RPM](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-full-1.0.3.beta.1-1.x86_64.rpm)
 - [Linux 64-bit Intel/AMD VM bundle](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-linux-vm-1.0.3.beta.1.tar.gz)
