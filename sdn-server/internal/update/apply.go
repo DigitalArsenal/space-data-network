@@ -2,6 +2,7 @@ package update
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"encoding/json"
 	"errors"
@@ -151,6 +152,10 @@ func selectCandidate(staged []StagedUpdate, updateID string) (*StagedUpdate, err
 }
 
 func extractBundleArchive(archivePath, format, destDir string) error {
+	if format == "zip" {
+		return extractZipArchive(archivePath, destDir)
+	}
+
 	file, err := os.Open(archivePath)
 	if err != nil {
 		return err
@@ -232,6 +237,86 @@ func extractTar(tr *tar.Reader, destDir string) error {
 			return fmt.Errorf("update bundle contains unsupported entry type for %s", header.Name)
 		}
 	}
+}
+
+func extractZipArchive(archivePath, destDir string) error {
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return err
+	}
+	for _, file := range reader.File {
+		name := strings.ReplaceAll(file.Name, "\\", "/")
+		target, err := safeJoin(destDir, name)
+		if err != nil {
+			return err
+		}
+		info := file.FileInfo()
+		if info.IsDir() {
+			if err := os.MkdirAll(target, info.Mode().Perm()|0o700); err != nil {
+				return err
+			}
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			linkTarget, err := readZipFile(file)
+			if err != nil {
+				return err
+			}
+			linkName := string(linkTarget)
+			if strings.HasPrefix(linkName, "/") {
+				return fmt.Errorf("update bundle contains absolute symlink: %s", file.Name)
+			}
+			if _, err := safeJoin(filepath.Dir(target), linkName); err != nil {
+				return fmt.Errorf("update bundle symlink escapes bundle: %s", file.Name)
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			if err := os.Symlink(linkName, target); err != nil {
+				return err
+			}
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("update bundle contains unsupported entry type for %s", file.Name)
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		source, err := file.Open()
+		if err != nil {
+			return err
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode().Perm())
+		if err != nil {
+			source.Close()
+			return err
+		}
+		_, copyErr := io.Copy(out, source)
+		closeErr := out.Close()
+		source.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
+}
+
+func readZipFile(file *zip.File) ([]byte, error) {
+	source, err := file.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer source.Close()
+	return io.ReadAll(source)
 }
 
 func safeJoin(base, name string) (string, error) {

@@ -95,6 +95,35 @@ test('buildCliUpdatePayload writes a signed manifest and carrier for the bundle 
   assert.equal(manifest.signing.public_key, publicKeyBase64(keys.publicKey));
 });
 
+test('buildCliUpdatePayload records Windows ZIP bundles as zip format', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sdn-cli-update-payload-zip-'));
+  const keys = generateKeyPairSync('ed25519');
+  const archivePath = join(root, 'spacedatanetwork-1.2.3-windows-amd64.zip');
+  const archiveBytes = Buffer.from('tiny fixture windows cli bundle zip');
+  await writeFile(archivePath, archiveBytes);
+  const outDir = join(root, 'dist', 'update');
+
+  const result = await buildCliUpdatePayload({
+    bundleArchive: archivePath,
+    version: '1.2.3',
+    sequence: 7,
+    channel: 'beta',
+    platform: 'windows',
+    arch: 'amd64',
+    keyId: 'sdn-test-root',
+    privateKey: keys.privateKey,
+    createdAt: '2026-06-10T00:00:00.000Z',
+    outDir,
+  });
+
+  const wasmBytes = await readFile(result.carrierPath);
+  assert.equal(result.manifest.update_id, 'cli-bundle-beta-windows-amd64-1.2.3');
+  assert.deepEqual(result.manifest.target, { platform: 'windows', arch: 'amd64', kind: 'cli-bundle' });
+  assert.equal(result.manifest.bundle.format, 'zip');
+  assert.equal(result.manifest.bundle.hash, sha256Hex(archiveBytes));
+  assert.deepEqual(extractBundleBytes(wasmBytes), archiveBytes);
+});
+
 test('buildCliUpdatePayload requires created-at and an integer sequence', async () => {
   const root = await mkdtemp(join(tmpdir(), 'sdn-cli-update-payload-invalid-'));
   const keys = generateKeyPairSync('ed25519');

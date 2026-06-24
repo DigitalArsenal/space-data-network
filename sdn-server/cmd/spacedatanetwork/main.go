@@ -57,6 +57,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storefront"
 	"github.com/spacedatanetwork/sdn-server/internal/tlsmgr"
 	"github.com/spacedatanetwork/sdn-server/internal/tor"
+	sdnupdate "github.com/spacedatanetwork/sdn-server/internal/update"
 	sdnvcard "github.com/spacedatanetwork/sdn-server/internal/vcard"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
@@ -577,6 +578,7 @@ func defaultHDWalletWasmCandidates() []string {
 func runDaemon(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	updateShutdown := make(chan struct{}, 1)
 
 	// Load configuration
 	cfg, err := config.Load(configPath)
@@ -618,7 +620,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	if envPath := os.Getenv("SDN_FRONTEND_PATH"); envPath != "" {
 		cfg.Admin.FrontendPath = envPath
 	}
-	applyBundleDefaults(cfg, bundle.ResolveCurrent())
+	layout := bundle.ResolveCurrent()
+	applyBundleDefaults(cfg, layout)
 	// Resolve empty frontend path to the built SDN Svelte UI when available,
 	// then fall back to the managed frontend directory.
 	cfg.Admin.FrontendPath = resolveFrontendPath(cfg.Admin.FrontendPath)
@@ -1048,6 +1051,18 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 			}
 
+			if layout.Root != "" {
+				adminMux.Handle("/api/v1/admin/update/shutdown", sdnupdate.NewControlHandler(sdnupdate.ControlHandlerOptions{
+					BundleRoot: layout.Root,
+					Shutdown: func() {
+						select {
+						case updateShutdown <- struct{}{}:
+						default:
+						}
+					},
+				}))
+			}
+
 			// Node info API endpoint
 			adminMux.HandleFunc("/api/node/info", handleNodeInfo(n, torRuntime))
 			adminMux.HandleFunc("/api/module-delivery/provider", handleProviderDescriptor(n))
@@ -1420,7 +1435,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	<-sigChan
+	select {
+	case <-sigChan:
+	case <-updateShutdown:
+		log.Info("Update shutdown requested")
+	}
 
 	log.Info("Shutting down...")
 
