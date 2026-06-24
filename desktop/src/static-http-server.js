@@ -2089,6 +2089,35 @@ async function serveDesktopLocalDataAPI (req, res) {
     return true
   }
 
+  if (req.method === 'POST' && parsed.pathname === '/api/v1/search/providers') {
+    let payload = {}
+    try {
+      payload = JSON.parse(await readRequestBody(req) || '{}')
+    } catch {
+      sendJSON(res, 400, { error: 'invalid JSON search request' })
+      return true
+    }
+    sendJSON(res, 200, await desktopLocalProviderSearchResult(payload))
+    return true
+  }
+
+  if (req.method === 'POST' && parsed.pathname === '/api/v1/search/data') {
+    let payload = {}
+    try {
+      payload = JSON.parse(await readRequestBody(req) || '{}')
+    } catch {
+      sendJSON(res, 400, { error: 'invalid JSON search request' })
+      return true
+    }
+    sendJSON(res, 200, await desktopLocalDataSearchResult(payload))
+    return true
+  }
+
+  if (parsed.pathname === '/api/v1/search/providers' || parsed.pathname === '/api/v1/search/data') {
+    sendJSON(res, 405, { error: 'method not allowed' })
+    return true
+  }
+
   if (req.method === 'GET' && parsed.pathname === '/api/v1/data/health') {
     sendJSON(res, 200, {
       healthy: true,
@@ -2184,6 +2213,74 @@ async function serveDesktopLocalDataAPI (req, res) {
   }
 
   return false
+}
+
+async function desktopLocalProviderSearchResult (payload) {
+  const profile = await readDesktopNodeProfile()
+  const record = await desktopLocalEpmDataRecord(profile)
+  const row = {
+    peer_id: record.peer_id,
+    dn: readEpmString(profile, ['dn', 'display_name', 'displayName', 'name']) || 'Space Data Network Desktop',
+    legal_name: readEpmString(profile, ['legal_name', 'legalName']) || '',
+    bitcoin_address: readEpmString(profile, ['bitcoin_address', 'bitcoinAddress']) || '',
+    epm_cid: record.cid,
+    source: 'desktop-local',
+    updated_at: record.timestamp,
+    schema_name: record.schema_name,
+    provider_peer_id: record.peer_id,
+    provider_public_key: readEpmString(profile, ['signing_public_key', 'signingPublicKey']) || '',
+    provider_id: record.provider_id,
+    source_name: record.source_name,
+    batch_id: record.batch_id,
+    query_profile: 'desktop-local-epm-v1',
+    local_rows: 1,
+    pinned_rows: 0,
+    cached_bytes: record.size_bytes,
+    pinned_bytes: 0,
+    snapshot_id: record.cid,
+    head: record.cid,
+    high_water_mark: 'desktop-local:1',
+    last_synced_at: record.timestamp
+  }
+  const results = desktopSearchMatches(row, payload) ? [row] : []
+  return { count: results.length, results }
+}
+
+async function desktopLocalDataSearchResult (payload) {
+  const record = await desktopLocalEpmDataRecord()
+  const row = {
+    schema_name: record.schema_name,
+    provider_id: record.provider_id,
+    source_name: record.source_name,
+    batch_id: record.batch_id,
+    query_profile: 'desktop-local-epm-v1',
+    provider_peer_id: record.peer_id,
+    provider_public_key: '',
+    local_rows: 1,
+    pinned_rows: 0,
+    cached_bytes: record.size_bytes,
+    pinned_bytes: 0,
+    snapshot_id: record.cid,
+    head: record.cid,
+    high_water_mark: 'desktop-local:1',
+    last_synced_at: record.timestamp
+  }
+  const results = desktopSearchMatches(row, payload) ? [row] : []
+  return { count: results.length, results }
+}
+
+function desktopSearchMatches (row, payload) {
+  const rawSchema = readEpmString(payload, ['schema', 'schema_name', 'schemaName'])
+  const schema = rawSchema ? normalizeDesktopSchemaName(rawSchema) : ''
+  const provider = readEpmString(payload, ['provider_id', 'providerId'])
+  const source = readEpmString(payload, ['source_name', 'sourceName'])
+  const batch = readEpmString(payload, ['batch_id', 'batchId'])
+  const query = String(readEpmString(payload, ['query']) || '').trim().toLowerCase()
+  return (!schema || schema === row.schema_name) &&
+    (!provider || provider === row.provider_id || provider === row.peer_id || provider === row.provider_peer_id) &&
+    (!source || source === row.source_name) &&
+    (!batch || batch === row.batch_id) &&
+    (!query || JSON.stringify(row).toLowerCase().includes(query))
 }
 
 function desktopConjunctionScreenResult (payload) {

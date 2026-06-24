@@ -34,18 +34,46 @@ surface.
 | Update | check/stage/apply through SDN update provider; running daemon in-place update | same trust/feed path through Desktop updater | SDN-owned signed feed, wrapped upstream IPFS/Kubo refresh, rollback |
 | Remove | removes current install location; data preserve by default, purge opt-in | uninstall/remove UX or documented OS uninstall plus SDN purge control | install registry discovers active install roots |
 
+## Objective Coverage Matrix
+
+The machine-readable parity contract now carries the objective requirement IDs
+below in `deployment/release/sdn-parity-contract.json`. Each capability in the
+contract must map to at least one requirement ID, list concrete acceptance
+checks, and name the tests that prove or guard the behavior. This keeps later
+slices from satisfying a narrow CLI or release test while leaving Desktop/UI or
+live-DHT parity untracked.
+
+| ID | Requirement |
+| --- | --- |
+| `R01.shared_acceptance_matrix` | CLI, Desktop, UI, release, updater, installers, docs, and live-DHT tests share one machine-readable acceptance matrix. |
+| `R02.desktop_api_routes` | Desktop exposes bundled-UI route parity for data APIs, node and peer EPM/vCard, auth user routes, and provider/search routes. |
+| `R03.shared_provider_data_search` | Provider and data search are shared across CLI, Desktop, and UI with local, daemon/API, and live-DHT modes plus row, JSON, and CSV output. |
+| `R04.provider_cli_commands` | Requester-facing provider commands cover list, search, show, connect/query, descriptor lookup, and data-standard filtering. |
+| `R05.encrypted_ca_private_mpe` | Encrypted conjunction assessment and private maneuver ephemeris workflows work across CLI and Desktop/UI with grants, channels, screening, export, and provenance. |
+| `R06.identity_epm_vcard` | Identity bootstrap, EPM/vCard wizard/export, QR/FlatBuffer output, and directory import/list/show/download are at parity across CLI, Desktop, and UI. |
+| `R07.lifecycle_parity` | CLI and Desktop lifecycle controls cover start, stop, restart, status, service, and remove with data-preserve defaults and explicit purge. |
+| `R08.installer_parity` | macOS/Linux curl installer and Windows PowerShell installer are user-scoped, require no `gh`, and have published-endpoint smoke coverage. |
+| `R09.signed_update_parity` | CLI and Desktop use the SDN-owned signed update provider path, stage/apply running-daemon updates in place, and cover rollback/failure behavior. |
+| `R10.desktop_release_artifacts` | Main release lane publishes Desktop macOS, Windows, and Linux artifacts with release-body and website links. |
+| `R11.docs_help_website` | README, CLI help, Desktop help/about, docs, and spacedatanetwork.org use SDN links, one-line installs, and private maneuver ephemeris messaging. |
+| `R12.live_dht_cross_platform` | GitHub Actions/Docker live-DHT tests cover Linux Docker, native macOS, and native Windows on the public IPFS Kademlia DHT after a five-minute registration wait. |
+| `R13.desktop_ui_smoke` | Desktop/UI smoke coverage proves parity is not CLI-only. |
+
 ## Architecture
 
 ### Shared Capability Registry
 
 The machine-readable contract lives at
 `deployment/release/sdn-parity-contract.json` and is checked by
-`deployment/release/sdn-parity-contract.test.mjs`. The contract should list
-stable capability IDs such as `identity.export`, `search.providers`,
+`deployment/release/sdn-parity-contract.test.mjs`. The contract lists stable
+capability IDs such as `identity.export`, `provider.search`,
 `desktop.route.node_epm_vcard`, `update.daemon_in_place`, and
-`release.desktop_artifacts`. CLI tests, Desktop route tests, UI runtime tests,
-and docs tests should assert the capabilities they expose against this contract.
-This does not replace implementation tests; it prevents future accidental drift.
+`release.desktop_artifacts`. It also records output formats, modes, platforms,
+registration waits, installer commands, update provider, and live-DHT proof
+requirements where the product contract needs exact values. CLI tests, Desktop
+route tests, UI runtime tests, and docs tests should assert the capabilities
+they expose against this contract. This does not replace implementation tests;
+it prevents future accidental drift.
 
 ### Server And Desktop API Parity
 

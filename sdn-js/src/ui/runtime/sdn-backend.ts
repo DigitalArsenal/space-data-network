@@ -139,6 +139,70 @@ export interface RawDataRecordBytes {
   bytes: Uint8Array;
 }
 
+export type SearchMode = 'local' | 'daemon' | 'live-dht';
+
+export interface SharedSearchRequest {
+  query?: string;
+  schema?: string;
+  providerId?: string;
+  providerPeerId?: string;
+  sourceName?: string;
+  batchId?: string;
+  queryProfile?: string;
+  mode?: SearchMode;
+  limit?: number;
+}
+
+export interface ProviderSearchRow {
+  peerId?: string;
+  displayName?: string;
+  legalName?: string;
+  bitcoinAddress?: string;
+  epmCid?: string;
+  source?: string;
+  updatedAt?: string;
+  schemaName?: string;
+  providerPeerId?: string;
+  providerPublicKey?: string;
+  providerId?: string;
+  sourceName?: string;
+  batchId?: string;
+  queryProfile?: string;
+  localRows?: number;
+  pinnedRows?: number;
+  cachedBytes?: number;
+  pinnedBytes?: number;
+  snapshotId?: string;
+  head?: string;
+  highWaterMark?: string;
+  lastSyncedAt?: string;
+  [key: string]: unknown;
+}
+
+export interface DataSearchRow {
+  schemaName?: string;
+  providerId?: string;
+  sourceName?: string;
+  batchId?: string;
+  queryProfile?: string;
+  providerPeerId?: string;
+  providerPublicKey?: string;
+  localRows?: number;
+  pinnedRows?: number;
+  cachedBytes?: number;
+  pinnedBytes?: number;
+  snapshotId?: string;
+  head?: string;
+  highWaterMark?: string;
+  lastSyncedAt?: string;
+  [key: string]: unknown;
+}
+
+export interface SearchResult<T> {
+  count: number;
+  results: T[];
+}
+
 export interface ConjunctionScreenRequest {
   primarySchema: string;
   secondarySchema: string;
@@ -399,6 +463,8 @@ export interface SdnBackend {
   listObjects(): Promise<BackendResult<LocalObjectSummary[]>>;
   inspectObject(id: string): Promise<BackendResult<LocalObjectSummary | Record<string, unknown>>>;
   getDataSummary(): Promise<BackendResult<DataSummary>>;
+  searchProviders(request: SharedSearchRequest): Promise<BackendResult<SearchResult<ProviderSearchRow>>>;
+  searchData(request: SharedSearchRequest): Promise<BackendResult<SearchResult<DataSearchRow>>>;
   scanRawData(query: RawDataQuery): Promise<BackendResult<DataScanResult>>;
   streamRawData(request: RawDataStreamRequest): Promise<BackendResult<RawDataRecord[]>>;
   queryRawData(query: RawDataQuery): Promise<BackendResult<RawDataRecord[]>>;

@@ -13,6 +13,10 @@ import {
   type ObservedSdnPeer,
   type RawDataRecord,
   type RawDataStreamRequest,
+  type SearchResult,
+  type SharedSearchRequest,
+  type DataSearchRow,
+  type ProviderSearchRow,
   type SdnBackendMode,
   type StorageSummary,
 } from './sdn-backend';
@@ -256,6 +260,87 @@ export function conjunctionScreenPayload(request: ConjunctionScreenRequest): Rec
     ...(request.channelId ? { channel_id: request.channelId } : {}),
     ...(request.assessorPeerId ? { assessor_peer_id: request.assessorPeerId } : {}),
     ...(typeof request.limit === 'number' && Number.isFinite(request.limit) ? { limit: request.limit } : {}),
+  };
+}
+
+export function sharedSearchPayload(request: SharedSearchRequest): Record<string, unknown> {
+  return {
+    ...(request.query ? { query: request.query } : {}),
+    ...(request.schema ? { schema: request.schema } : {}),
+    ...(request.providerId ? { provider_id: request.providerId } : {}),
+    ...(request.providerPeerId ? { provider_peer_id: request.providerPeerId } : {}),
+    ...(request.sourceName ? { source_name: request.sourceName } : {}),
+    ...(request.batchId ? { batch_id: request.batchId } : {}),
+    ...(request.queryProfile ? { query_profile: request.queryProfile } : {}),
+    ...(request.mode ? { mode: request.mode } : {}),
+    ...(typeof request.limit === 'number' ? { limit: request.limit } : {}),
+  };
+}
+
+export function normalizeProviderSearchResult(payload: unknown): SearchResult<ProviderSearchRow> {
+  const record = isRecord(payload) ? payload : {};
+  const results = recordsFromPayload(record).map(normalizeProviderSearchRow);
+  return {
+    count: readNumber(record, 'count') ?? results.length,
+    results,
+  };
+}
+
+export function normalizeDataSearchResult(payload: unknown): SearchResult<DataSearchRow> {
+  const record = isRecord(payload) ? payload : {};
+  const results = recordsFromPayload(record).map(normalizeDataSearchRow);
+  return {
+    count: readNumber(record, 'count') ?? results.length,
+    results,
+  };
+}
+
+function normalizeProviderSearchRow(record: Record<string, unknown>): ProviderSearchRow {
+  return {
+    ...record,
+    peerId: readString(record, 'peer_id', 'peerId') ?? undefined,
+    displayName: readString(record, 'dn', 'display_name', 'displayName', 'name') ?? undefined,
+    legalName: readString(record, 'legal_name', 'legalName') ?? undefined,
+    bitcoinAddress: readString(record, 'bitcoin_address', 'bitcoinAddress') ?? undefined,
+    epmCid: readString(record, 'epm_cid', 'epmCid') ?? undefined,
+    source: readString(record, 'source') ?? undefined,
+    updatedAt: readString(record, 'updated_at', 'updatedAt') ?? undefined,
+    schemaName: readString(record, 'schema_name', 'schemaName') ?? undefined,
+    providerPeerId: readString(record, 'provider_peer_id', 'providerPeerId') ?? undefined,
+    providerPublicKey: readString(record, 'provider_public_key', 'providerPublicKey') ?? undefined,
+    providerId: readString(record, 'provider_id', 'providerId') ?? undefined,
+    sourceName: readString(record, 'source_name', 'sourceName') ?? undefined,
+    batchId: readString(record, 'batch_id', 'batchId') ?? undefined,
+    queryProfile: readString(record, 'query_profile', 'queryProfile') ?? undefined,
+    localRows: readNumber(record, 'local_rows', 'localRows') ?? undefined,
+    pinnedRows: readNumber(record, 'pinned_rows', 'pinnedRows') ?? undefined,
+    cachedBytes: readNumber(record, 'cached_bytes', 'cachedBytes') ?? undefined,
+    pinnedBytes: readNumber(record, 'pinned_bytes', 'pinnedBytes') ?? undefined,
+    snapshotId: readString(record, 'snapshot_id', 'snapshotId') ?? undefined,
+    head: readString(record, 'head') ?? undefined,
+    highWaterMark: readString(record, 'high_water_mark', 'highWaterMark') ?? undefined,
+    lastSyncedAt: readString(record, 'last_synced_at', 'lastSyncedAt') ?? undefined,
+  };
+}
+
+function normalizeDataSearchRow(record: Record<string, unknown>): DataSearchRow {
+  return {
+    ...record,
+    schemaName: readString(record, 'schema_name', 'schemaName') ?? undefined,
+    providerId: readString(record, 'provider_id', 'providerId') ?? undefined,
+    sourceName: readString(record, 'source_name', 'sourceName') ?? undefined,
+    batchId: readString(record, 'batch_id', 'batchId') ?? undefined,
+    queryProfile: readString(record, 'query_profile', 'queryProfile') ?? undefined,
+    providerPeerId: readString(record, 'provider_peer_id', 'providerPeerId') ?? undefined,
+    providerPublicKey: readString(record, 'provider_public_key', 'providerPublicKey') ?? undefined,
+    localRows: readNumber(record, 'local_rows', 'localRows') ?? undefined,
+    pinnedRows: readNumber(record, 'pinned_rows', 'pinnedRows') ?? undefined,
+    cachedBytes: readNumber(record, 'cached_bytes', 'cachedBytes') ?? undefined,
+    pinnedBytes: readNumber(record, 'pinned_bytes', 'pinnedBytes') ?? undefined,
+    snapshotId: readString(record, 'snapshot_id', 'snapshotId') ?? undefined,
+    head: readString(record, 'head') ?? undefined,
+    highWaterMark: readString(record, 'high_water_mark', 'highWaterMark') ?? undefined,
+    lastSyncedAt: readString(record, 'last_synced_at', 'lastSyncedAt') ?? undefined,
   };
 }
 

@@ -814,6 +814,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Data API routes
 			dataAPI := api.NewDataQueryHandler(n.Store(), nil)
 			dataAPI.RegisterRoutes(adminMux)
+			searchAPI := api.NewSearchHandler(n.Store())
+			searchAPI.RegisterRoutes(adminMux)
 			conjunctionAPI := api.NewConjunctionHandler(n.Store())
 			conjunctionAPI.RegisterRoutes(adminMux)
 			channelAPI := api.NewChannelHandlerWithOptions(n.Store(), channelHandlerOptionsForIdentity(n.Identity()))
@@ -1762,6 +1764,7 @@ func isAdminOnlyAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/v1/admin/") ||
 		path == "/api/v1/data/summary" ||
 		path == "/api/v1/data/query" ||
+		strings.HasPrefix(path, "/api/v1/search/") ||
 		path == "/api/v1/conjunction/screen" ||
 		strings.HasPrefix(path, "/api/v1/data/records/") ||
 		strings.HasPrefix(path, "/api/v1/modules/runtime/") ||

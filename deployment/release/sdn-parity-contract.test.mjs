@@ -46,6 +46,95 @@ test('every parity capability names surfaces and tests', () => {
   }
 });
 
+test('contract maps every objective requirement to explicit acceptance evidence', () => {
+  const requiredRequirementIds = [
+    'R01.shared_acceptance_matrix',
+    'R02.desktop_api_routes',
+    'R03.shared_provider_data_search',
+    'R04.provider_cli_commands',
+    'R05.encrypted_ca_private_mpe',
+    'R06.identity_epm_vcard',
+    'R07.lifecycle_parity',
+    'R08.installer_parity',
+    'R09.signed_update_parity',
+    'R10.desktop_release_artifacts',
+    'R11.docs_help_website',
+    'R12.live_dht_cross_platform',
+    'R13.desktop_ui_smoke'
+  ];
+  const requirementIds = new Set((contract.objectiveRequirements ?? []).map((requirement) => requirement.id));
+  for (const required of requiredRequirementIds) {
+    assert.ok(requirementIds.has(required), `missing objective requirement ${required}`);
+  }
+
+  const coveredRequirementIds = new Set();
+  for (const capability of contract.capabilities) {
+    assert.ok(
+      Array.isArray(capability.requirementIds) && capability.requirementIds.length > 0,
+      `${capability.id} must map to at least one objective requirement`
+    );
+    assert.ok(
+      Array.isArray(capability.acceptance) && capability.acceptance.length > 0,
+      `${capability.id} must list acceptance checks`
+    );
+    for (const requirementId of capability.requirementIds) {
+      assert.ok(requirementIds.has(requirementId), `${capability.id} references unknown requirement ${requirementId}`);
+      coveredRequirementIds.add(requirementId);
+    }
+  }
+
+  for (const required of requiredRequirementIds) {
+    assert.ok(coveredRequirementIds.has(required), `no capability covers objective requirement ${required}`);
+  }
+});
+
+test('search, installer, update, and live-DHT capabilities encode required modes', () => {
+  const capabilities = new Map(contract.capabilities.map((capability) => [capability.id, capability]));
+
+  for (const id of ['data.search', 'provider.search']) {
+    const capability = capabilities.get(id);
+    assert.ok(capability, `missing ${id}`);
+    assert.deepEqual(capability.modes, ['local', 'daemon', 'live-dht'], `${id} modes must match product contract`);
+    assert.deepEqual(capability.outputs, ['row', 'json', 'csv'], `${id} outputs must match product contract`);
+  }
+
+  const providerInteraction = capabilities.get('provider.interaction');
+  assert.ok(providerInteraction);
+  assert.deepEqual(
+    providerInteraction.commands,
+    ['list', 'search', 'show', 'connect-query', 'descriptor-lookup', 'data-standard-filter'],
+    'provider interaction commands must cover requester-facing CLI/API flows'
+  );
+
+  const installer = capabilities.get('install.user_scoped');
+  assert.ok(installer);
+  assert.deepEqual(installer.platforms, ['macos', 'linux', 'windows']);
+  assert.deepEqual(installer.installCommands, [
+    'curl -fsSL https://spacedatanetwork.org/install.sh | bash',
+    'irm https://spacedatanetwork.org/install.ps1 | iex'
+  ]);
+  assert.equal(installer.requiresGh, false);
+  assert.equal(installer.requiresElevatedPrivileges, false);
+
+  const update = capabilities.get('update.daemon_in_place');
+  assert.ok(update);
+  assert.equal(update.providerServer, 'https://updates.spacedatanetwork.org');
+  assert.ok(update.acceptance.some((item) => item.includes('rollback')), 'update acceptance must include rollback');
+  assert.ok(update.acceptance.some((item) => item.includes('running daemon')), 'update acceptance must include running daemon');
+
+  const liveDht = capabilities.get('ci.live_dht_cross_platform');
+  assert.ok(liveDht);
+  assert.deepEqual(liveDht.platforms, ['linux-docker', 'macos', 'windows']);
+  assert.equal(liveDht.registrationWaitSeconds, 300);
+  assert.deepEqual(liveDht.proves, [
+    'peer-discovery',
+    'identity-exchange',
+    'provider-search',
+    'data-search',
+    'retrieval-query'
+  ]);
+});
+
 test('every parity contract test reference exists in the repo', () => {
   for (const capability of contract.capabilities) {
     for (const testPath of capability.tests) {
