@@ -330,6 +330,45 @@ func TestSearchProvidersDottedProviderAliasResolvesBeforeStatsFilter(t *testing.
 	}
 }
 
+func TestSearchProvidersProviderIDOnlyReturnsDirectoryOnlyRows(t *testing.T) {
+	cfgPath, store := newSyncCLITestStore(t)
+	if err := store.UpsertDirectoryRecord(storage.DirectoryRecord{
+		Kind:      "node",
+		PeerID:    "16Uiu2HDirectoryOnly",
+		DN:        "Directory Only Provider",
+		LegalName: "Directory Only LLC",
+		Source:    "test",
+		EPMJSON: `{
+			"aliases": ["directory-only.alias"]
+		}`,
+		UpdatedAt: 1779689334,
+	}); err != nil {
+		t.Fatalf("upsert directory-only record failed: %v", err)
+	}
+	withSyncCLITestConfig(t, cfgPath)
+
+	var out bytes.Buffer
+	err := runSearchProviders(&out, searchProviderOptions{
+		ProviderID: "directory-only.alias",
+		Format:     "json",
+	})
+	if err != nil {
+		t.Fatalf("runSearchProviders failed: %v", err)
+	}
+
+	var body searchResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode provider search JSON: %v\n%s", err, out.String())
+	}
+	if body.Count != 1 || len(body.Results) != 1 {
+		t.Fatalf("provider result count = %#v", body)
+	}
+	row := body.Results[0]
+	if row["peer_id"] != "16Uiu2HDirectoryOnly" || row["dn"] != "Directory Only Provider" || row["schema_name"] != nil || row["local_rows"] != nil {
+		t.Fatalf("unexpected directory-only provider row: %#v", row)
+	}
+}
+
 func TestSearchProvidersCanonicalIDEnrichesDirectoryByMatchedPeer(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)

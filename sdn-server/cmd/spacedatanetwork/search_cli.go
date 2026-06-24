@@ -443,7 +443,6 @@ func buildSearchProviderRows(store *storage.FlatSQLStore, options searchProvider
 
 func searchProviderReplicaFiltersActive(options searchProviderOptions) bool {
 	return strings.TrimSpace(options.Schema) != "" ||
-		strings.TrimSpace(options.ProviderID) != "" ||
 		strings.TrimSpace(options.SourceName) != "" ||
 		strings.TrimSpace(options.BatchID) != "" ||
 		strings.TrimSpace(options.QueryProfile) != ""
