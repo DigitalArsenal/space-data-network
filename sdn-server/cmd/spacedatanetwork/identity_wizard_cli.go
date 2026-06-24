@@ -163,7 +163,7 @@ func runIdentityWizardWithIO(in io.Reader, out io.Writer, options identityWizard
 	if options.PromptWriter == nil {
 		options.PromptWriter = io.Discard
 	}
-	if nodeIdentity.Identity == nil && strings.TrimSpace(nodeIdentity.XPub) == "" {
+	if nodeIdentity.Identity == nil || strings.TrimSpace(nodeIdentity.XPub) == "" {
 		hasIdentityMaterial, err := localEPMHasPublicIdentityMaterial(store, peerID)
 		if err != nil {
 			return err
