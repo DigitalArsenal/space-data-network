@@ -943,10 +943,14 @@ git commit -m "feat: add desktop parity routes and contract"
 - Modify: `deployment/release/install-script.test.mjs`
 - Create: `deployment/release/published-install-smoke.mjs`
 
-- [ ] Add failing tests asserting Linux/macOS use
+- [x] Add failing tests asserting Linux/macOS use
   `curl -fsSL https://spacedatanetwork.org/install.sh | bash`, Windows uses
   `irm https://spacedatanetwork.org/install.ps1 | iex`, and neither path
   requires `gh`.
+- [x] Add installer contract tests requiring both Unix and Windows installers
+  to verify `spacedatanetwork show-identity` immediately after post-install
+  identity initialization.
+  - 2026-06-24: Verified with `node --test deployment/release/install-script.test.mjs`.
 - [ ] Add clean-user smoke script for init, version, status, and identity.
 - [ ] Run installer tests and commit with message
   `test: smoke published SDN installers`.

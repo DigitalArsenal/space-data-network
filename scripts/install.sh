@@ -324,6 +324,8 @@ initialize_unix_node() {
 
     log_info "Initializing local node identity..."
     "$PRIMARY_COMMAND_PATH" init
+    log_info "Verifying local node identity..."
+    "$PRIMARY_COMMAND_PATH" show-identity >/dev/null 2>&1
 }
 
 verify_installation() {

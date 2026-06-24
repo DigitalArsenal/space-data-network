@@ -41,6 +41,7 @@ test('install script verifies both Unix commands are available after linking', (
 test('install script initializes the local node identity after Unix install', () => {
   assert.match(script, /SDN_SKIP_INIT/);
   assert.match(script, /"\$PRIMARY_COMMAND_PATH" init/);
+  assert.match(script, /"\$PRIMARY_COMMAND_PATH" show-identity >\/dev\/null/);
   assert.match(script, /Run '\$PRIMARY_BINARY_NAME start' to start the node as a persistent background service/);
   assert.match(script, /Run '\$PRIMARY_BINARY_NAME daemon' for foreground\/manual mode/);
 });
@@ -58,6 +59,7 @@ test('native PowerShell installer installs Windows shims without elevation', () 
   assert.match(powershellScript, /spacedatanetwork\.cmd/);
   assert.match(powershellScript, /sdn\.cmd/);
   assert.match(powershellScript, /\$PrimaryExe\s+init/);
+  assert.match(powershellScript, /\$PrimaryExe\s+show-identity\s+2>\$null\s+\|\s+Out-Null/);
   assert.doesNotMatch(powershellScript, /Start-Process[\s\S]*-Verb\s+RunAs/i);
   assert.doesNotMatch(powershellScript, /\bsudo\b/i);
 });
