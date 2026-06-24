@@ -982,12 +982,18 @@ with `npm --prefix desktop exec -- playwright test test/unit/static-http-server-
 - Modify: `deployment/release/beta-download-links.test.mjs`
 - Modify: `docs/index.html`
 
-- [ ] Add failing release tests requiring Desktop DMG/ZIP, Windows installer,
+- [x] Add failing release tests requiring Desktop DMG/ZIP, Windows installer,
   and Linux AppImage/deb/rpm artifacts where the current Electron Builder
   config supports them.
-- [ ] Implement artifact assembly and release body links.
-- [ ] Run release tests and commit with message
+- [x] Implement artifact assembly and release body links.
+- [x] Run release tests and commit with message
   `feat: release desktop artifacts`.
+
+  Implementation landed earlier in SDN commit `b2c4b638` (`feat: add desktop
+  artifacts to beta release lane`). Verification (2026-06-24): `node --test
+  deployment/release/assemble-beta-release-artifacts.test.mjs
+  deployment/release/beta-release-workflow.test.mjs
+  deployment/release/beta-download-links.test.mjs` passed 28/28.
 
 ### Task 15: Add Published Installer Smoke Tests
 
