@@ -130,6 +130,68 @@ test.describe('desktop static identity API', () => {
     expect(users.body).not.toContain('must-not-be-indexed')
   })
 
+  test('serves peer EPM and vCard artifacts from hosted directory records', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-peer-epm-api-'))
+    const { serveDesktopIdentityAPI, serveDesktopPeerEPMAPI } = loadStaticServer(userData)
+
+    await requestJson(serveDesktopIdentityAPI, 'PUT', '/api/identity/epms/provider', {
+      epm_json: {
+        dn: 'Provider Node',
+        email: 'provider@example.invalid',
+        entity_type: 'Node',
+        peer_id: '16Uiu2ProviderPeer',
+        public_key: 'provider-public',
+        signing_public_key: 'provider-signing',
+        encryption_public_key: 'provider-encryption'
+      }
+    })
+
+    const epm = await requestRaw(serveDesktopPeerEPMAPI, 'GET', '/api/peers/16Uiu2ProviderPeer/epm')
+    expect(epm.statusCode).toBe(200)
+    expect(epm.headers['Content-Type']).toBe('application/x-flatbuffers')
+
+    const vcard = await requestRaw(serveDesktopPeerEPMAPI, 'GET', '/api/peers/16Uiu2ProviderPeer/epm/vcard')
+    expect(vcard.statusCode).toBe(200)
+    expect(vcard.headers['Content-Type']).toContain('text/vcard')
+    expect(vcard.body).toContain('FN:Provider Node')
+    expect(vcard.body).toContain('X-SDN-PEER-ID:16Uiu2ProviderPeer')
+
+    const missing = await requestRaw(serveDesktopPeerEPMAPI, 'GET', '/api/peers/16Uiu2Missing/epm')
+    expect(missing.statusCode).toBe(404)
+  })
+
+  test('accepts local desktop auth user create and update routes used by settings override', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-auth-users-api-'))
+    const { serveDesktopAuthUsersAPI } = loadStaticServer(userData)
+
+    const grant = {
+      xpub: 'xpub-desktop-admin',
+      label: 'Desktop Admin',
+      role: 'admin',
+      trust_level: 'local'
+    }
+
+    const created = await requestJson(serveDesktopAuthUsersAPI, 'POST', '/api/auth/users', grant)
+    expect(created.statusCode).toBe(200)
+    expect(created.json.user).toMatchObject(grant)
+
+    const conflict = await requestJson(serveDesktopAuthUsersAPI, 'POST', '/api/auth/users', grant)
+    expect(conflict.statusCode).toBe(409)
+
+    const updated = await requestJson(serveDesktopAuthUsersAPI, 'PUT', '/api/auth/users/xpub-desktop-admin', {
+      ...grant,
+      label: 'Updated Desktop Admin'
+    })
+    expect(updated.statusCode).toBe(200)
+    expect(updated.json.user.label).toBe('Updated Desktop Admin')
+
+    const listed = await requestJson(serveDesktopAuthUsersAPI, 'GET', '/api/auth/users')
+    expect(listed.statusCode).toBe(200)
+    expect(listed.json.users).toEqual([
+      expect.objectContaining({ xpub: 'xpub-desktop-admin', label: 'Updated Desktop Admin' })
+    ])
+  })
+
   test('serves the local node EPM route as a raw FlatBuffer', async () => {
     const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-node-epm-api-'))
     const { serveDesktopNodeEPMAPI } = loadStaticServer(userData)
@@ -156,6 +218,16 @@ test.describe('desktop static identity API', () => {
     expect(epm.keysLength()).toBe(2)
     expect(epm.KEYS(0).PUBLIC_KEY()).toBe('ed25519-node-signing-public')
     expect(epm.KEYS(1).PUBLIC_KEY()).toBe('x25519-node-encryption-public')
+
+    const vcard = await requestRaw(serveDesktopNodeEPMAPI, 'GET', '/api/node/epm/vcard')
+    expect(vcard.statusCode).toBe(200)
+    expect(vcard.headers['Content-Type']).toContain('text/vcard')
+    expect(vcard.body).toContain('BEGIN:VCARD')
+    expect(vcard.body).toContain('FN:Desktop Node')
+    expect(vcard.body).toContain('EMAIL;TYPE=INTERNET:node@example.invalid')
+    expect(vcard.body).toContain('X-SDN-PEER-ID:12D3KooWDesktopNode')
+    expect(vcard.body).toContain('X-SDN-SIGNING-PUBLIC-KEY:ed25519-node-signing-public')
+    expect(vcard.body).toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:x25519-node-encryption-public')
   })
 
   test('persists node identity settings and blocks wallet key replacement until confirmed', async () => {

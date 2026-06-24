@@ -218,8 +218,8 @@ async function buildMenu () {
           enabled: false
         },
         {
-          label: `ipfs-desktop ${VERSION}`,
-          click: () => { shell.openExternal(`https://github.com/ipfs-shipyard/ipfs-desktop/releases/v${VERSION}`) }
+          label: `Space Data Network Desktop ${VERSION}`,
+          click: () => { shell.openExternal('https://spacedatanetwork.org/downloads/') }
         },
         {
           label: hasCustomBinary()
@@ -241,7 +241,7 @@ async function buildMenu () {
         { type: 'separator' },
         {
           label: i18n.t('viewOnGitHub'),
-          click: () => { shell.openExternal('https://github.com/ipfs-shipyard/ipfs-desktop/blob/master/README.md') }
+          click: () => { shell.openExternal('https://github.com/DigitalArsenal/space-data-network') }
         },
         {
           label: i18n.t('helpUsTranslate'),
