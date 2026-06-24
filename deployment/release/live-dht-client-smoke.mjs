@@ -199,6 +199,23 @@ export function buildDockerSmokeCommand({
   ];
 }
 
+export function buildLiveDHTProofSummary(report, expectedRoles = DEFAULT_EXPECTED_ROLES) {
+  const seenRoles = new Set(report?.seenRoles ?? []);
+  const observedAllExpectedRoles = expectedRoles.every((role) => seenRoles.has(role));
+  return {
+    peerDiscovery: Number(report?.maxConnectedPeers ?? 0) > 0,
+    identityExchange: String(report?.peerID ?? '').trim() !== '' && observedAllExpectedRoles,
+    providerSearch: report?.providerSearch?.success === true
+      && report?.providerSearch?.mode === 'live-dht'
+      && Number(report?.providerSearch?.count ?? 0) > 0,
+    dataSearch: report?.dataSearch?.success === true
+      && report?.dataSearch?.mode === 'live-dht'
+      && Number(report?.dataSearch?.count ?? 0) > 0,
+    retrievalQuery: report?.retrievalQuery?.success === true && Number(report?.retrievalQuery?.count ?? 0) > 0,
+    dhtRegistrationWait: Number(report?.dhtRegistrationWaitMs ?? 0) >= DEFAULT_DHT_REGISTRATION_WAIT_MS
+  };
+}
+
 function parseArgs(argv) {
   const options = {};
   for (let index = 0; index < argv.length; index += 1) {
@@ -370,6 +387,90 @@ function listDatasetPNMs(binaryPath, configPath, runId) {
   return JSON.parse(result.stdout || '[]');
 }
 
+function searchResultCount(decoded) {
+  const count = Number(decoded?.count);
+  if (Number.isFinite(count) && count >= 0) {
+    return count;
+  }
+  if (Array.isArray(decoded?.results)) {
+    return decoded.results.length;
+  }
+  return 0;
+}
+
+function runLiveDHTSearchProof(binaryPath, configPath, baseURL, kind) {
+  const command = `search ${kind}`;
+  const result = runCommand(binaryPath, [
+    '--config',
+    configPath,
+    'search',
+    kind,
+    '--mode',
+    'live-dht',
+    '--api',
+    baseURL,
+    '--format',
+    'json',
+    '--limit',
+    '200'
+  ], { allowFailure: true });
+  if (result.status !== 0) {
+    return {
+      success: false,
+      command,
+      mode: 'live-dht',
+      count: 0,
+      error: result.stderr || result.stdout || `${command} failed`
+    };
+  }
+  try {
+    const decoded = JSON.parse(result.stdout || '{}');
+    return {
+      success: true,
+      command,
+      mode: 'live-dht',
+      count: searchResultCount(decoded)
+    };
+  } catch (error) {
+    return {
+      success: false,
+      command,
+      mode: 'live-dht',
+      count: 0,
+      error: `decode ${command} JSON: ${error.message}`
+    };
+  }
+}
+
+function runDatasetPNMRetrievalProof(binaryPath, configPath, runId) {
+  const command = 'dataset-pnms export';
+  const result = runCommand(binaryPath, [
+    '--config',
+    configPath,
+    'dataset-pnms',
+    'export',
+    '--limit',
+    '2000',
+    '--file-id-contains',
+    `sdn-ci:${safeFileIDToken(runId, 'runId')}:`
+  ], { allowFailure: true });
+  if (result.status !== 0) {
+    return {
+      success: false,
+      command,
+      count: 0,
+      error: result.stderr || result.stdout || `${command} failed`
+    };
+  }
+  const encoded = String(result.stdout ?? '').trim();
+  return {
+    success: encoded.length > 0,
+    command,
+    count: encoded.length > 0 ? 1 : 0,
+    bytes: encoded.length
+  };
+}
+
 function writeReport(reportPath, report) {
   mkdirSync(dirname(reportPath), { recursive: true });
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
@@ -447,6 +548,9 @@ export async function runLiveDHTSmoke(options) {
   const observedFileIDs = [];
   const peerCounts = [];
   const publishErrors = [];
+  let providerSearch = { success: false, command: 'search providers', mode: 'live-dht', count: 0 };
+  let dataSearch = { success: false, command: 'search data', mode: 'live-dht', count: 0 };
+  let retrievalQuery = { success: false, command: 'dataset-pnms export', count: 0 };
   let peerID = '';
   let success = false;
   let failure = '';
@@ -522,7 +626,11 @@ export async function runLiveDHTSmoke(options) {
       throw new Error(failure);
     }
 
-    return {
+    providerSearch = runLiveDHTSearchProof(binaryPath, configPath, baseURL, 'providers');
+    dataSearch = runLiveDHTSearchProof(binaryPath, configPath, baseURL, 'data');
+    retrievalQuery = runDatasetPNMRetrievalProof(binaryPath, configPath, runId);
+
+    const report = {
       success: true,
       role,
       runId,
@@ -534,11 +642,23 @@ export async function runLiveDHTSmoke(options) {
       timeoutMs,
       logPath,
       observedFileIDs: [...new Set(observedFileIDs)].sort(),
-      publishErrors
+      publishErrors,
+      providerSearch,
+      dataSearch,
+      retrievalQuery
     };
+    const proofs = buildLiveDHTProofSummary(report, expectedRoles);
+    const missingProofs = Object.entries(proofs)
+      .filter(([, passed]) => !passed)
+      .map(([name]) => name);
+    if (missingProofs.length > 0) {
+      failure = `missing live DHT proof categories: ${missingProofs.join(', ')}`;
+      throw new Error(failure);
+    }
+    return { ...report, proofs };
   } catch (error) {
     failure = failure || error.message;
-    return {
+    const report = {
       success: false,
       role,
       runId,
@@ -551,7 +671,14 @@ export async function runLiveDHTSmoke(options) {
       logPath,
       observedFileIDs: [...new Set(observedFileIDs)].sort(),
       publishErrors,
+      providerSearch,
+      dataSearch,
+      retrievalQuery,
       error: failure
+    };
+    return {
+      ...report,
+      proofs: buildLiveDHTProofSummary(report, expectedRoles)
     };
   } finally {
     if (daemon) {

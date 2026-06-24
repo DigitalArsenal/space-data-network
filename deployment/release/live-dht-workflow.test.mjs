@@ -27,6 +27,7 @@ test('live DHT workflow builds current-ref CLI artifacts and uses public Kademli
   assert.match(workflow, /node:24-bookworm/);
   assert.match(workflow, /SDN_LIVE_DHT_EXPECT_ROLES/);
   assert.match(workflow, /300000/);
+  assert.match(workflow, /live-dht-summary\.mjs/);
   assert.doesNotMatch(workflow, /gh release download/);
   assert.doesNotMatch(workflow, /tailscale/i);
 });

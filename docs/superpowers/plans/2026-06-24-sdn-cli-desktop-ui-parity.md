@@ -965,13 +965,14 @@ git commit -m "feat: add desktop parity routes and contract"
 - Modify: `deployment/release/live-dht-client-smoke.test.mjs`
 - Modify: `deployment/release/live-dht-workflow.test.mjs`
 
-- [ ] Add failing workflow/static tests requiring Linux Docker, macOS, and
+- [x] Add failing workflow/static tests requiring Linux Docker, macOS, and
   Windows clients to wait at least five minutes for public Kademlia DHT
   registration.
-- [ ] Add smoke assertions for peer discovery, identity exchange, provider
+- [x] Add smoke assertions for peer discovery, identity exchange, provider
   search, data search, and one retrieval/query path.
-- [ ] Run live-DHT workflow tests and commit with message
+- [x] Run live-DHT workflow tests and commit with message
   `test: prove cross-platform live DHT parity`.
+  - 2026-06-24: Added proof-category reporting and summary failures for peer discovery, identity exchange, positive-result provider search, positive-result data search, retrieval/query, and five-minute DHT wait; targeted tests passed with `node --test deployment/release/live-dht-client-smoke.test.mjs deployment/release/live-dht-summary.test.mjs deployment/release/live-dht-workflow.test.mjs`, full release tests passed with `node --test deployment/release/*.test.mjs`, and `git diff --check` passed.
 
 ### Task 17: Update Docs, README, Help, Website
 

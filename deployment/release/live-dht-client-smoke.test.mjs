@@ -6,6 +6,7 @@ import {
   DEFAULT_DHT_REGISTRATION_WAIT_MS,
   LIVE_DHT_BOOTSTRAP_PEERS,
   buildDockerSmokeCommand,
+  buildLiveDHTProofSummary,
   buildSmokeFileID,
   buildWindowsExpandArchiveCommand,
   extractSmokeRolesFromDatasetPNMEntries,
@@ -99,4 +100,48 @@ test('Windows archive extraction does not depend on dropped PowerShell positiona
   assert.match(command, /-LiteralPath 'D:\\a\\space-data-network\\dist\\live-dht\\spacedatanetwork-windows-amd64\.zip'/);
   assert.match(command, /-DestinationPath 'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\sdn-live-dht-windows-native-oCCkLz\\bundle'/);
   assert.doesNotMatch(command, /\$args/);
+});
+
+test('live DHT proof summary requires all product proof categories', () => {
+  const proof = buildLiveDHTProofSummary({
+    success: true,
+    peerID: '12D3KooWPeer',
+    seenRoles: ['linux-docker', 'macos-native', 'windows-native'],
+    maxConnectedPeers: 2,
+    dhtRegistrationWaitMs: DEFAULT_DHT_REGISTRATION_WAIT_MS,
+    providerSearch: { success: true, count: 2, mode: 'live-dht' },
+    dataSearch: { success: true, count: 1, mode: 'live-dht' },
+    retrievalQuery: { success: true, count: 3, command: 'dataset-pnms export' }
+  }, DEFAULT_EXPECTED_ROLES);
+
+  assert.deepEqual(proof, {
+    peerDiscovery: true,
+    identityExchange: true,
+    providerSearch: true,
+    dataSearch: true,
+    retrievalQuery: true,
+    dhtRegistrationWait: true
+  });
+});
+
+test('live DHT proof summary fails closed when any proof category is missing', () => {
+  const proof = buildLiveDHTProofSummary({
+    success: true,
+    peerID: '',
+    seenRoles: ['linux-docker'],
+    maxConnectedPeers: 0,
+    dhtRegistrationWaitMs: 1_000,
+    providerSearch: { success: false, count: 0, mode: 'local' },
+    dataSearch: { success: false, count: 0, mode: 'local' },
+    retrievalQuery: { success: false, count: 0, command: 'dataset-pnms export' }
+  }, DEFAULT_EXPECTED_ROLES);
+
+  assert.deepEqual(proof, {
+    peerDiscovery: false,
+    identityExchange: false,
+    providerSearch: false,
+    dataSearch: false,
+    retrievalQuery: false,
+    dhtRegistrationWait: false
+  });
 });

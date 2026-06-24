@@ -4,7 +4,16 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { DEFAULT_EXPECTED_ROLES, normalizeExpectedRoles } from './live-dht-client-smoke.mjs';
+import { DEFAULT_EXPECTED_ROLES, buildLiveDHTProofSummary, normalizeExpectedRoles } from './live-dht-client-smoke.mjs';
+
+const PROOF_LABELS = {
+  peerDiscovery: 'peer-discovery',
+  identityExchange: 'identity-exchange',
+  providerSearch: 'provider-search',
+  dataSearch: 'data-search',
+  retrievalQuery: 'retrieval-query',
+  dhtRegistrationWait: 'dht-registration-wait'
+};
 
 function parseArgs(argv) {
   const options = {};
@@ -62,6 +71,12 @@ export function summarizeReports({ reportDir, expectedRoles = DEFAULT_EXPECTED_R
     for (const role of expectedRoles) {
       if (!seen.has(role)) {
         failures.push(`${report.role} did not observe ${role}`);
+      }
+    }
+    const proofs = buildLiveDHTProofSummary(report, expectedRoles);
+    for (const [key, passed] of Object.entries(proofs)) {
+      if (!passed) {
+        failures.push(`${report.role} did not prove ${PROOF_LABELS[key] ?? key}`);
       }
     }
   }
