@@ -25,6 +25,7 @@ import {
   createUnavailableResult,
   type BackendCapability,
   type BackendResult,
+  type ConjunctionScreenResult,
   type DataScanResult,
   type DataSummary,
   type LocalObjectSummary,
@@ -350,6 +351,9 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     },
     async readRawDataRecord(_schemaName: string, cid: string): Promise<BackendResult<RawDataRecordBytes>> {
       return createCapabilityResult('readRawDataRecord', 'local-only', `record ${cid} bytes are available after scan-bound FlatSQL streaming`);
+    },
+    async screenConjunction(): Promise<BackendResult<ConjunctionScreenResult>> {
+      return createCapabilityResult('screenConjunction', 'remote-only', 'conjunction screening requires the authenticated SDN HTTP API');
     },
     async pinObject(): Promise<BackendResult<Record<string, unknown>>> {
       return createCapabilityResult('pinObject', 'local-only', 'pinning is managed by the local FlatSQL store');

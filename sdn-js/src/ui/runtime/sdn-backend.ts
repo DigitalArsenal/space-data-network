@@ -139,6 +139,45 @@ export interface RawDataRecordBytes {
   bytes: Uint8Array;
 }
 
+export interface ConjunctionScreenRequest {
+  primarySchema: string;
+  secondarySchema: string;
+  encrypted?: boolean;
+  grantId?: string;
+  channelId?: string;
+  assessorPeerId?: string;
+  includeProvenance?: boolean;
+  limit?: number;
+}
+
+export interface ConjunctionEvent {
+  primaryObject?: string;
+  secondaryObject?: string;
+  tca?: string;
+  missDistanceKm?: number;
+  probability?: number;
+  providerId?: string;
+  sourceName?: string;
+  status?: string;
+  [key: string]: unknown;
+}
+
+export interface ConjunctionScreenResult {
+  workflow: string;
+  mode: string;
+  status?: string;
+  primarySchema: string;
+  secondarySchema: string;
+  encrypted: boolean;
+  grantId?: string;
+  channelId?: string;
+  assessorPeerId?: string;
+  count: number;
+  events: ConjunctionEvent[];
+  provenance?: Record<string, unknown>;
+  sources?: Array<Record<string, unknown>>;
+}
+
 export interface DataScanResult {
   schema: string;
   totalCount: number;
@@ -364,6 +403,7 @@ export interface SdnBackend {
   streamRawData(request: RawDataStreamRequest): Promise<BackendResult<RawDataRecord[]>>;
   queryRawData(query: RawDataQuery): Promise<BackendResult<RawDataRecord[]>>;
   readRawDataRecord(schemaName: string, cid: string): Promise<BackendResult<RawDataRecordBytes>>;
+  screenConjunction(request: ConjunctionScreenRequest): Promise<BackendResult<ConjunctionScreenResult>>;
   pinObject(id: string): Promise<BackendResult<Record<string, unknown>>>;
   unpinObject(id: string): Promise<BackendResult<Record<string, unknown>>>;
   listRulesets(): Promise<BackendResult<Array<Record<string, unknown>>>>;

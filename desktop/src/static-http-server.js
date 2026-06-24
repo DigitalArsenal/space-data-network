@@ -2072,6 +2072,23 @@ async function serveDesktopFlatSqlPersistenceAPI (req, res) {
 async function serveDesktopLocalDataAPI (req, res) {
   const parsed = new URL(req.url || '/', `http://${HOST}`)
 
+  if (req.method === 'POST' && parsed.pathname === '/api/v1/conjunction/screen') {
+    let payload = {}
+    try {
+      payload = JSON.parse(await readRequestBody(req) || '{}')
+    } catch {
+      sendJSON(res, 400, { error: 'invalid JSON conjunction request' })
+      return true
+    }
+    sendJSON(res, 200, desktopConjunctionScreenResult(payload))
+    return true
+  }
+
+  if (parsed.pathname === '/api/v1/conjunction/screen') {
+    sendJSON(res, 405, { error: 'method not allowed' })
+    return true
+  }
+
   if (req.method === 'GET' && parsed.pathname === '/api/v1/data/health') {
     sendJSON(res, 200, {
       healthy: true,
@@ -2167,6 +2184,51 @@ async function serveDesktopLocalDataAPI (req, res) {
   }
 
   return false
+}
+
+function desktopConjunctionScreenResult (payload) {
+  const primarySchema = normalizeDesktopSchemaName(readEpmString(payload, ['primary_schema', 'primarySchema']) || 'MPE.fbs')
+  const secondarySchema = normalizeDesktopSchemaName(readEpmString(payload, ['secondary_schema', 'secondarySchema']) || 'OMM.fbs')
+  const encrypted = payload.encrypted !== false
+  const grantID = readEpmString(payload, ['grant_id', 'grantId']) || ''
+  const channelID = readEpmString(payload, ['channel_id', 'channelId']) || ''
+  const assessorPeerID = readEpmString(payload, ['assessor_peer_id', 'assessorPeerId']) || ''
+  const limit = Number.isFinite(Number(payload.limit)) && Number(payload.limit) > 0 ? Number(payload.limit) : 100
+  return {
+    workflow: 'encrypted-conjunction-assessment',
+    mode: encrypted && primarySchema === 'MPE.fbs' ? 'private-maneuver-ephemeris' : encrypted ? 'private-ephemeris' : 'local-screening',
+    status: 'pending-module-execution',
+    primary_schema: primarySchema,
+    secondary_schema: secondarySchema,
+    encrypted,
+    grant_id: grantID,
+    channel_id: channelID,
+    assessor_peer_id: assessorPeerID,
+    limit,
+    count: 0,
+    events: [],
+    sources: [
+      { role: 'primary', schema: primarySchema, encrypted, available: false, count: 0 },
+      { role: 'secondary', schema: secondarySchema, encrypted: false, available: false, count: 0 }
+    ],
+    provenance: {
+      run_at: new Date().toISOString(),
+      source_schemas: [primarySchema, secondarySchema],
+      encrypted,
+      grant_id: grantID,
+      channel_id: channelID,
+      assessor_peer_id: assessorPeerID,
+      result_delivery: 'local-private',
+      module_status: 'pending-module-execution',
+      include_provenance: payload.include_provenance !== false
+    }
+  }
+}
+
+function normalizeDesktopSchemaName (value) {
+  const trimmed = String(value || '').trim()
+  if (!trimmed) return 'MPE.fbs'
+  return `${trimmed.replace(/\.fbs$/i, '').toUpperCase()}.fbs`
 }
 
 async function desktopLocalEpmDataRecord (profile = null) {

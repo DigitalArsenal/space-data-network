@@ -6,6 +6,7 @@
     { href: '#/peers', route: '/peers', label: 'Peers' },
     { href: '#/data', route: '/data', label: 'Data' },
     { href: '#/channels', route: '/channels', label: 'Channels' },
+    { href: '#/conjunction', route: '/conjunction', label: 'Conjunction' },
   ] as const;
 </script>
 

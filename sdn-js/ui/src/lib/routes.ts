@@ -1,4 +1,4 @@
-export type PrimaryRoute = '/node' | '/peers' | '/data' | '/channels';
+export type PrimaryRoute = '/node' | '/peers' | '/data' | '/channels' | '/conjunction';
 
 export function normalizeSdnRoute(rawPath: string): string {
   const path = normalizePath(rawPath);
@@ -10,7 +10,7 @@ export function normalizeSdnRoute(rawPath: string): string {
   if (path.startsWith('/marketplace')) return '/peers?tab=marketplace';
   if (path.startsWith('/explore/')) return `/data?inspect=${encodeURIComponent(path.slice('/explore/'.length))}`;
   if (path.startsWith('/local-data')) return `/data${path.slice('/local-data'.length)}`;
-  if (path.startsWith('/node') || path.startsWith('/peers') || path.startsWith('/data') || path.startsWith('/channels')) {
+  if (path.startsWith('/node') || path.startsWith('/peers') || path.startsWith('/data') || path.startsWith('/channels') || path.startsWith('/conjunction')) {
     return path;
   }
   return '/node';
@@ -20,6 +20,7 @@ export function primaryRouteFromNormalized(route: string): PrimaryRoute {
   if (route.startsWith('/peers')) return '/peers';
   if (route.startsWith('/data')) return '/data';
   if (route.startsWith('/channels')) return '/channels';
+  if (route.startsWith('/conjunction')) return '/conjunction';
   return '/node';
 }
 

@@ -7,6 +7,8 @@ import {
   normalizeBackendConfig,
   type BackendCapability,
   type BackendResult,
+  type ConjunctionScreenRequest,
+  type ConjunctionScreenResult,
   type DataScanResult,
   type DataSummary,
   type LocalObjectSummary,
@@ -27,7 +29,9 @@ import {
   getBytes,
   getJson,
   joinUrl,
+  conjunctionScreenPayload,
   nodeSummaryFromProfile,
+  normalizeConjunctionScreenResult,
   normalizeDataScanResult,
   normalizeDataSummary,
   normalizeNodeAccessPayload,
@@ -346,6 +350,16 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
         return createDegradedResult('readRawDataRecord', result.capability.reason ?? 'raw FlatBuffer record unavailable');
       }
       return createAvailableResult('readRawDataRecord', { schemaName, cid, bytes: result.data });
+    },
+    async screenConjunction(request: ConjunctionScreenRequest): Promise<BackendResult<ConjunctionScreenResult>> {
+      const result = await getJson<unknown>(
+        fetchLike,
+        joinUrl(serverBase, '/api/v1/conjunction/screen'),
+        'screenConjunction',
+        authJsonRequest('POST', conjunctionScreenPayload(request)),
+      );
+      if (!result.ok) return result as BackendResult<ConjunctionScreenResult>;
+      return createAvailableResult('screenConjunction', normalizeConjunctionScreenResult(result.data));
     },
     async pinObject(id: string): Promise<BackendResult<Record<string, unknown>>> {
       return createCapabilityResult('pinObject', 'local-only', `pinning ${id} must run on a local node`);

@@ -202,6 +202,69 @@ describe('remote-sdn backend', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('screens encrypted maneuver ephemeris through the remote conjunction route', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === 'https://sdn.spaceaware.io/api/v1/conjunction/screen') {
+        expect(init?.method).toBe('POST');
+        expect(init?.credentials).toBe('include');
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          primary_schema: 'MPE.fbs',
+          secondary_schema: 'OMM.fbs',
+          encrypted: true,
+          grant_id: 'grant-private-mpe',
+          channel_id: 'channel-private-ca',
+          assessor_peer_id: '16Uiu2HAssessor',
+          include_provenance: true,
+          limit: 25,
+        });
+        return jsonResponse({
+          workflow: 'encrypted-conjunction-assessment',
+          mode: 'private-maneuver-ephemeris',
+          primary_schema: 'MPE.fbs',
+          secondary_schema: 'OMM.fbs',
+          encrypted: true,
+          grant_id: 'grant-private-mpe',
+          channel_id: 'channel-private-ca',
+          assessor_peer_id: '16Uiu2HAssessor',
+          count: 0,
+          events: [],
+          provenance: {
+            assessor_peer_id: '16Uiu2HAssessor',
+            source_schemas: ['MPE.fbs', 'OMM.fbs'],
+          },
+        });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const backend = createRemoteSdnBackend({ serverUrl: 'https://sdn.spaceaware.io', fetch: fetchMock });
+
+    await expect(backend.screenConjunction({
+      primarySchema: 'MPE.fbs',
+      secondarySchema: 'OMM.fbs',
+      encrypted: true,
+      grantId: 'grant-private-mpe',
+      channelId: 'channel-private-ca',
+      assessorPeerId: '16Uiu2HAssessor',
+      includeProvenance: true,
+      limit: 25,
+    })).resolves.toMatchObject({
+      ok: true,
+      data: {
+        workflow: 'encrypted-conjunction-assessment',
+        mode: 'private-maneuver-ephemeris',
+        encrypted: true,
+        grantId: 'grant-private-mpe',
+        channelId: 'channel-private-ca',
+        assessorPeerId: '16Uiu2HAssessor',
+        count: 0,
+        events: [],
+      },
+    });
+    expect(calls.map((call) => call.url)).toEqual(['https://sdn.spaceaware.io/api/v1/conjunction/screen']);
+  });
+
   it('scans remote raw data refs without downloading FlatBuffer bytes', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
