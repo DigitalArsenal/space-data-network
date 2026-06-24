@@ -57,3 +57,12 @@ test('public pages installer needs only curl or wget and no GitHub CLI', () => {
   assert.match(pagesInstall, /wget -qO-/);
   assert.doesNotMatch(pagesInstall, /\bgh\b/);
 });
+
+test('README documents CLI search and EPM wizard', () => {
+  const readme = readFileSync(join(repoRoot, 'README.md'), 'utf8');
+
+  assert.match(readme, /spacedatanetwork search providers/);
+  assert.match(readme, /spacedatanetwork search standards OMM --format json/);
+  assert.match(readme, /spacedatanetwork identity wizard/);
+  assert.match(readme, /identity export --format flatbuffer/);
+});
