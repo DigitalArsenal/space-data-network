@@ -190,6 +190,7 @@ textarea,
 
 .sdn-channel-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: end;
   gap: 0.75rem;
   min-width: 0;
@@ -211,6 +212,11 @@ textarea,
   color: var(--sdn-text);
   padding: 0 0.6rem;
   text-transform: uppercase;
+}
+
+.sdn-channel-toolbar input.sdn-input-wide {
+  width: 10.5rem;
+  text-transform: none;
 }
 
 .sdn-channel-toolbar > span {

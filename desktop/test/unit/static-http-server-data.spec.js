@@ -163,7 +163,32 @@ test.describe('desktop static data API', () => {
       encrypted: true,
       grant_id: 'grant-private-mpe',
       channel_id: 'channel-private-ca',
+      result_channel_id: 'channel-private-results',
       assessor_peer_id: '16Uiu2HAssessor',
+      sources: [
+        {
+          role: 'primary',
+          schema: 'MPE.fbs',
+          provider_id: 'operator-private',
+          source_name: 'private-maneuver-ephemeris',
+          pnm_cid: 'bafyprimarypnm',
+          query: "ENTITY_ID = 'SAT-MANEUVER'",
+          encrypted: true
+        },
+        {
+          role: 'secondary',
+          schema: 'OMM.fbs',
+          provider_id: 'space-data-network-02',
+          source_name: 'celestrak-gp',
+          pnm_cid: 'bafysecondarypnm',
+          query: 'NORAD_CAT_ID = 25544',
+          encrypted: false
+        }
+      ],
+      module: {
+        id: 'com.space-data-network.conjunction-assessment',
+        version: '1.0.0'
+      },
       include_provenance: true,
       limit: 25
     })
@@ -177,12 +202,22 @@ test.describe('desktop static data API', () => {
       encrypted: true,
       grant_id: 'grant-private-mpe',
       channel_id: 'channel-private-ca',
+      result_channel_id: 'channel-private-results',
       assessor_peer_id: '16Uiu2HAssessor',
       count: 0,
       events: [],
+      sources: [
+        expect.objectContaining({ role: 'primary', provider_id: 'operator-private' }),
+        expect.objectContaining({ role: 'secondary', provider_id: 'space-data-network-02' })
+      ],
       provenance: {
         assessor_peer_id: '16Uiu2HAssessor',
-        source_schemas: ['MPE.fbs', 'OMM.fbs']
+        result_channel_id: 'channel-private-results',
+        source_schemas: ['MPE.fbs', 'OMM.fbs'],
+        module: {
+          id: 'com.space-data-network.conjunction-assessment',
+          version: '1.0.0'
+        }
       }
     })
   })

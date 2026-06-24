@@ -209,7 +209,18 @@ export interface ConjunctionScreenRequest {
   encrypted?: boolean;
   grantId?: string;
   channelId?: string;
+  resultChannelId?: string;
   assessorPeerId?: string;
+  primaryProviderId?: string;
+  primarySourceName?: string;
+  primaryPnmCid?: string;
+  primaryQuery?: string;
+  secondaryProviderId?: string;
+  secondarySourceName?: string;
+  secondaryPnmCid?: string;
+  secondaryQuery?: string;
+  moduleId?: string;
+  moduleVersion?: string;
   includeProvenance?: boolean;
   limit?: number;
 }
@@ -235,6 +246,7 @@ export interface ConjunctionScreenResult {
   encrypted: boolean;
   grantId?: string;
   channelId?: string;
+  resultChannelId?: string;
   assessorPeerId?: string;
   count: number;
   events: ConjunctionEvent[];
