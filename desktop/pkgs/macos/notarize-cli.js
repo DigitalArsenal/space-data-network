@@ -3,12 +3,12 @@ const { notarize } = require('electron-notarize-dmg')
 
 // Manual online notarization (no stapling) via CLI
 // ================================================
-// Note: this assumes APPLEID and APPLEIDPASS to be
-// set as env variables or set in .env file
+// Note: this assumes APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID
+// are set as env variables or in .env.
 //
 // Usage:
-// 1. Define APPLEID and APPLEIDPASS
-// 2. node ./notarize.js path/to/IPFS-Desktop.dmg
+// 1. Define APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID
+// 2. node ./notarize.js path/to/Space-Data-Network.dmg
 //
 // Note on stapling and this script:
 // We disable stapling of the dmg file, as it changes its contents.  It
@@ -22,18 +22,18 @@ const { notarize } = require('electron-notarize-dmg')
     console.log('Missing artifact path: pass .dmg file as CLI argument')
     process.exit(1)
   }
-  if (!process.env.APPLEID || !process.env.APPLEIDPASS) {
-    console.log('Define APPLEID and APPLEIDPASS as env variables or in .env file')
+  if (!process.env.APPLE_ID || !process.env.APPLE_APP_SPECIFIC_PASSWORD || !process.env.APPLE_TEAM_ID) {
+    console.log('Define APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID as env variables or in .env file')
     process.exit(1)
   }
   console.log(`Initializing notarization of DMG at ${artifactPath}`)
   await notarize({
-    appBundleId: 'io.ipfs.desktop',
+    appBundleId: 'org.spacedatanetwork.desktop',
     dmgPath: artifactPath,
     staple: false,
-    appleId: process.env.APPLEID,
-    appleIdPassword: process.env.APPLEIDPASS,
+    appleId: process.env.APPLE_ID,
+    appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
     tool: 'notarytool',
-    teamId: '7Y229E2YRL'
+    teamId: process.env.APPLE_TEAM_ID
   })
 })()

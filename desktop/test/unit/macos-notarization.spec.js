@@ -6,6 +6,7 @@ test.describe('macOS notarization configuration', () => {
   test('uses SDN bundle identity and environment-scoped Apple credentials', () => {
     const builderConfig = fs.readFileSync(path.join(__dirname, '../../electron-builder.yml'), 'utf8')
     const notarizeSource = fs.readFileSync(path.join(__dirname, '../../pkgs/macos/notarize-build.js'), 'utf8')
+    const notarizeCliSource = fs.readFileSync(path.join(__dirname, '../../pkgs/macos/notarize-cli.js'), 'utf8')
 
     expect(builderConfig).toContain('appId: org.spacedatanetwork.desktop')
     expect(notarizeSource).toContain('appBundleId: appId')
@@ -14,5 +15,13 @@ test.describe('macOS notarization configuration', () => {
     expect(notarizeSource).toContain('process.env.APPLE_APP_SPECIFIC_PASSWORD')
     expect(notarizeSource).not.toContain('io.ipfs.desktop')
     expect(notarizeSource).not.toContain('7Y229E2YRL')
+    expect(notarizeCliSource).toContain("appBundleId: 'org.spacedatanetwork.desktop'")
+    expect(notarizeCliSource).toContain('teamId: process.env.APPLE_TEAM_ID')
+    expect(notarizeCliSource).toContain('process.env.APPLE_ID')
+    expect(notarizeCliSource).toContain('process.env.APPLE_APP_SPECIFIC_PASSWORD')
+    expect(notarizeCliSource).not.toContain('io.ipfs.desktop')
+    expect(notarizeCliSource).not.toContain('process.env.APPLEID')
+    expect(notarizeCliSource).not.toContain('process.env.APPLEIDPASS')
+    expect(notarizeCliSource).not.toContain('7Y229E2YRL')
   })
 })
