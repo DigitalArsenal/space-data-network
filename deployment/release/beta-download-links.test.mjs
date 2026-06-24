@@ -75,6 +75,15 @@ test('public website and docs expose one-line installers', () => {
   }
 });
 
+test('website encrypted CA section names private maneuver ephemeris screening', () => {
+  const homepage = readRepoFile('docs/index.html');
+
+  assert.match(homepage, /Maneuver Ephemeris/i);
+  assert.match(homepage, /without broadcasting/i);
+  assert.match(homepage, /competitors/i);
+  assert.match(homepage, /planned maneuvers/i);
+});
+
 test('website download cards use direct assets and keep architecture details inside links', () => {
   const homepage = readRepoFile('docs/index.html');
 
