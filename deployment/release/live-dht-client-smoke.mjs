@@ -21,9 +21,9 @@ export const DEFAULT_DHT_REGISTRATION_WAIT_MS = 300_000;
 export const DEFAULT_TOTAL_TIMEOUT_MS = 1_200_000;
 export const DEFAULT_PUBLISH_INTERVAL_MS = 15_000;
 export const LIVE_DHT_BOOTSTRAP_PEERS = [
-  '/dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT',
+  '/dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
   '/dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3',
-  '/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT',
+  '/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
   '/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3'
 ];
 

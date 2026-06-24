@@ -26,7 +26,7 @@ fi
 server_base_url="${SDN_DEV_SERVER_BASE_URL:-${server_scheme}://127.0.0.1:${server_port}}"
 http_challenge_port="${SDN_DEV_HTTP_CHALLENGE_PORT:-5080}"
 remote_provider_url="${SDN_DEV_PROVIDER_URL:-https://sdn.spaceaware.io/api/module-delivery/provider}"
-remote_bootstrap_addr="${SDN_DEV_BOOTSTRAP_ADDR:-/ip4/159.203.150.8/tcp/8080/ws/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT}"
+remote_bootstrap_addr="${SDN_DEV_BOOTSTRAP_ADDR:-/ip4/159.203.150.8/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45}"
 storage_path="${SDN_DEV_STORAGE_PATH:-${repo_root}/data/admin-dev}"
 plugin_root="${SDN_PLUGIN_ROOT:-${storage_path}/license/plugins}"
 frontend_path="${SDN_FRONTEND_PATH:-${repo_root}/sdn-js/ui/dist}"

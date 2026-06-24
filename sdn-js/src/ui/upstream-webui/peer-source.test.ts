@@ -368,7 +368,7 @@ describe('upstream webui peer source', () => {
             Peers: [
               {
                 Addr: '/ip4/159.203.150.8/tcp/4001',
-                Peer: '16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT',
+                Peer: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
                 Identify: {
                   AgentVersion: 'spacedatanetwork/1.0.3',
                   Protocols: [
@@ -400,8 +400,8 @@ describe('upstream webui peer source', () => {
 
     await expect(source.listPeers()).resolves.toEqual([
       {
-        id: '16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT',
-        addrs: ['/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT'],
+        id: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+        addrs: ['/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45'],
         metadata: {
           agent_version: 'spacedatanetwork/1.0.3',
           protocols: '/ipfs/id/1.0.0,/space-data-network/module-delivery/1.0.0',

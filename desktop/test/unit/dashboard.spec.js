@@ -235,10 +235,10 @@ test.describe('SDN dashboard window', () => {
     const peers = kuboSwarmPeersToDesktopSdnPeers({
       Peers: [
         {
-          Peer: '16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT',
+          Peer: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
           Addr: '/ip4/159.203.150.8/tcp/4001',
           Identify: {
-            ID: '16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT',
+            ID: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
             AgentVersion: 'spacedatanetwork/1.0.3',
             Protocols: ['/space-data-network/module-delivery/1.0.0']
           }
@@ -256,8 +256,8 @@ test.describe('SDN dashboard window', () => {
     })
 
     expect(peers).toHaveLength(1)
-    expect(peers[0].id).toBe('16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT')
-    expect(peers[0].addrs[0]).toBe('/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT')
+    expect(peers[0].id).toBe('16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
+    expect(peers[0].addrs[0]).toBe('/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
     expect(peers[0].metadata.ipfs_artifact_addrs).toEqual([
       '/ip4/159.203.150.8/tcp/4002/p2p/12D3KooWMtfuRiHtDuzMMRYB2oX8UKVqP43hZQakGBLhWsMnCd7K'
     ])
@@ -277,7 +277,7 @@ test.describe('SDN dashboard window', () => {
     expect(results).toHaveLength(DESKTOP_SDN_SEED_PEERS.length)
     expect(results.some(result => result.ok)).toBe(true)
     expect(results.some(result => !result.ok)).toBe(true)
-    expect(decodeURIComponent(requestedPaths.join('\n'))).toContain('/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT')
+    expect(decodeURIComponent(requestedPaths.join('\n'))).toContain('/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
     expect(decodeURIComponent(requestedPaths.join('\n'))).toContain('/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3')
     expect(decodeURIComponent(requestedPaths.join('\n'))).not.toContain('/p2p/space-data-network-')
     expect(decodeURIComponent(requestedPaths.join('\n'))).not.toContain('/p2p/sdn.spaceaware.io')
@@ -301,8 +301,8 @@ test.describe('SDN dashboard window', () => {
 
     expect(daemonConfigSource).toContain('const DESKTOP_BOOTSTRAP_PEERS = Object.freeze([')
     expect(daemonConfigSource).toContain("'auto'")
-    expect(daemonConfigSource).toContain('/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT')
-    expect(daemonConfigSource).toContain('/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT')
+    expect(daemonConfigSource).toContain('/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
+    expect(daemonConfigSource).toContain('/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
     expect(daemonConfigSource).toContain('/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3')
     expect(daemonConfigSource).toContain('/dns4/celestrak.eth/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3')
     expect(daemonConfigSource).toContain('ensureDesktopBootstrapPeers')

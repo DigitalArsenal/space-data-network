@@ -16,16 +16,13 @@ import (
 
 var log = logging.Logger("sdn-bootstrap")
 
-// Production SDN bootstrap node peer IDs. Both nodes also serve the dnsaddr
-// TXT records at _dnsaddr.bootstrap.spacedatanetwork.org, so the dnsaddr
-// entries below resolve to the same hosts; the direct ip4 entries keep
-// bootstrap functional when DNS resolution is unavailable.
+// Production SDN bootstrap node peer IDs. The direct ip4 entries are the
+// authoritative fallbacks while dnsaddr bootstrap records are being published.
 const (
-	bootstrapPeerSpaceaware = "16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT" // sdn.spaceaware.io (159.203.150.8) full node, tcp+quic on 4001
+	bootstrapPeerSpaceaware = "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45" // sdn.spaceaware.io (159.203.150.8) full node, tcp+quic on 4001
 	bootstrapPeerCelestrak  = "16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3" // celestrak.eth (167.172.219.213) full node, all transports
-	// The long-lived SpaceAware websocket relay identity, co-hosted on
-	// sdn.spaceaware.io. It owns ws/8080 there (nginx terminates wss/443 in
-	// front of it); the full node above does not listen on websockets.
+	// The same SpaceAware identity also owns the ws/8080 relay listener on
+	// sdn.spaceaware.io; nginx terminates wss/443 in front of it.
 	bootstrapPeerSpaceawareRelay = "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45"
 )
 
@@ -126,12 +123,12 @@ func containsP2PComponent(addr string) bool {
 
 // ConnectResult represents the result of a bootstrap connection attempt.
 type ConnectResult struct {
-	PeerID      peer.ID
-	Address     string
-	Success     bool
-	Error       error
-	WasPinned   bool
-	ActualPeer  peer.ID // The peer ID we actually connected to
+	PeerID     peer.ID
+	Address    string
+	Success    bool
+	Error      error
+	WasPinned  bool
+	ActualPeer peer.ID // The peer ID we actually connected to
 }
 
 // ConnectToBootstrapPeers connects to a list of parsed bootstrap peers.

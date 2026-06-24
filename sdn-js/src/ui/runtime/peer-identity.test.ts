@@ -14,7 +14,7 @@ import {
 import type { HostedEpmRecord } from './identity';
 import type { ObservedSdnPeer } from './sdn-backend';
 
-const PEER_ID = '16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT';
+const PEER_ID = '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45';
 const HD_TEST_XPUB = 'xpub6BpyEDT14VWygfxLMawQKhGXLCVMhJK7voSnjD7VsYYzUfQb6vbTwNhDbXwsa5KraQQgfpDzTq45TfdXQzNiFRfGoFpgbd9KymJsauL4MuT';
 const HD_TEST_SIGNING_PUBLIC_KEY = '0321fce2a66e6c1be09128b20e3f50374fa05ec1ceb84eaa78e69cf1cddc60a7a6';
 const HD_TEST_ENCRYPTION_PUBLIC_KEY = '0301f6e5f01a7765617c817568db07e81dc1b86a87575f4702f347b5897f6b1d06';
@@ -64,7 +64,7 @@ describe('peer identity projection', () => {
 
     const payload = createVCardQrPayload(peerHostedEpmRecord(peer));
     const unfoldedPayload = payload.replace(/\r\n[ \t]/g, '');
-    expect(payload).not.toContain('UID:16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT');
+    expect(payload).not.toContain('UID:16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45');
     expect(payload).not.toContain('X-SDN-EPM-CID:bafy-peer-epm');
     expect(payload).not.toContain('X-SDN-PUBLIC-KEY:node-public-key');
     expect(payload).not.toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public-key');

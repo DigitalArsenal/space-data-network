@@ -12,8 +12,8 @@ private Kubo/SDN key material.
 - SSH alias: `celestrak.eth` or `space-data-network-02`
 - Role: SDN full node, CelesTrak public provider ingest worker, local Kubo node
 - Production seed:
-  `/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT`
-  (also published as `/dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT`)
+  `/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45`
+  (direct pinned IP multiaddrs are authoritative until `_dnsaddr.bootstrap.spacedatanetwork.org` TXT records are published)
 
 ## Install Shape
 
