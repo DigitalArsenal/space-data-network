@@ -776,8 +776,13 @@ git commit -m "feat: add desktop parity routes and contract"
 - [ ] Add failing tests proving CLI `search providers`, Desktop search routes,
   and UI Desktop adapter return the same field names for provider ID, provider
   name, peer ID, schema, source name, record count, and last observed time.
-- [ ] Add failing CLI tests for `--mode local`, `--mode daemon`, `--mode dht`,
+- [x] Add failing CLI tests for `--mode local`, `--mode daemon`, `--mode dht`,
   `--api-url`, and `--format row|table|json|csv`.
+  - [x] 2026-06-24: Added CLI tests for search mode normalization, `--api` /
+    `--api-url` / `--session-token` help, daemon provider search posting to
+    `/api/v1/search/providers`, and live-DHT data search posting to
+    `/api/v1/search/data`; verified with
+    `../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run 'Test(Search|Providers)' -count=1`.
 - [ ] Implement the smallest shared result shape in Go and Desktop JSON routes.
 - [ ] Wire `sdn-js/src/ui/runtime/sdn-backend-desktop.ts` to the same route.
 - [ ] Run `go test ./cmd/spacedatanetwork -run 'TestSearch'`, the Desktop data
@@ -796,8 +801,11 @@ git commit -m "feat: add desktop parity routes and contract"
   `providers search`, `providers show`, `providers connect`, and
   `providers descriptor`.
 - [ ] Add output tests for table/row, JSON, and CSV.
-- [ ] Implement commands using the same API/live/local search backend from
+- [x] Implement commands using the same API/live/local search backend from
   Slice 2 Task 7.
+  - [x] 2026-06-24: `providers list/search/show` now pass `--mode`,
+    `--api`/`--api-url`, and `--session-token` into the same local/direct or
+    daemon/live-DHT shared search path as `search providers`.
 - [ ] Run focused provider CLI tests and commit with message
   `feat: add provider discovery CLI`.
 

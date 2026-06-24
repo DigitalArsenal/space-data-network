@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -56,6 +60,17 @@ func TestSearchCommandHelpListsSubcommands(t *testing.T) {
 	}
 }
 
+func TestSearchSubcommandsDocumentModeAndDaemonAPIFlags(t *testing.T) {
+	for _, command := range []*cobra.Command{searchProvidersCmd, searchDataCmd} {
+		help := command.UsageString()
+		for _, want := range []string{"--mode", "--api", "--api-url", "--session-token"} {
+			if !strings.Contains(help, want) {
+				t.Fatalf("%s help missing %q:\n%s", command.Name(), want, help)
+			}
+		}
+	}
+}
+
 func TestSearchProviderRunEResetsPositionalQuery(t *testing.T) {
 	cfgPath, _ := newSyncCLITestStore(t)
 	withSyncCLITestConfig(t, cfgPath)
@@ -81,10 +96,33 @@ func TestSearchProviderRunEResetsPositionalQuery(t *testing.T) {
 	}
 }
 
+func TestNormalizeSearchMode(t *testing.T) {
+	tests := map[string]searchMode{
+		"":         searchModeLocal,
+		"local":    searchModeLocal,
+		"daemon":   searchModeDaemon,
+		"dht":      searchModeLiveDHT,
+		"live-dht": searchModeLiveDHT,
+	}
+	for input, want := range tests {
+		got, err := normalizeSearchMode(input)
+		if err != nil {
+			t.Fatalf("normalizeSearchMode(%q) returned error: %v", input, err)
+		}
+		if got != want {
+			t.Fatalf("normalizeSearchMode(%q) = %q, want %q", input, got, want)
+		}
+	}
+	if _, err := normalizeSearchMode("private"); err == nil || !strings.Contains(err.Error(), "local, daemon, live-dht") {
+		t.Fatalf("unsupported mode error = %v", err)
+	}
+}
+
 func TestNormalizeSearchFormat(t *testing.T) {
 	tests := map[string]searchOutputFormat{
 		"":      searchOutputTable,
 		"table": searchOutputTable,
+		"row":   searchOutputTable,
 		"rows":  searchOutputTable,
 		"json":  searchOutputJSON,
 		"csv":   searchOutputCSV,
@@ -100,6 +138,139 @@ func TestNormalizeSearchFormat(t *testing.T) {
 	}
 	if _, err := normalizeSearchFormat("xml"); err == nil || !strings.Contains(err.Error(), "table, json, csv") {
 		t.Fatalf("unsupported format error = %v", err)
+	}
+}
+
+func TestSearchProvidersDaemonModeUsesSharedSearchAPI(t *testing.T) {
+	var receivedPath string
+	var receivedBody map[string]any
+	var receivedCookie string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		cookie, err := r.Cookie("sdn_wallet_session")
+		if err != nil {
+			t.Fatalf("missing session cookie: %v", err)
+		}
+		receivedCookie = cookie.Value
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			t.Fatalf("Content-Type = %q, want application/json", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&receivedBody); err != nil {
+			t.Fatalf("decode search body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"count": 1,
+			"results": [{
+				"peer_id": "16Uiu2HCelesTrak",
+				"dn": "CelesTrak",
+				"schema_name": "OMM.fbs",
+				"provider_id": "space-data-network-02",
+				"source_name": "celestrak-gp",
+				"local_rows": 42
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	err := runSearchProviders(&out, searchProviderOptions{
+		Query:        "celestrak",
+		Schema:       "OMM",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Mode:         "daemon",
+		APIURL:       server.URL,
+		SessionToken: "session-123",
+		Format:       "json",
+		Limit:        7,
+	})
+	if err != nil {
+		t.Fatalf("runSearchProviders daemon mode failed: %v", err)
+	}
+
+	if receivedPath != "/api/v1/search/providers" {
+		t.Fatalf("search path = %q, want /api/v1/search/providers", receivedPath)
+	}
+	if receivedCookie != "session-123" {
+		t.Fatalf("session cookie = %q", receivedCookie)
+	}
+	wantBody := map[string]any{
+		"query":         "celestrak",
+		"schema":        "OMM",
+		"provider_id":   "space-data-network-02",
+		"source_name":   "celestrak-gp",
+		"query_profile": storage.DatasetPublicationQueryProfile,
+		"mode":          "daemon",
+		"limit":         float64(7),
+	}
+	for key, want := range wantBody {
+		if got := receivedBody[key]; got != want {
+			t.Fatalf("request body[%s] = %#v, want %#v; full body %#v", key, got, want, receivedBody)
+		}
+	}
+
+	var body searchResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode provider search JSON: %v\n%s", err, out.String())
+	}
+	if body.Count != 1 || body.Results[0]["peer_id"] != "16Uiu2HCelesTrak" || body.Results[0]["local_rows"] != float64(42) {
+		t.Fatalf("unexpected daemon provider search output: %#v", body)
+	}
+}
+
+func TestSearchDataLiveDHTModeUsesSharedSearchAPI(t *testing.T) {
+	var receivedPath string
+	var receivedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&receivedBody); err != nil {
+			t.Fatalf("decode search body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"count": 1,
+			"results": [{
+				"schema_name": "MPE.fbs",
+				"provider_id": "space-data-network-02",
+				"source_name": "private-maneuver-ephemeris",
+				"batch_id": "batch-live",
+				"query_profile": "dataset-publication",
+				"local_rows": 1
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	err := runSearchData(&out, searchDataOptions{
+		Query:        "maneuver",
+		Schema:       "MPE",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "private-maneuver-ephemeris",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Mode:         "live-dht",
+		APIURL:       server.URL,
+		Format:       "csv",
+		Limit:        3,
+	})
+	if err != nil {
+		t.Fatalf("runSearchData live-dht mode failed: %v", err)
+	}
+
+	if receivedPath != "/api/v1/search/data" {
+		t.Fatalf("search path = %q, want /api/v1/search/data", receivedPath)
+	}
+	if receivedBody["mode"] != "live-dht" || receivedBody["schema"] != "MPE" || receivedBody["limit"] != float64(3) {
+		t.Fatalf("request body = %#v", receivedBody)
+	}
+	records, err := csv.NewReader(strings.NewReader(out.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("decode live-dht data CSV: %v\n%s", err, out.String())
+	}
+	if len(records) != 2 || records[1][0] != "MPE.fbs" || records[1][2] != "private-maneuver-ephemeris" {
+		t.Fatalf("live-dht data CSV = %#v", records)
 	}
 }
 

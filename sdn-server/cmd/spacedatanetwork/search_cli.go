@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,11 +23,16 @@ import (
 )
 
 type searchOutputFormat string
+type searchMode string
 
 const (
 	searchOutputTable searchOutputFormat = "table"
 	searchOutputJSON  searchOutputFormat = "json"
 	searchOutputCSV   searchOutputFormat = "csv"
+
+	searchModeLocal   searchMode = "local"
+	searchModeDaemon  searchMode = "daemon"
+	searchModeLiveDHT searchMode = "live-dht"
 )
 
 type searchResult struct {
@@ -44,6 +53,9 @@ type searchProviderOptions struct {
 	SourceName   string
 	BatchID      string
 	QueryProfile string
+	Mode         string
+	APIURL       string
+	SessionToken string
 	Format       string
 	Limit        int
 }
@@ -61,6 +73,9 @@ type searchDataOptions struct {
 	SourceName   string
 	BatchID      string
 	QueryProfile string
+	Mode         string
+	APIURL       string
+	SessionToken string
 	Format       string
 	Limit        int
 }
@@ -124,6 +139,10 @@ func addSearchProviderFlags(cmd *cobra.Command, options *searchProviderOptions) 
 	cmd.Flags().StringVar(&options.SourceName, "source-name", "", "provider source/feed name")
 	cmd.Flags().StringVar(&options.BatchID, "batch-id", "", "source batch ID")
 	cmd.Flags().StringVar(&options.QueryProfile, "query-profile", "", "sync query profile")
+	cmd.Flags().StringVar(&options.Mode, "mode", "local", "search mode: local, daemon, live-dht")
+	cmd.Flags().StringVar(&options.APIURL, "api", "", "local SDN daemon API base URL for daemon/live-dht search (default: SDN_API_URL or config admin address)")
+	cmd.Flags().StringVar(&options.APIURL, "api-url", "", "alias for --api")
+	cmd.Flags().StringVar(&options.SessionToken, "session-token", "", "SDN wallet session token for auth-enabled search APIs (default: SDN_SESSION_TOKEN)")
 	cmd.Flags().StringVar(&options.Format, "format", "table", "output format: table, json, csv")
 	cmd.Flags().IntVar(&options.Limit, "limit", 100, "maximum results")
 }
@@ -139,8 +158,25 @@ func addSearchDataFlags(cmd *cobra.Command, options *searchDataOptions) {
 	cmd.Flags().StringVar(&options.SourceName, "source-name", "", "source/feed name filter")
 	cmd.Flags().StringVar(&options.BatchID, "batch-id", "", "source batch ID filter")
 	cmd.Flags().StringVar(&options.QueryProfile, "query-profile", "", "sync query profile filter")
+	cmd.Flags().StringVar(&options.Mode, "mode", "local", "search mode: local, daemon, live-dht")
+	cmd.Flags().StringVar(&options.APIURL, "api", "", "local SDN daemon API base URL for daemon/live-dht search (default: SDN_API_URL or config admin address)")
+	cmd.Flags().StringVar(&options.APIURL, "api-url", "", "alias for --api")
+	cmd.Flags().StringVar(&options.SessionToken, "session-token", "", "SDN wallet session token for auth-enabled search APIs (default: SDN_SESSION_TOKEN)")
 	cmd.Flags().StringVar(&options.Format, "format", "table", "output format: table, json, csv")
 	cmd.Flags().IntVar(&options.Limit, "limit", 100, "maximum results")
+}
+
+func normalizeSearchMode(input string) (searchMode, error) {
+	switch strings.ToLower(strings.TrimSpace(input)) {
+	case "", "local":
+		return searchModeLocal, nil
+	case "daemon", "api":
+		return searchModeDaemon, nil
+	case "live-dht", "livedht", "dht":
+		return searchModeLiveDHT, nil
+	default:
+		return "", fmt.Errorf("unsupported search mode %q (use local, daemon, live-dht)", input)
+	}
 }
 
 func normalizeSearchFormat(input string) (searchOutputFormat, error) {
@@ -256,6 +292,13 @@ func runSearchProviders(out io.Writer, options searchProviderOptions) error {
 	if err != nil {
 		return err
 	}
+	mode, err := normalizeSearchMode(options.Mode)
+	if err != nil {
+		return err
+	}
+	if mode != searchModeLocal {
+		return runSearchProvidersViaAPI(context.Background(), out, options, mode, format)
+	}
 	store, err := openSearchStore()
 	if err != nil {
 		return err
@@ -296,6 +339,13 @@ func runSearchData(out io.Writer, options searchDataOptions) error {
 	if err != nil {
 		return err
 	}
+	mode, err := normalizeSearchMode(options.Mode)
+	if err != nil {
+		return err
+	}
+	if mode != searchModeLocal {
+		return runSearchDataViaAPI(context.Background(), out, options, mode, format)
+	}
 	store, err := openSearchStore()
 	if err != nil {
 		return err
@@ -309,6 +359,141 @@ func runSearchData(out io.Writer, options searchDataOptions) error {
 	sortSearchRows(rows, dataSearchSortFields()...)
 	rows = applySearchLimit(rows, options.Limit)
 	return writeSearchResult(out, searchResult{Count: len(rows), Results: rows}, dataSearchFields(), format)
+}
+
+func runSearchProvidersViaAPI(ctx context.Context, out io.Writer, options searchProviderOptions, mode searchMode, format searchOutputFormat) error {
+	result, err := postSearchAPI(ctx, options.APIURL, options.SessionToken, "/api/v1/search/providers", searchAPIPayload(searchAPIOptions{
+		Query:        options.Query,
+		Schema:       options.Schema,
+		ProviderID:   options.ProviderID,
+		SourceName:   options.SourceName,
+		BatchID:      options.BatchID,
+		QueryProfile: options.QueryProfile,
+		Mode:         string(mode),
+		Limit:        options.Limit,
+	}))
+	if err != nil {
+		return err
+	}
+	return writeSearchResult(out, result, providerSearchFields(), format)
+}
+
+func runSearchDataViaAPI(ctx context.Context, out io.Writer, options searchDataOptions, mode searchMode, format searchOutputFormat) error {
+	result, err := postSearchAPI(ctx, options.APIURL, options.SessionToken, "/api/v1/search/data", searchAPIPayload(searchAPIOptions{
+		Query:        options.Query,
+		Schema:       options.Schema,
+		ProviderID:   options.ProviderID,
+		SourceName:   options.SourceName,
+		BatchID:      options.BatchID,
+		QueryProfile: options.QueryProfile,
+		Mode:         string(mode),
+		Limit:        options.Limit,
+	}))
+	if err != nil {
+		return err
+	}
+	return writeSearchResult(out, result, dataSearchFields(), format)
+}
+
+type searchAPIOptions struct {
+	Query        string
+	Schema       string
+	ProviderID   string
+	SourceName   string
+	BatchID      string
+	QueryProfile string
+	Mode         string
+	Limit        int
+}
+
+func searchAPIPayload(options searchAPIOptions) map[string]any {
+	payload := map[string]any{}
+	if value := strings.TrimSpace(options.Query); value != "" {
+		payload["query"] = value
+	}
+	if value := strings.TrimSpace(options.Schema); value != "" {
+		payload["schema"] = value
+	}
+	if value := strings.TrimSpace(options.ProviderID); value != "" {
+		payload["provider_id"] = value
+	}
+	if value := strings.TrimSpace(options.SourceName); value != "" {
+		payload["source_name"] = value
+	}
+	if value := strings.TrimSpace(options.BatchID); value != "" {
+		payload["batch_id"] = value
+	}
+	if value := strings.TrimSpace(options.QueryProfile); value != "" {
+		payload["query_profile"] = value
+	}
+	if value := strings.TrimSpace(options.Mode); value != "" {
+		payload["mode"] = value
+	}
+	if options.Limit > 0 {
+		payload["limit"] = options.Limit
+	}
+	return payload
+}
+
+func postSearchAPI(ctx context.Context, explicitAPIURL, explicitSessionToken, path string, payload map[string]any) (searchResult, error) {
+	baseURL, err := searchAPIBaseURL(explicitAPIURL)
+	if err != nil {
+		return searchResult{}, err
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return searchResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+path, bytes.NewReader(body))
+	if err != nil {
+		return searchResult{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if token := searchSessionToken(explicitSessionToken); token != "" {
+		req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return searchResult{}, fmt.Errorf("search API request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return searchResult{}, fmt.Errorf("search API request: %s", resp.Status)
+	}
+	var decoded searchResult
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return searchResult{}, fmt.Errorf("decode search API response: %w", err)
+	}
+	if decoded.Results == nil {
+		decoded.Results = []map[string]any{}
+	}
+	if decoded.Count == 0 && len(decoded.Results) > 0 {
+		decoded.Count = len(decoded.Results)
+	}
+	return decoded, nil
+}
+
+func searchAPIBaseURL(explicit string) (string, error) {
+	if value := strings.TrimSpace(explicit); value != "" {
+		return value, nil
+	}
+	if value := strings.TrimSpace(os.Getenv("SDN_API_URL")); value != "" {
+		return value, nil
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return "", err
+	}
+	return adminURL(cfg), nil
+}
+
+func searchSessionToken(explicit string) string {
+	if value := strings.TrimSpace(explicit); value != "" {
+		return value
+	}
+	return strings.TrimSpace(os.Getenv("SDN_SESSION_TOKEN"))
 }
 
 func providerSearchFields() []string {
