@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -211,7 +212,8 @@ func TestRunIdentityExportFlatBufferUsesLocalFallbackOutputPathWhenDaemonUnavail
 	if err != nil {
 		t.Fatalf("config.Load failed: %v", err)
 	}
-	cfg.Admin.ListenAddr = "127.0.0.1:59998"
+	closedAddr := reserveClosedLoopbackAddr(t)
+	cfg.Admin.ListenAddr = closedAddr
 	if err := config.Save(cfgPath, cfg); err != nil {
 		t.Fatalf("config.Save failed: %v", err)
 	}
@@ -652,6 +654,20 @@ func assertIdentityWizardJSONHasRuntimeAddress(t *testing.T, payload map[string]
 		}
 	}
 	t.Fatalf("payload multiformat_address does not include %q: %#v", runtimeAddr, addrs)
+}
+
+func reserveClosedLoopbackAddr(t *testing.T) string {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve loopback address: %v", err)
+	}
+	addr := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close reserved loopback listener: %v", err)
+	}
+	return addr
 }
 
 func newIdentityWizardTestStore(t *testing.T) (string, *storage.FlatSQLStore, peer.ID, string) {
