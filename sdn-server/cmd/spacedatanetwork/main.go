@@ -188,7 +188,7 @@ func init() {
 	initCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet-wasi.wasm")
 	showIdentityCmd.Flags().BoolVar(&showMnemonic, "show-mnemonic", false, "display the decrypted mnemonic phrase (SENSITIVE)")
 	showIdentityCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet-wasi.wasm")
-	identityExportCmd.Flags().StringVar(&identityExportFormat, "format", "text", "output format: text, json, csv, qrcode")
+	identityExportCmd.Flags().StringVar(&identityExportFormat, "format", "text", "output format: text, json, csv, flatbuffer, qrcode")
 	identityCmd.AddCommand(identityExportCmd)
 
 	rootCmd.AddCommand(daemonCmd)
@@ -256,6 +256,12 @@ func exportIdentity(ctx context.Context, out io.Writer, baseURL string, format s
 			return err
 		}
 		return writeIdentityCSV(out, jsonBytes)
+	case "flatbuffer":
+		epmBytes, err := fetchLocalIdentityEndpoint(ctx, baseURL, "/api/node/epm")
+		if err != nil {
+			return err
+		}
+		return writeIdentityFlatBufferOutput(out, epmBytes, "")
 	case "qrcode":
 		vcardBytes, err := fetchLocalIdentityEndpoint(ctx, baseURL, "/api/node/epm/vcard")
 		if err != nil {
@@ -268,7 +274,7 @@ func exportIdentity(ctx context.Context, out io.Writer, baseURL string, format s
 		_, err = io.WriteString(out, qr.ToSmallString(false))
 		return err
 	default:
-		return fmt.Errorf("unsupported identity export format %q (use text, json, csv, or qrcode)", format)
+		return fmt.Errorf("unsupported identity export format %q (use text, json, csv, flatbuffer, or qrcode)", format)
 	}
 }
 
@@ -280,6 +286,8 @@ func normalizeIdentityExportFormat(format string) string {
 		return "json"
 	case "csv":
 		return "csv"
+	case "flatbuffer", "fbs", "epm":
+		return "flatbuffer"
 	case "qr", "qrcode", "qr-code":
 		return "qrcode"
 	default:
