@@ -785,7 +785,7 @@ with `npm --prefix desktop exec -- playwright test test/unit/static-http-server-
 - Create: `sdn-server/cmd/spacedatanetwork/live_dht_search_backend.go`
 - Create: `sdn-server/cmd/spacedatanetwork/live_dht_search_backend_test.go`
 
-- [ ] Add failing tests proving CLI `search providers`, Desktop search routes,
+- [x] Add failing tests proving CLI `search providers`, Desktop search routes,
   and UI Desktop adapter return the same field names for provider ID, provider
   name, peer ID, schema, source name, record count, and last observed time.
 - [x] Add failing CLI tests for `--mode local`, `--mode daemon`, `--mode dht`,
@@ -803,12 +803,16 @@ with `npm --prefix desktop exec -- playwright test test/unit/static-http-server-
     `live-dht` mode now triggers public-DHT SDN advertisement discovery before
     returning the same shared provider/data rows, and returns a clear
     unavailable error if no live backend is wired.
-- [ ] Implement any remaining Desktop JSON route parity gaps against the same
+- [x] Implement any remaining Desktop JSON route parity gaps against the same
   result shape.
-- [ ] Wire `sdn-js/src/ui/runtime/sdn-backend-desktop.ts` to the same route.
-- [ ] Run `go test ./cmd/spacedatanetwork -run 'TestSearch'`, the Desktop data
+- [x] Wire `sdn-js/src/ui/runtime/sdn-backend-desktop.ts` to the same route.
+- [x] Run `go test ./cmd/spacedatanetwork -run 'TestSearch'`, the Desktop data
   route tests, and the SDN JS runtime tests touched by this slice.
-- [ ] Commit with message `feat: share SDN search across CLI and desktop`.
+- [x] Commit with message `feat: share SDN search across CLI and desktop`.
+  - 2026-06-24: Current implementation verified shared CLI/Desktop/UI search
+    shape and modes with `../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run 'Test(Search|Providers)' -count=1`,
+    `npm --prefix desktop exec -- playwright test test/unit/static-http-server-data.spec.js`,
+    and `npm --prefix sdn-js test -- --run src/ui/runtime/sdn-backend-desktop.test.ts`.
 
 ### Task 8: Add Provider CLI Commands
 
@@ -818,17 +822,21 @@ with `npm --prefix desktop exec -- playwright test test/unit/static-http-server-
 - Modify: `sdn-server/cmd/spacedatanetwork/main.go`
 - Modify: `sdn-server/cmd/spacedatanetwork/main_test.go`
 
-- [ ] Add failing command registration tests for `providers list`,
+- [x] Add failing command registration tests for `providers list`,
   `providers search`, `providers show`, `providers connect`, and
   `providers descriptor`.
-- [ ] Add output tests for table/row, JSON, and CSV.
+- [x] Add output tests for table/row, JSON, and CSV.
 - [x] Implement commands using the same API/live/local search backend from
   Slice 2 Task 7.
   - [x] 2026-06-24: `providers list/search/show` now pass `--mode`,
     `--api`/`--api-url`, and `--session-token` into the same local/direct or
     daemon/live-DHT shared search path as `search providers`.
-- [ ] Run focused provider CLI tests and commit with message
+- [x] Run focused provider CLI tests and commit with message
   `feat: add provider discovery CLI`.
+  - 2026-06-24: Added explicit `providers list` table, `providers search`
+    JSON, and `providers show` CSV coverage against the same shared search
+    fixture used by `search providers`; verified with
+    `../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run 'Test(Search|Providers)' -count=1`.
 
 ---
 

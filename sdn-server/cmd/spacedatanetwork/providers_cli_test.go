@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -44,6 +45,86 @@ func TestProvidersCommandHelpDocumentsDataStandardFiltering(t *testing.T) {
 		if !strings.Contains(help, want) {
 			t.Fatalf("providers help missing %q:\n%s", want, help)
 		}
+	}
+}
+
+func TestProvidersListOutputsTableRowsFromSharedSearch(t *testing.T) {
+	cfgPath, store := newSyncCLITestStore(t)
+	seedSyncCLITestData(t, store)
+	withSyncCLITestConfig(t, cfgPath)
+
+	var out bytes.Buffer
+	if err := runProvidersList(&out, providersSharedOptions{
+		Schema: "OMM",
+		Format: "table",
+		Limit:  10,
+	}); err != nil {
+		t.Fatalf("runProvidersList failed: %v", err)
+	}
+
+	output := out.String()
+	for _, want := range []string{"peer_id", "provider_id", "schema_name", "CelesTrak", "space-data-network-02", "OMM.fbs"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("providers list table missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestProvidersSearchOutputsJSONFromSharedSearch(t *testing.T) {
+	cfgPath, store := newSyncCLITestStore(t)
+	seedSyncCLITestData(t, store)
+	withSyncCLITestConfig(t, cfgPath)
+
+	var out bytes.Buffer
+	if err := runProvidersSearch(&out, "celestrak", providersSharedOptions{
+		Schema: "OMM",
+		Format: "json",
+		Limit:  10,
+	}); err != nil {
+		t.Fatalf("runProvidersSearch failed: %v", err)
+	}
+
+	var body searchResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("providers search JSON invalid: %v\n%s", err, out.String())
+	}
+	if body.Count != 1 || len(body.Results) != 1 {
+		t.Fatalf("providers search JSON = %#v", body)
+	}
+	row := body.Results[0]
+	if row["peer_id"] != "16Uiu2HCelesTrak" ||
+		row["provider_id"] != "space-data-network-02" ||
+		row["schema_name"] != "OMM.fbs" {
+		t.Fatalf("providers search row = %#v", row)
+	}
+}
+
+func TestProvidersShowOutputsCSVFromSharedSearch(t *testing.T) {
+	cfgPath, store := newSyncCLITestStore(t)
+	seedSyncCLITestData(t, store)
+	withSyncCLITestConfig(t, cfgPath)
+
+	var out bytes.Buffer
+	if err := runProvidersShow(&out, "celestrak.eth", providersSharedOptions{
+		Schema: "OMM",
+		Format: "csv",
+		Limit:  10,
+	}); err != nil {
+		t.Fatalf("runProvidersShow failed: %v", err)
+	}
+
+	records, err := csv.NewReader(strings.NewReader(out.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("providers show CSV invalid: %v\n%s", err, out.String())
+	}
+	if len(records) != 2 {
+		t.Fatalf("providers show CSV rows = %#v", records)
+	}
+	if records[0][0] != "peer_id" || records[0][10] != "provider_id" || records[0][7] != "schema_name" {
+		t.Fatalf("providers show CSV header = %#v", records[0])
+	}
+	if records[1][0] != "16Uiu2HCelesTrak" || records[1][10] != "space-data-network-02" || records[1][7] != "OMM.fbs" {
+		t.Fatalf("providers show CSV row = %#v", records[1])
 	}
 }
 
