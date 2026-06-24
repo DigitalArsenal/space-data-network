@@ -1632,7 +1632,7 @@ Run:
 rm -rf /tmp/sdn-search-wizard-bin /tmp/sdn-search-wizard-public-home
 mkdir -p /tmp/sdn-search-wizard-bin /tmp/sdn-search-wizard-public-home
 HOME=/tmp/sdn-search-wizard-public-home PATH="/tmp/sdn-search-wizard-bin:$PATH" \
-  curl -fsSL https://digitalarsenal.github.io/space-data-network/install.sh |
+  curl -fsSL https://spacedatanetwork.org/install.sh |
   HOME=/tmp/sdn-search-wizard-public-home PATH="/tmp/sdn-search-wizard-bin:$PATH" \
   SDN_INSTALL_DIR=/tmp/sdn-search-wizard-bin bash
 HOME=/tmp/sdn-search-wizard-public-home PATH="/tmp/sdn-search-wizard-bin:$PATH" spacedatanetwork search standards OMM --format json

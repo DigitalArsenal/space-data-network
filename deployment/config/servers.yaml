@@ -78,7 +78,7 @@ registry_builders:
     poll_interval: 5m
     cdn_endpoints:
       - s3://sdn-cdn/edge-relays.wasm
-      - https://digitalarsenal.github.io/space-data-network/cdn/
+      - https://spacedatanetwork.org/cdn/
 
 # Bootstrap nodes (subset of full nodes used for initial connection)
 bootstrap:

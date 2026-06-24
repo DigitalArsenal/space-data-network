@@ -1,10 +1,10 @@
 #!/bin/bash
 # Space Data Network Install Script
-# Usage: curl -sSL https://digitalarsenal.github.io/space-data-network/install.sh | bash
+# Usage: curl -fsSL https://spacedatanetwork.org/install.sh | bash
 #
 # Environment variables:
 #   SDN_VERSION     Release tag or version to install (default: latest)
-#   SDN_INSTALL_DIR Command link directory (default: /usr/local/bin)
+#   SDN_INSTALL_DIR Command link directory (default: ~/.spacedatanetwork/bin)
 #   SDN_BUNDLE_DIR  Bundle parent directory (default: ~/.spacedatanetwork/bundles)
 #   SDN_SKIP_INIT   Set to 1 to skip first-run node identity initialization
 
@@ -13,8 +13,10 @@ set -e
 REPO="DigitalArsenal/space-data-network"
 PRIMARY_BINARY_NAME="spacedatanetwork"
 ALIAS_BINARY_NAME="sdn"
-INSTALL_DIR="${SDN_INSTALL_DIR:-/usr/local/bin}"
+INSTALL_DIR="${SDN_INSTALL_DIR:-$HOME/.spacedatanetwork/bin}"
 BUNDLE_PARENT_DIR="${SDN_BUNDLE_DIR:-$HOME/.spacedatanetwork/bundles}"
+PRIMARY_COMMAND_PATH="${INSTALL_DIR}/${PRIMARY_BINARY_NAME}"
+ALIAS_COMMAND_PATH="${INSTALL_DIR}/${ALIAS_BINARY_NAME}"
 TMP_DIR=""
 
 RED='\033[0;31m'
@@ -118,6 +120,10 @@ detect_platform() {
             exit 1
             ;;
     esac
+
+    if [ "$OS" = "windows" ] && [ "$ARCH" = "arm64" ]; then
+        ARCH="amd64"
+    fi
 
     PLATFORM="${OS}-${ARCH}"
     log_info "Detected platform: $PLATFORM"
@@ -271,27 +277,26 @@ extract_archive() {
 install_unix_links() {
     log_info "Linking commands into $INSTALL_DIR..."
 
-    if [ ! -d "$INSTALL_DIR" ]; then
-        if ! mkdir -p "$INSTALL_DIR" 2>/dev/null; then
-            sudo mkdir -p "$INSTALL_DIR"
-        fi
+    if ! mkdir -p "$INSTALL_DIR"; then
+        log_error "Failed to create $INSTALL_DIR"
+        exit 1
     fi
 
-    if [ -w "$INSTALL_DIR" ]; then
-        ln -sf "${BUNDLE_ROOT}/bin/${PRIMARY_BINARY_NAME}" "${INSTALL_DIR}/${PRIMARY_BINARY_NAME}"
-        ln -sf "${BUNDLE_ROOT}/bin/${ALIAS_BINARY_NAME}" "${INSTALL_DIR}/${ALIAS_BINARY_NAME}"
-    else
-        log_info "Requesting sudo permission..."
-        sudo ln -sf "${BUNDLE_ROOT}/bin/${PRIMARY_BINARY_NAME}" "${INSTALL_DIR}/${PRIMARY_BINARY_NAME}"
-        sudo ln -sf "${BUNDLE_ROOT}/bin/${ALIAS_BINARY_NAME}" "${INSTALL_DIR}/${ALIAS_BINARY_NAME}"
+    if [ ! -w "$INSTALL_DIR" ]; then
+        log_error "$INSTALL_DIR is not writable. Set SDN_INSTALL_DIR to a user-writable directory."
+        exit 1
     fi
+
+    ln -sf "${BUNDLE_ROOT}/bin/${PRIMARY_BINARY_NAME}" "${INSTALL_DIR}/${PRIMARY_BINARY_NAME}"
+    ln -sf "${BUNDLE_ROOT}/bin/${ALIAS_BINARY_NAME}" "${INSTALL_DIR}/${ALIAS_BINARY_NAME}"
 
     log_info "Installed ${PRIMARY_BINARY_NAME} and ${ALIAS_BINARY_NAME} command links"
 }
 
 print_windows_usage() {
     log_info "Extracted portable Windows bundle to ${BUNDLE_ROOT}"
-    log_info "Add ${BUNDLE_ROOT}/bin to your PATH"
+    log_info "For native PowerShell, run: irm https://spacedatanetwork.org/install.ps1 | iex"
+    log_info "For this Bash environment, add ${BUNDLE_ROOT}/bin to your PATH"
     log_info "Run ${BUNDLE_ROOT}/bin/spacedatanetwork.exe version"
     log_info "Alias binary: ${BUNDLE_ROOT}/bin/sdn.exe"
 }
@@ -312,13 +317,13 @@ initialize_unix_node() {
         log_info "Skipping node identity initialization because SDN_SKIP_INIT=1"
         return
     fi
-    if ! command -v "$PRIMARY_BINARY_NAME" &> /dev/null; then
-        log_warn "Cannot initialize node identity because $PRIMARY_BINARY_NAME is not in PATH"
+    if [ ! -x "$PRIMARY_COMMAND_PATH" ]; then
+        log_warn "Cannot initialize node identity because $PRIMARY_COMMAND_PATH is not executable"
         return
     fi
 
     log_info "Initializing local node identity..."
-    "$PRIMARY_BINARY_NAME" init
+    "$PRIMARY_COMMAND_PATH" init
 }
 
 verify_installation() {
@@ -326,18 +331,23 @@ verify_installation() {
         return
     fi
 
-    if command -v "$PRIMARY_BINARY_NAME" &> /dev/null && command -v "$ALIAS_BINARY_NAME" &> /dev/null; then
+    if [ -x "$PRIMARY_COMMAND_PATH" ] && [ -x "$ALIAS_COMMAND_PATH" ]; then
         log_info "Installation successful!"
         echo ""
-        "$PRIMARY_BINARY_NAME" version || log_warn "Installed binary did not print a version"
-        "$ALIAS_BINARY_NAME" status >/dev/null 2>&1 || log_warn "Alias command did not print local status"
+        "$PRIMARY_COMMAND_PATH" version || log_warn "Installed binary did not print a version"
+        "$ALIAS_COMMAND_PATH" status >/dev/null 2>&1 || log_warn "Alias command did not print local status"
         echo ""
+        if ! command -v "$PRIMARY_BINARY_NAME" &> /dev/null || ! command -v "$ALIAS_BINARY_NAME" &> /dev/null; then
+            log_warn "Command links installed but $INSTALL_DIR is not in PATH"
+            log_info "Add this to your shell profile: export PATH=\"$INSTALL_DIR:\$PATH\""
+            log_info "For this shell, run: export PATH=\"$INSTALL_DIR:\$PATH\""
+        fi
         log_info "Run '$PRIMARY_BINARY_NAME start' to start the node as a persistent background service"
         log_info "Run '$PRIMARY_BINARY_NAME daemon' for foreground/manual mode"
         log_info "Run '$ALIAS_BINARY_NAME status' to inspect the local node"
     else
-        log_warn "Command links installed but not in PATH"
-        log_info "Add $INSTALL_DIR to your PATH or run: ${INSTALL_DIR}/${PRIMARY_BINARY_NAME}"
+        log_error "Command links were not installed correctly"
+        exit 1
     fi
 }
 
@@ -360,7 +370,7 @@ main() {
     verify_installation
 
     echo ""
-    log_info "Documentation: https://docs.digitalarsenal.github.io/space-data-network"
+    log_info "Documentation: https://spacedatanetwork.org"
     log_info "GitHub: https://github.com/${REPO}"
     echo ""
 }
