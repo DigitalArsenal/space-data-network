@@ -38,7 +38,7 @@
   "cancel": "Cancel",
   "enable": "Enable",
   "reportTheError": "Report the error",
-  "restartIpfsDesktop": "Restart IPFS Desktop",
+  "restartIpfsDesktop": "Restart Space Data Network",
   "openLogs": "Open logs",
   "takeScreenshot": "Take Screenshot",
   "moveRepositoryLocation": "Move Repository Location",
@@ -62,15 +62,15 @@
   },
   "recoverableErrorDialog": {
     "title": "An error has occurred",
-    "message": "An error occurred but it does not prevent the execution of IPFS Desktop. You can either inspect the logs for yourself or report the error to the developers."
+    "message": "An error occurred but it does not prevent the execution of Space Data Network. You can either inspect the logs for yourself or report the error to the developers."
   },
   "cannotConnectToApiDialog": {
     "title": "Cannot connect to API",
     "message": "IPFS Desktop cannot connect to the API address provided: { addr }."
   },
   "ipfsDesktopHasShutdownDialog": {
-    "title": "IPFS Desktop has shutdown",
-    "message": "IPFS Desktop has shutdown because of an error. You can restart the app or report the error to the developers, which requires a GitHub account."
+    "title": "Space Data Network has shut down",
+    "message": "Space Data Network has shut down because of an error. You can restart the app or report the error to the developers, which requires a GitHub account."
   },
   "moveRepositoryWarnDialog": {
     "title": "Move repository",

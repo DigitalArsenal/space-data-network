@@ -1004,6 +1004,22 @@ func TestUserFacingCLICommandsAreRegistered(t *testing.T) {
 	requireCommand(t, []string{"service", "uninstall"}, "uninstall")
 }
 
+func TestMigrationOnlyCommandsAreHiddenFromUserFacingHelp(t *testing.T) {
+	cmd, _, err := rootCmd.Find([]string{"import-legacy-sqlite"})
+	if err != nil {
+		t.Fatalf("find import-legacy-sqlite: %v", err)
+	}
+	if cmd == nil {
+		t.Fatal("import-legacy-sqlite command should remain available for explicit migration use")
+	}
+	if !cmd.Hidden {
+		t.Fatal("import-legacy-sqlite should be hidden from user-facing root help")
+	}
+	if usage := rootCmd.UsageString(); strings.Contains(usage, "import-legacy-sqlite") {
+		t.Fatalf("root help exposes migration-only command:\n%s", usage)
+	}
+}
+
 func TestChannelHandlerOptionsForIdentityWiresEncryptedStreamDecryptor(t *testing.T) {
 	t.Parallel()
 

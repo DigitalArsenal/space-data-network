@@ -239,7 +239,9 @@
       ],
       "tests": [
         "sdn-server/cmd/spacedatanetwork/conjunction_cli_test.go",
-        "sdn-js/tests/sdn-ui.spec.ts"
+        "sdn-js/src/ui/conjunction-ui-source.test.ts",
+        "sdn-js/src/ui/runtime/sdn-backend-desktop.test.ts",
+        "sdn-js/src/ui/runtime/sdn-backend-remote.test.ts"
       ]
     },
     {
@@ -316,12 +318,18 @@
         "website names private maneuver ephemeris as a key encrypted conjunction assessment use case",
         "user-facing docs do not require gh for install paths"
       ],
-      "tests": ["deployment/release/beta-download-links.test.mjs"]
+      "tests": [
+        "deployment/release/docs-parity.test.mjs",
+        "deployment/release/beta-download-links.test.mjs",
+        "desktop/test/unit/app-menu.spec.js",
+        "desktop/test/unit/tray-sdn-links.spec.js",
+        "desktop/test/unit/dashboard.spec.js"
+      ]
     },
     {
       "id": "ci.live_dht_cross_platform",
       "requirementIds": ["R12.live_dht_cross_platform"],
-      "surfaces": ["cli", "desktop", "release"],
+      "surfaces": ["cli", "release"],
       "platforms": ["linux-docker", "macos", "windows"],
       "registrationWaitSeconds": 300,
       "proves": [

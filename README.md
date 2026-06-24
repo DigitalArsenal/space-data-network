@@ -40,7 +40,7 @@ Space Data Network enables real-time sharing of space situational awareness data
 - `/webui` is the upstream-style IPFS WebUI.
 - `/admin` is reserved for admin and auth flows.
 
-The SDN browser path uses `sdn-js` plus the generic async capability surfaces from `space-data-module-sdk` and the existing `hd-wallet-wasm` and `hd-wallet-ui` identity stack. It does not use a helper service or the old broker/bootstrap browser flow.
+The SDN browser path uses `sdn-js` plus the generic async capability surfaces from `space-data-module-sdk` and the existing `hd-wallet-wasm` and `hd-wallet-ui` identity stack. It uses direct SDN APIs and browser-safe package exports without a helper service.
 
 ## Marketplace Direction
 
@@ -148,11 +148,29 @@ spacedatanetwork identity export --format flatbuffer --output epm.fbs
 spacedatanetwork identity export --format qrcode
 ```
 
+Identity export supports text, JSON, CSV, FlatBuffer, and QR code output. Text
+is the vCard, JSON is the EPM projection, CSV is a single-row contact export,
+FlatBuffer writes the signed EPM bytes, and QR code prints a terminal QR for
+the vCard.
+
 The wizard stores only public EPM contact fields. It never prints mnemonic,
 xpriv, private signing key, or private encryption key material. If the daemon is
 running with admin auth enabled, pass `--session-token` or set
 `SDN_SESSION_TOKEN` so the wizard can update the live EPM without dropping
 runtime-owned fields.
+
+Update the CLI bundle through the SDN-owned signed update provider:
+
+```bash
+spacedatanetwork update check
+spacedatanetwork update stage
+spacedatanetwork update apply
+```
+
+The update feed is rooted at `updates.spacedatanetwork.org`. The daemon update
+path stages the replacement, swaps the running bundle in place, restarts the
+daemon, checks health, and rolls back if the updated daemon does not come back
+healthy.
 
 ### Browser Usage
 
@@ -559,6 +577,11 @@ Each publisher maintains a per-schema **hash-chained log** for efficient increme
 ### Encrypted Messages
 
 SDN supports end-to-end encryption for private data:
+
+Encrypted conjunction assessment can screen private maneuver ephemeris without broadcasting
+planned maneuvers to competitors. Operators can submit protected MPE/EPM inputs
+through grant-scoped channels, receive threshold CA results, and preserve
+provenance without exposing maneuver intent to the public network.
 
 | Mode | Algorithm | Use Case |
 |------|-----------|----------|

@@ -40,14 +40,14 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/ipfs/ipfs-desktop"
+    "url": "https://github.com/DigitalArsenal/space-data-network"
   },
-  "author": "Interplanetary Shipyard",
+  "author": "Space Data Network",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/ipfs/ipfs-desktop/issues/new/choose"
+    "url": "https://github.com/DigitalArsenal/space-data-network/issues/new/choose"
   },
-  "homepage": "https://github.com/ipfs/ipfs-desktop",
+  "homepage": "https://spacedatanetwork.org/downloads/",
   "devDependencies": {
     "@electron/notarize": "^1.2.3",
     "@ipfs-shipyard/release-please-ipfs-plugin": "^1.0.0",

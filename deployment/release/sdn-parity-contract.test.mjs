@@ -139,6 +139,35 @@ test('search, installer, update, and live-DHT capabilities encode required modes
   ]);
 });
 
+test('docs and encrypted CA capabilities reference direct parity tests', () => {
+  const capabilities = new Map(contract.capabilities.map((capability) => [capability.id, capability]));
+
+  const docs = capabilities.get('docs.help_website');
+  assert.ok(docs);
+  for (const testPath of [
+    'deployment/release/docs-parity.test.mjs',
+    'desktop/test/unit/app-menu.spec.js',
+    'desktop/test/unit/tray-sdn-links.spec.js',
+    'desktop/test/unit/dashboard.spec.js'
+  ]) {
+    assert.ok(docs.tests.includes(testPath), `docs.help_website must reference ${testPath}`);
+  }
+
+  const encryptedCA = capabilities.get('encrypted_ca.maneuver_ephemeris');
+  assert.ok(encryptedCA);
+  for (const testPath of [
+    'sdn-js/src/ui/conjunction-ui-source.test.ts',
+    'sdn-js/src/ui/runtime/sdn-backend-desktop.test.ts',
+    'sdn-js/src/ui/runtime/sdn-backend-remote.test.ts'
+  ]) {
+    assert.ok(encryptedCA.tests.includes(testPath), `encrypted_ca.maneuver_ephemeris must reference ${testPath}`);
+  }
+
+  const liveDht = capabilities.get('ci.live_dht_cross_platform');
+  assert.ok(liveDht);
+  assert.deepEqual(liveDht.surfaces, ['cli', 'release'], 'live-DHT release smoke must not overclaim Desktop UI execution');
+});
+
 test('every parity contract test reference exists in the repo', () => {
   for (const capability of contract.capabilities) {
     for (const testPath of capability.tests) {

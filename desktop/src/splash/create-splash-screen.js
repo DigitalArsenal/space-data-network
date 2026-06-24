@@ -1,7 +1,7 @@
 /**
- * A splash screen for the application that is shown while the webui is loading.
+ * A splash screen for the application that is shown while the SDN UI is loading.
  *
- * This is to prevent the user from seeing the `Could not connect to the IPFS API` error
+ * This is to prevent the user from seeing the `Could not connect to the SDN API` error
  * while we're still booting up the daemon.
  */
 const { BrowserWindow } = require('electron')
@@ -12,7 +12,7 @@ const path = require('node:path')
 module.exports = async function createSplashScreen () {
   const ctx = getCtx()
   const splashScreen = new BrowserWindow({
-    title: 'IPFS Desktop splash screen',
+    title: 'Space Data Network splash screen',
     width: 250,
     height: 275,
     transparent: true,
