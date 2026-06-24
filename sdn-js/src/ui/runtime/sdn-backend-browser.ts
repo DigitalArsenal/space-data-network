@@ -6,6 +6,7 @@ import {
   createUnavailableResult,
   type BackendCapability,
   type BackendResult,
+  type ConjunctionScreenResult,
   type DataScanResult,
   type DataSummary,
   type LocalObjectSummary,
@@ -180,6 +181,9 @@ export function createBrowserNodeBackend(): SdnBackend {
     },
     async readRawDataRecord(): Promise<BackendResult<RawDataRecordBytes>> {
       return createUnavailableResult('readRawDataRecord', 'raw FlatBuffer record reads require a local or remote SDN node');
+    },
+    async screenConjunction(): Promise<BackendResult<ConjunctionScreenResult>> {
+      return createUnavailableResult('screenConjunction', 'conjunction screening requires a local or remote SDN node');
     },
     async pinObject(id: string): Promise<BackendResult<Record<string, unknown>>> {
       return createDegradedResult('pinObject', `browser pinning for ${id} is scheduled for Milestone 4`);

@@ -218,6 +218,21 @@ textarea,
   font-size: 0.86rem;
 }
 
+.sdn-channel-toolbar input[type='checkbox'] {
+  width: 1.25rem;
+  min-height: 1.25rem;
+  accent-color: var(--sdn-blue);
+}
+
+.sdn-conjunction-output {
+  width: 100%;
+  min-height: 20rem;
+  padding: 0.8rem;
+  resize: vertical;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  white-space: pre;
+}
+
 .sdn-channel-layout {
   display: grid;
   grid-template-columns: minmax(22rem, 0.95fr) minmax(24rem, 1.05fr);

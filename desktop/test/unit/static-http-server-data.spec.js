@@ -102,6 +102,40 @@ test.describe('desktop static data API', () => {
     expect(length).toBe(payload.byteLength)
     expect(payload.byteLength).toBeGreaterThan(0)
   })
+
+  test('serves encrypted conjunction screening workflow metadata for private MPE requests', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-desktop-conjunction-'))
+    const { serveDesktopLocalDataAPI } = loadStaticServer(userData)
+
+    const result = await requestJson(serveDesktopLocalDataAPI, 'POST', '/api/v1/conjunction/screen', {
+      primary_schema: 'MPE.fbs',
+      secondary_schema: 'OMM.fbs',
+      encrypted: true,
+      grant_id: 'grant-private-mpe',
+      channel_id: 'channel-private-ca',
+      assessor_peer_id: '16Uiu2HAssessor',
+      include_provenance: true,
+      limit: 25
+    })
+
+    expect(result.statusCode).toBe(200)
+    expect(result.json).toMatchObject({
+      workflow: 'encrypted-conjunction-assessment',
+      mode: 'private-maneuver-ephemeris',
+      primary_schema: 'MPE.fbs',
+      secondary_schema: 'OMM.fbs',
+      encrypted: true,
+      grant_id: 'grant-private-mpe',
+      channel_id: 'channel-private-ca',
+      assessor_peer_id: '16Uiu2HAssessor',
+      count: 0,
+      events: [],
+      provenance: {
+        assessor_peer_id: '16Uiu2HAssessor',
+        source_schemas: ['MPE.fbs', 'OMM.fbs']
+      }
+    })
+  })
 })
 
 function loadStaticServer (userData, overrides = {}) {

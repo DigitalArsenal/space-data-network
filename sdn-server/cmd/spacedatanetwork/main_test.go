@@ -96,6 +96,7 @@ func TestNodeSecurityPublicAPIRequestPolicy(t *testing.T) {
 
 		{http.MethodGet, "/api/v1/data/summary", false},
 		{http.MethodPost, "/api/v1/data/query", false},
+		{http.MethodPost, "/api/v1/conjunction/screen", false},
 		{http.MethodGet, "/api/v1/data/records/EPM.fbs/12D3KooW", false},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/subscribe", false},
 		{http.MethodPost, "/api/v1/channels/spaceaware-OMM/publish", false},
@@ -136,6 +137,7 @@ func TestNodeSecurityAdminOnlyAPIPathPolicy(t *testing.T) {
 		"/api/v0/pin/add",
 		"/api/v1/data/summary",
 		"/api/v1/data/query",
+		"/api/v1/conjunction/screen",
 		"/api/v1/data/records/EPM.fbs/12D3KooW",
 		"/api/v1/modules/runtime/celestrak-provider/schedules/full/run",
 		"/api/v1/admin/dataset-updates/publish",

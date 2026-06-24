@@ -2,6 +2,9 @@ import {
   createAvailableResult,
   createDegradedResult,
   type BackendResult,
+  type ConjunctionEvent,
+  type ConjunctionScreenRequest,
+  type ConjunctionScreenResult,
   type DataScanResult,
   type DataSummary,
   type LocalObjectSummary,
@@ -243,6 +246,53 @@ export function rawDataStreamPayload(request: RawDataStreamRequest): Record<stri
   };
 }
 
+export function conjunctionScreenPayload(request: ConjunctionScreenRequest): Record<string, unknown> {
+  return {
+    primary_schema: normalizeSchemaName(request.primarySchema, 'MPE.fbs'),
+    secondary_schema: normalizeSchemaName(request.secondarySchema, 'OMM.fbs'),
+    encrypted: request.encrypted !== false,
+    include_provenance: request.includeProvenance !== false,
+    ...(request.grantId ? { grant_id: request.grantId } : {}),
+    ...(request.channelId ? { channel_id: request.channelId } : {}),
+    ...(request.assessorPeerId ? { assessor_peer_id: request.assessorPeerId } : {}),
+    ...(typeof request.limit === 'number' && Number.isFinite(request.limit) ? { limit: request.limit } : {}),
+  };
+}
+
+export function normalizeConjunctionScreenResult(payload: unknown): ConjunctionScreenResult {
+  const record = isRecord(payload) ? payload : {};
+  const events = recordsFromValue(record.events).map(normalizeConjunctionEvent);
+  return {
+    workflow: readString(record, 'workflow') ?? 'encrypted-conjunction-assessment',
+    mode: readString(record, 'mode') ?? 'private-maneuver-ephemeris',
+    status: readString(record, 'status') ?? undefined,
+    primarySchema: readString(record, 'primary_schema', 'primarySchema') ?? 'MPE.fbs',
+    secondarySchema: readString(record, 'secondary_schema', 'secondarySchema') ?? 'OMM.fbs',
+    encrypted: readBoolean(record, 'encrypted') ?? false,
+    grantId: readString(record, 'grant_id', 'grantId') ?? undefined,
+    channelId: readString(record, 'channel_id', 'channelId') ?? undefined,
+    assessorPeerId: readString(record, 'assessor_peer_id', 'assessorPeerId') ?? undefined,
+    count: readNumber(record, 'count') ?? events.length,
+    events,
+    provenance: isRecord(record.provenance) ? record.provenance : undefined,
+    sources: recordsFromValue(record.sources),
+  };
+}
+
+function normalizeConjunctionEvent(record: Record<string, unknown>): ConjunctionEvent {
+  return {
+    ...record,
+    primaryObject: readString(record, 'primary_object', 'primaryObject') ?? undefined,
+    secondaryObject: readString(record, 'secondary_object', 'secondaryObject') ?? undefined,
+    tca: readString(record, 'tca', 'tca_time', 'tcaTime') ?? undefined,
+    missDistanceKm: readNumber(record, 'miss_distance_km', 'missDistanceKm') ?? undefined,
+    probability: readNumber(record, 'probability', 'pc', 'collision_probability') ?? undefined,
+    providerId: readString(record, 'provider_id', 'providerId') ?? undefined,
+    sourceName: readString(record, 'source_name', 'sourceName') ?? undefined,
+    status: readString(record, 'status') ?? undefined,
+  };
+}
+
 function normalizePeerRecord(record: Record<string, unknown>): ObservedSdnPeer | null {
   const metadata = isRecord(record.metadata) ? record.metadata : {};
   const id = readString(record, 'id', 'peer_id', 'peerId', 'PeerID');
@@ -345,6 +395,26 @@ function readNumber(record: Record<string, unknown>, ...keys: string[]): number 
     }
   }
   return null;
+}
+
+function readBoolean(record: Record<string, unknown>, ...keys: string[]): boolean | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'true') return true;
+      if (normalized === 'false') return false;
+    }
+  }
+  return null;
+}
+
+function normalizeSchemaName(value: string, fallback: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  const withoutSuffix = trimmed.replace(/\.fbs$/i, '');
+  return `${withoutSuffix.toUpperCase()}.fbs`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
