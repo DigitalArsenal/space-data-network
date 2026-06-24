@@ -236,6 +236,8 @@ try {
   } else {
     Write-Info 'Initializing local node identity...'
     & $PrimaryExe init
+    Write-Info 'Verifying local node identity...'
+    & $PrimaryExe show-identity 2>$null | Out-Null
   }
 
   Write-Info 'Installation successful!'
