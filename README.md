@@ -120,6 +120,32 @@ spacedatanetwork remove
 survive reinstall. Use `spacedatanetwork remove --purge-data` only when you
 want to delete the local config, mnemonic, and data as well.
 
+Search local SDN providers, standards, and data-source metadata:
+
+```bash
+spacedatanetwork search providers celestrak --schema OMM
+spacedatanetwork search standards OMM --format json
+spacedatanetwork search data --schema CAT --provider-id space-data-network-02 --format csv
+```
+
+Search output defaults to aligned table rows. Use `--format json` for scripts or
+`--format csv` for spreadsheets.
+
+Create or update your public EPM/vCard contact record:
+
+```bash
+spacedatanetwork identity wizard
+spacedatanetwork identity wizard --set dn="CelesTrak Provider" --set legal_name="CelesTrak" --format json --yes
+spacedatanetwork identity export --format flatbuffer --output epm.fbs
+spacedatanetwork identity export --format qrcode
+```
+
+The wizard stores only public EPM contact fields. It never prints mnemonic,
+xpriv, private signing key, or private encryption key material. If the daemon is
+running with admin auth enabled, pass `--session-token` or set
+`SDN_SESSION_TOKEN` so the wizard can update the live EPM without dropping
+runtime-owned fields.
+
 ### Browser Usage
 
 ```typescript
