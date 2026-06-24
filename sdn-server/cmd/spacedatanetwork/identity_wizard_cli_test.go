@@ -14,6 +14,8 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
+	"github.com/spacedatanetwork/sdn-server/internal/epm"
+	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -36,7 +38,7 @@ func TestIdentityWizardSetValuesWritesLocalEPMAndJSON(t *testing.T) {
 			Format: "json",
 		},
 		store,
-		peerID,
+		identityWizardNodeIdentity{PeerID: peerID},
 		dataDir,
 	)
 	if err != nil {
@@ -93,7 +95,7 @@ func TestIdentityWizardCSVAndFlatBufferOutputs(t *testing.T) {
 			Format: "csv",
 		},
 		store,
-		peerID,
+		identityWizardNodeIdentity{PeerID: peerID},
 		dataDir,
 	); err != nil {
 		t.Fatalf("runIdentityWizardWithIO csv failed: %v", err)
@@ -126,7 +128,7 @@ func TestIdentityWizardCSVAndFlatBufferOutputs(t *testing.T) {
 			OutputPath: epmPath,
 		},
 		store,
-		peerID,
+		identityWizardNodeIdentity{PeerID: peerID},
 		dataDir,
 	); err != nil {
 		t.Fatalf("runIdentityWizardWithIO flatbuffer failed: %v", err)
@@ -144,6 +146,88 @@ func TestIdentityWizardCSVAndFlatBufferOutputs(t *testing.T) {
 	if flatOut.Len() != 0 {
 		t.Fatalf("flatbuffer file output should not also write stdout, got %q", flatOut.String())
 	}
+}
+
+func TestIdentityWizardPreservesIdentityBackedPublicKeys(t *testing.T) {
+	_, store, _, dataDir := newIdentityWizardTestStore(t)
+	identity, err := testProviderDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testProviderDerivedIdentity failed: %v", err)
+	}
+
+	const xpub = "xpub-provider"
+	seedService := epm.NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, xpub, dataDir)
+	seedService.SetProfileStore(store)
+	if err := seedService.Init(); err != nil {
+		t.Fatalf("seed Init failed: %v", err)
+	}
+	if err := seedService.UpdateProfile(&epm.Profile{
+		DN:        "Identity Backed Provider",
+		LegalName: "Identity Backed LLC",
+	}); err != nil {
+		t.Fatalf("seed UpdateProfile failed: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := runIdentityWizardWithIO(
+		strings.NewReader("y\n"),
+		&out,
+		identityWizardOptions{
+			Sets:   []string{"dn=Updated Identity Provider"},
+			Format: "json",
+		},
+		store,
+		identityWizardNodeIdentity{
+			Identity: identity,
+			PeerID:   identity.PeerID,
+			XPub:     xpub,
+		},
+		dataDir,
+	); err != nil {
+		t.Fatalf("runIdentityWizardWithIO failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("wizard json output is invalid JSON: %v\n%s", err, out.String())
+	}
+	assertIdentityWizardJSONHasPublicIdentity(t, payload, xpub)
+
+	records, err := store.QueryDirectory(storage.DirectoryQuery{
+		Kind:   directory.KindNode,
+		PeerID: identity.PeerID.String(),
+		Limit:  1,
+	})
+	if err != nil {
+		t.Fatalf("QueryDirectory failed: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("directory records len = %d, want 1: %#v", len(records), records)
+	}
+	var directoryJSON map[string]any
+	if err := json.Unmarshal([]byte(records[0].EPMJSON), &directoryJSON); err != nil {
+		t.Fatalf("directory EPMJSON is invalid JSON: %v\n%s", err, records[0].EPMJSON)
+	}
+	assertIdentityWizardJSONHasPublicIdentity(t, directoryJSON, xpub)
+}
+
+func assertIdentityWizardJSONHasPublicIdentity(t *testing.T, payload map[string]any, xpub string) {
+	t.Helper()
+
+	keys, ok := payload["keys"].([]any)
+	if !ok || len(keys) == 0 {
+		t.Fatalf("payload keys missing or empty: %#v", payload["keys"])
+	}
+	for _, rawKey := range keys {
+		key, ok := rawKey.(map[string]any)
+		if !ok {
+			t.Fatalf("payload key has type %T: %#v", rawKey, rawKey)
+		}
+		if key["xpub"] == xpub && key["public_key"] != "" && key["key_type"] == "signing" {
+			return
+		}
+	}
+	t.Fatalf("payload keys do not include signing key with xpub %q: %#v", xpub, keys)
 }
 
 func newIdentityWizardTestStore(t *testing.T) (string, *storage.FlatSQLStore, peer.ID, string) {
