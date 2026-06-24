@@ -38,8 +38,10 @@ surface.
 
 ### Shared Capability Registry
 
-Add a small checked-in parity contract consumed by tests. The contract should
-list stable capability IDs such as `identity.export`, `search.providers`,
+The machine-readable contract lives at
+`deployment/release/sdn-parity-contract.json` and is checked by
+`deployment/release/sdn-parity-contract.test.mjs`. The contract should list
+stable capability IDs such as `identity.export`, `search.providers`,
 `desktop.route.node_epm_vcard`, `update.daemon_in_place`, and
 `release.desktop_artifacts`. CLI tests, Desktop route tests, UI runtime tests,
 and docs tests should assert the capabilities they expose against this contract.

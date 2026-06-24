@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "surfaces": ["cli", "desktop", "ui", "release", "docs"],
+  "capabilities": [
+    {
+      "id": "install.user_scoped",
+      "surfaces": ["cli", "release", "docs"],
+      "tests": ["deployment/release/install-script.test.mjs"]
+    },
+    {
+      "id": "identity.bootstrap",
+      "surfaces": ["cli", "desktop", "ui"],
+      "tests": [
+        "sdn-server/cmd/spacedatanetwork/main_test.go",
+        "desktop/test/unit/static-http-server-identity.spec.js",
+        "sdn-js/src/ui/runtime/identity.test.ts"
+      ]
+    },
+    {
+      "id": "identity.export",
+      "surfaces": ["cli", "desktop", "ui"],
+      "tests": [
+        "sdn-server/cmd/spacedatanetwork/main_test.go",
+        "desktop/test/unit/static-http-server-identity.spec.js"
+      ]
+    },
+    {
+      "id": "identity.directory",
+      "surfaces": ["cli", "desktop", "ui"],
+      "tests": [
+        "sdn-server/cmd/spacedatanetwork/identity_wizard_cli_test.go",
+        "desktop/test/unit/static-http-server-identity.spec.js",
+        "sdn-js/src/ui/runtime/directory.test.ts"
+      ]
+    },
+    {
+      "id": "desktop.route.node_epm_vcard",
+      "surfaces": ["desktop", "ui"],
+      "tests": ["desktop/test/unit/static-http-server-identity.spec.js"]
+    },
+    {
+      "id": "desktop.route.peer_epm",
+      "surfaces": ["desktop", "ui"],
+      "tests": ["desktop/test/unit/static-http-server-identity.spec.js"]
+    },
+    {
+      "id": "desktop.route.auth_user_update",
+      "surfaces": ["desktop", "ui"],
+      "tests": ["desktop/test/unit/static-http-server-identity.spec.js"]
+    },
+    {
+      "id": "data.search",
+      "surfaces": ["cli", "desktop", "ui"],
+      "tests": [
+        "sdn-server/cmd/spacedatanetwork/search_cli_test.go",
+        "desktop/test/unit/static-http-server-data.spec.js",
+        "sdn-js/src/ui/runtime/sdn-backend-desktop.test.ts"
+      ]
+    },
+    {
+      "id": "data.query",
+      "surfaces": ["cli", "desktop", "ui"],
+      "tests": [
+        "deployment/release/test-release-artifacts-docker.test.mjs",
+        "desktop/test/unit/static-http-server-data.spec.js",
+        "sdn-js/src/ui/runtime/sdn-backend-desktop.test.ts"
+      ]
+    },
+    {
+      "id": "provider.search",
+      "surfaces": ["cli", "desktop", "ui"],
+      "tests": [
+        "sdn-server/cmd/spacedatanetwork/search_cli_test.go",
+        "desktop/test/unit/static-http-server-data.spec.js",
+        "sdn-js/src/ui/runtime/sdn-backend-desktop.test.ts"
+      ]
+    },
+    {
+      "id": "provider.interaction",
+      "surfaces": ["cli", "desktop", "ui"],
+      "tests": [
+        "sdn-server/cmd/spacedatanetwork/providers_cli_test.go",
+        "sdn-js/src/ui/runtime/sdn-backend-desktop.test.ts"
+      ]
+    },
+    {
+      "id": "encrypted_ca.maneuver_ephemeris",
+      "surfaces": ["cli", "desktop", "ui"],
+      "tests": [
+        "sdn-server/cmd/spacedatanetwork/conjunction_cli_test.go",
+        "sdn-js/tests/sdn-ui.spec.ts"
+      ]
+    },
+    {
+      "id": "lifecycle.service",
+      "surfaces": ["cli", "desktop"],
+      "tests": [
+        "sdn-server/cmd/spacedatanetwork/service_test.go",
+        "desktop/test/unit/tray-service.spec.js"
+      ]
+    },
+    {
+      "id": "lifecycle.remove",
+      "surfaces": ["cli", "desktop", "docs"],
+      "tests": [
+        "sdn-server/cmd/spacedatanetwork/service_test.go",
+        "deployment/release/install-script.test.mjs"
+      ]
+    },
+    {
+      "id": "update.daemon_in_place",
+      "surfaces": ["cli", "desktop", "release"],
+      "tests": [
+        "sdn-server/cmd/spacedatanetwork/update_cli_test.go",
+        "desktop/test/unit/sdn-updater-staged-install.spec.js",
+        "deployment/release/build-cli-update-payload.test.mjs"
+      ]
+    },
+    {
+      "id": "release.desktop_artifacts",
+      "surfaces": ["desktop", "release", "docs"],
+      "tests": [
+        "deployment/release/beta-release-workflow.test.mjs",
+        "deployment/release/assemble-beta-release-artifacts.test.mjs",
+        "deployment/release/beta-download-links.test.mjs"
+      ]
+    },
+    {
+      "id": "ci.live_dht_cross_platform",
+      "surfaces": ["cli", "desktop", "release"],
+      "tests": [
+        "deployment/release/live-dht-workflow.test.mjs",
+        "deployment/release/live-dht-client-smoke.test.mjs"
+      ]
+    }
+  ]
+}
