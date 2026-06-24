@@ -223,6 +223,30 @@ func TestSearchStandardsCSVHasStableHeader(t *testing.T) {
 	}
 }
 
+func TestSearchStandardsDoesNotMatchLocalCounts(t *testing.T) {
+	cfgPath, store := newSyncCLITestStore(t)
+	seedSyncCLITestData(t, store)
+	withSyncCLITestConfig(t, cfgPath)
+
+	var out bytes.Buffer
+	err := runSearchStandards(&out, searchStandardsOptions{
+		Query:  "280",
+		Format: "json",
+	})
+	if err != nil {
+		t.Fatalf("runSearchStandards failed: %v", err)
+	}
+	var body searchResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode standards JSON: %v\n%s", err, out.String())
+	}
+	for _, row := range body.Results {
+		if row["schema_name"] == "OMM.fbs" {
+			t.Fatalf("standards search matched OMM from numeric local counts: %#v", row)
+		}
+	}
+}
+
 func TestSearchProviderSortUsesStableTieBreakers(t *testing.T) {
 	rows := []map[string]any{
 		{
