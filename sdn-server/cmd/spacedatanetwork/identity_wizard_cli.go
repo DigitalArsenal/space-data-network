@@ -605,10 +605,28 @@ func applyIdentityWizardSets(profile *epm.Profile, sets []string) error {
 			profile.DN = value
 		case "legal_name":
 			profile.LegalName = value
+		case "given_name":
+			profile.GivenName = value
+		case "family_name":
+			profile.FamilyName = value
+		case "additional_name":
+			profile.AdditionalName = value
+		case "honorific_prefix":
+			profile.HonorificPrefix = value
+		case "honorific_suffix":
+			profile.HonorificSuffix = value
+		case "job_title":
+			profile.JobTitle = value
+		case "occupation":
+			profile.Occupation = value
 		case "email":
 			profile.Email = value
 		case "telephone", "tel":
 			profile.Telephone = value
+		case "entity_type":
+			if normalized := strings.ToLower(strings.TrimSpace(value)); normalized != "" && normalized != "node" {
+				return fmt.Errorf("unsupported identity --set entity_type %q: node EPM profiles must use entity_type=node", value)
+			}
 		case "website", "url", "provider_id", "bitcoin_address", "ethereum_address", "solana_address", "ens", "sns", "alternate_names":
 			profile.AlternateNames = mergeIdentityWizardList(profile.AlternateNames, splitIdentityWizardList(value))
 		default:

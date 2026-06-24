@@ -851,13 +851,17 @@ with `npm --prefix desktop exec -- playwright test test/unit/static-http-server-
 - Create: `sdn-server/cmd/spacedatanetwork/identity_directory_cli_test.go`
 - Modify: `sdn-server/cmd/spacedatanetwork/main.go`
 
-- [ ] Add failing tests for wizard `--set given_name=`,
+- [x] Add failing tests for wizard `--set given_name=`,
   `--set family_name=`, and `--set entity_type=`.
-- [ ] Add failing tests for `identity directory list`, `show`, `import`, and
+- [x] Add failing tests for `identity directory list`, `show`, `import`, and
   `download`.
-- [ ] Implement the missing fields and directory commands.
-- [ ] Run focused identity tests and commit with message
+- [x] Implement the missing fields and directory commands.
+- [x] Run focused identity tests and commit with message
   `feat: add identity directory CLI parity`.
+  - 2026-06-24: Added wizard `given_name`, `family_name`, and `entity_type=node`
+    support plus `identity directory list/show/import/download`; verified with
+    `../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run 'TestIdentity(Directory|Wizard)' -count=1`
+    and `../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run 'Test(Identity|Search|Providers)' -count=1`.
 
 ---
 
