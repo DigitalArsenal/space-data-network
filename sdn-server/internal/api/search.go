@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,10 +16,23 @@ import (
 // SearchHandler serves shared provider/data search routes for CLI, Desktop,
 // and bundled UI consumers.
 type SearchHandler struct {
-	store *storage.FlatSQLStore
+	store       *storage.FlatSQLStore
+	liveBackend LiveSearchBackend
 }
 
-type searchRequest struct {
+// LiveSearchBackend executes public-DHT backed provider/data searches for
+// callers that explicitly request live-dht mode.
+type LiveSearchBackend interface {
+	SearchProviders(context.Context, SearchRequest) ([]map[string]interface{}, error)
+	SearchData(context.Context, SearchRequest) ([]map[string]interface{}, error)
+}
+
+// SearchHandlerOptions configures optional shared search backends.
+type SearchHandlerOptions struct {
+	LiveBackend LiveSearchBackend
+}
+
+type SearchRequest struct {
 	Query             string `json:"query"`
 	Schema            string `json:"schema"`
 	SchemaName        string `json:"schema_name"`
@@ -39,7 +53,16 @@ type searchRequest struct {
 
 // NewSearchHandler creates a shared search API handler.
 func NewSearchHandler(store *storage.FlatSQLStore) *SearchHandler {
-	return &SearchHandler{store: store}
+	return NewSearchHandlerWithOptions(store, SearchHandlerOptions{})
+}
+
+// NewSearchHandlerWithOptions creates a shared search API handler with
+// optional non-local backends.
+func NewSearchHandlerWithOptions(store *storage.FlatSQLStore, options SearchHandlerOptions) *SearchHandler {
+	return &SearchHandler{
+		store:       store,
+		liveBackend: options.LiveBackend,
+	}
 }
 
 // RegisterRoutes registers shared search API routes.
@@ -60,23 +83,20 @@ func (h *SearchHandler) handleProviders(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-
-	stats, err := h.store.LocalReplicaStats(req.replicaStatsQuery())
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	mode, ok := normalizeSearchAPIMode(w, req.Mode)
+	if !ok {
 		return
 	}
-	directoryRecords, err := h.store.QueryDirectory(storage.DirectoryQuery{
-		Kind:   "node",
-		Search: strings.TrimSpace(firstNonEmptyDataString(req.Query, req.ProviderID, req.ProviderIDAlt, req.ProviderPeerID, req.ProviderPeerIDAlt)),
-		Limit:  req.limitOrDefault(),
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if mode == "live-dht" {
+		h.handleLiveDHTProviders(w, r, req)
 		return
 	}
 
-	rows := providerSearchRows(directoryRecords, stats, req)
+	rows, err := SearchProviderRows(h.store, req)
+	if err != nil {
+		writeError(w, statusForSearchRowsError(err), err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"count":   len(rows),
 		"results": rows,
@@ -95,18 +115,69 @@ func (h *SearchHandler) handleData(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	stats, err := h.store.LocalReplicaStats(req.replicaStatsQuery())
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	mode, ok := normalizeSearchAPIMode(w, req.Mode)
+	if !ok {
 		return
 	}
-	rows := localReplicaStatsRows(filterSearchStatsByText(stats, req.Query))
-	sortSearchAPIRows(rows, "schema_name", "provider_id", "source_name", "batch_id")
+	if mode == "live-dht" {
+		h.handleLiveDHTData(w, r, req)
+		return
+	}
+	rows, err := SearchDataRows(h.store, req)
+	if err != nil {
+		writeError(w, statusForSearchRowsError(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"count":   len(rows),
+		"results": rows,
+	})
+}
+
+func (h *SearchHandler) handleLiveDHTProviders(w http.ResponseWriter, r *http.Request, req SearchRequest) {
+	if h.liveBackend == nil {
+		writeError(w, http.StatusServiceUnavailable, "live DHT search backend is unavailable")
+		return
+	}
+	rows, err := h.liveBackend.SearchProviders(r.Context(), req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
 	rows = limitSearchAPIRows(rows, req.limitOrDefault())
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"count":   len(rows),
 		"results": rows,
 	})
+}
+
+func (h *SearchHandler) handleLiveDHTData(w http.ResponseWriter, r *http.Request, req SearchRequest) {
+	if h.liveBackend == nil {
+		writeError(w, http.StatusServiceUnavailable, "live DHT search backend is unavailable")
+		return
+	}
+	rows, err := h.liveBackend.SearchData(r.Context(), req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	rows = limitSearchAPIRows(rows, req.limitOrDefault())
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"count":   len(rows),
+		"results": rows,
+	})
+}
+
+func normalizeSearchAPIMode(w http.ResponseWriter, input string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(input)) {
+	case "", "local", "daemon", "api":
+		return "local", true
+	case "live-dht", "livedht", "dht":
+		return "live-dht", true
+	default:
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("unsupported search mode %q (use local, daemon, live-dht)", input))
+		return "", false
+	}
 }
 
 func (h *SearchHandler) ensureStore(w http.ResponseWriter) bool {
@@ -117,8 +188,53 @@ func (h *SearchHandler) ensureStore(w http.ResponseWriter) bool {
 	return true
 }
 
-func decodeSearchRequest(w http.ResponseWriter, r *http.Request) (searchRequest, bool) {
-	var req searchRequest
+// SearchProviderRows returns the shared provider search row shape used by the
+// daemon API, CLI API mode, Desktop routes, and UI adapters.
+func SearchProviderRows(store *storage.FlatSQLStore, req SearchRequest) ([]map[string]interface{}, error) {
+	if store == nil {
+		return nil, errSearchStorageUnavailable
+	}
+	stats, err := store.LocalReplicaStats(req.replicaStatsQuery())
+	if err != nil {
+		return nil, err
+	}
+	directoryRecords, err := store.QueryDirectory(storage.DirectoryQuery{
+		Kind:   "node",
+		Search: strings.TrimSpace(firstNonEmptyDataString(req.Query, req.ProviderID, req.ProviderIDAlt, req.ProviderPeerID, req.ProviderPeerIDAlt)),
+		Limit:  req.limitOrDefault(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return providerSearchRows(directoryRecords, stats, req), nil
+}
+
+// SearchDataRows returns the shared data-source search row shape used by the
+// daemon API, CLI API mode, Desktop routes, and UI adapters.
+func SearchDataRows(store *storage.FlatSQLStore, req SearchRequest) ([]map[string]interface{}, error) {
+	if store == nil {
+		return nil, errSearchStorageUnavailable
+	}
+	stats, err := store.LocalReplicaStats(req.replicaStatsQuery())
+	if err != nil {
+		return nil, err
+	}
+	rows := localReplicaStatsRows(filterSearchStatsByText(stats, req.Query))
+	sortSearchAPIRows(rows, "schema_name", "provider_id", "source_name", "batch_id")
+	return limitSearchAPIRows(rows, req.limitOrDefault()), nil
+}
+
+var errSearchStorageUnavailable = fmt.Errorf("storage is unavailable")
+
+func statusForSearchRowsError(err error) int {
+	if err == errSearchStorageUnavailable {
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusBadRequest
+}
+
+func decodeSearchRequest(w http.ResponseWriter, r *http.Request) (SearchRequest, bool) {
+	var req SearchRequest
 	if r.Body != nil {
 		defer r.Body.Close()
 	}
@@ -129,7 +245,7 @@ func decodeSearchRequest(w http.ResponseWriter, r *http.Request) (searchRequest,
 	return req, true
 }
 
-func (r searchRequest) replicaStatsQuery() storage.LocalReplicaStatsQuery {
+func (r SearchRequest) replicaStatsQuery() storage.LocalReplicaStatsQuery {
 	return storage.LocalReplicaStatsQuery{
 		SchemaName:     normalizeSearchAPISchema(firstNonEmptyDataString(r.Schema, r.SchemaName, r.SchemaNameAlt)),
 		ProviderPeerID: firstNonEmptyDataString(r.ProviderPeerID, r.ProviderPeerIDAlt),
@@ -140,7 +256,7 @@ func (r searchRequest) replicaStatsQuery() storage.LocalReplicaStatsQuery {
 	}
 }
 
-func (r searchRequest) limitOrDefault() int {
+func (r SearchRequest) limitOrDefault() int {
 	if r.Limit <= 0 {
 		return 100
 	}
@@ -161,7 +277,7 @@ func normalizeSearchAPISchema(value string) string {
 	return strings.ToUpper(schema) + ".fbs"
 }
 
-func providerSearchRows(records []storage.DirectoryRecord, stats []storage.LocalReplicaStats, req searchRequest) []map[string]interface{} {
+func providerSearchRows(records []storage.DirectoryRecord, stats []storage.LocalReplicaStats, req SearchRequest) []map[string]interface{} {
 	rows := make([]map[string]interface{}, 0, len(records)+len(stats))
 	seenStats := map[string]bool{}
 	for _, record := range records {

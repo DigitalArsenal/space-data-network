@@ -772,6 +772,10 @@ git commit -m "feat: add desktop parity routes and contract"
 - Create: `desktop/test/unit/static-http-server-data.spec.js`
 - Modify: `desktop/src/static-http-server.js`
 - Modify: `sdn-server/cmd/spacedatanetwork/search_cli.go`
+- Modify: `sdn-server/internal/api/search.go`
+- Modify: `sdn-server/internal/node/advertisement_discovery.go`
+- Create: `sdn-server/cmd/spacedatanetwork/live_dht_search_backend.go`
+- Create: `sdn-server/cmd/spacedatanetwork/live_dht_search_backend_test.go`
 
 - [ ] Add failing tests proving CLI `search providers`, Desktop search routes,
   and UI Desktop adapter return the same field names for provider ID, provider
@@ -783,7 +787,16 @@ git commit -m "feat: add desktop parity routes and contract"
     `/api/v1/search/providers`, and live-DHT data search posting to
     `/api/v1/search/data`; verified with
     `../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run 'Test(Search|Providers)' -count=1`.
-- [ ] Implement the smallest shared result shape in Go and Desktop JSON routes.
+- [x] Implement the shared Go search row helpers and explicit daemon/live-DHT
+  dispatch.
+  - [x] 2026-06-24: Added `api.SearchProviderRows` /
+    `api.SearchDataRows`, `api.LiveSearchBackend`, daemon wiring through
+    `newLiveDHTSearchBackend(n)`, and `node.DiscoverSDNAdvertisementPeers`.
+    `live-dht` mode now triggers public-DHT SDN advertisement discovery before
+    returning the same shared provider/data rows, and returns a clear
+    unavailable error if no live backend is wired.
+- [ ] Implement any remaining Desktop JSON route parity gaps against the same
+  result shape.
 - [ ] Wire `sdn-js/src/ui/runtime/sdn-backend-desktop.ts` to the same route.
 - [ ] Run `go test ./cmd/spacedatanetwork -run 'TestSearch'`, the Desktop data
   route tests, and the SDN JS runtime tests touched by this slice.
