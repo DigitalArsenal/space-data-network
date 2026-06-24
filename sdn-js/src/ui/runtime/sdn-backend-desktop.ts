@@ -24,6 +24,10 @@ import {
   type RawDataRecord,
   type RawDataRecordBytes,
   type RawDataStreamRequest,
+  type SearchResult,
+  type SharedSearchRequest,
+  type DataSearchRow,
+  type ProviderSearchRow,
   type SdnBackend,
   type StorageSummary,
   type WalletNodeIdentityApplyOptions,
@@ -37,15 +41,18 @@ import {
   conjunctionScreenPayload,
   nodeSummaryFromProfile,
   normalizeConjunctionScreenResult,
+  normalizeDataSearchResult,
   normalizeDataScanResult,
   normalizeDataSummary,
   normalizeNodeAccessPayload,
   normalizeObjectPayload,
   normalizePeerPayload,
   normalizeRawDataRecords,
+  normalizeProviderSearchResult,
   attachRawFlatbufferStream,
   normalizeStorageSummary,
   rawDataStreamPayload,
+  sharedSearchPayload,
   RAW_FLATBUFFER_STREAM_CONTENT_TYPE,
   recordsFromPayload,
   resolveFetch,
@@ -411,6 +418,26 @@ export function createDesktopLocalBackend(options: DesktopLocalBackendOptions = 
       );
       if (!result.ok) return createDegradedResult('getDataSummary', result.capability.reason ?? 'data summary unavailable');
       return createAvailableResult('getDataSummary', normalizeDataSummary(result.data));
+    },
+    async searchProviders(request: SharedSearchRequest): Promise<BackendResult<SearchResult<ProviderSearchRow>>> {
+      const result = await getJson<unknown>(
+        fetchLike,
+        joinUrl(desktopBase, '/api/v1/search/providers'),
+        'searchProviders',
+        authJsonRequest('POST', sharedSearchPayload(request)),
+      );
+      if (!result.ok) return result as BackendResult<SearchResult<ProviderSearchRow>>;
+      return createAvailableResult('searchProviders', normalizeProviderSearchResult(result.data));
+    },
+    async searchData(request: SharedSearchRequest): Promise<BackendResult<SearchResult<DataSearchRow>>> {
+      const result = await getJson<unknown>(
+        fetchLike,
+        joinUrl(desktopBase, '/api/v1/search/data'),
+        'searchData',
+        authJsonRequest('POST', sharedSearchPayload(request)),
+      );
+      if (!result.ok) return result as BackendResult<SearchResult<DataSearchRow>>;
+      return createAvailableResult('searchData', normalizeDataSearchResult(result.data));
     },
     async scanRawData(query: RawDataQuery): Promise<BackendResult<DataScanResult>> {
       const result = await getJson<unknown>(

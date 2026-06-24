@@ -39,6 +39,9 @@ import {
   type RawDataRecord,
   type RawDataRecordBytes,
   type RawDataStreamRequest,
+  type SearchResult,
+  type DataSearchRow,
+  type ProviderSearchRow,
   type SdnBackend,
   type StorageSummary,
 } from './sdn-backend';
@@ -338,6 +341,12 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
       } catch (error) {
         return createUnavailableResult('getDataSummary', formatSyncError(error));
       }
+    },
+    async searchProviders(): Promise<BackendResult<SearchResult<ProviderSearchRow>>> {
+      return createCapabilityResult('searchProviders', 'remote-only', 'provider search requires the authenticated SDN HTTP API or a live-DHT search adapter');
+    },
+    async searchData(): Promise<BackendResult<SearchResult<DataSearchRow>>> {
+      return createCapabilityResult('searchData', 'remote-only', 'data search requires the authenticated SDN HTTP API or a live-DHT search adapter');
     },
     scanRawData,
     streamRawData,

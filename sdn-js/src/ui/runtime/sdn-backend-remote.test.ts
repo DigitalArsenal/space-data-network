@@ -202,6 +202,93 @@ describe('remote-sdn backend', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('searches providers and data through the remote shared search routes', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === 'https://sdn.spaceaware.io/api/v1/search/providers') {
+        expect(init?.method).toBe('POST');
+        expect(init?.credentials).toBe('include');
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          query: 'celestrak',
+          schema: 'OMM.fbs',
+          provider_id: 'space-data-network-02',
+          source_name: 'celestrak-gp',
+          mode: 'daemon',
+          limit: 25,
+        });
+        return jsonResponse({
+          count: 1,
+          results: [{
+            peer_id: '16Uiu2HCelesTrak',
+            dn: 'CelesTrak Provider',
+            provider_id: 'space-data-network-02',
+            schema_name: 'OMM.fbs',
+            source_name: 'celestrak-gp',
+            local_rows: 31069,
+          }],
+        });
+      }
+      if (url === 'https://sdn.spaceaware.io/api/v1/search/data') {
+        expect(init?.method).toBe('POST');
+        expect(init?.credentials).toBe('include');
+        return jsonResponse({
+          count: 1,
+          results: [{
+            schema_name: 'OMM.fbs',
+            provider_id: 'space-data-network-02',
+            source_name: 'celestrak-gp',
+            local_rows: 31069,
+          }],
+        });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const backend = createRemoteSdnBackend({ serverUrl: 'https://sdn.spaceaware.io', fetch: fetchMock });
+
+    await expect(backend.searchProviders({
+      query: 'celestrak',
+      schema: 'OMM.fbs',
+      providerId: 'space-data-network-02',
+      sourceName: 'celestrak-gp',
+      mode: 'daemon',
+      limit: 25,
+    })).resolves.toMatchObject({
+      ok: true,
+      data: {
+        count: 1,
+        results: [expect.objectContaining({
+          peerId: '16Uiu2HCelesTrak',
+          displayName: 'CelesTrak Provider',
+          providerId: 'space-data-network-02',
+          schemaName: 'OMM.fbs',
+          sourceName: 'celestrak-gp',
+          localRows: 31069,
+        })],
+      },
+    });
+    await expect(backend.searchData({
+      schema: 'OMM.fbs',
+      providerId: 'space-data-network-02',
+      sourceName: 'celestrak-gp',
+    })).resolves.toMatchObject({
+      ok: true,
+      data: {
+        count: 1,
+        results: [expect.objectContaining({
+          schemaName: 'OMM.fbs',
+          providerId: 'space-data-network-02',
+          sourceName: 'celestrak-gp',
+          localRows: 31069,
+        })],
+      },
+    });
+    expect(calls.map((call) => call.url)).toEqual([
+      'https://sdn.spaceaware.io/api/v1/search/providers',
+      'https://sdn.spaceaware.io/api/v1/search/data',
+    ]);
+  });
+
   it('screens encrypted maneuver ephemeris through the remote conjunction route', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {

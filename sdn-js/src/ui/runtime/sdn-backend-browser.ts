@@ -15,6 +15,9 @@ import {
   type ObservedSdnPeer,
   type RawDataRecord,
   type RawDataRecordBytes,
+  type SearchResult,
+  type DataSearchRow,
+  type ProviderSearchRow,
   type SdnBackend,
   type StorageSummary,
 } from './sdn-backend';
@@ -169,6 +172,12 @@ export function createBrowserNodeBackend(): SdnBackend {
     },
     async getDataSummary(): Promise<BackendResult<DataSummary>> {
       return createUnavailableResult('getDataSummary', 'raw FlatSQL summary requires a local or remote SDN node');
+    },
+    async searchProviders(): Promise<BackendResult<SearchResult<ProviderSearchRow>>> {
+      return createUnavailableResult('searchProviders', 'provider search requires a local, remote, or live-DHT SDN backend');
+    },
+    async searchData(): Promise<BackendResult<SearchResult<DataSearchRow>>> {
+      return createUnavailableResult('searchData', 'data search requires a local, remote, or live-DHT SDN backend');
     },
     async scanRawData(): Promise<BackendResult<DataScanResult>> {
       return createUnavailableResult('scanRawData', 'raw FlatSQL scan requires a local or remote SDN node');

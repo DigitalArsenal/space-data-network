@@ -59,7 +59,7 @@ first code edit, then execute that expanded slice without changing the scope.
 - Create: `deployment/release/sdn-parity-contract.test.mjs`
 - Modify: `docs/superpowers/specs/2026-06-24-cli-desktop-ui-parity-design.md`
 
-- [ ] **Step 1: Write the failing parity contract test**
+- [x] **Step 1: Write the failing parity contract test**
 
 Create `deployment/release/sdn-parity-contract.test.mjs`:
 
@@ -110,7 +110,7 @@ test('every parity capability names surfaces and tests', () => {
 });
 ```
 
-- [ ] **Step 2: Run the contract test and verify it fails**
+- [x] **Step 2: Run the contract test and verify it fails**
 
 Run:
 
@@ -120,7 +120,7 @@ node --test deployment/release/sdn-parity-contract.test.mjs
 
 Expected: FAIL because `deployment/release/sdn-parity-contract.json` does not exist.
 
-- [ ] **Step 3: Add the initial parity contract**
+- [x] **Step 3: Add the initial parity contract**
 
 Create `deployment/release/sdn-parity-contract.json`:
 
@@ -264,7 +264,7 @@ Create `deployment/release/sdn-parity-contract.json`:
 }
 ```
 
-- [ ] **Step 4: Link the design spec to the contract file**
+- [x] **Step 4: Link the design spec to the contract file**
 
 In `docs/superpowers/specs/2026-06-24-cli-desktop-ui-parity-design.md`,
 replace the first sentence under `### Shared Capability Registry` with:
@@ -275,7 +275,7 @@ The machine-readable contract lives at
 `deployment/release/sdn-parity-contract.test.mjs`.
 ```
 
-- [ ] **Step 5: Run the contract test and verify it passes**
+- [x] **Step 5: Run the contract test and verify it passes**
 
 Run:
 
@@ -285,7 +285,7 @@ node --test deployment/release/sdn-parity-contract.test.mjs
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit the contract**
+- [x] **Step 6: Commit the contract**
 
 Run:
 
@@ -293,6 +293,13 @@ Run:
 git add deployment/release/sdn-parity-contract.json deployment/release/sdn-parity-contract.test.mjs docs/superpowers/specs/2026-06-24-cli-desktop-ui-parity-design.md
 git commit -m "test: add SDN parity contract"
 ```
+
+2026-06-24 update: the parity contract was expanded after the initial contract
+commit to map objective requirements `R01` through `R13`, require acceptance
+checks per capability, and encode exact search modes, installer commands,
+update provider, Desktop release platforms, live-DHT five-minute registration
+wait, and cross-platform proof requirements. The update was driven by a
+red/green extension to `deployment/release/sdn-parity-contract.test.mjs`.
 
 ### Task 2: Add Desktop Node vCard Route Coverage
 

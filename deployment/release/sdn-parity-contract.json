@@ -1,15 +1,99 @@
 {
   "version": 1,
   "surfaces": ["cli", "desktop", "ui", "release", "docs"],
+  "objectiveRequirements": [
+    {
+      "id": "R01.shared_acceptance_matrix",
+      "summary": "CLI, Desktop, UI, release, updater, installers, docs, and live-DHT tests share one machine-readable acceptance matrix."
+    },
+    {
+      "id": "R02.desktop_api_routes",
+      "summary": "Desktop exposes bundled-UI route parity for data APIs, node and peer EPM/vCard, auth user routes, and provider/search routes."
+    },
+    {
+      "id": "R03.shared_provider_data_search",
+      "summary": "Provider and data search are shared across CLI, Desktop, and UI with local, daemon/API, and live-DHT modes plus row, JSON, and CSV output."
+    },
+    {
+      "id": "R04.provider_cli_commands",
+      "summary": "Requester-facing provider commands cover list, search, show, connect/query, descriptor lookup, and data-standard filtering."
+    },
+    {
+      "id": "R05.encrypted_ca_private_mpe",
+      "summary": "Encrypted conjunction assessment and private maneuver ephemeris workflows work across CLI and Desktop/UI with grants, channels, screening, export, and provenance."
+    },
+    {
+      "id": "R06.identity_epm_vcard",
+      "summary": "Identity bootstrap, EPM/vCard wizard/export, QR/FlatBuffer output, and directory import/list/show/download are at parity across CLI, Desktop, and UI."
+    },
+    {
+      "id": "R07.lifecycle_parity",
+      "summary": "CLI and Desktop lifecycle controls cover start, stop, restart, status, service, and remove with data-preserve defaults and explicit purge."
+    },
+    {
+      "id": "R08.installer_parity",
+      "summary": "macOS/Linux curl installer and Windows PowerShell installer are user-scoped, require no gh dependency, and have published-endpoint smoke coverage."
+    },
+    {
+      "id": "R09.signed_update_parity",
+      "summary": "CLI and Desktop use the SDN-owned signed update provider path, stage/apply running-daemon updates in place, and cover rollback/failure behavior."
+    },
+    {
+      "id": "R10.desktop_release_artifacts",
+      "summary": "Main release lane publishes Desktop macOS, Windows, and Linux artifacts with release-body and website links."
+    },
+    {
+      "id": "R11.docs_help_website",
+      "summary": "README, CLI help, Desktop help/about, docs, and spacedatanetwork.org use SDN links, one-line installs, and private maneuver ephemeris messaging."
+    },
+    {
+      "id": "R12.live_dht_cross_platform",
+      "summary": "GitHub Actions/Docker live-DHT tests cover Linux Docker, native macOS, and native Windows on the public IPFS Kademlia DHT after a five-minute registration wait."
+    },
+    {
+      "id": "R13.desktop_ui_smoke",
+      "summary": "Desktop/UI smoke coverage proves parity is not CLI-only."
+    }
+  ],
   "capabilities": [
     {
+      "id": "contract.acceptance_matrix",
+      "requirementIds": ["R01.shared_acceptance_matrix"],
+      "surfaces": ["cli", "desktop", "ui", "release", "docs"],
+      "acceptance": [
+        "contract lists every objective requirement",
+        "each capability maps to objective requirements",
+        "each capability names proving tests"
+      ],
+      "tests": ["deployment/release/sdn-parity-contract.test.mjs"]
+    },
+    {
       "id": "install.user_scoped",
+      "requirementIds": ["R08.installer_parity", "R11.docs_help_website"],
       "surfaces": ["cli", "release", "docs"],
+      "platforms": ["macos", "linux", "windows"],
+      "installCommands": [
+        "curl -fsSL https://spacedatanetwork.org/install.sh | bash",
+        "irm https://spacedatanetwork.org/install.ps1 | iex"
+      ],
+      "requiresGh": false,
+      "requiresElevatedPrivileges": false,
+      "acceptance": [
+        "macOS and Linux installer is curl-pipe-bash from spacedatanetwork.org",
+        "Windows installer is PowerShell irm-pipe-iex from spacedatanetwork.org",
+        "installers initialize node identity without manual init",
+        "installers do not require gh, sudo, or administrator privileges for user-scoped installs"
+      ],
       "tests": ["deployment/release/install-script.test.mjs"]
     },
     {
       "id": "identity.bootstrap",
+      "requirementIds": ["R06.identity_epm_vcard"],
       "surfaces": ["cli", "desktop", "ui"],
+      "acceptance": [
+        "fresh installs create a mnemonic, node identity, and canonical encrypted EPM without overwriting existing secrets",
+        "show-identity and UI identity views work immediately after install"
+      ],
       "tests": [
         "sdn-server/cmd/spacedatanetwork/main_test.go",
         "desktop/test/unit/static-http-server-identity.spec.js",
@@ -18,7 +102,13 @@
     },
     {
       "id": "identity.export",
+      "requirementIds": ["R06.identity_epm_vcard"],
       "surfaces": ["cli", "desktop", "ui"],
+      "outputs": ["text", "json", "csv", "flatbuffer", "qrcode"],
+      "acceptance": [
+        "CLI exports EPM/vCard identity as text, JSON, CSV, FlatBuffer, and QR code",
+        "Desktop/UI serve canonical FlatBuffer-derived EPM, JSON, vCard, and QR artifacts where useful"
+      ],
       "tests": [
         "sdn-server/cmd/spacedatanetwork/main_test.go",
         "desktop/test/unit/static-http-server-identity.spec.js"
@@ -26,7 +116,13 @@
     },
     {
       "id": "identity.directory",
+      "requirementIds": ["R06.identity_epm_vcard"],
       "surfaces": ["cli", "desktop", "ui"],
+      "commands": ["list", "show", "import", "download"],
+      "acceptance": [
+        "CLI directory commands list, show, import, and download EPM/vCard artifacts",
+        "Desktop/UI directory search and download use the same local directory store projection"
+      ],
       "tests": [
         "sdn-server/cmd/spacedatanetwork/identity_wizard_cli_test.go",
         "desktop/test/unit/static-http-server-identity.spec.js",
@@ -35,22 +131,45 @@
     },
     {
       "id": "desktop.route.node_epm_vcard",
+      "requirementIds": ["R02.desktop_api_routes", "R06.identity_epm_vcard"],
       "surfaces": ["desktop", "ui"],
+      "acceptance": [
+        "Desktop serves node EPM FlatBuffer and derived vCard/JSON artifacts through loopback-only routes",
+        "Desktop keeps encrypted size-prefixed EPM bytes as the node identity source of truth"
+      ],
       "tests": ["desktop/test/unit/static-http-server-identity.spec.js"]
     },
     {
       "id": "desktop.route.peer_epm",
+      "requirementIds": ["R02.desktop_api_routes", "R06.identity_epm_vcard"],
       "surfaces": ["desktop", "ui"],
+      "acceptance": [
+        "Desktop serves peer EPM and vCard artifacts from hosted directory records",
+        "peer routes reject unavailable peers with explicit local API errors"
+      ],
       "tests": ["desktop/test/unit/static-http-server-identity.spec.js"]
     },
     {
       "id": "desktop.route.auth_user_update",
+      "requirementIds": ["R02.desktop_api_routes"],
       "surfaces": ["desktop", "ui"],
+      "acceptance": [
+        "Desktop implements bundled UI auth user create/update routes",
+        "admin-auth routes stay loopback-local and do not bypass host-header guardrails"
+      ],
       "tests": ["desktop/test/unit/static-http-server-identity.spec.js"]
     },
     {
       "id": "data.search",
+      "requirementIds": ["R02.desktop_api_routes", "R03.shared_provider_data_search"],
       "surfaces": ["cli", "desktop", "ui"],
+      "modes": ["local", "daemon", "live-dht"],
+      "outputs": ["row", "json", "csv"],
+      "acceptance": [
+        "CLI, Desktop, and UI expose the same schema/provider/source filters",
+        "row, JSON, and CSV output include consistent result fields",
+        "live-DHT mode uses public Kademlia DHT discovery rather than private-only networking"
+      ],
       "tests": [
         "sdn-server/cmd/spacedatanetwork/search_cli_test.go",
         "desktop/test/unit/static-http-server-data.spec.js",
@@ -59,7 +178,14 @@
     },
     {
       "id": "data.query",
+      "requirementIds": ["R02.desktop_api_routes", "R03.shared_provider_data_search", "R12.live_dht_cross_platform"],
       "surfaces": ["cli", "desktop", "ui"],
+      "modes": ["local", "daemon", "live-dht"],
+      "acceptance": [
+        "CLI, Desktop, and UI can query records by schema/provider/data-source filters",
+        "one live-DHT smoke path proves a cross-platform retrieval or query",
+        "Desktop route parity includes record bytes and length-prefixed FlatBuffer streams"
+      ],
       "tests": [
         "deployment/release/test-release-artifacts-docker.test.mjs",
         "desktop/test/unit/static-http-server-data.spec.js",
@@ -68,7 +194,15 @@
     },
     {
       "id": "provider.search",
+      "requirementIds": ["R02.desktop_api_routes", "R03.shared_provider_data_search"],
       "surfaces": ["cli", "desktop", "ui"],
+      "modes": ["local", "daemon", "live-dht"],
+      "outputs": ["row", "json", "csv"],
+      "acceptance": [
+        "provider search supports provider, schema, standard, source, and capability filters",
+        "CLI, Desktop, and UI show consistent provider descriptor and data-standard fields",
+        "live-DHT provider search uses public IPFS Kademlia DHT discovery"
+      ],
       "tests": [
         "sdn-server/cmd/spacedatanetwork/search_cli_test.go",
         "desktop/test/unit/static-http-server-data.spec.js",
@@ -77,7 +211,13 @@
     },
     {
       "id": "provider.interaction",
+      "requirementIds": ["R04.provider_cli_commands"],
       "surfaces": ["cli", "desktop", "ui"],
+      "commands": ["list", "search", "show", "connect-query", "descriptor-lookup", "data-standard-filter"],
+      "acceptance": [
+        "requesters can list, search, show, connect/query, look up descriptors, and filter by data standard",
+        "Desktop/UI provider detail and query flows consume the same descriptor/result contract"
+      ],
       "tests": [
         "sdn-server/cmd/spacedatanetwork/providers_cli_test.go",
         "sdn-js/src/ui/runtime/sdn-backend-desktop.test.ts"
@@ -85,7 +225,15 @@
     },
     {
       "id": "encrypted_ca.maneuver_ephemeris",
+      "requirementIds": ["R05.encrypted_ca_private_mpe"],
       "surfaces": ["cli", "desktop", "ui"],
+      "schemas": ["OMM", "OCM", "OEM", "MPE", "CDM", "PNM", "FlatSQL"],
+      "acceptance": [
+        "private maneuver ephemeris can be selected as an encrypted primary source",
+        "workflow accepts grant and private result channel identifiers",
+        "screening output exports result rows plus provenance",
+        "provenance includes providers, query or PNM identifiers, module metadata, run timestamp, CA configuration, grant, and channel identifiers"
+      ],
       "tests": [
         "sdn-server/cmd/spacedatanetwork/conjunction_cli_test.go",
         "sdn-js/tests/sdn-ui.spec.ts"
@@ -93,7 +241,14 @@
     },
     {
       "id": "lifecycle.service",
+      "requirementIds": ["R07.lifecycle_parity"],
       "surfaces": ["cli", "desktop"],
+      "commands": ["start", "stop", "restart", "status", "service"],
+      "acceptance": [
+        "CLI start installs and starts a persistent user-scoped service",
+        "CLI stop/restart/status/service report the same service state used by Desktop",
+        "Desktop tray/menu/UI expose equivalent lifecycle status and controls where appropriate"
+      ],
       "tests": [
         "sdn-server/cmd/spacedatanetwork/service_test.go",
         "desktop/test/unit/tray-service.spec.js"
@@ -101,7 +256,14 @@
     },
     {
       "id": "lifecycle.remove",
+      "requirementIds": ["R07.lifecycle_parity"],
       "surfaces": ["cli", "desktop", "docs"],
+      "commands": ["remove"],
+      "acceptance": [
+        "remove discovers the active installed version and launcher roots",
+        "remove preserves node data by default",
+        "remove purges mnemonic/config/data only with an explicit purge flag"
+      ],
       "tests": [
         "sdn-server/cmd/spacedatanetwork/service_test.go",
         "deployment/release/install-script.test.mjs"
@@ -109,7 +271,15 @@
     },
     {
       "id": "update.daemon_in_place",
+      "requirementIds": ["R09.signed_update_parity"],
       "surfaces": ["cli", "desktop", "release"],
+      "providerServer": "https://updates.spacedatanetwork.org",
+      "acceptance": [
+        "CLI check/stage/apply verifies SDN signed update feed metadata",
+        "update stages and swaps a running daemon in place",
+        "Desktop updater uses the same SDN signed feed and trust roots",
+        "rollback tests cover failed staged apply and daemon health failure"
+      ],
       "tests": [
         "sdn-server/cmd/spacedatanetwork/update_cli_test.go",
         "desktop/test/unit/sdn-updater-staged-install.spec.js",
@@ -118,7 +288,15 @@
     },
     {
       "id": "release.desktop_artifacts",
+      "requirementIds": ["R10.desktop_release_artifacts"],
       "surfaces": ["desktop", "release", "docs"],
+      "platforms": ["macos", "windows", "linux"],
+      "acceptance": [
+        "main beta release lane builds macOS Desktop DMG and ZIP where supported",
+        "main beta release lane builds Windows Desktop installer",
+        "main beta release lane builds Linux Desktop AppImage, deb, and rpm where supported",
+        "release body and website download links include every published Desktop artifact"
+      ],
       "tests": [
         "deployment/release/beta-release-workflow.test.mjs",
         "deployment/release/assemble-beta-release-artifacts.test.mjs",
@@ -126,11 +304,53 @@
       ]
     },
     {
+      "id": "docs.help_website",
+      "requirementIds": ["R11.docs_help_website"],
+      "surfaces": ["cli", "desktop", "ui", "release", "docs"],
+      "acceptance": [
+        "README and docs use spacedatanetwork.org for installer/update docs",
+        "CLI help and Desktop help/about use SDN product links where SDN links belong",
+        "website names private maneuver ephemeris as a key encrypted conjunction assessment use case",
+        "user-facing docs do not require gh for install paths"
+      ],
+      "tests": ["deployment/release/beta-download-links.test.mjs"]
+    },
+    {
       "id": "ci.live_dht_cross_platform",
+      "requirementIds": ["R12.live_dht_cross_platform"],
       "surfaces": ["cli", "desktop", "release"],
+      "platforms": ["linux-docker", "macos", "windows"],
+      "registrationWaitSeconds": 300,
+      "proves": [
+        "peer-discovery",
+        "identity-exchange",
+        "provider-search",
+        "data-search",
+        "retrieval-query"
+      ],
+      "acceptance": [
+        "workflow builds current-ref client artifacts",
+        "Linux Docker, native macOS, and native Windows clients use live public IPFS Kademlia DHT",
+        "clients wait at least five minutes before asserting DHT registration",
+        "report proves peer discovery, identity exchange, provider search, data search, and one retrieval/query path"
+      ],
       "tests": [
         "deployment/release/live-dht-workflow.test.mjs",
         "deployment/release/live-dht-client-smoke.test.mjs"
+      ]
+    },
+    {
+      "id": "desktop.ui_smoke",
+      "requirementIds": ["R13.desktop_ui_smoke"],
+      "surfaces": ["desktop", "ui"],
+      "acceptance": [
+        "Desktop bundled UI route registration is checked by source and unit tests",
+        "Desktop local API routes used by UI screens have smoke coverage",
+        "parity regressions cannot pass through CLI-only tests"
+      ],
+      "tests": [
+        "desktop/test/unit/dashboard.spec.js",
+        "sdn-js/src/ui/upstream-webui/cutover-contract.test.ts"
       ]
     }
   ]

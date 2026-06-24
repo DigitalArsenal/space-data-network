@@ -103,6 +103,56 @@ test.describe('desktop static data API', () => {
     expect(payload.byteLength).toBeGreaterThan(0)
   })
 
+  test('serves shared provider and data search routes for bundled UI parity', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-desktop-search-api-'))
+    const { serveDesktopLocalDataAPI, serveDesktopNodeEPMAPI } = loadStaticServer(userData)
+
+    const put = await requestRaw(serveDesktopNodeEPMAPI, 'PUT', '/api/node/epm', JSON.stringify({
+      dn: 'Desktop Search Node',
+      entity_type: 'Node',
+      peer_id: '12D3KooWDesktopSearch',
+      signing_public_key: 'ed25519-search-signing-public',
+      encryption_public_key: 'x25519-search-encryption-public'
+    }))
+    expect(put.statusCode).toBe(200)
+
+    const providers = await requestJson(serveDesktopLocalDataAPI, 'POST', '/api/v1/search/providers', {
+      query: 'desktop',
+      schema: 'EPM',
+      provider_id: 'local-node',
+      source_name: 'local-epm'
+    })
+    expect(providers.statusCode).toBe(200)
+    expect(providers.json).toMatchObject({
+      count: 1,
+      results: [expect.objectContaining({
+        peer_id: '12D3KooWDesktopSearch',
+        dn: 'Desktop Search Node',
+        provider_id: 'local-node',
+        schema_name: 'EPM.fbs',
+        source_name: 'local-epm',
+        local_rows: 1
+      })]
+    })
+
+    const data = await requestJson(serveDesktopLocalDataAPI, 'POST', '/api/v1/search/data', {
+      schema: 'EPM',
+      provider_id: 'local-node',
+      source_name: 'local-epm'
+    })
+    expect(data.statusCode).toBe(200)
+    expect(data.json).toMatchObject({
+      count: 1,
+      results: [expect.objectContaining({
+        schema_name: 'EPM.fbs',
+        provider_id: 'local-node',
+        source_name: 'local-epm',
+        batch_id: 'local',
+        local_rows: 1
+      })]
+    })
+  })
+
   test('serves encrypted conjunction screening workflow metadata for private MPE requests', async () => {
     const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-desktop-conjunction-'))
     const { serveDesktopLocalDataAPI } = loadStaticServer(userData)
