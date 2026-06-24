@@ -81,6 +81,15 @@ type xpubDerivedPublicIdentityKeys struct {
 	EncryptionKeyPath   string
 }
 
+// PublicIdentityKeys holds public identity keys derived from an xpub.
+type PublicIdentityKeys struct {
+	XPub                string
+	SigningPublicKey    string
+	EncryptionPublicKey string
+	SigningKeyPath      string
+	EncryptionKeyPath   string
+}
+
 type IdentityAttestationChainProof struct {
 	Chain              string `json:"chain"`
 	Address            string `json:"address"`
@@ -1327,6 +1336,22 @@ func derivePublicIdentityKeysFromXPub(xpub string, account uint32) (*xpubDerived
 		EncryptionPublicKey: hex.EncodeToString(encryptionKey.publicKey),
 		SigningKeyPath:      xpubSigningKeyPath(account),
 		EncryptionKeyPath:   xpubEncryptionKeyPath(account),
+	}, true
+}
+
+// PublicIdentityKeysFromXPub derives the public signing/encryption identity
+// keys that EPM service rebuilds from an xpub.
+func PublicIdentityKeysFromXPub(xpub string, account uint32) (PublicIdentityKeys, bool) {
+	derived, ok := derivePublicIdentityKeysFromXPub(xpub, account)
+	if !ok {
+		return PublicIdentityKeys{}, false
+	}
+	return PublicIdentityKeys{
+		XPub:                derived.XPub,
+		SigningPublicKey:    derived.SigningPublicKey,
+		EncryptionPublicKey: derived.EncryptionPublicKey,
+		SigningKeyPath:      derived.SigningKeyPath,
+		EncryptionKeyPath:   derived.EncryptionKeyPath,
 	}, true
 }
 

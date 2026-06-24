@@ -471,9 +471,6 @@ func identityWizardCanRebuildKey(key map[string]any, nodeIdentity identityWizard
 	}
 	keyXPub := strings.TrimSpace(identityWizardStringValue(key["xpub"]))
 	keyAddress := strings.TrimSpace(identityWizardStringValue(key["key_address"]))
-	if keyXPub != "" && keyXPub == strings.TrimSpace(nodeIdentity.XPub) && identityWizardLooksLikeHDKeyPath(keyAddress) {
-		return true
-	}
 	if nodeIdentity.Identity == nil {
 		return false
 	}
@@ -481,6 +478,16 @@ func identityWizardCanRebuildKey(key map[string]any, nodeIdentity identityWizard
 	publicKey := strings.TrimSpace(identityWizardStringValue(key["public_key"]))
 	if publicKey == "" {
 		return true
+	}
+	if keyXPub != "" && keyXPub == strings.TrimSpace(nodeIdentity.XPub) {
+		if derived, ok := epm.PublicIdentityKeysFromXPub(nodeIdentity.XPub, info.Account); ok {
+			switch {
+			case publicKey == derived.SigningPublicKey && keyAddress == derived.SigningKeyPath:
+				return true
+			case publicKey == derived.EncryptionPublicKey && keyAddress == derived.EncryptionKeyPath:
+				return true
+			}
+		}
 	}
 	switch {
 	case publicKey == strings.TrimSpace(info.IdentityPubKeyHex) && keyAddress == strings.TrimSpace(info.IdentityKeyPath):
@@ -492,11 +499,6 @@ func identityWizardCanRebuildKey(key map[string]any, nodeIdentity identityWizard
 	default:
 		return false
 	}
-}
-
-func identityWizardLooksLikeHDKeyPath(value string) bool {
-	value = strings.TrimSpace(value)
-	return strings.HasPrefix(value, "m/44'/")
 }
 
 func identityWizardStringValue(value any) string {

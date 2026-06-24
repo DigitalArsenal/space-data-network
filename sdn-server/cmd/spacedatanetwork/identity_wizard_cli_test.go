@@ -429,6 +429,26 @@ func TestIdentityWizardOfflineRefusesUnrebuildableStoredKey(t *testing.T) {
 	}
 }
 
+func TestIdentityWizardDoesNotTreatUnknownXPubPathAsRebuildable(t *testing.T) {
+	identity, err := testProviderDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testProviderDerivedIdentity failed: %v", err)
+	}
+
+	if identityWizardCanRebuildKey(map[string]any{
+		"xpub":        "xpub-provider",
+		"public_key":  strings.Repeat("ab", 33),
+		"key_address": "m/44'/0'/0'/99/0",
+		"key_type":    "signing",
+	}, identityWizardNodeIdentity{
+		Identity: identity,
+		PeerID:   identity.PeerID,
+		XPub:     "xpub-provider",
+	}) {
+		t.Fatal("unknown xpub-derived path was treated as rebuildable")
+	}
+}
+
 func TestIdentityWizardRefusesToDropExistingPublicIdentityMaterial(t *testing.T) {
 	_, store, _, dataDir := newIdentityWizardTestStore(t)
 	identity, err := testProviderDerivedIdentity()
