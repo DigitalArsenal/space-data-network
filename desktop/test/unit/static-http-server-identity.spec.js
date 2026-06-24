@@ -745,10 +745,10 @@ test.describe('desktop static identity API', () => {
     const peers = kuboSwarmPeersToDesktopSdnPeers({
       Peers: [
         {
-          Peer: '16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT',
+          Peer: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
           Addr: '/ip4/159.203.150.8/tcp/4001',
           Identify: {
-            ID: '16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT',
+            ID: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
             AgentVersion: 'spacedatanetwork/1.0.3',
             Protocols: ['/space-data-network/module-delivery/1.0.0']
           }
@@ -767,14 +767,14 @@ test.describe('desktop static identity API', () => {
 
     expect(peers).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: '16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT',
+        id: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
         name: 'SpaceAware.io',
         metadata: expect.objectContaining({
-          xpub: 'xpub6Ck6927cz8B67K7wLdqjaFDA89wfaMaRaSMadY2H8kFTQu52y29ZdpKu7aNz3RzRaHXd6zcs7hC6GgBxyZez4F1x2mQmt32DkBgt5rGgNFL',
-          public_key: '02a3510d7c39403feb59f54ffa955c9346ee0970f64192e885e5139c9b6f5750c7',
-          signing_public_key: '02a3510d7c39403feb59f54ffa955c9346ee0970f64192e885e5139c9b6f5750c7',
+          xpub: 'xpub6DKCyLbCHZLFR4XpFg26royZdkxExSMHTjNorEgkn1kgvQbLF5sts9RfNt3PbGhphVUh7WsFQ5H6GJBh4LhmRL27oSPt1qDkJ5mAr6FZ3Wa',
+          public_key: '038664c404be42123ce709e53da2b63fc24c091a968dd2200c443d7470f73fb1e6',
+          signing_public_key: '038664c404be42123ce709e53da2b63fc24c091a968dd2200c443d7470f73fb1e6',
           signing_key_path: "m/44'/0'/0'/0/0",
-          encryption_public_key: '027f12f91c93d119921574196c265fed6ee4bea89620aa9c957b596c89a0d93034',
+          encryption_public_key: '0213dc855b71c36b4a7e47b034e5f0bcce8b5fdbdae95a04b3441bc8ac2db3cb41',
           encryption_key_path: "m/44'/0'/0'/1/0"
         })
       }),

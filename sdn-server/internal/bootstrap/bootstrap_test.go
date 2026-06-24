@@ -217,13 +217,20 @@ func TestDefaultBootstrapAddresses_UsesRealPinnedPeers(t *testing.T) {
 	}
 
 	foundSpaceawareDNSAddr := false
+	foundSpaceawareTCPAddr := false
 	foundCelestrakDNSAddr := false
 	for _, addr := range addresses {
 		if addr == "/dnsaddr/bootstrap.spacedatanetwork.org/p2p/"+bootstrapPeerSpaceaware {
 			foundSpaceawareDNSAddr = true
 		}
+		if addr == "/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45" {
+			foundSpaceawareTCPAddr = true
+		}
 		if addr == "/dnsaddr/bootstrap.spacedatanetwork.org/p2p/"+bootstrapPeerCelestrak {
 			foundCelestrakDNSAddr = true
+		}
+		if strings.Contains(addr, "16Uiu2HAmP8KTvYP2i7Ef2Lf7Vbn5beZf2aMTpq4pmQAK6SjRphYT") {
+			t.Fatalf("retired SpaceAware full-node peer ID leaked into defaults: %s", addr)
 		}
 		if addr == "/dnsaddr/bootstrap.digitalarsenal.io/p2p/QmBootstrap1" {
 			t.Fatalf("placeholder bootstrap address leaked into defaults: %s", addr)
@@ -236,8 +243,8 @@ func TestDefaultBootstrapAddresses_UsesRealPinnedPeers(t *testing.T) {
 		}
 	}
 
-	if !foundSpaceawareDNSAddr || !foundCelestrakDNSAddr {
-		t.Fatal("DefaultBootstrapAddresses did not include both production dnsaddr bootstrap entries")
+	if !foundSpaceawareDNSAddr || !foundSpaceawareTCPAddr || !foundCelestrakDNSAddr {
+		t.Fatal("DefaultBootstrapAddresses did not include both production dnsaddr bootstrap entries and SpaceAware TCP fallback")
 	}
 }
 
