@@ -209,6 +209,8 @@ func init() {
 	rootCmd.AddCommand(showIdentityCmd)
 	rootCmd.AddCommand(identityCmd)
 	rootCmd.AddCommand(searchCmd)
+	rootCmd.AddCommand(providersCmd)
+	rootCmd.AddCommand(conjunctionCmd)
 }
 
 func main() {
