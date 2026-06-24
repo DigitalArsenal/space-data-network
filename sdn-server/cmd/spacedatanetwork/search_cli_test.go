@@ -172,6 +172,57 @@ func TestDataSearchFieldsMatchTaskStep4Order(t *testing.T) {
 	}
 }
 
+func TestSearchStandardsFindsSchemaAndLocalCounts(t *testing.T) {
+	cfgPath, store := newSyncCLITestStore(t)
+	seedSyncCLITestData(t, store)
+	withSyncCLITestConfig(t, cfgPath)
+
+	var out bytes.Buffer
+	err := runSearchStandards(&out, searchStandardsOptions{
+		Query:  "omm",
+		Format: "json",
+	})
+	if err != nil {
+		t.Fatalf("runSearchStandards failed: %v", err)
+	}
+	var body searchResult
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
+		t.Fatalf("decode standards JSON: %v\n%s", err, out.String())
+	}
+	if body.Count == 0 {
+		t.Fatalf("expected at least one standard result: %#v", body)
+	}
+	row := body.Results[0]
+	if row["schema_name"] != "OMM.fbs" || row["code"] != "OMM" {
+		t.Fatalf("unexpected standards row: %#v", row)
+	}
+	if row["record_count"] != float64(1) && row["record_count"] != int64(1) {
+		t.Fatalf("record_count = %#v, want 1", row["record_count"])
+	}
+}
+
+func TestSearchStandardsCSVHasStableHeader(t *testing.T) {
+	cfgPath, _ := newSyncCLITestStore(t)
+	withSyncCLITestConfig(t, cfgPath)
+
+	var out bytes.Buffer
+	err := runSearchStandards(&out, searchStandardsOptions{
+		Query:  "catalog",
+		Format: "csv",
+		Limit:  5,
+	})
+	if err != nil {
+		t.Fatalf("runSearchStandards failed: %v", err)
+	}
+	records, err := csv.NewReader(strings.NewReader(out.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("decode standards CSV: %v\n%s", err, out.String())
+	}
+	if len(records) < 2 || strings.Join(records[0], ",") != "schema_name,code,description,record_count,total_bytes" {
+		t.Fatalf("standards CSV = %#v", records)
+	}
+}
+
 func TestSearchProviderSortUsesStableTieBreakers(t *testing.T) {
 	rows := []map[string]any{
 		{

@@ -276,7 +276,19 @@ func runSearchStandards(out io.Writer, options searchStandardsOptions) error {
 	if err != nil {
 		return err
 	}
-	return writeSearchResult(out, searchResult{Results: []map[string]any{}}, standardsSearchFields(), format)
+	store, err := openSearchStore()
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	rows, err := buildSearchStandardsRows(store, options)
+	if err != nil {
+		return err
+	}
+	sortSearchStandardRows(rows, options.Query)
+	rows = applySearchLimit(rows, options.Limit)
+	return writeSearchResult(out, searchResult{Count: len(rows), Results: rows}, standardsSearchFields(), format)
 }
 
 func runSearchData(out io.Writer, options searchDataOptions) error {
@@ -344,6 +356,27 @@ func searchSortFieldsWithLeading(leading, fields []string) []string {
 		out = append(out, field)
 	}
 	return out
+}
+
+func sortSearchStandardRows(rows []map[string]any, query string) {
+	query = strings.ToLower(strings.TrimSpace(query))
+	sort.Slice(rows, func(i, j int) bool {
+		leftDirect := searchStandardDirectMatch(rows[i], query)
+		rightDirect := searchStandardDirectMatch(rows[j], query)
+		if leftDirect != rightDirect {
+			return leftDirect
+		}
+		return searchRowSortKey(rows[i], []string{"schema_name", "code"}) < searchRowSortKey(rows[j], []string{"schema_name", "code"})
+	})
+}
+
+func searchStandardDirectMatch(row map[string]any, query string) bool {
+	if query == "" {
+		return false
+	}
+	code := strings.ToLower(searchValueString(row["code"]))
+	schemaName := strings.ToLower(searchValueString(row["schema_name"]))
+	return query == code || query == schemaName || query == strings.TrimSuffix(schemaName, ".fbs")
 }
 
 func openSearchStore() (*storage.FlatSQLStore, error) {
@@ -485,6 +518,70 @@ func buildSearchDataRows(store *storage.FlatSQLStore, options searchDataOptions)
 		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+func buildSearchStandardsRows(store *storage.FlatSQLStore, options searchStandardsOptions) ([]map[string]any, error) {
+	registry, err := sds.NewSchemaRegistry()
+	if err != nil {
+		return nil, fmt.Errorf("load schema registry: %w", err)
+	}
+	summary, err := store.DataSummary()
+	if err != nil {
+		return nil, fmt.Errorf("query data summary: %w", err)
+	}
+	counts := map[string]storage.DataSchemaSummary{}
+	for _, schema := range summary.Schemas {
+		counts[schema.SchemaName] = schema
+	}
+
+	query := strings.TrimSpace(options.Query)
+	schemas := registry.Info()
+	rows := make([]map[string]any, 0, len(schemas))
+	for _, info := range schemas {
+		code := strings.TrimSuffix(info.Name, ".fbs")
+		row := map[string]any{
+			"schema_name":  info.Name,
+			"code":         code,
+			"description":  standardsSearchDescription(registry, info, code),
+			"record_count": int64(0),
+			"total_bytes":  int64(0),
+		}
+		if summary, ok := counts[info.Name]; ok {
+			row["record_count"] = summary.Count
+			row["total_bytes"] = summary.TotalBytes
+		}
+		if !searchRowContains(row, query) {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func standardsSearchDescription(registry *sds.SchemaRegistry, info sds.SchemaInfo, code string) string {
+	if content, ok := registry.Get(info.Name); ok {
+		if description := standardsSearchTableDescription(content, code); description != "" {
+			return description
+		}
+	}
+	return info.Description
+}
+
+func standardsSearchTableDescription(content []byte, code string) string {
+	var comment []string
+	tablePrefix := "table " + code
+	for _, raw := range strings.Split(string(content), "\n") {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "///") {
+			comment = append(comment, strings.TrimSpace(strings.TrimPrefix(line, "///")))
+			continue
+		}
+		if strings.HasPrefix(line, tablePrefix) {
+			return strings.TrimSpace(strings.Join(comment, " "))
+		}
+		comment = nil
+	}
+	return ""
 }
 
 func localSearchReplicaStats(store *storage.FlatSQLStore, query storage.LocalReplicaStatsQuery) ([]storage.LocalReplicaStats, error) {
