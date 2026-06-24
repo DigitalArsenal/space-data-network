@@ -245,7 +245,7 @@ async function buildMenu () {
         },
         {
           label: i18n.t('helpUsTranslate'),
-          click: () => { shell.openExternal('https://www.transifex.com/ipfs/public/') }
+          click: () => { shell.openExternal('https://github.com/DigitalArsenal/space-data-network/issues/new?labels=i18n') }
         }
       ]
     },

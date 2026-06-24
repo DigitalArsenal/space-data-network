@@ -1044,11 +1044,26 @@ with `npm --prefix desktop exec -- playwright test test/unit/static-http-server-
 - Modify: CLI command help in touched Go files
 - Create or modify: `deployment/release/docs-parity.test.mjs`
 
-- [ ] Add failing docs parity tests for one-line install, SDN domain links,
+- [x] Add failing docs parity tests for one-line install, SDN domain links,
   CLI/Desktop/UI feature parity, encrypted CA, and maneuver ephemeris.
-- [ ] Update docs and help text.
-- [ ] Run docs parity tests and commit with message
+  - 2026-06-24: Added RED coverage in `deployment/release/docs-parity.test.mjs`,
+    `deployment/release/sdn-parity-contract.test.mjs`,
+    `desktop/test/unit/dashboard.spec.js`, `desktop/test/unit/tray-sdn-links.spec.js`,
+    and `sdn-server/cmd/spacedatanetwork/main_test.go`.
+- [x] Update docs and help text.
+  - 2026-06-24: Updated README/full docs/homepage/release pipeline docs,
+    Desktop package metadata, splash/error/tray support links, English error
+    dialog copy, and hid the migration-only SQLite importer from root help.
+- [x] Run docs parity tests and commit with message
   `docs: align SDN parity documentation`.
+  - 2026-06-24: Verified `npm run test:release` passed 96/96,
+    `NODE_ENV=test npm --prefix desktop exec -- playwright test
+    test/unit/app-menu.spec.js test/unit/tray-sdn-links.spec.js
+    test/unit/dashboard.spec.js` passed 29/29,
+    `../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run
+    'Test(UserFacingCLICommandsAreRegistered|MigrationOnlyCommandsAreHiddenFromUserFacingHelp)'
+    -count=1` passed, and `git diff --check` passed. Committed as
+    `docs: align SDN parity documentation`.
 
 ### Task 18: Desktop Package, Refresh, Restart
 

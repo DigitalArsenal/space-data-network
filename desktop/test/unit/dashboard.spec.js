@@ -46,11 +46,48 @@ test.describe('SDN dashboard window', () => {
 
     expect(packageJson.name).toBe('space-data-network-desktop')
     expect(packageJson.productName).toBe('Space Data Network')
+    expect(packageJson.repository.url).toBe('https://github.com/DigitalArsenal/space-data-network')
+    expect(packageJson.bugs.url).toBe('https://github.com/DigitalArsenal/space-data-network/issues/new/choose')
+    expect(packageJson.homepage).toBe('https://spacedatanetwork.org/downloads/')
+    expect(packageJson.author).toBe('Space Data Network')
     expect(indexSource).toContain("app.setAppUserModelId('org.spacedatanetwork.desktop')")
     expect(webuiSource).toContain("title: 'Space Data Network'")
     expect(traySource).toContain("tray.setToolTip('Space Data Network')")
     expect(autoLaunchSource).toContain('Name=Space Data Network')
     expect(autoLaunchSource).toContain('Comment=Space Data Network Startup Script')
+  })
+
+  test('uses Space Data Network labels for the splash screen', () => {
+    const splashSource = fs.readFileSync(path.join(__dirname, '../../src/splash/create-splash-screen.js'), 'utf8')
+
+    expect(splashSource).toContain("title: 'Space Data Network splash screen'")
+    expect(splashSource).not.toContain('IPFS Desktop splash screen')
+  })
+
+  test('routes desktop error reports to SDN support instead of upstream IPFS Desktop', () => {
+    const errorSource = fs.readFileSync(path.join(__dirname, '../../src/dialogs/errors.js'), 'utf8')
+
+    expect(errorSource).toContain('https://github.com/DigitalArsenal/space-data-network/issues/new')
+    expect(errorSource).toContain('https://spacedatanetwork.org/docs/')
+    expect(errorSource).not.toContain('github.com/ipfs/ipfs-desktop')
+    expect(errorSource).not.toContain('github.com/ipfs-shipyard/ipfs-desktop')
+  })
+
+  test('uses Space Data Network labels in error dialog copy', () => {
+    const locale = JSON.parse(fs.readFileSync(path.join(__dirname, '../../assets/locales/en.json'), 'utf8'))
+    const errorCopy = [
+      locale.restartIpfsDesktop,
+      locale.recoverableErrorDialog.title,
+      locale.recoverableErrorDialog.message,
+      locale.ipfsDesktopHasShutdownDialog.title,
+      locale.ipfsDesktopHasShutdownDialog.message
+    ].join('\n')
+
+    expect(locale.restartIpfsDesktop).toBe('Restart Space Data Network')
+    expect(locale.recoverableErrorDialog.message).toContain('Space Data Network')
+    expect(locale.ipfsDesktopHasShutdownDialog.title).toBe('Space Data Network has shut down')
+    expect(locale.ipfsDesktopHasShutdownDialog.message).toContain('Space Data Network has shut down because of an error')
+    expect(errorCopy).not.toContain('IPFS Desktop')
   })
 
   test('does not run auto-update checks in unsigned local app builds', () => {

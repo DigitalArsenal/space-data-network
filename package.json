@@ -49,6 +49,7 @@
     "ci:module-delivery": "npm run test:module-delivery",
     "ci:local": "scripts/ci-local.sh quick",
     "ci:local:full": "scripts/ci-local.sh full",
+    "test:release": "node --test deployment/release/*.test.mjs",
     "test:release-artifacts:docker": "node deployment/release/test-release-artifacts-docker.mjs",
     "test:live-dht-client-smoke": "node deployment/release/live-dht-client-smoke.mjs"
   },

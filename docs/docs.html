@@ -1073,6 +1073,37 @@ curl -fsSL https://spacedatanetwork.org/install.sh | bash
 # Windows PowerShell
 irm https://spacedatanetwork.org/install.ps1 | iex</code></pre>
 
+        <h3>CLI Operations</h3>
+        <p>The first-version CLI and Desktop use the same identity, lifecycle, search, and signed update contracts. The CLI can manage the persistent user-scoped service, remove the active installed bundle while preserving data by default, search the same provider/data indexes as the UI, export public identity records in every supported format, and update through the SDN-owned provider feed.</p>
+        <pre><code># Persistent service lifecycle
+spacedatanetwork start
+spacedatanetwork stop
+spacedatanetwork restart
+spacedatanetwork service status
+spacedatanetwork service install
+spacedatanetwork service uninstall
+
+# Remove the active install; data purge is explicit
+spacedatanetwork remove --dry-run
+spacedatanetwork remove --purge-data
+
+# Provider, standard, and data search
+spacedatanetwork search providers celestrak --schema OMM
+spacedatanetwork search standards OMM --format json
+spacedatanetwork search data --schema CAT --provider-id space-data-network-02 --format csv
+
+# EPM/vCard identity setup and export
+spacedatanetwork identity wizard
+spacedatanetwork identity export --format flatbuffer --output epm.fbs
+spacedatanetwork identity export --format qrcode
+
+# SDN-owned signed updates
+spacedatanetwork update check
+spacedatanetwork update stage
+spacedatanetwork update apply</code></pre>
+
+        <p>Identity export supports text, JSON, CSV, FlatBuffer, and QR code output. The signed update provider is rooted at <code>updates.spacedatanetwork.org</code>; running-daemon updates are staged, applied in place, health checked, and rolled back on failure.</p>
+
         <p>Native artifacts are attached to versioned SDN release tags, not SDK-only tags such as <code>sdn-js-v...</code>. Release <code>v1.0.3-beta.1</code> currently publishes self-contained CLI archives, Desktop installers, Linux amd64 full-node packages, a Docker image tarball, a Linux VM bundle, and a macOS ARM64 full-node bundle.</p>
 
         <h3>Versioned Release</h3>
@@ -1434,7 +1465,7 @@ node.on('error', (error) => console.error(error));</code></pre>
 
       <section id="sdk-storefront-delivery" class="doc-section">
         <h2>Storefront & Encrypted Module Delivery</h2>
-        <p>Third-party browser and Node applications can discover a PLG marketplace listing, purchase access, request encrypted WASM delivery, decrypt locally, load the module through the SDK browser harness, and invoke it using only public <code>sdn-js</code> package exports. No <code>src/*</code> imports, helper service, or legacy broker/bootstrap path is required.</p>
+        <p>Third-party browser and Node applications can discover a PLG marketplace listing, purchase access, request encrypted WASM delivery, decrypt locally, load the module through the SDK browser harness, and invoke it using only public <code>sdn-js</code> package exports. No <code>src/*</code> imports or helper service is required.</p>
 
         <h3>Public Package Surfaces</h3>
         <table>
@@ -2973,6 +3004,7 @@ const sub = subscriptionManager.createSubscription({
       <section id="dataflow-encryption" class="doc-section">
         <h2>Encrypted Messages Between Nodes</h2>
         <p>SDN supports end-to-end encryption for private data delivery. Encryption uses the recipient's X25519 public key (derived from their xpub via SLIP-10).</p>
+        <p>Encrypted conjunction assessment uses those private channels for maneuver ephemeris screening without broadcasting planned maneuvers to competitors. Operators can keep MPE/EPM inputs encrypted, choose the grant or channel used for screening, and export CA results with provenance without revealing maneuver intent to the public DHT.</p>
 
         <h3>Encryption Modes</h3>
         <table>

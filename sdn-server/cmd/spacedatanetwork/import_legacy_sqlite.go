@@ -31,6 +31,7 @@ import (
 var importLegacySQLiteCmd = &cobra.Command{
 	Use:   "import-legacy-sqlite",
 	Short: "Import legacy satellite_data.db rows into FlatSQL",
+	Hidden: true,
 	Long: `Streams rows from a legacy SQLite table (default: satellite_data) and stores
 them as OMM (and optionally MPE) FlatBuffers in the current FlatSQL storage.`,
 	RunE: runImportLegacySQLite,

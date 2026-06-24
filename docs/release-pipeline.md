@@ -24,6 +24,9 @@ anchor records. It does publish usable artifacts for testers:
 - Linux VM tarball named with `spacedatanetwork-linux-vm-`
 - downloadable Docker image tarball named with `spacedatanetwork-container-`
 - macOS ARM64 bundle named `spacedatanetwork-darwin-arm64.tar.gz`
+- macOS Desktop DMG named `space-data-network-desktop-<desktop-version>-mac.dmg`
+- Windows Desktop installer named `space-data-network-desktop-setup-<desktop-version>-windows-x64.exe`
+- Linux Desktop AppImage named `space-data-network-desktop-<desktop-version>-linux-x86_64.AppImage`
 - browser and Node SDK tarball named with `spacedatanetwork-sdn-js-`
 - CycloneDX SBOM: `spacedatanetwork-sbom.cdx.json`
 - `ipfs-deployment.json`
@@ -49,6 +52,9 @@ anchor records. It does publish usable artifacts for testers:
 - edge-relay RPM and DEB
 - Linux VM tarball
 - downloadable Docker image tarball
+- macOS Desktop DMG
+- Windows Desktop installer
+- Linux Desktop AppImage
 - CycloneDX SBOM: `spacedatanetwork-sbom.cdx.json`
 - `ipfs-deployment.json`
 - `container-digests.json`
@@ -77,6 +83,11 @@ For local `act` runs, point it at the artifact server directory instead:
 ```sh
 npm run test:release-artifacts:docker -- --act-artifacts /tmp/sdn-beta-act-artifacts
 ```
+
+The public live-DHT workflow is a separate release gate. It runs a Linux Docker
+client plus native macOS and Windows clients against the public IPFS Kademlia DHT,
+waits 300 seconds for registration, and then proves peer discovery, identity exchange,
+provider search, data search, and one retrieval/query path.
 
 Manual spot checks:
 
