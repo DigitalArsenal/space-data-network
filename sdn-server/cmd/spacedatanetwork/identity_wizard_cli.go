@@ -35,6 +35,7 @@ type identityWizardOptions struct {
 	Sets         []string
 	Yes          bool
 	PromptWriter io.Writer
+	SessionToken string
 }
 
 type identityWizardNodeIdentity struct {
@@ -51,11 +52,14 @@ type identityWizardProfileSource struct {
 
 var identityWizardOpts identityWizardOptions
 
+var errIdentityWizardDaemonUnavailable = errors.New("identity wizard daemon unavailable")
+
 func init() {
 	identityWizardCmd.Flags().StringVar(&identityWizardOpts.Format, "format", "text", "output format: text, json, csv, flatbuffer, qrcode")
 	identityWizardCmd.Flags().StringVarP(&identityWizardOpts.OutputPath, "output", "o", "", "write FlatBuffer output to path")
 	identityWizardCmd.Flags().StringArrayVar(&identityWizardOpts.Sets, "set", nil, "set public identity field as key=value (repeatable)")
 	identityWizardCmd.Flags().BoolVarP(&identityWizardOpts.Yes, "yes", "y", false, "accept changes without confirmation")
+	identityWizardCmd.Flags().StringVar(&identityWizardOpts.SessionToken, "session-token", "", "SDN wallet session token for auth-enabled daemon updates (default: SDN_SESSION_TOKEN)")
 	identityCmd.AddCommand(identityWizardCmd)
 }
 
@@ -222,6 +226,9 @@ func runIdentityWizardWithProfile(ctx context.Context, in io.Reader, out io.Writ
 	if profileSource.DaemonSource {
 		return runIdentityWizardWithDaemonProfile(ctx, out, options, strings.TrimSpace(daemonBaseURL), profile, peerID)
 	}
+	if err := ensureIdentityWizardCanRebuildSourceKeys(profileSource.SourceEPM, nodeIdentity); err != nil {
+		return err
+	}
 
 	service := epm.NewService(nodeIdentity.Identity, peers.NewRegistry(false, nil), peerID, nodeIdentity.XPub, dataDir)
 	service.SetProfileStore(store)
@@ -259,9 +266,12 @@ func loadIdentityWizardProfileSource(ctx context.Context, cfg *config.Config, st
 }
 
 func loadIdentityWizardDaemonProfileSource(ctx context.Context, baseURL string, peerID peer.ID) (identityWizardProfileSource, bool, error) {
-	raw, err := fetchIdentityWizardDaemonEndpoint(ctx, http.MethodGet, baseURL, "/api/node/epm", nil, "")
+	raw, err := fetchIdentityWizardDaemonEndpoint(ctx, http.MethodGet, baseURL, "/api/node/epm", nil, "", "")
 	if err != nil {
-		return identityWizardProfileSource{}, false, nil
+		if errors.Is(err, errIdentityWizardDaemonUnavailable) {
+			return identityWizardProfileSource{}, false, nil
+		}
+		return identityWizardProfileSource{}, true, err
 	}
 	profile, err := epm.ProfileFromEPMBytes(raw)
 	if err != nil {
@@ -312,7 +322,7 @@ func runIdentityWizardWithDaemonProfile(ctx context.Context, out io.Writer, opti
 	if strings.TrimSpace(baseURL) == "" {
 		return errors.New("identity wizard daemon URL is required")
 	}
-	epmBytes, err := updateIdentityWizardDaemonProfile(ctx, baseURL, profile)
+	epmBytes, err := updateIdentityWizardDaemonProfile(ctx, baseURL, profile, options)
 	if err != nil {
 		return err
 	}
@@ -323,12 +333,12 @@ func runIdentityWizardWithDaemonProfile(ctx context.Context, out io.Writer, opti
 	return writeIdentityWizardDaemonOutput(ctx, out, baseURL, epmBytes, epmJSON, options)
 }
 
-func updateIdentityWizardDaemonProfile(ctx context.Context, baseURL string, profile *epm.Profile) ([]byte, error) {
+func updateIdentityWizardDaemonProfile(ctx context.Context, baseURL string, profile *epm.Profile, options identityWizardOptions) ([]byte, error) {
 	body, err := json.Marshal(profile)
 	if err != nil {
 		return nil, fmt.Errorf("encode EPM profile update: %w", err)
 	}
-	epmBytes, err := fetchIdentityWizardDaemonEndpoint(ctx, http.MethodPut, baseURL, "/api/node/epm", bytes.NewReader(body), "application/json")
+	epmBytes, err := fetchIdentityWizardDaemonEndpoint(ctx, http.MethodPut, baseURL, "/api/node/epm", bytes.NewReader(body), "application/json", identityWizardSessionToken(options))
 	if err != nil {
 		return nil, err
 	}
@@ -338,7 +348,7 @@ func updateIdentityWizardDaemonProfile(ctx context.Context, baseURL string, prof
 	return epmBytes, nil
 }
 
-func fetchIdentityWizardDaemonEndpoint(ctx context.Context, method, baseURL, endpoint string, body io.Reader, contentType string) ([]byte, error) {
+func fetchIdentityWizardDaemonEndpoint(ctx context.Context, method, baseURL, endpoint string, body io.Reader, contentType, sessionToken string) ([]byte, error) {
 	requestURL := strings.TrimRight(baseURL, "/") + endpoint
 	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -349,9 +359,13 @@ func fetchIdentityWizardDaemonEndpoint(ctx context.Context, method, baseURL, end
 	if strings.TrimSpace(contentType) != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
+	if sessionToken = strings.TrimSpace(sessionToken); sessionToken != "" {
+		req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: sessionToken})
+		req.Header.Set("X-Requested-With", "spacedatanetwork-cli")
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("connect to local SDN daemon at %s: %w", baseURL, err)
+		return nil, fmt.Errorf("%w: connect to local SDN daemon at %s: %v", errIdentityWizardDaemonUnavailable, baseURL, err)
 	}
 	defer resp.Body.Close()
 	respBody, readErr := io.ReadAll(resp.Body)
@@ -371,7 +385,7 @@ func fetchIdentityWizardDaemonEndpoint(ctx context.Context, method, baseURL, end
 func writeIdentityWizardDaemonOutput(ctx context.Context, out io.Writer, baseURL string, epmBytes []byte, epmJSON map[string]any, options identityWizardOptions) error {
 	switch normalizeIdentityExportFormat(options.Format) {
 	case "text":
-		vcardBytes, err := fetchIdentityWizardDaemonEndpoint(ctx, http.MethodGet, baseURL, "/api/node/epm/vcard", nil, "")
+		vcardBytes, err := fetchIdentityWizardDaemonEndpoint(ctx, http.MethodGet, baseURL, "/api/node/epm/vcard", nil, "", identityWizardSessionToken(options))
 		if err != nil {
 			return err
 		}
@@ -392,7 +406,7 @@ func writeIdentityWizardDaemonOutput(ctx context.Context, out io.Writer, baseURL
 	case "flatbuffer":
 		return writeIdentityFlatBufferOutput(out, epmBytes, options.OutputPath)
 	case "qrcode":
-		vcardBytes, err := fetchIdentityWizardDaemonEndpoint(ctx, http.MethodGet, baseURL, "/api/node/epm/vcard", nil, "")
+		vcardBytes, err := fetchIdentityWizardDaemonEndpoint(ctx, http.MethodGet, baseURL, "/api/node/epm/vcard", nil, "", identityWizardSessionToken(options))
 		if err != nil {
 			return err
 		}
@@ -404,6 +418,93 @@ func writeIdentityWizardDaemonOutput(ctx context.Context, out io.Writer, baseURL
 		return err
 	default:
 		return fmt.Errorf("unsupported identity wizard output format %q (use text, json, csv, flatbuffer, or qrcode)", options.Format)
+	}
+}
+
+func identityWizardSessionToken(options identityWizardOptions) string {
+	if value := strings.TrimSpace(options.SessionToken); value != "" {
+		return value
+	}
+	return strings.TrimSpace(os.Getenv("SDN_SESSION_TOKEN"))
+}
+
+func ensureIdentityWizardCanRebuildSourceKeys(epmBytes []byte, nodeIdentity identityWizardNodeIdentity) error {
+	if len(epmBytes) == 0 {
+		return nil
+	}
+	epmJSON, err := epm.DirectoryRecordJSONFromEPM(epmBytes, nodeIdentity.PeerID.String())
+	if err != nil {
+		return fmt.Errorf("decode local EPM for key preservation check: %w", err)
+	}
+	keys := identityWizardEPMJSONKeys(epmJSON)
+	if len(keys) == 0 {
+		return nil
+	}
+	for _, key := range keys {
+		if !identityWizardCanRebuildKey(key, nodeIdentity) {
+			return fmt.Errorf("local EPM for %s contains public key material that cannot be rebuilt offline; start the daemon and pass --session-token or stop the daemon before retrying", nodeIdentity.PeerID)
+		}
+	}
+	return nil
+}
+
+func identityWizardEPMJSONKeys(epmJSON map[string]any) []map[string]any {
+	switch typed := epmJSON["keys"].(type) {
+	case []map[string]any:
+		return typed
+	case []any:
+		keys := make([]map[string]any, 0, len(typed))
+		for _, raw := range typed {
+			if key, ok := raw.(map[string]any); ok {
+				keys = append(keys, key)
+			}
+		}
+		return keys
+	default:
+		return nil
+	}
+}
+
+func identityWizardCanRebuildKey(key map[string]any, nodeIdentity identityWizardNodeIdentity) bool {
+	if key == nil {
+		return true
+	}
+	keyXPub := strings.TrimSpace(identityWizardStringValue(key["xpub"]))
+	keyAddress := strings.TrimSpace(identityWizardStringValue(key["key_address"]))
+	if keyXPub != "" && keyXPub == strings.TrimSpace(nodeIdentity.XPub) && identityWizardLooksLikeHDKeyPath(keyAddress) {
+		return true
+	}
+	if nodeIdentity.Identity == nil {
+		return false
+	}
+	info := nodeIdentity.Identity.Info()
+	publicKey := strings.TrimSpace(identityWizardStringValue(key["public_key"]))
+	if publicKey == "" {
+		return true
+	}
+	switch {
+	case publicKey == strings.TrimSpace(info.IdentityPubKeyHex) && keyAddress == strings.TrimSpace(info.IdentityKeyPath):
+		return true
+	case publicKey == strings.TrimSpace(info.SigningPubKeyHex) && keyAddress == strings.TrimSpace(info.SigningKeyPath):
+		return true
+	case publicKey == strings.TrimSpace(info.EncryptionPubHex) && keyAddress == strings.TrimSpace(info.EncryptionKeyPath):
+		return true
+	default:
+		return false
+	}
+}
+
+func identityWizardLooksLikeHDKeyPath(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "m/44'/")
+}
+
+func identityWizardStringValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	default:
+		return ""
 	}
 }
 

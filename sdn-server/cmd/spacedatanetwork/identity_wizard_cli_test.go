@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/csv"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -246,6 +248,15 @@ func TestIdentityWizardDaemonUpdatePreservesRuntimeAddress(t *testing.T) {
 			w.Header().Set("Content-Type", "application/x-flatbuffers")
 			_, _ = w.Write(daemonService.GetNodeEPM())
 		case http.MethodPut:
+			cookie, err := r.Cookie("sdn_wallet_session")
+			if err != nil || cookie.Value != "session-123" {
+				http.Error(w, "missing session cookie", http.StatusUnauthorized)
+				return
+			}
+			if got := r.Header.Get("X-Requested-With"); got != "spacedatanetwork-cli" {
+				http.Error(w, "missing cli CSRF header", http.StatusForbidden)
+				return
+			}
 			var profile epm.Profile
 			if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -278,8 +289,9 @@ func TestIdentityWizardDaemonUpdatePreservesRuntimeAddress(t *testing.T) {
 		strings.NewReader("y\n"),
 		&out,
 		identityWizardOptions{
-			Sets:   []string{"dn=" + updatedName},
-			Format: "json",
+			Sets:         []string{"dn=" + updatedName},
+			Format:       "json",
+			SessionToken: "session-123",
 		},
 		store,
 		identityWizardNodeIdentity{
@@ -306,6 +318,25 @@ func TestIdentityWizardDaemonUpdatePreservesRuntimeAddress(t *testing.T) {
 		t.Fatalf("payload dn = %v, want %q", payload["dn"], updatedName)
 	}
 	assertIdentityWizardJSONHasRuntimeAddress(t, payload, runtimeAddr)
+}
+
+func TestIdentityWizardDaemonProfileSourceReturnsHTTPError(t *testing.T) {
+	_, _, peerID, _ := newIdentityWizardTestStore(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "daemon not ready", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	_, ok, err := loadIdentityWizardDaemonProfileSource(t.Context(), server.URL, peerID)
+	if err == nil {
+		t.Fatal("loadIdentityWizardDaemonProfileSource succeeded, want daemon API error")
+	}
+	if !ok {
+		t.Fatal("loadIdentityWizardDaemonProfileSource reported offline fallback for HTTP error")
+	}
+	if !strings.Contains(err.Error(), "503") {
+		t.Fatalf("error = %v, want HTTP 503 detail", err)
+	}
 }
 
 func TestIdentityWizardOfflineUpdatePreservesStoredRuntimeAddress(t *testing.T) {
@@ -352,6 +383,50 @@ func TestIdentityWizardOfflineUpdatePreservesStoredRuntimeAddress(t *testing.T) 
 		t.Fatalf("wizard json output is invalid JSON: %v\n%s", err, out.String())
 	}
 	assertIdentityWizardJSONHasRuntimeAddress(t, payload, runtimeAddr)
+}
+
+func TestIdentityWizardOfflineRefusesUnrebuildableStoredKey(t *testing.T) {
+	_, store, _, dataDir := newIdentityWizardTestStore(t)
+	identity, err := testProviderDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testProviderDerivedIdentity failed: %v", err)
+	}
+	_, runtimePriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+
+	const xpub = "xpub-provider"
+	seedService := epm.NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, xpub, dataDir)
+	seedService.SetProfileStore(store)
+	if err := seedService.SetRuntimeSigningKey(runtimePriv, "sdn/dataset-publication/v1"); err != nil {
+		t.Fatalf("SetRuntimeSigningKey failed: %v", err)
+	}
+	if err := seedService.UpdateProfile(&epm.Profile{DN: "Runtime Key Provider"}); err != nil {
+		t.Fatalf("seed UpdateProfile failed: %v", err)
+	}
+
+	err = runIdentityWizardWithIO(
+		strings.NewReader("y\n"),
+		io.Discard,
+		identityWizardOptions{
+			Sets:   []string{"dn=Should Not Drop Runtime Key"},
+			Format: "json",
+		},
+		store,
+		identityWizardNodeIdentity{
+			Identity: identity,
+			PeerID:   identity.PeerID,
+			XPub:     xpub,
+		},
+		dataDir,
+	)
+	if err == nil {
+		t.Fatal("runIdentityWizardWithIO succeeded, want unrebuildable key preservation error")
+	}
+	if !strings.Contains(err.Error(), "cannot be rebuilt offline") {
+		t.Fatalf("error = %v, want unrebuildable key preservation error", err)
+	}
 }
 
 func TestIdentityWizardRefusesToDropExistingPublicIdentityMaterial(t *testing.T) {
