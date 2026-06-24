@@ -37,6 +37,9 @@ func TestIdentityWizardSetValuesWritesLocalEPMAndJSON(t *testing.T) {
 			Sets: []string{
 				"dn=CelesTrak Provider",
 				"legal_name=CelesTrak",
+				"given_name=Celes",
+				"family_name=Trak",
+				"entity_type=node",
 				"email=ops@celestrak.test",
 				"telephone=+1-555-0100",
 				"alternate_names=celestrak.eth,provider.sol",
@@ -64,6 +67,9 @@ func TestIdentityWizardSetValuesWritesLocalEPMAndJSON(t *testing.T) {
 	}
 	if payload["dn"] != "CelesTrak Provider" || payload["legal_name"] != "CelesTrak" {
 		t.Fatalf("wizard json payload = %#v", payload)
+	}
+	if payload["given_name"] != "Celes" || payload["family_name"] != "Trak" || payload["entity_type"] != "node" {
+		t.Fatalf("wizard json name/entity fields = %#v", payload)
 	}
 
 	localEPM, err := store.LoadLocalEPM(peerID.String())
@@ -151,6 +157,105 @@ func TestIdentityWizardCSVAndFlatBufferOutputs(t *testing.T) {
 	}
 	if flatOut.Len() != 0 {
 		t.Fatalf("flatbuffer file output should not also write stdout, got %q", flatOut.String())
+	}
+}
+
+func TestIdentityDirectoryCommandIsRegisteredWithParitySubcommands(t *testing.T) {
+	requireCommand(t, []string{"identity", "directory"}, "directory")
+	for _, command := range []struct {
+		args []string
+		use  string
+	}{
+		{[]string{"identity", "directory", "list"}, "list [query]"},
+		{[]string{"identity", "directory", "show"}, "show <peer-id>"},
+		{[]string{"identity", "directory", "import"}, "import --file <path>"},
+		{[]string{"identity", "directory", "download"}, "download <peer-id>"},
+	} {
+		requireCommand(t, command.args, command.use)
+	}
+}
+
+func TestIdentityDirectoryImportListShowAndDownload(t *testing.T) {
+	cfgPath, _, _, _ := newIdentityWizardTestStore(t)
+	withSyncCLITestConfig(t, cfgPath)
+
+	importPath := filepath.Join(t.TempDir(), "directory-node.json")
+	if err := os.WriteFile(importPath, []byte(`{
+		"kind": "node",
+		"epm_json": {
+			"peer_id": "16Uiu2DirectoryNode",
+			"dn": "Directory Provider",
+			"legal_name": "Directory Provider LLC",
+			"bitcoin_address": "bc1qdirectory"
+		},
+		"epm_cid": "bafy-directory-node"
+	}`), 0o600); err != nil {
+		t.Fatalf("write import file: %v", err)
+	}
+
+	var importOut bytes.Buffer
+	if err := runIdentityDirectoryImport(&importOut, identityDirectoryOptions{
+		File:   importPath,
+		Kind:   "node",
+		Format: "json",
+		Source: "test-import",
+		Limit:  100,
+	}); err != nil {
+		t.Fatalf("runIdentityDirectoryImport failed: %v", err)
+	}
+	var imported searchResult
+	if err := json.Unmarshal(importOut.Bytes(), &imported); err != nil {
+		t.Fatalf("decode import JSON: %v\n%s", err, importOut.String())
+	}
+	if imported.Count != 1 || imported.Results[0]["peer_id"] != "16Uiu2DirectoryNode" {
+		t.Fatalf("import result = %#v", imported)
+	}
+
+	var listOut bytes.Buffer
+	if err := runIdentityDirectoryList(&listOut, identityDirectoryOptions{
+		Kind:   "node",
+		Format: "table",
+		Limit:  100,
+	}, "Provider"); err != nil {
+		t.Fatalf("runIdentityDirectoryList failed: %v", err)
+	}
+	if output := listOut.String(); !strings.Contains(output, "Directory Provider") || !strings.Contains(output, "16Uiu2DirectoryNode") {
+		t.Fatalf("directory list output missing imported node:\n%s", output)
+	}
+
+	var showOut bytes.Buffer
+	if err := runIdentityDirectoryShow(&showOut, identityDirectoryOptions{
+		Kind:   "node",
+		Format: "csv",
+		Limit:  100,
+	}, "16Uiu2DirectoryNode"); err != nil {
+		t.Fatalf("runIdentityDirectoryShow failed: %v", err)
+	}
+	records, err := csv.NewReader(strings.NewReader(showOut.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("decode show CSV: %v\n%s", err, showOut.String())
+	}
+	if len(records) != 2 || records[0][1] != "peer_id" || records[1][1] != "16Uiu2DirectoryNode" {
+		t.Fatalf("show CSV = %#v", records)
+	}
+
+	vcardPath := filepath.Join(t.TempDir(), "directory-node.vcf")
+	if err := runIdentityDirectoryDownload(io.Discard, identityDirectoryOptions{
+		Kind:       "node",
+		Format:     "vcard",
+		OutputPath: vcardPath,
+		Limit:      100,
+	}, "16Uiu2DirectoryNode"); err != nil {
+		t.Fatalf("runIdentityDirectoryDownload failed: %v", err)
+	}
+	vcard, err := os.ReadFile(vcardPath)
+	if err != nil {
+		t.Fatalf("read downloaded vCard: %v", err)
+	}
+	if text := string(vcard); !strings.Contains(text, "BEGIN:VCARD") ||
+		!strings.Contains(text, "FN:Directory Provider") ||
+		!strings.Contains(text, "X-SDN-EPM-CID:bafy-directory-node") {
+		t.Fatalf("downloaded vCard = %s", text)
 	}
 }
 
