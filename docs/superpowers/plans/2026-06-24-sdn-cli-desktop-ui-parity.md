@@ -307,7 +307,7 @@ red/green extension to `deployment/release/sdn-parity-contract.test.mjs`.
 - Modify: `desktop/test/unit/static-http-server-identity.spec.js`
 - Modify: `desktop/src/static-http-server.js`
 
-- [ ] **Step 1: Add a failing node vCard test**
+- [x] **Step 1: Add a failing node vCard test**
 
 In the existing `serves the local node EPM route as a raw FlatBuffer` test,
 after the `expect(epm.keysLength()).toBe(2)` assertions, add:
@@ -324,7 +324,7 @@ after the `expect(epm.keysLength()).toBe(2)` assertions, add:
     expect(vcard.body).toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:x25519-node-encryption-public')
 ```
 
-- [ ] **Step 2: Run the identity test and verify it fails**
+- [x] **Step 2: Run the identity test and verify it fails**
 
 Run:
 
@@ -334,7 +334,7 @@ npx playwright test desktop/test/unit/static-http-server-identity.spec.js -g "se
 
 Expected: FAIL because `/api/node/epm/vcard` returns 404 or method not allowed.
 
-- [ ] **Step 3: Implement `/api/node/epm/vcard`**
+- [x] **Step 3: Implement `/api/node/epm/vcard`**
 
 In `desktop/src/static-http-server.js`, update the route guard at the start of
 `serveDesktopNodeEPMAPI` to include `/api/node/epm/vcard`, and add this handler
@@ -348,7 +348,7 @@ after the `/api/node/epm/json` GET handler:
   }
 ```
 
-- [ ] **Step 4: Run the focused identity test and verify it passes**
+- [x] **Step 4: Run the focused identity test and verify it passes**
 
 Run:
 
@@ -364,7 +364,7 @@ Expected: PASS.
 - Modify: `desktop/test/unit/static-http-server-identity.spec.js`
 - Modify: `desktop/src/static-http-server.js`
 
-- [ ] **Step 1: Add failing peer artifact route tests**
+- [x] **Step 1: Add failing peer artifact route tests**
 
 Add this test to `desktop/test/unit/static-http-server-identity.spec.js`:
 
@@ -400,7 +400,7 @@ Add this test to `desktop/test/unit/static-http-server-identity.spec.js`:
   })
 ```
 
-- [ ] **Step 2: Run the peer route test and verify it fails**
+- [x] **Step 2: Run the peer route test and verify it fails**
 
 Run:
 
@@ -410,7 +410,7 @@ npx playwright test desktop/test/unit/static-http-server-identity.spec.js -g "se
 
 Expected: FAIL because `serveDesktopPeerEPMAPI` is not exported.
 
-- [ ] **Step 3: Implement `serveDesktopPeerEPMAPI`**
+- [x] **Step 3: Implement `serveDesktopPeerEPMAPI`**
 
 Add this function in `desktop/src/static-http-server.js` near the other
 identity route handlers:
@@ -454,7 +454,7 @@ Add the route before `serveDesktopNodeEPMAPI` in the static server chain:
 
 Export `serveDesktopPeerEPMAPI` from `module.exports`.
 
-- [ ] **Step 4: Run the peer route test and verify it passes**
+- [x] **Step 4: Run the peer route test and verify it passes**
 
 Run:
 
@@ -470,7 +470,7 @@ Expected: PASS.
 - Modify: `desktop/test/unit/static-http-server-identity.spec.js`
 - Modify: `desktop/src/static-http-server.js`
 
-- [ ] **Step 1: Add failing auth user route tests**
+- [x] **Step 1: Add failing auth user route tests**
 
 Add this test to `desktop/test/unit/static-http-server-identity.spec.js`:
 
@@ -508,7 +508,7 @@ Add this test to `desktop/test/unit/static-http-server-identity.spec.js`:
   })
 ```
 
-- [ ] **Step 2: Run the auth route test and verify it fails**
+- [x] **Step 2: Run the auth route test and verify it fails**
 
 Run:
 
@@ -518,7 +518,7 @@ npx playwright test desktop/test/unit/static-http-server-identity.spec.js -g "ac
 
 Expected: FAIL because `serveDesktopAuthUsersAPI` is not exported.
 
-- [ ] **Step 3: Implement local Desktop auth users API**
+- [x] **Step 3: Implement local Desktop auth users API**
 
 In `desktop/src/static-http-server.js`, add a small JSON store backed by
 `desktop-auth-users.json` under `app.getPath('userData')`:
@@ -600,7 +600,7 @@ async function serveDesktopAuthUsersAPI (req, res) {
 
 Add the route before static file serving and export `serveDesktopAuthUsersAPI`.
 
-- [ ] **Step 4: Run the auth route test and verify it passes**
+- [x] **Step 4: Run the auth route test and verify it passes**
 
 Run:
 
@@ -618,7 +618,7 @@ Expected: PASS.
 - Modify: `desktop/src/app-menu.js`
 - Modify: `desktop/src/tray.js`
 
-- [ ] **Step 1: Add failing app menu link test**
+- [x] **Step 1: Add failing app menu link test**
 
 Create `desktop/test/unit/app-menu.spec.js`:
 
@@ -651,7 +651,7 @@ test('desktop app menu Learn More opens SDN docs', async () => {
 })
 ```
 
-- [ ] **Step 2: Add failing tray link test**
+- [x] **Step 2: Add failing tray link test**
 
 Create `desktop/test/unit/tray-sdn-links.spec.js` with a proxyquired tray menu
 builder that asserts the About submenu opens SDN release/docs URLs instead of
@@ -659,7 +659,7 @@ IPFS Desktop README URLs. Use the existing mocks from `desktop/test/unit/mocks`
 and assert `shell.openExternal` receives `https://spacedatanetwork.org/` or
 `https://github.com/DigitalArsenal/space-data-network`.
 
-- [ ] **Step 3: Run the new link tests and verify they fail**
+- [x] **Step 3: Run the new link tests and verify they fail**
 
 Run:
 
@@ -669,7 +669,7 @@ npx playwright test desktop/test/unit/app-menu.spec.js desktop/test/unit/tray-sd
 
 Expected: FAIL because current links point at upstream IPFS Desktop.
 
-- [ ] **Step 4: Update app menu and tray links**
+- [x] **Step 4: Update app menu and tray links**
 
 In `desktop/src/app-menu.js`, change:
 
@@ -706,7 +706,7 @@ shell.openExternal('https://github.com/DigitalArsenal/space-data-network')
 Keep the Kubo version link pointing to upstream Kubo releases because that row
 is explicitly about the bundled upstream runtime.
 
-- [ ] **Step 5: Run the link tests and verify they pass**
+- [x] **Step 5: Run the link tests and verify they pass**
 
 Run:
 
@@ -721,7 +721,7 @@ Expected: PASS.
 **Files:**
 - Modified files from Tasks 1-5.
 
-- [ ] **Step 1: Run focused Desktop identity/security tests**
+- [x] **Step 1: Run focused Desktop identity/security tests**
 
 Run:
 
@@ -731,7 +731,7 @@ npx playwright test desktop/test/unit/static-http-server-identity.spec.js deskto
 
 Expected: PASS.
 
-- [ ] **Step 2: Run release parity contract test**
+- [x] **Step 2: Run release parity contract test**
 
 Run:
 
@@ -741,7 +741,7 @@ node --test deployment/release/sdn-parity-contract.test.mjs
 
 Expected: PASS.
 
-- [ ] **Step 3: Run whitespace check**
+- [x] **Step 3: Run whitespace check**
 
 Run:
 
@@ -751,7 +751,7 @@ git diff --check
 
 Expected: no output and exit code 0.
 
-- [ ] **Step 4: Commit Slice 1**
+- [x] **Step 4: Commit Slice 1**
 
 Run:
 
@@ -759,6 +759,14 @@ Run:
 git add deployment/release/sdn-parity-contract.json deployment/release/sdn-parity-contract.test.mjs docs/superpowers/specs/2026-06-24-cli-desktop-ui-parity-design.md desktop/src/static-http-server.js desktop/test/unit/static-http-server-identity.spec.js desktop/src/app-menu.js desktop/src/tray.js desktop/test/unit/app-menu.spec.js desktop/test/unit/tray-sdn-links.spec.js
 git commit -m "feat: add desktop parity routes and contract"
 ```
+
+2026-06-24 verification: the current implementation already contains the
+Desktop node EPM/vCard, peer EPM/vCard, auth users, product link, tray service,
+local data/search, encrypted CA metadata, and security guardrail tests. Verified
+with `npm --prefix desktop exec -- playwright test test/unit/static-http-server-identity.spec.js test/unit/static-http-server-data.spec.js test/unit/app-menu.spec.js test/unit/tray-sdn-links.spec.js test/unit/tray-service.spec.js` (27 passed),
+`npm --prefix desktop exec -- playwright test test/unit/static-http-server-identity.spec.js test/unit/static-http-server-security.spec.js` (20 passed),
+`node --test deployment/release/sdn-parity-contract.test.mjs` (5 passed), and
+`git diff --check`.
 
 ---
 
