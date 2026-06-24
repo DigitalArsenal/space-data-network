@@ -875,12 +875,19 @@ with `npm --prefix desktop exec -- playwright test test/unit/static-http-server-
 - Modify: `sdn-server/cmd/spacedatanetwork/main.go`
 - Modify: `sdn-server/cmd/spacedatanetwork/channels_cli.go`
 
-- [ ] Add failing tests for MPE source selection, encrypted channel/grant
+- [x] Add failing tests for MPE source selection, encrypted channel/grant
   selection, dry-run provenance output, and JSON export.
-- [ ] Implement CLI entry points that compose existing data, channel, and
+- [x] Implement CLI entry points that compose existing data, channel, and
   module/source-selection contracts.
-- [ ] Run focused CA CLI tests and commit with message
+- [x] Run focused CA CLI tests and commit with message
   `feat: add encrypted CA maneuver ephemeris CLI`.
+  - 2026-06-24: Extended `conjunction screen` with `--dry-run`,
+    source/provider/PNM/query selectors, result channel ID, module metadata,
+    and JSON provenance output for private maneuver ephemeris screening.
+    Verified the red/green test with
+    `../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run 'TestRunConjunctionScreenDryRunExportsManeuverEphemerisProvenance' -count=1`
+    and the focused command surface with
+    `../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run 'Test(Conjunction|RunConjunction)' -count=1`.
 
 ### Task 11: Add Desktop/UI Workflow
 
