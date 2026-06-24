@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -128,6 +129,78 @@ func TestSearchDataRouteReturnsLocalReplicaRows(t *testing.T) {
 	}
 }
 
+func TestSearchProvidersLiveDHTModeUsesLiveBackend(t *testing.T) {
+	store := newDataAPITestStore(t)
+	live := &fakeLiveSearchBackend{
+		providerRows: []map[string]interface{}{{
+			"peer_id":     "16Uiu2HLiveCelesTrak",
+			"dn":          "Live CelesTrak",
+			"provider_id": "space-data-network-02",
+			"schema_name": "OMM.fbs",
+			"source_name": "celestrak-gp",
+		}},
+	}
+
+	mux := http.NewServeMux()
+	NewSearchHandlerWithOptions(store, SearchHandlerOptions{LiveBackend: live}).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/search/providers", bytes.NewBufferString(`{
+		"mode": "live-dht",
+		"query": "celestrak",
+		"schema": "OMM",
+		"provider_id": "space-data-network-02",
+		"limit": 10
+	}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if live.providerCalls != 1 || live.dataCalls != 0 {
+		t.Fatalf("live backend calls provider=%d data=%d", live.providerCalls, live.dataCalls)
+	}
+	if live.lastProviderRequest.Mode != "live-dht" ||
+		live.lastProviderRequest.Schema != "OMM" ||
+		live.lastProviderRequest.ProviderID != "space-data-network-02" ||
+		live.lastProviderRequest.Limit != 10 {
+		t.Fatalf("live provider request = %#v", live.lastProviderRequest)
+	}
+
+	var body struct {
+		Count   int                      `json:"count"`
+		Results []map[string]interface{} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode provider search response: %v", err)
+	}
+	if body.Count != 1 || body.Results[0]["peer_id"] != "16Uiu2HLiveCelesTrak" {
+		t.Fatalf("unexpected live provider response: %#v", body)
+	}
+}
+
+func TestSearchDataLiveDHTModeRequiresLiveBackend(t *testing.T) {
+	store := newDataAPITestStore(t)
+	storeDataAPITestOMM(t, store, 56775, "LOCAL-ROW-SHOULD-NOT-BE-USED", "2026-05-10")
+
+	mux := http.NewServeMux()
+	NewSearchHandler(store).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/search/data", bytes.NewBufferString(`{
+		"mode": "live-dht",
+		"schema": "OMM"
+	}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("live DHT search backend is unavailable")) {
+		t.Fatalf("live-dht unavailable response did not explain backend state: %s", rec.Body.String())
+	}
+}
+
 func TestSearchRoutesRejectNonPost(t *testing.T) {
 	mux := http.NewServeMux()
 	NewSearchHandler(nil).RegisterRoutes(mux)
@@ -139,4 +212,25 @@ func TestSearchRoutesRejectNonPost(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
 	}
+}
+
+type fakeLiveSearchBackend struct {
+	providerRows        []map[string]interface{}
+	dataRows            []map[string]interface{}
+	providerCalls       int
+	dataCalls           int
+	lastProviderRequest SearchRequest
+	lastDataRequest     SearchRequest
+}
+
+func (f *fakeLiveSearchBackend) SearchProviders(ctx context.Context, req SearchRequest) ([]map[string]interface{}, error) {
+	f.providerCalls++
+	f.lastProviderRequest = req
+	return f.providerRows, nil
+}
+
+func (f *fakeLiveSearchBackend) SearchData(ctx context.Context, req SearchRequest) ([]map[string]interface{}, error) {
+	f.dataCalls++
+	f.lastDataRequest = req
+	return f.dataRows, nil
 }

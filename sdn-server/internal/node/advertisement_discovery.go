@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
@@ -427,6 +429,80 @@ func (n *Node) SDNAdvertisementAddrsByPeer() map[string][]string {
 		out[peerID.String()] = addrs
 	}
 	return out
+}
+
+// DiscoverSDNAdvertisementPeers runs an immediate public-DHT lookup for SDN
+// advertisement peers and indexes any EPMs that can be fetched from the peers
+// it discovers. Live-DHT search uses this method before reading shared local
+// search rows so DHT mode cannot silently answer from stale local-only state.
+func (n *Node) DiscoverSDNAdvertisementPeers(ctx context.Context) (int, error) {
+	if n == nil || n.dht == nil || n.host == nil {
+		return 0, fmt.Errorf("live DHT discovery is unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	targets := n.sdnDiscoveryTargets
+	if len(targets) == 0 && strings.TrimSpace(n.sdnAdvertisementTarget.Namespace) != "" {
+		targets = []sdnAdvertisementDiscoveryTarget{n.sdnAdvertisementTarget}
+	}
+	if len(targets) == 0 {
+		return 0, fmt.Errorf("no SDN DHT discovery namespaces configured")
+	}
+
+	discoveryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	seen := map[peer.ID]struct{}{}
+	var lastErr error
+	for _, target := range targets {
+		if strings.TrimSpace(target.Namespace) == "" {
+			continue
+		}
+		count, err := n.discoverSDNAdvertisementPeersNow(discoveryCtx, target, seen)
+		if err != nil {
+			lastErr = err
+			log.Debugf("Live DHT search discovery failed for %s: %v", target.Flag, err)
+			continue
+		}
+		log.Debugf("Live DHT search discovery for %s observed %d peers", target.Flag, count)
+	}
+	if len(seen) == 0 && lastErr != nil {
+		return 0, lastErr
+	}
+	return len(seen), nil
+}
+
+func (n *Node) discoverSDNAdvertisementPeersNow(ctx context.Context, target sdnAdvertisementDiscoveryTarget, seen map[peer.ID]struct{}) (int, error) {
+	routingDiscovery := drouting.NewRoutingDiscovery(n.dht)
+	peerChan, err := routingDiscovery.FindPeers(ctx, target.Namespace)
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	for peerInfo := range peerChan {
+		if peerInfo.ID == "" || peerInfo.ID == n.host.ID() {
+			continue
+		}
+		if _, ok := seen[peerInfo.ID]; ok {
+			continue
+		}
+		seen[peerInfo.ID] = struct{}{}
+		count++
+		n.recordSDNAdvertisementPeerInfo(peerInfo, target.Flag)
+
+		if n.host.Network().Connectedness(peerInfo.ID) != network.Connected {
+			if err := n.host.Connect(ctx, peerInfo); err != nil {
+				log.Debugf("Failed to connect to live-DHT search peer %s (%s): %v", peerInfo.ID, target.Flag, err)
+				continue
+			}
+			n.enqueueAutoRelayCandidate(peerInfo)
+		}
+
+		n.fetchAndIndexDiscoveredNodeEPM(peerInfo.ID, "sdn-advertisement-discovery")
+	}
+	return count, nil
 }
 
 func addrInfoStrings(info peer.AddrInfo) []string {

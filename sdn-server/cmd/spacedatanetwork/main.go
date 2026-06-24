@@ -814,7 +814,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Data API routes
 			dataAPI := api.NewDataQueryHandler(n.Store(), nil)
 			dataAPI.RegisterRoutes(adminMux)
-			searchAPI := api.NewSearchHandler(n.Store())
+			searchAPI := api.NewSearchHandlerWithOptions(n.Store(), api.SearchHandlerOptions{
+				LiveBackend: newLiveDHTSearchBackend(n),
+			})
 			searchAPI.RegisterRoutes(adminMux)
 			conjunctionAPI := api.NewConjunctionHandler(n.Store())
 			conjunctionAPI.RegisterRoutes(adminMux)
