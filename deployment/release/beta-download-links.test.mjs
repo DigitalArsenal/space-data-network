@@ -65,6 +65,16 @@ test('website downloads page exposes beta artifacts and release links', () => {
   assert.doesNotMatch(homepage, /Docker edge-relay image/);
 });
 
+test('public website and docs expose one-line installers', () => {
+  for (const relativePath of ['README.md', 'docs/index.html', 'docs/docs.html']) {
+    const source = readRepoFile(relativePath);
+
+    assert.match(source, /curl -fsSL https:\/\/spacedatanetwork\.org\/install\.sh \| bash/, `${relativePath} missing macOS/Linux installer`);
+    assert.match(source, /irm https:\/\/spacedatanetwork\.org\/install\.ps1 \| iex/, `${relativePath} missing Windows PowerShell installer`);
+    assert.doesNotMatch(source, /digitalarsenal\.github\.io\/space-data-network/, `${relativePath} must not use old SDN GitHub Pages URLs`);
+  }
+});
+
 test('website download cards use direct assets and keep architecture details inside links', () => {
   const homepage = readRepoFile('docs/index.html');
 

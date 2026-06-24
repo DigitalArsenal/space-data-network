@@ -5005,18 +5005,17 @@ npm run desktop</code></pre>
         <div id="qs-server" class="qs-panel">
           <div class="code-block" style="border-top-left-radius: 0; border-top-right-radius: 0;">
             <div class="code-header">
-              <span class="code-lang">Server (Go)</span>
+              <span class="code-lang">Native CLI</span>
               <button class="code-copy" onclick="copyCode(this)">Copy</button>
             </div>
-            <pre><code><span class="code-comment"># Install a full node package on Linux amd64</span>
-SDN_VERSION=v1.0.3-beta.1
-SDN_NATIVE_PACKAGE_VERSION=1.0.3.beta.1
-curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_VERSION}/spacedatanetwork-full_${SDN_NATIVE_PACKAGE_VERSION}_amd64.deb"
-sudo apt install "./spacedatanetwork-full_${SDN_NATIVE_PACKAGE_VERSION}_amd64.deb"
+            <pre><code><span class="code-comment"># macOS/Linux</span>
+curl -fsSL https://spacedatanetwork.org/install.sh | bash
 
-<span class="code-comment"># Initialize and start</span>
-spacedatanetwork init
-spacedatanetwork daemon</code></pre>
+<span class="code-comment"># Windows PowerShell</span>
+irm https://spacedatanetwork.org/install.ps1 | iex
+
+<span class="code-comment"># Start a persistent local node</span>
+spacedatanetwork start</code></pre>
           </div>
         </div>
 
@@ -5296,6 +5295,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
             </div>
             <h3>macOS</h3>
             <div class="download-links">
+              <span class="download-coming">Install: curl -fsSL https://spacedatanetwork.org/install.sh | bash</span>
               <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-darwin-arm64.tar.gz" class="download-link">
                 <span>64-bit Apple Silicon (ARM64) bundle (.tar.gz)</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
@@ -5316,6 +5316,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
             </div>
             <h3>Linux</h3>
             <div class="download-links">
+              <span class="download-coming">Install: curl -fsSL https://spacedatanetwork.org/install.sh | bash</span>
               <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-full_1.0.3.beta.1_amd64.deb" class="download-link">
                 <span>64-bit Intel/AMD (DEB) full node</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
@@ -5341,7 +5342,11 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
             </div>
             <h3>Windows</h3>
             <div class="download-links">
-              <span class="download-coming">Not published yet</span>
+              <span class="download-coming">Install: irm https://spacedatanetwork.org/install.ps1 | iex</span>
+              <a href="https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-1.0.3-beta.1-windows-amd64.zip" class="download-link">
+                <span>64-bit Intel/AMD portable CLI (.zip)</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+              </a>
             </div>
           </div>
 
