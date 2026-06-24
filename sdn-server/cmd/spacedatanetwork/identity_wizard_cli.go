@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -39,6 +41,12 @@ type identityWizardNodeIdentity struct {
 	Identity *wasm.DerivedIdentity
 	PeerID   peer.ID
 	XPub     string
+}
+
+type identityWizardProfileSource struct {
+	Profile      *epm.Profile
+	SourceEPM    []byte
+	DaemonSource bool
 }
 
 var identityWizardOpts identityWizardOptions
@@ -81,7 +89,11 @@ func runIdentityWizard(ctx context.Context, in io.Reader, out io.Writer, options
 	if options.PromptWriter == nil {
 		options.PromptWriter = os.Stderr
 	}
-	return runIdentityWizardWithIO(in, out, options, store, nodeIdentity, cfg.Storage.Path)
+	profileSource, err := loadIdentityWizardProfileSource(ctx, cfg, store, nodeIdentity.PeerID, cfg.Storage.Path)
+	if err != nil {
+		return err
+	}
+	return runIdentityWizardWithProfile(ctx, in, out, options, store, nodeIdentity, cfg.Storage.Path, adminURL(cfg), profileSource)
 }
 
 func loadIdentityWizardNodeIdentity(ctx context.Context, cfg *config.Config) (identityWizardNodeIdentity, error) {
@@ -147,6 +159,20 @@ func loadIdentityWizardNodeIdentity(ctx context.Context, cfg *config.Config) (id
 }
 
 func runIdentityWizardWithIO(in io.Reader, out io.Writer, options identityWizardOptions, store *storage.FlatSQLStore, nodeIdentity identityWizardNodeIdentity, dataDir string) error {
+	if store == nil {
+		return errors.New("identity wizard store is required")
+	}
+	if nodeIdentity.PeerID == "" {
+		return errors.New("identity wizard peer ID is required")
+	}
+	profileSource, err := loadIdentityWizardStoredProfileSource(store, nodeIdentity.PeerID, dataDir)
+	if err != nil {
+		return err
+	}
+	return runIdentityWizardWithProfile(context.Background(), in, out, options, store, nodeIdentity, dataDir, "", profileSource)
+}
+
+func runIdentityWizardWithProfile(ctx context.Context, in io.Reader, out io.Writer, options identityWizardOptions, store *storage.FlatSQLStore, nodeIdentity identityWizardNodeIdentity, dataDir, daemonBaseURL string, profileSource identityWizardProfileSource) error {
 	if in == nil {
 		in = strings.NewReader("")
 	}
@@ -173,13 +199,7 @@ func runIdentityWizardWithIO(in io.Reader, out io.Writer, options identityWizard
 		}
 	}
 
-	service := epm.NewService(nodeIdentity.Identity, peers.NewRegistry(false, nil), peerID, nodeIdentity.XPub, dataDir)
-	service.SetProfileStore(store)
-	if err := service.Init(); err != nil {
-		return fmt.Errorf("initialize EPM service: %w", err)
-	}
-
-	profile := cloneEPMProfile(service.GetNodeProfile())
+	profile := cloneEPMProfile(profileSource.Profile)
 	if err := applyIdentityWizardSets(profile, options.Sets); err != nil {
 		return err
 	}
@@ -199,6 +219,17 @@ func runIdentityWizardWithIO(in io.Reader, out io.Writer, options identityWizard
 		}
 	}
 
+	if profileSource.DaemonSource {
+		return runIdentityWizardWithDaemonProfile(ctx, out, options, strings.TrimSpace(daemonBaseURL), profile, peerID)
+	}
+
+	service := epm.NewService(nodeIdentity.Identity, peers.NewRegistry(false, nil), peerID, nodeIdentity.XPub, dataDir)
+	service.SetProfileStore(store)
+	if runtimeAddrs := identityWizardRuntimeAddressesFromEPM(profileSource.SourceEPM, peerID.String()); len(runtimeAddrs) > 0 {
+		if err := service.SetRuntimeAddresses(runtimeAddrs); err != nil {
+			return fmt.Errorf("preserve runtime EPM addresses: %w", err)
+		}
+	}
 	if err := service.UpdateProfile(profile); err != nil {
 		return fmt.Errorf("update EPM profile: %w", err)
 	}
@@ -216,6 +247,207 @@ func runIdentityWizardWithIO(in io.Reader, out io.Writer, options identityWizard
 	}
 
 	return writeIdentityWizardOutput(out, service, epmBytes, epmJSON, options)
+}
+
+func loadIdentityWizardProfileSource(ctx context.Context, cfg *config.Config, store *storage.FlatSQLStore, peerID peer.ID, dataDir string) (identityWizardProfileSource, error) {
+	if daemonSource, ok, err := loadIdentityWizardDaemonProfileSource(ctx, adminURL(cfg), peerID); err != nil {
+		return identityWizardProfileSource{}, err
+	} else if ok {
+		return daemonSource, nil
+	}
+	return loadIdentityWizardStoredProfileSource(store, peerID, dataDir)
+}
+
+func loadIdentityWizardDaemonProfileSource(ctx context.Context, baseURL string, peerID peer.ID) (identityWizardProfileSource, bool, error) {
+	raw, err := fetchIdentityWizardDaemonEndpoint(ctx, http.MethodGet, baseURL, "/api/node/epm", nil, "")
+	if err != nil {
+		return identityWizardProfileSource{}, false, nil
+	}
+	profile, err := epm.ProfileFromEPMBytes(raw)
+	if err != nil {
+		return identityWizardProfileSource{}, true, fmt.Errorf("decode daemon EPM profile: %w", err)
+	}
+	if peerIDFromEPM, err := epm.PeerIDFromEPM(raw); err == nil && peerIDFromEPM != "" && peerIDFromEPM != peerID.String() {
+		return identityWizardProfileSource{}, true, fmt.Errorf("daemon EPM peer ID %s does not match local identity %s", peerIDFromEPM, peerID)
+	}
+	return identityWizardProfileSource{
+		Profile:      profile,
+		SourceEPM:    raw,
+		DaemonSource: true,
+	}, true, nil
+}
+
+func loadIdentityWizardStoredProfileSource(store *storage.FlatSQLStore, peerID peer.ID, dataDir string) (identityWizardProfileSource, error) {
+	if store == nil {
+		return identityWizardProfileSource{}, errors.New("identity wizard store is required")
+	}
+	if peerID == "" {
+		return identityWizardProfileSource{}, errors.New("identity wizard peer ID is required")
+	}
+	raw, err := store.LoadLocalEPM(peerID.String())
+	if err == nil {
+		profile, err := epm.ProfileFromEPMBytes(raw)
+		if err != nil {
+			return identityWizardProfileSource{}, fmt.Errorf("decode local EPM profile: %w", err)
+		}
+		return identityWizardProfileSource{
+			Profile:   profile,
+			SourceEPM: raw,
+		}, nil
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		return identityWizardProfileSource{}, fmt.Errorf("load local EPM profile: %w", err)
+	}
+	if profile, err := epm.LoadProfile(dataDir); err == nil {
+		return identityWizardProfileSource{Profile: profile}, nil
+	}
+	return identityWizardProfileSource{Profile: defaultIdentityWizardProfile(peerID)}, nil
+}
+
+func defaultIdentityWizardProfile(peerID peer.ID) *epm.Profile {
+	return &epm.Profile{DN: "SDN Node " + peerID.ShortString()}
+}
+
+func runIdentityWizardWithDaemonProfile(ctx context.Context, out io.Writer, options identityWizardOptions, baseURL string, profile *epm.Profile, peerID peer.ID) error {
+	if strings.TrimSpace(baseURL) == "" {
+		return errors.New("identity wizard daemon URL is required")
+	}
+	epmBytes, err := updateIdentityWizardDaemonProfile(ctx, baseURL, profile)
+	if err != nil {
+		return err
+	}
+	epmJSON, err := epm.DirectoryRecordJSONFromEPM(epmBytes, peerID.String())
+	if err != nil {
+		return fmt.Errorf("build daemon EPM directory JSON: %w", err)
+	}
+	return writeIdentityWizardDaemonOutput(ctx, out, baseURL, epmBytes, epmJSON, options)
+}
+
+func updateIdentityWizardDaemonProfile(ctx context.Context, baseURL string, profile *epm.Profile) ([]byte, error) {
+	body, err := json.Marshal(profile)
+	if err != nil {
+		return nil, fmt.Errorf("encode EPM profile update: %w", err)
+	}
+	epmBytes, err := fetchIdentityWizardDaemonEndpoint(ctx, http.MethodPut, baseURL, "/api/node/epm", bytes.NewReader(body), "application/json")
+	if err != nil {
+		return nil, err
+	}
+	if !EPM.SizePrefixedEPMBufferHasIdentifier(epmBytes) {
+		return nil, fmt.Errorf("daemon returned invalid EPM FlatBuffer bytes")
+	}
+	return epmBytes, nil
+}
+
+func fetchIdentityWizardDaemonEndpoint(ctx context.Context, method, baseURL, endpoint string, body io.Reader, contentType string) ([]byte, error) {
+	requestURL := strings.TrimRight(baseURL, "/") + endpoint
+	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, method, requestURL, body)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(contentType) != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("connect to local SDN daemon at %s: %w", baseURL, err)
+	}
+	defer resp.Body.Close()
+	respBody, readErr := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		detail := strings.TrimSpace(string(respBody))
+		if detail == "" {
+			detail = resp.Status
+		}
+		return nil, fmt.Errorf("local SDN daemon returned %s for %s %s: %s", resp.Status, method, endpoint, detail)
+	}
+	if readErr != nil {
+		return nil, readErr
+	}
+	return respBody, nil
+}
+
+func writeIdentityWizardDaemonOutput(ctx context.Context, out io.Writer, baseURL string, epmBytes []byte, epmJSON map[string]any, options identityWizardOptions) error {
+	switch normalizeIdentityExportFormat(options.Format) {
+	case "text":
+		vcardBytes, err := fetchIdentityWizardDaemonEndpoint(ctx, http.MethodGet, baseURL, "/api/node/epm/vcard", nil, "")
+		if err != nil {
+			return err
+		}
+		_, err = out.Write(ensureTrailingNewline(vcardBytes))
+		return err
+	case "json":
+		jsonBytes, err := json.Marshal(epmJSON)
+		if err != nil {
+			return fmt.Errorf("encode EPM JSON: %w", err)
+		}
+		return writeIndentedJSON(out, jsonBytes)
+	case "csv":
+		jsonBytes, err := json.Marshal(epmJSON)
+		if err != nil {
+			return fmt.Errorf("encode EPM JSON: %w", err)
+		}
+		return writeIdentityCSV(out, jsonBytes)
+	case "flatbuffer":
+		return writeIdentityFlatBufferOutput(out, epmBytes, options.OutputPath)
+	case "qrcode":
+		vcardBytes, err := fetchIdentityWizardDaemonEndpoint(ctx, http.MethodGet, baseURL, "/api/node/epm/vcard", nil, "")
+		if err != nil {
+			return err
+		}
+		qr, err := qrgen.New(string(vcardBytes), qrgen.Medium)
+		if err != nil {
+			return fmt.Errorf("encode EPM vCard QR code: %w", err)
+		}
+		_, err = io.WriteString(out, qr.ToSmallString(false))
+		return err
+	default:
+		return fmt.Errorf("unsupported identity wizard output format %q (use text, json, csv, flatbuffer, or qrcode)", options.Format)
+	}
+}
+
+func identityWizardRuntimeAddressesFromEPM(epmBytes []byte, peerID string) []string {
+	if len(epmBytes) == 0 {
+		return nil
+	}
+	epmJSON, err := epm.DirectoryRecordJSONFromEPM(epmBytes, peerID)
+	if err != nil {
+		return nil
+	}
+	var values []any
+	switch typed := epmJSON["multiformat_address"].(type) {
+	case []string:
+		values = make([]any, 0, len(typed))
+		for _, value := range typed {
+			values = append(values, value)
+		}
+	case []any:
+		values = typed
+	default:
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		value, ok := raw.(string)
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value == "" || identityWizardAddressContainsPeer(value, peerID) {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
+func identityWizardAddressContainsPeer(address, peerID string) bool {
+	peerID = strings.TrimSpace(peerID)
+	if peerID == "" {
+		return false
+	}
+	return strings.Contains(address, "/ipns/"+peerID) || strings.Contains(address, "/p2p/"+peerID)
 }
 
 func localEPMHasPublicIdentityMaterial(store *storage.FlatSQLStore, peerID peer.ID) (bool, error) {
