@@ -550,7 +550,7 @@ func buildSearchStandardsRows(store *storage.FlatSQLStore, options searchStandar
 			row["record_count"] = summary.Count
 			row["total_bytes"] = summary.TotalBytes
 		}
-		if !searchRowContains(row, query) {
+		if !searchStandardRowContains(row, query) {
 			continue
 		}
 		rows = append(rows, row)
@@ -582,6 +582,14 @@ func standardsSearchTableDescription(content []byte, code string) string {
 		comment = nil
 	}
 	return ""
+}
+
+func searchStandardRowContains(row map[string]any, query string) bool {
+	return searchRowContains(map[string]any{
+		"schema_name": row["schema_name"],
+		"code":        row["code"],
+		"description": row["description"],
+	}, query)
 }
 
 func localSearchReplicaStats(store *storage.FlatSQLStore, query storage.LocalReplicaStatsQuery) ([]storage.LocalReplicaStats, error) {
