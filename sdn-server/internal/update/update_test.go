@@ -2,6 +2,7 @@ package update
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"crypto/ed25519"
@@ -178,8 +179,11 @@ func TestVerifyPayloadRejectsUntrustedKeyExpiryTargetAndSequence(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "untrusted key",
-			opts:    func(o VerifyOptions) VerifyOptions { o.TrustedRoots = TrustedRoots{"other": o.TrustedRoots[signer.keyID]}; return o },
+			name: "untrusted key",
+			opts: func(o VerifyOptions) VerifyOptions {
+				o.TrustedRoots = TrustedRoots{"other": o.TrustedRoots[signer.keyID]}
+				return o
+			},
 			wantErr: "untrusted update signing key",
 		},
 		{
@@ -314,6 +318,54 @@ func makeBundleTarGz(t *testing.T, version string, files map[string]string) []by
 	return buf.Bytes()
 }
 
+func makeBundleZip(t *testing.T, version string, files map[string]string) []byte {
+	t.Helper()
+	wrapper := fmt.Sprintf("spacedatanetwork-%s-%s-%s", version, runtime.GOOS, runtime.GOARCH)
+
+	type artifact struct {
+		Path   string `json:"path"`
+		SHA256 string `json:"sha256"`
+		Size   int    `json:"size"`
+	}
+	var artifacts []artifact
+	for path, contents := range files {
+		artifacts = append(artifacts, artifact{Path: path, SHA256: sha256Hex([]byte(contents)), Size: len(contents)})
+	}
+	manifest := map[string]any{
+		"schema":    "org.spacedatanetwork.bundle.v1",
+		"version":   version,
+		"channel":   "beta",
+		"signature": "test-signature",
+		"artifacts": artifacts,
+	}
+	manifestBytes, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	write := func(name, contents string) {
+		header := &zip.FileHeader{Name: name, Method: zip.Deflate}
+		header.SetMode(0o755)
+		writer, err := zw.CreateHeader(header)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.Write([]byte(contents)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, contents := range files {
+		write(wrapper+"/"+path, contents)
+	}
+	write(wrapper+"/manifest.json", string(manifestBytes))
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
 func setupBundleRoot(t *testing.T, signer *testSigner) (Paths, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -415,6 +467,45 @@ func TestStageAndApplySwapsBundleAndKeepsRollback(t *testing.T) {
 	})
 	if _, err := Apply(paths, ApplyOptions{}); err == nil {
 		t.Fatal("re-applying same sequence succeeded, want sequence rejection")
+	}
+}
+
+func TestStageAndApplySupportsZipBundleFormat(t *testing.T) {
+	signer := newTestSigner(t)
+	paths, root := setupBundleRoot(t, signer)
+	bundleBytes := makeBundleZip(t, "9.9.10", map[string]string{
+		"bin/spacedatanetwork": "new-zip-binary",
+		"runtime/asset.txt":    "zip-asset",
+	})
+	wasmBytes := BuildCarrier(bundleBytes)
+	manifestBytes := signer.signedManifest(t, func(doc map[string]any) {
+		doc["version"] = "9.9.10"
+		doc["bundle"].(map[string]any)["hash"] = sha256Hex(bundleBytes)
+		doc["bundle"].(map[string]any)["size"] = int64(len(bundleBytes))
+		doc["bundle"].(map[string]any)["format"] = "zip"
+		doc["wasm"].(map[string]any)["hash"] = sha256Hex(wasmBytes)
+	}, bundleBytes, wasmBytes)
+
+	staged, err := Stage(paths, manifestBytes, wasmBytes, HostVerifyOptions(signer.roots(t), 0, time.Now()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(staged.BundleFile) != "bundle.zip" {
+		t.Fatalf("BundleFile = %s, want bundle.zip", staged.BundleFile)
+	}
+	result, err := Apply(paths, ApplyOptions{})
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+	if result.Version != "9.9.10" {
+		t.Fatalf("Version = %s, want 9.9.10", result.Version)
+	}
+	binary, err := os.ReadFile(filepath.Join(root, "bin", "spacedatanetwork"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(binary) != "new-zip-binary" {
+		t.Fatalf("binary = %q, want new-zip-binary", binary)
 	}
 }
 

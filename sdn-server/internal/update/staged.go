@@ -152,6 +152,8 @@ func bundleFileName(format string) (string, error) {
 		return "bundle.tar.zst", nil
 	case "tar.gz":
 		return "bundle.tar.gz", nil
+	case "zip":
+		return "bundle.zip", nil
 	default:
 		return "", fmt.Errorf("unsupported update bundle format: %s", format)
 	}

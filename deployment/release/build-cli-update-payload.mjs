@@ -15,7 +15,6 @@ import {
 // manifest the Go updater (sdn-server/internal/update) verifies before any
 // staged swap.
 export const CLI_BUNDLE_KIND = 'cli-bundle';
-export const CLI_BUNDLE_FORMAT = 'tar.gz';
 export const EXPIRES_AFTER_DAYS = 90;
 
 export async function buildCliUpdatePayload(options) {
@@ -42,6 +41,7 @@ export async function buildCliUpdatePayload(options) {
   const publicKey = createPublicKey(privateKey);
 
   const bundleBytes = await readFile(resolve(bundleArchive));
+  const bundleFormat = bundleFormatForArchive(bundleArchive);
   const wasmBytes = buildCarrier(bundleBytes);
   const expiresAt = new Date(createdAtMs + EXPIRES_AFTER_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const updateId = options.updateId || `${CLI_BUNDLE_KIND}-${channel}-${platform}-${arch}-${version}`;
@@ -55,7 +55,7 @@ export async function buildCliUpdatePayload(options) {
       platform,
       arch,
       kind: CLI_BUNDLE_KIND,
-      format: CLI_BUNDLE_FORMAT,
+      format: bundleFormat,
       bundleBytes,
       wasmBytes,
       keyId,
@@ -74,6 +74,20 @@ export async function buildCliUpdatePayload(options) {
   await writeFile(carrierPath, wasmBytes);
 
   return { manifest, manifestPath, carrierPath };
+}
+
+export function bundleFormatForArchive(archivePath) {
+  const name = String(archivePath).toLowerCase();
+  if (name.endsWith('.tar.gz')) {
+    return 'tar.gz';
+  }
+  if (name.endsWith('.tar.zst')) {
+    return 'tar.zst';
+  }
+  if (name.endsWith('.zip')) {
+    return 'zip';
+  }
+  throw new Error(`unsupported CLI bundle archive format: ${archivePath}`);
 }
 
 function required(value, name) {
