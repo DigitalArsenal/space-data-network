@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Public Space Data Network installer entrypoint for GitHub Pages.
+# Public Space Data Network shell installer entrypoint.
 
 set -euo pipefail
 

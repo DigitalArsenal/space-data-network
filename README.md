@@ -53,8 +53,11 @@ Marketplace discovery is driven by the canonical `PLG` manifest from `spacedatas
 ### Install the Server
 
 ```bash
-# Download latest release
-curl -sSL https://digitalarsenal.github.io/space-data-network/install.sh | bash
+# macOS/Linux
+curl -fsSL https://spacedatanetwork.org/install.sh | bash
+
+# Windows PowerShell
+irm https://spacedatanetwork.org/install.ps1 | iex
 
 # Or build from source
 git clone https://github.com/DigitalArsenal/space-data-network.git
@@ -62,6 +65,11 @@ cd space-data-network
 npm run install:wasmedge
 npm run server:build
 ```
+
+The one-line installers are user-scoped by default. They install the bundle
+under `~/.spacedatanetwork/bundles` and command launchers under
+`~/.spacedatanetwork/bin`; set `SDN_INSTALL_DIR` or `SDN_BUNDLE_DIR` only when
+you need a custom location.
 
 Source builds of the Go server host standalone WASM artifacts through WasmEdge,
 so `space-data-network` installs and wires the native WasmEdge SDK as part of
@@ -738,7 +746,7 @@ npm run check:versions
 
 ## Documentation
 
-Full documentation is available at [docs.digitalarsenal.github.io/space-data-network](https://digitalarsenal.github.io/space-data-network/) or locally at [docs/docs.html](./docs/docs.html).
+Full documentation is available at [spacedatanetwork.org](https://spacedatanetwork.org/) or locally at [docs/docs.html](./docs/docs.html).
 
 To preview the docs locally, start a webserver from the `docs/` directory:
 
@@ -764,8 +772,7 @@ Then open [http://localhost:8080](http://localhost:8080).
 
 ## Links
 
-- [digitalarsenal.github.io/space-data-network](https://digitalarsenal.github.io/space-data-network/)
-- [docs.digitalarsenal.github.io/space-data-network](https://digitalarsenal.github.io/space-data-network/)
+- [spacedatanetwork.org](https://spacedatanetwork.org/)
 - [GitHub](https://github.com/DigitalArsenal/space-data-network)
 - [Space Data Standards](https://spacedatastandards.org)
 - [SDN JS Source](https://github.com/DigitalArsenal/space-data-network/tree/main/sdn-js)
