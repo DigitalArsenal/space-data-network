@@ -40,6 +40,20 @@ type ApplyResult struct {
 	DryRun       bool
 }
 
+type RollbackOptions struct {
+	Reason string
+	Now    time.Time
+}
+
+type RollbackResult struct {
+	RestoredSequence int64
+	RestoredUpdateID string
+	RestoredVersion  string
+	RestoredChannel  string
+	FailedPath       string
+	Reason           string
+}
+
 // Apply verifies a staged update and atomically swaps the bundle contents,
 // keeping the previous payload under updates/rollback/<update_id>/. On any
 // swap failure the previous contents are restored and the staged payload is
@@ -102,6 +116,7 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 		Sequence: state.Sequence,
 		UpdateID: state.UpdateID,
 		Version:  state.Version,
+		Channel:  state.Channel,
 		Rollback: rollbackDir,
 	}
 	newState := &State{
@@ -125,6 +140,90 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 		Channel:      candidate.Result.Channel,
 		RollbackPath: rollbackDir,
 	}, nil
+}
+
+func RollbackLast(paths Paths, opts RollbackOptions) (*RollbackResult, error) {
+	state, err := LoadState(paths)
+	if err != nil {
+		return nil, err
+	}
+	if state.Previous == nil || strings.TrimSpace(state.Previous.Rollback) == "" {
+		return nil, errors.New("no previous update rollback is available")
+	}
+	previousRoot := state.Previous.Rollback
+	if info, err := os.Stat(previousRoot); err != nil {
+		return nil, fmt.Errorf("stat previous update rollback: %w", err)
+	} else if !info.IsDir() {
+		return nil, errors.New("previous update rollback is not a directory")
+	}
+
+	failedID := strings.TrimSpace(state.UpdateID)
+	if failedID == "" {
+		failedID = "current"
+	}
+	failedDir := filepath.Join(paths.Failed, failedID)
+	if err := swapBundleContents(paths, previousRoot, failedDir); err != nil {
+		return nil, fmt.Errorf("restore previous bundle: %w", err)
+	}
+	if err := os.RemoveAll(previousRoot); err != nil {
+		return nil, fmt.Errorf("cleanup consumed rollback bundle: %w", err)
+	}
+
+	version := strings.TrimSpace(state.Previous.Version)
+	channel := strings.TrimSpace(state.Previous.Channel)
+	if version == "" || channel == "" {
+		manifestVersion, manifestChannel, err := readBundleVersionAndChannel(paths.Root)
+		if err != nil {
+			return nil, err
+		}
+		if version == "" {
+			version = manifestVersion
+		}
+		if channel == "" {
+			channel = manifestChannel
+		}
+	}
+
+	now := opts.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	newState := &State{
+		Sequence:  state.Previous.Sequence,
+		UpdateID:  state.Previous.UpdateID,
+		Version:   version,
+		Channel:   channel,
+		AppliedAt: now.UTC().Format(time.RFC3339),
+	}
+	if err := SaveState(paths, newState); err != nil {
+		return nil, fmt.Errorf("rollback restored bundle but state write failed: %w", err)
+	}
+	return &RollbackResult{
+		RestoredSequence: newState.Sequence,
+		RestoredUpdateID: newState.UpdateID,
+		RestoredVersion:  newState.Version,
+		RestoredChannel:  newState.Channel,
+		FailedPath:       failedDir,
+		Reason:           strings.TrimSpace(opts.Reason),
+	}, nil
+}
+
+func readBundleVersionAndChannel(bundleRoot string) (string, string, error) {
+	data, err := os.ReadFile(filepath.Join(bundleRoot, manifestFileName))
+	if err != nil {
+		return "", "", fmt.Errorf("read restored bundle manifest: %w", err)
+	}
+	var manifest incomingBundleManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return "", "", fmt.Errorf("parse restored bundle manifest: %w", err)
+	}
+	if manifest.Schema != "org.spacedatanetwork.bundle.v1" {
+		return "", "", fmt.Errorf("unsupported restored bundle schema: %s", manifest.Schema)
+	}
+	if strings.TrimSpace(manifest.Version) == "" {
+		return "", "", errors.New("restored bundle manifest missing version")
+	}
+	return strings.TrimSpace(manifest.Version), strings.TrimSpace(manifest.Channel), nil
 }
 
 func selectCandidate(staged []StagedUpdate, updateID string) (*StagedUpdate, error) {
@@ -359,6 +458,7 @@ func locateBundleRoot(extractedDir string) (string, error) {
 type incomingBundleManifest struct {
 	Schema    string `json:"schema"`
 	Version   string `json:"version"`
+	Channel   string `json:"channel"`
 	Artifacts []struct {
 		Path   string `json:"path"`
 		SHA256 string `json:"sha256"`

@@ -125,6 +125,30 @@ test.describe('SDN staged updater install flow', () => {
     await expect(fs.readFile(path.join(rootDir, 'rollback', 'desktop-stable-2026-05-05', 'app.txt'), 'utf8')).resolves.toBe('old app')
   })
 
+  test('verifies daemon health after restarting the updated daemon', async () => {
+    const rootDir = await tempRoot()
+    const updater = createStagedUpdater({ rootDir })
+    const calls = []
+    await fs.outputFile(path.join(rootDir, 'current', 'app.txt'), 'old app')
+    await fs.outputFile(path.join(rootDir, 'staged', 'desktop-stable-2026-05-05', 'app.txt'), 'new app')
+
+    await updater.commitStagedUpdate({
+      updateId: 'desktop-stable-2026-05-05',
+      lifecycle: {
+        getIpfsd: async () => ({ id: 'running-node' }),
+        stopIpfs: async () => calls.push('stop'),
+        startIpfs: async () => calls.push('start')
+      },
+      healthCheck: async currentPath => {
+        calls.push('health')
+        expect(calls).toEqual(['stop', 'start', 'health'])
+        return fs.readFile(path.join(currentPath, 'app.txt'), 'utf8')
+      }
+    })
+
+    expect(calls).toEqual(['stop', 'start', 'health'])
+  })
+
   test('rolls back and restarts the prior daemon when post-swap health fails', async () => {
     const rootDir = await tempRoot()
     const updater = createStagedUpdater({ rootDir })
@@ -144,7 +168,7 @@ test.describe('SDN staged updater install flow', () => {
       }
     })).rejects.toThrow('startup health failed')
 
-    expect(calls).toEqual(['stop', 'start'])
+    expect(calls).toEqual(['stop', 'start', 'stop', 'start'])
     await expect(fs.readFile(path.join(rootDir, 'current', 'app.txt'), 'utf8')).resolves.toBe('old app')
     await expect(fs.pathExists(path.join(rootDir, 'failed', 'desktop-stable-2026-05-05'))).resolves.toBe(true)
   })

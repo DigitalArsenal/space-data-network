@@ -83,6 +83,7 @@ function createStagedUpdater ({ rootDir }) {
 
     const wasRunning = await daemonWasRunning(lifecycle)
     await stopDaemonIfNeeded(lifecycle, wasRunning)
+    let restartedUpdatedDaemon = false
 
     try {
       await fs.remove(paths.rollback)
@@ -91,8 +92,9 @@ function createStagedUpdater ({ rootDir }) {
       }
 
       await replacePath(paths.staged, paths.current)
-      await healthCheck(paths.current)
       await startDaemonIfNeeded(lifecycle, wasRunning)
+      restartedUpdatedDaemon = wasRunning
+      await healthCheck(paths.current)
 
       return {
         updateId,
@@ -101,6 +103,9 @@ function createStagedUpdater ({ rootDir }) {
         rolledBack: false
       }
     } catch (err) {
+      if (restartedUpdatedDaemon) {
+        await stopDaemonIfNeeded(lifecycle, true)
+      }
       await fs.remove(paths.failed)
       if (await fs.pathExists(paths.current)) {
         await fs.move(paths.current, paths.failed, { overwrite: false })

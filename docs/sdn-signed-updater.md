@@ -281,6 +281,11 @@ Lane-specific manifest rules:
 - `target.platform` and `target.arch` use Go runtime names (`darwin`, `linux`,
   `windows` and `amd64`, `arm64`). The Go verifier also accepts the
   Electron-style `win32`/`x64` aliases used by the desktop lane.
+- When the bundle wraps an upstream IPFS/Kubo runtime, the signed manifest
+  records `upstream.kubo.source` and `upstream.kubo.version`. Clients still
+  download through the SDN-owned feed and trust only the SDN signature; the
+  upstream fields are provenance for the wrapped payload, not an upstream
+  update authority.
 - `bundle.format` is `tar.gz`: the carrier embeds the exact
   `spacedatanetwork-<version>-<os>-<arch>.tar.gz` archive produced by
   `deployment/release/build-self-contained-cli.mjs`.
@@ -311,6 +316,7 @@ node deployment/release/build-cli-update-payload.mjs \
   --key-id sdn-release-2026 \
   --key key.pem \
   --created-at 2026-06-10T00:00:00Z \
+  --upstream-kubo-version v0.35.0 \
   --out-dir dist/update/darwin-arm64
 
 # 2. Assemble the static feed tree (index.json + payload copies).

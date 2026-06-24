@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -273,19 +274,14 @@ var updateHelperApplyCmd = &cobra.Command{
 		fmt.Fprintf(out, "version=%s\n", result.Version)
 		fmt.Fprintf(out, "sequence=%d\n", result.Sequence)
 		fmt.Fprintf(out, "rollback_path=%s\n", result.RollbackPath)
-		if helperApplyNoRestart || len(restartArgv) == 0 {
-			fmt.Fprintln(out, "restart=manual")
-			fmt.Fprintln(out, "next=restart the SDN daemon to run the new version")
-			return nil
-		}
-		restartCmd := exec.Command(restartArgv[0], restartArgv[1:]...)
-		restartCmd.Stdout = cmd.OutOrStdout()
-		restartCmd.Stderr = cmd.ErrOrStderr()
-		if err := restartCmd.Start(); err != nil {
-			return fmt.Errorf("restart daemon: %w", err)
-		}
-		fmt.Fprintf(out, "restart=started pid=%d\n", restartCmd.Process.Pid)
-		return nil
+		return helperPostApplyRestart(cmd.Context(), helperPostApplyOptions{
+			Paths:       update.PathsFor(helperApplyBundleRoot),
+			RestartArgv: restartArgv,
+			AdminURL:    helperApplyAdminURL,
+			NoRestart:   helperApplyNoRestart,
+			Out:         out,
+			Err:         cmd.ErrOrStderr(),
+		})
 	},
 }
 
@@ -496,6 +492,191 @@ func prepareUpdateHelper(paths update.Paths, updateID string, token string) (*up
 		Token:            token,
 		RestartArgv:      nil,
 	})
+}
+
+type helperStartedProcess interface {
+	PID() int
+	Kill() error
+}
+
+type helperExecProcess struct {
+	cmd *exec.Cmd
+}
+
+func (p helperExecProcess) PID() int {
+	if p.cmd == nil || p.cmd.Process == nil {
+		return 0
+	}
+	return p.cmd.Process.Pid
+}
+
+func (p helperExecProcess) Kill() error {
+	if p.cmd == nil || p.cmd.Process == nil {
+		return nil
+	}
+	return p.cmd.Process.Kill()
+}
+
+type helperPostApplyOptions struct {
+	Paths         update.Paths
+	RestartArgv   []string
+	AdminURL      string
+	NoRestart     bool
+	Out           io.Writer
+	Err           io.Writer
+	Client        *http.Client
+	HealthTimeout time.Duration
+	StartDaemon   func(argv []string, stdout io.Writer, stderr io.Writer) (helperStartedProcess, error)
+	WaitHealth    func(ctx context.Context, client *http.Client, adminURL string, timeout time.Duration) error
+	Rollback      func(paths update.Paths) (*update.RollbackResult, error)
+}
+
+func helperPostApplyRestart(ctx context.Context, opts helperPostApplyOptions) error {
+	out := opts.Out
+	if out == nil {
+		out = io.Discard
+	}
+	errOut := opts.Err
+	if errOut == nil {
+		errOut = io.Discard
+	}
+	if opts.NoRestart || len(opts.RestartArgv) == 0 {
+		fmt.Fprintln(out, "restart=manual")
+		fmt.Fprintln(out, "next=restart the SDN daemon to run the new version")
+		return nil
+	}
+
+	start := opts.StartDaemon
+	if start == nil {
+		start = startHelperDaemonProcess
+	}
+	waitHealth := opts.WaitHealth
+	if waitHealth == nil {
+		waitHealth = waitForDaemonHealth
+	}
+	rollback := opts.Rollback
+	if rollback == nil {
+		rollback = func(paths update.Paths) (*update.RollbackResult, error) {
+			return update.RollbackLast(paths, update.RollbackOptions{Reason: "daemon health failed after update"})
+		}
+	}
+	client := opts.Client
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
+	timeout := opts.HealthTimeout
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+
+	process, err := start(opts.RestartArgv, out, errOut)
+	if err != nil {
+		return fmt.Errorf("restart daemon: %w", err)
+	}
+	fmt.Fprintf(out, "restart=started pid=%d\n", process.PID())
+	if strings.TrimSpace(opts.AdminURL) == "" {
+		return nil
+	}
+	if err := waitHealth(ctx, client, opts.AdminURL, timeout); err == nil {
+		fmt.Fprintln(out, "daemon_health=healthy")
+		return nil
+	} else {
+		fmt.Fprintf(errOut, "daemon_health=unhealthy error=%q\n", err.Error())
+		if killErr := process.Kill(); killErr != nil {
+			fmt.Fprintf(errOut, "failed_daemon_stop=error error=%q\n", killErr.Error())
+		} else {
+			fmt.Fprintln(errOut, "failed_daemon=stopped")
+		}
+		rollbackResult, rollbackErr := rollback(opts.Paths)
+		if rollbackErr != nil {
+			return fmt.Errorf("daemon health failed after update and rollback failed: %v: %w", err, rollbackErr)
+		}
+		fmt.Fprintf(out, "rollback=applied restored_version=%s failed_path=%s\n",
+			rollbackResult.RestoredVersion, rollbackResult.FailedPath)
+		restoredProcess, restartErr := start(opts.RestartArgv, out, errOut)
+		if restartErr != nil {
+			return fmt.Errorf("daemon health failed after update; rolled back to %s but restart failed: %w",
+				rollbackResult.RestoredVersion, restartErr)
+		}
+		fmt.Fprintf(out, "restart=started pid=%d\n", restoredProcess.PID())
+		if restoredHealthErr := waitHealth(ctx, client, opts.AdminURL, timeout); restoredHealthErr != nil {
+			return fmt.Errorf("daemon health failed after update; rolled back to %s but restored daemon is unhealthy: %w",
+				rollbackResult.RestoredVersion, restoredHealthErr)
+		}
+		fmt.Fprintln(out, "daemon_health=healthy")
+		return fmt.Errorf("daemon health failed after update; rolled back to %s", rollbackResult.RestoredVersion)
+	}
+}
+
+func startHelperDaemonProcess(argv []string, stdout io.Writer, stderr io.Writer) (helperStartedProcess, error) {
+	if len(argv) == 0 {
+		return nil, errors.New("restart argv is empty")
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return helperExecProcess{cmd: cmd}, nil
+}
+
+func waitForDaemonHealth(ctx context.Context, client *http.Client, rawAdminURL string, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		lastErr = probeDaemonHealth(ctx, client, rawAdminURL)
+		if lastErr == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return lastErr
+		}
+		timer := time.NewTimer(500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func probeDaemonHealth(ctx context.Context, client *http.Client, rawAdminURL string) error {
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
+	healthURL, err := adminEndpointURL(rawAdminURL, "/api/v1/data/health")
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return fmt.Errorf("daemon health rejected: %s %s", resp.Status, strings.TrimSpace(string(data)))
+	}
+	var health struct {
+		Healthy bool `json:"healthy"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		return fmt.Errorf("decode daemon health: %w", err)
+	}
+	if !health.Healthy {
+		return errors.New("daemon reported unhealthy")
+	}
+	return nil
 }
 
 func generateUpdateControlToken() (string, error) {
