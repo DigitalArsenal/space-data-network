@@ -231,9 +231,66 @@ func runStatus(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "admin_url=%s\n", adminURL(cfg))
-	fmt.Fprintln(cmd.OutOrStdout(), "daemon_status=unknown")
+	out := cmd.OutOrStdout()
+	baseURL := adminURL(cfg)
+	fmt.Fprintf(out, "admin_url=%s\n", baseURL)
+	return writeDaemonStatus(cmd.Context(), out, baseURL)
+}
+
+func writeDaemonStatus(ctx context.Context, out io.Writer, baseURL string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/v1/data/health", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		fmt.Fprintln(out, "daemon_status=unavailable")
+		fmt.Fprintln(out, "data_health=unknown")
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		fmt.Fprintln(out, "daemon_status=unhealthy")
+		fmt.Fprintln(out, "data_health=unhealthy")
+		fmt.Fprintf(out, "data_status=%s\n", resp.Status)
+		return nil
+	}
+
+	var health struct {
+		Healthy bool           `json:"healthy"`
+		Details map[string]any `json:"details"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		fmt.Fprintln(out, "daemon_status=unhealthy")
+		fmt.Fprintln(out, "data_health=unhealthy")
+		fmt.Fprintf(out, "data_message=%s\n", strings.ReplaceAll(err.Error(), "\n", " "))
+		return nil
+	}
+
+	if health.Healthy {
+		fmt.Fprintln(out, "daemon_status=running")
+		fmt.Fprintln(out, "data_health=healthy")
+	} else {
+		fmt.Fprintln(out, "daemon_status=unhealthy")
+		fmt.Fprintln(out, "data_health=unhealthy")
+	}
+	writeStatusDetail(out, "data_runtime", health.Details["runtime"])
+	writeStatusDetail(out, "data_message", health.Details["message"])
 	return nil
+}
+
+func writeStatusDetail(out io.Writer, key string, value any) {
+	text, ok := value.(string)
+	if !ok {
+		return
+	}
+	if text = strings.TrimSpace(text); text == "" {
+		return
+	}
+	fmt.Fprintf(out, "%s=%s\n", key, strings.ReplaceAll(text, "\n", " "))
 }
 
 func runIdentityExport(cmd *cobra.Command, args []string) error {

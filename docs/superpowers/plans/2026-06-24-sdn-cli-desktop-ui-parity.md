@@ -925,11 +925,19 @@ with `npm --prefix desktop exec -- playwright test test/unit/static-http-server-
 - Create: `desktop/test/unit/tray-service.spec.js`
 - Modify: `desktop/src/tray.js`
 
-- [ ] Add failing tests for daemon health status, active install root
+- [x] Add failing tests for daemon health status, active install root
   discovery, data-preserve remove, purge remove, and Desktop tray status.
-- [ ] Implement health probing and shared remove semantics.
-- [ ] Run focused CLI and Desktop lifecycle tests and commit with message
+- [x] Implement health probing and shared remove semantics.
+- [x] Run focused CLI and Desktop lifecycle tests and commit with message
   `feat: align service lifecycle parity`.
+  - 2026-06-24: Added `spacedatanetwork status` daemon health probing through
+    `/api/v1/data/health` so status reports `running`, `unhealthy`, or
+    `unavailable` instead of `unknown`. Existing remove planning and Desktop
+    tray lifecycle tests cover install-root discovery, preserve-by-default,
+    explicit purge, and visible start/stop/restart controls. Verified with
+    `../scripts/go-with-wasmedge.sh test ./cmd/spacedatanetwork -run 'Test(WriteDaemonStatus|RootHelpListsServiceManagementCommands|RenderLaunchAgent|RenderSystemd|WindowsScheduledTask|ServiceActionPlans|PlanRemoveCurrentInstall)' -count=1`,
+    `npm --prefix desktop exec -- playwright test test/unit/tray-service.spec.js`,
+    and `git diff --check`.
 
 ### Task 13: Complete SDN-Owned Update Provider Flow
 
