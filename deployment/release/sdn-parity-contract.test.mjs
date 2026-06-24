@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 const contract = JSON.parse(readFileSync(new URL('./sdn-parity-contract.json', import.meta.url), 'utf8'));
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 test('SDN parity contract covers first-version product surfaces', () => {
   assert.equal(contract.version, 1);
@@ -40,5 +43,17 @@ test('every parity capability names surfaces and tests', () => {
     assert.ok(capability.surfaces.length > 0, `${capability.id} must name at least one surface`);
     assert.ok(Array.isArray(capability.tests), `${capability.id} tests must be an array`);
     assert.ok(capability.tests.length > 0, `${capability.id} must name at least one proving test`);
+  }
+});
+
+test('every parity contract test reference exists in the repo', () => {
+  for (const capability of contract.capabilities) {
+    for (const testPath of capability.tests) {
+      assert.equal(
+        existsSync(join(repoRoot, testPath)),
+        true,
+        `${capability.id} references missing test file ${testPath}`
+      );
+    }
   }
 });
