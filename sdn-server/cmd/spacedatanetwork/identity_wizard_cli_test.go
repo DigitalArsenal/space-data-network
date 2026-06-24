@@ -211,6 +211,45 @@ func TestIdentityWizardPreservesIdentityBackedPublicKeys(t *testing.T) {
 	assertIdentityWizardJSONHasPublicIdentity(t, directoryJSON, xpub)
 }
 
+func TestIdentityWizardRefusesToDropExistingPublicIdentityMaterial(t *testing.T) {
+	_, store, _, dataDir := newIdentityWizardTestStore(t)
+	identity, err := testProviderDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testProviderDerivedIdentity failed: %v", err)
+	}
+
+	seedService := epm.NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, "xpub-provider", dataDir)
+	seedService.SetProfileStore(store)
+	if err := seedService.Init(); err != nil {
+		t.Fatalf("seed Init failed: %v", err)
+	}
+	if err := seedService.UpdateProfile(&epm.Profile{DN: "Identity Backed Provider"}); err != nil {
+		t.Fatalf("seed UpdateProfile failed: %v", err)
+	}
+
+	var out bytes.Buffer
+	err = runIdentityWizardWithIO(
+		strings.NewReader("y\n"),
+		&out,
+		identityWizardOptions{
+			Sets:   []string{"dn=Should Not Persist"},
+			Format: "json",
+		},
+		store,
+		identityWizardNodeIdentity{
+			PeerID: identity.PeerID,
+			XPub:   "xpub-provider",
+		},
+		dataDir,
+	)
+	if err == nil {
+		t.Fatal("runIdentityWizardWithIO succeeded without derived identity, want preservation error")
+	}
+	if !strings.Contains(err.Error(), "refusing to update without derived identity/xpub") {
+		t.Fatalf("error = %v, want identity preservation refusal", err)
+	}
+}
+
 func assertIdentityWizardJSONHasPublicIdentity(t *testing.T, payload map[string]any, xpub string) {
 	t.Helper()
 
