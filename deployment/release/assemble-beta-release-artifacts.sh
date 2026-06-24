@@ -32,8 +32,64 @@ copy_matches "${dist_dir}/linux-vm/*.tar.gz"
 copy_matches "${dist_dir}/container-images/*.tar.gz"
 copy_matches "${dist_dir}/cli/*.tar.gz"
 copy_matches "${dist_dir}/cli/*.zip"
+copy_matches "${dist_dir}/update-feed/*.tar.gz"
 copy_matches "${dist_dir}/sdn-js/*.tgz"
 copy_matches "${dist_dir}/sbom/*.json"
+
+required_cli_artifacts=(
+  "spacedatanetwork-${version}-darwin-amd64.tar.gz"
+  "spacedatanetwork-${version}-darwin-arm64.tar.gz"
+  "spacedatanetwork-${version}-linux-amd64.tar.gz"
+  "spacedatanetwork-${version}-linux-arm64.tar.gz"
+  "spacedatanetwork-${version}-windows-amd64.zip"
+)
+
+for required_cli_artifact in "${required_cli_artifacts[@]}"; do
+  if [[ ! -f "${release_dir}/${required_cli_artifact}" ]]; then
+    echo "missing required CLI release artifact: ${required_cli_artifact}" >&2
+    exit 1
+  fi
+done
+
+if [[ -n "${SDN_UPDATE_SIGNING_KEY_PEM:-}" ]]; then
+  update_key_id="${SDN_UPDATE_KEY_ID:-sdn-beta-release}"
+  update_sequence="${SDN_UPDATE_SEQUENCE:-${GITHUB_RUN_NUMBER:-}}"
+  if [[ -z "${update_sequence}" ]]; then
+    echo "SDN_UPDATE_SEQUENCE or GITHUB_RUN_NUMBER is required to build the CLI update feed" >&2
+    exit 1
+  fi
+  update_created_at="${SDN_UPDATE_FEED_GENERATED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+  update_payload_dir="${dist_dir}/update-payloads"
+  rm -rf "${update_payload_dir}" "${release_dir}/update-feed"
+  mkdir -p "${update_payload_dir}"
+
+  feed_args=(--out-dir "${release_dir}/update-feed")
+  cli_update_targets=(
+    "darwin amd64 tar.gz"
+    "darwin arm64 tar.gz"
+    "linux amd64 tar.gz"
+    "linux arm64 tar.gz"
+    "windows amd64 zip"
+  )
+  for cli_update_target in "${cli_update_targets[@]}"; do
+    read -r target_os target_arch target_ext <<< "${cli_update_target}"
+    archive_path="${release_dir}/spacedatanetwork-${version}-${target_os}-${target_arch}.${target_ext}"
+    payload_out_dir="${update_payload_dir}/${target_os}-${target_arch}"
+    node "${root}/deployment/release/build-cli-update-payload.mjs" \
+      --bundle-archive "${archive_path}" \
+      --version "${version}" \
+      --sequence "${update_sequence}" \
+      --channel beta \
+      --platform "${target_os}" \
+      --arch "${target_arch}" \
+      --key-id "${update_key_id}" \
+      --created-at "${update_created_at}" \
+      --out-dir "${payload_out_dir}"
+    feed_args+=(--entry "${payload_out_dir}/manifest.json:${payload_out_dir}/update.wasm")
+  done
+  node "${root}/deployment/release/build-sdn-update-feed.js" "${feed_args[@]}"
+  tar -czf "${release_dir}/spacedatanetwork-update-feed-${version}.tar.gz" -C "${release_dir}" update-feed
+fi
 
 if [[ -f "${dist_dir}/ipfs/ipfs-deployment.json" ]]; then
   cp "${dist_dir}/ipfs/ipfs-deployment.json" "${release_dir}/"

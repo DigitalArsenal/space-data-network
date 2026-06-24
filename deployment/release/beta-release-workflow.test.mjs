@@ -163,6 +163,23 @@ test('beta release workflow builds the Windows CLI with the Windows WasmEdge run
   assert.match(workflow, /bin\/wasmedge\.dll/);
 });
 
+test('beta release workflow builds signed CLI update feed artifacts', () => {
+  const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
+
+  assert.match(workflow, /cli-update-feed:\s*\n\s*name:\s*Build signed CLI update feed/);
+  assert.match(workflow, /needs:\s*\[beta-version, cli\]/);
+  assert.match(workflow, /SDN_UPDATE_SIGNING_KEY_PEM:\s*\$\{\{ secrets\.SDN_UPDATE_SIGNING_KEY_PEM \}\}/);
+  assert.match(workflow, /SDN_UPDATE_KEY_ID:\s*\$\{\{ secrets\.SDN_UPDATE_KEY_ID \}\}/);
+  assert.match(workflow, /SDN_UPDATE_SEQUENCE:\s*\$\{\{ github\.run_number \}\}/);
+  assert.match(workflow, /build-cli-update-payload\.mjs/);
+  assert.match(workflow, /build-sdn-update-feed\.js/);
+  assert.match(workflow, /spacedatanetwork-update-feed-\$\{VERSION\}\.tar\.gz/);
+  assert.match(workflow, /name:\s*cli-update-feed[\s\S]*path:\s*dist\/update-feed\/spacedatanetwork-update-feed-\$\{\{ needs\.beta-version\.outputs\.package_version \}\}\.tar\.gz/);
+  assert.match(workflow, /name:\s*cli-update-feed[\s\S]*path:\s*dist\/update-feed/);
+  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, cli, cli-update-feed, packages, sdn-js-package\]/);
+  assert.match(workflow, /needs:\s*\[beta-version, ipfs, docker, cli, cli-update-feed, packages, sdn-js-package, artifact-docker-test\]/);
+});
+
 test('npm release publishing maps beta releases to the beta dist-tag', () => {
   const workflow = readRepoFile('.github/workflows/npm-publish-sdn-js.yml');
 

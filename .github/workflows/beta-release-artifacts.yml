@@ -336,6 +336,78 @@ jobs:
           name: cli-${{ matrix.target_os }}-${{ matrix.target_arch }}
           path: dist/cli/spacedatanetwork-${{ needs.beta-version.outputs.package_version }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.${{ matrix.archive_extension }}
 
+  cli-update-feed:
+    name: Build signed CLI update feed
+    runs-on: ubuntu-latest
+    needs: [beta-version, cli]
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.beta-version.outputs.package_version }}
+      SDN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.SDN_UPDATE_SIGNING_KEY_PEM }}
+      SDN_UPDATE_KEY_ID: ${{ secrets.SDN_UPDATE_KEY_ID }}
+      SDN_UPDATE_SEQUENCE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli-*
+          path: dist/cli
+          merge-multiple: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build signed CLI update feed
+        run: |
+          set -euo pipefail
+          if [[ -z "${SDN_UPDATE_SIGNING_KEY_PEM:-}" ]]; then
+            echo "SDN_UPDATE_SIGNING_KEY_PEM secret is required to publish signed CLI updates" >&2
+            exit 1
+          fi
+          update_key_id="${SDN_UPDATE_KEY_ID:-sdn-beta-release}"
+          created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          payload_dir="dist/update-payloads"
+          feed_tree_root="dist/update-feed-tree"
+          feed_dir="${feed_tree_root}/update-feed"
+          out_dir="dist/update-feed"
+          rm -rf "${payload_dir}" "${feed_tree_root}" "${out_dir}"
+          mkdir -p "${payload_dir}" "${out_dir}"
+          feed_args=(--out-dir "${feed_dir}" --generated-at "${created_at}")
+          targets=(
+            "darwin amd64 tar.gz"
+            "darwin arm64 tar.gz"
+            "linux amd64 tar.gz"
+            "linux arm64 tar.gz"
+            "windows amd64 zip"
+          )
+          for target in "${targets[@]}"; do
+            read -r target_os target_arch target_ext <<< "${target}"
+            archive_path="dist/cli/spacedatanetwork-${VERSION}-${target_os}-${target_arch}.${target_ext}"
+            payload_out="${payload_dir}/${target_os}-${target_arch}"
+            if [[ ! -f "${archive_path}" ]]; then
+              echo "missing CLI archive for update feed: ${archive_path}" >&2
+              exit 1
+            fi
+            node deployment/release/build-cli-update-payload.mjs \
+              --bundle-archive "${archive_path}" \
+              --version "${VERSION}" \
+              --sequence "${SDN_UPDATE_SEQUENCE}" \
+              --channel beta \
+              --platform "${target_os}" \
+              --arch "${target_arch}" \
+              --key-id "${update_key_id}" \
+              --created-at "${created_at}" \
+              --out-dir "${payload_out}"
+            feed_args+=(--entry "${payload_out}/manifest.json:${payload_out}/update.wasm")
+          done
+          node deployment/release/build-sdn-update-feed.js "${feed_args[@]}"
+          tar -czf "dist/update-feed/spacedatanetwork-update-feed-${VERSION}.tar.gz" -C "${feed_tree_root}" update-feed
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-update-feed
+          path: dist/update-feed/spacedatanetwork-update-feed-${{ needs.beta-version.outputs.package_version }}.tar.gz
+
   packages:
     name: Build beta native packages and SBOM
     runs-on: ubuntu-latest
@@ -419,7 +491,7 @@ jobs:
   artifact-docker-test:
     name: Install and network-test release artifacts
     runs-on: ubuntu-latest
-    needs: [beta-version, ipfs, docker, cli, packages, sdn-js-package]
+    needs: [beta-version, ipfs, docker, cli, cli-update-feed, packages, sdn-js-package]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -443,6 +515,10 @@ jobs:
           pattern: cli-*
           path: dist/cli
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli-update-feed
+          path: dist/update-feed
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -452,7 +528,7 @@ jobs:
   release:
     name: Publish beta GitHub release
     runs-on: ubuntu-latest
-    needs: [beta-version, ipfs, docker, cli, packages, sdn-js-package, artifact-docker-test]
+    needs: [beta-version, ipfs, docker, cli, cli-update-feed, packages, sdn-js-package, artifact-docker-test]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -480,6 +556,10 @@ jobs:
           pattern: cli-*
           path: dist/cli
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli-update-feed
+          path: dist/update-feed
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
