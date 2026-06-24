@@ -251,15 +251,46 @@ export function rawDataStreamPayload(request: RawDataStreamRequest): Record<stri
 }
 
 export function conjunctionScreenPayload(request: ConjunctionScreenRequest): Record<string, unknown> {
+  const primarySchema = normalizeSchemaName(request.primarySchema, 'MPE.fbs');
+  const secondarySchema = normalizeSchemaName(request.secondarySchema, 'OMM.fbs');
   return {
-    primary_schema: normalizeSchemaName(request.primarySchema, 'MPE.fbs'),
-    secondary_schema: normalizeSchemaName(request.secondarySchema, 'OMM.fbs'),
+    primary_schema: primarySchema,
+    secondary_schema: secondarySchema,
     encrypted: request.encrypted !== false,
     include_provenance: request.includeProvenance !== false,
+    sources: [
+      conjunctionSourcePayload('primary', primarySchema, request.primaryProviderId, request.primarySourceName, request.primaryPnmCid, request.primaryQuery, request.encrypted !== false),
+      conjunctionSourcePayload('secondary', secondarySchema, request.secondaryProviderId, request.secondarySourceName, request.secondaryPnmCid, request.secondaryQuery, false),
+    ],
+    module: {
+      id: request.moduleId || 'com.space-data-network.conjunction-assessment',
+      version: request.moduleVersion || 'latest',
+    },
     ...(request.grantId ? { grant_id: request.grantId } : {}),
     ...(request.channelId ? { channel_id: request.channelId } : {}),
+    ...(request.resultChannelId ? { result_channel_id: request.resultChannelId } : {}),
     ...(request.assessorPeerId ? { assessor_peer_id: request.assessorPeerId } : {}),
     ...(typeof request.limit === 'number' && Number.isFinite(request.limit) ? { limit: request.limit } : {}),
+  };
+}
+
+function conjunctionSourcePayload(
+  role: 'primary' | 'secondary',
+  schema: string,
+  providerId: string | undefined,
+  sourceName: string | undefined,
+  pnmCid: string | undefined,
+  query: string | undefined,
+  encrypted: boolean,
+): Record<string, unknown> {
+  return {
+    role,
+    schema,
+    ...(providerId ? { provider_id: providerId } : {}),
+    ...(sourceName ? { source_name: sourceName } : {}),
+    ...(pnmCid ? { pnm_cid: pnmCid } : {}),
+    ...(query ? { query } : {}),
+    encrypted,
   };
 }
 
@@ -356,6 +387,7 @@ export function normalizeConjunctionScreenResult(payload: unknown): ConjunctionS
     encrypted: readBoolean(record, 'encrypted') ?? false,
     grantId: readString(record, 'grant_id', 'grantId') ?? undefined,
     channelId: readString(record, 'channel_id', 'channelId') ?? undefined,
+    resultChannelId: readString(record, 'result_channel_id', 'resultChannelId') ?? undefined,
     assessorPeerId: readString(record, 'assessor_peer_id', 'assessorPeerId') ?? undefined,
     count: readNumber(record, 'count') ?? events.length,
     events,

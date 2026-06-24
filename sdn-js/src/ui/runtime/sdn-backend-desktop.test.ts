@@ -576,9 +576,34 @@ describe('desktop-local SDN backend', () => {
           encrypted: true,
           grant_id: 'grant-private-mpe',
           channel_id: 'channel-private-ca',
+          result_channel_id: 'channel-private-results',
           assessor_peer_id: '16Uiu2HAssessor',
           include_provenance: true,
           limit: 25,
+          sources: [
+            expect.objectContaining({
+              role: 'primary',
+              schema: 'MPE.fbs',
+              provider_id: 'operator-private',
+              source_name: 'private-maneuver-ephemeris',
+              pnm_cid: 'bafyprimarypnm',
+              query: "ENTITY_ID = 'SAT-MANEUVER'",
+              encrypted: true,
+            }),
+            expect.objectContaining({
+              role: 'secondary',
+              schema: 'OMM.fbs',
+              provider_id: 'space-data-network-02',
+              source_name: 'celestrak-gp',
+              pnm_cid: 'bafysecondarypnm',
+              query: 'NORAD_CAT_ID = 25544',
+              encrypted: false,
+            }),
+          ],
+          module: {
+            id: 'com.space-data-network.conjunction-assessment',
+            version: '1.0.0',
+          },
         });
         return jsonResponse({
           workflow: 'encrypted-conjunction-assessment',
@@ -588,12 +613,19 @@ describe('desktop-local SDN backend', () => {
           encrypted: true,
           grant_id: 'grant-private-mpe',
           channel_id: 'channel-private-ca',
+          result_channel_id: 'channel-private-results',
           assessor_peer_id: '16Uiu2HAssessor',
           count: 1,
           events: [{ primary_object: 'maneuvering-sat', secondary_object: 'catalog-object', miss_distance_km: 4.2 }],
+          sources: [
+            { role: 'primary', schema: 'MPE.fbs', provider_id: 'operator-private', source_name: 'private-maneuver-ephemeris' },
+            { role: 'secondary', schema: 'OMM.fbs', provider_id: 'space-data-network-02', source_name: 'celestrak-gp' },
+          ],
           provenance: {
             assessor_peer_id: '16Uiu2HAssessor',
+            result_channel_id: 'channel-private-results',
             source_schemas: ['MPE.fbs', 'OMM.fbs'],
+            module: { id: 'com.space-data-network.conjunction-assessment', version: '1.0.0' },
           },
         });
       }
@@ -607,7 +639,18 @@ describe('desktop-local SDN backend', () => {
       encrypted: true,
       grantId: 'grant-private-mpe',
       channelId: 'channel-private-ca',
+      resultChannelId: 'channel-private-results',
       assessorPeerId: '16Uiu2HAssessor',
+      primaryProviderId: 'operator-private',
+      primarySourceName: 'private-maneuver-ephemeris',
+      primaryPnmCid: 'bafyprimarypnm',
+      primaryQuery: "ENTITY_ID = 'SAT-MANEUVER'",
+      secondaryProviderId: 'space-data-network-02',
+      secondarySourceName: 'celestrak-gp',
+      secondaryPnmCid: 'bafysecondarypnm',
+      secondaryQuery: 'NORAD_CAT_ID = 25544',
+      moduleId: 'com.space-data-network.conjunction-assessment',
+      moduleVersion: '1.0.0',
       includeProvenance: true,
       limit: 25,
     })).resolves.toMatchObject({
@@ -618,9 +661,18 @@ describe('desktop-local SDN backend', () => {
         encrypted: true,
         grantId: 'grant-private-mpe',
         channelId: 'channel-private-ca',
+        resultChannelId: 'channel-private-results',
         assessorPeerId: '16Uiu2HAssessor',
         count: 1,
         events: [expect.objectContaining({ primaryObject: 'maneuvering-sat', missDistanceKm: 4.2 })],
+        sources: [
+          expect.objectContaining({ role: 'primary', provider_id: 'operator-private' }),
+          expect.objectContaining({ role: 'secondary', provider_id: 'space-data-network-02' }),
+        ],
+        provenance: expect.objectContaining({
+          result_channel_id: 'channel-private-results',
+          module: { id: 'com.space-data-network.conjunction-assessment', version: '1.0.0' },
+        }),
       },
     });
     expect(calls.map((call) => call.url)).toEqual(['http://127.0.0.1:17890/api/v1/conjunction/screen']);

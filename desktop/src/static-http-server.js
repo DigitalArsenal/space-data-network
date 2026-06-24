@@ -2289,8 +2289,11 @@ function desktopConjunctionScreenResult (payload) {
   const encrypted = payload.encrypted !== false
   const grantID = readEpmString(payload, ['grant_id', 'grantId']) || ''
   const channelID = readEpmString(payload, ['channel_id', 'channelId']) || ''
+  const resultChannelID = readEpmString(payload, ['result_channel_id', 'resultChannelId']) || ''
   const assessorPeerID = readEpmString(payload, ['assessor_peer_id', 'assessorPeerId']) || ''
   const limit = Number.isFinite(Number(payload.limit)) && Number(payload.limit) > 0 ? Number(payload.limit) : 100
+  const sources = desktopConjunctionSources(payload, primarySchema, secondarySchema, encrypted)
+  const module = desktopConjunctionModule(payload)
   return {
     workflow: 'encrypted-conjunction-assessment',
     mode: encrypted && primarySchema === 'MPE.fbs' ? 'private-maneuver-ephemeris' : encrypted ? 'private-ephemeris' : 'local-screening',
@@ -2300,25 +2303,57 @@ function desktopConjunctionScreenResult (payload) {
     encrypted,
     grant_id: grantID,
     channel_id: channelID,
+    result_channel_id: resultChannelID,
     assessor_peer_id: assessorPeerID,
     limit,
     count: 0,
     events: [],
-    sources: [
-      { role: 'primary', schema: primarySchema, encrypted, available: false, count: 0 },
-      { role: 'secondary', schema: secondarySchema, encrypted: false, available: false, count: 0 }
-    ],
+    sources,
     provenance: {
       run_at: new Date().toISOString(),
       source_schemas: [primarySchema, secondarySchema],
+      sources,
+      module,
       encrypted,
       grant_id: grantID,
       channel_id: channelID,
+      result_channel_id: resultChannelID,
       assessor_peer_id: assessorPeerID,
       result_delivery: 'local-private',
       module_status: 'pending-module-execution',
       include_provenance: payload.include_provenance !== false
     }
+  }
+}
+
+function desktopConjunctionSources (payload, primarySchema, secondarySchema, encrypted) {
+  const requested = Array.isArray(payload.sources) ? payload.sources : []
+  return [
+    desktopConjunctionSource(requested.find(source => readEpmString(source, ['role']) === 'primary'), 'primary', primarySchema, encrypted),
+    desktopConjunctionSource(requested.find(source => readEpmString(source, ['role']) === 'secondary'), 'secondary', secondarySchema, false)
+  ]
+}
+
+function desktopConjunctionSource (source, role, schema, encrypted) {
+  const sourceEncrypted = typeof source?.encrypted === 'boolean' ? source.encrypted : encrypted
+  return {
+    role,
+    schema,
+    provider_id: readEpmString(source, ['provider_id', 'providerId']),
+    source_name: readEpmString(source, ['source_name', 'sourceName']),
+    pnm_cid: readEpmString(source, ['pnm_cid', 'pnmCid']),
+    query: readEpmString(source, ['query']),
+    encrypted: sourceEncrypted,
+    available: false,
+    count: 0
+  }
+}
+
+function desktopConjunctionModule (payload) {
+  const module = payload && typeof payload.module === 'object' ? payload.module : {}
+  return {
+    id: readEpmString(module, ['id', 'module_id', 'moduleId']) || 'com.space-data-network.conjunction-assessment',
+    version: readEpmString(module, ['version', 'module_version', 'moduleVersion']) || 'latest'
   }
 }
 

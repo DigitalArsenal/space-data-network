@@ -8,7 +8,18 @@
   let encrypted = true;
   let grantId = '';
   let channelId = '';
+  let resultChannelId = '';
   let assessorPeerId = '';
+  let primaryProviderId = '';
+  let primarySourceName = '';
+  let primaryPnmCid = '';
+  let primaryQuery = '';
+  let secondaryProviderId = '';
+  let secondarySourceName = '';
+  let secondaryPnmCid = '';
+  let secondaryQuery = '';
+  let moduleId = 'com.space-data-network.conjunction-assessment';
+  let moduleVersion = 'latest';
   let limit = 25;
   let outputMode: 'table' | 'json' | 'csv' = 'table';
   let status = 'Ready';
@@ -33,7 +44,18 @@
       encrypted,
       grantId: grantId.trim() || undefined,
       channelId: channelId.trim() || undefined,
+      resultChannelId: resultChannelId.trim() || undefined,
       assessorPeerId: assessorPeerId.trim() || undefined,
+      primaryProviderId: primaryProviderId.trim() || undefined,
+      primarySourceName: primarySourceName.trim() || undefined,
+      primaryPnmCid: primaryPnmCid.trim() || undefined,
+      primaryQuery: primaryQuery.trim() || undefined,
+      secondaryProviderId: secondaryProviderId.trim() || undefined,
+      secondarySourceName: secondarySourceName.trim() || undefined,
+      secondaryPnmCid: secondaryPnmCid.trim() || undefined,
+      secondaryQuery: secondaryQuery.trim() || undefined,
+      moduleId: moduleId.trim() || undefined,
+      moduleVersion: moduleVersion.trim() || undefined,
       includeProvenance: true,
       limit,
     });
@@ -89,8 +111,52 @@
       <input class="sdn-input" bind:value={channelId} placeholder="private channel" />
     </label>
     <label>
+      <span>Results</span>
+      <input class="sdn-input" bind:value={resultChannelId} placeholder="result channel" />
+    </label>
+    <label>
       <span>Assessor</span>
       <input class="sdn-input" bind:value={assessorPeerId} placeholder="peer id" />
+    </label>
+    <label>
+      <span>Primary Provider</span>
+      <input class="sdn-input sdn-input-wide" bind:value={primaryProviderId} placeholder="provider id" />
+    </label>
+    <label>
+      <span>Primary Source</span>
+      <input class="sdn-input sdn-input-wide" bind:value={primarySourceName} placeholder="source name" />
+    </label>
+    <label>
+      <span>Primary PNM</span>
+      <input class="sdn-input sdn-input-wide" bind:value={primaryPnmCid} placeholder="cid" />
+    </label>
+    <label>
+      <span>Primary Query</span>
+      <input class="sdn-input sdn-input-wide" bind:value={primaryQuery} placeholder="query" />
+    </label>
+    <label>
+      <span>Secondary Provider</span>
+      <input class="sdn-input sdn-input-wide" bind:value={secondaryProviderId} placeholder="provider id" />
+    </label>
+    <label>
+      <span>Secondary Source</span>
+      <input class="sdn-input sdn-input-wide" bind:value={secondarySourceName} placeholder="source name" />
+    </label>
+    <label>
+      <span>Secondary PNM</span>
+      <input class="sdn-input sdn-input-wide" bind:value={secondaryPnmCid} placeholder="cid" />
+    </label>
+    <label>
+      <span>Secondary Query</span>
+      <input class="sdn-input sdn-input-wide" bind:value={secondaryQuery} placeholder="query" />
+    </label>
+    <label>
+      <span>Module</span>
+      <input class="sdn-input sdn-input-wide" bind:value={moduleId} placeholder="module id" />
+    </label>
+    <label>
+      <span>Version</span>
+      <input class="sdn-input" bind:value={moduleVersion} placeholder="version" />
     </label>
     <label>
       <span>Limit</span>
@@ -160,8 +226,10 @@
         <div><dt>Secondary Schema</dt><dd>{result?.secondarySchema ?? secondarySchema}</dd></div>
         <div><dt>Grant</dt><dd>{result?.grantId ?? (grantId || 'not set')}</dd></div>
         <div><dt>Channel</dt><dd>{result?.channelId ?? (channelId || 'not set')}</dd></div>
+        <div><dt>Results</dt><dd>{result?.resultChannelId ?? (resultChannelId || 'not set')}</dd></div>
         <div><dt>Assessor</dt><dd>{result?.assessorPeerId ?? (assessorPeerId || 'not set')}</dd></div>
         <div><dt>Events</dt><dd>{result?.count ?? 0}</dd></div>
+        <div><dt>Provenance</dt><dd>{result?.provenance ? 'available' : 'pending'}</dd></div>
       </dl>
     </div>
   </div>

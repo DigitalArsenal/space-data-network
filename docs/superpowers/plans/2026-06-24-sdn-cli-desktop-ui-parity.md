@@ -898,12 +898,19 @@ with `npm --prefix desktop exec -- playwright test test/unit/static-http-server-
 - Modify: `sdn-js/src/ui/runtime/channels.test.ts`
 - Modify: `sdn-js/tests/sdn-ui.spec.ts`
 
-- [ ] Add failing runtime and UI tests for selecting private MPE data,
+- [x] Add failing runtime and UI tests for selecting private MPE data,
   confirming encrypted grant/channel state, and exporting provenance.
-- [ ] Implement the UI controls without adding instructional marketing text to
+- [x] Implement the UI controls without adding instructional marketing text to
   the app surface.
-- [ ] Run focused SDN JS/UI tests and commit with message
+- [x] Run focused SDN JS/UI tests and commit with message
   `feat: add encrypted CA maneuver ephemeris UI`.
+  - 2026-06-24: Extended the Desktop-local conjunction route, SDN JS
+    Desktop/remote backend payload contract, and Svelte Conjunction screen with
+    private source selectors, result channel ID, module metadata, and
+    provenance export. Verified with
+    `npm --prefix desktop exec -- playwright test test/unit/static-http-server-data.spec.js`,
+    `npm --prefix sdn-js test -- --run src/ui/runtime/sdn-backend-desktop.test.ts src/ui/runtime/sdn-backend-remote.test.ts src/ui/conjunction-ui-source.test.ts`,
+    and `git diff --check`.
 
 ---
 
