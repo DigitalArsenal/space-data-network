@@ -21,9 +21,11 @@ type providersSharedOptions struct {
 	SourceName   string
 	BatchID      string
 	QueryProfile string
+	Mode         string
 	Format       string
 	Limit        int
 	BaseURL      string
+	SessionToken string
 	ProviderURL  string
 	Target       string
 	IncludeData  bool
@@ -65,7 +67,7 @@ var providersCmd = &cobra.Command{
 
 Provider commands share the same provider/search filters as data search:
 --schema, --provider-id, --source-name, --batch-id, --query-profile,
---limit, and --format table|json|csv.`,
+--mode local|daemon|live-dht, --limit, and --format table|json|csv.`,
 }
 
 var providersConnectCmd = &cobra.Command{
@@ -164,9 +166,12 @@ func addProvidersSharedFlags(cmd *cobra.Command, options *providersSharedOptions
 	cmd.PersistentFlags().StringVar(&options.SourceName, "source-name", "", "provider source/feed name")
 	cmd.PersistentFlags().StringVar(&options.BatchID, "batch-id", "", "source batch ID")
 	cmd.PersistentFlags().StringVar(&options.QueryProfile, "query-profile", "", "sync query profile")
+	cmd.PersistentFlags().StringVar(&options.Mode, "mode", "local", "search mode for list/search/show: local, daemon, live-dht")
 	cmd.PersistentFlags().StringVar(&options.Format, "format", "table", "output format: table, json, csv")
 	cmd.PersistentFlags().IntVar(&options.Limit, "limit", 100, "maximum results")
-	cmd.PersistentFlags().StringVar(&options.BaseURL, "api", "", "local SDN daemon API base URL for provider query")
+	cmd.PersistentFlags().StringVar(&options.BaseURL, "api", "", "local SDN daemon API base URL for provider query and daemon/live-dht search")
+	cmd.PersistentFlags().StringVar(&options.BaseURL, "api-url", "", "alias for --api")
+	cmd.PersistentFlags().StringVar(&options.SessionToken, "session-token", "", "SDN wallet session token for auth-enabled APIs (default: SDN_SESSION_TOKEN)")
 	cmd.PersistentFlags().StringVar(&options.ProviderURL, "provider-url", defaultModulePublishProviderURL, "provider descriptor URL")
 	cmd.PersistentFlags().StringVar(&options.Target, "target", "", "explicit provider multiaddr including /p2p/<peer-id>")
 	cmd.PersistentFlags().BoolVar(&options.IncludeData, "include-data", false, "include data_base64 in provider query JSON responses")
@@ -191,6 +196,9 @@ func runProvidersSearch(out io.Writer, query string, options providersSharedOpti
 		SourceName:   options.SourceName,
 		BatchID:      options.BatchID,
 		QueryProfile: options.QueryProfile,
+		Mode:         options.Mode,
+		APIURL:       options.BaseURL,
+		SessionToken: options.SessionToken,
 		Format:       options.Format,
 		Limit:        options.Limit,
 	})
