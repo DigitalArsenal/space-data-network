@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -211,6 +213,147 @@ func TestIdentityWizardPreservesIdentityBackedPublicKeys(t *testing.T) {
 	assertIdentityWizardJSONHasPublicIdentity(t, directoryJSON, xpub)
 }
 
+func TestIdentityWizardDaemonUpdatePreservesRuntimeAddress(t *testing.T) {
+	_, store, _, dataDir := newIdentityWizardTestStore(t)
+	identity, err := testProviderDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testProviderDerivedIdentity failed: %v", err)
+	}
+
+	const (
+		xpub         = "xpub-provider"
+		runtimeAddr  = "http://runtime-node.onion"
+		updatedName  = "Daemon Updated Provider"
+		originalName = "Daemon Runtime Provider"
+	)
+	daemonService := epm.NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, xpub, dataDir)
+	if err := daemonService.SetRuntimeAddresses([]string{runtimeAddr}); err != nil {
+		t.Fatalf("SetRuntimeAddresses failed: %v", err)
+	}
+	if err := daemonService.UpdateProfile(&epm.Profile{DN: originalName}); err != nil {
+		t.Fatalf("daemon seed UpdateProfile failed: %v", err)
+	}
+	sourceEPM := daemonService.GetNodeEPM()
+	sourceProfile, err := epm.ProfileFromEPMBytes(sourceEPM)
+	if err != nil {
+		t.Fatalf("ProfileFromEPMBytes failed: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/node/epm", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/x-flatbuffers")
+			_, _ = w.Write(daemonService.GetNodeEPM())
+		case http.MethodPut:
+			var profile epm.Profile
+			if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := daemonService.UpdateProfile(&profile); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-flatbuffers")
+			_, _ = w.Write(daemonService.GetNodeEPM())
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	mux.HandleFunc("/api/node/epm/vcard", func(w http.ResponseWriter, r *http.Request) {
+		vcard, err := daemonService.GetNodeVCard()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(vcard))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var out bytes.Buffer
+	if err := runIdentityWizardWithProfile(
+		t.Context(),
+		strings.NewReader("y\n"),
+		&out,
+		identityWizardOptions{
+			Sets:   []string{"dn=" + updatedName},
+			Format: "json",
+		},
+		store,
+		identityWizardNodeIdentity{
+			Identity: identity,
+			PeerID:   identity.PeerID,
+			XPub:     xpub,
+		},
+		dataDir,
+		server.URL,
+		identityWizardProfileSource{
+			Profile:      sourceProfile,
+			SourceEPM:    sourceEPM,
+			DaemonSource: true,
+		},
+	); err != nil {
+		t.Fatalf("runIdentityWizardWithProfile failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("wizard json output is invalid JSON: %v\n%s", err, out.String())
+	}
+	if payload["dn"] != updatedName {
+		t.Fatalf("payload dn = %v, want %q", payload["dn"], updatedName)
+	}
+	assertIdentityWizardJSONHasRuntimeAddress(t, payload, runtimeAddr)
+}
+
+func TestIdentityWizardOfflineUpdatePreservesStoredRuntimeAddress(t *testing.T) {
+	_, store, _, dataDir := newIdentityWizardTestStore(t)
+	identity, err := testProviderDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testProviderDerivedIdentity failed: %v", err)
+	}
+
+	const (
+		xpub        = "xpub-provider"
+		runtimeAddr = "http://stored-runtime-node.onion"
+	)
+	seedService := epm.NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, xpub, dataDir)
+	seedService.SetProfileStore(store)
+	if err := seedService.SetRuntimeAddresses([]string{runtimeAddr}); err != nil {
+		t.Fatalf("SetRuntimeAddresses failed: %v", err)
+	}
+	if err := seedService.UpdateProfile(&epm.Profile{DN: "Stored Runtime Provider"}); err != nil {
+		t.Fatalf("seed UpdateProfile failed: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := runIdentityWizardWithIO(
+		strings.NewReader("y\n"),
+		&out,
+		identityWizardOptions{
+			Sets:   []string{"dn=Offline Runtime Provider"},
+			Format: "json",
+		},
+		store,
+		identityWizardNodeIdentity{
+			Identity: identity,
+			PeerID:   identity.PeerID,
+			XPub:     xpub,
+		},
+		dataDir,
+	); err != nil {
+		t.Fatalf("runIdentityWizardWithIO failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("wizard json output is invalid JSON: %v\n%s", err, out.String())
+	}
+	assertIdentityWizardJSONHasRuntimeAddress(t, payload, runtimeAddr)
+}
+
 func TestIdentityWizardRefusesToDropExistingPublicIdentityMaterial(t *testing.T) {
 	_, store, _, dataDir := newIdentityWizardTestStore(t)
 	identity, err := testProviderDerivedIdentity()
@@ -267,6 +410,21 @@ func assertIdentityWizardJSONHasPublicIdentity(t *testing.T, payload map[string]
 		}
 	}
 	t.Fatalf("payload keys do not include signing key with xpub %q: %#v", xpub, keys)
+}
+
+func assertIdentityWizardJSONHasRuntimeAddress(t *testing.T, payload map[string]any, runtimeAddr string) {
+	t.Helper()
+
+	addrs, ok := payload["multiformat_address"].([]any)
+	if !ok || len(addrs) == 0 {
+		t.Fatalf("payload multiformat_address missing or empty: %#v", payload["multiformat_address"])
+	}
+	for _, raw := range addrs {
+		if raw == runtimeAddr {
+			return
+		}
+	}
+	t.Fatalf("payload multiformat_address does not include %q: %#v", runtimeAddr, addrs)
 }
 
 func newIdentityWizardTestStore(t *testing.T) (string, *storage.FlatSQLStore, peer.ID, string) {

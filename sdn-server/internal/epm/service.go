@@ -757,6 +757,12 @@ func profileFromEPMBytes(epmBytes []byte) (profile *Profile, err error) {
 	return p, nil
 }
 
+// ProfileFromEPMBytes extracts the editable profile fields from size-prefixed
+// EPM FlatBuffer bytes.
+func ProfileFromEPMBytes(epmBytes []byte) (*Profile, error) {
+	return profileFromEPMBytes(epmBytes)
+}
+
 func (s *Service) saveProfile(profile *Profile, epmBytes []byte) error {
 	if profile == nil {
 		profile = &Profile{}
