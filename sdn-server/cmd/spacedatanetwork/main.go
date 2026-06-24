@@ -14,6 +14,7 @@ import (
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -66,6 +67,8 @@ var (
 	log              = logging.Logger("sdn")
 	processStartTime = time.Now()
 )
+
+var errLocalSDNDaemonUnavailable = errors.New("local SDN daemon unavailable")
 
 var rootCmd = &cobra.Command{
 	Use:   "spacedatanetwork",
@@ -247,6 +250,9 @@ func exportIdentityWithLocalFallback(ctx context.Context, out io.Writer, cfg *co
 	if daemonErr == nil {
 		return nil
 	}
+	if !errors.Is(daemonErr, errLocalSDNDaemonUnavailable) {
+		return daemonErr
+	}
 	if localErr := exportLocalIdentity(ctx, out, cfg, format, outputPath); localErr == nil {
 		return nil
 	}
@@ -398,7 +404,7 @@ func fetchLocalIdentityEndpoint(ctx context.Context, baseURL string, endpoint st
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("connect to local SDN daemon at %s: %w", baseURL, err)
+		return nil, fmt.Errorf("%w: connect to local SDN daemon at %s: %v", errLocalSDNDaemonUnavailable, baseURL, err)
 	}
 	defer resp.Body.Close()
 	body, readErr := io.ReadAll(resp.Body)

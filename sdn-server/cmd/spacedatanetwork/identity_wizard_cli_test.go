@@ -15,6 +15,7 @@ import (
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/spf13/cobra"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
@@ -187,6 +188,99 @@ func TestExportLocalIdentityFlatBufferWritesOutputPath(t *testing.T) {
 	}
 	if !EPM.SizePrefixedEPMBufferHasIdentifier(raw) {
 		t.Fatalf("flatbuffer output has invalid EPM identifier: %x", raw[:min(len(raw), 16)])
+	}
+}
+
+func TestRunIdentityExportFlatBufferUsesLocalFallbackOutputPathWhenDaemonUnavailable(t *testing.T) {
+	cfgPath, store, peerID, dataDir := newIdentityWizardTestStore(t)
+	if err := runIdentityWizardWithIO(
+		strings.NewReader("y\n"),
+		io.Discard,
+		identityWizardOptions{
+			Sets:   []string{"dn=Run Export Provider"},
+			Format: "json",
+		},
+		store,
+		identityWizardNodeIdentity{PeerID: peerID},
+		dataDir,
+	); err != nil {
+		t.Fatalf("runIdentityWizardWithIO failed: %v", err)
+	}
+
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("config.Load failed: %v", err)
+	}
+	cfg.Admin.ListenAddr = "127.0.0.1:59998"
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("config.Save failed: %v", err)
+	}
+
+	oldConfigPath := configPath
+	oldFormat := identityExportFormat
+	oldOutput := identityExportOutput
+	t.Cleanup(func() {
+		configPath = oldConfigPath
+		identityExportFormat = oldFormat
+		identityExportOutput = oldOutput
+	})
+	configPath = cfgPath
+	identityExportFormat = "flatbuffer"
+	identityExportOutput = filepath.Join(t.TempDir(), "run-export.fbs")
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err := runIdentityExport(cmd, nil); err != nil {
+		t.Fatalf("runIdentityExport failed: %v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("flatbuffer file export should not write stdout, got %q", out.String())
+	}
+	raw, err := os.ReadFile(identityExportOutput)
+	if err != nil {
+		t.Fatalf("read flatbuffer output %s: %v", identityExportOutput, err)
+	}
+	if !EPM.SizePrefixedEPMBufferHasIdentifier(raw) {
+		t.Fatalf("flatbuffer output has invalid EPM identifier: %x", raw[:min(len(raw), 16)])
+	}
+}
+
+func TestIdentityExportDoesNotFallbackOnDaemonHTTPError(t *testing.T) {
+	_, store, peerID, dataDir := newIdentityWizardTestStore(t)
+	if err := runIdentityWizardWithIO(
+		strings.NewReader("y\n"),
+		io.Discard,
+		identityWizardOptions{
+			Sets:   []string{"dn=Stale Local Provider"},
+			Format: "json",
+		},
+		store,
+		identityWizardNodeIdentity{PeerID: peerID},
+		dataDir,
+	); err != nil {
+		t.Fatalf("runIdentityWizardWithIO failed: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "daemon unhappy", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.Storage.Path = dataDir
+	cfg.Admin.ListenAddr = strings.TrimPrefix(server.URL, "http://")
+	var out bytes.Buffer
+	err := exportIdentityWithLocalFallback(t.Context(), &out, cfg, "json", "")
+	if err == nil {
+		t.Fatal("exportIdentityWithLocalFallback succeeded, want daemon HTTP error")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Fatalf("error = %v, want daemon HTTP status", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("export wrote local fallback output despite daemon HTTP error: %s", out.String())
 	}
 }
 
