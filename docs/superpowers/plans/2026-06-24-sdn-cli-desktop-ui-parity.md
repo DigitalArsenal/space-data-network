@@ -951,9 +951,11 @@ git commit -m "feat: add desktop parity routes and contract"
   to verify `spacedatanetwork show-identity` immediately after post-install
   identity initialization.
   - 2026-06-24: Verified with `node --test deployment/release/install-script.test.mjs`.
-- [ ] Add clean-user smoke script for init, version, status, and identity.
-- [ ] Run installer tests and commit with message
+- [x] Add clean-user smoke script for init, version, status, and identity.
+  - 2026-06-24: Added `deployment/release/published-install-smoke.mjs` and a post-release Linux/macOS/Windows matrix job that runs the published installer one-liners from isolated user homes.
+- [x] Run installer tests and commit with message
   `test: smoke published SDN installers`.
+  - 2026-06-24: Verified with `node --test deployment/release/*.test.mjs` and `git diff --check`, then committed as `test: smoke published SDN installers`.
 
 ### Task 16: Extend Live-DHT Cross-Platform Tests
 
