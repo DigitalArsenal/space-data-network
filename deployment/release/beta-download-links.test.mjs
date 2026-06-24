@@ -8,6 +8,9 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const betaReleasesUrl = 'https://github.com/DigitalArsenal/space-data-network/releases/tag/v1.0.3-beta.1';
 const macosArm64BundleUrl = 'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-darwin-arm64.tar.gz';
 const directReleaseAssetUrls = [
+  'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/space-data-network-desktop-0.47.0-mac.dmg',
+  'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/space-data-network-desktop-setup-0.47.0-windows-x64.exe',
+  'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/space-data-network-desktop-0.47.0-linux-x86_64.AppImage',
   'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-full_1.0.3.beta.1_amd64.deb',
   'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-full-1.0.3.beta.1-1.x86_64.rpm',
   'https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-linux-vm-1.0.3.beta.1.tar.gz',
@@ -23,6 +26,9 @@ const requiredPhrases = [
   'spacedatanetwork-full',
   'spacedatanetwork-linux-vm-',
   'spacedatanetwork-container-',
+  'space-data-network-desktop-0.47.0-mac.dmg',
+  'space-data-network-desktop-setup-0.47.0-windows-x64.exe',
+  'space-data-network-desktop-0.47.0-linux-x86_64.AppImage',
   'spacedatanetwork-darwin-arm64.tar.gz',
   'spacedatanetwork-sdn-js-',
   'spacedatanetwork-sbom.cdx.json',
@@ -104,6 +110,9 @@ test('website download cards use direct assets and keep architecture details ins
     );
   }
   for (const label of [
+    'macOS Desktop app (DMG)',
+    'Windows Desktop installer',
+    'Linux Desktop AppImage',
     '64-bit Apple Silicon (ARM64)',
     '64-bit Intel/AMD (DEB)',
     '64-bit Intel/AMD (RPM)',
