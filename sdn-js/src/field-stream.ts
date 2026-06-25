@@ -12,7 +12,7 @@ import {
   fieldStreamValueStateCategory,
 } from 'spacedatastandards.org/lib/js/FSM/main.js';
 
-import { aesGcmDecryptWithIv, sha256 } from './crypto/hd-wallet';
+import { aesGcmDecryptWithIv, sha256, verify } from './crypto/hd-wallet';
 
 type GeneratedEnum = Record<string, string | number>;
 type FieldKeyMap = Record<string, Uint8Array> | Map<string, Uint8Array>;
@@ -531,6 +531,44 @@ export function buildFieldStreamGrantSignaturePayload(grant: FieldStreamAccessGr
     grant.deliveryTopic ?? '',
     canonicalGrantFieldStreamPolicy(grant),
   ].join('\x1f'));
+}
+
+export async function verifyFieldStreamProviderSignature(
+  message: FieldStreamMessageSummary,
+  providerPublicKey: Uint8Array,
+): Promise<boolean> {
+  if (!message.providerSignature || message.providerSignature.length === 0) {
+    return false;
+  }
+  try {
+    return await verify(
+      cloneBytes(providerPublicKey),
+      buildFieldStreamProviderSignaturePayload(message),
+      cloneBytes(message.providerSignature),
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function verifyFieldStreamGrantSignature(
+  grant: FieldStreamAccessGrant,
+  providerPublicKey: Uint8Array,
+): Promise<boolean> {
+  if (!grant.providerSignature || grant.providerSignature.length === 0) {
+    return false;
+  }
+  const signaturePayload = cloneOptionalBytes(grant.signaturePayload)
+    ?? buildFieldStreamGrantSignaturePayload(grant);
+  try {
+    return await verify(
+      cloneBytes(providerPublicKey),
+      signaturePayload,
+      cloneBytes(grant.providerSignature),
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function verifyMessageProviderSignature(
