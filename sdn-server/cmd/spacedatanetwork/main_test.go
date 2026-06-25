@@ -991,7 +991,7 @@ func TestResolveFrontendPathRespectsExplicitConfiguredPath(t *testing.T) {
 }
 
 func TestUserFacingCLICommandsAreRegistered(t *testing.T) {
-	want := []string{"daemon", "init", "status", "open", "update", "sync", "version", "config", "start", "stop", "restart", "remove", "service", "providers", "conjunction"}
+	want := []string{"daemon", "init", "status", "open", "update", "sync", "version", "config", "start", "stop", "restart", "remove", "service", "providers", "marketplace", "conjunction"}
 	for _, name := range want {
 		requireCommand(t, []string{name}, name)
 	}

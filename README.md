@@ -629,6 +629,22 @@ SDN includes an optional **commercial layer** for monetizing space data:
 - **Revenue Distribution:** Automated splits between data providers and platform
 - **Metering:** Usage tracking for consumption-based billing
 
+### Marketplace CLI
+
+The CLI can search local daemon storefront listings with the same row, JSON, and
+CSV output conventions used by provider/data search commands:
+
+```bash
+spacedatanetwork marketplace list --format table
+spacedatanetwork marketplace search maneuver --standard MPE --kind data_stream --tag encrypted --access-type streaming
+spacedatanetwork marketplace search ca --kind wasm_module --provider-id 12D3KooW... --format json
+spacedatanetwork marketplace show listing-mpe-alpha --format csv
+```
+
+Supported filters include provider peer ID, SDS/data type (`--standard` or
+`--data-type`), listing kind (`data_stream` or `wasm_module`), tags, access type
+(`one-time`, `subscription`, `streaming`, `query`), limit, and offset.
+
 ### Field-Encrypted Stream Inspection
 
 Protected marketplace streams can carry SDS `FSM` field-stream messages where

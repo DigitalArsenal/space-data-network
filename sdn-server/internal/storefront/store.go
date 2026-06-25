@@ -613,6 +613,24 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 		conditions = append(conditions, "("+strings.Join(placeholders, " OR ")+")")
 	}
 
+	if len(query.ListingKinds) > 0 {
+		placeholders := make([]string, len(query.ListingKinds))
+		for i, kind := range query.ListingKinds {
+			placeholders[i] = "listing_kind = ?"
+			args = append(args, string(kind))
+		}
+		conditions = append(conditions, "("+strings.Join(placeholders, " OR ")+")")
+	}
+
+	if len(query.Tags) > 0 {
+		placeholders := make([]string, len(query.Tags))
+		for i, tag := range query.Tags {
+			placeholders[i] = "tags LIKE ?"
+			args = append(args, "%"+tag+"%")
+		}
+		conditions = append(conditions, "("+strings.Join(placeholders, " OR ")+")")
+	}
+
 	if len(query.AccessTypes) > 0 {
 		placeholders := make([]string, len(query.AccessTypes))
 		for i, at := range query.AccessTypes {
