@@ -25,16 +25,31 @@ const (
 // ProtectedDelivery records the immutable encrypted artifact/window metadata
 // that a grant entitles the buyer to unwrap through the existing licensing flow.
 type ProtectedDelivery struct {
-	EncryptedCID     string   `json:"encrypted_cid"`
-	ManifestCID      string   `json:"manifest_cid"`
-	ContentHash      string   `json:"content_hash"`
-	ContentKeyID     string   `json:"content_key_id"`
-	LicenseModuleID  string   `json:"license_module_id"`
-	ModuleID         string   `json:"module_id"`
-	ModuleVersion    string   `json:"module_version"`
-	RequiredScopes   []string `json:"required_scopes"`
-	GrantScope       string   `json:"grant_scope"`
-	DeliveryProtocol string   `json:"delivery_protocol"`
+	EncryptedCID      string                  `json:"encrypted_cid"`
+	ManifestCID       string                  `json:"manifest_cid"`
+	ContentHash       string                  `json:"content_hash"`
+	ContentKeyID      string                  `json:"content_key_id"`
+	LicenseModuleID   string                  `json:"license_module_id"`
+	ModuleID          string                  `json:"module_id"`
+	ModuleVersion     string                  `json:"module_version"`
+	RequiredScopes    []string                `json:"required_scopes"`
+	GrantScope        string                  `json:"grant_scope"`
+	DeliveryProtocol  string                  `json:"delivery_protocol"`
+	FieldStreamPolicy *GrantFieldStreamPolicy `json:"field_stream_policy,omitempty"`
+}
+
+// GrantFieldStreamPolicy binds a marketplace grant to the field-level policy
+// used by protected stream envelopes.
+type GrantFieldStreamPolicy struct {
+	PolicyID           string   `json:"policy_id"`
+	PolicyVersion      uint32   `json:"policy_version"`
+	StreamID           string   `json:"stream_id"`
+	SchemaCode         string   `json:"schema_code"`
+	AllowedFieldPaths  []string `json:"allowed_field_paths"`
+	RedactedFieldPaths []string `json:"redacted_field_paths"`
+	KeyEpoch           string   `json:"key_epoch"`
+	GrantScope         string   `json:"grant_scope"`
+	AllowedOperations  []string `json:"allowed_operations"`
 }
 
 // PaymentMethod represents supported payment methods
@@ -52,14 +67,22 @@ const (
 )
 
 const (
-	PaymentAuditPurchaseCreated  = "purchase_created"
-	PaymentAuditPaymentDetected  = "payment_detected"
-	PaymentAuditPaymentConfirmed = "payment_confirmed"
-	PaymentAuditPaymentFailed    = "payment_failed"
-	PaymentAuditGrantIssued      = "grant_issued"
-	PaymentAuditKeyWrapIssued    = "key_wrap_issued"
-	PaymentAuditDeliveryReady    = "delivery_ready"
-	PaymentAuditGrantRevoked     = "grant_revoked"
+	PaymentAuditPurchaseCreated         = "purchase_created"
+	PaymentAuditPaymentDetected         = "payment_detected"
+	PaymentAuditPaymentConfirmed        = "payment_confirmed"
+	PaymentAuditPaymentFailed           = "payment_failed"
+	PaymentAuditGrantIssued             = "grant_issued"
+	PaymentAuditKeyWrapIssued           = "key_wrap_issued"
+	PaymentAuditDeliveryReady           = "delivery_ready"
+	PaymentAuditGrantRevoked            = "grant_revoked"
+	PaymentAuditStreamPolicyPublished   = "stream_policy_published"
+	PaymentAuditStreamPolicyChanged     = "stream_policy_changed"
+	PaymentAuditStreamPolicyGrantIssued = "stream_policy_grant_issued"
+	PaymentAuditStreamSubscribe         = "stream_subscribe"
+	PaymentAuditStreamDecryptSucceeded  = "stream_decrypt_succeeded"
+	PaymentAuditStreamDecryptDenied     = "stream_decrypt_denied"
+	PaymentAuditStreamPolicyRevoked     = "stream_policy_revoked"
+	PaymentAuditStreamKeyRotated        = "stream_key_rotated"
 )
 
 // GrantStatus represents the status of an access grant
@@ -180,36 +203,37 @@ type Listing struct {
 
 // AccessGrant represents a data access grant (ACL)
 type AccessGrant struct {
-	GrantID               string        `json:"grant_id"`
-	ListingID             string        `json:"listing_id"`
-	TierName              string        `json:"tier_name"`
-	BuyerPeerID           string        `json:"buyer_peer_id"`
-	BuyerEncryptionPubkey []byte        `json:"buyer_encryption_pubkey"`
-	KeyAlgorithm          string        `json:"key_algorithm"`
-	AccessType            AccessType    `json:"access_type"`
-	RateLimit             uint32        `json:"rate_limit"`
-	MaxRecordsPerRequest  uint32        `json:"max_records_per_request"`
-	GrantedAt             time.Time     `json:"granted_at"`
-	ExpiresAt             time.Time     `json:"expires_at"`
-	Status                GrantStatus   `json:"status"`
-	PaymentTxHash         string        `json:"payment_tx_hash"`
-	PaymentMethod         PaymentMethod `json:"payment_method"`
-	PaymentAmount         uint64        `json:"payment_amount"`
-	PaymentCurrency       string        `json:"payment_currency"`
-	PaymentChain          string        `json:"payment_chain"`
-	NextRenewal           time.Time     `json:"next_renewal"`
-	AutoRenew             bool          `json:"auto_renew"`
-	RenewalCount          uint32        `json:"renewal_count"`
-	TotalRequests         uint64        `json:"total_requests"`
-	TotalRecords          uint64        `json:"total_records"`
-	LastAccess            time.Time     `json:"last_access"`
-	DeliveryTopic         string        `json:"delivery_topic"`
-	CreatedAt             time.Time     `json:"created_at"`
-	UpdatedAt             time.Time     `json:"updated_at"`
-	Notes                 string        `json:"notes"`
-	ProviderSignature     []byte        `json:"provider_signature"`
-	ProviderPeerID        string        `json:"provider_peer_id"`
-	GrantResponseBase64   string        `json:"grant_response_base64,omitempty"`
+	GrantID               string                  `json:"grant_id"`
+	ListingID             string                  `json:"listing_id"`
+	TierName              string                  `json:"tier_name"`
+	BuyerPeerID           string                  `json:"buyer_peer_id"`
+	BuyerEncryptionPubkey []byte                  `json:"buyer_encryption_pubkey"`
+	KeyAlgorithm          string                  `json:"key_algorithm"`
+	AccessType            AccessType              `json:"access_type"`
+	RateLimit             uint32                  `json:"rate_limit"`
+	MaxRecordsPerRequest  uint32                  `json:"max_records_per_request"`
+	GrantedAt             time.Time               `json:"granted_at"`
+	ExpiresAt             time.Time               `json:"expires_at"`
+	Status                GrantStatus             `json:"status"`
+	PaymentTxHash         string                  `json:"payment_tx_hash"`
+	PaymentMethod         PaymentMethod           `json:"payment_method"`
+	PaymentAmount         uint64                  `json:"payment_amount"`
+	PaymentCurrency       string                  `json:"payment_currency"`
+	PaymentChain          string                  `json:"payment_chain"`
+	NextRenewal           time.Time               `json:"next_renewal"`
+	AutoRenew             bool                    `json:"auto_renew"`
+	RenewalCount          uint32                  `json:"renewal_count"`
+	TotalRequests         uint64                  `json:"total_requests"`
+	TotalRecords          uint64                  `json:"total_records"`
+	LastAccess            time.Time               `json:"last_access"`
+	DeliveryTopic         string                  `json:"delivery_topic"`
+	CreatedAt             time.Time               `json:"created_at"`
+	UpdatedAt             time.Time               `json:"updated_at"`
+	Notes                 string                  `json:"notes"`
+	ProviderSignature     []byte                  `json:"provider_signature"`
+	ProviderPeerID        string                  `json:"provider_peer_id"`
+	GrantResponseBase64   string                  `json:"grant_response_base64,omitempty"`
+	FieldStreamPolicy     *GrantFieldStreamPolicy `json:"field_stream_policy,omitempty"`
 }
 
 // GroupMemberStatus represents the lifecycle status for a group grant member.

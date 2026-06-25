@@ -173,7 +173,8 @@ func (s *Store) initTables() error {
 			updated_at INTEGER NOT NULL,
 			notes TEXT,
 			provider_signature BLOB,
-			provider_peer_id TEXT NOT NULL
+			provider_peer_id TEXT NOT NULL,
+			field_stream_policy TEXT DEFAULT ''
 		);
 		CREATE INDEX IF NOT EXISTS idx_grants_buyer ON storefront_grants(buyer_peer_id);
 		CREATE INDEX IF NOT EXISTS idx_grants_listing ON storefront_grants(listing_id);
@@ -184,6 +185,7 @@ func (s *Store) initTables() error {
 	}
 
 	s.db.Exec(`ALTER TABLE storefront_grants ADD COLUMN cid TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE storefront_grants ADD COLUMN field_stream_policy TEXT DEFAULT ''`)
 
 	// Purchase index
 	_, err = s.db.Exec(`
@@ -767,6 +769,10 @@ func (s *Store) CreateGrant(grant *AccessGrant) error {
 	if err != nil {
 		log.Warnf("FlatSQL store failed for grant %s: %v", grant.GrantID, err)
 	}
+	fieldStreamPolicyJSON, err := marshalGrantFieldStreamPolicy(grant.FieldStreamPolicy)
+	if err != nil {
+		return fmt.Errorf("failed to marshal field stream policy: %w", err)
+	}
 
 	_, err = s.db.Exec(`
 		INSERT INTO storefront_grants (
@@ -776,8 +782,8 @@ func (s *Store) CreateGrant(grant *AccessGrant) error {
 			payment_amount, payment_currency, payment_chain, next_renewal,
 			auto_renew, renewal_count, total_requests, total_records,
 			last_access, delivery_topic, created_at, updated_at, notes,
-			provider_signature, provider_peer_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			provider_signature, provider_peer_id, field_stream_policy
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		grant.GrantID, cid, grant.ListingID, grant.TierName, grant.BuyerPeerID,
 		grant.BuyerEncryptionPubkey, grant.KeyAlgorithm, grant.AccessType,
@@ -788,7 +794,7 @@ func (s *Store) CreateGrant(grant *AccessGrant) error {
 		grant.AutoRenew, grant.RenewalCount, grant.TotalRequests,
 		grant.TotalRecords, grant.LastAccess.Unix(), grant.DeliveryTopic,
 		grant.CreatedAt.Unix(), grant.UpdatedAt.Unix(), grant.Notes,
-		grant.ProviderSignature, grant.ProviderPeerID,
+		grant.ProviderSignature, grant.ProviderPeerID, fieldStreamPolicyJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to index grant: %w", err)
@@ -805,6 +811,7 @@ func (s *Store) GetGrant(grantID string) (*AccessGrant, error) {
 
 	var grant AccessGrant
 	var grantedAt, expiresAt, nextRenewal, lastAccess, createdAt, updatedAt int64
+	var fieldStreamPolicyJSON string
 
 	err := s.db.QueryRow(`
 		SELECT grant_id, listing_id, tier_name, buyer_peer_id, buyer_encryption_pubkey,
@@ -813,7 +820,7 @@ func (s *Store) GetGrant(grantID string) (*AccessGrant, error) {
 			payment_amount, payment_currency, payment_chain, next_renewal,
 			auto_renew, renewal_count, total_requests, total_records,
 			last_access, delivery_topic, created_at, updated_at, notes,
-			provider_signature, provider_peer_id
+			provider_signature, provider_peer_id, field_stream_policy
 		FROM storefront_grants WHERE grant_id = ?
 	`, grantID).Scan(
 		&grant.GrantID, &grant.ListingID, &grant.TierName, &grant.BuyerPeerID,
@@ -825,7 +832,7 @@ func (s *Store) GetGrant(grantID string) (*AccessGrant, error) {
 		&grant.AutoRenew, &grant.RenewalCount, &grant.TotalRequests,
 		&grant.TotalRecords, &lastAccess, &grant.DeliveryTopic,
 		&createdAt, &updatedAt, &grant.Notes,
-		&grant.ProviderSignature, &grant.ProviderPeerID,
+		&grant.ProviderSignature, &grant.ProviderPeerID, &fieldStreamPolicyJSON,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -840,6 +847,7 @@ func (s *Store) GetGrant(grantID string) (*AccessGrant, error) {
 	grant.LastAccess = time.Unix(lastAccess, 0)
 	grant.CreatedAt = time.Unix(createdAt, 0)
 	grant.UpdatedAt = time.Unix(updatedAt, 0)
+	grant.FieldStreamPolicy = unmarshalGrantFieldStreamPolicy(fieldStreamPolicyJSON)
 
 	return &grant, nil
 }
@@ -856,7 +864,7 @@ func (s *Store) GetGrantsByBuyer(buyerPeerID string) ([]*AccessGrant, error) {
 			payment_amount, payment_currency, payment_chain, next_renewal,
 			auto_renew, renewal_count, total_requests, total_records,
 			last_access, delivery_topic, created_at, updated_at, notes,
-			provider_signature, provider_peer_id
+			provider_signature, provider_peer_id, field_stream_policy
 		FROM storefront_grants WHERE buyer_peer_id = ?
 	`, buyerPeerID)
 	if err != nil {
@@ -868,6 +876,7 @@ func (s *Store) GetGrantsByBuyer(buyerPeerID string) ([]*AccessGrant, error) {
 	for rows.Next() {
 		var grant AccessGrant
 		var grantedAt, expiresAt, nextRenewal, lastAccess, createdAt, updatedAt int64
+		var fieldStreamPolicyJSON string
 
 		err := rows.Scan(
 			&grant.GrantID, &grant.ListingID, &grant.TierName, &grant.BuyerPeerID,
@@ -879,7 +888,7 @@ func (s *Store) GetGrantsByBuyer(buyerPeerID string) ([]*AccessGrant, error) {
 			&grant.AutoRenew, &grant.RenewalCount, &grant.TotalRequests,
 			&grant.TotalRecords, &lastAccess, &grant.DeliveryTopic,
 			&createdAt, &updatedAt, &grant.Notes,
-			&grant.ProviderSignature, &grant.ProviderPeerID,
+			&grant.ProviderSignature, &grant.ProviderPeerID, &fieldStreamPolicyJSON,
 		)
 		if err != nil {
 			log.Warnf("Failed to scan grant row: %v", err)
@@ -892,6 +901,7 @@ func (s *Store) GetGrantsByBuyer(buyerPeerID string) ([]*AccessGrant, error) {
 		grant.LastAccess = time.Unix(lastAccess, 0)
 		grant.CreatedAt = time.Unix(createdAt, 0)
 		grant.UpdatedAt = time.Unix(updatedAt, 0)
+		grant.FieldStreamPolicy = unmarshalGrantFieldStreamPolicy(fieldStreamPolicyJSON)
 
 		grants = append(grants, &grant)
 	}
@@ -2029,7 +2039,7 @@ func (s *Store) GetProviderGrants(providerPeerID string, limit, offset int) ([]*
 			payment_amount, payment_currency, payment_chain, next_renewal,
 			auto_renew, renewal_count, total_requests, total_records,
 			last_access, delivery_topic, created_at, updated_at, notes,
-			provider_signature, provider_peer_id
+			provider_signature, provider_peer_id, field_stream_policy
 		FROM storefront_grants WHERE provider_peer_id = ?
 		ORDER BY created_at DESC LIMIT ? OFFSET ?
 	`, providerPeerID, limit, offset)
@@ -2042,6 +2052,7 @@ func (s *Store) GetProviderGrants(providerPeerID string, limit, offset int) ([]*
 	for rows.Next() {
 		var grant AccessGrant
 		var grantedAt, expiresAt, nextRenewal, lastAccess, createdAt, updatedAt int64
+		var fieldStreamPolicyJSON string
 
 		err := rows.Scan(
 			&grant.GrantID, &grant.ListingID, &grant.TierName, &grant.BuyerPeerID,
@@ -2053,7 +2064,7 @@ func (s *Store) GetProviderGrants(providerPeerID string, limit, offset int) ([]*
 			&grant.AutoRenew, &grant.RenewalCount, &grant.TotalRequests,
 			&grant.TotalRecords, &lastAccess, &grant.DeliveryTopic,
 			&createdAt, &updatedAt, &grant.Notes,
-			&grant.ProviderSignature, &grant.ProviderPeerID,
+			&grant.ProviderSignature, &grant.ProviderPeerID, &fieldStreamPolicyJSON,
 		)
 		if err != nil {
 			log.Warnf("Failed to scan provider grant row: %v", err)
@@ -2066,11 +2077,43 @@ func (s *Store) GetProviderGrants(providerPeerID string, limit, offset int) ([]*
 		grant.LastAccess = time.Unix(lastAccess, 0)
 		grant.CreatedAt = time.Unix(createdAt, 0)
 		grant.UpdatedAt = time.Unix(updatedAt, 0)
+		grant.FieldStreamPolicy = unmarshalGrantFieldStreamPolicy(fieldStreamPolicyJSON)
 
 		grants = append(grants, &grant)
 	}
 
 	return grants, total, nil
+}
+
+func marshalGrantFieldStreamPolicy(policy *GrantFieldStreamPolicy) (string, error) {
+	if policy == nil {
+		return "", nil
+	}
+	encoded, err := json.Marshal(policy)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
+func unmarshalGrantFieldStreamPolicy(encoded string) *GrantFieldStreamPolicy {
+	encoded = strings.TrimSpace(encoded)
+	if encoded == "" || encoded == "null" {
+		return nil
+	}
+	var policy GrantFieldStreamPolicy
+	if err := json.Unmarshal([]byte(encoded), &policy); err != nil {
+		log.Warnf("Failed to decode grant field stream policy: %v", err)
+		return nil
+	}
+	if strings.TrimSpace(policy.PolicyID) == "" &&
+		strings.TrimSpace(policy.StreamID) == "" &&
+		strings.TrimSpace(policy.SchemaCode) == "" &&
+		len(policy.AllowedFieldPaths) == 0 &&
+		len(policy.RedactedFieldPaths) == 0 {
+		return nil
+	}
+	return &policy
 }
 
 // UpdateReviewVote updates the helpfulness vote count on a review.
