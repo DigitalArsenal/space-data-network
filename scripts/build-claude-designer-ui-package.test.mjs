@@ -1,11 +1,11 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const scriptPath = join(repoRoot, 'scripts/build-claude-designer-ui-package.mjs');
@@ -24,6 +24,10 @@ function runGenerator() {
     encoding: 'utf8',
     timeout: 120000
   });
+}
+
+async function loadGeneratorModule() {
+  return import(`${pathToFileURL(scriptPath).href}?t=${Date.now()}`);
 }
 
 function readPackageFile(relativePath) {
@@ -123,5 +127,86 @@ describe('Claude Designer UI package generator', () => {
     assert.doesNotMatch(combinedText, /mnemonic|xpriv|private[_ -]?key|BEGIN [A-Z ]*PRIVATE KEY/i);
     assert.doesNotMatch(combinedText, /(?:"(?:token|secret|password)"\s*:|\b(?:token|secret|password)\s*[=:])/i);
     assert.doesNotMatch(combinedText, /(?:\/Users\/[^/\s]+(?:\/|$)|\/home\/[^/\s]+(?:\/|$)|[A-Z]:\\Users\\[^\\\s]+(?:\\|$))/i);
+  });
+
+  it('rejects output paths that overlap the source template or tracked source directories', async () => {
+    const { assertSafeOutputPaths } = await loadGeneratorModule();
+    const fakeRepoRoot = join(tmpRoot, 'fake-repo');
+    const fakeTemplateDir = join(fakeRepoRoot, 'design/claude-designer-ui-package');
+    const safeOutputDir = join(tmpRoot, 'safe-artifacts/design');
+
+    assert.doesNotThrow(() => assertSafeOutputPaths({
+      repoRoot: fakeRepoRoot,
+      templateDir: fakeTemplateDir,
+      outputDir: safeOutputDir,
+      packageDir: join(safeOutputDir, 'claude-designer-ui-package')
+    }));
+
+    assert.throws(() => assertSafeOutputPaths({
+      repoRoot: fakeRepoRoot,
+      templateDir: fakeTemplateDir,
+      outputDir: join(fakeRepoRoot, 'design'),
+      packageDir: fakeTemplateDir
+    }), /overlap/i);
+
+    assert.throws(() => assertSafeOutputPaths({
+      repoRoot: fakeRepoRoot,
+      templateDir: fakeTemplateDir,
+      outputDir: join(fakeTemplateDir, 'generated'),
+      packageDir: join(fakeTemplateDir, 'generated/claude-designer-ui-package')
+    }), /overlap/i);
+
+    assert.throws(() => assertSafeOutputPaths({
+      repoRoot: fakeRepoRoot,
+      templateDir: fakeTemplateDir,
+      outputDir: join(fakeRepoRoot, 'docs/generated'),
+      packageDir: join(fakeRepoRoot, 'docs/generated/claude-designer-ui-package')
+    }), /tracked source/i);
+
+    const symlinkRepoRoot = join(tmpRoot, 'symlink-repo');
+    const symlinkTemplateDir = join(symlinkRepoRoot, 'design/claude-designer-ui-package');
+    const symlinkArtifactsDir = join(symlinkRepoRoot, 'artifacts');
+    mkdirSync(symlinkTemplateDir, { recursive: true });
+    mkdirSync(symlinkArtifactsDir, { recursive: true });
+    symlinkSync(join(symlinkRepoRoot, 'design'), join(symlinkArtifactsDir, 'design-link'), 'dir');
+
+    assert.throws(() => assertSafeOutputPaths({
+      repoRoot: symlinkRepoRoot,
+      templateDir: symlinkTemplateDir,
+      outputDir: join(symlinkArtifactsDir, 'design-link'),
+      packageDir: join(symlinkArtifactsDir, 'design-link/claude-designer-ui-package')
+    }), /overlap|tracked source/i);
+    assert.equal(existsSync(symlinkTemplateDir), true, 'source template should not be deleted by path validation');
+
+    const artifactsSymlinkRepoRoot = join(tmpRoot, 'artifacts-symlink-repo');
+    const artifactsSymlinkTemplateDir = join(artifactsSymlinkRepoRoot, 'design/claude-designer-ui-package');
+    mkdirSync(artifactsSymlinkTemplateDir, { recursive: true });
+    symlinkSync(join(artifactsSymlinkRepoRoot, 'design'), join(artifactsSymlinkRepoRoot, 'artifacts'), 'dir');
+
+    assert.throws(() => assertSafeOutputPaths({
+      repoRoot: artifactsSymlinkRepoRoot,
+      templateDir: artifactsSymlinkTemplateDir,
+      outputDir: join(artifactsSymlinkRepoRoot, 'artifacts/design'),
+      packageDir: join(artifactsSymlinkRepoRoot, 'artifacts/design/claude-designer-ui-package')
+    }), /overlap|tracked source/i);
+    assert.equal(existsSync(artifactsSymlinkTemplateDir), true, 'source template should survive artifacts symlink validation');
+  });
+
+  it('flags common credential-shaped text before packaging', async () => {
+    const { findForbiddenPackageText } = await loadGeneratorModule();
+    const forbiddenSamples = [
+      'session_token=abc123',
+      '"apiKey": "abc123"',
+      'access_key: abc123',
+      'secretKey = abc123',
+      'Authorization: Bearer abc123456789',
+      'credentials: abc123'
+    ];
+
+    for (const sample of forbiddenSamples) {
+      assert.notEqual(findForbiddenPackageText(sample), null, sample);
+    }
+
+    assert.equal(findForbiddenPackageText('CSS tokens and secret-looking examples are discussed without values.'), null);
   });
 });
