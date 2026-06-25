@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,6 +115,112 @@ func TestChannelsFieldStreamPrintsCSVWithoutSecrets(t *testing.T) {
 	}
 	if records[2][10] != "position" || records[2][11] != "Encrypted" || records[2][14] != "13" {
 		t.Fatalf("field-stream CSV encrypted row = %#v", records[2])
+	}
+}
+
+func TestChannelsStreamPrintsFieldStreamRowsFromLocalAPI(t *testing.T) {
+	t.Parallel()
+
+	messageBytes := buildCLIFieldStreamMessageFixture()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/channels/maneuver-MPE/stream" {
+			t.Fatalf("unexpected stream request %s %s", r.Method, r.URL.String())
+		}
+		query := r.URL.Query()
+		if query.Get("subject") != "customer-alpha-peer" ||
+			query.Get("grantId") != "grant-alpha" ||
+			query.Get("visibility") != "private-listed" {
+			t.Fatalf("stream private access query = %s", r.URL.RawQuery)
+		}
+		if got := r.Header.Get("Accept"); got != "application/vnd.sdn.field-stream-message, application/vnd.sdn.flatbuffers.stream" {
+			t.Fatalf("field-stream Accept = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/vnd.sdn.field-stream-message")
+		_, _ = w.Write(messageBytes)
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"stream", "maneuver-MPE",
+		"--field-stream",
+		"--subject", "customer-alpha-peer",
+		"--grant-id", "grant-alpha",
+		"--visibility", "private-listed",
+		"--api-url", server.URL,
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels stream --field-stream failed: %v", err)
+	}
+	body := out.String()
+	for _, want := range []string{
+		"field_path",
+		"state",
+		"object_id",
+		"Public",
+		"position",
+		"Encrypted",
+		"maneuver_plan",
+		"Redacted",
+		"covariance_detail",
+		"Unavailable",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("stream --field-stream table output missing %q:\n%s", want, body)
+		}
+	}
+	assertFieldStreamOutputOmitsSecrets(t, body)
+}
+
+func TestChannelsStreamPrintsFieldStreamJSONFromLocalAPI(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.sdn.field-stream-message")
+		_, _ = w.Write(buildCLIFieldStreamMessageFixture())
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"stream", "maneuver-MPE",
+		"--field-stream",
+		"--format", "json",
+		"--api-url", server.URL,
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("channels stream --field-stream --format json failed: %v", err)
+	}
+	assertFieldStreamOutputOmitsSecrets(t, out.String())
+	var payload searchResult
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("stream --field-stream JSON invalid: %v\n%s", err, out.String())
+	}
+	if payload.Count != 4 || payload.Results[3]["state"] != "Unavailable" {
+		t.Fatalf("stream --field-stream JSON = %#v", payload)
+	}
+}
+
+func TestChannelsStreamFieldStreamRejectsOutlessNativeMode(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	cmd := newChannelsCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"stream", "spaceaware-OMM", "--api-url", "http://127.0.0.1:1"})
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--out is required") {
+		t.Fatalf("channels stream without --field-stream error = %v, want --out required", err)
 	}
 }
 

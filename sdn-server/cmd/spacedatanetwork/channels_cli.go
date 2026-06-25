@@ -72,6 +72,8 @@ type channelStreamOptions struct {
 	Subject               string
 	GrantID               string
 	Visibility            string
+	FieldStream           bool
+	Format                string
 	APIURL                string
 	InsecureSkipTLSVerify bool
 }
@@ -227,6 +229,8 @@ func newChannelsCommand() *cobra.Command {
 	streamCmd.Flags().StringVar(&streamOptions.Subject, "subject", "", "subscriber EPM subject for private channel access")
 	streamCmd.Flags().StringVar(&streamOptions.GrantID, "grant-id", "", "private channel grant ID")
 	streamCmd.Flags().StringVar(&streamOptions.Visibility, "visibility", "", "channel visibility for private access checks")
+	streamCmd.Flags().BoolVar(&streamOptions.FieldStream, "field-stream", false, "decode stream response as an SDS FSM field-stream message and print field visibility")
+	streamCmd.Flags().StringVar(&streamOptions.Format, "format", "table", "field-stream output format: table, json, csv")
 	streamCmd.Flags().StringVar(&streamOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	addChannelInsecureTLSFlag(streamCmd, &streamOptions.InsecureSkipTLSVerify)
 	cmd.AddCommand(streamCmd)
@@ -537,7 +541,7 @@ func runChannelsStream(cmd *cobra.Command, options channelStreamOptions, channel
 		return err
 	}
 	outPath := strings.TrimSpace(options.Out)
-	if outPath == "" {
+	if outPath == "" && !options.FieldStream {
 		return fmt.Errorf("--out is required")
 	}
 	apiURL := firstNonEmptyChannelOption(strings.TrimSpace(options.APIURL), strings.TrimSpace(os.Getenv("SDN_API_URL")))
@@ -547,6 +551,9 @@ func runChannelsStream(cmd *cobra.Command, options channelStreamOptions, channel
 	streamBytes, contentType, err := readChannelsStreamFromAPI(cmd, parsed, options, apiURL)
 	if err != nil {
 		return err
+	}
+	if options.FieldStream {
+		return writeChannelFieldStreamMessage(cmd.OutOrStdout(), streamBytes, options.Format)
 	}
 	frames, err := channels.SplitNativeStreamFramesForChannel(parsed, streamBytes)
 	if err != nil {
@@ -574,12 +581,8 @@ func runChannelsStream(cmd *cobra.Command, options channelStreamOptions, channel
 	return nil
 }
 
-func runChannelsFieldStream(out io.Writer, options channelFieldStreamOptions, messagePath string) error {
-	format, err := normalizeSearchFormat(options.Format)
-	if err != nil {
-		return err
-	}
-	raw, err := readChannelFieldStreamMessage(messagePath)
+func writeChannelFieldStreamMessage(out io.Writer, raw []byte, formatValue string) error {
+	format, err := normalizeSearchFormat(formatValue)
 	if err != nil {
 		return err
 	}
@@ -589,6 +592,14 @@ func runChannelsFieldStream(out io.Writer, options channelFieldStreamOptions, me
 	}
 	rows := channelFieldStreamRows(message)
 	return writeSearchResult(out, searchResult{Count: len(rows), Results: rows}, channelFieldStreamFields(), format)
+}
+
+func runChannelsFieldStream(out io.Writer, options channelFieldStreamOptions, messagePath string) error {
+	raw, err := readChannelFieldStreamMessage(messagePath)
+	if err != nil {
+		return err
+	}
+	return writeChannelFieldStreamMessage(out, raw, options.Format)
 }
 
 func readChannelFieldStreamMessage(messagePath string) ([]byte, error) {
@@ -681,7 +692,11 @@ func readChannelsStreamFromAPI(cmd *cobra.Command, parsed channels.ChannelID, op
 		return nil, "", err
 	}
 	prepareChannelAPIRequest(cmd, req)
-	req.Header.Set("Accept", "application/vnd.sdn.flatbuffers.stream")
+	if options.FieldStream {
+		req.Header.Set("Accept", "application/vnd.sdn.field-stream-message, application/vnd.sdn.flatbuffers.stream")
+	} else {
+		req.Header.Set("Accept", "application/vnd.sdn.flatbuffers.stream")
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("open native channel stream: %w", err)

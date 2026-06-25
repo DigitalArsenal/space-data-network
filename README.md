@@ -661,6 +661,21 @@ spacedatanetwork channels field-stream message.fsm --format csv
 cat message.fsm | spacedatanetwork channels field-stream - --format table
 ```
 
+Live channel fetches can print the same metadata directly from the stream API
+when a protected channel returns an `FSM` envelope:
+
+```bash
+spacedatanetwork channels stream maneuver-MPE \
+  --field-stream \
+  --subject customer-alpha-peer \
+  --grant-id grant-alpha \
+  --visibility private-listed \
+  --format json
+```
+
+Without `--field-stream`, `channels stream` keeps the native FlatBuffers stream
+behavior and requires `--out`.
+
 The marketplace operates **on top of the free, open network**. Core SSA data exchange remains free and open - the commercial layer is opt-in for premium products.
 
 ---
