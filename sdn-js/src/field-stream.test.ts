@@ -26,7 +26,10 @@ import {
   decodeFieldStreamMessageSummary,
   decodeFieldStreamPolicySummary,
   resolveFieldStreamMessageView,
+  verifyFieldStreamGrantSignature,
+  verifyFieldStreamProviderSignature,
 } from './field-stream';
+import { ed25519PublicKey, sign } from './crypto/hd-wallet';
 
 const textEncoder = new TextEncoder();
 
@@ -543,6 +546,53 @@ describe('field stream marketplace envelopes', () => {
       '/space-data-network/field-stream/listing-maneuver-ephemeris/customer-alpha-peer',
       '{"policy_id":"policy-mpe-alpha","policy_version":3,"stream_id":"maneuver-ephemeris-live","schema_code":"MPE","allowed_field_paths":["position"],"redacted_field_paths":["maneuver_plan"],"key_epoch":"epoch-7","grant_scope":"stream:listing-maneuver-ephemeris:maneuver-ephemeris-live","allowed_operations":["Subscribe","Decrypt"]}',
     ].join('\x1f'));
+  });
+
+  it('verifies provider signatures over canonical FSM payload bytes', async () => {
+    const seed = new Uint8Array(32).fill(0x42);
+    const publicKey = await ed25519PublicKey(seed);
+    const message = decodeFieldStreamMessageSummary(encodeMessageFixture());
+    const signature = await sign(seed, buildFieldStreamProviderSignaturePayload(message));
+
+    expect(await verifyFieldStreamProviderSignature({
+      ...message,
+      providerSignature: signature,
+    }, publicKey)).toBe(true);
+
+    expect(await verifyFieldStreamProviderSignature({
+      ...message,
+      fields: message.fields.map((field) => field.fieldPath === 'position'
+        ? { ...field, ciphertext: new Uint8Array([0xde, 0xad, 0xbe, 0x00]), ciphertextLength: 4 }
+        : field),
+      providerSignature: signature,
+    }, publicKey)).toBe(false);
+  });
+
+  it('verifies grant signatures over storefront-compatible payload bytes', async () => {
+    const seed = new Uint8Array(32).fill(0x43);
+    const publicKey = await ed25519PublicKey(seed);
+    const grant = {
+      ...customerAlphaGrant(),
+      grantId: 'grant-alpha-1',
+      grantedAt: new Date(1_800_000_100_000),
+      expiresAt: new Date(1_800_000_160_000),
+      deliveryTopic: '/space-data-network/field-stream/listing-maneuver-ephemeris/customer-alpha-peer',
+      redactedFieldPaths: ['maneuver_plan'],
+      grantScope: 'stream:listing-maneuver-ephemeris:maneuver-ephemeris-live',
+      allowedOperations: ['Subscribe', 'Decrypt'],
+    };
+    const signature = await sign(seed, buildFieldStreamGrantSignaturePayload(grant));
+
+    expect(await verifyFieldStreamGrantSignature({
+      ...grant,
+      providerSignature: signature,
+    }, publicKey)).toBe(true);
+
+    expect(await verifyFieldStreamGrantSignature({
+      ...grant,
+      allowedFieldPaths: ['covariance_detail'],
+      providerSignature: signature,
+    }, publicKey)).toBe(false);
   });
 });
 

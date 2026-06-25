@@ -57,6 +57,8 @@ export {
   decodeFieldStreamMessageSummary,
   decodeFieldStreamPolicySummary,
   resolveFieldStreamMessageView,
+  verifyFieldStreamGrantSignature,
+  verifyFieldStreamProviderSignature,
 } from './field-stream';
 export type {
   FieldStreamAccessGrant,
