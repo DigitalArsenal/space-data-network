@@ -15,7 +15,7 @@ The highest-risk path is not basic FlatBuffer generation. It is resumable publis
 
 The council recommended these concrete scenarios:
 
-1. Wire-speed baseline vs published shard download with a 90% pass gate.
+1. Wire-speed baseline vs published shard download with a 99% pass gate.
 2. Interrupted published-shard resume at deterministic byte offsets.
 3. Snapshot/cursor resume while provider data advances.
 4. Peer churn with 8-32 requesters and repeated provider/requester restarts.
@@ -124,7 +124,7 @@ Result:
 - 16 MiB default range-resume run: resumed from byte `5,592,405`, completed `17.09 MiB` across `60,000` OMM rows in `3` range requests, and imported `60,000` rows.
 - 256 MiB disk-backed gate run: downloaded `257.36 MiB` across `900,000` OMM rows at `1709.77 MiB/s`; durable FlatSQL import completed in `2m13.6945705s`.
 - 1 GiB configured-link gate run: downloaded `1026.80 MiB` across `3,590,000` OMM rows at `1803.40 MiB/s`; hash verification completed in `624.200292ms`; durable FlatSQL import completed in `13m45.596499292s`.
-- Configured 2 Gbit/s production gate: passed. Required throughput is `225,000,000 B/s` (1.8 Gbit/s, `214.58 MiB/s`), and the 1 GiB data-plane transfer sustained `1803.40 MiB/s`.
+- Configured 2 Gbit/s production gate: passed. Required throughput is `247,500,000 B/s` (1.98 Gbit/s, `236.03 MiB/s`), and the 1 GiB data-plane transfer sustained `1803.40 MiB/s`.
 - HTTP fallback: none.
 - SSH fallback: none.
 
@@ -167,7 +167,7 @@ npm run stress:flatsql-replication
 ```
 
 With `SDN_TEST_LINK_GBIT=2`, the sustained published-shard download phase must
-meet `225,000,000 B/s` (1.8 Gbit/s), which is 90% of the configured 2 Gbit/s
+meet `247,500,000 B/s` (1.98 Gbit/s), which is 99% of the configured 2 Gbit/s
 link. The stress result reports the measured probe gate and the configured-link
 gate separately through `WireSpeedTarget`, `TargetMet`,
 `ConfiguredGateEnabled`, `ConfiguredLinkBytesPerSecond`,
@@ -351,7 +351,7 @@ Hard gates:
 
 Performance gates:
 
-- clean network published-shard sync: `>=90%` measured wire speed
+- clean network published-shard sync: `>=99%` measured wire speed
 - lossy/partitioned chaos: `>=60%` measured wire speed unless the scenario is intentionally saturated
 - time to first local page: p95 `<=2s`
 - time to first remote page: p95 `<=8s`

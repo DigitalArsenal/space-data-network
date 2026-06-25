@@ -21,4 +21,13 @@ describe('root package CI install contract', () => {
       ...packageJson.devDependencies,
     }).toHaveProperty(prepareCommand ?? '');
   });
+
+  it('exposes the near-wire-speed stream acceptance check from the root package', async () => {
+    const packageJson = JSON.parse(await fs.readFile(ROOT_PACKAGE_JSON_PATH, 'utf8')) as PackageJson;
+    const command = packageJson.scripts?.['test:wire-speed'];
+
+    expect(command).toBeTruthy();
+    expect(command).toContain('TestLiveFlatSQLReplicationBenchmarkMeetsWireSpeedGate');
+    expect(command).toContain('vitest.stress.config.mts');
+  });
 });

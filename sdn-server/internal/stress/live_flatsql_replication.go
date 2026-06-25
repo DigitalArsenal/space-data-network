@@ -620,7 +620,7 @@ func normalizeLiveFlatSQLReplicationOptions(opts LiveFlatSQLReplicationOptions) 
 		opts.ProbeBytes = opts.TargetBytes
 	}
 	if opts.WireSpeedTarget <= 0 || opts.WireSpeedTarget > 1 {
-		opts.WireSpeedTarget = 0.90
+		opts.WireSpeedTarget = 0.99
 	}
 	if strings.TrimSpace(opts.SchemaName) == "" {
 		opts.SchemaName = liveFlatSQLSchema
@@ -642,7 +642,7 @@ func evaluateLiveFlatSQLConfiguredWireSpeedGate(downloadBytesPerSecond float64, 
 		return liveFlatSQLConfiguredWireSpeedGate{}
 	}
 	if target <= 0 || target > 1 {
-		target = 0.90
+		target = 0.99
 	}
 	linkGBit := strings.TrimSpace(os.Getenv("SDN_TEST_LINK_GBIT"))
 	if linkGBit == "" {
@@ -664,7 +664,7 @@ func evaluateLiveFlatSQLConfiguredWireSpeedGate(downloadBytesPerSecond float64, 
 
 func evaluateLiveFlatSQLWireSpeedAcceptance(downloadBytesPerSecond, measuredWireSpeedBytesPerSecond float64, target float64) liveFlatSQLWireSpeedAcceptance {
 	if target <= 0 || target > 1 {
-		target = 0.90
+		target = 0.99
 	}
 	measuredTargetMet := downloadBytesPerSecond >= measuredWireSpeedBytesPerSecond*target
 	configuredGate := evaluateLiveFlatSQLConfiguredWireSpeedGate(downloadBytesPerSecond, target)

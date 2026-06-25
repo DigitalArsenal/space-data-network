@@ -17,6 +17,7 @@
     "stress:js": "cd sdn-js && npx vitest run --config vitest.stress.config.mts",
     "stress:quick": "STRESS_TARGET_SIZE=1073741824 ./scripts/go-with-wasmedge.sh test -v -tags=stress -timeout=1h ./internal/stress/...",
     "stress:flatsql-replication": "./scripts/go-with-wasmedge.sh test -v -tags=stress -timeout=10m ./internal/stress -run TestLiveFlatSQLReplication -count=1",
+    "test:wire-speed": "./scripts/go-with-wasmedge.sh test -v -tags=stress -timeout=10m ./internal/stress -run TestLiveFlatSQLReplicationBenchmarkMeetsWireSpeedGate -count=1 && cd sdn-js && npm exec -- vitest run --config vitest.stress.config.mts src/stress/chaos-local-network.stress.test.ts",
     "chaos:local": "cd sdn-js && npm run chaos:local --",
     "chaos:docker-cluster": "node deployment/scripts/chaos-local-cluster.mjs",
     "demo:hydra-marketplace": "node deployment/scripts/hydra-marketplace-demo.mjs",

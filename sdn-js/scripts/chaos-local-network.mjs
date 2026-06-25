@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const FLATSQL_SYNC_PROTOCOL_ID = '/space-data-network/flatsql-sync/1.0.0';
-const DEFAULT_WIRE_SPEED_TARGET = 0.9;
+const DEFAULT_WIRE_SPEED_TARGET = 0.99;
 
 const DEFAULTS = {
   shards: 256,

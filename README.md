@@ -207,6 +207,17 @@ await node.publish('OMM', ommData);
 ./scripts/ci-local.sh full
 ```
 
+- Near-wire-speed stream acceptance:
+
+```bash
+npm run test:wire-speed
+```
+
+This runs the live FlatSQL data-plane speed gate and the JavaScript local
+chaos stream configuration check. The configured 2 Gbit/s gate requires
+`247,500,000 B/s` sustained published-shard download throughput, which is 99%
+of wire speed.
+
 - Pushes run local CI automatically via `.husky/pre-push`. To bypass intentionally:
 
 ```bash
