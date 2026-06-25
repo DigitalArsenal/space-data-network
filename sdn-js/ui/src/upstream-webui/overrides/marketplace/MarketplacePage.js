@@ -251,6 +251,7 @@ function PluginListingCard({ result, selected, onSelect }) {
       <KeyLine label='Payments' value={(listing.acceptedPaymentMethods ?? []).join(', ') || 'not specified'} />
       <KeyLine label='Scope' value={listing.requiredScope || 'not specified'} />
       <ProtectedDeliveryDetails listing={listing} />
+      <FieldStreamPolicyDetails listing={listing} />
       <ChipList values={result.standardsUsed} empty='No SDS schemas advertised.' />
       <button
         type='button'
@@ -282,6 +283,7 @@ function DataListingCard({ listing, selected, onSelect }) {
       <KeyLine label='Access' value={listing.accessType || 'not specified'} />
       <KeyLine label='Sample CID' value={listing.sampleCid || 'not specified'} />
       <ProtectedDeliveryDetails listing={listing} />
+      <FieldStreamPolicyDetails listing={listing} />
       <ChipList values={listing.standardsUsed} empty='No SDS data types advertised.' />
       <button
         type='button'
@@ -335,6 +337,7 @@ function ListingDetailView({ listing }) {
           ))}
       </div>
       <ChipList values={listing.tags} empty='No listing tags advertised.' />
+      <FieldStreamPolicyDetails listing={listing} />
       <PurchaseAccessPanel listing={listing} />
     </section>
   )
@@ -648,6 +651,27 @@ function ProtectedDeliveryDetails({ listing }) {
   )
 }
 
+function FieldStreamPolicyDetails({ listing }) {
+  const policy = listing.protectedDelivery?.fieldStreamPolicy
+  if (!policy) {
+    return null
+  }
+  return (
+    <div className='mt3 pt2 bt b--black-10'>
+      <div className='f6 b black-70 mb2'>Field-stream policy</div>
+      <KeyLine label='Policy ID' value={fieldPolicyValue(policy.policyId || policy.policy_id)} />
+      <KeyLine label='Policy version' value={fieldPolicyValue(policy.policyVersion || policy.policy_version)} />
+      <KeyLine label='Stream ID' value={fieldPolicyValue(policy.streamId || policy.stream_id)} />
+      <KeyLine label='Schema code' value={fieldPolicyValue(policy.schemaCode || policy.schema_code)} />
+      <KeyLine label='Key epoch' value={fieldPolicyValue(policy.keyEpoch || policy.key_epoch)} />
+      <KeyLine label='Grant scope' value={fieldPolicyValue(policy.grantScope || policy.grant_scope)} />
+      <KeyLine label='Allowed fields' value={fieldPolicyList(policy.allowedFieldPaths || policy.allowed_field_paths)} />
+      <KeyLine label='Redacted fields' value={fieldPolicyList(policy.redactedFieldPaths || policy.redacted_field_paths)} />
+      <KeyLine label='Allowed operations' value={fieldPolicyList(policy.allowedOperations || policy.allowed_operations)} />
+    </div>
+  )
+}
+
 function DataStandardCard({ result }) {
   return (
     <article className='ba b--black-10 br2 bg-white pa3' style={cardStyle}>
@@ -751,6 +775,19 @@ function listingMatchesSearch(listing, search) {
 
 function providerLabel(listing) {
   return listing.publisherName || listing.publisherHandle || listing.publisherPeerId || 'Unknown provider'
+}
+
+function fieldPolicyValue(value) {
+  if (value === null || value === undefined || value === '') {
+    return ''
+  }
+  return String(value)
+}
+
+function fieldPolicyList(values) {
+  return Array.isArray(values) && values.length > 0
+    ? values.map((value) => String(value).trim()).filter(Boolean).join(', ')
+    : ''
 }
 
 function uniqueSorted(values) {

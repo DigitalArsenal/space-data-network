@@ -270,6 +270,87 @@ describe('loadMarketplaceListingsFromServer', () => {
     ]);
   });
 
+  it('decodes protected field-stream policy metadata for data stream listings', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            listings: [
+              {
+                listing_id: 'protected-maneuver-ephemeris',
+                listing_kind: 'data_stream',
+                provider_peer_id: '16Uiu2HProvider',
+                title: 'Protected Maneuver Ephemeris',
+                description: 'Field-level protected maneuver stream',
+                data_types: ['MPE'],
+                access_type: 2,
+                encryption_required: true,
+                protected_delivery: {
+                  delivery_protocol: '/space-data-network/field-stream/1.0.0',
+                  grant_scope: 'stream:protected-maneuver-ephemeris:maneuver-ephemeris-live',
+                  field_stream_policy: {
+                    policy_id: 'policy-mpe-alpha',
+                    policy_version: 3,
+                    stream_id: 'maneuver-ephemeris-live',
+                    schema_code: 'MPE',
+                    allowed_field_paths: ['object_id', 'timestamp', 'position'],
+                    redacted_field_paths: ['maneuver_plan'],
+                    key_epoch: 'epoch-7',
+                    grant_scope: 'stream:protected-maneuver-ephemeris:maneuver-ephemeris-live',
+                    allowed_operations: ['Subscribe', 'Decrypt'],
+                  },
+                },
+                active: true,
+                updated_at: '2026-06-25T12:00:00Z',
+              },
+            ],
+          };
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
+      });
+
+    await expect(
+      loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        listingKind: 'data',
+        pluginId: 'protected-maneuver-ephemeris',
+        accessType: 'streaming',
+        encryptionRequired: true,
+        protectedDelivery: expect.objectContaining({
+          deliveryProtocol: '/space-data-network/field-stream/1.0.0',
+          grantScope: 'stream:protected-maneuver-ephemeris:maneuver-ephemeris-live',
+          fieldStreamPolicy: {
+            policyId: 'policy-mpe-alpha',
+            policyVersion: 3,
+            streamId: 'maneuver-ephemeris-live',
+            schemaCode: 'MPE',
+            allowedFieldPaths: ['object_id', 'timestamp', 'position'],
+            redactedFieldPaths: ['maneuver_plan'],
+            keyEpoch: 'epoch-7',
+            grantScope: 'stream:protected-maneuver-ephemeris:maneuver-ephemeris-live',
+            allowedOperations: ['Subscribe', 'Decrypt'],
+          },
+        }),
+      }),
+    ]);
+  });
+
   it('falls back to storefront listings when module-delivery is available but empty', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({

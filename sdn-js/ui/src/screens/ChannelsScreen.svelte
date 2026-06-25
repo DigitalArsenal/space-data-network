@@ -1,6 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { ChannelActionOptions, ChannelMonitor, ChannelSummary, SdnBackend } from '../../../src/ui/runtime/sdn-backend';
+  import type {
+    ChannelActionOptions,
+    ChannelFieldStreamMessage,
+    ChannelMonitor,
+    ChannelSummary,
+    SdnBackend,
+  } from '../../../src/ui/runtime/sdn-backend';
 
   export let backend: SdnBackend | null = null;
 
@@ -20,6 +26,7 @@
   let selectedChannel: ChannelSummary | null = null;
   let monitor: ChannelMonitor | null = null;
   let streamBytesReceived = 0;
+  let fieldStreamMessage: ChannelFieldStreamMessage | null = null;
   let streamFile: File | null = null;
   let status = 'Loading';
   $: listVisibilityFilter = visibilityFilter === 'all' ? undefined : visibilityFilter;
@@ -33,6 +40,7 @@
     selectedChannel = null;
     monitor = null;
     streamBytesReceived = 0;
+    fieldStreamMessage = null;
     streamFile = null;
   }
 
@@ -73,6 +81,7 @@
     const nextMonitor = await backend.channels.monitor(channelId, channelAccessOptions);
     monitor = nextMonitor.data ?? null;
     streamBytesReceived = 0;
+    fieldStreamMessage = null;
     if (!detail.ok || !nextMonitor.ok) {
       status = detail.capability.reason ?? nextMonitor.capability.reason ?? 'Channel monitor unavailable';
     }
@@ -116,6 +125,15 @@
     const result = await backend.channels.openStream(selectedChannelId, channelAccessOptions);
     streamBytesReceived = result.data?.byteLength ?? 0;
     status = result.ok ? `Stream opened: ${formatBytes(streamBytesReceived)}` : result.capability.reason ?? 'Stream unavailable';
+  }
+
+  async function openFieldStreamSelected(): Promise<void> {
+    if (!backend || !selectedChannelId) return;
+    const result = await backend.channels.openFieldStream(selectedChannelId, channelAccessOptions);
+    fieldStreamMessage = result.data ?? null;
+    status = result.ok
+      ? `Field stream opened: ${formatNumber(fieldStreamMessage?.fields.length)} fields`
+      : result.capability.reason ?? 'Field stream unavailable';
   }
 
   function onStreamFileSelected(event: Event): void {
@@ -183,6 +201,10 @@
   function formatDurationMs(value: number | null | undefined): string {
     return `${formatNumber(value)} ms`;
   }
+
+  function formatList(values: string[] | null | undefined): string {
+    return values?.length ? values.join(', ') : 'None';
+  }
 </script>
 
 <section class="sdn-channel-screen" aria-label="Channels">
@@ -249,6 +271,7 @@
     <button class="sdn-button sdn-button-muted" type="button" on:click={keyUnwrapSelected} disabled={!selectedChannelId || !recipientKeyId.trim()}>Key Envelope</button>
     <button class="sdn-button sdn-button-muted" type="button" on:click={publishStreamSelected} disabled={!selectedChannelId || !streamFile}>Publish Stream</button>
     <button class="sdn-button sdn-button-muted" type="button" on:click={openStreamSelected} disabled={!selectedChannelId}>Open Stream</button>
+    <button class="sdn-button sdn-button-muted" type="button" on:click={openFieldStreamSelected} disabled={!selectedChannelId}>Open Field Stream</button>
     <span>{status}</span>
   </div>
 
@@ -310,6 +333,52 @@
         <div><dt>Hash Verification</dt><dd>{formatDurationMs(monitor?.timingsMs.hashVerification)}</dd></div>
         <div><dt>Durable Import</dt><dd>{formatDurationMs(monitor?.timingsMs.durableImport)}</dd></div>
       </dl>
+      {#if fieldStreamMessage}
+        <section class="sdn-field-stream-panel" aria-label="Field stream message">
+          <div class="sdn-channel-heading">
+            <h3>Field stream message</h3>
+            <span>{fieldStreamMessage.fields.length} fields</span>
+          </div>
+          <dl class="sdn-channel-metrics">
+            <div><dt>Message ID</dt><dd>{fieldStreamMessage.messageId}</dd></div>
+            <div><dt>Listing ID</dt><dd>{fieldStreamMessage.listingId}</dd></div>
+            <div><dt>Stream ID</dt><dd>{fieldStreamMessage.streamId}</dd></div>
+            <div><dt>Schema code</dt><dd>{fieldStreamMessage.schemaCode}</dd></div>
+            <div><dt>Policy ID</dt><dd>{fieldStreamMessage.policyId}</dd></div>
+            <div><dt>Policy version</dt><dd>{fieldStreamMessage.policyVersion}</dd></div>
+            <div><dt>Key epoch</dt><dd>{fieldStreamMessage.keyEpoch || 'Unknown'}</dd></div>
+            <div><dt>Subject</dt><dd>{fieldStreamMessage.subjectId || 'Unknown'}</dd></div>
+          </dl>
+          <table class="sdn-table">
+            <thead>
+              <tr>
+                <th>Field path</th>
+                <th>State</th>
+                <th>Encoding</th>
+                <th>Key ID</th>
+                <th>Ciphertext bytes</th>
+                <th>Value bytes</th>
+                <th>Release tags</th>
+                <th>Decision</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each fieldStreamMessage.fields as field}
+                <tr>
+                  <td>{field.fieldPath}</td>
+                  <td>{field.state}</td>
+                  <td>{field.encoding}</td>
+                  <td>{field.keyId || 'None'}</td>
+                  <td>{formatNumber(field.ciphertextLength)}</td>
+                  <td>{formatNumber(field.valueLength)}</td>
+                  <td>{formatList(field.releaseTags)}</td>
+                  <td>{field.decision || 'None'}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </section>
+      {/if}
     </section>
   </div>
 </section>

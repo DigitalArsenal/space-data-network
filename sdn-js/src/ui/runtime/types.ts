@@ -37,6 +37,19 @@ export interface CanonicalProtectedDelivery {
   requiredScopes?: string[];
   grantScope?: string;
   deliveryProtocol?: string;
+  fieldStreamPolicy?: CanonicalFieldStreamPolicy;
+}
+
+export interface CanonicalFieldStreamPolicy {
+  policyId?: string;
+  policyVersion?: number;
+  streamId?: string;
+  schemaCode?: string;
+  allowedFieldPaths?: string[];
+  redactedFieldPaths?: string[];
+  keyEpoch?: string;
+  grantScope?: string;
+  allowedOperations?: string[];
 }
 
 export interface CanonicalListing {

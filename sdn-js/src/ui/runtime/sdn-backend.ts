@@ -328,6 +328,32 @@ export interface ChannelMonitorTimings {
   durableImport: number;
 }
 
+export interface ChannelFieldStreamFieldRow {
+  fieldPath: string;
+  fieldIdPath: number[];
+  state: string;
+  encoding: string;
+  keyId?: string;
+  ciphertextLength: number;
+  valueLength: number;
+  releaseTags: string[];
+  decision?: string;
+}
+
+export interface ChannelFieldStreamMessage {
+  messageId: string;
+  providerPeerId: string;
+  listingId: string;
+  streamId: string;
+  schemaCode: string;
+  policyId: string;
+  policyVersion: number;
+  keyEpoch?: string;
+  sequence: string;
+  subjectId?: string;
+  fields: ChannelFieldStreamFieldRow[];
+}
+
 export interface ChannelKeyEnvelopeRequest {
   recipientKeyId: string;
   contentKeyId?: string;
@@ -342,6 +368,7 @@ export interface ChannelBackend {
   issueGrant(channelId: string, body?: Record<string, unknown>, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
   keyUnwrap(channelId: string, body: ChannelKeyEnvelopeRequest, options?: ChannelActionOptions): Promise<BackendResult<Record<string, unknown>>>;
   openStream(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<Uint8Array>>;
+  openFieldStream(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<ChannelFieldStreamMessage>>;
   monitor(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<ChannelMonitor>>;
 }
 

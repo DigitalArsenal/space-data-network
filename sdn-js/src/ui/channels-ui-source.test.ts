@@ -140,6 +140,33 @@ describe('SDN channels UI source', () => {
     expect(source).not.toContain(String.fromCharCode(46, 102, 98, 115));
   });
 
+  it('renders field-stream visibility metadata without raw envelope secrets', () => {
+    const source = readFileSync(new URL('../../ui/src/screens/ChannelsScreen.svelte', import.meta.url), 'utf8');
+    for (const expected of [
+      'openFieldStreamSelected',
+      'backend.channels.openFieldStream(selectedChannelId, channelAccessOptions)',
+      'Open Field Stream',
+      'fieldStreamMessage',
+      'aria-label="Field stream message"',
+      'Field path',
+      'State',
+      'Encoding',
+      'Key ID',
+      'Ciphertext bytes',
+      'Value bytes',
+      'Release tags',
+      'Decision',
+    ]) {
+      expect(source).toContain(expected);
+    }
+    expect(source).not.toContain('providerSignature');
+    expect(source).not.toContain('provider_signature');
+    expect(source).not.toContain('nonce');
+    expect(source).not.toContain('aadHash');
+    expect(source).not.toContain('privateKey');
+    expect(source).not.toContain(String.fromCharCode(46, 102, 98, 115));
+  });
+
   it('renders a native channel stream publish action required by the pub/sub surface', () => {
     const source = readFileSync(new URL('../../ui/src/screens/ChannelsScreen.svelte', import.meta.url), 'utf8');
     for (const expected of [
