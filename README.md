@@ -629,6 +629,22 @@ SDN includes an optional **commercial layer** for monetizing space data:
 - **Revenue Distribution:** Automated splits between data providers and platform
 - **Metering:** Usage tracking for consumption-based billing
 
+### Field-Encrypted Stream Inspection
+
+Protected marketplace streams can carry SDS `FSM` field-stream messages where
+each field is explicitly marked `Public`, `Encrypted`, `Redacted`, or
+`Unavailable`. The CLI can inspect an `FSM` message from a file or stdin and
+prints only field visibility metadata, lengths, policy IDs, key epochs, and
+decisions. It does not print plaintext values, ciphertext bytes, nonces, tags,
+AAD hashes, or provider signatures.
+
+```bash
+spacedatanetwork channels field-stream message.fsm
+spacedatanetwork channels field-stream message.fsm --format json
+spacedatanetwork channels field-stream message.fsm --format csv
+cat message.fsm | spacedatanetwork channels field-stream - --format table
+```
+
 The marketplace operates **on top of the free, open network**. Core SSA data exchange remains free and open - the commercial layer is opt-in for premium products.
 
 ---

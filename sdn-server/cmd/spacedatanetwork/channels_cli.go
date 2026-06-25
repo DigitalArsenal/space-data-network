@@ -19,6 +19,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storefront"
 )
 
 type channelsListOptions struct {
@@ -73,6 +74,10 @@ type channelStreamOptions struct {
 	Visibility            string
 	APIURL                string
 	InsecureSkipTLSVerify bool
+}
+
+type channelFieldStreamOptions struct {
+	Format string
 }
 
 type channelPNMOptions struct {
@@ -225,6 +230,17 @@ func newChannelsCommand() *cobra.Command {
 	streamCmd.Flags().StringVar(&streamOptions.APIURL, "api-url", "", "SDN API base URL (default: SDN_API_URL)")
 	addChannelInsecureTLSFlag(streamCmd, &streamOptions.InsecureSkipTLSVerify)
 	cmd.AddCommand(streamCmd)
+	fieldStreamOptions := channelFieldStreamOptions{}
+	fieldStreamCmd := &cobra.Command{
+		Use:   "field-stream <messageFile>",
+		Short: "Show field visibility for an encrypted field-stream message",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runChannelsFieldStream(cmd.OutOrStdout(), fieldStreamOptions, args[0])
+		},
+	}
+	fieldStreamCmd.Flags().StringVar(&fieldStreamOptions.Format, "format", "table", "output format: table, json, csv")
+	cmd.AddCommand(fieldStreamCmd)
 	moduleFeedOptions := channelStreamOptions{}
 	moduleFeedCmd := &cobra.Command{
 		Use:   "module-feed <channelId>",
@@ -556,6 +572,95 @@ func runChannelsStream(cmd *cobra.Command, options channelStreamOptions, channel
 	}
 	printChannelStreamPayload(cmd.OutOrStdout(), payload)
 	return nil
+}
+
+func runChannelsFieldStream(out io.Writer, options channelFieldStreamOptions, messagePath string) error {
+	format, err := normalizeSearchFormat(options.Format)
+	if err != nil {
+		return err
+	}
+	raw, err := readChannelFieldStreamMessage(messagePath)
+	if err != nil {
+		return err
+	}
+	message, err := storefront.DecodeFieldStreamMessageSummary(raw)
+	if err != nil {
+		return err
+	}
+	rows := channelFieldStreamRows(message)
+	return writeSearchResult(out, searchResult{Count: len(rows), Results: rows}, channelFieldStreamFields(), format)
+}
+
+func readChannelFieldStreamMessage(messagePath string) ([]byte, error) {
+	path := strings.TrimSpace(messagePath)
+	if path == "" {
+		return nil, fmt.Errorf("field-stream message file is required")
+	}
+	if path == "-" {
+		raw, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return nil, fmt.Errorf("read field-stream message from stdin: %w", err)
+		}
+		return raw, nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read field-stream message: %w", err)
+	}
+	return raw, nil
+}
+
+func channelFieldStreamRows(message *storefront.FieldStreamMessageSummary) []map[string]any {
+	if message == nil {
+		return nil
+	}
+	rows := make([]map[string]any, 0, len(message.Fields))
+	for _, field := range message.Fields {
+		rows = append(rows, map[string]any{
+			"message_id":        message.MessageID,
+			"provider_peer_id":  message.ProviderPeerID,
+			"listing_id":        message.ListingID,
+			"stream_id":         message.StreamID,
+			"schema_code":       message.SchemaCode,
+			"policy_id":         message.PolicyID,
+			"policy_version":    message.PolicyVersion,
+			"key_epoch":         message.KeyEpoch,
+			"sequence":          message.Sequence,
+			"subject_id":        message.SubjectID,
+			"field_path":        field.FieldPath,
+			"state":             field.State,
+			"encoding":          field.Encoding,
+			"key_id":            field.KeyID,
+			"ciphertext_length": field.CiphertextLength,
+			"value_length":      len(field.Value),
+			"release_tags":      field.ReleaseTags,
+			"decision":          field.Decision,
+		})
+	}
+	return rows
+}
+
+func channelFieldStreamFields() []string {
+	return []string{
+		"message_id",
+		"provider_peer_id",
+		"listing_id",
+		"stream_id",
+		"schema_code",
+		"policy_id",
+		"policy_version",
+		"key_epoch",
+		"sequence",
+		"subject_id",
+		"field_path",
+		"state",
+		"encoding",
+		"key_id",
+		"ciphertext_length",
+		"value_length",
+		"release_tags",
+		"decision",
+	}
 }
 
 func readChannelsStreamFromAPI(cmd *cobra.Command, parsed channels.ChannelID, options channelStreamOptions, apiURL string) ([]byte, string, error) {
