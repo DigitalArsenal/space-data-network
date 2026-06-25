@@ -220,7 +220,8 @@ textarea { width: 100%; min-height: 260px; resize: vertical; }
 @media (max-width: 900px) {
   .app-shell { grid-template-columns: 1fr; }
   .side-nav { border-right: 0; border-bottom: 1px solid var(--line); }
-  .nav-list { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .nav-list { grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); }
+  .nav-item { min-width: 0; text-align: center; padding: 9px 8px; font-size: 13px; }
   .top-bar { align-items: flex-start; flex-direction: column; }
   .span-4, .span-5, .span-7, .span-8 { grid-column: span 12; }
 }

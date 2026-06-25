@@ -7,6 +7,19 @@ const titles = {
   conjunction: 'Conjunction'
 };
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function escapeAttribute(value) {
+  return escapeHtml(value).replaceAll('`', '&#96;');
+}
+
 let fixtures = null;
 let state = {
   route: normalizeRoute(location.hash),
@@ -71,21 +84,21 @@ function renderNode() {
     <div class="grid">
       <section class="panel span-4">
         <h2>Node Health</h2>
-        <div class="metric">${node.status}</div>
-        <p class="muted">Mode: ${node.mode}</p>
+        <div class="metric">${escapeHtml(node.status)}</div>
+        <p class="muted">Mode: ${escapeHtml(node.mode)}</p>
         <dl class="detail-list">
-          <div><dt>Peer ID</dt><dd class="mono">${node.peerId}</dd></div>
-          <div><dt>API</dt><dd>${node.api}</dd></div>
-          <div><dt>Gateway</dt><dd>${node.gateway}</dd></div>
+          <div><dt>Peer ID</dt><dd class="mono">${escapeHtml(node.peerId)}</dd></div>
+          <div><dt>API</dt><dd>${escapeHtml(node.api)}</dd></div>
+          <div><dt>Gateway</dt><dd>${escapeHtml(node.gateway)}</dd></div>
         </dl>
       </section>
       <section class="panel span-4">
         <h2>Identity</h2>
-        <div class="metric">${node.identity.state}</div>
-        <p class="muted">${node.identity.entity}</p>
+        <div class="metric">${escapeHtml(node.identity.state)}</div>
+        <p class="muted">${escapeHtml(node.identity.entity)}</p>
         <dl class="detail-list">
-          <div><dt>EPM CID</dt><dd class="mono">${node.identity.epmCid}</dd></div>
-          <div><dt>vCard</dt><dd>${node.identity.vcard}</dd></div>
+          <div><dt>EPM CID</dt><dd class="mono">${escapeHtml(node.identity.epmCid)}</dd></div>
+          <div><dt>vCard</dt><dd>${escapeHtml(node.identity.vcard)}</dd></div>
         </dl>
         <div class="actions">
           <button class="button">JSON</button>
@@ -96,11 +109,11 @@ function renderNode() {
       </section>
       <section class="panel span-4">
         <h2>Service</h2>
-        <div class="metric">${node.service.state}</div>
-        <p class="muted">${node.service.update}</p>
+        <div class="metric">${escapeHtml(node.service.state)}</div>
+        <p class="muted">${escapeHtml(node.service.update)}</p>
         <dl class="detail-list">
-          <div><dt>Autostart</dt><dd>${node.service.autostart ? 'enabled' : 'disabled'}</dd></div>
-          <div><dt>Storage</dt><dd>${node.storage}</dd></div>
+          <div><dt>Autostart</dt><dd>${escapeHtml(node.service.autostart ? 'enabled' : 'disabled')}</dd></div>
+          <div><dt>Storage</dt><dd>${escapeHtml(node.storage)}</dd></div>
         </dl>
         <div class="actions">
           <button class="button primary">Restart</button>
@@ -123,11 +136,11 @@ function renderPeers() {
             <thead><tr><th>Name</th><th>Trust</th><th>Feeds</th><th>Address</th></tr></thead>
             <tbody>
               ${fixtures.peers.map((peer) => `
-                <tr data-selectable data-peer-id="${peer.id}" class="${peer.id === selected.id ? 'selected' : ''}">
-                  <td><strong>${peer.name}</strong><br><span class="muted mono">${peer.id}</span></td>
-                  <td>${peer.trust}</td>
-                  <td>${peer.feeds.join(', ')}</td>
-                  <td class="mono">${peer.addr}</td>
+                <tr data-selectable data-peer-id="${escapeAttribute(peer.id)}" class="${peer.id === selected.id ? 'selected' : ''}">
+                  <td><strong>${escapeHtml(peer.name)}</strong><br><span class="muted mono">${escapeHtml(peer.id)}</span></td>
+                  <td>${escapeHtml(peer.trust)}</td>
+                  <td>${peer.feeds.map((feed) => escapeHtml(feed)).join(', ')}</td>
+                  <td class="mono">${escapeHtml(peer.addr)}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -137,10 +150,10 @@ function renderPeers() {
       <section class="panel span-4">
         <h2>Provider Detail</h2>
         <dl class="detail-list">
-          <div><dt>Name</dt><dd>${selected.name}</dd></div>
-          <div><dt>Role</dt><dd>${selected.role}</dd></div>
-          <div><dt>Agent</dt><dd>${selected.agent}</dd></div>
-          <div><dt>EPM CID</dt><dd class="mono">${selected.epmCid}</dd></div>
+          <div><dt>Name</dt><dd>${escapeHtml(selected.name)}</dd></div>
+          <div><dt>Role</dt><dd>${escapeHtml(selected.role)}</dd></div>
+          <div><dt>Agent</dt><dd>${escapeHtml(selected.agent)}</dd></div>
+          <div><dt>EPM CID</dt><dd class="mono">${escapeHtml(selected.epmCid)}</dd></div>
         </dl>
         <div class="actions">
           <button class="button primary">Connect</button>
@@ -158,7 +171,7 @@ function renderData() {
       <section class="panel span-12">
         <h2>Data Workbench</h2>
         <div class="filters">
-          <input class="input" id="data-query" value="${state.dataQuery}" placeholder="Search providers, standards, schemas">
+          <input class="input" id="data-query" value="${escapeAttribute(state.dataQuery)}" placeholder="Search providers, standards, schemas">
           <select class="select"><option>All providers</option><option>SpaceAware.io</option><option>CelesTrak Provider</option></select>
           <button class="button primary">Search</button>
         </div>
@@ -170,7 +183,7 @@ function renderData() {
             <thead><tr><th>Standard</th><th>Rows</th><th>State</th></tr></thead>
             <tbody>
               ${fixtures.standards.map((standard) => `
-                <tr><td><strong>${standard.id}</strong><br><span class="muted">${standard.label}</span></td><td>${standard.rows.toLocaleString()}</td><td>${standard.state}</td></tr>
+                <tr><td><strong>${escapeHtml(standard.id)}</strong><br><span class="muted">${escapeHtml(standard.label)}</span></td><td>${escapeHtml(standard.rows.toLocaleString())}</td><td>${escapeHtml(standard.state)}</td></tr>
               `).join('')}
             </tbody>
           </table>
@@ -196,11 +209,11 @@ function renderChannels() {
             <thead><tr><th>Channel</th><th>Standard</th><th>Grant</th><th>Encryption</th></tr></thead>
             <tbody>
               ${fixtures.channels.map((channel) => `
-                <tr data-selectable data-channel-id="${channel.id}" class="${channel.id === selected.id ? 'selected' : ''}">
-                  <td>${channel.id}<br><span class="muted">${channel.recipient}</span></td>
-                  <td>${channel.standard}</td>
-                  <td>${channel.grant}</td>
-                  <td>${channel.encryption}</td>
+                <tr data-selectable data-channel-id="${escapeAttribute(channel.id)}" class="${channel.id === selected.id ? 'selected' : ''}">
+                  <td>${escapeHtml(channel.id)}<br><span class="muted">${escapeHtml(channel.recipient)}</span></td>
+                  <td>${escapeHtml(channel.standard)}</td>
+                  <td>${escapeHtml(channel.grant)}</td>
+                  <td>${escapeHtml(channel.encryption)}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -210,10 +223,10 @@ function renderChannels() {
       <section class="panel span-5">
         <h2>Channel Monitor</h2>
         <dl class="detail-list">
-          <div><dt>Selected channel</dt><dd>${selected.id}</dd></div>
-          <div><dt>Visibility</dt><dd>${selected.visibility}</dd></div>
-          <div><dt>Subscription</dt><dd>${selected.subscription}</dd></div>
-          <div><dt>Recipient</dt><dd>${selected.recipient}</dd></div>
+          <div><dt>Selected channel</dt><dd>${escapeHtml(selected.id)}</dd></div>
+          <div><dt>Visibility</dt><dd>${escapeHtml(selected.visibility)}</dd></div>
+          <div><dt>Subscription</dt><dd>${escapeHtml(selected.subscription)}</dd></div>
+          <div><dt>Recipient</dt><dd>${escapeHtml(selected.recipient)}</dd></div>
         </dl>
         <div class="actions">
           <button class="button primary">Open stream</button>
@@ -233,9 +246,9 @@ function renderConjunction() {
         <h2>Private Maneuver Ephemeris Screening</h2>
         <p class="muted">Screen maneuvers without broadcasting maneuver intent to competitors.</p>
         <div class="filters">
-          <select class="select"><option>${result.primary}</option></select>
-          <select class="select"><option>${result.secondary}</option></select>
-          <input class="input" value="${result.assessor}">
+          <select class="select"><option>${escapeHtml(result.primary)}</option></select>
+          <select class="select"><option>${escapeHtml(result.secondary)}</option></select>
+          <input class="input" value="${escapeAttribute(result.assessor)}">
           <button class="button primary">Screen</button>
         </div>
       </section>
@@ -247,11 +260,11 @@ function renderConjunction() {
       <section class="panel span-5">
         <h2>Provenance</h2>
         <dl class="detail-list">
-          <div><dt>Mode</dt><dd>${result.mode}</dd></div>
-          <div><dt>Module</dt><dd>${result.module}</dd></div>
-          <div><dt>Result channel</dt><dd>${result.resultChannel}</dd></div>
-          <div><dt>Grant</dt><dd>${result.provenance.grant}</dd></div>
-          <div><dt>Query hash</dt><dd class="mono">${result.provenance.queryHash}</dd></div>
+          <div><dt>Mode</dt><dd>${escapeHtml(result.mode)}</dd></div>
+          <div><dt>Module</dt><dd>${escapeHtml(result.module)}</dd></div>
+          <div><dt>Result channel</dt><dd>${escapeHtml(result.resultChannel)}</dd></div>
+          <div><dt>Grant</dt><dd>${escapeHtml(result.provenance.grant)}</dd></div>
+          <div><dt>Query hash</dt><dd class="mono">${escapeHtml(result.provenance.queryHash)}</dd></div>
         </dl>
       </section>
     </div>
@@ -267,8 +280,8 @@ function renderOutputModeControls() {
 }
 
 function renderDataOutput() {
-  if (state.outputMode === 'json') return JSON.stringify(fixtures.standards, null, 2);
-  if (state.outputMode === 'csv') return ['id,label,rows,state', ...fixtures.standards.map((standard) => `${standard.id},${standard.label},${standard.rows},${standard.state}`)].join('\n');
+  if (state.outputMode === 'json') return escapeHtml(JSON.stringify(fixtures.standards, null, 2));
+  if (state.outputMode === 'csv') return escapeHtml(['id,label,rows,state', ...fixtures.standards.map((standard) => `${standard.id},${standard.label},${standard.rows},${standard.state}`)].join('\n'));
   return 'Select JSON or CSV to preview export data.';
 }
 
@@ -278,7 +291,7 @@ function renderConjunctionTable() {
       <table>
         <thead><tr><th>Object</th><th>TCA</th><th>Miss km</th><th>Pc</th><th>State</th></tr></thead>
         <tbody>
-          ${fixtures.conjunction.rows.map((row) => `<tr><td>${row.object}</td><td>${row.tca}</td><td>${row.missDistanceKm}</td><td>${row.pc}</td><td>${row.state}</td></tr>`).join('')}
+          ${fixtures.conjunction.rows.map((row) => `<tr><td>${escapeHtml(row.object)}</td><td>${escapeHtml(row.tca)}</td><td>${escapeHtml(row.missDistanceKm)}</td><td>${escapeHtml(row.pc)}</td><td>${escapeHtml(row.state)}</td></tr>`).join('')}
         </tbody>
       </table>
     </div>
@@ -286,8 +299,8 @@ function renderConjunctionTable() {
 }
 
 function renderConjunctionOutput() {
-  if (state.outputMode === 'json') return JSON.stringify(fixtures.conjunction.rows, null, 2);
-  if (state.outputMode === 'csv') return ['object,tca,missDistanceKm,pc,state', ...fixtures.conjunction.rows.map((row) => `${row.object},${row.tca},${row.missDistanceKm},${row.pc},${row.state}`)].join('\n');
+  if (state.outputMode === 'json') return escapeHtml(JSON.stringify(fixtures.conjunction.rows, null, 2));
+  if (state.outputMode === 'csv') return escapeHtml(['object,tca,missDistanceKm,pc,state', ...fixtures.conjunction.rows.map((row) => `${row.object},${row.tca},${row.missDistanceKm},${row.pc},${row.state}`)].join('\n'));
   return '';
 }
 
