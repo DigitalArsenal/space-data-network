@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -148,6 +149,99 @@ func TestCreateListing(t *testing.T) {
 	}
 	if listing.Version != 1 {
 		t.Errorf("Version = %d, want 1", listing.Version)
+	}
+}
+
+func TestCreateListingRecordsFieldStreamPolicyPublishedAudit(t *testing.T) {
+	svc, _ := newTestService(t)
+	listing := testListing()
+	listing.ListingKind = ListingKindDataStream
+	listing.AccessType = AccessTypeStreaming
+	listing.ProtectedDelivery = ProtectedDelivery{
+		ContentKeyID: "field-key:mpe:epoch-7",
+		GrantScope:   "stream:read:mpe",
+		FieldStreamPolicy: &GrantFieldStreamPolicy{
+			PolicyID:           "policy-mpe-alpha",
+			PolicyVersion:      3,
+			StreamID:           "maneuver-ephemeris-live",
+			SchemaCode:         "MPE",
+			AllowedFieldPaths:  []string{"object_id", "timestamp", "position"},
+			RedactedFieldPaths: []string{"maneuver_plan", "covariance_detail"},
+			KeyEpoch:           "epoch-7",
+			GrantScope:         "stream:read:mpe",
+			AllowedOperations:  []string{"Subscribe", "Decrypt"},
+		},
+	}
+
+	if err := svc.CreateListing(context.Background(), listing); err != nil {
+		t.Fatalf("CreateListing failed: %v", err)
+	}
+
+	events, err := svc.store.GetPaymentAuditEvents(listing.ListingID)
+	if err != nil {
+		t.Fatalf("GetPaymentAuditEvents failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("policy audit events len = %d, want 1: %#v", len(events), events)
+	}
+	event := events[0]
+	if event.EventType != PaymentAuditStreamPolicyPublished ||
+		event.ActorPeerID != "test-peer-id" ||
+		event.Reference != "policy-mpe-alpha" ||
+		event.PurchaseStatus != PurchaseStatusCompleted {
+		t.Fatalf("unexpected policy publication audit event: %#v", event)
+	}
+	for _, forbidden := range []string{"field-key", "ciphertext", "nonce", "tag", "wrapped", "private"} {
+		if strings.Contains(strings.ToLower(event.Message), forbidden) {
+			t.Fatalf("policy publication audit leaked %q: %s", forbidden, event.Message)
+		}
+	}
+}
+
+func TestRecordStreamPolicyChangedAudit(t *testing.T) {
+	svc, _ := newTestService(t)
+	listing := testListing()
+	listing.ListingKind = ListingKindDataStream
+	listing.AccessType = AccessTypeStreaming
+	listing.ProtectedDelivery = ProtectedDelivery{
+		GrantScope: "stream:read:mpe",
+		FieldStreamPolicy: &GrantFieldStreamPolicy{
+			PolicyID:          "policy-mpe-alpha",
+			PolicyVersion:     4,
+			StreamID:          "maneuver-ephemeris-live",
+			SchemaCode:        "MPE",
+			AllowedFieldPaths: []string{"object_id", "timestamp"},
+			KeyEpoch:          "epoch-8",
+			GrantScope:        "stream:read:mpe",
+			AllowedOperations: []string{"Subscribe"},
+		},
+	}
+	if err := svc.CreateListing(context.Background(), listing); err != nil {
+		t.Fatalf("CreateListing failed: %v", err)
+	}
+
+	if err := svc.RecordStreamPolicyChanged(context.Background(), listing.ListingID, "provider-admin-peer"); err != nil {
+		t.Fatalf("RecordStreamPolicyChanged failed: %v", err)
+	}
+
+	events, err := svc.store.GetPaymentAuditEvents(listing.ListingID)
+	if err != nil {
+		t.Fatalf("GetPaymentAuditEvents failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("policy audit events len = %d, want 2: %#v", len(events), events)
+	}
+	event := events[1]
+	if event.EventType != PaymentAuditStreamPolicyChanged ||
+		event.ActorPeerID != "provider-admin-peer" ||
+		event.Reference != "policy-mpe-alpha" ||
+		!strings.Contains(event.Message, "version 4") {
+		t.Fatalf("unexpected policy changed audit event: %#v", event)
+	}
+	for _, forbidden := range []string{"epoch-8", "field-key", "ciphertext", "nonce", "tag", "wrapped"} {
+		if strings.Contains(strings.ToLower(event.Message), forbidden) {
+			t.Fatalf("policy changed audit leaked %q: %s", forbidden, event.Message)
+		}
 	}
 }
 
