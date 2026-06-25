@@ -66,7 +66,7 @@
     "semver-regex": "3.1.4",
     "shx": "0.3.4",
     "sinon": "^13.0.1",
-    "spacedatastandards.org": "^1.98.0",
+    "spacedatastandards.org": "https://github.com/DigitalArsenal/spacedatastandards.org/archive/1b6f4225ce05eec12a019fe59617ea5e485bd128.tar.gz",
     "standard": "16.0.4",
     "tmp": "0.2.3",
     "ts-standard": "^11.0.0",

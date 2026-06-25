@@ -139,8 +139,8 @@ describe('module-delivery', () => {
           publicKey: new Uint8Array(32).fill(8),
         },
       },
-      moduleId: 'com.space-data-network.fastest-path',
-      moduleVersion: '0.5.22',
+      moduleId: 'sensor-coverage-analysis',
+      moduleVersion: '0.1.0',
       requesterDomain: 'app.example.com',
       requestedTimeoutMs: 300_000,
       reqId: 'req-123',
@@ -170,8 +170,8 @@ describe('module-delivery', () => {
 
     expect(result.grant.bundleDescriptor).toMatchObject({
       cid: 'bafyencryptedmodule',
-      moduleId: 'com.space-data-network.fastest-path',
-      moduleVersion: '0.5.22',
+      moduleId: 'sensor-coverage-analysis',
+      moduleVersion: '0.1.0',
     });
     expect(result.grant.grantedDomain).toBe('app.example.com');
     expect(result.grant.grantedTimeoutMs).toBe(300_000);
@@ -262,8 +262,8 @@ describe('module-delivery', () => {
           publicKey: new Uint8Array(32).fill(8),
         },
       },
-      moduleId: 'com.space-data-network.fastest-path',
-      moduleVersion: '0.5.22',
+      moduleId: 'sensor-coverage-analysis',
+      moduleVersion: '0.1.0',
       requesterDomain: 'app.example.com',
       requestedTimeoutMs: 30_000,
       reqId: 'req-explicit-relay',
@@ -296,7 +296,7 @@ describe('module-delivery', () => {
           cid: 'bafyencryptedmodule',
           contentHash,
           sizeBytes: 4,
-          moduleId: 'com.space-data-network.fastest-path',
+          moduleId: 'sensor-coverage-analysis',
         },
         wrappedContentKey: {
           wrappingAlgorithm: 'x25519',
@@ -333,7 +333,7 @@ describe('module-delivery', () => {
               cid: 'bafyencryptedmodule',
               contentHash: new Uint8Array(32).fill(9),
               sizeBytes: 4,
-              moduleId: 'com.space-data-network.fastest-path',
+              moduleId: 'sensor-coverage-analysis',
             },
             wrappedContentKey: {
               wrappingAlgorithm: 'x25519',
@@ -441,7 +441,7 @@ describe('module-delivery', () => {
           publicKey: new Uint8Array(32).fill(8),
         },
       },
-      moduleId: 'com.space-data-network.fastest-path',
+      moduleId: 'sensor-coverage-analysis',
       reqId: 'req-discovery',
       requestedTimeoutMs: 30_000,
       requestedAtMs: 1_700_000_000_000,
@@ -517,8 +517,8 @@ describe('module-delivery', () => {
             publicKey: new Uint8Array(32).fill(8),
           },
         },
-        moduleId: 'com.space-data-network.fastest-path',
-        moduleVersion: '0.5.22',
+        moduleId: 'sensor-coverage-analysis',
+        moduleVersion: '0.1.0',
         requesterDomain: 'app.example.com',
         requestedTimeoutMs: 30_000,
         reqId: 'req-timeout-overgrant',
@@ -585,8 +585,8 @@ describe('module-delivery', () => {
           publicKey: new Uint8Array(32).fill(8),
         },
       },
-      moduleId: 'com.space-data-network.fastest-path',
-      moduleVersion: '0.5.22',
+      moduleId: 'sensor-coverage-analysis',
+      moduleVersion: '0.1.0',
       requesterDomain: 'app.example.com',
       requestedTimeoutMs: 30_000,
       reqId: 'req-invalid-grant',
@@ -682,8 +682,8 @@ describe('module-delivery', () => {
           publicKey: new Uint8Array(32).fill(8),
         },
       },
-      moduleId: 'com.space-data-network.fastest-path',
-      moduleVersion: '0.5.22',
+      moduleId: 'sensor-coverage-analysis',
+      moduleVersion: '0.1.0',
       requesterDomain: 'app.example.com',
       requestedTimeoutMs: 30_000,
       reqId: 'req-complete-plg-signature',
@@ -765,8 +765,8 @@ describe('module-delivery', () => {
             publicKey: new Uint8Array(32).fill(8),
           },
         },
-        moduleId: 'com.space-data-network.fastest-path',
-        moduleVersion: '0.5.22',
+        moduleId: 'sensor-coverage-analysis',
+        moduleVersion: '0.1.0',
         requesterDomain: 'app.example.com',
         requestedTimeoutMs: 30_000,
         reqId: 'req-epm-verifier',
@@ -837,8 +837,8 @@ describe('module-delivery', () => {
               publicKey: new Uint8Array(32).fill(8),
             },
           },
-          moduleId: 'com.space-data-network.fastest-path',
-          moduleVersion: '0.5.22',
+          moduleId: 'sensor-coverage-analysis',
+          moduleVersion: '0.1.0',
           requesterDomain: 'app.example.com',
           requestedTimeoutMs: 30_000,
           reqId: 'req-malformed-wrap',
@@ -1050,8 +1050,8 @@ function createModuleDescriptorOffset(
   contentHash: Uint8Array,
   options: Pick<GrantFixtureOptions, 'createdAtMs' | 'updatedAtMs'> = {},
 ): flatbuffers.Offset {
-  const moduleId = 'com.space-data-network.fastest-path';
-  const moduleVersion = '0.5.22';
+  const moduleId = 'sensor-coverage-analysis';
+  const moduleVersion = '0.1.0';
   const pluginIdOffset = builder.createString(moduleId);
   const nameOffset = builder.createString(moduleId);
   const versionOffset = builder.createString(moduleVersion);

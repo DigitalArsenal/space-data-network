@@ -242,7 +242,7 @@ describe('module-delivery SDK compatibility', () => {
           expect(decoded.messageType).toBe('request');
           expect(decoded.role).toBe('requester');
           expect(decoded.reqId).toBe('req-sdk-compat');
-          expect(decoded.moduleId).toBe('com.space-data-network.fastest-path');
+          expect(decoded.moduleId).toBe('sensor-coverage-analysis');
           expect(decoded.requestedDomain).toBe('app.example.com');
           expect(decoded.requestedTimeoutMs).toBe(300_000);
           expect(decoded.requesterSigningPublicKey).toEqual(new Uint8Array(32).fill(6));
@@ -260,7 +260,7 @@ describe('module-delivery SDK compatibility', () => {
         const decoded = decodeLicensingProofMessage(payload);
         expect(decoded.messageType).toBe('proof-request');
         expect(decoded.reqId).toBe('req-sdk-compat');
-        expect(decoded.moduleId).toBe('com.space-data-network.fastest-path');
+        expect(decoded.moduleId).toBe('sensor-coverage-analysis');
         expect(decoded.requestedDomain).toBe('app.example.com');
         expect(decoded.requestedTimeoutMs).toBe(300_000);
         expect(decoded.requesterEphemeralPublicKey).toEqual(new Uint8Array(32).fill(8));
@@ -302,8 +302,8 @@ describe('module-delivery SDK compatibility', () => {
           publicKey: new Uint8Array(32).fill(8),
         },
       },
-      moduleId: 'com.space-data-network.fastest-path',
-      moduleVersion: '0.5.22',
+      moduleId: 'sensor-coverage-analysis',
+      moduleVersion: '0.1.0',
       requesterDomain: 'app.example.com',
       requestedTimeoutMs: 300_000,
       reqId: 'req-sdk-compat',
@@ -312,24 +312,24 @@ describe('module-delivery SDK compatibility', () => {
 
     const sdkGrant = validateLicensingGrant(decodeLicensingGrant(capturedGrantBytes), {
       reqId: 'req-sdk-compat',
-      moduleId: 'com.space-data-network.fastest-path',
-      moduleVersion: '0.5.22',
+      moduleId: 'sensor-coverage-analysis',
+      moduleVersion: '0.1.0',
       expectedDomain: 'app.example.com',
       requestedTimeoutMs: 300_000,
     });
 
     expect(sdkGrant.messageType).toBe('granted');
-    expect(sdkGrant.moduleDescriptor?.moduleId).toBe('com.space-data-network.fastest-path');
+    expect(sdkGrant.moduleDescriptor?.moduleId).toBe('sensor-coverage-analysis');
     expect(sdkGrant.wrappedContentKey?.keyMaterialRootType).toBe('$KMF');
     expect(sdkGrant.wrappedContentKey).toBeTruthy();
     const sdkWrappedContentKey = sdkGrant.wrappedContentKey!;
 
     expect(result.grant.bundleDescriptor).toMatchObject({
       cid: 'bafyencryptedmodule',
-      moduleId: 'com.space-data-network.fastest-path',
-      moduleVersion: '0.5.22',
+      moduleId: 'sensor-coverage-analysis',
+      moduleVersion: '0.1.0',
       requiredScope: 'orbpro.default',
-      keyId: 'com.space-data-network.fastest-path:0.5.22',
+      keyId: 'sensor-coverage-analysis:0.1.0',
       allowedDomains: ['app.example.com'],
       maxGrantTimeoutMs: 300_000,
       encrypted: true,

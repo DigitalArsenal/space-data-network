@@ -11,7 +11,7 @@
     "test": "node --experimental-vm-modules tests/runner.test.mjs"
   },
   "dependencies": {
-    "space-data-module-sdk": "github:DigitalArsenal/space-data-module-sdk#b06faf5"
+    "space-data-module-sdk": "https://github.com/DigitalArsenal/space-data-module-sdk/archive/080a5348a613e06480090ea59a61ed24e0fce846.tar.gz"
   },
   "engines": {
     "node": ">=20.0.0"
