@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import * as flatbuffers from 'flatbuffers';
 import {
   FSP,
@@ -389,6 +390,95 @@ describe('field stream marketplace envelopes', () => {
       visibility: 'decrypted',
     });
   });
+
+  it('rejects invalid provider signatures before decrypting fields', async () => {
+    const decryptField = vi.fn(async () => textEncoder.encode('decrypted-position'));
+    const verifyProviderSignature = vi.fn(async () => false);
+
+    await expect(resolveFieldStreamMessageView(
+      encodeMessageFixture(),
+      customerAlphaGrant(),
+      { decryptField, verifyProviderSignature },
+    )).rejects.toThrow(/provider signature/i);
+
+    expect(verifyProviderSignature).toHaveBeenCalledTimes(1);
+    expect(decryptField).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid grant signatures before decrypting fields', async () => {
+    const decryptField = vi.fn(async () => textEncoder.encode('decrypted-position'));
+    const verifyGrantSignature = vi.fn(async () => false);
+
+    await expect(resolveFieldStreamMessageView(
+      encodeMessageFixture(),
+      {
+        ...customerAlphaGrant(),
+        providerSignature: new Uint8Array(64).fill(0x9a),
+        signaturePayload: textEncoder.encode('grant-signature-payload'),
+      },
+      { decryptField, verifyGrantSignature },
+    )).rejects.toThrow(/grant signature/i);
+
+    expect(verifyGrantSignature).toHaveBeenCalledTimes(1);
+    expect(decryptField).not.toHaveBeenCalled();
+  });
+
+  it('passes authenticated field AAD into decrypt only when the AAD hash matches', async () => {
+    const aad = textEncoder.encode('field-aad:position:epoch-7');
+    const decryptField = vi.fn(async ({ aad: passedAad }: { aad: Uint8Array }) => {
+      expect(new TextDecoder().decode(passedAad)).toBe('field-aad:position:epoch-7');
+      return textEncoder.encode('decrypted-position');
+    });
+
+    const view = await resolveFieldStreamMessageView(
+      encodeMessageFixture({
+        encryptedFields: [{
+          fieldPath: 'position',
+          fieldIdPath: [3],
+          keyId: 'field-key:alpha:position:epoch-7',
+          ciphertext: [0xde, 0xad, 0xbe, 0xef],
+          aadHash: sha256Fixture(aad),
+          decision: 'allow-encrypted',
+          releaseTags: ['restricted', 'customer-alpha'],
+        }],
+      }),
+      customerAlphaGrant(),
+      {
+        decryptField,
+        aadForField: () => aad,
+      },
+    );
+
+    expect(view.fields.find((field) => field.fieldPath === 'position')).toMatchObject({
+      visibility: 'decrypted',
+    });
+    expect(decryptField).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects field AAD hash mismatches before decrypting fields', async () => {
+    const decryptField = vi.fn(async () => textEncoder.encode('decrypted-position'));
+
+    await expect(resolveFieldStreamMessageView(
+      encodeMessageFixture({
+        encryptedFields: [{
+          fieldPath: 'position',
+          fieldIdPath: [3],
+          keyId: 'field-key:alpha:position:epoch-7',
+          ciphertext: [0xde, 0xad, 0xbe, 0xef],
+          aadHash: sha256Fixture(textEncoder.encode('expected-field-aad')),
+          decision: 'allow-encrypted',
+          releaseTags: ['restricted', 'customer-alpha'],
+        }],
+      }),
+      customerAlphaGrant(),
+      {
+        decryptField,
+        aadForField: () => textEncoder.encode('tampered-field-aad'),
+      },
+    )).rejects.toThrow(/aad hash/i);
+
+    expect(decryptField).not.toHaveBeenCalled();
+  });
 });
 
 function encodePolicyFixture(): Uint8Array {
@@ -447,6 +537,7 @@ interface EncryptedFieldFixture {
   fieldIdPath: number[];
   keyId: string;
   ciphertext: number[];
+  aadHash?: number[];
   decision: string;
   releaseTags: string[];
 }
@@ -506,7 +597,7 @@ function encodeMessageFixture(options: {
         Array.from(new Uint8Array(12).fill(0x21)),
         Array.from(new Uint8Array(16).fill(0x22)),
         field.keyId,
-        Array.from(new Uint8Array(32).fill(0x23)),
+        field.aadHash ?? Array.from(new Uint8Array(32).fill(0x23)),
         field.releaseTags,
         field.decision,
       )),
@@ -533,4 +624,25 @@ function encodeMessageFixture(options: {
   const root = message.pack(builder);
   FSM.finishFSMBuffer(builder, root);
   return builder.asUint8Array();
+}
+
+function customerAlphaGrant() {
+  return {
+    subjectId: 'customer-alpha-peer',
+    providerPeerId: 'provider-peer',
+    listingId: 'listing-maneuver-ephemeris',
+    streamId: 'maneuver-ephemeris-live',
+    schemaCode: 'MPE',
+    policyId: 'policy-mpe-alpha',
+    policyVersion: 3,
+    keyEpoch: 'epoch-7',
+    allowedFieldPaths: ['position'],
+    fieldKeysById: {
+      'field-key:alpha:position:epoch-7': new Uint8Array([0xa1]),
+    },
+  };
+}
+
+function sha256Fixture(bytes: Uint8Array): number[] {
+  return Array.from(createHash('sha256').update(bytes).digest());
 }
