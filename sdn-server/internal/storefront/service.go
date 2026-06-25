@@ -638,6 +638,7 @@ func (s *Service) IssueGrant(ctx context.Context, requestID string) (*AccessGran
 	if grant.AccessType == AccessTypeStreaming || grant.AccessType == AccessTypeSubscription {
 		grant.DeliveryTopic = fmt.Sprintf("/sdn/data/%s/%s", grant.ListingID, grant.BuyerPeerID)
 	}
+	grant.FieldStreamPolicy = grantFieldStreamPolicyFromListing(listing, grant)
 
 	// Sign the grant
 	if s.signingKey != nil {
@@ -695,6 +696,15 @@ func (s *Service) recordGrantDeliveryAudit(requestID, actorPeerID string, grant 
 		}
 		if err := s.recordPaymentAudit(requestID, PaymentAuditDeliveryReady, actorPeerID, grant.GrantID, msg, status); err != nil {
 			log.Warnf("Failed to record delivery audit event for %s: %v", requestID, err)
+		}
+	}
+	if grant.FieldStreamPolicy != nil {
+		msg := "Field stream policy grant issued"
+		if grant.FieldStreamPolicy.PolicyID != "" {
+			msg += ": " + grant.FieldStreamPolicy.PolicyID
+		}
+		if err := s.recordPaymentAudit(requestID, PaymentAuditStreamPolicyGrantIssued, actorPeerID, grant.GrantID, msg, status); err != nil {
+			log.Warnf("Failed to record stream policy grant audit event for %s: %v", requestID, err)
 		}
 	}
 }
@@ -820,14 +830,88 @@ func (s *Service) verifyGrantProviderSignature(grant *AccessGrant) error {
 }
 
 func (s *Service) grantSignaturePayload(grant *AccessGrant) []byte {
-	data := fmt.Sprintf("%s:%s:%s:%s:%d",
+	data := strings.Join([]string{
 		grant.GrantID,
 		grant.ListingID,
 		grant.BuyerPeerID,
 		grant.ProviderPeerID,
-		grant.GrantedAt.Unix(),
-	)
+		fmt.Sprintf("%d", grant.GrantedAt.Unix()),
+		fmt.Sprintf("%d", grant.ExpiresAt.Unix()),
+		grant.DeliveryTopic,
+		canonicalGrantFieldStreamPolicy(grant.FieldStreamPolicy),
+	}, "\x1f")
 	return []byte(data)
+}
+
+func grantFieldStreamPolicyFromListing(listing *Listing, grant *AccessGrant) *GrantFieldStreamPolicy {
+	if listing == nil || grant == nil || listing.ProtectedDelivery.FieldStreamPolicy == nil {
+		return nil
+	}
+	policy := cloneGrantFieldStreamPolicy(listing.ProtectedDelivery.FieldStreamPolicy)
+	if policy.GrantScope == "" {
+		policy.GrantScope = strings.TrimSpace(listing.ProtectedDelivery.GrantScope)
+	}
+	if policy.KeyEpoch == "" {
+		policy.KeyEpoch = strings.TrimSpace(listing.ProtectedDelivery.ContentKeyID)
+	}
+	if policy.StreamID == "" {
+		policy.StreamID = strings.TrimSpace(listing.ListingID)
+	}
+	if policy.SchemaCode == "" && len(listing.DataTypes) > 0 {
+		policy.SchemaCode = strings.TrimSpace(listing.DataTypes[0])
+	}
+	if len(policy.AllowedOperations) == 0 {
+		switch grant.AccessType {
+		case AccessTypeStreaming, AccessTypeSubscription:
+			policy.AllowedOperations = []string{"Subscribe", "Decrypt"}
+		default:
+			policy.AllowedOperations = []string{"Query"}
+		}
+	}
+	return policy
+}
+
+func cloneGrantFieldStreamPolicy(policy *GrantFieldStreamPolicy) *GrantFieldStreamPolicy {
+	if policy == nil {
+		return nil
+	}
+	return &GrantFieldStreamPolicy{
+		PolicyID:           strings.TrimSpace(policy.PolicyID),
+		PolicyVersion:      policy.PolicyVersion,
+		StreamID:           strings.TrimSpace(policy.StreamID),
+		SchemaCode:         strings.TrimSpace(policy.SchemaCode),
+		AllowedFieldPaths:  cloneTrimmedStrings(policy.AllowedFieldPaths),
+		RedactedFieldPaths: cloneTrimmedStrings(policy.RedactedFieldPaths),
+		KeyEpoch:           strings.TrimSpace(policy.KeyEpoch),
+		GrantScope:         strings.TrimSpace(policy.GrantScope),
+		AllowedOperations:  cloneTrimmedStrings(policy.AllowedOperations),
+	}
+}
+
+func canonicalGrantFieldStreamPolicy(policy *GrantFieldStreamPolicy) string {
+	if policy == nil {
+		return ""
+	}
+	canonical := cloneGrantFieldStreamPolicy(policy)
+	encoded, err := json.Marshal(canonical)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+func cloneTrimmedStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			cloned = append(cloned, value)
+		}
+	}
+	return cloned
 }
 
 func findPricingTierByName(listing *Listing, tierName string) *PricingTier {
@@ -876,6 +960,11 @@ func (s *Service) RevokeGrant(ctx context.Context, grantID, buyerPeerID, actorPe
 	if purchase, err := s.store.GetPurchaseRequestByGrantID(grantID); err == nil && purchase != nil {
 		if err := s.recordPaymentAudit(purchase.RequestID, PaymentAuditGrantRevoked, actor, grantID, note, purchase.Status); err != nil {
 			log.Warnf("Failed to record revocation audit event for %s: %v", purchase.RequestID, err)
+		}
+		if grant.FieldStreamPolicy != nil {
+			if err := s.recordPaymentAudit(purchase.RequestID, PaymentAuditStreamPolicyRevoked, actor, grantID, note, purchase.Status); err != nil {
+				log.Warnf("Failed to record stream policy revocation audit event for %s: %v", purchase.RequestID, err)
+			}
 		}
 	} else if err != nil {
 		log.Warnf("Failed to load purchase for grant revocation audit %s: %v", grantID, err)

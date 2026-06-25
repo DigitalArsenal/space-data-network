@@ -534,6 +534,118 @@ func TestManualDevPaymentIssuesGrantAndAudit(t *testing.T) {
 	}
 }
 
+func TestIssueGrantBindsFieldStreamPolicyAndSignature(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	listing := testListing()
+	listing.ListingKind = ListingKindDataStream
+	listing.AccessType = AccessTypeStreaming
+	listing.EncryptionRequired = true
+	listing.ProtectedDelivery = ProtectedDelivery{
+		ContentKeyID:   "field-key:mpe:epoch-7",
+		GrantScope:     "stream:read:mpe",
+		RequiredScopes: []string{"stream:read:mpe", "field:decrypt:position"},
+		FieldStreamPolicy: &GrantFieldStreamPolicy{
+			PolicyID:           "policy-mpe-alpha",
+			PolicyVersion:      3,
+			StreamID:           "maneuver-ephemeris-live",
+			SchemaCode:         "MPE",
+			AllowedFieldPaths:  []string{"object_id", "timestamp", "position"},
+			RedactedFieldPaths: []string{"maneuver_plan", "covariance_detail"},
+			KeyEpoch:           "epoch-7",
+			GrantScope:         "stream:read:mpe",
+			AllowedOperations:  []string{"Subscribe", "Decrypt"},
+		},
+	}
+	if err := svc.CreateListing(ctx, listing); err != nil {
+		t.Fatalf("CreateListing failed: %v", err)
+	}
+
+	req := &PurchaseRequest{
+		ListingID:               listing.ListingID,
+		TierName:                "Basic",
+		BuyerPeerID:             "customer-alpha-peer",
+		BuyerEncryptionPubkey:   []byte("buyer-public-key"),
+		KeyAlgorithm:            "x25519",
+		PaymentMethod:           PaymentMethodFiatStripe,
+		PreferredDeliveryMethod: "PubSubStream",
+	}
+	if err := svc.CreatePurchaseRequest(ctx, req); err != nil {
+		t.Fatalf("CreatePurchaseRequest failed: %v", err)
+	}
+
+	grant, err := svc.CompleteManualDevPayment(ctx, req.RequestID, ManualDevPaymentConfirmation{
+		OperatorPeerID: "provider-admin-peer",
+		Reference:      "field-stream-receipt-1",
+	})
+	if err != nil {
+		t.Fatalf("CompleteManualDevPayment failed: %v", err)
+	}
+	if grant.FieldStreamPolicy == nil {
+		t.Fatal("grant field stream policy is nil")
+	}
+	if grant.FieldStreamPolicy.PolicyID != "policy-mpe-alpha" ||
+		grant.FieldStreamPolicy.PolicyVersion != 3 ||
+		grant.FieldStreamPolicy.StreamID != "maneuver-ephemeris-live" ||
+		grant.FieldStreamPolicy.SchemaCode != "MPE" ||
+		grant.FieldStreamPolicy.KeyEpoch != "epoch-7" ||
+		grant.FieldStreamPolicy.GrantScope != "stream:read:mpe" {
+		t.Fatalf("unexpected field stream policy: %+v", grant.FieldStreamPolicy)
+	}
+	if !stringSlicesEqual(grant.FieldStreamPolicy.AllowedFieldPaths, []string{"object_id", "timestamp", "position"}) {
+		t.Fatalf("allowed fields = %#v", grant.FieldStreamPolicy.AllowedFieldPaths)
+	}
+	if !stringSlicesEqual(grant.FieldStreamPolicy.RedactedFieldPaths, []string{"maneuver_plan", "covariance_detail"}) {
+		t.Fatalf("redacted fields = %#v", grant.FieldStreamPolicy.RedactedFieldPaths)
+	}
+	if !stringSlicesEqual(grant.FieldStreamPolicy.AllowedOperations, []string{"Subscribe", "Decrypt"}) {
+		t.Fatalf("allowed operations = %#v", grant.FieldStreamPolicy.AllowedOperations)
+	}
+
+	stored, err := svc.store.GetGrant(grant.GrantID)
+	if err != nil {
+		t.Fatalf("GetGrant failed: %v", err)
+	}
+	if stored == nil || stored.FieldStreamPolicy == nil {
+		t.Fatalf("stored grant missing field stream policy: %#v", stored)
+	}
+	if stored.FieldStreamPolicy.PolicyID != grant.FieldStreamPolicy.PolicyID ||
+		stored.FieldStreamPolicy.PolicyVersion != grant.FieldStreamPolicy.PolicyVersion ||
+		!stringSlicesEqual(stored.FieldStreamPolicy.AllowedFieldPaths, grant.FieldStreamPolicy.AllowedFieldPaths) {
+		t.Fatalf("stored policy mismatch: got %+v want %+v", stored.FieldStreamPolicy, grant.FieldStreamPolicy)
+	}
+	if _, err := svc.VerifyGrant(ctx, grant.GrantID, req.BuyerPeerID); err != nil {
+		t.Fatalf("VerifyGrant failed: %v", err)
+	}
+
+	tamperedPolicy := *stored
+	tamperedPolicyCopy := *stored.FieldStreamPolicy
+	tamperedPolicy.FieldStreamPolicy = &tamperedPolicyCopy
+	tamperedPolicy.FieldStreamPolicy.PolicyVersion = 4
+	if err := svc.verifyGrantProviderSignature(&tamperedPolicy); err == nil {
+		t.Fatal("provider signature should reject tampered field policy version")
+	}
+
+	tamperedTopic := *stored
+	tamperedTopic.DeliveryTopic = tamperedTopic.DeliveryTopic + "-tampered"
+	if err := svc.verifyGrantProviderSignature(&tamperedTopic); err == nil {
+		t.Fatal("provider signature should reject tampered delivery topic")
+	}
+
+	events, err := svc.store.GetPaymentAuditEvents(req.RequestID)
+	if err != nil {
+		t.Fatalf("GetPaymentAuditEvents failed: %v", err)
+	}
+	eventTypes := map[string]bool{}
+	for _, event := range events {
+		eventTypes[event.EventType] = true
+	}
+	if !eventTypes[PaymentAuditStreamPolicyGrantIssued] {
+		t.Fatalf("audit events missing %q: %#v", PaymentAuditStreamPolicyGrantIssued, events)
+	}
+}
+
 func TestRevokeGrantRecordsAuditAndBlocksVerification(t *testing.T) {
 	svc, _ := newTestService(t)
 	ctx := context.Background()
@@ -1086,6 +1198,18 @@ func TestStreamingSubscriptionTopic(t *testing.T) {
 	if topic != "/sdn/data/listing-1/buyer-1" {
 		t.Errorf("topic = %s, want /sdn/data/listing-1/buyer-1", topic)
 	}
+}
+
+func stringSlicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // --- 14.6 Storefront UI / API Tests ---
