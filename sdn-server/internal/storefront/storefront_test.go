@@ -959,6 +959,30 @@ func TestGroupMemberEnvelopeLifecycle(t *testing.T) {
 	if latestEpoch == nil || latestEpoch.EpochID != epoch.EpochID {
 		t.Fatalf("latest epoch = %#v, want %s", latestEpoch, epoch.EpochID)
 	}
+	events, err := store.GetPaymentAuditEvents(req.RequestID)
+	if err != nil {
+		t.Fatalf("GetPaymentAuditEvents failed: %v", err)
+	}
+	var rotationEvent *PaymentAuditEvent
+	for _, event := range events {
+		if event.EventType == PaymentAuditStreamKeyRotated {
+			rotationEvent = event
+			break
+		}
+	}
+	if rotationEvent == nil {
+		t.Fatalf("audit events missing %q: %#v", PaymentAuditStreamKeyRotated, events)
+	}
+	if rotationEvent.ActorPeerID != "test-peer-id" ||
+		rotationEvent.Reference != epoch.EpochID ||
+		rotationEvent.PurchaseStatus != PurchaseStatusCompleted {
+		t.Fatalf("unexpected key rotation audit event: %#v", rotationEvent)
+	}
+	for _, forbidden := range []string{"key-beta", "peer-beta", "wrapped", "epoch-2026-05-05T00", "envelope"} {
+		if strings.Contains(strings.ToLower(rotationEvent.Message), strings.ToLower(forbidden)) {
+			t.Fatalf("key rotation audit leaked %q: %s", forbidden, rotationEvent.Message)
+		}
+	}
 	if _, err := svc.AddGroupMember(ctx, &GroupMember{
 		GroupID:            "group-celestrak-ops",
 		ListingID:          listing.ListingID,
