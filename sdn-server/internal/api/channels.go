@@ -30,6 +30,7 @@ type ChannelHandler struct {
 	subscriptions    *channels.SubscriptionRegistry
 	encryptedStreams EncryptedNativeStreamDecryptor
 	keyEnvelopes     PrivateChannelKeyEnvelopeProvider
+	accessAudit      ChannelAccessAuditSink
 	replayMu         sync.Mutex
 	encryptedIndexes map[string]struct{}
 }
@@ -58,6 +59,39 @@ type EncryptedNativeStreamDecryptor interface {
 type ChannelHandlerOptions struct {
 	EncryptedStreams EncryptedNativeStreamDecryptor
 	KeyEnvelopes     PrivateChannelKeyEnvelopeProvider
+	AccessAudit      ChannelAccessAuditSink
+}
+
+const (
+	ChannelAuditStreamSubscribe = "stream_subscribe"
+	ChannelAuditStreamOpen      = "stream_open"
+	ChannelAuditStreamAccess    = "stream_access"
+)
+
+type ChannelAccessAuditEvent struct {
+	EventType       string                  `json:"event_type"`
+	ChannelID       string                  `json:"channel_id"`
+	StandardCode    string                  `json:"standard_code"`
+	ProviderPeerID  string                  `json:"provider_peer_id,omitempty"`
+	Boundary        channels.AccessBoundary `json:"boundary"`
+	Subject         string                  `json:"subject,omitempty"`
+	GrantID         string                  `json:"grant_id,omitempty"`
+	Allowed         bool                    `json:"allowed"`
+	GrantState      string                  `json:"grant_state"`
+	Reason          string                  `json:"reason,omitempty"`
+	Visibility      string                  `json:"visibility,omitempty"`
+	EncryptionState string                  `json:"encryption_state,omitempty"`
+	PolicyID        string                  `json:"policy_id,omitempty"`
+}
+
+type ChannelAccessAuditSink interface {
+	RecordChannelAccessAudit(ChannelAccessAuditEvent)
+}
+
+type ChannelAccessAuditFunc func(ChannelAccessAuditEvent)
+
+func (f ChannelAccessAuditFunc) RecordChannelAccessAudit(event ChannelAccessAuditEvent) {
+	f(event)
 }
 
 type PrivateChannelKeyEnvelopeRequest struct {
@@ -97,6 +131,7 @@ func NewChannelHandlerWithOptions(store *storage.FlatSQLStore, options ChannelHa
 		subscriptions:    channels.NewSubscriptionRegistry(),
 		encryptedStreams: options.EncryptedStreams,
 		keyEnvelopes:     options.KeyEnvelopes,
+		accessAudit:      options.AccessAudit,
 		encryptedIndexes: make(map[string]struct{}),
 	}
 }
@@ -438,12 +473,50 @@ func (h *ChannelHandler) authorizeGrant(r *http.Request, parsed channels.Channel
 	if gate == nil {
 		gate = channels.NewAccessGate(nil)
 	}
-	return gate.Authorize(channels.AccessRequest{
+	req := channels.AccessRequest{
 		Channel:  parsed,
 		Boundary: boundary,
 		Subject:  strings.TrimSpace(r.URL.Query().Get("subject")),
 		GrantID:  strings.TrimSpace(r.URL.Query().Get("grantId")),
-	})
+	}
+	decision := gate.Authorize(req)
+	h.recordAccessAudit(req, decision)
+	return decision
+}
+
+func (h *ChannelHandler) recordAccessAudit(req channels.AccessRequest, decision channels.AccessDecision) {
+	if h == nil || h.accessAudit == nil {
+		return
+	}
+	event := ChannelAccessAuditEvent{
+		EventType:    channelAuditEventType(req.Boundary),
+		ChannelID:    req.Channel.ChannelID,
+		StandardCode: req.Channel.StandardCode,
+		Boundary:     req.Boundary,
+		Subject:      strings.TrimSpace(req.Subject),
+		GrantID:      strings.TrimSpace(req.GrantID),
+		Allowed:      decision.Allowed,
+		GrantState:   decision.GrantState,
+		Reason:       decision.Reason,
+	}
+	if metadata, ok := h.metadata.Get(req.Channel); ok {
+		event.ProviderPeerID = metadata.ProviderPeer
+		event.Visibility = metadata.Visibility
+		event.EncryptionState = metadata.EncryptionState
+		event.PolicyID = metadata.EncryptionPolicy
+	}
+	h.accessAudit.RecordChannelAccessAudit(event)
+}
+
+func channelAuditEventType(boundary channels.AccessBoundary) string {
+	switch boundary {
+	case channels.BoundarySubscribe:
+		return ChannelAuditStreamSubscribe
+	case channels.BoundaryStreamOpen:
+		return ChannelAuditStreamOpen
+	default:
+		return ChannelAuditStreamAccess
+	}
 }
 
 type channelGrantIssuePayload struct {

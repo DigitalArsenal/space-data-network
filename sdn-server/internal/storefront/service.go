@@ -93,6 +93,9 @@ func (s *Service) CreateListing(ctx context.Context, listing *Listing) error {
 	if err := s.store.CreateListing(listing); err != nil {
 		return fmt.Errorf("failed to store listing: %w", err)
 	}
+	if err := s.recordStreamPolicyListingAudit(listing, PaymentAuditStreamPolicyPublished, ""); err != nil {
+		log.Warnf("Failed to record stream policy listing audit event for %s: %v", listing.ListingID, err)
+	}
 
 	// Publish to PubSub
 	if s.listingTopic != nil {
@@ -102,6 +105,49 @@ func (s *Service) CreateListing(ctx context.Context, listing *Listing) error {
 	}
 
 	return nil
+}
+
+func (s *Service) RecordStreamPolicyChanged(ctx context.Context, listingID, actorPeerID string) error {
+	_ = ctx
+	listing, err := s.store.GetListing(listingID)
+	if err != nil {
+		return fmt.Errorf("failed to get listing: %w", err)
+	}
+	if listing == nil {
+		return fmt.Errorf("listing not found: %s", listingID)
+	}
+	return s.recordStreamPolicyListingAudit(listing, PaymentAuditStreamPolicyChanged, actorPeerID)
+}
+
+func (s *Service) recordStreamPolicyListingAudit(listing *Listing, eventType, actorPeerID string) error {
+	if listing == nil || listing.ProtectedDelivery.FieldStreamPolicy == nil {
+		return nil
+	}
+	policy := listing.ProtectedDelivery.FieldStreamPolicy
+	policyID := strings.TrimSpace(policy.PolicyID)
+	if policyID == "" {
+		return nil
+	}
+	actor := strings.TrimSpace(actorPeerID)
+	if actor == "" {
+		actor = strings.TrimSpace(listing.ProviderPeerID)
+	}
+	if actor == "" {
+		actor = s.peerID
+	}
+	message := fmt.Sprintf("Field stream policy published for stream %s schema %s version %d",
+		strings.TrimSpace(policy.StreamID),
+		strings.TrimSpace(policy.SchemaCode),
+		policy.PolicyVersion,
+	)
+	if eventType == PaymentAuditStreamPolicyChanged {
+		message = fmt.Sprintf("Field stream policy changed for stream %s schema %s version %d",
+			strings.TrimSpace(policy.StreamID),
+			strings.TrimSpace(policy.SchemaCode),
+			policy.PolicyVersion,
+		)
+	}
+	return s.recordPaymentAudit(listing.ListingID, eventType, actor, policyID, message, PurchaseStatusCompleted)
 }
 
 func (s *Service) signListing(listing *Listing) ([]byte, error) {

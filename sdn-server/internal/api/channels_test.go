@@ -175,6 +175,83 @@ func TestChannelHandlerPublicSubscribeUpdatesMonitor(t *testing.T) {
 	}
 }
 
+func TestChannelHandlerAuditsPrivateStreamAccessWithoutSecrets(t *testing.T) {
+	t.Parallel()
+
+	channel, err := channels.ParseChannelID("spaceaware-MPE")
+	if err != nil {
+		t.Fatalf("ParseChannelID failed: %v", err)
+	}
+	var auditEvents []ChannelAccessAuditEvent
+	handler := NewChannelHandlerWithOptions(nil, ChannelHandlerOptions{
+		AccessAudit: ChannelAccessAuditFunc(func(event ChannelAccessAuditEvent) {
+			auditEvents = append(auditEvents, event)
+		}),
+	})
+	handler.metadata.RecordRestored(channels.VerifiedMetadata{
+		ChannelID:        channel.ChannelID,
+		Visibility:       "private-listed",
+		EncryptionState:  "encrypted",
+		EncryptionPolicy: "policy-mpe-alpha",
+		ProviderPeer:     "provider-peer",
+	})
+	grant, err := handler.grants.Issue(channels.ChannelGrantIssueRequest{
+		Channel:   channel,
+		Subject:   "customer-alpha-peer",
+		Scopes:    []channels.AccessBoundary{channels.BoundarySubscribe, channels.BoundaryStreamOpen},
+		ExpiresAt: time.Now().UTC().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("Issue grant failed: %v", err)
+	}
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	subscribeReq := httptest.NewRequest(http.MethodPost, "/api/v1/channels/spaceaware-MPE/subscribe?visibility=private-listed&subject=customer-alpha-peer&grantId="+grant.GrantID, nil)
+	subscribeRec := httptest.NewRecorder()
+	mux.ServeHTTP(subscribeRec, subscribeReq)
+	if subscribeRec.Code != http.StatusOK {
+		t.Fatalf("subscribe status = %d body=%s", subscribeRec.Code, subscribeRec.Body.String())
+	}
+
+	deniedReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/spaceaware-MPE/stream?visibility=private-listed&subject=customer-alpha-peer&grantId=missing-grant", nil)
+	deniedRec := httptest.NewRecorder()
+	mux.ServeHTTP(deniedRec, deniedReq)
+	if deniedRec.Code != http.StatusForbidden {
+		t.Fatalf("denied stream status = %d body=%s", deniedRec.Code, deniedRec.Body.String())
+	}
+
+	if len(auditEvents) != 2 {
+		t.Fatalf("audit event count = %d, want 2: %#v", len(auditEvents), auditEvents)
+	}
+	if event := auditEvents[0]; event.EventType != ChannelAuditStreamSubscribe ||
+		event.ChannelID != "spaceaware-MPE" ||
+		event.StandardCode != "MPE" ||
+		event.Subject != "customer-alpha-peer" ||
+		event.GrantID != grant.GrantID ||
+		event.PolicyID != "policy-mpe-alpha" ||
+		event.GrantState != "verified" ||
+		!event.Allowed {
+		t.Fatalf("unexpected subscribe audit event: %#v", event)
+	}
+	if event := auditEvents[1]; event.EventType != ChannelAuditStreamOpen ||
+		event.Boundary != channels.BoundaryStreamOpen ||
+		event.GrantID != "missing-grant" ||
+		event.GrantState != "required" ||
+		event.Allowed {
+		t.Fatalf("unexpected denied stream audit event: %#v", event)
+	}
+	encoded, err := json.Marshal(auditEvents)
+	if err != nil {
+		t.Fatalf("marshal audit events: %v", err)
+	}
+	for _, forbidden := range []string{"ciphertext", "nonce", "tag", "plaintext", "wrapped", "content-key"} {
+		if strings.Contains(strings.ToLower(string(encoded)), forbidden) {
+			t.Fatalf("audit event leaked secret marker %q: %s", forbidden, encoded)
+		}
+	}
+}
+
 func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedger(t *testing.T) {
 	t.Parallel()
 
