@@ -5,8 +5,9 @@ import { readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
-const repoRoot = resolve(new URL('..', import.meta.url).pathname);
+const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const scriptPath = join(repoRoot, 'scripts/build-claude-designer-ui-package.mjs');
 const tmpRoot = mkdtempSync(join(tmpdir(), 'sdn-designer-package-test-'));
 const outputDir = join(tmpRoot, 'artifacts/design');
@@ -26,6 +27,14 @@ function runGenerator() {
 
 function readPackageFile(relativePath) {
   return readFileSync(join(packageDir, relativePath), 'utf8');
+}
+
+function listZipEntries() {
+  const zipinfo = spawnSync('zipinfo', ['-1', zipPath], { encoding: 'utf8' });
+  if (zipinfo.status === 0) return zipinfo.stdout.trim().split('\n').filter(Boolean);
+  const unzip = spawnSync('unzip', ['-Z1', zipPath], { encoding: 'utf8' });
+  assert.equal(unzip.status, 0, `${zipinfo.stdout}\n${zipinfo.stderr}\n${unzip.stdout}\n${unzip.stderr}`);
+  return unzip.stdout.trim().split('\n').filter(Boolean);
 }
 
 async function listFiles(root, prefix = '') {
@@ -80,10 +89,16 @@ describe('Claude Designer UI package generator', () => {
 
     assert.equal(existsSync(zipPath), true, 'ZIP archive should exist');
     assert.ok(statSync(zipPath).size > 10_000, 'ZIP archive should contain prototype and screenshots');
+    const zipEntries = listZipEntries();
+    for (const file of requiredFiles) {
+      assert.equal(zipEntries.includes(`claude-designer-ui-package/${file}`), true, `ZIP should include ${file}`);
+    }
 
     const indexHtml = readPackageFile('prototype/index.html');
+    const appJs = readPackageFile('prototype/app.js');
     assert.match(indexHtml, /Space Data Network/);
-    assert.match(indexHtml, /prototype\/data\/fixtures\.json/);
+    assert.match(indexHtml, /\.\/app\.js/);
+    assert.match(appJs, /\.\/data\/fixtures\.json/);
 
     const fixtures = JSON.parse(readPackageFile('prototype/data/fixtures.json'));
     const spaceAwarePeer = fixtures.peers.find((peer) => peer.name === 'SpaceAware.io');
