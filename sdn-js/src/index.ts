@@ -53,13 +53,20 @@ export type {
 export {
   decodeFieldStreamMessageSummary,
   decodeFieldStreamPolicySummary,
+  resolveFieldStreamMessageView,
 } from './field-stream';
 export type {
+  FieldStreamAccessGrant,
   FieldStreamAudienceSummary,
+  FieldStreamDecryptFieldInput,
   FieldStreamFieldSummary,
+  FieldStreamFieldVisibility,
   FieldStreamMessageSummary,
+  FieldStreamMessageView,
   FieldStreamPolicySummary,
+  FieldStreamResolvedField,
   FieldStreamRuleSummary,
+  ResolveFieldStreamMessageViewOptions,
 } from './field-stream';
 export {
   normalizeEPMDescriptor,

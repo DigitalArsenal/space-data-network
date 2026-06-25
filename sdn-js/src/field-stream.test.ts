@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as flatbuffers from 'flatbuffers';
 import {
   FSP,
@@ -21,6 +21,7 @@ import {
 import {
   decodeFieldStreamMessageSummary,
   decodeFieldStreamPolicySummary,
+  resolveFieldStreamMessageView,
 } from './field-stream';
 
 const textEncoder = new TextEncoder();
@@ -111,6 +112,160 @@ describe('field stream marketplace envelopes', () => {
     expect(() => decodeFieldStreamPolicySummary(encodeMessageFixture())).toThrow(/identifier mismatch/i);
     expect(() => decodeFieldStreamMessageSummary(encodePolicyFixture())).toThrow(/identifier mismatch/i);
   });
+
+  it('resolves the same FSM envelope into customer-specific decrypted field views', async () => {
+    const messageBytes = encodeMessageFixture({
+      subjectId: null,
+      encryptedFields: [
+        {
+          fieldPath: 'position',
+          fieldIdPath: [3],
+          keyId: 'field-key:position:epoch-7',
+          ciphertext: [0x10, 0x11, 0x12],
+          decision: 'allow-encrypted',
+          releaseTags: ['restricted', 'orbital-state'],
+        },
+        {
+          fieldPath: 'covariance_detail',
+          fieldIdPath: [4],
+          keyId: 'field-key:covariance:epoch-7',
+          ciphertext: [0x20, 0x21, 0x22],
+          decision: 'allow-encrypted',
+          releaseTags: ['restricted', 'covariance'],
+        },
+      ],
+    });
+    const decryptField = vi.fn(async ({ fieldPath, keyBytes }: { fieldPath: string; keyBytes: Uint8Array }) => {
+      return textEncoder.encode(`${fieldPath}:${Array.from(keyBytes).join('.')}`);
+    });
+
+    const customerA = await resolveFieldStreamMessageView(messageBytes, {
+      subjectId: 'customer-alpha-peer',
+      providerPeerId: 'provider-peer',
+      listingId: 'listing-maneuver-ephemeris',
+      streamId: 'maneuver-ephemeris-live',
+      schemaCode: 'MPE',
+      policyId: 'policy-mpe-alpha',
+      policyVersion: 3,
+      keyEpoch: 'epoch-7',
+      allowedFieldPaths: ['position'],
+      fieldKeysById: {
+        'field-key:position:epoch-7': new Uint8Array([0xa1]),
+      },
+    }, { decryptField });
+
+    const customerB = await resolveFieldStreamMessageView(messageBytes, {
+      subjectId: 'customer-beta-peer',
+      providerPeerId: 'provider-peer',
+      listingId: 'listing-maneuver-ephemeris',
+      streamId: 'maneuver-ephemeris-live',
+      schemaCode: 'MPE',
+      policyId: 'policy-mpe-alpha',
+      policyVersion: 3,
+      keyEpoch: 'epoch-7',
+      allowedFieldPaths: ['covariance_detail'],
+      fieldKeysById: new Map([
+        ['field-key:covariance:epoch-7', new Uint8Array([0xb2])],
+      ]),
+    }, { decryptField });
+
+    expect(customerA.fields.map((field) => [field.fieldPath, field.visibility])).toEqual([
+      ['object_id', 'public'],
+      ['position', 'decrypted'],
+      ['covariance_detail', 'encrypted'],
+      ['maneuver_plan', 'redacted'],
+    ]);
+    expect(new TextDecoder().decode(customerA.fields[1].plaintext)).toBe('position:161');
+    expect(customerA.fields[2].plaintext).toBeUndefined();
+    expect(customerA.fields[2].reason).toBe('field_not_granted');
+
+    expect(customerB.fields.map((field) => [field.fieldPath, field.visibility])).toEqual([
+      ['object_id', 'public'],
+      ['position', 'encrypted'],
+      ['covariance_detail', 'decrypted'],
+      ['maneuver_plan', 'redacted'],
+    ]);
+    expect(new TextDecoder().decode(customerB.fields[2].plaintext)).toBe('covariance_detail:178');
+    expect(customerB.fields[1].plaintext).toBeUndefined();
+    expect(customerB.fields[1].reason).toBe('field_not_granted');
+  });
+
+  it('keeps unauthorized observers locked out of encrypted fields without invoking decrypt', async () => {
+    const decryptField = vi.fn(async () => textEncoder.encode('should-not-run'));
+
+    const observer = await resolveFieldStreamMessageView(encodeMessageFixture({ subjectId: null }), {
+      subjectId: 'observer-peer',
+      providerPeerId: 'provider-peer',
+      listingId: 'listing-maneuver-ephemeris',
+      streamId: 'maneuver-ephemeris-live',
+      schemaCode: 'MPE',
+      policyId: 'policy-mpe-alpha',
+      policyVersion: 3,
+      keyEpoch: 'epoch-7',
+      allowedFieldPaths: [],
+      fieldKeysById: {},
+    }, { decryptField });
+
+    expect(observer.fields.filter((field) => field.visibility === 'decrypted')).toEqual([]);
+    expect(observer.fields.find((field) => field.fieldPath === 'position')).toMatchObject({
+      visibility: 'encrypted',
+      reason: 'field_not_granted',
+    });
+    expect(decryptField).not.toHaveBeenCalled();
+  });
+
+  it('rejects grants that do not match envelope policy and key epoch metadata', async () => {
+    await expect(resolveFieldStreamMessageView(encodeMessageFixture(), {
+      subjectId: 'customer-alpha-peer',
+      providerPeerId: 'provider-peer',
+      listingId: 'listing-maneuver-ephemeris',
+      streamId: 'maneuver-ephemeris-live',
+      schemaCode: 'MPE',
+      policyId: 'policy-mpe-alpha',
+      policyVersion: 2,
+      keyEpoch: 'epoch-7',
+      allowedFieldPaths: ['position'],
+      fieldKeysById: {
+        'field-key:alpha:position:epoch-7': new Uint8Array([0xa1]),
+      },
+    })).rejects.toThrow(/policy version/i);
+
+    await expect(resolveFieldStreamMessageView(encodeMessageFixture(), {
+      subjectId: 'customer-alpha-peer',
+      providerPeerId: 'provider-peer',
+      listingId: 'listing-maneuver-ephemeris',
+      streamId: 'maneuver-ephemeris-live',
+      schemaCode: 'MPE',
+      policyId: 'policy-mpe-alpha',
+      policyVersion: 3,
+      keyEpoch: 'epoch-6',
+      allowedFieldPaths: ['position'],
+      fieldKeysById: {
+        'field-key:alpha:position:epoch-7': new Uint8Array([0xa1]),
+      },
+    })).rejects.toThrow(/key epoch/i);
+  });
+
+  it('fails closed when an authorized encrypted field cannot be decrypted', async () => {
+    await expect(resolveFieldStreamMessageView(encodeMessageFixture(), {
+      subjectId: 'customer-alpha-peer',
+      providerPeerId: 'provider-peer',
+      listingId: 'listing-maneuver-ephemeris',
+      streamId: 'maneuver-ephemeris-live',
+      schemaCode: 'MPE',
+      policyId: 'policy-mpe-alpha',
+      policyVersion: 3,
+      keyEpoch: 'epoch-7',
+      allowedFieldPaths: ['position'],
+      fieldKeysById: {
+        'field-key:alpha:position:epoch-7': new Uint8Array([0xa1]),
+      },
+    }, {
+      decryptField: async () => {
+        throw new Error('authentication failed');
+      },
+    })).rejects.toThrow(/failed to decrypt field position/i);
+  });
 });
 
 function encodePolicyFixture(): Uint8Array {
@@ -164,7 +319,29 @@ function encodePolicyFixture(): Uint8Array {
   return builder.asUint8Array();
 }
 
-function encodeMessageFixture(): Uint8Array {
+interface EncryptedFieldFixture {
+  fieldPath: string;
+  fieldIdPath: number[];
+  keyId: string;
+  ciphertext: number[];
+  decision: string;
+  releaseTags: string[];
+}
+
+function encodeMessageFixture(options: {
+  subjectId?: string | null;
+  encryptedFields?: EncryptedFieldFixture[];
+} = {}): Uint8Array {
+  const encryptedFields = options.encryptedFields ?? [
+    {
+      fieldPath: 'position',
+      fieldIdPath: [3],
+      keyId: 'field-key:alpha:position:epoch-7',
+      ciphertext: [0xde, 0xad, 0xbe, 0xef],
+      decision: 'allow-encrypted',
+      releaseTags: ['restricted', 'customer-alpha'],
+    },
+  ];
   const message = new FSMT(
     'fsm-mpe-alpha-000001',
     'provider-peer',
@@ -178,7 +355,7 @@ function encodeMessageFixture(): Uint8Array {
     1n,
     1_800_000_100_000n,
     1_800_000_160_000n,
-    'customer-alpha-peer',
+    options.subjectId === null ? null : options.subjectId ?? 'customer-alpha-peer',
     [
       new FieldStreamValueT(
         'object_id',
@@ -194,20 +371,20 @@ function encodeMessageFixture(): Uint8Array {
         ['releasable'],
         'allow-public',
       ),
-      new FieldStreamValueT(
-        'position',
-        [3],
+      ...encryptedFields.map((field) => new FieldStreamValueT(
+        field.fieldPath,
+        field.fieldIdPath,
         fieldStreamValueStateCategory.Encrypted,
         fieldStreamValueEncodingCategory.FlatBuffer,
         [],
-        [0xde, 0xad, 0xbe, 0xef],
+        field.ciphertext,
         Array.from(new Uint8Array(12).fill(0x21)),
         Array.from(new Uint8Array(16).fill(0x22)),
-        'field-key:alpha:position:epoch-7',
+        field.keyId,
         Array.from(new Uint8Array(32).fill(0x23)),
-        ['restricted', 'customer-alpha'],
-        'allow-encrypted',
-      ),
+        field.releaseTags,
+        field.decision,
+      )),
       new FieldStreamValueT(
         'maneuver_plan',
         [7],
