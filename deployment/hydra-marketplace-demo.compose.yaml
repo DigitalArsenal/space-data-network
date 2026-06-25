@@ -1,0 +1,148 @@
+# Hydra Marketplace Field Encryption Demo
+#
+# This topology is intentionally separate from the standard local cluster. It
+# keeps the Hydra marketplace roles explicit while still using SDN/libp2p/IPFS
+# discovery through the normal SDN node image and bootstrap configuration.
+
+x-hydra-node: &hydra-node
+  build:
+    context: ..
+    dockerfile: deployment/docker/Dockerfile
+  networks:
+    - hydra-sdn
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  healthcheck:
+    test: ["CMD", "sh", "-c", "wget -q --spider http://localhost:5001/api/v1/status || wget -q --spider http://localhost:8080"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 30s
+
+services:
+  hydra-provider-maneuver:
+    <<: *hydra-node
+    container_name: sdn-hydra-provider-maneuver
+    hostname: hydra-provider-maneuver
+    environment:
+      - SDN_HYDRA_SCENARIO=marketplace-field-encrypted-streams
+      - SDN_DISCOVERY_MECHANISM=SDN/libp2p/IPFS
+      - SDN_HYDRA_BOOTSTRAP_ADDR=/dns4/hydra-provider-maneuver/tcp/8080/ws/p2p/${SDN_HYDRA_BOOTSTRAP_PEER_ID:-hydra-bootstrap-placeholder}
+      - SDN_HYDRA_DISCOVERY_MIN_WAIT_MS=${SDN_HYDRA_DISCOVERY_MIN_WAIT_MS:-300000}
+      - SDN_HYDRA_ROLE=hydra-provider-maneuver
+      - SDN_HYDRA_DATA_ROLE=provider:maneuver-ephemeris
+      - SDN_HYDRA_STREAM=maneuver-ephemeris-live
+      - SDN_HYDRA_SCHEMA=MPE
+    ports:
+      - "15101:5001"
+      - "18101:8080"
+    volumes:
+      - hydra-provider-maneuver-data:/app/data
+      - hydra-provider-maneuver-keys:/app/keys
+
+  hydra-provider-catalog:
+    <<: *hydra-node
+    container_name: sdn-hydra-provider-catalog
+    hostname: hydra-provider-catalog
+    depends_on:
+      - hydra-provider-maneuver
+    environment:
+      - SDN_HYDRA_SCENARIO=marketplace-field-encrypted-streams
+      - SDN_DISCOVERY_MECHANISM=SDN/libp2p/IPFS
+      - SDN_HYDRA_BOOTSTRAP_ADDR=/dns4/hydra-provider-maneuver/tcp/8080/ws/p2p/${SDN_HYDRA_BOOTSTRAP_PEER_ID:-hydra-bootstrap-placeholder}
+      - SDN_HYDRA_DISCOVERY_MIN_WAIT_MS=${SDN_HYDRA_DISCOVERY_MIN_WAIT_MS:-300000}
+      - SDN_HYDRA_ROLE=hydra-provider-catalog
+      - SDN_HYDRA_DATA_ROLE=provider:catalog-support
+      - SDN_HYDRA_STREAM=catalog-support-live
+      - SDN_HYDRA_SCHEMA=SATCAT
+    ports:
+      - "15102:5001"
+      - "18102:8080"
+    volumes:
+      - hydra-provider-catalog-data:/app/data
+      - hydra-provider-catalog-keys:/app/keys
+
+  hydra-customer-alpha:
+    <<: *hydra-node
+    container_name: sdn-hydra-customer-alpha
+    hostname: hydra-customer-alpha
+    depends_on:
+      - hydra-provider-maneuver
+      - hydra-provider-catalog
+    environment:
+      - SDN_HYDRA_SCENARIO=marketplace-field-encrypted-streams
+      - SDN_DISCOVERY_MECHANISM=SDN/libp2p/IPFS
+      - SDN_HYDRA_BOOTSTRAP_ADDR=/dns4/hydra-provider-maneuver/tcp/8080/ws/p2p/${SDN_HYDRA_BOOTSTRAP_PEER_ID:-hydra-bootstrap-placeholder}
+      - SDN_HYDRA_DISCOVERY_MIN_WAIT_MS=${SDN_HYDRA_DISCOVERY_MIN_WAIT_MS:-300000}
+      - SDN_HYDRA_ROLE=hydra-customer-alpha
+      - SDN_HYDRA_DATA_ROLE=customer:alpha
+      - SDN_HYDRA_ALLOWED_FIELDS=object_id,timestamp,position
+    ports:
+      - "15103:5001"
+      - "18103:8080"
+    volumes:
+      - hydra-customer-alpha-data:/app/data
+      - hydra-customer-alpha-keys:/app/keys
+
+  hydra-customer-beta:
+    <<: *hydra-node
+    container_name: sdn-hydra-customer-beta
+    hostname: hydra-customer-beta
+    depends_on:
+      - hydra-provider-maneuver
+      - hydra-provider-catalog
+    environment:
+      - SDN_HYDRA_SCENARIO=marketplace-field-encrypted-streams
+      - SDN_DISCOVERY_MECHANISM=SDN/libp2p/IPFS
+      - SDN_HYDRA_BOOTSTRAP_ADDR=/dns4/hydra-provider-maneuver/tcp/8080/ws/p2p/${SDN_HYDRA_BOOTSTRAP_PEER_ID:-hydra-bootstrap-placeholder}
+      - SDN_HYDRA_DISCOVERY_MIN_WAIT_MS=${SDN_HYDRA_DISCOVERY_MIN_WAIT_MS:-300000}
+      - SDN_HYDRA_ROLE=hydra-customer-beta
+      - SDN_HYDRA_DATA_ROLE=customer:beta
+      - SDN_HYDRA_ALLOWED_FIELDS=object_id,timestamp,position,covariance_detail
+    ports:
+      - "15104:5001"
+      - "18104:8080"
+    volumes:
+      - hydra-customer-beta-data:/app/data
+      - hydra-customer-beta-keys:/app/keys
+
+  hydra-observer:
+    <<: *hydra-node
+    container_name: sdn-hydra-observer
+    hostname: hydra-observer
+    depends_on:
+      - hydra-provider-maneuver
+      - hydra-provider-catalog
+    environment:
+      - SDN_HYDRA_SCENARIO=marketplace-field-encrypted-streams
+      - SDN_DISCOVERY_MECHANISM=SDN/libp2p/IPFS
+      - SDN_HYDRA_BOOTSTRAP_ADDR=/dns4/hydra-provider-maneuver/tcp/8080/ws/p2p/${SDN_HYDRA_BOOTSTRAP_PEER_ID:-hydra-bootstrap-placeholder}
+      - SDN_HYDRA_DISCOVERY_MIN_WAIT_MS=${SDN_HYDRA_DISCOVERY_MIN_WAIT_MS:-300000}
+      - SDN_HYDRA_ROLE=hydra-observer
+      - SDN_HYDRA_DATA_ROLE=observer:unauthorized
+      - SDN_HYDRA_ALLOWED_FIELDS=object_id,timestamp
+    ports:
+      - "15105:5001"
+      - "18105:8080"
+    volumes:
+      - hydra-observer-data:/app/data
+      - hydra-observer-keys:/app/keys
+
+networks:
+  hydra-sdn:
+    driver: bridge
+
+volumes:
+  hydra-provider-maneuver-data:
+  hydra-provider-maneuver-keys:
+  hydra-provider-catalog-data:
+  hydra-provider-catalog-keys:
+  hydra-customer-alpha-data:
+  hydra-customer-alpha-keys:
+  hydra-customer-beta-data:
+  hydra-customer-beta-keys:
+  hydra-observer-data:
+  hydra-observer-keys:
