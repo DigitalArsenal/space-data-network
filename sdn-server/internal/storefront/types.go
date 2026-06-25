@@ -412,17 +412,19 @@ type ReviewStats struct {
 
 // SearchQuery represents a storefront search query
 type SearchQuery struct {
-	DataTypes       []string     `json:"data_types"`
-	PriceMax        float64      `json:"price_max"`
-	AccessTypes     []AccessType `json:"access_types"`
-	SpatialCoverage []string     `json:"spatial_coverage"` // regions
-	ObjectIDs       []string     `json:"object_ids"`
-	ProviderPeerIDs []string     `json:"provider_peer_ids"`
-	SearchText      string       `json:"search_text"` // full-text search
-	SortBy          string       `json:"sort_by"`     // price, rating, updated, relevance
-	SortDesc        bool         `json:"sort_desc"`
-	Limit           int          `json:"limit"`
-	Offset          int          `json:"offset"`
+	DataTypes       []string      `json:"data_types"`
+	ListingKinds    []ListingKind `json:"listing_kinds"`
+	Tags            []string      `json:"tags"`
+	PriceMax        float64       `json:"price_max"`
+	AccessTypes     []AccessType  `json:"access_types"`
+	SpatialCoverage []string      `json:"spatial_coverage"` // regions
+	ObjectIDs       []string      `json:"object_ids"`
+	ProviderPeerIDs []string      `json:"provider_peer_ids"`
+	SearchText      string        `json:"search_text"` // full-text search
+	SortBy          string        `json:"sort_by"`     // price, rating, updated, relevance
+	SortDesc        bool          `json:"sort_desc"`
+	Limit           int           `json:"limit"`
+	Offset          int           `json:"offset"`
 }
 
 // SearchResult represents search results

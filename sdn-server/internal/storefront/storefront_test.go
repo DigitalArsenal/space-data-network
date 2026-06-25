@@ -205,12 +205,15 @@ func TestSearchListings(t *testing.T) {
 	l2 := testListing()
 	l2.Title = "GEO Orbit Predictions"
 	l2.DataTypes = []string{"OEM", "OMM"}
+	l2.ListingKind = ListingKindWASMModule
+	l2.Tags = []string{"module", "propagation"}
 	svc.CreateListing(context.Background(), l2)
 
 	l3 := testListing()
 	l3.Title = "TLE Updates"
 	l3.DataTypes = []string{"TLE"}
 	l3.AccessType = AccessTypeOneTime
+	l3.Tags = []string{"tle", "public"}
 	svc.CreateListing(context.Background(), l3)
 
 	// Search by data type
@@ -233,6 +236,28 @@ func TestSearchListings(t *testing.T) {
 	}
 	if result.Total != 2 {
 		t.Errorf("Total = %d, want 2", result.Total)
+	}
+
+	// Search by listing kind
+	result, err = svc.SearchListings(context.Background(), &SearchQuery{
+		ListingKinds: []ListingKind{ListingKindWASMModule},
+	})
+	if err != nil {
+		t.Fatalf("SearchListings failed: %v", err)
+	}
+	if result.Total != 1 || result.Listings[0].ListingKind != ListingKindWASMModule {
+		t.Errorf("WASM module search result = %+v", result)
+	}
+
+	// Search by marketplace tag
+	result, err = svc.SearchListings(context.Background(), &SearchQuery{
+		Tags: []string{"propagation"},
+	})
+	if err != nil {
+		t.Fatalf("SearchListings failed: %v", err)
+	}
+	if result.Total != 1 || result.Listings[0].Title != "GEO Orbit Predictions" {
+		t.Errorf("tag search result = %+v", result)
 	}
 
 	// All listings
