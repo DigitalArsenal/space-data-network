@@ -12,7 +12,7 @@ import {
   fieldStreamValueStateCategory,
 } from 'spacedatastandards.org/lib/js/FSM/main.js';
 
-import { aesGcmDecryptWithIv } from './crypto/hd-wallet';
+import { aesGcmDecryptWithIv, sha256 } from './crypto/hd-wallet';
 
 type GeneratedEnum = Record<string, string | number>;
 type FieldKeyMap = Record<string, Uint8Array> | Map<string, Uint8Array>;
@@ -112,6 +112,19 @@ export interface FieldStreamAccessGrant {
   expiresAt?: bigint | number | string | Date;
   revokedAt?: bigint | number | string | Date;
   revocationReason?: string;
+  providerSignature?: Uint8Array;
+  signaturePayload?: Uint8Array;
+}
+
+export interface FieldStreamProviderSignatureInput {
+  message: FieldStreamMessageSummary;
+  signature: Uint8Array;
+}
+
+export interface FieldStreamGrantSignatureInput {
+  grant: FieldStreamAccessGrant;
+  signature: Uint8Array;
+  signaturePayload?: Uint8Array;
 }
 
 export interface FieldStreamDecryptFieldInput {
@@ -130,6 +143,8 @@ export interface FieldStreamDecryptFieldInput {
 export interface ResolveFieldStreamMessageViewOptions {
   now?: bigint | number | string | Date;
   decryptField?: (input: FieldStreamDecryptFieldInput) => Promise<Uint8Array> | Uint8Array;
+  verifyProviderSignature?: (input: FieldStreamProviderSignatureInput) => Promise<boolean> | boolean;
+  verifyGrantSignature?: (input: FieldStreamGrantSignatureInput) => Promise<boolean> | boolean;
   replayGuard?: FieldStreamReplayGuard;
   aadForField?: (
     message: FieldStreamMessageSummary,
@@ -324,6 +339,8 @@ export async function resolveFieldStreamMessageView(
     : bytesOrSummary;
 
   validateGrantForMessage(message, grant, options.now);
+  await verifyMessageProviderSignature(message, options);
+  await verifyAccessGrantSignature(grant, options);
   options.replayGuard?.check(message);
 
   const allowedFieldPaths = new Set(grant.allowedFieldPaths);
@@ -402,6 +419,9 @@ export async function resolveFieldStreamMessageView(
     const tag = requiredBytes(field.tag, `field ${field.fieldPath} authentication tag`);
     const nonce = requiredBytes(field.nonce, `field ${field.fieldPath} nonce`);
     const aad = options.aadForField?.(message, field, grant) ?? new Uint8Array(0);
+    if (options.aadForField) {
+      await verifyFieldAadHash(field, aad);
+    }
     let plaintext: Uint8Array;
     try {
       plaintext = await decryptField({
@@ -444,6 +464,49 @@ export async function resolveFieldStreamMessageView(
   };
   options.replayGuard?.accept(message);
   return view;
+}
+
+async function verifyMessageProviderSignature(
+  message: FieldStreamMessageSummary,
+  options: ResolveFieldStreamMessageViewOptions,
+): Promise<void> {
+  if (!options.verifyProviderSignature) {
+    return;
+  }
+  const signature = requiredBytes(message.providerSignature, 'field stream provider signature');
+  const ok = await options.verifyProviderSignature({
+    message,
+    signature: cloneBytes(signature),
+  });
+  if (!ok) {
+    throw new Error('field stream provider signature invalid');
+  }
+}
+
+async function verifyAccessGrantSignature(
+  grant: FieldStreamAccessGrant,
+  options: ResolveFieldStreamMessageViewOptions,
+): Promise<void> {
+  if (!options.verifyGrantSignature) {
+    return;
+  }
+  const signature = requiredBytes(grant.providerSignature, 'field stream grant signature');
+  const ok = await options.verifyGrantSignature({
+    grant,
+    signature: cloneBytes(signature),
+    signaturePayload: cloneOptionalBytes(grant.signaturePayload),
+  });
+  if (!ok) {
+    throw new Error('field stream grant signature invalid');
+  }
+}
+
+async function verifyFieldAadHash(field: FieldStreamFieldSummary, aad: Uint8Array): Promise<void> {
+  const expected = requiredBytes(field.aadHash, `field ${field.fieldPath} aad hash`);
+  const actual = await sha256(aad);
+  if (!bytesEqual(actual, expected)) {
+    throw new Error(`field ${field.fieldPath} aad hash mismatch`);
+  }
 }
 
 function enumName(enumMap: GeneratedEnum, value: number | null | undefined): string {
@@ -593,6 +656,17 @@ function concatBytes(...chunks: Uint8Array[]): Uint8Array<ArrayBuffer> {
     offset += chunk.length;
   }
   return out;
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  let diff = 0;
+  for (let i = 0; i < left.length; i += 1) {
+    diff |= left[i] ^ right[i];
+  }
+  return diff === 0;
 }
 
 function toOptionalBigInt(value: bigint | number | string | Date | undefined): bigint | undefined {
