@@ -7,6 +7,96 @@ const titles = {
   conjunction: 'Conjunction'
 };
 
+const fallbackFixtures = {
+  "node": {
+    "name": "Local SDN Node",
+    "peerId": "12D3KooWDesignerLocalNode",
+    "status": "online",
+    "mode": "desktop-local",
+    "api": "http://127.0.0.1:5001",
+    "gateway": "http://127.0.0.1:8080",
+    "storage": "4.8 GB",
+    "identity": {
+      "state": "unlocked",
+      "entity": "Space Data Network Operator",
+      "epmCid": "bafkreidesignerpublicepmexample",
+      "vcard": "Space Data Network Operator"
+    },
+    "service": {
+      "state": "running",
+      "autostart": true,
+      "update": "0.47.0 current"
+    }
+  },
+  "peers": [
+    {
+      "id": "16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45",
+      "name": "SpaceAware.io",
+      "role": "Provider",
+      "trust": "trusted",
+      "addr": "/ip4/159.203.150.8/tcp/4001",
+      "agent": "spacedatanetwork/1.0.3",
+      "feeds": ["EPM", "MPE", "PNM"],
+      "epmCid": "bafkreiggawraezbltnl3anwmabtuhvmlhdiotx5pxuqa7zmxkfjjjq35d4"
+    },
+    {
+      "id": "16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3",
+      "name": "CelesTrak Provider",
+      "role": "Provider",
+      "trust": "trusted",
+      "addr": "/ip4/167.172.219.213/tcp/4001",
+      "agent": "spacedatanetwork/1.0.3",
+      "feeds": ["CAT", "OMM", "SPW"],
+      "epmCid": "bafkreiekghfegduqfol5jemuagc7rpqnvfw5ilk67d5nybhred6ubfxwr4"
+    }
+  ],
+  "standards": [
+    { "id": "CAT", "label": "Satellite Catalog", "rows": 8462, "state": "synced" },
+    { "id": "EPM", "label": "Entity Profile Metadata", "rows": 44, "state": "synced" },
+    { "id": "MPE", "label": "Maneuver Ephemeris", "rows": 18, "state": "encrypted" },
+    { "id": "OMM", "label": "Orbit Mean-Elements Message", "rows": 9120, "state": "synced" },
+    { "id": "PNM", "label": "Provider Navigation Message", "rows": 236, "state": "synced" },
+    { "id": "SPW", "label": "Space Weather", "rows": 96, "state": "fresh" }
+  ],
+  "channels": [
+    {
+      "id": "mpe-screening-alpha",
+      "standard": "MPE",
+      "visibility": "private",
+      "subscription": "active",
+      "grant": "granted",
+      "encryption": "sealed",
+      "recipient": "SpaceAware.io CA Assessor"
+    },
+    {
+      "id": "provider-pnm-sync",
+      "standard": "PNM",
+      "visibility": "controlled",
+      "subscription": "active",
+      "grant": "not required",
+      "encryption": "signed",
+      "recipient": "Local SDN Node"
+    }
+  ],
+  "conjunction": {
+    "mode": "private-maneuver-ephemeris",
+    "primary": "SpaceAware MPE grant",
+    "secondary": "CelesTrak public catalog",
+    "assessor": "SpaceAware.io CA Assessor",
+    "module": "sdn-ca-screen/1.0.0",
+    "resultChannel": "ca-results-private",
+    "rows": [
+      { "object": "SAT-44713", "tca": "2026-06-25T18:42:00Z", "missDistanceKm": 1.84, "pc": "2.1e-5", "state": "review" },
+      { "object": "SAT-57944", "tca": "2026-06-26T03:10:00Z", "missDistanceKm": 8.92, "pc": "4.8e-7", "state": "clear" }
+    ],
+    "provenance": {
+      "grant": "grant-mpe-alpha",
+      "queryHash": "sha256:designerqueryexample",
+      "resultHash": "sha256:designerresultexample"
+    }
+  }
+};
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -32,8 +122,18 @@ let state = {
 const screen = document.querySelector('#screen');
 const screenTitle = document.querySelector('#screen-title');
 
+async function loadFixtures() {
+  try {
+    const response = await fetch('./data/fixtures.json');
+    if (!response.ok) throw new Error(`fixture load failed: ${response.status}`);
+    return await response.json();
+  } catch {
+    return fallbackFixtures;
+  }
+}
+
 async function init() {
-  fixtures = await fetch('./data/fixtures.json').then((response) => response.json());
+  fixtures = await loadFixtures();
   state.selectedPeerId = fixtures.peers[0]?.id ?? '';
   state.selectedChannelId = fixtures.channels[0]?.id ?? '';
   document.querySelectorAll('[data-route]').forEach((button) => {
