@@ -21,7 +21,19 @@ export interface WrappedContentKeyLike {
 
 export interface LoadedModuleHarnessLike {
   invoke: (request: unknown) => Promise<unknown>;
+  invokeDirect?: (request: unknown) => Promise<unknown>;
+  runtime?: {
+    surface?: 'direct' | 'command' | string;
+  };
+  memory?: WebAssembly.Memory;
   destroy?: () => void;
+}
+
+export interface LoadDecryptedModuleOptions {
+  observer?: ModuleDeliveryObserver;
+  sharedMemory?: boolean;
+  initialMemoryBytes?: number;
+  maximumMemoryBytes?: number;
 }
 
 export interface GrantProtectedModuleBundleInput {
@@ -164,22 +176,46 @@ export async function decryptGrantProtectedModuleBundle(
 
 export async function loadDecryptedModule(
   wasmBytes: Uint8Array,
-  observer?: ModuleDeliveryObserver,
+  observerOrOptions?: ModuleDeliveryObserver | LoadDecryptedModuleOptions,
 ): Promise<LoadedModuleHarnessLike> {
-  emit(observer, {
+  const options = normalizeLoadOptions(observerOrOptions);
+  emit(options.observer, {
     stage: 'sdk-load-start',
     timestamp: Date.now(),
     bytes: wasmBytes.length,
   });
   const harness = await createBrowserModuleHarness({
     wasmSource: wasmBytes,
+    sharedMemory: options.sharedMemory,
+    initialMemoryBytes: options.initialMemoryBytes,
+    maximumMemoryBytes: options.maximumMemoryBytes,
   });
-  emit(observer, {
+  emit(options.observer, {
     stage: 'sdk-load-complete',
     timestamp: Date.now(),
     bytes: wasmBytes.length,
   });
   return harness as LoadedModuleHarnessLike;
+}
+
+function normalizeLoadOptions(
+  observerOrOptions?: ModuleDeliveryObserver | LoadDecryptedModuleOptions,
+): LoadDecryptedModuleOptions {
+  if (!observerOrOptions) {
+    return {};
+  }
+  const options = observerOrOptions as LoadDecryptedModuleOptions;
+  if (
+    'sharedMemory' in options ||
+    'initialMemoryBytes' in options ||
+    'maximumMemoryBytes' in options ||
+    'observer' in options
+  ) {
+    return options;
+  }
+  return {
+    observer: observerOrOptions as ModuleDeliveryObserver,
+  };
 }
 
 export async function invokeLoadedModule<TResult = unknown>(
@@ -193,7 +229,11 @@ export async function invokeLoadedModule<TResult = unknown>(
   });
 
   try {
-    const result = await harness.invoke(request);
+    const invokeRequest = prepareInvokeRequest(harness, request);
+    const invoke = shouldUseDirectExternalArena(harness, request) && harness.invokeDirect
+      ? harness.invokeDirect
+      : harness.invoke;
+    const result = await invoke(invokeRequest);
     emit(observer, {
       stage: 'invoke-result',
       timestamp: Date.now(),
@@ -208,6 +248,27 @@ export async function invokeLoadedModule<TResult = unknown>(
     });
     throw error;
   }
+}
+
+function shouldUseDirectExternalArena(harness: LoadedModuleHarnessLike, request: unknown): boolean {
+  if (harness.runtime?.surface !== 'direct') {
+    return false;
+  }
+  return request !== null &&
+    typeof request === 'object' &&
+    !Array.isArray(request) &&
+    !(request instanceof Uint8Array) &&
+    !('externalArena' in request);
+}
+
+function prepareInvokeRequest(harness: LoadedModuleHarnessLike, request: unknown): unknown {
+  if (!shouldUseDirectExternalArena(harness, request)) {
+    return request;
+  }
+  return {
+    ...(request as Record<string, unknown>),
+    externalArena: harness.memory ? new Uint8Array(harness.memory.buffer) : new Uint8Array(0),
+  };
 }
 
 function decodeKmfKeyBytes(bytes: Uint8Array): Uint8Array {

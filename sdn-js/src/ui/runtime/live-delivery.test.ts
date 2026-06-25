@@ -107,6 +107,31 @@ describe('live-delivery', () => {
     ]);
   });
 
+  it('uses direct external arena invocation for direct-surface SDK harnesses', async () => {
+    const invoke = vi.fn(async () => ({ statusCode: 1, outputs: [] }));
+    const invokeDirect = vi.fn(async () => ({ statusCode: 0, outputs: [] }));
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const response = await invokeLoadedModule(
+      {
+        runtime: { surface: 'direct' },
+        memory,
+        invoke,
+        invokeDirect,
+      },
+      { methodId: 'echo', inputs: [] },
+    );
+
+    expect(response.statusCode).toBe(0);
+    expect(invoke).not.toHaveBeenCalled();
+    expect(invokeDirect).toHaveBeenCalledTimes(1);
+    expect(invokeDirect.mock.calls[0]?.[0]).toMatchObject({
+      methodId: 'echo',
+      inputs: [],
+      externalArena: expect.any(Uint8Array),
+    });
+    expect((invokeDirect.mock.calls[0]?.[0] as { externalArena: Uint8Array }).externalArena.buffer).toBe(memory.buffer);
+  });
+
   it('fails closed for encrypted grant key unwraps that must run in client-decrypt WASM', async () => {
     await expect(
       unwrapGrantContentKey(

@@ -51,6 +51,17 @@ export type {
   RequesterIdentity,
 } from './module-delivery';
 export {
+  decodeFieldStreamMessageSummary,
+  decodeFieldStreamPolicySummary,
+} from './field-stream';
+export type {
+  FieldStreamAudienceSummary,
+  FieldStreamFieldSummary,
+  FieldStreamMessageSummary,
+  FieldStreamPolicySummary,
+  FieldStreamRuleSummary,
+} from './field-stream';
+export {
   normalizeEPMDescriptor,
   normalizeServerDescriptor,
 } from './server-descriptor';

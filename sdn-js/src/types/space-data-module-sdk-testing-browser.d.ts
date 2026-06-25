@@ -1,6 +1,11 @@
 declare module 'space-data-module-sdk/testing/browser' {
   export interface BrowserModuleHarness {
     invoke: (request: unknown) => Promise<unknown>;
+    invokeDirect?: (request: unknown) => Promise<unknown>;
+    runtime?: {
+      surface?: 'direct' | 'command' | string;
+    };
+    memory?: WebAssembly.Memory;
   }
 
   export interface CreateBrowserModuleHarnessOptions {
@@ -12,6 +17,9 @@ declare module 'space-data-module-sdk/testing/browser' {
     hostOptions?: Record<string, unknown>;
     performance?: Performance;
     logOutput?: boolean;
+    sharedMemory?: boolean;
+    initialMemoryBytes?: number;
+    maximumMemoryBytes?: number;
   }
 
   export function createBrowserModuleHarness(

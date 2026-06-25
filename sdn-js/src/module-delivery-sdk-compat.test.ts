@@ -111,6 +111,8 @@ int echo(void) {
   return 0;
 }
 `,
+    importedMemory: true,
+    sharedMemory: true,
   });
 }
 
@@ -210,7 +212,11 @@ describe('module-delivery SDK compatibility', () => {
         fetched.encryptedBundleBytes,
         unwrappedKey,
       );
-      const harness = await ui.loadDecryptedModule(decryptedWasm);
+      const harness = await ui.loadDecryptedModule(decryptedWasm, {
+        sharedMemory: true,
+        initialMemoryBytes: 64 * 1024 * 1024,
+        maximumMemoryBytes: 2 * 1024 * 1024 * 1024,
+      });
       const response = await ui.invokeLoadedModule<{
         statusCode: number;
         outputs: Array<{ payload: Uint8Array }>;
