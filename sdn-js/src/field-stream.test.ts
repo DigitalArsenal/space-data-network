@@ -19,6 +19,7 @@ import {
 } from 'spacedatastandards.org/lib/js/FSM/main.js';
 
 import {
+  createFieldStreamReplayGuard,
   decodeFieldStreamMessageSummary,
   decodeFieldStreamPolicySummary,
   resolveFieldStreamMessageView,
@@ -266,6 +267,128 @@ describe('field stream marketplace envelopes', () => {
       },
     })).rejects.toThrow(/failed to decrypt field position/i);
   });
+
+  it('rejects replayed or out-of-order FSM sequences before decrypting fields', async () => {
+    const replayGuard = createFieldStreamReplayGuard();
+    const decryptField = vi.fn(async () => textEncoder.encode('decrypted-position'));
+    const grant = {
+      subjectId: 'customer-alpha-peer',
+      providerPeerId: 'provider-peer',
+      listingId: 'listing-maneuver-ephemeris',
+      streamId: 'maneuver-ephemeris-live',
+      schemaCode: 'MPE',
+      policyId: 'policy-mpe-alpha',
+      policyVersion: 3,
+      keyEpoch: 'epoch-7',
+      allowedFieldPaths: ['position'],
+      fieldKeysById: {
+        'field-key:alpha:position:epoch-7': new Uint8Array([0xa1]),
+      },
+    };
+
+    await resolveFieldStreamMessageView(
+      encodeMessageFixture({ sequence: 1n }),
+      grant,
+      { decryptField, replayGuard },
+    );
+    await expect(resolveFieldStreamMessageView(
+      encodeMessageFixture({ sequence: 1n }),
+      grant,
+      { decryptField, replayGuard },
+    )).rejects.toThrow(/replayed field stream sequence/i);
+    await expect(resolveFieldStreamMessageView(
+      encodeMessageFixture({ sequence: 0n }),
+      grant,
+      { decryptField, replayGuard },
+    )).rejects.toThrow(/replayed field stream sequence/i);
+
+    await resolveFieldStreamMessageView(
+      encodeMessageFixture({ sequence: 2n }),
+      grant,
+      { decryptField, replayGuard },
+    );
+    expect(decryptField).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects expired grants and expired FSM envelopes before decrypting fields', async () => {
+    const decryptField = vi.fn(async () => textEncoder.encode('decrypted-position'));
+    const grant = {
+      subjectId: 'customer-alpha-peer',
+      providerPeerId: 'provider-peer',
+      listingId: 'listing-maneuver-ephemeris',
+      streamId: 'maneuver-ephemeris-live',
+      schemaCode: 'MPE',
+      policyId: 'policy-mpe-alpha',
+      policyVersion: 3,
+      keyEpoch: 'epoch-7',
+      allowedFieldPaths: ['position'],
+      fieldKeysById: {
+        'field-key:alpha:position:epoch-7': new Uint8Array([0xa1]),
+      },
+    };
+
+    await expect(resolveFieldStreamMessageView(
+      encodeMessageFixture(),
+      { ...grant, expiresAt: 1_800_000_000_000n },
+      { decryptField, now: 1_800_000_000_001n },
+    )).rejects.toThrow(/grant expired/i);
+
+    await expect(resolveFieldStreamMessageView(
+      encodeMessageFixture(),
+      { ...grant, revokedAt: 1_800_000_000_000n, revocationReason: 'key epoch rotated' },
+      { decryptField, now: 1_800_000_000_001n },
+    )).rejects.toThrow(/grant revoked: key epoch rotated/i);
+
+    await expect(resolveFieldStreamMessageView(
+      encodeMessageFixture({ expiresAt: 1_800_000_150_000n }),
+      grant,
+      { decryptField, now: 1_800_000_150_001n },
+    )).rejects.toThrow(/message expired/i);
+
+    expect(decryptField).not.toHaveBeenCalled();
+  });
+
+  it('does not advance replay state when field decryption fails', async () => {
+    const replayGuard = createFieldStreamReplayGuard();
+    const grant = {
+      subjectId: 'customer-alpha-peer',
+      providerPeerId: 'provider-peer',
+      listingId: 'listing-maneuver-ephemeris',
+      streamId: 'maneuver-ephemeris-live',
+      schemaCode: 'MPE',
+      policyId: 'policy-mpe-alpha',
+      policyVersion: 3,
+      keyEpoch: 'epoch-7',
+      allowedFieldPaths: ['position'],
+      fieldKeysById: {
+        'field-key:alpha:position:epoch-7': new Uint8Array([0xa1]),
+      },
+    };
+
+    await expect(resolveFieldStreamMessageView(
+      encodeMessageFixture({ sequence: 9n }),
+      grant,
+      {
+        replayGuard,
+        decryptField: async () => {
+          throw new Error('authentication failed');
+        },
+      },
+    )).rejects.toThrow(/failed to decrypt field position/i);
+
+    const recovered = await resolveFieldStreamMessageView(
+      encodeMessageFixture({ sequence: 9n }),
+      grant,
+      {
+        replayGuard,
+        decryptField: async () => textEncoder.encode('decrypted-position'),
+      },
+    );
+    expect(recovered.sequence).toBe(9n);
+    expect(recovered.fields.find((field) => field.fieldPath === 'position')).toMatchObject({
+      visibility: 'decrypted',
+    });
+  });
 });
 
 function encodePolicyFixture(): Uint8Array {
@@ -331,6 +454,8 @@ interface EncryptedFieldFixture {
 function encodeMessageFixture(options: {
   subjectId?: string | null;
   encryptedFields?: EncryptedFieldFixture[];
+  sequence?: bigint;
+  expiresAt?: bigint;
 } = {}): Uint8Array {
   const encryptedFields = options.encryptedFields ?? [
     {
@@ -352,9 +477,9 @@ function encodeMessageFixture(options: {
     'policy-mpe-alpha',
     3,
     'epoch-7',
-    1n,
+    options.sequence ?? 1n,
     1_800_000_100_000n,
-    1_800_000_160_000n,
+    options.expiresAt ?? 1_800_000_160_000n,
     options.subjectId === null ? null : options.subjectId ?? 'customer-alpha-peer',
     [
       new FieldStreamValueT(

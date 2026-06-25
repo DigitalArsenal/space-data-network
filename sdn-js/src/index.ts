@@ -51,6 +51,7 @@ export type {
   RequesterIdentity,
 } from './module-delivery';
 export {
+  createFieldStreamReplayGuard,
   decodeFieldStreamMessageSummary,
   decodeFieldStreamPolicySummary,
   resolveFieldStreamMessageView,
@@ -64,6 +65,7 @@ export type {
   FieldStreamMessageSummary,
   FieldStreamMessageView,
   FieldStreamPolicySummary,
+  FieldStreamReplayGuard,
   FieldStreamResolvedField,
   FieldStreamRuleSummary,
   ResolveFieldStreamMessageViewOptions,

@@ -130,6 +130,7 @@ export interface FieldStreamDecryptFieldInput {
 export interface ResolveFieldStreamMessageViewOptions {
   now?: bigint | number | string | Date;
   decryptField?: (input: FieldStreamDecryptFieldInput) => Promise<Uint8Array> | Uint8Array;
+  replayGuard?: FieldStreamReplayGuard;
   aadForField?: (
     message: FieldStreamMessageSummary,
     field: FieldStreamFieldSummary,
@@ -165,6 +166,35 @@ export interface FieldStreamMessageView {
   subjectId?: string;
   grantSubjectId: string;
   fields: FieldStreamResolvedField[];
+}
+
+export interface FieldStreamReplayGuard {
+  check(message: FieldStreamMessageSummary): void;
+  accept(message: FieldStreamMessageSummary): void;
+  reset(): void;
+}
+
+export function createFieldStreamReplayGuard(): FieldStreamReplayGuard {
+  const latestSequenceByScope = new Map<string, bigint>();
+  return {
+    check(message: FieldStreamMessageSummary): void {
+      const scope = fieldStreamReplayScope(message);
+      const previous = latestSequenceByScope.get(scope);
+      if (previous !== undefined && message.sequence <= previous) {
+        throw new Error(
+          `replayed field stream sequence ${message.sequence.toString()} for ${scope}; latest accepted sequence is ${previous.toString()}`,
+        );
+      }
+    },
+    accept(message: FieldStreamMessageSummary): void {
+      this.check(message);
+      const scope = fieldStreamReplayScope(message);
+      latestSequenceByScope.set(scope, message.sequence);
+    },
+    reset(): void {
+      latestSequenceByScope.clear();
+    },
+  };
 }
 
 export function decodeFieldStreamPolicySummary(bytes: Uint8Array): FieldStreamPolicySummary {
@@ -294,6 +324,7 @@ export async function resolveFieldStreamMessageView(
     : bytesOrSummary;
 
   validateGrantForMessage(message, grant, options.now);
+  options.replayGuard?.check(message);
 
   const allowedFieldPaths = new Set(grant.allowedFieldPaths);
   const redactedFieldPaths = new Set(grant.redactedFieldPaths ?? []);
@@ -397,7 +428,7 @@ export async function resolveFieldStreamMessageView(
     });
   }
 
-  return {
+  const view = {
     messageId: message.messageId,
     providerPeerId: message.providerPeerId,
     listingId: message.listingId,
@@ -411,6 +442,8 @@ export async function resolveFieldStreamMessageView(
     grantSubjectId: grant.subjectId,
     fields,
   };
+  options.replayGuard?.accept(message);
+  return view;
 }
 
 function enumName(enumMap: GeneratedEnum, value: number | null | undefined): string {
@@ -486,12 +519,13 @@ function validateGrantForMessage(
   if (grant.revokedAt !== undefined && grant.revokedAt !== null) {
     throw new Error(`field stream grant revoked${grant.revocationReason ? `: ${grant.revocationReason}` : ''}`);
   }
+  const now = toOptionalBigInt(nowInput) ?? BigInt(Date.now());
   const expiresAt = toOptionalBigInt(grant.expiresAt);
-  if (expiresAt !== undefined) {
-    const now = toOptionalBigInt(nowInput) ?? BigInt(Date.now());
-    if (now > expiresAt) {
-      throw new Error('field stream grant expired');
-    }
+  if (expiresAt !== undefined && now > expiresAt) {
+    throw new Error('field stream grant expired');
+  }
+  if (message.expiresAt !== undefined && now > message.expiresAt) {
+    throw new Error('field stream message expired');
   }
 }
 
@@ -499,6 +533,19 @@ function assertEqual(actual: string | undefined, expected: string | undefined, l
   if ((actual ?? '') !== (expected ?? '')) {
     throw new Error(`field stream grant ${label} mismatch: message=${actual ?? ''} grant=${expected ?? ''}`);
   }
+}
+
+function fieldStreamReplayScope(message: FieldStreamMessageSummary): string {
+  return [
+    message.providerPeerId,
+    message.listingId,
+    message.streamId,
+    message.schemaCode,
+    message.policyId,
+    String(message.policyVersion),
+    message.keyEpoch ?? '',
+    message.subjectId ?? '*',
+  ].join('\x1f');
 }
 
 function baseResolvedField(field: FieldStreamFieldSummary): Omit<FieldStreamResolvedField, 'visibility'> {
