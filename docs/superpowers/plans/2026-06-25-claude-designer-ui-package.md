@@ -86,12 +86,16 @@ function readPackageFile(relativePath) {
   return readFileSync(join(packageDir, relativePath), 'utf8');
 }
 
+function lines(text) {
+  return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
 function listZipEntries() {
   const zipinfo = spawnSync('zipinfo', ['-1', zipPath], { encoding: 'utf8' });
-  if (zipinfo.status === 0) return zipinfo.stdout.trim().split('\n').filter(Boolean);
+  if (zipinfo.status === 0) return lines(zipinfo.stdout);
   const unzip = spawnSync('unzip', ['-Z1', zipPath], { encoding: 'utf8' });
   assert.equal(unzip.status, 0, `${zipinfo.stdout}\n${zipinfo.stderr}\n${unzip.stdout}\n${unzip.stderr}`);
-  return unzip.stdout.trim().split('\n').filter(Boolean);
+  return lines(unzip.stdout);
 }
 
 async function listFiles(root, prefix = '') {
@@ -174,7 +178,7 @@ describe('Claude Designer UI package generator', () => {
       .join('\n');
     assert.doesNotMatch(combinedText, /mnemonic|xpriv|private[_ -]?key|BEGIN [A-Z ]*PRIVATE KEY/i);
     assert.doesNotMatch(combinedText, /(?:"(?:token|secret|password)"\s*:|\b(?:token|secret|password)\s*[=:])/i);
-    assert.doesNotMatch(combinedText, /\/Users\/tj(?:\/|$)/i);
+    assert.doesNotMatch(combinedText, /(?:\/Users\/[^/\s]+(?:\/|$)|\/home\/[^/\s]+(?:\/|$)|[A-Z]:\\Users\\[^\\\s]+(?:\\|$))/i);
   });
 });
 ```
