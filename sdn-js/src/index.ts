@@ -51,6 +51,8 @@ export type {
   RequesterIdentity,
 } from './module-delivery';
 export {
+  buildFieldStreamGrantSignaturePayload,
+  buildFieldStreamProviderSignaturePayload,
   createFieldStreamReplayGuard,
   decodeFieldStreamMessageSummary,
   decodeFieldStreamPolicySummary,
@@ -62,6 +64,7 @@ export type {
   FieldStreamDecryptFieldInput,
   FieldStreamFieldSummary,
   FieldStreamFieldVisibility,
+  FieldStreamGrantPolicyPayload,
   FieldStreamGrantSignatureInput,
   FieldStreamMessageSummary,
   FieldStreamMessageView,

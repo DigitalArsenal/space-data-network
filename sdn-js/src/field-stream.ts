@@ -16,6 +16,7 @@ import { aesGcmDecryptWithIv, sha256 } from './crypto/hd-wallet';
 
 type GeneratedEnum = Record<string, string | number>;
 type FieldKeyMap = Record<string, Uint8Array> | Map<string, Uint8Array>;
+const textEncoder = new TextEncoder();
 
 export interface FieldStreamPolicySummary {
   policyId: string;
@@ -98,6 +99,7 @@ export type FieldStreamFieldVisibility =
   | 'unavailable';
 
 export interface FieldStreamAccessGrant {
+  grantId?: string;
   subjectId: string;
   providerPeerId: string;
   listingId: string;
@@ -109,22 +111,40 @@ export interface FieldStreamAccessGrant {
   allowedFieldPaths: string[];
   redactedFieldPaths?: string[];
   fieldKeysById?: FieldKeyMap;
+  grantedAt?: bigint | number | string | Date;
   expiresAt?: bigint | number | string | Date;
   revokedAt?: bigint | number | string | Date;
   revocationReason?: string;
+  deliveryTopic?: string;
+  grantScope?: string;
+  allowedOperations?: string[];
+  fieldStreamPolicy?: FieldStreamGrantPolicyPayload;
   providerSignature?: Uint8Array;
   signaturePayload?: Uint8Array;
+}
+
+export interface FieldStreamGrantPolicyPayload {
+  policyId?: string;
+  policyVersion?: number;
+  streamId?: string;
+  schemaCode?: string;
+  allowedFieldPaths?: string[];
+  redactedFieldPaths?: string[];
+  keyEpoch?: string;
+  grantScope?: string;
+  allowedOperations?: string[];
 }
 
 export interface FieldStreamProviderSignatureInput {
   message: FieldStreamMessageSummary;
   signature: Uint8Array;
+  signaturePayload: Uint8Array;
 }
 
 export interface FieldStreamGrantSignatureInput {
   grant: FieldStreamAccessGrant;
   signature: Uint8Array;
-  signaturePayload?: Uint8Array;
+  signaturePayload: Uint8Array;
 }
 
 export interface FieldStreamDecryptFieldInput {
@@ -466,6 +486,53 @@ export async function resolveFieldStreamMessageView(
   return view;
 }
 
+export function buildFieldStreamProviderSignaturePayload(message: FieldStreamMessageSummary): Uint8Array {
+  return textEncoder.encode(JSON.stringify({
+    message_id: message.messageId,
+    provider_peer_id: message.providerPeerId,
+    listing_id: message.listingId,
+    stream_id: message.streamId,
+    schema_code: message.schemaCode,
+    schema_hash: bytesToHexOrNull(message.schemaHash),
+    policy_id: message.policyId,
+    policy_version: message.policyVersion,
+    key_epoch: message.keyEpoch ?? '',
+    sequence: message.sequence.toString(),
+    produced_at: message.producedAt?.toString() ?? '0',
+    expires_at: message.expiresAt?.toString() ?? '0',
+    subject_id: message.subjectId ?? '',
+    fields: message.fields.map((field) => ({
+      field_path: field.fieldPath,
+      field_id_path: [...field.fieldIdPath],
+      state: field.state,
+      encoding: field.encoding,
+      value: bytesToHexOrNull(field.value),
+      ciphertext: bytesToHexOrNull(field.ciphertext),
+      nonce: bytesToHexOrNull(field.nonce),
+      tag: bytesToHexOrNull(field.tag),
+      key_id: field.keyId ?? '',
+      aad_hash: bytesToHexOrNull(field.aadHash),
+      release_tags: [...field.releaseTags],
+      decision: field.decision ?? '',
+    })),
+    payload_hash: bytesToHexOrNull(message.payloadHash),
+    previous_message_hash: bytesToHexOrNull(message.previousMessageHash),
+  }));
+}
+
+export function buildFieldStreamGrantSignaturePayload(grant: FieldStreamAccessGrant): Uint8Array {
+  return textEncoder.encode([
+    grant.grantId ?? '',
+    grant.listingId,
+    grant.subjectId,
+    grant.providerPeerId,
+    unixSecondsForSignature(grant.grantedAt),
+    unixSecondsForSignature(grant.expiresAt),
+    grant.deliveryTopic ?? '',
+    canonicalGrantFieldStreamPolicy(grant),
+  ].join('\x1f'));
+}
+
 async function verifyMessageProviderSignature(
   message: FieldStreamMessageSummary,
   options: ResolveFieldStreamMessageViewOptions,
@@ -477,6 +544,7 @@ async function verifyMessageProviderSignature(
   const ok = await options.verifyProviderSignature({
     message,
     signature: cloneBytes(signature),
+    signaturePayload: buildFieldStreamProviderSignaturePayload(message),
   });
   if (!ok) {
     throw new Error('field stream provider signature invalid');
@@ -491,14 +559,32 @@ async function verifyAccessGrantSignature(
     return;
   }
   const signature = requiredBytes(grant.providerSignature, 'field stream grant signature');
+  const signaturePayload = cloneOptionalBytes(grant.signaturePayload)
+    ?? buildFieldStreamGrantSignaturePayload(grant);
   const ok = await options.verifyGrantSignature({
     grant,
     signature: cloneBytes(signature),
-    signaturePayload: cloneOptionalBytes(grant.signaturePayload),
+    signaturePayload,
   });
   if (!ok) {
     throw new Error('field stream grant signature invalid');
   }
+}
+
+function canonicalGrantFieldStreamPolicy(grant: FieldStreamAccessGrant): string {
+  const policy = grant.fieldStreamPolicy;
+  const canonical = {
+    policy_id: trimmed(policy?.policyId ?? grant.policyId),
+    policy_version: policy?.policyVersion ?? grant.policyVersion,
+    stream_id: trimmed(policy?.streamId ?? grant.streamId),
+    schema_code: trimmed(policy?.schemaCode ?? grant.schemaCode),
+    allowed_field_paths: grantStringVector(policy?.allowedFieldPaths ?? grant.allowedFieldPaths),
+    redacted_field_paths: grantStringVector(policy?.redactedFieldPaths ?? grant.redactedFieldPaths),
+    key_epoch: trimmed(policy?.keyEpoch ?? grant.keyEpoch),
+    grant_scope: trimmed(policy?.grantScope ?? grant.grantScope),
+    allowed_operations: grantStringVector(policy?.allowedOperations ?? grant.allowedOperations),
+  };
+  return JSON.stringify(canonical);
 }
 
 async function verifyFieldAadHash(field: FieldStreamFieldSummary, aad: Uint8Array): Promise<void> {
@@ -667,6 +753,57 @@ function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
     diff |= left[i] ^ right[i];
   }
   return diff === 0;
+}
+
+function bytesToHexOrNull(bytes: Uint8Array | undefined): string | null {
+  if (!bytes || bytes.length === 0) {
+    return null;
+  }
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function grantStringVector(values: string[] | undefined): string[] | null {
+  if (!values || values.length === 0) {
+    return null;
+  }
+  return values
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
+
+function trimmed(value: string | undefined): string {
+  return value?.trim() ?? '';
+}
+
+function unixSecondsForSignature(value: bigint | number | string | Date | undefined): string {
+  if (value === undefined || value === null) {
+    return '0';
+  }
+  if (value instanceof Date) {
+    return String(Math.trunc(value.getTime() / 1000));
+  }
+  let numeric: bigint;
+  if (typeof value === 'bigint') {
+    numeric = value;
+  } else if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new Error('field stream signature timestamp must be finite');
+    }
+    numeric = BigInt(Math.trunc(value));
+  } else {
+    const trimmedValue = value.trim();
+    if (/^-?\d+$/.test(trimmedValue)) {
+      numeric = BigInt(trimmedValue);
+    } else {
+      const parsed = Date.parse(trimmedValue);
+      if (!Number.isFinite(parsed)) {
+        throw new Error(`field stream signature timestamp is invalid: ${value}`);
+      }
+      return String(Math.trunc(parsed / 1000));
+    }
+  }
+  const absolute = numeric < 0n ? -numeric : numeric;
+  return (absolute > 10_000_000_000n ? numeric / 1000n : numeric).toString();
 }
 
 function toOptionalBigInt(value: bigint | number | string | Date | undefined): bigint | undefined {
