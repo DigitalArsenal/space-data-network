@@ -80,6 +80,24 @@ describe('marketplace page layout', () => {
     expect(source).toContain('verificationState');
   });
 
+  it('renders protected field-stream policy metadata without raw secrets', async () => {
+    const source = await readFile(marketplacePagePath, 'utf8');
+
+    expect(source).toContain('FieldStreamPolicyDetails');
+    expect(source).toContain('Field-stream policy');
+    expect(source).toContain('Policy ID');
+    expect(source).toContain('Policy version');
+    expect(source).toContain('Stream ID');
+    expect(source).toContain('Schema code');
+    expect(source).toContain('Key epoch');
+    expect(source).toContain('Allowed fields');
+    expect(source).toContain('Redacted fields');
+    expect(source).toContain('Allowed operations');
+    expect(source).not.toContain('provider_signature');
+    expect(source).not.toContain('wrapped_key');
+    expect(source).not.toContain('private_key');
+  });
+
   it('provides a purchase-to-grant panel using the Go storefront JSON contract', async () => {
     const source = await readFile(marketplacePagePath, 'utf8');
 

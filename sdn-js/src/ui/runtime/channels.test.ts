@@ -1,4 +1,12 @@
+import * as flatbuffers from 'flatbuffers';
 import { describe, expect, it } from 'vitest';
+import {
+  FSM,
+  FSMT,
+  FieldStreamValueT,
+  fieldStreamValueEncodingCategory,
+  fieldStreamValueStateCategory,
+} from 'spacedatastandards.org/lib/js/FSM/main.js';
 import { createRemoteSdnBackend } from './sdn-backend-remote';
 
 describe('SDN backend channel runtime surface', () => {
@@ -257,6 +265,73 @@ describe('SDN backend channel runtime surface', () => {
     }]);
   });
 
+  it('opens field stream messages as metadata-only field visibility rows', async () => {
+    const messageBytes = encodeFieldStreamMessageFixture();
+    const requests: Array<{ url: string; accept: string }> = [];
+    const fetchMock = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      requests.push({ url, accept: String(init?.headers && (init.headers as Record<string, string>).accept) });
+      if (url.endsWith('/api/v1/channels/spaceaware-MPE/stream?subject=customer-alpha&grantId=grant-alpha&visibility=private-listed')) {
+        return new Response(messageBytes, {
+          status: 200,
+          headers: { 'content-type': 'application/vnd.sdn.field-stream-message' },
+        });
+      }
+      return jsonResponse({ error: `unexpected ${url}` }, 404);
+    };
+
+    const backend = createRemoteSdnBackend({
+      serverUrl: 'https://sdn.spaceaware.io',
+      fetch: fetchMock,
+    });
+
+    const result = await (backend.channels as any).openFieldStream('spaceaware-MPE', {
+      subject: 'customer-alpha',
+      grantId: 'grant-alpha',
+      visibility: 'private-listed',
+    });
+
+    expect(requests).toEqual([{
+      url: 'https://sdn.spaceaware.io/api/v1/channels/spaceaware-MPE/stream?subject=customer-alpha&grantId=grant-alpha&visibility=private-listed',
+      accept: 'application/vnd.sdn.field-stream-message, application/vnd.sdn.flatbuffers.stream',
+    }]);
+    expect(result.ok).toBe(true);
+    expect(result.data).toMatchObject({
+      messageId: 'fsm-mpe-alpha-000001',
+      providerPeerId: 'provider-peer',
+      listingId: 'listing-maneuver-ephemeris',
+      streamId: 'maneuver-ephemeris-live',
+      schemaCode: 'MPE',
+      policyId: 'policy-mpe-alpha',
+      policyVersion: 3,
+      keyEpoch: 'epoch-7',
+      sequence: '1',
+      subjectId: 'customer-alpha-peer',
+    });
+    expect(result.data?.fields.map((field: { fieldPath: string; state: string }) => [field.fieldPath, field.state])).toEqual([
+      ['object_id', 'Public'],
+      ['position', 'Encrypted'],
+      ['maneuver_plan', 'Redacted'],
+      ['covariance_detail', 'Unavailable'],
+    ]);
+    expect(result.data?.fields[1]).toMatchObject({
+      fieldPath: 'position',
+      encoding: 'FlatBuffer',
+      keyId: 'field-key:alpha:position:epoch-7',
+      ciphertextLength: 4,
+      valueLength: 0,
+      releaseTags: ['restricted', 'customer-alpha'],
+      decision: 'allow-encrypted',
+    });
+    const payload = JSON.stringify(result.data);
+    expect(payload).not.toContain('provider_signature');
+    expect(payload).not.toContain('providerSignature');
+    expect(payload).not.toContain('"ciphertext":');
+    expect(payload).not.toContain('"nonce":');
+    expect(payload).not.toContain('"tag":');
+    expect(payload).not.toContain('"aadHash":');
+  });
+
   it('passes private grant context through protected channel actions', async () => {
     const requests: Array<{ url: string; method: string; contentType: string; encryptedStream: string; encryptedStreamHeader: string; encryptedRecordIndex: string; bodyText: string }> = [];
     const fetchMock = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -364,4 +439,87 @@ function jsonResponse(payload: unknown, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+function encodeFieldStreamMessageFixture(): Uint8Array {
+  const message = new FSMT(
+    'fsm-mpe-alpha-000001',
+    'provider-peer',
+    'listing-maneuver-ephemeris',
+    'maneuver-ephemeris-live',
+    'MPE',
+    Array.from(new Uint8Array(32).fill(0x61)),
+    'policy-mpe-alpha',
+    3,
+    'epoch-7',
+    1n,
+    1_800_000_100_000n,
+    1_800_000_160_000n,
+    'customer-alpha-peer',
+    [
+      new FieldStreamValueT(
+        'object_id',
+        [1],
+        fieldStreamValueStateCategory.Public,
+        fieldStreamValueEncodingCategory.TextUtf8,
+        Array.from(new TextEncoder().encode('SAT-042')),
+        [],
+        [],
+        [],
+        null,
+        [],
+        ['releasable'],
+        'allow-public',
+      ),
+      new FieldStreamValueT(
+        'position',
+        [3],
+        fieldStreamValueStateCategory.Encrypted,
+        fieldStreamValueEncodingCategory.FlatBuffer,
+        [],
+        [0xde, 0xad, 0xbe, 0xef],
+        Array.from(new Uint8Array(12).fill(0x21)),
+        Array.from(new Uint8Array(16).fill(0x22)),
+        'field-key:alpha:position:epoch-7',
+        Array.from(new Uint8Array(32).fill(0x23)),
+        ['restricted', 'customer-alpha'],
+        'allow-encrypted',
+      ),
+      new FieldStreamValueT(
+        'maneuver_plan',
+        [7],
+        fieldStreamValueStateCategory.Redacted,
+        fieldStreamValueEncodingCategory.JsonUtf8,
+        [],
+        [],
+        [],
+        [],
+        null,
+        [],
+        ['maneuver', 'not-granted'],
+        'redacted:not-granted',
+      ),
+      new FieldStreamValueT(
+        'covariance_detail',
+        [8],
+        fieldStreamValueStateCategory.Unavailable,
+        fieldStreamValueEncodingCategory.JsonUtf8,
+        [],
+        [],
+        [],
+        [],
+        null,
+        [],
+        ['covariance'],
+        'unavailable:not-published',
+      ),
+    ],
+    Array.from(new Uint8Array(32).fill(0x31)),
+    Array.from(new Uint8Array(32).fill(0x30)),
+    Array.from(new Uint8Array(64).fill(0xa1)),
+  );
+  const builder = new flatbuffers.Builder(1024);
+  const root = message.pack(builder);
+  FSM.finishFSMBuffer(builder, root);
+  return builder.asUint8Array();
 }

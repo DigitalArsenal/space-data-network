@@ -1,6 +1,12 @@
 import { decodeCanonicalPlgListing, inferStandardsUsed } from './plg-listings';
 import { decodeCanonicalStfListing } from './stf-listings';
-import type { CanonicalListing, CanonicalProtectedDelivery, ListingPaymentModel, ListingStatus } from './types';
+import type {
+  CanonicalFieldStreamPolicy,
+  CanonicalListing,
+  CanonicalProtectedDelivery,
+  ListingPaymentModel,
+  ListingStatus,
+} from './types';
 
 export interface MarketplaceFetchLikeResponse {
   ok: boolean;
@@ -291,9 +297,30 @@ function decodeProtectedDelivery(value: unknown): CanonicalProtectedDelivery | u
     requiredScopes: normalizeTags(value.required_scopes) ?? normalizeTags(value.requiredScopes),
     grantScope: pickTrimmedString(value, 'grant_scope') || pickTrimmedString(value, 'grantScope'),
     deliveryProtocol: pickTrimmedString(value, 'delivery_protocol') || pickTrimmedString(value, 'deliveryProtocol'),
+    fieldStreamPolicy: decodeFieldStreamPolicy(value.field_stream_policy ?? value.fieldStreamPolicy),
   };
   return Object.values(protectedDelivery).some((entry) => Array.isArray(entry) ? entry.length > 0 : Boolean(entry))
     ? protectedDelivery
+    : undefined;
+}
+
+function decodeFieldStreamPolicy(value: unknown): CanonicalFieldStreamPolicy | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const policy: CanonicalFieldStreamPolicy = {
+    policyId: pickTrimmedString(value, 'policy_id') || pickTrimmedString(value, 'policyId'),
+    policyVersion: numberField(value, 'policy_version') ?? numberField(value, 'policyVersion'),
+    streamId: pickTrimmedString(value, 'stream_id') || pickTrimmedString(value, 'streamId'),
+    schemaCode: pickTrimmedString(value, 'schema_code') || pickTrimmedString(value, 'schemaCode'),
+    allowedFieldPaths: normalizeTags(value.allowed_field_paths) ?? normalizeTags(value.allowedFieldPaths),
+    redactedFieldPaths: normalizeTags(value.redacted_field_paths) ?? normalizeTags(value.redactedFieldPaths),
+    keyEpoch: pickTrimmedString(value, 'key_epoch') || pickTrimmedString(value, 'keyEpoch'),
+    grantScope: pickTrimmedString(value, 'grant_scope') || pickTrimmedString(value, 'grantScope'),
+    allowedOperations: normalizeTags(value.allowed_operations) ?? normalizeTags(value.allowedOperations),
+  };
+  return Object.values(policy).some((entry) => Array.isArray(entry) ? entry.length > 0 : Boolean(entry))
+    ? policy
     : undefined;
 }
 

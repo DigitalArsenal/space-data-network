@@ -4,12 +4,14 @@ import {
   type BackendResult,
   type ChannelActionOptions,
   type ChannelBackend,
+  type ChannelFieldStreamMessage,
   type ChannelListOptions,
   type ChannelMonitor,
   type ChannelMonitorTimings,
   type ChannelSummary,
 } from './sdn-backend';
 import { getBytes, getJson, joinUrl, recordsFromPayload, type FetchLike } from './sdn-backend-adapter-utils';
+import { decodeFieldStreamMessageSummary, type FieldStreamMessageSummary } from '../../field-stream';
 
 export function createHttpChannelBackend(fetchLike: FetchLike, baseUrl: string | null | undefined): ChannelBackend {
   return {
@@ -53,6 +55,13 @@ export function createHttpChannelBackend(fetchLike: FetchLike, baseUrl: string |
         headers: { accept: 'application/vnd.sdn.flatbuffers.stream' },
       });
     },
+    async openFieldStream(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<ChannelFieldStreamMessage>> {
+      const result = await getBytes(fetchLike, channelActionUrl(baseUrl, channelId, 'stream', options), 'channels.openFieldStream', {
+        headers: { accept: 'application/vnd.sdn.field-stream-message, application/vnd.sdn.flatbuffers.stream' },
+      });
+      if (!result.ok || !result.data) return result as unknown as BackendResult<ChannelFieldStreamMessage>;
+      return createAvailableResult('channels.openFieldStream', normalizeFieldStreamMessage(decodeFieldStreamMessageSummary(result.data)));
+    },
     async monitor(channelId: string, options?: ChannelActionOptions): Promise<BackendResult<ChannelMonitor>> {
       const result = await getJson<unknown>(fetchLike, channelActionUrl(baseUrl, channelId, 'monitor', options), 'channels.monitor');
       if (!result.ok) return result as BackendResult<ChannelMonitor>;
@@ -71,6 +80,7 @@ export function createUnavailableChannelBackend(reason: string): ChannelBackend 
     issueGrant: () => Promise.resolve(createCapabilityResult('channels.issueGrant', 'unavailable', reason)),
     keyUnwrap: () => Promise.resolve(createCapabilityResult('channels.keyUnwrap', 'unavailable', reason)),
     openStream: () => Promise.resolve(createCapabilityResult('channels.openStream', 'unavailable', reason)),
+    openFieldStream: () => Promise.resolve(createCapabilityResult('channels.openFieldStream', 'unavailable', reason)),
     monitor: () => Promise.resolve(createCapabilityResult('channels.monitor', 'unavailable', reason)),
   };
 }
@@ -176,6 +186,32 @@ function normalizeChannelMonitorTimings(payload: unknown): ChannelMonitorTimings
     decrypt: pickNumber(record, 'decrypt') ?? 0,
     hashVerification: pickNumber(record, 'hashVerification') ?? 0,
     durableImport: pickNumber(record, 'durableImport') ?? 0,
+  };
+}
+
+function normalizeFieldStreamMessage(message: FieldStreamMessageSummary): ChannelFieldStreamMessage {
+  return {
+    messageId: message.messageId,
+    providerPeerId: message.providerPeerId,
+    listingId: message.listingId,
+    streamId: message.streamId,
+    schemaCode: message.schemaCode,
+    policyId: message.policyId,
+    policyVersion: message.policyVersion,
+    keyEpoch: message.keyEpoch,
+    sequence: message.sequence.toString(),
+    subjectId: message.subjectId,
+    fields: message.fields.map((field) => ({
+      fieldPath: field.fieldPath,
+      fieldIdPath: field.fieldIdPath,
+      state: field.state,
+      encoding: field.encoding,
+      keyId: field.keyId,
+      ciphertextLength: field.ciphertextLength,
+      valueLength: field.value?.byteLength ?? 0,
+      releaseTags: field.releaseTags,
+      decision: field.decision,
+    })),
   };
 }
 
