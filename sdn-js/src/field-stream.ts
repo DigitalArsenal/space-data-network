@@ -166,11 +166,36 @@ export interface ResolveFieldStreamMessageViewOptions {
   verifyProviderSignature?: (input: FieldStreamProviderSignatureInput) => Promise<boolean> | boolean;
   verifyGrantSignature?: (input: FieldStreamGrantSignatureInput) => Promise<boolean> | boolean;
   replayGuard?: FieldStreamReplayGuard;
+  auditEvent?: (event: FieldStreamAuditEvent) => void;
   aadForField?: (
     message: FieldStreamMessageSummary,
     field: FieldStreamFieldSummary,
     grant: FieldStreamAccessGrant,
   ) => Uint8Array | undefined;
+}
+
+export type FieldStreamAuditEventType =
+  | 'field_stream.decrypt_success'
+  | 'field_stream.decrypt_denied'
+  | 'field_stream.key_epoch_mismatch';
+
+export interface FieldStreamAuditEvent {
+  type: FieldStreamAuditEventType;
+  messageId: string;
+  providerPeerId: string;
+  listingId: string;
+  streamId: string;
+  schemaCode: string;
+  policyId: string;
+  policyVersion: number;
+  keyEpoch?: string;
+  sequence: string;
+  grantId?: string;
+  grantSubjectId: string;
+  fieldPath?: string;
+  reason?: string;
+  messageKeyEpoch?: string;
+  grantKeyEpoch?: string;
 }
 
 export interface FieldStreamResolvedField {
@@ -358,6 +383,14 @@ export async function resolveFieldStreamMessageView(
     ? decodeFieldStreamMessageSummary(bytesOrSummary)
     : bytesOrSummary;
 
+  if ((message.keyEpoch ?? '') !== (grant.keyEpoch ?? '')) {
+    emitFieldStreamAuditEvent(options, message, grant, {
+      type: 'field_stream.key_epoch_mismatch',
+      reason: 'key_epoch_mismatch',
+      messageKeyEpoch: message.keyEpoch ?? '',
+      grantKeyEpoch: grant.keyEpoch ?? '',
+    });
+  }
   validateGrantForMessage(message, grant, options.now);
   await verifyMessageProviderSignature(message, options);
   await verifyAccessGrantSignature(grant, options);
@@ -407,6 +440,11 @@ export async function resolveFieldStreamMessageView(
     }
 
     if (!allowedFieldPaths.has(field.fieldPath)) {
+      emitFieldStreamAuditEvent(options, message, grant, {
+        type: 'field_stream.decrypt_denied',
+        fieldPath: field.fieldPath,
+        reason: 'field_not_granted',
+      });
       fields.push({
         ...baseResolvedField(field),
         visibility: 'encrypted',
@@ -417,6 +455,11 @@ export async function resolveFieldStreamMessageView(
 
     const keyId = field.keyId;
     if (!keyId) {
+      emitFieldStreamAuditEvent(options, message, grant, {
+        type: 'field_stream.decrypt_denied',
+        fieldPath: field.fieldPath,
+        reason: 'missing_key_id',
+      });
       fields.push({
         ...baseResolvedField(field),
         visibility: 'encrypted',
@@ -427,6 +470,11 @@ export async function resolveFieldStreamMessageView(
 
     const keyBytes = fieldKeyBytes(grant.fieldKeysById, keyId);
     if (!keyBytes) {
+      emitFieldStreamAuditEvent(options, message, grant, {
+        type: 'field_stream.decrypt_denied',
+        fieldPath: field.fieldPath,
+        reason: 'missing_field_key',
+      });
       fields.push({
         ...baseResolvedField(field),
         visibility: 'encrypted',
@@ -465,6 +513,10 @@ export async function resolveFieldStreamMessageView(
       ...baseResolvedField(field),
       visibility: 'decrypted',
       plaintext: cloneBytes(plaintext),
+    });
+    emitFieldStreamAuditEvent(options, message, grant, {
+      type: 'field_stream.decrypt_success',
+      fieldPath: field.fieldPath,
     });
   }
 
@@ -680,6 +732,32 @@ async function defaultDecryptField(input: FieldStreamDecryptFieldInput): Promise
     cloneBytes(input.nonce),
     cloneBytes(input.aad),
   );
+}
+
+function emitFieldStreamAuditEvent(
+  options: ResolveFieldStreamMessageViewOptions,
+  message: FieldStreamMessageSummary,
+  grant: FieldStreamAccessGrant,
+  event: Pick<FieldStreamAuditEvent, 'type'> & Partial<FieldStreamAuditEvent>,
+): void {
+  options.auditEvent?.({
+    type: event.type,
+    messageId: message.messageId,
+    providerPeerId: message.providerPeerId,
+    listingId: message.listingId,
+    streamId: message.streamId,
+    schemaCode: message.schemaCode,
+    policyId: message.policyId,
+    policyVersion: message.policyVersion,
+    keyEpoch: message.keyEpoch,
+    sequence: message.sequence.toString(),
+    grantId: grant.grantId,
+    grantSubjectId: grant.subjectId,
+    fieldPath: event.fieldPath,
+    reason: event.reason,
+    messageKeyEpoch: event.messageKeyEpoch,
+    grantKeyEpoch: event.grantKeyEpoch,
+  });
 }
 
 function validateGrantForMessage(

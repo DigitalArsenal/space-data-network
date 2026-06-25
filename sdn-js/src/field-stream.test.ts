@@ -354,6 +354,114 @@ describe('field stream marketplace envelopes', () => {
     expect(decryptField).not.toHaveBeenCalled();
   });
 
+  it('emits non-secret audit events for decrypt success, denied fields, and stale key epochs', async () => {
+    const auditEvents: Array<Record<string, unknown>> = [];
+    const decryptField = vi.fn(async ({ fieldPath }: { fieldPath: string }) => textEncoder.encode(`decrypted:${fieldPath}`));
+    const messageBytes = encodeMessageFixture({
+      subjectId: null,
+      encryptedFields: [
+        {
+          fieldPath: 'position',
+          fieldIdPath: [3],
+          keyId: 'field-key:position:epoch-7',
+          ciphertext: [0x10, 0x11, 0x12],
+          decision: 'allow-encrypted',
+          releaseTags: ['restricted', 'orbital-state'],
+        },
+        {
+          fieldPath: 'covariance_detail',
+          fieldIdPath: [4],
+          keyId: 'field-key:covariance:epoch-7',
+          ciphertext: [0x20, 0x21, 0x22],
+          decision: 'allow-encrypted',
+          releaseTags: ['restricted', 'covariance'],
+        },
+      ],
+    });
+
+    const view = await resolveFieldStreamMessageView(messageBytes, {
+      grantId: 'grant-alpha',
+      subjectId: 'customer-alpha-peer',
+      providerPeerId: 'provider-peer',
+      listingId: 'listing-maneuver-ephemeris',
+      streamId: 'maneuver-ephemeris-live',
+      schemaCode: 'MPE',
+      policyId: 'policy-mpe-alpha',
+      policyVersion: 3,
+      keyEpoch: 'epoch-7',
+      allowedFieldPaths: ['position'],
+      fieldKeysById: {
+        'field-key:position:epoch-7': new Uint8Array([0xa1]),
+      },
+    }, {
+      decryptField,
+      auditEvent: (event: Record<string, unknown>) => auditEvents.push(event),
+    });
+
+    expect(view.fields.find((field) => field.fieldPath === 'position')).toMatchObject({
+      visibility: 'decrypted',
+    });
+    expect(view.fields.find((field) => field.fieldPath === 'covariance_detail')).toMatchObject({
+      visibility: 'encrypted',
+      reason: 'field_not_granted',
+    });
+    expect(auditEvents).toEqual([
+      expect.objectContaining({
+        type: 'field_stream.decrypt_success',
+        fieldPath: 'position',
+        grantId: 'grant-alpha',
+        grantSubjectId: 'customer-alpha-peer',
+        policyId: 'policy-mpe-alpha',
+        keyEpoch: 'epoch-7',
+      }),
+      expect.objectContaining({
+        type: 'field_stream.decrypt_denied',
+        fieldPath: 'covariance_detail',
+        reason: 'field_not_granted',
+        grantId: 'grant-alpha',
+        grantSubjectId: 'customer-alpha-peer',
+        policyId: 'policy-mpe-alpha',
+        keyEpoch: 'epoch-7',
+      }),
+    ]);
+    expect(JSON.stringify(auditEvents)).not.toContain('ciphertext');
+    expect(JSON.stringify(auditEvents)).not.toContain('keyBytes');
+    expect(JSON.stringify(auditEvents)).not.toContain('nonce');
+    expect(JSON.stringify(auditEvents)).not.toContain('tag');
+
+    const rotationAuditEvents: Array<Record<string, unknown>> = [];
+    await expect(resolveFieldStreamMessageView(encodeMessageFixture(), {
+      grantId: 'grant-alpha-stale',
+      subjectId: 'customer-alpha-peer',
+      providerPeerId: 'provider-peer',
+      listingId: 'listing-maneuver-ephemeris',
+      streamId: 'maneuver-ephemeris-live',
+      schemaCode: 'MPE',
+      policyId: 'policy-mpe-alpha',
+      policyVersion: 3,
+      keyEpoch: 'epoch-6',
+      allowedFieldPaths: ['position'],
+      fieldKeysById: {
+        'field-key:alpha:position:epoch-7': new Uint8Array([0xa1]),
+      },
+    }, {
+      decryptField,
+      auditEvent: (event: Record<string, unknown>) => rotationAuditEvents.push(event),
+    })).rejects.toThrow(/key epoch/i);
+
+    expect(rotationAuditEvents).toEqual([
+      expect.objectContaining({
+        type: 'field_stream.key_epoch_mismatch',
+        grantId: 'grant-alpha-stale',
+        grantSubjectId: 'customer-alpha-peer',
+        messageKeyEpoch: 'epoch-7',
+        grantKeyEpoch: 'epoch-6',
+        policyId: 'policy-mpe-alpha',
+      }),
+    ]);
+    expect(decryptField).toHaveBeenCalledTimes(1);
+  });
+
   it('does not advance replay state when field decryption fails', async () => {
     const replayGuard = createFieldStreamReplayGuard();
     const grant = {
