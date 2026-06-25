@@ -1115,7 +1115,43 @@ func (s *Service) RemoveGroupMember(ctx context.Context, groupID, memberPeerID, 
 	if err := s.store.CreateGroupKeyEpoch(epoch); err != nil {
 		return nil, err
 	}
+	s.recordGroupKeyRotationAudit(member, epoch)
 	return epoch, nil
+}
+
+func (s *Service) recordGroupKeyRotationAudit(member *GroupMember, epoch *GroupKeyEpoch) {
+	if member == nil || epoch == nil {
+		return
+	}
+	requestID := strings.TrimSpace(member.GrantID)
+	status := PurchaseStatusCompleted
+	if purchase, err := s.store.GetPurchaseRequestByGrantID(member.GrantID); err == nil && purchase != nil {
+		requestID = purchase.RequestID
+		status = purchase.Status
+	} else if err != nil {
+		log.Warnf("Failed to load purchase for group key rotation audit %s: %v", epoch.EpochID, err)
+	}
+	if requestID == "" {
+		return
+	}
+	actor := strings.TrimSpace(epoch.RotatedBy)
+	if actor == "" {
+		actor = s.peerID
+	}
+	parts := []string{"Field stream key rotated"}
+	if groupID := strings.TrimSpace(epoch.GroupID); groupID != "" {
+		parts = append(parts, "group "+groupID)
+	}
+	if listingID := strings.TrimSpace(epoch.ListingID); listingID != "" {
+		parts = append(parts, "listing "+listingID)
+	}
+	if policyID := strings.TrimSpace(epoch.PolicyID); policyID != "" {
+		parts = append(parts, "policy "+policyID)
+	}
+	message := strings.Join(parts, "; ")
+	if err := s.recordPaymentAudit(requestID, PaymentAuditStreamKeyRotated, actor, epoch.EpochID, message, status); err != nil {
+		log.Warnf("Failed to record group key rotation audit event for %s: %v", epoch.EpochID, err)
+	}
 }
 
 // GetRequesterGroupEnvelope returns only the active requester-specific envelope.
