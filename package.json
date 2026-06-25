@@ -19,6 +19,8 @@
     "stress:flatsql-replication": "./scripts/go-with-wasmedge.sh test -v -tags=stress -timeout=10m ./internal/stress -run TestLiveFlatSQLReplication -count=1",
     "chaos:local": "cd sdn-js && npm run chaos:local --",
     "chaos:docker-cluster": "node deployment/scripts/chaos-local-cluster.mjs",
+    "demo:hydra-marketplace": "node deployment/scripts/hydra-marketplace-demo.mjs",
+    "test:hydra-marketplace-demo": "node deployment/scripts/hydra-marketplace-demo.mjs --dry-run --json",
     "server": "./scripts/go-with-wasmedge.sh run ./cmd/spacedatanetwork",
     "admin:dev": "./scripts/admin-dev.sh",
     "admin:dev:http": "SDN_ADMIN_DEV_TLS_MODE=disabled ./scripts/admin-dev.sh",
