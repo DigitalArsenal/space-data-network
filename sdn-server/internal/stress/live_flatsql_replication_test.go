@@ -17,7 +17,7 @@ func TestLiveFlatSQLReplicationBenchmarkMeetsWireSpeedGate(t *testing.T) {
 	result, err := RunLiveFlatSQLReplicationBenchmark(ctx, LiveFlatSQLReplicationOptions{
 		TargetBytes:     targetBytes,
 		ProbeBytes:      targetBytes,
-		WireSpeedTarget: 0.90,
+		WireSpeedTarget: 0.99,
 	})
 	if err != nil {
 		t.Fatalf("RunLiveFlatSQLReplicationBenchmark failed: %v", err)
@@ -68,7 +68,7 @@ func TestLiveFlatSQLReplicationRangeResumeKeepsVerifiedPrefixAndImportsRows(t *t
 	result, err := RunLiveFlatSQLRangeResumeBenchmark(ctx, LiveFlatSQLReplicationOptions{
 		TargetBytes:     targetBytes,
 		ProbeBytes:      targetBytes,
-		WireSpeedTarget: 0.90,
+		WireSpeedTarget: 0.99,
 	}, LiveFlatSQLRangeResumeOptions{
 		InterruptAfterBytes: targetBytes / 3,
 	})
@@ -132,24 +132,24 @@ func TestLiveFlatSQLReplicationCanAlternateRangesAcrossTwoProviders(t *testing.T
 	}
 }
 
-func TestLiveFlatSQLConfiguredWireSpeedGateUsesTwoGbitNinetyPercent(t *testing.T) {
+func TestLiveFlatSQLConfiguredWireSpeedGateUsesTwoGbitNearFullWireSpeed(t *testing.T) {
 	t.Setenv("SDN_WIRESPEED_TEST", "1")
 	t.Setenv("SDN_TEST_LINK_GBIT", "2")
 
-	below := evaluateLiveFlatSQLConfiguredWireSpeedGate(224_999_999, 0.90)
+	below := evaluateLiveFlatSQLConfiguredWireSpeedGate(247_499_999, 0.99)
 	if !below.Enabled {
 		t.Fatalf("configured wire-speed gate was not enabled: %#v", below)
 	}
-	if below.LinkBytesPerSecond != 250_000_000 || below.RequiredBytesPerSecond != 225_000_000 {
+	if below.LinkBytesPerSecond != 250_000_000 || below.RequiredBytesPerSecond != 247_500_000 {
 		t.Fatalf("configured wire-speed gate bytes mismatch: %#v", below)
 	}
 	if below.TargetMet {
-		t.Fatalf("configured wire-speed gate passed below 1.8 Gbit/s: %#v", below)
+		t.Fatalf("configured wire-speed gate passed below 1.98 Gbit/s: %#v", below)
 	}
 
-	atTarget := evaluateLiveFlatSQLConfiguredWireSpeedGate(225_000_000, 0.90)
+	atTarget := evaluateLiveFlatSQLConfiguredWireSpeedGate(247_500_000, 0.99)
 	if !atTarget.TargetMet {
-		t.Fatalf("configured wire-speed gate failed at 1.8 Gbit/s: %#v", atTarget)
+		t.Fatalf("configured wire-speed gate failed at 1.98 Gbit/s: %#v", atTarget)
 	}
 }
 
@@ -157,7 +157,7 @@ func TestLiveFlatSQLWireSpeedAcceptanceUsesConfiguredGateWhenEnabled(t *testing.
 	t.Setenv("SDN_WIRESPEED_TEST", "1")
 	t.Setenv("SDN_TEST_LINK_GBIT", "2")
 
-	acceptance := evaluateLiveFlatSQLWireSpeedAcceptance(225_000_000, 2_000_000_000, 0.90)
+	acceptance := evaluateLiveFlatSQLWireSpeedAcceptance(247_500_000, 2_000_000_000, 0.99)
 	if !acceptance.ConfiguredGate.Enabled {
 		t.Fatalf("configured wire-speed gate was not enabled: %#v", acceptance)
 	}
@@ -165,7 +165,7 @@ func TestLiveFlatSQLWireSpeedAcceptanceUsesConfiguredGateWhenEnabled(t *testing.
 		t.Fatalf("configured acceptance must preserve measured target miss evidence: %#v", acceptance)
 	}
 	if !acceptance.TargetMet {
-		t.Fatalf("configured 2 Gbit/s acceptance failed at 1.8 Gbit/s despite a faster loopback probe: %#v", acceptance)
+		t.Fatalf("configured 2 Gbit/s acceptance failed at 1.98 Gbit/s despite a faster loopback probe: %#v", acceptance)
 	}
 }
 
@@ -173,7 +173,7 @@ func TestLiveFlatSQLWireSpeedAcceptanceTreatsDefaultRunAsSmoke(t *testing.T) {
 	t.Setenv("SDN_WIRESPEED_TEST", "")
 	t.Setenv("SDN_TEST_LINK_GBIT", "")
 
-	acceptance := evaluateLiveFlatSQLWireSpeedAcceptance(1_500_000_000, 2_000_000_000, 0.90)
+	acceptance := evaluateLiveFlatSQLWireSpeedAcceptance(1_500_000_000, 2_000_000_000, 0.99)
 	if acceptance.ConfiguredGate.Enabled {
 		t.Fatalf("configured wire-speed gate should be disabled by default: %#v", acceptance)
 	}

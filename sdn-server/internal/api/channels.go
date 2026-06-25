@@ -918,9 +918,11 @@ type channelWireSpeedGate struct {
 	ThroughputBytesPerSec  int64
 }
 
+const channelWireSpeedTarget = 0.99
+
 func evaluateChannelWireSpeedGate(throughputBPS int64, wireUtilization *float64, timings channelThroughputTimings) channelWireSpeedGate {
 	gate := channelWireSpeedGate{
-		Target:                0.90,
+		Target:                channelWireSpeedTarget,
 		Timings:               timings,
 		WireUtilization:       wireUtilization,
 		ThroughputBytesPerSec: throughputBPS,
@@ -1669,9 +1671,8 @@ func (h *ChannelHandler) channelMonitor(parsed channels.ChannelID) map[string]in
 	payload["throughputBytesPerSecond"] = metadata.ThroughputBPS
 	payload["wireSpeedUtilization"] = metadata.WireUtilization
 	if linkBytesPerSecond, ok := channelLinkBytesPerSecond(); ok {
-		target := 0.90
-		requiredBytesPerSecond := int64(linkBytesPerSecond * target)
-		payload["wireSpeedTarget"] = target
+		requiredBytesPerSecond := int64(linkBytesPerSecond * channelWireSpeedTarget)
+		payload["wireSpeedTarget"] = channelWireSpeedTarget
 		payload["requiredBytesPerSecond"] = requiredBytesPerSecond
 		payload["targetMet"] = metadata.ThroughputBPS >= requiredBytesPerSecond
 	}

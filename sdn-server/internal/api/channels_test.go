@@ -1085,14 +1085,38 @@ func TestChannelHandlerReportsNativeStreamWireSpeedUtilization(t *testing.T) {
 	if utilization, ok := monitorBody["wireSpeedUtilization"].(float64); !ok || utilization <= 0 {
 		t.Fatalf("monitor did not report native stream wire-speed utilization: %#v", monitorBody)
 	}
-	if monitorBody["wireSpeedTarget"] != 0.9 {
-		t.Fatalf("monitor wire speed target = %#v, want 0.9 body=%#v", monitorBody["wireSpeedTarget"], monitorBody)
+	if monitorBody["wireSpeedTarget"] != 0.99 {
+		t.Fatalf("monitor wire speed target = %#v, want 0.99 body=%#v", monitorBody["wireSpeedTarget"], monitorBody)
 	}
-	if monitorBody["requiredBytesPerSecond"] != 225_000_000.0 {
-		t.Fatalf("monitor required bytes/sec = %#v, want 225000000 body=%#v", monitorBody["requiredBytesPerSecond"], monitorBody)
+	if monitorBody["requiredBytesPerSecond"] != 247_500_000.0 {
+		t.Fatalf("monitor required bytes/sec = %#v, want 247500000 body=%#v", monitorBody["requiredBytesPerSecond"], monitorBody)
 	}
 	if _, ok := monitorBody["targetMet"].(bool); !ok {
 		t.Fatalf("monitor did not report wire-speed target status: %#v", monitorBody)
+	}
+}
+
+func TestChannelWireSpeedGateRequiresNearFullWireSpeed(t *testing.T) {
+	t.Setenv("SDN_WIRESPEED_TEST", "1")
+	t.Setenv("SDN_TEST_LINK_GBIT", "2")
+
+	below := evaluateChannelWireSpeedGate(247_499_999, measuredWireSpeedUtilization(247_499_999), channelThroughputTimings{})
+	if !below.Enabled {
+		t.Fatalf("channel wire-speed gate was not enabled: %#v", below)
+	}
+	if below.Target != 0.99 {
+		t.Fatalf("channel wire-speed target = %v, want 0.99", below.Target)
+	}
+	if below.RequiredBytesPerSecond != 247_500_000 {
+		t.Fatalf("required bytes/sec = %d, want 247500000", below.RequiredBytesPerSecond)
+	}
+	if below.TargetMet {
+		t.Fatalf("channel wire-speed gate passed below 99%% of 2 Gbit/s: %#v", below)
+	}
+
+	atTarget := evaluateChannelWireSpeedGate(247_500_000, measuredWireSpeedUtilization(247_500_000), channelThroughputTimings{})
+	if !atTarget.TargetMet {
+		t.Fatalf("channel wire-speed gate failed at 99%% of 2 Gbit/s: %#v", atTarget)
 	}
 }
 
@@ -1129,11 +1153,11 @@ func TestChannelHandlerEnforcesWirespeedGateWhenEnabled(t *testing.T) {
 		t.Fatalf("wirespeed-gated stream publish status = %d body=%s", streamRec.Code, streamRec.Body.String())
 	}
 	body := decodeChannelJSON(t, streamRec.Body.String())
-	if body["wireSpeedTarget"] != 0.9 {
-		t.Fatalf("wire speed target = %#v, want 0.9 body=%#v", body["wireSpeedTarget"], body)
+	if body["wireSpeedTarget"] != 0.99 {
+		t.Fatalf("wire speed target = %#v, want 0.99 body=%#v", body["wireSpeedTarget"], body)
 	}
-	if body["requiredBytesPerSecond"] != 225_000_000.0 {
-		t.Fatalf("required bytes/sec = %#v, want 225000000 body=%#v", body["requiredBytesPerSecond"], body)
+	if body["requiredBytesPerSecond"] != 247_500_000.0 {
+		t.Fatalf("required bytes/sec = %#v, want 247500000 body=%#v", body["requiredBytesPerSecond"], body)
 	}
 	if body["targetMet"] != false {
 		t.Fatalf("targetMet = %#v, want false body=%#v", body["targetMet"], body)
