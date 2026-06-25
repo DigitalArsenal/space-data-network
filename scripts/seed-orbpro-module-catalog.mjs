@@ -168,13 +168,12 @@ const DEFAULT_ORBPRO_MODULES = Object.freeze([
     keyExport: "recipientPrivateKeyHex",
   }),
   Object.freeze({
-    slug: "fastest-path",
-    protectedModulePath:
-      "packages/orbpro-integration/analysis.fastest-path/dist/fastest-path-encrypted.js",
-    protectedExports: Object.freeze([
-      Object.freeze({ exportName: "encryptedData", slug: "fastest-path" }),
-    ]),
-    keyExport: "recipientPrivateKeyHex",
+    slug: "sensor-coverage",
+    moduleId: "sensor-coverage-analysis",
+    wasmPath:
+      "packages/space-data-network-modules/analysis/sensor-coverage/dist/isomorphic/module.wasm",
+    manifestPath:
+      "packages/space-data-network-modules/analysis/sensor-coverage/plugin-manifest.json",
   }),
   Object.freeze({
     slug: "orbit-determination",
@@ -207,6 +206,7 @@ const DEFAULT_ORBPRO_MODULES = Object.freeze([
   }),
   Object.freeze({
     slug: "wasm-engine",
+    moduleId: "com.orbpro.wasm-engine",
     protectedModulePath:
       "packages/wasm-engine/dist/wasm-engine-sdn-encrypted.js",
     protectedExports: Object.freeze([

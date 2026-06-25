@@ -199,10 +199,10 @@ describe('crypto', () => {
       const iv = randomBytes(12);
       const plaintext = new TextEncoder().encode('module content key');
       const aad = new TextEncoder().encode(
-        'module=com.space-data-network.fastest-path;version=0.5.22;cid=bafyencryptedmodule',
+        'module=sensor-coverage-analysis;version=0.1.0;cid=bafyencryptedmodule',
       );
       const tamperedAad = new TextEncoder().encode(
-        'module=com.space-data-network.fastest-path;version=0.5.23;cid=bafyencryptedmodule',
+        'module=sensor-coverage-analysis;version=0.1.1;cid=bafyencryptedmodule',
       );
 
       const ciphertext = await aesGcmEncryptWithIv(key, plaintext, iv, aad);

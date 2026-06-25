@@ -64,8 +64,8 @@ await test("seedOrbproModuleCatalog upserts requested modules and preserves unre
     ),
   );
 
-  const wasmPath = path.join(tempRoot, "fastest-path.module.wasm");
-  const manifestPath = path.join(tempRoot, "fastest-path.plugin-manifest.json");
+  const wasmPath = path.join(tempRoot, "sensor-coverage.module.wasm");
+  const manifestPath = path.join(tempRoot, "sensor-coverage.plugin-manifest.json");
   const wasmBytes = new Uint8Array([
     0x00,
     0x61,
@@ -79,15 +79,15 @@ await test("seedOrbproModuleCatalog upserts requested modules and preserves unre
   await fs.writeFile(wasmPath, wasmBytes);
   await fs.writeFile(
     manifestPath,
-    JSON.stringify(createTestManifest("com.orbpro.fastest-path", "local-dev"), null, 2),
+    JSON.stringify(createTestManifest("sensor-coverage-analysis", "local-dev"), null, 2),
   );
 
   const summary = await seedOrbproModuleCatalog({
     pluginRoot,
     modules: [
       {
-        slug: "fastest-path",
-        moduleId: "com.orbpro.fastest-path",
+        slug: "sensor-coverage",
+        moduleId: "sensor-coverage-analysis",
         version: "local-dev",
         wasmPath,
         manifestPath,
@@ -96,14 +96,14 @@ await test("seedOrbproModuleCatalog upserts requested modules and preserves unre
   });
 
   assert.equal(summary.seeded.length, 1);
-  assert.equal(summary.seeded[0].moduleId, "com.orbpro.fastest-path");
+  assert.equal(summary.seeded[0].moduleId, "sensor-coverage-analysis");
   assert.equal(summary.seeded[0].contentKeyHex.length, 64);
   assert.equal(summary.seeded[0].hasMbl, true);
   assert.equal(summary.seeded[0].hasEnc, true);
   assert.equal(summary.seeded[0].hasPnm, true);
 
-  const encryptedPath = path.join(pluginRoot, "fastest-path.wasm.enc");
-  const keyPath = path.join(pluginRoot, "fastest-path.key");
+  const encryptedPath = path.join(pluginRoot, "sensor-coverage.wasm.enc");
+  const keyPath = path.join(pluginRoot, "sensor-coverage.key");
   const [encryptedBytes, keyHex, catalogRaw] = await Promise.all([
     fs.readFile(encryptedPath),
     fs.readFile(keyPath, "utf8"),
@@ -125,18 +125,18 @@ await test("seedOrbproModuleCatalog upserts requested modules and preserves unre
   assert.deepEqual(decrypted, wasmBytes);
   assert.deepEqual(
     catalog.plugins.map((entry) => entry.id).sort(),
-    ["com.orbpro.fastest-path", "existing.module"],
+    ["existing.module", "sensor-coverage-analysis"],
   );
 
   const seededEntry = catalog.plugins.find(
-    (entry) => entry.id === "com.orbpro.fastest-path",
+    (entry) => entry.id === "sensor-coverage-analysis",
   );
   assert.deepEqual(seededEntry, {
-    id: "com.orbpro.fastest-path",
+    id: "sensor-coverage-analysis",
     version: "local-dev",
     required_scope: "orbpro:base",
-    encrypted_path: "fastest-path.wasm.enc",
-    key_path: "fastest-path.key",
+    encrypted_path: "sensor-coverage.wasm.enc",
+    key_path: "sensor-coverage.key",
     content_type: "application/wasm+encrypted",
     cache_control: "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400",
   });
@@ -205,6 +205,7 @@ await test("DEFAULT_ORBPRO_MODULES includes the protected wasm-engine runtime ar
     wasmEngineRuntime?.protectedModulePath,
     "packages/wasm-engine/dist/wasm-engine-sdn-encrypted.js",
   );
+  assert.equal(wasmEngineRuntime?.moduleId, "com.orbpro.wasm-engine");
   assert.equal(wasmEngineRuntime?.protectedExports?.[0]?.exportName, "encryptedData");
 });
 

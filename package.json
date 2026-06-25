@@ -72,6 +72,6 @@
     "baseline-browser-mapping": "^2.10.0",
     "flatc-wasm": "^26.1.32",
     "husky": "^9.1.7",
-    "space-data-module-sdk": "github:DigitalArsenal/space-data-module-sdk#aa5bf2e"
+    "space-data-module-sdk": "https://github.com/DigitalArsenal/space-data-module-sdk/archive/080a5348a613e06480090ea59a61ed24e0fce846.tar.gz"
   }
 }
