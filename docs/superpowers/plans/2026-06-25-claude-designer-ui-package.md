@@ -77,7 +77,8 @@ function runGenerator() {
     outputDir
   ], {
     cwd: repoRoot,
-    encoding: 'utf8'
+    encoding: 'utf8',
+    timeout: 120000
   });
 }
 
@@ -146,9 +147,9 @@ describe('Claude Designer UI package generator', () => {
     assert.equal(existsSync(zipPath), true, 'ZIP archive should exist');
     assert.ok(statSync(zipPath).size > 10_000, 'ZIP archive should contain prototype and screenshots');
     const zipEntries = listZipEntries();
-    for (const file of requiredFiles) {
-      assert.equal(zipEntries.includes(`claude-designer-ui-package/${file}`), true, `ZIP should include ${file}`);
-    }
+    const expectedZipEntries = requiredFiles.map((file) => `claude-designer-ui-package/${file}`).sort();
+    const actualZipEntries = zipEntries.filter((entry) => !entry.endsWith('/')).sort();
+    assert.deepEqual(actualZipEntries, expectedZipEntries);
 
     const indexHtml = readPackageFile('prototype/index.html');
     const appJs = readPackageFile('prototype/app.js');
