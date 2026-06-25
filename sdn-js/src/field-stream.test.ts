@@ -20,6 +20,8 @@ import {
 } from 'spacedatastandards.org/lib/js/FSM/main.js';
 
 import {
+  buildFieldStreamGrantSignaturePayload,
+  buildFieldStreamProviderSignaturePayload,
   createFieldStreamReplayGuard,
   decodeFieldStreamMessageSummary,
   decodeFieldStreamPolicySummary,
@@ -478,6 +480,69 @@ describe('field stream marketplace envelopes', () => {
     )).rejects.toThrow(/aad hash/i);
 
     expect(decryptField).not.toHaveBeenCalled();
+  });
+
+  it('builds a stable provider signature payload that excludes only the provider signature', () => {
+    const message = decodeFieldStreamMessageSummary(encodeMessageFixture());
+    const payload = buildFieldStreamProviderSignaturePayload(message);
+    const parsed = JSON.parse(new TextDecoder().decode(payload));
+
+    expect(parsed.provider_signature).toBeUndefined();
+    expect(parsed).toMatchObject({
+      message_id: 'fsm-mpe-alpha-000001',
+      provider_peer_id: 'provider-peer',
+      listing_id: 'listing-maneuver-ephemeris',
+      stream_id: 'maneuver-ephemeris-live',
+      schema_code: 'MPE',
+      policy_id: 'policy-mpe-alpha',
+      policy_version: 3,
+      key_epoch: 'epoch-7',
+      sequence: '1',
+      subject_id: 'customer-alpha-peer',
+    });
+    expect(parsed.fields[1]).toMatchObject({
+      field_path: 'position',
+      ciphertext: 'deadbeef',
+      aad_hash: '2323232323232323232323232323232323232323232323232323232323232323',
+    });
+
+    const changedSignaturePayload = buildFieldStreamProviderSignaturePayload({
+      ...message,
+      providerSignature: new Uint8Array(64).fill(0xff),
+    });
+    expect(new TextDecoder().decode(changedSignaturePayload)).toBe(new TextDecoder().decode(payload));
+
+    const changedCiphertextPayload = buildFieldStreamProviderSignaturePayload({
+      ...message,
+      fields: message.fields.map((field) => field.fieldPath === 'position'
+        ? { ...field, ciphertext: new Uint8Array([0xde, 0xad, 0xbe, 0x00]), ciphertextLength: 4 }
+        : field),
+    });
+    expect(new TextDecoder().decode(changedCiphertextPayload)).not.toBe(new TextDecoder().decode(payload));
+  });
+
+  it('builds grant signature payloads matching the storefront field policy binding', () => {
+    const payload = new TextDecoder().decode(buildFieldStreamGrantSignaturePayload({
+      ...customerAlphaGrant(),
+      grantId: 'grant-alpha-1',
+      grantedAt: new Date(1_800_000_100_000),
+      expiresAt: new Date(1_800_000_160_000),
+      deliveryTopic: '/space-data-network/field-stream/listing-maneuver-ephemeris/customer-alpha-peer',
+      redactedFieldPaths: ['maneuver_plan'],
+      grantScope: 'stream:listing-maneuver-ephemeris:maneuver-ephemeris-live',
+      allowedOperations: ['Subscribe', 'Decrypt'],
+    }));
+
+    expect(payload).toBe([
+      'grant-alpha-1',
+      'listing-maneuver-ephemeris',
+      'customer-alpha-peer',
+      'provider-peer',
+      '1800000100',
+      '1800000160',
+      '/space-data-network/field-stream/listing-maneuver-ephemeris/customer-alpha-peer',
+      '{"policy_id":"policy-mpe-alpha","policy_version":3,"stream_id":"maneuver-ephemeris-live","schema_code":"MPE","allowed_field_paths":["position"],"redacted_field_paths":["maneuver_plan"],"key_epoch":"epoch-7","grant_scope":"stream:listing-maneuver-ephemeris:maneuver-ephemeris-live","allowed_operations":["Subscribe","Decrypt"]}',
+    ].join('\x1f'));
   });
 });
 
