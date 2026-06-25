@@ -86,8 +86,10 @@ describe('Claude Designer UI package generator', () => {
     assert.match(indexHtml, /prototype\/data\/fixtures\.json/);
 
     const fixtures = JSON.parse(readPackageFile('prototype/data/fixtures.json'));
-    assert.equal(fixtures.peers.some((peer) => peer.id === '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45'), true);
-    assert.equal(fixtures.peers.some((peer) => peer.id === '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3'), true);
+    const spaceAwarePeer = fixtures.peers.find((peer) => peer.name === 'SpaceAware.io');
+    const celesTrakPeer = fixtures.peers.find((peer) => peer.name === 'CelesTrak Provider');
+    assert.equal(spaceAwarePeer?.id, '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45');
+    assert.equal(celesTrakPeer?.id, '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3');
     assert.deepEqual(fixtures.standards.map((standard) => standard.id), ['CAT', 'EPM', 'MPE', 'OMM', 'PNM', 'SPW']);
 
     const files = await listFiles(packageDir);
@@ -99,6 +101,7 @@ describe('Claude Designer UI package generator', () => {
       .map((file) => readPackageFile(file))
       .join('\n');
     assert.doesNotMatch(combinedText, /mnemonic|xpriv|private[_ -]?key|BEGIN [A-Z ]*PRIVATE KEY/i);
-    assert.doesNotMatch(combinedText, /\/Users\/tj\/software\/orbpro-stack|\/Users\/tj\/\.config/i);
+    assert.doesNotMatch(combinedText, /(?:"(?:token|secret|password)"\s*:|\b(?:token|secret|password)\s*[=:])/i);
+    assert.doesNotMatch(combinedText, /\/Users\/tj(?:\/|$)/i);
   });
 });
