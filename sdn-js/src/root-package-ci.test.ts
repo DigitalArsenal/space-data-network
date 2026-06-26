@@ -30,4 +30,18 @@ describe('root package CI install contract', () => {
     expect(command).toContain('TestLiveFlatSQLReplicationBenchmarkMeetsWireSpeedGate');
     expect(command).toContain('vitest.stress.config.mts');
   });
+
+  it('exposes separate opt-in 256 GiB stream and fetch stress checks', async () => {
+    const packageJson = JSON.parse(await fs.readFile(ROOT_PACKAGE_JSON_PATH, 'utf8')) as PackageJson;
+    const streamCommand = packageJson.scripts?.['test:stream-256gb'];
+    const fetchCommand = packageJson.scripts?.['test:fetch-256gb'];
+
+    expect(streamCommand).toBeTruthy();
+    expect(fetchCommand).toBeTruthy();
+    expect(streamCommand).not.toBe(fetchCommand);
+    expect(streamCommand).toContain('STRESS_LIVE_FLATSQL_256GB=1');
+    expect(streamCommand).toContain('TestFlatSQLSyncProtocolStreamsPublishedShard256GB');
+    expect(fetchCommand).toContain('STRESS_LIVE_FLATSQL_256GB=1');
+    expect(fetchCommand).toContain('TestLiveFlatSQLFetchesPublishedShard256GB');
+  });
 });

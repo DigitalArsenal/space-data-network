@@ -32,6 +32,7 @@ import (
 const (
 	defaultLiveFlatSQLTargetBytes = 64 * 1024 * 1024
 	defaultLiveFlatSQLResumeBytes = 16 * 1024 * 1024
+	liveFlatSQL256GiBBytes        = 256 * 1024 * 1024 * 1024
 	liveFlatSQLSchema             = "OMM.fbs"
 	liveFlatSQLProviderID         = "stress-provider"
 	liveFlatSQLSourceName         = "OMM"
@@ -115,6 +116,35 @@ type LiveFlatSQLMultiProviderRangeResult struct {
 	ProviderPeerIDs []string
 	ProviderBytes   []int64
 	RangeRequests   int
+}
+
+// LiveFlatSQLPublishedShardFetchOptions controls the large published-shard
+// fetch benchmark without requiring valid FlatSQL records in the sparse shard.
+type LiveFlatSQLPublishedShardFetchOptions struct {
+	TargetBytes int64
+	WorkDir     string
+	SchemaName  string
+	ProviderID  string
+	SourceName  string
+	BatchID     string
+}
+
+// LiveFlatSQLPublishedShardFetchResult records a direct published-shard batch
+// fetch over the live FlatSQL sync protocol.
+type LiveFlatSQLPublishedShardFetchResult struct {
+	SchemaName                       string
+	ProviderPeerID                   string
+	SubscriberPeerID                 string
+	ShardCID                         string
+	HeaderBytes                      int64
+	DownloadedBytes                  int64
+	DownloadDuration                 time.Duration
+	DownloadBytesPerSecond           float64
+	WireSpeedTarget                  float64
+	ConfiguredGateEnabled            bool
+	ConfiguredLinkBytesPerSecond     float64
+	ConfiguredRequiredBytesPerSecond float64
+	ConfiguredTargetMet              bool
 }
 
 type liveFlatSQLManifest struct {
@@ -612,6 +642,81 @@ func RunLiveFlatSQLMultiProviderRangeBenchmark(ctx context.Context, opts LiveFla
 	}, nil
 }
 
+func RunLiveFlatSQLPublishedShardFetchBenchmark(ctx context.Context, opts LiveFlatSQLPublishedShardFetchOptions) (*LiveFlatSQLPublishedShardFetchResult, error) {
+	targetBytes := opts.TargetBytes
+	if targetBytes <= 0 {
+		targetBytes = liveFlatSQL256GiBBytes
+	}
+	baseOpts := normalizeLiveFlatSQLReplicationOptions(LiveFlatSQLReplicationOptions{
+		TargetBytes: targetBytes,
+		WorkDir:     opts.WorkDir,
+		SchemaName:  opts.SchemaName,
+		ProviderID:  opts.ProviderID,
+		SourceName:  opts.SourceName,
+		BatchID:     opts.BatchID,
+	})
+	workDir, cleanup, err := liveFlatSQLWorkDir(baseOpts.WorkDir)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		return nil, fmt.Errorf("create SDS validator: %w", err)
+	}
+	providerStore, err := storage.NewFlatSQLStore(filepath.Join(workDir, "provider", "db"), validator)
+	if err != nil {
+		return nil, fmt.Errorf("create provider FlatSQL store: %w", err)
+	}
+	defer providerStore.Close()
+
+	pub, err := registerSparseLiveFlatSQLPublishedShard(providerStore, baseOpts)
+	if err != nil {
+		return nil, err
+	}
+	providerHost, subscriberHost, err := startLiveFlatSQLPeers(ctx, providerStore)
+	if err != nil {
+		return nil, err
+	}
+	defer providerHost.Close()
+	defer subscriberHost.Close()
+
+	downloadedBytes, header, downloadDuration, err := downloadLiveFlatSQLShardBatchToWriter(ctx, subscriberHost, providerHost.ID(), baseOpts, []string{pub.ShardCID}, io.Discard)
+	if err != nil {
+		return nil, err
+	}
+	if header.ByteCount != baseOpts.TargetBytes {
+		return nil, fmt.Errorf("published shard batch header byte count = %d, want %d", header.ByteCount, baseOpts.TargetBytes)
+	}
+	if downloadedBytes != baseOpts.TargetBytes {
+		return nil, fmt.Errorf("published shard fetch downloaded %d bytes, want %d", downloadedBytes, baseOpts.TargetBytes)
+	}
+	downloadSpeed := bytesPerSecond(downloadedBytes, downloadDuration)
+	configuredGate := evaluateLiveFlatSQLConfiguredWireSpeedGate(downloadSpeed, baseOpts.WireSpeedTarget)
+	if configuredGate.Enabled && configuredGate.LinkBytesPerSecond > 0 && !configuredGate.TargetMet {
+		return nil, fmt.Errorf("published shard fetch speed %.2f MiB/s is below configured %.0f%% link gate %.2f MiB/s",
+			bytesPerSecondToMiB(downloadSpeed),
+			baseOpts.WireSpeedTarget*100,
+			bytesPerSecondToMiB(configuredGate.RequiredBytesPerSecond))
+	}
+	return &LiveFlatSQLPublishedShardFetchResult{
+		SchemaName:                       baseOpts.SchemaName,
+		ProviderPeerID:                   providerHost.ID().String(),
+		SubscriberPeerID:                 subscriberHost.ID().String(),
+		ShardCID:                         pub.ShardCID,
+		HeaderBytes:                      header.ByteCount,
+		DownloadedBytes:                  downloadedBytes,
+		DownloadDuration:                 downloadDuration,
+		DownloadBytesPerSecond:           downloadSpeed,
+		WireSpeedTarget:                  baseOpts.WireSpeedTarget,
+		ConfiguredGateEnabled:            configuredGate.Enabled,
+		ConfiguredLinkBytesPerSecond:     configuredGate.LinkBytesPerSecond,
+		ConfiguredRequiredBytesPerSecond: configuredGate.RequiredBytesPerSecond,
+		ConfiguredTargetMet:              configuredGate.TargetMet,
+	}, nil
+}
+
 func normalizeLiveFlatSQLReplicationOptions(opts LiveFlatSQLReplicationOptions) LiveFlatSQLReplicationOptions {
 	if opts.TargetBytes <= 0 {
 		opts.TargetBytes = defaultLiveFlatSQLTargetBytes
@@ -760,6 +865,56 @@ func exportLiveFlatSQLRecords(store *storage.FlatSQLStore, opts LiveFlatSQLRepli
 	return export, nil
 }
 
+func registerSparseLiveFlatSQLPublishedShard(store *storage.FlatSQLStore, opts LiveFlatSQLReplicationOptions) (storage.DatasetShardPublication, error) {
+	if store == nil {
+		return storage.DatasetShardPublication{}, fmt.Errorf("FlatSQL store is unavailable")
+	}
+	if opts.TargetBytes <= 0 {
+		return storage.DatasetShardPublication{}, fmt.Errorf("target bytes must be positive")
+	}
+	pub := storage.DatasetShardPublication{
+		SchemaName:   opts.SchemaName,
+		ProviderID:   opts.ProviderID,
+		SourceName:   opts.SourceName,
+		BatchID:      opts.BatchID,
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        1,
+		RecordCount:  1,
+		ByteCount:    opts.TargetBytes,
+		ShardCID:     fmt.Sprintf("bafk-live-flatsql-sparse-shard-%d", opts.TargetBytes),
+		IndexCID:     fmt.Sprintf("bafk-live-flatsql-sparse-index-%d", opts.TargetBytes),
+		ManifestCID:  fmt.Sprintf("bafk-live-flatsql-sparse-manifest-%d", opts.TargetBytes),
+		ShardSHA256:  strings.Repeat("2", 64),
+		IndexSHA256:  strings.Repeat("3", 64),
+		QuerySHA256:  strings.Repeat("1", 64),
+		ResultSHA256: strings.Repeat("2", 64),
+		PublishedAt:  time.Now().UTC(),
+	}
+	if err := store.UpsertDatasetShardPublication(pub); err != nil {
+		return storage.DatasetShardPublication{}, fmt.Errorf("register sparse published FlatSQL shard: %w", err)
+	}
+	shardPath, err := store.DatasetPublicationShardPath(pub)
+	if err != nil {
+		return storage.DatasetShardPublication{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(shardPath), 0o700); err != nil {
+		return storage.DatasetShardPublication{}, fmt.Errorf("create sparse shard directory: %w", err)
+	}
+	file, err := os.OpenFile(shardPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return storage.DatasetShardPublication{}, fmt.Errorf("create sparse published FlatSQL shard: %w", err)
+	}
+	if err := file.Truncate(opts.TargetBytes); err != nil {
+		_ = file.Close()
+		return storage.DatasetShardPublication{}, fmt.Errorf("truncate sparse published FlatSQL shard: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return storage.DatasetShardPublication{}, fmt.Errorf("close sparse published FlatSQL shard: %w", err)
+	}
+	return pub, nil
+}
+
 func generateLiveFlatSQLExportRecords(ctx context.Context, targetBytes int64, tags storage.SourceTags) ([]storage.DatasetExportRecord, error) {
 	generator := NewGenerator()
 	records := make([]storage.DatasetExportRecord, 0)
@@ -863,6 +1018,37 @@ func measureLiveFlatSQLWireSpeed(ctx context.Context, client host.Host, target p
 }
 
 func downloadLiveFlatSQLShardBatchToFile(ctx context.Context, client host.Host, target peer.ID, opts LiveFlatSQLReplicationOptions, cids []string, outputPath string) (int64, liveFlatSQLBatchHeader, time.Duration, error) {
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
+		return 0, liveFlatSQLBatchHeader{}, 0, fmt.Errorf("create shard download directory: %w", err)
+	}
+	tempFile, err := os.CreateTemp(filepath.Dir(outputPath), ".flatsql-shard-*.tmp")
+	if err != nil {
+		return 0, liveFlatSQLBatchHeader{}, 0, fmt.Errorf("create shard download file: %w", err)
+	}
+	tempPath := tempFile.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	readBytes, header, duration, copyErr := downloadLiveFlatSQLShardBatchToWriter(ctx, client, target, opts, cids, tempFile)
+	closeErr := tempFile.Close()
+	if copyErr != nil {
+		return readBytes, header, duration, copyErr
+	}
+	if closeErr != nil {
+		return readBytes, header, duration, fmt.Errorf("close shard download file: %w", closeErr)
+	}
+	if err := os.Rename(tempPath, outputPath); err != nil {
+		return readBytes, header, duration, fmt.Errorf("commit shard download file: %w", err)
+	}
+	committed = true
+	return readBytes, header, duration, nil
+}
+
+func downloadLiveFlatSQLShardBatchToWriter(ctx context.Context, client host.Host, target peer.ID, opts LiveFlatSQLReplicationOptions, cids []string, writer io.Writer) (int64, liveFlatSQLBatchHeader, time.Duration, error) {
 	stream, err := client.NewStream(ctx, target, protocol.FlatSQLSyncProtocolID)
 	if err != nil {
 		return 0, liveFlatSQLBatchHeader{}, 0, fmt.Errorf("open published FlatSQL shard stream: %w", err)
@@ -889,35 +1075,12 @@ func downloadLiveFlatSQLShardBatchToFile(ctx context.Context, client host.Host, 
 	if header.ByteCount <= 0 {
 		return 0, header, 0, fmt.Errorf("published FlatSQL shard batch returned no bytes")
 	}
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
-		return 0, header, 0, fmt.Errorf("create shard download directory: %w", err)
-	}
-	tempFile, err := os.CreateTemp(filepath.Dir(outputPath), ".flatsql-shard-*.tmp")
-	if err != nil {
-		return 0, header, 0, fmt.Errorf("create shard download file: %w", err)
-	}
-	tempPath := tempFile.Name()
-	committed := false
-	defer func() {
-		if !committed {
-			_ = os.Remove(tempPath)
-		}
-	}()
-
 	started := time.Now()
-	readBytes, copyErr := io.CopyN(tempFile, stream, header.ByteCount)
+	readBytes, copyErr := io.CopyN(writer, stream, header.ByteCount)
 	duration := time.Since(started)
-	closeErr := tempFile.Close()
 	if copyErr != nil {
 		return readBytes, header, duration, fmt.Errorf("read published FlatSQL shard payload after %d bytes: %w", readBytes, copyErr)
 	}
-	if closeErr != nil {
-		return readBytes, header, duration, fmt.Errorf("close shard download file: %w", closeErr)
-	}
-	if err := os.Rename(tempPath, outputPath); err != nil {
-		return readBytes, header, duration, fmt.Errorf("commit shard download file: %w", err)
-	}
-	committed = true
 	return readBytes, header, duration, nil
 }
 

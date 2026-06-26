@@ -218,6 +218,20 @@ chaos stream configuration check. The configured 2 Gbit/s gate requires
 `247,500,000 B/s` sustained published-shard download throughput, which is 99%
 of wire speed.
 
+- Full 256 GiB data-plane stress checks:
+
+```bash
+npm run test:stream-256gb
+npm run test:fetch-256gb
+```
+
+`test:stream-256gb` streams one 256 GiB published FlatSQL shard through the
+provider-side sync handler. `test:fetch-256gb` fetches one 256 GiB published
+FlatSQL shard over live libp2p using `/space-data-network/flatsql-sync/1.0.0`.
+Both commands are opt-in long-running stress checks and default to a configured
+2 Gbit/s, 99% wire-speed gate. Override the lab profile with
+`SDN_TEST_LINK_GBIT=<gbits>` when running on faster or slower links.
+
 - Pushes run local CI automatically via `.husky/pre-push`. To bypass intentionally:
 
 ```bash
