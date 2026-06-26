@@ -175,6 +175,23 @@ gate separately through `WireSpeedTarget`, `TargetMet`,
 discovery, shard verification, and FlatSQL import remain separate timing fields
 and do not hide a data-plane transfer miss.
 
+Full 256 GiB data-plane stress checks are split so provider streaming and
+requester fetching can fail independently:
+
+```sh
+npm run test:stream-256gb
+npm run test:fetch-256gb
+```
+
+`test:stream-256gb` streams a 256 GiB sparse published-shard fixture through
+the provider sync handler and discards the payload after counting it.
+`test:fetch-256gb` fetches a 256 GiB sparse published-shard fixture over live
+libp2p using `/space-data-network/flatsql-sync/1.0.0` and discards the payload
+after counting it. Both commands set `STRESS_LIVE_FLATSQL_256GB=1` and default
+to `SDN_WIRESPEED_TEST=1 SDN_TEST_LINK_GBIT=2`, so the sustained 256 GiB
+payload movement must meet the 99% configured-link gate unless
+`SDN_TEST_LINK_GBIT` is overridden by the caller.
+
 The range-resume byte size can be raised independently with:
 
 ```sh
