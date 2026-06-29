@@ -24,7 +24,6 @@ func TestBuildModulePublishRequestFromPluginRoot(t *testing.T) {
 				"encrypted_path":       "sgp4.wasm.enc",
 				"key_path":             "sgp4.key",
 				"content_type":         "application/wasm",
-				"allowed_domains":      []string{"orbpro.digitalarsenal.io"},
 				"max_grant_timeout_ms": 120000,
 			},
 		},
@@ -56,8 +55,5 @@ func TestBuildModulePublishRequestFromPluginRoot(t *testing.T) {
 	}
 	if len(module.EncryptedBundle) != 2 || module.EncryptedBundle[0] != 0x01 || module.EncryptedBundle[1] != 0x02 {
 		t.Fatalf("encrypted bundle = %x", module.EncryptedBundle)
-	}
-	if module.AllowedDomains[0] != "orbpro.digitalarsenal.io" {
-		t.Fatalf("allowed domain = %q", module.AllowedDomains[0])
 	}
 }

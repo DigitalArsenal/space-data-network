@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestLoadPluginRegistryNormalizesDomainPolicy(t *testing.T) {
+func TestLoadPluginRegistryNormalizesGrantTimeout(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -29,7 +29,6 @@ func TestLoadPluginRegistryNormalizesDomainPolicy(t *testing.T) {
 				Version:           "1.0.0",
 				EncryptedPath:     "module/bundle.wasm.enc",
 				KeyPath:           "module/bundle.key",
-				AllowedDomains:    []string{"App.Example.com", "example.com", "app.example.com"},
 				MaxGrantTimeoutMs: 180_000,
 			},
 		},
@@ -52,11 +51,5 @@ func TestLoadPluginRegistryNormalizesDomainPolicy(t *testing.T) {
 	}
 	if got := asset.GrantTimeoutLimitMs(); got != 180_000 {
 		t.Fatalf("GrantTimeoutLimitMs = %d", got)
-	}
-	if !asset.AllowsDomain("api.example.com") {
-		t.Fatal("expected subdomain to satisfy allowed_domains policy")
-	}
-	if asset.AllowsDomain("evil.example.net") {
-		t.Fatal("unexpected domain policy match")
 	}
 }

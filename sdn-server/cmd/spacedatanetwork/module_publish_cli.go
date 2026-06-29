@@ -33,16 +33,15 @@ import (
 const defaultModulePublishProviderURL = "https://sdn.spaceaware.io/api/module-delivery/provider"
 
 var (
-	modulePublishPluginRoot   string
-	modulePublishProviderURL  string
-	modulePublishTargetAddr   string
-	modulePublishWalletEnv    string
-	modulePublishWalletWASM   string
-	modulePublishWalletAcct   uint32
-	modulePublishModules      []string
-	modulePublishAllowDomains []string
-	modulePublishAllowXpubs   []string
-	modulePublishTimeout      time.Duration
+	modulePublishPluginRoot  string
+	modulePublishProviderURL string
+	modulePublishTargetAddr  string
+	modulePublishWalletEnv   string
+	modulePublishWalletWASM  string
+	modulePublishWalletAcct  uint32
+	modulePublishModules     []string
+	modulePublishAllowXpubs  []string
+	modulePublishTimeout     time.Duration
 )
 
 var pluginsCmd = &cobra.Command{
@@ -69,7 +68,6 @@ func init() {
 	pluginsPublishOrbProCmd.Flags().StringVar(&modulePublishWalletWASM, "wallet-wasm", "", "HD wallet WASM path used to derive the signing key")
 	pluginsPublishOrbProCmd.Flags().Uint32Var(&modulePublishWalletAcct, "wallet-account", 0, "HD wallet account index used to derive the signing key")
 	pluginsPublishOrbProCmd.Flags().StringArrayVar(&modulePublishModules, "module", nil, "module id to publish; repeat to publish a subset")
-	pluginsPublishOrbProCmd.Flags().StringArrayVar(&modulePublishAllowDomains, "allowed-domain", nil, "allowed requester domain to apply to every published module; repeat for multiple domains")
 	pluginsPublishOrbProCmd.Flags().StringArrayVar(&modulePublishAllowXpubs, "allowed-xpub", nil, "allowed requester xpub (PKI) to apply to every published module; repeat for multiple xpubs")
 	pluginsPublishOrbProCmd.Flags().DurationVar(&modulePublishTimeout, "timeout", 60*time.Second, "publish timeout")
 	pluginsCmd.AddCommand(pluginsPublishOrbProCmd)
@@ -93,7 +91,6 @@ func runPluginsPublishOrbPro(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	applyPublishAllowedDomains(&req, modulePublishAllowDomains)
 	applyPublishAllowedXpubs(&req, modulePublishAllowXpubs)
 
 	ctx, cancel := context.WithTimeout(cmd.Context(), modulePublishTimeout)
@@ -169,7 +166,6 @@ func buildModulePublishRequestFromPluginRoot(pluginRoot string, moduleIDs []stri
 			KeyMaterial:       keyMaterial,
 			ContentType:       entry.ContentType,
 			CacheControl:      entry.CacheControl,
-			AllowedDomains:    append([]string(nil), entry.AllowedDomains...),
 			AllowedXpubs:      append([]string(nil), entry.AllowedXpubs...),
 			MaxGrantTimeoutMs: entry.MaxGrantTimeoutMs,
 			SignatureHex:      entry.SignatureHex,
@@ -216,31 +212,6 @@ func sortedKeys(values map[string]struct{}) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-func applyPublishAllowedDomains(req *license.ModulePublishRequest, domains []string) {
-	if req == nil || len(domains) == 0 {
-		return
-	}
-	normalized := make([]string, 0, len(domains))
-	seen := map[string]struct{}{}
-	for _, domain := range domains {
-		trimmed := strings.TrimSpace(domain)
-		if trimmed == "" {
-			continue
-		}
-		if _, ok := seen[trimmed]; ok {
-			continue
-		}
-		seen[trimmed] = struct{}{}
-		normalized = append(normalized, trimmed)
-	}
-	if len(normalized) == 0 {
-		return
-	}
-	for i := range req.Modules {
-		req.Modules[i].AllowedDomains = append([]string(nil), normalized...)
-	}
 }
 
 // applyPublishAllowedXpubs merges the given xpubs into every module's allowlist

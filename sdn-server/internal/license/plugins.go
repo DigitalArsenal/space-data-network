@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -91,7 +90,6 @@ type PluginCatalogEntry struct {
 	PlainPath         string   `json:"plain_path,omitempty"`
 	ContentType       string   `json:"content_type,omitempty"`
 	CacheControl      string   `json:"cache_control,omitempty"`
-	AllowedDomains    []string `json:"allowed_domains,omitempty"`
 	AllowedXpubs      []string `json:"allowed_xpubs,omitempty"`
 	MaxGrantTimeoutMs int64    `json:"max_grant_timeout_ms,omitempty"`
 
@@ -126,7 +124,6 @@ type PluginAsset struct {
 	CacheControl      string
 	BundleSHA256      string
 	SizeBytes         int64
-	AllowedDomains    []string
 	AllowedXpubs      []string
 	MaxGrantTimeoutMs int64
 	SignatureHex      string
@@ -152,7 +149,6 @@ type EncryptedPluginUpload struct {
 	KeyMaterial        []byte
 	ContentType        string
 	CacheControl       string
-	AllowedDomains     []string
 	AllowedXpubs       []string
 	MaxGrantTimeoutMs  int64
 	SignatureHex       string
@@ -165,9 +161,6 @@ func (a *PluginAsset) clone() *PluginAsset {
 		return nil
 	}
 	cp := *a
-	if len(a.AllowedDomains) > 0 {
-		cp.AllowedDomains = append([]string(nil), a.AllowedDomains...)
-	}
 	if len(a.AllowedXpubs) > 0 {
 		cp.AllowedXpubs = append([]string(nil), a.AllowedXpubs...)
 	}
@@ -190,25 +183,6 @@ func (a *PluginAsset) GrantTimeoutLimitMs() uint64 {
 		return uint64(defaultMaxGrantTimeoutMs)
 	}
 	return uint64(a.MaxGrantTimeoutMs)
-}
-
-func (a *PluginAsset) AllowsDomain(requestedDomain string) bool {
-	if a == nil {
-		return false
-	}
-	normalizedRequested, err := normalizePolicyDomain(requestedDomain)
-	if err != nil {
-		return false
-	}
-	if len(a.AllowedDomains) == 0 {
-		return true
-	}
-	for _, allowed := range a.AllowedDomains {
-		if domainMatchesPolicy(normalizedRequested, allowed) {
-			return true
-		}
-	}
-	return false
 }
 
 func (a *PluginAsset) Descriptor() PluginDescriptor {
@@ -760,11 +734,6 @@ func validateCatalogEntry(rootAbs string, entry PluginCatalogEntry) (*PluginAsse
 		SignerPubKeyHex:   entry.SignerPubKeyHex,
 		UploadedAt:        entry.UploadedAt,
 	}
-	allowedDomains, err := normalizeAllowedDomains(entry.AllowedDomains)
-	if err != nil {
-		return nil, fmt.Errorf("allowed_domains: %w", err)
-	}
-	asset.AllowedDomains = allowedDomains
 	asset.AllowedXpubs = normalizeAllowedXpubs(entry.AllowedXpubs)
 	if asset.MaxGrantTimeoutMs < 0 {
 		return nil, errors.New("max_grant_timeout_ms must be >= 0")
@@ -914,10 +883,6 @@ func (r *PluginRegistry) AddEncryptedPlugin(upload EncryptedPluginUpload) (*Plug
 	if cacheControl == "" {
 		cacheControl = defaultPluginCacheControl
 	}
-	allowedDomains, err := normalizeAllowedDomains(upload.AllowedDomains)
-	if err != nil {
-		return nil, fmt.Errorf("allowed_domains: %w", err)
-	}
 	allowedXpubs := normalizeAllowedXpubs(upload.AllowedXpubs)
 	if upload.MaxGrantTimeoutMs < 0 {
 		return nil, errors.New("max_grant_timeout_ms must be >= 0")
@@ -954,7 +919,6 @@ func (r *PluginRegistry) AddEncryptedPlugin(upload EncryptedPluginUpload) (*Plug
 		CacheControl:      cacheControl,
 		BundleSHA256:      hex.EncodeToString(h[:]),
 		SizeBytes:         int64(len(upload.EncryptedBundle)),
-		AllowedDomains:    allowedDomains,
 		AllowedXpubs:      allowedXpubs,
 		MaxGrantTimeoutMs: upload.MaxGrantTimeoutMs,
 		SignatureHex:      strings.TrimSpace(upload.SignatureHex),
@@ -987,7 +951,6 @@ func (r *PluginRegistry) saveCatalogLocked() error {
 			RequiredScope:     a.RequiredScope,
 			ContentType:       a.ContentType,
 			CacheControl:      a.CacheControl,
-			AllowedDomains:    append([]string(nil), a.AllowedDomains...),
 			AllowedXpubs:      append([]string(nil), a.AllowedXpubs...),
 			MaxGrantTimeoutMs: a.MaxGrantTimeoutMs,
 			SignatureHex:      a.SignatureHex,
@@ -1029,27 +992,6 @@ func (r *PluginRegistry) saveCatalogLocked() error {
 	return os.WriteFile(catalogPath, data, 0600)
 }
 
-func normalizeAllowedDomains(values []string) ([]string, error) {
-	if len(values) == 0 {
-		return nil, nil
-	}
-	normalized := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		domain, err := normalizePolicyDomain(value)
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := seen[domain]; ok {
-			continue
-		}
-		seen[domain] = struct{}{}
-		normalized = append(normalized, domain)
-	}
-	sort.Strings(normalized)
-	return normalized, nil
-}
-
 // normalizeAllowedXpubs trims, drops empties, de-duplicates, and sorts the allowed
 // requester xpubs. Unlike domains these are opaque, case-sensitive BIP-32
 // identifiers, so no lowercasing or structural validation is applied.
@@ -1072,53 +1014,6 @@ func normalizeAllowedXpubs(values []string) []string {
 	}
 	sort.Strings(normalized)
 	return normalized
-}
-
-func normalizePolicyDomain(value string) (string, error) {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	normalized = strings.TrimSuffix(normalized, ".")
-	if normalized == "" {
-		return "", errors.New("domain is required")
-	}
-	if strings.ContainsAny(normalized, "/?#@") {
-		return "", fmt.Errorf("invalid domain %q", value)
-	}
-	if addr, err := netip.ParseAddr(strings.Trim(normalized, "[]")); err == nil {
-		return addr.String(), nil
-	}
-	labels := strings.Split(normalized, ".")
-	for _, label := range labels {
-		if label == "" {
-			return "", fmt.Errorf("invalid domain %q", value)
-		}
-		if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
-			return "", fmt.Errorf("invalid domain %q", value)
-		}
-		for _, r := range label {
-			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
-				return "", fmt.Errorf("invalid domain %q", value)
-			}
-		}
-	}
-	return normalized, nil
-}
-
-// NormalizePolicyDomain validates and canonicalizes a host name or IP literal for module-delivery policy checks.
-func NormalizePolicyDomain(value string) (string, error) {
-	return normalizePolicyDomain(value)
-}
-
-func domainMatchesPolicy(requestedDomain, allowedDomain string) bool {
-	if requestedDomain == allowedDomain {
-		return true
-	}
-	if allowedDomain == "localhost" {
-		return false
-	}
-	if _, err := netip.ParseAddr(allowedDomain); err != nil {
-		return strings.HasSuffix(requestedDomain, "."+allowedDomain)
-	}
-	return false
 }
 
 func resolveRelativePath(rootAbs, relPath string) (string, error) {

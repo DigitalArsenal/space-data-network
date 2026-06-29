@@ -39,7 +39,6 @@ func TestCatalogPublicationAssetsIncludesLicensingRuntimeModule(t *testing.T) {
 			EncryptedPath:     "sgp4.wasm.enc",
 			KeyPath:           "sgp4.key",
 			ContentType:       "application/wasm+encrypted",
-			AllowedDomains:    []string{"localhost"},
 			MaxGrantTimeoutMs: 30_000,
 		},
 	)
@@ -68,7 +67,6 @@ func TestBootstrapLicensingModulePublishesCatalogModulesAndHandlesChallenge(t *t
 			EncryptedPath:     "sgp4.wasm.enc",
 			KeyPath:           "sgp4.key",
 			ContentType:       "application/wasm+encrypted",
-			AllowedDomains:    []string{"localhost"},
 			MaxGrantTimeoutMs: 30_000,
 		},
 	)
