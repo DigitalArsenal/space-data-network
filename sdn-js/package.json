@@ -98,7 +98,7 @@
     "qrcode": "^1.5.3",
     "satellite.js": "^7.0.1",
     "space-data-module-sdk": "https://github.com/DigitalArsenal/space-data-module-sdk/archive/cfc9b5380adacd98337d16b81376f0a52a7a29fe.tar.gz",
-    "spacedatastandards.org": "https://github.com/DigitalArsenal/spacedatastandards.org/archive/refs/tags/v1.133.0.tar.gz",
+    "spacedatastandards.org": "https://github.com/DigitalArsenal/spacedatastandards.org/archive/refs/tags/v1.134.0.tar.gz",
     "uint8arraylist": "^2.4.8",
     "uint8arrays": "^5.0.0",
     "vcard-cryptoperson": "^1.1.10"
