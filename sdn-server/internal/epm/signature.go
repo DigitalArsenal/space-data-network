@@ -1,6 +1,7 @@
 package epm
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
@@ -188,12 +189,20 @@ func canonicalSigningContentFromEPM(epmRecord *EPM.EPM) ([]byte, error) {
 	return marshalEPMSigningContent(content)
 }
 
+// marshalEPMSigningContent serializes the canonical EPM content as RFC 8785 (JCS):
+// encoding/json sorts map keys recursively (the EPM key set is ASCII, so byte
+// order == UTF-16 code-unit order), and SetEscapeHTML(false) emits & < > and
+// U+2028/U+2029 raw instead of \u00XX. The result is byte-identical to the
+// isomorphic wasm verifier (space-data-network-modules common/jcs) and the wallet
+// (hd-wallet-wasm buildEPMSigningContent), so wallet/node/module signatures match.
 func marshalEPMSigningContent(content map[string]interface{}) ([]byte, error) {
-	canonical, err := json.Marshal(content)
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(content); err != nil {
 		return nil, fmt.Errorf("marshal EPM signing content: %w", err)
 	}
-	return canonical, nil
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
 func firstEPMSigningPublicKey(epmRecord *EPM.EPM) (ed25519.PublicKey, error) {
