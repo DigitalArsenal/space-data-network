@@ -23,7 +23,6 @@ func TestModulePublishRequestWalletSignatureRejectsTampering(t *testing.T) {
 				RequiredScope:   "orbpro:premium",
 				EncryptedBundle: []byte{0x01, 0x02, 0x03},
 				KeyMaterial:     []byte("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"),
-				AllowedDomains:  []string{"orbpro.digitalarsenal.io"},
 			},
 		},
 	}
@@ -66,7 +65,6 @@ func TestApplyModulePublishRequestStoresEncryptedModules(t *testing.T) {
 				EncryptedBundle:   []byte{0xaa, 0xbb, 0xcc},
 				KeyMaterial:       []byte("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"),
 				ContentType:       "application/wasm",
-				AllowedDomains:    []string{"orbpro.digitalarsenal.io"},
 				MaxGrantTimeoutMs: 90000,
 			},
 		},

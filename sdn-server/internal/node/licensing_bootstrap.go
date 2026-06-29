@@ -555,19 +555,6 @@ func buildPublicationDescriptorFrame(asset *license.PluginAsset) ([]byte, error)
 
 	keyIDOffset := builder.CreateString(publicationKeyID(asset))
 
-	allowedDomainsOffset := flatbuffers.UOffsetT(0)
-	if len(asset.AllowedDomains) > 0 {
-		domainOffsets := make([]flatbuffers.UOffsetT, 0, len(asset.AllowedDomains))
-		for _, domain := range asset.AllowedDomains {
-			normalized := strings.TrimSpace(domain)
-			if normalized == "" {
-				continue
-			}
-			domainOffsets = append(domainOffsets, builder.CreateString(normalized))
-		}
-		allowedDomainsOffset = createOffsetVector(builder, domainOffsets)
-	}
-
 	allowedXpubsOffset := flatbuffers.UOffsetT(0)
 	if len(asset.AllowedXpubs) > 0 {
 		xpubOffsets := make([]flatbuffers.UOffsetT, 0, len(asset.AllowedXpubs))
@@ -595,9 +582,6 @@ func buildPublicationDescriptorFrame(asset *license.PluginAsset) ([]byte, error)
 		plg.PLGAddREQUIRED_SCOPE(builder, requiredScopeOffset)
 	}
 	plg.PLGAddKEY_ID(builder, keyIDOffset)
-	if allowedDomainsOffset != 0 {
-		plg.PLGAddALLOWED_DOMAINS(builder, allowedDomainsOffset)
-	}
 	if allowedXpubsOffset != 0 {
 		plg.PLGAddALLOWED_XPUBS(builder, allowedXpubsOffset)
 	}

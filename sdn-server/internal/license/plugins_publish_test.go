@@ -22,7 +22,6 @@ func TestAddEncryptedPluginReplacesCatalogEntry(t *testing.T) {
 		KeyMaterial:        []byte("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"),
 		ContentType:        "application/wasm",
 		CacheControl:       "public, max-age=60",
-		AllowedDomains:     []string{"orbpro.digitalarsenal.io"},
 		MaxGrantTimeoutMs:  120000,
 		SignatureHex:       "first-signature",
 		SignerPubKeyHex:    "first-signer",
@@ -43,7 +42,6 @@ func TestAddEncryptedPluginReplacesCatalogEntry(t *testing.T) {
 		KeyMaterial:        []byte("1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100"),
 		ContentType:        "application/wasm",
 		CacheControl:       "public, max-age=60",
-		AllowedDomains:     []string{"orbpro.digitalarsenal.io"},
 		MaxGrantTimeoutMs:  180000,
 		SignatureHex:       "second-signature",
 		SignerPubKeyHex:    "second-signer",
@@ -79,9 +77,6 @@ func TestAddEncryptedPluginReplacesCatalogEntry(t *testing.T) {
 	}
 	if entry.EncryptedPath == "" || entry.KeyPath == "" {
 		t.Fatalf("encrypted_path/key_path must be present: %#v", entry)
-	}
-	if entry.AllowedDomains[0] != "orbpro.digitalarsenal.io" {
-		t.Fatalf("allowed domain = %q", entry.AllowedDomains[0])
 	}
 
 	reloaded, err := LoadPluginRegistry(root)
