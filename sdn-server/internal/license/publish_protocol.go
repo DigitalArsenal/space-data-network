@@ -42,6 +42,7 @@ type ModulePublishEntry struct {
 	ContentType       string   `json:"content_type,omitempty"`
 	CacheControl      string   `json:"cache_control,omitempty"`
 	AllowedDomains    []string `json:"allowed_domains,omitempty"`
+	AllowedXpubs      []string `json:"allowed_xpubs,omitempty"`
 	MaxGrantTimeoutMs int64    `json:"max_grant_timeout_ms,omitempty"`
 	SignatureHex      string   `json:"signature_hex,omitempty"`
 	SignerPubKeyHex   string   `json:"signer_pubkey_hex,omitempty"`
@@ -98,6 +99,7 @@ func ApplyModulePublishRequest(reg *PluginRegistry, req ModulePublishRequest, au
 			ContentType:        module.ContentType,
 			CacheControl:       module.CacheControl,
 			AllowedDomains:     module.AllowedDomains,
+			AllowedXpubs:       module.AllowedXpubs,
 			MaxGrantTimeoutMs:  module.MaxGrantTimeoutMs,
 			SignatureHex:       module.SignatureHex,
 			SignerPubKeyHex:    module.SignerPubKeyHex,

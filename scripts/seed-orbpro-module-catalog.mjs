@@ -15,6 +15,13 @@ const defaultCacheControl =
 const defaultContentType = "application/wasm+encrypted";
 const defaultRequiredScope = "orbpro:base";
 const defaultVersion = "local-dev";
+// PKI allowlist seeded into every module's catalog entry (allowed_xpubs). Comma- or
+// space-separated BIP-32 account xpubs; the gate authorizes any module request whose
+// verified EPM binds one of these xpubs. Empty = no xpub gate (open).
+const defaultAllowedXpubs = String(process.env.SDN_SEED_ALLOWED_XPUBS || "")
+  .split(/[\s,]+/)
+  .map((value) => value.trim())
+  .filter((value) => value.length > 0);
 const currentSpaceDataNetworkModulesVersion = "0.1.0-0.8.2";
 const orbproProtectedContextPrefix = "orbpro.plugin/";
 const moduleIdPattern = /^[A-Za-z0-9._-]+$/;
@@ -395,7 +402,7 @@ function upsertCatalogEntry(entries, nextEntry) {
 }
 
 function buildCatalogEntry(moduleSpec) {
-  return {
+  const entry = {
     id: moduleSpec.moduleId,
     version: moduleSpec.version || defaultVersion,
     required_scope: moduleSpec.requiredScope || defaultRequiredScope,
@@ -404,6 +411,20 @@ function buildCatalogEntry(moduleSpec) {
     content_type: moduleSpec.contentType || defaultContentType,
     cache_control: moduleSpec.cacheControl || defaultCacheControl,
   };
+  const allowedXpubs = Array.from(
+    new Set(
+      (Array.isArray(moduleSpec.allowedXpubs) && moduleSpec.allowedXpubs.length > 0
+        ? moduleSpec.allowedXpubs
+        : defaultAllowedXpubs
+      )
+        .map((value) => String(value || "").trim())
+        .filter((value) => value.length > 0),
+    ),
+  );
+  if (allowedXpubs.length > 0) {
+    entry.allowed_xpubs = allowedXpubs;
+  }
+  return entry;
 }
 
 function normalizeModuleSpec(moduleSpec) {

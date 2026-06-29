@@ -568,6 +568,19 @@ func buildPublicationDescriptorFrame(asset *license.PluginAsset) ([]byte, error)
 		allowedDomainsOffset = createOffsetVector(builder, domainOffsets)
 	}
 
+	allowedXpubsOffset := flatbuffers.UOffsetT(0)
+	if len(asset.AllowedXpubs) > 0 {
+		xpubOffsets := make([]flatbuffers.UOffsetT, 0, len(asset.AllowedXpubs))
+		for _, xpub := range asset.AllowedXpubs {
+			normalized := strings.TrimSpace(xpub)
+			if normalized == "" {
+				continue
+			}
+			xpubOffsets = append(xpubOffsets, builder.CreateString(normalized))
+		}
+		allowedXpubsOffset = createOffsetVector(builder, xpubOffsets)
+	}
+
 	nowMs := uint64(time.Now().UnixMilli())
 
 	plg.PLGStart(builder)
@@ -584,6 +597,9 @@ func buildPublicationDescriptorFrame(asset *license.PluginAsset) ([]byte, error)
 	plg.PLGAddKEY_ID(builder, keyIDOffset)
 	if allowedDomainsOffset != 0 {
 		plg.PLGAddALLOWED_DOMAINS(builder, allowedDomainsOffset)
+	}
+	if allowedXpubsOffset != 0 {
+		plg.PLGAddALLOWED_XPUBS(builder, allowedXpubsOffset)
 	}
 	plg.PLGAddMAX_GRANT_TIMEOUT_MS(builder, asset.GrantTimeoutLimitMs())
 	plg.PLGAddCREATED_AT(builder, nowMs)

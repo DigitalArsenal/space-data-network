@@ -92,6 +92,7 @@ type PluginCatalogEntry struct {
 	ContentType       string   `json:"content_type,omitempty"`
 	CacheControl      string   `json:"cache_control,omitempty"`
 	AllowedDomains    []string `json:"allowed_domains,omitempty"`
+	AllowedXpubs      []string `json:"allowed_xpubs,omitempty"`
 	MaxGrantTimeoutMs int64    `json:"max_grant_timeout_ms,omitempty"`
 
 	// Upload audit fields (set when uploaded via API).
@@ -126,6 +127,7 @@ type PluginAsset struct {
 	BundleSHA256      string
 	SizeBytes         int64
 	AllowedDomains    []string
+	AllowedXpubs      []string
 	MaxGrantTimeoutMs int64
 	SignatureHex      string
 	SignerPubKeyHex   string
@@ -151,6 +153,7 @@ type EncryptedPluginUpload struct {
 	ContentType        string
 	CacheControl       string
 	AllowedDomains     []string
+	AllowedXpubs       []string
 	MaxGrantTimeoutMs  int64
 	SignatureHex       string
 	SignerPubKeyHex    string
@@ -164,6 +167,9 @@ func (a *PluginAsset) clone() *PluginAsset {
 	cp := *a
 	if len(a.AllowedDomains) > 0 {
 		cp.AllowedDomains = append([]string(nil), a.AllowedDomains...)
+	}
+	if len(a.AllowedXpubs) > 0 {
+		cp.AllowedXpubs = append([]string(nil), a.AllowedXpubs...)
 	}
 	return &cp
 }
@@ -759,6 +765,7 @@ func validateCatalogEntry(rootAbs string, entry PluginCatalogEntry) (*PluginAsse
 		return nil, fmt.Errorf("allowed_domains: %w", err)
 	}
 	asset.AllowedDomains = allowedDomains
+	asset.AllowedXpubs = normalizeAllowedXpubs(entry.AllowedXpubs)
 	if asset.MaxGrantTimeoutMs < 0 {
 		return nil, errors.New("max_grant_timeout_ms must be >= 0")
 	}
@@ -911,6 +918,7 @@ func (r *PluginRegistry) AddEncryptedPlugin(upload EncryptedPluginUpload) (*Plug
 	if err != nil {
 		return nil, fmt.Errorf("allowed_domains: %w", err)
 	}
+	allowedXpubs := normalizeAllowedXpubs(upload.AllowedXpubs)
 	if upload.MaxGrantTimeoutMs < 0 {
 		return nil, errors.New("max_grant_timeout_ms must be >= 0")
 	}
@@ -947,6 +955,7 @@ func (r *PluginRegistry) AddEncryptedPlugin(upload EncryptedPluginUpload) (*Plug
 		BundleSHA256:      hex.EncodeToString(h[:]),
 		SizeBytes:         int64(len(upload.EncryptedBundle)),
 		AllowedDomains:    allowedDomains,
+		AllowedXpubs:      allowedXpubs,
 		MaxGrantTimeoutMs: upload.MaxGrantTimeoutMs,
 		SignatureHex:      strings.TrimSpace(upload.SignatureHex),
 		SignerPubKeyHex:   strings.TrimSpace(upload.SignerPubKeyHex),
@@ -979,6 +988,7 @@ func (r *PluginRegistry) saveCatalogLocked() error {
 			ContentType:       a.ContentType,
 			CacheControl:      a.CacheControl,
 			AllowedDomains:    append([]string(nil), a.AllowedDomains...),
+			AllowedXpubs:      append([]string(nil), a.AllowedXpubs...),
 			MaxGrantTimeoutMs: a.MaxGrantTimeoutMs,
 			SignatureHex:      a.SignatureHex,
 			SignerPubKeyHex:   a.SignerPubKeyHex,
@@ -1038,6 +1048,30 @@ func normalizeAllowedDomains(values []string) ([]string, error) {
 	}
 	sort.Strings(normalized)
 	return normalized, nil
+}
+
+// normalizeAllowedXpubs trims, drops empties, de-duplicates, and sorts the allowed
+// requester xpubs. Unlike domains these are opaque, case-sensitive BIP-32
+// identifiers, so no lowercasing or structural validation is applied.
+func normalizeAllowedXpubs(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	normalized := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		xpub := strings.TrimSpace(value)
+		if xpub == "" {
+			continue
+		}
+		if _, ok := seen[xpub]; ok {
+			continue
+		}
+		seen[xpub] = struct{}{}
+		normalized = append(normalized, xpub)
+	}
+	sort.Strings(normalized)
+	return normalized
 }
 
 func normalizePolicyDomain(value string) (string, error) {

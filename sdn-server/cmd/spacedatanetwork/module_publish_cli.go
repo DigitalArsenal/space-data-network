@@ -41,6 +41,7 @@ var (
 	modulePublishWalletAcct   uint32
 	modulePublishModules      []string
 	modulePublishAllowDomains []string
+	modulePublishAllowXpubs   []string
 	modulePublishTimeout      time.Duration
 )
 
@@ -69,6 +70,7 @@ func init() {
 	pluginsPublishOrbProCmd.Flags().Uint32Var(&modulePublishWalletAcct, "wallet-account", 0, "HD wallet account index used to derive the signing key")
 	pluginsPublishOrbProCmd.Flags().StringArrayVar(&modulePublishModules, "module", nil, "module id to publish; repeat to publish a subset")
 	pluginsPublishOrbProCmd.Flags().StringArrayVar(&modulePublishAllowDomains, "allowed-domain", nil, "allowed requester domain to apply to every published module; repeat for multiple domains")
+	pluginsPublishOrbProCmd.Flags().StringArrayVar(&modulePublishAllowXpubs, "allowed-xpub", nil, "allowed requester xpub (PKI) to apply to every published module; repeat for multiple xpubs")
 	pluginsPublishOrbProCmd.Flags().DurationVar(&modulePublishTimeout, "timeout", 60*time.Second, "publish timeout")
 	pluginsCmd.AddCommand(pluginsPublishOrbProCmd)
 	rootCmd.AddCommand(pluginsCmd)
@@ -92,6 +94,7 @@ func runPluginsPublishOrbPro(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	applyPublishAllowedDomains(&req, modulePublishAllowDomains)
+	applyPublishAllowedXpubs(&req, modulePublishAllowXpubs)
 
 	ctx, cancel := context.WithTimeout(cmd.Context(), modulePublishTimeout)
 	defer cancel()
@@ -167,6 +170,7 @@ func buildModulePublishRequestFromPluginRoot(pluginRoot string, moduleIDs []stri
 			ContentType:       entry.ContentType,
 			CacheControl:      entry.CacheControl,
 			AllowedDomains:    append([]string(nil), entry.AllowedDomains...),
+			AllowedXpubs:      append([]string(nil), entry.AllowedXpubs...),
 			MaxGrantTimeoutMs: entry.MaxGrantTimeoutMs,
 			SignatureHex:      entry.SignatureHex,
 			SignerPubKeyHex:   entry.SignerPubKeyHex,
@@ -236,6 +240,41 @@ func applyPublishAllowedDomains(req *license.ModulePublishRequest, domains []str
 	}
 	for i := range req.Modules {
 		req.Modules[i].AllowedDomains = append([]string(nil), normalized...)
+	}
+}
+
+// applyPublishAllowedXpubs merges the given xpubs into every module's allowlist
+// (additive + de-duplicated), so a global --allowed-xpub does not wipe any
+// per-module allowed_xpubs declared in catalog.json.
+func applyPublishAllowedXpubs(req *license.ModulePublishRequest, xpubs []string) {
+	if req == nil || len(xpubs) == 0 {
+		return
+	}
+	extra := make([]string, 0, len(xpubs))
+	for _, xpub := range xpubs {
+		trimmed := strings.TrimSpace(xpub)
+		if trimmed != "" {
+			extra = append(extra, trimmed)
+		}
+	}
+	if len(extra) == 0 {
+		return
+	}
+	for i := range req.Modules {
+		merged := append([]string(nil), req.Modules[i].AllowedXpubs...)
+		for _, xpub := range extra {
+			exists := false
+			for _, e := range merged {
+				if e == xpub {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				merged = append(merged, xpub)
+			}
+		}
+		req.Modules[i].AllowedXpubs = merged
 	}
 }
 
