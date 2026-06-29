@@ -5,7 +5,7 @@ go 1.24.6
 toolchain go1.24.12
 
 require (
-	github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.133.0
+	github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.134.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/emersion/go-vcard v0.0.0-20241024213814-c9703dde27ff
 	github.com/google/flatbuffers v25.12.19+incompatible
