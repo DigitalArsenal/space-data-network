@@ -914,6 +914,13 @@ func (n *Node) findKeyBrokerWasmPath() string {
 		}
 	}
 	paths := []string{
+		// Canonical, actively-maintained licensing/core (carries the PKI xpub gate:
+		// ALLOWED_XPUBS enforcement + EPM verification). Prefer it over the legacy
+		// space-data-network-plugins copy, which is deprecated and ungated.
+		"../space-data-network-modules/licensing/core/dist/isomorphic/module.wasm",
+		"../../space-data-network-modules/licensing/core/dist/isomorphic/module.wasm",
+		"../../packages/space-data-network-modules/licensing/core/dist/isomorphic/module.wasm",
+		// Deprecated fallback (stale repo; ungated) — kept only for older local layouts.
 		"../space-data-network-plugins/licensing/core/dist/isomorphic/module.wasm",
 		"../../space-data-network-plugins/licensing/core/dist/isomorphic/module.wasm",
 		"../../packages/sdn-license-plugin/build-wasi/sdn-license-plugin.wasm",
