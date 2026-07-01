@@ -19,6 +19,8 @@ type fakeProvider struct {
 	moduleCID     string
 	deny          bool
 	fetchErr      error
+	kmfPayload    []byte // if set, used as the grant's wrapped content-key payload
+	sealedBundle  []byte // if set, returned by FetchCID
 	challengeSent []byte
 	proofReceived []byte
 }
@@ -35,6 +37,10 @@ func (f *fakeProvider) Dial(_ context.Context, _ string, request []byte) ([]byte
 	case lpf.LPFBufferHasIdentifier(request):
 		f.proofReceived = append([]byte(nil), request...)
 		m := lpf.GetRootAsLPF(request, 0)
+		wrapped := f.kmfPayload
+		if wrapped == nil {
+			wrapped = []byte{0x11}
+		}
 		return encodeTestGrant(testGrant{
 			denied:        f.deny,
 			requestID:     string(m.REQUEST_ID()),
@@ -42,7 +48,7 @@ func (f *fakeProvider) Dial(_ context.Context, _ string, request []byte) ([]byte
 			moduleVersion: string(m.MODULE_VERSION()),
 			grantedDomain: "orbpro.default", grantedTimeoutMs: 30_000, expiresAtMs: 9_000_000,
 			grantStatus: "granted", denialReason: "not authorized", moduleCID: f.moduleCID,
-			wrappedPayload: []byte{0x11}, verifierPubKey: []byte{0x22}, providerSig: []byte{0x33},
+			wrappedPayload: wrapped, verifierPubKey: []byte{0x22}, providerSig: []byte{0x33},
 		}), nil
 	default:
 		return nil, fmt.Errorf("fakeProvider: unknown request frame")
@@ -55,6 +61,9 @@ func (f *fakeProvider) FetchCID(_ context.Context, cid string) ([]byte, error) {
 	}
 	if cid != f.moduleCID {
 		return nil, fmt.Errorf("fakeProvider: unexpected cid %q", cid)
+	}
+	if f.sealedBundle != nil {
+		return f.sealedBundle, nil
 	}
 	return []byte("ENCRYPTED-WASM-BYTES"), nil
 }
