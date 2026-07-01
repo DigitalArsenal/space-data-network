@@ -150,3 +150,99 @@ func TestStoreRoutedByProducer(t *testing.T) {
 		t.Errorf("peerA table leaked peerB record: %d", got)
 	}
 }
+
+func TestParseProducerStandardTable(t *testing.T) {
+	if p, s, ok := parseProducerStandardTable("sds_p_peerA__OMM"); !ok || p != "peerA" || s != "OMM" {
+		t.Errorf("parse(sds_p_peerA__OMM) = %q, %q, %v", p, s, ok)
+	}
+	// Split on the LAST "__" so a sanitized producer containing "__" stays intact.
+	if p, s, ok := parseProducerStandardTable("sds_p_a__b__OMM"); !ok || p != "a__b" || s != "OMM" {
+		t.Errorf("parse(sds_p_a__b__OMM) = %q, %q, %v", p, s, ok)
+	}
+	if _, _, ok := parseProducerStandardTable("some_other_table"); ok {
+		t.Error("non-matching name must not parse")
+	}
+	if _, _, ok := parseProducerStandardTable("sds_p_x"); ok {
+		t.Error("missing __standard must not parse")
+	}
+}
+
+func TestCrossTableRoutedQueries(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	ommA := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build()
+	ommB := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK").Build()
+	if _, err := store.StoreRoutedByProducer("OMM.fbs", ommA, "peerA", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.StoreRoutedByProducer("OMM.fbs", ommB, "peerB", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.StoreRoutedByProducer("EPM.fbs", []byte("epm-record-peerA"), "peerA", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// "all OMM across producers" -> both peerA and peerB.
+	omm, err := store.QueryRoutedByStandard("OMM.fbs", 0)
+	if err != nil {
+		t.Fatalf("QueryRoutedByStandard: %v", err)
+	}
+	if len(omm) != 2 {
+		t.Fatalf("OMM across producers = %d, want 2", len(omm))
+	}
+	producers := map[string]bool{}
+	for _, r := range omm {
+		producers[r.ProducerID] = true
+		if r.Standard != "OMM" {
+			t.Errorf("record standard = %q, want OMM", r.Standard)
+		}
+	}
+	if !producers["peerA"] || !producers["peerB"] {
+		t.Errorf("producers = %v, want {peerA, peerB}", producers)
+	}
+
+	// "all records from producer peerA" -> across standards OMM + EPM.
+	fromA, err := store.QueryRoutedByProducer("peerA", 0)
+	if err != nil {
+		t.Fatalf("QueryRoutedByProducer: %v", err)
+	}
+	if len(fromA) != 2 {
+		t.Fatalf("from peerA = %d, want 2", len(fromA))
+	}
+	standards := map[string]bool{}
+	for _, r := range fromA {
+		standards[r.Standard] = true
+		if r.ProducerID != "peerA" {
+			t.Errorf("record producer = %q, want peerA", r.ProducerID)
+		}
+	}
+	if !standards["OMM"] || !standards["EPM"] {
+		t.Errorf("standards = %v, want {OMM, EPM}", standards)
+	}
+
+	// Everything.
+	all, err := store.QueryRoutedAll(0)
+	if err != nil {
+		t.Fatalf("QueryRoutedAll: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("all routed records = %d, want 3", len(all))
+	}
+
+	// A standard with no records -> empty, not an error.
+	none, err := store.QueryRoutedByStandard("CAT.fbs", 0)
+	if err != nil {
+		t.Fatalf("QueryRoutedByStandard(CAT): %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("CAT across producers = %d, want 0", len(none))
+	}
+}
