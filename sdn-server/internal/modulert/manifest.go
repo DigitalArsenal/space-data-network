@@ -482,6 +482,26 @@ func pluginFamilyFromPLGType(value string) string {
 		return "PHYSICS"
 	case "Shader":
 		return "SHADER"
+	case "Parser":
+		return "PARSER"
+	case "Validator":
+		return "VALIDATOR"
+	case "Interpolator":
+		return "INTERPOLATOR"
+	case "Exporter":
+		return "EXPORTER"
+	case "Foundation":
+		return "FOUNDATION"
+	case "Infrastructure":
+		return "INFRASTRUCTURE"
+	case "Licensing":
+		return "LICENSING"
+	case "Storefront":
+		return "STOREFRONT"
+	case "Publisher":
+		return "PUBLISHER"
+	case "Basilisk":
+		return "BASILISK"
 	default:
 		return strings.ToUpper(strings.TrimSpace(value))
 	}
