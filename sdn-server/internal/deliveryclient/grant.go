@@ -35,11 +35,15 @@ type Grant struct {
 	// embedded PLG module descriptor's WASM_CID).
 	ModuleDescriptorCID string
 
-	// Opaque crypto material consumed by the content-key unwrap step (4.3c).
+	// Opaque crypto material consumed by the content-key unwrap step.
 	WrappedContentKeyPayload []byte
 	GrantVerifierPublicKey   []byte
 	ProviderSignature        []byte
 	HasWrappedContentKey     bool
+	// WrappedContentKeyRootType is the ENC header's ROOT_TYPE (normalized, e.g.
+	// "KMF"), which selects the unwrap path: a plaintext KMF is decoded
+	// natively; anything else is delegated to the client-decrypt WASM module.
+	WrappedContentKeyRootType string
 }
 
 // Granted reports whether the grant authorizes delivery.
@@ -72,8 +76,9 @@ func DecodeGrant(data []byte) (*Grant, error) {
 	if msg.WRAPPED_CONTENT_KEY_PAYLOADLength() > 0 {
 		g.WrappedContentKeyPayload = append([]byte(nil), msg.WrappedContentKeyPayloadBytes()...)
 	}
-	if msg.WRAPPED_CONTENT_KEY_HEADER(nil) != nil {
+	if header := msg.WRAPPED_CONTENT_KEY_HEADER(nil); header != nil {
 		g.HasWrappedContentKey = true
+		g.WrappedContentKeyRootType = normalizeRootType(string(header.ROOT_TYPE()))
 	}
 	if msg.GRANT_VERIFIER_PUBKEYLength() > 0 {
 		g.GrantVerifierPublicKey = append([]byte(nil), msg.GrantVerifierPubkeyBytes()...)
@@ -132,6 +137,12 @@ func (g *Grant) Validate(exp GrantExpectations) error {
 		return errors.New("deliveryclient: grant missing module descriptor CID")
 	}
 	return nil
+}
+
+// normalizeRootType strips a leading "$" and upper-cases a FlatBuffer root-type
+// tag, matching the sdn-js normalizeRootType used to select the unwrap path.
+func normalizeRootType(value string) string {
+	return strings.ToUpper(strings.TrimPrefix(strings.TrimSpace(value), "$"))
 }
 
 func firstNonEmpty(values ...string) string {
