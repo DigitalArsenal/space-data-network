@@ -80,18 +80,28 @@ type PluginCatalogFile struct {
 	Plugins []PluginCatalogEntry `json:"plugins"`
 }
 
+// PluginDependencyRef is a declared dependency on another plugin. It mirrors the
+// PLG.PluginDependency wire table and is the unit the dependency resolver walks
+// when it recursively pulls a module's transitive closure through the grant flow.
+type PluginDependencyRef struct {
+	PluginID   string `json:"plugin_id"`
+	MinVersion string `json:"min_version,omitempty"`
+	MaxVersion string `json:"max_version,omitempty"`
+}
+
 // PluginCatalogEntry describes a plugin bundle and its key material location.
 type PluginCatalogEntry struct {
-	ID                string   `json:"id"`
-	Version           string   `json:"version"`
-	RequiredScope     string   `json:"required_scope"`
-	EncryptedPath     string   `json:"encrypted_path,omitempty"`
-	KeyPath           string   `json:"key_path,omitempty"`
-	PlainPath         string   `json:"plain_path,omitempty"`
-	ContentType       string   `json:"content_type,omitempty"`
-	CacheControl      string   `json:"cache_control,omitempty"`
-	AllowedXpubs      []string `json:"allowed_xpubs,omitempty"`
-	MaxGrantTimeoutMs int64    `json:"max_grant_timeout_ms,omitempty"`
+	ID                string                `json:"id"`
+	Version           string                `json:"version"`
+	RequiredScope     string                `json:"required_scope"`
+	EncryptedPath     string                `json:"encrypted_path,omitempty"`
+	KeyPath           string                `json:"key_path,omitempty"`
+	PlainPath         string                `json:"plain_path,omitempty"`
+	ContentType       string                `json:"content_type,omitempty"`
+	CacheControl      string                `json:"cache_control,omitempty"`
+	AllowedXpubs      []string              `json:"allowed_xpubs,omitempty"`
+	Dependencies      []PluginDependencyRef `json:"dependencies,omitempty"`
+	MaxGrantTimeoutMs int64                 `json:"max_grant_timeout_ms,omitempty"`
 
 	// Upload audit fields (set when uploaded via API).
 	SignatureHex    string `json:"signature_hex,omitempty"`
@@ -125,6 +135,7 @@ type PluginAsset struct {
 	BundleSHA256      string
 	SizeBytes         int64
 	AllowedXpubs      []string
+	Dependencies      []PluginDependencyRef
 	MaxGrantTimeoutMs int64
 	SignatureHex      string
 	SignerPubKeyHex   string
@@ -150,6 +161,7 @@ type EncryptedPluginUpload struct {
 	ContentType        string
 	CacheControl       string
 	AllowedXpubs       []string
+	Dependencies       []PluginDependencyRef
 	MaxGrantTimeoutMs  int64
 	SignatureHex       string
 	SignerPubKeyHex    string
@@ -164,6 +176,7 @@ func (a *PluginAsset) clone() *PluginAsset {
 	if len(a.AllowedXpubs) > 0 {
 		cp.AllowedXpubs = append([]string(nil), a.AllowedXpubs...)
 	}
+	cp.Dependencies = cloneDependencies(a.Dependencies)
 	return &cp
 }
 
@@ -735,6 +748,7 @@ func validateCatalogEntry(rootAbs string, entry PluginCatalogEntry) (*PluginAsse
 		UploadedAt:        entry.UploadedAt,
 	}
 	asset.AllowedXpubs = normalizeAllowedXpubs(entry.AllowedXpubs)
+	asset.Dependencies = normalizeDependencies(entry.Dependencies)
 	if asset.MaxGrantTimeoutMs < 0 {
 		return nil, errors.New("max_grant_timeout_ms must be >= 0")
 	}
@@ -884,6 +898,7 @@ func (r *PluginRegistry) AddEncryptedPlugin(upload EncryptedPluginUpload) (*Plug
 		cacheControl = defaultPluginCacheControl
 	}
 	allowedXpubs := normalizeAllowedXpubs(upload.AllowedXpubs)
+	dependencies := normalizeDependencies(upload.Dependencies)
 	if upload.MaxGrantTimeoutMs < 0 {
 		return nil, errors.New("max_grant_timeout_ms must be >= 0")
 	}
@@ -920,6 +935,7 @@ func (r *PluginRegistry) AddEncryptedPlugin(upload EncryptedPluginUpload) (*Plug
 		BundleSHA256:      hex.EncodeToString(h[:]),
 		SizeBytes:         int64(len(upload.EncryptedBundle)),
 		AllowedXpubs:      allowedXpubs,
+		Dependencies:      dependencies,
 		MaxGrantTimeoutMs: upload.MaxGrantTimeoutMs,
 		SignatureHex:      strings.TrimSpace(upload.SignatureHex),
 		SignerPubKeyHex:   strings.TrimSpace(upload.SignerPubKeyHex),
@@ -952,6 +968,7 @@ func (r *PluginRegistry) saveCatalogLocked() error {
 			ContentType:       a.ContentType,
 			CacheControl:      a.CacheControl,
 			AllowedXpubs:      append([]string(nil), a.AllowedXpubs...),
+			Dependencies:      cloneDependencies(a.Dependencies),
 			MaxGrantTimeoutMs: a.MaxGrantTimeoutMs,
 			SignatureHex:      a.SignatureHex,
 			SignerPubKeyHex:   a.SignerPubKeyHex,
@@ -1014,6 +1031,50 @@ func normalizeAllowedXpubs(values []string) []string {
 	}
 	sort.Strings(normalized)
 	return normalized
+}
+
+// normalizeDependencies trims plugin IDs and version bounds, drops entries with
+// an empty plugin ID, de-duplicates by plugin ID (last declaration wins so a
+// later, tighter bound overrides an earlier one), and sorts by plugin ID so the
+// emitted PLG.DEPENDENCIES vector is deterministic across publishes.
+func normalizeDependencies(values []PluginDependencyRef) []PluginDependencyRef {
+	if len(values) == 0 {
+		return nil
+	}
+	index := make(map[string]int, len(values))
+	normalized := make([]PluginDependencyRef, 0, len(values))
+	for _, value := range values {
+		pluginID := strings.TrimSpace(value.PluginID)
+		if pluginID == "" {
+			continue
+		}
+		dep := PluginDependencyRef{
+			PluginID:   pluginID,
+			MinVersion: strings.TrimSpace(value.MinVersion),
+			MaxVersion: strings.TrimSpace(value.MaxVersion),
+		}
+		if pos, ok := index[pluginID]; ok {
+			normalized[pos] = dep
+			continue
+		}
+		index[pluginID] = len(normalized)
+		normalized = append(normalized, dep)
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	sort.Slice(normalized, func(i, j int) bool { return normalized[i].PluginID < normalized[j].PluginID })
+	return normalized
+}
+
+// cloneDependencies deep-copies a dependency slice. PluginDependencyRef holds
+// only value fields, so a slice copy fully detaches it from the registry's
+// stored slice.
+func cloneDependencies(values []PluginDependencyRef) []PluginDependencyRef {
+	if len(values) == 0 {
+		return nil
+	}
+	return append([]PluginDependencyRef(nil), values...)
 }
 
 func resolveRelativePath(rootAbs, relPath string) (string, error) {

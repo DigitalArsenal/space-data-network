@@ -568,6 +568,8 @@ func buildPublicationDescriptorFrame(asset *license.PluginAsset) ([]byte, error)
 		allowedXpubsOffset = createOffsetVector(builder, xpubOffsets)
 	}
 
+	dependenciesOffset := buildDependenciesVector(builder, asset.Dependencies)
+
 	nowMs := uint64(time.Now().UnixMilli())
 
 	plg.PLGStart(builder)
@@ -585,12 +587,51 @@ func buildPublicationDescriptorFrame(asset *license.PluginAsset) ([]byte, error)
 	if allowedXpubsOffset != 0 {
 		plg.PLGAddALLOWED_XPUBS(builder, allowedXpubsOffset)
 	}
+	if dependenciesOffset != 0 {
+		plg.PLGAddDEPENDENCIES(builder, dependenciesOffset)
+	}
 	plg.PLGAddMAX_GRANT_TIMEOUT_MS(builder, asset.GrantTimeoutLimitMs())
 	plg.PLGAddCREATED_AT(builder, nowMs)
 	plg.PLGAddUPDATED_AT(builder, nowMs)
 	root := plg.PLGEnd(builder)
 	plg.FinishPLGBuffer(builder, root)
 	return builder.FinishedBytes(), nil
+}
+
+// buildDependenciesVector encodes an asset's declared plugin dependencies as a
+// PLG.PluginDependency vector. Every child string and table is created before
+// the vector — and before the enclosing PLG table is opened by the caller — per
+// flatbuffers' rule that nested objects must be finished before their parent.
+func buildDependenciesVector(builder *flatbuffers.Builder, deps []license.PluginDependencyRef) flatbuffers.UOffsetT {
+	if len(deps) == 0 {
+		return 0
+	}
+	offsets := make([]flatbuffers.UOffsetT, 0, len(deps))
+	for _, dep := range deps {
+		pluginID := strings.TrimSpace(dep.PluginID)
+		if pluginID == "" {
+			continue
+		}
+		idOffset := builder.CreateString(pluginID)
+		minOffset := flatbuffers.UOffsetT(0)
+		if v := strings.TrimSpace(dep.MinVersion); v != "" {
+			minOffset = builder.CreateString(v)
+		}
+		maxOffset := flatbuffers.UOffsetT(0)
+		if v := strings.TrimSpace(dep.MaxVersion); v != "" {
+			maxOffset = builder.CreateString(v)
+		}
+		plg.PluginDependencyStart(builder)
+		plg.PluginDependencyAddPLUGIN_ID(builder, idOffset)
+		if minOffset != 0 {
+			plg.PluginDependencyAddMIN_VERSION(builder, minOffset)
+		}
+		if maxOffset != 0 {
+			plg.PluginDependencyAddMAX_VERSION(builder, maxOffset)
+		}
+		offsets = append(offsets, plg.PluginDependencyEnd(builder))
+	}
+	return createOffsetVector(builder, offsets)
 }
 
 func createOffsetVector(builder *flatbuffers.Builder, offsets []flatbuffers.UOffsetT) flatbuffers.UOffsetT {

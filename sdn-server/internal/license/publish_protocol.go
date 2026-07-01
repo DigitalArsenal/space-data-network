@@ -34,17 +34,18 @@ type ModulePublishAuthorizer func(xpub string) (ModulePublishPrincipal, error)
 // ModulePublishEntry is one encrypted module artifact in a publish request.
 // Byte slices are encoded as base64 by encoding/json.
 type ModulePublishEntry struct {
-	ID                string   `json:"id"`
-	Version           string   `json:"version"`
-	RequiredScope     string   `json:"required_scope,omitempty"`
-	EncryptedBundle   []byte   `json:"encrypted_bundle"`
-	KeyMaterial       []byte   `json:"key_material"`
-	ContentType       string   `json:"content_type,omitempty"`
-	CacheControl      string   `json:"cache_control,omitempty"`
-	AllowedXpubs      []string `json:"allowed_xpubs,omitempty"`
-	MaxGrantTimeoutMs int64    `json:"max_grant_timeout_ms,omitempty"`
-	SignatureHex      string   `json:"signature_hex,omitempty"`
-	SignerPubKeyHex   string   `json:"signer_pubkey_hex,omitempty"`
+	ID                string                `json:"id"`
+	Version           string                `json:"version"`
+	RequiredScope     string                `json:"required_scope,omitempty"`
+	EncryptedBundle   []byte                `json:"encrypted_bundle"`
+	KeyMaterial       []byte                `json:"key_material"`
+	ContentType       string                `json:"content_type,omitempty"`
+	CacheControl      string                `json:"cache_control,omitempty"`
+	AllowedXpubs      []string              `json:"allowed_xpubs,omitempty"`
+	Dependencies      []PluginDependencyRef `json:"dependencies,omitempty"`
+	MaxGrantTimeoutMs int64                 `json:"max_grant_timeout_ms,omitempty"`
+	SignatureHex      string                `json:"signature_hex,omitempty"`
+	SignerPubKeyHex   string                `json:"signer_pubkey_hex,omitempty"`
 }
 
 // ModulePublishRequest is signed by an admin wallet. The signer xpub is the
@@ -98,6 +99,7 @@ func ApplyModulePublishRequest(reg *PluginRegistry, req ModulePublishRequest, au
 			ContentType:        module.ContentType,
 			CacheControl:       module.CacheControl,
 			AllowedXpubs:       module.AllowedXpubs,
+			Dependencies:       module.Dependencies,
 			MaxGrantTimeoutMs:  module.MaxGrantTimeoutMs,
 			SignatureHex:       module.SignatureHex,
 			SignerPubKeyHex:    module.SignerPubKeyHex,
