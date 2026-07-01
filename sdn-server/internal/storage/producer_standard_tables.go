@@ -4,11 +4,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
+
+var producerStandardIdentRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
+func isSafeIdentifier(s string) bool { return producerStandardIdentRe.MatchString(s) }
 
 // sanitizeProducerID maps a producer identity (libp2p peer ID or hex public key)
 // to a SQL-identifier-safe token. Peer IDs (base58) and public keys (hex) are
@@ -114,4 +119,148 @@ func (s *FlatSQLStore) StoreRoutedByProducer(schemaName string, data []byte, pee
 		log.Warnf("Failed to index %s record %s: %v", schemaName, cid[:16]+"...", err)
 	}
 	return cid, nil
+}
+
+// ProducerStandardTable identifies a physical (producer, standard) record table.
+type ProducerStandardTable struct {
+	TableName  string
+	ProducerID string
+	Standard   string
+}
+
+// parseProducerStandardTable splits a physical table name of the form
+// sds_p_<producer>__<standard> back into its parts. The standard component (an
+// SDS file id like OMM/OEM/EPM) never contains "__", so the split is on the last
+// "__" — robust even if a sanitized producer happens to contain one. It returns
+// ok=false for names that are not valid (producer, standard) tables.
+func parseProducerStandardTable(name string) (producer, standard string, ok bool) {
+	const prefix = "sds_p_"
+	if !strings.HasPrefix(name, prefix) {
+		return "", "", false
+	}
+	rest := name[len(prefix):]
+	idx := strings.LastIndex(rest, "__")
+	if idx <= 0 || idx+2 >= len(rest) {
+		return "", "", false
+	}
+	producer, standard = rest[:idx], rest[idx+2:]
+	if !isSafeIdentifier(producer) || !isSafeIdentifier(standard) {
+		return "", "", false
+	}
+	return producer, standard, true
+}
+
+// listProducerStandardTables enumerates the (producer, standard) record tables.
+// The caller must hold s.mu.
+func (s *FlatSQLStore) listProducerStandardTables() ([]ProducerStandardTable, error) {
+	rows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'sds\_p\_%' ESCAPE '\' ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ProducerStandardTable
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		producer, standard, ok := parseProducerStandardTable(name)
+		if !ok {
+			continue
+		}
+		out = append(out, ProducerStandardTable{TableName: name, ProducerID: producer, Standard: standard})
+	}
+	return out, rows.Err()
+}
+
+// RoutedRecord is one record's provenance drawn from a (producer, standard)
+// table by a cross-table query.
+type RoutedRecord struct {
+	CID        string
+	ProducerID string
+	Standard   string
+	PeerID     string
+	Timestamp  int64
+}
+
+// QueryRoutedByStandard returns records for a standard across ALL producers,
+// newest first — e.g. "all OMM across producers". A zero/negative limit means no
+// limit. This is the cross-table query the (producer, standard) layout enables.
+func (s *FlatSQLStore) QueryRoutedByStandard(schemaName string, limit int) ([]RoutedRecord, error) {
+	standard, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return nil, err
+	}
+	if !isSafeIdentifier(standard) {
+		return nil, fmt.Errorf("unsupported standard name %q", standard)
+	}
+	return s.queryRoutedTables(func(t ProducerStandardTable) bool { return t.Standard == standard }, limit)
+}
+
+// QueryRoutedByProducer returns records from one producer across ALL standards,
+// newest first — e.g. "all records from producer X".
+func (s *FlatSQLStore) QueryRoutedByProducer(producerID string, limit int) ([]RoutedRecord, error) {
+	producer := sanitizeProducerID(producerID)
+	if producer == "" {
+		return nil, fmt.Errorf("producer id is required")
+	}
+	return s.queryRoutedTables(func(t ProducerStandardTable) bool { return t.ProducerID == producer }, limit)
+}
+
+// QueryRoutedAll returns records across every (producer, standard) table,
+// newest first.
+func (s *FlatSQLStore) QueryRoutedAll(limit int) ([]RoutedRecord, error) {
+	return s.queryRoutedTables(func(ProducerStandardTable) bool { return true }, limit)
+}
+
+// queryRoutedTables runs a UNION ALL over the matching (producer, standard)
+// tables, carrying each row's producer and standard alongside its metadata.
+func (s *FlatSQLStore) queryRoutedTables(match func(ProducerStandardTable) bool, limit int) ([]RoutedRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	tables, err := s.listProducerStandardTables()
+	if err != nil {
+		return nil, err
+	}
+
+	parts := make([]string, 0, len(tables))
+	for _, t := range tables {
+		if !match(t) {
+			continue
+		}
+		// TableName, ProducerID and Standard are validated identifiers (parsed
+		// from our own table names), so this cross-table UNION carries
+		// provenance without an injection vector.
+		parts = append(parts, fmt.Sprintf(
+			"SELECT cid, peer_id, timestamp, '%s' AS producer_id, '%s' AS standard FROM %s",
+			t.ProducerID, t.Standard, t.TableName))
+	}
+	if len(parts) == 0 {
+		return nil, nil
+	}
+
+	query := strings.Join(parts, " UNION ALL ") + " ORDER BY timestamp DESC"
+	var args []any
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []RoutedRecord
+	for rows.Next() {
+		var r RoutedRecord
+		if err := rows.Scan(&r.CID, &r.PeerID, &r.Timestamp, &r.ProducerID, &r.Standard); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
