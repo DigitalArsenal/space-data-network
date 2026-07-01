@@ -1,8 +1,11 @@
 package storage
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
@@ -70,4 +73,45 @@ func (s *FlatSQLStore) ensureProducerStandardTable(producerID, schemaName string
 		}
 	}
 	return tableName, nil
+}
+
+// StoreRoutedByProducer stores a record into the (producer, standard) table for
+// its producer (peerID) and schema — the (producer, standard) counterpart of
+// Store. It appends the payload to the shared FlatSQL stream and updates the
+// record index exactly like Store, but the metadata row lands in the producer's
+// own table, keeping each publisher's records separated. Content-addressed
+// records are immutable, so a repeat CID is a no-op.
+//
+// This adds the routed write path without changing the existing per-standard
+// Store; readers migrate to the (producer, standard) tables in WS7.3.
+func (s *FlatSQLStore) StoreRoutedByProducer(schemaName string, data []byte, peerID string, signature []byte) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tableName, err := s.ensureProducerStandardTable(peerID, schemaName)
+	if err != nil {
+		return "", fmt.Errorf("ensure (producer, standard) table: %w", err)
+	}
+
+	cid := computeCID(data)
+	var existing int
+	if err := s.db.QueryRow(fmt.Sprintf(`SELECT 1 FROM %s WHERE cid = ?`, tableName), cid).Scan(&existing); err == nil {
+		return cid, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("failed to check existing record: %w", err)
+	}
+
+	now := time.Now().Unix()
+	streamPath, streamOffset, recordLength, err := s.appendFlatSQLStreamRecord(schemaName, data)
+	if err != nil {
+		return "", fmt.Errorf("failed to append FlatSQL stream record: %w", err)
+	}
+	if err := insertSchemaMetadata(s.db, tableName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now); err != nil {
+		return "", fmt.Errorf("failed to store data: %w", err)
+	}
+	if err := s.upsertRecordIndex(schemaName, cid, now, data); err != nil {
+		// Do not fail writes if index extraction fails for a record.
+		log.Warnf("Failed to index %s record %s: %v", schemaName, cid[:16]+"...", err)
+	}
+	return cid, nil
 }

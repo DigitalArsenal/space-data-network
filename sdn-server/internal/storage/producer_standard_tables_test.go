@@ -93,3 +93,60 @@ func TestEnsureProducerStandardTable(t *testing.T) {
 		t.Fatalf("peerB table %s should exist (exists=%v err=%v)", nameB, exists, err)
 	}
 }
+
+func TestStoreRoutedByProducer(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	rowCount := func(table, cid string) int {
+		var n int
+		if err := store.db.QueryRow("SELECT COUNT(*) FROM "+table+" WHERE cid = ?", cid).Scan(&n); err != nil {
+			t.Fatalf("count in %s: %v", table, err)
+		}
+		return n
+	}
+
+	data := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build()
+	cid, err := store.StoreRoutedByProducer("OMM.fbs", data, "peerA", nil)
+	if err != nil {
+		t.Fatalf("StoreRoutedByProducer() error = %v", err)
+	}
+	if cid == "" {
+		t.Fatal("empty cid")
+	}
+
+	tableA := "sds_p_peerA__OMM"
+	if got := rowCount(tableA, cid); got != 1 {
+		t.Errorf("row count in %s = %d, want 1", tableA, got)
+	}
+
+	// Idempotent: re-storing the same record is a no-op.
+	if _, err := store.StoreRoutedByProducer("OMM.fbs", data, "peerA", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := rowCount(tableA, cid); got != 1 {
+		t.Errorf("after re-store, count = %d, want 1", got)
+	}
+
+	// A different producer's record for the same schema lands in a separate table.
+	data2 := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK").Build()
+	cidB, err := store.StoreRoutedByProducer("OMM.fbs", data2, "peerB", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tableB := "sds_p_peerB__OMM"
+	if got := rowCount(tableB, cidB); got != 1 {
+		t.Errorf("peerB row count = %d, want 1", got)
+	}
+	// peerA's table must not contain peerB's record (producer separation).
+	if got := rowCount(tableA, cidB); got != 0 {
+		t.Errorf("peerA table leaked peerB record: %d", got)
+	}
+}
