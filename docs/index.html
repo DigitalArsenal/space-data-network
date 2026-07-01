@@ -40,6 +40,11 @@
       --radius: 28px;
       --radius-sm: 16px;
       --sdn-stack-footer-height: 40px;
+      --sdn-stack-header-height: 52px;
+      --sdn-stack-header-brand-size: 15px;
+      --sdn-stack-header-link-size: 14px;
+      --sdn-stack-header-action-size: 13px;
+      --sdn-stack-header-mobile-link-size: 16px;
     }
 
     html {
@@ -103,7 +108,7 @@
       top: 0;
       left: 0;
       right: 0;
-      height: 44px;
+      height: var(--sdn-stack-header-height, 52px);
       z-index: 9999;
       background: var(--nav-bg);
       backdrop-filter: blur(20px);
@@ -134,7 +139,7 @@
       align-items: center;
       gap: 10px;
       font-weight: 600;
-      font-size: 15px;
+      font-size: var(--sdn-stack-header-brand-size, 15px);
       color: var(--text-primary);
       white-space: nowrap;
       flex-shrink: 0;
@@ -169,7 +174,7 @@
     .mobile-menu {
       display: none;
       position: fixed;
-      top: 44px;
+      top: var(--sdn-stack-header-height, 52px);
       left: 0;
       right: 0;
       background: var(--nav-bg);
@@ -188,7 +193,7 @@
 
     .mobile-menu a {
       color: var(--text-secondary);
-      font-size: 16px;
+      font-size: var(--sdn-stack-header-mobile-link-size, 16px);
       font-weight: 500;
       padding: 8px 0;
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
@@ -204,7 +209,7 @@
 
     .nav-links a {
       color: var(--text-secondary);
-      font-size: 13px;
+      font-size: var(--sdn-stack-header-link-size, 14px);
       font-weight: 500;
       transition: color 0.2s;
     }
@@ -218,7 +223,7 @@
       background: var(--ui-bg);
       border: 1px solid var(--ui-border);
       border-radius: var(--radius);
-      font-size: 13px;
+      font-size: var(--sdn-stack-header-action-size, 13px);
       font-weight: 600;
       color: var(--text-primary);
       backdrop-filter: blur(10px);
@@ -2816,7 +2821,7 @@
       background: var(--text-primary);
       border: 1px solid var(--text-primary);
       border-radius: var(--radius);
-      font-size: 13px;
+      font-size: var(--sdn-stack-header-action-size, 13px);
       font-weight: 600;
       color: var(--bg);
       cursor: pointer;
@@ -2861,7 +2866,7 @@
       background: transparent;
       border: 1px solid rgba(255, 255, 255, 0.3);
       border-radius: var(--radius);
-      font-size: 13px;
+      font-size: var(--sdn-stack-header-action-size, 13px);
       font-weight: 500;
       color: var(--text-primary);
       cursor: pointer;
@@ -2878,11 +2883,11 @@
         gap: 12px;
       }
       .nav-links a {
-        font-size: 12px;
+        font-size: var(--sdn-stack-header-link-size, 14px);
       }
       .nav-login {
         padding: 6px 12px;
-        font-size: 12px;
+        font-size: var(--sdn-stack-header-action-size, 13px);
       }
     }
 
@@ -2908,7 +2913,7 @@
       background: var(--text-primary);
       border: none;
       border-radius: var(--radius);
-      font-size: 16px;
+      font-size: var(--sdn-stack-header-mobile-link-size, 16px);
       font-weight: 600;
       color: var(--bg);
       cursor: pointer;
@@ -6309,7 +6314,7 @@ npm install</code></pre>
     }
 
     // Smooth scroll + deeplinking
-    const NAV_OFFSET = 44;
+    const NAV_OFFSET = 52;
     document.querySelectorAll('a[href^="#"]').forEach(anchor => {
       anchor.addEventListener('click', function(e) {
         const href = this.getAttribute('href');
