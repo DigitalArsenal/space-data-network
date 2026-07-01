@@ -39,7 +39,7 @@
       --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
       --radius: 28px;
       --radius-sm: 16px;
-      --sdn-stack-nav-height: 32px;
+      --sdn-stack-footer-height: 40px;
     }
 
     html {
@@ -47,7 +47,7 @@
     }
 
     section[id] {
-      scroll-margin-top: calc(var(--sdn-stack-nav-height, 32px) + 50px);
+      scroll-margin-top: 50px;
     }
 
     body {
@@ -58,6 +58,7 @@
       overflow-x: hidden;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
+      padding-bottom: var(--sdn-stack-footer-height, 40px);
     }
 
     a {
@@ -99,7 +100,7 @@
        ============================================ */
     nav {
       position: fixed;
-      top: var(--sdn-stack-nav-height, 32px);
+      top: 0;
       left: 0;
       right: 0;
       height: 44px;
@@ -168,7 +169,7 @@
     .mobile-menu {
       display: none;
       position: fixed;
-      top: calc(var(--sdn-stack-nav-height, 32px) + 44px);
+      top: 44px;
       left: 0;
       right: 0;
       background: var(--nav-bg);
@@ -2079,6 +2080,11 @@
       transform: translateY(-2px);
     }
 
+    .doc-card.active-stack-card {
+      border-color: rgba(0, 119, 182, 0.55);
+      background: rgba(0, 119, 182, 0.16);
+    }
+
     .doc-card h3 {
       font-size: 20px;
       font-weight: 600;
@@ -3019,6 +3025,7 @@
         <a href="#docs">Docs</a>
         <a href="#downloads">Downloads</a>
         <a href="#faq">FAQ</a>
+        <a href="#stack">Stack</a>
         <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank">GitHub</a>
       </div>
       <div class="nav-right">
@@ -3054,6 +3061,7 @@
     <a href="#docs">Documentation</a>
     <a href="#downloads">Downloads</a>
     <a href="#faq">FAQ</a>
+    <a href="#stack">Stack</a>
     <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank">GitHub</a>
     <button class="mobile-menu-login" id="mobile-login">Login</button>
   </div>
@@ -5159,6 +5167,62 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
     </div>
   </section>
 
+  <section id="stack">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">SDN Stack</h2>
+        <p class="section-subtitle">The sites that make up the standards, storage, network, and module toolchain</p>
+      </div>
+      <div class="docs-grid">
+        <a href="https://spacedatastandards.org/" class="doc-card">
+          <h3>Standards</h3>
+          <p>Canonical space data schemas and generated language bindings.</p>
+          <ul>
+            <li>FlatBuffer schemas</li>
+            <li>Record contracts</li>
+            <li>Generated packages</li>
+          </ul>
+        </a>
+        <a href="https://digitalarsenal.github.io/flatbuffers/" class="doc-card">
+          <h3>FlatBuffers</h3>
+          <p>Binary encoding, schema tooling, and runtime documentation.</p>
+          <ul>
+            <li>Schema tooling</li>
+            <li>Language runtimes</li>
+            <li>Core documentation</li>
+          </ul>
+        </a>
+        <a href="https://digitalarsenal.github.io/flatsql/" class="doc-card">
+          <h3>FlatSQL</h3>
+          <p>SQL-style queries over FlatBuffer-backed datasets and streams.</p>
+          <ul>
+            <li>Query surface</li>
+            <li>Indexed storage</li>
+            <li>Stream contracts</li>
+          </ul>
+        </a>
+        <a href="https://spacedatanetwork.org/" class="doc-card active-stack-card">
+          <h3>SDN</h3>
+          <p>Distributed publication, discovery, delivery, and marketplace infrastructure.</p>
+          <ul>
+            <li>Peer network</li>
+            <li>Signed delivery</li>
+            <li>Marketplace routing</li>
+          </ul>
+        </a>
+        <a href="https://digitalarsenal.github.io/space-data-module-sdk/" class="doc-card">
+          <h3>Module SDK</h3>
+          <p>Build and validate WebAssembly modules for SDN host runtimes.</p>
+          <ul>
+            <li>WASM packages</li>
+            <li>Manifest checks</li>
+            <li>Host compatibility</li>
+          </ul>
+        </a>
+      </div>
+    </div>
+  </section>
+
   <!-- FAQ Section -->
   <section id="faq">
     <div class="container">
@@ -6245,7 +6309,7 @@ npm install</code></pre>
     }
 
     // Smooth scroll + deeplinking
-    const NAV_OFFSET = 76;
+    const NAV_OFFSET = 44;
     document.querySelectorAll('a[href^="#"]').forEach(anchor => {
       anchor.addEventListener('click', function(e) {
         const href = this.getAttribute('href');
