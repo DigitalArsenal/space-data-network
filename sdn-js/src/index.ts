@@ -276,6 +276,39 @@ export type {
 export { resolveNode, detectIdentifierType } from './resolver';
 export type { ResolvedNode, ResolveOptions, IdentifierType } from './resolver';
 
+// Module dependency resolver + installer (decentralized package manager;
+// browser mirror of the Go internal/deps package).
+export {
+  resolveClosure,
+  installClosure,
+  MapModuleCatalog,
+  DependencyError,
+  compareSemver,
+  satisfies,
+} from './module-dependency-resolver';
+export type {
+  ModuleDependency,
+  ModuleManifest,
+  ModuleCatalog,
+  InstalledModules,
+  PlanStep,
+  InstallFn,
+  DependencyErrorCode,
+} from './module-dependency-resolver';
+export {
+  InstalledModuleRegistry,
+  MemoryRegistryStore,
+  LocalStorageRegistryStore,
+  createModuleInstaller,
+} from './installed-module-registry';
+export type {
+  InstalledModuleRecord,
+  RegistryStore,
+  FetchAndDecrypt,
+  RegisterModule,
+  ModuleInstallerOptions,
+} from './installed-module-registry';
+
 // Transport + Auth
 export { HttpTransport } from './transport/http';
 export type { LogEntry, LogHeadInfo } from './transport/http';
