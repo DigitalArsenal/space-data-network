@@ -3,6 +3,7 @@ package epm
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 )
 
 var (
@@ -43,22 +46,53 @@ func VerifyEPMSignature(epmData []byte) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidEPMSignature, err)
 	}
-	if len(signature) != ed25519.SignatureSize {
-		return fmt.Errorf("%w: signature length %d", ErrInvalidEPMSignature, len(signature))
-	}
-
-	publicKey, err := firstEPMSigningPublicKey(epmRecord)
-	if err != nil {
-		return err
-	}
 	payload, err := canonicalSigningContentFromEPM(epmRecord)
 	if err != nil {
 		return err
 	}
-	if !ed25519.Verify(publicKey, payload, signature) {
-		return ErrInvalidEPMSignature
+	if verifyEPMSignatureAgainstKeys(epmRecord, payload, signature) {
+		return nil
 	}
-	return nil
+	return ErrInvalidEPMSignature
+}
+
+// verifyEPMSignatureAgainstKeys tries each signing key in the EPM, dispatching on
+// its ADDRESS_TYPE. ed25519 (empty or "ed25519") is the default fast path;
+// secp256k1 signing keys are verified as ECDSA-DER over sha256(payload). Exactly
+// one signing key produced SIGNATURE, so accepting on the first that verifies is
+// correct, and ed25519 is tried first to preserve the 25519 default.
+func verifyEPMSignatureAgainstKeys(epmRecord *EPM.EPM, payload, signature []byte) bool {
+	key := new(EPM.CryptoKey)
+	for i := 0; i < epmRecord.KEYSLength(); i++ {
+		if !epmRecord.KEYS(key, i) || key.KEY_TYPE() != EPM.KeyTypeSigning {
+			continue
+		}
+		pub, err := decodeHexString(string(key.PUBLIC_KEY()))
+		if err != nil {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(string(key.ADDRESS_TYPE()))) {
+		case "", "ed25519":
+			if len(pub) == ed25519.PublicKeySize && len(signature) == ed25519.SignatureSize &&
+				ed25519.Verify(ed25519.PublicKey(pub), payload, signature) {
+				return true
+			}
+		case "secp256k1":
+			pk, err := secp256k1.ParsePubKey(pub)
+			if err != nil {
+				continue
+			}
+			sig, err := ecdsa.ParseDERSignature(signature)
+			if err != nil {
+				continue
+			}
+			digest := sha256.Sum256(payload)
+			if sig.Verify(digest[:], pk) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // EPMSigningPayload returns the deterministic payload covered by the embedded
@@ -203,27 +237,6 @@ func marshalEPMSigningContent(content map[string]interface{}) ([]byte, error) {
 		return nil, fmt.Errorf("marshal EPM signing content: %w", err)
 	}
 	return bytes.TrimRight(buf.Bytes(), "\n"), nil
-}
-
-func firstEPMSigningPublicKey(epmRecord *EPM.EPM) (ed25519.PublicKey, error) {
-	key := new(EPM.CryptoKey)
-	for i := 0; i < epmRecord.KEYSLength(); i++ {
-		if !epmRecord.KEYS(key, i) || key.KEY_TYPE() != EPM.KeyTypeSigning {
-			continue
-		}
-		if addressType := strings.ToLower(strings.TrimSpace(string(key.ADDRESS_TYPE()))); addressType != "" && addressType != "ed25519" {
-			continue
-		}
-		publicKey, err := decodeHexString(string(key.PUBLIC_KEY()))
-		if err != nil {
-			return nil, fmt.Errorf("invalid EPM signing public key: %w", err)
-		}
-		if len(publicKey) != ed25519.PublicKeySize {
-			continue
-		}
-		return ed25519.PublicKey(publicKey), nil
-	}
-	return nil, fmt.Errorf("%w: no Ed25519 signing key", ErrMissingEPMSignature)
 }
 
 func decodeHexString(value string) ([]byte, error) {
