@@ -644,8 +644,10 @@ func (n *Node) registerCatalogPlugins(reg *license.PluginRegistry, pluginCtx plu
 	capReg := n.buildCapRegistry()
 
 	var errs []error
-	for _, descriptor := range reg.ListPublic() {
-		pluginID := strings.TrimSpace(descriptor.ID)
+	// Register dependency-first so a module's dependencies are brought up before
+	// the module that composes with them (WS4.4).
+	for _, pluginID := range catalogRegistrationOrder(reg) {
+		pluginID = strings.TrimSpace(pluginID)
 		if pluginID == "" {
 			continue
 		}
