@@ -11,10 +11,15 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/hkdf"
 )
+
+// secp256k1PrivKeySize is the byte length of a secp256k1 private key.
+const secp256k1PrivKeySize = 32
 
 // NewCryptoCapFactory returns a CapFactory for all crypto_* capabilities.
 // A single factory handles all crypto operations — register it for each capability:
@@ -30,8 +35,14 @@ import (
 // Supported operations (all prefixed "crypto."):
 //
 //	crypto.hash          — {"algorithm":"sha256|sha512", "data":"base64"} → {"hash":"hex"}
-//	crypto.sign          — {"algorithm":"ed25519", "key":"base64 seed", "data":"base64"} → {"signature":"base64"}
-//	crypto.verify        — {"algorithm":"ed25519", "key":"base64 pubkey", "data":"base64", "signature":"base64"} → {"valid":bool}
+//	crypto.sign          — {"algorithm":"ed25519|secp256k1", "key":"base64 seed/privkey", "data":"base64"} → {"signature":"base64"}
+//	crypto.verify        — {"algorithm":"ed25519|secp256k1", "key":"base64 pubkey", "data":"base64", "signature":"base64"} → {"valid":bool}
+//
+// secp256k1 SDK operations (ECDSA over sha256(message), DER-encoded signatures — matches EPM SIGNATURE):
+//
+//	crypto.secp256k1.publicKeyFromPrivate — {"privateKey":"base64 32-byte"} → bytes (33-byte compressed pubkey)
+//	crypto.secp256k1.sign                 — {"message":"base64", "privateKey":"base64 32-byte"} → bytes (DER ECDSA signature)
+//	crypto.secp256k1.verify               — {"message":"base64", "signature":"base64 DER", "publicKey":"base64 33/65-byte"} → {"result":bool}
 //	crypto.encrypt       — {"algorithm":"aes-256-gcm", "key":"base64", "nonce":"base64", "data":"base64"} → {"ciphertext":"base64","nonce":"base64"}
 //	crypto.decrypt       — {"algorithm":"aes-256-gcm", "key":"base64", "nonce":"base64", "ciphertext":"base64"} → {"plaintext":"base64"}
 //	crypto.key_agreement — {"algorithm":"x25519", "private_key":"base64", "public_key":"base64"} → {"shared_secret":"base64"}
@@ -106,6 +117,40 @@ func cryptoCapHandle(operation string, payload []byte) ([]byte, error) {
 		}
 		return okCapJSON(ed25519.Verify(ed25519.PublicKey(publicKey), message, signature)), nil
 
+	case "crypto.secp256k1.publicKeyFromPrivate":
+		privateKey := bytes64("privateKey")
+		if len(privateKey) != secp256k1PrivKeySize {
+			return errCapJSON(fmt.Sprintf("secp256k1 private key must be %d bytes, got %d", secp256k1PrivKeySize, len(privateKey))), nil
+		}
+		priv := secp256k1.PrivKeyFromBytes(privateKey)
+		return okCapRaw(priv.PubKey().SerializeCompressed()), nil
+
+	case "crypto.secp256k1.sign":
+		privateKey := bytes64("privateKey")
+		message := bytes64("message")
+		if len(privateKey) != secp256k1PrivKeySize {
+			return errCapJSON(fmt.Sprintf("secp256k1 private key must be %d bytes, got %d", secp256k1PrivKeySize, len(privateKey))), nil
+		}
+		priv := secp256k1.PrivKeyFromBytes(privateKey)
+		digest := sha256.Sum256(message)
+		sig := ecdsa.Sign(priv, digest[:])
+		return okCapRaw(sig.Serialize()), nil
+
+	case "crypto.secp256k1.verify":
+		message := bytes64("message")
+		signature := bytes64("signature")
+		publicKey := bytes64("publicKey")
+		pub, err := secp256k1.ParsePubKey(publicKey)
+		if err != nil {
+			return errCapJSON("invalid secp256k1 public key: " + err.Error()), nil
+		}
+		sig, err := ecdsa.ParseDERSignature(signature)
+		if err != nil {
+			return errCapJSON("invalid secp256k1 DER signature: " + err.Error()), nil
+		}
+		digest := sha256.Sum256(message)
+		return okCapJSON(sig.Verify(digest[:], pub)), nil
+
 	case "crypto.hash":
 		data := bytes64("data")
 		algo := str("algorithm")
@@ -131,37 +176,67 @@ func cryptoCapHandle(operation string, payload []byte) ([]byte, error) {
 		if algo == "" {
 			algo = "ed25519"
 		}
-		if algo != "ed25519" {
+		switch algo {
+		case "ed25519":
+			seed := bytes64("key")
+			data := bytes64("data")
+			if len(seed) != ed25519.SeedSize {
+				return errCapJSON(fmt.Sprintf("ed25519 seed must be %d bytes, got %d", ed25519.SeedSize, len(seed))), nil
+			}
+			privKey := ed25519.NewKeyFromSeed(seed)
+			sig := ed25519.Sign(privKey, data)
+			return okCapJSON(map[string]interface{}{
+				"signature": encodeBase64Cap(sig),
+				"algorithm": "ed25519",
+			}), nil
+		case "secp256k1":
+			priv := bytes64("key")
+			data := bytes64("data")
+			if len(priv) != secp256k1PrivKeySize {
+				return errCapJSON(fmt.Sprintf("secp256k1 private key must be %d bytes, got %d", secp256k1PrivKeySize, len(priv))), nil
+			}
+			digest := sha256.Sum256(data)
+			sig := ecdsa.Sign(secp256k1.PrivKeyFromBytes(priv), digest[:])
+			return okCapJSON(map[string]interface{}{
+				"signature": encodeBase64Cap(sig.Serialize()),
+				"algorithm": "secp256k1",
+			}), nil
+		default:
 			return errCapJSON(fmt.Sprintf("unsupported sign algorithm: %s", algo)), nil
 		}
-		seed := bytes64("key")
-		data := bytes64("data")
-		if len(seed) != ed25519.SeedSize {
-			return errCapJSON(fmt.Sprintf("ed25519 seed must be %d bytes, got %d", ed25519.SeedSize, len(seed))), nil
-		}
-		privKey := ed25519.NewKeyFromSeed(seed)
-		sig := ed25519.Sign(privKey, data)
-		return okCapJSON(map[string]interface{}{
-			"signature": encodeBase64Cap(sig),
-			"algorithm": "ed25519",
-		}), nil
 
 	case "crypto.verify":
 		algo := str("algorithm")
 		if algo == "" {
 			algo = "ed25519"
 		}
-		if algo != "ed25519" {
+		switch algo {
+		case "ed25519":
+			pubKey := bytes64("key")
+			data := bytes64("data")
+			sig := bytes64("signature")
+			if len(pubKey) != ed25519.PublicKeySize {
+				return errCapJSON(fmt.Sprintf("ed25519 public key must be %d bytes, got %d", ed25519.PublicKeySize, len(pubKey))), nil
+			}
+			valid := ed25519.Verify(ed25519.PublicKey(pubKey), data, sig)
+			return okCapJSON(map[string]interface{}{"valid": valid}), nil
+		case "secp256k1":
+			pubKey := bytes64("key")
+			data := bytes64("data")
+			sigBytes := bytes64("signature")
+			pub, err := secp256k1.ParsePubKey(pubKey)
+			if err != nil {
+				return errCapJSON("invalid secp256k1 public key: " + err.Error()), nil
+			}
+			sig, err := ecdsa.ParseDERSignature(sigBytes)
+			if err != nil {
+				return errCapJSON("invalid secp256k1 DER signature: " + err.Error()), nil
+			}
+			digest := sha256.Sum256(data)
+			return okCapJSON(map[string]interface{}{"valid": sig.Verify(digest[:], pub)}), nil
+		default:
 			return errCapJSON(fmt.Sprintf("unsupported verify algorithm: %s", algo)), nil
 		}
-		pubKey := bytes64("key")
-		data := bytes64("data")
-		sig := bytes64("signature")
-		if len(pubKey) != ed25519.PublicKeySize {
-			return errCapJSON(fmt.Sprintf("ed25519 public key must be %d bytes, got %d", ed25519.PublicKeySize, len(pubKey))), nil
-		}
-		valid := ed25519.Verify(ed25519.PublicKey(pubKey), data, sig)
-		return okCapJSON(map[string]interface{}{"valid": valid}), nil
 
 	case "crypto.encrypt":
 		algo := str("algorithm")
