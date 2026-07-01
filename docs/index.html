@@ -14,6 +14,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="hd-wallet-ui.css">
+  <script defer src="https://spacedatastandards.org/sdn-stack-nav.js"></script>
   <style>
     /* ============================================
        CSS VARIABLES & RESET
@@ -38,6 +39,7 @@
       --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
       --radius: 28px;
       --radius-sm: 16px;
+      --sdn-stack-nav-height: 32px;
     }
 
     html {
@@ -45,7 +47,7 @@
     }
 
     section[id] {
-      scroll-margin-top: 50px;
+      scroll-margin-top: calc(var(--sdn-stack-nav-height, 32px) + 50px);
     }
 
     body {
@@ -97,7 +99,7 @@
        ============================================ */
     nav {
       position: fixed;
-      top: 0;
+      top: var(--sdn-stack-nav-height, 32px);
       left: 0;
       right: 0;
       height: 44px;
@@ -166,7 +168,7 @@
     .mobile-menu {
       display: none;
       position: fixed;
-      top: 44px;
+      top: calc(var(--sdn-stack-nav-height, 32px) + 44px);
       left: 0;
       right: 0;
       background: var(--nav-bg);
@@ -2988,6 +2990,7 @@
   </style>
 </head>
 <body>
+  <sdn-stack-nav active="sdn"></sdn-stack-nav>
   <!-- Video Background -->
   <video class="page-video-bg" id="bgVideo" autoplay loop muted playsinline disablepictureinpicture></video>
   <div class="page-video-overlay"></div>
@@ -6242,7 +6245,7 @@ npm install</code></pre>
     }
 
     // Smooth scroll + deeplinking
-    const NAV_OFFSET = 44;
+    const NAV_OFFSET = 76;
     document.querySelectorAll('a[href^="#"]').forEach(anchor => {
       anchor.addEventListener('click', function(e) {
         const href = this.getAttribute('href');
