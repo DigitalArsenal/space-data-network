@@ -1681,6 +1681,23 @@ func (s *Service) rebuildEPMLocked() error {
 			EPM.CryptoKeyAddKEY_ADDRESS(builder, encryptionPathOff)
 			EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeEncryption)
 			keyOffsets = append(keyOffsets, EPM.CryptoKeyEnd(builder))
+
+			// Also advertise the X25519 encryption key alongside the secp256k1
+			// one, so a sender can wrap a content key to either curve (X25519
+			// default, or secp256k1 ECIES). The EPM carries both encryption keys
+			// (WS2b). The identity's X25519 encryption key is always available
+			// here since s.identity is non-nil.
+			if len(s.identity.EncryptionPub) > 0 {
+				x25519PubOff := builder.CreateString(hex.EncodeToString(s.identity.EncryptionPub))
+				x25519AddrOff := builder.CreateString("x25519")
+				x25519PathOff := builder.CreateString(s.identity.EncryptionKeyPath)
+				EPM.CryptoKeyStart(builder)
+				EPM.CryptoKeyAddPUBLIC_KEY(builder, x25519PubOff)
+				EPM.CryptoKeyAddADDRESS_TYPE(builder, x25519AddrOff)
+				EPM.CryptoKeyAddKEY_ADDRESS(builder, x25519PathOff)
+				EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeEncryption)
+				keyOffsets = append(keyOffsets, EPM.CryptoKeyEnd(builder))
+			}
 		} else {
 			// Identity key (secp256k1) for provider descriptor and direct EPM parsing.
 			identityPubBytes, _ := s.identity.IdentityPubKey.Raw()

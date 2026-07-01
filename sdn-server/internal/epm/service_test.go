@@ -64,6 +64,46 @@ func TestGetNodeEPMJSONIncludesSecp256k1IdentitySigningKey(t *testing.T) {
 	t.Fatal("expected secp256k1 signing key in EPM keys")
 }
 
+func TestNodeEPMCarriesBothEncryptionKeys(t *testing.T) {
+	t.Parallel()
+
+	identity, err := testDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testDerivedIdentity failed: %v", err)
+	}
+
+	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, "xpub6DEcA45Z68pwH3NrnV1Tee1pLNfJYruoQkKZJxmeRdBaQAtZg9Vf5LzHVZoBR5dGpmHxWzUXTGo8w1nRS13AvmhbRcBVzduCL3TGsCsj9Mm", t.TempDir())
+	if err := service.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	epmBytes := service.GetNodeEPM()
+	if len(epmBytes) == 0 {
+		t.Fatal("GetNodeEPM returned no bytes")
+	}
+	root := EPM.GetSizePrefixedRootAsEPM(epmBytes, 0)
+
+	encCurves := map[string]bool{}
+	var key EPM.CryptoKey
+	for i := 0; i < root.KEYSLength(); i++ {
+		if !root.KEYS(&key, i) {
+			continue
+		}
+		if key.KEY_TYPE() == EPM.KeyTypeEncryption {
+			encCurves[strings.ToLower(string(key.ADDRESS_TYPE()))] = true
+		}
+	}
+
+	// The published EPM must advertise both encryption curves so a sender can
+	// wrap a content key via X25519 (default) or secp256k1 ECIES (WS2b).
+	if !encCurves["x25519"] {
+		t.Errorf("EPM missing x25519 encryption key; encryption curves = %v", encCurves)
+	}
+	if !encCurves["secp256k1"] {
+		t.Errorf("EPM missing secp256k1 encryption key; encryption curves = %v", encCurves)
+	}
+}
+
 func TestServicePersistsProfileThroughEncryptedFlatSQLStore(t *testing.T) {
 	t.Parallel()
 
