@@ -4818,7 +4818,12 @@ func (s *FlatSQLStore) upsertRecordIndex(schemaName, cid string, sourceTimestamp
 func upsertRecordIndexExec(exec sqlExecer, schemaName, cid string, sourceTimestamp int64, data []byte) error {
 	fields, err := extractIndexedFields(schemaName, data)
 	if err != nil {
-		return err
+		// The index is the global record catalog + sync cursor (WS7.3d): every
+		// stored record MUST get a row so no record is invisible to a
+		// rowid-cursor scan. A field-extraction failure (e.g. an unparseable
+		// OMM/CAT payload) still gets a bare index row with only the source
+		// timestamp; the structured columns stay NULL.
+		fields = &indexedFields{}
 	}
 
 	var norad interface{}
