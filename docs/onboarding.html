@@ -663,15 +663,22 @@ curl -X POST http://127.0.0.1:5001/api/v1/data/publish/OMM \
       <div class="step-card">
         <div class="step-head">
           <span class="step-num"><b>4</b></span>
-          <h2>Give away the basics, charge for the best</h2>
+          <h2>Decentralized storefront</h2>
         </div>
-        <p>Open data builds your reputation; premium data builds your business. The network lets you do both at once: publish a data product where some fields are public and the valuable ones are locked. Anyone can see what you offer &mdash; only paying customers can unlock it.</p>
+        <p>The network has a built-in storefront for selling data. There is no central store and no middleman between you and your customers &mdash; your own node hosts your listings, and buyers purchase directly from you.</p>
         <ul>
-          <li><strong>Lock exactly what you choose.</strong> Field-level controls let you share a satellite's approximate position openly while selling the high-precision version.</li>
-          <li><strong>Each customer gets their own key.</strong> Content is encrypted per customer, so access can't be shared or resold.</li>
-          <li><strong>Payments are built in.</strong> Customers pay with card, crypto, or prepaid credits; usage-based billing and enterprise invoicing are supported.</li>
-          <li><strong>One listing, everywhere.</strong> Your product appears in the network-wide marketplace with a signed listing that proves it's really yours.</li>
+          <li><strong>One signed listing per product.</strong> Each product and version gets a single listing, published from your node and visible across the entire network.</li>
+          <li><strong>Field-level access control.</strong> Mark each field in a stream as public or restricted &mdash; for example, share coarse positions openly while selling the high-precision values.</li>
+          <li><strong>Per-customer encrypted delivery.</strong> Every buyer receives their own key, so purchased content can't be shared or resold.</li>
+          <li><strong>Payments are built in.</strong> Card, crypto, or prepaid credits, with usage-based billing and enterprise invoicing supported.</li>
         </ul>
+        <p>Buyers browse the storefront the same way they find your open data:</p>
+        <div class="code-block">
+          <div class="code-header"><span>Terminal</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
+          <pre><code>spacedatanetwork marketplace list
+spacedatanetwork marketplace search &lt;term&gt;
+spacedatanetwork marketplace show &lt;listing-id&gt;</code></pre>
+        </div>
         <details class="tech">
           <summary>Technical details: protected data products</summary>
           <div class="tech-body">
