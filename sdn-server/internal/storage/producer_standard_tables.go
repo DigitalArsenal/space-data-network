@@ -87,20 +87,24 @@ func (s *FlatSQLStore) ensureProducerStandardTable(producerID, schemaName string
 	return tableName, nil
 }
 
-// mirrorRoutedRecord writes the (producer, standard) metadata row for a record
-// whose payload already lives in the shared FlatSQL stream — the phased WS7.3
-// write flip: every legacy write also lands in the producer's own table, so
-// producer-scoped queries (QueryRouted*) see all new data while the hydrated
-// readers keep using the legacy per-standard tables until they migrate.
-//
-// Best-effort by design: a routed-mirror failure must never fail the primary
-// write. Records with no producer identity (empty peerID) are skipped — those
-// call sites gain identities in the reader-flip phase. Callers hold s.mu.
-func (s *FlatSQLStore) mirrorRoutedRecord(exec sqlExecer, schemaName, cid, peerID string, timestamp int64, streamPath string, streamOffset, recordLength int64, signature []byte) {
+// routedProducerID maps a record's peer identity to the producer token used
+// for (producer, standard) routing. v1 stores are routed-only, so records
+// without a peer identity land under the reserved "unattributed" producer
+// rather than being dropped.
+func routedProducerID(peerID string) string {
 	if strings.TrimSpace(peerID) == "" {
-		return
+		return "unattributed"
 	}
-	tableName, err := s.ensureProducerStandardTable(peerID, schemaName)
+	return peerID
+}
+
+// mirrorRoutedRecord writes the (producer, standard) metadata row for a record
+// whose payload already lives in the shared FlatSQL stream. Used by the
+// repeat-CID path (the content row already exists under some producer; this
+// records that THIS producer also published it). Best-effort: a repeat-CID
+// mirror failure must never fail the caller. Callers hold s.mu.
+func (s *FlatSQLStore) mirrorRoutedRecord(exec sqlExecer, schemaName, cid, peerID string, timestamp int64, streamPath string, streamOffset, recordLength int64, signature []byte) {
+	tableName, err := s.ensureProducerStandardTable(routedProducerID(peerID), schemaName)
 	if err != nil {
 		log.Warnf("Routed mirror: ensure (producer, standard) table for %s/%s: %v", peerID, schemaName, err)
 		return
@@ -110,12 +114,15 @@ func (s *FlatSQLStore) mirrorRoutedRecord(exec sqlExecer, schemaName, cid, peerI
 	}
 }
 
-// mirrorRoutedRecordFromExisting mirrors a record that deduplicated against an
-// existing legacy row (repeat CID, possibly from a different producer): the
-// stream coordinates are read from the legacy table so the producer's table
-// still records that this producer published the content. Callers hold s.mu.
-func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, legacyTable, schemaName, cid, peerID string, signature []byte) {
-	if strings.TrimSpace(peerID) == "" {
+// mirrorRoutedRecordFromExisting records a repeat CID (possibly from a
+// different producer) in that producer's (producer, standard) table: the
+// stream coordinates are read from the record read source (any table already
+// holding the content row — routed, or legacy on pre-flip databases).
+// Callers hold s.mu.
+func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, schemaName, cid, peerID string, signature []byte) {
+	readSource, err := s.recordReadSource(schemaName)
+	if err != nil {
+		log.Warnf("Routed mirror: read source for %s: %v", schemaName, err)
 		return
 	}
 	var (
@@ -124,12 +131,12 @@ func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, legac
 		streamOffset int64
 		recordLength int64
 	)
-	err := exec.QueryRow(
-		fmt.Sprintf(`SELECT timestamp, stream_path, stream_offset, record_length FROM %s WHERE cid = ?`, legacyTable),
+	err = exec.QueryRow(
+		fmt.Sprintf(`SELECT timestamp, stream_path, stream_offset, record_length FROM %s WHERE cid = ?`, readSource),
 		cid,
 	).Scan(&timestamp, &streamPath, &streamOffset, &recordLength)
 	if err != nil {
-		log.Warnf("Routed mirror: read existing %s record %s: %v", legacyTable, cid[:16]+"...", err)
+		log.Warnf("Routed mirror: read existing %s record %s: %v", schemaName, cid[:16]+"...", err)
 		return
 	}
 	s.mirrorRoutedRecord(exec, schemaName, cid, peerID, timestamp, streamPath, streamOffset, recordLength, signature)
@@ -324,30 +331,47 @@ func (s *FlatSQLStore) queryRoutedTables(match func(ProducerStandardTable) bool,
 // (legacy per-standard and (producer, standard) alike).
 const recordReadColumns = "cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex, created_at"
 
-// recordReadSource returns a SQL FROM/JOIN target spanning the legacy
-// per-standard table and every (producer, standard) table for the standard,
-// deduplicated by cid (dual-written rows appear once; rowid is carried as an
-// ordering tiebreaker only). When no producer tables exist for the standard it
-// returns the legacy table name unchanged, keeping pre-flip query plans
-// byte-identical. Callers hold s.mu.
+// emptyRecordReadSource is a valid, always-empty FROM target with the shared
+// record-metadata column set — used when NO table (legacy or routed) exists
+// yet for a standard (v1 databases never pre-create legacy tables).
+const emptyRecordReadSource = "(SELECT 0 AS rowid, '' AS cid, '' AS peer_id, 0 AS timestamp, " +
+	"'' AS stream_path, 0 AS stream_offset, 0 AS record_length, '' AS signature_hex, 0 AS created_at WHERE 0)"
+
+// recordReadSource returns a SQL FROM/JOIN target spanning every table that
+// holds records for the standard: the (producer, standard) tables, plus the
+// legacy per-standard table when it exists (pre-flip databases; v1 stores are
+// routed-only and never create it). Rows are deduplicated by cid; rowid is
+// carried as an ordering tiebreaker only. With exactly one backing table the
+// bare table name is returned, keeping single-table query plans unchanged.
+// Callers hold s.mu.
 func (s *FlatSQLStore) recordReadSource(schemaName string) (string, error) {
 	legacy, err := sds.SchemaNameToTable(schemaName)
 	if err != nil {
 		return "", err
 	}
+	tables := []string{}
+	if exists, err := s.tableExists(legacy); err == nil && exists {
+		tables = append(tables, legacy)
+	}
 	producerTables, err := s.listProducerStandardTables()
 	if err != nil {
 		log.Warnf("recordReadSource: list (producer, standard) tables: %v", err)
-		return legacy, nil
-	}
-	selects := []string{fmt.Sprintf("SELECT rowid AS rowid, %s FROM %s", recordReadColumns, legacy)}
-	for _, t := range producerTables {
-		if t.Standard == legacy {
-			selects = append(selects, fmt.Sprintf("SELECT rowid AS rowid, %s FROM %s", recordReadColumns, t.TableName))
+	} else {
+		for _, t := range producerTables {
+			if t.Standard == legacy {
+				tables = append(tables, t.TableName)
+			}
 		}
 	}
-	if len(selects) == 1 {
-		return legacy, nil
+	switch len(tables) {
+	case 0:
+		return emptyRecordReadSource, nil
+	case 1:
+		return tables[0], nil
+	}
+	selects := make([]string, 0, len(tables))
+	for _, t := range tables {
+		selects = append(selects, fmt.Sprintf("SELECT rowid AS rowid, %s FROM %s", recordReadColumns, t))
 	}
 	return "(SELECT rowid, " + recordReadColumns + " FROM (" + strings.Join(selects, " UNION ALL ") + ") GROUP BY cid)", nil
 }
@@ -384,19 +408,26 @@ func (s *FlatSQLStore) rawRecordReadSource(schemaName string) (string, error) {
 // deleteRoutedMirrorsWhere deletes rows matching whereClause from every
 // (producer, standard) table of the given standard — used by delete/GC/
 // reconcile paths so the union read surface cannot resurrect removed
-// records via their routed mirrors. Best-effort per table; callers hold s.mu.
-func (s *FlatSQLStore) deleteRoutedMirrorsWhere(exec sqlExecer, standardTable, whereClause string, args ...any) {
+// records via their routed mirrors. Best-effort per table; returns the total
+// rows deleted across the producer tables. Callers hold s.mu.
+func (s *FlatSQLStore) deleteRoutedMirrorsWhere(exec sqlExecer, standardTable, whereClause string, args ...any) int64 {
 	producerTables, err := s.listProducerStandardTables()
 	if err != nil {
 		log.Warnf("routed mirror delete: list (producer, standard) tables: %v", err)
-		return
+		return 0
 	}
+	var total int64
 	for _, pt := range producerTables {
 		if pt.Standard != standardTable {
 			continue
 		}
-		if _, err := exec.Exec(fmt.Sprintf(`DELETE FROM %s WHERE %s`, pt.TableName, whereClause), args...); err != nil {
+		result, err := exec.Exec(fmt.Sprintf(`DELETE FROM %s WHERE %s`, pt.TableName, whereClause), args...)
+		if err != nil {
 			log.Warnf("routed mirror delete %s: %v", pt.TableName, err)
+			continue
 		}
+		n, _ := result.RowsAffected()
+		total += n
 	}
+	return total
 }

@@ -306,7 +306,10 @@ func (s *FlatSQLStore) initTables() error {
 		return fmt.Errorf("failed to create log epoch index: %w", err)
 	}
 
-	// Create tables for each schema
+	// WS7.3d: v1 stores are routed-only — legacy per-standard tables are
+	// NEVER created anew. Existing tables (pre-flip databases) keep their
+	// migrations and indexes so their rows stay readable via the union
+	// read source.
 	for _, schemaName := range s.validator.Schemas() {
 		tableName, err := sds.SchemaNameToTable(schemaName)
 		if err != nil {
@@ -315,15 +318,17 @@ func (s *FlatSQLStore) initTables() error {
 		if err := s.migrateCanonicalSchemaTableIfNeeded(schemaName, tableName); err != nil {
 			return err
 		}
+		// Migrates a legacy blob table into the canonical layout when one
+		// exists (creates the canonical table only in that case).
+		if err := s.migrateLegacySchemaTable(schemaName, tableName); err != nil {
+			return err
+		}
 		tableExisted, err := s.tableExists(tableName)
 		if err != nil {
 			return err
 		}
-		if err := s.createSchemaMetadataTable(tableName); err != nil {
-			return fmt.Errorf("failed to create table %s: %w", tableName, err)
-		}
-		if err := s.migrateLegacySchemaTable(schemaName, tableName); err != nil {
-			return err
+		if !tableExisted {
+			continue
 		}
 
 		// Create index on peer_id and timestamp
@@ -1211,6 +1216,11 @@ func (s *FlatSQLStore) ensureSourceSummaryForSchema(schemaName, tableName string
 }
 
 func (s *FlatSQLStore) rebuildSourceSummaryForSchema(schemaName, tableName string) error {
+	// WS7.3d: record rows live in the (producer, standard) tables (plus the
+	// legacy table on pre-flip databases) — join through the union read source.
+	if rs, rsErr := s.recordReadSource(schemaName); rsErr == nil {
+		tableName = rs
+	}
 	if _, err := s.db.Exec(`DELETE FROM sdn_record_source_summary WHERE schema_name = ?`, schemaName); err != nil {
 		return fmt.Errorf("clear source summary for %s: %w", schemaName, err)
 	}
@@ -1242,6 +1252,10 @@ func (s *FlatSQLStore) rebuildSourceSummaryForSchema(schemaName, tableName strin
 }
 
 func (s *FlatSQLStore) rebuildSourceSummaryForSourceBatch(schemaName, tableName, providerID, sourceName, batchID string) error {
+	// WS7.3d: join through the union read source (see rebuildSourceSummaryForSchema).
+	if rs, rsErr := s.recordReadSource(schemaName); rsErr == nil {
+		tableName = rs
+	}
 	if _, err := s.db.Exec(`
 		DELETE FROM sdn_record_source_summary
 		WHERE schema_name = ?
@@ -1396,39 +1410,41 @@ func (s *FlatSQLStore) Store(schemaName string, data []byte, peerID string, sign
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	tableName, err := sds.SchemaNameToTable(schemaName)
-	if err != nil {
+	if _, err := sds.SchemaNameToTable(schemaName); err != nil {
 		return "", fmt.Errorf("invalid schema name: %w", err)
 	}
 
-	// Compute CID (content identifier)
+	// Compute CID (content identifier). Dedupe via the global record index —
+	// the complete catalog of every stored record (bare rows are inserted even
+	// on field-extraction failure).
 	cid := computeCID(data)
 	var existing int
-	if err := s.db.QueryRow(fmt.Sprintf(`SELECT 1 FROM %s WHERE cid = ?`, tableName), cid).Scan(&existing); err == nil {
+	if err := s.db.QueryRow(`SELECT 1 FROM sdn_record_index WHERE schema_name = ? AND cid = ?`, schemaName, cid).Scan(&existing); err == nil {
 		// Repeat CID (possibly from a different producer): still record it in
 		// the producer's (producer, standard) table.
-		s.mirrorRoutedRecordFromExisting(s.db, tableName, schemaName, cid, peerID, signature)
+		s.mirrorRoutedRecordFromExisting(s.db, schemaName, cid, peerID, signature)
 		return cid, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("failed to check existing record: %w", err)
 	}
 
-	// Use INSERT OR IGNORE: content-addressed records are immutable.
-	// REPLACE would allow a different peer to overwrite the original
-	// author's peer_id (attribution hijacking).
+	// WS7.3d routed-only writes: the metadata row lands in the producer's
+	// (producer, standard) table — v1 stores never write the legacy
+	// per-standard tables. Content-addressed records are immutable; the index
+	// dedupe above prevents a different peer from overwriting the original
+	// author's attribution.
 	now := time.Now().Unix()
 	streamPath, streamOffset, recordLength, err := s.appendFlatSQLStreamRecord(schemaName, data)
 	if err != nil {
 		return "", fmt.Errorf("failed to append FlatSQL stream record: %w", err)
 	}
-	if err := insertSchemaMetadata(s.db, tableName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now); err != nil {
+	routedTable, err := s.ensureProducerStandardTable(routedProducerID(peerID), schemaName)
+	if err != nil {
+		return "", fmt.Errorf("ensure (producer, standard) table: %w", err)
+	}
+	if err := insertSchemaMetadata(s.db, routedTable, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now); err != nil {
 		return "", fmt.Errorf("failed to store data: %w", err)
 	}
-	// Phased WS7.3 write flip: the metadata row also lands in the producer's
-	// (producer, standard) table (same shared-stream coordinates), so
-	// producer-scoped queries see all new data while hydrated readers keep
-	// using the legacy per-standard tables.
-	s.mirrorRoutedRecord(s.db, schemaName, cid, peerID, now, streamPath, streamOffset, recordLength, signature)
 
 	if err := s.upsertRecordIndex(schemaName, cid, now, data); err != nil {
 		// Do not fail writes if index extraction fails for a record.
@@ -1610,8 +1626,7 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 	if len(records) == 0 {
 		return 0, nil
 	}
-	tableName, err := sds.SchemaNameToTable(schemaName)
-	if err != nil {
+	if _, err := sds.SchemaNameToTable(schemaName); err != nil {
 		return 0, fmt.Errorf("invalid schema name: %w", err)
 	}
 
@@ -1624,16 +1639,18 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 	}
 	defer appender.Close()
 
-	// Phased WS7.3 write flip: pre-create the (producer, standard) table
-	// outside the batch transaction (no DDL inside the tx); rows are mirrored
-	// into it alongside the legacy inserts below.
-	routedTable := ""
-	if strings.TrimSpace(peerID) != "" {
-		if t, routedErr := s.ensureProducerStandardTable(peerID, schemaName); routedErr != nil {
-			log.Warnf("Routed mirror: ensure (producer, standard) table for %s/%s: %v", peerID, schemaName, routedErr)
-		} else {
-			routedTable = t
-		}
+	// WS7.3d routed-only writes: pre-create the (producer, standard) table
+	// outside the batch transaction (no DDL inside the tx). This is the ONLY
+	// table batch rows land in — v1 stores never write the legacy tables.
+	routedTable, err := s.ensureProducerStandardTable(routedProducerID(peerID), schemaName)
+	if err != nil {
+		return 0, fmt.Errorf("ensure (producer, standard) table: %w", err)
+	}
+	// The source-tags path reads record rowid/bytes back through the union
+	// read source (computed after the routed table exists).
+	readSource, err := s.recordReadSource(schemaName)
+	if err != nil {
+		return 0, fmt.Errorf("record read source: %w", err)
 	}
 
 	tx, err := s.db.Begin()
@@ -1652,25 +1669,20 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 	for _, data := range records {
 		cid := computeCID(data)
 		var existing int
-		err := tx.QueryRow(fmt.Sprintf(`SELECT 1 FROM %s WHERE cid = ?`, tableName), cid).Scan(&existing)
+		err := tx.QueryRow(`SELECT 1 FROM sdn_record_index WHERE schema_name = ? AND cid = ?`, schemaName, cid).Scan(&existing)
 		switch {
 		case err == nil:
-			if routedTable != "" {
-				s.mirrorRoutedRecordFromExisting(tx, tableName, schemaName, cid, peerID, signature)
-			}
+			// Repeat CID (possibly from another producer): record it in THIS
+			// producer's table too.
+			s.mirrorRoutedRecordFromExisting(tx, schemaName, cid, peerID, signature)
 		case errors.Is(err, sql.ErrNoRows):
 			streamPath, streamOffset, recordLength, err := appender.Append(data)
 			if err != nil {
 				return inserted, fmt.Errorf("append %s record %s to FlatSQL stream: %w", schemaName, cid, err)
 			}
-			rowID, err := insertSchemaMetadataReturningRowID(tx, tableName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now)
+			rowID, err := insertSchemaMetadataReturningRowID(tx, routedTable, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now)
 			if err != nil {
 				return inserted, fmt.Errorf("store %s record %s: %w", schemaName, cid, err)
-			}
-			if routedTable != "" {
-				if routedErr := insertSchemaMetadata(tx, routedTable, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now); routedErr != nil {
-					log.Warnf("Routed mirror: insert into %s for %s: %v", routedTable, cid[:16]+"...", routedErr)
-				}
 			}
 			if err := upsertRecordIndexExec(tx, schemaName, cid, now, data); err != nil {
 				log.Warnf("Failed to index batch %s record %s: %v", schemaName, cid[:16]+"...", err)
@@ -1686,7 +1698,7 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 		}
 
 		if tags != nil && err == nil {
-			if err := upsertSourceTagsTx(tx, tableName, schemaName, cid, *tags, int64(len(data))); err != nil {
+			if err := upsertSourceTagsTx(tx, readSource, schemaName, cid, *tags, int64(len(data))); err != nil {
 				return inserted, err
 			}
 		}
@@ -1703,13 +1715,19 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 
 // UpsertSourceTags attaches or updates source tags for an existing record.
 func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags) error {
-	tableName, err := sds.SchemaNameToTable(schemaName)
-	if err != nil {
+	if _, err := sds.SchemaNameToTable(schemaName); err != nil {
 		return fmt.Errorf("invalid schema name: %w", err)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Record rowid/bytes are read back through the union read source (routed
+	// tables + legacy when present).
+	readSource, err := s.recordReadSource(schemaName)
+	if err != nil {
+		return fmt.Errorf("record read source: %w", err)
+	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -1717,7 +1735,7 @@ func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags)
 	}
 	defer tx.Rollback()
 
-	if err := upsertSourceTagsTx(tx, tableName, schemaName, cid, tags, -1); err != nil {
+	if err := upsertSourceTagsTx(tx, readSource, schemaName, cid, tags, -1); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -2022,6 +2040,10 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	readSource, err := s.recordReadSource(result.SchemaName)
+	if err != nil {
+		return result, fmt.Errorf("record read source: %w", err)
+	}
 	args := []interface{}{result.SchemaName, result.ProviderID, result.SourceName, result.KeepBatch}
 	countSQL := fmt.Sprintf(`
 		SELECT COUNT(*)
@@ -2031,7 +2053,7 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 		WHERE tags.provider_id = ?
 		  AND tags.source_name = ?
 		  AND tags.batch_id <> ?
-	`, tableName)
+	`, readSource)
 	if err := s.db.QueryRow(countSQL, args...).Scan(&result.Matched); err != nil {
 		return result, fmt.Errorf("count source batch reconciliation records: %w", err)
 	}
@@ -2065,22 +2087,33 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 	if _, err := tx.Exec(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id <> ?`, args...); err != nil {
 		return result, fmt.Errorf("delete source batch tags: %w", err)
 	}
-	deleteRecordsSQL := fmt.Sprintf(`
-		DELETE FROM %s
-		WHERE cid IN (SELECT cid FROM temp_sdn_reconcile_cids)
-		  AND NOT EXISTS (
-			SELECT 1
-			FROM sdn_record_source_tags tags
-			WHERE tags.schema_name = ? AND tags.cid = %s.cid
-		  )
-	`, tableName, tableName)
-	recordDelete, err := tx.Exec(deleteRecordsSQL, result.SchemaName)
-	if err != nil {
-		return result, fmt.Errorf("delete orphaned source batch records: %w", err)
+	// Delete orphaned records (staged cids with no surviving source tag) from
+	// every backing table: the legacy per-standard table when it exists
+	// (pre-flip databases) and the (producer, standard) tables. Deleted counts
+	// LOGICAL records (per cid), independent of how many tables hold the row.
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM temp_sdn_reconcile_cids WHERE cid NOT IN (SELECT cid FROM sdn_record_source_tags WHERE schema_name = ?)`,
+		result.SchemaName,
+	).Scan(&result.Deleted); err != nil {
+		return result, fmt.Errorf("count orphaned source batch records: %w", err)
 	}
-	result.Deleted, _ = recordDelete.RowsAffected()
+	if legacyExists, exErr := s.tableExists(tableName); exErr == nil && legacyExists {
+		deleteRecordsSQL := fmt.Sprintf(`
+			DELETE FROM %s
+			WHERE cid IN (SELECT cid FROM temp_sdn_reconcile_cids)
+			  AND NOT EXISTS (
+				SELECT 1
+				FROM sdn_record_source_tags tags
+				WHERE tags.schema_name = ? AND tags.cid = %s.cid
+			  )
+		`, tableName, tableName)
+		if _, err := tx.Exec(deleteRecordsSQL, result.SchemaName); err != nil {
+			return result, fmt.Errorf("delete orphaned source batch records: %w", err)
+		}
+	}
 	s.deleteRoutedMirrorsWhere(tx, tableName,
-		fmt.Sprintf(`cid IN (SELECT cid FROM temp_sdn_reconcile_cids) AND cid NOT IN (SELECT cid FROM %s)`, tableName))
+		`cid IN (SELECT cid FROM temp_sdn_reconcile_cids) AND cid NOT IN (SELECT cid FROM sdn_record_source_tags WHERE schema_name = ?)`,
+		result.SchemaName)
 	if _, err := tx.Exec(`
 		DELETE FROM sdn_record_index
 		WHERE schema_name = ?
@@ -2135,6 +2168,10 @@ func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, provide
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	readSource, err := s.recordReadSource(result.SchemaName)
+	if err != nil {
+		return result, fmt.Errorf("record read source: %w", err)
+	}
 	args := []interface{}{result.SchemaName, result.ProviderID, result.SourceName, result.BatchID}
 	countSQL := fmt.Sprintf(`
 		WITH ranked AS (
@@ -2163,7 +2200,7 @@ func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, provide
 		SELECT COUNT(*)
 		FROM ranked
 		WHERE rn > 1
-	`, tableName)
+	`, readSource)
 	if err := s.db.QueryRow(countSQL, args...).Scan(&result.Matched); err != nil {
 		return result, fmt.Errorf("count source batch duplicate records: %w", err)
 	}
@@ -2211,7 +2248,7 @@ func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, provide
 		SELECT cid
 		FROM ranked
 		WHERE rn > 1
-	`, tableName)
+	`, readSource)
 	if _, err := tx.Exec(stageSQL, args...); err != nil {
 		return result, fmt.Errorf("stage source batch duplicate cids: %w", err)
 	}
@@ -2225,22 +2262,30 @@ func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, provide
 	`, args...); err != nil {
 		return result, fmt.Errorf("delete source batch duplicate tags: %w", err)
 	}
-	deleteRecordsSQL := fmt.Sprintf(`
-		DELETE FROM %s
-		WHERE cid IN (SELECT cid FROM temp_sdn_reconcile_duplicate_cids)
-		  AND NOT EXISTS (
-			SELECT 1
-			FROM sdn_record_source_tags tags
-			WHERE tags.schema_name = ? AND tags.cid = %s.cid
-		  )
-	`, tableName, tableName)
-	recordDelete, err := tx.Exec(deleteRecordsSQL, result.SchemaName)
-	if err != nil {
-		return result, fmt.Errorf("delete orphaned duplicate records: %w", err)
+	// Deleted counts LOGICAL records (per cid), independent of table layout.
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM temp_sdn_reconcile_duplicate_cids WHERE cid NOT IN (SELECT cid FROM sdn_record_source_tags WHERE schema_name = ?)`,
+		result.SchemaName,
+	).Scan(&result.Deleted); err != nil {
+		return result, fmt.Errorf("count orphaned duplicate records: %w", err)
 	}
-	result.Deleted, _ = recordDelete.RowsAffected()
+	if legacyExists, exErr := s.tableExists(tableName); exErr == nil && legacyExists {
+		deleteRecordsSQL := fmt.Sprintf(`
+			DELETE FROM %s
+			WHERE cid IN (SELECT cid FROM temp_sdn_reconcile_duplicate_cids)
+			  AND NOT EXISTS (
+				SELECT 1
+				FROM sdn_record_source_tags tags
+				WHERE tags.schema_name = ? AND tags.cid = %s.cid
+			  )
+		`, tableName, tableName)
+		if _, err := tx.Exec(deleteRecordsSQL, result.SchemaName); err != nil {
+			return result, fmt.Errorf("delete orphaned duplicate records: %w", err)
+		}
+	}
 	s.deleteRoutedMirrorsWhere(tx, tableName,
-		fmt.Sprintf(`cid IN (SELECT cid FROM temp_sdn_reconcile_duplicate_cids) AND cid NOT IN (SELECT cid FROM %s)`, tableName))
+		`cid IN (SELECT cid FROM temp_sdn_reconcile_duplicate_cids) AND cid NOT IN (SELECT cid FROM sdn_record_source_tags WHERE schema_name = ?)`,
+		result.SchemaName)
 	if _, err := tx.Exec(`
 		DELETE FROM sdn_record_index
 		WHERE schema_name = ?
@@ -2419,9 +2464,13 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 	}
 	defer tx.Rollback()
 
+	readSource, rsErr := s.recordReadSource(schemaName)
+	if rsErr != nil {
+		return fmt.Errorf("record read source: %w", rsErr)
+	}
 	var recordBytes sql.NullInt64
 	var recordRowID sql.NullInt64
-	if err := tx.QueryRow(fmt.Sprintf(`SELECT rowid, record_length FROM %s WHERE cid = ?`, tableName), cid).Scan(&recordRowID, &recordBytes); err != nil {
+	if err := tx.QueryRow(fmt.Sprintf(`SELECT rowid, record_length FROM %s WHERE cid = ?`, readSource), cid).Scan(&recordRowID, &recordBytes); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("not found: %s", cid)
 		}
@@ -2457,25 +2506,31 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 		return fmt.Errorf("close deleted source tags: %w", err)
 	}
 
-	deleteSQL := fmt.Sprintf(`DELETE FROM %s WHERE cid = ?`, tableName)
-	result, err := tx.Exec(deleteSQL, cid)
-	if err != nil {
-		return fmt.Errorf("failed to delete: %w", err)
+	// Delete from every backing table: the legacy per-standard table when it
+	// exists (pre-flip databases) and the (producer, standard) tables.
+	var affected int64
+	if legacyExists, exErr := s.tableExists(tableName); exErr == nil && legacyExists {
+		result, err := tx.Exec(fmt.Sprintf(`DELETE FROM %s WHERE cid = ?`, tableName), cid)
+		if err != nil {
+			return fmt.Errorf("failed to delete: %w", err)
+		}
+		n, _ := result.RowsAffected()
+		affected += n
 	}
-	// Also sweep the (producer, standard) mirrors so the union read surface
-	// does not resurrect the deleted record.
 	if producerTables, ptErr := s.listProducerStandardTables(); ptErr == nil {
 		for _, pt := range producerTables {
 			if pt.Standard != tableName {
 				continue
 			}
-			if _, delErr := tx.Exec(fmt.Sprintf(`DELETE FROM %s WHERE cid = ?`, pt.TableName), cid); delErr != nil {
+			result, delErr := tx.Exec(fmt.Sprintf(`DELETE FROM %s WHERE cid = ?`, pt.TableName), cid)
+			if delErr != nil {
 				return fmt.Errorf("delete routed mirror %s: %w", pt.TableName, delErr)
 			}
+			n, _ := result.RowsAffected()
+			affected += n
 		}
 	}
 
-	affected, _ := result.RowsAffected()
 	if affected == 0 {
 		return fmt.Errorf("not found: %s", cid)
 	}
@@ -2529,15 +2584,17 @@ func (s *FlatSQLStore) GarbageCollect(maxAge time.Duration) (int64, error) {
 			continue
 		}
 
-		deleteSQL := fmt.Sprintf(`DELETE FROM %s WHERE timestamp < ?`, tableName)
-		result, err := s.db.Exec(deleteSQL, cutoff)
-		if err != nil {
-			log.Warnf("GC failed for %s: %v", tableName, err)
-			continue
+		// Legacy table only on pre-flip databases; routed tables always swept.
+		var affected int64
+		if legacyExists, exErr := s.tableExists(tableName); exErr == nil && legacyExists {
+			result, err := s.db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE timestamp < ?`, tableName), cutoff)
+			if err != nil {
+				log.Warnf("GC failed for %s: %v", tableName, err)
+				continue
+			}
+			affected, _ = result.RowsAffected()
 		}
-		s.deleteRoutedMirrorsWhere(s.db, tableName, `timestamp < ?`, cutoff)
-
-		affected, _ := result.RowsAffected()
+		affected += s.deleteRoutedMirrorsWhere(s.db, tableName, `timestamp < ?`, cutoff)
 		totalDeleted += affected
 
 		// Keep index table in sync with GC deletes.
@@ -2548,11 +2605,16 @@ func (s *FlatSQLStore) GarbageCollect(maxAge time.Duration) (int64, error) {
 			log.Warnf("GC index cleanup failed for %s: %v", schemaName, err)
 		}
 		if affected > 0 {
+			readSource, rsErr := s.recordReadSource(schemaName)
+			if rsErr != nil {
+				log.Warnf("GC source tag cleanup read source for %s: %v", schemaName, rsErr)
+				continue
+			}
 			if _, err := s.db.Exec(fmt.Sprintf(`
 				DELETE FROM sdn_record_source_tags
 				WHERE schema_name = ?
 				  AND cid NOT IN (SELECT cid FROM %s)
-			`, tableName), schemaName); err != nil {
+			`, readSource), schemaName); err != nil {
 				log.Warnf("GC source tag cleanup failed for %s: %v", schemaName, err)
 			}
 			if err := s.rebuildSourceSummaryForSchema(schemaName, tableName); err != nil {

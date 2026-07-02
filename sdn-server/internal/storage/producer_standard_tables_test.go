@@ -293,7 +293,8 @@ func TestStoreDualWritesRoutedTable(t *testing.T) {
 		t.Fatalf("routedB = %+v, want the deduped cid %s", routedB, cid)
 	}
 
-	// Empty producer identity: legacy write succeeds, no routed row appears.
+	// Empty producer identity (WS7.3d routed-only): the record lands under
+	// the reserved "unattributed" producer instead of being dropped.
 	anon := sds.NewOMMBuilder().WithNoradCatID(43013).WithObjectName("ANON").Build()
 	if _, err := store.Store("OMM.fbs", anon, "", nil); err != nil {
 		t.Fatalf("Store() with empty peer error = %v", err)
@@ -302,8 +303,15 @@ func TestStoreDualWritesRoutedTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(all) != 2 {
-		t.Fatalf("QueryRoutedAll = %d records, want 2 (peerA + peerB only)", len(all))
+	if len(all) != 3 {
+		t.Fatalf("QueryRoutedAll = %d records, want 3 (peerA + peerB + unattributed)", len(all))
+	}
+	unattributed, err := store.QueryRoutedByProducer("unattributed", 10)
+	if err != nil {
+		t.Fatalf("QueryRoutedByProducer(unattributed) error = %v", err)
+	}
+	if len(unattributed) != 1 {
+		t.Fatalf("unattributed = %+v, want 1 record", unattributed)
 	}
 }
 
