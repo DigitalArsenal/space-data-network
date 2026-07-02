@@ -15,6 +15,14 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
+// shortHash returns the first 8 characters of a hex hash for concise logging.
+func shortHash(h string) string {
+	if len(h) <= 8 {
+		return h
+	}
+	return h[:8]
+}
+
 // IdentityBundle is the canonical mnemonic-backed node identity surface.
 type IdentityBundle struct {
 	Mnemonic          string
@@ -90,10 +98,38 @@ func (n *Node) deriveIdentityBundleXPub(mnemonic string) (string, error) {
 func (n *Node) loadOrCreateMnemonic(mnemonicPath, keyDir string) (string, error) {
 	keyPassword := n.resolveKeyPassword()
 
+	// Surface a hostname change (canary only — not part of the key).
+	if canary, cerr := keys.CheckAndUpdateHostnameCanary(keyDir); cerr != nil {
+		log.Warnf("Unable to update hostname canary in %s: %v", keyDir, cerr)
+	} else if canary.Changed {
+		log.Warnf("SECURITY: machine hostname changed since last start (canary %s… -> %s…); "+
+			"the at-rest key is hardware-derived so this does not affect decryption, but a rename "+
+			"can indicate the disk was cloned or re-provisioned",
+			shortHash(canary.PreviousHash), shortHash(canary.CurrentHash))
+	}
+
 	if data, err := os.ReadFile(mnemonicPath); err == nil {
 		if keys.IsMnemonicEncrypted(data) {
 			mnemonic, err := keys.DecryptMnemonic(data, keyPassword)
 			if err != nil {
+				// Migration path: a mnemonic encrypted under the pre-v2
+				// hostname-based key. Decrypt with the legacy password and
+				// re-encrypt with the hardware-derived key so the node keeps
+				// its identity. Only attempt when no explicit password is set
+				// (explicit password takes precedence and must match).
+				if n.usingDerivedKeyPassword() {
+					if legacy, lerr := keys.DecryptMnemonic(data, keys.DeriveLegacyPassword()); lerr == nil {
+						log.Warnf("Migrating mnemonic at %s from legacy hostname-derived key to hardware-derived key", mnemonicPath)
+						if reenc, eerr := keys.EncryptMnemonic(strings.TrimSpace(legacy), keyPassword); eerr == nil {
+							if werr := os.WriteFile(mnemonicPath, reenc, 0o600); werr != nil {
+								log.Warnf("Mnemonic migration re-encrypt write failed (continuing with decrypted value): %v", werr)
+							} else {
+								log.Infof("Mnemonic re-encrypted with hardware-derived key at %s", mnemonicPath)
+							}
+						}
+						return strings.TrimSpace(legacy), nil
+					}
+				}
 				return "", fmt.Errorf("failed to decrypt mnemonic from %s: %w", mnemonicPath, err)
 			}
 			log.Infof("Loaded encrypted mnemonic from %s", mnemonicPath)
