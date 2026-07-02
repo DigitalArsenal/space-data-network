@@ -89,6 +89,17 @@ export type {
 } from './server-descriptor';
 export { SDNStorage } from './storage';
 export type { StoredRecord, QueryFilter, LogSyncState } from './storage';
+export {
+  FlatSQLStorage,
+  MemorySnapshotPersistence,
+  HeliaSnapshotPersistence,
+} from './flatsql-storage';
+export type {
+  SnapshotPersistence,
+  HeliaLike,
+  FlatSQLStorageOptions,
+} from './flatsql-storage';
+export type { NodeRecordStorage } from './node';
 export { createModuleHostCapabilityAdapters } from './module-host-adapters';
 export {
   createModuleRuntimeManager,
