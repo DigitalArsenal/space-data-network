@@ -412,3 +412,59 @@ func TestHydratingReadersSpanProducerTables(t *testing.T) {
 	}
 	_ = dualCID
 }
+
+// WS7.3c: the raw-record family (datasync's rowid-based sync cursors and
+// snapshot hashes) reads the legacy tables only, and dual-write mirrors must
+// not perturb it — same counts, same head, no duplicate refs — so incremental
+// sync against peers stays byte-stable until legacy retirement lands with a
+// protocol-versioned cursor redesign.
+func TestRawRecordCursorsUnaffectedByRoutedMirrors(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	for i := 0; i < 3; i++ {
+		data := sds.NewOMMBuilder().WithNoradCatID(uint32(1000 + i)).WithObjectName("SYNC").Build()
+		if _, err := store.Store("OMM.fbs", data, "peerSync", nil); err != nil {
+			t.Fatalf("Store #%d failed: %v", i, err)
+		}
+	}
+
+	filter := RawRecordQuery{SchemaName: "OMM.fbs"}
+	count, err := store.CountRawRecords(filter)
+	if err != nil {
+		t.Fatalf("CountRawRecords failed: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("CountRawRecords = %d, want 3 (mirrors must not double-count)", count)
+	}
+
+	refs, err := store.QueryRawRecordRefs(filter)
+	if err != nil {
+		t.Fatalf("QueryRawRecordRefs failed: %v", err)
+	}
+	if len(refs) != 3 {
+		t.Fatalf("refs = %d, want 3", len(refs))
+	}
+	seen := map[string]bool{}
+	for _, ref := range refs {
+		if seen[ref.CID] {
+			t.Fatalf("duplicate ref for cid %s", ref.CID)
+		}
+		seen[ref.CID] = true
+	}
+
+	head, err := store.RawRecordHead(filter)
+	if err != nil {
+		t.Fatalf("RawRecordHead failed: %v", err)
+	}
+	if head.MaxRowID != 3 {
+		t.Fatalf("MaxRowID = %d, want 3 (legacy-table rowid sequence)", head.MaxRowID)
+	}
+}
