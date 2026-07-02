@@ -286,6 +286,21 @@ export class SDNNode {
   /**
    * Publish data to a schema topic
    */
+  /**
+   * Publish raw binary payloads (e.g. signed PNM/SDS FlatBuffers) to a
+   * schema topic — publish() JSON-wraps objects; FlatBuffer envelopes must
+   * go out verbatim.
+   */
+  async publishRaw(schema: SchemaName | string, data: Uint8Array): Promise<string> {
+    if (!this.libp2p) {
+      throw new Error("Node not initialized");
+    }
+    const topicName = TOPIC_PREFIX + schema;
+    const pubsub = this.libp2p.services.pubsub as GossipSub;
+    await pubsub.publish(topicName, data);
+    return topicName;
+  }
+
   async publish(schema: SchemaName, data: object): Promise<string> {
     if (!this.libp2p) {
       throw new Error("Node not initialized");
