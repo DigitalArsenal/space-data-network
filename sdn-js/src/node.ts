@@ -22,7 +22,8 @@ import { isUint8ArrayList, Uint8ArrayList } from "uint8arraylist";
 
 import { unmarshalPrivateKey } from "@libp2p/crypto/keys";
 
-import { SDNStorage, StoredRecord } from "./storage";
+import { SDNStorage, StoredRecord, QueryFilter } from "./storage";
+import { FlatSQLStorage, type SnapshotPersistence } from "./flatsql-storage";
 import { getBootstrapRelays, EdgeDiscovery } from "./edge-discovery";
 import { SchemaName, SUPPORTED_SCHEMAS } from "./schemas";
 import { initHDWallet } from "./crypto/hd-wallet";
@@ -81,6 +82,14 @@ export interface SDNConfig {
   idExchangeProtocol?: string;
   enableStorage?: boolean;
   storeName?: string;
+  /**
+   * Record store backend. 'flatsql' (default) uses the FlatSQL
+   * store-of-record (optionally snapshot-persisted, see storagePersistence);
+   * 'indexeddb' keeps the legacy SDNStorage; or pass a ready store instance.
+   */
+  storageBackend?: 'flatsql' | 'indexeddb' | NodeRecordStorage;
+  /** Snapshot persistence for the FlatSQL backend (e.g. HeliaSnapshotPersistence). */
+  storagePersistence?: SnapshotPersistence;
   /** Private key for auth challenge signing (32 bytes Ed25519 seed) */
   privateKey?: Uint8Array;
   /** Full HD wallet-derived identity (secp256k1 for PeerID + Ed25519 for auth) */
@@ -98,9 +107,22 @@ export interface SDNNodeEvents {
   onModuleDeliveryEvent?: (event: ModuleDeliveryEvent) => void;
 }
 
+/** The record-store surface SDNNode drives (SDNStorage and FlatSQLStorage). */
+export interface NodeRecordStorage {
+  store(
+    schema: SchemaName | string,
+    data: Uint8Array,
+    peerId: string,
+    signature: Uint8Array,
+  ): Promise<string>;
+  get(schema: SchemaName | string, cid: string): Promise<StoredRecord | null>;
+  query(schema: SchemaName | string, filter?: QueryFilter): Promise<StoredRecord[]>;
+  close(): Promise<void>;
+}
+
 export class SDNNode {
   private libp2p: Libp2p | null = null;
-  private storage: SDNStorage | null = null;
+  private storage: NodeRecordStorage | null = null;
   private config: SDNConfig;
   private events: SDNNodeEvents;
   private subscriptions: Map<string, AbortController> = new Map();
@@ -214,11 +236,22 @@ export class SDNNode {
     // Initialize libp2p
     this.libp2p = await createLibp2p(libp2pOpts);
 
-    // Initialize storage if enabled
+    // Initialize storage if enabled. FlatSQL is the store-of-record default
+    // (WS6.5); pass storageBackend: 'indexeddb' for the legacy SDNStorage or
+    // a ready NodeRecordStorage instance.
     if (this.config.enableStorage !== false) {
-      this.storage = await SDNStorage.open(
-        this.config.storeName || "sdn-store",
-      );
+      const backend = this.config.storageBackend ?? "flatsql";
+      if (backend === "indexeddb") {
+        this.storage = await SDNStorage.open(
+          this.config.storeName || "sdn-store",
+        );
+      } else if (backend === "flatsql") {
+        this.storage = await FlatSQLStorage.open({
+          persistence: this.config.storagePersistence,
+        });
+      } else {
+        this.storage = backend;
+      }
     }
 
     // Setup event handlers
