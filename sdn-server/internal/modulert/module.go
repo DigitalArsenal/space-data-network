@@ -567,7 +567,7 @@ func (m *Module) InvokeMethodFrames(ctx context.Context, methodID string, inputF
 
 	response, err := decodePluginInvokeResponseBytes(responseBytes)
 	if err != nil {
-		return nil, fmt.Errorf("decode invoke response: %w", err)
+		return nil, fmt.Errorf("decode invoke response: %w (raw %d bytes: %.400q)", err, len(responseBytes), responseBytes)
 	}
 
 	return extractPluginInvokePayload(response, "response")
