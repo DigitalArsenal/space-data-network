@@ -522,53 +522,21 @@ function createPlgBytes(options: {
   const versionOffset = builder.createString(options.version);
   const descriptionOffset = options.description ? builder.createString(options.description) : 0;
 
-  const root = PLG.createPLG(
-    builder,
-    pluginIdOffset,
-    nameOffset,
-    versionOffset,
-    descriptionOffset,
-    0,
-    pluginType.Analysis,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    1,
-    0,
-    0n,
-    0,
-    0,
-    0n,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    true,
-    0,
-    0,
-    0,
-    0n,
-    0,
-    0n,
-    0n,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    listingStatus.Public,
-    0,
-  );
+  // Imperative builder API — positional createPLG args go stale every time
+  // the PLG schema gains/loses fields (1.134 ALLOWED_XPUBS, 1.135 domain
+  // removal, ...); only set the fields this fixture needs.
+  PLG.startPLG(builder);
+  PLG.addPluginId(builder, pluginIdOffset);
+  PLG.addName(builder, nameOffset);
+  PLG.addVersion(builder, versionOffset);
+  if (descriptionOffset) {
+    PLG.addDescription(builder, descriptionOffset);
+  }
+  PLG.addPluginType(builder, pluginType.Analysis);
+  PLG.addAbiVersion(builder, 1);
+  PLG.addEncrypted(builder, true);
+  PLG.addListingStatus(builder, listingStatus.Public);
+  const root = PLG.endPLG(builder);
 
   PLG.finishPLGBuffer(builder, root);
   return builder.asUint8Array();

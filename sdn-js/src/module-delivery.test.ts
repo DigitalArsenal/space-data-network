@@ -109,7 +109,7 @@ describe('module-delivery', () => {
           requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
           requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
           requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
-          grantedDomain: 'app.example.com',
+          grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: 300_000n,
           expiresAtMs: 1_700_003_600_000n,
           contentHash: new Uint8Array(32).fill(7),
@@ -141,7 +141,7 @@ describe('module-delivery', () => {
       },
       moduleId: 'com.space-data-network.fastest-path',
       moduleVersion: '0.5.22',
-      requesterDomain: 'app.example.com',
+      requesterDomain: 'xpub6FixtureAllowList',
       requestedTimeoutMs: 300_000,
       reqId: 'req-123',
       requestedAtMs: 1_700_000_000_000,
@@ -157,14 +157,14 @@ describe('module-delivery', () => {
     expect(challengeRequest.REQUEST_ID()).toBe('req-123');
     expect(challengeRequest.REQUESTER_PEER_ID()).toBe('requester-peer-id');
     expect(challengeRequest.REQUESTER_XPUB()).toBe('xpub-requester');
-    expect(challengeRequest.REQUESTED_DOMAIN()).toBe('app.example.com');
+    expect(challengeRequest.REQUESTED_DOMAIN()).toBe('xpub6FixtureAllowList');
     expect(challengeRequest.REQUESTED_TIMEOUT_MS()).toBe(300_000n);
     expect(challengeRequest.requesterSigningPubkeyArray()).toEqual(new Uint8Array(32).fill(6));
     expect(challengeRequest.requesterEphemeralPubkeyArray()).toEqual(new Uint8Array(32).fill(8));
 
     const proofRequest = decodeLPF(transport.calls[1].payload);
     expect(proofRequest.REQUEST_ID()).toBe('req-123');
-    expect(proofRequest.REQUESTED_DOMAIN()).toBe('app.example.com');
+    expect(proofRequest.REQUESTED_DOMAIN()).toBe('xpub6FixtureAllowList');
     expect(proofRequest.REQUESTED_TIMEOUT_MS()).toBe(300_000n);
     expect(proofRequest.signatureArray()).toEqual(new Uint8Array([0xaa, 0xbb, 0xcc]));
 
@@ -173,7 +173,7 @@ describe('module-delivery', () => {
       moduleId: 'com.space-data-network.fastest-path',
       moduleVersion: '0.5.22',
     });
-    expect(result.grant.grantedDomain).toBe('app.example.com');
+    expect(result.grant.grantedDomain).toBe('xpub6FixtureAllowList');
     expect(result.grant.grantedTimeoutMs).toBe(300_000);
     expect(result.grant.grantVerifierPublicKey).toEqual(new Uint8Array(32).fill(5));
     expect(result.grant.wrappedContentKey.header?.rootType).toBe('$KMF');
@@ -230,7 +230,7 @@ describe('module-delivery', () => {
           requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
           requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
           requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
-          grantedDomain: 'app.example.com',
+          grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
           expiresAtMs: 1_700_003_600_000n,
           contentHash: new Uint8Array(32).fill(7),
@@ -264,7 +264,7 @@ describe('module-delivery', () => {
       },
       moduleId: 'com.space-data-network.fastest-path',
       moduleVersion: '0.5.22',
-      requesterDomain: 'app.example.com',
+      requesterDomain: 'xpub6FixtureAllowList',
       requestedTimeoutMs: 30_000,
       reqId: 'req-explicit-relay',
       requestedAtMs: 1_700_000_000_000,
@@ -488,7 +488,7 @@ describe('module-delivery', () => {
           requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
           requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
           requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
-          grantedDomain: 'app.example.com',
+          grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS() + 1n,
           expiresAtMs: 1_700_003_600_000n,
           contentHash: new Uint8Array(32).fill(7),
@@ -519,7 +519,7 @@ describe('module-delivery', () => {
         },
         moduleId: 'com.space-data-network.fastest-path',
         moduleVersion: '0.5.22',
-        requesterDomain: 'app.example.com',
+        requesterDomain: 'xpub6FixtureAllowList',
         requestedTimeoutMs: 30_000,
         reqId: 'req-timeout-overgrant',
         requestedAtMs: 1_700_000_000_000,
@@ -557,7 +557,7 @@ describe('module-delivery', () => {
           requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
           requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
           requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
-          grantedDomain: 'app.example.com',
+          grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
           expiresAtMs: 1_700_003_600_000n,
           contentHash: new Uint8Array(32).fill(7),
@@ -587,7 +587,7 @@ describe('module-delivery', () => {
       },
       moduleId: 'com.space-data-network.fastest-path',
       moduleVersion: '0.5.22',
-      requesterDomain: 'app.example.com',
+      requesterDomain: 'xpub6FixtureAllowList',
       requestedTimeoutMs: 30_000,
       reqId: 'req-invalid-grant',
       requestedAtMs: 1_700_000_000_000,
@@ -652,7 +652,7 @@ describe('module-delivery', () => {
           requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
           requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
           requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
-          grantedDomain: 'app.example.com',
+          grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
           expiresAtMs: 1_700_003_600_000n,
           contentHash: new Uint8Array(32).fill(7),
@@ -684,7 +684,7 @@ describe('module-delivery', () => {
       },
       moduleId: 'com.space-data-network.fastest-path',
       moduleVersion: '0.5.22',
-      requesterDomain: 'app.example.com',
+      requesterDomain: 'xpub6FixtureAllowList',
       requestedTimeoutMs: 30_000,
       reqId: 'req-complete-plg-signature',
       requestedAtMs: 1_700_000_000_000,
@@ -728,7 +728,7 @@ describe('module-delivery', () => {
           requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
           requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
           requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
-          grantedDomain: 'app.example.com',
+          grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
           expiresAtMs: 1_700_003_600_000n,
           contentHash: new Uint8Array(32).fill(7),
@@ -767,7 +767,7 @@ describe('module-delivery', () => {
         },
         moduleId: 'com.space-data-network.fastest-path',
         moduleVersion: '0.5.22',
-        requesterDomain: 'app.example.com',
+        requesterDomain: 'xpub6FixtureAllowList',
         requestedTimeoutMs: 30_000,
         reqId: 'req-epm-verifier',
         requestedAtMs: 1_700_000_000_000,
@@ -805,7 +805,7 @@ describe('module-delivery', () => {
           requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
           requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
           requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
-          grantedDomain: 'app.example.com',
+          grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
           expiresAtMs: 1_700_003_600_000n,
           contentHash: new Uint8Array(32).fill(7),
@@ -839,7 +839,7 @@ describe('module-delivery', () => {
           },
           moduleId: 'com.space-data-network.fastest-path',
           moduleVersion: '0.5.22',
-          requesterDomain: 'app.example.com',
+          requesterDomain: 'xpub6FixtureAllowList',
           requestedTimeoutMs: 30_000,
           reqId: 'req-malformed-wrap',
           requestedAtMs: 1_700_000_000_000,
@@ -1060,9 +1060,9 @@ function createModuleDescriptorOffset(
   const wasmCidOffset = builder.createString('bafyencryptedmodule');
   const requiredScopeOffset = builder.createString('orbpro.default');
   const keyIdOffset = builder.createString(`${moduleId}:${moduleVersion}`);
-  const allowedDomainsOffset = PLG.createAllowedDomainsVector(
+  const allowedXpubsOffset = PLG.createAllowedXpubsVector(
     builder,
-    [builder.createString('app.example.com')],
+    [builder.createString('xpub6FixtureAllowList')],
   );
 
   PLG.startPLG(builder);
@@ -1078,7 +1078,7 @@ function createModuleDescriptorOffset(
   PLG.addEncrypted(builder, true);
   PLG.addRequiredScope(builder, requiredScopeOffset);
   PLG.addKeyId(builder, keyIdOffset);
-  PLG.addAllowedDomains(builder, allowedDomainsOffset);
+  PLG.addAllowedXpubs(builder, allowedXpubsOffset);
   PLG.addMaxGrantTimeoutMs(builder, 300_000n);
   if (options.createdAtMs !== undefined) {
     PLG.addCreatedAt(builder, options.createdAtMs);

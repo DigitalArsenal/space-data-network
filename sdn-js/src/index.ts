@@ -89,6 +89,13 @@ export type {
 } from './server-descriptor';
 export { SDNStorage } from './storage';
 export type { StoredRecord, QueryFilter, LogSyncState } from './storage';
+export { createModuleHostCapabilityAdapters } from './module-host-adapters';
+export type {
+  ModuleHostAdapterOptions,
+  ModuleHostCapabilityAdapters,
+  ModuleHostRecordStore,
+  ModuleHostKeySlotResolver,
+} from './module-host-adapters';
 export { preloadFlatSQLWASI, getFlatSQLWASIPath } from './flatsql';
 export { loadEdgeRelays, getBootstrapRelays, DEFAULT_EDGE_RELAYS, EdgeDiscovery, multiaddrToStatusURL } from './edge-discovery';
 export type { RelayStatus, RelayProbeResult, DiscoveryMetrics } from './edge-discovery';

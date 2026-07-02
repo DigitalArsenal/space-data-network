@@ -169,7 +169,7 @@ describe('module-delivery SDK compatibility', () => {
             reqId: 'req-public-helper-flow',
             moduleId: 'com.example.public-helper',
             requestedTimeoutMs: 300_000,
-            grantedDomain: 'app.example.com',
+            grantedDomain: 'xpub6FixtureAllowList',
             grantedTimeoutMs: 300_000,
             expiresAtMs: 1_700_003_600_000,
             capabilityToken: new Uint8Array(),
@@ -181,7 +181,7 @@ describe('module-delivery SDK compatibility', () => {
               sizeBytes: encryptedBundleBytes.length,
               moduleId: 'com.example.public-helper',
               moduleVersion: '1.0.0',
-              allowedDomains: ['app.example.com'],
+              allowedXpubs: ['xpub6FixtureAllowList'],
               maxGrantTimeoutMs: 300_000,
               encrypted: true,
             },
@@ -249,7 +249,7 @@ describe('module-delivery SDK compatibility', () => {
           expect(decoded.role).toBe('requester');
           expect(decoded.reqId).toBe('req-sdk-compat');
           expect(decoded.moduleId).toBe('com.space-data-network.fastest-path');
-          expect(decoded.requestedDomain).toBe('app.example.com');
+          expect(decoded.requestedDomain).toBe('xpub6FixtureAllowList');
           expect(decoded.requestedTimeoutMs).toBe(300_000);
           expect(decoded.requesterSigningPublicKey).toEqual(new Uint8Array(32).fill(6));
           expect(decoded.requesterEphemeralPublicKey).toEqual(new Uint8Array(32).fill(8));
@@ -267,7 +267,7 @@ describe('module-delivery SDK compatibility', () => {
         expect(decoded.messageType).toBe('proof-request');
         expect(decoded.reqId).toBe('req-sdk-compat');
         expect(decoded.moduleId).toBe('com.space-data-network.fastest-path');
-        expect(decoded.requestedDomain).toBe('app.example.com');
+        expect(decoded.requestedDomain).toBe('xpub6FixtureAllowList');
         expect(decoded.requestedTimeoutMs).toBe(300_000);
         expect(decoded.requesterEphemeralPublicKey).toEqual(new Uint8Array(32).fill(8));
         expect(decoded.signature).toEqual(new Uint8Array([0xaa, 0xbb, 0xcc]));
@@ -279,7 +279,7 @@ describe('module-delivery SDK compatibility', () => {
           requesterXpub: decoded.requesterXpub,
           requestedDomain: decoded.requestedDomain ?? '',
           requestedTimeoutMs: BigInt(decoded.requestedTimeoutMs),
-          grantedDomain: 'app.example.com',
+          grantedDomain: 'xpub6FixtureAllowList',
           grantedTimeoutMs: 300_000n,
           expiresAtMs: 1_700_003_600_000n,
           contentHash: new Uint8Array(32).fill(7),
@@ -310,7 +310,7 @@ describe('module-delivery SDK compatibility', () => {
       },
       moduleId: 'com.space-data-network.fastest-path',
       moduleVersion: '0.5.22',
-      requesterDomain: 'app.example.com',
+      requesterDomain: 'xpub6FixtureAllowList',
       requestedTimeoutMs: 300_000,
       reqId: 'req-sdk-compat',
       requestedAtMs: 1_700_000_000_000,
@@ -320,7 +320,7 @@ describe('module-delivery SDK compatibility', () => {
       reqId: 'req-sdk-compat',
       moduleId: 'com.space-data-network.fastest-path',
       moduleVersion: '0.5.22',
-      expectedDomain: 'app.example.com',
+      expectedDomain: 'xpub6FixtureAllowList',
       requestedTimeoutMs: 300_000,
     });
 
@@ -336,13 +336,13 @@ describe('module-delivery SDK compatibility', () => {
       moduleVersion: '0.5.22',
       requiredScope: 'orbpro.default',
       keyId: 'com.space-data-network.fastest-path:0.5.22',
-      allowedDomains: ['app.example.com'],
+      allowedXpubs: ['xpub6FixtureAllowList'],
       maxGrantTimeoutMs: 300_000,
       encrypted: true,
     });
     expect(result.grant.bundleDescriptor.contentHash).toEqual(new Uint8Array(32).fill(7));
     expect(result.grant.bundleDescriptor.sizeBytes).toBe(4);
-    expect(result.grant.grantedDomain).toBe('app.example.com');
+    expect(result.grant.grantedDomain).toBe('xpub6FixtureAllowList');
     expect(result.grant.grantedTimeoutMs).toBe(300_000);
     expect(result.grant.grantVerifierPublicKey).toEqual(new Uint8Array(32).fill(5));
     expect(result.grant.providerSignature).toEqual(new Uint8Array(64).fill(0x99));
@@ -494,9 +494,9 @@ function createModuleDescriptor(
   const wasmCidOffset = builder.createString('bafyencryptedmodule');
   const requiredScopeOffset = builder.createString('orbpro.default');
   const keyIdOffset = builder.createString(`${options.moduleId}:${options.moduleVersion ?? 'latest'}`);
-  const allowedDomainsOffset = PLG.createAllowedDomainsVector(
+  const allowedXpubsOffset = PLG.createAllowedXpubsVector(
     builder,
-    [builder.createString('app.example.com')],
+    [builder.createString('xpub6FixtureAllowList')],
   );
 
   // Use field-by-field setters so the fixture stays compatible when the
@@ -516,7 +516,7 @@ function createModuleDescriptor(
   PLG.addEncrypted(builder, true);
   PLG.addRequiredScope(builder, requiredScopeOffset);
   PLG.addKeyId(builder, keyIdOffset);
-  PLG.addAllowedDomains(builder, allowedDomainsOffset);
+  PLG.addAllowedXpubs(builder, allowedXpubsOffset);
   PLG.addMaxGrantTimeoutMs(builder, 300_000n);
   return PLG.endPLG(builder);
 }
