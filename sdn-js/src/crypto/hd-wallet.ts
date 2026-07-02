@@ -560,6 +560,32 @@ export async function x25519ECDH(
 }
 
 /**
+ * secp256k1 ECDH — returns the raw X coordinate of the shared point (RFC 5903),
+ * matching Go decred GenerateSharedSecret and CryptoPP ECDH<ECP>.Agree (used
+ * by the unified ECIES). privateKey 32 bytes; publicKey 33 bytes compressed.
+ */
+export async function secp256k1ECDH(
+  privateKey: Uint8Array,
+  publicKey: Uint8Array
+): Promise<Uint8Array> {
+  const module = getModule();
+  if (typeof module.curves.secp256k1?.ecdh !== 'function') {
+    throw new Error('HD Wallet WASM secp256k1 ECDH is unavailable');
+  }
+  const shared = module.curves.secp256k1.ecdh(privateKey, publicKey);
+  if (shared.length === 32) return shared;
+  const padded = new Uint8Array(32);
+  padded.set(shared, 32 - shared.length);
+  return padded;
+}
+
+/** secp256k1 compressed public key (33 bytes) from a 32-byte private key. */
+export async function secp256k1PublicKey(privateKey: Uint8Array): Promise<Uint8Array> {
+  const module = getModule();
+  return module.curves.publicKeyFromPrivate(privateKey, Curve.SECP256K1);
+}
+
+/**
  * Encrypt data using AES-GCM in the HD wallet WASM native crypto backend.
  */
 export async function encrypt(key: Uint8Array, plaintext: Uint8Array): Promise<Uint8Array> {
