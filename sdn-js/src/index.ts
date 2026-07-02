@@ -102,6 +102,20 @@ export type {
 export type { NodeRecordStorage } from './node';
 export { createModuleHostCapabilityAdapters } from './module-host-adapters';
 export {
+  buildSignedPnm,
+  verifySignedPnm,
+  publishSignedPnm,
+  signAndPublishPnm,
+  pnmSignaturePayload,
+  PNM_SCHEMA,
+  PNM_TOPIC,
+} from './pnm-publisher';
+export type {
+  BuildSignedPnmOptions,
+  SignedPnmEvidence,
+  RawTopicPublisher,
+} from './pnm-publisher';
+export {
   createModuleRuntimeManager,
   MemoryModuleBytesStore,
   IndexedDbModuleBytesStore,
