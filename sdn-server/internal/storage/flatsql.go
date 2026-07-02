@@ -1932,11 +1932,6 @@ func (s *FlatSQLStore) QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record
 	if query.Limit > 1000 {
 		query.Limit = 1000
 	}
-	tableName, err := sds.SchemaNameToTable(query.SchemaName)
-	if err != nil {
-		return nil, fmt.Errorf("invalid schema name: %w", err)
-	}
-
 	conditions := []string{"tags.schema_name = ?"}
 	args := []interface{}{query.SchemaName, query.SchemaName}
 	if providerID := strings.TrimSpace(query.ProviderID); providerID != "" {
@@ -1955,6 +1950,10 @@ func (s *FlatSQLStore) QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	readSource, err := s.recordReadSource(query.SchemaName)
+	if err != nil {
+		return nil, fmt.Errorf("invalid schema name: %w", err)
+	}
 	rows, err := s.db.Query(fmt.Sprintf(`
 		SELECT records.cid, records.peer_id, records.timestamp,
 		       records.stream_path, records.stream_offset, records.record_length, records.signature_hex
@@ -1964,7 +1963,7 @@ func (s *FlatSQLStore) QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record
 		WHERE %s
 		ORDER BY records.timestamp DESC
 		LIMIT ?
-	`, tableName, strings.Join(conditions, " AND ")), args...)
+	`, readSource, strings.Join(conditions, " AND ")), args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query source tagged records: %w", err)
 	}
@@ -2080,6 +2079,8 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 		return result, fmt.Errorf("delete orphaned source batch records: %w", err)
 	}
 	result.Deleted, _ = recordDelete.RowsAffected()
+	s.deleteRoutedMirrorsWhere(tx, tableName,
+		fmt.Sprintf(`cid IN (SELECT cid FROM temp_sdn_reconcile_cids) AND cid NOT IN (SELECT cid FROM %s)`, tableName))
 	if _, err := tx.Exec(`
 		DELETE FROM sdn_record_index
 		WHERE schema_name = ?
@@ -2238,6 +2239,8 @@ func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, provide
 		return result, fmt.Errorf("delete orphaned duplicate records: %w", err)
 	}
 	result.Deleted, _ = recordDelete.RowsAffected()
+	s.deleteRoutedMirrorsWhere(tx, tableName,
+		fmt.Sprintf(`cid IN (SELECT cid FROM temp_sdn_reconcile_duplicate_cids) AND cid NOT IN (SELECT cid FROM %s)`, tableName))
 	if _, err := tx.Exec(`
 		DELETE FROM sdn_record_index
 		WHERE schema_name = ?
@@ -2287,16 +2290,18 @@ func (s *FlatSQLStore) Query(schemaName, whereClause string, args ...interface{}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tableName, err := sds.SchemaNameToTable(schemaName)
+	// Reads span the legacy per-standard table and all (producer, standard)
+	// tables (WS7.3b) so routed-only records hydrate too.
+	readSource, err := s.recordReadSource(schemaName)
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}
 
 	var querySQL string
 	if whereClause != "" {
-		querySQL = fmt.Sprintf(`SELECT stream_path, stream_offset, record_length FROM %s WHERE %s`, tableName, whereClause)
+		querySQL = fmt.Sprintf(`SELECT stream_path, stream_offset, record_length FROM %s WHERE %s`, readSource, whereClause)
 	} else {
-		querySQL = fmt.Sprintf(`SELECT stream_path, stream_offset, record_length FROM %s`, tableName)
+		querySQL = fmt.Sprintf(`SELECT stream_path, stream_offset, record_length FROM %s`, readSource)
 	}
 
 	rows, err := s.db.Query(querySQL, args...)
@@ -2350,11 +2355,11 @@ func (s *FlatSQLStore) QueryAllBounded(schemaName string, limit int, maxTotalByt
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tableName, err := sds.SchemaNameToTable(schemaName)
+	readSource, err := s.recordReadSource(schemaName)
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}
-	querySQL := fmt.Sprintf(`SELECT stream_path, stream_offset, record_length FROM %s ORDER BY timestamp DESC LIMIT ?`, tableName)
+	querySQL := fmt.Sprintf(`SELECT stream_path, stream_offset, record_length FROM %s ORDER BY timestamp DESC LIMIT ?`, readSource)
 	rows, err := s.db.Query(querySQL, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query bounded records: %w", err)
@@ -2457,6 +2462,18 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete: %w", err)
 	}
+	// Also sweep the (producer, standard) mirrors so the union read surface
+	// does not resurrect the deleted record.
+	if producerTables, ptErr := s.listProducerStandardTables(); ptErr == nil {
+		for _, pt := range producerTables {
+			if pt.Standard != tableName {
+				continue
+			}
+			if _, delErr := tx.Exec(fmt.Sprintf(`DELETE FROM %s WHERE cid = ?`, pt.TableName), cid); delErr != nil {
+				return fmt.Errorf("delete routed mirror %s: %w", pt.TableName, delErr)
+			}
+		}
+	}
 
 	affected, _ := result.RowsAffected()
 	if affected == 0 {
@@ -2483,13 +2500,13 @@ func (s *FlatSQLStore) Count(schemaName string) (int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tableName, err := sds.SchemaNameToTable(schemaName)
+	readSource, err := s.recordReadSource(schemaName)
 	if err != nil {
 		return 0, fmt.Errorf("invalid schema name: %w", err)
 	}
 
 	var count int64
-	err = s.db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM %s`, tableName)).Scan(&count)
+	err = s.db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM %s`, readSource)).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count: %w", err)
 	}
@@ -2518,6 +2535,7 @@ func (s *FlatSQLStore) GarbageCollect(maxAge time.Duration) (int64, error) {
 			log.Warnf("GC failed for %s: %v", tableName, err)
 			continue
 		}
+		s.deleteRoutedMirrorsWhere(s.db, tableName, `timestamp < ?`, cutoff)
 
 		affected, _ := result.RowsAffected()
 		totalDeleted += affected
@@ -3034,7 +3052,7 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tableName, err := sds.SchemaNameToTable(schemaName)
+	tableName, err := s.recordReadSource(schemaName)
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}
@@ -3161,7 +3179,7 @@ func (s *FlatSQLStore) QueryLatestSourceBatchRecords(schemaName, sourceName stri
 	if !ok {
 		return nil, false, nil
 	}
-	tableName, err := sds.SchemaNameToTable(head.SchemaName)
+	tableName, err := s.recordReadSource(head.SchemaName)
 	if err != nil {
 		return nil, false, fmt.Errorf("invalid schema name: %w", err)
 	}
@@ -4601,7 +4619,7 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tableName, err := sds.SchemaNameToTable(filter.SchemaName)
+	tableName, err := s.recordReadSource(filter.SchemaName)
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}
@@ -4746,7 +4764,7 @@ func (s *FlatSQLStore) GetRecord(schemaName, cid string) (*Record, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tableName, err := sds.SchemaNameToTable(schemaName)
+	readSource, err := s.recordReadSource(schemaName)
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}
@@ -4754,7 +4772,7 @@ func (s *FlatSQLStore) GetRecord(schemaName, cid string) (*Record, error) {
 	querySQL := fmt.Sprintf(`
 		SELECT cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex
 		FROM %s WHERE cid = ?
-	`, tableName)
+	`, readSource)
 
 	var record Record
 	var timestamp int64
@@ -5038,7 +5056,7 @@ func (s *FlatSQLStore) SchemaDateRanges() ([]SchemaDateRange, error) {
 
 	// Compute total bytes from per-schema tables.
 	for i := range ranges {
-		tableName, err := sds.SchemaNameToTable(ranges[i].Schema)
+		tableName, err := s.recordReadSource(ranges[i].Schema)
 		if err != nil {
 			continue
 		}
@@ -5059,12 +5077,12 @@ func (s *FlatSQLStore) PeerStorageBytes(peerID string) (int64, error) {
 
 	var total int64
 	for _, schemaName := range s.validator.Schemas() {
-		tableName, err := sds.SchemaNameToTable(schemaName)
+		readSource, err := s.recordReadSource(schemaName)
 		if err != nil {
 			continue
 		}
 		var bytes sql.NullInt64
-		err = s.db.QueryRow(fmt.Sprintf(`SELECT SUM(record_length) FROM %s WHERE peer_id = ?`, tableName), peerID).Scan(&bytes)
+		err = s.db.QueryRow(fmt.Sprintf(`SELECT SUM(record_length) FROM %s WHERE peer_id = ?`, readSource), peerID).Scan(&bytes)
 		if err == nil && bytes.Valid {
 			total += bytes.Int64
 		}
@@ -5137,7 +5155,7 @@ func (s *FlatSQLStore) QueryLogEntries(publisherPeerID, schemaType string, since
 	if limit > 1000 {
 		limit = 1000
 	}
-	plgTableName, err := sds.SchemaNameToTable("PLG.fbs")
+	plgTableName, err := s.recordReadSource("PLG.fbs")
 	if err != nil {
 		return nil, fmt.Errorf("invalid PLG schema name: %w", err)
 	}
