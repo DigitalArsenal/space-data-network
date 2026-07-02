@@ -90,6 +90,20 @@ export type {
 export { SDNStorage } from './storage';
 export type { StoredRecord, QueryFilter, LogSyncState } from './storage';
 export { createModuleHostCapabilityAdapters } from './module-host-adapters';
+export {
+  createModuleRuntimeManager,
+  MemoryModuleBytesStore,
+  IndexedDbModuleBytesStore,
+} from './module-lifecycle';
+export type {
+  CachedModuleBytes,
+  ModuleBytesStore,
+  ModuleHarnessLike,
+  ModuleLoader,
+  ModuleRuntimeManagerOptions,
+  RunningModule,
+  TimerScheduleOverride,
+} from './module-lifecycle';
 export type {
   ModuleHostAdapterOptions,
   ModuleHostCapabilityAdapters,
