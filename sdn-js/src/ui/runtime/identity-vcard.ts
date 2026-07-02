@@ -46,14 +46,14 @@ const KEY_DERIVATION_PATH_FIELDS = ['derivation_path', 'derivationPath', 'key_ad
 const SIGNING_DERIVATION_PATH_FIELDS = ['signing_derivation_path', 'signingDerivationPath', 'signing_key_path', 'signingKeyPath'];
 const ENCRYPTION_DERIVATION_PATH_FIELDS = ['encryption_derivation_path', 'encryptionDerivationPath', 'encryption_key_path', 'encryptionKeyPath'];
 const IDENTITY_EMAIL_DOMAINS = {
-  signing: 'signing.digitalarsenal.io',
-  encryption: 'encryption.digitalarsenal.io',
-  bitcoin: 'bitcoin.digitalarsenal.io',
-  ethereum: 'ethereum.digitalarsenal.io',
-  solana: 'solana.digitalarsenal.io',
+  signing: 'signing.spacedatanetwork.org',
+  encryption: 'encryption.spacedatanetwork.org',
+  bitcoin: 'bitcoin.spacedatanetwork.org',
+  ethereum: 'ethereum.spacedatanetwork.org',
+  solana: 'solana.spacedatanetwork.org',
 } as const;
-const PEER_ID_ALIAS_DOMAIN = 'peerid.digitalarsenal.io';
-const XPUB_ALIAS_DOMAIN = 'xpub.digitalarsenal.io';
+const PEER_ID_ALIAS_DOMAIN = 'peerid.spacedatanetwork.org';
+const XPUB_ALIAS_DOMAIN = 'xpub.spacedatanetwork.org';
 
 type IdentityAliasType = keyof typeof IDENTITY_EMAIL_DOMAINS;
 export type IdentityPublicKeyType = 'signing' | 'encryption';

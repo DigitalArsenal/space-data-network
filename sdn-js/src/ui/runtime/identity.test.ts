@@ -131,10 +131,10 @@ describe('public EPM exports', () => {
     expect(payload).not.toContain('X-SDN-PEER-ID:16Uiu2Alice');
     expect(payload).not.toContain('X-SDN-EPM-CID:bafyepm');
     expect(payload).not.toContain('X-SDN-XPUB:xpub-node');
-    expect(unfolded).toContain('EMAIL;TYPE=INTERNET;TYPE=peerid:16Uiu2Alice@peerid.digitalarsenal.io');
-    expect(unfolded).toContain('EMAIL;TYPE=INTERNET;TYPE=xpub:xpub-node@xpub.digitalarsenal.io');
-    expect(payload).not.toContain('EMAIL;type=INTERNET;type=signing:signing-public@signing.digitalarsenal.io');
-    expect(unfolded).not.toContain('EMAIL;type=INTERNET;type=encryption:encryption-public@encryption.digitalarsenal.io');
+    expect(unfolded).toContain('EMAIL;TYPE=INTERNET;TYPE=peerid:16Uiu2Alice@peerid.spacedatanetwork.org');
+    expect(unfolded).toContain('EMAIL;TYPE=INTERNET;TYPE=xpub:xpub-node@xpub.spacedatanetwork.org');
+    expect(payload).not.toContain('EMAIL;type=INTERNET;type=signing:signing-public@signing.spacedatanetwork.org');
+    expect(unfolded).not.toContain('EMAIL;type=INTERNET;type=encryption:encryption-public@encryption.spacedatanetwork.org');
     expect(payload).not.toContain('EMAIL;TYPE=INTERNET:node-public@spacedatanetwork.org');
     expect(payload).not.toContain('X-SDN-PUBLIC-KEY:node-public');
     expect(payload).not.toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public');
@@ -157,9 +157,9 @@ describe('public EPM exports', () => {
     });
     const unfolded = payload.replace(/\r\n[ \t]/g, '');
 
-    expect(unfolded).toContain('EMAIL;TYPE=INTERNET;TYPE=peerid:12D3KooWNode@peerid.digitalarsenal.io');
-    expect(unfolded).not.toContain('array-signing-key@signing.digitalarsenal.io');
-    expect(unfolded).not.toContain('array-encryption-key@encryption.digitalarsenal.io');
+    expect(unfolded).toContain('EMAIL;TYPE=INTERNET;TYPE=peerid:12D3KooWNode@peerid.spacedatanetwork.org');
+    expect(unfolded).not.toContain('array-signing-key@signing.spacedatanetwork.org');
+    expect(unfolded).not.toContain('array-encryption-key@encryption.spacedatanetwork.org');
   });
 
   it('imports signing and encryption public keys from typed vCard email aliases into EPM JSON', async () => {
@@ -174,8 +174,8 @@ describe('public EPM exports', () => {
       'VERSION:3.0',
       'FN:Alice Example',
       'EMAIL;TYPE=INTERNET:alice@example.com',
-      'EMAIL;type=INTERNET;type=signing:ed25519-signing-public@signing.digitalarsenal.io',
-      'EMAIL;type=INTERNET;type=encryption:x25519-encryption-public@encryption.digitalarsenal.io',
+      'EMAIL;type=INTERNET;type=signing:ed25519-signing-public@signing.spacedatanetwork.org',
+      'EMAIL;type=INTERNET;type=encryption:x25519-encryption-public@encryption.spacedatanetwork.org',
       'X-SDN-PEER-ID:16Uiu2Alice',
       'END:VCARD',
     ].join('\r\n'));
@@ -200,8 +200,8 @@ describe('public EPM exports', () => {
       'BEGIN:VCARD',
       'VERSION:3.0',
       'FN:CelesTrak Provider',
-      'EMAIL;TYPE=INTERNET;TYPE=peerid:16Uiu2Peer@peerid.digitalarsenal.io',
-      'EMAIL;TYPE=INTERNET;TYPE=xpub:xpub6Provider@xpub.digitalarsenal.io',
+      'EMAIL;TYPE=INTERNET;TYPE=peerid:16Uiu2Peer@peerid.spacedatanetwork.org',
+      'EMAIL;TYPE=INTERNET;TYPE=xpub:xpub6Provider@xpub.spacedatanetwork.org',
       'END:VCARD',
     ].join('\r\n'));
 

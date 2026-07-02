@@ -954,17 +954,17 @@ func nodeIdentityAddressEmailAliasLines(identity *wasm.DerivedIdentity) []string
 	lines := make([]string, 0, 3)
 	if identity.Addresses.Bitcoin != nil {
 		if address := strings.TrimSpace(identity.Addresses.Bitcoin.Address); address != "" {
-			lines = append(lines, "EMAIL;type=INTERNET;type=bitcoin:"+address+"@bitcoin.digitalarsenal.io")
+			lines = append(lines, "EMAIL;type=INTERNET;type=bitcoin:"+address+"@bitcoin.spacedatanetwork.org")
 		}
 	}
 	if identity.Addresses.Ethereum != nil {
 		if address := strings.TrimSpace(identity.Addresses.Ethereum.Address); address != "" {
-			lines = append(lines, "EMAIL;type=INTERNET;type=ethereum:"+address+"@ethereum.digitalarsenal.io")
+			lines = append(lines, "EMAIL;type=INTERNET;type=ethereum:"+address+"@ethereum.spacedatanetwork.org")
 		}
 	}
 	if identity.Addresses.Solana != nil {
 		if address := strings.TrimSpace(identity.Addresses.Solana.Address); address != "" {
-			lines = append(lines, "EMAIL;type=INTERNET;type=solana:"+address+"@solana.digitalarsenal.io")
+			lines = append(lines, "EMAIL;type=INTERNET;type=solana:"+address+"@solana.spacedatanetwork.org")
 		}
 	}
 	return lines

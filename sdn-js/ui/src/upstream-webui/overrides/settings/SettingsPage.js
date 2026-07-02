@@ -35,11 +35,11 @@ const addressFields = [
 ]
 
 const profileQRIdentityDomains = {
-  signing: 'signing.digitalarsenal.io',
-  encryption: 'encryption.digitalarsenal.io',
-  bitcoin: 'bitcoin.digitalarsenal.io',
-  ethereum: 'ethereum.digitalarsenal.io',
-  solana: 'solana.digitalarsenal.io',
+  signing: 'signing.spacedatanetwork.org',
+  encryption: 'encryption.spacedatanetwork.org',
+  bitcoin: 'bitcoin.spacedatanetwork.org',
+  ethereum: 'ethereum.spacedatanetwork.org',
+  solana: 'solana.spacedatanetwork.org',
 }
 
 const settingsTabs = [
@@ -1125,7 +1125,7 @@ function extractServerAdminSigningKeyFromVCard(vcard) {
   const lines = serverAdminVCardLines(vcard)
   return firstProfileString(
     serverAdminVCardValue(lines, 'X-SIGNING-KEY'),
-    serverAdminVCardEmailAlias(lines, 'signing.digitalarsenal.io'),
+    serverAdminVCardEmailAlias(lines, 'signing.spacedatanetwork.org'),
     ...serverAdminVCardRelatedValues(lines, 'Public Key Signing'),
   )
 }

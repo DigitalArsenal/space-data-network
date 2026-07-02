@@ -29,11 +29,11 @@ const (
 
 const (
 	iphoneVCardProdID       = "-//Apple Inc.//iPhone OS 15.1.1//EN"
-	signingAliasDomain      = "signing.digitalarsenal.io"
-	encryptionAliasDomain   = "encryption.digitalarsenal.io"
-	bitcoinAliasDomain      = "bitcoin.digitalarsenal.io"
-	ethereumAliasDomain     = "ethereum.digitalarsenal.io"
-	solanaAliasDomain       = "solana.digitalarsenal.io"
+	signingAliasDomain      = "signing.spacedatanetwork.org"
+	encryptionAliasDomain   = "encryption.spacedatanetwork.org"
+	bitcoinAliasDomain      = "bitcoin.spacedatanetwork.org"
+	ethereumAliasDomain     = "ethereum.spacedatanetwork.org"
+	solanaAliasDomain       = "solana.spacedatanetwork.org"
 	vcardFoldLineLimitBytes = 74
 )
 

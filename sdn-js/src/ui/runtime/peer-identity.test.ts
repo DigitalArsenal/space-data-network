@@ -69,9 +69,9 @@ describe('peer identity projection', () => {
     expect(payload).not.toContain('X-SDN-PUBLIC-KEY:node-public-key');
     expect(payload).not.toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public-key');
     expect(payload).not.toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:encryption-public-key');
-    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=peerid:${PEER_ID}@peerid.digitalarsenal.io`);
-    expect(unfoldedPayload).not.toContain('signing-public-key@signing.digitalarsenal.io');
-    expect(unfoldedPayload).not.toContain('encryption-public-key@encryption.digitalarsenal.io');
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=peerid:${PEER_ID}@peerid.spacedatanetwork.org`);
+    expect(unfoldedPayload).not.toContain('signing-public-key@signing.spacedatanetwork.org');
+    expect(unfoldedPayload).not.toContain('encryption-public-key@encryption.spacedatanetwork.org');
   });
 
   it('lets hosted EPM values override metadata while preserving missing metadata keys', () => {
@@ -196,13 +196,13 @@ describe('peer identity projection', () => {
 
     const payload = createVCardQrPayload(enriched);
     const unfoldedPayload = payload.replace(/\r\n[ \t]/g, '');
-    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=peerid:${PEER_ID}@peerid.digitalarsenal.io`);
-    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=xpub:${HD_TEST_XPUB}@xpub.digitalarsenal.io`);
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=peerid:${PEER_ID}@peerid.spacedatanetwork.org`);
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=xpub:${HD_TEST_XPUB}@xpub.spacedatanetwork.org`);
     expect(unfoldedPayload).not.toContain(`X-SDN-XPUB:${HD_TEST_XPUB}`);
     expect(unfoldedPayload).not.toContain(`X-SDN-SIGNING-PUBLIC-KEY:${HD_TEST_SIGNING_PUBLIC_KEY}`);
     expect(unfoldedPayload).not.toContain(`X-SDN-ENCRYPTION-PUBLIC-KEY:${HD_TEST_ENCRYPTION_PUBLIC_KEY}`);
-    expect(unfoldedPayload).not.toContain('signing.digitalarsenal.io');
-    expect(unfoldedPayload).not.toContain('encryption.digitalarsenal.io');
+    expect(unfoldedPayload).not.toContain('signing.spacedatanetwork.org');
+    expect(unfoldedPayload).not.toContain('encryption.spacedatanetwork.org');
   });
 
   it('renders provider QR vCards as compact iPhone-readable contact cards', async () => {
@@ -222,8 +222,8 @@ describe('peer identity projection', () => {
 
     expect(unfoldedPayload).toContain('PRODID;VALUE=TEXT:-//Space Data Network//Compact QR//EN');
     expect(unfoldedPayload).toContain('FN:CelesTrak Provider');
-    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=peerid:${PEER_ID}@peerid.digitalarsenal.io`);
-    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=xpub:${HD_TEST_XPUB}@xpub.digitalarsenal.io`);
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=peerid:${PEER_ID}@peerid.spacedatanetwork.org`);
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=xpub:${HD_TEST_XPUB}@xpub.spacedatanetwork.org`);
     expect(unfoldedPayload).not.toContain('UID:');
     expect(unfoldedPayload).not.toContain('X-SDN-PEER-ID');
     expect(unfoldedPayload).not.toContain('X-SDN-EPM-CID');

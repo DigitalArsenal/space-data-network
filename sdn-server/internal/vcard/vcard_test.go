@@ -102,10 +102,10 @@ func TestEPMToVCardAddsIOSVisibleIdentityFields(t *testing.T) {
 	}
 	unfolded := unfoldVCardForTest(vcardStr)
 
-	if !strings.Contains(unfolded, "EMAIL;type=INTERNET;type=signing:0xsigningkey123@signing.digitalarsenal.io") {
+	if !strings.Contains(unfolded, "EMAIL;type=INTERNET;type=signing:0xsigningkey123@signing.spacedatanetwork.org") {
 		t.Errorf("vCard missing iOS-visible signing email alias, got:\n%s", vcardStr)
 	}
-	if !strings.Contains(unfolded, "EMAIL;type=INTERNET;type=encryption:0xencryptionkey456@encryption.digitalarsenal.io") {
+	if !strings.Contains(unfolded, "EMAIL;type=INTERNET;type=encryption:0xencryptionkey456@encryption.spacedatanetwork.org") {
 		t.Errorf("vCard missing iOS-visible encryption email alias, got:\n%s", vcardStr)
 	}
 	if !strings.Contains(vcardStr, "X-ABLabel:Public Key Signing") ||
