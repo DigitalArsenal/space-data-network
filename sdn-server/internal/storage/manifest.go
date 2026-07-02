@@ -612,8 +612,7 @@ func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, prov
 	if index == nil {
 		return 0, nil, fmt.Errorf("dataset export index is required")
 	}
-	tableName, err := sds.SchemaNameToTable(index.SchemaName)
-	if err != nil {
+	if _, err := sds.SchemaNameToTable(index.SchemaName); err != nil {
 		return 0, nil, fmt.Errorf("invalid schema name: %w", err)
 	}
 
@@ -625,6 +624,17 @@ func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, prov
 		return 0, nil, fmt.Errorf("open imported %s FlatSQL stream: %w", index.SchemaName, err)
 	}
 	defer appender.Close()
+
+	// WS7.3d routed-only writes: imported rows land in the provider's
+	// (producer, standard) table (pre-created outside the tx — no DDL inside).
+	routedTable, err := s.ensureProducerStandardTable(routedProducerID(providerPeerID), index.SchemaName)
+	if err != nil {
+		return 0, nil, fmt.Errorf("ensure (producer, standard) table: %w", err)
+	}
+	readSource, err := s.recordReadSource(index.SchemaName)
+	if err != nil {
+		return 0, nil, fmt.Errorf("record read source: %w", err)
+	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -653,15 +663,17 @@ func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, prov
 		}
 
 		var existing int
-		err = tx.QueryRow(fmt.Sprintf(`SELECT 1 FROM %s WHERE cid = ?`, tableName), record.CID).Scan(&existing)
+		err = tx.QueryRow(`SELECT 1 FROM sdn_record_index WHERE schema_name = ? AND cid = ?`, index.SchemaName, record.CID).Scan(&existing)
 		switch {
 		case err == nil:
+			// Repeat CID: record it under this provider's table too.
+			s.mirrorRoutedRecordFromExisting(tx, index.SchemaName, record.CID, strings.TrimSpace(providerPeerID), nil)
 		case errors.Is(err, sql.ErrNoRows):
 			streamPath, streamOffset, recordLength, err := appender.Append(data)
 			if err != nil {
 				return imported, nil, fmt.Errorf("append imported %s record %s to FlatSQL stream: %w", index.SchemaName, record.CID, err)
 			}
-			rowID, err := insertSchemaMetadataReturningRowID(tx, tableName, record.CID, strings.TrimSpace(providerPeerID), now, streamPath, streamOffset, recordLength, nil, now)
+			rowID, err := insertSchemaMetadataReturningRowID(tx, routedTable, record.CID, strings.TrimSpace(providerPeerID), now, streamPath, streamOffset, recordLength, nil, now)
 			if err != nil {
 				return imported, nil, fmt.Errorf("store imported %s record %s: %w", index.SchemaName, record.CID, err)
 			}
@@ -679,7 +691,7 @@ func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, prov
 		}
 
 		if err == nil && strings.TrimSpace(tags.ProviderID) != "" && strings.TrimSpace(tags.SourceName) != "" {
-			if err := upsertSourceTagsTx(tx, tableName, index.SchemaName, record.CID, tags, record.Length); err != nil {
+			if err := upsertSourceTagsTx(tx, readSource, index.SchemaName, record.CID, tags, record.Length); err != nil {
 				return imported, nil, err
 			}
 		}

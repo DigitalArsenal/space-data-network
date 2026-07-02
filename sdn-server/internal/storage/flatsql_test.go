@@ -4,6 +4,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -62,8 +63,25 @@ func TestNewFlatSQLStoreCreatesCanonicalSchemaTablesWithoutSQLiteBlobs(t *testin
 	}
 	defer store.Close()
 
-	assertNoSQLiteBlobColumns(t, store, "OMM")
-	assertHasColumns(t, store, "OMM", "cid", "peer_id", "timestamp", "stream_path", "stream_offset", "record_length", "signature_hex")
+	// WS7.3d: v1 stores never pre-create legacy per-standard tables — the
+	// canonical layout materializes in (producer, standard) tables on first
+	// write.
+	var legacyCount int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = 'OMM'`).Scan(&legacyCount); err != nil {
+		t.Fatalf("check legacy table: %v", err)
+	}
+	if legacyCount != 0 {
+		t.Fatalf("legacy OMM table pre-created on a fresh v1 store")
+	}
+	if _, err := store.Store("OMM.fbs", sds.NewOMMBuilder().WithNoradCatID(99999).WithObjectName("BLOBLESS").Build(), "blobless-peer", nil); err != nil {
+		t.Fatalf("routed store failed: %v", err)
+	}
+	routedTable, err := ProducerStandardTableName("blobless-peer", "OMM.fbs")
+	if err != nil {
+		t.Fatalf("routed table name: %v", err)
+	}
+	assertNoSQLiteBlobColumns(t, store, routedTable)
+	assertHasColumns(t, store, routedTable, "cid", "peer_id", "timestamp", "stream_path", "stream_offset", "record_length", "signature_hex")
 }
 
 func TestFlatSQLStreamAppenderUsesBufferedWriter(t *testing.T) {
@@ -124,6 +142,12 @@ func TestFlatSQLImportFastPathUsesInsertedRowIDForSourceSummary(t *testing.T) {
 		t.Fatalf("Append failed: %v", err)
 	}
 
+	// WS7.3d routed-only: the fast path inserts into the producer's table.
+	routedTable, err := store.ensureProducerStandardTable("source:celestrak", "OMM.fbs")
+	if err != nil {
+		t.Fatalf("ensureProducerStandardTable failed: %v", err)
+	}
+
 	tx, err := store.db.Begin()
 	if err != nil {
 		t.Fatalf("Begin failed: %v", err)
@@ -131,7 +155,7 @@ func TestFlatSQLImportFastPathUsesInsertedRowIDForSourceSummary(t *testing.T) {
 	defer tx.Rollback()
 
 	cid := computeCID(record)
-	rowID, err := insertSchemaMetadataReturningRowID(tx, "OMM", cid, "source:celestrak", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000)
+	rowID, err := insertSchemaMetadataReturningRowID(tx, routedTable, cid, "source:celestrak", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000)
 	if err != nil {
 		t.Fatalf("insertSchemaMetadataReturningRowID failed: %v", err)
 	}
@@ -326,6 +350,10 @@ func TestNewFlatSQLStoreDefersInterruptedLegacyMigrationWhenCanonicalHasRows(t *
 	if err != nil {
 		t.Fatalf("append existing stream record failed: %v", err)
 	}
+	// Simulate a pre-flip database: the canonical legacy table exists with rows.
+	if err := store.createSchemaMetadataTable("OMM"); err != nil {
+		t.Fatalf("create canonical legacy table failed: %v", err)
+	}
 	if err := insertSchemaMetadata(store.db, "OMM", "existing-cid", "source:celestrak", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000); err != nil {
 		t.Fatalf("insert existing metadata failed: %v", err)
 	}
@@ -396,6 +424,10 @@ func TestCopyBlobSchemaRowsToMetadataTableSkipsExistingMetadataRows(t *testing.T
 	streamPath, streamOffset, recordLength, err := store.appendFlatSQLStreamRecord("OMM.fbs", existingPayload)
 	if err != nil {
 		t.Fatalf("append existing stream record failed: %v", err)
+	}
+	// Simulate a pre-flip database: the canonical legacy table exists with rows.
+	if err := store.createSchemaMetadataTable("OMM"); err != nil {
+		t.Fatalf("create canonical legacy table failed: %v", err)
 	}
 	if err := insertSchemaMetadata(store.db, "OMM", "existing-cid", "source:celestrak", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000); err != nil {
 		t.Fatalf("insert existing metadata failed: %v", err)
@@ -971,8 +1003,12 @@ func TestFlatSQLStoreMaintainsSourceSummaryForMultipleProducers(t *testing.T) {
 	if got[1].providerID != "peer-bravo" || got[1].recordCount != 1 || got[1].totalBytes != int64(len(bravo)) {
 		t.Fatalf("bravo summary = %#v, want one bravo row with %d bytes", got[1], len(bravo))
 	}
-	if got[1].maxRowID <= got[0].maxRowID {
-		t.Fatalf("bravo summary max rowid = %d, want after alpha rowid %d", got[1].maxRowID, got[0].maxRowID)
+	// WS7.3d: summary max_rowid is a per-(producer, standard)-table boundary
+	// (the global sync cursor is sdn_record_index.rowid); producers with their
+	// own tables each start at rowid 1, so cross-producer monotonicity no
+	// longer holds — only per-producer population.
+	if got[1].maxRowID <= 0 {
+		t.Fatalf("bravo summary max rowid = %d, want populated row boundary", got[1].maxRowID)
 	}
 }
 
@@ -1571,16 +1607,21 @@ func TestFlatSQLStoreStoreAndGet(t *testing.T) {
 	if cid == "" {
 		t.Error("Expected non-empty CID")
 	}
-	assertNoSQLiteBlobColumns(t, store, "OMM")
+	// WS7.3d routed-only: the metadata row lives in the producer's table.
+	routedTable, err := ProducerStandardTableName(testPeerID, "OMM.fbs")
+	if err != nil {
+		t.Fatalf("routed table name: %v", err)
+	}
+	assertNoSQLiteBlobColumns(t, store, routedTable)
 
 	var streamPath string
 	var streamOffset, recordLength int64
 	var signatureHex sql.NullString
-	if err := store.db.QueryRow(`
+	if err := store.db.QueryRow(fmt.Sprintf(`
 		SELECT stream_path, stream_offset, record_length, signature_hex
-		FROM OMM
+		FROM %s
 		WHERE cid = ?
-	`, cid).Scan(&streamPath, &streamOffset, &recordLength, &signatureHex); err != nil {
+	`, routedTable), cid).Scan(&streamPath, &streamOffset, &recordLength, &signatureHex); err != nil {
 		t.Fatalf("stored metadata lookup failed: %v", err)
 	}
 	if streamPath == "" {
