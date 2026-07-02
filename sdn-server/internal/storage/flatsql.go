@@ -3377,7 +3377,7 @@ func (s *FlatSQLStore) CountRawRecords(filter RawRecordQuery) (int64, error) {
 	if filter.SchemaName == "" {
 		return 0, errors.New("schema name is required")
 	}
-	tableName, err := sds.SchemaNameToTable(filter.SchemaName)
+	tableName, err := s.rawRecordReadSource(filter.SchemaName)
 	if err != nil {
 		return 0, fmt.Errorf("invalid schema name: %w", err)
 	}
@@ -3532,7 +3532,7 @@ func (s *FlatSQLStore) RawRecordHead(filter RawRecordQuery) (RawRecordHead, erro
 	if filter.SchemaName == "" {
 		return RawRecordHead{}, errors.New("schema name is required")
 	}
-	tableName, err := sds.SchemaNameToTable(filter.SchemaName)
+	tableName, err := s.rawRecordReadSource(filter.SchemaName)
 	if err != nil {
 		return RawRecordHead{}, fmt.Errorf("invalid schema name: %w", err)
 	}
@@ -3556,7 +3556,12 @@ func (s *FlatSQLStore) RawRecordHead(filter RawRecordQuery) (RawRecordHead, erro
 		}
 		if ok {
 			head = summary
-			if filter.UseRowIDCursor && head.MaxRowID <= 0 {
+			// The cursor boundary must be the GLOBAL index rowid (WS7.3d), the
+			// same sequence the paginating scan orders by — NOT the summary's
+			// max_rowid (still written from the legacy record-table rowid by
+			// incrementSourceSummary, a different sequence). Always recompute
+			// MaxRowID live from MAX(idx.rowid) when a rowid cursor is in play.
+			if filter.UseRowIDCursor {
 				schemaHead, err := s.rawSchemaRecordHeadLocked(tableName, RawRecordQuery{
 					SchemaName: filter.SchemaName,
 				})
@@ -3946,7 +3951,7 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 	if filter.SchemaName == "" {
 		return nil, errors.New("schema name is required")
 	}
-	tableName, err := sds.SchemaNameToTable(filter.SchemaName)
+	tableName, err := s.rawRecordReadSource(filter.SchemaName)
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}
@@ -4100,7 +4105,7 @@ func (s *FlatSQLStore) QueryRawRecordRefsByRefs(schemaName string, refs []RawRec
 	if schemaName == "" {
 		return nil, errors.New("schema name is required")
 	}
-	tableName, err := sds.SchemaNameToTable(schemaName)
+	tableName, err := s.rawRecordReadSource(schemaName)
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}

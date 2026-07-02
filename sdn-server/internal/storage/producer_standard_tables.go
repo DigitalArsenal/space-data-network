@@ -352,6 +352,35 @@ func (s *FlatSQLStore) recordReadSource(schemaName string) (string, error) {
 	return "(SELECT rowid, " + recordReadColumns + " FROM (" + strings.Join(selects, " UNION ALL ") + ") GROUP BY cid)", nil
 }
 
+// rawRecordReadSource returns a FROM/JOIN target for the raw-record family and
+// its head/count that exposes the GLOBAL sync cursor as `rowid` (WS7.3d):
+// sdn_record_index.rowid — a single shared, monotonic table (the store never
+// VACUUMs, so rowids are stable and never reused mid-life) — joined to the
+// record payload columns from recordReadSource. Every stored record has an
+// index row (upsertRecordIndexExec inserts a bare row even on field-extraction
+// failure), so the join is complete. The subquery aliases as `records`, so the
+// existing `records.rowid` cursor predicates / ORDER BY / MAX(records.rowid)
+// keep working — now over the global index rowid instead of a per-table one.
+// Callers hold s.mu.
+func (s *FlatSQLStore) rawRecordReadSource(schemaName string) (string, error) {
+	payload, err := s.recordReadSource(schemaName)
+	if err != nil {
+		return "", err
+	}
+	// schema_name is stored verbatim (e.g. "OMM.fbs"); validated by
+	// recordReadSource above. Escape single quotes defensively for the literal.
+	schemaLiteral := strings.ReplaceAll(schemaName, "'", "''")
+	return fmt.Sprintf(
+		`(SELECT idx.rowid AS rowid, rr.cid AS cid, rr.peer_id AS peer_id, `+
+			`rr.timestamp AS timestamp, rr.stream_path AS stream_path, `+
+			`rr.stream_offset AS stream_offset, rr.record_length AS record_length, `+
+			`rr.signature_hex AS signature_hex, rr.created_at AS created_at `+
+			`FROM sdn_record_index idx JOIN %s rr ON rr.cid = idx.cid `+
+			`WHERE idx.schema_name = '%s')`,
+		payload, schemaLiteral,
+	), nil
+}
+
 // deleteRoutedMirrorsWhere deletes rows matching whereClause from every
 // (producer, standard) table of the given standard — used by delete/GC/
 // reconcile paths so the union read surface cannot resurrect removed
