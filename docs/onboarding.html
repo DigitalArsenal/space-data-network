@@ -12,7 +12,7 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='none' stroke='%23fff' stroke-width='4'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(60 50 50)'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(120 50 50)'/><circle cx='50' cy='50' r='8' fill='%23fff'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
   <script defer src="https://spacedatastandards.org/sdn-stack-nav.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -28,8 +28,8 @@
       --nav-bg: rgba(22, 22, 23, 0.95);
       --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
-      --radius: 28px;
-      --radius-sm: 16px;
+      --radius: 14px;
+      --radius-sm: 10px;
       --grad-cyan: linear-gradient(135deg, #17ead9 0%, #6078ea 100%);
       --grad-green: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
       --grad-orange: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
@@ -53,6 +53,27 @@
       padding-bottom: var(--sdn-stack-footer-height, 40px);
     }
     a { color: var(--text-primary); }
+    .page-video-bg {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      z-index: -2;
+      opacity: 0;
+      transition: opacity 1s ease;
+    }
+    .page-video-bg.loaded { opacity: 0.4; }
+    .page-video-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.35);
+      z-index: -1;
+    }
     .top-nav {
       position: sticky;
       top: 0;
@@ -76,9 +97,11 @@
     .container { max-width: 980px; margin: 0 auto; padding: 0 22px; }
     header.page-head { padding: 84px 0 30px; text-align: center; }
     .page-head h1 {
-      font-size: clamp(34px, 6vw, 56px);
+      font-family: 'Rajdhani', var(--font-sans);
+      font-size: clamp(38px, 6vw, 60px);
       font-weight: 700;
-      letter-spacing: -0.02em;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
       color: var(--text-primary);
     }
     .page-head p.lede {
@@ -99,7 +122,7 @@
       font-size: 13px;
       color: var(--text-secondary);
       border: 1px solid var(--ui-border);
-      border-radius: 999px;
+      border-radius: 6px;
       padding: 8px 16px;
       background: var(--ui-bg);
     }
@@ -111,55 +134,120 @@
     .steps-overview a:nth-child(5):hover { border-color: var(--accent-indigo); color: var(--accent-indigo); }
     section.step { padding: 34px 0; scroll-margin-top: 80px; }
     .step-card {
-      background: var(--step-bg, var(--ui-bg));
-      border: 1px solid var(--ui-border);
-      border-radius: var(--radius);
+      --cut: 18px;
+      --chamfer: polygon(var(--cut) 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, var(--cut) 100%, 0 calc(100% - var(--cut)), 0 var(--cut));
+      position: relative;
       padding: 34px;
+      clip-path: var(--chamfer);
     }
+    .step-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      clip-path: var(--chamfer);
+      background: linear-gradient(180deg, rgba(var(--step-tint, 134, 134, 139), 0.55) 0%, rgba(var(--step-tint, 134, 134, 139), 0.14) 55%, rgba(255, 255, 255, 0.10) 100%);
+    }
+    .step-card::after {
+      content: '';
+      position: absolute;
+      inset: 1.5px;
+      clip-path: var(--chamfer);
+      background:
+        linear-gradient(180deg, rgba(var(--step-tint, 134, 134, 139), 0.14) 0%, rgba(0, 0, 0, 0) 55%),
+        linear-gradient(180deg, rgba(9, 13, 21, 0.86) 0%, rgba(9, 13, 21, 0.64) 100%);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+    }
+    .step-card > * { position: relative; z-index: 1; }
     #step-start {
       --step-grad: var(--grad-cyan); --step-accent: var(--accent-cyan);
-      --step-bg: linear-gradient(135deg, rgba(23, 234, 217, 0.10) 0%, rgba(96, 120, 234, 0.05) 60%, rgba(42, 42, 45, 0.72) 100%);
+      --step-tint: 23, 234, 217;
     }
     #step-consume {
       --step-grad: var(--grad-green); --step-accent: var(--accent-green);
-      --step-bg: linear-gradient(135deg, rgba(17, 153, 142, 0.12) 0%, rgba(56, 239, 125, 0.05) 60%, rgba(42, 42, 45, 0.72) 100%);
+      --step-tint: 56, 239, 125;
     }
     #step-publish {
       --step-grad: var(--grad-orange); --step-accent: var(--accent-orange);
-      --step-bg: linear-gradient(135deg, rgba(240, 147, 251, 0.10) 0%, rgba(245, 87, 108, 0.05) 60%, rgba(42, 42, 45, 0.72) 100%);
+      --step-tint: 245, 87, 108;
     }
     #step-sell-data {
       --step-grad: var(--grad-purple); --step-accent: var(--accent-purple);
-      --step-bg: linear-gradient(135deg, rgba(142, 45, 226, 0.12) 0%, rgba(74, 0, 224, 0.06) 60%, rgba(42, 42, 45, 0.72) 100%);
+      --step-tint: 167, 139, 250;
     }
     #step-sell-modules {
       --step-grad: var(--grad-indigo); --step-accent: var(--accent-indigo);
-      --step-bg: linear-gradient(135deg, rgba(92, 107, 192, 0.14) 0%, rgba(126, 87, 194, 0.06) 60%, rgba(42, 42, 45, 0.72) 100%);
+      --step-tint: 126, 155, 245;
     }
     #going-further {
       --step-accent: var(--text-muted);
-      --step-bg: linear-gradient(135deg, rgba(23, 234, 217, 0.06) 0%, rgba(167, 139, 250, 0.05) 50%, rgba(240, 147, 251, 0.04) 100%);
+      --step-tint: 134, 134, 139;
+    }
+    .step-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 18px;
+    }
+    .step-head h2 {
+      font-family: 'Rajdhani', var(--font-sans);
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      text-align: right;
+      margin: 0;
+      color: var(--text-primary);
     }
     .step-label {
       display: inline-flex;
       align-items: center;
-      gap: 10px;
-      font-size: 13px;
-      letter-spacing: 0.08em;
+      gap: 16px;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
       text-transform: uppercase;
       color: var(--step-accent, var(--text-muted));
-      margin-bottom: 10px;
+      font-family: 'Rajdhani', var(--font-sans);
+      font-size: 16px;
+      letter-spacing: 0.14em;
+      white-space: nowrap;
     }
     .step-num {
+      --octa: polygon(29% 0%, 71% 0%, 100% 29%, 100% 71%, 71% 100%, 29% 100%, 0% 71%, 0% 29%);
+      position: relative;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 26px; height: 26px;
-      border-radius: 50%;
-      background: var(--step-grad, var(--ui-hover));
-      font-size: 13px;
-      font-weight: 600;
+      flex: 0 0 auto;
+      width: 64px; height: 64px;
+      font-family: 'Rajdhani', var(--font-sans);
+      font-size: 34px;
+      font-weight: 700;
+      line-height: 1;
       color: #fff;
+      filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55));
+    }
+    .step-num::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      clip-path: var(--octa);
+      background: var(--step-grad, var(--ui-hover));
+    }
+    .step-num::after {
+      content: '';
+      position: absolute;
+      inset: 5px;
+      clip-path: var(--octa);
+      background: linear-gradient(180deg, rgba(18, 20, 27, 0.94) 0%, rgba(32, 35, 45, 0.94) 100%);
+    }
+    .step-num b {
+      position: relative;
+      z-index: 1;
+      font-weight: 800;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
     }
     .step-card h2 { font-size: 26px; font-weight: 600; margin-bottom: 10px; color: var(--text-primary); }
     .step-card p { color: var(--text-secondary); font-size: 15px; margin-bottom: 12px; }
@@ -287,17 +375,47 @@
       margin: 14px 0;
     }
     .qr-tile {
+      --acc: var(--step-accent, var(--accent-cyan));
+      position: relative;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 10px;
-      background: #fff;
-      border-radius: var(--radius-sm);
-      padding: 18px;
+      gap: 12px;
+      width: 264px;
+      aspect-ratio: 1 / 1;
+      padding: 20px;
+      align-self: center;
+      background:
+        linear-gradient(var(--acc), var(--acc)) top 8px left 8px / 26px 2px no-repeat,
+        linear-gradient(var(--acc), var(--acc)) top 8px left 8px / 2px 26px no-repeat,
+        linear-gradient(var(--acc), var(--acc)) top 8px right 8px / 26px 2px no-repeat,
+        linear-gradient(var(--acc), var(--acc)) top 8px right 8px / 2px 26px no-repeat,
+        linear-gradient(var(--acc), var(--acc)) bottom 8px left 8px / 26px 2px no-repeat,
+        linear-gradient(var(--acc), var(--acc)) bottom 8px left 8px / 2px 26px no-repeat,
+        linear-gradient(var(--acc), var(--acc)) bottom 8px right 8px / 26px 2px no-repeat,
+        linear-gradient(var(--acc), var(--acc)) bottom 8px right 8px / 2px 26px no-repeat,
+        linear-gradient(180deg, rgba(18, 22, 32, 0.92) 0%, rgba(8, 10, 16, 0.92) 100%);
+      border: 1px solid var(--ui-border);
     }
-    .qr-tile img { display: block; width: 200px; height: 200px; }
-    .qr-tile p { color: #333; font-size: 12px; text-align: center; margin: 0; line-height: 1.4; }
+    .qr-plate {
+      --plate-cut: 8px;
+      background: #fff;
+      padding: 12px;
+      clip-path: polygon(var(--plate-cut) 0, calc(100% - var(--plate-cut)) 0, 100% var(--plate-cut), 100% calc(100% - var(--plate-cut)), calc(100% - var(--plate-cut)) 100%, var(--plate-cut) 100%, 0 calc(100% - var(--plate-cut)), 0 var(--plate-cut));
+    }
+    .qr-plate img { display: block; width: 168px; height: 168px; }
+    .qr-tile p {
+      font-family: 'Rajdhani', var(--font-sans);
+      color: var(--acc);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      text-align: center;
+      margin: 0;
+      line-height: 1.4;
+    }
     .next-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -323,8 +441,7 @@
       padding: 40px 0 6px;
       text-align: center;
     }
-    .share-qr .qr-tile { padding: 16px; }
-    .share-qr .qr-tile img { width: 168px; height: 168px; }
+    .share-qr { --step-accent: var(--accent-cyan); }
     .share-qr p { font-size: 14px; color: var(--text-muted); margin: 0; }
     footer {
       border-top: 1px solid var(--ui-border);
@@ -337,7 +454,9 @@
     footer a { color: var(--text-secondary); text-decoration: none; margin: 0 10px; }
     footer a:hover { color: var(--text-primary); }
     @media (max-width: 734px) {
-      .step-card { padding: 24px 18px; }
+      .step-card { padding: 24px 18px; --cut: 12px; }
+      .step-head { flex-direction: column; align-items: flex-start; gap: 12px; }
+      .step-head h2 { text-align: left; font-size: 21px; }
       header.page-head { padding: 56px 0 20px; }
       .identity-figure { grid-template-columns: 1fr; }
       .qr-tile { padding: 14px; }
@@ -346,6 +465,8 @@
 </head>
 <body>
   <sdn-stack-nav active="sdn"></sdn-stack-nav>
+  <video class="page-video-bg" id="bgVideo" autoplay loop muted playsinline disablepictureinpicture></video>
+  <div class="page-video-overlay"></div>
 
   <nav class="top-nav">
     <div class="top-nav-inner">
@@ -377,8 +498,10 @@
 
     <section class="step" id="step-start">
       <div class="step-card">
-        <div class="step-label"><span class="step-num">1</span> Start</div>
-        <h2>Set up your ID and start your node</h2>
+        <div class="step-head">
+          <div class="step-label"><span class="step-num"><b>1</b></span> Start</div>
+          <h2>Set up your ID and start your node</h2>
+        </div>
         <p>One command installs everything &mdash; no admin rights needed:</p>
         <div class="code-block">
           <div class="code-header"><span>macOS / Linux</span><button class="code-copy" onclick="copyCode(this)">Copy</button></div>
@@ -415,27 +538,29 @@ spacedatanetwork identity export --format qrcode</code></pre>
         </ul>
         <div class="identity-figure">
           <div class="code-block" style="margin: 0;">
-            <div class="code-header"><span>Example contact card (vCard)</span></div>
+            <div class="code-header"><span>Example contact card (vCard) &mdash; long values shortened</span></div>
             <pre><code>BEGIN:VCARD
-VERSION:4.0
+VERSION:3.0
 FN:Dr. Jane Smith
+N:Smith;Jane;;Dr.;
 ORG:Example Space Agency
 TITLE:Chief Scientist
 EMAIL:jane@example-agency.org
-X-SDN-PEER-ID:12D3KooWQmVzEx4mp1eNodePeerId7QhcVTKtGkbq
-X-SDN-EPM-CID:bafybeigdyrzt5sfp7udm7hu76uh7y26nf3e...
-X-SDN-EPM-SIGNATURE:&lt;digital signature&gt;
-X-SDN-EPM-SIGNATURE-TIMESTAMP:2026-07-02T12:00:00Z
-X-SDN-DIRECTORY-KIND:organization
+EMAIL;type=INTERNET;type=signing:
+ f4c3a1b0&hellip;@signing.spacedatanetwork.org
+EMAIL;type=INTERNET;type=encryption:
+ 2a3f4e5d&hellip;@encryption.spacedatanetwork.org
+item1.X-ABLabel:Public Key Signing
+item2.X-ABLabel:Public Key Encryption
 X-SDN-EPM-B64:&lt;complete signed identity record&gt;
 END:VCARD</code></pre>
           </div>
           <div class="qr-tile">
-            <img src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%2777%27%20height%3D%2777%27%20class%3D%27segno%27%3E%3Cpath%20fill%3D%27%23fff%27%20d%3D%27M0%200h77v77h-77z%27%2F%3E%3Cpath%20class%3D%27qrline%27%20stroke%3D%27%23000%27%20d%3D%27M2%202.5h7m1%200h1m1%200h2m1%200h1m2%200h2m1%200h1m4%200h1m1%200h1m1%200h4m7%200h1m2%200h2m2%200h1m7%200h2m1%200h1m1%200h2m1%200h1m1%200h1m1%200h7m-73%201h1m5%200h1m1%200h3m1%200h4m1%200h2m2%200h5m1%200h1m1%200h2m2%200h2m2%200h1m1%200h1m1%200h3m2%200h3m2%200h2m2%200h3m1%200h2m1%200h1m3%200h1m5%200h1m-73%201h1m1%200h3m1%200h1m2%200h2m1%200h1m3%200h1m2%200h1m4%200h1m1%200h1m1%200h3m2%200h2m3%200h1m2%200h1m2%200h2m3%200h2m3%200h4m2%200h1m5%200h1m1%200h3m1%200h1m-73%201h1m1%200h3m1%200h1m1%200h2m1%200h2m3%200h4m3%200h2m3%200h1m1%200h2m1%200h4m4%200h3m1%200h3m3%200h2m3%200h1m1%200h1m3%200h2m2%200h1m1%200h3m1%200h1m-73%201h1m1%200h3m1%200h1m2%200h2m1%200h1m1%200h1m3%200h4m2%200h5m2%200h2m4%200h2m5%200h5m3%200h2m5%200h3m1%200h2m1%200h1m1%200h3m1%200h1m-73%201h1m5%200h1m2%200h1m2%200h1m4%200h1m1%200h1m1%200h2m1%200h1m3%200h1m1%200h1m2%200h1m1%200h1m2%200h3m1%200h1m1%200h1m3%200h4m1%200h1m2%200h1m1%200h3m1%200h1m3%200h1m5%200h1m-73%201h7m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h1m1%200h7m-65%201h2m2%200h1m4%200h3m4%200h1m3%200h2m1%200h1m3%200h4m1%200h1m2%200h2m3%200h2m1%200h6m4%200h1m2%200h1m-65%201h1m1%200h2m1%200h3m1%200h2m3%200h2m1%200h1m2%200h2m1%200h6m4%200h1m1%200h1m1%200h1m1%200h3m1%200h6m1%200h1m3%200h5m1%200h1m2%200h2m1%200h1m2%200h1m1%200h2m-73%201h1m3%200h2m2%200h1m3%200h1m1%200h2m2%200h2m3%200h1m1%200h3m2%200h3m4%200h1m3%200h6m3%200h1m1%200h1m2%200h3m5%200h1m3%200h3m1%200h1m-72%201h1m3%200h3m4%200h5m1%200h1m1%200h2m1%200h2m2%200h1m3%200h2m1%200h1m2%200h1m1%200h3m2%200h5m4%200h3m3%200h1m1%200h1m6%200h1m2%200h2m-72%201h3m2%200h1m1%200h4m1%200h1m1%200h1m1%200h1m1%200h1m1%200h5m1%200h2m1%200h4m2%200h3m2%200h2m7%200h1m4%200h1m1%200h5m1%200h1m1%200h1m1%200h2m2%200h2m-71%201h1m1%200h1m1%200h5m1%200h1m1%200h2m2%200h7m1%200h1m1%200h1m3%200h1m4%200h3m3%200h8m1%200h2m1%200h1m2%200h2m2%200h1m2%200h3m3%200h1m-71%201h1m3%200h1m3%200h1m1%200h3m4%200h1m3%200h4m6%200h2m4%200h2m7%200h2m4%200h2m1%200h2m1%200h1m3%200h1m3%200h1m1%200h1m3%200h1m-73%201h2m2%200h4m7%200h2m1%200h1m1%200h1m1%200h6m3%200h2m2%200h1m3%200h2m4%200h2m1%200h1m1%200h3m1%200h4m1%200h1m1%200h2m2%200h1m1%200h2m2%200h1m-67%201h1m1%200h2m6%200h1m1%200h4m1%200h2m1%200h1m2%200h1m1%200h2m1%200h1m6%200h1m1%200h1m1%200h1m1%200h1m1%200h2m1%200h3m1%200h1m1%200h5m1%200h2m1%200h2m-68%201h2m1%200h4m4%200h3m1%200h2m3%200h3m1%200h3m1%200h1m2%200h3m3%200h3m3%200h1m3%200h1m1%200h1m2%200h3m1%200h1m1%200h2m2%200h2m2%200h1m3%200h2m-71%201h1m10%200h3m2%200h1m1%200h1m7%200h2m2%200h1m2%200h1m1%200h2m2%200h1m2%200h1m1%200h1m3%200h1m1%200h2m6%200h1m1%200h2m1%200h3m2%200h4m-69%201h4m1%200h2m1%200h1m1%200h2m6%200h1m1%200h3m2%200h2m6%200h1m3%200h3m4%200h4m1%200h3m1%200h2m1%200h4m1%200h4m1%200h3m-70%201h1m3%200h2m1%200h6m1%200h3m1%200h3m4%200h2m2%200h1m2%200h1m2%200h1m6%200h3m1%200h6m2%200h1m1%200h2m6%200h3m-70%201h5m1%200h1m1%200h1m1%200h4m3%200h1m3%200h1m1%200h2m1%200h5m1%200h8m2%200h3m1%200h1m1%200h1m6%200h2m4%200h1m1%200h1m1%200h1m4%200h2m-72%201h1m1%200h4m3%200h5m6%200h1m1%200h1m2%200h1m1%200h1m1%200h2m1%200h1m6%200h4m2%200h2m3%200h2m5%200h4m2%200h1m1%200h3m3%200h2m-73%201h2m1%200h1m2%200h3m1%200h1m1%200h2m1%200h3m2%200h1m1%200h2m2%200h6m2%200h1m1%200h1m2%200h3m1%200h1m5%200h1m5%200h2m1%200h1m8%200h1m-68%201h4m3%200h1m3%200h5m4%200h2m2%200h1m1%200h2m1%200h1m1%200h1m3%200h1m1%200h2m1%200h1m2%200h2m4%200h1m1%200h1m2%200h1m3%200h4m1%200h1m2%200h2m1%200h2m1%200h1m-69%201h8m3%200h2m2%200h4m1%200h8m1%200h5m3%200h1m1%200h7m1%200h2m1%200h1m1%200h3m2%200h1m1%200h8m-70%201h1m1%200h2m3%200h1m2%200h1m2%200h1m2%200h1m2%200h1m1%200h1m1%200h1m3%200h1m2%200h3m1%200h5m3%200h2m3%200h1m4%200h2m4%200h1m3%200h2m3%200h1m-69%201h5m1%200h1m1%200h2m2%200h1m3%200h1m2%200h4m1%200h1m1%200h1m1%200h1m1%200h3m1%200h1m4%200h6m1%200h1m1%200h3m1%200h1m2%200h1m4%200h3m1%200h1m1%200h1m1%200h2m1%200h1m-72%201h1m2%200h2m3%200h2m1%200h1m2%200h2m2%200h4m2%200h1m3%200h1m1%200h2m1%200h1m1%200h2m5%200h1m1%200h1m3%200h2m1%200h2m1%200h1m1%200h2m4%200h1m1%200h1m3%200h1m3%200h1m-73%201h1m1%200h1m1%200h5m1%200h2m6%200h2m3%200h12m2%200h3m1%200h1m1%200h6m1%200h1m1%200h1m1%200h1m1%200h6m2%200h5m1%200h2m-72%201h1m1%200h1m2%200h1m2%200h2m3%200h1m3%200h1m1%200h5m1%200h1m3%200h1m3%200h3m3%200h3m1%200h2m1%200h1m1%200h3m1%200h1m3%200h1m4%200h3m1%200h1m1%200h1m3%200h2m-73%201h1m1%200h6m2%200h1m1%200h1m1%200h2m4%200h6m5%200h2m1%200h3m1%200h1m1%200h1m3%200h3m2%200h1m3%200h1m4%200h1m1%200h5m1%200h2m1%200h1m1%200h2m-73%201h3m1%200h1m3%200h1m2%200h1m7%200h2m1%200h1m1%200h1m2%200h3m3%200h5m2%200h4m1%200h1m2%200h1m3%200h3m5%200h2m1%200h1m4%200h1m-69%201h5m1%200h3m3%200h1m2%200h1m3%200h1m1%200h1m1%200h2m1%200h1m8%200h1m3%200h2m1%200h4m8%200h2m1%200h2m1%200h2m2%200h1m7%200h1m-73%201h2m1%200h1m3%200h1m1%200h2m1%200h2m1%200h2m1%200h1m1%200h3m2%200h3m1%200h4m4%200h1m3%200h2m4%200h1m2%200h1m4%200h5m2%200h1m2%200h5m1%200h2m-73%201h1m3%200h3m4%200h2m2%200h1m1%200h1m1%200h2m1%200h4m3%200h2m1%200h1m1%200h2m1%200h1m2%200h2m4%200h2m5%200h3m2%200h1m1%200h1m1%200h3m1%200h1m1%200h1m1%200h1m-70%201h2m1%200h1m4%200h1m1%200h2m4%200h1m2%200h4m1%200h2m1%200h2m1%200h2m3%200h3m1%200h4m1%200h4m3%200h1m1%200h1m2%200h3m1%200h1m2%200h2m1%200h5m-72%201h3m1%200h4m4%200h1m1%200h2m2%200h2m1%200h1m1%200h1m2%200h4m1%200h1m3%200h2m1%200h1m2%200h4m1%200h1m1%200h1m2%200h1m2%200h1m6%200h1m2%200h4m1%200h1m2%200h1m-73%201h1m1%200h2m1%200h1m1%200h1m2%200h2m1%200h1m4%200h1m2%200h2m1%200h1m1%200h3m2%200h3m3%200h3m10%200h2m1%200h1m2%200h1m2%200h1m2%200h2m1%200h1m1%200h2m1%200h1m1%200h1m-70%201h1m1%200h2m1%200h1m1%200h1m1%200h3m4%200h3m1%200h1m2%200h1m1%200h1m1%200h1m6%200h2m6%200h2m4%200h3m1%200h1m1%200h2m2%200h3m1%200h4m2%200h1m-69%201h2m2%200h3m1%200h2m1%200h5m1%200h1m2%200h8m1%200h2m6%200h3m2%200h3m5%200h1m1%200h1m2%200h3m1%200h2m1%200h2m4%200h1m-72%201h5m1%200h2m3%200h1m1%200h1m1%200h3m1%200h2m2%200h1m1%200h1m2%200h1m1%200h5m2%200h2m2%200h2m2%200h2m1%200h3m1%200h1m3%200h2m1%200h1m4%200h7m1%200h1m-72%201h1m1%200h2m3%200h1m2%200h3m3%200h4m2%200h1m2%200h2m1%200h1m1%200h1m1%200h3m4%200h2m1%200h1m4%200h2m6%200h1m1%200h1m2%200h1m1%200h1m3%200h6m-71%201h2m2%200h1m5%200h2m2%200h1m3%200h2m5%200h1m1%200h1m1%200h1m1%200h2m1%200h1m1%200h4m4%200h1m3%200h1m1%200h1m2%200h10m3%200h1m3%200h1m-73%201h1m2%200h1m3%200h1m3%200h2m1%200h1m2%200h1m3%200h1m2%200h3m2%200h2m2%200h1m1%200h2m3%200h2m3%200h1m2%200h4m1%200h4m3%200h1m1%200h2m4%200h1m2%200h1m-71%201h1m1%200h6m2%200h1m2%200h1m4%200h1m2%200h1m1%200h5m1%200h1m3%200h2m4%200h1m1%200h7m1%200h1m1%200h2m1%200h2m5%200h1m1%200h6m-70%201h1m3%200h1m3%200h1m1%200h1m1%200h1m2%200h3m2%200h1m1%200h3m3%200h1m1%200h1m1%200h1m2%200h3m3%200h4m3%200h1m2%200h1m2%200h1m1%200h2m6%200h1m3%200h1m2%200h1m-72%201h2m2%200h1m1%200h1m1%200h2m1%200h4m1%200h5m2%200h2m1%200h1m1%200h1m1%200h2m6%200h2m1%200h1m2%200h1m1%200h1m1%200h4m1%200h2m1%200h1m2%200h1m4%200h1m1%200h1m1%200h1m1%200h1m-71%201h1m2%200h2m3%200h1m1%200h1m2%200h4m2%200h3m1%200h2m3%200h2m1%200h3m5%200h2m1%200h1m1%200h1m3%200h5m1%200h1m1%200h1m1%200h1m1%200h2m1%200h2m3%200h1m1%200h2m-72%201h2m2%200h7m3%200h2m1%200h2m1%200h1m2%200h6m1%200h2m3%200h2m4%200h2m1%200h5m1%200h2m1%200h2m1%200h2m2%200h1m1%200h1m1%200h7m1%200h1m-73%201h2m1%200h3m1%200h1m2%200h3m1%200h2m2%200h1m2%200h1m3%200h2m1%200h2m2%200h2m1%200h1m1%200h2m1%200h1m2%200h1m9%200h4m2%200h2m2%200h1m2%200h4m2%200h1m-73%201h2m2%200h1m1%200h3m1%200h1m1%200h1m1%200h2m3%200h3m1%200h1m1%200h1m2%200h5m1%200h4m3%200h1m1%200h2m1%200h3m2%200h1m1%200h2m1%200h2m2%200h1m1%200h1m2%200h1m3%200h1m1%200h1m-72%201h1m1%200h2m1%200h1m3%200h11m2%200h1m3%200h1m2%200h1m2%200h1m1%200h1m1%200h4m1%200h1m1%200h1m2%200h1m1%200h1m4%200h1m1%200h1m6%200h4m1%200h1m3%200h2m-73%201h2m3%200h2m1%200h1m2%200h1m1%200h3m1%200h1m2%200h2m2%200h2m1%200h4m1%200h1m1%200h1m4%200h1m1%200h4m2%200h1m8%200h1m1%200h6m1%200h1m4%200h3m-73%201h1m1%200h1m1%200h2m2%200h1m2%200h1m1%200h6m3%200h5m2%200h2m2%200h1m4%200h1m2%200h3m2%200h1m2%200h2m4%200h2m3%200h4m2%200h1m3%200h1m1%200h1m-73%201h1m1%200h2m2%200h3m1%200h1m1%200h2m2%200h1m1%200h1m1%200h2m1%200h2m1%200h1m1%200h1m1%200h2m1%200h1m2%200h1m2%200h2m1%200h1m1%200h3m3%200h2m1%200h1m3%200h2m1%200h4m3%200h1m1%200h4m-73%201h1m2%200h3m1%200h1m1%200h1m1%200h1m2%200h1m1%200h1m3%200h1m2%200h1m2%200h1m4%200h4m2%200h1m1%200h1m2%200h6m1%200h5m3%200h1m1%200h1m3%200h1m4%200h2m-70%201h1m1%200h3m1%200h3m2%200h1m2%200h1m3%200h5m1%200h2m1%200h2m2%200h1m5%200h2m1%200h1m1%200h1m3%200h1m3%200h1m1%200h2m1%200h2m1%200h1m2%200h3m1%200h1m2%200h1m1%200h2m-72%201h1m2%200h1m1%200h1m1%200h2m2%200h2m3%200h6m2%200h1m2%200h1m1%200h3m3%200h2m5%200h2m1%200h2m3%200h1m3%200h1m2%200h2m3%200h1m1%200h2m3%200h2m1%200h1m-72%201h1m1%200h4m2%200h1m1%200h2m2%200h1m4%200h1m1%200h1m2%200h1m1%200h1m2%200h1m1%200h1m1%200h2m6%200h1m1%200h1m1%200h1m2%200h1m1%200h1m1%200h2m1%200h1m1%200h2m5%200h4m2%200h1m-68%201h1m3%200h1m5%200h2m4%200h1m2%200h2m1%200h4m1%200h1m2%200h2m4%200h1m1%200h2m5%200h1m1%200h1m1%200h1m2%200h1m1%200h4m1%200h1m1%200h1m2%200h1m1%200h3m-73%201h1m3%200h1m1%200h6m1%200h1m5%200h4m3%200h1m3%200h2m2%200h3m4%200h2m2%200h4m1%200h2m1%200h2m3%200h1m1%200h4m1%200h2m1%200h2m1%200h2m-71%201h3m2%200h1m2%200h2m5%200h1m1%200h1m1%200h3m2%200h1m1%200h1m2%200h1m1%200h1m2%200h3m1%200h2m2%200h3m3%200h1m2%200h1m4%200h2m2%200h4m1%200h2m2%200h2m-73%201h2m1%200h1m1%200h2m4%200h3m1%200h2m1%200h1m5%200h1m3%200h5m2%200h3m2%200h1m5%200h1m2%200h2m1%200h1m1%200h1m1%200h2m1%200h1m1%200h2m6%200h1m-67%201h2m4%200h1m1%200h2m2%200h3m3%200h2m2%200h2m1%200h1m1%200h1m2%200h2m1%200h2m1%200h3m6%200h1m2%200h2m3%200h1m5%200h2m3%200h1m-68%201h1m3%200h1m1%200h1m3%200h3m5%200h1m1%200h1m1%200h1m1%200h10m3%200h1m3%200h1m1%200h8m1%200h3m1%200h1m2%200h2m3%200h5m1%200h1m-63%201h1m3%200h1m2%200h4m1%200h1m2%200h2m3%200h1m5%200h2m3%200h3m1%200h2m3%200h2m1%200h2m1%200h1m3%200h2m1%200h2m1%200h1m3%200h2m2%200h1m-73%201h7m1%200h2m5%200h1m1%200h2m2%200h1m2%200h1m1%200h1m1%200h2m3%200h3m2%200h1m5%200h1m1%200h1m1%200h2m1%200h1m1%200h1m1%200h1m2%200h1m1%200h3m1%200h1m1%200h1m1%200h1m2%200h2m-73%201h1m5%200h1m1%200h2m8%200h2m1%200h2m1%200h1m3%200h3m2%200h4m1%200h3m3%200h1m3%200h2m2%200h2m4%200h1m1%200h3m1%200h1m3%200h2m-70%201h1m1%200h3m1%200h1m2%200h1m1%200h2m1%200h1m3%200h3m2%200h6m1%200h1m2%200h1m1%200h1m1%200h1m1%200h3m1%200h7m2%200h1m2%200h2m3%200h1m3%200h9m-73%201h1m1%200h3m1%200h1m1%200h2m2%200h2m1%200h1m1%200h1m4%200h2m1%200h1m3%200h4m2%200h2m4%200h3m1%200h2m3%200h1m1%200h1m1%200h1m1%200h2m2%200h1m2%200h8m1%200h1m-73%201h1m1%200h3m1%200h1m1%200h3m1%200h1m2%200h1m1%200h1m2%200h5m1%200h6m2%200h2m1%200h1m1%200h1m2%200h1m1%200h1m2%200h2m3%200h3m3%200h1m1%200h1m2%200h3m2%200h2m1%200h1m-72%201h1m5%200h1m5%200h2m2%200h4m1%200h2m1%200h1m2%200h2m2%200h2m1%200h1m1%200h2m2%200h1m3%200h1m3%200h1m9%200h2m1%200h3m1%200h3m1%200h2m-71%201h7m1%200h2m8%200h1m2%200h2m1%200h4m1%200h3m1%200h4m1%200h1m2%200h1m1%200h4m3%200h2m2%200h1m2%200h1m2%200h1m1%200h1m4%200h1m1%200h4%27%2F%3E%3C%2Fsvg%3E" alt="QR code encoding the example signed SDN contact card" width="200" height="200">
-            <p>Scan to import a<br>verifiable contact card</p>
+            <div class="qr-plate"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMTciIGhlaWdodD0iMTE3IiBjbGFzcz0ic2Vnbm8iPjxwYXRoIGZpbGw9IiNmZmYiIGQ9Ik0wIDBoMTE3djExN2gtMTE3eiIvPjxwYXRoIGNsYXNzPSJxcmxpbmUiIHN0cm9rZT0iIzAwMCIgZD0iTTIgMi41aDdtMSAwaDJtMiAwaDJtOCAwaDFtMiAwaDFtMSAwaDRtMiAwaDNtMiAwaDFtMSAwaDFtMiAwaDNtMiAwaDJtMSAwaDFtMiAwaDFtMSAwaDNtMSAwaDFtMSAwaDNtMyAwaDFtMSAwaDJtMiAwaDNtMiAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMiAwaDFtMSAwaDFtMSAwaDNtMSAwaDNtMiAwaDFtMiAwaDFtMSAwaDdtLTExMyAxaDFtNSAwaDFtNSAwaDFtMyAwaDFtNCAwaDRtMSAwaDFtMyAwaDFtNiAwaDFtMiAwaDFtMiAwaDFtNCAwaDNtMiAwaDNtMSAwaDFtMiAwaDNtMyAwaDFtMiAwaDFtMyAwaDZtNyAwaDJtMiAwaDJtMSAwaDFtMSAwaDFtMiAwaDFtMSAwaDFtNSAwaDFtNSAwaDFtLTExMyAxaDFtMSAwaDNtMSAwaDFtMiAwaDJtMSAwaDFtMSAwaDJtMSAwaDFtMiAwaDFtMiAwaDJtNyAwaDFtMyAwaDJtMiAwaDFtMSAwaDFtNiAwaDJtMSAwaDRtMSAwaDFtNiAwaDFtMSAwaDFtMiAwaDFtNiAwaDNtOSAwaDFtMSAwaDJtMSAwaDFtMyAwaDJtMSAwaDRtMiAwaDFtMSAwaDNtMSAwaDFtLTExMyAxaDFtMSAwaDNtMSAwaDFtMSAwaDRtMiAwaDFtNiAwaDFtNiAwaDRtMiAwaDFtMyAwaDFtMSAwaDNtMiAwaDJtMiAwaDFtMSAwaDJtMyAwaDFtNiAwaDFtMSAwaDFtMiAwaDFtNCAwaDFtMiAwaDJtMiAwaDFtMSAwaDNtMyAwaDFtMSAwaDJtMSAwaDFtNSAwaDZtMSAwaDFtMSAwaDNtMSAwaDFtLTExMyAxaDFtMSAwaDNtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDVtMSAwaDFtMSAwaDFtNCAwaDVtMSAwaDFtNCAwaDFtMSAwaDFtNiAwaDFtMyAwaDdtMSAwaDJtMiAwaDFtMSAwaDFtMSAwaDEwbTIgMGg1bTEgMGg0bTEgMGgzbTEgMGgxbTMgMGgxbTEgMGgxbTYgMGgxbTEgMGgzbTEgMGgxbS0xMTMgMWgxbTUgMGgxbTEgMGgxbTIgMGg2bTEgMGgxbTMgMGgxbTIgMGgybTMgMGg0bTEgMGgybTEgMGg1bTEgMGgxbTUgMGgxbTEgMGgxbTMgMGgzbTIgMGg2bTEgMGgybTEgMGgxbTEgMGgybTEgMGgxbTEgMGgxbTMgMGgxbTMgMGgybTIgMGgybTEgMGgxbTEgMGgxbTIgMGgybTEgMGgzbTIgMGgxbTUgMGgxbS0xMTMgMWg3bTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGg3bS0xMDUgMWgxbTEgMGg0bTIgMGgybTcgMGgybTMgMGgybTIgMGgybTIgMGgzbTEgMGgybTYgMGgzbTMgMGgzbTIgMGg3bTEgMGgxbTEgMGgxbTEgMGgybTEgMGgzbTMgMGgxbTMgMGgxbTEgMGgybTEgMGgxbTEgMGgxbTEgMGgxbTIgMGgxbTEgMGgzbTEgMGgxbS0xMDUgMWgxbTMgMGgxbTEgMGg0bTIgMGgybTcgMGgzbTEgMGg2bTIgMGgxbTEgMGg5bTEgMGgzbTEgMGg4bTEwIDBoM20xIDBoMm0xIDBoMW0xIDBoMTBtMiAwaDFtMiAwaDNtMSAwaDVtMiAwaDFtMSAwaDZtMiAwaDFtLTEwOCAxaDFtMyAwaDFtMSAwaDFtMiAwaDFtMSAwaDVtMSAwaDJtMyAwaDFtMiAwaDFtMSAwaDJtMSAwaDNtMyAwaDNtMSAwaDFtMSAwaDJtMSAwaDFtMiAwaDJtMSAwaDJtMiAwaDFtMiAwaDZtMiAwaDRtNiAwaDFtMSAwaDJtMSAwaDFtMSAwaDFtMSAwaDFtMiAwaDFtMiAwaDFtMSAwaDJtMSAwaDNtMSAwaDFtMSAwaDFtMiAwaDFtMSAwaDFtLTExMiAxaDFtNCAwaDRtMSAwaDFtNSAwaDFtNCAwaDJtMSAwaDFtMiAwaDFtMSAwaDFtNSAwaDNtMSAwaDFtMSAwaDNtMSAwaDFtMSAwaDFtMyAwaDJtMiAwaDFtMSAwaDRtMiAwaDFtMiAwaDFtMSAwaDJtMSAwaDJtNCAwaDFtMyAwaDRtNiAwaDFtMSAwaDFtMSAwaDJtMSAwaDJtMiAwaDJtMSAwaDJtMiAwaDFtMSAwaDFtLTExMyAxaDJtMiAwaDFtMiAwaDJtMyAwaDJtMiAwaDFtMyAwaDJtMSAwaDFtMSAwaDFtMiAwaDJtMSAwaDFtMSAwaDJtMiAwaDJtMSAwaDFtMyAwaDRtMSAwaDRtMSAwaDJtMSAwaDFtNSAwaDVtMyAwaDFtMiAwaDFtMSAwaDFtMSAwaDFtMiAwaDFtNCAwaDZtMiAwaDJtMiAwaDFtMSAwaDNtMSAwaDFtMSAwaDJtNCAwaDFtLTExMiAxaDRtMSAwaDFtMiAwaDFtMSAwaDJtMiAwaDVtMiAwaDFtMSAwaDFtMiAwaDFtMSAwaDVtMyAwaDJtNSAwaDNtMiAwaDJtMSAwaDJtMiAwaDFtMiAwaDFtMSAwaDNtMiAwaDFtMiAwaDNtMSAwaDJtMiAwaDRtMiAwaDFtMiAwaDFtMSAwaDJtMSAwaDNtMSAwaDVtNCAwaDFtMSAwaDNtMiAwaDFtLTExMiAxaDJtMiAwaDJtMyAwaDJtMyAwaDNtNCAwaDFtMyAwaDFtMiAwaDFtMSAwaDFtNCAwaDJtMSAwaDFtMiAwaDFtMSAwaDJtMSAwaDFtMSAwaDJtMSAwaDFtMSAwaDNtMSAwaDRtMSAwaDFtMiAwaDJtMiAwaDJtMSAwaDFtMSAwaDFtNSAwaDJtMSAwaDRtMiAwaDNtMiAwaDFtMSAwaDFtMSAwaDFtMiAwaDJtMSAwaDJtMSAwaDFtMSAwaDNtLTExMSAxaDJtMSAwaDVtMSAwaDFtMSAwaDFtMiAwaDJtNCAwaDFtNCAwaDNtMSAwaDJtMiAwaDZtMSAwaDFtMiAwaDFtMSAwaDFtMSAwaDFtMiAwaDNtMSAwaDJtMSAwaDFtMiAwaDFtMyAwaDFtMiAwaDFtMSAwaDFtMiAwaDFtMyAwaDJtMSAwaDFtMSAwaDRtNyAwaDRtNyAwaDFtMSAwaDJtMiAwaDFtMSAwaDFtLTExMiAxaDFtMiAwaDFtMiAwaDFtNCAwaDJtMiAwaDFtMSAwaDFtMSAwaDZtMSAwaDFtMSAwaDVtMSAwaDFtNCAwaDJtMSAwaDFtMSAwaDNtMSAwaDVtMyAwaDFtNCAwaDNtMSAwaDJtOCAwaDRtMiAwaDFtMyAwaDFtMSAwaDJtMSAwaDFtNSAwaDVtMSAwaDJtMSAwaDFtNSAwaDFtLTExMyAxaDFtMSAwaDFtMyAwaDJtMiAwaDFtMiAwaDFtMSAwaDRtMSAwaDJtMSAwaDJtMyAwaDFtMyAwaDFtMiAwaDFtNCAwaDJtMSAwaDJtMiAwaDRtMSAwaDVtNCAwaDJtMSAwaDRtMSAwaDFtMSAwaDJtMSAwaDJtMSAwaDNtMiAwaDFtMSAwaDRtMSAwaDNtMSAwaDJtMSAwaDJtMiAwaDJtMSAwaDJtMSAwaDNtMyAwaDFtLTEwOSAxaDFtMiAwaDFtMSAwaDFtMiAwaDFtNSAwaDNtMiAwaDJtNCAwaDFtMSAwaDFtMiAwaDNtMSAwaDVtMiAwaDRtMSAwaDJtNCAwaDFtMSAwaDFtMSAwaDFtMiAwaDFtMSAwaDFtNSAwaDRtMiAwaDJtMSAwaDJtMSAwaDJtMyAwaDRtMSAwaDJtMSAwaDFtMSAwaDFtNiAwaDFtMyAwaDRtLTExMCAxaDJtMSAwaDFtMyAwaDFtMyAwaDJtMSAwaDFtMSAwaDNtMiAwaDJtMSAwaDJtMiAwaDZtMSAwaDJtMSAwaDNtMiAwaDFtMSAwaDFtNiAwaDJtMSAwaDRtMSAwaDJtMyAwaDFtMSAwaDNtNiAwaDFtMiAwaDFtMSAwaDJtMyAwaDFtNCAwaDFtMiAwaDFtNyAwaDFtMyAwaDFtMSAwaDJtLTExMyAxaDFtOCAwaDFtMSAwaDJtNSAwaDZtMSAwaDJtMSAwaDNtMSAwaDJtNSAwaDFtMyAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMiAwaDNtMiAwaDJtMyAwaDFtMSAwaDRtMSAwaDFtMyAwaDdtMSAwaDNtMiAwaDNtMSAwaDFtMiAwaDFtMyAwaDdtMSAwaDNtNCAwaDFtLTExMSAxaDJtMSAwaDJtMSAwaDFtMiAwaDhtMSAwaDVtMSAwaDFtMiAwaDNtMiAwaDFtMSAwaDFtMiAwaDFtMSAwaDJtMSAwaDFtMSAwaDFtMiAwaDFtNiAwaDFtNSAwaDFtMyAwaDNtMyAwaDNtMyAwaDJtMSAwaDJtNCAwaDFtNCAwaDFtMyAwaDFtMSAwaDFtNSAwaDhtLTExMiAxaDVtMiAwaDJtMSAwaDFtMSAwaDJtMSAwaDFtMSAwaDRtNSAwaDFtMiAwaDFtMSAwaDFtMSAwaDNtMSAwaDFtMSAwaDFtMSAwaDJtMiAwaDFtMSAwaDVtMSAwaDNtMSAwaDFtMyAwaDFtMSAwaDFtNCAwaDJtMyAwaDNtMSAwaDFtNCAwaDFtMSAwaDFtMSAwaDJtMSAwaDJtMiAwaDJtMSAwaDJtMSAwaDNtMSAwaDFtNSAwaDFtMSAwaDJtLTExMyAxaDNtMyAwaDJtNCAwaDFtMiAwaDFtMSAwaDJtMSAwaDJtMSAwaDFtNiAwaDFtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDJtMSAwaDJtMiAwaDRtMiAwaDFtMyAwaDNtMSAwaDFtMiAwaDJtNSAwaDFtNiAwaDJtMiAwaDVtNyAwaDJtMSAwaDFtMiAwaDFtMSAwaDFtMiAwaDNtNCAwaDJtLTExMyAxaDFtMSAwaDFtNCAwaDFtMiAwaDJtMyAwaDNtMSAwaDRtMSAwaDFtMSAwaDJtMiAwaDNtMyAwaDFtMSAwaDFtMSAwaDJtMiAwaDJtNCAwaDFtMSAwaDNtMiAwaDFtMSAwaDFtMSAwaDJtMSAwaDRtMSAwaDFtNiAwaDFtNCAwaDFtMyAwaDFtMSAwaDVtMSAwaDFtMyAwaDJtMSAwaDJtMSAwaDJtMSAwaDFtMSAwaDJtLTEwOCAxaDFtMyAwaDJtMSAwaDJtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDNtMiAwaDFtMiAwaDZtNCAwaDJtMiAwaDJtMSAwaDNtMyAwaDFtMSAwaDRtMSAwaDFtMSAwaDFtMiAwaDFtMiAwaDNtMSAwaDFtMiAwaDFtNSAwaDJtMSAwaDFtMiAwaDJtMSAwaDFtMSAwaDNtMSAwaDFtMSAwaDZtMSAwaDJtMSAwaDFtMSAwaDRtMiAwaDFtLTEwOCAxaDFtMSAwaDJtNCAwaDJtMiAwaDFtMSAwaDNtMiAwaDFtMSAwaDFtMyAwaDFtMSAwaDFtMiAwaDFtMSAwaDVtMSAwaDFtMyAwaDJtNCAwaDhtMSAwaDFtMiAwaDJtMyAwaDFtMSAwaDJtMSAwaDFtMiAwaDFtNCAwaDVtMiAwaDFtMSAwaDJtMiAwaDFtMSAwaDFtMyAwaDFtNSAwaDFtMSAwaDFtMSAwaDFtLTExMyAxaDFtMiAwaDdtMiAwaDNtMiAwaDFtMiAwaDNtMyAwaDVtMSAwaDJtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDFtMyAwaDFtMSAwaDJtMSAwaDZtMSAwaDFtMSAwaDJtNyAwaDRtMiAwaDFtMSAwaDhtMyAwaDFtMyAwaDFtMSAwaDFtMSAwaDFtMiAwaDFtMSAwaDFtMiAwaDZtMSAwaDJtLTEwOSAxaDFtMyAwaDRtNyAwaDFtMyAwaDFtMiAwaDFtMyAwaDFtMyAwaDFtMSAwaDFtMSAwaDFtMSAwaDNtMSAwaDJtMSAwaDFtNCAwaDFtMyAwaDRtMiAwaDhtMyAwaDJtMSAwaDFtMSAwaDFtMyAwaDFtMiAwaDJtMSAwaDFtMSAwaDJtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDFtMSAwaDFtMSAwaDFtMyAwaDJtMiAwaDFtLTExMCAxaDJtMSAwaDFtMSAwaDJtMyAwaDJtMSAwaDJtMSAwaDNtMSAwaDRtMSAwaDFtMSAwaDFtMSAwaDFtMiAwaDFtMSAwaDJtMSAwaDFtMSAwaDJtMSAwaDFtMyAwaDFtMSAwaDJtMSAwaDFtMSAwaDJtMSAwaDRtMSAwaDJtMSAwaDFtMSAwaDFtNCAwaDNtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMiAwaDNtMSAwaDFtMSAwaDFtMiAwaDJtMiAwaDFtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDFtLTExMiAxaDJtMiAwaDFtMyAwaDFtMiAwaDZtMyAwaDJtMSAwaDJtMSAwaDFtMyAwaDNtMiAwaDFtMSAwaDFtMiAwaDJtMSAwaDZtMyAwaDFtMyAwaDJtMSAwaDNtNyAwaDFtMSAwaDFtMiAwaDFtMyAwaDFtMyAwaDFtMSAwaDNtMiAwaDFtMSAwaDJtMSAwaDRtMyAwaDFtMiAwaDFtMyAwaDJtMSAwaDJtLTExMiAxaDhtMiAwaDNtMyAwaDJtMSAwaDFtMiAwaDFtMSAwaDZtMiAwaDJtNCAwaDNtNCAwaDJtMSAwaDFtMSAwaDhtMSAwaDJtMSAwaDFtNCAwaDFtMSAwaDNtMiAwaDFtMSAwaDltMSAwaDFtNiAwaDRtNiAwaDZtMiAwaDFtLTExMSAxaDNtNCAwaDFtNCAwaDFtMSAwaDFtMSAwaDFtMiAwaDFtMyAwaDFtMiAwaDFtMSAwaDJtMiAwaDJtMSAwaDFtMyAwaDJtMSAwaDJtMSAwaDFtMSAwaDFtMTIgMGg2bTEgMGgybTMgMGgzbTEgMGgxbTEgMGgxbTEgMGgxbTUgMGgzbTIgMGgxbTUgMGg0bTEgMGgzbTIgMGgxbS0xMTAgMWgzbTMgMGg1bTIgMGgxbTMgMGg1bTMgMGgzbTEgMGg3bTEgMGgybTEgMGgxbTIgMGg2bTEgMGgxbTEgMGgxbTMgMGgxbTIgMGgxbTEgMGgxbTQgMGgzbTEgMGgzbTEgMGgzbTEgMGgxbTEgMGgybTEgMGg1bTIgMGgybTIgMGgxbTQgMGgxbTIgMGgxbTEgMGgybS0xMDUgMWg1bTEgMGgybTEgMGg2bTQgMGgxbTEgMGgxbTEgMGgxbTEgMGgybTEgMGgxbTEgMGgxbTEgMGgybTEgMGgxbTEgMGgzbTEgMGgybTIgMGgybTIgMGgybTEgMGgxbTEgMGgybTEgMGgybTQgMGg2bTIgMGgxbTEgMGgybTMgMGg0bTIgMGgybTIgMGgxbTMgMGgxbTIgMGgybTUgMGgybTUgMGgzbS0xMTMgMWg1bTEgMGgybTEgMGg0bTQgMGgybTEgMGg1bTIgMGgxbTEgMGgxbTEgMGgxbTEgMGgybTEgMGgxbTEwIDBoMW0xIDBoMW0xIDBoM20xIDBoMW0xIDBoNG0yIDBoMW0xIDBoMW0xIDBoMW0yIDBoM200IDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW00IDBoMW0xIDBoMW0yIDBoMW0xIDBoMW0xIDBoMW0yIDBoMW0xIDBoMW0xIDBoMm0xIDBoMm0tMTExIDFoMW0yIDBoMW0xIDBoMm0xIDBoNW00IDBoMW0yIDBoMW0zIDBoMm00IDBoM20yIDBoMW0xIDBoMW0yIDBoNW04IDBoMm01IDBoMW0xIDBoNG0xIDBoMW00IDBoM20zIDBoM20zIDBoMW0xIDBoMW0xIDBoMm0xIDBoMW00IDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0yIDBoMW00IDBoMW0tMTEzIDFoM20xIDBoMW0xIDBoMW0yIDBoMW0yIDBoMW0xIDBoMW00IDBoM20xIDBoNW0xIDBoM20xIDBoMm0xIDBoMm0zIDBoM20zIDBoNG0xIDBoMW0xIDBoMW0xIDBoMm0xIDBoMm0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoNG0xIDBoMW0xIDBoMW00IDBoMW0xIDBoMW02IDBoMm0xIDBoMW0yIDBoMm0yIDBoMW0yIDBoNG0xIDBoMW0zIDBoMW0tMTExIDFoMW0yIDBoMm0yIDBoMm01IDBoN200IDBoMW0zIDBoMW0xIDBoMW00IDBoMW0zIDBoMm01IDBoMW0xIDBoMW0xIDBoM20xIDBoM20xIDBoMm0zIDBoNG0xIDBoMW0xIDBoNG0xIDBoMm0xIDBoMm0yIDBoMm0yIDBoM20xIDBoMm0yIDBoMW0zIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoM20tMTEzIDFoM20xIDBoMW0xIDBoMW0xIDBoM20yIDBoMm0xIDBoM202IDBoMW0zIDBoM20yIDBoM20yIDBoMW0zIDBoMW0yIDBoM20yIDBoMm0zIDBoMW0xIDBoMW0xIDBoMW0yIDBoMW0xIDBoMW0yIDBoMW0yIDBoMW0xIDBoMW0xIDBoNG0xIDBoM20xIDBoMm0xIDBoMW00IDBoMW0xIDBoMm0xIDBoMW0xIDBoMW0zIDBoNG0xIDBoMW0xIDBoM20tMTExIDFoMm02IDBoM20yIDBoMW0xIDBoMm01IDBoM20xIDBoMW01IDBoMW0xIDBoMW03IDBoMm0zIDBoMm0yIDBoMW0zIDBoMW0xIDBoMW0xIDBoMm0xIDBoMW0xIDBoMW0yIDBoM20yIDBoMW0xIDBoMW0zIDBoNG0xIDBoMm0xIDBoMW0xIDBoMm0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoNG0xIDBoNG0xIDBoMW0xIDBoMm0tMTEyIDFoMW0xIDBoMW0yIDBoMW0xIDBoNG0yIDBoMW02IDBoMm0xIDBoM20yIDBoMW02IDBoMW0xIDBoMm0xIDBoMW0xIDBoNm0xIDBoMW0yIDBoMW0yIDBoMW0xIDBoMm0xIDBoMm0xIDBoMm0xIDBoMm0xIDBoM20xIDBoMm00IDBoMW0yIDBoMm0xIDBoMW0yIDBoNm00IDBoMW0yIDBoMW0xIDBoMm0xIDBoNW0tMTEwIDFoMW0xIDBoMW0yIDBoMW0xIDBoMW0yIDBoOW0xIDBoNW0xIDBoMm0xIDBoMW0yIDBoM201IDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW01IDBoMW0xIDBoM20xIDBoMm0xIDBoM20yIDBoMm0yIDBoM20yIDBoMm0yIDBoMm0xIDBoMW0yIDBoM20xIDBoMW0xIDBoMm0yIDBoMm0yIDBoMm0xIDBoNW0xIDBoMW0tMTExIDFoNm0xIDBoMW0yIDBoMm0xIDBoMm0xIDBoNW0zIDBoMW0xIDBoMW0zIDBoMW0yIDBoM201IDBoMm0xIDBoMW0xIDBoMm0zIDBoM20yIDBoMW0xIDBoMW0yIDBoMW00IDBoMW0xIDBoMW0yIDBoMW0xIDBoMW0xIDBoM20yIDBoMm0zIDBoMW0xIDBoMW0yIDBoM20xIDBoMW0yIDBoMm0yIDBoMm0xIDBoNG0yIDBoMW0tMTEzIDFoMm0yIDBoMW0yIDBoOW00IDBoMW0zIDBoMW0xIDBoM20xIDBoMW0zIDBoM20yIDBoN200IDBoMW0xIDBoMW00IDBoMW0xIDBoMW0xIDBoMm0xIDBoMm0xIDBoMW0xIDBoM200IDBoMW0xIDBoNW0yIDBoNG0xIDBoMm0xIDBoM20yIDBoMW0xIDBoM20zIDBoMW0yIDBoMW0tMTEwIDFoMW0yIDBoMW0xIDBoNW0xIDBoMm0yIDBoMm0xIDBoMW0xIDBoMW0xIDBoMm0yIDBoMm0xIDBoM20yIDBoMW04IDBoNm0xIDBoMW0xIDBoM20yIDBoMW0xIDBoMm0xIDBoMTFtMSAwaDFtMyAwaDEzbTQgMGgybTEgMGgxbTEgMGgxbTEgMGgxbTIgMGgxbTMgMGgxbTIgMGgxbS0xMTMgMWgybTMgMGgxbTEgMGgzbTIgMGgxbTIgMGgybTIgMGgybTEgMGgxbTEgMGgxbTIgMGgybTIgMGgybTMgMGgxbTMgMGgybTEgMGgxbTMgMGgxbTIgMGgybTMgMGgxbTQgMGgxbTUgMGg0bTIgMGgxbTQgMGgybTEgMGgybTUgMGgxbTIgMGgybTIgMGgzbTEgMGgxbTEgMGg1bTIgMGg2bS0xMTEgMWgxbTEgMGgxbTEgMGgybTEgMGgybTEgMGgxbTEgMGgxbTEgMGgybTIgMGg0bTEgMGgzbTEgMGgybTEgMGgxbTEgMGgxbTEgMGgxbTEgMGg0bTIgMGgxbTEgMGgxbTQgMGgxMG0yIDBoMW0zIDBoMm0xIDBoMW0xIDBoMm0xIDBoMW0xIDBoMW01IDBoMm00IDBoMW0xIDBoMm0xIDBoNG0xIDBoMW00IDBoMW0xIDBoMm0xIDBoNG0tMTEzIDFoNm0xIDBoMm03IDBoMm0xIDBoMm0xIDBoMW0yIDBoMm0zIDBoMW00IDBoMW0xIDBoMW00IDBoMm0yIDBoMm0xIDBoMm0yIDBoMW0yIDBoMW03IDBoMm0zIDBoMW0xIDBoMW0yIDBoMW0xIDBoMW0xIDBoM20xIDBoMW0yIDBoNG0xIDBoMm0xIDBoMm0zIDBoNG0yIDBoMW0tMTAzIDFoM20xIDBoMm0xIDBoMW0xIDBoMm0xIDBoM20yIDBoMW0zIDBoMm0yIDBoM20xIDBoM20zIDBoMm0yIDBoNG0xIDBoM20xIDBoMW0yIDBoMW0yIDBoMW0yIDBoMm0zIDBoMW0xIDBoMW0xIDBoMm0xIDBoMW0zIDBoMm0zIDBoMW0zIDBoM20xIDBoMm0xIDBoMW0xIDBoMW0yIDBoMm0xIDBoMW0yIDBoMm0xIDBoMW0yIDBoMW0tMTA3IDFoMm0zIDBoMW00IDBoMm0yIDBoM20xIDBoMm0yIDBoNm0xIDBoMW0xIDBoM20xIDBoMW0xIDBoMW0yIDBoMW0xIDBoMW0xIDBoMW0xIDBoNG0yIDBoM20xIDBoMW0xIDBoMW0xIDBoMW0yIDBoMm0yIDBoMm0xIDBoMW0xIDBoMW0zIDBoMW0yIDBoMW0xIDBoMm0yIDBoMW0xIDBoMm0yIDBoNG0xIDBoMW0xIDBoM20zIDBoMm0xIDBoM20tMTEyIDFoN20zIDBoMm0xIDBoMm0zIDBoM20yIDBoNG0zIDBoMW0yIDBoMW0xIDBoNW0xIDBoM20yIDBoMW0xIDBoMW0yIDBoMm0xIDBoMm0yIDBoNG0zIDBoMW0yIDBoMW0xIDBoMm0xIDBoMW0xIDBoMW0xIDBoMm0zIDBoMW0xIDBoMm0yIDBoMm0xIDBoNG0xIDBoMm0yIDBoMm0xIDBoMW0xIDBoM20xIDBoMW0yIDBoMW0tMTEyIDFoMW0xIDBoMW0xIDBoMW0xIDBoM20xIDBoM20xIDBoMW0xIDBoMm0yIDBoN20yIDBoM20xIDBoNW0xIDBoNW0xIDBoMm0xIDBoM20xIDBoMW0xIDBoM201IDBoMm0xIDBoMW0yIDBoMW02IDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0zIDBoMW0xIDBoMm0zIDBoM20yIDBoMW0xIDBoMW0xIDBoMW0yIDBoMW0zIDBoMW0yIDBoMW0tMTEzIDFoMW0xIDBoMW0xIDBoNm0xIDBoMm0xIDBoNG0zIDBoNG0xIDBoNm0xIDBoMm0yIDBoMW0yIDBoM20yIDBoMW0xIDBoNG0xIDBoNm0zIDBoMW0yIDBoMW0xIDBoMW0yIDBoMW0zIDBoMm0xIDBoMW0xIDBoNm0xIDBoMm0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0yIDBoMm0xIDBoMTBtMSAwaDFtLTExMiAxaDJtMSAwaDJtMyAwaDJtMSAwaDJtMSAwaDJtNiAwaDVtMyAwaDFtMSAwaDFtMiAwaDJtMiAwaDJtNyAwaDFtMSAwaDNtMyAwaDJtMiAwaDNtMiAwaDNtMSAwaDFtMiAwaDJtMSAwaDJtMSAwaDFtMyAwaDFtMSAwaDFtMiAwaDNtMiAwaDFtMSAwaDFtMSAwaDJtMiAwaDFtMyAwaDFtMyAwaDFtMSAwaDFtMSAwaDFtLTExMyAxaDJtMiAwaDFtMSAwaDFtMSAwaDFtMSAwaDVtMiAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDFtMSAwaDJtMSAwaDFtMSAwaDFtMSAwaDJtMiAwaDJtMyAwaDFtMSAwaDFtMyAwaDFtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDRtMSAwaDFtMiAwaDFtMSAwaDJtMSAwaDFtMSAwaDRtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDFtMSAwaDFtMiAwaDFtMSAwaDFtMiAwaDFtMSAwaDFtMSAwaDJtMiAwaDFtLTExMiAxaDRtMyAwaDFtMiAwaDJtMSAwaDFtNiAwaDRtMSAwaDFtMyAwaDJtMSAwaDJtMiAwaDJtMSAwaDZtMSAwaDFtMSAwaDJtMSAwaDFtMyAwaDJtNCAwaDFtMSAwaDFtNCAwaDFtMSAwaDFtMSAwaDZtMyAwaDJtMiAwaDFtMSAwaDFtMSAwaDJtMSAwaDNtMSAwaDJtMSAwaDFtMSAwaDNtMyAwaDJtMSAwaDJtLTExMSAxaDEwbTEgMGgxbTIgMGgybTIgMGgzbTEgMGgxbTEgMGg2bTMgMGgxbTEgMGgybTEgMGgxbTIgMGgxbTUgMGgxbTEgMGg2bTEgMGgzbTMgMGgxbTEgMGgxbTQgMGgzbTEgMGg5bTIgMGg0bTYgMGgxbTEgMGgxbTEgMGgybTIgMGg1bTIgMGgybS0xMTMgMWgxbTMgMGgybTIgMGgzbTIgMGgxbTEgMGg2bTIgMGgybTEgMGgzbTEgMGgxbTEgMGg0bTEgMGgzbTEgMGgxbTMgMGgxbTEgMGg3bTEgMGgybTIgMGgxbTEgMGg4bTEgMGgybTIgMGgxbTIgMGgybTEgMGgxbTEgMGgxbTEgMGgybTEgMGgxbTMgMGgxbTQgMGgybTUgMGgybTMgMGgxbTEgMGgxbTEgMGgxbS0xMTMgMWg0bTIgMGg2bTIgMGgxbTIgMGg1bTEgMGgxbTEgMGgybTQgMGgxbTUgMGgxbTIgMGgybTIgMGg2bTEgMGgzbTEgMGgybTEgMGgxbTEgMGgybTEgMGgxbTMgMGgybTEgMGgxbTEgMGgybTEgMGg2bTIgMGgzbTEgMGgxbTQgMGgxbTEgMGgzbTIgMGgxbTUgMGgxbTQgMGgxbTEgMGgxbS0xMTMgMWgxbTMgMGgxbTIgMGgxbTIgMGgxbTMgMGgxbTEgMGgybTIgMGgxbTEgMGgybTIgMGgybTQgMGg0bTIgMGgxbTEgMGgxbTEgMGgybTYgMGgzbTQgMGgxbTEgMGgxbTIgMGgxbTEgMGgybTQgMGgybTEgMGg0bTEgMGgxbTIgMGgxbTEgMGgxbTIgMGg0bTEgMGgxbTUgMGgybTEgMGgxbTIgMGgxbTIgMGgxbTEgMGgybS0xMDkgMWgybTEgMGgxbTEgMGg0bTEgMGgxbTMgMGgxbTEgMGgzbTEgMGgzbTEgMGgxbTIgMGgxbTEgMGgzbTIgMGgxbTEgMGgybTEgMGgxbTIgMGgzbTIgMGgxbTIgMGgxbTIgMGgxbTMgMGgxbTQgMGgxbTMgMGgxbTMgMGgybTEgMGgxbTEgMGgxbTIgMGgxbTEgMGgxbTEgMGg0bTQgMGgxbTMgMGgzbTEgMGgxbTIgMGgybTEgMGgxbTEgMGgzbS0xMTAgMWgzbTIgMGgxbTIgMGgybTIgMGgxbTEgMGgxbTIgMGgxbTEgMGgybTEgMGgxbTIgMGgxbTIgMGgxbTQgMGgxbTEgMGgxbTIgMGgxbTEgMGgxbTEgMGgybTIgMGgybTIgMGg4bTEgMGgxbTEgMGgxbTIgMGgxbTEgMGgybTEgMGg1bTIgMGgzbTEgMGgxbTIgMGgybTMgMGgxbTQgMGgybTUgMGgybTIgMGgybTIgMGgybTIgMGgxbS0xMTMgMWg0bTIgMGgxbTEgMGg0bTEgMGgzbTIgMGg0bTIgMGgzbTEgMGgxbTEgMGgxbTMgMGgybTEgMGgxbTEgMGgybTMgMGgxbTEgMGgxbTEgMGgybTEgMGgzbTQgMGgxbTIgMGgxbTMgMGgxbTEgMGg0bTEgMGgybTEgMGgxbTEgMGgybTIgMGg1bTYgMGgxbTEgMGg0bTUgMGgybTEgMGgxbTIgMGgxbTIgMGgxbS0xMTMgMWgxbTEgMGg0bTIgMGgybTEgMGgxbTEgMGgxbTEgMGgzbTIgMGg0bTIgMGgxbTEgMGgxbTIgMGgxbTEgMGgybTIgMGgxbTIgMGg0bTEgMGgxbTEgMGgxbTMgMGgzbTEgMGgybTYgMGgzbTEgMGgxbTYgMGgxbTEgMGgybTIgMGgybTEgMGgxbTIgMGgzbTIgMGgxbTEgMGgxbTMgMGgybTEgMGg0bTIgMGg0bTEgMGgybS0xMTMgMWgybTMgMGgybTIgMGgybTEgMGgzbTIgMGgxbTEgMGgxbTEgMGgzbTEgMGgxbTEgMGgxbTUgMGg3bTIgMGgxbTEgMGgxbTIgMGg0bTEgMGg0bTQgMGg1bTEgMGgzbTEgMGgzbTEgMGg0bTIgMGgxbTUgMGg2bTEgMGgxbTEgMGgybTEgMGgxbTEgMGgxbTEgMGg0bTEgMGgzbS0xMDcgMWgxbTMgMGgxbTEgMGg0bTMgMGgxbTMgMGgxbTEgMGgxbTIgMGgxbTEgMGgxbTEgMGgybTEgMGgxbTMgMGg0bTIgMGgxbTEgMGgzbTEgMGgybTEgMGgybTMgMGgxbTEgMGgxbTEgMGgybTMgMGgxbTIgMGgybTMgMGgzbTIgMGgxbTEgMGgzbTEgMGgzbTQgMGgzbTMgMGgybTUgMGgxbTIgMGgzbTEgMGgybS0xMTIgMWgxMW0zIDBoMm0xIDBoM20xIDBoMW0xIDBoMW0yIDBoM20xIDBoNW0xIDBoNG0xIDBoMW0zIDBoMm00IDBoMW0zIDBoMW0xIDBoMW0yIDBoMW02IDBoNm0xIDBoMm0xIDBoMm0xIDBoM20xIDBoMW01IDBoN20xIDBoMW00IDBoMW0yIDBoMW0xIDBoMW0yIDBoMW0tMTEzIDFoMm0xIDBoM20zIDBoM20zIDBoMW0zIDBoMW0xIDBoM20xIDBoNG0yIDBoMm0xIDBoMm0xIDBoMW0xIDBoMW0xIDBoM20xIDBoMW0zIDBoMm0xIDBoMm0xIDBoMW0xIDBoMm0zIDBoM20xIDBoMm02IDBoMW0xIDBoNG0yIDBoMW0zIDBoMW0xIDBoMm04IDBoMW0xIDBoMW0xIDBoMW0xIDBoNG0xIDBoMW0xIDBoMm0tMTEzIDFoMW0xIDBoMW0zIDBoMW0xIDBoMm00IDBoMm0yIDBoMm01IDBoMm0xIDBoNG0yIDBoMW0xIDBoMW0xIDBoMm0zIDBoMm0zIDBoNG0xIDBoNW01IDBoMW0yIDBoM20yIDBoMW0yIDBoMm01IDBoMW0xIDBoMW0yIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0yIDBoNG0zIDBoMW0xIDBoOG0tMTExIDFoNW0yIDBoM20xIDBoMm0yIDBoMm01IDBoM20yIDBoMm0xIDBoNW0xIDBoMm0yIDBoNG0yIDBoMm03IDBoMW00IDBoMW0zIDBoMW0yIDBoMm0xIDBoMTBtMSAwaDFtMSAwaDdtMSAwaDdtMSAwaDFtMSAwaDFtMSAwaDFtNiAwaDJtLTExMyAxaDJtNCAwaDFtMyAwaDNtMSAwaDFtMSAwaDJtMSAwaDFtNiAwaDFtNCAwaDNtMSAwaDNtMiAwaDFtMSAwaDFtMSAwaDVtNCAwaDNtMSAwaDltMiAwaDFtMSAwaDRtMyAwaDJtMSAwaDFtMiAwaDFtMSAwaDFtMSAwaDJtMiAwaDJtMSAwaDJtMSAwaDFtOSAwaDFtMSAwaDFtMSAwaDJtLTExMSAxaDJtMyAwaDFtMSAwaDFtMiAwaDFtMSAwaDZtMyAwaDJtNCAwaDNtNCAwaDFtMSAwaDFtMSAwaDFtMiAwaDFtMyAwaDFtMSAwaDNtMyAwaDFtOCAwaDRtMSAwaDFtNCAwaDFtMSAwaDRtMSAwaDFtNCAwaDFtMSAwaDNtMiAwaDFtMyAwaDRtMSAwaDFtMSAwaDJtMiAwaDJtLTEwNSAxaDNtMiAwaDJtMSAwaDFtNSAwaDNtMSAwaDJtMSAwaDJtMyAwaDFtMiAwaDFtMSAwaDJtMyAwaDNtNCAwaDFtMiAwaDVtMSAwaDFtMyAwaDFtMSAwaDFtMSAwaDJtMiAwaDNtMiAwaDJtMiAwaDRtMSAwaDFtMiAwaDFtMiAwaDNtMiAwaDFtMiAwaDNtMiAwaDFtMiAwaDFtMiAwaDJtLTEwOSAxaDRtMiAwaDFtMiAwaDFtMiAwaDFtMSAwaDdtMSAwaDFtMiAwaDFtMSAwaDFtMiAwaDFtMyAwaDFtMSAwaDFtMSAwaDJtMiAwaDJtMSAwaDFtMiAwaDFtMiAwaDFtMSAwaDFtMSAwaDJtMyAwaDFtMiAwaDFtMSAwaDRtMiAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDJtMyAwaDVtMSAwaDFtMSAwaDFtMyAwaDFtMSAwaDNtMiAwaDJtMSAwaDJtLTExMyAxaDFtMSAwaDFtMSAwaDNtMSAwaDJtMSAwaDJtNCAwaDFtMiAwaDFtMiAwaDJtMiAwaDFtMSAwaDNtMSAwaDNtOSAwaDVtMiAwaDFtMSAwaDFtMyAwaDFtMiAwaDFtNSAwaDJtMSAwaDNtMiAwaDFtMSAwaDJtMSAwaDNtMSAwaDJtMyAwaDFtNCAwaDRtMSAwaDFtNCAwaDJtMyAwaDRtLTExMiAxaDFtMSAwaDJtMiAwaDFtMSAwaDFtNCAwaDFtMiAwaDFtMSAwaDFtMiAwaDRtNiAwaDJtMSAwaDJtMyAwaDFtMSAwaDJtNSAwaDFtMiAwaDFtMSAwaDJtMSAwaDFtMSAwaDFtMiAwaDRtNyAwaDJtMSAwaDFtMiAwaDVtNCAwaDNtMiAwaDFtNiAwaDdtMSAwaDJtMSAwaDJtLTExMiAxaDRtMSAwaDFtMSAwaDFtMiAwaDJtMSAwaDFtMiAwaDFtMSAwaDFtMSAwaDFtMSAwaDNtMSAwaDFtMSAwaDRtMSAwaDFtMSAwaDFtMyAwaDFtMyAwaDVtMSAwaDJtMiAwaDFtMiAwaDFtMSAwaDJtNSAwaDRtMSAwaDJtMSAwaDZtMSAwaDFtMSAwaDVtMSAwaDNtMyAwaDFtMSAwaDNtMSAwaDNtMSAwaDJtMSAwaDRtLTEwOSAxaDFtNSAwaDFtMiAwaDFtMiAwaDNtMSAwaDJtMiAwaDFtMyAwaDFtNSAwaDFtMSAwaDJtMiAwaDFtOCAwaDFtMSAwaDFtMSAwaDFtMiAwaDNtMiAwaDJtNCAwaDFtMSAwaDFtMSAwaDFtMiAwaDJtMyAwaDFtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDRtMSAwaDFtMyAwaDFtMSAwaDJtNCAwaDJtMSAwaDFtNCAwaDFtLTExMSAxaDhtNCAwaDNtMSAwaDFtNCAwaDJtMSAwaDltMTAgMGg1bTIgMGg1bTEgMGgxbTEgMGgxbTIgMGgybTMgMGg2bTEgMGgybTEgMGg4bTYgMGgxbTEgMGgxbTEgMGgxbTQgMGgxbTEgMGg3bTIgMGgxbS0xMTEgMWgxbTEgMGgxbTMgMGgxbTMgMGgybTIgMGgzbTEgMGgzbTMgMGgxbTMgMGgzbTEgMGgybTIgMGgxbTQgMGgxbTcgMGgybTMgMGgxbTEgMGgybTEgMGg3bTUgMGg0bTEgMGgxbTMgMGgxbTIgMGgxbTEgMGg1bTEgMGgxbTEgMGgxbTEgMGgybTEgMGgxbTEgMGgxbTEgMGgxbTMgMGgybTEgMGgxbS0xMTAgMWgzbTEgMGgxbTEgMGgzbTIgMGgxbTEgMGgxbTEgMGgxbTEgMGg0bTMgMGgxbTEgMGgxbTEgMGgybTIgMGgxbTQgMGgzbTEgMGgxbTIgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgybTEgMGgzbTEgMGgxbTEgMGgzbTEgMGgxbTEgMGgzbTEgMGg0bTEgMGgxbTEgMGgzbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgybTEgMGgxbTIgMGgybTIgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbS0xMTEgMWgybTEgMGgybTMgMGgxbTEgMGgxbTIgMGgybTEgMGgxbTIgMGgxbTIgMGgybTIgMGgxbTMgMGgybTIgMGgxbTEgMGgybTUgMGgzbTMgMGg0bTMgMGgxbTIgMGgzbTIgMGgxbTEgMGgybTEgMGgxbTIgMGgybTEgMGgxbTEgMGgybTMgMGg3bTIgMGgybTMgMGgzbTEgMGgybTEgMGgybTMgMGgxbTEgMGgxbTEgMGgxbS0xMTMgMWgxbTIgMGg3bTIgMGgxbTMgMGgzbTEgMGgxbTEgMGgxbTEgMGg3bTQgMGg0bTIgMGgxbTEgMGgybTEgMGgybTEgMGgxbTEgMGg5bTEgMGgxbTEgMGgybTMgMGgxbTEgMGgxbTEgMGgybTEgMGgxbTEgMGg2bTEgMGgybTEgMGgybTMgMGgzbTEgMGgybTYgMGg1bTMgMGgxbS0xMTMgMWgybTEgMGgzbTEgMGgxbTQgMGgxbTEgMGgybTIgMGgzbTEgMGgybTEgMGgybTMgMGgxbTIgMGg1bTEgMGgxbTEgMGgxbTMgMGgxbTQgMGgybTEgMGgzbTUgMGgxbTEgMGg1bTMgMGgxbTIgMGgxbTEgMGg0bTEgMGgzbTEgMGgybTEgMGg0bTYgMGgzbTEgMGgxbTEgMGgybTEgMGgxbTEgMGgxbTIgMGgxbS0xMTMgMWgzbTIgMGgybTMgMGgybTMgMGgybTEgMGgybTIgMGgybTIgMGg1bTEgMGgybTEgMGgybTcgMGgxbTIgMGg2bTMgMGgxbTIgMGgybTEgMGgybTEgMGgybTEgMGg3bTEgMGgxbTEgMGgxbTEgMGgybTYgMGgxbTQgMGgxbTIgMGgxbTMgMGgxbTEgMGgybTEgMGgxbTMgMGgzbS0xMTEgMWgxbTEgMGgzbTIgMGgzbTQgMGg0bTEgMGgxbTMgMGgxbTMgMGg2bTEgMGgxbTMgMGgzbTEgMGgybTEgMGgxbTEgMGgybTQgMGgxbTIgMGgxbTIgMGgxbTEgMGg2bTIgMGg0bTEgMGg3bTEgMGg1bTMgMGg4bTIgMGgybTIgMGgxbTIgMGgxbTEgMGgxbTEgMGgxbS0xMTMgMWgybTIgMGgzbTIgMGg0bTEgMGgxbTMgMGg2bTIgMGgzbTEgMGgzbTIgMGgxMG0xIDBoMW0xIDBoMm0xIDBoMm0xIDBoMW0yIDBoNG0yIDBoM20xIDBoMW0xIDBoNW0xMCAwaDJtNiAwaDFtMSAwaDRtMSAwaDNtMiAwaDFtMSAwaDFtNSAwaDFtLTExMyAxaDJtMyAwaDFtMSAwaDRtMSAwaDFtMSAwaDFtMyAwaDFtMSAwaDNtMSAwaDVtMSAwaDJtMSAwaDJtMSAwaDFtMSAwaDJtNSAwaDFtMSAwaDFtMiAwaDNtNSAwaDFtMyAwaDFtMSAwaDFtMSAwaDJtNiAwaDRtMSAwaDFtMyAwaDFtMiAwaDNtMiAwaDFtMSAwaDFtNCAwaDFtMSAwaDFtMSAwaDJtMSAwaDRtLTEwOSAxaDFtMSAwaDJtMSAwaDJtMSAwaDFtMSAwaDFtMyAwaDFtMSAwaDVtMSAwaDFtMiAwaDFtMSAwaDFtMiAwaDJtMSAwaDJtNyAwaDJtMyAwaDZtMSAwaDFtMSAwaDVtMiAwaDFtMSAwaDJtMSAwaDJtMiAwaDFtMSAwaDFtMSAwaDNtMyAwaDNtNSAwaDRtMiAwaDNtMyAwaDJtMSAwaDFtMSAwaDFtMyAwaDFtLTExMiAxaDFtMSAwaDRtMSAwaDNtMSAwaDFtMiAwaDRtMSAwaDJtMSAwaDJtMyAwaDRtMSAwaDFtMiAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMiAwaDJtMiAwaDFtMyAwaDVtMSAwaDFtMSAwaDJtMiAwaDJtMSAwaDFtNCAwaDFtMSAwaDJtMyAwaDFtMSAwaDFtMiAwaDJtMSAwaDFtMSAwaDFtMSAwaDJtMyAwaDJtMSAwaDFtNCAwaDFtMSAwaDFtMSAwaDJtMSAwaDJtLTEwOCAxaDdtNSAwaDRtMSAwaDFtNCAwaDVtNCAwaDRtMiAwaDNtMSAwaDRtMSAwaDFtMSAwaDJtMyAwaDFtMSAwaDFtMiAwaDJtNSAwaDRtMyAwaDFtMyAwaDFtMSAwaDNtMSAwaDFtMSAwaDFtMSAwaDZtMiAwaDFtMSAwaDFtMiAwaDRtMyAwaDJtLTExMyAxaDJtMSAwaDFtMSAwaDFtMiAwaDFtMSAwaDFtMTEgMGgxbTEgMGgzbTQgMGgzbTYgMGgxbTIgMGgxbTEgMGgybTMgMGgybTMgMGgzbTEgMGgxbTIgMGgxbTIgMGgzbTEgMGgxbTQgMGgxbTEgMGg3bTMgMGgxbTEgMGgxbTEgMGgybTUgMGgybTEgMGgxbTEgMGgybTUgMGgxbTIgMGgxbS0xMTIgMWgybTEgMGg4bTEgMGgybTEgMGgxbTEgMGgxbTIgMGgxbTUgMGgxbTEgMGgxbTEgMGg1bTIgMGgzbTEgMGgxbTQgMGgybTEgMGgxbTEgMGgxbTEgMGgxbTEgMGg0bTIgMGgxbTEgMGgxbTEgMGgzbTQgMGgzbTEgMGgxbTQgMGg0bTEgMGgybTMgMGgybTQgMGgxbTEgMGgybTEgMGgzbTMgMGgxbTEgMGgxbS0xMTIgMWgxbTEgMGg0bTEgMGgybTEgMGgxbTIgMGgxbTEgMGg3bTEgMGgybTEgMGgxbTEgMGgxbTEgMGgybTEgMGgxbTIgMGgxbTEgMGgzbTIgMGgxbTEgMGgxbTIgMGgybTIgMGgxbTEgMGgybTEgMGgxbTIgMGgybTEgMGgzbTEgMGgybTEgMGgxbTEgMGgybTIgMGgxbTEgMGgxbTcgMGgxbTIgMGgybTEgMGgxbTEgMGgxbTEgMGgxbTcgMGgybTEgMGgybTEgMGgxbS0xMDcgMWgzbTMgMGgxbTMgMGgybTMgMGgybTMgMGgzbTQgMGgzbTIgMGgxbTIgMGg0bTEgMGgxbTEgMGg0bTEgMGgybTEgMGgybTIgMGgybTMgMGgxbTQgMGgxbTEgMGgybTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTMgMGgzbTEgMGgxbTYgMGgxbTEgMGgybTEgMGgxbTEgMGgxbTMgMGg0bTMgMGgxbS0xMTIgMWgxbTEgMGgzbTIgMGgybTEgMGgxbTEgMGgxbTQgMGgxbTEgMGg0bTEgMGg5bTEgMGgybTIgMGgybTIgMGgxbTEgMGgybTMgMGgybTEgMGgxbTMgMGgxbTMgMGgybTEgMGg0bTEgMGgxbTMgMGgxbTIgMGg3bTIgMGgybTEgMGgybTMgMGgxbTEgMGgxbTIgMGgxbTEgMGgxbTEgMGgzbTIgMGgzbTEgMGgybS0xMTEgMWgxbTEgMGgzbTEgMGg0bTEgMGgxbTUgMGgxbTIgMGgxbTEgMGgzbTEgMGgxbTMgMGgxbTEgMGgxbTcgMGgybTQgMGgxbTIgMGgxbTEgMGgxbTEgMGg5bTEgMGgxbTIgMGgybTEgMGgxbTEgMGgxbTMgMGgxbTEgMGgzbTEgMGg0bTEgMGgxbTEgMGgxbTEgMGgzbTIgMGgzbTIgMGgybTEgMGgybTIgMGgxbTEgMGgxbS0xMTIgMWg1bTIgMGgxbTMgMGgzbTEgMGgxbTIgMGgxbTIgMGg0bTIgMGgxbTIgMGgxbTMgMGgxbTMgMGgxbTIgMGgybTEgMGgxbTEgMGg0bTIgMGgxbTEgMGgxbTIgMGgybTEgMGgxbTEgMGgxbTIgMGgxbTIgMGgybTMgMGgzbTEgMGg0bTIgMGgzbTIgMGgzbTMgMGg2bTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgybS0xMDkgMWgybTIgMGgzbTEgMGgybTIgMGgybTUgMGgxbTEgMGgybTEgMGgxbTEwIDBoMW0yIDBoMW01IDBoOG0yIDBoMW0zIDBoMm0zIDBoMm0yIDBoMm0xIDBoMW0xIDBoMm0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoNG0yIDBoMW01IDBoNW0xIDBoMm0zIDBoMW0xIDBoNG0yIDBoMW0tMTExIDFoM200IDBoMm0xIDBoMW0xIDBoMm0xIDBoM20zIDBoM20xIDBoMW0yIDBoN20xIDBoM20xIDBoMm05IDBoMW0yIDBoNG0xIDBoMm0xIDBoMW0xIDBoMm0xIDBoMW0xIDBoMW0yIDBoMW0xIDBoM20yIDBoMm0yIDBoMm0xIDBoM20yIDBoMW0xIDBoMW0xIDBoMm0xIDBoMW0xIDBoMm0xIDBoM200IDBoMW0tMTEzIDFoMm0zIDBoMm0xIDBoMW0xIDBoMW0xIDBoMm0xIDBoMm0xIDBoMm0zIDBoMm0xIDBoM20zIDBoMm0yIDBoMW0xIDBoMW01IDBoMW0yIDBoMW0xIDBoM20xIDBoMW0yIDBoNm0xIDBoMW0yIDBoMW0xIDBoMm0yIDBoMW0yIDBoMm0yIDBoMm0xIDBoNW0yIDBoMW0xIDBoMm00IDBoM20xIDBoMW0xIDBoMW01IDBoM20tMTEyIDFoMm0yIDBoMW01IDBoMW00IDBoMW0yIDBoMW0xMCAwaDFtMSAwaDJtNCAwaDFtMiAwaDJtMSAwaDFtMSAwaDRtMSAwaDFtMyAwaDFtMyAwaDJtMSAwaDNtMSAwaDNtMiAwaDRtMSAwaDFtMSAwaDFtMSAwaDJtNiAwaDFtNCAwaDFtMiAwaDRtMSAwaDRtMiAwaDNtMSAwaDNtLTExMSAxaDJtMSAwaDJtMiAwaDFtMSAwaDJtNCAwaDRtMSAwaDJtNCAwaDFtMiAwaDJtNCAwaDRtMiAwaDRtMSAwaDJtMSAwaDFtMiAwaDFtMiAwaDVtMSAwaDNtMyAwaDNtMSAwaDJtMiAwaDFtMSAwaDFtMSAwaDFtMSAwaDNtMSAwaDFtNiAwaDJtMSAwaDFtMyAwaDFtNCAwaDJtMSAwaDFtMSAwaDJtLTExMSAxaDJtMSAwaDFtMiAwaDFtMSAwaDFtMiAwaDRtMSAwaDJtMSAwaDNtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDJtMSAwaDRtMSAwaDFtNCAwaDFtMSAwaDFtMiAwaDJtMSAwaDJtMSAwaDFtNSAwaDFtMSAwaDFtMSAwaDJtOCAwaDJtMSAwaDJtMSAwaDFtNSAwaDRtMSAwaDJtMyAwaDRtMSAwaDNtMSAwaDFtNCAwaDFtLTExMyAxaDFtMiAwaDFtMiAwaDJtMSAwaDJtMyAwaDFtMiAwaDJtMSAwaDJtMiAwaDFtMSAwaDVtMSAwaDNtNCAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMyAwaDFtMSAwaDdtMSAwaDFtMyAwaDFtMiAwaDFtMSAwaDNtMiAwaDRtMSAwaDdtMSAwaDNtMiAwaDFtMSAwaDFtMSAwaDFtMSAwaDNtMyAwaDZtMiAwaDFtLTEwNCAxaDFtMSAwaDFtMiAwaDFtMyAwaDFtMSAwaDRtMSAwaDNtMyAwaDJtMSAwaDFtMSAwaDFtMSAwaDNtNCAwaDJtMiAwaDJtMiAwaDFtMyAwaDJtMSAwaDNtNiAwaDFtMSAwaDJtMSAwaDJtMSAwaDNtMyAwaDJtMSAwaDFtMSAwaDFtMSAwaDNtMyAwaDFtMyAwaDFtMyAwaDJtMyAwaDFtMSAwaDFtMSAwaDFtLTExMyAxaDdtMSAwaDNtMiAwaDFtMSAwaDFtMSAwaDFtNSAwaDJtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDNtMiAwaDJtMSAwaDFtMSAwaDhtMSAwaDJtMSAwaDFtMSAwaDFtMSAwaDRtMSAwaDFtMSAwaDFtMSAwaDFtMiAwaDNtNCAwaDJtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDFtMyAwaDVtMSAwaDFtMyAwaDFtMiAwaDFtMSAwaDFtMSAwaDFtMyAwaDFtLTExMyAxaDFtNSAwaDFtMiAwaDFtMSAwaDFtMSAwaDJtMiAwaDJtMyAwaDJtMiAwaDFtMyAwaDFtMiAwaDFtMiAwaDFtMSAwaDJtMTAgMGgxbTEgMGgxbTMgMGgxbTEgMGgxbTMgMGgxbTEgMGgxbTEgMGgxbTMgMGgxbTQgMGg0bTMgMGgxbTMgMGgzbTEgMGgxbTcgMGg3bTMgMGgxbTIgMGgybS0xMTMgMWgxbTEgMGgzbTEgMGgxbTEgMGgxbTIgMGgybTEgMGgxbTIgMGg1bTMgMGg4bTIgMGgxbTIgMGgybTEgMGgybTEgMGgybTEgMGgxbTIgMGg3bTMgMGg0bTEgMGgxbTIgMGg0bTEgMGgzbTEgMGg3bTIgMGgybTEgMGg0bTQgMGg0bTIgMGg2bTIgMGgybS0xMTMgMWgxbTEgMGgzbTEgMGgxbTMgMGgxbTMgMGgybTEgMGgybTMgMGgybTIgMGg0bTEgMGgzbTEgMGgybTEgMGgxbTIgMGg0bTEgMGgxbTEgMGgybTMgMGg4bTMgMGgybTEgMGgybTIgMGgxbTEgMGgybTcgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgzbTEgMGgxbTUgMGgxbTIgMGgybTIgMGgybS0xMTEgMWgxbTEgMGgzbTEgMGgxbTIgMGgxbTEgMGg2bTEgMGgxbTEgMGgxbTEgMGgzbTEgMGgybTQgMGgybTEgMGgzbTIgMGgybTEgMGgxbTEgMGgzbTEgMGgxbTEgMGgybTIgMGgybTEgMGgzbTMgMGgxbTIgMGgybTEgMGgybTEgMGgxbTEgMGgybTQgMGgybTEgMGgybTEgMGgxbTEgMGgxbTIgMGgzbTEgMGgybTEgMGgxbTUgMGgxbTUgMGgybS0xMTMgMWgxbTUgMGgxbTMgMGgxbTEgMGgybTIgMGgxbTEgMGgxbTEgMGgxbTggMGgybTEgMGgybTEgMGgybTEgMGgxbTIgMGgybTQgMGgxbTQgMGgzbTIgMGgxbTMgMGgybTEgMGgxbTEgMGgxbTIgMGgybTIgMGgxbTIgMGg0bTMgMGgxbTEgMGgxbTIgMGgxbTEgMGgybTggMGgzbTMgMGgxbTIgMGgxbTEgMGgybS0xMTMgMWg3bTEgMGgzbTEgMGgybTEgMGg0bTEgMGgybTIgMGgybTEgMGgzbTIgMGgybTEgMGgybTEgMGgybTIgMGgxbTEgMGgxbTcgMGgxbTIgMGgybTcgMGgybTEgMGgxbTQgMGgzbTEgMGgybTEgMGgxbTMgMGg0bTMgMGgxbTIgMGgzbTEwIDBoMW0xIDBoMm0xIDBoMSIvPjwvc3ZnPgo=" alt="QR code encoding the example contact card" width="168" height="168"></div>
+            <p>Scan to import<br>a verified contact</p>
           </div>
         </div>
-        <p style="margin-top: 14px;">The top half of the card is for people; the <code>X-SDN-*</code> lines are for software &mdash; they carry the proof.</p>
+        <p style="margin-top: 14px;">Name, organization, and title import on any phone exactly as written. Your keys ride along as email addresses at <code>spacedatanetwork.org</code> &mdash; a format every contacts app keeps, no special support needed.</p>
         <details class="tech">
           <summary>Technical details: how your ID works</summary>
           <div class="tech-body">
@@ -446,7 +571,7 @@ END:VCARD</code></pre>
               <li>Encryption: <code>m/44'/0'/0'/1'/0'</code> &rarr; X25519</li>
             </ul>
             <p>Your public listing is an <strong>Entity Profile Message (EPM)</strong> &mdash; a FlatBuffer record carrying an embedded Ed25519 <code>SIGNATURE</code> and <code>SIGNATURE_TIMESTAMP</code> over its canonical content. When it changes, the node announces the new EPM content ID (CID) to the network with a signed PNM message.</p>
-            <p>In the vCard export, <code>X-SDN-EPM-B64</code> contains the complete signed EPM bytes and is the source of truth: importers verify its embedded signature and prefer it over the editable display fields. Inspect your identity anytime with <code>spacedatanetwork show-identity</code>.</p>
+            <p>In the vCard export, public keys are encoded as email aliases (<code>&lt;key&gt;@signing.spacedatanetwork.org</code>, <code>&lt;key&gt;@encryption.spacedatanetwork.org</code>) because iOS and Android contact apps preserve email fields but silently drop unknown <code>X-</code> extension fields. The full export also carries <code>X-SDN-EPM-B64</code> &mdash; the complete signed EPM bytes and the source of truth: SDN importers verify its embedded signature and prefer it over the editable display fields. Inspect your identity anytime with <code>spacedatanetwork show-identity</code>.</p>
           </div>
         </details>
         <div class="note">Prefer a GUI? The <a href="index.html#downloads">desktop app</a> bundles a full node with a dashboard that walks you through the same steps. Docker images and native Linux packages are on the <a href="index.html#downloads">downloads page</a>.</div>
@@ -455,8 +580,10 @@ END:VCARD</code></pre>
 
     <section class="step" id="step-consume">
       <div class="step-card">
-        <div class="step-label"><span class="step-num">2</span> Consume data</div>
-        <h2>Tune into live space data</h2>
+        <div class="step-head">
+          <div class="step-label"><span class="step-num"><b>2</b></span> Consume data</div>
+          <h2>Tune into live space data</h2>
+        </div>
         <p>Your node can now receive live feeds shared across the network &mdash; satellite positions, collision warnings, launch events, space weather, and more, in 160+ standardized formats. Open data is free to use, and every record arrives with built-in proof of who published it.</p>
         <p>See what's out there:</p>
         <div class="code-block">
@@ -502,8 +629,10 @@ node.subscribe('OMM', (data, peer) => {
 
     <section class="step" id="step-publish">
       <div class="step-card">
-        <div class="step-label"><span class="step-num">3</span> Publish data</div>
-        <h2>Share your data with the network</h2>
+        <div class="step-head">
+          <div class="step-label"><span class="step-num"><b>3</b></span> Publish data</div>
+          <h2>Share your data with the network</h2>
+        </div>
         <p>Data on the network uses shared, open formats &mdash; that's what lets everyone read and verify everyone else's records. Match your data to one of the standard formats:</p>
         <table class="schema-map">
           <tr><th>Your data</th><th>Format</th></tr>
@@ -553,8 +682,10 @@ curl -X POST http://127.0.0.1:5001/api/v1/data/publish/OMM \
 
     <section class="step" id="step-sell-data">
       <div class="step-card">
-        <div class="step-label"><span class="step-num">4</span> Sell data</div>
-        <h2>Give away the basics, charge for the best</h2>
+        <div class="step-head">
+          <div class="step-label"><span class="step-num"><b>4</b></span> Sell data</div>
+          <h2>Give away the basics, charge for the best</h2>
+        </div>
         <p>Open data builds your reputation; premium data builds your business. The network lets you do both at once: publish a data product where some fields are public and the valuable ones are locked. Anyone can see what you offer &mdash; only paying customers can unlock it.</p>
         <ul>
           <li><strong>Lock exactly what you choose.</strong> Field-level controls let you share a satellite's approximate position openly while selling the high-precision version.</li>
@@ -574,8 +705,10 @@ curl -X POST http://127.0.0.1:5001/api/v1/data/publish/OMM \
 
     <section class="step" id="step-sell-modules">
       <div class="step-card">
-        <div class="step-label"><span class="step-num">5</span> Sell modules</div>
-        <h2>Sell software, not just data</h2>
+        <div class="step-head">
+          <div class="step-label"><span class="step-num"><b>5</b></span> Sell modules</div>
+          <h2>Sell software, not just data</h2>
+        </div>
         <p>Beyond data, you can sell working software &mdash; propagators, conjunction screeners, analysis tools &mdash; packaged as portable modules that run inside any SDN node. Modules ship encrypted, so only paying customers can run them, and they execute on the customer's machine: your algorithm is delivered, your source stays yours.</p>
         <p><strong>1. Package your module</strong> with the <a href="https://digitalarsenal.github.io/space-data-module-sdk/" target="_blank">Module SDK</a>, then validate and encrypt it:</p>
         <div class="code-block">
@@ -616,8 +749,10 @@ spacedatanetwork marketplace show &lt;listing-id&gt;</code></pre>
 
     <section class="step" id="going-further">
       <div class="step-card">
-        <div class="step-label">Going further</div>
-        <h2>Where to next</h2>
+        <div class="step-head">
+          <div class="step-label">Going further</div>
+          <h2>Where to next</h2>
+        </div>
         <div class="next-grid">
           <a class="next-card" href="docs.html">
             <h3>Read the full documentation</h3>
@@ -641,7 +776,8 @@ spacedatanetwork marketplace show &lt;listing-id&gt;</code></pre>
 
     <div class="share-qr">
       <div class="qr-tile">
-        <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MSIgaGVpZ2h0PSI0MSIgY2xhc3M9InNlZ25vIj48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMCAwaDQxdjQxaC00MXoiLz48cGF0aCBjbGFzcz0icXJsaW5lIiBzdHJva2U9IiMwMDAiIGQ9Ik0yIDIuNWg3bTEgMGgybTIgMGgxbTEgMGgzbTIgMGgybTEgMGg0bTIgMGgxbTEgMGg3bS0zNyAxaDFtNSAwaDFtMSAwaDJtMiAwaDRtMiAwaDFtMSAwaDJtMSAwaDFtMSAwaDNtMiAwaDFtNSAwaDFtLTM3IDFoMW0xIDBoM20xIDBoMW0xIDBoMW0xIDBoMm0xIDBoNG0yIDBoMW02IDBoMW0xIDBoMW0xIDBoMW0xIDBoM20xIDBoMW0tMzcgMWgxbTEgMGgzbTEgMGgxbTIgMGg0bTMgMGg1bTEgMGgybTEgMGgybTMgMGgxbTEgMGgzbTEgMGgxbS0zNyAxaDFtMSAwaDNtMSAwaDFtNCAwaDFtMSAwaDFtNSAwaDFtMiAwaDFtMSAwaDJtNCAwaDFtMSAwaDNtMSAwaDFtLTM3IDFoMW01IDBoMW0xIDBoMW0zIDBoNW00IDBoMW0xIDBoMW0zIDBoMm0xIDBoMW01IDBoMW0tMzcgMWg3bTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGg3bS0yOSAxaDJtMSAwaDFtMSAwaDFtMSAwaDFtNCAwaDRtNCAwaDFtLTI3IDFoM20xIDBoMW0xIDBoMW0xIDBoMW0yIDBoMm0xIDBoMW0zIDBoMm0yIDBoM20yIDBoM20yIDBoM20tMzcgMWgxbTMgMGgybTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgzbTEgMGgxbTUgMGgxbTEgMGgybTEgMGgxbTIgMGgxbTEgMGgxbTEgMGgxbS0zNSAxaDNtMSAwaDNtMiAwaDFtMSAwaDNtMSAwaDJtMSAwaDJtNCAwaDNtMiAwaDJtMyAwaDJtLTM3IDFoMm0yIDBoMW00IDBoMW0xIDBoMW0xIDBoMm0xIDBoMW0xIDBoMW01IDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0yIDBoMW0tMzAgMWgybTEgMGgxbTIgMGgxbTQgMGgybTIgMGgybTEgMGgzbTIgMGgybTEgMGgxbTEgMGgybS0zMyAxaDNtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDNtMyAwaDJtMSAwaDFtMSAwaDFtMiAwaDFtMSAwaDFtMSAwaDJtLTM1IDFoNG0xIDBoM20yIDBoM202IDBoMW0yIDBoMW0zIDBoM20xIDBoMW0xIDBoMm0xIDBoMm0tMzcgMWgxbTEgMGgxbTEgMGgybTEgMGgybTMgMGgxbTIgMGgybTEgMGgybTEgMGgxbTQgMGgxbTEgMGg1bTIgMGgybS0zNyAxaDJtMSAwaDFtMiAwaDJtMSAwaDFtMSAwaDFtMiAwaDFtMiAwaDFtMiAwaDFtMiAwaDFtMSAwaDNtMSAwaDJtMSAwaDFtMSAwaDFtMSAwaDFtLTM3IDFoMW0xIDBoMW04IDBoM20xIDBoMW00IDBoMW00IDBoMm0xIDBoMm0xIDBoMW0xIDBoMW0tMzIgMWg1bTIgMGgzbTEgMGg1bTEgMGgxbTEgMGgzbTEgMGg1bTQgMGgzbS0zNyAxaDFtMyAwaDFtMiAwaDNtNiAwaDVtNSAwaDJtMSAwaDFtMSAwaDFtNCAwaDFtLTM0IDFoNG0yIDBoMm00IDBoMW0zIDBoMm0yIDBoNW0xIDBoN20tMzUgMWgxbTIgMGgxbTMgMGg0bTIgMGgybTEgMGgxbTMgMGgxbTcgMGgxbTEgMGgxbTEgMGgxbS0zMyAxaDJtMyAwaDFtMiAwaDRtMiAwaDJtMiAwaDJtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDFtMyAwaDRtLTM3IDFoM20xIDBoMW0yIDBoMm0yIDBoMW0xIDBoMW0xIDBoMW0xIDBoNG0yIDBoMm02IDBoMW0zIDBoMW0tMzYgMWgxbTEgMGgxbTIgMGgybTMgMGgxbTIgMGgxbTMgMGgybTEgMGgxbTEgMGgxbTEgMGgzbTIgMGgybTEgMGg0bS0zNiAxaDJtMiAwaDFtMiAwaDNtMSAwaDFtMiAwaDFtMSAwaDFtMSAwaDFtMyAwaDFtMSAwaDFtNiAwaDFtMSAwaDFtLTM0IDFoMW0xIDBoMW0yIDBoM20xIDBoMm0yIDBoMm0xIDBoMm0yIDBoMW0xIDBoMW0xIDBoMm0xIDBoMm0xIDBoMW0yIDBoNG0tMzcgMWgxbTIgMGgxbTEgMGgxbTQgMGgxbTIgMGgxbTIgMGgxbTIgMGgxbTYgMGgxbTEgMGgybTEgMGgxbTMgMGgxbS0zNiAxaDFtMiAwaDFtMSAwaDJtMyAwaDJtMyAwaDFtMiAwaDNtMiAwaDE0bS0yOSAxaDNtMiAwaDJtMSAwaDFtMSAwaDRtMSAwaDFtMiAwaDNtMyAwaDFtLTMzIDFoN200IDBoMW00IDBoN20xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMm0xIDBoMm0tMzcgMWgxbTUgMGgxbTMgMGgzbTMgMGgxbTIgMGgzbTEgMGgybTMgMGgxbTMgMGgxbTMgMGgxbS0zNyAxaDFtMSAwaDNtMSAwaDFtMSAwaDNtNCAwaDFtMiAwaDFtMSAwaDJtMiAwaDltMSAwaDFtMSAwaDFtLTM3IDFoMW0xIDBoM20xIDBoMW0xIDBoMW01IDBoMW0xIDBoNW0xIDBoMm0xIDBoNG0xIDBoMW0xIDBoMW0tMzMgMWgxbTEgMGgzbTEgMGgxbTEgMGgxbTQgMGgybTEgMGgxbTMgMGgxbTEgMGgxbTIgMGgzbTEgMGgxbTYgMGgxbS0zNyAxaDFtNSAwaDFtMyAwaDFtMyAwaDFtMSAwaDJtMSAwaDFtMSAwaDJtNCAwaDZtMyAwaDFtLTM3IDFoN20yIDBoM20xIDBoMm0yIDBoMTBtMyAwaDFtMSAwaDUiLz48cmVjdCB4PSIxNC41IiB5PSIxNi41IiB3aWR0aD0iMTIiIGhlaWdodD0iOCIgcng9IjIiIGZpbGw9IiNmZmZmZmYiIHN0cm9rZT0iIzAwMDAwMCIgc3Ryb2tlLXdpZHRoPSIwLjYiLz48dGV4dCB4PSIyMC41IiB5PSIyMC41IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkb21pbmFudC1iYXNlbGluZT0iY2VudHJhbCIgZm9udC1mYW1pbHk9IkludGVyLCBBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC13ZWlnaHQ9IjgwMCIgZm9udC1zaXplPSI1LjAiIGZpbGw9IiMwMDAwMDAiPlNETjwvdGV4dD48L3N2Zz4K" alt="QR code linking to this onboarding guide">
+        <div class="qr-plate"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MSIgaGVpZ2h0PSI0MSIgY2xhc3M9InNlZ25vIj48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMCAwaDQxdjQxaC00MXoiLz48cGF0aCBjbGFzcz0icXJsaW5lIiBzdHJva2U9IiMwMDAiIGQ9Ik0yIDIuNWg3bTEgMGgybTIgMGgxbTEgMGgzbTIgMGgybTEgMGg0bTIgMGgxbTEgMGg3bS0zNyAxaDFtNSAwaDFtMSAwaDJtMiAwaDRtMiAwaDFtMSAwaDJtMSAwaDFtMSAwaDNtMiAwaDFtNSAwaDFtLTM3IDFoMW0xIDBoM20xIDBoMW0xIDBoMW0xIDBoMm0xIDBoNG0yIDBoMW02IDBoMW0xIDBoMW0xIDBoMW0xIDBoM20xIDBoMW0tMzcgMWgxbTEgMGgzbTEgMGgxbTIgMGg0bTMgMGg1bTEgMGgybTEgMGgybTMgMGgxbTEgMGgzbTEgMGgxbS0zNyAxaDFtMSAwaDNtMSAwaDFtNCAwaDFtMSAwaDFtNSAwaDFtMiAwaDFtMSAwaDJtNCAwaDFtMSAwaDNtMSAwaDFtLTM3IDFoMW01IDBoMW0xIDBoMW0zIDBoNW00IDBoMW0xIDBoMW0zIDBoMm0xIDBoMW01IDBoMW0tMzcgMWg3bTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgxbTEgMGg3bS0yOSAxaDJtMSAwaDFtMSAwaDFtMSAwaDFtNCAwaDRtNCAwaDFtLTI3IDFoM20xIDBoMW0xIDBoMW0xIDBoMW0yIDBoMm0xIDBoMW0zIDBoMm0yIDBoM20yIDBoM20yIDBoM20tMzcgMWgxbTMgMGgybTEgMGgxbTEgMGgxbTEgMGgxbTEgMGgzbTEgMGgxbTUgMGgxbTEgMGgybTEgMGgxbTIgMGgxbTEgMGgxbTEgMGgxbS0zNSAxaDNtMSAwaDNtMiAwaDFtMSAwaDNtMSAwaDJtMSAwaDJtNCAwaDNtMiAwaDJtMyAwaDJtLTM3IDFoMm0yIDBoMW00IDBoMW0xIDBoMW0xIDBoMm0xIDBoMW0xIDBoMW01IDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0yIDBoMW0tMzAgMWgybTEgMGgxbTIgMGgxbTQgMGgybTIgMGgybTEgMGgzbTIgMGgybTEgMGgxbTEgMGgybS0zMyAxaDNtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDFtMSAwaDNtMyAwaDJtMSAwaDFtMSAwaDFtMiAwaDFtMSAwaDFtMSAwaDJtLTM1IDFoNG0xIDBoM20yIDBoM202IDBoMW0yIDBoMW0zIDBoM20xIDBoMW0xIDBoMm0xIDBoMm0tMzcgMWgxbTEgMGgxbTEgMGgybTEgMGgybTMgMGgxbTIgMGgybTEgMGgybTEgMGgxbTQgMGgxbTEgMGg1bTIgMGgybS0zNyAxaDJtMSAwaDFtMiAwaDJtMSAwaDFtMSAwaDFtMiAwaDFtMiAwaDFtMiAwaDFtMiAwaDFtMSAwaDNtMSAwaDJtMSAwaDFtMSAwaDFtMSAwaDFtLTM3IDFoMW0xIDBoMW04IDBoM20xIDBoMW00IDBoMW00IDBoMm0xIDBoMm0xIDBoMW0xIDBoMW0tMzIgMWg1bTIgMGgzbTEgMGg1bTEgMGgxbTEgMGgzbTEgMGg1bTQgMGgzbS0zNyAxaDFtMyAwaDFtMiAwaDNtNiAwaDVtNSAwaDJtMSAwaDFtMSAwaDFtNCAwaDFtLTM0IDFoNG0yIDBoMm00IDBoMW0zIDBoMm0yIDBoNW0xIDBoN20tMzUgMWgxbTIgMGgxbTMgMGg0bTIgMGgybTEgMGgxbTMgMGgxbTcgMGgxbTEgMGgxbTEgMGgxbS0zMyAxaDJtMyAwaDFtMiAwaDRtMiAwaDJtMiAwaDJtMSAwaDFtMSAwaDFtMSAwaDJtMSAwaDFtMyAwaDRtLTM3IDFoM20xIDBoMW0yIDBoMm0yIDBoMW0xIDBoMW0xIDBoMW0xIDBoNG0yIDBoMm02IDBoMW0zIDBoMW0tMzYgMWgxbTEgMGgxbTIgMGgybTMgMGgxbTIgMGgxbTMgMGgybTEgMGgxbTEgMGgxbTEgMGgzbTIgMGgybTEgMGg0bS0zNiAxaDJtMiAwaDFtMiAwaDNtMSAwaDFtMiAwaDFtMSAwaDFtMSAwaDFtMyAwaDFtMSAwaDFtNiAwaDFtMSAwaDFtLTM0IDFoMW0xIDBoMW0yIDBoM20xIDBoMm0yIDBoMm0xIDBoMm0yIDBoMW0xIDBoMW0xIDBoMm0xIDBoMm0xIDBoMW0yIDBoNG0tMzcgMWgxbTIgMGgxbTEgMGgxbTQgMGgxbTIgMGgxbTIgMGgxbTIgMGgxbTYgMGgxbTEgMGgybTEgMGgxbTMgMGgxbS0zNiAxaDFtMiAwaDFtMSAwaDJtMyAwaDJtMyAwaDFtMiAwaDNtMiAwaDE0bS0yOSAxaDNtMiAwaDJtMSAwaDFtMSAwaDRtMSAwaDFtMiAwaDNtMyAwaDFtLTMzIDFoN200IDBoMW00IDBoN20xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMW0xIDBoMm0xIDBoMm0tMzcgMWgxbTUgMGgxbTMgMGgzbTMgMGgxbTIgMGgzbTEgMGgybTMgMGgxbTMgMGgxbTMgMGgxbS0zNyAxaDFtMSAwaDNtMSAwaDFtMSAwaDNtNCAwaDFtMiAwaDFtMSAwaDJtMiAwaDltMSAwaDFtMSAwaDFtLTM3IDFoMW0xIDBoM20xIDBoMW0xIDBoMW01IDBoMW0xIDBoNW0xIDBoMm0xIDBoNG0xIDBoMW0xIDBoMW0tMzMgMWgxbTEgMGgzbTEgMGgxbTEgMGgxbTQgMGgybTEgMGgxbTMgMGgxbTEgMGgxbTIgMGgzbTEgMGgxbTYgMGgxbS0zNyAxaDFtNSAwaDFtMyAwaDFtMyAwaDFtMSAwaDJtMSAwaDFtMSAwaDJtNCAwaDZtMyAwaDFtLTM3IDFoN20yIDBoM20xIDBoMm0yIDBoMTBtMyAwaDFtMSAwaDUiLz48cmVjdCB4PSIxNC41IiB5PSIxNi41IiB3aWR0aD0iMTIiIGhlaWdodD0iOCIgcng9IjIiIGZpbGw9IiNmZmZmZmYiIHN0cm9rZT0iIzAwMDAwMCIgc3Ryb2tlLXdpZHRoPSIwLjYiLz48dGV4dCB4PSIyMC41IiB5PSIyMC41IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkb21pbmFudC1iYXNlbGluZT0iY2VudHJhbCIgZm9udC1mYW1pbHk9IkludGVyLCBBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC13ZWlnaHQ9IjgwMCIgZm9udC1zaXplPSI1LjAiIGZpbGw9IiMwMDAwMDAiPlNETjwvdGV4dD48L3N2Zz4K" alt="QR code linking to this onboarding guide" width="168" height="168"></div>
+        <p>Onboarding &middot; SDN</p>
       </div>
       <p>Share this guide &mdash; the code points straight here.</p>
     </div>
@@ -662,6 +798,11 @@ spacedatanetwork marketplace show &lt;listing-id&gt;</code></pre>
   </footer>
 
   <script>
+    const bgVideo = document.getElementById('bgVideo');
+    bgVideo.src = 'space-bg.mp4';
+    bgVideo.addEventListener('loadeddata', () => bgVideo.classList.add('loaded'));
+    bgVideo.play().catch(() => {});
+
     function copyCode(button) {
       const code = button.closest('.code-block').querySelector('code').textContent;
       navigator.clipboard.writeText(code).then(() => {

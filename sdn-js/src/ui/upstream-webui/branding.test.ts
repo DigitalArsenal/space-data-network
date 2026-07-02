@@ -238,11 +238,11 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).toContain('givenName = displayName');
     expect(source).toContain('X-SDN-EPM-CID');
     expect(source).toContain('addProfileQRIdentityEmailLines(lines, epmPayload)');
-    expect(source).toContain('signing.digitalarsenal.io');
-    expect(source).toContain('encryption.digitalarsenal.io');
-    expect(source).toContain('bitcoin.digitalarsenal.io');
-    expect(source).toContain('ethereum.digitalarsenal.io');
-    expect(source).toContain('solana.digitalarsenal.io');
+    expect(source).toContain('signing.spacedatanetwork.org');
+    expect(source).toContain('encryption.spacedatanetwork.org');
+    expect(source).toContain('bitcoin.spacedatanetwork.org');
+    expect(source).toContain('ethereum.spacedatanetwork.org');
+    expect(source).toContain('solana.spacedatanetwork.org');
     expect(source).not.toContain('/api/node/epm/qr');
     expect(source).not.toContain('X-SDN-EPM-B64');
     expect(source).not.toContain('X-SDN-EPM-SIGNATURE');
@@ -386,11 +386,11 @@ describe('sdn upstream webui branding helper', () => {
 
     expect(source).toContain('VERSION:3.0');
     expect(source).toContain('-//Apple Inc.//iPhone OS 15.1.1//EN');
-    expect(source).toContain('signing.digitalarsenal.io');
-    expect(source).toContain('encryption.digitalarsenal.io');
-    expect(source).toContain('bitcoin.digitalarsenal.io');
-    expect(source).toContain('ethereum.digitalarsenal.io');
-    expect(source).toContain('solana.digitalarsenal.io');
+    expect(source).toContain('signing.spacedatanetwork.org');
+    expect(source).toContain('encryption.spacedatanetwork.org');
+    expect(source).toContain('bitcoin.spacedatanetwork.org');
+    expect(source).toContain('ethereum.spacedatanetwork.org');
+    expect(source).toContain('solana.spacedatanetwork.org');
     expect(source).toContain('X-ABRELATEDNAMES');
     expect(source).toContain('Binary EPM');
   });

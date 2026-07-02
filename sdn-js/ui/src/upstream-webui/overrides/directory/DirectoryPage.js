@@ -13,11 +13,11 @@ const directorySortKeys = {
 }
 
 const directoryAliasDomains = {
-  signing: 'signing.digitalarsenal.io',
-  encryption: 'encryption.digitalarsenal.io',
-  bitcoin: 'bitcoin.digitalarsenal.io',
-  ethereum: 'ethereum.digitalarsenal.io',
-  solana: 'solana.digitalarsenal.io',
+  signing: 'signing.spacedatanetwork.org',
+  encryption: 'encryption.spacedatanetwork.org',
+  bitcoin: 'bitcoin.spacedatanetwork.org',
+  ethereum: 'ethereum.spacedatanetwork.org',
+  solana: 'solana.spacedatanetwork.org',
 }
 
 const directoryHelpText = {

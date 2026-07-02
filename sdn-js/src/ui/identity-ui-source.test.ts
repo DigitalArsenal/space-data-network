@@ -213,10 +213,10 @@ describe('SDN identity Svelte source', () => {
     const uiSources = [identitySource, directorySource, peersSource];
 
     expectSourceToContainAll(runtimeSource, [
-      'signing.digitalarsenal.io',
-      'encryption.digitalarsenal.io',
-      'peerid.digitalarsenal.io',
-      'xpub.digitalarsenal.io',
+      'signing.spacedatanetwork.org',
+      'encryption.spacedatanetwork.org',
+      'peerid.spacedatanetwork.org',
+      'xpub.spacedatanetwork.org',
       'spacedatanetwork.org',
       'Compact QR',
       'ADR;TYPE=WORK',

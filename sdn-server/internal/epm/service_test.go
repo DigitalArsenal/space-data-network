@@ -403,19 +403,19 @@ func TestNodeVCardIncludesSignedEPMPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SigningPubKey.Raw failed: %v", err)
 	}
-	if !strings.Contains(unfolded, hex.EncodeToString(signingPubBytes)+"@signing.digitalarsenal.io") {
+	if !strings.Contains(unfolded, hex.EncodeToString(signingPubBytes)+"@signing.spacedatanetwork.org") {
 		t.Fatalf("vCard missing iPhone-visible signing public key alias: %s", vcard)
 	}
-	if !strings.Contains(unfolded, hex.EncodeToString(identity.EncryptionPub)+"@encryption.digitalarsenal.io") {
+	if !strings.Contains(unfolded, hex.EncodeToString(identity.EncryptionPub)+"@encryption.spacedatanetwork.org") {
 		t.Fatalf("vCard missing iPhone-visible encryption public key alias: %s", vcard)
 	}
-	if !strings.Contains(unfolded, identity.Addresses.Bitcoin.Address+"@bitcoin.digitalarsenal.io") {
+	if !strings.Contains(unfolded, identity.Addresses.Bitcoin.Address+"@bitcoin.spacedatanetwork.org") {
 		t.Fatalf("vCard missing iPhone-visible bitcoin address alias: %s", vcard)
 	}
-	if !strings.Contains(unfolded, identity.Addresses.Ethereum.Address+"@ethereum.digitalarsenal.io") {
+	if !strings.Contains(unfolded, identity.Addresses.Ethereum.Address+"@ethereum.spacedatanetwork.org") {
 		t.Fatalf("vCard missing iPhone-visible ethereum address alias: %s", vcard)
 	}
-	if !strings.Contains(unfolded, identity.Addresses.Solana.Address+"@solana.digitalarsenal.io") {
+	if !strings.Contains(unfolded, identity.Addresses.Solana.Address+"@solana.spacedatanetwork.org") {
 		t.Fatalf("vCard missing iPhone-visible solana address alias: %s", vcard)
 	}
 	if !strings.Contains(vcard, "X-ABLabel:Binary EPM") {
@@ -492,15 +492,15 @@ func TestNodeQRUsesCompactVCardWithoutEmbeddedEPMPayload(t *testing.T) {
 	if !strings.Contains(vcard, "X-SDN-EPM-SIGNATURE:") {
 		t.Fatalf("QR vCard missing EPM signature: %s", vcard)
 	}
-	if !strings.Contains(unfolded, "@signing.digitalarsenal.io") {
+	if !strings.Contains(unfolded, "@signing.spacedatanetwork.org") {
 		t.Fatalf("QR vCard missing iPhone-visible signing key alias: %s", vcard)
 	}
-	if !strings.Contains(unfolded, "@encryption.digitalarsenal.io") {
+	if !strings.Contains(unfolded, "@encryption.spacedatanetwork.org") {
 		t.Fatalf("QR vCard missing iPhone-visible encryption key alias: %s", vcard)
 	}
-	if !strings.Contains(unfolded, "@bitcoin.digitalarsenal.io") ||
-		!strings.Contains(unfolded, "@ethereum.digitalarsenal.io") ||
-		!strings.Contains(unfolded, "@solana.digitalarsenal.io") {
+	if !strings.Contains(unfolded, "@bitcoin.spacedatanetwork.org") ||
+		!strings.Contains(unfolded, "@ethereum.spacedatanetwork.org") ||
+		!strings.Contains(unfolded, "@solana.spacedatanetwork.org") {
 		t.Fatalf("QR vCard missing iPhone-visible chain address aliases: %s", vcard)
 	}
 	if !strings.Contains(vcard, "X-ABRELATEDNAMES:") {
