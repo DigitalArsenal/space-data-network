@@ -2994,7 +2994,7 @@ func (s *FlatSQLStore) RebuildIndex() (map[string]int64, error) {
 	summary := make(map[string]int64)
 
 	for _, schemaName := range s.validator.Schemas() {
-		tableName, err := sds.SchemaNameToTable(schemaName)
+		tableName, err := s.recordReadSource(schemaName)
 		if err != nil {
 			return nil, fmt.Errorf("invalid schema name %q: %w", schemaName, err)
 		}
@@ -3319,7 +3319,7 @@ func (s *FlatSQLStore) DataSummary() (*DataSummary, error) {
 		if summarizedSchemas[schemaName] {
 			continue
 		}
-		tableName, err := sds.SchemaNameToTable(schemaName)
+		tableName, err := s.recordReadSource(schemaName)
 		if err != nil {
 			return nil, fmt.Errorf("invalid schema name %q: %w", schemaName, err)
 		}
