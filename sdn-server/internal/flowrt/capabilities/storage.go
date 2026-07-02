@@ -18,7 +18,14 @@ const storagePluginID = "io.spacedatanetwork.flatsql"
 //   - store:  Store a FlatBuffer record
 //   - delete: Delete a record by CID
 func NewStorageHandlers(store *storage.FlatSQLStore) flowrt.HandlerMap {
-	s := &storageAdapter{store: store}
+	return NewStorageHandlersWithProducer(store, "")
+}
+
+// NewStorageHandlersWithProducer attributes flow-authored writes to the given
+// producer identity (typically the node peer id) for (producer, standard)
+// table routing.
+func NewStorageHandlersWithProducer(store *storage.FlatSQLStore, producerID string) flowrt.HandlerMap {
+	s := &storageAdapter{store: store, producerID: producerID}
 	return flowrt.HandlerMap{
 		storagePluginID + ":query":  s.query,
 		storagePluginID + ":store":  s.storeRecord,
@@ -27,7 +34,8 @@ func NewStorageHandlers(store *storage.FlatSQLStore) flowrt.HandlerMap {
 }
 
 type storageAdapter struct {
-	store *storage.FlatSQLStore
+	store      *storage.FlatSQLStore
+	producerID string
 }
 
 // query executes a FlatSQL query.
@@ -71,7 +79,7 @@ func (s *storageAdapter) storeRecord(ctx context.Context, args *flowrt.Invocatio
 		return errorResult(-1, "missing record data"), nil
 	}
 
-	cid, err := s.store.Store(schema, args.Frames[0].Bytes, "", nil)
+	cid, err := s.store.Store(schema, args.Frames[0].Bytes, s.producerID, nil)
 	if err != nil {
 		return errorResult(-1, "store failed: "+err.Error()), nil
 	}

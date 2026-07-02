@@ -3,6 +3,7 @@ package caps
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -18,14 +19,29 @@ import (
 //	storage.write  — {"schema":"OMM","data":"base64..."}  (data is raw FlatBuffer bytes)
 //	storage.delete — {"cid":"sha256hex..."}
 func NewStorageCapFactory(store *storage.FlatSQLStore) modulert.CapFactory {
-	return func(_ *modulert.Module) modulert.CapHandler {
-		s := &storageCapAdapter{store: store}
+	return NewStorageCapFactoryWithProducer(store, "")
+}
+
+// NewStorageCapFactoryWithProducer is NewStorageCapFactory with an explicit
+// fallback producer identity. Writes are attributed to the calling module's
+// plugin id (the natural (producer, standard) routing key for module-authored
+// records); the fallback covers modules whose manifest is unavailable.
+func NewStorageCapFactoryWithProducer(store *storage.FlatSQLStore, fallbackProducer string) modulert.CapFactory {
+	return func(mod *modulert.Module) modulert.CapHandler {
+		producer := strings.TrimSpace(fallbackProducer)
+		if mod != nil {
+			if id := strings.TrimSpace(mod.ID()); id != "" && id != "unknown-module" {
+				producer = id
+			}
+		}
+		s := &storageCapAdapter{store: store, producerID: producer}
 		return s.handle
 	}
 }
 
 type storageCapAdapter struct {
-	store *storage.FlatSQLStore
+	store      *storage.FlatSQLStore
+	producerID string
 }
 
 func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, error) {
@@ -91,7 +107,7 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		if len(rawBytes) == 0 {
 			return errCapJSON("data could not be decoded"), nil
 		}
-		cid, err := s.store.Store(schema, rawBytes, "", nil)
+		cid, err := s.store.Store(schema, rawBytes, s.producerID, nil)
 		if err != nil {
 			return errCapJSON("write failed: " + err.Error()), nil
 		}

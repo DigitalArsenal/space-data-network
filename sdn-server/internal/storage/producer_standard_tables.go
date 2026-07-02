@@ -319,3 +319,55 @@ func (s *FlatSQLStore) queryRoutedTables(match func(ProducerStandardTable) bool,
 	}
 	return out, rows.Err()
 }
+
+// recordReadColumns is the shared column list of every record metadata table
+// (legacy per-standard and (producer, standard) alike).
+const recordReadColumns = "cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex, created_at"
+
+// recordReadSource returns a SQL FROM/JOIN target spanning the legacy
+// per-standard table and every (producer, standard) table for the standard,
+// deduplicated by cid (dual-written rows appear once; rowid is carried as an
+// ordering tiebreaker only). When no producer tables exist for the standard it
+// returns the legacy table name unchanged, keeping pre-flip query plans
+// byte-identical. Callers hold s.mu.
+func (s *FlatSQLStore) recordReadSource(schemaName string) (string, error) {
+	legacy, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return "", err
+	}
+	producerTables, err := s.listProducerStandardTables()
+	if err != nil {
+		log.Warnf("recordReadSource: list (producer, standard) tables: %v", err)
+		return legacy, nil
+	}
+	selects := []string{fmt.Sprintf("SELECT rowid AS rowid, %s FROM %s", recordReadColumns, legacy)}
+	for _, t := range producerTables {
+		if t.Standard == legacy {
+			selects = append(selects, fmt.Sprintf("SELECT rowid AS rowid, %s FROM %s", recordReadColumns, t.TableName))
+		}
+	}
+	if len(selects) == 1 {
+		return legacy, nil
+	}
+	return "(SELECT rowid, " + recordReadColumns + " FROM (" + strings.Join(selects, " UNION ALL ") + ") GROUP BY cid)", nil
+}
+
+// deleteRoutedMirrorsWhere deletes rows matching whereClause from every
+// (producer, standard) table of the given standard — used by delete/GC/
+// reconcile paths so the union read surface cannot resurrect removed
+// records via their routed mirrors. Best-effort per table; callers hold s.mu.
+func (s *FlatSQLStore) deleteRoutedMirrorsWhere(exec sqlExecer, standardTable, whereClause string, args ...any) {
+	producerTables, err := s.listProducerStandardTables()
+	if err != nil {
+		log.Warnf("routed mirror delete: list (producer, standard) tables: %v", err)
+		return
+	}
+	for _, pt := range producerTables {
+		if pt.Standard != standardTable {
+			continue
+		}
+		if _, err := exec.Exec(fmt.Sprintf(`DELETE FROM %s WHERE %s`, pt.TableName, whereClause), args...); err != nil {
+			log.Warnf("routed mirror delete %s: %v", pt.TableName, err)
+		}
+	}
+}

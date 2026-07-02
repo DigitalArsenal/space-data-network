@@ -545,7 +545,7 @@ func (n *Node) init() error {
 			flowCaps = flowCaps.Merge(ipfsHandlers)
 		}
 		if n.store != nil {
-			storageHandlers := capabilities.NewStorageHandlers(n.store)
+			storageHandlers := capabilities.NewStorageHandlersWithProducer(n.store, n.host.ID().String())
 			flowCaps = flowCaps.Merge(storageHandlers)
 		}
 

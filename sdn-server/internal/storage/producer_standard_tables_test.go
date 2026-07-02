@@ -350,3 +350,65 @@ func TestStoreBatchDualWritesRoutedTable(t *testing.T) {
 		t.Fatalf("routed rows after repeat = %d, want 2", len(routedAgain))
 	}
 }
+
+// WS7.3b: hydrating readers span the legacy and (producer, standard) tables —
+// a record that exists ONLY in a producer table is visible to the standard
+// read surface, and dual-written records are not double-counted.
+func TestHydratingReadersSpanProducerTables(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	// Routed-only record (never written to the legacy table).
+	routedData := sds.NewOMMBuilder().WithNoradCatID(11111).WithObjectName("ROUTED-ONLY").Build()
+	routedCID, err := store.StoreRoutedByProducer("OMM.fbs", routedData, "peerRouted", nil)
+	if err != nil {
+		t.Fatalf("StoreRoutedByProducer() error = %v", err)
+	}
+	// Dual-written record (legacy + mirror).
+	dualData := sds.NewOMMBuilder().WithNoradCatID(22222).WithObjectName("DUAL").Build()
+	dualCID, err := store.Store("OMM.fbs", dualData, "peerDual", nil)
+	if err != nil {
+		t.Fatalf("Store() error = %v", err)
+	}
+
+	// Get hydrates the routed-only record.
+	got, err := store.Get("OMM.fbs", routedCID)
+	if err != nil || len(got) == 0 {
+		t.Fatalf("Get(routed-only) = (%d bytes, %v)", len(got), err)
+	}
+
+	// QueryAll sees both, each exactly once.
+	all, err := store.QueryAll("OMM.fbs", 100)
+	if err != nil {
+		t.Fatalf("QueryAll() error = %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("QueryAll() = %d records, want 2 (routed-only + dual, deduped)", len(all))
+	}
+
+	// Count dedupes dual-written rows.
+	count, err := store.Count("OMM.fbs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("Count() = %d, want 2", count)
+	}
+
+	// The materialized index join hydrates routed-only records too.
+	indexed, err := store.QueryByIndexedFields("OMM.fbs", "", func() *uint32 { v := uint32(11111); return &v }(), "", 10)
+	if err != nil {
+		t.Fatalf("QueryByIndexedFields() error = %v", err)
+	}
+	if len(indexed) != 1 || indexed[0].CID != routedCID {
+		t.Fatalf("indexed = %+v, want the routed-only record %s", indexed, routedCID)
+	}
+	_ = dualCID
+}
