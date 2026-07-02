@@ -73,7 +73,11 @@ on `ENC.KEY_EXCHANGE`; nothing downstream changes.
 - **SDK/wallet**: `KeyExchange` is already wired in `licensing/records.js`;
   add the secp256k1 wrap/unwrap using the wallet's secp256k1 ECDH.
 - **Delete**: Go JSON `BuildPluginKeyEnvelope` / `plugins_secp256k1.go` JSON
-  path; C++ `decrypt_legacy_envelope`.
+  path; C++ `decrypt_legacy_envelope`. **DONE** — the Go JSON
+  `PluginKeyEnvelope` (dead/test-only; the live wrap is the C++ licensing
+  WASM) and C++ `decrypt_legacy_envelope` (modules `91ab0b1`) are both
+  removed; the unified `$ENC`/`$KMF` scheme is the sole envelope across Go,
+  JS, and C++.
 
 ## Cross-runtime conformance vectors
 

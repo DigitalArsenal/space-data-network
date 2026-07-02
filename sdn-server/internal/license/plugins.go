@@ -4,7 +4,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -38,8 +37,6 @@ const (
 	defaultPluginCacheControl     = "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400"
 	defaultPluginRequiredScope    = "orbpro:base"
 	defaultMaxGrantTimeoutMs      = int64(300_000)
-	defaultKeyEnvelopeAlgorithm   = "X25519+SHA256+AES-256-GCM"
-	defaultKeyEnvelopeLifetimeSec = int64(120)
 	pluginRuntimeStatusStopped    = "stopped"
 	pluginRuntimeStatusRunning    = "running"
 	pluginRuntimeStatusError      = "error"
@@ -273,36 +270,6 @@ func (r *PluginRegistry) IsEncrypted(id string) (bool, error) {
 		return false, os.ErrNotExist
 	}
 	return strings.TrimSpace(asset.keyPath) != "", nil
-}
-
-// PluginKeyEnvelope is returned by /api/v1/plugins/{id}/key-envelope.
-type PluginKeyEnvelope struct {
-	PluginID           string `json:"plugin_id"`
-	Version            string `json:"version"`
-	RequiredScope      string `json:"required_scope"`
-	BundleSHA256       string `json:"bundle_sha256"`
-	Algorithm          string `json:"alg"`
-	ServerX25519PubKey string `json:"server_x25519_pubkey"`
-	Nonce              string `json:"nonce"`
-	Ciphertext         string `json:"ciphertext"`
-	AssociatedData     string `json:"associated_data"`
-	Issuer             string `json:"issuer"`
-	Subject            string `json:"sub"`
-	PeerID             string `json:"peer_id"`
-	CapabilityTokenJTI string `json:"capability_token_jti"`
-	ExpiresAt          int64  `json:"expires_at"`
-}
-
-type pluginKeyEnvelopePayload struct {
-	Key           string `json:"key"`
-	PluginID      string `json:"plugin_id"`
-	Version       string `json:"version"`
-	RequiredScope string `json:"required_scope"`
-	BundleSHA256  string `json:"bundle_sha256"`
-	Sub           string `json:"sub"`
-	PeerID        string `json:"peer_id"`
-	JTI           string `json:"jti"`
-	Exp           int64  `json:"exp"`
 }
 
 // LoadPluginRegistry loads plugin catalog and validates each entry.
@@ -606,105 +573,6 @@ func ParseX25519PublicKey(encoded string) ([]byte, error) {
 		}
 	}
 	return nil, errors.New("client_x25519_pubkey must decode to exactly 32 bytes")
-}
-
-// BuildPluginKeyEnvelope wraps plugin key material to the client X25519 public key.
-func BuildPluginKeyEnvelope(asset *PluginAsset, pluginKey, clientX25519Pub []byte, claims *CapabilityClaims, issuer string, now time.Time) (*PluginKeyEnvelope, error) {
-	if asset == nil {
-		return nil, errors.New("plugin asset is required")
-	}
-	if len(pluginKey) != 32 {
-		return nil, fmt.Errorf("plugin key must be 32 bytes, got %d", len(pluginKey))
-	}
-	if len(clientX25519Pub) != 32 {
-		return nil, fmt.Errorf("client x25519 public key must be 32 bytes, got %d", len(clientX25519Pub))
-	}
-	if claims == nil {
-		return nil, errors.New("capability claims are required")
-	}
-	issuer = strings.TrimSpace(issuer)
-	if issuer == "" {
-		issuer = "spaceaware-license"
-	}
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-
-	exp := now.Unix() + defaultKeyEnvelopeLifetimeSec
-	if claims.Exp > 0 && claims.Exp < exp {
-		exp = claims.Exp
-	}
-	if exp <= now.Unix() {
-		return nil, errors.New("capability token already expired")
-	}
-
-	serverPriv := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, serverPriv); err != nil {
-		return nil, fmt.Errorf("generate ephemeral server key: %w", err)
-	}
-	// H10: Zero ephemeral private key when done.
-	defer zeroBytes(serverPriv)
-	clampX25519PrivateKey(serverPriv)
-
-	serverPub, err := curve25519.X25519(serverPriv, curve25519.Basepoint)
-	if err != nil {
-		return nil, fmt.Errorf("derive server x25519 public key: %w", err)
-	}
-	sharedSecret, err := curve25519.X25519(serverPriv, clientX25519Pub)
-	if err != nil {
-		return nil, fmt.Errorf("derive shared secret: %w", err)
-	}
-	// H10: Zero shared secret when done.
-	defer zeroBytes(sharedSecret)
-
-	aad := buildPluginEnvelopeAAD(asset, claims, issuer, exp)
-	wrapKey := derivePluginWrapKey(sharedSecret, aad)
-	block, err := aes.NewCipher(wrapKey[:])
-	if err != nil {
-		return nil, fmt.Errorf("create key-wrap cipher: %w", err)
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("create key-wrap AEAD: %w", err)
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, fmt.Errorf("generate key-wrap nonce: %w", err)
-	}
-
-	payload := pluginKeyEnvelopePayload{
-		Key:           base64.RawStdEncoding.EncodeToString(pluginKey),
-		PluginID:      asset.ID,
-		Version:       asset.Version,
-		RequiredScope: asset.RequiredScope,
-		BundleSHA256:  asset.BundleSHA256,
-		Sub:           claims.Sub,
-		PeerID:        claims.PeerID,
-		JTI:           claims.JTI,
-		Exp:           exp,
-	}
-	plaintext, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal envelope payload: %w", err)
-	}
-	ciphertext := gcm.Seal(nil, nonce, plaintext, []byte(aad))
-
-	return &PluginKeyEnvelope{
-		PluginID:           asset.ID,
-		Version:            asset.Version,
-		RequiredScope:      asset.RequiredScope,
-		BundleSHA256:       asset.BundleSHA256,
-		Algorithm:          defaultKeyEnvelopeAlgorithm,
-		ServerX25519PubKey: base64.RawStdEncoding.EncodeToString(serverPub),
-		Nonce:              base64.RawStdEncoding.EncodeToString(nonce),
-		Ciphertext:         base64.RawStdEncoding.EncodeToString(ciphertext),
-		AssociatedData:     aad,
-		Issuer:             issuer,
-		Subject:            claims.Sub,
-		PeerID:             claims.PeerID,
-		CapabilityTokenJTI: claims.JTI,
-		ExpiresAt:          exp,
-	}, nil
 }
 
 func DefaultPluginRoot(baseDataPath string) string {
@@ -1296,40 +1164,3 @@ func derivePluginBundleKey(sharedSecret []byte, context []byte) ([]byte, error) 
 	return k, nil
 }
 
-func clampX25519PrivateKey(priv []byte) {
-	if len(priv) != 32 {
-		return
-	}
-	priv[0] &= 248
-	priv[31] &= 127
-	priv[31] |= 64
-}
-
-func buildPluginEnvelopeAAD(asset *PluginAsset, claims *CapabilityClaims, issuer string, exp int64) string {
-	return fmt.Sprintf(
-		"iss=%s|sub=%s|peer=%s|jti=%s|plugin=%s|version=%s|sha256=%s|scope=%s|exp=%d",
-		issuer,
-		claims.Sub,
-		claims.PeerID,
-		claims.JTI,
-		asset.ID,
-		asset.Version,
-		asset.BundleSHA256,
-		asset.RequiredScope,
-		exp,
-	)
-}
-
-// H12: Use proper HKDF (RFC 5869) instead of simple SHA-256 concatenation
-// for key derivation from the shared secret.
-func derivePluginWrapKey(sharedSecret []byte, aad string) [32]byte {
-	info := []byte("sdn-plugin-key-wrap:" + aad)
-	salt := []byte("sdn-plugin-key-v1")
-	kdf := hkdf.New(sha256.New, sharedSecret, salt, info)
-	var key [32]byte
-	if _, err := io.ReadFull(kdf, key[:]); err != nil {
-		// hkdf.Read should never fail for valid inputs; panic indicates a bug.
-		panic("hkdf read failed: " + err.Error())
-	}
-	return key
-}
