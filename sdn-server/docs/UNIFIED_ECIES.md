@@ -42,11 +42,10 @@ An ECIES envelope is an SDS record set:
 2. `Z = ECDH(eph_priv, recipient_pub)`.
    - **X25519**: RFC 7748 raw shared secret (32 bytes).
    - **secp256k1 / P256**: the **32-byte big-endian X coordinate** of the
-     shared point (SEC1), **not hashed**. This is the one cross-runtime
-     landmine: Go decred `GenerateSharedSecret` returns `SHA256(compressed
-     point)` — we must use `ScalarMult` and take X. CryptoPP
-     `ECDH<ECP>.Agree` and WebCrypto `deriveBits` both give raw X, so pinning
-     "raw X, no hash" makes all three agree.
+     shared point (SEC1), **not hashed**. Confirmed: Go decred v4
+     `GenerateSharedSecret` returns exactly the raw X (RFC 5903 §9 — "return
+     x", not hashed), matching CryptoPP `ECDH<ECP>.Agree` and WebCrypto
+     `deriveBits`. (Left-pad to 32 bytes when X has leading zero bytes.)
 3. `K = HKDF-SHA256(ikm = Z, salt = ENC.RECIPIENT_KEY_ID | none,
    info = ENC.CONTEXT)`. This is the flatbuffers `DeriveSymmetricKey`
    contract (`encryption.h`), already implemented for all curves.
