@@ -203,3 +203,55 @@ export async function eciesWrap(
     kmfBytes: kmfBuilder.asUint8Array().slice(),
   };
 }
+
+/** One wrap target for a one-to-many content-key delivery. */
+export interface EciesRecipient {
+  /** X25519 (32 bytes) or secp256k1 compressed (33 bytes), matching keyExchange. */
+  publicKey: Uint8Array;
+  keyExchange: EciesKeyExchange;
+  /** Optional RECIPIENT_KEY_ID stamped into `$ENC` and echoed on the result. */
+  keyId?: Uint8Array;
+}
+
+/** One recipient's wrapped-key envelope produced by {@link eciesWrapForRecipients}. */
+export interface EciesRecipientEnvelope {
+  keyId?: Uint8Array;
+  encBytes: Uint8Array;
+  kmfBytes: Uint8Array;
+}
+
+/**
+ * Unified ECIES one-to-many primitive (mirror of the Go `WrapForRecipients`):
+ * the caller encrypts the content ONCE with `contentKey`, then this wraps that
+ * single 32-byte content key independently for each recipient. Returns one
+ * per-recipient `$ENC`/`$KMF` envelope; every envelope `eciesUnwrap`s to the
+ * SAME `contentKey`, each recipient uses only its own envelope + private key,
+ * and recipients may mix curves. This is the storefront/channel group-delivery
+ * shape — encrypt-once content + N wrapped-key rows, no per-buyer re-encryption.
+ */
+export async function eciesWrapForRecipients(
+  contentKey: Uint8Array,
+  recipients: EciesRecipient[],
+  context?: string,
+): Promise<EciesRecipientEnvelope[]> {
+  if (contentKey.length !== CONTENT_KEY_BYTES) {
+    throw new Error(`ecies: content key must be ${CONTENT_KEY_BYTES} bytes`);
+  }
+  if (recipients.length === 0) {
+    throw new Error('ecies: wrapForRecipients requires at least one recipient');
+  }
+  const out: EciesRecipientEnvelope[] = [];
+  for (let i = 0; i < recipients.length; i++) {
+    const r = recipients[i];
+    if (!r.publicKey || r.publicKey.length === 0) {
+      throw new Error(`ecies: recipient ${i} has no public key`);
+    }
+    const { encBytes, kmfBytes } = await eciesWrap(r.publicKey, contentKey, {
+      keyExchange: r.keyExchange,
+      context,
+      recipientKeyId: r.keyId,
+    });
+    out.push({ keyId: r.keyId, encBytes, kmfBytes });
+  }
+  return out;
+}
