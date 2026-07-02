@@ -263,6 +263,68 @@ func Unwrap(recipientPriv, encBytes, kmfBytes []byte, context string) ([]byte, e
 	return out, nil
 }
 
+// Recipient identifies one wrap target for a one-to-many content-key delivery.
+// Each recipient may use a different curve, so KeyExchange is per-recipient.
+type Recipient struct {
+	// PublicKey is the recipient's encryption public key: X25519 (32 bytes) or
+	// secp256k1 compressed (33 bytes), matching KeyExchange.
+	PublicKey []byte
+	// KeyExchange is the ECDH curve for THIS recipient.
+	KeyExchange KeyExchange
+	// KeyID is an optional recipient identifier stamped into the $ENC
+	// RECIPIENT_KEY_ID field (and echoed on the result) so a recipient can find
+	// its own envelope in a multi-recipient set. May be nil.
+	KeyID []byte
+}
+
+// RecipientEnvelope is one recipient's wrapped-key envelope produced by
+// WrapForRecipients. Unwrap(recipientPriv, ENC, KMF, ctx) recovers the shared
+// content key from it.
+type RecipientEnvelope struct {
+	KeyID []byte // echoes Recipient.KeyID
+	ENC   []byte // $ENC header bytes
+	KMF   []byte // $KMF payload bytes (this recipient's wrap of the shared content key)
+}
+
+// WrapForRecipients is the unified ECIES one-to-many primitive: the caller
+// encrypts the content ONCE with contentKey, then this wraps that single
+// 32-byte content key independently for each recipient. It returns one
+// per-recipient $ENC/$KMF envelope; every envelope Unwraps to the SAME
+// contentKey, and each recipient uses only its own envelope + private key.
+// Recipients may mix curves (e.g. some X25519, some secp256k1). Every recipient
+// gets a fresh ephemeral key, so the envelopes are independent.
+//
+// This is the storefront/channel group-delivery shape: encrypt-once content +
+// N wrapped-key rows, no per-buyer content re-encryption.
+func WrapForRecipients(contentKey []byte, recipients []Recipient, ctx string) ([]RecipientEnvelope, error) {
+	if len(contentKey) != contentKeyBytes {
+		return nil, fmt.Errorf("ecies: content key must be %d bytes, got %d", contentKeyBytes, len(contentKey))
+	}
+	if len(recipients) == 0 {
+		return nil, errors.New("ecies: WrapForRecipients requires at least one recipient")
+	}
+	out := make([]RecipientEnvelope, 0, len(recipients))
+	for i, r := range recipients {
+		if len(r.PublicKey) == 0 {
+			return nil, fmt.Errorf("ecies: recipient %d has no public key", i)
+		}
+		encBytes, kmfBytes, err := Wrap(r.PublicKey, contentKey, WrapOptions{
+			KeyExchange:    r.KeyExchange,
+			Context:        ctx,
+			RecipientKeyID: r.KeyID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("ecies: wrap for recipient %d: %w", i, err)
+		}
+		out = append(out, RecipientEnvelope{
+			KeyID: append([]byte(nil), r.KeyID...),
+			ENC:   encBytes,
+			KMF:   kmfBytes,
+		})
+	}
+	return out, nil
+}
+
 func buildENC(opts WrapOptions, ephPub, nonceStart []byte) []byte {
 	b := flatbuffers.NewBuilder(128)
 	ephOff := b.CreateByteVector(ephPub)
