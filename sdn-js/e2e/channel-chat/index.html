@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>WS9.3 encrypted channel chat E2E</title>
+</head>
+<body>
+  <h1>WS9.3 encrypted channel chat E2E</h1>
+  <pre id="status">loading…</pre>
+  <script type="module">
+    import './bundle.js';
+    const params = new URLSearchParams(location.search);
+    const hub = params.get('hub');
+    const status = document.getElementById('status');
+    if (!hub) {
+      status.textContent = 'missing ?hub=<multiaddr>';
+    } else {
+      status.textContent = `running against ${hub}…`;
+      window.runChannelChatE2E(hub).then((r) => {
+        status.textContent = JSON.stringify(r, null, 2);
+      });
+    }
+  </script>
+</body>
+</html>
