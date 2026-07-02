@@ -122,10 +122,10 @@ describe('public EPM exports', () => {
     expect(payload).toContain('BEGIN:VCARD');
     expect(payload).toContain('N:Example;Alice;Q.;Dr.;PhD');
     expect(payload).toContain('FN:Dr. Alice Q. Example');
-    expect(payload).not.toContain('ORG:Example Orbital LLC');
-    expect(payload).not.toContain('EMAIL;TYPE=INTERNET:alice@example.com');
+    expect(payload).toContain('ORG:Example Orbital LLC');
+    expect(payload).toContain('EMAIL:alice@example.com');
     expect(payload).toContain('TEL:+1 555 0100');
-    expect(payload).not.toContain('TITLE:Flight Director');
+    expect(payload).toContain('TITLE:Flight Director');
     expect(payload).not.toContain('ROLE:Operator');
     expect(payload).toContain('ADR;TYPE=WORK:Box 42;;1 Orbit Way;Cape Canaveral;FL;32920;USA');
     expect(payload).not.toContain('X-SDN-PEER-ID:16Uiu2Alice');

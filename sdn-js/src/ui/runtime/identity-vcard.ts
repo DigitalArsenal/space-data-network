@@ -106,6 +106,9 @@ export function createVCardQrPayload(input: Record<string, unknown> | HostedEpmR
 
   addVCardStructuredName(lines, epm, displayName);
   addVCardLine(lines, 'FN', displayName);
+  addVCardLine(lines, 'ORG', pickString(epm, ['legal_name', 'legalName', 'organization', 'org']));
+  addVCardLine(lines, 'TITLE', pickString(epm, ['job_title', 'jobTitle', 'title']));
+  addVCardLine(lines, 'EMAIL', pickString(epm, ['email']));
   addVCardLine(lines, 'TEL', pickString(epm, ['telephone', 'phone', 'tel']));
   addVCardAddressLine(lines, epm);
   addCompactIdentityEmailLine(lines, 'peerid', peerId, PEER_ID_ALIAS_DOMAIN);
@@ -148,6 +151,8 @@ export function epmJsonFromVCard(text: string): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
   const lines = vcardLines(text);
   fields.dn = vcardValue(lines, 'FN');
+  fields.legal_name = vcardValue(lines, 'ORG');
+  fields.job_title = vcardValue(lines, 'TITLE');
   fields.email = vcardContactEmail(lines);
   fields.telephone = vcardValue(lines, 'TEL');
   fields.peer_id = vcardValue(lines, 'X-SDN-PEER-ID') || vcardEmailAlias(lines, PEER_ID_ALIAS_DOMAIN, 'peerid');
