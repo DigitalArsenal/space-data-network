@@ -188,20 +188,20 @@
       align-items: center;
       margin-bottom: 20px;
     }
-    .step-head h2 {
+    .step-card .step-head h2 {
       font-family: 'Rajdhani', var(--font-sans);
       font-size: 31px;
       font-weight: 700;
       letter-spacing: 0.06em;
       text-transform: uppercase;
       margin: 0 0 0 -32px;
-      padding: 7px 34px 7px 50px;
+      padding: 6px 30px 6px 50px;
       color: var(--text-primary);
       background: linear-gradient(180deg, rgba(var(--step-tint, 134, 134, 139), 0.34) 0%, rgba(var(--step-tint, 134, 134, 139), 0.12) 60%, rgba(9, 13, 21, 0.45) 100%);
-      clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 100%, 0 100%);
       line-height: 1.2;
+      align-self: center;
     }
-    .step-head h2:only-child {
+    .step-card .step-head h2:only-child {
       margin-left: 0;
       padding-left: 24px;
     }
@@ -476,7 +476,7 @@
     footer a:hover { color: var(--text-primary); }
     @media (max-width: 734px) {
       .step-card { padding: 24px 18px; --cut: 12px; }
-      .step-head h2 { font-size: 22px; padding: 6px 24px 6px 44px; }
+      .step-card .step-head h2 { font-size: 22px; padding: 5px 20px 5px 44px; }
       header.page-head { padding: 56px 0 20px; }
       .identity-figure { grid-template-columns: 1fr; }
       .qr-tile { padding: 14px; }
