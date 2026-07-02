@@ -1405,6 +1405,9 @@ func (s *FlatSQLStore) Store(schemaName string, data []byte, peerID string, sign
 	cid := computeCID(data)
 	var existing int
 	if err := s.db.QueryRow(fmt.Sprintf(`SELECT 1 FROM %s WHERE cid = ?`, tableName), cid).Scan(&existing); err == nil {
+		// Repeat CID (possibly from a different producer): still record it in
+		// the producer's (producer, standard) table.
+		s.mirrorRoutedRecordFromExisting(s.db, tableName, schemaName, cid, peerID, signature)
 		return cid, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("failed to check existing record: %w", err)
@@ -1421,6 +1424,11 @@ func (s *FlatSQLStore) Store(schemaName string, data []byte, peerID string, sign
 	if err := insertSchemaMetadata(s.db, tableName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now); err != nil {
 		return "", fmt.Errorf("failed to store data: %w", err)
 	}
+	// Phased WS7.3 write flip: the metadata row also lands in the producer's
+	// (producer, standard) table (same shared-stream coordinates), so
+	// producer-scoped queries see all new data while hydrated readers keep
+	// using the legacy per-standard tables.
+	s.mirrorRoutedRecord(s.db, schemaName, cid, peerID, now, streamPath, streamOffset, recordLength, signature)
 
 	if err := s.upsertRecordIndex(schemaName, cid, now, data); err != nil {
 		// Do not fail writes if index extraction fails for a record.
@@ -1616,6 +1624,18 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 	}
 	defer appender.Close()
 
+	// Phased WS7.3 write flip: pre-create the (producer, standard) table
+	// outside the batch transaction (no DDL inside the tx); rows are mirrored
+	// into it alongside the legacy inserts below.
+	routedTable := ""
+	if strings.TrimSpace(peerID) != "" {
+		if t, routedErr := s.ensureProducerStandardTable(peerID, schemaName); routedErr != nil {
+			log.Warnf("Routed mirror: ensure (producer, standard) table for %s/%s: %v", peerID, schemaName, routedErr)
+		} else {
+			routedTable = t
+		}
+	}
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("begin batch store: %w", err)
@@ -1635,6 +1655,9 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 		err := tx.QueryRow(fmt.Sprintf(`SELECT 1 FROM %s WHERE cid = ?`, tableName), cid).Scan(&existing)
 		switch {
 		case err == nil:
+			if routedTable != "" {
+				s.mirrorRoutedRecordFromExisting(tx, tableName, schemaName, cid, peerID, signature)
+			}
 		case errors.Is(err, sql.ErrNoRows):
 			streamPath, streamOffset, recordLength, err := appender.Append(data)
 			if err != nil {
@@ -1643,6 +1666,11 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 			rowID, err := insertSchemaMetadataReturningRowID(tx, tableName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now)
 			if err != nil {
 				return inserted, fmt.Errorf("store %s record %s: %w", schemaName, cid, err)
+			}
+			if routedTable != "" {
+				if routedErr := insertSchemaMetadata(tx, routedTable, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now); routedErr != nil {
+					log.Warnf("Routed mirror: insert into %s for %s: %v", routedTable, cid[:16]+"...", routedErr)
+				}
 			}
 			if err := upsertRecordIndexExec(tx, schemaName, cid, now, data); err != nil {
 				log.Warnf("Failed to index batch %s record %s: %v", schemaName, cid[:16]+"...", err)
