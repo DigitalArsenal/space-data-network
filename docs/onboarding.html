@@ -30,11 +30,6 @@
       --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
       --radius: 14px;
       --radius-sm: 10px;
-      --grad-cyan: linear-gradient(135deg, #17ead9 0%, #6078ea 100%);
-      --grad-green: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-      --grad-orange: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-      --grad-purple: linear-gradient(135deg, #8E2DE2 0%, #4A00E0 100%);
-      --grad-indigo: linear-gradient(135deg, #5c6bc0 0%, #7e57c2 100%);
       --accent-cyan: #17ead9;
       --accent-green: #38ef7d;
       --accent-orange: #f5576c;
@@ -126,12 +121,7 @@
       padding: 8px 16px;
       background: var(--ui-bg);
     }
-    .steps-overview a:hover { border-color: var(--ui-border-hover); color: var(--text-primary); }
-    .steps-overview a:nth-child(1):hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
-    .steps-overview a:nth-child(2):hover { border-color: var(--accent-green); color: var(--accent-green); }
-    .steps-overview a:nth-child(3):hover { border-color: var(--accent-orange); color: var(--accent-orange); }
-    .steps-overview a:nth-child(4):hover { border-color: var(--accent-purple); color: var(--accent-purple); }
-    .steps-overview a:nth-child(5):hover { border-color: var(--accent-indigo); color: var(--accent-indigo); }
+    .steps-overview a:hover { border-color: #d8a94e; color: #d8a94e; }
     section.step { padding: 34px 0; scroll-margin-top: 80px; }
     .step-card {
       position: relative;
@@ -145,29 +135,10 @@
       -webkit-backdrop-filter: blur(34px) saturate(170%);
       box-shadow: 0 14px 44px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.06);
     }
-    #step-start {
-      --step-accent: var(--accent-cyan); --step-accent-dark: #0a6f68;
-      --step-tint: 23, 234, 217;
-    }
-    #step-consume {
-      --step-accent: var(--accent-green); --step-accent-dark: #147a41;
-      --step-tint: 56, 239, 125;
-    }
-    #step-publish {
-      --step-accent: var(--accent-orange); --step-accent-dark: #7d1f2e;
-      --step-tint: 245, 87, 108;
-    }
-    #step-sell-data {
-      --step-accent: var(--accent-purple); --step-accent-dark: #503a8f;
-      --step-tint: 167, 139, 250;
-    }
-    #step-sell-modules {
-      --step-accent: var(--accent-indigo); --step-accent-dark: #37508f;
-      --step-tint: 126, 155, 245;
-    }
-    #going-further {
-      --step-accent: var(--text-muted);
-      --step-tint: 134, 134, 139;
+    section.step, .share-qr {
+      --step-accent: #d8a94e;
+      --step-accent-dark: #6e5320;
+      --step-tint: 216, 169, 78;
     }
     .step-head {
       display: flex;
@@ -355,7 +326,7 @@
       align-self: center;
     }
     .qr-tile {
-      --acc: var(--step-accent, var(--accent-cyan));
+      --acc: var(--step-accent, #d8a94e);
       position: relative;
       display: flex;
       align-items: center;
@@ -385,7 +356,7 @@
     .qr-plate img { display: block; width: 168px; height: 168px; }
     .qr-caption {
       font-family: 'Rajdhani', var(--font-sans);
-      color: var(--step-accent, var(--accent-cyan));
+      color: var(--step-accent, #d8a94e);
       font-size: 13px;
       font-weight: 600;
       letter-spacing: 0.12em;
@@ -451,7 +422,7 @@
       border-radius: 10px;
       transition: color 0.15s ease, background 0.15s ease;
     }
-    .contact-bar a:hover { color: var(--accent-cyan); background: rgba(23, 234, 217, 0.08); }
+    .contact-bar a:hover { color: #d8a94e; background: rgba(216, 169, 78, 0.08); }
     .contact-bar a svg { width: 15px; height: 15px; flex: 0 0 auto; }
     footer {
       border-top: 1px solid var(--ui-border);
