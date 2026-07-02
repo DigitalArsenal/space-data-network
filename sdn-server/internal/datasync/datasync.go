@@ -216,36 +216,26 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 		limit = maxLimit
 	}
 	hasProvidedSnapshot := req.TotalCount > 0 && strings.TrimSpace(req.SnapshotID) != "" && strings.TrimSpace(req.Head) != ""
-	offset := req.Offset
-	useRowIDCursor := !hasProvidedSnapshot && req.Offset <= 0
+	// v1 record sync speaks exactly one cursor: the rowid-snapshot cursor over
+	// the global sdn_record_index sequence (WS7.3d). The legacy offset/
+	// "ordered-offset-v1" mode and its version negotiation are removed.
+	const offset = 0
 	var cursor rawRecordCursor
 	if strings.TrimSpace(req.Cursor) != "" {
 		parsedCursor, ok, err := ParseRawRecordCursor(req.Cursor)
 		if err != nil {
 			return nil, nil, err
 		}
-		if ok {
-			cursor = parsedCursor
-			useRowIDCursor = true
-		} else {
-			parsedOffset, err := ParseCursor(req.Cursor)
-			if err != nil {
-				return nil, nil, err
-			}
-			offset = parsedOffset
-			useRowIDCursor = false
+		if !ok {
+			return nil, nil, fmt.Errorf("unsupported sync cursor: v1 uses the rowid-snapshot cursor only")
 		}
-	}
-	if offset < 0 {
-		return nil, nil, fmt.Errorf("offset must be non-negative")
+		cursor = parsedCursor
 	}
 
 	filter := FilterFromRequest(req, limit, offset)
-	filter.UseRowIDCursor = useRowIDCursor
-	if useRowIDCursor {
-		filter.AfterRowID = cursor.AfterRowID
-		filter.MaxRowID = cursor.MaxRowID
-	}
+	filter.UseRowIDCursor = true
+	filter.AfterRowID = cursor.AfterRowID
+	filter.MaxRowID = cursor.MaxRowID
 	var totalCount int64
 	var snapshot Snapshot
 	if hasProvidedSnapshot {
@@ -256,8 +246,18 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 			HighWaterMark: strings.TrimSpace(req.HighWaterMark),
 			MaxRowID:      cursor.MaxRowID,
 		}
-		if useRowIDCursor && filter.MaxRowID <= 0 {
-			return nil, nil, fmt.Errorf("row cursor is missing snapshot row boundary")
+		// A provided snapshot may not carry the rowid boundary (e.g. the
+		// open_manifest segment fan-out, or a first read_chunk that reuses
+		// snapshot metadata). Derive it live from the global index cursor —
+		// a cheap MAX(idx.rowid) — rather than requiring the client to resend
+		// it. The reused snapshot's identity metadata is still honored.
+		if filter.MaxRowID <= 0 {
+			head, err := store.RawRecordHead(filter)
+			if err != nil {
+				return nil, nil, err
+			}
+			filter.MaxRowID = head.MaxRowID
+			snapshot.MaxRowID = head.MaxRowID
 		}
 	} else {
 		var err error
@@ -269,9 +269,7 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 		if err != nil {
 			return nil, nil, err
 		}
-		if useRowIDCursor {
-			filter.MaxRowID = snapshot.MaxRowID
-		}
+		filter.MaxRowID = snapshot.MaxRowID
 	}
 	records, err := store.QueryRawRecordRefs(filter)
 	if err != nil {
@@ -282,17 +280,12 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 		results = append(results, RecordRow(schemaName, rec, false))
 	}
 	nextCursor := ""
-	responseCursor := EncodeCursor(offset)
-	if useRowIDCursor {
-		responseCursor = EncodeRawRecordCursor(filter.AfterRowID, filter.MaxRowID, snapshot.SnapshotID)
-		if len(records) > 0 {
-			lastRowID := records[len(records)-1].RowID
-			if len(records) >= limit && filter.MaxRowID > 0 && lastRowID < filter.MaxRowID {
-				nextCursor = EncodeRawRecordCursor(lastRowID, filter.MaxRowID, snapshot.SnapshotID)
-			}
+	responseCursor := EncodeRawRecordCursor(filter.AfterRowID, filter.MaxRowID, snapshot.SnapshotID)
+	if len(records) > 0 {
+		lastRowID := records[len(records)-1].RowID
+		if len(records) >= limit && filter.MaxRowID > 0 && lastRowID < filter.MaxRowID {
+			nextCursor = EncodeRawRecordCursor(lastRowID, filter.MaxRowID, snapshot.SnapshotID)
 		}
-	} else if int64(offset+len(records)) < totalCount {
-		nextCursor = EncodeCursor(offset + len(records))
 	}
 	chunkHash := ScanHash(schemaName, records)
 	response := &ScanResponse{
@@ -373,11 +366,16 @@ func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (
 
 	segments := make([]ManifestSegment, 0)
 	var totalBytes int64
-	for offset, index := 0, 0; int64(offset) < totalCount || (totalCount == 0 && index == 0); offset, index = offset+segmentLimit, index+1 {
+	// Segments chain by the rowid-snapshot cursor (v1 record sync has no offset
+	// mode). `offset` is a running record count kept only for matching a
+	// published dataset shard to its segment (shard publications are keyed by
+	// offset+limit).
+	cursor := ""
+	for offset, index := 0, 0; ; index++ {
 		segmentReq := req
 		segmentReq.Limit = segmentLimit
-		segmentReq.Offset = offset
-		segmentReq.Cursor = ""
+		segmentReq.Offset = 0
+		segmentReq.Cursor = cursor
 		segmentReq.TotalCount = totalCount
 		segmentReq.SnapshotID = snapshot.SnapshotID
 		segmentReq.Head = snapshot.Head
@@ -431,9 +429,11 @@ func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (
 		}
 		totalBytes += segment.ByteCount
 		segments = append(segments, segment)
+		offset += len(records)
 		if scan.NextCursor == "" {
 			break
 		}
+		cursor = scan.NextCursor
 	}
 
 	manifest := &ManifestResponse{
