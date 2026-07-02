@@ -113,6 +113,12 @@ export type {
   EciesRecipient,
   EciesRecipientEnvelope,
 } from './ecies';
+export { ChannelKeys } from './channel-keys';
+export type {
+  ChannelMember,
+  ChannelMemberEnvelope,
+  ChannelKeysOptions,
+} from './channel-keys';
 export { secp256k1ECDH, secp256k1PublicKey } from './crypto/hd-wallet';
 export {
   buildSignedPnm,
