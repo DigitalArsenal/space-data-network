@@ -807,133 +807,6 @@
     }
 
     /* ============================================
-       CONTENT PINNING
-       ============================================ */
-    .content-hash-demo {
-      background: var(--ui-bg);
-      border: 1px solid var(--ui-border);
-      border-radius: var(--radius);
-      padding: 40px;
-      margin-bottom: 40px;
-    }
-
-    .hash-explainer {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 16px;
-      flex-wrap: wrap;
-    }
-
-    .hash-step {
-      display: flex;
-      align-items: flex-start;
-      gap: 12px;
-      max-width: 280px;
-    }
-
-    .hash-step-num {
-      width: 28px;
-      height: 28px;
-      background: rgba(255, 255, 255, 0.1);
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 14px;
-      font-weight: 600;
-      flex-shrink: 0;
-    }
-
-    .hash-step-content h4 {
-      font-size: 15px;
-      font-weight: 600;
-      margin-bottom: 4px;
-    }
-
-    .hash-step-content p {
-      font-size: 13px;
-      color: var(--text-muted);
-      margin-bottom: 8px;
-    }
-
-    .hash-example-data code,
-    .hash-example-cid code {
-      font-family: var(--font-mono);
-      font-size: 10px;
-      background: rgba(0, 0, 0, 0.4);
-      padding: 8px;
-      border-radius: 6px;
-      display: block;
-      word-break: break-all;
-      color: #17ead9;
-    }
-
-    .hash-example-nodes {
-      display: flex;
-      gap: 8px;
-    }
-
-    .pin-node {
-      width: 20px;
-      height: 20px;
-      background: linear-gradient(135deg, #17ead9, #6078ea);
-      border-radius: 4px;
-    }
-
-    .hash-arrow {
-      flex-shrink: 0;
-    }
-
-    .hash-arrow svg {
-      width: 24px;
-      height: 24px;
-      color: var(--text-muted);
-    }
-
-    .pinning-features {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 20px;
-    }
-
-    .pinning-card {
-      background: var(--ui-bg);
-      border: 1px solid var(--ui-border);
-      border-radius: var(--radius);
-      padding: 24px;
-      text-align: center;
-    }
-
-    .pinning-icon {
-      width: 48px;
-      height: 48px;
-      margin: 0 auto 16px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: rgba(255, 255, 255, 0.08);
-      border-radius: 12px;
-    }
-
-    .pinning-icon svg {
-      width: 24px;
-      height: 24px;
-    }
-
-    .pinning-card h4 {
-      font-size: 16px;
-      font-weight: 600;
-      margin-bottom: 8px;
-    }
-
-    .pinning-card p {
-      font-size: 13px;
-      color: var(--text-muted);
-      line-height: 1.5;
-    }
-
-    /* ============================================
        MARKETPLACE
        ============================================ */
     .marketplace-flow {
@@ -1038,24 +911,12 @@
     }
 
     @media (max-width: 1068px) {
-      .pinning-features {
-        grid-template-columns: repeat(2, 1fr);
-      }
       .marketplace-features {
         grid-template-columns: 1fr;
       }
     }
 
     @media (max-width: 734px) {
-      .hash-explainer {
-        flex-direction: column;
-      }
-      .hash-arrow svg {
-        transform: rotate(90deg);
-      }
-      .pinning-features {
-        grid-template-columns: 1fr;
-      }
       .marketplace-flow {
         flex-direction: column;
       }
@@ -1152,52 +1013,6 @@
       font-weight: 600;
       text-align: center;
       margin-top: 56px;
-    }
-
-    /* No Central Authority Section */
-    .no-authority-section {
-      text-align: center;
-    }
-
-    .decentralized-features {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 24px;
-      margin-top: 48px;
-    }
-
-    .decentralized-item {
-      text-align: center;
-      padding: 24px 16px;
-    }
-
-    .decentralized-icon {
-      width: 56px;
-      height: 56px;
-      margin: 0 auto 16px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: rgba(255, 255, 255, 0.08);
-      border-radius: 16px;
-    }
-
-    .decentralized-icon svg {
-      width: 28px;
-      height: 28px;
-      color: var(--text-primary);
-    }
-
-    .decentralized-item h4 {
-      font-size: 17px;
-      font-weight: 600;
-      margin-bottom: 8px;
-    }
-
-    .decentralized-item p {
-      font-size: 14px;
-      color: var(--text-muted);
-      line-height: 1.5;
     }
 
     /* ============================================
@@ -2408,7 +2223,6 @@
       .stats-grid { grid-template-columns: repeat(2, 1fr); }
       .vision-grid { grid-template-columns: 1fr; gap: 8px; }
       .docs-grid { grid-template-columns: 1fr; }
-      .decentralized-features { grid-template-columns: repeat(2, 1fr); }
 
       .hero-actions { flex-direction: column; align-items: center; }
       .btn { width: 100%; max-width: 300px; }
@@ -2433,7 +2247,6 @@
       .logo svg { width: 28px; height: 28px; }
 
       .he-stats-row { flex-direction: column !important; align-items: center !important; gap: 16px !important; }
-      .decentralized-features { grid-template-columns: 1fr !important; }
     }
 
     /* ============================================
@@ -3025,7 +2838,7 @@
       <div class="nav-links">
         <a href="#features">Features</a>
         <a href="#network-architecture">Architecture</a>
-        <a href="#encrypted-ca">HE Encryption</a>
+        <a href="data-providers.html">Providers</a>
         <a href="#security">Security</a>
         <a href="#docs">Docs</a>
         <a href="#downloads">Downloads</a>
@@ -3061,7 +2874,7 @@
   <div class="mobile-menu" id="mobileMenu">
     <a href="#features">Features</a>
     <a href="#network-architecture">Architecture</a>
-    <a href="#encrypted-ca">HE Encryption</a>
+    <a href="data-providers.html">Providers</a>
     <a href="#security">Security</a>
     <a href="#docs">Documentation</a>
     <a href="#downloads">Downloads</a>
@@ -3607,106 +3420,6 @@
           <code>./spacedatanetwork daemon --relay-enabled --announce-public</code>
         </div>
         <p class="run-node-note">Requires: Public IP address, open ports (4001 TCP/UDP, 8080 HTTP)</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- Content Pinning Section -->
-  <section id="content-pinning">
-    <div class="container">
-      <div class="section-header">
-        <h2 class="section-title">Content Addressing & Pinning</h2>
-        <p class="section-subtitle">Immutable data with cryptographic integrity</p>
-      </div>
-
-      <div class="content-hash-demo">
-        <div class="hash-explainer">
-          <div class="hash-step">
-            <div class="hash-step-num">1</div>
-            <div class="hash-step-content">
-              <h4>Data Input</h4>
-              <p>Any SDS schema data</p>
-              <div class="hash-example-data">
-                <code>{ "OBJECT_NAME": "ISS", "EPOCH": "2025-01-24T12:00:00Z", ... }</code>
-              </div>
-            </div>
-          </div>
-          <div class="hash-arrow">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M5 12h14M12 5l7 7-7 7"/>
-            </svg>
-          </div>
-          <div class="hash-step">
-            <div class="hash-step-num">2</div>
-            <div class="hash-step-content">
-              <h4>Content Hash (CID)</h4>
-              <p>SHA-256 hash of the content</p>
-              <div class="hash-example-cid">
-                <code>bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi</code>
-              </div>
-            </div>
-          </div>
-          <div class="hash-arrow">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M5 12h14M12 5l7 7-7 7"/>
-            </svg>
-          </div>
-          <div class="hash-step">
-            <div class="hash-step-num">3</div>
-            <div class="hash-step-content">
-              <h4>Distributed Storage</h4>
-              <p>Pinned across network nodes</p>
-              <div class="hash-example-nodes">
-                <span class="pin-node"></span>
-                <span class="pin-node"></span>
-                <span class="pin-node"></span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="pinning-features">
-        <div class="pinning-card">
-          <div class="pinning-icon icon-cyan">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              <path d="M9 12l2 2 4-4"/>
-            </svg>
-          </div>
-          <h4>Tamper-Proof</h4>
-          <p>Content hash changes if data is modified. Any alteration is immediately detectable.</p>
-        </div>
-        <div class="pinning-card">
-          <div class="pinning-icon icon-green">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"/>
-              <path d="M12 6v6l4 2"/>
-            </svg>
-          </div>
-          <h4>Permanent References</h4>
-          <p>CIDs never change. Reference specific data versions forever, even as new versions are published.</p>
-        </div>
-        <div class="pinning-card">
-          <div class="pinning-icon icon-purple">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-            </svg>
-          </div>
-          <h4>Deduplication</h4>
-          <p>Same data = same hash. Network automatically deduplicates, saving storage and bandwidth.</p>
-        </div>
-        <div class="pinning-card">
-          <div class="pinning-icon icon-orange">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
-              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
-              <line x1="1" y1="1" x2="23" y2="23"/>
-            </svg>
-          </div>
-          <h4>Selective Pinning</h4>
-          <p>Choose what to store locally. Pin critical data for availability, let other data flow through.</p>
-        </div>
       </div>
     </div>
   </section>
@@ -4460,65 +4173,6 @@
     </div>
   </section>
 
-  <!-- No Central Authority Section -->
-  <section id="decentralized">
-    <div class="container">
-      <div class="no-authority-section">
-        <h2 class="section-title">No Central Authority</h2>
-        <p class="section-subtitle">No single point of failure. Just open collaboration.</p>
-        <div class="decentralized-features">
-          <div class="decentralized-item">
-            <div class="decentralized-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="3"/>
-                <circle cx="4" cy="4" r="2"/>
-                <circle cx="20" cy="4" r="2"/>
-                <circle cx="4" cy="20" r="2"/>
-                <circle cx="20" cy="20" r="2"/>
-                <line x1="12" y1="9" x2="12" y2="6"/>
-                <line x1="12" y1="15" x2="12" y2="18"/>
-                <line x1="9" y1="12" x2="6" y2="12"/>
-                <line x1="15" y1="12" x2="18" y2="12"/>
-              </svg>
-            </div>
-            <h4>Peer-to-Peer</h4>
-            <p>Direct connections between participants. No middleman controlling data flow.</p>
-          </div>
-          <div class="decentralized-item">
-            <div class="decentralized-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                <path d="M9 12l2 2 4-4"/>
-              </svg>
-            </div>
-            <h4>Censorship Resistant</h4>
-            <p>Critical safety data cannot be blocked or removed by any single entity.</p>
-          </div>
-          <div class="decentralized-item">
-            <div class="decentralized-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
-                <polyline points="17 6 23 6 23 12"/>
-              </svg>
-            </div>
-            <h4>Always Available</h4>
-            <p>Network routes around failures. No downtime from server outages.</p>
-          </div>
-          <div class="decentralized-item">
-            <div class="decentralized-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="11" width="18" height="11" rx="2"/>
-                <path d="M7 11V7a5 5 0 0 1 9.9-1"/>
-              </svg>
-            </div>
-            <h4>Verifiable</h4>
-            <p>Cryptographic signatures prove data origin. Trust math, not institutions.</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
   <!-- Security & Cryptography Section -->
   <section id="security">
     <div class="container">
@@ -5074,6 +4728,17 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
       </div>
 
       <div class="docs-grid">
+        <a href="data-providers.html" class="doc-card">
+          <h3>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+              <path d="M2 17l10 5 10-5"/>
+              <path d="M2 12l10 5 10-5"/>
+            </svg>
+            Data Provider Onboarding
+          </h3>
+          <p>Publish your data to the network in four steps</p>
+        </a>
         <a href="docs.html#overview" class="doc-card">
           <h3>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -5342,6 +5007,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
                 <li style="margin-bottom: 8px;"><strong>Request New Schemas</strong> - If your data doesn't fit existing schemas, <a href="https://github.com/DigitalArsenal/spacedatastandards.org/issues" target="_blank" style="color: var(--text-primary);">open an issue on the SDS repository</a> to propose additions.</li>
               </ul>
               <p style="margin-top: 12px;">SDS FlatBuffers are <strong>always backwards compatible</strong> by design - new fields can be added without breaking existing parsers. See the <a href="https://digitalarsenal.github.io/flatbuffers/flatbuffers_guide_writing_schema.html" target="_blank" style="color: var(--text-primary);">FlatBuffers schema evolution documentation</a> for details. The network software automatically updates when new SDS versions are released.</p>
+              <p style="margin-top: 12px;">Step-by-step instructions: <a href="data-providers.html" style="color: var(--text-primary);">Data Provider Onboarding Guide</a>.</p>
             </div>
           </div>
         </div>
@@ -5592,6 +5258,7 @@ npm install</code></pre>
           </svg>
           View on GitHub
         </a>
+        <a href="data-providers.html" class="btn btn-secondary">Become a Data Provider</a>
         <a href="docs.html" class="btn btn-secondary">Read Documentation</a>
       </div>
     </div>
@@ -5601,6 +5268,7 @@ npm install</code></pre>
   <footer>
     <div class="footer-content">
       <div class="footer-links">
+        <a href="data-providers.html">Data Provider Onboarding</a>
         <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank">GitHub</a>
         <a href="https://github.com/DigitalArsenal/space-data-network/tree/main/sdn-js" target="_blank">SDN JS Source</a>
         <a href="https://spacedatastandards.org" target="_blank">Space Data Standards</a>
