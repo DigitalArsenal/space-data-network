@@ -246,3 +246,107 @@ func TestCrossTableRoutedQueries(t *testing.T) {
 		t.Errorf("CAT across producers = %d, want 0", len(none))
 	}
 }
+
+// WS7.3 phased write flip: the legacy Store path dual-writes the metadata row
+// into the producer's (producer, standard) table.
+func TestStoreDualWritesRoutedTable(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	data := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build()
+	cid, err := store.Store("OMM.fbs", data, "peerA", nil)
+	if err != nil {
+		t.Fatalf("Store() error = %v", err)
+	}
+
+	// Legacy reader still sees it.
+	if got, err := store.Get("OMM.fbs", cid); err != nil || len(got) == 0 {
+		t.Fatalf("legacy Get() = (%d bytes, %v)", len(got), err)
+	}
+
+	// Producer-scoped routed queries see the same record.
+	routed, err := store.QueryRoutedByProducer("peerA", 10)
+	if err != nil {
+		t.Fatalf("QueryRoutedByProducer() error = %v", err)
+	}
+	if len(routed) != 1 || routed[0].CID != cid || routed[0].Standard != "OMM" {
+		t.Fatalf("routed = %+v, want 1 record with cid %s", routed, cid)
+	}
+
+	// A repeat CID from ANOTHER producer dedupes in the legacy table but still
+	// lands a row in the second producer's table.
+	if _, err := store.Store("OMM.fbs", data, "peerB", nil); err != nil {
+		t.Fatalf("Store() repeat from peerB error = %v", err)
+	}
+	routedB, err := store.QueryRoutedByProducer("peerB", 10)
+	if err != nil {
+		t.Fatalf("QueryRoutedByProducer(peerB) error = %v", err)
+	}
+	if len(routedB) != 1 || routedB[0].CID != cid {
+		t.Fatalf("routedB = %+v, want the deduped cid %s", routedB, cid)
+	}
+
+	// Empty producer identity: legacy write succeeds, no routed row appears.
+	anon := sds.NewOMMBuilder().WithNoradCatID(43013).WithObjectName("ANON").Build()
+	if _, err := store.Store("OMM.fbs", anon, "", nil); err != nil {
+		t.Fatalf("Store() with empty peer error = %v", err)
+	}
+	all, err := store.QueryRoutedAll(50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("QueryRoutedAll = %d records, want 2 (peerA + peerB only)", len(all))
+	}
+}
+
+func TestStoreBatchDualWritesRoutedTable(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	batch := [][]byte{
+		sds.NewOMMBuilder().WithNoradCatID(1).WithObjectName("A").Build(),
+		sds.NewOMMBuilder().WithNoradCatID(2).WithObjectName("B").Build(),
+	}
+	inserted, err := store.StoreBatch("OMM.fbs", batch, "peerBatch", nil)
+	if err != nil {
+		t.Fatalf("StoreBatch() error = %v", err)
+	}
+	if inserted != 2 {
+		t.Fatalf("inserted = %d, want 2", inserted)
+	}
+	routed, err := store.QueryRoutedByProducer("peerBatch", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routed) != 2 {
+		t.Fatalf("routed rows = %d, want 2", len(routed))
+	}
+
+	// Re-storing the same batch dedupes in the legacy table and leaves the
+	// routed table unchanged (INSERT OR IGNORE on repeat CIDs).
+	if _, err := store.StoreBatch("OMM.fbs", batch, "peerBatch", nil); err != nil {
+		t.Fatalf("repeat StoreBatch() error = %v", err)
+	}
+	routedAgain, err := store.QueryRoutedByProducer("peerBatch", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routedAgain) != 2 {
+		t.Fatalf("routed rows after repeat = %d, want 2", len(routedAgain))
+	}
+}

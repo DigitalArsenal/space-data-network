@@ -13,6 +13,13 @@ import (
 
 var producerStandardIdentRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
+// sqlQueryExecer is satisfied by *sql.DB and *sql.Tx — the routed mirror runs
+// inside either the plain write path or a batch transaction.
+type sqlQueryExecer interface {
+	sqlExecer
+	QueryRow(query string, args ...any) *sql.Row
+}
+
 func isSafeIdentifier(s string) bool { return producerStandardIdentRe.MatchString(s) }
 
 // sanitizeProducerID maps a producer identity (libp2p peer ID or hex public key)
@@ -78,6 +85,54 @@ func (s *FlatSQLStore) ensureProducerStandardTable(producerID, schemaName string
 		}
 	}
 	return tableName, nil
+}
+
+// mirrorRoutedRecord writes the (producer, standard) metadata row for a record
+// whose payload already lives in the shared FlatSQL stream — the phased WS7.3
+// write flip: every legacy write also lands in the producer's own table, so
+// producer-scoped queries (QueryRouted*) see all new data while the hydrated
+// readers keep using the legacy per-standard tables until they migrate.
+//
+// Best-effort by design: a routed-mirror failure must never fail the primary
+// write. Records with no producer identity (empty peerID) are skipped — those
+// call sites gain identities in the reader-flip phase. Callers hold s.mu.
+func (s *FlatSQLStore) mirrorRoutedRecord(exec sqlExecer, schemaName, cid, peerID string, timestamp int64, streamPath string, streamOffset, recordLength int64, signature []byte) {
+	if strings.TrimSpace(peerID) == "" {
+		return
+	}
+	tableName, err := s.ensureProducerStandardTable(peerID, schemaName)
+	if err != nil {
+		log.Warnf("Routed mirror: ensure (producer, standard) table for %s/%s: %v", peerID, schemaName, err)
+		return
+	}
+	if err := insertSchemaMetadata(exec, tableName, cid, peerID, timestamp, streamPath, streamOffset, recordLength, signature, timestamp); err != nil {
+		log.Warnf("Routed mirror: insert into %s for %s: %v", tableName, cid[:16]+"...", err)
+	}
+}
+
+// mirrorRoutedRecordFromExisting mirrors a record that deduplicated against an
+// existing legacy row (repeat CID, possibly from a different producer): the
+// stream coordinates are read from the legacy table so the producer's table
+// still records that this producer published the content. Callers hold s.mu.
+func (s *FlatSQLStore) mirrorRoutedRecordFromExisting(exec sqlQueryExecer, legacyTable, schemaName, cid, peerID string, signature []byte) {
+	if strings.TrimSpace(peerID) == "" {
+		return
+	}
+	var (
+		timestamp    int64
+		streamPath   string
+		streamOffset int64
+		recordLength int64
+	)
+	err := exec.QueryRow(
+		fmt.Sprintf(`SELECT timestamp, stream_path, stream_offset, record_length FROM %s WHERE cid = ?`, legacyTable),
+		cid,
+	).Scan(&timestamp, &streamPath, &streamOffset, &recordLength)
+	if err != nil {
+		log.Warnf("Routed mirror: read existing %s record %s: %v", legacyTable, cid[:16]+"...", err)
+		return
+	}
+	s.mirrorRoutedRecord(exec, schemaName, cid, peerID, timestamp, streamPath, streamOffset, recordLength, signature)
 }
 
 // StoreRoutedByProducer stores a record into the (producer, standard) table for
