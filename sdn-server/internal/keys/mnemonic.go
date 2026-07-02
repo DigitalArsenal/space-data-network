@@ -101,14 +101,33 @@ func IsMnemonicEncrypted(data []byte) bool {
 	return false
 }
 
-// DeriveDefaultPassword derives a deterministic password from machine
-// attributes using Argon2id.  This allows the server to start unattended
-// without a password in the config.  The password is tied to the machine's
-// hostname, CPU architecture, and OS — the same approach used in main_old.
+// machineKeySalt is the fixed Argon2id salt for the hardware-derived password.
+// It is a domain-separation constant, not a secret; the per-file random salt in
+// EncryptMnemonic provides the actual cryptographic salting.
+var machineKeySalt = []byte("sdn-mnemonic-machine-key/v2")
+
+// DeriveDefaultPassword derives a deterministic password from STABLE hardware
+// attributes (machine-id, total RAM, CPU model, CPU count, arch, OS) using
+// Argon2id, so the server can start unattended without a stored password.
 //
-// This is NOT a substitute for a strong explicit password; it merely
-// prevents trivial offline reads of the mnemonic file.
+// The hostname is deliberately excluded — see hardwareFingerprint. Renaming the
+// host must not change this key (that would lock the node out of its own
+// encrypted mnemonic); hostname changes are surfaced separately via
+// CheckAndUpdateHostnameCanary.
+//
+// This is NOT a substitute for a strong explicit password (SDN_KEY_PASSWORD);
+// it merely prevents trivial offline reads of the mnemonic file if the disk is
+// copied off the machine.
 func DeriveDefaultPassword() string {
+	derived := argon2.IDKey([]byte(hardwareFingerprint()), machineKeySalt, 1, 64*1024, 4, 32)
+	return string(derived)
+}
+
+// DeriveLegacyPassword reproduces the pre-v2 hostname-based derivation. It is
+// retained only so nodes whose mnemonic was encrypted under the old scheme can
+// be transparently migrated to the hardware-derived key on first start after
+// upgrade (decrypt with legacy → re-encrypt with DeriveDefaultPassword).
+func DeriveLegacyPassword() string {
 	hostname, _ := os.Hostname()
 	homeDir, _ := os.UserHomeDir()
 	input := fmt.Sprintf("%s:%s:%s", hostname, runtime.GOARCH, runtime.GOOS)

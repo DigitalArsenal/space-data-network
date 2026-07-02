@@ -7,6 +7,13 @@
 *.key
 *.p12
 *.pfx
+# Wallet / mnemonic material must never be committed (see scripts/oss-preflight.sh).
+# Commit a *.example template with placeholders instead.
+*wallet.env
+*-wallet.env
+config/dev-wallet.env
+*.mnemonic
+!*.example
 secrets/
 credentials/
 **/secrets/**

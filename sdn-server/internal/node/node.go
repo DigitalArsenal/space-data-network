@@ -822,6 +822,13 @@ func (n *Node) resolveKeyPassword() string {
 	return keys.DeriveDefaultPassword()
 }
 
+// usingDerivedKeyPassword reports whether the mnemonic key password comes from
+// the machine-derived default (no explicit SDN_KEY_PASSWORD / config password).
+// Legacy-key migration is only attempted in that case.
+func (n *Node) usingDerivedKeyPassword() bool {
+	return os.Getenv("SDN_KEY_PASSWORD") == "" && n.config.Security.KeyPassword == ""
+}
+
 func (n *Node) generateRandomKey(keyDir, keyPath string) (crypto.PrivKey, error) {
 	privKey, _, err := crypto.GenerateSecp256k1Key(rand.Reader)
 	if err != nil {
