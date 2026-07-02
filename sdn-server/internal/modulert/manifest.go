@@ -142,7 +142,20 @@ func ReadManifest(mod *wasmrt.Module) (*Manifest, error) {
 // parseManifestFlatBuffer parses either the current SDS PLG FlatBuffer
 // (file_identifier "$PLG") or the older internal PluginManifest FlatBuffer
 // (file_identifier "PMAN").
-func parseManifestFlatBuffer(buf []byte) (*Manifest, error) {
+//
+// The generated FlatBuffer accessors index into the buffer without bounds
+// checks, so a manifest encoded against an incompatible schema layout (e.g. a
+// module built against an older spacedatastandards PLG vtable) can make them
+// read a bogus offset and panic. A single malformed module manifest must never
+// take down the whole node, so recover any such panic and surface it as an
+// error the caller can log and skip.
+func parseManifestFlatBuffer(buf []byte) (m *Manifest, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			m = nil
+			err = fmt.Errorf("malformed manifest flatbuffer (incompatible schema layout?): %v", r)
+		}
+	}()
 	if len(buf) < 8 {
 		return nil, errors.New("manifest too small")
 	}
@@ -154,7 +167,7 @@ func parseManifestFlatBuffer(buf []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("unexpected file identifier: %q", identifier)
 	}
 
-	m := &Manifest{}
+	m = &Manifest{}
 
 	root := readUint32(buf, 0)
 	vtOff := root - readUint32(buf, int(root))
