@@ -102,6 +102,14 @@ export type {
 export type { NodeRecordStorage } from './node';
 export { createModuleHostCapabilityAdapters } from './module-host-adapters';
 export {
+  eciesWrap,
+  eciesUnwrap,
+  EciesKeyExchange,
+  DEFAULT_GRANT_CONTEXT,
+} from './ecies';
+export type { EciesWrapResult } from './ecies';
+export { secp256k1ECDH, secp256k1PublicKey } from './crypto/hd-wallet';
+export {
   buildSignedPnm,
   verifySignedPnm,
   publishSignedPnm,
