@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	enc "github.com/DigitalArsenal/spacedatastandards.org/lib/go/ENC"
 	secp256k1 "github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"golang.org/x/crypto/curve25519"
 )
@@ -73,6 +74,86 @@ func TestWrapUnwrapRoundTrip(t *testing.T) {
 				t.Fatal("unwrap with the wrong key recovered the content key")
 			}
 		})
+	}
+}
+
+// TestWrapForRecipients pins the one-to-many primitive: one content key wrapped
+// independently for a mixed-curve recipient set; every recipient recovers the
+// SAME content key from its own envelope, envelopes are per-recipient distinct,
+// each is addressable by RECIPIENT_KEY_ID, and no recipient can open another's.
+func TestWrapForRecipients(t *testing.T) {
+	contentKey := make([]byte, 32)
+	for i := range contentKey {
+		contentKey[i] = byte(0xA0 + i)
+	}
+	const ctx = "space-data-network/storefront/one-to-many/v1"
+
+	type party struct {
+		priv, pub []byte
+		kx        KeyExchange
+		keyID     []byte
+	}
+	xa1, xb1 := x25519Keypair(t)
+	xa2, xb2 := x25519Keypair(t)
+	sa1, sb1 := secp256k1Keypair(t)
+	sa2, sb2 := secp256k1Keypair(t)
+	parties := []party{
+		{xa1, xb1, X25519, []byte("buyer-x-1")},
+		{sa1, sb1, Secp256k1, []byte("buyer-s-1")},
+		{xa2, xb2, X25519, []byte("buyer-x-2")},
+		{sa2, sb2, Secp256k1, []byte("buyer-s-2")},
+	}
+
+	recipients := make([]Recipient, len(parties))
+	for i, p := range parties {
+		recipients[i] = Recipient{PublicKey: p.pub, KeyExchange: p.kx, KeyID: p.keyID}
+	}
+	envs, err := WrapForRecipients(contentKey, recipients, ctx)
+	if err != nil {
+		t.Fatalf("WrapForRecipients: %v", err)
+	}
+	if len(envs) != len(parties) {
+		t.Fatalf("got %d envelopes, want %d", len(envs), len(parties))
+	}
+
+	for i, p := range parties {
+		env := envs[i]
+		if !bytes.Equal(env.KeyID, p.keyID) {
+			t.Fatalf("recipient %d: envelope KeyID = %q want %q", i, env.KeyID, p.keyID)
+		}
+		hdr := enc.GetRootAsENC(env.ENC, 0)
+		if !bytes.Equal(hdr.RECIPIENT_KEY_IDBytes(), p.keyID) {
+			t.Fatalf("recipient %d: ENC RECIPIENT_KEY_ID not stamped", i)
+		}
+		got, err := Unwrap(p.priv, env.ENC, env.KMF, ctx)
+		if err != nil {
+			t.Fatalf("recipient %d Unwrap: %v", i, err)
+		}
+		if !bytes.Equal(got, contentKey) {
+			t.Fatalf("recipient %d: recovered key mismatch", i)
+		}
+		// Fresh ephemeral per recipient → wrapped bytes must differ.
+		for j := range parties {
+			if j != i && bytes.Equal(env.KMF, envs[j].KMF) {
+				t.Fatalf("recipients %d and %d share identical wrapped bytes", i, j)
+			}
+		}
+	}
+
+	// Cross-recipient isolation (same curve, valid ECDH, wrong key).
+	if bad, err := Unwrap(parties[0].priv, envs[2].ENC, envs[2].KMF, ctx); err == nil && bytes.Equal(bad, contentKey) {
+		t.Fatal("a recipient recovered another recipient's content key")
+	}
+
+	// Guardrails.
+	if _, err := WrapForRecipients(contentKey, nil, ctx); err == nil {
+		t.Fatal("expected error for empty recipient set")
+	}
+	if _, err := WrapForRecipients(contentKey[:16], recipients, ctx); err == nil {
+		t.Fatal("expected error for short content key")
+	}
+	if _, err := WrapForRecipients(contentKey, []Recipient{{KeyExchange: X25519}}, ctx); err == nil {
+		t.Fatal("expected error for recipient with no public key")
 	}
 }
 
