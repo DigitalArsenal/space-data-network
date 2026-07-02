@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
 const (
@@ -338,7 +337,7 @@ func (s *FlatSQLStore) queryEpochIndexedRecords(query EpochRecordQuery) ([]*Reco
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tableName, err := sds.SchemaNameToTable(query.SchemaName)
+	tableName, err := s.recordReadSource(query.SchemaName)
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}
@@ -390,7 +389,7 @@ func (s *FlatSQLStore) queryPointEpochRecords(query EpochRecordQuery) ([]EpochRe
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tableName, err := sds.SchemaNameToTable(query.SchemaName)
+	tableName, err := s.recordReadSource(query.SchemaName)
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}
