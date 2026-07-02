@@ -134,31 +134,17 @@
     .steps-overview a:nth-child(5):hover { border-color: var(--accent-indigo); color: var(--accent-indigo); }
     section.step { padding: 34px 0; scroll-margin-top: 80px; }
     .step-card {
-      --cut: 18px;
-      --chamfer: polygon(var(--cut) 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, var(--cut) 100%, 0 calc(100% - var(--cut)), 0 var(--cut));
       position: relative;
       padding: 34px;
-      clip-path: var(--chamfer);
-    }
-    .step-card::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      clip-path: var(--chamfer);
-      background: linear-gradient(180deg, rgba(var(--step-tint, 134, 134, 139), 0.55) 0%, rgba(var(--step-tint, 134, 134, 139), 0.14) 55%, rgba(255, 255, 255, 0.10) 100%);
-    }
-    .step-card::after {
-      content: '';
-      position: absolute;
-      inset: 1.5px;
-      clip-path: var(--chamfer);
+      border-radius: 22px;
+      border: 1px solid rgba(255, 255, 255, 0.10);
       background:
-        linear-gradient(180deg, rgba(var(--step-tint, 134, 134, 139), 0.14) 0%, rgba(0, 0, 0, 0) 55%),
-        linear-gradient(180deg, rgba(9, 13, 21, 0.86) 0%, rgba(9, 13, 21, 0.64) 100%);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
+        linear-gradient(180deg, rgba(var(--step-tint, 134, 134, 139), 0.05) 0%, rgba(0, 0, 0, 0) 55%),
+        rgba(14, 16, 22, 0.55);
+      backdrop-filter: blur(34px) saturate(170%);
+      -webkit-backdrop-filter: blur(34px) saturate(170%);
+      box-shadow: 0 14px 44px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.06);
     }
-    .step-card > * { position: relative; z-index: 1; }
     #step-start {
       --step-accent: var(--accent-cyan); --step-accent-dark: #0a6f68;
       --step-tint: 23, 234, 217;
@@ -197,7 +183,8 @@
       margin: 0 0 0 -32px;
       padding: 6px 30px 6px 50px;
       color: var(--text-primary);
-      background: linear-gradient(180deg, rgba(var(--step-tint, 134, 134, 139), 0.34) 0%, rgba(var(--step-tint, 134, 134, 139), 0.12) 60%, rgba(9, 13, 21, 0.45) 100%);
+      background: linear-gradient(180deg, rgba(var(--step-tint, 134, 134, 139), 0.16) 0%, rgba(var(--step-tint, 134, 134, 139), 0.06) 60%, rgba(9, 13, 21, 0.5) 100%);
+      border-radius: 0 12px 12px 0;
       line-height: 1.2;
       align-self: center;
     }
@@ -286,10 +273,10 @@
       border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     }
     details.tech {
-      border: 1px solid var(--ui-border);
-      border-radius: var(--radius-sm);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
       margin: 14px 0;
-      background: rgba(0, 0, 0, 0.35);
+      background: rgba(0, 0, 0, 0.3);
     }
     details.tech summary {
       display: flex;
@@ -384,14 +371,16 @@
         linear-gradient(var(--acc), var(--acc)) bottom 8px left 8px / 2px 26px no-repeat,
         linear-gradient(var(--acc), var(--acc)) bottom 8px right 8px / 26px 2px no-repeat,
         linear-gradient(var(--acc), var(--acc)) bottom 8px right 8px / 2px 26px no-repeat,
-        linear-gradient(180deg, rgba(18, 22, 32, 0.92) 0%, rgba(8, 10, 16, 0.92) 100%);
-      border: 1px solid var(--ui-border);
+        linear-gradient(180deg, rgba(16, 19, 27, 0.72) 0%, rgba(8, 10, 16, 0.72) 100%);
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      border-radius: 16px;
+      backdrop-filter: blur(24px) saturate(160%);
+      -webkit-backdrop-filter: blur(24px) saturate(160%);
     }
     .qr-plate {
-      --plate-cut: 8px;
       background: #fff;
       padding: 12px;
-      clip-path: polygon(var(--plate-cut) 0, calc(100% - var(--plate-cut)) 0, 100% var(--plate-cut), 100% calc(100% - var(--plate-cut)), calc(100% - var(--plate-cut)) 100%, var(--plate-cut) 100%, 0 calc(100% - var(--plate-cut)), 0 var(--plate-cut));
+      border-radius: 12px;
     }
     .qr-plate img { display: block; width: 168px; height: 168px; }
     .qr-caption {
@@ -459,7 +448,7 @@
       color: var(--text-secondary);
       font-size: 13px;
       text-decoration: none;
-      clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+      border-radius: 10px;
       transition: color 0.15s ease, background 0.15s ease;
     }
     .contact-bar a:hover { color: var(--accent-cyan); background: rgba(23, 234, 217, 0.08); }
@@ -475,7 +464,7 @@
     footer a { color: var(--text-secondary); text-decoration: none; margin: 0 10px; }
     footer a:hover { color: var(--text-primary); }
     @media (max-width: 734px) {
-      .step-card { padding: 24px 18px; --cut: 12px; }
+      .step-card { padding: 24px 18px; border-radius: 18px; }
       .step-card .step-head h2 { font-size: 22px; padding: 5px 20px 5px 44px; }
       header.page-head { padding: 56px 0 20px; }
       .identity-figure { grid-template-columns: 1fr; }
