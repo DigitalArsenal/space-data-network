@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeAll } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-import { ChannelKeys } from './channel-keys';
+import {
+  ChannelKeys,
+  encryptChannelMessage,
+  decryptChannelMessage,
+  channelChatTopic,
+} from './channel-keys';
 import { EciesKeyExchange } from './ecies';
 import {
   initHDWallet,
@@ -94,6 +101,78 @@ describe('ChannelKeys — group-chat key management', () => {
     expect(toHex(bobOld)).not.toBe(after);
 
     expect(() => ch.removeMember('bob')).toThrow();
+  });
+
+  it('encrypts/decrypts channel messages (GCM + sender signature)', async () => {
+    const ch = await ChannelKeys.create('chat-room-msg');
+    const key = ch.getContentKey();
+    const senderSeed = hex('77'.repeat(32));
+    const plaintext = new TextEncoder().encode('hello channel — привет 🚀');
+
+    const env = await encryptChannelMessage(key, senderSeed, ch.context, ch.epoch, plaintext, {
+      timestampMs: 1_750_000_000_000,
+    });
+    // Envelope must not leak plaintext.
+    expect(toHex(env)).not.toContain(toHex(plaintext));
+
+    const msg = await decryptChannelMessage(key, env, ch.context);
+    expect(toHex(msg.plaintext)).toBe(toHex(plaintext));
+    expect(msg.epoch).toBe(ch.epoch);
+    expect(msg.timestampMs).toBe(1_750_000_000_000);
+
+    // Wrong key fails; tampered ciphertext fails; tampered signature fails.
+    await expect(decryptChannelMessage(new Uint8Array(32), env, ch.context)).rejects.toThrow();
+    const tampered = env.slice();
+    tampered[tampered.length - 1] ^= 1;
+    await expect(decryptChannelMessage(key, tampered, ch.context)).rejects.toThrow();
+    const encLen = new DataView(env.buffer, env.byteOffset).getUint32(0, true);
+    const badSig = env.slice();
+    badSig[4 + encLen] ^= 1;
+    await expect(decryptChannelMessage(key, badSig, ch.context)).rejects.toThrow();
+    // Context mismatch rejected.
+    await expect(decryptChannelMessage(key, env, 'other-context')).rejects.toThrow();
+  });
+
+  it('matches the Go cross-runtime message vector (decrypt + byte-identical re-encrypt)', async () => {
+    interface MessageVector {
+      contentKeyHex: string;
+      senderSeedHex: string;
+      senderPubHex: string;
+      context: string;
+      epoch: number;
+      nonceHex: string;
+      timestampMs: number;
+      plaintextHex: string;
+      envelopeHex: string;
+      chatTopic: string;
+    }
+    const vectors: MessageVector[] = JSON.parse(
+      readFileSync(
+        fileURLToPath(new URL('./testdata/channel_message_vectors.json', import.meta.url)),
+        'utf8',
+      ),
+    );
+    expect(vectors.length).toBeGreaterThan(0);
+    for (const v of vectors) {
+      // JS decrypts the Go-produced envelope.
+      const msg = await decryptChannelMessage(hex(v.contentKeyHex), hex(v.envelopeHex), v.context);
+      expect(toHex(msg.plaintext)).toBe(v.plaintextHex);
+      expect(msg.epoch).toBe(v.epoch);
+      expect(msg.timestampMs).toBe(v.timestampMs);
+      expect(toHex(msg.senderPublicKey)).toBe(v.senderPubHex);
+      // JS re-encrypts with the same deterministic inputs → byte-identical envelope.
+      const env = await encryptChannelMessage(
+        hex(v.contentKeyHex),
+        hex(v.senderSeedHex),
+        v.context,
+        v.epoch,
+        hex(v.plaintextHex),
+        { nonce: hex(v.nonceHex), timestampMs: v.timestampMs },
+      );
+      expect(toHex(env)).toBe(v.envelopeHex);
+      // Topic naming agrees.
+      expect(channelChatTopic('chat-room-vector')).toBe(v.chatTopic);
+    }
   });
 
   it('guards empty/invalid inputs', async () => {

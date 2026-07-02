@@ -113,11 +113,18 @@ export type {
   EciesRecipient,
   EciesRecipientEnvelope,
 } from './ecies';
-export { ChannelKeys } from './channel-keys';
+export {
+  ChannelKeys,
+  encryptChannelMessage,
+  decryptChannelMessage,
+  channelChatTopic,
+} from './channel-keys';
 export type {
   ChannelMember,
   ChannelMemberEnvelope,
   ChannelKeysOptions,
+  ChannelMessage,
+  EncryptChannelMessageOptions,
 } from './channel-keys';
 export { secp256k1ECDH, secp256k1PublicKey } from './crypto/hd-wallet';
 export {
