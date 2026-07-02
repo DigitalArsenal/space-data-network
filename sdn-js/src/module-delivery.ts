@@ -134,7 +134,7 @@ interface BundleDescriptorPayload {
   moduleVersion?: string;
   keyId?: string;
   requiredScope?: string;
-  allowedDomains: string[];
+  allowedXpubs: string[];
   maxGrantTimeoutMs: number;
   encrypted: boolean;
 }
@@ -616,7 +616,7 @@ function mapBundleDescriptor(descriptor: LicensingGrantModuleDescriptor): Bundle
     moduleVersion: trimOptional(descriptor.moduleVersion),
     keyId: trimOptional(descriptor.keyId),
     requiredScope: trimOptional(descriptor.requiredScope),
-    allowedDomains: descriptor.allowedDomains.slice(),
+    allowedXpubs: descriptor.allowedXpubs.slice(),
     maxGrantTimeoutMs: descriptor.maxGrantTimeoutMs,
     encrypted: descriptor.encrypted,
   };

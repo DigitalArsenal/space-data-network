@@ -34,6 +34,14 @@ export interface LoadDecryptedModuleOptions {
   sharedMemory?: boolean;
   initialMemoryBytes?: number;
   maximumMemoryBytes?: number;
+  /**
+   * BrowserHost capability adapters (ipfs/storage/pubsub/walletSign, e.g.
+   * from createModuleHostCapabilityAdapters) granting the guest module host
+   * capabilities. Forwarded as hostOptions.capabilityAdapters.
+   */
+  capabilityAdapters?: Record<string, unknown>;
+  /** Extra BrowserHost options forwarded verbatim to the harness. */
+  hostOptions?: Record<string, unknown>;
 }
 
 export interface GrantProtectedModuleBundleInput {
@@ -184,11 +192,21 @@ export async function loadDecryptedModule(
     timestamp: Date.now(),
     bytes: wasmBytes.length,
   });
+  const hostOptions =
+    options.capabilityAdapters || options.hostOptions
+      ? {
+          ...options.hostOptions,
+          ...(options.capabilityAdapters
+            ? { capabilityAdapters: options.capabilityAdapters }
+            : {}),
+        }
+      : undefined;
   const harness = await createBrowserModuleHarness({
     wasmSource: wasmBytes,
     sharedMemory: options.sharedMemory,
     initialMemoryBytes: options.initialMemoryBytes,
     maximumMemoryBytes: options.maximumMemoryBytes,
+    ...(hostOptions ? { hostOptions } : {}),
   });
   emit(options.observer, {
     stage: 'sdk-load-complete',
@@ -209,6 +227,8 @@ function normalizeLoadOptions(
     'sharedMemory' in options ||
     'initialMemoryBytes' in options ||
     'maximumMemoryBytes' in options ||
+    'capabilityAdapters' in options ||
+    'hostOptions' in options ||
     'observer' in options
   ) {
     return options;
