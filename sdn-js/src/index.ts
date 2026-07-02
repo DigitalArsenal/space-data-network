@@ -104,10 +104,15 @@ export { createModuleHostCapabilityAdapters } from './module-host-adapters';
 export {
   eciesWrap,
   eciesUnwrap,
+  eciesWrapForRecipients,
   EciesKeyExchange,
   DEFAULT_GRANT_CONTEXT,
 } from './ecies';
-export type { EciesWrapResult } from './ecies';
+export type {
+  EciesWrapResult,
+  EciesRecipient,
+  EciesRecipientEnvelope,
+} from './ecies';
 export { secp256k1ECDH, secp256k1PublicKey } from './crypto/hd-wallet';
 export {
   buildSignedPnm,

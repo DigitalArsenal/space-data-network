@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import {
   eciesWrap,
   eciesUnwrap,
+  eciesWrapForRecipients,
   EciesKeyExchange,
   DEFAULT_GRANT_CONTEXT,
 } from './ecies';
@@ -76,6 +77,52 @@ describe('unified ECIES (cross-runtime with the Go reference)', () => {
       expect(toHex(got)).toBe(toHex(contentKey));
     });
   }
+
+  // One-to-many: one content key wrapped for a mixed-curve recipient set; every
+  // recipient unwraps the SAME key from its own envelope; envelopes are distinct
+  // and addressable by key id; no recipient opens another's.
+  it('wraps one content key for many recipients (one-to-many, mixed curves)', async () => {
+    const contentKey = hex('c3'.repeat(32));
+    const ctx = 'space-data-network/storefront/one-to-many/v1';
+    const parties = [
+      { priv: hex('21'.repeat(32)), kx: EciesKeyExchange.X25519, keyId: new TextEncoder().encode('buyer-x-1') },
+      { priv: hex('22'.repeat(32)), kx: EciesKeyExchange.Secp256k1, keyId: new TextEncoder().encode('buyer-s-1') },
+      { priv: hex('23'.repeat(32)), kx: EciesKeyExchange.X25519, keyId: new TextEncoder().encode('buyer-x-2') },
+    ];
+    const recipients = [];
+    for (const p of parties) {
+      const publicKey = p.kx === EciesKeyExchange.Secp256k1
+        ? await secp256k1PublicKey(p.priv)
+        : await x25519PublicKey(p.priv);
+      recipients.push({ publicKey, keyExchange: p.kx, keyId: p.keyId });
+    }
+    const envs = await eciesWrapForRecipients(contentKey, recipients, ctx);
+    expect(envs.length).toBe(parties.length);
+
+    for (let i = 0; i < parties.length; i++) {
+      const got = await eciesUnwrap(parties[i].priv, envs[i].encBytes, envs[i].kmfBytes, ctx);
+      expect(toHex(got)).toBe(toHex(contentKey));
+      // distinct wrapped bytes per recipient
+      for (let j = 0; j < envs.length; j++) {
+        if (j !== i) expect(toHex(envs[i].kmfBytes)).not.toBe(toHex(envs[j].kmfBytes));
+      }
+    }
+    // isolation: party 0's key on party 2's envelope (both X25519) must not yield the key
+    const bad = await eciesUnwrap(parties[0].priv, envs[2].encBytes, envs[2].kmfBytes, ctx);
+    expect(toHex(bad)).not.toBe(toHex(contentKey));
+  });
+
+  // The Go conformance set IS a one-to-many set: both vectors wrap the identical
+  // content key for different-curve recipients — proves Go→JS one-to-many.
+  it('Go conformance vectors are a one-to-many set (same content key, N recipients)', async () => {
+    expect(vectors.length).toBeGreaterThan(1);
+    const keys = new Set<string>();
+    for (const v of vectors) {
+      const k = await eciesUnwrap(hex(v.recipientPrivHex), hex(v.encHex), hex(v.kmfHex), v.context);
+      keys.add(toHex(k));
+    }
+    expect(keys.size).toBe(1); // every recipient recovered the one shared content key
+  });
 
   // JS wrap → Go must unwrap (round-trip closes when the vector matches the Go
   // reference's deterministic wrap of the same inputs). Here we assert JS wrap
