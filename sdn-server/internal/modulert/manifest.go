@@ -262,6 +262,23 @@ func parsePLGManifestFlatBuffer(buf []byte) (*Manifest, error) {
 		m.Capabilities = append(m.Capabilities, name)
 	}
 
+	var timer plg.PLGTimerSpec
+	for i := 0; i < root.TIMERSLength(); i++ {
+		if !root.TIMERS(&timer, i) {
+			continue
+		}
+		timerID := strings.TrimSpace(string(timer.TIMER_ID()))
+		if timerID == "" {
+			continue
+		}
+		m.Timers = append(m.Timers, TimerDecl{
+			TimerID:           timerID,
+			MethodID:          string(timer.METHOD_ID()),
+			DefaultIntervalMs: timer.DEFAULT_INTERVAL_MS(),
+			Description:       string(timer.DESCRIPTION()),
+		})
+	}
+
 	attachKnownPLGProtocols(m)
 	return m, nil
 }

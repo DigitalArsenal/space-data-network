@@ -88,12 +88,9 @@ func TestStarlinkSourcePullDrivesHostCapSequence(t *testing.T) {
 		}
 	})
 
-	// NewModule reads + parses the embedded $PLG manifest. The Go
-	// third_party/spacedatastandards-go/PLG bindings are currently stale vs the
-	// SDK's PLG schema (SDK has METHODS at field index 45, the Go bindings at 44 —
-	// off by one), so parsing a current-SDK manifest panics for EVERY compiled
-	// module (licensing included). Skip until those bindings are synced (WS5.5),
-	// at which point this test runs and asserts the full host-cap sequence.
+	// NewModule reads + parses the embedded $PLG manifest. Since WS5.5 the SDK
+	// encodes with the same spacedatastandards 1.136 PLG layout the Go bindings
+	// read, so a parse failure here is a real wire-layout regression.
 	mod, err := func() (m *Module, err error) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -103,8 +100,8 @@ func TestStarlinkSourcePullDrivesHostCapSequence(t *testing.T) {
 		return NewModule(wasmBytes, reg, &NodeContext{})
 	}()
 	if err != nil {
-		t.Skipf("module runtime cannot parse current-SDK $PLG manifests yet "+
-			"(Go third_party/spacedatastandards-go/PLG stale vs SDK; see WS5.5): %v", err)
+		t.Fatalf("NewModule failed to parse the module's $PLG manifest "+
+			"(SDK encoder vs Go PLG bindings wire-layout mismatch?): %v", err)
 	}
 	defer func() {
 		if closeErr := mod.Close(); closeErr != nil {
@@ -135,11 +132,11 @@ func TestStarlinkSourcePullDrivesHostCapSequence(t *testing.T) {
 
 	// Invoke pull — exactly what the cron TIMERS scheduler re-invokes. run_pull
 	// runs to completion (firing all host-caps) inside plugin_invoke_stream before
-	// returning. The invoke response is not yet an SDS PIV frame (that is the
-	// follow-on WS5.5 invoke-bridge task), so we do not assert on the decoded
+	// returning. The module still returns a raw JSON summary rather than an SDS
+	// PIV frame (follow-on framing work), so we do not assert on the decoded
 	// payload here — the recorded host-cap sequence below is the assertion.
 	if _, invokeErr := mod.InvokeMethod(context.Background(), "pull", nil); invokeErr != nil {
-		t.Logf("pull invoke returned (response framing pending WS5.5): %v", invokeErr)
+		t.Logf("pull invoke returned (module response is a raw JSON summary, not PIV yet): %v", invokeErr)
 	}
 
 	mu.Lock()
