@@ -50,8 +50,8 @@ admin:
 
 # Local dev admin wallet: see ./dev-wallet.env
 users:
-  - xpub: "xpub6DHm9a1bDz4qPHGMQqQ386E76KFhxsx4ZmVjm1K9HfiCVh2jNc77AgFtWtEScGRKNqArC7gEjRW8iPFJSgroCAB8tdZpkoXQj2hkZgRiENw"
-    signing_pubkey_hex: "de65b6a3c2ddbe3593d96782bb3195931fdc1b5cfdcf31a019ba6bee8d4d5720"
+  - xpub: "xpub6Bkg9i9EdSNTYhW6FvaFAtpxpRFQtj5MQFifvLnJgKKUP8zBFycj56PHwkaZ6pMqaiCd3vMAkzb4JgDVFCvyAugvpdghxUHH36C3kQhKFhy"
+    signing_pubkey_hex: "e31e29b7c8b76bd08012ae0a917eced0067a183e9f1de980a7ef377115578f93"
     trust_level: "admin"
     name: "Dev Admin"
 
