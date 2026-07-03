@@ -132,39 +132,51 @@ func newOMMDatabase(t *testing.T, rt *Runtime, name string) *Database {
 func TestEmbeddedArtifact(t *testing.T) {
 	sum := sha256.Sum256(EmbeddedWasm())
 	// Must match the provenance block in README.md.
-	const want = "22a6b19b0d6c47d99ab94055109775805cf46322fcd4b84c3e9b8e09219ce468"
+	const want = "f9c4e2e31ecd49f31ca711975d354a7bb33ab5d4e409af27db3c97ee2c3dd14a"
 	if got := hex.EncodeToString(sum[:]); got != want {
 		t.Fatalf("embedded flatsql-wasi-noeh.wasm sha256 = %s, want %s (update README provenance if the pin moved)", got, want)
 	}
 }
 
-func TestQueryErrorSurfaceAndPoisoning(t *testing.T) {
+func TestQueryErrorSurfaceWithoutPoisoning(t *testing.T) {
 	rt := newTestRuntime(t)
 	db := newOMMDatabase(t, rt, "omm-basic")
+
+	// Since the flatsql A.3c no-throw refactor, user-triggerable errors are
+	// benign: clean message, no trap, runtime stays healthy and reusable.
 	if _, err := db.Query("SELECT * FROM NoSuchTable"); err == nil {
 		t.Fatal("expected SQL error, got nil")
 	}
-	// No-exceptions engine contract (until loop A.3c makes error paths
-	// non-throwing): ANY engine error poisons the instance — it must be
-	// reported and the runtime replaced. Reusing a poisoned runtime can hang.
-	if !rt.Poisoned() {
-		t.Fatal("runtime not marked poisoned after engine error")
+	if _, err := db.Query("SELECT * FROM OMM WHERE NORAD_CAT_ID = ?"); err == nil {
+		// 1 placeholder, 0 params — param-count pre-check.
+		t.Fatal("expected param-count error, got nil")
 	}
-	// A fresh runtime is fully functional.
-	rt2 := newTestRuntime(t)
-	db2 := newOMMDatabase(t, rt2, "omm-recovered")
-	if _, err := db2.IngestOne(fixtureBuffer(t)); err != nil {
-		t.Fatalf("IngestOne on fresh runtime: %v", err)
+	if _, err := db.QueryTemplate("no-such-template"); err == nil {
+		t.Fatal("expected unknown-template error, got nil")
 	}
-	res, err := db2.Query("SELECT OBJECT_NAME FROM OMM WHERE NORAD_CAT_ID = 56775")
+	if err := db.RegisterSource("dup"); err != nil {
+		t.Fatalf("RegisterSource: %v", err)
+	}
+	if err := db.RegisterSource("dup"); err == nil {
+		t.Fatal("expected duplicate-source error, got nil")
+	}
+	if rt.Poisoned() {
+		t.Fatal("runtime poisoned by benign errors — no-throw contract broken")
+	}
+
+	// The SAME database keeps working after all of the above.
+	if _, err := db.IngestOne(fixtureBuffer(t)); err != nil {
+		t.Fatalf("IngestOne after errors: %v", err)
+	}
+	res, err := db.Query("SELECT OBJECT_NAME FROM OMM WHERE NORAD_CAT_ID = 56775")
 	if err != nil {
-		t.Fatalf("Query on fresh runtime: %v", err)
+		t.Fatalf("Query after errors: %v", err)
 	}
 	if len(res.Rows) != 1 || res.Rows[0][0] != "STARLINK-6292" {
-		t.Fatalf("fresh-runtime query rows: %#v", res.Rows)
+		t.Fatalf("post-error query rows: %#v", res.Rows)
 	}
-	if rt2.Poisoned() {
-		t.Fatal("fresh runtime unexpectedly poisoned")
+	if rt.Poisoned() {
+		t.Fatal("runtime unexpectedly poisoned")
 	}
 }
 

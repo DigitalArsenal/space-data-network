@@ -76,14 +76,15 @@ type Runtime struct {
 	poisoned bool
 }
 
-// Poisoned reports whether an engine error has occurred on this runtime.
+// Poisoned reports whether this runtime has trapped.
 //
-// The embedded engine is built WITHOUT exception support (see README), so
-// any internal engine error — including a plain SQL syntax error — traps out
-// of C++ mid-execution and may leave guest state (shadow stack, SQLite
-// internals) corrupted. Until the engine's error paths are exception-free by
-// construction (loop task A.3c), a poisoned runtime must be discarded and
-// recreated; continuing to use it can hang or corrupt results.
+// The embedded engine is built WITHOUT exception support (see README).
+// User-triggerable errors (bad SQL, unknown template, param mismatch,
+// duplicate source, bad schema) are non-throwing since the flatsql A.3c
+// refactor and do NOT poison the runtime. A trap (wasm-level failure of an
+// engine export — a C++ throw on some untouched internal path, OOM,
+// unreachable) may leave guest state corrupted: a poisoned runtime must be
+// discarded and recreated; continuing to use it can hang or corrupt results.
 func (r *Runtime) Poisoned() bool { return r.poisoned }
 
 // New instantiates the FlatSQL WASI reactor and runs its _initialize export.
@@ -177,11 +178,13 @@ func (r *Runtime) readCString(ptr uint32) (string, error) {
 	return string(buf), nil
 }
 
-// engineErr wraps a failed engine call with flatsql_get_error detail and
-// marks the runtime poisoned (see Poisoned).
+// engineErr wraps a benign engine error (error-sentinel return + populated
+// error latch). Since the flatsql no-throw refactor (loop A.3c),
+// user-triggerable failures — bad SQL, param-count mismatch, unknown
+// template, duplicate source, bad schema — take this path without throwing,
+// so the runtime stays healthy and is NOT poisoned.
 func (r *Runtime) engineErr(op string) error {
-	r.poisoned = true
-	return fmt.Errorf("flatsqlrt: %s (runtime poisoned — recreate it): %s", op, r.lastError())
+	return fmt.Errorf("flatsqlrt: %s: %s", op, r.lastError())
 }
 
 // execErr wraps a trap/host-level failure of an engine export call and marks
@@ -447,8 +450,22 @@ func (d *Database) RegisterSource(source string) error {
 	}
 	defer d.rt.mod.Deallocate(srcPtr)
 
+	// flatsql_register_source is a void export: failures (e.g. duplicate
+	// source) only land in the error latch, so detect success by the source
+	// count changing.
+	before, err := d.rt.mod.Execute("flatsql_get_sources_count", int32(d.handle))
+	if err != nil {
+		return d.rt.execErr("flatsql_get_sources_count", err)
+	}
 	if _, err := d.rt.mod.Execute("flatsql_register_source", int32(d.handle), int32(srcPtr)); err != nil {
 		return d.rt.execErr("flatsql_register_source", err)
+	}
+	after, err := d.rt.mod.Execute("flatsql_get_sources_count", int32(d.handle))
+	if err != nil {
+		return d.rt.execErr("flatsql_get_sources_count", err)
+	}
+	if wasmrt.ToInt32(after[0]) == wasmrt.ToInt32(before[0]) {
+		return d.rt.engineErr("register_source")
 	}
 	return nil
 }
