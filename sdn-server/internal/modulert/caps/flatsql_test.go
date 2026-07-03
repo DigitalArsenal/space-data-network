@@ -1,7 +1,6 @@
 package caps
 
 import (
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"testing"
@@ -57,7 +56,48 @@ func mustUnix(t *testing.T, iso string) int64 {
 	return ts.Unix()
 }
 
-func callOp(t *testing.T, store *storage.FlatSQLStore, op string, payload map[string]interface{}) map[string]interface{} {
+// decodeCapResponse decodes a CapHandler response: either plain JSON or the
+// PRE-ENCODED hostcall envelope (loop C.5 — magic \x00SDNENV1 + [u32 metaLen]
+// [meta JSON][u32 segCount]([u32 segLen][segment])...), the exact bytes
+// encodeHostcallJSONResponse forwards to the guest.
+func decodeCapResponse(t *testing.T, resp []byte) (map[string]interface{}, [][]byte) {
+	t.Helper()
+	magic := []byte{0x00, 'S', 'D', 'N', 'E', 'N', 'V', '1'}
+	if len(resp) > len(magic) && string(resp[:len(magic)]) == string(magic) {
+		raw := resp[len(magic):]
+		if len(raw) < 8 {
+			t.Fatalf("pre-encoded envelope truncated (%d bytes)", len(raw))
+		}
+		off := 0
+		metaLen := int(binary.LittleEndian.Uint32(raw[off:]))
+		off += 4
+		var meta map[string]interface{}
+		if err := json.Unmarshal(raw[off:off+metaLen], &meta); err != nil {
+			t.Fatalf("pre-encoded envelope meta not JSON: %v", err)
+		}
+		off += metaLen
+		segCount := int(binary.LittleEndian.Uint32(raw[off:]))
+		off += 4
+		segments := make([][]byte, 0, segCount)
+		for i := 0; i < segCount; i++ {
+			n := int(binary.LittleEndian.Uint32(raw[off:]))
+			off += 4
+			segments = append(segments, raw[off:off+n])
+			off += n
+		}
+		if off != len(raw) {
+			t.Fatalf("pre-encoded envelope has %d trailing bytes", len(raw)-off)
+		}
+		return meta, segments
+	}
+	var envelope map[string]interface{}
+	if err := json.Unmarshal(resp, &envelope); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	return envelope, nil
+}
+
+func callOp(t *testing.T, store *storage.FlatSQLStore, op string, payload map[string]interface{}) (map[string]interface{}, [][]byte) {
 	t.Helper()
 	handler := NewStorageCapFactory(store)(nil)
 	body, _ := json.Marshal(payload)
@@ -65,27 +105,24 @@ func callOp(t *testing.T, store *storage.FlatSQLStore, op string, payload map[st
 	if err != nil {
 		t.Fatalf("%s handler error: %v", op, err)
 	}
-	var envelope map[string]interface{}
-	if err := json.Unmarshal(resp, &envelope); err != nil {
-		t.Fatalf("%s response not JSON: %v", op, err)
-	}
+	envelope, segments := decodeCapResponse(t, resp)
 	if ok, _ := envelope["ok"].(bool); !ok {
 		t.Fatalf("%s returned error: %v", op, envelope["error"])
 	}
 	result, _ := envelope["result"].(map[string]interface{})
-	return result
+	return result, segments
 }
 
-func decodeStreamFrames(t *testing.T, result map[string]interface{}) [][]byte {
+// decodeStreamFrames splits the aligned size-prefixed stream carried by the
+// result's binary segment ({"$bin":0} in the pre-encoded envelope).
+func decodeStreamFrames(t *testing.T, result map[string]interface{}, segments [][]byte) [][]byte {
 	t.Helper()
 	streamObj, _ := result["stream"].(map[string]interface{})
-	if typ, _ := streamObj["__type"].(string); typ != "bytes" {
-		t.Fatalf("stream missing __type bytes marker: %v", result)
+	ref, ok := streamObj["$bin"].(float64)
+	if !ok || int(ref) >= len(segments) {
+		t.Fatalf("stream missing $bin segment ref: %v (segments=%d)", result, len(segments))
 	}
-	raw, err := base64.StdEncoding.DecodeString(streamObj["base64"].(string))
-	if err != nil {
-		t.Fatalf("stream decode: %v", err)
-	}
+	raw := segments[int(ref)]
 	var frames [][]byte
 	off := 0
 	for off < len(raw) {
@@ -99,11 +136,11 @@ func decodeStreamFrames(t *testing.T, result map[string]interface{}) [][]byte {
 
 func TestFlatSQLQueryStreamOp(t *testing.T) {
 	store := newCapTestStore(t)
-	result := callOp(t, store, "storage.flatsql_query_stream", map[string]interface{}{
+	result, segments := callOp(t, store, "storage.flatsql_query_stream", map[string]interface{}{
 		"sql":    `SELECT _data FROM "OMM@celestrak-gp" WHERE NORAD_CAT_ID = ?`,
 		"params": []map[string]interface{}{{"t": "i64", "v": 30001}},
 	})
-	frames := decodeStreamFrames(t, result)
+	frames := decodeStreamFrames(t, result, segments)
 	if len(frames) != 2 || result["rows"].(float64) != 2 {
 		t.Fatalf("got %d frames rows=%v, want 2", len(frames), result["rows"])
 	}
@@ -111,14 +148,14 @@ func TestFlatSQLQueryStreamOp(t *testing.T) {
 
 func TestFlatSQLEpochStreamOp(t *testing.T) {
 	store := newCapTestStore(t)
-	result := callOp(t, store, "storage.flatsql_epoch_stream", map[string]interface{}{
+	result, segments := callOp(t, store, "storage.flatsql_epoch_stream", map[string]interface{}{
 		"schema":  "OMM.fbs",
 		"source":  "celestrak-gp",
 		"profile": "nearest",
 		"epoch":   float64(mustUnix(t, "2026-05-11T12:00:00Z")),
 		"limit":   1000,
 	})
-	frames := decodeStreamFrames(t, result)
+	frames := decodeStreamFrames(t, result, segments)
 	if len(frames) != 2 { // one nearest record per object
 		t.Fatalf("nearest epoch frames = %d, want 2", len(frames))
 	}
@@ -165,16 +202,15 @@ func TestFlatSQLQueryStreamOpErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
-	var envelope map[string]interface{}
-	json.Unmarshal(resp, &envelope)
+	envelope, _ := decodeCapResponse(t, resp)
 	if ok, _ := envelope["ok"].(bool); ok {
 		t.Fatal("expected error envelope for bad SQL")
 	}
 	// Store remains healthy (A.3c no-poison contract through the cap).
-	result := callOp(t, store, "storage.flatsql_query_stream", map[string]interface{}{
+	result, segments := callOp(t, store, "storage.flatsql_query_stream", map[string]interface{}{
 		"sql": `SELECT _data FROM "OMM@celestrak-gp"`,
 	})
-	if len(decodeStreamFrames(t, result)) != 3 {
+	if len(decodeStreamFrames(t, result, segments)) != 3 {
 		t.Fatal("store unhealthy after bad SQL through cap")
 	}
 }
