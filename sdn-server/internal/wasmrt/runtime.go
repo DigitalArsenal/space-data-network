@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 
 	"github.com/second-state/WasmEdge-go/wasmedge"
@@ -40,6 +41,7 @@ type config struct {
 	freeName          string
 	secureDeallocName string
 	hostModules       []hostModuleSpec
+	dedicatedThread   bool
 }
 
 type hostModuleSpec struct {
@@ -82,6 +84,20 @@ func WithHostModule(name string, funcs []HostFunc) Option {
 	}
 }
 
+// WithDedicatedThread executes every guest call of this module on one
+// dedicated, locked OS thread. REQUIRED for any AOT-compiled module whose
+// exports are invoked from inside ANOTHER module's host function (nested
+// execution): libwasmedge 0.14 keeps per-thread executor state that a nested
+// AOT execution clobbers — when control returns to the suspended outer AOT
+// frame on the same thread, its next linear-memory access falsely traps
+// "out of bounds memory access" (see docs/wasmedge-aot-nested-execution.md,
+// flowrt TestAOTMountRepro). Running this module's executions on their own
+// thread means they never nest above (or below) another VM's AOT frames.
+// Costs one channel round-trip per call — noise next to any engine query.
+func WithDedicatedThread() Option {
+	return func(c *config) { c.dedicatedThread = true }
+}
+
 // Module wraps a WasmEdge VM with convenience methods for memory management
 // and function execution.
 type Module struct {
@@ -93,6 +109,50 @@ type Module struct {
 	mallocName        string
 	freeName          string
 	secureDeallocName string
+
+	// Dedicated execution thread (WithDedicatedThread): all vm.Execute
+	// calls are served by one locked OS thread.
+	execCh chan *execRequest
+	execWG sync.WaitGroup
+}
+
+// execRequest carries one guest call to the dedicated execution thread.
+type execRequest struct {
+	name   string
+	params []interface{}
+	done   chan execResult
+}
+
+type execResult struct {
+	values []interface{}
+	err    error
+}
+
+// startExecThread spawns the dedicated, OS-locked execution worker.
+func (m *Module) startExecThread() {
+	m.execCh = make(chan *execRequest)
+	m.execWG.Add(1)
+	go func() {
+		defer m.execWG.Done()
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		for req := range m.execCh {
+			values, err := m.vm.Execute(req.name, req.params...)
+			req.done <- execResult{values: values, err: err}
+		}
+	}()
+}
+
+// exec routes a guest call through the dedicated thread when configured,
+// falling back to a direct call otherwise.
+func (m *Module) exec(name string, params ...interface{}) ([]interface{}, error) {
+	if m.execCh == nil {
+		return m.vm.Execute(name, params...)
+	}
+	req := &execRequest{name: name, params: params, done: make(chan execResult, 1)}
+	m.execCh <- req
+	res := <-req.done
+	return res.values, res.err
 }
 
 // MemoryStats describes the module's current default linear memory size.
@@ -198,6 +258,10 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 		return nil, fmt.Errorf("failed to instantiate WASM: %w", err)
 	}
 
+	if cfg.dedicatedThread {
+		m.startExecThread()
+	}
+
 	return m, nil
 }
 
@@ -212,7 +276,7 @@ func NewModuleFromFile(path string, opts ...Option) (*Module, error) {
 
 // Execute calls a WASM exported function by name.
 func (m *Module) Execute(name string, params ...interface{}) ([]interface{}, error) {
-	return m.vm.Execute(name, params...)
+	return m.exec(name, params...)
 }
 
 // memory returns the default linear memory ("memory") from the active module.
@@ -295,7 +359,7 @@ func (m *Module) Allocate(data []byte) (uint32, error) {
 
 // AllocateSize calls the module's malloc for the given size, returning the pointer.
 func (m *Module) AllocateSize(size uint32) (uint32, error) {
-	results, err := m.vm.Execute(m.mallocName, int32(size))
+	results, err := m.exec(m.mallocName, int32(size))
 	if err != nil {
 		return 0, fmt.Errorf("malloc(%d) failed: %w", size, err)
 	}
@@ -308,14 +372,14 @@ func (m *Module) AllocateSize(size uint32) (uint32, error) {
 
 // Deallocate calls the module's free.
 func (m *Module) Deallocate(ptr uint32) {
-	m.vm.Execute(m.freeName, int32(ptr))
+	m.exec(m.freeName, int32(ptr))
 }
 
 // SecureDeallocate wipes memory then frees. Falls back to plain Deallocate
 // if no secure dealloc function was configured.
 func (m *Module) SecureDeallocate(ptr, size uint32) {
 	if m.secureDeallocName != "" {
-		m.vm.Execute(m.secureDeallocName, int32(ptr), int32(size))
+		m.exec(m.secureDeallocName, int32(ptr), int32(size))
 	} else {
 		m.Deallocate(ptr)
 	}
@@ -343,6 +407,11 @@ func (m *Module) ReadCString(ptr, maxLen uint32) (string, error) {
 
 // Release frees all WasmEdge resources.
 func (m *Module) Release() {
+	if m.execCh != nil {
+		close(m.execCh)
+		m.execWG.Wait()
+		m.execCh = nil
+	}
 	if m.vm != nil {
 		m.vm.Release()
 		m.vm = nil

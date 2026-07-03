@@ -47,6 +47,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt/capabilities"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
@@ -2381,12 +2382,15 @@ func (n *Node) MountFlows(mux *http.ServeMux) error {
 		CapRegistry:    n.buildCapRegistry(),
 		NodeCtx:        nodeCtx,
 		MaxMemoryPages: n.config.Flows.MaxMemoryPages,
-		// NOTE (loop C.4): flow mounts run INTERPRETED. WasmEdge AOT
-		// compiles the flow artifact without error but the compiled code
-		// traps ("out of bounds memory access") on the first linked-direct
-		// dispatch (flowrt TestAOTMountRepro) — do not set AOTCacheDir here
-		// until that is fixed upstream. The 123KB artifact is a thin
-		// pass-through; the FlatSQL engine underneath stays AOT.
+		// Flow mounts run AOT-compiled through the same sha256-keyed cache
+		// as the store engine (loop C.5b). The C.4 "out of bounds memory
+		// access" trap on linked-direct dispatch was NOT an artifact bug:
+		// libwasmedge 0.14 corrupts per-thread executor state when the
+		// storage hostcall executes the (AOT) engine nested inside the
+		// (AOT) flow's frame. Fixed by pinning engine execution to its own
+		// locked OS thread (wasmrt.WithDedicatedThread; see
+		// docs/wasmedge-aot-nested-execution.md, flowrt TestAOTMountRepro).
+		AOTCacheDir: flatsqldrv.DefaultAOTCacheDir(),
 	}
 	if n.flowManager != nil {
 		deps.Store = n.flowManager.Store()

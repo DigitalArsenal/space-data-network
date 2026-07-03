@@ -9,8 +9,11 @@
 #   (c) a raw-TCP wire_speed_probe reference.
 # Prints the throughput table and exits NONZERO when (a) < 99% of (b).
 #
-# Known-blocked override (CLEARLY LABELED, use only while the WasmEdge AOT
-# trap on the linked-direct flow artifact is unfixed — TestAOTMountRepro):
+# Known-miss override (CLEARLY LABELED): loop C.5b landed AOT flow dispatch
+# (nested AOT-in-AOT WasmEdge fix) + the engine raw-stream response cache;
+# warm flow requests measure ~37% of the same-bytes baseline (7 ms vs
+# 2.6 ms / 8.6 MB). The remaining gap is per-request byte copies in the
+# flow-runtime template (C.3(c3) direct-linkage/zero-copy egress work).
 #   SDN_C5_ALLOW_BLOCKED=1 scripts/wirespeed-gate.sh
 #
 # Tunables (see wirespeed_gate_test.go): SDN_C5_OBJECTS, SDN_C5_EPOCHS,

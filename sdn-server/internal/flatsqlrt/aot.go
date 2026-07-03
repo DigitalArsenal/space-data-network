@@ -56,7 +56,11 @@ func EnsureAOTArtifact(cacheDir, prefix string, wasm []byte) ([]byte, error) {
 	}
 	defer compiler.Release()
 
-	tmp := path + ".tmp"
+	// Unique temp name per process: concurrent compilers (parallel test
+	// binaries, multiple daemons sharing the machine-wide cache) must never
+	// write the same temp file — the final rename is atomic, so readers only
+	// ever observe complete artifacts.
+	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
 	if err := compiler.CompileBuffer(wasm, tmp); err != nil {
 		os.Remove(tmp)
 		return nil, fmt.Errorf("flatsqlrt: AOT compile: %w", err)

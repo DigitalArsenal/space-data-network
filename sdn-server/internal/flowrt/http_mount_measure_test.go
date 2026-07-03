@@ -9,8 +9,8 @@ package flowrt
 //
 // Reports, per the loop protocol:
 //   - GET omm/bulk epoch-nearest latency at limit=29000 and limit=250000,
-//     flatbuffers (default) and json (interpreted flow; AOT is blocked by a
-//     WasmEdge trap — TestAOTMountRepro);
+//     flatbuffers (default) and json, interpreted AND AOT flow dispatch
+//     (AOT unblocked in loop C.5b — see TestAOTMountRepro);
 //   - concurrent throughput (8 parallel clients) with pool=1 vs pool=4;
 //   - hot-window enforcement at scale (500K ingested through a 400K window).
 
@@ -157,17 +157,15 @@ func TestHTTPMountMeasure(t *testing.T) {
 		return resp.StatusCode, len(body), dur
 	}
 
-	// Execution mode: INTERPRETED only. WasmEdge AOT compiles the flow
-	// artifact without error, but the compiled code traps ("out of bounds
-	// memory access" in dispatch_current_invocation_direct) on the first
-	// linked-direct dispatch at ANY scale — see TestAOTMountRepro. Until
-	// that is fixed upstream, flow mounts interpret the 123KB artifact (the
-	// FlatSQL engine underneath remains AOT-compiled).
+	// Both execution modes: interpreted (the C.4 configuration) and AOT
+	// (production default since loop C.5b fixed the nested AOT-in-AOT
+	// WasmEdge corruption — see TestAOTMountRepro).
 	modes := []struct {
 		name   string
 		aotDir string
 	}{
 		{"interpreted", ""},
+		{"aot", t.TempDir()},
 	}
 	for _, mode := range modes {
 		srv, mounted := mount(4, mode.aotDir)
@@ -207,9 +205,9 @@ func TestHTTPMountMeasure(t *testing.T) {
 		}
 	}
 
-	// ---- Concurrent throughput: 8 clients, pool=1 vs pool=4 ---------------
+	// ---- Concurrent throughput: 8 clients, pool=1 vs pool=4 (AOT) ---------
 	for _, pool := range []int{1, 4} {
-		srv, mounted := mount(pool, "")
+		srv, mounted := mount(pool, t.TempDir())
 		const clients = 8
 		const perClient = 4
 		var totalBytes atomic.Int64
