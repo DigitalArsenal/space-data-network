@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/second-state/WasmEdge-go/wasmedge"
 )
@@ -53,6 +54,19 @@ func ensureAOT(cacheDir string, wasm []byte) ([]byte, error) {
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp)
 		return nil, fmt.Errorf("flatsqlrt: AOT cache rename: %w", err)
+	}
+
+	// Prune artifacts compiled from older engine bytes — the dir is dedicated
+	// to this cache, and stale entries would otherwise accumulate across
+	// engine upgrades.
+	if entries, err := os.ReadDir(cacheDir); err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			if name != filepath.Base(path) &&
+				strings.HasPrefix(name, "flatsql-") && strings.HasSuffix(name, ".aot.wasm") {
+				os.Remove(filepath.Join(cacheDir, name))
+			}
+		}
 	}
 	return os.ReadFile(path)
 }

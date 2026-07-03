@@ -16,7 +16,8 @@ aligned size-prefixed FlatBuffer frames (`QueryRawFlatBufferStream`).
 `flatsql` repo (superproject submodule `repos/main-packages/flatsql`):
 
 - source path: `flatsql/wasm/flatsql-wasi-noeh.wasm`
-- sha256: `22a6b19b0d6c47d99ab94055109775805cf46322fcd4b84c3e9b8e09219ce468`
+- flatsql commit: `eeca33a` (no-throw error paths)
+- sha256: `f9c4e2e31ecd49f31ca711975d354a7bb33ab5d4e409af27db3c97ee2c3dd14a`
 
 Why no-exceptions (loop A.3/A.3b findings, measured): WasmEdge's AOT
 compiler (0.14–0.17) cannot parse wasm-exceptions (exnref) modules, and its
@@ -25,6 +26,13 @@ interpreter runs the engine ~100x slower than native (nearest-epoch over
 Wasmtime runs exnref natively but its C API/Go bindings do not expose the
 exceptions proposal yet. The no-EH build is export-identical and
 byte-parity-verified against the browser artifact (parity_test.go).
+
+Error semantics (since flatsql A.3c no-throw refactor): user-triggerable
+failures — bad SQL, param-count mismatch, unknown template, duplicate
+source, bad schema — are pre-validated/latched in the engine WITHOUT
+throwing, return clean errors, and do NOT poison the runtime. Only a
+genuine trap (untouched internal throw path, OOM, unreachable) sets
+`Runtime.Poisoned()`; a poisoned runtime must be discarded and recreated.
 
 Production hosts should pass `WithAOTCache(dir)`: the portable module is
 AOT-compiled once (sha256-keyed cache file) and loaded natively afterwards.
