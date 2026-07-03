@@ -51,7 +51,7 @@ func TestProvidersCommandHelpDocumentsDataStandardFiltering(t *testing.T) {
 func TestProvidersListOutputsTableRowsFromSharedSearch(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	if err := runProvidersList(&out, providersSharedOptions{
@@ -73,7 +73,7 @@ func TestProvidersListOutputsTableRowsFromSharedSearch(t *testing.T) {
 func TestProvidersSearchOutputsJSONFromSharedSearch(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	if err := runProvidersSearch(&out, "celestrak", providersSharedOptions{
@@ -102,7 +102,7 @@ func TestProvidersSearchOutputsJSONFromSharedSearch(t *testing.T) {
 func TestProvidersShowOutputsCSVFromSharedSearch(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	if err := runProvidersShow(&out, "celestrak.eth", providersSharedOptions{

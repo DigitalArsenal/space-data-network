@@ -59,7 +59,7 @@ func TestClassifySyncProviderIdentifier(t *testing.T) {
 func TestSyncStatusReportsLocalReplicaWithoutSourceName(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSyncStatusWithOptions(context.Background(), &out, syncStatusOptions{
@@ -92,7 +92,7 @@ func TestSyncStatusReportsLocalReplicaWithoutSourceName(t *testing.T) {
 func TestSyncStatusResolvesProviderAliasFromDirectory(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSyncStatusWithOptions(context.Background(), &out, syncStatusOptions{
@@ -122,7 +122,7 @@ func TestSyncStatusResolvesProviderAliasFromDirectory(t *testing.T) {
 func TestSyncStatusResolvesProviderDomainFromSourcePrefix(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestReplica(t, store)
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSyncStatusWithOptions(context.Background(), &out, syncStatusOptions{
@@ -152,7 +152,7 @@ func TestSyncStatusResolvesProviderDomainFromSourcePrefix(t *testing.T) {
 func TestSyncStatusReportsMaterializedPublicationReplica(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestPublicationReplica(t, store)
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSyncStatusWithOptions(context.Background(), &out, syncStatusOptions{
@@ -185,7 +185,7 @@ func TestSyncStatusReportsMaterializedPublicationReplica(t *testing.T) {
 func TestSyncStatusJSONOutput(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSyncStatusWithOptions(context.Background(), &out, syncStatusOptions{
@@ -244,8 +244,21 @@ func newSyncCLITestStore(t *testing.T) (string, *storage.FlatSQLStore) {
 	return cfgPath, store
 }
 
-func withSyncCLITestConfig(t *testing.T, cfgPath string) {
+// withSyncCLITestConfig points the CLI at cfgPath and closes any seed-store
+// handles passed in: the CLI verbs under test open the store themselves and
+// the FlatSQL v2 store is single-writer (an open seeding handle would make
+// the verb fail with storage.ErrStoreLocked).
+func withSyncCLITestConfig(t *testing.T, cfgPath string, seedStores ...*storage.FlatSQLStore) {
 	t.Helper()
+
+	for _, s := range seedStores {
+		if s == nil {
+			continue
+		}
+		if err := s.Close(); err != nil {
+			t.Fatalf("close seed store: %v", err)
+		}
+	}
 
 	oldConfigPath := configPath
 	configPath = cfgPath

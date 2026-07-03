@@ -176,8 +176,13 @@ func TestIdentityDirectoryCommandIsRegisteredWithParitySubcommands(t *testing.T)
 }
 
 func TestIdentityDirectoryImportListShowAndDownload(t *testing.T) {
-	cfgPath, _, _, _ := newIdentityWizardTestStore(t)
+	cfgPath, store, _, _ := newIdentityWizardTestStore(t)
 	withSyncCLITestConfig(t, cfgPath)
+	// The directory CLI verbs below open the store themselves; release the
+	// seeding handle first (the v2 store is single-writer).
+	if err := store.Close(); err != nil {
+		t.Fatalf("close seed store: %v", err)
+	}
 
 	importPath := filepath.Join(t.TempDir(), "directory-node.json")
 	if err := os.WriteFile(importPath, []byte(`{
@@ -278,6 +283,12 @@ func TestExportLocalIdentityFlatBufferWritesOutputPath(t *testing.T) {
 		t.Fatalf("runIdentityWizardWithIO failed: %v", err)
 	}
 
+	// exportLocalIdentity opens the store itself; release the wizard's
+	// handle first (the v2 store is single-writer).
+	if err := store.Close(); err != nil {
+		t.Fatalf("close seed store: %v", err)
+	}
+
 	cfg := config.Default()
 	cfg.Storage.Path = dataDir
 	epmPath := filepath.Join(t.TempDir(), "local-epm.fbs")
@@ -334,6 +345,12 @@ func TestRunIdentityExportFlatBufferUsesLocalFallbackOutputPathWhenDaemonUnavail
 	configPath = cfgPath
 	identityExportFormat = "flatbuffer"
 	identityExportOutput = filepath.Join(t.TempDir(), "run-export.fbs")
+
+	// The local fallback inside runIdentityExport opens the store itself;
+	// release the wizard's handle first (the v2 store is single-writer).
+	if err := store.Close(); err != nil {
+		t.Fatalf("close seed store: %v", err)
+	}
 
 	cmd := &cobra.Command{}
 	cmd.SetContext(t.Context())

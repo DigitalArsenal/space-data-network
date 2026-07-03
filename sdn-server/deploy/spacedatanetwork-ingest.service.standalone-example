@@ -1,5 +1,20 @@
+# STANDALONE EXAMPLE — DO NOT ENABLE NEXT TO A RUNNING DAEMON.
+#
+# The FlatSQL v2 store is SINGLE-WRITER (in-process engine + control.sdnj
+# statement journal): only one process may open a storage path for writing.
+# Running this worker against a store a `spacedatanetwork` daemon holds now
+# fails with a clean store-lock error (it previously corrupted the journal).
+#
+# Supported topologies:
+#   * Daemon + ingest on one host/store: enable in-daemon ingest in the
+#     daemon config instead of this unit:
+#         ingest:
+#           enabled: true
+#     (credentials via Environment= drop-ins on spacedatanetwork.service).
+#   * Offline/standalone ingest (no daemon on the storage path): this unit,
+#     renamed to spacedatanetwork-ingest.service.
 [Unit]
-Description=Space Data Network Ingestion Worker
+Description=Space Data Network Ingestion Worker (standalone store only)
 Documentation=https://github.com/spacedatanetwork/sdn-server
 After=network-online.target
 Wants=network-online.target

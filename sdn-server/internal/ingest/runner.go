@@ -137,12 +137,34 @@ type Config struct {
 type Runner struct {
 	cfg         Config
 	store       *storage.FlatSQLStore
+	ownsStore   bool
 	httpClient  *http.Client
 	checkpoints *checkpointStore
 }
 
-// NewRunner constructs a Runner with local storage and checkpoint state.
+// NewRunner constructs a Runner that opens (and owns) its own store at
+// cfg.StoragePath. The v2 store is single-writer: if another process — a
+// running daemon in particular — already holds the store, the open fails
+// with storage.ErrStoreLocked instead of corrupting the journal.
 func NewRunner(cfg Config) (*Runner, error) {
+	return newRunner(cfg, nil)
+}
+
+// NewRunnerWithStore constructs a Runner that drives the ingest pipeline
+// against an ALREADY-OPEN store — the daemon's own handle. This is the
+// single-writer in-daemon ingest topology (loop C.6b): fetch/parse/store
+// runs as a goroutine inside the daemon process, records land through the
+// exact same store path as datasync/API writes (hot-window enforcement,
+// cursor rowids, engine mirror invalidation all apply), and no second
+// process ever opens the store. The runner does NOT close the store.
+func NewRunnerWithStore(cfg Config, store *storage.FlatSQLStore) (*Runner, error) {
+	if store == nil {
+		return nil, fmt.Errorf("store is required")
+	}
+	return newRunner(cfg, store)
+}
+
+func newRunner(cfg Config, store *storage.FlatSQLStore) (*Runner, error) {
 	if cfg.StoragePath == "" {
 		return nil, fmt.Errorf("storage path is required")
 	}
@@ -218,31 +240,40 @@ func NewRunner(cfg Config) (*Runner, error) {
 		cfg.MinFreeDiskBytes = defaultMinFreeDiskBytes
 	}
 
-	validator, err := sds.NewValidator(nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize validator: %w", err)
+	ownsStore := store == nil
+	if ownsStore {
+		validator, err := sds.NewValidator(nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize validator: %w", err)
+		}
+		opened, err := storage.NewFlatSQLStore(cfg.StoragePath, validator)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open storage: %w", err)
+		}
+		store = opened
 	}
-
-	store, err := storage.NewFlatSQLStore(cfg.StoragePath, validator)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open storage: %w", err)
+	closeOwned := func() {
+		if ownsStore {
+			store.Close()
+		}
 	}
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		store.Close()
+		closeOwned()
 		return nil, fmt.Errorf("failed to create cookie jar: %w", err)
 	}
 
 	cp, err := newCheckpointStore(filepath.Join(cfg.StoragePath, "ingest-checkpoints.json"))
 	if err != nil {
-		store.Close()
+		closeOwned()
 		return nil, err
 	}
 
 	return &Runner{
-		cfg:   cfg,
-		store: store,
+		cfg:       cfg,
+		store:     store,
+		ownsStore: ownsStore,
 		httpClient: &http.Client{
 			Timeout: cfg.HTTPTimeout,
 			Jar:     jar,
@@ -254,9 +285,11 @@ func NewRunner(cfg Config) (*Runner, error) {
 	}, nil
 }
 
-// Close releases underlying resources.
+// Close releases underlying resources. A store injected via
+// NewRunnerWithStore belongs to the caller (the daemon) and is never closed
+// here.
 func (r *Runner) Close() error {
-	if r.store != nil {
+	if r.store != nil && r.ownsStore {
 		return r.store.Close()
 	}
 	return nil

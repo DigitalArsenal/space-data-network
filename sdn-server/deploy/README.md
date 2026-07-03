@@ -4,33 +4,45 @@ This directory contains deployment configurations for the Space Data Network ser
 
 ## Systemd Services
 
-### Ingestion Worker Service
+### Ingestion (single-writer topology)
 
-The ingestion worker pulls CelesTrak feeds continuously and performs checkpointed Space-Track gap-fill in bounded day batches.
+The FlatSQL v2 store is **single-writer**: exactly one process may open a
+storage path for writing (enforced by an exclusive `store.lock` next to
+`control.sdnj`; a second writer open fails with a clean store-lock error).
+Ingestion therefore runs in one of two mutually exclusive shapes:
+
+**Preferred — in-daemon ingest (daemon + ingest on one store).** Enable the
+`ingest` section in the daemon config; the CelesTrak/Space-Track/UDL workers
+run inside `spacedatanetwork.service` against the daemon's own store handle:
+
+```yaml
+# /etc/spacedatanetwork/config.yaml
+ingest:
+  enabled: true
+  celestrak_interval: 3h
+  satcat_interval: 24h
+  space_weather_interval: 3h
+  spacetrack_enabled: false   # true needs SPACETRACK_* env vars
+  udl_enabled: false          # true needs UDL_* env vars
+  dataset_publish_url: http://127.0.0.1:5001/api/v1/admin/dataset-updates/publish
+```
 
 ```bash
-# Install ingestion worker
-sudo cp spacedatanetwork-ingest.service /etc/systemd/system/
-sudo mkdir -p /opt/spacedatanetwork/bin
-sudo mkdir -p /opt/data/sdn /opt/data/raw
-sudo cp ../bin/spacedatanetwork /opt/spacedatanetwork/bin/
-
-# Set Space-Track credentials (required for gap-fill)
-sudo systemctl edit spacedatanetwork-ingest
-# Add:
+# Credentials (only if spacetrack/udl are enabled) go on the DAEMON unit:
+sudo systemctl edit spacedatanetwork
 # [Service]
 # Environment=SPACETRACK_IDENTITY=your_username
 # Environment=SPACETRACK_PASSWORD=your_password
 
-# Enable and start
-sudo systemctl daemon-reload
-sudo systemctl enable spacedatanetwork-ingest
-sudo systemctl start spacedatanetwork-ingest
-
-# Check status
-sudo systemctl status spacedatanetwork-ingest
-sudo journalctl -u spacedatanetwork-ingest -f
+sudo systemctl restart spacedatanetwork
+sudo journalctl -u spacedatanetwork -f | grep -i ingest
 ```
+
+**Standalone worker (offline store only, no daemon on the path).** See
+`spacedatanetwork-ingest.service.standalone-example` — copy it to
+`/etc/systemd/system/spacedatanetwork-ingest.service` ONLY for stores no
+daemon opens. Running it against a daemon-held store fails at startup with
+the store-lock error and instructions to use the config above.
 
 ### Edge Relay Service
 

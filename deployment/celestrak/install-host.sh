@@ -43,7 +43,15 @@ mkdir -p \
 install -m 0644 "${ASSET_DIR}/config.yaml" /etc/spacedatanetwork/config.yaml
 install -m 0644 "${ASSET_DIR}/kubo.service" /etc/systemd/system/kubo.service
 install -m 0644 "${SOURCE_ROOT}/sdn-server/deploy/spacedatanetwork.service" /etc/systemd/system/spacedatanetwork.service
-install -m 0644 "${ASSET_DIR}/spacedatanetwork-ingest.service" /etc/systemd/system/spacedatanetwork-ingest.service
+
+# Single-writer topology (loop C.6b): ingest now runs INSIDE the daemon
+# (config.yaml `ingest.enabled: true`). The FlatSQL v2 store rejects a
+# second writer process, so the legacy separate ingest unit must not run
+# against the daemon's storage path — remove it on upgraded hosts.
+if [ -f /etc/systemd/system/spacedatanetwork-ingest.service ]; then
+  systemctl disable --now spacedatanetwork-ingest.service || true
+  rm -f /etc/systemd/system/spacedatanetwork-ingest.service
+fi
 
 if [ -f "${SOURCE_ROOT}/sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm" ]; then
   install -m 0644 "${SOURCE_ROOT}/sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm" /opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm
@@ -79,4 +87,4 @@ if command -v ipfs >/dev/null 2>&1 && [ ! -f /var/lib/kubo/config ]; then
 fi
 
 systemctl daemon-reload
-systemctl enable kubo spacedatanetwork spacedatanetwork-ingest
+systemctl enable kubo spacedatanetwork

@@ -26,6 +26,74 @@ type Config struct {
 	Publishing PublishingConfig `yaml:"publishing"`
 	Flows      FlowsConfig      `yaml:"flows"`
 	Policies   PoliciesConfig   `yaml:"policies"`
+	Ingest     IngestConfig     `yaml:"ingest"`
+}
+
+// IngestConfig runs the CelesTrak/Space-Track/UDL source-sync workers
+// INSIDE the daemon process, against the daemon's own store handle.
+//
+// This is the single-writer topology (loop C.6b): the FlatSQL v2 store
+// (in-process engine + control.sdnj statement journal) admits exactly one
+// writer process, so a separate `spacedatanetwork ingest` service can no
+// longer share a running daemon's storage path — it now fails with a
+// store-lock error instead of corrupting the journal. Enable this section
+// on provider nodes instead of the standalone ingest unit. The standalone
+// `ingest` verb remains supported for offline/standalone stores only.
+//
+// Credentials are intentionally NOT configurable here: Space-Track and UDL
+// logins come from the SPACETRACK_IDENTITY/SPACETRACK_PASSWORD and
+// UDL_USERNAME/UDL_PASSWORD environment variables (set them in the daemon
+// service unit), so secrets never land in config files.
+type IngestConfig struct {
+	// Enabled starts the in-daemon ingest workers (full nodes only).
+	Enabled bool `yaml:"enabled"`
+
+	// RawPath is the raw source-snapshot archive directory.
+	// Default: <storage-parent>/raw.
+	RawPath string `yaml:"raw_path,omitempty"`
+
+	// Sync cadences (Go duration strings). The CelesTrak cadences are
+	// clamped to the 3h public-API minimum by the runner.
+	CelestrakInterval    string `yaml:"celestrak_interval,omitempty"`     // default 3h
+	SatcatInterval       string `yaml:"satcat_interval,omitempty"`        // default 24h
+	SpaceWeatherInterval string `yaml:"space_weather_interval,omitempty"` // default 3h
+
+	// Source URL overrides (defaults are the public CelesTrak endpoints).
+	CelestrakCatalogURL      string `yaml:"celestrak_catalog_url,omitempty"`
+	CelestrakSatcatURL       string `yaml:"celestrak_satcat_url,omitempty"`
+	CelestrakSatcatCSVURL    string `yaml:"celestrak_satcat_csv_url,omitempty"`
+	CelestrakSpaceWeatherURL string `yaml:"celestrak_space_weather_url,omitempty"`
+
+	// Space-Track gap-fill worker (credentials via env, see above).
+	SpaceTrackEnabled      bool   `yaml:"spacetrack_enabled"`
+	SpaceTrackStartDay     string `yaml:"spacetrack_start_day,omitempty"`
+	SpaceTrackBatchDays    int    `yaml:"spacetrack_batch_days,omitempty"`
+	SpaceTrackBatchSleep   string `yaml:"spacetrack_batch_sleep,omitempty"`
+	SpaceTrackPollInterval string `yaml:"spacetrack_poll_interval,omitempty"`
+	SpaceTrackLoginURL     string `yaml:"spacetrack_login_url,omitempty"`
+	SpaceTrackQueryTmpl    string `yaml:"spacetrack_query_template,omitempty"`
+
+	// Unified Data Library sync worker (credentials via env, see above).
+	UDLEnabled      bool   `yaml:"udl_enabled"`
+	UDLBaseURL      string `yaml:"udl_base_url,omitempty"`
+	UDLStartDay     string `yaml:"udl_start_day,omitempty"`
+	UDLBatchDays    int    `yaml:"udl_batch_days,omitempty"`
+	UDLBatchSleep   string `yaml:"udl_batch_sleep,omitempty"`
+	UDLPollInterval string `yaml:"udl_poll_interval,omitempty"`
+	UDLMaxResults   int    `yaml:"udl_max_results,omitempty"`
+
+	// HTTPTimeout bounds each source fetch (default 90s; raise for the
+	// full-catalog CelesTrak GP fetch on slow links, e.g. 900s).
+	HTTPTimeout string `yaml:"http_timeout,omitempty"`
+
+	// MinFreeDiskGB refuses to start a sync cycle below this free-disk
+	// floor (0 = built-in 5 GiB default).
+	MinFreeDiskGB float64 `yaml:"min_free_disk_gb,omitempty"`
+
+	// DatasetPublishURL is the local admin dataset-publication endpoint
+	// called after successful CelesTrak syncs (usually this daemon's own
+	// admin listener). Env override: SDN_DATASET_PUBLISH_URL.
+	DatasetPublishURL string `yaml:"dataset_publish_url,omitempty"`
 }
 
 // PoliciesConfig configures the ABAC policy engine.
