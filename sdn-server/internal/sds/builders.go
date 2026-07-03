@@ -30,6 +30,7 @@ type OMMBuilder struct {
 	creationDate       string
 	originator         string
 	classificationType string
+	epochTimestamp     float64
 }
 
 // NewOMMBuilder creates a new OMM builder with default values.
@@ -68,6 +69,15 @@ func (b *OMMBuilder) WithObjectID(id string) *OMMBuilder {
 // WithNoradCatID sets the NORAD catalog ID.
 func (b *OMMBuilder) WithNoradCatID(id uint32) *OMMBuilder {
 	b.noradCatID = id
+	return b
+}
+
+// WithEpochTimestamp sets the numeric USER_DEFINED_EPOCH_TIMESTAMP field
+// (Unix seconds). Numeric epoch comparisons in FlatSQL are orders of
+// magnitude cheaper than strftime over the EPOCH string, so ingest should
+// always populate this alongside EPOCH.
+func (b *OMMBuilder) WithEpochTimestamp(unixSeconds float64) *OMMBuilder {
+	b.epochTimestamp = unixSeconds
 	return b
 }
 
@@ -158,6 +168,9 @@ func (b *OMMBuilder) Build() []byte {
 	OMM.OMMAddCREATION_DATE(b.builder, creationDateOffset)
 	OMM.OMMAddORIGINATOR(b.builder, originatorOffset)
 	OMM.OMMAddCLASSIFICATION_TYPE(b.builder, classificationOffset)
+	if b.epochTimestamp != 0 {
+		OMM.OMMAddUSER_DEFINED_EPOCH_TIMESTAMP(b.builder, b.epochTimestamp)
+	}
 	omm := OMM.OMMEnd(b.builder)
 
 	OMM.FinishSizePrefixedOMMBuffer(b.builder, omm)
