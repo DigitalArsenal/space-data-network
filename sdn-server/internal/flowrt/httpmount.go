@@ -1,10 +1,10 @@
 package flowrt
 
-// HTTP flow mounts (loop C.3d): a compiled flow bundle is just a WASM module —
-// it loads through the standard flowrt instantiation path like any other
-// module, with the module-SDK hostcall bridge satisfying its declared
-// capabilities. There is NO gateway: the only host glue is socket plumbing
-// with zero decisions —
+// HTTP flow mounts (loop C.3d, pooled in C.4): a compiled flow bundle is just
+// a WASM module — it loads through the standard flowrt instantiation path
+// like any other module, with the module-SDK hostcall bridge satisfying its
+// declared capabilities. There is NO gateway: the only host glue is socket
+// plumbing with zero decisions —
 //
 //	HTTP request  → one $HTQ FlatBuffer frame (method/path/raw query/headers/
 //	                body/remote, verbatim) enqueued at the flow's HTTP trigger
@@ -14,10 +14,16 @@ package flowrt
 // All routing, query parsing, format selection, profile resolution, caching,
 // and ETag logic live inside the wasm flow. Which flow owns which listener
 // path is configuration (config.FlowMount), never Go code.
+//
+// Concurrency: requests are serialized per flow INSTANCE (one linear memory
+// each), so every mount runs a small instance pool (config.FlowMount.Pool,
+// default 4) — a request checks an idle instance out of the pool for the
+// duration of the exchange.
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,10 +34,26 @@ import (
 	"sync"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/httpabi"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
+
+// DefaultMountPool is the instance-pool size used when a mount does not
+// configure one.
+const DefaultMountPool = 4
+
+// flowAOTCachePrefix names flow-mount AOT artifacts inside a shared AOT
+// cache directory (distinct from the engine's "flatsql-" prefix).
+const flowAOTCachePrefix = "flowmount"
+
+// ErrFlowNotInstalled reports a flow reference that resolves to neither a
+// filesystem path nor an installed flow artifact. Mount registration skips
+// (rather than aborts on) these so a default-config node without the module
+// installed yet still boots; delivery of the module later + restart mounts
+// it.
+var ErrFlowNotInstalled = errors.New("flow is not installed")
 
 // FlowMountDeps carries the host services a mounted flow's declared
 // capabilities are satisfied from. Nothing here makes request-level decisions.
@@ -44,24 +66,39 @@ type FlowMountDeps struct {
 	// hostcalls (plugin.getConfig, node.peerId, ...). May be empty.
 	NodeCtx *modulert.NodeContext
 
-	// MaxMemoryPages caps the flow's linear memory (64KB pages, 0 = 1024).
+	// MaxMemoryPages caps each flow instance's linear memory (64KB pages,
+	// 0 = 1024). Per-mount config.FlowMount.MemoryPages overrides it.
 	MaxMemoryPages uint32
+
+	// PoolSize is the number of flow instances to load for the mount
+	// (<= 0: DefaultMountPool via RegisterFlowMounts, 1 when LoadMountedFlow
+	// is called directly).
+	PoolSize int
+
+	// AOTCacheDir, when set, AOT-compiles the flow artifact through the same
+	// sha256-keyed disk cache the FlatSQL engine uses (flatsqlrt
+	// EnsureAOTArtifact). Compile failure falls back to interpretation.
+	AOTCacheDir string
 
 	// Store optionally resolves installed flow program IDs to artifacts.
 	Store *FlowStore
 }
 
-// MountedFlow is one flow module bound to one HTTP listener path. It is the
-// dumb pipe between the socket and the flow's ingress trigger / egress sink.
+// MountedFlow is one flow module bound to one HTTP listener path, served by a
+// pool of identical instances. It is the dumb pipe between the socket and
+// the flow's ingress trigger / egress sink.
 type MountedFlow struct {
-	rt       *FlowRuntime
 	manifest *modulert.Manifest
+	aot      bool
 
 	triggerIndex  uint32
 	triggerPortID string
 	egressKeys    []string
 
-	mu sync.Mutex
+	pool chan *FlowRuntime
+
+	closeMu sync.Mutex
+	closed  bool
 }
 
 // flowBundleTopology is the subset of the compiled bundle's flow.json needed
@@ -92,14 +129,43 @@ func resolveFlowArtifact(flowRef string, store *FlowStore) (wasmPath, bundleDir 
 			return wasmPath, filepath.Dir(wasmPath), nil
 		}
 	}
-	return "", "", fmt.Errorf("flow reference %q is neither a filesystem path nor an installed flow", flowRef)
+	return "", "", fmt.Errorf("flow reference %q is neither a filesystem path nor an installed flow: %w", flowRef, ErrFlowNotInstalled)
 }
 
-// LoadMountedFlow loads a compiled flow bundle through the standard flowrt
-// instantiation path (WASI + flow host funcs + the module-SDK hostcall
-// bridge), reads its $PLG manifest, and provisions the manifest capability set
-// from the registry — rejecting the load if the host cannot satisfy a
-// required capability.
+// loadFlowInstance instantiates one pooled flow instance: standard flowrt
+// load (WASI + flow host funcs + the module-SDK hostcall bridge), manifest
+// read, capability provisioning from the registry — rejecting the load if
+// the host cannot satisfy a required capability.
+func loadFlowInstance(wasmBytes []byte, pages uint32, deps FlowMountDeps) (*FlowRuntime, *modulert.Manifest, error) {
+	// The hostcall bridge is created before the manifest is readable
+	// (chicken-and-egg, same as modulert.Module); its capability grants are
+	// applied right after the manifest parse below.
+	bridge := modulert.NewHostBridge(deps.NodeCtx, nil)
+
+	rt, err := NewFlowRuntime(wasmBytes, pages,
+		wasmrt.WithHostModule(modulert.HostcallImportModule, bridge.BuildWasmEdgeHostFuncs()),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load flow module: %w", err)
+	}
+
+	manifest, err := modulert.ReadManifest(rt.Module())
+	if err != nil {
+		rt.Release()
+		return nil, nil, fmt.Errorf("read flow manifest: %w", err)
+	}
+
+	if err := modulert.ProvisionBridge(bridge, deps.CapRegistry, manifest.Capabilities, nil); err != nil {
+		rt.Release()
+		return nil, nil, fmt.Errorf("flow %q: %w", manifest.PluginID, err)
+	}
+	return rt, manifest, nil
+}
+
+// LoadMountedFlow loads a compiled flow bundle as a pool of deps.PoolSize
+// identical instances (minimum 1). When deps.AOTCacheDir is set the artifact
+// is AOT-compiled through the shared cache first; on compile failure the
+// portable bytes are interpreted.
 func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 	wasmPath, bundleDir, err := resolveFlowArtifact(flowRef, deps.Store)
 	if err != nil {
@@ -110,96 +176,143 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 		return nil, fmt.Errorf("read flow artifact: %w", err)
 	}
 
+	runBytes := wasmBytes
+	aot := false
+	if deps.AOTCacheDir != "" {
+		if compiled, aotErr := flatsqlrt.EnsureAOTArtifact(deps.AOTCacheDir, flowAOTCachePrefix, wasmBytes); aotErr == nil {
+			runBytes = compiled
+			aot = true
+		} else {
+			log.Warnf("Flow mount %q: AOT compile failed, interpreting: %v", flowRef, aotErr)
+		}
+	}
+
 	pages := deps.MaxMemoryPages
 	if pages == 0 {
 		pages = 1024
 	}
-
-	// The hostcall bridge is created before the manifest is readable
-	// (chicken-and-egg, same as modulert.Module); its capability grants are
-	// applied right after the manifest parse below.
-	bridge := modulert.NewHostBridge(deps.NodeCtx, nil)
-
-	rt, err := NewFlowRuntime(wasmBytes, pages,
-		wasmrt.WithHostModule(modulert.HostcallImportModule, bridge.BuildWasmEdgeHostFuncs()),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("load flow module: %w", err)
-	}
-
-	manifest, err := modulert.ReadManifest(rt.Module())
-	if err != nil {
-		rt.Release()
-		return nil, fmt.Errorf("read flow manifest: %w", err)
-	}
-
-	if err := modulert.ProvisionBridge(bridge, deps.CapRegistry, manifest.Capabilities, nil); err != nil {
-		rt.Release()
-		return nil, fmt.Errorf("flow %q: %w", manifest.PluginID, err)
+	poolSize := deps.PoolSize
+	if poolSize <= 0 {
+		poolSize = 1
 	}
 
 	mf := &MountedFlow{
-		rt:            rt,
-		manifest:      manifest,
+		aot:           aot,
 		triggerIndex:  0,
 		triggerPortID: "request",
+		pool:          make(chan *FlowRuntime, poolSize),
 	}
 
-	// Ingress trigger index + bound port come from the bundle's flow.json
-	// topology when present (mechanical lookup, no interpretation).
-	if bundleDir != "" {
-		if data, readErr := os.ReadFile(filepath.Join(bundleDir, "flow.json")); readErr == nil {
-			var topo flowBundleTopology
-			if json.Unmarshal(data, &topo) == nil {
-				for i, trig := range topo.Triggers {
-					if trig.Kind != "http-request" {
-						continue
-					}
-					mf.triggerIndex = uint32(i)
-					for _, binding := range topo.TriggerBindings {
-						if binding.TriggerID == trig.TriggerID && binding.TargetPortID != "" {
-							mf.triggerPortID = binding.TargetPortID
+	for i := 0; i < poolSize; i++ {
+		rt, manifest, err := loadFlowInstance(runBytes, pages, deps)
+		if err != nil {
+			mf.Close()
+			return nil, err
+		}
+		if mf.manifest == nil {
+			mf.manifest = manifest
+
+			// Ingress trigger index + bound port come from the bundle's
+			// flow.json topology when present (mechanical lookup, no
+			// interpretation).
+			if bundleDir != "" {
+				if data, readErr := os.ReadFile(filepath.Join(bundleDir, "flow.json")); readErr == nil {
+					var topo flowBundleTopology
+					if json.Unmarshal(data, &topo) == nil {
+						for ti, trig := range topo.Triggers {
+							if trig.Kind != "http-request" {
+								continue
+							}
+							mf.triggerIndex = uint32(ti)
+							for _, binding := range topo.TriggerBindings {
+								if binding.TriggerID == trig.TriggerID && binding.TargetPortID != "" {
+									mf.triggerPortID = binding.TargetPortID
+								}
+							}
+							break
 						}
 					}
-					break
 				}
 			}
-		}
-	}
 
-	// Egress sinks are the artifact's host-dispatch nodes (in the
-	// linked-direct model every other node runs inside the artifact and all
-	// hostcalls are capabilities). Register the response pipe for each.
-	for i := uint32(0); i < rt.NodeCount; i++ {
-		dd, ddErr := rt.GetNodeDispatchDescriptor(i)
-		if ddErr != nil {
-			continue
+			// Egress sinks are the artifact's host-dispatch nodes (in the
+			// linked-direct model every other node runs inside the artifact
+			// and all hostcalls are capabilities). Identical across pool
+			// instances (same artifact bytes).
+			for ni := uint32(0); ni < rt.NodeCount; ni++ {
+				dd, ddErr := rt.GetNodeDispatchDescriptor(ni)
+				if ddErr != nil {
+					continue
+				}
+				if rt.readCStringAt(dd.DispatchModelPointer) != "host" {
+					continue
+				}
+				pluginID := rt.readCStringAt(dd.PluginIDPointer)
+				methodID := rt.readCStringAt(dd.MethodIDPointer)
+				if pluginID == "" || methodID == "" {
+					continue
+				}
+				mf.egressKeys = append(mf.egressKeys, pluginID+":"+methodID)
+			}
+			if len(mf.egressKeys) == 0 {
+				rt.Release()
+				mf.Close()
+				return nil, fmt.Errorf("flow %q has no host-model egress sink to deliver HTTP responses", manifest.PluginID)
+			}
 		}
-		if rt.readCStringAt(dd.DispatchModelPointer) != "host" {
-			continue
-		}
-		pluginID := rt.readCStringAt(dd.PluginIDPointer)
-		methodID := rt.readCStringAt(dd.MethodIDPointer)
-		if pluginID == "" || methodID == "" {
-			continue
-		}
-		mf.egressKeys = append(mf.egressKeys, pluginID+":"+methodID)
-	}
-	if len(mf.egressKeys) == 0 {
-		rt.Release()
-		return nil, fmt.Errorf("flow %q has no host-model egress sink to deliver HTTP responses", manifest.PluginID)
+		mf.pool <- rt
 	}
 
 	return mf, nil
 }
 
-// Close releases the flow module.
+// acquire checks an idle instance out of the pool, waiting until one frees
+// up or the request context ends.
+func (mf *MountedFlow) acquire(ctx context.Context) (*FlowRuntime, error) {
+	select {
+	case rt, ok := <-mf.pool:
+		if !ok || rt == nil {
+			return nil, errors.New("flow module is closed")
+		}
+		return rt, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// release returns an instance to the pool (or frees it if the mount closed
+// while the request was in flight).
+func (mf *MountedFlow) release(rt *FlowRuntime) {
+	mf.closeMu.Lock()
+	closed := mf.closed
+	mf.closeMu.Unlock()
+	if closed {
+		rt.Release()
+		return
+	}
+	mf.pool <- rt
+}
+
+// Close releases every pooled instance. Instances currently serving a
+// request are released when their request finishes.
 func (mf *MountedFlow) Close() {
-	mf.mu.Lock()
-	defer mf.mu.Unlock()
-	if mf.rt != nil {
-		mf.rt.Release()
-		mf.rt = nil
+	mf.closeMu.Lock()
+	if mf.closed {
+		mf.closeMu.Unlock()
+		return
+	}
+	mf.closed = true
+	mf.closeMu.Unlock()
+
+	for {
+		select {
+		case rt := <-mf.pool:
+			if rt != nil {
+				rt.Release()
+			}
+		default:
+			return
+		}
 	}
 }
 
@@ -211,8 +324,11 @@ func (mf *MountedFlow) ProgramID() string {
 	return ""
 }
 
-// Runtime returns the underlying flow runtime (tests/diagnostics).
-func (mf *MountedFlow) Runtime() *FlowRuntime { return mf.rt }
+// AOT reports whether the pooled instances execute an AOT-compiled artifact.
+func (mf *MountedFlow) AOT() bool { return mf.aot }
+
+// PoolSize reports the mount's instance-pool capacity.
+func (mf *MountedFlow) PoolSize() int { return cap(mf.pool) }
 
 // htrPipe streams the flow's $HTR egress frames to the ResponseWriter
 // verbatim: the first frame carries status + headers + the first body bytes;
@@ -256,8 +372,8 @@ func (p *htrPipe) emit(_ context.Context, args *InvocationArgs) (*InvocationResu
 
 // ServeHTTP pipes one HTTP exchange through the flow: encode the request
 // verbatim as a single $HTQ ingress frame, drain the flow, stream the $HTR
-// egress verbatim. Requests are serialized per flow instance (one linear
-// memory).
+// egress verbatim. Each request runs on an instance checked out of the
+// mount's pool for the duration of the exchange.
 func (mf *MountedFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -290,14 +406,12 @@ func (mf *MountedFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Remote:  r.RemoteAddr,
 	})
 
-	mf.mu.Lock()
-	defer mf.mu.Unlock()
-
-	rt := mf.rt
-	if rt == nil {
-		http.Error(w, "flow module is closed", http.StatusServiceUnavailable)
+	rt, err := mf.acquire(r.Context())
+	if err != nil {
+		http.Error(w, fmt.Sprintf("acquire flow instance: %v", err), http.StatusServiceUnavailable)
 		return
 	}
+	defer mf.release(rt)
 
 	// One $HTQ frame into the flow's linear memory, enqueued at the ingress
 	// trigger.
@@ -343,9 +457,10 @@ func (mf *MountedFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // RegisterFlowMounts loads every configured flow mount and registers its
-// handler on the mux. It fails (closing anything already mounted) if any
-// mount cannot be loaded — including when a flow declares a capability the
-// host cannot satisfy.
+// handler on the mux. A mount whose flow artifact is not installed is
+// SKIPPED with an error log (module delivery may install it later); any
+// other load failure — including a flow declaring a capability the host
+// cannot satisfy — fails registration and closes anything already mounted.
 func RegisterFlowMounts(mux *http.ServeMux, mounts []config.FlowMount, deps FlowMountDeps) ([]*MountedFlow, error) {
 	mounted := make([]*MountedFlow, 0, len(mounts))
 	fail := func(err error) ([]*MountedFlow, error) {
@@ -358,14 +473,27 @@ func RegisterFlowMounts(mux *http.ServeMux, mounts []config.FlowMount, deps Flow
 		if strings.TrimSpace(mount.Path) == "" || strings.TrimSpace(mount.Flow) == "" {
 			return fail(fmt.Errorf("flow mount requires both path and flow (got path=%q flow=%q)", mount.Path, mount.Flow))
 		}
-		mf, err := LoadMountedFlow(mount.Flow, deps)
+		mountDeps := deps
+		if mount.Pool > 0 {
+			mountDeps.PoolSize = mount.Pool
+		} else if mountDeps.PoolSize <= 0 {
+			mountDeps.PoolSize = DefaultMountPool
+		}
+		if mount.MemoryPages > 0 {
+			mountDeps.MaxMemoryPages = mount.MemoryPages
+		}
+		mf, err := LoadMountedFlow(mount.Flow, mountDeps)
 		if err != nil {
+			if errors.Is(err, ErrFlowNotInstalled) {
+				log.Errorf("Flow mount %q skipped: %v", mount.Path, err)
+				continue
+			}
 			return fail(fmt.Errorf("mount %q: %w", mount.Path, err))
 		}
 		mux.Handle(mount.Path, mf)
 		mounted = append(mounted, mf)
-		log.Infof("Flow %q mounted at %s (trigger %d, egress %v)",
-			mf.ProgramID(), mount.Path, mf.triggerIndex, mf.egressKeys)
+		log.Infof("Flow %q mounted at %s (pool %d, aot %v, trigger %d, egress %v)",
+			mf.ProgramID(), mount.Path, mf.PoolSize(), mf.AOT(), mf.triggerIndex, mf.egressKeys)
 	}
 	return mounted, nil
 }

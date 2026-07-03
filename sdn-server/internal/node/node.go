@@ -331,7 +331,8 @@ func (n *Node) init() error {
 
 	// Initialize storage (if not edge mode)
 	if n.config.Mode != "edge" {
-		n.store, err = storage.NewFlatSQLStore(n.config.Storage.Path, n.validator)
+		n.store, err = storage.NewFlatSQLStore(n.config.Storage.Path, n.validator,
+			storage.WithEngineHotWindow(n.config.Storage.EngineHotWindow))
 		if err != nil {
 			return fmt.Errorf("failed to create storage: %w", err)
 		}
@@ -2380,6 +2381,12 @@ func (n *Node) MountFlows(mux *http.ServeMux) error {
 		CapRegistry:    n.buildCapRegistry(),
 		NodeCtx:        nodeCtx,
 		MaxMemoryPages: n.config.Flows.MaxMemoryPages,
+		// NOTE (loop C.4): flow mounts run INTERPRETED. WasmEdge AOT
+		// compiles the flow artifact without error but the compiled code
+		// traps ("out of bounds memory access") on the first linked-direct
+		// dispatch (flowrt TestAOTMountRepro) — do not set AOTCacheDir here
+		// until that is fixed upstream. The 123KB artifact is a thin
+		// pass-through; the FlatSQL engine underneath stays AOT.
 	}
 	if n.flowManager != nil {
 		deps.Store = n.flowManager.Store()

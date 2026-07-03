@@ -12,221 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/SPW"
-	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
-
-func TestOMMBulkReturnsFullCatalogFlatBufferStream(t *testing.T) {
-	store := newDataAPITestStore(t)
-	day := "2026-05-05"
-	storeDataAPITestOMM(t, store, 25544, "ISS (ZARYA)", day)
-	storeDataAPITestOMM(t, store, 40909, "STARLINK-1001", day)
-
-	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/omm/bulk?limit=10", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-	if got := rec.Header().Get("X-SDN-Schema"); got != "OMM.fbs" {
-		t.Fatalf("X-SDN-Schema = %q, want OMM.fbs", got)
-	}
-	if got := rec.Header().Get("X-SDN-Stream-Format"); got != "flatsql-size-prefixed-le-u32" {
-		t.Fatalf("X-SDN-Stream-Format = %q", got)
-	}
-	if got := rec.Header().Get("X-SDN-Record-Count"); got != "2" {
-		t.Fatalf("X-SDN-Record-Count = %q, want 2", got)
-	}
-
-	records := readLengthPrefixedRecords(t, rec.Body.Bytes())
-	if len(records) != 2 {
-		t.Fatalf("stream record count = %d, want 2", len(records))
-	}
-}
-
-func TestOMMBulkReturnsLatestCelestrakCatalogBatch(t *testing.T) {
-	store := newDataAPITestStore(t)
-	storeDataAPITestOMMWithBatch(t, store, 25544, "ISS (ZARYA)", "2026-05-10", "old-batch")
-	storeDataAPITestOMMWithBatch(t, store, 40909, "STARLINK-1001", "2026-05-10", "old-batch")
-	storeDataAPITestOMMWithBatch(t, store, 25544, "ISS (ZARYA)", "2026-05-15", "new-batch")
-	storeDataAPITestOMMWithBatch(t, store, 40909, "STARLINK-1001", "2026-05-15", "new-batch")
-
-	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/omm/bulk?limit=10", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-	if got := rec.Header().Get("X-SDN-Record-Count"); got != "2" {
-		t.Fatalf("X-SDN-Record-Count = %q, want latest catalog batch count 2", got)
-	}
-	records := readLengthPrefixedRecords(t, rec.Body.Bytes())
-	if len(records) != 2 {
-		t.Fatalf("stream record count = %d, want latest catalog batch count 2", len(records))
-	}
-	for _, payload := range records {
-		omm := OMM.GetSizePrefixedRootAsOMM(payload, 0)
-		if got := string(omm.EPOCH()); got != "2026-05-15T12:00:00Z" {
-			t.Fatalf("bulk OMM epoch = %q, want latest batch epoch", got)
-		}
-	}
-}
-
-func TestOMMBulkCachesFlatBufferStreamUntilSourceUpdate(t *testing.T) {
-	store, basePath, _ := newDataAPITestStoreWithBasePath(t)
-	storeDataAPITestOMMWithBatch(t, store, 25544, "ISS (ZARYA)", "2026-05-15", "batch-a")
-	storeDataAPITestOMMWithBatch(t, store, 40909, "STARLINK-1001", "2026-05-15", "batch-a")
-
-	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/omm/bulk?limit=10", nil)
-	first := httptest.NewRecorder()
-	mux.ServeHTTP(first, req)
-	if first.Code != http.StatusOK {
-		t.Fatalf("first status = %d, body=%s", first.Code, first.Body.String())
-	}
-	firstBody := append([]byte(nil), first.Body.Bytes()...)
-	if len(readLengthPrefixedRecords(t, firstBody)) != 2 {
-		t.Fatalf("first cached stream record count != 2")
-	}
-
-	if err := os.RemoveAll(filepath.Join(basePath, "flatsql-streams")); err != nil {
-		t.Fatalf("remove backing stream files failed: %v", err)
-	}
-
-	second := httptest.NewRecorder()
-	mux.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/api/v1/data/omm/bulk?limit=10", nil))
-	if second.Code != http.StatusOK {
-		t.Fatalf("second status = %d, body=%s", second.Code, second.Body.String())
-	}
-	if !bytes.Equal(second.Body.Bytes(), firstBody) {
-		t.Fatal("second OMM bulk stream was not served from the source-update cache")
-	}
-}
-
-func TestOMMBulkJSONIncludesDataForFullCatalogConsumers(t *testing.T) {
-	store := newDataAPITestStore(t)
-	day := "2026-05-05"
-	storeDataAPITestOMM(t, store, 25544, "ISS (ZARYA)", day)
-	storeDataAPITestOMM(t, store, 40909, "STARLINK-1001", day)
-
-	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/omm/bulk?format=json&include_data=true", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-	var body struct {
-		Schema  string                   `json:"schema"`
-		Count   int                      `json:"count"`
-		Results []map[string]interface{} `json:"results"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode response failed: %v", err)
-	}
-	if body.Schema != "OMM.fbs" {
-		t.Fatalf("schema = %q, want OMM.fbs", body.Schema)
-	}
-	if body.Count != 2 || len(body.Results) != 2 {
-		t.Fatalf("count=%d len(results)=%d, want 2", body.Count, len(body.Results))
-	}
-	for _, row := range body.Results {
-		if row["data_base64"] == "" {
-			t.Fatalf("row missing data_base64: %#v", row)
-		}
-		if row["materialized_at"] == "" {
-			t.Fatalf("row missing materialized_at: %#v", row)
-		}
-		if row["source_name"] != "celestrak-gp" {
-			t.Fatalf("row source_name = %#v, want celestrak-gp", row["source_name"])
-		}
-	}
-}
-
-func TestSPWBulkReturnsSpaceWeatherFlatBufferStream(t *testing.T) {
-	store := newDataAPITestStore(t)
-	storeDataAPITestSPW(t, store, "2026-05-05")
-	storeDataAPITestSPW(t, store, "2026-05-06")
-
-	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/spw/bulk?limit=10", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-	if got := rec.Header().Get("X-SDN-Schema"); got != "SPW.fbs" {
-		t.Fatalf("X-SDN-Schema = %q, want SPW.fbs", got)
-	}
-	if got := rec.Header().Get("X-SDN-Stream-Format"); got != "flatsql-size-prefixed-le-u32" {
-		t.Fatalf("X-SDN-Stream-Format = %q", got)
-	}
-	if got := rec.Header().Get("X-SDN-Record-Count"); got != "2" {
-		t.Fatalf("X-SDN-Record-Count = %q, want 2", got)
-	}
-}
-
-func TestSPWBulkJSONIncludesSpaceWeatherFreshness(t *testing.T) {
-	store := newDataAPITestStore(t)
-	storeDataAPITestSPW(t, store, "2026-05-05")
-
-	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/spw/bulk?format=json&include_data=true", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-	var body struct {
-		Schema  string                   `json:"schema"`
-		Count   int                      `json:"count"`
-		Results []map[string]interface{} `json:"results"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode response failed: %v", err)
-	}
-	if body.Schema != "SPW.fbs" {
-		t.Fatalf("schema = %q, want SPW.fbs", body.Schema)
-	}
-	if body.Count != 1 || len(body.Results) != 1 {
-		t.Fatalf("count=%d len(results)=%d, want 1", body.Count, len(body.Results))
-	}
-	row := body.Results[0]
-	if row["date"] != "2026-05-05" {
-		t.Fatalf("row date = %#v, want 2026-05-05", row["date"])
-	}
-	if row["source_name"] != "celestrak-space-weather" {
-		t.Fatalf("row source_name = %#v, want celestrak-space-weather", row["source_name"])
-	}
-	if row["materialized_at"] == "" {
-		t.Fatalf("row missing materialized_at: %#v", row)
-	}
-	if row["data_base64"] == "" {
-		t.Fatalf("row missing data_base64: %#v", row)
-	}
-}
 
 func TestDataEpochQueryReturnsMatchQuality(t *testing.T) {
 	store := newDataAPITestStore(t)
@@ -234,7 +22,7 @@ func TestDataEpochQueryReturnsMatchQuality(t *testing.T) {
 	storeDataAPITestOMM(t, store, 25544, "ISS-FORWARD", "2026-05-12")
 
 	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+	NewDataQueryHandler(store).RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/epoch?schema=OMM.fbs&profile=epoch.nearest&at=2026-05-11T12:00:00Z&norad_cat_id=25544&provider_id=space-data-network-02&source_name=celestrak-gp&limit=10", nil)
 	rec := httptest.NewRecorder()
@@ -284,7 +72,7 @@ func TestDataEpochQueryReportsTotalCountBeyondReturnedPage(t *testing.T) {
 	storeDataAPITestOMM(t, store, 50000, "OTHER-DAY", "2026-05-12")
 
 	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+	NewDataQueryHandler(store).RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/epoch?schema=OMM.fbs&profile=epoch.day&day=2026-05-11&provider_id=space-data-network-02&source_name=celestrak-gp&limit=1", nil)
 	rec := httptest.NewRecorder()
@@ -327,7 +115,7 @@ func TestDataSummaryGroupsBySchemaAndProducer(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+	NewDataQueryHandler(store).RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/summary", nil)
 	rec := httptest.NewRecorder()
@@ -383,7 +171,7 @@ func TestDataDatastoresListsRegisteredNamespaces(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+	NewDataQueryHandler(store).RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/datastores", nil)
 	rec := httptest.NewRecorder()
@@ -431,7 +219,7 @@ func TestDataQueryReturnsRawFlatBufferRowsForEPM(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+	NewDataQueryHandler(store).RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/query", bytes.NewBufferString(`{"schema":"EPM.fbs","provider_id":"local-node","source_name":"local-epm","limit":10,"include_data":true}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -481,7 +269,7 @@ func TestDataQueryStreamsRawFlatBuffersWithoutBase64(t *testing.T) {
 	payload := storeDataAPITestOMM(t, store, 56775, "STARLINK-6292", "2026-05-10")
 
 	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+	NewDataQueryHandler(store).RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/query", bytes.NewBufferString(`{"schema":"OMM.fbs","provider_id":"space-data-network-02","source_name":"celestrak-gp","limit":10}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -519,7 +307,7 @@ func TestDataQueryAppliesSubscriptionSyncFilter(t *testing.T) {
 	wantedPayload := storeDataAPITestOMM(t, store, 25544, "ISS (ZARYA)", "2026-05-11")
 
 	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+	NewDataQueryHandler(store).RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/query", bytes.NewBufferString(`{"schema":"OMM.fbs","provider_id":"space-data-network-02","source_name":"celestrak-gp","sync_filter":"NORAD_CAT_ID = 25544","limit":10,"include_data":true}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -556,7 +344,7 @@ func TestDataScanReturnsFilteredTotalAndHashBoundRefs(t *testing.T) {
 	storeDataAPITestOMM(t, store, 25544, "ISS (ZARYA)", "2026-05-10")
 
 	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+	NewDataQueryHandler(store).RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/scan", bytes.NewBufferString(`{"schema":"OMM.fbs","provider_id":"space-data-network-02","source_name":"celestrak-gp","limit":1}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -640,7 +428,7 @@ func TestDataScanAppliesSubscriptionSyncFilter(t *testing.T) {
 	storeDataAPITestOMM(t, store, 25544, "ISS (ZARYA)", "2026-05-11")
 
 	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+	NewDataQueryHandler(store).RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/scan", bytes.NewBufferString(`{"schema":"OMM.fbs","provider_id":"space-data-network-02","source_name":"celestrak-gp","sync_filter":"NORAD_CAT_ID = 25544","limit":10}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -699,7 +487,7 @@ func TestDataScanCanReadRegisteredDatastoreNamespace(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+	NewDataQueryHandler(store).RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/scan", bytes.NewBufferString(`{"schema":"OMM.fbs","datastore_key":"`+key+`","limit":1}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -753,7 +541,7 @@ func TestDataLocalReplicaStatsReportsRowsPinsAndHead(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+	NewDataQueryHandler(store).RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/local-replica-stats?schema=OMM.fbs&provider_id=space-data-network-02&source_name=celestrak-gp&batch_id=test-batch&query_profile="+storage.DatasetPublicationQueryProfile, nil)
 	rec := httptest.NewRecorder()
@@ -811,7 +599,7 @@ func TestDataStreamEchoesResumableChunkMetadata(t *testing.T) {
 	storeDataAPITestOMM(t, store, 56775, "STARLINK-6292", "2026-05-10")
 
 	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+	NewDataQueryHandler(store).RegisterRoutes(mux)
 
 	scanReq := httptest.NewRequest(http.MethodPost, "/api/v1/data/scan", bytes.NewBufferString(`{"schema":"OMM.fbs","provider_id":"space-data-network-02","source_name":"celestrak-gp","limit":1}`))
 	scanReq.Header.Set("Content-Type", "application/json")
@@ -894,7 +682,7 @@ func TestDataScanAllowsLargeOrderedChunks(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+	NewDataQueryHandler(store).RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/scan", bytes.NewBufferString(`{"schema":"OMM.fbs","provider_id":"space-data-network-02","source_name":"celestrak-gp","limit":1105}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -962,7 +750,7 @@ func TestDataStreamReturnsScanBoundRefsInRequestedOrder(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+	NewDataQueryHandler(store).RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/stream", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -1023,7 +811,7 @@ func TestDataStreamAcceptsLargeScanBoundRefChunks(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+	NewDataQueryHandler(store).RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/stream", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -1058,7 +846,7 @@ func TestDataRecordEndpointReturnsRawFlatBuffer(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+	NewDataQueryHandler(store).RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/records/EPM.fbs/12D3KooWRecordEPM", nil)
 	rec := httptest.NewRecorder()
@@ -1159,34 +947,6 @@ func storeDataAPITestOMMWithBatch(t *testing.T, store *storage.FlatSQLStore, nor
 		t.Fatalf("store OMM failed: %v", err)
 	}
 	return payload
-}
-
-func storeDataAPITestSPW(t *testing.T, store *storage.FlatSQLStore, date string) {
-	t.Helper()
-
-	builder := flatbuffers.NewBuilder(256)
-	dateOffset := builder.CreateString(date)
-	SPW.SPWStart(builder)
-	SPW.SPWAddDATE(builder, dateOffset)
-	SPW.SPWAddBSRN(builder, 2569)
-	SPW.SPWAddND(builder, 12)
-	SPW.SPWAddKP1(builder, 13)
-	SPW.SPWAddAP1(builder, 5)
-	SPW.SPWAddF107_OBS(builder, 172.3)
-	SPW.SPWAddF107_ADJ(builder, 170.1)
-	SPW.SPWAddF107_DATA_TYPE(builder, SPW.F107DataTypeOBS)
-	spw := SPW.SPWEnd(builder)
-	SPW.FinishSizePrefixedSPWBuffer(builder, spw)
-
-	tags := storage.SourceTags{
-		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-space-weather",
-		SourceURL:  "https://celestrak.org/SpaceData/SW-All.csv",
-		BatchID:    "test-spw-batch",
-	}
-	if _, err := store.StoreWithSourceTags("SPW.fbs", builder.FinishedBytes(), "source:celestrak", nil, tags); err != nil {
-		t.Fatalf("store SPW failed: %v", err)
-	}
 }
 
 func readLengthPrefixedRecords(t *testing.T, data []byte) [][]byte {

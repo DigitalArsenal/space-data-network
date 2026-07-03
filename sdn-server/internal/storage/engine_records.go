@@ -26,10 +26,16 @@ import (
 )
 
 const (
-	// engineHotWindowLimit bounds the records resident in the engine per the
-	// A.4 capacity ceiling (docs/flatsql-store-v2.md §6): boot rebuild loads
-	// at most this many of the NEWEST records into the vtabs.
-	engineHotWindowLimit = 1_500_000
+	// engineDefaultHotWindow bounds the records resident in the engine per
+	// schema. A.4 measured the raw record ceiling at ~1.5M resident $OMM, but
+	// the record vtabs share the 4 GiB engine with the control tables (~4
+	// control rows per record, loop B.7), so the practical default is the
+	// migration guidance's ~400K records. Configurable via
+	// WithEngineHotWindow (config storage.engine_hot_window). Enforced at
+	// boot rebuild (LIMIT) and at ingest (tombstone eviction of the oldest
+	// resident records). Eviction never touches stream files, the control
+	// journal, or datasync cursor rowids.
+	engineDefaultHotWindow = 400_000
 
 	// engineOMMSchemaName is the only SDS schema routed into the engine so
 	// far (loop B.3 slice); further standards land with their own tables.
@@ -164,6 +170,7 @@ func (s *FlatSQLStore) ensureEngineSource(source string) error {
 // are logged and skipped; only a poisoned (trapped) runtime is returned as an
 // error. Caller holds s.mu for writing.
 func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIngest) error {
+	ingested := int64(0)
 	for _, p := range pending {
 		if err := s.ensureEngineSource(p.source); err != nil {
 			log.Warnf("FlatSQL engine: register source %q for %s: %v", p.source, schemaName, err)
@@ -177,17 +184,90 @@ func (s *FlatSQLStore) ingestEngineRecords(schemaName string, pending []engineIn
 			if s.engine.Poisoned() {
 				return fmt.Errorf("FlatSQL engine poisoned during %s ingest: %w", schemaName, err)
 			}
+			continue
 		}
+		ingested++
+	}
+	s.engineResident[schemaName] += ingested
+	return s.enforceEngineHotWindowLocked(schemaName)
+}
+
+// enforceEngineHotWindowLocked evicts the OLDEST resident engine records
+// beyond the configured hot window by tombstoning them in their per-source
+// shadow tables (flatsql_mark_deleted): queries stop returning them
+// immediately, and the next boot rebuild (which loads at most the window)
+// reclaims the memory. The durable substrate is untouched — control rows,
+// stream files, and the datasync cursor rowid space keep every record.
+// Failures are logged and skipped (the window is a cache bound, not
+// correctness-critical state); only a poisoned runtime is fatal. Caller
+// holds s.mu for writing.
+func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string) error {
+	if schemaName != engineOMMSchemaName || s.engineHotWindow <= 0 {
+		return nil
+	}
+	overflow := s.engineResident[schemaName] - int64(s.engineHotWindow)
+	if overflow <= 0 {
+		return nil
+	}
+	if len(s.engineSources) == 0 {
+		return nil
+	}
+
+	// Oldest live rows first. `_rowid` is the engine's per-source ingest
+	// sequence and both boot rebuild and live mirroring insert in ascending
+	// global-index order, so ascending `_rowid` is ingest order (exactly so
+	// for the dominant single-source case; near-ingest-order across
+	// concurrently written sources). Tombstoned rows are already skipped by
+	// the vtab scan.
+	res, err := s.engineDB.Query(
+		`SELECT _source, _rowid FROM OMM ORDER BY _rowid ASC LIMIT ?1`, overflow)
+	if err != nil {
+		log.Warnf("FlatSQL engine: hot-window eviction scan (%s): %v", schemaName, err)
+		if s.engine.Poisoned() {
+			return fmt.Errorf("FlatSQL engine poisoned during hot-window eviction scan: %w", err)
+		}
+		return nil
+	}
+
+	evicted := int64(0)
+	for _, row := range res.Rows {
+		if len(row) != 2 {
+			continue
+		}
+		source, ok := row[0].(string)
+		if !ok || source == "" {
+			continue
+		}
+		seq, ok := row[1].(int64)
+		if !ok {
+			continue
+		}
+		// source carries the FULL shadow-table name ("OMM@celestrak-gp") as
+		// reported by the unified view — exactly the name MarkDeleted keys
+		// on, and guaranteed registered (it came from the engine itself).
+		if err := s.engineDB.MarkDeleted(source, uint64(seq)); err != nil {
+			log.Warnf("FlatSQL engine: tombstone %s seq %d: %v", source, seq, err)
+			if s.engine.Poisoned() {
+				return fmt.Errorf("FlatSQL engine poisoned during hot-window eviction: %w", err)
+			}
+			continue
+		}
+		evicted++
+	}
+	s.engineResident[schemaName] -= evicted
+	if evicted > 0 {
+		log.Infof("FlatSQL engine: hot window evicted %d oldest %s records (window %d)",
+			evicted, schemaName, s.engineHotWindow)
 	}
 	return nil
 }
 
 // rebuildEngineRecords reloads the engine vtab hot window from durable state
-// at boot: the newest engineHotWindowLimit OMM records (by global index
-// rowid), replayed in ascending rowid order from the stream files. A no-op on
-// empty stores. Never fails the open for per-record problems — only a
-// poisoned runtime is fatal. Called from NewFlatSQLStore before the store is
-// shared, so no locking is needed.
+// at boot: the newest engineHotWindow OMM records (by global index rowid),
+// replayed in ascending rowid order from the stream files. A no-op on empty
+// stores. Never fails the open for per-record problems — only a poisoned
+// runtime is fatal. Called from NewFlatSQLStore before the store is shared,
+// so no locking is needed.
 func (s *FlatSQLStore) rebuildEngineRecords() error {
 	readSource, err := s.recordReadSource(engineOMMSchemaName)
 	if err != nil {
@@ -214,7 +294,7 @@ func (s *FlatSQLStore) rebuildEngineRecords() error {
 			ORDER BY idx.rowid DESC
 			LIMIT ?
 		) ORDER BY rid ASC
-	`, readSource), engineOMMSchemaName, engineHotWindowLimit)
+	`, readSource), engineOMMSchemaName, s.engineHotWindow)
 	if err != nil {
 		log.Warnf("FlatSQL engine rebuild: query %s hot window: %v", engineOMMSchemaName, err)
 		return nil
@@ -270,8 +350,9 @@ func (s *FlatSQLStore) rebuildEngineRecords() error {
 	if err := rows.Err(); err != nil {
 		log.Warnf("FlatSQL engine rebuild: iterate hot window: %v", err)
 	}
+	s.engineResident[engineOMMSchemaName] = int64(rebuilt)
 	if rebuilt > 0 || skipped > 0 {
-		log.Infof("FlatSQL engine rebuild: loaded %d %s records into the hot window (%d skipped)", rebuilt, engineOMMSchemaName, skipped)
+		log.Infof("FlatSQL engine rebuild: loaded %d %s records into the hot window (%d skipped, window %d)", rebuilt, engineOMMSchemaName, skipped, s.engineHotWindow)
 	}
 	return nil
 }

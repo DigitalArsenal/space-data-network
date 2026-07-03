@@ -89,6 +89,15 @@ type FlowMount struct {
 	// filesystem path to a compiled flow bundle directory (containing
 	// runtime.wasm) or directly to a .wasm artifact.
 	Flow string `yaml:"flow"`
+
+	// Pool is the number of flow instances serving this mount. Requests are
+	// serialized per instance (one linear memory each), so the pool size
+	// bounds concurrently served requests. Default (<= 0): 4.
+	Pool int `yaml:"pool,omitempty"`
+
+	// MemoryPages caps each pooled instance's linear memory (64KB pages).
+	// Default (0): the flows.max_memory_pages global.
+	MemoryPages uint32 `yaml:"memory_pages,omitempty"`
 }
 
 // PublishingConfig controls remote data publishing via the API.
@@ -161,6 +170,13 @@ type StorageConfig struct {
 	Path       string `yaml:"path"`
 	MaxSize    string `yaml:"max_size"`
 	GCInterval string `yaml:"gc_interval"`
+
+	// EngineHotWindow bounds the records resident per schema in the in-memory
+	// FlatSQL-WASM engine (the query hot window). Older records are evicted
+	// from the ENGINE only — stream files, the control journal, and datasync
+	// cursors keep the full history. 0 = built-in default (400K records,
+	// sized against the engine's 4 GiB wasm32 ceiling).
+	EngineHotWindow int `yaml:"engine_hot_window,omitempty"`
 }
 
 // SchemaConfig contains schema validation settings.
@@ -447,9 +463,30 @@ func Default() *Config {
 			MaxMemoryPages: 1024, // 64MB per flow
 			EditorEnabled:  false,
 			EditorPath:     "/flow-editor",
+			// The public /api/v1/data/* record-retrieval surface is served by
+			// the data-retrieval FLOW module (loop C.4 cutover): all routing,
+			// param parsing, profile resolution, format selection and
+			// ETag/304 logic live inside the wasm flow. Exact-match native
+			// routes (health, summary, datasync scan/stream/query, records/)
+			// still take mux precedence over this subtree mount. The flow
+			// reference is the installed flow program ID (delivered via SDN
+			// module delivery); mounts whose artifact is not installed yet
+			// are skipped with an error log at startup.
+			Mounts: []FlowMount{
+				{
+					Path:        "/api/v1/data/",
+					Flow:        DataRetrievalFlowID,
+					Pool:        4,
+					MemoryPages: 8192, // 512MB per instance: bulk streams + JSON encode live in flow memory
+				},
+			},
 		},
 	}
 }
+
+// DataRetrievalFlowID is the program ID of the flow bundle serving
+// /api/v1/data/* (space-data-network-modules flows/data-retrieval).
+const DataRetrievalFlowID = "com.digitalarsenal.flows.data-retrieval"
 
 // DefaultPath returns the default configuration file path.
 func DefaultPath() string {
