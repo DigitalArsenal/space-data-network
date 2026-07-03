@@ -1,10 +1,12 @@
 package trust
 
 import (
-	"database/sql"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 )
 
 func mustSetEdge(t *testing.T, g *Graph, truster, trustee string, w float64) {
@@ -152,11 +154,11 @@ func TestRemoveNode(t *testing.T) {
 }
 
 func TestStorePersistenceRoundTrip(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, closer, err := flatsqldrv.OpenStandalone(filepath.Join(t.TempDir(), "trust-test.sdnj"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer closer()
 	store, err := NewStore(db)
 	if err != nil {
 		t.Fatal(err)

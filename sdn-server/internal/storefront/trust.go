@@ -8,18 +8,18 @@ import (
 
 // TrustScore represents a computed trust score for a provider
 type TrustScore struct {
-	PeerID             string  `json:"peer_id"`
-	OverallScore       float64 `json:"overall_score"`        // 0-100
-	ReputationScore    float64 `json:"reputation_score"`     // 0-100 from marketplace
-	UptimeScore        float64 `json:"uptime_score"`         // 0-100
-	DeliveryScore      float64 `json:"delivery_score"`       // 0-100
-	DataQualityScore   float64 `json:"data_quality_score"`   // 0-100
-	DisputeScore       float64 `json:"dispute_score"`        // 0-100 (100 = no disputes)
-	TenureScore        float64 `json:"tenure_score"`         // 0-100 based on time active
-	VolumeScore        float64 `json:"volume_score"`         // 0-100 based on sales volume
-	EscrowRequired     bool    `json:"escrow_required"`      // Whether escrow is needed
-	Featured           bool    `json:"featured"`             // Whether eligible for featured
-	ComputedAt         int64   `json:"computed_at"`
+	PeerID           string  `json:"peer_id"`
+	OverallScore     float64 `json:"overall_score"`      // 0-100
+	ReputationScore  float64 `json:"reputation_score"`   // 0-100 from marketplace
+	UptimeScore      float64 `json:"uptime_score"`       // 0-100
+	DeliveryScore    float64 `json:"delivery_score"`     // 0-100
+	DataQualityScore float64 `json:"data_quality_score"` // 0-100
+	DisputeScore     float64 `json:"dispute_score"`      // 0-100 (100 = no disputes)
+	TenureScore      float64 `json:"tenure_score"`       // 0-100 based on time active
+	VolumeScore      float64 `json:"volume_score"`       // 0-100 based on sales volume
+	EscrowRequired   bool    `json:"escrow_required"`    // Whether escrow is needed
+	Featured         bool    `json:"featured"`           // Whether eligible for featured
+	ComputedAt       int64   `json:"computed_at"`
 }
 
 // TrustWeights defines the weights for computing overall trust score

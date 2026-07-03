@@ -232,7 +232,15 @@ func (j *StatementJournal) Replay(db *flatsqlrt.Database) (int, error) {
 		if err != nil {
 			return count, fmt.Errorf("flatsqldrv: journal frame at %d: %w", off, err)
 		}
-		if _, err := db.Query(fr.SQL, fr.Params...); err != nil {
+		// Mirror ExecContext's multi-statement handling: the engine executes
+		// one statement per call, but journaled DDL blocks may hold several.
+		if stmts := splitStatements(fr.SQL); len(stmts) > 1 && len(fr.Params) == 0 {
+			for _, stmt := range stmts {
+				if _, err := db.Query(stmt); err != nil {
+					return count, fmt.Errorf("flatsqldrv: replay %q: %w", stmt, err)
+				}
+			}
+		} else if _, err := db.Query(fr.SQL, fr.Params...); err != nil {
 			return count, fmt.Errorf("flatsqldrv: replay %q: %w", fr.SQL, err)
 		}
 		count++

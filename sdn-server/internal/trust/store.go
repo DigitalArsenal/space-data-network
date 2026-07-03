@@ -3,18 +3,18 @@ package trust
 import (
 	"database/sql"
 	"fmt"
+	"path/filepath"
 
-	_ "github.com/mattn/go-sqlite3"
-
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
-// Store persists the trust DAG in lightweight index tables alongside the
-// FlatSQL store (the storefront index-table pattern): the Graph enforces the
-// acyclic invariant in memory, the Store is its durable row image.
+// Store persists the trust DAG in lightweight index tables in its own
+// engine-backed database (journal-durable): the Graph enforces the acyclic
+// invariant in memory, the Store is its durable row image.
 type Store struct {
-	db      *sql.DB
-	ownedDB bool
+	db     *sql.DB
+	closer func() error
 }
 
 // NewStore wraps an existing database handle (tests pass an in-memory
@@ -27,25 +27,26 @@ func NewStore(db *sql.DB) (*Store, error) {
 	return s, nil
 }
 
-// NewStoreWithFlatSQL opens index tables on the node's FlatSQL database file
-// (the same pattern storefront uses). Close releases the connection.
+// NewStoreWithFlatSQL opens the trust index tables in a private
+// engine-backed database next to the node's datastore (journal
+// `trust.sdnj`) — no shared db file, no cross-subsystem contention.
 func NewStoreWithFlatSQL(flatStore *storage.FlatSQLStore) (*Store, error) {
-	db, err := sql.Open("sqlite3", flatStore.Path()+"?_journal_mode=WAL&_busy_timeout=5000")
+	db, closer, err := flatsqldrv.OpenStandalone(filepath.Join(filepath.Dir(flatStore.Path()), "trust.sdnj"))
 	if err != nil {
 		return nil, fmt.Errorf("trust: open index database: %w", err)
 	}
-	s := &Store{db: db, ownedDB: true}
+	s := &Store{db: db, closer: closer}
 	if err := s.initTables(); err != nil {
-		db.Close()
+		closer()
 		return nil, err
 	}
 	return s, nil
 }
 
-// Close releases the store's own database connection (no-op for wrapped DBs).
+// Close releases the store's own database (no-op for wrapped DBs).
 func (s *Store) Close() error {
-	if s.ownedDB {
-		return s.db.Close()
+	if s.closer != nil {
+		return s.closer()
 	}
 	return nil
 }

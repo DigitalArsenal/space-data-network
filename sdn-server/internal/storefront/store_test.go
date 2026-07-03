@@ -131,20 +131,20 @@ func TestStoreGrants(t *testing.T) {
 
 	// Create a grant
 	grant := &AccessGrant{
-		GrantID:        "test-grant-1",
-		ListingID:      "test-listing-1",
-		TierName:       "Basic",
-		BuyerPeerID:    "12D3KooWTestBuyer",
-		AccessType:     AccessTypeSubscription,
-		GrantedAt:      time.Now(),
-		ExpiresAt:      time.Now().Add(30 * 24 * time.Hour),
-		Status:         GrantStatusActive,
-		PaymentMethod:  PaymentMethodSDNCredits,
-		PaymentAmount:  4900,
+		GrantID:         "test-grant-1",
+		ListingID:       "test-listing-1",
+		TierName:        "Basic",
+		BuyerPeerID:     "12D3KooWTestBuyer",
+		AccessType:      AccessTypeSubscription,
+		GrantedAt:       time.Now(),
+		ExpiresAt:       time.Now().Add(30 * 24 * time.Hour),
+		Status:          GrantStatusActive,
+		PaymentMethod:   PaymentMethodSDNCredits,
+		PaymentAmount:   4900,
 		PaymentCurrency: "USD",
-		ProviderPeerID: "12D3KooWTestProvider",
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		ProviderPeerID:  "12D3KooWTestProvider",
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
 	}
 
 	if err := store.CreateGrant(grant); err != nil {
@@ -192,16 +192,16 @@ func TestStoreReviews(t *testing.T) {
 	// Create reviews
 	for i := 1; i <= 3; i++ {
 		review := &Review{
-			ReviewID:       "test-review-" + string(rune('0'+i)),
-			ListingID:      "test-listing-1",
-			ReviewerPeerID: "12D3KooWTestReviewer",
-			Rating:         uint8(3 + (i % 3)),
-			Title:          "Great data!",
-			Content:        "Very reliable and accurate data.",
+			ReviewID:         "test-review-" + string(rune('0'+i)),
+			ListingID:        "test-listing-1",
+			ReviewerPeerID:   "12D3KooWTestReviewer",
+			Rating:           uint8(3 + (i % 3)),
+			Title:            "Great data!",
+			Content:          "Very reliable and accurate data.",
 			VerifiedPurchase: true,
-			CreatedAt:      time.Now(),
-			UpdatedAt:      time.Now(),
-			Status:         ReviewStatusPublished,
+			CreatedAt:        time.Now(),
+			UpdatedAt:        time.Now(),
+			Status:           ReviewStatusPublished,
 		}
 		if err := store.CreateReview(review); err != nil {
 			t.Fatalf("Failed to create review %d: %v", i, err)

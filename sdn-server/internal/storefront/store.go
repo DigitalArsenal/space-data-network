@@ -6,13 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	logging "github.com/ipfs/go-log/v2"
-	_ "github.com/mattn/go-sqlite3"
 
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -26,40 +27,24 @@ const (
 	SchemaREV = "REV.fbs"
 )
 
-// sanitizeFTS5Query escapes special FTS5 operators from user input by quoting
-// each whitespace-delimited token. This prevents FTS5 MATCH injection where
-// operators like AND, OR, NOT, NEAR, *, or column filters could be abused.
-func sanitizeFTS5Query(input string) string {
-	tokens := strings.Fields(input)
-	if len(tokens) == 0 {
-		return ""
-	}
-	quoted := make([]string, 0, len(tokens))
-	for _, tok := range tokens {
-		tok = strings.ReplaceAll(tok, "\"", "")
-		if tok == "" {
-			continue
-		}
-		quoted = append(quoted, "\""+tok+"\"")
-	}
-	return strings.Join(quoted, " ")
-}
-
 // Store provides FlatSQL-backed storage for storefront data.
 // Canonical record data (STF, ACL, PUR, REV) is stored through FlatSQLStore
-// as content-addressed blobs. Lightweight index tables in the same database
-// provide rich query support (search, filter, pagination).
+// as content-addressed blobs. Lightweight index tables in a private
+// engine-backed database (journal-durable) provide rich query support
+// (search, filter, pagination).
 type Store struct {
 	flatStore *storage.FlatSQLStore
-	db        *sql.DB // own connection for index tables
+	db        *sql.DB // own engine-backed database for index tables
+	closer    func() error
 	mu        sync.RWMutex
 }
 
-// NewStore creates a new storefront store backed by FlatSQL.
-// It opens its own connection to the same sdn.db for index tables,
-// while using flatStore for content-addressed record storage.
+// NewStore creates a new storefront store backed by FlatSQL. Index tables
+// live in a private engine database next to the node's datastore (journal
+// `storefront.sdnj`) — no shared db file, no cross-subsystem contention —
+// while flatStore holds the content-addressed records.
 func NewStore(flatStore *storage.FlatSQLStore) (*Store, error) {
-	db, err := sql.Open("sqlite3", flatStore.Path()+"?_journal_mode=WAL&_busy_timeout=5000")
+	db, closer, err := flatsqldrv.OpenStandalone(filepath.Join(filepath.Dir(flatStore.Path()), "storefront.sdnj"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open index database: %w", err)
 	}
@@ -67,9 +52,10 @@ func NewStore(flatStore *storage.FlatSQLStore) (*Store, error) {
 	store := &Store{
 		flatStore: flatStore,
 		db:        db,
+		closer:    closer,
 	}
 	if err := store.initTables(); err != nil {
-		db.Close()
+		closer()
 		return nil, fmt.Errorf("failed to initialize index tables: %w", err)
 	}
 
@@ -125,20 +111,19 @@ func (s *Store) initTables() error {
 	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN protected_delivery TEXT`)
 	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN source_peer_id TEXT DEFAULT ''`)
 
-	// Full-text search for listings
+	// Text search projection for listings. This replaced the former FTS5
+	// virtual table: FTS5 is not usable inside the FlatSQL engine (its
+	// CREATE VIRTUAL TABLE hangs — engine-level issue, tracked upstream),
+	// and tokenized LIKE over a lowercased projection covers the search
+	// semantics the storefront needs.
 	_, err = s.db.Exec(`
-		CREATE VIRTUAL TABLE IF NOT EXISTS storefront_listings_fts USING fts5(
-			listing_id,
-			title,
-			description,
-			data_types,
-			tags,
-			content=storefront_listings,
-			content_rowid=rowid
-		);
+		CREATE TABLE IF NOT EXISTS storefront_listings_search (
+			listing_id TEXT PRIMARY KEY,
+			searchable TEXT NOT NULL
+		)
 	`)
 	if err != nil {
-		log.Warnf("Failed to create FTS table (may already exist): %v", err)
+		return fmt.Errorf("failed to create search projection table: %w", err)
 	}
 
 	// Grant index
@@ -520,14 +505,17 @@ func (s *Store) CreateListing(listing *Listing) error {
 		return fmt.Errorf("failed to index listing: %w", err)
 	}
 
-	// Update FTS index
+	// Update the search projection
+	searchable := strings.ToLower(strings.Join([]string{
+		listing.Title, listing.Description,
+		strings.Join(listing.DataTypes, " "), strings.Join(listing.Tags, " "),
+	}, " "))
 	_, err = s.db.Exec(`
-		INSERT INTO storefront_listings_fts (listing_id, title, description, data_types, tags)
-		VALUES (?, ?, ?, ?, ?)
-	`, listing.ListingID, listing.Title, listing.Description,
-		strings.Join(listing.DataTypes, " "), strings.Join(listing.Tags, " "))
+		INSERT OR REPLACE INTO storefront_listings_search (listing_id, searchable)
+		VALUES (?, ?)
+	`, listing.ListingID, searchable)
 	if err != nil {
-		log.Warnf("Failed to update FTS index: %v", err)
+		log.Warnf("Failed to update search projection: %v", err)
 	}
 
 	log.Infof("Created listing: %s (CID: %s)", listing.ListingID, cid)
@@ -649,17 +637,24 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 		conditions = append(conditions, "("+strings.Join(placeholders, " OR ")+")")
 	}
 
-	// Full-text search
+	// Text search: every whitespace token must appear in the lowercased
+	// searchable projection (AND semantics, parameter-bound LIKE — no
+	// injection surface).
 	var listingIDs []string
 	if query.SearchText != "" {
-		sanitized := sanitizeFTS5Query(query.SearchText)
-		if sanitized == "" {
+		tokens := strings.Fields(strings.ToLower(query.SearchText))
+		if len(tokens) == 0 {
 			return &SearchResult{Listings: []Listing{}, Total: 0}, nil
 		}
-		rows, err := s.db.Query(`
-			SELECT listing_id FROM storefront_listings_fts
-			WHERE storefront_listings_fts MATCH ?
-		`, sanitized)
+		var likeConds []string
+		var likeArgs []interface{}
+		for _, tok := range tokens {
+			likeConds = append(likeConds, "searchable LIKE '%' || ? || '%'")
+			likeArgs = append(likeArgs, tok)
+		}
+		rows, err := s.db.Query(
+			`SELECT listing_id FROM storefront_listings_search WHERE `+strings.Join(likeConds, " AND "),
+			likeArgs...)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -2206,8 +2201,11 @@ func (s *Store) FlatStore() *storage.FlatSQLStore {
 	return s.flatStore
 }
 
-// Close closes the index database connection.
+// Close closes the index database (engine + journal).
 // Does NOT close FlatSQLStore (it's shared with the rest of the system).
 func (s *Store) Close() error {
+	if s.closer != nil {
+		return s.closer()
+	}
 	return s.db.Close()
 }
