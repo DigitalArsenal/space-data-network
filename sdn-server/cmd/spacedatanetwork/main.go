@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"database/sql"
 	_ "embed"
 	"encoding/base64"
 	"encoding/csv"
@@ -33,7 +32,6 @@ import (
 	logging "github.com/ipfs/go-log/v2"
 	libp2phost "github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/multiformats/go-multiaddr"
 	qrgen "github.com/skip2/go-qrcode"
 	"github.com/spf13/cobra"
@@ -1157,21 +1155,18 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 			// HD wallet authentication
 			if cfg.Admin.RequireAuth {
+				// The user store owns the private auth engine database
+				// (journal auth.sdnj derived from this path); the session
+				// store shares that same engine via userStore.DB().
 				authDBPath := filepath.Join(cfg.Storage.Path, "auth.db")
-				authDB, err := sql.Open("sqlite3", authDBPath+"?_journal_mode=WAL")
-				if err != nil {
-					return fmt.Errorf("admin authentication required: open auth database: %w", err)
-				}
-
 				userStore, err := auth.NewUserStore(authDBPath, cfg.Users)
 				if err != nil {
-					_ = authDB.Close()
 					return fmt.Errorf("admin authentication required: create user store: %w", err)
 				}
 
-				sessionStore, err := auth.NewSessionStore(authDB)
+				sessionStore, err := auth.NewSessionStore(userStore.DB())
 				if err != nil {
-					_ = authDB.Close()
+					_ = userStore.Close()
 					return fmt.Errorf("admin authentication required: create session store: %w", err)
 				}
 

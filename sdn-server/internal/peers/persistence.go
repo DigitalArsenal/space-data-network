@@ -6,20 +6,25 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/multiformats/go-multiaddr"
+
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 )
 
-// SQLitePersistence provides SQLite-based persistence for the peer registry.
+// SQLitePersistence provides SQL-based persistence for the peer registry in a
+// private engine database (statement journal derived from the configured
+// registry path: peers.db -> peers.sdnj).
 type SQLitePersistence struct {
-	db   *sql.DB
-	path string
+	db     *sql.DB
+	closer func() error
+	path   string
 }
 
-// NewSQLitePersistence creates a new SQLite persistence provider.
+// NewSQLitePersistence creates a new SQL persistence provider.
 func NewSQLitePersistence(dbPath string) (*SQLitePersistence, error) {
 	// Ensure directory exists
 	dir := filepath.Dir(dbPath)
@@ -27,18 +32,19 @@ func NewSQLitePersistence(dbPath string) (*SQLitePersistence, error) {
 		return nil, err
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, closer, err := flatsqldrv.OpenStandalone(strings.TrimSuffix(dbPath, ".db") + ".sdnj")
 	if err != nil {
 		return nil, err
 	}
 
 	sp := &SQLitePersistence{
-		db:   db,
-		path: dbPath,
+		db:     db,
+		closer: closer,
+		path:   dbPath,
 	}
 
 	if err := sp.initialize(); err != nil {
-		db.Close()
+		closer()
 		return nil, err
 	}
 
@@ -190,9 +196,9 @@ func (sp *SQLitePersistence) Load() (map[peer.ID]*TrustedPeer, map[string]*PeerG
 			organization  sql.NullString
 			groupsJSON    string
 			notes         sql.NullString
-			addedAt       time.Time
-			lastSeen      sql.NullTime
-			lastConnected sql.NullTime
+			addedAt       sql.NullString
+			lastSeen      sql.NullString
+			lastConnected sql.NullString
 			connCount     int64
 			msgsRecv      int64
 			msgsSent      int64
@@ -235,9 +241,9 @@ func (sp *SQLitePersistence) Load() (map[peer.ID]*TrustedPeer, map[string]*PeerG
 			Organization:     organization.String,
 			Groups:           peerGroups,
 			Notes:            notes.String,
-			AddedAt:          addedAt,
-			LastSeen:         lastSeen.Time,
-			LastConnected:    lastConnected.Time,
+			AddedAt:          parseStoredTime(addedAt.String),
+			LastSeen:         parseStoredTime(lastSeen.String),
+			LastConnected:    parseStoredTime(lastConnected.String),
 			ConnectionCount:  connCount,
 			MessagesReceived: msgsRecv,
 			MessagesSent:     msgsSent,
@@ -263,11 +269,11 @@ func (sp *SQLitePersistence) Load() (map[peer.ID]*TrustedPeer, map[string]*PeerG
 
 	for groupRows.Next() {
 		var (
-			name        string
-			description sql.NullString
-			trustLevel  int
-			membersJSON string
-			createdAt   time.Time
+			name         string
+			description  sql.NullString
+			trustLevel   int
+			membersJSON  string
+			createdAt    sql.NullString
 			metadataJSON string
 		)
 
@@ -287,7 +293,7 @@ func (sp *SQLitePersistence) Load() (map[peer.ID]*TrustedPeer, map[string]*PeerG
 			Description:       description.String,
 			DefaultTrustLevel: TrustLevel(trustLevel),
 			Members:           stringsToPeerIDs(memberStrs),
-			CreatedAt:         createdAt,
+			CreatedAt:         parseStoredTime(createdAt.String),
 			Metadata:          metadata,
 		}
 
@@ -297,9 +303,9 @@ func (sp *SQLitePersistence) Load() (map[peer.ID]*TrustedPeer, map[string]*PeerG
 	return peers, groups, nil
 }
 
-// Close closes the database connection.
+// Close releases the registry's private engine database.
 func (sp *SQLitePersistence) Close() error {
-	return sp.db.Close()
+	return sp.closer()
 }
 
 // Helper functions
@@ -345,6 +351,25 @@ func nullableTime(t time.Time) interface{} {
 		return nil
 	}
 	return t
+}
+
+// parseStoredTime decodes a timestamp column the engine returns as TEXT.
+// The driver binds time.Time params in mattn/go-sqlite3's primary format;
+// CURRENT_TIMESTAMP defaults produce the plain "2006-01-02 15:04:05" form.
+func parseStoredTime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	for _, layout := range []string{
+		"2006-01-02 15:04:05.999999999-07:00",
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05",
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 // JSONFilePersistence provides simple JSON file-based persistence.

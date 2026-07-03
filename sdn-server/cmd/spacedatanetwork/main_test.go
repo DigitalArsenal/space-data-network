@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"database/sql"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
@@ -22,7 +21,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/crypto"
 	libp2phost "github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/spacedatanetwork/sdn-server/internal/api"
@@ -31,6 +29,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
@@ -1204,11 +1203,11 @@ func TestMakeFrontendSurfaceHandlerServesFrontendWhenAuthenticated(t *testing.T)
 	t.Parallel()
 
 	dir := t.TempDir()
-	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenStandalone: %v", err)
 	}
-	defer sdb.Close()
+	defer closer()
 
 	sessions, err := auth.NewSessionStore(sdb)
 	if err != nil {

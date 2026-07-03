@@ -3,7 +3,6 @@ package auth
 import (
 	"bytes"
 	"crypto/ed25519"
-	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -16,9 +15,8 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
-
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/tlsmgr"
 )
@@ -169,11 +167,11 @@ func TestAuth_ChallengeVerify_SucceedsWithBoundKey(t *testing.T) {
 	}
 	defer userStore.Close()
 
-	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenStandalone: %v", err)
 	}
-	defer sdb.Close()
+	defer closer()
 
 	sessions, err := NewSessionStore(sdb)
 	if err != nil {
@@ -294,11 +292,11 @@ func TestAuth_FirstAdminBootstrapCreatesAdminFromVerifiedWallet(t *testing.T) {
 		t.Fatal("empty user store should not have an admin")
 	}
 
-	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenStandalone: %v", err)
 	}
-	defer sdb.Close()
+	defer closer()
 
 	sessions, err := NewSessionStore(sdb)
 	if err != nil {
@@ -371,11 +369,11 @@ func TestAuth_FirstAdminBootstrapClosesAfterAdminExists(t *testing.T) {
 		t.Fatal("expected configured admin")
 	}
 
-	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenStandalone: %v", err)
 	}
-	defer sdb.Close()
+	defer closer()
 
 	sessions, err := NewSessionStore(sdb)
 	if err != nil {
@@ -462,11 +460,11 @@ func TestAuth_ChallengeVerify_SucceedsWithoutXPubWhenSigningKeyIsBound(t *testin
 	}
 	defer userStore.Close()
 
-	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenStandalone: %v", err)
 	}
-	defer sdb.Close()
+	defer closer()
 
 	sessions, err := NewSessionStore(sdb)
 	if err != nil {
@@ -556,11 +554,11 @@ func TestAuth_Me_DoesNotExposeXPub(t *testing.T) {
 	}
 	defer userStore.Close()
 
-	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenStandalone: %v", err)
 	}
-	defer sdb.Close()
+	defer closer()
 
 	sessions, err := NewSessionStore(sdb)
 	if err != nil {
@@ -623,11 +621,11 @@ func TestAuth_ChallengeVerify_FailsWithoutXPubForUnboundTOFUUser(t *testing.T) {
 	}
 	defer userStore.Close()
 
-	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenStandalone: %v", err)
 	}
-	defer sdb.Close()
+	defer closer()
 
 	sessions, err := NewSessionStore(sdb)
 	if err != nil {
@@ -710,11 +708,11 @@ func TestAuth_ChallengeVerify_FailsWithMismatchedKey(t *testing.T) {
 	}
 	defer userStore.Close()
 
-	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenStandalone: %v", err)
 	}
-	defer sdb.Close()
+	defer closer()
 
 	sessions, err := NewSessionStore(sdb)
 	if err != nil {
@@ -798,11 +796,11 @@ func TestAuth_TOFU_BindsSigningKeyOnFirstLogin(t *testing.T) {
 		t.Fatalf("HasAdmin() should return true for config admin without signing key")
 	}
 
-	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenStandalone: %v", err)
 	}
-	defer sdb.Close()
+	defer closer()
 
 	sessions, err := NewSessionStore(sdb)
 	if err != nil {
@@ -1178,11 +1176,11 @@ func TestLoginPage_AllowsUnauthorizedSessionsToReachWalletSurface(t *testing.T) 
 	t.Parallel()
 
 	dir := t.TempDir()
-	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenStandalone: %v", err)
 	}
-	defer sdb.Close()
+	defer closer()
 
 	sessions, err := NewSessionStore(sdb)
 	if err != nil {
@@ -1218,11 +1216,11 @@ func TestLoginPage_RedirectsAuthenticatedStandardUsersToRequestedWebUI(t *testin
 	t.Parallel()
 
 	dir := t.TempDir()
-	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenStandalone: %v", err)
 	}
-	defer sdb.Close()
+	defer closer()
 
 	sessions, err := NewSessionStore(sdb)
 	if err != nil {
