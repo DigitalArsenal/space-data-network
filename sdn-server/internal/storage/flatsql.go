@@ -1484,6 +1484,13 @@ func normalizeSourceTags(tags SourceTags) SourceTags {
 
 // Store stores validated data in the appropriate table.
 func (s *FlatSQLStore) Store(schemaName string, data []byte, peerID string, signature []byte) (string, error) {
+	return s.storeOne(schemaName, data, peerID, signature, nil)
+}
+
+// storeOne is the single-record write path. tags (optional) only inform the
+// engine-cache partition here; provenance rows are written by the callers'
+// UpsertSourceTags.
+func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, signature []byte, tags *SourceTags) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1526,6 +1533,15 @@ func (s *FlatSQLStore) Store(schemaName string, data []byte, peerID string, sign
 	if err := s.upsertRecordIndex(schemaName, cid, now, data); err != nil {
 		// Do not fail writes if index extraction fails for a record.
 		log.Warnf("Failed to index %s record %s: %v", schemaName, cid[:16]+"...", err)
+	}
+
+	// Engine-cache mirror (same contract as storeBatch): live ingest paths
+	// write per record, and the vtab hot window must reflect them without
+	// waiting for a boot rebuild.
+	if schemaName == engineOMMSchemaName {
+		if err := s.ingestEngineRecords(schemaName, []engineIngest{{data: data, source: engineSourceName(tags)}}); err != nil {
+			return "", err
+		}
 	}
 
 	log.Debugf("Stored %s record with CID: %s", schemaName, cid[:16]+"...")
@@ -1677,7 +1693,7 @@ type IndexedRecordQuery struct {
 
 // StoreWithSourceTags stores a FlatBuffer record and attaches provider/source metadata.
 func (s *FlatSQLStore) StoreWithSourceTags(schemaName string, data []byte, peerID string, signature []byte, tags SourceTags) (string, error) {
-	cid, err := s.Store(schemaName, data, peerID, signature)
+	cid, err := s.storeOne(schemaName, data, peerID, signature, &tags)
 	if err != nil {
 		return "", err
 	}
