@@ -67,9 +67,11 @@ func TestNewFlatSQLStoreCreatesCanonicalSchemaTablesWithoutSQLiteBlobs(t *testin
 
 	// WS7.3d: v1 stores never pre-create legacy per-standard tables — the
 	// canonical layout materializes in (producer, standard) tables on first
-	// write.
+	// write. (The engine's OMM record vtab shares the SQLite context as a
+	// virtual table, so exclude it — only a plain metadata table would be a
+	// legacy leak.)
 	var legacyCount int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = 'OMM'`).Scan(&legacyCount); err != nil {
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = 'OMM' AND COALESCE(sql,'') NOT LIKE 'CREATE VIRTUAL%'`).Scan(&legacyCount); err != nil {
 		t.Fatalf("check legacy table: %v", err)
 	}
 	if legacyCount != 0 {
@@ -331,8 +333,11 @@ func TestNewFlatSQLStoreDefersInterruptedLegacyMigrationWhenCanonicalHasRows(t *
 	}
 	defer store.Close()
 
+	// Uses CAT: the OMM name is reserved by the engine record vtab (loop
+	// B.3), so a plain canonical "OMM" table can no longer exist — CAT keeps
+	// the interrupted-migration deferral logic covered.
 	if _, err := store.db.Exec(`
-		CREATE TABLE sds_omm (
+		CREATE TABLE sds_cat (
 			cid TEXT PRIMARY KEY,
 			peer_id TEXT NOT NULL,
 			timestamp INTEGER NOT NULL,
@@ -344,21 +349,21 @@ func TestNewFlatSQLStoreDefersInterruptedLegacyMigrationWhenCanonicalHasRows(t *
 		t.Fatalf("create legacy schema table failed: %v", err)
 	}
 	if _, err := store.db.Exec(`
-		INSERT INTO sds_omm (cid, peer_id, timestamp, data, signature)
+		INSERT INTO sds_cat (cid, peer_id, timestamp, data, signature)
 		VALUES ('legacy-cid', 'source:celestrak', 1700000001, ?, NULL)
-	`, []byte("legacy-omm-payload")); err != nil {
+	`, []byte("legacy-cat-payload")); err != nil {
 		t.Fatalf("insert legacy record failed: %v", err)
 	}
-	existingPayload := []byte("already-migrated-omm-payload")
-	streamPath, streamOffset, recordLength, err := store.appendFlatSQLStreamRecord("OMM.fbs", existingPayload)
+	existingPayload := []byte("already-migrated-cat-payload")
+	streamPath, streamOffset, recordLength, err := store.appendFlatSQLStreamRecord("CAT.fbs", existingPayload)
 	if err != nil {
 		t.Fatalf("append existing stream record failed: %v", err)
 	}
 	// Simulate a pre-flip database: the canonical legacy table exists with rows.
-	if err := store.createSchemaMetadataTable("OMM"); err != nil {
+	if err := store.createSchemaMetadataTable("CAT"); err != nil {
 		t.Fatalf("create canonical legacy table failed: %v", err)
 	}
-	if err := insertSchemaMetadata(store.db, "OMM", "existing-cid", "source:celestrak", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000); err != nil {
+	if err := insertSchemaMetadata(store.db, "CAT", "existing-cid", "source:celestrak", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000); err != nil {
 		t.Fatalf("insert existing metadata failed: %v", err)
 	}
 	if err := store.Close(); err != nil {
@@ -371,12 +376,12 @@ func TestNewFlatSQLStoreDefersInterruptedLegacyMigrationWhenCanonicalHasRows(t *
 	}
 	defer store.Close()
 
-	if exists, err := store.tableExists("sds_omm"); err != nil {
+	if exists, err := store.tableExists("sds_cat"); err != nil {
 		t.Fatalf("legacy table lookup failed: %v", err)
 	} else if !exists {
 		t.Fatal("interrupted legacy table should remain for maintenance migration")
 	}
-	record, err := store.Get("OMM.fbs", "existing-cid")
+	record, err := store.Get("CAT.fbs", "existing-cid")
 	if err != nil {
 		t.Fatalf("existing migrated record lookup failed: %v", err)
 	}
@@ -402,8 +407,11 @@ func TestCopyBlobSchemaRowsToMetadataTableSkipsExistingMetadataRows(t *testing.T
 	}
 	defer store.Close()
 
+	// Uses CAT: the OMM name is reserved by the engine record vtab (loop
+	// B.3), so a plain canonical "OMM" table can no longer exist — CAT keeps
+	// the resume-migration logic covered.
 	if _, err := store.db.Exec(`
-		CREATE TABLE sds_omm (
+		CREATE TABLE sds_cat (
 			cid TEXT PRIMARY KEY,
 			peer_id TEXT NOT NULL,
 			timestamp INTEGER NOT NULL,
@@ -414,10 +422,10 @@ func TestCopyBlobSchemaRowsToMetadataTableSkipsExistingMetadataRows(t *testing.T
 	`); err != nil {
 		t.Fatalf("create legacy schema table failed: %v", err)
 	}
-	existingPayload := []byte("existing-omm-payload")
-	newPayload := []byte("new-omm-payload")
+	existingPayload := []byte("existing-cat-payload")
+	newPayload := []byte("new-cat-payload")
 	if _, err := store.db.Exec(`
-		INSERT INTO sds_omm (cid, peer_id, timestamp, data, signature)
+		INSERT INTO sds_cat (cid, peer_id, timestamp, data, signature)
 		VALUES
 			('existing-cid', 'source:celestrak', 1700000000, ?, NULL),
 			('new-cid', 'source:celestrak', 1700000001, ?, NULL)
@@ -425,15 +433,15 @@ func TestCopyBlobSchemaRowsToMetadataTableSkipsExistingMetadataRows(t *testing.T
 		t.Fatalf("insert legacy records failed: %v", err)
 	}
 
-	streamPath, streamOffset, recordLength, err := store.appendFlatSQLStreamRecord("OMM.fbs", existingPayload)
+	streamPath, streamOffset, recordLength, err := store.appendFlatSQLStreamRecord("CAT.fbs", existingPayload)
 	if err != nil {
 		t.Fatalf("append existing stream record failed: %v", err)
 	}
 	// Simulate a pre-flip database: the canonical legacy table exists with rows.
-	if err := store.createSchemaMetadataTable("OMM"); err != nil {
+	if err := store.createSchemaMetadataTable("CAT"); err != nil {
 		t.Fatalf("create canonical legacy table failed: %v", err)
 	}
-	if err := insertSchemaMetadata(store.db, "OMM", "existing-cid", "source:celestrak", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000); err != nil {
+	if err := insertSchemaMetadata(store.db, "CAT", "existing-cid", "source:celestrak", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000); err != nil {
 		t.Fatalf("insert existing metadata failed: %v", err)
 	}
 	streamFile := filepath.Join(tmpDir, streamPath)
@@ -442,7 +450,7 @@ func TestCopyBlobSchemaRowsToMetadataTableSkipsExistingMetadataRows(t *testing.T
 		t.Fatalf("stat stream before migration failed: %v", err)
 	}
 
-	if err := store.copyBlobSchemaRowsToMetadataTable("OMM.fbs", "sds_omm", "OMM"); err != nil {
+	if err := store.copyBlobSchemaRowsToMetadataTable("CAT.fbs", "sds_cat", "CAT"); err != nil {
 		t.Fatalf("copy legacy rows failed: %v", err)
 	}
 
@@ -454,7 +462,7 @@ func TestCopyBlobSchemaRowsToMetadataTableSkipsExistingMetadataRows(t *testing.T
 	if growth := after.Size() - before.Size(); growth != expectedGrowth {
 		t.Fatalf("stream file grew by %d bytes, want only new record growth %d", growth, expectedGrowth)
 	}
-	record, err := store.Get("OMM.fbs", "new-cid")
+	record, err := store.Get("CAT.fbs", "new-cid")
 	if err != nil {
 		t.Fatalf("migrated new record lookup failed: %v", err)
 	}
