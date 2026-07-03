@@ -56,6 +56,7 @@ var (
 	ingestUDLMaxResults        int
 	ingestHTTPTimeout          time.Duration
 	ingestDatasetPublishURL    string
+	ingestMinFreeDiskGB        float64
 )
 
 func init() {
@@ -93,6 +94,7 @@ func init() {
 
 	ingestCmd.Flags().DurationVar(&ingestHTTPTimeout, "http-timeout", 90*time.Second, "HTTP request timeout")
 	ingestCmd.Flags().StringVar(&ingestDatasetPublishURL, "dataset-publish-url", "", "local SDN admin dataset publication endpoint")
+	ingestCmd.Flags().Float64Var(&ingestMinFreeDiskGB, "min-free-disk-gb", 0, "minimum free disk (GB) required before a sync runs (0 = default 5 GiB); lower on small volumes")
 
 	rootCmd.AddCommand(ingestCmd)
 }
@@ -175,10 +177,16 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		log.Infof("Ingest outbound HTTP proxying enabled via TOR (%s)", torRuntime.ProxyURL())
 	}
 
+	var minFreeDiskBytes int64
+	if ingestMinFreeDiskGB > 0 {
+		minFreeDiskBytes = int64(ingestMinFreeDiskGB * 1024 * 1024 * 1024)
+	}
+
 	runner, err := ingest.NewRunner(ingest.Config{
-		StoragePath: storagePath,
-		RawPath:     rawPath,
-		Once:        ingestOnce,
+		StoragePath:      storagePath,
+		RawPath:          rawPath,
+		Once:             ingestOnce,
+		MinFreeDiskBytes: minFreeDiskBytes,
 
 		CelestrakCatalogURL:      ingestCatalogURL,
 		CelestrakSatcatURL:       ingestSatcatURL,
