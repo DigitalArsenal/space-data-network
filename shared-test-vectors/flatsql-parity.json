@@ -1,0 +1,156 @@
+{
+  "description": "FlatSQL isomorphism parity vectors. The SAME schema, ingest bytes, SQL, and params run through the Go host (sdn-server/internal/flatsqlrt, WasmEdge) and the JS host (flatsql/standalone, V8) and MUST produce the expected outputs below byte-for-byte. Regenerate with: node sdn-js/scripts/generate-flatsql-parity-vectors.mjs (uses the JS reference engine). Consumed by sdn-server/internal/flatsqlrt/parity_test.go and sdn-js/src/flatsql-parity.test.ts.",
+  "schema": "\n  table OMM {\n    CCSDS_OMM_VERS:double;\n    CREATION_DATE:string;\n    ORIGINATOR:string;\n    OBJECT_NAME:string;\n    OBJECT_ID:string;\n    CENTER_NAME:string;\n    REFERENCE_FRAME:RFM;\n    REFERENCE_FRAME_EPOCH:string;\n    TIME_SYSTEM:timingStandard = UTC;\n    MEAN_ELEMENT_THEORY:meanElementSource = SGP4;\n    COMMENT:string;\n    EPOCH:string;\n    SEMI_MAJOR_AXIS:double;\n    MEAN_MOTION:double;\n    ECCENTRICITY:double;\n    INCLINATION:double;\n    RA_OF_ASC_NODE:double;\n    ARG_OF_PERICENTER:double;\n    MEAN_ANOMALY:double;\n    GM:double;\n    MASS:double;\n    SOLAR_RAD_AREA:double;\n    SOLAR_RAD_COEFF:double;\n    DRAG_AREA:double;\n    DRAG_COEFF:double;\n    EPHEMERIS_TYPE:ephemerisFormat = SGP4;\n    CLASSIFICATION_TYPE:string;\n    NORAD_CAT_ID:uint32;\n    ELEMENT_SET_NO:uint32;\n    REV_AT_EPOCH:double;\n    BSTAR:double;\n    MEAN_MOTION_DOT:double;\n    MEAN_MOTION_DDOT:double;\n    COV_REFERENCE_FRAME:RFM;\n    COVARIANCE:[double];\n    USER_DEFINED_BIP_0044_TYPE:uint;\n    USER_DEFINED_OBJECT_DESIGNATOR:string;\n    USER_DEFINED_EARTH_MODEL:string;\n    USER_DEFINED_EPOCH_TIMESTAMP: double;\n    USER_DEFINED_MICROSECONDS: double;\n  }\n  root_type OMM;\n  file_identifier \"$OMM\";\n",
+  "fileId": "$OMM",
+  "table": "OMM",
+  "fixtureStreamBase64": "HAEAAEgAAAAkT01NAAAAADwAVAAAAAwACABQAEwAEAAAAAAAAAAAAAAARAAAADwANAAsACQAHAAUAAAAAAAAAAAAAAAAAAAABABIADwAAABQAAAAVAAAAGAAAAB4AAAAxEKtad4BV0DByqFFtsBwQGZmZmZmnGJAXf5D+u1/UUCej3xvHS04P22KKnBw9y1AUAAAAMfdAABkAAAAcAAAAAEAAABVAAAACAAAAFNETi1URVNUAAAAABQAAAAyMDI2LTA1LTExVDEwOjI2OjQxWgAAAAAFAAAARUFSVEgAAAAUAAAAMjAyNi0wNS0xMFQxMDo0NTozMVoAAAAACQAAADIwMjMtMDc4SgAAAA0AAABTVEFSTElOSy02MjkyAAAA",
+  "rawStreamCases": [
+    {
+      "name": "all_rows",
+      "sql": "SELECT _data FROM OMM",
+      "params": []
+    },
+    {
+      "name": "by_norad_int_param",
+      "sql": "SELECT _data FROM OMM WHERE NORAD_CAT_ID = ?",
+      "params": [
+        {
+          "t": "i64",
+          "v": 56775
+        }
+      ]
+    },
+    {
+      "name": "by_name_string_param",
+      "sql": "SELECT _data FROM OMM WHERE OBJECT_NAME = ?",
+      "params": [
+        {
+          "t": "str",
+          "v": "STARLINK-6292"
+        }
+      ]
+    },
+    {
+      "name": "float_and_int_params",
+      "sql": "SELECT _data FROM OMM WHERE MEAN_MOTION > ? AND NORAD_CAT_ID = ?",
+      "params": [
+        {
+          "t": "f64",
+          "v": 1.5
+        },
+        {
+          "t": "i64",
+          "v": 56775
+        }
+      ]
+    },
+    {
+      "name": "no_match_empty_stream",
+      "sql": "SELECT _data FROM OMM WHERE NORAD_CAT_ID = ?",
+      "params": [
+        {
+          "t": "i64",
+          "v": 1
+        }
+      ]
+    }
+  ],
+  "queryCacheKeyCases": [
+    {
+      "name": "omm_by_norad",
+      "dataset": "OMM",
+      "artifactVersion": "1",
+      "queryId": "byNorad",
+      "params": [
+        {
+          "t": "i64",
+          "v": 56775
+        }
+      ]
+    },
+    {
+      "name": "mixed_param_types",
+      "dataset": "OMM",
+      "artifactVersion": "7",
+      "queryId": "epochNearest",
+      "params": [
+        {
+          "t": "str",
+          "v": "2026-07-02T00:00:00Z"
+        },
+        {
+          "t": "f64",
+          "v": 0.5
+        },
+        {
+          "t": "bool",
+          "v": true
+        },
+        {
+          "t": "null"
+        }
+      ]
+    }
+  ],
+  "responseArtifactKeyCases": [
+    {
+      "name": "raw_projection",
+      "schemaName": "OMM",
+      "schemaVersion": "3",
+      "sql": " SELECT   _data   FROM OMM WHERE NORAD_CAT_ID = ? ",
+      "format": "raw",
+      "publishEventKey": "OMM-event-9",
+      "projection": [
+        "_data"
+      ],
+      "params": [
+        {
+          "t": "i64",
+          "v": 56775
+        }
+      ]
+    },
+    {
+      "name": "json_default_format",
+      "schemaName": "OMM",
+      "schemaVersion": "3",
+      "sql": "SELECT OBJECT_NAME FROM OMM",
+      "format": "",
+      "publishEventKey": "",
+      "projection": [],
+      "params": []
+    }
+  ],
+  "expected": {
+    "rawStreams": {
+      "all_rows": {
+        "sha256": "01b37c31fc0527666bf29f68053ed1af8554edd1470ecf9f10faf284a0a8b045",
+        "byteLength": 288
+      },
+      "by_norad_int_param": {
+        "sha256": "01b37c31fc0527666bf29f68053ed1af8554edd1470ecf9f10faf284a0a8b045",
+        "byteLength": 288
+      },
+      "by_name_string_param": {
+        "sha256": "01b37c31fc0527666bf29f68053ed1af8554edd1470ecf9f10faf284a0a8b045",
+        "byteLength": 288
+      },
+      "float_and_int_params": {
+        "sha256": "01b37c31fc0527666bf29f68053ed1af8554edd1470ecf9f10faf284a0a8b045",
+        "byteLength": 288
+      },
+      "no_match_empty_stream": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "byteLength": 0
+      }
+    },
+    "queryCacheKeys": {
+      "omm_by_norad": "flatsql:v1|d=4f4d4d|a=31|q=62794e6f726164|p=1:i=56775",
+      "mixed_param_types": "flatsql:v1|d=4f4d4d|a=37|q=65706f63684e656172657374|p=4:s=323032362d30372d30325430303a30303a30305a:f=0.5:b=1:n"
+    },
+    "responseArtifactKeys": {
+      "raw_projection": "flatsql:response:v1|s=4f4d4d|v=33|f=726177|e=4f4d4d2d6576656e742d39|q=53454c454354205f646174612046524f4d204f4d4d205748455245204e4f5241445f4341545f4944203d203f|c=1:5f64617461|p=1:i=56775",
+      "json_default_format": "flatsql:response:v1|s=4f4d4d|v=33|f=6a736f6e|e=|q=53454c454354204f424a4543545f4e414d452046524f4d204f4d4d|c=0|p=0"
+    }
+  }
+}
