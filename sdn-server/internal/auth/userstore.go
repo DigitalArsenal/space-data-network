@@ -13,9 +13,9 @@ import (
 	"time"
 
 	logging "github.com/ipfs/go-log/v2"
-	_ "github.com/mattn/go-sqlite3" // SQLite driver
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
 
@@ -37,28 +37,32 @@ type User struct {
 // in both places, so operator config changes are reflected immediately.
 type UserStore struct {
 	db          *sql.DB
+	closer      func() error
 	configUsers map[string]User
 	mu          sync.RWMutex
 }
 
-// NewUserStore creates a user store backed by SQLite and config-defined users.
+// NewUserStore creates a user store backed by a private engine database
+// (statement journal derived from dbPath: auth.db -> auth.sdnj) plus
+// config-defined users.
 func NewUserStore(dbPath string, configEntries []config.UserEntry) (*UserStore, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
 		return nil, fmt.Errorf("failed to create user store directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
+	db, closer, err := flatsqldrv.OpenStandalone(strings.TrimSuffix(dbPath, ".db") + ".sdnj")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open user store database: %w", err)
 	}
 
 	s := &UserStore{
 		db:          db,
+		closer:      closer,
 		configUsers: make(map[string]User),
 	}
 
 	if err := s.initDB(); err != nil {
-		db.Close()
+		closer()
 		return nil, fmt.Errorf("failed to initialize user store: %w", err)
 	}
 
@@ -116,16 +120,16 @@ func (s *UserStore) initDB() error {
 			last_login_at INTEGER
 		)
 	`)
-	if err != nil {
-		return err
-	}
+	// No ALTER TABLE migration needed: engine databases are always created
+	// with the current schema (legacy sqlite files are imported by the
+	// dedicated migration CLI, not opened here).
+	return err
+}
 
-	// Migrate older databases (pre signing_pubkey_hex).
-	_, err = s.db.Exec(`ALTER TABLE users ADD COLUMN signing_pubkey_hex TEXT DEFAULT ''`)
-	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
-		return err
-	}
-	return nil
+// DB exposes the underlying engine-backed database so co-located auth state
+// (e.g. the session store) can share the same private engine.
+func (s *UserStore) DB() *sql.DB {
+	return s.db
 }
 
 // GetUser retrieves a user by xpub, applying config-defined trust and key values
@@ -426,9 +430,9 @@ func (s *UserStore) RecordLogin(xpub string) error {
 	return nil
 }
 
-// Close closes the database connection.
+// Close releases the store's private engine database.
 func (s *UserStore) Close() error {
-	return s.db.Close()
+	return s.closer()
 }
 
 func normalizeEd25519PubKeyHex(s string) (string, error) {

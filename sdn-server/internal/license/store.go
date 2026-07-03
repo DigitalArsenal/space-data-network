@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 )
 
 const (
@@ -20,10 +20,13 @@ const (
 
 // EntitlementStore persists xpub subscription state.
 type EntitlementStore struct {
-	db *sql.DB
+	db     *sql.DB
+	closer func() error
 }
 
-// NewEntitlementStore opens/creates the entitlement database.
+// NewEntitlementStore opens/creates the entitlement database — a private
+// engine database with its statement journal derived from path
+// (entitlements.db -> entitlements.sdnj).
 func NewEntitlementStore(path string) (*EntitlementStore, error) {
 	dbPath := strings.TrimSpace(path)
 	if dbPath == "" {
@@ -33,13 +36,13 @@ func NewEntitlementStore(path string) (*EntitlementStore, error) {
 		return nil, fmt.Errorf("create entitlement dir: %w", err)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, closer, err := flatsqldrv.OpenStandalone(strings.TrimSuffix(dbPath, ".db") + ".sdnj")
 	if err != nil {
 		return nil, fmt.Errorf("open entitlement db: %w", err)
 	}
-	store := &EntitlementStore{db: db}
+	store := &EntitlementStore{db: db, closer: closer}
 	if err := store.initSchema(); err != nil {
-		_ = db.Close()
+		_ = closer()
 		return nil, err
 	}
 	return store, nil
@@ -69,10 +72,10 @@ CREATE INDEX IF NOT EXISTS idx_entitlements_status ON entitlements(status);
 
 // Close closes the underlying database.
 func (s *EntitlementStore) Close() error {
-	if s == nil || s.db == nil {
+	if s == nil || s.closer == nil {
 		return nil
 	}
-	return s.db.Close()
+	return s.closer()
 }
 
 // GetEntitlement returns entitlement for xpub.

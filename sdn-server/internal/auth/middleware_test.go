@@ -1,15 +1,13 @@
 package auth
 
 import (
-	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
-
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
 
@@ -17,11 +15,11 @@ func TestRequireAuth_RedirectsBrowserForbiddenToWalletLogin(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenStandalone: %v", err)
 	}
-	defer sdb.Close()
+	defer closer()
 
 	sessions, err := NewSessionStore(sdb)
 	if err != nil {
@@ -60,11 +58,11 @@ func TestRequireAuth_RedirectsBrowserUnauthenticatedWebUIToWalletLogin(t *testin
 	t.Parallel()
 
 	dir := t.TempDir()
-	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenStandalone: %v", err)
 	}
-	defer sdb.Close()
+	defer closer()
 
 	sessions, err := NewSessionStore(sdb)
 	if err != nil {
@@ -91,11 +89,11 @@ func TestRequireAuth_RotatesNearExpirySessionAndSetsReplacementCookie(t *testing
 	t.Parallel()
 
 	dir := t.TempDir()
-	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("OpenStandalone: %v", err)
 	}
-	defer sdb.Close()
+	defer closer()
 
 	sessions, err := NewSessionStore(sdb)
 	if err != nil {

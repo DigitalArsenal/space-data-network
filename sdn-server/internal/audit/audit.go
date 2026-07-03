@@ -16,38 +16,39 @@ import (
 	"time"
 
 	logging "github.com/ipfs/go-log/v2"
-	_ "github.com/mattn/go-sqlite3"
+
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 )
 
 var log = logging.Logger("sdn-audit")
 
 // Event types
 const (
-	EventTypeAdminLogin       = "admin.login"
-	EventTypeAdminLogout      = "admin.logout"
-	EventTypeAdminCreate      = "admin.create"
-	EventTypePasswordChange   = "admin.password_change"
-	EventTypeTOTPEnable       = "admin.totp_enable"
-	EventTypeTOTPDisable      = "admin.totp_disable"
-	EventTypeSessionRevoke    = "admin.session_revoke"
-	EventTypePeerTrustChange  = "peer.trust_change"
-	EventTypePeerAdd          = "peer.add"
-	EventTypePeerRemove       = "peer.remove"
-	EventTypeConfigChange     = "config.change"
-	EventTypeKeyGenerate      = "key.generate"
-	EventTypeKeyBackup        = "key.backup"
-	EventTypeKeyRestore       = "key.restore"
-	EventTypeSetupStart       = "setup.start"
-	EventTypeSetupComplete    = "setup.complete"
-	EventTypeServerStart      = "server.start"
-	EventTypeServerStop       = "server.stop"
+	EventTypeAdminLogin      = "admin.login"
+	EventTypeAdminLogout     = "admin.logout"
+	EventTypeAdminCreate     = "admin.create"
+	EventTypePasswordChange  = "admin.password_change"
+	EventTypeTOTPEnable      = "admin.totp_enable"
+	EventTypeTOTPDisable     = "admin.totp_disable"
+	EventTypeSessionRevoke   = "admin.session_revoke"
+	EventTypePeerTrustChange = "peer.trust_change"
+	EventTypePeerAdd         = "peer.add"
+	EventTypePeerRemove      = "peer.remove"
+	EventTypeConfigChange    = "config.change"
+	EventTypeKeyGenerate     = "key.generate"
+	EventTypeKeyBackup       = "key.backup"
+	EventTypeKeyRestore      = "key.restore"
+	EventTypeSetupStart      = "setup.start"
+	EventTypeSetupComplete   = "setup.complete"
+	EventTypeServerStart     = "server.start"
+	EventTypeServerStop      = "server.stop"
 )
 
 // Severity levels
 const (
-	SeverityInfo    = "info"
-	SeverityWarning = "warning"
-	SeverityError   = "error"
+	SeverityInfo     = "info"
+	SeverityWarning  = "warning"
+	SeverityError    = "error"
 	SeverityCritical = "critical"
 )
 
@@ -72,45 +73,48 @@ type Entry struct {
 	Timestamp    time.Time `json:"timestamp"`
 	EventType    string    `json:"event_type"`
 	Severity     string    `json:"severity"`
-	ActorID      int64     `json:"actor_id,omitempty"`      // Admin ID who performed action
-	ActorIP      string    `json:"actor_ip,omitempty"`      // IP address
-	TargetType   string    `json:"target_type,omitempty"`   // Type of target (peer, config, etc.)
-	TargetID     string    `json:"target_id,omitempty"`     // ID of target
+	ActorID      int64     `json:"actor_id,omitempty"`    // Admin ID who performed action
+	ActorIP      string    `json:"actor_ip,omitempty"`    // IP address
+	TargetType   string    `json:"target_type,omitempty"` // Type of target (peer, config, etc.)
+	TargetID     string    `json:"target_id,omitempty"`   // ID of target
 	Description  string    `json:"description"`
-	Details      string    `json:"details,omitempty"`       // JSON encoded details
-	PreviousHash string    `json:"previous_hash"`           // Hash of previous entry
-	EntryHash    string    `json:"entry_hash"`              // Hash of this entry
+	Details      string    `json:"details,omitempty"` // JSON encoded details
+	PreviousHash string    `json:"previous_hash"`     // Hash of previous entry
+	EntryHash    string    `json:"entry_hash"`        // Hash of this entry
 }
 
 // Logger provides tamper-evident audit logging.
 type Logger struct {
-	db           *sql.DB
-	dbPath       string
-	lastHash     string
-	lastID       int64
-	mu           sync.Mutex
+	db       *sql.DB
+	closer   func() error
+	dbPath   string
+	lastHash string
+	lastID   int64
+	mu       sync.Mutex
 }
 
-// NewLogger creates a new audit logger.
+// NewLogger creates a new audit logger backed by a private engine database
+// (statement journal audit.sdnj under basePath).
 func NewLogger(basePath string) (*Logger, error) {
 	if err := os.MkdirAll(basePath, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create audit directory: %w", err)
 	}
 
-	dbPath := filepath.Join(basePath, AuditDBFile)
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
+	dbPath := filepath.Join(basePath, "audit.sdnj")
+	db, closer, err := flatsqldrv.OpenStandalone(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open audit database: %w", err)
 	}
 
 	l := &Logger{
 		db:       db,
+		closer:   closer,
 		dbPath:   dbPath,
 		lastHash: GenesisHash,
 	}
 
 	if err := l.initDB(); err != nil {
-		db.Close()
+		closer()
 		return nil, fmt.Errorf("failed to initialize audit database: %w", err)
 	}
 
@@ -484,9 +488,9 @@ func (l *Logger) Export() ([]byte, error) {
 	return json.MarshalIndent(entries, "", "  ")
 }
 
-// Close closes the database connection.
+// Close releases the logger's private engine database.
 func (l *Logger) Close() error {
-	return l.db.Close()
+	return l.closer()
 }
 
 // Convenience methods for common audit events

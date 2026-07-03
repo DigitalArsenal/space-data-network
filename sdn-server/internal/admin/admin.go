@@ -17,8 +17,9 @@ import (
 	"unicode"
 
 	logging "github.com/ipfs/go-log/v2"
-	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/crypto/argon2"
+
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 )
 
 var log = logging.Logger("sdn-admin")
@@ -68,41 +69,44 @@ type Admin struct {
 
 // Session represents an active admin session.
 type Session struct {
-	Token       string
-	AdminID     int64
-	CreatedAt   time.Time
-	ExpiresAt   time.Time
-	IPAddress   string
-	UserAgent   string
-	Revoked     bool
+	Token     string
+	AdminID   int64
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	IPAddress string
+	UserAgent string
+	Revoked   bool
 }
 
 // Manager handles admin authentication and sessions.
 type Manager struct {
 	db     *sql.DB
+	closer func() error
 	dbPath string
 	mu     sync.RWMutex
 }
 
-// NewManager creates a new admin manager.
+// NewManager creates a new admin manager backed by a private engine database
+// (statement journal admin.sdnj under basePath).
 func NewManager(basePath string) (*Manager, error) {
 	if err := os.MkdirAll(basePath, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create admin directory: %w", err)
 	}
 
-	dbPath := filepath.Join(basePath, AdminDBFile)
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
+	dbPath := filepath.Join(basePath, "admin.sdnj")
+	db, closer, err := flatsqldrv.OpenStandalone(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open admin database: %w", err)
 	}
 
 	m := &Manager{
 		db:     db,
+		closer: closer,
 		dbPath: dbPath,
 	}
 
 	if err := m.initDB(); err != nil {
-		db.Close()
+		closer()
 		return nil, fmt.Errorf("failed to initialize admin database: %w", err)
 	}
 
@@ -542,9 +546,9 @@ func (m *Manager) CleanupExpiredSessions() (int64, error) {
 	return affected, nil
 }
 
-// Close closes the database connection.
+// Close releases the manager's private engine database.
 func (m *Manager) Close() error {
-	return m.db.Close()
+	return m.closer()
 }
 
 // GetAdmin retrieves an admin by ID.
