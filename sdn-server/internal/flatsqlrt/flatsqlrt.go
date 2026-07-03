@@ -17,7 +17,15 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
 
-//go:embed flatsql-wasi.wasm
+// The embedded engine is the NO-EXCEPTIONS WASI build (flatsql_wasi_noeh
+// CMake target): identical sources and exports to flatsql-wasi.wasm, but
+// C++ throws abort instead of unwinding. This is required server-side
+// because WasmEdge's AOT compiler (0.14–0.17) cannot parse wasm-exceptions
+// (exnref) modules, and interpreted execution is ~100x too slow for query
+// workloads. Byte-parity with the browser artifact is enforced by
+// parity_test.go against shared-test-vectors/flatsql-parity.json.
+//
+//go:embed flatsql-wasi-noeh.wasm
 var flatsqlWasm []byte
 
 // EmbeddedWasm returns the embedded flatsql-wasi.wasm bytes (for hashing /
@@ -45,6 +53,7 @@ type Option func(*config)
 type config struct {
 	maxMemoryPages uint32
 	wasmBytes      []byte
+	aotCacheDir    string
 }
 
 // WithMaxMemoryPages overrides the default 4 GiB linear-memory growth cap.
@@ -62,8 +71,20 @@ func WithWasmBytes(b []byte) Option {
 // multiple databases. All calls are serialized on the underlying module lock:
 // the engine is compiled single-threaded (SQLITE_THREADSAFE=0).
 type Runtime struct {
-	mod *wasmrt.Module
+	mod      *wasmrt.Module
+	aot      bool
+	poisoned bool
 }
+
+// Poisoned reports whether an engine error has occurred on this runtime.
+//
+// The embedded engine is built WITHOUT exception support (see README), so
+// any internal engine error — including a plain SQL syntax error — traps out
+// of C++ mid-execution and may leave guest state (shadow stack, SQLite
+// internals) corrupted. Until the engine's error paths are exception-free by
+// construction (loop task A.3c), a poisoned runtime must be discarded and
+// recreated; continuing to use it can hang or corrupt results.
+func (r *Runtime) Poisoned() bool { return r.poisoned }
 
 // New instantiates the FlatSQL WASI reactor and runs its _initialize export.
 func New(opts ...Option) (*Runtime, error) {
@@ -71,7 +92,19 @@ func New(opts ...Option) (*Runtime, error) {
 	for _, o := range opts {
 		o(cfg)
 	}
-	mod, err := wasmrt.NewModule(cfg.wasmBytes,
+
+	runBytes := cfg.wasmBytes
+	aot := false
+	if cfg.aotCacheDir != "" {
+		if compiled, err := ensureAOT(cfg.aotCacheDir, cfg.wasmBytes); err == nil {
+			runBytes = compiled
+			aot = true
+		}
+		// On compile failure fall back to interpreting the portable bytes;
+		// callers can check Runtime.AOT() and warn.
+	}
+
+	mod, err := wasmrt.NewModule(runBytes,
 		wasmrt.WithWASI(),
 		wasmrt.WithMaxMemoryPages(cfg.maxMemoryPages),
 	)
@@ -82,7 +115,7 @@ func New(opts ...Option) (*Runtime, error) {
 		mod.Release()
 		return nil, fmt.Errorf("flatsqlrt: _initialize: %w", err)
 	}
-	return &Runtime{mod: mod}, nil
+	return &Runtime{mod: mod, aot: aot}, nil
 }
 
 // Close releases the WasmEdge VM and all engine memory. Databases created on
@@ -144,9 +177,18 @@ func (r *Runtime) readCString(ptr uint32) (string, error) {
 	return string(buf), nil
 }
 
-// engineErr wraps a failed engine call with flatsql_get_error detail.
+// engineErr wraps a failed engine call with flatsql_get_error detail and
+// marks the runtime poisoned (see Poisoned).
 func (r *Runtime) engineErr(op string) error {
-	return fmt.Errorf("flatsqlrt: %s: %s", op, r.lastError())
+	r.poisoned = true
+	return fmt.Errorf("flatsqlrt: %s (runtime poisoned — recreate it): %s", op, r.lastError())
+}
+
+// execErr wraps a trap/host-level failure of an engine export call and marks
+// the runtime poisoned.
+func (r *Runtime) execErr(op string, err error) error {
+	r.poisoned = true
+	return fmt.Errorf("flatsqlrt: %s (runtime poisoned — recreate it): %w", op, err)
 }
 
 // allocCString copies s into guest memory as a NUL-terminated C string.
@@ -216,7 +258,7 @@ func (r *Runtime) BuildQueryCacheKey(dataset, artifactVersion, queryID string, p
 		int32(dsPtr), int32(verPtr), int32(idPtr),
 		int32(blobPtr), int32(len(blob)), int32(len(params)))
 	if err != nil {
-		return "", fmt.Errorf("flatsqlrt: flatsql_build_query_cache_key: %w", err)
+		return "", r.execErr("flatsql_build_query_cache_key", err)
 	}
 	keyPtr := toUint32(res[0])
 	if keyPtr == 0 {
@@ -310,7 +352,7 @@ func (r *Runtime) BuildResponseArtifactCacheKey(schemaName, schemaVersion, sql s
 		int32(evtPtr), int32(projPtr),
 		int32(blobPtr), int32(len(blob)), int32(len(opts.Params)))
 	if err != nil {
-		return "", fmt.Errorf("flatsqlrt: flatsql_build_response_artifact_cache_key: %w", err)
+		return "", r.execErr("flatsql_build_response_artifact_cache_key", err)
 	}
 	keyPtr := toUint32(res[0])
 	if keyPtr == 0 {
@@ -338,7 +380,7 @@ func (r *Runtime) CreateDatabase(schema, name string) (*Database, error) {
 
 	res, err := r.mod.Execute("flatsql_create_db", int32(schemaPtr), int32(namePtr))
 	if err != nil {
-		return nil, fmt.Errorf("flatsqlrt: flatsql_create_db: %w", err)
+		return nil, r.execErr("flatsql_create_db", err)
 	}
 	handle := toUint32(res[0])
 	if handle == 0 {
@@ -388,7 +430,7 @@ func (d *Database) RegisterFileID(fileID, tableName string) error {
 	defer d.rt.mod.Deallocate(tblPtr)
 
 	if _, err := d.rt.mod.Execute("flatsql_register_file_id", int32(d.handle), int32(fidPtr), int32(tblPtr)); err != nil {
-		return fmt.Errorf("flatsqlrt: flatsql_register_file_id: %w", err)
+		return d.rt.execErr("flatsql_register_file_id", err)
 	}
 	return nil
 }
@@ -406,7 +448,7 @@ func (d *Database) RegisterSource(source string) error {
 	defer d.rt.mod.Deallocate(srcPtr)
 
 	if _, err := d.rt.mod.Execute("flatsql_register_source", int32(d.handle), int32(srcPtr)); err != nil {
-		return fmt.Errorf("flatsqlrt: flatsql_register_source: %w", err)
+		return d.rt.execErr("flatsql_register_source", err)
 	}
 	return nil
 }
@@ -417,7 +459,7 @@ func (d *Database) CreateUnifiedViews() error {
 	d.rt.mod.Lock()
 	defer d.rt.mod.Unlock()
 	if _, err := d.rt.mod.Execute("flatsql_create_unified_views", int32(d.handle)); err != nil {
-		return fmt.Errorf("flatsqlrt: flatsql_create_unified_views: %w", err)
+		return d.rt.execErr("flatsql_create_unified_views", err)
 	}
 	return nil
 }
@@ -509,7 +551,7 @@ func (d *Database) execQuery(sql string, params []interface{}) error {
 	if len(params) == 0 {
 		res, err := d.rt.mod.Execute("flatsql_query", int32(d.handle), int32(sqlPtr))
 		if err != nil {
-			return fmt.Errorf("flatsqlrt: flatsql_query: %w", err)
+			return d.rt.execErr("flatsql_query", err)
 		}
 		if wasmrt.ToInt32(res[0]) == 0 {
 			return d.rt.engineErr("query")
@@ -531,7 +573,7 @@ func (d *Database) execQuery(sql string, params []interface{}) error {
 	res, err := d.rt.mod.Execute("flatsql_query_params",
 		int32(d.handle), int32(sqlPtr), int32(blobPtr), int32(len(blob)), int32(len(params)))
 	if err != nil {
-		return fmt.Errorf("flatsqlrt: flatsql_query_params: %w", err)
+		return d.rt.execErr("flatsql_query_params", err)
 	}
 	if wasmrt.ToInt32(res[0]) == 0 {
 		return d.rt.engineErr("query_params")
@@ -664,7 +706,7 @@ func (d *Database) RegisterQueryTemplate(queryID, sql string, cacheable bool) er
 	}
 	res, err := d.rt.mod.Execute("flatsql_register_query_template", int32(d.handle), int32(idPtr), int32(sqlPtr), c)
 	if err != nil {
-		return fmt.Errorf("flatsqlrt: flatsql_register_query_template: %w", err)
+		return d.rt.execErr("flatsql_register_query_template", err)
 	}
 	if wasmrt.ToInt32(res[0]) == 0 {
 		return d.rt.engineErr("register_query_template")
@@ -698,7 +740,7 @@ func (d *Database) QueryTemplate(queryID string, params ...interface{}) (*Result
 	res, err := d.rt.mod.Execute("flatsql_query_template",
 		int32(d.handle), int32(idPtr), int32(blobPtr), int32(len(blob)), int32(len(params)))
 	if err != nil {
-		return nil, fmt.Errorf("flatsqlrt: flatsql_query_template: %w", err)
+		return nil, d.rt.execErr("flatsql_query_template", err)
 	}
 	if wasmrt.ToInt32(res[0]) == 0 {
 		return nil, d.rt.engineErr("query_template")
@@ -727,7 +769,7 @@ func (d *Database) QueryMany(reqs []QueryRequest) ([]*Result, error) {
 	res, err := d.rt.mod.Execute("flatsql_query_many",
 		int32(d.handle), int32(blobPtr), int32(len(blob)), int32(len(reqs)))
 	if err != nil {
-		return nil, fmt.Errorf("flatsqlrt: flatsql_query_many: %w", err)
+		return nil, d.rt.execErr("flatsql_query_many", err)
 	}
 	if wasmrt.ToInt32(res[0]) == 0 {
 		return nil, d.rt.engineErr("query_many")
@@ -793,7 +835,7 @@ func (d *Database) QueryRawFlatBufferStream(sql string, params ...interface{}) (
 	res, err := d.rt.mod.Execute("flatsql_query_raw_flatbuffer_stream",
 		int32(d.handle), int32(sqlPtr), int32(blobPtr), int32(len(blob)), int32(len(params)))
 	if err != nil {
-		return nil, fmt.Errorf("flatsqlrt: flatsql_query_raw_flatbuffer_stream: %w", err)
+		return nil, d.rt.execErr("flatsql_query_raw_flatbuffer_stream", err)
 	}
 	if wasmrt.ToInt32(res[0]) == 0 {
 		return nil, d.rt.engineErr("query_raw_flatbuffer_stream")
@@ -841,7 +883,7 @@ func (d *Database) ExportData() ([]byte, error) {
 
 	ptrRes, err := d.rt.mod.Execute("flatsql_export_data", int32(d.handle))
 	if err != nil {
-		return nil, fmt.Errorf("flatsqlrt: flatsql_export_data: %w", err)
+		return nil, d.rt.execErr("flatsql_export_data", err)
 	}
 	sizeRes, err := d.rt.mod.Execute("flatsql_export_size")
 	if err != nil {
@@ -868,7 +910,7 @@ func (d *Database) LoadAndRebuild(data []byte) error {
 		defer d.rt.mod.Deallocate(dataPtr)
 	}
 	if _, err := d.rt.mod.Execute("flatsql_load_and_rebuild", int32(d.handle), int32(dataPtr), int32(len(data))); err != nil {
-		return fmt.Errorf("flatsqlrt: flatsql_load_and_rebuild: %w", err)
+		return d.rt.execErr("flatsql_load_and_rebuild", err)
 	}
 	return nil
 }

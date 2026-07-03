@@ -11,16 +11,28 @@ aligned size-prefixed FlatBuffer frames (`QueryRawFlatBufferStream`).
 
 ## Embedded artifact provenance
 
-`flatsql-wasi.wasm` is copied verbatim from the `flatsql` repo
-(superproject submodule `repos/main-packages/flatsql`, npm `flatsql`):
+`flatsql-wasi-noeh.wasm` is the **no-exceptions** WASI build (CMake target
+`flatsql_wasi_noeh`, `-fignore-exceptions`) copied verbatim from the
+`flatsql` repo (superproject submodule `repos/main-packages/flatsql`):
 
-- source path: `flatsql/wasm/flatsql-wasi.wasm`
-- flatsql commit: `0c76d87b29fcffae453a88969418cc70884a5ecc`
-- sha256: `3b28fd9cefe376c0fe10e9fb41f280ece36d50b93ab4f482208db2d27cc18cf6`
+- source path: `flatsql/wasm/flatsql-wasi-noeh.wasm`
+- sha256: `22a6b19b0d6c47d99ab94055109775805cf46322fcd4b84c3e9b8e09219ce468`
 
-When the flatsql submodule pin moves, re-copy the artifact and update this
-block (`cp ../../flatsql/wasm/flatsql-wasi.wasm internal/flatsqlrt/` from
-`sdn-server/`). The embedded sha256 is asserted by `TestEmbeddedArtifact`.
+Why no-exceptions (loop A.3/A.3b findings, measured): WasmEdge's AOT
+compiler (0.14–0.17) cannot parse wasm-exceptions (exnref) modules, and its
+interpreter runs the engine ~100x slower than native (nearest-epoch over
+145K rows: 38.7 s interpreted vs 0.59 s AOT; ingest 78K vs 4.09M rec/s).
+Wasmtime runs exnref natively but its C API/Go bindings do not expose the
+exceptions proposal yet. The no-EH build is export-identical and
+byte-parity-verified against the browser artifact (parity_test.go).
+
+Production hosts should pass `WithAOTCache(dir)`: the portable module is
+AOT-compiled once (sha256-keyed cache file) and loaded natively afterwards.
+
+When the flatsql submodule pin moves, rebuild + re-copy the artifact and
+update this block (`cmake --build build-wasm --target flatsql_wasi_noeh`
+in `flatsql/cpp`, then copy `flatsql/wasm/flatsql-wasi-noeh.wasm` here).
+The embedded sha256 is asserted by `TestEmbeddedArtifact`.
 
 ## ABI conventions (mirrors `flatsql/wasm/standalone.js`)
 
