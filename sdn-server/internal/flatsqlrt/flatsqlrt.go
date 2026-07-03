@@ -165,6 +165,160 @@ func (r *Runtime) allocBytes(b []byte) (uint32, error) {
 	return r.mod.Allocate(b)
 }
 
+// BuildQueryCacheKey returns the engine's deterministic cache key for a
+// template query invocation (dataset + artifact version + query id + params).
+func (r *Runtime) BuildQueryCacheKey(dataset, artifactVersion, queryID string, params ...interface{}) (string, error) {
+	r.mod.Lock()
+	defer r.mod.Unlock()
+
+	blob, err := EncodeParams(params)
+	if err != nil {
+		return "", err
+	}
+	ptrs := make([]uint32, 0, 4)
+	free := func() {
+		for _, p := range ptrs {
+			if p != 0 {
+				r.mod.Deallocate(p)
+			}
+		}
+	}
+	defer free()
+	alloc := func(s string) (uint32, error) {
+		p, err := r.allocCString(s)
+		if err == nil {
+			ptrs = append(ptrs, p)
+		}
+		return p, err
+	}
+
+	dsPtr, err := alloc(dataset)
+	if err != nil {
+		return "", err
+	}
+	verPtr, err := alloc(artifactVersion)
+	if err != nil {
+		return "", err
+	}
+	idPtr, err := alloc(queryID)
+	if err != nil {
+		return "", err
+	}
+	blobPtr, err := r.allocBytes(blob)
+	if err != nil {
+		return "", err
+	}
+	if blobPtr != 0 {
+		ptrs = append(ptrs, blobPtr)
+	}
+
+	res, err := r.mod.Execute("flatsql_build_query_cache_key",
+		int32(dsPtr), int32(verPtr), int32(idPtr),
+		int32(blobPtr), int32(len(blob)), int32(len(params)))
+	if err != nil {
+		return "", fmt.Errorf("flatsqlrt: flatsql_build_query_cache_key: %w", err)
+	}
+	keyPtr := toUint32(res[0])
+	if keyPtr == 0 {
+		return "", r.engineErr("build_query_cache_key")
+	}
+	return r.readCString(keyPtr)
+}
+
+// ResponseArtifactKeyOptions mirrors the JS buildResponseArtifactCacheKey
+// options (format defaults to "json"; Projection is newline-joined).
+type ResponseArtifactKeyOptions struct {
+	Format          string
+	PublishEventKey string
+	Projection      []string
+	Params          []interface{}
+}
+
+// BuildResponseArtifactCacheKey returns the engine's deterministic cache key
+// for a response artifact (the ETag/conditional-GET identity of a query
+// result).
+func (r *Runtime) BuildResponseArtifactCacheKey(schemaName, schemaVersion, sql string, opts ResponseArtifactKeyOptions) (string, error) {
+	r.mod.Lock()
+	defer r.mod.Unlock()
+
+	format := opts.Format
+	if format == "" {
+		format = "json"
+	}
+	projection := ""
+	for i, p := range opts.Projection {
+		if i > 0 {
+			projection += "\n"
+		}
+		projection += p
+	}
+	blob, err := EncodeParams(opts.Params)
+	if err != nil {
+		return "", err
+	}
+
+	ptrs := make([]uint32, 0, 7)
+	defer func() {
+		for _, p := range ptrs {
+			if p != 0 {
+				r.mod.Deallocate(p)
+			}
+		}
+	}()
+	alloc := func(s string) (uint32, error) {
+		p, err := r.allocCString(s)
+		if err == nil {
+			ptrs = append(ptrs, p)
+		}
+		return p, err
+	}
+
+	schemaPtr, err := alloc(schemaName)
+	if err != nil {
+		return "", err
+	}
+	verPtr, err := alloc(schemaVersion)
+	if err != nil {
+		return "", err
+	}
+	sqlPtr, err := alloc(sql)
+	if err != nil {
+		return "", err
+	}
+	fmtPtr, err := alloc(format)
+	if err != nil {
+		return "", err
+	}
+	evtPtr, err := alloc(opts.PublishEventKey)
+	if err != nil {
+		return "", err
+	}
+	projPtr, err := alloc(projection)
+	if err != nil {
+		return "", err
+	}
+	blobPtr, err := r.allocBytes(blob)
+	if err != nil {
+		return "", err
+	}
+	if blobPtr != 0 {
+		ptrs = append(ptrs, blobPtr)
+	}
+
+	res, err := r.mod.Execute("flatsql_build_response_artifact_cache_key",
+		int32(schemaPtr), int32(verPtr), int32(sqlPtr), int32(fmtPtr),
+		int32(evtPtr), int32(projPtr),
+		int32(blobPtr), int32(len(blob)), int32(len(opts.Params)))
+	if err != nil {
+		return "", fmt.Errorf("flatsqlrt: flatsql_build_response_artifact_cache_key: %w", err)
+	}
+	keyPtr := toUint32(res[0])
+	if keyPtr == 0 {
+		return "", r.engineErr("build_response_artifact_cache_key")
+	}
+	return r.readCString(keyPtr)
+}
+
 // CreateDatabase parses a FlatBuffers .fbs schema and creates one SQL table
 // per schema table. name is a diagnostic label.
 func (r *Runtime) CreateDatabase(schema, name string) (*Database, error) {
