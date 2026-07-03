@@ -127,9 +127,9 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		return okCapJSON(true), nil
 
 	// Engine-native ops (loop C.1): results are ALIGNED size-prefixed
-	// FlatBuffer streams delivered as raw binary envelope segments
-	// ({"__type":"bytes"} values detach into segments on the hostcall wire —
-	// no base64/JSON reaches the guest).
+	// FlatBuffer streams delivered as raw binary envelope segments (the
+	// handler returns a PRE-ENCODED envelope — no base64/JSON round-trip
+	// anywhere on the host side, loop C.5).
 	case "storage.flatsql_query_stream":
 		sqlText := str("sql")
 		if sqlText == "" {
@@ -143,7 +143,7 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		if err != nil {
 			return errCapJSON("flatsql query failed: " + err.Error()), nil
 		}
-		return okCapJSON(streamResult(stream)), nil
+		return streamResult(stream), nil
 
 	case "storage.flatsql_epoch_stream":
 		schema := str("schema")
@@ -166,7 +166,7 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		if err != nil {
 			return errCapJSON("epoch stream failed: " + err.Error()), nil
 		}
-		return okCapJSON(streamResult(stream)), nil
+		return streamResult(stream), nil
 
 	case "storage.flatsql_cache_key":
 		sqlText := str("sql")
@@ -200,17 +200,19 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 	}
 }
 
-// streamResult shapes an aligned FlatBuffer stream for the hostcall
-// envelope: the bytes value detaches into a raw binary segment.
-func streamResult(stream *flatsqlrt.RawStream) map[string]interface{} {
-	return map[string]interface{}{
-		"rows":    stream.Rows,
-		"columns": stream.Columns,
-		"stream": map[string]interface{}{
-			"__type": "bytes",
-			"base64": base64.StdEncoding.EncodeToString(stream.Bytes),
+// streamResult shapes an aligned FlatBuffer stream as a PRE-ENCODED hostcall
+// envelope: the stream bytes travel as a raw binary segment referenced by
+// {"$bin":0} — never base64/JSON (loop C.5 hostcall-bridge copy elimination;
+// the guest reads byte-identical envelope bytes either way).
+func streamResult(stream *flatsqlrt.RawStream) []byte {
+	return modulert.PreEncodedEnvelope(map[string]interface{}{
+		"ok": true,
+		"result": map[string]interface{}{
+			"rows":    stream.Rows,
+			"columns": stream.Columns,
+			"stream":  map[string]interface{}{"$bin": 0},
 		},
-	}
+	}, [][]byte{stream.Bytes})
 }
 
 // decodeTaggedParams decodes the typed query-parameter array used across the

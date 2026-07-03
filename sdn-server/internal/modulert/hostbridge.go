@@ -376,7 +376,35 @@ func attachHostcallBinaryRefs(value interface{}, segments [][]byte) (interface{}
 	}
 }
 
+// preEncodedEnvelopeMagic prefixes CapHandler responses that are ALREADY
+// encoded as the binary hostcall envelope ([u32 metaLen][meta JSON]
+// [u32 segCount]([u32 segLen][segment])...). encodeHostcallJSONResponse
+// strips the marker and forwards the envelope untouched — large binary
+// results (aligned FlatBuffer streams) skip the base64→JSON→parse→base64
+// round-trip entirely. The marker's leading NUL cannot collide with a JSON
+// response. Pure copy elimination: the envelope bytes the guest reads are
+// identical either way.
+var preEncodedEnvelopeMagic = []byte{0x00, 'S', 'D', 'N', 'E', 'N', 'V', '1'}
+
+// PreEncodedEnvelope builds a marked, fully-encoded hostcall envelope for a
+// CapHandler to return. meta is the JSON metadata (binary values referenced
+// as {"$bin": segmentIndex}); segments carry the raw bytes verbatim.
+func PreEncodedEnvelope(meta interface{}, segments [][]byte) []byte {
+	envelope := encodeHostcallEnvelope(meta, segments)
+	out := make([]byte, 0, len(preEncodedEnvelopeMagic)+len(envelope))
+	out = append(out, preEncodedEnvelopeMagic...)
+	return append(out, envelope...)
+}
+
+func isPreEncodedEnvelope(response []byte) bool {
+	return len(response) >= len(preEncodedEnvelopeMagic) &&
+		string(response[:len(preEncodedEnvelopeMagic)]) == string(preEncodedEnvelopeMagic)
+}
+
 func encodeHostcallJSONResponse(response []byte) []byte {
+	if isPreEncodedEnvelope(response) {
+		return response[len(preEncodedEnvelopeMagic):]
+	}
 	var envelope interface{}
 	if err := json.Unmarshal(response, &envelope); err != nil {
 		envelope = map[string]interface{}{
