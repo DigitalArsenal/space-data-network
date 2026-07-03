@@ -28,9 +28,10 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	logging "github.com/ipfs/go-log/v2"
-	_ "github.com/mattn/go-sqlite3" // SQLite driver
 	"golang.org/x/crypto/scrypt"
 
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
@@ -40,12 +41,35 @@ const (
 	flatSQLStreamDirName         = "flatsql-streams"
 	legacyBlobMigrationBatchSize = 50000
 	localEPMStoreSalt            = "space-data-network-local-epm-store-v1"
-	sqliteBusyTimeoutMillis      = 120000
+	controlJournalFileName       = "control.sdnj"
+	engineAOTCacheDirName        = "flatsql-aot"
 )
 
-// FlatSQLStore provides SQLite storage with FlatBuffer virtual tables.
+// engineControlSchema is the FlatBuffer schema handed to the engine. The
+// control tables (sdn_record_index & co.) are plain SQLite tables created via
+// DDL through the driver; SDS record vtabs get wired here in loop B.3.
+const engineControlSchema = `table SDNControl { id: int (id); } root_type SDNControl;`
+
+// engineAOTCacheDir returns the machine-wide AOT artifact cache. It is keyed
+// by engine-bytes hash inside, so it is shared safely across datastores and
+// processes; compiling per-datastore would redo a ~35 s LLVM compile for
+// every store open (and every test).
+func engineAOTCacheDir() string {
+	if base, err := os.UserCacheDir(); err == nil {
+		return filepath.Join(base, engineAOTCacheDirName)
+	}
+	return filepath.Join(os.TempDir(), engineAOTCacheDirName)
+}
+
+// FlatSQLStore provides storage over the in-process FlatSQL-WASM engine:
+// record payloads live in append-only stream files, control/index tables live
+// in the engine's SQLite (durable via the statement journal, replayed at
+// boot). See docs/flatsql-store-v2.md.
 type FlatSQLStore struct {
 	db        *sql.DB
+	engine    *flatsqlrt.Runtime
+	engineDB  *flatsqlrt.Database
+	journal   *flatsqldrv.StatementJournal
 	validator *sds.Validator
 	dbPath    string
 	basePath  string
@@ -64,21 +88,47 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator) (*FlatSQLStore, 
 		return nil, fmt.Errorf("failed to create FlatSQL stream directory: %w", err)
 	}
 
+	// dbPath no longer names a real SQLite file (the engine is in-memory,
+	// durably backed by the statement journal), but the string stays exactly
+	// as before: it salts the local-EPM store key and is exposed via Path().
 	dbPath := filepath.Join(basePath, "sdn.db")
 
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout="+strconv.Itoa(sqliteBusyTimeoutMillis)+"&_txlock=immediate")
+	engine, err := flatsqlrt.New(flatsqlrt.WithAOTCache(engineAOTCacheDir()))
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+		return nil, fmt.Errorf("failed to start FlatSQL engine: %w", err)
 	}
+	engineDB, err := engine.CreateDatabase(engineControlSchema, "sdn-control")
+	if err != nil {
+		engine.Close()
+		return nil, fmt.Errorf("failed to create FlatSQL database: %w", err)
+	}
+
+	journal, err := flatsqldrv.OpenStatementJournal(filepath.Join(basePath, controlJournalFileName))
+	if err != nil {
+		engine.Close()
+		return nil, fmt.Errorf("failed to open control journal: %w", err)
+	}
+	if _, err := journal.Replay(engineDB); err != nil {
+		journal.Close()
+		engine.Close()
+		return nil, fmt.Errorf("failed to replay control journal: %w", err)
+	}
+
+	db := flatsqldrv.Open(engineDB, journal)
 
 	// Enable foreign keys
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
+		journal.Close()
+		engine.Close()
 		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
 
 	store := &FlatSQLStore{
 		db:        db,
+		engine:    engine,
+		engineDB:  engineDB,
+		journal:   journal,
 		validator: validator,
 		dbPath:    dbPath,
 		basePath:  basePath,
@@ -87,7 +137,7 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator) (*FlatSQLStore, 
 
 	// Initialize tables for all schemas
 	if err := store.initTables(); err != nil {
-		db.Close()
+		store.Close()
 		return nil, fmt.Errorf("failed to initialize tables: %w", err)
 	}
 
@@ -2630,15 +2680,31 @@ func (s *FlatSQLStore) GarbageCollect(maxAge time.Duration) (int64, error) {
 	return totalDeleted, nil
 }
 
-// Close closes the database connection.
+// Close closes the database handle, journal, and engine.
 func (s *FlatSQLStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	var firstErr error
 	if s.db != nil {
-		return s.db.Close()
+		firstErr = s.db.Close()
+		s.db = nil
 	}
-	return nil
+	if s.journal != nil {
+		if err := s.journal.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		s.journal = nil
+	}
+	if s.engineDB != nil {
+		s.engineDB.Destroy()
+		s.engineDB = nil
+	}
+	if s.engine != nil {
+		s.engine.Close()
+		s.engine = nil
+	}
+	return firstErr
 }
 
 // Stats returns storage statistics.
