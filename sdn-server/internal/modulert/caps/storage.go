@@ -1,10 +1,12 @@
 package caps
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -124,9 +126,149 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		}
 		return okCapJSON(true), nil
 
+	// Engine-native ops (loop C.1): results are ALIGNED size-prefixed
+	// FlatBuffer streams delivered as raw binary envelope segments
+	// ({"__type":"bytes"} values detach into segments on the hostcall wire —
+	// no base64/JSON reaches the guest).
+	case "storage.flatsql_query_stream":
+		sqlText := str("sql")
+		if sqlText == "" {
+			return errCapJSON("missing sql"), nil
+		}
+		params, err := decodeTaggedParams(p["params"])
+		if err != nil {
+			return errCapJSON(err.Error()), nil
+		}
+		stream, err := s.store.QueryRawStream(sqlText, params...)
+		if err != nil {
+			return errCapJSON("flatsql query failed: " + err.Error()), nil
+		}
+		return okCapJSON(streamResult(stream)), nil
+
+	case "storage.flatsql_epoch_stream":
+		schema := str("schema")
+		if schema == "" {
+			schema = "OMM.fbs"
+		}
+		profile := str("profile")
+		if profile == "" {
+			profile = "nearest"
+		}
+		var epoch float64
+		if v, ok := p["epoch"].(float64); ok {
+			epoch = v
+		}
+		limit := 50000
+		if v, ok := p["limit"].(float64); ok && v > 0 {
+			limit = int(v)
+		}
+		stream, err := s.store.QueryEpochRawStream(schema, str("source"), profile, epoch, limit)
+		if err != nil {
+			return errCapJSON("epoch stream failed: " + err.Error()), nil
+		}
+		return okCapJSON(streamResult(stream)), nil
+
+	case "storage.flatsql_cache_key":
+		sqlText := str("sql")
+		if sqlText == "" {
+			return errCapJSON("missing sql"), nil
+		}
+		params, err := decodeTaggedParams(p["params"])
+		if err != nil {
+			return errCapJSON(err.Error()), nil
+		}
+		var projection []string
+		if raw, ok := p["projection"].([]interface{}); ok {
+			for _, entry := range raw {
+				projection = append(projection, fmt.Sprintf("%v", entry))
+			}
+		}
+		key, err := s.store.ResponseArtifactCacheKey(str("schema_name"), str("schema_version"), sqlText,
+			flatsqlrt.ResponseArtifactKeyOptions{
+				Format:          str("format"),
+				PublishEventKey: str("publish_event_key"),
+				Projection:      projection,
+				Params:          params,
+			})
+		if err != nil {
+			return errCapJSON("cache key failed: " + err.Error()), nil
+		}
+		return okCapJSON(map[string]string{"key": key}), nil
+
 	default:
 		return errCapJSON(fmt.Sprintf("unknown storage operation: %s", operation)), nil
 	}
+}
+
+// streamResult shapes an aligned FlatBuffer stream for the hostcall
+// envelope: the bytes value detaches into a raw binary segment.
+func streamResult(stream *flatsqlrt.RawStream) map[string]interface{} {
+	return map[string]interface{}{
+		"rows":    stream.Rows,
+		"columns": stream.Columns,
+		"stream": map[string]interface{}{
+			"__type": "bytes",
+			"base64": base64.StdEncoding.EncodeToString(stream.Bytes),
+		},
+	}
+}
+
+// decodeTaggedParams decodes the typed query-parameter array used across the
+// stack ({"t":"null|bool|i64|f64|str|bytes","v":...}, bytes base64).
+func decodeTaggedParams(raw interface{}) ([]interface{}, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	entries, ok := raw.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("params must be an array of tagged values")
+	}
+	out := make([]interface{}, 0, len(entries))
+	for i, e := range entries {
+		m, ok := e.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("param %d: expected {t,v} object", i)
+		}
+		tag, _ := m["t"].(string)
+		switch tag {
+		case "null":
+			out = append(out, nil)
+		case "bool":
+			v, _ := m["v"].(bool)
+			out = append(out, v)
+		case "i64":
+			v, ok := m["v"].(float64)
+			if !ok {
+				return nil, fmt.Errorf("param %d: i64 value missing", i)
+			}
+			out = append(out, int64(v))
+		case "f64":
+			v, ok := m["v"].(float64)
+			if !ok {
+				return nil, fmt.Errorf("param %d: f64 value missing", i)
+			}
+			out = append(out, v)
+		case "str":
+			v, ok := m["v"].(string)
+			if !ok {
+				return nil, fmt.Errorf("param %d: str value missing", i)
+			}
+			out = append(out, v)
+		case "bytes":
+			v, ok := m["v"].(string)
+			if !ok {
+				return nil, fmt.Errorf("param %d: bytes value missing", i)
+			}
+			decoded, err := base64.StdEncoding.DecodeString(v)
+			if err != nil {
+				return nil, fmt.Errorf("param %d: bytes not base64: %w", i, err)
+			}
+			out = append(out, decoded)
+		default:
+			return nil, fmt.Errorf("param %d: unknown tag %q", i, tag)
+		}
+	}
+	return out, nil
 }
 
 // decodeBase64Cap decodes a standard base64 string (with or without padding).
