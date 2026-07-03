@@ -92,13 +92,17 @@ func (m *FlowManager) Deploy(ctx context.Context, wasmBytes []byte, flowJSON []b
 		return "", fmt.Errorf("install flow: %w", err)
 	}
 
-	// Load and register
+	// Load and register. Start failure is NOT an install failure: flows that
+	// import the module-SDK hostcall bridge (HTTP-mounted flows, loop C.4)
+	// cannot run as standalone trigger plugins — they are served by the
+	// config mount table (node.MountFlows) which loads them with the bridge
+	// at boot. Boot-time LoadAll already tolerates these the same way.
 	flow, err := m.store.Get(program.ProgramID)
 	if err != nil {
 		return "", err
 	}
 	if err := m.loadAndRegister(ctx, flow); err != nil {
-		return "", fmt.Errorf("start flow: %w", err)
+		log.Warnf("Flow %q installed; standalone start skipped (mount-served flows start via flows.mounts at boot): %v", program.ProgramID, err)
 	}
 
 	return program.ProgramID, nil
