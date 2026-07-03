@@ -96,15 +96,26 @@ stream file (today's hydrate path, unchanged).
 - Point read `Get(schema,cid)`: control-table lookup → stream `ReadAt`.
 - `Query*`/`Count*`/`Stats`/`DataSummary`: SQL over control tables + vtabs.
 
-## 6. Retention (per A.4 capacity ceiling)
+## 6. Retention (per A.4 capacity ceiling — ENFORCED in loop C.4)
 
-Resident hot window bounded to ≲1.5M records per engine (measured: 3M ≈
-2.2 GB and the next arena doubling traps). Enforced at ingest: when the
-resident count would exceed the bound, evict oldest-epoch records
-per (provider,standard) from the engine (tombstone + periodic rebuild)
-BEFORE ingesting. History remains in streams+journal; epoch queries beyond
-the hot window are served by transient engines over time-partitioned
-segments (wired after the hot path).
+Resident hot window bounded per schema (measured raw ceiling ≈1.5M $OMM:
+3M ≈ 2.2 GB and the next arena doubling traps; the vtabs share the 4 GiB
+engine with the control tables at ~4 control rows/record — B.7 — so the
+shipped DEFAULT is 400K records, configurable via
+`storage.engine_hot_window` / `storage.WithEngineHotWindow`). Enforcement
+(engine_records.go):
+
+- **Boot**: the rebuild loads at most the window (newest records by global
+  index rowid).
+- **Ingest**: after mirroring a committed batch, the oldest resident engine
+  records beyond the window are TOMBSTONED (`flatsql_mark_deleted` keyed by
+  the unified view's `_source` + `_rowid`) — queries stop returning them
+  immediately; arena bytes are reclaimed by the next boot rebuild.
+
+History remains in streams+journal (eviction never touches control rows,
+stream files, or datasync cursor rowids — TestEngineHotWindowEviction);
+epoch queries beyond the hot window are served by transient engines over
+time-partitioned segments (wired after the hot path).
 
 ## 7. Migration & compatibility gates
 

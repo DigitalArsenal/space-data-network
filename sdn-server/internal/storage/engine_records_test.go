@@ -373,3 +373,143 @@ func TestEpochEngineMeasure(t *testing.T) {
 		total, len(frames), outMB, newDur)
 	t.Logf("MEASURE old/new nearest latency ratio: %.1fx", float64(oldDur)/float64(newDur))
 }
+
+// TestEngineHotWindowEviction (loop C.4): the configured hot window is
+// enforced at ingest by tombstoning the OLDEST resident engine records, and
+// at boot by the bounded rebuild — while the durable substrate (control
+// rows, stream files, datasync cursor rowid space) keeps every record.
+func TestEngineHotWindowEviction(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := NewFlatSQLStore(basePath, validator, WithEngineHotWindow(10))
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+
+	epoch1 := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC).Unix()
+	epoch2 := epoch1 + 2*86400
+	epoch3 := epoch1 + 4*86400
+
+	// Batch 1: 3 objects x 2 epochs = 6 records (fits the window).
+	var batch1 [][]byte
+	for _, norad := range []uint32{1001, 1002, 1003} {
+		batch1 = append(batch1,
+			buildEngineOMM(t, norad, fmt.Sprintf("SAT-%d", norad), epoch1),
+			buildEngineOMM(t, norad, fmt.Sprintf("SAT-%d", norad), epoch2),
+		)
+	}
+	evictedPayload := batch1[0] // 1001@epoch1 — the oldest ingested record
+	tags := SourceTags{ProviderID: "prov-a", SourceName: "celestrak-gp", BatchID: "batch-1"}
+	if _, err := store.StoreBatchWithSourceTags("OMM.fbs", batch1, "peer-evict-test", nil, tags); err != nil {
+		t.Fatalf("StoreBatchWithSourceTags batch1 failed: %v", err)
+	}
+	if count, _ := store.EngineRecordCount("OMM.fbs"); count != 6 {
+		t.Fatalf("engine count after batch1 = %d, want 6", count)
+	}
+
+	// Batch 2: 9 more records -> 15 total, 5 over the window. The 5 OLDEST
+	// (1001@e1, 1001@e2, 1002@e1, 1002@e2, 1003@e1) must be evicted from the
+	// ENGINE only.
+	var batch2 [][]byte
+	for norad := uint32(2001); norad <= 2009; norad++ {
+		batch2 = append(batch2, buildEngineOMM(t, norad, fmt.Sprintf("SAT-%d", norad), epoch3))
+	}
+	tags2 := SourceTags{ProviderID: "prov-a", SourceName: "celestrak-gp", BatchID: "batch-2"}
+	if _, err := store.StoreBatchWithSourceTags("OMM.fbs", batch2, "peer-evict-test", nil, tags2); err != nil {
+		t.Fatalf("StoreBatchWithSourceTags batch2 failed: %v", err)
+	}
+
+	count, err := store.EngineRecordCount("OMM.fbs")
+	if err != nil {
+		t.Fatalf("EngineRecordCount failed: %v", err)
+	}
+	if count != 10 {
+		t.Fatalf("engine count after eviction = %d, want 10 (window)", count)
+	}
+
+	// Query results reflect the window. Ingest order was [1001e1, 1001e2,
+	// 1002e1, 1002e2, 1003e1, 1003e2, 2001..2009]; the 5 oldest (1001e1,
+	// 1001e2, 1002e1, 1002e2, 1003e1) are evicted, so nearest(all) sees
+	// exactly 10 objects: 1003 (via its resident epoch2 record) + 2001..2009.
+	stream, err := store.QueryEpochRawStream("OMM.fbs", "", "nearest", float64(epoch3), 0)
+	if err != nil {
+		t.Fatalf("QueryEpochRawStream failed: %v", err)
+	}
+	nearest := decodeEpochFrames(t, stream)
+	if len(nearest) != 10 {
+		t.Fatalf("nearest returned %d objects, want 10", len(nearest))
+	}
+	if _, present := nearest[1001]; present {
+		t.Fatal("norad 1001 should be fully evicted from the engine window")
+	}
+	if nearest[1003] != float64(epoch2) {
+		t.Fatalf("norad 1003 epoch = %v, want %d (epoch1 record evicted, epoch2 resident)", nearest[1003], epoch2)
+	}
+
+	// The durable substrate is unaffected: every record is still point-
+	// readable (stream files) and the datasync cursor space still covers all
+	// 15 rows.
+	evictedCID := computeCID(evictedPayload)
+	rec, err := store.GetRawRecord("OMM.fbs", evictedCID)
+	if err != nil {
+		t.Fatalf("GetRawRecord for evicted record failed: %v", err)
+	}
+	if len(rec.Data) == 0 {
+		t.Fatal("evicted record hydrated empty payload")
+	}
+	var indexRows int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sdn_record_index WHERE schema_name = 'OMM.fbs'`).Scan(&indexRows); err != nil {
+		t.Fatalf("count sdn_record_index: %v", err)
+	}
+	if indexRows != 15 {
+		t.Fatalf("sdn_record_index rows = %d, want 15 (eviction must not touch cursor space)", indexRows)
+	}
+	raw, err := store.QueryRawRecords(RawRecordQuery{SchemaName: "OMM.fbs", Limit: 100})
+	if err != nil {
+		t.Fatalf("QueryRawRecords failed: %v", err)
+	}
+	if len(raw) != 15 {
+		t.Fatalf("QueryRawRecords returned %d records, want 15", len(raw))
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Boot enforcement: reopening with the same window loads only the NEWEST
+	// 10 records.
+	reopened, err := NewFlatSQLStore(basePath, validator, WithEngineHotWindow(10))
+	if err != nil {
+		t.Fatalf("reopen with window failed: %v", err)
+	}
+	if count, _ := reopened.EngineRecordCount("OMM.fbs"); count != 10 {
+		reopened.Close()
+		t.Fatalf("engine count after windowed reopen = %d, want 10", count)
+	}
+	stream, err = reopened.QueryEpochRawStream("OMM.fbs", "", "nearest", float64(epoch3), 0)
+	if err != nil {
+		reopened.Close()
+		t.Fatalf("QueryEpochRawStream after reopen failed: %v", err)
+	}
+	if nearest := decodeEpochFrames(t, stream); len(nearest) != 10 {
+		reopened.Close()
+		t.Fatalf("nearest after windowed reopen returned %d objects, want 10", len(nearest))
+	}
+	if err := reopened.Close(); err != nil {
+		t.Fatalf("Close reopened failed: %v", err)
+	}
+
+	// The window is an ENGINE bound, not data loss: a wider window at the
+	// next boot sees the full history again.
+	wide, err := NewFlatSQLStore(basePath, validator, WithEngineHotWindow(1000))
+	if err != nil {
+		t.Fatalf("reopen with wide window failed: %v", err)
+	}
+	defer wide.Close()
+	if count, _ := wide.EngineRecordCount("OMM.fbs"); count != 15 {
+		t.Fatalf("engine count with wide window = %d, want 15", count)
+	}
+}

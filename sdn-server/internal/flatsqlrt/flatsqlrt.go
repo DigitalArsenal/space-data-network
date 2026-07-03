@@ -481,6 +481,66 @@ func (d *Database) CreateUnifiedViews() error {
 	return nil
 }
 
+// MarkDeleted tombstones one record (identified by its vtab `_rowid`
+// sequence) in a table or per-source shadow table (full name, e.g.
+// "OMM@celestrak-gp"). Queries skip tombstoned records immediately; the
+// underlying arena bytes are only reclaimed by a rebuild. CAUTION: the table
+// name MUST be a registered source/table — an unknown name throws inside the
+// engine, which traps (poisons) the no-EH build. Callers should pass names
+// obtained from the engine itself (e.g. the unified view's `_source` column).
+func (d *Database) MarkDeleted(tableName string, sequence uint64) error {
+	d.rt.mod.Lock()
+	defer d.rt.mod.Unlock()
+
+	tblPtr, err := d.rt.allocCString(tableName)
+	if err != nil {
+		return err
+	}
+	defer d.rt.mod.Deallocate(tblPtr)
+
+	if _, err := d.rt.mod.Execute("flatsql_mark_deleted", int32(d.handle), int32(tblPtr), float64(sequence)); err != nil {
+		return d.rt.execErr("flatsql_mark_deleted", err)
+	}
+	return nil
+}
+
+// DeletedCount reports how many records are tombstoned in a table (0 for
+// unknown tables — the engine treats that case as empty, not an error).
+func (d *Database) DeletedCount(tableName string) (int64, error) {
+	d.rt.mod.Lock()
+	defer d.rt.mod.Unlock()
+
+	tblPtr, err := d.rt.allocCString(tableName)
+	if err != nil {
+		return 0, err
+	}
+	defer d.rt.mod.Deallocate(tblPtr)
+
+	res, err := d.rt.mod.Execute("flatsql_get_deleted_count", int32(d.handle), int32(tblPtr))
+	if err != nil {
+		return 0, d.rt.execErr("flatsql_get_deleted_count", err)
+	}
+	return int64(toFloat64(res[0])), nil
+}
+
+// ClearTombstones forgets a table's tombstone set (used after a compaction
+// rebuild re-ingested only the live records).
+func (d *Database) ClearTombstones(tableName string) error {
+	d.rt.mod.Lock()
+	defer d.rt.mod.Unlock()
+
+	tblPtr, err := d.rt.allocCString(tableName)
+	if err != nil {
+		return err
+	}
+	defer d.rt.mod.Deallocate(tblPtr)
+
+	if _, err := d.rt.mod.Execute("flatsql_clear_tombstones", int32(d.handle), int32(tblPtr)); err != nil {
+		return d.rt.execErr("flatsql_clear_tombstones", err)
+	}
+	return nil
+}
+
 // Ingest appends a size-prefixed FlatBuffer stream. Returns the number of
 // bytes consumed from the stream (== len(stream) on full success; the C ABI
 // does not expose the per-call record count).

@@ -866,8 +866,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			if n.PluginManager() != nil {
 				n.PluginManager().RegisterRoutes(adminMux)
 			}
-			// Data API routes
-			dataAPI := api.NewDataQueryHandler(n.Store(), nil)
+			// Native data API routes (health/summary + the datasync sync
+			// surface). Record retrieval (/api/v1/data/omm/bulk etc.) is
+			// served by the data-retrieval flow mounted below via
+			// n.MountFlows (config flows.mounts) — loop C.4 cutover.
+			dataAPI := api.NewDataQueryHandler(n.Store())
 			dataAPI.RegisterRoutes(adminMux)
 			searchAPI := api.NewSearchHandlerWithOptions(n.Store(), api.SearchHandlerOptions{
 				LiveBackend: newLiveDHTSearchBackend(n),
@@ -1654,14 +1657,9 @@ func isPublicReadAPIPath(path string) bool {
 		"/api/storefront/listings",
 		"/api/v1/catalog",
 		"/api/v1/data/health",
-		"/api/v1/data/omm",
+		// Flow-served record retrieval (loop C.4: the data-retrieval flow
+		// mounted at /api/v1/data/ owns routing/format/ETag inside wasm).
 		"/api/v1/data/omm/bulk",
-		"/api/v1/data/mpe",
-		"/api/v1/data/mpe/bulk",
-		"/api/v1/data/cat",
-		"/api/v1/data/cat/bulk",
-		"/api/v1/data/spw/bulk",
-		"/api/v1/data/secure/omm",
 		"/sdn/libp2p.js",
 		"/api/v1/id",
 		"/api/v1/version",

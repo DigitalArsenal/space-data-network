@@ -297,3 +297,101 @@ func TestFlowMountRejectsUnsatisfiedCapability(t *testing.T) {
 		t.Fatalf("error should name the unsatisfied capability: %v", err)
 	}
 }
+
+// TestFlowMountPoolServesConcurrentClients (loop C.4): a mount is served by a
+// pool of instances; concurrent clients each get complete, correct responses.
+func TestFlowMountPoolServesConcurrentClients(t *testing.T) {
+	dist := dataRetrievalFlowDist(t)
+
+	epoch1 := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC).Unix()
+	epoch2 := epoch1 + 2*86400
+	store := newSeededMountStore(t, epoch1, epoch2)
+
+	reg := modulert.NewCapabilityRegistry()
+	reg.Register("storage_query", caps.NewStorageCapFactory(store))
+
+	mux := http.NewServeMux()
+	mounted, err := RegisterFlowMounts(mux,
+		[]config.FlowMount{{Path: "/test/data/", Flow: dist, Pool: 4}},
+		FlowMountDeps{
+			CapRegistry:    reg,
+			NodeCtx:        &modulert.NodeContext{},
+			MaxMemoryPages: 2048,
+		})
+	if err != nil {
+		t.Fatalf("RegisterFlowMounts: %v", err)
+	}
+	defer func() {
+		for _, mf := range mounted {
+			mf.Close()
+		}
+	}()
+	if got := mounted[0].PoolSize(); got != 4 {
+		t.Fatalf("pool size = %d, want 4", got)
+	}
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	target := epoch1 + 36*3600
+	bulkURL := fmt.Sprintf("%s/test/data/omm/bulk?epoch=%d&limit=100&profile=nearest", srv.URL, target)
+	expected, err := store.QueryEpochRawStream("OMM.fbs", "", "nearest", float64(target), 100)
+	if err != nil {
+		t.Fatalf("QueryEpochRawStream: %v", err)
+	}
+
+	const clients = 8
+	const perClient = 5
+	errs := make(chan error, clients)
+	for c := 0; c < clients; c++ {
+		go func() {
+			for i := 0; i < perClient; i++ {
+				resp, err := http.Get(bulkURL)
+				if err != nil {
+					errs <- err
+					return
+				}
+				body, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err != nil {
+					errs <- err
+					return
+				}
+				if resp.StatusCode != http.StatusOK {
+					errs <- fmt.Errorf("status %d: %s", resp.StatusCode, body)
+					return
+				}
+				if string(body) != string(expected.Bytes) {
+					errs <- fmt.Errorf("response bytes diverge (%d vs %d)", len(body), len(expected.Bytes))
+					return
+				}
+			}
+			errs <- nil
+		}()
+	}
+	for c := 0; c < clients; c++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent client: %v", err)
+		}
+	}
+}
+
+// TestFlowMountSkipsUninstalledFlow: a config mount whose flow artifact is
+// not installed is skipped (error-logged) instead of failing registration —
+// default configs ship the /api/v1/data/ mount before the module is
+// delivered.
+func TestFlowMountSkipsUninstalledFlow(t *testing.T) {
+	mux := http.NewServeMux()
+	mounted, err := RegisterFlowMounts(mux,
+		[]config.FlowMount{{Path: "/test/data/", Flow: "com.example.not-installed"}},
+		FlowMountDeps{
+			CapRegistry: modulert.NewCapabilityRegistry(),
+			NodeCtx:     &modulert.NodeContext{},
+		})
+	if err != nil {
+		t.Fatalf("RegisterFlowMounts should skip uninstalled flows, got: %v", err)
+	}
+	if len(mounted) != 0 {
+		t.Fatalf("mounted %d flows, want 0", len(mounted))
+	}
+}

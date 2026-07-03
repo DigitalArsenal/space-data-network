@@ -30,8 +30,18 @@ func (r *Runtime) AOT() bool { return r.aot }
 // first use. The cache key is the sha256 of the portable module, so engine
 // upgrades recompile automatically.
 func ensureAOT(cacheDir string, wasm []byte) ([]byte, error) {
+	return EnsureAOTArtifact(cacheDir, "flatsql", wasm)
+}
+
+// EnsureAOTArtifact AOT-compiles arbitrary portable wasm bytes through the
+// same sha256-keyed disk cache the engine uses (one <prefix>-<hash>.aot.wasm
+// per artifact; stale entries under the SAME prefix are pruned, other
+// prefixes in the directory are left alone). Callers hosting non-engine
+// modules (e.g. flow HTTP mounts) share the cache directory safely by
+// picking a distinct prefix.
+func EnsureAOTArtifact(cacheDir, prefix string, wasm []byte) ([]byte, error) {
 	sum := sha256.Sum256(wasm)
-	path := filepath.Join(cacheDir, fmt.Sprintf("flatsql-%s.aot.wasm", hex.EncodeToString(sum[:8])))
+	path := filepath.Join(cacheDir, fmt.Sprintf("%s-%s.aot.wasm", prefix, hex.EncodeToString(sum[:8])))
 
 	if cached, err := os.ReadFile(path); err == nil && len(cached) > 0 {
 		return cached, nil
@@ -56,14 +66,14 @@ func ensureAOT(cacheDir string, wasm []byte) ([]byte, error) {
 		return nil, fmt.Errorf("flatsqlrt: AOT cache rename: %w", err)
 	}
 
-	// Prune artifacts compiled from older engine bytes — the dir is dedicated
-	// to this cache, and stale entries would otherwise accumulate across
-	// engine upgrades.
+	// Prune artifacts compiled from older bytes of the SAME module (prefix) —
+	// stale entries would otherwise accumulate across upgrades. Other
+	// prefixes sharing the directory are untouched.
 	if entries, err := os.ReadDir(cacheDir); err == nil {
 		for _, e := range entries {
 			name := e.Name()
 			if name != filepath.Base(path) &&
-				strings.HasPrefix(name, "flatsql-") && strings.HasSuffix(name, ".aot.wasm") {
+				strings.HasPrefix(name, prefix+"-") && strings.HasSuffix(name, ".aot.wasm") {
 				os.Remove(filepath.Join(cacheDir, name))
 			}
 		}

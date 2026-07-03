@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
 
@@ -751,127 +750,6 @@ func TestFlatSQLStoreQueryRecentRecordsPrefersLatestSourceTagMaterialization(t *
 	}
 	if records[0].CID != currentCID {
 		t.Fatalf("QueryRecentRecords returned CID %q, want latest materialized CID %q", records[0].CID, currentCID)
-	}
-}
-
-func TestFlatSQLStoreQueryLatestSourceBatchRecords(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "flatsql-latest-source-batch-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	validator, err := sds.NewValidator(nil)
-	if err != nil {
-		t.Fatalf("Failed to create validator: %v", err)
-	}
-
-	store, err := NewFlatSQLStore(tmpDir, validator)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
-
-	oldTags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "old-batch"}
-	newTags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "new-batch"}
-	oldISS := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS OLD").WithEpoch("2026-05-10T12:00:00Z").Build()
-	oldStarlink := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK OLD").WithEpoch("2026-05-10T12:00:00Z").Build()
-	newISS := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS NEW").WithEpoch("2026-05-15T12:00:00Z").Build()
-	newStarlink := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK NEW").WithEpoch("2026-05-15T12:00:00Z").Build()
-	if _, err := store.StoreWithSourceTags("OMM.fbs", oldISS, "provider", nil, oldTags); err != nil {
-		t.Fatalf("store old ISS failed: %v", err)
-	}
-	if _, err := store.StoreWithSourceTags("OMM.fbs", oldStarlink, "provider", nil, oldTags); err != nil {
-		t.Fatalf("store old Starlink failed: %v", err)
-	}
-	if _, err := store.StoreWithSourceTags("OMM.fbs", newISS, "provider", nil, newTags); err != nil {
-		t.Fatalf("store new ISS failed: %v", err)
-	}
-	if _, err := store.StoreWithSourceTags("OMM.fbs", newStarlink, "provider", nil, newTags); err != nil {
-		t.Fatalf("store new Starlink failed: %v", err)
-	}
-
-	records, ok, err := store.QueryLatestSourceBatchRecords("OMM.fbs", "celestrak-gp", 10)
-	if err != nil {
-		t.Fatalf("QueryLatestSourceBatchRecords failed: %v", err)
-	}
-	if !ok {
-		t.Fatal("QueryLatestSourceBatchRecords did not find latest batch")
-	}
-	if len(records) != 2 {
-		t.Fatalf("len(records) = %d, want latest batch count 2", len(records))
-	}
-	for _, record := range records {
-		if record.SourceTags.BatchID != "new-batch" {
-			t.Fatalf("record batch = %q, want new-batch", record.SourceTags.BatchID)
-		}
-		if string(record.Data) == string(oldISS) || string(record.Data) == string(oldStarlink) {
-			t.Fatal("latest source batch query returned old batch data")
-		}
-	}
-}
-
-func TestFlatSQLStoreQueryLatestSourceBatchRecordsChoosesClosestEpochPerEntity(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "flatsql-latest-source-batch-closest-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	validator, err := sds.NewValidator(nil)
-	if err != nil {
-		t.Fatalf("Failed to create validator: %v", err)
-	}
-
-	store, err := NewFlatSQLStore(tmpDir, validator)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
-
-	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "batch-a"}
-	olderISS := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS OLDER").WithEpoch("2026-05-14T12:00:00Z").Build()
-	closerISS := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS CLOSER").WithEpoch("2026-05-15T10:00:00Z").Build()
-	starlink := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK").WithEpoch("2026-05-15T12:00:00Z").Build()
-	if _, err := store.StoreWithSourceTags("OMM.fbs", olderISS, "provider", nil, tags); err != nil {
-		t.Fatalf("store older ISS failed: %v", err)
-	}
-	if _, err := store.StoreWithSourceTags("OMM.fbs", closerISS, "provider", nil, tags); err != nil {
-		t.Fatalf("store closer ISS failed: %v", err)
-	}
-	if _, err := store.StoreWithSourceTags("OMM.fbs", starlink, "provider", nil, tags); err != nil {
-		t.Fatalf("store Starlink failed: %v", err)
-	}
-
-	target := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC).Unix()
-	if _, err := store.db.Exec(`
-		UPDATE sdn_record_source_summary
-		SET updated_at = ?
-		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
-	`, target, "OMM.fbs", tags.ProviderID, tags.SourceName, tags.BatchID); err != nil {
-		t.Fatalf("set source summary update time failed: %v", err)
-	}
-
-	records, ok, err := store.QueryLatestSourceBatchRecords("OMM.fbs", "celestrak-gp", 10)
-	if err != nil {
-		t.Fatalf("QueryLatestSourceBatchRecords failed: %v", err)
-	}
-	if !ok {
-		t.Fatal("QueryLatestSourceBatchRecords did not find latest batch")
-	}
-	if len(records) != 2 {
-		t.Fatalf("len(records) = %d, want one closest epoch per NORAD", len(records))
-	}
-	seen := map[uint32]string{}
-	for _, record := range records {
-		omm := OMM.GetSizePrefixedRootAsOMM(record.Data, 0)
-		seen[omm.NORAD_CAT_ID()] = string(omm.OBJECT_NAME())
-	}
-	if seen[25544] != "ISS CLOSER" {
-		t.Fatalf("NORAD 25544 selected %q, want closest epoch record", seen[25544])
-	}
-	if seen[40909] != "STARLINK" {
-		t.Fatalf("NORAD 40909 selected %q, want Starlink record", seen[40909])
 	}
 }
 

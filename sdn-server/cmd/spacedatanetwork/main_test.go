@@ -86,7 +86,9 @@ func TestNodeSecurityPublicAPIRequestPolicy(t *testing.T) {
 		{http.MethodPost, "/api/storefront/listings/search", true},
 		{http.MethodPost, "/api/storefront/payments/stripe/webhook", true},
 		{http.MethodGet, "/api/v1/data/omm/bulk", true},
-		{http.MethodGet, "/api/v1/data/secure/omm", true},
+		// Retired native endpoints (loop C.4): no longer public paths.
+		{http.MethodGet, "/api/v1/data/secure/omm", false},
+		{http.MethodGet, "/api/v1/data/mpe/bulk", false},
 		{http.MethodGet, "/api/v1/channels", true},
 		{http.MethodGet, "/api/v1/channels/spaceaware-OMM", true},
 		{http.MethodGet, "/api/v1/channels/spaceaware-OMM/monitor", true},

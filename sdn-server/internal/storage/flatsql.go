@@ -73,10 +73,41 @@ type FlatSQLStore struct {
 	// engineSources tracks per-source shadow tables already registered on the
 	// engine (flatsql_register_source errors on duplicates). Guarded by mu.
 	engineSources map[string]bool
+	// engineHotWindow bounds the records resident in the engine vtabs per
+	// schema (engine_records.go); engineResident tracks the live (non
+	// tombstoned) resident count per schema. Both guarded by mu.
+	engineHotWindow int
+	engineResident  map[string]int64
+}
+
+// StoreOption configures a FlatSQLStore at open time.
+type StoreOption func(*storeConfig)
+
+type storeConfig struct {
+	engineHotWindow int
+}
+
+// WithEngineHotWindow overrides the engine hot-window bound: the maximum
+// records resident in the engine vtabs per schema, enforced at boot rebuild
+// and by tombstone eviction at ingest. Values <= 0 keep the default
+// (engineDefaultHotWindow). Eviction only affects the in-memory engine
+// cache — stream files, the control journal, and datasync cursor rowids are
+// never touched.
+func WithEngineHotWindow(records int) StoreOption {
+	return func(c *storeConfig) {
+		if records > 0 {
+			c.engineHotWindow = records
+		}
+	}
 }
 
 // NewFlatSQLStore creates a new FlatSQL storage instance.
-func NewFlatSQLStore(basePath string, validator *sds.Validator) (*FlatSQLStore, error) {
+func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOption) (*FlatSQLStore, error) {
+	cfg := storeConfig{engineHotWindow: engineDefaultHotWindow}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
 	// Ensure directory exists
 	if err := os.MkdirAll(basePath, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)
@@ -136,6 +167,9 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator) (*FlatSQLStore, 
 		basePath:      basePath,
 		streamDir:     streamDir,
 		engineSources: map[string]bool{},
+
+		engineHotWindow: cfg.engineHotWindow,
+		engineResident:  map[string]int64{},
 	}
 
 	// Initialize tables for all schemas
@@ -1616,19 +1650,6 @@ type DataSourceSummary struct {
 	ProducerPublicKey string
 	Count             int64
 	TotalBytes        int64
-}
-
-// SourceBatchHead identifies one materialized provider/source batch for
-// snapshot catalog reads and response cache keys.
-type SourceBatchHead struct {
-	SchemaName string
-	ProviderID string
-	SourceName string
-	BatchID    string
-	Count      int64
-	TotalBytes int64
-	MaxRowID   int64
-	UpdatedAt  time.Time
 }
 
 // RawRecordQuery filters raw FlatBuffer records for UI and node-to-node reads.
@@ -3296,139 +3317,6 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 	}
 	records = append(records, untagged...)
 	return records, nil
-}
-
-// LatestSourceBatchHead returns the newest materialized provider/source batch
-// without hydrating FlatBuffer payloads.
-func (s *FlatSQLStore) LatestSourceBatchHead(schemaName, sourceName string) (SourceBatchHead, bool, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return s.latestSourceBatchHeadLocked(schemaName, sourceName)
-}
-
-func (s *FlatSQLStore) latestSourceBatchHeadLocked(schemaName, sourceName string) (SourceBatchHead, bool, error) {
-	schemaName = strings.TrimSpace(schemaName)
-	sourceName = strings.TrimSpace(sourceName)
-	if sourceName == "" {
-		return SourceBatchHead{}, false, errors.New("source name is required")
-	}
-	tableName, err := sds.SchemaNameToTable(schemaName)
-	if err != nil {
-		return SourceBatchHead{}, false, fmt.Errorf("invalid schema name: %w", err)
-	}
-	_ = tableName
-
-	var head SourceBatchHead
-	var updatedAtUnix int64
-	err = s.db.QueryRow(`
-		SELECT schema_name, provider_id, source_name, batch_id,
-		       record_count, total_bytes, max_rowid, updated_at
-		FROM sdn_record_source_summary
-		WHERE schema_name = ?
-		  AND source_name = ?
-		  AND batch_id <> ''
-		  AND record_count > 0
-		ORDER BY max_rowid DESC, updated_at DESC, provider_id ASC, batch_id DESC
-		LIMIT 1
-	`, schemaName, sourceName).Scan(
-		&head.SchemaName,
-		&head.ProviderID,
-		&head.SourceName,
-		&head.BatchID,
-		&head.Count,
-		&head.TotalBytes,
-		&head.MaxRowID,
-		&updatedAtUnix,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return SourceBatchHead{}, false, nil
-	}
-	if err != nil {
-		return SourceBatchHead{}, false, fmt.Errorf("latest source batch query failed: %w", err)
-	}
-	head.UpdatedAt = time.Unix(updatedAtUnix, 0).UTC()
-	return head, true, nil
-}
-
-// QueryLatestSourceBatchRecords returns one closest-epoch record per entity
-// from the newest materialized provider/source batch for a live catalog source.
-func (s *FlatSQLStore) QueryLatestSourceBatchRecords(schemaName, sourceName string, limit int) ([]*Record, bool, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	head, ok, err := s.latestSourceBatchHeadLocked(schemaName, sourceName)
-	if err != nil {
-		return nil, false, err
-	}
-	if !ok {
-		return nil, false, nil
-	}
-	tableName, err := s.recordReadSource(head.SchemaName)
-	if err != nil {
-		return nil, false, fmt.Errorf("invalid schema name: %w", err)
-	}
-	if limit <= 0 {
-		limit = 50
-	}
-	if limit > 250000 {
-		limit = 250000
-	}
-	targetUnix := head.UpdatedAt.Unix()
-
-	rows, err := s.db.Query(fmt.Sprintf(`
-		WITH candidates AS (
-			SELECT d.cid, d.peer_id, d.timestamp,
-			       d.stream_path, d.stream_offset, d.record_length, d.signature_hex,
-			       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
-			       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key,
-			       tags.created_at,
-			       COALESCE(
-			         CASE WHEN idx.norad_cat_id IS NOT NULL THEN CAST(idx.norad_cat_id AS TEXT) END,
-			         NULLIF(idx.entity_id, ''),
-			         d.cid
-			       ) AS entity_key,
-			       idx.epoch_unix AS matched_epoch_unix,
-			       d.rowid AS record_rowid
-			FROM sdn_record_source_tags tags
-			INNER JOIN %s d ON d.cid = tags.cid
-			INNER JOIN sdn_record_index idx ON idx.schema_name = tags.schema_name AND idx.cid = tags.cid
-			WHERE tags.schema_name = ?
-			  AND tags.provider_id = ?
-			  AND tags.source_name = ?
-			  AND tags.batch_id = ?
-		),
-		ranked AS (
-			SELECT *,
-			       ROW_NUMBER() OVER (
-			         PARTITION BY entity_key
-			         ORDER BY ABS(matched_epoch_unix - ?) ASC,
-			                  CASE WHEN matched_epoch_unix <= ? THEN 0 ELSE 1 END ASC,
-			                  matched_epoch_unix DESC,
-			                  record_rowid DESC,
-			                  cid ASC
-			       ) AS rn
-			FROM candidates
-		)
-		SELECT cid, peer_id, timestamp,
-		       stream_path, stream_offset, record_length, signature_hex,
-		       provider_id, source_name, source_url, batch_id,
-		       content_key_id, producer_peer_id, producer_public_key, created_at
-		FROM ranked
-		WHERE rn = 1
-		  AND entity_key IS NOT NULL
-		  AND entity_key != ''
-		ORDER BY entity_key ASC
-		LIMIT ?
-	`, tableName), head.SchemaName, head.ProviderID, head.SourceName, head.BatchID, targetUnix, targetUnix, limit)
-	if err != nil {
-		return nil, false, fmt.Errorf("latest source batch records query failed: %w", err)
-	}
-	records, err := s.scanRecentRecords(rows)
-	if err != nil {
-		return nil, false, err
-	}
-	return records, true, nil
 }
 
 // DataSummary returns aggregate FlatSQL record counts and raw byte totals.
