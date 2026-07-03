@@ -126,6 +126,14 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 	if err != nil {
 		return nil, fmt.Errorf("failed to start FlatSQL engine: %w", err)
 	}
+	if !engine.AOT() {
+		// Interpreted execution is ~100x slower for query workloads (loop
+		// A.3). Static production daemons ship WITHOUT the AOT compiler —
+		// deploys must place a precompiled universal-wasm artifact into the
+		// cache dir (flatsql-<sha256[:8]>.aot.wasm, keyed on the embedded
+		// engine bytes) so this warning never fires in production.
+		log.Warnf("FlatSQL engine running INTERPRETED (no AOT artifact in %s, no AOT compiler in this build) — queries will be ~100x slower", engineAOTCacheDir())
+	}
 	engineDB, err := engine.CreateDatabase(engineRecordSchema, "sdn-control")
 	if err != nil {
 		engine.Close()
