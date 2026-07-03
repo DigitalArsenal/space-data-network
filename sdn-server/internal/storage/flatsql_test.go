@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,10 +40,11 @@ func TestNewFlatSQLStore(t *testing.T) {
 	}
 	defer store.Close()
 
-	// Verify database file was created
-	dbPath := filepath.Join(tmpDir, "sdn.db")
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		t.Error("Database file was not created")
+	// Verify the durable control journal was created (the engine is
+	// in-memory; control.sdnj replaced sdn.db as the at-rest artifact).
+	journalPath := filepath.Join(tmpDir, "control.sdnj")
+	if _, err := os.Stat(journalPath); os.IsNotExist(err) {
+		t.Error("Control journal was not created")
 	}
 }
 
@@ -189,6 +191,7 @@ func TestFlatSQLImportFastPathUsesInsertedRowIDForSourceSummary(t *testing.T) {
 }
 
 func TestNewFlatSQLStoreMigratesExistingCanonicalBlobTableToStreamMetadata(t *testing.T) {
+	t.Skip("obsolete: fabricates a legacy sdn.db; the engine store never reads sqlite files — legacy import is the B.7 migration CLI")
 	tmpDir, err := os.MkdirTemp("", "flatsql-existing-table-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -245,6 +248,7 @@ func TestNewFlatSQLStoreMigratesExistingCanonicalBlobTableToStreamMetadata(t *te
 }
 
 func TestNewFlatSQLStoreMigratesLegacySDSTableToCanonicalSchemaTable(t *testing.T) {
+	t.Skip("obsolete: fabricates a legacy sdn.db; the engine store never reads sqlite files — legacy import is the B.7 migration CLI")
 	tmpDir, err := os.MkdirTemp("", "flatsql-legacy-table-migration-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -460,6 +464,7 @@ func TestCopyBlobSchemaRowsToMetadataTableSkipsExistingMetadataRows(t *testing.T
 }
 
 func TestNewFlatSQLStoreDoesNotSynchronouslyIndexExistingGlobalTables(t *testing.T) {
+	t.Skip("obsolete: fabricates a legacy sdn.db; the engine store never reads sqlite files — legacy import is the B.7 migration CLI")
 	tmpDir, err := os.MkdirTemp("", "flatsql-existing-global-index-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -1781,6 +1786,7 @@ func TestFlatSQLStoreUpsertSourceTagsLeavesExistingTagTimestampStable(t *testing
 }
 
 func TestFlatSQLStoreWaitsForExternalWriterLock(t *testing.T) {
+	t.Skip("obsolete: simulated cross-process sqlite file locking; the engine store has no shared db file (see TestConcurrentStoreAccessThroughAPI)")
 	tmpDir, err := os.MkdirTemp("", "flatsql-writer-lock-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -1847,6 +1853,7 @@ func TestFlatSQLStoreWaitsForExternalWriterLock(t *testing.T) {
 }
 
 func TestFlatSQLStoreSourceTagUpsertWaitsWhenExistingRecordReadCanProceed(t *testing.T) {
+	t.Skip("obsolete: simulated cross-process sqlite file locking; the engine store has no shared db file (see TestConcurrentStoreAccessThroughAPI)")
 	tmpDir, err := os.MkdirTemp("", "flatsql-source-tag-upgrade-lock-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -2538,4 +2545,62 @@ func TestFlatSQLStoreGarbageCollect(t *testing.T) {
 	// Note: GC may not delete immediately if records are very new
 	// This is testing the function works without errors
 	_ = deleted
+}
+
+// TestConcurrentStoreAccessThroughAPI replaces the retired sqlite file-lock
+// simulations: with the engine store there is no shared db file to contend
+// on — concurrency correctness means racing readers and writers through the
+// store API stay consistent.
+func TestConcurrentStoreAccessThroughAPI(t *testing.T) {
+	tmpDir := t.TempDir()
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("validator: %v", err)
+	}
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	defer store.Close()
+
+	const writers, readers, perWriter = 4, 4, 25
+	var wg sync.WaitGroup
+	errCh := make(chan error, writers+readers)
+	for w := 0; w < writers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < perWriter; i++ {
+				data := []byte(fmt.Sprintf("payload-%d-%d", w, i))
+				if _, err := store.Store("OMM.fbs", data, "peer-test", nil); err != nil {
+					errCh <- fmt.Errorf("writer %d: %w", w, err)
+					return
+				}
+			}
+		}(w)
+	}
+	for r := 0; r < readers; r++ {
+		wg.Add(1)
+		go func(r int) {
+			defer wg.Done()
+			for i := 0; i < perWriter; i++ {
+				if _, err := store.Count("OMM.fbs"); err != nil {
+					errCh <- fmt.Errorf("reader %d: %w", r, err)
+					return
+				}
+			}
+		}(r)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+	count, err := store.Count("OMM.fbs")
+	if err != nil {
+		t.Fatalf("final count: %v", err)
+	}
+	if count != writers*perWriter {
+		t.Fatalf("count = %d, want %d", count, writers*perWriter)
+	}
 }

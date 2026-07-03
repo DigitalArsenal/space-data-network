@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
@@ -123,24 +124,25 @@ func TestFlatSQLStore_LocalEPMRecordsAreEncryptedAtRest(t *testing.T) {
 		}
 	}
 
-	if _, err := store.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
-		t.Fatalf("wal checkpoint failed: %v", err)
-	}
-	rawDB, err := os.ReadFile(store.dbPath)
+	// The statement journal is the at-rest surface for control-table state
+	// now (the engine is in-memory; sdn.db no longer exists). Encrypted EPM
+	// bytes flow through journaled INSERT params, so plaintext must never
+	// appear there. Note: journal params are JSON-encoded (blobs as base64),
+	// so also forbid the base64 of the plaintext.
+	rawJournal, err := os.ReadFile(filepath.Join(store.basePath, "control.sdnj"))
 	if err != nil {
-		t.Fatalf("read db failed: %v", err)
+		t.Fatalf("read control journal failed: %v", err)
 	}
-	rawWAL, _ := os.ReadFile(store.dbPath + "-wal")
-	rawSHM, _ := os.ReadFile(store.dbPath + "-shm")
-	rawDisk := bytes.Join([][]byte{rawDB, rawWAL, rawSHM}, nil)
-	for _, forbidden := range [][]byte{
+	forbidden := [][]byte{
 		epmBytes,
 		[]byte("Jane Example"),
 		[]byte("jane@example.com"),
 		[]byte("$EPM binary bytes"),
-	} {
-		if bytes.Contains(rawDisk, forbidden) {
-			t.Fatalf("local EPM store leaked %q into %s", forbidden, filepath.Dir(store.dbPath))
+		[]byte(base64.StdEncoding.EncodeToString(epmBytes)),
+	}
+	for _, f := range forbidden {
+		if bytes.Contains(rawJournal, f) {
+			t.Fatalf("local EPM store leaked %q into the control journal", f)
 		}
 	}
 }

@@ -4,8 +4,8 @@
 // driver with a StatementJournal for durable, replayable control-table state
 // (docs/flatsql-store-v2.md).
 //
-// Concurrency: the engine is single-threaded, so Open configures the pool to
-// one connection and every call serializes on the engine lock anyway.
+// Concurrency: connections are stateless proxies onto one single-threaded
+// engine; see Open for the pooling and serialization rules.
 package flatsqldrv
 
 import (
@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
@@ -24,21 +25,34 @@ import (
 // Open wraps an engine database in a database/sql handle. If journal is
 // non-nil, every committed mutating statement is appended to it (replayable
 // at boot via Replay). The caller keeps ownership of db's lifetime.
+//
+// The pool allows multiple connections so callers may run a query while
+// iterating another result set (a single-conn pool deadlocks there). All
+// connections are stateless proxies onto the ONE engine SQLite context:
+// every statement serializes on the engine lock, and a shared mutex keeps
+// Exec + its last_insert_rowid()/changes() follow-ups atomic. Transactions
+// are engine-global — callers must serialize writes themselves (the storage
+// layer's RWMutex already does).
 func Open(db *flatsqlrt.Database, journal *StatementJournal) *sql.DB {
-	sqldb := sql.OpenDB(&connector{db: db, journal: journal})
-	sqldb.SetMaxOpenConns(1)
-	sqldb.SetMaxIdleConns(1)
+	shared := &engineGate{}
+	sqldb := sql.OpenDB(&connector{db: db, journal: journal, gate: shared})
+	sqldb.SetMaxOpenConns(8)
+	sqldb.SetMaxIdleConns(8)
 	sqldb.SetConnMaxLifetime(0)
 	return sqldb
 }
 
+// engineGate serializes exec+meta (and tx) sequences across connections.
+type engineGate struct{ mu sync.Mutex }
+
 type connector struct {
 	db      *flatsqlrt.Database
 	journal *StatementJournal
+	gate    *engineGate
 }
 
 func (c *connector) Connect(context.Context) (driver.Conn, error) {
-	return &conn{db: c.db, journal: c.journal}, nil
+	return &conn{db: c.db, journal: c.journal, gate: c.gate}, nil
 }
 
 func (c *connector) Driver() driver.Driver { return dr{} }
@@ -52,6 +66,7 @@ func (dr) Open(string) (driver.Conn, error) {
 type conn struct {
 	db      *flatsqlrt.Database
 	journal *StatementJournal
+	gate    *engineGate
 	inTx    bool
 	// txBuf holds journal frames for the open transaction; they are flushed
 	// on Commit and discarded on Rollback so replay never sees uncommitted
@@ -166,12 +181,13 @@ func (c *conn) ExecContext(_ context.Context, query string, args []driver.NamedV
 	if err != nil {
 		return nil, err
 	}
+	// Keep the statement and its metadata follow-ups atomic across pool
+	// connections (last_insert_rowid()/changes() are engine-global state).
+	c.gate.mu.Lock()
+	defer c.gate.mu.Unlock()
 	if _, err := c.db.Query(query, params...); err != nil {
 		return nil, err
 	}
-	// last_insert_rowid()/changes() are per-connection SQLite state; the
-	// engine is one connection and the pool is capped at one, so these
-	// follow-ups cannot interleave with another statement.
 	meta, err := c.db.Query("SELECT last_insert_rowid(), changes()")
 	if err != nil {
 		return nil, err
