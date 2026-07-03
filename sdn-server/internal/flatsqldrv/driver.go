@@ -176,6 +176,70 @@ func isMutation(query string) bool {
 	}
 }
 
+// splitStatements breaks a multi-statement SQL string into individual
+// statements (quote-, comment-, and trigger-unaware-but-sufficient: the
+// engine's flatsql_query executes ONE statement, while database/sql callers
+// legitimately Exec multi-statement DDL blocks the way sqlite3_exec allows).
+// Statements containing bind parameters must be single (params bind to one
+// statement only) — callers already follow that convention.
+func splitStatements(query string) []string {
+	var stmts []string
+	var b strings.Builder
+	i := 0
+	n := len(query)
+	for i < n {
+		ch := query[i]
+		switch {
+		case ch == '\'' || ch == '"' || ch == '`':
+			quote := ch
+			b.WriteByte(ch)
+			i++
+			for i < n {
+				b.WriteByte(query[i])
+				if query[i] == quote {
+					if i+1 < n && query[i+1] == quote { // escaped quote
+						i++
+						b.WriteByte(query[i])
+						i++
+						continue
+					}
+					i++
+					break
+				}
+				i++
+			}
+		case ch == '-' && i+1 < n && query[i+1] == '-':
+			for i < n && query[i] != '\n' {
+				b.WriteByte(query[i])
+				i++
+			}
+		case ch == '/' && i+1 < n && query[i+1] == '*':
+			for i < n {
+				b.WriteByte(query[i])
+				if query[i] == '*' && i+1 < n && query[i+1] == '/' {
+					b.WriteByte(query[i+1])
+					i += 2
+					break
+				}
+				i++
+			}
+		case ch == ';':
+			if s := strings.TrimSpace(b.String()); s != "" {
+				stmts = append(stmts, s)
+			}
+			b.Reset()
+			i++
+		default:
+			b.WriteByte(ch)
+			i++
+		}
+	}
+	if s := strings.TrimSpace(b.String()); s != "" {
+		stmts = append(stmts, s)
+	}
+	return stmts
+}
+
 func (c *conn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	params, err := convertArgs(args)
 	if err != nil {
@@ -185,8 +249,21 @@ func (c *conn) ExecContext(_ context.Context, query string, args []driver.NamedV
 	// connections (last_insert_rowid()/changes() are engine-global state).
 	c.gate.mu.Lock()
 	defer c.gate.mu.Unlock()
-	if _, err := c.db.Query(query, params...); err != nil {
-		return nil, err
+
+	stmts := splitStatements(query)
+	if len(stmts) > 1 && len(params) > 0 {
+		return nil, errors.New("flatsqldrv: bind parameters not supported in multi-statement Exec")
+	}
+	if len(stmts) <= 1 {
+		if _, err := c.db.Query(query, params...); err != nil {
+			return nil, err
+		}
+	} else {
+		for _, stmt := range stmts {
+			if _, err := c.db.Query(stmt); err != nil {
+				return nil, fmt.Errorf("%w (in multi-statement exec: %.60q)", err, stmt)
+			}
+		}
 	}
 	meta, err := c.db.Query("SELECT last_insert_rowid(), changes()")
 	if err != nil {

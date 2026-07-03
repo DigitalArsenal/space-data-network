@@ -63,12 +63,12 @@ type ScoringConfig struct {
 	TrusterFundsSaturation float64 // truster weighted funds
 
 	// Component weights for DefaultScoreFunc; normalized internally.
-	WeightOwnFunds             float64
-	WeightTrusterCount         float64
-	WeightTrusterCountTrusted  float64
-	WeightTrusterFunds         float64
-	WeightTrusterFundsTrusted  float64
-	WeightDirectEdge           float64
+	WeightOwnFunds            float64
+	WeightTrusterCount        float64
+	WeightTrusterCountTrusted float64
+	WeightTrusterFunds        float64
+	WeightTrusterFundsTrusted float64
+	WeightDirectEdge          float64
 
 	// TrustThreshold is the score at or above which a subject is
 	// considered trusted (status flips in WS11.3 use this).
@@ -86,9 +86,9 @@ func DefaultScoringConfig() ScoringConfig {
 			FundETH:        0.85,
 			FundOther:      0.5,
 		},
-		FundsSaturation:        100_000, // $100k weighted ≈ 63% of the funds component
-		TrusterCountSaturation: 10,
-		TrusterFundsSaturation: 1_000_000,
+		FundsSaturation:           100_000, // $100k weighted ≈ 63% of the funds component
+		TrusterCountSaturation:    10,
+		TrusterFundsSaturation:    1_000_000,
 		WeightOwnFunds:            0.25,
 		WeightTrusterCount:        0.10,
 		WeightTrusterCountTrusted: 0.20,
