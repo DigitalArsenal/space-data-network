@@ -712,9 +712,9 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 	// Storage capabilities — require an initialized FlatSQL store
 	if n.store != nil {
 		storageFac := caps.NewStorageCapFactory(n.store)
-		reg.Register("storage_query", storageFac)
-		reg.Register("storage_write", storageFac)
-		reg.Register("storage_adapter", storageFac)
+		reg.RegisterBridgeAware("storage_query", storageFac)
+		reg.RegisterBridgeAware("storage_write", storageFac)
+		reg.RegisterBridgeAware("storage_adapter", storageFac)
 	}
 
 	// HTTP outbound capability — always available

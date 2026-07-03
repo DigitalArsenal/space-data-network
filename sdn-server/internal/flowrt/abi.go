@@ -29,6 +29,10 @@ const (
 	runtimeExportNodeStates                = "space_data_module_runtime_get_node_states"
 	runtimeExportIngressStates             = "space_data_module_runtime_get_ingress_states"
 	runtimeExportDispatchCurrentInvocation = "space_data_module_runtime_dispatch_current_invocation_direct"
+	// OPTIONAL (loop C.5c): in-wasm scheduler loop running every ready
+	// linked-direct node inside one call. Hosts probe for it and fall back
+	// to per-node driving when the artifact predates it.
+	runtimeExportDrainLinked = "space_data_module_runtime_drain_linked"
 )
 
 var compiledRuntimeExportNames = []string{
@@ -95,8 +99,9 @@ func readFrameDescriptor(mod *wasmrt.Module, ptr uint32) (*FlowFrameDescriptor, 
 	}, nil
 }
 
-func writeFrameDescriptor(mod *wasmrt.Module, ptr uint32, fd *FlowFrameDescriptor) error {
-	buf := make([]byte, flowFrameDescriptorSize)
+// encodeFrameDescriptor serializes a frame descriptor into buf (which must
+// be at least flowFrameDescriptorSize bytes).
+func encodeFrameDescriptor(buf []byte, fd *FlowFrameDescriptor) {
 	binary.LittleEndian.PutUint32(buf[0:4], fd.IngressIndex)
 	binary.LittleEndian.PutUint32(buf[4:8], fd.TypeDescriptorIdx)
 	binary.LittleEndian.PutUint32(buf[8:12], fd.PortIDPointer)
@@ -106,12 +111,19 @@ func writeFrameDescriptor(mod *wasmrt.Module, ptr uint32, fd *FlowFrameDescripto
 	binary.LittleEndian.PutUint32(buf[24:28], fd.StreamID)
 	binary.LittleEndian.PutUint32(buf[28:32], fd.Sequence)
 	binary.LittleEndian.PutUint64(buf[32:40], fd.TraceToken)
+	buf[40] = 0
 	if fd.EndOfStream {
 		buf[40] = 1
 	}
+	buf[41] = 0
 	if fd.Occupied {
 		buf[41] = 1
 	}
+}
+
+func writeFrameDescriptor(mod *wasmrt.Module, ptr uint32, fd *FlowFrameDescriptor) error {
+	buf := make([]byte, flowFrameDescriptorSize)
+	encodeFrameDescriptor(buf, fd)
 	return mod.WriteMemory(ptr, buf)
 }
 

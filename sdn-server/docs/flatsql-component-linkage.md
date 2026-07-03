@@ -344,3 +344,65 @@ configuration (interpreted dependent calling into AOT engine functions):
   directive; it's just a thinner bridge).
 - Store-attaches-to-flow inversion as the general mechanism
   (single-tenant only; lifecycle inversion risk).
+
+---
+
+## 7. Loop C.5c addendum (2026-07-03)
+
+### 7.1 Thread-affinity question ANSWERED for direct linkage
+
+`TestLinkedComponent_AOTDependentAOTEngine` (env-gated,
+`FLATSQL_LINKAGE_AOT=1`): an **AOT-compiled dependent** making direct import
+calls into the **AOT-compiled engine instance** on **one locked OS thread**
+runs correctly (repeated passes, no trap). The C.5b corruption
+(docs/wasmedge-aot-nested-execution.md) is specific to **nested
+`Executor::execute` re-entry inside a suspended host function**; a linked
+direct call is one contiguous wasm call stack under ONE executor invocation
+and does not touch the suspended-frame state. Consequence: linked-direct
+engine calls do NOT need to hop to the engine's dedicated thread — they only
+need the store engine LOCK (SQLITE_THREADSAFE=0 serialization, §4.1 item 4).
+
+### 7.2 What C.5c landed instead of (before) full linkage
+
+The wirespeed residue was **per-request byte copies**, and most of them were
+eliminated WITHOUT direct linkage by making the heavy bytes never enter the
+flow at all — the **body-reference delivery contract**:
+
+- Guest-elected `"deliver":"ref"` on `storage.flatsql_*_stream` hostcalls
+  (decision-gate injects it on the flatbuffer branch; json branch keeps
+  byte delivery for in-flow field extraction).
+- The storage capability handler registers the materialized Go buffer on
+  the calling instance's hostcall bridge and answers with
+  `result.ref = {token, size, frames, fnv1a64}` — no binary segment.
+- The retrieval module forwards the reference as a
+  `{"$sdnbodyref":1,...}` descriptor frame; decision-gate formats the
+  host-computed word-folded FNV-1a 64 into the IDENTICAL entity tag the
+  hashed-stream path produces; http-respond emits `$HTR
+  BODY_REF_TOKEN/BODY_REF_SIZE` (HttpResponseAbi.fbs schema extension).
+- The egress (Go `htrPipe` / JS harness) substitutes the registered buffer
+  — a token lookup, not a decision. Hosts that ignore `deliver` keep
+  returning segments and guests fall back to byte delivery (compat both
+  directions).
+- flatsqlrt gained a host-side **raw-stream mirror** keyed by the engine's
+  own `(generation, sql, params)` identity: warm identical queries return
+  the previously copied buffer with zero engine execution and zero copies
+  (rawstream_mirror.go).
+
+Remaining copies on a warm flatbuffer request: ONE engine→Go copy per
+mirror-miss materialization, and the unavoidable socket write.
+
+### 7.3 What full direct linkage still needs (unchanged scope, de-risked)
+
+- Flow-compiler emission of engine-import (B-iv) query components, or the
+  SIDE_MODULE mini-loader for the C++ retrieval module as written (§3.A).
+- modulert wiring: `vm.RegisterModule(storeEngineInstance)` before flow
+  instantiation; engine lock around linked dispatches; re-instantiation of
+  dependents on engine replacement (poisoning).
+- With 7.1 proven, no dedicated-thread routing is required for linked
+  calls — a materially smaller change than feared after C.5b.
+
+Note the perf calculus after 7.2: queries are submitted through one small
+hostcall (~µs) while result bytes already move zero-copy; direct linkage's
+remaining wirespeed value is the hostcall envelope + dedicated-thread
+round-trips per query (small, measurable), while its architectural value
+(zero-hostcall composition, private-engine flows) is unchanged.

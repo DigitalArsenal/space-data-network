@@ -64,19 +64,33 @@ func (m *Module) Context() context.Context {
 // CapabilityRegistry maps capability strings to provisioner functions.
 type CapabilityRegistry struct {
 	mu        sync.RWMutex
-	factories map[string]CapFactory
+	factories map[string]BridgeCapFactory
 }
 
 // CapFactory creates a CapHandler for a module that declared a given capability.
 type CapFactory func(mod *Module) CapHandler
 
+// BridgeCapFactory is a CapFactory that additionally receives the module
+// instance's hostcall bridge — handlers that register out-of-band results
+// (body references, loop C.5c) need the bridge's registry. mod may be nil
+// (flow instances have no *Module wrapper).
+type BridgeCapFactory func(mod *Module, bridge *HostBridge) CapHandler
+
 // NewCapabilityRegistry creates an empty registry.
 func NewCapabilityRegistry() *CapabilityRegistry {
-	return &CapabilityRegistry{factories: make(map[string]CapFactory)}
+	return &CapabilityRegistry{factories: make(map[string]BridgeCapFactory)}
 }
 
 // Register adds a capability factory.
 func (r *CapabilityRegistry) Register(capability string, factory CapFactory) {
+	r.RegisterBridgeAware(capability, func(mod *Module, _ *HostBridge) CapHandler {
+		return factory(mod)
+	})
+}
+
+// RegisterBridgeAware adds a capability factory that receives the hostcall
+// bridge alongside the module.
+func (r *CapabilityRegistry) RegisterBridgeAware(capability string, factory BridgeCapFactory) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.factories[capability] = factory
@@ -200,7 +214,7 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 		m.capReg.mu.RLock()
 		for _, cap := range manifest.Capabilities {
 			if factory, ok := m.capReg.factories[cap]; ok {
-				handler := factory(m)
+				handler := factory(m, bridge)
 				bridge.RegisterCapHandler(capPrefixFromName(cap), handler)
 				log.Debugf("Module %q: provisioned capability %q", manifest.PluginID, cap)
 			}

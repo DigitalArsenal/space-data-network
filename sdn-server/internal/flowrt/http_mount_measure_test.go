@@ -113,7 +113,7 @@ func TestHTTPMountMeasure(t *testing.T) {
 	target := baseEpochUnix + 86400 + 43200
 
 	reg := modulert.NewCapabilityRegistry()
-	reg.Register("storage_query", caps.NewStorageCapFactory(store))
+	reg.RegisterBridgeAware("storage_query", caps.NewStorageCapFactory(store))
 
 	mount := func(pool int, aotDir string) (*httptest.Server, []*MountedFlow) {
 		t.Helper()

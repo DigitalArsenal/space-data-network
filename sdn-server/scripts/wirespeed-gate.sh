@@ -9,11 +9,15 @@
 #   (c) a raw-TCP wire_speed_probe reference.
 # Prints the throughput table and exits NONZERO when (a) < 99% of (b).
 #
-# Known-miss override (CLEARLY LABELED): loop C.5b landed AOT flow dispatch
-# (nested AOT-in-AOT WasmEdge fix) + the engine raw-stream response cache;
-# warm flow requests measure ~37% of the same-bytes baseline (7 ms vs
-# 2.6 ms / 8.6 MB). The remaining gap is per-request byte copies in the
-# flow-runtime template (C.3(c3) direct-linkage/zero-copy egress work).
+# Known-miss override (CLEARLY LABELED): loop C.5c landed body-reference
+# egress (stream bytes never enter the flow), the flatsqlrt raw-stream
+# mirror (warm queries: zero engine execution, zero copies), the in-wasm
+# linked drain loop, and drain/ingress host-crossing reduction; a warm
+# 8.6 MB request measures ~1.08-1.13 ms (~8.0 GB/s, faster than the raw
+# TCP probe) vs ~0.91-1.06 ms baseline -- ~85% best / ~94% median, noise-
+# dominated. The ~130 us residue is a handful of host<->wasm round-trips;
+# >=99% of a ~1 ms baseline allows <=10 us TOTAL added latency, beyond any
+# host-mediated dispatch (docs/flatsql-component-linkage.md section 7).
 #   SDN_C5_ALLOW_BLOCKED=1 scripts/wirespeed-gate.sh
 #
 # Tunables (see wirespeed_gate_test.go): SDN_C5_OBJECTS, SDN_C5_EPOCHS,

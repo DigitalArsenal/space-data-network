@@ -24,6 +24,26 @@ type FlowRuntime struct {
 	EdgeCount    uint32
 	TriggerCount uint32
 	DepCount     uint32
+
+	// nodeInfo caches each node's STATIC dispatch identity (plugin/method/
+	// node/dependency ids + dispatch model — constant data compiled into the
+	// artifact) so the drain loop does not re-read descriptor structs and
+	// C strings out of linear memory on every dispatch (loop C.5c: those
+	// reads were ~40 cgo round-trips per request on an 8-node flow).
+	nodeInfo []flowNodeInfo
+
+	// hasDrainLinked reports the artifact exports the C.5c in-wasm scheduler
+	// loop (space_data_module_runtime_drain_linked); probed once at load.
+	hasDrainLinked bool
+}
+
+// flowNodeInfo is the cached static identity of one flow node.
+type flowNodeInfo struct {
+	PluginID      string
+	MethodID      string
+	DependencyID  string
+	NodeID        string
+	DispatchModel string
 }
 
 // NewFlowRuntime loads a compiled flow WASM artifact and binds the runtime ABI.
@@ -56,8 +76,29 @@ func NewFlowRuntime(wasmBytes []byte, maxMemoryPages uint32, extraOpts ...wasmrt
 	rt.TriggerCount = rt.callUint32(runtimeExportTriggerDescriptorCount)
 	rt.DepCount = rt.callUint32(runtimeExportDependencyDescriptorCount)
 
-	log.Infof("Flow runtime loaded: %d nodes, %d edges, %d triggers, %d deps",
-		rt.NodeCount, rt.EdgeCount, rt.TriggerCount, rt.DepCount)
+	// Cache the static per-node dispatch identities once.
+	rt.nodeInfo = make([]flowNodeInfo, rt.NodeCount)
+	for i := uint32(0); i < rt.NodeCount; i++ {
+		if dd, err := rt.GetNodeDispatchDescriptor(i); err == nil {
+			rt.nodeInfo[i] = flowNodeInfo{
+				PluginID:      rt.readCStringAt(dd.PluginIDPointer),
+				MethodID:      rt.readCStringAt(dd.MethodIDPointer),
+				DependencyID:  rt.readCStringAt(dd.DependencyIDPointer),
+				NodeID:        rt.readCStringAt(dd.NodeIDPointer),
+				DispatchModel: rt.readCStringAt(dd.DispatchModelPointer),
+			}
+		}
+	}
+
+	// Probe for the optional in-wasm scheduler loop (0 iterations = no-op).
+	if _, err := rt.mod.Execute(runtimeExportDrainLinked, int32(0)); err == nil {
+		rt.hasDrainLinked = true
+	} else if _, err := rt.mod.Execute(underscoreRuntimeExportName(runtimeExportDrainLinked), int32(0)); err == nil {
+		rt.hasDrainLinked = true
+	}
+
+	log.Infof("Flow runtime loaded: %d nodes, %d edges, %d triggers, %d deps (in-wasm linked drain: %v)",
+		rt.NodeCount, rt.EdgeCount, rt.TriggerCount, rt.DepCount, rt.hasDrainLinked)
 
 	return rt, nil
 }
@@ -248,6 +289,20 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 		default:
 		}
 
+		// In-wasm scheduler loop (loop C.5c): run every ready linked-direct
+		// node inside ONE guest call — ready-node selection, dispatch, and
+		// frame routing never cross the host boundary. The host loop below
+		// then only services host-model nodes (and acts as the fallback for
+		// artifacts predating the export).
+		if rt.hasDrainLinked {
+			if res, err := rt.mod.Execute(runtimeExportDrainLinked, int32(maxIter)); err == nil {
+				if dispatched := wasmrt.ToInt32(res[0]); dispatched > 0 {
+					result.NodesInvoked += int(dispatched)
+					result.Iterations += int(dispatched)
+				}
+			}
+		}
+
 		nodeIndex := rt.GetReadyNodeIndex()
 		if nodeIndex == InvalidIndex {
 			break // no more ready nodes
@@ -263,52 +318,47 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 			continue
 		}
 
-		// Read invocation descriptor
+		// The node's dispatch identity is static per artifact — served from
+		// the init-time cache instead of re-reading descriptor structs and C
+		// strings out of linear memory on every dispatch (loop C.5c).
+		var info flowNodeInfo
+		if nodeIndex < uint32(len(rt.nodeInfo)) {
+			info = rt.nodeInfo[nodeIndex]
+		}
+		pluginID := info.PluginID
+		methodID := info.MethodID
+		dependencyID := info.DependencyID
+		nodeID := info.NodeID
+
+		// Resolve handler BEFORE touching descriptor/input frames:
+		// linked-direct nodes consume their (possibly multi-megabyte) frames
+		// entirely inside the artifact's linear memory — copying them out
+		// here just to discard them was a per-dispatch stream-sized copy.
+		handler := handlers.Resolve(pluginID, methodID, dependencyID, nodeID)
+		if handler == nil {
+			log.Debugf("No handler for %s:%s (node=%s, dep=%s)", pluginID, methodID, nodeID, dependencyID)
+			result.HandlersSkipped++
+
+			if info.DispatchModel == "linked-direct" {
+				rt.dispatchDirect(nodeIndex)
+				result.NodesInvoked++
+				continue
+			}
+
+			rt.CompleteInvocation(nodeIndex)
+			continue
+		}
+
+		// Host-model dispatch: read the invocation descriptor + input frames.
 		invDesc, err := rt.GetCurrentInvocationDescriptor()
 		if err != nil {
 			log.Warnf("GetCurrentInvocationDescriptor: %v", err)
 			rt.CompleteInvocation(nodeIndex)
 			continue
 		}
-
-		pluginID := rt.readCStringAt(invDesc.PluginIDPointer)
-		methodID := rt.readCStringAt(invDesc.MethodIDPointer)
-
-		// Read dispatch descriptor for nodeId and dependencyId
-		var dependencyID, nodeID string
-		if invDesc.DispatchDescriptorIdx != InvalidIndex {
-			if dd, err := rt.GetNodeDispatchDescriptor(invDesc.DispatchDescriptorIdx); err == nil {
-				dependencyID = rt.readCStringAt(dd.DependencyIDPointer)
-				nodeID = rt.readCStringAt(dd.NodeIDPointer)
-			}
-		}
-
-		// Read input frames
 		frames, err := rt.readInputFrames(invDesc)
 		if err != nil {
 			log.Warnf("readInputFrames: %v", err)
-			rt.CompleteInvocation(nodeIndex)
-			continue
-		}
-
-		// Resolve handler
-		handler := handlers.Resolve(pluginID, methodID, dependencyID, nodeID)
-		if handler == nil {
-			log.Debugf("No handler for %s:%s (node=%s, dep=%s)", pluginID, methodID, nodeID, dependencyID)
-			result.HandlersSkipped++
-
-			// Check for linked-direct dispatch
-			if invDesc.DispatchDescriptorIdx != InvalidIndex {
-				if dd, err := rt.GetNodeDispatchDescriptor(invDesc.DispatchDescriptorIdx); err == nil {
-					dispatchModel := rt.readCStringAt(dd.DispatchModelPointer)
-					if dispatchModel == "linked-direct" {
-						rt.dispatchDirect(nodeIndex)
-						result.NodesInvoked++
-						continue
-					}
-				}
-			}
-
 			rt.CompleteInvocation(nodeIndex)
 			continue
 		}
