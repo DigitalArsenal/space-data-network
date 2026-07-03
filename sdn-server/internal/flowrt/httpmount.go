@@ -183,6 +183,12 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read flow artifact: %w", err)
 	}
+	// Published artifacts carry an appended SDS $REC publication trailer
+	// (MBL+PNM per the module publication standard); the runtime payload is
+	// the bytes before it. Stripping BEFORE the AOT cache keeps the cache
+	// keyed on the executable payload, so a precompiled artifact shipped
+	// into the cache dir matches regardless of publication metadata.
+	wasmBytes = modulert.StripPublicationTrailer(wasmBytes)
 
 	runBytes := wasmBytes
 	aot := false
