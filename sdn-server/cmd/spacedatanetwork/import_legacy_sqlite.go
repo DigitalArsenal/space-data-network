@@ -20,7 +20,6 @@ import (
 
 	MPEFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	"github.com/google/flatbuffers/go"
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -29,8 +28,8 @@ import (
 )
 
 var importLegacySQLiteCmd = &cobra.Command{
-	Use:   "import-legacy-sqlite",
-	Short: "Import legacy satellite_data.db rows into FlatSQL",
+	Use:    "import-legacy-sqlite",
+	Short:  "Import legacy satellite_data.db rows into FlatSQL",
 	Hidden: true,
 	Long: `Streams rows from a legacy SQLite table (default: satellite_data) and stores
 them as OMM (and optionally MPE) FlatBuffers in the current FlatSQL storage.`,
@@ -204,7 +203,7 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	src, err := sql.Open("sqlite3", "file:"+sourceDB+"?mode=ro")
+	src, err := sql.Open("sqlite", "file:"+sourceDB+"?mode=ro")
 	if err != nil {
 		return fmt.Errorf("failed to open source db: %w", err)
 	}
