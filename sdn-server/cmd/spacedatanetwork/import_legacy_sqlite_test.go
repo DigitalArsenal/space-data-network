@@ -785,6 +785,12 @@ func TestRebuildDatasetPublicationShardGroupCARBundlesPublishesExistingShards(t 
 		t.Fatalf("seed partial CAR ledger entry failed: %v", err)
 	}
 
+	// rebuildDatasetPublicationShardGroupCARBundles opens the store itself;
+	// release the seeding handle first (the v2 store is single-writer).
+	if err := store.Close(); err != nil {
+		t.Fatalf("close seed store: %v", err)
+	}
+
 	result, err := rebuildDatasetPublicationShardGroupCARBundles(context.Background(), datasetPublicationCARRebuildOptions{
 		StoragePath:       storagePath,
 		IPFSAPIURL:        kubo.URL,
@@ -802,6 +808,13 @@ func TestRebuildDatasetPublicationShardGroupCARBundlesPublishesExistingShards(t 
 	if result.Publications != 3 || result.Records != 150_000 || result.Bundles != 2 {
 		t.Fatalf("rebuild result = %#v, want 3 publications, 150000 records, 2 bundles", result)
 	}
+
+	// Reopen for the post-rebuild assertions below.
+	store, err = storage.NewFlatSQLStore(storagePath, validator)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer store.Close()
 
 	manifest, err := datasync.OpenManifest(store, datasync.QueryRequest{
 		Schema:       "OMM.fbs",

@@ -35,6 +35,25 @@ admin:
   ipfs_api_url: http://127.0.0.1:5002
   ipfs_gateway_url: http://127.0.0.1:8081
 
+# In-daemon ingest (single-writer topology, loop C.6b): the FlatSQL v2
+# store admits exactly ONE writer process, so the former separate
+# spacedatanetwork-ingest.service can no longer share this daemon's storage
+# path (a second writer open fails with a store-lock error). The CelesTrak
+# sync workers run inside the daemon instead. Space-Track/UDL credentials,
+# if ever enabled, come from SPACETRACK_IDENTITY/SPACETRACK_PASSWORD and
+# UDL_USERNAME/UDL_PASSWORD environment variables in a private systemd
+# drop-in on spacedatanetwork.service — never from this file.
+ingest:
+  enabled: true
+  raw_path: /var/lib/spacedatanetwork/raw
+  celestrak_interval: 3h
+  satcat_interval: 3h
+  space_weather_interval: 3h
+  spacetrack_enabled: false
+  udl_enabled: false
+  http_timeout: 900s
+  dataset_publish_url: http://127.0.0.1:5001/api/v1/admin/dataset-updates/publish
+
 setup:
   token_expiry: 10m
   data_path: /var/lib/spacedatanetwork/data

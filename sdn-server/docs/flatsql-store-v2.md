@@ -125,3 +125,33 @@ time-partitioned segments (wired after the hot path).
 - Sibling stores: storefront + trust move onto the store API (B.5); auth,
   admin, audit, license, peers migrate in B.6; `mattn/go-sqlite3` deleted
   in B.8.
+
+## 8. Single-writer liveness lock + ingest topology (loop C.6b)
+
+The store is SINGLE-WRITER by construction: one in-process engine owns the
+control journal and the stream appenders. Two independent processes on one
+basePath (the pre-C.6b celestrak.eth production shape: daemon +
+`spacedatanetwork-ingest.service`) would interleave `control.sdnj` frames
+and stream appends — journal corruption.
+
+- **Lock**: every `NewFlatSQLStore` takes a non-blocking EXCLUSIVE OS lock
+  (`flock` on Unix, `LockFileEx` on Windows) on `<basePath>/store.lock`
+  BEFORE touching any store file (`internal/storage/storelock.go`). A
+  second writer open fails immediately with `storage.ErrStoreLocked` and an
+  actionable message (holder pid/host/time from advisory JSON metadata in
+  the lock file).
+- **Stale leases**: none exist. The lock is kernel-owned and tied to the
+  open file description, so process death — including `kill -9` — releases
+  it automatically; the next open succeeds with no takeover protocol. The
+  metadata is never used to decide liveness. The lock file is not unlinked
+  on release (unlink would race a contender holding the old inode).
+- **Ingest topology**: source-sync workers run IN the daemon (config
+  `ingest.enabled`, `internal/node/ingest.go` →
+  `ingest.NewRunnerWithStore`) against the daemon's own store handle, so
+  hot-window enforcement, datasync cursor rowids, and engine-mirror
+  generation invalidation apply to ingested records exactly as to datasync
+  writes (TestInDaemonIngestSharedStoreEndToEnd). The standalone
+  `spacedatanetwork ingest` verb remains for offline stores and fails with
+  the lock error against a daemon-held path
+  (TestNewRunnerFailsCleanlyWhenDaemonHoldsStore); cross-process lock
+  semantics are proven by subprocess tests (storelock_test.go).

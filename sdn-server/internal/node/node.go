@@ -1058,6 +1058,13 @@ func (n *Node) Start(ctx context.Context) error {
 		}()
 	}
 
+	// In-daemon ingest workers (config ingest.enabled): the single-writer
+	// replacement for the separate spacedatanetwork-ingest.service process
+	// (loop C.6b, node/ingest.go).
+	if err := n.startInDaemonIngest(); err != nil {
+		return err
+	}
+
 	return nil
 }
 

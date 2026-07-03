@@ -49,6 +49,26 @@ tor:
 
 ## Ingestion Workers (CelesTrak + Space-Track + UDL)
 
+**Single-writer topology:** the FlatSQL v2 store admits exactly one writer
+process (exclusive `store.lock` beside `control.sdnj`). Where a daemon runs
+on the storage path, enable in-daemon ingest in the daemon config instead of
+the standalone verb — the workers then run inside the daemon against its own
+store handle:
+
+```yaml
+ingest:
+  enabled: true
+  celestrak_interval: 3h
+  satcat_interval: 24h
+  space_weather_interval: 3h
+  spacetrack_enabled: false   # credentials via SPACETRACK_* env vars
+  udl_enabled: false          # credentials via UDL_* env vars
+```
+
+The standalone `spacedatanetwork ingest` verb below remains supported for
+offline/standalone stores; against a daemon-held store it fails with a clean
+store-lock error (never journal corruption) and points at the config above.
+
 Run a one-time sync:
 
 ```bash
@@ -132,10 +152,11 @@ UDL behavior notes:
 - Records missing a NORAD catalog ID or with malformed epochs are skipped and
   reported in provenance warnings instead of aborting the batch.
 
-Production (systemd) credential location:
+Production (systemd) credential location — in-daemon ingest reads them from
+the DAEMON unit environment:
 
 ```bash
-/etc/systemd/system/spacedatanetwork-ingest.service.d/spacetrack.conf
+/etc/systemd/system/spacedatanetwork.service.d/spacetrack.conf
 ```
 
 ```ini
@@ -150,8 +171,11 @@ Apply changes:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl restart spacedatanetwork-ingest
+sudo systemctl restart spacedatanetwork
 ```
+
+(For a standalone ingest unit on an offline store, put the same drop-in under
+`spacedatanetwork-ingest.service.d/` instead.)
 
 Legacy import from `/opt/data/satellite_data.db`:
 

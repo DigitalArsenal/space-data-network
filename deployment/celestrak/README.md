@@ -17,11 +17,21 @@ private Kubo/SDN key material.
 
 ## Install Shape
 
-The CelesTrak host runs three systemd units:
+The CelesTrak host runs two systemd units:
 
-- `spacedatanetwork.service`: SDN full node and public/API surface
-- `spacedatanetwork-ingest.service`: CelesTrak ingest worker
+- `spacedatanetwork.service`: SDN full node, public/API surface, AND the
+  CelesTrak ingest workers (config `ingest.enabled: true` — see below)
 - `kubo.service`: local Kubo RPC/gateway node used by SDN WebUI and publication helpers
+
+There is intentionally NO separate ingest unit anymore. The FlatSQL v2 store
+(in-process engine + `control.sdnj` statement journal) is single-writer: a
+second writer process opening the daemon's storage path fails with a clean
+store-lock error (`store.lock` flock next to `control.sdnj`). The former
+`spacedatanetwork-ingest.service` topology — a second process on the same
+store — would corrupt the journal and is removed; `install-host.sh` disables
+and deletes it on upgraded hosts. The standalone `spacedatanetwork ingest`
+verb remains for offline stores only (see
+`sdn-server/deploy/spacedatanetwork-ingest.service.standalone-example`).
 
 The private closed-module checkout is loaded separately at
 `/opt/spacedatanetwork/closed-modules`. It contains the scheduler-facing
@@ -72,7 +82,7 @@ Then start services:
 
 ```sh
 systemctl daemon-reload
-systemctl enable --now kubo spacedatanetwork spacedatanetwork-ingest
+systemctl enable --now kubo spacedatanetwork
 ```
 
 ## Closed Module Load
@@ -106,10 +116,11 @@ ssh celestrak.eth 'cd /opt/spacedatanetwork/closed-modules && npm test'
 ssh celestrak.eth 'cd /opt/spacedatanetwork/closed-modules && env CELESTRAK_PROVIDER_CRON="0 */3 * * *" CELESTRAK_SOURCES="spaceWeather" SDN_PROVIDER_ID="celestrak.eth" node packages/celestrak-provider/bin/run-provider.mjs --run'
 ```
 
-The checked-in `spacedatanetwork-ingest.service` remains the production
-three-hour CelesTrak pull path. It posts successful OMM, CAT, and SPW syncs to
+The daemon config's `ingest` section (checked-in `config.yaml`) is the
+production three-hour CelesTrak pull path, running inside
+`spacedatanetwork.service`. It posts successful OMM, CAT, and SPW syncs to
 the local SDN admin publication endpoint at
-`/api/v1/admin/dataset-updates/publish`, where the running daemon exports the
+`/api/v1/admin/dataset-updates/publish`, where the same daemon exports the
 FlatSQL window, pins shard/index/DPM assets to local Kubo, signs the PNM, and
 fans it out over SDN pub/sub. Full-catalog publication is chunked into
 multi-shard DPM series instead of treating one PNM as the whole accumulated
@@ -120,30 +131,35 @@ the burst.
 ## Verification
 
 ```sh
-systemctl --no-pager --full status kubo spacedatanetwork spacedatanetwork-ingest
+systemctl --no-pager --full status kubo spacedatanetwork
 curl -fsS http://127.0.0.1:5001/api/node/info
 curl -fsS http://127.0.0.1:5002/api/v0/id -X POST
 ss -ltnup | grep -E ':4001|:4002|:5001|:5002|:8080|:8081'
 journalctl -u spacedatanetwork -n 200 --no-pager
-journalctl -u spacedatanetwork-ingest -n 200 --no-pager
+journalctl -u spacedatanetwork -n 200 --no-pager | grep -i 'ingest'
 ```
+
+In-daemon ingest logs under the `ingest` logger inside the daemon journal;
+`In-daemon ingest enabled` at boot confirms the config took effect.
 
 If `ss` shows `ipfs` listening on `4001`, Kubo was started before the CelesTrak
 port config was applied. Restart Kubo through `kubo.service` after confirming no
 coordinator deploy is in progress; the checked-in config expects Kubo swarm on
 `4002` so SDN can own `4001`.
 
-The ingest worker is configured for CelesTrak-only fetches by default. Enable
-Space-Track gap-fill only through a private systemd drop-in that sets
-`SPACETRACK_IDENTITY` and `SPACETRACK_PASSWORD`, then changes the service
-argument to `--spacetrack-enabled true`.
+In-daemon ingest is configured for CelesTrak-only fetches by default
+(`spacetrack_enabled: false`, `udl_enabled: false` in `config.yaml`). Enable
+Space-Track gap-fill only through a private systemd drop-in on
+`spacedatanetwork.service` that sets `SPACETRACK_IDENTITY` and
+`SPACETRACK_PASSWORD`, plus `spacetrack_enabled: true` in the config's
+`ingest` section.
 
 Confirm the live publication hook is present before treating the provider as
 subscriber-ready:
 
 ```sh
-systemctl cat spacedatanetwork-ingest | grep dataset-publish-url
-journalctl -u spacedatanetwork-ingest -n 200 --no-pager | grep 'Dataset publication requested'
+grep dataset_publish_url /etc/spacedatanetwork/config.yaml
+journalctl -u spacedatanetwork -n 200 --no-pager | grep 'Dataset publication requested'
 journalctl -u spacedatanetwork -n 200 --no-pager | grep 'Dataset publication API available'
 ```
 
@@ -159,7 +175,7 @@ curl -fsS 'http://127.0.0.1:10080/api/v1/data/omm/bulk?limit=1&format=json'
 
 ## CelesTrak Source Controls
 
-The checked-in service uses public CelesTrak sources and does not require
+The checked-in config uses public CelesTrak sources and does not require
 private credentials:
 
 - GP full catalog:
@@ -171,16 +187,16 @@ private credentials:
 - Space weather:
   `https://celestrak.org/SpaceData/SW-All.csv`
 
-For readiness tests or source migrations, override these without editing the
-systemd unit by adding an `ExecStart=` replacement in a private drop-in with
-the corresponding `spacedatanetwork ingest` flags:
+For readiness tests or source migrations, override these in the daemon
+config's `ingest` section:
 
-```sh
---celestrak-catalog-url ...
---celestrak-satcat-url ...
---celestrak-satcat-csv-url ...
---celestrak-space-weather-url ...
---celestrak-space-weather-interval 3h
+```yaml
+ingest:
+  celestrak_catalog_url: ...
+  celestrak_satcat_url: ...
+  celestrak_satcat_csv_url: ...
+  celestrak_space_weather_url: ...
+  space_weather_interval: 3h
 ```
 
 Keep GP and space-weather intervals at or above the CelesTrak-safe minimum

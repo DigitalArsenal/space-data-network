@@ -72,8 +72,8 @@ func TestSearchSubcommandsDocumentModeAndDaemonAPIFlags(t *testing.T) {
 }
 
 func TestSearchProviderRunEResetsPositionalQuery(t *testing.T) {
-	cfgPath, _ := newSyncCLITestStore(t)
-	withSyncCLITestConfig(t, cfgPath)
+	cfgPath, store := newSyncCLITestStore(t)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	oldOptions := searchOptionsState.Provider
 	searchOptionsState.Provider = searchProviderOptions{Format: "table", Limit: 100}
@@ -346,7 +346,7 @@ func TestDataSearchFieldsMatchTaskStep4Order(t *testing.T) {
 func TestSearchStandardsFindsSchemaAndLocalCounts(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSearchStandards(&out, searchStandardsOptions{
@@ -373,8 +373,8 @@ func TestSearchStandardsFindsSchemaAndLocalCounts(t *testing.T) {
 }
 
 func TestSearchStandardsCSVHasStableHeader(t *testing.T) {
-	cfgPath, _ := newSyncCLITestStore(t)
-	withSyncCLITestConfig(t, cfgPath)
+	cfgPath, store := newSyncCLITestStore(t)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSearchStandards(&out, searchStandardsOptions{
@@ -397,7 +397,7 @@ func TestSearchStandardsCSVHasStableHeader(t *testing.T) {
 func TestSearchStandardsDoesNotMatchLocalCounts(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSearchStandards(&out, searchStandardsOptions{
@@ -483,7 +483,7 @@ func TestSearchDataSortUsesStableTieBreakers(t *testing.T) {
 func TestSearchProvidersJSONEnrichesDirectoryWithReplicaStats(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSearchProviders(&out, searchProviderOptions{
@@ -518,7 +518,7 @@ func TestSearchProvidersProviderIDAliasResolvesBeforeStatsFilter(t *testing.T) {
 		t.Run(providerID, func(t *testing.T) {
 			cfgPath, store := newSyncCLITestStore(t)
 			seedSyncCLITestData(t, store)
-			withSyncCLITestConfig(t, cfgPath)
+			withSyncCLITestConfig(t, cfgPath, store)
 
 			var out bytes.Buffer
 			err := runSearchProviders(&out, searchProviderOptions{
@@ -550,7 +550,7 @@ func TestSearchProvidersDottedProviderAliasResolvesBeforeStatsFilter(t *testing.
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
 	seedSearchCLIDottedAlias(t, store)
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSearchProviders(&out, searchProviderOptions{
@@ -591,7 +591,7 @@ func TestSearchProvidersProviderIDOnlyReturnsDirectoryOnlyRows(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert directory-only record failed: %v", err)
 	}
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSearchProviders(&out, searchProviderOptions{
@@ -619,7 +619,7 @@ func TestSearchProvidersCanonicalIDEnrichesDirectoryByMatchedPeer(t *testing.T) 
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
 	seedSearchCLIDirectoryWithoutProviderID(t, store)
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSearchProviders(&out, searchProviderOptions{
@@ -648,7 +648,7 @@ func TestSearchProvidersCanonicalIDEnrichesDirectoryByMatchedPeer(t *testing.T) 
 func TestSearchProvidersCanonicalIDMatchesStatsWithoutProviderID(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSearchCLIReplicaWithoutProviderID(t, store)
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSearchProviders(&out, searchProviderOptions{
@@ -687,7 +687,7 @@ func TestSearchProvidersReplicaFiltersSkipDirectoryOnlyRows(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert unrelated directory record failed: %v", err)
 	}
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSearchProviders(&out, searchProviderOptions{
@@ -731,7 +731,7 @@ func TestSearchProvidersAppliesLimitAfterSort(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert A provider failed: %v", err)
 	}
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSearchProviders(&out, searchProviderOptions{
@@ -755,7 +755,7 @@ func TestSearchProvidersAppliesLimitAfterSort(t *testing.T) {
 func TestSearchProvidersCSVUsesStableColumns(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSearchProviders(&out, searchProviderOptions{
@@ -794,7 +794,7 @@ func TestSearchProvidersCSVUsesStableColumns(t *testing.T) {
 func TestSearchDataFiltersBySchemaAndProvider(t *testing.T) {
 	cfgPath, store := newSyncCLITestStore(t)
 	seedSyncCLITestData(t, store)
-	withSyncCLITestConfig(t, cfgPath)
+	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
 	err := runSearchData(&out, searchDataOptions{

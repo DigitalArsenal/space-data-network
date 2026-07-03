@@ -69,7 +69,11 @@ type FlatSQLStore struct {
 	dbPath    string
 	basePath  string
 	streamDir string
-	mu        sync.RWMutex
+	// lock is the exclusive single-writer liveness lock on
+	// <basePath>/store.lock (storelock.go, loop C.6b) — held for the
+	// store's whole lifetime, released by Close.
+	lock *storeLock
+	mu   sync.RWMutex
 	// engineSources tracks per-source shadow tables already registered on the
 	// engine (flatsql_register_source errors on duplicates). Guarded by mu.
 	engineSources map[string]bool
@@ -116,6 +120,23 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 	if err := os.MkdirAll(streamDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create FlatSQL stream directory: %w", err)
 	}
+
+	// Single-writer liveness lock (storelock.go): taken BEFORE any store
+	// file is touched, so a second writer process fails here with a clean
+	// ErrStoreLocked instead of corrupting the journal or stream files.
+	lock, err := acquireStoreLock(basePath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Release the lock on every failure path below; store.Close() releases
+	// it on the paths that already have a store (release is idempotent).
+	opened := false
+	defer func() {
+		if !opened {
+			_ = lock.release()
+		}
+	}()
 
 	// dbPath no longer names a real SQLite file (the engine is in-memory,
 	// durably backed by the statement journal), but the string stays exactly
@@ -174,6 +195,7 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 		dbPath:        dbPath,
 		basePath:      basePath,
 		streamDir:     streamDir,
+		lock:          lock,
 		engineSources: map[string]bool{},
 
 		engineHotWindow: cfg.engineHotWindow,
@@ -194,6 +216,7 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 		return nil, fmt.Errorf("failed to rebuild engine records: %w", err)
 	}
 
+	opened = true
 	return store, nil
 }
 
@@ -2789,6 +2812,14 @@ func (s *FlatSQLStore) Close() error {
 	if s.engine != nil {
 		s.engine.Close()
 		s.engine = nil
+	}
+	// Release the single-writer liveness lock LAST, after every store file
+	// handle is closed, so a waiting opener never sees a half-closed store.
+	if s.lock != nil {
+		if err := s.lock.release(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		s.lock = nil
 	}
 	return firstErr
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/ingest"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/tor"
 	"github.com/spf13/cobra"
 )
@@ -221,6 +223,15 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		DatasetPublishURL: datasetPublishURL,
 	})
 	if err != nil {
+		if errors.Is(err, storage.ErrStoreLocked) {
+			// The v2 store is single-writer: the standalone ingest verb can
+			// no longer run against a store a daemon (or any other process)
+			// holds — that topology corrupted the control journal.
+			return fmt.Errorf("%w\n\nThe storage path %s is held by another process (most likely a running spacedatanetwork daemon).\n"+
+				"The standalone 'ingest' command only works against a store no daemon is using (offline/standalone mode).\n"+
+				"To ingest alongside a running daemon, enable in-daemon ingest in the daemon config instead:\n\n"+
+				"  ingest:\n    enabled: true\n\nand remove/disable any spacedatanetwork-ingest service unit.", err, storagePath)
+		}
 		return err
 	}
 
