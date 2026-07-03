@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"os"
 	"testing"
 )
 
@@ -78,9 +79,36 @@ func fixtureBuffer(t *testing.T) []byte {
 	return fixtureStream(t)[4:]
 }
 
+// sharedAOTDir gives every test the same AOT cache so the suite runs at
+// native speed; only the first run on a machine pays the ~35 s compile.
+func sharedAOTDir(t *testing.T) string {
+	t.Helper()
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return t.TempDir()
+	}
+	return base + "/sdn-flatsqlrt-test-aot"
+}
+
 func newTestRuntime(t *testing.T) *Runtime {
 	t.Helper()
-	rt, err := New()
+	var opts []Option
+	switch {
+	// FLATSQLRT_WASM_FILE points the whole suite at alternate engine bytes
+	// (e.g. a candidate artifact) — used to validate byte-parity and
+	// performance of candidate builds.
+	case os.Getenv("FLATSQLRT_WASM_FILE") != "":
+		b, err := os.ReadFile(os.Getenv("FLATSQLRT_WASM_FILE"))
+		if err != nil {
+			t.Fatalf("FLATSQLRT_WASM_FILE: %v", err)
+		}
+		opts = append(opts, WithWasmBytes(b))
+	// FLATSQLRT_INTERPRET=1 forces interpreted execution (perf comparison).
+	case os.Getenv("FLATSQLRT_INTERPRET") != "":
+	default:
+		opts = append(opts, WithAOTCache(sharedAOTDir(t)))
+	}
+	rt, err := New(opts...)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -103,18 +131,94 @@ func newOMMDatabase(t *testing.T, rt *Runtime, name string) *Database {
 
 func TestEmbeddedArtifact(t *testing.T) {
 	sum := sha256.Sum256(EmbeddedWasm())
-	// Must match the provenance block in README.md (flatsql pin 0c76d87).
-	const want = "3b28fd9cefe376c0fe10e9fb41f280ece36d50b93ab4f482208db2d27cc18cf6"
+	// Must match the provenance block in README.md.
+	const want = "22a6b19b0d6c47d99ab94055109775805cf46322fcd4b84c3e9b8e09219ce468"
 	if got := hex.EncodeToString(sum[:]); got != want {
-		t.Fatalf("embedded flatsql-wasi.wasm sha256 = %s, want %s (update README provenance if the pin moved)", got, want)
+		t.Fatalf("embedded flatsql-wasi-noeh.wasm sha256 = %s, want %s (update README provenance if the pin moved)", got, want)
 	}
 }
 
-func TestQueryErrorSurface(t *testing.T) {
+func TestQueryErrorSurfaceAndPoisoning(t *testing.T) {
 	rt := newTestRuntime(t)
 	db := newOMMDatabase(t, rt, "omm-basic")
 	if _, err := db.Query("SELECT * FROM NoSuchTable"); err == nil {
 		t.Fatal("expected SQL error, got nil")
+	}
+	// No-exceptions engine contract (until loop A.3c makes error paths
+	// non-throwing): ANY engine error poisons the instance — it must be
+	// reported and the runtime replaced. Reusing a poisoned runtime can hang.
+	if !rt.Poisoned() {
+		t.Fatal("runtime not marked poisoned after engine error")
+	}
+	// A fresh runtime is fully functional.
+	rt2 := newTestRuntime(t)
+	db2 := newOMMDatabase(t, rt2, "omm-recovered")
+	if _, err := db2.IngestOne(fixtureBuffer(t)); err != nil {
+		t.Fatalf("IngestOne on fresh runtime: %v", err)
+	}
+	res, err := db2.Query("SELECT OBJECT_NAME FROM OMM WHERE NORAD_CAT_ID = 56775")
+	if err != nil {
+		t.Fatalf("Query on fresh runtime: %v", err)
+	}
+	if len(res.Rows) != 1 || res.Rows[0][0] != "STARLINK-6292" {
+		t.Fatalf("fresh-runtime query rows: %#v", res.Rows)
+	}
+	if rt2.Poisoned() {
+		t.Fatal("fresh runtime unexpectedly poisoned")
+	}
+}
+
+func TestAOTCache(t *testing.T) {
+	// Shared cache: the first run on a machine compiles (~35 s), later runs
+	// assert the cache-hit path. Point FLATSQLRT_AOT_FRESH=1 at a fresh
+	// TempDir to force a compile.
+	dir := sharedAOTDir(t)
+	if os.Getenv("FLATSQLRT_AOT_FRESH") != "" {
+		dir = t.TempDir()
+	}
+
+	rt, err := New(WithAOTCache(dir))
+	if err != nil {
+		t.Fatalf("New with AOT cache: %v", err)
+	}
+	defer rt.Close()
+	if !rt.AOT() {
+		t.Fatal("expected AOT-compiled runtime (compiler unavailable?)")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("AOT cache dir entries: %v err=%v", entries, err)
+	}
+
+	// Engine works end-to-end on the compiled artifact.
+	db, err := rt.CreateDatabase(ommTestSchema, "aot-check")
+	if err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+	defer db.Destroy()
+	if err := db.RegisterFileID("$OMM", "OMM"); err != nil {
+		t.Fatalf("RegisterFileID: %v", err)
+	}
+	if _, err := db.IngestOne(fixtureBuffer(t)); err != nil {
+		t.Fatalf("IngestOne: %v", err)
+	}
+	res, err := db.Query("SELECT NORAD_CAT_ID FROM OMM")
+	if err != nil || len(res.Rows) != 1 || res.Rows[0][0] != int64(56775) {
+		t.Fatalf("AOT query: rows=%#v err=%v", res, err)
+	}
+
+	// Second runtime hits the cache (no recompile: same single cache entry).
+	rt2, err := New(WithAOTCache(dir))
+	if err != nil {
+		t.Fatalf("New (cached): %v", err)
+	}
+	defer rt2.Close()
+	if !rt2.AOT() {
+		t.Fatal("cached runtime not AOT")
+	}
+	entries, _ = os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatalf("cache dir has %d entries after reuse, want 1", len(entries))
 	}
 }
 
