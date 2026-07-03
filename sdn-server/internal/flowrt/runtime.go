@@ -27,7 +27,9 @@ type FlowRuntime struct {
 }
 
 // NewFlowRuntime loads a compiled flow WASM artifact and binds the runtime ABI.
-func NewFlowRuntime(wasmBytes []byte, maxMemoryPages uint32) (*FlowRuntime, error) {
+// Extra wasmrt options (e.g. additional host import modules such as the
+// module-SDK hostcall bridge) are appended after the defaults.
+func NewFlowRuntime(wasmBytes []byte, maxMemoryPages uint32, extraOpts ...wasmrt.Option) (*FlowRuntime, error) {
 	opts := []wasmrt.Option{
 		wasmrt.WithWASI(),
 		wasmrt.WithHostModule("sdn", buildFlowHostFuncs("sdn")),
@@ -36,6 +38,7 @@ func NewFlowRuntime(wasmBytes []byte, maxMemoryPages uint32) (*FlowRuntime, erro
 	if maxMemoryPages > 0 {
 		opts = append(opts, wasmrt.WithMaxMemoryPages(maxMemoryPages))
 	}
+	opts = append(opts, extraOpts...)
 
 	mod, err := wasmrt.NewModule(wasmBytes, opts...)
 	if err != nil {

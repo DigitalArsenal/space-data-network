@@ -1114,6 +1114,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 			}
 
+			// Config-declared flow HTTP mounts (flows.mounts): each entry
+			// loads a compiled flow bundle as a WASM module and binds it to
+			// its listener path; the handler is pure socket plumbing.
+			if err := n.MountFlows(adminMux); err != nil {
+				log.Errorf("Failed to register flow HTTP mounts: %v", err)
+			}
+
 			if layout.Root != "" {
 				adminMux.Handle("/api/v1/admin/update/shutdown", sdnupdate.NewControlHandler(sdnupdate.ControlHandlerOptions{
 					BundleRoot: layout.Root,
