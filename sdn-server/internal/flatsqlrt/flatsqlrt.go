@@ -108,6 +108,12 @@ func New(opts ...Option) (*Runtime, error) {
 	mod, err := wasmrt.NewModule(runBytes,
 		wasmrt.WithWASI(),
 		wasmrt.WithMaxMemoryPages(cfg.maxMemoryPages),
+		// The engine is routinely executed from INSIDE another module's host
+		// function (storage.flatsql_* capability hostcalls issued by AOT flow
+		// mounts). libwasmedge 0.14 corrupts per-thread executor state on
+		// nested AOT-inside-AOT execution — the engine therefore always runs
+		// on its own locked OS thread (docs/wasmedge-aot-nested-execution.md).
+		wasmrt.WithDedicatedThread(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("flatsqlrt: instantiate engine: %w", err)
@@ -882,6 +888,9 @@ type RawStream struct {
 	Bytes   []byte
 	Rows    int
 	Columns int
+	// CacheHit reports whether the engine served this stream from its
+	// response-artifact cache (no SQL re-execution — loop C.5b).
+	CacheHit bool
 }
 
 // QueryRawFlatBufferStream executes SQL whose every result cell is a BLOB
@@ -935,6 +944,10 @@ func (d *Database) QueryRawFlatBufferStream(sql string, params ...interface{}) (
 	if err != nil {
 		return nil, err
 	}
+	hitRes, err := m.Execute("flatsql_response_artifact_cache_hit")
+	if err != nil {
+		return nil, err
+	}
 
 	size := uint32(wasmrt.ToInt32(sizeRes[0]))
 	var out []byte
@@ -947,9 +960,10 @@ func (d *Database) QueryRawFlatBufferStream(sql string, params ...interface{}) (
 		out = []byte{}
 	}
 	return &RawStream{
-		Bytes:   out,
-		Rows:    int(toFloat64(rowsRes[0])),
-		Columns: int(toFloat64(colsRes[0])),
+		Bytes:    out,
+		Rows:     int(toFloat64(rowsRes[0])),
+		Columns:  int(toFloat64(colsRes[0])),
+		CacheHit: wasmrt.ToInt32(hitRes[0]) != 0,
 	}, nil
 }
 

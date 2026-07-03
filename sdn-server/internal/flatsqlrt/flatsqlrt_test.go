@@ -132,7 +132,7 @@ func newOMMDatabase(t *testing.T, rt *Runtime, name string) *Database {
 func TestEmbeddedArtifact(t *testing.T) {
 	sum := sha256.Sum256(EmbeddedWasm())
 	// Must match the provenance block in README.md.
-	const want = "f9c4e2e31ecd49f31ca711975d354a7bb33ab5d4e409af27db3c97ee2c3dd14a"
+	const want = "eb79d4c1ae93841a5f1782551bb188cbb1760c9bbfb36bd371fde89fdaf56a20"
 	if got := hex.EncodeToString(sum[:]); got != want {
 		t.Fatalf("embedded flatsql-wasi-noeh.wasm sha256 = %s, want %s (update README provenance if the pin moved)", got, want)
 	}
@@ -310,6 +310,59 @@ func TestQueryRawFlatBufferStream(t *testing.T) {
 	// Frame header should carry the exact payload length.
 	if got := binary.LittleEndian.Uint32(stream.Bytes[:4]); int(got) != len(original) {
 		t.Fatalf("frame length prefix %d, want %d", got, len(original))
+	}
+}
+
+// TestRawStreamResponseCache covers the engine's cached raw-stream response
+// artifacts (flatsql cc4885c, loop C.5b): repeated (sql, params) requests are
+// served from the cache byte-identically without SQL re-execution; ingest
+// invalidates.
+func TestRawStreamResponseCache(t *testing.T) {
+	rt := newTestRuntime(t)
+	db := newOMMDatabase(t, rt, "omm-raw-cache")
+
+	original := fixtureBuffer(t)
+	if _, err := db.IngestOne(original); err != nil {
+		t.Fatalf("IngestOne: %v", err)
+	}
+
+	const sql = "SELECT _data FROM OMM WHERE NORAD_CAT_ID = ?"
+	first, err := db.QueryRawFlatBufferStream(sql, 56775)
+	if err != nil {
+		t.Fatalf("QueryRawFlatBufferStream (cold): %v", err)
+	}
+	if first.CacheHit {
+		t.Fatal("cold raw-stream query reported CacheHit=true")
+	}
+
+	second, err := db.QueryRawFlatBufferStream(sql, 56775)
+	if err != nil {
+		t.Fatalf("QueryRawFlatBufferStream (warm): %v", err)
+	}
+	if !second.CacheHit {
+		t.Fatal("warm raw-stream query was not served from the response cache")
+	}
+	if !bytes.Equal(first.Bytes, second.Bytes) {
+		t.Fatal("cache hit returned different bytes than the cold query")
+	}
+	if second.Rows != first.Rows || second.Columns != first.Columns {
+		t.Fatalf("cache hit counts rows=%d cols=%d, want %d/%d",
+			second.Rows, second.Columns, first.Rows, first.Columns)
+	}
+
+	// Ingest invalidates: next request re-executes (miss) and sees the data.
+	if _, err := db.IngestOne(original); err != nil {
+		t.Fatalf("IngestOne (second): %v", err)
+	}
+	third, err := db.QueryRawFlatBufferStream(sql, 56775)
+	if err != nil {
+		t.Fatalf("QueryRawFlatBufferStream (post-ingest): %v", err)
+	}
+	if third.CacheHit {
+		t.Fatal("raw-stream cache survived an ingest (stale artifact served)")
+	}
+	if third.Rows != 2 {
+		t.Fatalf("post-ingest rows = %d, want 2", third.Rows)
 	}
 }
 

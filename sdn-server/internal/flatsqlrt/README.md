@@ -16,8 +16,8 @@ aligned size-prefixed FlatBuffer frames (`QueryRawFlatBufferStream`).
 `flatsql` repo (superproject submodule `repos/main-packages/flatsql`):
 
 - source path: `flatsql/wasm/flatsql-wasi-noeh.wasm`
-- flatsql commit: `eeca33a` (no-throw error paths)
-- sha256: `f9c4e2e31ecd49f31ca711975d354a7bb33ab5d4e409af27db3c97ee2c3dd14a`
+- flatsql commit: `cc4885c` (cached raw-stream response artifacts)
+- sha256: `eb79d4c1ae93841a5f1782551bb188cbb1760c9bbfb36bd371fde89fdaf56a20`
 
 Why no-exceptions (loop A.3/A.3b findings, measured): WasmEdge's AOT
 compiler (0.14–0.17) cannot parse wasm-exceptions (exnref) modules, and its

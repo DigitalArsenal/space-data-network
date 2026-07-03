@@ -34,13 +34,21 @@ package flowrt
 //	SDN_C5_POOL          flow mount instance pool (default 1; the gate is a
 //	                     single-stream throughput measure)
 //	SDN_C5_PAGES         flow instance memory pages (default 4096 = 256 MB)
-//	SDN_C5_AOT=1         mount the flow AOT-compiled (KNOWN to trap on the
-//	                     linked-direct artifact — see TestAOTMountRepro;
-//	                     kept for retesting after artifact/toolchain fixes)
+//	SDN_C5_AOT=0         mount the flow interpreted (default is AOT since
+//	                     loop C.5b fixed the nested AOT-in-AOT WasmEdge
+//	                     corruption — see TestAOTMountRepro and
+//	                     docs/wasmedge-aot-nested-execution.md)
 //	SDN_C5_ALLOW_BLOCKED=1  do not fail the test when the gate misses —
 //	                     CLEARLY LABELED override for the documented
-//	                     known-blocked state (WasmEdge AOT of the flow
-//	                     artifact traps; the flow executes interpreted).
+//	                     known-miss state: with AOT flow dispatch and the
+//	                     engine's raw-stream response cache (flatsql
+//	                     cc4885c) warm requests measure ~37% of the
+//	                     same-bytes HTTP baseline (7 ms vs 2.6 ms for
+//	                     8.6 MB); the rest is per-request byte copies in
+//	                     the flow-runtime template (hostcall envelope →
+//	                     guest queues → $HTR body → host egress). Closing
+//	                     it needs the C.3(c3) direct-linkage/zero-copy
+//	                     egress work, not benchmark fixes.
 
 import (
 	"bufio"
@@ -132,7 +140,7 @@ func TestWirespeedGate(t *testing.T) {
 	warmup := c5EnvInt("SDN_C5_WARMUP", 2)
 	pool := c5EnvInt("SDN_C5_POOL", 1)
 	pages := c5EnvInt("SDN_C5_PAGES", 4096)
-	useAOT := os.Getenv("SDN_C5_AOT") != ""
+	useAOT := os.Getenv("SDN_C5_AOT") != "0"
 	allowBlocked := os.Getenv("SDN_C5_ALLOW_BLOCKED") != ""
 
 	const (
@@ -382,9 +390,10 @@ func TestWirespeedGate(t *testing.T) {
 		"Flow executed %s.", pctBest, pctMedian, execMode)
 	if allowBlocked {
 		t.Logf("%s", msg)
-		t.Logf("C5 GATE OVERRIDE: SDN_C5_ALLOW_BLOCKED=1 set — reporting the known-blocked state instead of failing "+
-			"(WasmEdge AOT of the linked-direct flow artifact traps on first dispatch — see TestAOTMountRepro; " +
-			"the flow executes interpreted until that is fixed)")
+		t.Logf("C5 GATE OVERRIDE: SDN_C5_ALLOW_BLOCKED=1 set — reporting the known-miss state instead of failing " +
+			"(AOT dispatch + engine raw-stream response cache landed in loop C.5b; the remaining gap is " +
+			"per-request byte copies inside the flow-runtime template — tracked with the C.3(c3) " +
+			"direct-linkage/zero-copy egress work)")
 		return
 	}
 	t.Fatal(msg)
