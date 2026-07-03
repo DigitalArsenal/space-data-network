@@ -45,11 +45,6 @@ const (
 	engineAOTCacheDirName        = "flatsql-aot"
 )
 
-// engineControlSchema is the FlatBuffer schema handed to the engine. The
-// control tables (sdn_record_index & co.) are plain SQLite tables created via
-// DDL through the driver; SDS record vtabs get wired here in loop B.3.
-const engineControlSchema = `table SDNControl { id: int (id); } root_type SDNControl;`
-
 // engineAOTCacheDir returns the machine-wide AOT artifact cache. It is keyed
 // by engine-bytes hash inside, so it is shared safely across datastores and
 // processes; compiling per-datastore would redo a ~35 s LLVM compile for
@@ -75,6 +70,9 @@ type FlatSQLStore struct {
 	basePath  string
 	streamDir string
 	mu        sync.RWMutex
+	// engineSources tracks per-source shadow tables already registered on the
+	// engine (flatsql_register_source errors on duplicates). Guarded by mu.
+	engineSources map[string]bool
 }
 
 // NewFlatSQLStore creates a new FlatSQL storage instance.
@@ -97,10 +95,14 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator) (*FlatSQLStore, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to start FlatSQL engine: %w", err)
 	}
-	engineDB, err := engine.CreateDatabase(engineControlSchema, "sdn-control")
+	engineDB, err := engine.CreateDatabase(engineRecordSchema, "sdn-control")
 	if err != nil {
 		engine.Close()
 		return nil, fmt.Errorf("failed to create FlatSQL database: %w", err)
+	}
+	if err := engineDB.RegisterFileID("$OMM", "OMM"); err != nil {
+		engine.Close()
+		return nil, fmt.Errorf("failed to register $OMM file identifier: %w", err)
 	}
 
 	journal, err := flatsqldrv.OpenStatementJournal(filepath.Join(basePath, controlJournalFileName))
@@ -125,20 +127,29 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator) (*FlatSQLStore, 
 	}
 
 	store := &FlatSQLStore{
-		db:        db,
-		engine:    engine,
-		engineDB:  engineDB,
-		journal:   journal,
-		validator: validator,
-		dbPath:    dbPath,
-		basePath:  basePath,
-		streamDir: streamDir,
+		db:            db,
+		engine:        engine,
+		engineDB:      engineDB,
+		journal:       journal,
+		validator:     validator,
+		dbPath:        dbPath,
+		basePath:      basePath,
+		streamDir:     streamDir,
+		engineSources: map[string]bool{},
 	}
 
 	// Initialize tables for all schemas
 	if err := store.initTables(); err != nil {
 		store.Close()
 		return nil, fmt.Errorf("failed to initialize tables: %w", err)
+	}
+
+	// Rebuild the engine record vtabs (the hot window) from durable state:
+	// control tables + stream files. Per-record failures are logged and
+	// skipped inside; only a poisoned runtime aborts the open.
+	if err := store.rebuildEngineRecords(); err != nil {
+		store.Close()
+		return nil, fmt.Errorf("failed to rebuild engine records: %w", err)
 	}
 
 	return store, nil
@@ -724,6 +735,14 @@ func (s *FlatSQLStore) migrateLegacySchemaTable(schemaName, tableName string) er
 	if !legacyExists {
 		return nil
 	}
+	if engineOwnsTableName(tableName) {
+		// The canonical name is reserved by the engine's record vtab, so the
+		// legacy blob rows cannot be merged into a plain table of that name.
+		// Leave them for the B.7 legacy importer (which replays into the
+		// routed (producer, standard) tables) instead of failing the open.
+		log.Warnf("Deferring legacy FlatSQL table %s migration: canonical name %s is reserved by the engine record vtab (B.7 importer)", legacyTableName, tableName)
+		return nil
+	}
 	if err := s.createSchemaMetadataTable(tableName); err != nil {
 		return fmt.Errorf("create canonical schema table %s before legacy migration: %w", tableName, err)
 	}
@@ -930,8 +949,16 @@ func legacySchemaTableName(schemaName string) string {
 }
 
 func (s *FlatSQLStore) tableExists(tableName string) (bool, error) {
+	// Exclude virtual tables: the engine's SDS record vtabs live in the same
+	// SQLite context (e.g. "OMM"), and every tableExists caller is asking
+	// about plain control/metadata tables — the OMM vtab must not be mistaken
+	// for the legacy per-standard metadata table of the same name.
 	var name string
-	err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, tableName).Scan(&name)
+	err := s.db.QueryRow(`
+		SELECT name FROM sqlite_master
+		WHERE type = 'table' AND name = ?
+		  AND COALESCE(sql, '') NOT LIKE 'CREATE VIRTUAL%'
+	`, tableName).Scan(&name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -1716,6 +1743,10 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 
 	now := time.Now().Unix()
 	inserted := 0
+	// New records queued for the engine vtab (loop B.3); mirrored after the
+	// control transaction commits so a rollback never leaves phantom rows in
+	// the engine.
+	var enginePending []engineIngest
 	for _, data := range records {
 		cid := computeCID(data)
 		var existing int
@@ -1743,6 +1774,9 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 					return inserted, err
 				}
 			}
+			if schemaName == engineOMMSchemaName {
+				enginePending = append(enginePending, engineIngest{data: data, source: engineSourceName(tags)})
+			}
 		default:
 			return inserted, fmt.Errorf("check %s record %s: %w", schemaName, cid, err)
 		}
@@ -1760,6 +1794,13 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 		return inserted, fmt.Errorf("commit batch store: %w", err)
 	}
 	committed = true
+	if len(enginePending) > 0 {
+		// Engine-cache mirror: failures never fail the write (control rows +
+		// stream files are the source of truth), but a trapped runtime does.
+		if err := s.ingestEngineRecords(schemaName, enginePending); err != nil {
+			return inserted, err
+		}
+	}
 	return inserted, nil
 }
 
