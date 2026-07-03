@@ -71,6 +71,24 @@ type FlowsConfig struct {
 
 	// EditorPath is the URL base path for the editor (default: /flow-editor).
 	EditorPath string `yaml:"editor_path"`
+
+	// Mounts maps HTTP listener paths to flow modules. Each mounted flow is
+	// loaded as a WASM module through the standard flow runtime; the HTTP
+	// handler is pure socket plumbing ($HTQ request frames in, $HTR response
+	// frames out) with zero request-level decisions in the host.
+	Mounts []FlowMount `yaml:"mounts,omitempty"`
+}
+
+// FlowMount binds one HTTP listener path to one flow module. Route → module
+// mapping is configuration, never Go code.
+type FlowMount struct {
+	// Path is the HTTP mux pattern the flow owns (e.g. "/api/v1/data/").
+	Path string `yaml:"path"`
+
+	// Flow references the flow module: an installed flow program ID, or a
+	// filesystem path to a compiled flow bundle directory (containing
+	// runtime.wasm) or directly to a .wasm artifact.
+	Flow string `yaml:"flow"`
 }
 
 // PublishingConfig controls remote data publishing via the API.

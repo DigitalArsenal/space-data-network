@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,6 +100,7 @@ type Node struct {
 	directorySvc   *directory.Service
 	logService     *logservice.Service
 	flowManager    *flowrt.FlowManager
+	mountedFlows   []*flowrt.MountedFlow
 	config         *config.Config
 	identityBundle *IdentityBundle
 
@@ -2334,6 +2336,10 @@ func (n *Node) Stop() error {
 			log.Warnf("Error closing storage: %v", err)
 		}
 	}
+	for _, mf := range n.mountedFlows {
+		mf.Close()
+	}
+	n.mountedFlows = nil
 	if n.flowManager != nil {
 		n.flowManager.CloseAll()
 	}
@@ -2353,6 +2359,37 @@ func (n *Node) Stop() error {
 // FlowManager returns the flow runtime manager, or nil if flows are disabled.
 func (n *Node) FlowManager() *flowrt.FlowManager {
 	return n.flowManager
+}
+
+// MountFlows registers the config-declared flow HTTP mounts
+// (config flows.mounts) on the mux. Each mount loads a compiled flow bundle
+// as a WASM module through the standard flow runtime and binds it to its
+// listener path; the HTTP handler is pure socket plumbing ($HTQ in, $HTR
+// out). Loading rejects any flow whose declared capability set the node
+// cannot satisfy.
+func (n *Node) MountFlows(mux *http.ServeMux) error {
+	mounts := n.config.Flows.Mounts
+	if len(mounts) == 0 {
+		return nil
+	}
+	nodeCtx, err := n.buildModuleNodeContext()
+	if err != nil {
+		return fmt.Errorf("build module node context: %w", err)
+	}
+	deps := flowrt.FlowMountDeps{
+		CapRegistry:    n.buildCapRegistry(),
+		NodeCtx:        nodeCtx,
+		MaxMemoryPages: n.config.Flows.MaxMemoryPages,
+	}
+	if n.flowManager != nil {
+		deps.Store = n.flowManager.Store()
+	}
+	mounted, err := flowrt.RegisterFlowMounts(mux, mounts, deps)
+	if err != nil {
+		return err
+	}
+	n.mountedFlows = append(n.mountedFlows, mounted...)
+	return nil
 }
 
 // PeerID returns the node's peer ID.
