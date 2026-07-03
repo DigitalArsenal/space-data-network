@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	logging "github.com/ipfs/go-log/v2"
+	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
 
@@ -50,6 +51,10 @@ type flowNodeInfo struct {
 // Extra wasmrt options (e.g. additional host import modules such as the
 // module-SDK hostcall bridge) are appended after the defaults.
 func NewFlowRuntime(wasmBytes []byte, maxMemoryPages uint32, extraOpts ...wasmrt.Option) (*FlowRuntime, error) {
+	// Accept publication-protected artifacts directly: the runtime payload is
+	// the bytes before any appended SDS $REC trailer (module publication
+	// standard). No-op for plain wasm.
+	wasmBytes = modulert.StripPublicationTrailer(wasmBytes)
 	opts := []wasmrt.Option{
 		wasmrt.WithWASI(),
 		wasmrt.WithHostModule("sdn", buildFlowHostFuncs("sdn")),
