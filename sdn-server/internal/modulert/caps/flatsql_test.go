@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -99,7 +100,7 @@ func decodeCapResponse(t *testing.T, resp []byte) (map[string]interface{}, [][]b
 
 func callOp(t *testing.T, store *storage.FlatSQLStore, op string, payload map[string]interface{}) (map[string]interface{}, [][]byte) {
 	t.Helper()
-	handler := NewStorageCapFactory(store)(nil)
+	handler := NewStorageCapFactory(store)(nil, modulert.NewHostBridge(nil, nil))
 	body, _ := json.Marshal(payload)
 	resp, err := handler(op, body)
 	if err != nil {
@@ -163,7 +164,7 @@ func TestFlatSQLEpochStreamOp(t *testing.T) {
 
 func TestFlatSQLCacheKeyOp(t *testing.T) {
 	store := newCapTestStore(t)
-	handler := NewStorageCapFactory(store)(nil)
+	handler := NewStorageCapFactory(store)(nil, modulert.NewHostBridge(nil, nil))
 	payload := map[string]interface{}{
 		"schema_name":    "OMM",
 		"schema_version": "1",
@@ -196,7 +197,7 @@ func TestFlatSQLCacheKeyOp(t *testing.T) {
 
 func TestFlatSQLQueryStreamOpErrors(t *testing.T) {
 	store := newCapTestStore(t)
-	handler := NewStorageCapFactory(store)(nil)
+	handler := NewStorageCapFactory(store)(nil, modulert.NewHostBridge(nil, nil))
 	body, _ := json.Marshal(map[string]interface{}{"sql": "SELECT _data FROM Nope"})
 	resp, err := handler("storage.flatsql_query_stream", body)
 	if err != nil {

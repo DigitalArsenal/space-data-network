@@ -48,6 +48,12 @@ type Response struct {
 	Status  uint16
 	Headers []Header
 	Body    []byte
+	// BodyRefToken/BodyRefSize surface the schema's optional out-of-band
+	// body reference (loop C.5c): when BodyRefSize > 0 the host substitutes
+	// the byte buffer it registered under BodyRefToken on the module
+	// instance's hostcall bridge. Zero when the body (if any) is inline.
+	BodyRefToken uint64
+	BodyRefSize  uint64
 }
 
 // Field vtable offsets (slot n → 4 + 2n), per the schema declaration order.
@@ -59,9 +65,11 @@ const (
 	requestFieldBody    = 12 // BODY:[ubyte]
 	requestFieldRemote  = 14 // REMOTE:string
 
-	responseFieldStatus  = 4 // STATUS:ushort
-	responseFieldHeaders = 6 // HEADERS:[HttpHeader]
-	responseFieldBody    = 8 // BODY:[ubyte]
+	responseFieldStatus       = 4  // STATUS:ushort
+	responseFieldHeaders      = 6  // HEADERS:[HttpHeader]
+	responseFieldBody         = 8  // BODY:[ubyte]
+	responseFieldBodyRefToken = 10 // BODY_REF_TOKEN:ulong
+	responseFieldBodyRefSize  = 12 // BODY_REF_SIZE:ulong
 
 	headerFieldName  = 4 // NAME:string (key)
 	headerFieldValue = 6 // VALUE:string
@@ -125,10 +133,12 @@ func EncodeResponse(resp *Response) []byte {
 	if len(resp.Body) > 0 {
 		bodyVec = b.CreateByteVector(resp.Body)
 	}
-	b.StartObject(3)
+	b.StartObject(5)
 	b.PrependUint16Slot(0, resp.Status, 0)
 	b.PrependUOffsetTSlot(1, headersVec, 0)
 	b.PrependUOffsetTSlot(2, bodyVec, 0)
+	b.PrependUint64Slot(3, resp.BodyRefToken, 0)
+	b.PrependUint64Slot(4, resp.BodyRefSize, 0)
 	root := b.EndObject()
 	b.FinishWithFileIdentifier(root, []byte(ResponseFileIdentifier))
 	return b.FinishedBytes()
@@ -205,9 +215,19 @@ func DecodeResponse(buf []byte) (*Response, error) {
 	if o := flatbuffers.UOffsetT(t.Offset(responseFieldStatus)); o != 0 {
 		status = t.GetUint16(o + t.Pos)
 	}
+	refToken := uint64(0)
+	if o := flatbuffers.UOffsetT(t.Offset(responseFieldBodyRefToken)); o != 0 {
+		refToken = t.GetUint64(o + t.Pos)
+	}
+	refSize := uint64(0)
+	if o := flatbuffers.UOffsetT(t.Offset(responseFieldBodyRefSize)); o != 0 {
+		refSize = t.GetUint64(o + t.Pos)
+	}
 	return &Response{
-		Status:  status,
-		Headers: tableHeaders(t, responseFieldHeaders),
-		Body:    tableBytes(t, responseFieldBody),
+		Status:       status,
+		Headers:      tableHeaders(t, responseFieldHeaders),
+		Body:         tableBytes(t, responseFieldBody),
+		BodyRefToken: refToken,
+		BodyRefSize:  refSize,
 	}, nil
 }

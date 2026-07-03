@@ -404,6 +404,11 @@ type Database struct {
 	rt     *Runtime
 	handle uint32
 	name   string
+
+	// rawMirror holds recently materialized raw streams host-side, keyed by
+	// (generation, sql, params) — see rawstream_mirror.go. Lazily created;
+	// guarded by the Runtime's module lock like all database state.
+	rawMirror *rawStreamMirror
 }
 
 // Name returns the diagnostic label the database was created with.
@@ -891,14 +896,52 @@ type RawStream struct {
 	// CacheHit reports whether the engine served this stream from its
 	// response-artifact cache (no SQL re-execution — loop C.5b).
 	CacheHit bool
+	// MirrorHit reports the stream was served from the HOST-side mirror
+	// (zero engine execution, zero memory copies — loop C.5c). Implies the
+	// bytes are identical to what the engine would return: the mirror is
+	// keyed by the engine's own (generation, sql, params) identity.
+	MirrorHit bool
+	// FNV1a64 is the word-folded FNV-1a 64 content hash of Bytes (the
+	// canonical body-reference / entity-tag identity — FNV1a64WordFolded).
+	FNV1a64 uint64
+	// FrameCount counts Bytes' size-prefixed frames, skipping zero-length
+	// prefixes (the modules' x-sdn-record-count rule); -1 when the framing
+	// is malformed.
+	FrameCount int
 }
 
 // QueryRawFlatBufferStream executes SQL whose every result cell is a BLOB
 // (e.g. `SELECT _data FROM OMM WHERE ...`) and returns the aligned
 // size-prefixed frame stream — the wire format served to the network.
+//
+// Repeated queries whose engine generation is unchanged are served from the
+// host-side mirror without executing anything in the engine (see
+// rawstream_mirror.go). Callers MUST NOT mutate the returned Bytes.
 func (d *Database) QueryRawFlatBufferStream(sql string, params ...interface{}) (*RawStream, error) {
 	d.rt.mod.Lock()
 	defer d.rt.mod.Unlock()
+
+	blob, err := EncodeParams(params)
+	if err != nil {
+		return nil, err
+	}
+
+	// Host mirror first: (generation, sql, params) is the engine's own
+	// staleness identity — a hit is byte-equivalent to re-reading the
+	// engine's cached artifact, minus the round-trip and the copy.
+	preGen, genErr := d.queryCacheGenerationLocked()
+	mirrorKey := ""
+	if genErr == nil {
+		mirrorKey = rawMirrorKey(sql, blob, preGen)
+		if d.rawMirror != nil {
+			if cached := d.rawMirror.get(mirrorKey); cached != nil {
+				hit := *cached
+				hit.CacheHit = true
+				hit.MirrorHit = true
+				return &hit, nil
+			}
+		}
+	}
 
 	sqlPtr, err := d.rt.allocCString(sql)
 	if err != nil {
@@ -906,10 +949,6 @@ func (d *Database) QueryRawFlatBufferStream(sql string, params ...interface{}) (
 	}
 	defer d.rt.mod.Deallocate(sqlPtr)
 
-	blob, err := EncodeParams(params)
-	if err != nil {
-		return nil, err
-	}
 	blobPtr, err := d.rt.allocBytes(blob)
 	if err != nil {
 		return nil, err
@@ -959,12 +998,37 @@ func (d *Database) QueryRawFlatBufferStream(sql string, params ...interface{}) (
 	} else {
 		out = []byte{}
 	}
-	return &RawStream{
-		Bytes:    out,
-		Rows:     int(toFloat64(rowsRes[0])),
-		Columns:  int(toFloat64(colsRes[0])),
-		CacheHit: wasmrt.ToInt32(hitRes[0]) != 0,
-	}, nil
+	stream := &RawStream{
+		Bytes:      out,
+		Rows:       int(toFloat64(rowsRes[0])),
+		Columns:    int(toFloat64(colsRes[0])),
+		CacheHit:   wasmrt.ToInt32(hitRes[0]) != 0,
+		FNV1a64:    FNV1a64WordFolded(out),
+		FrameCount: countStreamFrames(out),
+	}
+
+	// Mirror only when the generation is unchanged across the execution: a
+	// mutating raw-stream statement (or any concurrent invalidation) bumps
+	// it, and such results must never be replayed.
+	if mirrorKey != "" {
+		if postGen, err := d.queryCacheGenerationLocked(); err == nil && postGen == preGen {
+			if d.rawMirror == nil {
+				d.rawMirror = newRawStreamMirror()
+			}
+			d.rawMirror.put(mirrorKey, stream)
+		}
+	}
+	return stream, nil
+}
+
+// queryCacheGenerationLocked reads the engine's query-cache generation
+// counter (bumped by every mutator). Caller holds the module lock.
+func (d *Database) queryCacheGenerationLocked() (uint64, error) {
+	res, err := d.rt.mod.Execute("flatsql_query_cache_generation", int32(d.handle))
+	if err != nil {
+		return 0, d.rt.execErr("flatsql_query_cache_generation", err)
+	}
+	return uint64(toFloat64(res[0])), nil
 }
 
 // ExportData snapshots the raw arena stream (the durability primitive).

@@ -40,15 +40,27 @@ package flowrt
 //	                     docs/wasmedge-aot-nested-execution.md)
 //	SDN_C5_ALLOW_BLOCKED=1  do not fail the test when the gate misses —
 //	                     CLEARLY LABELED override for the documented
-//	                     known-miss state: with AOT flow dispatch and the
-//	                     engine's raw-stream response cache (flatsql
-//	                     cc4885c) warm requests measure ~37% of the
-//	                     same-bytes HTTP baseline (7 ms vs 2.6 ms for
-//	                     8.6 MB); the rest is per-request byte copies in
-//	                     the flow-runtime template (hostcall envelope →
-//	                     guest queues → $HTR body → host egress). Closing
-//	                     it needs the C.3(c3) direct-linkage/zero-copy
-//	                     egress work, not benchmark fixes.
+//	                     known-miss state. After the C.5c work — body-
+//	                     reference egress (the stream bytes never enter
+//	                     the flow: the guest elects "deliver":"ref" and
+//	                     the host substitutes the buffer at the $HTR
+//	                     BODY_REF egress), the flatsqlrt raw-stream
+//	                     mirror (warm identical queries return the host
+//	                     buffer with zero engine execution and zero
+//	                     copies), the in-wasm linked drain loop
+//	                     (space_data_module_runtime_drain_linked), drain
+//	                     descriptor caching, and single-allocation
+//	                     ingress — a warm 8.6 MB request measures
+//	                     ~1.08–1.13 ms (≈8.0 GB/s, faster than the raw
+//	                     TCP probe) vs ~0.91–1.06 ms baseline: ~85% best
+//	                     / ~94% median (21 runs / 15 warmup; both arms'
+//	                     runs spread ~0.9–2.2 ms — noise-dominated). The
+//	                     ~130 µs residue is a handful of host↔wasm
+//	                     round-trips (drain + egress + the query-
+//	                     submission hostcall) — ≥99% of a ~1 ms baseline
+//	                     allows ≤10 µs of TOTAL added latency, beyond any
+//	                     host-mediated dispatch; see
+//	                     docs/flatsql-component-linkage.md §7.
 
 import (
 	"bufio"
@@ -213,7 +225,7 @@ func TestWirespeedGate(t *testing.T) {
 
 	// ---- (a) the module-served streaming endpoint --------------------------
 	reg := modulert.NewCapabilityRegistry()
-	reg.Register("storage_query", caps.NewStorageCapFactory(store))
+	reg.RegisterBridgeAware("storage_query", caps.NewStorageCapFactory(store))
 
 	aotDir := ""
 	if useAOT {

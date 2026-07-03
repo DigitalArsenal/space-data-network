@@ -95,10 +95,18 @@ type MountedFlow struct {
 	triggerPortID string
 	egressKeys    []string
 
-	pool chan *FlowRuntime
+	pool chan *flowInstance
 
 	closeMu sync.Mutex
 	closed  bool
+}
+
+// flowInstance is one pooled flow runtime plus its hostcall bridge (the
+// egress needs the bridge to resolve $HTR body references registered by
+// capability handlers during the exchange).
+type flowInstance struct {
+	rt     *FlowRuntime
+	bridge *modulert.HostBridge
 }
 
 // flowBundleTopology is the subset of the compiled bundle's flow.json needed
@@ -136,7 +144,7 @@ func resolveFlowArtifact(flowRef string, store *FlowStore) (wasmPath, bundleDir 
 // load (WASI + flow host funcs + the module-SDK hostcall bridge), manifest
 // read, capability provisioning from the registry — rejecting the load if
 // the host cannot satisfy a required capability.
-func loadFlowInstance(wasmBytes []byte, pages uint32, deps FlowMountDeps) (*FlowRuntime, *modulert.Manifest, error) {
+func loadFlowInstance(wasmBytes []byte, pages uint32, deps FlowMountDeps) (*flowInstance, *modulert.Manifest, error) {
 	// The hostcall bridge is created before the manifest is readable
 	// (chicken-and-egg, same as modulert.Module); its capability grants are
 	// applied right after the manifest parse below.
@@ -159,7 +167,7 @@ func loadFlowInstance(wasmBytes []byte, pages uint32, deps FlowMountDeps) (*Flow
 		rt.Release()
 		return nil, nil, fmt.Errorf("flow %q: %w", manifest.PluginID, err)
 	}
-	return rt, manifest, nil
+	return &flowInstance{rt: rt, bridge: bridge}, manifest, nil
 }
 
 // LoadMountedFlow loads a compiled flow bundle as a pool of deps.PoolSize
@@ -200,15 +208,16 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 		aot:           aot,
 		triggerIndex:  0,
 		triggerPortID: "request",
-		pool:          make(chan *FlowRuntime, poolSize),
+		pool:          make(chan *flowInstance, poolSize),
 	}
 
 	for i := 0; i < poolSize; i++ {
-		rt, manifest, err := loadFlowInstance(runBytes, pages, deps)
+		inst, manifest, err := loadFlowInstance(runBytes, pages, deps)
 		if err != nil {
 			mf.Close()
 			return nil, err
 		}
+		rt := inst.rt
 		if mf.manifest == nil {
 			mf.manifest = manifest
 
@@ -260,7 +269,7 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 				return nil, fmt.Errorf("flow %q has no host-model egress sink to deliver HTTP responses", manifest.PluginID)
 			}
 		}
-		mf.pool <- rt
+		mf.pool <- inst
 	}
 
 	return mf, nil
@@ -268,13 +277,13 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 
 // acquire checks an idle instance out of the pool, waiting until one frees
 // up or the request context ends.
-func (mf *MountedFlow) acquire(ctx context.Context) (*FlowRuntime, error) {
+func (mf *MountedFlow) acquire(ctx context.Context) (*flowInstance, error) {
 	select {
-	case rt, ok := <-mf.pool:
-		if !ok || rt == nil {
+	case inst, ok := <-mf.pool:
+		if !ok || inst == nil {
 			return nil, errors.New("flow module is closed")
 		}
-		return rt, nil
+		return inst, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -282,15 +291,15 @@ func (mf *MountedFlow) acquire(ctx context.Context) (*FlowRuntime, error) {
 
 // release returns an instance to the pool (or frees it if the mount closed
 // while the request was in flight).
-func (mf *MountedFlow) release(rt *FlowRuntime) {
+func (mf *MountedFlow) release(inst *flowInstance) {
 	mf.closeMu.Lock()
 	closed := mf.closed
 	mf.closeMu.Unlock()
 	if closed {
-		rt.Release()
+		inst.rt.Release()
 		return
 	}
-	mf.pool <- rt
+	mf.pool <- inst
 }
 
 // Close releases every pooled instance. Instances currently serving a
@@ -306,9 +315,9 @@ func (mf *MountedFlow) Close() {
 
 	for {
 		select {
-		case rt := <-mf.pool:
-			if rt != nil {
-				rt.Release()
+		case inst := <-mf.pool:
+			if inst != nil {
+				inst.rt.Release()
 			}
 		default:
 			return
@@ -333,9 +342,13 @@ func (mf *MountedFlow) PoolSize() int { return cap(mf.pool) }
 // htrPipe streams the flow's $HTR egress frames to the ResponseWriter
 // verbatim: the first frame carries status + headers + the first body bytes;
 // any following frames append body bytes. Each frame is flushed as it
-// arrives.
+// arrives. A frame carrying a BODY_REF (out-of-band body reference, loop
+// C.5c) has its body substituted from the instance's hostcall-bridge
+// registry — the buffer a capability handler registered during this same
+// exchange; the bytes never traversed the flow's linear memory.
 type htrPipe struct {
 	w           http.ResponseWriter
+	bridge      *modulert.HostBridge
 	wroteHeader bool
 	frames      int
 	err         error
@@ -351,6 +364,20 @@ func (p *htrPipe) emit(_ context.Context, args *InvocationArgs) (*InvocationResu
 			continue
 		}
 		p.frames++
+
+		var refBody []byte
+		if resp.BodyRefSize > 0 {
+			b, ok := p.bridge.TakeBodyRef(resp.BodyRefToken)
+			if !ok || uint64(len(b)) != resp.BodyRefSize {
+				if p.err == nil {
+					p.err = fmt.Errorf("egress $HTR references body token %d (%d bytes) not registered on this exchange",
+						resp.BodyRefToken, resp.BodyRefSize)
+				}
+				continue
+			}
+			refBody = b
+		}
+
 		if !p.wroteHeader {
 			for _, h := range resp.Headers {
 				p.w.Header().Add(h.Name, h.Value)
@@ -360,6 +387,11 @@ func (p *htrPipe) emit(_ context.Context, args *InvocationArgs) (*InvocationResu
 		}
 		if len(resp.Body) > 0 {
 			if _, err := p.w.Write(resp.Body); err != nil && p.err == nil {
+				p.err = err
+			}
+		}
+		if len(refBody) > 0 {
+			if _, err := p.w.Write(refBody); err != nil && p.err == nil {
 				p.err = err
 			}
 		}
@@ -406,30 +438,36 @@ func (mf *MountedFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Remote:  r.RemoteAddr,
 	})
 
-	rt, err := mf.acquire(r.Context())
+	inst, err := mf.acquire(r.Context())
 	if err != nil {
 		http.Error(w, fmt.Sprintf("acquire flow instance: %v", err), http.StatusServiceUnavailable)
 		return
 	}
-	defer mf.release(rt)
+	defer mf.release(inst)
+	rt := inst.rt
+	// References are exchange-scoped: drop anything a 304/error path left
+	// unconsumed before the instance goes back to the pool.
+	defer inst.bridge.ResetBodyRefs()
 
 	// One $HTQ frame into the flow's linear memory, enqueued at the ingress
-	// trigger.
-	payloadPtr, err := rt.Module().Allocate(htq)
+	// trigger. Descriptor + NUL-terminated port id + payload are packed into
+	// ONE allocation/write (one malloc + one memory write instead of three
+	// each — loop C.5c host-crossing reduction). Layout:
+	// [48B descriptor][port id\0][payload].
+	portBytes := append([]byte(mf.triggerPortID), 0)
+	buf := make([]byte, flowFrameDescriptorSize+len(portBytes)+len(htq))
+	copy(buf[flowFrameDescriptorSize:], portBytes)
+	copy(buf[flowFrameDescriptorSize+len(portBytes):], htq)
+	framePtr, err := rt.Module().AllocateSize(uint32(len(buf)))
 	if err == nil {
-		var portPtr, framePtr uint32
-		if portPtr, err = rt.Module().AllocateString(mf.triggerPortID); err == nil {
-			if framePtr, err = rt.Module().AllocateSize(flowFrameDescriptorSize); err == nil {
-				err = writeFrameDescriptor(rt.Module(), framePtr, &FlowFrameDescriptor{
-					PortIDPointer: portPtr,
-					Offset:        payloadPtr,
-					Size:          uint32(len(htq)),
-					Occupied:      true,
-				})
-				if err == nil {
-					rt.EnqueueTriggerFrame(mf.triggerIndex, framePtr)
-				}
-			}
+		encodeFrameDescriptor(buf[:flowFrameDescriptorSize], &FlowFrameDescriptor{
+			PortIDPointer: framePtr + flowFrameDescriptorSize,
+			Offset:        framePtr + flowFrameDescriptorSize + uint32(len(portBytes)),
+			Size:          uint32(len(htq)),
+			Occupied:      true,
+		})
+		if err = rt.Module().WriteMemory(framePtr, buf); err == nil {
+			rt.EnqueueTriggerFrame(mf.triggerIndex, framePtr)
 		}
 	}
 	if err != nil {
@@ -437,7 +475,7 @@ func (mf *MountedFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pipe := &htrPipe{w: w}
+	pipe := &htrPipe{w: w, bridge: inst.bridge}
 	handlers := make(HandlerMap, len(mf.egressKeys))
 	for _, key := range mf.egressKeys {
 		handlers[key] = pipe.emit

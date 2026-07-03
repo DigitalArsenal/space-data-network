@@ -11,6 +11,7 @@ package flowrt
 // FlatSQLStore seeded through the normal ingest path.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -105,9 +107,27 @@ func TestHTTPMountedDataRetrievalFlow(t *testing.T) {
 
 	// Capability registry: exactly what the node wires for modules. The flow
 	// manifest declares [storage_query]; the same caps handler serves the
-	// storage.flatsql_* hostcalls.
+	// storage.flatsql_* hostcalls. A thin recording wrapper (observation
+	// only, answers untouched) proves the flatbuffer path really runs the
+	// C.5c reference-delivery contract end-to-end instead of silently
+	// falling back to byte delivery.
+	var refRequests, refResponses atomic.Int64
+	storageFac := caps.NewStorageCapFactory(store)
 	reg := modulert.NewCapabilityRegistry()
-	reg.Register("storage_query", caps.NewStorageCapFactory(store))
+	reg.RegisterBridgeAware("storage_query", func(mod *modulert.Module, bridge *modulert.HostBridge) modulert.CapHandler {
+		inner := storageFac(mod, bridge)
+		return func(operation string, payload []byte) ([]byte, error) {
+			if strings.HasPrefix(operation, "storage.flatsql_") &&
+				bytes.Contains(payload, []byte(`"deliver":"ref"`)) {
+				refRequests.Add(1)
+			}
+			resp, err := inner(operation, payload)
+			if err == nil && bytes.Contains(resp, []byte(`"ref":{`)) {
+				refResponses.Add(1)
+			}
+			return resp, err
+		}
+	})
 
 	// Config mount table on a TEST path (the /api/v1/data cutover is C.4).
 	mux := http.NewServeMux()
@@ -212,6 +232,15 @@ func TestHTTPMountedDataRetrievalFlow(t *testing.T) {
 				t.Fatalf("norad %d epoch = %v (present=%v), want %d", norad, got, ok, epoch2)
 			}
 		}
+
+		// C.5c reference delivery actually happened: the gate elected
+		// deliver:ref, the handler answered with a reference (no stream
+		// segment), and the byte-verbatim body above therefore came through
+		// the $HTR BODY_REF egress substitution.
+		if refRequests.Load() == 0 || refResponses.Load() == 0 {
+			t.Fatalf("flatbuffer path did not use reference delivery (ref requests=%d responses=%d)",
+				refRequests.Load(), refResponses.Load())
+		}
 	})
 
 	t.Run("json branch", func(t *testing.T) {
@@ -308,7 +337,7 @@ func TestFlowMountPoolServesConcurrentClients(t *testing.T) {
 	store := newSeededMountStore(t, epoch1, epoch2)
 
 	reg := modulert.NewCapabilityRegistry()
-	reg.Register("storage_query", caps.NewStorageCapFactory(store))
+	reg.RegisterBridgeAware("storage_query", caps.NewStorageCapFactory(store))
 
 	mux := http.NewServeMux()
 	mounted, err := RegisterFlowMounts(mux,

@@ -32,6 +32,7 @@ package flatsqlrt
 import (
 	"encoding/hex"
 	"os"
+	"runtime"
 	"testing"
 
 	"github.com/second-state/WasmEdge-go/wasmedge"
@@ -319,6 +320,78 @@ func TestLinkedComponent_AOTEngine(t *testing.T) {
 		t.Fatalf("AOT-engine toy run = %v, want 42", got)
 	}
 	t.Logf("interpreted dependent -> AOT-compiled engine instance = %v", res[0])
+}
+
+// TestLinkedComponent_AOTDependentAOTEngine answers the C.5c feasibility
+// question the C.5b thread-affinity bug raises for DIRECT linkage: an
+// AOT-compiled dependent making direct import calls into an AOT-compiled
+// engine instance ON THE SAME OS THREAD. This is NOT the trapping C.5b shape
+// (there, a nested Executor::execute re-entry ran inside a suspended host
+// function); a linked direct call is one contiguous wasm call stack under
+// ONE executor invocation. If this passes, linked-direct engine calls do not
+// need the engine's dedicated thread; if it traps, direct linkage inherits
+// the C.5b workaround. Env-gated like the AOT engine POC.
+func TestLinkedComponent_AOTDependentAOTEngine(t *testing.T) {
+	if os.Getenv("FLATSQL_LINKAGE_AOT") == "" {
+		t.Skip("set FLATSQL_LINKAGE_AOT=1 to run (first AOT compile of the engine can take minutes)")
+	}
+	cacheDir := os.Getenv("FLATSQL_AOT_CACHE_DIR")
+	if cacheDir == "" {
+		cacheDir = t.TempDir()
+	}
+	compiledEngine, err := ensureAOT(cacheDir, flatsqlWasm)
+	if err != nil {
+		t.Fatalf("AOT compile engine: %v", err)
+	}
+	compiledToy, err := EnsureAOTArtifact(cacheDir, "linkpoc", linkagePOCToyWasm(t))
+	if err != nil {
+		t.Fatalf("AOT compile toy dependent: %v", err)
+	}
+
+	// Pin the goroutine: both AOT modules execute on THIS one OS thread.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	vm1 := newEngineVMWithBytes(t, compiledEngine)
+	engine := vm1.GetRegisteredModule("flatsql")
+	if engine == nil {
+		t.Fatal("GetRegisteredModule(flatsql) = nil")
+	}
+
+	conf2 := wasmedge.NewConfigure()
+	conf2.SetMaxMemoryPage(DefaultMaxMemoryPages)
+	vm2 := wasmedge.NewVMWithConfig(conf2)
+	if vm2 == nil {
+		conf2.Release()
+		t.Fatal("create dependent VM")
+	}
+	t.Cleanup(func() { vm2.Release(); conf2.Release() })
+
+	if err := vm2.RegisterModule(engine); err != nil {
+		t.Fatalf("register AOT engine instance into second VM: %v", err)
+	}
+	if err := vm2.LoadWasmBuffer(compiledToy); err != nil {
+		t.Fatalf("load AOT toy: %v", err)
+	}
+	if err := vm2.Validate(); err != nil {
+		t.Fatalf("validate AOT toy: %v", err)
+	}
+	if err := vm2.Instantiate(); err != nil {
+		t.Fatalf("instantiate AOT toy against AOT engine: %v", err)
+	}
+
+	// Repeat to catch state corruption that only bites on the SECOND pass
+	// (the C.5b trap fired on the return to the suspended outer frame).
+	for i := 0; i < 3; i++ {
+		res, err := vm2.Execute("run")
+		if err != nil {
+			t.Fatalf("AOT toy run #%d (AOT engine, same thread): %v", i, err)
+		}
+		if got := res[0].(float64); got != 42 {
+			t.Fatalf("AOT->AOT direct-linked run #%d = %v, want 42", i, got)
+		}
+	}
+	t.Logf("AOT dependent -> AOT engine, direct import calls, one OS thread: OK (3 passes)")
 }
 
 // ToInt32ForTest converts a WasmEdge return value to int32 (mirrors

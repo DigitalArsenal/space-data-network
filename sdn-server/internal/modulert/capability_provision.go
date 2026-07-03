@@ -6,7 +6,7 @@ import (
 )
 
 // Lookup returns the registered factory for a capability.
-func (r *CapabilityRegistry) Lookup(capability string) (CapFactory, bool) {
+func (r *CapabilityRegistry) Lookup(capability string) (BridgeCapFactory, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	factory, ok := r.factories[capability]
@@ -35,7 +35,7 @@ func ProvisionBridge(bridge *HostBridge, reg *CapabilityRegistry, capabilities [
 
 	var missing []string
 	for _, capability := range capabilities {
-		var factory CapFactory
+		var factory BridgeCapFactory
 		ok := false
 		if reg != nil {
 			factory, ok = reg.Lookup(capability)
@@ -44,7 +44,7 @@ func ProvisionBridge(bridge *HostBridge, reg *CapabilityRegistry, capabilities [
 			missing = append(missing, capability)
 			continue
 		}
-		bridge.RegisterCapHandler(capPrefixFromName(capability), factory(mod))
+		bridge.RegisterCapHandler(capPrefixFromName(capability), factory(mod, bridge))
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("host cannot satisfy required capabilities: %s", strings.Join(missing, ", "))

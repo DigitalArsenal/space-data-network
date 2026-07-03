@@ -11,16 +11,17 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
-// NewStorageCapFactory returns a CapFactory for "storage_query" and "storage_write"
-// capabilities. Both capabilities share the same handler — the operation prefix
-// distinguishes them ("storage.query" vs "storage.write").
+// NewStorageCapFactory returns a BridgeCapFactory for "storage_query" and
+// "storage_write" capabilities. Both capabilities share the same handler —
+// the operation prefix distinguishes them ("storage.query" vs
+// "storage.write").
 //
 // Supported operations:
 //
 //	storage.query  — {"schema":"OMM","day":"2026-04-07","entity_id":"...","norad_cat_id":12345,"limit":100}
 //	storage.write  — {"schema":"OMM","data":"base64..."}  (data is raw FlatBuffer bytes)
 //	storage.delete — {"cid":"sha256hex..."}
-func NewStorageCapFactory(store *storage.FlatSQLStore) modulert.CapFactory {
+func NewStorageCapFactory(store *storage.FlatSQLStore) modulert.BridgeCapFactory {
 	return NewStorageCapFactoryWithProducer(store, "")
 }
 
@@ -28,15 +29,15 @@ func NewStorageCapFactory(store *storage.FlatSQLStore) modulert.CapFactory {
 // fallback producer identity. Writes are attributed to the calling module's
 // plugin id (the natural (producer, standard) routing key for module-authored
 // records); the fallback covers modules whose manifest is unavailable.
-func NewStorageCapFactoryWithProducer(store *storage.FlatSQLStore, fallbackProducer string) modulert.CapFactory {
-	return func(mod *modulert.Module) modulert.CapHandler {
+func NewStorageCapFactoryWithProducer(store *storage.FlatSQLStore, fallbackProducer string) modulert.BridgeCapFactory {
+	return func(mod *modulert.Module, bridge *modulert.HostBridge) modulert.CapHandler {
 		producer := strings.TrimSpace(fallbackProducer)
 		if mod != nil {
 			if id := strings.TrimSpace(mod.ID()); id != "" && id != "unknown-module" {
 				producer = id
 			}
 		}
-		s := &storageCapAdapter{store: store, producerID: producer}
+		s := &storageCapAdapter{store: store, producerID: producer, bridge: bridge}
 		return s.handle
 	}
 }
@@ -44,6 +45,10 @@ func NewStorageCapFactoryWithProducer(store *storage.FlatSQLStore, fallbackProdu
 type storageCapAdapter struct {
 	store      *storage.FlatSQLStore
 	producerID string
+	// bridge is the calling instance's hostcall bridge — the registry for
+	// "deliver":"ref" body references (loop C.5c). May be nil on legacy
+	// provisioning paths; ref delivery then degrades to byte delivery.
+	bridge *modulert.HostBridge
 }
 
 func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, error) {
@@ -143,7 +148,7 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		if err != nil {
 			return errCapJSON("flatsql query failed: " + err.Error()), nil
 		}
-		return streamResult(stream), nil
+		return s.streamResult(stream, str("deliver")), nil
 
 	case "storage.flatsql_epoch_stream":
 		schema := str("schema")
@@ -166,7 +171,7 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		if err != nil {
 			return errCapJSON("epoch stream failed: " + err.Error()), nil
 		}
-		return streamResult(stream), nil
+		return s.streamResult(stream, str("deliver")), nil
 
 	case "storage.flatsql_cache_key":
 		sqlText := str("sql")
@@ -201,10 +206,38 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 }
 
 // streamResult shapes an aligned FlatBuffer stream as a PRE-ENCODED hostcall
-// envelope: the stream bytes travel as a raw binary segment referenced by
-// {"$bin":0} — never base64/JSON (loop C.5 hostcall-bridge copy elimination;
-// the guest reads byte-identical envelope bytes either way).
-func streamResult(stream *flatsqlrt.RawStream) []byte {
+// envelope. Two delivery modes, elected by the GUEST (never here):
+//
+//   - byte delivery (default): the stream bytes travel as a raw binary
+//     segment referenced by {"$bin":0} — never base64/JSON (loop C.5
+//     hostcall-bridge copy elimination).
+//   - reference delivery (deliver == "ref", loop C.5c): the bytes stay
+//     host-side, registered on the calling instance's hostcall bridge; the
+//     guest receives only result.ref = {token, size, frames, fnv1a64} and
+//     forwards it to the egress, where $HTR BODY_REF_TOKEN resolves back to
+//     this exact buffer — the stream never enters the flow's linear memory.
+//     The fnv1a64/frames metadata come precomputed from the flatsqlrt mirror
+//     (computed once per materialization, free on warm requests).
+func (s *storageCapAdapter) streamResult(stream *flatsqlrt.RawStream, deliver string) []byte {
+	if deliver == "ref" && s.bridge != nil {
+		token := s.bridge.PutBodyRef(stream.Bytes)
+		ref := map[string]interface{}{
+			"token":   token,
+			"size":    len(stream.Bytes),
+			"fnv1a64": fmt.Sprintf("%016x", stream.FNV1a64),
+		}
+		if stream.FrameCount >= 0 {
+			ref["frames"] = stream.FrameCount
+		}
+		return modulert.PreEncodedEnvelope(map[string]interface{}{
+			"ok": true,
+			"result": map[string]interface{}{
+				"rows":    stream.Rows,
+				"columns": stream.Columns,
+				"ref":     ref,
+			},
+		}, nil)
+	}
 	return modulert.PreEncodedEnvelope(map[string]interface{}{
 		"ok": true,
 		"result": map[string]interface{}{

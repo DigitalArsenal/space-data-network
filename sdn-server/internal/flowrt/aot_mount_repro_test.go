@@ -44,7 +44,7 @@ func TestAOTMountRepro(t *testing.T) {
 	epoch1 := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC).Unix()
 	store := newSeededMountStore(t, epoch1, epoch1+2*86400)
 	reg := modulert.NewCapabilityRegistry()
-	reg.Register("storage_query", caps.NewStorageCapFactory(store))
+	reg.RegisterBridgeAware("storage_query", caps.NewStorageCapFactory(store))
 	mux := http.NewServeMux()
 	mounted, err := RegisterFlowMounts(mux,
 		[]config.FlowMount{{Path: "/test/data/", Flow: dist, Pool: 1, MemoryPages: 2048}},

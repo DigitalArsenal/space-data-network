@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/second-state/WasmEdge-go/wasmedge"
@@ -37,6 +38,51 @@ type HostBridge struct {
 	// Response buffer for the sync hostcall protocol.
 	lastStatus  int32
 	responseBuf []byte
+
+	// Body-reference registry (loop C.5c near-zero-copy egress): capability
+	// handlers answering in "deliver":"ref" mode register the result buffer
+	// here and return only a token; the host's egress sink resolves $HTR
+	// BODY_REF_TOKEN against the SAME bridge — references never cross module
+	// instances. Guarded for host-side use (the egress may run on a request
+	// goroutine while guest calls are serialized elsewhere).
+	bodyRefMu   sync.Mutex
+	bodyRefs    map[uint64][]byte
+	bodyRefNext uint64
+}
+
+// PutBodyRef registers a byte buffer for out-of-band body delivery and
+// returns its token. Buffers may be shared (e.g. mirror-cached streams) —
+// nothing here mutates or frees them.
+func (hb *HostBridge) PutBodyRef(b []byte) uint64 {
+	hb.bodyRefMu.Lock()
+	defer hb.bodyRefMu.Unlock()
+	if hb.bodyRefs == nil {
+		hb.bodyRefs = make(map[uint64][]byte)
+	}
+	hb.bodyRefNext++
+	token := hb.bodyRefNext
+	hb.bodyRefs[token] = b
+	return token
+}
+
+// TakeBodyRef resolves and removes a registered body reference. Tokens are
+// single-use.
+func (hb *HostBridge) TakeBodyRef(token uint64) ([]byte, bool) {
+	hb.bodyRefMu.Lock()
+	defer hb.bodyRefMu.Unlock()
+	b, ok := hb.bodyRefs[token]
+	if ok {
+		delete(hb.bodyRefs, token)
+	}
+	return b, ok
+}
+
+// ResetBodyRefs drops every outstanding reference (end-of-exchange cleanup —
+// e.g. a 304 or an error path never consumes the reference it caused).
+func (hb *HostBridge) ResetBodyRefs() {
+	hb.bodyRefMu.Lock()
+	defer hb.bodyRefMu.Unlock()
+	hb.bodyRefs = nil
 }
 
 // NewHostBridge creates a per-module host bridge.
