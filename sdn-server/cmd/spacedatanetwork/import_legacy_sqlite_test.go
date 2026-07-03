@@ -17,7 +17,6 @@ import (
 	"github.com/ipfs/go-cid"
 	car "github.com/ipld/go-car/v2"
 	carstorage "github.com/ipld/go-car/v2/storage"
-	_ "github.com/mattn/go-sqlite3"
 	mh "github.com/multiformats/go-multihash"
 
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
@@ -28,7 +27,7 @@ import (
 func TestImportLegacySQLiteStoresHistoricalOMMWithSourceProvenance(t *testing.T) {
 	tmpDir := t.TempDir()
 	sourcePath := filepath.Join(tmpDir, "satellite_data.db")
-	sourceDB, err := sql.Open("sqlite3", sourcePath)
+	sourceDB, err := sql.Open("sqlite", sourcePath)
 	if err != nil {
 		t.Fatalf("open source sqlite: %v", err)
 	}
@@ -131,7 +130,7 @@ func TestImportLegacySQLiteStoresHistoricalOMMWithSourceProvenance(t *testing.T)
 func TestImportLegacySQLiteToleratesBlankNumericFields(t *testing.T) {
 	tmpDir := t.TempDir()
 	sourcePath := filepath.Join(tmpDir, "satellite_data.db")
-	sourceDB, err := sql.Open("sqlite3", sourcePath)
+	sourceDB, err := sql.Open("sqlite", sourcePath)
 	if err != nil {
 		t.Fatalf("open source sqlite: %v", err)
 	}
@@ -201,7 +200,7 @@ func TestImportLegacySQLiteToleratesBlankNumericFields(t *testing.T) {
 func TestImportLegacySQLiteCanStoreHistoricalOMMInSourceDatastoreNamespace(t *testing.T) {
 	tmpDir := t.TempDir()
 	sourcePath := filepath.Join(tmpDir, "satellite_data.db")
-	sourceDB, err := sql.Open("sqlite3", sourcePath)
+	sourceDB, err := sql.Open("sqlite", sourcePath)
 	if err != nil {
 		t.Fatalf("open source sqlite: %v", err)
 	}
@@ -321,7 +320,7 @@ func TestImportLegacySQLiteCanStoreHistoricalOMMInSourceDatastoreNamespace(t *te
 func TestImportLegacySQLiteCanPublishHistoricalOMMArtifactsWithoutMaterializingRows(t *testing.T) {
 	tmpDir := t.TempDir()
 	sourcePath := filepath.Join(tmpDir, "satellite_data.db")
-	sourceDB, err := sql.Open("sqlite3", sourcePath)
+	sourceDB, err := sql.Open("sqlite", sourcePath)
 	if err != nil {
 		t.Fatalf("open source sqlite: %v", err)
 	}
@@ -462,7 +461,7 @@ func TestImportLegacySQLiteCanPublishHistoricalOMMArtifactsWithoutMaterializingR
 func TestImportLegacySQLitePlanOnlyCanRegisterHistoricalArtifactsWithNodeSigningKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	sourcePath := filepath.Join(tmpDir, "satellite_data.db")
-	sourceDB, err := sql.Open("sqlite3", sourcePath)
+	sourceDB, err := sql.Open("sqlite", sourcePath)
 	if err != nil {
 		t.Fatalf("open source sqlite: %v", err)
 	}
