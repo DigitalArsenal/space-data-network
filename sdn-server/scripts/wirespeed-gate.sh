@@ -12,14 +12,17 @@
 # Known-miss override (CLEARLY LABELED): loop C.7 landed DIRECT engine
 # linkage — query submission is in-wasm (zero storage hostcalls on any
 # path), result bytes ride engine body-refs resolved under the store engine
-# lock (warm: zero copies). BUT libwasmedge 0.14 falsely traps AOT-compiled
+# lock (warm: zero copies). libwasmedge 0.14 falsely traps AOT-compiled
 # linked flows (docs/flatsql-component-linkage.md section 8.2), so linked
-# mounts force-interpret the flow artifact: a warm 8.6 MB request measures
-# ~3.5 ms (~2.5 GB/s) vs ~2.4-2.6 ms baseline — ~68% best / ~73% median
-# (interpreted flow-runtime execution, not host crossings). The C.5c
-# bridge+AOT mode measured ~85% best / ~94% median; >=99% of a ~1 ms
-# loopback baseline stays structurally out of reach until the upstream AOT
-# defect is fixed (repro: SDN_C7_FORCE_LINKED_AOT=1 + TestAOTMountRepro).
+# mounts force-interpret the flow artifact THERE (~68% best / ~73% median).
+# Loop C.9: libwasmedge 0.16.4 FIXES the AOT defects — linked mounts run
+# AOT (version-gated, flatsqlrt.RuntimeHasLinkedAOTFix) and the gate
+# measures ~97% best / ~93% median of the ~2.6 ms loopback baseline
+# (flow ~3.2 GB/s warm; zero host dispatch remains — the residue is inside
+# net/http, identical for flow and baseline handlers, so >=99% of a
+# loopback baseline remains unmet; on a NIC-limited real wire the endpoint
+# saturates). Run under WASMEDGE_ROOT=$HOME/.wasmedge-0.16.4 (or any
+# >=0.16.4 install) for the linked+AOT numbers.
 #   SDN_C5_ALLOW_BLOCKED=1 scripts/wirespeed-gate.sh
 #
 # Tunables (see wirespeed_gate_test.go): SDN_C5_OBJECTS, SDN_C5_EPOCHS,

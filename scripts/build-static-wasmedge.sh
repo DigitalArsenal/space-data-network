@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
-# Build WasmEdge 0.14.0 as a STATIC, no-AOT library and static-link the
-# spacedatanetwork daemon into a single self-contained binary.
+# Build WasmEdge (default 0.16.4, override WASMEDGE_VERSION) as a STATIC,
+# no-AOT library and static-link the spacedatanetwork daemon into a single
+# self-contained binary.
+#
+# NOTE (loop C.9): 0.16.4 is the verified runtime — it fixes BOTH libwasmedge
+# 0.14 AOT defects (nested AOT-in-AOT executor-state corruption, C.5b; and
+# the linked-drain false trap, C.7), so engine-linked flow mounts run AOT
+# there. Static no-LLVM builds cannot AOT-compile: deploys must stage
+# precompiled cache artifacts named
+# <prefix>-<sha256[:8]>-we<runtime-version>.aot.wasm — the cache key includes
+# the runtime version, so artifacts compiled under 0.14.0 are ignored (and
+# pruned) by a 0.16.4 daemon.
 #
 # The default build (scripts/go-with-wasmedge.sh) dynamically links
 # libwasmedge.so, which requires a WasmEdge install (~/.wasmedge or
@@ -17,7 +27,7 @@
 # Requires: git, cmake, a C++17 compiler (g++), Go with CGO. Linux/amd64.
 set -euo pipefail
 
-WASMEDGE_VERSION="${WASMEDGE_VERSION:-0.14.0}"
+WASMEDGE_VERSION="${WASMEDGE_VERSION:-0.16.4}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="${WASMEDGE_STATIC_WORK:-${ROOT}/.wasmedge-static-build}"
 SRC="${WORK}/WasmEdge"

@@ -157,8 +157,9 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 		// Interpreted execution is ~100x slower for query workloads (loop
 		// A.3). Static production daemons ship WITHOUT the AOT compiler —
 		// deploys must place a precompiled universal-wasm artifact into the
-		// cache dir (flatsql-<sha256[:8]>.aot.wasm, keyed on the embedded
-		// engine bytes) so this warning never fires in production.
+		// cache dir (flatsql-<sha256[:8]>-we<runtime-version>.aot.wasm, keyed
+		// on the embedded engine bytes AND the libwasmedge version, loop C.9)
+		// so this warning never fires in production.
 		log.Warnf("FlatSQL engine running INTERPRETED (no AOT artifact in %s, no AOT compiler in this build) — queries will be ~100x slower", engineAOTCacheDir())
 	}
 	engineDB, err := engine.CreateDatabase(engineRecordSchema, "sdn-control")

@@ -2,6 +2,10 @@
 
 **Status:** worked around in-tree (loop C.5b). Upstream bug in libwasmedge
 0.14.0 (Go bindings `github.com/second-state/WasmEdge-go v0.14.0`).
+**RETESTED (loop C.9, 2026-07-03): FIXED in libwasmedge 0.16.4** — see
+"Upstream retest" at the bottom. The workaround stays in-tree because 0.14
+builds remain possible (the v0.14.0 Go binding is the newest release and
+builds against both runtimes).
 
 ## Symptom
 
@@ -81,3 +85,54 @@ the same vs a different OS thread.
 Fix candidates upstream: save/restore the thread-local executor state around
 `Executor::execute` re-entry, or make the execution context stack-scoped.
 Worth re-testing on WasmEdge ≥ 0.15 before upgrading the pinned Go binding.
+
+## Upstream retest (loop C.9, 2026-07-03)
+
+Retested with the original `aotprobe` driver (real 123 KB bridge-mode flow
+artifact, recorded $HTQ ingress + hostcall response bytes, the real
+`flatsql-wasi-noeh.wasm` engine as the nested VM executed inside the
+`storage.flatsql_epoch_stream` hostcall). Full matrix per runtime, v0.14.0
+Go binding in both cases (it compiles unchanged against 0.16.x headers):
+
+| outer VM | nested VM (inside hostcall) | 0.14.0 | 0.16.4 |
+|---|---|---|---|
+| AOT | none | OK | OK |
+| AOT | interpreted engine, same thread | OK | OK |
+| interpreted | AOT engine, same thread | OK | OK |
+| AOT | AOT engine, same thread | **trap** (`out of bounds memory access, Code: 0x408` in `space_data_module_runtime_dispatch_current_invocation_direct`) | **OK** |
+| AOT | AOT engine, different thread | OK | OK |
+
+**libwasmedge 0.16.4 fixes this defect** (and the C.7 linked-drain trap,
+`flatsql-component-linkage.md` §8.4). No upstream report needed — the fix
+already shipped. Versions 0.15.x/0.16.0–0.16.3 were not tested; the in-tree
+version gate (`flatsqlrt.RuntimeHasLinkedAOTFix`) therefore requires the
+verified ≥ 0.16.4.
+
+Runtime/binding compatibility found during the retest:
+
+- `WasmEdge-go v0.14.0` (newest binding release as of 2026-07) **builds and
+  passes the full sdn-server suite against libwasmedge 0.16.4** — the C API
+  it uses is unchanged between 0.14 and 0.16.
+- libwasmedge **0.17.0 is binding-incompatible**: it removed the by-value
+  `WasmEdge_Limit` struct API (replaced by `WasmEdge_LimitContext *`,
+  SOVERSION bump 0.1.0 → 0.1.1), so the binding fails to compile
+  (`ast.go:187: could not determine what C.WasmEdge_Limit refers to`).
+  Moving past 0.16.x waits on an upstream binding release or a fork.
+- The wasm-exceptions constraint is UNCHANGED: 0.14/0.16.4/0.17.0 all reject
+  EH encodings in AOT — the engine stays the no-EH build.
+
+`WithDedicatedThread` is KEPT even on fixed runtimes: it costs one channel
+round-trip per call (noise), still protects any 0.14 build, and serializes
+engine execution on one thread. Flow mounts' force-interpret of LINKED
+artifacts is version-gated off on ≥ 0.16.4 (flowrt/httpmount.go).
+
+SA_ONSTACK note (measured on macOS with a genuine-trap probe, both 0.14.0
+and 0.16.4 identical): during execution libwasmedge installs its own
+SIGSEGV/SIGBUS/SIGFPE handlers WITH `SA_ONSTACK`, but after handling a
+genuine trap it leaves the process handlers WITHOUT `SA_ONSTACK` and without
+Go's handlers (sa_flags 0x43 → 0x2). Genuine wasm traps return normal Go
+errors (process survives), but Go's own fault handling is degraded after the
+first trap on POSIX-signal platforms (Linux; macOS Go uses Mach exception
+ports for faults, so the exposure there is limited). Pre-existing on 0.14 —
+not a regression, not a blocker; engine traps already poison-and-replace the
+runtime.

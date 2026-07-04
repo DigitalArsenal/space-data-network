@@ -389,13 +389,22 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 	// pattern, same bug class as the C.5b nested-execution corruption). The
 	// heavy work (query execution, stream materialization) runs INSIDE the
 	// AOT engine either way, so linked flows interpret the small flow
-	// artifact until a WasmEdge upgrade clears the repro
-	// (SDN_C7_FORCE_LINKED_AOT=1 + flowrt TestAOTMountRepro).
+	// artifact ON AFFECTED RUNTIMES ONLY. Loop C.9 retested the repro
+	// (SDN_C7_FORCE_LINKED_AOT=1 + flowrt TestAOTMountRepro) on libwasmedge
+	// 0.16.4: FIXED — linked mounts run AOT there
+	// (flatsqlrt.RuntimeHasLinkedAOTFix). Overrides for A/B measurement and
+	// upstream retests: SDN_C7_FORCE_LINKED_AOT=1 forces AOT on any runtime;
+	// SDN_C7_FORCE_LINKED_INTERP=1 forces interpretation on any runtime.
 	linkShim := flatsqlLinkShimWasm
-	if linked && aot && os.Getenv("SDN_C7_FORCE_LINKED_AOT") == "" {
+	forceInterp := linked && aot && os.Getenv("SDN_C7_FORCE_LINKED_INTERP") != ""
+	if linked && aot && !forceInterp &&
+		!flatsqlrt.RuntimeHasLinkedAOTFix() && os.Getenv("SDN_C7_FORCE_LINKED_AOT") == "" {
+		forceInterp = true
+	}
+	if forceInterp {
 		runBytes = wasmBytes
 		aot = false
-		log.Warnf("Flow mount %q: engine-linked artifact runs INTERPRETED (libwasmedge 0.14 AOT cross-instance limitation; engine stays AOT)", flowRef)
+		log.Warnf("Flow mount %q: engine-linked artifact runs INTERPRETED (libwasmedge %s AOT cross-instance limitation, fixed in >=0.16.4; engine stays AOT)", flowRef, flatsqlrt.RuntimeVersion())
 	}
 	if linked && aot {
 		// Keep the whole linked chain AOT when forcing AOT (repro/upgrades).
