@@ -25,8 +25,16 @@ import { unmarshalPrivateKey } from "@libp2p/crypto/keys";
 import { SDNStorage, StoredRecord, QueryFilter } from "./storage";
 import {
   FlatSQLEngineRecordStore,
+  type EnginePublishedShardIngestOptions,
+  type EngineSyncChunkIngestOptions,
+  type EngineSyncIngestResult,
   type SnapshotPersistence,
 } from "./engine-record-store";
+import {
+  syncFlatSqlSchemaIntoStore,
+  type FlatSqlSchemaSyncOptions,
+  type FlatSqlSchemaSyncSummary,
+} from "./datasync-session";
 import type {
   EngineEpochQueryProfilesConfig,
   EngineEpochQueryRequest,
@@ -51,6 +59,8 @@ import {
 import {
   requestFlatSqlSyncChunk,
   requestFlatSqlSyncManifest,
+  requestFlatSqlPublishedShard,
+  type FlatSqlPublishedShard,
   type FlatSqlSyncChunk,
   type FlatSqlSyncManifest,
   type FlatSqlSyncQuery,
@@ -585,6 +595,58 @@ export class SDNNode {
 
   async openFlatSqlSyncManifest(query: FlatSqlSyncQuery): Promise<FlatSqlSyncManifest> {
     return requestFlatSqlSyncManifest(this, query);
+  }
+
+  async readFlatSqlPublishedShard(
+    query: FlatSqlSyncQuery & { cid: string },
+  ): Promise<FlatSqlPublishedShard> {
+    return requestFlatSqlPublishedShard(this, query);
+  }
+
+  /**
+   * Datasync-fed store (loop D.4): materialize a flatsql-sync chunk into
+   * THE engine record store with its true provider/source/batch provenance
+   * (per-provider engine source partitions + envelope index rows).
+   */
+  async ingestFlatSqlSyncChunk(
+    chunk: FlatSqlSyncChunk,
+    options?: EngineSyncChunkIngestOptions,
+  ): Promise<EngineSyncIngestResult> {
+    return this.requireEngineStore().ingestSyncChunk(chunk, options);
+  }
+
+  /** Datasync-fed store (loop D.4): materialize a published shard with pin-ledger provenance. */
+  async ingestFlatSqlPublishedShard(
+    shard: FlatSqlPublishedShard,
+    options?: EnginePublishedShardIngestOptions,
+  ): Promise<EngineSyncIngestResult> {
+    return this.requireEngineStore().ingestPublishedShard(shard, options);
+  }
+
+  /**
+   * Bounded datasync session (loop D.4): walk a peer's flatsql-sync cursor
+   * chain (`read_chunk` over the server's rowid-snapshot cursor — the
+   * sdn_record_index rowid space) and materialize every chunk into the
+   * engine store with true provenance. Stops when the peer reports no next
+   * cursor, a chunk comes back empty, or `maxChunks` is reached.
+   */
+  async syncFlatSqlSchema(
+    query: FlatSqlSyncQuery,
+    options: FlatSqlSchemaSyncOptions = {},
+  ): Promise<FlatSqlSchemaSyncSummary> {
+    return syncFlatSqlSchemaIntoStore(this, this.requireEngineStore(), query, options);
+  }
+
+  private requireEngineStore(): FlatSQLEngineRecordStore {
+    if (!this.storage) {
+      throw new Error("Storage not enabled");
+    }
+    if (!(this.storage instanceof FlatSQLEngineRecordStore)) {
+      throw new Error(
+        "Datasync ingest requires the FlatSQL engine record store backend",
+      );
+    }
+    return this.storage;
   }
 
   async dialProtocolThroughRelay(

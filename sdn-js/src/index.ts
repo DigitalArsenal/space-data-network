@@ -102,6 +102,10 @@ export type {
   EngineQueryParam,
   SnapshotPersistence,
   HeliaLike,
+  // Datasync-fed store (loop D.4): sync/published-shard ingest into the engine.
+  EngineSyncChunkIngestOptions,
+  EnginePublishedShardIngestOptions,
+  EngineSyncIngestResult,
 } from './engine-record-store';
 // PRIMARY public query API (loop D.2): engine-native epoch profiles —
 // same template SQL/params as sdn-server engine_records.go, aligned raw
@@ -169,6 +173,13 @@ export type {
 export { FlatSQLStorage } from './flatsql-storage';
 export type { FlatSQLStorageOptions } from './flatsql-storage';
 export type { NodeRecordStorage } from './node';
+// Datasync session (loop D.4): bounded cursor walk into the engine store.
+export { syncFlatSqlSchemaIntoStore } from './datasync-session';
+export type {
+  FlatSqlSchemaSyncOptions,
+  FlatSqlSchemaSyncSummary,
+  FlatSqlSyncChunkTransport,
+} from './datasync-session';
 export { createModuleHostCapabilityAdapters } from './module-host-adapters';
 export {
   eciesWrap,
