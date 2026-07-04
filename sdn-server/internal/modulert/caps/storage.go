@@ -2,11 +2,16 @@ package caps
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
+	"github.com/spacedatanetwork/sdn-server/internal/ingest"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -30,14 +35,48 @@ func NewStorageCapFactory(store *storage.FlatSQLStore) modulert.BridgeCapFactory
 // plugin id (the natural (producer, standard) routing key for module-authored
 // records); the fallback covers modules whose manifest is unavailable.
 func NewStorageCapFactoryWithProducer(store *storage.FlatSQLStore, fallbackProducer string) modulert.BridgeCapFactory {
+	return NewStorageCapFactoryWithOptions(store, StorageCapOptions{FallbackProducer: fallbackProducer})
+}
+
+// StorageCapOptions configures host-side resource policy for the storage
+// capability adapter. These are resource limits and filesystem roots — never
+// request-level decisions (those live in the wasm modules).
+type StorageCapOptions struct {
+	// FallbackProducer attributes writes when the module manifest is
+	// unavailable (compiled flow bundles use the plugin id when present).
+	FallbackProducer string
+
+	// RawRoot is the raw-archive root directory used by
+	// storage.ingest_with_source archive/provenance segments (the same
+	// layout the in-daemon ingest runner writes: <raw>/<source>/<day>/<name>
+	// and <raw>/provenance/<source>/<ts>.json). Empty disables archiving —
+	// archive requests then fail loudly rather than silently dropping.
+	RawRoot string
+
+	// MinFreeDiskBytes is the ingest disk guardrail (parity with the ingest
+	// runner's requireFreeDisk): storage.ingest_with_source refuses to write
+	// when the store or raw-archive filesystem has less free space.
+	// <= 0 uses the runner's default (5 GiB).
+	MinFreeDiskBytes int64
+}
+
+// NewStorageCapFactoryWithOptions is NewStorageCapFactory with explicit
+// host-policy options (loop C.8 flow ingest).
+func NewStorageCapFactoryWithOptions(store *storage.FlatSQLStore, opts StorageCapOptions) modulert.BridgeCapFactory {
 	return func(mod *modulert.Module, bridge *modulert.HostBridge) modulert.CapHandler {
-		producer := strings.TrimSpace(fallbackProducer)
+		producer := strings.TrimSpace(opts.FallbackProducer)
 		if mod != nil {
 			if id := strings.TrimSpace(mod.ID()); id != "" && id != "unknown-module" {
 				producer = id
 			}
 		}
-		s := &storageCapAdapter{store: store, producerID: producer, bridge: bridge}
+		s := &storageCapAdapter{
+			store:            store,
+			producerID:       producer,
+			bridge:           bridge,
+			rawRoot:          strings.TrimSpace(opts.RawRoot),
+			minFreeDiskBytes: opts.MinFreeDiskBytes,
+		}
 		return s.handle
 	}
 }
@@ -49,6 +88,10 @@ type storageCapAdapter struct {
 	// "deliver":"ref" body references (loop C.5c). May be nil on legacy
 	// provisioning paths; ref delivery then degrades to byte delivery.
 	bridge *modulert.HostBridge
+	// rawRoot / minFreeDiskBytes: host resource policy for
+	// storage.ingest_with_source (see StorageCapOptions).
+	rawRoot          string
+	minFreeDiskBytes int64
 }
 
 func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, error) {
@@ -131,6 +174,9 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		}
 		return okCapJSON(true), nil
 
+	case "storage.ingest_with_source":
+		return s.handleIngestWithSource(p, str), nil
+
 	// Engine-native ops (loop C.1): results are ALIGNED size-prefixed
 	// FlatBuffer streams delivered as raw binary envelope segments (the
 	// handler returns a PRE-ENCODED envelope — no base64/JSON round-trip
@@ -202,6 +248,254 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 
 	default:
 		return errCapJSON(fmt.Sprintf("unknown storage operation: %s", operation)), nil
+	}
+}
+
+// defaultIngestMinFreeDiskBytes mirrors the ingest runner's disk guardrail
+// default (internal/ingest defaultMinFreeDiskBytes).
+const defaultIngestMinFreeDiskBytes = 5 * 1024 * 1024 * 1024
+
+// handleIngestWithSource is the provenance/batch-capable flow ingest op
+// (loop C.8a): the WASM side (provider parser nodes) delivers a size-prefixed
+// aligned FlatBuffer record stream plus full SourceTags attribution; the host
+// performs ONLY resource-guarded persistence — disk guardrail, batch store
+// with source tags, optional source-batch reconcile, optional raw-payload +
+// provenance archiving under the ingest raw root. No parsing, no fetch, no
+// scheduling decisions live here.
+//
+// POLICY: this op requires the dedicated "storage_ingest" capability grant
+// (checked against the calling bridge), not just any storage_* capability —
+// provider attribution is a heavier privilege than storage.write.
+//
+// Payload meta (records/raw/provenance are binary envelope segments,
+// delivered by the bridge as base64 at their {"$bin":N} references):
+//
+//	{
+//	  "schema": "OMM.fbs",
+//	  "provider_id": "space-data-network-02",     (required)
+//	  "source_name": "celestrak-gp",              (required)
+//	  "source_url":  "https://...",               (optional)
+//	  "batch_id":    "<sha256 of source payload>",(required)
+//	  "content_key_id": "public",                 (optional)
+//	  "source_peer": "source:celestrak",          (optional)
+//	  "records": {"$bin":0},                      (size-prefixed record stream)
+//	  "reconcile": "none"|"duplicates"|"current", (default "duplicates")
+//	  "archive": {"source":"celestrak","name":"catalog.csv","raw":{"$bin":1}},
+//	  "provenance": {"source":"celestrak-gp","json":{"$bin":2}}
+//	}
+func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str func(string) string) []byte {
+	if s.bridge == nil || !s.bridge.HasCapability("storage_ingest") {
+		return errCapJSON("storage.ingest_with_source requires the storage_ingest capability grant")
+	}
+
+	schema := str("schema")
+	if schema == "" {
+		return errCapJSON("missing schema")
+	}
+	tags := storage.SourceTags{
+		ProviderID:   str("provider_id"),
+		SourceName:   str("source_name"),
+		SourceURL:    str("source_url"),
+		BatchID:      str("batch_id"),
+		ContentKeyID: str("content_key_id"),
+	}
+	if strings.TrimSpace(tags.ProviderID) == "" || strings.TrimSpace(tags.SourceName) == "" || strings.TrimSpace(tags.BatchID) == "" {
+		return errCapJSON("provider_id, source_name and batch_id are required for provenance attribution")
+	}
+	sourcePeer := str("source_peer")
+	if sourcePeer == "" {
+		sourcePeer = "module:" + s.producerID
+	}
+
+	recordsB64 := str("records")
+	if recordsB64 == "" {
+		return errCapJSON("missing records stream")
+	}
+	stream := decodeBase64Cap(recordsB64)
+	records, err := splitSizePrefixedStream(stream)
+	if err != nil {
+		return errCapJSON("invalid records stream: " + err.Error())
+	}
+	if len(records) == 0 {
+		return errCapJSON("records stream contains no records")
+	}
+
+	// Disk guardrail (parity with ingest.Runner.requireFreeDisk): refuse the
+	// whole batch when the store or raw filesystem is under the floor.
+	minFree := s.minFreeDiskBytes
+	if minFree <= 0 {
+		minFree = defaultIngestMinFreeDiskBytes
+	}
+	guardPaths := []string{filepath.Dir(s.store.Path())}
+	if s.rawRoot != "" {
+		guardPaths = append(guardPaths, s.rawRoot)
+	}
+	for _, path := range guardPaths {
+		free, err := ingest.AvailableDiskBytes(existingDirOrParent(path))
+		if err != nil {
+			return errCapJSON("free-disk check failed for " + path + ": " + err.Error())
+		}
+		if int64(free) < minFree {
+			return errCapJSON(fmt.Sprintf("ingest requires at least %d free bytes at %s; only %d available", minFree, path, free))
+		}
+	}
+
+	reconcile := str("reconcile")
+	if reconcile == "" {
+		reconcile = "duplicates"
+	}
+	switch reconcile {
+	case "none", "duplicates", "current":
+	default:
+		return errCapJSON("unknown reconcile mode " + reconcile + " (none|duplicates|current)")
+	}
+
+	// Pre-ingest duplicate reconcile: replaying the SAME source batch (same
+	// batch_id) must not double records — mirror the runner's
+	// reconcile-before-ingest step.
+	if reconcile != "none" {
+		if _, err := s.store.ReconcileSourceBatchIndexedDuplicates(schema, tags.ProviderID, tags.SourceName, tags.BatchID, true); err != nil {
+			return errCapJSON("pre-ingest reconcile failed: " + err.Error())
+		}
+	}
+
+	inserted, err := s.store.StoreBatchWithSourceTags(schema, records, sourcePeer, nil, tags)
+	if err != nil {
+		return errCapJSON("ingest failed: " + err.Error())
+	}
+
+	result := map[string]interface{}{
+		"schema":   schema,
+		"inserted": inserted,
+		"batch_id": tags.BatchID,
+	}
+
+	if reconcile == "current" {
+		// Drop records from OLD batches of this provider/source (the runner's
+		// reconcileCelestrakCurrentSourceBatch, used for snapshot sources like
+		// SATCAT where only the newest batch is meaningful).
+		batchResult, err := s.store.ReconcileSourceBatch(schema, tags.ProviderID, tags.SourceName, tags.BatchID, true)
+		if err != nil {
+			return errCapJSON("post-ingest current-batch reconcile failed: " + err.Error())
+		}
+		result["reconciled_old_batches"] = batchResult.Deleted
+	}
+	if reconcile != "none" {
+		dupResult, err := s.store.ReconcileSourceBatchIndexedDuplicates(schema, tags.ProviderID, tags.SourceName, tags.BatchID, true)
+		if err != nil {
+			return errCapJSON("post-ingest duplicate reconcile failed: " + err.Error())
+		}
+		result["reconciled_duplicates"] = dupResult.Deleted
+		if err := s.store.RefreshSourceBatchSummary(schema, tags.ProviderID, tags.SourceName, tags.BatchID); err != nil {
+			return errCapJSON("refresh source batch summary failed: " + err.Error())
+		}
+	}
+
+	// Optional raw-payload archive (runner archiveRaw layout:
+	// <raw>/<source>/<yyyy-mm-dd>/<name>).
+	if archive, ok := p["archive"].(map[string]interface{}); ok {
+		source := sanitizePathComponent(fmt.Sprintf("%v", archive["source"]))
+		name := sanitizePathComponent(fmt.Sprintf("%v", archive["name"]))
+		rawB64, _ := archive["raw"].(string)
+		if s.rawRoot == "" {
+			return errCapJSON("archive requested but the host has no raw-archive root configured")
+		}
+		if source == "" || name == "" || rawB64 == "" {
+			return errCapJSON("archive requires source, name and raw bytes")
+		}
+		raw := decodeBase64Cap(rawB64)
+		day := time.Now().UTC().Format("2006-01-02")
+		dir := filepath.Join(s.rawRoot, source, day)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return errCapJSON("create raw archive dir: " + err.Error())
+		}
+		archivePath := filepath.Join(dir, name)
+		if err := os.WriteFile(archivePath, raw, 0644); err != nil {
+			return errCapJSON("write raw archive: " + err.Error())
+		}
+		result["archived"] = archivePath
+	}
+
+	// Optional provenance record (runner recordIngestBatchProvenance layout:
+	// <raw>/provenance/<source>/<ts>.json). The JSON body is authored by the
+	// wasm side — the host only places it.
+	if prov, ok := p["provenance"].(map[string]interface{}); ok {
+		source := sanitizePathComponent(fmt.Sprintf("%v", prov["source"]))
+		jsonB64, _ := prov["json"].(string)
+		if s.rawRoot == "" {
+			return errCapJSON("provenance requested but the host has no raw-archive root configured")
+		}
+		if source == "" || jsonB64 == "" {
+			return errCapJSON("provenance requires source and json bytes")
+		}
+		body := decodeBase64Cap(jsonB64)
+		if !json.Valid(body) {
+			return errCapJSON("provenance json is not valid JSON")
+		}
+		dir := filepath.Join(s.rawRoot, "provenance", source)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return errCapJSON("create provenance dir: " + err.Error())
+		}
+		filename := time.Now().UTC().Format("20060102T150405.000000000Z") + ".json"
+		provPath := filepath.Join(dir, filename)
+		if err := os.WriteFile(provPath, body, 0644); err != nil {
+			return errCapJSON("write provenance: " + err.Error())
+		}
+		result["provenance"] = provPath
+	}
+
+	return okCapJSON(result)
+}
+
+// splitSizePrefixedStream parses a [u32le len][bytes]... record stream into
+// unprefixed record byte slices (the store's batch input shape).
+func splitSizePrefixedStream(stream []byte) ([][]byte, error) {
+	var records [][]byte
+	off := 0
+	for off < len(stream) {
+		if off+4 > len(stream) {
+			return nil, fmt.Errorf("truncated size prefix at offset %d", off)
+		}
+		n := int(binary.LittleEndian.Uint32(stream[off:]))
+		off += 4
+		if n <= 0 || off+n > len(stream) {
+			return nil, fmt.Errorf("record at offset %d has invalid length %d", off-4, n)
+		}
+		records = append(records, stream[off:off+n])
+		off += n
+	}
+	return records, nil
+}
+
+// sanitizePathComponent keeps archive names strictly single path components.
+func sanitizePathComponent(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "<nil>" || value == "." || value == ".." {
+		return ""
+	}
+	if strings.ContainsAny(value, "/\\") {
+		return ""
+	}
+	return value
+}
+
+// existingDirOrParent walks up from path to the nearest existing directory
+// (the runner's existingDiskPath behavior) so statfs works before the raw
+// dir is first created.
+func existingDirOrParent(path string) string {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" || path == "." {
+		return "."
+	}
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return path
+		}
+		path = parent
 	}
 }
 

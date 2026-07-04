@@ -77,7 +77,14 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 		engine.Close()
 		return s.engineEpoch, fmt.Errorf("recover poisoned engine: journal replay: %w", err)
 	}
-	db := flatsqldrv.Open(engineDB, s.journal)
+	// Read-only stores (loop C.8b) run the driver without a journal — the
+	// replacement engine is rebuilt from the read-only replay prefix and
+	// this process must never append durable frames.
+	driverJournal := s.journal
+	if s.readOnly {
+		driverJournal = nil
+	}
+	db := flatsqldrv.Open(engineDB, driverJournal)
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
 		engine.Close()

@@ -25,6 +25,12 @@ type StatementJournal struct {
 	mu   sync.Mutex
 	f    *os.File
 	path string
+	// readOnly journals never append or truncate: they replay the CRC-valid
+	// frame prefix captured at open (replayLimit) and reject writes. Used by
+	// the shared read-only store open (loop C.8b) so a reader can replay a
+	// consistent prefix while a live daemon keeps appending.
+	readOnly    bool
+	replayLimit int64
 }
 
 type journalFrame struct {
@@ -141,6 +147,33 @@ func OpenStatementJournal(path string) (*StatementJournal, error) {
 	return &StatementJournal{f: f, path: path}, nil
 }
 
+// OpenStatementJournalReadOnly opens the journal at path for replay only
+// (loop C.8b read-only store opens). The file is opened O_RDONLY and NEVER
+// truncated or written: a torn tail (or a frame a concurrent writer is
+// mid-appending) simply bounds the replayable prefix, exactly like the
+// writer-side torn-tail scan. Concurrent daemon appends after open extend
+// the file past replayLimit and are ignored — the reader sees a consistent
+// point-in-time prefix. A missing journal file yields an empty journal
+// (nothing to replay), matching a store that was created but never written.
+func OpenStatementJournalReadOnly(path string) (*StatementJournal, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY, 0)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &StatementJournal{path: path, readOnly: true}, nil
+		}
+		return nil, fmt.Errorf("flatsqldrv: open journal read-only: %w", err)
+	}
+	valid, err := scanValidLength(f)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return &StatementJournal{f: f, path: path, readOnly: true, replayLimit: valid}, nil
+}
+
+// ReadOnly reports whether this journal was opened for replay only.
+func (j *StatementJournal) ReadOnly() bool { return j.readOnly }
+
 func scanValidLength(f *os.File) (int64, error) {
 	info, err := f.Stat()
 	if err != nil {
@@ -177,6 +210,9 @@ func scanValidLength(f *os.File) (int64, error) {
 func (j *StatementJournal) appendAll(frames []journalFrame) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if j.readOnly {
+		return fmt.Errorf("flatsqldrv: journal %s is read-only", j.path)
+	}
 	var buf []byte
 	for _, fr := range frames {
 		payload, err := encodeFrame(fr)
@@ -199,6 +235,9 @@ func (j *StatementJournal) appendAll(frames []journalFrame) error {
 func (j *StatementJournal) Close() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if j.f == nil {
+		return nil
+	}
 	return j.f.Close()
 }
 
@@ -211,11 +250,19 @@ func (j *StatementJournal) Replay(db *flatsqlrt.Database) (int, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
+	if j.f == nil {
+		return 0, nil // read-only journal for a store with no journal file yet
+	}
 	info, err := j.f.Stat()
 	if err != nil {
 		return 0, err
 	}
 	size := info.Size()
+	if j.readOnly {
+		// Bound the replay to the CRC-valid prefix captured at open: bytes a
+		// live writer appended since then are invisible to this reader.
+		size = j.replayLimit
+	}
 	var off int64
 	var hdr [8]byte
 	count := 0

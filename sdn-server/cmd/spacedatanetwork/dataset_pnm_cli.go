@@ -164,9 +164,9 @@ func openDatasetPNMStore() (*storage.FlatSQLStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize schema validator: %w", err)
 	}
-	store, err := storage.NewFlatSQLStore(cfg.Storage.Path, validator)
+	store, err := openStoreForReading(cfg.Storage.Path, validator)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open storage: %w", err)
+		return nil, err
 	}
 	return store, nil
 }

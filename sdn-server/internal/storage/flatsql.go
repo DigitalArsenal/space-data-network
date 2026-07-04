@@ -37,6 +37,10 @@ import (
 
 var log = logging.Logger("storage")
 
+// ErrStoreReadOnly reports a write attempted on a store opened via
+// NewFlatSQLStoreReadOnly (loop C.8b). Callers can match it with errors.Is.
+var ErrStoreReadOnly = errors.New("datastore is open read-only")
+
 const (
 	flatSQLStreamDirName         = "flatsql-streams"
 	legacyBlobMigrationBatchSize = 50000
@@ -71,9 +75,16 @@ type FlatSQLStore struct {
 	streamDir string
 	// lock is the exclusive single-writer liveness lock on
 	// <basePath>/store.lock (storelock.go, loop C.6b) — held for the
-	// store's whole lifetime, released by Close.
+	// store's whole lifetime, released by Close. Nil for read-only opens
+	// (loop C.8b), which never take the writer lock.
 	lock *storeLock
-	mu   sync.RWMutex
+	// readOnly marks a store opened via NewFlatSQLStoreReadOnly: no writer
+	// lock, journal replayed from its CRC-valid prefix and never appended,
+	// stream appenders refused, and all public write verbs fail with
+	// ErrStoreReadOnly. Engine-local state (the private in-memory SQLite)
+	// may still mutate — it is never durable.
+	readOnly bool
+	mu       sync.RWMutex
 	// engineSources tracks per-source shadow tables already registered on the
 	// engine (flatsql_register_source errors on duplicates). Guarded by mu.
 	engineSources map[string]bool
@@ -113,26 +124,65 @@ func WithEngineHotWindow(records int) StoreOption {
 
 // NewFlatSQLStore creates a new FlatSQL storage instance.
 func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOption) (*FlatSQLStore, error) {
+	return newFlatSQLStore(basePath, validator, false, opts...)
+}
+
+// NewFlatSQLStoreReadOnly opens the store at basePath for READING while
+// another process (a live daemon) may hold the exclusive writer lock (loop
+// C.8b). It never takes the writer lock and never writes a single byte of
+// durable store state:
+//
+//   - the control journal is opened O_RDONLY and replayed up to the
+//     CRC-valid prefix captured at open (concurrent daemon appends after
+//     that point are simply not visible);
+//   - stream files are only ever read (ReadAt), and both the journal and
+//     the stream files are append-only by design, so a point-in-time prefix
+//     is always internally consistent (index rows are journaled only after
+//     their stream bytes are durably appended);
+//   - stream appenders and every public write verb fail with
+//     ErrStoreReadOnly; engine-local SQL still executes against this
+//     process's PRIVATE in-memory engine and is never persisted.
+//
+// Note on locking: flock shared locks conflict with the daemon's exclusive
+// writer lock, so a kernel shared lock on store.lock would either fail
+// against a running daemon (defeating the purpose) or, when acquired first,
+// block a daemon (re)start for the whole read session. Read-only opens
+// therefore take NO lock at all — safety comes from the append-only file
+// formats plus the read-only invariants above, not from mutual exclusion.
+func NewFlatSQLStoreReadOnly(basePath string, validator *sds.Validator, opts ...StoreOption) (*FlatSQLStore, error) {
+	return newFlatSQLStore(basePath, validator, true, opts...)
+}
+
+func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, opts ...StoreOption) (*FlatSQLStore, error) {
 	cfg := storeConfig{engineHotWindow: engineDefaultHotWindow}
 	for _, o := range opts {
 		o(&cfg)
 	}
 
-	// Ensure directory exists
-	if err := os.MkdirAll(basePath, 0700); err != nil {
-		return nil, fmt.Errorf("failed to create storage directory: %w", err)
-	}
 	streamDir := filepath.Join(basePath, flatSQLStreamDirName)
-	if err := os.MkdirAll(streamDir, 0700); err != nil {
-		return nil, fmt.Errorf("failed to create FlatSQL stream directory: %w", err)
-	}
+	var lock *storeLock
+	if readOnly {
+		// Never create or mutate anything: the store must already exist.
+		if info, err := os.Stat(basePath); err != nil || !info.IsDir() {
+			return nil, fmt.Errorf("read-only open: storage directory %s does not exist", basePath)
+		}
+	} else {
+		// Ensure directory exists
+		if err := os.MkdirAll(basePath, 0700); err != nil {
+			return nil, fmt.Errorf("failed to create storage directory: %w", err)
+		}
+		if err := os.MkdirAll(streamDir, 0700); err != nil {
+			return nil, fmt.Errorf("failed to create FlatSQL stream directory: %w", err)
+		}
 
-	// Single-writer liveness lock (storelock.go): taken BEFORE any store
-	// file is touched, so a second writer process fails here with a clean
-	// ErrStoreLocked instead of corrupting the journal or stream files.
-	lock, err := acquireStoreLock(basePath)
-	if err != nil {
-		return nil, err
+		// Single-writer liveness lock (storelock.go): taken BEFORE any store
+		// file is touched, so a second writer process fails here with a clean
+		// ErrStoreLocked instead of corrupting the journal or stream files.
+		var err error
+		lock, err = acquireStoreLock(basePath)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Release the lock on every failure path below; store.Close() releases
@@ -172,7 +222,13 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 		return nil, fmt.Errorf("failed to register $OMM file identifier: %w", err)
 	}
 
-	journal, err := flatsqldrv.OpenStatementJournal(filepath.Join(basePath, controlJournalFileName))
+	journalPath := filepath.Join(basePath, controlJournalFileName)
+	var journal *flatsqldrv.StatementJournal
+	if readOnly {
+		journal, err = flatsqldrv.OpenStatementJournalReadOnly(journalPath)
+	} else {
+		journal, err = flatsqldrv.OpenStatementJournal(journalPath)
+	}
 	if err != nil {
 		engine.Close()
 		return nil, fmt.Errorf("failed to open control journal: %w", err)
@@ -183,7 +239,15 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 		return nil, fmt.Errorf("failed to replay control journal: %w", err)
 	}
 
-	db := flatsqldrv.Open(engineDB, journal)
+	// Read-only stores run the driver WITHOUT a journal: SQL mutations (the
+	// idempotent table/index init below, engine mirror bookkeeping) execute
+	// against this process's private in-memory engine only and are never
+	// persisted. The read-only journal handle is kept solely for Close.
+	driverJournal := journal
+	if readOnly {
+		driverJournal = nil
+	}
+	db := flatsqldrv.Open(engineDB, driverJournal)
 
 	// Enable foreign keys
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
@@ -203,6 +267,7 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 		basePath:      basePath,
 		streamDir:     streamDir,
 		lock:          lock,
+		readOnly:      readOnly,
 		engineSources: map[string]bool{},
 
 		engineHotWindow: cfg.engineHotWindow,
@@ -226,6 +291,19 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 
 	opened = true
 	return store, nil
+}
+
+// IsReadOnly reports whether this store was opened via
+// NewFlatSQLStoreReadOnly.
+func (s *FlatSQLStore) IsReadOnly() bool { return s.readOnly }
+
+// requireWritable fails a public write verb on read-only stores with a
+// typed, actionable error.
+func (s *FlatSQLStore) requireWritable(op string) error {
+	if s.readOnly {
+		return fmt.Errorf("%s requires a writable store open (this handle was opened read-only, e.g. because a daemon holds the writer lock): %w", op, ErrStoreReadOnly)
+	}
+	return nil
 }
 
 func (s *FlatSQLStore) initTables() error {
@@ -1224,6 +1302,11 @@ type flatSQLStreamAppender struct {
 }
 
 func (s *FlatSQLStore) newFlatSQLStreamAppender(schemaName string) (*flatSQLStreamAppender, error) {
+	// Choke point for every durable stream write (regular ingest AND legacy
+	// blob-table migrations): read-only opens must never append.
+	if err := s.requireWritable("stream append"); err != nil {
+		return nil, err
+	}
 	tableName, err := sds.SchemaNameToTable(schemaName)
 	if err != nil {
 		return nil, err
@@ -1564,6 +1647,9 @@ func (s *FlatSQLStore) Store(schemaName string, data []byte, peerID string, sign
 // engine-cache partition here; provenance rows are written by the callers'
 // UpsertSourceTags.
 func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, signature []byte, tags *SourceTags) (string, error) {
+	if err := s.requireWritable("store record"); err != nil {
+		return "", err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1776,6 +1862,9 @@ func (s *FlatSQLStore) StoreBatchWithSourceTags(schemaName string, records [][]b
 }
 
 func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags) (int, error) {
+	if err := s.requireWritable("store batch"); err != nil {
+		return 0, err
+	}
 	if len(records) == 0 {
 		return 0, nil
 	}
@@ -1882,6 +1971,9 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 
 // UpsertSourceTags attaches or updates source tags for an existing record.
 func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags) error {
+	if err := s.requireWritable("upsert source tags"); err != nil {
+		return err
+	}
 	if _, err := sds.SchemaNameToTable(schemaName); err != nil {
 		return fmt.Errorf("invalid schema name: %w", err)
 	}
@@ -2180,6 +2272,11 @@ func (s *FlatSQLStore) QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record
 // source batch. It is intended for DPM-series reconciliation after an operator
 // has selected the latest accepted source hash/batch ID.
 func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, keepBatch string, apply bool) (SourceBatchReconcileResult, error) {
+	if apply {
+		if err := s.requireWritable("reconcile source batch"); err != nil {
+			return SourceBatchReconcileResult{}, err
+		}
+	}
 	result := SourceBatchReconcileResult{
 		SchemaName: strings.TrimSpace(schemaName),
 		ProviderID: strings.TrimSpace(providerID),
@@ -2308,6 +2405,11 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 // for each logical indexed key and only deletes a record row when no source tags
 // remain for that CID.
 func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, providerID, sourceName, batchID string, apply bool) (SourceBatchDuplicateReconcileResult, error) {
+	if apply {
+		if err := s.requireWritable("reconcile source batch duplicates"); err != nil {
+			return SourceBatchDuplicateReconcileResult{}, err
+		}
+	}
 	result := SourceBatchDuplicateReconcileResult{
 		SchemaName: strings.TrimSpace(schemaName),
 		ProviderID: strings.TrimSpace(providerID),
@@ -2617,6 +2719,9 @@ func (s *FlatSQLStore) QuerySince(schemaName string, since time.Time) ([][]byte,
 
 // Delete removes a record by CID.
 func (s *FlatSQLStore) Delete(schemaName, cid string) error {
+	if err := s.requireWritable("delete record"); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -2738,6 +2843,9 @@ func (s *FlatSQLStore) Count(schemaName string) (int64, error) {
 
 // GarbageCollect removes old records based on age.
 func (s *FlatSQLStore) GarbageCollect(maxAge time.Duration) (int64, error) {
+	if err := s.requireWritable("garbage collect"); err != nil {
+		return 0, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -2914,6 +3022,9 @@ type DirectoryQuery struct {
 
 // UpsertDirectoryRecord inserts or updates a directory record.
 func (s *FlatSQLStore) UpsertDirectoryRecord(record DirectoryRecord) error {
+	if err := s.requireWritable("upsert directory record"); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -3081,6 +3192,9 @@ func (s *FlatSQLStore) QueryDirectory(query DirectoryQuery) ([]DirectoryRecord, 
 // SaveLocalEPM stores a local node EPM FlatBuffer encrypted in the FlatSQL
 // database. JSON profile and JSON EPM projections are intentionally not stored.
 func (s *FlatSQLStore) SaveLocalEPM(peerID string, epmBytes []byte) error {
+	if err := s.requireWritable("save local EPM"); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -3247,6 +3361,9 @@ func (s *FlatSQLStore) localEPMKey() ([]byte, error) {
 
 // RebuildIndex scans all schema tables and repopulates sdn_record_index.
 func (s *FlatSQLStore) RebuildIndex() (map[string]int64, error) {
+	if err := s.requireWritable("reindex"); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

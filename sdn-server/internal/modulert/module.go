@@ -232,7 +232,7 @@ func capPrefixFromName(cap string) string {
 		return "protocol"
 	case "wallet_sign":
 		return "keyslot"
-	case "storage_query", "storage_write", "storage_adapter":
+	case "storage_query", "storage_write", "storage_adapter", "storage_ingest":
 		return "storage"
 	case "crypto_hash", "crypto_sign", "crypto_verify", "crypto_encrypt",
 		"crypto_decrypt", "crypto_key_agreement", "crypto_kdf":
