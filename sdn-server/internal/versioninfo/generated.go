@@ -5,7 +5,7 @@ package versioninfo
 const (
 	SuiteVersion = "1.0.4"
 	SpaceDataStandardsVersion = "1.136.0"
-	FlatSQLVersion = "1.0.1"
+	FlatSQLVersion = "1.1.0"
 	HDWalletWasmVersion = "2.0.20"
 	HDWalletUIVersion = "2.0.20"
 	IPFSWebUIVersion = "4.12.0"

@@ -23,7 +23,11 @@ import { isUint8ArrayList, Uint8ArrayList } from "uint8arraylist";
 import { unmarshalPrivateKey } from "@libp2p/crypto/keys";
 
 import { SDNStorage, StoredRecord, QueryFilter } from "./storage";
-import { FlatSQLStorage, type SnapshotPersistence } from "./flatsql-storage";
+import {
+  FlatSQLEngineRecordStore,
+  type SnapshotPersistence,
+} from "./engine-record-store";
+import type { LocalFlatSqlSchema } from "./local-flatsql";
 import { getBootstrapRelays, EdgeDiscovery } from "./edge-discovery";
 import { SchemaName, SUPPORTED_SCHEMAS } from "./schemas";
 import { initHDWallet } from "./crypto/hd-wallet";
@@ -83,13 +87,22 @@ export interface SDNConfig {
   enableStorage?: boolean;
   storeName?: string;
   /**
-   * Record store backend. 'flatsql' (default) uses the FlatSQL
-   * store-of-record (optionally snapshot-persisted, see storagePersistence);
-   * 'indexeddb' keeps the legacy SDNStorage; or pass a ready store instance.
+   * Record store backend. 'flatsql' (default) is THE node store: the
+   * FlatSQL-WASM engine record store (loop D.1 — same engine, SQL, and
+   * source-partition layout as sdn-server), journal-persisted to IndexedDB
+   * under storeName by default or through storagePersistence when given;
+   * 'indexeddb' keeps the legacy SDNStorage (slated for removal in D.5);
+   * or pass a ready store instance.
    */
   storageBackend?: 'flatsql' | 'indexeddb' | NodeRecordStorage;
-  /** Snapshot persistence for the FlatSQL backend (e.g. HeliaSnapshotPersistence). */
+  /** Envelope journal persistence for the engine store (e.g. HeliaSnapshotPersistence). */
   storagePersistence?: SnapshotPersistence;
+  /**
+   * SDS standards mirrored into per-standard engine databases
+   * (per-provider `registerSource` shadow tables + unified views, mirroring
+   * the server layout). Optional: the envelope store works without them.
+   */
+  storageSchemas?: LocalFlatSqlSchema[];
   /** Private key for auth challenge signing (32 bytes Ed25519 seed) */
   privateKey?: Uint8Array;
   /** Full HD wallet-derived identity (secp256k1 for PeerID + Ed25519 for auth) */
@@ -236,9 +249,10 @@ export class SDNNode {
     // Initialize libp2p
     this.libp2p = await createLibp2p(libp2pOpts);
 
-    // Initialize storage if enabled. FlatSQL is the store-of-record default
-    // (WS6.5); pass storageBackend: 'indexeddb' for the legacy SDNStorage or
-    // a ready NodeRecordStorage instance.
+    // Initialize storage if enabled. The FlatSQL-WASM engine record store is
+    // THE node store (loop D.1) — no opt-in flag; pass storageBackend:
+    // 'indexeddb' for the legacy SDNStorage (until D.5) or a ready
+    // NodeRecordStorage instance.
     if (this.config.enableStorage !== false) {
       const backend = this.config.storageBackend ?? "flatsql";
       if (backend === "indexeddb") {
@@ -246,8 +260,10 @@ export class SDNNode {
           this.config.storeName || "sdn-store",
         );
       } else if (backend === "flatsql") {
-        this.storage = await FlatSQLStorage.open({
+        this.storage = await FlatSQLEngineRecordStore.open({
           persistence: this.config.storagePersistence,
+          persistenceKey: this.config.storeName || "sdn-store",
+          schemas: this.config.storageSchemas,
         });
       } else {
         this.storage = backend;

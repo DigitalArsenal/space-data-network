@@ -783,11 +783,14 @@ describe('local FlatSQL datastore', () => {
     });
 
     expect(loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }]);
-    expect(persisted.has('desktop-flatbuffer-cache:OMM')).toBe(true);
+    // D.1 layout: per-(standard, source) aligned streams + a source list —
+    // records without an explicit source live in the `local` partition.
+    expect(persisted.has('desktop-flatbuffer-cache:OMM:sources')).toBe(true);
+    expect(persisted.has('desktop-flatbuffer-cache:OMM:src:local')).toBe(true);
     expect(persisted.has('desktop-flatbuffer-cache:OMM:record-keys')).toBe(true);
     expect(calls).toEqual(expect.arrayContaining([
-      expect.objectContaining({ method: 'PUT', url: 'http://desktop.local/api/flatsql/persistence/desktop-flatbuffer-cache%3AOMM' }),
-      expect.objectContaining({ method: 'GET', url: 'http://desktop.local/api/flatsql/persistence/desktop-flatbuffer-cache%3AOMM' }),
+      expect.objectContaining({ method: 'PUT', url: 'http://desktop.local/api/flatsql/persistence/desktop-flatbuffer-cache%3AOMM%3Asrc%3Alocal' }),
+      expect.objectContaining({ method: 'GET', url: 'http://desktop.local/api/flatsql/persistence/desktop-flatbuffer-cache%3AOMM%3Asrc%3Alocal' }),
     ]));
     loaded.destroy();
   });
