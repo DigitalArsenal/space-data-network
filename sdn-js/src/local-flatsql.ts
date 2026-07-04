@@ -23,8 +23,15 @@
  * snapshots (pre-D.1 `exportData` bytes) are migrated into the `local`
  * source partition on first open.
  */
-import type { FlatSQL, FlatSQLDatabase } from 'flatsql/wasm';
+import type { FlatSQL, FlatSQLDatabase, QueryParam } from 'flatsql/wasm';
 
+import {
+  resolveEngineEpochQuery,
+  DEFAULT_ENGINE_EPOCH_SPECS,
+  type EngineEpochProfileSpec,
+  type EngineEpochQueryProfilesConfig,
+  type EngineEpochQueryRequest,
+} from './epoch-query-sql';
 import { validateReadOnlySql, type ReadOnlySqlValidationOptions } from './read-only-sql-sandbox';
 
 /**
@@ -47,6 +54,15 @@ export interface LocalFlatSqlSchema {
   tableName: string;
   fileId: string;
   schema: string;
+  /**
+   * Engine epoch profile columns for this standard (loop D.2). Overrides /
+   * supplements DEFAULT_ENGINE_EPOCH_SPECS so CAT/MPE/SPW can opt into the
+   * engine-native epoch profiles through configuration, not code.
+   */
+  epochSpec?: {
+    partitionColumn?: string;
+    epochColumn?: string;
+  } | null;
 }
 
 /**
@@ -62,6 +78,16 @@ export interface LocalFlatSqlStoreOptions {
   fetch?: FetchLike | null;
   /** Injectable persistence backend (tests / embedders). Defaults to IndexedDB or the desktop endpoint. */
   persistenceStore?: LocalFlatSqlPersistenceStore | null;
+  /**
+   * Per-standard default query profiles (loop D.2) — the SAME shape the
+   * retrieval module reads through plugin.getConfig, keyed by schema name
+   * (`OMM.fbs`) or standard id (`OMM`). Request fields override these;
+   * whatever is still unset falls back to the compiled defaults
+   * (`nearest`, epoch = now, limit 50000).
+   */
+  queryProfiles?: EngineEpochQueryProfilesConfig | null;
+  /** Clock used when a query epoch is neither requested nor configured (tests). */
+  nowSeconds?: (() => number) | null;
 }
 
 export interface ClearLocalFlatSqlStoreOptions {
@@ -177,6 +203,21 @@ export interface LocalFlatSqlStore {
   recordPinLedgerEntries(entries: LocalFlatSqlPinLedgerEntry[], options?: LocalFlatSqlPinLedgerWriteOptions): Promise<void>;
   listPinLedgerEntries(query?: LocalFlatSqlPinLedgerQuery): Promise<LocalFlatSqlPinLedgerEntry[]>;
   query(sql: string, standardId?: string, options?: LocalFlatSqlQueryOptions): LocalFlatSqlQueryResult | Promise<LocalFlatSqlQueryResult>;
+  /**
+   * PRIMARY query path (loop D.2): run an engine-native epoch profile
+   * (`nearest` / `as_of` / `forward` — the server's retrieval profiles,
+   * SQL byte-identical to sdn-server engine_records.go) over the unified
+   * per-standard view and return the ALIGNED size-prefixed FlatBuffer frame
+   * stream — the wire format, zero-copy out of the engine.
+   */
+  queryEpochRawStream?(standardId: string, request?: EngineEpochQueryRequest | null): Uint8Array;
+  /**
+   * Generic aligned-raw-stream query (server mirror of
+   * FlatSQLStore.QueryRawStream): read-only SQL whose result cells are all
+   * BLOBs (`SELECT _data FROM ...`), executed verbatim with positional
+   * params. Returns the aligned size-prefixed frame stream.
+   */
+  queryRawFlatBufferStream?(standardId: string, sql: string, params?: QueryParam[]): Uint8Array;
   getStats(options?: LocalFlatSqlStatsOptions): LocalFlatSqlStandardStats[] | Promise<LocalFlatSqlStandardStats[]>;
   destroy(): void;
 }
@@ -324,7 +365,15 @@ export async function createLocalFlatSqlStore(options: LocalFlatSqlStoreOptions)
   const pinLedger = options.persistenceKey
     ? await readPersistedPinLedgerEntries(persistenceStore, persistedPinLedgerKey(options.persistenceKey))
     : new Map<string, LocalFlatSqlPinLedgerEntry>();
-  return new WasmLocalFlatSqlStore(states, options.persistenceKey ?? null, pinLedger, persistenceStore, flatsql);
+  return new WasmLocalFlatSqlStore(
+    states,
+    options.persistenceKey ?? null,
+    pinLedger,
+    persistenceStore,
+    flatsql,
+    options.queryProfiles ?? null,
+    options.nowSeconds ?? null,
+  );
 }
 
 export async function clearLocalFlatSqlStore(options: ClearLocalFlatSqlStoreOptions): Promise<void> {
@@ -374,6 +423,8 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     private readonly pinLedger: Map<string, LocalFlatSqlPinLedgerEntry>,
     private readonly persistenceStore: LocalFlatSqlPersistenceStore,
     private readonly flatsql: FlatSQL,
+    private readonly queryProfiles: EngineEpochQueryProfilesConfig | null = null,
+    private readonly nowSeconds: (() => number) | null = null,
   ) {}
 
   async ingestRecords(
@@ -497,6 +548,8 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
       new Map<string, LocalFlatSqlPinLedgerEntry>(),
       this.persistenceStore,
       this.flatsql,
+      this.queryProfiles,
+      this.nowSeconds,
     );
   }
 
@@ -583,6 +636,50 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     };
     enforceQueryRuntimeLimits(queryResult, validation.limits?.maxBytes ?? 64_000, validation.limits?.timeoutMs ?? 5_000, nowMs() - startedAt);
     return queryResult;
+  }
+
+  /**
+   * PRIMARY query path (loop D.2): engine-native epoch profile over the
+   * unified per-standard view, aligned size-prefixed FlatBuffer stream out.
+   * Resolution mirrors the retrieval module: request > per-standard config
+   * (`queryProfiles`) > compiled fallback (`nearest`, epoch = now, 50000).
+   */
+  queryEpochRawStream(standardId: string, request: EngineEpochQueryRequest | null = null): Uint8Array {
+    const state = this.stateForStandard(standardId);
+    const query = resolveEngineEpochQuery({
+      spec: engineEpochSpecForSchema(state.schema),
+      request,
+      defaults: this.queryProfileDefaults(state.schema),
+      nowSeconds: this.nowSeconds,
+    });
+    if (state.sources.size === 0) {
+      // Server mirror (engine_records.go QueryEpochRawStream): with no
+      // sources registered the unified view (and its _source column) does
+      // not exist. Nothing ingested, nothing to return.
+      return new Uint8Array(0);
+    }
+    return state.db.queryRawFlatBufferStream(query.sql, query.params);
+  }
+
+  /**
+   * Generic aligned-raw-stream query (server mirror of
+   * FlatSQLStore.QueryRawStream). The SQL must be read-only; it runs
+   * VERBATIM (no limit rewriting — raw streams are the wire format and
+   * limits arrive as positional params).
+   */
+  queryRawFlatBufferStream(standardId: string, sql: string, params: QueryParam[] = []): Uint8Array {
+    const validation = validateReadOnlySql(sql);
+    if (!validation.ok) {
+      throw new Error(`FlatSQL raw stream queries must be read-only SELECT or WITH SELECT statements: ${validation.diagnostics.join(' ')}`);
+    }
+    return this.stateForStandard(standardId).db.queryRawFlatBufferStream(sql, params);
+  }
+
+  private queryProfileDefaults(schema: LocalFlatSqlSchema): EngineEpochQueryRequest | null {
+    if (!this.queryProfiles) return null;
+    return this.queryProfiles[`${schema.standardId}.fbs`]
+      ?? this.queryProfiles[schema.standardId]
+      ?? null;
   }
 
   getStats(options: LocalFlatSqlStatsOptions = {}): LocalFlatSqlStandardStats[] {
@@ -825,6 +922,48 @@ function nowMs(): number {
   return typeof performance !== 'undefined' && typeof performance.now === 'function'
     ? performance.now()
     : Date.now();
+}
+
+/**
+ * Engine epoch profile spec for a configured standard (loop D.2): built-in
+ * registry defaults (OMM) overlaid with the schema's `epochSpec` config.
+ * Throws for standards without configured epoch columns.
+ */
+export function engineEpochSpecForSchema(schema: LocalFlatSqlSchema): EngineEpochProfileSpec {
+  const defaults = DEFAULT_ENGINE_EPOCH_SPECS[normalizeStandardId(schema.standardId)];
+  const partitionColumn = schema.epochSpec?.partitionColumn ?? defaults?.partitionColumn;
+  const epochColumn = schema.epochSpec?.epochColumn ?? defaults?.epochColumn;
+  if (!partitionColumn || !epochColumn) {
+    throw new Error(
+      `No engine epoch profile columns configured for ${schema.standardId} — set epochSpec {partitionColumn, epochColumn} on the schema`,
+    );
+  }
+  return { tableName: schema.tableName, partitionColumn, epochColumn };
+}
+
+/**
+ * Zero-copy frame iterator over an aligned size-prefixed FlatBuffer stream:
+ * every yielded frame is a subarray VIEW into the stream bytes (no copies) —
+ * the decoded-record convenience over `queryEpochRawStream` output.
+ */
+export function* iterateFlatSqlSizePrefixedStream(streamBytes: Uint8Array): Generator<Uint8Array, void, undefined> {
+  const view = new DataView(streamBytes.buffer, streamBytes.byteOffset, streamBytes.byteLength);
+  let offset = 0;
+  let index = 0;
+  while (offset < streamBytes.byteLength) {
+    if (streamBytes.byteLength - offset < 4) {
+      throw new Error(`Invalid FlatSQL size-prefixed stream: truncated frame header at offset ${offset}`);
+    }
+    const length = view.getUint32(offset, true);
+    offset += 4;
+    const nextOffset = offset + length;
+    if (nextOffset > streamBytes.byteLength) {
+      throw new Error(`Invalid FlatSQL size-prefixed stream: truncated frame at index ${index}`);
+    }
+    yield streamBytes.subarray(offset, nextOffset);
+    offset = nextOffset;
+    index += 1;
+  }
 }
 
 export function decodeFlatSqlSizePrefixedStream(streamBytes: Uint8Array, skipRecords = 0): Uint8Array[] {
