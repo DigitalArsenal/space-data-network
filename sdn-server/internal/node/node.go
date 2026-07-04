@@ -1081,6 +1081,44 @@ func (n *Node) Start(ctx context.Context) error {
 		return err
 	}
 
+	if err := n.startFlowServices(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// startFlowServices loads the config-declared timer-served flows (loop C.8a
+// ingest-as-flow) and registers them with the plugin manager so the cron
+// scheduler drives their timer triggers. The host contributes timers +
+// capability hostcalls only; every ingest decision lives in the wasm flow.
+func (n *Node) startFlowServices() error {
+	services := n.config.Flows.Services
+	if len(services) == 0 {
+		return nil
+	}
+	nodeCtx, err := n.buildModuleNodeContext()
+	if err != nil {
+		return fmt.Errorf("build module node context: %w", err)
+	}
+	deps := flowrt.FlowMountDeps{
+		CapRegistry:    n.buildCapRegistry(),
+		NodeCtx:        nodeCtx,
+		MaxMemoryPages: n.config.Flows.MaxMemoryPages,
+		AOTCacheDir:    flatsqldrv.DefaultAOTCacheDir(),
+	}
+	if n.flowManager != nil {
+		deps.Store = n.flowManager.Store()
+	}
+	loaded, err := flowrt.LoadFlowServices(services, deps)
+	if err != nil {
+		return fmt.Errorf("load flow services: %w", err)
+	}
+	for _, sf := range loaded {
+		if err := n.plugins.Register(sf); err != nil {
+			return fmt.Errorf("register flow service %q: %w", sf.ID(), err)
+		}
+	}
 	return nil
 }
 

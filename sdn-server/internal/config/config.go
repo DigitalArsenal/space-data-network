@@ -145,6 +145,34 @@ type FlowsConfig struct {
 	// handler is pure socket plumbing ($HTQ request frames in, $HTR response
 	// frames out) with zero request-level decisions in the host.
 	Mounts []FlowMount `yaml:"mounts,omitempty"`
+
+	// Services are timer-served flows (loop C.8a ingest-as-flow): each entry
+	// loads a compiled flow bundle whose triggers are cron timers and
+	// registers it with the plugin manager's cron scheduler. Which flow runs
+	// on which schedule with which node CONFIG is configuration, never Go
+	// code.
+	Services []FlowService `yaml:"services,omitempty"`
+}
+
+// FlowService declares one timer-served flow.
+type FlowService struct {
+	// Flow references the flow module: an installed flow program ID, or a
+	// filesystem path to a compiled flow bundle directory (containing
+	// runtime.wasm + flow.json) or directly to a .wasm artifact.
+	Flow string `yaml:"flow"`
+
+	// MemoryPages caps the instance's linear memory (64KB pages).
+	// Default (0): the flows.max_memory_pages global.
+	MemoryPages uint32 `yaml:"memory_pages,omitempty"`
+
+	// Config is the node-config block served to the flow's nodes through the
+	// builtin plugin.getConfig hostcall (e.g. celestrak_gp_url overrides).
+	Config map[string]interface{} `yaml:"config,omitempty"`
+
+	// Intervals overrides trigger intervals by trigger id (Go duration
+	// strings, e.g. timer-gp: "6h"). Default: the flow.json trigger
+	// defaults.
+	Intervals map[string]string `yaml:"intervals,omitempty"`
 }
 
 // FlowMount binds one HTTP listener path to one flow module. Route → module
