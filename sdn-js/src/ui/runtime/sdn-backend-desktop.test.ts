@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import * as flatbuffers from 'flatbuffers';
 import { EPM } from 'spacedatastandards.org/lib/js/EPM/EPM.js';
@@ -407,21 +408,9 @@ describe('desktop-local SDN backend', () => {
       if (url === 'http://127.0.0.1:17890/api/v1/data/query') {
         expect(init?.method).toBe('POST');
         expect(init?.credentials).toBe('include');
-        if (acceptHeader(init).includes('application/vnd.sdn.flatbuffers.stream')) {
-          return flatbufferStreamResponse([new Uint8Array([0, 1, 2, 3])]);
-        }
-        return jsonResponse({
-          schema: 'EPM.fbs',
-          count: 1,
-          results: [{
-            schema_name: 'EPM.fbs',
-            cid: '12D3KooWEPM',
-            peer_id: '12D3KooWEPM',
-            provider_id: 'local-node',
-            source_name: 'local-epm',
-            size_bytes: 128,
-          }],
-        });
+        // ONE request (loop D.3): only the stream shape is ever asked for.
+        expect(acceptHeader(init)).toContain('application/vnd.sdn.flatbuffers.stream');
+        return flatbufferStreamResponse([new Uint8Array([0, 1, 2, 3])], 'EPM.fbs');
       }
       if (url === 'http://127.0.0.1:17890/api/v1/data/records/EPM.fbs/12D3KooWEPM') {
         return flatbufferResponse(new Uint8Array([0, 1, 2, 3]));
@@ -442,7 +431,14 @@ describe('desktop-local SDN backend', () => {
       limit: 10,
     })).resolves.toMatchObject({
       ok: true,
-      data: [{ schemaName: 'EPM.fbs', cid: '12D3KooWEPM', dataBytes: new Uint8Array([0, 1, 2, 3]) }],
+      data: [{
+        schemaName: 'EPM.fbs',
+        // cid = sha256 hex of the payload bytes — the server's computeCID.
+        cid: createHash('sha256').update(new Uint8Array([0, 1, 2, 3])).digest('hex'),
+        providerId: 'local-node',
+        sourceName: 'local-epm',
+        dataBytes: new Uint8Array([0, 1, 2, 3]),
+      }],
     });
     await expect(backend.readRawDataRecord('EPM.fbs', '12D3KooWEPM')).resolves.toMatchObject({
       ok: true,
@@ -452,7 +448,8 @@ describe('desktop-local SDN backend', () => {
       expect.objectContaining({ url: 'http://127.0.0.1:17890/api/v1/data/summary', init: expect.objectContaining({ credentials: 'include' }) }),
       expect.objectContaining({ url: 'http://127.0.0.1:17890/api/v1/data/query', init: expect.objectContaining({ method: 'POST', credentials: 'include' }) }),
     ]));
-    expect(calls.filter((call) => call.url === 'http://127.0.0.1:17890/api/v1/data/query')).toHaveLength(2);
+    // The base64-era double round-trip is GONE: exactly ONE query request.
+    expect(calls.filter((call) => call.url === 'http://127.0.0.1:17890/api/v1/data/query')).toHaveLength(1);
     for (const call of calls.filter((entry) => entry.url === 'http://127.0.0.1:17890/api/v1/data/query')) {
       expect(JSON.parse(String(call.init?.body))).toMatchObject({ sync_filter: "FILE_ID LIKE 'celestrak:%'" });
     }
@@ -929,20 +926,27 @@ function jsonResponse(payload: unknown, status = 200) {
   } as Response;
 }
 
-function flatbufferStreamResponse(records: Uint8Array[]) {
+function flatbufferStreamResponse(records: Uint8Array[], schemaName = 'OMM.fbs') {
   const size = records.reduce((total, record) => total + 4 + record.byteLength, 0);
   const body = new Uint8Array(size);
   const view = new DataView(body.buffer);
   let offset = 0;
   for (const record of records) {
-    view.setUint32(offset, record.byteLength, false);
+    // u32 LITTLE-ENDIAN framing — the real server's
+    // X-SDN-Stream-Format: flatsql-size-prefixed-le-u32 wire format.
+    view.setUint32(offset, record.byteLength, true);
     offset += 4;
     body.set(record, offset);
     offset += record.byteLength;
   }
   return new Response(body, {
     status: 200,
-    headers: { 'content-type': 'application/vnd.sdn.flatbuffers.stream' },
+    headers: {
+      'content-type': 'application/vnd.sdn.flatbuffers.stream',
+      'x-sdn-schema': schemaName,
+      'x-sdn-record-count': String(records.length),
+      'x-sdn-stream-format': 'flatsql-size-prefixed-le-u32',
+    },
   });
 }
 

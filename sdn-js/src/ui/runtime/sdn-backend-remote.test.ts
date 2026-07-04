@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import * as flatbuffers from 'flatbuffers';
 import { EPM } from 'spacedatastandards.org/lib/js/EPM/EPM.js';
@@ -141,14 +142,9 @@ describe('remote-sdn backend', () => {
       if (url === 'https://sdn.spaceaware.io/api/v1/data/query') {
         expect(init?.method).toBe('POST');
         expect(init?.credentials).toBe('include');
-        if (acceptHeader(init).includes('application/vnd.sdn.flatbuffers.stream')) {
-          return flatbufferStreamResponse([new Uint8Array([0, 1, 2, 3])]);
-        }
-        return jsonResponse({
-          schema: 'EPM.fbs',
-          count: 1,
-          results: [{ schema_name: 'EPM.fbs', cid: '16Uiu2HRemote', peer_id: '16Uiu2HRemote', size_bytes: 4 }],
-        });
+        // ONE request (loop D.3): only the stream shape is ever asked for.
+        expect(acceptHeader(init)).toContain('application/vnd.sdn.flatbuffers.stream');
+        return flatbufferStreamResponse([new Uint8Array([0, 1, 2, 3])], 'EPM.fbs');
       }
       throw new Error(`unexpected ${url}`);
     });
@@ -170,19 +166,24 @@ describe('remote-sdn backend', () => {
       syncFilter: "FILE_ID LIKE 'celestrak:%'",
     })).resolves.toMatchObject({
       ok: true,
-      data: [{ schemaName: 'EPM.fbs', cid: '16Uiu2HRemote', dataBytes: new Uint8Array([0, 1, 2, 3]) }],
+      data: [{
+        schemaName: 'EPM.fbs',
+        // cid = sha256 hex of the payload bytes — the server's computeCID.
+        cid: createHash('sha256').update(new Uint8Array([0, 1, 2, 3])).digest('hex'),
+        providerId: 'local-node',
+        sizeBytes: 4,
+        dataBytes: new Uint8Array([0, 1, 2, 3]),
+      }],
     });
     expect(calls).toEqual(expect.arrayContaining([
       expect.objectContaining({ url: 'https://sdn.spaceaware.io/api/v1/data/summary', init: expect.objectContaining({ credentials: 'include' }) }),
       expect.objectContaining({ url: 'https://sdn.spaceaware.io/api/v1/data/query', init: expect.objectContaining({ method: 'POST', credentials: 'include' }) }),
     ]));
-    expect(calls.filter((call) => call.url === 'https://sdn.spaceaware.io/api/v1/data/query')).toHaveLength(2);
+    // The base64-era double round-trip is GONE: exactly ONE query request.
     const queryCalls = calls.filter((call) => call.url === 'https://sdn.spaceaware.io/api/v1/data/query');
-    const metadataQueryCall = queryCalls.find((call) => !acceptHeader(call.init).includes('application/vnd.sdn.flatbuffers.stream'));
-    expect(JSON.parse(String(metadataQueryCall?.init?.body))).toMatchObject({ include_data: false, sync_filter: "FILE_ID LIKE 'celestrak:%'" });
-    for (const call of queryCalls) {
-      expect(JSON.parse(String(call.init?.body))).toMatchObject({ sync_filter: "FILE_ID LIKE 'celestrak:%'" });
-    }
+    expect(queryCalls).toHaveLength(1);
+    expect(acceptHeader(queryCalls[0].init)).toContain('application/vnd.sdn.flatbuffers.stream');
+    expect(JSON.parse(String(queryCalls[0].init?.body))).toMatchObject({ include_data: false, sync_filter: "FILE_ID LIKE 'celestrak:%'" });
   });
 
   it('does not send raw SQL to remote peers', async () => {
@@ -573,20 +574,27 @@ function jsonResponse(payload: unknown) {
   } as Response;
 }
 
-function flatbufferStreamResponse(records: Uint8Array[]) {
+function flatbufferStreamResponse(records: Uint8Array[], schemaName = 'OMM.fbs') {
   const size = records.reduce((total, record) => total + 4 + record.byteLength, 0);
   const body = new Uint8Array(size);
   const view = new DataView(body.buffer);
   let offset = 0;
   for (const record of records) {
-    view.setUint32(offset, record.byteLength, false);
+    // u32 LITTLE-ENDIAN framing — the real server's
+    // X-SDN-Stream-Format: flatsql-size-prefixed-le-u32 wire format.
+    view.setUint32(offset, record.byteLength, true);
     offset += 4;
     body.set(record, offset);
     offset += record.byteLength;
   }
   return new Response(body, {
     status: 200,
-    headers: { 'content-type': 'application/vnd.sdn.flatbuffers.stream' },
+    headers: {
+      'content-type': 'application/vnd.sdn.flatbuffers.stream',
+      'x-sdn-schema': schemaName,
+      'x-sdn-record-count': String(records.length),
+      'x-sdn-stream-format': 'flatsql-size-prefixed-le-u32',
+    },
   });
 }
 

@@ -129,7 +129,6 @@ export interface RawDataRecord {
   producerPublicKey?: string;
   timestamp?: string;
   sizeBytes: number;
-  dataBase64?: string;
   dataBytes?: Uint8Array;
 }
 

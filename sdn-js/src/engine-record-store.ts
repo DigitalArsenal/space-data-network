@@ -376,6 +376,21 @@ export class FlatSQLEngineRecordStore {
   }
 
   /**
+   * Ingest an aligned size-prefixed FlatBuffer record stream straight into
+   * the per-standard engine database (loop D.3: HTTP bulk-stream bodies feed
+   * through verbatim — no base64, no JSON re-encode, no per-record
+   * round-trips). Delegates to the engine store's stream ingest (dedupe via
+   * the ingested-keys ledger; per-(standard,source) persistence).
+   */
+  async ingestFlatBufferStream(
+    standardId: string,
+    streamBytes: Uint8Array,
+    options?: Parameters<LocalFlatSqlStore['ingestFlatBufferStream']>[2],
+  ): Promise<number> {
+    return this.requireStandards().ingestFlatBufferStream(standardId, streamBytes, options);
+  }
+
+  /**
    * Generic aligned-raw-stream query (server mirror of
    * FlatSQLStore.QueryRawStream): read-only SQL whose result cells are all
    * BLOBs, run verbatim with positional params against the standard's

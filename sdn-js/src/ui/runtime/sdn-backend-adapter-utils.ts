@@ -11,6 +11,7 @@ import {
   type NodeAccessUser,
   type NodeSummary,
   type ObservedSdnPeer,
+  type RawDataQuery,
   type RawDataRecord,
   type RawDataStreamRequest,
   type SearchResult,
@@ -21,6 +22,7 @@ import {
   type StorageSummary,
 } from './sdn-backend';
 import { normalizeIpfsArtifactPeerAddrs } from './ipfs-artifact-peers';
+import { sha256 } from '../../crypto/hd-wallet';
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 export const RAW_FLATBUFFER_STREAM_CONTENT_TYPE = 'application/vnd.sdn.flatbuffers.stream';
@@ -185,7 +187,6 @@ export function normalizeDataScanResult(payload: unknown): DataScanResult {
 
 export function normalizeRawDataRecords(payload: unknown): RawDataRecord[] {
   return recordsFromPayload(payload).map((record): RawDataRecord => {
-    const dataBase64 = readString(record, 'data_base64', 'dataBase64') ?? undefined;
     return {
       schemaName: readString(record, 'schema_name', 'schemaName') ?? 'unknown',
       cid: readString(record, 'cid', 'CID', 'id') ?? '',
@@ -197,21 +198,27 @@ export function normalizeRawDataRecords(payload: unknown): RawDataRecord[] {
       producerPublicKey: readString(record, 'producer_public_key', 'producerPublicKey') ?? undefined,
       timestamp: readString(record, 'timestamp') ?? undefined,
       sizeBytes: readNumber(record, 'size_bytes', 'sizeBytes') ?? 0,
-      ...(dataBase64 ? { dataBase64 } : {}),
     };
   }).filter((record) => record.schemaName !== 'unknown' && record.cid !== '');
 }
 
+/**
+ * Parse an aligned size-prefixed FlatBuffer record stream. The wire format
+ * is u32 LITTLE-ENDIAN length prefixes — the FlatSQL engine framing the
+ * server advertises as `X-SDN-Stream-Format: flatsql-size-prefixed-le-u32`
+ * (sdn-server writeFlatBufferPayloadStream / WriteRawRecordFrames). Frames
+ * are zero-copy subarray views into `bytes`.
+ */
 export function parseRawFlatbufferStream(bytes: Uint8Array): Uint8Array[] {
   const records: Uint8Array[] = [];
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let offset = 0;
   while (offset < bytes.byteLength) {
     if (offset + 4 > bytes.byteLength) throw new Error('truncated raw FlatBuffer stream frame header');
-    const length = view.getUint32(offset, false);
+    const length = view.getUint32(offset, true);
     offset += 4;
     if (offset + length > bytes.byteLength) throw new Error('truncated raw FlatBuffer stream frame payload');
-    records.push(bytes.slice(offset, offset + length));
+    records.push(bytes.subarray(offset, offset + length));
     offset += length;
   }
   return records;
@@ -223,6 +230,88 @@ export function attachRawFlatbufferStream(records: RawDataRecord[], streamBytes:
     ...record,
     ...(payloads[index] ? { dataBytes: payloads[index] } : {}),
   }));
+}
+
+/** Datasync raw-query JSON payload (shared by the remote + desktop adapters). */
+export function rawDataQueryPayload(query: RawDataQuery): Record<string, unknown> {
+  return {
+    schema: query.schema,
+    include_data: false,
+    ...(query.datastoreKey ? { datastore_key: query.datastoreKey } : {}),
+    ...(query.providerId ? { provider_id: query.providerId } : {}),
+    ...(query.sourceName ? { source_name: query.sourceName } : {}),
+    ...(query.batchId ? { batch_id: query.batchId } : {}),
+    ...(query.peerId ? { peer_id: query.peerId } : {}),
+    ...(query.cursor ? { cursor: query.cursor } : {}),
+    ...(query.snapshotId ? { snapshot_id: query.snapshotId } : {}),
+    ...(query.head ? { head: query.head } : {}),
+    ...(query.queryProfile ? { query_profile: query.queryProfile } : {}),
+    ...(query.syncFilter ? { sync_filter: query.syncFilter } : {}),
+    ...(typeof query.limit === 'number' ? { limit: query.limit } : {}),
+    ...(typeof query.offset === 'number' ? { offset: query.offset } : {}),
+  };
+}
+
+/** Authenticated POST that asks for the aligned FlatBuffer record stream. */
+export function authRawFlatbufferStreamRequest(body: Record<string, unknown>): RequestInit {
+  return {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'content-type': 'application/json',
+      'x-requested-with': 'sdn-ui',
+      accept: RAW_FLATBUFFER_STREAM_CONTENT_TYPE,
+    },
+    body: JSON.stringify(body),
+  };
+}
+
+/**
+ * Raw data query in ONE stream request (loop D.3 — the base64-era double
+ * round-trip is gone): POST `/api/v1/data/query` with the FlatBuffer-stream
+ * Accept header; the response headers carry the schema
+ * (`X-SDN-Schema`) and record count (`X-SDN-Record-Count`), the body is the
+ * aligned size-prefixed record stream. Record identity is reconstructed
+ * client-side: cid = sha256 hex of the payload bytes — exactly the server's
+ * computeCID (sdn-server internal/storage/flatsql.go) — and the query's own
+ * provider/source/batch filters stamp the provenance columns they pinned.
+ */
+export async function queryRawDataViaStream(
+  fetchLike: FetchLike,
+  baseUrl: string | null | undefined,
+  capabilityId: string,
+  query: RawDataQuery,
+): Promise<BackendResult<RawDataRecord[]>> {
+  const url = joinUrl(baseUrl, '/api/v1/data/query');
+  try {
+    const response = await fetchLike(url, authRawFlatbufferStreamRequest(rawDataQueryPayload(query)));
+    if (!response.ok) {
+      return createDegradedResult(capabilityId, `${url} returned HTTP ${response.status}`);
+    }
+    const streamBytes = new Uint8Array(await response.arrayBuffer());
+    const schemaName = response.headers?.get?.('x-sdn-schema') ?? query.schema;
+    const frames = parseRawFlatbufferStream(streamBytes);
+    const records = await Promise.all(frames.map(async (frame): Promise<RawDataRecord> => ({
+      schemaName,
+      cid: await sha256Hex(frame),
+      peerId: query.peerId ?? '',
+      ...(query.providerId ? { providerId: query.providerId } : {}),
+      ...(query.sourceName ? { sourceName: query.sourceName } : {}),
+      ...(query.batchId ? { batchId: query.batchId } : {}),
+      sizeBytes: frame.byteLength,
+      dataBytes: frame,
+    })));
+    return createAvailableResult(capabilityId, records);
+  } catch (error) {
+    return createDegradedResult(capabilityId, error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function sha256Hex(data: Uint8Array): Promise<string> {
+  const digest = await sha256(new Uint8Array(data));
+  let hex = '';
+  for (const byte of digest) hex += byte.toString(16).padStart(2, '0');
+  return hex;
 }
 
 export function rawDataStreamPayload(request: RawDataStreamRequest): Record<string, unknown> {
