@@ -467,6 +467,6 @@ export {
   FLATBUFFER_STREAM_CONTENT_TYPE,
   iterateSizePrefixedFrames,
 } from './transport/http';
-export type { LogHeadInfo } from './transport/http';
+export type { LogHeadInfo, HttpTransportOptions } from './transport/http';
 export { SessionAuth } from './transport/auth';
 export type { AuthProvider } from './transport/auth';
