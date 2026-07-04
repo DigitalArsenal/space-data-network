@@ -291,6 +291,20 @@ export async function getSharedFlatSql(): Promise<FlatSQL> {
   return sharedFlatSqlPromise;
 }
 
+/**
+ * Engine database session setup (loop D.6). The browser/Node wasm build has
+ * no filesystem: any query whose sorter/window spills a temp b-tree to
+ * "disk" (e.g. the epoch-nearest profile over a catalog-scale partition,
+ * ~29K objects) dies with `SQL execution error: disk I/O error` unless
+ * SQLite keeps temp storage in memory. The engine is in-memory anyway
+ * (OMIT_WAL) — the server hosts run the identical data fine, so this only
+ * aligns the JS host with them. MUST run AFTER registerFileId: executing
+ * any SQL first finalizes the schema before the record vtab exists.
+ */
+export function configureEngineDatabaseSession(db: Pick<FlatSQLDatabase, 'query'>): void {
+  db.query('PRAGMA temp_store=MEMORY');
+}
+
 export async function createLocalFlatSqlStore(options: LocalFlatSqlStoreOptions): Promise<LocalFlatSqlStore> {
   const flatsql = await getSharedFlatSql();
   const states = new Map<string, StandardDatabaseState>();
@@ -300,6 +314,7 @@ export async function createLocalFlatSqlStore(options: LocalFlatSqlStoreOptions)
     const standardId = normalizeStandardId(schema.standardId);
     const db = flatsql.createDatabase(stripFlatBufferComments(schema.schema), `sdn-${standardId.toLowerCase()}`);
     db.registerFileId(schema.fileId, schema.tableName);
+    configureEngineDatabaseSession(db);
 
     // Restore source partitions (server-mirroring layout): re-register every
     // persisted source, rebuild the unified views, then re-ingest each
@@ -493,10 +508,7 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     }
 
     const streamRecords = decodeFlatSqlSizePrefixedStream(streamBytes, options?.skipRecords ?? 0);
-    const candidates = streamRecords.map((buffer, index) => ({
-      buffer,
-      key: flatSqlStreamRecordKey(standardId, buffer, index + keyOffset, options),
-    }));
+    const candidates = streamRecords.map((buffer, index) => flatSqlStreamRecordCandidate(standardId, buffer, index + keyOffset, options));
     const nextRecords = trustOrderedPublishedOffsets
       ? candidates
       : filterNewFlatSqlRecordCandidates(candidates, state.ingestedKeys);
@@ -504,7 +516,19 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
 
     const source = this.ensureSource(state, options?.source);
     const beforeRecordCount = recordCountForState(state);
-    state.db.ingestBuffers(nextRecords.map((entry) => stripSdnFlatBufferSizePrefix(entry.buffer)), source);
+    if (
+      nextRecords.length === candidates.length &&
+      streamInfo.allFramesHaveDirectFileIdentifier &&
+      (options?.skipRecords ?? 0) === 0
+    ) {
+      // No frame was filtered and the stream is already the engine wire
+      // format — ingest the ORIGINAL aligned bytes in ONE engine call
+      // (loop D.6: avoids re-buffering the whole stream through
+      // ingestBuffers' rebuilt copy; byte-identical input to the engine).
+      state.db.ingest(streamBytes, source);
+    } else {
+      state.db.ingestBuffers(nextRecords.map((entry) => stripSdnFlatBufferSizePrefix(entry.buffer)), source);
+    }
     const ingestedCount = Math.max(0, recordCountForState(state) - beforeRecordCount);
     for (const entry of nextRecords.slice(0, ingestedCount)) state.ingestedKeys.add(entry.key);
     state.dirty = true;
@@ -736,6 +760,7 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
   private createDatabaseForSchema(schema: LocalFlatSqlSchema): FlatSQLDatabase {
     const db = this.flatsql.createDatabase(stripFlatBufferComments(schema.schema), `sdn-${schema.standardId.toLowerCase()}`);
     db.registerFileId(schema.fileId, schema.tableName);
+    configureEngineDatabaseSession(db);
     return db;
   }
 
@@ -1045,40 +1070,80 @@ function isOrderedPublishedShardIngest(options: LocalFlatSqlStreamIngestOptions 
   return Boolean(options?.recordKeyPrefix?.trim().startsWith('published:'));
 }
 
-function flatSqlStreamRecordKey(
+interface FlatSqlStreamRecordCandidate {
+  buffer: Uint8Array;
+  key: string;
+  /**
+   * Pre-D.6 32-bit content-key format, still honored for MEMBERSHIP so
+   * ledgers persisted by older builds keep suppressing replays. Never
+   * written anymore.
+   */
+  legacyKey?: string;
+}
+
+function flatSqlStreamRecordCandidate(
   standardId: string,
   buffer: Uint8Array,
   index: number,
   options: LocalFlatSqlStreamIngestOptions | null,
-): string {
+): FlatSqlStreamRecordCandidate {
   const explicitKey = options?.recordKeys?.[index - Math.max(0, options.recordKeyOffset ?? options.skipRecords ?? 0)]?.trim();
-  if (explicitKey) return explicitKey;
+  if (explicitKey) return { buffer, key: explicitKey };
   const prefix = options?.recordKeyPrefix?.trim();
-  if (prefix) return `${normalizeStandardId(standardId)}|${prefix}|${index}`;
-  return `${normalizeStandardId(standardId)}|stream|${buffer.byteLength}|${fnv1a32(buffer).toString(16).padStart(8, '0')}`;
+  if (prefix) return { buffer, key: `${normalizeStandardId(standardId)}|${prefix}|${index}` };
+  // Content-addressed dedupe key. REAL BUG caught at catalog scale (loop
+  // D.6): the old key was (byteLength, fnv1a32) — 32 bits of content hash —
+  // and a 250K-record bulk stream silently dropped ~13 DISTINCT records as
+  // birthday collisions. The key now carries two independent 32-bit hashes
+  // (64 collision bits, one pass); the old format stays recognized for
+  // membership so persisted ledgers keep deduping their replays.
+  const normalizedStandardId = normalizeStandardId(standardId);
+  const [h1, h2] = contentHash64(buffer);
+  const h1Hex = h1.toString(16).padStart(8, '0');
+  return {
+    buffer,
+    key: `${normalizedStandardId}|stream|${buffer.byteLength}|${h1Hex}${h2.toString(16).padStart(8, '0')}`,
+    legacyKey: `${normalizedStandardId}|stream|${buffer.byteLength}|${h1Hex}`,
+  };
 }
 
-function filterNewFlatSqlRecordCandidates<T extends { key: string }>(
+function filterNewFlatSqlRecordCandidates<T extends { key: string; legacyKey?: string }>(
   candidates: T[],
   ingestedKeys: ReadonlySet<string>,
 ): T[] {
-  const seen = new Set(ingestedKeys);
+  // Do NOT clone ingestedKeys (it grows with the store — cloning made every
+  // ingest O(total records), loop D.6); batch-local dupes get their own set.
+  const batchSeen = new Set<string>();
   const next: T[] = [];
   for (const candidate of candidates) {
-    if (seen.has(candidate.key)) continue;
-    seen.add(candidate.key);
+    if (
+      ingestedKeys.has(candidate.key) ||
+      batchSeen.has(candidate.key) ||
+      (candidate.legacyKey !== undefined && ingestedKeys.has(candidate.legacyKey))
+    ) continue;
+    batchSeen.add(candidate.key);
     next.push(candidate);
   }
   return next;
 }
 
-function fnv1a32(bytes: Uint8Array): number {
-  let hash = 0x811c9dc5;
-  for (const byte of bytes) {
-    hash ^= byte;
-    hash = Math.imul(hash, 0x01000193);
+/**
+ * One-pass 64-bit content hash for stream dedupe keys: word 0 is canonical
+ * FNV-1a 32 (BYTE-STABLE — it doubles as the persisted legacy key, never
+ * change its math), word 1 is an independent multiply-rotate mixer.
+ * Indexed loop, not for-of (~2x faster on the ingest hot path, loop D.6).
+ */
+function contentHash64(bytes: Uint8Array): [number, number] {
+  let h1 = 0x811c9dc5;
+  let h2 = 0x9e3779b9;
+  for (let i = 0; i < bytes.length; i += 1) {
+    const byte = bytes[i];
+    h1 ^= byte;
+    h1 = Math.imul(h1, 0x01000193);
+    h2 = Math.imul(h2 ^ byte, 0x85ebca6b);
+    h2 = (h2 << 13) | (h2 >>> 19);
   }
-  return hash >>> 0;
+  return [h1 >>> 0, h2 >>> 0];
 }
 
 function rowToRecord(columns: string[], row: unknown[]): Record<string, unknown> {

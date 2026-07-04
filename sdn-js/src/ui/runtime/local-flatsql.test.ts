@@ -168,6 +168,156 @@ describe('local FlatSQL datastore', () => {
     }));
   });
 
+  it('ingests content-keyed streams in one engine call when nothing dedupes, and still filters overlaps (loop D.6)', async () => {
+    const store = await createLocalFlatSqlStore({
+      schemas: [{
+        standardId: 'OMM',
+        tableName: 'OMM',
+        fileId: '$OMM',
+        schema: OMM_SCHEMA,
+      }],
+    });
+    const frameA = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
+    const frameB = withReplacedAscii(frameA, 'STARLINK-6292', 'STARLINK-6293');
+    const frameC = withReplacedAscii(frameA, 'STARLINK-6292', 'STARLINK-6294');
+
+    // No recordKeys / no recordKeyPrefix → content-hash dedupe keys (the
+    // RemoteEpochStreamClient ingest path). A fresh full stream takes the
+    // D.6 single-engine-call route (original aligned bytes, no rebuild).
+    const first = await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frameA, frameB]), { persist: false });
+    expect(first).toBe(2);
+
+    // Overlapping re-delivery: content keys must still dedupe A/B and only
+    // materialize C (the filtered per-record route).
+    const second = await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frameA, frameB, frameC]), { persist: false });
+    expect(second).toBe(1);
+
+    // Full replay is a no-op.
+    const replay = await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frameA, frameB, frameC]), { persist: false });
+    expect(replay).toBe(0);
+
+    const rows = await store.query('SELECT OBJECT_NAME FROM OMM ORDER BY OBJECT_NAME', 'OMM');
+    expect(rows.records).toEqual([
+      { OBJECT_NAME: 'STARLINK-6292' },
+      { OBJECT_NAME: 'STARLINK-6293' },
+      { OBJECT_NAME: 'STARLINK-6294' },
+    ]);
+    store.destroy();
+  });
+
+  it('does not drop distinct records that collide on the legacy 32-bit content key (loop D.6)', async () => {
+    // REAL BUG caught at catalog scale: dedupe keys carried only
+    // (byteLength, fnv1a32) — a 250K bulk stream lost ~13 DISTINCT records
+    // to birthday collisions. Craft a genuine same-length fnv1a32 collision
+    // between two distinct OMM records and require BOTH to materialize.
+    const fnv1a32 = (bytes: Uint8Array): number => {
+      let hash = 0x811c9dc5;
+      for (let i = 0; i < bytes.length; i += 1) {
+        hash ^= bytes[i];
+        hash = Math.imul(hash, 0x01000193);
+      }
+      return hash >>> 0;
+    };
+    const base = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
+    const nameAt = (() => {
+      const needle = 'STARLINK-6292';
+      outer: for (let i = 0; i <= base.byteLength - needle.length; i += 1) {
+        for (let j = 0; j < needle.length; j += 1) {
+          if (base[i + j] !== needle.charCodeAt(j)) continue outer;
+        }
+        return i;
+      }
+      throw new Error('fixture name not found');
+    })();
+    // Mutate 6 OBJECT_NAME characters (24 variant bits — 'STARLINK-6292'
+    // positions 4..9 become printable ASCII), keeping byteLength identical.
+    const mutateAt = nameAt + 4;
+    const variant = (suffix: number): Uint8Array => {
+      const out = new Uint8Array(base);
+      for (let n = 0; n < 6; n += 1) {
+        out[mutateAt + n] = 0x41 + ((suffix >> (4 * n)) & 0x0f);
+      }
+      return out;
+    };
+    // Birthday-search for an fnv1a32 collision; the hash state over the
+    // unchanged prefix is cached so each candidate only hashes its tail
+    // (expected first collision after ~82K candidates).
+    let prefixHash = 0x811c9dc5;
+    for (let i = 0; i < mutateAt; i += 1) {
+      prefixHash ^= base[i];
+      prefixHash = Math.imul(prefixHash, 0x01000193);
+    }
+    const tailHash = (candidate: Uint8Array): number => {
+      let hash = prefixHash;
+      for (let i = mutateAt; i < candidate.byteLength; i += 1) {
+        hash ^= candidate[i];
+        hash = Math.imul(hash, 0x01000193);
+      }
+      return hash >>> 0;
+    };
+    const seen = new Map<number, number>();
+    let pair: [Uint8Array, Uint8Array] | null = null;
+    for (let suffix = 0; suffix < 0x1000000; suffix += 1) {
+      const candidate = variant(suffix);
+      const hash = tailHash(candidate);
+      const previous = seen.get(hash);
+      if (previous !== undefined) {
+        pair = [variant(previous), candidate];
+        break;
+      }
+      seen.set(hash, suffix);
+    }
+    if (!pair) throw new Error('no fnv1a32 collision found in the search budget');
+    expect(fnv1a32(pair[0])).toBe(fnv1a32(pair[1]));
+    expect(pair[0]).not.toEqual(pair[1]);
+
+    const store = await createLocalFlatSqlStore({
+      schemas: [{
+        standardId: 'OMM',
+        tableName: 'OMM',
+        fileId: '$OMM',
+        schema: OMM_SCHEMA,
+      }],
+    });
+    const ingested = await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream(pair), { persist: false });
+    expect(ingested).toBe(2);
+    const replay = await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream(pair), { persist: false });
+    expect(replay).toBe(0);
+    store.destroy();
+  });
+
+  it('honors legacy 32-bit content keys persisted by older builds (loop D.6 migration)', async () => {
+    const fnv1a32 = (bytes: Uint8Array): number => {
+      let hash = 0x811c9dc5;
+      for (let i = 0; i < bytes.length; i += 1) {
+        hash ^= bytes[i];
+        hash = Math.imul(hash, 0x01000193);
+      }
+      return hash >>> 0;
+    };
+    const store = await createLocalFlatSqlStore({
+      schemas: [{
+        standardId: 'OMM',
+        tableName: 'OMM',
+        fileId: '$OMM',
+        schema: OMM_SCHEMA,
+      }],
+    });
+    const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
+    // Seed the ledger with the OLD key format (what a pre-D.6 build
+    // persisted): `<standard>|stream|<len>|<fnv1a32 hex8>`.
+    const legacyKey = `OMM|stream|${frame.byteLength}|${fnv1a32(frame).toString(16).padStart(8, '0')}`;
+    const seeded = await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame]), {
+      recordKeys: [legacyKey],
+      persist: false,
+    });
+    expect(seeded).toBe(1);
+    // A content-keyed re-delivery of the same bytes must STILL dedupe.
+    const replay = await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame]), { persist: false });
+    expect(replay).toBe(0);
+    store.destroy();
+  });
+
   it('preserves CAT replacement stream rows exactly as published', async () => {
     const store = await createLocalFlatSqlStore({
       schemas: [{
@@ -977,6 +1127,23 @@ describe('local FlatSQL datastore', () => {
     expect(store.query('SELECT * FROM PNM LIMIT 0', 'PNM').columns).not.toContain('https');
   });
 });
+
+/** Same-length ASCII substitution inside a FlatBuffer fixture (distinct records, identical layout). */
+function withReplacedAscii(bytes: Uint8Array, search: string, replacement: string): Uint8Array {
+  if (search.length !== replacement.length) throw new Error('replacement must preserve length');
+  const out = new Uint8Array(bytes);
+  const needle = Array.from(search, (char) => char.charCodeAt(0));
+  outer: for (let index = 0; index <= out.byteLength - needle.length; index += 1) {
+    for (let j = 0; j < needle.length; j += 1) {
+      if (out[index + j] !== needle[j]) continue outer;
+    }
+    for (let j = 0; j < needle.length; j += 1) {
+      out[index + j] = replacement.charCodeAt(j);
+    }
+    return out;
+  }
+  throw new Error(`ASCII sequence ${search} not found`);
+}
 
 function flatSqlSizePrefixedStream(records: Uint8Array[]): Uint8Array {
   const totalLength = records.reduce((sum, frame) => sum + 4 + frame.byteLength, 0);
