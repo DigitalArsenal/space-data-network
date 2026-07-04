@@ -774,6 +774,13 @@ func (r *Runner) syncSpaceTrackGapFill(ctx context.Context) error {
 
 var diskAvailableBytes = availableDiskBytes
 
+// AvailableDiskBytes reports the free bytes on the filesystem holding path.
+// Exported for the storage.ingest_with_source capability's disk guardrail
+// (loop C.8a), which mirrors this runner's requireFreeDisk policy.
+func AvailableDiskBytes(path string) (uint64, error) {
+	return availableDiskBytes(path)
+}
+
 func (r *Runner) requireFreeDisk(operation string) error {
 	minFree := r.cfg.MinFreeDiskBytes
 	if minFree <= 0 {

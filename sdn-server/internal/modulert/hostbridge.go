@@ -140,7 +140,7 @@ func (hb *HostBridge) Dispatch(operation string, payload []byte) []byte {
 			"crypto_encrypt", "crypto_decrypt", "crypto_key_agreement", "crypto_kdf",
 			"wallet_sign",
 			"ipfs",
-			"storage_query", "storage_write", "storage_adapter",
+			"storage_query", "storage_write", "storage_adapter", "storage_ingest",
 			"http",
 			"schedule_cron",
 		})

@@ -188,9 +188,9 @@ func loadSyncStatusSnapshot(ctx context.Context, options syncStatusOptions) (syn
 	if err != nil {
 		return syncStatusSnapshot{}, fmt.Errorf("failed to initialize schema validator: %w", err)
 	}
-	store, err := storage.NewFlatSQLStore(cfg.Storage.Path, validator)
+	store, err := openStoreForReading(cfg.Storage.Path, validator)
 	if err != nil {
-		return syncStatusSnapshot{}, fmt.Errorf("failed to open storage: %w", err)
+		return syncStatusSnapshot{}, err
 	}
 	defer store.Close()
 

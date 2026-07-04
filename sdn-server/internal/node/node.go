@@ -711,10 +711,26 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 
 	// Storage capabilities — require an initialized FlatSQL store
 	if n.store != nil {
-		storageFac := caps.NewStorageCapFactory(n.store)
+		// Raw-archive root + disk guardrail mirror the in-daemon ingest
+		// runner's policy (loop C.8a flow ingest): raw/ lives beside the
+		// store directory, guardrail floor from config ingest.min_free_disk_gb.
+		basePath := filepath.Dir(n.store.Path())
+		rawRoot := strings.TrimSpace(n.config.Ingest.RawPath)
+		if rawRoot == "" {
+			rawRoot = filepath.Join(filepath.Dir(basePath), "raw")
+		}
+		var minFreeDiskBytes int64
+		if n.config.Ingest.MinFreeDiskGB > 0 {
+			minFreeDiskBytes = int64(n.config.Ingest.MinFreeDiskGB * 1024 * 1024 * 1024)
+		}
+		storageFac := caps.NewStorageCapFactoryWithOptions(n.store, caps.StorageCapOptions{
+			RawRoot:          rawRoot,
+			MinFreeDiskBytes: minFreeDiskBytes,
+		})
 		reg.RegisterBridgeAware("storage_query", storageFac)
 		reg.RegisterBridgeAware("storage_write", storageFac)
 		reg.RegisterBridgeAware("storage_adapter", storageFac)
+		reg.RegisterBridgeAware("storage_ingest", storageFac)
 	}
 
 	// HTTP outbound capability — always available

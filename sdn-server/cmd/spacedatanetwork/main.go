@@ -368,9 +368,9 @@ func exportLocalIdentity(ctx context.Context, out io.Writer, cfg *config.Config,
 	if err != nil {
 		return fmt.Errorf("failed to initialize schema validator: %w", err)
 	}
-	store, err := storage.NewFlatSQLStore(cfg.Storage.Path, validator)
+	store, err := openStoreForReading(cfg.Storage.Path, validator)
 	if err != nil {
-		return fmt.Errorf("failed to open storage: %w", err)
+		return err
 	}
 	defer store.Close()
 
@@ -3293,6 +3293,9 @@ func runReindex(cmd *cobra.Command, args []string) error {
 
 	store, err := storage.NewFlatSQLStore(cfg.Storage.Path, validator)
 	if err != nil {
+		if errors.Is(err, storage.ErrStoreLocked) {
+			return fmt.Errorf("reindex rewrites the record index and needs EXCLUSIVE store access — stop the daemon first (read-flavored verbs like `search`/`sync status` work against a running daemon): %w", err)
+		}
 		return fmt.Errorf("failed to open storage: %w", err)
 	}
 	defer store.Close()
