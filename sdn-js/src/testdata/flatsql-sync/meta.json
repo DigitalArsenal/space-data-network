@@ -1,0 +1,108 @@
+{
+  "protocol": "/space-data-network/flatsql-sync/1.0.0",
+  "recordedFrom": "sdn-server internal/protocol.FlatSQLSyncHandler (genuine handler output)",
+  "records": [
+    {
+      "cid": "daad79d4462b4a9b357694137aa7b869c0d347f99e29bb0d81cf4cb0f73dde6a",
+      "norad": 56775,
+      "objectName": "STARLINK-6292",
+      "providerId": "space-data-network-02",
+      "sourceName": "celestrak-gp",
+      "batchId": "batch-a",
+      "sizeBytes": 156
+    },
+    {
+      "cid": "9629d13f145a23bd47157c8b18043300accb53ddf1bdd19eaf437b3dc77cdaa5",
+      "norad": 25544,
+      "objectName": "ISS (ZARYA)",
+      "providerId": "space-data-network-02",
+      "sourceName": "celestrak-gp",
+      "batchId": "batch-a",
+      "sizeBytes": 152
+    },
+    {
+      "cid": "7f1f2bbb5c68333e51c10c07f6608a9d9572cc10063926e39fb0a808427b0150",
+      "norad": 43013,
+      "objectName": "NOAA-20",
+      "providerId": "demo-provider",
+      "sourceName": "spacetrack-gp",
+      "batchId": "batch-b",
+      "sizeBytes": 148
+    }
+  ],
+  "page1": {
+    "file": "read_chunk_page1.bin",
+    "sha256": "5a05c5dd6633eb4bf306e7a1b383662524c37f84f7e10354a48da63d128b9c14",
+    "request": {
+      "limit": 2,
+      "op": "read_chunk",
+      "schema": "OMM.fbs"
+    },
+    "totalCount": 3,
+    "count": 2,
+    "snapshotId": "4e7249e0c5c3f0735ef5728efb9e68b3bd86d2d1ae63be23f02fb98ea7e2af64",
+    "head": "4e7249e0c5c3f0735ef5728efb9e68b3bd86d2d1ae63be23f02fb98ea7e2af64",
+    "cursor": {
+      "encoded": "eyJ2IjoxLCJtb2RlIjoicm93aWQtc25hcHNob3QiLCJhZnRlcl9yb3dfaWQiOjAsIm1heF9yb3dfaWQiOjMsInNuYXBzaG90X2lkIjoiNGU3MjQ5ZTBjNWMzZjA3MzVlZjU3MjhlZmI5ZTY4YjNiZDg2ZDJkMWFlNjNiZTIzZjAyZmI5OGVhN2UyYWY2NCJ9",
+      "v": 1,
+      "mode": "rowid-snapshot",
+      "afterRowId": 0,
+      "maxRowId": 3,
+      "snapshotId": "4e7249e0c5c3f0735ef5728efb9e68b3bd86d2d1ae63be23f02fb98ea7e2af64"
+    },
+    "nextCursor": {
+      "encoded": "eyJ2IjoxLCJtb2RlIjoicm93aWQtc25hcHNob3QiLCJhZnRlcl9yb3dfaWQiOjIsIm1heF9yb3dfaWQiOjMsInNuYXBzaG90X2lkIjoiNGU3MjQ5ZTBjNWMzZjA3MzVlZjU3MjhlZmI5ZTY4YjNiZDg2ZDJkMWFlNjNiZTIzZjAyZmI5OGVhN2UyYWY2NCJ9",
+      "v": 1,
+      "mode": "rowid-snapshot",
+      "afterRowId": 2,
+      "maxRowId": 3,
+      "snapshotId": "4e7249e0c5c3f0735ef5728efb9e68b3bd86d2d1ae63be23f02fb98ea7e2af64"
+    },
+    "resultCids": [
+      "daad79d4462b4a9b357694137aa7b869c0d347f99e29bb0d81cf4cb0f73dde6a",
+      "9629d13f145a23bd47157c8b18043300accb53ddf1bdd19eaf437b3dc77cdaa5"
+    ]
+  },
+  "page2": {
+    "file": "read_chunk_page2.bin",
+    "sha256": "24131984aea29f25bd9196489a32d5852e7cf89525784d235225ad1175d7248b",
+    "request": {
+      "cursor": "eyJ2IjoxLCJtb2RlIjoicm93aWQtc25hcHNob3QiLCJhZnRlcl9yb3dfaWQiOjIsIm1heF9yb3dfaWQiOjMsInNuYXBzaG90X2lkIjoiNGU3MjQ5ZTBjNWMzZjA3MzVlZjU3MjhlZmI5ZTY4YjNiZDg2ZDJkMWFlNjNiZTIzZjAyZmI5OGVhN2UyYWY2NCJ9",
+      "head": "4e7249e0c5c3f0735ef5728efb9e68b3bd86d2d1ae63be23f02fb98ea7e2af64",
+      "limit": 2,
+      "op": "read_chunk",
+      "schema": "OMM.fbs",
+      "snapshot_id": "4e7249e0c5c3f0735ef5728efb9e68b3bd86d2d1ae63be23f02fb98ea7e2af64"
+    },
+    "totalCount": 3,
+    "count": 1,
+    "snapshotId": "4e7249e0c5c3f0735ef5728efb9e68b3bd86d2d1ae63be23f02fb98ea7e2af64",
+    "head": "4e7249e0c5c3f0735ef5728efb9e68b3bd86d2d1ae63be23f02fb98ea7e2af64",
+    "cursor": {
+      "encoded": "eyJ2IjoxLCJtb2RlIjoicm93aWQtc25hcHNob3QiLCJhZnRlcl9yb3dfaWQiOjIsIm1heF9yb3dfaWQiOjMsInNuYXBzaG90X2lkIjoiNGU3MjQ5ZTBjNWMzZjA3MzVlZjU3MjhlZmI5ZTY4YjNiZDg2ZDJkMWFlNjNiZTIzZjAyZmI5OGVhN2UyYWY2NCJ9",
+      "v": 1,
+      "mode": "rowid-snapshot",
+      "afterRowId": 2,
+      "maxRowId": 3,
+      "snapshotId": "4e7249e0c5c3f0735ef5728efb9e68b3bd86d2d1ae63be23f02fb98ea7e2af64"
+    },
+    "resultCids": [
+      "7f1f2bbb5c68333e51c10c07f6608a9d9572cc10063926e39fb0a808427b0150"
+    ]
+  },
+  "manifest": {
+    "file": "open_manifest.bin",
+    "sha256": "148030a90267a6ceeb4404a807f3214560d78052ee96a9e9401c3f7027008bff"
+  },
+  "publishedShard": {
+    "file": "read_published_shard.bin",
+    "sha256": "8112aca7f09667800e30ae60b5e24294514c816aff036739b117b99706240c1d",
+    "shardCid": "bafkd4wirecompatshard",
+    "shardSha256": "2cb814b6be4c34f39c7507a1fcde2b39f769ad35eef4fd705447270f7eec42eb",
+    "rowCount": 2,
+    "byteCount": 316,
+    "providerId": "space-data-network-02",
+    "sourceName": "celestrak-gp",
+    "batchId": "batch-a"
+  }
+}

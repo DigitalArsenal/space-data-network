@@ -31,6 +31,13 @@
 
 import { sha256 } from './crypto/hd-wallet';
 import type { EngineEpochQueryProfilesConfig, EngineEpochQueryRequest } from './epoch-query-sql';
+import type {
+  FlatSqlPublishedShard,
+  FlatSqlSyncChunk,
+  FlatSqlSyncManifest,
+  FlatSqlSyncManifestSegment,
+  FlatSqlSyncRecordRef,
+} from './flatsql-sync';
 import type { SchemaName } from './schemas';
 import type { StoredRecord, QueryFilter } from './storage';
 import {
@@ -39,7 +46,10 @@ import {
   getSharedFlatSql,
   iterateFlatSqlSizePrefixedStream,
   LOCAL_FLATSQL_DEFAULT_SOURCE,
+  type LocalFlatSqlIngestRecord,
   type LocalFlatSqlPersistenceStore,
+  type LocalFlatSqlPinLedgerEntry,
+  type LocalFlatSqlPinLedgerQuery,
   type LocalFlatSqlSchema,
   type LocalFlatSqlStore,
 } from './local-flatsql';
@@ -261,6 +271,55 @@ interface EngineRecordStoreContext {
   standards: LocalFlatSqlStore | null;
   standardIds: Map<string, { standardId: string; fileId: string }>;
   options: FlatSQLEngineRecordStoreOptions;
+  /** Compact durable index for datasync-fed envelope rows (loop D.4). */
+  syncEnvelopePersistence?: { store: LocalFlatSqlPersistenceStore; key: string } | null;
+}
+
+// ---------------------------------------------------------------------------
+// Datasync-fed ingest (loop D.4): published-shard / flatsql-sync streams
+// materialize into THE engine store with pin-ledger provenance intact.
+// ---------------------------------------------------------------------------
+
+/** Provenance fallbacks for sync-chunk ingest (per-record refs win). */
+export interface EngineSyncChunkIngestOptions {
+  /** Explicit source partition override (wins over all provenance). */
+  source?: string | null;
+  /** Fallback provider when a record ref carries no provider tag. */
+  providerId?: string | null;
+  /** Fallback source name when a record ref carries no source tag. */
+  sourceName?: string | null;
+  /** Persist engine streams + envelope index after ingest (default true). */
+  persist?: boolean;
+}
+
+export interface EngineSyncIngestResult {
+  standardId: string;
+  /** Frames delivered by the peer (before dedupe). */
+  totalRecords: number;
+  /** New engine rows materialized (dedupe makes replay 0). */
+  ingestedRecords: number;
+  /** Envelope index rows written for the first time. */
+  indexedEnvelopes: number;
+  /** Source partitions touched (server layout: `registerSource` per provider). */
+  sources: string[];
+  /** True when the pin ledger proved this delivery was already materialized. */
+  replayed: boolean;
+}
+
+export interface EnginePublishedShardIngestOptions {
+  /** Explicit source partition override (wins over header/manifest provenance). */
+  source?: string | null;
+  /** libp2p peer the shard was fetched from (pin-ledger provenance). */
+  providerPeerId?: string | null;
+  providerPublicKey?: string | null;
+  /** Manifest the shard was announced in (provenance fallback: provider/source/batch/head). */
+  manifest?: Pick<FlatSqlSyncManifest, 'providerId' | 'sourceName' | 'batchId' | 'schema' | 'queryProfile' | 'snapshotId' | 'head' | 'highWaterMark'> | null;
+  /** Manifest segment for this shard (feed head / chunk-hash fallback). */
+  segment?: Pick<FlatSqlSyncManifestSegment, 'rowCount' | 'chunkHash' | 'shardSha256' | 'feedHead'> | null;
+  /** Write per-record envelope index rows (cid = sha256, the server computeCID). Default true. */
+  indexEnvelopes?: boolean;
+  /** Persist engine streams + pin ledger + envelope index after ingest (default true). */
+  persist?: boolean;
 }
 
 export class FlatSQLEngineRecordStore {
@@ -268,6 +327,9 @@ export class FlatSQLEngineRecordStore {
   private readonly standards: LocalFlatSqlStore | null;
   private readonly standardIds: Map<string, { standardId: string; fileId: string }>;
   private readonly byCid = new Map<string, StoredRecord>();
+  /** Datasync-fed envelope index rows (schema|cid → row), payloads live in the engine partitions. */
+  private readonly syncEnvelopes = new Map<string, SyncEnvelopeRow>();
+  private readonly syncEnvelopePersistence: { store: LocalFlatSqlPersistenceStore; key: string } | null;
   private readonly persistence?: SnapshotPersistence;
   private readonly flushOnWrite: boolean;
   private readonly hashHex: (data: Uint8Array) => Promise<string>;
@@ -279,6 +341,7 @@ export class FlatSQLEngineRecordStore {
     this.controlDb = context.controlDb;
     this.standards = context.standards;
     this.standardIds = context.standardIds;
+    this.syncEnvelopePersistence = context.syncEnvelopePersistence ?? null;
     this.persistence = context.options.persistence;
     this.flushOnWrite = context.options.flushOnWrite ?? Boolean(context.options.persistence);
     this.hashHex = context.options.hashHex ?? sha256Hex;
@@ -314,17 +377,24 @@ export class FlatSQLEngineRecordStore {
     }
 
     const resolvedOptions: FlatSQLEngineRecordStoreOptions = { ...options };
-    if (!resolvedOptions.persistence && options.persistenceKey) {
+    let syncEnvelopePersistence: { store: LocalFlatSqlPersistenceStore; key: string } | null = null;
+    if (options.persistenceKey) {
       const backing = options.persistenceStore
         ?? createDefaultLocalFlatSqlPersistenceStore({
           desktopPersistenceBaseUrl: options.desktopPersistenceBaseUrl,
           fetch: options.fetch,
         });
       if (backing.available) {
-        resolvedOptions.persistence = new PersistenceStoreSnapshotPersistence(
-          backing,
-          `${options.persistenceKey}:record-envelopes`,
-        );
+        if (!resolvedOptions.persistence) {
+          resolvedOptions.persistence = new PersistenceStoreSnapshotPersistence(
+            backing,
+            `${options.persistenceKey}:record-envelopes`,
+          );
+        }
+        syncEnvelopePersistence = {
+          store: backing,
+          key: `${options.persistenceKey}:sync-envelopes`,
+        };
       }
     }
 
@@ -333,8 +403,10 @@ export class FlatSQLEngineRecordStore {
       standards,
       standardIds,
       options: resolvedOptions,
+      syncEnvelopePersistence,
     });
     await store.replayJournal();
+    await store.replaySyncEnvelopes();
     return store;
   }
 
@@ -388,6 +460,320 @@ export class FlatSQLEngineRecordStore {
     options?: Parameters<LocalFlatSqlStore['ingestFlatBufferStream']>[2],
   ): Promise<number> {
     return this.requireStandards().ingestFlatBufferStream(standardId, streamBytes, options);
+  }
+
+  /**
+   * Datasync-fed ingest (loop D.4): materialize a flatsql-sync `read_chunk`
+   * response into the engine store with its TRUE provenance. Every record
+   * ref's provider/source/batch tags route the record into its per-provider
+   * source partition (`registerSource` shadow tables — the server layout),
+   * NOT into the node's default `local` partition; the envelope index
+   * (`sdn_record_index` mirror) gains a row per ref (cid / peer /
+   * source_timestamp), with the payload bytes living in the engine
+   * partition exactly like the server keeps them in stream files.
+   *
+   * Idempotent under sync re-delivery: dedupe keys are the D.1
+   * ingested-keys ledger keys (`schema|cid|provider|source|batch|timestamp`
+   * — identical to the webUI sync worker's `flatSqlRecordKeys`), and
+   * envelope rows upsert by (schema, cid).
+   */
+  async ingestSyncChunk(
+    chunk: FlatSqlSyncChunk,
+    options: EngineSyncChunkIngestOptions = {},
+  ): Promise<EngineSyncIngestResult> {
+    const standards = this.requireStandards();
+    const schemaName = normalizeSyncSchemaName(chunk.header.schema);
+    const standardId = standardIdFromSchemaName(schemaName);
+    const refs = chunk.header.results;
+    const frames = chunk.records;
+
+    if (refs.length === 0) {
+      // Anonymous stream (no refs): materialize under the fallback
+      // provenance and index envelopes by content hash (server computeCID).
+      return await this.ingestAnonymousSyncStream(standardId, schemaName, frames, options);
+    }
+    if (frames.length < refs.length) {
+      throw new Error(`FlatSQL sync chunk delivered ${frames.length}/${refs.length} record frames`);
+    }
+
+    // Group records by their resolved source partition, preserving order.
+    const groups = new Map<string, LocalFlatSqlIngestRecord[]>();
+    for (let index = 0; index < refs.length; index += 1) {
+      const ref = refs[index];
+      const source = resolveSyncSourceName(ref, options, this.defaultSource);
+      const group = groups.get(source) ?? [];
+      group.push(syncIngestRecordFromRef(schemaName, ref, frames[index]));
+      groups.set(source, group);
+    }
+
+    let ingestedRecords = 0;
+    for (const [source, group] of groups) {
+      ingestedRecords += await standards.ingestRecords(standardId, group, { source, persist: false });
+    }
+
+    let indexedEnvelopes = 0;
+    for (const ref of refs) {
+      if (!ref.cid) continue;
+      if (this.upsertSyncEnvelope({
+        schema: schemaName,
+        cid: ref.cid,
+        peerId: ref.peerId || ref.producerPeerId || '',
+        timestampMs: parseSyncTimestampMs(ref.timestamp, this.nowMs),
+      })) {
+        indexedEnvelopes += 1;
+      }
+    }
+
+    if (options.persist !== false) {
+      await standards.flush(standardId);
+      await this.persistSyncEnvelopes();
+    }
+    return {
+      standardId,
+      totalRecords: frames.length,
+      ingestedRecords,
+      indexedEnvelopes,
+      sources: [...groups.keys()],
+      replayed: ingestedRecords === 0 && frames.length > 0,
+    };
+  }
+
+  /**
+   * Datasync-fed ingest (loop D.4): materialize a published FlatSQL shard
+   * (`read_published_shard` response, or a manifest segment fetched over
+   * IPFS) into the engine store. The shard's provider/source/batch
+   * provenance routes into a per-provider engine source partition, the pin
+   * ledger records the shard exactly like the webUI sync worker does
+   * (role `shard`, verified, byteHash/head/rowCount), and — by default —
+   * every record frame is indexed as an envelope row whose cid is the
+   * sha256 of the frame (byte-identical to the server's computeCID).
+   *
+   * Idempotent under re-delivery: a verified pin-ledger entry for the same
+   * (cid, standard, provider/source/batch) short-circuits to a no-op, and
+   * the ingested-keys ledger (`shard:<cid>` keys) catches replays even when
+   * the ledger entry is missing.
+   */
+  async ingestPublishedShard(
+    shard: FlatSqlPublishedShard,
+    options: EnginePublishedShardIngestOptions = {},
+  ): Promise<EngineSyncIngestResult> {
+    const standards = this.requireStandards();
+    const header = shard.header;
+    const cid = header.cid?.trim();
+    if (!cid) throw new Error('published shard cid is required');
+    const schemaName = normalizeSyncSchemaName(header.schema || options.manifest?.schema || '');
+    const standardId = standardIdFromSchemaName(schemaName);
+
+    const providerId = header.providerId ?? options.manifest?.providerId ?? null;
+    const sourceName = header.sourceName ?? options.manifest?.sourceName ?? null;
+    const batchId = header.batchId ?? options.manifest?.batchId ?? null;
+    const source = options.source?.trim()
+      || sourceName?.trim()
+      || providerId?.trim()
+      || this.defaultSource;
+
+    const frameCount = countFlatSqlStreamFrames(shard.streamBytes);
+    const expectedRows = Math.max(0, Math.floor(header.rowCount || options.segment?.rowCount || 0));
+    if (expectedRows > 0 && frameCount !== expectedRows) {
+      throw new Error(`published shard ${cid} carries ${frameCount}/${expectedRows} record frames`);
+    }
+
+    // Pin-ledger idempotence: a verified materialized entry for this shard
+    // under the same provenance makes re-delivery a no-op.
+    const existing = await standards.listPinLedgerEntries({
+      cid,
+      standardId,
+      providerId,
+      sourceName,
+      batchId,
+      role: 'shard',
+      verificationState: 'verified',
+    });
+    if (existing.some((entry) => Boolean(entry.materializedAt))) {
+      return {
+        standardId,
+        totalRecords: frameCount,
+        ingestedRecords: 0,
+        indexedEnvelopes: 0,
+        sources: [source],
+        replayed: true,
+      };
+    }
+
+    const expectedSha = header.shardSha256?.trim() || options.segment?.shardSha256?.trim();
+    if (expectedSha) {
+      const actualSha = await this.hashHex(shard.streamBytes);
+      if (actualSha !== expectedSha) {
+        throw new Error(`published shard SHA-256 mismatch for ${cid}`);
+      }
+    }
+
+    const now = new Date(this.nowMs()).toISOString();
+    const ledgerEntry: LocalFlatSqlPinLedgerEntry = {
+      cid,
+      standardId,
+      schemaName,
+      providerPeerId: options.providerPeerId ?? null,
+      providerPublicKey: options.providerPublicKey ?? null,
+      providerId,
+      sourceName,
+      batchId,
+      queryProfile: header.queryProfile || options.manifest?.queryProfile || 'dataset-publication-offset-v1',
+      snapshotId: options.segment?.feedHead || options.manifest?.snapshotId || header.head || null,
+      head: options.segment?.feedHead || header.head || options.manifest?.head || null,
+      highWaterMark: options.manifest?.highWaterMark || null,
+      byteHash: expectedSha || options.segment?.chunkHash || null,
+      role: 'shard',
+      rowCount: expectedRows > 0 ? expectedRows : frameCount,
+      byteCount: shard.streamBytes.byteLength,
+      verificationState: 'verified',
+      materializedAt: now,
+      verifiedAt: now,
+      updatedAt: now,
+    };
+
+    const ingestedRecords = await standards.ingestFlatBufferStream(standardId, shard.streamBytes, {
+      source,
+      persist: false,
+      // NOT the worker's trust-ordered `published:` prefix: the record-key
+      // ledger must keep replays idempotent even without the pin ledger.
+      recordKeyPrefix: `shard:${cid}`,
+      pinLedgerEntries: [ledgerEntry],
+    });
+    if (ingestedRecords === 0) {
+      // Replay caught by the ingested-keys ledger — still record provenance
+      // so the pin ledger converges.
+      await standards.recordPinLedgerEntries([ledgerEntry], { persist: false });
+    }
+
+    let indexedEnvelopes = 0;
+    if (options.indexEnvelopes !== false) {
+      const timestampMs = this.nowMs();
+      for (const frame of iterateFlatSqlSizePrefixedStream(shard.streamBytes)) {
+        const recordCid = await this.hashHex(frame);
+        if (this.upsertSyncEnvelope({
+          schema: schemaName,
+          cid: recordCid,
+          peerId: options.providerPeerId ?? '',
+          timestampMs,
+        })) {
+          indexedEnvelopes += 1;
+        }
+      }
+    }
+
+    if (options.persist !== false) {
+      await standards.flush(standardId);
+      await this.persistSyncEnvelopes();
+    }
+    return {
+      standardId,
+      totalRecords: frameCount,
+      ingestedRecords,
+      indexedEnvelopes,
+      sources: [source],
+      replayed: ingestedRecords === 0 && frameCount > 0,
+    };
+  }
+
+  /** Pin-ledger provenance surface (provider/source/batch attribution queries). */
+  async listPinLedgerEntries(query?: LocalFlatSqlPinLedgerQuery): Promise<LocalFlatSqlPinLedgerEntry[]> {
+    return this.requireStandards().listPinLedgerEntries(query);
+  }
+
+  async recordPinLedgerEntries(entries: LocalFlatSqlPinLedgerEntry[]): Promise<void> {
+    return this.requireStandards().recordPinLedgerEntries(entries);
+  }
+
+  private async ingestAnonymousSyncStream(
+    standardId: string,
+    schemaName: string,
+    frames: Uint8Array[],
+    options: EngineSyncChunkIngestOptions,
+  ): Promise<EngineSyncIngestResult> {
+    const standards = this.requireStandards();
+    const source = options.source?.trim()
+      || options.sourceName?.trim()
+      || options.providerId?.trim()
+      || this.defaultSource;
+    const records: LocalFlatSqlIngestRecord[] = [];
+    for (const frame of frames) {
+      records.push({
+        schemaName,
+        cid: await this.hashHex(frame),
+        providerId: options.providerId ?? null,
+        sourceName: options.sourceName ?? null,
+        dataBytes: frame,
+      });
+    }
+    const ingestedRecords = await standards.ingestRecords(standardId, records, { source, persist: false });
+    let indexedEnvelopes = 0;
+    for (const record of records) {
+      if (this.upsertSyncEnvelope({
+        schema: schemaName,
+        cid: record.cid,
+        peerId: '',
+        timestampMs: this.nowMs(),
+      })) {
+        indexedEnvelopes += 1;
+      }
+    }
+    if (options.persist !== false) {
+      await standards.flush(standardId);
+      await this.persistSyncEnvelopes();
+    }
+    return {
+      standardId,
+      totalRecords: frames.length,
+      ingestedRecords,
+      indexedEnvelopes,
+      sources: frames.length > 0 ? [source] : [],
+      replayed: ingestedRecords === 0 && frames.length > 0,
+    };
+  }
+
+  /**
+   * Upsert a datasync-fed envelope index row. Server mirror: SQLite holds
+   * index/provenance rows only — the payload stays in the engine partition
+   * (the server's append-only stream files). Returns true on first insert.
+   */
+  private upsertSyncEnvelope(row: SyncEnvelopeRow): boolean {
+    const key = `${row.schema}|${row.cid}`;
+    const isNew = !this.syncEnvelopes.has(key) && !this.byCid.has(row.cid);
+    this.syncEnvelopes.set(key, row);
+    this.controlDb.query(
+      'INSERT OR REPLACE INTO sdn_record_index (schema_name, cid, peer_id, source_timestamp, created_at) VALUES (?1, ?2, ?3, ?4, ?5)',
+      [row.schema, row.cid, row.peerId, row.timestampMs, Math.floor(this.nowMs() / 1000)],
+    );
+    return isNew;
+  }
+
+  private async replaySyncEnvelopes(): Promise<void> {
+    if (!this.syncEnvelopePersistence) return;
+    const value = await this.syncEnvelopePersistence.store.readJson(this.syncEnvelopePersistence.key);
+    if (!Array.isArray(value)) return;
+    for (const candidate of value) {
+      if (!candidate || typeof candidate !== 'object') continue;
+      const row = candidate as Partial<SyncEnvelopeRow>;
+      if (typeof row.schema !== 'string' || typeof row.cid !== 'string' || !row.schema || !row.cid) continue;
+      this.upsertSyncEnvelope({
+        schema: row.schema,
+        cid: row.cid,
+        peerId: typeof row.peerId === 'string' ? row.peerId : '',
+        timestampMs: typeof row.timestampMs === 'number' && Number.isFinite(row.timestampMs)
+          ? row.timestampMs
+          : this.nowMs(),
+      });
+    }
+  }
+
+  private async persistSyncEnvelopes(): Promise<void> {
+    if (!this.syncEnvelopePersistence) return;
+    if (this.syncEnvelopes.size === 0) return;
+    await this.syncEnvelopePersistence.store.writeJson(
+      this.syncEnvelopePersistence.key,
+      Array.from(this.syncEnvelopes.values()),
+    );
   }
 
   /**
@@ -518,6 +904,9 @@ export class FlatSQLEngineRecordStore {
   async delete(cid: string): Promise<void> {
     this.controlDb.query('DELETE FROM sdn_record_index WHERE cid = ?1', [cid]);
     this.byCid.delete(cid);
+    for (const [key, row] of this.syncEnvelopes) {
+      if (row.cid === cid) this.syncEnvelopes.delete(key);
+    }
     if (this.flushOnWrite) await this.flush();
   }
 
@@ -533,6 +922,7 @@ export class FlatSQLEngineRecordStore {
   }
 
   async flush(): Promise<void> {
+    await this.persistSyncEnvelopes();
     if (!this.persistence) return;
     await this.persistence.save(encodeSnapshot(this.listRecords()));
   }
@@ -548,6 +938,86 @@ export class FlatSQLEngineRecordStore {
       // Engine teardown is best-effort; the durable journal is already safe.
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Datasync ingest helpers (loop D.4)
+// ---------------------------------------------------------------------------
+
+interface SyncEnvelopeRow {
+  schema: string;
+  cid: string;
+  peerId: string;
+  timestampMs: number;
+}
+
+function normalizeSyncSchemaName(schema: string): string {
+  const trimmedSchema = schema.trim();
+  if (!trimmedSchema) throw new Error('FlatSQL sync schema is required');
+  return trimmedSchema;
+}
+
+function standardIdFromSchemaName(schemaName: string): string {
+  const standardId = schemaName.trim().split('.')[0]?.toUpperCase() ?? '';
+  if (!standardId) throw new Error('FlatSQL sync schema is required');
+  return standardId;
+}
+
+/**
+ * Resolve a sync record's engine source partition. TRUE provenance first:
+ * an explicit caller override wins, then the record ref's own source tag,
+ * then the query-level fallbacks, then the record's provider id — the
+ * server's default `local` partition is the last resort only.
+ */
+function resolveSyncSourceName(
+  ref: FlatSqlSyncRecordRef,
+  options: EngineSyncChunkIngestOptions,
+  defaultSource: string,
+): string {
+  return options.source?.trim()
+    || ref.sourceName?.trim()
+    || options.sourceName?.trim()
+    || ref.providerId?.trim()
+    || options.providerId?.trim()
+    || defaultSource;
+}
+
+function syncIngestRecordFromRef(
+  schemaName: string,
+  ref: FlatSqlSyncRecordRef,
+  frame: Uint8Array,
+): LocalFlatSqlIngestRecord {
+  return {
+    // Dedupe key = schema|cid|provider|source|batch|timestamp — identical
+    // to the webUI worker's flatSqlRecordKeys, so records deduplicate
+    // across every sync path that feeds the same engine store.
+    schemaName: ref.schemaName && ref.schemaName !== 'unknown' ? ref.schemaName : schemaName,
+    cid: ref.cid,
+    peerId: ref.peerId || null,
+    providerId: ref.providerId ?? null,
+    sourceName: ref.sourceName ?? null,
+    batchId: ref.batchId ?? null,
+    timestamp: ref.timestamp ?? null,
+    dataBytes: frame,
+  };
+}
+
+function parseSyncTimestampMs(timestamp: string | undefined, nowMs: () => number): number {
+  if (timestamp) {
+    const parsed = Date.parse(timestamp);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return nowMs();
+}
+
+/** Frame count of an aligned little-endian size-prefixed record stream. */
+function countFlatSqlStreamFrames(streamBytes: Uint8Array): number {
+  let count = 0;
+  for (const frame of iterateFlatSqlSizePrefixedStream(streamBytes)) {
+    void frame;
+    count += 1;
+  }
+  return count;
 }
 
 /**
