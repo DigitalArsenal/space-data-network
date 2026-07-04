@@ -99,9 +99,35 @@ export {
 } from './engine-record-store';
 export type {
   FlatSQLEngineRecordStoreOptions,
+  EngineQueryParam,
   SnapshotPersistence,
   HeliaLike,
 } from './engine-record-store';
+// PRIMARY public query API (loop D.2): engine-native epoch profiles —
+// same template SQL/params as sdn-server engine_records.go, aligned raw
+// FlatBuffer streams out.
+export {
+  ENGINE_EPOCH_PROFILES,
+  ENGINE_EPOCH_FALLBACK_PROFILE,
+  ENGINE_EPOCH_FALLBACK_LIMIT,
+  DEFAULT_ENGINE_EPOCH_SPECS,
+  normalizeEngineEpochProfile,
+  buildEngineEpochProfileSql,
+  resolveEngineEpochQuery,
+  buildEpochProfileSql,
+  EPOCH_SQL_PROFILES,
+  EPOCH_SQL_PROFILE_DESCRIPTIONS,
+} from './epoch-query-sql';
+export type {
+  EngineEpochProfile,
+  EngineEpochProfileSpec,
+  EngineEpochQuery,
+  EngineEpochQueryRequest,
+  EngineEpochProfileDefaults,
+  EngineEpochQueryProfilesConfig,
+  EpochSqlProfile,
+  EpochProfileSqlOptions,
+} from './epoch-query-sql';
 // Per-standard engine store surface (per-source shadow tables + unified views).
 export {
   createLocalFlatSqlStore,
@@ -110,6 +136,8 @@ export {
   MemoryFlatSqlPersistenceStore,
   LOCAL_FLATSQL_DEFAULT_SOURCE,
   decodeFlatSqlSizePrefixedStream,
+  iterateFlatSqlSizePrefixedStream,
+  engineEpochSpecForSchema,
   flatSqlSizePrefixedStreamInfo,
   stripSdnFlatBufferSizePrefix,
   isReadOnlyFlatSqlQuery,

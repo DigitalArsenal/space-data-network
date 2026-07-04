@@ -30,17 +30,22 @@
  */
 
 import { sha256 } from './crypto/hd-wallet';
+import type { EngineEpochQueryProfilesConfig, EngineEpochQueryRequest } from './epoch-query-sql';
 import type { SchemaName } from './schemas';
 import type { StoredRecord, QueryFilter } from './storage';
 import {
   createDefaultLocalFlatSqlPersistenceStore,
   createLocalFlatSqlStore,
   getSharedFlatSql,
+  iterateFlatSqlSizePrefixedStream,
   LOCAL_FLATSQL_DEFAULT_SOURCE,
   type LocalFlatSqlPersistenceStore,
   type LocalFlatSqlSchema,
   type LocalFlatSqlStore,
 } from './local-flatsql';
+
+/** Positional query parameter accepted by the engine (flatsql/wasm QueryParam). */
+export type EngineQueryParam = null | boolean | number | string | Uint8Array;
 
 // ---------------------------------------------------------------------------
 // Snapshot persistence (journal) — codec + backends preserved from the
@@ -242,6 +247,13 @@ export interface FlatSQLEngineRecordStoreOptions {
   persistenceStore?: LocalFlatSqlPersistenceStore | null;
   /** Source partition for records stored through the node surface (default `local`). */
   defaultSource?: string;
+  /**
+   * Per-standard default query profiles (loop D.2) — retrieval-module
+   * config shape, keyed by schema name (`OMM.fbs`) or standard id (`OMM`).
+   */
+  queryProfiles?: EngineEpochQueryProfilesConfig | null;
+  /** Clock for defaulted query epochs (tests). */
+  nowSeconds?: (() => number) | null;
 }
 
 interface EngineRecordStoreContext {
@@ -291,6 +303,8 @@ export class FlatSQLEngineRecordStore {
         desktopPersistenceBaseUrl: options.desktopPersistenceBaseUrl,
         fetch: options.fetch,
         persistenceStore: options.persistenceStore,
+        queryProfiles: options.queryProfiles,
+        nowSeconds: options.nowSeconds,
       })
       : null;
     const standardIds = new Map<string, { standardId: string; fileId: string }>();
@@ -326,6 +340,59 @@ export class FlatSQLEngineRecordStore {
 
   /** Per-standard engine store (per-source shadow tables + unified views). */
   get standardsStore(): LocalFlatSqlStore | null {
+    return this.standards;
+  }
+
+  /**
+   * PRIMARY public query API (loop D.2): run an engine-native epoch profile
+   * (`nearest` — the default — / `as_of` / `forward`; the server's retrieval
+   * profiles, SQL byte-identical to sdn-server engine_records.go, params
+   * bound in the same positional order) over the unified per-standard view
+   * and return the ALIGNED size-prefixed FlatBuffer frame stream — the wire
+   * format, byte-identical to the Go host for the same store contents.
+   *
+   * Defaults resolve request > per-standard `queryProfiles` config >
+   * compiled fallback (`nearest`, epoch = now, limit 50000) — the same
+   * precedence as the retrieval module.
+   */
+  queryEpochRawStream(standardId: string, request?: EngineEpochQueryRequest | null): Uint8Array {
+    const standards = this.requireStandards();
+    if (!standards.queryEpochRawStream) {
+      throw new Error('The configured standards store does not expose engine epoch raw-stream queries');
+    }
+    return standards.queryEpochRawStream(standardId, request ?? null);
+  }
+
+  /**
+   * Decoded-record convenience over `queryEpochRawStream`: an iterator of
+   * per-record FlatBuffer frames that are zero-copy subarray VIEWS into the
+   * aligned stream.
+   */
+  queryEpochFrames(
+    standardId: string,
+    request?: EngineEpochQueryRequest | null,
+  ): Generator<Uint8Array, void, undefined> {
+    return iterateFlatSqlSizePrefixedStream(this.queryEpochRawStream(standardId, request));
+  }
+
+  /**
+   * Generic aligned-raw-stream query (server mirror of
+   * FlatSQLStore.QueryRawStream): read-only SQL whose result cells are all
+   * BLOBs, run verbatim with positional params against the standard's
+   * engine database.
+   */
+  queryRawFlatBufferStream(standardId: string, sql: string, params?: EngineQueryParam[]): Uint8Array {
+    const standards = this.requireStandards();
+    if (!standards.queryRawFlatBufferStream) {
+      throw new Error('The configured standards store does not expose raw FlatBuffer stream queries');
+    }
+    return standards.queryRawFlatBufferStream(standardId, sql, params);
+  }
+
+  private requireStandards(): LocalFlatSqlStore {
+    if (!this.standards) {
+      throw new Error('No per-standard engine databases configured — open the store with `schemas`');
+    }
     return this.standards;
   }
 

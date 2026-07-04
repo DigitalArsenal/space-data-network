@@ -27,6 +27,10 @@ import {
   FlatSQLEngineRecordStore,
   type SnapshotPersistence,
 } from "./engine-record-store";
+import type {
+  EngineEpochQueryProfilesConfig,
+  EngineEpochQueryRequest,
+} from "./epoch-query-sql";
 import type { LocalFlatSqlSchema } from "./local-flatsql";
 import { getBootstrapRelays, EdgeDiscovery } from "./edge-discovery";
 import { SchemaName, SUPPORTED_SCHEMAS } from "./schemas";
@@ -103,6 +107,14 @@ export interface SDNConfig {
    * the server layout). Optional: the envelope store works without them.
    */
   storageSchemas?: LocalFlatSqlSchema[];
+  /**
+   * Per-standard default query profiles for the engine store (loop D.2) —
+   * the retrieval-module config shape, keyed by schema name (`OMM.fbs`):
+   * e.g. `{ "OMM.fbs": { profile: "nearest", limit: 50000 } }`. Request
+   * fields override; unset fields fall back to `nearest` / epoch=now /
+   * limit 50000.
+   */
+  storageQueryProfiles?: EngineEpochQueryProfilesConfig;
   /** Private key for auth challenge signing (32 bytes Ed25519 seed) */
   privateKey?: Uint8Array;
   /** Full HD wallet-derived identity (secp256k1 for PeerID + Ed25519 for auth) */
@@ -264,6 +276,7 @@ export class SDNNode {
           persistence: this.config.storagePersistence,
           persistenceKey: this.config.storeName || "sdn-store",
           schemas: this.config.storageSchemas,
+          queryProfiles: this.config.storageQueryProfiles,
         });
       } else {
         this.storage = backend;
@@ -471,6 +484,25 @@ export class SDNNode {
     }
 
     return this.storage.get(schema, cid);
+  }
+
+  /**
+   * PRIMARY data query path (loop D.2): engine-native epoch profile
+   * (`nearest` default / `as_of` / `forward`) over the node store's unified
+   * per-standard view — the server's retrieval profiles with byte-identical
+   * SQL/params — returning the ALIGNED size-prefixed FlatBuffer stream.
+   * Requires the default `flatsql` storage backend with `storageSchemas`.
+   */
+  queryEpochRawStream(standardId: string, request?: EngineEpochQueryRequest): Uint8Array {
+    if (!this.storage) {
+      throw new Error("Storage not enabled");
+    }
+    if (!(this.storage instanceof FlatSQLEngineRecordStore)) {
+      throw new Error(
+        "Epoch raw-stream queries require the FlatSQL engine record store backend",
+      );
+    }
+    return this.storage.queryEpochRawStream(standardId, request ?? null);
   }
 
   /**
