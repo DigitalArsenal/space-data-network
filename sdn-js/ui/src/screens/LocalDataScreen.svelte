@@ -1586,6 +1586,10 @@
 
   function handleSubscriptionRowKeydown(schema: SchemaSyncRow, event: KeyboardEvent): void {
     if (event.key !== 'Enter' && event.key !== ' ') return;
+    // Keyboard parity with handleSubscriptionRowClick: Enter/Space on an
+    // interactive child (Pause / Retry / detail inputs) must activate that
+    // control — hijacking it made row buttons unreachable by keyboard.
+    if (event.target instanceof Element && event.target.closest('button, input, select, textarea, a, label')) return;
     event.preventDefault();
     event.stopPropagation();
     toggleSubscriptionRowDetails(schema);
@@ -1603,6 +1607,9 @@
 
   function handleCatalogRowKeydown(row: DataCatalogRow, event: KeyboardEvent): void {
     if (event.key !== 'Enter' && event.key !== ' ') return;
+    // Same keyboard-parity guard as the subscription rows: let interactive
+    // children (cell triggers, action-panel buttons) receive Enter/Space.
+    if (event.target instanceof Element && event.target.closest('button, input, select, textarea, a, label')) return;
     event.preventDefault();
     event.stopPropagation();
     suppressCatalogOutsideClearOnce();

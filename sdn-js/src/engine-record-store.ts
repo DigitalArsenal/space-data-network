@@ -432,7 +432,7 @@ export class FlatSQLEngineRecordStore {
     if (!standards.queryEpochRawStream) {
       throw new Error('The configured standards store does not expose engine epoch raw-stream queries');
     }
-    return standards.queryEpochRawStream(standardId, request ?? null);
+    return requireSyncStream(standards.queryEpochRawStream(standardId, request ?? null));
   }
 
   /**
@@ -787,7 +787,7 @@ export class FlatSQLEngineRecordStore {
     if (!standards.queryRawFlatBufferStream) {
       throw new Error('The configured standards store does not expose raw FlatBuffer stream queries');
     }
-    return standards.queryRawFlatBufferStream(standardId, sql, params);
+    return requireSyncStream(standards.queryRawFlatBufferStream(standardId, sql, params));
   }
 
   private requireStandards(): LocalFlatSqlStore {
@@ -949,6 +949,18 @@ interface SyncEnvelopeRow {
   cid: string;
   peerId: string;
   timestampMs: number;
+}
+
+/**
+ * The engine record store always wraps the in-process (synchronous) engine
+ * store; the async raw-stream variants exist only on worker-proxied stores.
+ * No silent adaptation: a Promise here means a mis-wired store.
+ */
+function requireSyncStream(stream: Uint8Array | Promise<Uint8Array>): Uint8Array {
+  if (stream instanceof Uint8Array) return stream;
+  throw new Error(
+    'FlatSQLEngineRecordStore requires a synchronous standards store; worker-proxied stores expose the async raw-stream API directly',
+  );
 }
 
 function normalizeSyncSchemaName(schema: string): string {

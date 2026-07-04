@@ -2022,6 +2022,17 @@ tr[aria-expanded='true'] .sdn-row-chevron,
   .sdn-subscription-detail-controls {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  /* The two-column explorer topline (controls | saved views) needs more
+     than ~1100px; below that the saved-view bar overflowed the explorer
+     horizontally. Stack it instead. */
+  .sdn-explorer-topline {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sdn-explorer-saved-view-compact {
+    justify-self: stretch;
+  }
 }
 
 .sdn-toast-region {

@@ -248,4 +248,15 @@ describe("SDNNode relay bootstrap", () => {
 
     await node.stop();
   });
+
+  it("rejects the removed legacy 'indexeddb' storage backend with a clear error (loop D.5)", async () => {
+    const { SDNNode } = await import("./node");
+
+    await expect(
+      SDNNode.create({
+        edgeRelays: ["/ip4/127.0.0.1/tcp/14080/ws/p2p/local-provider"],
+        storageBackend: "indexeddb" as never,
+      }),
+    ).rejects.toThrow(/SDNStorage.*removed/is);
+  });
 });

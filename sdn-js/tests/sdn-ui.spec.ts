@@ -101,7 +101,7 @@ test('data route renders subscribed local datastore preview without workbench st
   expect(syncCentering).toBeLessThanOrEqual(1);
 
   const storeRow = storeProducts.locator('tbody tr.sdn-catalog-row').filter({ hasText: 'PNM Feed' }).first();
-  await storeRow.locator('td').first().getByRole('button').click();
+  await storeRow.locator('button.sdn-catalog-cell-trigger').first().click();
   await expect(storeProducts.locator('.sdn-catalog-detail-grid')).toContainText('Provider');
   await expect(storeProducts.locator('.sdn-catalog-detail-grid')).toContainText('Public key');
   await expect(storeProducts.locator('.sdn-catalog-detail-grid')).toContainText(celestrakXpub.slice(0, 10));
@@ -134,11 +134,13 @@ test('data route renders subscribed local datastore preview without workbench st
   await subscriptionFilterMenu.getByRole('checkbox', { name: 'Free' }).check();
   await expect(syncSettings.getByRole('button', { name: 'Filters (1)' })).toBeVisible();
   await expect(syncSettings).toContainText('PNM');
-  await expect(syncSettings.locator('article').filter({ hasText: 'PNM Feed' })).toBeVisible();
+  await expect(syncSettings.locator('.sdn-subscription-row').filter({ hasText: 'PNM Feed' })).toBeVisible();
   await subscriptionFilterMenu.getByRole('button', { name: 'Clear all' }).click();
   await expect(syncSettings.getByRole('button', { name: 'Filters' })).toBeVisible();
   await expect(syncSettings).toContainText('12');
-  await syncSettings.locator('article').filter({ hasText: 'PNM Feed' }).getByRole('button', { name: 'Details' }).click();
+  // Subscription rows expand into the detail panel when clicked (the
+  // per-row 'Details' button was retired with the storage-grid refresh).
+  await syncSettings.locator('.sdn-subscription-row').filter({ hasText: 'PNM Feed' }).first().click();
   const subscriptionDetails = page.getByLabel('PNM subscription details');
   await expect(subscriptionDetails).toContainText('Access');
   await expect(subscriptionDetails).toContainText('Storage');
@@ -149,14 +151,14 @@ test('data route renders subscribed local datastore preview without workbench st
   await expect(subscriptionDetails.getByRole('button', { name: 'Reset row' })).toBeVisible();
   await expect(page.getByRole('spinbutton', { name: 'PNM storage cap' })).toHaveValue('2.5');
   await expect(page.getByRole('combobox', { name: 'PNM storage unit' })).toHaveValue('MB');
-  await page.getByRole('button', { name: 'Pause' }).press('Enter');
-  await expect(page.getByRole('button', { name: 'Resume' })).toBeVisible();
-  await page.getByRole('button', { name: 'Resume' }).press('Enter');
-  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+  await page.getByRole('button', { name: 'Pause', exact: true }).press('Enter');
+  await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Resume', exact: true }).press('Enter');
+  await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Verify pins' }).click();
   await expect(page.getByText(/verified pinned PNM shard artifacts|Verified .* PNM shard artifacts/i)).toBeVisible();
   await expect(syncSettings.getByRole('button', { name: 'Query' })).toHaveCount(0);
-  await expect(syncSettings.getByRole('button', { name: /retry sync/i })).toBeVisible();
+  await expect(syncSettings.getByRole('button', { name: 'PNM retry sync', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Explorer', exact: true }).click();
   await expect(page.getByRole('combobox', { name: 'Data type' })).toHaveValue('PNM');
@@ -183,7 +185,7 @@ test('data route renders subscribed local datastore preview without workbench st
   await page.getByRole('button', { name: 'Run' }).click();
   await expect(dataRows.getByRole('columnheader', { name: 'FILE ID' })).toBeVisible();
   await expect(dataRows.getByRole('cell', { name: 'bafy-pnm-cid', exact: true })).toBeVisible();
-  await page.getByRole('textbox', { name: 'Name', exact: true }).fill('PNM ID lookup');
+  await page.getByRole('textbox', { name: 'Saved view name' }).fill('PNM ID lookup');
   await page.getByRole('button', { name: 'Save view' }).click();
   const savedViews = page.getByRole('combobox', { name: 'Saved views' });
   await expect(savedViews).toContainText('PNM ID lookup');
@@ -195,8 +197,8 @@ test('data route renders subscribed local datastore preview without workbench st
 
   await page.reload();
   await page.getByRole('button', { name: 'Subscriptions' }).click();
-  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
-  await page.locator('article').filter({ hasText: 'PNM Feed' }).getByRole('button', { name: 'Details' }).click();
+  await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  await page.locator('.sdn-subscription-row').filter({ hasText: 'PNM Feed' }).first().click();
   await expect(page.getByRole('spinbutton', { name: 'PNM storage cap' })).toHaveValue('2.5');
   await expect(page.getByRole('combobox', { name: 'PNM storage unit' })).toHaveValue('MB');
 });
@@ -307,16 +309,18 @@ test('data route shows retry instead of query for sync-error subscriptions', asy
   await page.getByRole('button', { name: 'Subscriptions' }).click();
 
   const syncSettings = page.getByLabel('Sync settings');
-  const row = syncSettings.locator('article').filter({ hasText: 'CelesTrak Provider' });
+  const row = syncSettings.locator('.sdn-subscription-row').filter({ hasText: 'CelesTrak Provider' });
   await expect(row.getByLabel(/Status: Sync error/)).toBeVisible();
   await expect(row).toContainText('failed to dial remote FlatSQL sync peer');
   await expect(row.getByRole('button', { name: 'Query' })).toHaveCount(0);
   await expect(row.getByRole('button', { name: /retry sync/i })).toBeVisible();
-  await row.getByRole('button', { name: 'Details' }).click();
+  await row.first().click();
   await expect(page.getByRole('textbox', { name: 'PNM sync filter' })).toHaveValue('FILE_ID LIKE celestrak:%');
 
   await row.getByRole('button', { name: /retry sync/i }).press('Enter');
-  await expect(row.getByLabel(/Status: Queued/)).toBeVisible();
+  // Retry clears the error and requeues; the scheduler may already be
+  // driving the attempt by the time the label re-renders.
+  await expect(row.getByLabel(/Status: (Queued|Syncing)/)).toBeVisible();
 });
 
 test('data catalog rows highlight and expand actions when clicked', async ({ page }) => {
@@ -381,7 +385,7 @@ test('data catalog rows highlight and expand actions when clicked', async ({ pag
   await expect(row).toBeVisible();
   await expect(row).toHaveAttribute('aria-expanded', 'false');
 
-  const providerCell = row.locator('td').first().getByRole('button');
+  const providerCell = row.locator('button.sdn-catalog-cell-trigger').first();
   if (test.info().project.name.includes('mobile')) {
     await providerCell.tap();
   } else {
@@ -484,13 +488,12 @@ test('subscriptions search by message type and expose schema health actions', as
 
   const syncSettings = page.getByLabel('Sync settings');
   await syncSettings.getByRole('textbox', { name: 'Search subscriptions' }).fill('CAT');
-  const catRow = syncSettings.locator('article').filter({ hasText: 'CAT Feed' });
+  const catRow = syncSettings.locator('.sdn-subscription-row').filter({ hasText: 'CAT Feed' });
   await expect(catRow).toBeVisible();
   await expect(catRow).toContainText('2,500 rows');
   await expect(catRow).toContainText(/pinned/i);
-  await expect(catRow.getByRole('button', { name: 'Retry' })).toBeVisible();
-  await expect(catRow.getByRole('button', { name: 'Details' })).toBeVisible();
-  await catRow.getByRole('button', { name: 'Details' }).click();
+  await expect(catRow.getByRole('button', { name: /retry sync/i })).toBeVisible();
+  await catRow.first().click();
   await expect(page.getByLabel('CAT subscription details')).toContainText('Health');
   await expect(page.getByLabel('CAT subscription details')).toContainText('Freshness');
   await expect(page.getByLabel('CAT subscription details').getByRole('button', { name: 'Open Explorer' })).toBeVisible();
@@ -537,8 +540,8 @@ test('subscription rows stay responsive without horizontal overflow', async ({ p
   await page.getByRole('button', { name: 'Subscriptions' }).click();
 
   const syncSettings = page.getByLabel('Sync settings');
-  await expect(syncSettings.locator('article.sdn-subscription-row')).toBeVisible();
-  const rowText = await syncSettings.locator('article.sdn-subscription-row').innerText();
+  await expect(syncSettings.locator('.sdn-subscription-row').first()).toBeVisible();
+  const rowText = await syncSettings.locator('.sdn-subscription-row').first().innerText();
   expect(rowText).toContain('Free feed');
   expect(rowText).not.toContain('1 GB cap');
   expect(rowText).not.toContain('Synced 1,105,675/2,659,160');
@@ -698,7 +701,7 @@ test('data route keeps same-schema subscriptions separated by datastore namespac
 
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
   await page.getByRole('button', { name: 'Subscriptions' }).click();
-  const liveRow = page.getByLabel('Sync settings').locator('article').filter({ hasText: 'CelesTrak Live' });
+  const liveRow = page.getByLabel('Sync settings').locator('.sdn-subscription-row').filter({ hasText: 'CelesTrak Live' });
   await expect(liveRow).toContainText('2,287,018 rows');
   await expect(liveRow.getByRole('button', { name: 'Query' })).toHaveCount(0);
   await expect(liveRow.getByRole('button', { name: /retry sync/i })).toBeVisible();
@@ -842,6 +845,8 @@ test('data route runs local SQL against locally synced CelesTrak rows without re
 
   const dataRows = page.getByRole('table', { name: 'Data rows' });
   await expect(dataRows.getByRole('cell', { name: 'STARLINK-6292', exact: true })).toBeVisible();
+  // Epoch range inputs live behind the column's filter menu now.
+  await dataRows.locator('button.sdn-epoch-filter-button[title="Filter Epoch by date and time"]').click();
   const epochStartFilter = dataRows.locator('input[type="datetime-local"][aria-label="Filter Epoch start"]');
   const epochStopFilter = dataRows.locator('input[type="datetime-local"][aria-label="Filter Epoch stop"]');
   await expect(epochStartFilter).toBeVisible();
@@ -849,6 +854,9 @@ test('data route runs local SQL against locally synced CelesTrak rows without re
   await epochStartFilter.fill('2026-05-10T00:00');
   await epochStopFilter.fill('2026-05-11T00:00');
   await expect(dataRows.getByRole('cell', { name: 'STARLINK-6292', exact: true })).toBeVisible();
+  // Close the floating filter panel (outside click) before measuring layout overflow.
+  await page.getByRole('heading', { level: 1, name: 'Data' }).click();
+  await expect(epochStartFilter).toHaveCount(0);
   const desktopExplorerMetrics = await page.evaluate(() => {
     const explorer = document.querySelector<HTMLElement>('[aria-label="Data explorer"]');
     const controls = document.querySelector<HTMLElement>('.sdn-explorer-controls');
@@ -1052,6 +1060,24 @@ async function assertVisualGuardrails(page: Page): Promise<void> {
 }
 
 async function installSdnFixtures(page: Page): Promise<void> {
+  // Node identity session: unlocked. The desktop node persists the wallet
+  // unlock server-side; without this fixture the NodeIdentityGate mounts the
+  // hd-wallet login modal over /node and intercepts every pointer event.
+  await page.route('**/api/node/identity/settings', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ttl_ms: 3_600_000,
+        session: {
+          unlocked: true,
+          profile: {
+            dn: 'Space Data Network Desktop',
+            peer_id: '12D3KooWNZMVqKBHke7bQJ6JTs2zp13DTZu441UNs6hZcZ3bUwMs',
+          },
+        },
+      }),
+    });
+  });
   await page.route('**/api/node/epm/json', async (route) => {
     await route.fulfill({
       contentType: 'application/json',
@@ -1511,10 +1537,14 @@ const PNM_FIXTURE_REFS = Array.from({ length: 12 }, (_, index) => {
 });
 
 function rawFlatbufferStream(records: Buffer[]): Buffer {
+  // u32 LITTLE-ENDIAN length framing — the FlatSQL engine wire format
+  // (`X-SDN-Stream-Format: flatsql-size-prefixed-le-u32`), matching
+  // parseRawFlatbufferStream. (These fixtures were big-endian before loop
+  // D.3 fixed the client to the server's real LE framing.)
   const chunks: Buffer[] = [];
   for (const record of records) {
     const header = Buffer.alloc(4);
-    header.writeUInt32BE(record.byteLength, 0);
+    header.writeUInt32LE(record.byteLength, 0);
     chunks.push(header, record);
   }
   return Buffer.concat(chunks);

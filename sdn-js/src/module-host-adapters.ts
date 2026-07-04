@@ -28,7 +28,7 @@ import type { Helia } from 'helia';
 import type { Libp2p } from 'libp2p';
 import type { GossipSub } from '@chainsafe/libp2p-gossipsub';
 
-/** Minimal record-store contract (satisfied by the FlatSQL-WASM engine record store — THE SDNNode store — and the legacy SDNStorage). */
+/** Minimal record-store contract (satisfied by the FlatSQL-WASM engine record store — THE SDNNode store). */
 export interface ModuleHostRecordStore {
   store(
     schema: string,
@@ -52,7 +52,7 @@ export interface ModuleHostAdapterOptions {
   helia?: Helia;
   /** libp2p node whose services.pubsub (gossipsub) backs pubsub.*. */
   libp2p?: Libp2p;
-  /** Record store backing storage.* (e.g. SDNStorage). */
+  /** Record store backing storage.* (e.g. FlatSQLEngineRecordStore). */
   storage?: ModuleHostRecordStore;
   /** Publisher peer id recorded on storage.write records. */
   peerId?: string;

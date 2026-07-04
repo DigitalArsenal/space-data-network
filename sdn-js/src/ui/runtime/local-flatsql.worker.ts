@@ -37,6 +37,8 @@ import { syncRowCountSummary } from './sync-progress';
 import { DEFAULT_WIRE_SPEED_TARGET, measuredWireSpeedUtilization, meetsWireSpeedTarget } from './sync-throughput';
 import { encodeWorkerSchemaSyncProgressFlatBuffer } from './worker-sync-status-flatbuffer';
 import type { DataSummary, RawDataRecord, SdnBackend } from './sdn-backend';
+import type { EngineEpochQueryRequest } from '../../epoch-query-sql';
+import type { QueryParam } from 'flatsql/wasm';
 import type { FlatSqlSyncManifest, FlatSqlSyncManifestSegment } from '../../flatsql-sync';
 import type {
   WorkerFlatSqlSyncBackendConfig,
@@ -53,6 +55,9 @@ type WorkerRequest =
   | { id: number; type: 'clearStandard'; standardId: string; options?: LocalFlatSqlClearOptions }
   | { id: number; type: 'flush'; standardId?: string }
   | { id: number; type: 'query'; sql: string; standardId?: string; options?: LocalFlatSqlQueryOptions }
+  | { id: number; type: 'listSources'; standardId: string }
+  | { id: number; type: 'queryEpochRawStream'; standardId: string; request?: EngineEpochQueryRequest | null }
+  | { id: number; type: 'queryRawFlatBufferStream'; standardId: string; sql: string; params?: QueryParam[] }
   | { id: number; type: 'getStats'; options?: LocalFlatSqlStatsOptions }
   | { id: number; type: 'recordPinLedgerEntries'; entries: LocalFlatSqlPinLedgerEntry[] }
   | { id: number; type: 'listPinLedgerEntries'; query?: LocalFlatSqlPinLedgerQuery }
@@ -139,6 +144,30 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
       case 'query': {
         const result = await requireStore().query(request.sql, request.standardId, request.options);
         postSuccess(request.id, result);
+        return;
+      }
+      case 'listSources': {
+        const currentStore = requireStore();
+        if (!currentStore.listSources) {
+          throw new Error('The FlatSQL worker store does not expose source-partition listing');
+        }
+        postSuccess(request.id, await currentStore.listSources(request.standardId));
+        return;
+      }
+      case 'queryEpochRawStream': {
+        const currentStore = requireStore();
+        if (!currentStore.queryEpochRawStream) {
+          throw new Error('The FlatSQL worker store does not expose engine epoch raw-stream queries');
+        }
+        postRawStreamSuccess(request.id, await currentStore.queryEpochRawStream(request.standardId, request.request ?? null));
+        return;
+      }
+      case 'queryRawFlatBufferStream': {
+        const currentStore = requireStore();
+        if (!currentStore.queryRawFlatBufferStream) {
+          throw new Error('The FlatSQL worker store does not expose raw FlatBuffer stream queries');
+        }
+        postRawStreamSuccess(request.id, await currentStore.queryRawFlatBufferStream(request.standardId, request.sql, request.params ?? []));
         return;
       }
       case 'getStats':
@@ -1361,6 +1390,20 @@ function prepareRecordsForTransfer(records: RawDataRecord[]): { records: RawData
     return transferableBytes === bytes ? record : { ...record, dataBytes: transferableBytes };
   });
   return { records: preparedRecords, transferables };
+}
+
+/**
+ * Post an aligned raw FlatBuffer stream back to the client, transferring the
+ * buffer when the bytes own it outright. Streams that are views into a
+ * larger buffer (or into SharedArrayBuffer WASM memory under COI) are copied
+ * first — transferring the underlying buffer would detach engine memory.
+ */
+function postRawStreamSuccess(id: number, streamBytes: Uint8Array): void {
+  const ownsBuffer = streamBytes.byteOffset === 0
+    && streamBytes.byteLength === streamBytes.buffer.byteLength
+    && streamBytes.buffer instanceof ArrayBuffer;
+  const bytes = ownsBuffer ? streamBytes : streamBytes.slice();
+  postSuccess(id, bytes, undefined, [bytes.buffer as ArrayBuffer]);
 }
 
 function postSuccess(id: number, data?: unknown, stats?: LocalFlatSqlStandardStats[], transferables: Transferable[] = []): void {
