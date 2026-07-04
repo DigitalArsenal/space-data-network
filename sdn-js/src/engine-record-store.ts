@@ -41,6 +41,7 @@ import type {
 import type { SchemaName } from './schemas';
 import type { StoredRecord, QueryFilter } from './storage';
 import {
+  configureEngineDatabaseSession,
   createDefaultLocalFlatSqlPersistenceStore,
   createLocalFlatSqlStore,
   getSharedFlatSql,
@@ -355,6 +356,7 @@ export class FlatSQLEngineRecordStore {
   ): Promise<FlatSQLEngineRecordStore> {
     const flatsql = await getSharedFlatSql();
     const controlDb = flatsql.createDatabase(CONTROL_DB_SCHEMA, 'sdn-control') as unknown as ControlDatabase;
+    configureEngineDatabaseSession(controlDb);
     controlDb.query(CONTROL_TABLE_DDL);
     controlDb.query(CONTROL_INDEX_DDL);
 

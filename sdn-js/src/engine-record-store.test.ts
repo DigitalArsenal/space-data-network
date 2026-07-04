@@ -23,6 +23,8 @@ import {
   stripSdnFlatBufferSizePrefix,
 } from './local-flatsql';
 import { createModuleHostCapabilityAdapters } from './module-host-adapters';
+// @ts-expect-error — plain .mjs helper shared with the D.6 benchmark scripts.
+import { BENCH_EPOCH_BASE, buildBenchCorpus } from '../scripts/lib/d6-bench-common.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -160,6 +162,46 @@ describe('FlatSQLEngineRecordStore (THE SDNNode store)', () => {
     expect(flatBufferMatchesFileId(sizePrefixed, '$CAT')).toBe(false);
     expect(flatBufferMatchesFileId(enc('not a flatbuffer'), '$OMM')).toBe(false);
   });
+});
+
+describe('catalog-scale engine queries (loop D.6 regression)', () => {
+  it('answers a catalog-scale epoch-nearest raw stream (29K partitions) without temp-store spill failures', async () => {
+    // REAL BUG caught by the D.6 REST-stream benchmark: the browser/Node
+    // wasm build has no filesystem, and the epoch-nearest window over a
+    // catalog-scale partition set spilled a temp b-tree to "disk" →
+    // `SQL execution error: disk I/O error`. Fixed by pinning
+    // temp_store=MEMORY at database creation (configureEngineDatabaseSession).
+    const corpus = buildBenchCorpus(29000);
+    const store = await FlatSQLEngineRecordStore.open({ schemas: [OMM_STANDARD] });
+    try {
+      const ingested = await store.ingestFlatBufferStream('OMM', corpus.streamBytes, {
+        source: 'celestrak-gp',
+        recordKeyPrefix: 'shard:d6-regression',
+        persist: false,
+      });
+      expect(ingested).toBe(29000);
+      const stream = store.queryEpochRawStream('OMM', {
+        profile: 'nearest',
+        epoch: BENCH_EPOCH_BASE + 2 * 86400,
+        limit: -1,
+        source: 'celestrak-gp',
+      });
+      let frames = 0;
+      for (const frame of store.queryEpochFrames('OMM', {
+        profile: 'nearest',
+        epoch: BENCH_EPOCH_BASE + 2 * 86400,
+        limit: -1,
+        source: 'celestrak-gp',
+      })) {
+        if (frame.byteLength === 0) throw new Error('empty frame');
+        frames += 1;
+      }
+      expect(frames).toBe(29000);
+      expect(stream.byteLength).toBeGreaterThan(corpus.streamBytes.byteLength * 0.9);
+    } finally {
+      await store.close();
+    }
+  }, 120_000);
 });
 
 describe('per-provider source partitioning (server layout mirror)', () => {

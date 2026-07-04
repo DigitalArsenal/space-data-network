@@ -42,6 +42,8 @@
     "test:e2e:sdn-ui": "playwright test --config playwright.sdn-ui.config.ts",
     "test:relay": "SDN_RUN_RELAY_TEST=1 vitest run src/spaceaware-relay.integration.test.ts",
     "measure:flatsql-sync": "npm run build:core && node scripts/measure-flatsql-sync-throughput.mjs",
+    "measure:flatsql-ingest": "npm run build:core && node scripts/measure-flatsql-sync-throughput.mjs --local-ingest",
+    "measure:rest-stream": "npm run build:core && node scripts/measure-rest-stream.mjs",
     "chaos:local": "node scripts/chaos-local-network.mjs",
     "lint": "eslint src --ext .ts",
     "check:versions": "node ../scripts/generate-suite-version-info.js --check && node ../scripts/check-version-consistency.js",

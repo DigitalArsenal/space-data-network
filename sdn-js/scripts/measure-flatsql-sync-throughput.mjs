@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
 
 import {
@@ -609,6 +610,13 @@ function usage() {
     'Bulk shard bytes are fetched as published-shard byte ranges or bounded published-shard batches.',
     'There is no Kubo gateway, remote HTTP, or SSH data fallback in this harness.',
     '',
+    'Local mode (loop D.6, no peer needed):',
+    '  --local-ingest              Measure the D.4 engine-store ingest surface',
+    '                              (ingestFlatBufferStream / ingestSyncChunk /',
+    '                              ingestPublishedShard) on synthetic $OMM corpora.',
+    '                              Knobs: --records 29000,250000 --runs 5 --warmup 1',
+    '                              (env: SDN_D6_INGEST_RECORDS/SDN_D6_RUNS/SDN_D6_WARMUP)',
+    '',
     'Options:',
     '  --schema <schema>            SDS schema, default OMM.fbs',
     '  --provider-id <id>          Provider/source filter',
@@ -645,7 +653,214 @@ async function stopClients(clients) {
   ]);
 }
 
+// ---------------------------------------------------------------------------
+// Loop D.6 — LOCAL ENGINE-STORE INGEST MODE (`--local-ingest`).
+//
+// Measures the D.4 datasync-fed ingest surface against the REAL
+// FlatSQLEngineRecordStore (FlatSQL-WASM engine, server-mirror layout):
+//
+//   stream-direct         ingestFlatBufferStream, recordKeyPrefix keys
+//                         (the ingestPublishedShard inner path: ONE engine
+//                         call over the original aligned bytes)
+//   stream-content-keyed  ingestFlatBufferStream, content-hash dedupe keys
+//                         (the RemoteEpochStreamClient / queryData ingest
+//                         path: per-frame fnv1a32 ledger keys)
+//   sync-chunk            ingestSyncChunk on a decoded flatsql-sync
+//                         read_chunk response (true provenance: per-record
+//                         refs route to per-provider partitions + envelope
+//                         index rows)
+//   published-shard       ingestPublishedShard, sha256-verified, per-frame
+//                         envelope cids (server computeCID — wasm sha256
+//                         per record)
+//   published-shard-noenv ingestPublishedShard with indexEnvelopes:false
+//                         (isolates the envelope-cid hashing cost)
+//
+// Every measured run ingests into a FRESH store (the dedupe ledgers make
+// replays no-ops, which would measure nothing); store open/close and
+// corpus/chunk construction are OUTSIDE the timed window. The engine is
+// in-memory; Node has no IndexedDB, so journal/stream flush is structurally
+// a no-op here — browser flush cost is NOT covered by this benchmark
+// (stated per the loop's honest-measurement rule).
+//
+// Usage:
+//   npm run measure:flatsql-ingest             # 29000 + 250000 records
+//   npm run measure:flatsql-sync -- --local-ingest --records 29000 --runs 5 --warmup 1
+// Env: SDN_D6_INGEST_RECORDS, SDN_D6_RUNS, SDN_D6_WARMUP.
+// ---------------------------------------------------------------------------
+
+async function runLocalIngestBenchmark(argv) {
+  const {
+    OMM_STANDARD,
+    buildBenchCorpus,
+    encodeSyncResponseBytes,
+    throughputStats,
+    recordsPerSecond,
+    fmtMBps,
+    fmtMs,
+    fmtRecs,
+    envInt,
+    argValue,
+  } = await import('./lib/d6-bench-common.mjs');
+  const { FlatSQLEngineRecordStore, decodeFlatSqlSyncChunk, FLATSQL_SYNC_PROTOCOL_ID } =
+    await import('../dist/index.mjs');
+
+  const recordCounts = (argValue(argv, '--records') ?? process.env.SDN_D6_INGEST_RECORDS ?? '29000,250000')
+    .split(',')
+    .map((v) => Number.parseInt(v.trim(), 10))
+    .filter((v) => Number.isFinite(v) && v > 0);
+  const runs = Number.parseInt(argValue(argv, '--runs') ?? '', 10) || envInt('SDN_D6_RUNS', 5);
+  const warmup = Number.parseInt(argValue(argv, '--warmup') ?? '', 10) || envInt('SDN_D6_WARMUP', 1);
+  const jsonOnly = argv.includes('--json');
+
+  const openStore = () => FlatSQLEngineRecordStore.open({ schemas: [OMM_STANDARD] });
+
+  const results = [];
+  for (const recordCount of recordCounts) {
+    const corpus = buildBenchCorpus(recordCount);
+    const sizeBytes = corpus.streamBytes.byteLength;
+    const sizeMB = sizeBytes / (1024 * 1024);
+    const shardSha256 = createHash('sha256').update(corpus.streamBytes).digest('hex');
+
+    // flatsql-sync read_chunk response with per-record provenance refs
+    // (two providers, alternating — the D.4 wire shape), decoded ONCE
+    // through the real transport decoder (decode is libp2p-transport work,
+    // not store-ingest work; kept outside the timed window).
+    const providers = [
+      { providerId: 'space-data-network-02', sourceName: 'celestrak-gp', batchId: 'bench-batch-a' },
+      { providerId: 'demo-provider', sourceName: 'spacetrack-gp', batchId: 'bench-batch-b' },
+    ];
+    const refs = corpus.frames.map((frame, index) => {
+      const p = providers[index % providers.length];
+      return {
+        schema_name: 'OMM.fbs',
+        cid: `bench-cid-${index}`,
+        peer_id: 'bench-peer',
+        provider_id: p.providerId,
+        source_name: p.sourceName,
+        batch_id: p.batchId,
+        timestamp: '2026-05-10T12:00:00Z',
+        size_bytes: frame.byteLength,
+      };
+    });
+    const chunk = decodeFlatSqlSyncChunk(encodeSyncResponseBytes({
+      schema: 'OMM.fbs',
+      total_count: recordCount,
+      count: recordCount,
+      limit: recordCount,
+      offset: 0,
+      cursor: 'bench-cursor',
+      next_cursor: '',
+      snapshot_id: 'bench-snapshot',
+      head: 'bench-snapshot',
+      scan_hash: 'bench-scan',
+      chunk_hash: 'bench-scan',
+      query_profile: 'dataset-publication-offset-v1',
+      sync_protocol: FLATSQL_SYNC_PROTOCOL_ID,
+      max_chunk_size: recordCount,
+      transports: ['wss'],
+      results: refs,
+    }, corpus.streamBytes));
+    const publishedShard = (cid) => ({
+      header: {
+        cid,
+        schema: 'OMM.fbs',
+        providerId: 'space-data-network-02',
+        sourceName: 'celestrak-gp',
+        batchId: 'bench-batch-a',
+        queryProfile: 'dataset-publication-offset-v1',
+        head: 'bench-head',
+        rowCount: recordCount,
+        shardSha256,
+      },
+      streamBytes: corpus.streamBytes,
+    });
+
+    const paths = [
+      {
+        name: 'stream-direct',
+        run: async (store) => store.ingestFlatBufferStream('OMM', corpus.streamBytes, {
+          source: 'celestrak-gp',
+          recordKeyPrefix: 'shard:bench',
+          persist: false,
+        }),
+      },
+      {
+        name: 'stream-content-keyed',
+        run: async (store) => store.ingestFlatBufferStream('OMM', corpus.streamBytes, {
+          source: 'celestrak-gp',
+          persist: false,
+        }),
+      },
+      {
+        name: 'sync-chunk',
+        run: async (store) => (await store.ingestSyncChunk(chunk, { persist: false })).ingestedRecords,
+      },
+      {
+        name: 'published-shard',
+        run: async (store) => (await store.ingestPublishedShard(publishedShard('bench-shard-env'), { persist: false })).ingestedRecords,
+      },
+      {
+        name: 'published-shard-noenv',
+        run: async (store) => (await store.ingestPublishedShard(publishedShard('bench-shard-noenv'), {
+          indexEnvelopes: false,
+          persist: false,
+        })).ingestedRecords,
+      },
+    ];
+
+    const sizeResult = { recordCount, sizeBytes, sizeMB: Number(sizeMB.toFixed(2)), runs, warmup, paths: {} };
+    for (const path of paths) {
+      const durations = [];
+      for (let i = 0; i < warmup + runs; i += 1) {
+        const store = await openStore();
+        try {
+          const started = performance.now();
+          const ingested = await path.run(store);
+          const elapsed = performance.now() - started;
+          if (ingested !== recordCount) {
+            throw new Error(`${path.name}: ingested ${ingested}/${recordCount} records`);
+          }
+          if (i >= warmup) durations.push(elapsed);
+        } finally {
+          await store.close();
+        }
+      }
+      const stats = throughputStats(sizeBytes, durations);
+      sizeResult.paths[path.name] = {
+        ...stats,
+        bestRecordsPerSecond: Math.round(recordsPerSecond(recordCount, stats.bestMs)),
+        medianRecordsPerSecond: Math.round(recordsPerSecond(recordCount, stats.medianMs)),
+      };
+      if (!jsonOnly) {
+        console.log(
+          `D6 INGEST ${String(recordCount).padStart(7)} rec / ${sizeMB.toFixed(1).padStart(6)} MB  ${path.name.padEnd(22)}`
+          + ` best ${fmtMBps(stats.bestMBps)} (${fmtMs(stats.bestMs)}, ${fmtRecs(recordsPerSecond(recordCount, stats.bestMs))})`
+          + `  median ${fmtMBps(stats.medianMBps)} (${fmtMs(stats.medianMs)}, ${fmtRecs(recordsPerSecond(recordCount, stats.medianMs))})`,
+        );
+      }
+    }
+    results.push(sizeResult);
+  }
+
+  const report = {
+    generatedAt: new Date().toISOString(),
+    benchmark: 'flatsql-engine-store-ingest (loop D.6)',
+    store: 'FlatSQLEngineRecordStore (FlatSQL-WASM, in-memory engine; Node — journal/IndexedDB flush structurally absent)',
+    sizes: results,
+  };
+  if (jsonOnly) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    console.log('');
+    console.log(JSON.stringify(report, null, 2));
+  }
+}
+
 async function main() {
+  if (process.argv.includes('--local-ingest')) {
+    await runLocalIngestBenchmark(process.argv.slice(2));
+    return;
+  }
   const options = parseThroughputHarnessArgs(process.argv.slice(2));
   if (options.help) {
     console.log(usage());
