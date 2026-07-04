@@ -53,7 +53,9 @@ run_installer() {
 }
 
 installed_version() {
-  "$(wasmedge_binary)" --version 2>/dev/null | awk '{print $NF}'
+  # WasmEdge >=0.16 prints extra plugin-version lines; only the first line
+  # carries the runtime version.
+  "$(wasmedge_binary)" --version 2>/dev/null | awk 'NR==1{print $NF}'
 }
 
 case "$(uname -s)" in
