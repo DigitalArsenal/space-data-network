@@ -483,6 +483,12 @@ repro (`SDN_C7_FORCE_LINKED_AOT=1 SDN_C4_AOT_REPRO=1 go test ./internal/flowrt/
 flow artifact of linked mounts; the engine — where query execution and
 stream materialization live — stays AOT.
 
+**UPDATE (loop C.9, 2026-07-03): FIXED in libwasmedge 0.16.4** — see §8.4.
+The force-interpret is now VERSION-GATED (`flatsqlrt.RuntimeHasLinkedAOTFix`,
+≥ 0.16.4): on fixed runtimes linked mounts run AOT; on 0.14 the mitigation is
+unchanged. `SDN_C7_FORCE_LINKED_AOT=1` still forces AOT anywhere (the old
+repro), `SDN_C7_FORCE_LINKED_INTERP=1` forces interpretation anywhere (A/B).
+
 ### 8.3 Measured consequence (wirespeed gate, 8.6 MB / 29K records)
 
 - linked + interpreted flow (this loop): **68.3% best / 72.5% median** (flow
@@ -494,3 +500,56 @@ stream materialization live — stays AOT.
   ≥99% gate target is unmet either way. When the upstream AOT defect is
   fixed, linked+AOT should exceed C.5c (its ~130 µs host-dispatch residue is
   architecturally gone).
+
+### 8.4 Loop C.9 — RETESTED: fixed in libwasmedge 0.16.4 (2026-07-03)
+
+Candidate survey: stable releases ≥0.15 are 0.15.0/0.15.1, 0.16.0–0.16.4,
+0.17.0. The newest Go binding release is still `WasmEdge-go v0.14.0`; it
+builds unchanged against 0.16.x (C API unchanged), while **0.17.0 removed
+the by-value `WasmEdge_Limit` struct** (→ `WasmEdge_LimitContext *`,
+SOVERSION 0.1.0→0.1.1), so the binding does not compile against it
+(`ast.go:187: could not determine what C.WasmEdge_Limit refers to`).
+0.16.4 was installed side-by-side (`~/.wasmedge-0.16.4`; CGO env selects
+the runtime at build time) and retested:
+
+- **This §8.2 defect (linked-drain AOT trap): FIXED.**
+  `SDN_C7_FORCE_LINKED_AOT=1 SDN_C4_AOT_REPRO=1 TestAOTMountRepro` on
+  0.14.0 traps (`out of bounds memory access, Code: 0x408` in
+  `space_data_module_runtime_drain_linked`, HTTP 502); on 0.16.4 the same
+  forced-AOT mount serves **200 (936 bytes)**. Full flatsqlrt/flowrt/
+  modulert/storage/api/storefront/trust suites green on 0.16.4, engine
+  no-EH AOT compiles and runs (the wasm-exceptions AOT rejection is
+  unchanged in 0.14/0.16.4/0.17.0 — the engine stays the no-EH build).
+- **The C.5b nested-AOT defect: ALSO FIXED** (standalone matrix green on
+  0.16.4 including AOT-in-AOT same-thread; still traps on 0.14.0 —
+  wasmedge-aot-nested-execution.md "Upstream retest").
+
+Adoption: `LoadMountedFlow` now version-gates the force-interpret
+(`flatsqlrt.RuntimeHasLinkedAOTFix`, ≥0.16.4 — the verified version;
+0.15.x/0.16.0–0.16.3 untested). The AOT disk cache key includes the
+runtime version (`<prefix>-<hash>-we<version>.aot.wasm`) so 0.14-compiled
+native artifacts never load into an upgraded daemon. Install scripts
+default to 0.16.4. `wasmrt.WithDedicatedThread` stays (protects 0.14
+builds; serializes engine execution; cost is noise).
+
+Measured (wirespeed gate, 8.6 MB / 29K records, pool=1, 0.16.4,
+**linked + AOT flow**, 3 runs):
+
+- **97.48% best / 93.09% median** (flow 3239 MB/s best, 2.66 ms warm);
+  89.12%/84.79%; 85.81%/88.21%. Linked+AOT recovers the C.7 interpreted
+  penalty (68.3%/72.5% → ~86–97% best) and meets/exceeds the C.5c
+  bridge+AOT numbers (84.9%/93.8%) — with zero host dispatch on the query
+  path. The ≥99% target is still unmet (run-to-run variance of the ~2.5 ms
+  loopback baseline dominates); the gate default stays unflipped.
+
+C.4-style measure (0.16.4, linked+AOT, 500K seeded / 400K hot window):
+fb@29K **4.84 ms best** (1783 MB/s) · fb@250K **33.1 ms** (2250 MB/s) ·
+json@29K 202 ms · json@250K 1.72 s (json encodes INSIDE the flow on the
+linked pipeline — bridge mode remains the faster json path; per-flow
+`engineLinkage` choice). Interpreted-flow control on the same seed: fb@29K
+67 ms, json@29K 4.5 s — AOT of the linked artifact is a 14×/22× step.
+Concurrency (8 clients × 4 reqs, fb@29K): **466.5 req/s pool=1
+(4026 MB/s) / 587.3 req/s pool=4 (5068 MB/s aggregate)** — vs C.7
+linked-interpreted 195/98.7 req/s and C.5c bridge 547/577 req/s: the
+in-wasm-drain lock penalty is gone; linked+AOT is the best concurrent
+configuration measured so far.

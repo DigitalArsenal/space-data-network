@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WASMEDGE_VERSION="${WASMEDGE_VERSION:-0.14.0}"
+WASMEDGE_VERSION="${WASMEDGE_VERSION:-0.16.4}"
 WASMEDGE_DEFAULT_DIR="${HOME}/.wasmedge"
 WASMEDGE_DIR="${WASMEDGE_DIR:-$WASMEDGE_DEFAULT_DIR}"
 WASMEDGE_INSTALL_SCRIPT_URL="${WASMEDGE_INSTALL_SCRIPT_URL:-https://raw.githubusercontent.com/WasmEdge/WasmEdge/master/utils/install.sh}"

@@ -95,13 +95,15 @@ func WithHostModule(name string, funcs []HostFunc) Option {
 // WithDedicatedThread executes every guest call of this module on one
 // dedicated, locked OS thread. REQUIRED for any AOT-compiled module whose
 // exports are invoked from inside ANOTHER module's host function (nested
-// execution): libwasmedge 0.14 keeps per-thread executor state that a nested
-// AOT execution clobbers — when control returns to the suspended outer AOT
-// frame on the same thread, its next linear-memory access falsely traps
-// "out of bounds memory access" (see docs/wasmedge-aot-nested-execution.md,
-// flowrt TestAOTMountRepro). Running this module's executions on their own
-// thread means they never nest above (or below) another VM's AOT frames.
-// Costs one channel round-trip per call — noise next to any engine query.
+// execution) on libwasmedge < 0.16.4: 0.14 keeps per-thread executor state
+// that a nested AOT execution clobbers — when control returns to the
+// suspended outer AOT frame on the same thread, its next linear-memory
+// access falsely traps "out of bounds memory access" (see
+// docs/wasmedge-aot-nested-execution.md, flowrt TestAOTMountRepro). Loop
+// C.9 proved the defect FIXED in libwasmedge 0.16.4 (standalone matrix
+// green), but the option is KEPT unconditionally: it also serializes this
+// module's executions, still protects 0.14 builds, and costs one channel
+// round-trip per call — noise next to any engine query.
 func WithDedicatedThread() Option {
 	return func(c *config) { c.dedicatedThread = true }
 }

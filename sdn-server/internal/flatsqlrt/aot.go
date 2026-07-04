@@ -34,14 +34,24 @@ func ensureAOT(cacheDir string, wasm []byte) ([]byte, error) {
 }
 
 // EnsureAOTArtifact AOT-compiles arbitrary portable wasm bytes through the
-// same sha256-keyed disk cache the engine uses (one <prefix>-<hash>.aot.wasm
-// per artifact; stale entries under the SAME prefix are pruned, other
-// prefixes in the directory are left alone). Callers hosting non-engine
-// modules (e.g. flow HTTP mounts) share the cache directory safely by
-// picking a distinct prefix.
+// same sha256-keyed disk cache the engine uses (one
+// <prefix>-<hash>-we<runtime-version>.aot.wasm per artifact; stale entries
+// under the SAME prefix are pruned, other prefixes in the directory are left
+// alone). The cache key includes the libwasmedge RUNTIME version (loop C.9):
+// native code compiled by one runtime must never load into another — a
+// machine-wide cache shared by daemons built against 0.14.0 and 0.16.4
+// would otherwise serve stale artifacts across the upgrade. Callers hosting
+// non-engine modules (e.g. flow HTTP mounts) share the cache directory
+// safely by picking a distinct prefix.
 func EnsureAOTArtifact(cacheDir, prefix string, wasm []byte) ([]byte, error) {
 	sum := sha256.Sum256(wasm)
-	path := filepath.Join(cacheDir, fmt.Sprintf("%s-%s.aot.wasm", prefix, hex.EncodeToString(sum[:8])))
+	ver := strings.Map(func(r rune) rune {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '.' {
+			return r
+		}
+		return '_'
+	}, RuntimeVersion())
+	path := filepath.Join(cacheDir, fmt.Sprintf("%s-%s-we%s.aot.wasm", prefix, hex.EncodeToString(sum[:8]), ver))
 
 	if cached, err := os.ReadFile(path); err == nil && len(cached) > 0 {
 		return cached, nil

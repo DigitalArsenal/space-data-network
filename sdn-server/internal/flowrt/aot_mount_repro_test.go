@@ -25,9 +25,11 @@ package flowrt
 // artifact interpreted against the AOT engine is byte-verbatim green. Linked
 // mounts therefore force-interpret the (small) flow artifact; the heavy work
 // executes inside the AOT engine either way. This test asserts the mount's
-// effective state: linked artifact => forced interpretation + 200; with
-// SDN_C7_FORCE_LINKED_AOT=1 it becomes the upstream repro (AOT + expected
-// trap until a WasmEdge upgrade clears it).
+// effective state per runtime: on an affected libwasmedge (<0.16.4) a linked
+// artifact => forced interpretation + 200, and SDN_C7_FORCE_LINKED_AOT=1
+// turns it into the upstream repro (AOT + expected trap). Loop C.9 retested
+// on libwasmedge 0.16.4: BOTH defects are FIXED — there the mount runs AOT
+// (flatsqlrt.RuntimeHasLinkedAOTFix) and must serve 200.
 //
 // Env-gated only because it needs the compiled dist bundle + seeded store:
 //
@@ -43,6 +45,7 @@ import (
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
 )
@@ -69,13 +72,15 @@ func TestAOTMountRepro(t *testing.T) {
 		t.Fatalf("RegisterFlowMounts: %v", err)
 	}
 	defer mounted[0].Close()
-	if mounted[0].linked && os.Getenv("SDN_C7_FORCE_LINKED_AOT") == "" {
+	if mounted[0].linked && !flatsqlrt.RuntimeHasLinkedAOTFix() &&
+		os.Getenv("SDN_C7_FORCE_LINKED_AOT") == "" {
 		if mounted[0].AOT() {
-			t.Fatal("linked flow mount should force-interpret under libwasmedge 0.14 (see engine_link.go)")
+			t.Fatalf("linked flow mount should force-interpret under libwasmedge %s (<0.16.4, see httpmount.go)", flatsqlrt.RuntimeVersion())
 		}
 	} else if !mounted[0].AOT() {
 		t.Fatal("flow mount did not AOT-compile — expected AOT execution")
 	}
+	t.Logf("libwasmedge=%s linked=%v aot=%v", flatsqlrt.RuntimeVersion(), mounted[0].linked, mounted[0].AOT())
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	resp, err := http.Get(fmt.Sprintf("%s/test/data/omm/bulk?epoch=%d&limit=100&profile=nearest", srv.URL, epoch1+36*3600))
