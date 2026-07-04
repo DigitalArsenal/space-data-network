@@ -124,6 +124,7 @@ func TestHTTPMountMeasure(t *testing.T) {
 				CapRegistry: reg,
 				NodeCtx:     &modulert.NodeContext{},
 				AOTCacheDir: aotDir,
+				EngineLink:  store,
 			})
 		if err != nil {
 			t.Fatalf("RegisterFlowMounts(pool=%d, aot=%q): %v", pool, aotDir, err)

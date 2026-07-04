@@ -2398,6 +2398,12 @@ func (n *Node) MountFlows(mux *http.ServeMux) error {
 		// locked OS thread (wasmrt.WithDedicatedThread; see
 		// docs/wasmedge-aot-nested-execution.md, flowrt TestAOTMountRepro).
 		AOTCacheDir: flatsqldrv.DefaultAOTCacheDir(),
+		// Direct engine linkage (loop C.7): config-declared mounts are the
+		// node admin's first-party flows, so engine-linked artifacts get the
+		// store's LIVE engine instance. Untrusted/delivered third-party
+		// modules never reach this path — they stay on the
+		// storage.flatsql_* hostcall bridge permanently.
+		EngineLink: n.store,
 	}
 	if n.flowManager != nil {
 		deps.Store = n.flowManager.Store()

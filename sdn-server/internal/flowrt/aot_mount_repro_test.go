@@ -16,9 +16,20 @@ package flowrt
 // (wasmrt.WithDedicatedThread; see docs/wasmedge-aot-nested-execution.md),
 // so no other VM's AOT frames are ever suspended beneath it.
 //
-// This test mounts the real flow bundle AOT-compiled and asserts the request
-// SUCCEEDS. Env-gated only because it needs the compiled dist bundle +
-// seeded store (slow), not because it is expected to fail:
+// UPDATE (loop C.7): ENGINE-LINKED artifacts (direct cross-instance calls
+// into the AOT engine, no hostcall) hit a SECOND libwasmedge 0.14 defect of
+// the same class: the AOT-compiled flow falsely traps "out of bounds memory
+// access" once the real linked query sequence runs — while every isolated
+// mechanism (own-memory AOT->AOT cross-instance calls, three-module chains,
+// callee memory growth, locked/unlocked threads) passes, and the SAME
+// artifact interpreted against the AOT engine is byte-verbatim green. Linked
+// mounts therefore force-interpret the (small) flow artifact; the heavy work
+// executes inside the AOT engine either way. This test asserts the mount's
+// effective state: linked artifact => forced interpretation + 200; with
+// SDN_C7_FORCE_LINKED_AOT=1 it becomes the upstream repro (AOT + expected
+// trap until a WasmEdge upgrade clears it).
+//
+// Env-gated only because it needs the compiled dist bundle + seeded store:
 //
 //	SDN_C4_AOT_REPRO=1 go test ./internal/flowrt/ -run TestAOTMountRepro -v
 
@@ -52,12 +63,17 @@ func TestAOTMountRepro(t *testing.T) {
 			CapRegistry: reg,
 			NodeCtx:     &modulert.NodeContext{},
 			AOTCacheDir: t.TempDir(),
+			EngineLink:  store,
 		})
 	if err != nil {
 		t.Fatalf("RegisterFlowMounts: %v", err)
 	}
 	defer mounted[0].Close()
-	if !mounted[0].AOT() {
+	if mounted[0].linked && os.Getenv("SDN_C7_FORCE_LINKED_AOT") == "" {
+		if mounted[0].AOT() {
+			t.Fatal("linked flow mount should force-interpret under libwasmedge 0.14 (see engine_link.go)")
+		}
+	} else if !mounted[0].AOT() {
 		t.Fatal("flow mount did not AOT-compile — expected AOT execution")
 	}
 	srv := httptest.NewServer(mux)

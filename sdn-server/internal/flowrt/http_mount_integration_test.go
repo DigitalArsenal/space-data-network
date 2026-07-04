@@ -11,7 +11,6 @@ package flowrt
 // FlatSQLStore seeded through the normal ingest path.
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -105,27 +104,22 @@ func TestHTTPMountedDataRetrievalFlow(t *testing.T) {
 	epoch2 := epoch1 + 2*86400
 	store := newSeededMountStore(t, epoch1, epoch2)
 
-	// Capability registry: exactly what the node wires for modules. The flow
-	// manifest declares [storage_query]; the same caps handler serves the
-	// storage.flatsql_* hostcalls. A thin recording wrapper (observation
-	// only, answers untouched) proves the flatbuffer path really runs the
-	// C.5c reference-delivery contract end-to-end instead of silently
-	// falling back to byte delivery.
-	var refRequests, refResponses atomic.Int64
+	// Capability registry: exactly what the node wires for modules. The
+	// LINKED flow (loop C.7) submits queries DIRECTLY to the store engine
+	// in-wasm; the storage handler stays provisioned (the manifest still
+	// declares storage_query) but a recording wrapper proves NO
+	// storage.flatsql_* hostcall crosses the bridge on ANY path — the last
+	// host-mediated crossing is gone.
+	var storageHostcalls atomic.Int64
 	storageFac := caps.NewStorageCapFactory(store)
 	reg := modulert.NewCapabilityRegistry()
 	reg.RegisterBridgeAware("storage_query", func(mod *modulert.Module, bridge *modulert.HostBridge) modulert.CapHandler {
 		inner := storageFac(mod, bridge)
 		return func(operation string, payload []byte) ([]byte, error) {
-			if strings.HasPrefix(operation, "storage.flatsql_") &&
-				bytes.Contains(payload, []byte(`"deliver":"ref"`)) {
-				refRequests.Add(1)
+			if strings.HasPrefix(operation, "storage.") {
+				storageHostcalls.Add(1)
 			}
-			resp, err := inner(operation, payload)
-			if err == nil && bytes.Contains(resp, []byte(`"ref":{`)) {
-				refResponses.Add(1)
-			}
-			return resp, err
+			return inner(operation, payload)
 		}
 	})
 
@@ -137,6 +131,7 @@ func TestHTTPMountedDataRetrievalFlow(t *testing.T) {
 			CapRegistry:    reg,
 			NodeCtx:        &modulert.NodeContext{},
 			MaxMemoryPages: 2048,
+			EngineLink:     store,
 		})
 	if err != nil {
 		t.Fatalf("RegisterFlowMounts: %v", err)
@@ -233,13 +228,11 @@ func TestHTTPMountedDataRetrievalFlow(t *testing.T) {
 			}
 		}
 
-		// C.5c reference delivery actually happened: the gate elected
-		// deliver:ref, the handler answered with a reference (no stream
-		// segment), and the byte-verbatim body above therefore came through
-		// the $HTR BODY_REF egress substitution.
-		if refRequests.Load() == 0 || refResponses.Load() == 0 {
-			t.Fatalf("flatbuffer path did not use reference delivery (ref requests=%d responses=%d)",
-				refRequests.Load(), refResponses.Load())
+		// Direct linkage (loop C.7): the byte-verbatim body above came
+		// through an ENGINE body-reference harvested under the store engine
+		// lock — zero storage.* hostcalls crossed the bridge.
+		if calls := storageHostcalls.Load(); calls != 0 {
+			t.Fatalf("linked flow issued %d storage.* hostcalls; query submission must be in-wasm", calls)
 		}
 	})
 
@@ -307,6 +300,12 @@ func TestHTTPMountedDataRetrievalFlow(t *testing.T) {
 			t.Fatalf("404 body should carry a JSON error: %v (%q)", err, body)
 		}
 	})
+
+	// Every path above — flatbuffer, json, 304, 404 — ran without a single
+	// storage.* hostcall: query submission is fully in-wasm (loop C.7).
+	if calls := storageHostcalls.Load(); calls != 0 {
+		t.Fatalf("linked flow issued %d storage.* hostcalls across the request matrix", calls)
+	}
 }
 
 // TestFlowMountRejectsUnsatisfiedCapability: loading must fail when the host
@@ -314,10 +313,30 @@ func TestHTTPMountedDataRetrievalFlow(t *testing.T) {
 func TestFlowMountRejectsUnsatisfiedCapability(t *testing.T) {
 	dist := dataRetrievalFlowDist(t)
 
+	// The LINKED artifact imports the store engine: mounting without an
+	// explicit EngineLink is a hard error (first-party grant, never
+	// inferred) — the untrusted-module security boundary.
 	_, err := LoadMountedFlow(dist, FlowMountDeps{
+		CapRegistry:    modulert.NewCapabilityRegistry(),
+		NodeCtx:        &modulert.NodeContext{},
+		MaxMemoryPages: 2048,
+	})
+	if err == nil {
+		t.Fatal("LoadMountedFlow succeeded without an EngineLink for a linked artifact")
+	}
+	if !strings.Contains(err.Error(), "EngineLink") {
+		t.Fatalf("error should name the missing engine link: %v", err)
+	}
+
+	// With the engine link but WITHOUT the storage_query capability handler
+	// the load must still reject on the unsatisfied capability.
+	epoch1 := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC).Unix()
+	store := newSeededMountStore(t, epoch1, epoch1+2*86400)
+	_, err = LoadMountedFlow(dist, FlowMountDeps{
 		CapRegistry:    modulert.NewCapabilityRegistry(), // no storage_query
 		NodeCtx:        &modulert.NodeContext{},
 		MaxMemoryPages: 2048,
+		EngineLink:     store,
 	})
 	if err == nil {
 		t.Fatal("LoadMountedFlow succeeded without the storage_query capability")
@@ -346,6 +365,7 @@ func TestFlowMountPoolServesConcurrentClients(t *testing.T) {
 			CapRegistry:    reg,
 			NodeCtx:        &modulert.NodeContext{},
 			MaxMemoryPages: 2048,
+			EngineLink:     store,
 		})
 	if err != nil {
 		t.Fatalf("RegisterFlowMounts: %v", err)

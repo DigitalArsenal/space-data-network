@@ -42,11 +42,19 @@ type config struct {
 	secureDeallocName string
 	hostModules       []hostModuleSpec
 	dedicatedThread   bool
+	registeredName    string
+	linkedModules     []*Module
+	namedWasm         []namedWasmSpec
 }
 
 type hostModuleSpec struct {
 	name  string
 	funcs []HostFunc
+}
+
+type namedWasmSpec struct {
+	name  string
+	bytes []byte
 }
 
 func WithMaxMemoryPages(pages uint32) Option {
@@ -98,6 +106,35 @@ func WithDedicatedThread() Option {
 	return func(c *config) { c.dedicatedThread = true }
 }
 
+// WithRegisteredName instantiates the main module as a NAMED module in the
+// VM's store (VM.RegisterWasmBuffer) instead of the anonymous active module.
+// A named live instance can be shared into other VMs via
+// WithLinkedModuleFrom — the direct-linkage mechanism (an anonymous active
+// module cannot be registered as an import source; see
+// docs/flatsql-component-linkage.md §4.1). Execute/memory access route
+// through the registered instance transparently.
+func WithRegisteredName(name string) Option {
+	return func(c *config) { c.registeredName = name }
+}
+
+// WithLinkedModuleFrom registers another Module's LIVE named instance into
+// this VM before instantiation (WasmEdge_VMRegisterModuleFromImport — no
+// re-instantiation, no copy), so this module's imports of that name resolve
+// against the live instance: direct in-wasm calls into its exports and
+// memory. The source module must have been created WithRegisteredName. The
+// source instance MUST outlive this module (loop C.7: mounts release
+// dependent flow instances before the store retires a replaced engine).
+func WithLinkedModuleFrom(src *Module) Option {
+	return func(c *config) { c.linkedModules = append(c.linkedModules, src) }
+}
+
+// WithNamedWasm loads+instantiates additional wasm bytes as a named module
+// in the same VM before the main module (e.g. the flatsql_link shim, whose
+// imports resolve against previously registered linked modules).
+func WithNamedWasm(name string, bytes []byte) Option {
+	return func(c *config) { c.namedWasm = append(c.namedWasm, namedWasmSpec{name: name, bytes: bytes}) }
+}
+
 // Module wraps a WasmEdge VM with convenience methods for memory management
 // and function execution.
 type Module struct {
@@ -105,6 +142,11 @@ type Module struct {
 	vm       *wasmedge.VM
 	hostMods []*wasmedge.Module
 	mu       sync.Mutex
+
+	// registeredName is non-empty when the main module lives in the VM store
+	// as a NAMED instance (WithRegisteredName) — required for cross-VM
+	// instance linking.
+	registeredName string
 
 	mallocName        string
 	freeName          string
@@ -137,17 +179,27 @@ func (m *Module) startExecThread() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 		for req := range m.execCh {
-			values, err := m.vm.Execute(req.name, req.params...)
+			values, err := m.executeDirect(req.name, req.params...)
 			req.done <- execResult{values: values, err: err}
 		}
 	}()
+}
+
+// executeDirect invokes an export on the calling goroutine, routing through
+// the named registered instance when the module was created
+// WithRegisteredName.
+func (m *Module) executeDirect(name string, params ...interface{}) ([]interface{}, error) {
+	if m.registeredName != "" {
+		return m.vm.ExecuteRegistered(m.registeredName, name, params...)
+	}
+	return m.vm.Execute(name, params...)
 }
 
 // exec routes a guest call through the dedicated thread when configured,
 // falling back to a direct call otherwise.
 func (m *Module) exec(name string, params ...interface{}) ([]interface{}, error) {
 	if m.execCh == nil {
-		return m.vm.Execute(name, params...)
+		return m.executeDirect(name, params...)
 	}
 	req := &execRequest{name: name, params: params, done: make(chan execResult, 1)}
 	m.execCh <- req
@@ -193,6 +245,7 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 	m := &Module{
 		conf:              conf,
 		vm:                vm,
+		registeredName:    cfg.registeredName,
 		mallocName:        cfg.mallocName,
 		freeName:          cfg.freeName,
 		secureDeallocName: cfg.secureDeallocName,
@@ -244,18 +297,50 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 		m.hostMods = append(m.hostMods, hostMod)
 	}
 
-	// Load, validate, and instantiate the WASM module
-	if err := vm.LoadWasmBuffer(wasmBytes); err != nil {
-		m.Release()
-		return nil, fmt.Errorf("failed to load WASM: %w", err)
+	// Direct-linkage import sources (loop C.7): live instances borrowed from
+	// other VMs first (e.g. the store's FlatSQL engine under its registered
+	// name), then named wasm modules instantiated in THIS VM (e.g. the
+	// flatsql_link shim, whose own imports resolve against the instances
+	// registered above). Both must precede the main module's instantiation.
+	for _, src := range cfg.linkedModules {
+		inst := src.RegisteredInstance()
+		if inst == nil {
+			m.Release()
+			return nil, errors.New("linked module has no registered named instance (create it WithRegisteredName)")
+		}
+		if err := vm.RegisterModule(inst); err != nil {
+			m.Release()
+			return nil, fmt.Errorf("failed to register linked module instance %q: %w", src.RegisteredName(), err)
+		}
 	}
-	if err := vm.Validate(); err != nil {
-		m.Release()
-		return nil, fmt.Errorf("failed to validate WASM: %w", err)
+	for _, spec := range cfg.namedWasm {
+		if err := vm.RegisterWasmBuffer(spec.name, spec.bytes); err != nil {
+			m.Release()
+			return nil, fmt.Errorf("failed to register named wasm %q: %w", spec.name, err)
+		}
 	}
-	if err := vm.Instantiate(); err != nil {
-		m.Release()
-		return nil, fmt.Errorf("failed to instantiate WASM: %w", err)
+
+	// Load, validate, and instantiate the WASM module (named when a
+	// registered name was requested — required to share the live instance
+	// into other VMs).
+	if cfg.registeredName != "" {
+		if err := vm.RegisterWasmBuffer(cfg.registeredName, wasmBytes); err != nil {
+			m.Release()
+			return nil, fmt.Errorf("failed to register WASM as %q: %w", cfg.registeredName, err)
+		}
+	} else {
+		if err := vm.LoadWasmBuffer(wasmBytes); err != nil {
+			m.Release()
+			return nil, fmt.Errorf("failed to load WASM: %w", err)
+		}
+		if err := vm.Validate(); err != nil {
+			m.Release()
+			return nil, fmt.Errorf("failed to validate WASM: %w", err)
+		}
+		if err := vm.Instantiate(); err != nil {
+			m.Release()
+			return nil, fmt.Errorf("failed to instantiate WASM: %w", err)
+		}
 	}
 
 	if cfg.dedicatedThread {
@@ -279,9 +364,15 @@ func (m *Module) Execute(name string, params ...interface{}) ([]interface{}, err
 	return m.exec(name, params...)
 }
 
-// memory returns the default linear memory ("memory") from the active module.
+// memory returns the default linear memory ("memory") from the active (or
+// named registered) module.
 func (m *Module) memory() (*wasmedge.Memory, error) {
-	mod := m.vm.GetActiveModule()
+	var mod *wasmedge.Module
+	if m.registeredName != "" {
+		mod = m.vm.GetRegisteredModule(m.registeredName)
+	} else {
+		mod = m.vm.GetActiveModule()
+	}
 	if mod == nil {
 		return nil, ErrNoModule
 	}
@@ -290,6 +381,20 @@ func (m *Module) memory() (*wasmedge.Memory, error) {
 		return nil, fmt.Errorf("%w: no 'memory' export found", ErrMemory)
 	}
 	return mem, nil
+}
+
+// RegisteredName reports the name the main module was registered under
+// (empty for anonymous active modules).
+func (m *Module) RegisteredName() string { return m.registeredName }
+
+// RegisteredInstance returns the live named module instance (nil unless the
+// module was created WithRegisteredName). The instance is owned by this VM —
+// borrowers must not outlive it.
+func (m *Module) RegisteredInstance() *wasmedge.Module {
+	if m == nil || m.vm == nil || m.registeredName == "" {
+		return nil
+	}
+	return m.vm.GetRegisteredModule(m.registeredName)
 }
 
 // MemoryStats returns the current and configured maximum linear memory sizes.

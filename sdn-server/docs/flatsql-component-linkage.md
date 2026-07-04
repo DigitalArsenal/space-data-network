@@ -406,3 +406,91 @@ hostcall (~µs) while result bytes already move zero-copy; direct linkage's
 remaining wirespeed value is the hostcall envelope + dedicated-thread
 round-trips per query (small, measurable), while its architectural value
 (zero-hostcall composition, private-engine flows) is unchanged.
+
+---
+
+## 8. Loop C.7 — direct linkage LANDED (2026-07-03)
+
+### 8.1 What shipped
+
+The B-iv end state is in production form, both hosts, same artifact:
+
+- **Flow-compiler emission** (`flow.engineLinkage: "flatsql"` in the flow
+  document): the runtime template compiles `-DSDN_FLATSQL_LINKED=1` — engine
+  calls become direct wasm imports (`flatsql.malloc/free/
+  flatsql_query_raw_flatbuffer_stream/…`); the memory boundary is crossed by
+  the deterministic ~400-byte **flatsql_link shim** (SDK
+  `src/flow/flatsqlLinkShim.js`, memory = `flatsql.memory`, pure code — the
+  minimal B-iv component), which also carries the canonical word-folded
+  fnv1a64 and frame counting so etags are computed over ENGINE memory
+  in-wasm. Dependencies ship a second `dist/guest-link-linked/` object
+  variant; the retrieval module's linked path builds the engine-native epoch
+  SQL + TLV params itself (byte-identical SQL to
+  `storage/engine_records.go`). The emitted manifest gains the
+  `storage_engine_link` capability — the host's first-party gate.
+- **Memory ownership**: the flow artifact KEEPS its own emscripten heap, the
+  engine keeps its own; pointers never cross raw — SQL/params are poked into
+  engine-malloc'd space through the shim (~µs for ~400 bytes), results stay
+  materialized in engine memory and travel as **engine body-ref tokens**
+  ("SDNE" magic | counter) via the UNCHANGED C.5c `$sdnbodyref` descriptor /
+  `$HTR BODY_REF` contract (decision-gate and http-respond needed NO
+  changes).
+- **Host wiring** (Go): the engine instantiates as the NAMED module
+  "flatsql" (`wasmrt.WithRegisteredName`); linked flow VMs borrow the live
+  instance (`WithLinkedModuleFrom` → `VM.RegisterModule`) + the shim
+  (`WithNamedWasm`). Every in-wasm drain runs inside
+  `flatsqlrt.Database.WithLinkedDrain` — the store engine LOCK
+  (SQLITE_THREADSAFE=0) held for the duration of the linked calls — and
+  engine body-refs are harvested inside the SAME critical section (the
+  generation cannot move ⇒ engine pointers valid by construction), resolved
+  through a host mirror keyed `(generation, fnv1a64, size)`: warm = zero
+  engine execution + zero copies; miss = one fnv-verified engine→host copy.
+- **Poison recovery**: `storage.RecoverPoisonedEngine()` rebuilds the engine
+  in place (journal replay + hot-window rebuild) and bumps `EngineEpoch`;
+  mounts re-instantiate linked instances per epoch on the next request
+  (`flowrt.TestLinkedMountRecoversFromEnginePoisoning`). Replaced runtimes
+  are RETIRED (not closed) until store Close — dependent VMs may still hold
+  borrowed instance references.
+- **Browser**: `createFlowRuntimeHost({ engineLink: { exports, dbHandle } })`
+  instantiates the SAME artifact against the JS engine's exports + the shim;
+  `host.resolveEngineBodyRef(token)` reads the body straight out of engine
+  memory. Proven end-to-end in
+  `space-data-network-modules/flows/data-retrieval/tests/flow.test.mjs`
+  (real standalone engine, byte-identical bodies, canonical etags, zero
+  storage hostcalls).
+
+### 8.2 libwasmedge 0.14 LIMITATION — linked flows run interpreted
+
+An **AOT-compiled** linked flow falsely traps `out of bounds memory access`
+inside the linked drain once the real query sequence runs. Bisected hard:
+
+- interpreted flow → AOT engine: byte-verbatim green (the shipped mode);
+- AOT flow, hostcall-free paths (404) and pre-engine error paths: green;
+- isolated mechanisms ALL green under AOT→AOT: own-memory dependent calling
+  the engine, three-module chains through the shim, callee-side engine
+  memory growth (64→128 MB inside the call), caller-side growth after engine
+  calls, locked and unlocked threads, THREADS/EH-configured VMs, compiler
+  levels O0/O1/O2/O3;
+- the full artifact's engine sequence (getConfig hostcall + engine malloc +
+  ~330 shim pokes + `flatsql_query_raw_flatbuffer_stream` + artifact getters
+  + shim fnv/count) traps deterministically.
+
+Same defect class as the C.5b nested-execution corruption
+(docs/wasmedge-aot-nested-execution.md): per-thread executor state around
+cross-instance AOT calls. Until a WasmEdge upgrade clears the env-gated
+repro (`SDN_C7_FORCE_LINKED_AOT=1 SDN_C4_AOT_REPRO=1 go test ./internal/flowrt/
+-run TestAOTMountRepro`), `LoadMountedFlow` force-interprets the (small)
+flow artifact of linked mounts; the engine — where query execution and
+stream materialization live — stays AOT.
+
+### 8.3 Measured consequence (wirespeed gate, 8.6 MB / 29K records)
+
+- linked + interpreted flow (this loop): **68.3% best / 72.5% median** (flow
+  2469 MB/s best, ~3.5 ms warm; the residue is interpreted flow-runtime
+  execution, NOT host crossings — zero storage hostcalls remain on any
+  path).
+- bridge + AOT flow (C.5c): 84.9% best / 93.8% median (~1.1 ms warm).
+- Both modes stay compilable (`engineLinkage` is per-flow document); the
+  ≥99% gate target is unmet either way. When the upstream AOT defect is
+  fixed, linked+AOT should exceed C.5c (its ~130 µs host-dispatch residue is
+  architecturally gone).

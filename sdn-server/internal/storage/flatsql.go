@@ -82,6 +82,12 @@ type FlatSQLStore struct {
 	// tombstoned) resident count per schema. Both guarded by mu.
 	engineHotWindow int
 	engineResident  map[string]int64
+	// engineEpoch counts engine replacements (starts at 1); retiredEngines
+	// holds poisoned runtimes whose live instances dependent flow VMs may
+	// still reference — released at Close (engine_link.go, loop C.7). Both
+	// guarded by mu.
+	engineEpoch    uint64
+	retiredEngines []*flatsqlrt.Runtime
 }
 
 // StoreOption configures a FlatSQLStore at open time.
@@ -200,6 +206,7 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 
 		engineHotWindow: cfg.engineHotWindow,
 		engineResident:  map[string]int64{},
+		engineEpoch:     1,
 	}
 
 	// Initialize tables for all schemas
@@ -2813,6 +2820,12 @@ func (s *FlatSQLStore) Close() error {
 		s.engine.Close()
 		s.engine = nil
 	}
+	// Retired (poisoned, replaced) engines are released only now: dependent
+	// linked-flow VMs must have been closed by their mounts first.
+	for _, retired := range s.retiredEngines {
+		retired.Close()
+	}
+	s.retiredEngines = nil
 	// Release the single-writer liveness lock LAST, after every store file
 	// handle is closed, so a waiting opener never sees a half-closed store.
 	if s.lock != nil {

@@ -82,6 +82,14 @@ type FlowMountDeps struct {
 
 	// Store optionally resolves installed flow program IDs to artifacts.
 	Store *FlowStore
+
+	// EngineLink shares the host store's LIVE FlatSQL engine with
+	// engine-linked flow artifacts (loop C.7 direct linkage,
+	// engine_link.go). Mount registration HARD-FAILS when an artifact
+	// imports the "flatsql" module and no link is provided: linking grants
+	// full store-memory access, so it is an explicit, first-party grant —
+	// never inferred. Bridge-mode artifacts ignore it.
+	EngineLink EngineLinkProvider
 }
 
 // MountedFlow is one flow module bound to one HTTP listener path, served by a
@@ -90,10 +98,18 @@ type FlowMountDeps struct {
 type MountedFlow struct {
 	manifest *modulert.Manifest
 	aot      bool
+	linked   bool
 
 	triggerIndex  uint32
 	triggerPortID string
 	egressKeys    []string
+
+	// runBytes/pages/deps/linkShim are retained so linked instances can be
+	// rebuilt against a replacement engine after poisoning (loop C.7).
+	runBytes []byte
+	pages    uint32
+	deps     FlowMountDeps
+	linkShim []byte
 
 	pool chan *flowInstance
 
@@ -103,10 +119,74 @@ type MountedFlow struct {
 
 // flowInstance is one pooled flow runtime plus its hostcall bridge (the
 // egress needs the bridge to resolve $HTR body references registered by
-// capability handlers during the exchange).
+// capability handlers during the exchange) and, for engine-linked artifacts,
+// the direct-linkage state (loop C.7).
 type flowInstance struct {
 	rt     *FlowRuntime
 	bridge *modulert.HostBridge
+
+	// Direct linkage (nil/zero for bridge-mode artifacts):
+	linked      bool
+	engineEpoch uint64                // store engine epoch this instance was built against
+	engineRT    *flatsqlrt.Runtime    // the borrowed live engine
+	engineDB    *flatsqlrt.Database   // its database (lock + harvest surface)
+	refTablePtr uint32                // sdn_flatsql_link_ref_table (static)
+	refSlots    uint32                // sdn_flatsql_link_ref_slots
+	engineMu    sync.Mutex            // guards engineBodies (egress runs on the request goroutine)
+	engineBodies map[uint64][]byte    // exchange-scoped harvested bodies by token
+}
+
+// takeEngineBody resolves (and removes) a harvested engine body-ref.
+func (inst *flowInstance) takeEngineBody(token uint64) ([]byte, bool) {
+	inst.engineMu.Lock()
+	defer inst.engineMu.Unlock()
+	b, ok := inst.engineBodies[token]
+	if ok {
+		delete(inst.engineBodies, token)
+	}
+	return b, ok
+}
+
+// resetEngineBodies drops any unconsumed harvested bodies (end of exchange).
+func (inst *flowInstance) resetEngineBodies() {
+	inst.engineMu.Lock()
+	defer inst.engineMu.Unlock()
+	inst.engineBodies = map[uint64][]byte{}
+}
+
+// harvestEngineRefs reads the flow's engine body-reference table and
+// resolves every fresh entry through the store's mirror — INSIDE the locked
+// linked-drain section, so the generation cannot move and every engine
+// pointer is valid by construction. Slots are cleared after harvest
+// (single-use references).
+func (inst *flowInstance) harvestEngineRefs(h *flatsqlrt.EngineLinkHarvest) {
+	if inst.refTablePtr == 0 || inst.refSlots == 0 {
+		return
+	}
+	data, err := inst.rt.Module().ReadMemory(inst.refTablePtr, inst.refSlots*engineRefEntrySize)
+	if err != nil {
+		log.Warnf("engine-link harvest: read ref table: %v", err)
+		return
+	}
+	for i := uint32(0); i < inst.refSlots; i++ {
+		entry := decodeEngineRefEntry(data[i*engineRefEntrySize : (i+1)*engineRefEntrySize])
+		if !entry.Used {
+			continue
+		}
+		stream, err := h.ResolveRef(entry.Generation, entry.EnginePtr, entry.Size, entry.FNV1a64, int(entry.Frames))
+		if err != nil {
+			log.Warnf("engine-link harvest: resolve token %d: %v", entry.Token, err)
+		} else {
+			inst.engineMu.Lock()
+			inst.engineBodies[entry.Token] = stream.Bytes
+			inst.engineMu.Unlock()
+		}
+		// Clear the slot: references are single-use and must not be
+		// rescanned by later drains.
+		if err := inst.rt.Module().WriteMemory(inst.refTablePtr+i*engineRefEntrySize+36, []byte{0, 0, 0, 0}); err != nil {
+			log.Warnf("engine-link harvest: clear slot %d: %v", i, err)
+		}
+	}
 }
 
 // flowBundleTopology is the subset of the compiled bundle's flow.json needed
@@ -144,15 +224,46 @@ func resolveFlowArtifact(flowRef string, store *FlowStore) (wasmPath, bundleDir 
 // load (WASI + flow host funcs + the module-SDK hostcall bridge), manifest
 // read, capability provisioning from the registry — rejecting the load if
 // the host cannot satisfy a required capability.
-func loadFlowInstance(wasmBytes []byte, pages uint32, deps FlowMountDeps) (*flowInstance, *modulert.Manifest, error) {
+//
+// Engine-linked artifacts (they import the "flatsql" wasm module — loop C.7)
+// additionally get the store's LIVE engine instance and the flatsql_link
+// shim registered into their VM before instantiation, the store db handle
+// wired in, and a linked-drain section that holds the store engine lock
+// around every in-wasm drain and harvests engine body-references before
+// releasing it. Loading a linked artifact WITHOUT deps.EngineLink is a hard
+// error (first-party grant, never inferred).
+func loadFlowInstance(wasmBytes []byte, pages uint32, linked bool, linkShim []byte, deps FlowMountDeps) (*flowInstance, *modulert.Manifest, error) {
 	// The hostcall bridge is created before the manifest is readable
 	// (chicken-and-egg, same as modulert.Module); its capability grants are
 	// applied right after the manifest parse below.
 	bridge := modulert.NewHostBridge(deps.NodeCtx, nil)
 
-	rt, err := NewFlowRuntime(wasmBytes, pages,
+	opts := []wasmrt.Option{
 		wasmrt.WithHostModule(modulert.HostcallImportModule, bridge.BuildWasmEdgeHostFuncs()),
-	)
+	}
+
+	var engineRT *flatsqlrt.Runtime
+	var engineDB *flatsqlrt.Database
+	var engineEpoch uint64
+	if linked {
+		if deps.EngineLink == nil {
+			return nil, nil, fmt.Errorf("flow artifact links the store engine (imports module %q) but the host provided no EngineLink — linked mounts are a first-party grant", flatsqlrt.EngineImportModule)
+		}
+		engineEpoch = deps.EngineLink.EngineEpoch()
+		engineRT, engineDB = deps.EngineLink.EngineRuntime()
+		if engineRT == nil || engineDB == nil {
+			return nil, nil, fmt.Errorf("engine link provider returned no live engine")
+		}
+		if len(linkShim) == 0 {
+			linkShim = flatsqlLinkShimWasm
+		}
+		opts = append(opts,
+			wasmrt.WithLinkedModuleFrom(engineRT.WasmModule()),
+			wasmrt.WithNamedWasm(LinkShimModuleName, linkShim),
+		)
+	}
+
+	rt, err := NewFlowRuntime(wasmBytes, pages, opts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load flow module: %w", err)
 	}
@@ -163,11 +274,64 @@ func loadFlowInstance(wasmBytes []byte, pages uint32, deps FlowMountDeps) (*flow
 		return nil, nil, fmt.Errorf("read flow manifest: %w", err)
 	}
 
-	if err := modulert.ProvisionBridge(bridge, deps.CapRegistry, manifest.Capabilities, nil); err != nil {
+	// The engine-link capability is satisfied by the mount's engine link,
+	// not by a hostcall handler — exclude it from bridge provisioning.
+	capabilities := make([]string, 0, len(manifest.Capabilities))
+	for _, capability := range manifest.Capabilities {
+		if capability == EngineLinkCapability {
+			if !linked {
+				rt.Release()
+				return nil, nil, fmt.Errorf("flow %q declares %s but the artifact does not import the engine module", manifest.PluginID, EngineLinkCapability)
+			}
+			continue
+		}
+		capabilities = append(capabilities, capability)
+	}
+	if err := modulert.ProvisionBridge(bridge, deps.CapRegistry, capabilities, nil); err != nil {
 		rt.Release()
 		return nil, nil, fmt.Errorf("flow %q: %w", manifest.PluginID, err)
 	}
-	return &flowInstance{rt: rt, bridge: bridge}, manifest, nil
+
+	inst := &flowInstance{rt: rt, bridge: bridge, engineBodies: map[uint64][]byte{}}
+	if linked {
+		if _, err := rt.Module().Execute("sdn_flatsql_link_init", int32(engineDB.Handle())); err != nil {
+			rt.Release()
+			return nil, nil, fmt.Errorf("flow %q: sdn_flatsql_link_init: %w", manifest.PluginID, err)
+		}
+		tableRes, err := rt.Module().Execute("sdn_flatsql_link_ref_table")
+		if err != nil {
+			rt.Release()
+			return nil, nil, fmt.Errorf("flow %q: sdn_flatsql_link_ref_table: %w", manifest.PluginID, err)
+		}
+		slotsRes, err := rt.Module().Execute("sdn_flatsql_link_ref_slots")
+		if err != nil {
+			rt.Release()
+			return nil, nil, fmt.Errorf("flow %q: sdn_flatsql_link_ref_slots: %w", manifest.PluginID, err)
+		}
+		inst.linked = true
+		inst.engineEpoch = engineEpoch
+		inst.engineRT = engineRT
+		inst.engineDB = engineDB
+		inst.refTablePtr = uint32(wasmrt.ToInt32(tableRes[0]))
+		inst.refSlots = uint32(wasmrt.ToInt32(slotsRes[0]))
+
+		// Every in-wasm drain of this instance runs under the store engine
+		// lock (SQLITE_THREADSAFE=0; linked calls are one contiguous
+		// executor invocation — safe on the request thread, C.5c §7.1). A
+		// trap inside the drain may have corrupted engine state exactly like
+		// a host-invoked trap: poison the engine so the store replaces it.
+		rt.SetLinkedSection(func(run func() error) error {
+			return engineDB.WithLinkedDrain(func(h *flatsqlrt.EngineLinkHarvest) error {
+				if err := run(); err != nil {
+					engineRT.MarkPoisoned()
+					return err
+				}
+				inst.harvestEngineRefs(h)
+				return nil
+			})
+		})
+	}
+	return inst, manifest, nil
 }
 
 // LoadMountedFlow loads a compiled flow bundle as a pool of deps.PoolSize
@@ -210,15 +374,52 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 		poolSize = 1
 	}
 
+	// Engine-linked artifact detection is mechanical: it imports the live
+	// engine's wasm module, so it cannot instantiate without the link.
+	// Scanned on the PORTABLE bytes (AOT universal artifacts wrap them).
+	linked := wasmImportsModule(wasmBytes, flatsqlrt.EngineImportModule)
+
+	// libwasmedge 0.14 LIMITATION (loop C.7, docs/flatsql-component-linkage.md
+	// §8): an AOT-compiled flow making direct cross-instance calls into the
+	// AOT engine falsely traps "out of bounds memory access" once the real
+	// query sequence runs (interpreted flows against the AOT engine are
+	// proven byte-verbatim green, and every isolated mechanism — own-memory
+	// AOT->AOT calls, three-module chains, callee memory growth, locked and
+	// unlocked threads — passes; the trigger is the full workload's call
+	// pattern, same bug class as the C.5b nested-execution corruption). The
+	// heavy work (query execution, stream materialization) runs INSIDE the
+	// AOT engine either way, so linked flows interpret the small flow
+	// artifact until a WasmEdge upgrade clears the repro
+	// (SDN_C7_FORCE_LINKED_AOT=1 + flowrt TestAOTMountRepro).
+	linkShim := flatsqlLinkShimWasm
+	if linked && aot && os.Getenv("SDN_C7_FORCE_LINKED_AOT") == "" {
+		runBytes = wasmBytes
+		aot = false
+		log.Warnf("Flow mount %q: engine-linked artifact runs INTERPRETED (libwasmedge 0.14 AOT cross-instance limitation; engine stays AOT)", flowRef)
+	}
+	if linked && aot {
+		// Keep the whole linked chain AOT when forcing AOT (repro/upgrades).
+		if compiledShim, shimErr := flatsqlrt.EnsureAOTArtifact(deps.AOTCacheDir, "flatsqllink", flatsqlLinkShimWasm); shimErr == nil {
+			linkShim = compiledShim
+		} else {
+			log.Warnf("Flow mount %q: link-shim AOT compile failed, interpreting shim: %v", flowRef, shimErr)
+		}
+	}
+
 	mf := &MountedFlow{
 		aot:           aot,
+		linked:        linked,
 		triggerIndex:  0,
 		triggerPortID: "request",
+		runBytes:      runBytes,
+		pages:         pages,
+		deps:          deps,
+		linkShim:      linkShim,
 		pool:          make(chan *flowInstance, poolSize),
 	}
 
 	for i := 0; i < poolSize; i++ {
-		inst, manifest, err := loadFlowInstance(runBytes, pages, deps)
+		inst, manifest, err := loadFlowInstance(runBytes, pages, linked, linkShim, deps)
 		if err != nil {
 			mf.Close()
 			return nil, err
@@ -355,6 +556,7 @@ func (mf *MountedFlow) PoolSize() int { return cap(mf.pool) }
 type htrPipe struct {
 	w           http.ResponseWriter
 	bridge      *modulert.HostBridge
+	inst        *flowInstance
 	wroteHeader bool
 	frames      int
 	err         error
@@ -374,6 +576,12 @@ func (p *htrPipe) emit(_ context.Context, args *InvocationArgs) (*InvocationResu
 		var refBody []byte
 		if resp.BodyRefSize > 0 {
 			b, ok := p.bridge.TakeBodyRef(resp.BodyRefToken)
+			if !ok && p.inst != nil && resp.BodyRefToken&0xFFFFFFFF00000000 == engineBodyRefTokenMagic {
+				// Engine body-reference (loop C.7 direct linkage): the bytes
+				// were harvested from engine memory under the store engine
+				// lock during the linked drain.
+				b, ok = p.inst.takeEngineBody(resp.BodyRefToken)
+			}
 			if !ok || uint64(len(b)) != resp.BodyRefSize {
 				if p.err == nil {
 					p.err = fmt.Errorf("egress $HTR references body token %d (%d bytes) not registered on this exchange",
@@ -449,11 +657,36 @@ func (mf *MountedFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("acquire flow instance: %v", err), http.StatusServiceUnavailable)
 		return
 	}
-	defer mf.release(inst)
+	defer func() { mf.release(inst) }()
+
+	// Linked instances borrow the store's live engine: if the engine was
+	// poisoned, recover it (idempotent), and if the engine epoch moved,
+	// re-instantiate this instance against the replacement before serving
+	// (loop C.7 poison recovery).
+	if mf.linked {
+		if engineRT, _ := mf.deps.EngineLink.EngineRuntime(); engineRT != nil && engineRT.Poisoned() {
+			if _, rerr := mf.deps.EngineLink.RecoverPoisonedEngine(); rerr != nil {
+				http.Error(w, fmt.Sprintf("store engine recovery failed: %v", rerr), http.StatusServiceUnavailable)
+				return
+			}
+		}
+		if epoch := mf.deps.EngineLink.EngineEpoch(); inst.engineEpoch != epoch {
+			fresh, _, lerr := loadFlowInstance(mf.runBytes, mf.pages, true, mf.linkShim, mf.deps)
+			if lerr != nil {
+				http.Error(w, fmt.Sprintf("rebuild flow instance against replacement engine: %v", lerr), http.StatusServiceUnavailable)
+				return
+			}
+			inst.rt.Release()
+			inst = fresh
+			log.Infof("Flow %q instance re-instantiated against engine epoch %d", mf.ProgramID(), epoch)
+		}
+	}
+
 	rt := inst.rt
 	// References are exchange-scoped: drop anything a 304/error path left
 	// unconsumed before the instance goes back to the pool.
 	defer inst.bridge.ResetBodyRefs()
+	defer inst.resetEngineBodies()
 
 	// One $HTQ frame into the flow's linear memory, enqueued at the ingress
 	// trigger. Descriptor + NUL-terminated port id + payload are packed into
@@ -481,7 +714,7 @@ func (mf *MountedFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pipe := &htrPipe{w: w, bridge: inst.bridge}
+	pipe := &htrPipe{w: w, bridge: inst.bridge, inst: inst}
 	handlers := make(HandlerMap, len(mf.egressKeys))
 	for _, key := range mf.egressKeys {
 		handlers[key] = pipe.emit
