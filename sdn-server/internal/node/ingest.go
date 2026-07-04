@@ -9,21 +9,21 @@ package node
 // rowids, and engine-mirror invalidation (query-cache generation bumps) all
 // apply identically to daemon-served queries.
 //
-// Honest architecture note: the target module paradigm (timer trigger →
-// http cap fetch → parse module → storage.write cap) is the intended end
-// state for ingest, and its host pieces largely EXIST: module cron timers
-// (plugins.Manager manifest TIMERS — the starlink-pull data-source module
-// runs exactly this shape, modulert/starlink_source_*_test.go) and the
-// storage.write cap op (modulert/caps/storage.go). What does NOT exist is
-// (a) a WASM port of the provider parsers (CelesTrak GP/SATCAT/SW CSV →
-// OMM/MPE/CAT/SPW FlatBuffers, Space-Track gp_history CSV, UDL elset/sgi
-// JSON — ~2.5K lines in internal/ingest with checkpoints, raw-archive
-// snapshots, disk guardrails, stale-source alerts, and dataset-publication
-// triggers), and (b) provenance-carrying batch semantics on storage.write
-// (it stores single base64 records without SourceTags provider/source/
-// batch attribution or reconcile). Converting that is a full task of its
-// own; this runner is the pragmatic single-writer unblock and keeps the
-// pipeline byte-identical with the standalone verb.
+// Architecture note (updated loop C.8a): the module-paradigm ingest path
+// NOW EXISTS for the CelesTrak sources — config `flows.services` loads the
+// compiled celestrak-{gp,satcat,spw}-ingest flow bundles
+// (space-data-network-modules/flows/celestrak-ingest) as timer-served flow
+// services (internal/flowrt/cronmount.go): cron TIMER trigger →
+// hostcap/http-request → WASM provider parsers (spacedatastandards.org
+// generated code, byte-parity with this pipeline's builders) → the
+// policy-mediated storage.ingest_with_source cap op (SourceTags
+// attribution, reconcile, disk guardrail, raw + provenance archiving).
+// This Go runner remains for (a) Space-Track gap-fill and UDL sync — the
+// credentialed, checkpointed multi-batch workers that stayed host-side
+// (see the C.8 report's descope rationale) — and (b) deployments that have
+// not opted into the flow topology yet. Dataset publication triggering
+// also still lives here (DatasetPublishURL); the flow path does not fire
+// it yet.
 
 import (
 	"fmt"
