@@ -1,5 +1,6 @@
 import { decodeCanonicalPlgListing, inferStandardsUsed } from './plg-listings';
 import { decodeCanonicalStfListing } from './stf-listings';
+import { parseRawFlatbufferStream, RAW_FLATBUFFER_STREAM_CONTENT_TYPE } from './sdn-backend-adapter-utils';
 import type {
   CanonicalFieldStreamPolicy,
   CanonicalListing,
@@ -12,16 +13,14 @@ export interface MarketplaceFetchLikeResponse {
   ok: boolean;
   status: number;
   json(): Promise<unknown>;
+  /** Required for the FlatBuffer record-stream listing path (real fetch has it). */
+  arrayBuffer?(): Promise<ArrayBuffer>;
 }
 
 export type MarketplaceFetchLike = (
   input: string,
   init?: RequestInit,
 ) => Promise<MarketplaceFetchLikeResponse>;
-
-interface PlgQueryResponse {
-  results?: unknown;
-}
 
 interface ModuleDeliveryListingResponse {
   results?: unknown;
@@ -101,9 +100,12 @@ export async function loadMarketplaceListingsFromServer(
     storefrontError = new Error(`storefront listing query failed (${storefront.status})`);
   }
 
+  // Base64-free listing fallback (loop D.3): ONE datasync stream request —
+  // the aligned FlatBuffer record stream replaces the retired
+  // `data/query/PLG?include_data=true&format=json` base64 envelope.
   const plgResponse = await fetchImpl(
-    `${normalizedBaseUrl}/api/v1/data/query/PLG?include_data=true&format=json&limit=25`,
-    { credentials: 'include' },
+    `${normalizedBaseUrl}/api/v1/data/query`,
+    listingStreamRequest('PLG.fbs'),
   );
 
   if (!plgResponse.ok) {
@@ -116,17 +118,33 @@ export async function loadMarketplaceListingsFromServer(
     throw new Error(`listing query failed (${plgResponse.status})`);
   }
 
-  const payload = asRecord(await plgResponse.json()) as PlgQueryResponse | null;
-  listings.push(...normalizeFlatbufferQueryResults(payload?.results)
-    .map((entry) => entry.data_base64 ? decodeCanonicalPlgListing(base64ToBytes(entry.data_base64), {
-      observedAt: entry.timestamp ? Date.parse(entry.timestamp) : Date.now(),
-    }) : null)
+  listings.push(...(await listingStreamFrames(plgResponse))
+    .map((frame) => decodeCanonicalPlgListing(frame, { observedAt: Date.now() }))
     .filter((listing): listing is CanonicalListing => Boolean(listing)));
 
   return [
     ...listings,
     ...await loadStfListings(normalizedBaseUrl, fetchImpl),
   ];
+}
+
+function listingStreamRequest(schemaName: string): RequestInit {
+  return {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'content-type': 'application/json',
+      accept: RAW_FLATBUFFER_STREAM_CONTENT_TYPE,
+    },
+    body: JSON.stringify({ schema: schemaName, limit: 25 }),
+  };
+}
+
+async function listingStreamFrames(response: MarketplaceFetchLikeResponse): Promise<Uint8Array[]> {
+  if (typeof response.arrayBuffer !== 'function') {
+    return [];
+  }
+  return parseRawFlatbufferStream(new Uint8Array(await response.arrayBuffer()));
 }
 
 async function loadStorefrontListings(
@@ -329,8 +347,8 @@ async function loadStfListings(
   fetchImpl: MarketplaceFetchLike,
 ): Promise<CanonicalListing[]> {
   const response = await fetchImpl(
-    `${normalizedBaseUrl}/api/v1/data/query/STF?include_data=true&format=json&limit=25`,
-    { credentials: 'include' },
+    `${normalizedBaseUrl}/api/v1/data/query`,
+    listingStreamRequest('STF.fbs'),
   );
 
   if (!response.ok) {
@@ -340,11 +358,8 @@ async function loadStfListings(
     throw new Error(`STF listing query failed (${response.status})`);
   }
 
-  const payload = asRecord(await response.json()) as PlgQueryResponse | null;
-  return normalizeFlatbufferQueryResults(payload?.results)
-    .map((entry) => entry.data_base64 ? decodeCanonicalStfListing(base64ToBytes(entry.data_base64), {
-      observedAt: entry.timestamp ? Date.parse(entry.timestamp) : Date.now(),
-    }) : null)
+  return (await listingStreamFrames(response))
+    .map((frame) => decodeCanonicalStfListing(frame, { observedAt: Date.now() }))
     .filter((listing): listing is CanonicalListing => Boolean(listing));
 }
 

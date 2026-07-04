@@ -128,6 +128,15 @@ export type {
   EpochSqlProfile,
   EpochProfileSqlOptions,
 } from './epoch-query-sql';
+// HTTP transport flatbuffers-first (loop D.3): ONE conditional stream
+// request; 304 served from the local engine store.
+export { RemoteEpochStreamClient } from './remote-epoch-stream';
+export type {
+  EpochStreamTransport,
+  EpochStreamLocalStore,
+  RemoteEpochStreamRequest,
+  RemoteEpochStreamResult,
+} from './remote-epoch-stream';
 // Per-standard engine store surface (per-source shadow tables + unified views).
 export {
   createLocalFlatSqlStore,
@@ -387,12 +396,11 @@ export type {
   NodeCatalog,
   SchemaCatalogEntry,
   DataQueryOptions,
-  DataQueryResponse,
-  DataRecord,
+  DataQueryStreamResult,
+  DataQueryJsonResult,
   PublishResult,
   BatchPublishResult,
   LogHeadResponse,
-  LogEntriesResponse,
   LogHeadsResponse,
   ChannelAccessOptions,
   ChannelActionResponse,
@@ -442,7 +450,11 @@ export type {
 } from './installed-module-registry';
 
 // Transport + Auth
-export { HttpTransport } from './transport/http';
-export type { LogEntry, LogHeadInfo } from './transport/http';
+export {
+  HttpTransport,
+  FLATBUFFER_STREAM_CONTENT_TYPE,
+  iterateSizePrefixedFrames,
+} from './transport/http';
+export type { LogHeadInfo } from './transport/http';
 export { SessionAuth } from './transport/auth';
 export type { AuthProvider } from './transport/auth';

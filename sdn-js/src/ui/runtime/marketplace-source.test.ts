@@ -76,27 +76,7 @@ describe('loadMarketplaceListingsFromServer', () => {
           };
         },
       })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        async json() {
-          return {
-            results: [
-              {
-                data_base64: Buffer.from(createStfBytes()).toString('base64'),
-                timestamp: '2026-04-18T16:00:00Z',
-              },
-            ],
-          };
-        },
-      })
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        async json() {
-          return {};
-        },
-      });
+      .mockResolvedValueOnce(flatbufferStreamListingResponse([createStfBytes()]));
 
     await expect(
       loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
@@ -120,9 +100,16 @@ describe('loadMarketplaceListingsFromServer', () => {
       }),
     ]);
 
+    // The STF listing fallback is ONE datasync stream request — the retired
+    // base64 `data/query/STF?include_data=true&format=json` envelope is gone.
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://sdn.spaceaware.io/api/v1/data/query/STF?include_data=true&format=json&limit=25',
-      { credentials: 'include' },
+      'https://sdn.spaceaware.io/api/v1/data/query',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        headers: expect.objectContaining({ accept: 'application/vnd.sdn.flatbuffers.stream' }),
+        body: JSON.stringify({ schema: 'STF.fbs', limit: 25 }),
+      }),
     );
   });
 
@@ -181,6 +168,45 @@ describe('loadMarketplaceListingsFromServer', () => {
     ]);
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('serves the PLG listing fallback from ONE FlatBuffer stream request (no base64)', async () => {
+    const fetchMock = vi.fn()
+      // module-delivery unavailable
+      .mockResolvedValueOnce({ ok: false, status: 404, async json() { return {}; } })
+      // storefront unavailable
+      .mockResolvedValueOnce({ ok: false, status: 404, async json() { return {}; } })
+      // PLG datasync stream
+      .mockResolvedValueOnce(flatbufferStreamListingResponse([createPlgBytes({
+        pluginId: 'com.space-data-network.stream-demo',
+        version: '2.0.0',
+        name: 'Stream Demo',
+        description: 'Served as raw FlatBuffer frames',
+      })]))
+      // STF datasync stream: empty
+      .mockResolvedValueOnce(flatbufferStreamListingResponse([]));
+
+    await expect(
+      loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        pluginId: 'com.space-data-network.stream-demo',
+        version: '2.0.0',
+        name: 'Stream Demo',
+        description: 'Served as raw FlatBuffer frames',
+      }),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      'https://sdn.spaceaware.io/api/v1/data/query',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ accept: 'application/vnd.sdn.flatbuffers.stream' }),
+        body: JSON.stringify({ schema: 'PLG.fbs', limit: 25 }),
+      }),
+    );
   });
 
   it('decodes protected WASM storefront listings into module marketplace entries', async () => {
@@ -540,6 +566,29 @@ function createPlgBytes(options: {
 
   PLG.finishPLGBuffer(builder, root);
   return builder.asUint8Array();
+}
+
+function flatbufferStreamListingResponse(records: Uint8Array[]) {
+  const size = records.reduce((total, record) => total + 4 + record.byteLength, 0);
+  const body = new Uint8Array(size);
+  const view = new DataView(body.buffer);
+  let offset = 0;
+  for (const record of records) {
+    view.setUint32(offset, record.byteLength, true); // LE — flatsql-size-prefixed-le-u32
+    offset += 4;
+    body.set(record, offset);
+    offset += record.byteLength;
+  }
+  return {
+    ok: true,
+    status: 200,
+    async json() {
+      throw new Error('stream responses are not JSON');
+    },
+    async arrayBuffer() {
+      return body.buffer as ArrayBuffer;
+    },
+  };
 }
 
 function createStfBytes(): Uint8Array {

@@ -12,12 +12,11 @@ import type {
   NodeCatalog,
   SchemaCatalogEntry,
   DataQueryOptions,
-  DataQueryResponse,
-  DataRecord,
+  DataQueryStreamResult,
+  DataQueryJsonResult,
   PublishResult,
   BatchPublishResult,
   LogHeadResponse,
-  LogEntriesResponse,
   LogHeadsResponse,
   ChannelAccessOptions,
   ChannelActionResponse,
@@ -199,13 +198,20 @@ export class SDNClient {
     return cat.schemas.map((s) => s.name);
   }
 
-  /** Query data records. */
-  async query(opts: DataQueryOptions): Promise<DataRecord[]> {
-    const resp = await this.transport.queryData(opts);
-    return resp.results;
+  /**
+   * Query data records (flatbuffers-first, loop D.3): ONE request to the
+   * flow-served bulk endpoint; the DEFAULT result carries the aligned
+   * size-prefixed FlatBuffer record stream verbatim (zero-copy `frames()`
+   * iterator). Pass `format: 'json'` for the opt-in JSON edge adapter.
+   */
+  async query(opts: DataQueryOptions & { format: 'json' }): Promise<DataQueryJsonResult>;
+  async query(opts: DataQueryOptions & { format?: 'flatbuffers' }): Promise<DataQueryStreamResult>;
+  async query(opts: DataQueryOptions): Promise<DataQueryStreamResult | DataQueryJsonResult>;
+  async query(opts: DataQueryOptions): Promise<DataQueryStreamResult | DataQueryJsonResult> {
+    return this.transport.queryData(opts);
   }
 
-  /** Get a single record by schema and CID. */
+  /** Get a single record's raw FlatBuffer bytes by schema and CID. */
   async get(schema: string, cid: string): Promise<Uint8Array | null> {
     return this.transport.getRecord(schema, cid);
   }
@@ -241,16 +247,6 @@ export class SDNClient {
     return this.transport.getLogHead(schema, publisherPeerID);
   }
 
-  /** Get log entries for a publisher+schema since a given sequence. */
-  async logEntries(
-    schema: string,
-    publisherPeerID: string,
-    sinceSequence: number = 0,
-    limit: number = 100,
-  ): Promise<LogEntriesResponse> {
-    return this.transport.getLogEntries(schema, publisherPeerID, sinceSequence, limit);
-  }
-
   /** Get all publishers' log heads for a schema. */
   async logHeads(schema: string): Promise<LogHeadsResponse> {
     return this.transport.getLogHeads(schema);
@@ -262,12 +258,11 @@ export type {
   NodeCatalog,
   SchemaCatalogEntry,
   DataQueryOptions,
-  DataQueryResponse,
-  DataRecord,
+  DataQueryStreamResult,
+  DataQueryJsonResult,
   PublishResult,
   BatchPublishResult,
   LogHeadResponse,
-  LogEntriesResponse,
   LogHeadsResponse,
   ChannelAccessOptions,
   ChannelActionResponse,
