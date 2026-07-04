@@ -150,6 +150,36 @@ describe('HttpTransport.queryData (flatbuffers-first, loop D.3)', () => {
     const transport = new HttpTransport(BASE);
     await expect(transport.queryData({ schema: 'nope' })).rejects.toBeInstanceOf(SDNTransportError);
   });
+
+  it("defaults to credentials 'include' (session-cookie auth, historical behavior)", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return streamResponse([new Uint8Array([1, 2, 3, 4])], 'W/"fnv1a64-1"');
+    }));
+
+    await new HttpTransport(BASE).queryData({ schema: 'OMM' });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].init?.credentials).toBe('include');
+  });
+
+  it("honors credentials 'omit' for anonymous cross-origin data queries", async () => {
+    // Browsers block credentialed CORS responses unless the server sends
+    // Access-Control-Allow-Credentials: true — SDN nodes do not on the
+    // public data endpoints, so cross-origin consumers (e.g. the OrbPro
+    // Sandcastle catalog loader) must be able to opt out of cookies.
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return streamResponse([new Uint8Array([1, 2, 3, 4])], 'W/"fnv1a64-1"');
+    }));
+
+    await new HttpTransport(BASE, undefined, { credentials: 'omit' }).queryData({ schema: 'OMM' });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].init?.credentials).toBe('omit');
+  });
 });
 
 describe('HttpTransport.getRecord (raw bytes — the base64 envelope is dead)', () => {

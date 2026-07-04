@@ -233,14 +233,32 @@ export interface ChannelKeyEnvelopeResponse {
   [key: string]: unknown;
 }
 
+/** Construction options for {@link HttpTransport}. */
+export interface HttpTransportOptions {
+  /**
+   * Fetch credentials mode. Defaults to `'include'` (session-cookie auth
+   * against a same-origin / trusted SDN node — the historical behavior).
+   *
+   * Pass `'omit'` for anonymous cross-origin data queries: browsers BLOCK
+   * credentialed CORS responses unless the server answers with
+   * `Access-Control-Allow-Credentials: true`, which SDN nodes do not send
+   * on the public data endpoints — a credentialed cross-origin `queryData`
+   * therefore fails with a network error even though the endpoint itself
+   * is publicly readable.
+   */
+  credentials?: RequestCredentials;
+}
+
 /** HTTP transport for SDN server APIs. */
 export class HttpTransport {
   private baseUrl: string;
   private authProvider?: AuthProvider;
+  private credentials: RequestCredentials;
 
-  constructor(baseUrl: string, authProvider?: AuthProvider) {
+  constructor(baseUrl: string, authProvider?: AuthProvider, options?: HttpTransportOptions) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.authProvider = authProvider;
+    this.credentials = options?.credentials ?? 'include';
   }
 
   /** Fetch the node's schema catalog. */
@@ -486,7 +504,9 @@ export class HttpTransport {
     const resp = await globalThis.fetch(url, {
       ...init,
       headers,
-      credentials: 'include', // send cookies for session auth
+      // Default 'include' sends cookies for session auth; 'omit' enables
+      // anonymous cross-origin data queries (see HttpTransportOptions).
+      credentials: this.credentials,
     });
 
     if (!resp.ok && !opts?.allowStatuses?.includes(resp.status)) {
