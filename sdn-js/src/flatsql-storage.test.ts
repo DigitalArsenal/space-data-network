@@ -28,13 +28,15 @@ describe('FlatSQLStorage', () => {
     expect((await storage.query('OMM', { limit: 1 })).length).toBe(1);
   });
 
-  it('exposes SQL over the FlatSQL row table with schema provenance', async () => {
+  it('exposes SQL over the engine control table with schema provenance', async () => {
+    // D.1: the row index lives in the FlatSQL-WASM engine's control table,
+    // named after the server layout (sdn_record_index, flatsql.go).
     const storage = await FlatSQLStorage.open();
     await storage.store('OMM', enc('a'), 'p', enc(''));
     await storage.store('OMM', enc('b'), 'p', enc(''));
     await storage.store('CDM', enc('c'), 'p', enc(''));
     const result = storage.sql(
-      "SELECT schemaFileId, rowId FROM RuntimeHostRow WHERE schemaFileId = 'OMM' ORDER BY rowId",
+      "SELECT schema_name, cid FROM sdn_record_index WHERE schema_name = 'OMM' ORDER BY rowid",
     );
     expect(result.rowCount).toBe(2);
     expect(result.rows.map((r) => r[0])).toEqual(['OMM', 'OMM']);
@@ -66,8 +68,8 @@ describe('FlatSQLStorage', () => {
     expect(alpha?.peerId).toBe('peer-a');
     const beta = await second.get('CDM', cid2);
     expect([...(beta?.signature ?? [])]).toEqual([...enc('sig-b')]);
-    // FlatSQL rows rebuilt from the snapshot
-    expect(second.sql('SELECT rowId FROM RuntimeHostRow').rowCount).toBe(2);
+    // Engine control-table rows rebuilt from the snapshot
+    expect(second.sql('SELECT cid FROM sdn_record_index').rowCount).toBe(2);
   });
 
   it('HeliaSnapshotPersistence round-trips through an addBytes/catBytes surface', async () => {

@@ -89,16 +89,48 @@ export type {
 } from './server-descriptor';
 export { SDNStorage } from './storage';
 export type { StoredRecord, QueryFilter, LogSyncState } from './storage';
+// THE SDNNode store (loop D.1): the FlatSQL-WASM engine record store.
 export {
-  FlatSQLStorage,
+  FlatSQLEngineRecordStore,
+  PersistenceStoreSnapshotPersistence,
   MemorySnapshotPersistence,
   HeliaSnapshotPersistence,
-} from './flatsql-storage';
+  flatBufferMatchesFileId,
+} from './engine-record-store';
 export type {
+  FlatSQLEngineRecordStoreOptions,
   SnapshotPersistence,
   HeliaLike,
-  FlatSQLStorageOptions,
-} from './flatsql-storage';
+} from './engine-record-store';
+// Per-standard engine store surface (per-source shadow tables + unified views).
+export {
+  createLocalFlatSqlStore,
+  clearLocalFlatSqlStore,
+  createDefaultLocalFlatSqlPersistenceStore,
+  MemoryFlatSqlPersistenceStore,
+  LOCAL_FLATSQL_DEFAULT_SOURCE,
+  decodeFlatSqlSizePrefixedStream,
+  flatSqlSizePrefixedStreamInfo,
+  stripSdnFlatBufferSizePrefix,
+  isReadOnlyFlatSqlQuery,
+} from './local-flatsql';
+export type {
+  LocalFlatSqlStore,
+  LocalFlatSqlStoreOptions,
+  LocalFlatSqlSchema,
+  LocalFlatSqlIngestRecord,
+  LocalFlatSqlIngestOptions,
+  LocalFlatSqlStreamIngestOptions,
+  LocalFlatSqlQueryOptions,
+  LocalFlatSqlQueryResult,
+  LocalFlatSqlStandardStats,
+  LocalFlatSqlPinLedgerEntry,
+  LocalFlatSqlPinLedgerQuery,
+  LocalFlatSqlPersistenceStore,
+} from './local-flatsql';
+// Compatibility alias over the engine record store (published surface).
+export { FlatSQLStorage } from './flatsql-storage';
+export type { FlatSQLStorageOptions } from './flatsql-storage';
 export type { NodeRecordStorage } from './node';
 export { createModuleHostCapabilityAdapters } from './module-host-adapters';
 export {

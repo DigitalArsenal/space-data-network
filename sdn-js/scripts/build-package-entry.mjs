@@ -51,6 +51,33 @@ const sharedBuildOptions = {
       },
     },
     {
+      // Loop D.1: the FlatSQL-WASM engine (THE SDNNode store) is bundled
+      // into the package entries. Its emscripten glue / wasm loader import
+      // the Node builtins `module` and `node:crypto` on Node-only code
+      // paths; for the browser-platform bundle those imports are mapped to
+      // runtime-conditional shims (real builtins in Node, inert in
+      // browsers). Scoped to importers inside node_modules/flatsql so no
+      // other dependency resolution changes.
+      name: 'flatsql-node-builtin-shims',
+      setup(pluginBuild) {
+        const flatsqlDir = `node_modules${path.sep}flatsql${path.sep}`;
+        const shimByBuiltin = new Map([
+          ['module', 'src/shims/flatsql-node-module.ts'],
+          ['node:crypto', 'src/shims/flatsql-node-crypto.ts'],
+          ['fs', 'src/shims/flatsql-node-builtins.ts'],
+          ['path', 'src/shims/flatsql-node-builtins.ts'],
+          ['url', 'src/shims/flatsql-node-builtins.ts'],
+        ]);
+        pluginBuild.onResolve({ filter: /^(module|node:crypto|fs|path|url)$/ }, (args) => {
+          if (!args.importer.includes(flatsqlDir)) {
+            return null;
+          }
+          const shim = shimByBuiltin.get(args.path);
+          return shim ? { path: path.join(packageRoot, shim) } : null;
+        });
+      },
+    },
+    {
       name: 'hd-wallet-sdn-shims',
       setup(pluginBuild) {
         pluginBuild.onResolve(
@@ -115,3 +142,12 @@ await build({
     '.js': '.mjs',
   },
 });
+
+// The bundled flatsql emscripten glue locates its wasm binary relative to
+// the importing module's URL (new URL('flatsql.wasm', import.meta.url)).
+// Ship the engine binary beside every dist entry that may initialize it so
+// the lookup works from the published package in both Node and browsers.
+const flatsqlWasm = path.join(packageRoot, 'node_modules/flatsql/wasm/flatsql.wasm');
+for (const target of ['dist/flatsql.wasm', 'dist/ui/flatsql.wasm']) {
+  await fs.copyFile(flatsqlWasm, path.join(packageRoot, target));
+}
