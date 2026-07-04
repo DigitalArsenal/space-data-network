@@ -33,6 +33,11 @@ var flatsqlWasm []byte
 func EmbeddedWasm() []byte { return flatsqlWasm }
 
 const (
+	// EngineImportModule is the wasm import-module name linked dependents
+	// resolve the engine's exports against — and therefore the name the live
+	// engine instance is registered under in its own VM (loop C.7).
+	EngineImportModule = "flatsql"
+
 	// DefaultMaxMemoryPages allows the engine to grow to the wasm32 maximum
 	// (65536 pages x 64 KiB = 4 GiB). The catalog-scale store needs far more
 	// than modulert's 64 MB plugin cap.
@@ -87,6 +92,17 @@ type Runtime struct {
 // discarded and recreated; continuing to use it can hang or corrupt results.
 func (r *Runtime) Poisoned() bool { return r.poisoned }
 
+// MarkPoisoned records an externally observed trap (e.g. a linked flow's
+// direct engine dispatch trapping mid-call — the engine state may be
+// corrupted exactly like a host-invoked trap). The runtime must be replaced.
+func (r *Runtime) MarkPoisoned() { r.poisoned = true }
+
+// WasmModule exposes the underlying wasmrt module so hosts can register the
+// LIVE engine instance into dependent VMs (wasmrt.WithLinkedModuleFrom) —
+// the loop C.7 direct-linkage wiring. The instance is named
+// EngineImportModule.
+func (r *Runtime) WasmModule() *wasmrt.Module { return r.mod }
+
 // New instantiates the FlatSQL WASI reactor and runs its _initialize export.
 func New(opts ...Option) (*Runtime, error) {
 	cfg := &config{maxMemoryPages: DefaultMaxMemoryPages, wasmBytes: flatsqlWasm}
@@ -114,6 +130,13 @@ func New(opts ...Option) (*Runtime, error) {
 		// nested AOT-inside-AOT execution — the engine therefore always runs
 		// on its own locked OS thread (docs/wasmedge-aot-nested-execution.md).
 		wasmrt.WithDedicatedThread(),
+		// The engine instantiates as the NAMED module "flatsql" so its LIVE
+		// instance can be registered into dependent VMs (linked flow
+		// artifacts import flatsql.malloc/free/flatsql_* directly — loop C.7,
+		// docs/flatsql-component-linkage.md B-iv). Direct linked calls are
+		// safe on the CALLER's thread (one contiguous executor invocation,
+		// §7.1) but require the module lock (SQLITE_THREADSAFE=0).
+		wasmrt.WithRegisteredName(EngineImportModule),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("flatsqlrt: instantiate engine: %w", err)
@@ -409,10 +432,21 @@ type Database struct {
 	// (generation, sql, params) — see rawstream_mirror.go. Lazily created;
 	// guarded by the Runtime's module lock like all database state.
 	rawMirror *rawStreamMirror
+
+	// engineRefMirror holds bodies harvested from LINKED flows' engine
+	// body-references, keyed by (generation, fnv1a64, size) — content
+	// identity under the engine's own staleness authority. Same locking as
+	// rawMirror.
+	engineRefMirror *rawStreamMirror
 }
 
 // Name returns the diagnostic label the database was created with.
 func (d *Database) Name() string { return d.name }
+
+// Handle exposes the engine-side database handle — the value linked flow
+// artifacts receive through sdn_flatsql_link_init and pass to their direct
+// flatsql_* calls (loop C.7).
+func (d *Database) Handle() uint32 { return d.handle }
 
 // Destroy releases the engine-side database. The handle must not be used
 // afterwards.

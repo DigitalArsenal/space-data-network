@@ -36,6 +36,19 @@ type FlowRuntime struct {
 	// hasDrainLinked reports the artifact exports the C.5c in-wasm scheduler
 	// loop (space_data_module_runtime_drain_linked); probed once at load.
 	hasDrainLinked bool
+
+	// linkedSection, when set (loop C.7 direct linkage), brackets every
+	// in-wasm drain_linked execution: the mount supplies a wrapper that holds
+	// the store engine lock for the duration of the linked calls
+	// (SQLITE_THREADSAFE=0) and harvests engine body-references before
+	// releasing it. run() returns the drain execution error so the wrapper
+	// can poison the engine on a trap.
+	linkedSection func(run func() error) error
+}
+
+// SetLinkedSection installs the linked-drain wrapper (see linkedSection).
+func (rt *FlowRuntime) SetLinkedSection(fn func(run func() error) error) {
+	rt.linkedSection = fn
 }
 
 // flowNodeInfo is the cached static identity of one flow node.
@@ -298,13 +311,28 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 		// node inside ONE guest call — ready-node selection, dispatch, and
 		// frame routing never cross the host boundary. The host loop below
 		// then only services host-model nodes (and acts as the fallback for
-		// artifacts predating the export).
+		// artifacts predating the export). Engine-linked artifacts (loop
+		// C.7) run the whole drain inside the mount's linkedSection: the
+		// store engine lock is held while direct engine calls execute, and
+		// engine body-refs are harvested before it is released.
 		if rt.hasDrainLinked {
-			if res, err := rt.mod.Execute(runtimeExportDrainLinked, int32(maxIter)); err == nil {
+			runLinked := func() error {
+				res, err := rt.mod.Execute(runtimeExportDrainLinked, int32(maxIter))
+				if err != nil {
+					return err
+				}
 				if dispatched := wasmrt.ToInt32(res[0]); dispatched > 0 {
 					result.NodesInvoked += int(dispatched)
 					result.Iterations += int(dispatched)
 				}
+				return nil
+			}
+			if rt.linkedSection != nil {
+				if err := rt.linkedSection(runLinked); err != nil {
+					return result, fmt.Errorf("linked drain: %w", err)
+				}
+			} else {
+				_ = runLinked() // best-effort, host loop below is the fallback
 			}
 		}
 

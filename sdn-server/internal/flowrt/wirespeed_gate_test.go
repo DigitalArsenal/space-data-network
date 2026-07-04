@@ -238,6 +238,7 @@ func TestWirespeedGate(t *testing.T) {
 			CapRegistry: reg,
 			NodeCtx:     &modulert.NodeContext{},
 			AOTCacheDir: aotDir,
+			EngineLink:  store,
 		})
 	if err != nil {
 		t.Fatalf("RegisterFlowMounts: %v", err)

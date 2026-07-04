@@ -105,6 +105,7 @@ func TestDeliveredSignedFlowArtifactByteVerifiesAndMounts(t *testing.T) {
 			NodeCtx:        &modulert.NodeContext{},
 			MaxMemoryPages: 2048,
 			Store:          store,
+			EngineLink:     dataStore,
 		})
 	if err != nil {
 		t.Fatalf("RegisterFlowMounts: %v", err)
