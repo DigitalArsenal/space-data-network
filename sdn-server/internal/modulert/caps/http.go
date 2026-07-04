@@ -25,13 +25,26 @@ import (
 //	    "body": "utf8 string or base64 bytes",
 //	    "body_encoding": "utf8|base64",  // default: utf8
 //	    "timeout_ms": 30000,
+//	    "max_bytes": 16777216,           // optional response-size clamp
 //	}
 //	→ {"status": 200, "headers": {...}, "body": "...", "body_encoding": "utf8|base64"}
+//
+// Response bodies are bounded by httpCapMaxResponseBytes (100 MB — the same
+// ceiling the in-daemon ingest runner reads sources with; capability-gated,
+// same trust domain). A request may clamp LOWER via "max_bytes". A response
+// exceeding the effective bound is an ERROR, never a silent truncation
+// (loop C.8a: a silently truncated CelesTrak catalog would otherwise ingest
+// a partial batch as if it were complete).
 func NewHTTPCapFactory() modulert.CapFactory {
 	return func(_ *modulert.Module) modulert.CapHandler {
 		return httpCapHandle
 	}
 }
+
+// httpCapMaxResponseBytes is the host-policy ceiling for http.request
+// response bodies (parity with internal/ingest fetchBytesWithMetadata's
+// 100 MB read limit).
+const httpCapMaxResponseBytes = 100 * 1024 * 1024
 
 func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	if operation != "http.request" {
@@ -45,6 +58,7 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 		Body         string            `json:"body"`
 		BodyEncoding string            `json:"body_encoding"`
 		TimeoutMs    int               `json:"timeout_ms"`
+		MaxBytes     int64             `json:"max_bytes"`
 	}
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return errCapJSON("invalid request payload: " + err.Error()), nil
@@ -90,9 +104,16 @@ func httpCapHandle(operation string, payload []byte) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	limit := int64(httpCapMaxResponseBytes)
+	if req.MaxBytes > 0 && req.MaxBytes < limit {
+		limit = req.MaxBytes
+	}
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return errCapJSON("failed to read response body: " + err.Error()), nil
+	}
+	if int64(len(respBody)) > limit {
+		return errCapJSON(fmt.Sprintf("response body exceeds the %d-byte limit — refusing to deliver a truncated payload", limit)), nil
 	}
 
 	// Collect response headers
