@@ -13,6 +13,8 @@ import {
   type LocalFlatSqlStreamIngestOptions,
 } from './local-flatsql';
 import type { DataScanResult, DataSummary, RawDataQuery, RawDataRecord } from './sdn-backend';
+import type { EngineEpochQueryRequest } from '../../epoch-query-sql';
+import type { QueryParam } from 'flatsql/wasm';
 import { decodeWorkerSchemaSyncProgressFlatBuffer } from './worker-sync-status-flatbuffer';
 
 export interface WorkerFlatSqlSyncBackendConfig {
@@ -104,6 +106,16 @@ export interface WorkerLocalFlatSqlStore extends LocalFlatSqlStore {
   getRemoteDataSummary(backendConfig: WorkerFlatSqlSyncBackendConfig): Promise<DataSummary | null>;
   queryRemotePage(request: WorkerRemotePageRequest): Promise<WorkerRemotePageResult>;
   syncSchema(request: WorkerSchemaSyncRequest, onProgress?: (update: WorkerSchemaSyncUpdate) => void): Promise<WorkerSchemaSyncUpdate>;
+  /** Registered source partitions (`<Table>@<source>` shadows) — REQUIRED on the worker store (loop D.5). */
+  listSources(standardId: string): string[] | Promise<string[]>;
+  /**
+   * PRIMARY query path (loop D.2, proxied in D.5): engine-native epoch
+   * profile over the unified per-standard view, ALIGNED size-prefixed
+   * FlatBuffer frame stream out.
+   */
+  queryEpochRawStream(standardId: string, request?: EngineEpochQueryRequest | null): Uint8Array | Promise<Uint8Array>;
+  /** Generic aligned-raw-stream query (server mirror), proxied in D.5. */
+  queryRawFlatBufferStream(standardId: string, sql: string, params?: QueryParam[]): Uint8Array | Promise<Uint8Array>;
 }
 
 type WorkerRequest =
@@ -113,6 +125,9 @@ type WorkerRequest =
   | { id: number; type: 'clearStandard'; standardId: string; options?: LocalFlatSqlClearOptions }
   | { id: number; type: 'flush'; standardId?: string }
   | { id: number; type: 'query'; sql: string; standardId?: string; options?: LocalFlatSqlQueryOptions }
+  | { id: number; type: 'listSources'; standardId: string }
+  | { id: number; type: 'queryEpochRawStream'; standardId: string; request?: EngineEpochQueryRequest | null }
+  | { id: number; type: 'queryRawFlatBufferStream'; standardId: string; sql: string; params?: QueryParam[] }
   | { id: number; type: 'getStats'; options?: LocalFlatSqlStatsOptions }
   | { id: number; type: 'recordPinLedgerEntries'; entries: LocalFlatSqlPinLedgerEntry[] }
   | { id: number; type: 'listPinLedgerEntries'; query?: LocalFlatSqlPinLedgerQuery }
@@ -227,6 +242,24 @@ class WorkerLocalFlatSqlStoreClient implements WorkerLocalFlatSqlStore {
 
   query(sql: string, standardId?: string, options?: LocalFlatSqlQueryOptions): Promise<LocalFlatSqlQueryResult> {
     return this.request<LocalFlatSqlQueryResult>({ id: 0, type: 'query', sql, standardId, options });
+  }
+
+  listSources(standardId: string): Promise<string[]> {
+    return this.request<string[]>({ id: 0, type: 'listSources', standardId });
+  }
+
+  /**
+   * PRIMARY query path (loop D.2, worker-proxied in D.5): engine-native
+   * epoch profile over the unified per-standard view; the ALIGNED
+   * size-prefixed frame stream transfers back zero-copy.
+   */
+  queryEpochRawStream(standardId: string, request?: EngineEpochQueryRequest | null): Promise<Uint8Array> {
+    return this.request<Uint8Array>({ id: 0, type: 'queryEpochRawStream', standardId, request });
+  }
+
+  /** Generic aligned-raw-stream query (server mirror), worker-proxied in D.5. */
+  queryRawFlatBufferStream(standardId: string, sql: string, params?: QueryParam[]): Promise<Uint8Array> {
+    return this.request<Uint8Array>({ id: 0, type: 'queryRawFlatBufferStream', standardId, sql, params });
   }
 
   async getStats(options?: LocalFlatSqlStatsOptions): Promise<LocalFlatSqlStandardStats[]> {

@@ -22,7 +22,7 @@ import { isUint8ArrayList, Uint8ArrayList } from "uint8arraylist";
 
 import { unmarshalPrivateKey } from "@libp2p/crypto/keys";
 
-import { SDNStorage, StoredRecord, QueryFilter } from "./storage";
+import type { StoredRecord, QueryFilter } from "./storage";
 import {
   FlatSQLEngineRecordStore,
   type EnginePublishedShardIngestOptions,
@@ -105,10 +105,10 @@ export interface SDNConfig {
    * FlatSQL-WASM engine record store (loop D.1 — same engine, SQL, and
    * source-partition layout as sdn-server), journal-persisted to IndexedDB
    * under storeName by default or through storagePersistence when given;
-   * 'indexeddb' keeps the legacy SDNStorage (slated for removal in D.5);
-   * or pass a ready store instance.
+   * or pass a ready store instance. The legacy 'indexeddb' SDNStorage
+   * backend was REMOVED in loop D.5 — passing it now throws.
    */
-  storageBackend?: 'flatsql' | 'indexeddb' | NodeRecordStorage;
+  storageBackend?: 'flatsql' | NodeRecordStorage;
   /** Envelope journal persistence for the engine store (e.g. HeliaSnapshotPersistence). */
   storagePersistence?: SnapshotPersistence;
   /**
@@ -142,7 +142,7 @@ export interface SDNNodeEvents {
   onModuleDeliveryEvent?: (event: ModuleDeliveryEvent) => void;
 }
 
-/** The record-store surface SDNNode drives (SDNStorage and FlatSQLStorage). */
+/** The record-store surface SDNNode drives (the FlatSQL-WASM engine record store). */
 export interface NodeRecordStorage {
   store(
     schema: SchemaName | string,
@@ -272,16 +272,21 @@ export class SDNNode {
     this.libp2p = await createLibp2p(libp2pOpts);
 
     // Initialize storage if enabled. The FlatSQL-WASM engine record store is
-    // THE node store (loop D.1) — no opt-in flag; pass storageBackend:
-    // 'indexeddb' for the legacy SDNStorage (until D.5) or a ready
-    // NodeRecordStorage instance.
+    // THE node store (loop D.1, sole store since D.5) — no opt-in flag; pass
+    // storageBackend: a ready NodeRecordStorage instance to override.
     if (this.config.enableStorage !== false) {
       const backend = this.config.storageBackend ?? "flatsql";
-      if (backend === "indexeddb") {
-        this.storage = await SDNStorage.open(
-          this.config.storeName || "sdn-store",
+      if ((backend as string) === "indexeddb") {
+        // No silent fallback: the legacy backend had a different layout and
+        // query surface, so switching callers over must be explicit.
+        throw new Error(
+          "The legacy IndexedDB 'SDNStorage' backend was removed (loop D.5). " +
+            "Use the default 'flatsql' engine record store — it already " +
+            "persists via IndexedDB source-stream snapshots — or pass a " +
+            "NodeRecordStorage instance.",
         );
-      } else if (backend === "flatsql") {
+      }
+      if (backend === "flatsql") {
         this.storage = await FlatSQLEngineRecordStore.open({
           persistence: this.config.storagePersistence,
           persistenceKey: this.config.storeName || "sdn-store",

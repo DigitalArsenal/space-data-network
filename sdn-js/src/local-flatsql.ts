@@ -210,14 +210,14 @@ export interface LocalFlatSqlStore {
    * per-standard view and return the ALIGNED size-prefixed FlatBuffer frame
    * stream — the wire format, zero-copy out of the engine.
    */
-  queryEpochRawStream?(standardId: string, request?: EngineEpochQueryRequest | null): Uint8Array;
+  queryEpochRawStream?(standardId: string, request?: EngineEpochQueryRequest | null): Uint8Array | Promise<Uint8Array>;
   /**
    * Generic aligned-raw-stream query (server mirror of
    * FlatSQLStore.QueryRawStream): read-only SQL whose result cells are all
    * BLOBs (`SELECT _data FROM ...`), executed verbatim with positional
    * params. Returns the aligned size-prefixed frame stream.
    */
-  queryRawFlatBufferStream?(standardId: string, sql: string, params?: QueryParam[]): Uint8Array;
+  queryRawFlatBufferStream?(standardId: string, sql: string, params?: QueryParam[]): Uint8Array | Promise<Uint8Array>;
   getStats(options?: LocalFlatSqlStatsOptions): LocalFlatSqlStandardStats[] | Promise<LocalFlatSqlStandardStats[]>;
   destroy(): void;
 }

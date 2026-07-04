@@ -87,8 +87,9 @@ export type {
   ServerDescriptorInput,
   ServerDescriptorResolver,
 } from './server-descriptor';
-export { SDNStorage } from './storage';
-export type { StoredRecord, QueryFilter, LogSyncState } from './storage';
+// The legacy IndexedDB `SDNStorage` backend was removed in loop D.5; the
+// FlatSQL-WASM engine record store below is THE record store.
+export type { StoredRecord, QueryFilter } from './storage';
 // THE SDNNode store (loop D.1): the FlatSQL-WASM engine record store.
 export {
   FlatSQLEngineRecordStore,
