@@ -244,25 +244,31 @@ func TestHTTPMountedDataRetrievalFlow(t *testing.T) {
 		if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
 			t.Fatalf("content-type = %q", ct)
 		}
-		var decoded struct {
-			Count   int `json:"count"`
-			Records []struct {
-				NoradCatID uint32 `json:"norad_cat_id"`
-				ObjectName string `json:"object_name"`
-			} `json:"records"`
+		// format=json is a BARE top-level array — the same record stream as
+		// the flatbuffer format in a different encoding. Metadata travels in
+		// headers (x-sdn-record-count), never a body envelope.
+		if got := resp.Header.Get("X-Sdn-Record-Count"); got != "3" {
+			t.Fatalf("x-sdn-record-count = %q, want 3", got)
 		}
-		if err := json.Unmarshal(body, &decoded); err != nil {
+		if len(body) == 0 || body[0] != '[' {
+			t.Fatalf("json body must be a bare top-level array, got %q...", body[:min(len(body), 40)])
+		}
+		var records []struct {
+			NoradCatID uint32 `json:"norad_cat_id"`
+			ObjectName string `json:"object_name"`
+		}
+		if err := json.Unmarshal(body, &records); err != nil {
 			t.Fatalf("json body: %v (%q)", err, body)
 		}
-		if decoded.Count != 3 || len(decoded.Records) != 3 {
-			t.Fatalf("count = %d, records = %d, want 3/3", decoded.Count, len(decoded.Records))
+		if len(records) != 3 {
+			t.Fatalf("records = %d, want 3", len(records))
 		}
 		names := map[uint32]string{}
-		for _, r := range decoded.Records {
+		for _, r := range records {
 			names[r.NoradCatID] = r.ObjectName
 		}
 		if names[1001] != "SAT-1001" || names[1002] != "SAT-1002" || names[1003] != "SAT-1003" {
-			t.Fatalf("records = %+v", decoded.Records)
+			t.Fatalf("records = %+v", records)
 		}
 	})
 

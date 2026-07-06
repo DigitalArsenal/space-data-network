@@ -117,17 +117,19 @@ describe('HttpTransport.queryData (flatbuffers-first, loop D.3)', () => {
     expect([...result.frames()]).toEqual([]);
   });
 
-  it('treats json as the opt-in edge adapter', async () => {
+  it('treats json as the opt-in edge adapter (bare top-level array, count from header)', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
-      return new Response(JSON.stringify({
-        count: 2,
-        records: [
-          { norad_cat_id: 1001, object_name: 'SAT-1001' },
-          { norad_cat_id: 1002, object_name: 'SAT-1002' },
-        ],
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      // The wire contract: a BARE top-level array of records; the record
+      // count travels in x-sdn-record-count exactly like the fb path.
+      return new Response(JSON.stringify([
+        { norad_cat_id: 1001, object_name: 'SAT-1001' },
+        { norad_cat_id: 1002, object_name: 'SAT-1002' },
+      ]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'X-SDN-Record-Count': '2' },
+      });
     }));
 
     const transport = new HttpTransport(BASE);
@@ -139,6 +141,18 @@ describe('HttpTransport.queryData (flatbuffers-first, loop D.3)', () => {
     expect(result.format).toBe('json');
     expect(result.count).toBe(2);
     expect(result.records[1]).toEqual({ norad_cat_id: 1002, object_name: 'SAT-1002' });
+  });
+
+  it('json adapter falls back to array length when the count header is absent', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify([{ norad_cat_id: 1001 }]),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )));
+
+    const transport = new HttpTransport(BASE);
+    const result = await transport.queryData({ schema: 'omm', format: 'json' });
+    expect(result.count).toBe(1);
+    expect(result.records).toHaveLength(1);
   });
 
   it('surfaces flow 404s as SDNTransportError', async () => {
