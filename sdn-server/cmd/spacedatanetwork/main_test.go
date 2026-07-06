@@ -1607,3 +1607,43 @@ func testProviderDerivedIdentity() (*wasm.DerivedIdentity, error) {
 		},
 	}, nil
 }
+
+// TestIdentityAdvertisesPublicationKey pins the dataset-publication key
+// advertisement decision: HD-identity nodes whose publication key is the
+// identity Ed25519 signing key already advertise it on the wire EPM (no
+// runtime-key injection); every other configuration still injects the key
+// via SetRuntimeSigningKey.
+func TestIdentityAdvertisesPublicationKey(t *testing.T) {
+	t.Parallel()
+
+	_, identityPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	_, otherPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+
+	// HD identity, publication key == identity signing key (raw 64-byte form,
+	// as node.SigningKey returns): already advertised via the EPM KEYS vector.
+	if !identityAdvertisesPublicationKey(true, []byte(identityPriv), identityPriv) {
+		t.Fatal("HD identity with matching publication key should be advertised via EPM")
+	}
+	// Seed form of the same key must also match.
+	if !identityAdvertisesPublicationKey(true, identityPriv.Seed(), identityPriv) {
+		t.Fatal("HD identity seed-form signing key should match publication key")
+	}
+	// HD identity but publication key differs: must inject runtime key.
+	if identityAdvertisesPublicationKey(true, []byte(identityPriv), otherPriv) {
+		t.Fatal("mismatched publication key must not be treated as advertised")
+	}
+	// HD identity with no exportable signing key: must inject runtime key.
+	if identityAdvertisesPublicationKey(true, nil, identityPriv) {
+		t.Fatal("missing identity signing key must not be treated as advertised")
+	}
+	// No HD identity: unchanged legacy behavior, inject runtime key.
+	if identityAdvertisesPublicationKey(false, []byte(identityPriv), identityPriv) {
+		t.Fatal("non-HD node must keep injecting the runtime signing key")
+	}
+}

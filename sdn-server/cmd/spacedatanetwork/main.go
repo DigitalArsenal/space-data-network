@@ -894,7 +894,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				if err != nil {
 					log.Warnf("Dataset publication signing unavailable: %v", err)
 				}
-				if len(publicationSigningKey) == ed25519.PrivateKeySize && n.Identity() == nil {
+				if len(publicationSigningKey) == ed25519.PrivateKeySize &&
+					!identityAdvertisesPublicationKey(n.Identity() != nil, n.SigningKey(), ed25519.PrivateKey(publicationSigningKey)) {
 					if epmSvc := n.EPMService(); epmSvc != nil {
 						if err := epmSvc.SetRuntimeSigningKey(ed25519.PrivateKey(publicationSigningKey), "sdn/dataset-publication/v1"); err != nil {
 							log.Warnf("Could not advertise dataset publication signing key in node EPM: %v", err)
@@ -1589,6 +1590,32 @@ func publicHomepageFile(frontendPath string, homepageFile string) string {
 		return ""
 	}
 	return strings.TrimSpace(homepageFile)
+}
+
+// identityAdvertisesPublicationKey reports whether the node EPM already
+// advertises the dataset-publication Ed25519 public key through the HD
+// identity. HD-identity nodes sign dataset publications with the identity
+// Ed25519 signing key, which the node EPM now carries directly in its KEYS
+// vector, so injecting a duplicate runtime signing key would be redundant.
+// Nodes without an HD identity (or whose publication key differs from the
+// identity signing key) still need SetRuntimeSigningKey to advertise it.
+func identityAdvertisesPublicationKey(hasIdentity bool, identitySigningRaw []byte, publicationKey ed25519.PrivateKey) bool {
+	if !hasIdentity || len(publicationKey) != ed25519.PrivateKeySize {
+		return false
+	}
+	identityKey, err := storefrontSigningKeyFromRaw(identitySigningRaw)
+	if err != nil {
+		return false
+	}
+	identityPub, ok := identityKey.Public().(ed25519.PublicKey)
+	if !ok {
+		return false
+	}
+	publicationPub, ok := publicationKey.Public().(ed25519.PublicKey)
+	if !ok {
+		return false
+	}
+	return identityPub.Equal(publicationPub)
 }
 
 func storefrontSigningKeyFromRaw(raw []byte) (ed25519.PrivateKey, error) {

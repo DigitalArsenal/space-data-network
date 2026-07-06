@@ -1436,7 +1436,7 @@ func xpubEncryptionKeyPath(account uint32) string {
 
 func runtimeIdentityKeys(info wasm.IdentityInfo, xpub string) []map[string]interface{} {
 	if derived, ok := derivePublicIdentityKeysFromXPub(xpub, info.Account); ok {
-		return []map[string]interface{}{
+		keys := []map[string]interface{}{
 			{
 				"public_key":      derived.SigningPublicKey,
 				"address_type":    "secp256k1",
@@ -1445,15 +1445,39 @@ func runtimeIdentityKeys(info wasm.IdentityInfo, xpub string) []map[string]inter
 				"key_type":        "signing",
 				"xpub":            derived.XPub,
 			},
-			{
-				"public_key":      derived.EncryptionPublicKey,
-				"address_type":    "secp256k1",
-				"key_address":     derived.EncryptionKeyPath,
-				"derivation_path": derived.EncryptionKeyPath,
-				"key_type":        "encryption",
-				"xpub":            derived.XPub,
-			},
 		}
+		// Ed25519 signing key: the key behind EPM self-signatures and
+		// PNM/dataset-publication signatures. Directory consumers
+		// (ed25519PublicKeyFromDirectoryJSON) resolve it from this
+		// projection, so it must not be dropped in the xpub branch.
+		if strings.TrimSpace(info.SigningPubKeyHex) != "" {
+			keys = append(keys, map[string]interface{}{
+				"public_key":      info.SigningPubKeyHex,
+				"address_type":    "ed25519",
+				"key_address":     info.SigningKeyPath,
+				"derivation_path": info.SigningKeyPath,
+				"key_type":        "signing",
+				"xpub":            derived.XPub,
+			})
+		}
+		keys = append(keys, map[string]interface{}{
+			"public_key":      derived.EncryptionPublicKey,
+			"address_type":    "secp256k1",
+			"key_address":     derived.EncryptionKeyPath,
+			"derivation_path": derived.EncryptionKeyPath,
+			"key_type":        "encryption",
+			"xpub":            derived.XPub,
+		})
+		// X25519 encryption key, mirroring the wire EPM key set (WS2b).
+		if strings.TrimSpace(info.EncryptionPubHex) != "" {
+			keys = append(keys, map[string]interface{}{
+				"public_key":   info.EncryptionPubHex,
+				"address_type": "x25519",
+				"key_address":  info.EncryptionKeyPath,
+				"key_type":     "encryption",
+			})
+		}
+		return keys
 	}
 
 	if strings.TrimSpace(info.IdentityPubKeyHex) == "" &&
@@ -1547,7 +1571,62 @@ func (s *Service) rebuildEPM() error {
 }
 
 // rebuildEPMLocked builds EPM bytes. Caller must hold s.mu.
+//
+// The EPM is built twice: first without a signature to obtain the exact wire
+// bytes, then again with the embedded signature over the payload that
+// canonicalSigningContentFromEPM derives from those wire bytes. Because the
+// verifier (VerifyEPMSignature) recomputes the payload from the same wire
+// fields, signer and verifier agree by construction; the signing payload can
+// never drift from the published EPM. (The SIGNATURE field itself is not part
+// of the canonical content, so the pass-1 payload is identical to what a
+// verifier recomputes from the signed pass-2 bytes.)
 func (s *Service) rebuildEPMLocked() error {
+	// Build the identity attestation (chain proofs) once, up front, so both
+	// build passes emit identical CHAIN_PROOFS.
+	if err := s.rebuildIdentityAttestationLocked(); err != nil {
+		log.Warnf("Failed to build identity attestation: %v", err)
+	}
+
+	// Timestamp for the EPM signature.
+	signatureTimestamp := time.Now().Unix()
+
+	unsigned, err := s.buildEPMBytesLocked("", signatureTimestamp)
+	if err != nil {
+		return err
+	}
+
+	signatureHex := ""
+	if s.identity != nil || len(s.runtimeSigningKey) == ed25519.PrivateKeySize {
+		payload, err := EPMSigningPayload(unsigned)
+		if err != nil {
+			return fmt.Errorf("derive EPM signing payload: %w", err)
+		}
+		if s.identity != nil {
+			if sig, err := s.identity.SigningPrivKey.Sign(payload); err == nil {
+				signatureHex = hex.EncodeToString(sig)
+			}
+		} else {
+			signatureHex = hex.EncodeToString(ed25519.Sign(s.runtimeSigningKey, payload))
+		}
+	}
+	if signatureHex == "" {
+		s.epmBytes = unsigned
+		return nil
+	}
+
+	signed, err := s.buildEPMBytesLocked(signatureHex, signatureTimestamp)
+	if err != nil {
+		return err
+	}
+	s.epmBytes = signed
+	return nil
+}
+
+// buildEPMBytesLocked serializes the node EPM wire bytes with the given
+// signature (hex, empty for the unsigned pre-image pass) and signature
+// timestamp. Caller must hold s.mu. The output is deterministic for a fixed
+// service state, signature, and timestamp.
+func (s *Service) buildEPMBytesLocked(signatureHex string, signatureTimestamp int64) ([]byte, error) {
 	builder := flatbuffers.NewBuilder(2048)
 
 	p := s.profile
@@ -1671,6 +1750,25 @@ func (s *Service) rebuildEPMLocked() error {
 			EPM.CryptoKeyAddKEY_ADDRESS(builder, signingPathOff)
 			EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
 			keyOffsets = append(keyOffsets, EPM.CryptoKeyEnd(builder))
+
+			// Ed25519 signing key. This is the key that produces the EPM
+			// self-signature (and PNM/dataset-publication signatures), so it
+			// must ride the wire: VerifyEPMSignature and the directory
+			// Ed25519-key lookup both read it from the EPM KEYS vector.
+			if s.identity.SigningPubKey != nil {
+				if sigPubBytes, err := s.identity.SigningPubKey.Raw(); err == nil && len(sigPubBytes) > 0 {
+					ed25519PubOff := builder.CreateString(hex.EncodeToString(sigPubBytes))
+					ed25519AddrTypeOff := builder.CreateString("ed25519")
+					ed25519PathOff := builder.CreateString(s.identity.SigningKeyPath)
+					EPM.CryptoKeyStart(builder)
+					EPM.CryptoKeyAddPUBLIC_KEY(builder, ed25519PubOff)
+					EPM.CryptoKeyAddXPUB(builder, xpubOff)
+					EPM.CryptoKeyAddADDRESS_TYPE(builder, ed25519AddrTypeOff)
+					EPM.CryptoKeyAddKEY_ADDRESS(builder, ed25519PathOff)
+					EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
+					keyOffsets = append(keyOffsets, EPM.CryptoKeyEnd(builder))
+				}
+			}
 
 			encryptionPubOff := builder.CreateString(derived.EncryptionPublicKey)
 			encryptionPathOff := builder.CreateString(derived.EncryptionKeyPath)
@@ -1799,12 +1897,8 @@ func (s *Service) rebuildEPMLocked() error {
 		multiAddrOff = builder.EndVector(len(addrOffsets))
 	}
 
-	// Build identity attestation (chain proofs) before starting EPM table
-	if err := s.rebuildIdentityAttestationLocked(); err != nil {
-		log.Warnf("Failed to build identity attestation: %v", err)
-	}
-
 	// Build ChainProof FlatBuffer entries from identity attestation
+	// (rebuilt once by rebuildEPMLocked before both build passes)
 	var chainProofsOff flatbuffers.UOffsetT
 	if s.identityAttestation != nil && len(s.identityAttestation.ChainProofs) > 0 {
 		proofOffsets := make([]flatbuffers.UOffsetT, len(s.identityAttestation.ChainProofs))
@@ -1836,20 +1930,11 @@ func (s *Service) rebuildEPMLocked() error {
 		chainProofsOff = builder.EndVector(len(proofOffsets))
 	}
 
-	// Timestamp for the EPM signature
-	signatureTimestamp := time.Now().Unix()
-
-	// Sign EPM content with Ed25519 (canonical JSON of all fields except SIGNATURE/SIGNATURE_TIMESTAMP)
+	// Embedded signature (computed by rebuildEPMLocked over the wire-derived
+	// canonical payload; empty during the unsigned pre-image pass).
 	var signatureOff flatbuffers.UOffsetT
-	if s.identity != nil {
-		canonicalContent := s.buildCanonicalSigningContent(signatureTimestamp)
-		if sig, err := s.identity.SigningPrivKey.Sign(canonicalContent); err == nil {
-			signatureOff = builder.CreateString(hex.EncodeToString(sig))
-		}
-	} else if len(s.runtimeSigningKey) == ed25519.PrivateKeySize {
-		canonicalContent := s.buildCanonicalSigningContent(signatureTimestamp)
-		sig := ed25519.Sign(s.runtimeSigningKey, canonicalContent)
-		signatureOff = builder.CreateString(hex.EncodeToString(sig))
+	if signatureHex != "" {
+		signatureOff = builder.CreateString(signatureHex)
 	}
 
 	// Build EPM table
@@ -1913,180 +1998,7 @@ func (s *Service) rebuildEPMLocked() error {
 
 	result := make([]byte, len(builder.FinishedBytes()))
 	copy(result, builder.FinishedBytes())
-	s.epmBytes = result
-
-	return nil
-}
-
-// buildCanonicalSigningContent builds the canonical JSON of all EPM fields
-// except SIGNATURE for content signing.
-// This matches the JS buildEPMSigningContent() output.
-func (s *Service) buildCanonicalSigningContent(signatureTimestamp int64) []byte {
-	content := make(map[string]interface{})
-
-	p := s.profile
-	if p == nil {
-		p = &Profile{}
-	}
-
-	if p.DN != "" {
-		content["DN"] = p.DN
-	}
-	if p.LegalName != "" {
-		content["LEGAL_NAME"] = p.LegalName
-	}
-	if p.FamilyName != "" {
-		content["FAMILY_NAME"] = p.FamilyName
-	}
-	if p.GivenName != "" {
-		content["GIVEN_NAME"] = p.GivenName
-	}
-	if p.AdditionalName != "" {
-		content["ADDITIONAL_NAME"] = p.AdditionalName
-	}
-	if p.HonorificPrefix != "" {
-		content["HONORIFIC_PREFIX"] = p.HonorificPrefix
-	}
-	if p.HonorificSuffix != "" {
-		content["HONORIFIC_SUFFIX"] = p.HonorificSuffix
-	}
-	if p.JobTitle != "" {
-		content["JOB_TITLE"] = p.JobTitle
-	}
-	if p.Occupation != "" {
-		content["OCCUPATION"] = p.Occupation
-	}
-	if p.Email != "" {
-		content["EMAIL"] = p.Email
-	}
-	if p.Telephone != "" {
-		content["TELEPHONE"] = p.Telephone
-	}
-	if p.Address != nil && !p.Address.IsEmpty() {
-		address := make(map[string]interface{})
-		if p.Address.Country != "" {
-			address["COUNTRY"] = p.Address.Country
-		}
-		if p.Address.Region != "" {
-			address["REGION"] = p.Address.Region
-		}
-		if p.Address.Locality != "" {
-			address["LOCALITY"] = p.Address.Locality
-		}
-		if p.Address.PostalCode != "" {
-			address["POSTAL_CODE"] = p.Address.PostalCode
-		}
-		if p.Address.Street != "" {
-			address["STREET"] = p.Address.Street
-		}
-		if p.Address.POBox != "" {
-			address["POST_OFFICE_BOX_NUMBER"] = p.Address.POBox
-		}
-		if len(address) > 0 {
-			content["ADDRESS"] = address
-		}
-	}
-	if len(p.AlternateNames) > 0 {
-		content["ALTERNATE_NAMES"] = p.AlternateNames
-	}
-
-	// Keys
-	if s.identity != nil {
-		if derived, ok := derivePublicIdentityKeysFromXPub(s.xpub, s.identity.Account); ok {
-			content["KEYS"] = []map[string]interface{}{
-				{
-					"PUBLIC_KEY":      derived.SigningPublicKey,
-					"ADDRESS_TYPE":    "secp256k1",
-					"KEY_ADDRESS":     derived.SigningKeyPath,
-					"DERIVATION_PATH": derived.SigningKeyPath,
-					"KEY_TYPE":        "Signing",
-					"XPUB":            derived.XPub,
-				},
-				{
-					"PUBLIC_KEY":      derived.EncryptionPublicKey,
-					"ADDRESS_TYPE":    "secp256k1",
-					"KEY_ADDRESS":     derived.EncryptionKeyPath,
-					"DERIVATION_PATH": derived.EncryptionKeyPath,
-					"KEY_TYPE":        "Encryption",
-					"XPUB":            derived.XPub,
-				},
-			}
-		} else {
-			var keys []map[string]interface{}
-			identityPubBytes, _ := s.identity.IdentityPubKey.Raw()
-			keys = append(keys, map[string]interface{}{
-				"PUBLIC_KEY":   hex.EncodeToString(identityPubBytes),
-				"ADDRESS_TYPE": "secp256k1",
-				"KEY_ADDRESS":  s.identity.IdentityKeyPath,
-				"KEY_TYPE":     "Signing",
-			})
-			sigPubBytes, _ := s.identity.SigningPubKey.Raw()
-			signingKey := map[string]interface{}{
-				"PUBLIC_KEY":   hex.EncodeToString(sigPubBytes),
-				"ADDRESS_TYPE": "ed25519",
-				"KEY_ADDRESS":  s.identity.SigningKeyPath,
-				"KEY_TYPE":     "Signing",
-			}
-			if s.xpub != "" {
-				signingKey["XPUB"] = s.xpub
-			}
-			keys = append(keys, signingKey)
-			keys = append(keys, map[string]interface{}{
-				"PUBLIC_KEY":   hex.EncodeToString(s.identity.EncryptionPub),
-				"ADDRESS_TYPE": "x25519",
-				"KEY_ADDRESS":  s.identity.EncryptionKeyPath,
-				"KEY_TYPE":     "Encryption",
-			})
-			content["KEYS"] = keys
-		}
-	}
-	if len(s.runtimeSigningKey) == ed25519.PrivateKeySize {
-		keys, _ := content["KEYS"].([]map[string]interface{})
-		path := strings.TrimSpace(s.runtimeSigningPath)
-		if path == "" {
-			path = "sdn/runtime-signing"
-		}
-		pub := s.runtimeSigningKey.Public().(ed25519.PublicKey)
-		keys = append(keys, map[string]interface{}{
-			"PUBLIC_KEY":   hex.EncodeToString(pub),
-			"ADDRESS_TYPE": "ed25519",
-			"KEY_ADDRESS":  path,
-			"KEY_TYPE":     "Signing",
-		})
-		content["KEYS"] = keys
-	}
-
-	// Multiformat addresses
-	peerIDStr := s.peerID.String()
-	addresses := []string{"/ipns/" + peerIDStr}
-	addresses = append(addresses, s.runtimeAddresses...)
-	addresses = normalizeRuntimeAddresses(addresses)
-	if len(addresses) > 0 {
-		content["MULTIFORMAT_ADDRESS"] = addresses
-	}
-	content["ENTITY_TYPE"] = "Node"
-	content["SIGNATURE_TIMESTAMP"] = signatureTimestamp
-
-	// Chain proofs
-	if s.identityAttestation != nil && len(s.identityAttestation.ChainProofs) > 0 {
-		var proofs []map[string]interface{}
-		for _, proof := range s.identityAttestation.ChainProofs {
-			proofs = append(proofs, map[string]interface{}{
-				"CHAIN":          proof.Chain,
-				"ADDRESS":        proof.Address,
-				"PUBLIC_KEY":     proof.PublicKeyHex,
-				"KEY_PATH":       proof.KeyPath,
-				"SIGNATURE":      proof.Signature,
-				"SIGNED_PAYLOAD": proof.SignedPayloadHex,
-				"ALGORITHM":      proof.SignatureAlgorithm,
-				"ENCODING":       proof.SignatureEncoding,
-			})
-		}
-		content["CHAIN_PROOFS"] = proofs
-	}
-
-	canonical, _ := marshalEPMSigningContent(content)
-	return canonical
+	return result, nil
 }
 
 func (s *Service) rebuildIdentityAttestationLocked() error {
