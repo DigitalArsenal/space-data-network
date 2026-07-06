@@ -15,12 +15,16 @@ type contextKey string
 const sessionContextKey contextKey = "auth_session"
 
 // RequireAuth wraps an http.HandlerFunc to require a valid session with minimum trust level.
-// Redirects to /login for browser requests, returns 401 JSON for API requests.
+// Redirects to /login for browser PAGE requests only; API paths (/api/...)
+// ALWAYS get status-code JSON, never a redirect (gateway allowlist policy,
+// sdn-server/docs/gateway-api.md §4 — this retires the "epoch endpoint
+// answers 302" oddity: an anonymous browser GET of a gated API route now
+// reads 401, not a login page).
 func (h *Handler) RequireAuth(minTrust peers.TrustLevel, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		session, err := h.sessionFromRequest(r)
 		if err != nil {
-			if wantsJSON(r) {
+			if wantsJSON(r) || isAPIPath(r) {
 				writeJSON(w, http.StatusUnauthorized, errorResponse{Code: "unauthorized", Message: "not authenticated"})
 			} else {
 				http.Redirect(w, r, loginPagePath(r.URL.RequestURI(), false), http.StatusFound)
@@ -29,7 +33,7 @@ func (h *Handler) RequireAuth(minTrust peers.TrustLevel, next http.HandlerFunc) 
 		}
 
 		if session.TrustLevel < minTrust {
-			if wantsJSON(r) {
+			if wantsJSON(r) || isAPIPath(r) {
 				writeJSON(w, http.StatusForbidden, errorResponse{Code: "forbidden", Message: "insufficient permissions"})
 			} else {
 				http.Redirect(w, r, loginPagePath(r.URL.RequestURI(), true), http.StatusFound)
@@ -138,6 +142,13 @@ func wantsJSON(r *http.Request) bool {
 	accept := r.Header.Get("Accept")
 	return strings.Contains(accept, "application/json") ||
 		r.Header.Get("Content-Type") == "application/json"
+}
+
+// isAPIPath reports whether the request targets the API surface. API
+// clients (curl, fetch, data tooling) must receive status codes, never a
+// login-page redirect, regardless of their Accept header.
+func isAPIPath(r *http.Request) bool {
+	return strings.HasPrefix(r.URL.Path, "/api/")
 }
 
 func loginPagePath(next string, unauthorized bool) string {

@@ -1124,6 +1124,28 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				log.Errorf("Failed to register flow HTTP mounts: %v", err)
 			}
 
+			// Gateway API docs (loop G.1): OpenAPI generated FROM the flows
+			// mounted above (their flow.json api extensions) + the Scalar
+			// reference UI, self-hosted. x-sdn-anonymous stamps come from
+			// the SAME predicate the auth wall enforces (isPublicAPIRequest)
+			// so the spec cannot drift from enforcement. Temporary native
+			// bootstrap routes — documented in docs/gateway-api.md §6.
+			docFlows := make([]api.FlowDocSource, 0, len(n.MountedFlows()))
+			for _, mf := range n.MountedFlows() {
+				docFlows = append(docFlows, mf)
+			}
+			if docsHandler, err := api.NewDocsHandler(api.DocsHandlerOptions{
+				Version:            versioninfo.AgentVersion,
+				Flows:              docFlows,
+				EffectiveAnonymous: isPublicAPIRequest,
+			}); err != nil {
+				log.Errorf("Failed to build gateway API docs: %v", err)
+			} else {
+				docsHandler.RegisterRoutes(adminMux)
+				log.Infof("Gateway API docs at %s://%s/api/v1/docs (spec: /api/v1/openapi.json, %d mounted flows)",
+					adminScheme, adminAddr, len(n.MountedFlows()))
+			}
+
 			if layout.Root != "" {
 				adminMux.Handle("/api/v1/admin/update/shutdown", sdnupdate.NewControlHandler(sdnupdate.ControlHandlerOptions{
 					BundleRoot: layout.Root,
@@ -1647,6 +1669,11 @@ func isPublicReadAPIPath(path string) bool {
 	switch path {
 	case "/api/module-delivery/provider",
 		"/api/module-delivery/listings",
+		// Gateway API docs surface (loop G.1, docs/gateway-api.md §4): the
+		// spec + reference UI are part of the anonymous read surface — an
+		// API you cannot read the docs of is not a public gateway.
+		"/api/v1/openapi.json",
+		"/api/v1/docs",
 		"/api/node/info",
 		"/api/node/epm",
 		"/api/node/epm/json",
@@ -1671,6 +1698,7 @@ func isPublicReadAPIPath(path string) bool {
 	}
 
 	return strings.HasPrefix(path, "/api/directory/") ||
+		strings.HasPrefix(path, "/api/v1/docs/") ||
 		path == "/api/v1/channels" ||
 		strings.HasPrefix(path, "/api/v1/channels/") ||
 		strings.HasPrefix(path, "/api/v1/demo/") ||
