@@ -7,7 +7,9 @@
 #   (b) a baseline handler streaming the same pre-materialized aligned bytes
 #       over the same net/http stack,
 #   (c) a raw-TCP wire_speed_probe reference.
-# Prints the throughput table and exits NONZERO when (a) < 99% of (b).
+# Prints the throughput table and exits NONZERO when (a) median < 90% of
+# (b) median (gate relaxed from >=99% by user decision 2026-07-06 — the
+# measured 97% best / 93% median state was accepted; see the note below).
 #
 # Known-miss override (CLEARLY LABELED): loop C.7 landed DIRECT engine
 # linkage — query submission is in-wasm (zero storage hostcalls on any
@@ -20,9 +22,10 @@
 # measures ~97% best / ~93% median of the ~2.6 ms loopback baseline
 # (flow ~3.2 GB/s warm; zero host dispatch remains — the residue is inside
 # net/http, identical for flow and baseline handlers, so >=99% of a
-# loopback baseline remains unmet; on a NIC-limited real wire the endpoint
-# saturates). Run under WASMEDGE_ROOT=$HOME/.wasmedge-0.16.4 (or any
-# >=0.16.4 install) for the linked+AOT numbers.
+# loopback baseline remains structurally unmet — hence the 90%-median gate;
+# on a NIC-limited real wire the endpoint saturates). Run under
+# WASMEDGE_ROOT=$HOME/.wasmedge-0.16.4 (or any >=0.16.4 install) for the
+# linked+AOT numbers.
 #   SDN_C5_ALLOW_BLOCKED=1 scripts/wirespeed-gate.sh
 #
 # Tunables (see wirespeed_gate_test.go): SDN_C5_OBJECTS, SDN_C5_EPOCHS,

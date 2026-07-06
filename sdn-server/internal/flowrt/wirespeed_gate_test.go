@@ -13,9 +13,15 @@ package flowrt
 //	(c) a raw-TCP wire_speed_probe reference: a minimal socket write of the
 //	    same bytes (reported alongside, NOT part of the gate).
 //
-// The gate: streaming (a) must sustain >= 99% of baseline (b) throughput —
-// it gates transport/copy overhead added by the wasm-served path, measured
-// warm (steady state).
+// The gate: streaming (a) must sustain >= 90% of baseline (b) MEDIAN
+// throughput — it gates transport/copy overhead added by the wasm-served
+// path, measured warm (steady state). The original ≥99% aspiration was
+// retired by user decision (2026-07-06) after the C.5/C.5b/C.5c/C.9 work
+// landed the measured state at 97.48% best / 93.09% median: ≥99% of a ~1 ms
+// loopback baseline allows ≤10 µs of total host-mediated dispatch, which is
+// structurally noise-dominated at this transfer size (run variance exceeds
+// the margin); on a NIC-limited real wire the endpoint saturates. Median is
+// gated (not best) so a single lucky run can't mask a regression.
 //
 // Run:
 //
@@ -393,14 +399,14 @@ func TestWirespeedGate(t *testing.T) {
 		baseStats.bestMBps(), baseStats.best, baseStats.medianMBps(), baseStats.median, baseStats.runs)
 	t.Logf("C5   (c) raw TCP ref   : best %8.1f MB/s (%v)  median %8.1f MB/s (%v)  (reference only)",
 		tcpStats.bestMBps(), tcpStats.best, tcpStats.medianMBps(), tcpStats.median)
-	t.Logf("C5   gate: flow/baseline = %.2f%% (best) / %.2f%% (median); requirement >= 99%%", pctBest, pctMedian)
+	t.Logf("C5   gate: flow/baseline = %.2f%% (best) / %.2f%% (median); requirement >= 90%% median", pctBest, pctMedian)
 
-	if pctBest >= 99.0 {
-		t.Logf("C5 GATE: PASS (%.2f%% of baseline)", pctBest)
+	if pctMedian >= 90.0 {
+		t.Logf("C5 GATE: PASS (%.2f%% median / %.2f%% best of baseline)", pctMedian, pctBest)
 		return
 	}
-	msg := fmt.Sprintf("C5 GATE: FAIL — flow-served streaming is %.2f%% (best) / %.2f%% (median) of the raw baseline, requirement >= 99%%. "+
-		"Flow executed %s.", pctBest, pctMedian, execMode)
+	msg := fmt.Sprintf("C5 GATE: FAIL — flow-served streaming is %.2f%% (median) / %.2f%% (best) of the raw baseline, requirement >= 90%% median. "+
+		"Flow executed %s.", pctMedian, pctBest, execMode)
 	if allowBlocked {
 		t.Logf("%s", msg)
 		t.Logf("C5 GATE OVERRIDE: SDN_C5_ALLOW_BLOCKED=1 set — reporting the known-miss state instead of failing " +
