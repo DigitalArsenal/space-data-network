@@ -1,7 +1,9 @@
 package caps
 
 import (
+	"crypto/ed25519"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"testing"
 
@@ -305,5 +307,212 @@ func TestP2PEmptyOptions(t *testing.T) {
 	result = resultOf(t, meta)
 	if len(result["entries"].([]interface{})) != 0 {
 		t.Fatalf("expected no entries")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// p2p.pnm_history (gateway loop G.3)
+// ---------------------------------------------------------------------------
+
+// buildSignedTestPNM returns a size-prefixed $PNM carrying a REAL Ed25519
+// signature over the dataset-publication payload ("SDN-DPM-PNM\x00" +
+// FILE_ID + "\x00" + CID), matching storage.BuildDatasetPublicationPNM.
+func buildSignedTestPNM(t *testing.T, key ed25519.PrivateKey, fileID, cid, ts string) []byte {
+	t.Helper()
+	payload := make([]byte, 0, len(fileID)+len(cid)+16)
+	payload = append(payload, []byte("SDN-DPM-PNM\x00")...)
+	payload = append(payload, fileID...)
+	payload = append(payload, 0)
+	payload = append(payload, cid...)
+	signature := ed25519.Sign(key, payload)
+
+	b := flatbuffers.NewBuilder(512)
+	fileIDOff := b.CreateString(fileID)
+	cidOff := b.CreateString(cid)
+	tsOff := b.CreateString(ts)
+	fileNameOff := b.CreateString("dataset.fsql")
+	sigOff := b.CreateString(hex.EncodeToString(signature))
+	sigTypeOff := b.CreateString("Ed25519")
+	PNM.PNMStart(b)
+	PNM.PNMAddFILE_ID(b, fileIDOff)
+	PNM.PNMAddCID(b, cidOff)
+	PNM.PNMAddPUBLISH_TIMESTAMP(b, tsOff)
+	PNM.PNMAddFILE_NAME(b, fileNameOff)
+	PNM.PNMAddSIGNATURE(b, sigOff)
+	PNM.PNMAddSIGNATURE_TYPE(b, sigTypeOff)
+	b.FinishSizePrefixedWithFileIdentifier(PNM.PNMEnd(b), []byte(PNM.PNMIdentifier))
+	return b.FinishedBytes()
+}
+
+func pnmHistoryFixture(t *testing.T) (P2PCapOptions, ed25519.PublicKey, [][]byte) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	_, otherPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("generate other key: %v", err)
+	}
+	newest := buildSignedTestPNM(t, priv, "celestrak:gp:OMM.fbs:2026-07-06T03:00:00Z", "bafy-omm-new", "2026-07-06T03:00:00Z")
+	middle := buildSignedTestPNM(t, priv, "celestrak:satcat:CAT.fbs:2026-07-06T02:00:00Z", "bafy-cat", "2026-07-06T02:00:00Z")
+	oldest := buildSignedTestPNM(t, priv, "celestrak:gp:OMM.fbs:2026-07-05T03:00:00Z", "bafy-omm-old", "2026-07-05T03:00:00Z")
+	pnms := []P2PPNMRecord{
+		// Store arrival order deliberately NOT publish order: the op must
+		// re-sort by PUBLISH_TIMESTAMP descending.
+		{PeerID: testCelestrakID, Data: middle},
+		// Gossip attribution says a RELAY delivered the newest frame — the
+		// signature must still attribute it to the publisher.
+		{PeerID: testSelfID, Data: newest},
+		{PeerID: testCelestrakID, Data: oldest},
+		// Duplicate delivery of the same publication: deduplicated.
+		{PeerID: testCelestrakID, Data: middle},
+		// Gossip-attributed to celestrak but signed by a DIFFERENT key:
+		// excluded under signature attribution (counted, not served).
+		{PeerID: testCelestrakID, Data: buildSignedTestPNM(t, otherPriv, "impostor:gp:OMM.fbs:2026-07-06T04:00:00Z", "bafy-impostor", "2026-07-06T04:00:00Z")},
+		// Unsigned PNM: never on this surface.
+		{PeerID: testCelestrakID, Data: buildTestPNM(t, "celestrak:gp:OMM.fbs:2026-07-04T03:00:00Z", "bafy-unsigned", "2026-07-04T03:00:00Z")},
+		// Malformed frame: skipped.
+		{PeerID: testCelestrakID, Data: []byte{9, 9, 9}},
+	}
+	opts := P2PCapOptions{
+		RecentPNMs: func(limit int) []P2PPNMRecord { return pnms },
+		PublisherKeys: func(peerID string) []P2PPublisherKey {
+			if peerID == testCelestrakID {
+				return []P2PPublisherKey{{PublicKey: pub, Source: "epm-directory"}}
+			}
+			return nil
+		},
+	}
+	return opts, pub, [][]byte{newest, middle, oldest}
+}
+
+func TestP2PPNMHistorySignatureAttribution(t *testing.T) {
+	opts, pub, frames := pnmHistoryFixture(t)
+	meta, segments := invoke(t, opts, "p2p.pnm_history",
+		`{"peer_id":"`+testCelestrakID+`","limit":10}`)
+	result := resultOf(t, meta)
+	if result["publisher_key_available"] != true {
+		t.Fatalf("publisher_key_available: %v", result)
+	}
+	if result["gossip_only_excluded"] != float64(1) {
+		t.Fatalf("gossip_only_excluded = %v, want 1 (the impostor frame)", result["gossip_only_excluded"])
+	}
+	entries := result["entries"].([]interface{})
+	if len(entries) != 3 {
+		t.Fatalf("entries = %d, want 3: %v", len(entries), entries)
+	}
+	wantCIDs := []string{"bafy-omm-new", "bafy-cat", "bafy-omm-old"}
+	for i, want := range wantCIDs {
+		entry := entries[i].(map[string]interface{})
+		if entry["cid"] != want {
+			t.Fatalf("entry %d cid = %v, want %s (newest-first order)", i, entry["cid"], want)
+		}
+		if entry["signature_verified"] != true || entry["attribution"] != "signature" {
+			t.Fatalf("entry %d provenance: %v", i, entry)
+		}
+		if entry["publisher_peer_id"] != testCelestrakID {
+			t.Fatalf("entry %d publisher: %v", i, entry)
+		}
+		if entry["publisher_key"] != hex.EncodeToString(pub) || entry["publisher_key_source"] != "epm-directory" {
+			t.Fatalf("entry %d key: %v", i, entry)
+		}
+		if entry["pnm_index"] != float64(i) {
+			t.Fatalf("entry %d pnm_index = %v", i, entry["pnm_index"])
+		}
+	}
+	// The relayed frame keeps its honest gossip attribution alongside.
+	newestEntry := entries[0].(map[string]interface{})
+	if newestEntry["gossip_peer_id"] != testSelfID {
+		t.Fatalf("gossip_peer_id = %v, want the relaying peer", newestEntry["gossip_peer_id"])
+	}
+	if newestEntry["standard"] != "OMM" || newestEntry["schema"] != "OMM.fbs" {
+		t.Fatalf("standard/schema: %v", newestEntry)
+	}
+
+	// Stream: the signed frames VERBATIM, newest first.
+	stream := segments[0]
+	offset := 0
+	for i, want := range [][]byte{frames[0], frames[1], frames[2]} {
+		if offset+len(want) > len(stream) {
+			t.Fatalf("stream truncated at frame %d", i)
+		}
+		if string(stream[offset:offset+len(want)]) != string(want) {
+			t.Fatalf("frame %d not spliced verbatim", i)
+		}
+		offset += len(want)
+	}
+	if offset != len(stream) {
+		t.Fatalf("stream has %d trailing bytes", len(stream)-offset)
+	}
+}
+
+func TestP2PPNMHistoryLimitAndDefault(t *testing.T) {
+	opts, _, frames := pnmHistoryFixture(t)
+	meta, segments := invoke(t, opts, "p2p.pnm_history",
+		`{"peer_id":"`+testCelestrakID+`","limit":1}`)
+	result := resultOf(t, meta)
+	entries := result["entries"].([]interface{})
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if entries[0].(map[string]interface{})["cid"] != "bafy-omm-new" {
+		t.Fatalf("limit=1 must serve the NEWEST publication: %v", entries[0])
+	}
+	if string(segments[0]) != string(frames[0]) {
+		t.Fatalf("limit=1 stream is not exactly the newest frame")
+	}
+
+	// limit omitted / 0: all attributed entries (host materials bound only).
+	meta, _ = invoke(t, opts, "p2p.pnm_history", `{"peer_id":"`+testCelestrakID+`"}`)
+	if len(resultOf(t, meta)["entries"].([]interface{})) != 3 {
+		t.Fatalf("limit=0 must return all attributed entries")
+	}
+}
+
+func TestP2PPNMHistoryGossipFallback(t *testing.T) {
+	opts, _, _ := pnmHistoryFixture(t)
+	opts.PublisherKeys = nil // no key resolvable for anyone
+	meta, _ := invoke(t, opts, "p2p.pnm_history",
+		`{"peer_id":"`+testCelestrakID+`","limit":10}`)
+	result := resultOf(t, meta)
+	if result["publisher_key_available"] != false {
+		t.Fatalf("publisher_key_available: %v", result)
+	}
+	entries := result["entries"].([]interface{})
+	// Gossip attribution: middle/oldest/impostor carry celestrak's peer id
+	// with signatures (the relayed newest is attributed to the relay, the
+	// unsigned frame never appears).
+	if len(entries) != 3 {
+		t.Fatalf("entries = %d, want 3: %v", len(entries), entries)
+	}
+	for _, raw := range entries {
+		entry := raw.(map[string]interface{})
+		if entry["signature_verified"] != false || entry["attribution"] != "gossip" {
+			t.Fatalf("fallback provenance must be honest: %v", entry)
+		}
+		if _, ok := entry["publisher_key"]; ok {
+			t.Fatalf("no key may be reported without verification: %v", entry)
+		}
+	}
+	if entries[0].(map[string]interface{})["cid"] != "bafy-impostor" {
+		t.Fatalf("gossip fallback newest-first: %v", entries[0])
+	}
+}
+
+func TestP2PPNMHistoryRequiresPeerID(t *testing.T) {
+	opts, _, _ := pnmHistoryFixture(t)
+	factory := NewP2PCapFactory(opts)
+	handler := factory(&modulert.Module{})
+	response, err := handler("p2p.pnm_history", []byte(`{}`))
+	if err != nil {
+		t.Fatalf("unexpected transport error: %v", err)
+	}
+	var meta map[string]interface{}
+	if err := json.Unmarshal(response, &meta); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if ok, _ := meta["ok"].(bool); ok {
+		t.Fatalf("missing peer_id must fail: %v", meta)
 	}
 }
