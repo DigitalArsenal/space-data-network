@@ -40,6 +40,22 @@ type GatewayConfig struct {
 	// or trailing-slash prefixes. Deny wins over everything, including the
 	// host's built-in static allowlist.
 	Anonymous GatewayAnonymousConfig `yaml:"anonymous"`
+
+	// Pin is the OPT-IN dataset pin list for the provider-scoped gateway
+	// surface (gateway loop G.4, docs/gateway-api.md §10). Pinning is NEVER
+	// a default: GET /api/v1/peers/{peerId}/{standard}/latest serves a
+	// remote provider's newest published dataset ONLY when the
+	// (peer, standard) pair is listed here (a node always may serve its own
+	// publications). A pinned pair additionally gets SUPERSEDE lifecycle
+	// management: when a newer publication batch from the pinned provider
+	// finishes materializing, the previously pinned batch's records are
+	// evicted from the store so pins do not accumulate history.
+	//
+	// Pinning does NOT create the materialization path: dataset feed heads
+	// are still imported only from TRUSTED peers (trust registry), exactly
+	// as before G.4. A pin for a peer that is not trusted never
+	// materializes, and /latest answers 503 with the newest PNM pointer.
+	Pin []GatewayPinEntry `yaml:"pin,omitempty"`
 }
 
 // GatewayAnonymousConfig is the operator veto/extension for the anonymous
@@ -47,6 +63,72 @@ type GatewayConfig struct {
 type GatewayAnonymousConfig struct {
 	Allow []string `yaml:"allow,omitempty"`
 	Deny  []string `yaml:"deny,omitempty"`
+}
+
+// GatewayPinEntry pins one provider's published standard(s) for gateway
+// serving. Standard is an SDS standard name ("OMM", "omm", or "OMM.fbs");
+// empty, "*", or "all" pins every standard the peer publishes.
+type GatewayPinEntry struct {
+	Peer     string `yaml:"peer"`
+	Standard string `yaml:"standard,omitempty"`
+}
+
+// normalizePinStandard maps a standard spelling to the bare upper-case
+// standard name ("omm" / "OMM.fbs" -> "OMM"). ""/"*"/"all" -> "" (the
+// config-side wildcard).
+func normalizePinStandard(standard string) string {
+	standard = strings.TrimSpace(standard)
+	if fbs := strings.LastIndexByte(standard, '.'); fbs > 0 && strings.EqualFold(standard[fbs:], ".fbs") {
+		standard = standard[:fbs]
+	}
+	if standard == "" || standard == "*" || strings.EqualFold(standard, "all") {
+		return ""
+	}
+	return strings.ToUpper(standard)
+}
+
+// PinnedStandard reports whether gateway.pin opts the (peer, standard) pair
+// into pinned gateway serving. schemaName accepts "OMM.fbs" / "OMM" / "omm";
+// wildcards are config-side only, so a concrete standard is required here.
+func (g GatewayConfig) PinnedStandard(peerID, schemaName string) bool {
+	peerID = strings.TrimSpace(peerID)
+	want := normalizePinStandard(schemaName)
+	if peerID == "" || want == "" {
+		return false
+	}
+	for _, entry := range g.Pin {
+		if strings.TrimSpace(entry.Peer) != peerID {
+			continue
+		}
+		pinned := normalizePinStandard(entry.Standard)
+		if pinned == "" || pinned == want {
+			return true
+		}
+	}
+	return false
+}
+
+// PinnedPeers lists the distinct peer ids whose gateway.pin entries cover
+// schemaName (used by the supersede evaluation hooks).
+func (g GatewayConfig) PinnedPeers(schemaName string) []string {
+	want := normalizePinStandard(schemaName)
+	if want == "" {
+		return nil
+	}
+	seen := make(map[string]bool, len(g.Pin))
+	peers := make([]string, 0, len(g.Pin))
+	for _, entry := range g.Pin {
+		peer := strings.TrimSpace(entry.Peer)
+		if peer == "" || seen[peer] {
+			continue
+		}
+		pinned := normalizePinStandard(entry.Standard)
+		if pinned == "" || pinned == want {
+			seen[peer] = true
+			peers = append(peers, peer)
+		}
+	}
+	return peers
 }
 
 // IngestConfig runs the CelesTrak/Space-Track/UDL source-sync workers

@@ -100,7 +100,7 @@ func TestHTTPMountedPNMHistoryFlow(t *testing.T) {
 	})
 
 	reg := modulert.NewCapabilityRegistry()
-	reg.Register("p2p_read", caps.NewP2PCapFactory(caps.P2PCapOptions{
+	reg.RegisterBridgeAware("p2p_read", caps.NewP2PCapFactory(caps.P2PCapOptions{
 		SelfID: discoverySelfID,
 		Peers: func() []caps.P2PPeerInfo {
 			return []caps.P2PPeerInfo{{ID: discoveryCelestrakID, Connected: true}}
