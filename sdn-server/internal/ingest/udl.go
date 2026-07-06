@@ -407,6 +407,7 @@ func (r *Runner) ingestUDLElsetRecords(records []map[string]string, sourcePeer s
 			WithObjectName(valueOr(getValue(record, "OBJECT_NAME", "SATNAME", "NAME"), fmt.Sprintf("SAT-%d", norad))).
 			WithObjectID(valueOr(getValue(record, "OBJECT_ID", "ID_ON_ORBIT", "INTLDES", "INTERNATIONAL_DESIGNATOR"), fmt.Sprintf("NORAD-%d", norad))).
 			WithCreationDate(deterministicOMMCreationDate(record, parsedEpoch)).
+			WithOriginator(valueOr(getValue(record, "ORIGINATOR", "ORIGIN"), "UDL")).
 			WithEpoch(parsedEpoch.UTC().Format(time.RFC3339)).
 			WithClassificationType(marking)
 

@@ -1449,6 +1449,9 @@ func TestIngestGPDataStoresOMMAndMPEFlatBuffers(t *testing.T) {
 	if got, want := iss.EphemerisType().String(), "SGP"; got != want {
 		t.Fatalf("EPHEMERIS_TYPE = %q, want %q", got, want)
 	}
+	if got, want := string(iss.Originator()), "CELESTRAK"; got != want {
+		t.Fatalf("ORIGINATOR = %q, want %q (test-builder default must not leak)", got, want)
+	}
 	starlink := byNorad[40909]
 	if starlink == nil {
 		t.Fatalf("missing OMM record for NORAD 40909")
