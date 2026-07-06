@@ -126,7 +126,7 @@ func testOptions(t *testing.T) P2PCapOptions {
 func invoke(t *testing.T, opts P2PCapOptions, op string, payload string) (map[string]interface{}, [][]byte) {
 	t.Helper()
 	factory := NewP2PCapFactory(opts)
-	handler := factory(&modulert.Module{})
+	handler := factory(&modulert.Module{}, nil)
 	response, err := handler(op, []byte(payload))
 	if err != nil {
 		t.Fatalf("%s: %v", op, err)
@@ -279,7 +279,7 @@ func TestP2PStandardsSnapshot(t *testing.T) {
 
 func TestP2PUnknownOperation(t *testing.T) {
 	factory := NewP2PCapFactory(testOptions(t))
-	handler := factory(&modulert.Module{})
+	handler := factory(&modulert.Module{}, nil)
 	response, err := handler("p2p.write_something", []byte("{}"))
 	if err != nil {
 		t.Fatalf("unexpected transport error: %v", err)
@@ -503,7 +503,7 @@ func TestP2PPNMHistoryGossipFallback(t *testing.T) {
 func TestP2PPNMHistoryRequiresPeerID(t *testing.T) {
 	opts, _, _ := pnmHistoryFixture(t)
 	factory := NewP2PCapFactory(opts)
-	handler := factory(&modulert.Module{})
+	handler := factory(&modulert.Module{}, nil)
 	response, err := handler("p2p.pnm_history", []byte(`{}`))
 	if err != nil {
 		t.Fatalf("unexpected transport error: %v", err)
@@ -514,5 +514,267 @@ func TestP2PPNMHistoryRequiresPeerID(t *testing.T) {
 	}
 	if ok, _ := meta["ok"].(bool); ok {
 		t.Fatalf("missing peer_id must fail: %v", meta)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// p2p.latest_dataset (gateway loop G.4)
+// ---------------------------------------------------------------------------
+
+// latestDatasetFixture: two signed OMM publication batches for celestrak
+// (FILE_ID "<dataset>:<schema>:<batchID>[:part]"), the newest one optionally
+// materialized. Returns options with a pin decision + batch store stub.
+func latestDatasetFixture(t *testing.T, pinned bool, materialized map[string][]byte) P2PCapOptions {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	newest := buildSignedTestPNM(t, priv, "sdn-OMM-full:OMM.fbs:batch-new:part-000001", "bafy-manifest-new", "2026-07-06T06:00:00Z")
+	older := buildSignedTestPNM(t, priv, "sdn-OMM-full:OMM.fbs:batch-old:part-000001", "bafy-manifest-old", "2026-07-06T03:00:00Z")
+	cat := buildSignedTestPNM(t, priv, "sdn-CAT-full:CAT.fbs:batch-cat:part-000001", "bafy-manifest-cat", "2026-07-06T05:00:00Z")
+	pnms := []P2PPNMRecord{
+		{PeerID: testCelestrakID, Data: older}, // arrival order != publish order
+		{PeerID: testSelfID, Data: newest},     // relayed: signature reclaims it
+		{PeerID: testCelestrakID, Data: cat},
+	}
+	return P2PCapOptions{
+		SelfID:     testSelfID,
+		RecentPNMs: func(limit int) []P2PPNMRecord { return pnms },
+		PublisherKeys: func(peerID string) []P2PPublisherKey {
+			if peerID == testCelestrakID {
+				return []P2PPublisherKey{{PublicKey: pub, Source: "epm-directory"}}
+			}
+			return nil
+		},
+		SchemaForStandard: func(standard string) string {
+			switch standard {
+			case "omm", "OMM":
+				return "OMM.fbs"
+			case "cat", "CAT":
+				return "CAT.fbs"
+			}
+			return ""
+		},
+		PinnedDataset: func(peerID, schemaName string) bool {
+			return pinned && peerID == testCelestrakID && schemaName == "OMM.fbs"
+		},
+		LatestDatasetBatch: func(schemaName, batchID string, includeBytes bool) (*P2PDatasetBatch, bool) {
+			bytes, ok := materialized[schemaName+"\x00"+batchID]
+			if !ok {
+				return nil, false
+			}
+			batch := &P2PDatasetBatch{
+				ProviderID:  "space-data-network-02",
+				SourceName:  "celestrak-gp",
+				BatchID:     batchID,
+				RecordCount: 2,
+				Parts:       1,
+				PublishedAt: "2026-07-06T06:00:00Z",
+				FNV1a64:     0xdeadbeefcafef00d,
+			}
+			if includeBytes {
+				batch.Bytes = bytes
+			}
+			return batch, true
+		},
+	}
+}
+
+func latestStreamFixtureBytes() []byte {
+	// Two aligned size-prefixed frames (content irrelevant to the cap).
+	frame := func(payload string) []byte {
+		out := make([]byte, 4+len(payload))
+		binary.LittleEndian.PutUint32(out, uint32(len(payload)))
+		copy(out[4:], payload)
+		return out
+	}
+	return append(frame("record-1"), frame("record-2")...)
+}
+
+func TestP2PLatestDatasetUnknownStandard(t *testing.T) {
+	opts := latestDatasetFixture(t, true, nil)
+	meta, segments := invoke(t, opts, "p2p.latest_dataset",
+		`{"peer_id":"`+testCelestrakID+`","standard":"xyz"}`)
+	result := resultOf(t, meta)
+	if result["known"] != false || result["reason"] != "unknown-standard" {
+		t.Fatalf("unknown standard: %v", result)
+	}
+	if len(segments) != 0 {
+		t.Fatalf("segments = %d, want 0", len(segments))
+	}
+}
+
+func TestP2PLatestDatasetNoPublications(t *testing.T) {
+	opts := latestDatasetFixture(t, true, nil)
+	meta, _ := invoke(t, opts, "p2p.latest_dataset",
+		`{"peer_id":"16Uiu2HAmUnknownPeer","standard":"omm"}`)
+	result := resultOf(t, meta)
+	if result["known"] != false || result["reason"] != "no-publications" {
+		t.Fatalf("unknown peer: %v", result)
+	}
+}
+
+func TestP2PLatestDatasetUnpinnedCarriesPNMPointer(t *testing.T) {
+	// Materialized but NOT pinned: pinning is opt-in, never a default —
+	// the materials say known+unpinned and carry the newest PNM pointer.
+	stream := latestStreamFixtureBytes()
+	opts := latestDatasetFixture(t, false, map[string][]byte{"OMM.fbs\x00batch-new": stream})
+	meta, segments := invoke(t, opts, "p2p.latest_dataset",
+		`{"peer_id":"`+testCelestrakID+`","standard":"omm"}`)
+	result := resultOf(t, meta)
+	if result["known"] != true || result["pinned"] != false || result["reason"] != "not-pinned" {
+		t.Fatalf("unpinned result: %v", result)
+	}
+	if _, has := result["serving"]; has {
+		t.Fatalf("unpinned must not serve: %v", result)
+	}
+	if len(segments) != 0 {
+		t.Fatalf("segments = %d, want 0 (no silent serving)", len(segments))
+	}
+	pnm := result["pnm"].(map[string]interface{})
+	if pnm["cid"] != "bafy-manifest-new" || pnm["batch_id"] != "batch-new" ||
+		pnm["publish_timestamp"] != "2026-07-06T06:00:00Z" ||
+		pnm["signature_verified"] != true || pnm["attribution"] != "signature" {
+		t.Fatalf("pnm pointer: %v", pnm)
+	}
+}
+
+func TestP2PLatestDatasetPinnedServesNewestBatch(t *testing.T) {
+	stream := latestStreamFixtureBytes()
+	opts := latestDatasetFixture(t, true, map[string][]byte{"OMM.fbs\x00batch-new": stream})
+	meta, segments := invoke(t, opts, "p2p.latest_dataset",
+		`{"peer_id":"`+testCelestrakID+`","standard":"omm"}`)
+	result := resultOf(t, meta)
+	if result["known"] != true || result["pinned"] != true || result["fresh"] != true {
+		t.Fatalf("pinned result: %v", result)
+	}
+	serving := result["serving"].(map[string]interface{})
+	if serving["batch_id"] != "batch-new" || serving["record_count"] != float64(2) {
+		t.Fatalf("serving: %v", serving)
+	}
+	if serving["etag_fnv1a64"] != "deadbeefcafef00d" {
+		t.Fatalf("etag_fnv1a64: %v", serving)
+	}
+	if len(segments) != 1 || string(segments[0]) != string(stream) {
+		t.Fatalf("stream segment mismatch (%d segments)", len(segments))
+	}
+}
+
+func TestP2PLatestDatasetPinnedFallsBackToNewestMaterializedBatch(t *testing.T) {
+	stream := latestStreamFixtureBytes()
+	opts := latestDatasetFixture(t, true, map[string][]byte{"OMM.fbs\x00batch-old": stream})
+	meta, segments := invoke(t, opts, "p2p.latest_dataset",
+		`{"peer_id":"`+testCelestrakID+`","standard":"omm"}`)
+	result := resultOf(t, meta)
+	if result["fresh"] != false {
+		t.Fatalf("fresh = %v, want false (older batch served)", result["fresh"])
+	}
+	serving := result["serving"].(map[string]interface{})
+	if serving["batch_id"] != "batch-old" {
+		t.Fatalf("serving: %v", serving)
+	}
+	// The result-level pnm pointer is still the NEWEST publication; the
+	// serving-level pointer names the served batch.
+	if result["pnm"].(map[string]interface{})["batch_id"] != "batch-new" {
+		t.Fatalf("result pnm: %v", result["pnm"])
+	}
+	if serving["pnm"].(map[string]interface{})["batch_id"] != "batch-old" {
+		t.Fatalf("serving pnm: %v", serving["pnm"])
+	}
+	if len(segments) != 1 {
+		t.Fatalf("segments = %d, want 1", len(segments))
+	}
+}
+
+func TestP2PLatestDatasetPinnedNotMaterialized(t *testing.T) {
+	opts := latestDatasetFixture(t, true, nil)
+	meta, segments := invoke(t, opts, "p2p.latest_dataset",
+		`{"peer_id":"`+testCelestrakID+`","standard":"omm"}`)
+	result := resultOf(t, meta)
+	if result["known"] != true || result["pinned"] != true || result["reason"] != "not-materialized" {
+		t.Fatalf("not-materialized result: %v", result)
+	}
+	if result["pnm"].(map[string]interface{})["cid"] != "bafy-manifest-new" {
+		t.Fatalf("pnm pointer: %v", result["pnm"])
+	}
+	if len(segments) != 0 {
+		t.Fatalf("segments = %d, want 0", len(segments))
+	}
+}
+
+func TestP2PLatestDatasetRefDelivery(t *testing.T) {
+	stream := latestStreamFixtureBytes()
+	opts := latestDatasetFixture(t, true, map[string][]byte{"OMM.fbs\x00batch-new": stream})
+	factory := NewP2PCapFactory(opts)
+	bridge := modulert.NewHostBridge(&modulert.NodeContext{}, nil)
+	handler := factory(&modulert.Module{}, bridge)
+	response, err := handler("p2p.latest_dataset",
+		[]byte(`{"peer_id":"`+testCelestrakID+`","standard":"omm","deliver":"ref"}`))
+	if err != nil {
+		t.Fatalf("latest_dataset ref: %v", err)
+	}
+	meta, segments := decodePreEncodedEnvelope(t, response)
+	if len(segments) != 0 {
+		t.Fatalf("ref delivery must not carry inline segments (%d)", len(segments))
+	}
+	serving := resultOf(t, meta)["serving"].(map[string]interface{})
+	ref := serving["ref"].(map[string]interface{})
+	if ref["size"] != float64(len(stream)) || ref["frames"] != float64(2) ||
+		ref["fnv1a64"] != "deadbeefcafef00d" {
+		t.Fatalf("ref descriptor: %v", ref)
+	}
+	token := uint64(ref["token"].(float64))
+	body, ok := bridge.TakeBodyRef(token)
+	if !ok || string(body) != string(stream) {
+		t.Fatalf("body ref did not resolve to the stream bytes")
+	}
+}
+
+func TestP2PLatestDatasetSelfServesWithoutPin(t *testing.T) {
+	stream := latestStreamFixtureBytes()
+	opts := latestDatasetFixture(t, false, map[string][]byte{"OMM.fbs\x00batch-self": stream})
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	selfPNM := buildSignedTestPNM(t, priv, "sdn-OMM-full:OMM.fbs:batch-self:part-000001", "bafy-manifest-self", "2026-07-06T07:00:00Z")
+	opts.RecentPNMs = func(limit int) []P2PPNMRecord {
+		return []P2PPNMRecord{{PeerID: testSelfID, Data: selfPNM}}
+	}
+	opts.PublisherKeys = func(peerID string) []P2PPublisherKey {
+		if peerID == testSelfID {
+			return []P2PPublisherKey{{PublicKey: pub, Source: "peer-id"}}
+		}
+		return nil
+	}
+	meta, segments := invoke(t, opts, "p2p.latest_dataset",
+		`{"peer_id":"`+testSelfID+`","standard":"omm"}`)
+	result := resultOf(t, meta)
+	if result["self"] != true || result["pinned"] != false {
+		t.Fatalf("self result: %v", result)
+	}
+	serving := result["serving"].(map[string]interface{})
+	if serving["batch_id"] != "batch-self" || len(segments) != 1 {
+		t.Fatalf("self serving: %v (%d segments)", serving, len(segments))
+	}
+}
+
+func TestLatestBatchCandidatesOrderAndDedup(t *testing.T) {
+	opts := latestDatasetFixture(t, true, nil)
+	candidates := LatestBatchCandidates(opts, testCelestrakID, "OMM.fbs", 0)
+	if len(candidates) != 2 {
+		t.Fatalf("candidates = %d, want 2: %+v", len(candidates), candidates)
+	}
+	if candidates[0].BatchID != "batch-new" || candidates[1].BatchID != "batch-old" {
+		t.Fatalf("candidate order: %+v", candidates)
+	}
+	if !candidates[0].Verified || candidates[0].Attribution != "signature" {
+		t.Fatalf("candidate attribution: %+v", candidates[0])
+	}
+	// CAT batches never leak into the OMM candidate list.
+	catCandidates := LatestBatchCandidates(opts, testCelestrakID, "CAT.fbs", 0)
+	if len(catCandidates) != 1 || catCandidates[0].BatchID != "batch-cat" {
+		t.Fatalf("cat candidates: %+v", catCandidates)
 	}
 }

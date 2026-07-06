@@ -1,6 +1,6 @@
-# SDN Network Gateway API (Phase G design, loops G.1–G.2)
+# SDN Network Gateway API (Phase G design, loops G.1–G.4)
 
-Status: DESIGN + G.1/G.2 implementation record (2026-07-06).
+Status: DESIGN + G.1–G.4 implementation record (2026-07-06).
 Authority: user directives 2026-07-06 recorded in
 `SDN_FLATSQL_REWRITE_LOOP.md` §Phase G; architecture constraints in
 `ARCHITECTURE_FLATSQL_FIRST.md` (flows-only, FlatBuffer-first, isomorphic).
@@ -27,7 +27,7 @@ All gateway routes live under `/api/v1`. `{peerId}` is a libp2p peer ID;
 | `/api/v1/peers/{peerId}` | GET | One peer's EPM profile + published standards | **live** (peers-discovery flow) | G.2 |
 | `/api/v1/standards` | GET | Standards published across known peers, with publishers | **live** (standards-discovery flow) | G.2 |
 | `/api/v1/peers/{peerId}/pnm?limit=N` | GET | The peer's newest signed PNMs (default `limit=1`, clamp 100), VERIFIABLE provenance — stored `$PNM` frames verbatim, publisher-attributed by signature | **live** (pnm-history flow) | G.3 |
-| `/api/v1/peers/{peerId}/{standard}/latest` | GET | Provider's newest published dataset for the standard, served from this node's **opt-in** pin | planned | G.4 |
+| `/api/v1/peers/{peerId}/{standard}/latest` | GET | Provider's newest published dataset **batch** for the standard, served from this node's **opt-in** pin (or the node's own publications); unpinned/unmaterialized = honest 404/503 + PNM pointer | **live** (latest-dataset flow) | G.4 |
 | `/api/v1/query` | POST | Sandboxed public raw SELECT (read-only session, single statement, timeout, row/byte caps) | planned | G.5 |
 | `/api/v1/data/omm/bulk` | GET | Per-object OMM epoch-profile stream (data-retrieval flow) | **live** — DELETED in G.6, superseded by `/{peerId}/omm/latest` | C.4 → G.6 |
 | `/api/v1/data/…/query` | POST | data-retrieval flow's internal SQL route | live (suffix-matched); superseded by `/api/v1/query` in G.5 | C.3c → G.5 |
@@ -395,3 +395,154 @@ in the loop doc (G.3 entry).
   flow/native/planned marking, record-stream headers, shadowing,
   handler/ETag/CSP), `internal/auth/middleware_test.go`
   (`TestRequireAuth_APIPathsGet401NotRedirect`).
+
+## 10. G.4 implementation record (provider-scoped latest + opt-in pinning)
+
+Delivered 2026-07-06. The G.4 row in §1 is live; the planned OpenAPI entry
+auto-shadows when the mount is configured.
+
+### "Latest dataset", defined honestly
+
+`GET /api/v1/peers/{peerId}/{standard}/latest` serves **one publication
+batch**: the newest batch whose signed `$PNM` verifies under the peer's
+publication keys (the G.3 attribution machinery — FILE_ID
+`<datasetID>:<schema>:<batchID>[:part-N]` names the batch) AND whose full
+shard content is materialized locally. The response bytes are the
+provider's **published shard files spliced in window order, byte-verbatim**,
+re-verified against the recorded SHA-256 at every materialization
+(`storage.MaterializedDatasetBatch`) — exactly the content the PNM/DPM
+signature chain covers, NOT "whatever rows are in the store's tables".
+Batch-scoping honesty notes:
+
+- Publication batches are **content deltas**: the store's repeat-CID dedup
+  keeps a record's original batch tag, so a batch's export carries the
+  records **first seen in that batch**. For OMM full-catalog cycles this is
+  effectively the whole catalog (epochs churn every record); for
+  slow-moving standards (CAT) the newest publication is a delta — `/latest`
+  still serves it verbatim because that IS the provider's newest published
+  dataset.
+- Multi-part batches are served only with a **contiguous window chain from
+  offset 0** whose final part is a short window (`record_count <
+  window_limit`). A batch whose last known part exactly fills its window is
+  indistinguishable from a mid-import series and is NOT served (production
+  full-catalog windows are 50K vs ~32K records, so the tail is always
+  short).
+- When the newest batch is not yet fully materialized, the newest
+  **fully-materialized** batch serves instead (the cap marks `fresh:false`
+  in its materials); if none is materialized the answer is the honest 503.
+
+### `gateway.pin` (config) — pinning is OPT-IN, never a default
+
+```yaml
+gateway:
+  pin:
+    - peer: 16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3
+      standard: OMM        # "OMM" | "omm" | "OMM.fbs"; ""/"*"/"all" = every standard
+```
+
+`gateway.pin` gates the **serving surface and the supersede lifecycle** —
+deliberately NOT the materialization path:
+
+- **Serving**: `/latest` answers 200 only for pinned `(peer, standard)`
+  pairs, plus the node's OWN publications (a provider serving its own
+  datasets is not "pinning"; `peerId == self` is always servable).
+- **Supersede**: for pinned pairs, each newly materialized publication
+  batch evicts the previously pinned batch
+  (`storage.SupersedeSourceBatches`, hooked on feed-head import + dataset
+  PNM materialization): superseded source-tag rows are deleted and records
+  whose CID no longer carries any tag are removed from the legacy table,
+  the routed (producer, standard) tables, and the record index — records
+  shared with the kept batch survive. Eviction is CHUNKED (2048 CIDs per
+  store-lock window + transaction, the 17576fbb lock-window discipline) and
+  idempotent. Cached shard/index files of superseded batches are deleted;
+  their publication **metadata rows are kept** — they are the few-hundred-
+  byte provenance record AND the trusted-peer catch-up dedup key
+  (`datasetShardPublicationAlreadyCached`); deleting them would make the
+  next catch-up cycle re-materialize the very batch that was just evicted.
+- **Interaction with existing catch-up (documented semantics)**: dataset
+  feed-head materialization is and remains a TRUSTED-PEER datasync behavior
+  (`materializeDatasetFeedHeadAnnouncement` imports only from trust-registry
+  peers, `security.require_signed_feed_heads` untouched). With
+  `gateway.pin` absent, a node still materializes trusted providers'
+  publications into its own store — that feeds the node's own features
+  (e.g. host-01's engine-served `/api/v1/data/omm/bulk`) and is NOT
+  gateway pinning: `/latest` for such a pair answers 503 + PNM pointer,
+  and no supersede/eviction runs (history accumulates exactly as before
+  G.4). Turning a pin ON adds serving + bounded retention for that pair;
+  turning it OFF restores the pre-G.4 behavior. A pin for a peer that is
+  NOT trusted never materializes (no new import path was added) and serves
+  503 + pointer — on-demand p2p fetch-through remains a possible
+  G-follow-on, decided separately.
+- **NOT evicted** (deliberately): append-only FlatSQL stream file bytes
+  (control rows are the deletion unit, the payload substrate is append-only
+  by design — disk reclamation is a store-compaction concern, not a pin
+  concern) and the in-memory engine hot window (a bounded cache — max
+  `storage.engine_hot_window` records — rebuilt from the surviving control
+  rows at boot; live tombstoning would need a cid→vtab-sequence mapping the
+  control tables do not keep).
+
+### 404 vs 503 (documented choice)
+
+- **404** — provider/standard unknown: the node holds NO
+  signature-attributable publication PNM for the pair (or the standard is
+  not a validated SDS name here). No pointer exists, so none is served.
+- **503** — known via signed PNM but not served here: not pinned (opt-in!)
+  or pinned-but-not-yet-materialized. Body carries the newest PNM pointer:
+  `{"error": …, "pnm": {"cid", "file_id", "batch_id", "publish_timestamp",
+  "standard", "schema", "signature_verified", "attribution"}}` — the client
+  fetches the publication itself over p2p. **No silent proxying, ever.**
+- **406** — `format=json` for a standard without a JSON presentation
+  adapter (v1 ships foundation/omm-json only); the fb stream always works.
+
+### Capability op (host side)
+
+`p2p.latest_dataset {peer_id, standard, deliver?}` on the existing
+`p2p_read` capability (`internal/modulert/caps/p2p.go`). Materials only —
+`known`/`pinned`/`self` flags, the newest PNM pointer, and (when servable)
+the batch stream + metadata (`batch_id`, provider/source, record count,
+`etag_fnv1a64` = word-folded FNV-1a-64 of the stream, `fresh`); ALL response
+decisions stay in wasm. `deliver:"ref"` (the default fb path) delivers the
+stream as a hostcall-bridge **body reference** (`p2p_read` became
+bridge-aware): the bytes never enter the flow's linear memory — the C.5c
+chain `PutBodyRef → {"$sdnbodyref"} descriptor → $HTR BODY_REF →
+httpmount TakeBodyRef`. The json path receives the bytes as an inline
+envelope segment (omm-json shapes them in wasm). Batch candidates come from
+`caps.LatestBatchCandidates` — the SAME selection rule (signed-PNM
+newest-first, batch-deduplicated) the node's supersede evaluation uses.
+
+### Flow (modules repo)
+
+`flows/latest-dataset` 0.1.0, mounted at the Go 1.22 mux pattern
+`/api/v1/peers/{peerId}/{standard}/latest` (coexists with the peers subtree
+and the pnm pattern; anonymous templateMatch speaks multi-`{param}` paths).
+Node chain: http-route `discover` (new `latest_dataset` route) →
+hostcap/p2p-discovery `latest_dataset` (hostcall; `deliver:"ref"` unless
+`format=json`) → discovery-shape `shape_latest` (200 body/body-ref + shared
+etag; json → raw `$OMM` stream on the `stream` port; honest
+404/503/406 decision rewrites carrying the PNM pointer) →
+foundation/omm-json `encode` (json path only) → http-respond (gained the
+generic `route=error` decision: explicit status + `pnm` object forwarded
+into the body) → egress. Module versions: http-route 0.4.0, p2p-discovery
+0.3.0, discovery-shape 0.3.0, http-respond 0.2.0. Fix landed with
+http-respond 0.2.0: its `json_string_field` is now colon-anchored — the
+G.3 key-vs-value lesson again (`{"route":"error"}` made the bare `"error"`
+needle match the route VALUE).
+
+### Verification
+
+Unit: `caps/p2p_test.go` (unknown standard / unpinned pointer / pinned
+serve / stale-batch fallback + freshness / self-serving / ref delivery via
+a real HostBridge / candidate order+dedup), `config/gateway_pin_test.go`
+(defaults-off + normalization + wildcards),
+`storage/dataset_latest_test.go` (byte-verbatim serving, SHA/tamper/
+truncation refusals, supersede eviction counts incl. shared-CID survival +
+multi-chunk windows + idempotence, publication-row retention). Integration:
+`flowrt/latest_flow_integration_test.go` mounts the REAL compiled bundle at
+the production pattern alongside the peers subtree over the real cap
+handler AND real hostcall bridge (BODY_REF end-to-end), with the REAL
+`config.GatewayConfig.PinnedStandard` predicate: verbatim bytes + count +
+shared etag + 304, bare-array json, unpinned 503 + verified pointer,
+unknown 404s, POST 404. Modules-side parity:
+`flows/discovery/tests/flow.test.mjs` runs the SAME bundle in the JS flow
+runtime host. Live cold-client evidence is recorded in the loop doc (G.4
+entry).

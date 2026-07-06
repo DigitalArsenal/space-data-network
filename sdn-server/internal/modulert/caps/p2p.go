@@ -22,6 +22,16 @@
 //     key is resolvable does the op fall back to the stored gossip
 //     attribution, and every entry carries signature_verified +
 //     attribution so the surface never overstates provenance.
+//   - p2p.latest_dataset — the provider's newest published dataset for one
+//     standard (gateway loop G.4): the newest publication BATCH whose PNM
+//     verifies under the peer's publication keys (same attribution rules as
+//     pnm_history) AND whose full shard content is materialized locally.
+//     Serving is gated by the host's OPT-IN gateway.pin config (a node's
+//     own publications are always servable); an unpinned or not-yet-
+//     materialized dataset returns MATERIALS for the honest 404/503 —
+//     known/pinned flags plus the newest PNM pointer — never a silent
+//     proxy fetch. Stream delivery is by hostcall-bridge body reference
+//     (deliver="ref") or an inline binary segment (json shaping path).
 //
 // The host supplies MATERIALS only (which peers exist, which records are
 // stored); all response shaping (record selection, format handling, ETag)
@@ -35,6 +45,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -65,6 +76,37 @@ type P2PPublisherKey struct {
 	Source    string // "peer-id" (identity multihash) | "epm-directory"
 }
 
+// P2PDatasetBatch is one locally materialized publication batch supplied by
+// the host store (storage.MaterializedDatasetBatch) for the latest-dataset
+// surface.
+type P2PDatasetBatch struct {
+	ProviderID  string
+	SourceName  string
+	BatchID     string
+	RecordCount int
+	// Bytes is the batch's aligned size-prefixed record stream (the shard
+	// files spliced in window order, SHA-verified by the store).
+	Bytes []byte
+	// FNV1a64 is the word-folded FNV-1a 64 hash of Bytes (entity-tag
+	// identity, matching the flow-side algorithm).
+	FNV1a64     uint64
+	Parts       int
+	PublishedAt string // RFC3339, newest part
+}
+
+// P2PBatchCandidate is one publication batch attributed to a peer via its
+// stored PNMs, newest first (the shared selection rule for serving AND the
+// supersede evaluation).
+type P2PBatchCandidate struct {
+	BatchID          string
+	FileID           string
+	FileName         string
+	CID              string
+	PublishTimestamp string
+	Verified         bool
+	Attribution      string // "signature" | "gossip"
+}
+
 // P2PCapOptions wires the node services into the capability as closures so
 // the handler stays unit-testable without a libp2p host or a live store.
 type P2PCapOptions struct {
@@ -89,18 +131,44 @@ type P2PCapOptions struct {
 	PublisherKeys func(peerID string) []P2PPublisherKey
 	// PNMScanLimit bounds the standards-derivation scan (default 4096).
 	PNMScanLimit int
+
+	// SchemaForStandard maps a URL standard segment ("omm", "OMM") to the
+	// node's canonical schema name ("OMM.fbs"); "" = unknown standard
+	// (latest-dataset surface, gateway loop G.4).
+	SchemaForStandard func(standard string) string
+	// PinnedDataset reports the host's OPT-IN gateway.pin decision for a
+	// (peer, schema) pair. Never defaults to true.
+	PinnedDataset func(peerID, schemaName string) bool
+	// LatestDatasetBatch materializes one publication batch from the local
+	// store (nil/false = not materialized here). includeBytes=false is the
+	// cheap servability probe.
+	LatestDatasetBatch func(schemaName, batchID string, includeBytes bool) (*P2PDatasetBatch, bool)
+	// LatestBatchScan bounds how many newest batch candidates are probed for
+	// local materialization before answering unavailable (default 8).
+	LatestBatchScan int
 }
 
-const defaultPNMScanLimit = 4096
+const (
+	defaultPNMScanLimit    = 4096
+	defaultLatestBatchScan = 8
+)
 
-// NewP2PCapFactory builds the p2p_read capability handler factory.
-func NewP2PCapFactory(opts P2PCapOptions) modulert.CapFactory {
+// NewP2PCapFactory builds the p2p_read capability handler factory. It is
+// bridge-aware since G.4: p2p.latest_dataset delivers large dataset streams
+// as hostcall-bridge body references (deliver="ref") so the bytes never
+// enter the flow's linear memory.
+func NewP2PCapFactory(opts P2PCapOptions) modulert.BridgeCapFactory {
 	if opts.PNMScanLimit <= 0 {
 		opts.PNMScanLimit = defaultPNMScanLimit
 	}
+	if opts.LatestBatchScan <= 0 {
+		opts.LatestBatchScan = defaultLatestBatchScan
+	}
 	adapter := &p2pCapAdapter{opts: opts}
-	return func(mod *modulert.Module) modulert.CapHandler {
-		return adapter.handle
+	return func(mod *modulert.Module, bridge *modulert.HostBridge) modulert.CapHandler {
+		return func(operation string, payload []byte) ([]byte, error) {
+			return adapter.handle(operation, payload, bridge)
+		}
 	}
 }
 
@@ -108,10 +176,12 @@ type p2pCapAdapter struct {
 	opts P2PCapOptions
 }
 
-func (a *p2pCapAdapter) handle(operation string, payload []byte) ([]byte, error) {
+func (a *p2pCapAdapter) handle(operation string, payload []byte, bridge *modulert.HostBridge) ([]byte, error) {
 	var params struct {
-		PeerID string `json:"peer_id"`
-		Limit  int    `json:"limit"`
+		PeerID   string `json:"peer_id"`
+		Limit    int    `json:"limit"`
+		Standard string `json:"standard"`
+		Deliver  string `json:"deliver"`
 	}
 	if len(payload) > 0 {
 		_ = json.Unmarshal(payload, &params) // tolerate empty/omitted payloads
@@ -123,6 +193,8 @@ func (a *p2pCapAdapter) handle(operation string, payload []byte) ([]byte, error)
 		return a.standardsSnapshot(strings.TrimSpace(params.PeerID)), nil
 	case "p2p.pnm_history":
 		return a.pnmHistory(strings.TrimSpace(params.PeerID), params.Limit), nil
+	case "p2p.latest_dataset":
+		return a.latestDataset(strings.TrimSpace(params.PeerID), strings.TrimSpace(params.Standard), strings.TrimSpace(params.Deliver), bridge), nil
 	default:
 		return errCapJSON("unknown p2p operation: " + operation), nil
 	}
@@ -385,25 +457,82 @@ func (a *p2pCapAdapter) pnmHistory(peerID string, limit int) []byte {
 		return errCapJSON("p2p.pnm_history requires peer_id")
 	}
 
+	entries, keysAvailable, gossipOnlyExcluded := a.scanAttributedPNMs(peerID)
+	if limit > 0 && len(entries) > limit {
+		entries = entries[:limit]
+	}
+
+	stream := make([]byte, 0, 4096)
+	entriesOut := make([]map[string]interface{}, 0, len(entries))
+	for i, entry := range entries {
+		stream = append(stream, entry.frame...)
+		schema := pnmFileIDSchema(entry.evidence.FileID)
+		attribution := "gossip"
+		if entry.verified {
+			attribution = "signature"
+		}
+		out := map[string]interface{}{
+			"publisher_peer_id":  peerID,
+			"gossip_peer_id":     entry.gossipID,
+			"standard":           strings.TrimSuffix(schema, ".fbs"),
+			"schema":             schema,
+			"file_id":            entry.evidence.FileID,
+			"file_name":          entry.fileName,
+			"cid":                entry.evidence.CID,
+			"publish_timestamp":  entry.publishTS,
+			"signature_type":     entry.evidence.SignatureType,
+			"signature":          hex.EncodeToString(entry.evidence.Signature),
+			"signature_verified": entry.verified,
+			"attribution":        attribution,
+			"pnm_index":          i,
+		}
+		if entry.keyHex != "" {
+			out["publisher_key"] = entry.keyHex
+			out["publisher_key_source"] = entry.keySource
+		}
+		entriesOut = append(entriesOut, out)
+	}
+
+	return modulert.PreEncodedEnvelope(map[string]interface{}{
+		"ok": true,
+		"result": map[string]interface{}{
+			"peer_id":                 peerID,
+			"publisher_key_available": keysAvailable,
+			"gossip_only_excluded":    gossipOnlyExcluded,
+			"entries":                 entriesOut,
+			"records":                 map[string]interface{}{"$bin": 0},
+		},
+	}, [][]byte{stream})
+}
+
+// attributedPNMEntry is one stored PNM attributed to a publisher (the shared
+// selection core of pnm_history and latest_dataset).
+type attributedPNMEntry struct {
+	evidence  channels.PNMTrustEvidence
+	frame     []byte
+	gossipID  string
+	verified  bool
+	keyHex    string
+	keySource string
+	publishTS string
+	fileName  string
+	scanOrder int
+}
+
+// scanAttributedPNMs walks the newest-first stored PNMs and returns the ones
+// attributable to peerID, newest first (PUBLISH_TIMESTAMP descending, store
+// arrival as tiebreak), deduplicated per publication. Attribution rules per
+// the package comment: signature verification when publication keys resolve
+// (failures excluded + counted), gossip attribution only when NO key
+// resolves. Unsigned/malformed frames never appear.
+func (a *p2pCapAdapter) scanAttributedPNMs(peerID string) (entries []attributedPNMEntry, keysAvailable bool, gossipOnlyExcluded int) {
 	var keys []P2PPublisherKey
 	if a.opts.PublisherKeys != nil {
 		keys = a.opts.PublisherKeys(peerID)
 	}
+	keysAvailable = len(keys) > 0
 
-	type historyEntry struct {
-		evidence  channels.PNMTrustEvidence
-		frame     []byte
-		gossipID  string
-		verified  bool
-		keyHex    string
-		keySource string
-		publishTS string
-		fileName  string
-		scanOrder int
-	}
-
-	entries := make([]historyEntry, 0, 16)
-	gossipOnlyExcluded := 0
+	entries = make([]attributedPNMEntry, 0, 16)
 	scanOrder := 0
 	seen := make(map[string]bool)
 	if a.opts.RecentPNMs != nil {
@@ -416,13 +545,13 @@ func (a *p2pCapAdapter) pnmHistory(peerID string, limit int) []byte {
 			if err != nil {
 				continue // unsigned / malformed: no provenance value here
 			}
-			entry := historyEntry{
+			entry := attributedPNMEntry{
 				evidence:  evidence,
 				frame:     record.Data,
 				gossipID:  record.PeerID,
 				scanOrder: scanOrder,
 			}
-			if len(keys) > 0 {
+			if keysAvailable {
 				for _, key := range keys {
 					if len(key.PublicKey) != ed25519.PublicKeySize {
 						continue
@@ -470,49 +599,190 @@ func (a *p2pCapAdapter) pnmHistory(peerID string, limit int) []byte {
 		}
 		return entries[i].scanOrder < entries[j].scanOrder
 	})
-	if limit > 0 && len(entries) > limit {
-		entries = entries[:limit]
-	}
+	return entries, keysAvailable, gossipOnlyExcluded
+}
 
-	stream := make([]byte, 0, 4096)
-	entriesOut := make([]map[string]interface{}, 0, len(entries))
-	for i, entry := range entries {
-		stream = append(stream, entry.frame...)
-		schema := pnmFileIDSchema(entry.evidence.FileID)
+// ---------------------------------------------------------------------------
+// p2p.latest_dataset (gateway loop G.4)
+// ---------------------------------------------------------------------------
+
+// pnmFileIDBatch extracts the batch id of a dataset-publication FILE_ID
+// ("<datasetID>:<schema>:<batchID>[:part-N]" — the segment right after the
+// schema; mirrors the host's datasetPublicationFileIDParts rule).
+func pnmFileIDBatch(fileID, schema string) string {
+	parts := strings.Split(fileID, ":")
+	for i, part := range parts {
+		if strings.TrimSpace(part) == schema && i+1 < len(parts) {
+			return strings.TrimSpace(parts[i+1])
+		}
+	}
+	return ""
+}
+
+// LatestBatchCandidates lists a peer's publication batches for one schema,
+// newest first by PNM publish timestamp — the SHARED batch selection rule
+// for the latest-dataset serving path and the node's supersede evaluation.
+// max <= 0 uses the options' LatestBatchScan default.
+func LatestBatchCandidates(opts P2PCapOptions, peerID, schemaName string, max int) []P2PBatchCandidate {
+	if opts.PNMScanLimit <= 0 {
+		opts.PNMScanLimit = defaultPNMScanLimit
+	}
+	if max <= 0 {
+		max = opts.LatestBatchScan
+	}
+	if max <= 0 {
+		max = defaultLatestBatchScan
+	}
+	adapter := &p2pCapAdapter{opts: opts}
+	return adapter.latestBatchCandidates(peerID, schemaName, max)
+}
+
+func (a *p2pCapAdapter) latestBatchCandidates(peerID, schemaName string, max int) []P2PBatchCandidate {
+	entries, _, _ := a.scanAttributedPNMs(peerID)
+	candidates := make([]P2PBatchCandidate, 0, 4)
+	seen := make(map[string]bool)
+	for _, entry := range entries {
+		if pnmFileIDSchema(entry.evidence.FileID) != schemaName {
+			continue
+		}
+		batchID := pnmFileIDBatch(entry.evidence.FileID, schemaName)
+		if batchID == "" || seen[batchID] {
+			continue
+		}
+		seen[batchID] = true
 		attribution := "gossip"
 		if entry.verified {
 			attribution = "signature"
 		}
-		out := map[string]interface{}{
-			"publisher_peer_id":  peerID,
-			"gossip_peer_id":     entry.gossipID,
-			"standard":           strings.TrimSuffix(schema, ".fbs"),
-			"schema":             schema,
-			"file_id":            entry.evidence.FileID,
-			"file_name":          entry.fileName,
-			"cid":                entry.evidence.CID,
-			"publish_timestamp":  entry.publishTS,
-			"signature_type":     entry.evidence.SignatureType,
-			"signature":          hex.EncodeToString(entry.evidence.Signature),
-			"signature_verified": entry.verified,
-			"attribution":        attribution,
-			"pnm_index":          i,
+		candidates = append(candidates, P2PBatchCandidate{
+			BatchID:          batchID,
+			FileID:           entry.evidence.FileID,
+			FileName:         entry.fileName,
+			CID:              entry.evidence.CID,
+			PublishTimestamp: entry.publishTS,
+			Verified:         entry.verified,
+			Attribution:      attribution,
+		})
+		if len(candidates) >= max {
+			break
 		}
-		if entry.keyHex != "" {
-			out["publisher_key"] = entry.keyHex
-			out["publisher_key_source"] = entry.keySource
-		}
-		entriesOut = append(entriesOut, out)
+	}
+	return candidates
+}
+
+// pnmPointerJSON is the honest-error / provenance pointer for a candidate:
+// enough for a client to fetch the publication itself over p2p.
+func pnmPointerJSON(c P2PBatchCandidate, schemaName string) map[string]interface{} {
+	return map[string]interface{}{
+		"cid":                c.CID,
+		"file_id":            c.FileID,
+		"batch_id":           c.BatchID,
+		"publish_timestamp":  c.PublishTimestamp,
+		"standard":           strings.TrimSuffix(schemaName, ".fbs"),
+		"schema":             schemaName,
+		"signature_verified": c.Verified,
+		"attribution":        c.Attribution,
+	}
+}
+
+// latestDataset assembles the materials for GET
+// /api/v1/peers/{peerId}/{standard}/latest. The wasm flow makes every
+// response decision; this op reports flags + materials only:
+//
+//	known:    the peer has attributable publications for the standard
+//	pinned:   the host's gateway.pin opts this (peer, standard) in
+//	self:     the peer is this node (own publications are always servable)
+//	pnm:      the NEWEST publication pointer (known = true)
+//	serving:  the served batch metadata + stream (pinned/self and a batch
+//	          is fully materialized locally)
+//	fresh:    the served batch IS the newest published batch
+func (a *p2pCapAdapter) latestDataset(peerID, standard, deliver string, bridge *modulert.HostBridge) []byte {
+	if peerID == "" {
+		return errCapJSON("p2p.latest_dataset requires peer_id")
+	}
+	if standard == "" {
+		return errCapJSON("p2p.latest_dataset requires standard")
 	}
 
-	return modulert.PreEncodedEnvelope(map[string]interface{}{
-		"ok": true,
-		"result": map[string]interface{}{
-			"peer_id":                 peerID,
-			"publisher_key_available": len(keys) > 0,
-			"gossip_only_excluded":    gossipOnlyExcluded,
-			"entries":                 entriesOut,
-			"records":                 map[string]interface{}{"$bin": 0},
-		},
-	}, [][]byte{stream})
+	schemaName := ""
+	if a.opts.SchemaForStandard != nil {
+		schemaName = strings.TrimSpace(a.opts.SchemaForStandard(standard))
+	}
+	if schemaName == "" {
+		return modulert.PreEncodedEnvelope(map[string]interface{}{
+			"ok": true,
+			"result": map[string]interface{}{
+				"known":  false,
+				"reason": "unknown-standard",
+			},
+		}, nil)
+	}
+
+	candidates := a.latestBatchCandidates(peerID, schemaName, a.opts.LatestBatchScan)
+	if len(candidates) == 0 {
+		return modulert.PreEncodedEnvelope(map[string]interface{}{
+			"ok": true,
+			"result": map[string]interface{}{
+				"known":    false,
+				"reason":   "no-publications",
+				"standard": strings.TrimSuffix(schemaName, ".fbs"),
+				"schema":   schemaName,
+			},
+		}, nil)
+	}
+	newest := candidates[0]
+
+	self := a.opts.SelfID != "" && peerID == a.opts.SelfID
+	pinned := false
+	if a.opts.PinnedDataset != nil {
+		pinned = a.opts.PinnedDataset(peerID, schemaName)
+	}
+	base := map[string]interface{}{
+		"known":    true,
+		"pinned":   pinned,
+		"self":     self,
+		"standard": strings.TrimSuffix(schemaName, ".fbs"),
+		"schema":   schemaName,
+		"pnm":      pnmPointerJSON(newest, schemaName),
+	}
+	if !pinned && !self {
+		base["reason"] = "not-pinned"
+		return modulert.PreEncodedEnvelope(map[string]interface{}{"ok": true, "result": base}, nil)
+	}
+
+	if a.opts.LatestDatasetBatch != nil {
+		for i, candidate := range candidates {
+			batch, ok := a.opts.LatestDatasetBatch(schemaName, candidate.BatchID, true)
+			if !ok || batch == nil {
+				continue
+			}
+			serving := map[string]interface{}{
+				"batch_id":     batch.BatchID,
+				"provider_id":  batch.ProviderID,
+				"source_name":  batch.SourceName,
+				"record_count": batch.RecordCount,
+				"byte_count":   len(batch.Bytes),
+				"parts":        batch.Parts,
+				"published_at": batch.PublishedAt,
+				"pnm":          pnmPointerJSON(candidate, schemaName),
+				"etag_fnv1a64": fmt.Sprintf("%016x", batch.FNV1a64),
+			}
+			base["serving"] = serving
+			base["fresh"] = i == 0
+			if deliver == "ref" && bridge != nil {
+				serving["ref"] = map[string]interface{}{
+					"token":   bridge.PutBodyRef(batch.Bytes),
+					"size":    len(batch.Bytes),
+					"frames":  batch.RecordCount,
+					"fnv1a64": fmt.Sprintf("%016x", batch.FNV1a64),
+				}
+				return modulert.PreEncodedEnvelope(map[string]interface{}{"ok": true, "result": base}, nil)
+			}
+			serving["stream"] = map[string]interface{}{"$bin": 0}
+			return modulert.PreEncodedEnvelope(map[string]interface{}{"ok": true, "result": base}, [][]byte{batch.Bytes})
+		}
+	}
+
+	base["reason"] = "not-materialized"
+	return modulert.PreEncodedEnvelope(map[string]interface{}{"ok": true, "result": base}, nil)
 }

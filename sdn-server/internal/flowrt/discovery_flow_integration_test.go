@@ -122,7 +122,7 @@ func discoveryCapRegistry(t *testing.T) *modulert.CapabilityRegistry {
 		{PeerID: discoveryCelestrakID, Data: buildDiscoveryPNM(t, "celestrak:satcat:CAT.fbs:2026-07-06T02:00:00Z", "bafy-cat", "2026-07-06T02:00:00Z")},
 	}
 	reg := modulert.NewCapabilityRegistry()
-	reg.Register("p2p_read", caps.NewP2PCapFactory(caps.P2PCapOptions{
+	reg.RegisterBridgeAware("p2p_read", caps.NewP2PCapFactory(caps.P2PCapOptions{
 		SelfID:           discoverySelfID,
 		SelfAgentVersion: "spacedatanetwork/test",
 		SelfAddrs:        func() []string { return []string{"/ip4/104.131.11.220/tcp/4001"} },

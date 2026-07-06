@@ -123,6 +123,7 @@ type Node struct {
 	autoRelayPeerChan       chan peer.AddrInfo
 	datasetMaterializeMu    sync.Mutex
 	datasetMaterializedPNMs map[string]time.Time
+	datasetSupersedeMu      sync.Mutex
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -759,8 +760,10 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 
 	// P2P discovery read capability (gateway loop G.2) — read-only snapshots
 	// of the peerstore/DHT/registry view + stored EPM profiles + PNM-derived
-	// published standards, feeding the discovery gateway flows.
-	reg.Register("p2p_read", caps.NewP2PCapFactory(n.buildP2PCapOptions()))
+	// published standards, feeding the discovery gateway flows. Bridge-aware
+	// since G.4: p2p.latest_dataset delivers dataset streams as body
+	// references on the calling instance's hostcall bridge.
+	reg.RegisterBridgeAware("p2p_read", caps.NewP2PCapFactory(n.buildP2PCapOptions()))
 
 	return reg
 }
@@ -885,7 +888,59 @@ func (n *Node) buildP2PCapOptions() caps.P2PCapOptions {
 		}
 		return keys
 	}
+	// Latest-dataset materials (gateway loop G.4): schema resolution against
+	// the node's validated schema set, the OPT-IN gateway.pin decision, and
+	// batch materialization from the store's publication shard files.
+	opts.SchemaForStandard = n.schemaForStandard
+	opts.PinnedDataset = func(peerID, schemaName string) bool {
+		if n.config == nil {
+			return false
+		}
+		return n.config.Gateway.PinnedStandard(peerID, schemaName)
+	}
+	if n.store != nil {
+		opts.LatestDatasetBatch = func(schemaName, batchID string, includeBytes bool) (*caps.P2PDatasetBatch, bool) {
+			content, ok, err := n.store.MaterializedDatasetBatch(schemaName, batchID, storage.DatasetBatchOptions{IncludeBytes: includeBytes})
+			if err != nil {
+				log.Warnf("latest-dataset batch %s %s: %v", schemaName, batchID, err)
+				return nil, false
+			}
+			if !ok {
+				return nil, false
+			}
+			batch := &caps.P2PDatasetBatch{
+				ProviderID:  content.ProviderID,
+				SourceName:  content.SourceName,
+				BatchID:     content.BatchID,
+				RecordCount: content.RecordCount,
+				Bytes:       content.Bytes,
+				FNV1a64:     content.FNV1a64,
+				Parts:       len(content.Parts),
+			}
+			if !content.PublishedAt.IsZero() {
+				batch.PublishedAt = content.PublishedAt.UTC().Format(time.RFC3339)
+			}
+			return batch, true
+		}
+	}
 	return opts
+}
+
+// schemaForStandard maps a gateway URL standard segment ("omm", "OMM",
+// "OMM.fbs") to the node's canonical schema name; "" = not a validated
+// standard on this node.
+func (n *Node) schemaForStandard(standard string) string {
+	standard = strings.TrimSpace(standard)
+	standard = strings.TrimSuffix(strings.TrimSuffix(standard, ".fbs"), ".FBS")
+	if standard == "" || n.validator == nil {
+		return ""
+	}
+	for _, schema := range n.validator.Schemas() {
+		if strings.EqualFold(strings.TrimSuffix(schema, ".fbs"), standard) {
+			return schema
+		}
+	}
+	return ""
 }
 
 func (n *Node) getPluginByID(reg *license.PluginRegistry, pluginID string) (plugins.Plugin, bool) {
@@ -1748,7 +1803,12 @@ func (n *Node) handleDatasetFeedHeadSubscription(sub *pubsub.Subscription, schem
 }
 
 func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) error {
-	_, err := n.materializeDatasetPublicationPNM(ctx, schema, pnmBytes, from)
+	materialized, err := n.materializeDatasetPublicationPNM(ctx, schema, pnmBytes, from)
+	if materialized {
+		// Pinned-dataset supersede (gateway loop G.4): the PNM pointer may
+		// arrive after its feed-head import — re-evaluate on either event.
+		n.scheduleDatasetSupersede(schema)
+	}
 	return err
 }
 
@@ -1804,6 +1864,10 @@ func (n *Node) materializeDatasetFeedHeadAnnouncement(ctx context.Context, ann s
 	if err := n.store.UpsertDatasetShardPublication(pub); err != nil {
 		return imported, fmt.Errorf("record replicated dataset shard publication %s: %w", ann.FeedHead, err)
 	}
+	// Pinned-dataset supersede (gateway loop G.4): a newly materialized
+	// publication may complete a newer batch for a pinned provider — evict
+	// the superseded batch so pins do not accumulate.
+	n.scheduleDatasetSupersede(ann.Schema)
 	return imported, nil
 }
 
@@ -1855,6 +1919,71 @@ func datasetShardPublicationFromFeedHead(ann sdnpubsub.DatasetFeedHeadAnnounceme
 		pub.PublishedAt = time.Now().UTC()
 	}
 	return pub
+}
+
+// scheduleDatasetSupersede runs the pinned-dataset supersede evaluation for
+// one schema in the background (gateway loop G.4). Evaluations are
+// serialized (datasetSupersedeMu) and idempotent, so overlapping triggers
+// (feed-head import + PNM arrival) converge.
+func (n *Node) scheduleDatasetSupersede(schema string) {
+	if n == nil || n.store == nil || n.config == nil {
+		return
+	}
+	peers := n.config.Gateway.PinnedPeers(schema)
+	if len(peers) == 0 {
+		return
+	}
+	n.wg.Add(1)
+	go func() {
+		defer n.wg.Done()
+		n.datasetSupersedeMu.Lock()
+		defer n.datasetSupersedeMu.Unlock()
+		n.supersedePinnedDatasetBatches(schema, peers)
+	}()
+}
+
+// supersedePinnedDatasetBatches keeps exactly ONE materialized publication
+// batch per pinned (peer, schema): the newest batch (by signed-PNM publish
+// order — the same selection rule the /latest serving path uses) that is
+// fully materialized locally. Every other batch of the same
+// (provider, source, schema) group is evicted (storage.SupersedeSourceBatches:
+// chunked control-row eviction + cached shard/index file removal;
+// publication metadata rows are kept as the catch-up dedup record). The
+// node's own provider identity is never superseded — a provider manages its
+// own publication history.
+func (n *Node) supersedePinnedDatasetBatches(schema string, peers []string) {
+	opts := n.buildP2PCapOptions()
+	self := ""
+	if n.host != nil {
+		self = n.host.ID().String()
+	}
+	for _, peerID := range peers {
+		if peerID == "" || peerID == self {
+			continue
+		}
+		candidates := caps.LatestBatchCandidates(opts, peerID, schema, 0)
+		for _, candidate := range candidates {
+			content, ok, err := n.store.MaterializedDatasetBatch(schema, candidate.BatchID, storage.DatasetBatchOptions{})
+			if err != nil {
+				log.Warnf("gateway.pin supersede %s %s: probe batch %s: %v", peerID, schema, candidate.BatchID, err)
+				break
+			}
+			if !ok {
+				continue // newest not fully materialized yet — keep waiting
+			}
+			result, err := n.store.SupersedeSourceBatches(schema, content.ProviderID, content.SourceName, content.BatchID)
+			if err != nil {
+				log.Warnf("gateway.pin supersede %s %s: evict batches superseded by %s: %v", peerID, schema, content.BatchID, err)
+				break
+			}
+			if result.TagsDeleted > 0 || result.RecordsDeleted > 0 || result.FilesDeleted > 0 {
+				log.Infof("gateway.pin supersede %s %s: keeping batch %s (%s/%s, %d records) — evicted %d source-tag rows, %d records, %d cached publication files",
+					peerID, schema, content.BatchID, content.ProviderID, content.SourceName, content.RecordCount,
+					result.TagsDeleted, result.RecordsDeleted, result.FilesDeleted)
+			}
+			break // newest servable batch found and kept; older candidates are the evictees
+		}
+	}
 }
 
 func (n *Node) cacheDatasetFeedHeadPublicationFiles(pub storage.DatasetShardPublication, shardPath, indexPath string) error {
