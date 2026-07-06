@@ -11,21 +11,35 @@
 //   - p2p.standards_snapshot — the newest stored signed $PNM per
 //     (publishing peer, standard), FILE_ID-derived standard names, frames
 //     verbatim in the stream segment (entry order).
+//   - p2p.pnm_history — the stored signed $PNM frames PUBLISHED BY one
+//     peer, newest first (gateway loop G.3). Attribution honesty: the store
+//     records the GOSSIP-DELIVERING peer id, which is not necessarily the
+//     publisher, so this op attributes by SIGNATURE — a PNM belongs to the
+//     requested peer iff its Ed25519 signature verifies under one of the
+//     peer's publication keys (identity key extracted from the peer id, or
+//     the signing key of the peer's EPM directory record — the exact key
+//     path the host's own dataset-publication ingest uses). Only when NO
+//     key is resolvable does the op fall back to the stored gossip
+//     attribution, and every entry carries signature_verified +
+//     attribution so the surface never overstates provenance.
 //
 // The host supplies MATERIALS only (which peers exist, which records are
 // stored); all response shaping (record selection, format handling, ETag)
-// lives in the wasm flow. Both ops are deterministic for a fixed network
+// lives in the wasm flow. All ops are deterministic for a fixed network
 // state: peers and entries are sorted so identical state yields identical
 // streams (content-derived ETags stay stable).
 package caps
 
 import (
+	"crypto/ed25519"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"sort"
 	"strings"
 
 	PNM "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
+	"github.com/spacedatanetwork/sdn-server/internal/channels"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 )
 
@@ -42,6 +56,13 @@ type P2PPeerInfo struct {
 type P2PPNMRecord struct {
 	PeerID string
 	Data   []byte // size-prefixed $PNM FlatBuffer
+}
+
+// P2PPublisherKey is one candidate Ed25519 dataset-publication public key
+// for a peer, with the provenance of how the host learned it.
+type P2PPublisherKey struct {
+	PublicKey ed25519.PublicKey
+	Source    string // "peer-id" (identity multihash) | "epm-directory"
 }
 
 // P2PCapOptions wires the node services into the capability as closures so
@@ -62,6 +83,10 @@ type P2PCapOptions struct {
 	PeerEPM func(peerID string) []byte
 	// RecentPNMs returns up to limit stored PNM records, newest first.
 	RecentPNMs func(limit int) []P2PPNMRecord
+	// PublisherKeys resolves a peer's candidate Ed25519 dataset-publication
+	// public keys (peer-id identity key and/or EPM-directory signing key).
+	// Read-only and local: NO live network fetch (deterministic materials).
+	PublisherKeys func(peerID string) []P2PPublisherKey
 	// PNMScanLimit bounds the standards-derivation scan (default 4096).
 	PNMScanLimit int
 }
@@ -86,6 +111,7 @@ type p2pCapAdapter struct {
 func (a *p2pCapAdapter) handle(operation string, payload []byte) ([]byte, error) {
 	var params struct {
 		PeerID string `json:"peer_id"`
+		Limit  int    `json:"limit"`
 	}
 	if len(payload) > 0 {
 		_ = json.Unmarshal(payload, &params) // tolerate empty/omitted payloads
@@ -95,6 +121,8 @@ func (a *p2pCapAdapter) handle(operation string, payload []byte) ([]byte, error)
 		return a.peersSnapshot(strings.TrimSpace(params.PeerID)), nil
 	case "p2p.standards_snapshot":
 		return a.standardsSnapshot(strings.TrimSpace(params.PeerID)), nil
+	case "p2p.pnm_history":
+		return a.pnmHistory(strings.TrimSpace(params.PeerID), params.Limit), nil
 	default:
 		return errCapJSON("unknown p2p operation: " + operation), nil
 	}
@@ -330,6 +358,161 @@ func (a *p2pCapAdapter) standardsSnapshot(peerFilter string) []byte {
 		"result": map[string]interface{}{
 			"entries": entriesOut,
 			"records": map[string]interface{}{"$bin": 0},
+		},
+	}, [][]byte{stream})
+}
+
+// ---------------------------------------------------------------------------
+// p2p.pnm_history (gateway loop G.3)
+// ---------------------------------------------------------------------------
+
+// pnmHistory returns the stored signed $PNM frames published by peerID,
+// newest first (PUBLISH_TIMESTAMP descending, store arrival order as the
+// tiebreak), truncated to limit (limit <= 0 = no request bound; the scan is
+// always bounded by PNMScanLimit).
+//
+// Publisher attribution (docs/gateway-api.md §"attribution honesty"): the
+// store's recorded peer id is the GOSSIP-DELIVERING peer, so when the host
+// can resolve publication keys for peerID, an entry is included iff its
+// Ed25519 signature verifies under one of those keys (attribution
+// "signature", signature_verified true) — gossip-attributed frames that do
+// NOT verify are excluded and counted in gossip_only_excluded. When no key
+// resolves, entries fall back to the stored gossip attribution
+// (attribution "gossip", signature_verified false). Frames that do not
+// carry a well-formed Ed25519 signature never appear on this surface.
+func (a *p2pCapAdapter) pnmHistory(peerID string, limit int) []byte {
+	if peerID == "" {
+		return errCapJSON("p2p.pnm_history requires peer_id")
+	}
+
+	var keys []P2PPublisherKey
+	if a.opts.PublisherKeys != nil {
+		keys = a.opts.PublisherKeys(peerID)
+	}
+
+	type historyEntry struct {
+		evidence  channels.PNMTrustEvidence
+		frame     []byte
+		gossipID  string
+		verified  bool
+		keyHex    string
+		keySource string
+		publishTS string
+		fileName  string
+		scanOrder int
+	}
+
+	entries := make([]historyEntry, 0, 16)
+	gossipOnlyExcluded := 0
+	scanOrder := 0
+	seen := make(map[string]bool)
+	if a.opts.RecentPNMs != nil {
+		for _, record := range a.opts.RecentPNMs(a.opts.PNMScanLimit) {
+			scanOrder++
+			if len(record.Data) < 8 || !PNM.SizePrefixedPNMBufferHasIdentifier(record.Data) {
+				continue
+			}
+			evidence, err := channels.VerifySignedPNMEnvelope(record.Data)
+			if err != nil {
+				continue // unsigned / malformed: no provenance value here
+			}
+			entry := historyEntry{
+				evidence:  evidence,
+				frame:     record.Data,
+				gossipID:  record.PeerID,
+				scanOrder: scanOrder,
+			}
+			if len(keys) > 0 {
+				for _, key := range keys {
+					if len(key.PublicKey) != ed25519.PublicKeySize {
+						continue
+					}
+					if _, err := channels.VerifySignedPNMEnvelopeWithProviderKey(record.Data, key.PublicKey); err == nil {
+						entry.verified = true
+						entry.keyHex = hex.EncodeToString(key.PublicKey)
+						entry.keySource = key.Source
+						break
+					}
+				}
+				if !entry.verified {
+					if record.PeerID == peerID {
+						gossipOnlyExcluded++
+					}
+					continue
+				}
+			} else if record.PeerID != peerID {
+				continue
+			}
+			dedupKey := evidence.FileID + "\x00" + evidence.CID + "\x00" + hex.EncodeToString(evidence.Signature)
+			if seen[dedupKey] {
+				continue
+			}
+			seen[dedupKey] = true
+			pnm := PNM.GetSizePrefixedRootAsPNM(record.Data, 0)
+			entry.publishTS = strings.TrimSpace(string(pnm.PUBLISH_TIMESTAMP()))
+			entry.fileName = strings.TrimSpace(string(pnm.FILE_NAME()))
+			entries = append(entries, entry)
+		}
+	}
+
+	// Newest first: PUBLISH_TIMESTAMP descending (RFC3339 strings compare
+	// lexicographically; empty sorts last), store arrival order as tiebreak.
+	sort.SliceStable(entries, func(i, j int) bool {
+		ti, tj := entries[i].publishTS, entries[j].publishTS
+		if ti != tj {
+			if ti == "" {
+				return false
+			}
+			if tj == "" {
+				return true
+			}
+			return ti > tj
+		}
+		return entries[i].scanOrder < entries[j].scanOrder
+	})
+	if limit > 0 && len(entries) > limit {
+		entries = entries[:limit]
+	}
+
+	stream := make([]byte, 0, 4096)
+	entriesOut := make([]map[string]interface{}, 0, len(entries))
+	for i, entry := range entries {
+		stream = append(stream, entry.frame...)
+		schema := pnmFileIDSchema(entry.evidence.FileID)
+		attribution := "gossip"
+		if entry.verified {
+			attribution = "signature"
+		}
+		out := map[string]interface{}{
+			"publisher_peer_id":  peerID,
+			"gossip_peer_id":     entry.gossipID,
+			"standard":           strings.TrimSuffix(schema, ".fbs"),
+			"schema":             schema,
+			"file_id":            entry.evidence.FileID,
+			"file_name":          entry.fileName,
+			"cid":                entry.evidence.CID,
+			"publish_timestamp":  entry.publishTS,
+			"signature_type":     entry.evidence.SignatureType,
+			"signature":          hex.EncodeToString(entry.evidence.Signature),
+			"signature_verified": entry.verified,
+			"attribution":        attribution,
+			"pnm_index":          i,
+		}
+		if entry.keyHex != "" {
+			out["publisher_key"] = entry.keyHex
+			out["publisher_key_source"] = entry.keySource
+		}
+		entriesOut = append(entriesOut, out)
+	}
+
+	return modulert.PreEncodedEnvelope(map[string]interface{}{
+		"ok": true,
+		"result": map[string]interface{}{
+			"peer_id":                 peerID,
+			"publisher_key_available": len(keys) > 0,
+			"gossip_only_excluded":    gossipOnlyExcluded,
+			"entries":                 entriesOut,
+			"records":                 map[string]interface{}{"$bin": 0},
 		},
 	}, [][]byte{stream})
 }

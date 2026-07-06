@@ -26,7 +26,7 @@ All gateway routes live under `/api/v1`. `{peerId}` is a libp2p peer ID;
 | `/api/v1/peers` | GET | Known peers (peerstore + DHT + EPM profile) with the standards each publishes | **live** (peers-discovery flow) | G.2 |
 | `/api/v1/peers/{peerId}` | GET | One peer's EPM profile + published standards | **live** (peers-discovery flow) | G.2 |
 | `/api/v1/standards` | GET | Standards published across known peers, with publishers | **live** (standards-discovery flow) | G.2 |
-| `/api/v1/peers/{peerId}/pnm?limit=N` | GET | The peer's newest signed PNMs (default `limit=1`), verifiable provenance | planned | G.3 |
+| `/api/v1/peers/{peerId}/pnm?limit=N` | GET | The peer's newest signed PNMs (default `limit=1`, clamp 100), VERIFIABLE provenance — stored `$PNM` frames verbatim, publisher-attributed by signature | **live** (pnm-history flow) | G.3 |
 | `/api/v1/peers/{peerId}/{standard}/latest` | GET | Provider's newest published dataset for the standard, served from this node's **opt-in** pin | planned | G.4 |
 | `/api/v1/query` | POST | Sandboxed public raw SELECT (read-only session, single statement, timeout, row/byte caps) | planned | G.5 |
 | `/api/v1/data/omm/bulk` | GET | Per-object OMM epoch-profile stream (data-retrieval flow) | **live** — DELETED in G.6, superseded by `/{peerId}/omm/latest` | C.4 → G.6 |
@@ -313,7 +313,76 @@ parity: `flows/discovery/tests/flow.test.mjs` runs the SAME bundles in the
 JS flow runtime host. Live cold-client evidence is recorded in the loop
 doc (G.2 entry).
 
-## 8. G.1 verification record
+## 8. G.3 implementation record (PNM provenance)
+
+Delivered 2026-07-06. The G.3 row in §1 is live; the planned OpenAPI entry
+auto-shadows when the mount is configured.
+
+**Capability op (host side)** — `p2p.pnm_history {peer_id, limit}` (same
+`p2p_read` capability, `internal/modulert/caps/p2p.go`): the stored signed
+`$PNM` frames PUBLISHED BY one peer, newest first (PUBLISH_TIMESTAMP
+descending, store arrival as tiebreak), deduplicated per publication.
+
+**Attribution honesty** (the point of this surface): the store records only
+the GOSSIP-DELIVERING peer id per PNM, which is not necessarily the
+publisher. The op therefore attributes by SIGNATURE — an entry belongs to
+the requested peer iff its Ed25519 `SIGNATURE` (hex, `SIGNATURE_TYPE=
+Ed25519`, payload `"SDN-DPM-PNM\0" + FILE_ID + "\0" + CID` — the
+dataset-publication contract in `internal/storage/manifest.go` /
+`internal/channels/pnm_verifier.go`) verifies under one of the peer's
+publication keys. Key resolution (`Node.buildP2PCapOptions` →
+`PublisherKeys`) is the LOCAL half of the exact path the host's own ingest
+verification uses (`datasetPublicationPublicKey`): (1) the Ed25519 identity
+key extracted from the peer id, (2) the `key_type=signing` /
+`address_type=ed25519` key of the peer's EPM directory record (the surface
+healed by the 7d2713c5 EPM self-signature fix) — no live network fetch, so
+snapshots stay deterministic. Gossip-attributed frames that FAIL
+verification are excluded (counted in `gossip_only_excluded`); only when NO
+key resolves does the op fall back to gossip attribution, and every entry
+carries `signature_verified` + `attribution` (`"signature"`|`"gossip"`) so
+provenance is never overstated. Unsigned/malformed frames never appear.
+
+**Client verification chain** (cold client, response bytes only):
+
+1. `GET /api/v1/peers/{peerId}/pnm` → aligned size-prefixed `$PNM` frames
+   VERBATIM as stored — signatures intact.
+2. From each frame read `FILE_ID`, `CID`, `SIGNATURE` (hex),
+   `SIGNATURE_TYPE` (must be `Ed25519`).
+3. Publisher key: decode the libp2p peer id (identity-multihash Ed25519
+   ids embed it) and/or `GET /api/v1/peers/{peerId}` → the `$EPM` frame's
+   `KEYS` entry with `KEY_TYPE=Signing`/`ADDRESS_TYPE=ed25519` (hex
+   `PUBLIC_KEY`).
+4. `ed25519.Verify(key, "SDN-DPM-PNM\0" + FILE_ID + "\0" + CID, SIGNATURE)`.
+
+**Flow (modules repo)** — `flows/pnm-history` 0.1.0, mounted at the Go 1.22
+mux pattern `/api/v1/peers/{peerId}/pnm` (more specific than the
+`/api/v1/peers/` subtree, so both mounts coexist; the anonymous-policy
+`templateMatch` already speaks `{param}` templates). Node chain: http-route
+`discover` (new `pnm_history` route; `?limit` clamped IN-WASM to [1, 100],
+default 1 = newest) → hostcap/p2p-discovery `pnm_history` →
+foundation/discovery-shape `shape_pnm` (frames verbatim / bare-array json
+with the provenance fields / shared word-folded FNV-1a-64 etag; empty
+history → 404) → http-respond → egress. Module versions: http-route 0.3.0,
+p2p-discovery 0.2.0, discovery-shape 0.2.0. Route-ownership guards landed
+with this change: each discovery flow's snapshot node hostcalls only for
+routes it OWNS and each shape method 404s sibling routes, so a
+pnm_history-routed request hitting the peers mount (e.g. on a node without
+the G.3 mount) answers 404 instead of misinterpreting.
+
+**Verification** — unit: `caps/p2p_test.go` (signature attribution incl.
+relayed-frame reclaim + impostor exclusion + gossip fallback + newest-first
++ dedup + limit), `api/docs_test.go` (G.3 shadow + anonymous stamps);
+integration: `flowrt/pnm_flow_integration_test.go` mounts the REAL compiled
+bundle at the production mux pattern alongside the peers subtree over the
+real cap handler — 120 REAL-signed fixtures, served newest frame
+byte-verbatim and signature-verified from response bytes only, in-wasm
+clamp observable (limit=5000 → 100), provenance json fields, shared ETag +
+304, impostor/unsigned exclusion, unknown-publisher/POST 404s.
+Modules-side parity: `flows/discovery/tests/flow.test.mjs` runs the SAME
+bundle in the JS flow runtime host. Live cold-client evidence is recorded
+in the loop doc (G.3 entry).
+
+## 9. G.1 verification record
 
 - `openapi.json` generated from the REAL mounted data-retrieval flow
   (v0.2.3 bundle mounted at `/api/v1/data/` on a local daemon; operations

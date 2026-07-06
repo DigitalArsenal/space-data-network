@@ -858,6 +858,33 @@ func (n *Node) buildP2PCapOptions() caps.P2PCapOptions {
 			return out
 		}
 	}
+	// Publisher publication-key resolution for p2p.pnm_history: the SAME
+	// local key path datasetPublicationPublicKey uses (identity key from the
+	// peer id, then the EPM directory signing key), WITHOUT the live network
+	// fetch — capability snapshots stay read-only and deterministic.
+	opts.PublisherKeys = func(peerID string) []caps.P2PPublisherKey {
+		pid, err := peer.Decode(peerID)
+		if err != nil {
+			return nil
+		}
+		keys := make([]caps.P2PPublisherKey, 0, 2)
+		if key, err := ed25519PublicKeyFromPeerID(pid); err == nil {
+			keys = append(keys, caps.P2PPublisherKey{PublicKey: key, Source: "peer-id"})
+		}
+		if key, err := n.datasetPublicationPublicKeyFromDirectory(pid); err == nil {
+			duplicate := false
+			for _, existing := range keys {
+				if string(existing.PublicKey) == string(key) {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				keys = append(keys, caps.P2PPublisherKey{PublicKey: key, Source: "epm-directory"})
+			}
+		}
+		return keys
+	}
 	return opts
 }
 

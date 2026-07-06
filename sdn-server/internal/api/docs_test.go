@@ -301,6 +301,56 @@ func TestGenerateOpenAPIG2DiscoveryShadowsAllPlanned(t *testing.T) {
 	}
 }
 
+// The real G.3 mount: pnm-history at the /api/v1/peers/{peerId}/pnm mux
+// pattern (route ""). The planned G.3 entry must flip to flow-served; the
+// G.4/G.5 planned entries must survive.
+func TestGenerateOpenAPIG3PNMHistoryShadowsPlanned(t *testing.T) {
+	pnmFlow := &fakeFlowDocSource{
+		programID: "com.digitalarsenal.flows.pnm-history",
+		version:   "0.1.0",
+		mountPath: "/api/v1/peers/{peerId}/pnm",
+		doc: &flowrt.FlowAPIDoc{
+			Tag: "discovery",
+			Routes: []flowrt.FlowAPIRoute{
+				{Path: "", Method: "GET", Summary: "signed PNM history", Anonymous: true},
+			},
+		},
+	}
+	spec, err := GenerateOpenAPI(DocsHandlerOptions{
+		Version: "test",
+		Flows:   []FlowDocSource{pnmFlow},
+		EffectiveAnonymous: func(method, path string) bool {
+			return method == "GET"
+		},
+	})
+	if err != nil {
+		t.Fatalf("GenerateOpenAPI: %v", err)
+	}
+	var doc map[string]interface{}
+	if err := json.Unmarshal(spec, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	op := opAt(t, doc, "/api/v1/peers/{peerId}/pnm", "get")
+	if op["x-sdn-served-by"] != "flow" {
+		t.Fatalf("pnm route must be flow-served, got %v", op["x-sdn-served-by"])
+	}
+	if _, ok := op["x-sdn-status"]; ok {
+		t.Fatal("pnm route must not be marked planned once mounted")
+	}
+	if op["x-sdn-anonymous"] != true || op["x-sdn-anonymous-requested"] != true {
+		t.Fatalf("pnm anonymous stamps wrong: %v / %v", op["x-sdn-anonymous"], op["x-sdn-anonymous-requested"])
+	}
+	for _, path := range []string{"/api/v1/peers/{peerId}/{standard}/latest", "/api/v1/query"} {
+		method := "get"
+		if path == "/api/v1/query" {
+			method = "post"
+		}
+		if planned := opAt(t, doc, path, method); planned["x-sdn-status"] != "planned" {
+			t.Fatalf("%s must remain planned, got %v", path, planned["x-sdn-status"])
+		}
+	}
+}
+
 func TestDocsHandlerServesSpecAndUI(t *testing.T) {
 	h, err := NewDocsHandler(DocsHandlerOptions{
 		Version: "test",
