@@ -100,6 +100,13 @@ type MountedFlow struct {
 	aot      bool
 	linked   bool
 
+	// mountPath is the mux pattern the flow is bound to (RegisterFlowMounts).
+	// apiDoc/flowVersion carry the bundle flow.json "api" extension (loop
+	// G.1, apidoc.go) for the OpenAPI-from-mounted-flows generator.
+	mountPath   string
+	apiDoc      *FlowAPIDoc
+	flowVersion string
+
 	triggerIndex  uint32
 	triggerPortID string
 	egressKeys    []string
@@ -439,7 +446,8 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 
 			// Ingress trigger index + bound port come from the bundle's
 			// flow.json topology when present (mechanical lookup, no
-			// interpretation).
+			// interpretation). The same read carries the "api" extension
+			// (loop G.1) for the OpenAPI-from-mounted-flows generator.
 			if bundleDir != "" {
 				if data, readErr := os.ReadFile(filepath.Join(bundleDir, "flow.json")); readErr == nil {
 					var topo flowBundleTopology
@@ -457,6 +465,7 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 							break
 						}
 					}
+					mf.apiDoc, mf.flowVersion = parseFlowAPIDoc(data)
 				}
 			}
 
@@ -776,6 +785,7 @@ func RegisterFlowMounts(mux *http.ServeMux, mounts []config.FlowMount, deps Flow
 			}
 			return fail(fmt.Errorf("mount %q: %w", mount.Path, err))
 		}
+		mf.mountPath = mount.Path
 		mux.Handle(mount.Path, mf)
 		mounted = append(mounted, mf)
 		log.Infof("Flow %q mounted at %s (pool %d, aot %v, trigger %d, egress %v)",

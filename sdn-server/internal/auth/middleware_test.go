@@ -85,6 +85,60 @@ func TestRequireAuth_RedirectsBrowserUnauthenticatedWebUIToWalletLogin(t *testin
 	}
 }
 
+// API paths never redirect to the login page: an anonymous browser GET of a
+// gated /api/ route reads a 401 status, not a 302 (gateway allowlist policy,
+// docs/gateway-api.md §4 — retires the epoch-endpoint 302 oddity).
+func TestRequireAuth_APIPathsGet401NotRedirect(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
+	if err != nil {
+		t.Fatalf("OpenStandalone: %v", err)
+	}
+	defer closer()
+
+	sessions, err := NewSessionStore(sdb)
+	if err != nil {
+		t.Fatalf("NewSessionStore: %v", err)
+	}
+
+	h := NewHandler(nil, sessions, time.Hour, "", "")
+
+	// Unauthenticated browser-shaped request (no Accept: application/json).
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/epoch", nil)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	rec := httptest.NewRecorder()
+	h.RequireAuth(peers.Standard, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated API status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if location := rec.Header().Get("Location"); location != "" {
+		t.Fatalf("API path must not redirect, got Location %q", location)
+	}
+
+	// Insufficient trust on an API path → 403, still no redirect.
+	token, err := sessions.CreateSession("xpub-standard-user", peers.Standard, "127.0.0.1", "test-agent", time.Hour)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/admin/peers", nil)
+	req.Header.Set("Accept", "text/html")
+	req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
+	rec = httptest.NewRecorder()
+	h.RequireAuth(peers.Admin, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("forbidden API status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+	if location := rec.Header().Get("Location"); location != "" {
+		t.Fatalf("API path must not redirect, got Location %q", location)
+	}
+}
+
 func TestRequireAuth_RotatesNearExpirySessionAndSetsReplacementCookie(t *testing.T) {
 	t.Parallel()
 

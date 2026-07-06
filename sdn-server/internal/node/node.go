@@ -2424,6 +2424,14 @@ func (n *Node) FlowManager() *flowrt.FlowManager {
 	return n.flowManager
 }
 
+// MountedFlows returns the flow modules currently mounted on HTTP listener
+// paths (loop G.1: the OpenAPI generator reads their flow.json api
+// extensions, so the published spec is derived from what is ACTUALLY
+// mounted).
+func (n *Node) MountedFlows() []*flowrt.MountedFlow {
+	return n.mountedFlows
+}
+
 // MountFlows registers the config-declared flow HTTP mounts
 // (config flows.mounts) on the mux. Each mount loads a compiled flow bundle
 // as a WASM module through the standard flow runtime and binds it to its
