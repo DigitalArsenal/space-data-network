@@ -86,6 +86,10 @@ func buildDiscoveryEPM(t *testing.T, dn string, alternateNames, addrs []string) 
 	if addrVec != 0 {
 		EPM.EPMAddMULTIFORMAT_ADDRESS(b, addrVec)
 	}
+	// SIGNATURE_TIMESTAMP (int64): 8-byte scalars are aligned relative to
+	// the size-PREFIXED buffer start — regression guard for the shape
+	// node's size-prefixed frame verification (real signed EPMs carry it).
+	EPM.EPMAddSIGNATURE_TIMESTAMP(b, 1751793600)
 	EPM.EPMAddENTITY_TYPE(b, EPM.EntityTypeNode)
 	b.FinishSizePrefixedWithFileIdentifier(EPM.EPMEnd(b), []byte(EPM.EPMIdentifier))
 	return b.FinishedBytes()
