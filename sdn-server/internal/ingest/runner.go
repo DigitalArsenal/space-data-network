@@ -911,7 +911,8 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string, tags ...storage
 			WithNoradCatID(norad).
 			WithObjectName(valueOr(getValue(row, "OBJECT_NAME", "SATNAME", "NAME"), fmt.Sprintf("SAT-%d", norad))).
 			WithObjectID(valueOr(getValue(row, "OBJECT_ID", "INTLDES", "INTERNATIONAL_DESIGNATOR"), fmt.Sprintf("NORAD-%d", norad))).
-			WithCreationDate(deterministicOMMCreationDate(row, parsedEpoch))
+			WithCreationDate(deterministicOMMCreationDate(row, parsedEpoch)).
+			WithOriginator(valueOr(getValue(row, "ORIGINATOR"), gpOriginatorForSource(sourcePeer)))
 
 		if !parsedEpoch.IsZero() {
 			builder = builder.WithEpoch(parsedEpoch.UTC().Format(time.RFC3339))
@@ -992,6 +993,22 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string, tags ...storage
 		return 0, countMPE, "", fmt.Errorf("no OMM rows parsed")
 	}
 	return countOMM, countMPE, hex.EncodeToString(normalized.Sum(nil)), nil
+}
+
+// gpOriginatorForSource maps the GP ingest source to the CCSDS ORIGINATOR
+// (creating agency) recorded on OMMs whose source row carries no ORIGINATOR
+// column. CelesTrak GP CSV has no such column; the OMM datasets it serves
+// are CelesTrak's own product, so the honest originator is "CELESTRAK"
+// (never the sds test-builder default "SDN-TEST", which leaked into
+// production records once).
+func gpOriginatorForSource(sourcePeer string) string {
+	switch sourcePeer {
+	case "source:celestrak":
+		return "CELESTRAK"
+	case "source:spacetrack":
+		return "SPACE-TRACK"
+	}
+	return strings.ToUpper(strings.TrimPrefix(sourcePeer, "source:"))
 }
 
 // normalizeEphemerisType maps a GP EPHEMERIS_TYPE cell (TLE numeric code

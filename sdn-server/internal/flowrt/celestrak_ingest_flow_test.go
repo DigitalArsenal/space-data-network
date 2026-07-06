@@ -273,6 +273,7 @@ func TestCelestrakIngestFlowEndToEnd(t *testing.T) {
 			WithRevAtEpoch(row.revAtEpoch).
 			WithClassificationType("U").
 			WithEphemerisType("SGP").
+			WithOriginator("CELESTRAK").
 			Build()
 		record := data[4:]
 		sum := sha256.Sum256(record)

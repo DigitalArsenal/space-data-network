@@ -147,6 +147,16 @@ func (b *OMMBuilder) WithClassificationType(ct string) *OMMBuilder {
 	return b
 }
 
+// WithOriginator sets the CCSDS ORIGINATOR (creating agency). The empty
+// string is a no-op, keeping the builder default ("SDN-TEST" — a TEST
+// default; production ingest paths must always set an honest originator).
+func (b *OMMBuilder) WithOriginator(name string) *OMMBuilder {
+	if name = strings.TrimSpace(name); name != "" {
+		b.originator = name
+	}
+	return b
+}
+
 // WithBStar sets the SGP4 drag term BSTAR (1/EarthRadii). Zero means unset
 // (FlatBuffers omits default-valued slots), matching the source convention.
 func (b *OMMBuilder) WithBStar(bstar float64) *OMMBuilder {
