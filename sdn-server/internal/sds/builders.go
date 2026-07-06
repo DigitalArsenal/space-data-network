@@ -31,6 +31,12 @@ type OMMBuilder struct {
 	originator         string
 	classificationType string
 	epochTimestamp     float64
+	bstar              float64
+	meanMotionDot      float64
+	meanMotionDdot     float64
+	elementSetNo       uint32
+	revAtEpoch         float64
+	ephemerisType      string
 }
 
 // NewOMMBuilder creates a new OMM builder with default values.
@@ -141,6 +147,46 @@ func (b *OMMBuilder) WithClassificationType(ct string) *OMMBuilder {
 	return b
 }
 
+// WithBStar sets the SGP4 drag term BSTAR (1/EarthRadii). Zero means unset
+// (FlatBuffers omits default-valued slots), matching the source convention.
+func (b *OMMBuilder) WithBStar(bstar float64) *OMMBuilder {
+	b.bstar = bstar
+	return b
+}
+
+// WithMeanMotionDot sets the first derivative of mean motion (rev/day^2).
+func (b *OMMBuilder) WithMeanMotionDot(v float64) *OMMBuilder {
+	b.meanMotionDot = v
+	return b
+}
+
+// WithMeanMotionDdot sets the second derivative of mean motion (rev/day^3).
+func (b *OMMBuilder) WithMeanMotionDdot(v float64) *OMMBuilder {
+	b.meanMotionDdot = v
+	return b
+}
+
+// WithElementSetNo sets the ELSET number of the element set.
+func (b *OMMBuilder) WithElementSetNo(n uint32) *OMMBuilder {
+	b.elementSetNo = n
+	return b
+}
+
+// WithRevAtEpoch sets the revolution number at epoch.
+func (b *OMMBuilder) WithRevAtEpoch(rev float64) *OMMBuilder {
+	b.revAtEpoch = rev
+	return b
+}
+
+// WithEphemerisType sets the CCSDS EPHEMERIS_TYPE by enum NAME ("SGP",
+// "SGP4", "SDP4", "SGP8", "SDP8" — the generated enum type is unexported, so
+// the name is resolved through OMM.EnumValuesephemerisFormat at Build time).
+// Unknown names are ignored, leaving the schema default (SGP = 0).
+func (b *OMMBuilder) WithEphemerisType(name string) *OMMBuilder {
+	b.ephemerisType = strings.ToUpper(strings.TrimSpace(name))
+	return b
+}
+
 // Build creates the OMM FlatBuffer and returns a copy of the bytes.
 func (b *OMMBuilder) Build() []byte {
 	b.builder.Reset()
@@ -168,6 +214,18 @@ func (b *OMMBuilder) Build() []byte {
 	OMM.OMMAddCREATION_DATE(b.builder, creationDateOffset)
 	OMM.OMMAddORIGINATOR(b.builder, originatorOffset)
 	OMM.OMMAddCLASSIFICATION_TYPE(b.builder, classificationOffset)
+	// SGP4 propagation terms + element-set identity (zero values are the
+	// FlatBuffers slot defaults and are omitted from the encoded buffer).
+	OMM.OMMAddBSTAR(b.builder, b.bstar)
+	OMM.OMMAddMEAN_MOTION_DOT(b.builder, b.meanMotionDot)
+	OMM.OMMAddMEAN_MOTION_DDOT(b.builder, b.meanMotionDdot)
+	OMM.OMMAddELEMENT_SET_NO(b.builder, b.elementSetNo)
+	OMM.OMMAddREV_AT_EPOCH(b.builder, b.revAtEpoch)
+	if b.ephemerisType != "" {
+		if v, ok := OMM.EnumValuesephemerisFormat[b.ephemerisType]; ok {
+			OMM.OMMAddEPHEMERIS_TYPE(b.builder, v)
+		}
+	}
 	if b.epochTimestamp != 0 {
 		OMM.OMMAddUSER_DEFINED_EPOCH_TIMESTAMP(b.builder, b.epochTimestamp)
 	}

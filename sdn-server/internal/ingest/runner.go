@@ -48,7 +48,7 @@ const (
 	fullCatalogPublicationTimeout   = 2 * time.Hour
 	defaultMinFreeDiskBytes         = 5 * 1024 * 1024 * 1024
 	publicContentKeyID              = "public"
-	parserVersionCelestrakGP        = "celestrak-gp/v1"
+	parserVersionCelestrakGP        = "celestrak-gp/v2"
 	parserVersionCelestrakSatcat    = "celestrak-satcat/v1"
 	parserVersionCelestrakSatcatCSV = "celestrak-satcat-csv/v1"
 	parserVersionCelestrakSPW       = "celestrak-space-weather/v1"
@@ -934,6 +934,30 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string, tags ...storage
 		if v, ok := parseFloat(getValue(row, "MEAN_ANOMALY", "MA")); ok {
 			builder = builder.WithMeanAnomaly(v)
 		}
+		// SGP4 propagation terms + element-set identity (the fields OrbPro's
+		// SGP4 init reads from OMM — a record without BSTAR/MEAN_MOTION_DOT
+		// propagates drag-free).
+		if v, ok := parseFloat(getValue(row, "BSTAR", "B_STAR")); ok {
+			builder = builder.WithBStar(v)
+		}
+		if v, ok := parseFloat(getValue(row, "MEAN_MOTION_DOT", "N_DOT", "NDOT")); ok {
+			builder = builder.WithMeanMotionDot(v)
+		}
+		if v, ok := parseFloat(getValue(row, "MEAN_MOTION_DDOT", "N_DDOT", "NDDOT")); ok {
+			builder = builder.WithMeanMotionDdot(v)
+		}
+		if v, ok := parseUint32(getValue(row, "ELEMENT_SET_NO", "ELSET_NO")); ok {
+			builder = builder.WithElementSetNo(v)
+		}
+		if v, ok := parseFloat(getValue(row, "REV_AT_EPOCH", "REV")); ok {
+			builder = builder.WithRevAtEpoch(v)
+		}
+		if v := strings.TrimSpace(getValue(row, "CLASSIFICATION_TYPE", "CLASSIFICATION")); v != "" {
+			builder = builder.WithClassificationType(v)
+		}
+		if name := normalizeEphemerisType(getValue(row, "EPHEMERIS_TYPE")); name != "" {
+			builder = builder.WithEphemerisType(name)
+		}
 
 		ommBytes := builder.Build()
 		if _, err := r.storeIngestRecord("OMM.fbs", ommBytes, sourcePeer, tags...); err != nil {
@@ -968,6 +992,28 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string, tags ...storage
 		return 0, countMPE, "", fmt.Errorf("no OMM rows parsed")
 	}
 	return countOMM, countMPE, hex.EncodeToString(normalized.Sum(nil)), nil
+}
+
+// normalizeEphemerisType maps a GP EPHEMERIS_TYPE cell (TLE numeric code
+// 0-4 or a CCSDS enum name) to the OMM ephemerisFormat enum NAME. Empty or
+// unrecognized input returns "" (leave the schema default).
+func normalizeEphemerisType(raw string) string {
+	v := strings.ToUpper(strings.TrimSpace(raw))
+	switch v {
+	case "":
+		return ""
+	case "0", "SGP":
+		return "SGP"
+	case "1", "SGP4":
+		return "SGP4"
+	case "2", "SDP4":
+		return "SDP4"
+	case "3", "SGP8":
+		return "SGP8"
+	case "4", "SDP8":
+		return "SDP8"
+	}
+	return ""
 }
 
 func deterministicOMMCreationDate(row map[string]string, parsedEpoch time.Time) string {

@@ -242,12 +242,17 @@ func TestCelestrakIngestFlowEndToEnd(t *testing.T) {
 	// same CIDs, so switching pipelines is idempotent.
 	expectedOMM := map[string][]byte{}
 	for _, row := range []struct {
-		norad                       uint32
-		name, objectID, epoch       string
-		n, e, i, raan, argp, ma     float64
+		norad                   uint32
+		name, objectID, epoch   string
+		n, e, i, raan, argp, ma float64
+		bstar, mmDot, mmDdot    float64
+		elsetNo                 uint32
+		revAtEpoch              float64
 	}{
-		{25544, "ISS (ZARYA)", "1998-067A", "2026-01-01T00:00:00Z", 15.48962367, 0.0006703, 51.6432, 92.1234, 45.6789, 314.1592},
-		{40909, "STARLINK-1001", "2015-049A", "2026-01-01T00:10:00Z", 15.05512345, 0.0001234, 53.0001, 120.5678, 89.1234, 270.4567},
+		{25544, "ISS (ZARYA)", "1998-067A", "2026-01-01T00:00:00Z", 15.48962367, 0.0006703, 51.6432, 92.1234, 45.6789, 314.1592,
+			0.00012345, 0.00002182, 0.0000000001, 999, 48123},
+		{40909, "STARLINK-1001", "2015-049A", "2026-01-01T00:10:00Z", 15.05512345, 0.0001234, 53.0001, 120.5678, 89.1234, 270.4567,
+			0.00001234, 0.00000103, 0, 998, 31456},
 	} {
 		data := sds.NewOMMBuilder().
 			WithNoradCatID(row.norad).
@@ -261,6 +266,13 @@ func TestCelestrakIngestFlowEndToEnd(t *testing.T) {
 			WithRaOfAscNode(row.raan).
 			WithArgOfPericenter(row.argp).
 			WithMeanAnomaly(row.ma).
+			WithBStar(row.bstar).
+			WithMeanMotionDot(row.mmDot).
+			WithMeanMotionDdot(row.mmDdot).
+			WithElementSetNo(row.elsetNo).
+			WithRevAtEpoch(row.revAtEpoch).
+			WithClassificationType("U").
+			WithEphemerisType("SGP").
 			Build()
 		record := data[4:]
 		sum := sha256.Sum256(record)
@@ -291,7 +303,7 @@ func TestCelestrakIngestFlowEndToEnd(t *testing.T) {
 	if err := json.Unmarshal(provBody, &prov); err != nil {
 		t.Fatalf("provenance is not JSON: %v", err)
 	}
-	if prov["source_sha256"] != gpBatch || prov["parser_version"] != "celestrak-gp-wasm/v1" {
+	if prov["source_sha256"] != gpBatch || prov["parser_version"] != "celestrak-gp-wasm/v2" {
 		t.Fatalf("provenance content wrong: %v", prov)
 	}
 
