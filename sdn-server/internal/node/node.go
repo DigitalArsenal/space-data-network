@@ -757,7 +757,108 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 		reg.Register("protocol_dial", caps.NewProtocolCapFactory())
 	}
 
+	// P2P discovery read capability (gateway loop G.2) — read-only snapshots
+	// of the peerstore/DHT/registry view + stored EPM profiles + PNM-derived
+	// published standards, feeding the discovery gateway flows.
+	reg.Register("p2p_read", caps.NewP2PCapFactory(n.buildP2PCapOptions()))
+
 	return reg
+}
+
+// buildP2PCapOptions wires the node's live services into the p2p_read
+// capability as closures (materials only — response shaping lives in the
+// discovery flow's wasm).
+func (n *Node) buildP2PCapOptions() caps.P2PCapOptions {
+	opts := caps.P2PCapOptions{
+		SelfAgentVersion: versioninfo.AgentVersion,
+	}
+	if n.host != nil {
+		opts.SelfID = n.host.ID().String()
+		opts.SelfAddrs = func() []string {
+			addrs := make([]string, 0, 8)
+			for _, ma := range n.ListenAddrs() {
+				addrs = append(addrs, ma.String())
+			}
+			return addrs
+		}
+		opts.Peers = func() []caps.P2PPeerInfo {
+			// Merged network view: connected peers + peerstore entries with
+			// addresses + DHT routing table + trust-registry peers.
+			ids := make(map[peer.ID]bool)
+			for _, pid := range n.host.Network().Peers() {
+				ids[pid] = true
+			}
+			for _, pid := range n.host.Peerstore().PeersWithAddrs() {
+				ids[pid] = true
+			}
+			if n.dht != nil {
+				for _, pid := range n.dht.RoutingTable().ListPeers() {
+					ids[pid] = true
+				}
+			}
+			if n.peerRegistry != nil {
+				for _, tp := range n.peerRegistry.ListPeers() {
+					if tp != nil && tp.ID != "" {
+						ids[tp.ID] = true
+					}
+				}
+			}
+			self := n.host.ID()
+			out := make([]caps.P2PPeerInfo, 0, len(ids))
+			for pid := range ids {
+				if pid == self {
+					continue
+				}
+				info := caps.P2PPeerInfo{
+					ID:        pid.String(),
+					Connected: n.host.Network().Connectedness(pid) == network.Connected,
+				}
+				for _, ma := range n.host.Peerstore().Addrs(pid) {
+					info.Addrs = append(info.Addrs, ma.String())
+				}
+				if av, err := n.host.Peerstore().Get(pid, "AgentVersion"); err == nil {
+					if s, ok := av.(string); ok {
+						info.AgentVersion = s
+					}
+				}
+				out = append(out, info)
+			}
+			return out
+		}
+	}
+	if n.epmService != nil {
+		opts.SelfEPM = n.epmService.GetNodeEPM
+	}
+	if n.peerRegistry != nil {
+		opts.PeerEPM = func(peerID string) []byte {
+			pid, err := peer.Decode(peerID)
+			if err != nil {
+				return nil
+			}
+			tp, err := n.peerRegistry.GetPeer(pid)
+			if err != nil || tp == nil {
+				return nil
+			}
+			return tp.EPMData
+		}
+	}
+	if n.store != nil {
+		opts.RecentPNMs = func(limit int) []caps.P2PPNMRecord {
+			records, err := n.store.QueryRecentRecords("PNM.fbs", limit)
+			if err != nil {
+				return nil
+			}
+			out := make([]caps.P2PPNMRecord, 0, len(records))
+			for _, record := range records {
+				if record == nil {
+					continue
+				}
+				out = append(out, caps.P2PPNMRecord{PeerID: record.PeerID, Data: record.Data})
+			}
+			return out
+		}
+	}
+	return opts
 }
 
 func (n *Node) getPluginByID(reg *license.PluginRegistry, pluginID string) (plugins.Plugin, bool) {

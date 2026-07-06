@@ -46,6 +46,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt/editor"
 	"github.com/spacedatanetwork/sdn-server/internal/frontend"
+	"github.com/spacedatanetwork/sdn-server/internal/gateway"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
@@ -1125,10 +1126,41 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				log.Errorf("Failed to register flow HTTP mounts: %v", err)
 			}
 
+			// Anonymous-access policy (gateway loop G.2, docs/gateway-api.md
+			// §4.4): mounted flows FEED the allowlist mechanically — a
+			// mounted route is admitted anonymously iff its api block
+			// declares anonymous:true AND gateway.anonymous.deny does not
+			// veto it; gateway.anonymous.allow extends read access. The
+			// static isPublicAPIRequest list remains the native baseline.
+			// ONE predicate serves the auth wall, CORS, CSRF, and the
+			// OpenAPI x-sdn-anonymous stamp, so spec and enforcement cannot
+			// drift.
+			flowRouteDecls := make([]gateway.RouteDecl, 0, 8)
+			for _, mf := range n.MountedFlows() {
+				doc := mf.APIDoc()
+				if doc == nil {
+					continue
+				}
+				for _, route := range doc.Routes {
+					flowRouteDecls = append(flowRouteDecls, gateway.RouteDecl{
+						Method:    route.Method,
+						Path:      gateway.JoinMountPath(mf.MountPath(), route.Path),
+						Anonymous: route.Anonymous,
+					})
+				}
+			}
+			anonymousPolicy := gateway.NewAnonymousPolicy(
+				isPublicAPIRequest,
+				flowRouteDecls,
+				cfg.Gateway.Anonymous.Allow,
+				cfg.Gateway.Anonymous.Deny,
+			)
+			publicAPIRequest := anonymousPolicy.Anonymous
+
 			// Gateway API docs (loop G.1): OpenAPI generated FROM the flows
 			// mounted above (their flow.json api extensions) + the Scalar
 			// reference UI, self-hosted. x-sdn-anonymous stamps come from
-			// the SAME predicate the auth wall enforces (isPublicAPIRequest)
+			// the SAME predicate the auth wall enforces (anonymousPolicy)
 			// so the spec cannot drift from enforcement. Temporary native
 			// bootstrap routes — documented in docs/gateway-api.md §6.
 			docFlows := make([]api.FlowDocSource, 0, len(n.MountedFlows()))
@@ -1138,7 +1170,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			if docsHandler, err := api.NewDocsHandler(api.DocsHandlerOptions{
 				Version:            versioninfo.AgentVersion,
 				Flows:              docFlows,
-				EffectiveAnonymous: isPublicAPIRequest,
+				EffectiveAnonymous: publicAPIRequest,
 			}); err != nil {
 				log.Errorf("Failed to build gateway API docs: %v", err)
 			} else {
@@ -1324,7 +1356,21 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					authHandler,
 					n.ListenAddrs,
 				)
-				coreAPI.RegisterRoutes(adminMux)
+				// Mounted gateway flows claim mux paths (incl. the trimmed
+				// exact alias of trailing-slash subtree mounts); the core
+				// API yields claimed surfaces — G.2: the peers-discovery
+				// flow REPLACES the native /api/v1/peers read routes.
+				flowClaimedPaths := make(map[string]bool, len(n.MountedFlows())*2)
+				for _, mf := range n.MountedFlows() {
+					mountPath := mf.MountPath()
+					flowClaimedPaths[mountPath] = true
+					if trimmed := strings.TrimSuffix(mountPath, "/"); trimmed != "" {
+						flowClaimedPaths[trimmed] = true
+					}
+				}
+				coreAPI.RegisterRoutesWithFlowMounts(adminMux, func(path string) bool {
+					return flowClaimedPaths[path]
+				})
 				log.Infof("Core API available at %s://%s/api/v1/{id,version,stats,peers,pubsub}", adminScheme, adminAddr)
 
 				// WebSocket bridge
@@ -1423,7 +1469,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 					}
 
-					if isPublicAPIRequest(r.Method, r.URL.Path) {
+					if publicAPIRequest(r.Method, r.URL.Path) {
 						applyPublicAPICORSHeaders(w.Header(), r.Header.Get("Origin"))
 						if r.Method == http.MethodOptions {
 							w.WriteHeader(http.StatusNoContent)
@@ -1434,7 +1480,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					// CSRF protection: for state-changing requests using cookie auth,
 					// require same-origin Origin/Referer, or X-Requested-With.
 					if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-						if hasSessionCookie(r) && !isWebhookPath(r.URL.Path) && !isPublicAPIRequest(r.Method, r.URL.Path) {
+						if hasSessionCookie(r) && !isWebhookPath(r.URL.Path) && !publicAPIRequest(r.Method, r.URL.Path) {
 							origin := strings.TrimSpace(r.Header.Get("Origin"))
 							referer := strings.TrimSpace(r.Header.Get("Referer"))
 							xrw := strings.TrimSpace(r.Header.Get("X-Requested-With"))
@@ -1471,7 +1517,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						isAPIOrPlugin := strings.HasPrefix(path, "/api/") ||
 							strings.HasPrefix(path, "/orbpro-key-broker/")
 
-						if isAPIOrPlugin && !isPublicAPIRequest(r.Method, path) {
+						if isAPIOrPlugin && !publicAPIRequest(r.Method, path) {
 							minTrust := peers.Standard
 							if isAdminOnlyAPIPath(path) {
 								minTrust = peers.Admin

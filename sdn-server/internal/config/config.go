@@ -27,6 +27,26 @@ type Config struct {
 	Flows      FlowsConfig      `yaml:"flows"`
 	Policies   PoliciesConfig   `yaml:"policies"`
 	Ingest     IngestConfig     `yaml:"ingest"`
+	Gateway    GatewayConfig    `yaml:"gateway"`
+}
+
+// GatewayConfig tunes the network-gateway API surface (docs/gateway-api.md).
+type GatewayConfig struct {
+	// Anonymous adjusts the anonymous-access allowlist fed by mounted
+	// flows' api.routes[].anonymous declarations (gateway loop G.2): a
+	// mounted route is admitted anonymously iff it declares anonymous:true
+	// AND no Deny entry matches; Allow entries extend read (GET/HEAD)
+	// access to extra paths. Entries are exact paths, "{param}" templates,
+	// or trailing-slash prefixes. Deny wins over everything, including the
+	// host's built-in static allowlist.
+	Anonymous GatewayAnonymousConfig `yaml:"anonymous"`
+}
+
+// GatewayAnonymousConfig is the operator veto/extension for the anonymous
+// allowlist.
+type GatewayAnonymousConfig struct {
+	Allow []string `yaml:"allow,omitempty"`
+	Deny  []string `yaml:"deny,omitempty"`
 }
 
 // IngestConfig runs the CelesTrak/Space-Track/UDL source-sync workers
