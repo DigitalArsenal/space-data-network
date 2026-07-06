@@ -787,9 +787,32 @@ func RegisterFlowMounts(mux *http.ServeMux, mounts []config.FlowMount, deps Flow
 		}
 		mf.mountPath = mount.Path
 		mux.Handle(mount.Path, mf)
+		// A trailing-slash mount is a Go mux SUBTREE: without an exact-path
+		// alias, GET on the bare path (e.g. /api/v1/peers for the
+		// /api/v1/peers/ mount) answers 301 — and API paths never redirect
+		// (docs/gateway-api.md §4.1). Register the trimmed alias to the
+		// same handler; the wasm route node treats both spellings alike.
+		// Best-effort: if a native exact handler already owns the bare
+		// path, that registration wins and the alias is skipped.
+		if trimmed := strings.TrimSuffix(mount.Path, "/"); trimmed != "" && trimmed != mount.Path {
+			registerMountAlias(mux, trimmed, mf)
+		}
 		mounted = append(mounted, mf)
 		log.Infof("Flow %q mounted at %s (pool %d, aot %v, trigger %d, egress %v)",
 			mf.ProgramID(), mount.Path, mf.PoolSize(), mf.AOT(), mf.triggerIndex, mf.egressKeys)
 	}
 	return mounted, nil
+}
+
+// registerMountAlias registers the exact-path alias for a subtree mount.
+// http.ServeMux has no introspection API and panics on duplicate patterns,
+// so a conflicting pre-existing exact route (which should win — exact
+// native routes take precedence by design) is absorbed here.
+func registerMountAlias(mux *http.ServeMux, pattern string, handler http.Handler) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Warnf("Flow mount alias %q skipped (pattern already registered): %v", pattern, r)
+		}
+	}()
+	mux.Handle(pattern, handler)
 }

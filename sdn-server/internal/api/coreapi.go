@@ -112,6 +112,20 @@ func (h *CoreAPIHandler) SetPolicyEngine(engine auth.PolicyEngine) {
 
 // RegisterRoutes registers all core API routes onto mux.
 func (h *CoreAPIHandler) RegisterRoutes(mux *http.ServeMux) {
+	h.RegisterRoutesWithFlowMounts(mux, nil)
+}
+
+// RegisterRoutesWithFlowMounts registers the core API routes, yielding the
+// peer read surface to a mounted gateway flow when one claims it (gateway
+// loop G.2: the peers-discovery flow REPLACES the native /api/v1/peers
+// listing — bare-array/$EPM-stream response). flowClaimed reports whether a
+// config flow mount owns the given mux path; nil means no flows are mounted.
+//
+// When the flow owns /api/v1/peers, the admin control plane stays native via
+// method-scoped Go 1.22 mux patterns that are more specific than the flow's
+// subtree mount: POST /api/v1/peers/connect and DELETE /api/v1/peers/{peerID}
+// (disconnect). GET traffic flows to the wasm mount.
+func (h *CoreAPIHandler) RegisterRoutesWithFlowMounts(mux *http.ServeMux, flowClaimed func(path string) bool) {
 	// Public GET endpoints — no auth required.
 	mux.HandleFunc("/api/v1/id", h.withRL(h.handleID))
 	mux.HandleFunc("/api/v1/version", h.withRL(h.handleVersion))
@@ -126,7 +140,22 @@ func (h *CoreAPIHandler) RegisterRoutes(mux *http.ServeMux) {
 	// PubSub messages — public GET.
 	mux.HandleFunc("/api/v1/pubsub/messages", h.withRL(h.handlePubSubMessages))
 
-	// Peer listing/info — public GET; connect/disconnect require admin auth.
+	peersClaimedByFlow := flowClaimed != nil &&
+		(flowClaimed("/api/v1/peers") || flowClaimed("/api/v1/peers/"))
+	if peersClaimedByFlow {
+		// The discovery flow serves the read surface; keep the admin
+		// control plane native with method-scoped patterns (more specific
+		// than the flow's "/api/v1/peers/" subtree, so no mux conflict).
+		mux.HandleFunc("POST /api/v1/peers/connect", h.withRL(h.requireAuth(peers.Admin, h.handlePeerConnect)))
+		mux.HandleFunc("DELETE /api/v1/peers/{peerID}", h.withRL(func(w http.ResponseWriter, r *http.Request) {
+			h.requireAuth(peers.Admin, func(w http.ResponseWriter, r *http.Request) {
+				h.deletePeer(w, r, r.PathValue("peerID"))
+			})(w, r)
+		}))
+		return
+	}
+
+	// Legacy native peer surface (no discovery flow mounted).
 	mux.HandleFunc("/api/v1/peers", h.withRL(h.handlePeers))
 	mux.HandleFunc("/api/v1/peers/connect", h.withRL(h.requireAuth(peers.Admin, h.handlePeerConnect)))
 	mux.HandleFunc("/api/v1/peers/", h.withRL(h.handlePeerByID))

@@ -232,6 +232,75 @@ func TestGenerateOpenAPIMountedFlowShadowsPlanned(t *testing.T) {
 	}
 }
 
+// The real G.2 mounts: peers-discovery at /api/v1/peers/ (routes "" +
+// "{peerId}") and standards-discovery at /api/v1/standards. All three
+// planned G.2 entries must flip from planned to flow-served; the G.3-G.5
+// planned entries must survive.
+func TestGenerateOpenAPIG2DiscoveryShadowsAllPlanned(t *testing.T) {
+	peersFlow := &fakeFlowDocSource{
+		programID: "com.digitalarsenal.flows.peers-discovery",
+		version:   "0.1.0",
+		mountPath: "/api/v1/peers/",
+		doc: &flowrt.FlowAPIDoc{
+			Tag: "discovery",
+			Routes: []flowrt.FlowAPIRoute{
+				{Path: "", Method: "GET", Summary: "peers list", Anonymous: true},
+				{Path: "{peerId}", Method: "GET", Summary: "one peer", Anonymous: true},
+			},
+		},
+	}
+	standardsFlow := &fakeFlowDocSource{
+		programID: "com.digitalarsenal.flows.standards-discovery",
+		version:   "0.1.0",
+		mountPath: "/api/v1/standards",
+		doc: &flowrt.FlowAPIDoc{
+			Tag: "discovery",
+			Routes: []flowrt.FlowAPIRoute{
+				{Path: "", Method: "GET", Summary: "standards list", Anonymous: true},
+			},
+		},
+	}
+	spec, err := GenerateOpenAPI(DocsHandlerOptions{
+		Version: "test",
+		Flows:   []FlowDocSource{peersFlow, standardsFlow},
+		EffectiveAnonymous: func(method, path string) bool {
+			// Simulates the G.2 mechanical allowlist: mounted anonymous
+			// routes are admitted.
+			return method == "GET"
+		},
+	})
+	if err != nil {
+		t.Fatalf("GenerateOpenAPI: %v", err)
+	}
+	var doc map[string]interface{}
+	if err := json.Unmarshal(spec, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, path := range []string{"/api/v1/peers", "/api/v1/peers/{peerId}", "/api/v1/standards"} {
+		op := opAt(t, doc, path, "get")
+		if op["x-sdn-served-by"] != "flow" {
+			t.Fatalf("%s must be flow-served, got %v", path, op["x-sdn-served-by"])
+		}
+		if _, ok := op["x-sdn-status"]; ok {
+			t.Fatalf("%s must not be marked planned once mounted", path)
+		}
+		if op["x-sdn-anonymous"] != true || op["x-sdn-anonymous-requested"] != true {
+			t.Fatalf("%s anonymous stamps wrong: %v / %v", path, op["x-sdn-anonymous"], op["x-sdn-anonymous-requested"])
+		}
+	}
+	// Later-phase planned entries survive the G.2 landing.
+	for _, path := range []string{"/api/v1/peers/{peerId}/pnm", "/api/v1/peers/{peerId}/{standard}/latest", "/api/v1/query"} {
+		method := "get"
+		if path == "/api/v1/query" {
+			method = "post"
+		}
+		op := opAt(t, doc, path, method)
+		if op["x-sdn-status"] != "planned" {
+			t.Fatalf("%s must remain planned, got %v", path, op["x-sdn-status"])
+		}
+	}
+}
+
 func TestDocsHandlerServesSpecAndUI(t *testing.T) {
 	h, err := NewDocsHandler(DocsHandlerOptions{
 		Version: "test",

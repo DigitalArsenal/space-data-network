@@ -143,6 +143,7 @@ func (hb *HostBridge) Dispatch(operation string, payload []byte) []byte {
 			"storage_query", "storage_write", "storage_adapter", "storage_ingest",
 			"http",
 			"schedule_cron",
+			"p2p_read",
 		})
 	case "host.hasCapability":
 		var p struct {
@@ -172,6 +173,9 @@ func (hb *HostBridge) Dispatch(operation string, payload []byte) []byte {
 		}
 		if _, ok := hb.capHandlers["keyslot"]; ok {
 			operations = append(operations, "keyslot.get")
+		}
+		if _, ok := hb.capHandlers["p2p"]; ok {
+			operations = append(operations, "p2p.peers_snapshot", "p2p.standards_snapshot")
 		}
 		return okJSON(operations)
 	case "node.publicKey":

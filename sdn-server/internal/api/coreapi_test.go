@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -464,4 +465,77 @@ func buildMinimalOMM(t *testing.T) []byte {
 	t.Helper()
 	store, _, _ := newDataAPITestStoreWithBasePath(t)
 	return storeDataAPITestOMM(t, store, 25544, "ISS (ZARYA)", "2026-05-05")
+}
+
+// ---------------------------------------------------------------------------
+// G.2: flow-claimed peer routes — the native read surface yields to the
+// mounted discovery flow; the admin control plane stays native via
+// method-scoped patterns (no mux conflict with the flow's subtree).
+// ---------------------------------------------------------------------------
+
+func TestCoreAPI_RegisterRoutes_FlowClaimsPeers(t *testing.T) {
+	h, _ := newTestCoreAPIHandler(t)
+	mux := http.NewServeMux()
+
+	// The flow mount owns the peers surface (subtree + exact alias), as
+	// RegisterFlowMounts does for a /api/v1/peers/ config mount.
+	flowHits := 0
+	flowHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flowHits++
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.Handle("/api/v1/peers/", flowHandler)
+	mux.Handle("/api/v1/peers", flowHandler)
+
+	// Must NOT panic on duplicate patterns and must keep the admin verbs.
+	h.RegisterRoutesWithFlowMounts(mux, func(path string) bool {
+		return path == "/api/v1/peers" || path == "/api/v1/peers/"
+	})
+
+	// GET peers goes to the flow.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/peers", nil))
+	if rec.Code != http.StatusOK || flowHits != 1 {
+		t.Fatalf("GET peers: code=%d flowHits=%d", rec.Code, flowHits)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/peers/16Uiu2X", nil))
+	if rec.Code != http.StatusOK || flowHits != 2 {
+		t.Fatalf("GET peers/{id}: code=%d flowHits=%d", rec.Code, flowHits)
+	}
+
+	// POST connect stays native (h2pHost is nil -> 503 from the native
+	// handler, proving the native route matched, not the flow).
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/peers/connect", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("POST connect: code=%d (want native 503), flowHits=%d", rec.Code, flowHits)
+	}
+
+	// DELETE peers/{id} stays native (h2pHost is nil in this fixture, so
+	// the native disconnect handler answers 503 — the flow would have 200'd).
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/v1/peers/not-a-peer-id", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("DELETE peers/{id}: code=%d (want native 503)", rec.Code)
+	}
+	if flowHits != 2 {
+		t.Fatalf("admin verbs leaked to the flow: flowHits=%d", flowHits)
+	}
+}
+
+func TestCoreAPI_RegisterRoutes_NoFlowKeepsLegacyPeers(t *testing.T) {
+	h, _ := newTestCoreAPIHandler(t)
+	mux := http.NewServeMux()
+	h.RegisterRoutesWithFlowMounts(mux, nil)
+
+	// Legacy native listing answers (empty host -> {"peers":[]}).
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/peers", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET peers: code=%d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"peers"`) {
+		t.Fatalf("legacy envelope missing: %q", rec.Body.String())
+	}
 }

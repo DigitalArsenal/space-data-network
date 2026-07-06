@@ -1,6 +1,6 @@
-# SDN Network Gateway API (Phase G design, loop G.1)
+# SDN Network Gateway API (Phase G design, loops G.1–G.2)
 
-Status: DESIGN + G.1 implementation record (2026-07-06).
+Status: DESIGN + G.1/G.2 implementation record (2026-07-06).
 Authority: user directives 2026-07-06 recorded in
 `SDN_FLATSQL_REWRITE_LOOP.md` §Phase G; architecture constraints in
 `ARCHITECTURE_FLATSQL_FIRST.md` (flows-only, FlatBuffer-first, isomorphic).
@@ -23,9 +23,9 @@ All gateway routes live under `/api/v1`. `{peerId}` is a libp2p peer ID;
 
 | Route | Method | Serves | Status | Phase |
 |---|---|---|---|---|
-| `/api/v1/peers` | GET | Known peers (peerstore + DHT + EPM profile) with the standards each publishes | planned | G.2 |
-| `/api/v1/peers/{peerId}` | GET | One peer's EPM profile + published standards | planned | G.2 |
-| `/api/v1/standards` | GET | Standards published across known peers, with publishers | planned | G.2 |
+| `/api/v1/peers` | GET | Known peers (peerstore + DHT + EPM profile) with the standards each publishes | **live** (peers-discovery flow) | G.2 |
+| `/api/v1/peers/{peerId}` | GET | One peer's EPM profile + published standards | **live** (peers-discovery flow) | G.2 |
+| `/api/v1/standards` | GET | Standards published across known peers, with publishers | **live** (standards-discovery flow) | G.2 |
 | `/api/v1/peers/{peerId}/pnm?limit=N` | GET | The peer's newest signed PNMs (default `limit=1`), verifiable provenance | planned | G.3 |
 | `/api/v1/peers/{peerId}/{standard}/latest` | GET | Provider's newest published dataset for the standard, served from this node's **opt-in** pin | planned | G.4 |
 | `/api/v1/query` | POST | Sandboxed public raw SELECT (read-only session, single statement, timeout, row/byte caps) | planned | G.5 |
@@ -108,13 +108,16 @@ case-insensitive and specs/docs write `X-SDN-Record-Count`.
    row/byte caps), not authentication.
 4. **Declared vs effective.** A flow's manifest REQUESTS anonymous
    placement per route (`api.routes[].anonymous`); the node DECIDES.
-   Today the decision is the static allowlist; when G.2 lands, mounts
-   feed it mechanically: a mounted route is admitted anonymously iff it
-   declares `anonymous: true` AND node config does not veto it
-   (`gateway.anonymous.deny`), plus config may extend
-   (`gateway.anonymous.allow`). The OpenAPI generator stamps the
-   EFFECTIVE decision (`x-sdn-anonymous`, computed by the same predicate
-   the auth wall evaluates) next to the declared one
+   Since G.2 the decision is MECHANICAL (`internal/gateway/anonymous.go`,
+   wired in `cmd/spacedatanetwork/main.go` after `MountFlows`): a mounted
+   route is admitted anonymously iff it declares `anonymous: true` AND
+   node config does not veto it (`gateway.anonymous.deny`), plus config
+   may extend read access (`gateway.anonymous.allow`); the static
+   `isPublicAPIRequest` list remains the native baseline, and deny
+   entries veto it too. Path templates (`{peerId}`) match one segment;
+   entries ending in `/` are prefixes. ONE predicate object serves the
+   auth wall, CORS, CSRF, and the OpenAPI generator: the generator stamps
+   the EFFECTIVE decision (`x-sdn-anonymous`) next to the declared one
    (`x-sdn-anonymous-requested`), so policy drift is visible in the spec
    itself.
 5. **State-changing = authenticated, always.** Anonymous POST exists only
@@ -128,7 +131,7 @@ case-insensitive and specs/docs write `X-SDN-Record-Count`.
 | `/api/v1/data/omm/bulk` (flow) | anonymous | anonymous until G.6, then **deleted** (provider-scoped `/latest` replaces it) |
 | `/api/v1/data/health` | anonymous | anonymous; native → flow later |
 | `/api/v1/data/{summary,datastores,scan,stream,query,epoch,records/,local-replica-stats}` | auth (epoch was the 302 oddity) | stay auth-gated **operator/datasync surface**, now always 401 JSON when anonymous; public equivalents are the G routes (`/query`, `/latest`, `/pnm`). Native → flow or retirement decided per-route after G.5 |
-| `/api/v1/peers` (native connected-peers JSON) | anonymous | **replaced in G.2** by the peers flow at the same path (bare-array/EPM-stream response) |
+| `/api/v1/peers` (native connected-peers JSON) | anonymous | **REPLACED in G.2** by the peers-discovery flow at the same path (bare-array/$EPM-stream response). When the flow mount claims the path, `CoreAPIHandler.RegisterRoutesWithFlowMounts` yields the read surface and keeps the admin control plane native via method-scoped mux patterns (`POST /api/v1/peers/connect`, `DELETE /api/v1/peers/{peerID}`); without the mount the legacy native routes register unchanged |
 | `/api/v1/peers/connect`, `/api/v1/admin/**`, `/api/v1/flows/`, `/api/v1/modules/runtime*` | admin | unchanged (admin control plane, never anonymous) |
 | `/api/v1/{id,version,stats,catalog}` | anonymous | anonymous (node identity/health belong to discovery); native → flow later |
 | `/api/v1/pubsub/{topics,messages}` GET | anonymous | anonymous read; `publish` stays auth |
@@ -254,7 +257,63 @@ surface itself be a mounted flow. Until then this is the ONLY sanctioned
 native addition; it is marked `x-sdn-served-by: native` in its own spec
 entry.
 
-## 7. G.1 verification record
+## 7. G.2 implementation record (discovery)
+
+Delivered 2026-07-06. The G.2 rows in §1 are live; the planned OpenAPI
+entries auto-shadow when the mounts are configured.
+
+**Capability node (host side)** — `p2p_read` (registered in
+`Node.buildCapRegistry`, handler `internal/modulert/caps/p2p.go`, op prefix
+`p2p`). Read-only, deterministic snapshots; the host supplies MATERIALS,
+the wasm flow makes every response decision:
+
+- `p2p.peers_snapshot {peer_id?}` — merged peerstore + connected + DHT
+  routing table + trust-registry view (self listed first), per-peer addrs /
+  connectedness / agent version / published standards (PNM-derived) /
+  stored size-prefixed `$EPM` profile frames in the binary stream segment
+  (`{"$bin":0}`). Peers known only through stored PNMs are included.
+- `p2p.standards_snapshot {peer_id?}` — newest stored signed `$PNM` per
+  (publishing peer, standard); the standard is the `.fbs` segment of the
+  colon-delimited `FILE_ID` (dataset-pnms CLI rule); frames verbatim in
+  entry order, sorted (peer, standard).
+
+**Flows (modules repo)** — `flows/peers-discovery` 0.1.0 (mounted
+`/api/v1/peers/`; routes `""` + `"{peerId}"`) and
+`flows/standards-discovery` 0.1.0 (mounted `/api/v1/standards`), both
+bridge-linked, capability union `[p2p_read]`, `flow check` PASS (cycle
+detection + the new SDK api-block validation). Node chain: http-route
+`discover` → hostcap/p2p-discovery (decision passthrough + raw snapshot
+envelope; `not_found` short-circuits without a hostcall) →
+foundation/discovery-shape (stored `$EPM`/`$PNM` frames spliced VERBATIM —
+signature-preserving; peers without a stored profile get a synthesized
+minimal unsigned EPM: DN = peer id, `/p2p/<peerId>` multiaddr,
+ENTITY_TYPE=Node; bare-array json presentation; ONE word-folded FNV-1a-64
+etag per logical stream shared by both encodings) → http-respond → egress.
+
+**Host plumbing changes**:
+
+- Trailing-slash flow mounts also register the trimmed EXACT alias
+  (`RegisterFlowMounts` → `registerMountAlias`), so `GET /api/v1/peers`
+  answers 200 instead of the mux's 301 — §4.1 holds on flow mounts.
+- `gateway.anonymous.allow`/`gateway.anonymous.deny` config landed
+  (`config.GatewayConfig`); the §4.4 mechanical allowlist is implemented in
+  `internal/gateway/anonymous.go` and feeds wall + spec from one predicate.
+- Native peers routes yield per §4's disposition table
+  (`RegisterRoutesWithFlowMounts`).
+
+**Verification** — unit: `caps/p2p_test.go`, `gateway/anonymous_test.go`,
+`api/docs_test.go` (G.2 shadow + anonymous stamps),
+`api/coreapi_test.go` (flow-claimed registration); integration:
+`flowrt/discovery_flow_integration_test.go` mounts the REAL compiled
+bundles at the production paths over the real cap handler — no-redirect
+alias, `$EPM`/`$PNM` frame verification, verbatim splice, bare-array json
+with peerID + standards, shared ETag across encodings, If-None-Match 304,
+unknown-peer/deep-path/POST 404s, hostcall short-circuit. Modules-side
+parity: `flows/discovery/tests/flow.test.mjs` runs the SAME bundles in the
+JS flow runtime host. Live cold-client evidence is recorded in the loop
+doc (G.2 entry).
+
+## 8. G.1 verification record
 
 - `openapi.json` generated from the REAL mounted data-retrieval flow
   (v0.2.3 bundle mounted at `/api/v1/data/` on a local daemon; operations

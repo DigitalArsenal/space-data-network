@@ -241,6 +241,8 @@ func capPrefixFromName(cap string) string {
 		return "context"
 	case "schedule_cron":
 		return "schedule"
+	case "p2p_read":
+		return "p2p"
 	default:
 		return cap
 	}
