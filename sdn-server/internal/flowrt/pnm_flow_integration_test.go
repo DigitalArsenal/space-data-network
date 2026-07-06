@@ -245,6 +245,19 @@ func TestHTTPMountedPNMHistoryFlow(t *testing.T) {
 		if entry["cid"] != "bafy-omm-000" {
 			t.Fatalf("newest cid: %v", entry["cid"])
 		}
+		// The json "signature" must be the PNM's Ed25519 signature hex —
+		// regression guard for the key-vs-value collision (Go marshals
+		// entry keys alphabetically, so "attribution":"signature" precedes
+		// the "signature" key; a substring key match served the cid here).
+		sigHex, _ := entry["signature"].(string)
+		sig, err := hex.DecodeString(sigHex)
+		if err != nil || len(sig) != ed25519.SignatureSize {
+			t.Fatalf("json signature is not a 64-byte hex signature: %q", sigHex)
+		}
+		if !ed25519.Verify(celestrakPub,
+			pnmPublicationSignaturePayload(entry["cid"].(string), entry["file_id"].(string)), sig) {
+			t.Fatalf("json signature does not verify: %v", entry)
+		}
 
 		resp, _ = discoveryGET(t, base, map[string]string{"If-None-Match": newestEtag})
 		if resp.StatusCode != http.StatusNotModified {
