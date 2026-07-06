@@ -1849,14 +1849,26 @@ func (s *FlatSQLStore) StoreWithSourceTags(schemaName string, data []byte, peerI
 	return cid, nil
 }
 
-// StoreBatch stores FlatBuffer records under one store lock, FlatSQL stream
-// appender, and SQLite transaction without attaching per-record source tags.
+// storeWriteChunkSize bounds how many records one store-lock window (write
+// RWMutex hold + control transaction + stream-appender session) processes.
+// A full-catalog batch (~32K CelesTrak GP records) under ONE lock hold
+// starved every reader for the whole drain — the 2026-07-06 production
+// blackout: API queries waited >11 minutes on s.mu.RLock while a dataset
+// shard import held the write lock. Chunking commits each window atomically
+// and releases the lock between windows so readers interleave; batch replay
+// stays idempotent (CID-checked, source-batch reconcile) so a mid-batch
+// failure converges on retry exactly like the per-record ingest path.
+const storeWriteChunkSize = 128
+
+// StoreBatch stores FlatBuffer records in chunked store-lock windows
+// (storeWriteChunkSize records per lock hold + transaction) without
+// attaching per-record source tags.
 func (s *FlatSQLStore) StoreBatch(schemaName string, records [][]byte, peerID string, signature []byte) (int, error) {
 	return s.storeBatch(schemaName, records, peerID, signature, nil)
 }
 
-// StoreBatchWithSourceTags stores FlatBuffer records under one store lock,
-// FlatSQL stream appender, and SQLite transaction.
+// StoreBatchWithSourceTags stores FlatBuffer records in chunked store-lock
+// windows (storeWriteChunkSize records per lock hold + transaction).
 func (s *FlatSQLStore) StoreBatchWithSourceTags(schemaName string, records [][]byte, peerID string, signature []byte, tags SourceTags) (int, error) {
 	return s.storeBatch(schemaName, records, peerID, signature, &tags)
 }
@@ -1872,6 +1884,24 @@ func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID st
 		return 0, fmt.Errorf("invalid schema name: %w", err)
 	}
 
+	inserted := 0
+	for start := 0; start < len(records); start += storeWriteChunkSize {
+		end := start + storeWriteChunkSize
+		if end > len(records) {
+			end = len(records)
+		}
+		n, err := s.storeBatchChunk(schemaName, records[start:end], peerID, signature, tags)
+		inserted += n
+		if err != nil {
+			return inserted, err
+		}
+	}
+	return inserted, nil
+}
+
+// storeBatchChunk stores one chunk under one store lock, FlatSQL stream
+// appender, and control transaction (the pre-chunking storeBatch body).
+func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

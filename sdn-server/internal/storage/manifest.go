@@ -616,12 +616,41 @@ func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, prov
 		return 0, nil, fmt.Errorf("invalid schema name: %w", err)
 	}
 
+	// Chunked lock windows (storeWriteChunkSize records per store write-lock
+	// hold + transaction). The pre-chunking shape — ONE lock hold + ONE tx
+	// spanning the entire shard — blacked out the whole data API for the
+	// import duration when a peer announced a full-catalog dataset
+	// (2026-07-06: readers waited >11 min on s.mu.RLock behind a 31.8K-record
+	// import). Each chunk commits atomically; the import is CID-idempotent
+	// (existing CIDs are mirrored, not duplicated), so a mid-shard failure
+	// followed by the announcement retry converges — the same consistency
+	// readers already observe from the record-by-record datasync path.
+	imported := 0
+	records := index.Records
+	for start := 0; start < len(records); start += storeWriteChunkSize {
+		end := start + storeWriteChunkSize
+		if end > len(records) {
+			end = len(records)
+		}
+		n, err := s.importDatasetShardChunk(index, providerPeerID, records[start:end], readRecord)
+		imported += n
+		if err != nil {
+			return imported, nil, err
+		}
+	}
+	return imported, index, nil
+}
+
+// importDatasetShardChunk imports one chunk of shard records under one store
+// lock, stream-appender session, and control transaction (the pre-chunking
+// importDatasetShardRecords body).
+func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, providerPeerID string, records []DatasetExportIndexRecord, readRecord datasetShardRecordReader) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	appender, err := s.newFlatSQLStreamAppender(index.SchemaName)
 	if err != nil {
-		return 0, nil, fmt.Errorf("open imported %s FlatSQL stream: %w", index.SchemaName, err)
+		return 0, fmt.Errorf("open imported %s FlatSQL stream: %w", index.SchemaName, err)
 	}
 	defer appender.Close()
 
@@ -629,16 +658,16 @@ func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, prov
 	// (producer, standard) table (pre-created outside the tx — no DDL inside).
 	routedTable, err := s.ensureProducerStandardTable(routedProducerID(providerPeerID), index.SchemaName)
 	if err != nil {
-		return 0, nil, fmt.Errorf("ensure (producer, standard) table: %w", err)
+		return 0, fmt.Errorf("ensure (producer, standard) table: %w", err)
 	}
 	readSource, err := s.recordReadSource(index.SchemaName)
 	if err != nil {
-		return 0, nil, fmt.Errorf("record read source: %w", err)
+		return 0, fmt.Errorf("record read source: %w", err)
 	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
-		return 0, nil, fmt.Errorf("begin dataset shard import: %w", err)
+		return 0, fmt.Errorf("begin dataset shard import: %w", err)
 	}
 	committed := false
 	defer func() {
@@ -649,13 +678,13 @@ func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, prov
 
 	imported := 0
 	now := time.Now().Unix()
-	for _, record := range index.Records {
+	for _, record := range records {
 		data, err := readRecord(record)
 		if err != nil {
-			return imported, nil, err
+			return imported, err
 		}
 		if computeCID(data) != record.CID {
-			return imported, nil, fmt.Errorf("record CID mismatch for indexed record %s", record.CID)
+			return imported, fmt.Errorf("record CID mismatch for indexed record %s", record.CID)
 		}
 		tags := record.SourceTags
 		if strings.TrimSpace(tags.ProviderID) == "" {
@@ -671,11 +700,11 @@ func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, prov
 		case errors.Is(err, sql.ErrNoRows):
 			streamPath, streamOffset, recordLength, err := appender.Append(data)
 			if err != nil {
-				return imported, nil, fmt.Errorf("append imported %s record %s to FlatSQL stream: %w", index.SchemaName, record.CID, err)
+				return imported, fmt.Errorf("append imported %s record %s to FlatSQL stream: %w", index.SchemaName, record.CID, err)
 			}
 			rowID, err := insertSchemaMetadataReturningRowID(tx, routedTable, record.CID, strings.TrimSpace(providerPeerID), now, streamPath, streamOffset, recordLength, nil, now)
 			if err != nil {
-				return imported, nil, fmt.Errorf("store imported %s record %s: %w", index.SchemaName, record.CID, err)
+				return imported, fmt.Errorf("store imported %s record %s: %w", index.SchemaName, record.CID, err)
 			}
 			if err := upsertRecordIndexExec(tx, index.SchemaName, record.CID, now, data); err != nil {
 				log.Warnf("Failed to index imported %s record %s: %v", index.SchemaName, record.CID[:16]+"...", err)
@@ -683,27 +712,27 @@ func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, prov
 			imported++
 			if strings.TrimSpace(tags.ProviderID) != "" && strings.TrimSpace(tags.SourceName) != "" {
 				if err := insertNewSourceTagsTx(tx, index.SchemaName, record.CID, tags, recordLength, rowID); err != nil {
-					return imported, nil, err
+					return imported, err
 				}
 			}
 		default:
-			return imported, nil, fmt.Errorf("check imported %s record %s: %w", index.SchemaName, record.CID, err)
+			return imported, fmt.Errorf("check imported %s record %s: %w", index.SchemaName, record.CID, err)
 		}
 
 		if err == nil && strings.TrimSpace(tags.ProviderID) != "" && strings.TrimSpace(tags.SourceName) != "" {
 			if err := upsertSourceTagsTx(tx, readSource, index.SchemaName, record.CID, tags, record.Length); err != nil {
-				return imported, nil, err
+				return imported, err
 			}
 		}
 	}
 	if err := appender.Close(); err != nil {
-		return imported, nil, fmt.Errorf("flush imported %s FlatSQL stream: %w", index.SchemaName, err)
+		return imported, fmt.Errorf("flush imported %s FlatSQL stream: %w", index.SchemaName, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return imported, nil, fmt.Errorf("commit dataset shard import: %w", err)
+		return imported, fmt.Errorf("commit dataset shard import: %w", err)
 	}
 	committed = true
-	return imported, index, nil
+	return imported, nil
 }
 
 // BuildSignedDatasetPublicationManifest writes a signed SDS DPM manifest that
