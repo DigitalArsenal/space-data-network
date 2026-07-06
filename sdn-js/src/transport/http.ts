@@ -303,16 +303,20 @@ export class HttpTransport {
     const notModified = resp.status === 304;
 
     if (format === 'json') {
-      const payload = notModified ? {} : ((await resp.json()) as Record<string, unknown>);
-      const records = Array.isArray(payload.records)
-        ? (payload.records as Array<Record<string, unknown>>)
-        : [];
+      // format=json is a BARE top-level array of records — the same record
+      // stream as the flatbuffer format in a different encoding. Metadata
+      // (record count, etag) travels in headers, exactly like the fb path;
+      // the legacy {"records":[...],"count":N} envelope is gone.
+      const payload = notModified ? [] : ((await resp.json()) as unknown);
+      const records = Array.isArray(payload) ? (payload as Array<Record<string, unknown>>) : [];
+      const countHeader = resp.headers?.get?.('x-sdn-record-count');
+      const headerCount = countHeader ? Number.parseInt(countHeader, 10) : Number.NaN;
       return {
         format: 'json',
         status: resp.status,
         notModified,
         etag,
-        count: typeof payload.count === 'number' ? payload.count : records.length,
+        count: Number.isFinite(headerCount) ? headerCount : records.length,
         records,
       };
     }
