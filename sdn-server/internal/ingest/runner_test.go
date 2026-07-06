@@ -1412,6 +1412,59 @@ func TestIngestGPDataStoresOMMAndMPEFlatBuffers(t *testing.T) {
 	if got, want := iss.Eccentricity(), 0.0006703; got != want {
 		t.Fatalf("ECCENTRICITY = %.7f, want %.7f", got, want)
 	}
+	// Full-field round-trip: every GP CSV column the OMM schema can hold
+	// must survive ingest with its source value (BSTAR/MEAN_MOTION_DOT
+	// truncation shipped drag-free elements to SGP4 consumers once — never
+	// again).
+	if got, want := iss.Inclination(), 51.6432; got != want {
+		t.Fatalf("INCLINATION = %v, want %v", got, want)
+	}
+	if got, want := iss.RaOfAscNode(), 92.1234; got != want {
+		t.Fatalf("RA_OF_ASC_NODE = %v, want %v", got, want)
+	}
+	if got, want := iss.ArgOfPericenter(), 45.6789; got != want {
+		t.Fatalf("ARG_OF_PERICENTER = %v, want %v", got, want)
+	}
+	if got, want := iss.MeanAnomaly(), 314.1592; got != want {
+		t.Fatalf("MEAN_ANOMALY = %v, want %v", got, want)
+	}
+	if got, want := iss.Bstar(), 0.00012345; got != want {
+		t.Fatalf("BSTAR = %v, want %v", got, want)
+	}
+	if got, want := iss.MeanMotionDot(), 0.00002182; got != want {
+		t.Fatalf("MEAN_MOTION_DOT = %v, want %v", got, want)
+	}
+	if got, want := iss.MeanMotionDdot(), 0.0000000001; got != want {
+		t.Fatalf("MEAN_MOTION_DDOT = %v, want %v", got, want)
+	}
+	if got, want := iss.ElementSetNo(), uint32(999); got != want {
+		t.Fatalf("ELEMENT_SET_NO = %d, want %d", got, want)
+	}
+	if got, want := iss.RevAtEpoch(), float64(48123); got != want {
+		t.Fatalf("REV_AT_EPOCH = %v, want %v", got, want)
+	}
+	if got, want := string(iss.ClassificationType()), "U"; got != want {
+		t.Fatalf("CLASSIFICATION_TYPE = %q, want %q", got, want)
+	}
+	if got, want := iss.EphemerisType().String(), "SGP"; got != want {
+		t.Fatalf("EPHEMERIS_TYPE = %q, want %q", got, want)
+	}
+	starlink := byNorad[40909]
+	if starlink == nil {
+		t.Fatalf("missing OMM record for NORAD 40909")
+	}
+	if got, want := starlink.Bstar(), 0.00001234; got != want {
+		t.Fatalf("STARLINK BSTAR = %v, want %v", got, want)
+	}
+	if got, want := starlink.MeanMotionDot(), 0.00000103; got != want {
+		t.Fatalf("STARLINK MEAN_MOTION_DOT = %v, want %v", got, want)
+	}
+	if got, want := starlink.RevAtEpoch(), float64(31456); got != want {
+		t.Fatalf("STARLINK REV_AT_EPOCH = %v, want %v", got, want)
+	}
+	if got, want := starlink.ElementSetNo(), uint32(998); got != want {
+		t.Fatalf("STARLINK ELEMENT_SET_NO = %d, want %d", got, want)
+	}
 }
 
 func TestIngestGPDataRejectsParseCountAnomaly(t *testing.T) {

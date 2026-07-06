@@ -434,6 +434,26 @@ func (r *Runner) ingestUDLElsetRecords(records []map[string]string, sourcePeer s
 		if v, ok := parseFloat(getValue(record, "MEAN_ANOMALY")); ok {
 			builder = builder.WithMeanAnomaly(v)
 		}
+		// SGP4 propagation terms + element-set identity (same mapping as the
+		// CelesTrak GP path; UDL elset uses REV_NO/EPHEM_TYPE spellings).
+		if v, ok := parseFloat(getValue(record, "BSTAR", "B_STAR")); ok {
+			builder = builder.WithBStar(v)
+		}
+		if v, ok := parseFloat(getValue(record, "MEAN_MOTION_DOT", "N_DOT")); ok {
+			builder = builder.WithMeanMotionDot(v)
+		}
+		if v, ok := parseFloat(getValue(record, "MEAN_MOTION_DDOT", "N_DDOT")); ok {
+			builder = builder.WithMeanMotionDdot(v)
+		}
+		if v, ok := parseUint32(getValue(record, "ELEMENT_SET_NO", "ELSET_NO")); ok {
+			builder = builder.WithElementSetNo(v)
+		}
+		if v, ok := parseFloat(getValue(record, "REV_AT_EPOCH", "REV_NO", "REV")); ok {
+			builder = builder.WithRevAtEpoch(v)
+		}
+		if name := normalizeEphemerisType(getValue(record, "EPHEMERIS_TYPE", "EPHEM_TYPE")); name != "" {
+			builder = builder.WithEphemerisType(name)
+		}
 
 		ommBytes := builder.Build()
 		if _, err := r.storeIngestRecord("OMM.fbs", ommBytes, sourcePeer, tags); err != nil {

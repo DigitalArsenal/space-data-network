@@ -98,7 +98,7 @@ func TestIngestWithSourceStoresTaggedBatch(t *testing.T) {
 	}
 	stream := sizePrefixedStream(records)
 	rawPayload := []byte("NORAD_CAT_ID,EPOCH\n7001,2023-11-14T22:13:20Z\n")
-	provenance := []byte(`{"source_url":"https://fixture.test/gp","parser_version":"celestrak-gp-wasm/v1","normalized_count":3}`)
+	provenance := []byte(`{"source_url":"https://fixture.test/gp","parser_version":"celestrak-gp-wasm/v2","normalized_count":3}`)
 
 	payload := map[string]interface{}{
 		"schema":         "OMM.fbs",
