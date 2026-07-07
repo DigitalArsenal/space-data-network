@@ -60,7 +60,7 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 
 	log.Warnf("FlatSQL engine poisoned — rebuilding engine in place (epoch %d)", s.engineEpoch)
 
-	engine, err := flatsqlrt.New(flatsqlrt.WithAOTCache(engineAOTCacheDir()))
+	engine, err := flatsqlrt.New(flatsqlrt.WithPrecompiledAOTCache(engineAOTCacheDir()))
 	if err != nil {
 		return s.engineEpoch, fmt.Errorf("recover poisoned engine: start replacement engine: %w", err)
 	}

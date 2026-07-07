@@ -90,6 +90,7 @@ type Node struct {
 	host           host.Host
 	dht            *dht.IpfsDHT
 	pubsub         *pubsub.PubSub
+	topicsMu       sync.RWMutex
 	topics         map[string]*pubsub.Topic
 	flatc          *wasm.FlatcModule
 	hdwallet       *wasm.HDWalletModule
@@ -129,6 +130,8 @@ type Node struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	recordCatalogHydrationOnce sync.Once
 }
 
 const licensingModuleID = "licensing"
@@ -335,7 +338,9 @@ func (n *Node) init() error {
 	// Initialize storage (if not edge mode)
 	if n.config.Mode != "edge" {
 		n.store, err = storage.NewFlatSQLStore(n.config.Storage.Path, n.validator,
-			storage.WithEngineHotWindow(n.config.Storage.EngineHotWindow))
+			storage.WithEngineHotWindow(n.config.Storage.EngineHotWindow),
+			storage.WithDeferredBootRebuilds(),
+			storage.WithDeferredRecordCatalogReplay())
 		if err != nil {
 			return fmt.Errorf("failed to create storage: %w", err)
 		}
@@ -560,9 +565,7 @@ func (n *Node) init() error {
 			log.Warnf("Failed to create flow manager: %v", err)
 		} else {
 			n.flowManager = fm
-			if err := fm.LoadAll(n.ctx); err != nil {
-				log.Warnf("Failed to load flows: %v", err)
-			}
+			log.Info("Flow manager initialized; installed flow WASM modules load only on explicit start or lazy HTTP request")
 		}
 	}
 
@@ -1201,43 +1204,10 @@ func (n *Node) Start(ctx context.Context) error {
 	n.wg.Add(1)
 	go n.maintainBootstrapConnections(pinnedPeers)
 
-	// Setup per-schema PubSub topics
-	for _, schema := range n.validator.Schemas() {
-		topicName := fmt.Sprintf("/spacedatanetwork/sds/%s", schema)
-		topic, err := n.pubsub.Join(topicName)
-		if err != nil {
-			log.Warnf("Failed to join topic %s: %v", topicName, err)
-			continue
-		}
-		n.topics[schema] = topic
-
-		// Subscribe to receive messages
-		sub, err := topic.Subscribe()
-		if err != nil {
-			log.Warnf("Failed to subscribe to %s: %v", topicName, err)
-			continue
-		}
-
-		n.wg.Add(1)
-		go n.handleSubscription(sub, schema)
-
-		if n.store != nil {
-			feedTopicName := sdnpubsub.DatasetFeedHeadTopic(schema)
-			feedTopic, err := n.pubsub.Join(feedTopicName)
-			if err != nil {
-				log.Warnf("Failed to join dataset feed-head topic %s: %v", feedTopicName, err)
-				continue
-			}
-			n.topics[feedTopicName] = feedTopic
-			feedSub, err := feedTopic.Subscribe()
-			if err != nil {
-				log.Warnf("Failed to subscribe to dataset feed-head topic %s: %v", feedTopicName, err)
-				continue
-			}
-			n.wg.Add(1)
-			go n.handleDatasetFeedHeadSubscription(feedSub, schema)
-		}
-	}
+	// Per-schema PubSub topic setup can be expensive on full SDS catalogs and
+	// should not block the admin/data HTTP listener from coming up.
+	n.wg.Add(1)
+	go n.setupSchemaPubSubTopics(ctx)
 
 	// Start mDNS discovery
 	n.wg.Add(1)
@@ -1272,11 +1242,114 @@ func (n *Node) Start(ctx context.Context) error {
 		return err
 	}
 
-	if err := n.startFlowServices(); err != nil {
-		return err
-	}
-
 	return nil
+}
+
+// StartConfiguredFlowServices starts timer-served flow services in the
+// background after the daemon has started its core network/admin surfaces.
+// Service flow artifacts are existing release/delivery outputs; this path must
+// not build, rebuild, or AOT-compile wasm modules.
+func (n *Node) StartConfiguredFlowServices(ctx context.Context) {
+	if n == nil || len(n.config.Flows.Services) == 0 {
+		return
+	}
+	n.wg.Add(1)
+	go func() {
+		defer n.wg.Done()
+		select {
+		case <-ctx.Done():
+			return
+		case <-n.ctx.Done():
+			return
+		default:
+		}
+		if err := n.startFlowServices(); err != nil {
+			log.Errorf("Configured flow service startup failed: %v", err)
+		}
+	}()
+}
+
+// StartBackgroundRecordCatalogHydration primes provider query state after the
+// daemon has had a chance to bind admin/network surfaces. Startup hydrates
+// only the linked-query OMM engine hot window from compact metadata; full
+// record-catalog table replay is a maintenance/on-demand task, not daemon
+// startup work.
+func (n *Node) StartBackgroundRecordCatalogHydration(ctx context.Context) {
+	if n == nil || n.store == nil {
+		return
+	}
+	n.recordCatalogHydrationOnce.Do(func() {
+		n.wg.Add(1)
+		go func() {
+			defer n.wg.Done()
+			select {
+			case <-ctx.Done():
+				return
+			case <-n.ctx.Done():
+				return
+			default:
+			}
+			count, err := n.store.HydrateEngineHotWindowFromRecordCatalog()
+			if err != nil {
+				log.Errorf("FlatSQL compact engine hot-window hydration failed: %v", err)
+				return
+			}
+			log.Infof("FlatSQL compact engine hot-window hydration complete: %d records", count)
+			log.Info("FlatSQL full record-catalog metadata replay deferred outside daemon startup")
+		}()
+	})
+}
+
+func (n *Node) setupSchemaPubSubTopics(ctx context.Context) {
+	defer n.wg.Done()
+
+	schemas := n.validator.Schemas()
+	log.Infof("Schema PubSub setup starting for %d schema(s)", len(schemas))
+	joined := 0
+	feedJoined := 0
+	for _, schema := range schemas {
+		select {
+		case <-ctx.Done():
+			return
+		case <-n.ctx.Done():
+			return
+		default:
+		}
+
+		topicName := fmt.Sprintf("/spacedatanetwork/sds/%s", schema)
+		topic, err := n.joinAndStoreTopic(schema, topicName)
+		if err != nil {
+			log.Warnf("Failed to join topic %s: %v", topicName, err)
+			continue
+		}
+		joined++
+
+		sub, err := topic.Subscribe()
+		if err != nil {
+			log.Warnf("Failed to subscribe to %s: %v", topicName, err)
+			continue
+		}
+		n.wg.Add(1)
+		go n.handleSubscription(sub, schema)
+
+		if n.store != nil {
+			feedTopicName := sdnpubsub.DatasetFeedHeadTopic(schema)
+			feedTopic, err := n.joinAndStoreTopic(feedTopicName, feedTopicName)
+			if err != nil {
+				log.Warnf("Failed to join dataset feed-head topic %s: %v", feedTopicName, err)
+				continue
+			}
+			feedJoined++
+			feedSub, err := feedTopic.Subscribe()
+			if err != nil {
+				log.Warnf("Failed to subscribe to dataset feed-head topic %s: %v", feedTopicName, err)
+				continue
+			}
+			n.wg.Add(1)
+			go n.handleDatasetFeedHeadSubscription(feedSub, schema)
+		}
+	}
+	log.Infof("Schema PubSub setup complete: schema_topics=%d dataset_feed_topics=%d", joined, feedJoined)
 }
 
 // startFlowServices loads the config-declared timer-served flows (loop C.8a
@@ -1296,7 +1369,9 @@ func (n *Node) startFlowServices() error {
 		CapRegistry:    n.buildCapRegistry(),
 		NodeCtx:        nodeCtx,
 		MaxMemoryPages: n.config.Flows.MaxMemoryPages,
-		AOTCacheDir:    flatsqldrv.DefaultAOTCacheDir(),
+		// Startup loads precompiled AOT artifacts when present but never
+		// compiles wasm modules; cache population is a release/prewarm step.
+		AOTCacheDir: flatsqldrv.DefaultAOTCacheDir(),
 	}
 	if n.flowManager != nil {
 		deps.Store = n.flowManager.Store()
@@ -2704,11 +2779,11 @@ func (n *Node) MountedFlows() []*flowrt.MountedFlow {
 }
 
 // MountFlows registers the config-declared flow HTTP mounts
-// (config flows.mounts) on the mux. Each mount loads a compiled flow bundle
-// as a WASM module through the standard flow runtime and binds it to its
-// listener path; the HTTP handler is pure socket plumbing ($HTQ in, $HTR
-// out). Loading rejects any flow whose declared capability set the node
-// cannot satisfy.
+// (config flows.mounts) on the mux without instantiating WASM at daemon
+// startup. Each handler lazily loads the existing compiled artifact on first
+// request; startup never builds, rebuilds, or AOT-compiles module artifacts.
+// The HTTP handler is pure socket plumbing ($HTQ in, $HTR out). Lazy loading
+// rejects any flow whose declared capability set the node cannot satisfy.
 func (n *Node) MountFlows(mux *http.ServeMux) error {
 	mounts := n.config.Flows.Mounts
 	if len(mounts) == 0 {
@@ -2722,8 +2797,9 @@ func (n *Node) MountFlows(mux *http.ServeMux) error {
 		CapRegistry:    n.buildCapRegistry(),
 		NodeCtx:        nodeCtx,
 		MaxMemoryPages: n.config.Flows.MaxMemoryPages,
-		// Flow mounts run AOT-compiled through the same sha256-keyed cache
-		// as the store engine (loop C.5b). The C.4 "out of bounds memory
+		// Flow mounts load precompiled AOT artifacts through the same
+		// sha256-keyed cache as the store engine when present. The lazy
+		// request path never compiles wasm modules. The C.4 "out of bounds memory
 		// access" trap on linked-direct dispatch was NOT an artifact bug:
 		// libwasmedge 0.14 corrupts per-thread executor state when the
 		// storage hostcall executes the (AOT) engine nested inside the
@@ -2737,11 +2813,23 @@ func (n *Node) MountFlows(mux *http.ServeMux) error {
 		// modules never reach this path — they stay on the
 		// storage.flatsql_* hostcall bridge permanently.
 		EngineLink: n.store,
+		ReadinessCheck: func() error {
+			if n.store == nil {
+				return nil
+			}
+			if n.store.EngineHotWindowHydrating() {
+				return fmt.Errorf("engine hot window hydration in progress")
+			}
+			if !n.store.EngineHotWindowHydrated() {
+				return fmt.Errorf("engine hot window not ready")
+			}
+			return nil
+		},
 	}
 	if n.flowManager != nil {
 		deps.Store = n.flowManager.Store()
 	}
-	mounted, err := flowrt.RegisterFlowMounts(mux, mounts, deps)
+	mounted, err := flowrt.RegisterLazyFlowMounts(mux, mounts, deps)
 	if err != nil {
 		return err
 	}
@@ -2761,9 +2849,13 @@ func (n *Node) ListenAddrs() []multiaddr.Multiaddr {
 
 // Publish publishes data to a schema topic.
 func (n *Node) Publish(schema string, data []byte) error {
-	topic, ok := n.topics[schema]
-	if !ok {
+	if !n.validator.HasSchema(schema) {
 		return fmt.Errorf("unknown schema: %s", schema)
+	}
+	topicName := fmt.Sprintf("/spacedatanetwork/sds/%s", schema)
+	topic, err := n.joinAndStoreTopic(schema, topicName)
+	if err != nil {
+		return fmt.Errorf("join topic %s: %w", topicName, err)
 	}
 
 	if err := topic.Publish(n.ctx, data); err != nil {
@@ -2786,16 +2878,33 @@ func (n *Node) PublishToTopic(ctx context.Context, topicName string, data []byte
 		ctx = context.Background()
 	}
 
-	topic, ok := n.topics[topicName]
-	if !ok {
-		joined, err := n.pubsub.Join(topicName)
-		if err != nil {
-			return fmt.Errorf("join topic %s: %w", topicName, err)
-		}
-		topic = joined
-		n.topics[topicName] = topic
+	topic, err := n.joinAndStoreTopic(topicName, topicName)
+	if err != nil {
+		return fmt.Errorf("join topic %s: %w", topicName, err)
 	}
 	return topic.Publish(ctx, data)
+}
+
+func (n *Node) joinAndStoreTopic(key, topicName string) (*pubsub.Topic, error) {
+	n.topicsMu.RLock()
+	topic, ok := n.topics[key]
+	n.topicsMu.RUnlock()
+	if ok {
+		return topic, nil
+	}
+
+	joined, err := n.pubsub.Join(topicName)
+	if err != nil {
+		return nil, err
+	}
+
+	n.topicsMu.Lock()
+	defer n.topicsMu.Unlock()
+	if topic, ok := n.topics[key]; ok {
+		return topic, nil
+	}
+	n.topics[key] = joined
+	return joined, nil
 }
 
 // PublishDatasetUpdatePNM announces one signed dataset-publication PNM on the

@@ -1571,6 +1571,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	n.StartBackgroundRecordCatalogHydration(ctx)
+	n.StartConfiguredFlowServices(ctx)
+
 	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)

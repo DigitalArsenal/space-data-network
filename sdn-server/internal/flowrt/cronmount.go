@@ -89,11 +89,18 @@ func LoadFlowService(flowRef string, intervals map[string]string, deps FlowMount
 	runBytes := wasmBytes
 	aot := false
 	if deps.AOTCacheDir != "" {
-		if compiled, aotErr := flatsqlrt.EnsureAOTArtifact(deps.AOTCacheDir, flowAOTCachePrefix, wasmBytes); aotErr == nil {
+		var compiled []byte
+		var aotErr error
+		if deps.AOTCompileOnMiss {
+			compiled, aotErr = flatsqlrt.EnsureAOTArtifact(deps.AOTCacheDir, flowAOTCachePrefix, wasmBytes)
+		} else {
+			compiled, aotErr = flatsqlrt.LoadAOTArtifact(deps.AOTCacheDir, flowAOTCachePrefix, wasmBytes)
+		}
+		if aotErr == nil {
 			runBytes = compiled
 			aot = true
 		} else {
-			log.Warnf("Flow service %q: AOT compile failed, interpreting: %v", flowRef, aotErr)
+			log.Warnf("Flow service %q: AOT artifact unavailable, interpreting: %v", flowRef, aotErr)
 		}
 	}
 	if wasmImportsModule(wasmBytes, flatsqlrt.EngineImportModule) {

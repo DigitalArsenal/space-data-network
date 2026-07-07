@@ -11,16 +11,27 @@ import (
 	"github.com/second-state/WasmEdge-go/wasmedge"
 )
 
-// WithAOTCache enables ahead-of-time native compilation of the engine.
-// On first use the embedded portable wasm is compiled with WasmEdge's AOT
-// compiler into <dir>/flatsql-<sha256[:16]>.aot.wasm (a universal wasm
-// binary, platform-specific native code); subsequent starts load the cached
-// artifact. Interpreted execution is ~100x slower for query workloads
-// (measured in loop A.3), so production hosts should always set this.
+// WithAOTCache enables ahead-of-time native compilation of the engine. This
+// option is for tests and explicit prewarm/maintenance paths: on cache miss
+// it invokes WasmEdge's AOT compiler. Daemon startup should use
+// WithPrecompiledAOTCache so service start never compiles wasm artifacts.
 // If compilation fails, New falls back to interpreting the portable bytes
 // and Runtime.AOT() reports false.
 func WithAOTCache(dir string) Option {
-	return func(c *config) { c.aotCacheDir = dir }
+	return func(c *config) {
+		c.aotCacheDir = dir
+		c.aotCompileOnMiss = true
+	}
+}
+
+// WithPrecompiledAOTCache loads an existing AOT artifact from dir when it is
+// present, but never invokes the compiler. On cache miss New falls back to
+// interpreting the portable bytes and Runtime.AOT reports false.
+func WithPrecompiledAOTCache(dir string) Option {
+	return func(c *config) {
+		c.aotCacheDir = dir
+		c.aotCompileOnMiss = false
+	}
 }
 
 // AOT reports whether this runtime is executing an AOT-compiled artifact.
@@ -31,6 +42,21 @@ func (r *Runtime) AOT() bool { return r.aot }
 // upgrades recompile automatically.
 func ensureAOT(cacheDir string, wasm []byte) ([]byte, error) {
 	return EnsureAOTArtifact(cacheDir, "flatsql", wasm)
+}
+
+// LoadAOTArtifact returns a precompiled AOT artifact from cacheDir for the
+// supplied portable wasm bytes. It never creates directories or invokes the
+// WasmEdge compiler.
+func LoadAOTArtifact(cacheDir, prefix string, wasm []byte) ([]byte, error) {
+	path := aotArtifactPath(cacheDir, prefix, wasm)
+	cached, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("flatsqlrt: precompiled AOT artifact not found at %s: %w", path, err)
+	}
+	if len(cached) == 0 {
+		return nil, fmt.Errorf("flatsqlrt: precompiled AOT artifact %s is empty", path)
+	}
+	return cached, nil
 }
 
 // EnsureAOTArtifact AOT-compiles arbitrary portable wasm bytes through the
@@ -44,15 +70,7 @@ func ensureAOT(cacheDir string, wasm []byte) ([]byte, error) {
 // non-engine modules (e.g. flow HTTP mounts) share the cache directory
 // safely by picking a distinct prefix.
 func EnsureAOTArtifact(cacheDir, prefix string, wasm []byte) ([]byte, error) {
-	sum := sha256.Sum256(wasm)
-	ver := strings.Map(func(r rune) rune {
-		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '.' {
-			return r
-		}
-		return '_'
-	}, RuntimeVersion())
-	path := filepath.Join(cacheDir, fmt.Sprintf("%s-%s-we%s.aot.wasm", prefix, hex.EncodeToString(sum[:8]), ver))
-
+	path := aotArtifactPath(cacheDir, prefix, wasm)
 	if cached, err := os.ReadFile(path); err == nil && len(cached) > 0 {
 		return cached, nil
 	}
@@ -93,4 +111,15 @@ func EnsureAOTArtifact(cacheDir, prefix string, wasm []byte) ([]byte, error) {
 		}
 	}
 	return os.ReadFile(path)
+}
+
+func aotArtifactPath(cacheDir, prefix string, wasm []byte) string {
+	sum := sha256.Sum256(wasm)
+	ver := strings.Map(func(r rune) rune {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '.' {
+			return r
+		}
+		return '_'
+	}, RuntimeVersion())
+	return filepath.Join(cacheDir, fmt.Sprintf("%s-%s-we%s.aot.wasm", prefix, hex.EncodeToString(sum[:8]), ver))
 }

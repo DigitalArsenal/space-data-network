@@ -56,9 +56,10 @@ const (
 type Option func(*config)
 
 type config struct {
-	maxMemoryPages uint32
-	wasmBytes      []byte
-	aotCacheDir    string
+	maxMemoryPages   uint32
+	wasmBytes        []byte
+	aotCacheDir      string
+	aotCompileOnMiss bool
 }
 
 // WithMaxMemoryPages overrides the default 4 GiB linear-memory growth cap.
@@ -113,12 +114,21 @@ func New(opts ...Option) (*Runtime, error) {
 	runBytes := cfg.wasmBytes
 	aot := false
 	if cfg.aotCacheDir != "" {
-		if compiled, err := ensureAOT(cfg.aotCacheDir, cfg.wasmBytes); err == nil {
+		var compiled []byte
+		var err error
+		if cfg.aotCompileOnMiss {
+			compiled, err = ensureAOT(cfg.aotCacheDir, cfg.wasmBytes)
+		} else {
+			compiled, err = LoadAOTArtifact(cfg.aotCacheDir, "flatsql", cfg.wasmBytes)
+		}
+		if err == nil {
 			runBytes = compiled
 			aot = true
 		}
-		// On compile failure fall back to interpreting the portable bytes;
-		// callers can check Runtime.AOT() and warn.
+		// On cache miss or compile failure, fall back to interpreting the
+		// portable bytes; callers can check Runtime.AOT() and warn. Daemon
+		// startup uses the no-compile path so it never invokes the AOT
+		// compiler as part of service start.
 	}
 
 	mod, err := wasmrt.NewModule(runBytes,

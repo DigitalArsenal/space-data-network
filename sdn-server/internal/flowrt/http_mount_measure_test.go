@@ -121,10 +121,11 @@ func TestHTTPMountMeasure(t *testing.T) {
 		mounted, err := RegisterFlowMounts(mux,
 			[]config.FlowMount{{Path: "/api/v1/data/", Flow: dist, Pool: pool, MemoryPages: mountPages}},
 			FlowMountDeps{
-				CapRegistry: reg,
-				NodeCtx:     &modulert.NodeContext{},
-				AOTCacheDir: aotDir,
-				EngineLink:  store,
+				CapRegistry:      reg,
+				NodeCtx:          &modulert.NodeContext{},
+				AOTCacheDir:      aotDir,
+				AOTCompileOnMiss: aotDir != "",
+				EngineLink:       store,
 			})
 		if err != nil {
 			t.Fatalf("RegisterFlowMounts(pool=%d, aot=%q): %v", pool, aotDir, err)

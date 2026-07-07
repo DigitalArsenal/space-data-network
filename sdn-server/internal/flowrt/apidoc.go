@@ -132,11 +132,23 @@ func parseFlowAPIDoc(flowJSON []byte) (*FlowAPIDoc, string) {
 
 // APIDoc returns the flow's parsed api extension (nil when the bundle
 // declares none).
-func (mf *MountedFlow) APIDoc() *FlowAPIDoc { return mf.apiDoc }
+func (mf *MountedFlow) APIDoc() *FlowAPIDoc {
+	mf.lazyMu.RLock()
+	defer mf.lazyMu.RUnlock()
+	return mf.apiDoc
+}
 
 // FlowVersion returns the mounted bundle's flow.json version string.
-func (mf *MountedFlow) FlowVersion() string { return mf.flowVersion }
+func (mf *MountedFlow) FlowVersion() string {
+	mf.lazyMu.RLock()
+	defer mf.lazyMu.RUnlock()
+	return mf.flowVersion
+}
 
 // MountPath returns the HTTP mux pattern this flow is mounted on (set by
 // RegisterFlowMounts; empty for flows loaded outside the mount table).
-func (mf *MountedFlow) MountPath() string { return mf.mountPath }
+func (mf *MountedFlow) MountPath() string {
+	mf.lazyMu.RLock()
+	defer mf.lazyMu.RUnlock()
+	return mf.mountPath
+}

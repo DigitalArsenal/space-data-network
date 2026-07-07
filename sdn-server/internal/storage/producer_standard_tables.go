@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
@@ -179,6 +180,13 @@ func (s *FlatSQLStore) StoreRoutedByProducer(schemaName string, data []byte, pee
 	if err := s.upsertRecordIndex(schemaName, cid, now, data); err != nil {
 		// Do not fail writes if index extraction fails for a record.
 		log.Warnf("Failed to index %s record %s: %v", schemaName, cid[:16]+"...", err)
+	}
+	event, err := s.recordCatalogUpsertEvent(s.db, schemaName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now, data)
+	if err != nil {
+		return "", fmt.Errorf("record catalog event: %w", err)
+	}
+	if err := s.recordCatalog.Append(event); err != nil {
+		return "", fmt.Errorf("append record catalog event: %w", err)
 	}
 	return cid, nil
 }
@@ -421,7 +429,7 @@ func (s *FlatSQLStore) deleteRoutedMirrorsWhere(exec sqlExecer, standardTable, w
 		if pt.Standard != standardTable {
 			continue
 		}
-		result, err := exec.Exec(fmt.Sprintf(`DELETE FROM %s WHERE %s`, pt.TableName, whereClause), args...)
+		result, err := exec.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM %s WHERE %s`, pt.TableName, whereClause)), args...)
 		if err != nil {
 			log.Warnf("routed mirror delete %s: %v", pt.TableName, err)
 			continue

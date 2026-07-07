@@ -34,8 +34,10 @@ throwing, return clean errors, and do NOT poison the runtime. Only a
 genuine trap (untouched internal throw path, OOM, unreachable) sets
 `Runtime.Poisoned()`; a poisoned runtime must be discarded and recreated.
 
-Production hosts should pass `WithAOTCache(dir)`: the portable module is
-AOT-compiled once (sha256-keyed cache file) and loaded natively afterwards.
+Production daemons should pass `WithPrecompiledAOTCache(dir)`: the portable
+module is AOT-compiled by an explicit release/prewarm step and loaded from
+the sha256-keyed cache afterwards. `WithAOTCache(dir)` is only for tests and
+maintenance tools that intentionally compile on cache miss.
 
 When the flatsql submodule pin moves, rebuild + re-copy the artifact and
 update this block (`cmake --build build-wasm --target flatsql_wasi_noeh`

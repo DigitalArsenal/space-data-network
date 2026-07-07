@@ -130,21 +130,14 @@ run_preflight() {
 prepare_go_toolchain() {
   prepare_go_wasm_artifacts
 
-  step "WasmEdge"
-  "$ROOT/scripts/install-wasmedge.sh"
-  pass "wasmedge install"
-
-  # WasmEdge library paths (CGO dependency)
-  local WASMEDGE_LIB="${WASMEDGE_LIB:-$HOME/.wasmedge/lib}"
-  local WASMEDGE_INC="${WASMEDGE_INC:-$HOME/.wasmedge/include}"
-  local GO_CGO_LDFLAGS="${CGO_LDFLAGS:-}"
-  local GO_CGO_CFLAGS="${CGO_CFLAGS:-}"
-  if [[ -d "$WASMEDGE_LIB" ]]; then
-    GO_CGO_LDFLAGS="-L${WASMEDGE_LIB} -Wl,-rpath,${WASMEDGE_LIB} ${GO_CGO_LDFLAGS}"
+  step "WasmEdge headers/libs"
+  if [[ -z "${WASMEDGE_DIR:-}" ]]; then
+    fail "WASMEDGE_DIR must point to existing WasmEdge headers/libs; automatic local runtime installation is disabled"
   fi
-  if [[ -d "$WASMEDGE_INC" ]]; then
-    GO_CGO_CFLAGS="-I${WASMEDGE_INC} ${GO_CGO_CFLAGS}"
+  if [[ ! -f "$WASMEDGE_DIR/include/wasmedge/wasmedge.h" || ! -d "$WASMEDGE_DIR/lib" ]]; then
+    fail "invalid WASMEDGE_DIR: $WASMEDGE_DIR"
   fi
+  pass "wasmedge headers/libs"
 
   step "Go deps"
   "$ROOT/scripts/go-with-wasmedge.sh" mod download

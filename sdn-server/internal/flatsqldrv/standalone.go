@@ -29,7 +29,7 @@ func DefaultAOTCacheDir() string {
 // subsystem now has fully isolated transactions and no shared-file
 // contention. The returned closer releases the sql.DB, journal, and engine.
 func OpenStandalone(journalPath string) (*sql.DB, func() error, error) {
-	rt, err := flatsqlrt.New(flatsqlrt.WithAOTCache(DefaultAOTCacheDir()))
+	rt, err := flatsqlrt.New(flatsqlrt.WithPrecompiledAOTCache(DefaultAOTCacheDir()))
 	if err != nil {
 		return nil, nil, fmt.Errorf("flatsqldrv: start engine: %w", err)
 	}

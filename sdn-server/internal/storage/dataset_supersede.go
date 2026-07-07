@@ -42,6 +42,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
@@ -189,18 +190,18 @@ func (s *FlatSQLStore) supersedeSourceBatchChunk(scope DatasetSupersedeResult, t
 		}
 	}()
 
-	if _, err := tx.Exec(`CREATE TEMP TABLE IF NOT EXISTS temp_sdn_supersede_cids (cid TEXT PRIMARY KEY)`); err != nil {
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`CREATE TEMP TABLE IF NOT EXISTS temp_sdn_supersede_cids (cid TEXT PRIMARY KEY)`)); err != nil {
 		return 0, 0, fmt.Errorf("create supersede cid table: %w", err)
 	}
-	if _, err := tx.Exec(`DELETE FROM temp_sdn_supersede_cids`); err != nil {
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`DELETE FROM temp_sdn_supersede_cids`)); err != nil {
 		return 0, 0, fmt.Errorf("clear supersede cid table: %w", err)
 	}
-	if _, err := tx.Exec(`
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
 		INSERT OR IGNORE INTO temp_sdn_supersede_cids (cid)
 		SELECT cid FROM sdn_record_source_tags
 		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id <> ?
 		LIMIT ?
-	`, scope.SchemaName, scope.ProviderID, scope.SourceName, scope.KeepBatch, supersedeChunkSize); err != nil {
+	`), scope.SchemaName, scope.ProviderID, scope.SourceName, scope.KeepBatch, supersedeChunkSize); err != nil {
 		return 0, 0, fmt.Errorf("stage superseded cids: %w", err)
 	}
 	var staged int64
@@ -215,11 +216,11 @@ func (s *FlatSQLStore) supersedeSourceBatchChunk(scope DatasetSupersedeResult, t
 		return 0, 0, nil
 	}
 
-	tagsResult, err := tx.Exec(`
+	tagsResult, err := tx.Exec(flatsqldrv.WithoutJournal(`
 		DELETE FROM sdn_record_source_tags
 		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id <> ?
 		  AND cid IN (SELECT cid FROM temp_sdn_supersede_cids)
-	`, scope.SchemaName, scope.ProviderID, scope.SourceName, scope.KeepBatch)
+	`), scope.SchemaName, scope.ProviderID, scope.SourceName, scope.KeepBatch)
 	if err != nil {
 		return 0, 0, fmt.Errorf("delete superseded source tags: %w", err)
 	}
@@ -235,21 +236,21 @@ func (s *FlatSQLStore) supersedeSourceBatchChunk(scope DatasetSupersedeResult, t
 	}
 	if recordsDeleted > 0 {
 		if legacyExists, exErr := s.tableExists(tableName); exErr == nil && legacyExists {
-			if _, err := tx.Exec(fmt.Sprintf(`
+			if _, err := tx.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`
 				DELETE FROM %s
 				WHERE cid IN (SELECT cid FROM temp_sdn_supersede_cids)
 				  AND NOT EXISTS (
 					SELECT 1 FROM sdn_record_source_tags tags
 					WHERE tags.schema_name = ? AND tags.cid = %s.cid
 				  )
-			`, tableName, tableName), scope.SchemaName); err != nil {
+			`, tableName, tableName)), scope.SchemaName); err != nil {
 				return 0, 0, fmt.Errorf("delete orphaned superseded records: %w", err)
 			}
 		}
 		s.deleteRoutedMirrorsWhere(tx, tableName,
 			`cid IN (SELECT cid FROM temp_sdn_supersede_cids) AND cid NOT IN (SELECT cid FROM sdn_record_source_tags WHERE schema_name = ?)`,
 			scope.SchemaName)
-		if _, err := tx.Exec(`
+		if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
 			DELETE FROM sdn_record_index
 			WHERE schema_name = ?
 			  AND cid IN (SELECT cid FROM temp_sdn_supersede_cids)
@@ -258,7 +259,7 @@ func (s *FlatSQLStore) supersedeSourceBatchChunk(scope DatasetSupersedeResult, t
 				WHERE tags.schema_name = sdn_record_index.schema_name
 				  AND tags.cid = sdn_record_index.cid
 			  )
-		`, scope.SchemaName); err != nil {
+		`), scope.SchemaName); err != nil {
 			return 0, 0, fmt.Errorf("delete orphaned superseded index rows: %w", err)
 		}
 	}
@@ -267,5 +268,16 @@ func (s *FlatSQLStore) supersedeSourceBatchChunk(scope DatasetSupersedeResult, t
 		return 0, 0, fmt.Errorf("commit supersede chunk: %w", err)
 	}
 	committed = true
+	if err := s.recordCatalog.Append(recordCatalogEvent{
+		Kind:       recordCatalogEventSourceKeep,
+		SchemaName: scope.SchemaName,
+		Tags: SourceTags{
+			ProviderID: scope.ProviderID,
+			SourceName: scope.SourceName,
+			BatchID:    scope.KeepBatch,
+		},
+	}); err != nil {
+		return 0, 0, fmt.Errorf("append record catalog source keep event: %w", err)
+	}
 	return tagsDeleted, recordsDeleted, nil
 }
