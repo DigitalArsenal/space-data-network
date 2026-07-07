@@ -2,6 +2,7 @@
   import Panel from '../primitives/Panel.svelte';
   import SaButton from '../primitives/SaButton.svelte';
   import SaTabs from '../primitives/SaTabs.svelte';
+  import GlobeDemoPanel from './GlobeDemoPanel.svelte';
   import { BMC2_MODES, CONSOLE_VIEWS, type SpaceAwareRoute } from '../router';
 
   let {
@@ -75,6 +76,11 @@
       selected={route.sub ?? 'index'}
       onselect={(mode) => navigate(mode === 'index' ? '/bmc2' : `/bmc2/${mode}`)}
     />
+  {/if}
+
+  {#if route.screen === 'console' && route.sub === 'peers'}
+    <!-- U0.2: SdnGlobe port demo (design mock fixtures). Real peer wiring = U3.4. -->
+    <GlobeDemoPanel />
   {/if}
 
   <Panel title={`${meta.title} · not yet ported`} variant="well">
