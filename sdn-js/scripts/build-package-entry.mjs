@@ -120,6 +120,102 @@ const sharedBuildOptions = {
         );
       },
     },
+    {
+      name: 'libp2p-peer-store-metadata-byte-views',
+      setup(pluginBuild) {
+        pluginBuild.onLoad(
+          { filter: /node_modules[\\/]@libp2p[\\/]peer-store[\\/](?:src[\\/]utils[\\/]to-peer-pb\.ts|dist[\\/]src[\\/]utils[\\/]to-peer-pb\.js)$/ },
+          async (args) => {
+            let contents = await fs.readFile(args.path, 'utf8');
+            const normalizerTs = `function normalizePeerMetadataValue (value: any): Uint8Array | null {
+  if (value instanceof Uint8Array) {
+    return value
+  }
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength).slice()
+  }
+  if (value instanceof ArrayBuffer || (value?.constructor?.name === 'ArrayBuffer' && typeof value?.byteLength === 'number')) {
+    return new Uint8Array(value).slice()
+  }
+  if (typeof value?.subarray === 'function' && typeof value?.byteLength === 'number') {
+    const view = value.subarray()
+    if (view instanceof Uint8Array) {
+      return view.slice()
+    }
+    if (ArrayBuffer.isView(view)) {
+      return new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice()
+    }
+  }
+  return null
+}
+
+`;
+            const normalizerJs = `function normalizePeerMetadataValue(value) {
+    if (value instanceof Uint8Array) {
+        return value;
+    }
+    if (ArrayBuffer.isView(value)) {
+        return new Uint8Array(value.buffer, value.byteOffset, value.byteLength).slice();
+    }
+    if (value instanceof ArrayBuffer || (value?.constructor?.name === 'ArrayBuffer' && typeof value?.byteLength === 'number')) {
+        return new Uint8Array(value).slice();
+    }
+    if (typeof value?.subarray === 'function' && typeof value?.byteLength === 'number') {
+        const view = value.subarray();
+        if (view instanceof Uint8Array) {
+            return view.slice();
+        }
+        if (ArrayBuffer.isView(view)) {
+            return new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice();
+        }
+    }
+    return null;
+}
+`;
+            contents = contents.replace(
+              'function validateMetadata (key: string, value: Uint8Array): void {\n',
+              `${normalizerTs}function validateMetadata (key: string, value: Uint8Array): void {\n`,
+            );
+            contents = contents.replace(
+              'function validateMetadata(key, value) {\n',
+              `${normalizerJs}function validateMetadata(key, value) {\n`,
+            );
+            contents = contents.replace(
+              "  if (!(value instanceof Uint8Array)) {\n    throw new CodeError('Metadata value must be a Uint8Array', codes.ERR_INVALID_PARAMETERS)\n  }\n",
+              "  if (normalizePeerMetadataValue(value) == null) {\n    throw new CodeError('Metadata value must be a Uint8Array', codes.ERR_INVALID_PARAMETERS)\n  }\n",
+            );
+            contents = contents.replace(
+              "    if (!(value instanceof Uint8Array)) {\n        throw new CodeError('Metadata value must be a Uint8Array', codes.ERR_INVALID_PARAMETERS);\n    }\n",
+              "    if (normalizePeerMetadataValue(value) == null) {\n        throw new CodeError('Metadata value must be a Uint8Array', codes.ERR_INVALID_PARAMETERS);\n    }\n",
+            );
+            contents = contents.replace(
+              "    if (!(value instanceof Uint8Array)) {\n        throw new InvalidParametersError('Metadata value must be a Uint8Array');\n    }\n",
+              "    if (normalizePeerMetadataValue(value) == null) {\n        throw new InvalidParametersError('Metadata value must be a Uint8Array');\n    }\n",
+            );
+            contents = contents.replaceAll(
+              "      metadata = createSortedMap(metadataEntries, {\n        validate: validateMetadata\n      })",
+              "      metadata = createSortedMap(metadataEntries, {\n        validate: validateMetadata,\n        map: (_key, value) => normalizePeerMetadataValue(value) ?? value\n      })",
+            );
+            contents = contents.replaceAll(
+              "            metadata = createSortedMap(metadataEntries, {\n                validate: validateMetadata\n            });",
+              "            metadata = createSortedMap(metadataEntries, {\n                validate: validateMetadata,\n                map: (_key, value) => normalizePeerMetadataValue(value) ?? value\n            });",
+            );
+            contents = contents.replaceAll(
+              "      metadata = createSortedMap([...metadata.entries()], {\n        validate: validateMetadata\n      })",
+              "      metadata = createSortedMap([...metadata.entries()], {\n        validate: validateMetadata,\n        map: (_key, value) => normalizePeerMetadataValue(value) ?? value\n      })",
+            );
+            contents = contents.replaceAll(
+              "            metadata = createSortedMap([...metadata.entries()], {\n                validate: validateMetadata\n            });",
+              "            metadata = createSortedMap([...metadata.entries()], {\n                validate: validateMetadata,\n                map: (_key, value) => normalizePeerMetadataValue(value) ?? value\n            });",
+            );
+            return {
+              contents,
+              loader: args.path.endsWith('.ts') ? 'ts' : 'js',
+            };
+          },
+        );
+      },
+    },
   ],
   loader: {
     '.wasm': 'file',

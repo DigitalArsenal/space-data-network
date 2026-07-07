@@ -29,26 +29,28 @@ const getEnvRelays = (): string[] | null => {
  * Prefer DNS-based addresses for production deployments.
  * IP addresses should only be used for development/testing.
  */
-// The SpaceAware identity lives on sdn.spaceaware.io (159.203.150.8) and owns
-// tcp/quic on 4001 plus ws/8080 there; nginx terminates wss/443 in front of it.
 const SPACEAWARE_RELAY_PEER_ID = '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45';
 const CELESTRAK_RELAY_PEER_ID = '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3';
+const SPACEAWARE_WEBRTC_DIRECT =
+  `/ip4/104.131.11.220/udp/4003/webrtc-direct/certhash/uEiDHMHA60lI3WloWOnksNqBZe8J7zUcxrIV_yB6E5NBMyw/p2p/${SPACEAWARE_RELAY_PEER_ID}`;
+const CELESTRAK_WEBRTC_DIRECT =
+  `/ip4/167.172.219.213/udp/4003/webrtc-direct/certhash/uEiD8YU5I18BuOBAcE8z_3NFRoGnhu9dKdTjG7PAqVbAjEQ/p2p/${CELESTRAK_RELAY_PEER_ID}`;
 
 export const DEFAULT_EDGE_RELAYS = getEnvRelays() ?? [
   // Primary relay for the current production deployment (nginx proxies 443 -> 8080).
   `/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`,
-  // Direct websocket fallbacks from the nodes' advertised listen addresses.
-  `/ip4/159.203.150.8/tcp/8080/ws/p2p/${SPACEAWARE_RELAY_PEER_ID}`,
-  `/ip4/167.172.219.213/tcp/8080/ws/p2p/${CELESTRAK_RELAY_PEER_ID}`,
+  // Direct browser-dialable full-node bootstrap addresses from provider descriptors.
+  SPACEAWARE_WEBRTC_DIRECT,
+  CELESTRAK_WEBRTC_DIRECT,
 ];
 
 /**
  * Fallback relays for regional availability
  */
 export const REGIONAL_FALLBACK_RELAYS: Record<string, string[]> = {
-  'us-east': [`/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`],
-  'eu-west': [`/ip4/167.172.219.213/tcp/8080/ws/p2p/${CELESTRAK_RELAY_PEER_ID}`],
-  'ap-southeast': [`/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`],
+  'us-east': [`/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`, SPACEAWARE_WEBRTC_DIRECT],
+  'eu-west': [CELESTRAK_WEBRTC_DIRECT],
+  'ap-southeast': [`/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`, SPACEAWARE_WEBRTC_DIRECT],
 };
 
 let edgeRelaysModule: EdgeRelaysModule | null = null;

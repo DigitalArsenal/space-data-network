@@ -45,6 +45,7 @@ vi.mock("@libp2p/webtransport", () => ({
 
 vi.mock("@spacedatanetwork/libp2p-webrtc-v1", () => ({
   webRTC: vi.fn(() => ({ transport: "webRTC" })),
+  webRTCDirect: vi.fn(() => ({ transport: "webRTCDirect" })),
 }));
 
 vi.mock("@libp2p/circuit-relay-v2", () => ({
@@ -123,6 +124,23 @@ describe("SDNNode relay bootstrap", () => {
     expect(edgeDiscoveryInstances[0].probeAllRelays).not.toHaveBeenCalled();
     expect(edgeDiscoveryInstances[0].startProbing).not.toHaveBeenCalled();
     expect(bootstrapMock).toHaveBeenCalledWith({ list: [explicitRelay] });
+
+    await node.stop();
+  });
+
+  it("enables WebRTC-direct transport for browser-dialable full-node bootstrap addresses", async () => {
+    const { SDNNode } = await import("./node");
+
+    const node = await SDNNode.create({
+      edgeRelays: [
+        "/ip4/167.172.219.213/udp/4003/webrtc-direct/certhash/uEiD8YU5I18BuOBAcE8z_3NFRoGnhu9dKdTjG7PAqVbAjEQ/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3",
+      ],
+      enableStorage: false,
+    });
+
+    expect(createLibp2pMock.mock.calls[0][0].transports).toEqual(
+      expect.arrayContaining([expect.objectContaining({ transport: "webRTCDirect" })]),
+    );
 
     await node.stop();
   });

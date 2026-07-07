@@ -197,6 +197,17 @@ describe('sdn-js package build', () => {
     expect(dist).not.toMatch(/DEFAULT_WASI_URL\s*=\s*new URL\([^)]*import_meta/u);
   });
 
+  it('normalizes persisted libp2p peer metadata byte views before validation', async () => {
+    const dist = await fs.readFile(DIST_INDEX_PATH, 'utf8');
+    const normalizerReferences = dist.match(/normalizePeerMetadataValue/g) ?? [];
+
+    expect(dist.includes('function normalizePeerMetadataValue')).toBe(true);
+    expect(normalizerReferences.length).toBeGreaterThanOrEqual(4);
+    expect(dist).not.toMatch(
+      /if \(!\(value\d* instanceof Uint8Array\)\) \{\n\s+throw new InvalidParametersError\d*\("Metadata value must be a Uint8Array"\)/u,
+    );
+  });
+
   it(
     'imports the built canonical root entry successfully',
     { timeout: 60_000 },
@@ -204,6 +215,8 @@ describe('sdn-js package build', () => {
     const runtime = await import(pathToFileURL(DIST_INDEX_PATH).href);
 
     expect(typeof runtime.SDNNode?.create).toBe('function');
+    expect(typeof runtime.createHeliaSDNNode).toBe('function');
+    expect(typeof runtime.fetchCIDBytesFromHelia).toBe('function');
     expect(typeof runtime.getFlatSQLWASIPath).toBe('function');
     expect(runtime.mountWalletUI).toBeUndefined();
     },
