@@ -14,9 +14,9 @@ import (
 // FlowManager owns the flow store, running FlowPlugin instances, and
 // capability handlers. It registers flow plugins with the SDN plugin manager.
 type FlowManager struct {
-	store       *FlowStore
-	cfg         config.FlowsConfig
-	pluginMgr   *plugins.Manager
+	store        *FlowStore
+	cfg          config.FlowsConfig
+	pluginMgr    *plugins.Manager
 	capabilities HandlerMap
 
 	mu      sync.Mutex
@@ -94,15 +94,14 @@ func (m *FlowManager) Deploy(ctx context.Context, wasmBytes []byte, flowJSON []b
 
 	// Load and register. Start failure is NOT an install failure: flows that
 	// import the module-SDK hostcall bridge (HTTP-mounted flows, loop C.4)
-	// cannot run as standalone trigger plugins — they are served by the
-	// config mount table (node.MountFlows) which loads them with the bridge
-	// at boot. Boot-time LoadAll already tolerates these the same way.
+	// cannot run as standalone trigger plugins; lazy HTTP mounts serve them
+	// from the config mount table on demand.
 	flow, err := m.store.Get(program.ProgramID)
 	if err != nil {
 		return "", err
 	}
 	if err := m.loadAndRegister(ctx, flow); err != nil {
-		log.Warnf("Flow %q installed; standalone start skipped (mount-served flows start via flows.mounts at boot): %v", program.ProgramID, err)
+		log.Warnf("Flow %q installed; standalone start skipped (mount-served flows load lazily via flows.mounts): %v", program.ProgramID, err)
 	}
 
 	return program.ProgramID, nil

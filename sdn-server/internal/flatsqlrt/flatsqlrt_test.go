@@ -234,6 +234,25 @@ func TestAOTCache(t *testing.T) {
 	}
 }
 
+func TestPrecompiledAOTCacheDoesNotCompileOnMiss(t *testing.T) {
+	dir := t.TempDir()
+	rt, err := New(WithPrecompiledAOTCache(dir))
+	if err != nil {
+		t.Fatalf("New with precompiled AOT cache: %v", err)
+	}
+	defer rt.Close()
+	if rt.AOT() {
+		t.Fatal("runtime unexpectedly used AOT from an empty precompiled cache")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read cache dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("precompiled cache miss created %d entries, want 0", len(entries))
+	}
+}
+
 func TestIngestStreamAndQuery(t *testing.T) {
 	rt := newTestRuntime(t)
 	db := newOMMDatabase(t, rt, "omm-ingest")

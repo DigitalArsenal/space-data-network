@@ -2,9 +2,22 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-WASMEDGE_DIR="${WASMEDGE_DIR:-$HOME/.wasmedge}"
+WASMEDGE_DIR="${WASMEDGE_DIR:-}"
 
-"$ROOT/scripts/install-wasmedge.sh" >/dev/null
+if [[ -z "$WASMEDGE_DIR" ]]; then
+  cat >&2 <<'EOF'
+[wasmedge] WASMEDGE_DIR must point to an existing WasmEdge header/library layout.
+[wasmedge] Automatic local WasmEdge runtime installation is disabled; use an
+[wasmedge] explicit system/toolchain path instead of ~/.wasmedge.
+EOF
+  exit 1
+fi
+
+if [[ ! -f "$WASMEDGE_DIR/include/wasmedge/wasmedge.h" || ! -d "$WASMEDGE_DIR/lib" ]]; then
+  printf '[wasmedge] invalid WASMEDGE_DIR: %s\n' "$WASMEDGE_DIR" >&2
+  printf '[wasmedge] expected include/wasmedge/wasmedge.h and lib/ under that path\n' >&2
+  exit 1
+fi
 
 if [[ -f "$WASMEDGE_DIR/env" ]]; then
   set +u
@@ -14,7 +27,9 @@ if [[ -f "$WASMEDGE_DIR/env" ]]; then
 fi
 
 export WASMEDGE_DIR
-export PATH="$WASMEDGE_DIR/bin:$PATH"
+if [[ -d "$WASMEDGE_DIR/bin" ]]; then
+  export PATH="$WASMEDGE_DIR/bin:$PATH"
+fi
 export GOCACHE="${GOCACHE:-$ROOT/.gocache}"
 
 mkdir -p "$GOCACHE"
@@ -38,7 +53,9 @@ esac
 
 export CGO_CFLAGS="$CGO_CFLAGS_VALUE"
 export CGO_LDFLAGS="$CGO_LDFLAGS_VALUE"
-export PATH="$WASMEDGE_DIR/bin:$PATH"
+if [[ -d "$WASMEDGE_DIR/bin" ]]; then
+  export PATH="$WASMEDGE_DIR/bin:$PATH"
+fi
 
 cd "$ROOT/sdn-server"
 exec go "$@"

@@ -241,10 +241,11 @@ func TestWirespeedGate(t *testing.T) {
 	mounted, err := RegisterFlowMounts(mux,
 		[]config.FlowMount{{Path: "/api/v1/data/", Flow: dist, Pool: pool, MemoryPages: uint32(pages)}},
 		FlowMountDeps{
-			CapRegistry: reg,
-			NodeCtx:     &modulert.NodeContext{},
-			AOTCacheDir: aotDir,
-			EngineLink:  store,
+			CapRegistry:      reg,
+			NodeCtx:          &modulert.NodeContext{},
+			AOTCacheDir:      aotDir,
+			AOTCompileOnMiss: useAOT,
+			EngineLink:       store,
 		})
 	if err != nil {
 		t.Fatalf("RegisterFlowMounts: %v", err)

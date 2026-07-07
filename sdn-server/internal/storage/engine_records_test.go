@@ -266,6 +266,80 @@ func TestEngineRecordsBootRebuild(t *testing.T) {
 	}
 }
 
+func TestEngineHotWindowHydratesFromCompactCatalogBeforeFullReplay(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := NewFlatSQLStore(basePath, validator, WithEngineHotWindow(10))
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+
+	epoch1 := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC).Unix()
+	epoch2 := epoch1 + 2*86400
+	celestrakTags := SourceTags{ProviderID: "prov-a", SourceName: "celestrak-gp", BatchID: "batch-1"}
+	if _, err := store.StoreBatchWithSourceTags("OMM.fbs", [][]byte{
+		buildEngineOMM(t, 1001, "SAT-1001-A", epoch1),
+		buildEngineOMM(t, 1001, "SAT-1001-B", epoch2),
+		buildEngineOMM(t, 1002, "SAT-1002", epoch2),
+	}, "peer-engine-catalog", nil, celestrakTags); err != nil {
+		t.Fatalf("StoreBatchWithSourceTags celestrak failed: %v", err)
+	}
+	otherTags := SourceTags{ProviderID: "prov-b", SourceName: "provider-two", BatchID: "batch-1"}
+	if _, err := store.StoreBatchWithSourceTags("OMM.fbs", [][]byte{
+		buildEngineOMM(t, 2001, "OTHER-SAT", epoch2),
+	}, "peer-engine-catalog", nil, otherTags); err != nil {
+		t.Fatalf("StoreBatchWithSourceTags provider-two failed: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	reopened, err := NewFlatSQLStore(basePath, validator,
+		WithDeferredBootRebuilds(),
+		WithDeferredRecordCatalogReplay(),
+		WithEngineHotWindow(10))
+	if err != nil {
+		t.Fatalf("deferred reopen failed: %v", err)
+	}
+	defer reopened.Close()
+
+	if count, err := reopened.EngineRecordCount("OMM.fbs"); err != nil || count != 0 {
+		t.Fatalf("deferred reopen engine count = %d err=%v, want 0 nil", count, err)
+	}
+	stream, err := reopened.QueryEpochRawStream("OMM.fbs", "celestrak-gp", "nearest", float64(epoch2), 0)
+	if err != nil {
+		t.Fatalf("QueryEpochRawStream before hot-window hydration failed: %v", err)
+	}
+	if frames := decodeEpochFrames(t, stream); len(frames) != 0 {
+		t.Fatalf("deferred reopen returned %d frames before hot-window hydration, want 0", len(frames))
+	}
+
+	loaded, err := reopened.HydrateEngineHotWindowFromRecordCatalog()
+	if err != nil {
+		t.Fatalf("HydrateEngineHotWindowFromRecordCatalog failed: %v", err)
+	}
+	if loaded != 4 {
+		t.Fatalf("HydrateEngineHotWindowFromRecordCatalog loaded %d records, want 4", loaded)
+	}
+	if reopened.RecordCatalogHydrated() {
+		t.Fatal("engine hot-window hydration must not mark the full record catalog hydrated")
+	}
+	if count, err := reopened.EngineRecordCount("OMM.fbs"); err != nil || count != 4 {
+		t.Fatalf("engine count after compact hot-window hydration = %d err=%v, want 4 nil", count, err)
+	}
+	stream, err = reopened.QueryEpochRawStream("OMM.fbs", "celestrak-gp", "nearest", float64(epoch2), 0)
+	if err != nil {
+		t.Fatalf("QueryEpochRawStream after hot-window hydration failed: %v", err)
+	}
+	nearest := decodeEpochFrames(t, stream)
+	if len(nearest) != 2 || nearest[1001] != float64(epoch2) || nearest[1002] != float64(epoch2) {
+		t.Fatalf("celestrak nearest after hot-window hydration = %v, want 1001/1002 at epoch2", nearest)
+	}
+}
+
 // TestEpochEngineMeasure reports the B.3 numbers: full-store write throughput
 // at catalog-history scale (29K objects x 5 epochs = 145K OMM records) and
 // old (control-index + stream hydration) vs new (engine-native raw stream)

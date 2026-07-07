@@ -22,6 +22,17 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 )
 
+const noJournalDirective = "flatsqldrv:no-journal"
+
+// WithoutJournal marks an idempotent or derived-state mutation so it executes
+// against the live engine but is not appended to the durable statement journal.
+func WithoutJournal(query string) string {
+	if hasNoJournalDirective(query) {
+		return query
+	}
+	return "-- " + noJournalDirective + "\n" + query
+}
+
 // Open wraps an engine database in a database/sql handle. If journal is
 // non-nil, every committed mutating statement is appended to it (replayable
 // at boot via Replay). The caller keeps ownership of db's lifetime.
@@ -151,6 +162,9 @@ func convertArgs(args []driver.NamedValue) ([]interface{}, error) {
 
 // isMutation decides whether a statement belongs in the journal.
 func isMutation(query string) bool {
+	if hasNoJournalDirective(query) {
+		return false
+	}
 	q := strings.TrimSpace(query)
 	for {
 		if strings.HasPrefix(q, "--") {
@@ -174,6 +188,15 @@ func isMutation(query string) bool {
 	default:
 		return true
 	}
+}
+
+func hasNoJournalDirective(query string) bool {
+	q := strings.TrimLeft(query, " \t\r\n")
+	if !strings.HasPrefix(q, "--") {
+		return false
+	}
+	line, _, _ := strings.Cut(q, "\n")
+	return strings.Contains(line, noJournalDirective)
 }
 
 // splitStatements breaks a multi-statement SQL string into individual

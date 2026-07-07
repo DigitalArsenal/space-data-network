@@ -293,10 +293,11 @@ type FlowsConfig struct {
 	// EditorPath is the URL base path for the editor (default: /flow-editor).
 	EditorPath string `yaml:"editor_path"`
 
-	// Mounts maps HTTP listener paths to flow modules. Each mounted flow is
-	// loaded as a WASM module through the standard flow runtime; the HTTP
-	// handler is pure socket plumbing ($HTQ request frames in, $HTR response
-	// frames out) with zero request-level decisions in the host.
+	// Mounts maps HTTP listener paths to flow modules. Daemon startup only
+	// registers lazy handlers; each handler loads the existing compiled WASM
+	// artifact on first request. The HTTP handler is pure socket plumbing
+	// ($HTQ request frames in, $HTR response frames out) with zero
+	// request-level decisions in the host.
 	Mounts []FlowMount `yaml:"mounts,omitempty"`
 
 	// Services are timer-served flows (loop C.8a ingest-as-flow): each entry
@@ -719,8 +720,8 @@ func Default() *Config {
 			// routes (health, summary, datasync scan/stream/query, records/)
 			// still take mux precedence over this subtree mount. The flow
 			// reference is the installed flow program ID (delivered via SDN
-			// module delivery); mounts whose artifact is not installed yet
-			// are skipped with an error log at startup.
+			// module delivery); the route is registered at startup and returns
+			// 503 until the artifact is installed.
 			Mounts: []FlowMount{
 				{
 					Path:        "/api/v1/data/",

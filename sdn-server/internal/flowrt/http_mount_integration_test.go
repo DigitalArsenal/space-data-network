@@ -450,3 +450,60 @@ func TestFlowMountSkipsUninstalledFlow(t *testing.T) {
 		t.Fatalf("mounted %d flows, want 0", len(mounted))
 	}
 }
+
+func TestLazyFlowMountRegistersUninstalledFlowWithoutStartupLoad(t *testing.T) {
+	mux := http.NewServeMux()
+	mounted, err := RegisterLazyFlowMounts(mux,
+		[]config.FlowMount{{Path: "/test/data/", Flow: "com.example.not-installed", Pool: 3}},
+		FlowMountDeps{
+			CapRegistry: modulert.NewCapabilityRegistry(),
+			NodeCtx:     &modulert.NodeContext{},
+		})
+	if err != nil {
+		t.Fatalf("RegisterLazyFlowMounts should not load artifacts at registration: %v", err)
+	}
+	if len(mounted) != 1 {
+		t.Fatalf("mounted %d flows, want 1 lazy handler", len(mounted))
+	}
+	if got := mounted[0].PoolSize(); got != 3 {
+		t.Fatalf("lazy pool size = %d, want 3", got)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test/data/omm/bulk", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("lazy missing artifact status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if !strings.Contains(rec.Body.String(), "flow unavailable") {
+		t.Fatalf("lazy missing artifact body = %q", rec.Body.String())
+	}
+}
+
+func TestLazyFlowMountReadinessCheckShortCircuitsLoad(t *testing.T) {
+	mux := http.NewServeMux()
+	readinessErr := fmt.Errorf("record catalog hydration in progress")
+	mounted, err := RegisterLazyFlowMounts(mux,
+		[]config.FlowMount{{Path: "/test/data/", Flow: "com.example.not-installed"}},
+		FlowMountDeps{
+			CapRegistry:    modulert.NewCapabilityRegistry(),
+			NodeCtx:        &modulert.NodeContext{},
+			ReadinessCheck: func() error { return readinessErr },
+		})
+	if err != nil {
+		t.Fatalf("RegisterLazyFlowMounts: %v", err)
+	}
+	if len(mounted) != 1 {
+		t.Fatalf("mounted %d flows, want 1 lazy handler", len(mounted))
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test/data/omm/bulk", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readiness status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if !strings.Contains(rec.Body.String(), readinessErr.Error()) {
+		t.Fatalf("readiness body = %q", rec.Body.String())
+	}
+}

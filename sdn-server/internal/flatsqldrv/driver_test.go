@@ -206,6 +206,62 @@ func TestJournalReplayReproducesStateAndRowids(t *testing.T) {
 	}
 }
 
+func TestJournalSkipDirectiveExecutesWithoutReplay(t *testing.T) {
+	dir := t.TempDir()
+	jpath := filepath.Join(dir, "control.sdnj")
+
+	journal, err := OpenStatementJournal(jpath)
+	if err != nil {
+		t.Fatalf("open journal: %v", err)
+	}
+	db, _ := newSQLDB(t, journal)
+
+	if _, err := db.Exec(`CREATE TABLE idx (schema_name TEXT, cid TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`-- flatsqldrv:no-journal
+INSERT INTO idx (rowid, schema_name, cid) VALUES (?, 'OMM.fbs', ?)`, int64(10), "transient"); err != nil {
+		t.Fatal(err)
+	}
+	var liveCount int64
+	if err := db.QueryRow(`SELECT COUNT(*) FROM idx WHERE cid = 'transient'`).Scan(&liveCount); err != nil || liveCount != 1 {
+		t.Fatalf("live transient row count = %d err=%v", liveCount, err)
+	}
+	db.Close()
+	journal.Close()
+
+	journal2, err := OpenStatementJournal(jpath)
+	if err != nil {
+		t.Fatalf("reopen journal: %v", err)
+	}
+	defer journal2.Close()
+	rt, err := flatsqlrt.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	edb, err := rt.CreateDatabase(testSchema, "drv-skip-journal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer edb.Destroy()
+
+	n, err := journal2.Replay(edb)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("replayed %d frames, want only CREATE TABLE", n)
+	}
+	res, err := edb.Query(`SELECT COUNT(*) FROM idx WHERE cid = 'transient'`)
+	if err != nil {
+		t.Fatalf("query after replay: %v", err)
+	}
+	if got := res.Rows[0][0].(int64); got != 0 {
+		t.Fatalf("transient row replayed: count = %d, want 0", got)
+	}
+}
+
 func TestJournalTornTailTruncated(t *testing.T) {
 	dir := t.TempDir()
 	jpath := filepath.Join(dir, "torn.sdnj")

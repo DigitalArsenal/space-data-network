@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
@@ -65,14 +66,19 @@ func engineAOTCacheDir() string {
 // in the engine's SQLite (durable via the statement journal, replayed at
 // boot). See docs/flatsql-store-v2.md.
 type FlatSQLStore struct {
-	db        *sql.DB
-	engine    *flatsqlrt.Runtime
-	engineDB  *flatsqlrt.Database
-	journal   *flatsqldrv.StatementJournal
-	validator *sds.Validator
-	dbPath    string
-	basePath  string
-	streamDir string
+	db                     *sql.DB
+	engine                 *flatsqlrt.Runtime
+	engineDB               *flatsqlrt.Database
+	journal                *flatsqldrv.StatementJournal
+	recordCatalog          *recordCatalogJournal
+	recordCatalogHydrating atomic.Bool
+	recordCatalogHydrated  atomic.Bool
+	engineHotHydrating     atomic.Bool
+	engineHotHydrated      atomic.Bool
+	validator              *sds.Validator
+	dbPath                 string
+	basePath               string
+	streamDir              string
 	// lock is the exclusive single-writer liveness lock on
 	// <basePath>/store.lock (storelock.go, loop C.6b) — held for the
 	// store's whole lifetime, released by Close. Nil for read-only opens
@@ -105,7 +111,9 @@ type FlatSQLStore struct {
 type StoreOption func(*storeConfig)
 
 type storeConfig struct {
-	engineHotWindow int
+	engineHotWindow          int
+	deferBootRebuilds        bool
+	deferRecordCatalogReplay bool
 }
 
 // WithEngineHotWindow overrides the engine hot-window bound: the maximum
@@ -119,6 +127,26 @@ func WithEngineHotWindow(records int) StoreOption {
 		if records > 0 {
 			c.engineHotWindow = records
 		}
+	}
+}
+
+// WithDeferredBootRebuilds skips the synchronous rebuild of derived source
+// summaries and the FlatSQL engine hot window during open. Stream-backed raw
+// record reads and cursor/index queries remain available from the durable
+// control journal + flatsql-streams files. Callers can run RebuildDerivedState
+// later as a maintenance step.
+func WithDeferredBootRebuilds() StoreOption {
+	return func(c *storeConfig) {
+		c.deferBootRebuilds = true
+	}
+}
+
+// WithDeferredRecordCatalogReplay skips compact record-catalog hydration during
+// open. Call HydrateRecordCatalog after startup to rebuild record metadata from
+// record-catalog.flatsqlmeta while admin/network surfaces are already alive.
+func WithDeferredRecordCatalogReplay() StoreOption {
+	return func(c *storeConfig) {
+		c.deferRecordCatalogReplay = true
 	}
 }
 
@@ -199,7 +227,7 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	// as before: it salts the local-EPM store key and is exposed via Path().
 	dbPath := filepath.Join(basePath, "sdn.db")
 
-	engine, err := flatsqlrt.New(flatsqlrt.WithAOTCache(engineAOTCacheDir()))
+	engine, err := flatsqlrt.New(flatsqlrt.WithPrecompiledAOTCache(engineAOTCacheDir()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to start FlatSQL engine: %w", err)
 	}
@@ -210,7 +238,7 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		// cache dir (flatsql-<sha256[:8]>-we<runtime-version>.aot.wasm, keyed
 		// on the embedded engine bytes AND the libwasmedge version, loop C.9)
 		// so this warning never fires in production.
-		log.Warnf("FlatSQL engine running INTERPRETED (no AOT artifact in %s, no AOT compiler in this build) — queries will be ~100x slower", engineAOTCacheDir())
+		log.Warnf("FlatSQL engine running INTERPRETED (no precompiled AOT artifact in %s; daemon startup never compiles wasm artifacts) — queries will be ~100x slower", engineAOTCacheDir())
 	}
 	engineDB, err := engine.CreateDatabase(engineRecordSchema, "sdn-control")
 	if err != nil {
@@ -238,6 +266,12 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		engine.Close()
 		return nil, fmt.Errorf("failed to replay control journal: %w", err)
 	}
+	recordCatalog, err := openRecordCatalogJournal(filepath.Join(basePath, recordCatalogJournalFileName), readOnly)
+	if err != nil {
+		journal.Close()
+		engine.Close()
+		return nil, fmt.Errorf("failed to open record catalog journal: %w", err)
+	}
 
 	// Read-only stores run the driver WITHOUT a journal: SQL mutations (the
 	// idempotent table/index init below, engine mirror bookkeeping) execute
@@ -262,6 +296,7 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		engine:        engine,
 		engineDB:      engineDB,
 		journal:       journal,
+		recordCatalog: recordCatalog,
 		validator:     validator,
 		dbPath:        dbPath,
 		basePath:      basePath,
@@ -280,17 +315,118 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		store.Close()
 		return nil, fmt.Errorf("failed to initialize tables: %w", err)
 	}
-
-	// Rebuild the engine record vtabs (the hot window) from durable state:
-	// control tables + stream files. Per-record failures are logged and
-	// skipped inside; only a poisoned runtime aborts the open.
-	if err := store.rebuildEngineRecords(); err != nil {
-		store.Close()
-		return nil, fmt.Errorf("failed to rebuild engine records: %w", err)
+	if cfg.deferRecordCatalogReplay {
+		log.Infof("FlatSQL store: deferred compact record-catalog replay at open")
+	} else {
+		if _, err := recordCatalog.Replay(store); err != nil {
+			store.Close()
+			return nil, fmt.Errorf("failed to replay record catalog journal: %w", err)
+		}
+		store.recordCatalogHydrated.Store(true)
+	}
+	if cfg.deferBootRebuilds {
+		log.Infof("FlatSQL store: deferred derived source-summary and engine hot-window rebuilds at open")
+	} else {
+		if err := store.RebuildDerivedState(); err != nil {
+			store.Close()
+			return nil, fmt.Errorf("failed to rebuild derived state: %w", err)
+		}
 	}
 
 	opened = true
 	return store, nil
+}
+
+// RebuildDerivedState rebuilds durable-derived caches from the control
+// journal and stream files: source summaries and the engine hot window. This
+// is safe to run after opening a store with WithDeferredBootRebuilds, but it
+// may be expensive on large catalogs and holds the store write lock.
+func (s *FlatSQLStore) RebuildDerivedState() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.rebuildSourceSummariesFromDurableState(); err != nil {
+		return fmt.Errorf("source summaries: %w", err)
+	}
+	if err := s.rebuildEngineRecords(); err != nil {
+		return fmt.Errorf("engine records: %w", err)
+	}
+	return nil
+}
+
+// HydrateRecordCatalog replays compact record metadata into the in-memory
+// control tables. It is intended for daemons opened with
+// WithDeferredRecordCatalogReplay so API surfaces can start before provider-
+// scale catalog hydration. The store write lock is held for consistency.
+func (s *FlatSQLStore) HydrateRecordCatalog() (int, error) {
+	if s.recordCatalogHydrated.Load() {
+		return 0, nil
+	}
+	s.recordCatalogHydrating.Store(true)
+	defer s.recordCatalogHydrating.Store(false)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.recordCatalog == nil {
+		s.recordCatalogHydrated.Store(true)
+		return 0, nil
+	}
+	count, err := s.recordCatalog.Replay(s)
+	if err != nil {
+		return count, err
+	}
+	s.recordCatalogHydrated.Store(true)
+	return count, nil
+}
+
+// HydrateEngineHotWindowFromRecordCatalog loads only the OMM engine hot window
+// from compact record metadata and stream files. It is cheaper than full
+// record-catalog replay and is intended to make linked data-retrieval flows
+// usable before the full metadata catalog finishes hydrating.
+func (s *FlatSQLStore) HydrateEngineHotWindowFromRecordCatalog() (int, error) {
+	if s.engineHotHydrated.Load() {
+		return 0, nil
+	}
+	s.engineHotHydrating.Store(true)
+	defer s.engineHotHydrating.Store(false)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.recordCatalog == nil {
+		s.engineHotHydrated.Store(true)
+		return 0, nil
+	}
+	count, err := s.recordCatalog.ReplayEngineHotWindow(s, engineOMMSchemaName, s.engineHotWindow)
+	if err != nil {
+		return count, err
+	}
+	s.engineHotHydrated.Store(true)
+	return count, nil
+}
+
+// RecordCatalogHydrating reports whether compact metadata hydration is
+// currently holding or waiting for the store lock. Public flow-backed data
+// routes should fail fast while this is true instead of blocking browser
+// requests behind startup catch-up work.
+func (s *FlatSQLStore) RecordCatalogHydrating() bool {
+	return s != nil && s.recordCatalogHydrating.Load()
+}
+
+// RecordCatalogHydrated reports whether compact record metadata has been
+// replayed into the query catalog for this process.
+func (s *FlatSQLStore) RecordCatalogHydrated() bool {
+	return s == nil || s.recordCatalogHydrated.Load()
+}
+
+// EngineHotWindowHydrating reports whether the linked-query OMM engine window
+// is currently being rebuilt from compact metadata.
+func (s *FlatSQLStore) EngineHotWindowHydrating() bool {
+	return s != nil && s.engineHotHydrating.Load()
+}
+
+// EngineHotWindowHydrated reports whether the linked-query OMM engine window
+// has been rebuilt for this process.
+func (s *FlatSQLStore) EngineHotWindowHydrated() bool {
+	return s == nil || s.engineHotHydrated.Load()
 }
 
 // IsReadOnly reports whether this store was opened via
@@ -562,6 +698,14 @@ func (s *FlatSQLStore) initTables() error {
 }
 
 func (s *FlatSQLStore) createStartupIndex(tableName, indexName string, tableExisted bool, createSQL string) error {
+	return s.createStartupIndexWithSQL(tableName, indexName, tableExisted, createSQL)
+}
+
+func (s *FlatSQLStore) createStartupIndexNoJournal(tableName, indexName string, tableExisted bool, createSQL string) error {
+	return s.createStartupIndexWithSQL(tableName, indexName, tableExisted, flatsqldrv.WithoutJournal(createSQL))
+}
+
+func (s *FlatSQLStore) createStartupIndexWithSQL(tableName, indexName string, tableExisted bool, createSQL string) error {
 	indexExists, err := s.indexExists(indexName)
 	if err != nil {
 		return err
@@ -792,20 +936,20 @@ func (s *FlatSQLStore) initSourceSummaryTable() error {
 			return err
 		}
 		if !columns["producer_peer_id"] || !columns["producer_public_key"] {
-			if _, err := s.db.Exec(`DROP TABLE sdn_record_source_summary`); err != nil {
+			if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`DROP TABLE sdn_record_source_summary`)); err != nil {
 				return err
 			}
 			sourceSummaryExisted = false
 		}
 	}
-	_, err = s.db.Exec(sourceSummaryTableSQL("sdn_record_source_summary"))
+	_, err = s.db.Exec(flatsqldrv.WithoutJournal(sourceSummaryTableSQL("sdn_record_source_summary")))
 	if err != nil {
 		return fmt.Errorf("failed to create source summary table: %w", err)
 	}
 	if err := s.ensureColumn("sdn_record_source_summary", "max_rowid", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	if err := s.createStartupIndex("sdn_record_source_summary", "idx_sdn_record_source_summary_schema", sourceSummaryExisted, `
+	if err := s.createStartupIndexNoJournal("sdn_record_source_summary", "idx_sdn_record_source_summary_schema", sourceSummaryExisted, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_summary_schema
 		ON sdn_record_source_summary (schema_name)
 	`); err != nil {
@@ -836,7 +980,11 @@ func sourceSummaryTableSQL(tableName string) string {
 }
 
 func (s *FlatSQLStore) createSchemaMetadataTable(tableName string) error {
-	_, err := s.db.Exec(schemaMetadataTableSQL(tableName))
+	createSQL := schemaMetadataTableSQL(tableName)
+	if strings.HasPrefix(tableName, "sds_p_") {
+		createSQL = flatsqldrv.WithoutJournal(createSQL)
+	}
+	_, err := s.db.Exec(createSQL)
 	return err
 }
 
@@ -1155,7 +1303,11 @@ func (s *FlatSQLStore) ensureColumn(tableName, columnName, columnType string) er
 		return fmt.Errorf("failed iterating %s columns: %w", tableName, err)
 	}
 
-	if _, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, tableName, columnName, columnType)); err != nil {
+	alterSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, tableName, columnName, columnType)
+	if tableName == "sdn_record_source_summary" {
+		alterSQL = flatsqldrv.WithoutJournal(alterSQL)
+	}
+	if _, err := s.db.Exec(alterSQL); err != nil {
 		return fmt.Errorf("failed to add %s.%s: %w", tableName, columnName, err)
 	}
 	return nil
@@ -1277,12 +1429,16 @@ func insertSchemaMetadataWithMode(exec sqlExecer, tableName, cid, peerID string,
 	if ignoreDuplicates {
 		insertMode = "INSERT OR IGNORE INTO"
 	}
-	result, err := exec.Exec(fmt.Sprintf(`
+	insertSQL := fmt.Sprintf(`
 		%s %s (
 			cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex, created_at
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, insertMode, tableName), cid, peerID, timestamp, streamPath, streamOffset, recordLength, signatureHex, createdAt)
+	`, insertMode, tableName)
+	if strings.HasPrefix(tableName, "sds_p_") {
+		insertSQL = flatsqldrv.WithoutJournal(insertSQL)
+	}
+	result, err := exec.Exec(insertSQL, cid, peerID, timestamp, streamPath, streamOffset, recordLength, signatureHex, createdAt)
 	if err != nil {
 		return 0, err
 	}
@@ -1448,16 +1604,46 @@ func (s *FlatSQLStore) ensureSourceSummaryForSchema(schemaName, tableName string
 	return nil
 }
 
+func (s *FlatSQLStore) rebuildSourceSummariesFromDurableState() error {
+	rows, err := s.db.Query(`
+		SELECT DISTINCT schema_name
+		FROM sdn_record_source_tags
+		ORDER BY schema_name
+	`)
+	if err != nil {
+		return fmt.Errorf("list source-summary schemas: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var schemaName string
+		if err := rows.Scan(&schemaName); err != nil {
+			return fmt.Errorf("scan source-summary schema: %w", err)
+		}
+		tableName, err := sds.SchemaNameToTable(schemaName)
+		if err != nil {
+			return fmt.Errorf("source-summary schema %q: %w", schemaName, err)
+		}
+		if err := s.rebuildSourceSummaryForSchema(schemaName, tableName); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate source-summary schemas: %w", err)
+	}
+	return nil
+}
+
 func (s *FlatSQLStore) rebuildSourceSummaryForSchema(schemaName, tableName string) error {
 	// WS7.3d: record rows live in the (producer, standard) tables (plus the
 	// legacy table on pre-flip databases) — join through the union read source.
 	if rs, rsErr := s.recordReadSource(schemaName); rsErr == nil {
 		tableName = rs
 	}
-	if _, err := s.db.Exec(`DELETE FROM sdn_record_source_summary WHERE schema_name = ?`, schemaName); err != nil {
+	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_source_summary WHERE schema_name = ?`), schemaName); err != nil {
 		return fmt.Errorf("clear source summary for %s: %w", schemaName, err)
 	}
-	if _, err := s.db.Exec(fmt.Sprintf(`
+	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`
 		INSERT INTO sdn_record_source_summary (
 			schema_name, provider_id, source_name, batch_id, producer_peer_id,
 			producer_public_key, record_count, total_bytes, max_rowid, updated_at
@@ -1478,7 +1664,7 @@ func (s *FlatSQLStore) rebuildSourceSummaryForSchema(schemaName, tableName strin
 		WHERE tags.schema_name = ?
 		GROUP BY tags.schema_name, tags.provider_id, tags.source_name, COALESCE(tags.batch_id, ''),
 		         COALESCE(tags.producer_peer_id, ''), COALESCE(tags.producer_public_key, '')
-	`, tableName), schemaName); err != nil {
+	`, tableName)), schemaName); err != nil {
 		return fmt.Errorf("rebuild source summary for %s: %w", schemaName, err)
 	}
 	return nil
@@ -1489,16 +1675,16 @@ func (s *FlatSQLStore) rebuildSourceSummaryForSourceBatch(schemaName, tableName,
 	if rs, rsErr := s.recordReadSource(schemaName); rsErr == nil {
 		tableName = rs
 	}
-	if _, err := s.db.Exec(`
+	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
 		DELETE FROM sdn_record_source_summary
 		WHERE schema_name = ?
 		  AND provider_id = ?
 		  AND source_name = ?
 		  AND batch_id = ?
-	`, schemaName, providerID, sourceName, batchID); err != nil {
+	`), schemaName, providerID, sourceName, batchID); err != nil {
 		return fmt.Errorf("clear source summary for %s/%s/%s/%s: %w", schemaName, providerID, sourceName, batchID, err)
 	}
-	if _, err := s.db.Exec(fmt.Sprintf(`
+	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`
 		INSERT INTO sdn_record_source_summary (
 			schema_name, provider_id, source_name, batch_id, producer_peer_id,
 			producer_public_key, record_count, total_bytes, max_rowid, updated_at
@@ -1522,7 +1708,7 @@ func (s *FlatSQLStore) rebuildSourceSummaryForSourceBatch(schemaName, tableName,
 		  AND tags.batch_id = ?
 		GROUP BY tags.schema_name, tags.provider_id, tags.source_name, COALESCE(tags.batch_id, ''),
 		         COALESCE(tags.producer_peer_id, ''), COALESCE(tags.producer_public_key, '')
-	`, tableName), schemaName, providerID, sourceName, batchID); err != nil {
+	`, tableName)), schemaName, providerID, sourceName, batchID); err != nil {
 		return fmt.Errorf("rebuild source summary for %s/%s/%s/%s: %w", schemaName, providerID, sourceName, batchID, err)
 	}
 	return nil
@@ -1559,7 +1745,7 @@ func (s *FlatSQLStore) RefreshSourceBatchSummary(schemaName, providerID, sourceN
 
 func incrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, recordBytes, recordRowID int64) error {
 	tags = normalizeSourceTags(tags)
-	_, err := tx.Exec(`
+	_, err := tx.Exec(flatsqldrv.WithoutJournal(`
 		INSERT INTO sdn_record_source_summary (
 			schema_name, provider_id, source_name, batch_id, producer_peer_id,
 			producer_public_key, record_count, total_bytes, max_rowid, updated_at
@@ -1570,7 +1756,7 @@ func incrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, reco
 			total_bytes = total_bytes + excluded.total_bytes,
 			max_rowid = MAX(max_rowid, excluded.max_rowid),
 			updated_at = excluded.updated_at
-	`, schemaName, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ProducerPeerID, tags.ProducerPublicKey, recordBytes, recordRowID)
+	`), schemaName, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ProducerPeerID, tags.ProducerPublicKey, recordBytes, recordRowID)
 	if err != nil {
 		return fmt.Errorf("increment source summary: %w", err)
 	}
@@ -1579,7 +1765,7 @@ func incrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, reco
 
 func decrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, recordBytes, recordRowID int64) error {
 	tags = normalizeSourceTags(tags)
-	_, err := tx.Exec(`
+	_, err := tx.Exec(flatsqldrv.WithoutJournal(`
 		UPDATE sdn_record_source_summary
 		SET
 			record_count = CASE WHEN record_count > 0 THEN record_count - 1 ELSE 0 END,
@@ -1592,11 +1778,11 @@ func decrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, reco
 		  AND batch_id = ?
 		  AND producer_peer_id = ?
 		  AND producer_public_key = ?
-	`, recordBytes, recordBytes, recordRowID, schemaName, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ProducerPeerID, tags.ProducerPublicKey)
+	`), recordBytes, recordBytes, recordRowID, schemaName, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ProducerPeerID, tags.ProducerPublicKey)
 	if err != nil {
 		return fmt.Errorf("decrement source summary: %w", err)
 	}
-	if _, err := tx.Exec(`
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
 		DELETE FROM sdn_record_source_summary
 		WHERE schema_name = ?
 		  AND provider_id = ?
@@ -1605,7 +1791,7 @@ func decrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, reco
 		  AND producer_peer_id = ?
 		  AND producer_public_key = ?
 		  AND record_count <= 0
-	`, schemaName, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ProducerPeerID, tags.ProducerPublicKey); err != nil {
+	`), schemaName, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ProducerPeerID, tags.ProducerPublicKey); err != nil {
 		return fmt.Errorf("delete empty source summary: %w", err)
 	}
 	return nil
@@ -1692,6 +1878,13 @@ func (s *FlatSQLStore) storeOne(schemaName string, data []byte, peerID string, s
 	if err := s.upsertRecordIndex(schemaName, cid, now, data); err != nil {
 		// Do not fail writes if index extraction fails for a record.
 		log.Warnf("Failed to index %s record %s: %v", schemaName, cid[:16]+"...", err)
+	}
+	event, err := s.recordCatalogUpsertEvent(s.db, schemaName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now, data)
+	if err != nil {
+		return "", fmt.Errorf("record catalog event: %w", err)
+	}
+	if err := s.recordCatalog.Append(event); err != nil {
+		return "", fmt.Errorf("append record catalog event: %w", err)
 	}
 
 	// Engine-cache mirror (same contract as storeBatch): live ingest paths
@@ -1942,6 +2135,7 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 	// control transaction commits so a rollback never leaves phantom rows in
 	// the engine.
 	var enginePending []engineIngest
+	catalogEvents := make([]recordCatalogEvent, 0, len(records)*2)
 	for _, data := range records {
 		cid := computeCID(data)
 		var existing int
@@ -1963,11 +2157,21 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 			if err := upsertRecordIndexExec(tx, schemaName, cid, now, data); err != nil {
 				log.Warnf("Failed to index batch %s record %s: %v", schemaName, cid[:16]+"...", err)
 			}
+			event, err := s.recordCatalogUpsertEvent(tx, schemaName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now, data)
+			if err != nil {
+				return inserted, fmt.Errorf("record catalog event for %s record %s: %w", schemaName, cid, err)
+			}
+			catalogEvents = append(catalogEvents, event)
 			inserted++
 			if tags != nil {
 				if err := insertNewSourceTagsTx(tx, schemaName, cid, *tags, recordLength, rowID); err != nil {
 					return inserted, err
 				}
+				tagEvent, err := recordCatalogTagUpsertEvent(tx, schemaName, cid, *tags)
+				if err != nil {
+					return inserted, fmt.Errorf("record catalog source tag event for %s record %s: %w", schemaName, cid, err)
+				}
+				catalogEvents = append(catalogEvents, tagEvent)
 			}
 			if schemaName == engineOMMSchemaName {
 				enginePending = append(enginePending, engineIngest{data: data, source: engineSourceName(tags)})
@@ -1980,6 +2184,11 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 			if err := upsertSourceTagsTx(tx, readSource, schemaName, cid, *tags, int64(len(data))); err != nil {
 				return inserted, err
 			}
+			tagEvent, err := recordCatalogTagUpsertEvent(tx, schemaName, cid, *tags)
+			if err != nil {
+				return inserted, fmt.Errorf("record catalog source tag event for %s record %s: %w", schemaName, cid, err)
+			}
+			catalogEvents = append(catalogEvents, tagEvent)
 		}
 	}
 	if err := appender.Close(); err != nil {
@@ -1989,6 +2198,9 @@ func (s *FlatSQLStore) storeBatchChunk(schemaName string, records [][]byte, peer
 		return inserted, fmt.Errorf("commit batch store: %w", err)
 	}
 	committed = true
+	if err := s.recordCatalog.AppendAll(catalogEvents); err != nil {
+		return inserted, fmt.Errorf("append record catalog events: %w", err)
+	}
 	if len(enginePending) > 0 {
 		// Engine-cache mirror: failures never fail the write (control rows +
 		// stream files are the source of truth), but a trapped runtime does.
@@ -2027,8 +2239,15 @@ func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags)
 	if err := upsertSourceTagsTx(tx, readSource, schemaName, cid, tags, -1); err != nil {
 		return err
 	}
+	event, err := recordCatalogTagUpsertEvent(tx, schemaName, cid, tags)
+	if err != nil {
+		return fmt.Errorf("record catalog source tag event: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit source tag upsert: %w", err)
+	}
+	if err := s.recordCatalog.Append(event); err != nil {
+		return fmt.Errorf("append record catalog source tag event: %w", err)
 	}
 	return nil
 }
@@ -2042,13 +2261,13 @@ func insertNewSourceTagsTx(tx *sql.Tx, schemaName, cid string, tags SourceTags, 
 		return errors.New("cid is required")
 	}
 
-	if _, err := tx.Exec(`
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
 		INSERT INTO sdn_record_source_tags (
 			schema_name, cid, provider_id, source_name, source_url, batch_id,
 			content_key_id, producer_peer_id, producer_public_key
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, schemaName, cid, tags.ProviderID, tags.SourceName, tags.SourceURL, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey); err != nil {
+	`), schemaName, cid, tags.ProviderID, tags.SourceName, tags.SourceURL, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey); err != nil {
 		return fmt.Errorf("failed to insert source tags: %w", err)
 	}
 	if err := incrementSourceSummary(tx, schemaName, tags, recordBytes, recordRowID); err != nil {
@@ -2081,7 +2300,7 @@ func upsertSourceTagsTx(tx *sql.Tx, tableName, schemaName, cid string, tags Sour
 	`, schemaName, cid, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey).Scan(&existingSourceURL)
 	if err == nil {
 		if existingSourceURL != tags.SourceURL {
-			if _, err := tx.Exec(`
+			if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
 				UPDATE sdn_record_source_tags
 				SET source_url = ?
 				WHERE schema_name = ?
@@ -2092,7 +2311,7 @@ func upsertSourceTagsTx(tx *sql.Tx, tableName, schemaName, cid string, tags Sour
 				  AND content_key_id = ?
 				  AND producer_peer_id = ?
 				  AND producer_public_key = ?
-			`, tags.SourceURL, schemaName, cid, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey); err != nil {
+			`), tags.SourceURL, schemaName, cid, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey); err != nil {
 				return fmt.Errorf("update existing source tag URL: %w", err)
 			}
 		}
@@ -2114,13 +2333,13 @@ func upsertSourceTagsTx(tx *sql.Tx, tableName, schemaName, cid string, tags Sour
 		bytesTotal = storedBytes.Int64
 	}
 
-	_, err = tx.Exec(`
+	_, err = tx.Exec(flatsqldrv.WithoutJournal(`
 		INSERT INTO sdn_record_source_tags (
 			schema_name, cid, provider_id, source_name, source_url, batch_id,
 			content_key_id, producer_peer_id, producer_public_key
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, schemaName, cid, tags.ProviderID, tags.SourceName, tags.SourceURL, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey)
+	`), schemaName, cid, tags.ProviderID, tags.SourceName, tags.SourceURL, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey)
 	if err != nil {
 		return fmt.Errorf("failed to upsert source tags: %w", err)
 	}
@@ -2369,16 +2588,16 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 		  AND source_name = ?
 		  AND batch_id <> ?
 	`
-	if _, err := tx.Exec(`CREATE TEMP TABLE IF NOT EXISTS temp_sdn_reconcile_cids (cid TEXT PRIMARY KEY)`); err != nil {
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`CREATE TEMP TABLE IF NOT EXISTS temp_sdn_reconcile_cids (cid TEXT PRIMARY KEY)`)); err != nil {
 		return result, fmt.Errorf("create reconcile cid table: %w", err)
 	}
-	if _, err := tx.Exec(`DELETE FROM temp_sdn_reconcile_cids`); err != nil {
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`DELETE FROM temp_sdn_reconcile_cids`)); err != nil {
 		return result, fmt.Errorf("clear reconcile cid table: %w", err)
 	}
-	if _, err := tx.Exec(`INSERT OR IGNORE INTO temp_sdn_reconcile_cids (cid) `+cidSubquery, args...); err != nil {
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`INSERT OR IGNORE INTO temp_sdn_reconcile_cids (cid) `+cidSubquery), args...); err != nil {
 		return result, fmt.Errorf("stage source batch cids: %w", err)
 	}
-	if _, err := tx.Exec(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id <> ?`, args...); err != nil {
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id <> ?`), args...); err != nil {
 		return result, fmt.Errorf("delete source batch tags: %w", err)
 	}
 	// Delete orphaned records (staged cids with no surviving source tag) from
@@ -2401,14 +2620,14 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 				WHERE tags.schema_name = ? AND tags.cid = %s.cid
 			  )
 		`, tableName, tableName)
-		if _, err := tx.Exec(deleteRecordsSQL, result.SchemaName); err != nil {
+		if _, err := tx.Exec(flatsqldrv.WithoutJournal(deleteRecordsSQL), result.SchemaName); err != nil {
 			return result, fmt.Errorf("delete orphaned source batch records: %w", err)
 		}
 	}
 	s.deleteRoutedMirrorsWhere(tx, tableName,
 		`cid IN (SELECT cid FROM temp_sdn_reconcile_cids) AND cid NOT IN (SELECT cid FROM sdn_record_source_tags WHERE schema_name = ?)`,
 		result.SchemaName)
-	if _, err := tx.Exec(`
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`
 		DELETE FROM sdn_record_index
 		WHERE schema_name = ?
 		  AND cid IN (SELECT cid FROM temp_sdn_reconcile_cids)
@@ -2418,11 +2637,22 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 			WHERE tags.schema_name = sdn_record_index.schema_name
 			  AND tags.cid = sdn_record_index.cid
 		  )
-	`, result.SchemaName); err != nil {
+	`), result.SchemaName); err != nil {
 		return result, fmt.Errorf("delete orphaned source batch index rows: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return result, fmt.Errorf("commit source batch reconciliation: %w", err)
+	}
+	if err := s.recordCatalog.Append(recordCatalogEvent{
+		Kind:       recordCatalogEventSourceKeep,
+		SchemaName: result.SchemaName,
+		Tags: SourceTags{
+			ProviderID: result.ProviderID,
+			SourceName: result.SourceName,
+			BatchID:    result.KeepBatch,
+		},
+	}); err != nil {
+		return result, fmt.Errorf("append record catalog source keep event: %w", err)
 	}
 	if err := s.rebuildSourceSummaryForSchema(result.SchemaName, tableName); err != nil {
 		return result, err
@@ -2812,7 +3042,7 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 	// exists (pre-flip databases) and the (producer, standard) tables.
 	var affected int64
 	if legacyExists, exErr := s.tableExists(tableName); exErr == nil && legacyExists {
-		result, err := tx.Exec(fmt.Sprintf(`DELETE FROM %s WHERE cid = ?`, tableName), cid)
+		result, err := tx.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM %s WHERE cid = ?`, tableName)), cid)
 		if err != nil {
 			return fmt.Errorf("failed to delete: %w", err)
 		}
@@ -2824,7 +3054,7 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 			if pt.Standard != tableName {
 				continue
 			}
-			result, delErr := tx.Exec(fmt.Sprintf(`DELETE FROM %s WHERE cid = ?`, pt.TableName), cid)
+			result, delErr := tx.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM %s WHERE cid = ?`, pt.TableName)), cid)
 			if delErr != nil {
 				return fmt.Errorf("delete routed mirror %s: %w", pt.TableName, delErr)
 			}
@@ -2837,10 +3067,10 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 		return fmt.Errorf("not found: %s", cid)
 	}
 
-	if _, err := tx.Exec(`DELETE FROM sdn_record_index WHERE schema_name = ? AND cid = ?`, schemaName, cid); err != nil {
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_index WHERE schema_name = ? AND cid = ?`), schemaName, cid); err != nil {
 		log.Warnf("Failed to delete index row for %s/%s: %v", schemaName, cid, err)
 	}
-	if _, err := tx.Exec(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND cid = ?`, schemaName, cid); err != nil {
+	if _, err := tx.Exec(flatsqldrv.WithoutJournal(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND cid = ?`), schemaName, cid); err != nil {
 		log.Warnf("Failed to delete source tags for %s/%s: %v", schemaName, cid, err)
 	}
 	for _, tags := range deletedTags {
@@ -2849,7 +3079,13 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if err := s.recordCatalog.Append(recordCatalogEvent{Kind: recordCatalogEventRecordDelete, SchemaName: schemaName, CID: cid}); err != nil {
+		return fmt.Errorf("append record catalog delete event: %w", err)
+	}
+	return nil
 }
 
 // Count returns the number of records in a schema table.
@@ -2892,7 +3128,7 @@ func (s *FlatSQLStore) GarbageCollect(maxAge time.Duration) (int64, error) {
 		// Legacy table only on pre-flip databases; routed tables always swept.
 		var affected int64
 		if legacyExists, exErr := s.tableExists(tableName); exErr == nil && legacyExists {
-			result, err := s.db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE timestamp < ?`, tableName), cutoff)
+			result, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`DELETE FROM %s WHERE timestamp < ?`, tableName)), cutoff)
 			if err != nil {
 				log.Warnf("GC failed for %s: %v", tableName, err)
 				continue
@@ -2903,10 +3139,10 @@ func (s *FlatSQLStore) GarbageCollect(maxAge time.Duration) (int64, error) {
 		totalDeleted += affected
 
 		// Keep index table in sync with GC deletes.
-		if _, err := s.db.Exec(`
+		if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
 			DELETE FROM sdn_record_index
 			WHERE schema_name = ? AND source_timestamp < ?
-		`, schemaName, cutoff); err != nil {
+		`), schemaName, cutoff); err != nil {
 			log.Warnf("GC index cleanup failed for %s: %v", schemaName, err)
 		}
 		if affected > 0 {
@@ -2915,12 +3151,15 @@ func (s *FlatSQLStore) GarbageCollect(maxAge time.Duration) (int64, error) {
 				log.Warnf("GC source tag cleanup read source for %s: %v", schemaName, rsErr)
 				continue
 			}
-			if _, err := s.db.Exec(fmt.Sprintf(`
+			if _, err := s.db.Exec(flatsqldrv.WithoutJournal(fmt.Sprintf(`
 				DELETE FROM sdn_record_source_tags
 				WHERE schema_name = ?
 				  AND cid NOT IN (SELECT cid FROM %s)
-			`, readSource), schemaName); err != nil {
+			`, readSource)), schemaName); err != nil {
 				log.Warnf("GC source tag cleanup failed for %s: %v", schemaName, err)
+			}
+			if err := s.recordCatalog.Append(recordCatalogEvent{Kind: recordCatalogEventGCOlderThan, SchemaName: schemaName, CutoffUnix: cutoff}); err != nil {
+				return totalDeleted, fmt.Errorf("append record catalog GC event: %w", err)
 			}
 			if err := s.rebuildSourceSummaryForSchema(schemaName, tableName); err != nil {
 				log.Warnf("GC source summary rebuild failed for %s: %v", schemaName, err)
@@ -2950,6 +3189,12 @@ func (s *FlatSQLStore) Close() error {
 			firstErr = err
 		}
 		s.journal = nil
+	}
+	if s.recordCatalog != nil {
+		if err := s.recordCatalog.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		s.recordCatalog = nil
 	}
 	if s.engineDB != nil {
 		s.engineDB.Destroy()
@@ -5129,7 +5374,7 @@ func upsertRecordIndexExec(exec sqlExecer, schemaName, cid string, sourceTimesta
 		day = fields.epochDay
 	}
 
-	_, err = exec.Exec(`
+	_, err = exec.Exec(flatsqldrv.WithoutJournal(`
 		INSERT INTO sdn_record_index (
 			schema_name, cid, norad_cat_id, entity_id, object_type, ops_status_code, epoch_unix, epoch_day, source_timestamp
 		)
@@ -5142,7 +5387,7 @@ func upsertRecordIndexExec(exec sqlExecer, schemaName, cid string, sourceTimesta
 			epoch_unix = excluded.epoch_unix,
 			epoch_day = excluded.epoch_day,
 			source_timestamp = excluded.source_timestamp
-	`, schemaName, cid, norad, entity, objectType, opsStatusCode, epoch, day, sourceTimestamp)
+	`), schemaName, cid, norad, entity, objectType, opsStatusCode, epoch, day, sourceTimestamp)
 	if err != nil {
 		return fmt.Errorf("failed to upsert index row: %w", err)
 	}

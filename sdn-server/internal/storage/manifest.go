@@ -678,6 +678,7 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 
 	imported := 0
 	now := time.Now().Unix()
+	catalogEvents := make([]recordCatalogEvent, 0, len(records)*2)
 	for _, record := range records {
 		data, err := readRecord(record)
 		if err != nil {
@@ -709,11 +710,21 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 			if err := upsertRecordIndexExec(tx, index.SchemaName, record.CID, now, data); err != nil {
 				log.Warnf("Failed to index imported %s record %s: %v", index.SchemaName, record.CID[:16]+"...", err)
 			}
+			event, err := s.recordCatalogUpsertEvent(tx, index.SchemaName, record.CID, strings.TrimSpace(providerPeerID), now, streamPath, streamOffset, recordLength, nil, now, data)
+			if err != nil {
+				return imported, fmt.Errorf("record catalog event for imported %s record %s: %w", index.SchemaName, record.CID, err)
+			}
+			catalogEvents = append(catalogEvents, event)
 			imported++
 			if strings.TrimSpace(tags.ProviderID) != "" && strings.TrimSpace(tags.SourceName) != "" {
 				if err := insertNewSourceTagsTx(tx, index.SchemaName, record.CID, tags, recordLength, rowID); err != nil {
 					return imported, err
 				}
+				tagEvent, err := recordCatalogTagUpsertEvent(tx, index.SchemaName, record.CID, tags)
+				if err != nil {
+					return imported, fmt.Errorf("record catalog source tag event for imported %s record %s: %w", index.SchemaName, record.CID, err)
+				}
+				catalogEvents = append(catalogEvents, tagEvent)
 			}
 		default:
 			return imported, fmt.Errorf("check imported %s record %s: %w", index.SchemaName, record.CID, err)
@@ -723,6 +734,11 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 			if err := upsertSourceTagsTx(tx, readSource, index.SchemaName, record.CID, tags, record.Length); err != nil {
 				return imported, err
 			}
+			tagEvent, err := recordCatalogTagUpsertEvent(tx, index.SchemaName, record.CID, tags)
+			if err != nil {
+				return imported, fmt.Errorf("record catalog source tag event for imported %s record %s: %w", index.SchemaName, record.CID, err)
+			}
+			catalogEvents = append(catalogEvents, tagEvent)
 		}
 	}
 	if err := appender.Close(); err != nil {
@@ -732,6 +748,9 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 		return imported, fmt.Errorf("commit dataset shard import: %w", err)
 	}
 	committed = true
+	if err := s.recordCatalog.AppendAll(catalogEvents); err != nil {
+		return imported, fmt.Errorf("append record catalog events: %w", err)
+	}
 	return imported, nil
 }
 

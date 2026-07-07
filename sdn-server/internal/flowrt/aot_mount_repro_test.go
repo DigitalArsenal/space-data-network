@@ -63,10 +63,11 @@ func TestAOTMountRepro(t *testing.T) {
 	mounted, err := RegisterFlowMounts(mux,
 		[]config.FlowMount{{Path: "/test/data/", Flow: dist, Pool: 1, MemoryPages: 2048}},
 		FlowMountDeps{
-			CapRegistry: reg,
-			NodeCtx:     &modulert.NodeContext{},
-			AOTCacheDir: t.TempDir(),
-			EngineLink:  store,
+			CapRegistry:      reg,
+			NodeCtx:          &modulert.NodeContext{},
+			AOTCacheDir:      t.TempDir(),
+			AOTCompileOnMiss: true,
+			EngineLink:       store,
 		})
 	if err != nil {
 		t.Fatalf("RegisterFlowMounts: %v", err)

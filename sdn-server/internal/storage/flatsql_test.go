@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -2085,6 +2086,210 @@ func TestFlatSQLStoreRefreshSourceBatchSummaryRepairsStaleCount(t *testing.T) {
 	}
 	if totalBytes <= 0 || totalBytes == 99999 {
 		t.Fatalf("total_bytes = %d, want repaired record byte count", totalBytes)
+	}
+}
+
+func TestFlatSQLStoreRebuildsSourceSummaryWithoutDurableSummaryJournal(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-derived-summary-journal-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "current-batch", ContentKeyID: "public"}
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	if _, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().WithNoradCatID(25544).Build(), "provider", nil, tags); err != nil {
+		t.Fatalf("store source-tagged record: %v", err)
+	}
+	var liveCount int64
+	if err := store.db.QueryRow(`
+		SELECT record_count
+		FROM sdn_record_source_summary
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
+	`, "OMM.fbs", tags.ProviderID, tags.SourceName, tags.BatchID).Scan(&liveCount); err != nil {
+		t.Fatalf("query live source summary: %v", err)
+	}
+	if liveCount != 1 {
+		t.Fatalf("live record_count = %d, want 1", liveCount)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	journalBytes, err := os.ReadFile(filepath.Join(tmpDir, controlJournalFileName))
+	if err != nil {
+		t.Fatalf("read control journal: %v", err)
+	}
+	if bytes.Contains(journalBytes, []byte("sdn_record_source_summary")) {
+		t.Fatal("derived source summary SQL was written to the durable control journal")
+	}
+
+	reopened, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer reopened.Close()
+	var rebuiltCount int64
+	if err := reopened.db.QueryRow(`
+		SELECT record_count
+		FROM sdn_record_source_summary
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
+	`, "OMM.fbs", tags.ProviderID, tags.SourceName, tags.BatchID).Scan(&rebuiltCount); err != nil {
+		t.Fatalf("query rebuilt source summary: %v", err)
+	}
+	if rebuiltCount != 1 {
+		t.Fatalf("rebuilt record_count = %d, want 1", rebuiltCount)
+	}
+}
+
+func TestFlatSQLStoreDeferredBootRebuildsKeepStreamBackedRawRecordsAvailable(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-deferred-boot-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "current-batch", ContentKeyID: "public"}
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	cid, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().WithNoradCatID(25544).Build(), "provider", nil, tags)
+	if err != nil {
+		t.Fatalf("store source-tagged record: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	reopened, err := NewFlatSQLStore(tmpDir, validator, WithDeferredBootRebuilds())
+	if err != nil {
+		t.Fatalf("reopen with deferred boot rebuilds: %v", err)
+	}
+	defer reopened.Close()
+	if count, err := reopened.EngineRecordCount("OMM.fbs"); err != nil || count != 0 {
+		t.Fatalf("deferred engine count = %d err=%v, want 0 nil", count, err)
+	}
+	record, err := reopened.GetRawRecord("OMM.fbs", cid)
+	if err != nil {
+		t.Fatalf("GetRawRecord after deferred reopen: %v", err)
+	}
+	if len(record.Data) == 0 {
+		t.Fatal("deferred reopen returned empty stream-backed record data")
+	}
+	raw, err := reopened.QueryRawRecords(RawRecordQuery{SchemaName: "OMM.fbs", Limit: 10})
+	if err != nil {
+		t.Fatalf("QueryRawRecords after deferred reopen: %v", err)
+	}
+	if len(raw) != 1 {
+		t.Fatalf("QueryRawRecords returned %d records, want 1", len(raw))
+	}
+}
+
+func TestFlatSQLStoreRecordCatalogUsesCompactMetadataJournal(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-record-catalog-journal-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	tags := SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "current-batch",
+		ContentKeyID: "public",
+	}
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	firstCID, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build(), "provider", nil, tags)
+	if err != nil {
+		t.Fatalf("store first source-tagged record: %v", err)
+	}
+	secondCID, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK").Build(), "provider", nil, tags)
+	if err != nil {
+		t.Fatalf("store second source-tagged record: %v", err)
+	}
+	liveHead, err := store.RawRecordHead(RawRecordQuery{SchemaName: "OMM.fbs", ProviderID: tags.ProviderID, SourceName: tags.SourceName})
+	if err != nil {
+		t.Fatalf("live RawRecordHead: %v", err)
+	}
+	if liveHead.MaxRowID <= 0 {
+		t.Fatalf("live MaxRowID = %d, want populated cursor head", liveHead.MaxRowID)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	controlBytes, err := os.ReadFile(filepath.Join(tmpDir, controlJournalFileName))
+	if err != nil {
+		t.Fatalf("read control journal: %v", err)
+	}
+	for _, marker := range [][]byte{
+		[]byte("INSERT INTO sdn_record_index"),
+		[]byte("INSERT INTO sdn_record_source_tags"),
+		[]byte("INSERT OR IGNORE INTO sds_p_"),
+	} {
+		if bytes.Contains(controlBytes, marker) {
+			t.Fatalf("record catalog SQL marker %q was written to %s", marker, controlJournalFileName)
+		}
+	}
+	catalogBytes, err := os.ReadFile(filepath.Join(tmpDir, recordCatalogJournalFileName))
+	if err != nil {
+		t.Fatalf("read compact record catalog journal: %v", err)
+	}
+	if len(catalogBytes) == 0 {
+		t.Fatal("compact record catalog journal is empty")
+	}
+	if bytes.Contains(catalogBytes, []byte("INSERT INTO")) || bytes.Contains(catalogBytes, []byte("sdn_record_index")) {
+		t.Fatal("compact record catalog journal contains SQL text")
+	}
+
+	reopened, err := NewFlatSQLStore(tmpDir, validator, WithDeferredBootRebuilds())
+	if err != nil {
+		t.Fatalf("reopen with deferred boot rebuilds: %v", err)
+	}
+	defer reopened.Close()
+	raw, err := reopened.QueryRawRecords(RawRecordQuery{SchemaName: "OMM.fbs", ProviderID: tags.ProviderID, SourceName: tags.SourceName, Limit: 10})
+	if err != nil {
+		t.Fatalf("QueryRawRecords after compact replay: %v", err)
+	}
+	if len(raw) != 2 {
+		t.Fatalf("QueryRawRecords returned %d records, want 2", len(raw))
+	}
+	replayedHead, err := reopened.RawRecordHead(RawRecordQuery{SchemaName: "OMM.fbs", ProviderID: tags.ProviderID, SourceName: tags.SourceName})
+	if err != nil {
+		t.Fatalf("replayed RawRecordHead: %v", err)
+	}
+	if replayedHead.MaxRowID != liveHead.MaxRowID {
+		t.Fatalf("replayed MaxRowID = %d, want live cursor head %d", replayedHead.MaxRowID, liveHead.MaxRowID)
+	}
+	if _, err := reopened.GetRawRecord("OMM.fbs", firstCID); err != nil {
+		t.Fatalf("first CID missing after compact replay: %v", err)
+	}
+	if gotTags, err := reopened.GetSourceTags("OMM.fbs", secondCID); err != nil {
+		t.Fatalf("second CID tags missing after compact replay: %v", err)
+	} else if gotTags.ProviderID != tags.ProviderID || gotTags.SourceName != tags.SourceName || gotTags.BatchID != tags.BatchID {
+		t.Fatalf("second CID tags = %+v, want provider/source/batch from compact replay", gotTags)
 	}
 }
 

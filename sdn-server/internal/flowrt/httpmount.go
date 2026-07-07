@@ -75,13 +75,24 @@ type FlowMountDeps struct {
 	// is called directly).
 	PoolSize int
 
-	// AOTCacheDir, when set, AOT-compiles the flow artifact through the same
-	// sha256-keyed disk cache the FlatSQL engine uses (flatsqlrt
-	// EnsureAOTArtifact). Compile failure falls back to interpretation.
+	// AOTCacheDir, when set, loads a precompiled flow artifact from the same
+	// sha256-keyed disk cache the FlatSQL engine uses. Cache miss falls back
+	// to interpretation unless AOTCompileOnMiss is explicitly enabled by a
+	// test or maintenance prewarm path. Daemon startup must not compile wasm
+	// artifacts.
 	AOTCacheDir string
+
+	// AOTCompileOnMiss allows tests/benchmarks/prewarm tooling to populate
+	// AOTCacheDir. Production daemon startup leaves this false.
+	AOTCompileOnMiss bool
 
 	// Store optionally resolves installed flow program IDs to artifacts.
 	Store *FlowStore
+
+	// ReadinessCheck optionally rejects a request before lazy load/body read.
+	// Daemons use this to return 503 while shared storage is hydrating instead
+	// of blocking browser requests behind startup catch-up work.
+	ReadinessCheck func() error
 
 	// EngineLink shares the host store's LIVE FlatSQL engine with
 	// engine-linked flow artifacts (loop C.7 direct linkage,
@@ -120,6 +131,11 @@ type MountedFlow struct {
 
 	pool chan *flowInstance
 
+	lazy     bool
+	flowRef  string
+	lazyDeps FlowMountDeps
+	lazyMu   sync.RWMutex
+
 	closeMu sync.Mutex
 	closed  bool
 }
@@ -133,14 +149,14 @@ type flowInstance struct {
 	bridge *modulert.HostBridge
 
 	// Direct linkage (nil/zero for bridge-mode artifacts):
-	linked      bool
-	engineEpoch uint64                // store engine epoch this instance was built against
-	engineRT    *flatsqlrt.Runtime    // the borrowed live engine
-	engineDB    *flatsqlrt.Database   // its database (lock + harvest surface)
-	refTablePtr uint32                // sdn_flatsql_link_ref_table (static)
-	refSlots    uint32                // sdn_flatsql_link_ref_slots
-	engineMu    sync.Mutex            // guards engineBodies (egress runs on the request goroutine)
-	engineBodies map[uint64][]byte    // exchange-scoped harvested bodies by token
+	linked       bool
+	engineEpoch  uint64              // store engine epoch this instance was built against
+	engineRT     *flatsqlrt.Runtime  // the borrowed live engine
+	engineDB     *flatsqlrt.Database // its database (lock + harvest surface)
+	refTablePtr  uint32              // sdn_flatsql_link_ref_table (static)
+	refSlots     uint32              // sdn_flatsql_link_ref_slots
+	engineMu     sync.Mutex          // guards engineBodies (egress runs on the request goroutine)
+	engineBodies map[uint64][]byte   // exchange-scoped harvested bodies by token
 }
 
 // takeEngineBody resolves (and removes) a harvested engine body-ref.
@@ -342,9 +358,9 @@ func loadFlowInstance(wasmBytes []byte, pages uint32, linked bool, linkShim []by
 }
 
 // LoadMountedFlow loads a compiled flow bundle as a pool of deps.PoolSize
-// identical instances (minimum 1). When deps.AOTCacheDir is set the artifact
-// is AOT-compiled through the shared cache first; on compile failure the
-// portable bytes are interpreted.
+// identical instances (minimum 1). When deps.AOTCacheDir is set the loader
+// uses an existing AOT artifact; only explicit AOTCompileOnMiss callers build
+// cache entries. Cache miss or compile failure falls back to interpretation.
 func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 	wasmPath, bundleDir, err := resolveFlowArtifact(flowRef, deps.Store)
 	if err != nil {
@@ -364,11 +380,18 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 	runBytes := wasmBytes
 	aot := false
 	if deps.AOTCacheDir != "" {
-		if compiled, aotErr := flatsqlrt.EnsureAOTArtifact(deps.AOTCacheDir, flowAOTCachePrefix, wasmBytes); aotErr == nil {
+		var compiled []byte
+		var aotErr error
+		if deps.AOTCompileOnMiss {
+			compiled, aotErr = flatsqlrt.EnsureAOTArtifact(deps.AOTCacheDir, flowAOTCachePrefix, wasmBytes)
+		} else {
+			compiled, aotErr = flatsqlrt.LoadAOTArtifact(deps.AOTCacheDir, flowAOTCachePrefix, wasmBytes)
+		}
+		if aotErr == nil {
 			runBytes = compiled
 			aot = true
 		} else {
-			log.Warnf("Flow mount %q: AOT compile failed, interpreting: %v", flowRef, aotErr)
+			log.Warnf("Flow mount %q: AOT artifact unavailable, interpreting: %v", flowRef, aotErr)
 		}
 	}
 
@@ -415,10 +438,17 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 	}
 	if linked && aot {
 		// Keep the whole linked chain AOT when forcing AOT (repro/upgrades).
-		if compiledShim, shimErr := flatsqlrt.EnsureAOTArtifact(deps.AOTCacheDir, "flatsqllink", flatsqlLinkShimWasm); shimErr == nil {
+		var compiledShim []byte
+		var shimErr error
+		if deps.AOTCompileOnMiss {
+			compiledShim, shimErr = flatsqlrt.EnsureAOTArtifact(deps.AOTCacheDir, "flatsqllink", flatsqlLinkShimWasm)
+		} else {
+			compiledShim, shimErr = flatsqlrt.LoadAOTArtifact(deps.AOTCacheDir, "flatsqllink", flatsqlLinkShimWasm)
+		}
+		if shimErr == nil {
 			linkShim = compiledShim
 		} else {
-			log.Warnf("Flow mount %q: link-shim AOT compile failed, interpreting shim: %v", flowRef, shimErr)
+			log.Warnf("Flow mount %q: link-shim AOT artifact unavailable, interpreting shim: %v", flowRef, shimErr)
 		}
 	}
 
@@ -500,6 +530,94 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 	return mf, nil
 }
 
+func newLazyMountedFlow(flowRef string, deps FlowMountDeps) *MountedFlow {
+	apiDoc, flowVersion := loadFlowAPIMetadata(flowRef, deps.Store)
+	return &MountedFlow{
+		lazy:        true,
+		flowRef:     flowRef,
+		lazyDeps:    deps,
+		apiDoc:      apiDoc,
+		flowVersion: flowVersion,
+	}
+}
+
+func loadFlowAPIMetadata(flowRef string, store *FlowStore) (*FlowAPIDoc, string) {
+	_, bundleDir, err := resolveFlowArtifact(flowRef, store)
+	if err != nil || bundleDir == "" {
+		return nil, ""
+	}
+	data, err := os.ReadFile(filepath.Join(bundleDir, "flow.json"))
+	if err != nil {
+		return nil, ""
+	}
+	return parseFlowAPIDoc(data)
+}
+
+func (mf *MountedFlow) ensureLoaded() error {
+	if mf == nil || !mf.lazy {
+		return nil
+	}
+
+	mf.lazyMu.RLock()
+	loaded := mf.pool != nil
+	mf.lazyMu.RUnlock()
+	if loaded {
+		return nil
+	}
+
+	mf.lazyMu.Lock()
+	defer mf.lazyMu.Unlock()
+	if mf.pool != nil {
+		return nil
+	}
+	mf.closeMu.Lock()
+	closed := mf.closed
+	mf.closeMu.Unlock()
+	if closed {
+		return errors.New("flow module is closed")
+	}
+
+	loadedFlow, err := LoadMountedFlow(mf.flowRef, mf.lazyDeps)
+	if err != nil {
+		return err
+	}
+	loadedFlow.mountPath = mf.mountPath
+
+	mf.manifest = loadedFlow.manifest
+	mf.aot = loadedFlow.aot
+	mf.linked = loadedFlow.linked
+	if loadedFlow.apiDoc != nil {
+		mf.apiDoc = loadedFlow.apiDoc
+	}
+	if loadedFlow.flowVersion != "" {
+		mf.flowVersion = loadedFlow.flowVersion
+	}
+	mf.triggerIndex = loadedFlow.triggerIndex
+	mf.triggerPortID = loadedFlow.triggerPortID
+	mf.egressKeys = loadedFlow.egressKeys
+	mf.runBytes = loadedFlow.runBytes
+	mf.pages = loadedFlow.pages
+	mf.deps = loadedFlow.deps
+	mf.linkShim = loadedFlow.linkShim
+	mf.pool = loadedFlow.pool
+	programID := ""
+	if mf.manifest != nil {
+		programID = mf.manifest.PluginID
+	}
+	log.Infof("Flow %q loaded lazily at %s (pool %d, aot %v, trigger %d, egress %v)",
+		programID, mf.mountPath, cap(mf.pool), mf.aot, mf.triggerIndex, mf.egressKeys)
+	return nil
+}
+
+func (mf *MountedFlow) readinessCheck() func() error {
+	mf.lazyMu.RLock()
+	defer mf.lazyMu.RUnlock()
+	if mf.pool != nil {
+		return mf.deps.ReadinessCheck
+	}
+	return mf.lazyDeps.ReadinessCheck
+}
+
 // acquire checks an idle instance out of the pool, waiting until one frees
 // up or the request context ends.
 func (mf *MountedFlow) acquire(ctx context.Context) (*flowInstance, error) {
@@ -530,6 +648,9 @@ func (mf *MountedFlow) release(inst *flowInstance) {
 // Close releases every pooled instance. Instances currently serving a
 // request are released when their request finishes.
 func (mf *MountedFlow) Close() {
+	mf.lazyMu.Lock()
+	defer mf.lazyMu.Unlock()
+
 	mf.closeMu.Lock()
 	if mf.closed {
 		mf.closeMu.Unlock()
@@ -537,6 +658,10 @@ func (mf *MountedFlow) Close() {
 	}
 	mf.closed = true
 	mf.closeMu.Unlock()
+
+	if mf.pool == nil {
+		return
+	}
 
 	for {
 		select {
@@ -552,6 +677,8 @@ func (mf *MountedFlow) Close() {
 
 // ProgramID returns the flow's plugin/program identifier.
 func (mf *MountedFlow) ProgramID() string {
+	mf.lazyMu.RLock()
+	defer mf.lazyMu.RUnlock()
 	if mf.manifest != nil {
 		return mf.manifest.PluginID
 	}
@@ -559,10 +686,21 @@ func (mf *MountedFlow) ProgramID() string {
 }
 
 // AOT reports whether the pooled instances execute an AOT-compiled artifact.
-func (mf *MountedFlow) AOT() bool { return mf.aot }
+func (mf *MountedFlow) AOT() bool {
+	mf.lazyMu.RLock()
+	defer mf.lazyMu.RUnlock()
+	return mf.aot
+}
 
 // PoolSize reports the mount's instance-pool capacity.
-func (mf *MountedFlow) PoolSize() int { return cap(mf.pool) }
+func (mf *MountedFlow) PoolSize() int {
+	mf.lazyMu.RLock()
+	defer mf.lazyMu.RUnlock()
+	if mf.pool != nil {
+		return cap(mf.pool)
+	}
+	return mf.lazyDeps.PoolSize
+}
 
 // htrPipe streams the flow's $HTR egress frames to the ResponseWriter
 // verbatim: the first frame carries status + headers + the first body bytes;
@@ -639,6 +777,21 @@ func (p *htrPipe) emit(_ context.Context, args *InvocationArgs) (*InvocationResu
 // egress verbatim. Each request runs on an instance checked out of the
 // mount's pool for the duration of the exchange.
 func (mf *MountedFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if check := mf.readinessCheck(); check != nil {
+		if err := check(); err != nil {
+			http.Error(w, fmt.Sprintf("flow unavailable: %v", err), http.StatusServiceUnavailable)
+			return
+		}
+	}
+
+	if err := mf.ensureLoaded(); err != nil {
+		if !errors.Is(err, ErrFlowNotInstalled) {
+			log.Warnf("Flow mount %q lazy load failed: %v", mf.mountPath, err)
+		}
+		http.Error(w, fmt.Sprintf("flow unavailable: %v", err), http.StatusServiceUnavailable)
+		return
+	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("read request body: %v", err), http.StatusBadRequest)
@@ -800,6 +953,44 @@ func RegisterFlowMounts(mux *http.ServeMux, mounts []config.FlowMount, deps Flow
 		mounted = append(mounted, mf)
 		log.Infof("Flow %q mounted at %s (pool %d, aot %v, trigger %d, egress %v)",
 			mf.ProgramID(), mount.Path, mf.PoolSize(), mf.AOT(), mf.triggerIndex, mf.egressKeys)
+	}
+	return mounted, nil
+}
+
+// RegisterLazyFlowMounts registers configured flow mount handlers without
+// instantiating their WASM modules. The first request to a mount loads the
+// existing compiled artifact and precompiled AOT cache entry when available;
+// daemon startup never compiles or rebuilds module artifacts.
+func RegisterLazyFlowMounts(mux *http.ServeMux, mounts []config.FlowMount, deps FlowMountDeps) ([]*MountedFlow, error) {
+	mounted := make([]*MountedFlow, 0, len(mounts))
+	fail := func(err error) ([]*MountedFlow, error) {
+		for _, mf := range mounted {
+			mf.Close()
+		}
+		return nil, err
+	}
+	for _, mount := range mounts {
+		if strings.TrimSpace(mount.Path) == "" || strings.TrimSpace(mount.Flow) == "" {
+			return fail(fmt.Errorf("flow mount requires both path and flow (got path=%q flow=%q)", mount.Path, mount.Flow))
+		}
+		mountDeps := deps
+		if mount.Pool > 0 {
+			mountDeps.PoolSize = mount.Pool
+		} else if mountDeps.PoolSize <= 0 {
+			mountDeps.PoolSize = DefaultMountPool
+		}
+		if mount.MemoryPages > 0 {
+			mountDeps.MaxMemoryPages = mount.MemoryPages
+		}
+		mf := newLazyMountedFlow(mount.Flow, mountDeps)
+		mf.mountPath = mount.Path
+		mux.Handle(mount.Path, mf)
+		if trimmed := strings.TrimSuffix(mount.Path, "/"); trimmed != "" && trimmed != mount.Path {
+			registerMountAlias(mux, trimmed, mf)
+		}
+		mounted = append(mounted, mf)
+		log.Infof("Flow %q lazy-mounted at %s (pool %d; artifact loads on first request)",
+			mount.Flow, mount.Path, mf.PoolSize())
 	}
 	return mounted, nil
 }
