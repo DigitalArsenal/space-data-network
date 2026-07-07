@@ -1628,6 +1628,12 @@ func (n *Node) materializeStoredDatasetPublicationPNMs(ctx context.Context, limi
 		}
 		if didMaterialize {
 			materialized++
+			// Pinned-dataset supersede (gateway loop G.4): catch-up
+			// materialization is a publish-import event like the live
+			// gossip/feed-head paths — a node that was offline during a
+			// publish must still evict the superseded pin when it catches
+			// up, not wait for the NEXT publication cycle.
+			n.scheduleDatasetSupersede(schema)
 		}
 	}
 	return materialized, firstErr
