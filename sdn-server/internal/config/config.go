@@ -56,6 +56,57 @@ type GatewayConfig struct {
 	// as before G.4. A pin for a peer that is not trusted never
 	// materializes, and /latest answers 503 with the newest PNM pointer.
 	Pin []GatewayPinEntry `yaml:"pin,omitempty"`
+
+	// Query tunes the sandboxed public query surface (/api/v1/query,
+	// gateway loop G.5). The caps are enforced IN-WASM by the FlatSQL
+	// engine per statement; zero values take the built-in defaults below —
+	// there is deliberately NO way to configure "unlimited".
+	Query GatewayQueryConfig `yaml:"query"`
+}
+
+// GatewayQueryConfig caps one sandboxed public query execution.
+type GatewayQueryConfig struct {
+	// TimeoutMs bounds statement execution (progress-handler deadline).
+	// Default 5000.
+	TimeoutMs int `yaml:"timeout_ms,omitempty"`
+	// MaxRows rejects (never truncates) results beyond this row count.
+	// Default 200000 — comfortably above a full-catalog per-object query.
+	MaxRows int64 `yaml:"max_rows,omitempty"`
+	// MaxBytes rejects results whose payload exceeds this byte budget.
+	// Default 134217728 (128 MiB).
+	MaxBytes int64 `yaml:"max_bytes,omitempty"`
+}
+
+// Built-in defaults for GatewayQueryConfig (also the floor semantics: a
+// zero/negative knob means "use the default", never "unlimited").
+const (
+	DefaultGatewayQueryTimeoutMs = 5000
+	DefaultGatewayQueryMaxRows   = 200000
+	DefaultGatewayQueryMaxBytes  = 128 << 20
+)
+
+// EffectiveTimeoutMs returns the configured statement timeout or the default.
+func (q GatewayQueryConfig) EffectiveTimeoutMs() int {
+	if q.TimeoutMs > 0 {
+		return q.TimeoutMs
+	}
+	return DefaultGatewayQueryTimeoutMs
+}
+
+// EffectiveMaxRows returns the configured row cap or the default.
+func (q GatewayQueryConfig) EffectiveMaxRows() int64 {
+	if q.MaxRows > 0 {
+		return q.MaxRows
+	}
+	return DefaultGatewayQueryMaxRows
+}
+
+// EffectiveMaxBytes returns the configured byte cap or the default.
+func (q GatewayQueryConfig) EffectiveMaxBytes() int64 {
+	if q.MaxBytes > 0 {
+		return q.MaxBytes
+	}
+	return DefaultGatewayQueryMaxBytes
 }
 
 // GatewayAnonymousConfig is the operator veto/extension for the anonymous

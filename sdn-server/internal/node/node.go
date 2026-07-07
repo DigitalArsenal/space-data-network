@@ -48,6 +48,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
+	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt/capabilities"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
@@ -727,6 +728,13 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 		storageFac := caps.NewStorageCapFactoryWithOptions(n.store, caps.StorageCapOptions{
 			RawRoot:          rawRoot,
 			MinFreeDiskBytes: minFreeDiskBytes,
+			// Sandboxed public query caps (gateway loop G.5) — config
+			// gateway.query with built-in defense defaults.
+			QueryCaps: flatsqlrt.SandboxCaps{
+				Timeout:  time.Duration(n.config.Gateway.Query.EffectiveTimeoutMs()) * time.Millisecond,
+				MaxRows:  uint64(n.config.Gateway.Query.EffectiveMaxRows()),
+				MaxBytes: uint64(n.config.Gateway.Query.EffectiveMaxBytes()),
+			},
 		})
 		reg.RegisterBridgeAware("storage_query", storageFac)
 		reg.RegisterBridgeAware("storage_write", storageFac)
