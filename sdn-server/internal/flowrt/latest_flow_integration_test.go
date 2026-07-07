@@ -11,6 +11,7 @@ package flowrt
 
 import (
 	"crypto/ed25519"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -25,18 +26,25 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
-// latestOMMStream builds a small aligned size-prefixed $OMM record stream —
-// the "published batch" fixture content.
+// latestOMMStream builds a "published batch" fixture with the LIVE shard
+// shape: STORED records are size-prefixed $OMM FlatBuffers (the ingest wire
+// form), and the shard wraps each in an OUTER stream frame — so shard
+// frames are double-prefixed ([u32 outer][u32 inner][buffer]). The fb path
+// serves these bytes verbatim; the json path unwraps the redundant outer
+// layer before omm-json.
 func latestOMMStream(t *testing.T) []byte {
 	t.Helper()
 	stream := make([]byte, 0, 2048)
+	var prefix [4]byte
 	for i, name := range []string{"ISS (ZARYA)", "NOAA 19", "HST"} {
 		record := sds.NewOMMBuilder().
 			WithObjectName(name).
 			WithNoradCatID(uint32(25544 + i)).
 			WithMeanMotion(15.49 - float64(i)).
 			WithEpochTimestamp(1783300000 + float64(i)*100).
-			Build() // already size-prefixed
+			Build() // size-prefixed (the stored form)
+		binary.LittleEndian.PutUint32(prefix[:], uint32(len(record)))
+		stream = append(stream, prefix[:]...)
 		stream = append(stream, record...)
 	}
 	return stream
