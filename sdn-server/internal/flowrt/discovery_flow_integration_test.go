@@ -302,7 +302,7 @@ func TestHTTPMountedDiscoveryFlows(t *testing.T) {
 		if epm == nil {
 			t.Fatalf("celestrak epm missing")
 		}
-		names, _ := epm["alternate_names"].([]interface{})
+		names, _ := epm["ALTERNATE_NAMES"].([]interface{})
 		if len(names) != 1 || names[0] != "celestrak.eth" {
 			t.Fatalf("celestrak alternate_names = %v", names)
 		}

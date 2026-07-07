@@ -242,20 +242,20 @@ func TestHTTPMountedPNMHistoryFlow(t *testing.T) {
 			entry["publisher_key_source"] != "epm-directory" {
 			t.Fatalf("publisher key fields: %v", entry)
 		}
-		if entry["cid"] != "bafy-omm-000" {
-			t.Fatalf("newest cid: %v", entry["cid"])
+		if entry["CID"] != "bafy-omm-000" {
+			t.Fatalf("newest CID: %v", entry["CID"])
 		}
 		// The json "signature" must be the PNM's Ed25519 signature hex —
 		// regression guard for the key-vs-value collision (Go marshals
 		// entry keys alphabetically, so "attribution":"signature" precedes
 		// the "signature" key; a substring key match served the cid here).
-		sigHex, _ := entry["signature"].(string)
+		sigHex, _ := entry["SIGNATURE"].(string)
 		sig, err := hex.DecodeString(sigHex)
 		if err != nil || len(sig) != ed25519.SignatureSize {
 			t.Fatalf("json signature is not a 64-byte hex signature: %q", sigHex)
 		}
 		if !ed25519.Verify(celestrakPub,
-			pnmPublicationSignaturePayload(entry["cid"].(string), entry["file_id"].(string)), sig) {
+			pnmPublicationSignaturePayload(entry["CID"].(string), entry["FILE_ID"].(string)), sig) {
 			t.Fatalf("json signature does not verify: %v", entry)
 		}
 
@@ -272,7 +272,7 @@ func TestHTTPMountedPNMHistoryFlow(t *testing.T) {
 			t.Fatalf("bare array: %v", err)
 		}
 		for _, record := range records {
-			cid, _ := record["cid"].(string)
+			cid, _ := record["CID"].(string)
 			if cid == "bafy-impostor" || cid == "bafy-unsigned" {
 				t.Fatalf("unattributable frame served: %v", record)
 			}

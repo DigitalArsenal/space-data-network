@@ -254,8 +254,8 @@ func TestHTTPMountedDataRetrievalFlow(t *testing.T) {
 			t.Fatalf("json body must be a bare top-level array, got %q...", body[:min(len(body), 40)])
 		}
 		var records []struct {
-			NoradCatID uint32 `json:"norad_cat_id"`
-			ObjectName string `json:"object_name"`
+			NoradCatID uint32 `json:"NORAD_CAT_ID"`
+			ObjectName string `json:"OBJECT_NAME"`
 		}
 		if err := json.Unmarshal(body, &records); err != nil {
 			t.Fatalf("json body: %v (%q)", err, body)

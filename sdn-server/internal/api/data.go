@@ -704,20 +704,26 @@ func epochMatchRow(schemaName string, match storage.EpochRecordMatch, includeDat
 		"delta_seconds":   match.DeltaSeconds,
 		"match_type":      match.MatchType,
 	}
+	// HARD RULE (user 2026-07-06, json-schema-capitalization-rule): JSON
+	// properties that render SDS-record fields carry the schema IDL names
+	// EXACTLY (schema/OMM/main.fbs, schema/MPE/main.fbs) — never lowercased.
+	// API-synthesized envelope fields (entity_key, match_quality, cid, …)
+	// stay lowercase snake_case: the case distinction separates schema data
+	// from API metadata.
 	switch schemaName {
 	case "OMM.fbs":
 		if omm, err := decodeOMM(match.Record.Data); err == nil {
-			row["norad_cat_id"] = omm.NORAD_CAT_ID()
-			row["object_name"] = string(omm.OBJECT_NAME())
-			row["object_id"] = string(omm.OBJECT_ID())
-			row["epoch"] = string(omm.EPOCH())
-			row["mean_motion"] = omm.MEAN_MOTION()
+			row["NORAD_CAT_ID"] = omm.NORAD_CAT_ID()
+			row["OBJECT_NAME"] = string(omm.OBJECT_NAME())
+			row["OBJECT_ID"] = string(omm.OBJECT_ID())
+			row["EPOCH"] = string(omm.EPOCH())
+			row["MEAN_MOTION"] = omm.MEAN_MOTION()
 		}
 	case "MPE.fbs":
 		if mpe, err := decodeMPE(match.Record.Data); err == nil {
-			row["entity_id"] = strings.TrimSpace(string(mpe.ENTITY_ID()))
-			row["epoch_unix"] = int64(mpe.EPOCH())
-			row["mean_motion"] = mpe.MEAN_MOTION()
+			row["ENTITY_ID"] = strings.TrimSpace(string(mpe.ENTITY_ID()))
+			row["EPOCH"] = mpe.EPOCH()
+			row["MEAN_MOTION"] = mpe.MEAN_MOTION()
 		}
 	}
 	return row

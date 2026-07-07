@@ -633,8 +633,8 @@ func TestP2PLatestDatasetUnpinnedCarriesPNMPointer(t *testing.T) {
 		t.Fatalf("segments = %d, want 0 (no silent serving)", len(segments))
 	}
 	pnm := result["pnm"].(map[string]interface{})
-	if pnm["cid"] != "bafy-manifest-new" || pnm["batch_id"] != "batch-new" ||
-		pnm["publish_timestamp"] != "2026-07-06T06:00:00Z" ||
+	if pnm["CID"] != "bafy-manifest-new" || pnm["batch_id"] != "batch-new" ||
+		pnm["PUBLISH_TIMESTAMP"] != "2026-07-06T06:00:00Z" ||
 		pnm["signature_verified"] != true || pnm["attribution"] != "signature" {
 		t.Fatalf("pnm pointer: %v", pnm)
 	}
@@ -695,7 +695,7 @@ func TestP2PLatestDatasetPinnedNotMaterialized(t *testing.T) {
 	if result["known"] != true || result["pinned"] != true || result["reason"] != "not-materialized" {
 		t.Fatalf("not-materialized result: %v", result)
 	}
-	if result["pnm"].(map[string]interface{})["cid"] != "bafy-manifest-new" {
+	if result["pnm"].(map[string]interface{})["CID"] != "bafy-manifest-new" {
 		t.Fatalf("pnm pointer: %v", result["pnm"])
 	}
 	if len(segments) != 0 {

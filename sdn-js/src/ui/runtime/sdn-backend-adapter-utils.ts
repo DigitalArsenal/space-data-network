@@ -101,10 +101,10 @@ export function normalizePeerPayload(payload: unknown): ObservedSdnPeer[] {
 export function normalizeObjectPayload(payload: unknown): LocalObjectSummary[] {
   return recordsFromPayload(payload).map((record, index) => {
     const cid = readString(record, 'cid', 'CID');
-    const id = readString(record, 'id', 'object_id', 'objectId') ?? cid ?? `object-${index + 1}`;
+    const id = readString(record, 'id', 'OBJECT_ID', 'object_id', 'objectId') ?? cid ?? `object-${index + 1}`;
     return {
       id,
-      label: readString(record, 'label', 'name', 'object_name', 'objectName') ?? id,
+      label: readString(record, 'label', 'name', 'OBJECT_NAME', 'object_name', 'objectName') ?? id,
       schema: readString(record, 'schema', 'schema_name', 'schemaName') ?? null,
       source: readString(record, 'source', 'source_name', 'sourceName', 'source_provider_id') ?? null,
       sizeBytes: readNumber(record, 'size_bytes', 'sizeBytes', 'size') ?? null,

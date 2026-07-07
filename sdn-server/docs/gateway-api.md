@@ -70,6 +70,26 @@ Two encodings, one surface — the SAME records, the SAME metadata:
   `records` wrapper keys: JSON is a presentation adapter over the same
   stream, so its body is the record list and nothing else.
 
+**Property-name capitalization — HARD RULE** (user 2026-07-06, memory
+`json-schema-capitalization-rule`): every JSON rendering of an SDS record,
+anywhere in the stack, uses property names EXACTLY matching the
+spacedatastandards.org IDL / JSON Schema capitalization — e.g. OMM fields
+are `NORAD_CAT_ID`, `OBJECT_NAME`, `EPOCH`, `MEAN_MOTION`, `BSTAR`, …;
+PNM fields are `FILE_ID`, `FILE_NAME`, `CID`, `PUBLISH_TIMESTAMP`,
+`SIGNATURE`, `SIGNATURE_TYPE`; EPM fields are `DN`, `LEGAL_NAME`,
+`ALTERNATE_NAMES`, `MULTIFORMAT_ADDRESS`, `ENTITY_TYPE`. Never lowercased.
+The authoritative source is `spacedatastandards.org/schema/<TYPE>/main.fbs`
+(and `lib/json/<TYPE>/*.schema.json`); emitters derive keys from the
+generated accessors where possible, and suites cross-check emitted keys
+against the IDL so drift fails the build. API-synthesized envelope fields
+that are NOT schema fields (`signature_verified`, `attribution`,
+`publisher_key`, `peer_id`, `standard`, `schema`, `batch_id`, `error`, …)
+STAY lowercase `snake_case` — the case distinction is the contract that
+separates schema data from API metadata. Internal host↔module hostcall
+envelopes are wire protocol, not public renderings; only the public JSON
+surface (and anything spliced into it verbatim, like the latest-dataset
+`pnm` pointer) carries the schema-exact names.
+
 ## 3. Header conventions (metadata never rides in the body)
 
 On **both** encodings, every record-stream response carries:

@@ -209,7 +209,7 @@ func TestHTTPMountedLatestDatasetFlow(t *testing.T) {
 		if err := json.Unmarshal(body, &records); err != nil {
 			t.Fatalf("bare array: %v (%q)", err, body[:min(len(body), 120)])
 		}
-		if len(records) != 3 || records[0]["object_name"] != "ISS (ZARYA)" {
+		if len(records) != 3 || records[0]["OBJECT_NAME"] != "ISS (ZARYA)" {
 			t.Fatalf("records: %v", records)
 		}
 		if rc := resp.Header.Get("X-Sdn-Record-Count"); rc != "3" {
@@ -225,10 +225,10 @@ func TestHTTPMountedLatestDatasetFlow(t *testing.T) {
 		var payload struct {
 			Error string `json:"error"`
 			PNM   struct {
-				CID               string `json:"cid"`
-				FileID            string `json:"file_id"`
+				CID               string `json:"CID"`
+				FileID            string `json:"FILE_ID"`
 				BatchID           string `json:"batch_id"`
-				PublishTimestamp  string `json:"publish_timestamp"`
+				PublishTimestamp  string `json:"PUBLISH_TIMESTAMP"`
 				SignatureVerified bool   `json:"signature_verified"`
 				Attribution       string `json:"attribution"`
 			} `json:"pnm"`
