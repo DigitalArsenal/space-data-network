@@ -7,7 +7,7 @@ import { serviceCapabilities } from "@libp2p/interface";
 import { webSockets } from "@libp2p/websockets";
 import { all as wsFilters } from "@libp2p/websockets/filters";
 import { webTransport } from "@libp2p/webtransport";
-import { webRTC } from "@spacedatanetwork/libp2p-webrtc-v1";
+import { webRTC, webRTCDirect } from "@spacedatanetwork/libp2p-webrtc-v1";
 import { circuitRelayTransport } from "@libp2p/circuit-relay-v2";
 import { bootstrap } from "@libp2p/bootstrap";
 import { identify } from "@libp2p/identify";
@@ -94,6 +94,10 @@ export interface SDNConfig {
   includeIPFSBootstrap?: boolean;
   /** Enable libp2p Identify service. Disabled by default for lean browser module delivery. */
   enableIdentify?: boolean;
+  /** Enable libp2p DHT/content routing. Disable for peer-addressed browser nodes. */
+  enableDHT?: boolean;
+  /** Let libp2p auto-dial discovered peers to satisfy minConnections. */
+  enableAutoDial?: boolean;
   ipfsApiBaseUrl?: string;
   ipfsGatewayBaseUrl?: string;
   ipfsFetchTimeoutMs?: number;
@@ -229,10 +233,12 @@ export class SDNNode {
         allowPublishToZeroTopicPeers: true,
         emitSelf: false,
       }),
-      dht: kadDHT({
-        clientMode: true,
-      }),
     };
+    if (this.config.enableDHT !== false) {
+      services.dht = kadDHT({
+        clientMode: true,
+      });
+    }
     services.identify =
       this.config.enableIdentify === true
         ? identify()
@@ -242,6 +248,7 @@ export class SDNNode {
       transports: [
         webSockets({ filter: wsFilters }),
         webTransport(),
+        webRTCDirect() as unknown as ReturnType<typeof webTransport>,
         webRTC() as unknown as ReturnType<typeof webTransport>,
         circuitRelayTransport({
           discoverRelays: 100,
@@ -252,6 +259,11 @@ export class SDNNode {
       peerDiscovery: [bootstrap({ list: bootstrapList })],
       services,
     };
+    if (this.config.enableAutoDial === false) {
+      libp2pOpts.connectionManager = {
+        minConnections: 0,
+      };
+    }
 
     // If an HD wallet identity is provided, use its secp256k1 key for deterministic PeerID
     if (this.config.identity?.identityKey) {

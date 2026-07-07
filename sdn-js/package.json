@@ -76,6 +76,8 @@
     "@chainsafe/libp2p-gossipsub": "^13.0.0",
     "@chainsafe/libp2p-noise": "^15.0.0",
     "@chainsafe/libp2p-yamux": "^6.0.0",
+    "@helia/block-brokers": "^5.1.4",
+    "@helia/routers": "^5.0.3",
     "@helia/unixfs": "^7.1.0",
     "@libp2p/bootstrap": "^10.0.0",
     "@libp2p/circuit-relay-v2": "^1.0.0",

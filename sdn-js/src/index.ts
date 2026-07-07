@@ -6,7 +6,7 @@
 
 export * from './version-info.generated';
 export { SDNNode } from './node';
-export { createHeliaSDNNode } from './helia';
+export { createHeliaSDNNode, fetchCIDBytesFromHelia } from './helia';
 export type { HeliaSDNNode } from './helia';
 export type { SDNConfig, SDNNodeEvents } from './node';
 export { IPFS_BOOTSTRAP_PEERS, LEGACY_ID_EXCHANGE_PROTOCOL } from './node';

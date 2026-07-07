@@ -26,6 +26,18 @@ describe('edge-discovery', () => {
       const dnsRelays = DEFAULT_EDGE_RELAYS.filter((r) => r.startsWith('/dns4/'));
       expect(dnsRelays.length).toBeGreaterThan(0);
     });
+
+    it('bootstraps both public full nodes through browser-dialable WebRTC-direct addresses', () => {
+      const relays = DEFAULT_EDGE_RELAYS.join('\n');
+
+      expect(relays).toContain(
+        '/ip4/104.131.11.220/udp/4003/webrtc-direct/certhash/uEiDHMHA60lI3WloWOnksNqBZe8J7zUcxrIV_yB6E5NBMyw/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+      );
+      expect(relays).toContain(
+        '/ip4/167.172.219.213/udp/4003/webrtc-direct/certhash/uEiD8YU5I18BuOBAcE8z_3NFRoGnhu9dKdTjG7PAqVbAjEQ/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3',
+      );
+      expect(relays).not.toContain('/ip4/159.203.150.8/');
+    });
   });
 
   describe('REGIONAL_FALLBACK_RELAYS', () => {
