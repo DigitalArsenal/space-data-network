@@ -2198,6 +2198,12 @@ func loadInjectedFrontendIndex(indexPath string) ([]byte, error) {
 
 func makeFrontendSurfaceHandler(frontendHandler http.Handler, _ *auth.Handler, _ bool) http.Handler {
 	serve := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// SpaceAware UI routes are served from the artifact embedded in this
+		// binary (spaceaware_ui.go) — never from disk (packaging hard rule).
+		if isSpaceAwareUIPath(r.URL.Path) {
+			serveSpaceAwareUI(w, r)
+			return
+		}
 		frontendHandler.ServeHTTP(w, r)
 	})
 	return serve
