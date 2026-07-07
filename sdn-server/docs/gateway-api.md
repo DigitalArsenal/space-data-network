@@ -1,6 +1,6 @@
-# SDN Network Gateway API (Phase G design, loops G.1–G.4)
+# SDN Network Gateway API (Phase G design, loops G.1–G.5)
 
-Status: DESIGN + G.1–G.4 implementation record (2026-07-06).
+Status: DESIGN + G.1–G.5 implementation record (2026-07-06/07).
 Authority: user directives 2026-07-06 recorded in
 `SDN_FLATSQL_REWRITE_LOOP.md` §Phase G; architecture constraints in
 `ARCHITECTURE_FLATSQL_FIRST.md` (flows-only, FlatBuffer-first, isomorphic).
@@ -28,9 +28,10 @@ All gateway routes live under `/api/v1`. `{peerId}` is a libp2p peer ID;
 | `/api/v1/standards` | GET | Standards published across known peers, with publishers | **live** (standards-discovery flow) | G.2 |
 | `/api/v1/peers/{peerId}/pnm?limit=N` | GET | The peer's newest signed PNMs (default `limit=1`, clamp 100), VERIFIABLE provenance — stored `$PNM` frames verbatim, publisher-attributed by signature | **live** (pnm-history flow) | G.3 |
 | `/api/v1/peers/{peerId}/{standard}/latest` | GET | Provider's newest published dataset **batch** for the standard, served from this node's **opt-in** pin (or the node's own publications); unpinned/unmaterialized = honest 404/503 + PNM pointer | **live** (latest-dataset flow) | G.4 |
-| `/api/v1/query` | POST | Sandboxed public raw SELECT (read-only session, single statement, timeout, row/byte caps) | planned | G.5 |
+| `/api/v1/query` | GET | Queryable-surface listing (tables/views/columns + effective caps, enumerated live from the engine) | **live** (public-query flow) | G.5 |
+| `/api/v1/query` | POST | Sandboxed public raw SELECT (in-engine read-only sandbox: authorizer, single SELECT, statement timeout, row/byte caps) | **live** (public-query flow) | G.5 |
 | `/api/v1/data/omm/bulk` | GET | Per-object OMM epoch-profile stream (data-retrieval flow) | **live** — DELETED in G.6, superseded by `/{peerId}/omm/latest` | C.4 → G.6 |
-| `/api/v1/data/…/query` | POST | data-retrieval flow's internal SQL route | live (suffix-matched); superseded by `/api/v1/query` in G.5 | C.3c → G.5 |
+| `/api/v1/data/…/query` | POST | data-retrieval flow's internal SQL route (UNSANDBOXED, engine-linked) | live; **superseded for public use** by `/api/v1/query` (G.5) — retained as the auth-gated operator surface, see §11 | C.3c → G.5 |
 | `/api/v1/openapi.json` | GET | Generated OpenAPI 3.1 document | **live** (temporary native, §6) | G.1 |
 | `/api/v1/docs` (+`/docs/scalar.js`) | GET | Self-hosted Scalar reference UI | **live** (temporary native, §6) | G.1 |
 
@@ -566,3 +567,146 @@ unknown 404s, POST 404. Modules-side parity:
 `flows/discovery/tests/flow.test.mjs` runs the SAME bundle in the JS flow
 runtime host. Live cold-client evidence is recorded in the loop doc (G.4
 entry).
+
+## 11. G.5 implementation record (sandboxed public query)
+
+Delivered 2026-07-07. The G.5 rows in §1 are live; the planned OpenAPI
+entry auto-shadows when the mount is configured
+(`flows.mounts: /api/v1/query` → public-query 0.1.0).
+
+### Sandbox design (defense-in-depth, enforced IN THE ENGINE)
+
+The public surface accepts RAW SELECT text from anonymous callers. Layers,
+innermost first (flatsql `flatsql_query_sandboxed`, engine v1.2.0):
+
+1. **wasm memory sandbox** — the engine is a WASI module; nothing it does
+   can touch host memory or the filesystem.
+2. **Read-only session, structurally** — a `sqlite3_set_authorizer`
+   installed for the prepare denies every DDL/DML verb, PRAGMA,
+   ATTACH/DETACH, TRANSACTION/SAVEPOINT and temp-object creation, and
+   restricts `SQLITE_READ` to the record vtabs / per-source shadow tables /
+   unified views (control tables — `sdn_record_index`, auth/session/trust
+   rows — and `sqlite_*` reserved names are NOT readable; CTE aliases are
+   recognized against a schema enumeration that FAILS CLOSED).
+   `sqlite3_stmt_readonly` + result-column checks back it up, and the
+   record vtabs have no xUpdate at all. Violations are typed
+   (`sandbox: not-authorized: …`) and map to 400.
+3. **Single statement** — any non-whitespace prepare tail rejects
+   (`multi-statement`, 400).
+4. **Statement timeout** — a `sqlite3_progress_handler` steady-clock
+   deadline aborts runaway statements with SQLITE_INTERRUPT
+   (`timeout`, 422). The engine keeps NO handler installed outside
+   sandboxed statements (hot-path cost: one compare per VDBE jump op).
+5. **Row/byte caps** — enforced inside the step loop; oversized results
+   REJECT (`row-cap`/`byte-cap`, 422), never truncate.
+
+The sandbox bypasses the statement/query/raw-stream caches and the host
+raw-stream mirror entirely (no pollution, nothing to invalidate), and a
+rejection latches a clean error — no throw, no poison, the engine instance
+(the LIVE store engine) stays healthy. This is the C.8b read-only
+discipline applied per-statement to the live engine session: no second
+store open, typed errors, writes structurally impossible.
+
+**Caps are host policy** (`gateway.query` config; wired through
+`caps.StorageCapOptions.QueryCaps` → the `storage.query_sandboxed` op):
+`timeout_ms` (default 5000), `max_rows` (default 200000), `max_bytes`
+(default 134217728). Zero/absent knobs take the defaults — there is
+deliberately no way to configure "unlimited". Abuse posture (user
+decision): per-request cost is bounded by the sandbox, so the route is
+anonymous; the node ships NO rate limiting beyond the caps — volumetric
+abuse is an operator/CDN concern.
+
+### Capability op (host side)
+
+`storage.query_sandboxed {sql, params[tagged], want, deliver}` on the
+storage adapter (`internal/modulert/caps/storage.go`), gated on the
+DEDICATED `storage_query` grant. `want=stream` executes the all-BLOB raw
+form (aligned frames; body-reference delivery like the other gateway
+flows); `want=rows` returns the engine-assembled bare-array JSON;
+`want=auto` (the json path) tries stream first and falls back to rows for
+projections (one extra bounded execution). Sandbox rejections come back
+as `{"ok":false,"error":{"message","sandbox":"<code>"}}` — the wasm flow
+maps CODES to statuses, never string-matches messages.
+`storage.query_surface {}` returns the queryable surface + effective caps.
+
+### Flow (modules repo)
+
+`flows/public-query` 0.1.0, mounted at `/api/v1/query` (bridge linkage,
+capability union `[storage_query]`). Node chain: http-route
+`route_public_query` (POST body = `{sql, params, format, limit, sort,
+profile, epoch, source}` JSON object or raw SQL text, `?format` wins;
+GET/HEAD = surface listing; others 404) → flatsql-query `sandbox_query`
+(composes the effective SQL IN-WASM: validated `sort`/`limit` wrapping
+`SELECT * FROM (sql) ORDER BY "COL" [DIR] LIMIT n`, or the engine epoch
+profiles `nearest|as_of|forward` over the unified OMM view with default
+epoch = clock.now and the `source` mapped to its SHADOW-TABLE name) →
+foundation/omm-json (json presentation of full-record streams) →
+http-respond (0.2.1: error decisions forward a machine-readable `code`)
+→ egress. Module versions: http-route 0.5.0, flatsql-query 0.2.0,
+http-respond 0.2.1.
+
+### Result encodings, honestly
+
+For arbitrary SELECT the result is not necessarily a full record — the
+two encodings are defined without inventing a fake fb framing:
+
+- **`format=flatbuffer` (default)** requires an all-BLOB projection
+  (typically `SELECT _data …`): the response is the aligned size-prefixed
+  frame stream, byte-parity with the engine's unsandboxed raw-stream path.
+  The frames are SELF-IDENTIFYING record buffers (file identifier at
+  bytes 4–8), so the stream's type is whatever BLOB column was selected —
+  `$OMM` today. Projections with scalar cells answer **406**
+  (`not-a-record-stream`) directing the caller to `format=json`.
+- **`format=json`**: full-record results serve the bare-array record
+  presentation (omm-json; SCHEMA-EXACT keys per the hard rule —
+  `NORAD_CAT_ID`, `MEAN_MOTION`); tabular projections serve an
+  engine-assembled bare array whose keys are the SQL column names
+  VERBATIM (`sqlite3_column_name` → schema-exact by construction; BLOB
+  cells base64, NaN/Inf → null). Both encodings of the same logical
+  stream share ONE word-folded FNV-1a-64 ETag; `If-None-Match` → 304.
+
+### Queryable-surface documentation (no drift by construction)
+
+`GET /api/v1/query` returns the surface enumerated LIVE from the engine
+(`storage.PublicQuerySurface`): every readable relation (unified views
+with `_source`, shadow tables per provider-source) with columns and
+current hot-window record counts, plus the effective caps. The same set
+is what the authorizer permits — the listing and the enforcement derive
+from the same engine state. Honesty note: the surface is the engine HOT
+WINDOW (up to `storage.engine_hot_window` records per schema, default
+400K) — the same data `omm/bulk` serves; full history lives in the
+append-only stream files, not in SQL.
+
+### Alias-vs-supersede decision (the old query routes)
+
+`POST /api/v1/data/query` (data-retrieval flow, suffix-matched) is
+**superseded for public use** and NOT aliased: it is engine-LINKED
+(direct wasm linkage, no sandbox, arbitrary SQL incl. control tables) and
+sits behind the auth wall per §4 — it remains the OPERATOR/datasync
+escape hatch exactly as the §4 disposition table already recorded. The
+two routes are different trust domains, so aliasing one onto the other
+would either weaken the operator surface or silently un-sandbox the
+public one. Its retirement is a per-route decision after Phase G (§4);
+the OpenAPI planned entry for `/api/v1/query` documented the supersession
+and now serves the real flow ops.
+
+### Verification
+
+Unit: flatsql `test/sandbox-query.test.ts` (the engine-level injection
+matrix on BOTH engine hosts, 150/150 repo-green), flatsqlrt
+`sandbox_test.go` (typed rejection codes, byte-parity with the raw-stream
+path, bounded timeout, no poisoning), `api/docs_test.go` (G.5 shadow +
+anonymous stamps incl. the documented anonymous-POST exception).
+Integration: `flowrt/query_flow_integration_test.go` mounts the REAL
+compiled bundle at `/api/v1/query` over the real storage cap and a REAL
+FlatSQL store+engine: verbatim BODY_REF stream + shared etag + 304,
+schema-exact json (both record and projection shapes), sort/limit/profile
+composition, the queryable surface from the live engine, and an
+18-case injection/abuse suite (writes, multi-statement, PRAGMA, ATTACH,
+temp writes, transactions, control-table/sqlite_master reads, runaway
+recursive CTE, cartesian blowup, oversized results, sort injection, bad
+SQL, empty body) — every case the correct status + code in bounded time,
+store intact afterwards. Modules-side parity:
+`flows/public-query/tests/flow.test.mjs` runs the SAME bundle in the JS
+flow runtime host. Live cold-client evidence is recorded in the loop doc
+(G.5 entry).

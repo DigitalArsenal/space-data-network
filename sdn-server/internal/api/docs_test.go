@@ -415,3 +415,48 @@ func TestDocsHandlerServesSpecAndUI(t *testing.T) {
 		t.Fatalf("scalar.js suspiciously small (%d bytes) — vendored bundle missing?", rec.Body.Len())
 	}
 }
+
+// The real G.5 mount: public-query at /api/v1/query (routes "" GET + POST).
+// The planned G.5 POST entry must flip to flow-served, the GET surface
+// listing appears, and both anonymous stamps hold (anonymous POST is a
+// documented policy exception for the sandboxed query, §4.5).
+func TestGenerateOpenAPIG5PublicQueryShadowsPlanned(t *testing.T) {
+	queryFlow := &fakeFlowDocSource{
+		programID: "com.digitalarsenal.flows.public-query",
+		version:   "0.1.0",
+		mountPath: "/api/v1/query",
+		doc: &flowrt.FlowAPIDoc{
+			Tag: "query",
+			Routes: []flowrt.FlowAPIRoute{
+				{Path: "", Method: "GET", Summary: "queryable-surface listing", Anonymous: true},
+				{Path: "", Method: "POST", Summary: "sandboxed raw SELECT", Anonymous: true},
+			},
+		},
+	}
+	spec, err := GenerateOpenAPI(DocsHandlerOptions{
+		Version: "test",
+		Flows:   []FlowDocSource{queryFlow},
+		EffectiveAnonymous: func(method, path string) bool {
+			return path == "/api/v1/query"
+		},
+	})
+	if err != nil {
+		t.Fatalf("GenerateOpenAPI: %v", err)
+	}
+	var doc map[string]interface{}
+	if err := json.Unmarshal(spec, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, method := range []string{"get", "post"} {
+		op := opAt(t, doc, "/api/v1/query", method)
+		if op["x-sdn-served-by"] != "flow" {
+			t.Fatalf("query %s must be flow-served, got %v", method, op["x-sdn-served-by"])
+		}
+		if _, ok := op["x-sdn-status"]; ok {
+			t.Fatalf("query %s must not be marked planned once mounted", method)
+		}
+		if op["x-sdn-anonymous"] != true || op["x-sdn-anonymous-requested"] != true {
+			t.Fatalf("query %s anonymous stamps wrong: %v / %v", method, op["x-sdn-anonymous"], op["x-sdn-anonymous-requested"])
+		}
+	}
+}

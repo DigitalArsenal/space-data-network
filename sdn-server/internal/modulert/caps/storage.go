@@ -58,6 +58,34 @@ type StorageCapOptions struct {
 	// when the store or raw-archive filesystem has less free space.
 	// <= 0 uses the runner's default (5 GiB).
 	MinFreeDiskBytes int64
+
+	// QueryCaps bounds every storage.query_sandboxed execution (gateway
+	// loop G.5): statement timeout + row/byte caps, enforced IN-WASM by the
+	// engine. Zero fields fall back to the built-in defense defaults
+	// (5 s / 200K rows / 128 MiB) — a missing config never means unlimited.
+	QueryCaps flatsqlrt.SandboxCaps
+}
+
+// Built-in defense defaults for QueryCaps (mirrors
+// config.DefaultGatewayQuery*).
+const (
+	defaultQueryTimeout  = 5 * time.Second
+	defaultQueryMaxRows  = 200000
+	defaultQueryMaxBytes = 128 << 20
+)
+
+// effectiveQueryCaps applies the defense defaults to unset fields.
+func effectiveQueryCaps(caps flatsqlrt.SandboxCaps) flatsqlrt.SandboxCaps {
+	if caps.Timeout <= 0 {
+		caps.Timeout = defaultQueryTimeout
+	}
+	if caps.MaxRows == 0 {
+		caps.MaxRows = defaultQueryMaxRows
+	}
+	if caps.MaxBytes == 0 {
+		caps.MaxBytes = defaultQueryMaxBytes
+	}
+	return caps
 }
 
 // NewStorageCapFactoryWithOptions is NewStorageCapFactory with explicit
@@ -76,6 +104,7 @@ func NewStorageCapFactoryWithOptions(store *storage.FlatSQLStore, opts StorageCa
 			bridge:           bridge,
 			rawRoot:          strings.TrimSpace(opts.RawRoot),
 			minFreeDiskBytes: opts.MinFreeDiskBytes,
+			queryCaps:        effectiveQueryCaps(opts.QueryCaps),
 		}
 		return s.handle
 	}
@@ -92,6 +121,9 @@ type storageCapAdapter struct {
 	// storage.ingest_with_source (see StorageCapOptions).
 	rawRoot          string
 	minFreeDiskBytes int64
+	// queryCaps: per-execution resource caps for storage.query_sandboxed
+	// (defaults already applied).
+	queryCaps flatsqlrt.SandboxCaps
 }
 
 func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, error) {
@@ -219,6 +251,20 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		}
 		return s.streamResult(stream, str("deliver")), nil
 
+	// Sandboxed public query (gateway loop G.5): the /api/v1/query flow's
+	// ONLY data path. Policy-mediated read-only — the engine enforces the
+	// sandbox IN-WASM (authorizer over record tables/shadows/views,
+	// single-statement SELECT, statement timeout, row/byte caps); the host
+	// contributes exactly two things: the storage_query grant check and the
+	// configured caps. Sandbox rejections come back as
+	// {"ok":false,"error":{"message","sandbox":"<code>"}} so the wasm flow
+	// maps them to HTTP statuses.
+	case "storage.query_sandboxed":
+		return s.handleQuerySandboxed(p, str), nil
+
+	case "storage.query_surface":
+		return s.handleQuerySurface(), nil
+
 	case "storage.flatsql_cache_key":
 		sqlText := str("sql")
 		if sqlText == "" {
@@ -249,6 +295,109 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 	default:
 		return errCapJSON(fmt.Sprintf("unknown storage operation: %s", operation)), nil
 	}
+}
+
+// errSandboxCapJSON is errCapJSON plus the typed sandbox rejection code —
+// the wasm flow maps codes to HTTP statuses (never string-matches messages).
+func errSandboxCapJSON(code, msg string) []byte {
+	r, _ := json.Marshal(map[string]interface{}{
+		"ok":    false,
+		"error": map[string]string{"message": msg, "sandbox": code},
+	})
+	return r
+}
+
+// handleQuerySandboxed executes one untrusted SELECT under the engine
+// sandbox. Payload:
+//
+//	{
+//	  "sql": "SELECT ...",                      (required)
+//	  "params": [{"t":"i64|f64|str|bool|null|bytes","v":...}],
+//	  "want": "stream" | "rows" | "auto",       (default "stream")
+//	  "deliver": "ref"                          (stream results only)
+//	}
+//
+// want=stream: all result cells must be BLOB — the aligned frame stream is
+// delivered like storage.flatsql_query_stream (binary segment or body ref).
+// want=rows: the engine assembles bare-array JSON IN-WASM (column names
+// verbatim — schema-exact capitalization); delivered as a binary segment.
+// want=auto: stream first, falling back to rows when the projection is not
+// BLOB-only (one extra bounded execution; every execution wears the caps).
+func (s *storageCapAdapter) handleQuerySandboxed(p map[string]interface{}, str func(string) string) []byte {
+	if s.bridge == nil || !s.bridge.HasCapability("storage_query") {
+		return errCapJSON("storage.query_sandboxed requires the storage_query capability grant")
+	}
+	sqlText := str("sql")
+	if sqlText == "" {
+		return errCapJSON("missing sql")
+	}
+	params, err := decodeTaggedParams(p["params"])
+	if err != nil {
+		return errCapJSON(err.Error())
+	}
+	want := str("want")
+	if want == "" {
+		want = "stream"
+	}
+
+	failed := func(err error) []byte {
+		if se, ok := flatsqlrt.AsSandboxError(err); ok {
+			return errSandboxCapJSON(se.Code, se.Message)
+		}
+		return errCapJSON("sandboxed query failed: " + err.Error())
+	}
+
+	switch want {
+	case "stream", "auto":
+		stream, err := s.store.QuerySandboxedStream(sqlText, s.queryCaps, params...)
+		if err != nil {
+			if se, ok := flatsqlrt.AsSandboxError(err); ok &&
+				want == "auto" && se.Code == flatsqlrt.SandboxCodeNotRecordStream {
+				break // projection result — fall through to rows
+			}
+			return failed(err)
+		}
+		return s.streamResult(stream, str("deliver"))
+	case "rows":
+		// handled below
+	default:
+		return errCapJSON("unknown want: " + want + " (stream | rows | auto)")
+	}
+
+	payload, rows, cols, err := s.store.QuerySandboxedJSON(sqlText, s.queryCaps, params...)
+	if err != nil {
+		return failed(err)
+	}
+	return modulert.PreEncodedEnvelope(map[string]interface{}{
+		"ok": true,
+		"result": map[string]interface{}{
+			"kind":    "rows",
+			"rows":    rows,
+			"columns": cols,
+			"json":    map[string]interface{}{"$bin": 0},
+		},
+	}, [][]byte{payload})
+}
+
+// handleQuerySurface reports the queryable public surface (tables / views /
+// columns straight from the live engine — no hand-maintained list) plus the
+// effective caps, so /api/v1/query is self-documenting.
+func (s *storageCapAdapter) handleQuerySurface() []byte {
+	if s.bridge == nil || !s.bridge.HasCapability("storage_query") {
+		return errCapJSON("storage.query_surface requires the storage_query capability grant")
+	}
+	surface, err := s.store.PublicQuerySurface()
+	if err != nil {
+		return errCapJSON("query surface failed: " + err.Error())
+	}
+	return okCapJSON(map[string]interface{}{
+		"tables": surface,
+		"caps": map[string]interface{}{
+			"timeout_ms": int64(s.queryCaps.Timeout / time.Millisecond),
+			"max_rows":   s.queryCaps.MaxRows,
+			"max_bytes":  s.queryCaps.MaxBytes,
+		},
+	})
 }
 
 // defaultIngestMinFreeDiskBytes mirrors the ingest runner's disk guardrail
