@@ -37,8 +37,8 @@ func TestDataEpochQueryReturnsMatchQuality(t *testing.T) {
 		Count   int    `json:"count"`
 		Results []struct {
 			EntityKey    string `json:"entity_key"`
-			NoradCatID   uint32 `json:"norad_cat_id"`
-			ObjectName   string `json:"object_name"`
+			NoradCatID   uint32 `json:"NORAD_CAT_ID"`
+			ObjectName   string `json:"OBJECT_NAME"`
 			MatchQuality struct {
 				RequestedEpoch string `json:"requested_epoch"`
 				MatchedEpoch   string `json:"matched_epoch"`

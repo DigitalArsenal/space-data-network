@@ -672,12 +672,20 @@ func (a *p2pCapAdapter) latestBatchCandidates(peerID, schemaName string, max int
 
 // pnmPointerJSON is the honest-error / provenance pointer for a candidate:
 // enough for a client to fetch the publication itself over p2p.
+//
+// This object travels VERBATIM into the public 503/406 error bodies (the
+// discovery-shape flow node embeds the "pnm" slice unmodified), so it is a
+// public JSON rendering of PNM record fields. HARD RULE (user 2026-07-06,
+// json-schema-capitalization-rule): schema-derived properties carry the
+// schema/PNM/main.fbs field names EXACTLY (CID, FILE_ID, PUBLISH_TIMESTAMP);
+// synthesized fields (batch_id, standard, schema, signature_verified,
+// attribution) stay lowercase snake_case.
 func pnmPointerJSON(c P2PBatchCandidate, schemaName string) map[string]interface{} {
 	return map[string]interface{}{
-		"cid":                c.CID,
-		"file_id":            c.FileID,
+		"CID":                c.CID,
+		"FILE_ID":            c.FileID,
+		"PUBLISH_TIMESTAMP":  c.PublishTimestamp,
 		"batch_id":           c.BatchID,
-		"publish_timestamp":  c.PublishTimestamp,
 		"standard":           strings.TrimSuffix(schemaName, ".fbs"),
 		"schema":             schemaName,
 		"signature_verified": c.Verified,

@@ -123,9 +123,12 @@ describe('HttpTransport.queryData (flatbuffers-first, loop D.3)', () => {
       calls.push({ url, init });
       // The wire contract: a BARE top-level array of records; the record
       // count travels in x-sdn-record-count exactly like the fb path.
+      // Property names are SCHEMA-EXACT (hard rule
+      // json-schema-capitalization-rule): the IDL capitalization, never
+      // lowercased.
       return new Response(JSON.stringify([
-        { norad_cat_id: 1001, object_name: 'SAT-1001' },
-        { norad_cat_id: 1002, object_name: 'SAT-1002' },
+        { NORAD_CAT_ID: 1001, OBJECT_NAME: 'SAT-1001' },
+        { NORAD_CAT_ID: 1002, OBJECT_NAME: 'SAT-1002' },
       ]), {
         status: 200,
         headers: { 'Content-Type': 'application/json', 'X-SDN-Record-Count': '2' },
@@ -140,12 +143,12 @@ describe('HttpTransport.queryData (flatbuffers-first, loop D.3)', () => {
     expect((calls[0].init?.headers as Record<string, string>).Accept).toBe('application/json');
     expect(result.format).toBe('json');
     expect(result.count).toBe(2);
-    expect(result.records[1]).toEqual({ norad_cat_id: 1002, object_name: 'SAT-1002' });
+    expect(result.records[1]).toEqual({ NORAD_CAT_ID: 1002, OBJECT_NAME: 'SAT-1002' });
   });
 
   it('json adapter falls back to array length when the count header is absent', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
-      JSON.stringify([{ norad_cat_id: 1001 }]),
+      JSON.stringify([{ NORAD_CAT_ID: 1001 }]),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     )));
 

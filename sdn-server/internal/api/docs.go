@@ -291,7 +291,12 @@ func GenerateOpenAPI(opts DocsHandlerOptions) ([]byte, error) {
 				"size-prefixed FlatBuffer stream (" + ContentTypeFlatBufferStream + "); " +
 				"?format=json opts into a BARE top-level JSON array of records. Metadata never rides " +
 				"in a body envelope — X-SDN-Record-Count and a content-derived ETag are response " +
-				"headers on BOTH encodings, and conditional GET (If-None-Match → 304) works on both.",
+				"headers on BOTH encodings, and conditional GET (If-None-Match → 304) works on both.\n\n" +
+				"Property names: JSON renderings of SDS records use the spacedatastandards.org " +
+				"IDL / JSON Schema capitalization EXACTLY (NORAD_CAT_ID, MEAN_MOTION, FILE_ID, " +
+				"CID, DN, …) — never lowercased. API-synthesized envelope fields that are not " +
+				"schema fields (signature_verified, attribution, peer_id, …) stay lowercase " +
+				"snake_case: the case distinction separates schema data from API metadata.",
 		},
 		"servers": []openAPIObj{{"url": "/"}},
 		"tags":    tags,
