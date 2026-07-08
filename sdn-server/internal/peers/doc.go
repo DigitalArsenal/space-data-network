@@ -26,8 +26,8 @@
 //
 // Example usage:
 //
-//	// Create persistence provider
-//	persistence, _ := peers.NewSQLitePersistence("/path/to/peers.db")
+//	// Create persistence provider over the node FlatSQL store
+//	persistence, _ := peers.NewFlatSQLPersistence(flatStore)
 //
 //	// Create registry in strict mode
 //	registry := peers.NewRegistry(true, persistence)

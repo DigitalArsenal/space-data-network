@@ -264,7 +264,7 @@ var internalSchemas = map[string]bool{
 }
 
 const (
-	expectedStandardSchemaCount = 169
+	expectedStandardSchemaCount = 171
 	expectedInternalSchemaCount = 4
 	expectedTotalSchemaCount    = expectedStandardSchemaCount + expectedInternalSchemaCount
 )
@@ -298,7 +298,7 @@ func TestSupportedSchemas(t *testing.T) {
 	}
 
 	// Spot-check a few well-known schemas
-	for _, expected := range []string{"OMM.fbs", "CDM.fbs", "EPM.fbs", "CAT.fbs", "PNM.fbs", "PGR.fbs"} {
+	for _, expected := range []string{"OMM.fbs", "CDM.fbs", "EPM.fbs", "CAT.fbs", "PNM.fbs", "PGM.fbs", "PRR.fbs", "PGR.fbs"} {
 		if !seen[expected] {
 			t.Errorf("Expected schema %s not found in SupportedSchemas", expected)
 		}

@@ -189,6 +189,7 @@ var SupportedSchemas = []string{
 	"OPM.fbs",  // Orbit Parameter Message
 	"OSM.fbs",  // Orbit State Message
 	"PCF.fbs",  // Propagator Configuration
+	"PGM.fbs",  // Peer Group Membership Record
 	"PGR.fbs",  // Peer Graph Record - Peer network graph snapshot (SDN-internal)
 	"PHY.fbs",  // Physics and Rigid Body Dynamics
 	"PIV.fbs",  // Plugin Invoke - Plugin request/response envelopes
@@ -199,6 +200,7 @@ var SupportedSchemas = []string{
 	"PLOG.fbs", // Publication Log Entry - Internal compatibility log record (SDN-internal)
 	"PNM.fbs",  // Publish Notification Message
 	"PPE.fbs",  // Polynomial Ephemeris
+	"PRR.fbs",  // Peer Registry Record
 	"PRG.fbs",  // Propagation Settings
 	"PRW.fbs",  // Propagator Runtime Wire
 	"PUR.fbs",  // Purchase Request - Marketplace purchases

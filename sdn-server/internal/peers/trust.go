@@ -773,7 +773,9 @@ func (r *Registry) Import(data []byte, merge bool) error {
 // save persists the registry if a persistence provider is configured.
 func (r *Registry) save() {
 	if r.persistence != nil {
-		r.persistence.Save(r.peers, r.groups)
+		if err := r.persistence.Save(r.peers, r.groups); err != nil {
+			log.Warnf("Failed to persist peer registry: %v", err)
+		}
 	}
 }
 
