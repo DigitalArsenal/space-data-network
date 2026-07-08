@@ -58,6 +58,18 @@ strip_path_entry() {
   fi
 }
 
+darwin_wasmedge_requires_rpath() {
+  local dylib="$WASMEDGE_DIR/lib/libwasmedge.dylib"
+  local install_name=""
+
+  if [[ "$(uname -s)" != "Darwin" || ! -f "$dylib" ]]; then
+    return 1
+  fi
+
+  install_name="$(otool -D "$dylib" 2>/dev/null | awk 'NR == 2 { print $1 }')"
+  [[ "$install_name" == @rpath/* ]]
+}
+
 # The local build must be driven by the explicit header/library layout above.
 # Stale default runtime installs in the parent shell can otherwise leak into
 # CGO through linker search paths and shadow the selected WasmEdge version.
@@ -79,6 +91,12 @@ CGO_CFLAGS_VALUE="${CGO_CFLAGS_VALUE}${CGO_CFLAGS_VALUE:+ }-I${WASMEDGE_DIR}/inc
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
     CGO_LDFLAGS_VALUE="${CGO_LDFLAGS_VALUE}${CGO_LDFLAGS_VALUE:+ }-L${WASMEDGE_DIR}/bin -L${WASMEDGE_DIR}/lib -lwasmedge"
+    ;;
+  Darwin)
+    CGO_LDFLAGS_VALUE="${CGO_LDFLAGS_VALUE}${CGO_LDFLAGS_VALUE:+ }-L${WASMEDGE_DIR}/lib"
+    if darwin_wasmedge_requires_rpath; then
+      CGO_LDFLAGS_VALUE="${CGO_LDFLAGS_VALUE} -Wl,-rpath,${WASMEDGE_DIR}/lib"
+    fi
     ;;
   *)
     CGO_LDFLAGS_VALUE="${CGO_LDFLAGS_VALUE}${CGO_LDFLAGS_VALUE:+ }-L${WASMEDGE_DIR}/lib -Wl,-rpath,${WASMEDGE_DIR}/lib"
