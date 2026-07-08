@@ -264,7 +264,7 @@ var internalSchemas = map[string]bool{
 }
 
 const (
-	expectedStandardSchemaCount = 167
+	expectedStandardSchemaCount = 169
 	expectedInternalSchemaCount = 4
 	expectedTotalSchemaCount    = expectedStandardSchemaCount + expectedInternalSchemaCount
 )

@@ -32,7 +32,7 @@ import (
 // TrustHandler exposes the trust subsystem over the node HTTP API.
 type TrustHandler struct {
 	Service *trust.Service
-	// Store, when set, persists edge mutations (trust_nodes/trust_edges).
+	// Store, when set, persists edge mutations as SDS TNR/TRE records.
 	Store *trust.Store
 	// Events, when set, fans mutation flips out to gossipsub (WS11.4).
 	Events *trust.EventPublisher

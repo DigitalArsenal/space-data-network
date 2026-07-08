@@ -6,7 +6,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 func mustSetEdge(t *testing.T, g *Graph, truster, trustee string, w float64) {
@@ -154,12 +155,17 @@ func TestRemoveNode(t *testing.T) {
 }
 
 func TestStorePersistenceRoundTrip(t *testing.T) {
-	db, closer, err := flatsqldrv.OpenStandalone(filepath.Join(t.TempDir(), "trust-test.db"))
+	validator, err := sds.NewValidator(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer closer()
-	store, err := NewStore(db)
+	flatStore, err := storage.NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = flatStore.Close() })
+
+	store, err := NewStoreWithFlatSQL(flatStore)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,11 +228,20 @@ func TestStorePersistenceRoundTrip(t *testing.T) {
 		t.Fatal("edge b->c survived DeleteNode(c)")
 	}
 
-	// A corrupted (cyclic) row image must fail loudly on load.
-	if _, err := db.Exec(`INSERT INTO trust_edges(truster, trustee, weight, updated_at) VALUES ('b','a',1,500)`); err != nil {
+	// A corrupted (cyclic) projected record set must fail loudly on load.
+	if err := store.storeTrustEdgeRecord(trustEdgeRecord{
+		EdgeID: trustEdgeID("b", "a"),
+		Edge: Edge{
+			Truster:     "b",
+			Trustee:     "a",
+			Weight:      1,
+			UpdatedAtMs: 500,
+		},
+		ProviderPeerID: defaultTrustProviderPeerID,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.LoadGraph(); err == nil {
-		t.Fatal("cyclic row image loaded silently")
+		t.Fatal("cyclic projected record set loaded silently")
 	}
 }
