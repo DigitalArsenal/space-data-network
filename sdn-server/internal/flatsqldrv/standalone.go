@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
+	_ "modernc.org/sqlite"
 )
 
 // standaloneSchema: subsystem stores only use plain SQL tables (DDL through
@@ -22,41 +23,38 @@ func DefaultAOTCacheDir() string {
 	return filepath.Join(os.TempDir(), "flatsql-aot")
 }
 
-// OpenStandalone gives a subsystem its own private engine-backed database:
-// a dedicated FlatSQL runtime plus a statement journal at journalPath for
-// durability (replayed here on open). This replaces the old pattern of
-// opening a second sqlite connection onto the main store's db file — each
-// subsystem now has fully isolated transactions and no shared-file
-// contention. The returned closer releases the sql.DB, journal, and engine.
-func OpenStandalone(journalPath string) (*sql.DB, func() error, error) {
-	rt, err := flatsqlrt.New(flatsqlrt.WithPrecompiledAOTCache(DefaultAOTCacheDir()))
+// OpenStandalone gives a subsystem its own private durable SQL database.
+// These stores are not FlatSQL record streams; use a normal SQLite file
+// instead of a SQL-statement replay log.
+func OpenStandalone(dbPath string) (*sql.DB, func() error, error) {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+		return nil, nil, fmt.Errorf("flatsqldrv: create standalone db directory: %w", err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("flatsqldrv: start engine: %w", err)
+		return nil, nil, fmt.Errorf("flatsqldrv: open standalone sqlite db: %w", err)
 	}
-	edb, err := rt.CreateDatabase(standaloneSchema, filepath.Base(journalPath))
-	if err != nil {
-		rt.Close()
-		return nil, nil, fmt.Errorf("flatsqldrv: create database: %w", err)
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		db.Close()
+		return nil, nil, fmt.Errorf("flatsqldrv: enable foreign keys: %w", err)
 	}
-	journal, err := OpenStatementJournal(journalPath)
-	if err != nil {
-		rt.Close()
-		return nil, nil, err
-	}
-	if _, err := journal.Replay(edb); err != nil {
-		journal.Close()
-		rt.Close()
-		return nil, nil, fmt.Errorf("flatsqldrv: replay %s: %w", journalPath, err)
-	}
-	db := Open(edb, journal)
 	closer := func() error {
-		err := db.Close()
-		if jerr := journal.Close(); err == nil {
-			err = jerr
-		}
-		edb.Destroy()
-		rt.Close()
-		return err
+		return db.Close()
 	}
 	return db, closer, nil
+}
+
+// newEphemeralSQLDB is used by flatsqldrv's own tests to exercise the
+// database/sql wrapper over a FlatSQL engine.
+func newEphemeralSQLDB() (*sql.DB, *flatsqlrt.Runtime, *flatsqlrt.Database, error) {
+	rt, err := flatsqlrt.New(flatsqlrt.WithPrecompiledAOTCache(DefaultAOTCacheDir()))
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("flatsqldrv: start engine: %w", err)
+	}
+	edb, err := rt.CreateDatabase(standaloneSchema, "ephemeral")
+	if err != nil {
+		rt.Close()
+		return nil, nil, nil, fmt.Errorf("flatsqldrv: create database: %w", err)
+	}
+	return Open(edb), rt, edb, nil
 }

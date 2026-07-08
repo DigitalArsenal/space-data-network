@@ -15,7 +15,7 @@ func TestRequireAuth_RedirectsBrowserForbiddenToWalletLogin(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.db"))
 	if err != nil {
 		t.Fatalf("OpenStandalone: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestRequireAuth_RedirectsBrowserUnauthenticatedWebUIToWalletLogin(t *testin
 	t.Parallel()
 
 	dir := t.TempDir()
-	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.db"))
 	if err != nil {
 		t.Fatalf("OpenStandalone: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestRequireAuth_APIPathsGet401NotRedirect(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.db"))
 	if err != nil {
 		t.Fatalf("OpenStandalone: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestRequireAuth_RotatesNearExpirySessionAndSetsReplacementCookie(t *testing
 	t.Parallel()
 
 	dir := t.TempDir()
-	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.db"))
 	if err != nil {
 		t.Fatalf("OpenStandalone: %v", err)
 	}

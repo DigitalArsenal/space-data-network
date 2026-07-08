@@ -34,13 +34,13 @@ signature_hex)`.
 
 - **Payloads**: the existing append-only `flatsql-streams/<table>.flatsql`
   files, byte-unchanged (size-prefixed FlatBuffer frames).
-- **Metadata**: a new append-only **journal** per datastore
-  (`flatsql-streams/journal.sdnj`): one compact frame per ingested record
+- **Metadata**: a compact append-only record catalog per datastore
+  (`record-catalog.flatsqlmeta`): one compact frame per ingested record
   carrying `(seq u64, schema_id, cid, stream_path_ref, stream_offset u64,
   record_length u32, peer_id, timestamp, source-tag tuple, signature)` —
   i.e. today's `sdn_record_index` + `sdn_record_source_tags` rows as a flat
   log. CRC per frame; torn tails truncated at boot.
-- **Boot**: replay the journal in `seq` order; for each frame, feed the
+- **Boot**: replay the record catalog in `seq` order; for each frame, feed the
   payload bytes (read from the stream file) to
   `flatsql_ingest_one_with_source` and `INSERT` the control row **with the
   explicit rowid = seq**. MEASURED (A.4): 493K records rebuild in ~145 ms;
@@ -129,10 +129,10 @@ time-partitioned segments (wired after the hot path).
 ## 8. Single-writer liveness lock + ingest topology (loop C.6b)
 
 The store is SINGLE-WRITER by construction: one in-process engine owns the
-control journal and the stream appenders. Two independent processes on one
-basePath (the pre-C.6b celestrak.eth production shape: daemon +
-`spacedatanetwork-ingest.service`) would interleave `control.sdnj` frames
-and stream appends — journal corruption.
+compact record metadata and the stream appenders. Two independent processes
+on one basePath (the pre-C.6b celestrak.eth production shape: daemon +
+`spacedatanetwork-ingest.service`) would interleave metadata frames and
+stream appends — store corruption.
 
 - **Lock**: every `NewFlatSQLStore` takes a non-blocking EXCLUSIVE OS lock
   (`flock` on Unix, `LockFileEx` on Windows) on `<basePath>/store.lock`

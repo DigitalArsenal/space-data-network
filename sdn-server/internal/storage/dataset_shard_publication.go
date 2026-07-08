@@ -158,6 +158,9 @@ func (s *FlatSQLStore) initDatasetShardPublicationTable() error {
 }
 
 func (s *FlatSQLStore) UpsertDatasetShardPublication(pub DatasetShardPublication) error {
+	if err := s.requireWritable("upsert dataset shard publication"); err != nil {
+		return err
+	}
 	pub = normalizeDatasetShardPublication(pub)
 	if pub.SchemaName == "" {
 		return errors.New("schema name is required")
@@ -192,6 +195,19 @@ func (s *FlatSQLStore) UpsertDatasetShardPublication(pub DatasetShardPublication
 	if err := s.populateDatasetShardPublicationFeedMetadataLocked(&pub); err != nil {
 		return err
 	}
+	if err := s.applyDatasetShardPublicationUpsert(pub); err != nil {
+		return err
+	}
+	if err := s.appendAuxiliaryMetadata(auxiliaryMetadataEvent{
+		Kind:                    auxiliaryEventDatasetShardPublicationUpsert,
+		DatasetShardPublication: &pub,
+	}); err != nil {
+		return fmt.Errorf("append dataset shard publication metadata: %w", err)
+	}
+	return nil
+}
+
+func (s *FlatSQLStore) applyDatasetShardPublicationUpsert(pub DatasetShardPublication) error {
 	_, err := s.db.Exec(`
 		INSERT INTO sdn_dataset_shard_publications (
 			schema_name, provider_id, source_name, batch_id, query_profile,
@@ -415,6 +431,9 @@ func (s *FlatSQLStore) ListDatasetShardPublications(query DatasetShardPublicatio
 }
 
 func (s *FlatSQLStore) DeleteDatasetShardPublicationsAtOrAfterOffset(query DatasetShardPublicationQuery, offset int) (int64, error) {
+	if err := s.requireWritable("delete stale dataset shard publications"); err != nil {
+		return 0, err
+	}
 	query = normalizeDatasetShardPublicationQuery(query)
 	if query.SchemaName == "" {
 		return 0, errors.New("schema name is required")
@@ -426,6 +445,28 @@ func (s *FlatSQLStore) DeleteDatasetShardPublicationsAtOrAfterOffset(query Datas
 		return 0, errors.New("offset must be non-negative")
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deleted, err := s.applyDatasetShardPublicationDelete(query, offset)
+	if err != nil {
+		return 0, err
+	}
+	if deleted > 0 {
+		deleteEvent := auxiliaryDatasetShardPublicationDelete{
+			Query:  query,
+			Offset: offset,
+		}
+		if err := s.appendAuxiliaryMetadata(auxiliaryMetadataEvent{
+			Kind:                          auxiliaryEventDatasetShardPublicationDelete,
+			DatasetShardPublicationDelete: &deleteEvent,
+		}); err != nil {
+			return deleted, fmt.Errorf("append dataset shard publication delete metadata: %w", err)
+		}
+	}
+	return deleted, nil
+}
+
+func (s *FlatSQLStore) applyDatasetShardPublicationDelete(query DatasetShardPublicationQuery, offset int) (int64, error) {
 	where := []string{`schema_name = ?`, `query_profile = ?`, `window_offset >= ?`}
 	args := []interface{}{query.SchemaName, query.QueryProfile, offset}
 	if query.ProviderID != "" {
@@ -445,8 +486,6 @@ func (s *FlatSQLStore) DeleteDatasetShardPublicationsAtOrAfterOffset(query Datas
 		args = append(args, query.Limit)
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	result, err := s.db.Exec(`
 		DELETE FROM sdn_dataset_shard_publications
 		WHERE `+strings.Join(where, " AND "), args...)

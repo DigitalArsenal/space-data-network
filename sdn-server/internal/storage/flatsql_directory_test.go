@@ -2,7 +2,6 @@ package storage
 
 import (
 	"bytes"
-	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
@@ -124,25 +123,31 @@ func TestFlatSQLStore_LocalEPMRecordsAreEncryptedAtRest(t *testing.T) {
 		}
 	}
 
-	// The statement journal is the at-rest surface for control-table state
-	// now (the engine is in-memory; sdn.db no longer exists). Encrypted EPM
-	// bytes flow through journaled INSERT params, so plaintext must never
-	// appear there. Note: journal params are JSON-encoded (blobs as base64),
-	// so also forbid the base64 of the plaintext.
-	rawJournal, err := os.ReadFile(filepath.Join(store.basePath, "control.sdnj"))
-	if err != nil {
-		t.Fatalf("read control journal failed: %v", err)
+	if _, err := os.Stat(filepath.Join(store.basePath, "control.sdnj")); !os.IsNotExist(err) {
+		t.Fatalf("control.sdnj should not exist; local EPM writes must not create a SQL statement log (err=%v)", err)
 	}
 	forbidden := [][]byte{
 		epmBytes,
 		[]byte("Jane Example"),
 		[]byte("jane@example.com"),
 		[]byte("$EPM binary bytes"),
-		[]byte(base64.StdEncoding.EncodeToString(epmBytes)),
 	}
-	for _, f := range forbidden {
-		if bytes.Contains(rawJournal, f) {
-			t.Fatalf("local EPM store leaked %q into the control journal", f)
+	files, err := os.ReadDir(store.basePath)
+	if err != nil {
+		t.Fatalf("read store directory: %v", err)
+	}
+	for _, entry := range files {
+		if entry.IsDir() {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(store.basePath, entry.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", entry.Name(), err)
+		}
+		for _, f := range forbidden {
+			if bytes.Contains(raw, f) {
+				t.Fatalf("local EPM store leaked %q into %s", f, entry.Name())
+			}
 		}
 	}
 }

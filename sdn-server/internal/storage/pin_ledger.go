@@ -137,6 +137,9 @@ func (s *FlatSQLStore) initPinLedgerTable() error {
 }
 
 func (s *FlatSQLStore) UpsertPinLedgerEntry(entry PinLedgerEntry) error {
+	if err := s.requireWritable("upsert pin ledger entry"); err != nil {
+		return err
+	}
 	entry = normalizePinLedgerEntry(entry)
 	if entry.CID == "" {
 		return errors.New("pin ledger CID is required")
@@ -165,6 +168,19 @@ func (s *FlatSQLStore) UpsertPinLedgerEntry(entry PinLedgerEntry) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.applyPinLedgerEntryUpsert(entry); err != nil {
+		return err
+	}
+	if err := s.appendAuxiliaryMetadata(auxiliaryMetadataEvent{
+		Kind:      auxiliaryEventPinLedgerUpsert,
+		PinLedger: &entry,
+	}); err != nil {
+		return fmt.Errorf("append pin ledger metadata: %w", err)
+	}
+	return nil
+}
+
+func (s *FlatSQLStore) applyPinLedgerEntryUpsert(entry PinLedgerEntry) error {
 	_, err := s.db.Exec(`
 		INSERT INTO sdn_pin_ledger (
 			cid, schema_name, provider_peer_id, provider_public_key,

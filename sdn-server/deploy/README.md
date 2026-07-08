@@ -8,7 +8,8 @@ This directory contains deployment configurations for the Space Data Network ser
 
 The FlatSQL v2 store is **single-writer**: exactly one process may open a
 storage path for writing (enforced by an exclusive `store.lock` next to
-`control.sdnj`; a second writer open fails with a clean store-lock error).
+compact record metadata and stream files; a second writer open fails with a
+clean store-lock error).
 Ingestion therefore runs in one of two mutually exclusive shapes:
 
 **Preferred — in-daemon ingest (daemon + ingest on one store).** Enable the

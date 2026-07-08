@@ -154,7 +154,7 @@ func TestRemoveNode(t *testing.T) {
 }
 
 func TestStorePersistenceRoundTrip(t *testing.T) {
-	db, closer, err := flatsqldrv.OpenStandalone(filepath.Join(t.TempDir(), "trust-test.sdnj"))
+	db, closer, err := flatsqldrv.OpenStandalone(filepath.Join(t.TempDir(), "trust-test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

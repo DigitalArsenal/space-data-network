@@ -126,9 +126,9 @@ func TestStoreLockSecondProcessOpenFailsCleanly(t *testing.T) {
 	}
 	defer store.Close()
 
-	journalBefore, err := os.ReadFile(filepath.Join(base, controlJournalFileName))
+	catalogBefore, err := os.ReadFile(filepath.Join(base, recordCatalogJournalFileName))
 	if err != nil {
-		t.Fatalf("read journal: %v", err)
+		t.Fatalf("read record catalog: %v", err)
 	}
 
 	cmd, out := spawnLockHelper(t, base, "acquire")
@@ -148,13 +148,13 @@ func TestStoreLockSecondProcessOpenFailsCleanly(t *testing.T) {
 		t.Fatalf("helper exit = %v, want exit code 3 (clean lock failure)", err)
 	}
 
-	// The failed contender must not have altered the journal.
-	journalAfter, err := os.ReadFile(filepath.Join(base, controlJournalFileName))
+	// The failed contender must not have altered durable record metadata.
+	catalogAfter, err := os.ReadFile(filepath.Join(base, recordCatalogJournalFileName))
 	if err != nil {
-		t.Fatalf("read journal after: %v", err)
+		t.Fatalf("read record catalog after: %v", err)
 	}
-	if string(journalBefore) != string(journalAfter) {
-		t.Fatalf("control journal changed after failed second-process open")
+	if string(catalogBefore) != string(catalogAfter) {
+		t.Fatalf("record catalog changed after failed second-process open")
 	}
 }
 

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -16,8 +15,7 @@ import (
 )
 
 // SQLitePersistence provides SQL-based persistence for the peer registry in a
-// private engine database (statement journal derived from the configured
-// registry path: peers.db -> peers.sdnj).
+// private SQLite database.
 type SQLitePersistence struct {
 	db     *sql.DB
 	closer func() error
@@ -32,7 +30,7 @@ func NewSQLitePersistence(dbPath string) (*SQLitePersistence, error) {
 		return nil, err
 	}
 
-	db, closer, err := flatsqldrv.OpenStandalone(strings.TrimSuffix(dbPath, ".db") + ".sdnj")
+	db, closer, err := flatsqldrv.OpenStandalone(dbPath)
 	if err != nil {
 		return nil, err
 	}

@@ -1,9 +1,9 @@
 # STANDALONE EXAMPLE — DO NOT ENABLE NEXT TO A RUNNING DAEMON.
 #
-# The FlatSQL v2 store is SINGLE-WRITER (in-process engine + control.sdnj
-# statement journal): only one process may open a storage path for writing.
+# The FlatSQL v2 store is SINGLE-WRITER (in-process engine + compact record
+# metadata + stream appenders): only one process may open a storage path for writing.
 # Running this worker against a store a `spacedatanetwork` daemon holds now
-# fails with a clean store-lock error (it previously corrupted the journal).
+# fails with a clean store-lock error (it previously corrupted store files).
 #
 # Supported topologies:
 #   * Daemon + ingest on one host/store: enable in-daemon ingest in the

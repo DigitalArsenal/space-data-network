@@ -446,7 +446,7 @@ The B-iv end state is in production form, both hosts, same artifact:
   through a host mirror keyed `(generation, fnv1a64, size)`: warm = zero
   engine execution + zero copies; miss = one fnv-verified engine→host copy.
 - **Poison recovery**: `storage.RecoverPoisonedEngine()` rebuilds the engine
-  in place (journal replay + hot-window rebuild) and bumps `EngineEpoch`;
+  in place (compact metadata replay + hot-window rebuild) and bumps `EngineEpoch`;
   mounts re-instantiate linked instances per epoch on the next request
   (`flowrt.TestLinkedMountRecoversFromEnginePoisoning`). Replaced runtimes
   are RETIRED (not closed) until store Close — dependent VMs may still hold

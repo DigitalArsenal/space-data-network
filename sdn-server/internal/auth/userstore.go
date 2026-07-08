@@ -42,15 +42,14 @@ type UserStore struct {
 	mu          sync.RWMutex
 }
 
-// NewUserStore creates a user store backed by a private engine database
-// (statement journal derived from dbPath: auth.db -> auth.sdnj) plus
+// NewUserStore creates a user store backed by a private SQLite database plus
 // config-defined users.
 func NewUserStore(dbPath string, configEntries []config.UserEntry) (*UserStore, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
 		return nil, fmt.Errorf("failed to create user store directory: %w", err)
 	}
 
-	db, closer, err := flatsqldrv.OpenStandalone(strings.TrimSuffix(dbPath, ".db") + ".sdnj")
+	db, closer, err := flatsqldrv.OpenStandalone(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open user store database: %w", err)
 	}

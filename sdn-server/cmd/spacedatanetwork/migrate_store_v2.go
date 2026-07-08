@@ -1,9 +1,9 @@
 package main
 
 // migrate_store_v2.go (loop B.7): `spacedatanetwork migrate-store-v2`
-// generates the FlatSQL v2 control journal (control.sdnj) from a deployed
-// v1 basePath containing sdn.db + flatsql-streams/. The legacy sdn.db is
-// opened READ-ONLY through the pure-Go modernc.org/sqlite driver and is left
+// generates the FlatSQL v2 compact record metadata from a deployed v1
+// basePath containing sdn.db + flatsql-streams/. The legacy sdn.db is opened
+// READ-ONLY through the pure-Go modernc.org/sqlite driver and is left
 // untouched; record payload bytes stay in the unchanged append-only stream
 // files. The load-bearing invariant: sdn_record_index rowids (the datasync
 // cursor space deployed peers hold) are preserved exactly, including sparse
@@ -30,12 +30,14 @@ var (
 	migrateStoreV2WindowLimit int
 )
 
+const migrateStoreV2RecordCatalogFile = "record-catalog.flatsqlmeta"
+
 var migrateStoreV2Cmd = &cobra.Command{
 	Use:   "migrate-store-v2",
-	Short: "Generate the FlatSQL v2 control journal from a legacy sdn.db",
+	Short: "Generate FlatSQL v2 compact metadata from a legacy sdn.db",
 	Long: `Migrate a deployed v1 datastore (sdn.db + flatsql-streams/) to the
-FlatSQL-WASM engine store by generating the statement journal (control.sdnj)
-from the legacy sqlite control tables.
+FlatSQL-WASM engine store by generating compact record metadata from the
+legacy sqlite control tables.
 
 The legacy sdn.db is opened read-only and never modified; record payload
 bytes stay in the unchanged flatsql-streams/*.flatsql files. Every control
@@ -50,10 +52,11 @@ with cursors below the window page into the window start or snapshot-resync
 (designed behavior). --window-limit 0 migrates the full history (small
 stores only).
 
---target defaults to --source (in-place: control.sdnj is created alongside
-the untouched sdn.db). For a dry run, point --target at a scratch directory
-that already contains a copy or symlink of <source>/flatsql-streams. The
-command refuses to run if <target>/control.sdnj already exists.`,
+--target defaults to --source (in-place: record-catalog.flatsqlmeta is
+created alongside the untouched sdn.db). For a dry run, point --target at a
+scratch directory that already contains a copy or symlink of
+<source>/flatsql-streams. The command refuses to run if the target already
+has compact record metadata.`,
 	RunE: runMigrateStoreV2,
 }
 
@@ -87,11 +90,11 @@ func runMigrateStoreV2(cmd *cobra.Command, args []string) error {
 	if _, err := os.Stat(legacyDBPath); err != nil {
 		return fmt.Errorf("legacy sqlite database not found at %s: %w", legacyDBPath, err)
 	}
-	journalPath := filepath.Join(targetAbs, "control.sdnj")
-	if _, err := os.Stat(journalPath); err == nil {
-		return fmt.Errorf("refusing to migrate: %s already exists (the target already has v2 control state; remove it or choose another --target)", journalPath)
+	catalogPath := filepath.Join(targetAbs, migrateStoreV2RecordCatalogFile)
+	if _, err := os.Stat(catalogPath); err == nil {
+		return fmt.Errorf("refusing to migrate: %s already exists (the target already has v2 record metadata; remove it or choose another --target)", catalogPath)
 	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("inspect %s: %w", journalPath, err)
+		return fmt.Errorf("inspect %s: %w", catalogPath, err)
 	}
 	if targetAbs != sourceAbs {
 		streams := filepath.Join(targetAbs, "flatsql-streams")
@@ -125,7 +128,7 @@ func runMigrateStoreV2(cmd *cobra.Command, args []string) error {
 		WindowLimit: migrateStoreV2WindowLimit,
 	})
 	if report != nil {
-		printLegacyMigrationReport(cmd, targetAbs, journalPath, report)
+		printLegacyMigrationReport(cmd, targetAbs, catalogPath, report)
 	}
 	if err != nil {
 		return fmt.Errorf("legacy migration failed: %w", err)
@@ -133,7 +136,7 @@ func runMigrateStoreV2(cmd *cobra.Command, args []string) error {
 	if problems := legacyMigrationProblems(report); len(problems) > 0 {
 		return fmt.Errorf("migration verification failed: %s", strings.Join(problems, "; "))
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "migration complete: %s\n", journalPath)
+	fmt.Fprintf(cmd.OutOrStdout(), "migration complete: %s\n", catalogPath)
 	return nil
 }
 
@@ -157,10 +160,10 @@ func legacyMigrationProblems(report *storage.LegacyMigrationReport) []string {
 	return problems
 }
 
-func printLegacyMigrationReport(cmd *cobra.Command, targetAbs, journalPath string, report *storage.LegacyMigrationReport) {
+func printLegacyMigrationReport(cmd *cobra.Command, targetAbs, catalogPath string, report *storage.LegacyMigrationReport) {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "legacy store migration report (target %s)\n", targetAbs)
-	fmt.Fprintf(out, "  control journal: %s\n", journalPath)
+	fmt.Fprintf(out, "  record catalog: %s\n", catalogPath)
 	fmt.Fprintln(out, "  tables:")
 	for _, t := range report.Tables {
 		if t.SkippedReason != "" {

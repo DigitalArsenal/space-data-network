@@ -1,8 +1,8 @@
 // Package flatsqldrv exposes a FlatSQL-WASM engine database
 // (internal/flatsqlrt) through database/sql, so existing SQLite-dialect code
-// swaps engines without rewriting its SQL. The engine is in-memory; pair the
-// driver with a StatementJournal for durable, replayable control-table state
-// (docs/flatsql-store-v2.md).
+// swaps engines without rewriting its SQL. The engine is in-memory; callers
+// that need durable state must persist domain records directly instead of
+// replaying SQL statements.
 //
 // Concurrency: connections are stateless proxies onto one single-threaded
 // engine; see Open for the pooling and serialization rules.
@@ -22,20 +22,14 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 )
 
-const noJournalDirective = "flatsqldrv:no-journal"
-
-// WithoutJournal marks an idempotent or derived-state mutation so it executes
-// against the live engine but is not appended to the durable statement journal.
+// WithoutJournal is kept as a compatibility no-op for older storage call
+// sites. The FlatSQL driver no longer records SQL statements.
 func WithoutJournal(query string) string {
-	if hasNoJournalDirective(query) {
-		return query
-	}
-	return "-- " + noJournalDirective + "\n" + query
+	return query
 }
 
-// Open wraps an engine database in a database/sql handle. If journal is
-// non-nil, every committed mutating statement is appended to it (replayable
-// at boot via Replay). The caller keeps ownership of db's lifetime.
+// Open wraps an engine database in a database/sql handle. The caller keeps
+// ownership of db's lifetime.
 //
 // The pool allows multiple connections so callers may run a query while
 // iterating another result set (a single-conn pool deadlocks there). All
@@ -44,9 +38,9 @@ func WithoutJournal(query string) string {
 // Exec + its last_insert_rowid()/changes() follow-ups atomic. Transactions
 // are engine-global — callers must serialize writes themselves (the storage
 // layer's RWMutex already does).
-func Open(db *flatsqlrt.Database, journal *StatementJournal) *sql.DB {
+func Open(db *flatsqlrt.Database) *sql.DB {
 	shared := &engineGate{}
-	sqldb := sql.OpenDB(&connector{db: db, journal: journal, gate: shared})
+	sqldb := sql.OpenDB(&connector{db: db, gate: shared})
 	sqldb.SetMaxOpenConns(8)
 	sqldb.SetMaxIdleConns(8)
 	sqldb.SetConnMaxLifetime(0)
@@ -57,13 +51,12 @@ func Open(db *flatsqlrt.Database, journal *StatementJournal) *sql.DB {
 type engineGate struct{ mu sync.Mutex }
 
 type connector struct {
-	db      *flatsqlrt.Database
-	journal *StatementJournal
-	gate    *engineGate
+	db   *flatsqlrt.Database
+	gate *engineGate
 }
 
 func (c *connector) Connect(context.Context) (driver.Conn, error) {
-	return &conn{db: c.db, journal: c.journal, gate: c.gate}, nil
+	return &conn{db: c.db, gate: c.gate}, nil
 }
 
 func (c *connector) Driver() driver.Driver { return dr{} }
@@ -75,14 +68,9 @@ func (dr) Open(string) (driver.Conn, error) {
 }
 
 type conn struct {
-	db      *flatsqlrt.Database
-	journal *StatementJournal
-	gate    *engineGate
-	inTx    bool
-	// txBuf holds journal frames for the open transaction; they are flushed
-	// on Commit and discarded on Rollback so replay never sees uncommitted
-	// statements.
-	txBuf []journalFrame
+	db   *flatsqlrt.Database
+	gate *engineGate
+	inTx bool
 }
 
 var (
@@ -110,7 +98,6 @@ func (c *conn) BeginTx(_ context.Context, _ driver.TxOptions) (driver.Tx, error)
 		return nil, err
 	}
 	c.inTx = true
-	c.txBuf = c.txBuf[:0]
 	return &tx{c: c}, nil
 }
 
@@ -121,19 +108,12 @@ func (t *tx) Commit() error {
 		return err
 	}
 	t.c.inTx = false
-	if t.c.journal != nil && len(t.c.txBuf) > 0 {
-		if err := t.c.journal.appendAll(t.c.txBuf); err != nil {
-			return fmt.Errorf("flatsqldrv: journal append: %w", err)
-		}
-	}
-	t.c.txBuf = nil
 	return nil
 }
 
 func (t *tx) Rollback() error {
 	_, err := t.c.db.Query("ROLLBACK")
 	t.c.inTx = false
-	t.c.txBuf = nil
 	return err
 }
 
@@ -158,45 +138,6 @@ func convertArgs(args []driver.NamedValue) ([]interface{}, error) {
 		}
 	}
 	return out, nil
-}
-
-// isMutation decides whether a statement belongs in the journal.
-func isMutation(query string) bool {
-	if hasNoJournalDirective(query) {
-		return false
-	}
-	q := strings.TrimSpace(query)
-	for {
-		if strings.HasPrefix(q, "--") {
-			if idx := strings.IndexByte(q, '\n'); idx >= 0 {
-				q = strings.TrimSpace(q[idx+1:])
-				continue
-			}
-			return false
-		}
-		break
-	}
-	if len(q) < 3 {
-		return false
-	}
-	head := strings.ToUpper(q[:min(12, len(q))])
-	switch {
-	case strings.HasPrefix(head, "SELECT"), strings.HasPrefix(head, "PRAGMA"),
-		strings.HasPrefix(head, "EXPLAIN"), strings.HasPrefix(head, "BEGIN"),
-		strings.HasPrefix(head, "COMMIT"), strings.HasPrefix(head, "ROLLBACK"):
-		return false
-	default:
-		return true
-	}
-}
-
-func hasNoJournalDirective(query string) bool {
-	q := strings.TrimLeft(query, " \t\r\n")
-	if !strings.HasPrefix(q, "--") {
-		return false
-	}
-	line, _, _ := strings.Cut(q, "\n")
-	return strings.Contains(line, noJournalDirective)
 }
 
 // splitStatements breaks a multi-statement SQL string into individual
@@ -298,14 +239,6 @@ func (c *conn) ExecContext(_ context.Context, query string, args []driver.NamedV
 		affected, _ = meta.Rows[0][1].(int64)
 	}
 
-	if c.journal != nil && isMutation(query) {
-		frame := journalFrame{SQL: query, Params: params}
-		if c.inTx {
-			c.txBuf = append(c.txBuf, frame)
-		} else if err := c.journal.appendAll([]journalFrame{frame}); err != nil {
-			return nil, fmt.Errorf("flatsqldrv: journal append: %w", err)
-		}
-	}
 	return result{lastID: lastID, affected: affected}, nil
 }
 
@@ -372,11 +305,4 @@ func (r *rows) Next(dest []driver.Value) error {
 		}
 	}
 	return nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

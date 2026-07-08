@@ -3,9 +3,9 @@ package main
 // Loop C.8b: read-flavored CLI verbs (search, sync status, identity export,
 // dataset-pnm list/export, ...) must work against a store a live daemon
 // holds. The v2 store is single-writer, so those verbs open the store
-// read-only when the exclusive writer lock is taken: journal replayed from
-// its CRC-valid prefix, stream files only ever read, all writes rejected
-// with storage.ErrStoreReadOnly.
+// read-only when the exclusive writer lock is taken: compact metadata is
+// replayed from its CRC-valid prefix, stream files are only ever read, and
+// all writes are rejected with storage.ErrStoreReadOnly.
 
 import (
 	"errors"

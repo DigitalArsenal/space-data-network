@@ -46,7 +46,6 @@ const (
 	flatSQLStreamDirName         = "flatsql-streams"
 	legacyBlobMigrationBatchSize = 50000
 	localEPMStoreSalt            = "space-data-network-local-epm-store-v1"
-	controlJournalFileName       = "control.sdnj"
 	engineAOTCacheDirName        = "flatsql-aot"
 )
 
@@ -62,15 +61,16 @@ func engineAOTCacheDir() string {
 }
 
 // FlatSQLStore provides storage over the in-process FlatSQL-WASM engine:
-// record payloads live in append-only stream files, control/index tables live
-// in the engine's SQLite (durable via the statement journal, replayed at
-// boot). See docs/flatsql-store-v2.md.
+// record payloads live in append-only stream files, and durable record
+// metadata lives in the compact record-catalog log. The engine's SQLite
+// tables are rebuilt from those domain records at open/recovery; SQL
+// statements are not persisted.
 type FlatSQLStore struct {
 	db                     *sql.DB
 	engine                 *flatsqlrt.Runtime
 	engineDB               *flatsqlrt.Database
-	journal                *flatsqldrv.StatementJournal
 	recordCatalog          *recordCatalogJournal
+	auxiliaryMetadata      *auxiliaryMetadataStore
 	recordCatalogHydrating atomic.Bool
 	recordCatalogHydrated  atomic.Bool
 	engineHotHydrating     atomic.Bool
@@ -85,7 +85,7 @@ type FlatSQLStore struct {
 	// (loop C.8b), which never take the writer lock.
 	lock *storeLock
 	// readOnly marks a store opened via NewFlatSQLStoreReadOnly: no writer
-	// lock, journal replayed from its CRC-valid prefix and never appended,
+	// lock, compact record metadata replayed from its CRC-valid prefix,
 	// stream appenders refused, and all public write verbs fail with
 	// ErrStoreReadOnly. Engine-local state (the private in-memory SQLite)
 	// may still mutate — it is never durable.
@@ -120,8 +120,7 @@ type storeConfig struct {
 // records resident in the engine vtabs per schema, enforced at boot rebuild
 // and by tombstone eviction at ingest. Values <= 0 keep the default
 // (engineDefaultHotWindow). Eviction only affects the in-memory engine
-// cache — stream files, the control journal, and datasync cursor rowids are
-// never touched.
+// cache — stream files and compact record metadata are never touched.
 func WithEngineHotWindow(records int) StoreOption {
 	return func(c *storeConfig) {
 		if records > 0 {
@@ -132,9 +131,9 @@ func WithEngineHotWindow(records int) StoreOption {
 
 // WithDeferredBootRebuilds skips the synchronous rebuild of derived source
 // summaries and the FlatSQL engine hot window during open. Stream-backed raw
-// record reads and cursor/index queries remain available from the durable
-// control journal + flatsql-streams files. Callers can run RebuildDerivedState
-// later as a maintenance step.
+// record reads remain available from the compact record catalog +
+// flatsql-streams files. Callers can run RebuildDerivedState later as a
+// maintenance step.
 func WithDeferredBootRebuilds() StoreOption {
 	return func(c *storeConfig) {
 		c.deferBootRebuilds = true
@@ -160,13 +159,12 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator, opts ...StoreOpt
 // C.8b). It never takes the writer lock and never writes a single byte of
 // durable store state:
 //
-//   - the control journal is opened O_RDONLY and replayed up to the
+//   - compact record metadata is opened read-only and replayed up to the
 //     CRC-valid prefix captured at open (concurrent daemon appends after
 //     that point are simply not visible);
-//   - stream files are only ever read (ReadAt), and both the journal and
-//     the stream files are append-only by design, so a point-in-time prefix
-//     is always internally consistent (index rows are journaled only after
-//     their stream bytes are durably appended);
+//   - stream files are only ever read (ReadAt), and both the metadata log
+//     and stream files are append-only by design, so a point-in-time prefix
+//     is always internally consistent;
 //   - stream appenders and every public write verb fail with
 //     ErrStoreReadOnly; engine-local SQL still executes against this
 //     process's PRIVATE in-memory engine and is never persisted.
@@ -205,7 +203,7 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 
 		// Single-writer liveness lock (storelock.go): taken BEFORE any store
 		// file is touched, so a second writer process fails here with a clean
-		// ErrStoreLocked instead of corrupting the journal or stream files.
+		// ErrStoreLocked instead of corrupting metadata or stream files.
 		var err error
 		lock, err = acquireStoreLock(basePath)
 		if err != nil {
@@ -222,9 +220,9 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		}
 	}()
 
-	// dbPath no longer names a real SQLite file (the engine is in-memory,
-	// durably backed by the statement journal), but the string stays exactly
-	// as before: it salts the local-EPM store key and is exposed via Path().
+	// dbPath no longer names a real SQLite file (the engine is in-memory),
+	// but the string stays exactly as before: it salts the local-EPM store key
+	// and is exposed via Path().
 	dbPath := filepath.Join(basePath, "sdn.db")
 
 	engine, err := flatsqlrt.New(flatsqlrt.WithPrecompiledAOTCache(engineAOTCacheDir()))
@@ -250,60 +248,42 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		return nil, fmt.Errorf("failed to register $OMM file identifier: %w", err)
 	}
 
-	journalPath := filepath.Join(basePath, controlJournalFileName)
-	var journal *flatsqldrv.StatementJournal
-	if readOnly {
-		journal, err = flatsqldrv.OpenStatementJournalReadOnly(journalPath)
-	} else {
-		journal, err = flatsqldrv.OpenStatementJournal(journalPath)
-	}
-	if err != nil {
-		engine.Close()
-		return nil, fmt.Errorf("failed to open control journal: %w", err)
-	}
-	if _, err := journal.Replay(engineDB); err != nil {
-		journal.Close()
-		engine.Close()
-		return nil, fmt.Errorf("failed to replay control journal: %w", err)
-	}
 	recordCatalog, err := openRecordCatalogJournal(filepath.Join(basePath, recordCatalogJournalFileName), readOnly)
 	if err != nil {
-		journal.Close()
 		engine.Close()
 		return nil, fmt.Errorf("failed to open record catalog journal: %w", err)
 	}
-
-	// Read-only stores run the driver WITHOUT a journal: SQL mutations (the
-	// idempotent table/index init below, engine mirror bookkeeping) execute
-	// against this process's private in-memory engine only and are never
-	// persisted. The read-only journal handle is kept solely for Close.
-	driverJournal := journal
-	if readOnly {
-		driverJournal = nil
+	auxiliaryMetadata, err := openAuxiliaryMetadataStore(filepath.Join(basePath, auxiliaryMetadataFileName), readOnly)
+	if err != nil {
+		recordCatalog.Close()
+		engine.Close()
+		return nil, fmt.Errorf("failed to open auxiliary metadata: %w", err)
 	}
-	db := flatsqldrv.Open(engineDB, driverJournal)
+
+	db := flatsqldrv.Open(engineDB)
 
 	// Enable foreign keys
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
-		journal.Close()
+		auxiliaryMetadata.Close()
+		recordCatalog.Close()
 		engine.Close()
 		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
 
 	store := &FlatSQLStore{
-		db:            db,
-		engine:        engine,
-		engineDB:      engineDB,
-		journal:       journal,
-		recordCatalog: recordCatalog,
-		validator:     validator,
-		dbPath:        dbPath,
-		basePath:      basePath,
-		streamDir:     streamDir,
-		lock:          lock,
-		readOnly:      readOnly,
-		engineSources: map[string]bool{},
+		db:                db,
+		engine:            engine,
+		engineDB:          engineDB,
+		recordCatalog:     recordCatalog,
+		auxiliaryMetadata: auxiliaryMetadata,
+		validator:         validator,
+		dbPath:            dbPath,
+		basePath:          basePath,
+		streamDir:         streamDir,
+		lock:              lock,
+		readOnly:          readOnly,
+		engineSources:     map[string]bool{},
 
 		engineHotWindow: cfg.engineHotWindow,
 		engineResident:  map[string]int64{},
@@ -314,6 +294,10 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	if err := store.initTables(); err != nil {
 		store.Close()
 		return nil, fmt.Errorf("failed to initialize tables: %w", err)
+	}
+	if _, err := auxiliaryMetadata.Replay(store); err != nil {
+		store.Close()
+		return nil, fmt.Errorf("failed to replay auxiliary metadata: %w", err)
 	}
 	if cfg.deferRecordCatalogReplay {
 		log.Infof("FlatSQL store: deferred compact record-catalog replay at open")
@@ -337,8 +321,8 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	return store, nil
 }
 
-// RebuildDerivedState rebuilds durable-derived caches from the control
-// journal and stream files: source summaries and the engine hot window. This
+// RebuildDerivedState rebuilds durable-derived caches from compact record
+// metadata and stream files: source summaries and the engine hot window. This
 // is safe to run after opening a store with WithDeferredBootRebuilds, but it
 // may be expensive on large catalogs and holds the store write lock.
 func (s *FlatSQLStore) RebuildDerivedState() error {
@@ -3174,7 +3158,7 @@ func (s *FlatSQLStore) GarbageCollect(maxAge time.Duration) (int64, error) {
 	return totalDeleted, nil
 }
 
-// Close closes the database handle, journal, and engine.
+// Close closes the database handle, record catalog, and engine.
 func (s *FlatSQLStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -3184,17 +3168,17 @@ func (s *FlatSQLStore) Close() error {
 		firstErr = s.db.Close()
 		s.db = nil
 	}
-	if s.journal != nil {
-		if err := s.journal.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
-		s.journal = nil
-	}
 	if s.recordCatalog != nil {
 		if err := s.recordCatalog.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 		s.recordCatalog = nil
+	}
+	if s.auxiliaryMetadata != nil {
+		if err := s.auxiliaryMetadata.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		s.auxiliaryMetadata = nil
 	}
 	if s.engineDB != nil {
 		s.engineDB.Destroy()
@@ -3300,16 +3284,34 @@ func (s *FlatSQLStore) UpsertDirectoryRecord(record DirectoryRecord) error {
 	if err := s.requireWritable("upsert directory record"); err != nil {
 		return err
 	}
+	record, err := normalizeDirectoryRecord(record)
+	if err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if err := s.applyDirectoryRecordUpsert(record); err != nil {
+		return err
+	}
+	if err := s.appendAuxiliaryMetadata(auxiliaryMetadataEvent{
+		Kind:      auxiliaryEventDirectoryUpsert,
+		Directory: &record,
+	}); err != nil {
+		return fmt.Errorf("append directory metadata: %w", err)
+	}
+	return nil
+}
+
+func normalizeDirectoryRecord(record DirectoryRecord) (DirectoryRecord, error) {
 	kind := strings.TrimSpace(strings.ToLower(record.Kind))
 	peerID := strings.TrimSpace(record.PeerID)
 	if kind == "" {
-		return errors.New("directory record kind is required")
+		return DirectoryRecord{}, errors.New("directory record kind is required")
 	}
 	if peerID == "" {
-		return errors.New("directory record peer_id is required")
+		return DirectoryRecord{}, errors.New("directory record peer_id is required")
 	}
 
 	source := strings.TrimSpace(record.Source)
@@ -3333,6 +3335,19 @@ func (s *FlatSQLStore) UpsertDirectoryRecord(record DirectoryRecord) error {
 		}
 	}
 
+	record.Kind = kind
+	record.PeerID = peerID
+	record.DN = strings.TrimSpace(record.DN)
+	record.LegalName = strings.TrimSpace(record.LegalName)
+	record.BitcoinAddress = strings.TrimSpace(record.BitcoinAddress)
+	record.EPMCID = strings.TrimSpace(record.EPMCID)
+	record.Source = source
+	record.UpdatedAt = updatedAt
+	record.EPMJSON = epmJSON
+	return record, nil
+}
+
+func (s *FlatSQLStore) applyDirectoryRecordUpsert(record DirectoryRecord) error {
 	_, err := s.db.Exec(`
 		INSERT INTO sdn_directory (
 			kind, peer_id, dn, legal_name, bitcoin_address, epm_cid, source, updated_at, epm_json
@@ -3346,11 +3361,10 @@ func (s *FlatSQLStore) UpsertDirectoryRecord(record DirectoryRecord) error {
 			source = excluded.source,
 			updated_at = excluded.updated_at,
 			epm_json = excluded.epm_json
-	`, kind, peerID, strings.TrimSpace(record.DN), strings.TrimSpace(record.LegalName), strings.TrimSpace(record.BitcoinAddress), strings.TrimSpace(record.EPMCID), source, updatedAt, epmJSON)
+	`, record.Kind, record.PeerID, record.DN, record.LegalName, record.BitcoinAddress, record.EPMCID, record.Source, record.UpdatedAt, record.EPMJSON)
 	if err != nil {
 		return fmt.Errorf("failed to upsert directory record: %w", err)
 	}
-
 	return nil
 }
 
@@ -3485,8 +3499,39 @@ func (s *FlatSQLStore) SaveLocalEPM(peerID string, epmBytes []byte) error {
 	if err != nil {
 		return fmt.Errorf("encrypt local EPM bytes: %w", err)
 	}
+	record := auxiliaryLocalEPMRecord{
+		PeerID:            peerID,
+		EncryptedEPMBytes: encryptedBytes,
+		UpdatedAt:         time.Now().Unix(),
+	}
 
-	_, err = s.db.Exec(`
+	if err := s.applyLocalEPMEncryptedUpsert(record); err != nil {
+		return err
+	}
+	if err := s.appendAuxiliaryMetadata(auxiliaryMetadataEvent{
+		Kind:     auxiliaryEventLocalEPMUpsert,
+		LocalEPM: &record,
+	}); err != nil {
+		return fmt.Errorf("append local EPM metadata: %w", err)
+	}
+
+	return nil
+}
+
+func (s *FlatSQLStore) applyLocalEPMEncryptedUpsert(record auxiliaryLocalEPMRecord) error {
+	peerID := strings.TrimSpace(record.PeerID)
+	if peerID == "" {
+		return errors.New("local EPM peer_id is required")
+	}
+	if strings.TrimSpace(record.EncryptedEPMBytes) == "" {
+		return errors.New("local EPM encrypted bytes are required")
+	}
+	updatedAt := record.UpdatedAt
+	if updatedAt == 0 {
+		updatedAt = time.Now().Unix()
+	}
+
+	_, err := s.db.Exec(`
 		INSERT INTO sdn_local_epms (
 			peer_id, schema_name, encrypted_epm_bytes, updated_at
 		)
@@ -3495,11 +3540,10 @@ func (s *FlatSQLStore) SaveLocalEPM(peerID string, epmBytes []byte) error {
 			schema_name = 'EPM.fbs',
 			encrypted_epm_bytes = excluded.encrypted_epm_bytes,
 			updated_at = excluded.updated_at
-	`, peerID, encryptedBytes, time.Now().Unix())
+	`, peerID, record.EncryptedEPMBytes, updatedAt)
 	if err != nil {
 		return fmt.Errorf("save local EPM record: %w", err)
 	}
-
 	return nil
 }
 

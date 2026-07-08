@@ -1,10 +1,10 @@
 package storage
 
 // Store liveness lock (loop C.6b). The v2 FlatSQL store is SINGLE-WRITER:
-// one in-process engine owns the control journal (control.sdnj) and the
+// one in-process engine owns the compact record metadata log and the
 // stream appenders. Two independent processes opening the same basePath —
 // the celestrak.eth prod topology was `spacedatanetwork` (daemon) plus
-// `spacedatanetwork-ingest.service` on ONE path — would interleave journal
+// `spacedatanetwork-ingest.service` on ONE path — would interleave metadata
 // frames and stream appends and corrupt the store. Every writer open
 // therefore takes an EXCLUSIVE OS advisory lock (flock on Unix, LockFileEx
 // on Windows) on <basePath>/store.lock before touching any store file, and
@@ -62,7 +62,7 @@ func acquireStoreLock(basePath string) (*storeLock, error) {
 		holder := describeLockHolder(path)
 		f.Close()
 		return nil, fmt.Errorf(
-			"store at %s is already open for writing%s: the FlatSQL v2 store is single-writer (in-process engine + control.sdnj journal) — "+
+			"store at %s is already open for writing%s: the FlatSQL v2 store is single-writer (in-process engine + compact record metadata) — "+
 				"stop the other process before opening this store: %w",
 			basePath, holder, ErrStoreLocked)
 	}

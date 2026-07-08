@@ -10,8 +10,8 @@ import (
 )
 
 // Store persists the trust DAG in lightweight index tables in its own
-// engine-backed database (journal-durable): the Graph enforces the acyclic
-// invariant in memory, the Store is its durable row image.
+// durable database: the Graph enforces the acyclic invariant in memory, the
+// Store is its durable row image.
 type Store struct {
 	db     *sql.DB
 	closer func() error
@@ -27,11 +27,10 @@ func NewStore(db *sql.DB) (*Store, error) {
 	return s, nil
 }
 
-// NewStoreWithFlatSQL opens the trust index tables in a private
-// engine-backed database next to the node's datastore (journal
-// `trust.sdnj`) — no shared db file, no cross-subsystem contention.
+// NewStoreWithFlatSQL opens the trust index tables in a private database next
+// to the node's datastore — no shared db file, no cross-subsystem contention.
 func NewStoreWithFlatSQL(flatStore *storage.FlatSQLStore) (*Store, error) {
-	db, closer, err := flatsqldrv.OpenStandalone(filepath.Join(filepath.Dir(flatStore.Path()), "trust.sdnj"))
+	db, closer, err := flatsqldrv.OpenStandalone(filepath.Join(filepath.Dir(flatStore.Path()), "trust.db"))
 	if err != nil {
 		return nil, fmt.Errorf("trust: open index database: %w", err)
 	}

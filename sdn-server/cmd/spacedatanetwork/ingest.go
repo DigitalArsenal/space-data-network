@@ -226,7 +226,7 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		if errors.Is(err, storage.ErrStoreLocked) {
 			// The v2 store is single-writer: the standalone ingest verb can
 			// no longer run against a store a daemon (or any other process)
-			// holds — that topology corrupted the control journal.
+			// holds — that topology corrupts record metadata/stream state.
 			return fmt.Errorf("%w\n\nThe storage path %s is held by another process (most likely a running spacedatanetwork daemon).\n"+
 				"The standalone 'ingest' command only works against a store no daemon is using (offline/standalone mode).\n"+
 				"To ingest alongside a running daemon, enable in-daemon ingest in the daemon config instead:\n\n"+

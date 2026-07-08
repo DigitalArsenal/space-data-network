@@ -4,8 +4,8 @@ package storage
 // and query a store WHILE a writer (the daemon) holds the exclusive
 // single-writer lock, seeing a consistent point-in-time prefix; every write
 // verb on the read-only handle must fail with ErrStoreReadOnly; and the
-// read-only open must leave zero durable trace (journal byte-identical,
-// stream files byte-identical, no new files).
+// read-only open must leave zero durable trace (metadata/stream files
+// byte-identical for the point-in-time view, no new files).
 
 import (
 	"crypto/sha256"
@@ -200,7 +200,7 @@ func TestReadOnlyOpenAgainstLiveWriter(t *testing.T) {
 	}
 
 	// Zero durable trace: comparing everything but the files the WRITER
-	// legitimately changed (journal + streams grew with batch 2) is not
+	// legitimately changed (metadata + streams grew with batch 2) is not
 	// enough — assert the reader created NO new files and that closing both
 	// readers changes nothing.
 	if err := reader.Close(); err != nil {
@@ -213,7 +213,7 @@ func TestReadOnlyOpenAgainstLiveWriter(t *testing.T) {
 	for _, name := range sortedKeys(postClose) {
 		if _, existed := preOpen[name]; !existed {
 			// Only the writer may have created files since the snapshot; the
-			// writer appends to existing journal/stream files, so ANY new
+			// writer appends to existing metadata/stream files, so ANY new
 			// file would have to come from the readers.
 			t.Fatalf("read-only opens created new store file %q", name)
 		}

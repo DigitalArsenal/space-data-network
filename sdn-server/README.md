@@ -50,10 +50,10 @@ tor:
 ## Ingestion Workers (CelesTrak + Space-Track + UDL)
 
 **Single-writer topology:** the FlatSQL v2 store admits exactly one writer
-process (exclusive `store.lock` beside `control.sdnj`). Where a daemon runs
-on the storage path, enable in-daemon ingest in the daemon config instead of
-the standalone verb — the workers then run inside the daemon against its own
-store handle:
+process (exclusive `store.lock` beside compact record metadata and stream
+files). Where a daemon runs on the storage path, enable in-daemon ingest in
+the daemon config instead of the standalone verb — the workers then run
+inside the daemon against its own store handle:
 
 ```yaml
 ingest:
