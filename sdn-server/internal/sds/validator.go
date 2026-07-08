@@ -246,7 +246,9 @@ var SupportedSchemas = []string{
 	"TKG.fbs",  // Tracking and Data Fusion
 	"TME.fbs",  // Time Systems
 	"TMF.fbs",  // Telemetry Transfer Frame (CCSDS 132.0-B-2)
+	"TNR.fbs",  // Trust Node Record
 	"TPN.fbs",  // Transponder
+	"TRE.fbs",  // Trust Edge Record
 	"TRK.fbs",  // Track
 	"TRN.fbs",  // Terrain Models
 	"VCM.fbs",  // Vector Covariance Message
