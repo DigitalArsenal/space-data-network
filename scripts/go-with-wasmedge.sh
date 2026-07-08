@@ -32,6 +32,40 @@ if [[ -d "$WASMEDGE_DIR/bin" ]]; then
 fi
 export GOCACHE="${GOCACHE:-$ROOT/.gocache}"
 
+strip_path_entry() {
+  local var_name="$1"
+  local remove_entry="$2"
+  local current="${!var_name:-}"
+  local next=""
+  local entry
+
+  if [[ -z "$current" ]]; then
+    return 0
+  fi
+
+  IFS=':' read -r -a entries <<<"$current"
+  for entry in "${entries[@]}"; do
+    if [[ "$entry" == "$remove_entry" ]]; then
+      continue
+    fi
+    next="${next}${next:+:}${entry}"
+  done
+
+  if [[ -n "$next" ]]; then
+    export "$var_name=$next"
+  else
+    unset "$var_name"
+  fi
+}
+
+# The local build must be driven by the explicit header/library layout above.
+# Stale default runtime installs in the parent shell can otherwise leak into
+# CGO through linker search paths and shadow the selected WasmEdge version.
+unset WASMEDGE_LIB_DIR WASMEDGE_INCLUDE_DIR
+strip_path_entry LIBRARY_PATH "$HOME/.wasmedge/lib"
+strip_path_entry DYLD_LIBRARY_PATH "$HOME/.wasmedge/lib"
+strip_path_entry DYLD_FALLBACK_LIBRARY_PATH "$HOME/.wasmedge/lib"
+
 mkdir -p "$GOCACHE"
 
 if [[ -z "${CC:-}" ]] && [[ "$(uname -s)" == "Darwin" ]] && [[ -x /usr/bin/clang ]]; then
