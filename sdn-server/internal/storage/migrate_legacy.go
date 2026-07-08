@@ -3,10 +3,9 @@ package storage
 // migrate_legacy.go (loop B.7): one-shot migration of a v1 sqlite control
 // database (sdn.db) into the FlatSQL-WASM engine store. The legacy database
 // is read-only input; every control row is re-inserted through the engine
-// driver — and therefore into the statement journal (control.sdnj) — WITH ITS
-// LEGACY ROWID. sdn_record_index rowids are the datasync cursor space that
-// deployed peers hold (docs/flatsql-store-v2.md §3), so sparse rowids left by
-// GC must survive byte-for-byte: every insert is
+// driver WITH ITS LEGACY ROWID. sdn_record_index rowids are the datasync
+// cursor space that deployed peers hold (docs/flatsql-store-v2.md §3), so
+// sparse rowids left by GC must survive byte-for-byte: every insert is
 // `INSERT ... (rowid, <cols>) VALUES (?, ...)`.
 //
 // Record payload bytes are NOT touched: they stay in the unchanged
@@ -25,6 +24,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -36,8 +36,7 @@ import (
 // identity) in the migrated store.
 const legacyMigrationSampleSize = 100
 
-// legacyMigrationBatchRows bounds rows per destination transaction so each
-// journal append stays a reasonable size.
+// legacyMigrationBatchRows bounds rows per destination transaction.
 const legacyMigrationBatchRows = 5000
 
 // LegacyMigrationOptions configures MigrateLegacyControl.
@@ -140,8 +139,7 @@ func (s *FlatSQLStore) MigrateLegacyControl(legacy *sql.DB, opts LegacyMigration
 	report := &LegacyMigrationReport{WindowLimit: opts.WindowLimit}
 
 	// Copying preserves legacy row order per table but not cross-table
-	// insertion order, so relax FK enforcement for the copy (PRAGMAs are not
-	// journaled; the journal replays in copy order, which is self-consistent).
+	// insertion order, so relax FK enforcement for the copy.
 	if _, err := s.db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
 		return nil, fmt.Errorf("disable foreign keys for migration: %w", err)
 	}
@@ -176,6 +174,9 @@ func (s *FlatSQLStore) MigrateLegacyControl(legacy *sql.DB, opts LegacyMigration
 	}
 	if err := s.sampleCheckRecordIndex(legacy, window, report); err != nil {
 		return report, err
+	}
+	if err := s.appendMigratedRecordCatalogEvents(); err != nil {
+		return report, fmt.Errorf("append compact record metadata after migration: %w", err)
 	}
 
 	// Rebuild the engine hot window from the (now migrated) control tables +
@@ -688,6 +689,163 @@ func (s *FlatSQLStore) copyLegacyTable(legacy *sql.DB, t legacyTable, filter *le
 		return copied, fmt.Errorf("commit destination batch: %w", err)
 	}
 	return copied, nil
+}
+
+func (s *FlatSQLStore) appendMigratedRecordCatalogEvents() error {
+	if s.recordCatalog == nil {
+		return nil
+	}
+
+	appendBatch := func(events *[]recordCatalogEvent, force bool) error {
+		if len(*events) == 0 || (!force && len(*events) < recordCatalogReplayBatchSize) {
+			return nil
+		}
+		if err := s.recordCatalog.AppendAll(*events); err != nil {
+			return err
+		}
+		*events = (*events)[:0]
+		return nil
+	}
+
+	files := map[string]*os.File{}
+	defer func() {
+		for _, f := range files {
+			_ = f.Close()
+		}
+	}()
+
+	schemaRows, err := s.db.Query(`SELECT DISTINCT schema_name FROM sdn_record_index ORDER BY schema_name`)
+	if err != nil {
+		return fmt.Errorf("list migrated schemas: %w", err)
+	}
+	var schemas []string
+	for schemaRows.Next() {
+		var schemaName string
+		if err := schemaRows.Scan(&schemaName); err != nil {
+			schemaRows.Close()
+			return fmt.Errorf("scan migrated schema: %w", err)
+		}
+		schemas = append(schemas, schemaName)
+	}
+	if err := schemaRows.Err(); err != nil {
+		schemaRows.Close()
+		return fmt.Errorf("iterate migrated schemas: %w", err)
+	}
+	schemaRows.Close()
+
+	events := make([]recordCatalogEvent, 0, recordCatalogReplayBatchSize)
+	for _, schemaName := range schemas {
+		readSource, err := s.recordReadSource(schemaName)
+		if err != nil {
+			return fmt.Errorf("record read source for %s: %w", schemaName, err)
+		}
+		rows, err := s.db.Query(fmt.Sprintf(`
+			SELECT idx.cid,
+			       idx.source_timestamp,
+			       COALESCE(rr.peer_id, ''),
+			       rr.stream_path,
+			       rr.stream_offset,
+			       rr.record_length,
+			       COALESCE(rr.signature_hex, ''),
+			       COALESCE(rr.created_at, idx.created_at, idx.source_timestamp)
+			FROM sdn_record_index idx
+			JOIN %s rr ON rr.cid = idx.cid
+			WHERE idx.schema_name = ?
+			ORDER BY idx.rowid ASC
+		`, readSource), schemaName)
+		if err != nil {
+			return fmt.Errorf("read migrated records for %s: %w", schemaName, err)
+		}
+		for rows.Next() {
+			var cid, peerID, streamPath, signatureHex string
+			var sourceTimestamp, streamOffset, recordLength, createdAt int64
+			if err := rows.Scan(&cid, &sourceTimestamp, &peerID, &streamPath, &streamOffset, &recordLength, &signatureHex, &createdAt); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan migrated record for %s: %w", schemaName, err)
+			}
+			data, err := s.readStreamRecordCached(files, streamPath, streamOffset, recordLength)
+			if err != nil {
+				rows.Close()
+				return fmt.Errorf("read migrated record stream %s/%s: %w", schemaName, cid, err)
+			}
+			index, err := recordCatalogIndexFromStoredRow(s.db, schemaName, cid, sourceTimestamp, data)
+			if err != nil {
+				rows.Close()
+				return fmt.Errorf("build migrated record index %s/%s: %w", schemaName, cid, err)
+			}
+			events = append(events, recordCatalogEvent{
+				Kind:         recordCatalogEventRecordUpsert,
+				SchemaName:   schemaName,
+				CID:          cid,
+				PeerID:       peerID,
+				StreamPath:   streamPath,
+				StreamOffset: streamOffset,
+				RecordLength: recordLength,
+				SignatureHex: signatureHex,
+				Timestamp:    sourceTimestamp,
+				CreatedAt:    createdAt,
+				Index:        index,
+			})
+			if err := appendBatch(&events, false); err != nil {
+				rows.Close()
+				return err
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return fmt.Errorf("iterate migrated records for %s: %w", schemaName, err)
+		}
+		rows.Close()
+	}
+	if err := appendBatch(&events, true); err != nil {
+		return err
+	}
+
+	tagRows, err := s.db.Query(`
+		SELECT schema_name, cid,
+		       COALESCE(provider_id, ''),
+		       COALESCE(source_name, ''),
+		       COALESCE(source_url, ''),
+		       COALESCE(batch_id, ''),
+		       COALESCE(content_key_id, ''),
+		       COALESCE(producer_peer_id, ''),
+		       COALESCE(producer_public_key, ''),
+		       created_at
+		FROM sdn_record_source_tags
+		ORDER BY rowid ASC
+	`)
+	if err != nil {
+		return fmt.Errorf("read migrated source tags: %w", err)
+	}
+	defer tagRows.Close()
+	for tagRows.Next() {
+		var event recordCatalogEvent
+		event.Kind = recordCatalogEventTagUpsert
+		var tags SourceTags
+		if err := tagRows.Scan(
+			&event.SchemaName,
+			&event.CID,
+			&tags.ProviderID,
+			&tags.SourceName,
+			&tags.SourceURL,
+			&tags.BatchID,
+			&tags.ContentKeyID,
+			&tags.ProducerPeerID,
+			&tags.ProducerPublicKey,
+			&event.CreatedAt,
+		); err != nil {
+			return fmt.Errorf("scan migrated source tag: %w", err)
+		}
+		event.Tags = normalizeSourceTags(tags)
+		events = append(events, event)
+		if err := appendBatch(&events, false); err != nil {
+			return err
+		}
+	}
+	if err := tagRows.Err(); err != nil {
+		return fmt.Errorf("iterate migrated source tags: %w", err)
+	}
+	return appendBatch(&events, true)
 }
 
 // legacyValueForInsert maps a scanned legacy value onto the engine driver's

@@ -11,7 +11,7 @@ package storage
 //                          store REPLACES its engine; mounts re-instantiate
 //                          dependent flow instances when it moves
 //   RecoverPoisonedEngine replace a trapped engine in place: fresh runtime,
-//                          journal replay, hot-window rebuild. The old
+//                          record-catalog replay, hot-window rebuild. The old
 //                          runtime is RETIRED, not closed — dependent VMs
 //                          may still hold borrowed references to its
 //                          instance; retired engines are released at store
@@ -43,10 +43,10 @@ func (s *FlatSQLStore) EngineEpoch() uint64 {
 }
 
 // RecoverPoisonedEngine replaces the engine if (and only if) it is poisoned:
-// new runtime + database, control tables replayed from the statement
-// journal, hot window rebuilt from stream files — the exact boot path, in
-// place, holding the store write lock for the duration. Idempotent and
-// cheap when the engine is healthy. Returns the (possibly bumped) epoch.
+// new runtime + database, tables rebuilt from compact domain metadata when
+// already hydrated, and the hot window rebuilt from stream files. Holds the
+// store write lock for the duration. Idempotent and cheap when the engine is
+// healthy. Returns the (possibly bumped) epoch.
 func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -73,18 +73,7 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 		engine.Close()
 		return s.engineEpoch, fmt.Errorf("recover poisoned engine: register $OMM: %w", err)
 	}
-	if _, err := s.journal.Replay(engineDB); err != nil {
-		engine.Close()
-		return s.engineEpoch, fmt.Errorf("recover poisoned engine: journal replay: %w", err)
-	}
-	// Read-only stores (loop C.8b) run the driver without a journal — the
-	// replacement engine is rebuilt from the read-only replay prefix and
-	// this process must never append durable frames.
-	driverJournal := s.journal
-	if s.readOnly {
-		driverJournal = nil
-	}
-	db := flatsqldrv.Open(engineDB, driverJournal)
+	db := flatsqldrv.Open(engineDB)
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
 		engine.Close()
@@ -106,8 +95,39 @@ func (s *FlatSQLStore) RecoverPoisonedEngine() (uint64, error) {
 		_ = oldDB.Close()
 	}
 
-	if err := s.rebuildEngineRecords(); err != nil {
-		return s.engineEpoch, fmt.Errorf("recover poisoned engine: hot-window rebuild: %w", err)
+	if err := s.initTables(); err != nil {
+		return s.engineEpoch, fmt.Errorf("recover poisoned engine: init tables: %w", err)
+	}
+	if s.auxiliaryMetadata != nil {
+		if _, err := s.auxiliaryMetadata.Replay(s); err != nil {
+			return s.engineEpoch, fmt.Errorf("recover poisoned engine: replay auxiliary metadata: %w", err)
+		}
+	}
+
+	catalogWasHydrated := s.recordCatalogHydrated.Load()
+	hotWindowWasHydrated := s.engineHotHydrated.Load()
+	s.recordCatalogHydrated.Store(false)
+	s.engineHotHydrated.Store(false)
+	if catalogWasHydrated && s.recordCatalog != nil {
+		if _, err := s.recordCatalog.Replay(s); err != nil {
+			return s.engineEpoch, fmt.Errorf("recover poisoned engine: replay record catalog: %w", err)
+		}
+		s.recordCatalogHydrated.Store(true)
+	}
+
+	if catalogWasHydrated {
+		if err := s.rebuildSourceSummariesFromDurableState(); err != nil {
+			return s.engineEpoch, fmt.Errorf("recover poisoned engine: source summaries: %w", err)
+		}
+		if err := s.rebuildEngineRecords(); err != nil {
+			return s.engineEpoch, fmt.Errorf("recover poisoned engine: hot-window rebuild: %w", err)
+		}
+		s.engineHotHydrated.Store(true)
+	} else if hotWindowWasHydrated && s.recordCatalog != nil {
+		if _, err := s.recordCatalog.ReplayEngineHotWindow(s, engineOMMSchemaName, s.engineHotWindow); err != nil {
+			return s.engineEpoch, fmt.Errorf("recover poisoned engine: compact hot-window rebuild: %w", err)
+		}
+		s.engineHotHydrated.Store(true)
 	}
 
 	log.Infof("FlatSQL engine rebuilt after poisoning (epoch %d)", s.engineEpoch)

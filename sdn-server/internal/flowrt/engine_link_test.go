@@ -62,9 +62,9 @@ func TestWasmImportsModuleDetection(t *testing.T) {
 // TestLinkedMountRecoversFromEnginePoisoning: serve → poison the store
 // engine (a genuine trap: MarkDeleted on an unknown table throws inside the
 // no-EH engine) → the next request recovers: the store replaces the engine
-// in place (journal replay + hot-window rebuild), the mount re-instantiates
-// its linked instance against the replacement, and the response is
-// byte-verbatim again.
+// in place (compact metadata replay + hot-window rebuild), the mount
+// re-instantiates its linked instance against the replacement, and the
+// response is byte-verbatim again.
 func TestLinkedMountRecoversFromEnginePoisoning(t *testing.T) {
 	dist := dataRetrievalFlowDist(t)
 
@@ -142,7 +142,6 @@ func TestLinkedMountRecoversFromEnginePoisoning(t *testing.T) {
 	if !engineRT.Poisoned() {
 		t.Fatal("engine should report poisoned")
 	}
-
 	// The next request must transparently recover: engine replaced, linked
 	// instance rebuilt, byte-verbatim response restored.
 	status, body = fetch()

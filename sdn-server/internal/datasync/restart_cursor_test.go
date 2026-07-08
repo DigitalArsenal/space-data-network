@@ -3,10 +3,10 @@ package datasync
 // restart_cursor_test.go (loop B.4): the deployed-peer sync contract must
 // survive a store restart. With the engine store, control-table state
 // (including sdn_record_index rowids — the cursor space) is rebuilt at boot
-// by statement-journal replay; these tests prove a cursor issued before a
-// restart resumes EXACTLY where it left off afterwards, with identical
-// bytes, hashes, and snapshot identity — i.e. a deployed peer never notices
-// the restart.
+// from compact record metadata; these tests prove a cursor issued before a
+// restart resumes EXACTLY where it left off afterwards, with identical bytes,
+// hashes, and snapshot identity — i.e. a deployed peer never notices the
+// restart.
 
 import (
 	"bytes"
@@ -24,6 +24,7 @@ func buildSyncOMM(norad uint32) []byte {
 		WithObjectID(fmt.Sprintf("2026-%03d", norad%1000)).
 		WithObjectName(fmt.Sprintf("SAT-%d", norad)).
 		WithEpoch("2026-05-12T12:00:00Z").
+		WithCreationDate("2026-05-12T12:00:00Z").
 		Build()
 }
 
@@ -103,7 +104,7 @@ func TestScanCursorSurvivesStoreRestart(t *testing.T) {
 	cPage2 := scanOnce(t, control, cPage1.resp)
 	cPage3 := scanOnce(t, control, cPage2.resp)
 
-	// Restart store: page 1, RESTART (close + reopen -> journal replay +
+	// Restart store: page 1, RESTART (close + reopen -> metadata replay +
 	// engine rebuild), then resume pages 2 and 3 with the pre-restart cursor.
 	restartDir := filepath.Join(t.TempDir(), "restart")
 	store := openSyncStore(t, restartDir)
@@ -152,7 +153,7 @@ func TestScanCursorSurvivesStoreRestart(t *testing.T) {
 	}
 
 	// Post-restart snapshot head must match the control store's (rowid space
-	// reproduced exactly by journal replay).
+	// reproduced exactly by compact metadata replay).
 	cHead, err := control.RawRecordHead(storage.RawRecordQuery{SchemaName: "OMM.fbs"})
 	if err != nil {
 		t.Fatalf("control head: %v", err)

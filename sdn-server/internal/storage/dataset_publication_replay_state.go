@@ -57,6 +57,9 @@ func (s *FlatSQLStore) initDatasetPublicationReplayStateTable() error {
 }
 
 func (s *FlatSQLStore) UpsertDatasetPublicationReplayState(state DatasetPublicationReplayState) error {
+	if err := s.requireWritable("upsert dataset publication replay state"); err != nil {
+		return err
+	}
 	state = normalizeDatasetPublicationReplayState(state)
 	if state.PNMKey == "" {
 		return errors.New("dataset publication replay state key is required")
@@ -70,6 +73,19 @@ func (s *FlatSQLStore) UpsertDatasetPublicationReplayState(state DatasetPublicat
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.applyDatasetPublicationReplayStateUpsert(state); err != nil {
+		return err
+	}
+	if err := s.appendAuxiliaryMetadata(auxiliaryMetadataEvent{
+		Kind:               auxiliaryEventDatasetReplayStateUpsert,
+		DatasetReplayState: &state,
+	}); err != nil {
+		return fmt.Errorf("append dataset replay state metadata: %w", err)
+	}
+	return nil
+}
+
+func (s *FlatSQLStore) applyDatasetPublicationReplayStateUpsert(state DatasetPublicationReplayState) error {
 	_, err := s.db.Exec(`
 		INSERT INTO sdn_dataset_publication_replay_state (
 			pnm_key, schema_name, pnm_cid, file_id, state, error, updated_at

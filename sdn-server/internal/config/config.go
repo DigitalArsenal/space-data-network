@@ -186,11 +186,11 @@ func (g GatewayConfig) PinnedPeers(schemaName string) []string {
 // INSIDE the daemon process, against the daemon's own store handle.
 //
 // This is the single-writer topology (loop C.6b): the FlatSQL v2 store
-// (in-process engine + control.sdnj statement journal) admits exactly one
-// writer process, so a separate `spacedatanetwork ingest` service can no
-// longer share a running daemon's storage path — it now fails with a
-// store-lock error instead of corrupting the journal. Enable this section
-// on provider nodes instead of the standalone ingest unit. The standalone
+// (in-process engine + compact record metadata + stream appenders) admits
+// exactly one writer process, so a separate `spacedatanetwork ingest` service
+// can no longer share a running daemon's storage path — it now fails with a
+// store-lock error instead of corrupting the store. Enable this section on
+// provider nodes instead of the standalone ingest unit. The standalone
 // `ingest` verb remains supported for offline/standalone stores only.
 //
 // Credentials are intentionally NOT configurable here: Space-Track and UDL
@@ -423,7 +423,7 @@ type StorageConfig struct {
 
 	// EngineHotWindow bounds the records resident per schema in the in-memory
 	// FlatSQL-WASM engine (the query hot window). Older records are evicted
-	// from the ENGINE only — stream files, the control journal, and datasync
+	// from the ENGINE only — stream files, compact metadata, and datasync
 	// cursors keep the full history. 0 = built-in default (400K records,
 	// sized against the engine's 4 GiB wasm32 ceiling).
 	EngineHotWindow int `yaml:"engine_hot_window,omitempty"`

@@ -1205,7 +1205,7 @@ func TestMakeFrontendSurfaceHandlerServesFrontendWhenAuthenticated(t *testing.T)
 	t.Parallel()
 
 	dir := t.TempDir()
-	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.sdnj"))
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.db"))
 	if err != nil {
 		t.Fatalf("OpenStandalone: %v", err)
 	}

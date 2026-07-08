@@ -86,14 +86,13 @@ type Manager struct {
 	mu     sync.RWMutex
 }
 
-// NewManager creates a new admin manager backed by a private engine database
-// (statement journal admin.sdnj under basePath).
+// NewManager creates a new admin manager backed by a private SQLite database.
 func NewManager(basePath string) (*Manager, error) {
 	if err := os.MkdirAll(basePath, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create admin directory: %w", err)
 	}
 
-	dbPath := filepath.Join(basePath, "admin.sdnj")
+	dbPath := filepath.Join(basePath, "admin.db")
 	db, closer, err := flatsqldrv.OpenStandalone(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open admin database: %w", err)

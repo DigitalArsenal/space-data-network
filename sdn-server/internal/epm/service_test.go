@@ -17,7 +17,6 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
-	sdnvcard "github.com/spacedatanetwork/sdn-server/internal/vcard"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
@@ -467,13 +466,9 @@ func TestNodeQRUsesCompactVCardWithoutEmbeddedEPMPayload(t *testing.T) {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	pngData, err := service.GetNodeQR(320)
+	vcard, err := service.GetNodeQRVCard()
 	if err != nil {
-		t.Fatalf("GetNodeQR failed: %v", err)
-	}
-	vcard, err := sdnvcard.QRToVCard(pngData)
-	if err != nil {
-		t.Fatalf("QRToVCard failed: %v", err)
+		t.Fatalf("GetNodeQRVCard failed: %v", err)
 	}
 	unfolded := unfoldVCardForTest(vcard)
 

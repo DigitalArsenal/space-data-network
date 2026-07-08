@@ -29,9 +29,8 @@ const (
 
 // Store provides FlatSQL-backed storage for storefront data.
 // Canonical record data (STF, ACL, PUR, REV) is stored through FlatSQLStore
-// as content-addressed blobs. Lightweight index tables in a private
-// engine-backed database (journal-durable) provide rich query support
-// (search, filter, pagination).
+// as content-addressed blobs. Lightweight index tables in a private durable
+// database provide rich query support (search, filter, pagination).
 type Store struct {
 	flatStore *storage.FlatSQLStore
 	db        *sql.DB // own engine-backed database for index tables
@@ -40,11 +39,11 @@ type Store struct {
 }
 
 // NewStore creates a new storefront store backed by FlatSQL. Index tables
-// live in a private engine database next to the node's datastore (journal
-// `storefront.sdnj`) — no shared db file, no cross-subsystem contention —
-// while flatStore holds the content-addressed records.
+// live in a private database next to the node's datastore — no shared db
+// file, no cross-subsystem contention — while flatStore holds the
+// content-addressed records.
 func NewStore(flatStore *storage.FlatSQLStore) (*Store, error) {
-	db, closer, err := flatsqldrv.OpenStandalone(filepath.Join(filepath.Dir(flatStore.Path()), "storefront.sdnj"))
+	db, closer, err := flatsqldrv.OpenStandalone(filepath.Join(filepath.Dir(flatStore.Path()), "storefront.db"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open index database: %w", err)
 	}

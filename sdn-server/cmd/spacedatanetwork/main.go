@@ -1220,9 +1220,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 			// HD wallet authentication
 			if cfg.Admin.RequireAuth {
-				// The user store owns the private auth engine database
-				// (journal auth.sdnj derived from this path); the session
-				// store shares that same engine via userStore.DB().
+				// The user store owns the private auth database; the session
+				// store shares that same handle via userStore.DB().
 				authDBPath := filepath.Join(cfg.Storage.Path, "auth.db")
 				userStore, err := auth.NewUserStore(authDBPath, cfg.Users)
 				if err != nil {

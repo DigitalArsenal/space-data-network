@@ -24,9 +24,7 @@ type EntitlementStore struct {
 	closer func() error
 }
 
-// NewEntitlementStore opens/creates the entitlement database — a private
-// engine database with its statement journal derived from path
-// (entitlements.db -> entitlements.sdnj).
+// NewEntitlementStore opens/creates the entitlement database.
 func NewEntitlementStore(path string) (*EntitlementStore, error) {
 	dbPath := strings.TrimSpace(path)
 	if dbPath == "" {
@@ -36,7 +34,7 @@ func NewEntitlementStore(path string) (*EntitlementStore, error) {
 		return nil, fmt.Errorf("create entitlement dir: %w", err)
 	}
 
-	db, closer, err := flatsqldrv.OpenStandalone(strings.TrimSuffix(dbPath, ".db") + ".sdnj")
+	db, closer, err := flatsqldrv.OpenStandalone(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open entitlement db: %w", err)
 	}

@@ -93,14 +93,13 @@ type Logger struct {
 	mu       sync.Mutex
 }
 
-// NewLogger creates a new audit logger backed by a private engine database
-// (statement journal audit.sdnj under basePath).
+// NewLogger creates a new audit logger backed by a private SQLite database.
 func NewLogger(basePath string) (*Logger, error) {
 	if err := os.MkdirAll(basePath, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create audit directory: %w", err)
 	}
 
-	dbPath := filepath.Join(basePath, "audit.sdnj")
+	dbPath := filepath.Join(basePath, "audit.db")
 	db, closer, err := flatsqldrv.OpenStandalone(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open audit database: %w", err)

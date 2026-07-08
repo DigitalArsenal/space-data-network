@@ -40,11 +40,11 @@ func TestNewFlatSQLStore(t *testing.T) {
 	}
 	defer store.Close()
 
-	// Verify the durable control journal was created (the engine is
-	// in-memory; control.sdnj replaced sdn.db as the at-rest artifact).
-	journalPath := filepath.Join(tmpDir, "control.sdnj")
-	if _, err := os.Stat(journalPath); os.IsNotExist(err) {
-		t.Error("Control journal was not created")
+	if _, err := os.Stat(filepath.Join(tmpDir, "control.sdnj")); !os.IsNotExist(err) {
+		t.Fatalf("control.sdnj should not exist; statement logs are not a store artifact (err=%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, recordCatalogJournalFileName)); err != nil {
+		t.Fatalf("compact record catalog was not created: %v", err)
 	}
 }
 
@@ -313,80 +313,6 @@ func TestNewFlatSQLStoreMigratesLegacySDSTableToCanonicalSchemaTable(t *testing.
 	}
 	if string(record) != string(legacyPayload) {
 		t.Fatalf("migrated payload = %q, want %q", string(record), string(legacyPayload))
-	}
-}
-
-func TestNewFlatSQLStoreDefersInterruptedLegacyMigrationWhenCanonicalHasRows(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "flatsql-interrupted-legacy-migration-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	validator, err := sds.NewValidator(nil)
-	if err != nil {
-		t.Fatalf("Failed to create validator: %v", err)
-	}
-	store, err := NewFlatSQLStore(tmpDir, validator)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
-
-	// Uses CAT: the OMM name is reserved by the engine record vtab (loop
-	// B.3), so a plain canonical "OMM" table can no longer exist — CAT keeps
-	// the interrupted-migration deferral logic covered.
-	if _, err := store.db.Exec(`
-		CREATE TABLE sds_cat (
-			cid TEXT PRIMARY KEY,
-			peer_id TEXT NOT NULL,
-			timestamp INTEGER NOT NULL,
-			data BLOB NOT NULL,
-			signature BLOB,
-			UNIQUE(cid)
-		)
-	`); err != nil {
-		t.Fatalf("create legacy schema table failed: %v", err)
-	}
-	if _, err := store.db.Exec(`
-		INSERT INTO sds_cat (cid, peer_id, timestamp, data, signature)
-		VALUES ('legacy-cid', 'source:celestrak', 1700000001, ?, NULL)
-	`, []byte("legacy-cat-payload")); err != nil {
-		t.Fatalf("insert legacy record failed: %v", err)
-	}
-	existingPayload := []byte("already-migrated-cat-payload")
-	streamPath, streamOffset, recordLength, err := store.appendFlatSQLStreamRecord("CAT.fbs", existingPayload)
-	if err != nil {
-		t.Fatalf("append existing stream record failed: %v", err)
-	}
-	// Simulate a pre-flip database: the canonical legacy table exists with rows.
-	if err := store.createSchemaMetadataTable("CAT"); err != nil {
-		t.Fatalf("create canonical legacy table failed: %v", err)
-	}
-	if err := insertSchemaMetadata(store.db, "CAT", "existing-cid", "source:celestrak", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000); err != nil {
-		t.Fatalf("insert existing metadata failed: %v", err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close initial store failed: %v", err)
-	}
-
-	store, err = NewFlatSQLStore(tmpDir, validator)
-	if err != nil {
-		t.Fatalf("reopen store failed: %v", err)
-	}
-	defer store.Close()
-
-	if exists, err := store.tableExists("sds_cat"); err != nil {
-		t.Fatalf("legacy table lookup failed: %v", err)
-	} else if !exists {
-		t.Fatal("interrupted legacy table should remain for maintenance migration")
-	}
-	record, err := store.Get("CAT.fbs", "existing-cid")
-	if err != nil {
-		t.Fatalf("existing migrated record lookup failed: %v", err)
-	}
-	if string(record) != string(existingPayload) {
-		t.Fatalf("existing payload = %q, want %q", string(record), string(existingPayload))
 	}
 }
 
@@ -2089,8 +2015,8 @@ func TestFlatSQLStoreRefreshSourceBatchSummaryRepairsStaleCount(t *testing.T) {
 	}
 }
 
-func TestFlatSQLStoreRebuildsSourceSummaryWithoutDurableSummaryJournal(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "flatsql-derived-summary-journal-test-*")
+func TestFlatSQLStoreRebuildsSourceSummaryWithoutStatementLog(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-derived-summary-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -2124,12 +2050,8 @@ func TestFlatSQLStoreRebuildsSourceSummaryWithoutDurableSummaryJournal(t *testin
 		t.Fatalf("close store: %v", err)
 	}
 
-	journalBytes, err := os.ReadFile(filepath.Join(tmpDir, controlJournalFileName))
-	if err != nil {
-		t.Fatalf("read control journal: %v", err)
-	}
-	if bytes.Contains(journalBytes, []byte("sdn_record_source_summary")) {
-		t.Fatal("derived source summary SQL was written to the durable control journal")
+	if _, err := os.Stat(filepath.Join(tmpDir, "control.sdnj")); !os.IsNotExist(err) {
+		t.Fatalf("control.sdnj should not exist after close (err=%v)", err)
 	}
 
 	reopened, err := NewFlatSQLStore(tmpDir, validator)
@@ -2240,18 +2162,8 @@ func TestFlatSQLStoreRecordCatalogUsesCompactMetadataJournal(t *testing.T) {
 		t.Fatalf("close store: %v", err)
 	}
 
-	controlBytes, err := os.ReadFile(filepath.Join(tmpDir, controlJournalFileName))
-	if err != nil {
-		t.Fatalf("read control journal: %v", err)
-	}
-	for _, marker := range [][]byte{
-		[]byte("INSERT INTO sdn_record_index"),
-		[]byte("INSERT INTO sdn_record_source_tags"),
-		[]byte("INSERT OR IGNORE INTO sds_p_"),
-	} {
-		if bytes.Contains(controlBytes, marker) {
-			t.Fatalf("record catalog SQL marker %q was written to %s", marker, controlJournalFileName)
-		}
+	if _, err := os.Stat(filepath.Join(tmpDir, "control.sdnj")); !os.IsNotExist(err) {
+		t.Fatalf("control.sdnj should not exist after record writes (err=%v)", err)
 	}
 	catalogBytes, err := os.ReadFile(filepath.Join(tmpDir, recordCatalogJournalFileName))
 	if err != nil {

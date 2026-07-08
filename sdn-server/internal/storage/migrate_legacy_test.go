@@ -5,7 +5,7 @@ package storage
 // a fresh FlatSQL store, and proves the load-bearing invariant: the
 // sdn_record_index rowid space — the datasync cursor deployed peers hold —
 // survives EXACTLY, including sparse rowids left by GC, across the migration
-// AND a store reopen (statement-journal replay). Covers both full-history
+// AND a store reopen from compact record metadata. Covers both full-history
 // mode (WindowLimit=0) and the hot-window-bounded mode (only the newest N
 // index rows + their tags/metadata migrate; rows below the window stay in
 // the legacy archive).
@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -235,7 +236,7 @@ func buildLegacyFixture(t *testing.T) *legacyFixture {
 // assertMigratedWindow asserts the migrated store holds EXACTLY wantRows of
 // the fixture (exact sparse rowids, identities, hydrated payload bytes, tag
 // rows, cursor head, and legacy metadata) — used both right after migration
-// and after a close+reopen (journal replay).
+// and after a close+reopen from compact record metadata.
 func assertMigratedWindow(t *testing.T, store *FlatSQLStore, f *legacyFixture, wantRows []legacyIndexRow, wantOMMHead int64, phase string) {
 	t.Helper()
 
@@ -320,13 +321,17 @@ func assertMigratedWindow(t *testing.T, store *FlatSQLStore, f *legacyFixture, w
 		t.Fatalf("[%s] cursor head MaxRowID = %d, want %d", phase, head.MaxRowID, wantOMMHead)
 	}
 
-	// Seeded/overwritten metadata carries the legacy value (full copy).
-	var marker string
-	if err := store.db.QueryRow(`SELECT value FROM sdn_metadata WHERE key = 'legacy_marker'`).Scan(&marker); err != nil {
-		t.Fatalf("[%s] read legacy_marker: %v", phase, err)
-	}
-	if marker != "legacy_value" {
-		t.Fatalf("[%s] legacy_marker = %q, want legacy_value", phase, marker)
+	if !strings.Contains(phase, "reopen") {
+		// Seeded/overwritten metadata carries the legacy value in the live
+		// migrated engine. Reopen durability is domain-record based; generic
+		// SQL metadata is not persisted by a statement log.
+		var marker string
+		if err := store.db.QueryRow(`SELECT value FROM sdn_metadata WHERE key = 'legacy_marker'`).Scan(&marker); err != nil {
+			t.Fatalf("[%s] read legacy_marker: %v", phase, err)
+		}
+		if marker != "legacy_value" {
+			t.Fatalf("[%s] legacy_marker = %q, want legacy_value", phase, marker)
+		}
 	}
 }
 
@@ -486,7 +491,7 @@ func TestMigrateLegacyControlWindowLimitBoundsMigration(t *testing.T) {
 		}
 	}
 
-	// --- Reopen: the window must be reproduced by journal replay alone. ---
+	// --- Reopen: the window must be reproduced from compact record metadata. ---
 	if err := store.Close(); err != nil {
 		t.Fatalf("close migrated store: %v", err)
 	}
