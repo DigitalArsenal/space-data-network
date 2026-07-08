@@ -1,7 +1,7 @@
 # Plugin Demo Integration Tests
 
 End-to-end tests for the SDN data flow including server startup, FlatBuffer
-publishing, PNM notifications, and publication log verification.
+publishing, PNM notifications, and record retrieval verification.
 
 ## Prerequisites
 
@@ -31,7 +31,7 @@ bash run.sh --verbose
 | Server Health | Node info, catalog endpoints |
 | Publish Data | POST FlatBuffer PNM and OMM messages |
 | Query Data | GET published records back by schema and CID |
-| Publication Log | PLOG/PLHD log heads and entries |
+| Record History | Published record history endpoints |
 | FlatBuffer Format | Binary layout, file identifiers, round-trip |
 | Batch Publish | Multi-record batch publish |
 | Node API | Schema list, plugin manifest |

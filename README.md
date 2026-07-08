@@ -616,14 +616,6 @@ not start a helper local SDN node. The browser node should resolve the latest
 PNM/DPM and fetch data directly through libp2p/IPFS-compatible paths, falling
 back only to explicit public gateway/query surfaces.
 
-### PLOG/PLHD Status
-
-`PLOG` and `PLHD` still exist as SDN-internal incremental-log plumbing for older
-or generic publish paths, but they are not the authoritative CelesTrak/latest
-dataset product flow. Current dataset publication readiness is measured by
-verified PNM -> DPM -> asset/query materialization and by the pin ledger/feed
-head state, not by a separate PLOG chain.
-
 ### Module Delivery
 
 Modules are discovered and delivered separately from datasets. A client looks up

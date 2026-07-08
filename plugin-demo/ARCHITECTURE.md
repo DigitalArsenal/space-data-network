@@ -22,17 +22,13 @@ data flow, from publication through notification to consumption.
                           │     ├── OMM/CAT/... stream metadata rows    │
                           │     └── sdn_record_index(schema, cid, ...)  │
                           │                                             │
-                          │  3. Append PLOG entry                       │
-                          │     ├── Compute ENTRY_HASH (SHA-256)        │
-                          │     ├── Sign ENTRY_HASH (Ed25519)           │
-                          │     ├── Chain to PREVIOUS_ENTRY_HASH        │
-                          │     └── Store in sdn_log_index              │
+                          │  3. Update publication metadata             │
+                          │     ├── Compute content hash / CID          │
+                          │     ├── Update record catalog indexes       │
+                          │     └── Build DPM for dataset products      │
                           │                                             │
                           │  4. Broadcast PNM via GossipSub             │
                           │     topic: /spacedatanetwork/sds/PNM.fbs    │
-                          │                                             │
-                          │  5. Publish PLHD via GossipSub              │
-                          │     topic: /spacedatanetwork/sds/PLHD.fbs   │
                           └──────────────┬──────────────────────────────┘
                                          │
                         GossipSub mesh   │
@@ -71,48 +67,29 @@ data flow, from publication through notification to consumption.
 
 ---
 
-## 2. Publication Log Sync Flow
+## 2. Latest Dataset Sync Flow
 
 ```
     Publisher                                        Subscriber
     ─────────                                        ──────────
 
-    Maintains per-schema log:                        Tracks last_synced per
-    PLOG seq=1 → seq=2 → seq=3 → seq=4             (publisher, schema)
-         │          │         │         │
-         └──hash────┘──hash───┘──hash───┘
+    Publishes latest PNM per product:                 Tracks latest FILE_ID per
+    PNM -> DPM CID -> assets/query contract           (provider, dataset)
+         │
+         └──signed DPM binds hashes, roots, assets
 
-    On new publish:                                  On PLHD receive:
-    1. Append PLOG(seq=N+1)                          1. Compare HEAD_SEQUENCE
-    2. Broadcast PLHD(HEAD=N+1) ────────────────────►   vs. last_synced
-       via GossipSub                                    │
-                                                        ▼ (if behind)
-                                                     2. Open libp2p stream
-                                                        protocol: sds-exchange
-                                                        │
-    3. Handle MsgSyncLog ◄──────────────────────────── 3. Send MsgSyncLog(0x07)
-       since_seq, max=500                                  since=last_synced
-       │                                                   max_entries=500
-       ▼                                                   │
-    4. Query sdn_log_index                              ◄──┘
-       WHERE sequence > since_seq
-       LIMIT max_entries
-       │
-       ▼
-    5. Send MsgSyncReply(0x08) ────────────────────► 6. Receive PLOG entries
-       [entry_count][len|data]...                       │
-                                                        ▼
-                                                     7. Verify hash chain:
-                                                        - Recompute ENTRY_HASH
-                                                        - Check chain links
-                                                        - Verify Ed25519 sigs
+    On source update:                                  On PNM receive/resolve:
+    1. Ingest newest SDS records                       1. Verify provider identity
+    2. Build signed DPM ─────────────────────────────► 2. Fetch DPM by CID
+    3. Announce signed PNM via GossipSub               3. Verify DPM signature,
+       and provider feed-head cache                       FILE_ID, hashes, roots
                                                         │
                                                         ▼
-                                                     8. Fetch missing CIDs
-                                                        (data records)
+                                                     4. Fetch DPM-listed assets
+                                                        by CID or provider query
                                                         │
                                                         ▼
-                                                     9. Update last_synced
+                                                     5. Verify records and import
 ```
 
 ---
@@ -221,8 +198,7 @@ data flow, from publication through notification to consumption.
     │   │ GossipSub   │    │ GossipSub   │    │ GossipSub   │        │
     │   │ FlatSQL DB  │    │ FlatSQL DB  │    │ FlatSQL DB  │        │
     │   │ Plugin Mgr  │    │ Plugin Mgr  │    │ Plugin Mgr  │        │
-    │   │ Log Service │    │ Log Service │    │ Log Service │        │
-    │   │ PLOG/PLHD   │    │ PLOG/PLHD   │    │ PLOG/PLHD   │        │
+    │   │ PNM / DPM   │    │ PNM / DPM   │    │ PNM / DPM   │        │
     │   └──────┬──────┘    └──────┬──────┘    └──────┬──────┘        │
     │          │                  │                  │                │
     │          │  TCP + WS + QUIC │                  │                │
@@ -302,8 +278,6 @@ data flow, from publication through notification to consumption.
 
 ```
     /spacedatanetwork/sds/PNM.fbs      ← Publish notifications (all schemas)
-    /spacedatanetwork/sds/PLOG.fbs     ← Publication log entries
-    /spacedatanetwork/sds/PLHD.fbs     ← Publication log head announcements
     /spacedatanetwork/sds/OMM.fbs      ← Orbital Mean-Elements Messages
     /spacedatanetwork/sds/CDM.fbs      ← Conjunction Data Messages
     /spacedatanetwork/sds/EPM.fbs      ← Entity Profile Manifests

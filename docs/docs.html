@@ -670,7 +670,6 @@
           <li><a href="#dataflow-flatsql">FlatSQL Storage</a></li>
           <li><a href="#dataflow-pnm">PNM Notifications</a></li>
           <li><a href="#dataflow-dpm">DPM Manifests</a></li>
-          <li><a href="#dataflow-plog">PLOG/PLHD Status</a></li>
           <li><a href="#dataflow-streaming">Streaming & Channels</a></li>
           <li><a href="#dataflow-encryption">Encrypted Messages</a></li>
           <li><a href="#dataflow-identity">Wallet Identity</a></li>
@@ -2000,7 +1999,7 @@ Verifiers can confirm:
             <tr><td>POST</td><td><code>/api/v1/data/query</code></td><td>auth</td><td>Raw FlatBuffer query</td></tr>
             <tr><td>GET</td><td><code>/api/v1/data/records/{schema}/{cid}</code></td><td>auth</td><td>Single record by CID</td></tr>
             <tr><td>POST</td><td><code>/api/v1/data/publish/{schema}</code></td><td>auth (standard trust)</td><td>Publish SDS-validated FlatBuffer data</td></tr>
-            <tr><td>GET</td><td><code>/api/v1/log/{schema}</code></td><td>public</td><td>Publication log (PLG) entries</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/log/{schema}</code></td><td>public</td><td>Published record history endpoint</td></tr>
             <tr><td>various</td><td><code>/api/v1/admin/*</code></td><td>auth (admin trust)</td><td>Admin-only operations</td></tr>
           </tbody>
         </table>
@@ -2165,7 +2164,7 @@ X-RateLimit-Reset: 1706097660   # Unix timestamp when the bucket refills</code><
       <!-- Schemas -->
       <section id="schemas-overview" class="doc-section">
         <h2>Schema Reference</h2>
-        <p>SDN registers every <a href="https://spacedatastandards.org">Space Data Standards</a> (SDS) schema — 160+ standards — plus the SDN-internal schemas (PGR, PLHD, PLOG, RHD). All data on the network must conform to these schemas. The full registered list:</p>
+        <p>SDN registers every <a href="https://spacedatastandards.org">Space Data Standards</a> (SDS) schema — 160+ standards — plus the current SDN coordination schemas used by the runtime. All data on the network must conform to these schemas. The full registered list:</p>
 
         <table>
           <thead>
@@ -2280,9 +2279,7 @@ X-RateLimit-Reset: 1706097660   # Unix timestamp when the bucket refills</code><
             <tr><td><code>PIV</code></td><td>Plugin Invoke - Plugin request/response envelopes</td></tr>
             <tr><td><code>PLD</code></td><td>Payload - Spacecraft payload information</td></tr>
             <tr><td><code>PLG</code></td><td>Plugin Manifest - Signed plugin distribution record</td></tr>
-            <tr><td><code>PLHD</code></td><td>Publication Log Head - Lightweight log head announcement via GossipSub (SDN-internal) <em>(SDN-internal)</em></td></tr>
             <tr><td><code>PLK</code></td><td>Plugin License Key</td></tr>
-            <tr><td><code>PLOG</code></td><td>Publication Log Entry - internal compatibility log record for older/generic incremental-log flows <em>(SDN-internal)</em></td></tr>
             <tr><td><code>PNM</code></td><td>Publish Notification Message - signed announcement that names a published CID, commonly a DPM for dataset updates</td></tr>
             <tr><td><code>PPE</code></td><td>Polynomial Ephemeris</td></tr>
             <tr><td><code>PRG</code></td><td>Propagation Settings - Orbit propagation parameters</td></tr>
@@ -2930,21 +2927,6 @@ CREATE TABLE sdn_dataset_publications (
 
         <h3>CelesTrak Latest Product</h3>
         <p>The CelesTrak provider node should keep the newest OMM product as the authoritative live dataset, publish a new DPM every time the source changes, and announce that DPM through PNM. Core pinning nodes can materialize and pin the latest product. Archive nodes can retain historical DPM/shard sets and serve historical queries through REST/query endpoints.</p>
-      </section>
-
-      <section id="dataflow-plog" class="doc-section">
-        <h2>PLOG/PLHD Status</h2>
-        <p><code>PLOG</code> and <code>PLHD</code> remain SDN-internal schemas for older or generic incremental-log code paths, but they are not the primary public dataset product flow described above. For current latest-dataset delivery, the authoritative sequence is signed PNM, verified DPM, DPM-listed assets or query response, and then verified import/pinning.</p>
-
-        <table>
-          <thead><tr><th>Record</th><th>Current Role</th><th>Use in Latest Dataset Flow</th></tr></thead>
-          <tbody>
-            <tr><td><code>PLOG</code></td><td>Internal append-log entry used by legacy/generic log-service code.</td><td>Not required for CelesTrak latest OMM publication; use PNM/DPM.</td></tr>
-            <tr><td><code>PLHD</code></td><td>Internal log-head announcement used by the same compatibility path.</td><td>Not the authoritative feed head for PNM/DPM dataset publications.</td></tr>
-          </tbody>
-        </table>
-
-        <p>Do not use PLOG presence as proof that a latest dataset is ready. Readiness means the expected provider peer has a verified latest PNM, the PNM names a verified DPM, the DPM-listed shard/index or query response verifies, and the node has imported or pinned the records required by its role.</p>
       </section>
 
       <section id="dataflow-streaming" class="doc-section">
