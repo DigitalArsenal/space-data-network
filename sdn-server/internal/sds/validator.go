@@ -196,8 +196,8 @@ var SupportedSchemas = []string{
 	"PLG.fbs",  // Plugin Manifest - Signed plugin distribution record
 	"PLHD.fbs", // Publication Log Head - Log head announcement (SDN-internal)
 	"PLK.fbs",  // Plugin License Key
-	"PLOG.fbs", // Publication Log Entry - Hash-chained publication log (SDN-internal)
-	"PNM.fbs",  // Peer Network Manifest
+	"PLOG.fbs", // Publication Log Entry - Internal compatibility log record (SDN-internal)
+	"PNM.fbs",  // Publish Notification Message
 	"PPE.fbs",  // Polynomial Ephemeris
 	"PRG.fbs",  // Propagation Settings
 	"PRW.fbs",  // Propagator Runtime Wire
