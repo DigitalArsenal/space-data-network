@@ -440,14 +440,14 @@ func (s *Store) initTables() error {
 	return nil
 }
 
-// storeRecordToFlatSQL marshals data to JSON and stores it through FlatSQL.
+// storeRecordToFlatSQL encodes canonical SDS FlatBuffers and stores them through FlatSQL.
 // Returns the content identifier (CID).
 func (s *Store) storeRecordToFlatSQL(schemaName string, data interface{}, peerID string, signature []byte) (string, error) {
-	jsonData, err := json.Marshal(data)
+	recordData, err := encodeStorefrontRecord(schemaName, data)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal record: %w", err)
+		return "", fmt.Errorf("failed to encode %s record: %w", schemaName, err)
 	}
-	cid, err := s.flatStore.Store(schemaName, jsonData, peerID, signature)
+	cid, err := s.flatStore.Store(schemaName, recordData, peerID, signature)
 	if err != nil {
 		return "", fmt.Errorf("failed to store %s record in FlatSQL: %w", schemaName, err)
 	}
