@@ -7,7 +7,7 @@
  *   2. Verify node info and catalog endpoints
  *   3. Build and publish a FlatBuffer message (PNM schema)
  *   4. Query the published data back
- *   5. Verify publication log (PLOG/PLHD) entries
+ *   5. Verify published record history endpoints
  *   6. Verify the REST API data endpoints
  *   7. Clean up
  *
@@ -287,8 +287,8 @@ async function runTests() {
       assert(resp.status < 500, `expected non-500, got ${resp.status}`);
     });
 
-    /* ── Section 4: Publication Log (PLOG/PLHD) ── */
-    console.log('\n§ Publication Log');
+    /* ── Section 4: Published Record History ── */
+    console.log('\n§ Published Record History');
 
     await test('GET /api/v1/log/heads?schema=PNM.fbs returns log heads', async () => {
       const resp = await httpGet(`${baseUrl}/api/v1/log/heads?schema=PNM.fbs`);

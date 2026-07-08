@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Integration tests for SDN plugin demo (server, publish, PNM, PLOG, sdn-js)",
+  "description": "Integration tests for SDN plugin demo (server, publish, PNM, record retrieval, sdn-js)",
   "scripts": {
     "test": "node integration.test.mjs",
     "test:verbose": "SDN_TEST_VERBOSE=1 node integration.test.mjs"

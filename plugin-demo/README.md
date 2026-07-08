@@ -12,15 +12,14 @@ AI agents working on SDN plugin development.
 2. [FlatBuffers Binary Format](#flatbuffers-binary-format)
 3. [WASM Plugin API](#wasm-plugin-api)
 4. [Data Flow: Publish → PNM → Subscribe](#data-flow-publish--pnm--subscribe)
-5. [Publication Log (PLOG/PLHD)](#publication-log-plogplhd)
-6. [FlatSQL Storage](#flatsql-storage)
-7. [Custom Protocol Registration](#custom-protocol-registration)
-8. [Identity & HD Wallet Keys](#identity--hd-wallet-keys)
-9. [sdn-js: Browser/Node.js as a Network Node](#sdn-js-browsernode-as-a-network-node)
-10. [Periodic Tasks (Cron)](#periodic-tasks-cron)
-11. [flatc-wasm: JSON ↔ FlatBuffer Streaming](#flatc-wasm-json--flatbuffer-streaming)
-12. [Integration Tests](#integration-tests)
-13. [File Map](#file-map)
+5. [FlatSQL Storage](#flatsql-storage)
+6. [Custom Protocol Registration](#custom-protocol-registration)
+7. [Identity & HD Wallet Keys](#identity--hd-wallet-keys)
+8. [sdn-js: Browser/Node.js as a Network Node](#sdn-js-browsernode-as-a-network-node)
+9. [Periodic Tasks (Cron)](#periodic-tasks-cron)
+10. [flatc-wasm: JSON ↔ FlatBuffer Streaming](#flatc-wasm-json--flatbuffer-streaming)
+11. [Integration Tests](#integration-tests)
+12. [File Map](#file-map)
 
 ---
 
@@ -54,7 +53,7 @@ binary without parsing/unpacking the entire message.
 ```
 ┌─────────────────────────────────────────────────────┐
 │ Offset 0-3:  root table offset (uint32 LE)          │
-│ Offset 4-7:  file_identifier (4 ASCII bytes)        │  ← "$PNM", "PLOG", etc.
+│ Offset 4-7:  file_identifier (4 ASCII bytes)        │  ← "$PNM", "$DPM", etc.
 │              ... vtable + field data ...             │
 │              ... string/vector payloads ...          │
 └─────────────────────────────────────────────────────┘
@@ -152,7 +151,7 @@ console.log(pnm.FILE_ID());   // "OMM"
 ```javascript
 // Read file identifier from bytes 4-7
 const fileId = String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
-// "$PNM" → PNM, "PLOG" → Publication Log, "PLHD" → Publication Log Head
+// "$PNM" → Publish Notification Message
 ```
 
 ---
@@ -251,9 +250,9 @@ This is the core data exchange pattern in SDN:
        │                                       │
   2. POST /api/v1/data/publish/{schema}        │
        │  → validates FlatBuffer               │
-       │  → stores in FlatSQL (SQLite)         │
+       │  → stores in FlatSQL stream files     │
        │  → computes SHA-256 CID               │
-       │  → appends PLOG entry                 │
+       │  → updates record metadata/indexes    │
        │                                       │
   3. Broadcast PNM via GossipSub ──────────────┤
        │  topic: /spacedatanetwork/sds/PNM.fbs │
@@ -300,77 +299,12 @@ Subscribers configure how they handle incoming PNMs:
 
 ---
 
-## Publication Log (PLOG/PLHD)
-
-PLOG/PLHD is a hash-chained log system for efficient catalog synchronization.
-Instead of re-downloading entire catalogs, subscribers sync incrementally.
-
-### How It Works
-
-```
-Publisher maintains per-schema append-only log:
-
-  PLOG seq=1 ──→ PLOG seq=2 ──→ PLOG seq=3 ──→ ...
-  (hash chain)    (hash chain)    (hash chain)
-
-Each PLOG entry:
-  - SEQUENCE: monotonic counter (starts at 1)
-  - SCHEMA_TYPE: "OMM", "CDM", etc.
-  - RECORD_CID: CID of the actual data record
-  - PREVIOUS_ENTRY_HASH: SHA-256 chain link
-  - ENTRY_HASH: SHA-256 of this entry's fields
-  - SIGNATURE: Ed25519 signature of ENTRY_HASH
-  - ENTITY_IDS: ["25544"] (NORAD IDs for filtering)
-  - EPOCH_DAY: "2026-03-09" (time window filtering)
-
-PLHD (Publication Log Head) — lightweight announcement:
-  - HEAD_SEQUENCE: latest sequence number
-  - HEAD_ENTRY_HASH: hash of latest entry
-  - RECORD_COUNT: total records in log
-  - Broadcast via GossipSub when log advances
-```
-
-### Sync Protocol
-
-```
-Subscriber                          Publisher
-    │                                   │
-    │── Compare HEAD_SEQUENCE ──────────│
-    │   (subscriber's last_synced       │
-    │    vs. publisher's HEAD)          │
-    │                                   │
-    │── MsgSyncLog (0x07) ─────────────│
-    │   since_sequence=last_synced      │
-    │   max_entries=500                 │
-    │                                   │
-    │──────── MsgSyncReply (0x08) ──────│
-    │   [PLOG entries...]               │
-    │                                   │
-    │── Verify hash chain ──────────────│
-    │── Fetch missing CIDs ─────────────│
-    │── Update last_synced ─────────────│
-```
-
-### Hash Computation
-
-```
-ENTRY_HASH = SHA-256(
-  SEQUENCE as 8-byte LE  ||
-  SCHEMA_TYPE as UTF-8   ||
-  PUBLISHER_PEER_ID as UTF-8 ||
-  RECORD_CID as UTF-8   ||
-  PREVIOUS_ENTRY_HASH as UTF-8 ||
-  TIMESTAMP as 8-byte LE
-)
-```
-
----
-
 ## FlatSQL Storage
 
 FlatSQL is SDN's stream-backed storage layer. Raw FlatBuffer records are
-appended to `.flatsql` stream files, while SQLite stores canonical schema
-metadata and query indexes only.
+appended to `.flatsql` stream files. The query engine exposes derived metadata
+and index tables for lookup; SDS FlatBuffer bytes remain the durable record
+source of truth.
 
 ### Database Schema
 
@@ -398,18 +332,6 @@ CREATE TABLE sdn_record_index (
   PRIMARY KEY (schema_name, cid)
 );
 
--- Publication log index
-CREATE TABLE sdn_log_index (
-  publisher_peer_id TEXT NOT NULL,
-  schema_type       TEXT NOT NULL,
-  sequence          INTEGER NOT NULL,
-  entry_hash        TEXT NOT NULL,
-  record_cid        TEXT NOT NULL,
-  plg_cid           TEXT NOT NULL,
-  epoch_day         TEXT,
-  timestamp         INTEGER NOT NULL,
-  PRIMARY KEY (publisher_peer_id, schema_type, sequence)
-);
 ```
 
 ### Data Lifecycle
@@ -433,7 +355,7 @@ Extract index fields (NORAD_CAT_ID, epoch, entity_id) from FlatBuffer
 INSERT into sdn_record_index (schema_name, cid, ...)
     │
     ▼
-Append PLOG entry via logservice
+When publishing a dataset product, build or resolve the DPM and announce it with PNM
 ```
 
 ---
@@ -462,8 +384,6 @@ communication beyond the standard SDS exchange protocol.
 | `0x04` | MsgResponse | Response to query |
 | `0x05` | MsgAck | Acknowledgment |
 | `0x06` | MsgNack | Negative acknowledgment |
-| `0x07` | MsgSyncLog | Request PLOG entries since sequence |
-| `0x08` | MsgSyncReply | Response with PLOG entries |
 
 ### Registering a Custom Protocol (Go Plugin)
 
@@ -515,7 +435,7 @@ BIP-39 Mnemonic → PBKDF2 → 512-bit Seed → SLIP-10 Master Key
     │
     ├── m/44'/0'/account'/0'/0'     → Ed25519 Signing Key
     │                                  Also used as libp2p PeerID
-    │                                  Signs all data, challenges, PLOG entries
+    │                                  Signs data, challenges, PNMs, and DPMs
     │
     └── m/44'/0'/account'/1'/0'     → X25519 Encryption Key
                                        ECIES: X25519 + ChaCha20-Poly1305
@@ -834,7 +754,7 @@ npm test
 2. **Authentication** — Ed25519 challenge-response auth flow
 3. **Publish** — POST FlatBuffer data, verify CID and storage
 4. **PNM notification** — Verify PNM broadcast via GossipSub
-5. **PLOG/PLHD** — Verify publication log chain integrity
+5. **Record retrieval** — Verify published records can be queried by schema and CID
 6. **Custom protocol** — Register and communicate via custom libp2p protocol
 7. **sdn-js client** — Node.js sdn-js client subscribes and receives data
 
@@ -872,4 +792,4 @@ plugin-demo/
 | `sdn-server/internal/wasm/stream_converter.go` | Streaming JSON↔FlatBuffer converter |
 | `sdn-js/src/` | JavaScript SDK source |
 | `schemas/sds/` | Space Data Standards schemas |
-| `sdn-server/internal/sds/schemas/` | Server schema copies (PNM, PLOG, PLHD) |
+| `sdn-server/internal/sds/schemas/` | Server schema copies used by the runtime until generated SDS package consumption is complete |

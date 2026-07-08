@@ -56,7 +56,7 @@ Resume is cursor-based, not "start over and count rows" long term. A replica per
 - pinned byte budget and current cached bytes;
 - last successful sync time and last error.
 
-On restart, refresh, transport failure, or peer reconnect, the client reopens the snapshot. If the provider reports the same head, the client resumes from the persisted cursor. If the head changed, the client keeps verified local rows, requests the provider's delta/publication log, and resumes from the closest valid high-water marker. Until PLOG/PLHD heads are fully wired, the HTTP wrapper can resume by offset/local-row count but must expose the stronger head/cursor fields so the UI and storage ledger do not bake in offset semantics.
+On restart, refresh, transport failure, or peer reconnect, the client reopens the snapshot. If the provider reports the same head, the client resumes from the persisted cursor. If the head changed, the client keeps verified local rows, requests the provider's signed publication delta, and resumes from the closest valid high-water marker. Until signed PNM/DPM heads are fully wired, the HTTP wrapper can resume by offset/local-row count but must expose the stronger head/cursor fields so the UI and storage ledger do not bake in offset semantics.
 
 Implementation update, 2026-05-11: browser sync persists this ledger in local storage per selected data source and SDS schema. It resumes with the provider `next_cursor` when the `head` matches. If the provider head changes, it preserves verified local rows and restarts from the current local row offset until publication-log delta sync is available.
 
