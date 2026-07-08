@@ -669,7 +669,8 @@
           <li><a href="#dataflow-flatbuffers">FlatBuffers Format</a></li>
           <li><a href="#dataflow-flatsql">FlatSQL Storage</a></li>
           <li><a href="#dataflow-pnm">PNM Notifications</a></li>
-          <li><a href="#dataflow-plog">Publication Logs</a></li>
+          <li><a href="#dataflow-dpm">DPM Manifests</a></li>
+          <li><a href="#dataflow-plog">PLOG/PLHD Status</a></li>
           <li><a href="#dataflow-streaming">Streaming & Channels</a></li>
           <li><a href="#dataflow-encryption">Encrypted Messages</a></li>
           <li><a href="#dataflow-identity">Wallet Identity</a></li>
@@ -2204,7 +2205,7 @@ X-RateLimit-Reset: 1706097660   # Unix timestamp when the bucket refills</code><
             <tr><td><code>DFH</code></td><td>GEO Drift History</td></tr>
             <tr><td><code>DMG</code></td><td>Damage Models</td></tr>
             <tr><td><code>DOA</code></td><td>Difference of Arrival Geolocation</td></tr>
-            <tr><td><code>DPM</code></td><td>Dataset Publication Manifest</td></tr>
+            <tr><td><code>DPM</code></td><td>Dataset Publication Manifest - signed manifest for dataset shards, indexes, source provenance, query replay metadata, hashes, and provider signature</td></tr>
             <tr><td><code>DSS</code></td><td>Data Sync Status</td></tr>
             <tr><td><code>EME</code></td><td>Electromagnetic Emissions - RF and electromagnetic data</td></tr>
             <tr><td><code>ENC</code></td><td>Encryption Header</td></tr>
@@ -2281,8 +2282,8 @@ X-RateLimit-Reset: 1706097660   # Unix timestamp when the bucket refills</code><
             <tr><td><code>PLG</code></td><td>Plugin Manifest - Signed plugin distribution record</td></tr>
             <tr><td><code>PLHD</code></td><td>Publication Log Head - Lightweight log head announcement via GossipSub (SDN-internal) <em>(SDN-internal)</em></td></tr>
             <tr><td><code>PLK</code></td><td>Plugin License Key</td></tr>
-            <tr><td><code>PLOG</code></td><td>Publication Log Entry - Hash-chained publication log for data provenance (SDN-internal) <em>(SDN-internal)</em></td></tr>
-            <tr><td><code>PNM</code></td><td>Peer Network Manifest - Peer identity and network capabilities</td></tr>
+            <tr><td><code>PLOG</code></td><td>Publication Log Entry - internal compatibility log record for older/generic incremental-log flows <em>(SDN-internal)</em></td></tr>
+            <tr><td><code>PNM</code></td><td>Publish Notification Message - signed announcement that names a published CID, commonly a DPM for dataset updates</td></tr>
             <tr><td><code>PPE</code></td><td>Polynomial Ephemeris</td></tr>
             <tr><td><code>PRG</code></td><td>Propagation Settings - Orbit propagation parameters</td></tr>
             <tr><td><code>PRW</code></td><td>Propagator Runtime Wire</td></tr>
@@ -2686,11 +2687,11 @@ tq.PublishTip(ctx, pubsub.PublishOptions{
 
       <section id="dataflow-overview" class="doc-section">
         <h2>Data Flow Architecture</h2>
-        <p>SDN uses a layered data flow architecture built on <strong>FlatBuffers</strong> for zero-copy binary serialization, <strong>FlatSQL</strong> (SQLite) for local storage, <strong>GossipSub</strong> for pub/sub messaging, and <strong>PLOG/PLHD</strong> for hash-chained publication logs. This section explains every layer from wire format to application delivery.</p>
+        <p>SDN dataset delivery is built on <strong>FlatBuffers</strong> for zero-copy binary records, <strong>FlatSQL</strong> for durable local materialization, <strong>DPM</strong> manifests for signed publication contracts, and <strong>PNM</strong> messages for compact network announcements. The current latest-product path is PNM -> DPM -> data shard/query-index assets or provider-mediated query, followed by verification and import.</p>
 
         <div class="callout callout-info">
           <div class="callout-title">Key Principle</div>
-          <p>Every piece of data on SDN is a <strong>FlatBuffer binary blob</strong> with a 4-byte file identifier. JSON is only used for HTTP API responses, never for on-wire data exchange. This enables zero-copy reads and deterministic content addressing (SHA-256 CID).</p>
+          <p>PNM is the announcement, not the dataset. A subscriber verifies the signed PNM, fetches and verifies the signed DPM it names, then fetches only the DPM-listed content-addressed assets or provider-mediated query results. JSON is used for API envelopes and query indexes; canonical records remain SDS FlatBuffers.</p>
         </div>
 
         <!-- Data Flow Diagram (SVG) -->
@@ -2722,25 +2723,25 @@ tq.PublishTip(ctx, pubsub.PublishOptions{
 
             <!-- Publisher Steps -->
             <rect x="40" y="60" width="340" height="36" rx="6" fill="rgba(79,171,181,0.12)" stroke="#4FABB5" stroke-opacity="0.4"/>
-            <text x="210" y="83" text-anchor="middle" fill="#F5F5F7" font-size="12">1. Build FlatBuffer (OMM, CDM, EPM...)</text>
+            <text x="210" y="83" text-anchor="middle" fill="#F5F5F7" font-size="12">1. Ingest source data (CelesTrak, operator, sensor)</text>
 
             <rect x="40" y="110" width="340" height="36" rx="6" fill="rgba(79,171,181,0.12)" stroke="#4FABB5" stroke-opacity="0.4"/>
-            <text x="210" y="133" text-anchor="middle" fill="#F5F5F7" font-size="12">2. POST /api/v1/data/publish/{schema}</text>
+            <text x="210" y="133" text-anchor="middle" fill="#F5F5F7" font-size="12">2. Normalize into SDS FlatBuffers</text>
 
             <rect x="40" y="160" width="340" height="36" rx="6" fill="rgba(79,171,181,0.12)" stroke="#4FABB5" stroke-opacity="0.4"/>
-            <text x="210" y="183" text-anchor="middle" fill="#F5F5F7" font-size="12">3. Validate &amp; store in FlatSQL (SQLite)</text>
+            <text x="210" y="183" text-anchor="middle" fill="#F5F5F7" font-size="12">3. Materialize latest set in FlatSQL</text>
 
             <rect x="40" y="210" width="340" height="36" rx="6" fill="rgba(79,171,181,0.12)" stroke="#4FABB5" stroke-opacity="0.4"/>
-            <text x="210" y="233" text-anchor="middle" fill="#F5F5F7" font-size="12">4. Compute SHA-256 CID → content address</text>
+            <text x="210" y="233" text-anchor="middle" fill="#F5F5F7" font-size="12">4. Export DATA_SHARD + QUERY_INDEX</text>
 
             <rect x="40" y="260" width="340" height="36" rx="6" fill="rgba(79,171,181,0.12)" stroke="#4FABB5" stroke-opacity="0.4"/>
-            <text x="210" y="283" text-anchor="middle" fill="#F5F5F7" font-size="12">5. Append PLOG entry (hash-chained log)</text>
+            <text x="210" y="283" text-anchor="middle" fill="#F5F5F7" font-size="12">5. Build and sign DPM manifest</text>
 
             <rect x="40" y="310" width="340" height="36" rx="6" fill="rgba(79,171,181,0.15)" stroke="#4FABB5" stroke-opacity="0.6"/>
-            <text x="210" y="333" text-anchor="middle" fill="#4FABB5" font-size="12" font-weight="600">6. Broadcast PNM via GossipSub</text>
+            <text x="210" y="333" text-anchor="middle" fill="#4FABB5" font-size="12" font-weight="600">6. Publish signed PNM announcing DPM CID</text>
 
             <rect x="40" y="360" width="340" height="36" rx="6" fill="rgba(79,171,181,0.12)" stroke="#4FABB5" stroke-opacity="0.4"/>
-            <text x="210" y="383" text-anchor="middle" fill="#F5F5F7" font-size="12">7. Publish PLHD (log head announcement)</text>
+            <text x="210" y="383" text-anchor="middle" fill="#F5F5F7" font-size="12">7. Pin DPM + shard/index assets to IPFS</text>
 
             <!-- Arrow: PNM broadcast -->
             <line x1="380" y1="328" x2="520" y2="118" stroke="#4FABB5" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#df-arrow)"/>
@@ -2749,31 +2750,31 @@ tq.PublishTip(ctx, pubsub.PublishOptions{
 
             <!-- Subscriber Steps -->
             <rect x="520" y="100" width="340" height="36" rx="6" fill="rgba(124,111,212,0.12)" stroke="#7C6FD4" stroke-opacity="0.4"/>
-            <text x="690" y="123" text-anchor="middle" fill="#F5F5F7" font-size="12">8. Receive PNM notification</text>
+            <text x="690" y="123" text-anchor="middle" fill="#F5F5F7" font-size="12">8. Resolve latest PNM by peerID + standard</text>
 
             <rect x="520" y="150" width="340" height="36" rx="6" fill="rgba(124,111,212,0.12)" stroke="#7C6FD4" stroke-opacity="0.4"/>
-            <text x="690" y="173" text-anchor="middle" fill="#F5F5F7" font-size="12">9. Verify Ed25519 signature on CID</text>
+            <text x="690" y="173" text-anchor="middle" fill="#F5F5F7" font-size="12">9. Verify PNM signature and FILE_ID</text>
 
             <rect x="520" y="200" width="340" height="36" rx="6" fill="rgba(124,111,212,0.12)" stroke="#7C6FD4" stroke-opacity="0.4"/>
-            <text x="690" y="223" text-anchor="middle" fill="#F5F5F7" font-size="12">10. Check tip/queue config (trust + schema)</text>
+            <text x="690" y="223" text-anchor="middle" fill="#F5F5F7" font-size="12">10. Fetch DPM and verify provider signature</text>
 
             <rect x="520" y="260" width="340" height="50" rx="6" fill="rgba(124,111,212,0.15)" stroke="#7C6FD4" stroke-opacity="0.6"/>
-            <text x="690" y="282" text-anchor="middle" fill="#7C6FD4" font-size="12" font-weight="600">11. autoFetch → fetch content by CID</text>
-            <text x="690" y="298" text-anchor="middle" fill="#86868B" font-size="10">from publisher or any peer that has it</text>
+            <text x="690" y="282" text-anchor="middle" fill="#7C6FD4" font-size="12" font-weight="600">11. Fetch assets by CID or query protocol</text>
+            <text x="690" y="298" text-anchor="middle" fill="#86868B" font-size="10">direct IPFS/libp2p, pinned gateway, or provider query</text>
 
             <rect x="520" y="324" width="340" height="36" rx="6" fill="rgba(124,111,212,0.12)" stroke="#7C6FD4" stroke-opacity="0.4"/>
-            <text x="690" y="347" text-anchor="middle" fill="#F5F5F7" font-size="12">12. Store in local FlatSQL database</text>
+            <text x="690" y="347" text-anchor="middle" fill="#F5F5F7" font-size="12">12. Verify byte hashes, roots, and schema</text>
 
             <rect x="520" y="374" width="340" height="36" rx="6" fill="rgba(124,111,212,0.12)" stroke="#7C6FD4" stroke-opacity="0.4"/>
-            <text x="690" y="397" text-anchor="middle" fill="#F5F5F7" font-size="12">13. autoPin with TTL (time-to-live)</text>
+            <text x="690" y="397" text-anchor="middle" fill="#F5F5F7" font-size="12">13. Import into FlatSQL/IndexedDB</text>
 
             <rect x="520" y="424" width="340" height="36" rx="6" fill="rgba(77,168,130,0.15)" stroke="#4DA882" stroke-opacity="0.6"/>
-            <text x="690" y="447" text-anchor="middle" fill="#4DA882" font-size="12" font-weight="600">14. Fire onMessage(schema, data, peerId)</text>
+            <text x="690" y="447" text-anchor="middle" fill="#4DA882" font-size="12" font-weight="600">14. Pin latest, archive, or serve query results</text>
 
             <!-- Fetch arrow back -->
             <line x1="520" y1="285" x2="380" y2="183" stroke="#7C6FD4" stroke-width="1.5" stroke-dasharray="4,4" marker-end="url(#df-arrow2)"/>
             <defs><marker id="df-arrow2" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#7C6FD4"/></marker></defs>
-            <text x="450" y="250" text-anchor="middle" fill="#7C6FD4" font-size="10" font-style="italic">fetch CID</text>
+            <text x="450" y="250" text-anchor="middle" fill="#7C6FD4" font-size="10" font-style="italic">fetch DPM/assets</text>
 
             <!-- Legend -->
             <rect x="40" y="470" width="10" height="10" rx="2" fill="#4FABB5"/>
@@ -2792,7 +2793,7 @@ tq.PublishTip(ctx, pubsub.PublishOptions{
 
         <h3>Binary Layout</h3>
         <pre><code>Offset 0-3:  Root table offset (uint32 little-endian)
-Offset 4-7:  File identifier (4 ASCII bytes: "$PNM", "PLOG", "$OMM", etc.)
+Offset 4-7:  File identifier (4 ASCII bytes: "$PNM", "$DPM", "$OMM", etc.)
 Offset 8+:   VTable + field data + string/vector payloads</code></pre>
 
         <h3>File Identifiers</h3>
@@ -2801,8 +2802,7 @@ Offset 8+:   VTable + field data + string/vector payloads</code></pre>
           <thead><tr><th>Identifier</th><th>Schema</th><th>Description</th></tr></thead>
           <tbody>
             <tr><td><code>$PNM</code></td><td>PNM.fbs</td><td>Publish Notification Message</td></tr>
-            <tr><td><code>PLOG</code></td><td>PLOG.fbs</td><td>Publication Log Entry</td></tr>
-            <tr><td><code>PLHD</code></td><td>PLHD.fbs</td><td>Publication Log Head</td></tr>
+            <tr><td><code>$DPM</code></td><td>DPM.fbs</td><td>Dataset Publication Manifest</td></tr>
             <tr><td><code>$OMM</code></td><td>OMM.fbs</td><td>Orbit Mean-Elements Message</td></tr>
             <tr><td><code>$CDM</code></td><td>CDM.fbs</td><td>Conjunction Data Message</td></tr>
             <tr><td><code>$EPM</code></td><td>EPM.fbs</td><td>Entity Profile Manifest</td></tr>
@@ -2813,7 +2813,7 @@ Offset 8+:   VTable + field data + string/vector payloads</code></pre>
         <h3>Reading the File Identifier</h3>
         <pre><code>// JavaScript — identify message type from raw bytes
 const fileId = String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
-// "$PNM" → Publish Notification, "PLOG" → Publication Log, etc.
+// "$PNM" -> Publish Notification, "$DPM" -> Dataset Publication Manifest
 
 // Go — same concept
 fileID := string(data[4:8])</code></pre>
@@ -2829,7 +2829,7 @@ fileID := string(data[4:8])</code></pre>
 
       <section id="dataflow-flatsql" class="doc-section">
         <h2>FlatSQL Storage</h2>
-        <p><strong>FlatSQL</strong> is SDN's SQLite-based storage layer that stores raw FlatBuffer blobs alongside indexed metadata. Every node maintains a local SQLite database for fast queries.</p>
+        <p><strong>FlatSQL</strong> is SDN's SQLite-backed storage layer for raw FlatBuffer bytes, stream offsets, source tags, and query indexes. Full nodes use it to materialize provider data, export dataset shards, import verified DPM publications, and serve query results. Browser nodes use the same concepts in the <code>sdn-js</code> local store.</p>
 
         <h3>Database Schema</h3>
         <pre><code>-- Per-schema data table (one table per registered SDS schema)
@@ -2851,14 +2851,18 @@ CREATE TABLE sdn_record_index (
   PRIMARY KEY (schema_name, cid)
 );
 
--- Publication log index (hash-chained ledger)
-CREATE TABLE sdn_log_index (
-  publisher_peer_id TEXT NOT NULL,
-  schema_type       TEXT NOT NULL,
-  sequence          INTEGER NOT NULL,
-  entry_hash        TEXT NOT NULL,
-  record_cid        TEXT NOT NULL,
-  PRIMARY KEY (publisher_peer_id, schema_type, sequence)
+-- Dataset publication ledger
+CREATE TABLE sdn_dataset_publications (
+  schema_name   TEXT NOT NULL,
+  provider_id   TEXT NOT NULL,
+  source_name   TEXT NOT NULL,
+  batch_id      TEXT NOT NULL,
+  shard_cid     TEXT NOT NULL,
+  index_cid     TEXT NOT NULL,
+  manifest_cid  TEXT NOT NULL,
+  pnm_cid       TEXT,
+  published_at  INTEGER NOT NULL,
+  PRIMARY KEY (schema_name, provider_id, source_name, batch_id)
 );</code></pre>
 
         <h3>Content Addressing</h3>
@@ -2871,91 +2875,76 @@ CREATE TABLE sdn_log_index (
     → INSERT into sds_{schema}(cid, data, peer_id, signature)
     → Extract index fields (NORAD_CAT_ID, epoch, entity_id)
     → INSERT into sdn_record_index
-    → Append PLOG entry via logservice</code></pre>
+    → Export latest product shard/index when publishing a dataset
+    → Build signed DPM and signed PNM for the publication</code></pre>
       </section>
 
       <section id="dataflow-pnm" class="doc-section">
         <h2>PNM — Publish Notification Messages</h2>
-        <p>PNM is a lightweight notification that tells the network "I just published data with this CID and schema type." Subscribers receive PNMs via GossipSub and decide whether to fetch the actual content based on their configuration.</p>
+        <p>PNM is a lightweight signed announcement. For a dataset update, the PNM normally points at the DPM CID and carries the canonical <code>FILE_ID</code> for that publication. It does not contain the dataset and it is not the authoritative manifest; it tells subscribers which DPM to fetch and verify.</p>
 
         <h3>PNM Fields</h3>
         <table>
           <thead><tr><th>Field</th><th>Example</th><th>Purpose</th></tr></thead>
           <tbody>
             <tr><td><code>MULTIFORMAT_ADDRESS</code></td><td><code>/ip4/1.2.3.4/tcp/4001/p2p/12D3K...</code></td><td>Publisher's libp2p address</td></tr>
-            <tr><td><code>CID</code></td><td><code>bafybeig...</code></td><td>SHA-256 content hash</td></tr>
-            <tr><td><code>FILE_ID</code></td><td><code>OMM</code></td><td>Schema type of published data</td></tr>
-            <tr><td><code>FILE_NAME</code></td><td><code>ISS-2026-03-09.omm</code></td><td>Human-readable name</td></tr>
-            <tr><td><code>SIGNATURE</code></td><td><em>(base64)</em></td><td>Ed25519 signature of CID</td></tr>
+            <tr><td><code>CID</code></td><td><code>bafybeig...</code></td><td>DPM CID or compact verification-object CID</td></tr>
+            <tr><td><code>FILE_ID</code></td><td><code>celestrak:gp:OMM.fbs:2026-05-06T03:00:00Z</code></td><td>Canonical dataset publication identity; must match <code>DPM.FILE_ID</code></td></tr>
+            <tr><td><code>FILE_NAME</code></td><td><code>OMM.fbs</code></td><td>Human-readable schema or artifact label</td></tr>
+            <tr><td><code>SIGNATURE</code></td><td><em>(base64/hex)</em></td><td>Ed25519 signature over the DPM CID + FILE_ID payload</td></tr>
             <tr><td><code>PUBLISH_TIMESTAMP</code></td><td><code>2026-03-09T12:00:00Z</code></td><td>RFC3339 publish time</td></tr>
             <tr><td><code>SIGNATURE_TYPE</code></td><td><code>Ed25519</code></td><td>Signature algorithm</td></tr>
           </tbody>
         </table>
 
-        <h3>GossipSub Topic Map</h3>
-        <p>Each Space Data Standards record code gets its own GossipSub topic. Nodes subscribe to the topics they care about:</p>
-        <pre><code>/spacedatanetwork/sds/PNM     &larr; Publish notifications
-/spacedatanetwork/sds/PLOG    &larr; Publication log entries
-/spacedatanetwork/sds/PLHD    &larr; Log head announcements
-/spacedatanetwork/sds/OMM     &larr; Orbital mean elements
-/spacedatanetwork/sds/CDM     &larr; Conjunction data
-/spacedatanetwork/sds/EPM     &larr; Entity profiles
-... (one topic per registered record code)
-/spacedatanetwork/edge-relays     ← Edge relay announcements
-/sdn/storefront/listings          ← Marketplace listings
-/sdn/data/{listing}/{buyer}       ← Encrypted delivery channels</code></pre>
+        <h3>Latest Dataset Resolution</h3>
+        <pre><code>1. Select provider peer ID and standard, e.g. celestrak.eth + OMM.fbs.
+2. Resolve the latest signed PNM from PubSub/history, peer API, or feed-head cache.
+3. Verify the PNM signature with the provider public key.
+4. Fetch the PNM CID as a DPM.
+5. Verify DPM signature, FILE_ID, source hashes, byte hashes, and schema hash.
+6. Fetch DPM-listed DATA_SHARD / QUERY_INDEX assets by CID, or open the DPM query protocol.
+7. Import only records that verify against the DPM roots and hashes.</code></pre>
+
+        <h3>Topic Map</h3>
+        <p>PNM announcements use the canonical PNM topic. Dataset assets are fetched by CID or query protocol; modules and private deliveries use their own storefront/grant channels.</p>
+        <pre><code>/spacedatanetwork/sds/PNM.fbs        &larr; signed PNM announcements
+/spacedatanetwork/dataset/{standard} &larr; dataset feed-head announcements where enabled
+/spacedatanetwork/edge-relays        &larr; edge relay announcements
+/sdn/storefront/listings             &larr; PLG marketplace listings
+/space-data-network/module-delivery/1.0.0 &larr; encrypted module grant/delivery protocol</code></pre>
+      </section>
+
+      <section id="dataflow-dpm" class="doc-section">
+        <h2>DPM — Dataset Publication Manifests</h2>
+        <p>A DPM is the immutable signed publication contract for one dataset update. It binds the provider identity, dataset/update IDs, canonical <code>FILE_ID</code>, source batch provenance, data shard and query-index CIDs, byte lengths, SHA-256 hashes, schema hash, query replay metadata, optional encryption metadata, and provider signature.</p>
+
+        <h3>What a Subscriber Verifies</h3>
+        <ul>
+          <li>The PNM signature was made by the expected provider and its <code>CID</code> resolves to the DPM.</li>
+          <li><code>PNM.FILE_ID</code>, <code>DPM.FILE_ID</code>, and every <code>DPMAsset.FILE_ID</code> match.</li>
+          <li>The DPM provider signature verifies over the canonical manifest bytes or digest.</li>
+          <li>Each fetched shard/index byte stream matches the DPM CID, byte length, and SHA-256 fields.</li>
+          <li>Imported records match the DPM schema, query result hash, and declared completeness roots when provided.</li>
+        </ul>
+
+        <h3>CelesTrak Latest Product</h3>
+        <p>The CelesTrak provider node should keep the newest OMM product as the authoritative live dataset, publish a new DPM every time the source changes, and announce that DPM through PNM. Core pinning nodes can materialize and pin the latest product. Archive nodes can retain historical DPM/shard sets and serve historical queries through REST/query endpoints.</p>
       </section>
 
       <section id="dataflow-plog" class="doc-section">
-        <h2>Publication Logs — PLOG &amp; PLHD</h2>
-        <p>The Publication Log system enables <strong>efficient incremental sync</strong> instead of re-downloading entire catalogs. Each publisher maintains a per-schema, append-only, hash-chained log.</p>
+        <h2>PLOG/PLHD Status</h2>
+        <p><code>PLOG</code> and <code>PLHD</code> remain SDN-internal schemas for older or generic incremental-log code paths, but they are not the primary public dataset product flow described above. For current latest-dataset delivery, the authoritative sequence is signed PNM, verified DPM, DPM-listed assets or query response, and then verified import/pinning.</p>
 
-        <h3>PLOG — Publication Log Entry</h3>
-        <p>Each PLOG entry records one data publication with a chain link to the previous entry:</p>
-        <pre><code>PLOG seq=1 ──hash──→ PLOG seq=2 ──hash──→ PLOG seq=3 → ...
+        <table>
+          <thead><tr><th>Record</th><th>Current Role</th><th>Use in Latest Dataset Flow</th></tr></thead>
+          <tbody>
+            <tr><td><code>PLOG</code></td><td>Internal append-log entry used by legacy/generic log-service code.</td><td>Not required for CelesTrak latest OMM publication; use PNM/DPM.</td></tr>
+            <tr><td><code>PLHD</code></td><td>Internal log-head announcement used by the same compatibility path.</td><td>Not the authoritative feed head for PNM/DPM dataset publications.</td></tr>
+          </tbody>
+        </table>
 
-Entry fields:
-  SEQUENCE:            1, 2, 3... (monotonic, no gaps)
-  SCHEMA_TYPE:         "OMM", "CDM", etc.
-  PUBLISHER_PEER_ID:   libp2p PeerID
-  RECORD_CID:          SHA-256 of actual data record
-  PREVIOUS_ENTRY_HASH: chain link (empty for seq=1)
-  ENTRY_HASH:          SHA-256 of this entry's fields
-  SIGNATURE:           Ed25519 of ENTRY_HASH
-  ENTITY_IDS:          ["25544"] (NORAD IDs for filtering)
-  EPOCH_DAY:           "2026-03-09" (time windowing)</code></pre>
-
-        <h3>Hash Computation</h3>
-        <pre><code>ENTRY_HASH = SHA-256(
-  SEQUENCE      as 8-byte little-endian  ||
-  SCHEMA_TYPE   as UTF-8 bytes           ||
-  PUBLISHER_PEER_ID as UTF-8 bytes       ||
-  RECORD_CID    as UTF-8 bytes           ||
-  PREVIOUS_ENTRY_HASH as UTF-8 bytes     ||
-  TIMESTAMP     as 8-byte little-endian
-)</code></pre>
-
-        <h3>PLHD — Publication Log Head</h3>
-        <p>A lightweight announcement broadcast via GossipSub when a publisher's log advances. Subscribers compare the HEAD_SEQUENCE against their last-synced sequence to decide if they need to catch up.</p>
-
-        <h3>Sync Protocol</h3>
-        <pre><code>Subscriber                            Publisher
-    │                                     │
-    │  Receive PLHD (HEAD_SEQUENCE=100)   │
-    │  Local last_synced = 90             │
-    │  → Need 10 entries                  │
-    │                                     │
-    │── MsgSyncLog (0x07) ───────────────→│
-    │   since_sequence=90                 │
-    │   max_entries=500                   │
-    │                                     │
-    │←──── MsgSyncReply (0x08) ──────────│
-    │   [10 PLOG entries]                 │
-    │                                     │
-    │  Verify hash chain integrity        │
-    │  Verify Ed25519 signatures          │
-    │  Fetch missing data CIDs            │
-    │  Update last_synced = 100           │</code></pre>
+        <p>Do not use PLOG presence as proof that a latest dataset is ready. Readiness means the expected provider peer has a verified latest PNM, the PNM names a verified DPM, the DPM-listed shard/index or query response verifies, and the node has imported or pinned the records required by its role.</p>
       </section>
 
       <section id="dataflow-streaming" class="doc-section">
@@ -3088,7 +3077,7 @@ Recipient:
             <text x="120" y="268" text-anchor="middle" fill="#86868B" font-size="10">Network identity</text>
             <text x="120" y="280" text-anchor="middle" fill="#86868B" font-size="10">(TOFU binding)</text>
             <text x="400" y="268" text-anchor="middle" fill="#86868B" font-size="10">Signs all data, auth challenges,</text>
-            <text x="400" y="280" text-anchor="middle" fill="#86868B" font-size="10">PLOG entries. Also is libp2p PeerID.</text>
+            <text x="400" y="280" text-anchor="middle" fill="#86868B" font-size="10">PNM/DPM publications. Also is libp2p PeerID.</text>
             <text x="680" y="268" text-anchor="middle" fill="#86868B" font-size="10">X25519 + ChaCha20-Poly1305</text>
             <text x="680" y="280" text-anchor="middle" fill="#86868B" font-size="10">per-message or session key</text>
           </svg>
@@ -3154,7 +3143,7 @@ Recipient:
             <text x="710" y="122" text-anchor="middle" fill="#86868B" font-size="9">DHT routing</text>
             <text x="710" y="136" text-anchor="middle" fill="#86868B" font-size="9">GossipSub mesh</text>
             <text x="710" y="150" text-anchor="middle" fill="#86868B" font-size="9">FlatSQL database</text>
-            <text x="710" y="164" text-anchor="middle" fill="#86868B" font-size="9">PLOG service</text>
+            <text x="710" y="164" text-anchor="middle" fill="#86868B" font-size="9">dataset publication service</text>
             <text x="710" y="178" text-anchor="middle" fill="#86868B" font-size="9">Plugin manager</text>
 
             <!-- Key insight -->

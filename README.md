@@ -553,45 +553,88 @@ All data on SDN is **content-addressed** using cryptographic hashes (CIDs):
 
 ## Data Flow
 
-SDN uses a layered data flow architecture: **FlatBuffers** → **FlatSQL** → **PNM** → **PLOG/PLHD** → **Subscriptions**
+SDN uses a signed publication flow for datasets and a separate encrypted
+module-delivery flow for executable modules. The current dataset path is:
+**SDS FlatBuffers** -> **FlatSQL materialization/export** -> **signed DPM** ->
+**signed PNM** -> **IPFS/libp2p retrieval or provider query** -> **verified
+import/pinning**.
 
 ```
-Publisher                                      Subscriber
-    │                                               │
-    │  1. Build FlatBuffer (OMM, CDM, etc.)         │
-    │  2. POST /api/v1/data/publish/{schema}        │
-    │     → Validate + append to FlatSQL stream     │
-    │     → Compute SHA-256 CID                     │
-    │     → Append PLOG entry (hash-chained log)    │
-    │                                               │
-    │  3. Broadcast PNM via GossipSub ──────────────│──→ Receive PNM
-    │     (lightweight notification: CID + schema)  │
-    │                                               │  4. Verify signature
-    │  5. Publish PLHD (log head) ──────────────────│──→ Check tip/queue config
-    │                                               │
-    │                                               │  6. If autoFetch: fetch CID
-    │  ◄────────────────────────────────────────────│     from publisher or any peer
-    │     (SDS exchange protocol)                   │
-    │                                               │  7. Store in local FlatSQL
-    │                                               │  8. Fire onMessage(schema, data, peerId)
+CelesTrak provider / full node                  Browser, core node, archive node
+    │                                                         │
+    │  1. Pull latest CelesTrak source bytes                  │
+    │  2. Normalize records into SDS FlatBuffers              │
+    │  3. Materialize the latest authoritative FlatSQL set    │
+    │  4. Export DATA_SHARD + QUERY_INDEX assets              │
+    │  5. Build and sign DPM                                 │
+    │     - source hashes, byte hashes, schema hash           │
+    │     - DATA_SHARD / QUERY_INDEX CIDs                     │
+    │     - FILE_ID, query metadata, optional encryption      │
+    │  6. Pin DPM + listed assets to IPFS                     │
+    │  7. Publish signed PNM announcing the DPM CID ─────────>│
+    │                                                         │  8. Resolve latest PNM by peerID + standard
+    │                                                         │  9. Verify PNM signature and FILE_ID
+    │                                                        │ 10. Fetch and verify DPM
+    │  <──────────────────────────────────────────────────────│ 11. Fetch DPM assets by CID over IPFS/libp2p
+    │                                                         │     or use provider-mediated query
+    │                                                         │ 12. Verify hashes, roots, and signatures
+    │                                                         │ 13. Import into local FlatSQL/IndexedDB,
+    │                                                         │     pin latest, or archive historical sets
 ```
 
 ### FlatSQL Storage
 
-FlatBuffer bytes are stored in append-only FlatSQL stream files under the node data directory. SQLite schema tables are canonical SDS names such as `OMM`, `MPE`, `CAT`, and `SPW`, and store only metadata needed to locate the bytes: `cid`, `peer_id`, `timestamp`, `stream_path`, `stream_offset`, `record_length`, and `signature_hex`. Source/provenance rows are keyed by provider, source, batch, producer peer ID, and producer public key. Content is addressed by SHA-256 CID — the same FlatBuffer bytes always produce the same hash.
+FlatBuffer bytes are stored in FlatSQL stream files under the node data
+directory. SQLite schema tables are canonical SDS names such as `OMM`, `MPE`,
+`CAT`, and `SPW`, and store only metadata needed to locate the bytes: `cid`,
+`peer_id`, `timestamp`, `stream_path`, `stream_offset`, `record_length`, and
+`signature_hex`. Source/provenance rows are keyed by provider, source, batch,
+producer peer ID, and producer public key. Content is addressed by SHA-256 CID:
+the same FlatBuffer bytes always produce the same hash.
 
-### Publication Logs (PLOG/PLHD)
+For latest-product feeds such as CelesTrak OMM, the provider keeps the latest
+authoritative set as the live product. Core pinning nodes can materialize and
+pin that latest publication. Archive nodes can separately retain historical
+publications and serve query results through the REST/query service.
 
-Each publisher maintains a per-schema **hash-chained log** for efficient incremental sync:
+### DPM and PNM Publications
 
-- **PLOG** — Append-only log entries with sequence numbers, chain links, and Ed25519 signatures
-- **PLHD** — Lightweight log head announcements broadcast when the log advances
-- Subscribers compare HEAD_SEQUENCE against last_synced to determine the delta
-- Full chain verification: recompute hashes + verify signatures
+**Dataset Publication Manifest (DPM)** is the signed publication contract. It
+binds the dataset/update identifiers, canonical `FILE_ID`, source batches,
+`DATA_SHARD` and `QUERY_INDEX` CIDs, byte lengths, SHA-256 hashes, schema hash,
+query replay metadata, optional encryption/content-key metadata, and provider
+signature.
 
-### PNM Tip/Queue System
+**Publish Notification Message (PNM)** is the lightweight announcement. A latest
+PNM says "this provider published this FILE_ID at this DPM CID." The client
+must verify the PNM, fetch and verify the DPM, then fetch or query only the
+assets authorized by that DPM.
 
-**Publish Notification Messages (PNM)** decouple content storage from notification. Nodes configure auto-fetch, auto-pin, and TTL per-source AND per-schema:
+Browser clients run `sdn-js` in the browser and use configured bootstrap peers
+such as `celestrak.eth` and `sdn.spaceaware.io`; Sandcastle/browser demos should
+not start a helper local SDN node. The browser node should resolve the latest
+PNM/DPM and fetch data directly through libp2p/IPFS-compatible paths, falling
+back only to explicit public gateway/query surfaces.
+
+### PLOG/PLHD Status
+
+`PLOG` and `PLHD` still exist as SDN-internal incremental-log plumbing for older
+or generic publish paths, but they are not the authoritative CelesTrak/latest
+dataset product flow. Current dataset publication readiness is measured by
+verified PNM -> DPM -> asset/query materialization and by the pin ledger/feed
+head state, not by a separate PLOG chain.
+
+### Module Delivery
+
+Modules are discovered and delivered separately from datasets. A client looks up
+the module listing (`PLG`) in the online store, connects to the advertised
+provider peer such as `sdn.spaceaware.io`, requests a grant, fetches the
+encrypted WASM bundle by CID/module ID, unwraps the content key through the
+grant response, decrypts locally, then loads the module through the SDK runtime.
+
+### Subscription and Pinning Policy
+
+Nodes configure auto-fetch, auto-pin, and TTL per-source and per-schema:
 
 | Setting | Description |
 |---------|-------------|
@@ -862,7 +905,7 @@ Then open [http://localhost:8080](http://localhost:8080).
 - JavaScript SDK Reference
 - REST & WebSocket API
 - Schema Reference (all Space Data Standards)
-- **Data Flow Architecture** — FlatBuffers, FlatSQL, PNM, PLOG/PLHD, streaming, encryption
+- **Data Flow Architecture** — FlatBuffers, FlatSQL, PNM/DPM publications, IPFS/libp2p retrieval, module delivery, streaming, encryption
 - **Wallet Identity** — HD key derivation, TOFU binding, multi-account
 - **Browser Nodes** — sdn-js as a full network peer
 - **Plugin System** — WASM API, host functions, lifecycle
