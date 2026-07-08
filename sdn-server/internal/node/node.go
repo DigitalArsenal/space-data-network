@@ -208,15 +208,44 @@ func (n *Node) init() error {
 		n.sdnDiscoveryTargets = discoverTargets
 	}
 
-	// Initialize trusted peer registry
-	registryPath := n.config.Peers.RegistryPath
-	if registryPath == "" {
-		registryPath = filepath.Join(filepath.Dir(n.config.Storage.Path), "peers.db")
-	}
-	persistence, err := peers.NewSQLitePersistence(registryPath)
+	// Initialize WASM module for FlatBuffers (if available)
+	n.flatc, err = wasm.NewFlatcModule(n.ctx, n.findWasmPath())
 	if err != nil {
-		log.Warnf("Failed to create peer persistence, using in-memory registry: %v", err)
-		persistence = nil
+		log.Warnf("FlatBuffer WASM not loaded (optional): %v", err)
+		// Continue without WASM - it's optional for basic operation
+	}
+
+	// Initialize validator (uses WASM if available)
+	n.validator, err = sds.NewValidator(n.flatc)
+	if err != nil {
+		return fmt.Errorf("failed to create validator: %w", err)
+	}
+
+	// Initialize storage (if not edge mode)
+	if n.config.Mode != "edge" {
+		n.store, err = storage.NewFlatSQLStore(n.config.Storage.Path, n.validator,
+			storage.WithEngineHotWindow(n.config.Storage.EngineHotWindow),
+			storage.WithDeferredBootRebuilds(),
+			storage.WithDeferredRecordCatalogReplay())
+		if err != nil {
+			return fmt.Errorf("failed to create storage: %w", err)
+		}
+	}
+
+	// Initialize trusted peer registry from SDS PRR/PGM records.
+	var persistence peers.PersistenceProvider
+	if n.store != nil {
+		persistence, err = peers.NewFlatSQLPersistence(n.store)
+		if err != nil {
+			log.Warnf("Failed to create FlatSQL peer persistence, using in-memory registry: %v", err)
+			persistence = nil
+		}
+	} else if registryPath := strings.TrimSpace(n.config.Peers.RegistryPath); registryPath != "" {
+		if strings.HasSuffix(strings.ToLower(registryPath), ".db") {
+			log.Warnf("Ignoring legacy peer registry database path %q; peer registry sidecar databases are disabled", registryPath)
+		} else {
+			persistence = peers.NewJSONFilePersistence(registryPath)
+		}
 	}
 	n.peerRegistry = peers.NewRegistry(n.config.Peers.StrictMode, persistence)
 	n.peerGater = peers.NewTrustedConnectionGater(n.peerRegistry)
@@ -320,30 +349,6 @@ func (n *Node) init() error {
 	n.pubsub, err = pubsub.NewGossipSub(n.ctx, n.host)
 	if err != nil {
 		return fmt.Errorf("failed to create pubsub: %w", err)
-	}
-
-	// Initialize WASM module for FlatBuffers (if available)
-	n.flatc, err = wasm.NewFlatcModule(n.ctx, n.findWasmPath())
-	if err != nil {
-		log.Warnf("FlatBuffer WASM not loaded (optional): %v", err)
-		// Continue without WASM - it's optional for basic operation
-	}
-
-	// Initialize validator (uses WASM if available)
-	n.validator, err = sds.NewValidator(n.flatc)
-	if err != nil {
-		return fmt.Errorf("failed to create validator: %w", err)
-	}
-
-	// Initialize storage (if not edge mode)
-	if n.config.Mode != "edge" {
-		n.store, err = storage.NewFlatSQLStore(n.config.Storage.Path, n.validator,
-			storage.WithEngineHotWindow(n.config.Storage.EngineHotWindow),
-			storage.WithDeferredBootRebuilds(),
-			storage.WithDeferredRecordCatalogReplay())
-		if err != nil {
-			return fmt.Errorf("failed to create storage: %w", err)
-		}
 	}
 
 	// Setup protocol handler with message limits from config

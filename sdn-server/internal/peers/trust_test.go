@@ -63,7 +63,7 @@ func TestParseTrustLevel(t *testing.T) {
 }
 
 func TestNewRegistryTreatsTypedNilPersistenceAsInMemory(t *testing.T) {
-	var persistence *SQLitePersistence
+	var persistence *FlatSQLPersistence
 
 	registry := NewRegistry(false, persistence)
 

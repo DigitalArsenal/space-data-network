@@ -486,8 +486,9 @@ type PeersConfig struct {
 	// When disabled, unknown peers get Standard trust level by default.
 	StrictMode bool `yaml:"strict_mode"`
 
-	// RegistryPath is the path to the peer registry database.
-	// If empty, defaults to {storage_path}/peers.db
+	// RegistryPath is an optional JSON snapshot path for explicit
+	// operator-managed peer registry persistence. Production nodes store peer
+	// registry state as SDS PRR/PGM records in the node FlatSQL store.
 	RegistryPath string `yaml:"registry_path"`
 
 	// TrustedPeers is a list of peer addresses that should be always connected (like IPFS Peering.Peers).

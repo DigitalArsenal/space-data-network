@@ -141,15 +141,11 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to create audit logger: %w", err)
 	}
 
-	// Initialize peer registry from config
-	registryPath := cfg.Peers.RegistryPath
-	if registryPath == "" {
-		registryPath = filepath.Join(cfg.Storage.Path, "peers.db")
-	}
-
+	// Initialize peer registry from config. Legacy .db sidecar paths are
+	// ignored by the peers package; production nodes use FlatSQLPersistence.
 	peerRegistry, peerGater, peerRateLimiter, err := peers.InitializeFromConfig(peers.RegistryConfig{
 		StrictMode:             cfg.Peers.StrictMode,
-		RegistryPath:           registryPath,
+		RegistryPath:           cfg.Peers.RegistryPath,
 		TrustedPeers:           cfg.Peers.TrustedPeers,
 		TrustBasedRateLimiting: cfg.Peers.TrustBasedRateLimiting,
 		BaseMPS:                cfg.Network.MaxMessagesPerSecond,

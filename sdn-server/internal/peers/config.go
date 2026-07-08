@@ -14,8 +14,12 @@ type RegistryConfig struct {
 	// StrictMode only allows connections to/from peers in the trusted registry.
 	StrictMode bool
 
-	// RegistryPath is the path to the peer registry database file.
-	// If empty, an in-memory registry is used.
+	// Persistence is the registry persistence provider. Production SDN nodes
+	// pass FlatSQLPersistence so peer state is stored as SDS records.
+	Persistence PersistenceProvider
+
+	// RegistryPath is an optional JSON file path for explicit operator-managed
+	// peer registry snapshots. Legacy .db sidecar paths are ignored.
 	RegistryPath string
 
 	// TrustedPeers is a list of multiaddr strings for peers that should be
@@ -43,14 +47,10 @@ type RegistryConfig struct {
 // in the registry (loaded from persistence) are not modified.
 func InitializeFromConfig(cfg RegistryConfig) (*Registry, *TrustedConnectionGater, *TrustBasedRateLimiter, error) {
 	// Set up persistence
-	var persistence PersistenceProvider
-	if cfg.RegistryPath != "" {
-		if strings.HasSuffix(cfg.RegistryPath, ".db") {
-			sp, err := NewSQLitePersistence(cfg.RegistryPath)
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("failed to create SQLite persistence: %w", err)
-			}
-			persistence = sp
+	persistence := cfg.Persistence
+	if persistence == nil && cfg.RegistryPath != "" {
+		if strings.HasSuffix(strings.ToLower(strings.TrimSpace(cfg.RegistryPath)), ".db") {
+			log.Warnf("Ignoring legacy peer registry database path %q; peer registry sidecar databases are disabled", cfg.RegistryPath)
 		} else {
 			persistence = NewJSONFilePersistence(cfg.RegistryPath)
 		}
