@@ -113,12 +113,16 @@ func TestHTTPMountedPublicQueryFlow(t *testing.T) {
 	storageFac := caps.NewStorageCapFactoryWithOptions(store, caps.StorageCapOptions{QueryCaps: queryCaps})
 	reg.RegisterBridgeAware("storage_query", storageFac)
 
+	// loop B1-followup default-deny gate: record a test-scoped operator
+	// approval for THIS bundle's real content hash (capability_approval_test.go).
+	policy := approvedCapabilityPolicy(t, dist, "storage_query")
+
 	mux := http.NewServeMux()
 	mounted, err := RegisterFlowMounts(mux,
 		[]config.FlowMount{{Path: "/api/v1/query", Flow: dist, Pool: 1}},
 		FlowMountDeps{
 			CapRegistry:    reg,
-			NodeCtx:        &modulert.NodeContext{},
+			NodeCtx:        &modulert.NodeContext{CapabilityPolicy: policy},
 			MaxMemoryPages: 4096,
 		})
 	if err != nil {
