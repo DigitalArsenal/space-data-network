@@ -131,7 +131,9 @@ func TestTrustedPeerToVCard(t *testing.T) {
 	if !strings.Contains(vcardStr, "X-SDN-PEER-ID:"+peerID.String()) {
 		t.Error("Missing X-SDN-PEER-ID field")
 	}
-	if !strings.Contains(vcardStr, "X-SDN-TRUST-LEVEL:trusted") {
+	// TrustLevel.String() now emits the canonical PGP ownertrust name
+	// (Phase C1): Trusted's alias is Full.
+	if !strings.Contains(vcardStr, "X-SDN-TRUST-LEVEL:full") {
 		t.Error("Missing X-SDN-TRUST-LEVEL field")
 	}
 	if !strings.Contains(vcardStr, "END:VCARD") {

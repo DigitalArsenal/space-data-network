@@ -10,58 +10,268 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
+
+	"github.com/spacedatanetwork/sdn-server/internal/trust"
 )
 
-// TrustLevel represents the trust level of a peer.
+// TrustLevel represents the trust level of a peer, aligned with the PGP/GPG
+// ownertrust scale (WS12, alignment plan Phase C1): unknown / never /
+// marginal / full / ultimate. Ultimate (5) is the numeric maximum and is
+// reserved for the node's own identity (browser-user-is-the-node-key,
+// Phase F) — it is never granted to a remote peer or session.
+//
+// # Numeric scale and legacy compatibility
+//
+// TrustLevel is persisted as a raw signed integer in two places outside
+// this package's control: internal/peers' own FlatSQL PRR records (int8,
+// see persistence.go) and internal/auth's user-session SQL column. Both
+// key on the ORIGINAL 0-4 values (Untrusted=0 … Admin=4). Renumbering them
+// would silently reinterpret every already-persisted trust assignment on
+// upgrade, which we cannot migrate from this package (internal/auth is out
+// of scope for this change). The legacy values are therefore kept
+// numerically unchanged and simply reinterpreted/relabeled on the PGP
+// scale; the only genuinely NEW numeric value is Ultimate(5). Never(-1) is
+// also new — it deliberately falls OUTSIDE the legacy 0-4 range so it can
+// never collide with a value any pre-WS12 build could have written.
+//
+// Legacy -> PGP mapping (also the deterministic legacy-migration target;
+// see the const doc comments below for the per-value rationale):
+//
+//	Untrusted(0) -> Unknown(0)    no assertion made; fail-closed default (unchanged value)
+//	Limited(1)   -> Marginal(1)   weakest positive assertion (unchanged value)
+//	Standard(2)  -> (no PGP alias) between Marginal and Full; classifies as
+//	                ">= Marginal" via Ownertrust() (unchanged value)
+//	Trusted(3)   -> Full(3)       full confidence / elevated access (unchanged value)
+//	Admin(4)     -> (no PGP alias, classifies as ">= Full") — see Admin's
+//	                doc comment for why Admin maps to Full-strength rather
+//	                than Ultimate (unchanged value)
+//
+// No legacy record can ever decode to Never(-1) or Ultimate(5); those are
+// exclusively forward-assigned by post-WS12 code.
 type TrustLevel int
 
 const (
-	// Untrusted - No connection allowed
-	Untrusted TrustLevel = iota
-	// Limited - Read-only, rate-limited access
-	Limited
-	// Standard - Normal peer with standard access
-	Standard
-	// Trusted - Full access with priority routing
-	Trusted
-	// Admin - Can manage other peers
-	Admin
+	// Never is deliberate, explicit distrust (PGP ownertrust "n"): a hard
+	// veto. Unlike Unknown (no opinion), Never is a positive assertion
+	// that this identity must NOT be trusted, and computed web-of-trust
+	// validity (Phase C2) can never override it (fail-closed). Never has
+	// no legacy equivalent — pre-WS12 code only ever expressed "blocked"
+	// as Untrusted — so it is intentionally given a value (-1) outside
+	// the legacy 0-4 persisted range: no existing stored record can ever
+	// decode to Never, and no ambiguity is possible.
+	Never TrustLevel = -1
+
+	// Untrusted is the legacy name for "no positive trust assertion"; see
+	// Unknown below for its PGP-scale alias. It is also the Go zero value
+	// and the fail-closed default for peers absent from the registry
+	// (strict mode) or with corrupted/out-of-range persisted trust bytes.
+	Untrusted TrustLevel = 0
+	// Limited is the legacy "read-only, rate-limited access" tier; see
+	// Marginal below for its PGP-scale alias.
+	Limited TrustLevel = 1
+	// Standard is the legacy "normal peer, standard access" tier and the
+	// default granted to unknown peers in non-strict mode. It has no
+	// dedicated PGP-scale name: it sits strictly between Marginal and
+	// Full, and Ownertrust() classifies it as ">= Marginal, < Full".
+	Standard TrustLevel = 2
+	// Trusted is the legacy "full access, priority routing" tier; see
+	// Full below for its PGP-scale alias.
+	Trusted TrustLevel = 3
+	// Admin is the legacy "can manage other peers" tier: an OPERATIONAL
+	// super-user privilege (admin API routes, session gating), not a
+	// signing-confidence assertion. Every current call site grants it to
+	// human operator sessions or ACL-managed peers, never to the node's
+	// own key, so it deliberately does NOT alias Ultimate — doing so
+	// would let a plain admin grant satisfy checks meant exclusively for
+	// "this key IS my own node" (Phase F / Phase D auto-pin gating).
+	// Admin(4) > Full(3) numerically, so it still satisfies every
+	// "Full-or-better" web-of-trust check via Ownertrust().
+	Admin TrustLevel = 4
+
+	// Ultimate is the maximum trust level on the PGP ownertrust scale
+	// (PGP "u"): this key IS the node's own identity — the
+	// browser-user-is-the-node-key case (Phase F). New; no legacy stored
+	// record can carry this value, and only Phase F code is expected to
+	// assign it.
+	Ultimate TrustLevel = 5
+
+	// Unknown is the PGP-scale alias of Untrusted (PGP "-"/"o"): no trust
+	// assertion has been made about this identity.
+	Unknown = Untrusted
+	// Marginal is the PGP-scale alias of Limited (PGP "m"): partial
+	// confidence. Per PGP web-of-trust validity, >=3 marginal trusters
+	// (or >=1 full/ultimate truster) computes a subject VALID.
+	Marginal = Limited
+	// Full is the PGP-scale alias of Trusted (PGP "f"): full confidence.
+	// A single Full (or Admin, or Ultimate) truster alone computes a
+	// subject VALID.
+	Full = Trusted
 )
 
-// String returns the string representation of a TrustLevel.
-func (t TrustLevel) String() string {
-	switch t {
-	case Untrusted:
-		return "untrusted"
-	case Limited:
-		return "limited"
-	case Standard:
-		return "standard"
-	case Trusted:
-		return "trusted"
-	case Admin:
-		return "admin"
+// Ownertrust classifies a TrustLevel into one of the PGP ownertrust
+// buckets, folding the legacy tiers that have no dedicated PGP alias
+// (Standard, Admin) into the bucket their numeric value qualifies for.
+// Used by the web-of-trust validity computation (Phase C2) to decide
+// whether a truster's assigned level counts as a "marginal" or "full"
+// vote.
+type Ownertrust int
+
+const (
+	OwnertrustNever Ownertrust = iota
+	OwnertrustUnknown
+	OwnertrustMarginal
+	OwnertrustFull
+	OwnertrustUltimate
+)
+
+// String returns the PGP ownertrust bucket name.
+func (o Ownertrust) String() string {
+	switch o {
+	case OwnertrustNever:
+		return "never"
+	case OwnertrustUnknown:
+		return "unknown"
+	case OwnertrustMarginal:
+		return "marginal"
+	case OwnertrustFull:
+		return "full"
+	case OwnertrustUltimate:
+		return "ultimate"
 	default:
 		return "unknown"
 	}
 }
 
-// ParseTrustLevel converts a string to a TrustLevel.
+// Ownertrust classifies t. Standard falls into OwnertrustMarginal (it is
+// strictly above Marginal's own value but below Full); Admin falls into
+// OwnertrustFull (strictly above Full's value but below Ultimate) — see
+// the Admin const doc comment for why it does not classify as Ultimate.
+func (t TrustLevel) Ownertrust() Ownertrust {
+	switch {
+	case t <= Never:
+		return OwnertrustNever
+	case t < Marginal: // == Untrusted/Unknown
+		return OwnertrustUnknown
+	case t < Full: // Limited/Marginal or Standard
+		return OwnertrustMarginal
+	case t < Ultimate: // Trusted/Full or Admin
+		return OwnertrustFull
+	default: // Ultimate
+		return OwnertrustUltimate
+	}
+}
+
+// String returns the string representation of a TrustLevel, using the
+// canonical PGP ownertrust name where one exists (Phase C1 alignment).
+func (t TrustLevel) String() string {
+	switch t {
+	case Never:
+		return "never"
+	case Untrusted: // == Unknown
+		return "unknown"
+	case Limited: // == Marginal
+		return "marginal"
+	case Standard:
+		return "standard"
+	case Trusted: // == Full
+		return "full"
+	case Admin:
+		return "admin"
+	case Ultimate:
+		return "ultimate"
+	default:
+		return "unknown"
+	}
+}
+
+// ParseTrustLevel converts a string to a TrustLevel. Both the canonical
+// PGP ownertrust names and the legacy names are accepted as input (so
+// existing API clients/config/scripts that submit "untrusted", "limited",
+// or "trusted" keep working); output formatting (String/JSON) always uses
+// the canonical PGP name.
 func ParseTrustLevel(s string) (TrustLevel, error) {
 	switch s {
-	case "untrusted":
+	case "never":
+		return Never, nil
+	case "unknown", "untrusted":
 		return Untrusted, nil
-	case "limited":
+	case "marginal", "limited":
 		return Limited, nil
 	case "standard":
 		return Standard, nil
-	case "trusted":
+	case "full", "trusted":
 		return Trusted, nil
 	case "admin":
 		return Admin, nil
+	case "ultimate":
+		return Ultimate, nil
 	default:
 		return Untrusted, errors.New("invalid trust level")
 	}
+}
+
+// Web-of-trust validity thresholds and edge weights (Phase C2). A subject
+// is computed VALID when its trusters, evaluated through the wired
+// internal/trust.Graph, meet either bar: enough Marginal-or-better votes,
+// or a single Full-or-better vote.
+const (
+	// MinMarginalTrusters is the PGP web-of-trust rule: >=3 marginal (or
+	// better) trusters computes a subject VALID.
+	MinMarginalTrusters = 3
+	// MinFullTrusters is the PGP web-of-trust rule: >=1 full (or
+	// ultimate) truster alone computes a subject VALID.
+	MinFullTrusters = 1
+
+	// MarginalEdgeWeight is the trust.Edge.Weight floor that counts as a
+	// "marginal" vote in ComputeValidity.
+	MarginalEdgeWeight = 0.5
+	// FullEdgeWeight is the trust.Edge.Weight floor that counts as a
+	// "full" (or ultimate) vote in ComputeValidity.
+	FullEdgeWeight = 1.0
+)
+
+// EdgeWeight converts t into the [0,1] weight used by internal/trust.Edge
+// when this node's own trust assignments are projected into the
+// web-of-trust graph: Never/Unknown contribute zero (fail-safe — no bonus
+// from an unassigned or explicitly-distrusted truster), Marginal-or-better
+// (Limited/Standard) contributes MarginalEdgeWeight, and Full-or-better
+// (Trusted/Admin/Ultimate) contributes FullEdgeWeight.
+func (t TrustLevel) EdgeWeight() float64 {
+	switch t.Ownertrust() {
+	case OwnertrustFull, OwnertrustUltimate:
+		return FullEdgeWeight
+	case OwnertrustMarginal:
+		return MarginalEdgeWeight
+	default:
+		return 0
+	}
+}
+
+// ComputeValidity reports whether subject clears PGP web-of-trust validity
+// given the edges of g: it counts, among subject's direct trusters, how
+// many assert a Marginal-or-better vs. Full-or-better weight (see
+// MarginalEdgeWeight/FullEdgeWeight), then applies the standard rule
+// (>=MinMarginalTrusters marginal, OR >=MinFullTrusters full). A nil graph
+// (or a subject with no trusters) is fail-safe: never valid, zero counts —
+// exactly "no bonus" from missing graph data.
+func ComputeValidity(g *trust.Graph, subject string) (valid bool, marginalCount, fullCount int) {
+	if g == nil {
+		return false, 0, 0
+	}
+	for _, truster := range g.Trusters(subject) {
+		edge, ok := g.Edge(truster, subject)
+		if !ok {
+			continue
+		}
+		switch {
+		case edge.Weight >= FullEdgeWeight:
+			fullCount++
+		case edge.Weight >= MarginalEdgeWeight:
+			marginalCount++
+		}
+	}
+	valid = fullCount >= MinFullTrusters || marginalCount >= MinMarginalTrusters
+	return valid, marginalCount, fullCount
 }
 
 // MarshalJSON implements json.Marshaler for TrustLevel.
@@ -291,6 +501,13 @@ type Registry struct {
 	groups      map[string]*PeerGroup
 	strictMode  bool // Only connect to peers in registry
 	persistence PersistenceProvider
+
+	// trustGraph is the optional web-of-trust DAG (Phase C2, internal/trust)
+	// consulted by EffectiveTrustLevel to compute PGP web-of-trust validity
+	// on top of direct assignments. nil (the default) means "no graph
+	// wired" and every accessor degrades to exactly the pre-C2
+	// direct-assignment behavior (fail-safe).
+	trustGraph *trust.Graph
 }
 
 // PersistenceProvider is an interface for persisting the registry.
@@ -477,7 +694,10 @@ func (r *Registry) SetTrustLevel(id peer.ID, level TrustLevel) error {
 	return nil
 }
 
-// GetTrustLevel returns the trust level for a peer.
+// GetTrustLevel returns the DIRECTLY ASSIGNED trust level for a peer,
+// ignoring any web-of-trust graph (see EffectiveTrustLevel for the
+// computed-validity-augmented accessor). Used for rate limiting / display
+// where only the operator's own explicit assignment should matter.
 func (r *Registry) GetTrustLevel(id peer.ID) TrustLevel {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -493,21 +713,98 @@ func (r *Registry) GetTrustLevel(id peer.ID) TrustLevel {
 	return tp.TrustLevel
 }
 
+// SetTrustGraph wires (or clears, with nil) the web-of-trust DAG consulted
+// by EffectiveTrustLevel (Phase C2). Passing nil restores the exact
+// pre-C2, direct-assignment-only behavior (fail-safe default).
+func (r *Registry) SetTrustGraph(g *trust.Graph) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.trustGraph = g
+}
+
+// TrustGraph returns the currently wired web-of-trust graph, or nil.
+func (r *Registry) TrustGraph() *trust.Graph {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.trustGraph
+}
+
+// ComputedValidity reports whether id clears PGP web-of-trust validity per
+// the wired trust graph (nil/empty graph => never valid; fail-safe, no
+// bonus) along with the marginal/full truster counts that were tallied.
+// See ComputeValidity for the underlying rule.
+func (r *Registry) ComputedValidity(id peer.ID) (valid bool, marginalCount, fullCount int) {
+	r.mu.RLock()
+	g := r.trustGraph
+	r.mu.RUnlock()
+	return ComputeValidity(g, id.String())
+}
+
+// EffectiveTrustLevel is the LIVE trust decision: it folds computed
+// web-of-trust validity (Phase C2) on top of the peer's direct assignment.
+//
+//   - A direct assignment of Never is a hard veto: computed validity can
+//     NEVER override it (fail-closed on an explicit "do not trust").
+//   - Otherwise, direct assignment is a FLOOR: if the peer also clears
+//     computed web-of-trust validity (>=3 marginal trusters, or >=1
+//     full/ultimate truster — see ComputeValidity), the effective level is
+//     raised to at least Marginal. A direct assignment already at or above
+//     Marginal is never lowered by this computation ("direct assignments
+//     still win where higher").
+//   - No trust graph wired (the default) degrades to exactly the direct
+//     assignment, i.e. today's pre-C2 behavior (fail-safe).
+//
+// This is the accessor IsAllowed/IsTrusted/IsAdmin — and therefore the
+// connection gater, pubsub gating, and admin ACL checks — consult.
+func (r *Registry) EffectiveTrustLevel(id peer.ID) TrustLevel {
+	direct := r.GetTrustLevel(id)
+	if direct == Never {
+		return direct
+	}
+	valid, _, _ := r.ComputedValidity(id)
+	if valid && Marginal > direct {
+		return Marginal
+	}
+	return direct
+}
+
+// IsValid reports computed PGP web-of-trust validity for id, independent
+// of its direct assignment (Never still reports whatever ComputeValidity
+// found; callers wanting the veto-aware decision should use
+// EffectiveTrustLevel/IsAllowed/IsTrusted instead).
+func (r *Registry) IsValid(id peer.ID) bool {
+	valid, _, _ := r.ComputedValidity(id)
+	return valid
+}
+
+// IsFullyTrusted reports whether id's EFFECTIVE trust (direct assignment
+// augmented by computed validity) is Full or above (Trusted/Full, Admin,
+// or Ultimate). Exposed for Phase D: auto-subscribe/auto-pin should key
+// off this, not IsTrusted (which only checks direct-or-Marginal-raised
+// trust).
+func (r *Registry) IsFullyTrusted(id peer.ID) bool {
+	return r.EffectiveTrustLevel(id) >= Full
+}
+
 // IsAllowed checks if a peer is allowed to connect.
 func (r *Registry) IsAllowed(id peer.ID) bool {
-	level := r.GetTrustLevel(id)
+	level := r.EffectiveTrustLevel(id)
 	return level > Untrusted
 }
 
-// IsTrusted checks if a peer has Trusted or Admin level.
+// IsTrusted checks if a peer has Trusted/Full, Admin, or Ultimate level.
+// Computed web-of-trust validity only raises a peer to Marginal (see
+// EffectiveTrustLevel), so this remains a direct-assignment check unless
+// the peer was already directly assigned Trusted or above.
 func (r *Registry) IsTrusted(id peer.ID) bool {
-	level := r.GetTrustLevel(id)
+	level := r.EffectiveTrustLevel(id)
 	return level >= Trusted
 }
 
-// IsAdmin checks if a peer has Admin level.
+// IsAdmin checks if a peer has Admin level. Computed validity never grants
+// Admin (its floor is Marginal), so this is equivalent to a direct check.
 func (r *Registry) IsAdmin(id peer.ID) bool {
-	level := r.GetTrustLevel(id)
+	level := r.EffectiveTrustLevel(id)
 	return level == Admin
 }
 

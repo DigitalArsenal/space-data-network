@@ -172,10 +172,10 @@ var _ connmgr.ConnectionGater = (*TrustedConnectionGater)(nil)
 
 // TrustBasedRateLimiter adjusts rate limits based on peer trust level.
 type TrustBasedRateLimiter struct {
-	registry *Registry
-	baseMPS  float64 // Base messages per second
-	baseMPM  int     // Base messages per minute
-	baseBurst int    // Base burst size
+	registry  *Registry
+	baseMPS   float64 // Base messages per second
+	baseMPM   int     // Base messages per minute
+	baseBurst int     // Base burst size
 }
 
 // NewTrustBasedRateLimiter creates a rate limiter that adjusts based on trust.
@@ -193,7 +193,7 @@ func (trl *TrustBasedRateLimiter) GetLimits(peerID peer.ID) (mps float64, mpm, b
 	trustLevel := trl.registry.GetTrustLevel(peerID)
 
 	switch trustLevel {
-	case Untrusted:
+	case Untrusted, Never:
 		// Should not happen if connection gater is working
 		return 0, 0, 0
 	case Limited:

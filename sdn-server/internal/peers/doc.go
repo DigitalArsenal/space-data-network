@@ -6,13 +6,36 @@
 //
 // # Trust Levels
 //
-// The package defines five trust levels for peers:
+// TrustLevel is aligned with the PGP/GPG ownertrust scale (Phase C1 of the
+// alignment plan): Never < Unknown < Marginal < Standard < Full < Admin <
+// Ultimate. Ultimate (5) is the numeric maximum, reserved exclusively for
+// the node's own identity (Phase F). The legacy names below remain valid
+// identifiers (and legacy-persisted 0-4 values keep their original
+// meaning); see the TrustLevel doc comment in trust.go for the full
+// legacy<->PGP mapping and rationale.
 //
-//   - Untrusted: No connection allowed. Used for blocked peers.
-//   - Limited: Read-only, rate-limited access. For untrusted but not blocked peers.
+//   - Untrusted / Unknown: No connection allowed / no trust assertion made.
+//   - Limited / Marginal: Read-only, rate-limited access. Partial WoT confidence.
 //   - Standard: Normal peer with standard access. Default for unknown peers in non-strict mode.
-//   - Trusted: Full access with priority routing. For verified trusted peers.
-//   - Admin: Can manage other peers. For administrative access.
+//   - Trusted / Full: Full access with priority routing. Full WoT confidence.
+//   - Admin: Can manage other peers. Operational super-user, not a WoT signing level.
+//   - Ultimate: This key IS the node's own identity (Phase F only).
+//   - Never: Explicit, deliberate distrust — a hard veto that computed
+//     web-of-trust validity can never override.
+//
+// # Web of Trust (Phase C2)
+//
+// Registry.SetTrustGraph wires an internal/trust.Graph of trust
+// assertions between identities. Once wired, EffectiveTrustLevel (and the
+// IsAllowed/IsTrusted/IsAdmin accessors built on it) augments a peer's
+// direct assignment with computed PGP web-of-trust validity: a peer with
+// >=3 marginal trusters, or >=1 full/ultimate truster, is computed VALID
+// and floored at Marginal even absent (or below) a direct assignment.
+// Direct assignments at or above Marginal always win, and a direct
+// assignment of Never is a hard veto no graph can override. No graph wired
+// (the default) is exactly the pre-C2, direct-assignment-only behavior.
+// See Registry.IsFullyTrusted for the (separate, stronger) Phase D
+// auto-subscribe/auto-pin hook.
 //
 // # Registry
 //
