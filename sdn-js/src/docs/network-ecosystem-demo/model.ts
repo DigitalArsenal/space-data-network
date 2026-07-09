@@ -204,6 +204,10 @@ const initialEdges: EcosystemEdge[] = [
   },
 ];
 
+const liveConnectionNotRequestedDetail = 'Live connection has not been requested.';
+const liveConnectionUnavailableDetail =
+  'Live connection was requested, but this endpoint remains unavailable and disconnected.';
+
 export function createInitialEcosystemState(): EcosystemState {
   return {
     mode: 'sandbox',
@@ -222,13 +226,13 @@ export function createInitialEcosystemState(): EcosystemState {
           id: 'sdn.spaceaware.io',
           label: 'sdn.spaceaware.io',
           status: 'unavailable',
-          detail: 'Live connection has not been requested.',
+          detail: liveConnectionNotRequestedDetail,
         },
         {
           id: 'celestrak.eth',
           label: 'celestrak.eth',
           status: 'unavailable',
-          detail: 'Live connection has not been requested.',
+          detail: liveConnectionNotRequestedDetail,
         },
       ],
     },
@@ -336,6 +340,7 @@ export function runEcosystemAction(state: EcosystemState, action: EcosystemActio
           connections: state.live.connections.map((connection) => ({
             ...connection,
             status: 'unavailable',
+            detail: action.mode === 'live' ? liveConnectionUnavailableDetail : liveConnectionNotRequestedDetail,
           })),
         },
       },
