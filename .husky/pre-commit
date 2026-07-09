@@ -1,1 +1,2 @@
+./scripts/check-no-mnemonics.sh
 npm run check:versions
