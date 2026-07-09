@@ -49,6 +49,7 @@ func findStarlinkSourceModuleWasmPath(t testing.TB, callerDepth int) (string, bo
 
 	anchorDir := filepath.Dir(callerFile)
 	var candidates []string
+	candidates = appendStackPackageArtifactCandidates(candidates, anchorDir, starlinkSourceWasmPathSuffixes)
 	for _, suffix := range starlinkSourceWasmPathSuffixes {
 		candidates = append(candidates,
 			filepath.Join(append([]string{anchorDir, "..", "..", "..", ".."}, suffix...)...),
