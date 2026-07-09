@@ -41,6 +41,13 @@ import type {
 } from "./epoch-query-sql";
 import type { LocalFlatSqlSchema } from "./local-flatsql";
 import { getBootstrapRelays, EdgeDiscovery } from "./edge-discovery";
+import {
+  findSDNAdvertisementPeers,
+  provideSDNAdvertisementFlag,
+  type DiscoveredSDNAdvertisementPeer,
+  type FindSDNAdvertisementPeersOptions,
+  type ProvideSDNAdvertisementFlagOptions,
+} from "./sdn-advertisement-discovery";
 import { SchemaName, SUPPORTED_SCHEMAS } from "./schemas";
 import { initHDWallet } from "./crypto/hd-wallet";
 import type { DerivedIdentity } from "./crypto/types";
@@ -720,6 +727,40 @@ export class SDNNode {
     }
 
     return providers;
+  }
+
+  /**
+   * Discover Go sdn-server peers (and other SDN-flagged browser nodes) on
+   * the public IPFS/Amino DHT by the shared SDN membership rendezvous flag
+   * (loop A3 — see sdn-advertisement-discovery.ts for the exact CID
+   * derivation matched against sdn-server/internal/node/
+   * advertisement_discovery.go and go-libp2p's routing-discovery). By
+   * default this dials any newly discovered peer through the same libp2p
+   * connection path used by `dial()`.
+   */
+  async discoverSDNAdvertisementPeers(
+    options: Omit<FindSDNAdvertisementPeersOptions, "libp2p"> = {},
+  ): Promise<DiscoveredSDNAdvertisementPeer[]> {
+    if (!this.libp2p) {
+      throw new Error("Node not initialized");
+    }
+    return findSDNAdvertisementPeers({ ...options, libp2p: this.libp2p });
+  }
+
+  /**
+   * Announce this browser node as an SDN member on the public DHT under the
+   * shared rendezvous flag, so Go sdn-server peers (and other browser
+   * nodes) can discover it via `discoverSDNAdvertisementPeers`. Optional:
+   * most browser nodes are content consumers and should not call this. See
+   * sdn-advertisement-discovery.ts for re-announcement/TTL guidance.
+   */
+  async provideSDNAdvertisementFlag(
+    options: Omit<ProvideSDNAdvertisementFlagOptions, "libp2p"> = {},
+  ): Promise<void> {
+    if (!this.libp2p) {
+      throw new Error("Node not initialized");
+    }
+    await provideSDNAdvertisementFlag({ ...options, libp2p: this.libp2p });
   }
 
   async fetchCIDBytes(cid: string): Promise<Uint8Array> {
