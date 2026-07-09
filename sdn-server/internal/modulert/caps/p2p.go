@@ -3,11 +3,16 @@
 // Read-only, policy-mediated snapshots of the host's network view for the
 // discovery gateway flows (hostcap/p2p-discovery guest node):
 //
-//   - p2p.peers_snapshot   — the merged peerstore/DHT/registry/PNM view:
-//     one entry per known peer (self included, listed first) with addrs,
-//     connectedness, agent version, the standards the peer publishes
-//     (derived from stored signed PNMs), and the stored $EPM profile as a
-//     size-prefixed frame in the binary stream segment ({"$bin":0}).
+//   - p2p.peers_snapshot   — the merged peerstore/registry/PNM view, where
+//     "DHT peers" means only peers verified via the SDN advertisement flag
+//     rendezvous namespace (the node's DHT joins the public IPFS/Amino
+//     swarm, so raw DHT routing-table membership is NOT evidence of SDN
+//     membership — see sdnAdvertisementDiscoveryNamespace in
+//     internal/node/advertisement_discovery.go): one entry per known peer
+//     (self included, listed first) with addrs, connectedness, agent
+//     version, the standards the peer publishes (derived from stored signed
+//     PNMs), and the stored $EPM profile as a size-prefixed frame in the
+//     binary stream segment ({"$bin":0}).
 //   - p2p.standards_snapshot — the newest stored signed $PNM per
 //     (publishing peer, standard), FILE_ID-derived standard names, frames
 //     verbatim in the stream segment (entry order).
@@ -118,8 +123,9 @@ type P2PCapOptions struct {
 	SelfAgentVersion string
 	// SelfEPM returns the node's own size-prefixed $EPM (nil = none).
 	SelfEPM func() []byte
-	// Peers returns the merged network view (connected + peerstore + DHT +
-	// trust registry), excluding self.
+	// Peers returns the merged network view (connected + peerstore +
+	// SDN-advertisement-flag-verified DHT peers + trust registry), excluding
+	// self.
 	Peers func() []P2PPeerInfo
 	// PeerEPM returns the stored size-prefixed $EPM for a peer (nil = none).
 	PeerEPM func(peerID string) []byte

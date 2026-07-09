@@ -33,7 +33,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
-	dutil "github.com/libp2p/go-libp2p/p2p/discovery/util"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
@@ -784,10 +783,11 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 	}
 
 	// P2P discovery read capability (gateway loop G.2) — read-only snapshots
-	// of the peerstore/DHT/registry view + stored EPM profiles + PNM-derived
-	// published standards, feeding the discovery gateway flows. Bridge-aware
-	// since G.4: p2p.latest_dataset delivers dataset streams as body
-	// references on the calling instance's hostcall bridge.
+	// of the peerstore/SDN-flag-verified-DHT/registry view + stored EPM
+	// profiles + PNM-derived published standards, feeding the discovery
+	// gateway flows. Bridge-aware since G.4: p2p.latest_dataset delivers
+	// dataset streams as body references on the calling instance's hostcall
+	// bridge.
 	reg.RegisterBridgeAware("p2p_read", caps.NewP2PCapFactory(n.buildP2PCapOptions()))
 
 	return reg
@@ -811,7 +811,13 @@ func (n *Node) buildP2PCapOptions() caps.P2PCapOptions {
 		}
 		opts.Peers = func() []caps.P2PPeerInfo {
 			// Merged network view: connected peers + peerstore entries with
-			// addresses + DHT routing table + trust-registry peers.
+			// addresses + SDN-advertisement-flag-verified DHT peers +
+			// trust-registry peers. Since A1 the node's DHT joins the public
+			// IPFS/Amino swarm (publicDHTOptions in this file), so the raw
+			// DHT routing table is full of unrelated public IPFS nodes and
+			// must NOT be used here — only peers verified via the SDN
+			// membership flag namespace (sdnAdvertisementDiscoveryNamespace,
+			// see advertisement_discovery.go) count as known SDN peers.
 			ids := make(map[peer.ID]bool)
 			for _, pid := range n.host.Network().Peers() {
 				ids[pid] = true
@@ -819,10 +825,8 @@ func (n *Node) buildP2PCapOptions() caps.P2PCapOptions {
 			for _, pid := range n.host.Peerstore().PeersWithAddrs() {
 				ids[pid] = true
 			}
-			if n.dht != nil {
-				for _, pid := range n.dht.RoutingTable().ListPeers() {
-					ids[pid] = true
-				}
+			for _, pid := range n.sdnAdvertisementDiscoveredPeerIDs() {
+				ids[pid] = true
 			}
 			if n.peerRegistry != nil {
 				for _, tp := range n.peerRegistry.ListPeers() {
@@ -2645,6 +2649,18 @@ func moduleDeliveryDiscoveryTargets(discoveryCID cid.Cid) []cid.Cid {
 	return []cid.Cid{discoveryCID}
 }
 
+// announceSDNAdvertisement publishes one provider record for the SDN
+// membership flag rendezvous namespace on the public DHT. This calls
+// RoutingDiscovery.Advertise directly (a single synchronous Provide, mirroring
+// announceOnDHT below) rather than dutil.Advertise: dutil.Advertise only
+// spawns a background goroutine and returns immediately, so wrapping it in a
+// context that this function then cancels via `defer cancel()` on return
+// would cancel the DHT Provide before the spawned goroutine's network I/O
+// has any real chance to complete — on a real public DHT with real latency
+// that race is lost essentially every time, silently breaking the "canonical
+// SDN discovery flag" this function exists to publish. runDHTDiscovery
+// already re-invokes this every 30 seconds, so a bounded synchronous call
+// here (like its announceOnDHT sibling) is the correct shape.
 func (n *Node) announceSDNAdvertisement(target sdnAdvertisementDiscoveryTarget) {
 	if strings.TrimSpace(target.Namespace) == "" {
 		return
@@ -2654,8 +2670,11 @@ func (n *Node) announceSDNAdvertisement(target sdnAdvertisementDiscoveryTarget) 
 	defer cancel()
 
 	routingDiscovery := drouting.NewRoutingDiscovery(n.dht)
-	dutil.Advertise(ctx, routingDiscovery, target.Namespace)
-	log.Debugf("SDN advertisement announce started for %s", target.Flag)
+	if _, err := routingDiscovery.Advertise(ctx, target.Namespace); err != nil {
+		log.Debugf("SDN advertisement announce failed for %s: %v", target.Flag, err)
+		return
+	}
+	log.Debugf("SDN advertisement announce completed for %s", target.Flag)
 }
 
 // announceOnDHT announces our presence in the DHT discovery namespace.

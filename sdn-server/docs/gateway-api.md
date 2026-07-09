@@ -23,7 +23,7 @@ All gateway routes live under `/api/v1`. `{peerId}` is a libp2p peer ID;
 
 | Route | Method | Serves | Status | Phase |
 |---|---|---|---|---|
-| `/api/v1/peers` | GET | Known peers (peerstore + DHT + EPM profile) with the standards each publishes | **live** (peers-discovery flow) | G.2 |
+| `/api/v1/peers` | GET | Known peers (peerstore + SDN-advertisement-flag-verified DHT peers + EPM profile) with the standards each publishes | **live** (peers-discovery flow) | G.2 |
 | `/api/v1/peers/{peerId}` | GET | One peer's EPM profile + published standards | **live** (peers-discovery flow) | G.2 |
 | `/api/v1/standards` | GET | Standards published across known peers, with publishers | **live** (standards-discovery flow) | G.2 |
 | `/api/v1/peers/{peerId}/pnm?limit=N` | GET | The peer's newest signed PNMs (default `limit=1`, clamp 100), VERIFIABLE provenance — stored `$PNM` frames verbatim, publisher-attributed by signature | **live** (pnm-history flow) | G.3 |
@@ -288,11 +288,17 @@ entries auto-shadow when the mounts are configured.
 `p2p`). Read-only, deterministic snapshots; the host supplies MATERIALS,
 the wasm flow makes every response decision:
 
-- `p2p.peers_snapshot {peer_id?}` — merged peerstore + connected + DHT
-  routing table + trust-registry view (self listed first), per-peer addrs /
-  connectedness / agent version / published standards (PNM-derived) /
-  stored size-prefixed `$EPM` profile frames in the binary stream segment
-  (`{"$bin":0}`). Peers known only through stored PNMs are included.
+- `p2p.peers_snapshot {peer_id?}` — merged peerstore + connected +
+  SDN-advertisement-flag-verified DHT peers + trust-registry view (self
+  listed first), per-peer addrs / connectedness / agent version / published
+  standards (PNM-derived) / stored size-prefixed `$EPM` profile frames in the
+  binary stream segment (`{"$bin":0}`). Peers known only through stored PNMs
+  are included. The node's DHT joins the public IPFS/Amino swarm (stock
+  `/ipfs/kad/1.0.0`), so "DHT peers" here means only peers found via (or
+  advertising under) the SDN advertisement flag rendezvous namespace
+  (`space-data-network/discovery/advertisement-flag/<flag>`) — raw DHT
+  routing-table membership is not evidence of SDN membership and is
+  excluded.
 - `p2p.standards_snapshot {peer_id?}` — newest stored signed `$PNM` per
   (publishing peer, standard); the standard is the `.fbs` segment of the
   colon-delimited `FILE_ID` (dataset-pnms CLI rule); frames verbatim in
