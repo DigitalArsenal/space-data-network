@@ -19,13 +19,17 @@ import (
 // NewStorageCapFactory returns a BridgeCapFactory for "storage_query" and
 // "storage_write" capabilities. Both capabilities share the same handler —
 // the operation prefix distinguishes them ("storage.query" vs
-// "storage.write").
+// "storage.write") — but every operation independently re-checks its own
+// capability grant against the calling bridge (least privilege / defense in
+// depth): storage_query does NOT imply storage_write and vice versa, even
+// though both land in this one handler. See the per-case "POLICY" comments
+// in handle() below.
 //
 // Supported operations:
 //
-//	storage.query  — {"schema":"OMM","day":"2026-04-07","entity_id":"...","norad_cat_id":12345,"limit":100}
-//	storage.write  — {"schema":"OMM","data":"base64..."}  (data is raw FlatBuffer bytes)
-//	storage.delete — {"cid":"sha256hex..."}
+//	storage.query  — {"schema":"OMM","day":"2026-04-07","entity_id":"...","norad_cat_id":12345,"limit":100}  (requires storage_query)
+//	storage.write  — {"schema":"OMM","data":"base64..."}  (data is raw FlatBuffer bytes) (requires storage_write)
+//	storage.delete — {"cid":"sha256hex..."}  (requires storage_write)
 func NewStorageCapFactory(store *storage.FlatSQLStore) modulert.BridgeCapFactory {
 	return NewStorageCapFactoryWithProducer(store, "")
 }
@@ -143,6 +147,17 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 
 	switch operation {
 	case "storage.query":
+		// POLICY (least privilege, defense-in-depth): all four storage_*
+		// manifest capabilities (query/write/adapter/ingest) share this one
+		// hostcall handler under the "storage" prefix (capPrefixFromName in
+		// module.go) — the handler itself is the ONLY place that can tell
+		// them apart. storage_write/storage_ingest do NOT imply read access:
+		// a module approved only for writing must not silently gain query
+		// access, so this checks storage_query specifically rather than
+		// "any storage_* grant".
+		if s.bridge == nil || !s.bridge.HasCapability("storage_query") {
+			return errCapJSON("storage.query requires the storage_query capability grant"), nil
+		}
 		schema := str("schema")
 		if schema == "" {
 			return errCapJSON("missing schema"), nil
@@ -174,6 +189,13 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		return okCapJSON(json.RawMessage(result)), nil
 
 	case "storage.write":
+		// POLICY: write-tier gate. storage_query does NOT imply write —
+		// see the storage.query case above for why the four storage_*
+		// capabilities must be checked individually despite sharing one
+		// handler.
+		if s.bridge == nil || !s.bridge.HasCapability("storage_write") {
+			return errCapJSON("storage.write requires the storage_write capability grant"), nil
+		}
 		schema := str("schema")
 		if schema == "" {
 			return errCapJSON("missing schema"), nil
@@ -196,6 +218,13 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		return okCapJSON(map[string]string{"cid": cid}), nil
 
 	case "storage.delete":
+		// POLICY: destructive op — same write-tier gate as storage.write.
+		// There is no separate "storage_delete" manifest capability (see
+		// manifest.go / capability_policy.go sensitiveCapabilities);
+		// storage_write is the write/delete tier.
+		if s.bridge == nil || !s.bridge.HasCapability("storage_write") {
+			return errCapJSON("storage.delete requires the storage_write capability grant"), nil
+		}
 		schema := str("schema")
 		cid := str("cid")
 		if cid == "" {
@@ -214,6 +243,10 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 	// handler returns a PRE-ENCODED envelope — no base64/JSON round-trip
 	// anywhere on the host side, loop C.5).
 	case "storage.flatsql_query_stream":
+		// POLICY: read-tier gate, same rationale as storage.query above.
+		if s.bridge == nil || !s.bridge.HasCapability("storage_query") {
+			return errCapJSON("storage.flatsql_query_stream requires the storage_query capability grant"), nil
+		}
 		sqlText := str("sql")
 		if sqlText == "" {
 			return errCapJSON("missing sql"), nil
@@ -229,6 +262,10 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		return s.streamResult(stream, str("deliver")), nil
 
 	case "storage.flatsql_epoch_stream":
+		// POLICY: read-tier gate, same rationale as storage.query above.
+		if s.bridge == nil || !s.bridge.HasCapability("storage_query") {
+			return errCapJSON("storage.flatsql_epoch_stream requires the storage_query capability grant"), nil
+		}
 		schema := str("schema")
 		if schema == "" {
 			schema = "OMM.fbs"

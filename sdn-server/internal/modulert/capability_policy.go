@@ -58,18 +58,18 @@ import (
 //     loop B1 spec is storage_ingest — see caps/storage.go
 //     handleIngestWithSource).
 //   - storage_query, storage_adapter: gated as sensitive alongside
-//     storage_write/storage_ingest, NOT merely "read-only benign". This is
-//     load-bearing, not extra caution: caps/storage.go registers ONE
-//     handler shared by all four storage_* capabilities (capPrefixFromName
-//     maps storage_query/storage_write/storage_adapter/storage_ingest to
-//     the same "storage" hostcall prefix). Its "storage.write" and
-//     "storage.delete" operations perform NO per-operation HasCapability
-//     check — only storage.ingest_with_source and storage.query_sandboxed
-//     explicitly re-check their own grant. A module granted only
-//     storage_query already reaches storage.write/storage.delete once that
-//     shared handler is wired up. Denying storage_query/storage_adapter by
-//     default is required for the storage_write/storage_ingest gate above
-//     to mean anything; see caps/storage.go for the underlying handler.
+//     storage_write/storage_ingest, NOT merely "read-only benign".
+//     caps/storage.go registers ONE handler shared by all four storage_*
+//     capabilities (capPrefixFromName maps storage_query/storage_write/
+//     storage_adapter/storage_ingest to the same "storage" hostcall
+//     prefix). The handler now enforces per-operation HasCapability gates
+//     (storage.write/storage.delete require storage_write; the query and
+//     flatsql stream ops require storage_query; grants do not imply each
+//     other), so approving one storage_* name grants exactly that tier.
+//     storage_query stays in the sensitive default-deny set regardless:
+//     queries read the node's whole persisted SDS store, and the two-layer
+//     posture (policy approval + per-op gate) is deliberate defense in
+//     depth; see caps/storage.go for the per-op checks.
 //   - ipfs: pins/adds arbitrary content to the local IPFS daemon, reachable
 //     by the public swarm — exfiltration and unbounded local-disk risk.
 //   - pubsub: broadcasts arbitrary messages under the node's identity to
