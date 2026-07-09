@@ -195,7 +195,9 @@ func NewEdgeNode(ctx context.Context, cfg EdgeConfig) (*EdgeNode, error) {
 			var err error
 			dhtRouting, err = dht.New(nodeCtx, h,
 				dht.Mode(dht.ModeServer),
-				dht.ProtocolPrefix("/spacedatanetwork"),
+				// No ProtocolPrefix override: join the public IPFS/Amino DHT
+				// (protocol "/ipfs/kad/1.0.0") to stay reachable by the main
+				// sdn-server daemon, which also now rides the public DHT.
 			)
 			return dhtRouting, err
 		}),

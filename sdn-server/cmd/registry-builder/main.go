@@ -136,7 +136,9 @@ func NewRegistryBuilder(ctx context.Context, bootstraps []string, buildScript, o
 			var err error
 			dhtRouting, err = dht.New(ctx, h,
 				dht.Mode(dht.ModeClient),
-				dht.ProtocolPrefix("/spacedatanetwork"),
+				// No ProtocolPrefix override: join the public IPFS/Amino DHT
+				// (protocol "/ipfs/kad/1.0.0") to stay reachable by the main
+				// sdn-server daemon, which also now rides the public DHT.
 			)
 			return dhtRouting, err
 		}),
