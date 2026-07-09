@@ -43,6 +43,24 @@ describe('network ecosystem demo model', () => {
     expect(state.mode).toBe('live');
     expect(state.live.explicitlyRequested).toBe(true);
     expect(state.live.connections.every((connection) => connection.status === 'unavailable')).toBe(true);
+    expect(state.live.connections.map((connection) => connection.detail)).toEqual([
+      'Live connection was requested, but this endpoint remains unavailable and disconnected.',
+      'Live connection was requested, but this endpoint remains unavailable and disconnected.',
+    ]);
+    expect(state.pins).toEqual([
+      {
+        targetId: 'data-dpm',
+        durable: false,
+        label: 'Sandbox pin',
+      },
+    ]);
+    expect(state.subscriptions).toEqual([
+      {
+        sourceId: 'celestrak-eth',
+        standardCode: 'OMM',
+        topic: '/spacedatanetwork/channels/OMM',
+      },
+    ]);
     expect(state.moduleListings).toEqual([
       {
         name: 'Demo SGP4',
