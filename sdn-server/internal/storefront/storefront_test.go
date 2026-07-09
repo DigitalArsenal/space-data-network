@@ -477,6 +477,12 @@ func TestPurchaseFlow(t *testing.T) {
 	// signed buyer intent, have the (mocked) chain verifier confirm it
 	// against that intent's exact recipient/amount/asset, then complete.
 	// There is no more "just tell the server a tx hash and chain" shortcut.
+	//
+	// The recipient is now server-authoritative (derived from the
+	// SDN_CRYPTO_<CHAIN>_RECIPIENT env var), so the test configures it
+	// rather than trusting the request body for it; the request-body
+	// Recipient below is only checked for consistency against this value.
+	t.Setenv("SDN_CRYPTO_ETHEREUM_RECIPIENT", "0xProviderWallet")
 	pp := NewPaymentProcessor(store, "test-peer-id", &mockChainVerifier{
 		chain:  "ethereum",
 		result: verifiedCryptoResult(),

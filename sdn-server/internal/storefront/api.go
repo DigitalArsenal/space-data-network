@@ -557,6 +557,13 @@ func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// handleCreateCryptoIntent creates the server-authored payment intent a
+// buyer must pay against. Like handleManualDevPaid, it requires the caller
+// to either own the purchase (match its BuyerPeerID) or hold peers.Admin
+// trust — a crypto payment intent authorizes the caller to see (and, before
+// the recipient-derivation fix in CreateCryptoBuyerIntent, to influence) the
+// exact payment terms for a purchase, so it must not be creatable/readable
+// by an arbitrary caller who merely knows another buyer's request_id.
 func (h *APIHandler) handleCreateCryptoIntent(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -564,6 +571,19 @@ func (h *APIHandler) handleCreateCryptoIntent(w http.ResponseWriter, r *http.Req
 	}
 	if h.payment == nil {
 		http.Error(w, "crypto payments not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	purchase, err := h.service.store.GetPurchaseRequest(requestID)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if purchase == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := authorizeStorefrontPeerQuery(w, r, purchase.BuyerPeerID, "buyer_peer_id"); !ok {
 		return
 	}
 
@@ -577,7 +597,7 @@ func (h *APIHandler) handleCreateCryptoIntent(w http.ResponseWriter, r *http.Req
 
 	intent, err := h.payment.CreateCryptoBuyerIntent(r.Context(), &body)
 	if err != nil {
-		http.Error(w, "failed to create crypto intent", http.StatusInternalServerError)
+		http.Error(w, "failed to create crypto intent: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	writeJSON(w, http.StatusOK, intent)

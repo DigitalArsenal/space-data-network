@@ -134,12 +134,24 @@ func (pp *PaymentProcessor) CreateCryptoBuyerIntent(ctx context.Context, req *Cr
 	assetContract := normalizePaymentContract(req.AssetContract, chain)
 	nativeAsset := req.NativeAsset || isNativePaymentAsset(chain, asset, assetContract)
 
-	recipient := strings.TrimSpace(req.Recipient)
+	// The payout recipient is server-authoritative: it is derived ONLY from
+	// operator/provider configuration, never from the request body. Before
+	// this fix, an absent req.Recipient fell back to the operator env var,
+	// but a PRESENT req.Recipient was trusted outright — letting a buyer
+	// point the intent at an address they control. The confirm-time chain
+	// check (validateVerifiedCryptoPayment) faithfully verifies payment
+	// against whatever recipient the intent recorded, so a client-controlled
+	// recipient meant a buyer could pay themselves and still pass
+	// verification. Any client-supplied req.Recipient is now only used as an
+	// expectation to fail closed against, never as a source of truth; and if
+	// no server-side recipient is configured for this chain at all, intent
+	// creation is rejected rather than accepting a client value.
+	recipient := strings.TrimSpace(os.Getenv("SDN_CRYPTO_" + strings.ToUpper(chain) + "_RECIPIENT"))
 	if recipient == "" {
-		recipient = strings.TrimSpace(os.Getenv("SDN_CRYPTO_" + strings.ToUpper(chain) + "_RECIPIENT"))
+		return nil, fmt.Errorf("no server-configured recipient for chain %q; set SDN_CRYPTO_%s_RECIPIENT before accepting crypto payments on this chain", chain, strings.ToUpper(chain))
 	}
-	if recipient == "" {
-		return nil, fmt.Errorf("recipient is required for crypto payment intent")
+	if clientRecipient := strings.TrimSpace(req.Recipient); clientRecipient != "" && !samePaymentAddress(clientRecipient, recipient, chain) {
+		return nil, fmt.Errorf("requested recipient does not match the server-configured recipient for chain %q", chain)
 	}
 
 	expiresAt := req.ExpiresAt
@@ -168,7 +180,11 @@ func (pp *PaymentProcessor) CreateCryptoBuyerIntent(ctx context.Context, req *Cr
 		CreatedAt:     time.Now(),
 		ExpiresAt:     expiresAt,
 	}
-	signCryptoBuyerIntent(intent, pp.intentSigningSecret())
+	secret, err := pp.intentSigningSecret()
+	if err != nil {
+		return nil, fmt.Errorf("failed to establish crypto intent signing secret: %w", err)
+	}
+	signCryptoBuyerIntent(intent, secret)
 	if err := pp.store.CreateCryptoBuyerIntent(intent); err != nil {
 		return nil, err
 	}
@@ -195,7 +211,11 @@ func (pp *PaymentProcessor) SubmitCryptoPayment(ctx context.Context, req *Crypto
 	if intent == nil {
 		return &CryptoPaymentResult{Verified: false, Error: "payment reference not found"}, nil
 	}
-	if !verifyCryptoBuyerIntentSignature(intent, pp.intentSigningSecret()) {
+	secret, err := pp.intentSigningSecret()
+	if err != nil {
+		return nil, fmt.Errorf("failed to establish crypto intent signing secret: %w", err)
+	}
+	if !verifyCryptoBuyerIntentSignature(intent, secret) {
 		return &CryptoPaymentResult{Verified: false, Error: "payment intent signature invalid"}, nil
 	}
 	if intent.RequestID != req.RequestID {
@@ -271,12 +291,31 @@ func (pp *PaymentProcessor) SubmitCryptoPayment(ctx context.Context, req *Crypto
 	return result, nil
 }
 
-func (pp *PaymentProcessor) intentSigningSecret() []byte {
-	secret := strings.TrimSpace(os.Getenv("SDN_CRYPTO_INTENT_SIGNING_SECRET"))
-	if secret == "" {
-		secret = pp.peerID
+// intentSigningSecret returns the HMAC key used to sign/verify crypto buyer
+// intents. It NEVER falls back to public data (the peer ID was previously
+// used as a fallback, but a peer ID is publicly known, which would let
+// anyone forge a validly "signed" intent). When
+// SDN_CRYPTO_INTENT_SIGNING_SECRET is unset, a cryptographically random
+// 32-byte secret is generated once and persisted in the storefront Store (see
+// Store.GetOrCreateSecret) so it is stable across process restarts; without a
+// store to persist it in, secret establishment fails closed rather than
+// generating an ephemeral value that would invalidate every previously
+// issued intent signature on the next restart.
+func (pp *PaymentProcessor) intentSigningSecret() ([]byte, error) {
+	if secret := strings.TrimSpace(os.Getenv("SDN_CRYPTO_INTENT_SIGNING_SECRET")); secret != "" {
+		return []byte(secret), nil
 	}
-	return []byte(secret)
+	if pp.store == nil {
+		return nil, fmt.Errorf("SDN_CRYPTO_INTENT_SIGNING_SECRET is not set and no store is available to persist a generated secret")
+	}
+	persisted, err := pp.store.GetOrCreateSecret("crypto_intent_signing_secret", 32)
+	if err != nil {
+		return nil, fmt.Errorf("failed to establish a persisted crypto intent signing secret: %w", err)
+	}
+	if strings.TrimSpace(persisted) == "" {
+		return nil, fmt.Errorf("persisted crypto intent signing secret is empty")
+	}
+	return []byte(persisted), nil
 }
 
 func signCryptoBuyerIntent(intent *CryptoBuyerIntent, secret []byte) {
