@@ -42,14 +42,39 @@ export function mountNetworkEcosystemDemo(root: HTMLElement): NetworkEcosystemMo
       return;
     }
 
-    const itemElement = target.closest<HTMLElement>('[data-item-id]');
-    if (itemElement && root.contains(itemElement)) {
-      const itemId = itemElement.dataset.itemId;
-      if (itemId) {
-        state = selectEcosystemItem(state, itemId);
-        render();
-      }
+    if (selectItemFromTarget(target)) {
+      render();
     }
+  }
+
+  function handleKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+
+    if (selectItemFromTarget(event.target)) {
+      event.preventDefault();
+      render();
+    }
+  }
+
+  function selectItemFromTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof Element)) {
+      return false;
+    }
+
+    const itemElement = target.closest<HTMLElement>('[data-item-id]');
+    if (!itemElement || !root.contains(itemElement)) {
+      return false;
+    }
+
+    const itemId = itemElement.dataset.itemId;
+    if (!itemId) {
+      return false;
+    }
+
+    state = selectEcosystemItem(state, itemId);
+    return true;
   }
 
   async function dispatchAction(action: string): Promise<void> {
@@ -115,6 +140,7 @@ export function mountNetworkEcosystemDemo(root: HTMLElement): NetworkEcosystemMo
   }
 
   root.addEventListener('click', handleClick, { signal: abortController.signal });
+  root.addEventListener('keydown', handleKeydown, { signal: abortController.signal });
   render();
 
   return {
