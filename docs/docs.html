@@ -615,6 +615,9 @@
         <div class="sidebar-title">API Reference</div>
         <ul class="sidebar-links">
           <li><a href="#api-rest">REST API</a></li>
+          <li><a href="#api-auth">Wallet Authentication</a></li>
+          <li><a href="#api-channels">Channels</a></li>
+          <li><a href="#api-module-delivery">Module Delivery</a></li>
           <li><a href="#api-websocket">WebSocket</a></li>
           <li><a href="#api-errors">Errors</a></li>
         </ul>
@@ -640,6 +643,7 @@
         <div class="sidebar-title">Data Flow</div>
         <ul class="sidebar-links">
           <li><a href="#dataflow-overview">Architecture Overview</a></li>
+          <li><a href="#dataflow-discovery">Peer Discovery (DHT)</a></li>
           <li><a href="#dataflow-flatbuffers">FlatBuffers Format</a></li>
           <li><a href="#dataflow-flatsql">FlatSQL Storage</a></li>
           <li><a href="#dataflow-pnm">PNM Notifications</a></li>
@@ -867,7 +871,7 @@ curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download
           <li><code>config.yaml</code> &mdash; Node configuration (YAML format)</li>
           <li><code>keys/mnemonic</code> &mdash; BIP-39 mnemonic, <strong>encrypted at rest</strong> with XChaCha20-Poly1305 (see <a href="#key-security">Key Security</a>)</li>
           <li><code>keys/node.key</code> &mdash; Serialized libp2p private key (backward compatibility)</li>
-          <li><code>data/</code> &mdash; SQLite database and pinned content</li>
+          <li><code>data/</code> &mdash; FlatSQL record streams (append-only FlatBuffer bytes, plus SQL metadata/index tables) and, if a local Kubo node is configured, its pinned content</li>
         </ul>
 
         <h3>Configuration File</h3>
@@ -1683,34 +1687,26 @@ Verifiers can confirm:
       <!-- API Reference -->
       <section id="api-rest" class="doc-section">
         <h2>REST API</h2>
-        <p>The HTTP API is served on the configured admin port (default <code>127.0.0.1:5001</code>). All
-        paths below are absolute. Pre-existing data endpoints remain at their original paths; the new
-        core-info, peer-management, and pubsub endpoints are under <code>/api/v1/</code>.</p>
+        <p>The gateway HTTP API is served on the configured admin port (default <code>127.0.0.1:5001</code>;
+        see <code>admin.listen_addr</code> in <a href="#full-node">Full Node Setup</a>). All paths below are
+        absolute. A machine-readable, always-current reference is generated at runtime and served at
+        <code>GET /api/v1/openapi.json</code> &mdash; treat that endpoint as the source of truth over any
+        table on this page.</p>
 
-        <h3>Pre-existing endpoints</h3>
-        <table>
-          <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
-          <tbody>
-            <tr><td>GET</td><td><code>/api/node/info</code></td><td>public</td><td>Full node identity (EPM JSON + runtime metadata)</td></tr>
-            <tr><td>GET</td><td><code>/api/peers</code></td><td>public</td><td>Trusted-peer registry listing (admin UI backend)</td></tr>
-            <tr><td>GET / POST / PUT / DELETE</td><td><code>/api/peers/{peerId}</code></td><td>varies</td><td>Trusted-peer registry CRUD</td></tr>
-            <tr><td>GET</td><td><code>/api/v1/catalog</code></td><td>public</td><td>Registered SDS schema catalog</td></tr>
-            <tr><td>GET</td><td><code>/api/v1/data/health</code></td><td>public</td><td>Data API health check</td></tr>
-            <tr><td>GET</td><td><code>/api/v1/data/omm</code>, <code>/api/v1/data/omm/bulk</code></td><td>public</td><td>Orbital Mean-Motion records</td></tr>
-            <tr><td>GET</td><td><code>/api/v1/data/mpe</code>, <code>/api/v1/data/mpe/bulk</code></td><td>public</td><td>Mean-Perigee Ephemeris records</td></tr>
-            <tr><td>GET</td><td><code>/api/v1/data/cat</code>, <code>/api/v1/data/cat/bulk</code></td><td>public</td><td>Satellite catalog records</td></tr>
-            <tr><td>GET</td><td><code>/api/v1/data/spw/bulk</code></td><td>public</td><td>Space-weather records</td></tr>
-            <tr><td>GET</td><td><code>/api/v1/data/secure/omm</code></td><td>public</td><td>Authenticated OMM stream</td></tr>
-            <tr><td>GET</td><td><code>/api/v1/data/summary</code></td><td>auth</td><td>Record counts by schema and source</td></tr>
-            <tr><td>POST</td><td><code>/api/v1/data/query</code></td><td>auth</td><td>Raw FlatBuffer query</td></tr>
-            <tr><td>GET</td><td><code>/api/v1/data/records/{schema}/{cid}</code></td><td>auth</td><td>Single record by CID</td></tr>
-            <tr><td>POST</td><td><code>/api/v1/data/publish/{schema}</code></td><td>auth (standard trust)</td><td>Publish SDS-validated FlatBuffer data</td></tr>
-            <tr><td>GET</td><td><code>/api/v1/log/{schema}</code></td><td>public</td><td>Published record history endpoint</td></tr>
-            <tr><td>various</td><td><code>/api/v1/admin/*</code></td><td>auth (admin trust)</td><td>Admin-only operations</td></tr>
-          </tbody>
-        </table>
+        <div class="callout callout-info">
+          <div class="callout-title">How the OpenAPI document is built</div>
+          <p><code>/api/v1/openapi.json</code> is assembled from three sources: a small set of always-on
+          native Go routes, whatever WASM <strong>flow</strong> modules are currently mounted (see
+          <code>flows.mounts</code> in <a href="#full-node">Configuration File</a>; the data-retrieval flow
+          is mounted at <code>/api/v1/data/</code> by default), and a set of routes marked
+          <code>x-sdn-status: "planned"</code> for functionality that exists as a flow bundle but is not
+          mounted by default. Several native HTTP surfaces described below &mdash; wallet auth, the trusted-peer
+          registry, channels, and module-delivery discovery &mdash; are live on the same listener but not
+          yet enumerated in the generated document; this page lists them explicitly until the generator
+          catches up.</p>
+        </div>
 
-        <h3>Node information &mdash; <code>/api/v1/</code></h3>
+        <h3>Node information</h3>
         <pre><code>GET /api/v1/id        # Node identity: peer_id, listen_addresses, version fields  (public)
 GET /api/v1/version   # Software versions: agent_version, suite_version, standards_version  (public)
 GET /api/v1/stats     # Runtime stats: connected_peers, total_records, total_bytes, schemas  (public)</code></pre>
@@ -1725,8 +1721,10 @@ GET /api/v1/stats     # Runtime stats: connected_peers, total_records, total_byt
 }</code></pre>
 
         <h3>Peer management &mdash; <code>/api/v1/peers/</code></h3>
-        <p>These endpoints operate on the <em>libp2p network layer</em> (connected peers), which is
-        separate from the trusted-peer registry at <code>/api/peers</code>.</p>
+        <p>These endpoints operate on the <em>libp2p network layer</em> (currently connected peers), which
+        is separate from the trusted-peer registry at <code>/api/peers</code> (below) and from the
+        <a href="#dataflow-discovery">public-DHT advertisement-flag discovery</a> that finds peers in the
+        first place.</p>
         <table>
           <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
           <tbody>
@@ -1734,6 +1732,19 @@ GET /api/v1/stats     # Runtime stats: connected_peers, total_records, total_byt
             <tr><td>GET</td><td><code>/api/v1/peers/{peerId}</code></td><td>public</td><td>Info for a connected peer (peer_id, addrs)</td></tr>
             <tr><td>POST</td><td><code>/api/v1/peers/connect</code></td><td>admin</td><td>Connect to a peer by multiaddr. Body: <code>{"addr":"/ip4/..."}</code></td></tr>
             <tr><td>DELETE</td><td><code>/api/v1/peers/{peerId}</code></td><td>admin</td><td>Disconnect a peer from this node</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Trusted-peer registry &mdash; <code>/api/peers</code></h3>
+        <p>A separate handler manages the operator-curated trusted-peer registry that the admin UI reads
+        and writes (trust level, groups, EPM/vCard export, blocklist). This registry is what
+        <a href="#dataflow-pnm">PNM materialization</a> checks before importing a peer's published data.</p>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>GET / POST</td><td><code>/api/peers</code></td><td>varies</td><td>List / add registry entries</td></tr>
+            <tr><td>GET / PUT / DELETE</td><td><code>/api/peers/{peerId}</code></td><td>varies</td><td>Read, update, or remove a registry entry (plus <code>/trust</code>, <code>/stats</code>, <code>/epm</code> sub-resources)</td></tr>
+            <tr><td>various</td><td><code>/api/groups</code>, <code>/api/blocklist</code>, <code>/api/settings</code></td><td>varies</td><td>Group membership, blocklist, and registry settings</td></tr>
           </tbody>
         </table>
 
@@ -1750,7 +1761,7 @@ GET /api/v1/stats     # Runtime stats: connected_peers, total_records, total_byt
                 Publish SDS-validated data to a GossipSub topic. Body:
                 <code>{"schema":"OMM.fbs","data":"&lt;base64&gt;"}</code>.
                 Data is validated against the schema before publication; invalid data is rejected.
-                Published to libp2p topic <code>/sdn/data/{schema}</code>.
+                Published to libp2p topic <code>/spacedatanetwork/sds/{schema}</code>.
               </td>
             </tr>
             <tr>
@@ -1766,6 +1777,87 @@ GET /api/v1/stats     # Runtime stats: connected_peers, total_records, total_byt
             </tr>
           </tbody>
         </table>
+
+        <h3>Data query &amp; retrieval &mdash; <code>/api/v1/data/</code></h3>
+        <p>Record bytes are content-addressed and stored in the per-<code>(producer, standard)</code>
+        FlatSQL tables described in <a href="#dataflow-flatsql">FlatSQL Storage</a>. A small set of routes
+        are native Go and always on; per-schema convenience routes are served by the default-mounted
+        data-retrieval flow module (a sandboxed FlatSQL-WASM bundle, not hand-written Go).</p>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Served by</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td><code>/api/v1/data/health</code></td><td>native</td><td>Data API health check</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/data/summary</code></td><td>native</td><td>Record counts by schema and source</td></tr>
+            <tr><td>POST</td><td><code>/api/v1/data/query</code></td><td>native</td><td>Raw FlatSQL query over stored records (schema + filters JSON body)</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/data/records/{schema}/{cid}</code></td><td>native</td><td>Single record by CID</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/data/scan</code>, <code>/stream</code>, <code>/epoch</code></td><td>native</td><td>Node-to-node datasync scan/stream/replay surface</td></tr>
+            <tr><td>POST</td><td><code>/api/v1/data/publish/{schema}</code></td><td>native</td><td>Publish SDS-validated FlatBuffer data (auth: standard trust)</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/log/{schema}</code></td><td>native</td><td>Published record history endpoint</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/data/omm</code>, <code>/omm/bulk</code>, <code>/mpe</code>, <code>/mpe/bulk</code>, <code>/cat</code>, <code>/cat/bulk</code>, <code>/spw/bulk</code>, <code>/secure/omm</code></td><td>flow (data-retrieval)</td><td>Per-schema convenience routes. <code>omm/bulk</code> is deprecated; prefer <code>POST /api/v1/data/query</code>.</td></tr>
+            <tr><td>various</td><td><code>/api/v1/admin/*</code></td><td>native</td><td>Admin-only operations (peer registry, dataset-update publish, directory import; auth: admin trust)</td></tr>
+          </tbody>
+        </table>
+        <p>Record-stream endpoints accept <code>?format=json</code> to return a bare top-level JSON array of
+        records (the default encoding is the binary FlatBuffer stream). Responses carry
+        <code>X-SDN-Record-Count</code> and <code>X-SDN-Schema</code> headers; other endpoint families
+        (channels, storefront, peer/EPM export) use their own <code>X-SDN-*</code> headers documented inline
+        below.</p>
+
+        <h3 id="api-auth" class="doc-section">Wallet authentication &mdash; <code>/api/auth/</code></h3>
+        <p>SDN has no username/password login on the gateway API. A wallet proves control of its
+        <a href="#identity-secp256k1">xpub identity</a> with a signed challenge:</p>
+        <ol>
+          <li>The client requests a single-use, 60-second challenge for an <code>xpub</code> (or a bare
+          Ed25519 public key on first-run bootstrap).</li>
+          <li>The wallet signs the raw challenge bytes with its Ed25519 signing key and posts the signature
+          back.</li>
+          <li>The server verifies the Ed25519 signature; on the very first successful verify for an xpub the
+          signing key is bound to it via <strong>TOFU</strong> (see <a href="#identity-signing">Signing &amp;
+          Authentication</a>).</li>
+          <li>A session token is issued as an <code>HttpOnly</code> cookie (<code>sdn_wallet_session</code>).</li>
+        </ol>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>POST</td><td><code>/api/auth/challenge</code></td><td>public</td><td>Request a signing challenge for an xpub</td></tr>
+            <tr><td>POST</td><td><code>/api/auth/verify</code></td><td>public</td><td>Submit the signed challenge; issues the session cookie</td></tr>
+            <tr><td>POST</td><td><code>/api/auth/logout</code></td><td>session</td><td>Invalidate the current session</td></tr>
+            <tr><td>GET</td><td><code>/api/auth/me</code>, <code>/api/auth/status</code></td><td>session</td><td>Current session identity / auth status</td></tr>
+            <tr><td>GET / DELETE / PUT</td><td><code>/api/auth/users</code>, <code>/api/auth/users/{xpub}</code></td><td>admin</td><td>Manage authorized xpubs</td></tr>
+          </tbody>
+        </table>
+
+        <h3 id="api-channels" class="doc-section">Channels &mdash; <code>/api/v1/channels/</code></h3>
+        <p>Channels carry PNM/DPM publication updates, encrypted marketplace delivery, and shard import for
+        a given dataset or grant.</p>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td><code>/api/v1/channels</code></td><td>List channels</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/channels/{channelID}</code></td><td>Channel detail</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/channels/{channelID}/monitor</code></td><td>Live monitor stream</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/channels/{channelID}/pnm</code></td><td>Latest PNM for the channel</td></tr>
+            <tr><td>POST</td><td><code>/api/v1/channels/{channelID}/subscribe</code>, <code>/unsubscribe</code></td><td>Join / leave a channel</td></tr>
+            <tr><td>POST</td><td><code>/api/v1/channels/{channelID}/publish</code></td><td>Publish to the channel</td></tr>
+            <tr><td>GET</td><td><code>/api/v1/channels/{channelID}/stream</code>, <code>/bytes</code>, <code>/cache</code></td><td>Fetch channel byte streams / cached content</td></tr>
+            <tr><td>POST</td><td><code>/api/v1/channels/{channelID}/key-unwrap</code></td><td>Unwrap an encrypted grant content key</td></tr>
+            <tr><td>POST</td><td><code>/api/v1/channels/{channelID}/shard-import</code></td><td>Import a verified dataset shard</td></tr>
+            <tr><td>POST</td><td><code>/api/v1/channels/{channelID}/module-feed</code>, <code>/grants</code></td><td>Module-delivery feed updates and grant issuance</td></tr>
+          </tbody>
+        </table>
+
+        <h3 id="api-module-delivery" class="doc-section">Module delivery &mdash; <code>/api/module-delivery/</code></h3>
+        <p>These two GET endpoints are public HTTP discovery only:</p>
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>GET</td><td><code>/api/module-delivery/provider</code></td><td>This node's module-delivery provider descriptor</td></tr>
+            <tr><td>GET</td><td><code>/api/module-delivery/listings</code></td><td>PLG marketplace listings this node knows about</td></tr>
+          </tbody>
+        </table>
+        <p>The actual purchase/grant/decrypt exchange is <strong>not HTTP</strong> &mdash; it runs over the
+        libp2p stream protocol <code>/space-data-network/module-delivery/1.0.0</code>, as shown in
+        <a href="#sdk-storefront-delivery">Storefront &amp; Encrypted Module Delivery</a>.</p>
       </section>
 
       <section id="api-websocket" class="doc-section">
@@ -1799,7 +1891,7 @@ GET /api/v1/stats     # Runtime stats: connected_peers, total_records, total_byt
 }</code></pre>
         <p>Data is validated against the named SDS schema before publication. Invalid data returns an
         error frame. On success the message is broadcast to local subscribers and forwarded to the
-        libp2p topic <code>/sdn/data/{schema}</code>.</p>
+        libp2p topic <code>/spacedatanetwork/sds/{schema}</code>.</p>
 
         <h3>Server &rarr; Client: message</h3>
         <pre><code>{
@@ -1830,9 +1922,12 @@ GET /api/v1/stats     # Runtime stats: connected_peers, total_records, total_byt
   }
 }</code></pre>
 
-        <p>Pre-existing data endpoints (<code>/api/v1/data/*</code>) use a simpler envelope
-        <code>{"error":{"message":"..."}}</code> without a code field &mdash; this is intentional
-        for backwards compatibility.</p>
+        <p>The native <code>/api/v1/data/*</code> query endpoints (<code>health</code>,
+        <code>summary</code>, <code>query</code>, <code>records/{schema}/{cid}</code>, and the datasync
+        surface) use a simpler envelope, <code>{"error":{"message":"..."}}</code>, without a code field;
+        <code>/api/v1/data/publish/{schema}</code> returns a flat <code>{"error":"..."}</code> string. Both
+        predate the structured <code>{"error":{"code":...}}</code> envelope above and are kept for
+        compatibility with existing clients.</p>
 
         <table>
           <thead>
@@ -2490,6 +2585,56 @@ tq.PublishTip(ctx, pubsub.PublishOptions{
         </div>
       </section>
 
+      <section id="dataflow-discovery" class="doc-section">
+        <h2>Peer Discovery &mdash; Public IPFS/Amino DHT</h2>
+        <p>SDN nodes find each other on the same <strong>public IPFS/Amino DHT</strong> that every stock
+        IPFS/Kubo node joins &mdash; the standard Kademlia protocol <code>/ipfs/kad/1.0.0</code>. There is
+        no private <code>/spacedatanetwork</code> DHT swarm; at the DHT-transport layer an SDN node is
+        indistinguishable from any other public IPFS peer, and a regression test in the server
+        (<code>TestPublicDHTOptionsJoinStockIPFSProtocol</code>) asserts the legacy private protocol string
+        is never registered.</p>
+
+        <div class="callout callout-info">
+          <div class="callout-title">DHT membership is not SDN membership</div>
+          <p>Because the DHT is public, plenty of non-SDN IPFS/Kubo nodes share the same swarm. Raw routing-table
+          membership, or turning up in an unrelated <code>FindProvidersAsync</code> result, does <em>not</em>
+          mean a peer runs SDN. Nodes additionally advertise a lightweight rendezvous flag and only treat a
+          peer as SDN-discovered once it is found through that flag.</p>
+        </div>
+
+        <h3>The advertisement flag</h3>
+        <p>Using libp2p's routing-discovery convention (<code>Provide</code> / <code>FindPeers</code> over
+        the DHT), each node advertises and searches for a CID derived from a namespaced string:</p>
+        <pre><code>namespace = "space-data-network/discovery/advertisement-flag/&lt;flag&gt;"
+                                                                  # current flag: "spacedatanetwork/1.0.0"
+cid       = CIDv1(raw, sha2-256, SHA-256(UTF-8 bytes of namespace))
+
+Advertise: drouting.NewRoutingDiscovery(dht).Advertise(ctx, namespace)   # ~every 30s
+Discover:  drouting.NewRoutingDiscovery(dht).FindPeers(ctx, namespace)</code></pre>
+        <p>A peer only counts as SDN-discovered when it is found via (or itself advertises) this
+        namespace &mdash; never merely by DHT routing-table adjacency or an inbound/outbound libp2p
+        connection. Multiple flags can be supported simultaneously across a rolling upgrade; a node
+        advertises its current flag and discovers peers under every flag it still recognizes.</p>
+
+        <h3>Same derivation, Go and browser</h3>
+        <p>The browser SDK computes the identical namespace-to-CID derivation
+        (<code>sdn-advertisement-discovery.ts</code>) and runs libp2p's Kademlia DHT client mode with no
+        protocol-prefix override, so it speaks the same public swarm as a Go daemon. A browser tab can
+        therefore discover full nodes directly through the DHT; <a href="#edge-relay">edge relays</a> are
+        still useful for bridging transports a browser cannot dial on its own (e.g. raw TCP), but they are
+        not required for basic peer discovery.</p>
+
+        <h3>Bootstrap peers</h3>
+        <p>A node's effective bootstrap set combines SDN's own production peers with the standard public
+        IPFS/libp2p defaults &mdash; SDN augments the public bootstrap set, it does not replace it:</p>
+        <pre><code>network:
+  bootstrap:
+    - /dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
+    - /dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3
+    # ...plus the standard go-libp2p-kad-dht default bootstrap peers (bootstrap.libp2p.io),
+    # appended automatically unless bootstrap is overridden.</code></pre>
+      </section>
+
       <section id="dataflow-flatbuffers" class="doc-section">
         <h2>FlatBuffers Binary Format</h2>
         <p>All SDN data uses <a href="https://google.github.io/flatbuffers/">Google FlatBuffers</a> — a zero-copy binary serialization format. Unlike JSON or Protocol Buffers, FlatBuffers can be read directly from the binary without parsing or memory allocation.</p>
@@ -2532,52 +2677,84 @@ fileID := string(data[4:8])</code></pre>
 
       <section id="dataflow-flatsql" class="doc-section">
         <h2>FlatSQL Storage</h2>
-        <p><strong>FlatSQL</strong> is SDN's SQLite-backed storage layer for raw FlatBuffer bytes, stream offsets, source tags, and query indexes. Full nodes use it to materialize provider data, export dataset shards, import verified DPM publications, and serve query results. Browser nodes use the same concepts in the <code>sdn-js</code> local store.</p>
+        <p><strong>FlatSQL</strong> is a streaming SQL-over-FlatBuffers engine: a C++/SQLite core compiled to
+        WebAssembly and hosted in-process (WasmEdge), queried through <code>database/sql</code> via a Go
+        driver so existing SQL-shaped code doesn't need rewriting. The engine itself runs in memory &mdash;
+        there is no on-disk <code>mattn/go-sqlite3</code> or other CGO SQLite dependency behind the record
+        store, and record payload bytes are never stored as SQL <code>BLOB</code> columns. Durability comes
+        from append-only <code>flatsql-streams/*.flatsql</code> files that hold the raw FlatBuffer bytes;
+        SQL tables hold only pointers into those streams plus indexes. (A small, separate pure-Go
+        <code>modernc.org/sqlite</code> file-backed database is still used for a few unrelated standalone
+        subsystems &mdash; admin, audit, auth, storefront &mdash; each with its own private <code>.db</code>
+        file; those are not part of the FlatSQL record path.) Browser nodes use the same concepts in the
+        <code>sdn-js</code> local (IndexedDB) store.</p>
 
-        <h3>Database Schema</h3>
-        <pre><code>-- Per-schema data table (one table per registered SDS schema)
-CREATE TABLE sds_{schema_name} (
-  cid        TEXT PRIMARY KEY,   -- SHA-256 content hash
-  peer_id    TEXT,               -- Publisher's peer ID / xpub
-  timestamp  INTEGER,            -- Unix timestamp
-  data       BLOB,               -- Raw FlatBuffer binary bytes
-  signature  BLOB                -- Ed25519 signature
+        <h3>Per-Producer, Per-Standard Tables</h3>
+        <p>Every record is routed into a physical table named for its publisher and Space Data Standard:</p>
+        <pre><code>sds_p_&lt;sanitized-producer-id&gt;__&lt;standard&gt;
+
+# examples
+sds_p_16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45__OMM
+sds_p_unattributed__CAT   # records with no resolvable publisher identity</code></pre>
+        <p>The producer segment is the publisher's libp2p peer ID (or hex pubkey) with non-alphanumeric
+        characters replaced by <code>_</code>; the standard segment is the SDS schema name with its
+        <code>.fbs</code> suffix stripped (<code>OMM.fbs</code> &rarr; <code>OMM</code>). A table is created
+        on demand the first time a given producer publishes a given standard &mdash; there is no up-front
+        schema registration step. This is the v1 storage layout: it is routed-only, meaning new data is
+        never written to the older, non-producer-scoped per-standard tables (e.g. a bare <code>OMM</code>
+        table); those remain readable for continuity with data imported before this loop, via a read-side
+        union across both layouts.</p>
+
+        <h3>Table Schema</h3>
+        <pre><code>-- Shared metadata shape for every sds_p_&lt;producer&gt;__&lt;standard&gt; table
+CREATE TABLE sds_p_&lt;producer&gt;__&lt;standard&gt; (
+  cid            TEXT PRIMARY KEY,  -- real CIDv1: raw codec, sha2-256 multihash
+  peer_id        TEXT NOT NULL,     -- publisher's libp2p peer ID
+  timestamp      INTEGER NOT NULL,  -- unix seconds
+  stream_path    TEXT NOT NULL,     -- which flatsql-streams/*.flatsql file holds the bytes
+  stream_offset  INTEGER NOT NULL,  -- byte offset of the record within that file
+  record_length  INTEGER NOT NULL,  -- byte length of the record
+  signature_hex  TEXT,              -- Ed25519 signature, hex-encoded
+  created_at     INTEGER DEFAULT (strftime('%s', 'now')),
+  UNIQUE(cid)
 );
 
--- Fast query index (NORAD ID, epoch day, entity filtering)
+-- Fast query index (NORAD ID, epoch, entity/object filtering) across all tables
 CREATE TABLE sdn_record_index (
-  schema_name  TEXT NOT NULL,
-  cid          TEXT NOT NULL,
-  norad_cat_id INTEGER,          -- For orbital data (OMM, CDM)
-  entity_id    TEXT,
-  epoch_day    TEXT,              -- "YYYY-MM-DD" for time queries
+  schema_name       TEXT NOT NULL,
+  cid               TEXT NOT NULL,
+  norad_cat_id      INTEGER,        -- for orbital data (OMM, CDM, ...)
+  entity_id         TEXT,
+  object_type       TEXT,
+  ops_status_code   TEXT,
+  epoch_unix        INTEGER,
+  epoch_day         TEXT,           -- "YYYY-MM-DD" for time queries
+  source_timestamp  INTEGER NOT NULL,
+  created_at        INTEGER DEFAULT (strftime('%s', 'now')),
   PRIMARY KEY (schema_name, cid)
-);
-
--- Dataset publication ledger
-CREATE TABLE sdn_dataset_publications (
-  schema_name   TEXT NOT NULL,
-  provider_id   TEXT NOT NULL,
-  source_name   TEXT NOT NULL,
-  batch_id      TEXT NOT NULL,
-  shard_cid     TEXT NOT NULL,
-  index_cid     TEXT NOT NULL,
-  manifest_cid  TEXT NOT NULL,
-  pnm_cid       TEXT,
-  published_at  INTEGER NOT NULL,
-  PRIMARY KEY (schema_name, provider_id, source_name, batch_id)
 );</code></pre>
+        <p>Additional supporting tables: <code>sdn_record_source_tags</code> / <code>sdn_record_source_summary</code>
+        (provenance), <code>sdn_directory</code> (identity/EPM directory), <code>sdn_log_index</code>
+        (hash-chained PLG logs), and <code>sdn_pin_ledger</code> (what this node has pinned and why).</p>
 
         <h3>Content Addressing</h3>
-        <p>Every record gets a <strong>CID</strong> (Content Identifier) computed as <code>SHA-256(flatbuffer_bytes)</code>. This gives tamper-proof, permanent references — the same data always produces the same CID, and any modification changes the hash.</p>
+        <p>Every record gets a real <strong>CIDv1</strong> &mdash; raw codec (<code>0x55</code>), sha2-256
+        multihash, default base32 multibase &mdash; computed the same way a stock IPFS client computes it
+        (<code>bafybei...</code>). This is not a bespoke hash format: any IPFS/Kubo node can fetch and pin
+        an SDN record CID directly, and by default an SDN node pins published/imported records itself
+        through a local Kubo RPC endpoint (<code>admin.ipfs_api_url</code>, default
+        <code>http://127.0.0.1:5001</code>; pinning is on unless an operator explicitly sets it to an empty
+        string). Some rows written before this content-addressing scheme landed may still carry legacy
+        bare-hex digests instead of CIDs; those remain readable but nothing writes them anymore.</p>
 
         <h3>Data Lifecycle</h3>
         <pre><code>Incoming FlatBuffer bytes
     → Validate file_identifier (bytes 4-7) against schema registry
-    → Compute CID = SHA-256(bytes) as hex string
-    → INSERT into sds_{schema}(cid, data, peer_id, signature)
-    → Extract index fields (NORAD_CAT_ID, epoch, entity_id)
-    → INSERT into sdn_record_index
+    → Compute CID = CIDv1(raw, sha2-256, bytes)
+    → Append bytes to flatsql-streams/*.flatsql; record (stream_path, stream_offset, record_length)
+    → INSERT into sds_p_&lt;producer&gt;__&lt;standard&gt;(cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex)
+    → Extract index fields (NORAD_CAT_ID, epoch, entity_id) → INSERT into sdn_record_index
+    → Pin the CID via the local Kubo RPC (if admin.ipfs_api_url is set)
     → Export latest product shard/index when publishing a dataset
     → Build signed DPM and signed PNM for the publication</code></pre>
       </section>
@@ -2610,12 +2787,12 @@ CREATE TABLE sdn_dataset_publications (
 7. Import only records that verify against the DPM roots and hashes.</code></pre>
 
         <h3>Topic Map</h3>
-        <p>PNM announcements use the canonical PNM topic. Dataset assets are fetched by CID or query protocol; modules and private deliveries use their own storefront/grant channels.</p>
-        <pre><code>/spacedatanetwork/sds/PNM            &larr; signed PNM announcements
-/spacedatanetwork/dataset/{standard} &larr; dataset feed-head announcements where enabled
-/spacedatanetwork/edge-relays        &larr; edge relay announcements
-/sdn/storefront/listings             &larr; PLG marketplace listings
-/space-data-network/module-delivery/1.0.0 &larr; encrypted module grant/delivery protocol</code></pre>
+        <p>PNM announcements use the canonical per-schema PubSub topic. Dataset assets are fetched by CID or query protocol; modules and private deliveries use their own storefront/grant channels.</p>
+        <pre><code>/spacedatanetwork/sds/PNM.fbs                     &larr; signed PNM announcements (and one such topic per SDS schema, e.g. /spacedatanetwork/sds/OMM.fbs)
+/space-data-network/feed-heads/1.0.0/{standard}   &larr; dataset feed-head announcements where enabled
+/spacedatanetwork/edge-relays                     &larr; edge relay announcements
+/sdn/storefront/listings                          &larr; PLG marketplace listings
+/space-data-network/module-delivery/1.0.0         &larr; encrypted module grant/delivery protocol (libp2p stream protocol, not PubSub)</code></pre>
       </section>
 
       <section id="dataflow-dpm" class="doc-section">
