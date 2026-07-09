@@ -85,7 +85,10 @@ func (n *Node) loadOrCreateIdentityBundle() (*IdentityBundle, error) {
 		keyData, err := identity.MarshalPrivateKey()
 		if err == nil {
 			keyPath := filepath.Join(keyDir, "node.key")
-			_ = os.WriteFile(keyPath, keyData, 0o600)
+			// The identity key must never touch disk unencrypted; a plaintext
+			// write here would persist even though loadOrCreateKey overwrites
+			// the file later (crash window + non-secure overwrite on COW/SSD).
+			_ = n.writeEncryptedNodeKey(keyPath, keyData)
 		}
 	}
 

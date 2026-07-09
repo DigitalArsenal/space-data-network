@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"os"
@@ -50,6 +51,48 @@ func TestLoadOrCreateIdentityBundle_ReusesEncryptedMnemonic(t *testing.T) {
 	}
 	if !keys.IsMnemonicEncrypted(mnemonicData) {
 		t.Fatalf("mnemonic file at %s was not encrypted", mnemonicPath)
+	}
+}
+
+// TestLoadOrCreateIdentityBundle_NodeKeyNeverPlaintextOnDisk guards the exact
+// window the round-trip tests miss: the node.key written by
+// loadOrCreateIdentityBundle itself, BEFORE loadOrCreateKey later overwrites
+// the same path. A plaintext write here persists across a crash between the
+// two writes and is not securely erased by the later overwrite.
+func TestLoadOrCreateIdentityBundle_NodeKeyNeverPlaintextOnDisk(t *testing.T) {
+	n := newTestIdentityBundleNode(t)
+
+	bundle, err := n.loadOrCreateIdentityBundle()
+	if err != nil {
+		t.Fatalf("bundle: %v", err)
+	}
+	if bundle.Identity == nil || bundle.Identity.IdentityPrivKey == nil {
+		t.Fatal("bundle missing identity private key")
+	}
+
+	keyPath := filepath.Join(filepath.Dir(n.config.Storage.Path), "keys", "node.key")
+	raw, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatalf("read node.key immediately after bundle creation: %v", err)
+	}
+	if !bytes.HasPrefix(raw, nodeKeyEncMagic) {
+		t.Fatalf("node.key written by loadOrCreateIdentityBundle is not encrypted at rest")
+	}
+	keyData, err := bundle.Identity.MarshalPrivateKey()
+	if err != nil {
+		t.Fatalf("marshal identity key: %v", err)
+	}
+	if bytes.Contains(raw, keyData) {
+		t.Fatalf("plaintext identity key material present in node.key")
+	}
+
+	// And it must round-trip through the standard reader.
+	got, err := n.readNodeKeyFile(keyPath)
+	if err != nil {
+		t.Fatalf("readNodeKeyFile: %v", err)
+	}
+	if !got.Equals(bundle.Identity.IdentityPrivKey) {
+		t.Fatalf("round-tripped node.key differs from bundle identity key")
 	}
 }
 
