@@ -4,11 +4,14 @@
 package wasmrt
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/second-state/WasmEdge-go/wasmedge"
 )
@@ -17,7 +20,49 @@ var (
 	ErrNoModule    = errors.New("WASM module not loaded")
 	ErrAllocFailed = errors.New("WASM memory allocation failed")
 	ErrMemory      = errors.New("WASM memory access failed")
+
+	// ErrExecutionTimeout is returned (wrapped) when a guest invocation is
+	// aborted because it exceeded its configured wall-clock budget
+	// (WithExecTimeout / the ctx deadline passed to ExecuteContext,
+	// whichever is shorter). The in-flight execution is hard-interrupted
+	// (WasmEdge_AsyncCancel) and reaped before this error is returned, so
+	// the runtime is guaranteed usable for the next invocation.
+	ErrExecutionTimeout = errors.New("wasm execution exceeded wall-clock timeout")
+
+	// ErrFuelExhausted is returned (wrapped) when a guest invocation is
+	// aborted by WasmEdge's instruction-cost limit (WithCostLimit) — the
+	// fuel/gas mechanism. WasmEdge aborts the execution itself once the
+	// cumulative cost crosses the configured budget; the VM remains usable
+	// afterward.
+	ErrFuelExhausted = errors.New("wasm execution exceeded instruction/cost fuel budget")
 )
+
+// IsResourceLimitExceeded reports whether err (or any error it wraps) is a
+// wasmrt resource-limit breach: wall-clock timeout or fuel/cost exhaustion.
+func IsResourceLimitExceeded(err error) bool {
+	return errors.Is(err, ErrExecutionTimeout) || errors.Is(err, ErrFuelExhausted)
+}
+
+// classifyExecError inspects a raw WasmEdge execution error and wraps it in
+// the appropriate typed sentinel when it recognizes a resource-limit breach.
+// WasmEdge reports these as plain result messages ("cost limit exceeded",
+// "execution interrupted") rather than distinguishable Go error types, so
+// detection is by substring match against the upstream message text (see
+// enum.inc CostLimitExceeded / Interrupted in the WasmEdge C API).
+func classifyExecError(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "cost limit exceeded"):
+		return fmt.Errorf("%w: %v", ErrFuelExhausted, err)
+	case strings.Contains(msg, "execution interrupted"):
+		return fmt.Errorf("%w: %v", ErrExecutionTimeout, err)
+	default:
+		return err
+	}
+}
 
 // HostFunc describes a single host function to register in a host module.
 type HostFunc struct {
@@ -45,6 +90,13 @@ type config struct {
 	registeredName    string
 	linkedModules     []*Module
 	namedWasm         []namedWasmSpec
+
+	// execTimeout is the default per-Execute wall-clock budget (0 disables
+	// wall-clock enforcement — the pre-B3 behavior). See WithExecTimeout.
+	execTimeout time.Duration
+	// costLimit is the default per-Execute WasmEdge instruction-cost budget
+	// (0 disables fuel enforcement — the pre-B3 behavior). See WithCostLimit.
+	costLimit uint
 }
 
 type hostModuleSpec struct {
@@ -59,6 +111,41 @@ type namedWasmSpec struct {
 
 func WithMaxMemoryPages(pages uint32) Option {
 	return func(c *config) { c.maxMemoryPages = pages }
+}
+
+// WithExecTimeout sets the default per-Execute wall-clock budget (B3
+// defensive hardening). Zero (the default when this option is omitted)
+// disables wall-clock enforcement, preserving pre-B3 behavior for existing
+// callers that don't opt in.
+//
+// When set and the module was NOT created WithDedicatedThread, breaches are
+// hard-interrupted via WasmEdge's async-execute + cancel mechanism
+// (WasmEdge_AsyncCancel) — the guest is stopped mid-instruction and the
+// runtime remains usable for the next call. WithDedicatedThread modules
+// cannot safely use the async interrupt path (see WithDedicatedThread's
+// doc comment on nested-AOT thread affinity), so for those the wall-clock
+// budget is enforced best-effort only; WithCostLimit is the mechanism that
+// reliably bounds them and should always be set alongside this option for
+// dedicated-thread modules.
+func WithExecTimeout(d time.Duration) Option {
+	return func(c *config) { c.execTimeout = d }
+}
+
+// WithCostLimit sets the default per-Execute WasmEdge instruction-cost
+// budget (the fuel/gas mechanism; B3 defensive hardening). Zero (the
+// default when this option is omitted) disables fuel enforcement,
+// preserving pre-B3 behavior for existing callers that don't opt in.
+//
+// Enabling this turns on WasmEdge's cost-measuring statistics for the VM
+// (WasmEdge_ConfigureStatisticsSetCostMeasuring) and, before every Execute
+// call, raises the VM's cumulative cost limit by this budget
+// (WasmEdge_StatisticsSetCostLimit). WasmEdge aborts the guest itself
+// ("cost limit exceeded") once the budget is spent — this works uniformly
+// for both dedicated-thread and normal modules, and is the only mechanism
+// in this package that reliably bounds a hot loop with no host calls
+// regardless of dispatch mode.
+func WithCostLimit(limit uint) Option {
+	return func(c *config) { c.costLimit = limit }
 }
 
 func WithWASI() Option {
@@ -156,12 +243,19 @@ type Module struct {
 
 	// Dedicated execution thread (WithDedicatedThread): all vm.Execute
 	// calls are served by one locked OS thread.
-	execCh chan *execRequest
-	execWG sync.WaitGroup
+	execCh          chan *execRequest
+	execWG          sync.WaitGroup
+	dedicatedThread bool
+
+	// Resource limits (B3 defensive hardening). Zero values disable the
+	// corresponding enforcement — see WithExecTimeout / WithCostLimit.
+	execTimeout time.Duration
+	costLimit   uint
 }
 
 // execRequest carries one guest call to the dedicated execution thread.
 type execRequest struct {
+	ctx    context.Context
 	name   string
 	params []interface{}
 	done   chan execResult
@@ -181,29 +275,133 @@ func (m *Module) startExecThread() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 		for req := range m.execCh {
-			values, err := m.executeDirect(req.name, req.params...)
+			values, err := m.executeDirect(req.ctx, req.name, req.params...)
 			req.done <- execResult{values: values, err: err}
 		}
 	}()
 }
 
-// executeDirect invokes an export on the calling goroutine, routing through
-// the named registered instance when the module was created
+// runSync invokes an export synchronously on the calling goroutine, routing
+// through the named registered instance when the module was created
 // WithRegisteredName.
-func (m *Module) executeDirect(name string, params ...interface{}) ([]interface{}, error) {
+func (m *Module) runSync(name string, params ...interface{}) ([]interface{}, error) {
 	if m.registeredName != "" {
 		return m.vm.ExecuteRegistered(m.registeredName, name, params...)
 	}
 	return m.vm.Execute(name, params...)
 }
 
+// runAsyncWithTimeout invokes an export via WasmEdge's async-execute path
+// and hard-interrupts it (WasmEdge_AsyncCancel) if it has not completed
+// within timeout. On breach the in-flight execution is canceled and reaped
+// (via Async.GetResult, which blocks until the cancellation has actually
+// taken effect) before returning, so the VM is guaranteed idle — and safe
+// for the next Execute call — by the time this function returns.
+func (m *Module) runAsyncWithTimeout(timeout time.Duration, name string, params ...interface{}) ([]interface{}, error) {
+	var async *wasmedge.Async
+	if m.registeredName != "" {
+		async = m.vm.AsyncExecuteRegistered(m.registeredName, name, params...)
+	} else {
+		async = m.vm.AsyncExecute(name, params...)
+	}
+	if async == nil {
+		return nil, fmt.Errorf("failed to start async execution of %q", name)
+	}
+	defer async.Release()
+
+	ms := timeout.Milliseconds()
+	if ms <= 0 {
+		ms = 1
+	}
+	if async.WaitFor(int(ms)) {
+		values, err := async.GetResult()
+		return values, classifyExecError(err)
+	}
+
+	// Hard interrupt: cancel, then reap so the cancellation has fully taken
+	// effect (and any WasmEdge-internal execution thread has been joined)
+	// before we hand control back to the caller.
+	async.Cancel()
+	_, _ = async.GetResult()
+	return nil, fmt.Errorf("%w: %q exceeded %s", ErrExecutionTimeout, name, timeout)
+}
+
+// applyCostBudget raises the VM's cumulative WasmEdge cost limit by
+// m.costLimit above whatever has already been spent, giving the upcoming
+// Execute call a fresh fuel budget. WasmEdge's cost counter is cumulative
+// for the VM's lifetime (the Go bindings do not expose a per-call reset), so
+// "per invocation" fuel is implemented by ratcheting the limit up each call
+// rather than resetting the counter.
+func (m *Module) applyCostBudget() {
+	stats := m.vm.GetStatistics()
+	if stats == nil {
+		return
+	}
+	stats.SetCostLimit(stats.GetTotalCost() + m.costLimit)
+}
+
+// effectiveTimeout resolves the wall-clock budget for one Execute call: the
+// module's configured default (WithExecTimeout), narrowed to ctx's deadline
+// when ctx has one and it is sooner. Zero means "no wall-clock enforcement".
+func (m *Module) effectiveTimeout(ctx context.Context) time.Duration {
+	timeout := m.execTimeout
+	if dl, ok := ctx.Deadline(); ok {
+		remain := time.Until(dl)
+		if remain <= 0 {
+			remain = time.Millisecond
+		}
+		if timeout <= 0 || remain < timeout {
+			timeout = remain
+		}
+	}
+	return timeout
+}
+
+// executeDirect invokes an export on the calling goroutine (or, when called
+// from the dedicated-thread worker, on that locked OS thread), applying the
+// module's configured resource limits.
+//
+// Fuel (WithCostLimit) is enforced uniformly regardless of dispatch mode —
+// WasmEdge aborts the guest itself once the budget is spent, which works
+// whether the call is synchronous or async and whether or not it runs on a
+// dedicated thread.
+//
+// Wall-clock (WithExecTimeout) is hard-enforced via the async-execute +
+// cancel path ONLY for non-dedicated-thread modules. WithDedicatedThread
+// modules keep the plain synchronous call to preserve the nested-AOT
+// thread-affinity invariant that option exists for (see its doc comment);
+// for those, WithCostLimit is the mechanism that reliably bounds a runaway
+// guest, and the wall-clock budget is best-effort only (a ctx.Err() check
+// up front, no mid-flight interrupt). This is a known, documented residual
+// gap — see WithExecTimeout's doc comment.
+func (m *Module) executeDirect(ctx context.Context, name string, params ...interface{}) ([]interface{}, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	if m.costLimit > 0 {
+		m.applyCostBudget()
+	}
+
+	timeout := m.effectiveTimeout(ctx)
+	if timeout > 0 && !m.dedicatedThread {
+		return m.runAsyncWithTimeout(timeout, name, params...)
+	}
+
+	values, err := m.runSync(name, params...)
+	return values, classifyExecError(err)
+}
+
 // exec routes a guest call through the dedicated thread when configured,
 // falling back to a direct call otherwise.
-func (m *Module) exec(name string, params ...interface{}) ([]interface{}, error) {
+func (m *Module) exec(ctx context.Context, name string, params ...interface{}) ([]interface{}, error) {
 	if m.execCh == nil {
-		return m.executeDirect(name, params...)
+		return m.executeDirect(ctx, name, params...)
 	}
-	req := &execRequest{name: name, params: params, done: make(chan execResult, 1)}
+	req := &execRequest{ctx: ctx, name: name, params: params, done: make(chan execResult, 1)}
 	m.execCh <- req
 	res := <-req.done
 	return res.values, res.err
@@ -237,6 +435,12 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 	if cfg.maxMemoryPages > 0 {
 		conf.SetMaxMemoryPage(uint(cfg.maxMemoryPages))
 	}
+	if cfg.costLimit > 0 {
+		// Enables WasmEdge's instruction-cost accounting so
+		// Statistics.SetCostLimit (applyCostBudget) actually aborts guest
+		// execution once the fuel budget is spent (B3 defensive hardening).
+		conf.SetStatisticsCostMeasuring(true)
+	}
 
 	vm := wasmedge.NewVMWithConfig(conf)
 	if vm == nil {
@@ -251,6 +455,9 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 		mallocName:        cfg.mallocName,
 		freeName:          cfg.freeName,
 		secureDeallocName: cfg.secureDeallocName,
+		dedicatedThread:   cfg.dedicatedThread,
+		execTimeout:       cfg.execTimeout,
+		costLimit:         cfg.costLimit,
 	}
 
 	// Initialize WASI module if enabled.
@@ -361,9 +568,22 @@ func NewModuleFromFile(path string, opts ...Option) (*Module, error) {
 	return NewModule(wasmBytes, opts...)
 }
 
-// Execute calls a WASM exported function by name.
+// Execute calls a WASM exported function by name, subject to the module's
+// configured default resource limits (WithExecTimeout / WithCostLimit).
 func (m *Module) Execute(name string, params ...interface{}) ([]interface{}, error) {
-	return m.exec(name, params...)
+	return m.exec(context.Background(), name, params...)
+}
+
+// ExecuteContext calls a WASM exported function by name, narrowing the
+// module's configured wall-clock budget to ctx's deadline when ctx has one
+// and it is sooner (B3: per-invocation timeout threaded from the caller).
+// An already-canceled/expired ctx fails fast without starting the guest
+// call. Fuel (WithCostLimit) enforcement is unaffected by ctx.
+func (m *Module) ExecuteContext(ctx context.Context, name string, params ...interface{}) ([]interface{}, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return m.exec(ctx, name, params...)
 }
 
 // memory returns the default linear memory ("memory") from the active (or
@@ -466,7 +686,7 @@ func (m *Module) Allocate(data []byte) (uint32, error) {
 
 // AllocateSize calls the module's malloc for the given size, returning the pointer.
 func (m *Module) AllocateSize(size uint32) (uint32, error) {
-	results, err := m.exec(m.mallocName, int32(size))
+	results, err := m.exec(context.Background(), m.mallocName, int32(size))
 	if err != nil {
 		return 0, fmt.Errorf("malloc(%d) failed: %w", size, err)
 	}
@@ -479,14 +699,14 @@ func (m *Module) AllocateSize(size uint32) (uint32, error) {
 
 // Deallocate calls the module's free.
 func (m *Module) Deallocate(ptr uint32) {
-	m.exec(m.freeName, int32(ptr))
+	m.exec(context.Background(), m.freeName, int32(ptr))
 }
 
 // SecureDeallocate wipes memory then frees. Falls back to plain Deallocate
 // if no secure dealloc function was configured.
 func (m *Module) SecureDeallocate(ptr, size uint32) {
 	if m.secureDeallocName != "" {
-		m.exec(m.secureDeallocName, int32(ptr), int32(size))
+		m.exec(context.Background(), m.secureDeallocName, int32(ptr), int32(size))
 	} else {
 		m.Deallocate(ptr)
 	}
