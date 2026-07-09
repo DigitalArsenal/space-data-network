@@ -362,6 +362,35 @@ func (m *Manager) resolvePath(relPath string) (string, string, error) {
 	return fullPath, filepath.ToSlash(clean), nil
 }
 
+// gitCloneArgs builds the argv for a `git clone` invocation from
+// caller-supplied repoURL/branch values. handleGitImport is an
+// admin-authenticated HTTP endpoint, but its request body (url, branch) is
+// still attacker-influenceable network input placed directly into git's
+// argv. exec.Command never invokes a shell, so shell-metacharacter
+// injection is not possible, but git itself parses any argv element
+// starting with "-" as an option rather than a positional argument — e.g. a
+// branch of "--upload-pack=<cmd>" makes git execute an arbitrary local
+// command during clone. gitCloneArgs rejects anything that could be
+// mistaken for a flag and additionally inserts "--" ahead of the
+// positional repoURL/dstDir arguments as defense in depth.
+func gitCloneArgs(repoURL, branch, dstDir string) ([]string, error) {
+	if strings.HasPrefix(repoURL, "-") {
+		return nil, fmt.Errorf("URL must not start with '-'")
+	}
+	if strings.HasPrefix(branch, "-") {
+		return nil, fmt.Errorf("branch must not start with '-'")
+	}
+
+	args := []string{"clone", "--depth=1"}
+	if branch != "" {
+		args = append(args, "--branch", branch)
+	}
+	// "--" marks the end of option parsing so git can never reinterpret
+	// repoURL/dstDir as flags even if the checks above are ever loosened.
+	args = append(args, "--", repoURL, dstDir)
+	return args, nil
+}
+
 // handleGitImport clones a git repository into the frontend directory.
 func (m *Manager) handleGitImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -388,6 +417,7 @@ func (m *Manager) handleGitImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "URL must be https://, http://, or git@ format", http.StatusBadRequest)
 		return
 	}
+	branch := strings.TrimSpace(body.Branch)
 
 	// Clone into a temporary directory first, then swap
 	tmpDir, err := os.MkdirTemp(filepath.Dir(m.dir), ".frontend-import-*")
@@ -397,11 +427,11 @@ func (m *Manager) handleGitImport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.RemoveAll(tmpDir) // clean up on failure
 
-	args := []string{"clone", "--depth=1"}
-	if branch := strings.TrimSpace(body.Branch); branch != "" {
-		args = append(args, "--branch", branch)
+	args, err := gitCloneArgs(repoURL, branch, tmpDir)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
-	args = append(args, repoURL, tmpDir)
 
 	cmd := exec.Command("git", args...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")

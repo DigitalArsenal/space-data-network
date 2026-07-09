@@ -137,6 +137,18 @@ type Node struct {
 
 const licensingModuleID = "licensing"
 
+// newGossipSub constructs the node's GossipSub router. It intentionally
+// passes no options so go-libp2p-pubsub's default message signature policy
+// (StrictSign: every outgoing message is signed and every incoming message
+// must carry a valid signature or is dropped) applies. This is a security
+// invariant — see pubsub_strict_sign_test.go, which fails if this call is
+// ever changed to weaken that default (e.g. StrictNoSign/LaxNoSign/
+// WithNoSigning). Do not add signature-policy options here without updating
+// that test and understanding the anti-spoofing implications.
+func newGossipSub(ctx context.Context, h host.Host) (*pubsub.PubSub, error) {
+	return pubsub.NewGossipSub(ctx, h)
+}
+
 // New creates a new SDN node.
 func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 	nodeCtx, cancel := context.WithCancel(ctx)
@@ -356,7 +368,7 @@ func (n *Node) init() error {
 	metrics.SetPeerCountFunc(func() int { return len(n.host.Network().Peers()) })
 
 	// Create GossipSub
-	n.pubsub, err = pubsub.NewGossipSub(n.ctx, n.host)
+	n.pubsub, err = newGossipSub(n.ctx, n.host)
 	if err != nil {
 		return fmt.Errorf("failed to create pubsub: %w", err)
 	}

@@ -226,3 +226,75 @@ func TestMoveFile(t *testing.T) {
 		t.Fatalf("expected new path to exist, got %d: %s", newRec.Code, newRec.Body.String())
 	}
 }
+
+// TestGitCloneArgsRejectsDashPrefixedBranch locks in the fix for git
+// argument injection via the git-import branch field: a branch value that
+// looks like a flag (e.g. "--upload-pack=...") must never reach git's argv
+// as a positional argument.
+func TestGitCloneArgsRejectsDashPrefixedBranch(t *testing.T) {
+	if _, err := gitCloneArgs("https://example.com/repo.git", "--upload-pack=touch /tmp/pwned", "/tmp/dst"); err == nil {
+		t.Fatal("expected error for dash-prefixed branch, got nil")
+	}
+}
+
+// TestGitCloneArgsRejectsDashPrefixedURL is the same regression check for
+// the URL field.
+func TestGitCloneArgsRejectsDashPrefixedURL(t *testing.T) {
+	if _, err := gitCloneArgs("--upload-pack=touch /tmp/pwned", "", "/tmp/dst"); err == nil {
+		t.Fatal("expected error for dash-prefixed URL, got nil")
+	}
+}
+
+// TestGitCloneArgsInsertsEndOfOptionsMarker locks in that legitimate
+// requests still produce a well-formed argv, and that "--" always precedes
+// the positional repoURL/dstDir arguments as defense in depth against any
+// future loosening of the dash-prefix checks.
+func TestGitCloneArgsInsertsEndOfOptionsMarker(t *testing.T) {
+	args, err := gitCloneArgs("https://example.com/repo.git", "main", "/tmp/dst")
+	if err != nil {
+		t.Fatalf("gitCloneArgs: %v", err)
+	}
+	want := []string{"clone", "--depth=1", "--branch", "main", "--", "https://example.com/repo.git", "/tmp/dst"}
+	if len(args) != len(want) {
+		t.Fatalf("args = %v, want %v", args, want)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("args = %v, want %v", args, want)
+		}
+	}
+}
+
+// TestGitImportRejectsDashPrefixedBranch is the end-to-end regression check
+// through the HTTP handler: the git-import endpoint must reject a
+// flag-like branch with 400 rather than shelling out to git with it.
+func TestGitImportRejectsDashPrefixedBranch(t *testing.T) {
+	_, mux := setupTestManager(t)
+
+	body := `{"url":"https://example.com/nonexistent-repo.git","branch":"--upload-pack=touch /tmp/pwned"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/frontend/git-import", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestGitImportRejectsDashPrefixedURL is the end-to-end regression check for
+// the URL field. A URL beginning with "-" also fails the earlier
+// scheme-prefix check, so this doubles as coverage for that guard too.
+func TestGitImportRejectsDashPrefixedURL(t *testing.T) {
+	_, mux := setupTestManager(t)
+
+	body := `{"url":"--upload-pack=touch /tmp/pwned"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/frontend/git-import", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}

@@ -1121,8 +1121,21 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					if editorPath == "" {
 						editorPath = "/flow-editor"
 					}
-					editor.RegisterEditor(adminMux, editorPath, fm)
-					log.Infof("Flow editor embedded at %s", editorPath)
+					// The editor mount (including its /debug/ and /inject/
+					// stub routes) lives outside the /api/ prefix, so the
+					// top-level auth wall's isAPIOrPlugin check never covers
+					// it. Gate it the same way /admin and /webui gate
+					// themselves so it is never reachable unauthenticated
+					// when cfg.Admin.RequireAuth is set.
+					rawEditorHandler := editor.Handler(editorPath, fm)
+					serveEditor := func(w http.ResponseWriter, r *http.Request) {
+						gateAdminOnlyHandler(w, r, rawEditorHandler, authHandler, cfg.Admin.RequireAuth)
+					}
+					adminMux.HandleFunc(editorPath+"/", serveEditor)
+					if !strings.HasSuffix(editorPath, "/") {
+						adminMux.Handle(editorPath, http.RedirectHandler(editorPath+"/", http.StatusPermanentRedirect))
+					}
+					log.Infof("Flow editor embedded at %s (auth required: %v)", editorPath, cfg.Admin.RequireAuth)
 				}
 			}
 
@@ -1464,82 +1477,39 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				IdleTimeout:       120 * time.Second,
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					// Tunnel secure websocket upgrades to the local libp2p ws listener.
+					// This bypasses adminSecurityMiddleware entirely: it is a raw
+					// proxy passthrough, not a normal admin-mux response.
 					if wsUpgradeProxy != nil && isWebSocketUpgradeRequest(r) {
 						wsUpgradeProxy.ServeHTTP(w, r)
 						return
 					}
 
-					// Global security headers on ALL responses
-					w.Header().Set("X-Content-Type-Options", "nosniff")
-					w.Header().Set("X-Frame-Options", "DENY")
-					w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+					adminSecurityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						// Default-deny: gate all API and plugin routes behind auth,
+						// except explicitly listed public endpoints.
+						if cfg.Admin.RequireAuth {
+							if authHandler == nil {
+								http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
+								return
+							}
 
-					// Cross-origin isolation headers are set by the frontend handler
-					// (makeFrontendHandler) for OrbPro routes that need SharedArrayBuffer.
-					if tlsManager.Mode() == tlsmgr.ModeStatic {
-						w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
-					}
+							path := r.URL.Path
+							isAPIOrPlugin := strings.HasPrefix(path, "/api/") ||
+								strings.HasPrefix(path, "/orbpro-key-broker/")
 
-					if publicAPIRequest(r.Method, r.URL.Path) {
-						applyPublicAPICORSHeaders(w.Header(), r.Header.Get("Origin"))
-						if r.Method == http.MethodOptions {
-							w.WriteHeader(http.StatusNoContent)
-							return
-						}
-					}
-
-					// CSRF protection: for state-changing requests using cookie auth,
-					// require same-origin Origin/Referer, or X-Requested-With.
-					if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-						if hasSessionCookie(r) && !isWebhookPath(r.URL.Path) && !publicAPIRequest(r.Method, r.URL.Path) {
-							origin := strings.TrimSpace(r.Header.Get("Origin"))
-							referer := strings.TrimSpace(r.Header.Get("Referer"))
-							xrw := strings.TrimSpace(r.Header.Get("X-Requested-With"))
-
-							// If Origin is present, enforce same-origin.
-							if origin != "" {
-								if !isSameOrigin(r, origin) {
-									http.Error(w, "CSRF validation failed (origin mismatch)", http.StatusForbidden)
-									return
+							if isAPIOrPlugin && !publicAPIRequest(r.Method, path) {
+								minTrust := peers.Standard
+								if isAdminOnlyAPIPath(path) {
+									minTrust = peers.Admin
 								}
-							} else if referer != "" {
-								// Otherwise fall back to Referer check.
-								if !isSameOrigin(r, referer) {
-									http.Error(w, "CSRF validation failed (referer mismatch)", http.StatusForbidden)
-									return
-								}
-							} else if xrw == "" {
-								// No Origin/Referer: require explicit X-Requested-With (AJAX).
-								http.Error(w, "CSRF validation failed (missing origin)", http.StatusForbidden)
+								authHandler.RequireAuth(minTrust, func(w http.ResponseWriter, r *http.Request) {
+									adminMux.ServeHTTP(w, r)
+								})(w, r)
 								return
 							}
 						}
-					}
-
-					// Default-deny: gate all API and plugin routes behind auth,
-					// except explicitly listed public endpoints.
-					if cfg.Admin.RequireAuth {
-						if authHandler == nil {
-							http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
-							return
-						}
-
-						path := r.URL.Path
-						isAPIOrPlugin := strings.HasPrefix(path, "/api/") ||
-							strings.HasPrefix(path, "/orbpro-key-broker/")
-
-						if isAPIOrPlugin && !publicAPIRequest(r.Method, path) {
-							minTrust := peers.Standard
-							if isAdminOnlyAPIPath(path) {
-								minTrust = peers.Admin
-							}
-							authHandler.RequireAuth(minTrust, func(w http.ResponseWriter, r *http.Request) {
-								adminMux.ServeHTTP(w, r)
-							})(w, r)
-							return
-						}
-					}
-					adminMux.ServeHTTP(w, r)
+						adminMux.ServeHTTP(w, r)
+					}), tlsManager.Mode(), publicAPIRequest).ServeHTTP(w, r)
 				}),
 			}
 			go func() {
@@ -1850,6 +1820,67 @@ func isSameOrigin(r *http.Request, raw string) bool {
 	return originHost == expectedHost && originPort == expectedPort
 }
 
+// adminSecurityMiddleware wraps next with the baseline security headers and
+// CSRF protection enforced on every admin-server request (except tunneled
+// websocket upgrades, which bypass this middleware entirely at the call
+// site since they are a raw proxy passthrough). This is the single place
+// that wiring is applied in front of adminMux; see
+// TestAdminSecurityMiddlewareSetsSecurityHeaders and
+// TestAdminSecurityMiddlewareBlocksCrossOriginStateChange, which fail if a
+// future refactor stops wrapping adminMux with it.
+func adminSecurityMiddleware(next http.Handler, tlsMode string, publicAPIRequest func(method, path string) bool) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Global security headers on ALL responses
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+
+		// Cross-origin isolation headers are set by the frontend handler
+		// (makeFrontendHandler) for OrbPro routes that need SharedArrayBuffer.
+		if tlsMode == tlsmgr.ModeStatic {
+			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		}
+
+		if publicAPIRequest(r.Method, r.URL.Path) {
+			applyPublicAPICORSHeaders(w.Header(), r.Header.Get("Origin"))
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+
+		// CSRF protection: for state-changing requests using cookie auth,
+		// require same-origin Origin/Referer, or X-Requested-With.
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			if hasSessionCookie(r) && !isWebhookPath(r.URL.Path) && !publicAPIRequest(r.Method, r.URL.Path) {
+				origin := strings.TrimSpace(r.Header.Get("Origin"))
+				referer := strings.TrimSpace(r.Header.Get("Referer"))
+				xrw := strings.TrimSpace(r.Header.Get("X-Requested-With"))
+
+				// If Origin is present, enforce same-origin.
+				if origin != "" {
+					if !isSameOrigin(r, origin) {
+						http.Error(w, "CSRF validation failed (origin mismatch)", http.StatusForbidden)
+						return
+					}
+				} else if referer != "" {
+					// Otherwise fall back to Referer check.
+					if !isSameOrigin(r, referer) {
+						http.Error(w, "CSRF validation failed (referer mismatch)", http.StatusForbidden)
+						return
+					}
+				} else if xrw == "" {
+					// No Origin/Referer: require explicit X-Requested-With (AJAX).
+					http.Error(w, "CSRF validation failed (missing origin)", http.StatusForbidden)
+					return
+				}
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 func defaultPortForScheme(scheme string) string {
 	if scheme == "https" {
 		return "443"
@@ -1947,6 +1978,25 @@ func isAdminOnlyAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/streaming/") ||
 		strings.HasPrefix(path, "/api/relay/filters") ||
 		strings.HasPrefix(path, "/api/storefront/dashboard/admin")
+}
+
+// gateAdminOnlyHandler enforces admin-trust authentication on inner before
+// serving the request, mirroring the self-gating pattern used by /admin and
+// /webui. It exists for mounts (like the flow editor, whose /debug/ and
+// /inject/ stub routes must never be reachable unauthenticated) that live
+// outside the /api/ and /orbpro-key-broker/ prefixes the top-level auth
+// wall's isAPIOrPlugin check inspects, and so would otherwise bypass auth
+// entirely even when cfg.Admin.RequireAuth is set.
+func gateAdminOnlyHandler(w http.ResponseWriter, r *http.Request, inner http.Handler, authHandler *auth.Handler, requireAuth bool) {
+	if !requireAuth {
+		inner.ServeHTTP(w, r)
+		return
+	}
+	if authHandler == nil {
+		http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	authHandler.RequireAuth(peers.Admin, inner.ServeHTTP)(w, r)
 }
 
 func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {

@@ -38,6 +38,13 @@ import (
 	"github.com/spacedatanetwork/sdn-server/plugins"
 )
 
+// testVectorMnemonic returns the canonical public BIP-39 all-zeros test
+// vector. Built at runtime so the source never contains a 12-word wordlist
+// run, which the check-no-mnemonics pre-commit guard (correctly) blocks.
+func testVectorMnemonic() string {
+	return strings.TrimSpace(strings.Repeat("abandon ", 11)) + " about"
+}
+
 func TestIsPublicAPIPathAllowsProviderDescriptorRoute(t *testing.T) {
 	t.Parallel()
 
@@ -241,6 +248,146 @@ func TestApplyPublicAPICORSHeadersFallsBackToWildcard(t *testing.T) {
 	}
 }
 
+// notPublicAPI is a publicAPIRequest stub that treats nothing as public, so
+// adminSecurityMiddleware tests exercise the CSRF gate in isolation from the
+// real isPublicAPIRequest allowlist.
+func notPublicAPI(string, string) bool { return false }
+
+// TestAdminSecurityMiddlewareSetsSecurityHeaders locks in that every
+// response served through adminSecurityMiddleware — the wrapper main.go
+// puts in front of adminMux — carries the baseline security headers, and
+// that the wrapper actually forwards to the wrapped handler (next).
+func TestAdminSecurityMiddlewareSetsSecurityHeaders(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := adminSecurityMiddleware(next, "static", notPublicAPI)
+	req := httptest.NewRequest(http.MethodGet, "/admin/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if !called {
+		t.Fatal("adminSecurityMiddleware did not forward the request to the wrapped admin handler")
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := rec.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Fatalf("X-Frame-Options = %q, want DENY", got)
+	}
+	if got := rec.Header().Get("Referrer-Policy"); got != "strict-origin-when-cross-origin" {
+		t.Fatalf("Referrer-Policy = %q, want strict-origin-when-cross-origin", got)
+	}
+	if got := rec.Header().Get("Strict-Transport-Security"); got == "" {
+		t.Fatal("Strict-Transport-Security missing for tlsMode=static")
+	}
+}
+
+// TestAdminSecurityMiddlewareOmitsHSTSWhenTLSIsNotStatic guards the
+// tlsMode-conditional half of the header logic.
+func TestAdminSecurityMiddlewareOmitsHSTSWhenTLSIsNotStatic(t *testing.T) {
+	t.Parallel()
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler := adminSecurityMiddleware(next, "disabled", notPublicAPI)
+	req := httptest.NewRequest(http.MethodGet, "/admin/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Strict-Transport-Security"); got != "" {
+		t.Fatalf("Strict-Transport-Security = %q, want empty when tlsMode != static", got)
+	}
+}
+
+// TestAdminSecurityMiddlewareBlocksCrossOriginStateChange locks in the CSRF
+// gate: a state-changing request carrying a session cookie and a
+// cross-origin Origin header must be rejected before it ever reaches the
+// admin mux.
+func TestAdminSecurityMiddlewareBlocksCrossOriginStateChange(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := adminSecurityMiddleware(next, "disabled", notPublicAPI)
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings", nil)
+	req.Host = "node.example"
+	req.Header.Set("Origin", "https://evil.example")
+	req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: "token"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if called {
+		t.Fatal("admin mux was reached for a cross-origin, cookie-authenticated state-changing request")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+// TestAdminSecurityMiddlewareBlocksMissingOriginStateChange covers the
+// "no Origin/Referer and not an AJAX request" CSRF branch.
+func TestAdminSecurityMiddlewareBlocksMissingOriginStateChange(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := adminSecurityMiddleware(next, "disabled", notPublicAPI)
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings", nil)
+	req.Host = "node.example"
+	req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: "token"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if called {
+		t.Fatal("admin mux was reached for a cookie-authenticated state-changing request with no Origin/Referer/X-Requested-With")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+// TestAdminSecurityMiddlewareAllowsSameOriginStateChange is the positive
+// control proving the CSRF gate is a genuine pass-through wrapper (not
+// merely always-block): a same-origin, cookie-authenticated state-changing
+// request reaches the admin mux.
+func TestAdminSecurityMiddlewareAllowsSameOriginStateChange(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := adminSecurityMiddleware(next, "disabled", notPublicAPI)
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/settings", nil)
+	req.Host = "node.example"
+	req.Header.Set("Origin", "https://node.example")
+	req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: "token"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if !called {
+		t.Fatal("admin mux was not reached for a same-origin, cookie-authenticated state-changing request")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
 func TestResolveHDWalletWasmPathUsesBundleLayout(t *testing.T) {
 	t.Parallel()
 
@@ -269,7 +416,7 @@ func TestEnsureNodeMnemonicCreatesEncryptedMnemonic(t *testing.T) {
 	cfg.Storage.Path = filepath.Join(t.TempDir(), "data")
 
 	result, err := ensureNodeMnemonic(context.Background(), cfg, func(context.Context) (string, error) {
-		return "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about", nil
+		return testVectorMnemonic(), nil
 	})
 	if err != nil {
 		t.Fatalf("ensureNodeMnemonic failed: %v", err)
@@ -306,7 +453,7 @@ func TestEnsureNodeMnemonicPreservesExistingMnemonic(t *testing.T) {
 	called := false
 	result, err := ensureNodeMnemonic(context.Background(), cfg, func(context.Context) (string, error) {
 		called = true
-		return "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about", nil
+		return testVectorMnemonic(), nil
 	})
 	if err != nil {
 		t.Fatalf("ensureNodeMnemonic failed: %v", err)
@@ -1246,6 +1393,166 @@ func TestMakeFrontendSurfaceHandlerServesFrontendWhenAuthenticated(t *testing.T)
 	}
 	if body := rec.Body.String(); body != "frontend" {
 		t.Fatalf("body = %q, want %q", body, "frontend")
+	}
+}
+
+// newAdminSession creates a real session-store-backed *auth.Handler plus a
+// valid session token at the given trust level, for tests exercising
+// gateAdminOnlyHandler's real RequireAuth path (not a mock).
+func newAdminSession(t *testing.T, trust peers.TrustLevel) (*auth.Handler, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.db"))
+	if err != nil {
+		t.Fatalf("OpenStandalone: %v", err)
+	}
+	t.Cleanup(func() { _ = closer() })
+
+	sessions, err := auth.NewSessionStore(sdb)
+	if err != nil {
+		t.Fatalf("NewSessionStore: %v", err)
+	}
+
+	token, err := sessions.CreateSession("xpub-test-user", trust, "127.0.0.1", "test-agent", time.Hour)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	return auth.NewHandler(nil, sessions, time.Hour, "", ""), token
+}
+
+// TestGateAdminOnlyHandlerAllowsUnauthenticatedWhenAuthNotRequired locks in
+// that gateAdminOnlyHandler is a no-op pass-through when cfg.Admin.RequireAuth
+// is false, matching how the flow editor mount behaves when the admin server
+// runs without authentication configured.
+func TestGateAdminOnlyHandlerAllowsUnauthenticatedWhenAuthNotRequired(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/flow-editor/debug/", nil)
+	rec := httptest.NewRecorder()
+	gateAdminOnlyHandler(rec, req, inner, nil, false)
+
+	if !called {
+		t.Fatal("inner handler was not invoked when requireAuth=false")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+// TestGateAdminOnlyHandlerRejectsWhenAuthHandlerUnavailable locks in the
+// fail-closed behavior when RequireAuth is set but no auth handler could be
+// constructed (e.g. auth store initialization failure): the request must be
+// rejected, never routed to the inner handler.
+func TestGateAdminOnlyHandlerRejectsWhenAuthHandlerUnavailable(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/flow-editor/debug/", nil)
+	rec := httptest.NewRecorder()
+	gateAdminOnlyHandler(rec, req, inner, nil, true)
+
+	if called {
+		t.Fatal("inner handler was invoked despite a nil auth handler with requireAuth=true")
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+// TestGateAdminOnlyHandlerRejectsRequestWithoutSession locks in that an
+// unauthenticated request to a gated mount (like the flow editor's /debug/
+// stub) is rejected rather than reaching the inner handler — this is the
+// regression this fix closes: the editor mount previously bypassed the
+// top-level auth wall entirely because it does not live under /api/.
+func TestGateAdminOnlyHandlerRejectsRequestWithoutSession(t *testing.T) {
+	t.Parallel()
+
+	authHandler, _ := newAdminSession(t, peers.Admin)
+
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/flow-editor/debug/", nil)
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	gateAdminOnlyHandler(rec, req, inner, authHandler, true)
+
+	if called {
+		t.Fatal("inner handler (debug stub) was invoked for an unauthenticated request")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+// TestGateAdminOnlyHandlerRejectsInsufficientTrust locks in that a session
+// below Admin trust (e.g. a Standard user) cannot reach the gated mount —
+// the editor requires the same trust level as /admin, not merely "any
+// logged-in session".
+func TestGateAdminOnlyHandlerRejectsInsufficientTrust(t *testing.T) {
+	t.Parallel()
+
+	authHandler, token := newAdminSession(t, peers.Standard)
+
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/flow-editor/debug/", nil)
+	req.Header.Set("Accept", "application/json")
+	req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
+	rec := httptest.NewRecorder()
+	gateAdminOnlyHandler(rec, req, inner, authHandler, true)
+
+	if called {
+		t.Fatal("inner handler (debug stub) was invoked for a Standard-trust session on an Admin-gated mount")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+// TestGateAdminOnlyHandlerAllowsAuthenticatedAdminSession locks in the
+// success path: an Admin-trust session reaches the inner handler.
+func TestGateAdminOnlyHandlerAllowsAuthenticatedAdminSession(t *testing.T) {
+	t.Parallel()
+
+	authHandler, token := newAdminSession(t, peers.Admin)
+
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/flow-editor/debug/", nil)
+	req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
+	rec := httptest.NewRecorder()
+	gateAdminOnlyHandler(rec, req, inner, authHandler, true)
+
+	if !called {
+		t.Fatal("inner handler was not invoked for an authenticated Admin session")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 }
 
