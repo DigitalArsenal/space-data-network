@@ -360,9 +360,9 @@ type solTokenBalance struct {
 }
 
 type solMeta struct {
-	Err               interface{}        `json:"err"`
-	PreTokenBalances  []solTokenBalance  `json:"preTokenBalances"`
-	PostTokenBalances []solTokenBalance  `json:"postTokenBalances"`
+	Err               interface{}       `json:"err"`
+	PreTokenBalances  []solTokenBalance `json:"preTokenBalances"`
+	PostTokenBalances []solTokenBalance `json:"postTokenBalances"`
 }
 
 type solParsedInstructionInfo struct {
@@ -372,12 +372,12 @@ type solParsedInstructionInfo struct {
 }
 
 type solParsedInstruction struct {
-	Type string                    `json:"type"`
+	Type string                   `json:"type"`
 	Info solParsedInstructionInfo `json:"info"`
 }
 
 type solInstruction struct {
-	ProgramID string                 `json:"programId"`
+	ProgramID string                `json:"programId"`
 	Parsed    *solParsedInstruction `json:"parsed"`
 }
 
@@ -390,8 +390,8 @@ type solTransactionEnvelope struct {
 }
 
 type solTransactionResult struct {
-	Slot        uint64                   `json:"slot"`
-	Meta        *solMeta                 `json:"meta"`
+	Slot        uint64                  `json:"slot"`
+	Meta        *solMeta                `json:"meta"`
 	Transaction *solTransactionEnvelope `json:"transaction"`
 }
 

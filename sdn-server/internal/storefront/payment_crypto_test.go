@@ -8,6 +8,7 @@ import (
 )
 
 func TestCryptoBuyerIntentIsSignedAndTamperRejected(t *testing.T) {
+	t.Setenv("SDN_CRYPTO_ETHEREUM_RECIPIENT", "0xProviderWallet")
 	svc, store := newTestService(t)
 	ctx := context.Background()
 	purchase := createStorefrontPurchaseForTest(t, svc, PaymentMethodCryptoETH)
@@ -46,6 +47,7 @@ func TestCryptoBuyerIntentIsSignedAndTamperRejected(t *testing.T) {
 }
 
 func TestCryptoPaymentCompletionIssuesGrantAndIsIdempotent(t *testing.T) {
+	t.Setenv("SDN_CRYPTO_ETHEREUM_RECIPIENT", "0xProviderWallet")
 	svc, store := newTestService(t)
 	ctx := context.Background()
 	purchase := createStorefrontPurchaseForTest(t, svc, PaymentMethodCryptoETH)
@@ -95,6 +97,7 @@ func TestCryptoPaymentCompletionIssuesGrantAndIsIdempotent(t *testing.T) {
 }
 
 func TestCryptoVerifierPolicyRejectsOnChainMismatches(t *testing.T) {
+	t.Setenv("SDN_CRYPTO_ETHEREUM_RECIPIENT", "0xProviderWallet")
 	svc, store := newTestService(t)
 	ctx := context.Background()
 
@@ -186,6 +189,7 @@ func TestCryptoVerifierPolicyRejectsOnChainMismatches(t *testing.T) {
 }
 
 func TestCryptoIntentValidationRejectsWrongPaymentDetails(t *testing.T) {
+	t.Setenv("SDN_CRYPTO_ETHEREUM_RECIPIENT", "0xProviderWallet")
 	svc, store := newTestService(t)
 	ctx := context.Background()
 
@@ -263,6 +267,7 @@ func TestCryptoIntentValidationRejectsWrongPaymentDetails(t *testing.T) {
 }
 
 func TestCryptoIntentValidationRejectsReusedReference(t *testing.T) {
+	t.Setenv("SDN_CRYPTO_ETHEREUM_RECIPIENT", "0xProviderWallet")
 	svc, store := newTestService(t)
 	ctx := context.Background()
 
@@ -333,6 +338,7 @@ func TestCryptoIntentValidationRejectsReusedReference(t *testing.T) {
 // must not be treated as a match just because it didn't explicitly report
 // the WRONG contract.
 func TestCryptoVerifierPolicyRejectsMissingTokenContract(t *testing.T) {
+	t.Setenv("SDN_CRYPTO_ETHEREUM_RECIPIENT", "0xProviderWallet")
 	svc, store := newTestService(t)
 	ctx := context.Background()
 	purchase := createStorefrontPurchaseForTest(t, svc, PaymentMethodCryptoETH)
@@ -388,6 +394,7 @@ func TestCryptoVerifierPolicyRejectsMissingTokenContract(t *testing.T) {
 // catch the reuse; only the consumed-tx-hash ledger does. The original
 // submission must still succeed exactly once.
 func TestCryptoPaymentRejectsReplayedTxHashAcrossIntents(t *testing.T) {
+	t.Setenv("SDN_CRYPTO_ETHEREUM_RECIPIENT", "0xProviderWallet")
 	svc, store := newTestService(t)
 	ctx := context.Background()
 
@@ -494,6 +501,7 @@ func TestCryptoPaymentRejectsReplayedTxHashAcrossIntents(t *testing.T) {
 // hash re-cased must still be caught as a replay, not treated as a
 // different, novel hash.
 func TestCryptoPaymentRejectsReplayedTxHashCaseInsensitiveForEthereum(t *testing.T) {
+	t.Setenv("SDN_CRYPTO_ETHEREUM_RECIPIENT", "0xProviderWallet")
 	svc, store := newTestService(t)
 	ctx := context.Background()
 

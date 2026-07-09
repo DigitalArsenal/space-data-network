@@ -460,8 +460,68 @@ func (s *Store) initTables() error {
 		return fmt.Errorf("failed to create invoices table: %w", err)
 	}
 
+	// Server-generated operational secrets that must survive process
+	// restarts (e.g. the crypto payment intent HMAC signing key) but must
+	// never be recreated from — or allowed to fall back to — public data.
+	// See PaymentProcessor.intentSigningSecret and Store.GetOrCreateSecret.
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS storefront_secrets (
+			name TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create secrets table: %w", err)
+	}
+
 	log.Info("Storefront index tables initialized (FlatSQL-backed)")
 	return nil
+}
+
+// GetOrCreateSecret returns the persisted hex-encoded value stored under
+// name, generating and persisting a new cryptographically random
+// genBytes-byte value the first time it is requested. Once generated, the
+// same value is returned on every subsequent call (including across process
+// restarts), so callers that sign data with it (e.g. HMAC) do not silently
+// invalidate previously issued signatures on every reboot.
+//
+// All Store methods already serialize through s.mu, so within one process
+// concurrent callers cannot race on the generate-then-insert sequence below.
+// The read-after-failed-insert fallback additionally protects against two
+// separate Store instances (e.g. a multi-process deployment sharing the same
+// database file) initializing the secret at the same time.
+func (s *Store) GetOrCreateSecret(name string, genBytes int) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("secret name is required")
+	}
+
+	var value string
+	err := s.db.QueryRow(`SELECT value FROM storefront_secrets WHERE name = ?`, name).Scan(&value)
+	if err == nil {
+		return value, nil
+	}
+	if err != sql.ErrNoRows {
+		return "", fmt.Errorf("failed to read secret %q: %w", name, err)
+	}
+
+	generated := generateToken(genBytes)
+	if _, err := s.db.Exec(`
+		INSERT INTO storefront_secrets (name, value, created_at) VALUES (?, ?, ?)
+	`, name, generated, time.Now().Unix()); err != nil {
+		// Another Store instance may have inserted the same name concurrently;
+		// re-read rather than treating this as a fatal generation failure.
+		var existing string
+		if scanErr := s.db.QueryRow(`SELECT value FROM storefront_secrets WHERE name = ?`, name).Scan(&existing); scanErr == nil {
+			return existing, nil
+		}
+		return "", fmt.Errorf("failed to persist secret %q: %w", name, err)
+	}
+	return generated, nil
 }
 
 // storeRecordToFlatSQL encodes canonical SDS FlatBuffers and stores them through FlatSQL.
