@@ -65,6 +65,7 @@ describe('createModuleRuntimeManager', () => {
   });
 
   it('start loads cached bytes, starts manifest timers, stop tears down', async () => {
+    vi.useFakeTimers();
     const registry = new InstalledModuleRegistry(new MemoryRegistryStore());
     const bytesStore = new MemoryModuleBytesStore();
     const invocations: unknown[] = [];
@@ -81,30 +82,34 @@ describe('createModuleRuntimeManager', () => {
       minTimerIntervalMs: 10,
     });
 
-    await manager.install({
-      pluginId: 'com.example.lifecycle',
-      version: '1.0.0',
-      wasmBytes: Uint8Array.from([9, 9, 9]),
-      manifestBytes: await encodeTimerManifest(60_000),
-    });
+    try {
+      await manager.install({
+        pluginId: 'com.example.lifecycle',
+        version: '1.0.0',
+        wasmBytes: Uint8Array.from([9, 9, 9]),
+        manifestBytes: await encodeTimerManifest(60_000),
+      });
 
-    const handle = await manager.start('com.example.lifecycle');
-    expect(handle.timerIds).toEqual(['tick']);
-    expect(loadedWith[0]).toEqual(Uint8Array.from([9, 9, 9]));
-    expect(manager.isRunning('com.example.lifecycle')).toBe(true);
-    // idempotent start returns the same handle
-    expect(await manager.start('com.example.lifecycle')).toEqual(handle);
+      const handle = await manager.start('com.example.lifecycle');
+      expect(handle.timerIds).toEqual(['tick']);
+      expect(loadedWith[0]).toEqual(Uint8Array.from([9, 9, 9]));
+      expect(manager.isRunning('com.example.lifecycle')).toBe(true);
+      // idempotent start returns the same handle
+      expect(await manager.start('com.example.lifecycle')).toEqual(handle);
 
-    await new Promise((resolve) => setTimeout(resolve, 90));
-    expect(invocations.length).toBeGreaterThanOrEqual(2);
-    expect(invocations[0]).toEqual({ methodId: 'pull', inputs: [] });
+      await vi.advanceTimersByTimeAsync(90);
+      expect(invocations.length).toBeGreaterThanOrEqual(2);
+      expect(invocations[0]).toEqual({ methodId: 'pull', inputs: [] });
 
-    expect(await manager.stop('com.example.lifecycle')).toBe(true);
-    expect(harness.destroyed).toBe(true);
-    const countAfterStop = invocations.length;
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    expect(invocations.length).toBe(countAfterStop);
-    expect(manager.isRunning('com.example.lifecycle')).toBe(false);
+      expect(await manager.stop('com.example.lifecycle')).toBe(true);
+      expect(harness.destroyed).toBe(true);
+      const countAfterStop = invocations.length;
+      await vi.advanceTimersByTimeAsync(60);
+      expect(invocations.length).toBe(countAfterStop);
+      expect(manager.isRunning('com.example.lifecycle')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('start without cached bytes throws; uninstall clears everything', async () => {
