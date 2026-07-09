@@ -15,7 +15,18 @@
  *   storage.delete {schema, cid}      -> true
  *   pubsub.publish {topic, data}      -> true
  *   pubsub.subscribe/unsubscribe {topic}; pubsub.list_topics {} -> { topics }
- *   keyslot.get {slotId}              -> key bytes
+ *
+ * wallet_sign / keyslot is a host-side crypto oracle, not a raw-key export:
+ * there is no "keyslot.get" guest-facing operation (removed by B2, mirroring
+ * the same removal in sdn-server/internal/modulert/caps/keyslot.go). The
+ * `walletSign.get({slotId})` resolver built by this module is internal-only
+ * — it is never invoked directly by a guest. It is consumed by
+ * space-data-module-sdk's BrowserHost, which implements the guest-facing
+ * ops itself and never lets the resolved key bytes leave the host:
+ *
+ *   keyslot.sign {slotId, payload:b64, algorithm?} -> {signature:b64, algorithm}
+ *   keyslot.unwrap {slotId, ephemeralPublicKey:b64, nonce:b64, ciphertext:b64}
+ *     -> {plaintext:b64}
  *
  * Pass the result as `hostOptions.capabilityAdapters` to
  * createBrowserModuleHarness (see loadDecryptedModule in
@@ -56,7 +67,13 @@ export interface ModuleHostAdapterOptions {
   storage?: ModuleHostRecordStore;
   /** Publisher peer id recorded on storage.write records. */
   peerId?: string;
-  /** Named signing-key slots served by keyslot.get. */
+  /**
+   * Named signing-key slots backing the host-side keyslot.sign /
+   * keyslot.unwrap crypto oracle. Resolved key bytes stay host-side — they
+   * are consumed internally by BrowserHost's keyslot.sign/keyslot.unwrap
+   * implementations and never returned to the guest directly (there is no
+   * "keyslot.get" hostcall).
+   */
   keySlots?: Record<string, ModuleHostKeySlotResolver>;
   /** Optional callback for messages on topics subscribed via pubsub.subscribe. */
   onPubsubMessage?: (message: {
@@ -232,6 +249,11 @@ export function createModuleHostCapabilityAdapters(
 
   if (options.keySlots) {
     const keySlots = options.keySlots;
+    // Internal-only resolver — BrowserHost calls this to fetch a slot's raw
+    // key material for its own host-side keyslot.sign/keyslot.unwrap crypto
+    // (space-data-module-sdk/src/host/browserHost.js). It is never wired up
+    // as a guest-facing "keyslot.get" hostcall; the returned bytes must
+    // never be forwarded to a guest as-is.
     adapters.walletSign = {
       get: async (params) => {
         const slotId = requireString(params.slotId, 'slotId');
