@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +12,19 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
+
+// DevPaymentsEnvVar gates the manual/dev "mark this purchase paid without a
+// real payment" endpoint. It must be explicitly set to "1" — matching the
+// off-by-default pattern used elsewhere in this codebase for test/dev-only
+// surfaces (see SDN_WIRESPEED_TEST in internal/api/channels.go) — and is
+// unset in every production deployment config. Even with the flag set, the
+// caller must still own the purchase (or hold peers.Admin trust); see
+// handleManualDevPaid.
+const DevPaymentsEnvVar = "SDN_STOREFRONT_DEV_PAYMENTS"
+
+func devPaymentsEnabled() bool {
+	return strings.TrimSpace(os.Getenv(DevPaymentsEnvVar)) == "1"
+}
 
 // APIHandler provides HTTP handlers for the storefront API
 type APIHandler struct {
@@ -398,9 +412,37 @@ func (h *APIHandler) handlePurchaseByID(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, purchase)
 }
 
+// handleManualDevPaid marks a purchase paid out of band with no real
+// payment evidence — it exists only for local/dev environments where no
+// checkout provider is configured. It is gated behind BOTH an explicit
+// opt-in env flag (off by default; see DevPaymentsEnvVar) AND a
+// caller-ownership/admin check, so that in any production deployment that
+// hasn't deliberately set the flag, this always fails closed regardless of
+// who calls it or what trust level they hold.
 func (h *APIHandler) handleManualDevPaid(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if !devPaymentsEnabled() {
+		// Deliberately indistinguishable from a route that was never
+		// registered: this endpoint must not be reachable, or even
+		// discoverable, in a production config.
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	purchase, err := h.service.store.GetPurchaseRequest(requestID)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if purchase == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if _, ok := authorizeStorefrontPeerQuery(w, r, purchase.BuyerPeerID, "buyer_peer_id"); !ok {
 		return
 	}
 
@@ -416,7 +458,7 @@ func (h *APIHandler) handleManualDevPaid(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "failed to complete manual/dev payment", http.StatusInternalServerError)
 		return
 	}
-	purchase, err := h.service.store.GetPurchaseRequest(requestID)
+	purchase, err = h.service.store.GetPurchaseRequest(requestID)
 	if err != nil {
 		http.Error(w, "failed to load purchase", http.StatusInternalServerError)
 		return
@@ -444,6 +486,14 @@ func (h *APIHandler) handlePurchaseAudit(w http.ResponseWriter, r *http.Request,
 	})
 }
 
+// handleConfirmPayment confirms a crypto payment. Every confirmation MUST
+// resolve to a signed CryptoBuyerIntent (identified by "reference") and pass
+// full chain verification via SubmitCryptoPayment/validateVerifiedCryptoPayment
+// (B4) — there is no reference-less fallback path anymore. The previous
+// behavior of auto-confirming (and issuing a grant for) a bare txHash/chain
+// pair with no intent to check it against has been removed entirely: that
+// path never verified recipient, amount, or asset, so it amounted to "any
+// caller who can produce a request_id gets a free grant."
 func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -466,55 +516,45 @@ func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-
-	if h.payment != nil {
-		req := &CryptoPaymentRequest{
-			RequestID:        requestID,
-			TxHash:           body.TxHash,
-			Chain:            body.Chain,
-			SenderAddress:    body.SenderAddress,
-			RecipientAddress: body.RecipientAddress,
-			Reference:        body.Reference,
-			Amount:           body.Amount,
-			Currency:         body.Currency,
-			AssetContract:    body.AssetContract,
-			NativeAsset:      body.NativeAsset,
-		}
-		var result *CryptoPaymentResult
-		var err error
-		if strings.TrimSpace(body.Reference) != "" {
-			result, err = h.payment.SubmitCryptoPayment(r.Context(), req)
-		} else {
-			result, err = h.payment.VerifyCryptoPayment(r.Context(), req)
-		}
-		if err != nil {
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
-		if !result.Verified {
-			http.Error(w, "payment not verified: "+result.Error, http.StatusPaymentRequired)
-			return
-		}
-		if strings.TrimSpace(body.Reference) != "" {
-			grant, err := h.service.CompleteCryptoPayment(r.Context(), requestID, result)
-			if err != nil {
-				http.Error(w, "internal server error", http.StatusInternalServerError)
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]interface{}{
-				"payment": result,
-				"grant":   grant,
-			})
-			return
-		}
+	if strings.TrimSpace(body.Reference) == "" {
+		http.Error(w, "payment reference required", http.StatusBadRequest)
+		return
 	}
-
-	if err := h.service.ProcessPayment(r.Context(), requestID, body.TxHash, body.Chain); err != nil {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+	if h.payment == nil {
+		http.Error(w, "crypto payments not configured", http.StatusServiceUnavailable)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	req := &CryptoPaymentRequest{
+		RequestID:        requestID,
+		TxHash:           body.TxHash,
+		Chain:            body.Chain,
+		SenderAddress:    body.SenderAddress,
+		RecipientAddress: body.RecipientAddress,
+		Reference:        body.Reference,
+		Amount:           body.Amount,
+		Currency:         body.Currency,
+		AssetContract:    body.AssetContract,
+		NativeAsset:      body.NativeAsset,
+	}
+	result, err := h.payment.SubmitCryptoPayment(r.Context(), req)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if !result.Verified {
+		http.Error(w, "payment not verified: "+result.Error, http.StatusPaymentRequired)
+		return
+	}
+	grant, err := h.service.CompleteCryptoPayment(r.Context(), requestID, result)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"payment": result,
+		"grant":   grant,
+	})
 }
 
 func (h *APIHandler) handleCreateCryptoIntent(w http.ResponseWriter, r *http.Request, requestID string) {

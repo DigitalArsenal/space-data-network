@@ -245,7 +245,17 @@ func (s *Service) CreatePurchaseRequest(ctx context.Context, req *PurchaseReques
 // CompleteManualDevPayment marks an out-of-band local/dev payment as paid and
 // issues the corresponding storefront grant. It is intentionally explicit so
 // callers cannot confuse it with Stripe or on-chain settlement.
+//
+// This is a no-payment grant path, so it fails closed unless
+// DevPaymentsEnvVar is explicitly set to "1" — mirrored here (not just at
+// the HTTP handler) so that any other caller of this method, present or
+// future, gets the same fail-closed behavior rather than relying solely on
+// the API layer to remember the gate.
 func (s *Service) CompleteManualDevPayment(ctx context.Context, requestID string, confirmation ManualDevPaymentConfirmation) (*AccessGrant, error) {
+	if !devPaymentsEnabled() {
+		return nil, fmt.Errorf("manual/dev payments are disabled; set %s=1 to enable (never in production)", DevPaymentsEnvVar)
+	}
+
 	purchase, err := s.store.GetPurchaseRequest(requestID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load purchase request: %w", err)
@@ -306,52 +316,6 @@ func (s *Service) CompleteManualDevPayment(ctx context.Context, requestID string
 	s.recordGrantDeliveryAudit(requestID, actor, grant, PurchaseStatusCompleted)
 
 	return grant, nil
-}
-
-// ProcessPayment processes a payment confirmation
-func (s *Service) ProcessPayment(ctx context.Context, requestID string, txHash string, chain string) error {
-	if txHash != "" || chain != "" {
-		if err := s.store.UpdatePurchasePayment(requestID, txHash, chain, ""); err != nil {
-			return err
-		}
-	}
-	// Update purchase status
-	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusPaymentDetected, "Payment detected"); err != nil {
-		return err
-	}
-	if err := s.recordPaymentAudit(requestID, PaymentAuditPaymentDetected, s.peerID, txHash, "Payment detected on "+chain, PurchaseStatusPaymentDetected); err != nil {
-		log.Warnf("Failed to record payment detected audit event for %s: %v", requestID, err)
-	}
-
-	// TODO: Verify payment on chain
-	// For now, auto-confirm
-
-	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusPaymentConfirmed, "Payment confirmed"); err != nil {
-		return err
-	}
-	if err := s.recordPaymentAudit(requestID, PaymentAuditPaymentConfirmed, s.peerID, txHash, "Payment confirmed on "+chain, PurchaseStatusPaymentConfirmed); err != nil {
-		log.Warnf("Failed to record payment confirmed audit event for %s: %v", requestID, err)
-	}
-
-	// Issue access grant
-	grant, err := s.IssueGrant(ctx, requestID)
-	if err != nil {
-		return fmt.Errorf("failed to issue grant: %w", err)
-	}
-
-	// Update purchase with grant ID
-	if err := s.store.UpdatePurchaseGrant(requestID, grant.GrantID); err != nil {
-		log.Warnf("Failed to attach grant to purchase %s: %v", requestID, err)
-	}
-	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusCompleted, fmt.Sprintf("Grant issued: %s", grant.GrantID)); err != nil {
-		log.Warnf("Failed to set purchase completed for %s: %v", requestID, err)
-	}
-	if err := s.recordPaymentAudit(requestID, PaymentAuditGrantIssued, s.peerID, grant.GrantID, "Grant issued after payment confirmation", PurchaseStatusCompleted); err != nil {
-		log.Warnf("Failed to record grant audit event for %s: %v", requestID, err)
-	}
-	s.recordGrantDeliveryAudit(requestID, s.peerID, grant, PurchaseStatusCompleted)
-
-	return nil
 }
 
 // CompleteCryptoPayment finalizes a verifier-approved on-chain payment and

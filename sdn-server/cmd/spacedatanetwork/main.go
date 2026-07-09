@@ -49,6 +49,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/gateway"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
+	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -1100,6 +1101,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						storefrontDelivery = sfDelivery
 						log.Infof("Storefront API available at %s://%s/api/storefront/listings", adminScheme, adminAddr)
 						log.Infof("Stripe webhook endpoint: %s://%s/api/storefront/payments/stripe/webhook", adminScheme, adminAddr)
+						// manual-dev-paid grants purchases with no real payment; it
+						// stays wired into the mux (it self-gates on every request)
+						// but must never be enabled in production.
+						if strings.TrimSpace(os.Getenv(storefront.DevPaymentsEnvVar)) == "1" {
+							log.Warnf("Storefront manual/dev payment endpoint is ENABLED (%s=1) — do not set this in production", storefront.DevPaymentsEnvVar)
+						}
 					}
 				}
 			}
@@ -1197,6 +1204,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.HandleFunc("/api/module-delivery/listings", handleModuleDeliveryListings(n.PluginRegistry()))
 			adminMux.HandleFunc("/api/v1/modules/runtime", handleModuleRuntimeSnapshot(n.PluginManager(), n.PluginRegistry()))
 			adminMux.HandleFunc("/api/v1/modules/runtime/", handleModuleRuntimeMutation(n.PluginManager()))
+			if capPolicy := n.CapabilityPolicy(); capPolicy != nil {
+				capAPI := modulert.NewCapabilityPolicyAPI(capPolicy)
+				adminMux.Handle("/api/modules/capabilities", capAPI)
+				adminMux.Handle("/api/modules/capabilities/", capAPI)
+			}
 			adminMux.Handle("/api/directory/", directory.NewHTTPHandler(n.DirectoryService()))
 
 			// Relay status endpoint (public, used by clients for load balancing)

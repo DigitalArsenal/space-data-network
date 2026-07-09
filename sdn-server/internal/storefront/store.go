@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -390,6 +391,29 @@ func (s *Store) initTables() error {
 	s.db.Exec(`ALTER TABLE storefront_crypto_intents ADD COLUMN native_asset INTEGER DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE storefront_crypto_intents ADD COLUMN intent_digest TEXT DEFAULT ''`)
 	s.db.Exec(`ALTER TABLE storefront_crypto_intents ADD COLUMN intent_signature TEXT DEFAULT ''`)
+
+	// Anti-replay ledger: a chain transaction hash may satisfy at most one
+	// payment intent, ever. Without this a single confirmed on-chain payment
+	// could be resubmitted against a different purchase's intent and mint a
+	// second grant for free (the second intent's own recipient/amount/asset
+	// checks do not protect against this — they only ensure the *claimed*
+	// details match; they say nothing about whether this tx already paid for
+	// something else). Uniqueness is enforced by Store's own mutex (all Store
+	// methods already serialize through s.mu), not by relying on the
+	// underlying FlatSQL engine to reject a duplicate PRIMARY KEY insert.
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS storefront_consumed_tx_hashes (
+			chain TEXT NOT NULL,
+			tx_hash TEXT NOT NULL,
+			reference TEXT NOT NULL,
+			request_id TEXT NOT NULL,
+			consumed_at INTEGER NOT NULL,
+			PRIMARY KEY (chain, tx_hash)
+		);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create consumed tx hash table: %w", err)
+	}
 
 	// Usage events table for metered billing
 	_, err = s.db.Exec(`
@@ -1133,6 +1157,49 @@ func (s *Store) MarkCryptoBuyerIntentUsed(reference, requestID, txHash string) e
 	}
 	if affected == 0 {
 		return fmt.Errorf("crypto payment reference reused or not found")
+	}
+	return nil
+}
+
+// ErrTxHashAlreadyConsumed indicates a chain transaction hash has already
+// been used to satisfy a different payment intent (anti-replay).
+var ErrTxHashAlreadyConsumed = errors.New("transaction hash already used for a different payment")
+
+// ConsumeTxHash atomically claims (chain, txHash) for the given
+// reference/requestID so the same on-chain transaction cannot be used to
+// satisfy more than one payment intent. It is idempotent for repeated calls
+// with the SAME reference/requestID (a retried confirmation of an
+// already-accepted payment), but returns ErrTxHashAlreadyConsumed if the
+// hash was already claimed by a different reference or purchase.
+func (s *Store) ConsumeTxHash(chain, txHash, reference, requestID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	chain = strings.ToLower(strings.TrimSpace(chain))
+	txHash = strings.TrimSpace(txHash)
+	if chain == "" || txHash == "" {
+		return fmt.Errorf("chain and tx_hash are required to record a consumed payment")
+	}
+
+	var existingReference, existingRequestID string
+	err := s.db.QueryRow(`
+		SELECT reference, request_id FROM storefront_consumed_tx_hashes WHERE chain = ? AND tx_hash = ?
+	`, chain, txHash).Scan(&existingReference, &existingRequestID)
+	switch {
+	case err == nil:
+		if existingReference == reference && existingRequestID == requestID {
+			return nil
+		}
+		return ErrTxHashAlreadyConsumed
+	case err != sql.ErrNoRows:
+		return fmt.Errorf("failed to check consumed tx hash: %w", err)
+	}
+
+	if _, err := s.db.Exec(`
+		INSERT INTO storefront_consumed_tx_hashes (chain, tx_hash, reference, request_id, consumed_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, chain, txHash, reference, requestID, time.Now().Unix()); err != nil {
+		return fmt.Errorf("failed to record consumed tx hash: %w", err)
 	}
 	return nil
 }
