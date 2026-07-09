@@ -88,6 +88,28 @@ func TestStarlinkSourcePullDrivesHostCapSequence(t *testing.T) {
 		}
 	})
 
+	// loop B1: the real starlink-source manifest declares sensitive
+	// capabilities (http, pubsub, storage_write, wallet_sign) that now
+	// require an explicit operator approval before NewModule will load it
+	// (default-deny). Pre-approve them so this test keeps exercising the
+	// host-capability sequence; approval enforcement itself is covered by
+	// capability_policy_test.go.
+	policy, err := NewCapabilityPolicyStore("")
+	if err != nil {
+		t.Fatalf("NewCapabilityPolicyStore failed: %v", err)
+	}
+	moduleHash := ContentHashHex(wasmBytes)
+	for _, capability := range []string{"http", "pubsub", "storage_write", "wallet_sign"} {
+		if _, err := policy.Approve(CapabilityApproval{
+			ModuleHash: moduleHash,
+			Capability: capability,
+			PluginID:   "com.orbpro.spacex-starlink-source",
+			ApprovedBy: "test",
+		}); err != nil {
+			t.Fatalf("Approve(%s) failed: %v", capability, err)
+		}
+	}
+
 	// NewModule reads + parses the embedded $PLG manifest. Since WS5.5 the SDK
 	// encodes with the same spacedatastandards 1.136 PLG layout the Go bindings
 	// read, so a parse failure here is a real wire-layout regression.
@@ -97,7 +119,7 @@ func TestStarlinkSourcePullDrivesHostCapSequence(t *testing.T) {
 				err = fmt.Errorf("panic parsing manifest: %v", r)
 			}
 		}()
-		return NewModule(wasmBytes, reg, &NodeContext{})
+		return NewModule(wasmBytes, reg, &NodeContext{CapabilityPolicy: policy})
 	}()
 	if err != nil {
 		t.Fatalf("NewModule failed to parse the module's $PLG manifest "+

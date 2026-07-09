@@ -112,6 +112,7 @@ type Node struct {
 
 	pluginRegistry          *license.PluginRegistry
 	licensingModule         *modulert.Module
+	capabilityPolicy        *modulert.CapabilityPolicyStore
 	modulePublishAuthorizer license.ModulePublishAuthorizer
 	moduleDeliveryDiscovery cid.Cid
 	sdnAdvertisementTarget  sdnAdvertisementDiscoveryTarget
@@ -412,6 +413,23 @@ func (n *Node) init() error {
 	// Initialize EPM (Entity Profile Message) service for node identity cards.
 	basePath := filepath.Dir(n.config.Storage.Path)
 	storageBasePath := strings.TrimSpace(n.config.Storage.Path)
+
+	// Module capability policy (loop B1 — defensive hardening, FAIL CLOSED):
+	// operator-controlled allowlist of sensitive module-manifest
+	// capabilities, consulted by every modulert.NewModule call below via
+	// buildModuleNodeContextWithPolicy. A missing/unreadable policy file is
+	// a fresh node with an empty policy (default-deny for sensitive caps,
+	// not a fatal error) — see capability_policy.go.
+	capPolicyPath := strings.TrimSpace(os.Getenv("SDN_MODULE_CAPABILITY_POLICY_PATH"))
+	if capPolicyPath == "" && storageBasePath != "" {
+		capPolicyPath = modulert.DefaultCapabilityPolicyPath(storageBasePath)
+	}
+	if capPolicyStore, err := modulert.NewCapabilityPolicyStore(capPolicyPath); err != nil {
+		log.Warnf("Module capability policy unavailable (%v); sensitive module capabilities will be denied", err)
+	} else {
+		n.capabilityPolicy = capPolicyStore
+	}
+
 	var xpubStr string
 	if n.identityBundle != nil {
 		xpubStr = n.identityBundle.XPub
@@ -495,7 +513,7 @@ func (n *Node) init() error {
 		}
 
 		if n.shouldLoadLicensingFromCatalog(reg) {
-			nodeCtx, err := n.buildModuleNodeContext()
+			nodeCtx, err := n.buildModuleNodeContextWithPolicy()
 			if err != nil {
 				log.Warnf("Failed to build module node context: %v", err)
 			} else {
@@ -527,7 +545,7 @@ func (n *Node) init() error {
 					log.Infof("WASM module loaded: %s (sha256: %s)", wasmPath, hex.EncodeToString(kbHash[:]))
 				}
 
-				nodeCtx, err := n.buildModuleNodeContext()
+				nodeCtx, err := n.buildModuleNodeContextWithPolicy()
 				if err != nil {
 					log.Warnf("Failed to build module node context: %v", err)
 				} else {
@@ -587,6 +605,23 @@ func (n *Node) init() error {
 	}
 
 	return nil
+}
+
+// buildModuleNodeContextWithPolicy is buildModuleNodeContext plus the
+// operator capability policy (loop B1). buildModuleNodeContext itself lives
+// in licensing_bootstrap.go (owned by another in-flight task); every
+// modulert.NewModule call site in this file must go through this wrapper
+// instead, so the policy is consistently attached regardless of which
+// caller builds the NodeContext.
+func (n *Node) buildModuleNodeContextWithPolicy() (*modulert.NodeContext, error) {
+	nodeCtx, err := n.buildModuleNodeContext()
+	if err != nil {
+		return nil, err
+	}
+	if nodeCtx != nil {
+		nodeCtx.CapabilityPolicy = n.capabilityPolicy
+	}
+	return nodeCtx, nil
 }
 
 func (n *Node) loadPluginRegistry() (*license.PluginRegistry, error) {
@@ -659,7 +694,7 @@ func (n *Node) registerCatalogPlugins(reg *license.PluginRegistry, pluginCtx plu
 		return nil
 	}
 
-	nodeCtx, err := n.buildModuleNodeContext()
+	nodeCtx, err := n.buildModuleNodeContextWithPolicy()
 	if err != nil {
 		return fmt.Errorf("build module node context: %w", err)
 	}
@@ -1379,7 +1414,7 @@ func (n *Node) startFlowServices() error {
 	if len(services) == 0 {
 		return nil
 	}
-	nodeCtx, err := n.buildModuleNodeContext()
+	nodeCtx, err := n.buildModuleNodeContextWithPolicy()
 	if err != nil {
 		return fmt.Errorf("build module node context: %w", err)
 	}
@@ -2822,7 +2857,7 @@ func (n *Node) MountFlows(mux *http.ServeMux) error {
 	if len(mounts) == 0 {
 		return nil
 	}
-	nodeCtx, err := n.buildModuleNodeContext()
+	nodeCtx, err := n.buildModuleNodeContextWithPolicy()
 	if err != nil {
 		return fmt.Errorf("build module node context: %w", err)
 	}
@@ -2967,6 +3002,15 @@ func (n *Node) PeerRegistry() *peers.Registry {
 // PeerGater returns the connection gater for trust-based filtering.
 func (n *Node) PeerGater() *peers.TrustedConnectionGater {
 	return n.peerGater
+}
+
+// CapabilityPolicy returns the operator-controlled module capability
+// allowlist (loop B1 — defensive hardening). May be nil if the node has not
+// finished init() yet; nil is treated as an empty (default-deny) policy by
+// modulert.checkCapabilityPolicy. Callers wiring the admin HTTP surface use
+// this to construct modulert.NewCapabilityPolicyAPI.
+func (n *Node) CapabilityPolicy() *modulert.CapabilityPolicyStore {
+	return n.capabilityPolicy
 }
 
 // Config returns the node configuration.

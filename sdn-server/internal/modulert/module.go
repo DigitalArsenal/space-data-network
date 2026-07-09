@@ -23,6 +23,30 @@ import (
 
 var log = logging.Logger("modulert")
 
+// Default per-invocation resource limits for module-sdk WASM guests (loop
+// B3 — defensive hardening, fail closed). Every wasmrt.Module.Execute call
+// on a loaded module (plugin_invoke_stream, malloc/free, manifest reads,
+// _initialize, ...) is subject to both: WasmEdge aborts the guest itself
+// once either budget is spent, hard-interrupting it and leaving the runtime
+// usable for the next call. The module-sdk manifest (Manifest, manifest.go)
+// has no field to override these per module, so every module currently
+// gets the same budget — see the B3 report's follow-up note for the exact
+// manifest/config plumbing that would be needed to make this overridable.
+const (
+	// defaultInvokeTimeout is the wall-clock budget per Execute call,
+	// hard-enforced via WasmEdge async-execute + cancel (modules here are
+	// never created WithDedicatedThread, so the hard-interrupt path always
+	// applies).
+	defaultInvokeTimeout = 30 * time.Second
+	// defaultInvokeCostLimit is the WasmEdge instruction-cost (fuel)
+	// budget per Execute call. WasmEdge's default per-instruction cost is 1
+	// unit (no custom cost table configured here), so this is approximately
+	// an instruction-count ceiling — generous headroom for legitimate
+	// module work while deterministically bounding a hot loop regardless of
+	// host CPU speed.
+	defaultInvokeCostLimit = 4_000_000_000
+)
+
 // Module is the generic module-sdk runtime. It loads any space-data-module-sdk
 // WASM binary, reads its manifest, provisions declared capabilities, and
 // implements the SDN plugin interfaces (Plugin, CronProvider, UIProvider).
@@ -36,6 +60,10 @@ type Module struct {
 	host      host.Host
 	paused    bool
 	mu        sync.Mutex
+	// contentHash is the lowercase hex SHA-256 digest of wasmBytes — the
+	// capability policy identity (loop B1). Set once instantiateWASM reads
+	// the manifest.
+	contentHash string
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -181,6 +209,8 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 	mod, err := wasmrt.NewModule(wasmBytes,
 		wasmrt.WithWASI(),
 		wasmrt.WithMaxMemoryPages(1024),
+		wasmrt.WithExecTimeout(defaultInvokeTimeout),
+		wasmrt.WithCostLimit(defaultInvokeCostLimit),
 		wasmrt.WithMallocName("plugin_alloc"),
 		wasmrt.WithFreeName("plugin_alloc"), // dummy — use SecureDeallocate
 		wasmrt.WithSecureDealloc("plugin_free"),
@@ -200,6 +230,28 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 	if err != nil {
 		mod.Release()
 		return nil, nil, nil, fmt.Errorf("failed to read manifest: %w", err)
+	}
+
+	// Operator capability policy gate (loop B1 — defensive hardening, FAIL
+	// CLOSED). A module's manifest is self-declared, so the manifest alone
+	// is not authorization: sensitive capabilities require an explicit
+	// recorded operator approval keyed by the module's content hash (not
+	// the spoofable manifest PluginID), or the WHOLE module is refused —
+	// no partial silent grant. This is independent of, and runs before,
+	// the host-can-satisfy provisioning below (which stays tolerant of
+	// capabilities the host has no factory for, e.g. "clock"/"logging" —
+	// that is a capacity gap, not a trust decision).
+	contentHash := ContentHashHex(wasmBytes)
+	m.mu.Lock()
+	m.contentHash = contentHash
+	m.mu.Unlock()
+	var policy *CapabilityPolicyStore
+	if m.nodeCtx != nil {
+		policy = m.nodeCtx.CapabilityPolicy
+	}
+	if err := checkCapabilityPolicy(policy, contentHash, manifest.PluginID, manifest.Capabilities); err != nil {
+		mod.Release()
+		return nil, nil, nil, err
 	}
 
 	// Now restrict the bridge to only granted capabilities
@@ -552,7 +604,11 @@ func (m *Module) InvokeMethodFrames(ctx context.Context, methodID string, inputF
 		return nil, fmt.Errorf("zero response length: %w", err)
 	}
 
-	results, err := m.mod.Execute("plugin_invoke_stream",
+	// ExecuteContext (not plain Execute): narrows the module's default B3
+	// wall-clock budget (defaultInvokeTimeout) to the caller's ctx deadline
+	// when it is sooner, so an HTTP/protocol-handler-scoped timeout can cut
+	// a guest invocation short before the default 30s.
+	results, err := m.mod.ExecuteContext(ctx, "plugin_invoke_stream",
 		int32(reqPtr), int32(len(req)), int32(responseLenPtr),
 	)
 	if err != nil {
@@ -672,6 +728,18 @@ func (m *Module) RuntimeHost() host.Host {
 
 // NodeContext returns the module's bound node context.
 func (m *Module) NodeContext() *NodeContext { return m.nodeCtx }
+
+// ContentHash returns the lowercase hex SHA-256 digest of the module's raw
+// WASM artifact — the canonical identity used by the capability policy
+// (loop B1). Empty until Load()/NewModule() completes manifest parsing.
+func (m *Module) ContentHash() string {
+	if m == nil {
+		return ""
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.contentHash
+}
 
 func runtimeManifestDescriptor(manifest *Manifest) *plugins.RuntimeModuleManifest {
 	if manifest == nil {

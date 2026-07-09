@@ -27,6 +27,29 @@ func ProvisionBridge(bridge *HostBridge, reg *CapabilityRegistry, capabilities [
 	if bridge == nil {
 		return fmt.Errorf("provision bridge: bridge is nil")
 	}
+
+	// Operator capability policy gate (loop B1 — defensive hardening, FAIL
+	// CLOSED): the same check module.go instantiateWASM applies to the
+	// generic module load path. Only enforced when the caller supplies a
+	// *Module — its content hash is the policy lookup key. Flow-bundle
+	// callers (mod == nil, e.g. flowrt/httpmount.go) have no stable
+	// content-hash identity plumbed through this call today and are
+	// unaffected by this gate; extending policy enforcement to flow
+	// bundles is a follow-up (see loop B1 report).
+	if mod != nil {
+		var policy *CapabilityPolicyStore
+		if nodeCtx := mod.NodeContext(); nodeCtx != nil {
+			policy = nodeCtx.CapabilityPolicy
+		}
+		pluginID := ""
+		if manifest := mod.Manifest(); manifest != nil {
+			pluginID = manifest.PluginID
+		}
+		if err := checkCapabilityPolicy(policy, mod.ContentHash(), pluginID, capabilities); err != nil {
+			return err
+		}
+	}
+
 	granted := make(map[string]bool, len(capabilities))
 	for _, c := range capabilities {
 		granted[c] = true
