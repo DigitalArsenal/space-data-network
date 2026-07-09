@@ -27,6 +27,19 @@ test('oss preflight ignores generated docs ecosystem bundle without ignoring ord
   assert.doesNotMatch(ordinarySecret.stdout, /docs\/network-ecosystem-demo\.mjs/);
 });
 
+test('oss preflight still reports production endpoints in generated docs ecosystem bundle', () => {
+  const repo = createTempRepo();
+
+  const productionEndpoint = 'https://api.' + 'spaceaware.io';
+  writeTrackedFile(repo, 'docs/network-ecosystem-demo.mjs', `export const endpoint = "${productionEndpoint}";\n`);
+  git(repo, ['add', '.']);
+
+  const generatedEndpoint = runPreflight(repo);
+  assert.notEqual(generatedEndpoint.status, 0, generatedEndpoint.stdout + generatedEndpoint.stderr);
+  assert.match(generatedEndpoint.stdout, /production endpoint or host references detected/);
+  assert.match(generatedEndpoint.stdout, /docs\/network-ecosystem-demo\.mjs/);
+});
+
 function createTempRepo() {
   const repo = mkdtempSync(join(tmpdir(), 'sdn-oss-preflight-'));
   mkdirSync(join(repo, 'scripts'), { recursive: true });

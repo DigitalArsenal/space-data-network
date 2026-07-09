@@ -20,9 +20,10 @@ echo "[oss-preflight] Repo: $ROOT"
 
 BLOCKED_PATHS_REGEX='^\.claude/|^\.gocache/|^demo/\.demo-env$|^demo/\.demo-secrets\.json$|(^|/)[^/]*-?wallet\.env$|(^|/)[^/]*\.mnemonic$'
 SECRET_REGEX='-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|-----BEGIN PRIVATE KEY-----|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{80,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{35}|sk_live_[A-Za-z0-9]{16,}|ORBPRO_SERVER_PRIVATE_KEY_HEX=[A-Fa-f0-9]{32,}|DERIVATION_SECRET=[A-Fa-f0-9]{32,}|(MNEMONIC|SEED_PHRASE)="?([a-z]+ ){11,}[a-z]+'
-INFRA_REGEX='api\\.spaceaware\\.io|relay\\.spaceaware\\.io|tokyo\\.relay\\.digitalarsenal\\.io|209\\.182\\.234\\.97|~/.ssh/sdn_deploy_key'
+INFRA_REGEX='api\.spaceaware\.io|relay\.spaceaware\.io|tokyo\.relay\.digitalarsenal\.io|209\.182\.234\.97|~/.ssh/sdn_deploy_key'
 
-ALLOWLIST_REGEX='^kubo/test/sharness/t0165-keystore-data/|^sdn-server/internal/storefront/payment_stripe_test.go:|^sdn-js/node_modules/|^docs/network-ecosystem-demo\.mjs:|^scripts/oss-preflight.sh:'
+SECRET_ALLOWLIST_REGEX='^kubo/test/sharness/t0165-keystore-data/|^sdn-server/internal/storefront/payment_stripe_test.go:|^sdn-js/node_modules/|^docs/network-ecosystem-demo\.mjs:|^scripts/oss-preflight.sh:'
+INFRA_ALLOWLIST_REGEX='^scripts/oss-preflight.sh:'
 
 echo "[oss-preflight] 1/3 Checking blocked tracked paths..."
 if [[ "$FILTER_CMD" == "rg" ]]; then
@@ -42,9 +43,9 @@ echo "[oss-preflight] 2/3 Scanning tracked files for high-risk secret patterns..
 secret_hits="$(git grep -n -I -E -e "$SECRET_REGEX" || true)"
 if [[ -n "$secret_hits" ]]; then
   if [[ "$FILTER_CMD" == "rg" ]]; then
-    secret_hits="$(printf '%s\n' "$secret_hits" | rg -v "$ALLOWLIST_REGEX" || true)"
+    secret_hits="$(printf '%s\n' "$secret_hits" | rg -v "$SECRET_ALLOWLIST_REGEX" || true)"
   else
-    secret_hits="$(printf '%s\n' "$secret_hits" | grep -Ev "$ALLOWLIST_REGEX" || true)"
+    secret_hits="$(printf '%s\n' "$secret_hits" | grep -Ev "$SECRET_ALLOWLIST_REGEX" || true)"
   fi
 fi
 if [[ -n "$secret_hits" ]]; then
@@ -59,9 +60,9 @@ echo "[oss-preflight] 3/3 Checking tracked files for production endpoint leaks..
 infra_hits="$(git grep -n -I -E -e "$INFRA_REGEX" || true)"
 if [[ -n "$infra_hits" ]]; then
   if [[ "$FILTER_CMD" == "rg" ]]; then
-    infra_hits="$(printf '%s\n' "$infra_hits" | rg -v "$ALLOWLIST_REGEX" || true)"
+    infra_hits="$(printf '%s\n' "$infra_hits" | rg -v "$INFRA_ALLOWLIST_REGEX" || true)"
   else
-    infra_hits="$(printf '%s\n' "$infra_hits" | grep -Ev "$ALLOWLIST_REGEX" || true)"
+    infra_hits="$(printf '%s\n' "$infra_hits" | grep -Ev "$INFRA_ALLOWLIST_REGEX" || true)"
   fi
 fi
 if [[ -n "$infra_hits" ]]; then
