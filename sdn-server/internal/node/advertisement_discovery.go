@@ -19,6 +19,22 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/vcard"
 )
 
+// sdnAdvertisementDiscoveryNamespace is the canonical SDN membership flag on
+// the public IPFS/Amino DHT. Since A1 (SDN_ALIGNMENT_FIX_LOOP) the node's DHT
+// (see publicDHTOptions in node.go) joins the stock public "/ipfs/kad/1.0.0"
+// swarm rather than a private "/spacedatanetwork" one, so DHT membership
+// alone no longer implies SDN membership: the routing table and
+// FindProvidersAsync/GetClosestPeers results are full of unrelated public
+// IPFS nodes. This rendezvous namespace (via
+// drouting.NewRoutingDiscovery(dht).Advertise / .FindPeers, versioned per
+// flag under "<namespace>/<flag>") is what actually distinguishes an SDN
+// node from an arbitrary DHT peer: a peer counts as SDN-discovered only when
+// it is found by (or advertises under) this namespace, never merely by
+// appearing in the DHT routing table, a FindProvidersAsync result for an
+// unrelated CID, or an inbound/outbound libp2p connection. Callers that
+// select "SDN peers" out of a mixed DHT view MUST filter by this flag (see
+// hasSDNAdvertisementPeer, recordSDNAdvertisementDiscovery,
+// sdnAdvertisementDiscoveredPeerIDs) rather than trusting "any DHT peer."
 const sdnAdvertisementDiscoveryNamespace = "space-data-network/discovery/advertisement-flag"
 
 type sdnAdvertisementDiscoveryTarget struct {
@@ -124,6 +140,34 @@ func (n *Node) hasSDNAdvertisementPeer(pid peer.ID) bool {
 	defer n.sdnDiscoveryMu.RUnlock()
 
 	return len(n.sdnDiscoveryFlagsByPeer[pid]) > 0
+}
+
+// sdnAdvertisementDiscoveredPeerIDs returns the peer IDs verified via the SDN
+// advertisement flag namespace (rendezvous find or a recorded advertiser),
+// i.e. the "SDN membership flag" verified peer set. On the public IPFS/Amino
+// DHT this is the correct peer-selection surface for anything presented as
+// "known SDN peers" — the raw DHT routing table or FindProvidersAsync/
+// GetClosestPeers results include arbitrary public IPFS nodes and must not
+// be used as a proxy for SDN membership.
+func (n *Node) sdnAdvertisementDiscoveredPeerIDs() []peer.ID {
+	if n == nil {
+		return nil
+	}
+
+	n.sdnDiscoveryMu.RLock()
+	defer n.sdnDiscoveryMu.RUnlock()
+
+	if len(n.sdnDiscoveryFlagsByPeer) == 0 {
+		return nil
+	}
+	out := make([]peer.ID, 0, len(n.sdnDiscoveryFlagsByPeer))
+	for pid, flags := range n.sdnDiscoveryFlagsByPeer {
+		if len(flags) == 0 {
+			continue
+		}
+		out = append(out, pid)
+	}
+	return out
 }
 
 func (n *Node) fetchAndIndexDiscoveredNodeEPM(pid peer.ID, source string) {
