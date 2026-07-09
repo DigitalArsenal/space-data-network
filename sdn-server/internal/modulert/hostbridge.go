@@ -20,6 +20,13 @@ type NodeContext struct {
 	EncryptionKey []byte
 	KeySlots      map[string][]byte
 	Config        map[string]interface{}
+
+	// CapabilityPolicy is the operator-controlled capability allowlist
+	// consulted at module load/provision time (loop B1 — defensive
+	// hardening, FAIL CLOSED). May be nil, which is equivalent to an empty
+	// policy store: every sensitive capability is denied. See
+	// capability_policy.go.
+	CapabilityPolicy *CapabilityPolicyStore
 }
 
 // CapHandler is a function that handles a capability-gated hostcall operation.
@@ -172,7 +179,11 @@ func (hb *HostBridge) Dispatch(operation string, payload []byte) []byte {
 			operations = append(operations, "ipfs.add", "ipfs.cat")
 		}
 		if _, ok := hb.capHandlers["keyslot"]; ok {
-			operations = append(operations, "keyslot.get")
+			// keyslot is a host-side crypto oracle: sign/unwrap return only
+			// derived outputs (a signature, or the plaintext of a wrapped
+			// payload) — never the slot's private key. There is no raw-get
+			// operation; do not add one back.
+			operations = append(operations, "keyslot.sign", "keyslot.unwrap")
 		}
 		if _, ok := hb.capHandlers["p2p"]; ok {
 			operations = append(operations, "p2p.peers_snapshot", "p2p.standards_snapshot")
