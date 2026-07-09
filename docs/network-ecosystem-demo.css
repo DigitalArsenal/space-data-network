@@ -8,6 +8,34 @@
   color: var(--text-secondary);
 }
 
+.network-ecosystem-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  color: var(--text-secondary);
+  list-style: none;
+}
+
+.network-ecosystem-summary li {
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.network-ecosystem-summary strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
 .network-ecosystem-demo-shell {
   margin: 24px 0 28px;
   overflow: hidden;
@@ -421,6 +449,10 @@
   .network-ecosystem-demo-shell {
     margin-right: -2px;
     margin-left: -2px;
+  }
+
+  .network-ecosystem-summary {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .ecosystem-demo__toolbar {
