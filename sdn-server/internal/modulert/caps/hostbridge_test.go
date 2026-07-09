@@ -54,7 +54,13 @@ func TestHostBridgeListOperationsIncludesProtocolRequestOnlyWhenRegistered(t *te
 	})
 
 	withKeyslot := decodeOperations(bridge.Dispatch("host.listOperations", nil))
-	if !contains(withKeyslot, "keyslot.get") {
-		t.Fatalf("keyslot.get should be listed after a keyslot handler is registered")
+	if !contains(withKeyslot, "keyslot.sign") {
+		t.Fatalf("keyslot.sign should be listed after a keyslot handler is registered")
+	}
+	if !contains(withKeyslot, "keyslot.unwrap") {
+		t.Fatalf("keyslot.unwrap should be listed after a keyslot handler is registered")
+	}
+	if contains(withKeyslot, "keyslot.get") {
+		t.Fatalf("keyslot.get (raw key export) must never be advertised as a supported operation")
 	}
 }
