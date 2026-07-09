@@ -702,6 +702,11 @@
 
         <div class="network-ecosystem-intro">
           <p>Use the sandbox to walk through the same network mechanics used by production SDN: providers publish signed SDS data, PNMs announce current artifacts, DPMs describe authoritative products, PLGs describe modules, and peers subscribe, verify, decrypt, and pin by CID.</p>
+          <ul class="network-ecosystem-summary" aria-label="Network ecosystem demo modes and shapes">
+            <li><strong>Sandbox mode</strong> runs deterministic browser-only mechanics for local exploration.</li>
+            <li><strong>Live mode</strong> shows the production connection path when live providers are available.</li>
+            <li><strong>Circle</strong> nodes, <strong>Triangle</strong> data, <strong>Square</strong> modules, and <strong>Diamond</strong> verification artifacts share the same visual language as the interactive graph.</li>
+          </ul>
         </div>
 
         <div
@@ -3277,7 +3282,6 @@ scannedEPM, err := vcard.QRToEPM(pngData)
       document.getElementById('qs-' + tab).classList.add('active');
     }
   </script>
-  <!-- Network ecosystem renderer labels: Sandbox mode, Live mode, Circle, Triangle, Square. -->
   <script type="module" src="network-ecosystem-demo.mjs"></script>
 </body>
 </html>
