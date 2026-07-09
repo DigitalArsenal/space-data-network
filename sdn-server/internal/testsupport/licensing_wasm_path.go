@@ -48,6 +48,7 @@ func findLicensingModuleWasmPath(t testing.TB, callerDepth int) (string, bool) {
 
 	anchorDir := filepath.Dir(callerFile)
 	var candidates []string
+	candidates = appendStackPackageArtifactCandidates(candidates, anchorDir, licensingWasmPathSuffixes)
 	for _, suffix := range licensingWasmPathSuffixes {
 		candidates = append(candidates,
 			filepath.Join(append([]string{anchorDir, "..", "..", "..", ".."}, suffix...)...),
