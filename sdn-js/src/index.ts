@@ -349,6 +349,25 @@ export {
   discoverProvider,
 } from './discovery';
 
+// SDN advertisement-flag DHT rendezvous discovery (loop A3): browser<->Go
+// daemon peer discovery on the public IPFS/Amino DHT via a shared flag.
+export {
+  SDN_ADVERTISEMENT_DISCOVERY_NAMESPACE,
+  advertisementNamespaceToCid,
+  findSDNAdvertisementPeers,
+  provideSDNAdvertisementFlag,
+  sdnAdvertisementDiscoveryTargets,
+  sdnAdvertisementNamespace,
+} from './sdn-advertisement-discovery';
+export type {
+  DiscoveredSDNAdvertisementPeer,
+  FindSDNAdvertisementPeersOptions,
+  ProvideSDNAdvertisementFlagOptions,
+  SDNAdvertisementContentRouting,
+  SDNAdvertisementDiscoveryNode,
+  SDNAdvertisementDiscoveryTarget,
+} from './sdn-advertisement-discovery';
+
 // EPM Resolution
 export {
   EPMResolver,
