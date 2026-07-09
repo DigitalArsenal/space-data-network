@@ -222,8 +222,33 @@ func newLicensingTestModule(t *testing.T) *modulert.Module {
 		t.Fatalf("ReadFile(%q) failed: %v", wasmPath, err)
 	}
 
+	// loop B1: the real licensing manifest declares sensitive capabilities
+	// (ipfs, protocol_dial, wallet_sign) that now require an explicit
+	// operator approval before NewModule will load it (default-deny). This
+	// helper backs every test in this file with a permissive in-memory
+	// policy pre-approving exactly what the artifact declares, so bootstrap
+	// behavior is still exercised end-to-end; approval enforcement itself
+	// is covered by capability_policy_test.go / module tests in
+	// internal/modulert.
+	policy, err := modulert.NewCapabilityPolicyStore("")
+	if err != nil {
+		t.Fatalf("NewCapabilityPolicyStore failed: %v", err)
+	}
+	moduleHash := modulert.ContentHashHex(wasmBytes)
+	for _, capability := range []string{"ipfs", "protocol_dial", "wallet_sign"} {
+		if _, err := policy.Approve(modulert.CapabilityApproval{
+			ModuleHash: moduleHash,
+			Capability: capability,
+			PluginID:   "licensing",
+			ApprovedBy: "test",
+		}); err != nil {
+			t.Fatalf("Approve(%s) failed: %v", capability, err)
+		}
+	}
+
 	nodeCtx := &modulert.NodeContext{
-		PeerID: "provider.orbpro.test",
+		PeerID:           "provider.orbpro.test",
+		CapabilityPolicy: policy,
 		KeySlots: map[string][]byte{
 			providerSigningSlotID: {
 				1, 2, 3, 4, 5, 6, 7, 8,
