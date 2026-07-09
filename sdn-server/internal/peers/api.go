@@ -168,7 +168,11 @@ func (h *APIHandler) listPeers(w http.ResponseWriter, r *http.Request) {
 		filtered = append(filtered, p)
 	}
 
-	writeJSON(w, filtered)
+	views := make([]PeerView, 0, len(filtered))
+	for _, tp := range filtered {
+		views = append(views, h.peerView(tp))
+	}
+	writeJSON(w, views)
 }
 
 // getPeer returns a single peer.
@@ -178,7 +182,84 @@ func (h *APIHandler) getPeer(w http.ResponseWriter, r *http.Request, peerID peer
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	writeJSON(w, tp)
+	writeJSON(w, h.peerView(tp))
+}
+
+// PeerView is the JSON view served for peer-info reads (GET /api/peers,
+// GET /api/peers/:id): the persisted TrustedPeer record plus trust values
+// computed LIVE from the web-of-trust graph (Phase C2). These computed
+// fields are never persisted — they are recalculated on every response so
+// Phase D (auto-subscribe/auto-pin) and any UI can key off "fully
+// trusted" / "computed valid" without the registry itself carrying stale
+// derived state.
+type PeerView struct {
+	TrustedPeer *TrustedPeer `json:"-"`
+
+	// EffectiveTrustLevel is the direct assignment augmented by computed
+	// web-of-trust validity (see Registry.EffectiveTrustLevel).
+	EffectiveTrustLevel TrustLevel `json:"effective_trust_level"`
+	// ComputedValid reports PGP web-of-trust validity independent of the
+	// direct assignment (see Registry.IsValid / ComputeValidity).
+	ComputedValid bool `json:"computed_valid"`
+	// MarginalTrusterCount / FullTrusterCount are the tallies behind
+	// ComputedValid, exposed for UI/debugging.
+	MarginalTrusterCount int `json:"marginal_truster_count"`
+	FullTrusterCount     int `json:"full_truster_count"`
+	// FullyTrusted is EffectiveTrustLevel >= Full — the Phase D
+	// auto-subscribe/auto-pin trigger.
+	FullyTrusted bool `json:"fully_trusted"`
+}
+
+// MarshalJSON merges TrustedPeer's own custom JSON encoding with the
+// computed-only fields above (a plain embed would let TrustedPeer's
+// MarshalJSON shadow PeerView's extra fields, since Go promotes the
+// embedded Marshaler).
+func (v PeerView) MarshalJSON() ([]byte, error) {
+	base, err := json.Marshal(v.TrustedPeer)
+	if err != nil {
+		return nil, err
+	}
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(base, &merged); err != nil {
+		return nil, err
+	}
+	extra, err := json.Marshal(struct {
+		EffectiveTrustLevel  TrustLevel `json:"effective_trust_level"`
+		ComputedValid        bool       `json:"computed_valid"`
+		MarginalTrusterCount int        `json:"marginal_truster_count"`
+		FullTrusterCount     int        `json:"full_truster_count"`
+		FullyTrusted         bool       `json:"fully_trusted"`
+	}{
+		EffectiveTrustLevel:  v.EffectiveTrustLevel,
+		ComputedValid:        v.ComputedValid,
+		MarginalTrusterCount: v.MarginalTrusterCount,
+		FullTrusterCount:     v.FullTrusterCount,
+		FullyTrusted:         v.FullyTrusted,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var extraMap map[string]json.RawMessage
+	if err := json.Unmarshal(extra, &extraMap); err != nil {
+		return nil, err
+	}
+	for k, val := range extraMap {
+		merged[k] = val
+	}
+	return json.Marshal(merged)
+}
+
+// peerView computes a PeerView for tp against the handler's registry.
+func (h *APIHandler) peerView(tp *TrustedPeer) PeerView {
+	valid, marginal, full := h.registry.ComputedValidity(tp.ID)
+	return PeerView{
+		TrustedPeer:          tp,
+		EffectiveTrustLevel:  h.registry.EffectiveTrustLevel(tp.ID),
+		ComputedValid:        valid,
+		MarginalTrusterCount: marginal,
+		FullTrusterCount:     full,
+		FullyTrusted:         h.registry.IsFullyTrusted(tp.ID),
+	}
 }
 
 // AddPeerRequest is the request body for adding a peer.

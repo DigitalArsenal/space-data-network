@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
+
+	"github.com/spacedatanetwork/sdn-server/internal/trust"
 )
 
 // Test peer IDs (using valid base58 encoded Ed25519 peer IDs)
@@ -15,16 +17,26 @@ var (
 	testPeerID3, _ = peer.Decode("12D3KooWP5MYTnN8DcQDw7aDUFZY2vQAhvMwZZZ1XN3U9Wh3mJUW")
 )
 
+// allScaleValues enumerates every distinct point on the PGP-aligned
+// TrustLevel scale (Phase C1), from the hard veto (Never) up to the
+// numeric maximum (Ultimate).
+var allScaleValues = []TrustLevel{Never, Untrusted, Limited, Standard, Trusted, Admin, Ultimate}
+
 func TestTrustLevel_String(t *testing.T) {
 	tests := []struct {
 		level    TrustLevel
 		expected string
 	}{
-		{Untrusted, "untrusted"},
-		{Limited, "limited"},
+		{Never, "never"},
+		{Untrusted, "unknown"},
+		{Unknown, "unknown"},
+		{Limited, "marginal"},
+		{Marginal, "marginal"},
 		{Standard, "standard"},
-		{Trusted, "trusted"},
+		{Trusted, "full"},
+		{Full, "full"},
 		{Admin, "admin"},
+		{Ultimate, "ultimate"},
 		{TrustLevel(99), "unknown"},
 	}
 
@@ -41,11 +53,19 @@ func TestParseTrustLevel(t *testing.T) {
 		expected TrustLevel
 		wantErr  bool
 	}{
+		// Canonical PGP ownertrust names.
+		{"never", Never, false},
+		{"unknown", Unknown, false},
+		{"marginal", Marginal, false},
+		{"standard", Standard, false},
+		{"full", Full, false},
+		{"admin", Admin, false},
+		{"ultimate", Ultimate, false},
+		// Legacy names must still parse (existing API clients/config/
+		// scripts submit these) even though String() no longer emits them.
 		{"untrusted", Untrusted, false},
 		{"limited", Limited, false},
-		{"standard", Standard, false},
 		{"trusted", Trusted, false},
-		{"admin", Admin, false},
 		{"invalid", Untrusted, true},
 		{"", Untrusted, true},
 	}
@@ -60,6 +80,304 @@ func TestParseTrustLevel(t *testing.T) {
 			t.Errorf("ParseTrustLevel(%q) = %v, want %v", tt.input, got, tt.expected)
 		}
 	}
+}
+
+// TestTrustLevel_RoundTrip round-trips every scale value through
+// String -> ParseTrustLevel -> JSON Marshal/Unmarshal -> FlatSQL peer
+// registry persistence, per the C1 test requirement.
+func TestTrustLevel_RoundTrip(t *testing.T) {
+	for _, level := range allScaleValues {
+		level := level
+		t.Run(level.String(), func(t *testing.T) {
+			// parse(format(x)) == x
+			parsed, err := ParseTrustLevel(level.String())
+			if err != nil {
+				t.Fatalf("ParseTrustLevel(%q) error: %v", level.String(), err)
+			}
+			if parsed != level {
+				t.Errorf("parse(format(%d)) = %d, want %d", level, parsed, level)
+			}
+
+			// JSON round trip.
+			data, err := json.Marshal(level)
+			if err != nil {
+				t.Fatalf("json.Marshal failed: %v", err)
+			}
+			var decoded TrustLevel
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Fatalf("json.Unmarshal failed: %v", err)
+			}
+			if decoded != level {
+				t.Errorf("JSON round trip: got %d, want %d", decoded, level)
+			}
+
+			// FlatSQL peer-registry persistence round trip (int8 encoding).
+			record := peerRegistryRecordFromTrustedPeer(&TrustedPeer{
+				ID:         testPeerID1,
+				TrustLevel: level,
+			}, time.Now().UnixMilli())
+			encoded, err := encodePeerRegistryRecord(record)
+			if err != nil {
+				t.Fatalf("encodePeerRegistryRecord failed: %v", err)
+			}
+			decodedRecord, err := decodePeerRegistryRecord(encoded)
+			if err != nil {
+				t.Fatalf("decodePeerRegistryRecord failed: %v", err)
+			}
+			if decodedRecord.TrustLevel != level {
+				t.Errorf("FlatSQL persist round trip: got %d, want %d", decodedRecord.TrustLevel, level)
+			}
+		})
+	}
+}
+
+// TestTrustLevel_UltimateIsMax asserts level 5 (Ultimate) exists and is
+// the numeric maximum of the scale.
+func TestTrustLevel_UltimateIsMax(t *testing.T) {
+	if Ultimate != 5 {
+		t.Fatalf("Ultimate = %d, want 5", int(Ultimate))
+	}
+	for _, level := range allScaleValues {
+		if level > Ultimate {
+			t.Errorf("%s (%d) exceeds Ultimate (5)", level, level)
+		}
+	}
+}
+
+// TestTrustLevel_LegacyMigration asserts each legacy stored value (the
+// only five TrustLevel values any pre-C1 build could ever have persisted:
+// Untrusted..Admin, 0-4) migrates deterministically to its documented PGP
+// target, per the mapping table in trust.go's TrustLevel doc comment.
+func TestTrustLevel_LegacyMigration(t *testing.T) {
+	tests := []struct {
+		name         string
+		legacyRaw    int8 // the byte a pre-C1 build would have written
+		wantMigrated TrustLevel
+		wantString   string
+	}{
+		{"Untrusted(0)->Unknown", 0, Unknown, "unknown"},
+		{"Limited(1)->Marginal", 1, Marginal, "marginal"},
+		{"Standard(2)->Standard(no PGP alias, classifies >=Marginal)", 2, Standard, "standard"},
+		{"Trusted(3)->Full", 3, Full, "full"},
+		{"Admin(4)->Admin(no PGP alias, classifies >=Full)", 4, Admin, "admin"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate decoding a record a pre-C1 build wrote: the raw
+			// int8 byte, run through the same normalize/decode path used
+			// by the live persistence loader.
+			migrated := normalizeTrustLevel(TrustLevel(tt.legacyRaw))
+			if migrated != tt.wantMigrated {
+				t.Fatalf("legacy raw %d migrated to %d, want %d", tt.legacyRaw, migrated, tt.wantMigrated)
+			}
+			if got := migrated.String(); got != tt.wantString {
+				t.Errorf("migrated value String() = %q, want %q", got, tt.wantString)
+			}
+		})
+	}
+
+	// Out-of-range/corrupted bytes fail closed to Unknown, not the old
+	// Standard fallback.
+	if got := normalizeTrustLevel(TrustLevel(-42)); got != Unknown {
+		t.Errorf("corrupted low value normalized to %v, want Unknown", got)
+	}
+	if got := normalizeTrustLevel(TrustLevel(42)); got != Unknown {
+		t.Errorf("corrupted high value normalized to %v, want Unknown", got)
+	}
+}
+
+func TestTrustLevel_Ownertrust(t *testing.T) {
+	tests := []struct {
+		level TrustLevel
+		want  Ownertrust
+	}{
+		{Never, OwnertrustNever},
+		{Untrusted, OwnertrustUnknown},
+		{Unknown, OwnertrustUnknown},
+		{Limited, OwnertrustMarginal},
+		{Marginal, OwnertrustMarginal},
+		{Standard, OwnertrustMarginal},
+		{Trusted, OwnertrustFull},
+		{Full, OwnertrustFull},
+		{Admin, OwnertrustFull},
+		{Ultimate, OwnertrustUltimate},
+	}
+	for _, tt := range tests {
+		if got := tt.level.Ownertrust(); got != tt.want {
+			t.Errorf("%s.Ownertrust() = %s, want %s", tt.level, got, tt.want)
+		}
+	}
+}
+
+// TestComputeValidity_WebOfTrustRule exercises the PGP web-of-trust
+// validity rule directly against internal/trust.Graph: >=3 marginal
+// trusters, or >=1 full/ultimate truster, computes VALID.
+func TestComputeValidity_WebOfTrustRule(t *testing.T) {
+	t.Run("nil graph is fail-safe", func(t *testing.T) {
+		valid, marginal, full := ComputeValidity(nil, "subject")
+		if valid || marginal != 0 || full != 0 {
+			t.Fatalf("nil graph: valid=%v marginal=%d full=%d, want false/0/0", valid, marginal, full)
+		}
+	})
+
+	t.Run("2 marginal signers is not valid", func(t *testing.T) {
+		g := trust.NewGraph()
+		mustSetEdge(t, g, "signer1", "subject", Marginal.EdgeWeight())
+		mustSetEdge(t, g, "signer2", "subject", Marginal.EdgeWeight())
+		valid, marginal, full := ComputeValidity(g, "subject")
+		if valid || marginal != 2 || full != 0 {
+			t.Fatalf("2 marginal: valid=%v marginal=%d full=%d, want false/2/0", valid, marginal, full)
+		}
+	})
+
+	t.Run("3 marginal signers is valid", func(t *testing.T) {
+		g := trust.NewGraph()
+		mustSetEdge(t, g, "signer1", "subject", Marginal.EdgeWeight())
+		mustSetEdge(t, g, "signer2", "subject", Marginal.EdgeWeight())
+		mustSetEdge(t, g, "signer3", "subject", Marginal.EdgeWeight())
+		valid, marginal, full := ComputeValidity(g, "subject")
+		if !valid || marginal != 3 || full != 0 {
+			t.Fatalf("3 marginal: valid=%v marginal=%d full=%d, want true/3/0", valid, marginal, full)
+		}
+	})
+
+	t.Run("1 full signer is valid", func(t *testing.T) {
+		g := trust.NewGraph()
+		mustSetEdge(t, g, "signer1", "subject", Full.EdgeWeight())
+		valid, marginal, full := ComputeValidity(g, "subject")
+		if !valid || marginal != 0 || full != 1 {
+			t.Fatalf("1 full: valid=%v marginal=%d full=%d, want true/0/1", valid, marginal, full)
+		}
+	})
+
+	t.Run("unknown/never trusters contribute no bonus", func(t *testing.T) {
+		g := trust.NewGraph()
+		mustSetEdge(t, g, "signer1", "subject", Unknown.EdgeWeight())
+		mustSetEdge(t, g, "signer2", "subject", Unknown.EdgeWeight())
+		mustSetEdge(t, g, "signer3", "subject", Unknown.EdgeWeight())
+		valid, marginal, full := ComputeValidity(g, "subject")
+		if valid || marginal != 0 || full != 0 {
+			t.Fatalf("unknown trusters: valid=%v marginal=%d full=%d, want false/0/0", valid, marginal, full)
+		}
+	})
+}
+
+func mustSetEdge(t *testing.T, g *trust.Graph, truster, trustee string, weight float64) {
+	t.Helper()
+	if err := g.SetEdge(trust.Edge{Truster: truster, Trustee: trustee, Weight: weight}); err != nil {
+		t.Fatalf("SetEdge(%s->%s) failed: %v", truster, trustee, err)
+	}
+}
+
+// TestRegistry_EffectiveTrustLevel_LivePath exercises the LIVE accessors
+// (IsAllowed/IsTrusted/EffectiveTrustLevel) the daemon actually calls, not
+// ComputeValidity directly, per the C2 test requirement.
+func TestRegistry_EffectiveTrustLevel_LivePath(t *testing.T) {
+	t.Run("empty/absent graph degrades to direct assignment", func(t *testing.T) {
+		registry := NewRegistry(false, nil)
+		registry.AddPeer(&TrustedPeer{ID: testPeerID1, TrustLevel: Untrusted})
+		if registry.IsAllowed(testPeerID1) {
+			t.Fatal("no graph wired: Untrusted peer should remain disallowed")
+		}
+		if registry.EffectiveTrustLevel(testPeerID1) != Untrusted {
+			t.Fatalf("no graph wired: EffectiveTrustLevel = %v, want Untrusted", registry.EffectiveTrustLevel(testPeerID1))
+		}
+
+		// Wiring an EMPTY graph must be equally inert.
+		registry.SetTrustGraph(trust.NewGraph())
+		if registry.IsAllowed(testPeerID1) {
+			t.Fatal("empty graph: Untrusted peer should remain disallowed")
+		}
+	})
+
+	t.Run("3 marginal trusters elevates an unassigned peer to allowed", func(t *testing.T) {
+		registry := NewRegistry(true, nil) // strict mode: unknown peers start Untrusted
+		g := trust.NewGraph()
+		subject := testPeerID1.String()
+		mustSetEdge(t, g, "s1", subject, Marginal.EdgeWeight())
+		mustSetEdge(t, g, "s2", subject, Marginal.EdgeWeight())
+		mustSetEdge(t, g, "s3", subject, Marginal.EdgeWeight())
+		registry.SetTrustGraph(g)
+
+		if !registry.IsAllowed(testPeerID1) {
+			t.Fatal("3 marginal trusters should elevate an otherwise-untrusted peer to allowed")
+		}
+		if got := registry.EffectiveTrustLevel(testPeerID1); got != Marginal {
+			t.Fatalf("EffectiveTrustLevel = %v, want Marginal", got)
+		}
+		if !registry.IsValid(testPeerID1) {
+			t.Fatal("IsValid should be true")
+		}
+	})
+
+	t.Run("1 full truster elevates an unassigned peer to allowed", func(t *testing.T) {
+		registry := NewRegistry(true, nil)
+		g := trust.NewGraph()
+		subject := testPeerID1.String()
+		mustSetEdge(t, g, "s1", subject, Full.EdgeWeight())
+		registry.SetTrustGraph(g)
+
+		if !registry.IsAllowed(testPeerID1) {
+			t.Fatal("1 full truster should elevate an otherwise-untrusted peer to allowed")
+		}
+	})
+
+	t.Run("2 marginal trusters is not enough", func(t *testing.T) {
+		registry := NewRegistry(true, nil)
+		g := trust.NewGraph()
+		subject := testPeerID1.String()
+		mustSetEdge(t, g, "s1", subject, Marginal.EdgeWeight())
+		mustSetEdge(t, g, "s2", subject, Marginal.EdgeWeight())
+		registry.SetTrustGraph(g)
+
+		if registry.IsAllowed(testPeerID1) {
+			t.Fatal("2 marginal trusters should not clear validity")
+		}
+	})
+
+	t.Run("Never is a hard veto computed validity cannot override", func(t *testing.T) {
+		registry := NewRegistry(false, nil)
+		registry.AddPeer(&TrustedPeer{ID: testPeerID1, TrustLevel: Never})
+		g := trust.NewGraph()
+		subject := testPeerID1.String()
+		mustSetEdge(t, g, "s1", subject, Full.EdgeWeight())
+		registry.SetTrustGraph(g)
+
+		if registry.IsAllowed(testPeerID1) {
+			t.Fatal("Never must veto computed validity")
+		}
+		if registry.EffectiveTrustLevel(testPeerID1) != Never {
+			t.Fatalf("EffectiveTrustLevel = %v, want Never", registry.EffectiveTrustLevel(testPeerID1))
+		}
+	})
+
+	t.Run("direct assignment wins where higher than computed floor", func(t *testing.T) {
+		registry := NewRegistry(false, nil)
+		registry.AddPeer(&TrustedPeer{ID: testPeerID1, TrustLevel: Admin})
+		g := trust.NewGraph()
+		subject := testPeerID1.String()
+		mustSetEdge(t, g, "s1", subject, Marginal.EdgeWeight())
+		mustSetEdge(t, g, "s2", subject, Marginal.EdgeWeight())
+		mustSetEdge(t, g, "s3", subject, Marginal.EdgeWeight())
+		registry.SetTrustGraph(g)
+
+		if got := registry.EffectiveTrustLevel(testPeerID1); got != Admin {
+			t.Fatalf("EffectiveTrustLevel = %v, want Admin (direct assignment must win)", got)
+		}
+	})
+
+	t.Run("IsFullyTrusted exposes the Phase D auto-pin hook", func(t *testing.T) {
+		registry := NewRegistry(false, nil)
+		registry.AddPeer(&TrustedPeer{ID: testPeerID1, TrustLevel: Trusted})
+		registry.AddPeer(&TrustedPeer{ID: testPeerID2, TrustLevel: Standard})
+		if !registry.IsFullyTrusted(testPeerID1) {
+			t.Error("Trusted/Full peer should be IsFullyTrusted")
+		}
+		if registry.IsFullyTrusted(testPeerID2) {
+			t.Error("Standard peer should not be IsFullyTrusted")
+		}
+	})
 }
 
 func TestNewRegistryTreatsTypedNilPersistenceAsInMemory(t *testing.T) {

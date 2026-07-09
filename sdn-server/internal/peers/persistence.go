@@ -719,9 +719,14 @@ func uint64ToInt64(value uint64) int64 {
 	return int64(value)
 }
 
+// normalizeTrustLevel clamps a TrustLevel to the valid persisted range
+// [Never, Ultimate]. Out-of-range/corrupted values (including the pre-C1
+// range check's old [Untrusted, Admin] bound) fail closed to Unknown
+// rather than the previous Standard fallback: a value we can't make sense
+// of should never be silently upgraded to a positively-trusted default.
 func normalizeTrustLevel(level TrustLevel) TrustLevel {
-	if level < Untrusted || level > Admin {
-		return Standard
+	if level < Never || level > Ultimate {
+		return Unknown
 	}
 	return level
 }
