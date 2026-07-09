@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { mountNetworkEcosystemDemo } from './dom';
 import { createInitialEcosystemState, runEcosystemAction, selectEcosystemItem } from './model';
 import { renderNetworkEcosystemDemo } from './view';
 
@@ -118,8 +119,63 @@ describe('network ecosystem demo entrypoint', () => {
     );
 
     domContentLoadedListener?.();
+    domContentLoadedListener?.();
 
     expect(mountNetworkEcosystemDemo).toHaveBeenCalledTimes(1);
     expect(mountNetworkEcosystemDemo).toHaveBeenCalledWith(root);
+  });
+});
+
+describe('network ecosystem demo mount', () => {
+  it('selects graph items with Enter and Space keyboard activation', () => {
+    class MockElement {
+      readonly dataset: Record<string, string>;
+
+      constructor(dataset: Record<string, string>) {
+        this.dataset = dataset;
+      }
+
+      closest(selector: string): MockElement | null {
+        return selector === '[data-item-id]' && this.dataset.itemId ? this : null;
+      }
+    }
+
+    vi.stubGlobal('Element', MockElement);
+
+    const listeners = new Map<string, EventListener>();
+    const root = {
+      innerHTML: '',
+      addEventListener: vi.fn((eventName: string, listener: EventListener): void => {
+        listeners.set(eventName, listener);
+      }),
+      contains: vi.fn(() => true),
+      querySelector: vi.fn(() => null),
+    } as unknown as HTMLElement;
+
+    const mount = mountNetworkEcosystemDemo(root);
+    const keydownListener = listeners.get('keydown');
+    expect(keydownListener).toBeDefined();
+
+    const enterEvent = {
+      target: new MockElement({ itemId: 'module-sgp4' }),
+      key: 'Enter',
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent;
+    keydownListener?.(enterEvent);
+
+    expect(enterEvent.preventDefault).toHaveBeenCalledTimes(1);
+    expect(mount.getState().selectedItemId).toBe('module-sgp4');
+
+    const spaceEvent = {
+      target: new MockElement({ itemId: 'data-dpm' }),
+      key: ' ',
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent;
+    keydownListener?.(spaceEvent);
+
+    expect(spaceEvent.preventDefault).toHaveBeenCalledTimes(1);
+    expect(mount.getState().selectedItemId).toBe('data-dpm');
+
+    mount.destroy();
   });
 });
