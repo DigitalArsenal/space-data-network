@@ -129,6 +129,14 @@ type MountedFlow struct {
 	deps     FlowMountDeps
 	linkShim []byte
 
+	// contentHash is the SHA-256 content-hash identity (loop B1-followup) of
+	// the flow bundle's portable, canonical WASM bytes — computed once in
+	// LoadMountedFlow and reused for every pooled instance and every
+	// re-instantiation (e.g. the engine-epoch rebuild in ServeHTTP) so the
+	// capability-policy gate always keys off the same identity as the
+	// artifact an operator approved.
+	contentHash string
+
 	pool chan *flowInstance
 
 	lazy     bool
@@ -246,7 +254,20 @@ func resolveFlowArtifact(flowRef string, store *FlowStore) (wasmPath, bundleDir 
 // loadFlowInstance instantiates one pooled flow instance: standard flowrt
 // load (WASI + flow host funcs + the module-SDK hostcall bridge), manifest
 // read, capability provisioning from the registry — rejecting the load if
-// the host cannot satisfy a required capability.
+// the host cannot satisfy a required capability OR (loop B1-followup) if the
+// flow bundle requests a sensitive capability the operator has not approved
+// for its content hash (default-deny, fail closed — see
+// modulert.checkCapabilityPolicy).
+//
+// contentHash is the SHA-256 content-hash identity (modulert.ContentHashHex)
+// of the flow bundle's portable, canonical WASM bytes — computed ONCE by the
+// caller (LoadMountedFlow, from the artifact bytes before AOT compilation)
+// and threaded through every pooled instance and every re-instantiation
+// (e.g. the engine-epoch rebuild in ServeHTTP) so they all key the capability
+// policy off the same identity. wasmBytes here is deliberately a SEPARATE
+// parameter from contentHash: wasmBytes may be an AOT-compiled variant of the
+// artifact (platform/runtime-version-specific bytes), which must never be
+// hashed for policy purposes — see ProvisionIdentity.ContentHash.
 //
 // Engine-linked artifacts (they import the "flatsql" wasm module — loop C.7)
 // additionally get the store's LIVE engine instance and the flatsql_link
@@ -255,7 +276,7 @@ func resolveFlowArtifact(flowRef string, store *FlowStore) (wasmPath, bundleDir 
 // around every in-wasm drain and harvests engine body-references before
 // releasing it. Loading a linked artifact WITHOUT deps.EngineLink is a hard
 // error (first-party grant, never inferred).
-func loadFlowInstance(wasmBytes []byte, pages uint32, linked bool, linkShim []byte, deps FlowMountDeps) (*flowInstance, *modulert.Manifest, error) {
+func loadFlowInstance(wasmBytes []byte, pages uint32, linked bool, linkShim []byte, deps FlowMountDeps, contentHash string) (*flowInstance, *modulert.Manifest, error) {
 	// The hostcall bridge is created before the manifest is readable
 	// (chicken-and-egg, same as modulert.Module); its capability grants are
 	// applied right after the manifest parse below.
@@ -310,7 +331,23 @@ func loadFlowInstance(wasmBytes []byte, pages uint32, linked bool, linkShim []by
 		}
 		capabilities = append(capabilities, capability)
 	}
-	if err := modulert.ProvisionBridge(bridge, deps.CapRegistry, capabilities, nil); err != nil {
+	// Operator capability policy gate (loop B1-followup — defensive
+	// hardening, FAIL CLOSED): flow bundles have no *Module, so the identity
+	// checkCapabilityPolicy keys off (content hash / plugin id / policy
+	// store) is supplied explicitly here rather than derived from mod
+	// (which stays nil — flow bundles are not driven through the Module
+	// invocation surface). See ProvisionIdentity for why contentHash must be
+	// the caller-computed, pre-AOT hash and not derived from wasmBytes here.
+	var policy *modulert.CapabilityPolicyStore
+	if deps.NodeCtx != nil {
+		policy = deps.NodeCtx.CapabilityPolicy
+	}
+	identity := modulert.ProvisionIdentity{
+		ContentHash: contentHash,
+		PluginID:    manifest.PluginID,
+		Policy:      policy,
+	}
+	if err := modulert.ProvisionBridge(bridge, deps.CapRegistry, capabilities, nil, identity); err != nil {
 		rt.Release()
 		return nil, nil, fmt.Errorf("flow %q: %w", manifest.PluginID, err)
 	}
@@ -376,6 +413,14 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 	// keyed on the executable payload, so a precompiled artifact shipped
 	// into the cache dir matches regardless of publication metadata.
 	wasmBytes = modulert.StripPublicationTrailer(wasmBytes)
+
+	// Content-hash identity for the operator capability-policy gate (loop
+	// B1-followup) — computed HERE, on the portable bytes, before any AOT
+	// compilation below. AOT-compiled bytes are platform/runtime-version-
+	// specific, so hashing them instead would make a recorded operator
+	// approval silently stop matching on a different host; see
+	// modulert.ProvisionIdentity.ContentHash.
+	contentHash := modulert.ContentHashHex(wasmBytes)
 
 	runBytes := wasmBytes
 	aot := false
@@ -461,11 +506,12 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 		pages:         pages,
 		deps:          deps,
 		linkShim:      linkShim,
+		contentHash:   contentHash,
 		pool:          make(chan *flowInstance, poolSize),
 	}
 
 	for i := 0; i < poolSize; i++ {
-		inst, manifest, err := loadFlowInstance(runBytes, pages, linked, linkShim, deps)
+		inst, manifest, err := loadFlowInstance(runBytes, pages, linked, linkShim, deps, contentHash)
 		if err != nil {
 			mf.Close()
 			return nil, err
@@ -599,6 +645,7 @@ func (mf *MountedFlow) ensureLoaded() error {
 	mf.pages = loadedFlow.pages
 	mf.deps = loadedFlow.deps
 	mf.linkShim = loadedFlow.linkShim
+	mf.contentHash = loadedFlow.contentHash
 	mf.pool = loadedFlow.pool
 	programID := ""
 	if mf.manifest != nil {
@@ -842,7 +889,7 @@ func (mf *MountedFlow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if epoch := mf.deps.EngineLink.EngineEpoch(); inst.engineEpoch != epoch {
-			fresh, _, lerr := loadFlowInstance(mf.runBytes, mf.pages, true, mf.linkShim, mf.deps)
+			fresh, _, lerr := loadFlowInstance(mf.runBytes, mf.pages, true, mf.linkShim, mf.deps, mf.contentHash)
 			if lerr != nil {
 				http.Error(w, fmt.Sprintf("rebuild flow instance against replacement engine: %v", lerr), http.StatusServiceUnavailable)
 				return

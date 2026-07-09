@@ -123,13 +123,17 @@ func TestHTTPMountedDataRetrievalFlow(t *testing.T) {
 		}
 	})
 
+	// loop B1-followup default-deny gate: record a test-scoped operator
+	// approval for THIS bundle's real content hash (capability_approval_test.go).
+	policy := approvedCapabilityPolicy(t, dist, "storage_query")
+
 	// Config mount table on a TEST path (the /api/v1/data cutover is C.4).
 	mux := http.NewServeMux()
 	mounted, err := RegisterFlowMounts(mux,
 		[]config.FlowMount{{Path: "/test/data/", Flow: dist}},
 		FlowMountDeps{
 			CapRegistry:    reg,
-			NodeCtx:        &modulert.NodeContext{},
+			NodeCtx:        &modulert.NodeContext{CapabilityPolicy: policy},
 			MaxMemoryPages: 2048,
 			EngineLink:     store,
 		})
@@ -364,12 +368,16 @@ func TestFlowMountPoolServesConcurrentClients(t *testing.T) {
 	reg := modulert.NewCapabilityRegistry()
 	reg.RegisterBridgeAware("storage_query", caps.NewStorageCapFactory(store))
 
+	// loop B1-followup default-deny gate: record a test-scoped operator
+	// approval for THIS bundle's real content hash (capability_approval_test.go).
+	policy := approvedCapabilityPolicy(t, dist, "storage_query")
+
 	mux := http.NewServeMux()
 	mounted, err := RegisterFlowMounts(mux,
 		[]config.FlowMount{{Path: "/test/data/", Flow: dist, Pool: 4}},
 		FlowMountDeps{
 			CapRegistry:    reg,
-			NodeCtx:        &modulert.NodeContext{},
+			NodeCtx:        &modulert.NodeContext{CapabilityPolicy: policy},
 			MaxMemoryPages: 2048,
 			EngineLink:     store,
 		})

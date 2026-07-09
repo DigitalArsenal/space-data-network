@@ -130,7 +130,7 @@ func newCelestrakIngestHarness(t *testing.T) *celestrakIngestHarness {
 
 	h.deps = FlowMountDeps{
 		CapRegistry:    reg,
-		NodeCtx:        &modulert.NodeContext{},
+		NodeCtx:        &modulert.NodeContext{CapabilityPolicy: newTestCapabilityPolicy(t)},
 		MaxMemoryPages: 4096,
 	}
 	return h
@@ -140,8 +140,14 @@ func newCelestrakIngestHarness(t *testing.T) *celestrakIngestHarness {
 // overrides delivered as node CONFIG (config.FlowService semantics).
 func (h *celestrakIngestHarness) loadService(t *testing.T, bundle string) *ServiceFlow {
 	t.Helper()
+	bundleDist := filepath.Join(h.dist, bundle)
+	// Each celestrak-ingest bundle (gp/satcat/spw) is a SEPARATE compiled
+	// artifact with its own content hash; record the approval for THIS
+	// bundle's hash before loading it (loop B1-followup default-deny gate —
+	// see capability_approval_test.go).
+	approveFlowCapabilities(t, h.deps.NodeCtx.CapabilityPolicy, bundleDist, "http", "storage_ingest")
 	services := []config.FlowService{{
-		Flow: filepath.Join(h.dist, bundle),
+		Flow: bundleDist,
 		Config: map[string]interface{}{
 			"celestrak_gp_url":            h.server.URL + "/gp.csv",
 			"celestrak_satcat_url":        h.server.URL + "/satcat.txt",

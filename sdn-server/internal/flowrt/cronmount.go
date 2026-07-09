@@ -86,6 +86,12 @@ func LoadFlowService(flowRef string, intervals map[string]string, deps FlowMount
 	}
 	wasmBytes = modulert.StripPublicationTrailer(wasmBytes)
 
+	// Content-hash identity for the operator capability-policy gate (loop
+	// B1-followup — same requirement as LoadMountedFlow/httpmount.go):
+	// computed on the portable bytes, before AOT compilation, so it matches
+	// what an operator hashes to record an approval.
+	contentHash := modulert.ContentHashHex(wasmBytes)
+
 	runBytes := wasmBytes
 	aot := false
 	if deps.AOTCacheDir != "" {
@@ -115,7 +121,7 @@ func LoadFlowService(flowRef string, intervals map[string]string, deps FlowMount
 		pages = 1024
 	}
 
-	inst, manifest, err := loadFlowInstance(runBytes, pages, false, nil, deps)
+	inst, manifest, err := loadFlowInstance(runBytes, pages, false, nil, deps, contentHash)
 	if err != nil {
 		return nil, err
 	}
