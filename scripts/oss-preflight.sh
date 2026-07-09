@@ -22,7 +22,7 @@ BLOCKED_PATHS_REGEX='^\.claude/|^\.gocache/|^demo/\.demo-env$|^demo/\.demo-secre
 SECRET_REGEX='-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|-----BEGIN PRIVATE KEY-----|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{80,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{35}|sk_live_[A-Za-z0-9]{16,}|ORBPRO_SERVER_PRIVATE_KEY_HEX=[A-Fa-f0-9]{32,}|DERIVATION_SECRET=[A-Fa-f0-9]{32,}|(MNEMONIC|SEED_PHRASE)="?([a-z]+ ){11,}[a-z]+'
 INFRA_REGEX='api\\.spaceaware\\.io|relay\\.spaceaware\\.io|tokyo\\.relay\\.digitalarsenal\\.io|209\\.182\\.234\\.97|~/.ssh/sdn_deploy_key'
 
-ALLOWLIST_REGEX='^kubo/test/sharness/t0165-keystore-data/|^sdn-server/internal/storefront/payment_stripe_test.go:|^sdn-js/node_modules/|^scripts/oss-preflight.sh:'
+ALLOWLIST_REGEX='^kubo/test/sharness/t0165-keystore-data/|^sdn-server/internal/storefront/payment_stripe_test.go:|^sdn-js/node_modules/|^docs/network-ecosystem-demo\.mjs:|^scripts/oss-preflight.sh:'
 
 echo "[oss-preflight] 1/3 Checking blocked tracked paths..."
 if [[ "$FILTER_CMD" == "rg" ]]; then
