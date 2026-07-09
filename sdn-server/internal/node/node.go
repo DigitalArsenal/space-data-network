@@ -160,6 +160,18 @@ func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 	return n, nil
 }
 
+// publicDHTOptions returns the go-libp2p-kad-dht options used when
+// constructing the node's DHT routing table. Deliberately omits
+// dht.ProtocolPrefix so the node speaks the stock public IPFS/Amino DHT
+// protocol ("/ipfs/kad/1.0.0") rather than a private "/spacedatanetwork"
+// swarm. Factored out so tests can assert the resulting protocol
+// configuration without standing up a full Node.
+func publicDHTOptions() []dht.Option {
+	return []dht.Option{
+		dht.Mode(dht.ModeAutoServer),
+	}
+}
+
 func (n *Node) init() error {
 	// Initialize HD wallet WASM module (optional, enables deterministic identity)
 	if hdPath := n.findHDWalletWasmPath(); hdPath != "" {
@@ -328,10 +340,7 @@ func (n *Node) init() error {
 		),
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
 			var err error
-			dhtRouting, err = dht.New(n.ctx, h,
-				dht.Mode(dht.ModeAutoServer),
-				dht.ProtocolPrefix("/spacedatanetwork"),
-			)
+			dhtRouting, err = dht.New(n.ctx, h, publicDHTOptions()...)
 			return dhtRouting, err
 		}),
 		libp2p.NATPortMap(),
