@@ -98,7 +98,7 @@ function fileIdForSchema(schema: SandboxSchema): string {
   return `$${schema}`;
 }
 
-function artifactSignaturePayload(
+export function sandboxArtifactSignaturePayload(
   schema: SandboxSchema,
   cid: string,
   payloadBytes: Uint8Array,
@@ -115,13 +115,16 @@ export function buildSandboxChannelEvidence(input: {
   sourceId: string;
   standardCode: string;
 } {
-  const topic = channelDiscoveryTopic(input.standardCode);
+  const sourceId = input.sourceId.trim();
+  const standardCode = input.standardCode.trim();
+  const channelId = formatChannelId({ sourceId, standardCode });
+  const topic = channelDiscoveryTopic(standardCode);
 
   return {
-    channelId: formatChannelId(input),
+    channelId,
     topic,
-    sourceId: input.sourceId,
-    standardCode: input.standardCode.trim(),
+    sourceId,
+    standardCode,
   };
 }
 
@@ -136,7 +139,7 @@ export async function createSandboxArtifactEvidence(
   const cid = `bafyecosystem${digestHex.slice(0, 24)}`;
   const privateKey = await deterministicPrivateKey(input.schema);
   const publicKey = await ed25519PublicKey(privateKey);
-  const signaturePayload = artifactSignaturePayload(input.schema, cid, payloadBytes);
+  const signaturePayload = sandboxArtifactSignaturePayload(input.schema, cid, payloadBytes);
   const signature = await sign(privateKey, signaturePayload);
   const verified = await verify(publicKey, signaturePayload, signature);
 
