@@ -505,6 +505,14 @@ type PeersConfig struct {
 	TrustBasedRateLimiting bool `yaml:"trust_based_rate_limiting"`
 }
 
+// DefaultIPFSAPIURL is the Kubo RPC API endpoint AdminConfig.IPFSAPIURL
+// defaults to: the embedded/local Kubo node's RPC address. Pinning-gated
+// paths (dataset publication, trusted-PNM materialization, demo payload
+// pinning) key off AdminConfig.IPFSAPIURL being non-empty, so defaulting it
+// here — rather than to "" — turns pinning on by default. Operators can
+// still opt out by setting `ipfs_api_url: ""` explicitly in config.yaml.
+const DefaultIPFSAPIURL = "http://127.0.0.1:5001"
+
 // AdminConfig contains admin interface settings.
 type AdminConfig struct {
 	// Enabled enables the admin web interface.
@@ -572,7 +580,16 @@ type AdminConfig struct {
 	// IPFSAPIURL is the base URL of an upstream Kubo RPC API endpoint (no path),
 	// e.g. "http://127.0.0.1:5001". When set, the admin server reverse-proxies
 	// requests to "/api/v0/*" to this endpoint so the React WebUI can talk to IPFS
-	// through the authenticated SDN admin server.
+	// through the authenticated SDN admin server. It also gates record pinning
+	// (dataset publication, trusted-PNM materialization, demo payload pinning):
+	// those paths are opt-in only when this is non-empty.
+	//
+	// Defaults to the embedded/local Kubo RPC ("http://127.0.0.1:5001") so
+	// pinning is on out of the box — see Default(). Set to an explicit empty
+	// string in config.yaml (ipfs_api_url: "") to disable pinning entirely;
+	// Load() starts from Default() and overlays the YAML document, so an
+	// explicit empty value in the file overrides the default and is
+	// preserved, while simply omitting the key keeps the default.
 	IPFSAPIURL string `yaml:"ipfs_api_url"`
 
 	// IPFSGatewayURL is the base URL of an upstream Kubo HTTP gateway (no path),
@@ -687,7 +704,7 @@ func Default() *Config {
 			AdminUIPath:       "",
 			HomepageFile:      "",
 			WebuiPath:         "",
-			IPFSAPIURL:        "",
+			IPFSAPIURL:        DefaultIPFSAPIURL,
 			WalletUIPath:      "",
 		},
 		Users: []UserEntry{},

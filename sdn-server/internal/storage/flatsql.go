@@ -3221,10 +3221,32 @@ func (s *FlatSQLStore) Stats() (map[string]int64, error) {
 	return stats, nil
 }
 
-// computeCID computes a content identifier for data.
+// computeCID computes the content identifier for data as a real CIDv1
+// string (raw codec 0x55, sha2-256 multihash, default base32 multibase
+// encoding) — the same identifier a stock IPFS client computes for the same
+// bytes via `ipfs add --cid-version=1 --raw-leaves` or
+// `ipfs block put --format=raw --mhtype=sha2-256`. This lets any record
+// stored here be pinned and fetched as an ordinary IPFS block.
+//
+// Prior to loop A4 this returned a bare SHA-256 hex digest, which is not a
+// valid CID. Rows written before that fix still carry bare-hex values in
+// their `cid` columns; those rows remain readable (every lookup here is a
+// plain string comparison), but content re-ingested after the fix is
+// content-addressed under its proper CIDv1 rather than the old digest — see
+// the loop A4 report for the full compat analysis.
 func computeCID(data []byte) string {
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:])
+	c, err := cidV1RawSHA256(data)
+	if err != nil {
+		// mh.Sum only fails for an unregistered hash function or an
+		// explicit length exceeding the digest size; neither is possible
+		// for the fixed sha2-256/default-length call below, so this branch
+		// is unreachable in practice. Fall back to the legacy bare-hex
+		// digest rather than panicking.
+		log.Errorf("computeCID: failed to build CIDv1, falling back to bare SHA-256 hex: %v", err)
+		hash := sha256.Sum256(data)
+		return hex.EncodeToString(hash[:])
+	}
+	return c
 }
 
 // Path returns the database file path.
