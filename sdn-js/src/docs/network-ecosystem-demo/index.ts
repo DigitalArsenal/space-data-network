@@ -4,10 +4,23 @@ export { mountNetworkEcosystemDemo } from './dom';
 export * from './model';
 export * from './evidence';
 
-const root = typeof document !== 'undefined'
-  ? document.querySelector<HTMLElement>('[data-sdn-network-ecosystem-demo]')
-  : null;
+let mounted = false;
 
-if (root) {
+function mountAvailableDemo(): boolean {
+  if (mounted || typeof document === 'undefined') {
+    return mounted;
+  }
+
+  const root = document.querySelector<HTMLElement>('[data-sdn-network-ecosystem-demo]');
+  if (!root) {
+    return false;
+  }
+
   mountNetworkEcosystemDemo(root);
+  mounted = true;
+  return true;
+}
+
+if (!mountAvailableDemo() && typeof document !== 'undefined' && document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', mountAvailableDemo, { once: true });
 }
