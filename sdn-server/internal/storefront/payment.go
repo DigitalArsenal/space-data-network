@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -234,6 +235,26 @@ func (pp *PaymentProcessor) SubmitCryptoPayment(ctx context.Context, req *Crypto
 		return &CryptoPaymentResult{Verified: false, ConfirmationBlock: result.ConfirmationBlock, CurrentBlock: result.CurrentBlock, Confirmations: result.Confirmations, Error: policyErr}, nil
 	}
 
+	// Anti-replay: the same on-chain transaction may only ever satisfy one
+	// payment intent. Without this, a single confirmed payment could be
+	// resubmitted against unrelated purchase requests (their own intents
+	// would independently pass recipient/amount/asset checks if the attacker
+	// controls or reuses the same recipient+amount) and mint a grant for
+	// each one at no additional on-chain cost.
+	//
+	// The hash is normalized before being used as the replay key: Ethereum
+	// and Bitcoin transaction hashes are hex and case-insensitive on-chain
+	// (a node will resolve "0xABC..." and "0xabc..." to the identical
+	// transaction), so submitting the same hash in a different case must
+	// not bypass the ledger. Solana signatures are base58, where case IS
+	// significant, so they are left untouched.
+	if err := pp.store.ConsumeTxHash(intent.Chain, normalizeTxHashForReplayLedger(intent.Chain, req.TxHash), intent.Reference, intent.RequestID); err != nil {
+		if errors.Is(err, ErrTxHashAlreadyConsumed) {
+			return &CryptoPaymentResult{Verified: false, Error: "transaction hash already used for a different payment"}, nil
+		}
+		return nil, err
+	}
+
 	if err := pp.store.MarkCryptoBuyerIntentUsed(intent.Reference, intent.RequestID, req.TxHash); err != nil {
 		return &CryptoPaymentResult{Verified: false, Error: err.Error()}, nil
 	}
@@ -296,6 +317,27 @@ func cryptoIntentDigest(intent *CryptoBuyerIntent) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// validateVerifiedCryptoPayment re-checks a chain verifier's result against
+// the buyer's signed payment intent before the payment is allowed to settle.
+//
+// This is the fail-closed gate: every identity-binding field (chain,
+// recipient, amount, and asset-or-contract) MUST be present in the
+// verifier's result. A verifier that could not determine one of these
+// fields — RPC returned a partial record, a chain client's parsing gave up,
+// whatever the reason — must not let the payment through on the strength of
+// the fields it happened to resolve. Missing == reject, never skip-the-check.
+//
+// Amount is matched exactly (not >=): the buyer's intent records one exact
+// price, and the crypto payment intents in this codebase have never allowed
+// "overpay and get change assumed as tip" semantics, so exact-match is kept
+// as the existing contract rather than loosened to a >= comparison.
+//
+// SenderAddress is the one field that is intentionally NOT fail-closed here:
+// CryptoBuyerIntent does not record an "expected sender" (only the provider's
+// recipient address is pinned at intent-creation time), so there is no
+// ground truth to fail closed against. It is verified only when the buyer's
+// own submission claims a sender AND the verifier could resolve one --- in
+// that case they must agree.
 func validateVerifiedCryptoPayment(intent *CryptoBuyerIntent, req *CryptoPaymentRequest, result *CryptoPaymentResult) string {
 	if result.CurrentBlock > 0 && result.ConfirmationBlock > 0 && result.CurrentBlock < result.ConfirmationBlock {
 		return "stale block height"
@@ -306,30 +348,52 @@ func validateVerifiedCryptoPayment(intent *CryptoBuyerIntent, req *CryptoPayment
 			return "stale block height"
 		}
 	}
-	if result.Chain != "" && normalizePaymentToken(result.Chain) != intent.Chain {
+
+	if strings.TrimSpace(result.Chain) == "" {
+		return "chain verifier did not report a chain"
+	}
+	if normalizePaymentToken(result.Chain) != intent.Chain {
 		return fmt.Sprintf("wrong chain: got %s want %s", result.Chain, intent.Chain)
 	}
-	if result.Asset != "" && normalizePaymentToken(result.Asset) != intent.Asset {
-		return fmt.Sprintf("wrong asset: got %s want %s", result.Asset, intent.Asset)
+
+	if strings.TrimSpace(result.RecipientAddress) == "" {
+		return "chain verifier did not report a recipient address"
 	}
-	if result.AssetContract != "" || intent.AssetContract != "" {
+	if !samePaymentAddress(result.RecipientAddress, intent.Recipient, intent.Chain) {
+		return "wrong recipient"
+	}
+
+	if result.Amount == 0 {
+		return "chain verifier did not report a payment amount"
+	}
+	if result.Amount != intent.Amount {
+		return fmt.Sprintf("wrong amount: got %d want %d", result.Amount, intent.Amount)
+	}
+
+	if result.NativeAsset != intent.NativeAsset {
+		return "wrong token contract/native asset"
+	}
+	if intent.NativeAsset {
+		if strings.TrimSpace(result.Asset) == "" {
+			return "chain verifier did not report an asset"
+		}
+		if normalizePaymentToken(result.Asset) != intent.Asset {
+			return fmt.Sprintf("wrong asset: got %s want %s", result.Asset, intent.Asset)
+		}
+	} else {
+		if strings.TrimSpace(result.AssetContract) == "" {
+			return "chain verifier did not report a token contract"
+		}
 		if normalizePaymentContract(result.AssetContract, intent.Chain) != intent.AssetContract {
 			return "wrong token contract"
 		}
 	}
-	if intent.NativeAsset && !result.NativeAsset && (result.Asset != "" || result.AssetContract != "") {
-		return "wrong token contract/native asset"
-	}
-	if result.Amount > 0 && result.Amount != intent.Amount {
-		return fmt.Sprintf("wrong amount: got %d want %d", result.Amount, intent.Amount)
-	}
-	if result.RecipientAddress != "" && !samePaymentAddress(result.RecipientAddress, intent.Recipient, intent.Chain) {
-		return "wrong recipient"
-	}
+
 	if result.SenderAddress != "" && strings.TrimSpace(req.SenderAddress) != "" &&
 		!samePaymentAddress(result.SenderAddress, req.SenderAddress, intent.Chain) {
 		return "wrong sender"
 	}
+
 	return ""
 }
 
@@ -342,6 +406,21 @@ func normalizePaymentContract(value, chain string) string {
 		return strings.ToLower(contract)
 	}
 	return contract
+}
+
+// normalizeTxHashForReplayLedger canonicalizes a transaction hash before it
+// is used as the anti-replay key. Ethereum/Bitcoin hashes are hex and
+// case-insensitive on-chain, so they are lowercased; Solana signatures are
+// base58, where case is semantically significant, so they pass through
+// unchanged.
+func normalizeTxHashForReplayLedger(chain, txHash string) string {
+	txHash = strings.TrimSpace(txHash)
+	switch chain {
+	case "ethereum", "bitcoin":
+		return strings.ToLower(txHash)
+	default:
+		return txHash
+	}
 }
 
 func isNativePaymentAsset(chain, asset, contract string) bool {

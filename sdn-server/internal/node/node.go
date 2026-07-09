@@ -2,6 +2,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	crypto_ecdh "crypto/ecdh"
 	"crypto/ed25519"
@@ -1054,27 +1055,90 @@ func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 			}
 		}
 
-		// Also save the serialized key for backward compatibility
-		keyData, err := bundle.Identity.MarshalPrivateKey()
-		if err == nil {
-			_ = os.WriteFile(keyPath, keyData, 0600)
+		// Also save the serialized key for backward compatibility, encrypted
+		// at rest (same Argon2id + XChaCha20-Poly1305 scheme as the mnemonic).
+		if keyData, err := bundle.Identity.MarshalPrivateKey(); err == nil {
+			if err := n.writeEncryptedNodeKey(keyPath, keyData); err != nil {
+				log.Warnf("failed to persist encrypted node identity key at %s: %v", keyPath, err)
+			}
 		}
 
 		// Return secp256k1 identity key for libp2p PeerID
 		return bundle.Identity.IdentityPrivKey, nil
 	}
 
-	// Fallback: load existing key or generate random one
-	if keyData, err := os.ReadFile(keyPath); err == nil {
-		privKey, err := crypto.UnmarshalPrivateKey(keyData)
+	// Fallback: load existing key or generate random one.
+	if _, statErr := os.Stat(keyPath); statErr == nil {
+		privKey, err := n.readNodeKeyFile(keyPath)
 		if err == nil {
 			log.Infof("Loaded existing node identity from %s", keyPath)
 			return privKey, nil
 		}
-		log.Warnf("Failed to unmarshal existing key, generating new one: %v", err)
+		// Fail closed on an encrypted key we cannot decrypt: silently
+		// regenerating would mint a new PeerID and break every peer's trust
+		// map entry for this node.
+		if errors.Is(err, errNodeKeyUndecryptable) {
+			return nil, err
+		}
+		log.Warnf("Failed to load existing key, generating new one: %v", err)
 	}
 
 	return n.generateRandomKey(keyDir, keyPath)
+}
+
+// nodeKeyEncMagic prefixes a node.key file whose body is an encrypted envelope
+// (keys.EncryptSecret) rather than a legacy plaintext libp2p marshaled private
+// key. The NUL keeps it from ever colliding with protobuf-marshaled key bytes.
+var nodeKeyEncMagic = []byte("sdnkey1\x00")
+
+// errNodeKeyUndecryptable marks an on-disk node.key that carries the encrypted
+// marker but could not be decrypted (wrong password or corruption). Callers
+// must fail closed rather than regenerate the identity.
+var errNodeKeyUndecryptable = errors.New("encrypted node identity key could not be decrypted")
+
+// writeEncryptedNodeKey persists marshaled libp2p private-key bytes to keyPath
+// as an encrypted-at-rest envelope under the node's key password.
+func (n *Node) writeEncryptedNodeKey(keyPath string, keyData []byte) error {
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0700); err != nil {
+		return fmt.Errorf("create key directory: %w", err)
+	}
+	enc, err := keys.EncryptSecret(keyData, n.resolveKeyPassword())
+	if err != nil {
+		return fmt.Errorf("encrypt node identity key: %w", err)
+	}
+	out := make([]byte, 0, len(nodeKeyEncMagic)+len(enc))
+	out = append(out, nodeKeyEncMagic...)
+	out = append(out, enc...)
+	return os.WriteFile(keyPath, out, 0600)
+}
+
+// readNodeKeyFile loads node.key, decrypting an encrypted envelope or migrating
+// a legacy plaintext file to encrypted-at-rest in place. An encrypted file that
+// fails to decrypt returns errNodeKeyUndecryptable (fail closed).
+func (n *Node) readNodeKeyFile(keyPath string) (crypto.PrivKey, error) {
+	raw, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, err
+	}
+	if bytes.HasPrefix(raw, nodeKeyEncMagic) {
+		keyData, derr := keys.DecryptSecret(raw[len(nodeKeyEncMagic):], n.resolveKeyPassword())
+		if derr != nil {
+			return nil, fmt.Errorf("%w at %s (check SDN_KEY_PASSWORD): %v", errNodeKeyUndecryptable, keyPath, derr)
+		}
+		return crypto.UnmarshalPrivateKey(keyData)
+	}
+	// Legacy plaintext file: unmarshal, then re-encrypt in place (one-way
+	// upgrade). The PeerID is unchanged because the same key bytes are kept.
+	privKey, uerr := crypto.UnmarshalPrivateKey(raw)
+	if uerr != nil {
+		return nil, uerr
+	}
+	if werr := n.writeEncryptedNodeKey(keyPath, raw); werr != nil {
+		log.Warnf("node identity key loaded but at-rest encryption upgrade failed for %s: %v", keyPath, werr)
+	} else {
+		log.Infof("migrated node identity key at %s to encrypted-at-rest", keyPath)
+	}
+	return privKey, nil
 }
 
 // resolveKeyPassword returns the password for mnemonic encryption/decryption.
@@ -1111,7 +1175,7 @@ func (n *Node) generateRandomKey(keyDir, keyPath string) (crypto.PrivKey, error)
 		return nil, fmt.Errorf("failed to marshal private key: %w", err)
 	}
 
-	if err := os.WriteFile(keyPath, keyData, 0600); err != nil {
+	if err := n.writeEncryptedNodeKey(keyPath, keyData); err != nil {
 		return nil, fmt.Errorf("failed to write key file: %w", err)
 	}
 

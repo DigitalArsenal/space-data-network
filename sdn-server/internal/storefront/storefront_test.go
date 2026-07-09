@@ -443,7 +443,7 @@ func TestIndexerComputeFacets(t *testing.T) {
 // --- 14.3 Purchase and Access Flow Tests ---
 
 func TestPurchaseFlow(t *testing.T) {
-	svc, _ := newTestService(t)
+	svc, store := newTestService(t)
 	ctx := context.Background()
 
 	// Create listing
@@ -473,10 +473,32 @@ func TestPurchaseFlow(t *testing.T) {
 		t.Errorf("Status = %d, want Pending", req.Status)
 	}
 
-	// Process payment
-	err = svc.ProcessPayment(ctx, req.RequestID, "0xabc123", "ethereum")
+	// Process payment through the real verified crypto flow (B4): create a
+	// signed buyer intent, have the (mocked) chain verifier confirm it
+	// against that intent's exact recipient/amount/asset, then complete.
+	// There is no more "just tell the server a tx hash and chain" shortcut.
+	pp := NewPaymentProcessor(store, "test-peer-id", &mockChainVerifier{
+		chain:  "ethereum",
+		result: verifiedCryptoResult(),
+	})
+	intent, err := pp.CreateCryptoBuyerIntent(ctx, &CreateCryptoIntentRequest{
+		RequestID: req.RequestID,
+		Chain:     "ethereum",
+		Asset:     "ETH",
+		Recipient: "0xProviderWallet",
+	})
 	if err != nil {
-		t.Fatalf("ProcessPayment failed: %v", err)
+		t.Fatalf("CreateCryptoBuyerIntent failed: %v", err)
+	}
+	result, err := pp.SubmitCryptoPayment(ctx, ptrCryptoSubmission(cryptoSubmission(req.RequestID, intent.Reference, "ethereum", "ETH", 4900, "0xProviderWallet")))
+	if err != nil {
+		t.Fatalf("SubmitCryptoPayment failed: %v", err)
+	}
+	if !result.Verified {
+		t.Fatalf("SubmitCryptoPayment not verified: %s", result.Error)
+	}
+	if _, err := svc.CompleteCryptoPayment(ctx, req.RequestID, result); err != nil {
+		t.Fatalf("CompleteCryptoPayment failed: %v", err)
 	}
 
 	// Verify purchase completed
@@ -566,6 +588,7 @@ func TestIssueGrantRejectsPendingPaidPurchase(t *testing.T) {
 }
 
 func TestManualDevPaymentIssuesGrantAndAudit(t *testing.T) {
+	t.Setenv(DevPaymentsEnvVar, "1")
 	svc, _ := newTestService(t)
 	ctx := context.Background()
 
@@ -654,6 +677,7 @@ func TestManualDevPaymentIssuesGrantAndAudit(t *testing.T) {
 }
 
 func TestIssueGrantBindsFieldStreamPolicyAndSignature(t *testing.T) {
+	t.Setenv(DevPaymentsEnvVar, "1")
 	svc, _ := newTestService(t)
 	ctx := context.Background()
 
@@ -766,6 +790,7 @@ func TestIssueGrantBindsFieldStreamPolicyAndSignature(t *testing.T) {
 }
 
 func TestRevokeGrantRecordsAuditAndBlocksVerification(t *testing.T) {
+	t.Setenv(DevPaymentsEnvVar, "1")
 	svc, _ := newTestService(t)
 	ctx := context.Background()
 
@@ -820,6 +845,7 @@ func TestRevokeGrantRecordsAuditAndBlocksVerification(t *testing.T) {
 }
 
 func TestGroupMemberEnvelopeLifecycle(t *testing.T) {
+	t.Setenv(DevPaymentsEnvVar, "1")
 	svc, store := newTestService(t)
 	ctx := context.Background()
 
