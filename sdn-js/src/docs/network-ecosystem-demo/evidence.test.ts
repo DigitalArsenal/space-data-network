@@ -5,7 +5,9 @@ import {
   buildSandboxPnmEvidence,
   createSandboxArtifactEvidence,
   requestLiveConnections,
+  sandboxArtifactSignaturePayload,
 } from './evidence';
+import { verify } from '../../crypto/hd-wallet';
 import { verifySignedPnm } from '../../pnm-publisher';
 
 describe('network ecosystem evidence', () => {
@@ -21,6 +23,20 @@ describe('network ecosystem evidence', () => {
     expect(evidence.signatureHex).toMatch(/^[0-9a-f]{128}$/);
     expect(evidence.publicKeyHex).toMatch(/^[0-9a-f]+$/);
     expect(evidence.verified).toBe(true);
+
+    const signaturePayload = sandboxArtifactSignaturePayload(
+      evidence.schema,
+      evidence.cid,
+      evidence.payloadBytes,
+    );
+    await expect(verify(evidence.publicKey, signaturePayload, evidence.signature)).resolves.toBe(true);
+
+    const tamperedPayload = sandboxArtifactSignaturePayload(
+      evidence.schema,
+      evidence.cid,
+      new TextEncoder().encode('tampered'),
+    );
+    await expect(verify(evidence.publicKey, tamperedPayload, evidence.signature)).resolves.toBe(false);
   });
 
   it('builds a signed PNM using the canonical sdn-js helper', async () => {
@@ -39,6 +55,15 @@ describe('network ecosystem evidence', () => {
 
   it('uses the canonical channel topic format', () => {
     expect(buildSandboxChannelEvidence({ sourceId: 'celestrak-eth', standardCode: 'OMM' })).toEqual({
+      channelId: 'celestrak-eth-OMM',
+      topic: '/spacedatanetwork/channels/OMM',
+      sourceId: 'celestrak-eth',
+      standardCode: 'OMM',
+    });
+  });
+
+  it('returns normalized channel evidence for trimmed channel inputs', () => {
+    expect(buildSandboxChannelEvidence({ sourceId: ' celestrak-eth ', standardCode: ' OMM ' })).toEqual({
       channelId: 'celestrak-eth-OMM',
       topic: '/spacedatanetwork/channels/OMM',
       sourceId: 'celestrak-eth',
