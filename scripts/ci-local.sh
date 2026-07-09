@@ -40,6 +40,22 @@ existing_file() {
   return 1
 }
 
+nearest_stack_root() {
+  local dir="$ROOT"
+  while true; do
+    if [[ -f "$dir/docs/repository-catalog.md" && -d "$dir/repos/main-packages" ]]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+    local parent
+    parent="$(dirname "$dir")"
+    if [[ "$parent" == "$dir" ]]; then
+      return 1
+    fi
+    dir="$parent"
+  done
+}
+
 ensure_npm_deps() {
   local dir="$1"
   shift || true
@@ -108,11 +124,21 @@ prepare_go_wasm_artifacts() {
 
   if [[ -z "${ORBPRO_LICENSING_WASM_PATH:-}" || ! -f "${ORBPRO_LICENSING_WASM_PATH:-}" ]]; then
     local licensing_path
-    if licensing_path="$(existing_file \
-      "$ROOT/../space-data-network-plugins/licensing/core/dist/isomorphic/module.wasm" \
-      "$ROOT/../space-data-network-modules/licensing/core/dist/isomorphic/module.wasm" \
-      "$ROOT/../../space-data-network-plugins/licensing/core/dist/isomorphic/module.wasm" \
-      "$ROOT/../../space-data-network-modules/licensing/core/dist/isomorphic/module.wasm")"; then
+    local licensing_candidates=()
+    local stack_root
+    if stack_root="$(nearest_stack_root)"; then
+      licensing_candidates+=(
+        "$stack_root/repos/main-packages/space-data-network-modules/licensing/core/dist/isomorphic/module.wasm"
+        "$stack_root/repos/ancillary-packages/space-data-network-modules/licensing/core/dist/isomorphic/module.wasm"
+      )
+    fi
+    licensing_candidates+=(
+      "$ROOT/../space-data-network-modules/licensing/core/dist/isomorphic/module.wasm"
+      "$ROOT/../../space-data-network-modules/licensing/core/dist/isomorphic/module.wasm"
+      "$ROOT/../space-data-network-plugins/licensing/core/dist/isomorphic/module.wasm"
+      "$ROOT/../../space-data-network-plugins/licensing/core/dist/isomorphic/module.wasm"
+    )
+    if licensing_path="$(existing_file "${licensing_candidates[@]}")"; then
       export ORBPRO_LICENSING_WASM_PATH="$licensing_path"
       echo "ORBPRO_LICENSING_WASM_PATH=$ORBPRO_LICENSING_WASM_PATH"
     else

@@ -474,7 +474,7 @@ const identity = await identityFromMnemonic('abandon abandon ...');
 // Create a P2P node (libp2p under the hood)
 const node = await SDNNode.create({
   identity,
-  edgeRelays: ['wss://relay.spaceaware.io/...'],
+  edgeRelays: ['wss://relay.example.invalid/...'],
   enableStorage: true,  // IndexedDB local storage
 });
 

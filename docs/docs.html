@@ -2849,7 +2849,7 @@ const identity = await identityFromMnemonic('abandon abandon ...');
 
 const node = await SDNNode.create({
   identity,
-  edgeRelays: ['wss://relay.spaceaware.io/...'],
+  edgeRelays: ['wss://relay.example.invalid/...'],
   enableStorage: true,  // IndexedDB
 });
 
