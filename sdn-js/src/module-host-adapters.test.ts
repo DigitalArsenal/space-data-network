@@ -125,4 +125,53 @@ describe('createModuleHostCapabilityAdapters', () => {
       /unknown key slot/,
     );
   });
+
+  // B2-followup-2: keyslot.get raw-key-export removal (B2, Go commit
+  // 3c6bd6e0, sdn-server/internal/modulert/caps/keyslot.go). The guest-facing
+  // "keyslot.get" hostcall no longer exists anywhere in the module host
+  // stack — it was replaced by a host-side crypto oracle (keyslot.sign /
+  // keyslot.unwrap) implemented in space-data-module-sdk's NodeHost /
+  // BrowserHost. This adapter only ever builds the *internal* key-slot
+  // resolver those hosts call from inside their own process; it must never
+  // grow a guest-reachable surface of its own.
+  it('walletSign adapter exposes only the internal "get" resolver — no guest-facing keyslot.get/sign/unwrap surface', () => {
+    const key = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
+    const adapters = createModuleHostCapabilityAdapters({
+      keySlots: { 'node-signing': key },
+    });
+    // This resolver is consumed host-side only, by BrowserHost's
+    // keyslot.sign/keyslot.unwrap (space-data-module-sdk/src/host/browserHost.js).
+    // It is not itself a hostcall name, and must not accrue a "sign"/"unwrap"/
+    // "keyslot.get"-shaped method — that would reintroduce a second path to
+    // raw key material outside the crypto-oracle boundary.
+    expect(Object.keys(adapters.walletSign!)).toEqual(['get']);
+  });
+
+  it('walletSign.get rejecting an unknown slot never leaks a configured slot\'s key material', async () => {
+    const nodeSigningKey = Uint8Array.from({ length: 32 }, (_, i) => i + 11);
+    const otherKey = Uint8Array.from({ length: 32 }, (_, i) => i + 61);
+    const adapters = createModuleHostCapabilityAdapters({
+      keySlots: {
+        'node-signing': nodeSigningKey,
+        other: otherKey,
+      },
+    });
+
+    const forbiddenEncodings = [nodeSigningKey, otherKey].flatMap((keyBytes) => [
+      Buffer.from(keyBytes).toString('base64'),
+      Buffer.from(keyBytes).toString('hex'),
+    ]);
+
+    let caught: unknown;
+    try {
+      await adapters.walletSign!.get({ slotId: 'does-not-exist' });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const message = (caught as Error).message;
+    for (const forbidden of forbiddenEncodings) {
+      expect(message.includes(forbidden)).toBe(false);
+    }
+  });
 });
