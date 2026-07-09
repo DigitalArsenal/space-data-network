@@ -540,33 +540,6 @@
       display: block;
     }
 
-    /* Master Network Connectivity Diagram */
-    .master-diagram-wrap {
-      border: 1px solid rgba(134, 134, 139, 0.3);
-      border-radius: var(--radius);
-      margin: 32px 0 24px;
-      padding: 5px;
-      overflow: hidden;
-      background: rgba(15, 15, 18, 0.95);
-    }
-
-    .master-diagram-svg {
-      width: 100%;
-      display: block;
-    }
-
-    @keyframes md-dash {
-      to { stroke-dashoffset: -30; }
-    }
-
-    @keyframes md-dash-rev {
-      to { stroke-dashoffset: 30; }
-    }
-
-    @keyframes md-pulse {
-      0%, 100% { opacity: 0.5; }
-      50% { opacity: 1; }
-    }
   </style>
 </head>
 <body>
@@ -698,7 +671,7 @@
         <p>Space Data Network (SDN) is a decentralized peer-to-peer network for exchanging standardized space situational awareness data. Built on <a href="https://libp2p.io" target="_blank" style="color: inherit; text-decoration: underline;">libp2p</a> with FlatBuffers serialization, SDN enables real-time sharing of orbital data, conjunction warnings, and tracking information.</p>
 
         <h3 id="network-ecosystem">Network Ecosystem</h3>
-        <p>The diagram below shows how satellites, sensors, operations centers, independent contributors, commercial operators, and data consumers interconnect through the decentralized SDN mesh. All participants exchange standardized Space Data Standards messages peer-to-peer with no central server.</p>
+        <p>The interactive sandbox below shows providers publishing signed SDS data, PNMs announcing current artifacts, DPMs describing authoritative product sets, PLG module listings and delivery, peer subscriptions, signature verification, encryption grants, and pinning, archive, and consumer nodes moving artifacts by CID.</p>
 
         <div class="network-ecosystem-intro">
           <p>Use the sandbox to walk through the same network mechanics used by production SDN: providers publish signed SDS data, PNMs announce current artifacts, DPMs describe authoritative products, PLGs describe modules, and peers subscribe, verify, decrypt, and pin by CID.</p>
