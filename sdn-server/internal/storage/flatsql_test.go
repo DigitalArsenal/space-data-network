@@ -15,6 +15,8 @@ import (
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
@@ -2509,9 +2511,61 @@ func TestComputeCID(t *testing.T) {
 		t.Error("Different data should produce different CID")
 	}
 
-	// CID should be 64 hex characters (SHA-256)
-	if len(cid1) != 64 {
-		t.Errorf("Expected CID length 64, got %d", len(cid1))
+	// computeCID must return a real CIDv1 (raw codec, sha2-256 multihash),
+	// not a bare hex digest — see TestComputeCIDIsRealCIDv1 for the
+	// well-known-vector check.
+	decoded, err := cid.Decode(cid1)
+	if err != nil {
+		t.Fatalf("computeCID output %q does not parse as a CID: %v", cid1, err)
+	}
+	if decoded.Version() != 1 {
+		t.Errorf("CID version = %d, want 1", decoded.Version())
+	}
+	if decoded.Prefix().Codec != cid.Raw {
+		t.Errorf("CID codec = %d, want %d (raw)", decoded.Prefix().Codec, cid.Raw)
+	}
+}
+
+// TestComputeCIDIsRealCIDv1 pins computeCID to the well-known CIDv1 for the
+// 11-byte input "hello world": bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e
+// (this is the CID `ipfs add --cid-version=1 --raw-leaves` or
+// `echo -n "hello world" | ipfs add --cid-version=1 --raw-leaves` produces
+// for that exact byte string — reproducible on ipfs.io/ipfs/<cid>). Rather
+// than trust that literal blindly, the expected value is also derived here
+// with go-cid/go-multihash directly, so a bug shared between computeCID and
+// the hand-typed literal cannot hide a regression.
+func TestComputeCIDIsRealCIDv1(t *testing.T) {
+	const wantLiteral = "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e"
+	data := []byte("hello world")
+	if len(data) != 11 {
+		t.Fatalf("test input %q is %d bytes, want 11", data, len(data))
+	}
+
+	// Derive the expected CID independently via go-multihash + go-cid rather
+	// than trusting the literal above.
+	digest, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		t.Fatalf("mh.Sum failed: %v", err)
+	}
+	wantCID := cid.NewCidV1(cid.Raw, digest).String()
+	if wantCID != wantLiteral {
+		t.Fatalf("independently derived CID %q does not match documented literal %q", wantCID, wantLiteral)
+	}
+
+	got := computeCID(data)
+	if got != wantCID {
+		t.Errorf("computeCID(%q) = %q, want %q", data, got, wantCID)
+	}
+
+	decoded, err := cid.Decode(got)
+	if err != nil {
+		t.Fatalf("cid.Decode(%q) failed: %v", got, err)
+	}
+	if decoded.Version() != 1 {
+		t.Errorf("decoded CID version = %d, want 1", decoded.Version())
+	}
+	if decoded.Prefix().Codec != cid.Raw {
+		t.Errorf("decoded CID codec = %d, want %d (raw)", decoded.Prefix().Codec, cid.Raw)
 	}
 }
 

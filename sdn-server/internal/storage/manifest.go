@@ -684,7 +684,14 @@ func (s *FlatSQLStore) importDatasetShardChunk(index *DatasetExportIndex, provid
 		if err != nil {
 			return imported, err
 		}
-		if computeCID(data) != record.CID {
+		// Accept either the current CIDv1 (raw codec, sha2-256 multihash) or
+		// the legacy bare SHA-256 hex digest computeCID emitted before loop
+		// A4: dataset shard bundles exported by an older build carry
+		// bare-hex CIDs in their index JSON, and those bundles must remain
+		// importable. Either way the record keeps the identity it already
+		// carries in the (trusted, signed) index — importing never rewrites
+		// record.CID to the new format.
+		if computeCID(data) != record.CID && sha256Hex(data) != record.CID {
 			return imported, fmt.Errorf("record CID mismatch for indexed record %s", record.CID)
 		}
 		tags := record.SourceTags

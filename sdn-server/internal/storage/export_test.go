@@ -1086,6 +1086,143 @@ func TestImportDatasetShardFromFilesStreamsShardIntoFlatSQL(t *testing.T) {
 	}
 }
 
+// TestImportDatasetShardAcceptsLegacyBareHexRecordCIDs is the loop A4 compat
+// check: computeCID used to emit a bare SHA-256 hex digest (not a CID), so
+// dataset shard bundles exported by a pre-A4 build carry that legacy format
+// in their index JSON's per-record "cid" fields. Those bundles must still
+// import cleanly after computeCID starts emitting real CIDv1 strings —
+// manifest.go's importDatasetShardChunk now accepts either digest when
+// verifying a record's bytes against its declared CID (see the
+// computeCID(data) != record.CID && sha256Hex(data) != record.CID check).
+// This test simulates a legacy export by rewriting a freshly exported
+// index's record CIDs to the old bare-hex form and confirms import still
+// succeeds, preserving the record's declared (legacy) identity rather than
+// silently upgrading it.
+func TestImportDatasetShardAcceptsLegacyBareHexRecordCIDs(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-shard-legacy-cid-import-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	providerStore, err := NewFlatSQLStore(filepath.Join(tmpDir, "provider-db"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore provider failed: %v", err)
+	}
+	defer providerStore.Close()
+	subscriberStore, err := NewFlatSQLStore(filepath.Join(tmpDir, "subscriber-db"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore subscriber failed: %v", err)
+	}
+	defer subscriberStore.Close()
+
+	tags := SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		SourceURL:    "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+		BatchID:      "source-legacy-cid-import",
+		ContentKeyID: "public",
+	}
+	const recordCount = 3
+	for i := 0; i < recordCount; i++ {
+		record := sds.NewCATBuilder().
+			WithNoradCatID(uint32(62000 + i)).
+			WithObjectName("LEGACY-CID-IMPORT").
+			WithObjectType("PAYLOAD").
+			WithOpsStatus("OPERATIONAL").
+			Build()
+		if _, err := providerStore.StoreWithSourceTags("CAT.fbs", record, "celestrak.eth", nil, tags); err != nil {
+			t.Fatalf("store record %d failed: %v", i, err)
+		}
+	}
+	export, err := providerStore.ExportDatasetWindow(filepath.Join(tmpDir, "export"), IndexedRecordQuery{
+		SchemaName:          "CAT.fbs",
+		ProviderID:          tags.ProviderID,
+		SourceName:          tags.SourceName,
+		BatchID:             tags.BatchID,
+		Limit:               10,
+		AllowLargeResultSet: true,
+		OrderByCID:          true,
+	})
+	if err != nil {
+		t.Fatalf("ExportDatasetWindow failed: %v", err)
+	}
+
+	shardBytes, err := os.ReadFile(export.ShardPath)
+	if err != nil {
+		t.Fatalf("read shard file: %v", err)
+	}
+	indexBytes, err := os.ReadFile(export.IndexPath)
+	if err != nil {
+		t.Fatalf("read index file: %v", err)
+	}
+	index, err := parseDatasetExportIndexBytes(indexBytes)
+	if err != nil {
+		t.Fatalf("parse index: %v", err)
+	}
+	if len(index.Records) != recordCount {
+		t.Fatalf("exported %d records, want %d", len(index.Records), recordCount)
+	}
+
+	// Rewrite each record's CID from the current CIDv1 format to the legacy
+	// bare SHA-256 hex digest computeCID emitted before loop A4, simulating
+	// an export produced by a pre-A4 build.
+	legacyCIDs := make(map[string]bool, len(index.Records))
+	for i, rec := range index.Records {
+		if rec.Offset < 0 || rec.Length < 0 || rec.Offset+4+rec.Length > int64(len(shardBytes)) {
+			t.Fatalf("record %d offset/length outside shard", i)
+		}
+		frame := shardBytes[rec.Offset:]
+		length := int64(binary.LittleEndian.Uint32(frame[:4]))
+		if length != rec.Length {
+			t.Fatalf("record %d frame length = %d, want %d", i, length, rec.Length)
+		}
+		data := frame[4 : 4+length]
+		if computeCID(data) != rec.CID {
+			t.Fatalf("record %d exported CID %q does not match freshly computed CIDv1", i, rec.CID)
+		}
+		legacyCID := sha256Hex(data)
+		index.Records[i].CID = legacyCID
+		legacyCIDs[legacyCID] = true
+	}
+
+	legacyIndexBytes, err := json.Marshal(index)
+	if err != nil {
+		t.Fatalf("marshal patched index: %v", err)
+	}
+
+	imported, importedIndex, err := subscriberStore.ImportDatasetShard(shardBytes, legacyIndexBytes, "celestrak.eth")
+	if err != nil {
+		t.Fatalf("ImportDatasetShard with legacy bare-hex record CIDs failed: %v", err)
+	}
+	if imported != recordCount || importedIndex.RecordCount != recordCount {
+		t.Fatalf("imported=%d recordCount=%d, want %d/%d", imported, importedIndex.RecordCount, recordCount, recordCount)
+	}
+
+	records, err := subscriberStore.QueryIndexedRecords(IndexedRecordQuery{
+		SchemaName: "CAT.fbs",
+		ProviderID: tags.ProviderID,
+		SourceName: tags.SourceName,
+		BatchID:    tags.BatchID,
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("query imported records failed: %v", err)
+	}
+	if len(records) != recordCount {
+		t.Fatalf("imported records = %d, want %d", len(records), recordCount)
+	}
+	for _, rec := range records {
+		if !legacyCIDs[rec.CID] {
+			t.Errorf("imported record CID %q was not one of the legacy bare-hex CIDs from the patched index; import must preserve the declared identity, not rewrite it", rec.CID)
+		}
+	}
+}
+
 func TestBuildSignedDatasetPublicationManifestBindsExportAndQuery(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-dpm-test-*")
 	if err != nil {
