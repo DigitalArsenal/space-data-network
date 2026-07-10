@@ -578,6 +578,26 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// assignableTrustLevel enforces the C7 admin-assignment ceiling: only
+// levels in [peers.Unknown, peers.Admin] may be assigned to a user via the
+// add-user/update-trust API handlers. Every admin gate in this package is
+// a numeric comparison (session.TrustLevel < peers.Admin), so an assigned
+// Ultimate(5) — which is > Admin(4) — would satisfy every one of them,
+// AND would satisfy a future Phase F "this key IS my own node identity"
+// (== peers.Ultimate) check, breaking the invariant that Ultimate is
+// reserved exclusively for the node's own identity (see the TrustLevel /
+// Ultimate doc comments in internal/peers/trust.go). Never(-1) is
+// rejected too: whether Never should be an operator-assignable lockout is
+// a separate product decision this fix does not make — it is refused here
+// rather than silently allowed, pending that decision (residual
+// follow-up).
+func assignableTrustLevel(level peers.TrustLevel) error {
+	if level < peers.Unknown || level > peers.Admin {
+		return fmt.Errorf("trust level %q is not assignable via this API: must be between %q and %q (ultimate is reserved for the node's own identity; never as an operator lockout is not yet supported)", level, peers.Unknown, peers.Admin)
+	}
+	return nil
+}
+
 func (h *Handler) handleUsers(w http.ResponseWriter, r *http.Request) {
 	// All user management requires admin trust
 	session, err := h.sessionFromRequest(r)
@@ -604,6 +624,10 @@ func (h *Handler) handleUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		trust, err := peers.ParseTrustLevel(req.TrustLevel)
 		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_trust_level", Message: err.Error()})
+			return
+		}
+		if err := assignableTrustLevel(trust); err != nil {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_trust_level", Message: err.Error()})
 			return
 		}
@@ -671,6 +695,10 @@ func (h *Handler) handleUserByXPub(w http.ResponseWriter, r *http.Request) {
 		}
 		trust, err := peers.ParseTrustLevel(req.TrustLevel)
 		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_trust_level", Message: err.Error()})
+			return
+		}
+		if err := assignableTrustLevel(trust); err != nil {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_trust_level", Message: err.Error()})
 			return
 		}

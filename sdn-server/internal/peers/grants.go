@@ -399,7 +399,13 @@ func BuildTrustGraphAt(grants []SignedGrant, now time.Time) (g *trust.Graph, ski
 		}
 		key := trustEdgeKey{sg.Granter, sg.Subject}
 		if prev, ok := applied[key]; ok && !sg.IssuedAt.After(prev) {
-			continue // an already-applied grant for this pair is at least as new
+			// An already-applied grant for this pair is at least as new, so
+			// this one is dropped exactly like any other rejected grant —
+			// count it in skipped too (the doc comment above promises
+			// "anything else ... is silently dropped and counted in the
+			// returned skipped total").
+			skipped++
+			continue
 		}
 		if err := g.SetEdge(trust.Edge{
 			Truster:     sg.Granter.String(),

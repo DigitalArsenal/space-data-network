@@ -346,6 +346,48 @@ func TestBuildTrustGraphAt_LatestGrantWinsForSamePair(t *testing.T) {
 	}
 }
 
+// TestBuildTrustGraphAt_OlderDuplicateGrantForSamePairIsCountedSkipped is
+// the minor-fix regression test: the same-pair dedup path (an
+// already-applied grant for a (granter, subject) pair that is at least as
+// new as the incoming one) must increment `skipped`, matching the
+// function's own doc comment ("anything else ... is silently dropped and
+// counted in the returned skipped total").
+func TestBuildTrustGraphAt_OlderDuplicateGrantForSamePairIsCountedSkipped(t *testing.T) {
+	granterPriv, granterID := newTestEd25519Identity(t)
+	_, subjectID := newTestEd25519Identity(t)
+
+	newer, err := SignGrant(granterPriv, Grant{
+		Subject:  subjectID,
+		Level:    Trusted,
+		IssuedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("SignGrant (newer): %v", err)
+	}
+	older, err := SignGrant(granterPriv, Grant{
+		Subject:  subjectID,
+		Level:    Limited,
+		IssuedAt: time.Now().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("SignGrant (older): %v", err)
+	}
+
+	// Process newer FIRST so the older grant for the same (granter,
+	// subject) pair hits the "already-applied, not newer" dedup path.
+	g, skipped := BuildTrustGraph([]SignedGrant{newer, older})
+	if skipped != 1 {
+		t.Fatalf("skipped = %d, want 1 (the superseded older grant)", skipped)
+	}
+	edge, ok := g.Edge(granterID.String(), subjectID.String())
+	if !ok {
+		t.Fatal("expected an edge for the granter/subject pair")
+	}
+	if edge.Weight != FullEdgeWeight {
+		t.Fatalf("edge weight = %v, want the newer (Full) grant's weight %v", edge.Weight, FullEdgeWeight)
+	}
+}
+
 func TestBuildTrustGraphAt_SelfGrantSkipped(t *testing.T) {
 	priv, id := newTestEd25519Identity(t)
 	sg, err := SignGrant(priv, Grant{Subject: id, Level: Trusted})

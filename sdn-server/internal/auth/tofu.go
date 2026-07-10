@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
+
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
 
@@ -88,10 +90,31 @@ func (s *UserStore) ReconcileSigningKey(xpub, candidateHex string) error {
 // Callers MUST call grant.Verify()/VerifyAt() themselves first — this
 // function only performs the TOFU precedence check, not signature
 // verification.
+//
+// # Ed25519-subject guard
+//
+// internal/peers/grants.go's SignGrant/Verify require the GRANTER to embed
+// an Ed25519 public key, but place no such requirement on the Subject — a
+// grant naming a non-Ed25519 subject (e.g. a secp256k1 libp2p identity,
+// whose raw public key is 33 bytes) verifies just fine. A TOFU-bound
+// wallet signing key, however, is ALWAYS Ed25519 (32 bytes) by
+// construction (see normalizeEd25519PubKeyHex). Without a matching guard
+// here, a non-Ed25519 subject's raw key bytes can never legitimately equal
+// the bound Ed25519 key, so this function would (depending on incidental
+// byte length) either misreport ErrTOFUConflict or fail with a confusing
+// "invalid candidate" error for a case that isn't actually a conflict at
+// all — it is simply not the kind of key TOFU binding ever deals with.
+// Mirror SignGrant/Verify's own Ed25519 guard and skip cleanly (nil, "
+// nothing to reconcile") for any non-Ed25519 subject instead.
 func (s *UserStore) ReconcileGrantSubjectKey(xpub string, grant peers.SignedGrant) error {
 	pub, err := grant.Subject.ExtractPublicKey()
 	if err != nil {
 		return fmt.Errorf("auth: reconcile grant subject key: extract public key: %w", err)
+	}
+	if _, ok := pub.(*libp2pcrypto.Ed25519PublicKey); !ok {
+		// Not an Ed25519 identity: cannot correspond to any Ed25519
+		// TOFU-bound wallet signing key. Nothing to reconcile.
+		return nil
 	}
 	raw, err := pub.Raw()
 	if err != nil {

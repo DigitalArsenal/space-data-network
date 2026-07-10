@@ -949,6 +949,214 @@ func TestUserStore_UpdateTrustDoesNotClaimConfigUserRevocation(t *testing.T) {
 	}
 }
 
+// newAdminTestHandler builds a Handler backed by fresh, isolated userStore
+// and session stores, with a single seeded admin session — the minimum
+// fixture the C7 add-user/update-trust handler tests need.
+func newAdminTestHandler(t *testing.T) (*Handler, string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	userStore, err := NewUserStore(filepath.Join(dir, "users.db"), []config.UserEntry{
+		{XPub: "xpub-c7-admin", TrustLevel: "admin", Name: "C7 Admin"},
+	})
+	if err != nil {
+		t.Fatalf("NewUserStore: %v", err)
+	}
+	t.Cleanup(func() { userStore.Close() })
+
+	sdb, closer, err := flatsqldrv.OpenStandalone(filepath.Join(dir, "sessions.db"))
+	if err != nil {
+		t.Fatalf("OpenStandalone: %v", err)
+	}
+	t.Cleanup(func() { closer() })
+
+	sessions, err := NewSessionStore(sdb)
+	if err != nil {
+		t.Fatalf("NewSessionStore: %v", err)
+	}
+
+	token, err := sessions.CreateSession("xpub-c7-admin", peers.Admin, "127.0.0.1", "test-agent", 24*time.Hour)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	return NewHandler(userStore, sessions, 24*time.Hour, "", ""), token
+}
+
+// TestHandleUsers_AddUser_RejectsUltimateAndNever is the C7 regression
+// test: Ultimate is reserved exclusively for the node's own identity, and
+// must never be operator-assignable through the add-user API (every admin
+// gate is a numeric >= comparison, so an assigned Ultimate(5) would
+// satisfy every one of them, plus any future Phase F "== Ultimate, this
+// key IS my own node" check). Never is rejected too pending a separate
+// product decision about operator-assignable lockouts.
+func TestHandleUsers_AddUser_RejectsUltimateAndNever(t *testing.T) {
+	t.Parallel()
+
+	for _, level := range []string{"ultimate", "never"} {
+		level := level
+		t.Run(level, func(t *testing.T) {
+			t.Parallel()
+			h, token := newAdminTestHandler(t)
+
+			body, err := json.Marshal(map[string]string{
+				"xpub":        "xpub-new-user-" + level,
+				"name":        "New User",
+				"trust_level": level,
+			})
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/api/auth/users", bytes.NewReader(body))
+			req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
+			rec := httptest.NewRecorder()
+
+			h.handleUsers(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("assigning %q via add-user: status = %d, want %d: %s", level, rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+
+			if user, _ := h.userStore.GetUser("xpub-new-user-" + level); user != nil {
+				t.Fatalf("rejected add-user must not create the user record, got %+v", user)
+			}
+		})
+	}
+}
+
+// TestHandleUsers_AddUser_AllowsAssignableLevels asserts the clamp does
+// not collaterally block ordinary in-range assignments.
+func TestHandleUsers_AddUser_AllowsAssignableLevels(t *testing.T) {
+	t.Parallel()
+
+	for _, level := range []string{"unknown", "standard", "trusted", "admin"} {
+		level := level
+		t.Run(level, func(t *testing.T) {
+			t.Parallel()
+			h, token := newAdminTestHandler(t)
+
+			body, err := json.Marshal(map[string]string{
+				"xpub":        "xpub-new-user-" + level,
+				"name":        "New User",
+				"trust_level": level,
+			})
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/api/auth/users", bytes.NewReader(body))
+			req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
+			rec := httptest.NewRecorder()
+
+			h.handleUsers(rec, req)
+
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("assigning %q via add-user: status = %d, want %d: %s", level, rec.Code, http.StatusCreated, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestHandleUserByXPub_UpdateTrust_RejectsUltimateAndNever is the C7
+// regression test for the update-trust path (handler.go ~672-676): same
+// clamp, same reasoning, applied to an existing user instead of at
+// creation.
+func TestHandleUserByXPub_UpdateTrust_RejectsUltimateAndNever(t *testing.T) {
+	t.Parallel()
+
+	for _, level := range []string{"ultimate", "never"} {
+		level := level
+		t.Run(level, func(t *testing.T) {
+			t.Parallel()
+			h, token := newAdminTestHandler(t)
+
+			addBody, err := json.Marshal(map[string]string{
+				"xpub":        "xpub-target-" + level,
+				"name":        "Target",
+				"trust_level": "standard",
+			})
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			addReq := httptest.NewRequest(http.MethodPost, "/api/auth/users", bytes.NewReader(addBody))
+			addReq.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
+			addRec := httptest.NewRecorder()
+			h.handleUsers(addRec, addReq)
+			if addRec.Code != http.StatusCreated {
+				t.Fatalf("seed user: status = %d: %s", addRec.Code, addRec.Body.String())
+			}
+
+			updateBody, err := json.Marshal(map[string]string{"trust_level": level})
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			updateReq := httptest.NewRequest(http.MethodPut, "/api/auth/users/xpub-target-"+level, bytes.NewReader(updateBody))
+			updateReq.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
+			updateRec := httptest.NewRecorder()
+			h.handleUserByXPub(updateRec, updateReq)
+
+			if updateRec.Code != http.StatusBadRequest {
+				t.Fatalf("assigning %q via update-trust: status = %d, want %d: %s", level, updateRec.Code, http.StatusBadRequest, updateRec.Body.String())
+			}
+
+			user, err := h.userStore.GetUser("xpub-target-" + level)
+			if err != nil {
+				t.Fatalf("GetUser: %v", err)
+			}
+			if user == nil {
+				t.Fatal("seeded target user disappeared")
+			}
+			if user.TrustLevel != peers.Standard {
+				t.Fatalf("target trust level changed despite rejected update: got %v, want Standard", user.TrustLevel)
+			}
+		})
+	}
+}
+
+// TestHandleUserByXPub_UpdateTrust_AllowsAssignableLevels asserts the
+// clamp does not collaterally block an ordinary admin promotion.
+func TestHandleUserByXPub_UpdateTrust_AllowsAssignableLevels(t *testing.T) {
+	t.Parallel()
+
+	h, token := newAdminTestHandler(t)
+
+	addBody, err := json.Marshal(map[string]string{
+		"xpub":        "xpub-target-assignable",
+		"name":        "Target",
+		"trust_level": "standard",
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	addReq := httptest.NewRequest(http.MethodPost, "/api/auth/users", bytes.NewReader(addBody))
+	addReq.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
+	addRec := httptest.NewRecorder()
+	h.handleUsers(addRec, addReq)
+	if addRec.Code != http.StatusCreated {
+		t.Fatalf("seed user: status = %d: %s", addRec.Code, addRec.Body.String())
+	}
+
+	updateBody, err := json.Marshal(map[string]string{"trust_level": "admin"})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/auth/users/xpub-target-assignable", bytes.NewReader(updateBody))
+	updateReq.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
+	updateRec := httptest.NewRecorder()
+	h.handleUserByXPub(updateRec, updateReq)
+
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("assigning admin via update-trust: status = %d, want %d: %s", updateRec.Code, http.StatusOK, updateRec.Body.String())
+	}
+
+	user, err := h.userStore.GetUser("xpub-target-assignable")
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if user.TrustLevel != peers.Admin {
+		t.Fatalf("update-trust did not apply: got %v, want Admin", user.TrustLevel)
+	}
+}
+
 func TestLoginPage_UsesCDNWalletUIFallbackWhenNoLocalDistIsConfigured(t *testing.T) {
 	t.Parallel()
 
@@ -1077,6 +1285,38 @@ func TestLoginPage_BuildersWrapShellInCenteredStage(t *testing.T) {
 	}
 	if !strings.Contains(html, `<main class="sdn-shell" aria-label="Space Data Network login">`) {
 		t.Fatalf("login page missing SDN shell main element: %s", html)
+	}
+}
+
+// TestLoginPage_RedirectGateAcceptsBothLegacyAndPGPTrustNames is the C5a
+// regression test: /api/auth/verify serializes TrustLevel via its PGP
+// ownertrust name (TrustLevel.String() in internal/peers/trust.go) — a
+// Trusted(3) user now comes back as trust_level "full", not "trusted".
+// The embedded redirect gate's /webui/ allowlist must accept BOTH the
+// legacy name ("trusted") and the new PGP name ("full"), or a Trusted
+// user whose server-side authorizedPostLoginPath already authorizes
+// /webui/ (numeric trust >= peers.Standard) gets client-side stuck on the
+// login page. Assert both vocabularies are present in the emitted page,
+// scoped to the /webui/ gate clause specifically.
+func TestLoginPage_RedirectGateAcceptsBothLegacyAndPGPTrustNames(t *testing.T) {
+	t.Parallel()
+
+	html := buildLoginPage("/wallet-ui/dist/assets/wallet.js", "/wallet-ui/dist/assets/wallet.css")
+
+	gateStart := strings.Index(html, "nextPath.indexOf('/webui/')")
+	if gateStart == -1 {
+		t.Fatalf("login page missing /webui/ redirect gate: %s", html)
+	}
+	gateEndOffset := strings.Index(html[gateStart:], "nextPath === '/'")
+	if gateEndOffset == -1 {
+		t.Fatalf("could not locate end of /webui/ redirect gate clause: %s", html)
+	}
+	gateClause := html[gateStart : gateStart+gateEndOffset]
+
+	for _, want := range []string{"'standard'", "'trusted'", "'full'", "'admin'"} {
+		if !strings.Contains(gateClause, want) {
+			t.Fatalf("login page /webui/ redirect gate missing %s (must accept both legacy and PGP trust names, C5a): %s", want, gateClause)
+		}
 	}
 }
 

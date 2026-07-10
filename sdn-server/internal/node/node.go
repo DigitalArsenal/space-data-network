@@ -401,6 +401,11 @@ func (n *Node) init() error {
 	go n.feedAutoRelayCandidates(n.ctx)
 	metrics.SetPeerCountFunc(func() int { return len(n.host.Network().Peers()) })
 
+	// Phase C6: anchor this node's own peer ID as the rooted web-of-trust
+	// root now that the libp2p host exists. Without it the rooted validity
+	// computation fail-safes to "never valid".
+	n.peerRegistry.SetRootIdentity(n.host.ID())
+
 	// Create GossipSub
 	n.pubsub, err = newGossipSub(n.ctx, n.host)
 	if err != nil {
