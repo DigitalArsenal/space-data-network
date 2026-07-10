@@ -244,6 +244,20 @@ func enforceModuleSignaturePolicy(policy *ModuleSignaturePolicy, wasmBytes []byt
 	)
 }
 
+// EnforceModuleSignaturePolicy is the exported form of
+// enforceModuleSignaturePolicy (loop I2): a thin wrapper with no logic of
+// its own, so that callers outside package modulert — namely
+// internal/flowrt's flow-bundle admit path (install-time FlowManager.Deploy,
+// load-time LoadMountedFlow/LoadFlowService) — reuse the EXACT SAME
+// publication-signature gate the MODULE load path (instantiateWASM, loop I1)
+// applies, rather than reimplementing it. See enforceModuleSignaturePolicy's
+// doc for the nil-policy-is-inert / fail-closed-once-configured semantics
+// and the AllowUnsignedByContentHash dev escape hatch: they apply here
+// identically.
+func EnforceModuleSignaturePolicy(policy *ModuleSignaturePolicy, wasmBytes []byte) ([]byte, ModuleSignatureStatus, error) {
+	return enforceModuleSignaturePolicy(policy, wasmBytes)
+}
+
 // recTrailerRecordType mirrors REC.fbs's RecordType enum value for "MBL"
 // (see third_party/spacedatastandards-go/REC/RecordType.go). The REC.fbs
 // collection wrapper (root table + heterogeneous Record union vector) is

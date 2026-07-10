@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/plugins"
 )
 
@@ -19,8 +20,42 @@ type FlowManager struct {
 	pluginMgr    *plugins.Manager
 	capabilities HandlerMap
 
+	// sigPolicy is the operator-controlled publication-trailer signature
+	// trust policy consulted at install (Deploy) and load (loadAndRegister)
+	// time (loop I2 — mirrors modulert's I1 module load gate). nil (the
+	// zero value, set via NewFlowManager) means signature enforcement is
+	// not configured for this node: Deploy/loadAndRegister behave exactly
+	// as before this field existed. Set via SetModuleSignaturePolicy —
+	// activation is owner/release-gated, so production wiring is left to
+	// the caller (see SetModuleSignaturePolicy's doc). Guarded by its own
+	// mutex (not mu): Deploy calls loadAndRegister while already holding
+	// mu, and sync.Mutex is not reentrant.
+	sigPolicyMu sync.RWMutex
+	sigPolicy   *modulert.ModuleSignaturePolicy
+
 	mu      sync.Mutex
 	running map[string]*FlowPlugin // programID → running plugin
+}
+
+// SetModuleSignaturePolicy installs the publication-trailer signature trust
+// policy Deploy/loadAndRegister enforce against (loop I2). Passing nil (also
+// the default after NewFlowManager) disables enforcement — flow bundles
+// install/load exactly as they did before this gate existed. This is a
+// separate setter rather than a NewFlowManager parameter so existing call
+// sites are unaffected; a production node attaches a real policy here only
+// once that activation is explicitly released (see the coordinator note in
+// the loop I2 task for the exact node.go wiring).
+func (m *FlowManager) SetModuleSignaturePolicy(policy *modulert.ModuleSignaturePolicy) {
+	m.sigPolicyMu.Lock()
+	defer m.sigPolicyMu.Unlock()
+	m.sigPolicy = policy
+}
+
+// signaturePolicy reads the currently installed policy (nil = inert).
+func (m *FlowManager) signaturePolicy() *modulert.ModuleSignaturePolicy {
+	m.sigPolicyMu.RLock()
+	defer m.sigPolicyMu.RUnlock()
+	return m.sigPolicy
 }
 
 // NewFlowManager creates a flow manager with the given config and capability handlers.
@@ -85,6 +120,19 @@ func (m *FlowManager) Deploy(ctx context.Context, wasmBytes []byte, flowJSON []b
 	if existing, ok := m.running[program.ProgramID]; ok {
 		existing.Close()
 		delete(m.running, program.ProgramID)
+	}
+
+	// Publication-trailer signature gate (loop I2 — defensive hardening,
+	// FAIL CLOSED once configured): admitted here, BEFORE the artifact is
+	// written to disk, reusing the exact gate modulert's module load path
+	// applies (instantiateWASM, loop I1) via the exported wrapper. The
+	// portable (trailer-stripped) return value is discarded on purpose —
+	// Install below persists wasmBytes VERBATIM, trailer intact, so an
+	// installed flow stays signed at rest; loadAndRegister strips the
+	// trailer again at actual wasm-compile time. nil sigPolicy (today's
+	// default) makes this a no-op that never rejects.
+	if _, _, sigErr := modulert.EnforceModuleSignaturePolicy(m.signaturePolicy(), wasmBytes); sigErr != nil {
+		return "", fmt.Errorf("flow %q: %w", program.ProgramID, sigErr)
 	}
 
 	// Install to disk
@@ -178,6 +226,15 @@ func (m *FlowManager) loadAndRegister(ctx context.Context, flow *InstalledFlow) 
 	wasmBytes, err := os.ReadFile(wasmPath)
 	if err != nil {
 		return fmt.Errorf("read wasm: %w", err)
+	}
+
+	// Publication-trailer signature gate (loop I2 — see the identical
+	// comment in Deploy above): re-checked here so a cold daemon restart
+	// (LoadAll, which never goes through Deploy) is covered too, not just
+	// the HTTP deploy path. Idempotent/cheap when Deploy already verified
+	// the same bytes moments ago. nil sigPolicy is a no-op.
+	if _, _, sigErr := modulert.EnforceModuleSignaturePolicy(m.signaturePolicy(), wasmBytes); sigErr != nil {
+		return fmt.Errorf("flow %q: %w", flow.ProgramID, sigErr)
 	}
 
 	// Parse flow program for triggers

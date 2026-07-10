@@ -84,7 +84,21 @@ func LoadFlowService(flowRef string, intervals map[string]string, deps FlowMount
 	if err != nil {
 		return nil, fmt.Errorf("read flow artifact: %w", err)
 	}
-	wasmBytes = modulert.StripPublicationTrailer(wasmBytes)
+	// Publication-trailer signature gate (loop I2 — see the identical
+	// comment in httpmount.go's LoadMountedFlow): admitted here, before the
+	// trailer is stripped, reusing modulert's I1 module-load gate via the
+	// exported wrapper. Sourced from deps.NodeCtx.ModuleSignaturePolicy
+	// (nil NodeCtx or nil policy is inert), mirroring how loadFlowInstance
+	// sources NodeCtx.CapabilityPolicy.
+	var sigPolicy *modulert.ModuleSignaturePolicy
+	if deps.NodeCtx != nil {
+		sigPolicy = deps.NodeCtx.ModuleSignaturePolicy
+	}
+	portableBytes, _, sigErr := modulert.EnforceModuleSignaturePolicy(sigPolicy, wasmBytes)
+	if sigErr != nil {
+		return nil, fmt.Errorf("flow service %q: %w", flowRef, sigErr)
+	}
+	wasmBytes = portableBytes
 
 	// Content-hash identity for the operator capability-policy gate (loop
 	// B1-followup — same requirement as LoadMountedFlow/httpmount.go):
