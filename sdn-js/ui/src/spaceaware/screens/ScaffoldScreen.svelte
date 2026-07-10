@@ -2,34 +2,23 @@
   import Panel from '../primitives/Panel.svelte';
   import SaButton from '../primitives/SaButton.svelte';
   import SaTabs from '../primitives/SaTabs.svelte';
-  import GlobeDemoPanel from './GlobeDemoPanel.svelte';
-  import { BMC2_MODES, CONSOLE_VIEWS, type SpaceAwareRoute } from '../router';
-  import { requiresAuthenticatedSession, type AuthSessionState } from '../../lib/auth/auth-store';
+  import { BMC2_MODES, type SpaceAwareRoute } from '../router';
+  import type { AuthSessionState } from '../../lib/auth/auth-store';
 
   let {
     route,
     navigate,
-    authState,
   }: {
     route: SpaceAwareRoute;
     navigate: (path: string) => void;
     authState?: AuthSessionState;
   } = $props();
 
-  // U0.3 (D1 groundwork): honest session status — no fabricated widget
-  // data, this is the scaffold's only authenticated-surface signal until
-  // U3.1 wires the real console shell. /console is guarded client-side
-  // (SpaceAwareApp.svelte); this line is a debug-visible confirmation that
-  // the guard's own state agrees with what is rendered.
-  const gated = $derived(route.screen === 'console' && requiresAuthenticatedSession(route));
-  const sessionLabel = $derived(
-    !authState || authState.status === 'unknown'
-      ? 'CHECKING SESSION…'
-      : authState.status === 'authenticated'
-        ? `SESSION: AUTHENTICATED (${authState.user?.trust_level ?? 'unknown'})`
-        : 'SESSION: ANONYMOUS',
-  );
-
+  // U3.1 note: `route.screen === 'console'` no longer reaches this
+  // component — `SpaceAwareApp.svelte` routes it to `ConsoleShell.svelte`
+  // instead, which has its own real header chips (health/session). The
+  // `screenMeta.console` entry below only survives as the generic
+  // fallback value for an unrecognized `route.screen`.
   const screenMeta: Record<string, { title: string; portedIn: string; reference: string }> = {
     console: {
       title: 'SDN CONSOLE',
@@ -55,12 +44,6 @@
 
   const meta = $derived(screenMeta[route.screen] ?? screenMeta.console);
 
-  const consoleTabs = CONSOLE_VIEWS.map((view) => ({
-    id: view,
-    label: view.toUpperCase(),
-    title: `Console ${view} view scaffold`,
-  }));
-
   const bmc2Tabs = [
     { id: 'index', label: 'INDEX', title: 'BMC2 modes index scaffold' },
     ...BMC2_MODES.map((mode) => ({
@@ -79,28 +62,14 @@
       Route skeleton placeholder ({route.path}). The pixel port of
       {meta.reference} lands in loop {meta.portedIn}.
     </p>
-    {#if gated}
-      <p class="scaffold-note session-note" title="U0.3 session guard status">{sessionLabel}</p>
-    {/if}
   </header>
 
-  {#if route.screen === 'console'}
-    <SaTabs
-      tabs={consoleTabs}
-      selected={route.sub ?? 'node'}
-      onselect={(view) => navigate(`/console/${view}`)}
-    />
-  {:else if route.screen === 'bmc2'}
+  {#if route.screen === 'bmc2'}
     <SaTabs
       tabs={bmc2Tabs}
       selected={route.sub ?? 'index'}
       onselect={(mode) => navigate(mode === 'index' ? '/bmc2' : `/bmc2/${mode}`)}
     />
-  {/if}
-
-  {#if route.screen === 'console' && route.sub === 'peers'}
-    <!-- U0.2: SdnGlobe port demo (design mock fixtures). Real peer wiring = U3.4. -->
-    <GlobeDemoPanel />
   {/if}
 
   <Panel title={`${meta.title} · not yet ported`} variant="well">
@@ -152,11 +121,6 @@
     max-width: 640px;
     font-size: 11px;
     color: #7d929b;
-  }
-  .session-note {
-    font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    letter-spacing: 0.08em;
-    color: #35c9d8;
   }
   .empty-copy {
     margin: 0;
