@@ -14,6 +14,40 @@ const (
 	DefaultMaxQueueSize = 1000
 	DefaultFetchTimeout = 30 * time.Second
 	DefaultPriority     = 0
+
+	// DefaultMaxFetchBytes bounds the number of content bytes a single
+	// auto-fetched tip may pull into this process (Task D4). It is
+	// enforced by the ContentFetcher adapter (see ipfsTipFetcher in
+	// internal/node), which prefers a Kubo size pre-check and otherwise
+	// hard-limits the read, rejecting/discarding anything over the cap
+	// without pinning or materializing it.
+	//
+	// This is the per-fetch analogue of the aggregate 90%-disk quota Task
+	// D3 (a separate, not-yet-landed worker touching internal/storage and
+	// internal/config) is expected to enforce: D3's quota bounds total
+	// pinned bytes across ALL tips, this constant bounds bytes for ANY
+	// ONE tip. The two compose rather than conflict -- D3 should treat
+	// DefaultMaxFetchBytes (or the equivalent configured
+	// TipQueueConfig.MaxFetchBytes) as the per-item ceiling it sums
+	// against its own aggregate threshold, not re-derive a separate
+	// per-item number. Do not raise this default without also checking
+	// D3's quota math.
+	DefaultMaxFetchBytes = 64 * 1024 * 1024 // 64 MiB
+
+	// DefaultMaxConcurrentFetches bounds how many ContentFetcher.Fetch
+	// calls TipQueue allows in flight at once (Task D4). This is separate
+	// from MaxQueueSize (which bounds backlog of *un-processed* tips);
+	// this bounds concurrent *in-progress fetches* so a burst of queued
+	// tips cannot spawn unbounded simultaneous downloads/connections.
+	DefaultMaxConcurrentFetches = 4
+
+	// DefaultMinFetchInterval is the minimum spacing TipQueue enforces
+	// between the start of consecutive fetches (Task D4): a simple
+	// min-interval/token-bucket-of-one rate limit. Tips that arrive faster
+	// than this interval still fetch -- they simply wait their turn,
+	// bounded by the tip's own TTL/queue residency rather than all firing
+	// at once.
+	DefaultMinFetchInterval = 250 * time.Millisecond
 )
 
 // TipQueueConfig holds system-wide defaults and per-source/per-schema overrides.
@@ -24,6 +58,13 @@ type TipQueueConfig struct {
 	DefaultTTL       time.Duration `yaml:"default_ttl" json:"default_ttl"`
 	MaxQueueSize     int           `yaml:"max_queue_size" json:"max_queue_size"`
 	FetchTimeout     time.Duration `yaml:"fetch_timeout" json:"fetch_timeout"`
+
+	// Resource caps (Task D4). See the Default* constants above for the
+	// rationale behind each default and how MaxFetchBytes composes with
+	// Task D3's separate aggregate disk quota.
+	MaxFetchBytes        int64         `yaml:"max_fetch_bytes" json:"max_fetch_bytes"`
+	MaxConcurrentFetches int           `yaml:"max_concurrent_fetches" json:"max_concurrent_fetches"`
+	MinFetchInterval     time.Duration `yaml:"min_fetch_interval" json:"min_fetch_interval"`
 
 	// Per-schema defaults (schema name -> config)
 	SchemaDefaults map[string]*SchemaConfig `yaml:"schema_defaults" json:"schema_defaults"`
@@ -65,13 +106,16 @@ type ResolvedConfig struct {
 // NewTipQueueConfig creates a TipQueueConfig with sensible defaults.
 func NewTipQueueConfig() *TipQueueConfig {
 	return &TipQueueConfig{
-		DefaultAutoFetch: DefaultAutoFetch,
-		DefaultAutoPin:   DefaultAutoPin,
-		DefaultTTL:       DefaultTTL,
-		MaxQueueSize:     DefaultMaxQueueSize,
-		FetchTimeout:     DefaultFetchTimeout,
-		SchemaDefaults:   make(map[string]*SchemaConfig),
-		SourceOverrides:  make(map[string]*SourceConfig),
+		DefaultAutoFetch:     DefaultAutoFetch,
+		DefaultAutoPin:       DefaultAutoPin,
+		DefaultTTL:           DefaultTTL,
+		MaxQueueSize:         DefaultMaxQueueSize,
+		FetchTimeout:         DefaultFetchTimeout,
+		MaxFetchBytes:        DefaultMaxFetchBytes,
+		MaxConcurrentFetches: DefaultMaxConcurrentFetches,
+		MinFetchInterval:     DefaultMinFetchInterval,
+		SchemaDefaults:       make(map[string]*SchemaConfig),
+		SourceOverrides:      make(map[string]*SourceConfig),
 	}
 }
 

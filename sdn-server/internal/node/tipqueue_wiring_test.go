@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -407,6 +408,191 @@ func TestRegistryPromotionToFullTriggersNodeCatchupBackfill(t *testing.T) {
 	})
 	if !demoted {
 		t.Fatal("demotion below Full did not unsubscribe (TipQueue config still reports trusted)")
+	}
+}
+
+// --- D4: resource caps on auto-ingest fetches --------------------------
+
+// TestIPFSTipFetcherRejectsContentOverCapViaStatPreCheckWithoutDownloading
+// drives the real ipfsTipFetcher (not a test double) against a fake Kubo
+// RPC server that implements /api/v0/block/stat, proving the pre-check
+// path rejects an oversize CID without ever calling /api/v0/cat -- i.e.
+// without paying for the download at all -- while an undersize CID still
+// fetches normally.
+func TestIPFSTipFetcherRejectsContentOverCapViaStatPreCheckWithoutDownloading(t *testing.T) {
+	const oversizeCID = "bafyoversizestat"
+	const undersizeCID = "bafyundersizestat"
+
+	var mu sync.Mutex
+	sawCatForOversize := false
+	ipfs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cidValue := r.URL.Query().Get("arg")
+		switch r.URL.Path {
+		case "/api/v0/block/stat":
+			if cidValue == oversizeCID {
+				_, _ = w.Write([]byte(`{"Key":"` + cidValue + `","Size":1048576}`))
+				return
+			}
+			http.NotFound(w, r)
+		case "/api/v0/cat":
+			mu.Lock()
+			if cidValue == oversizeCID {
+				sawCatForOversize = true
+			}
+			mu.Unlock()
+			_, _ = w.Write([]byte("small-ok"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ipfs.Close()
+
+	fetcher := newIPFSTipFetcher(ipfs.URL, 1024) // 1 KiB cap; stat reports 1 MiB for oversizeCID
+
+	_, err := fetcher.Fetch(context.Background(), oversizeCID)
+	if err == nil || !errors.Is(err, sdnpubsub.ErrFetchTooLarge) {
+		t.Fatalf("Fetch(oversize) error = %v, want an error wrapping sdnpubsub.ErrFetchTooLarge", err)
+	}
+	mu.Lock()
+	calledCat := sawCatForOversize
+	mu.Unlock()
+	if calledCat {
+		t.Fatal("stat pre-check should have rejected the oversize CID before ever calling /api/v0/cat")
+	}
+
+	data, err := fetcher.Fetch(context.Background(), undersizeCID)
+	if err != nil {
+		t.Fatalf("Fetch(undersize) unexpected error: %v", err)
+	}
+	if string(data) != "small-ok" {
+		t.Fatalf("Fetch(undersize) data = %q, want %q", data, "small-ok")
+	}
+}
+
+// TestIPFSTipFetcherHardLimitsReadWhenStatUnavailable drives the real
+// ipfsTipFetcher against a fake Kubo server that does NOT implement
+// /api/v0/block/stat (as the D1 wiring test's fake server, and real Kubo
+// for a chunked UnixFS CID whose single-block stat wouldn't reflect the
+// file's cumulative size, both effectively behave) to prove the hard
+// io.LimitReader-based read cap is what actually enforces the ceiling when
+// no reliable pre-check size is available.
+func TestIPFSTipFetcherHardLimitsReadWhenStatUnavailable(t *testing.T) {
+	const oversizeCID = "bafyoversizeread"
+	payload := bytes.Repeat([]byte{0x41}, 2048) // 2 KiB, over the cap below
+
+	ipfs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v0/cat":
+			_, _ = w.Write(payload)
+		default:
+			// No /api/v0/block/stat support -- forces the hard-limit
+			// fallback path in ipfsTipFetcher.Fetch.
+			http.NotFound(w, r)
+		}
+	}))
+	defer ipfs.Close()
+
+	fetcher := newIPFSTipFetcher(ipfs.URL, 1024) // 1 KiB cap, payload is 2 KiB
+
+	_, err := fetcher.Fetch(context.Background(), oversizeCID)
+	if err == nil || !errors.Is(err, sdnpubsub.ErrFetchTooLarge) {
+		t.Fatalf("Fetch error = %v, want an error wrapping sdnpubsub.ErrFetchTooLarge", err)
+	}
+}
+
+// TestIPFSTipFetcherAllowsContentExactlyAtCap is a boundary check for the
+// off-by-one behavior of the maxBytes+1 LimitReader in ipfsTipFetcher.Fetch.
+func TestIPFSTipFetcherAllowsContentExactlyAtCap(t *testing.T) {
+	const cidValue = "bafyexactcap"
+	payload := bytes.Repeat([]byte{0x42}, 1024)
+
+	ipfs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v0/cat":
+			_, _ = w.Write(payload)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ipfs.Close()
+
+	fetcher := newIPFSTipFetcher(ipfs.URL, int64(len(payload)))
+
+	data, err := fetcher.Fetch(context.Background(), cidValue)
+	if err != nil {
+		t.Fatalf("Fetch at exactly the cap should succeed, got error: %v", err)
+	}
+	if !bytes.Equal(data, payload) {
+		t.Fatalf("Fetch returned %d bytes, want %d", len(data), len(payload))
+	}
+}
+
+// TestTipQueueRejectsOversizeIPFSFetchWithoutPinningEndToEnd exercises the
+// full D1+D4 chain through the SAME real adapters buildTipQueue wires
+// (ipfsTipFetcher, ipfsTipPinner) against a fake Kubo server, mirroring
+// TestBuildTipQueueWiresRealIPFSFetcherAndPinnerWhenConfigured's pattern:
+// an oversize tip must be fetched-and-rejected without ever reaching
+// /api/v0/pin/add, while an undersize tip in the same queue still flows
+// through to a real pin call.
+func TestTipQueueRejectsOversizeIPFSFetchWithoutPinningEndToEnd(t *testing.T) {
+	const oversizeCID = "bafyoversizeflow"
+	const undersizeCID = "bafyunderflow"
+
+	var mu sync.Mutex
+	pinned := make(map[string]bool)
+	ipfs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cidValue := r.URL.Query().Get("arg")
+		switch r.URL.Path {
+		case "/api/v0/cat":
+			if cidValue == oversizeCID {
+				_, _ = w.Write(bytes.Repeat([]byte{0x43}, 4096))
+				return
+			}
+			_, _ = w.Write([]byte("ok"))
+		case "/api/v0/pin/add":
+			mu.Lock()
+			pinned[cidValue] = true
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"Pins":["` + cidValue + `"]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ipfs.Close()
+
+	tqConfig := sdnpubsub.NewTipQueueConfig()
+	tqConfig.DefaultAutoFetch = true
+	tqConfig.DefaultAutoPin = true
+	tqConfig.MaxFetchBytes = 1024 // smaller than the oversize payload above
+
+	tq := sdnpubsub.NewTipQueue(tqConfig)
+	tq.SetFetcher(newIPFSTipFetcher(ipfs.URL, tqConfig.MaxFetchBytes))
+	tq.SetPinner(newIPFSTipPinner(ipfs.URL))
+
+	tq.HandleMessage(&ps.Message{
+		Message:      &pb.Message{Data: buildWiringTestPNM(t, oversizeCID, "unknown-schema")},
+		ReceivedFrom: mustTestPeerID(t, 0x73),
+	})
+	tq.HandleMessage(&ps.Message{
+		Message:      &pb.Message{Data: buildWiringTestPNM(t, undersizeCID, "unknown-schema")},
+		ReceivedFrom: mustTestPeerID(t, 0x74),
+	})
+
+	if !waitForCondition(t, 2*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return pinned[undersizeCID] && tq.OversizeRejections() >= 1
+	}) {
+		mu.Lock()
+		defer mu.Unlock()
+		t.Fatalf("expected undersize CID pinned and an oversize rejection counted: pinned=%v rejections=%d", pinned, tq.OversizeRejections())
+	}
+
+	mu.Lock()
+	oversizePinned := pinned[oversizeCID]
+	mu.Unlock()
+	if oversizePinned {
+		t.Fatal("oversize content must not have reached /api/v0/pin/add")
 	}
 }
 
