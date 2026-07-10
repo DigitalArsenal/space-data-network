@@ -10,15 +10,23 @@
    * `node/epm/vcard`, `/v1/stats`, and `/v1/peers` (`lib/node-data.ts` does
    * all the fetching/parsing/formatting; this file only renders the
    * resulting view-model strings verbatim). Any field with no backing
-   * surface yet (AUTOSTART, UPTIME, storage capacity, PEER MAP countries,
-   * NETWORK THROUGHPUT, ACTIVITY LOG) renders an honest no-data state
-   * instead of a fabricated number — see `lib/node-data.ts`'s doc comments
-   * for which endpoint, if any, is missing each one.
+   * surface yet (AUTOSTART, UPTIME, storage capacity, NETWORK THROUGHPUT,
+   * ACTIVITY LOG) renders an honest no-data state instead of a fabricated
+   * number — see `lib/node-data.ts`'s doc comments for which endpoint, if
+   * any, is missing each one.
    *
-   * The PEER MAP widget's actual canvas globe (`globe.js`) is still
-   * explicitly OUT of scope here — that's U3.4 — so it only shows its
-   * caption chrome (now real connection count, honest country dash, 3D/2D
-   * tab state) around an inert canvas.
+   * The PEER MAP widget (loop U3.4) renders a real canvas globe —
+   * `../../../lib/globe/SdnGlobe.ts` (the `globe.js` port; same engine the
+   * retired `GlobeDemoPanel.svelte` demo used) fed by `lib/netmap-data.ts`'s
+   * honest point-placement pipeline: every peer's first PUBLIC ip4/ip6
+   * multiaddr (private/loopback/dns/`/p2p-circuit` addrs excluded) is looked
+   * up against a small vendored static table of DOCUMENTED production infra
+   * (decision D8 v1 — no runtime GeoIP calls, no CDN tiles); a peer with no
+   * table hit gets a deterministic peer-id-hashed placement instead,
+   * rendered dimmer by the engine with an honest "location unresolved"
+   * tooltip rather than a fabricated country. COUNTRIES counts DISTINCT
+   * countries among RESOLVED peers only (still the honest `—` when nothing
+   * has resolved).
    *
    * SERVICE widget decision (D6, `SPACEAWARE_UI_WIRING_ANALYSIS.md`):
    * daemon lifecycle (restart/stop) has no HTTP control surface and the
@@ -59,6 +67,12 @@
     loadNodeDashboardData,
     serviceStatusDotColor,
   } from '../../lib/node-data';
+  import {
+    buildNetmapPoints,
+    formatNetmapCountryCount,
+    netmapPointColor,
+  } from '../../lib/netmap-data';
+  import { sdnGlobe } from '../../../lib/globe/SdnGlobe';
   import type { SdnApiClient } from '../../../lib/auth/sdn-api-client';
 
   let {
@@ -86,6 +100,22 @@
   const identityView = $derived(buildNodeIdentityView(dashboard?.identity ?? null, dashboard?.vcardText ?? null));
   const serviceView = $derived(buildNodeServiceView(dashboard?.nodeInfo ?? null));
   const netmapView = $derived(buildNodeNetmapView(dashboard?.stats ?? null));
+  // Loop U3.4: the real point set + honest resolved-only country count for
+  // the PEER MAP canvas globe — see `lib/netmap-data.ts`'s doc comment.
+  // `netmapView.countryCount` above stays the U3.2 honest-dash placeholder
+  // (that builder has no geo surface); this widget renders the real count
+  // computed here instead, without touching `node-data.ts`.
+  const netmapModel = $derived(buildNetmapPoints(dashboard?.nodeInfo ?? null, dashboard?.peers ?? []));
+  const netmapCountryCount = $derived(formatNetmapCountryCount(netmapModel.points));
+  const netmapGlobeOptions = $derived({
+    home: { ...netmapModel.home, label: 'THIS NODE' },
+    points: netmapModel.points,
+    colorFor: netmapPointColor,
+    // Reading mapMode HERE (not just inside a closure) makes this derived
+    // object invalidate on toggle, so the action's update applies the mode
+    // — same rationale as the retired GlobeDemoPanel demo's identical comment.
+    mode: mapMode,
+  });
   const peerSummaryRows = $derived(buildNodePeerSummary(dashboard?.peers ?? []));
   const storageView = $derived(buildNodeStorageView(dashboard?.stats ?? null, dashboard?.nodeInfo?.standardsVersion));
   const healthChipStyle = $derived(consoleHealthChipStyle(healthState));
@@ -417,16 +447,16 @@
           </div>
         </div>
         <div class="sdn-netmap-canvas-wrap">
-          <!--
-            Intentionally inert: the real canvas globe (globe.js port,
-            `../../../lib/globe/SdnGlobe.ts`) is wired here in loop U3.4,
-            not this task — see the file-level doc comment.
-          -->
-          <canvas class="sdn-netmap-canvas"></canvas>
+          <canvas class="sdn-netmap-canvas" use:sdnGlobe={netmapGlobeOptions}></canvas>
           <div class="sdn-netmap-caption-tl">
             <div>{netmapView.connectionCount} CONNECTIONS</div>
-            <!-- No GeoIP surface wired yet — honest dash rather than a fabricated country count. -->
-            <div>{netmapView.countryCount} COUNTRIES</div>
+            <!--
+              Loop U3.4: real distinct-country count among RESOLVED peers
+              only (`lib/netmap-data.ts`'s countResolvedCountries) — still
+              the honest '—' when nothing has resolved, never a fabricated
+              number.
+            -->
+            <div>{netmapCountryCount} COUNTRIES</div>
           </div>
           <div class="sdn-netmap-caption-br">DRAG TO ROTATE</div>
         </div>
@@ -449,7 +479,10 @@
               ></span>CLIENTS</span
             >
           </div>
-          <span class="sdn-netmap-legend-note">Locations · MaxMind GeoLite2</span>
+          <!-- The mock credits "MaxMind GeoLite2", but D8 v1 uses a vendored
+               static host table + deterministic fallback (lib/netmap-data.ts)
+               — crediting a database we don't ship would be a false claim. -->
+          <span class="sdn-netmap-legend-note">Locations · static map · approximate</span>
         </div>
       {:else if w.id === 'throughput'}
         <div class="sdn-widget-title">NETWORK THROUGHPUT</div>

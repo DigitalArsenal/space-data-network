@@ -13,6 +13,13 @@
  * embedded as a precomputed 2° dot grid (./land-dots.ts), with the same
  * localStorage['sdn_land_dots_v3_2deg'] cache semantics and the same
  * graticule-only fallback.
+ *
+ * Loop U3.4 extended this engine (rather than forking it) for the real NODE
+ * dashboard PEER MAP widget: `SdnGlobePoint.sublabel` overrides the
+ * tooltip's second line and `SdnGlobePoint.resolved` dims a point's marker/
+ * arc/packet — both optional and additive, so any caller that predates
+ * these fields (e.g. the retired `GlobeDemoPanel.svelte` demo, which used
+ * plain `kind`/`ip` fixtures) would still render exactly as before.
  */
 
 import { loadLandDots, type LandDot } from './land-dots';
@@ -32,6 +39,21 @@ export interface SdnGlobePoint {
   city?: string;
   /** Tooltip line 2 suffix. */
   ip?: string;
+  /**
+   * Tooltip line 2 override — when set, replaces the default
+   * `${kind.toUpperCase()}  ·  ${ip}` composition verbatim (loop U3.4: lets
+   * callers show honest resolved/unresolved location text without
+   * repurposing `kind`, which still drives marker color/sizing).
+   */
+  sublabel?: string;
+  /**
+   * `false` dims this point's marker/arc/packet (lower alpha) — loop U3.4's
+   * honest "location unresolved" visual cue for peers placed via a
+   * deterministic hash fallback rather than a real vendored-table hit.
+   * Unset/`true` renders at full opacity (matches every point before this
+   * field existed, so demo fixtures that never set it are unaffected).
+   */
+  resolved?: boolean;
 }
 
 export interface SdnGlobeHome extends SdnGlobePoint {
@@ -417,6 +439,7 @@ export class SdnGlobe {
       const col = this.colorFor(pt.kind);
       const pts = this._arcPts(home, pt, 64);
       const lw = pt.kind === 'client' ? 0.9 : 1.3;
+      const dim = pt.resolved === false ? 0.4 : 1; // loop U3.4: unresolved-location peers render dimmer end-to-end
       ctx.strokeStyle = col;
       ctx.lineWidth = lw;
       // segment-by-segment so alpha can taper with depth — arcs melt into the horizon instead of a hard cut
@@ -425,7 +448,7 @@ export class SdnGlobe {
         const b = pts[k];
         const zmid = (a.z + b.z) / 2;
         if (zmid <= 0) continue; // segment is behind the globe
-        ctx.globalAlpha = 0.46 * (zmid < FADE ? zmid / FADE : 1);
+        ctx.globalAlpha = 0.46 * (zmid < FADE ? zmid / FADE : 1) * dim;
         ctx.beginPath();
         ctx.moveTo(a.x, a.y);
         ctx.lineTo(b.x, b.y);
@@ -438,7 +461,7 @@ export class SdnGlobe {
       const idx = Math.floor(tt * (pts.length - 1));
       const pk = pts[idx];
       if (pk && pk.z > 0.01) {
-        ctx.globalAlpha = pk.z < FADE ? pk.z / FADE : 1;
+        ctx.globalAlpha = (pk.z < FADE ? pk.z / FADE : 1) * dim;
         ctx.fillStyle = col;
         ctx.shadowColor = col;
         ctx.shadowBlur = 8;
@@ -462,6 +485,7 @@ export class SdnGlobe {
       const p = this._proj(this._toVec(pt.lat, pt.lon));
       if (p.z <= 0.02) continue;
       const col = this.colorFor(pt.kind);
+      const dim = pt.resolved === false ? 0.4 : 1; // loop U3.4: unresolved-location peers render dimmer
       const near =
         this._mx != null &&
         this._my != null &&
@@ -471,12 +495,12 @@ export class SdnGlobe {
       const rad = pt.kind === 'client' ? 2 : 3;
       // pulse ring
       ctx.strokeStyle = col;
-      ctx.globalAlpha = 0.5 * (1 - pulse);
+      ctx.globalAlpha = 0.5 * (1 - pulse) * dim;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.arc(p.x, p.y, rad + 1 + pulse * (pt.kind === 'client' ? 4 : 7), 0, 7);
       ctx.stroke();
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = dim;
       ctx.fillStyle = col;
       ctx.shadowColor = col;
       ctx.shadowBlur = 7;
@@ -484,6 +508,7 @@ export class SdnGlobe {
       ctx.arc(p.x, p.y, rad, 0, 7);
       ctx.fill();
       ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
       if (pt.label) this._label(p.x, p.y - rad - 4, pt.label, col);
     }
     // home node
@@ -532,7 +557,7 @@ export class SdnGlobe {
     const x = this._mx ?? 0;
     const y = this._my ?? 0;
     const line1 = pt.city;
-    const line2 = (pt.kind || '').toUpperCase() + (pt.ip ? '  ·  ' + pt.ip : '');
+    const line2 = pt.sublabel ?? (pt.kind || '').toUpperCase() + (pt.ip ? '  ·  ' + pt.ip : '');
     ctx.font = "600 10px 'Chakra Petch',monospace";
     const w1 = ctx.measureText(line1).width;
     ctx.font = "9px 'IBM Plex Mono',monospace";
@@ -614,6 +639,7 @@ export class SdnGlobe {
       const pt = this.points[a];
       const tp = this._mapXY(pt.lat, pt.lon);
       const col = this.colorFor(pt.kind);
+      const dim = pt.resolved === false ? 0.4 : 1; // loop U3.4: unresolved-location peers render dimmer end-to-end
       let tx = tp.x;
       if (Math.abs(pt.lon - home.lon) > 180) {
         tx += (pt.lon > home.lon ? -1 : 1) * this.mw; // short way across dateline
@@ -621,7 +647,7 @@ export class SdnGlobe {
       const mxp = (hp.x + tx) / 2;
       const myp = (hp.y + tp.y) / 2 - Math.min(64, Math.abs(tx - hp.x) * 0.24 + 20);
       ctx.strokeStyle = col;
-      ctx.globalAlpha = 0.4;
+      ctx.globalAlpha = 0.4 * dim;
       ctx.lineWidth = pt.kind === 'client' ? 0.8 : 1.2;
       ctx.beginPath();
       ctx.moveTo(hp.x, hp.y);
@@ -633,6 +659,7 @@ export class SdnGlobe {
       const u = 1 - tt;
       const px = u * u * hp.x + 2 * u * tt * mxp + tt * tt * tx;
       const py = u * u * hp.y + 2 * u * tt * myp + tt * tt * tp.y;
+      ctx.globalAlpha = dim;
       ctx.fillStyle = col;
       ctx.shadowColor = col;
       ctx.shadowBlur = 8;
@@ -640,6 +667,7 @@ export class SdnGlobe {
       ctx.arc(px, py, pt.kind === 'client' ? 1.5 : 2, 0, 7);
       ctx.fill();
       ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
     }
     // markers
     const pulse = 0.5 + 0.5 * Math.sin(now * 0.004);
@@ -648,6 +676,7 @@ export class SdnGlobe {
       const p2 = this.points[m];
       const mp = this._mapXY(p2.lat, p2.lon);
       const c2 = this.colorFor(p2.kind);
+      const dim = p2.resolved === false ? 0.4 : 1; // loop U3.4: unresolved-location peers render dimmer
       const near =
         this._mx != null &&
         this._my != null &&
@@ -656,12 +685,12 @@ export class SdnGlobe {
       if (near) this._hover = m;
       const rad = p2.kind === 'client' ? 2 : 3;
       ctx.strokeStyle = c2;
-      ctx.globalAlpha = 0.5 * (1 - pulse);
+      ctx.globalAlpha = 0.5 * (1 - pulse) * dim;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.arc(mp.x, mp.y, rad + 1 + pulse * (p2.kind === 'client' ? 4 : 7), 0, 7);
       ctx.stroke();
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = dim;
       ctx.fillStyle = c2;
       ctx.shadowColor = c2;
       ctx.shadowBlur = 7;
@@ -669,6 +698,7 @@ export class SdnGlobe {
       ctx.arc(mp.x, mp.y, rad, 0, 7);
       ctx.fill();
       ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
       if (p2.label) this._label(mp.x, mp.y - rad - 4, p2.label, c2);
     }
     ctx.strokeStyle = '#ffd089';
