@@ -56,6 +56,15 @@ type ApplyResult struct {
 	// two-phase path (runtime/kubo/ was separable) rather than the legacy
 	// single-phase swap.
 	TwoPhase bool
+	// ModuleUpdate reports whether this apply went through the G4
+	// module-targeted swap path (Manifest.IsModuleUpdate): only the
+	// artifacts in the manifest's Modules[] were touched, not the whole
+	// bundle. Mutually exclusive with TwoPhase — a module-targeted update
+	// never runs the Kubo two-phase path.
+	ModuleUpdate bool
+	// AppliedModules lists the module ids installed by a module-targeted
+	// apply, in manifest order. Empty for a full-bundle apply.
+	AppliedModules []string
 }
 
 type RollbackOptions struct {
@@ -131,9 +140,17 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 	}
 
 	rollbackDir := filepath.Join(paths.Rollback, candidate.UpdateID)
-	twoPhase := hasSeparableKuboSubtree(newRoot)
+	moduleUpdate := candidate.Manifest.IsModuleUpdate()
+	var twoPhase bool
 	var swapErr error
-	if twoPhase {
+	switch {
+	case moduleUpdate:
+		// G4 targeted swap: install only the declared module artifacts.
+		// Never runs the Kubo two-phase path — that path exists for
+		// full-bundle updates that may ship a new runtime/kubo/ subtree.
+		swapErr = applyModuleTargets(paths, newRoot, rollbackDir, candidate.Manifest.Modules)
+	case hasSeparableKuboSubtree(newRoot):
+		twoPhase = true
 		if err := os.RemoveAll(rollbackDir); err != nil {
 			return nil, err
 		}
@@ -142,7 +159,7 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 			hook = NoopKuboPhaseHook
 		}
 		swapErr = applyTwoPhase(paths, newRoot, rollbackDir, candidate.UpdateID, hook, opts.testFault)
-	} else {
+	default:
 		// Degraded/back-compat path: the incoming bundle has no separable
 		// runtime/kubo/ subtree (older release, or a non-Kubo-bearing
 		// target), so fall back to the original single-phase atomic swap.
@@ -184,14 +201,21 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 	if err := os.RemoveAll(candidate.Dir); err != nil {
 		return nil, fmt.Errorf("update applied but staged cleanup failed: %w", err)
 	}
-	return &ApplyResult{
+	result := &ApplyResult{
 		UpdateID:     candidate.UpdateID,
 		Version:      candidate.Result.Version,
 		Sequence:     candidate.Result.Sequence,
 		Channel:      candidate.Result.Channel,
 		RollbackPath: rollbackDir,
 		TwoPhase:     twoPhase,
-	}, nil
+		ModuleUpdate: moduleUpdate,
+	}
+	if moduleUpdate {
+		for _, module := range candidate.Manifest.Modules {
+			result.AppliedModules = append(result.AppliedModules, module.ID)
+		}
+	}
+	return result, nil
 }
 
 func RollbackLast(paths Paths, opts RollbackOptions) (*RollbackResult, error) {

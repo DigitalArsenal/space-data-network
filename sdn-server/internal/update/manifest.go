@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -23,10 +24,35 @@ import (
 
 const ManifestSchema = "org.spacedatanetwork.update.v1"
 
+// TargetKindModuleUpdate is a target.kind value (G4) marking a manifest that
+// delivers a targeted swap of one or more BUILT-IN module artifacts (e.g.
+// flatsql) rather than a full bundle. It travels through the exact same
+// signed-manifest + per-peer-encrypted carrier lane as a full-bundle update
+// (see envelope.go / EncryptCarrierForRecipients); only Apply's install step
+// differs (see ManifestModuleTarget and Manifest.IsModuleUpdate). A manifest
+// also selects the targeted-swap path whenever Modules is non-empty, even if
+// Target.Kind carries a different value — Kind and Modules are independent
+// signals and either alone is sufficient.
+const TargetKindModuleUpdate = "module-update"
+
 type ManifestTarget struct {
 	Platform string `json:"platform"`
 	Arch     string `json:"arch"`
 	Kind     string `json:"kind"`
+}
+
+// ManifestModuleTarget (G4) declares one built-in module artifact that a
+// module-targeted update installs in place of a full bundle swap. Hash is
+// the sha256 (lowercase hex) of the plaintext artifact bytes found at Path
+// inside the decrypted/staged bundle payload; Path is the artifact's install
+// location relative to the bundle root (e.g.
+// "runtime/modules/flatsql/flatsql.wasm") and must stay inside the bundle
+// root (validated with safeJoin both at manifest-validate time, structurally,
+// and again at apply time against the real bundle root).
+type ManifestModuleTarget struct {
+	ID   string `json:"id"`
+	Hash string `json:"hash"`
+	Path string `json:"path"`
 }
 
 type ManifestBundle struct {
@@ -74,8 +100,25 @@ type Manifest struct {
 	Signing       ManifestSigning        `json:"signing"`
 	Rollback      *ManifestRollback      `json:"rollback,omitempty"`
 	Compatibility *ManifestCompatibility `json:"compatibility,omitempty"`
+	// Modules (G4) is optional and additive: when non-empty it declares that
+	// this update installs only the listed built-in module artifacts (a
+	// targeted swap) instead of the full bundle. A manifest with no Modules
+	// behaves exactly as before this field existed. Because
+	// CanonicalManifestBytes canonicalizes the full generic JSON document
+	// (not just the fields this struct models), adding this field is
+	// signature-compatible: it is covered by the signature like any other
+	// manifest field, old or new.
+	Modules []ManifestModuleTarget `json:"modules,omitempty"`
 
 	raw []byte
+}
+
+// IsModuleUpdate reports whether this manifest selects the G4
+// module-targeted apply path: either Target.Kind is explicitly
+// TargetKindModuleUpdate, or Modules is non-empty. Either signal alone is
+// sufficient (see TargetKindModuleUpdate doc).
+func (m *Manifest) IsModuleUpdate() bool {
+	return m.Target.Kind == TargetKindModuleUpdate || len(m.Modules) > 0
 }
 
 // ParseManifest decodes a signed update manifest, retaining the raw bytes so
@@ -175,8 +218,50 @@ func (m *Manifest) assertRequiredShape() error {
 	if m.Signing.Signature == "" {
 		return errors.New("missing update signature")
 	}
+	if err := m.assertModuleTargets(); err != nil {
+		return err
+	}
 	return nil
 }
+
+// assertModuleTargets validates the optional G4 Modules[] declaration: a
+// module-update target kind requires at least one module target, and every
+// module target needs a non-empty id, a valid 64-hex sha256 hash, and a path
+// that stays inside the bundle root (checked structurally with safeJoin
+// against a synthetic root — the real bundle root is only known at apply
+// time, where the check is repeated against the real paths).
+func (m *Manifest) assertModuleTargets() error {
+	if m.Target.Kind == TargetKindModuleUpdate && len(m.Modules) == 0 {
+		return errors.New("module-update target requires at least one module target")
+	}
+	seenPaths := make(map[string]bool, len(m.Modules))
+	for i, module := range m.Modules {
+		if strings.TrimSpace(module.ID) == "" {
+			return fmt.Errorf("missing module target id at index %d", i)
+		}
+		if err := assertHash(module.Hash, fmt.Sprintf("missing or invalid module target hash for %s", module.ID)); err != nil {
+			return err
+		}
+		if strings.TrimSpace(module.Path) == "" {
+			return fmt.Errorf("missing module target path for %s", module.ID)
+		}
+		if _, err := safeJoin(moduleTargetValidationRoot, module.Path); err != nil {
+			return fmt.Errorf("module target %s: %w", module.ID, err)
+		}
+		normalized := strings.ToLower(filepath.ToSlash(module.Path))
+		if seenPaths[normalized] {
+			return fmt.Errorf("duplicate module target path: %s", module.Path)
+		}
+		seenPaths[normalized] = true
+	}
+	return nil
+}
+
+// moduleTargetValidationRoot is a synthetic (never-created) base directory
+// used only to run safeJoin's lexical "does this escape the root" check on a
+// module target's Path at manifest-validate time, before any real bundle
+// root exists on disk.
+const moduleTargetValidationRoot = "bundle-root"
 
 func platformMatches(manifestPlatform, hostPlatform string) bool {
 	if manifestPlatform == hostPlatform {
