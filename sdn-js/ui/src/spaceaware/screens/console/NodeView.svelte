@@ -1,16 +1,24 @@
 <script lang="ts">
   /**
-   * NODE dashboard (loop U3.1). Ground truth: the `<!-- ==== NODE ==== -->`
-   * block in `SDN Console.dc.html` — a 12-col widget grid with an EDIT MODE
-   * (drag-reorder, span cycle, remove, add-from-catalog, reset), layout
-   * persisted to `localStorage['sdn_node_layout_v1']`.
+   * NODE dashboard (loop U3.1 layout, U3.2 real data). Ground truth: the
+   * `<!-- ==== NODE ==== -->` block in `SDN Console.dc.html` — a 12-col
+   * widget grid with an EDIT MODE (drag-reorder, span cycle, remove,
+   * add-from-catalog, reset), layout persisted to
+   * `localStorage['sdn_node_layout_v1']`. That layout engine is untouched by
+   * U3.2 — only the widget BODIES below changed, from U3.1's typed
+   * placeholder data to real reads of `node/info`, `node/epm/json`,
+   * `node/epm/vcard`, `/v1/stats`, and `/v1/peers` (`lib/node-data.ts` does
+   * all the fetching/parsing/formatting; this file only renders the
+   * resulting view-model strings verbatim). Any field with no backing
+   * surface yet (AUTOSTART, UPTIME, storage capacity, PEER MAP countries,
+   * NETWORK THROUGHPUT, ACTIVITY LOG) renders an honest no-data state
+   * instead of a fabricated number — see `lib/node-data.ts`'s doc comments
+   * for which endpoint, if any, is missing each one.
    *
-   * All widget BODIES render `TYPED PLACEHOLDER data (lib/console.ts)` —
-   * real wiring (node/info, node/epm, stats, activity feed, throughput
-   * counters) is loop task U3.2. The PEER MAP widget's actual canvas globe
-   * (`globe.js`) is explicitly OUT of scope here too — that's U3.4 — so it
-   * only shows its static caption chrome (connection/country counts,
-   * 3D/2D tab state) around an inert canvas.
+   * The PEER MAP widget's actual canvas globe (`globe.js`) is still
+   * explicitly OUT of scope here — that's U3.4 — so it only shows its
+   * caption chrome (now real connection count, honest country dash, 3D/2D
+   * tab state) around an inert canvas.
    *
    * SERVICE widget decision (D6, `SPACEAWARE_UI_WIRING_ANALYSIS.md`):
    * daemon lifecycle (restart/stop) has no HTTP control surface and the
@@ -20,18 +28,11 @@
    */
   import { onMount } from 'svelte';
   import {
-    NODE_ACTIVITY_PLACEHOLDER,
     NODE_DEFAULT_LAYOUT,
-    NODE_HEALTH_PLACEHOLDER,
-    NODE_IDENTITY_PLACEHOLDER,
-    NODE_NETMAP_PLACEHOLDER,
-    NODE_PEER_SUMMARY_PLACEHOLDER,
-    NODE_SERVICE_PLACEHOLDER,
-    NODE_STORAGE_PLACEHOLDER,
-    NODE_THROUGHPUT_SPARK,
     NODE_WIDGETS,
     addNodeWidget,
     availableNodeWidgets,
+    consoleHealthChipStyle,
     cycleWidgetSpan,
     loadNodeLayout,
     nodeMapTabStyle,
@@ -39,14 +40,32 @@
     reorderNodeLayout,
     resetNodeLayout,
     saveNodeLayout,
-    throughputBarGradient,
     widgetSpanLabel,
+    type ConsoleHealthChipState,
     type NodeLayout,
     type NodeMapMode,
     type NodeWidgetId,
   } from '../../lib/console';
+  import {
+    NODE_PEER_SUMMARY_EMPTY_LABEL,
+    buildEpmDownloadFilename,
+    buildNodeHealthView,
+    buildNodeIdentityView,
+    buildNodeNetmapView,
+    buildNodePeerSummary,
+    buildNodeServiceView,
+    buildNodeStorageView,
+    flattenJsonToCsv,
+    loadNodeDashboardData,
+    serviceStatusDotColor,
+  } from '../../lib/node-data';
+  import type { SdnApiClient } from '../../../lib/auth/sdn-api-client';
 
-  let { onOpenQr }: { onOpenQr: () => void } = $props();
+  let {
+    onOpenQr,
+    apiClient,
+    healthState,
+  }: { onOpenQr: () => void; apiClient: SdnApiClient; healthState: ConsoleHealthChipState } = $props();
 
   let layout = $state<NodeLayout>(NODE_DEFAULT_LAYOUT.map((w) => ({ ...w })));
   let editMode = $state(false);
@@ -56,13 +75,69 @@
   // mock's `this._dragId`, since it only matters mid-gesture.
   let dragId: NodeWidgetId | null = null;
 
+  // ---------------------------------------------------------------------
+  // Real dashboard data (loop U3.2). Fetched once on mount — see
+  // `lib/node-data.ts`'s `loadNodeDashboardData` doc comment for why this
+  // never throws/rejects even when the daemon is fully offline.
+  // ---------------------------------------------------------------------
+  let dashboard = $state<Awaited<ReturnType<typeof loadNodeDashboardData>> | null>(null);
+
+  const healthView = $derived(buildNodeHealthView(dashboard?.nodeInfo ?? null, dashboard?.stats?.totalBytes ?? null));
+  const identityView = $derived(buildNodeIdentityView(dashboard?.identity ?? null, dashboard?.vcardText ?? null));
+  const serviceView = $derived(buildNodeServiceView(dashboard?.nodeInfo ?? null));
+  const netmapView = $derived(buildNodeNetmapView(dashboard?.stats ?? null));
+  const peerSummaryRows = $derived(buildNodePeerSummary(dashboard?.peers ?? []));
+  const storageView = $derived(buildNodeStorageView(dashboard?.stats ?? null, dashboard?.nodeInfo?.standardsVersion));
+  const healthChipStyle = $derived(consoleHealthChipStyle(healthState));
+
   onMount(() => {
     try {
       layout = loadNodeLayout(window.localStorage);
     } catch {
       // localStorage unavailable — keep the in-memory default layout.
     }
+    void loadNodeDashboardData(apiClient).then((data) => {
+      dashboard = data;
+    });
   });
+
+  function triggerDownload(content: string, filename: string, mimeType: string) {
+    try {
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // Browser download APIs unavailable in this context — the button is a no-op rather than a crash.
+    }
+  }
+
+  function downloadJson() {
+    const raw = dashboard?.epmJsonRaw;
+    if (!raw) return;
+    triggerDownload(
+      JSON.stringify(raw, null, 2),
+      buildEpmDownloadFilename(dashboard?.identity?.dn, 'json'),
+      'application/json',
+    );
+  }
+
+  function downloadCsv() {
+    const raw = dashboard?.epmJsonRaw;
+    if (!raw) return;
+    const csv = flattenJsonToCsv(raw);
+    if (!csv) return;
+    triggerDownload(csv, buildEpmDownloadFilename(dashboard?.identity?.dn, 'csv'), 'text/csv');
+  }
+
+  function downloadVCard() {
+    const vcard = dashboard?.vcardText;
+    if (!vcard) return;
+    triggerDownload(vcard, buildEpmDownloadFilename(dashboard?.identity?.dn, 'vcf'), 'text/vcard');
+  }
 
   function persist(next: NodeLayout) {
     layout = next;
@@ -170,35 +245,36 @@
         {@render cornerBrackets('#4aa6e0')}
         <div class="sdn-widget-title">NODE HEALTH</div>
         <div class="sdn-widget-status-row">
-          <span class="sdn-status-dot" style="background:#5ad6a0;box-shadow:0 0 9px #5ad6a0;"></span>
-          <span class="sdn-widget-status-text">ONLINE</span>
+          <span class="sdn-status-dot" style={`background:${healthChipStyle.color};box-shadow:0 0 9px ${healthChipStyle.color};`}
+          ></span>
+          <span class="sdn-widget-status-text">{healthChipStyle.label}</span>
         </div>
-        <div class="sdn-widget-status-sub">{NODE_HEALTH_PLACEHOLDER.mode}</div>
+        <div class="sdn-widget-status-sub">{healthView.mode}</div>
         <div class="sdn-widget-field-stack">
           <div>
             <div class="sdn-widget-field-label">PEER ID</div>
-            <div class="sdn-widget-field-value sdn-widget-field-value--wrap">{NODE_HEALTH_PLACEHOLDER.peerId}</div>
+            <div class="sdn-widget-field-value sdn-widget-field-value--wrap">{healthView.peerId}</div>
           </div>
           <div class="sdn-widget-field-row">
             <div class="sdn-widget-field-flex">
               <div class="sdn-widget-field-label">API</div>
-              <div class="sdn-widget-field-value">{NODE_HEALTH_PLACEHOLDER.api}</div>
+              <div class="sdn-widget-field-value">{healthView.api}</div>
             </div>
             <div class="sdn-widget-field-flex">
               <div class="sdn-widget-field-label">GATEWAY</div>
-              <div class="sdn-widget-field-value">{NODE_HEALTH_PLACEHOLDER.gateway}</div>
+              <div class="sdn-widget-field-value">{healthView.gateway}</div>
             </div>
           </div>
           <div class="sdn-widget-storage">
             <div class="sdn-widget-storage-row">
               <span class="sdn-widget-field-label">STORAGE</span>
               <span class="sdn-widget-storage-value"
-                >{NODE_HEALTH_PLACEHOLDER.storageUsed}
-                <span class="sdn-widget-storage-total">/ {NODE_HEALTH_PLACEHOLDER.storageTotal}</span></span
+                >{healthView.storageUsed}
+                <span class="sdn-widget-storage-total">/ {healthView.storageTotal}</span></span
               >
             </div>
             <div class="sdn-widget-bar-track">
-              <div class="sdn-widget-bar-fill" style={`width:${NODE_HEALTH_PLACEHOLDER.storagePercent}%;`}></div>
+              <div class="sdn-widget-bar-fill" style={`width:${healthView.storagePercent}%;`}></div>
             </div>
           </div>
         </div>
@@ -207,24 +283,48 @@
           <span class="sdn-widget-title">IDENTITY</span>
           <span class="sdn-widget-badge sdn-widget-badge--confirmed">CONFIRMED</span>
         </div>
-        <div class="sdn-widget-heading">{NODE_IDENTITY_PLACEHOLDER.name}</div>
-        <div class="sdn-widget-subheading">{NODE_IDENTITY_PLACEHOLDER.subtitle}</div>
+        <div class="sdn-widget-heading">{identityView.name}</div>
+        <div class="sdn-widget-subheading">{identityView.subtitle}</div>
         <div class="sdn-widget-field-stack">
           <div>
             <div class="sdn-widget-field-label">EPM CID</div>
             <div class="sdn-widget-field-value sdn-widget-field-value--wrap sdn-widget-field-value--dense">
-              {NODE_IDENTITY_PLACEHOLDER.epmCid}
+              {identityView.epmCid}
             </div>
           </div>
           <div>
             <div class="sdn-widget-field-label">vCARD</div>
-            <div class="sdn-widget-field-value">{NODE_IDENTITY_PLACEHOLDER.vcard}</div>
+            <div class="sdn-widget-field-value">{identityView.vcard}</div>
           </div>
         </div>
         <div class="sdn-widget-button-row">
-          <button type="button" class="sdn-btn-ghost sdn-btn-flex" title="Export identity as JSON">JSON</button>
-          <button type="button" class="sdn-btn-ghost sdn-btn-flex" title="Export identity as CSV">CSV</button>
-          <button type="button" class="sdn-btn-ghost sdn-btn-flex" title="Export identity as vCARD">vCARD</button>
+          <button
+            type="button"
+            class="sdn-btn-ghost sdn-btn-flex"
+            disabled={!dashboard?.epmJsonRaw}
+            title="Export identity as JSON"
+            onclick={downloadJson}
+          >
+            JSON
+          </button>
+          <button
+            type="button"
+            class="sdn-btn-ghost sdn-btn-flex"
+            disabled={!dashboard?.epmJsonRaw}
+            title="Export identity as CSV"
+            onclick={downloadCsv}
+          >
+            CSV
+          </button>
+          <button
+            type="button"
+            class="sdn-btn-ghost sdn-btn-flex"
+            disabled={!dashboard?.vcardText}
+            title="Export identity as vCARD"
+            onclick={downloadVCard}
+          >
+            vCARD
+          </button>
           <button
             type="button"
             class="sdn-btn-accent sdn-btn-flex"
@@ -237,18 +337,23 @@
       {:else if w.id === 'service'}
         <div class="sdn-widget-title">SERVICE</div>
         <div class="sdn-widget-status-row">
-          <span class="sdn-status-dot" style="background:#5ad6a0;box-shadow:0 0 9px #5ad6a0;"></span>
-          <span class="sdn-widget-status-text sdn-widget-status-text--service">{NODE_SERVICE_PLACEHOLDER.state}</span>
+          <span
+            class="sdn-status-dot"
+            style={`background:${serviceStatusDotColor(serviceView.state)};box-shadow:0 0 9px ${serviceStatusDotColor(serviceView.state)};`}
+          ></span>
+          <span class="sdn-widget-status-text sdn-widget-status-text--service">{serviceView.state}</span>
         </div>
-        <div class="sdn-widget-status-sub sdn-widget-status-sub--plain">{NODE_SERVICE_PLACEHOLDER.version}</div>
+        <div class="sdn-widget-status-sub sdn-widget-status-sub--plain">{serviceView.version}</div>
         <div class="sdn-widget-field-row sdn-widget-field-row--gap">
           <div class="sdn-widget-field-flex">
             <div class="sdn-widget-field-label">AUTOSTART</div>
-            <div class="sdn-widget-field-value sdn-widget-field-value--green">{NODE_SERVICE_PLACEHOLDER.autostart}</div>
+            <!-- No autostart surface exists yet (M1 follow-up) — honest dash, dropped the green "confirmed" styling since nothing confirms it. -->
+            <div class="sdn-widget-field-value">{serviceView.autostart}</div>
           </div>
           <div class="sdn-widget-field-flex">
             <div class="sdn-widget-field-label">UPTIME</div>
-            <div class="sdn-widget-field-value">{NODE_SERVICE_PLACEHOLDER.uptime}</div>
+            <!-- No uptime surface exists yet (M1 follow-up). -->
+            <div class="sdn-widget-field-value">{serviceView.uptime}</div>
           </div>
         </div>
         <div class="sdn-widget-button-row">
@@ -287,7 +392,7 @@
           <div class="sdn-netmap-header-right">
             <span class="sdn-netmap-links">
               <span class="sdn-status-dot sdn-status-dot--sm" style="background:#5ad6a0;box-shadow:0 0 6px #5ad6a0;"
-              ></span>{NODE_NETMAP_PLACEHOLDER.connectionCount} LINKS
+              ></span>{netmapView.connectionCount} LINKS
             </span>
             <div class="sdn-netmap-tabs">
               <button
@@ -319,8 +424,9 @@
           -->
           <canvas class="sdn-netmap-canvas"></canvas>
           <div class="sdn-netmap-caption-tl">
-            <div>{NODE_NETMAP_PLACEHOLDER.connectionCount} CONNECTIONS</div>
-            <div>{NODE_NETMAP_PLACEHOLDER.countryCount} COUNTRIES</div>
+            <div>{netmapView.connectionCount} CONNECTIONS</div>
+            <!-- No GeoIP surface wired yet — honest dash rather than a fabricated country count. -->
+            <div>{netmapView.countryCount} COUNTRIES</div>
           </div>
           <div class="sdn-netmap-caption-br">DRAG TO ROTATE</div>
         </div>
@@ -347,21 +453,18 @@
         </div>
       {:else if w.id === 'throughput'}
         <div class="sdn-widget-title">NETWORK THROUGHPUT</div>
-        <div class="sdn-throughput-row">
-          <span class="sdn-throughput-value">3.42</span><span class="sdn-throughput-unit">MB/s ↓</span>
-          <span class="sdn-throughput-value sdn-throughput-value--up">0.88</span
-          ><span class="sdn-throughput-unit">↑</span>
-        </div>
-        <div class="sdn-throughput-bars">
-          {#each NODE_THROUGHPUT_SPARK as h, i (i)}
-            <div class="sdn-throughput-bar" style={`height:${h}%;background:${throughputBarGradient(i)};`}></div>
-          {/each}
-        </div>
-        <div class="sdn-throughput-axis"><span>−60s</span><span>NOW</span></div>
+        <!--
+          No per-second throughput counters exist on this build (M1/M2
+          follow-up) — an honest no-data line replaces the mock's fabricated
+          3.42/0.88 MB/s figures and sparkline bars, matching the dim
+          `.sdn-widget-status-sub` styling used elsewhere for "we don't know
+          this yet" fields, rather than drawing fake zeroed bars.
+        -->
+        <div class="sdn-widget-status-sub sdn-widget-status-sub--plain">NO TELEMETRY · pending M1</div>
       {:else if w.id === 'peersum'}
         <div class="sdn-widget-title">PEER SUMMARY</div>
         <div class="sdn-peersum-list">
-          {#each NODE_PEER_SUMMARY_PLACEHOLDER as pm (pm.name)}
+          {#each peerSummaryRows as pm (pm.name)}
             <div class="sdn-peersum-row">
               <span class="sdn-status-dot sdn-status-dot--sm" style={`background:${pm.trustColor};box-shadow:0 0 6px ${pm.trustColor};`}
               ></span>
@@ -369,36 +472,42 @@
               <span class="sdn-peersum-feeds">{pm.feeds}</span>
               <span class="sdn-peersum-trust" style={`color:${pm.trustColor};`}>{pm.trust}</span>
             </div>
+          {:else}
+            <div class="sdn-peersum-row">
+              <span class="sdn-peersum-name">{NODE_PEER_SUMMARY_EMPTY_LABEL}</span>
+            </div>
           {/each}
         </div>
       {:else if w.id === 'storage'}
         <div class="sdn-widget-title">STORAGE · FLATSQL</div>
         <div class="sdn-storage-value-row">
-          <span class="sdn-storage-value">{NODE_STORAGE_PLACEHOLDER.used}</span>
-          <span class="sdn-storage-unit">/ {NODE_STORAGE_PLACEHOLDER.total}</span>
+          <span class="sdn-storage-value">{storageView.used}</span>
+          <span class="sdn-storage-unit">/ {storageView.total}</span>
         </div>
+        <!-- FlatSQL's cumulative byte count has no capacity to measure against (unlike a disk quota) — bar always renders 0-width rather than a fabricated percent. -->
         <div class="sdn-widget-bar-track sdn-widget-bar-track--lg">
-          <div class="sdn-widget-bar-fill" style={`width:${NODE_STORAGE_PLACEHOLDER.percent}%;`}></div>
+          <div class="sdn-widget-bar-fill" style={`width:${storageView.percent}%;`}></div>
         </div>
         <div class="sdn-storage-meta-row">
-          <span>{NODE_STORAGE_PLACEHOLDER.standardsSynced}</span>
-          <span class="sdn-storage-fresh">{NODE_STORAGE_PLACEHOLDER.freshness}</span>
+          <span>{storageView.standardsSynced}</span>
+          <!-- No sync-freshness surface exists yet — the green "confirmed" styling only applies once freshnessKnown is real. -->
+          <span class:sdn-storage-fresh={storageView.freshnessKnown}>{storageView.freshness}</span>
         </div>
-        <div class="sdn-storage-meta-row sdn-storage-meta-row--tight">
-          <span>SCHEMA</span>
-          <span class="sdn-storage-schema">{NODE_STORAGE_PLACEHOLDER.schema}</span>
-        </div>
+        {#each storageView.schemaRows as row (row.label)}
+          <div class="sdn-storage-meta-row sdn-storage-meta-row--tight">
+            <span>{row.label}</span>
+            <span class="sdn-storage-schema">{row.value}</span>
+          </div>
+        {:else}
+          <div class="sdn-storage-meta-row sdn-storage-meta-row--tight">
+            <span>SCHEMA</span>
+            <span class="sdn-storage-schema">NO SCHEMAS</span>
+          </div>
+        {/each}
       {:else if w.id === 'activity'}
         <div class="sdn-widget-title">ACTIVITY LOG</div>
-        <div class="sdn-activity-list">
-          {#each NODE_ACTIVITY_PLACEHOLDER as ev (ev.time + ev.text)}
-            <div class="sdn-activity-row">
-              <span class="sdn-activity-time">{ev.time}</span>
-              <span class="sdn-status-dot sdn-status-dot--xs" style={`background:${ev.color};`}></span>
-              <span class="sdn-activity-text">{ev.text}</span>
-            </div>
-          {/each}
-        </div>
+        <!-- No activity-feed surface exists yet — honest no-data line replaces the mock's fabricated event rows. -->
+        <div class="sdn-widget-status-sub sdn-widget-status-sub--plain">NO ACTIVITY DATA · NO SURFACE YET</div>
       {/if}
     </section>
   {/each}

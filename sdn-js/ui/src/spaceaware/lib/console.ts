@@ -433,8 +433,13 @@ export function widgetSpanLabel(span: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// NODE widget placeholder datasets (typed placeholder data — real wiring is
-// U3.2; PEER MAP's actual globe render is U3.4)
+// NODE widget catalog helpers still shared with real data (loop U3.2 wired
+// the NODE dashboard's widget bodies to real daemon surfaces in
+// `lib/node-data.ts` — `peerTrustColor`/`NODE_PEER_SUMMARY_PLACEHOLDER` stay
+// here because they're still exercised directly by this file's own tests,
+// and `node-data.ts`'s `buildNodePeerSummary` reuses `peerTrustColor` for
+// its honest "OBSERVED" badge color rather than duplicating the palette.
+// PEER MAP's actual globe render is still U3.4.)
 // ---------------------------------------------------------------------------
 
 export type PeerTrustLevel = 'trusted' | 'observed' | 'unknown';
@@ -453,29 +458,14 @@ export interface NodePeerSummaryRow {
   feeds: string;
 }
 
-/** `PEERS.slice(0,3)` from the mock, mapped through `trustColor()`. */
+/** `PEERS.slice(0,3)` from the mock, mapped through `trustColor()`. Kept as a fixture for this file's own tests — `NodeView.svelte` no longer renders it (see `lib/node-data.ts`'s `buildNodePeerSummary`, which reads `GET /api/v1/peers` instead). */
 export const NODE_PEER_SUMMARY_PLACEHOLDER: readonly NodePeerSummaryRow[] = [
   { name: 'SpaceAware.io', trust: 'TRUSTED', trustColor: peerTrustColor('trusted'), feeds: 'EPM · MPE · PNM' },
   { name: 'CelesTrak Provider', trust: 'TRUSTED', trustColor: peerTrustColor('trusted'), feeds: 'CAT · OMM · SPW' },
   { name: 'OrbitalEdge Node', trust: 'OBSERVED', trustColor: peerTrustColor('observed'), feeds: 'OMM' },
 ];
 
-export interface NodeActivityRow {
-  time: string;
-  color: string;
-  text: string;
-}
-
-/** Verbatim `ACTIVITY` array from the mock. */
-export const NODE_ACTIVITY_PLACEHOLDER: readonly NodeActivityRow[] = [
-  { time: '12:04:22', color: '#5ad6a0', text: 'Channel mpe-screening-alpha · grant accepted' },
-  { time: '11:58:10', color: '#9fd4f5', text: 'Schema sync · OMM updated to 9,120 rows' },
-  { time: '11:42:03', color: '#7d929b', text: 'Observed peer · OrbitalEdge Node' },
-  { time: '11:30:51', color: '#35c9d8', text: 'SpaceAware analytics entitlement renewed' },
-  { time: '11:15:09', color: '#5ad6a0', text: 'Service autostart · node came online' },
-];
-
-/** Verbatim `SPARK` array from the mock (%-height bars, 60s window). */
+/** Verbatim `SPARK` array from the mock (%-height bars, 60s window). Kept as a fixture for this file's own tests — the NETWORK THROUGHPUT widget has no real telemetry surface yet (loop U3.2), so `NodeView.svelte` renders an honest no-data state instead of these bars. */
 export const NODE_THROUGHPUT_SPARK: readonly number[] = [38, 52, 44, 67, 58, 79, 48, 62, 85, 54, 70, 41];
 
 /** Bar index 8 (the tallest, "current") gets the brighter ice gradient; every other bar gets the cyan gradient. */
@@ -508,53 +498,13 @@ export function nodeMapTabStyle(mode: NodeMapMode): NodeMapTabStyle {
   };
 }
 
-/**
- * PEER MAP caption counts. Real geo-resolved peer data is a later gap (M3 /
- * Decision D8 in `SPACEAWARE_UI_WIRING_ANALYSIS.md`) and the canvas draw
- * itself is U3.4 (`globe.js` port) — this only reproduces the two static
- * caption numbers the mock renders next to the (here, inert) canvas, from
- * its own `HOME`/`CONNECTIONS` fixture (also used verbatim by
- * `screens/GlobeDemoPanel.svelte`, loop U0.2).
- */
-export const NODE_NETMAP_PLACEHOLDER = {
-  connectionCount: 16,
-  countryCount: 15,
-} as const;
-
-// ---------------------------------------------------------------------------
-// NODE HEALTH / IDENTITY / SERVICE / STORAGE static placeholder text
-// (verbatim mock copy — real values land in U3.2)
-// ---------------------------------------------------------------------------
-
-export const NODE_HEALTH_PLACEHOLDER = {
-  mode: 'MODE · DESKTOP-LOCAL',
-  peerId: '12D3KooWDesignerLocalNode',
-  api: '127.0.0.1:5001',
-  gateway: '127.0.0.1:8080',
-  storageUsed: '4.8 GB',
-  storageTotal: '32 GB',
-  storagePercent: 15,
-} as const;
-
-export const NODE_IDENTITY_PLACEHOLDER = {
-  name: 'SDN Operator',
-  subtitle: 'Entity Profile Metadata · self-issued',
-  epmCid: 'bafkreidesignerpublicepmexample',
-  vcard: 'Space Data Network Operator',
-} as const;
-
-export const NODE_SERVICE_PLACEHOLDER = {
-  state: 'RUNNING',
-  version: 'v0.47.0 · current · headless-capable ✓',
-  autostart: 'ENABLED',
-  uptime: '4d 02:11',
-} as const;
-
-export const NODE_STORAGE_PLACEHOLDER = {
-  used: '4.8',
-  total: '32 GB',
-  percent: 15,
-  standardsSynced: '6 STANDARDS SYNCED',
-  freshness: 'FRESH',
-  schema: 'v1.0.3 · synced',
-} as const;
+// NODE HEALTH / IDENTITY / SERVICE / STORAGE / PEER MAP caption / ACTIVITY LOG
+// static placeholder text (verbatim mock copy) lived here through U3.1. Loop
+// U3.2 wired all of those widget bodies to real daemon surfaces — see
+// `lib/node-data.ts` (`buildNodeHealthView`, `buildNodeIdentityView`,
+// `buildNodeServiceView`, `buildNodeNetmapView`, `buildNodeStorageView`) —
+// and removed the fabricated fixtures (`NODE_HEALTH_PLACEHOLDER`,
+// `NODE_IDENTITY_PLACEHOLDER`, `NODE_SERVICE_PLACEHOLDER`,
+// `NODE_STORAGE_PLACEHOLDER`, `NODE_NETMAP_PLACEHOLDER`,
+// `NODE_ACTIVITY_PLACEHOLDER`) since nothing outside `NodeView.svelte`
+// imported them.

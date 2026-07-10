@@ -71,6 +71,8 @@ describe('sdn upstream webui cutover contract', () => {
       'spaceaware/lib/console.ts',
       'spaceaware/lib/login.test.ts',
       'spaceaware/lib/login.ts',
+      'spaceaware/lib/node-data.test.ts',
+      'spaceaware/lib/node-data.ts',
       'spaceaware/main.ts',
       'spaceaware/primitives/Kicker.svelte',
       'spaceaware/primitives/Panel.svelte',
