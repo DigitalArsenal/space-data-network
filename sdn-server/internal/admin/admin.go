@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 	"unicode"
@@ -19,6 +20,7 @@ import (
 	logging "github.com/ipfs/go-log/v2"
 	"golang.org/x/crypto/argon2"
 
+	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 )
 
@@ -34,6 +36,8 @@ var (
 	ErrTOTPRequired       = errors.New("TOTP verification required")
 	ErrTOTPInvalid        = errors.New("invalid TOTP code")
 	ErrWeakPassword       = errors.New("password must be at least 12 characters with uppercase, lowercase, and digit")
+	ErrInvalidXPub        = errors.New("invalid xpub")
+	ErrXPubInUse          = errors.New("xpub is already bound to another admin account")
 )
 
 const (
@@ -54,6 +58,13 @@ const (
 )
 
 // Admin represents an admin account.
+//
+// Admin is an AUTHENTICATION METHOD (username/password + optional TOTP), not
+// a second identity space. Task F1 (single hd-wallet identity, xpub-keyed,
+// everywhere) makes internal/auth.UserStore — keyed by hd-wallet xpub — the
+// one identity AUTHORITY. XPub is the bridge: once set, it binds this admin
+// account to the xpub-keyed User record that carries the actual trust level.
+// See BindXPub and GetAdminByXPub.
 type Admin struct {
 	ID           int64
 	Username     string
@@ -62,6 +73,7 @@ type Admin struct {
 	TOTPSecret   string // Base32 encoded TOTP secret
 	TOTPEnabled  bool
 	WebAuthnCred []byte // WebAuthn credential
+	XPub         string // bridge to the xpub-keyed identity in internal/auth.UserStore; empty until bound
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	LastLoginAt  *time.Time
@@ -124,6 +136,7 @@ func (m *Manager) initDB() error {
 			totp_secret TEXT,
 			totp_enabled INTEGER DEFAULT 0,
 			webauthn_cred BLOB,
+			xpub TEXT DEFAULT '',
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			last_login_at INTEGER
@@ -132,6 +145,12 @@ func (m *Manager) initDB() error {
 	if err != nil {
 		return err
 	}
+
+	// Migration: add the xpub identity-bridge column for admin databases
+	// created before Task F1 (single hd-wallet identity, xpub-keyed,
+	// everywhere). Error ignored: it only fails once the column already
+	// exists, which is the steady state after the first run of this code.
+	_, _ = m.db.Exec(`ALTER TABLE admins ADD COLUMN xpub TEXT DEFAULT ''`)
 
 	// Create sessions table
 	_, err = m.db.Exec(`
@@ -558,17 +577,113 @@ func (m *Manager) GetAdmin(adminID int64) (*Admin, error) {
 	var admin Admin
 	var createdAt, updatedAt int64
 	var lastLoginAt sql.NullInt64
+	var xpub sql.NullString
 
 	err := m.db.QueryRow(`
-		SELECT id, username, totp_enabled, created_at, updated_at, last_login_at
+		SELECT id, username, totp_enabled, xpub, created_at, updated_at, last_login_at
 		FROM admins WHERE id = ?
-	`, adminID).Scan(&admin.ID, &admin.Username, &admin.TOTPEnabled,
+	`, adminID).Scan(&admin.ID, &admin.Username, &admin.TOTPEnabled, &xpub,
 		&createdAt, &updatedAt, &lastLoginAt)
 
 	if err == sql.ErrNoRows {
 		return nil, ErrAdminNotFound
 	} else if err != nil {
 		return nil, err
+	}
+
+	if xpub.Valid {
+		admin.XPub = xpub.String
+	}
+	admin.CreatedAt = time.Unix(createdAt, 0)
+	admin.UpdatedAt = time.Unix(updatedAt, 0)
+	if lastLoginAt.Valid {
+		t := time.Unix(lastLoginAt.Int64, 0)
+		admin.LastLoginAt = &t
+	}
+
+	return &admin, nil
+}
+
+// BindXPub binds an admin account to an hd-wallet xpub, making the admin
+// resolvable to the xpub-keyed identity in internal/auth.UserStore — the
+// single identity authority (Task F1). This does not replace password/TOTP
+// authentication; it is the minimal schema addition that lets a caller, once
+// an admin has authenticated with their password/TOTP, resolve (or create)
+// the corresponding auth.UserStore User by xpub and treat the two as one
+// identity. Typical call sequence (wired by the HTTP layer, outside this
+// package):
+//
+//	token, err := adminMgr.Authenticate(username, password, ip, ua, remember)
+//	// ... on TOTP-required, AuthenticateWithTOTP instead ...
+//	session, _ := adminMgr.ValidateSession(token)
+//	adm, _ := adminMgr.GetAdmin(session.AdminID)
+//	if adm.XPub == "" {
+//	    // first bridge: bind the admin's wallet xpub once, then ensure a
+//	    // corresponding Admin-trust User exists in the UserStore.
+//	    adminMgr.BindXPub(adm.ID, walletXPub)
+//	    userStore.AddUser(walletXPub, adm.Username, peers.Admin, "")
+//	}
+//	user, _ := userStore.GetUser(adm.XPub) // same identity, resolved by xpub
+//
+// An xpub may only be bound to one admin account at a time.
+func (m *Manager) BindXPub(adminID int64, xpub string) error {
+	xpub = strings.TrimSpace(xpub)
+	if !auth.IsValidXPub(xpub) {
+		return ErrInvalidXPub
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var existingID int64
+	err := m.db.QueryRow(`SELECT id FROM admins WHERE xpub = ? AND xpub != ''`, xpub).Scan(&existingID)
+	if err == nil && existingID != adminID {
+		return ErrXPubInUse
+	} else if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("database error: %w", err)
+	}
+
+	result, err := m.db.Exec(`UPDATE admins SET xpub = ?, updated_at = ? WHERE id = ?`,
+		xpub, time.Now().Unix(), adminID)
+	if err != nil {
+		return fmt.Errorf("failed to bind xpub: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return ErrAdminNotFound
+	}
+
+	log.Infof("Bound admin ID %d to xpub identity", adminID)
+	return nil
+}
+
+// GetAdminByXPub resolves an admin account by its bound xpub. It returns
+// (nil, nil) if no admin is bound to that xpub — mirroring the not-found
+// convention used by auth.UserStore.GetUser so callers can treat "no admin
+// row" and "no user row" identically when reconciling the two stores.
+func (m *Manager) GetAdminByXPub(xpub string) (*Admin, error) {
+	xpub = strings.TrimSpace(xpub)
+	if xpub == "" {
+		return nil, nil
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var admin Admin
+	var createdAt, updatedAt int64
+	var lastLoginAt sql.NullInt64
+
+	err := m.db.QueryRow(`
+		SELECT id, username, totp_enabled, xpub, created_at, updated_at, last_login_at
+		FROM admins WHERE xpub = ? AND xpub != ''
+	`, xpub).Scan(&admin.ID, &admin.Username, &admin.TOTPEnabled, &admin.XPub,
+		&createdAt, &updatedAt, &lastLoginAt)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("database error: %w", err)
 	}
 
 	admin.CreatedAt = time.Unix(createdAt, 0)

@@ -17,10 +17,10 @@ import (
 
 const (
 	// TOTP settings per RFC 6238
-	totpDigits   = 6
-	totpPeriod   = 30 // seconds
-	totpSkew     = 1  // allow +/- 1 period for clock drift
-	totpIssuer   = "SpaceDataNetwork"
+	totpDigits    = 6
+	totpPeriod    = 30 // seconds
+	totpSkew      = 1  // allow +/- 1 period for clock drift
+	totpIssuer    = "SpaceDataNetwork"
 	totpSecretLen = 20 // 160 bits
 )
 
