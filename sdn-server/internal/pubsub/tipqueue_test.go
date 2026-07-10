@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"reflect"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +18,22 @@ import (
 	pb "github.com/libp2p/go-libp2p-pubsub/pb"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
+
+// waitUntil polls cond until it returns true or timeout elapses, returning
+// cond's final value. Mirrors internal/node's waitForCondition helper for
+// the same async-goroutine-settling pattern, kept local to this package
+// since pubsub and node are independent modules-under-test here.
+func waitUntil(t *testing.T, timeout time.Duration, cond func() bool) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return cond()
+}
 
 // mockFetcher implements ContentFetcher for testing.
 type mockFetcher struct {
@@ -885,5 +904,314 @@ func TestEvictOldest(t *testing.T) {
 	}
 	if len(tq.tips["OMM"]) != 2 {
 		t.Error("OMM tips should be unchanged")
+	}
+}
+
+// --- D4: resource caps on auto-ingest fetches --------------------------
+
+// capTestFetcher simulates a ContentFetcher whose adapter (e.g.
+// internal/node's ipfsTipFetcher) has already applied the MaxFetchBytes
+// size cap: a CID marked oversize returns ErrFetchTooLarge, everything
+// else returns its configured bytes.
+type capTestFetcher struct {
+	mu       sync.Mutex
+	oversize map[string]bool
+	data     map[string][]byte
+	fetched  map[string]bool
+}
+
+func newCapTestFetcher() *capTestFetcher {
+	return &capTestFetcher{
+		oversize: make(map[string]bool),
+		data:     make(map[string][]byte),
+		fetched:  make(map[string]bool),
+	}
+}
+
+func (f *capTestFetcher) Fetch(ctx context.Context, cid string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fetched[cid] = true
+	if f.oversize[cid] {
+		return nil, fmt.Errorf("%w: cid %s exceeded cap", ErrFetchTooLarge, cid)
+	}
+	return f.data[cid], nil
+}
+
+func (f *capTestFetcher) WasFetched(cid string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.fetched[cid]
+}
+
+func TestTipQueueDispatchFetchRejectsOversizeWithoutPinningButUndersizeFlows(t *testing.T) {
+	config := NewTipQueueConfig()
+	config.DefaultAutoFetch = true
+	config.DefaultAutoPin = true
+
+	tq := NewTipQueue(config)
+	fetcher := newCapTestFetcher()
+	fetcher.oversize["bafyoversize"] = true
+	fetcher.data["bafyundersize"] = []byte("ok")
+	pinner := newMockPinner()
+	tq.SetFetcher(fetcher)
+	tq.SetPinner(pinner)
+
+	over := &Tip{CID: "bafyoversize", SchemaType: "OMM"}
+	under := &Tip{CID: "bafyundersize", SchemaType: "OMM"}
+	cfg := ResolvedConfig{AutoFetch: true, AutoPin: true, TTL: time.Hour}
+
+	tq.processTip(over, cfg)
+	tq.processTip(under, cfg)
+
+	if !waitUntil(t, 2*time.Second, func() bool {
+		return pinner.IsPinned("bafyundersize") && tq.OversizeRejections() >= 1
+	}) {
+		t.Fatalf("undersize tip not pinned and/or oversize rejection not counted in time: pinned=%v rejections=%d",
+			pinner.IsPinned("bafyundersize"), tq.OversizeRejections())
+	}
+
+	if pinner.IsPinned("bafyoversize") {
+		t.Fatal("oversize content must not be pinned")
+	}
+	if tq.OversizeRejections() != 1 {
+		t.Fatalf("OversizeRejections = %d, want exactly 1", tq.OversizeRejections())
+	}
+	if pinner.GetTTL("bafyundersize") != time.Hour {
+		t.Fatalf("undersize pin TTL = %v, want 1h", pinner.GetTTL("bafyundersize"))
+	}
+
+	// tip.Fetched/tip.Pinned are mutated under tq.mu by dispatchFetch and
+	// runPin; read them the same way TestTipQueueSetters reads TipQueue's
+	// own internal state, rather than racing on the bare struct fields.
+	tq.mu.RLock()
+	overFetched, overPinned := over.Fetched, over.Pinned
+	underFetched, underPinned := under.Fetched, under.Pinned
+	tq.mu.RUnlock()
+
+	if overFetched {
+		t.Fatal("oversize tip must not be marked Fetched")
+	}
+	if overPinned {
+		t.Fatal("oversize tip must not be marked Pinned")
+	}
+	if !underFetched {
+		t.Fatal("undersize tip should be marked Fetched")
+	}
+	if !underPinned {
+		t.Fatal("undersize tip should be marked Pinned")
+	}
+}
+
+// blockingFetcher blocks every Fetch call until release is closed, and
+// tracks how many calls are simultaneously executing (peak) so tests can
+// assert TipQueue never exceeds MaxConcurrentFetches in-flight fetches.
+type blockingFetcher struct {
+	release chan struct{}
+
+	mu        sync.Mutex
+	inFlight  int
+	peak      int
+	completed int
+}
+
+func newBlockingFetcher() *blockingFetcher {
+	return &blockingFetcher{release: make(chan struct{})}
+}
+
+func (f *blockingFetcher) Fetch(ctx context.Context, cid string) ([]byte, error) {
+	f.mu.Lock()
+	f.inFlight++
+	if f.inFlight > f.peak {
+		f.peak = f.inFlight
+	}
+	f.mu.Unlock()
+
+	select {
+	case <-f.release:
+	case <-ctx.Done():
+		f.mu.Lock()
+		f.inFlight--
+		f.mu.Unlock()
+		return nil, ctx.Err()
+	}
+
+	f.mu.Lock()
+	f.inFlight--
+	f.completed++
+	f.mu.Unlock()
+	return []byte("ok"), nil
+}
+
+func (f *blockingFetcher) InFlight() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.inFlight
+}
+
+func (f *blockingFetcher) Peak() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.peak
+}
+
+func (f *blockingFetcher) Completed() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.completed
+}
+
+func TestTipQueueDispatchFetchBoundsConcurrency(t *testing.T) {
+	config := NewTipQueueConfig()
+	config.MaxConcurrentFetches = 2
+	// A tiny (but non-zero, so NewTipQueue does not normalize it back to
+	// the package default) interval isolates this test from rate
+	// limiting: fetch starts are barely spaced, so concurrency -- the
+	// blockingFetcher holding its slot until released -- is the only
+	// thing capping how many run at once.
+	config.MinFetchInterval = time.Millisecond
+	config.FetchTimeout = 5 * time.Second
+
+	tq := NewTipQueue(config)
+	fetcher := newBlockingFetcher()
+	tq.SetFetcher(fetcher)
+
+	const n = 6
+	cfg := ResolvedConfig{AutoFetch: true}
+	for i := 0; i < n; i++ {
+		tq.processTip(&Tip{CID: fmt.Sprintf("cid-%d", i), SchemaType: "OMM"}, cfg)
+	}
+
+	if !waitUntil(t, 2*time.Second, func() bool {
+		return fetcher.InFlight() == config.MaxConcurrentFetches
+	}) {
+		t.Fatalf("in-flight fetches never reached the concurrency cap of %d (got %d); dispatch may not be bounding concurrency",
+			config.MaxConcurrentFetches, fetcher.InFlight())
+	}
+
+	// Give any incorrectly-unbounded dispatch a further moment to prove
+	// itself before checking peak.
+	time.Sleep(100 * time.Millisecond)
+	if peak := fetcher.Peak(); peak > config.MaxConcurrentFetches {
+		t.Fatalf("peak concurrent fetches = %d, want <= %d", peak, config.MaxConcurrentFetches)
+	}
+
+	close(fetcher.release)
+
+	if !waitUntil(t, 2*time.Second, func() bool {
+		return fetcher.Completed() == n
+	}) {
+		t.Fatalf("not all %d fetches completed after release (completed=%d)", n, fetcher.Completed())
+	}
+
+	if peak := fetcher.Peak(); peak != config.MaxConcurrentFetches {
+		t.Fatalf("peak concurrent fetches = %d, want exactly %d with %d tips queued against a cap of %d",
+			peak, config.MaxConcurrentFetches, n, config.MaxConcurrentFetches)
+	}
+}
+
+// timestampFetcher records the wall-clock time each Fetch call starts, so
+// tests can assert TipQueue spaces fetch starts by at least
+// MinFetchInterval instead of firing a burst all at once.
+type timestampFetcher struct {
+	mu     sync.Mutex
+	starts []time.Time
+}
+
+func (f *timestampFetcher) Fetch(ctx context.Context, cid string) ([]byte, error) {
+	f.mu.Lock()
+	f.starts = append(f.starts, time.Now())
+	f.mu.Unlock()
+	return []byte("ok"), nil
+}
+
+func (f *timestampFetcher) Count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.starts)
+}
+
+func (f *timestampFetcher) Starts() []time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]time.Time, len(f.starts))
+	copy(out, f.starts)
+	return out
+}
+
+func TestTipQueueDispatchFetchBoundsRate(t *testing.T) {
+	config := NewTipQueueConfig()
+	config.MaxConcurrentFetches = 100 // effectively unbounded: isolate rate limiting
+	config.MinFetchInterval = 100 * time.Millisecond
+	config.FetchTimeout = 5 * time.Second
+
+	tq := NewTipQueue(config)
+	fetcher := &timestampFetcher{}
+	tq.SetFetcher(fetcher)
+
+	const n = 4
+	cfg := ResolvedConfig{AutoFetch: true}
+	start := time.Now()
+	for i := 0; i < n; i++ {
+		tq.processTip(&Tip{CID: fmt.Sprintf("cid-%d", i), SchemaType: "OMM"}, cfg)
+	}
+
+	if !waitUntil(t, 3*time.Second, func() bool {
+		return fetcher.Count() == n
+	}) {
+		t.Fatalf("not all %d fetches completed (got %d)", n, fetcher.Count())
+	}
+
+	// The whole burst must NOT complete within a single interval window:
+	// spacing n fetch starts by MinFetchInterval takes at least
+	// (n-1)*MinFetchInterval.
+	minExpected := time.Duration(n-1) * config.MinFetchInterval
+	if elapsed := time.Since(start); elapsed < minExpected {
+		t.Fatalf("burst of %d tips fetched in %v, want >= %v (rate limiting should space fetch starts by %v instead of firing them all at once)",
+			n, elapsed, minExpected, config.MinFetchInterval)
+	}
+
+	starts := fetcher.Starts()
+	sort.Slice(starts, func(i, j int) bool { return starts[i].Before(starts[j]) })
+	const jitterTolerance = 20 * time.Millisecond
+	for i := 1; i < len(starts); i++ {
+		gap := starts[i].Sub(starts[i-1])
+		if gap < config.MinFetchInterval-jitterTolerance {
+			t.Fatalf("fetch %d started only %v after fetch %d, want >= ~%v (MinFetchInterval)", i, gap, i-1, config.MinFetchInterval)
+		}
+	}
+}
+
+func TestTipQueueProcessTipStillFetchesAndPinsWhenBothEnabled(t *testing.T) {
+	// D1/D2 regression guard: the default config (AutoFetch=AutoPin=true)
+	// must still result in a fetched + pinned tip once dispatchFetch
+	// chains Pin after a successful fetch (Task D4 restructured this from
+	// two independent goroutines into one sequential chain).
+	tq := NewTipQueue(nil)
+	fetcher := newMockFetcher()
+	fetcher.data["bafyboth"] = []byte("payload")
+	pinner := newMockPinner()
+	tq.SetFetcher(fetcher)
+	tq.SetPinner(pinner)
+
+	tip := &Tip{CID: "bafyboth", SchemaType: "OMM"}
+	cfg := ResolvedConfig{AutoFetch: true, AutoPin: true, TTL: 30 * time.Minute}
+
+	tq.processTip(tip, cfg)
+
+	if !waitUntil(t, 2*time.Second, func() bool {
+		return fetcher.WasFetched("bafyboth") && pinner.IsPinned("bafyboth")
+	}) {
+		t.Fatalf("expected fetch+pin to both complete: fetched=%v pinned=%v", fetcher.WasFetched("bafyboth"), pinner.IsPinned("bafyboth"))
+	}
+	if pinner.GetTTL("bafyboth") != 30*time.Minute {
+		t.Fatalf("pin TTL = %v, want 30m", pinner.GetTTL("bafyboth"))
+	}
+}
+
+func TestErrFetchTooLargeIsDistinguishableViaErrorsIs(t *testing.T) {
+	wrapped := fmt.Errorf("adapter rejected cid: %w", ErrFetchTooLarge)
+	if !errors.Is(wrapped, ErrFetchTooLarge) {
+		t.Fatal("wrapped oversize error should satisfy errors.Is(err, ErrFetchTooLarge)")
 	}
 }

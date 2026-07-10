@@ -2122,21 +2122,146 @@ func (n *Node) buildTipQueue() *sdnpubsub.TipQueue {
 	tq := sdnpubsub.NewTipQueue(n.newTipQueueConfig())
 	ipfsAPIURL := strings.TrimSpace(n.config.Admin.IPFSAPIURL)
 	if ipfsAPIURL != "" {
-		tq.SetFetcher(&ipfsTipFetcher{apiURL: ipfsAPIURL})
+		tq.SetFetcher(newIPFSTipFetcher(ipfsAPIURL, tq.Config().MaxFetchBytes))
 		tq.SetPinner(newIPFSTipPinner(ipfsAPIURL))
 	}
 	tq.OnTip(n.handleTipQueueTip)
 	return tq
 }
 
-// ipfsTipFetcher adapts storage.FetchIPFSBlockByCID (the same Kubo RPC
-// helper materializeDatasetPublicationPNM uses) to pubsub.ContentFetcher.
+// ipfsTipFetcher adapts Kubo's /api/v0/cat RPC to pubsub.ContentFetcher,
+// enforcing the TipQueue per-fetch size ceiling (Task D4) directly here
+// rather than through storage.FetchIPFSBlockByCID: that helper has no
+// built-in limit (it reads the whole response body via io.ReadAll), and
+// internal/storage is out of scope for this change, so a fully-trusted
+// but compromised/misbehaving peer could otherwise drive an unbounded
+// download merely by announcing a huge CID on the aggregate PNM.fbs topic.
+// maxBytes <= 0 disables the cap; buildTipQueue always supplies
+// tq.Config().MaxFetchBytes, which pubsub.NewTipQueue normalizes to
+// sdnpubsub.DefaultMaxFetchBytes when unset, so that should not happen on
+// the live startup path.
 type ipfsTipFetcher struct {
-	apiURL string
+	apiURL   string
+	maxBytes int64
+	client   *http.Client
 }
 
+func newIPFSTipFetcher(apiURL string, maxBytes int64) *ipfsTipFetcher {
+	return &ipfsTipFetcher{apiURL: apiURL, maxBytes: maxBytes, client: http.DefaultClient}
+}
+
+// Fetch fetches cidValue's content, rejecting it (without downloading the
+// full body, when Kubo's block/stat pre-check reports the size) if it
+// exceeds f.maxBytes. When a pre-check isn't available or doesn't apply
+// (block/stat reports the size of a single block, not a chunked UnixFS
+// file's cumulative size, so it can only prove "too large," never prove
+// "small enough"), the read itself is hard-limited via io.LimitReader so
+// this function never buffers more than maxBytes+1 bytes regardless of
+// how much content Kubo is willing to serve.
 func (f *ipfsTipFetcher) Fetch(ctx context.Context, cidValue string) ([]byte, error) {
-	return storage.FetchIPFSBlockByCID(ctx, f.apiURL, cidValue)
+	cidValue = strings.TrimSpace(cidValue)
+	if cidValue == "" {
+		return nil, fmt.Errorf("cid is required")
+	}
+	if strings.TrimSpace(f.apiURL) == "" {
+		return nil, fmt.Errorf("ipfs api url is required")
+	}
+	client := f.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	if f.maxBytes > 0 {
+		if size, ok := f.statSize(ctx, client, cidValue); ok && size > f.maxBytes {
+			return nil, fmt.Errorf("%w: cid %s reports size %d bytes (cap %d)", sdnpubsub.ErrFetchTooLarge, cidValue, size, f.maxBytes)
+		}
+	}
+
+	endpoint, err := url.JoinPath(strings.TrimRight(f.apiURL, "/"), "/api/v0/cat")
+	if err != nil {
+		return nil, fmt.Errorf("build IPFS URL: %w", err)
+	}
+	reqURL, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("parse IPFS URL: %w", err)
+	}
+	query := reqURL.Query()
+	query.Set("arg", cidValue)
+	reqURL.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("create IPFS request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("post IPFS cat: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("IPFS cat failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	if f.maxBytes <= 0 {
+		return io.ReadAll(resp.Body)
+	}
+
+	// Read at most maxBytes+1 so a body that is exactly at the cap can be
+	// distinguished from one that exceeds it, without ever buffering more
+	// than a single byte past the limit.
+	data, err := io.ReadAll(io.LimitReader(resp.Body, f.maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read IPFS CID bytes: %w", err)
+	}
+	if int64(len(data)) > f.maxBytes {
+		return nil, fmt.Errorf("%w: cid %s exceeded %d bytes", sdnpubsub.ErrFetchTooLarge, cidValue, f.maxBytes)
+	}
+	return data, nil
+}
+
+// statSize best-effort queries Kubo's /api/v0/block/stat for cidValue's
+// size. It returns ok=false on any error, unsupported endpoint (e.g. a
+// test double that only implements /api/v0/cat), or non-positive size --
+// callers must treat ok=false as "unknown," not "small," and fall back to
+// the hard read limit in Fetch.
+func (f *ipfsTipFetcher) statSize(ctx context.Context, client *http.Client, cidValue string) (int64, bool) {
+	endpoint, err := url.JoinPath(strings.TrimRight(f.apiURL, "/"), "/api/v0/block/stat")
+	if err != nil {
+		return 0, false
+	}
+	reqURL, err := url.Parse(endpoint)
+	if err != nil {
+		return 0, false
+	}
+	query := reqURL.Query()
+	query.Set("arg", cidValue)
+	reqURL.RawQuery = query.Encode()
+
+	statCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(statCtx, http.MethodPost, reqURL.String(), nil)
+	if err != nil {
+		return 0, false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return 0, false
+	}
+	var stat struct {
+		Size int64
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&stat); err != nil {
+		return 0, false
+	}
+	if stat.Size <= 0 {
+		return 0, false
+	}
+	return stat.Size, true
 }
 
 // ipfsTipPinner adapts Kubo's pin/add + pin/rm RPCs to

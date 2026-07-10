@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
@@ -18,6 +19,14 @@ var (
 	ErrNotSubscribed = errors.New("not subscribed to PNM topic")
 	ErrInvalidPNM    = errors.New("invalid PNM message")
 	ErrNoTopicMgr    = errors.New("topic manager not set")
+
+	// ErrFetchTooLarge is the sentinel a ContentFetcher (see ipfsTipFetcher
+	// in internal/node) wraps/returns when a tip's content exceeds the
+	// configured MaxFetchBytes ceiling (Task D4). dispatchFetch checks for
+	// it via errors.Is to count the rejection separately from an ordinary
+	// fetch failure and to skip the chained Pin step: oversize content is
+	// never pinned.
+	ErrFetchTooLarge = errors.New("tip content exceeds max fetch size")
 )
 
 const pnmSchema = "PNM.fbs"
@@ -76,6 +85,19 @@ type TipQueue struct {
 
 	handlers []TipHandler
 
+	// fetchSem bounds in-flight ContentFetcher.Fetch calls to
+	// config.MaxConcurrentFetches (Task D4). Buffered channel used as a
+	// counting semaphore; sized once at construction since
+	// MaxConcurrentFetches is not hot-reloaded.
+	fetchSem chan struct{}
+	// fetchLimiter enforces config.MinFetchInterval between the start of
+	// consecutive fetches (Task D4).
+	fetchLimiter *fetchRateLimiter
+	// oversizeRejections counts tips rejected by dispatchFetch because the
+	// fetcher reported ErrFetchTooLarge (Task D4). Read via
+	// OversizeRejections.
+	oversizeRejections int64
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -87,17 +109,84 @@ func NewTipQueue(config *TipQueueConfig) *TipQueue {
 	if config == nil {
 		config = NewTipQueueConfig()
 	}
+	// A config built by hand (or unmarshaled from a source that omits
+	// these fields) should not silently disable the D4 resource caps --
+	// treat a non-positive value the same as "unset" and fall back to the
+	// package defaults, mirroring StartTTLSweeper's existing
+	// non-positive-interval-defaults convention below.
+	if config.MaxFetchBytes <= 0 {
+		config.MaxFetchBytes = DefaultMaxFetchBytes
+	}
+	if config.MaxConcurrentFetches <= 0 {
+		config.MaxConcurrentFetches = DefaultMaxConcurrentFetches
+	}
+	if config.MinFetchInterval <= 0 {
+		config.MinFetchInterval = DefaultMinFetchInterval
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &TipQueue{
-		config:     config,
-		verifier:   channels.VerifySignedPNMEnvelope,
-		tips:       make(map[string][]*Tip),
-		pinnedCIDs: make(map[string]*Tip),
-		handlers:   make([]TipHandler, 0),
-		ctx:        ctx,
-		cancel:     cancel,
+		config:       config,
+		verifier:     channels.VerifySignedPNMEnvelope,
+		tips:         make(map[string][]*Tip),
+		pinnedCIDs:   make(map[string]*Tip),
+		handlers:     make([]TipHandler, 0),
+		fetchSem:     make(chan struct{}, config.MaxConcurrentFetches),
+		fetchLimiter: newFetchRateLimiter(config.MinFetchInterval),
+		ctx:          ctx,
+		cancel:       cancel,
+	}
+}
+
+// OversizeRejections returns the number of tips rejected so far because
+// their fetched content exceeded MaxFetchBytes (Task D4).
+func (tq *TipQueue) OversizeRejections() int64 {
+	return atomic.LoadInt64(&tq.oversizeRejections)
+}
+
+// fetchRateLimiter is a minimal token-bucket-of-one rate limiter: it
+// enforces a minimum spacing between successive Wait callers returning,
+// which is sufficient for "don't let a burst of tips all fetch at once"
+// (Task D4) without pulling in a rate-limiting dependency.
+type fetchRateLimiter struct {
+	interval time.Duration
+
+	mu   sync.Mutex
+	next time.Time
+}
+
+func newFetchRateLimiter(interval time.Duration) *fetchRateLimiter {
+	return &fetchRateLimiter{interval: interval}
+}
+
+// wait blocks until the next fetch slot is available and reserves it, or
+// returns early with ctx's error if ctx is done first (e.g. TipQueue.Close
+// was called). A non-positive interval disables rate limiting.
+func (r *fetchRateLimiter) wait(ctx context.Context) error {
+	if r == nil || r.interval <= 0 {
+		return nil
+	}
+	for {
+		r.mu.Lock()
+		now := time.Now()
+		if !now.Before(r.next) {
+			r.next = now.Add(r.interval)
+			r.mu.Unlock()
+			return nil
+		}
+		wait := r.next.Sub(now)
+		r.mu.Unlock()
+
+		timer := time.NewTimer(wait)
+		select {
+		case <-timer.C:
+			// Loop and re-check: another goroutine may have reserved the
+			// slot we were waiting on in the meantime.
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		}
 	}
 }
 
@@ -327,54 +416,99 @@ func (tq *TipQueue) notifyHandlers(tip *Tip, config ResolvedConfig) {
 	}
 }
 
-// processTip handles auto-fetch and auto-pin based on config.
+// processTip handles auto-fetch and auto-pin based on config, subject to
+// the Task D4 resource caps: MaxFetchBytes (per-fetch size ceiling,
+// enforced by the ContentFetcher adapter itself -- see ipfsTipFetcher in
+// internal/node), MaxConcurrentFetches (in-flight fetch concurrency), and
+// MinFetchInterval (minimum spacing between fetch starts). The
+// concurrency/rate caps only gate Fetch: a pin-only tip (AutoFetch=false,
+// AutoPin=true, e.g. a schema/source override for durability-only pinning)
+// is not subject to either, since Pin never reads content into this
+// process to measure against MaxFetchBytes and issues a single lightweight
+// RPC rather than a bulk transfer here.
 func (tq *TipQueue) processTip(tip *Tip, config ResolvedConfig) {
 	tq.mu.RLock()
 	fetcher := tq.fetcher
 	pinner := tq.pinner
 	tq.mu.RUnlock()
 
-	// Auto-fetch if enabled
 	if config.AutoFetch && fetcher != nil {
-		go func() {
-			ctx, cancel := context.WithTimeout(tq.ctx, tq.config.FetchTimeout)
-			defer cancel()
-
-			_, err := fetcher.Fetch(ctx, tip.CID)
-			if err != nil {
-				log.Warnf("Failed to fetch %s: %v", tip.CID, err)
-				return
-			}
-
-			tq.mu.Lock()
-			tip.Fetched = true
-			tq.mu.Unlock()
-
-			log.Debugf("Fetched content: %s", tip.CID)
-		}()
+		// When both AutoFetch and AutoPin are enabled (the default), Pin
+		// is chained INSIDE dispatchFetch after a successful, in-cap
+		// fetch rather than fired as an independent goroutine: this is
+		// what makes "oversize content is never pinned" true instead of a
+		// race between two unrelated goroutines.
+		go tq.dispatchFetch(tip, config, fetcher, pinner)
+		return
 	}
 
-	// Auto-pin if enabled
 	if config.AutoPin && pinner != nil {
-		go func() {
-			ctx, cancel := context.WithTimeout(tq.ctx, tq.config.FetchTimeout)
-			defer cancel()
-
-			err := pinner.Pin(ctx, tip.CID, config.TTL)
-			if err != nil {
-				log.Warnf("Failed to pin %s: %v", tip.CID, err)
-				return
-			}
-
-			tq.mu.Lock()
-			tip.Pinned = true
-			tip.PinExpiry = time.Now().Add(config.TTL)
-			tq.pinnedCIDs[tip.CID] = tip
-			tq.mu.Unlock()
-
-			log.Debugf("Pinned content: %s (TTL: %v)", tip.CID, config.TTL)
-		}()
+		go tq.runPin(tip, config, pinner)
 	}
+}
+
+// dispatchFetch waits for a rate-limit slot and a concurrency slot (both
+// bounded by tq.ctx, so TipQueue.Close unblocks any queued dispatch
+// instead of leaking a goroutine), fetches, and on success chains straight
+// into Pin (if AutoPin is also enabled). A fetch rejected for being
+// oversize (ErrFetchTooLarge) is counted and logged, and never reaches
+// Pin.
+func (tq *TipQueue) dispatchFetch(tip *Tip, config ResolvedConfig, fetcher ContentFetcher, pinner ContentPinner) {
+	if err := tq.fetchLimiter.wait(tq.ctx); err != nil {
+		return // TipQueue is shutting down
+	}
+
+	select {
+	case tq.fetchSem <- struct{}{}:
+		defer func() { <-tq.fetchSem }()
+	case <-tq.ctx.Done():
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(tq.ctx, tq.config.FetchTimeout)
+	defer cancel()
+
+	_, err := fetcher.Fetch(ctx, tip.CID)
+	if err != nil {
+		if errors.Is(err, ErrFetchTooLarge) {
+			atomic.AddInt64(&tq.oversizeRejections, 1)
+			log.Warnf("Rejected oversize fetch for %s: %v", tip.CID, err)
+		} else {
+			log.Warnf("Failed to fetch %s: %v", tip.CID, err)
+		}
+		return
+	}
+
+	tq.mu.Lock()
+	tip.Fetched = true
+	tq.mu.Unlock()
+
+	log.Debugf("Fetched content: %s", tip.CID)
+
+	if config.AutoPin && pinner != nil {
+		tq.runPin(tip, config, pinner)
+	}
+}
+
+// runPin pins tip.CID and records the resulting TTL bookkeeping. Called
+// either as its own goroutine (pin-only tips) or synchronously from
+// dispatchFetch after a successful in-cap fetch.
+func (tq *TipQueue) runPin(tip *Tip, config ResolvedConfig, pinner ContentPinner) {
+	ctx, cancel := context.WithTimeout(tq.ctx, tq.config.FetchTimeout)
+	defer cancel()
+
+	if err := pinner.Pin(ctx, tip.CID, config.TTL); err != nil {
+		log.Warnf("Failed to pin %s: %v", tip.CID, err)
+		return
+	}
+
+	tq.mu.Lock()
+	tip.Pinned = true
+	tip.PinExpiry = time.Now().Add(config.TTL)
+	tq.pinnedCIDs[tip.CID] = tip
+	tq.mu.Unlock()
+
+	log.Debugf("Pinned content: %s (TTL: %v)", tip.CID, config.TTL)
 }
 
 // PublishTip creates and broadcasts a PNM for pinned content.
