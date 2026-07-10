@@ -23,12 +23,17 @@ const (
 	trustRootsName   = "update-roots.json"
 	manifestFileName = "manifest.json"
 	carrierFileName  = "update.wasm"
+	phaseFileName    = "apply-phase.json"
 
 	// TrustRootsEnv overrides the bundle trust store path, primarily for
 	// tests and managed deployments.
 	TrustRootsEnv = "SDN_UPDATE_TRUST_ROOTS"
 
 	StateSchema = "org.spacedatanetwork.update.state.v1"
+
+	// ApplyPhaseSchema is the schema for the durable two-phase-apply crash
+	// marker (updates/apply-phase.json). See RecoverPendingApply.
+	ApplyPhaseSchema = "org.spacedatanetwork.update.apply-phase.v1"
 )
 
 // Paths describes the update working tree inside a self-contained bundle.
@@ -41,6 +46,10 @@ type Paths struct {
 	Incoming string
 	State    string
 	Trust    string
+	// Phase is the durable two-phase-apply crash marker path
+	// (updates/apply-phase.json). It lives under Updates, which the bundle
+	// swap never touches, so it survives a crash mid-apply.
+	Phase string
 }
 
 func PathsFor(bundleRoot string) Paths {
@@ -54,6 +63,7 @@ func PathsFor(bundleRoot string) Paths {
 		Incoming: filepath.Join(updates, incomingDirName),
 		State:    filepath.Join(updates, stateFileName),
 		Trust:    filepath.Join(bundleRoot, trustDirName, trustRootsName),
+		Phase:    filepath.Join(updates, phaseFileName),
 	}
 }
 
@@ -111,6 +121,86 @@ func SaveState(paths Paths, state *State) error {
 		return err
 	}
 	return os.Rename(tmp, paths.State)
+}
+
+// applyPhaseMarker is the durable, on-disk record of an in-progress
+// two-phase apply (G3). It is written once the Kubo phase has committed
+// (runtime/kubo/ swapped and health-checked) and cleared once the whole
+// apply completes or is rolled back. If the process dies while the marker
+// is present, the bundle root is left with a NEW Kubo runtime and an OLD
+// SDN/remaining payload; RecoverPendingApply uses the recorded move lists
+// to undo exactly the Kubo-phase renames and restore the original bytes.
+type applyPhaseMarker struct {
+	Schema        string   `json:"schema"`
+	UpdateID      string   `json:"update_id"`
+	RollbackDir   string   `json:"rollback_dir"`
+	Phase         string   `json:"phase"` // "kubo-done"
+	KuboMoved     []string `json:"kubo_moved,omitempty"`
+	KuboInstalled []string `json:"kubo_installed,omitempty"`
+	StartedAt     string   `json:"started_at,omitempty"`
+}
+
+func savePhaseMarker(paths Paths, marker *applyPhaseMarker) error {
+	marker.Schema = ApplyPhaseSchema
+	data, err := json.MarshalIndent(marker, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(paths.Updates, 0o755); err != nil {
+		return err
+	}
+	tmp := paths.Phase + ".tmp"
+	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, paths.Phase)
+}
+
+func loadPhaseMarker(paths Paths) (*applyPhaseMarker, error) {
+	data, err := os.ReadFile(paths.Phase)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read apply phase marker: %w", err)
+	}
+	var marker applyPhaseMarker
+	if err := json.Unmarshal(data, &marker); err != nil {
+		return nil, fmt.Errorf("parse apply phase marker: %w", err)
+	}
+	if marker.Schema != ApplyPhaseSchema {
+		return nil, fmt.Errorf("unsupported apply phase marker schema: %s", marker.Schema)
+	}
+	return &marker, nil
+}
+
+func clearPhaseMarker(paths Paths) error {
+	if err := os.Remove(paths.Phase); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// RecoverPendingApply detects a durable two-phase-apply crash marker left
+// behind by a process that died between the Kubo phase committing and the
+// SDN/main phase (or its own cleanup) completing, and rolls the Kubo phase
+// back so the bundle root returns to its pre-apply state. It is safe to
+// call unconditionally on every start/apply/verify: when no marker is
+// present it is a no-op (recovered=false, err=nil). Apply calls this
+// automatically as its first step.
+func RecoverPendingApply(paths Paths) (recovered bool, err error) {
+	marker, err := loadPhaseMarker(paths)
+	if err != nil {
+		return false, err
+	}
+	if marker == nil {
+		return false, nil
+	}
+	undoKuboPhase(paths, marker.RollbackDir, marker.KuboMoved, marker.KuboInstalled)
+	if err := clearPhaseMarker(paths); err != nil {
+		return false, fmt.Errorf("clear apply phase marker after recovery: %w", err)
+	}
+	return true, nil
 }
 
 // LoadTrustRoots reads the bundle trust store (or the SDN_UPDATE_TRUST_ROOTS

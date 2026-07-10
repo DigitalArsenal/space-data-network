@@ -16,6 +16,8 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -49,19 +51,29 @@ type ManifestRollback struct {
 	Reason           string `json:"reason,omitempty"`
 }
 
+// ManifestCompatibility carries host/runtime compatibility gates that must
+// hold before an update is applied. MinKuboVersion is the G3 two-phase-apply
+// gate: when set, the installed Kubo version (opts.InstalledKuboVersion at
+// Validate time) must be >= this version or the manifest is rejected before
+// any swap begins.
+type ManifestCompatibility struct {
+	MinKuboVersion string `json:"min_kubo_version,omitempty"`
+}
+
 type Manifest struct {
-	Schema    string            `json:"schema"`
-	UpdateID  string            `json:"update_id"`
-	Version   string            `json:"version"`
-	Sequence  *int64            `json:"sequence"`
-	Channel   string            `json:"channel"`
-	CreatedAt string            `json:"created_at"`
-	ExpiresAt string            `json:"expires_at"`
-	Target    ManifestTarget    `json:"target"`
-	Bundle    ManifestBundle    `json:"bundle"`
-	Wasm      ManifestWasm      `json:"wasm"`
-	Signing   ManifestSigning   `json:"signing"`
-	Rollback  *ManifestRollback `json:"rollback,omitempty"`
+	Schema        string                 `json:"schema"`
+	UpdateID      string                 `json:"update_id"`
+	Version       string                 `json:"version"`
+	Sequence      *int64                 `json:"sequence"`
+	Channel       string                 `json:"channel"`
+	CreatedAt     string                 `json:"created_at"`
+	ExpiresAt     string                 `json:"expires_at"`
+	Target        ManifestTarget         `json:"target"`
+	Bundle        ManifestBundle         `json:"bundle"`
+	Wasm          ManifestWasm           `json:"wasm"`
+	Signing       ManifestSigning        `json:"signing"`
+	Rollback      *ManifestRollback      `json:"rollback,omitempty"`
+	Compatibility *ManifestCompatibility `json:"compatibility,omitempty"`
 
 	raw []byte
 }
@@ -205,6 +217,86 @@ func (m *Manifest) assertExpiration(now time.Time) error {
 	return nil
 }
 
+// assertCompatibility enforces the G3 min_kubo_version gate. When the
+// manifest declares no compatibility requirement, or the caller does not
+// know the installed Kubo version, the check is skipped (back-compat: older
+// callers that never set VerifyOptions.InstalledKuboVersion see no change
+// in behavior). The gate only fires when both sides are known and the
+// installed version is strictly older than required.
+func (m *Manifest) assertCompatibility(installedKuboVersion string) error {
+	if m.Compatibility == nil {
+		return nil
+	}
+	minVersion := strings.TrimSpace(m.Compatibility.MinKuboVersion)
+	if minVersion == "" {
+		return nil
+	}
+	installed := strings.TrimSpace(installedKuboVersion)
+	if installed == "" {
+		return nil
+	}
+	cmp, err := compareVersions(installed, minVersion)
+	if err != nil {
+		return fmt.Errorf("invalid kubo version for compatibility check: %w", err)
+	}
+	if cmp < 0 {
+		return fmt.Errorf("update requires kubo >= %s, installed %s", minVersion, installed)
+	}
+	return nil
+}
+
+// compareVersions compares two dot-separated numeric version strings
+// (optionally "v"-prefixed, optionally carrying a "-"/"+" pre-release or
+// build suffix which is ignored), returning -1, 0, or 1. Missing trailing
+// segments are treated as 0 (e.g. "0.29" == "0.29.0").
+func compareVersions(a, b string) (int, error) {
+	pa, err := parseVersionParts(a)
+	if err != nil {
+		return 0, err
+	}
+	pb, err := parseVersionParts(b)
+	if err != nil {
+		return 0, err
+	}
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		var x, y int
+		if i < len(pa) {
+			x = pa[i]
+		}
+		if i < len(pb) {
+			y = pb[i]
+		}
+		if x != y {
+			if x < y {
+				return -1, nil
+			}
+			return 1, nil
+		}
+	}
+	return 0, nil
+}
+
+func parseVersionParts(v string) ([]int, error) {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, "v")
+	if idx := strings.IndexAny(v, "-+"); idx >= 0 {
+		v = v[:idx]
+	}
+	if v == "" {
+		return nil, fmt.Errorf("empty version string")
+	}
+	fields := strings.Split(v, ".")
+	parts := make([]int, len(fields))
+	for i, f := range fields {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			return nil, fmt.Errorf("invalid version segment %q in %q", f, v)
+		}
+		parts[i] = n
+	}
+	return parts, nil
+}
+
 func (m *Manifest) assertSequence(currentSequence int64) error {
 	if *m.Sequence > currentSequence {
 		return nil
@@ -279,6 +371,12 @@ type VerifyOptions struct {
 	CurrentSequence int64
 	TrustedRoots    TrustedRoots
 	Now             time.Time
+	// InstalledKuboVersion is the currently-installed Kubo version, used to
+	// enforce a manifest's compatibility.min_kubo_version gate (G3). Left
+	// empty, the gate is skipped — existing callers built before this field
+	// existed see no behavior change until a coordinator wires the actual
+	// installed version in (see node.go TODO in the G3 report).
+	InstalledKuboVersion string
 }
 
 type VerifyResult struct {
@@ -310,6 +408,9 @@ func (m *Manifest) Validate(bundleHash string, opts VerifyOptions) (*VerifyResul
 		return nil, err
 	}
 	if err := m.assertSequence(opts.CurrentSequence); err != nil {
+		return nil, err
+	}
+	if err := m.assertCompatibility(opts.InstalledKuboVersion); err != nil {
 		return nil, err
 	}
 	if m.Bundle.Hash != bundleHash {
