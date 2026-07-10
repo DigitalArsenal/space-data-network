@@ -275,6 +275,16 @@ func (n *Node) init() error {
 	n.peerRegistry = peers.NewRegistry(n.config.Peers.StrictMode, persistence)
 	n.peerGater = peers.NewTrustedConnectionGater(n.peerRegistry)
 
+	// Wire the web-of-trust graph (Phase C2) from verified node-key-signed
+	// permission grants (Phase C4, internal/peers/grants.go). No grant
+	// store/transport is wired up yet, so this starts from an empty grant
+	// set — BuildTrustGraph degrades to an empty *trust.Graph, which keeps
+	// EffectiveTrustLevel exactly at pre-C2 direct-assignment-only behavior
+	// (fail-safe). Populating the grant slice from a real source (peer
+	// exchange, persisted grants, …) is a follow-up.
+	trustGraph, _ := peers.BuildTrustGraph(nil)
+	n.peerRegistry.SetTrustGraph(trustGraph)
+
 	// Log trusted peer mode
 	if n.config.Peers.StrictMode {
 		log.Infof("Trusted peer strict mode ENABLED - only registry peers allowed")
