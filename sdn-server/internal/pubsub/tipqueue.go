@@ -46,6 +46,14 @@ type Tip struct {
 	Fetched          bool
 	Pinned           bool
 	PinExpiry        time.Time
+
+	// RawPNM is the complete size-prefixed PNM buffer this tip was parsed
+	// from. Callers that need to drive a schema-specific materialization
+	// path (e.g. a dataset-publication PNM consumer that re-verifies the
+	// signature against a provider key) need the original bytes, not just
+	// the parsed fields above, so OnTip handlers get them here rather than
+	// having to re-fetch or reconstruct the buffer.
+	RawPNM []byte
 }
 
 // TipHandler is called when a tip is received.
@@ -168,6 +176,18 @@ func (tq *TipQueue) receiveLoop() {
 	}
 }
 
+// HandleMessage feeds one already-received pubsub message into the tip
+// queue. It is exported so a caller that manages its own topic
+// subscription (e.g. a host process that already joined/subscribed the
+// topic for other reasons and wants to avoid a second, competing
+// subscription to the same libp2p pubsub topic) can drive the queue
+// without going through Subscribe/receiveLoop. Subscribe-based and
+// HandleMessage-based feeding are mutually exclusive in practice but not
+// mutually enforced; callers own that choice.
+func (tq *TipQueue) HandleMessage(msg *ps.Message) {
+	tq.handleMessage(msg)
+}
+
 // handleMessage processes a single PNM message.
 func (tq *TipQueue) handleMessage(msg *ps.Message) {
 	data := msg.Data
@@ -200,6 +220,19 @@ func (tq *TipQueue) handleMessage(msg *ps.Message) {
 		return
 	}
 
+	// Dedupe: a CID that is already pinned and not yet past its TTL has
+	// already been fetched/pinned/materialized by an earlier tip for the
+	// same content. Re-announcements of the same CID (e.g. gossipsub
+	// retransmission, or the same publication seen on more than one topic)
+	// should not re-trigger fetch/pin/handler work.
+	tq.mu.RLock()
+	if existing, ok := tq.pinnedCIDs[cid]; ok && (existing.PinExpiry.IsZero() || time.Now().Before(existing.PinExpiry)) {
+		tq.mu.RUnlock()
+		log.Debugf("Skipping duplicate tip for already-pinned CID %s", cid)
+		return
+	}
+	tq.mu.RUnlock()
+
 	// Extract schema type from FILE_ID
 	schemaType := string(pnm.FILE_ID())
 	if schemaType == "" {
@@ -228,6 +261,7 @@ func (tq *TipQueue) handleMessage(msg *ps.Message) {
 		Signature:        string(pnm.SIGNATURE()),
 		PublishTimestamp: publishTime,
 		ReceivedAt:       time.Now(),
+		RawPNM:           append([]byte(nil), data...),
 	}
 
 	// Resolve config for this peer+schema
@@ -508,6 +542,71 @@ func (tq *TipQueue) QueueSize() int {
 		total += len(tips)
 	}
 	return total
+}
+
+// StartTTLSweeper begins a background loop that unpins content whose TTL
+// (Tip.PinExpiry, set when the tip was auto-pinned) has elapsed. Kubo/IPFS
+// pins have no native TTL, so this is the mechanism that actually enforces
+// ResolvedConfig.TTL: SetPinner must be called with a real ContentPinner
+// before this has any effect. Safe to call at most once per TipQueue; the
+// loop stops when Close is called. A non-positive interval defaults to one
+// minute.
+func (tq *TipQueue) StartTTLSweeper(interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	tq.wg.Add(1)
+	go tq.ttlSweepLoop(interval)
+}
+
+func (tq *TipQueue) ttlSweepLoop(interval time.Duration) {
+	defer tq.wg.Done()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-tq.ctx.Done():
+			return
+		case <-ticker.C:
+			tq.sweepExpiredPins()
+		}
+	}
+}
+
+// sweepExpiredPins unpins every currently-tracked CID whose PinExpiry has
+// elapsed and removes it from the pinned set. Exported indirectly via
+// StartTTLSweeper; kept callable directly (unexported) for tests that want
+// to assert sweep behavior without waiting on a ticker.
+func (tq *TipQueue) sweepExpiredPins() {
+	tq.mu.RLock()
+	pinner := tq.pinner
+	now := time.Now()
+	expired := make([]string, 0)
+	for cidValue, tip := range tq.pinnedCIDs {
+		if tip != nil && !tip.PinExpiry.IsZero() && now.After(tip.PinExpiry) {
+			expired = append(expired, cidValue)
+		}
+	}
+	tq.mu.RUnlock()
+
+	if pinner == nil || len(expired) == 0 {
+		return
+	}
+
+	for _, cidValue := range expired {
+		ctx, cancel := context.WithTimeout(tq.ctx, tq.config.FetchTimeout)
+		err := pinner.Unpin(ctx, cidValue)
+		cancel()
+		if err != nil {
+			log.Warnf("Failed to unpin expired content %s: %v", cidValue, err)
+			continue
+		}
+		tq.mu.Lock()
+		delete(tq.pinnedCIDs, cidValue)
+		tq.mu.Unlock()
+		log.Debugf("Unpinned expired content: %s", cidValue)
+	}
 }
 
 // Close stops the TipQueue.

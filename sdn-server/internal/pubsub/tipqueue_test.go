@@ -2,6 +2,7 @@ package pubsub
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"reflect"
 	"sync"
@@ -611,6 +612,206 @@ func buildTestPNM(t *testing.T, cid, fileID string) []byte {
 	pnm := PNM.PNMEnd(builder)
 	PNM.FinishSizePrefixedPNMBuffer(builder, pnm)
 	return append([]byte(nil), builder.FinishedBytes()...)
+}
+
+// buildSignedTestPNM builds a PNM buffer that clears the default verifier's
+// structural checks (SIGNATURE_TYPE == "Ed25519", SIGNATURE decodes to 64
+// bytes) without asserting anything about the signature's cryptographic
+// validity — mirrors internal/channels' own verifier test helper.
+func buildSignedTestPNM(t *testing.T, cid, fileID string) []byte {
+	t.Helper()
+
+	signature := make([]byte, 64)
+	for i := range signature {
+		signature[i] = byte(i + 1)
+	}
+
+	builder := flatbuffers.NewBuilder(256)
+	cidOffset := builder.CreateString(cid)
+	fileIDOffset := builder.CreateString(fileID)
+	timestampOffset := builder.CreateString(time.Now().UTC().Format(time.RFC3339))
+	sigTypeOffset := builder.CreateString("Ed25519")
+	sigOffset := builder.CreateString(hex.EncodeToString(signature))
+
+	PNM.PNMStart(builder)
+	PNM.PNMAddCID(builder, cidOffset)
+	PNM.PNMAddFILE_ID(builder, fileIDOffset)
+	PNM.PNMAddPUBLISH_TIMESTAMP(builder, timestampOffset)
+	PNM.PNMAddSIGNATURE_TYPE(builder, sigTypeOffset)
+	PNM.PNMAddSIGNATURE(builder, sigOffset)
+	pnm := PNM.PNMEnd(builder)
+	PNM.FinishSizePrefixedPNMBuffer(builder, pnm)
+	return append([]byte(nil), builder.FinishedBytes()...)
+}
+
+func TestTipQueueHandleMessagePublicWrapperMatchesInternalHandler(t *testing.T) {
+	tq := NewTipQueue(nil)
+
+	var received *Tip
+	tq.OnTip(func(tip *Tip, _ ResolvedConfig) {
+		received = tip
+	})
+
+	tq.HandleMessage(&ps.Message{
+		Message:      &pb.Message{Data: buildSignedTestPNM(t, "bafypublicwrapper", "OMM")},
+		ReceivedFrom: peer.ID("12D3KooWPublicWrapperPeer"),
+	})
+
+	if received == nil {
+		t.Fatal("exported HandleMessage did not drive the same handling path as handleMessage")
+	}
+	if received.CID != "bafypublicwrapper" {
+		t.Fatalf("tip CID = %q, want bafypublicwrapper", received.CID)
+	}
+}
+
+func TestTipQueueHandleMessageCarriesRawPNMToHandlers(t *testing.T) {
+	tq := NewTipQueue(nil)
+	pnmBytes := buildSignedTestPNM(t, "bafyraw", "OMM")
+
+	var received *Tip
+	tq.OnTip(func(tip *Tip, _ ResolvedConfig) {
+		received = tip
+	})
+
+	tq.handleMessage(&ps.Message{
+		Message:      &pb.Message{Data: pnmBytes},
+		ReceivedFrom: peer.ID("12D3KooWRawPNMPeer"),
+	})
+
+	if received == nil {
+		t.Fatal("handler was not called")
+	}
+	if !reflect.DeepEqual(received.RawPNM, pnmBytes) {
+		t.Fatalf("RawPNM = %x, want %x", received.RawPNM, pnmBytes)
+	}
+}
+
+func TestTipQueueHandleMessageDedupesAlreadyPinnedCID(t *testing.T) {
+	config := NewTipQueueConfig()
+	config.DefaultAutoFetch = true
+	config.DefaultAutoPin = true
+
+	tq := NewTipQueue(config)
+	fetcher := newMockFetcher()
+	pinner := newMockPinner()
+	tq.SetFetcher(fetcher)
+	tq.SetPinner(pinner)
+
+	handlerCalls := 0
+	tq.OnTip(func(tip *Tip, _ ResolvedConfig) {
+		handlerCalls++
+	})
+
+	// Seed pinnedCIDs as though an earlier tip for this CID already ran
+	// through processTip and is still within its TTL.
+	tq.mu.Lock()
+	tq.pinnedCIDs["bafydedupe"] = &Tip{CID: "bafydedupe", PinExpiry: time.Now().Add(time.Hour)}
+	tq.mu.Unlock()
+
+	tq.handleMessage(&ps.Message{
+		Message:      &pb.Message{Data: buildSignedTestPNM(t, "bafydedupe", "OMM")},
+		ReceivedFrom: peer.ID("12D3KooWDedupePeer"),
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	if handlerCalls != 0 {
+		t.Fatalf("handler called %d times, want 0 for a duplicate already-pinned CID", handlerCalls)
+	}
+	if tq.QueueSize() != 0 {
+		t.Fatalf("queue size = %d, want 0: duplicate tip should not be queued", tq.QueueSize())
+	}
+	if fetcher.WasFetched("bafydedupe") {
+		t.Fatal("duplicate already-pinned CID should not be re-fetched")
+	}
+}
+
+func TestTipQueueHandleMessageProcessesExpiredPinAgain(t *testing.T) {
+	config := NewTipQueueConfig()
+	config.DefaultAutoFetch = true
+	config.DefaultAutoPin = true
+
+	tq := NewTipQueue(config)
+	fetcher := newMockFetcher()
+	pinner := newMockPinner()
+	tq.SetFetcher(fetcher)
+	tq.SetPinner(pinner)
+
+	// A tip whose TTL has already elapsed is not a duplicate: a fresh
+	// announcement of the same CID should be processed normally.
+	tq.mu.Lock()
+	tq.pinnedCIDs["bafyexpired"] = &Tip{CID: "bafyexpired", PinExpiry: time.Now().Add(-time.Hour)}
+	tq.mu.Unlock()
+
+	handlerCalls := 0
+	tq.OnTip(func(tip *Tip, _ ResolvedConfig) {
+		handlerCalls++
+	})
+
+	tq.handleMessage(&ps.Message{
+		Message:      &pb.Message{Data: buildSignedTestPNM(t, "bafyexpired", "OMM")},
+		ReceivedFrom: peer.ID("12D3KooWExpiredPeer"),
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	if handlerCalls != 1 {
+		t.Fatalf("handler called %d times, want 1 for an expired-then-renewed CID", handlerCalls)
+	}
+	if !fetcher.WasFetched("bafyexpired") {
+		t.Fatal("expired-then-renewed CID should be fetched again")
+	}
+}
+
+func TestTipQueueSweepExpiredPinsUnpinsAndRemoves(t *testing.T) {
+	tq := NewTipQueue(nil)
+	pinner := newMockPinner()
+	tq.SetPinner(pinner)
+
+	tq.mu.Lock()
+	tq.pinnedCIDs["bafystale"] = &Tip{CID: "bafystale", PinExpiry: time.Now().Add(-time.Minute)}
+	tq.pinnedCIDs["bafyfresh"] = &Tip{CID: "bafyfresh", PinExpiry: time.Now().Add(time.Hour)}
+	tq.mu.Unlock()
+	// Seed the mock pinner directly so Unpin has something to remove.
+	_ = pinner.Pin(context.Background(), "bafystale", time.Minute)
+	_ = pinner.Pin(context.Background(), "bafyfresh", time.Hour)
+
+	tq.sweepExpiredPins()
+
+	if pinner.IsPinned("bafystale") {
+		t.Fatal("expired pin should have been unpinned by the sweep")
+	}
+	if !pinner.IsPinned("bafyfresh") {
+		t.Fatal("non-expired pin should not have been touched by the sweep")
+	}
+	remaining := tq.GetPinnedCIDs()
+	if _, ok := remaining["bafystale"]; ok {
+		t.Fatal("expired CID should have been removed from the tracked pinned set")
+	}
+	if _, ok := remaining["bafyfresh"]; !ok {
+		t.Fatal("non-expired CID should still be tracked")
+	}
+}
+
+func TestTipQueueStartTTLSweeperStopsOnClose(t *testing.T) {
+	tq := NewTipQueue(nil)
+	tq.StartTTLSweeper(10 * time.Millisecond)
+
+	// Give the sweeper a couple of ticks before closing, then assert Close
+	// returns promptly (i.e. the sweeper goroutine actually exits instead
+	// of leaking past ctx cancellation).
+	time.Sleep(30 * time.Millisecond)
+
+	done := make(chan error, 1)
+	go func() { done <- tq.Close() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Close returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not return; TTL sweeper goroutine may have leaked")
+	}
 }
 
 func TestTipQueueClose(t *testing.T) {
