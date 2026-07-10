@@ -29,6 +29,20 @@ type ApplyOptions struct {
 	UpdateID string
 	DryRun   bool
 	Now      time.Time
+	// KuboPhaseHook drives Kubo process control around the Kubo-first phase
+	// of a two-phase apply (see KuboPhaseHook doc). Nil uses
+	// NoopKuboPhaseHook.
+	KuboPhaseHook KuboPhaseHook
+	// InstalledKuboVersion, when set, is threaded into manifest.Validate via
+	// VerifyOptions so a manifest's compatibility.min_kubo_version gate is
+	// enforced. Left empty, the gate is skipped (back-compat).
+	InstalledKuboVersion string
+
+	// testFault is an in-package-only fault-injection seam used by this
+	// package's own tests to exercise the phase-2-failure and crash-
+	// recovery paths through the real Apply entry point. It is unexported,
+	// so no caller outside internal/update can set it.
+	testFault *applyFaultInjection
 }
 
 type ApplyResult struct {
@@ -38,6 +52,10 @@ type ApplyResult struct {
 	Channel      string
 	RollbackPath string
 	DryRun       bool
+	// TwoPhase reports whether the apply went through the Kubo-first
+	// two-phase path (runtime/kubo/ was separable) rather than the legacy
+	// single-phase swap.
+	TwoPhase bool
 }
 
 type RollbackOptions struct {
@@ -59,6 +77,14 @@ type RollbackResult struct {
 // swap failure the previous contents are restored and the staged payload is
 // moved to updates/failed/<update_id>/.
 func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
+	// Self-heal first: if a previous apply crashed between the Kubo phase
+	// committing and the SDN/main phase (or its own cleanup) completing,
+	// undo the Kubo phase before doing anything else so every subsequent
+	// step sees a consistent, fully-rolled-back bundle root.
+	if _, err := RecoverPendingApply(paths); err != nil {
+		return nil, fmt.Errorf("recover pending update apply: %w", err)
+	}
+
 	roots, err := LoadTrustRoots(paths)
 	if err != nil {
 		return nil, err
@@ -68,6 +94,7 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 		return nil, err
 	}
 	verifyOpts := HostVerifyOptions(roots, state.Sequence, opts.Now)
+	verifyOpts.InstalledKuboVersion = opts.InstalledKuboVersion
 	staged, err := ScanStaged(paths, verifyOpts)
 	if err != nil {
 		return nil, err
@@ -104,12 +131,36 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 	}
 
 	rollbackDir := filepath.Join(paths.Rollback, candidate.UpdateID)
-	if err := swapBundleContents(paths, newRoot, rollbackDir); err != nil {
+	twoPhase := hasSeparableKuboSubtree(newRoot)
+	var swapErr error
+	if twoPhase {
+		if err := os.RemoveAll(rollbackDir); err != nil {
+			return nil, err
+		}
+		hook := opts.KuboPhaseHook
+		if hook == nil {
+			hook = NoopKuboPhaseHook
+		}
+		swapErr = applyTwoPhase(paths, newRoot, rollbackDir, candidate.UpdateID, hook, opts.testFault)
+	} else {
+		// Degraded/back-compat path: the incoming bundle has no separable
+		// runtime/kubo/ subtree (older release, or a non-Kubo-bearing
+		// target), so fall back to the original single-phase atomic swap.
+		swapErr = swapBundleContents(paths, newRoot, rollbackDir)
+	}
+	if swapErr != nil {
+		if errors.Is(swapErr, errSimulatedCrash) {
+			// A real crash would never reach this cleanup step either; the
+			// on-disk state (Kubo-new/SDN-old + phase marker) is left
+			// exactly as applyTwoPhase produced it, for RecoverPendingApply
+			// to find on the next start.
+			return nil, swapErr
+		}
 		failedDir := filepath.Join(paths.Failed, candidate.UpdateID)
 		_ = os.RemoveAll(failedDir)
 		_ = os.MkdirAll(filepath.Dir(failedDir), 0o755)
 		_ = os.Rename(candidate.Dir, failedDir)
-		return nil, err
+		return nil, swapErr
 	}
 
 	previous := &StatePrevious{
@@ -139,6 +190,7 @@ func Apply(paths Paths, opts ApplyOptions) (*ApplyResult, error) {
 		Sequence:     candidate.Result.Sequence,
 		Channel:      candidate.Result.Channel,
 		RollbackPath: rollbackDir,
+		TwoPhase:     twoPhase,
 	}, nil
 }
 
@@ -509,8 +561,13 @@ func validateIncomingBundle(newRoot, expectedVersion string) error {
 }
 
 // swapBundleContents moves the current bundle payload entries into
-// rollbackDir and the new payload entries into the bundle root. On failure
-// it restores everything it moved.
+// rollbackDir and the new payload entries into the bundle root, as a single
+// atomic-per-entry operation across the whole tree. On failure it restores
+// everything it moved. This is the legacy single-phase path: Apply uses it
+// as the back-compat/degraded fallback when the incoming bundle has no
+// separable runtime/kubo/ subtree (see applyTwoPhase for the Kubo-first
+// path). It shares its per-entry rename/restore mechanics with the
+// two-phase swap via swapEntrySet/restoreEntries.
 func swapBundleContents(paths Paths, newRoot, rollbackDir string) error {
 	if err := os.RemoveAll(rollbackDir); err != nil {
 		return err
@@ -519,54 +576,11 @@ func swapBundleContents(paths Paths, newRoot, rollbackDir string) error {
 		return err
 	}
 
-	newEntries, err := os.ReadDir(newRoot)
-	if err != nil {
+	var movedToRollback, installed []string
+	skip := func(name string) bool { return protectedEntries[name] }
+	if err := swapEntrySet(paths.Root, newRoot, rollbackDir, "", isBundlePayloadEntry, skip, &movedToRollback, &installed); err != nil {
+		restoreEntries(paths, rollbackDir, movedToRollback, installed)
 		return err
-	}
-	currentEntries, err := os.ReadDir(paths.Root)
-	if err != nil {
-		return err
-	}
-
-	var movedToRollback []string
-	var installed []string
-	restore := func() {
-		for _, name := range installed {
-			_ = os.RemoveAll(filepath.Join(paths.Root, name))
-		}
-		for _, name := range movedToRollback {
-			_ = os.Rename(filepath.Join(rollbackDir, name), filepath.Join(paths.Root, name))
-		}
-	}
-
-	newNames := make(map[string]bool, len(newEntries))
-	for _, entry := range newEntries {
-		newNames[entry.Name()] = true
-	}
-	// Retire current payload entries that are either replaced by, or absent
-	// from, the new bundle. Anything not in the original payload (user data,
-	// updates/, trust/) stays in place.
-	for _, entry := range currentEntries {
-		name := entry.Name()
-		if protectedEntries[name] {
-			continue
-		}
-		if !newNames[name] && !isBundlePayloadEntry(name) {
-			continue
-		}
-		if err := os.Rename(filepath.Join(paths.Root, name), filepath.Join(rollbackDir, name)); err != nil {
-			restore()
-			return fmt.Errorf("retire current bundle entry %s: %w", name, err)
-		}
-		movedToRollback = append(movedToRollback, name)
-	}
-	for _, entry := range newEntries {
-		name := entry.Name()
-		if err := os.Rename(filepath.Join(newRoot, name), filepath.Join(paths.Root, name)); err != nil {
-			restore()
-			return fmt.Errorf("install bundle entry %s: %w", name, err)
-		}
-		installed = append(installed, name)
 	}
 	return nil
 }
