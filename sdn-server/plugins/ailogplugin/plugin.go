@@ -17,8 +17,16 @@ var log = logging.Logger("ailog")
 const (
 	ID = "spaceaware-ai-log"
 
-	// Dashboard UUID — change to revoke access.
-	dashboardUUID = "eaf6c52a-40f1-462d-aa22-b22f015b74f2"
+	// DashboardPath is the operator diagnostic dashboard route. It exposes
+	// client IPs, user queries, generated SQL, and provider/model info, so
+	// it must never be reachable unauthenticated. It is registered under
+	// /api/ (gap B10.1 fix) so the top-level auth wall's isAPIOrPlugin
+	// check in cmd/spacedatanetwork/main.go applies RequireAuth, and that
+	// same file's isAdminOnlyAPIPath lists this prefix so it specifically
+	// requires Admin trust. The path previously carried a hardcoded UUID
+	// as a static "shared secret" — that was never real authentication, so
+	// it was dropped; the auth wall is the gate now, not path secrecy.
+	DashboardPath = "/api/v1/diag"
 
 	maxEntries = 50_000
 )
@@ -87,8 +95,8 @@ func (p *Plugin) RegisterRoutes(mux *http.ServeMux) {
 	if mux == nil {
 		return
 	}
-	mux.HandleFunc("/diag/"+dashboardUUID, p.handleDashboard)
-	log.Infof("AI diag dashboard: /diag/%s", dashboardUUID)
+	mux.HandleFunc(DashboardPath, p.handleDashboard)
+	log.Infof("AI diag dashboard: %s (requires admin authentication)", DashboardPath)
 }
 
 func (p *Plugin) Close() error {
@@ -108,7 +116,7 @@ func (p *Plugin) UIDescriptor() plugins.UIDescriptor {
 		Icon:        "🤖",
 		Color:       "#1e3a5f",
 		TextColor:   "#e0e0e0",
-		URL:         "/diag/" + dashboardUUID,
+		URL:         DashboardPath,
 	}
 }
 

@@ -1397,10 +1397,24 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				})
 				log.Infof("Core API available at %s://%s/api/v1/{id,version,stats,peers,pubsub}", adminScheme, adminAddr)
 
-				// WebSocket bridge
+				// WebSocket bridge (gap B10.3): /ws lives outside the /api/
+				// and /orbpro-key-broker/ prefixes the top-level auth
+				// wall's isAPIOrPlugin check inspects, and an anonymous
+				// client can use it to publish SDS records into local AND
+				// libp2p pubsub — a state-changing surface, not merely a
+				// read. Self-gate it the same way /webui gates itself
+				// (Standard trust) so it is never reachable
+				// unauthenticated when cfg.Admin.RequireAuth is set.
+				// Subscribe and publish both sit behind the same session;
+				// anonymous read access, if ever wanted, must be an
+				// explicit future decision. ws.go's CheckOrigin adds a
+				// second, independent same-origin check on top of this.
 				wsHandler := api.NewWSHandler(n, n.Validator())
-				adminMux.Handle("/ws", wsHandler)
-				log.Infof("WebSocket bridge available at %s://%s/ws", adminScheme, adminAddr)
+				serveWS := func(w http.ResponseWriter, r *http.Request) {
+					gateHandlerWithTrust(w, r, wsHandler, authHandler, cfg.Admin.RequireAuth, peers.Standard)
+				}
+				adminMux.HandleFunc("/ws", serveWS)
+				log.Infof("WebSocket bridge available at %s://%s/ws (auth required: %v)", adminScheme, adminAddr, cfg.Admin.RequireAuth)
 			}
 
 			// ----------------------------------------------------------------
@@ -1977,7 +1991,36 @@ func isAdminOnlyAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/routing/") ||
 		strings.HasPrefix(path, "/api/streaming/") ||
 		strings.HasPrefix(path, "/api/relay/filters") ||
-		strings.HasPrefix(path, "/api/storefront/dashboard/admin")
+		strings.HasPrefix(path, "/api/storefront/dashboard/admin") ||
+		// AI query-log operator diagnostic dashboard (gap B10.1): client
+		// IPs, user queries, generated SQL, and provider/model info.
+		strings.HasPrefix(path, "/api/v1/diag") ||
+		// Module capability approvals (gap B10.1 audit follow-up):
+		// POST .../approve and .../revoke are operator actions that were
+		// previously reachable at Standard trust because this prefix was
+		// missing. isAdminOnlyAPIPath is prefix-only with no method
+		// granularity, so the whole /api/modules/capabilities surface
+		// (including the GET list/tiers reads) becomes Admin-only rather
+		// than splitting read/write here.
+		strings.HasPrefix(path, "/api/modules/capabilities")
+}
+
+// gateHandlerWithTrust enforces a minimum trust level on inner before
+// serving the request. It is the shared self-gating primitive for mounts
+// (the flow editor, /webui, /ws) that live outside the /api/ and
+// /orbpro-key-broker/ prefixes the top-level auth wall's isAPIOrPlugin check
+// inspects, and so would otherwise bypass auth entirely even when
+// cfg.Admin.RequireAuth is set.
+func gateHandlerWithTrust(w http.ResponseWriter, r *http.Request, inner http.Handler, authHandler *auth.Handler, requireAuth bool, minTrust peers.TrustLevel) {
+	if !requireAuth {
+		inner.ServeHTTP(w, r)
+		return
+	}
+	if authHandler == nil {
+		http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	authHandler.RequireAuth(minTrust, inner.ServeHTTP)(w, r)
 }
 
 // gateAdminOnlyHandler enforces admin-trust authentication on inner before
@@ -1988,15 +2031,7 @@ func isAdminOnlyAPIPath(path string) bool {
 // wall's isAPIOrPlugin check inspects, and so would otherwise bypass auth
 // entirely even when cfg.Admin.RequireAuth is set.
 func gateAdminOnlyHandler(w http.ResponseWriter, r *http.Request, inner http.Handler, authHandler *auth.Handler, requireAuth bool) {
-	if !requireAuth {
-		inner.ServeHTTP(w, r)
-		return
-	}
-	if authHandler == nil {
-		http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	authHandler.RequireAuth(peers.Admin, inner.ServeHTTP)(w, r)
+	gateHandlerWithTrust(w, r, inner, authHandler, requireAuth, peers.Admin)
 }
 
 func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {
