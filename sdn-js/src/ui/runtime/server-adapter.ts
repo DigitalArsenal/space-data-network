@@ -229,16 +229,31 @@ function buildPermissions(
   };
 }
 
+// The server's `/auth/me` and verify endpoints serialize peer trust levels using PGP
+// trust-model names (unknown/marginal/full/never/ultimate). These replace the legacy
+// vocabulary (untrusted/limited/trusted) that this adapter originally spoke; `standard`
+// and `admin` are unchanged across both vocabularies. Accept both so already-deployed
+// servers and freshly-updated ones map to the same internal AdminRole.
 function normalizeRole(value?: string): AdminPermissions['role'] {
   switch ((value ?? '').trim().toLowerCase()) {
     case 'admin':
       return 'admin';
+    case 'ultimate':
+      // New, above 'admin' in the PGP trust model; treat as admin-equivalent for UI role purposes.
+      return 'admin';
     case 'trusted':
+    case 'full':
       return 'trusted';
     case 'standard':
       return 'standard';
     case 'limited':
+    case 'marginal':
       return 'limited';
+    case 'untrusted':
+    case 'unknown':
+    case 'never':
+      // 'never' is new (explicitly blocked); treat the same as the default/unknown guest case.
+      return 'guest';
     default:
       return 'guest';
   }

@@ -160,6 +160,50 @@ describe('createServerAdapter', () => {
     expect(directory.users[0]?.dn).toBe('Local Operator Example');
   });
 
+  it.each([
+    // [trust_level from server, expected role, expected authenticated, expected canManageStore]
+    ['admin', 'admin', true, true],
+    ['ultimate', 'admin', true, true], // new PGP name above admin; treated as admin-equivalent
+    ['trusted', 'trusted', true, true], // legacy name
+    ['full', 'trusted', true, true], // new PGP name replacing 'trusted'
+    ['standard', 'standard', true, false], // unchanged across both vocabularies
+    ['limited', 'limited', true, false], // legacy name
+    ['marginal', 'limited', true, false], // new PGP name replacing 'limited'
+    ['untrusted', 'guest', false, false], // legacy name
+    ['unknown', 'guest', false, false], // new PGP name replacing 'untrusted'
+    ['never', 'guest', false, false], // new PGP name; explicitly blocked
+  ] as const)(
+    'maps trust_level %j to role %j (authenticated=%s, canManageStore=%s)',
+    async (trustLevel, expectedRole, expectedAuthenticated, expectedCanManageStore) => {
+      const fetch = vi.fn(async (input: string) => {
+        if (input.endsWith('/api/node/info')) {
+          return jsonResponse(200, { peer_id: '12D3KooWRemote' });
+        }
+        if (input.endsWith('/api/auth/status')) {
+          return jsonResponse(200, { wallet_ui_configured: true });
+        }
+        if (input.endsWith('/api/auth/me')) {
+          return jsonResponse(200, {
+            name: 'Remote Operator',
+            trust_level: trustLevel,
+          });
+        }
+        throw new Error(`unexpected fetch ${input}`);
+      });
+
+      const adapter = createServerAdapter({
+        target: { baseUrl: 'https://node.example' },
+        fetch,
+      });
+
+      const snapshot = await adapter.connect();
+
+      expect(snapshot.permissions.role).toBe(expectedRole);
+      expect(snapshot.permissions.authenticated).toBe(expectedAuthenticated);
+      expect(snapshot.permissions.canManageStore).toBe(expectedCanManageStore);
+    },
+  );
+
   it('shares one hosted runtime adapter across pages without rebuilding local globals in each page', async () => {
     const listDirectoryRecords = vi.fn(async () => [
       {
