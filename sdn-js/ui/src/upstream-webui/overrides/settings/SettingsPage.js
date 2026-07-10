@@ -48,12 +48,32 @@ const settingsTabs = [
   ['node-settings', 'Node Settings'],
 ]
 
+// Values granted through the UI (and sent back to the server on write). The Go server's
+// ParseTrustLevel still accepts these legacy names, so grants continue to write them.
 const serverAdminPermissionLevels = [
   ['limited', 'Limited'],
   ['standard', 'Standard'],
   ['trusted', 'Trusted'],
   ['admin', 'Admin'],
 ]
+
+// The server's `/auth/me` and admin list endpoints may report trust levels using either
+// the legacy vocabulary above or the newer PGP trust-model names (unknown/marginal/full/
+// never/ultimate). Resolve both to the same display label so read paths (e.g. the grants
+// table) render correctly regardless of which vocabulary the server responds with. This
+// mirrors the role grouping in src/ui/runtime/server-adapter.ts's normalizeRole().
+const serverAdminPermissionLabelAliases = {
+  untrusted: 'Untrusted',
+  unknown: 'Untrusted',
+  never: 'Untrusted',
+  limited: 'Limited',
+  marginal: 'Limited',
+  standard: 'Standard',
+  trusted: 'Trusted',
+  full: 'Trusted',
+  admin: 'Admin',
+  ultimate: 'Admin',
+}
 
 const profileGridStyle = {
   display: 'grid',
@@ -1213,8 +1233,8 @@ function serverAdminPermissionLabel(value) {
   if (Number.isFinite(numeric)) {
     return ['Untrusted', 'Limited', 'Standard', 'Trusted', 'Admin'][numeric] ?? String(value)
   }
-  const level = serverAdminPermissionLevels.find(([key]) => key === String(value))
-  return level ? level[1] : String(value || 'Unknown')
+  const key = String(value ?? '').trim().toLowerCase()
+  return serverAdminPermissionLabelAliases[key] ?? String(value || 'Unknown')
 }
 
 export default SettingsPage
