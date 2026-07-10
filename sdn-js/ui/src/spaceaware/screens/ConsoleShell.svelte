@@ -94,7 +94,7 @@
 
     <div class="sdn-console-content">
       {#if activeView === 'node'}
-        <NodeView onOpenQr={openQr} />
+        <NodeView onOpenQr={openQr} {apiClient} {healthState} />
       {:else}
         <ConsolePlaceholder view={activeView} />
       {/if}
