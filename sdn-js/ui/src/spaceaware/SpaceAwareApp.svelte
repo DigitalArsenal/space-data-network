@@ -41,7 +41,7 @@
 
 <div class="sa-root">
   {#if route.screen === 'login'}
-    <LoginScreen {navigate} />
+    <LoginScreen {navigate} {authStore} {authState} {apiClient} />
   {:else}
     <ScaffoldScreen {route} {navigate} {authState} />
   {/if}

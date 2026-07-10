@@ -1,21 +1,44 @@
 import { describe, expect, it } from 'vitest';
 import {
   AUTH_STEP_TIMINGS_MS,
+  GRANTED_DWELL_MS,
+  MIN_SEQUENCE_DWELL_MS,
+  MIN_STEP_DWELL_MS,
   NODE_KEY_FORMAT_ERROR,
+  NODE_KEY_NO_PEER_ID_ERROR,
   NODE_KEY_REQUIRED_ERROR,
+  NO_LOCAL_WALLET_ERROR,
   OPERATOR_REQUIRED_ERROR,
   STAR_COUNT,
   STAR_SEED,
   buildAuthSteps,
   createSeededRandom,
+  describeAuthFailure,
+  extractPeerIdFromKey,
+  formatAgentVersionLabel,
+  formatFeedsSynced,
+  formatFooterNodeLabel,
+  formatPeerIdentitySummary,
+  formatPeersConnected,
+  formatTelemetryCount,
   generateOrbitArcs,
   generateStarfield,
   isRecognizedNodeKey,
+  networkStatusFromHealth,
   nodeStepLabels,
+  operatorStepIndexForStage,
   operatorStepLabels,
+  parseHealthResponse,
+  parseNodeInfoResponse,
+  parseStatsResponse,
+  remainingDwellMs,
+  resolvePeerIdentity,
+  shortenPeerId,
   validateNodeKeyForm,
   validateOperatorForm,
 } from './login';
+import { LocalWalletError } from '../../lib/auth/local-wallet';
+import { SdnApiError } from '../../lib/auth/sdn-api-client';
 
 // Not currently wired into a vitest `include` glob for `ui/src/**` (no such
 // harness exists yet in this package — root `vitest.config.mts` only covers
@@ -182,5 +205,349 @@ describe('mock auth timing + step view models', () => {
   it('marks every step done once step advances past all of them', () => {
     const steps = buildAuthSteps(operatorStepLabels(), 3);
     expect(steps.every((s) => s.glyph === '✓' && s.status === 'OK')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U1.2 — real-auth dwell timing + operator-tab stage mapping
+// ---------------------------------------------------------------------------
+
+describe('remainingDwellMs', () => {
+  it('returns the full floor when nothing has elapsed', () => {
+    expect(remainingDwellMs(0, 220)).toBe(220);
+  });
+
+  it('returns the remainder once partway through the floor', () => {
+    expect(remainingDwellMs(150, 220)).toBe(70);
+  });
+
+  it('never goes negative once the floor has already elapsed', () => {
+    expect(remainingDwellMs(500, 220)).toBe(0);
+    expect(remainingDwellMs(220, 220)).toBe(0);
+  });
+
+  it('treats negative/non-finite elapsed as "start of window"', () => {
+    expect(remainingDwellMs(-5, 220)).toBe(220);
+    expect(remainingDwellMs(Number.NaN, 220)).toBe(220);
+  });
+
+  it('defaults to MIN_STEP_DWELL_MS', () => {
+    expect(remainingDwellMs(0)).toBe(MIN_STEP_DWELL_MS);
+  });
+});
+
+describe('dwell constants', () => {
+  it('keeps the per-step floor at or under the 300ms anti-flash ceiling', () => {
+    expect(MIN_STEP_DWELL_MS).toBeGreaterThan(0);
+    expect(MIN_STEP_DWELL_MS).toBeLessThanOrEqual(300);
+  });
+
+  it('sizes the whole-sequence floor off the per-step floor (3 rows)', () => {
+    expect(MIN_SEQUENCE_DWELL_MS).toBe(MIN_STEP_DWELL_MS * 3);
+  });
+
+  it('keeps a positive granted-banner dwell', () => {
+    expect(GRANTED_DWELL_MS).toBeGreaterThan(0);
+  });
+});
+
+describe('operatorStepIndexForStage', () => {
+  it('maps idle/challenge to step 0 (CREDENTIAL CHECK)', () => {
+    expect(operatorStepIndexForStage('idle')).toBe(0);
+    expect(operatorStepIndexForStage('challenge')).toBe(0);
+  });
+
+  it('maps verify to step 1 (P2P HANDSHAKE)', () => {
+    expect(operatorStepIndexForStage('verify')).toBe(1);
+  });
+
+  it('maps confirmed to step 2 (SESSION SEALED)', () => {
+    expect(operatorStepIndexForStage('confirmed')).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U1.2 — real-auth error text
+// ---------------------------------------------------------------------------
+
+describe('describeAuthFailure', () => {
+  it('gives the "no wallet" LocalWalletError a wallet-creation-pointing message', () => {
+    const err = new LocalWalletError('no local wallet labeled "op@sdn.io"');
+    expect(describeAuthFailure(err)).toBe(NO_LOCAL_WALLET_ERROR);
+  });
+
+  it('is case-insensitive when detecting the "no wallet" LocalWalletError', () => {
+    const err = new LocalWalletError('No Local Wallet Labeled "x"');
+    expect(describeAuthFailure(err)).toBe(NO_LOCAL_WALLET_ERROR);
+  });
+
+  it('uppercases other LocalWalletError messages verbatim (e.g. wrong passphrase)', () => {
+    const err = new LocalWalletError('incorrect passphrase');
+    expect(describeAuthFailure(err)).toBe('INCORRECT PASSPHRASE');
+  });
+
+  it('prefers the SdnApiError JSON body message, uppercased', () => {
+    const err = new SdnApiError(401, { code: 'unauthorized', message: 'challenge expired' }, '/api/auth/verify');
+    expect(describeAuthFailure(err)).toBe('CHALLENGE EXPIRED');
+  });
+
+  it('falls back to the HTTP-status message for a bodyless SdnApiError', () => {
+    // SdnApiError's own constructor already synthesizes `HTTP <status>` as
+    // its `.message` when there is no JSON body (see sdn-api-client.ts) —
+    // describeAuthFailure just uppercases whatever it finds.
+    const err = new SdnApiError(503, null, '/api/v1/peers/16Uiu2HAmX');
+    expect(describeAuthFailure(err)).toBe('HTTP 503');
+  });
+
+  it('uppercases a plain Error message', () => {
+    expect(describeAuthFailure(new Error('network request failed'))).toBe('NETWORK REQUEST FAILED');
+  });
+
+  it('falls back to a generic message for a non-Error throw', () => {
+    expect(describeAuthFailure('nope')).toBe('AUTHENTICATION FAILED');
+    expect(describeAuthFailure(undefined)).toBe('AUTHENTICATION FAILED');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U1.2 — node-key tab: peer-ID extraction + EPM identity resolution
+// ---------------------------------------------------------------------------
+
+describe('extractPeerIdFromKey', () => {
+  it('returns a bare 16Uiu…/12D3Koo… peer ID as-is', () => {
+    expect(extractPeerIdFromKey('16Uiu2HAm1Lbvwj')).toBe('16Uiu2HAm1Lbvwj');
+    expect(extractPeerIdFromKey('12D3KooWAbc123')).toBe('12D3KooWAbc123');
+  });
+
+  it('extracts the trailing /p2p/<id> component from a multiaddr', () => {
+    expect(extractPeerIdFromKey('/ip4/127.0.0.1/tcp/4001/p2p/16Uiu2HAmX')).toBe('16Uiu2HAmX');
+  });
+
+  it('extracts /p2p/<id> even when more path follows it', () => {
+    expect(extractPeerIdFromKey('/dns/node.example.com/tcp/4001/p2p/12D3KooWY/extra')).toBe('12D3KooWY');
+  });
+
+  it('trims surrounding whitespace before extracting', () => {
+    expect(extractPeerIdFromKey('  16Uiu2HAmZ  ')).toBe('16Uiu2HAmZ');
+  });
+
+  it('returns null for a well-formed multiaddr with no embedded peer ID', () => {
+    expect(extractPeerIdFromKey('/dns/node.example.com/tcp/4001')).toBeNull();
+    expect(extractPeerIdFromKey('/ip4/127.0.0.1/tcp/4001')).toBeNull();
+  });
+
+  it('documents the error the component throws when extraction returns null', () => {
+    // screens/LoginScreen.svelte's runNodeResolve() throws
+    // `new Error(NODE_KEY_NO_PEER_ID_ERROR)` when this returns null — pinned
+    // here so the two stay in sync.
+    expect(extractPeerIdFromKey('/dns/node.example.com/tcp/4001')).toBeNull();
+    expect(NODE_KEY_NO_PEER_ID_ERROR).toBe('MULTIADDR HAS NO EMBEDDED PEER ID (/p2p/<id>) TO RESOLVE');
+  });
+});
+
+describe('resolvePeerIdentity', () => {
+  it('reads dn/signature/signing-key fields from a directory-record-shaped payload', () => {
+    const view = resolvePeerIdentity('16Uiu2HAmX', {
+      dn: 'Node Alice',
+      signature: 'abcd1234',
+      keys: [
+        { key_type: 'encryption', address_type: 'x25519' },
+        { key_type: 'signing', address_type: 'ed25519' },
+      ],
+    });
+    expect(view).toEqual({
+      peerId: '16Uiu2HAmX',
+      dn: 'Node Alice',
+      signed: true,
+      keyAlgorithm: 'ED25519',
+    });
+  });
+
+  it('prefers the ed25519 signing key over a legacy secp256k1 signing key', () => {
+    const view = resolvePeerIdentity('16Uiu2HAmX', {
+      keys: [
+        { key_type: 'signing', address_type: 'secp256k1' },
+        { key_type: 'signing', address_type: 'ed25519' },
+      ],
+    });
+    expect(view.keyAlgorithm).toBe('ED25519');
+  });
+
+  it('falls back to the only signing key when no ed25519 key is present', () => {
+    const view = resolvePeerIdentity('16Uiu2HAmX', {
+      keys: [{ key_type: 'signing', address_type: 'secp256k1' }],
+    });
+    expect(view.keyAlgorithm).toBe('SECP256K1');
+  });
+
+  it('degrades gracefully for the legacy native getPeer shape (no dn/signature/keys)', () => {
+    const view = resolvePeerIdentity('16Uiu2HAmX', {
+      peer_id: '16Uiu2HAmX',
+      addrs: ['/ip4/127.0.0.1/tcp/4001'],
+      connection_count: 1,
+    });
+    expect(view).toEqual({ peerId: '16Uiu2HAmX', dn: null, signed: false, keyAlgorithm: null });
+  });
+
+  it('degrades gracefully for a non-object/null payload', () => {
+    expect(resolvePeerIdentity('16Uiu2HAmX', null)).toEqual({
+      peerId: '16Uiu2HAmX',
+      dn: null,
+      signed: false,
+      keyAlgorithm: null,
+    });
+    expect(resolvePeerIdentity('16Uiu2HAmX', undefined)).toEqual({
+      peerId: '16Uiu2HAmX',
+      dn: null,
+      signed: false,
+      keyAlgorithm: null,
+    });
+  });
+});
+
+describe('formatPeerIdentitySummary', () => {
+  it('joins DN, signed state, and algorithm', () => {
+    expect(
+      formatPeerIdentitySummary({ peerId: '16Uiu2HAmX', dn: 'Node Alice', signed: true, keyAlgorithm: 'ED25519' }),
+    ).toBe('Node Alice · SIGNED · ED25519');
+  });
+
+  it('falls back to the peer ID, UNSIGNED, and KEY UNKNOWN when the record is bare', () => {
+    expect(
+      formatPeerIdentitySummary({ peerId: '16Uiu2HAmX', dn: null, signed: false, keyAlgorithm: null }),
+    ).toBe('16Uiu2HAmX · UNSIGNED · KEY UNKNOWN');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// U1.2 — node telemetry parsing/formatting + footer identity
+// ---------------------------------------------------------------------------
+
+describe('networkStatusFromHealth', () => {
+  it('maps ok/healthy/nominal to NOMINAL', () => {
+    expect(networkStatusFromHealth('ok')).toBe('NOMINAL');
+    expect(networkStatusFromHealth('healthy')).toBe('NOMINAL');
+    expect(networkStatusFromHealth('NOMINAL')).toBe('NOMINAL');
+  });
+
+  it('maps degraded/warn/warning to DEGRADED', () => {
+    expect(networkStatusFromHealth('degraded')).toBe('DEGRADED');
+    expect(networkStatusFromHealth('warn')).toBe('DEGRADED');
+  });
+
+  it('maps anything else (including absent) to ALERT', () => {
+    expect(networkStatusFromHealth('down')).toBe('ALERT');
+    expect(networkStatusFromHealth(null)).toBe('ALERT');
+    expect(networkStatusFromHealth(undefined)).toBe('ALERT');
+    expect(networkStatusFromHealth('')).toBe('ALERT');
+  });
+});
+
+describe('parseStatsResponse', () => {
+  it('reads total_records/connected_peers/schemas.length from GET /api/v1/stats', () => {
+    expect(
+      parseStatsResponse({
+        connected_peers: 3,
+        total_records: 31000,
+        total_bytes: 999,
+        schemas: [{ schema: 'OMM' }, { schema: 'MPE' }],
+      }),
+    ).toEqual({ totalRecords: 31000, connectedPeers: 3, schemaCount: 2 });
+  });
+
+  it('degrades to nulls for a bare/malformed payload', () => {
+    expect(parseStatsResponse({})).toEqual({ totalRecords: null, connectedPeers: null, schemaCount: null });
+    expect(parseStatsResponse(null)).toEqual({ totalRecords: null, connectedPeers: null, schemaCount: null });
+  });
+});
+
+describe('parseHealthResponse', () => {
+  it('reads status from GET /api/v1/data/health', () => {
+    expect(parseHealthResponse({ status: 'ok', component: 'spaceaware-data-api' })).toBe('NOMINAL');
+  });
+
+  it('degrades to ALERT for a bare/malformed payload', () => {
+    expect(parseHealthResponse({})).toBe('ALERT');
+    expect(parseHealthResponse(null)).toBe('ALERT');
+  });
+});
+
+describe('parseNodeInfoResponse', () => {
+  it('reads peer_id/agent_version from GET /api/node/info', () => {
+    expect(parseNodeInfoResponse({ peer_id: '16Uiu2HAmX', agent_version: 'spacedatanetwork/1.4.2' })).toEqual({
+      peerId: '16Uiu2HAmX',
+      agentVersion: 'spacedatanetwork/1.4.2',
+    });
+  });
+
+  it('degrades to nulls for a bare/malformed payload', () => {
+    expect(parseNodeInfoResponse({})).toEqual({ peerId: null, agentVersion: null });
+    expect(parseNodeInfoResponse(undefined)).toEqual({ peerId: null, agentVersion: null });
+  });
+});
+
+describe('formatTelemetryCount', () => {
+  it('groups with commas', () => {
+    expect(formatTelemetryCount(31000)).toBe('31,000');
+    expect(formatTelemetryCount(1234567)).toBe('1,234,567');
+  });
+
+  it('falls back to an em dash for null/undefined/non-finite', () => {
+    expect(formatTelemetryCount(null)).toBe('—');
+    expect(formatTelemetryCount(undefined)).toBe('—');
+    expect(formatTelemetryCount(Number.NaN)).toBe('—');
+  });
+});
+
+describe('formatPeersConnected / formatFeedsSynced', () => {
+  it('appends the documented unit label', () => {
+    expect(formatPeersConnected(3)).toBe('3 CONNECTED');
+    expect(formatFeedsSynced(9)).toBe('9 SYNCED');
+  });
+
+  it('falls back to an em dash when unavailable', () => {
+    expect(formatPeersConnected(null)).toBe('—');
+    expect(formatFeedsSynced(undefined)).toBe('—');
+  });
+});
+
+describe('shortenPeerId', () => {
+  it('shortens a long peer ID to prefix…suffix (15 chars · ellipsis · 6 chars)', () => {
+    expect(shortenPeerId('16Uiu2HAm1Lbvwjabcdefghijklmnop')).toBe('16Uiu2HAm1Lbvwj…klmnop');
+  });
+
+  it('leaves a short peer ID untouched', () => {
+    expect(shortenPeerId('16Uiu2HAmX')).toBe('16Uiu2HAmX');
+  });
+
+  it('falls back to UNKNOWN for empty/absent input', () => {
+    expect(shortenPeerId(null)).toBe('UNKNOWN');
+    expect(shortenPeerId(undefined)).toBe('UNKNOWN');
+    expect(shortenPeerId('   ')).toBe('UNKNOWN');
+  });
+});
+
+describe('formatFooterNodeLabel', () => {
+  it('prefixes THIS NODE · without a city (no geo data source on a stock node)', () => {
+    expect(formatFooterNodeLabel('16Uiu2HAmX')).toBe('THIS NODE · 16Uiu2HAmX');
+  });
+
+  it('falls back to UNKNOWN for absent input', () => {
+    expect(formatFooterNodeLabel(null)).toBe('THIS NODE · UNKNOWN');
+  });
+});
+
+describe('formatAgentVersionLabel', () => {
+  it('takes the part after the last / (AgentName/SuiteVersion)', () => {
+    expect(formatAgentVersionLabel('spacedatanetwork/1.4.2')).toBe('NODE v1.4.2');
+  });
+
+  it('uses the whole string when there is no slash', () => {
+    expect(formatAgentVersionLabel('1.4.2')).toBe('NODE v1.4.2');
+  });
+
+  it('falls back to a placeholder for absent input', () => {
+    expect(formatAgentVersionLabel(null)).toBe('NODE VERSION UNKNOWN');
+    expect(formatAgentVersionLabel('')).toBe('NODE VERSION UNKNOWN');
   });
 });

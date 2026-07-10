@@ -66,6 +66,20 @@ is_binary_staged() {
 # longer valid-length) mnemonic-shaped window, so that is the trigger.
 # Empirically, ordinary prose in this repo (READMEs, docs) never produced a
 # run above 10 -- see the guard's test suite / task verification notes.
+#
+# DISTINCTNESS FILTER (added when the embedded SpaceAware UI bundle started
+# inlining hd-wallet code, U1.2): minified wallet JS tokenizes into long
+# runs of REPEATED BIP-39 words ("return base key curve this base key curve
+# base key depth ..." -- base/key/curve/this/depth are all wordlist words),
+# as did a Go duration literal ("time minute time minute time hour ...").
+# Real mnemonics are 12/15/18/21/24 words sampled independently from 2048,
+# so 12+ words with fewer than 9 DISTINCT among them is astronomically
+# improbable (repeats happen, near-total repetition does not). Requiring
+# >= 9 distinct words in the run keeps every real-mnemonic detection
+# (including the all-zeros test vector "abandon x11 about" -- SEE BELOW: a
+# run whose distinct count is < 9 but which contains the word "abandon" 11+
+# times IS still flagged, covering degenerate low-entropy test vectors)
+# while eliminating code-token false positives.
 scan_bip39_sequences() {
   git show ":$1" 2>/dev/null | awk -v wordlist="$WORDLIST" '
     BEGIN {
@@ -77,6 +91,12 @@ scan_bip39_sequences() {
       run = 0
       hit = 0
     }
+    function run_reset() {
+      run = 0
+      delete seen
+      distinct = 0
+      abandons = 0
+    }
     {
       line = tolower($0)
       gsub(/[^a-z]+/, " ", line)
@@ -86,9 +106,13 @@ scan_bip39_sequences() {
         if (t == "") continue
         if (t in inlist) {
           run++
-          if (run >= 12) hit = 1
+          if (!(t in seen)) { seen[t] = 1; distinct++ }
+          if (t == "abandon") abandons++
+          # Trigger: mnemonic-shaped run with real-mnemonic word diversity,
+          # OR the canonical degenerate all-zeros vector (abandon x11+).
+          if (run >= 12 && (distinct >= 9 || abandons >= 11)) hit = 1
         } else {
-          run = 0
+          run_reset()
         }
       }
     }
