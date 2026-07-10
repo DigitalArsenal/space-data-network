@@ -5,10 +5,11 @@
    * truth: `SDN Console.dc.html`'s `<!-- COLLAPSIBLE RAIL -->` +
    * `<!-- MAIN -->` + `<!-- QR overlay -->` blocks and its README.md.
    *
-   * Only the NODE view (`screens/console/NodeView.svelte`) is a real port
-   * right now; the other five render `ConsolePlaceholder.svelte` inside
-   * this same shell (rail/header/chips all real, view body pending its own
-   * loop task) — see the loop task's scope note.
+   * NODE (`screens/console/NodeView.svelte`, loop U3.1/U3.2) and PEERS
+   * (`screens/console/PeersView.svelte`, loop U3.3) are real ports now; the
+   * remaining four render `ConsolePlaceholder.svelte` inside this same
+   * shell (rail/header/chips all real, view body pending its own loop
+   * task) — see the loop task's scope note.
    *
    * Deep-link compatibility: the `.dc.html` prototype reads `?route=` /
    * `?group=` once on mount (`componentDidMount`) and sets its OWN internal
@@ -24,6 +25,7 @@
   import ConsoleHeader from './console/ConsoleHeader.svelte';
   import ConsolePlaceholder from './console/ConsolePlaceholder.svelte';
   import NodeView from './console/NodeView.svelte';
+  import PeersView from './console/PeersView.svelte';
   import QrOverlay from './console/QrOverlay.svelte';
   import { consoleHealthChipState, resolveConsoleDeepLinkPath, type ConsoleHealthChipState } from '../lib/console';
   import { parseHealthResponse } from '../lib/login';
@@ -95,6 +97,8 @@
     <div class="sdn-console-content">
       {#if activeView === 'node'}
         <NodeView onOpenQr={openQr} {apiClient} {healthState} />
+      {:else if activeView === 'peers'}
+        <PeersView {apiClient} {authState} />
       {:else}
         <ConsolePlaceholder view={activeView} />
       {/if}
