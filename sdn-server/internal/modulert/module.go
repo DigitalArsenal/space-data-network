@@ -70,6 +70,14 @@ type Module struct {
 	// NodeContext.ModuleSignaturePolicy is nil, i.e. enforcement not
 	// configured — Signed/Verified will simply reflect the artifact as-is).
 	signatureStatus ModuleSignatureStatus
+	// uiURL is the module's UI page URL, assigned via SetUIURL. WASM modules
+	// have no self-known UI location the way a Go-native plugin does, so
+	// this is populated from outside (see internal/appmanifest.AppManifest's
+	// UI entry, resolved and pushed in by node/cmd startup wiring through
+	// plugins.Manager.SetModuleUIURL). Empty until assigned, so
+	// UIDescriptor().URL stays "" for modules with no declared UI, exactly
+	// as before this field existed (H1 loop).
+	uiURL string
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -578,16 +586,38 @@ func (m *Module) InvokeCron(ctx context.Context, method string, input []byte) ([
 	return output, err
 }
 
-// --- plugins.UIProvider interface ---
+// --- plugins.UIProvider / plugins.UIURLSetter interfaces ---
 
 func (m *Module) UIDescriptor() plugins.UIDescriptor {
+	m.mu.Lock()
+	url := m.uiURL
+	m.mu.Unlock()
 	return plugins.UIDescriptor{
 		Title:       m.manifest.Name,
 		Description: fmt.Sprintf("%s v%s", m.manifest.PluginID, m.manifest.Version),
 		Icon:        "📦",
 		Color:       "#6366f1",
 		TextColor:   "#ffffff",
+		URL:         url,
 	}
+}
+
+// SetUIURL assigns the module's UI page URL, implementing
+// plugins.UIURLSetter. A module-sdk WASM module has no self-known UI
+// location (unlike a Go-native plugin such as ailogplugin, which hardcodes
+// its own dashboard path); the URL instead comes from an app manifest's UI
+// entry (internal/appmanifest.AppManifest), resolved and pushed in by
+// node/cmd startup wiring via plugins.Manager.SetModuleUIURL once this
+// module is registered. Safe to call at any time — UIDescriptor() always
+// reflects the latest value. Never calling it leaves UIDescriptor().URL
+// empty, matching pre-H1 behavior for modules with no declared UI.
+func (m *Module) SetUIURL(url string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.uiURL = url
 }
 
 // --- Module-SDK invocation ---
