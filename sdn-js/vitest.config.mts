@@ -6,7 +6,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'ui/src/**/*.test.ts'],
     exclude: ['src/**/*.stress.test.ts'], // Stress tests run separately
     testTimeout: 20_000,
     hookTimeout: 20_000,
