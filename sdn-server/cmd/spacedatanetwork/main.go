@@ -1314,6 +1314,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					log.Infof("Peer ACL API available at %s://%s/api/v1/admin/peers", adminScheme, adminAddr)
 				}
 
+				// Pinning policy admin API (Admin-gated in RegisterRoutes) —
+				// the TipQueue auto-fetch/auto-pin/TTL configuration surface (D1).
+				if n.TipQueue() != nil {
+					pinningAPI := api.NewPinningHandler(n.TipQueue().Config(), authHandler)
+					pinningAPI.RegisterRoutes(adminMux)
+					log.Infof("Pinning policy API available at %s://%s/api/v1/admin/pinning", adminScheme, adminAddr)
+				}
+
 				// Serve wallet-ui static files if configured
 				if walletUIPath := strings.TrimSpace(cfg.Admin.WalletUIPath); walletUIPath != "" {
 					serveRoot := auth.WalletUIStaticRoot(walletUIPath)
