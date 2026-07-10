@@ -10,11 +10,11 @@ package main
 //
 // The route set below must stay in sync with
 // sdn-js/ui/src/spaceaware/router.ts (SPACEAWARE_ROUTES). Note on /login:
-// when HD-wallet auth is enabled, the auth handler registers an exact
-// "/login" mux pattern which takes precedence over the "/" frontend surface,
-// so the existing wallet login page keeps winning until loop task U1.2
-// deliberately replaces it. On nodes without auth routes, /login serves the
-// SpaceAware UI.
+// since U1.2 the SpaceAware login owns /login on auth-enabled nodes too —
+// main.go calls authHandler.SetExternalLoginUI(true) so the auth handler
+// registers the legacy wallet-gated page at /login/legacy (still the wallet
+// CREATION surface for first-boot/first-admin bootstrap) instead of taking
+// the exact "/login" mux pattern.
 
 import (
 	_ "embed"

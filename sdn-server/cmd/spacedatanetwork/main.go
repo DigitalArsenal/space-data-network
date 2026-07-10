@@ -1275,6 +1275,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						authHandler.SetNodeSigningAttestation(att)
 					}
 				}
+				// U1.2: the embedded SpaceAware login (spaceaware_ui.go, served by
+				// the "/" frontend surface) owns GET /login in this binary; the
+				// legacy wallet-gated page moves to /login/legacy for wallet
+				// creation / first-admin bootstrap.
+				authHandler.SetExternalLoginUI(true)
 				authHandler.RegisterRoutes(adminMux)
 				n.SetModulePublishAuthorizer(func(xpub string) (license.ModulePublishPrincipal, error) {
 					user, err := authHandler.UserStore().GetUser(xpub)

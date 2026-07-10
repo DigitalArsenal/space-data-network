@@ -87,6 +87,57 @@ test('check-no-mnemonics allows a run of BIP-39 words shorter than the minimum m
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
 
+// Distinctness filter (U1.2): minified wallet JS tokenizes into long runs of
+// REPEATED wordlist words that are code identifiers, not secrets. A run with
+// < 9 distinct words is not mnemonic-shaped (real mnemonics sample 12+ words
+// independently from 2048) and must pass...
+test('check-no-mnemonics allows repetitive code-token runs (minified-JS false positive)', () => {
+  const repo = createTempRepo();
+  // Mirrors the real hd-wallet bundle tokenization: 17 wordlist words, only
+  // 5 distinct — and the Go duration-literal case (time/minute/hour).
+  const minifiedish = 'return base.key.curve(this.base.key.curve),base.key.depth(this.base.key.depth,base.key)';
+  const durations = 'candidates := []time.Duration{15 * time.Minute, 30 * time.Minute, time.Hour, 2 * time.Hour, 3 * time.Hour, 6 * time.Hour, 12 * time.Hour, 24 * time.Hour}';
+
+  writeStagedFile(repo, 'bundle.html', `${minifiedish}\n`);
+  writeStagedFile(repo, 'presets.go', `${durations}\n`);
+
+  const result = runGuard(repo);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
+// ...while a real high-diversity mnemonic still trips. Built at runtime from
+// distinct wordlist members (never a literal run in this source file), and
+// deliberately NOT a valid checksummed mnemonic — shape is what the guard
+// detects.
+test('check-no-mnemonics still blocks a distinct-word mnemonic-shaped run', () => {
+  const repo = createTempRepo();
+  // 'qq' separators keep THIS source file free of an adjacent 12-word run
+  // (staging this test file must not trip the guard it tests — see the
+  // file-level comment); they are filtered out of the staged fixture, which
+  // then DOES contain the adjacent run.
+  const distinctWords = [
+    'legal', 'qq', 'winner', 'qq', 'thank', 'qq', 'year', 'qq', 'wave', 'qq',
+    'sausage', 'qq', 'worth', 'qq', 'useful', 'qq', 'lawsuit', 'qq', 'ugly',
+    'qq', 'theme', 'qq', 'zone',
+  ].filter((w) => w !== 'qq').join(' ');
+
+  writeStagedFile(repo, 'notes.txt', `${distinctWords}\n`);
+
+  const result = runGuard(repo);
+  assert.notEqual(result.status, 0, result.stdout + result.stderr);
+});
+
+// ...and the canonical degenerate all-zeros vector (abandon x11 + about) is
+// low-diversity but must STILL be blocked via the abandon-count escape hatch.
+test('check-no-mnemonics still blocks the all-abandon public test vector', () => {
+  const repo = createTempRepo();
+
+  writeStagedFile(repo, 'notes.txt', `${publicTestMnemonic}\n`);
+
+  const result = runGuard(repo);
+  assert.notEqual(result.status, 0, result.stdout + result.stderr);
+});
+
 function createTempRepo() {
   const repo = mkdtempSync(join(tmpdir(), 'sdn-check-no-mnemonics-'));
   mkdirSync(join(repo, 'scripts/wordlists'), { recursive: true });

@@ -1,37 +1,68 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import {
-    AUTH_STEP_TIMINGS_MS,
+    GRANTED_DWELL_MS,
+    MIN_SEQUENCE_DWELL_MS,
     buildAuthSteps,
+    describeAuthFailure,
+    extractPeerIdFromKey,
+    formatAgentVersionLabel,
+    formatFeedsSynced,
+    formatFooterNodeLabel,
+    formatPeerIdentitySummary,
+    formatPeersConnected,
+    formatTelemetryCount,
     generateOrbitArcs,
     generateStarfield,
     nodeStepLabels,
+    NODE_KEY_NO_PEER_ID_ERROR,
+    operatorStepIndexForStage,
     operatorStepLabels,
+    parseHealthResponse,
+    parseNodeInfoResponse,
+    parseStatsResponse,
+    remainingDwellMs,
+    resolvePeerIdentity,
     validateNodeKeyForm,
     validateOperatorForm,
+    type NodeHealthStatus,
+    type NodeInfoSnapshot,
+    type ResolvedPeerIdentity,
+    type StatsSnapshot,
   } from '../lib/login';
+  import type { AuthSessionState, AuthStore } from '../../lib/auth/auth-store';
+  import { unlockLocalWallet, type UnlockedWallet } from '../../lib/auth/local-wallet';
+  import type { SdnApiClient } from '../../lib/auth/sdn-api-client';
 
-  // U1.1 pixel port of login/Login.dc.html (MOCK-STAGED — no real auth; wired
-  // in U1.2). Ground truth: the .dc.html inline styles/markup/script + its
-  // README.md spec. `../lib/login.ts` owns the pure logic (PRNG, validation,
-  // step view models) so it stays unit-testable outside the DOM/canvas.
+  // U1.1 pixel port of login/Login.dc.html; U1.2 wires it to the real U0.3
+  // auth/data surface. Ground truth for pixels: the .dc.html inline
+  // styles/markup/script + its README.md spec — behavior now comes from
+  // `authStore`/`apiClient` instead of the old fixed-timer mock sequence.
+  // `../lib/login.ts` owns all pure logic (PRNG, validation, step view
+  // models, real-stage mapping, telemetry/peer-identity parsing) so it stays
+  // unit-testable outside the DOM/canvas/network.
 
   type AuthTab = 'operator' | 'node';
-  type NetworkStatus = 'NOMINAL' | 'DEGRADED' | 'ALERT';
+  type NetworkStatus = NodeHealthStatus;
 
   let {
     navigate,
+    authStore,
+    authState,
+    apiClient,
     defaultTab = 'operator',
-    networkStatus = 'NOMINAL',
     showTelemetry = true,
   }: {
     navigate: (path: string) => void;
+    authStore: AuthStore;
+    authState: AuthSessionState;
+    apiClient: SdnApiClient;
     defaultTab?: AuthTab;
-    networkStatus?: NetworkStatus;
     showTelemetry?: boolean;
   } = $props();
 
   const REMEMBERED_OPERATOR_KEY = 'sa_remembered_operator';
+  const TELEMETRY_REFRESH_MS = 30_000;
 
   let tab = $state<AuthTab>(defaultTab);
   let opId = $state('');
@@ -39,11 +70,28 @@
   let nodeKey = $state('');
   let remember = $state(false);
   let phase = $state<'idle' | 'auth' | 'ok'>('idle');
-  let step = $state(-1);
+  let operatorStep = $state(-1);
+  let nodeStep = $state(-1);
   let err = $state('');
   let reqOpen = $state(false);
   let utcDate = $state('');
   let utcTime = $state('');
+
+  // Set only while awaiting `authStore.loginWithWallet(...)`, so a stale
+  // `authState.stage` left over from a PRIOR session (e.g. the user
+  // navigated back to /login while already authenticated) can never be
+  // misread as progress on an attempt that hasn't started yet.
+  let watchingAuthState = $state(false);
+
+  let peerIdentity = $state<ResolvedPeerIdentity | null>(null);
+
+  // Real telemetry (bottom-left panel) + footer identity — fetched once on
+  // mount and on a modest interval; fields fail soft to `null`/placeholder
+  // dashes (see login.ts's format* helpers) rather than spamming the
+  // console on a slow/offline node.
+  let stats = $state<StatsSnapshot>({ totalRecords: null, connectedPeers: null, schemaCount: null });
+  let nodeInfo = $state<NodeInfoSnapshot>({ peerId: null, agentVersion: null });
+  let liveNetworkStatus = $state<NetworkStatus>('NOMINAL');
 
   let canvasEl: HTMLCanvasElement | undefined;
 
@@ -54,7 +102,7 @@
   const showNodeForm = $derived(tab === 'node' && !authing);
 
   const netColor = $derived(
-    networkStatus === 'NOMINAL' ? '#5ad6a0' : networkStatus === 'DEGRADED' ? '#ffb24d' : '#ff5b5b',
+    liveNetworkStatus === 'NOMINAL' ? '#5ad6a0' : liveNetworkStatus === 'DEGRADED' ? '#ffb24d' : '#ff5b5b',
   );
 
   const opIdError = $derived(!!err && !opId.trim());
@@ -62,10 +110,58 @@
   const nodeKeyError = $derived(!!err && tab === 'node');
 
   const authSteps = $derived(
-    buildAuthSteps(tab === 'operator' ? operatorStepLabels() : nodeStepLabels(), step),
+    buildAuthSteps(tab === 'operator' ? operatorStepLabels() : nodeStepLabels(), tab === 'operator' ? operatorStep : nodeStep),
   );
 
+  const grantedText = $derived(
+    tab === 'operator'
+      ? 'ACCESS GRANTED · LOADING SDN CONSOLE'
+      : peerIdentity
+        ? `PEER VERIFIED · ${formatPeerIdentitySummary(peerIdentity)}`
+        : 'PEER RESOLVED · LOADING CATALOG',
+  );
+
+  const trackedDisplay = $derived(formatTelemetryCount(stats.totalRecords));
+  const peersDisplay = $derived(formatPeersConnected(stats.connectedPeers));
+  const feedsDisplay = $derived(formatFeedsSynced(stats.schemaCount));
+  const footerNodeLabel = $derived(formatFooterNodeLabel(nodeInfo.peerId));
+  const footerVersionLabel = $derived(formatAgentVersionLabel(nodeInfo.agentVersion));
+
   let timers: ReturnType<typeof setTimeout>[] = [];
+  let telemetryHandle: ReturnType<typeof setInterval> | undefined;
+
+  // Reflects the real `authStore` stage onto the operator tab's step rows
+  // while (and only while) we're awaiting our own `loginWithWallet` call —
+  // see `watchingAuthState` above.
+  $effect(() => {
+    if (!watchingAuthState) return;
+    const target = operatorStepIndexForStage(authState.stage);
+    if (target > operatorStep) operatorStep = target;
+  });
+
+  function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      timers.push(setTimeout(resolve, ms));
+    });
+  }
+
+  /** Waits out whatever's left of `minMs` since `startedAt` so a fast real sequence doesn't flash by unreadably. */
+  async function dwell(startedAt: number, minMs: number): Promise<void> {
+    const remaining = remainingDwellMs(performance.now() - startedAt, minMs);
+    if (remaining > 0) await sleep(remaining);
+  }
+
+  function persistRememberedOperator() {
+    try {
+      if (remember) {
+        localStorage.setItem(REMEMBERED_OPERATOR_KEY, opId);
+      } else {
+        localStorage.removeItem(REMEMBERED_OPERATOR_KEY);
+      }
+    } catch {
+      // localStorage unavailable (private mode, etc.) — non-fatal.
+    }
+  }
 
   function selectTab(next: AuthTab) {
     tab = next;
@@ -127,35 +223,74 @@
     ctx.setLineDash([]);
   }
 
-  function startAuth(kind: AuthTab) {
+  /**
+   * Real operator auth (U1.2): local wallet unlock (D1 — "operator ID"
+   * labels a browser-side wallet, "passphrase" decrypts it) →
+   * `authStore.loginWithWallet` (challenge fetch → sign → verify →
+   * `auth/me` hydration, all against the shared U0.3 store so
+   * `SpaceAwareApp`'s route guard sees the resulting session). Step rows
+   * advance live off `authState.stage` via the `$effect` above; on any
+   * failure the sequence aborts, the form comes back, and the REAL error
+   * (local-wallet or `SdnApiError` message) lands in the existing banner.
+   */
+  async function runOperatorAuth() {
     phase = 'auth';
-    step = 0;
+    operatorStep = 0;
     err = '';
-    const push = (ms: number, fn: () => void) => {
-      timers.push(setTimeout(fn, ms));
-    };
-    push(AUTH_STEP_TIMINGS_MS.step1, () => {
-      step = 1;
-    });
-    push(AUTH_STEP_TIMINGS_MS.step2, () => {
-      step = 2;
-    });
-    push(AUTH_STEP_TIMINGS_MS.complete, () => {
-      step = 3;
-      phase = 'ok';
+    const startedAt = performance.now();
+    let wallet: UnlockedWallet | null = null;
+    try {
+      wallet = await unlockLocalWallet(opId, pass);
+      watchingAuthState = true;
       try {
-        if (kind === 'operator' && remember) {
-          localStorage.setItem(REMEMBERED_OPERATOR_KEY, opId);
-        } else if (kind === 'operator' && !remember) {
-          localStorage.removeItem(REMEMBERED_OPERATOR_KEY);
-        }
-      } catch {
-        // localStorage unavailable (private mode, etc.) — non-fatal.
+        await authStore.loginWithWallet(wallet);
+      } finally {
+        watchingAuthState = false;
       }
-    });
-    push(AUTH_STEP_TIMINGS_MS.redirect, () => {
+      operatorStep = 2;
+      await dwell(startedAt, MIN_SEQUENCE_DWELL_MS);
+      persistRememberedOperator();
+      phase = 'ok';
+      await sleep(GRANTED_DWELL_MS);
       navigate('/console');
-    });
+    } catch (e) {
+      phase = 'idle';
+      operatorStep = -1;
+      err = describeAuthFailure(e);
+    } finally {
+      wallet?.lock();
+    }
+  }
+
+  /**
+   * Real node-key resolve (U1.2, D2 v1): resolves the peer ID (or a
+   * multiaddr's trailing `/p2p/<id>`) via `GET /api/v1/peers/{peerId}`
+   * through the typed client, surfaces its EPM identity, then enters a
+   * read-only explore of the public catalog — no session is created (D2:
+   * only `/console` requires auth), so this never touches `authStore`.
+   */
+  async function runNodeResolve() {
+    phase = 'auth';
+    nodeStep = 0;
+    peerIdentity = null;
+    err = '';
+    const startedAt = performance.now();
+    try {
+      const peerId = extractPeerIdFromKey(nodeKey);
+      if (!peerId) throw new Error(NODE_KEY_NO_PEER_ID_ERROR);
+      nodeStep = 1;
+      const result = await apiClient.requestJson<unknown>(`/peers/${encodeURIComponent(peerId)}`);
+      peerIdentity = resolvePeerIdentity(peerId, result.data);
+      nodeStep = 2;
+      await dwell(startedAt, MIN_SEQUENCE_DWELL_MS);
+      phase = 'ok';
+      await sleep(GRANTED_DWELL_MS);
+      navigate('/orbital');
+    } catch (e) {
+      phase = 'idle';
+      nodeStep = -1;
+      err = describeAuthFailure(e);
+    }
   }
 
   function onSubmitOperator(event: SubmitEvent) {
@@ -165,7 +300,7 @@
       err = validation;
       return;
     }
-    startAuth('operator');
+    void runOperatorAuth();
   }
 
   function onSubmitNode(event: SubmitEvent) {
@@ -175,7 +310,31 @@
       err = validation;
       return;
     }
-    startAuth('node');
+    void runNodeResolve();
+  }
+
+  /** Fetches TRACKED/PEERS/FEEDS, the network chip status, and the footer node identity. Fails soft per-field — never throws, never logs. */
+  async function refreshTelemetry() {
+    try {
+      const result = await apiClient.requestJson<unknown>('/stats');
+      stats = parseStatsResponse(result.data);
+    } catch {
+      // Leave the previous snapshot (or placeholder dashes) in place.
+    }
+
+    try {
+      const result = await apiClient.requestJson<unknown>('/data/health');
+      liveNetworkStatus = parseHealthResponse(result.data);
+    } catch {
+      liveNetworkStatus = 'ALERT';
+    }
+
+    try {
+      const result = await apiClient.requestJson<unknown>('/api/node/info', { base: 'root' });
+      nodeInfo = parseNodeInfoResponse(result.data);
+    } catch {
+      // Leave the previous snapshot (or placeholder dashes) in place.
+    }
   }
 
   function onExploreCatalog(event: MouseEvent) {
@@ -206,9 +365,13 @@
     const onResize = () => drawStarfield();
     window.addEventListener('resize', onResize);
 
+    void refreshTelemetry();
+    telemetryHandle = setInterval(() => void refreshTelemetry(), TELEMETRY_REFRESH_MS);
+
     return () => {
       clearInterval(clockHandle);
       window.removeEventListener('resize', onResize);
+      if (telemetryHandle) clearInterval(telemetryHandle);
       timers.forEach((t) => clearTimeout(t));
       timers = [];
     };
@@ -220,11 +383,11 @@
   <div class="sa-login-glow"></div>
   <div class="sa-login-vignette"></div>
 
-  <div class="sa-login-network-chip" title={`Network status: ${networkStatus}`}>
+  <div class="sa-login-network-chip" title={`Network status: ${liveNetworkStatus}`}>
     <span class="sa-login-network-dot" style={`background:${netColor};box-shadow:0 0 7px ${netColor};`}
     ></span>
     <span class="sa-login-network-label"
-      >NETWORK <span style={`color:${netColor};`}>{networkStatus}</span></span
+      >NETWORK <span style={`color:${netColor};`}>{liveNetworkStatus}</span></span
     >
   </div>
 
@@ -375,7 +538,7 @@
               {#if granted}
                 <div class="sa-login-granted">
                   <span class="sa-login-granted-dot"></span>
-                  <span class="sa-login-granted-text">ACCESS GRANTED · LOADING SDN CONSOLE</span>
+                  <span class="sa-login-granted-text">{grantedText}</span>
                 </div>
               {/if}
             </div>
@@ -427,27 +590,28 @@
     <div class="sa-login-telemetry">
       <div class="sa-login-telemetry-title">NODE TELEMETRY</div>
       <div class="sa-login-telemetry-row">
-        <span>TRACKED</span><span class="sa-login-telemetry-value">31,000</span>
+        <span>TRACKED</span><span class="sa-login-telemetry-value">{trackedDisplay}</span>
       </div>
       <div class="sa-login-telemetry-row">
         <span>PEERS</span><span class="sa-login-telemetry-value sa-login-telemetry-value--cyan"
-          >3 CONNECTED</span
+          >{peersDisplay}</span
         >
       </div>
       <div class="sa-login-telemetry-row">
-        <span>FEEDS</span><span class="sa-login-telemetry-value">9 SYNCED</span>
+        <span>FEEDS</span><span class="sa-login-telemetry-value">{feedsDisplay}</span>
       </div>
-      <div class="sa-login-telemetry-row">
-        <span>SIM LINK</span><span class="sa-login-telemetry-value sa-login-telemetry-value--green"
-          >BASILISK ✓</span
-        >
-      </div>
+      <!--
+        SIM LINK (U1.1 mock: "BASILISK ✓") is DROPPED, not demo-badged: a
+        stock sdn-server node has no basilisk feed to report on, and there is
+        no real data source for this row (see U1.2 task notes). The other 3
+        telemetry rows keep their existing layout/spacing unchanged.
+      -->
     </div>
   {/if}
 
   <div class="sa-login-footer">
-    <span class="sa-login-footer-version">SPACE DATA NETWORK · NODE v1.4.2</span>
-    <span class="sa-login-footer-node">THIS NODE · 16Uiu2HAm1Lbvwj…Z5Fm45 · COLORADO SPRINGS, US</span>
+    <span class="sa-login-footer-version">SPACE DATA NETWORK · {footerVersionLabel}</span>
+    <span class="sa-login-footer-node">{footerNodeLabel}</span>
     <span class="sa-login-footer-clock"
       >{utcDate} <span class="sa-login-footer-time">{utcTime}</span> UTC<span class="sa-login-footer-caret"
         >▍</span
@@ -955,9 +1119,8 @@
     color: #35c9d8;
   }
 
-  .sa-login-telemetry-value--green {
-    color: #5ad6a0;
-  }
+  /* .sa-login-telemetry-value--green (U1.1: SIM LINK "BASILISK ✓") removed
+     with the SIM LINK row — see the telemetry panel markup above. */
 
   /* ---- footer strip ---- */
 

@@ -49,6 +49,7 @@ type Handler struct {
 	rates                map[string]rateEntry
 	cookieSecureOverride *bool
 	tlsManager           *tlsmgr.Manager
+	externalLoginUI      bool // when true, an embedded UI owns GET /login; legacy page moves to /login/legacy
 }
 
 type pendingChallenge struct {
@@ -150,6 +151,17 @@ func (h *Handler) SetTLSManager(manager *tlsmgr.Manager) {
 	h.tlsManager = manager
 }
 
+// SetExternalLoginUI declares that an embedded product UI (the SpaceAware
+// login, served by the "/" frontend surface via isSpaceAwareUIPath) owns
+// GET /login. RegisterRoutes then leaves the exact "/login" mux pattern
+// unregistered — so the frontend surface wins it — and keeps the legacy
+// wallet-gated page reachable at /login/legacy (it remains the wallet
+// CREATION surface for first-boot/first-admin bootstrap until the product
+// UI covers that flow). Call before RegisterRoutes.
+func (h *Handler) SetExternalLoginUI(external bool) {
+	h.externalLoginUI = external
+}
+
 // RegisterRoutes registers all auth routes on the provided mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/challenge", h.handleChallenge)
@@ -159,7 +171,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/status", h.handleAuthStatus)
 	mux.HandleFunc("/api/auth/users", h.handleUsers)
 	mux.HandleFunc("/api/auth/users/", h.handleUserByXPub)
-	mux.HandleFunc("/login", h.handleLoginPage)
+	if h.externalLoginUI {
+		// U1.2: the embedded SpaceAware login owns /login; the legacy page
+		// stays reachable for wallet creation / recovery flows.
+		mux.HandleFunc("/login/legacy", h.handleLoginPage)
+	} else {
+		mux.HandleFunc("/login", h.handleLoginPage)
+	}
 	mux.HandleFunc("/bootstrap.crt", h.handleBootstrapCert)
 }
 
