@@ -508,6 +508,65 @@ type Registry struct {
 	// wired" and every accessor degrades to exactly the pre-C2
 	// direct-assignment behavior (fail-safe).
 	trustGraph *trust.Graph
+
+	// trustChangeHandlers are notified (see fireTrustChange) whenever a
+	// peer's DIRECTLY ASSIGNED trust level changes via AddPeer, UpdatePeer,
+	// SetTrustLevel, or RemovePeer. Phase D: auto-subscribe/auto-pin keys
+	// off promotion to/demotion from Full (see IsFullyTrusted).
+	trustChangeHandlers []TrustChangeHandler
+}
+
+// TrustChangeHandler is invoked when a peer's directly assigned trust level
+// changes (old != newLevel). old/newLevel are DIRECT levels — the same
+// value GetTrustLevel/SetTrustLevel operate on — not EffectiveTrustLevel,
+// so handlers can reason about registry mutations without recomputing the
+// web-of-trust graph on every event.
+type TrustChangeHandler func(id peer.ID, old, newLevel TrustLevel)
+
+// OnTrustChange registers a handler to be notified of future direct
+// trust-level changes. Registration is synchronous (the handler is
+// appended under the registry lock and this call returns immediately), but
+// DISPATCH is asynchronous: fireTrustChange runs each handler in its own
+// goroutine so a slow or network-bound handler (e.g. subscribing to a
+// pubsub topic, kicking off a catch-up backfill) can never block a trust
+// mutation call (AddPeer/UpdatePeer/SetTrustLevel/RemovePeer). Handlers
+// registered with a nil value are ignored.
+func (r *Registry) OnTrustChange(handler TrustChangeHandler) {
+	if handler == nil {
+		return
+	}
+	r.mu.Lock()
+	r.trustChangeHandlers = append(r.trustChangeHandlers, handler)
+	r.mu.Unlock()
+}
+
+// fireTrustChange dispatches old->newLevel to every registered
+// TrustChangeHandler on its own goroutine per handler. A no-op transition
+// (old == newLevel) is not dispatched at all, so callers that re-assert an
+// already-current trust level (e.g. SetTrustLevel(id, Full) twice in a row)
+// do not cause repeat side effects such as duplicate catch-up backfills.
+func (r *Registry) fireTrustChange(id peer.ID, old, newLevel TrustLevel) {
+	if old == newLevel {
+		return
+	}
+	r.mu.RLock()
+	handlers := make([]TrustChangeHandler, len(r.trustChangeHandlers))
+	copy(handlers, r.trustChangeHandlers)
+	r.mu.RUnlock()
+	for _, h := range handlers {
+		go h(id, old, newLevel)
+	}
+}
+
+// unknownPeerDirectTrustLevel returns the DIRECT trust level GetTrustLevel
+// would report for a peer.ID absent from the registry, i.e. the "before
+// AddPeer" / "after RemovePeer" baseline used to compute trust-change
+// events for those two mutations.
+func (r *Registry) unknownPeerDirectTrustLevel() TrustLevel {
+	if r.strictMode {
+		return Untrusted
+	}
+	return Standard
 }
 
 // PersistenceProvider is an interface for persisting the registry.
@@ -571,9 +630,9 @@ func (r *Registry) AddPeer(tp *TrustedPeer) error {
 	}
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	if _, exists := r.peers[tp.ID]; exists {
+		r.mu.Unlock()
 		return ErrPeerAlreadyExists
 	}
 
@@ -581,8 +640,12 @@ func (r *Registry) AddPeer(tp *TrustedPeer) error {
 		tp.AddedAt = time.Now()
 	}
 
+	old := r.unknownPeerDirectTrustLevel()
 	r.peers[tp.ID] = tp
 	r.save()
+	r.mu.Unlock()
+
+	r.fireTrustChange(tp.ID, old, tp.TrustLevel)
 	return nil
 }
 
@@ -593,28 +656,38 @@ func (r *Registry) UpdatePeer(tp *TrustedPeer) error {
 	}
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
-	if _, exists := r.peers[tp.ID]; !exists {
+	existing, exists := r.peers[tp.ID]
+	if !exists {
+		r.mu.Unlock()
 		return ErrPeerNotFound
 	}
 
+	old := existing.TrustLevel
 	r.peers[tp.ID] = tp
 	r.save()
+	r.mu.Unlock()
+
+	r.fireTrustChange(tp.ID, old, tp.TrustLevel)
 	return nil
 }
 
 // RemovePeer removes a peer from the registry.
 func (r *Registry) RemovePeer(id peer.ID) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
-	if _, exists := r.peers[id]; !exists {
+	existing, exists := r.peers[id]
+	if !exists {
+		r.mu.Unlock()
 		return ErrPeerNotFound
 	}
 
+	old := existing.TrustLevel
 	delete(r.peers, id)
 	r.save()
+	r.mu.Unlock()
+
+	r.fireTrustChange(id, old, r.unknownPeerDirectTrustLevel())
 	return nil
 }
 
@@ -682,15 +755,19 @@ func (r *Registry) ListPeersByGroup(groupName string) []*TrustedPeer {
 // SetTrustLevel updates the trust level for a peer.
 func (r *Registry) SetTrustLevel(id peer.ID, level TrustLevel) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	tp, exists := r.peers[id]
 	if !exists {
+		r.mu.Unlock()
 		return ErrPeerNotFound
 	}
 
+	old := tp.TrustLevel
 	tp.TrustLevel = level
 	r.save()
+	r.mu.Unlock()
+
+	r.fireTrustChange(id, old, level)
 	return nil
 }
 

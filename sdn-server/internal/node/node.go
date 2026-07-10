@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,6 +84,13 @@ const (
 	datasetPublicationCatchupInterval     = 5 * time.Minute
 	datasetPublicationCatchupLimit        = 5000
 	datasetShardPublicationCatchupLimit   = 5000
+
+	// tipQueueTTLSweepInterval is how often the TipQueue's background
+	// sweeper checks for expired auto-pinned content to unpin (Task D1).
+	// internal/config has no dedicated tip-queue knob yet (see
+	// buildTipQueue's doc comment), so this is a node-local default rather
+	// than something read from config.
+	tipQueueTTLSweepInterval = 15 * time.Minute
 )
 
 // Node represents a Space Data Network node.
@@ -110,6 +118,15 @@ type Node struct {
 	// Trusted peer management
 	peerRegistry *peers.Registry
 	peerGater    *peers.TrustedConnectionGater
+
+	// tipQueue is the PNM auto-fetch/auto-pin/TTL engine (internal/pubsub,
+	// Task D1). It consumes the aggregate "PNM.fbs" topic (see
+	// handleSubscription) — the per-schema dataset topics (e.g. "OMM.fbs")
+	// already materialize directly via materializeDatasetPublicationPNM.
+	// nil until buildTipQueue runs in init(); see buildTipQueue's doc
+	// comment for why it can also be nil in a fully initialized node
+	// (edge mode / no storage).
+	tipQueue *sdnpubsub.TipQueue
 
 	pluginRegistry          *license.PluginRegistry
 	licensingModule         *modulert.Module
@@ -285,6 +302,13 @@ func (n *Node) init() error {
 	trustGraph, _ := peers.BuildTrustGraph(nil)
 	n.peerRegistry.SetTrustGraph(trustGraph)
 
+	// Task D2: auto-subscribe/backfill on promotion to Full trust, and
+	// undo it on demotion below Full. Registered here (registration is
+	// synchronous) even though n.tipQueue/n.store are not created yet —
+	// the handler closes over n and only reads those fields when a trust
+	// change actually fires, which cannot happen before init() returns.
+	n.peerRegistry.OnTrustChange(n.handleTrustLevelChange)
+
 	// Log trusted peer mode
 	if n.config.Peers.StrictMode {
 		log.Infof("Trusted peer strict mode ENABLED - only registry peers allowed")
@@ -426,6 +450,7 @@ func (n *Node) init() error {
 
 	n.protocol = protocol.NewSDSExchangeHandlerWithOptions(n.store, n.validator, limits, rateLimiter)
 	n.protocol.SetPubSubPNMHandler(n.handleDatasetPublicationPNM)
+	n.tipQueue = n.buildTipQueue()
 	n.host.SetStreamHandler(protocol.SDSProtocolID, n.protocol.HandleStream)
 	if n.store != nil {
 		n.host.SetStreamHandler(protocol.FlatSQLSyncProtocolID, protocol.NewFlatSQLSyncHandler(n.store).HandleStream)
@@ -1365,6 +1390,13 @@ func (n *Node) Start(ctx context.Context) error {
 		go n.runDatasetShardPublicationCatchup()
 	}
 
+	// TipQueue TTL enforcement (Task D1): Kubo/IPFS pins have no native
+	// TTL, so this periodic sweep is what actually retires auto-pinned
+	// content once ResolvedConfig.TTL elapses.
+	if n.tipQueue != nil {
+		n.tipQueue.StartTTLSweeper(tipQueueTTLSweepInterval)
+	}
+
 	// Start EPM auto-publish via PubSub (every 30 minutes)
 	if n.epmService != nil && n.epmService.GetNodeEPM() != nil {
 		n.wg.Add(1)
@@ -1982,6 +2014,18 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 		if err := n.protocol.HandlePubSubMessage(schema, msg.Data, msg.ReceivedFrom); err != nil {
 			log.Warnf("Failed to handle message on %s: %v", schema, err)
 		}
+
+		// The aggregate "PNM.fbs" topic is deliberately skipped by
+		// materializeDatasetPublicationPNM (schema == "PNM.fbs" is a no-op
+		// there; only the per-schema dataset topics materialize directly).
+		// The TipQueue (Task D1) is that topic's consumer: forward only
+		// messages from already-trusted peers, mirroring every other
+		// trust gate in this file (e.g. materializeDatasetPublicationPNM,
+		// catchUpDatasetShardPublicationsFromPeer) so an untrusted peer's
+		// PNM never reaches the queue's fetch/pin/materialize path.
+		if schema == "PNM.fbs" && n.tipQueue != nil && n.peerRegistry != nil && n.peerRegistry.IsTrusted(msg.ReceivedFrom) {
+			n.tipQueue.HandleMessage(msg)
+		}
 	}
 }
 
@@ -2038,6 +2082,224 @@ func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, p
 		n.scheduleDatasetSupersede(schema)
 	}
 	return err
+}
+
+// newTipQueueConfig returns the TipQueueConfig buildTipQueue constructs the
+// live TipQueue from. internal/config has no dedicated tip-queue section
+// yet (see the coordinator config.go snippet in the D1 task report), so
+// this starts from pubsub.NewTipQueueConfig()'s built-in defaults
+// (TTL/MaxQueueSize/FetchTimeout) and only overrides AutoFetch/AutoPin.
+//
+// Overriding them to true is safe specifically because forwarding into the
+// TipQueue already only happens for messages from trusted peers
+// (handleSubscription checks n.peerRegistry.IsTrusted before ever calling
+// n.tipQueue.HandleMessage) — unlike a bare TipQueueConfig zero value,
+// which is meant for a caller that has not yet applied any peer-trust
+// gate. This mirrors materializeDatasetPublicationPNM's own behavior of
+// unconditionally fetching from every trusted peer's dataset-publication
+// PNM. Per-schema/per-source overrides (e.g. to turn auto-pin off for a
+// noisy schema) remain available at runtime through the admin pinning API
+// (internal/api/pinning.go, not yet mounted — see the D1 task report).
+func (n *Node) newTipQueueConfig() *sdnpubsub.TipQueueConfig {
+	cfg := sdnpubsub.NewTipQueueConfig()
+	cfg.DefaultAutoFetch = true
+	cfg.DefaultAutoPin = true
+	return cfg
+}
+
+// buildTipQueue constructs the PNM auto-fetch/auto-pin/TTL engine (Task
+// D1). The TipQueue is the consumer for the aggregate "PNM.fbs" topic:
+// materializeDatasetPublicationPNM explicitly ignores messages that arrive
+// on that topic (schema == "PNM.fbs" short-circuits there) because
+// per-schema dataset topics (e.g. "OMM.fbs") already materialize directly
+// through the existing protocol pubsub handler. Content fetch/pin is only
+// wired when admin.ipfs_api_url is configured, matching every other
+// pinning-gated code path in this package
+// (materializeDatasetPublicationPNM, PublishDatasetExportToIPFS, ...); with
+// no IPFS API configured the queue still tracks/dedupes tips, it just
+// cannot fetch or pin content.
+func (n *Node) buildTipQueue() *sdnpubsub.TipQueue {
+	tq := sdnpubsub.NewTipQueue(n.newTipQueueConfig())
+	ipfsAPIURL := strings.TrimSpace(n.config.Admin.IPFSAPIURL)
+	if ipfsAPIURL != "" {
+		tq.SetFetcher(&ipfsTipFetcher{apiURL: ipfsAPIURL})
+		tq.SetPinner(newIPFSTipPinner(ipfsAPIURL))
+	}
+	tq.OnTip(n.handleTipQueueTip)
+	return tq
+}
+
+// ipfsTipFetcher adapts storage.FetchIPFSBlockByCID (the same Kubo RPC
+// helper materializeDatasetPublicationPNM uses) to pubsub.ContentFetcher.
+type ipfsTipFetcher struct {
+	apiURL string
+}
+
+func (f *ipfsTipFetcher) Fetch(ctx context.Context, cidValue string) ([]byte, error) {
+	return storage.FetchIPFSBlockByCID(ctx, f.apiURL, cidValue)
+}
+
+// ipfsTipPinner adapts Kubo's pin/add + pin/rm RPCs to
+// pubsub.ContentPinner. Unpin reuses storage.UnpinIPFSCID; Pin has no
+// existing exported storage helper because storage's own pin helpers all
+// pin a *local file* while uploading it (PublishDatasetExportToIPFS,
+// PublishDatasetPublicationManifestToIPFS), not an already-known remote
+// CID by reference, so it talks to the Kubo RPC API directly here.
+type ipfsTipPinner struct {
+	apiURL string
+	client *http.Client
+}
+
+func newIPFSTipPinner(apiURL string) *ipfsTipPinner {
+	return &ipfsTipPinner{apiURL: apiURL, client: http.DefaultClient}
+}
+
+// Pin recursively pins cidValue. TTL is intentionally not sent to Kubo
+// (pin/add has no TTL concept); TipQueue.sweepExpiredPins is what enforces
+// TTL by calling Unpin once a tip's PinExpiry has elapsed.
+func (p *ipfsTipPinner) Pin(ctx context.Context, cidValue string, _ time.Duration) error {
+	cidValue = strings.TrimSpace(cidValue)
+	if cidValue == "" {
+		return fmt.Errorf("cid is required")
+	}
+	if strings.TrimSpace(p.apiURL) == "" {
+		return fmt.Errorf("ipfs api url is required")
+	}
+	endpoint, err := url.JoinPath(strings.TrimRight(p.apiURL, "/"), "/api/v0/pin/add")
+	if err != nil {
+		return fmt.Errorf("build IPFS URL: %w", err)
+	}
+	reqURL, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("parse IPFS URL: %w", err)
+	}
+	query := reqURL.Query()
+	query.Set("arg", cidValue)
+	query.Set("recursive", "true")
+	reqURL.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), nil)
+	if err != nil {
+		return fmt.Errorf("create IPFS pin/add request: %w", err)
+	}
+	client := p.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("post IPFS pin/add: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	body, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("IPFS pin/add failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+}
+
+func (p *ipfsTipPinner) Unpin(ctx context.Context, cidValue string) error {
+	return storage.UnpinIPFSCID(ctx, p.apiURL, cidValue)
+}
+
+// handleTipQueueTip is the TipQueue OnTip handler: it drives the SAME
+// materialization function the direct per-schema-topic pubsub path uses
+// (materializeDatasetPublicationPNM), reusing its trust check, replay-state
+// dedupe, and fetch/import logic rather than duplicating any of it. This is
+// what turns a queued "PNM.fbs" tip into rows landing in the
+// per-(producer,standard) FlatSQL tables; TipQueue's own processTip
+// (AutoFetch/AutoPin) independently pins the manifest CID itself for
+// durability, in parallel.
+func (n *Node) handleTipQueueTip(tip *sdnpubsub.Tip, _ sdnpubsub.ResolvedConfig) {
+	if n == nil || tip == nil || len(tip.RawPNM) == 0 || n.store == nil || n.peerRegistry == nil {
+		return
+	}
+	schema := datasetPublicationFileIDSchema(tip.SchemaType)
+	if schema == "" {
+		log.Debugf("TipQueue: PNM FILE_ID %q does not resolve to a dataset schema; skipping materialization", tip.SchemaType)
+		return
+	}
+	from, err := peer.Decode(tip.PeerID)
+	if err != nil {
+		log.Debugf("TipQueue: cannot decode tip peer ID %q: %v", tip.PeerID, err)
+		return
+	}
+	materialized, err := n.materializeDatasetPublicationPNM(n.ctx, schema, tip.RawPNM, from)
+	if err != nil {
+		log.Warnf("TipQueue: dataset PNM materialization failed for %s on %s from %s: %v", tip.CID, schema, from.ShortString(), err)
+		return
+	}
+	if materialized {
+		n.scheduleDatasetSupersede(schema)
+		log.Infof("TipQueue: materialized dataset publication from %s on %s (cid=%s)", from.ShortString(), schema, tip.CID)
+	}
+}
+
+// handleTrustLevelChange is the Task D2 trust-change hook: it auto-
+// subscribes (and backfills) a peer promoted to Full trust or above, and
+// auto-unsubscribes a peer demoted below Full. Registered on
+// n.peerRegistry in init() via OnTrustChange, which dispatches
+// asynchronously, so this never runs on the goroutine that mutated trust.
+func (n *Node) handleTrustLevelChange(id peer.ID, old, newLevel peers.TrustLevel) {
+	if n == nil {
+		return
+	}
+	wasFull := old >= peers.Full
+	isFull := newLevel >= peers.Full
+	switch {
+	case isFull && !wasFull:
+		n.subscribeFullyTrustedPeer(id)
+	case wasFull && !isFull:
+		n.unsubscribeFullyTrustedPeer(id)
+	}
+}
+
+// subscribeFullyTrustedPeer reacts to a peer's promotion to Full trust (or
+// above). Gossipsub topics in this codebase are not peer-scoped (every
+// schema topic, including the aggregate "PNM.fbs" topic, is already joined
+// for every peer regardless of trust — see setupSchemaPubSubTopics), so
+// there is no separate per-peer topic to join here. What promotion to Full
+// actually changes is (1) the TipQueue's own trusted-source bookkeeping,
+// which the admin pinning API surfaces, and (2) whether this peer's
+// already-stored/available publications get materialized — which the
+// existing catch-up loop (runDatasetPublicationPNMCatchup /
+// runDatasetShardPublicationCatchup, node.go ~1530-1607) already does for
+// every trusted peer every five minutes. This hook triggers that SAME
+// catch-up machinery immediately for this peer instead of waiting for the
+// next tick; it does not clone it.
+func (n *Node) subscribeFullyTrustedPeer(id peer.ID) {
+	if n.tipQueue != nil {
+		n.tipQueue.Config().TrustSource(id.String())
+	}
+	if n.store == nil || n.ctx == nil {
+		return
+	}
+	n.wg.Add(1)
+	go func() {
+		defer n.wg.Done()
+		if materialized, err := n.materializeStoredDatasetPublicationPNMs(n.ctx, datasetPublicationCatchupLimit); err != nil {
+			log.Warnf("Trust-promotion PNM catch-up for %s completed with errors after materializing %d update(s): %v", id.ShortString(), materialized, err)
+		} else if materialized > 0 {
+			log.Infof("Trust-promotion PNM catch-up materialized %d update(s) triggered by %s", materialized, id.ShortString())
+		}
+		if materialized, err := n.catchUpDatasetShardPublicationsFromPeer(n.ctx, id); err != nil {
+			log.Warnf("Trust-promotion shard catch-up from %s completed with errors after materializing %d shard(s): %v", id.ShortString(), materialized, err)
+		} else if materialized > 0 {
+			log.Infof("Trust-promotion shard catch-up materialized %d shard(s) from %s", materialized, id.ShortString())
+		}
+	}()
+}
+
+// unsubscribeFullyTrustedPeer reacts to a peer's demotion below Full trust,
+// undoing subscribeFullyTrustedPeer's TipQueue bookkeeping. There is no
+// live materialization to undo: every consumer of this peer's data
+// (materializeDatasetPublicationPNM, catch-up loops, handleTipQueueTip) is
+// already gated on live IsTrusted()/EffectiveTrustLevel() checks, so a
+// demoted peer simply stops being materialized going forward without any
+// further action here.
+func (n *Node) unsubscribeFullyTrustedPeer(id peer.ID) {
+	if n.tipQueue != nil {
+		n.tipQueue.Config().UntrustSource(id.String())
+	}
 }
 
 func (n *Node) materializeDatasetFeedHeadAnnouncement(ctx context.Context, ann sdnpubsub.DatasetFeedHeadAnnouncement, from peer.ID) (int, error) {
@@ -2894,6 +3156,15 @@ func (n *Node) Stop() error {
 	n.cancel()
 	n.wg.Wait()
 
+	// TipQueue owns its own internal context/wait group (it is usable
+	// standalone, outside a Node), so n.cancel()/n.wg.Wait() above do not
+	// stop its TTL sweeper goroutine; it must be closed explicitly.
+	if n.tipQueue != nil {
+		if err := n.tipQueue.Close(); err != nil {
+			log.Warnf("Error closing tip queue: %v", err)
+		}
+	}
+
 	if n.store != nil {
 		if err := n.store.Close(); err != nil {
 			log.Warnf("Error closing storage: %v", err)
@@ -3088,6 +3359,15 @@ func (n *Node) PeerRegistry() *peers.Registry {
 // PeerGater returns the connection gater for trust-based filtering.
 func (n *Node) PeerGater() *peers.TrustedConnectionGater {
 	return n.peerGater
+}
+
+// TipQueue returns the PNM auto-fetch/auto-pin/TTL engine (Task D1), or nil
+// if node startup has not wired it (e.g. edge mode with no storage). Used
+// by cmd/spacedatanetwork/main.go to mount the admin pinning-policy API
+// (internal/api/pinning.go) — see the D1 task report for the exact
+// registration snippet.
+func (n *Node) TipQueue() *sdnpubsub.TipQueue {
+	return n.tipQueue
 }
 
 // CapabilityPolicy returns the operator-controlled module capability
