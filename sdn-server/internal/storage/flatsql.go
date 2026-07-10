@@ -31,6 +31,7 @@ import (
 	logging "github.com/ipfs/go-log/v2"
 	"golang.org/x/crypto/scrypt"
 
+	"github.com/spacedatanetwork/sdn-server/internal/encfield"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqldrv"
 	"github.com/spacedatanetwork/sdn-server/internal/flatsqlrt"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -105,6 +106,14 @@ type FlatSQLStore struct {
 	// guarded by mu.
 	engineEpoch    uint64
 	retiredEngines []*flatsqlrt.Runtime
+	// fieldEncMu guards the lazily-provisioned field-encryption identity
+	// (field_encryption.go). Deliberately separate from mu: Append and
+	// readFlatSQLStreamRecord are reached while mu is already held (Lock or
+	// RLock, or not at all, depending on the caller), and sync.RWMutex is not
+	// reentrant.
+	fieldEncMu   sync.Mutex
+	fieldEncPriv []byte
+	fieldEncPub  []byte
 }
 
 // StoreOption configures a FlatSQLStore at open time.
@@ -1439,6 +1448,13 @@ type flatSQLStreamAppender struct {
 	relativePath string
 	offset       int64
 	closed       bool
+	// schemaName/store let Append transparently seal any schema's registered
+	// `(encrypted)` fields (field_encryption.go) before writing, without
+	// changing Append's signature or any of its callers (storeOne via
+	// appendFlatSQLStreamRecord, StoreRoutedByProducer, and storeBatchChunk's
+	// direct appender.Append loop all share this one path).
+	schemaName string
+	store      *FlatSQLStore
 }
 
 func (s *FlatSQLStore) newFlatSQLStreamAppender(schemaName string) (*flatSQLStreamAppender, error) {
@@ -1471,15 +1487,35 @@ func (s *FlatSQLStore) newFlatSQLStreamAppender(schemaName string) (*flatSQLStre
 		writer:       bufio.NewWriterSize(file, 4*1024*1024),
 		relativePath: relativePath,
 		offset:       info.Size(),
+		// encfield's registry (and streamRecordSchemaName on the read side,
+		// which only has the table-derived stream path to go on) is keyed by
+		// the table name, not the raw ".fbs" schema name -- use the same
+		// tableName the stream file itself is named after.
+		schemaName: tableName,
+		store:      s,
 	}, nil
 }
 
 func (a *flatSQLStreamAppender) Append(data []byte) (string, int64, int64, error) {
-	if len(data) > int(^uint32(0)) {
-		return "", 0, 0, fmt.Errorf("record exceeds uint32 FlatSQL stream frame length")
-	}
 	if a.closed {
 		return "", 0, 0, fmt.Errorf("FlatSQL stream appender is closed")
+	}
+	// Transparent field-level encryption (E1): a no-op for every schema with
+	// no registered `(encrypted)` field (encfield.HasEncryptedFields is the
+	// single guard, so the overwhelming majority of writes pay one bool-map
+	// lookup and nothing else). CID/indexing already happened against the
+	// caller's plaintext `data` before Append was called (storeOne,
+	// storeBatchChunk, StoreRoutedByProducer) -- only the durable stream
+	// bytes below become ciphertext.
+	if a.store != nil && encfield.HasEncryptedFields(a.schemaName) {
+		sealed, err := a.store.sealRecordFields(a.schemaName, data)
+		if err != nil {
+			return "", 0, 0, fmt.Errorf("seal %s stream record: %w", a.schemaName, err)
+		}
+		data = sealed
+	}
+	if len(data) > int(^uint32(0)) {
+		return "", 0, 0, fmt.Errorf("record exceeds uint32 FlatSQL stream frame length")
 	}
 	offset := a.offset
 	var sizePrefix [4]byte
@@ -1548,6 +1584,20 @@ func (s *FlatSQLStore) readFlatSQLStreamRecord(streamPath string, streamOffset, 
 	data := make([]byte, recordLength)
 	if _, err := file.ReadAt(data, streamOffset+4); err != nil {
 		return nil, err
+	}
+	// Transparent field-level decryption (E1), the mirror of Append's seal:
+	// encfield.IsSealed is a cheap 5-byte magic/version check, false (and a
+	// no-op) for every record that was never sealed -- which, since
+	// streamRecordSchemaName derives the schema straight from streamPath
+	// (Append never seals a schema with no registered encrypted field), is
+	// every schema except KMF today.
+	if encfield.IsSealed(data) {
+		schemaName := streamRecordSchemaName(streamPath)
+		opened, err := s.openRecordFields(schemaName, data)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt %s FlatSQL stream record: %w", schemaName, err)
+		}
+		data = opened
 	}
 	return data, nil
 }
