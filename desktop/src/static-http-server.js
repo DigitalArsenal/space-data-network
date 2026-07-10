@@ -1294,6 +1294,15 @@ async function nodeSelfIdentityRecord () {
     record.epmJson.epmCid = localRecord.cid
     record.epm_json = record.epmJson
   }
+  // Task F2 follow-up: EVERY view of the node's own record carries the
+  // self-recognition ceiling, exactly like applyWalletNodeIdentity's
+  // wallet-apply path (see the F2 comment there) — the self record IS this
+  // node's web-of-trust root (mirrors Registry.SetRootIdentity, C6), and
+  // 'ultimate' is reserved for that root. Structurally self-only: this
+  // function exists solely for the 'self'/'node-self' record; hosted
+  // identities never pass through here.
+  record.epmJson.trust_level = normalizeDesktopTrustLevel('ultimate')
+  record.epm_json = record.epmJson
   return record
 }
 
@@ -1598,7 +1607,11 @@ async function serveDesktopIdentityAPI (req, res) {
       const next = { ...(await readDesktopNodeProfile()), ...epmJson }
       await fs.promises.mkdir(path.dirname(localProfilePath()), { recursive: true })
       await fs.promises.writeFile(localProfilePath(), JSON.stringify(next, null, 2))
-      sendJSON(res, 200, await publicIdentityRecord('self', 'node-self', next))
+      // F2 follow-up: respond via nodeSelfIdentityRecord (re-reads the
+      // just-written profile) so the PUT response matches every other view
+      // of the self record — same ultimate self-recognition stamp, same
+      // epmCid fallback — instead of a divergent inline rebuild.
+      sendJSON(res, 200, await nodeSelfIdentityRecord())
       return true
     }
 
