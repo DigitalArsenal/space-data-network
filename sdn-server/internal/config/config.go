@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"gopkg.in/yaml.v3"
@@ -29,6 +31,27 @@ type Config struct {
 	Policies   PoliciesConfig   `yaml:"policies"`
 	Ingest     IngestConfig     `yaml:"ingest"`
 	Gateway    GatewayConfig    `yaml:"gateway"`
+	TipQueue   TipQueueConfig   `yaml:"tip_queue"`
+}
+
+// TipQueueConfig makes the pubsub.TipQueue resource caps (Task D4:
+// per-item auto-fetch size, in-flight fetch concurrency, and minimum
+// spacing between fetch starts) YAML-tunable. Zero values keep
+// pubsub.NewTipQueueConfig()'s built-in defaults (DefaultMaxFetchBytes,
+// DefaultMaxConcurrentFetches, DefaultMinFetchInterval) — see node.go's
+// newTipQueueConfig, which only overrides a field when it is > 0.
+type TipQueueConfig struct {
+	// MaxFetchBytes caps a single auto-fetched PNM content item. 0 keeps
+	// pubsub.DefaultMaxFetchBytes (64 MiB).
+	MaxFetchBytes int64 `yaml:"max_fetch_bytes"`
+
+	// MaxConcurrentFetches bounds in-flight auto-fetches. 0 keeps
+	// pubsub.DefaultMaxConcurrentFetches.
+	MaxConcurrentFetches int `yaml:"max_concurrent_fetches"`
+
+	// MinFetchInterval is the minimum spacing TipQueue enforces between the
+	// start of consecutive fetches. 0 keeps pubsub.DefaultMinFetchInterval.
+	MinFetchInterval time.Duration `yaml:"min_fetch_interval"`
 }
 
 // GatewayConfig tunes the network-gateway API surface (docs/gateway-api.md).
@@ -418,8 +441,24 @@ type NetworkConfig struct {
 
 // StorageConfig contains storage-related settings.
 type StorageConfig struct {
-	Path       string `yaml:"path"`
-	MaxSize    string `yaml:"max_size"`
+	Path string `yaml:"path"`
+
+	// MaxSize is the disk-quota cap enforced by FlatSQLStore.
+	// GarbageCollectToQuota (Task D3). Two forms:
+	//   - a percentage of the filesystem holding Path, e.g. "90%" — the
+	//     default (DefaultStorageMaxSizePercent) when MaxSize is empty.
+	//   - an absolute size, e.g. "10GB", "500MB", "2TB", or a bare integer
+	//     byte count. Units are binary (1GB = 1<<30 bytes, matching this
+	//     codebase's other byte-size constants, e.g.
+	//     DefaultGatewayQueryMaxBytes = 128 << 20); KiB/MiB/GiB/TiB are
+	//     accepted as explicit synonyms.
+	// Resolve with ResolveMaxSizeBytes (percentages need Statfs against a
+	// real path, so resolution is lazy — done at node startup, not here).
+	MaxSize string `yaml:"max_size"`
+
+	// GCInterval is a Go duration string (e.g. "1h") controlling how often
+	// the periodic storage-quota GC loop runs (node.go's
+	// runStorageQuotaGC). Empty resolves to 1h (ResolveGCInterval).
 	GCInterval string `yaml:"gc_interval"`
 
 	// EngineHotWindow bounds the records resident per schema in the in-memory
@@ -428,6 +467,183 @@ type StorageConfig struct {
 	// cursors keep the full history. 0 = built-in default (400K records,
 	// sized against the engine's 4 GiB wasm32 ceiling).
 	EngineHotWindow int `yaml:"engine_hot_window,omitempty"`
+}
+
+// DefaultStorageMaxSizePercent is the disk-quota percentage StorageConfig
+// resolves to when MaxSize is empty (or explicitly "90%" as Default()
+// sets it): 90% of the filesystem holding storage.path.
+const DefaultStorageMaxSizePercent = 90
+
+// DefaultStorageGCInterval is the periodic storage-quota GC cadence used
+// when storage.gc_interval is empty.
+const DefaultStorageGCInterval = time.Hour
+
+// storageMaxSizeSpec is the parsed (but not yet disk-resolved) form of
+// StorageConfig.MaxSize.
+type storageMaxSizeSpec struct {
+	isPercent bool
+	percent   float64 // (0, 100]
+	bytes     int64   // absolute byte count, only meaningful when !isPercent
+}
+
+// resolve turns a parsed spec into an absolute byte cap. A percentage spec
+// needs Statfs against a real, ideally-existing path — nearestExistingDir
+// walks up to the closest existing ancestor so this still works before
+// storage.path itself has been created (e.g. first-run config validation).
+func (spec storageMaxSizeSpec) resolve(storagePath string) (int64, error) {
+	if !spec.isPercent {
+		return spec.bytes, nil
+	}
+	total, err := diskTotalBytes(nearestExistingDir(storagePath))
+	if err != nil {
+		return 0, fmt.Errorf("statfs %q: %w", storagePath, err)
+	}
+	return int64(float64(total) * spec.percent / 100.0), nil
+}
+
+// parseStorageMaxSizeSpec validates and parses a storage.max_size string
+// WITHOUT touching the filesystem — this is what Config.validate() calls so
+// a malformed value (typo'd unit, out-of-range percentage, ...) fails
+// config Load() with a clear error instead of surfacing as a confusing
+// runtime failure the first time the quota GC loop resolves it.
+func parseStorageMaxSizeSpec(spec string) (storageMaxSizeSpec, error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		spec = fmt.Sprintf("%d%%", DefaultStorageMaxSizePercent)
+	}
+	if strings.HasSuffix(spec, "%") {
+		pctStr := strings.TrimSpace(strings.TrimSuffix(spec, "%"))
+		pct, err := strconv.ParseFloat(pctStr, 64)
+		if err != nil {
+			return storageMaxSizeSpec{}, fmt.Errorf("invalid percentage %q: %w", spec, err)
+		}
+		if pct <= 0 || pct > 100 {
+			return storageMaxSizeSpec{}, fmt.Errorf("percentage %q out of range (0,100]", spec)
+		}
+		return storageMaxSizeSpec{isPercent: true, percent: pct}, nil
+	}
+	b, err := parseByteSize(spec)
+	if err != nil {
+		return storageMaxSizeSpec{}, err
+	}
+	if b <= 0 {
+		return storageMaxSizeSpec{}, fmt.Errorf("size %q must be positive", spec)
+	}
+	return storageMaxSizeSpec{bytes: b}, nil
+}
+
+// byteSizeUnits maps size-string suffixes to their byte multiplier, binary
+// (1024-based) throughout to match this codebase's other byte-size
+// constants (e.g. DefaultGatewayQueryMaxBytes = 128 << 20). Longer/more
+// specific suffixes are listed first so e.g. "10GB" matches "GB" — not the
+// generic trailing "B" — via the first-match-wins scan in parseByteSize.
+var byteSizeUnits = []struct {
+	suffix string
+	mult   int64
+}{
+	{"TIB", 1 << 40}, {"TB", 1 << 40},
+	{"GIB", 1 << 30}, {"GB", 1 << 30},
+	{"MIB", 1 << 20}, {"MB", 1 << 20},
+	{"KIB", 1 << 10}, {"KB", 1 << 10},
+	{"B", 1},
+}
+
+// parseByteSize parses an absolute size string ("10GB", "512MiB", "100",
+// ...) into a byte count. A bare integer (no unit suffix) is interpreted
+// as a byte count directly.
+func parseByteSize(spec string) (int64, error) {
+	trimmed := strings.TrimSpace(spec)
+	if trimmed == "" {
+		return 0, fmt.Errorf("empty size")
+	}
+	upper := strings.ToUpper(trimmed)
+	for _, u := range byteSizeUnits {
+		if !strings.HasSuffix(upper, u.suffix) {
+			continue
+		}
+		numPart := strings.TrimSpace(trimmed[:len(trimmed)-len(u.suffix)])
+		if numPart == "" {
+			continue
+		}
+		val, err := strconv.ParseFloat(numPart, 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid size %q: %w", spec, err)
+		}
+		if val < 0 {
+			return 0, fmt.Errorf("invalid size %q: negative", spec)
+		}
+		return int64(val * float64(u.mult)), nil
+	}
+	val, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid size %q: no recognized unit suffix (B/KB/MB/GB/TB, optionally KiB/MiB/GiB/TiB) and not a bare byte integer", spec)
+	}
+	return val, nil
+}
+
+// ResolveMaxSizeBytes resolves StorageConfig.MaxSize against the
+// filesystem holding storagePath: an absolute size ("10GB") parses
+// directly, a percentage ("90%", or the default when MaxSize is empty)
+// resolves against Statfs-reported total filesystem capacity. Call at node
+// startup (after storage.path exists), not from Config.validate() — that
+// only checks syntax (parseStorageMaxSizeSpec), since a percentage cannot
+// be resolved without touching the filesystem.
+func (c StorageConfig) ResolveMaxSizeBytes(storagePath string) (int64, error) {
+	spec, err := parseStorageMaxSizeSpec(c.MaxSize)
+	if err != nil {
+		return 0, fmt.Errorf("storage.max_size: %w", err)
+	}
+	bytes, err := spec.resolve(storagePath)
+	if err != nil {
+		return 0, fmt.Errorf("storage.max_size: %w", err)
+	}
+	return bytes, nil
+}
+
+// resolveGCInterval parses storage.gc_interval as a Go duration string,
+// defaulting to DefaultStorageGCInterval when empty.
+func resolveGCInterval(spec string) (time.Duration, error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return DefaultStorageGCInterval, nil
+	}
+	d, err := time.ParseDuration(spec)
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration %q: %w", spec, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("must be positive, got %q", spec)
+	}
+	return d, nil
+}
+
+// ResolveGCInterval parses StorageConfig.GCInterval, defaulting to
+// DefaultStorageGCInterval (1h) when empty.
+func (c StorageConfig) ResolveGCInterval() (time.Duration, error) {
+	d, err := resolveGCInterval(c.GCInterval)
+	if err != nil {
+		return 0, fmt.Errorf("storage.gc_interval: %w", err)
+	}
+	return d, nil
+}
+
+// nearestExistingDir walks up from path until it finds a directory that
+// exists (bounded to avoid spinning on a pathological input), so Statfs
+// can resolve a percentage-of-disk quota even before storage.path itself
+// has been created (e.g. first-run config validation).
+func nearestExistingDir(path string) string {
+	p := path
+	for i := 0; i < 64; i++ {
+		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			return p
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return p
+		}
+		p = parent
+	}
+	return p
 }
 
 // SchemaConfig contains schema validation settings.
@@ -660,8 +876,10 @@ func Default() *Config {
 			RateLimitBurst:       50,   // Allow burst of 50 messages
 		},
 		Storage: StorageConfig{
-			Path:       dataPath,
-			MaxSize:    "10GB",
+			Path: dataPath,
+			// 90% of the filesystem holding Path (DefaultStorageMaxSizePercent) —
+			// an explicit "10GB"-style absolute size still works (back-compat).
+			MaxSize:    fmt.Sprintf("%d%%", DefaultStorageMaxSizePercent),
 			GCInterval: "1h",
 		},
 		Schemas: SchemaConfig{
@@ -818,6 +1036,16 @@ func (c *Config) validate() error {
 				mount.Path,
 			)
 		}
+	}
+	// Syntax-only checks (Task D3): percentage resolution needs Statfs
+	// against a real path, so full ResolveMaxSizeBytes stays lazy (node
+	// startup) — but a malformed spec should fail Load() immediately
+	// rather than surface as a confusing runtime error later.
+	if _, err := parseStorageMaxSizeSpec(c.Storage.MaxSize); err != nil {
+		return fmt.Errorf("storage.max_size: %w", err)
+	}
+	if _, err := resolveGCInterval(c.Storage.GCInterval); err != nil {
+		return fmt.Errorf("storage.gc_interval: %w", err)
 	}
 	return nil
 }
