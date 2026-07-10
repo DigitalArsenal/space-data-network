@@ -1911,7 +1911,7 @@ async function serveDesktopNodeIdentityAPI (req, res) {
   }
   await fs.promises.mkdir(path.dirname(localProfilePath()), { recursive: true })
   await fs.promises.writeFile(localProfilePath(), JSON.stringify(next, null, 2))
-  const publicProfile = (await publicIdentityRecord('self', 'node-self', next)).epmJson
+  const publicProfile = await applyWalletNodeIdentity(next)
   const session = await writeNodeIdentitySession(publicProfile)
   sendJSON(res, 200, {
     status: keysMatch && hasCurrentKeys ? 'unchanged' : 'updated',
@@ -1919,6 +1919,29 @@ async function serveDesktopNodeIdentityAPI (req, res) {
     session
   })
   return true
+}
+
+// Task F2: the wallet key applied through PUT /api/node/identity/wallet
+// (above) *becomes* the node's own identity in the browser — in the desktop
+// app the user's wallet key IS the node key, there is no separate operator
+// identity. Recognizing that identity as this node's own root is
+// self-recognition, not an operator-style trust assignment: it mirrors
+// sdn-server's Registry.SetRootIdentity (internal/peers/trust.go, commit
+// 283cbf95 C6), where a node's own key is planted as the web-of-trust root,
+// and Ultimate (peers.Ultimate == 5) is the PGP-scale ceiling reserved for
+// that root. This never routes through the C7-blocked operator-assignment
+// path — the /api/auth/users add/update-trust handlers' assignableTrustLevel
+// intentionally rejects Ultimate/Never (handler.go), and this function calls
+// none of that; it only ever stamps the record produced for 'self' /
+// 'node-self' by publicIdentityRecord, which is used exclusively for this
+// node's own profile (see nodeSelfIdentityRecord) and never for a hosted EPM
+// belonging to someone else. A hosted (non-self) identity is therefore
+// structurally unreachable from this function and never receives 'ultimate'.
+async function applyWalletNodeIdentity (profile) {
+  const record = await publicIdentityRecord('self', 'node-self', profile)
+  record.epmJson.trust_level = normalizeDesktopTrustLevel('ultimate')
+  record.epm_json = record.epmJson
+  return record.epmJson
 }
 
 async function normalizeWalletNodeIdentity (value) {
@@ -2538,6 +2561,7 @@ async function getDesktopStaticUrl (routeName, hash = '/') {
 }
 
 module.exports = {
+  applyWalletNodeIdentity,
   connectDesktopSdnSeedPeers,
   configuredSdnNodesFromSshConfig,
   DESKTOP_SDN_SEED_PEERS,

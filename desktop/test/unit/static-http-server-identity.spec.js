@@ -918,6 +918,95 @@ test.describe('desktop trust-level vocabulary normalization', () => {
   })
 })
 
+// Task F2: in the browser the user's wallet key IS the node key, so applying
+// a wallet identity (PUT /api/node/identity/wallet) must make the resulting
+// self-node report the canonical PGP scale's ceiling, 'ultimate' (peers
+// .Ultimate == 5) — by self-recognition (this identity IS the node's own
+// root identity), never by the C7-blocked operator-assignment path
+// (assignableTrustLevel in sdn-server/internal/auth/handler.go rejects
+// Ultimate/Never on /api/auth/users). A DIFFERENT, non-self identity (a
+// hosted EPM belonging to someone else) must never receive that elevation.
+test.describe('Task F2: browser self identity reports Ultimate trust', () => {
+  test('applyWalletNodeIdentity reports the canonical "ultimate" level for the node\'s own identity', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-self-ultimate-direct-'))
+    const { applyWalletNodeIdentity, CANONICAL_TRUST_LEVELS } = loadStaticServer(userData)
+
+    const profile = await applyWalletNodeIdentity({
+      dn: 'Space Data Network Desktop',
+      entity_type: 'Node',
+      peer_id: '12D3KooWSelfUltimate',
+      xpub: 'xpub-self-ultimate',
+      signing_public_key: 'aa'.repeat(32),
+      encryption_public_key: 'bb'.repeat(32)
+    })
+
+    expect(profile.trust_level).toBe('ultimate')
+    // Uses the canonical F1 vocabulary, not a bespoke string.
+    expect(CANONICAL_TRUST_LEVELS).toContain(profile.trust_level)
+  })
+
+  test('PUT /api/node/identity/wallet makes the browser self-node report ultimate trust, persisted into the session', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-self-ultimate-wallet-put-'))
+    const { serveDesktopNodeIdentityAPI } = loadStaticServer(userData)
+
+    const put = await requestJson(serveDesktopNodeIdentityAPI, 'PUT', '/api/node/identity/wallet', {
+      wallet_identity: {
+        peer_id: '12D3KooWBrowserSelf',
+        xpub: 'xpub-browser-self',
+        identity_public_key: '11'.repeat(33),
+        signing_public_key: 'aa'.repeat(32),
+        encryption_public_key: 'bb'.repeat(32),
+        signature: 'cc'.repeat(64),
+        signature_payload: 'payload-browser-self',
+        signature_timestamp: 1778700010
+      }
+    })
+    expect(put.statusCode).toBe(200)
+    expect(put.json.profile.trust_level).toBe('ultimate')
+    expect(put.json.session.profile.trust_level).toBe('ultimate')
+
+    const session = await requestJson(serveDesktopNodeIdentityAPI, 'GET', '/api/node/identity/session')
+    expect(session.statusCode).toBe(200)
+    expect(session.json.profile.trust_level).toBe('ultimate')
+  })
+
+  test('a different (non-self) hosted identity does not get ultimate trust', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-nonself-not-ultimate-'))
+    const { serveDesktopNodeIdentityAPI, serveDesktopIdentityAPI } = loadStaticServer(userData)
+
+    await requestJson(serveDesktopNodeIdentityAPI, 'PUT', '/api/node/identity/wallet', {
+      wallet_identity: {
+        peer_id: '12D3KooWBrowserSelfTwo',
+        xpub: 'xpub-browser-self-two',
+        identity_public_key: '22'.repeat(33),
+        signing_public_key: 'dd'.repeat(32),
+        encryption_public_key: 'ee'.repeat(32),
+        signature: 'ff'.repeat(64),
+        signature_payload: 'payload-browser-self-two',
+        signature_timestamp: 1778700011
+      }
+    })
+
+    const hosted = await requestJson(serveDesktopIdentityAPI, 'PUT', '/api/identity/epms/alice', {
+      epm_json: {
+        dn: 'Alice Operator',
+        entity_type: 'Person',
+        peer_id: '16Uiu2Alice',
+        public_key: 'alice-public-key'
+      }
+    })
+    expect(hosted.statusCode).toBe(200)
+    expect(hosted.json.kind).toBe('hosted')
+    expect(hosted.json.epmJson.trust_level).not.toBe('ultimate')
+
+    const list = await requestJson(serveDesktopIdentityAPI, 'GET', '/api/identity/epms')
+    expect(list.statusCode).toBe(200)
+    const aliceEntry = list.json.epms.find(entry => entry.id === 'alice')
+    expect(aliceEntry).toBeTruthy()
+    expect(aliceEntry.epmJson.trust_level).not.toBe('ultimate')
+  })
+})
+
 function loadStaticServer (userData, overrides = {}) {
   const app = {
     getPath: (name) => {
