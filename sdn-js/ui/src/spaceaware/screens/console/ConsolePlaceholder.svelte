@@ -1,16 +1,21 @@
 <script lang="ts">
   /**
-   * "Not yet ported" placeholder content for the 5 console views that
-   * aren't NODE (loop U3.1 scope: only NODE gets a real view now — the
-   * other 5 render their existing scaffold placeholder INSIDE this shell
-   * instead of the old full-page `ScaffoldScreen`).
+   * "Not yet ported" placeholder content for the console views that aren't
+   * NODE or PEERS (loop U3.1 scope: only NODE got a real view then; loop
+   * U3.3 added PEERS — see `ConsoleShell.svelte`, which now routes `peers`
+   * to `PeersView.svelte` directly and never reaches this component for
+   * that view). The remaining views render their existing scaffold
+   * placeholder INSIDE this shell instead of the old full-page
+   * `ScaffoldScreen`.
    *
-   * Preserves `ScaffoldScreen.svelte`'s prior behavior for `route.sub ===
-   * 'peers'`: the SdnGlobe demo panel (loop U0.2) stays mounted there until
-   * the real PEER MAP wiring lands (U3.4).
+   * The SdnGlobe demo panel (loop U0.2) that used to live here for
+   * `route.sub === 'peers'` moved out with it — the real PEER MAP widget
+   * (NODE view, loop U3.2) and the PEERS directory (loop U3.3) both ship
+   * without it now; the panel itself stays unused pending the real PEER MAP
+   * canvas wiring (U3.4), at which point it's expected to be deleted rather
+   * than re-attached here.
    */
   import Panel from '../../primitives/Panel.svelte';
-  import GlobeDemoPanel from '../GlobeDemoPanel.svelte';
   import { CONSOLE_TITLES } from '../../lib/console';
   import type { ConsoleView } from '../../router';
 
@@ -18,10 +23,6 @@
 </script>
 
 <div class="sdn-console-placeholder">
-  {#if view === 'peers'}
-    <GlobeDemoPanel />
-  {/if}
-
   <Panel title={`${CONSOLE_TITLES[view]} · not yet ported`} variant="well">
     <p class="sdn-console-placeholder-copy">
       This view is intentionally empty: no placeholder data is rendered
