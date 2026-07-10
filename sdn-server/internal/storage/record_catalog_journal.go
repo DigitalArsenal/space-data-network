@@ -495,6 +495,408 @@ func (j *recordCatalogJournal) Close() error {
 	return j.f.Close()
 }
 
+// reopen swaps the journal's file handle onto the on-disk inode currently at
+// j.path (compaction.go, after a compaction commit has renamed a fresh
+// compacted snapshot over the old journal path). The OLD *os.File descriptor
+// keeps pointing at the pre-compaction inode across a rename -- os.Rename
+// never invalidates an already-open fd, it just unlinks the old directory
+// entry -- so without this, any subsequent Append would keep writing into
+// that now-unlinked (and, once every referencing fd closes, garbage
+// collected) inode and be silently lost forever. Re-scans the valid tail
+// defensively (writeCompactedJournalSnapshot already fsynced the whole file
+// before the rename, so this should simply validate the entire thing) and
+// seeks to EOF so the next Append lands after the compacted content. Callers
+// hold the store's s.mu (Lock).
+func (j *recordCatalogJournal) reopen() error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.readOnly {
+		return fmt.Errorf("record catalog journal %s is read-only", j.path)
+	}
+	f, err := os.OpenFile(j.path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return fmt.Errorf("record catalog: reopen: %w", err)
+	}
+	valid, err := scanRecordCatalogValidLength(f)
+	if err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Truncate(valid); err != nil {
+		f.Close()
+		return fmt.Errorf("record catalog: reopen truncate torn tail: %w", err)
+	}
+	if _, err := f.Seek(valid, io.SeekStart); err != nil {
+		f.Close()
+		return err
+	}
+	old := j.f
+	j.f = f
+	if old != nil {
+		_ = old.Close()
+	}
+	return nil
+}
+
+// writeCompactedJournalSnapshot writes a brand-new compacted record-catalog
+// journal to tmpPath (which must not already exist -- compaction.go always
+// hands this a fresh, generation-suffixed temp path) containing exactly
+// `events` framed identically to AppendAll's on-disk format, then fsyncs it.
+// Called BEFORE the compaction commit manifest is written, so the temp is
+// fully durable before it can ever be renamed over the live journal.
+func writeCompactedJournalSnapshot(tmpPath string, events []recordCatalogEvent) error {
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_EXCL, 0o644)
+	if err != nil {
+		return fmt.Errorf("record catalog: create compaction snapshot %s: %w", tmpPath, err)
+	}
+	var out []byte
+	for _, event := range events {
+		payload, err := encodeRecordCatalogEvent(event)
+		if err != nil {
+			f.Close()
+			return fmt.Errorf("record catalog: encode compaction snapshot event: %w", err)
+		}
+		var hdr [8]byte
+		binary.LittleEndian.PutUint32(hdr[0:], uint32(len(payload)))
+		binary.LittleEndian.PutUint32(hdr[4:], crc32.ChecksumIEEE(payload))
+		out = append(out, hdr[:]...)
+		out = append(out, payload...)
+	}
+	if len(out) > 0 {
+		if _, err := f.Write(out); err != nil {
+			f.Close()
+			return fmt.Errorf("record catalog: write compaction snapshot %s: %w", tmpPath, err)
+		}
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return fmt.Errorf("record catalog: sync compaction snapshot %s: %w", tmpPath, err)
+	}
+	return f.Close()
+}
+
+// compactionOffsetRemap resolves a live frame's pre-compaction (streamPath,
+// oldOffset) to its post-compaction offset. ok is false only for a
+// programming-error case (a row referencing a frame CompactStreams did not
+// itself just enumerate as live) -- callers treat that as a hard error
+// rather than silently mis-writing an offset.
+type compactionOffsetRemap func(streamPath string, oldOffset int64) (newOffset int64, ok bool)
+
+// recordCatalogUpsertAttribution is the subset of a
+// recordCatalogEventRecordUpsert event that identifies WHO durably owns a
+// cid: the producer that published it and (optionally) their signature over
+// it. See latestUpsertAttributionByCID.
+type recordCatalogUpsertAttribution struct {
+	PeerID       string
+	SignatureHex string
+}
+
+// latestUpsertAttributionByCID scans the journal's CURRENT valid content
+// (the pre-compaction journal -- called from buildCompactedRecordCatalogSnapshot
+// BEFORE the compacted temp is written or anything is renamed) and returns,
+// per schema, a map of cid -> the peer_id/signature_hex carried by the
+// LATEST recordCatalogEventRecordUpsert event journaled for that cid (a map
+// assignment per matching event naturally keeps only the last one seen,
+// since events are read in on-disk/append order).
+//
+// This is the durable source of truth buildCompactedRecordCatalogSnapshot
+// must draw producer attribution from, INSTEAD of recordReadSource's
+// UNION-ALL-then-"GROUP BY cid" query: SQLite's own documentation says bare
+// (non-aggregated) columns in a GROUP BY query with no MIN()/MAX() draw
+// their value from an UNDEFINED row of the group. For a repeat-CID record
+// co-published by producers A and B, that query can return producer B's
+// peer_id/signature_hex even though the record's ONE durable journal event
+// (the thing an actual reopen replays) was written for producer A --
+// repeat-CID mirror writes (mirrorRoutedRecord / mirrorRoutedRecordFromExisting,
+// producer_standard_tables.go) update producer B's live table immediately
+// but are, BY DESIGN, never themselves journaled. So a plain reopen
+// (replaying the untouched journal from an empty store) ALWAYS lands the
+// cid under producer A -- never under a mirror -- and the compacted
+// snapshot must match that exactly, not an arbitrary pick that can silently
+// re-attribute the record to a different producer than an ordinary restart
+// would have. (stream_path/stream_offset/record_length/timestamp/created_at
+// are unaffected by this ambiguity: mirror writes always copy those columns
+// verbatim from the record they are mirroring, so every producer-table row
+// for a given cid already agrees on them byte-for-byte -- only peer_id and
+// signature_hex, which a mirror legitimately writes as ITS OWN, can differ.)
+func (j *recordCatalogJournal) latestUpsertAttributionByCID() (map[string]map[string]recordCatalogUpsertAttribution, error) {
+	if j == nil || j.f == nil {
+		return nil, nil
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	info, err := j.f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	size := info.Size()
+	if j.readOnly {
+		size = j.replayLimit
+	}
+
+	out := make(map[string]map[string]recordCatalogUpsertAttribution)
+	var off int64
+	var hdr [8]byte
+	for off < size {
+		if _, err := j.f.ReadAt(hdr[:], off); err != nil {
+			return nil, err
+		}
+		n := int64(binary.LittleEndian.Uint32(hdr[0:]))
+		payload := make([]byte, n)
+		if _, err := j.f.ReadAt(payload, off+8); err != nil {
+			return nil, err
+		}
+		event, err := decodeRecordCatalogEvent(payload)
+		if err != nil {
+			return nil, fmt.Errorf("record catalog frame at %d: %w", off, err)
+		}
+		if event.Kind == recordCatalogEventRecordUpsert {
+			bySchema := out[event.SchemaName]
+			if bySchema == nil {
+				bySchema = make(map[string]recordCatalogUpsertAttribution)
+				out[event.SchemaName] = bySchema
+			}
+			// Overwrite on every match: the LAST (highest-offset, i.e. most
+			// recently journaled) upsert event for this cid wins, matching
+			// what replay's own last-event-standing semantics would leave
+			// live (e.g. a delete-then-re-store cycle re-journals a fresh
+			// upsert under a possibly different producer).
+			bySchema[event.CID] = recordCatalogUpsertAttribution{
+				PeerID:       event.PeerID,
+				SignatureHex: event.SignatureHex,
+			}
+		}
+		off += 8 + n
+	}
+	return out, nil
+}
+
+// buildCompactedRecordCatalogSnapshot regenerates the MINIMAL set of record
+// catalog events that reproduce the store's CURRENT live state with
+// REMAPPED stream offsets -- a log-compaction collapsing the journal's
+// entire append history into exactly the rows that still exist:
+//
+//   - one record-upsert event per sdn_record_index row, in ascending rowid
+//     order (sdn_record_index.rowid is both the durable global sync cursor
+//     replay must reproduce exactly -- carried via Index.RowID and replayed
+//     with an explicit-rowid INSERT, see applyRecordCatalogIndexUpsertTo --
+//     and the engine hot-window replay sort key, recordCatalogEngineSortKey),
+//     joined against that schema's recordReadSource for the payload columns
+//     (timestamp, record_length, created_at, stream_path) with stream_offset
+//     resolved through remap. Repeat-CID mirror rows in OTHER producer
+//     tables for the same cid are already never journaled on the live write
+//     path (mirrorRoutedRecord never calls recordCatalog.Append) -- one
+//     event per cid here is exactly what an ordinary reopen already
+//     reconstructs, so the snapshot loses nothing durable. peer_id and
+//     signature_hex -- the two columns a repeat-CID mirror legitimately
+//     writes as its OWN -- are NOT trusted from that same ambiguous
+//     GROUP BY join; they are instead resolved through
+//     latestUpsertAttributionByCID, which reads them from the cid's actual
+//     durable journal event so the compacted snapshot's producer
+//     attribution always matches what a plain reopen would produce (see its
+//     doc comment for why the join alone cannot guarantee that).
+//   - one tag-upsert event per sdn_record_source_tags row.
+//
+// Callers hold s.mu (Lock).
+func (s *FlatSQLStore) buildCompactedRecordCatalogSnapshot(remap compactionOffsetRemap) ([]recordCatalogEvent, error) {
+	type indexRow struct {
+		rowID           int64
+		schemaName      string
+		cid             string
+		noradCatID      sql.NullInt64
+		entityID        sql.NullString
+		objectType      sql.NullString
+		opsStatusCode   sql.NullString
+		epochUnix       sql.NullInt64
+		epochDay        sql.NullString
+		sourceTimestamp int64
+	}
+
+	rows, err := s.db.Query(`
+		SELECT rowid, schema_name, cid, norad_cat_id, entity_id, object_type, ops_status_code, epoch_unix, epoch_day, source_timestamp
+		FROM sdn_record_index
+		ORDER BY rowid ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("compact snapshot: scan sdn_record_index: %w", err)
+	}
+	var indexRows []indexRow
+	for rows.Next() {
+		var r indexRow
+		if err := rows.Scan(&r.rowID, &r.schemaName, &r.cid, &r.noradCatID, &r.entityID, &r.objectType, &r.opsStatusCode, &r.epochUnix, &r.epochDay, &r.sourceTimestamp); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("compact snapshot: scan sdn_record_index row: %w", err)
+		}
+		indexRows = append(indexRows, r)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("compact snapshot: iterate sdn_record_index: %w", err)
+	}
+	rows.Close()
+
+	// Ground truth for producer attribution -- see latestUpsertAttributionByCID's
+	// doc comment for why recordReadSource's GROUP BY join below cannot be
+	// trusted for peer_id/signature_hex on a repeat-CID cid.
+	attribution, err := s.recordCatalog.latestUpsertAttributionByCID()
+	if err != nil {
+		return nil, fmt.Errorf("compact snapshot: scan journal for producer attribution: %w", err)
+	}
+
+	type payloadRow struct {
+		peerID       string
+		timestamp    int64
+		streamPath   string
+		streamOffset int64
+		recordLength int64
+		signatureHex sql.NullString
+		createdAt    int64
+	}
+	payloadsBySchema := map[string]map[string]payloadRow{}
+	schemaPayloads := func(schemaName string) (map[string]payloadRow, error) {
+		if m, ok := payloadsBySchema[schemaName]; ok {
+			return m, nil
+		}
+		readSource, err := s.recordReadSource(schemaName)
+		if err != nil {
+			return nil, fmt.Errorf("compact snapshot: read source for %s: %w", schemaName, err)
+		}
+		prows, err := s.db.Query(fmt.Sprintf(`
+			SELECT cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex, created_at
+			FROM %s
+		`, readSource))
+		if err != nil {
+			return nil, fmt.Errorf("compact snapshot: read %s records: %w", schemaName, err)
+		}
+		m := map[string]payloadRow{}
+		for prows.Next() {
+			var cid string
+			var p payloadRow
+			if err := prows.Scan(&cid, &p.peerID, &p.timestamp, &p.streamPath, &p.streamOffset, &p.recordLength, &p.signatureHex, &p.createdAt); err != nil {
+				prows.Close()
+				return nil, fmt.Errorf("compact snapshot: scan %s record row: %w", schemaName, err)
+			}
+			m[cid] = p
+		}
+		if err := prows.Err(); err != nil {
+			prows.Close()
+			return nil, fmt.Errorf("compact snapshot: iterate %s records: %w", schemaName, err)
+		}
+		prows.Close()
+		payloadsBySchema[schemaName] = m
+		return m, nil
+	}
+
+	events := make([]recordCatalogEvent, 0, len(indexRows))
+	for _, r := range indexRows {
+		m, err := schemaPayloads(r.schemaName)
+		if err != nil {
+			return nil, err
+		}
+		p, ok := m[r.cid]
+		if !ok {
+			return nil, fmt.Errorf("compact snapshot: sdn_record_index row (schema=%s cid=%s) has no backing record row", r.schemaName, r.cid)
+		}
+		newOffset, ok := remap(p.streamPath, p.streamOffset)
+		if !ok {
+			return nil, fmt.Errorf("compact snapshot: no compacted offset for %s@%d (schema=%s cid=%s)", p.streamPath, p.streamOffset, r.schemaName, r.cid)
+		}
+		peerID := p.peerID
+		signatureHex := ""
+		if p.signatureHex.Valid {
+			signatureHex = p.signatureHex.String
+		}
+		// Prefer the journal's own recorded attribution (the peer_id and
+		// signature_hex that a plain reopen -- replaying this same,
+		// untouched journal -- would actually land this cid under) over
+		// recordReadSource's ambiguous GROUP BY pick. Every sdn_record_index
+		// row is expected to have a matching journal upsert event (that is
+		// the durable write path); fall back to the SQL join's pick only in
+		// the (should not happen, but tolerated rather than hard-failing
+		// compaction over it) case where one is missing.
+		if bySchema, ok := attribution[r.schemaName]; ok {
+			if a, ok := bySchema[r.cid]; ok {
+				peerID = a.PeerID
+				signatureHex = a.SignatureHex
+			}
+		}
+		idx := recordCatalogIndex{
+			RowID:           r.rowID,
+			SourceTimestamp: r.sourceTimestamp,
+		}
+		if r.noradCatID.Valid {
+			idx.HasNoradCatID = true
+			idx.NoradCatID = r.noradCatID.Int64
+		}
+		if r.entityID.Valid {
+			idx.EntityID = r.entityID.String
+		}
+		if r.objectType.Valid {
+			idx.ObjectType = r.objectType.String
+		}
+		if r.opsStatusCode.Valid {
+			idx.OpsStatusCode = r.opsStatusCode.String
+		}
+		if r.epochUnix.Valid {
+			idx.HasEpochUnix = true
+			idx.EpochUnix = r.epochUnix.Int64
+		}
+		if r.epochDay.Valid {
+			idx.EpochDay = r.epochDay.String
+		}
+		events = append(events, recordCatalogEvent{
+			Kind:         recordCatalogEventRecordUpsert,
+			SchemaName:   r.schemaName,
+			CID:          r.cid,
+			PeerID:       peerID,
+			StreamPath:   p.streamPath,
+			StreamOffset: newOffset,
+			RecordLength: p.recordLength,
+			SignatureHex: signatureHex,
+			Timestamp:    p.timestamp,
+			CreatedAt:    p.createdAt,
+			Index:        idx,
+		})
+	}
+
+	tagRows, err := s.db.Query(`
+		SELECT schema_name, cid, provider_id, source_name, source_url, batch_id, content_key_id, producer_peer_id, producer_public_key, created_at
+		FROM sdn_record_source_tags
+		ORDER BY rowid ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("compact snapshot: scan sdn_record_source_tags: %w", err)
+	}
+	for tagRows.Next() {
+		var schemaName, cid string
+		var tags SourceTags
+		var sourceURL sql.NullString
+		var createdAt int64
+		if err := tagRows.Scan(&schemaName, &cid, &tags.ProviderID, &tags.SourceName, &sourceURL, &tags.BatchID, &tags.ContentKeyID, &tags.ProducerPeerID, &tags.ProducerPublicKey, &createdAt); err != nil {
+			tagRows.Close()
+			return nil, fmt.Errorf("compact snapshot: scan sdn_record_source_tags row: %w", err)
+		}
+		if sourceURL.Valid {
+			tags.SourceURL = sourceURL.String
+		}
+		events = append(events, recordCatalogEvent{
+			Kind:       recordCatalogEventTagUpsert,
+			SchemaName: schemaName,
+			CID:        cid,
+			Tags:       tags,
+			CreatedAt:  createdAt,
+		})
+	}
+	if err := tagRows.Err(); err != nil {
+		tagRows.Close()
+		return nil, fmt.Errorf("compact snapshot: iterate sdn_record_source_tags: %w", err)
+	}
+	tagRows.Close()
+
+	return events, nil
+}
+
 func encodeRecordCatalogEvent(event recordCatalogEvent) ([]byte, error) {
 	var buf bytes.Buffer
 	buf.WriteByte(recordCatalogFrameVersion)

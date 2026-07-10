@@ -257,6 +257,20 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		return nil, fmt.Errorf("failed to register $OMM file identifier: %w", err)
 	}
 
+	// Resolve any compaction (compaction.go) left interrupted by a prior
+	// crash BEFORE the record-catalog journal below is opened, so replay
+	// always sees a journal file that is unambiguously the pre- or
+	// post-compaction one -- never a leftover temp or a half-renamed one.
+	// Read-only opens take no writer lock and must never mutate the store
+	// (mirrors every other writer-only invariant here), so they skip this
+	// entirely and simply read whatever is currently on disk.
+	if !readOnly {
+		if err := recoverPendingCompaction(basePath, streamDir); err != nil {
+			engine.Close()
+			return nil, fmt.Errorf("failed to recover pending stream compaction: %w", err)
+		}
+	}
+
 	recordCatalog, err := openRecordCatalogJournal(filepath.Join(basePath, recordCatalogJournalFileName), readOnly)
 	if err != nil {
 		engine.Close()
