@@ -113,6 +113,25 @@ body {
   100% { transform: translateX(-50%); }
 }
 
+/* ---- BMC2 board keyframes (loop U2.1) ----
+ * Named `oc-*` (not `sa-*`) to match the literal keyframe names declared in
+ * design_handoff/bmc2/BMC2_F1_Surveillance.dc.html (and F2/F3's identical
+ * `<helmet>` blocks) verbatim, per the bmc2 README's "Keyframes used:
+ * oc-spin, oc-marq (marquee hatch scroll), oc-pulse" porting note. Global
+ * (not component-scoped) so every BMC2 board component can reference them
+ * by name, same pattern as the sa-* set above.
+ */
+@keyframes oc-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes oc-marq {
+  to { background-position: 14px 0, 0 14px, 0 0, 0 0; }
+}
+@keyframes oc-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
 /* ---- Scrollbars (square, 8px) ---- */
 
 .sa-root ::-webkit-scrollbar {

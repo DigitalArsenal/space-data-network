@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import LoginScreen from './screens/LoginScreen.svelte';
   import ScaffoldScreen from './screens/ScaffoldScreen.svelte';
+  import Bmc2Router from './screens/Bmc2Router.svelte';
   import { createRouter, routeFromLocation, type SpaceAwareRoute } from './router';
   import { SdnApiClient } from '../lib/auth/sdn-api-client';
   import { createAuthStore, guardRoute, type AuthSessionState } from '../lib/auth/auth-store';
@@ -42,6 +43,8 @@
 <div class="sa-root">
   {#if route.screen === 'login'}
     <LoginScreen {navigate} {authStore} {authState} {apiClient} />
+  {:else if route.screen === 'bmc2'}
+    <Bmc2Router {route} {navigate} {authState} />
   {:else}
     <ScaffoldScreen {route} {navigate} {authState} />
   {/if}
