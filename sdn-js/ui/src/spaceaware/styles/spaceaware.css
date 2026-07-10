@@ -113,13 +113,18 @@ body {
   100% { transform: translateX(-50%); }
 }
 
-/* ---- BMC2 board keyframes (loop U2.1) ----
+/* ---- BMC2 board keyframes (loop U2.1 / U2.2) ----
  * Named `oc-*` (not `sa-*`) to match the literal keyframe names declared in
  * design_handoff/bmc2/BMC2_F1_Surveillance.dc.html (and F2/F3's identical
  * `<helmet>` blocks) verbatim, per the bmc2 README's "Keyframes used:
  * oc-spin, oc-marq (marquee hatch scroll), oc-pulse" porting note. Global
  * (not component-scoped) so every BMC2 board component can reference them
  * by name, same pattern as the sa-* set above.
+ *
+ * `oc-blink` was added in loop U2.2 for BMC2_F4_Conjunction.dc.html (the
+ * only F1-F6 board whose `<helmet>` declares it) — ported verbatim from its
+ * `@keyframes oc-blink{0%,100%{opacity:1}50%{opacity:.35}}`. Used by the F4
+ * conjunction-point marker and the top screening-list row's threat dot.
  */
 @keyframes oc-spin {
   to { transform: rotate(360deg); }
@@ -130,6 +135,10 @@ body {
 @keyframes oc-pulse {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
+}
+@keyframes oc-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
 /* ---- Scrollbars (square, 8px) ---- */
