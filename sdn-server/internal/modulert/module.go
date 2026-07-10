@@ -64,6 +64,12 @@ type Module struct {
 	// capability policy identity (loop B1). Set once instantiateWASM reads
 	// the manifest.
 	contentHash string
+	// signatureStatus is the publication-trailer signature verification
+	// outcome for this artifact (loop I1). Set before contentHash, always
+	// populated once instantiateWASM has run (even when
+	// NodeContext.ModuleSignaturePolicy is nil, i.e. enforcement not
+	// configured — Signed/Verified will simply reflect the artifact as-is).
+	signatureStatus ModuleSignatureStatus
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -187,6 +193,31 @@ func (m *Module) Load(ctx context.Context) error {
 }
 
 func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge, *Manifest, error) {
+	// Publication-trailer signature gate (loop I1 — defensive hardening,
+	// FAIL CLOSED once configured). This MUST run before any wasm bytes are
+	// handed to the runtime: an unsigned or badly-signed artifact is
+	// refused here, before _initialize, before the manifest is even parsed
+	// — a tampered artifact's self-reported manifest is not trustworthy
+	// evidence about itself. See publication_signature.go for the
+	// verification scheme (reconciles with publish_protocol.go's Ed25519
+	// signer-key model) and ModuleSignaturePolicy for the nil-policy /
+	// allowlist semantics. This call also strips the SDS $REC publication
+	// trailer unconditionally (previously missing here entirely — wasmBytes
+	// went straight to wasmrt.NewModule trailer and all), so the runtime
+	// only ever compiles the portable wasm payload.
+	var sigPolicy *ModuleSignaturePolicy
+	if m.nodeCtx != nil {
+		sigPolicy = m.nodeCtx.ModuleSignaturePolicy
+	}
+	portableBytes, sigStatus, sigErr := enforceModuleSignaturePolicy(sigPolicy, wasmBytes)
+	if sigErr != nil {
+		return nil, nil, nil, sigErr
+	}
+	wasmBytes = portableBytes
+	m.mu.Lock()
+	m.signatureStatus = sigStatus
+	m.mu.Unlock()
+
 	// Create the per-module host bridge (needs manifest first for capabilities,
 	// but we need the WASM loaded to read the manifest — chicken-and-egg.
 	// Solution: create bridge with all capabilities initially, then restrict after manifest parse.)
@@ -241,7 +272,12 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 	// the host-can-satisfy provisioning below (which stays tolerant of
 	// capabilities the host has no factory for, e.g. "clock"/"logging" —
 	// that is a capacity gap, not a trust decision).
-	contentHash := ContentHashHex(wasmBytes)
+	// wasmBytes is already the portable (trailer-stripped) payload at this
+	// point (stripped by enforceModuleSignaturePolicy above), so this is
+	// exactly sigStatus.ContentHash — reuse it directly rather than
+	// re-hashing, guaranteeing the capability-policy identity and the
+	// publication-signature identity can never drift apart.
+	contentHash := sigStatus.ContentHash
 	m.mu.Lock()
 	m.contentHash = contentHash
 	m.mu.Unlock()
@@ -739,6 +775,20 @@ func (m *Module) ContentHash() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.contentHash
+}
+
+// SignatureStatus returns the publication-trailer signature verification
+// outcome recorded at load time (loop I1) — observable evidence for
+// operators/audit tooling of whether an artifact was signed, verified, or
+// loaded via the AllowUnsignedByContentHash bypass. Zero value before
+// Load()/NewModule() completes.
+func (m *Module) SignatureStatus() ModuleSignatureStatus {
+	if m == nil {
+		return ModuleSignatureStatus{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.signatureStatus
 }
 
 func runtimeManifestDescriptor(manifest *Manifest) *plugins.RuntimeModuleManifest {

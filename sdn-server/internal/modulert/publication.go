@@ -43,3 +43,18 @@ func StripPublicationTrailer(bytes []byte) []byte {
 func HasPublicationTrailer(bytes []byte) bool {
 	return len(StripPublicationTrailer(bytes)) != len(bytes)
 }
+
+// PublicationTrailerRecordBytes returns the appended SDS $REC record
+// collection bytes (the encoded REC FlatBuffer carrying MBL/PNM/ENC) for a
+// well-formed publication trailer — the region between the portable payload
+// and the 8-byte footer. Returns nil when bytes has no well-formed trailer
+// (mirrors HasPublicationTrailer/StripPublicationTrailer: a malformed
+// footer is treated as absent).
+func PublicationTrailerRecordBytes(bytes []byte) []byte {
+	if !HasPublicationTrailer(bytes) {
+		return nil
+	}
+	footer := len(bytes) - publicationTrailerFooterLength
+	recLength := int(binary.LittleEndian.Uint32(bytes[footer : footer+4]))
+	return bytes[footer-recLength : footer]
+}
