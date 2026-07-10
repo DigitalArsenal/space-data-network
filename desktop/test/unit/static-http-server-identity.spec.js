@@ -164,6 +164,10 @@ test.describe('desktop static identity API', () => {
     const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-auth-users-api-'))
     const { serveDesktopAuthUsersAPI } = loadStaticServer(userData)
 
+    // Task F1: the desktop-only 'local' trust_level is retired in favor of
+    // the canonical PGP scale (matches sdn-server's peers.TrustLevel). A
+    // caller may still submit the legacy value (e.g. an older settings
+    // override build) but the store normalizes it to 'admin' on write.
     const grant = {
       xpub: 'xpub-desktop-admin',
       label: 'Desktop Admin',
@@ -173,7 +177,7 @@ test.describe('desktop static identity API', () => {
 
     const created = await requestJson(serveDesktopAuthUsersAPI, 'POST', '/api/auth/users', grant)
     expect(created.statusCode).toBe(200)
-    expect(created.json.user).toMatchObject(grant)
+    expect(created.json.user).toMatchObject({ ...grant, trust_level: 'admin' })
 
     const conflict = await requestJson(serveDesktopAuthUsersAPI, 'POST', '/api/auth/users', grant)
     expect(conflict.statusCode).toBe(409)
@@ -188,8 +192,55 @@ test.describe('desktop static identity API', () => {
     const listed = await requestJson(serveDesktopAuthUsersAPI, 'GET', '/api/auth/users')
     expect(listed.statusCode).toBe(200)
     expect(listed.json.users).toEqual([
-      expect.objectContaining({ xpub: 'xpub-desktop-admin', label: 'Updated Desktop Admin' })
+      expect.objectContaining({ xpub: 'xpub-desktop-admin', label: 'Updated Desktop Admin', trust_level: 'admin' })
     ])
+  })
+
+  test('registers an xpub user with a canonical PGP trust level identically to the server vocabulary', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-auth-users-canonical-'))
+    const { serveDesktopAuthUsersAPI } = loadStaticServer(userData)
+
+    // sdn-server's internal/peers.TrustLevel.String() emits exactly these
+    // names; the desktop settings override (sdn-js/ui) already submits them
+    // directly (see SettingsPage.js's permissionLevel select). Round-trip
+    // one to confirm the desktop store passes canonical values through
+    // unchanged instead of coercing them into desktop-only vocabulary.
+    const grant = {
+      xpub: 'xpub-desktop-standard-user',
+      label: 'Canonical Trust User',
+      role: 'operator',
+      trust_level: 'standard'
+    }
+
+    const created = await requestJson(serveDesktopAuthUsersAPI, 'POST', '/api/auth/users', grant)
+    expect(created.statusCode).toBe(200)
+    expect(created.json.user).toMatchObject(grant)
+
+    const listed = await requestJson(serveDesktopAuthUsersAPI, 'GET', '/api/auth/users')
+    expect(listed.statusCode).toBe(200)
+    expect(listed.json.users).toEqual([
+      expect.objectContaining({ xpub: 'xpub-desktop-standard-user', trust_level: 'standard' })
+    ])
+  })
+
+  test('migrates a pre-F1 desktop-auth-users.json trust_level vocabulary on read', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-auth-users-migrate-'))
+    fs.writeFileSync(path.join(userData, 'desktop-auth-users.json'), JSON.stringify({
+      users: [
+        { xpub: 'xpub-legacy-local', label: 'Legacy Local Admin', role: 'admin', trust_level: 'local' },
+        { xpub: 'xpub-legacy-blank', label: 'Legacy Blank', role: 'admin', trust_level: '' },
+        { xpub: 'xpub-already-canonical', label: 'Already Canonical', role: 'admin', trust_level: 'ultimate' }
+      ]
+    }))
+    const { serveDesktopAuthUsersAPI } = loadStaticServer(userData)
+
+    const listed = await requestJson(serveDesktopAuthUsersAPI, 'GET', '/api/auth/users')
+    expect(listed.statusCode).toBe(200)
+    expect(listed.json.users).toEqual(expect.arrayContaining([
+      expect.objectContaining({ xpub: 'xpub-legacy-local', trust_level: 'admin' }),
+      expect.objectContaining({ xpub: 'xpub-legacy-blank', trust_level: 'admin' }),
+      expect.objectContaining({ xpub: 'xpub-already-canonical', trust_level: 'ultimate' })
+    ]))
   })
 
   test('serves the local node EPM route as a raw FlatBuffer', async () => {
@@ -792,6 +843,78 @@ test.describe('desktop static identity API', () => {
         })
       })
     ]))
+  })
+})
+
+// Task F1: the desktop trust vocabulary (previously 'trusted' / 'observed' /
+// 'local') must map onto sdn-server's canonical PGP scale — never / unknown
+// / marginal / standard / full / admin / ultimate (internal/peers.TrustLevel
+// .String()) — so an xpub-registered user's trust level reads identically
+// whether it was created through the desktop app or the server.
+test.describe('desktop trust-level vocabulary normalization', () => {
+  test('passes canonical PGP trust levels through unchanged', () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-trust-canonical-'))
+    const { normalizeDesktopTrustLevel, CANONICAL_TRUST_LEVELS } = loadStaticServer(userData)
+
+    expect(CANONICAL_TRUST_LEVELS).toEqual([
+      'never', 'unknown', 'marginal', 'standard', 'full', 'admin', 'ultimate'
+    ])
+    for (const level of CANONICAL_TRUST_LEVELS) {
+      expect(normalizeDesktopTrustLevel(level)).toBe(level)
+      // Case-insensitive, as the server's own ParseTrustLevel input is.
+      expect(normalizeDesktopTrustLevel(level.toUpperCase())).toBe(level)
+    }
+  })
+
+  test('maps retired desktop-only vocabulary onto the canonical scale', () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-trust-legacy-desktop-'))
+    const { normalizeDesktopTrustLevel } = loadStaticServer(userData)
+
+    // The three desktop-only values named in the F1 task: SSH-configured
+    // ("trusted") and swarm-discovered ("observed") peers, and the desktop
+    // auth user store's former default ("local").
+    expect(normalizeDesktopTrustLevel('trusted')).toBe('full')
+    expect(normalizeDesktopTrustLevel('observed')).toBe('unknown')
+    expect(normalizeDesktopTrustLevel('local')).toBe('admin')
+  })
+
+  test('maps server-side legacy aliases the same way peers.ParseTrustLevel does', () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-trust-legacy-server-'))
+    const { normalizeDesktopTrustLevel } = loadStaticServer(userData)
+
+    expect(normalizeDesktopTrustLevel('untrusted')).toBe('unknown')
+    expect(normalizeDesktopTrustLevel('limited')).toBe('marginal')
+  })
+
+  test('falls back for unrecognized input, honoring a caller-supplied default', () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-trust-fallback-'))
+    const { normalizeDesktopTrustLevel } = loadStaticServer(userData)
+
+    expect(normalizeDesktopTrustLevel('')).toBe('unknown')
+    expect(normalizeDesktopTrustLevel(undefined)).toBe('unknown')
+    expect(normalizeDesktopTrustLevel('not-a-trust-level')).toBe('unknown')
+    expect(normalizeDesktopTrustLevel('not-a-trust-level', 'admin')).toBe('admin')
+  })
+
+  test('the SDN peer graph reports "full" and "unknown" instead of retired desktop vocabulary', () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-trust-peer-graph-'))
+    const { kuboSwarmPeersToDesktopSdnPeers } = loadStaticServer(userData)
+
+    const peers = kuboSwarmPeersToDesktopSdnPeers({
+      Peers: [{
+        Peer: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+        Addr: '/ip4/159.203.150.8/tcp/4001',
+        Identify: {
+          ID: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+          AgentVersion: 'spacedatanetwork/1.0.3',
+          Protocols: ['/space-data-network/module-delivery/1.0.0']
+        }
+      }]
+    })
+
+    expect(peers).toEqual([
+      expect.objectContaining({ trust_level: 'unknown' })
+    ])
   })
 })
 

@@ -2,6 +2,7 @@ package keys
 
 import (
 	"crypto/ed25519"
+	"crypto/rand"
 	"os"
 	"path/filepath"
 	"testing"
@@ -89,6 +90,148 @@ func TestGenerateIdentity(t *testing.T) {
 	_, err = m.GenerateIdentity()
 	if err != ErrKeyAlreadyExists {
 		t.Errorf("Expected ErrKeyAlreadyExists, got: %v", err)
+	}
+}
+
+// TestGenerateIdentity_IsRandomNotXPubBound documents and asserts the F1
+// legacy-scope finding for this manager: GenerateIdentity's key material is
+// NOT deterministically tied to any hd-wallet xpub/seed — two managers
+// generating "identity" independently produce unrelated keys. This is
+// exactly why GenerateIdentity must not be used to mint a persistent
+// "node identity" or "user identity" going forward (those come from the
+// hd-wallet xpub path — see internal/auth.UserStore and
+// internal/node.IdentityBundle). It remains fine for the narrow legacy,
+// non-identity uses documented on GenerateIdentity.
+func TestGenerateIdentity_IsRandomNotXPubBound(t *testing.T) {
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+
+	m1, err := NewManager(dir1)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	m2, err := NewManager(dir2)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	id1, err := m1.GenerateIdentity()
+	if err != nil {
+		t.Fatalf("GenerateIdentity (m1): %v", err)
+	}
+	id2, err := m2.GenerateIdentity()
+	if err != nil {
+		t.Fatalf("GenerateIdentity (m2): %v", err)
+	}
+
+	if string(id1.SigningKey.PublicKey) == string(id2.SigningKey.PublicKey) {
+		t.Fatal("two independent GenerateIdentity calls produced the same signing key; expected random, unrelated keys")
+	}
+	if string(id1.EncryptionKey.PublicKey) == string(id2.EncryptionKey.PublicKey) {
+		t.Fatal("two independent GenerateIdentity calls produced the same encryption key; expected random, unrelated keys")
+	}
+}
+
+// TestGenerateIdentityFromSeed_DeterministicBindToXPub asserts the
+// bind-to-xpub path GenerateIdentity's doc comment points callers to: given
+// the same seed (as would be derived from an hd-wallet xpub/mnemonic), the
+// resulting identity is always the same — the opposite of GenerateIdentity's
+// randomness — so this manager's on-disk identity can be made a function of
+// the single hd-wallet identity instead of a divergent random one.
+func TestGenerateIdentityFromSeed_DeterministicBindToXPub(t *testing.T) {
+	var seed [Ed25519SeedSize]byte
+	if _, err := rand.Read(seed[:]); err != nil {
+		t.Fatalf("rand.Read: %v", err)
+	}
+
+	dirA := t.TempDir()
+	mA, err := NewManager(dirA)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	idA, err := mA.GenerateIdentityFromSeed(seed)
+	if err != nil {
+		t.Fatalf("GenerateIdentityFromSeed (A): %v", err)
+	}
+
+	dirB := t.TempDir()
+	mB, err := NewManager(dirB)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	idB, err := mB.GenerateIdentityFromSeed(seed)
+	if err != nil {
+		t.Fatalf("GenerateIdentityFromSeed (B): %v", err)
+	}
+
+	if string(idA.SigningKey.PublicKey) != string(idB.SigningKey.PublicKey) {
+		t.Error("same seed produced different signing public keys; GenerateIdentityFromSeed must be deterministic")
+	}
+	if string(idA.SigningKey.PrivateKey) != string(idB.SigningKey.PrivateKey) {
+		t.Error("same seed produced different signing private keys; GenerateIdentityFromSeed must be deterministic")
+	}
+	if string(idA.EncryptionKey.PublicKey) != string(idB.EncryptionKey.PublicKey) {
+		t.Error("same seed produced different encryption public keys; GenerateIdentityFromSeed must be deterministic")
+	}
+	if string(idA.EncryptionKey.PrivateKey) != string(idB.EncryptionKey.PrivateKey) {
+		t.Error("same seed produced different encryption private keys; GenerateIdentityFromSeed must be deterministic")
+	}
+
+	// Sanity: the encryption key must not just be the signing seed bytes
+	// reused verbatim under a different algorithm (domain separation).
+	if string(idA.EncryptionKey.PrivateKey) == string(seed[:]) {
+		t.Error("encryption private key must not equal the raw seed (expected domain-separated derivation)")
+	}
+
+	// A different seed must yield a different identity.
+	var otherSeed [Ed25519SeedSize]byte
+	if _, err := rand.Read(otherSeed[:]); err != nil {
+		t.Fatalf("rand.Read: %v", err)
+	}
+	dirC := t.TempDir()
+	mC, err := NewManager(dirC)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	idC, err := mC.GenerateIdentityFromSeed(otherSeed)
+	if err != nil {
+		t.Fatalf("GenerateIdentityFromSeed (C): %v", err)
+	}
+	if string(idA.SigningKey.PublicKey) == string(idC.SigningKey.PublicKey) {
+		t.Error("different seeds produced the same signing public key")
+	}
+
+	// GenerateIdentityFromSeed round-trips through LoadIdentity exactly like
+	// GenerateIdentity does.
+	mALoaded, err := NewManager(dirA)
+	if err != nil {
+		t.Fatalf("NewManager (reload): %v", err)
+	}
+	loaded, err := mALoaded.LoadIdentity()
+	if err != nil {
+		t.Fatalf("LoadIdentity: %v", err)
+	}
+	if string(loaded.SigningKey.PrivateKey) != string(idA.SigningKey.PrivateKey) {
+		t.Error("LoadIdentity did not round-trip a GenerateIdentityFromSeed identity")
+	}
+}
+
+func TestGenerateIdentityFromSeed_AlreadyExists(t *testing.T) {
+	dir := t.TempDir()
+	m, err := NewManager(dir)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if _, err := m.GenerateIdentity(); err != nil {
+		t.Fatalf("GenerateIdentity: %v", err)
+	}
+
+	var seed [Ed25519SeedSize]byte
+	if _, err := rand.Read(seed[:]); err != nil {
+		t.Fatalf("rand.Read: %v", err)
+	}
+	if _, err := m.GenerateIdentityFromSeed(seed); err != ErrKeyAlreadyExists {
+		t.Errorf("GenerateIdentityFromSeed after GenerateIdentity: error = %v, want ErrKeyAlreadyExists", err)
 	}
 }
 

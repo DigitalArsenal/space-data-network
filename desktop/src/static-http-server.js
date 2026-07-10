@@ -35,6 +35,39 @@ const HOSTED_EPM_STORE_VERSION = 1
 const HOSTED_EPM_STORE_FILE = 'sdn-hosted-epms.enc.json'
 const HOSTED_EPM_STORE_SALT = 'space-data-network-hosted-epm-store-v1'
 const DESKTOP_AUTH_USERS_FILE = 'desktop-auth-users.json'
+// Canonical PGP/GPG ownertrust scale (Task F1): matches
+// sdn-server/internal/peers.TrustLevel.String() exactly — never / unknown /
+// marginal / standard / full / admin / ultimate. This desktop server used to
+// speak a parallel, desktop-only vocabulary ('trusted' for operator-
+// configured nodes, 'observed' for swarm-discovered peers, 'local' for
+// desktop-managed admin users) that does not exist server-side. Both are
+// normalized to the one canonical scale so an xpub-registered user (or a
+// trust_level shown for a peer) reads identically whether it came from the
+// desktop app or the server. Legacy string values are accepted on input
+// (e.g. reading an older desktop-auth-users.json) and always normalized to
+// the canonical name on output — mirroring peers.ParseTrustLevel's
+// legacy-in/canonical-out contract on the Go side.
+const CANONICAL_TRUST_LEVELS = Object.freeze([
+  'never', 'unknown', 'marginal', 'standard', 'full', 'admin', 'ultimate'
+])
+const LEGACY_TRUST_LEVEL_ALIASES = Object.freeze({
+  // Server-side legacy aliases (see peers.ParseTrustLevel).
+  untrusted: 'unknown',
+  limited: 'marginal',
+  trusted: 'full',
+  // Desktop-only legacy vocabulary being retired by this reconciliation.
+  observed: 'unknown',
+  local: 'admin'
+})
+
+function normalizeDesktopTrustLevel (value, fallback = 'unknown') {
+  const normalized = String(value ?? '').trim().toLowerCase()
+  if (CANONICAL_TRUST_LEVELS.includes(normalized)) return normalized
+  if (Object.prototype.hasOwnProperty.call(LEGACY_TRUST_LEVEL_ALIASES, normalized)) {
+    return LEGACY_TRUST_LEVEL_ALIASES[normalized]
+  }
+  return fallback
+}
 const NODE_IDENTITY_SETTINGS_FILE = 'sdn-node-identity-settings.json'
 const NODE_IDENTITY_SESSION_FILE = 'sdn-node-identity-session.json'
 const NODE_WALLET_STORAGE_FILE = 'sdn-wallet-local-storage.enc.json'
@@ -258,7 +291,9 @@ function configuredSdnNodesFromSshConfig (configPath = path.join(os.homedir(), '
       id: alias,
       name: displayNameForSdnSSHHost(alias, current.aliases),
       addrs,
-      trust_level: 'trusted',
+      // Explicitly operator-configured (~/.ssh/config) SDN node: full
+      // confidence, matching sdn-server's peers.Full (== peers.Trusted).
+      trust_level: 'full',
       metadata: {
         agent_version: 'sdn-configured-node',
         protocols: `/space-data-network/configured-node/1.0.0,${FLATSQL_SYNC_PROTOCOL_ID}`,
@@ -402,7 +437,9 @@ function kuboSwarmPeersToDesktopSdnPeers (payload) {
         id: peerId,
         name: identity?.name || peerId,
         addrs: [normalizeKuboPeerAddress(peer?.Addr, peerId)].filter(Boolean),
-        trust_level: 'observed',
+        // Seen on the swarm with no operator assertion made yet: matches
+        // sdn-server's peers.Unknown (fail-closed default, no opinion).
+        trust_level: 'unknown',
         metadata
       }
     })
@@ -1626,7 +1663,14 @@ function desktopAuthUsersPath () {
 async function readDesktopAuthUsers () {
   try {
     const parsed = JSON.parse(await fs.promises.readFile(desktopAuthUsersPath(), 'utf8'))
-    return Array.isArray(parsed.users) ? parsed.users : []
+    const users = Array.isArray(parsed.users) ? parsed.users : []
+    // Migrate any pre-F1 desktop-only trust_level values ('local', etc.) to
+    // the canonical scale on read so already-registered xpub users keep
+    // resolving identically to freshly-created ones and to the server.
+    return users.map(user => ({
+      ...user,
+      trust_level: normalizeDesktopTrustLevel(user && user.trust_level, 'admin')
+    }))
   } catch {
     return []
   }
@@ -1642,7 +1686,15 @@ function sanitizeDesktopAuthUser (payload) {
     xpub: readEpmString(payload, ['xpub']),
     label: readEpmString(payload, ['label', 'name', 'dn']),
     role: readEpmString(payload, ['role']) || 'admin',
-    trust_level: readEpmString(payload, ['trust_level', 'trustLevel']) || 'local'
+    // Desktop auth users are locally-managed operator accounts, the same
+    // role the server bootstraps its first admin into (peers.Admin) — see
+    // internal/auth/handler.go's firstAdminBootstrap. Any legacy or
+    // server-canonical value supplied by the caller is normalized to the
+    // canonical PGP scale (see CANONICAL_TRUST_LEVELS above); unrecognized
+    // input falls back to 'admin' rather than silently becoming 'unknown',
+    // since every user reaching this store is, by construction, a desktop
+    // admin account.
+    trust_level: normalizeDesktopTrustLevel(readEpmString(payload, ['trust_level', 'trustLevel']), 'admin')
   }
 }
 
@@ -2495,6 +2547,8 @@ module.exports = {
   isAllowedLoopbackHostHeader,
   isSdnSSHHostAlias,
   kuboSwarmPeersToDesktopSdnPeers,
+  CANONICAL_TRUST_LEVELS,
+  normalizeDesktopTrustLevel,
   serveDesktopDirectoryAPI,
   serveDesktopIdentityAPI,
   serveDesktopPeerEPMAPI,
