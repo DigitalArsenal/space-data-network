@@ -15,10 +15,17 @@ import (
 // data-source module under the real module runtime and asserts that invoking its
 // TIMERS-driven `pull` method (what the node cron re-invokes) drives the full
 // data-source host-capability sequence: fetch (http) → store (storage_write) →
-// fetch signing key (wallet_sign/keyslot) → sign PNM (crypto_sign) → publish
+// host-side sign the PNM (keyslot.sign, via the wallet_sign capability) → publish
 // (pubsub). Capabilities are only granted because the embedded manifest declares
 // them (NewModule provisions caps from manifest.Capabilities), so this also
 // exercises the WS5.4 real-manifest embedding end-to-end.
+//
+// Post-B2 signing shape: B2 removed the raw `keyslot.get` key export and the
+// in-guest `crypto.sign` step, replacing them with a single host-side signing
+// oracle `keyslot.sign` (routed through the wallet_sign capability). The rebuilt
+// starlink module (modules repo d482e02) calls that oracle, so the sequence is
+// four ops, not the old five, and the wallet_sign fake must return a
+// {signature} result (not raw key bytes) for run_pull to record "signed":true.
 func TestStarlinkSourcePullDrivesHostCapSequence(t *testing.T) {
 	t.Parallel()
 
@@ -61,17 +68,19 @@ func TestStarlinkSourcePullDrivesHostCapSequence(t *testing.T) {
 	reg.Register("wallet_sign", func(_ *Module) CapHandler {
 		return func(op string, _ []byte) ([]byte, error) {
 			record(op)
-			// keyslot.get returns the signing key bytes (base64 -> detached segment).
-			key := make([]byte, 32)
-			for i := range key {
-				key[i] = byte(i + 1)
-			}
+			// Post-B2: keyslot.sign is a host-side signing oracle that returns a
+			// detached signature (never the raw key). run_pull records
+			// "signed":true only when it can parse a {signature} result here.
+			sig := make([]byte, 64)
 			return okJSON(map[string]interface{}{
-				"__type": "bytes",
-				"base64": base64.StdEncoding.EncodeToString(key),
+				"signature": base64.StdEncoding.EncodeToString(sig),
 			}), nil
 		}
 	})
+	// crypto_sign is registered defensively: post-B2 the starlink module signs
+	// host-side via keyslot.sign and does not drive a separate crypto.sign step,
+	// but keeping the handler avoids an unknown-capability error if a module
+	// variant ever signs in-guest.
 	reg.Register("crypto_sign", func(_ *Module) CapHandler {
 		return func(op string, _ []byte) ([]byte, error) {
 			record(op)
@@ -165,11 +174,13 @@ func TestStarlinkSourcePullDrivesHostCapSequence(t *testing.T) {
 	got := append([]string(nil), ops...)
 	mu.Unlock()
 
+	// Post-B2 host-side-signing sequence: fetch → store → keyslot.sign → publish.
+	// (Was http→store→keyslot.get→crypto.sign→publish before B2 collapsed key
+	// export + in-guest signing into the single keyslot.sign oracle.)
 	want := []string{
 		"http.request",
 		"storage.write",
-		"keyslot.get",
-		"crypto.sign",
+		"keyslot.sign",
 		"pubsub.publish",
 	}
 	assertSubsequence(t, got, want)
