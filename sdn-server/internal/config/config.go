@@ -2,6 +2,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -784,7 +785,11 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Return default config if file doesn't exist
-			return Default(), nil
+			cfg := Default()
+			if verr := cfg.validate(); verr != nil {
+				return nil, verr
+			}
+			return cfg, nil
 		}
 		return nil, err
 	}
@@ -793,8 +798,28 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
+}
+
+// validate performs configuration checks that cannot be expressed as struct
+// tags, and that must fail the load rather than silently start the server
+// with a security-relevant misconfiguration. It runs unconditionally at the
+// end of Load, on both the default config and a config file that was
+// successfully parsed.
+func (c *Config) validate() error {
+	for _, mount := range c.Flows.Mounts {
+		if !strings.HasPrefix(mount.Path, "/api/") {
+			return fmt.Errorf(
+				"flows.mounts: path %q must begin with \"/api/\" — the admin auth wall (cmd/spacedatanetwork/main.go's isAPIOrPlugin check) only evaluates a mounted flow's declared anonymous route policy for paths under /api/; a mount outside that prefix would be served without the wall ever enforcing auth for it",
+				mount.Path,
+			)
+		}
+	}
+	return nil
 }
 
 // Save saves the configuration to a file.

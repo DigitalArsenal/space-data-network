@@ -1020,6 +1020,17 @@ func RegisterLazyFlowMounts(mux *http.ServeMux, mounts []config.FlowMount, deps 
 		if strings.TrimSpace(mount.Path) == "" || strings.TrimSpace(mount.Flow) == "" {
 			return fail(fmt.Errorf("flow mount requires both path and flow (got path=%q flow=%q)", mount.Path, mount.Flow))
 		}
+		// Defense in depth (gap B10.2): config.Load already rejects any
+		// flows.mounts[].path outside /api/ at load time, since the
+		// top-level auth wall's isAPIOrPlugin check (cmd/spacedatanetwork/
+		// main.go) only evaluates declared route policy for /api/ and
+		// /orbpro-key-broker/ paths. Refuse here too — fail closed — so a
+		// future bypass of that config-time check (a hand-built
+		// FlowMountDeps caller, a validation regression, etc.) cannot
+		// silently register an ungated HTTP surface.
+		if !strings.HasPrefix(mount.Path, "/api/") {
+			return fail(fmt.Errorf("flow mount path %q must begin with /api/ — mounts outside the auth wall's gated prefix are refused", mount.Path))
+		}
 		mountDeps := deps
 		if mount.Pool > 0 {
 			mountDeps.PoolSize = mount.Pool

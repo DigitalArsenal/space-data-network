@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
+	"github.com/gorilla/websocket"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	libp2phost "github.com/libp2p/go-libp2p/core/host"
@@ -158,6 +159,11 @@ func TestNodeSecurityAdminOnlyAPIPathPolicy(t *testing.T) {
 		"/api/routing/config",
 		"/api/streaming/sessions",
 		"/api/relay/filters",
+		"/api/v1/diag",
+		"/api/modules/capabilities",
+		"/api/modules/capabilities/approve",
+		"/api/modules/capabilities/revoke",
+		"/api/modules/capabilities/tiers",
 	}
 	for _, path := range adminPaths {
 		path := path
@@ -1553,6 +1559,138 @@ func TestGateAdminOnlyHandlerAllowsAuthenticatedAdminSession(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+// TestGateHandlerWithTrustRejectsStandardMountWithoutSession locks in gap
+// B10.3(a): a Standard-trust self-gate (the pattern now used for /ws, mirror
+// of /webui's existing gate) must reject a request with no session before
+// the inner handler is ever invoked.
+func TestGateHandlerWithTrustRejectsStandardMountWithoutSession(t *testing.T) {
+	t.Parallel()
+
+	authHandler, _ := newAdminSession(t, peers.Admin)
+
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	gateHandlerWithTrust(rec, req, inner, authHandler, true, peers.Standard)
+
+	if called {
+		t.Fatal("inner handler (ws bridge) was invoked for an unauthenticated request")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+// TestGateHandlerWithTrustAllowsAuthenticatedStandardSession locks in the
+// success path for the Standard-trust self-gate: a Standard session reaches
+// the inner handler (unlike gateAdminOnlyHandler, this must not require
+// Admin trust — the /ws bridge is meant for any logged-in operator client).
+func TestGateHandlerWithTrustAllowsAuthenticatedStandardSession(t *testing.T) {
+	t.Parallel()
+
+	authHandler, token := newAdminSession(t, peers.Standard)
+
+	called := false
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+	req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
+	rec := httptest.NewRecorder()
+	gateHandlerWithTrust(rec, req, inner, authHandler, true, peers.Standard)
+
+	if !called {
+		t.Fatal("inner handler was not invoked for an authenticated Standard session")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+// wsGateTestServer builds the exact self-gate pattern registered for /ws in
+// runDaemon (gateHandlerWithTrust wrapping api.NewWSHandler at Standard
+// trust) behind a real httptest.Server, for end-to-end WebSocket dial tests.
+func wsGateTestServer(t *testing.T, authHandler *auth.Handler) *httptest.Server {
+	t.Helper()
+	wsHandler := api.NewWSHandler(nil, nil)
+	serveWS := func(w http.ResponseWriter, r *http.Request) {
+		gateHandlerWithTrust(w, r, wsHandler, authHandler, true, peers.Standard)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(serveWS))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestWSBridgeGateRejectsUnauthenticatedUpgrade dials a real WebSocket
+// handshake against the /ws self-gate with no session cookie: the upgrade
+// must fail (no 101 Switching Protocols reaches the bridge).
+func TestWSBridgeGateRejectsUnauthenticatedUpgrade(t *testing.T) {
+	t.Parallel()
+
+	authHandler, _ := newAdminSession(t, peers.Standard)
+	srv := wsGateTestServer(t, authHandler)
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err == nil {
+		t.Fatal("unauthenticated WebSocket dial succeeded, want rejection")
+	}
+	if resp == nil {
+		t.Fatal("expected an HTTP response on dial failure")
+	}
+	if resp.StatusCode == http.StatusSwitchingProtocols {
+		t.Fatal("unauthenticated dial got 101 Switching Protocols, want a non-upgrade response")
+	}
+}
+
+// TestWSBridgeGateAllowsAuthenticatedSameOriginSubscribeRoundTrip is the
+// success path required by gap B10.3: with a valid session cookie, the /ws
+// self-gate lets the connection through and the existing subscribe/publish
+// round trip still works.
+func TestWSBridgeGateAllowsAuthenticatedSameOriginSubscribeRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	authHandler, token := newAdminSession(t, peers.Standard)
+	srv := wsGateTestServer(t, authHandler)
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	header := http.Header{}
+	header.Set("Cookie", (&http.Cookie{Name: "sdn_wallet_session", Value: token}).String())
+
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("authenticated WebSocket dial failed: %v", err)
+	}
+	defer conn.Close()
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("dial status = %d, want %d", resp.StatusCode, http.StatusSwitchingProtocols)
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if err := conn.WriteJSON(map[string]string{"type": "subscribe", "schema": "OMM.fbs"}); err != nil {
+		t.Fatalf("write subscribe: %v", err)
+	}
+
+	var ack struct {
+		Type   string `json:"type"`
+		Schema string `json:"schema"`
+	}
+	if err := conn.ReadJSON(&ack); err != nil {
+		t.Fatalf("read subscribe ack: %v", err)
+	}
+	if ack.Type != "subscribed" || ack.Schema != "OMM.fbs" {
+		t.Fatalf("subscribe ack = %+v, want type=subscribed schema=OMM.fbs", ack)
 	}
 }
 

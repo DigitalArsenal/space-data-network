@@ -462,7 +462,7 @@ func TestFlowMountSkipsUninstalledFlow(t *testing.T) {
 func TestLazyFlowMountRegistersUninstalledFlowWithoutStartupLoad(t *testing.T) {
 	mux := http.NewServeMux()
 	mounted, err := RegisterLazyFlowMounts(mux,
-		[]config.FlowMount{{Path: "/test/data/", Flow: "com.example.not-installed", Pool: 3}},
+		[]config.FlowMount{{Path: "/api/test/data/", Flow: "com.example.not-installed", Pool: 3}},
 		FlowMountDeps{
 			CapRegistry: modulert.NewCapabilityRegistry(),
 			NodeCtx:     &modulert.NodeContext{},
@@ -478,7 +478,7 @@ func TestLazyFlowMountRegistersUninstalledFlowWithoutStartupLoad(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/test/data/omm/bulk", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/test/data/omm/bulk", nil)
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("lazy missing artifact status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
@@ -492,7 +492,7 @@ func TestLazyFlowMountReadinessCheckShortCircuitsLoad(t *testing.T) {
 	mux := http.NewServeMux()
 	readinessErr := fmt.Errorf("record catalog hydration in progress")
 	mounted, err := RegisterLazyFlowMounts(mux,
-		[]config.FlowMount{{Path: "/test/data/", Flow: "com.example.not-installed"}},
+		[]config.FlowMount{{Path: "/api/test/data/", Flow: "com.example.not-installed"}},
 		FlowMountDeps{
 			CapRegistry:    modulert.NewCapabilityRegistry(),
 			NodeCtx:        &modulert.NodeContext{},
@@ -506,12 +506,45 @@ func TestLazyFlowMountReadinessCheckShortCircuitsLoad(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/test/data/omm/bulk", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/test/data/omm/bulk", nil)
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("readiness status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
 	}
 	if !strings.Contains(rec.Body.String(), readinessErr.Error()) {
 		t.Fatalf("readiness body = %q", rec.Body.String())
+	}
+}
+
+// TestRegisterLazyFlowMountsRefusesPathOutsideAPIPrefix is the defense-in-
+// depth half of gap B10.2: config.Load already rejects a non-/api/ mount
+// path at load time, but RegisterLazyFlowMounts must independently refuse
+// (fail closed) so a future bypass of that config-time check cannot
+// silently register an HTTP surface the auth wall never evaluates policy
+// for (the wall's isAPIOrPlugin check only inspects /api/ and
+// /orbpro-key-broker/ paths).
+func TestRegisterLazyFlowMountsRefusesPathOutsideAPIPrefix(t *testing.T) {
+	mux := http.NewServeMux()
+	mounted, err := RegisterLazyFlowMounts(mux,
+		[]config.FlowMount{{Path: "/unsafe/mount/", Flow: "com.example.not-installed"}},
+		FlowMountDeps{
+			CapRegistry: modulert.NewCapabilityRegistry(),
+			NodeCtx:     &modulert.NodeContext{},
+		})
+	if err == nil {
+		t.Fatal("RegisterLazyFlowMounts accepted a mount path outside /api/, want a refusal error")
+	}
+	if !strings.Contains(err.Error(), "/unsafe/mount/") || !strings.Contains(err.Error(), "/api/") {
+		t.Fatalf("error = %q, want it to name the offending path and the /api/ requirement", err.Error())
+	}
+	if len(mounted) != 0 {
+		t.Fatalf("mounted %d flows, want 0 when the batch is refused", len(mounted))
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/unsafe/mount/omm/bulk", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("refused mount path status = %d, want %d (nothing registered)", rec.Code, http.StatusNotFound)
 	}
 }

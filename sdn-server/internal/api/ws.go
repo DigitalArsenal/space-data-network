@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,8 +17,38 @@ import (
 var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
-	// Allow all origins — callers must restrict at the reverse-proxy layer.
-	CheckOrigin: func(r *http.Request) bool { return true },
+	// Gap B10.3(b): this handler is registered outside the /api/ prefix the
+	// top-level auth wall's isAPIOrPlugin check inspects, so
+	// cmd/spacedatanetwork/main.go self-gates the whole /ws route behind
+	// RequireAuth(Standard) before a connection ever reaches here (same
+	// pattern as /webui). CheckOrigin is a second, independent layer: a
+	// same-origin-only check so a session cookie cannot be ridden by a
+	// cross-origin page's browser-initiated WebSocket handshake (a classic
+	// CSWSH — cross-site WebSocket hijacking — vector). There is no
+	// separate configured-origins allowlist elsewhere in this codebase to
+	// reuse, so "same host as the request" is the whole policy; a
+	// same-origin connection can both subscribe AND publish (state-
+	// changing: publish fans out into local and libp2p pubsub) — anonymous
+	// or cross-origin READ-only access, if ever wanted, must be a
+	// deliberate future decision, not an accidental default.
+	CheckOrigin: checkSameOriginHost,
+}
+
+// checkSameOriginHost rejects a WebSocket upgrade whose Origin header names
+// a different host than the request itself. Browsers always send Origin on
+// a WebSocket handshake; non-browser clients (curl, server-side tooling,
+// this codebase's own test dialers) typically omit it entirely and are let
+// through, matching gorilla/websocket's own documented secure default.
+func checkSameOriginHost(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
 }
 
 // wsClientMsg is the envelope sent from the browser / client to the server.
