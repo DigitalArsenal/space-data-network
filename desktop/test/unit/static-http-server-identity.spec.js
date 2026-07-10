@@ -1005,6 +1005,33 @@ test.describe('Task F2: browser self identity reports Ultimate trust', () => {
     expect(aliceEntry).toBeTruthy()
     expect(aliceEntry.epmJson.trust_level).not.toBe('ultimate')
   })
+
+  // F2 coordinator follow-up: EVERY view of the self record — not just the
+  // wallet-apply path — carries the self-recognition ceiling, so
+  // GET/PUT /api/identity/epms/self and the epms list agree with
+  // applyWalletNodeIdentity instead of diverging.
+  test('GET and PUT /api/identity/epms/self report ultimate consistently across views', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-self-crossview-'))
+    const { serveDesktopIdentityAPI } = loadStaticServer(userData)
+
+    const got = await requestJson(serveDesktopIdentityAPI, 'GET', '/api/identity/epms/self')
+    expect(got.statusCode).toBe(200)
+    expect(got.json.kind).toBe('node-self')
+    expect(got.json.epmJson.trust_level).toBe('ultimate')
+
+    const put = await requestJson(serveDesktopIdentityAPI, 'PUT', '/api/identity/epms/self', {
+      epm_json: { dn: 'Renamed Self Node', entity_type: 'Node' }
+    })
+    expect(put.statusCode).toBe(200)
+    expect(put.json.kind).toBe('node-self')
+    expect(put.json.epmJson.dn).toBe('Renamed Self Node')
+    expect(put.json.epmJson.trust_level).toBe('ultimate')
+
+    const list = await requestJson(serveDesktopIdentityAPI, 'GET', '/api/identity/epms')
+    const selfEntry = list.json.epms.find(entry => entry.id === 'self')
+    expect(selfEntry).toBeTruthy()
+    expect(selfEntry.epmJson.trust_level).toBe('ultimate')
+  })
 })
 
 function loadStaticServer (userData, overrides = {}) {
