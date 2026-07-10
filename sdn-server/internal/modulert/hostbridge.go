@@ -27,6 +27,17 @@ type NodeContext struct {
 	// policy store: every sensitive capability is denied. See
 	// capability_policy.go.
 	CapabilityPolicy *CapabilityPolicyStore
+
+	// ModuleSignaturePolicy is the operator-controlled publication-trailer
+	// signature trust policy consulted at module load time, before the
+	// module is admitted (loop I1 — defensive hardening, FAIL CLOSED once
+	// configured). A nil value means signature enforcement is not
+	// configured for this node — the trailer is still stripped, but no
+	// signature is required (see ModuleSignaturePolicy's doc in
+	// publication_signature.go for why, and what a production deployment
+	// must set here). Mirrors CapabilityPolicy's nil-is-a-real-choice
+	// shape.
+	ModuleSignaturePolicy *ModuleSignaturePolicy
 }
 
 // CapHandler is a function that handles a capability-gated hostcall operation.
