@@ -1402,6 +1402,15 @@ func (n *Node) Start(ctx context.Context) error {
 		n.tipQueue.StartTTLSweeper(tipQueueTTLSweepInterval)
 	}
 
+	// Storage quota GC loop (Task D3): periodically evicts the oldest
+	// records once the live dataset exceeds storage.max_size (default 90%
+	// of the filesystem holding storage.path). Interval from
+	// storage.gc_interval (default 1h).
+	if n.store != nil {
+		n.wg.Add(1)
+		go n.runStorageQuotaGC()
+	}
+
 	// Start EPM auto-publish via PubSub (every 30 minutes)
 	if n.epmService != nil && n.epmService.GetNodeEPM() != nil {
 		n.wg.Add(1)
@@ -2109,6 +2118,22 @@ func (n *Node) newTipQueueConfig() *sdnpubsub.TipQueueConfig {
 	cfg := sdnpubsub.NewTipQueueConfig()
 	cfg.DefaultAutoFetch = true
 	cfg.DefaultAutoPin = true
+
+	// Task D3 coordinator handoff: fold the D4 resource caps into
+	// config.yaml (config.TipQueueConfig) so operators can tune them
+	// without a code change. Zero/unset keeps pubsub.NewTipQueueConfig's
+	// built-in defaults — only override when explicitly configured > 0.
+	if n.config != nil {
+		if n.config.TipQueue.MaxFetchBytes > 0 {
+			cfg.MaxFetchBytes = n.config.TipQueue.MaxFetchBytes
+		}
+		if n.config.TipQueue.MaxConcurrentFetches > 0 {
+			cfg.MaxConcurrentFetches = n.config.TipQueue.MaxConcurrentFetches
+		}
+		if n.config.TipQueue.MinFetchInterval > 0 {
+			cfg.MinFetchInterval = n.config.TipQueue.MinFetchInterval
+		}
+	}
 	return cfg
 }
 
@@ -2132,6 +2157,81 @@ func (n *Node) buildTipQueue() *sdnpubsub.TipQueue {
 	}
 	tq.OnTip(n.handleTipQueueTip)
 	return tq
+}
+
+// enforceStorageQuota (Task D3) resolves the configured storage.max_size
+// cap against the filesystem holding storage.path and, if the store is
+// over cap, evicts the oldest records via
+// storage.FlatSQLStore.GarbageCollectToQuota. Safe to call frequently: it
+// is a cheap no-op once the store is back under the low-water mark (see
+// quotaLowWaterMarkFraction in internal/storage/flatsql.go).
+//
+// Two callers wire this live: runStorageQuotaGC (a periodic sweep on
+// storage.gc_interval, mirroring the TTL-sweeper/catch-up-loop precedent
+// elsewhere in this file) and materializeDatasetPublicationPNM (right
+// after a trusted peer's publication is accepted, so a trusted peer's
+// flood evicts the store's own oldest records rather than filling the
+// disk — the config context this task was handed off with).
+func (n *Node) enforceStorageQuota() {
+	if n == nil || n.store == nil || n.config == nil {
+		return
+	}
+	maxBytes, err := n.config.Storage.ResolveMaxSizeBytes(n.config.Storage.Path)
+	if err != nil {
+		log.Warnf("Storage quota: resolve storage.max_size: %v", err)
+		return
+	}
+	if maxBytes <= 0 {
+		return
+	}
+	// DiskUsageBytes is an additional trigger signal alongside
+	// LiveRecordBytes (which GarbageCollectToQuota itself measures and
+	// enforces against) — see DiskUsageBytes's doc on why raw on-disk
+	// bytes can exceed the live dataset for an append-only stream store.
+	// Either signal being over cap is reason enough to run a pass.
+	overCap := false
+	if live, err := n.store.LiveRecordBytes(); err == nil && live > maxBytes {
+		overCap = true
+	}
+	if diskUsage, err := n.store.DiskUsageBytes(); err == nil && diskUsage > maxBytes {
+		overCap = true
+	}
+	if !overCap {
+		return
+	}
+	deleted, err := n.store.GarbageCollectToQuota(maxBytes)
+	if err != nil {
+		log.Warnf("Storage quota enforcement failed: %v", err)
+		return
+	}
+	if deleted > 0 {
+		log.Infof("Storage quota enforcement evicted %d oldest record(s) (cap %d bytes)", deleted, maxBytes)
+	}
+}
+
+// runStorageQuotaGC is the periodic storage-quota sweep (Task D3),
+// started from Start() when a store is present. Interval is
+// storage.gc_interval (default 1h via config.ResolveGCInterval). Follows
+// the same ticker/n.ctx-shutdown shape as maintainBootstrapConnections and
+// the dataset-publication catch-up loops elsewhere in this file.
+func (n *Node) runStorageQuotaGC() {
+	defer n.wg.Done()
+
+	interval, err := n.config.Storage.ResolveGCInterval()
+	if err != nil {
+		log.Warnf("Storage quota GC: invalid storage.gc_interval, using default: %v", err)
+		interval = config.DefaultStorageGCInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-n.ctx.Done():
+			return
+		case <-ticker.C:
+			n.enforceStorageQuota()
+		}
+	}
 }
 
 // ipfsTipFetcher adapts Kubo's /api/v0/cat RPC to pubsub.ContentFetcher,
@@ -2820,6 +2920,18 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 	}
 	log.Infof("Materialized trusted dataset update from %s on %s: schema=%s imported=%d manifest=%s shard=%s",
 		from.ShortString(), schema, result.SchemaName, result.Imported, result.ManifestCID, result.ShardCID)
+
+	// Storage quota enforcement (Task D3): a trusted peer materializing a
+	// large/frequent publication flood should evict this store's own
+	// oldest records rather than filling the disk. Dispatched in the
+	// background (n.wg-tracked, same ad-hoc pattern as
+	// subscribeFullyTrustedPeer's catch-up dispatch above) so quota
+	// bookkeeping never adds latency to the materialization path itself.
+	n.wg.Add(1)
+	go func() {
+		defer n.wg.Done()
+		n.enforceStorageQuota()
+	}()
 	return true, nil
 }
 

@@ -3150,6 +3150,17 @@ func (s *FlatSQLStore) GarbageCollect(maxAge time.Duration) (int64, error) {
 	defer s.mu.Unlock()
 
 	cutoff := time.Now().Add(-maxAge).Unix()
+	return s.garbageCollectBeforeLocked(cutoff)
+}
+
+// garbageCollectBeforeLocked deletes every record (across every schema)
+// with timestamp < cutoff (Unix seconds): the exact age-based delete path
+// GarbageCollect has always used, factored out (Task D3) so
+// GarbageCollectToQuota reuses it instead of duplicating the delete
+// machinery (legacy + routed-mirror table cleanup, index sync, source-tag
+// cleanup, record-catalog GC event, source-summary rebuild). Callers must
+// hold s.mu (Lock) and have already checked requireWritable.
+func (s *FlatSQLStore) garbageCollectBeforeLocked(cutoff int64) (int64, error) {
 	var totalDeleted int64
 
 	for _, schemaName := range s.validator.Schemas() {
@@ -3202,9 +3213,212 @@ func (s *FlatSQLStore) GarbageCollect(maxAge time.Duration) (int64, error) {
 	}
 
 	if totalDeleted > 0 {
-		log.Infof("GC removed %d old records", totalDeleted)
+		log.Infof("GC removed %d old records (cutoff unix=%d)", totalDeleted, cutoff)
 	}
 
+	return totalDeleted, nil
+}
+
+// quotaLowWaterMarkFraction is the hysteresis fraction GarbageCollectToQuota
+// evicts DOWN TO once a store exceeds its configured cap: eviction targets
+// this fraction of maxBytes rather than maxBytes itself, so a store
+// sitting right at the cap does not immediately re-trigger a GC pass on
+// the very next write — which would otherwise run a full sweep on every
+// single incoming record once steady-state ingestion holds the store near
+// its ceiling. 0.85 gives a 15% buffer before the next eviction pass is
+// needed.
+const quotaLowWaterMarkFraction = 0.85
+
+// maxQuotaEvictionRounds bounds GarbageCollectToQuota's cutoff-search
+// loop. Each round re-measures live bytes and, if still over the
+// low-water mark, searches for a wider eviction cutoff; this caps
+// worst-case iterations for a skewed record-size distribution rather than
+// looping unboundedly.
+const maxQuotaEvictionRounds = 8
+
+// LiveRecordBytes returns the sum of record_length across every live
+// (non-deleted) record in every schema this store recognizes.
+//
+// This is the quantity GarbageCollectToQuota enforces a cap against.
+// FlatSQL stream files are strictly append-only (this store's stream
+// files are never rewritten in place — see recordReadSource's "the store
+// never VACUUMs" rowid-stability note): deleting a record's index/mirror
+// rows shrinks LiveRecordBytes immediately and deterministically, but
+// does NOT shrink the bytes that record's payload already occupies in its
+// stream file on disk. LiveRecordBytes is therefore the metric quota
+// enforcement can actually control — it bounds how large the LOGICAL
+// dataset is allowed to grow. DiskUsageBytes (below) reports the true,
+// larger, monotonically-growing on-disk footprint for observability; the
+// two converge only once a future stream-compaction pass exists to
+// reclaim already-written bytes (tracked as a residual gap — see the D3
+// task report).
+func (s *FlatSQLStore) LiveRecordBytes() (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.liveRecordBytesLocked()
+}
+
+func (s *FlatSQLStore) liveRecordBytesLocked() (int64, error) {
+	var total int64
+	for _, schemaName := range s.validator.Schemas() {
+		readSource, err := s.recordReadSource(schemaName)
+		if err != nil {
+			continue
+		}
+		var sum sql.NullInt64
+		if err := s.db.QueryRow(fmt.Sprintf(`SELECT COALESCE(SUM(record_length), 0) FROM %s`, readSource)).Scan(&sum); err != nil {
+			log.Warnf("LiveRecordBytes: sum record_length for %s: %v", schemaName, err)
+			continue
+		}
+		total += sum.Int64
+	}
+	return total, nil
+}
+
+// DiskUsageBytes sums the actual bytes currently on disk under the
+// store's FlatSQL stream directory plus its durable metadata logs (record
+// catalog journal, auxiliary metadata store). It reflects total
+// historical writes, not the live dataset — see LiveRecordBytes's doc for
+// why append-only stream files retain deleted records' bytes. Exposed for
+// operator-facing disk-pressure observability (Stats) and as an
+// additional quota-check trigger signal (node.go's enforceStorageQuota),
+// alongside LiveRecordBytes.
+func (s *FlatSQLStore) DiskUsageBytes() (int64, error) {
+	s.mu.RLock()
+	basePath := s.basePath
+	streamDir := s.streamDir
+	s.mu.RUnlock()
+
+	var total int64
+	err := filepath.Walk(streamDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if !info.IsDir() {
+			total += info.Size()
+		}
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		return 0, fmt.Errorf("disk usage: walk stream dir: %w", err)
+	}
+	for _, name := range []string{recordCatalogJournalFileName, auxiliaryMetadataFileName} {
+		info, statErr := os.Stat(filepath.Join(basePath, name))
+		if statErr == nil {
+			total += info.Size()
+			continue
+		}
+		if !os.IsNotExist(statErr) {
+			return 0, fmt.Errorf("disk usage: stat %s: %w", name, statErr)
+		}
+	}
+	return total, nil
+}
+
+// GarbageCollectToQuota enforces a disk-quota cap (Task D3) by evicting
+// the OLDEST records first — globally, across every schema — until the
+// store's live-record footprint (LiveRecordBytes) drops to the low-water
+// mark (quotaLowWaterMarkFraction * maxBytes), or there is nothing left
+// to evict. maxBytes <= 0 disables the check (returns 0, nil
+// immediately).
+//
+// Global "oldest first" is approximated via a shared cutoff timestamp —
+// the same sdn_record_index.source_timestamp column age-based GC already
+// keys off: each round estimates how many of the globally-oldest records
+// need to go (bytes-over-low-water / average-bytes-per-record), looks up
+// the source_timestamp at that offset via sdn_record_index ordered
+// ascending, and deletes everything at-or-before it via
+// garbageCollectBeforeLocked — the exact delete path GarbageCollect(maxAge)
+// uses, so eviction goes through the same, already-exercised code (index
+// rows, routed mirror tables, source-tag/summary cleanup, record-catalog
+// GC event) rather than a duplicated one. Multiple rounds correct for a
+// non-uniform size distribution (e.g. a run of oversized records skewing
+// the average); maxQuotaEvictionRounds bounds the worst case.
+//
+// Never deletes a record newer than the chosen cutoff, so newest records
+// are always retained; never runs past the low-water mark once reached,
+// so it does not over-evict beyond what the hysteresis budget calls for.
+//
+// Residual gap: because of the append-only stream-file limitation
+// documented on LiveRecordBytes, this shrinks the LIVE dataset
+// immediately (bounding further disk growth) but does not itself reclaim
+// already-written stream bytes from disk — see LiveRecordBytes's doc.
+func (s *FlatSQLStore) GarbageCollectToQuota(maxBytes int64) (int64, error) {
+	if maxBytes <= 0 {
+		return 0, nil
+	}
+	if err := s.requireWritable("garbage collect to quota"); err != nil {
+		return 0, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	liveBytes, err := s.liveRecordBytesLocked()
+	if err != nil {
+		return 0, fmt.Errorf("garbage collect to quota: measure live bytes: %w", err)
+	}
+	if liveBytes <= maxBytes {
+		return 0, nil
+	}
+	lowWater := int64(float64(maxBytes) * quotaLowWaterMarkFraction)
+
+	var totalDeleted int64
+	for round := 0; round < maxQuotaEvictionRounds && liveBytes > lowWater; round++ {
+		var totalCount int64
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM sdn_record_index`).Scan(&totalCount); err != nil {
+			return totalDeleted, fmt.Errorf("garbage collect to quota: count records: %w", err)
+		}
+		if totalCount <= 0 {
+			break
+		}
+		avgBytes := liveBytes / totalCount
+		if avgBytes <= 0 {
+			avgBytes = 1
+		}
+		remaining := liveBytes - lowWater
+		recordsToEvict := remaining / avgBytes
+		if remaining%avgBytes != 0 {
+			recordsToEvict++
+		}
+		if recordsToEvict < 1 {
+			recordsToEvict = 1
+		}
+		if recordsToEvict > totalCount {
+			recordsToEvict = totalCount
+		}
+
+		var cutoff int64
+		if err := s.db.QueryRow(
+			`SELECT source_timestamp FROM sdn_record_index ORDER BY source_timestamp ASC LIMIT 1 OFFSET ?`,
+			recordsToEvict-1,
+		).Scan(&cutoff); err != nil {
+			return totalDeleted, fmt.Errorf("garbage collect to quota: locate eviction cutoff: %w", err)
+		}
+		// garbageCollectBeforeLocked deletes strictly-less-than cutoff;
+		// evict one Unix second past the selected boundary timestamp so a
+		// round always makes forward progress even when many records share
+		// that exact second.
+		deleted, err := s.garbageCollectBeforeLocked(cutoff + 1)
+		if err != nil {
+			return totalDeleted, fmt.Errorf("garbage collect to quota: evict: %w", err)
+		}
+		totalDeleted += deleted
+		if deleted == 0 {
+			// No progress possible — stop rather than spin.
+			break
+		}
+		liveBytes, err = s.liveRecordBytesLocked()
+		if err != nil {
+			return totalDeleted, fmt.Errorf("garbage collect to quota: remeasure live bytes: %w", err)
+		}
+	}
+
+	if totalDeleted > 0 {
+		log.Infof("GarbageCollectToQuota evicted %d record(s), live bytes now %d (cap %d, low-water %d)", totalDeleted, liveBytes, maxBytes, lowWater)
+	}
 	return totalDeleted, nil
 }
 
