@@ -37,6 +37,21 @@
 // See Registry.IsFullyTrusted for the (separate, stronger) Phase D
 // auto-subscribe/auto-pin hook.
 //
+// # Rooted validity (Phase C6)
+//
+// The live path (EffectiveTrustLevel/ComputedValidity) does not count
+// every truster in the graph — only trusters that are themselves
+// trust-anchored to this node's own identity (Registry.SetRootIdentity):
+// the root itself, or a peer the root directly trusts at >=Marginal (a
+// depth-1 "trusted introducer"). This mirrors real PGP web-of-trust, where
+// validity is always computed relative to the user's own ultimate key —
+// otherwise any set of self-minted identities could vouch for each other
+// and manufacture computed validity out of nothing. See
+// ComputeValidityRooted for the rule and ComputeValidity for the
+// unrooted primitive it is built on (kept for tests, not the live path).
+// No root identity wired (the default) fail-safes to "no bonus", exactly
+// like no graph wired.
+//
 // # Registry
 //
 // The Registry type manages the trusted peer registry with support for:

@@ -254,6 +254,20 @@ func (t TrustLevel) EdgeWeight() float64 {
 // (>=MinMarginalTrusters marginal, OR >=MinFullTrusters full). A nil graph
 // (or a subject with no trusters) is fail-safe: never valid, zero counts —
 // exactly "no bonus" from missing graph data.
+//
+// # UNROOTED — not the live path (Phase C6)
+//
+// This function counts EVERY in-edge of subject as a truster vote, with
+// no requirement that the trusters themselves be valid or anchored to
+// this node's own key. That means any 3 self-minted Ed25519 identities
+// can each sign a marginal grant for a target and the target computes
+// VALID here — real PGP web-of-trust only counts votes from
+// valid/trusted introducers rooted at the user's own ultimate key. See
+// ComputeValidityRooted for the rooted variant that closes this gap;
+// Registry.ComputedValidity/EffectiveTrustLevel (the LIVE decision the
+// daemon actually consults) calls the rooted variant, not this one. This
+// unrooted function is kept for callers/tests that intentionally want the
+// raw, unanchored counting rule.
 func ComputeValidity(g *trust.Graph, subject string) (valid bool, marginalCount, fullCount int) {
 	if g == nil {
 		return false, 0, 0
@@ -272,6 +286,83 @@ func ComputeValidity(g *trust.Graph, subject string) (valid bool, marginalCount,
 	}
 	valid = fullCount >= MinFullTrusters || marginalCount >= MinMarginalTrusters
 	return valid, marginalCount, fullCount
+}
+
+// ComputeValidityRooted reports whether subject clears ROOTED PGP
+// web-of-trust validity given root (this node's own identity — the
+// Ultimate root of trust, Phase F) and the edges of g. It applies the same
+// counting rule as ComputeValidity (>=MinMarginalTrusters marginal votes,
+// OR >=MinFullTrusters full vote) EXCEPT a truster's vote only counts if
+// the truster is itself trust-anchored with respect to root: either the
+// truster IS root, or root directly trusts the truster at
+// >=MarginalEdgeWeight (g.Edge(root, truster) — a depth-1 "trusted
+// introducer"). A truster that is not trust-anchored is ignored entirely,
+// no matter what weight it asserts about subject.
+//
+// # Why rooting is required (task C6)
+//
+// The unrooted ComputeValidity counts every in-edge of subject as a
+// truster vote with no anchor at all, so 3 self-minted Ed25519 identities
+// can each sign a marginal grant for a target and the target computes
+// VALID. Real PGP web-of-trust only counts votes from valid/trusted
+// introducers rooted at the user's own ultimate key — an unrooted
+// identity vouching for another unrooted identity proves nothing about
+// whether THIS node should trust the result. Rooting closes that gap: a
+// vote only counts if it traces back to root within one hop.
+//
+// # Depth
+//
+// This is deliberately depth-1: root's own directly-trusted introducers
+// are valid introducers, but an introducer's own introducers are NOT,
+// transitively. That is sufficient to match PGP's "trusted introducer"
+// concept without the complexity/DoS surface (unbounded graph walk,
+// amplified trust-laundering distance) of unbounded transitive traversal.
+// A deeper, explicitly-capped variant (e.g. depth 2) is a documented
+// possible extension, not implemented here.
+//
+// # Fail-safe defaults
+//
+// A nil graph is fail-safe: never valid, zero counts (same as
+// ComputeValidity). An EMPTY root ("") is likewise fail-safe: no truster
+// can ever equal "" or be directly trusted BY "", so computed validity
+// grants no bonus at all until this node's own identity is wired in via
+// Registry.SetRootIdentity — "no bonus without live root data", the same
+// philosophy as the nil-graph case.
+func ComputeValidityRooted(g *trust.Graph, root, subject string) (valid bool, marginalCount, fullCount int) {
+	if g == nil || root == "" {
+		return false, 0, 0
+	}
+	for _, truster := range g.Trusters(subject) {
+		edge, ok := g.Edge(truster, subject)
+		if !ok {
+			continue
+		}
+		if !rootTrustAnchored(g, root, truster) {
+			continue
+		}
+		switch {
+		case edge.Weight >= FullEdgeWeight:
+			fullCount++
+		case edge.Weight >= MarginalEdgeWeight:
+			marginalCount++
+		}
+	}
+	valid = fullCount >= MinFullTrusters || marginalCount >= MinMarginalTrusters
+	return valid, marginalCount, fullCount
+}
+
+// rootTrustAnchored reports whether truster is trust-anchored with respect
+// to root (see ComputeValidityRooted): truster IS root, or root directly
+// trusts truster at >=MarginalEdgeWeight (a depth-1 trusted introducer).
+func rootTrustAnchored(g *trust.Graph, root, truster string) bool {
+	if truster == root {
+		return true
+	}
+	edge, ok := g.Edge(root, truster)
+	if !ok {
+		return false
+	}
+	return edge.Weight >= MarginalEdgeWeight
 }
 
 // MarshalJSON implements json.Marshaler for TrustLevel.
@@ -508,6 +599,14 @@ type Registry struct {
 	// wired" and every accessor degrades to exactly the pre-C2
 	// direct-assignment behavior (fail-safe).
 	trustGraph *trust.Graph
+
+	// rootID is this node's own identity — the trust graph's Ultimate root
+	// consulted by ComputeValidityRooted (Phase C6). The zero peer.ID (the
+	// default) means "not wired yet": see ComputeValidityRooted for why
+	// that fail-safes to "no truster can ever be trust-anchored, so
+	// computed validity always fails" rather than silently falling back to
+	// the unrooted (and gameable) ComputeValidity rule.
+	rootID peer.ID
 
 	// trustChangeHandlers are notified (see fireTrustChange) whenever a
 	// peer's DIRECTLY ASSIGNED trust level changes via AddPeer, UpdatePeer,
@@ -806,30 +905,60 @@ func (r *Registry) TrustGraph() *trust.Graph {
 	return r.trustGraph
 }
 
-// ComputedValidity reports whether id clears PGP web-of-trust validity per
-// the wired trust graph (nil/empty graph => never valid; fail-safe, no
-// bonus) along with the marginal/full truster counts that were tallied.
-// See ComputeValidity for the underlying rule.
+// SetRootIdentity designates id as this node's own identity — the Ultimate
+// root of trust consulted by the ROOTED web-of-trust validity computation
+// (Phase C6, see ComputeValidityRooted) that ComputedValidity/
+// EffectiveTrustLevel use as their live decision. Passing the zero
+// peer.ID clears it, restoring the fail-safe "no truster can ever be
+// trust-anchored, so computed validity always fails" behavior — the
+// default until a node wires in its own real identity.
+func (r *Registry) SetRootIdentity(id peer.ID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rootID = id
+}
+
+// RootIdentity returns the currently wired root identity, or the zero
+// peer.ID if none has been set.
+func (r *Registry) RootIdentity() peer.ID {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.rootID
+}
+
+// ComputedValidity reports whether id clears ROOTED PGP web-of-trust
+// validity (Phase C6) per the wired trust graph and this node's own root
+// identity (nil/empty graph, or no root identity wired, => never valid;
+// fail-safe, no bonus) along with the marginal/full truster counts that
+// were tallied. See ComputeValidityRooted for the underlying rule and why
+// the ROOTED computation — not the plain, gameable ComputeValidity — is
+// the live decision every caller of this method (in particular
+// EffectiveTrustLevel) gets.
 func (r *Registry) ComputedValidity(id peer.ID) (valid bool, marginalCount, fullCount int) {
 	r.mu.RLock()
 	g := r.trustGraph
+	root := r.rootID
 	r.mu.RUnlock()
-	return ComputeValidity(g, id.String())
+	return ComputeValidityRooted(g, root.String(), id.String())
 }
 
 // EffectiveTrustLevel is the LIVE trust decision: it folds computed
-// web-of-trust validity (Phase C2) on top of the peer's direct assignment.
+// ROOTED web-of-trust validity (Phase C2, rooted per Phase C6) on top of
+// the peer's direct assignment.
 //
 //   - A direct assignment of Never is a hard veto: computed validity can
 //     NEVER override it (fail-closed on an explicit "do not trust").
 //   - Otherwise, direct assignment is a FLOOR: if the peer also clears
-//     computed web-of-trust validity (>=3 marginal trusters, or >=1
-//     full/ultimate truster — see ComputeValidity), the effective level is
-//     raised to at least Marginal. A direct assignment already at or above
-//     Marginal is never lowered by this computation ("direct assignments
-//     still win where higher").
-//   - No trust graph wired (the default) degrades to exactly the direct
-//     assignment, i.e. today's pre-C2 behavior (fail-safe).
+//     computed ROOTED web-of-trust validity (>=3 marginal votes from
+//     trust-anchored introducers, or >=1 full/ultimate vote from a
+//     trust-anchored introducer — see ComputeValidityRooted, called via
+//     ComputedValidity), the effective level is raised to at least
+//     Marginal. A direct assignment already at or above Marginal is never
+//     lowered by this computation ("direct assignments still win where
+//     higher").
+//   - No trust graph wired, or no root identity wired (SetRootIdentity;
+//     both are the default), degrades to exactly the direct assignment —
+//     fail-safe, no bonus from missing/unanchored data.
 //
 // This is the accessor IsAllowed/IsTrusted/IsAdmin — and therefore the
 // connection gater, pubsub gating, and admin ACL checks — consult.
@@ -845,10 +974,10 @@ func (r *Registry) EffectiveTrustLevel(id peer.ID) TrustLevel {
 	return direct
 }
 
-// IsValid reports computed PGP web-of-trust validity for id, independent
-// of its direct assignment (Never still reports whatever ComputeValidity
-// found; callers wanting the veto-aware decision should use
-// EffectiveTrustLevel/IsAllowed/IsTrusted instead).
+// IsValid reports computed ROOTED PGP web-of-trust validity for id,
+// independent of its direct assignment (Never still reports whatever
+// ComputeValidityRooted found; callers wanting the veto-aware decision
+// should use EffectiveTrustLevel/IsAllowed/IsTrusted instead).
 func (r *Registry) IsValid(id peer.ID) bool {
 	valid, _, _ := r.ComputedValidity(id)
 	return valid

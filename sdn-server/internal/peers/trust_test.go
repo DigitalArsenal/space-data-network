@@ -270,6 +270,98 @@ func mustSetEdge(t *testing.T, g *trust.Graph, truster, trustee string, weight f
 	}
 }
 
+// TestComputeValidityRooted_WebOfTrustRule exercises the ROOTED PGP
+// web-of-trust validity rule (Phase C6) directly against
+// internal/trust.Graph: a truster's vote only counts if it is itself
+// trust-anchored w.r.t. root (root itself, or a peer root directly trusts
+// at >=Marginal — a depth-1 "trusted introducer"). This is the regression
+// coverage for the C6 finding: 3 self-minted, unrooted identities must NOT
+// be able to manufacture computed validity for each other.
+func TestComputeValidityRooted_WebOfTrustRule(t *testing.T) {
+	const root = "root"
+
+	t.Run("nil graph is fail-safe", func(t *testing.T) {
+		valid, marginal, full := ComputeValidityRooted(nil, root, "subject")
+		if valid || marginal != 0 || full != 0 {
+			t.Fatalf("nil graph: valid=%v marginal=%d full=%d, want false/0/0", valid, marginal, full)
+		}
+	})
+
+	t.Run("empty root is fail-safe even with a well-formed graph", func(t *testing.T) {
+		g := trust.NewGraph()
+		mustSetEdge(t, g, "signer1", "subject", Full.EdgeWeight())
+		valid, marginal, full := ComputeValidityRooted(g, "", "subject")
+		if valid || marginal != 0 || full != 0 {
+			t.Fatalf("empty root: valid=%v marginal=%d full=%d, want false/0/0", valid, marginal, full)
+		}
+	})
+
+	t.Run("3 unrooted self-minted marginal trusters do NOT make a subject valid", func(t *testing.T) {
+		g := trust.NewGraph()
+		// signer1..3 are self-minted identities asserting marginal trust
+		// for subject; root never trust-anchored any of them (no
+		// root->signer edge exists at all).
+		mustSetEdge(t, g, "signer1", "subject", Marginal.EdgeWeight())
+		mustSetEdge(t, g, "signer2", "subject", Marginal.EdgeWeight())
+		mustSetEdge(t, g, "signer3", "subject", Marginal.EdgeWeight())
+
+		valid, marginal, full := ComputeValidityRooted(g, root, "subject")
+		if valid || marginal != 0 || full != 0 {
+			t.Fatalf("3 unrooted self-minted marginal trusters must not validate: valid=%v marginal=%d full=%d, want false/0/0", valid, marginal, full)
+		}
+	})
+
+	t.Run("3 marginals from trusters that the root directly trusts DO make a subject valid", func(t *testing.T) {
+		g := trust.NewGraph()
+		for _, signer := range []string{"signer1", "signer2", "signer3"} {
+			mustSetEdge(t, g, root, signer, Marginal.EdgeWeight()) // root trust-anchors the introducer
+			mustSetEdge(t, g, signer, "subject", Marginal.EdgeWeight())
+		}
+
+		valid, marginal, full := ComputeValidityRooted(g, root, "subject")
+		if !valid || marginal != 3 || full != 0 {
+			t.Fatalf("3 marginals from root-trusted introducers should validate: valid=%v marginal=%d full=%d, want true/3/0", valid, marginal, full)
+		}
+	})
+
+	t.Run("1 root-trusted full introducer DOES make a subject valid", func(t *testing.T) {
+		g := trust.NewGraph()
+		mustSetEdge(t, g, root, "introducer", Marginal.EdgeWeight()) // root anchors the introducer
+		mustSetEdge(t, g, "introducer", "subject", Full.EdgeWeight())
+
+		valid, marginal, full := ComputeValidityRooted(g, root, "subject")
+		if !valid || marginal != 0 || full != 1 {
+			t.Fatalf("1 root-trusted full introducer should validate: valid=%v marginal=%d full=%d, want true/0/1", valid, marginal, full)
+		}
+	})
+
+	t.Run("root's own direct vote counts without a separate anchoring edge", func(t *testing.T) {
+		g := trust.NewGraph()
+		mustSetEdge(t, g, root, "subject", Full.EdgeWeight())
+
+		valid, marginal, full := ComputeValidityRooted(g, root, "subject")
+		if !valid || marginal != 0 || full != 1 {
+			t.Fatalf("root's own full vote should validate directly: valid=%v marginal=%d full=%d, want true/0/1", valid, marginal, full)
+		}
+	})
+
+	t.Run("an unrooted 3rd vote cannot round out an otherwise-insufficient rooted count", func(t *testing.T) {
+		g := trust.NewGraph()
+		mustSetEdge(t, g, root, "introducer1", Marginal.EdgeWeight())
+		mustSetEdge(t, g, root, "introducer2", Marginal.EdgeWeight())
+		mustSetEdge(t, g, "introducer1", "subject", Marginal.EdgeWeight())
+		mustSetEdge(t, g, "introducer2", "subject", Marginal.EdgeWeight())
+		// A 3rd, unrooted self-minted signer tries to make up the missing
+		// vote to reach MinMarginalTrusters — it must be ignored.
+		mustSetEdge(t, g, "outsider", "subject", Marginal.EdgeWeight())
+
+		valid, marginal, full := ComputeValidityRooted(g, root, "subject")
+		if valid || marginal != 2 || full != 0 {
+			t.Fatalf("unrooted 3rd vote must not count toward validity: valid=%v marginal=%d full=%d, want false/2/0", valid, marginal, full)
+		}
+	})
+}
+
 // TestRegistry_EffectiveTrustLevel_LivePath exercises the LIVE accessors
 // (IsAllowed/IsTrusted/EffectiveTrustLevel) the daemon actually calls, not
 // ComputeValidity directly, per the C2 test requirement.
@@ -291,17 +383,23 @@ func TestRegistry_EffectiveTrustLevel_LivePath(t *testing.T) {
 		}
 	})
 
-	t.Run("3 marginal trusters elevates an unassigned peer to allowed", func(t *testing.T) {
+	t.Run("3 marginal trusters from root-trusted introducers elevates an unassigned peer to allowed", func(t *testing.T) {
+		// Phase C6: the live path is ROOTED, so trusters must themselves be
+		// trust-anchored to the registry's own root identity before their
+		// votes count.
 		registry := NewRegistry(true, nil) // strict mode: unknown peers start Untrusted
+		registry.SetRootIdentity(testPeerID3)
 		g := trust.NewGraph()
 		subject := testPeerID1.String()
-		mustSetEdge(t, g, "s1", subject, Marginal.EdgeWeight())
-		mustSetEdge(t, g, "s2", subject, Marginal.EdgeWeight())
-		mustSetEdge(t, g, "s3", subject, Marginal.EdgeWeight())
+		root := testPeerID3.String()
+		for _, signer := range []string{"s1", "s2", "s3"} {
+			mustSetEdge(t, g, root, signer, Marginal.EdgeWeight()) // root trust-anchors each introducer
+			mustSetEdge(t, g, signer, subject, Marginal.EdgeWeight())
+		}
 		registry.SetTrustGraph(g)
 
 		if !registry.IsAllowed(testPeerID1) {
-			t.Fatal("3 marginal trusters should elevate an otherwise-untrusted peer to allowed")
+			t.Fatal("3 marginal trusters from root-trusted introducers should elevate an otherwise-untrusted peer to allowed")
 		}
 		if got := registry.EffectiveTrustLevel(testPeerID1); got != Marginal {
 			t.Fatalf("EffectiveTrustLevel = %v, want Marginal", got)
@@ -311,28 +409,68 @@ func TestRegistry_EffectiveTrustLevel_LivePath(t *testing.T) {
 		}
 	})
 
-	t.Run("1 full truster elevates an unassigned peer to allowed", func(t *testing.T) {
+	t.Run("1 root-trusted full introducer elevates an unassigned peer to allowed", func(t *testing.T) {
 		registry := NewRegistry(true, nil)
+		registry.SetRootIdentity(testPeerID3)
 		g := trust.NewGraph()
 		subject := testPeerID1.String()
+		root := testPeerID3.String()
+		mustSetEdge(t, g, root, "s1", Marginal.EdgeWeight()) // root trust-anchors the introducer
 		mustSetEdge(t, g, "s1", subject, Full.EdgeWeight())
 		registry.SetTrustGraph(g)
 
 		if !registry.IsAllowed(testPeerID1) {
-			t.Fatal("1 full truster should elevate an otherwise-untrusted peer to allowed")
+			t.Fatal("1 full truster from a root-trusted introducer should elevate an otherwise-untrusted peer to allowed")
 		}
 	})
 
-	t.Run("2 marginal trusters is not enough", func(t *testing.T) {
+	t.Run("2 marginal trusters (even root-trusted) is not enough", func(t *testing.T) {
 		registry := NewRegistry(true, nil)
+		registry.SetRootIdentity(testPeerID3)
 		g := trust.NewGraph()
 		subject := testPeerID1.String()
+		root := testPeerID3.String()
+		mustSetEdge(t, g, root, "s1", Marginal.EdgeWeight())
+		mustSetEdge(t, g, root, "s2", Marginal.EdgeWeight())
 		mustSetEdge(t, g, "s1", subject, Marginal.EdgeWeight())
 		mustSetEdge(t, g, "s2", subject, Marginal.EdgeWeight())
 		registry.SetTrustGraph(g)
 
 		if registry.IsAllowed(testPeerID1) {
 			t.Fatal("2 marginal trusters should not clear validity")
+		}
+	})
+
+	t.Run("3 unrooted self-minted marginal trusters do NOT elevate (C6 regression)", func(t *testing.T) {
+		// The root IS wired here, but s1/s2/s3 are self-minted identities
+		// the root never trust-anchored (no root->signer edges at all):
+		// this is exactly the C6 attack the rooted live path must close.
+		registry := NewRegistry(true, nil)
+		registry.SetRootIdentity(testPeerID3)
+		g := trust.NewGraph()
+		subject := testPeerID1.String()
+		mustSetEdge(t, g, "s1", subject, Marginal.EdgeWeight())
+		mustSetEdge(t, g, "s2", subject, Marginal.EdgeWeight())
+		mustSetEdge(t, g, "s3", subject, Marginal.EdgeWeight())
+		registry.SetTrustGraph(g)
+
+		if registry.IsAllowed(testPeerID1) {
+			t.Fatal("3 self-minted unrooted marginal trusters must not elevate validity (C6)")
+		}
+		if got := registry.EffectiveTrustLevel(testPeerID1); got != Untrusted {
+			t.Fatalf("EffectiveTrustLevel = %v, want Untrusted (no unrooted bonus)", got)
+		}
+	})
+
+	t.Run("no root identity wired: even a well-formed full truster grants no bonus", func(t *testing.T) {
+		registry := NewRegistry(true, nil) // root intentionally NOT set
+		g := trust.NewGraph()
+		subject := testPeerID1.String()
+		mustSetEdge(t, g, "s1", subject, Full.EdgeWeight())
+		registry.SetTrustGraph(g)
+
+		if registry.IsAllowed(testPeerID1) {
+			t.Fatal("no root identity wired: computed validity must grant no bonus (fail-safe)")
 		}
 	})
 
@@ -355,11 +493,17 @@ func TestRegistry_EffectiveTrustLevel_LivePath(t *testing.T) {
 	t.Run("direct assignment wins where higher than computed floor", func(t *testing.T) {
 		registry := NewRegistry(false, nil)
 		registry.AddPeer(&TrustedPeer{ID: testPeerID1, TrustLevel: Admin})
+		registry.SetRootIdentity(testPeerID3)
 		g := trust.NewGraph()
 		subject := testPeerID1.String()
-		mustSetEdge(t, g, "s1", subject, Marginal.EdgeWeight())
-		mustSetEdge(t, g, "s2", subject, Marginal.EdgeWeight())
-		mustSetEdge(t, g, "s3", subject, Marginal.EdgeWeight())
+		root := testPeerID3.String()
+		// Well-formed, root-anchored marginal votes really would compute
+		// VALID (floor Marginal) on their own — the point of this test is
+		// that Admin still wins since it is already higher.
+		for _, signer := range []string{"s1", "s2", "s3"} {
+			mustSetEdge(t, g, root, signer, Marginal.EdgeWeight())
+			mustSetEdge(t, g, signer, subject, Marginal.EdgeWeight())
+		}
 		registry.SetTrustGraph(g)
 
 		if got := registry.EffectiveTrustLevel(testPeerID1); got != Admin {

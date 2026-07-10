@@ -198,8 +198,8 @@ type PeerView struct {
 	// EffectiveTrustLevel is the direct assignment augmented by computed
 	// web-of-trust validity (see Registry.EffectiveTrustLevel).
 	EffectiveTrustLevel TrustLevel `json:"effective_trust_level"`
-	// ComputedValid reports PGP web-of-trust validity independent of the
-	// direct assignment (see Registry.IsValid / ComputeValidity).
+	// ComputedValid reports ROOTED PGP web-of-trust validity independent of
+	// the direct assignment (see Registry.IsValid / ComputeValidityRooted).
 	ComputedValid bool `json:"computed_valid"`
 	// MarginalTrusterCount / FullTrusterCount are the tallies behind
 	// ComputedValid, exposed for UI/debugging.

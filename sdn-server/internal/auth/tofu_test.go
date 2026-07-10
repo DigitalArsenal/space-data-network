@@ -214,3 +214,61 @@ func TestReconcileGrantSubjectKey_UsesGrantSubjectEmbeddedKey(t *testing.T) {
 		}
 	})
 }
+
+// TestReconcileGrantSubjectKey_NonEd25519Subject_SkipsCleanly is the
+// minor-fix regression test: SignGrant/Verify only require the GRANTER to
+// be Ed25519, so a verified grant can legitimately name a non-Ed25519
+// (e.g. secp256k1) subject. Since a TOFU-bound wallet signing key is
+// always Ed25519, ReconcileGrantSubjectKey must recognize this case and
+// skip cleanly (nil, nothing to reconcile) instead of erroring or
+// misreporting ErrTOFUConflict against an existing, unrelated Ed25519
+// binding.
+func TestReconcileGrantSubjectKey_NonEd25519Subject_SkipsCleanly(t *testing.T) {
+	secpPriv, secpPub, err := libp2pcrypto.GenerateKeyPair(libp2pcrypto.Secp256k1, 256)
+	if err != nil {
+		t.Fatalf("GenerateKeyPair (secp256k1 subject): %v", err)
+	}
+	_ = secpPriv
+	subjectID, err := peer.IDFromPublicKey(secpPub)
+	if err != nil {
+		t.Fatalf("IDFromPublicKey (secp256k1 subject): %v", err)
+	}
+
+	granterPriv, _, err := libp2pcrypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key (granter): %v", err)
+	}
+	grant, err := peers.SignGrant(granterPriv, peers.Grant{
+		Subject: subjectID,
+		Level:   peers.Trusted,
+	})
+	if err != nil {
+		t.Fatalf("SignGrant: %v", err)
+	}
+	if err := grant.Verify(); err != nil {
+		t.Fatalf("Verify: %v (a non-Ed25519 SUBJECT should not affect an Ed25519-granter grant's validity)", err)
+	}
+
+	boundHex := newTestSigningKeyHex(t)
+	dir := t.TempDir()
+	store, err := NewUserStore(filepath.Join(dir, "nonEd25519subject.db"), []config.UserEntry{
+		{XPub: "xpub-nonEd25519-subject", Name: "NonEd25519Subject", TrustLevel: "standard", SigningPubKeyHex: boundHex},
+	})
+	if err != nil {
+		t.Fatalf("NewUserStore: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.ReconcileGrantSubjectKey("xpub-nonEd25519-subject", grant); err != nil {
+		t.Fatalf("ReconcileGrantSubjectKey() with non-Ed25519 subject: error = %v, want nil (skip cleanly)", err)
+	}
+
+	// The existing Ed25519 TOFU binding must be left untouched.
+	user, err := store.GetUser("xpub-nonEd25519-subject")
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if user.SigningPubKeyHex != boundHex {
+		t.Fatalf("SigningPubKeyHex = %q, want unchanged %q", user.SigningPubKeyHex, boundHex)
+	}
+}

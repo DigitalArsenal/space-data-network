@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/libp2p/go-libp2p/core/peer"
+
+	"github.com/spacedatanetwork/sdn-server/internal/trust"
 )
 
 func TestTrustedConnectionGater_Block(t *testing.T) {
@@ -127,6 +129,43 @@ func TestTrustBasedRateLimiter(t *testing.T) {
 	if mps3 != 10000 || mpm3 != 100000 || burst3 != 500 {
 		t.Errorf("Admin peer limits: got mps=%v mpm=%v burst=%v, want mps=10000 mpm=100000 burst=500",
 			mps3, mpm3, burst3)
+	}
+}
+
+// TestTrustBasedRateLimiter_UsesEffectiveTrustLevel is the minor-fix
+// regression test: GetLimits must consult EffectiveTrustLevel (the same
+// LIVE, computed-validity-augmented accessor IsAllowed consults), not the
+// direct-assignment-only GetTrustLevel — otherwise a peer the connection
+// gater treats as allowed (computed validity floors it at Marginal) could
+// still be handed the 0,0,0 "should not happen" limits reserved for
+// directly Untrusted/Never peers.
+func TestTrustBasedRateLimiter_UsesEffectiveTrustLevel(t *testing.T) {
+	registry := NewRegistry(true, nil) // strict mode: unknown peers start Untrusted
+	registry.SetRootIdentity(testPeerID3)
+
+	g := trust.NewGraph()
+	subject := testPeerID1.String()
+	root := testPeerID3.String()
+	for _, signer := range []string{"s1", "s2", "s3"} {
+		mustSetEdge(t, g, root, signer, Marginal.EdgeWeight())
+		mustSetEdge(t, g, signer, subject, Marginal.EdgeWeight())
+	}
+	registry.SetTrustGraph(g)
+
+	if !registry.IsAllowed(testPeerID1) {
+		t.Fatal("test setup: peer should be computed-valid and allowed")
+	}
+
+	limiter := NewTrustBasedRateLimiter(registry, 100, 1000, 50)
+	mps, mpm, burst := limiter.GetLimits(testPeerID1)
+
+	if mps == 0 && mpm == 0 && burst == 0 {
+		t.Fatalf("GetLimits gave 0,0,0 for a computed-valid (allowed) peer: mps=%v mpm=%v burst=%v", mps, mpm, burst)
+	}
+	// EffectiveTrustLevel floors a computed-valid peer at Marginal, which
+	// is numerically the same tier as the legacy "Limited" rate bucket.
+	if mps != 10 || mpm != 100 || burst != 10 {
+		t.Fatalf("GetLimits = mps=%v mpm=%v burst=%v, want the Marginal/Limited bucket (10, 100, 10)", mps, mpm, burst)
 	}
 }
 

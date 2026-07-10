@@ -189,8 +189,16 @@ func NewTrustBasedRateLimiter(registry *Registry, baseMPS float64, baseMPM, base
 }
 
 // GetLimits returns the rate limits for a peer based on their trust level.
+//
+// Uses EffectiveTrustLevel (the same LIVE computed-validity-augmented
+// accessor IsAllowed consults), not the direct-assignment-only
+// GetTrustLevel: a peer that computed web-of-trust validity elevates to
+// Marginal-or-above is allowed to connect by IsAllowed/InterceptSecured,
+// and must not then be handed the 0,0,0 "should not happen" limits below
+// (which assumed only a directly Untrusted/Never peer could ever reach
+// this point).
 func (trl *TrustBasedRateLimiter) GetLimits(peerID peer.ID) (mps float64, mpm, burst int) {
-	trustLevel := trl.registry.GetTrustLevel(peerID)
+	trustLevel := trl.registry.EffectiveTrustLevel(peerID)
 
 	switch trustLevel {
 	case Untrusted, Never:

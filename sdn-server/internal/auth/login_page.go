@@ -995,8 +995,16 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool, host s
 
       var trustName = (verifyData.user.trust_level || 'unknown').toLowerCase();
 
+      // C5a: /auth/me and /auth/verify serialize TrustLevel via its PGP
+      // ownertrust name (TrustLevel.String() in internal/peers/trust.go) —
+      // Trusted(3) now comes back as "full", not "trusted". The allowlist
+      // below must accept BOTH the legacy names (kept for back-compat with
+      // any cached/older client code) and the new PGP names, so a Trusted
+      // user's server-side authorization (authorizedPostLoginPath, numeric
+      // trust >= peers.Standard) is never contradicted by a client-side
+      // redirect refusal.
       if ((nextPath.indexOf('/admin/') === 0 && trustName === 'admin') ||
-          (nextPath.indexOf('/webui/') === 0 && ['standard', 'trusted', 'admin'].indexOf(trustName) !== -1) ||
+          (nextPath.indexOf('/webui/') === 0 && ['standard', 'trusted', 'full', 'admin'].indexOf(trustName) !== -1) ||
           nextPath === '/') {
         window.__sdnSetStatus('Redirecting...', 'success');
         setTimeout(function(){ window.location.href = nextPath; }, 600);
