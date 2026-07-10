@@ -65,6 +65,8 @@ describe('sdn upstream webui cutover contract', () => {
       'spaceaware/fonts/ibm-plex-mono-latin-500.woff2',
       'spaceaware/fonts/ibm-plex-mono-latin-600.woff2',
       'spaceaware/fonts/jetbrains-mono-latin-var.woff2',
+      'spaceaware/lib/login.test.ts',
+      'spaceaware/lib/login.ts',
       'spaceaware/main.ts',
       'spaceaware/primitives/Kicker.svelte',
       'spaceaware/primitives/Panel.svelte',
