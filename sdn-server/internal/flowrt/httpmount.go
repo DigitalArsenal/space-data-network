@@ -63,7 +63,15 @@ type FlowMountDeps struct {
 	CapRegistry *modulert.CapabilityRegistry
 
 	// NodeCtx is the node identity/config context exposed to built-in
-	// hostcalls (plugin.getConfig, node.peerId, ...). May be empty.
+	// hostcalls (plugin.getConfig, node.peerId, ...). May be empty. Also
+	// carries the operator-controlled trust policies consulted before a
+	// flow bundle's wasm bytes are admitted: NodeCtx.CapabilityPolicy (loop
+	// B1-followup, see loadFlowInstance) and NodeCtx.ModuleSignaturePolicy
+	// (loop I2 — mirrors modulert's module load path, loop I1; see
+	// LoadMountedFlow/LoadFlowService). A nil NodeCtx, or a non-nil NodeCtx
+	// with ModuleSignaturePolicy left nil (the zero value, same as today),
+	// means signature enforcement is not configured for this node: flow
+	// bundles load exactly as before that gate existed.
 	NodeCtx *modulert.NodeContext
 
 	// MaxMemoryPages caps each flow instance's linear memory (64KB pages,
@@ -407,12 +415,32 @@ func LoadMountedFlow(flowRef string, deps FlowMountDeps) (*MountedFlow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read flow artifact: %w", err)
 	}
+	// Publication-trailer signature gate (loop I2 — defensive hardening,
+	// FAIL CLOSED once configured): admitted here, before the trailer is
+	// stripped or the bytes reach the AOT cache/runtime, reusing the exact
+	// same gate the module load path applies (modulert.instantiateWASM,
+	// loop I1) via the exported wrapper. Sourced from deps.NodeCtx (mirrors
+	// how loadFlowInstance below sources NodeCtx.CapabilityPolicy) rather
+	// than a separate FlowMountDeps field, so a node.go wiring that already
+	// builds one NodeContext for a mount attaches both trust policies in
+	// one place. A nil NodeCtx / nil ModuleSignaturePolicy (today's
+	// default) makes this inert: EnforceModuleSignaturePolicy always
+	// strips and returns the portable payload but never rejects.
+	//
 	// Published artifacts carry an appended SDS $REC publication trailer
 	// (MBL+PNM per the module publication standard); the runtime payload is
 	// the bytes before it. Stripping BEFORE the AOT cache keeps the cache
 	// keyed on the executable payload, so a precompiled artifact shipped
 	// into the cache dir matches regardless of publication metadata.
-	wasmBytes = modulert.StripPublicationTrailer(wasmBytes)
+	var sigPolicy *modulert.ModuleSignaturePolicy
+	if deps.NodeCtx != nil {
+		sigPolicy = deps.NodeCtx.ModuleSignaturePolicy
+	}
+	portableBytes, _, sigErr := modulert.EnforceModuleSignaturePolicy(sigPolicy, wasmBytes)
+	if sigErr != nil {
+		return nil, fmt.Errorf("flow %q: %w", flowRef, sigErr)
+	}
+	wasmBytes = portableBytes
 
 	// Content-hash identity for the operator capability-policy gate (loop
 	// B1-followup) — computed HERE, on the portable bytes, before any AOT
