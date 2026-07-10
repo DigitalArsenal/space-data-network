@@ -171,6 +171,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/status", h.handleAuthStatus)
 	mux.HandleFunc("/api/auth/users", h.handleUsers)
 	mux.HandleFunc("/api/auth/users/", h.handleUserByXPub)
+	mux.HandleFunc("/api/auth/attest", h.handleAttest)
 	if h.externalLoginUI {
 		// U1.2: the embedded SpaceAware login owns /login; the legacy page
 		// stays reachable for wallet creation / recovery flows.
