@@ -13,6 +13,11 @@ package trust
 // The combination is a pluggable ScoreFunc; DefaultScoreFunc is a bounded,
 // monotone combination with saturating normalization. WS11.3 layers
 // incremental recompute + threshold status flips on top.
+//
+// C3 additionally layers an optional crypto security-bond bonus on top of
+// the web-of-trust score (a stake-based tiebreaker/weight, not a gate): see
+// bond.go for the BondSource seam and the fail-safe, bounded weighting
+// rule.
 
 import (
 	"math"
@@ -62,6 +67,20 @@ type ScoringConfig struct {
 	TrusterCountSaturation float64 // truster counts
 	TrusterFundsSaturation float64 // truster weighted funds
 
+	// BondChainWeights discounts a bond's amount by chain (mirroring
+	// FundTypeWeights). Unlisted chains default to weight 1.0; a nil map
+	// weights every chain equally.
+	BondChainWeights map[Chain]float64
+	// BondSaturation is the chain-weighted bond balance at which the bond
+	// bonus reaches ~63% of BondBonusCap. Must be > 0 for bonds to have any
+	// effect.
+	BondSaturation float64
+	// BondBonusCap bounds how much a bond can ever add to a subject's
+	// score, however large its balance — a bond WEIGHTS an existing
+	// web-of-trust score, it never dominates it. 0 disables bond weighting
+	// entirely.
+	BondBonusCap float64
+
 	// Component weights for DefaultScoreFunc; normalized internally.
 	WeightOwnFunds            float64
 	WeightTrusterCount        float64
@@ -86,9 +105,16 @@ func DefaultScoringConfig() ScoringConfig {
 			FundETH:        0.85,
 			FundOther:      0.5,
 		},
-		FundsSaturation:           100_000, // $100k weighted ≈ 63% of the funds component
-		TrusterCountSaturation:    10,
-		TrusterFundsSaturation:    1_000_000,
+		FundsSaturation:        100_000, // $100k weighted ≈ 63% of the funds component
+		TrusterCountSaturation: 10,
+		TrusterFundsSaturation: 1_000_000,
+		BondChainWeights: map[Chain]float64{
+			ChainBitcoin:  0.9,
+			ChainEthereum: 0.85,
+			ChainSolana:   0.8,
+		},
+		BondSaturation:            50_000, // $50k weighted bond ≈ 63% of the bond bonus cap
+		BondBonusCap:              0.15,   // a bond can move a score by at most 0.15
 		WeightOwnFunds:            0.25,
 		WeightTrusterCount:        0.10,
 		WeightTrusterCountTrusted: 0.20,
@@ -139,6 +165,19 @@ type ScoreInputs struct {
 	// DirectEdgeWeight: the evaluator's own edge weight to the subject
 	// (0 when the evaluator has no direct edge).
 	DirectEdgeWeight float64
+
+	// BondWeightedBalance: subject's chain-weighted crypto security-bond
+	// balance, summed across every configured BondSource (0 if none are
+	// configured, or all are unreachable/absent for this subject — see
+	// bond.go).
+	BondWeightedBalance float64
+	// BondBonus: the bounded, saturating score addend derived from
+	// BondWeightedBalance (see bondBonus in bond.go). Always 0 when the
+	// subject has zero trusters, however large its balance — a bond cannot
+	// substitute for being vouched for. DefaultScoreFunc adds this on top
+	// of the web-of-trust score; custom ScoreFunc implementations may use
+	// it or ignore it.
+	BondBonus float64
 }
 
 // ScoreFunc combines raw inputs into a score in [0,1]. Pluggable so
@@ -153,8 +192,10 @@ func saturate(v, scale float64) float64 {
 	return 1 - math.Exp(-v/scale)
 }
 
-// DefaultScoreFunc: normalized weighted sum of saturated components.
-// Monotone in every input; always in [0,1].
+// DefaultScoreFunc: normalized weighted sum of saturated web-of-trust
+// components, plus the bounded bond bonus (see bond.go). Monotone in every
+// input; always in [0,1] — the bond bonus can only push the sum up, and the
+// final result is clamped at 1 rather than allowed to exceed it.
 func DefaultScoreFunc(in ScoreInputs, cfg ScoringConfig) float64 {
 	wsum := cfg.WeightOwnFunds + cfg.WeightTrusterCount + cfg.WeightTrusterCountTrusted +
 		cfg.WeightTrusterFunds + cfg.WeightTrusterFundsTrusted + cfg.WeightDirectEdge
@@ -167,21 +208,26 @@ func DefaultScoreFunc(in ScoreInputs, cfg ScoringConfig) float64 {
 		cfg.WeightTrusterFunds*saturate(in.TrusterFundsTotal, cfg.TrusterFundsSaturation) +
 		cfg.WeightTrusterFundsTrusted*saturate(in.TrusterFundsAmongTrusted, cfg.TrusterFundsSaturation) +
 		cfg.WeightDirectEdge*math.Max(0, math.Min(1, in.DirectEdgeWeight))
-	return s / wsum
+	base := s / wsum
+	return math.Min(1, base+math.Max(0, in.BondBonus))
 }
 
-// Evaluator computes scores over a Graph + FundsProvider with a config and
-// a pluggable ScoreFunc.
+// Evaluator computes scores over a Graph + FundsProvider (+ optional
+// BondSources) with a config and a pluggable ScoreFunc.
 type Evaluator struct {
-	Graph   *Graph
-	Funds   FundsProvider
+	Graph *Graph
+	Funds FundsProvider
+	// Bonds are the configured crypto security-bond sources (C3). Optional:
+	// nil/empty means no bond weighting, matching pre-C3 behavior exactly.
+	Bonds   []BondSource
 	Config  ScoringConfig
 	ScoreFn ScoreFunc
 }
 
-// NewEvaluator wires the default config + score function.
-func NewEvaluator(g *Graph, funds FundsProvider) *Evaluator {
-	return &Evaluator{Graph: g, Funds: funds, Config: DefaultScoringConfig(), ScoreFn: DefaultScoreFunc}
+// NewEvaluator wires the default config + score function. bonds is optional
+// (variadic) so existing two-argument call sites are unaffected.
+func NewEvaluator(g *Graph, funds FundsProvider, bonds ...BondSource) *Evaluator {
+	return &Evaluator{Graph: g, Funds: funds, Bonds: bonds, Config: DefaultScoringConfig(), ScoreFn: DefaultScoreFunc}
 }
 
 // Inputs assembles the raw scoring signals for subject as seen by evaluator.
@@ -208,6 +254,9 @@ func (ev *Evaluator) Inputs(evaluator, subject string) ScoreInputs {
 	if e, ok := ev.Graph.Edge(evaluator, subject); ok {
 		in.DirectEdgeWeight = e.Weight
 	}
+
+	in.BondWeightedBalance = ev.BondBalance(subject)
+	in.BondBonus = bondBonus(in.BondWeightedBalance, in.TrusterCountTotal, ev.Config)
 	return in
 }
 
