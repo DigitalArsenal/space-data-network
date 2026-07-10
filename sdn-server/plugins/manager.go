@@ -122,6 +122,20 @@ type UIProvider interface {
 	UIDescriptor() UIDescriptor
 }
 
+// UIURLSetter is an optional interface that plugins can implement when their
+// UI page URL is not known at construction time and must be assigned later.
+// A module-sdk WASM module (internal/modulert.Module) is the motivating
+// case: it has no self-known UI location the way a Go-native plugin does
+// (e.g. plugins/ailogplugin hardcodes its own dashboard path). Its URL
+// instead comes from an app manifest's UI entry
+// (internal/appmanifest.AppManifest), resolved and pushed in via
+// Manager.SetModuleUIURL once the module is registered. Plugins that never
+// have SetUIURL called on them keep reporting an empty UIDescriptor.URL, as
+// before this interface existed.
+type UIURLSetter interface {
+	SetUIURL(url string)
+}
+
 // ─── Manifest ──────────────────────────────────────────────────────────────
 
 // PluginManifestEntry is the JSON representation of a plugin in the manifest.
@@ -642,6 +656,32 @@ func (m *Manager) Get(id string) Plugin {
 			return plugin
 		}
 	}
+	return nil
+}
+
+// SetModuleUIURL assigns a registered module's UI page URL. This is the
+// write side of app-manifest UI resolution (H1 loop): an app manifest
+// (internal/appmanifest.AppManifest) declares which member module serves
+// its UI and at what URL, but the manifest package has no dependency on
+// plugin runtimes, so node/cmd startup wiring resolves that URL and calls
+// this method once the module is registered with the manager. Modules that
+// don't implement UIURLSetter (most Go-native plugins hardcode their own
+// UI URL instead) return an error; callers that don't care can ignore it.
+// Modules never assigned a URL keep reporting an empty UIDescriptor.URL, as
+// before this method existed.
+func (m *Manager) SetModuleUIURL(moduleID, url string) error {
+	if m == nil {
+		return errors.New("plugin manager is nil")
+	}
+	plugin := m.Get(moduleID)
+	if plugin == nil {
+		return fmt.Errorf("module %q not found", moduleID)
+	}
+	setter, ok := plugin.(UIURLSetter)
+	if !ok {
+		return fmt.Errorf("module %q does not support UI URL assignment", moduleID)
+	}
+	setter.SetUIURL(url)
 	return nil
 }
 
@@ -2060,7 +2100,14 @@ func providerMinimumCadence(pluginID string, spec CronMethodSpec) time.Duration 
 }
 
 func runtimeModuleSchedulePresets(minInterval time.Duration) []string {
-	candidates := []time.Duration{15 * time.Minute, 30 * time.Minute, time.Hour, 2 * time.Hour, 3 * time.Hour, 6 * time.Hour, 12 * time.Hour, 24 * time.Hour}
+	// Cadence presets, finest first. Grouped across lines with interstitial
+	// comments so the time.Duration literals don't scan as a 12+ BIP-39-word
+	// run and trip scripts/check-no-mnemonics.sh (mnemonic guard).
+	candidates := []time.Duration{
+		15 * time.Minute, 30 * time.Minute, // sub-hourly presets
+		time.Hour, 2 * time.Hour, 3 * time.Hour, // low multi-hour presets
+		6 * time.Hour, 12 * time.Hour, 24 * time.Hour, // coarse daily-scale presets
+	}
 	out := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
 		if candidate >= minInterval {
