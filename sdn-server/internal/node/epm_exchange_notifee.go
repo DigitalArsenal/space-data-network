@@ -19,12 +19,25 @@ func (e *epmExchangeNotifee) Listen(network.Network, multiaddr.Multiaddr)      {
 func (e *epmExchangeNotifee) ListenClose(network.Network, multiaddr.Multiaddr) {}
 func (e *epmExchangeNotifee) OpenedStream(network.Network, network.Stream)     {}
 func (e *epmExchangeNotifee) ClosedStream(network.Network, network.Stream)     {}
-func (e *epmExchangeNotifee) Disconnected(network.Network, network.Conn)       {}
+
+// Disconnected taps the node_activity_read activity ring (M2 activity
+// capability, caps/nodeactivity.go). e.node.activityRing.Append is
+// nil/panic-safe, so this is safe even before/after e.node is fully torn
+// down.
+func (e *epmExchangeNotifee) Disconnected(_ network.Network, conn network.Conn) {
+	if e == nil || e.node == nil || conn == nil {
+		return
+	}
+	e.node.activityRing.Append("peer_disconnected", conn.RemotePeer().String(), "")
+}
 
 func (e *epmExchangeNotifee) Connected(_ network.Network, conn network.Conn) {
 	if e == nil || e.node == nil || conn == nil {
 		return
 	}
+	// Tap the activity ring (M2 activity capability, caps/nodeactivity.go)
+	// before the existing EPM-exchange side effect below.
+	e.node.activityRing.Append("peer_connected", conn.RemotePeer().String(), "")
 	e.node.requestConnectedPeerEPM(conn.RemotePeer(), "peer-connect")
 }
 

@@ -136,6 +136,14 @@ type Node struct {
 	// reads from; runBandwidthHistorySampler (Start()) samples
 	// bandwidthCounter into it every bandwidthHistorySampleInterval.
 	bandwidthHistory *caps.BandwidthHistoryRing
+	// activityRing is the shared, bounded (256-entry) in-memory event ring
+	// backing the node_activity_read capability (M2 activity capability,
+	// caps/nodeactivity.go — the SpaceAware NODE dashboard's ACTIVITY LOG
+	// widget). Constructed once in New() and never nil; taps across this
+	// package (and epm_exchange_notifee.go / internal/api/channels.go, via
+	// the ChannelHandler's optional ActivityRing field) Append to it, the
+	// node_activity_read capability reads it back via Snapshot.
+	activityRing *caps.ActivityRing
 
 	// Trusted peer management
 	peerRegistry *peers.Registry
@@ -199,6 +207,7 @@ func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 		cancel:                  cancel,
 		startedAt:               time.Now().UTC(),
 		bandwidthHistory:        caps.NewBandwidthHistoryRing(nodeStatusBandwidthHistoryCapacity),
+		activityRing:            caps.NewActivityRing(caps.ActivityRingCapacity),
 		sdnDiscoveryFlagsByPeer: make(map[peer.ID]map[string]time.Time),
 		sdnDiscoveryAddrsByPeer: make(map[peer.ID][]string),
 		epmExchangeLastRequest:  make(map[peer.ID]time.Time),
@@ -916,6 +925,13 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 	// bridge/body-ref delivery needed.
 	reg.Register("node_status_read", caps.NewNodeStatusCapFactory(n.buildNodeStatusMaterials()))
 
+	// Node-activity read capability (M2 activity capability, caps/
+	// nodeactivity.go) — read-only, bounded (256-entry) snapshot of the
+	// HOST's own recent activity ring for the SpaceAware NODE dashboard's
+	// ACTIVITY LOG widget. Pure JSON result, no bridge/body-ref delivery
+	// needed.
+	reg.Register("node_activity_read", caps.NewNodeActivityCapFactory(n.buildNodeActivityMaterials()))
+
 	return reg
 }
 
@@ -951,6 +967,15 @@ func (n *Node) buildNodeStatusMaterials() caps.NodeStatusMaterials {
 		materials.BandwidthHistory = history.Snapshot
 	}
 	return materials
+}
+
+// buildNodeActivityMaterials wires the node's shared activityRing into the
+// node_activity_read capability (materials only — mirrors
+// buildNodeStatusMaterials above). n.activityRing is constructed in New()
+// and is never nil, but NodeActivityMaterials.Ring degrades gracefully
+// (empty snapshot) if it ever were.
+func (n *Node) buildNodeActivityMaterials() caps.NodeActivityMaterials {
+	return caps.NodeActivityMaterials{Ring: n.activityRing}
 }
 
 // buildP2PCapOptions wires the node's live services into the p2p_read
@@ -2108,6 +2133,13 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 		// Process the message
 		if err := n.protocol.HandlePubSubMessage(schema, msg.Data, msg.ReceivedFrom); err != nil {
 			log.Warnf("Failed to handle message on %s: %v", schema, err)
+		} else {
+			// Activity-ring tap (M2 activity capability, caps/
+			// nodeactivity.go): a nil error here means
+			// HandlePubSubMessage validated AND stored the record (see its
+			// doc — every reject path returns a non-nil error), so this is
+			// the ACCEPTED/stored record, not every gossip delivery.
+			n.activityRing.Append("record_stored", msg.ReceivedFrom.String(), schema)
 		}
 
 		// The aggregate "PNM.fbs" topic is deliberately skipped by
@@ -2172,6 +2204,10 @@ func (n *Node) handleDatasetFeedHeadSubscription(sub *pubsub.Subscription, schem
 func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) error {
 	materialized, err := n.materializeDatasetPublicationPNM(ctx, schema, pnmBytes, from)
 	if materialized {
+		// Activity-ring tap (M2 activity capability, caps/nodeactivity.go):
+		// materialized==true means validity is already established (signed,
+		// parsed, imported) — reject paths must never reach here.
+		n.activityRing.Append("pnm_publication", from.String(), schema)
 		// Pinned-dataset supersede (gateway loop G.4): the PNM pointer may
 		// arrive after its feed-head import — re-evaluate on either event.
 		n.scheduleDatasetSupersede(schema)
@@ -3553,6 +3589,14 @@ func (n *Node) FlowManager() *flowrt.FlowManager {
 // mounted).
 func (n *Node) MountedFlows() []*flowrt.MountedFlow {
 	return n.mountedFlows
+}
+
+// ActivityRing returns the node's bounded activity-event ring (loop U4.2 /
+// M2) so out-of-package emitters (the channels API's grant tap) can share
+// the same ring the node_activity_read hostcall reads. May be nil on
+// struct-literal test Nodes — consumers must stay nil-safe.
+func (n *Node) ActivityRing() *caps.ActivityRing {
+	return n.activityRing
 }
 
 // MountFlows registers the config-declared flow HTTP mounts
