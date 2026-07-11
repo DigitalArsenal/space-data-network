@@ -104,6 +104,13 @@ var sensitiveCapabilities = map[string]bool{
 //     counts) or a local statfs/bandwidth-counter probe; nothing here reads
 //     node secrets (contrast wallet_sign/keyslot) or another peer's data
 //     (contrast p2p_read), and it has no mutation/outbound side effects.
+//   - node_activity_read: read-only, bounded (256-entry) in-memory ring of
+//     the HOST's OWN recent activity — peer connect/disconnect, PNM
+//     publication, schema record ingest, channel-grant issuance (M2
+//     activity capability — caps/nodeactivity.go). Entries carry only
+//     already-public libp2p peer IDs and short schema/channel names; no
+//     addresses, no key material, no other PII. Same rationale as
+//     node_status_read: no secrets, no mutation, no outbound side effects.
 //   - crypto_hash, crypto_sign, crypto_verify, crypto_encrypt,
 //     crypto_decrypt, crypto_key_agreement, crypto_kdf: stateless
 //     functions over caller-SUPPLIED byte material only (see
@@ -135,6 +142,7 @@ var sensitiveCapabilities = map[string]bool{
 var benignCapabilities = map[string]bool{
 	"p2p_read":             true,
 	"node_status_read":     true,
+	"node_activity_read":   true,
 	"crypto_hash":          true,
 	"crypto_sign":          true,
 	"crypto_verify":        true,

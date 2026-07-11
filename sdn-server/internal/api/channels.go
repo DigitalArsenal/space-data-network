@@ -16,7 +16,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
+	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -33,6 +36,12 @@ type ChannelHandler struct {
 	accessAudit      ChannelAccessAuditSink
 	replayMu         sync.Mutex
 	encryptedIndexes map[string]struct{}
+	// activityRing is the node's shared node_activity_read event ring (M2
+	// activity capability, caps/nodeactivity.go). Optional — nil unless
+	// ChannelHandlerOptions.ActivityRing is set — and every Append call is
+	// itself nil-safe, so a handler constructed without one behaves
+	// exactly as before this field was added.
+	activityRing *caps.ActivityRing
 }
 
 type EncryptedNativeStreamHeader struct {
@@ -60,6 +69,11 @@ type ChannelHandlerOptions struct {
 	EncryptedStreams EncryptedNativeStreamDecryptor
 	KeyEnvelopes     PrivateChannelKeyEnvelopeProvider
 	AccessAudit      ChannelAccessAuditSink
+	// ActivityRing is the node's shared node_activity_read event ring (M2
+	// activity capability, caps/nodeactivity.go). Optional: a nil value
+	// (the zero value, so every existing construction compiles unchanged)
+	// simply means issueGrant's activity-ring tap is a no-op.
+	ActivityRing *caps.ActivityRing
 }
 
 const (
@@ -133,6 +147,7 @@ func NewChannelHandlerWithOptions(store *storage.FlatSQLStore, options ChannelHa
 		keyEnvelopes:     options.KeyEnvelopes,
 		accessAudit:      options.AccessAudit,
 		encryptedIndexes: make(map[string]struct{}),
+		activityRing:     options.ActivityRing,
 	}
 }
 
@@ -559,7 +574,27 @@ func (h *ChannelHandler) issueGrant(w http.ResponseWriter, r *http.Request, pars
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.tapGrantIssued(parsed.ChannelID, grant.Subject)
 	writeJSON(w, http.StatusCreated, channelGrantResponse(grant))
+}
+
+// tapGrantIssued taps the node_activity_read activity ring (M2 activity
+// capability, caps/nodeactivity.go) after a channel grant is successfully
+// issued. h.activityRing is optional (see ChannelHandlerOptions) and
+// ActivityRing.Append is itself nil-safe, so this is always safe to call
+// unconditionally.
+//
+// The grant subject is a peer ID or an operator-chosen alias — not always
+// one or the other — so: a value that decodes as a libp2p peer ID goes in
+// peer_id (letting the dashboard cross-reference it against other
+// peer-scoped events); anything else is folded into detail instead of
+// being silently dropped.
+func (h *ChannelHandler) tapGrantIssued(channelID, subject string) {
+	if _, err := peer.Decode(subject); err == nil {
+		h.activityRing.Append("grant_issued", subject, channelID)
+		return
+	}
+	h.activityRing.Append("grant_issued", "", channelID+" subject="+subject)
 }
 
 func (h *ChannelHandler) publishPublic(w http.ResponseWriter, r *http.Request, parsed channels.ChannelID) {
