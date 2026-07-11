@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -76,6 +77,9 @@ func TestKeyslotGetOperationIsGone(t *testing.T) {
 		KeySlots: map[string][]byte{
 			"provider-signing": seed,
 		},
+		KeySlotAlgorithms: map[string]string{
+			"provider-signing": modulert.KeySlotAlgorithmEd25519,
+		},
 	}
 
 	handler := newKeyslotCapHandler(nodeCtx)
@@ -112,6 +116,9 @@ func TestKeyslotSignReturnsSignatureNotKey(t *testing.T) {
 	nodeCtx := &modulert.NodeContext{
 		KeySlots: map[string][]byte{
 			"provider-signing": seed,
+		},
+		KeySlotAlgorithms: map[string]string{
+			"provider-signing": modulert.KeySlotAlgorithmEd25519,
 		},
 	}
 	publicKey := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
@@ -170,6 +177,9 @@ func TestKeyslotSignSecp256k1ReturnsSignatureNotKey(t *testing.T) {
 		KeySlots: map[string][]byte{
 			"provider-secp": priv,
 		},
+		KeySlotAlgorithms: map[string]string{
+			"provider-secp": modulert.KeySlotAlgorithmSecp256k1,
+		},
 	}
 	pub := secp256k1.PrivKeyFromBytes(priv).PubKey()
 
@@ -224,6 +234,9 @@ func TestKeyslotUnwrapRoundTrips(t *testing.T) {
 	nodeCtx := &modulert.NodeContext{
 		KeySlots: map[string][]byte{
 			"provider-wrapping": slotPriv,
+		},
+		KeySlotAlgorithms: map[string]string{
+			"provider-wrapping": modulert.KeySlotAlgorithmX25519,
 		},
 	}
 
@@ -320,6 +333,10 @@ func TestKeyslotUnwrapWrongSlotFailsClosed(t *testing.T) {
 			"provider-wrapping": slotPriv,
 			"other-slot":        otherSlotPriv,
 		},
+		KeySlotAlgorithms: map[string]string{
+			"provider-wrapping": modulert.KeySlotAlgorithmX25519,
+			"other-slot":        modulert.KeySlotAlgorithmX25519,
+		},
 	}
 
 	curve := ecdh.X25519()
@@ -366,6 +383,153 @@ func TestKeyslotUnwrapWrongSlotFailsClosed(t *testing.T) {
 
 	assertResponseNeverContainsKeyMaterial(t, responseEnvelope, slotPriv)
 	assertResponseNeverContainsKeyMaterial(t, responseEnvelope, otherSlotPriv)
+}
+
+// decodeCapErrorEnvelope decodes a capability response envelope and asserts
+// it is an error, returning the error message for content checks.
+func decodeCapErrorEnvelope(t *testing.T, responseEnvelope []byte) string {
+	t.Helper()
+	var response struct {
+		Ok    bool `json:"ok"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(responseEnvelope, &response); err != nil {
+		t.Fatalf("decode response envelope: %v", err)
+	}
+	if response.Ok {
+		t.Fatalf("expected error envelope, got ok response: %s", responseEnvelope)
+	}
+	return response.Error.Message
+}
+
+// TestKeyslotCrossProtocolUseIsDenied is the loop B9.5 acceptance test: a
+// 32-byte slot is bit-compatible with both an Ed25519 seed and an X25519
+// scalar, so the oracle must refuse to drive a slot through any algorithm
+// other than the one it was declared for. Each denial must happen before any
+// key operation runs and must leak no key material.
+func TestKeyslotCrossProtocolUseIsDenied(t *testing.T) {
+	signingSeed := throwawayEd25519Seed()
+	wrappingKey := throwawayX25519PrivateKey()
+	nodeCtx := &modulert.NodeContext{
+		KeySlots: map[string][]byte{
+			"provider-signing":  signingSeed,
+			"provider-wrapping": wrappingKey,
+		},
+		KeySlotAlgorithms: map[string]string{
+			"provider-signing":  modulert.KeySlotAlgorithmEd25519,
+			"provider-wrapping": modulert.KeySlotAlgorithmX25519,
+		},
+	}
+	handler := newKeyslotCapHandler(nodeCtx)
+
+	// keyslot.unwrap against the Ed25519 signing slot: the exact B9.5
+	// scenario (signing seed used as an X25519 scalar). The request is
+	// otherwise well-formed so only the algorithm gate can reject it.
+	curve := ecdh.X25519()
+	ephemeralPriv, err := curve.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey(ephemeral): %v", err)
+	}
+	unwrapRequest, _ := json.Marshal(map[string]string{
+		"slotId":             "provider-signing",
+		"ephemeralPublicKey": base64.StdEncoding.EncodeToString(ephemeralPriv.PublicKey().Bytes()),
+		"nonce":              base64.StdEncoding.EncodeToString(make([]byte, 12)),
+		"ciphertext":         base64.StdEncoding.EncodeToString([]byte("opaque-ciphertext")),
+	})
+	responseEnvelope, err := handler("keyslot.unwrap", unwrapRequest)
+	if err != nil {
+		t.Fatalf("keyslot.unwrap returned Go error: %v", err)
+	}
+	message := decodeCapErrorEnvelope(t, responseEnvelope)
+	if !strings.Contains(message, "not declared for algorithm") {
+		t.Fatalf("unwrap of an ed25519-declared slot must be an algorithm denial, got: %q", message)
+	}
+	assertResponseNeverContainsKeyMaterial(t, responseEnvelope, signingSeed)
+
+	// keyslot.sign against the X25519 wrapping slot (both algorithms).
+	for _, algo := range []string{"", "secp256k1"} {
+		signRequest, _ := json.Marshal(map[string]string{
+			"slotId":    "provider-wrapping",
+			"payload":   base64.StdEncoding.EncodeToString([]byte("data")),
+			"algorithm": algo,
+		})
+		responseEnvelope, err := handler("keyslot.sign", signRequest)
+		if err != nil {
+			t.Fatalf("keyslot.sign returned Go error: %v", err)
+		}
+		message := decodeCapErrorEnvelope(t, responseEnvelope)
+		if !strings.Contains(message, "not declared for algorithm") {
+			t.Fatalf("sign with an x25519-declared slot (algo %q) must be an algorithm denial, got: %q", algo, message)
+		}
+		assertResponseNeverContainsKeyMaterial(t, responseEnvelope, wrappingKey)
+	}
+
+	// keyslot.sign with the signing slot but the wrong sign algorithm: the
+	// declaration binds one algorithm, not the operation family.
+	signRequest, _ := json.Marshal(map[string]string{
+		"slotId":    "provider-signing",
+		"payload":   base64.StdEncoding.EncodeToString([]byte("data")),
+		"algorithm": "secp256k1",
+	})
+	responseEnvelope, err = handler("keyslot.sign", signRequest)
+	if err != nil {
+		t.Fatalf("keyslot.sign returned Go error: %v", err)
+	}
+	message = decodeCapErrorEnvelope(t, responseEnvelope)
+	if !strings.Contains(message, "not declared for algorithm") {
+		t.Fatalf("secp256k1 sign with an ed25519-declared slot must be an algorithm denial, got: %q", message)
+	}
+	assertResponseNeverContainsKeyMaterial(t, responseEnvelope, signingSeed)
+}
+
+// TestKeyslotUndeclaredSlotFailsClosed asserts a slot present in KeySlots but
+// absent from KeySlotAlgorithms is unusable by every operation — a provider
+// that forgets the declaration gets a dead slot, never an unrestricted one.
+func TestKeyslotUndeclaredSlotFailsClosed(t *testing.T) {
+	seed := throwawayEd25519Seed()
+	nodeCtx := &modulert.NodeContext{
+		KeySlots: map[string][]byte{
+			"undeclared-slot": seed,
+		},
+	}
+	handler := newKeyslotCapHandler(nodeCtx)
+
+	signRequest, _ := json.Marshal(map[string]string{
+		"slotId":  "undeclared-slot",
+		"payload": base64.StdEncoding.EncodeToString([]byte("data")),
+	})
+	responseEnvelope, err := handler("keyslot.sign", signRequest)
+	if err != nil {
+		t.Fatalf("keyslot.sign returned Go error: %v", err)
+	}
+	message := decodeCapErrorEnvelope(t, responseEnvelope)
+	if !strings.Contains(message, "no declared algorithm") {
+		t.Fatalf("sign with an undeclared slot must fail closed on the declaration, got: %q", message)
+	}
+	assertResponseNeverContainsKeyMaterial(t, responseEnvelope, seed)
+
+	curve := ecdh.X25519()
+	ephemeralPriv, err := curve.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey(ephemeral): %v", err)
+	}
+	unwrapRequest, _ := json.Marshal(map[string]string{
+		"slotId":             "undeclared-slot",
+		"ephemeralPublicKey": base64.StdEncoding.EncodeToString(ephemeralPriv.PublicKey().Bytes()),
+		"nonce":              base64.StdEncoding.EncodeToString(make([]byte, 12)),
+		"ciphertext":         base64.StdEncoding.EncodeToString([]byte("opaque-ciphertext")),
+	})
+	responseEnvelope, err = handler("keyslot.unwrap", unwrapRequest)
+	if err != nil {
+		t.Fatalf("keyslot.unwrap returned Go error: %v", err)
+	}
+	message = decodeCapErrorEnvelope(t, responseEnvelope)
+	if !strings.Contains(message, "no declared algorithm") {
+		t.Fatalf("unwrap with an undeclared slot must fail closed on the declaration, got: %q", message)
+	}
+	assertResponseNeverContainsKeyMaterial(t, responseEnvelope, seed)
 }
 
 // TestKeyslotSignMissingSlotFailsClosed asserts an unknown slot id is a
