@@ -124,8 +124,14 @@ export function createRouter(onChange: RouteListener): {
 
   return {
     navigate(path: string): void {
-      const route = matchSpaceAwareRoute(path);
-      const target = route?.path ?? '/login';
+      // Canonicalize only the PATH portion — the query string rides along
+      // untouched (GROUPS' "OPEN IN 3D" hands Orbital `?group=`, and the
+      // console's own `?route=`/`?group=` deep links share the scheme).
+      const queryIndex = path.search(/[?#]/);
+      const pathname = queryIndex === -1 ? path : path.slice(0, queryIndex);
+      const suffix = queryIndex === -1 ? '' : path.slice(queryIndex);
+      const route = matchSpaceAwareRoute(pathname);
+      const target = (route?.path ?? '/login') + suffix;
       if (hashMode) {
         if (window.location.hash !== `#${target}`) {
           window.location.hash = `#${target}`;
@@ -133,7 +139,7 @@ export function createRouter(onChange: RouteListener): {
           emit();
         }
       } else {
-        if (window.location.pathname !== target) {
+        if (window.location.pathname + window.location.search !== target) {
           window.history.pushState({}, '', target);
         }
         emit();
