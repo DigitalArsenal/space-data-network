@@ -6,11 +6,12 @@
    * `<!-- MAIN -->` + `<!-- QR overlay -->` blocks and its README.md.
    *
    * NODE (`screens/console/NodeView.svelte`, loop U3.1/U3.2), PEERS
-   * (`screens/console/PeersView.svelte`, loop U3.3), and DATA
-   * (`screens/console/DataView.svelte`, loop U3.5) are real ports now; the
-   * remaining three render `ConsolePlaceholder.svelte` inside this same
-   * shell (rail/header/chips all real, view body pending its own loop
-   * task) — see the loop task's scope note.
+   * (`screens/console/PeersView.svelte`, loop U3.3), DATA
+   * (`screens/console/DataView.svelte`, loop U3.5), and CHANNELS
+   * (`screens/console/ChannelsView.svelte`, loop U3.7) are real ports now;
+   * the remaining two (GROUPS/CONJUNCTION) render `ConsolePlaceholder.svelte`
+   * inside this same shell (rail/header/chips all real, view body pending
+   * its own loop task) — see the loop task's scope note.
    *
    * Deep-link compatibility: the `.dc.html` prototype reads `?route=` /
    * `?group=` once on mount (`componentDidMount`) and sets its OWN internal
@@ -28,6 +29,7 @@
   import NodeView from './console/NodeView.svelte';
   import PeersView from './console/PeersView.svelte';
   import DataView from './console/DataView.svelte';
+  import ChannelsView from './console/ChannelsView.svelte';
   import QrOverlay from './console/QrOverlay.svelte';
   import { consoleHealthChipState, resolveConsoleDeepLinkPath, type ConsoleHealthChipState } from '../lib/console';
   import { parseHealthResponse } from '../lib/login';
@@ -103,6 +105,8 @@
         <PeersView {apiClient} {authState} />
       {:else if activeView === 'data'}
         <DataView {apiClient} />
+      {:else if activeView === 'channels'}
+        <ChannelsView {apiClient} {authState} />
       {:else}
         <ConsolePlaceholder view={activeView} />
       {/if}
