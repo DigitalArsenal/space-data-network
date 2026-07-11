@@ -42,6 +42,7 @@
   import { parseConsoleDeepLinkQuery } from '../../lib/console';
   import {
     GROUPS_CONJUNCTION_CONSOLE_PATH,
+    groupConjunctionPath,
     GROUPS_CONJUNCTION_DEMO_TAG_TITLE,
     GROUPS_LEGEND_CAPTION,
     GROUPS_OWNERSHIP_DEMO_TAG_TITLE,
@@ -149,7 +150,8 @@
   }
 
   function screenForConjunctions() {
-    navigate(GROUPS_CONJUNCTION_CONSOLE_PATH);
+    // Carry the selected group so ConjunctionView pre-selects its pill.
+    navigate(detailView ? groupConjunctionPath(detailView.id) : GROUPS_CONJUNCTION_CONSOLE_PATH);
   }
 </script>
 
