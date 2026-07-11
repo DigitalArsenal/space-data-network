@@ -6,21 +6,25 @@
    * `<!-- MAIN -->` + `<!-- QR overlay -->` blocks and its README.md.
    *
    * NODE (`screens/console/NodeView.svelte`, loop U3.1/U3.2), PEERS
-   * (`screens/console/PeersView.svelte`, loop U3.3), DATA
-   * (`screens/console/DataView.svelte`, loop U3.5), and CHANNELS
-   * (`screens/console/ChannelsView.svelte`, loop U3.7) are real ports now;
-   * the remaining two (GROUPS/CONJUNCTION) render `ConsolePlaceholder.svelte`
-   * inside this same shell (rail/header/chips all real, view body pending
-   * its own loop task) — see the loop task's scope note.
+   * (`screens/console/PeersView.svelte`, loop U3.3), GROUPS
+   * (`screens/console/GroupsView.svelte`, loop U3.8, client-local per
+   * decision D5), DATA (`screens/console/DataView.svelte`, loop U3.5), and
+   * CHANNELS (`screens/console/ChannelsView.svelte`, loop U3.7) are real
+   * ports now; the remaining view (CONJUNCTION) renders
+   * `ConsolePlaceholder.svelte` inside this same shell (rail/header/chips
+   * all real, view body pending its own loop task) — see the loop task's
+   * scope note.
    *
    * Deep-link compatibility: the `.dc.html` prototype reads `?route=` /
    * `?group=` once on mount (`componentDidMount`) and sets its OWN internal
    * state — it never had real sub-routes. This app already has real
    * History-API paths (`/console/{view}`, `router.ts`), so on mount here we
    * map any `?route=` query param onto the equivalent path and `navigate()`
-   * to it once; `?group=` is captured but not consumed yet (the GROUPS view
-   * that would use it is a later loop task) so the scheme keeps working
-   * once that view lands.
+   * to it once; `?group=` is captured here but consumed by
+   * `GroupsView.svelte` itself (it re-parses `window.location.search` on
+   * its own mount — see that file's doc comment), since a `?group=`-only
+   * deep link (no `?route=`) never triggers this component's own
+   * `navigate()` call.
    */
   import { onMount } from 'svelte';
   import ConsoleRail from './console/ConsoleRail.svelte';
@@ -28,6 +32,7 @@
   import ConsolePlaceholder from './console/ConsolePlaceholder.svelte';
   import NodeView from './console/NodeView.svelte';
   import PeersView from './console/PeersView.svelte';
+  import GroupsView from './console/GroupsView.svelte';
   import DataView from './console/DataView.svelte';
   import ChannelsView from './console/ChannelsView.svelte';
   import QrOverlay from './console/QrOverlay.svelte';
@@ -103,6 +108,8 @@
         <NodeView onOpenQr={openQr} {apiClient} {healthState} />
       {:else if activeView === 'peers'}
         <PeersView {apiClient} {authState} />
+      {:else if activeView === 'groups'}
+        <GroupsView {navigate} />
       {:else if activeView === 'data'}
         <DataView {apiClient} />
       {:else if activeView === 'channels'}
