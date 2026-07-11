@@ -30,6 +30,7 @@ import (
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
+	libp2pmetrics "github.com/libp2p/go-libp2p/core/metrics"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/routing"
@@ -91,6 +92,13 @@ const (
 	// buildTipQueue's doc comment), so this is a node-local default rather
 	// than something read from config.
 	tipQueueTTLSweepInterval = 15 * time.Minute
+
+	// nodeStatusBandwidthHistoryCapacity/nodeStatusBandwidthSampleInterval
+	// size the node_status_read.status bandwidth sparkline (caps/
+	// nodestatus.go, M1 node-status capability): 24 samples at a 5s
+	// cadence covers ~2 minutes of history.
+	nodeStatusBandwidthHistoryCapacity = 24
+	nodeStatusBandwidthSampleInterval  = 5 * time.Second
 )
 
 // Node represents a Space Data Network node.
@@ -114,6 +122,20 @@ type Node struct {
 	mountedFlows   []*flowrt.MountedFlow
 	config         *config.Config
 	identityBundle *IdentityBundle
+
+	// startedAt is captured once, at New(), for the node_status_read
+	// capability's uptime_seconds (caps/nodestatus.go, M1 node-status
+	// capability).
+	startedAt time.Time
+	// bandwidthCounter is the libp2p bandwidth reporter wired into the host
+	// via libp2p.BandwidthReporter (init(), near hostOptions below) — purely
+	// additive instrumentation, does not change any existing host behavior.
+	// Feeds node_status_read.status's "bandwidth" totals/rates.
+	bandwidthCounter *libp2pmetrics.BandwidthCounter
+	// bandwidthHistory is the in-memory sparkline ring node_status_read
+	// reads from; runBandwidthHistorySampler (Start()) samples
+	// bandwidthCounter into it every bandwidthHistorySampleInterval.
+	bandwidthHistory *caps.BandwidthHistoryRing
 
 	// Trusted peer management
 	peerRegistry *peers.Registry
@@ -175,6 +197,8 @@ func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 		config:                  cfg,
 		ctx:                     nodeCtx,
 		cancel:                  cancel,
+		startedAt:               time.Now().UTC(),
+		bandwidthHistory:        caps.NewBandwidthHistoryRing(nodeStatusBandwidthHistoryCapacity),
 		sdnDiscoveryFlagsByPeer: make(map[peer.ID]map[string]time.Time),
 		sdnDiscoveryAddrsByPeer: make(map[peer.ID][]string),
 		epmExchangeLastRequest:  make(map[peer.ID]time.Time),
@@ -365,6 +389,12 @@ func (n *Node) init() error {
 
 	// Create libp2p host with connection gater for trust-based filtering
 	var dhtRouting *dht.IpfsDHT
+	// Bandwidth counter (M1 node-status capability, caps/nodestatus.go):
+	// purely additive instrumentation via libp2p.BandwidthReporter — it does
+	// not change any existing host behavior, only records byte counters the
+	// node_status_read.status hostcall (and its background sparkline
+	// sampler, see runBandwidthHistorySampler) later reads back.
+	n.bandwidthCounter = libp2pmetrics.NewBandwidthCounter()
 	hostOptions := append([]libp2p.Option{
 		libp2p.Identity(privKey),
 		libp2p.UserAgent(versioninfo.AgentVersion),
@@ -392,6 +422,7 @@ func (n *Node) init() error {
 		}),
 		libp2p.NATPortMap(),
 		libp2p.EnableNATService(),
+		libp2p.BandwidthReporter(n.bandwidthCounter),
 	)...)
 	if err != nil {
 		return fmt.Errorf("failed to create libp2p host: %w", err)
@@ -878,7 +909,48 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 	// bridge.
 	reg.RegisterBridgeAware("p2p_read", caps.NewP2PCapFactory(n.buildP2PCapOptions()))
 
+	// Node-status read capability (M1 node-status capability, caps/
+	// nodestatus.go) — read-only snapshot of the HOST's own runtime state
+	// (uptime, record-store totals, disk headroom, service/mode, libp2p
+	// bandwidth) for the SpaceAware NODE dashboard. Pure JSON result, no
+	// bridge/body-ref delivery needed.
+	reg.Register("node_status_read", caps.NewNodeStatusCapFactory(n.buildNodeStatusMaterials()))
+
 	return reg
+}
+
+// buildNodeStatusMaterials wires the node's live services into the
+// node_status_read capability as closures/values (materials only — mirrors
+// buildP2PCapOptions above).
+func (n *Node) buildNodeStatusMaterials() caps.NodeStatusMaterials {
+	materials := caps.NodeStatusMaterials{
+		StartedAt:   n.startedAt,
+		Mode:        n.config.Mode,
+		StoragePath: n.config.Storage.Path,
+		DiskStat:    caps.StatDisk,
+	}
+	if n.store != nil {
+		store := n.store
+		materials.StorageSummary = func() (int64, int64, error) {
+			summary, err := store.DataSummary()
+			if err != nil {
+				return 0, 0, err
+			}
+			return summary.TotalBytes, summary.TotalRecords, nil
+		}
+	}
+	if n.bandwidthCounter != nil {
+		bwc := n.bandwidthCounter
+		materials.BandwidthTotals = func() (int64, int64, float64, float64, bool) {
+			stats := bwc.GetBandwidthTotals()
+			return stats.TotalIn, stats.TotalOut, stats.RateIn, stats.RateOut, true
+		}
+	}
+	if n.bandwidthHistory != nil {
+		history := n.bandwidthHistory
+		materials.BandwidthHistory = history.Snapshot
+	}
+	return materials
 }
 
 // buildP2PCapOptions wires the node's live services into the p2p_read
@@ -1409,6 +1481,15 @@ func (n *Node) Start(ctx context.Context) error {
 	if n.store != nil {
 		n.wg.Add(1)
 		go n.runStorageQuotaGC()
+	}
+
+	// Bandwidth sparkline sampler (M1 node-status capability, caps/
+	// nodestatus.go): periodically snapshots n.bandwidthCounter into
+	// n.bandwidthHistory so node_status_read.status can serve a short
+	// history for the SpaceAware NODE dashboard.
+	if n.bandwidthCounter != nil {
+		n.wg.Add(1)
+		go n.runBandwidthHistorySampler()
 	}
 
 	// Start EPM auto-publish via PubSub (every 30 minutes)
@@ -2230,6 +2311,35 @@ func (n *Node) runStorageQuotaGC() {
 			return
 		case <-ticker.C:
 			n.enforceStorageQuota()
+		}
+	}
+}
+
+// runBandwidthHistorySampler periodically snapshots n.bandwidthCounter's
+// cumulative totals/rates into n.bandwidthHistory (M1 node-status
+// capability, caps/nodestatus.go), so node_status_read.status can serve a
+// ~2-minute sparkline (nodeStatusBandwidthHistoryCapacity samples at
+// nodeStatusBandwidthSampleInterval). Started from Start() only when a
+// bandwidth counter is wired; stopped via n.ctx.Done()/n.wg.Wait() in
+// Stop(), the same shape as runStorageQuotaGC above.
+func (n *Node) runBandwidthHistorySampler() {
+	defer n.wg.Done()
+
+	ticker := time.NewTicker(nodeStatusBandwidthSampleInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-n.ctx.Done():
+			return
+		case <-ticker.C:
+			stats := n.bandwidthCounter.GetBandwidthTotals()
+			n.bandwidthHistory.Add(caps.BandwidthHistorySample{
+				At:       time.Now().UTC(),
+				TotalIn:  stats.TotalIn,
+				TotalOut: stats.TotalOut,
+				RateIn:   stats.RateIn,
+				RateOut:  stats.RateOut,
+			})
 		}
 	}
 }
