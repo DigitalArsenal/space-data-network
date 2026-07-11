@@ -7,8 +7,9 @@
    * ("spacedatastandards.org" wordmark + package version chip + standards
    * count + FLATSQL STORE sync status + a DATA STANDARDS/MODULES toggle)
    * above either the STANDARDS explorer (`DataStandardsExplorer.svelte`) or
-   * a MODULES placeholder panel. The shared `ConsoleHeader` already renders
-   * "DATA · STANDARDS WORKBENCH", so this view starts at the banner.
+   * the MODULES panel (`DataModulesPanel.svelte`). The shared `ConsoleHeader`
+   * already renders "DATA · STANDARDS WORKBENCH", so this view starts at the
+   * banner.
    *
    * All data wiring lives in `../../lib/standards-data.ts`
    * (channels+stats+node/info fetch/join/sort) and `../../lib/standards-fbs.ts`
@@ -21,20 +22,18 @@
    * package doesn't actually provide.
    *
    * MODULES (loading/unloading analysis & propagation modules from
-   * connected peers) and the STANDARDS detail's own DATA tab (a local
-   * FlatSQL query workbench) are BOTH explicitly out of this task's scope
-   * (loop task U3.6) — both render the same honest
-   * `ConsolePlaceholder.svelte`-style copy instead of the mock's fabricated
-   * module list / query output fixtures. The MODULES toggle itself still
-   * has to render pixel-true (loop task spec), so it's a real, working
-   * toggle — only its content is a placeholder.
+   * connected peers, loop task U3.6) renders `DataModulesPanel.svelte` —
+   * split out into its own file per this doc comment's original "could get
+   * huge" note (see that component's own doc comment for its data wiring).
+   * The STANDARDS detail's own DATA tab (a local FlatSQL query workbench,
+   * also loop task U3.6) is wired inside `DataStandardsExplorer.svelte`
+   * instead — see that file's doc comment.
    */
   import { onMount } from 'svelte';
   import DataStandardsExplorer from './DataStandardsExplorer.svelte';
+  import DataModulesPanel from './DataModulesPanel.svelte';
   import {
     DATA_VIEW_TOGGLES,
-    MODULES_PLACEHOLDER_COPY,
-    MODULES_PLACEHOLDER_TITLE,
     buildSchemaSyncBannerView,
     dataViewToggleStyle,
     formatSdsPackageVersionChip,
@@ -108,12 +107,9 @@
   </section>
 
   {#if dataView === 'standards'}
-    <DataStandardsExplorer {entries} {selectedCode} onSelect={selectStandard} {loaded} {sdsPackageVersion} />
+    <DataStandardsExplorer {entries} {selectedCode} onSelect={selectStandard} {loaded} {sdsPackageVersion} {apiClient} />
   {:else}
-    <section class="sdn-data-modules-placeholder">
-      <div class="sdn-data-placeholder-title">{MODULES_PLACEHOLDER_TITLE}</div>
-      <p class="sdn-data-placeholder-copy">{MODULES_PLACEHOLDER_COPY}</p>
-    </section>
+    <DataModulesPanel {apiClient} />
   {/if}
 </div>
 
@@ -204,26 +200,4 @@
       color 0.14s;
   }
 
-  .sdn-data-modules-placeholder {
-    background: linear-gradient(178deg, #16252f, #0a141b);
-    border: 1px solid rgba(90, 150, 180, 0.22);
-    box-shadow: inset 0 1px 0 rgba(150, 210, 240, 0.14);
-    padding: 15px 16px;
-  }
-
-  .sdn-data-placeholder-title {
-    font-family: 'Chakra Petch', ui-monospace, monospace;
-    font-weight: 600;
-    font-size: 13px;
-    letter-spacing: 0.08em;
-    color: #9fb3bc;
-    margin-bottom: 8px;
-  }
-
-  .sdn-data-placeholder-copy {
-    margin: 0;
-    font-size: 11px;
-    line-height: 1.5;
-    color: #5d7681;
-  }
 </style>
