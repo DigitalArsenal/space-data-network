@@ -9,6 +9,9 @@ import {
   buildNodePeerSummary,
   buildNodeServiceView,
   buildNodeStorageView,
+  buildNodeThroughputView,
+  buildThroughputBars,
+  buildThroughputRateView,
   composeServiceVersionLine,
   deriveIdentitySubtitle,
   deriveListenAddressRows,
@@ -20,15 +23,20 @@ import {
   formatBytes,
   formatConnectedPeersCount,
   formatModeLabel,
+  formatRate,
+  formatThroughputAxisLabel,
+  formatUptime,
   loadNodeDashboardData,
   parseEpmIdentity,
   parseNodeInfo,
   parseNodePeers,
   parseNodeStats,
+  parseNodeStatus,
   parseVCardFn,
   serviceStatusDotColor,
   slugifyForFilename,
   truncateMiddle,
+  type NodeBandwidthHistorySample,
   type NodeInfoApiClient,
 } from './node-data';
 
@@ -234,6 +242,90 @@ describe('formatConnectedPeersCount', () => {
   });
 });
 
+describe('formatUptime', () => {
+  it('renders an honest "—" for missing/invalid input', () => {
+    expect(formatUptime(null)).toBe('—');
+    expect(formatUptime(undefined)).toBe('—');
+    expect(formatUptime(Number.NaN)).toBe('—');
+    expect(formatUptime(-1)).toBe('—');
+  });
+
+  it('renders "00:00" for zero uptime', () => {
+    expect(formatUptime(0)).toBe('00:00');
+  });
+
+  it('drops the day segment entirely under 24h, rendering plain "HH:MM"', () => {
+    expect(formatUptime(45)).toBe('00:00'); // sub-minute
+    expect(formatUptime(60)).toBe('00:01');
+    expect(formatUptime(3600)).toBe('01:00');
+    expect(formatUptime(86399)).toBe('23:59'); // one second under a day
+  });
+
+  it('adds the day segment starting at exactly 24h', () => {
+    expect(formatUptime(86400)).toBe('1d 00:00');
+  });
+
+  it('matches the mock\'s "4d 02:11" style for a real multi-day sample (355860s)', () => {
+    expect(formatUptime(355860)).toBe('4d 02:51');
+  });
+
+  it('keeps HH:MM zero-padded for a large day count', () => {
+    expect(formatUptime(864000)).toBe('10d 00:00'); // exactly 10 days
+  });
+
+  it('truncates fractional seconds rather than rounding', () => {
+    expect(formatUptime(119.9)).toBe('00:01'); // 119s -> 1m59s, not rounded up to 2m
+  });
+});
+
+describe('formatRate', () => {
+  it('renders an honest "—" for missing/invalid input', () => {
+    expect(formatRate(null)).toBe('—');
+    expect(formatRate(undefined)).toBe('—');
+    expect(formatRate(Number.NaN)).toBe('—');
+    expect(formatRate(-5)).toBe('—');
+  });
+
+  it('renders 0 bytes/s explicitly rather than a blank/dash', () => {
+    expect(formatRate(0)).toBe('0 B/s');
+  });
+
+  it('formats sub-1024 values as whole bytes/s', () => {
+    expect(formatRate(512)).toBe('512 B/s');
+    expect(formatRate(1023)).toBe('1023 B/s');
+  });
+
+  it('formats the loop U4.1 sample inputs (3452 bps -> KB/s, 3452000 bps -> MB/s)', () => {
+    expect(formatRate(3452)).toBe('3.37 KB/s');
+    expect(formatRate(3_452_000)).toBe('3.29 MB/s');
+  });
+
+  it('formats GB/s with two-decimal precision (unlike formatBytes\' one-decimal style)', () => {
+    expect(formatRate(5 * 1024 ** 3)).toBe('5.00 GB/s');
+  });
+
+  it('caps at TB/s rather than overflowing further', () => {
+    expect(formatRate(2 * 1024 ** 4)).toBe('2.00 TB/s');
+  });
+});
+
+describe('formatThroughputAxisLabel', () => {
+  it('renders a seconds label under a minute', () => {
+    expect(formatThroughputAxisLabel(2)).toBe('−10s'); // 2 samples * 5s
+  });
+
+  it('switches to a rounded minutes label at/above 60s', () => {
+    expect(formatThroughputAxisLabel(12)).toBe('−1m'); // exactly 60s
+    expect(formatThroughputAxisLabel(24)).toBe('−2m'); // a full 24-sample buffer, ~2 min per the daemon's own doc
+  });
+
+  it('renders "−0s" for zero/negative/non-finite sample counts rather than throwing', () => {
+    expect(formatThroughputAxisLabel(0)).toBe('−0s');
+    expect(formatThroughputAxisLabel(-3)).toBe('−0s');
+    expect(formatThroughputAxisLabel(Number.NaN)).toBe('−0s');
+  });
+});
+
 describe('composeServiceVersionLine', () => {
   it('composes all three fields honestly when present', () => {
     expect(
@@ -418,6 +510,79 @@ describe('parseNodePeers', () => {
   });
 });
 
+describe('parseNodeStatus', () => {
+  it('parses a full /api/v1/node/status payload (disk + service + bandwidth + history all present)', () => {
+    const payload = {
+      uptime_seconds: 355_860,
+      started_at: '2026-07-06T12:00:00Z',
+      store: { total_bytes: 117_832, total_records: 8, storage_path: '/var/lib/sdn/flatsql' },
+      disk: { capacity_bytes: 32_000_000_000, free_bytes: 20_000_000_000, available_bytes: 19_500_000_000 },
+      service: { state: 'running', mode: 'desktop-local', autostart_known: false },
+      bandwidth: {
+        total_in_bytes: 1_000_000,
+        total_out_bytes: 500_000,
+        rate_in_bps: 3_452_000,
+        rate_out_bps: 922_000,
+        history: [
+          { ts: '2026-07-06T12:00:00Z', total_in_bytes: 900_000, total_out_bytes: 450_000, rate_in_bps: 3_000_000, rate_out_bps: 800_000 },
+          { ts: '2026-07-06T12:00:05Z', total_in_bytes: 1_000_000, total_out_bytes: 500_000, rate_in_bps: 3_452_000, rate_out_bps: 922_000 },
+        ],
+      },
+    };
+    expect(parseNodeStatus(payload)).toEqual({
+      uptimeSeconds: 355_860,
+      startedAt: '2026-07-06T12:00:00Z',
+      store: { totalBytes: 117_832, totalRecords: 8, storagePath: '/var/lib/sdn/flatsql' },
+      disk: { capacityBytes: 32_000_000_000, freeBytes: 20_000_000_000, availableBytes: 19_500_000_000 },
+      service: { state: 'running', mode: 'desktop-local', autostartKnown: false },
+      bandwidth: {
+        totalInBytes: 1_000_000,
+        totalOutBytes: 500_000,
+        rateInBps: 3_452_000,
+        rateOutBps: 922_000,
+        history: [
+          { ts: '2026-07-06T12:00:00Z', totalInBytes: 900_000, totalOutBytes: 450_000, rateInBps: 3_000_000, rateOutBps: 800_000 },
+          { ts: '2026-07-06T12:00:05Z', totalInBytes: 1_000_000, totalOutBytes: 500_000, rateInBps: 3_452_000, rateOutBps: 922_000 },
+        ],
+      },
+    });
+  });
+
+  it('preserves a real "disk: null" / "bandwidth: null" as an honest null, not a parse failure', () => {
+    const result = parseNodeStatus({ uptime_seconds: 10, disk: null, bandwidth: null, service: { state: 'running', mode: 'desktop-local', autostart_known: false } });
+    expect(result.disk).toBeNull();
+    expect(result.bandwidth).toBeNull();
+  });
+
+  it('degrades every field to null/empty for a malformed/non-object payload', () => {
+    expect(parseNodeStatus(null)).toEqual({
+      uptimeSeconds: null,
+      startedAt: null,
+      store: null,
+      disk: null,
+      service: null,
+      bandwidth: null,
+    });
+    expect(parseNodeStatus('not an object').uptimeSeconds).toBeNull();
+    expect(parseNodeStatus([1, 2, 3]).bandwidth).toBeNull();
+  });
+
+  it('drops malformed history entries rather than crashing on them', () => {
+    const result = parseNodeStatus({
+      bandwidth: { rate_in_bps: 1, rate_out_bps: 1, history: [{ rate_in_bps: 5 }, null, 'garbage', 42] },
+    });
+    expect(result.bandwidth?.history).toEqual([
+      { ts: null, totalInBytes: null, totalOutBytes: null, rateInBps: 5, rateOutBps: null },
+    ]);
+  });
+
+  it('parses service.autostart_known as a real boolean in either direction', () => {
+    expect(parseNodeStatus({ service: { autostart_known: true } }).service?.autostartKnown).toBe(true);
+    expect(parseNodeStatus({ service: { autostart_known: false } }).service?.autostartKnown).toBe(false);
+    expect(parseNodeStatus({ service: {} }).service?.autostartKnown).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // View-model builders
 // ---------------------------------------------------------------------------
@@ -451,6 +616,31 @@ describe('buildNodeHealthView', () => {
       storagePercent: 0,
     });
   });
+
+  it('renders the mock\'s "used / capacity" pattern with a real (un-clamped, tiny) percent when disk capacity is real (loop U4.1)', () => {
+    const view = buildNodeHealthView(null, 117_832, 34_359_738_368 /* 32 GiB */);
+    expect(view.storageUsed).toBe('115.1 KB');
+    expect(view.storageTotal).toBe('32.0 GB');
+    expect(view.storagePercent).toBeGreaterThan(0);
+    expect(view.storagePercent).toBeLessThan(0.001); // honest sliver, not artificially clamped up
+  });
+
+  it('shows the real capacity even when used bytes are unavailable, with a 0% bar', () => {
+    const view = buildNodeHealthView(null, null, 34_359_738_368);
+    expect(view.storageUsed).toBe('—');
+    expect(view.storageTotal).toBe('32.0 GB');
+    expect(view.storagePercent).toBe(0);
+  });
+
+  it('treats a null/zero/negative disk capacity as "capacity unknown", not a fabricated total', () => {
+    expect(buildNodeHealthView(null, 117_832, null).storageTotal).toBe('— capacity unknown');
+    expect(buildNodeHealthView(null, 117_832, 0).storageTotal).toBe('— capacity unknown');
+    expect(buildNodeHealthView(null, 117_832, -5).storageTotal).toBe('— capacity unknown');
+  });
+
+  it('clamps a used-over-capacity percent at 100 rather than overflowing', () => {
+    expect(buildNodeHealthView(null, 200, 100).storagePercent).toBe(100);
+  });
 });
 
 describe('buildNodeIdentityView', () => {
@@ -478,7 +668,7 @@ describe('buildNodeIdentityView', () => {
 });
 
 describe('buildNodeServiceView', () => {
-  it('reports RUNNING with an honest version line when node/info succeeded', () => {
+  it('reports RUNNING with an honest version line when node/info succeeded, uptime defaulting to "—" when omitted', () => {
     const info = parseNodeInfo({ version: '0.47.0', suite_version: '2.1.0', agent_version: 'spacedatanetwork/1.0.4' });
     expect(buildNodeServiceView(info)).toEqual({
       state: 'RUNNING',
@@ -490,6 +680,18 @@ describe('buildNodeServiceView', () => {
 
   it('renders every honest fallback when node/info is unavailable', () => {
     expect(buildNodeServiceView(null)).toEqual({ state: '—', version: '—', autostart: '—', uptime: '—' });
+  });
+
+  it('renders a real formatUptime-style uptime when /node/status uptime_seconds is real (loop U4.1)', () => {
+    const info = parseNodeInfo({ version: '0.47.0' });
+    expect(buildNodeServiceView(info, 355_860).uptime).toBe('4d 02:51');
+  });
+
+  it('keeps AUTOSTART an honest "—" no matter the uptime value — no daemon surface has ever backed it', () => {
+    const info = parseNodeInfo({ version: '0.47.0' });
+    expect(buildNodeServiceView(info, 355_860).autostart).toBe('—');
+    expect(buildNodeServiceView(info, 0).autostart).toBe('—');
+    expect(buildNodeServiceView(info, null).autostart).toBe('—');
   });
 });
 
@@ -565,6 +767,124 @@ describe('buildNodeStorageView', () => {
       freshnessKnown: false,
       schemaRows: [],
     });
+  });
+});
+
+describe('buildThroughputRateView', () => {
+  it('renders the down figure in its own adaptive unit and the up figure at that SAME unit', () => {
+    expect(buildThroughputRateView(3_452_000, 922_000)).toEqual({
+      downValue: '3.29',
+      downUnit: 'MB/s',
+      upValue: '0.88', // 922000 / 1024^2, expressed at the down figure's MB/s tier, not its own adaptive KB/s
+    });
+  });
+
+  it('renders an honest dash pair when rate_in_bps is missing/invalid, regardless of rate_out_bps', () => {
+    expect(buildThroughputRateView(null, 922_000)).toEqual({ downValue: '—', downUnit: '', upValue: '—' });
+    expect(buildThroughputRateView(Number.NaN, 922_000)).toEqual({ downValue: '—', downUnit: '', upValue: '—' });
+    expect(buildThroughputRateView(-1, 922_000)).toEqual({ downValue: '—', downUnit: '', upValue: '—' });
+  });
+
+  it('renders an honest dash for just the up figure when only rate_out_bps is missing', () => {
+    const view = buildThroughputRateView(3_452_000, null);
+    expect(view.downValue).toBe('3.29');
+    expect(view.upValue).toBe('—');
+  });
+
+  it('renders whole-byte precision at the B/s tier for a small rate_in_bps', () => {
+    expect(buildThroughputRateView(512, 256)).toEqual({ downValue: '512', downUnit: 'B/s', upValue: '256' });
+  });
+});
+
+describe('buildThroughputBars', () => {
+  function sample(rateInBps: number | null): NodeBandwidthHistorySample {
+    return { ts: null, totalInBytes: null, totalOutBytes: null, rateInBps, rateOutBps: null };
+  }
+
+  it('returns [] for an empty history', () => {
+    expect(buildThroughputBars([])).toEqual([]);
+  });
+
+  it('normalizes a single sample to 100% of itself', () => {
+    const bars = buildThroughputBars([sample(1000)]);
+    expect(bars).toHaveLength(1);
+    expect(bars[0]!.percent).toBe(100);
+  });
+
+  it('normalizes multiple samples to the max sample in the window', () => {
+    const bars = buildThroughputBars([sample(50), sample(100), sample(25)]);
+    expect(bars.map((b) => b.percent)).toEqual([50, 100, 25]);
+  });
+
+  it('renders every bar at 0% for a genuinely idle link (all-zero samples) rather than dividing by zero', () => {
+    const bars = buildThroughputBars([sample(0), sample(0)]);
+    expect(bars.map((b) => b.percent)).toEqual([0, 0]);
+  });
+
+  it('clamps a negative/malformed sample rate to 0 rather than a negative bar height', () => {
+    const bars = buildThroughputBars([sample(-50), sample(null), sample(100)]);
+    expect(bars.map((b) => b.percent)).toEqual([0, 0, 100]);
+  });
+
+  it('pairs each bar with a real lib/console.ts throughputBarGradient by index', () => {
+    const bars = buildThroughputBars([sample(1), sample(2), sample(3)]);
+    expect(bars.every((b) => typeof b.gradient === 'string' && b.gradient.includes('gradient'))).toBe(true);
+  });
+});
+
+describe('buildNodeThroughputView', () => {
+  function sample(rateInBps: number, tsOffsetSec: number): NodeBandwidthHistorySample {
+    return { ts: `t+${tsOffsetSec}`, totalInBytes: null, totalOutBytes: null, rateInBps, rateOutBps: null };
+  }
+
+  it('renders hasData:false (the pre-U4.1 NO TELEMETRY state) when bandwidth is null', () => {
+    expect(buildNodeThroughputView(null)).toEqual({
+      hasData: false,
+      downValue: '—',
+      downUnit: '',
+      upValue: '—',
+      collecting: false,
+      bars: [],
+      axisStart: '',
+      axisEnd: '',
+    });
+  });
+
+  it('renders the headline pair but collecting:true with no bars for 0-1 history samples', () => {
+    const view = buildNodeThroughputView({
+      totalInBytes: null,
+      totalOutBytes: null,
+      rateInBps: 3_452_000,
+      rateOutBps: 922_000,
+      history: [],
+    });
+    expect(view.hasData).toBe(true);
+    expect(view.collecting).toBe(true);
+    expect(view.downValue).toBe('3.29');
+    expect(view.bars).toEqual([]);
+    expect(view.axisStart).toBe('');
+  });
+
+  it('renders real bars + a real axis span for ≥2 history samples', () => {
+    const history = [sample(10, 0), sample(20, 5), sample(15, 10)];
+    const view = buildNodeThroughputView({
+      totalInBytes: null,
+      totalOutBytes: null,
+      rateInBps: 3_452_000,
+      rateOutBps: 922_000,
+      history,
+    });
+    expect(view.hasData).toBe(true);
+    expect(view.collecting).toBe(false);
+    expect(view.bars).toHaveLength(3);
+    expect(view.axisStart).toBe('−15s'); // 3 samples * 5s
+    expect(view.axisEnd).toBe('NOW');
+  });
+
+  it('computes the real "−2m"/"NOW" axis span for a full 24-sample buffer', () => {
+    const history = Array.from({ length: 24 }, (_, i) => sample(i + 1, i * 5));
+    const view = buildNodeThroughputView({ totalInBytes: null, totalOutBytes: null, rateInBps: 1, rateOutBps: 1, history });
+    expect(view.axisStart).toBe('−2m');
   });
 });
 
@@ -694,12 +1014,13 @@ describe('loadNodeDashboardData', () => {
     } as unknown as NodeInfoApiClient;
   }
 
-  it('assembles every surface into one snapshot on success', async () => {
+  it('assembles every surface into one snapshot on success, including the loop U4.1 /node/status surface', async () => {
     const apiClient = fakeApiClient({
       '/api/node/info': { peer_id: '12D3KooWExample', mode: 'desktop-local' },
       '/api/node/epm/json': { dn: 'SDN Operator', entity_type: 'operator' },
       '/stats': { connected_peers: 117, total_bytes: 117_832, total_records: 8 },
       '/peers': { peers: [{ peer_id: '12D3KooWAAA', addrs: [] }] },
+      '/node/status': { uptime_seconds: 355_860, disk: { capacity_bytes: 34_359_738_368 }, service: { autostart_known: false } },
     });
     const data = await loadNodeDashboardData(apiClient, fakeFetch(200, 'BEGIN:VCARD\nFN:Test\nEND:VCARD'));
     expect(data.nodeInfo?.peerId).toBe('12D3KooWExample');
@@ -708,6 +1029,8 @@ describe('loadNodeDashboardData', () => {
     expect(data.vcardText).toBe('BEGIN:VCARD\nFN:Test\nEND:VCARD');
     expect(data.stats?.connectedPeers).toBe(117);
     expect(data.peers).toEqual([{ peerId: '12D3KooWAAA', addrs: [] }]);
+    expect(data.status?.uptimeSeconds).toBe(355_860);
+    expect(data.status?.disk?.capacityBytes).toBe(34_359_738_368);
   });
 
   it('degrades only the failing surface to null/[] when one endpoint is unreachable, never throwing', async () => {
@@ -716,6 +1039,7 @@ describe('loadNodeDashboardData', () => {
       '/api/node/epm/json': { dn: 'SDN Operator' },
       '/stats': new Error('offline'),
       '/peers': new Error('offline'),
+      '/node/status': new Error('offline'),
     });
     const data = await loadNodeDashboardData(apiClient, throwingFetch());
     expect(data.nodeInfo).toBeNull();
@@ -723,5 +1047,20 @@ describe('loadNodeDashboardData', () => {
     expect(data.stats).toBeNull();
     expect(data.peers).toEqual([]);
     expect(data.vcardText).toBeNull();
+    expect(data.status).toBeNull();
+  });
+
+  it('degrades ONLY /node/status to null (e.g. an anonymous session\'s 401) while every other surface still succeeds', async () => {
+    const apiClient = fakeApiClient({
+      '/api/node/info': { peer_id: '12D3KooWExample' },
+      '/api/node/epm/json': { dn: 'SDN Operator' },
+      '/stats': { total_bytes: 117_832 },
+      '/peers': { peers: [] },
+      '/node/status': new Error('401 anonymous'),
+    });
+    const data = await loadNodeDashboardData(apiClient, fakeFetch(200, ''));
+    expect(data.status).toBeNull();
+    expect(data.nodeInfo?.peerId).toBe('12D3KooWExample');
+    expect(data.stats?.totalBytes).toBe(117_832);
   });
 });

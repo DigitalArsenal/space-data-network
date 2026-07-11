@@ -1,19 +1,21 @@
 <script lang="ts">
   /**
-   * NODE dashboard (loop U3.1 layout, U3.2 real data). Ground truth: the
+   * NODE dashboard (loop U3.1 layout, U3.2 real data, U4.1 cycle C adds
+   * storage capacity/uptime/throughput). Ground truth: the
    * `<!-- ==== NODE ==== -->` block in `SDN Console.dc.html` — a 12-col
    * widget grid with an EDIT MODE (drag-reorder, span cycle, remove,
    * add-from-catalog, reset), layout persisted to
    * `localStorage['sdn_node_layout_v1']`. That layout engine is untouched by
-   * U3.2 — only the widget BODIES below changed, from U3.1's typed
+   * U3.2/U4.1 — only the widget BODIES below changed, from U3.1's typed
    * placeholder data to real reads of `node/info`, `node/epm/json`,
-   * `node/epm/vcard`, `/v1/stats`, and `/v1/peers` (`lib/node-data.ts` does
-   * all the fetching/parsing/formatting; this file only renders the
-   * resulting view-model strings verbatim). Any field with no backing
-   * surface yet (AUTOSTART, UPTIME, storage capacity, NETWORK THROUGHPUT,
-   * ACTIVITY LOG) renders an honest no-data state instead of a fabricated
-   * number — see `lib/node-data.ts`'s doc comments for which endpoint, if
-   * any, is missing each one.
+   * `node/epm/vcard`, `/v1/stats`, `/v1/peers`, and (U4.1, session-gated)
+   * `/node/status` (`lib/node-data.ts` does all the fetching/parsing/
+   * formatting; this file only renders the resulting view-model strings
+   * verbatim). NODE HEALTH's storage capacity, SERVICE's UPTIME, and NETWORK
+   * THROUGHPUT are real as of U4.1; AUTOSTART and ACTIVITY LOG still have no
+   * backing surface and render an honest no-data state instead of a
+   * fabricated number — see `lib/node-data.ts`'s doc comments for which
+   * endpoint, if any, is missing each remaining one.
    *
    * The PEER MAP widget (loop U3.4) renders a real canvas globe —
    * `../../../lib/globe/SdnGlobe.ts` (the `globe.js` port; same engine the
@@ -63,6 +65,7 @@
     buildNodePeerSummary,
     buildNodeServiceView,
     buildNodeStorageView,
+    buildNodeThroughputView,
     flattenJsonToCsv,
     loadNodeDashboardData,
     serviceStatusDotColor,
@@ -96,9 +99,19 @@
   // ---------------------------------------------------------------------
   let dashboard = $state<Awaited<ReturnType<typeof loadNodeDashboardData>> | null>(null);
 
-  const healthView = $derived(buildNodeHealthView(dashboard?.nodeInfo ?? null, dashboard?.stats?.totalBytes ?? null));
+  const healthView = $derived(
+    buildNodeHealthView(
+      dashboard?.nodeInfo ?? null,
+      dashboard?.stats?.totalBytes ?? null,
+      dashboard?.status?.disk?.capacityBytes ?? null,
+    ),
+  );
   const identityView = $derived(buildNodeIdentityView(dashboard?.identity ?? null, dashboard?.vcardText ?? null));
-  const serviceView = $derived(buildNodeServiceView(dashboard?.nodeInfo ?? null));
+  const serviceView = $derived(buildNodeServiceView(dashboard?.nodeInfo ?? null, dashboard?.status?.uptimeSeconds ?? null));
+  // Loop U4.1 cycle C: real NETWORK THROUGHPUT telemetry from `/node/status`'s
+  // `bandwidth` — see `lib/node-data.ts`'s `buildNodeThroughputView` doc
+  // comment for the collecting/no-telemetry honest-degradation rules.
+  const throughputView = $derived(buildNodeThroughputView(dashboard?.status?.bandwidth ?? null));
   const netmapView = $derived(buildNodeNetmapView(dashboard?.stats ?? null));
   // Loop U3.4: the real point set + honest resolved-only country count for
   // the PEER MAP canvas globe — see `lib/netmap-data.ts`'s doc comment.
@@ -377,12 +390,22 @@
         <div class="sdn-widget-field-row sdn-widget-field-row--gap">
           <div class="sdn-widget-field-flex">
             <div class="sdn-widget-field-label">AUTOSTART</div>
-            <!-- No autostart surface exists yet (M1 follow-up) — honest dash, dropped the green "confirmed" styling since nothing confirms it. -->
+            <!--
+              Loop U4.1: `/node/status`'s `service.autostart_known` IS wired
+              in now (see lib/node-data.ts's NodeStatusServiceSnapshot), but
+              it only ever says whether the daemon KNOWS its autostart
+              config, not what that config IS — there is still no
+              `autostart_enabled`-shaped value in the payload to render (and
+              `autostart_known` is always `false` on this build besides), so
+              this stays the honest dash rather than a fabricated
+              ENABLED/DISABLED — dropped the green "confirmed" styling since
+              nothing confirms it.
+            -->
             <div class="sdn-widget-field-value">{serviceView.autostart}</div>
           </div>
           <div class="sdn-widget-field-flex">
             <div class="sdn-widget-field-label">UPTIME</div>
-            <!-- No uptime surface exists yet (M1 follow-up). -->
+            <!-- Loop U4.1: real `/node/status` `uptime_seconds`, `formatUptime`'s "Nd HH:MM" style; still the honest dash when the surface is unavailable (anonymous session, offline daemon). -->
             <div class="sdn-widget-field-value">{serviceView.uptime}</div>
           </div>
         </div>
@@ -486,14 +509,38 @@
         </div>
       {:else if w.id === 'throughput'}
         <div class="sdn-widget-title">NETWORK THROUGHPUT</div>
-        <!--
-          No per-second throughput counters exist on this build (M1/M2
-          follow-up) — an honest no-data line replaces the mock's fabricated
-          3.42/0.88 MB/s figures and sparkline bars, matching the dim
-          `.sdn-widget-status-sub` styling used elsewhere for "we don't know
-          this yet" fields, rather than drawing fake zeroed bars.
-        -->
-        <div class="sdn-widget-status-sub sdn-widget-status-sub--plain">NO TELEMETRY · pending M1</div>
+        {#if !throughputView.hasData}
+          <!--
+            Loop U4.1: `/node/status`'s `bandwidth` is itself nullable on the
+            wire (fresh/constrained daemon, or an anonymous/broken session —
+            `lib/node-data.ts`'s `fetchNodeStatus` degrades either to `null`)
+            — same honest no-data line the widget has always shown in that
+            case, matching the dim `.sdn-widget-status-sub` styling used
+            elsewhere for "we don't know this yet" fields.
+          -->
+          <div class="sdn-widget-status-sub sdn-widget-status-sub--plain">NO TELEMETRY · pending M1</div>
+        {:else}
+          <div class="sdn-throughput-row">
+            <span class="sdn-throughput-value">{throughputView.downValue}</span>
+            <span class="sdn-throughput-unit">{throughputView.downUnit} ↓</span>
+            <span class="sdn-throughput-value--up">{throughputView.upValue} ↑</span>
+          </div>
+          {#if throughputView.collecting}
+            <!-- Fewer than 2 history samples yet (a just-started daemon) — real bars would be drawn from noise, so an honest "still collecting" line replaces the mock's fabricated sparkline instead of faking one from 0-1 points. -->
+            <div class="sdn-widget-status-sub sdn-widget-status-sub--plain">COLLECTING · first samples in ~10s</div>
+          {:else}
+            <div class="sdn-throughput-bars">
+              {#each throughputView.bars as bar, i (i)}
+                <div class="sdn-throughput-bar" style={`height:${bar.percent}%;background:${bar.gradient};`}></div>
+              {/each}
+            </div>
+            <div class="sdn-throughput-axis">
+              <!-- The REAL span the bar chart covers (history length × 5s cadence), replacing the mock's fixed "−60s" — see `formatThroughputAxisLabel`'s doc comment. -->
+              <span>{throughputView.axisStart}</span>
+              <span>{throughputView.axisEnd}</span>
+            </div>
+          {/if}
+        {/if}
       {:else if w.id === 'peersum'}
         <div class="sdn-widget-title">PEER SUMMARY</div>
         <div class="sdn-peersum-list">

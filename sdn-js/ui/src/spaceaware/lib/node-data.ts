@@ -9,6 +9,10 @@
  *   3. `GET /api/node/epm/vcard` — the same identity as a vCard (text)
  *   4. `GET /api/v1/stats`       — FlatSQL storage/record/schema counters
  *   5. `GET /api/v1/peers`       — the connected-peer swarm list
+ *   6. `GET /api/v1/node/status` — SESSION-GATED (anonymous 401): uptime,
+ *      disk capacity, service knownness, and bandwidth/history (loop U4.1
+ *      cycle C) — see `parseNodeStatus`/`buildNodeThroughputView` below for
+ *      the honest-degradation rules for its nullable `disk`/`bandwidth`.
  *
  * `GET /api/node/epm/qr` 500s ("content too long to encode") on this build
  * — a real server gap, not a client bug — so the QR overlay encodes the
@@ -28,7 +32,7 @@
  */
 
 import type { SdnApiClient } from '../../lib/auth/sdn-api-client';
-import { peerTrustColor } from './console';
+import { peerTrustColor, throughputBarGradient } from './console';
 
 // ---------------------------------------------------------------------------
 // Small JSON helpers (self-contained — mirrors the private helpers in
@@ -56,6 +60,11 @@ function pickStringArray(record: Record<string, unknown>, key: string): string[]
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
 }
 
+/** `true` only for a literal JSON `true` — a missing key, `null`, or any other type reads as `false` rather than throwing. */
+function pickBoolean(record: Record<string, unknown>, key: string): boolean {
+  return record[key] === true;
+}
+
 // ---------------------------------------------------------------------------
 // Formatting helpers
 // ---------------------------------------------------------------------------
@@ -79,6 +88,77 @@ export function formatBytes(bytes: number | null | undefined): string {
   }
   const precision = unitIndex === 0 ? 0 : 1;
   return `${value.toFixed(precision)} ${BYTE_UNITS[unitIndex]}`;
+}
+
+const RATE_UNITS = ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s'] as const;
+
+/** How many `RATE_UNITS` steps up `bytesPerSecond` climbs before it drops under 1024, capped at the last tier. Shared by `formatRate` and `buildThroughputRateView` so both pick a unit the same way. */
+function rateUnitIndex(bytesPerSecond: number): number {
+  let value = bytesPerSecond;
+  let index = 0;
+  while (value >= 1024 && index < RATE_UNITS.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return index;
+}
+
+/** Expresses `bytesPerSecond` at a SPECIFIC already-chosen unit tier rather than picking its own — lets the NETWORK THROUGHPUT widget's small "up" (`rate_out_bps`) figure share the big "down" figure's unit instead of adaptively picking a different one (the widget prints only one unit label, next to the down figure). */
+function formatRateAtUnit(bytesPerSecond: number, unitIndex: number): string {
+  const value = bytesPerSecond / 1024 ** unitIndex;
+  const precision = unitIndex === 0 ? 0 : 2;
+  return value.toFixed(precision);
+}
+
+/**
+ * Adaptive bytes-per-second formatter for the NETWORK THROUGHPUT widget
+ * (`"3.37 KB/s"` / `"3.29 MB/s"`) — same adaptive-unit ladder as
+ * `formatBytes` but 2-decimal precision beyond the whole-byte tier (the
+ * mock's `"3.42 MB/s"` sample has two decimal places, `formatBytes`'
+ * `"4.8 GB"` style has one — these are visually distinct widgets).
+ * `null`/`undefined`/negative/non-finite input renders `'—'`, matching
+ * `formatBytes`' honesty rule: no fabricated `"0 B/s"` for "we don't know".
+ */
+export function formatRate(bytesPerSecond: number | null | undefined): string {
+  if (bytesPerSecond == null || !Number.isFinite(bytesPerSecond) || bytesPerSecond < 0) return '—';
+  if (bytesPerSecond === 0) return '0 B/s';
+  const unitIndex = rateUnitIndex(bytesPerSecond);
+  return `${formatRateAtUnit(bytesPerSecond, unitIndex)} ${RATE_UNITS[unitIndex]}`;
+}
+
+/**
+ * `uptime_seconds` → the mock's `"4d 02:11"` style (`Nd HH:MM`; the day
+ * count is dropped entirely under 24h, rendering plain `"HH:MM"` rather than
+ * `"0d HH:MM"`). Pure duration formatter — no `Date`/timezone involved,
+ * `uptime_seconds` is an elapsed span, not a wall-clock timestamp.
+ * `null`/`undefined`/negative/non-finite input renders `'—'`.
+ */
+export function formatUptime(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '—';
+  const total = Math.floor(seconds);
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const hh = String(hours).padStart(2, '0');
+  const mm = String(minutes).padStart(2, '0');
+  return days > 0 ? `${days}d ${hh}:${mm}` : `${hh}:${mm}`;
+}
+
+/**
+ * NETWORK THROUGHPUT widget's left axis label — the REAL span the bar chart
+ * covers, computed from the sample count at the daemon's fixed 5s cadence
+ * (a full 24-sample buffer → `"−2m"`), replacing the mock's fixed `"−60s"`
+ * (which asserted a 60s window this widget never actually measures).
+ * Renders `"−Ns"` under a minute, `"−Nm"` (rounded) at/above it. Callers
+ * only invoke this once there are ≥2 history samples (see
+ * `buildNodeThroughputView`) — with 0-1 samples the widget shows a
+ * "collecting" line instead of an axis at all.
+ */
+export function formatThroughputAxisLabel(sampleCount: number): string {
+  const n = Number.isFinite(sampleCount) && sampleCount > 0 ? Math.trunc(sampleCount) : 0;
+  const seconds = n * 5;
+  if (seconds < 60) return `−${seconds}s`;
+  return `−${Math.round(seconds / 60)}m`;
 }
 
 /**
@@ -319,6 +399,131 @@ export function parseNodePeers(payload: unknown): RawPeer[] {
     .filter((p) => p.peerId);
 }
 
+export interface NodeDiskSnapshot {
+  capacityBytes: number | null;
+  freeBytes: number | null;
+  availableBytes: number | null;
+}
+
+export interface NodeStatusServiceSnapshot {
+  state: string | null;
+  mode: string | null;
+  /**
+   * Whether the daemon actually KNOWS its own autostart configuration —
+   * always `false` on this build. There is no `autostart_enabled`-shaped
+   * VALUE anywhere in the payload yet, only this knownness flag; it exists
+   * precisely so the SERVICE widget's AUTOSTART field can stay an honest
+   * `'—'` today (see `buildNodeServiceView`) and start rendering a real
+   * ENABLED/DISABLED badge the moment a real value field ships alongside it,
+   * instead of silently guessing in the meantime.
+   */
+  autostartKnown: boolean;
+}
+
+export interface NodeBandwidthHistorySample {
+  ts: string | null;
+  totalInBytes: number | null;
+  totalOutBytes: number | null;
+  rateInBps: number | null;
+  rateOutBps: number | null;
+}
+
+export interface NodeBandwidthSnapshot {
+  totalInBytes: number | null;
+  totalOutBytes: number | null;
+  rateInBps: number | null;
+  rateOutBps: number | null;
+  /** Oldest-first, up to 24 samples at a 5s cadence (~2 min) — see `formatThroughputAxisLabel`. May be empty (0-2 samples) on a freshly started daemon. */
+  history: NodeBandwidthHistorySample[];
+}
+
+export interface NodeStoreStatusSnapshot {
+  totalBytes: number | null;
+  totalRecords: number | null;
+  storagePath: string | null;
+}
+
+export interface NodeStatusSnapshot {
+  uptimeSeconds: number | null;
+  startedAt: string | null;
+  store: NodeStoreStatusSnapshot | null;
+  disk: NodeDiskSnapshot | null;
+  service: NodeStatusServiceSnapshot | null;
+  bandwidth: NodeBandwidthSnapshot | null;
+}
+
+function parseNodeDisk(value: unknown): NodeDiskSnapshot | null {
+  if (!isPlainRecord(value)) return null;
+  return {
+    capacityBytes: pickNumber(value, 'capacity_bytes'),
+    freeBytes: pickNumber(value, 'free_bytes'),
+    availableBytes: pickNumber(value, 'available_bytes'),
+  };
+}
+
+function parseNodeStatusService(value: unknown): NodeStatusServiceSnapshot | null {
+  if (!isPlainRecord(value)) return null;
+  return {
+    state: pickString(value, 'state'),
+    mode: pickString(value, 'mode'),
+    autostartKnown: pickBoolean(value, 'autostart_known'),
+  };
+}
+
+function parseBandwidthHistorySample(value: unknown): NodeBandwidthHistorySample | null {
+  if (!isPlainRecord(value)) return null;
+  return {
+    ts: pickString(value, 'ts'),
+    totalInBytes: pickNumber(value, 'total_in_bytes'),
+    totalOutBytes: pickNumber(value, 'total_out_bytes'),
+    rateInBps: pickNumber(value, 'rate_in_bps'),
+    rateOutBps: pickNumber(value, 'rate_out_bps'),
+  };
+}
+
+function parseNodeBandwidth(value: unknown): NodeBandwidthSnapshot | null {
+  if (!isPlainRecord(value)) return null;
+  const rawHistory = Array.isArray(value.history) ? value.history : [];
+  return {
+    totalInBytes: pickNumber(value, 'total_in_bytes'),
+    totalOutBytes: pickNumber(value, 'total_out_bytes'),
+    rateInBps: pickNumber(value, 'rate_in_bps'),
+    rateOutBps: pickNumber(value, 'rate_out_bps'),
+    history: rawHistory.map(parseBandwidthHistorySample).filter((s): s is NodeBandwidthHistorySample => s !== null),
+  };
+}
+
+function parseNodeStoreStatus(value: unknown): NodeStoreStatusSnapshot | null {
+  if (!isPlainRecord(value)) return null;
+  return {
+    totalBytes: pickNumber(value, 'total_bytes'),
+    totalRecords: pickNumber(value, 'total_records'),
+    storagePath: pickString(value, 'storage_path'),
+  };
+}
+
+/**
+ * Parses `GET /api/v1/node/status` (loop U4.1 cycles A+B — SESSION-GATED;
+ * an anonymous 401 is handled by `fetchNodeStatus` below, never by this pure
+ * parser, which only ever sees an already-successful body). `disk` and
+ * `bandwidth` are themselves nullable IN THE WIRE PAYLOAD (a fresh or
+ * constrained daemon may not report either yet) — that `null` is a real,
+ * documented state, not a parse failure, and both `buildNodeHealthView` and
+ * `buildNodeThroughputView` treat it as "no capacity/telemetry surface"
+ * rather than crashing or fabricating zeros.
+ */
+export function parseNodeStatus(payload: unknown): NodeStatusSnapshot {
+  const rec = isPlainRecord(payload) ? payload : {};
+  return {
+    uptimeSeconds: pickNumber(rec, 'uptime_seconds'),
+    startedAt: pickString(rec, 'started_at'),
+    store: parseNodeStoreStatus(rec.store),
+    disk: parseNodeDisk(rec.disk),
+    service: parseNodeStatusService(rec.service),
+    bandwidth: parseNodeBandwidth(rec.bandwidth),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Widget view-model builders (typed snapshots → exact render strings)
 // ---------------------------------------------------------------------------
@@ -333,17 +538,44 @@ export interface NodeHealthView {
   storagePercent: number;
 }
 
-/** NODE HEALTH widget. `totalBytes` is `stats.total_bytes` — there is no capacity surface, so `storageTotal` is always the honest "capacity unknown" label and `storagePercent` is always 0 (bar renders hidden/0-width). */
-export function buildNodeHealthView(info: NodeInfoSnapshot | null, totalBytes: number | null): NodeHealthView {
+/**
+ * NODE HEALTH widget. `totalBytes` is `stats.total_bytes` (unchanged since
+ * U3.2 — sourced from `/v1/stats`, not `/node/status`). `diskCapacityBytes`
+ * (loop U4.1, `/node/status`'s `disk.capacity_bytes`) is the first real
+ * capacity surface this widget has ever had: when present, `storageTotal`
+ * renders the real capacity (`formatBytes`) and `storagePercent` is the
+ * real `used/capacity` ratio, per the mock's `"4.8 GB / 32 GB"` pattern.
+ * That ratio will often round to a tiny sliver (a few hundred KB against a
+ * multi-hundred-GB disk) and is left UN-clamped: the mock's
+ * `.sdn-widget-bar-fill` CSS never defined a minimum-visible-width rule, so
+ * inventing one now would be a UI decision this loop task wasn't asked to
+ * make — a near-invisible bar is the honest picture. `diskCapacityBytes`
+ * absent/`null`/non-positive (still common — a fresh/constrained daemon may
+ * not report it) keeps today's honest `'— capacity unknown'` fallback and a
+ * 0% bar.
+ */
+export function buildNodeHealthView(
+  info: NodeInfoSnapshot | null,
+  totalBytes: number | null,
+  diskCapacityBytes: number | null = null,
+): NodeHealthView {
   const addrs = deriveListenAddressRows(info?.listenAddresses);
+  const capacity =
+    diskCapacityBytes != null && Number.isFinite(diskCapacityBytes) && diskCapacityBytes > 0
+      ? diskCapacityBytes
+      : null;
+  const percent =
+    capacity != null && totalBytes != null && Number.isFinite(totalBytes)
+      ? Math.min(100, Math.max(0, (totalBytes / capacity) * 100))
+      : 0;
   return {
     mode: formatModeLabel(info?.mode),
     peerId: info?.peerId ?? '—',
     api: addrs.api,
     gateway: addrs.gateway,
     storageUsed: formatBytes(totalBytes),
-    storageTotal: '— capacity unknown',
-    storagePercent: 0,
+    storageTotal: capacity != null ? formatBytes(capacity) : '— capacity unknown',
+    storagePercent: percent,
   };
 }
 
@@ -375,8 +607,24 @@ export interface NodeServiceView {
   uptime: string;
 }
 
-/** SERVICE widget. `autostart`/`uptime` have no daemon surface at all (M1 follow-up) — always an honest `'—'`, never the mock's fixed `ENABLED`/`4d 02:11`. */
-export function buildNodeServiceView(info: NodeInfoSnapshot | null): NodeServiceView {
+/**
+ * SERVICE widget. `version` stays sourced from `node/info` (U3.2,
+ * unchanged). `uptimeSeconds` (loop U4.1, `/node/status`'s top-level
+ * `uptime_seconds`) is the first real uptime surface this widget has ever
+ * had — `formatUptime` renders it in the mock's `"4d 02:11"` style, and an
+ * absent/`null` surface still degrades to the honest `'—'` `formatUptime`
+ * itself already renders for that input.
+ *
+ * `autostart` stays a hardcoded honest `'—'`, unlike `uptime` — not because
+ * nothing was wired, but because what WAS wired (`/node/status`'s
+ * `service.autostart_known`, see `NodeStatusServiceSnapshot`) only tells us
+ * whether the daemon KNOWS its autostart config, never what it IS. There is
+ * still no `autostart_enabled`-shaped value anywhere in the payload to
+ * render (and `autostart_known` is always `false` on this build besides),
+ * so rendering anything but `'—'` here would be a fabrication regardless of
+ * that flag's value.
+ */
+export function buildNodeServiceView(info: NodeInfoSnapshot | null, uptimeSeconds: number | null = null): NodeServiceView {
   return {
     state: info ? 'RUNNING' : '—',
     version: composeServiceVersionLine({
@@ -385,7 +633,7 @@ export function buildNodeServiceView(info: NodeInfoSnapshot | null): NodeService
       agentVersion: info?.agentVersion,
     }),
     autostart: '—',
-    uptime: '—',
+    uptime: formatUptime(uptimeSeconds),
   };
 }
 
@@ -469,6 +717,105 @@ export function buildNodeStorageView(
       label: s.schema,
       value: `${s.count} RECORDS · ${formatBytes(s.totalBytes)}`,
     })),
+  };
+}
+
+export interface NodeThroughputRateView {
+  downValue: string;
+  downUnit: string;
+  upValue: string;
+}
+
+/**
+ * NETWORK THROUGHPUT widget's headline pair. `rate_in_bps` picks its own
+ * adaptive unit tier (`formatRate`'s ladder) for the big "down" figure;
+ * `rate_out_bps` (the small "up" figure) is expressed at that SAME tier via
+ * `formatRateAtUnit` rather than adaptively picking its own — the widget
+ * only prints one unit label (next to the down figure, e.g. `"MB/s"`), so
+ * the up figure has to already share that scale to be readable alone.
+ * `rateInBps` missing/negative/non-finite renders both sides `'—'` (a
+ * malformed "down" figure with no unit makes an "up" figure meaningless
+ * regardless of its own validity).
+ */
+export function buildThroughputRateView(rateInBps: number | null, rateOutBps: number | null): NodeThroughputRateView {
+  if (rateInBps == null || !Number.isFinite(rateInBps) || rateInBps < 0) {
+    return { downValue: '—', downUnit: '', upValue: '—' };
+  }
+  const unitIndex = rateUnitIndex(rateInBps);
+  const downValue = formatRateAtUnit(rateInBps, unitIndex);
+  const downUnit = RATE_UNITS[unitIndex];
+  const upValue =
+    rateOutBps != null && Number.isFinite(rateOutBps) && rateOutBps >= 0
+      ? formatRateAtUnit(rateOutBps, unitIndex)
+      : '—';
+  return { downValue, downUnit, upValue };
+}
+
+export interface NodeThroughputBarView {
+  percent: number;
+  gradient: string;
+}
+
+/**
+ * Normalizes each history sample's `rate_in_bps` to the max sample in the
+ * window for the bar chart's height, pairing each bar with
+ * `lib/console.ts`'s `throughputBarGradient` (same accent rule as the
+ * retired U3.1 mock fixture: the bar at index 8 gets the brighter "current"
+ * gradient, every other bar the dimmer cyan one — a decorative accent
+ * carried over verbatim, not a claim about which sample is literally "now").
+ * A genuinely idle link (every sample's rate 0, or negative/malformed
+ * samples clamped to 0) renders every bar at 0% rather than dividing by
+ * zero.
+ */
+export function buildThroughputBars(history: readonly NodeBandwidthHistorySample[]): NodeThroughputBarView[] {
+  const rates = history.map((h) => Math.max(0, h.rateInBps ?? 0));
+  const max = Math.max(0, ...rates);
+  return rates.map((rate, index) => ({
+    percent: max > 0 ? Math.min(100, (rate / max) * 100) : 0,
+    gradient: throughputBarGradient(index),
+  }));
+}
+
+export interface NodeThroughputView {
+  /** `false` only when `bandwidth` itself is `null` (no telemetry surface at all) — the widget's original honest no-data line. */
+  hasData: boolean;
+  downValue: string;
+  downUnit: string;
+  upValue: string;
+  /** `true` when there IS bandwidth data but fewer than 2 history samples yet — too little to draw an honest bar chart from. */
+  collecting: boolean;
+  bars: NodeThroughputBarView[];
+  axisStart: string;
+  axisEnd: string;
+}
+
+/**
+ * NETWORK THROUGHPUT widget (loop U4.1 cycle C — `/node/status`'s
+ * `bandwidth`). `rate_in_bps`/`rate_out_bps` are top-level fields on
+ * `bandwidth` itself (not derived from `history`), so the headline pair
+ * renders as soon as `bandwidth` is non-null, independent of how many
+ * history samples exist yet — only the bar chart/axis waits for ≥2 samples,
+ * rendering a dim "collecting" line in their place until then.
+ * `bandwidth === null` (still common — a fresh/constrained daemon, or an
+ * anonymous session `fetchNodeStatus` already degraded to `null`) keeps the
+ * pre-U4.1 honest `NO TELEMETRY` line.
+ */
+export function buildNodeThroughputView(bandwidth: NodeBandwidthSnapshot | null): NodeThroughputView {
+  if (!bandwidth) {
+    return { hasData: false, downValue: '—', downUnit: '', upValue: '—', collecting: false, bars: [], axisStart: '', axisEnd: '' };
+  }
+  const rate = buildThroughputRateView(bandwidth.rateInBps, bandwidth.rateOutBps);
+  const history = bandwidth.history;
+  if (history.length < 2) {
+    return { hasData: true, ...rate, collecting: true, bars: [], axisStart: '', axisEnd: '' };
+  }
+  return {
+    hasData: true,
+    ...rate,
+    collecting: false,
+    bars: buildThroughputBars(history),
+    axisStart: formatThroughputAxisLabel(history.length),
+    axisEnd: 'NOW',
   };
 }
 
@@ -608,6 +955,23 @@ async function fetchNodePeers(apiClient: NodeInfoApiClient): Promise<RawPeer[]> 
 }
 
 /**
+ * Fetches `GET /api/v1/node/status` (loop U4.1 — SESSION-GATED, unlike
+ * `/stats`/`/peers` this endpoint 401s for an anonymous caller). That 401
+ * lands in the same `catch` as any other failure and degrades to `null`
+ * here — an anonymous/broken session simply keeps the pre-U4.1 honest
+ * no-data states for storage capacity/uptime/throughput, same as a fully
+ * offline daemon.
+ */
+async function fetchNodeStatus(apiClient: NodeInfoApiClient): Promise<NodeStatusSnapshot | null> {
+  try {
+    const result = await apiClient.requestJson<unknown>('/node/status');
+    return parseNodeStatus(result.data);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Raw text fetch for `GET /api/node/epm/vcard` (200 `text/vcard`) — the
  * only endpoint here that isn't JSON, so it bypasses `SdnApiClient`'s
  * JSON-only `requestJson`/`requestBareArray` and hits the relative,
@@ -634,6 +998,8 @@ export interface NodeDashboardData {
   vcardText: string | null;
   stats: NodeStatsSnapshot | null;
   peers: RawPeer[];
+  /** `GET /node/status` (loop U4.1) — `null` for an anonymous/broken session or an unreachable daemon, same honest-degradation contract as every other field here. */
+  status: NodeStatusSnapshot | null;
 }
 
 /**
@@ -647,12 +1013,13 @@ export async function loadNodeDashboardData(
   apiClient: NodeInfoApiClient,
   fetchImpl?: typeof fetch,
 ): Promise<NodeDashboardData> {
-  const [nodeInfo, epmResult, vcardText, stats, peers] = await Promise.all([
+  const [nodeInfo, epmResult, vcardText, stats, peers, status] = await Promise.all([
     fetchNodeInfo(apiClient),
     fetchEpmIdentity(apiClient),
     fetchVCardText(fetchImpl),
     fetchNodeStats(apiClient),
     fetchNodePeers(apiClient),
+    fetchNodeStatus(apiClient),
   ]);
   return {
     nodeInfo,
@@ -661,5 +1028,6 @@ export async function loadNodeDashboardData(
     vcardText,
     stats,
     peers,
+    status,
   };
 }
