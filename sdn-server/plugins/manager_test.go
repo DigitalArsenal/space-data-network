@@ -472,7 +472,10 @@ func TestRuntimeSnapshotEnablesLifecycleActionsForCurrentStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actions := buildRuntimeModuleActions(tt.status)
+			// fakeRuntimePlugin implements RuntimeModuleLoader + Pausable, so
+			// the status-derived expectations above are unchanged by the
+			// capability gating.
+			actions := buildRuntimeModuleActions(tt.status, &fakeRuntimePlugin{id: "caps"})
 			seen := make(map[string]RuntimeModuleAction, len(actions))
 			for _, action := range actions {
 				seen[action.ActionID] = action
@@ -487,6 +490,46 @@ func TestRuntimeSnapshotEnablesLifecycleActionsForCurrentStatus(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// barePlugin implements ONLY the base Plugin interface — no
+// RuntimeModuleLoader, no RuntimeModulePausable.
+type barePlugin struct{ id string }
+
+func (p *barePlugin) ID() string                                  { return p.id }
+func (p *barePlugin) Start(context.Context, RuntimeContext) error { return nil }
+func (p *barePlugin) RegisterRoutes(*http.ServeMux)               {}
+func (p *barePlugin) Close() error                                { return nil }
+
+func TestBuildRuntimeModuleActionsGatesOnCapabilityInterfaces(t *testing.T) {
+	// Regression: the snapshot used to advertise "load" enabled for any
+	// unloaded module purely from status, while RunRuntimeModuleAction
+	// rejects it for plugins without RuntimeModuleLoader — the dashboard got
+	// a button that could only ever 400. Same for "pause"/paused-"start"
+	// without RuntimeModulePausable.
+	actions := buildRuntimeModuleActions("unloaded", &barePlugin{id: "bare"})
+	byID := make(map[string]RuntimeModuleAction, len(actions))
+	for _, a := range actions {
+		byID[a.ActionID] = a
+	}
+	if byID["load"].Enabled {
+		t.Fatal("load must not be advertised enabled without RuntimeModuleLoader")
+	}
+	if !byID["start"].Enabled {
+		t.Fatal("start stays enabled for unloaded modules (plain Start path needs no capability)")
+	}
+	running := buildRuntimeModuleActions("running", &barePlugin{id: "bare"})
+	for _, a := range running {
+		if a.ActionID == "pause" && a.Enabled {
+			t.Fatal("pause must not be advertised enabled without RuntimeModulePausable")
+		}
+	}
+	paused := buildRuntimeModuleActions("paused", &barePlugin{id: "bare"})
+	for _, a := range paused {
+		if a.ActionID == "start" && a.Enabled {
+			t.Fatal("paused-start (resume) must not be advertised enabled without RuntimeModulePausable")
+		}
 	}
 }
 

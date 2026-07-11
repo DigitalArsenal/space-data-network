@@ -772,7 +772,7 @@ func (m *Manager) RuntimeSnapshot() RuntimeSnapshot {
 				entry.StatusMessage = "input values updated; restart to apply"
 			}
 		}
-		entry.Actions = mergeRuntimeModuleActions(entry.Actions, buildRuntimeModuleActions(entry.Status))
+		entry.Actions = mergeRuntimeModuleActions(entry.Actions, buildRuntimeModuleActions(entry.Status, p))
 		entry.StatusHistory = m.pluginStatusHistory(id)
 		if entry.Links == nil {
 			links := defaultRuntimeModuleLinks(id)
@@ -1646,10 +1646,17 @@ func (m *Manager) moduleStartContext(fallback context.Context) context.Context {
 	return context.Background()
 }
 
-func buildRuntimeModuleActions(status string) []RuntimeModuleAction {
+func buildRuntimeModuleActions(status string, plugin Plugin) []RuntimeModuleAction {
 	normalized := strings.ToLower(strings.TrimSpace(status))
-	canLoad := normalized == "unloaded" || normalized == "stopped"
-	canStart := normalized == "registered" || normalized == "stopped" || normalized == "unloaded" || normalized == "paused"
+	// Advertised enablement must mirror RunRuntimeModuleAction's dispatch:
+	// "load" hard-requires RuntimeModuleLoader and "pause"/paused-"start"
+	// hard-require RuntimeModulePausable — advertising them on status alone
+	// hands the dashboard a button that can only ever 400.
+	_, isLoader := plugin.(RuntimeModuleLoader)
+	_, isPausable := plugin.(RuntimeModulePausable)
+	canLoad := isLoader && (normalized == "unloaded" || normalized == "stopped")
+	canStart := normalized == "registered" || normalized == "stopped" || normalized == "unloaded" ||
+		(normalized == "paused" && isPausable)
 	canUnload := normalized == "running" || normalized == "paused" || normalized == "registered" || normalized == "stopped" || normalized == "updated"
 	canRestart := normalized == "running" || normalized == "paused" || normalized == "registered" || normalized == "stopped" || normalized == "updated"
 	canReloadManifest := normalized == "running" || normalized == "paused" || normalized == "registered" || normalized == "stopped" || normalized == "updated"
@@ -1671,7 +1678,7 @@ func buildRuntimeModuleActions(status string) []RuntimeModuleAction {
 			ActionID:    "pause",
 			Label:       "Pause",
 			Description: "Pause module invocation while keeping the artifact loaded.",
-			Enabled:     normalized == "running" || normalized == "updated",
+			Enabled:     isPausable && (normalized == "running" || normalized == "updated"),
 		},
 		{
 			ActionID:    "start",

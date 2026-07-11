@@ -12,16 +12,25 @@
    * All data comes from `entries` (already fetched/joined/sorted by
    * `DataView.svelte` via `lib/standards-data.ts`) and the vendored
    * `main.fbs` corpus (`lib/standards-fbs.ts`, `getVendoredSchema`) — this
-   * component owns no fetch of its own, only the EXPLORER/GENERATE tab
-   * selection state and the download buttons. The DATA tab (query
-   * workbench) is out of scope here (loop task U3.6) — it renders the same
-   * honest placeholder text `ConsolePlaceholder.svelte` uses elsewhere,
-   * never the mock's fabricated query-output fixtures.
+   * component owns no fetch of its own for the EXPLORER/GENERATE tabs, only
+   * their tab selection state and the download buttons.
+   *
+   * The DATA tab (loop task U3.6 — local FlatSQL query workbench) IS wired
+   * here: all fetching/parsing/rendering logic lives in
+   * `../../lib/query-data.ts`, which this component only orchestrates
+   * (probe `/api/v1/query` ONCE per DATA-tab activation, cache that
+   * availability, re-query on every standard switch while the tab stays
+   * active — see the `$effect` below) and renders verbatim. Real fallback:
+   * `POST /api/v1/data/query` returns RECORD-METADATA rows (`batch_id`,
+   * `cid`, `peer_id`, ...), not decoded standard fields — there is no
+   * decoded-field surface until G.5 ships (`query-data.ts`'s doc comment has
+   * the full endpoint contract). Every row-rendering path (TABLE/JSON/CSV)
+   * passes each row's keys through completely unmodified, which is what
+   * lets a future G.5 decoded row (`NORAD_CAT_ID`-style keys) render
+   * correctly here with no code changes.
    */
   import {
     CODEGEN_LANGUAGES,
-    DATA_TAB_PLACEHOLDER_COPY,
-    DATA_TAB_PLACEHOLDER_TITLE,
     NO_VENDORED_SCHEMA_MESSAGE,
     STANDARD_DETAIL_TABS,
     buildExplorerFieldRows,
@@ -37,6 +46,25 @@
     type StandardEntry,
   } from '../../lib/standards-data';
   import { getVendoredSchema } from '../../lib/standards-fbs';
+  import {
+    QUERY_DEFAULT_MODE,
+    QUERY_OUTPUT_MODES,
+    QUERY_ROW_LIMIT,
+    buildDecodedQuerySql,
+    buildQueryCsvOutput,
+    buildQueryJsonOutput,
+    buildQueryTableColumns,
+    loadQueryTabData,
+    queryEmptyStateLabel,
+    queryEngineCaption,
+    queryOutputModeStyle,
+    queryTableCellText,
+    resolveQueryEngine,
+    type QueryEngineAvailability,
+    type QueryOutputMode,
+    type QueryTabResult,
+  } from '../../lib/query-data';
+  import type { SdnApiClient } from '../../../lib/auth/sdn-api-client';
 
   let {
     entries,
@@ -44,16 +72,29 @@
     onSelect,
     loaded,
     sdsPackageVersion,
+    apiClient,
   }: {
     entries: readonly StandardEntry[];
     selectedCode: string | null;
     onSelect: (code: string) => void;
     loaded: boolean;
     sdsPackageVersion: string | null;
+    apiClient: SdnApiClient;
   } = $props();
 
   let activeTab = $state<StandardDetailTab>('explorer');
   let genLang = $state<CodegenLanguageId>('typescript');
+
+  // DATA tab query state. `queryEngineAvailability` is probed ONCE per
+  // DATA-tab activation (see the `$effect` below, and `query-data.ts`'s
+  // `resolveQueryEngine` doc comment) — every subsequent standard switch
+  // while the tab stays active reuses the cached value rather than
+  // re-probing `/api/v1/query` on every keystroke/switch.
+  let queryMode = $state<QueryOutputMode>(QUERY_DEFAULT_MODE);
+  let queryEngineAvailability = $state<QueryEngineAvailability>('unknown');
+  let queryEngineProbed = $state(false);
+  let queryResult = $state<QueryTabResult | null>(null);
+  let queryLoaded = $state(false);
 
   // Default selection prefers the first standard that HAS a vendored schema:
   // the rows-first sort can put a non-vendored live channel (e.g. PRR) on
@@ -75,12 +116,54 @@
   );
   const genFileName = $derived(selectedEntry ? generatedCodeFilename(selectedEntry.code, activeLang) : '');
 
+  const queryRows = $derived(queryResult?.rows ?? []);
+  const queryColumns = $derived(buildQueryTableColumns(queryRows));
+  const queryJsonText = $derived(buildQueryJsonOutput(queryRows));
+  const queryCsvText = $derived(buildQueryCsvOutput(queryRows));
+  const queryCaption = $derived(queryEngineCaption(queryResult?.engine ?? 'metadata'));
+  const queryEmptyLabel = $derived(
+    selectedEntry ? queryEmptyStateLabel(selectedEntry.code, queryLoaded, queryRows.length) : '',
+  );
+
+  // Runs the DATA tab's query on tab activation and on every standard
+  // switch while the tab stays active (loop task spec: "run the query on
+  // tab activation (limit 50)") — never on EXPLORER/GENERATE. A stale
+  // in-flight request from a since-abandoned activation/switch is dropped
+  // via the `cancelled` flag, matching `PeersView.svelte`'s
+  // selected-peer-detail effect.
+  $effect(() => {
+    const tab = activeTab;
+    const code = selectedEntry?.code ?? null;
+    if (tab !== 'data' || !code) return;
+    let cancelled = false;
+    queryLoaded = false;
+    queryResult = null;
+    void (async () => {
+      if (!queryEngineProbed) {
+        queryEngineAvailability = await resolveQueryEngine(apiClient, buildDecodedQuerySql(code, QUERY_ROW_LIMIT, 0));
+        queryEngineProbed = true;
+      }
+      if (cancelled) return;
+      const result = await loadQueryTabData(apiClient, code, queryEngineAvailability, QUERY_ROW_LIMIT, 0);
+      if (cancelled) return;
+      queryResult = result;
+      queryLoaded = true;
+    })();
+    return () => {
+      cancelled = true;
+    };
+  });
+
   function selectStandard(code: string) {
     onSelect(code);
   }
 
   function setTab(tab: StandardDetailTab) {
     activeTab = tab;
+  }
+
+  function setQueryMode(mode: QueryOutputMode) {
+    queryMode = mode;
   }
 
   function triggerDownload(content: string, filename: string) {
@@ -243,9 +326,55 @@
             <pre class="sdn-data-code-block sdn-data-code-block--tall">{genCodeText}</pre>
           </div>
         {:else}
-          <div class="sdn-data-placeholder">
-            <div class="sdn-data-placeholder-title">{DATA_TAB_PLACEHOLDER_TITLE}</div>
-            <p class="sdn-data-placeholder-copy">{DATA_TAB_PLACEHOLDER_COPY}</p>
+          <div class="sdn-data-tab-stack">
+            <div class="sdn-data-query-header">
+              <span class="sdn-data-section-kicker">LOCAL FLATSQL · QUERY OUTPUT</span>
+              <div class="sdn-data-query-modes">
+                {#each QUERY_OUTPUT_MODES as mode (mode.id)}
+                  {@const modeStyle = queryOutputModeStyle(mode.id, queryMode)}
+                  <button
+                    type="button"
+                    class="sdn-data-query-mode-btn"
+                    style={`background:${modeStyle.background};border-color:${modeStyle.border};color:${modeStyle.color};`}
+                    title={`Show query output as ${mode.label}`}
+                    onclick={() => setQueryMode(mode.id)}
+                  >
+                    {mode.label}
+                  </button>
+                {/each}
+              </div>
+            </div>
+            <div class="sdn-data-query-caption">{queryCaption}</div>
+            {#if queryResult?.errorKind}
+              <div class="sdn-data-query-error">{queryResult.errorMessage}</div>
+            {:else if queryEmptyLabel}
+              <div class="sdn-data-query-empty">{queryEmptyLabel}</div>
+            {:else if queryMode === 'table'}
+              <div class="sdn-data-query-table-wrap">
+                <table class="sdn-data-query-table">
+                  <thead>
+                    <tr>
+                      {#each queryColumns as col (col)}
+                        <th>{col}</th>
+                      {/each}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each queryRows as row, rowIndex (rowIndex)}
+                      <tr>
+                        {#each queryColumns as col (col)}
+                          <td>{queryTableCellText(row[col])}</td>
+                        {/each}
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            {:else if queryMode === 'json'}
+              <pre class="sdn-data-code-block">{queryJsonText}</pre>
+            {:else}
+              <pre class="sdn-data-code-block">{queryCsvText}</pre>
+            {/if}
           </div>
         {/if}
       </div>
@@ -601,23 +730,88 @@
     gap: 6px;
   }
 
-  .sdn-data-placeholder {
-    padding: 6px 2px;
+  .sdn-data-query-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
-  .sdn-data-placeholder-title {
-    font-family: 'Chakra Petch', ui-monospace, monospace;
-    font-weight: 600;
-    font-size: 13px;
-    letter-spacing: 0.08em;
-    color: #9fb3bc;
-    margin-bottom: 8px;
+  .sdn-data-query-modes {
+    display: flex;
+    gap: 4px;
   }
 
-  .sdn-data-placeholder-copy {
-    margin: 0;
+  .sdn-data-query-mode-btn {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
     font-size: 11px;
-    line-height: 1.5;
+    letter-spacing: 0.08em;
+    border: 1px solid;
+    padding: 4px 11px;
+    cursor: pointer;
+    transition:
+      border-color 0.14s,
+      color 0.14s,
+      background 0.14s;
+  }
+
+  .sdn-data-query-caption {
+    font-size: 10.5px;
     color: #5d7681;
+    margin-top: -6px;
+  }
+
+  .sdn-data-query-error {
+    font-size: 11px;
+    line-height: 1.4;
+    color: #ff8d8d;
+    border: 1px solid rgba(255, 107, 107, 0.3);
+    background: rgba(255, 107, 107, 0.06);
+    padding: 10px 12px;
+  }
+
+  .sdn-data-query-empty {
+    padding: 20px 4px;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: #5d7681;
+    text-align: center;
+    background: #090d12;
+    border: 1px solid rgba(90, 150, 180, 0.18);
+  }
+
+  .sdn-data-query-table-wrap {
+    overflow: auto;
+    max-height: 240px;
+    background: #090d12;
+    border: 1px solid rgba(90, 150, 180, 0.18);
+  }
+
+  .sdn-data-query-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 11.5px;
+  }
+
+  .sdn-data-query-table th {
+    position: sticky;
+    top: 0;
+    text-align: left;
+    font-size: 9.5px;
+    letter-spacing: 0.1em;
+    color: #5a7a8a;
+    background: #0c1017;
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(90, 150, 180, 0.18);
+    white-space: nowrap;
+  }
+
+  .sdn-data-query-table td {
+    padding: 6px 10px;
+    color: #9fd4c8;
+    border-bottom: 1px solid rgba(90, 150, 180, 0.06);
+    white-space: nowrap;
   }
 </style>
