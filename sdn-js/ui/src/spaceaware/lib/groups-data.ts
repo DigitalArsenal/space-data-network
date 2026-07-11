@@ -678,8 +678,13 @@ export function groupOrbitalPath(id: string): string {
   return `/orbital?group=${encodeURIComponent(id)}`;
 }
 
-/** `SCREEN FOR CONJUNCTIONS`/`MONITOR CONJUNCTIONS` both route here — the CONJUNCTION console view (a later loop task; today renders the shared "not yet ported" placeholder). */
+/** `SCREEN FOR CONJUNCTIONS`/`MONITOR CONJUNCTIONS` both route here — the CONJUNCTION console view (U3.9), carrying the selected group so its target pill pre-selects. */
 export const GROUPS_CONJUNCTION_CONSOLE_PATH = '/console/conjunction';
+
+/** Conjunction-console path for a specific group — the `?group=` deep link ConjunctionView honors. */
+export function groupConjunctionPath(id: string): string {
+  return `${GROUPS_CONJUNCTION_CONSOLE_PATH}?group=${encodeURIComponent(id)}`;
+}
 
 export interface GroupDetailView {
   id: string;

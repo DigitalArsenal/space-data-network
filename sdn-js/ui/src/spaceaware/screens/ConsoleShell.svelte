@@ -8,12 +8,13 @@
    * NODE (`screens/console/NodeView.svelte`, loop U3.1/U3.2), PEERS
    * (`screens/console/PeersView.svelte`, loop U3.3), GROUPS
    * (`screens/console/GroupsView.svelte`, loop U3.8, client-local per
-   * decision D5), DATA (`screens/console/DataView.svelte`, loop U3.5), and
-   * CHANNELS (`screens/console/ChannelsView.svelte`, loop U3.7) are real
-   * ports now; the remaining view (CONJUNCTION) renders
-   * `ConsolePlaceholder.svelte` inside this same shell (rail/header/chips
-   * all real, view body pending its own loop task) — see the loop task's
-   * scope note.
+   * decision D5), DATA (`screens/console/DataView.svelte`, loop U3.5),
+   * CHANNELS (`screens/console/ChannelsView.svelte`, loop U3.7), and
+   * CONJUNCTION (`screens/console/ConjunctionView.svelte`, loop U3.9,
+   * demo-mode per decision D4) are all real ports now — every `ConsoleView`
+   * routes to its own component, so `ConsolePlaceholder.svelte` (the "not
+   * yet ported" filler this shell used to fall back to) has no remaining
+   * callers and was deleted.
    *
    * Deep-link compatibility: the `.dc.html` prototype reads `?route=` /
    * `?group=` once on mount (`componentDidMount`) and sets its OWN internal
@@ -21,20 +22,20 @@
    * History-API paths (`/console/{view}`, `router.ts`), so on mount here we
    * map any `?route=` query param onto the equivalent path and `navigate()`
    * to it once; `?group=` is captured here but consumed by
-   * `GroupsView.svelte` itself (it re-parses `window.location.search` on
-   * its own mount — see that file's doc comment), since a `?group=`-only
-   * deep link (no `?route=`) never triggers this component's own
-   * `navigate()` call.
+   * `GroupsView.svelte`/`ConjunctionView.svelte` themselves (each re-parses
+   * `window.location.search` on its own mount — see those files' doc
+   * comments), since a `?group=`-only deep link (no `?route=`) never
+   * triggers this component's own `navigate()` call.
    */
   import { onMount } from 'svelte';
   import ConsoleRail from './console/ConsoleRail.svelte';
   import ConsoleHeader from './console/ConsoleHeader.svelte';
-  import ConsolePlaceholder from './console/ConsolePlaceholder.svelte';
   import NodeView from './console/NodeView.svelte';
   import PeersView from './console/PeersView.svelte';
   import GroupsView from './console/GroupsView.svelte';
   import DataView from './console/DataView.svelte';
   import ChannelsView from './console/ChannelsView.svelte';
+  import ConjunctionView from './console/ConjunctionView.svelte';
   import QrOverlay from './console/QrOverlay.svelte';
   import { consoleHealthChipState, resolveConsoleDeepLinkPath, type ConsoleHealthChipState } from '../lib/console';
   import { parseHealthResponse } from '../lib/login';
@@ -115,7 +116,7 @@
       {:else if activeView === 'channels'}
         <ChannelsView {apiClient} {authState} />
       {:else}
-        <ConsolePlaceholder view={activeView} />
+        <ConjunctionView {apiClient} {navigate} />
       {/if}
     </div>
   </main>
