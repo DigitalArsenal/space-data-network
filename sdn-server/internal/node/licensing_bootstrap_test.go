@@ -142,6 +142,14 @@ func TestBuildModuleNodeContextFallsBackToServerIdentity(t *testing.T) {
 	if got := nodeCtx.KeySlots[providerWrappingSlotID]; !bytes.Equal(got, identity.EncryptionKey.PrivateKey) {
 		t.Fatalf("provider wrapping slot = %x, want %x", got, identity.EncryptionKey.PrivateKey)
 	}
+	// Loop B9.5: every provisioned slot must carry an algorithm declaration,
+	// or the keyslot oracle fails closed and the slot is unusable.
+	if got := nodeCtx.KeySlotAlgorithms[providerSigningSlotID]; got != modulert.KeySlotAlgorithmEd25519 {
+		t.Fatalf("provider signing slot algorithm = %q, want %q", got, modulert.KeySlotAlgorithmEd25519)
+	}
+	if got := nodeCtx.KeySlotAlgorithms[providerWrappingSlotID]; got != modulert.KeySlotAlgorithmX25519 {
+		t.Fatalf("provider wrapping slot algorithm = %q, want %q", got, modulert.KeySlotAlgorithmX25519)
+	}
 }
 
 func TestBuildPublicationContentKeyFrameUsesDecryptKeyForRecProtectedArtifacts(t *testing.T) {

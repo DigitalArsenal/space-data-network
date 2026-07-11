@@ -57,11 +57,19 @@ func newKeyslotCapHandler(nodeCtx *modulert.NodeContext) modulert.CapHandler {
 	}
 }
 
-// resolveKeySlot looks up a slot's private key material. The returned slice
-// aliases the host-side slot map — callers MUST NOT return it, or any
-// encoding of it, to the guest. Only derived outputs (signatures, decrypted
-// plaintext of a wrapped payload) may cross the host/guest boundary.
-func resolveKeySlot(nodeCtx *modulert.NodeContext, slotID string) ([]byte, error) {
+// resolveKeySlot looks up a slot's private key material for use with exactly
+// one algorithm. The returned slice aliases the host-side slot map — callers
+// MUST NOT return it, or any encoding of it, to the guest. Only derived
+// outputs (signatures, decrypted plaintext of a wrapped payload) may cross
+// the host/guest boundary.
+//
+// Algorithm domain separation (loop B9.5): a 32-byte slot is bit-compatible
+// with both an Ed25519 seed and an X25519 scalar, so without this gate a
+// guest could drive the same key through keyslot.sign AND keyslot.unwrap —
+// cross-protocol key reuse. The slot provider declares each slot's single
+// algorithm in NodeContext.KeySlotAlgorithms; an undeclared slot or a
+// mismatched algorithm fails closed here, before any key material is used.
+func resolveKeySlot(nodeCtx *modulert.NodeContext, slotID, algorithm string) ([]byte, error) {
 	if nodeCtx == nil {
 		return nil, fmt.Errorf("keyslot context is not available")
 	}
@@ -76,6 +84,13 @@ func resolveKeySlot(nodeCtx *modulert.NodeContext, slotID string) ([]byte, error
 	raw, ok := keySlots[slotID]
 	if !ok || len(raw) == 0 {
 		return nil, fmt.Errorf("keyslot not found")
+	}
+	declared := strings.TrimSpace(nodeCtx.KeySlotAlgorithms[slotID])
+	if declared == "" {
+		return nil, fmt.Errorf("keyslot %q has no declared algorithm", slotID)
+	}
+	if declared != algorithm {
+		return nil, fmt.Errorf("keyslot %q is not declared for algorithm %q", slotID, algorithm)
 	}
 	return raw, nil
 }
@@ -98,20 +113,25 @@ func handleKeyslotSign(nodeCtx *modulert.NodeContext, payload []byte) []byte {
 		return errCapJSON("invalid keyslot.sign request payload: " + err.Error())
 	}
 
-	slotKey, err := resolveKeySlot(nodeCtx, request.SlotID)
+	algo := strings.TrimSpace(request.Algorithm)
+	if algo == "" {
+		algo = modulert.KeySlotAlgorithmEd25519
+	}
+	switch algo {
+	case modulert.KeySlotAlgorithmEd25519, modulert.KeySlotAlgorithmSecp256k1:
+	default:
+		return errCapJSON(fmt.Sprintf("unsupported keyslot.sign algorithm: %s", algo))
+	}
+
+	slotKey, err := resolveKeySlot(nodeCtx, request.SlotID, algo)
 	if err != nil {
 		return errCapJSON(err.Error())
 	}
 
 	data := decodeBase64Cap(request.Payload)
 
-	algo := strings.TrimSpace(request.Algorithm)
-	if algo == "" {
-		algo = "ed25519"
-	}
-
 	switch algo {
-	case "ed25519":
+	case modulert.KeySlotAlgorithmEd25519:
 		if len(slotKey) != ed25519.SeedSize {
 			return errCapJSON(fmt.Sprintf("keyslot %q is not a %d-byte ed25519 seed", request.SlotID, ed25519.SeedSize))
 		}
@@ -121,7 +141,7 @@ func handleKeyslotSign(nodeCtx *modulert.NodeContext, payload []byte) []byte {
 			"algorithm": "ed25519",
 		})
 
-	case "secp256k1":
+	case modulert.KeySlotAlgorithmSecp256k1:
 		if len(slotKey) != secp256k1PrivKeySize {
 			return errCapJSON(fmt.Sprintf("keyslot %q is not a %d-byte secp256k1 private key", request.SlotID, secp256k1PrivKeySize))
 		}
@@ -157,7 +177,7 @@ func handleKeyslotUnwrap(nodeCtx *modulert.NodeContext, payload []byte) []byte {
 		return errCapJSON("invalid keyslot.unwrap request payload: " + err.Error())
 	}
 
-	slotKey, err := resolveKeySlot(nodeCtx, request.SlotID)
+	slotKey, err := resolveKeySlot(nodeCtx, request.SlotID, modulert.KeySlotAlgorithmX25519)
 	if err != nil {
 		return errCapJSON(err.Error())
 	}

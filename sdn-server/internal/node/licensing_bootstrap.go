@@ -120,12 +120,18 @@ func (n *Node) buildModuleNodeContext() (*modulert.NodeContext, error) {
 	}
 	if len(signingSeed) == 32 || len(wrappingKey) == 32 {
 		nodeCtx.KeySlots = make(map[string][]byte, 2)
+		// Loop B9.5: each slot is declared for exactly one algorithm so the
+		// keyslot oracle rejects cross-protocol use (e.g. the Ed25519 signing
+		// seed driven through keyslot.unwrap as an X25519 scalar).
+		nodeCtx.KeySlotAlgorithms = make(map[string]string, 2)
 	}
 	if len(signingSeed) == 32 {
 		nodeCtx.KeySlots[providerSigningSlotID] = append([]byte(nil), signingSeed...)
+		nodeCtx.KeySlotAlgorithms[providerSigningSlotID] = modulert.KeySlotAlgorithmEd25519
 	}
 	if len(wrappingKey) == 32 {
 		nodeCtx.KeySlots[providerWrappingSlotID] = append([]byte(nil), wrappingKey...)
+		nodeCtx.KeySlotAlgorithms[providerWrappingSlotID] = modulert.KeySlotAlgorithmX25519
 	}
 
 	return nodeCtx, nil

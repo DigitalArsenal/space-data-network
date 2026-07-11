@@ -13,13 +13,31 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
 
+// Key-slot algorithm declarations (loop B9.5 — defensive hardening).
+// Every entry in NodeContext.KeySlots MUST have a matching entry in
+// NodeContext.KeySlotAlgorithms declaring the single algorithm the slot's
+// key material may be used with. The keyslot hostcall family fails closed
+// on an undeclared slot or an algorithm mismatch, so one 32-byte slot can
+// never be used as both an Ed25519 seed (keyslot.sign) and an X25519
+// scalar (keyslot.unwrap) — cross-protocol key reuse.
+const (
+	KeySlotAlgorithmEd25519   = "ed25519"
+	KeySlotAlgorithmSecp256k1 = "secp256k1"
+	KeySlotAlgorithmX25519    = "x25519"
+)
+
 // NodeContext holds node-level info that any module can access via hostcalls.
 type NodeContext struct {
 	PeerID        string
 	PublicKeyHex  string
 	EncryptionKey []byte
 	KeySlots      map[string][]byte
-	Config        map[string]interface{}
+	// KeySlotAlgorithms domain-separates KeySlots by algorithm: slot ID →
+	// one of the KeySlotAlgorithm* constants. A slot absent from this map
+	// is unusable by any keyslot operation (fail closed). See the constant
+	// block above.
+	KeySlotAlgorithms map[string]string
+	Config            map[string]interface{}
 
 	// CapabilityPolicy is the operator-controlled capability allowlist
 	// consulted at module load/provision time (loop B1 — defensive
