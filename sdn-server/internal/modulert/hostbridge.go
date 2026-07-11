@@ -162,6 +162,7 @@ func (hb *HostBridge) Dispatch(operation string, payload []byte) []byte {
 			"http",
 			"schedule_cron",
 			"p2p_read",
+			"node_status_read",
 		})
 	case "host.hasCapability":
 		var p struct {
@@ -198,6 +199,14 @@ func (hb *HostBridge) Dispatch(operation string, payload []byte) []byte {
 		}
 		if _, ok := hb.capHandlers["p2p"]; ok {
 			operations = append(operations, "p2p.peers_snapshot", "p2p.standards_snapshot")
+		}
+		if _, ok := hb.capHandlers["node_status_read"]; ok {
+			// node_status_read has no capPrefixFromName override (module.go
+			// is out of scope for this change), so — mirroring the OTHER
+			// unmapped capabilities above (ipfs, keyslot's wallet_sign
+			// aside) — its hostcall prefix is the capability name itself.
+			// See caps/nodestatus.go's package doc for the full rationale.
+			operations = append(operations, "node_status_read.status")
 		}
 		return okJSON(operations)
 	case "node.publicKey":

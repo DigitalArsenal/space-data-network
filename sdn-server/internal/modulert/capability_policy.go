@@ -96,6 +96,14 @@ var sensitiveCapabilities = map[string]bool{
 //     / registry view + stored EPM/PNM data (loop G.2/G.4 — caps/p2p.go).
 //     No mutation, no secret material, no outbound side effects beyond
 //     what the node is already doing.
+//   - node_status_read: read-only snapshot of the HOST's OWN runtime state
+//     — uptime, record-store totals, disk headroom, service/mode, libp2p
+//     bandwidth totals + a short in-memory rate history (M1 node-status
+//     capability — caps/nodestatus.go). Every value is either derived from
+//     the node's own already-public operating state (uptime, mode, byte
+//     counts) or a local statfs/bandwidth-counter probe; nothing here reads
+//     node secrets (contrast wallet_sign/keyslot) or another peer's data
+//     (contrast p2p_read), and it has no mutation/outbound side effects.
 //   - crypto_hash, crypto_sign, crypto_verify, crypto_encrypt,
 //     crypto_decrypt, crypto_key_agreement, crypto_kdf: stateless
 //     functions over caller-SUPPLIED byte material only (see
@@ -126,6 +134,7 @@ var sensitiveCapabilities = map[string]bool{
 //     capability that SHOULD be sensitive once it gains a real effect).
 var benignCapabilities = map[string]bool{
 	"p2p_read":             true,
+	"node_status_read":     true,
 	"crypto_hash":          true,
 	"crypto_sign":          true,
 	"crypto_verify":        true,
