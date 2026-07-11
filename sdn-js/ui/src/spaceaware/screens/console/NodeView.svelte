@@ -65,6 +65,7 @@
     buildNodePeerSummary,
     buildNodeServiceView,
     buildNodeStorageView,
+    buildActivityRows,
     buildNodeThroughputView,
     flattenJsonToCsv,
     loadNodeDashboardData,
@@ -130,6 +131,7 @@
     mode: mapMode,
   });
   const peerSummaryRows = $derived(buildNodePeerSummary(dashboard?.peers ?? []));
+  const activityRows = $derived(buildActivityRows(dashboard?.activity ?? []));
   const storageView = $derived(buildNodeStorageView(dashboard?.stats ?? null, dashboard?.nodeInfo?.standardsVersion));
   const healthChipStyle = $derived(consoleHealthChipStyle(healthState));
 
@@ -586,8 +588,22 @@
         {/each}
       {:else if w.id === 'activity'}
         <div class="sdn-widget-title">ACTIVITY LOG</div>
-        <!-- No activity-feed surface exists yet — honest no-data line replaces the mock's fabricated event rows. -->
-        <div class="sdn-widget-status-sub sdn-widget-status-sub--plain">NO ACTIVITY DATA · NO SURFACE YET</div>
+        {#if activityRows.length}
+          <!-- Real events from GET /node/activity (loop U4.2 / M2): the
+               node's bounded ring, newest first. -->
+          <div class="sdn-activity-list">
+            {#each activityRows as row, i (i)}
+              <div class="sdn-activity-row">
+                <span class="sdn-activity-time">{row.time}</span>
+                <span class="sdn-activity-text">{row.text}</span>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <!-- Session-gated surface: anonymous/offline degrades to an empty
+               list, and a fresh ring is legitimately empty too. -->
+          <div class="sdn-widget-status-sub sdn-widget-status-sub--plain">NO ACTIVITY YET</div>
+        {/if}
       {/if}
     </section>
   {/each}
