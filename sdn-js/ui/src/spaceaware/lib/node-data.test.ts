@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   EPM_CID_NOT_PUBLISHED,
   NODE_PEER_SUMMARY_EMPTY_LABEL,
+  buildActivityRows,
   buildEpmDownloadFilename,
   buildNodeHealthView,
   buildNodeIdentityView,
@@ -31,6 +32,7 @@ import {
   parseNodeInfo,
   parseNodePeers,
   parseNodeStats,
+  parseNodeActivity,
   parseNodeStatus,
   parseVCardFn,
   serviceStatusDotColor,
@@ -1062,5 +1064,71 @@ describe('loadNodeDashboardData', () => {
     expect(data.status).toBeNull();
     expect(data.nodeInfo?.peerId).toBe('12D3KooWExample');
     expect(data.stats?.totalBytes).toBe(117_832);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /node/activity (loop U4.2 / M2)
+// ---------------------------------------------------------------------------
+
+describe('parseNodeActivity', () => {
+  it('parses the live envelope shape, keeping server key order semantics', () => {
+    const events = parseNodeActivity({
+      count: 2,
+      events: [
+        { ts: '2026-07-11T16:43:22Z', kind: 'peer_connected', peer_id: '12D3KooWabc', detail: '' },
+        { ts: '2026-07-11T16:43:20Z', kind: 'record_stored', peer_id: '12D3KooWdef', detail: 'OMM.fbs' },
+      ],
+    });
+    expect(events).toEqual([
+      { ts: '2026-07-11T16:43:22Z', kind: 'peer_connected', peerId: '12D3KooWabc', detail: '' },
+      { ts: '2026-07-11T16:43:20Z', kind: 'record_stored', peerId: '12D3KooWdef', detail: 'OMM.fbs' },
+    ]);
+  });
+
+  it('degrades malformed input to an empty list, never throwing', () => {
+    expect(parseNodeActivity(null)).toEqual([]);
+    expect(parseNodeActivity('nope')).toEqual([]);
+    expect(parseNodeActivity({ events: 'nope' })).toEqual([]);
+    expect(parseNodeActivity({ events: [{ kind: 'x' }, { ts: 'y' }, 42] })).toEqual([]);
+  });
+
+  it('omits peer_id honestly when the server omitted it', () => {
+    const events = parseNodeActivity({ events: [{ ts: '2026-07-11T00:00:00Z', kind: 'grant_issued', detail: 'local-ACL' }] });
+    expect(events[0].peerId).toBeNull();
+  });
+});
+
+describe('buildActivityRows', () => {
+  const ev = (kind: string, peerId: string | null = null, detail = '') => ({
+    ts: '2026-07-11T16:43:22Z',
+    kind,
+    peerId,
+    detail,
+  });
+
+  it('maps known kinds to readable labels with truncated peer ids', () => {
+    const rows = buildActivityRows([ev('peer_connected', '12D3KooWAbCdEfGh1234567890AbCdEfGh1234567890Ab')]);
+    expect(rows[0].time).toBe('16:43:22');
+    expect(rows[0].text).toBe('Peer connected · 12D3KooW…7890Ab');
+  });
+
+  it('joins detail and peer id when both present', () => {
+    const rows = buildActivityRows([ev('record_stored', '12D3Koo', 'OMM.fbs')]);
+    expect(rows[0].text).toBe('Record stored · OMM.fbs · 12D3Koo');
+  });
+
+  it('renders unknown kinds verbatim so new server events surface without a UI release', () => {
+    const rows = buildActivityRows([ev('flux_capacitor_engaged')]);
+    expect(rows[0].text).toBe('flux_capacitor_engaged');
+  });
+
+  it('caps rows at the widget budget (default 8) keeping newest-first order', () => {
+    const rows = buildActivityRows(Array.from({ length: 20 }, () => ev('peer_connected')));
+    expect(rows).toHaveLength(8);
+  });
+
+  it('renders an empty list for an empty ring', () => {
+    expect(buildActivityRows([])).toEqual([]);
   });
 });

@@ -971,6 +971,76 @@ async function fetchNodeStatus(apiClient: NodeInfoApiClient): Promise<NodeStatus
   }
 }
 
+// ---------------------------------------------------------------------------
+// GET /node/activity (loop U4.2 / M2) — the bounded activity-event ring
+// ---------------------------------------------------------------------------
+
+/** One event from `GET /api/v1/node/activity` (newest first). */
+export interface NodeActivityEvent {
+  ts: string;
+  kind: string;
+  peerId: string | null;
+  detail: string;
+}
+
+/** Parses the `{count,events:[{ts,kind,peer_id?,detail}]}` payload; malformed input degrades to `[]`, never throws. */
+export function parseNodeActivity(value: unknown): NodeActivityEvent[] {
+  if (!isPlainRecord(value) || !Array.isArray(value.events)) return [];
+  const out: NodeActivityEvent[] = [];
+  for (const entry of value.events) {
+    if (!isPlainRecord(entry)) continue;
+    const ts = pickString(entry, 'ts');
+    const kind = pickString(entry, 'kind');
+    if (!ts || !kind) continue;
+    out.push({ ts, kind, peerId: pickString(entry, 'peer_id'), detail: pickString(entry, 'detail') ?? '' });
+  }
+  return out;
+}
+
+/**
+ * Session-gated like `/node/status`: anonymous 401 / offline degrade to
+ * `[]`, which the widget renders as its honest no-data line.
+ */
+async function fetchNodeActivity(apiClient: NodeInfoApiClient, limit = 24): Promise<NodeActivityEvent[]> {
+  try {
+    const result = await apiClient.requestJson<unknown>(`/node/activity?limit=${limit}`);
+    return parseNodeActivity(result.data);
+  } catch {
+    return [];
+  }
+}
+
+export interface ActivityRowView {
+  time: string;
+  text: string;
+}
+
+/**
+ * Maps a ring event to the mock's time+text row. The kind vocabulary is the
+ * server's own (peer_connected / peer_disconnected / pnm_publication /
+ * record_stored / grant_issued); unknown kinds render verbatim rather than
+ * being dropped, so new server events surface without a UI release.
+ */
+export function buildActivityRows(events: readonly NodeActivityEvent[], max = 8): ActivityRowView[] {
+  const KIND_LABELS: Record<string, string> = {
+    peer_connected: 'Peer connected',
+    peer_disconnected: 'Peer disconnected',
+    pnm_publication: 'PNM publication',
+    record_stored: 'Record stored',
+    grant_issued: 'Grant issued',
+  };
+  return events.slice(0, max).map((e) => {
+    const label = KIND_LABELS[e.kind] ?? e.kind;
+    const parts = [label];
+    if (e.detail) parts.push(e.detail);
+    if (e.peerId) parts.push(truncateMiddle(e.peerId));
+    // ts → HH:MM:SS UTC — the ring spans ~minutes, so date-less time
+    // matches the mock's short time column.
+    const m = /T(\d{2}:\d{2}:\d{2})/.exec(e.ts);
+    return { time: m ? m[1] : e.ts, text: parts.join(' · ') };
+  });
+}
+
 /**
  * Raw text fetch for `GET /api/node/epm/vcard` (200 `text/vcard`) — the
  * only endpoint here that isn't JSON, so it bypasses `SdnApiClient`'s
@@ -1000,6 +1070,8 @@ export interface NodeDashboardData {
   peers: RawPeer[];
   /** `GET /node/status` (loop U4.1) — `null` for an anonymous/broken session or an unreachable daemon, same honest-degradation contract as every other field here. */
   status: NodeStatusSnapshot | null;
+  /** `GET /node/activity` (loop U4.2) — `[]` for anonymous/offline, same honest degradation. */
+  activity: NodeActivityEvent[];
 }
 
 /**
@@ -1013,13 +1085,14 @@ export async function loadNodeDashboardData(
   apiClient: NodeInfoApiClient,
   fetchImpl?: typeof fetch,
 ): Promise<NodeDashboardData> {
-  const [nodeInfo, epmResult, vcardText, stats, peers, status] = await Promise.all([
+  const [nodeInfo, epmResult, vcardText, stats, peers, status, activity] = await Promise.all([
     fetchNodeInfo(apiClient),
     fetchEpmIdentity(apiClient),
     fetchVCardText(fetchImpl),
     fetchNodeStats(apiClient),
     fetchNodePeers(apiClient),
     fetchNodeStatus(apiClient),
+    fetchNodeActivity(apiClient),
   ]);
   return {
     nodeInfo,
@@ -1029,5 +1102,6 @@ export async function loadNodeDashboardData(
     stats,
     peers,
     status,
+    activity,
   };
 }
