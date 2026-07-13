@@ -72,6 +72,8 @@ type FlatSQLStore struct {
 	engineDB               *flatsqlrt.Database
 	recordCatalog          *recordCatalogJournal
 	auxiliaryMetadata      *auxiliaryMetadataStore
+	assetPinTransactions   assetPinTransactionBeginner
+	assetPinLedgerRecovery atomic.Bool
 	recordCatalogHydrating atomic.Bool
 	recordCatalogHydrated  atomic.Bool
 	engineHotHydrating     atomic.Bool
@@ -295,18 +297,19 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	}
 
 	store := &FlatSQLStore{
-		db:                db,
-		engine:            engine,
-		engineDB:          engineDB,
-		recordCatalog:     recordCatalog,
-		auxiliaryMetadata: auxiliaryMetadata,
-		validator:         validator,
-		dbPath:            dbPath,
-		basePath:          basePath,
-		streamDir:         streamDir,
-		lock:              lock,
-		readOnly:          readOnly,
-		engineSources:     map[string]bool{},
+		db:                   db,
+		engine:               engine,
+		engineDB:             engineDB,
+		recordCatalog:        recordCatalog,
+		auxiliaryMetadata:    auxiliaryMetadata,
+		assetPinTransactions: sqlAssetPinTransactionBeginner{db: db},
+		validator:            validator,
+		dbPath:               dbPath,
+		basePath:             basePath,
+		streamDir:            streamDir,
+		lock:                 lock,
+		readOnly:             readOnly,
+		engineSources:        map[string]bool{},
 
 		engineHotWindow: cfg.engineHotWindow,
 		engineResident:  map[string]int64{},
@@ -445,6 +448,9 @@ func (s *FlatSQLStore) IsReadOnly() bool { return s.readOnly }
 func (s *FlatSQLStore) requireWritable(op string) error {
 	if s.readOnly {
 		return fmt.Errorf("%s requires a writable store open (this handle was opened read-only, e.g. because a daemon holds the writer lock): %w", op, ErrStoreReadOnly)
+	}
+	if s.assetPinLedgerRecovery.Load() {
+		return fmt.Errorf("%s requires closing and reopening the store to replay durable asset-pin state: %w", op, ErrAssetPinLedgerRecoveryRequired)
 	}
 	return nil
 }

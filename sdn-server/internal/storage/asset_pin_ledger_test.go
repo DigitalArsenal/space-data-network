@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -130,6 +131,181 @@ func TestAssetPinOIDCTokenReplayUsesSemanticReceiptIdentity(t *testing.T) {
 		t.Fatalf("replayed auxiliary frames = %d, want 1 receipt frame", frames)
 	}
 	assertSingleAssetOIDCReceiptForTest(t, ctx, reopened, receipt)
+}
+
+func TestAssetPinCommitFailureBlocksConflictingUpsertUntilReopen(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	store := newAssetPinTestStore(t, basePath)
+	ctx := context.Background()
+	now := time.Date(2026, 7, 14, 3, 0, 0, 123456789, time.UTC)
+	first := testAssetPinReference("reference-commit-first", "candidate-commit-shared", "bafybeicommitfirst", strings.Repeat("1", 64), AssetReferenceStaged, now, now.Add(time.Hour))
+	firstEvent := testAssetPinEvent("event-commit-first", "reference_upsert", first, now)
+	commitFailure := errors.New("injected asset pin commit failure")
+	store.assetPinTransactions = failingAssetPinTransactionBeginner{
+		delegate:  store.assetPinTransactions,
+		commitErr: commitFailure,
+	}
+
+	before := auxiliaryJournalSizeForTest(t, basePath)
+	err := store.UpsertAssetPinReference(ctx, first, firstEvent)
+	if !errors.Is(err, commitFailure) {
+		t.Fatalf("first UpsertAssetPinReference() error = %v, want injected commit failure", err)
+	}
+	if !errors.Is(err, ErrAssetPinLedgerRecoveryRequired) {
+		t.Errorf("first UpsertAssetPinReference() error = %v, want ErrAssetPinLedgerRecoveryRequired", err)
+	}
+	afterFirst := auxiliaryJournalSizeForTest(t, basePath)
+	if afterFirst <= before {
+		t.Fatalf("journal size after failed commit = %d, want greater than %d", afterFirst, before)
+	}
+
+	second := testAssetPinReference("reference-commit-second", first.CandidateKey, "bafybeicommitsecond", strings.Repeat("2", 64), AssetReferenceStaged, now.Add(time.Second), now.Add(2*time.Hour))
+	secondEvent := testAssetPinEvent("event-commit-second", "reference_upsert", second, second.CreatedAt)
+	if err := store.UpsertAssetPinReference(ctx, second, secondEvent); !errors.Is(err, ErrAssetPinLedgerRecoveryRequired) {
+		t.Fatalf("second UpsertAssetPinReference() error = %v, want ErrAssetPinLedgerRecoveryRequired", err)
+	}
+	if afterSecond := auxiliaryJournalSizeForTest(t, basePath); afterSecond != afterFirst {
+		t.Fatalf("journal size after blocked upsert = %d, want %d", afterSecond, afterFirst)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	reopened := newAssetPinTestStore(t, basePath)
+	got, ok, err := reopened.FindAssetPinReference(ctx, first.ReferenceKey)
+	if err != nil || !ok || !equalAssetPinReference(got, first) {
+		t.Fatalf("first reference after reopen = %+v, %v, %v; want %+v", got, ok, err, first)
+	}
+	if got, ok, err := reopened.FindAssetPinReference(ctx, second.ReferenceKey); err != nil || ok {
+		t.Fatalf("second reference after reopen = %+v, %v, %v; want absent", got, ok, err)
+	}
+}
+
+func TestAssetPinCommitFailureBlocksCompetingTransitionUntilReopen(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	store := newAssetPinTestStore(t, basePath)
+	ctx := context.Background()
+	now := time.Date(2026, 7, 14, 3, 30, 0, 123456789, time.UTC)
+	ref := testAssetPinReference("reference-transition-commit", "candidate-transition-commit", "bafybeitransitioncommit", strings.Repeat("3", 64), AssetReferenceStaged, now, now.Add(3*time.Hour))
+	if err := store.UpsertAssetPinReference(ctx, ref, testAssetPinEvent("event-transition-commit-upsert", "reference_upsert", ref, now)); err != nil {
+		t.Fatalf("UpsertAssetPinReference() error = %v", err)
+	}
+	commitFailure := errors.New("injected asset pin transition commit failure")
+	store.assetPinTransactions = failingAssetPinTransactionBeginner{
+		delegate:  store.assetPinTransactions,
+		commitErr: commitFailure,
+	}
+	first := AssetPinReferenceTransition{
+		ReferenceKey: ref.ReferenceKey,
+		FromState:    AssetReferenceStaged,
+		ToState:      AssetReferenceReviewOpen,
+		GitHubIssue:  5150,
+		UpdatedAt:    now.Add(time.Minute),
+		ExpiresAt:    now.Add(4 * time.Hour),
+	}
+	firstEvent := testAssetPinEvent("event-transition-commit-first", "reference_transition", ref, first.UpdatedAt)
+	firstEvent.Result = string(first.ToState)
+
+	before := auxiliaryJournalSizeForTest(t, basePath)
+	err := store.TransitionAssetPinReference(ctx, first, firstEvent)
+	if !errors.Is(err, commitFailure) {
+		t.Fatalf("first TransitionAssetPinReference() error = %v, want injected commit failure", err)
+	}
+	if !errors.Is(err, ErrAssetPinLedgerRecoveryRequired) {
+		t.Errorf("first TransitionAssetPinReference() error = %v, want ErrAssetPinLedgerRecoveryRequired", err)
+	}
+	afterFirst := auxiliaryJournalSizeForTest(t, basePath)
+	if afterFirst <= before {
+		t.Fatalf("journal size after failed transition commit = %d, want greater than %d", afterFirst, before)
+	}
+
+	second := AssetPinReferenceTransition{
+		ReferenceKey: ref.ReferenceKey,
+		FromState:    AssetReferenceStaged,
+		ToState:      AssetReferenceRejected,
+		UpdatedAt:    now.Add(2 * time.Minute),
+		ExpiresAt:    now.Add(5 * time.Hour),
+	}
+	secondEvent := testAssetPinEvent("event-transition-commit-second", "reference_transition", ref, second.UpdatedAt)
+	secondEvent.Result = string(second.ToState)
+	if err := store.TransitionAssetPinReference(ctx, second, secondEvent); !errors.Is(err, ErrAssetPinLedgerRecoveryRequired) {
+		t.Fatalf("second TransitionAssetPinReference() error = %v, want ErrAssetPinLedgerRecoveryRequired", err)
+	}
+	if afterSecond := auxiliaryJournalSizeForTest(t, basePath); afterSecond != afterFirst {
+		t.Fatalf("journal size after blocked transition = %d, want %d", afterSecond, afterFirst)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	reopened := newAssetPinTestStore(t, basePath)
+	got, ok, err := reopened.FindAssetPinReference(ctx, ref.ReferenceKey)
+	if err != nil || !ok {
+		t.Fatalf("reference after reopen = %+v, %v, %v; want present", got, ok, err)
+	}
+	if got.State != first.ToState || got.GitHubIssue != first.GitHubIssue || !got.UpdatedAt.Equal(first.UpdatedAt) {
+		t.Fatalf("reference after reopen = %+v, want only first transition %+v", got, first)
+	}
+	secondEvents, err := reopened.ListAssetPinAuditEvents(ctx, AssetPinAuditEventQuery{EventID: secondEvent.EventID})
+	if err != nil {
+		t.Fatalf("ListAssetPinAuditEvents(second) error = %v", err)
+	}
+	if len(secondEvents) != 0 {
+		t.Fatalf("second transition audit events after reopen = %+v, want none", secondEvents)
+	}
+}
+
+func TestAssetPinAppendFailureDoesNotRequireRecovery(t *testing.T) {
+	store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
+	ctx := context.Background()
+	now := time.Date(2026, 7, 14, 4, 0, 0, 123456789, time.UTC)
+	if err := store.auxiliaryMetadata.f.Close(); err != nil {
+		t.Fatalf("close auxiliary metadata file: %v", err)
+	}
+	ref := testAssetPinReference("reference-append-failure", "candidate-append-failure", "bafybeiappendfailure", strings.Repeat("4", 64), AssetReferenceStaged, now, now.Add(time.Hour))
+	err := store.UpsertAssetPinReference(ctx, ref, testAssetPinEvent("event-append-failure", "reference_upsert", ref, now))
+	if err == nil {
+		t.Fatal("UpsertAssetPinReference() succeeded with closed auxiliary journal")
+	}
+	if errors.Is(err, ErrAssetPinLedgerRecoveryRequired) {
+		t.Fatalf("UpsertAssetPinReference() error = %v, append failure must not require recovery", err)
+	}
+	if err := store.requireWritable("probe append failure"); err != nil {
+		t.Fatalf("requireWritable() after append failure = %v, want writable", err)
+	}
+}
+
+func TestAssetPinQueryCutoffsRejectUnixNanoOverflow(t *testing.T) {
+	store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
+	ctx := context.Background()
+	outOfRange := time.Date(2500, 1, 1, 0, 0, 0, 987654321, time.UTC)
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "expired references",
+			run: func() error {
+				_, err := store.ListExpiredAssetPinReferences(ctx, outOfRange)
+				return err
+			},
+		},
+		{
+			name: "protected references",
+			run: func() error {
+				_, err := store.CountProtectedAssetReferences(ctx, "bafybeiquerycutoff", outOfRange)
+				return err
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run()
+			if err == nil || !strings.Contains(err.Error(), "UnixNano range") {
+				t.Fatalf("query with out-of-range cutoff error = %v, want UnixNano range rejection", err)
+			}
+		})
+	}
 }
 
 func TestAssetPinPublicWritesRequireExplicitPersistedTimestamps(t *testing.T) {
@@ -1463,4 +1639,26 @@ func auxiliaryJournalSizeForTest(t *testing.T, basePath string) int64 {
 		t.Fatalf("stat auxiliary journal: %v", err)
 	}
 	return info.Size()
+}
+
+type failingAssetPinTransactionBeginner struct {
+	delegate  assetPinTransactionBeginner
+	commitErr error
+}
+
+func (beginner failingAssetPinTransactionBeginner) BeginTx(ctx context.Context, opts *sql.TxOptions) (assetPinTransaction, error) {
+	tx, err := beginner.delegate.BeginTx(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return failingAssetPinTransaction{assetPinTransaction: tx, commitErr: beginner.commitErr}, nil
+}
+
+type failingAssetPinTransaction struct {
+	assetPinTransaction
+	commitErr error
+}
+
+func (tx failingAssetPinTransaction) Commit() error {
+	return tx.commitErr
 }
