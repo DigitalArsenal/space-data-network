@@ -1,0 +1,40 @@
+# C2 curl cross-checks — conjunction-only daemon serving swap
+# Captured 2026-07-13T15:55:45Z against a local scratch daemon
+# (SDN_UI_MODE unset => conjunction shipped default; admin.require_auth=true)
+# daemon: 127.0.0.1:15080 (isolated scratch home, explicit --config)
+
+## Primary route GET / (headers)
+HTTP/1.1 200 OK
+Cache-Control: no-store
+Content-Type: text/html; charset=utf-8
+Cross-Origin-Embedder-Policy: require-corp
+Cross-Origin-Opener-Policy: same-origin
+bytes=  230806  conj-root=3  __SDN_CONFIG__=2
+
+## Descoped SpaceAware screens — expect 404 (code stays, serving stops)
+  /console                 404
+  /console/node            404
+  /console/peers           404
+  /console/groups          404
+  /console/data            404
+  /console/channels        404
+  /console/conjunction     404
+  /orbital                 404
+  /gantt                   404
+  /bmc2                    404
+  /bmc2/f4                 404
+
+## Conjunction anonymous data sources — expect 200
+  /api/v1/peers            200
+  /api/v1/channels         200
+  /api/v1/stats            200
+  /api/v1/data/health      200
+
+## Admin/operator APIs anonymous — expect 401 (RequireAuth wall unchanged)
+  /api/v1/data/summary     401
+  /api/v1/data/query       401
+  /api/auth/me             401
+
+## Legacy wallet surfaces (kept mounted for operators) — expect 200
+  /login                   200 (text/html; charset=utf-8)
+  /webui/                  200
