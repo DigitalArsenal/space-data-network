@@ -102,7 +102,7 @@ var capabilityNames = map[int]string{
 	26: "context_read", 27: "context_write",
 	28: "crypto_hash", 29: "crypto_sign", 30: "crypto_verify",
 	31: "crypto_encrypt", 32: "crypto_decrypt", 33: "crypto_key_agreement",
-	34: "crypto_kdf", 35: "schedule_cron",
+	34: "crypto_kdf", 35: "schedule_cron", 36: "storage_ingest",
 }
 
 var pluginFamilyNames = map[int]string{
