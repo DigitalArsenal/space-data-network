@@ -613,7 +613,7 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		expectedCID, calculateErr := h.pinner.CalculateAssetGLBCID(r.Context(), upload.tempPath)
 		if calculateErr != nil {
-			writeError(w, http.StatusBadGateway, "asset pin backend failed")
+			writeError(w, http.StatusServiceUnavailable, "asset pin backend unavailable")
 			return
 		}
 		expectedCID, err = canonicalAssetCID(expectedCID)
@@ -652,7 +652,7 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		observedCID, pinErr := h.pinner.PinAssetGLB(r.Context(), upload.tempPath)
 		if pinErr != nil {
-			writeError(w, http.StatusBadGateway, "asset pin backend failed")
+			writeError(w, http.StatusServiceUnavailable, "asset pin backend unavailable")
 			return
 		}
 		observedCID, err = canonicalAssetCID(observedCID)
