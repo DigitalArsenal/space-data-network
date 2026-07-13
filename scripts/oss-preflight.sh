@@ -19,7 +19,11 @@ fi
 echo "[oss-preflight] Repo: $ROOT"
 
 BLOCKED_PATHS_REGEX='^\.claude/|^\.gocache/|^demo/\.demo-env$|^demo/\.demo-secrets\.json$|(^|/)[^/]*-?wallet\.env$|(^|/)[^/]*\.mnemonic$'
-SECRET_REGEX='-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|-----BEGIN PRIVATE KEY-----|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{80,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{35}|sk_live_[A-Za-z0-9]{16,}|ORBPRO_SERVER_PRIVATE_KEY_HEX=[A-Fa-f0-9]{32,}|DERIVATION_SECRET=[A-Fa-f0-9]{32,}|(MNEMONIC|SEED_PHRASE)="?([a-z]+ ){11,}[a-z]+'
+# AKIA/ASIA are wrapped in non-alphanumeric boundaries: a real AWS key id is a
+# standalone 20-char token, while base64-embedded build artifacts (e.g. the
+# single-file UI bundles inlining wasm) legitimately contain AKIA/ASIA as
+# substrings of longer alphanumeric runs and must not trip the scan.
+SECRET_REGEX='-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|-----BEGIN PRIVATE KEY-----|(^|[^A-Za-z0-9])AKIA[0-9A-Z]{16}($|[^A-Za-z0-9])|(^|[^A-Za-z0-9])ASIA[0-9A-Z]{16}($|[^A-Za-z0-9])|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{80,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{35}|sk_live_[A-Za-z0-9]{16,}|ORBPRO_SERVER_PRIVATE_KEY_HEX=[A-Fa-f0-9]{32,}|DERIVATION_SECRET=[A-Fa-f0-9]{32,}|(MNEMONIC|SEED_PHRASE)="?([a-z]+ ){11,}[a-z]+'
 INFRA_REGEX='api\.spaceaware\.io|relay\.spaceaware\.io|tokyo\.relay\.digitalarsenal\.io|209\.182\.234\.97|~/.ssh/sdn_deploy_key'
 
 SECRET_ALLOWLIST_REGEX='^kubo/test/sharness/t0165-keystore-data/|^sdn-server/internal/storefront/payment_stripe_test.go:|^sdn-js/node_modules/|^docs/network-ecosystem-demo\.mjs:|^scripts/oss-preflight.sh:'
