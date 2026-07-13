@@ -35,6 +35,9 @@ var (
 	// ErrAssetOIDCReceiptConflict reports corrupt or contradictory receipt data
 	// under a digest already reconstructed from the auxiliary journal.
 	ErrAssetOIDCReceiptConflict = errors.New("storage: conflicting asset OIDC receipt")
+	// ErrAssetPinLedgerRecoveryRequired reports that durable asset-pin journal
+	// state must be replayed into a fresh store before another mutation.
+	ErrAssetPinLedgerRecoveryRequired = errors.New("storage: asset pin ledger recovery required")
 	// ErrAssetPinReferenceNotFound reports a missing reference key.
 	ErrAssetPinReferenceNotFound = errors.New("storage: asset pin reference not found")
 	// ErrAssetPinReferenceConflict reports a deterministic-key or state compare-and-swap conflict.
@@ -45,6 +48,49 @@ var (
 	// ErrAssetPinAuditConflict reports different audit data under one stable event ID.
 	ErrAssetPinAuditConflict = errors.New("storage: conflicting asset pin audit event")
 )
+
+type assetPinTransaction interface {
+	assetPinQueryExecer
+	Commit() error
+	Rollback() error
+}
+
+type assetPinTransactionBeginner interface {
+	BeginTx(context.Context, *sql.TxOptions) (assetPinTransaction, error)
+}
+
+type sqlAssetPinTransactionBeginner struct {
+	db *sql.DB
+}
+
+func (beginner sqlAssetPinTransactionBeginner) BeginTx(ctx context.Context, opts *sql.TxOptions) (assetPinTransaction, error) {
+	return beginner.db.BeginTx(ctx, opts)
+}
+
+func (s *FlatSQLStore) beginAssetPinTransaction(ctx context.Context, operation string) (assetPinTransaction, error) {
+	// Asset mutation callers hold s.mu here. Re-check after lock acquisition so
+	// a writer queued behind a failed commit cannot validate against stale SQL.
+	if err := s.requireWritable(operation); err != nil {
+		return nil, err
+	}
+	return s.assetPinTransactions.BeginTx(ctx, nil)
+}
+
+func (s *FlatSQLStore) appendAndCommitAssetPinMutation(tx assetPinTransaction, event auxiliaryMetadataEvent, appendOperation, commitOperation string) error {
+	if err := s.appendAuxiliaryMetadata(event); err != nil {
+		return fmt.Errorf("%s: %w", appendOperation, err)
+	}
+	if err := tx.Commit(); err != nil {
+		// The caller still holds s.mu, so publish the poison state before any
+		// queued asset mutation can acquire the lock and inspect live SQL.
+		s.assetPinLedgerRecovery.Store(true)
+		return errors.Join(
+			fmt.Errorf("%s: %w", commitOperation, err),
+			ErrAssetPinLedgerRecoveryRequired,
+		)
+	}
+	return nil
+}
 
 // AssetOIDCReceipt is the storage-owned audit record for one verified token.
 // Digest is the SHA-256 digest of the token; raw JWTs have no field here and
@@ -323,7 +369,7 @@ func (s *FlatSQLStore) ConsumeAssetOIDCToken(ctx context.Context, receipt AssetO
 	if err := s.checkAuxiliaryAssetFrame(metadataEvent); err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginAssetPinTransaction(ctx, "consume asset OIDC token")
 	if err != nil {
 		return fmt.Errorf("begin asset OIDC receipt transaction: %w", err)
 	}
@@ -336,13 +382,7 @@ func (s *FlatSQLStore) ConsumeAssetOIDCToken(ctx context.Context, receipt AssetO
 	if !inserted {
 		return fmt.Errorf("digest %s: %w", receipt.Digest, ErrAssetOIDCTokenReplay)
 	}
-	if err := s.appendAuxiliaryMetadata(metadataEvent); err != nil {
-		return fmt.Errorf("append asset OIDC receipt metadata: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit asset OIDC receipt: %w", err)
-	}
-	return nil
+	return s.appendAndCommitAssetPinMutation(tx, metadataEvent, "append asset OIDC receipt metadata", "commit asset OIDC receipt")
 }
 
 // FindAssetOIDCReceipt looks up a consumed token digest without exposing token material.
@@ -402,7 +442,7 @@ func (s *FlatSQLStore) UpsertAssetPinReference(ctx context.Context, ref AssetPin
 	if err := s.checkAuxiliaryAssetFrame(metadataEvent); err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginAssetPinTransaction(ctx, "upsert asset pin reference")
 	if err != nil {
 		return fmt.Errorf("begin asset pin reference upsert: %w", err)
 	}
@@ -418,13 +458,7 @@ func (s *FlatSQLStore) UpsertAssetPinReference(ctx context.Context, ref AssetPin
 	if _, err := insertAssetPinAuditEvent(ctx, tx, event); err != nil {
 		return err
 	}
-	if err := s.appendAuxiliaryMetadata(metadataEvent); err != nil {
-		return fmt.Errorf("append asset pin reference upsert metadata: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit asset pin reference upsert: %w", err)
-	}
-	return nil
+	return s.appendAndCommitAssetPinMutation(tx, metadataEvent, "append asset pin reference upsert metadata", "commit asset pin reference upsert")
 }
 
 // TransitionAssetPinReference compare-and-swaps one lifecycle state and writes
@@ -452,7 +486,7 @@ func (s *FlatSQLStore) TransitionAssetPinReference(ctx context.Context, transiti
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginAssetPinTransaction(ctx, "transition asset pin reference")
 	if err != nil {
 		return fmt.Errorf("begin asset pin reference transition: %w", err)
 	}
@@ -487,13 +521,7 @@ func (s *FlatSQLStore) TransitionAssetPinReference(ctx context.Context, transiti
 	if _, err := insertAssetPinAuditEvent(ctx, tx, event); err != nil {
 		return err
 	}
-	if err := s.appendAuxiliaryMetadata(metadataEvent); err != nil {
-		return fmt.Errorf("append asset pin reference transition metadata: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit asset pin reference transition: %w", err)
-	}
-	return nil
+	return s.appendAndCommitAssetPinMutation(tx, metadataEvent, "append asset pin reference transition metadata", "commit asset pin reference transition")
 }
 
 // DeleteExpiredAssetPinReference deletes a finite, expired, non-permanently
@@ -524,7 +552,7 @@ func (s *FlatSQLStore) DeleteExpiredAssetPinReference(ctx context.Context, refer
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginAssetPinTransaction(ctx, "delete expired asset pin reference")
 	if err != nil {
 		return fmt.Errorf("begin expired asset pin reference delete: %w", err)
 	}
@@ -564,13 +592,7 @@ func (s *FlatSQLStore) DeleteExpiredAssetPinReference(ctx context.Context, refer
 	if _, err := insertAssetPinAuditEvent(ctx, tx, event); err != nil {
 		return err
 	}
-	if err := s.appendAuxiliaryMetadata(metadataEvent); err != nil {
-		return fmt.Errorf("append asset pin reference delete metadata: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit expired asset pin reference delete: %w", err)
-	}
-	return nil
+	return s.appendAndCommitAssetPinMutation(tx, metadataEvent, "append asset pin reference delete metadata", "commit expired asset pin reference delete")
 }
 
 // AppendAssetPinAuditEvent records a standalone immutable audit event.
@@ -595,7 +617,7 @@ func (s *FlatSQLStore) AppendAssetPinAuditEvent(ctx context.Context, event Asset
 	if err := s.checkAuxiliaryAssetFrame(metadataEvent); err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.beginAssetPinTransaction(ctx, "append asset pin audit event")
 	if err != nil {
 		return fmt.Errorf("begin asset pin audit append: %w", err)
 	}
@@ -608,13 +630,7 @@ func (s *FlatSQLStore) AppendAssetPinAuditEvent(ctx context.Context, event Asset
 	if _, err := insertAssetPinAuditEvent(ctx, tx, event); err != nil {
 		return err
 	}
-	if err := s.appendAuxiliaryMetadata(metadataEvent); err != nil {
-		return fmt.Errorf("append asset pin audit metadata: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit asset pin audit append: %w", err)
-	}
-	return nil
+	return s.appendAndCommitAssetPinMutation(tx, metadataEvent, "append asset pin audit metadata", "commit asset pin audit append")
 }
 
 // FindAssetBySHA256 returns the most recently updated reference for reusable content.
@@ -728,8 +744,8 @@ func (s *FlatSQLStore) ListExpiredAssetPinReferences(ctx context.Context, now ti
 	if err := requireAssetPinContext(ctx); err != nil {
 		return nil, err
 	}
-	if now.IsZero() {
-		return nil, errors.New("asset pin expiry cutoff is required")
+	if err := validateAssetPinPersistedTime("asset pin expiry cutoff", now, false); err != nil {
+		return nil, err
 	}
 	now = normalizeAssetPinTime(now)
 	s.mu.RLock()
@@ -753,8 +769,8 @@ func (s *FlatSQLStore) CountProtectedAssetReferences(ctx context.Context, cid st
 	if cid == "" {
 		return 0, errors.New("asset CID is required")
 	}
-	if now.IsZero() {
-		return 0, errors.New("asset protection cutoff is required")
+	if err := validateAssetPinPersistedTime("asset protection cutoff", now, false); err != nil {
+		return 0, err
 	}
 	now = normalizeAssetPinTime(now)
 	s.mu.RLock()
