@@ -4,9 +4,11 @@ package assetpin
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -23,6 +25,8 @@ const (
 	WorkflowPin WorkflowKind = "pin"
 	// WorkflowDecision authorizes the asset review decision workflow.
 	WorkflowDecision WorkflowKind = "decision"
+
+	defaultOIDCHTTPTimeout = 10 * time.Second
 )
 
 var (
@@ -32,8 +36,8 @@ var (
 	ErrInvalidToken = errors.New("assetpin: invalid token")
 	// ErrTokenReplay indicates that a previously consumed token was used again.
 	ErrTokenReplay = errors.New("assetpin: token replay")
-
-	errTokenReceiptConsumer = errors.New("assetpin: token receipt consumer failed")
+	// ErrTokenReceipt indicates that the verified token receipt could not be consumed.
+	ErrTokenReceipt = errors.New("assetpin: token receipt consumer failed")
 )
 
 // Claims contains the GitHub Actions claims retained for an accepted asset
@@ -67,11 +71,18 @@ type Verifier struct {
 // NewVerifier discovers the configured OIDC provider and constructs an asset
 // workflow token verifier.
 func NewVerifier(ctx context.Context, cfg config.AssetPinConfig, consumer TokenReceiptConsumer) (*Verifier, error) {
+	return newVerifier(ctx, cfg, consumer, defaultOIDCHTTPTimeout)
+}
+
+func newVerifier(ctx context.Context, cfg config.AssetPinConfig, consumer TokenReceiptConsumer, httpTimeout time.Duration) (*Verifier, error) {
 	if ctx == nil {
 		return nil, errors.New("assetpin: context is required")
 	}
 	if consumer == nil {
 		return nil, errors.New("assetpin: token receipt consumer is required")
+	}
+	if httpTimeout <= 0 {
+		return nil, errors.New("assetpin: OIDC HTTP timeout must be positive")
 	}
 	for _, field := range []struct {
 		name  string
@@ -89,13 +100,15 @@ func NewVerifier(ctx context.Context, cfg config.AssetPinConfig, consumer TokenR
 		}
 	}
 
-	provider, err := oidc.NewProvider(ctx, cfg.Issuer)
+	httpClient := &http.Client{Timeout: httpTimeout}
+	provider, err := oidc.NewProvider(oidc.ClientContext(ctx, httpClient), cfg.Issuer)
 	if err != nil {
 		return nil, fmt.Errorf("assetpin: discover OIDC provider: %w", err)
 	}
+	keySetContext := oidc.ClientContext(context.Background(), httpClient)
 
 	return &Verifier{
-		tokenVerifier:    provider.Verifier(&oidc.Config{ClientID: cfg.Audience}),
+		tokenVerifier:    provider.VerifierContext(keySetContext, &oidc.Config{ClientID: cfg.Audience}),
 		repository:       cfg.Repository,
 		ref:              cfg.Ref,
 		pinWorkflow:      cfg.PinWorkflow,
@@ -107,8 +120,14 @@ func NewVerifier(ctx context.Context, cfg config.AssetPinConfig, consumer TokenR
 // VerifyAndConsume verifies rawToken for kind, validates its GitHub Actions
 // claims, and records its SHA-256 digest before returning the accepted claims.
 func (v *Verifier) VerifyAndConsume(ctx context.Context, rawToken string, kind WorkflowKind) (Claims, error) {
+	if ctx == nil {
+		return Claims{}, ErrInvalidToken
+	}
 	if strings.TrimSpace(rawToken) == "" {
 		return Claims{}, ErrMissingToken
+	}
+	if !isCanonicalCompactJWT(rawToken) {
+		return Claims{}, ErrInvalidToken
 	}
 
 	wantWorkflow, ok := v.workflow(kind)
@@ -140,10 +159,28 @@ func (v *Verifier) VerifyAndConsume(ctx context.Context, rawToken string, kind W
 		if errors.Is(err, ErrTokenReplay) {
 			return Claims{}, ErrTokenReplay
 		}
-		return Claims{}, errTokenReceiptConsumer
+		return Claims{}, ErrTokenReceipt
 	}
 
 	return claims, nil
+}
+
+func isCanonicalCompactJWT(rawToken string) bool {
+	segments := strings.Split(rawToken, ".")
+	if len(segments) != 3 {
+		return false
+	}
+	encoding := base64.RawURLEncoding.Strict()
+	for _, segment := range segments {
+		if segment == "" {
+			return false
+		}
+		decoded, err := encoding.DecodeString(segment)
+		if err != nil || encoding.EncodeToString(decoded) != segment {
+			return false
+		}
+	}
+	return true
 }
 
 func (v *Verifier) workflow(kind WorkflowKind) (string, bool) {

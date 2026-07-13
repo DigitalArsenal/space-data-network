@@ -16,6 +16,8 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -309,6 +311,204 @@ func TestVerifierRejectsSecondUseOfTokenDigest(t *testing.T) {
 	}
 }
 
+func TestVerifierRejectsEquivalentNonCanonicalCompactToken(t *testing.T) {
+	provider := newTestOIDCProvider(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	canonicalToken := provider.sign(t, provider.validClaims(now, now.Add(5*time.Minute), testPinWorkflow), provider.privateKey)
+	nonCanonicalToken := equivalentNonCanonicalSignatureToken(t, canonicalToken)
+	if canonicalToken == nonCanonicalToken {
+		t.Fatal("non-canonical token must differ from canonical token")
+	}
+	canonicalDigest := sha256.Sum256([]byte(canonicalToken))
+	nonCanonicalDigest := sha256.Sum256([]byte(nonCanonicalToken))
+	if canonicalDigest == nonCanonicalDigest {
+		t.Fatal("differently serialized tokens must have different receipt digests")
+	}
+
+	consumerCalls := 0
+	verifier := newTestVerifier(t, provider, func(_ context.Context, _ string, _ time.Time, _ Claims) error {
+		consumerCalls++
+		return nil
+	})
+
+	got, err := verifier.VerifyAndConsume(context.Background(), nonCanonicalToken, WorkflowPin)
+	if !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("non-canonical VerifyAndConsume() error = %v, want ErrInvalidToken", err)
+	}
+	if err.Error() != ErrInvalidToken.Error() {
+		t.Fatalf("non-canonical VerifyAndConsume() error = %q, want sanitized %q", err, ErrInvalidToken)
+	}
+	if got != (Claims{}) {
+		t.Fatalf("non-canonical VerifyAndConsume() claims = %#v, want zero claims", got)
+	}
+	if consumerCalls != 0 {
+		t.Fatalf("receipt consumer calls = %d, want 0", consumerCalls)
+	}
+}
+
+func TestVerifierConcurrentSameTokenHasOneSuccessAndOneDigest(t *testing.T) {
+	provider := newTestOIDCProvider(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	rawToken := provider.sign(t, provider.validClaims(now, now.Add(5*time.Minute), testPinWorkflow), provider.privateKey)
+	digestBytes := sha256.Sum256([]byte(rawToken))
+	wantDigest := hex.EncodeToString(digestBytes[:])
+
+	var accepted atomic.Bool
+	var digestMismatch atomic.Bool
+	verifier := newTestVerifier(t, provider, func(_ context.Context, digest string, _ time.Time, _ Claims) error {
+		if digest != wantDigest {
+			digestMismatch.Store(true)
+		}
+		if accepted.CompareAndSwap(false, true) {
+			return nil
+		}
+		return ErrTokenReplay
+	})
+
+	const attempts = 32
+	start := make(chan struct{})
+	errs := make(chan error, attempts)
+	var wg sync.WaitGroup
+	for range attempts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := verifier.VerifyAndConsume(context.Background(), rawToken, WorkflowPin)
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	successes := 0
+	replays := 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrTokenReplay):
+			replays++
+		default:
+			t.Fatalf("VerifyAndConsume() error = %v, want success or ErrTokenReplay", err)
+		}
+	}
+	if successes != 1 || replays != attempts-1 {
+		t.Fatalf("concurrent results = %d successes, %d replays; want 1 success, %d replays", successes, replays, attempts-1)
+	}
+	if digestMismatch.Load() {
+		t.Fatal("concurrent receipt consumers received different token digests")
+	}
+}
+
+func TestVerifierJWKSFetchTimeoutDoesNotWedgeRetries(t *testing.T) {
+	var jwksRequests atomic.Int32
+	provider := newTestOIDCProviderWithJWKSHandler(t, func(provider *testOIDCProvider, w http.ResponseWriter, r *http.Request) {
+		if jwksRequests.Add(1) == 1 {
+			<-r.Context().Done()
+			return
+		}
+		provider.serveJWKS(t, w)
+	})
+	now := time.Now().UTC().Truncate(time.Second)
+	rawToken := provider.sign(t, provider.validClaims(now, now.Add(5*time.Minute), testPinWorkflow), provider.privateKey)
+	consumerCalls := 0
+
+	const testHTTPTimeout = 50 * time.Millisecond
+	verifier, err := newVerifier(context.Background(), provider.config(), func(context.Context, string, time.Time, Claims) error {
+		consumerCalls++
+		return nil
+	}, testHTTPTimeout)
+	if err != nil {
+		t.Fatalf("newVerifier() = %v", err)
+	}
+
+	started := time.Now()
+	if _, err := verifier.VerifyAndConsume(context.Background(), rawToken, WorkflowPin); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("stalled JWKS VerifyAndConsume() error = %v, want ErrInvalidToken", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("stalled JWKS VerifyAndConsume() took %v, want bounded by HTTP timeout", elapsed)
+	}
+	if consumerCalls != 0 {
+		t.Fatalf("receipt consumer calls after stalled JWKS = %d, want 0", consumerCalls)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		_, err = verifier.VerifyAndConsume(context.Background(), rawToken, WorkflowPin)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("VerifyAndConsume() remained wedged after timed-out JWKS request: %v", err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if consumerCalls != 1 {
+		t.Fatalf("receipt consumer calls after JWKS recovery = %d, want 1", consumerCalls)
+	}
+	if got := jwksRequests.Load(); got < 2 {
+		t.Fatalf("JWKS requests = %d, want at least 2", got)
+	}
+}
+
+func TestVerifierSanitizesTokenReceiptConsumerFailure(t *testing.T) {
+	provider := newTestOIDCProvider(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	rawToken := provider.sign(t, provider.validClaims(now, now.Add(5*time.Minute), testPinWorkflow), provider.privateKey)
+	consumerErr := errors.New("sensitive consumer failure: " + rawToken + " actor=" + testActor)
+	verifier := newTestVerifier(t, provider, func(context.Context, string, time.Time, Claims) error {
+		return consumerErr
+	})
+
+	got, err := verifier.VerifyAndConsume(context.Background(), rawToken, WorkflowPin)
+	if !errors.Is(err, ErrTokenReceipt) {
+		t.Fatalf("VerifyAndConsume() error = %v, want ErrTokenReceipt", err)
+	}
+	if errors.Is(err, consumerErr) {
+		t.Fatal("VerifyAndConsume() exposed the underlying consumer error")
+	}
+	if err.Error() != ErrTokenReceipt.Error() {
+		t.Fatalf("VerifyAndConsume() error = %q, want sanitized %q", err, ErrTokenReceipt)
+	}
+	if strings.Contains(err.Error(), rawToken) || strings.Contains(err.Error(), testActor) {
+		t.Fatal("VerifyAndConsume() error leaked token or claim data")
+	}
+	if got != (Claims{}) {
+		t.Fatalf("VerifyAndConsume() claims = %#v, want zero claims", got)
+	}
+}
+
+func TestVerifierRejectsNilVerifyContext(t *testing.T) {
+	provider := newTestOIDCProvider(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	rawToken := provider.sign(t, provider.validClaims(now, now.Add(5*time.Minute), testPinWorkflow), provider.privateKey)
+	consumerCalls := 0
+	verifier := newTestVerifier(t, provider, func(context.Context, string, time.Time, Claims) error {
+		consumerCalls++
+		return nil
+	})
+
+	got, err := verifier.VerifyAndConsume(nil, rawToken, WorkflowPin)
+	if !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("VerifyAndConsume(nil) error = %v, want ErrInvalidToken", err)
+	}
+	if err.Error() != ErrInvalidToken.Error() {
+		t.Fatalf("VerifyAndConsume(nil) error = %q, want sanitized %q", err, ErrInvalidToken)
+	}
+	if got != (Claims{}) {
+		t.Fatalf("VerifyAndConsume(nil) claims = %#v, want zero claims", got)
+	}
+	if consumerCalls != 0 {
+		t.Fatalf("receipt consumer calls = %d, want 0", consumerCalls)
+	}
+	if strings.Contains(err.Error(), rawToken) || strings.Contains(err.Error(), testActor) {
+		t.Fatal("VerifyAndConsume(nil) error leaked token or claim data")
+	}
+}
+
 type testTokenReceipt struct {
 	digest    string
 	expiresAt time.Time
@@ -322,6 +522,10 @@ type testOIDCProvider struct {
 }
 
 func newTestOIDCProvider(t *testing.T) *testOIDCProvider {
+	return newTestOIDCProviderWithJWKSHandler(t, nil)
+}
+
+func newTestOIDCProviderWithJWKSHandler(t *testing.T, jwksHandler func(*testOIDCProvider, http.ResponseWriter, *http.Request)) *testOIDCProvider {
 	t.Helper()
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -347,25 +551,35 @@ func newTestOIDCProvider(t *testing.T) *testOIDCProvider {
 			t.Errorf("encode discovery document: %v", err)
 		}
 	})
-	mux.HandleFunc("/keys", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		publicKey := provider.privateKey.PublicKey
-		if err := json.NewEncoder(w).Encode(map[string]any{
-			"keys": []map[string]string{{
-				"kty": "RSA",
-				"use": "sig",
-				"kid": provider.keyID,
-				"alg": "RS256",
-				"n":   base64.RawURLEncoding.EncodeToString(publicKey.N.Bytes()),
-				"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(publicKey.E)).Bytes()),
-			}},
-		}); err != nil {
-			t.Errorf("encode JWKS: %v", err)
+	mux.HandleFunc("/keys", func(w http.ResponseWriter, r *http.Request) {
+		if jwksHandler != nil {
+			jwksHandler(provider, w, r)
+			return
 		}
+		provider.serveJWKS(t, w)
 	})
 	provider.server = httptest.NewServer(mux)
 	t.Cleanup(provider.server.Close)
 	return provider
+}
+
+func (p *testOIDCProvider) serveJWKS(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+
+	w.Header().Set("Content-Type", "application/json")
+	publicKey := p.privateKey.PublicKey
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"keys": []map[string]string{{
+			"kty": "RSA",
+			"use": "sig",
+			"kid": p.keyID,
+			"alg": "RS256",
+			"n":   base64.RawURLEncoding.EncodeToString(publicKey.N.Bytes()),
+			"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(publicKey.E)).Bytes()),
+		}},
+	}); err != nil {
+		t.Errorf("encode JWKS: %v", err)
+	}
 }
 
 func (p *testOIDCProvider) config() config.AssetPinConfig {
@@ -457,4 +671,35 @@ func assertNoSensitiveTokenData(t *testing.T, err error, rawToken string, claims
 			t.Fatalf("verification error leaked %s", claimName)
 		}
 	}
+}
+
+func equivalentNonCanonicalSignatureToken(t *testing.T, rawToken string) string {
+	t.Helper()
+
+	parts := strings.Split(rawToken, ".")
+	if len(parts) != 3 {
+		t.Fatalf("compact token segments = %d, want 3", len(parts))
+	}
+	if len(parts[2])%4 != 2 {
+		t.Fatalf("RSA-2048 signature segment length mod 4 = %d, want 2", len(parts[2])%4)
+	}
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	last := len(parts[2]) - 1
+	index := strings.IndexByte(alphabet, parts[2][last])
+	if index < 0 || index%16 != 0 || index+1 >= len(alphabet) {
+		t.Fatalf("canonical signature suffix %q cannot be made non-canonical", parts[2][last])
+	}
+	canonicalSignature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatalf("decode canonical signature: %v", err)
+	}
+	parts[2] = parts[2][:last] + string(alphabet[index+1])
+	nonCanonicalSignature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatalf("decode non-canonical signature: %v", err)
+	}
+	if string(canonicalSignature) != string(nonCanonicalSignature) {
+		t.Fatal("test mutation changed decoded signature bytes")
+	}
+	return strings.Join(parts, ".")
 }
