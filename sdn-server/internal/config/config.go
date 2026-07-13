@@ -52,13 +52,20 @@ type AssetPinConfig struct {
 	RetentionInterval time.Duration `yaml:"retention_interval"`
 }
 
+// Built-in defaults for AssetPinConfig's bounded resource controls.
+const (
+	DefaultAssetPinMaxUploadBytes    int64         = 10_000_000
+	DefaultAssetPinMinFreeBytes      int64         = 10 << 30
+	DefaultAssetPinRetentionInterval time.Duration = time.Hour
+)
+
 // EffectiveMaxUploadBytes returns the configured upload limit or the safe
 // default when the configured value is not positive.
 func (c AssetPinConfig) EffectiveMaxUploadBytes() int64 {
 	if c.MaxUploadBytes > 0 {
 		return c.MaxUploadBytes
 	}
-	return 10_000_000
+	return DefaultAssetPinMaxUploadBytes
 }
 
 // EffectiveMinFreeBytes returns the configured free-space floor or the safe
@@ -67,7 +74,7 @@ func (c AssetPinConfig) EffectiveMinFreeBytes() int64 {
 	if c.MinFreeBytes > 0 {
 		return c.MinFreeBytes
 	}
-	return 10 << 30
+	return DefaultAssetPinMinFreeBytes
 }
 
 // EffectiveRetentionInterval returns the configured retention cadence or the
@@ -76,7 +83,7 @@ func (c AssetPinConfig) EffectiveRetentionInterval() time.Duration {
 	if c.RetentionInterval > 0 {
 		return c.RetentionInterval
 	}
-	return time.Hour
+	return DefaultAssetPinRetentionInterval
 }
 
 // TipQueueConfig makes the pubsub.TipQueue resource caps (Task D4:
@@ -1116,7 +1123,7 @@ func (c *Config) validate() error {
 	}
 	if strings.TrimSpace(c.AssetPins.GatewayURL) != "" {
 		gatewayURL, err := url.Parse(c.AssetPins.GatewayURL)
-		if err != nil || !strings.EqualFold(gatewayURL.Scheme, "https") || gatewayURL.Host == "" {
+		if err != nil || !strings.EqualFold(gatewayURL.Scheme, "https") || gatewayURL.Hostname() == "" {
 			return fmt.Errorf("asset_pins.gateway_url must be an absolute HTTPS URL")
 		}
 	}

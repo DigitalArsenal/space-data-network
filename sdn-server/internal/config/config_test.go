@@ -14,14 +14,14 @@ func TestDefaultAssetPinConfigIsSecureAndBounded(t *testing.T) {
 	if cfg.AssetPins.Enabled {
 		t.Fatal("default asset pin capability must be disabled")
 	}
-	if got := cfg.AssetPins.EffectiveMaxUploadBytes(); got != 10_000_000 {
-		t.Fatalf("EffectiveMaxUploadBytes() = %d, want 10000000", got)
+	if got := cfg.AssetPins.EffectiveMaxUploadBytes(); got != DefaultAssetPinMaxUploadBytes {
+		t.Fatalf("EffectiveMaxUploadBytes() = %d, want %d", got, DefaultAssetPinMaxUploadBytes)
 	}
-	if got := cfg.AssetPins.EffectiveMinFreeBytes(); got != 10<<30 {
-		t.Fatalf("EffectiveMinFreeBytes() = %d, want %d", got, int64(10<<30))
+	if got := cfg.AssetPins.EffectiveMinFreeBytes(); got != DefaultAssetPinMinFreeBytes {
+		t.Fatalf("EffectiveMinFreeBytes() = %d, want %d", got, DefaultAssetPinMinFreeBytes)
 	}
-	if got := cfg.AssetPins.EffectiveRetentionInterval(); got != time.Hour {
-		t.Fatalf("EffectiveRetentionInterval() = %v, want %v", got, time.Hour)
+	if got := cfg.AssetPins.EffectiveRetentionInterval(); got != DefaultAssetPinRetentionInterval {
+		t.Fatalf("EffectiveRetentionInterval() = %v, want %v", got, DefaultAssetPinRetentionInterval)
 	}
 }
 
@@ -239,6 +239,24 @@ func TestLoadRejectsNonHTTPSAssetPinGateway(t *testing.T) {
 				t.Fatalf("Load() error = %q, want it to require HTTPS for asset_pins.gateway_url", err)
 			}
 		})
+	}
+}
+
+func TestLoadRejectsHostlessAssetPinGateway(t *testing.T) {
+	cfg := Default()
+	cfg.AssetPins.Enabled = true
+	cfg.AssetPins.GatewayURL = "https://:443"
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := Save(configPath, cfg); err != nil {
+		t.Fatalf("Save() = %v", err)
+	}
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("Load() succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "asset_pins.gateway_url") {
+		t.Fatalf("Load() error = %q, want it to name asset_pins.gateway_url", err)
 	}
 }
 
