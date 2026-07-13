@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -32,11 +33,19 @@ const (
 type auxiliaryMetadataStore struct {
 	mu          sync.Mutex
 	f           *os.File
+	appendFile  auxiliaryMetadataAppendFile
 	path        string
 	readOnly    bool
 	replayLimit int64
 	assetFrames map[string][]byte
 }
+
+type auxiliaryMetadataAppendFile interface {
+	Write([]byte) (int, error)
+	Sync() error
+}
+
+var errAuxiliaryMetadataAppendRecoveryRequired = errors.New("auxiliary metadata append requires recovery")
 
 type auxiliaryMetadataEvent struct {
 	Kind string `json:"kind"`
@@ -89,7 +98,7 @@ func openAuxiliaryMetadataStore(path string, readOnly bool) (*auxiliaryMetadataS
 			f.Close()
 			return nil, err
 		}
-		return &auxiliaryMetadataStore{f: f, path: path, readOnly: true, replayLimit: valid, assetFrames: assetFrames}, nil
+		return &auxiliaryMetadataStore{f: f, appendFile: f, path: path, readOnly: true, replayLimit: valid, assetFrames: assetFrames}, nil
 	}
 
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
@@ -114,7 +123,7 @@ func openAuxiliaryMetadataStore(path string, readOnly bool) (*auxiliaryMetadataS
 		f.Close()
 		return nil, err
 	}
-	return &auxiliaryMetadataStore{f: f, path: path, assetFrames: assetFrames}, nil
+	return &auxiliaryMetadataStore{f: f, appendFile: f, path: path, assetFrames: assetFrames}, nil
 }
 
 func scanAuxiliaryAssetFrames(f *os.File, size int64) (map[string][]byte, error) {
@@ -174,19 +183,41 @@ func (m *auxiliaryMetadataStore) Append(event auxiliaryMetadataEvent) error {
 	var hdr [8]byte
 	binary.LittleEndian.PutUint32(hdr[0:], uint32(len(payload)))
 	binary.LittleEndian.PutUint32(hdr[4:], crc32.ChecksumIEEE(payload))
-	if _, err := m.f.Write(hdr[:]); err != nil {
+	if err := writeAuxiliaryMetadataFramePart(m.appendFile, hdr[:], false); err != nil {
 		return err
 	}
-	if _, err := m.f.Write(payload); err != nil {
+	if err := writeAuxiliaryMetadataFramePart(m.appendFile, payload, true); err != nil {
 		return err
 	}
-	if err := m.f.Sync(); err != nil {
-		return err
+	if err := m.appendFile.Sync(); err != nil {
+		return errors.Join(err, errAuxiliaryMetadataAppendRecoveryRequired)
 	}
 	if identity != "" {
 		m.assetFrames[identity] = bytes.Clone(payload)
 	}
 	return nil
+}
+
+func writeAuxiliaryMetadataFramePart(file auxiliaryMetadataAppendFile, part []byte, priorWrite bool) error {
+	n, err := file.Write(part)
+	invalidCount := n < 0 || n > len(part)
+	if invalidCount {
+		countErr := fmt.Errorf("auxiliary metadata: invalid write count %d for %d bytes", n, len(part))
+		if err != nil {
+			err = errors.Join(err, countErr)
+		} else {
+			err = countErr
+		}
+	} else if n != len(part) && err == nil {
+		err = io.ErrShortWrite
+	}
+	if err == nil {
+		return nil
+	}
+	if priorWrite || n > 0 || invalidCount {
+		return errors.Join(err, errAuxiliaryMetadataAppendRecoveryRequired)
+	}
+	return err
 }
 
 func (m *auxiliaryMetadataStore) CheckAssetFrame(event auxiliaryMetadataEvent) error {
