@@ -3,7 +3,9 @@ package storage
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -98,24 +100,25 @@ type AssetPinReferenceTransition struct {
 // AssetPinAuditEvent is one immutable operational audit entry. EventID must be
 // stable across retries and journal replay; it is the table's unique key.
 type AssetPinAuditEvent struct {
-	EventID       string    `json:"event_id"`
-	Kind          string    `json:"kind"`
-	Result        string    `json:"result"`
-	TokenDigest   string    `json:"token_digest"`
-	Repository    string    `json:"repository"`
-	Ref           string    `json:"ref"`
-	WorkflowRef   string    `json:"workflow_ref"`
-	Actor         string    `json:"actor"`
-	WorkflowRunID string    `json:"workflow_run_id"`
-	RunAttempt    string    `json:"run_attempt"`
-	CommitSHA     string    `json:"commit_sha"`
-	CandidateKey  string    `json:"candidate_key"`
-	ReferenceKey  string    `json:"reference_key"`
-	CID           string    `json:"cid"`
-	SHA256        string    `json:"sha256"`
-	ByteCount     int64     `json:"byte_count"`
-	Detail        string    `json:"detail"`
-	OccurredAt    time.Time `json:"occurred_at"`
+	EventID        string    `json:"event_id"`
+	MutationDigest string    `json:"mutation_digest"`
+	Kind           string    `json:"kind"`
+	Result         string    `json:"result"`
+	TokenDigest    string    `json:"token_digest"`
+	Repository     string    `json:"repository"`
+	Ref            string    `json:"ref"`
+	WorkflowRef    string    `json:"workflow_ref"`
+	Actor          string    `json:"actor"`
+	WorkflowRunID  string    `json:"workflow_run_id"`
+	RunAttempt     string    `json:"run_attempt"`
+	CommitSHA      string    `json:"commit_sha"`
+	CandidateKey   string    `json:"candidate_key"`
+	ReferenceKey   string    `json:"reference_key"`
+	CID            string    `json:"cid"`
+	SHA256         string    `json:"sha256"`
+	ByteCount      int64     `json:"byte_count"`
+	Detail         string    `json:"detail"`
+	OccurredAt     time.Time `json:"occurred_at"`
 }
 
 // AssetPinReferenceQuery selects operational references for retention and
@@ -162,7 +165,7 @@ const assetPinReferenceSelectColumns = `
 	created_at, updated_at, expires_at`
 
 const assetPinAuditSelectColumns = `
-	event_id, event_kind, result, token_digest,
+	event_id, mutation_digest, event_kind, result, token_digest,
 	repository, git_ref, workflow_ref, actor, workflow_run_id,
 	run_attempt, commit_sha, candidate_key, reference_key,
 	cid, sha256, byte_count, detail, occurred_at`
@@ -196,6 +199,7 @@ func (s *FlatSQLStore) initAssetPinLedgerTables() error {
 	if _, err := s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS sdn_asset_pin_events (
 			event_id TEXT NOT NULL PRIMARY KEY,
+			mutation_digest TEXT NOT NULL DEFAULT '',
 			event_kind TEXT NOT NULL,
 			result TEXT NOT NULL,
 			token_digest TEXT NOT NULL DEFAULT '',
@@ -267,6 +271,18 @@ func (s *FlatSQLStore) initAssetPinLedgerTables() error {
 			CREATE INDEX IF NOT EXISTS idx_sdn_asset_pin_events_occurred
 			ON sdn_asset_pin_events (occurred_at, event_id)
 		`},
+		{table: "sdn_asset_pin_events", name: "idx_sdn_asset_pin_events_kind_occurred", sql: `
+			CREATE INDEX IF NOT EXISTS idx_sdn_asset_pin_events_kind_occurred
+			ON sdn_asset_pin_events (event_kind, occurred_at, event_id)
+		`},
+		{table: "sdn_asset_pin_events", name: "idx_sdn_asset_pin_events_candidate_occurred", sql: `
+			CREATE INDEX IF NOT EXISTS idx_sdn_asset_pin_events_candidate_occurred
+			ON sdn_asset_pin_events (candidate_key, occurred_at, event_id)
+		`},
+		{table: "sdn_asset_pin_events", name: "idx_sdn_asset_pin_events_sha_occurred", sql: `
+			CREATE INDEX IF NOT EXISTS idx_sdn_asset_pin_events_sha_occurred
+			ON sdn_asset_pin_events (sha256, occurred_at, event_id)
+		`},
 		{table: "sdn_asset_oidc_receipts", name: "idx_sdn_asset_oidc_receipts_expiry", sql: `
 			CREATE INDEX IF NOT EXISTS idx_sdn_asset_oidc_receipts_expiry
 			ON sdn_asset_oidc_receipts (expires_at, consumed_at)
@@ -288,16 +304,20 @@ func (s *FlatSQLStore) ConsumeAssetOIDCToken(ctx context.Context, receipt AssetO
 	if err := requireAssetPinContext(ctx); err != nil {
 		return err
 	}
-	receipt = normalizeAssetOIDCReceipt(receipt)
-	if receipt.ConsumedAt.IsZero() {
-		receipt.ConsumedAt = assetPinNow()
-	}
-	if err := validateAssetOIDCReceipt(receipt); err != nil {
+	receipt, err := prepareAssetOIDCReceipt(receipt)
+	if err != nil {
 		return err
+	}
+	metadataEvent := auxiliaryMetadataEvent{
+		Kind:             auxiliaryEventAssetOIDCReceiptConsume,
+		AssetOIDCReceipt: &receipt,
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkAuxiliaryAssetFrame(metadataEvent); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin asset OIDC receipt transaction: %w", err)
@@ -311,10 +331,7 @@ func (s *FlatSQLStore) ConsumeAssetOIDCToken(ctx context.Context, receipt AssetO
 	if !inserted {
 		return fmt.Errorf("digest %s: %w", receipt.Digest, ErrAssetOIDCTokenReplay)
 	}
-	if err := s.appendAuxiliaryMetadata(auxiliaryMetadataEvent{
-		Kind:             auxiliaryEventAssetOIDCReceiptConsume,
-		AssetOIDCReceipt: &receipt,
-	}); err != nil {
+	if err := s.appendAuxiliaryMetadata(metadataEvent); err != nil {
 		return fmt.Errorf("append asset OIDC receipt metadata: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -353,19 +370,33 @@ func (s *FlatSQLStore) UpsertAssetPinReference(ctx context.Context, ref AssetPin
 	if err := requireAssetPinContext(ctx); err != nil {
 		return err
 	}
-	now := assetPinNow()
-	ref, err := prepareAssetPinReference(ref, now)
+	ref, err := prepareAssetPinReference(ref)
 	if err != nil {
 		return err
 	}
-	event = completeAssetPinAuditEvent(event, ref)
-	event, err = prepareAssetPinAuditEvent(event, now)
+	event, err = completeAssetPinAuditEvent(event, ref)
 	if err != nil {
 		return err
+	}
+	event, err = bindAssetPinMutationDigest(event, auxiliaryEventAssetPinReferenceUpsert, ref)
+	if err != nil {
+		return err
+	}
+	event, err = prepareAssetPinAuditEvent(event)
+	if err != nil {
+		return err
+	}
+	payload := auxiliaryAssetPinReferenceUpsert{Reference: ref, Event: event}
+	metadataEvent := auxiliaryMetadataEvent{
+		Kind:                    auxiliaryEventAssetPinReferenceUpsert,
+		AssetPinReferenceUpsert: &payload,
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkAuxiliaryAssetFrame(metadataEvent); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin asset pin reference upsert: %w", err)
@@ -382,11 +413,7 @@ func (s *FlatSQLStore) UpsertAssetPinReference(ctx context.Context, ref AssetPin
 	if _, err := insertAssetPinAuditEvent(ctx, tx, event); err != nil {
 		return err
 	}
-	payload := auxiliaryAssetPinReferenceUpsert{Reference: ref, Event: event}
-	if err := s.appendAuxiliaryMetadata(auxiliaryMetadataEvent{
-		Kind:                    auxiliaryEventAssetPinReferenceUpsert,
-		AssetPinReferenceUpsert: &payload,
-	}); err != nil {
+	if err := s.appendAuxiliaryMetadata(metadataEvent); err != nil {
 		return fmt.Errorf("append asset pin reference upsert metadata: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -404,12 +431,16 @@ func (s *FlatSQLStore) TransitionAssetPinReference(ctx context.Context, transiti
 	if err := requireAssetPinContext(ctx); err != nil {
 		return err
 	}
-	transition, err := prepareAssetPinReferenceTransition(transition, assetPinNow())
+	transition, err := prepareAssetPinReferenceTransition(transition)
+	if err != nil {
+		return err
+	}
+	event, err = bindAssetPinMutationDigest(event, auxiliaryEventAssetPinReferenceTransition, transition)
 	if err != nil {
 		return err
 	}
 	event.ReferenceKey = firstNonEmpty(event.ReferenceKey, transition.ReferenceKey)
-	event, err = prepareAssetPinAuditEvent(event, transition.UpdatedAt)
+	event, err = prepareAssetPinAuditEvent(event)
 	if err != nil {
 		return err
 	}
@@ -426,17 +457,32 @@ func (s *FlatSQLStore) TransitionAssetPinReference(ctx context.Context, transiti
 	} else if same {
 		return nil
 	}
+	ref, err := findAssetPinReferenceWhere(ctx, tx, "reference_key = ?", transition.ReferenceKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("reference %q: %w", transition.ReferenceKey, ErrAssetPinReferenceNotFound)
+	}
+	if err != nil {
+		return fmt.Errorf("find asset pin reference for audit binding: %w", err)
+	}
+	event, err = completeAssetPinAuditEvent(event, ref)
+	if err != nil {
+		return err
+	}
+	payload := auxiliaryAssetPinReferenceTransition{Transition: transition, Event: event}
+	metadataEvent := auxiliaryMetadataEvent{
+		Kind:                        auxiliaryEventAssetPinReferenceTransition,
+		AssetPinReferenceTransition: &payload,
+	}
+	if err := s.checkAuxiliaryAssetFrame(metadataEvent); err != nil {
+		return err
+	}
 	if err := transitionAssetPinReferenceTo(ctx, tx, transition); err != nil {
 		return err
 	}
 	if _, err := insertAssetPinAuditEvent(ctx, tx, event); err != nil {
 		return err
 	}
-	payload := auxiliaryAssetPinReferenceTransition{Transition: transition, Event: event}
-	if err := s.appendAuxiliaryMetadata(auxiliaryMetadataEvent{
-		Kind:                        auxiliaryEventAssetPinReferenceTransition,
-		AssetPinReferenceTransition: &payload,
-	}); err != nil {
+	if err := s.appendAuxiliaryMetadata(metadataEvent); err != nil {
 		return fmt.Errorf("append asset pin reference transition metadata: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -458,6 +504,18 @@ func (s *FlatSQLStore) DeleteExpiredAssetPinReference(ctx context.Context, refer
 	if referenceKey == "" {
 		return errors.New("asset pin reference key is required")
 	}
+	if auditReferenceKey := strings.TrimSpace(event.ReferenceKey); auditReferenceKey != "" && auditReferenceKey != referenceKey {
+		return fmt.Errorf("asset pin audit reference key %q does not match mutation %q: %w", auditReferenceKey, referenceKey, ErrAssetPinAuditConflict)
+	}
+	event.ReferenceKey = referenceKey
+	event, err := bindAssetPinMutationDigest(event, auxiliaryEventAssetPinReferenceDelete, auxiliaryAssetPinReferenceDelete{ReferenceKey: referenceKey})
+	if err != nil {
+		return err
+	}
+	event, err = prepareAssetPinAuditEvent(event)
+	if err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -466,22 +524,28 @@ func (s *FlatSQLStore) DeleteExpiredAssetPinReference(ctx context.Context, refer
 		return fmt.Errorf("begin expired asset pin reference delete: %w", err)
 	}
 	defer tx.Rollback()
+	if same, err := assetPinAuditEventAlreadyApplied(ctx, tx, event); err != nil {
+		return err
+	} else if same {
+		return nil
+	}
 	ref, findErr := findAssetPinReferenceWhere(ctx, tx, "reference_key = ?", referenceKey)
 	if findErr != nil && !errors.Is(findErr, sql.ErrNoRows) {
 		return fmt.Errorf("find expired asset pin reference: %w", findErr)
 	}
 	if findErr == nil {
-		event = completeAssetPinAuditEvent(event, ref)
+		event, err = completeAssetPinAuditEvent(event, ref)
+		if err != nil {
+			return err
+		}
 	}
-	event.ReferenceKey = referenceKey
-	event, err = prepareAssetPinAuditEvent(event, assetPinNow())
-	if err != nil {
-		return err
+	payload := auxiliaryAssetPinReferenceDelete{ReferenceKey: referenceKey, Event: event}
+	metadataEvent := auxiliaryMetadataEvent{
+		Kind:                    auxiliaryEventAssetPinReferenceDelete,
+		AssetPinReferenceDelete: &payload,
 	}
-	if same, err := assetPinAuditEventAlreadyApplied(ctx, tx, event); err != nil {
+	if err := s.checkAuxiliaryAssetFrame(metadataEvent); err != nil {
 		return err
-	} else if same {
-		return nil
 	}
 	if errors.Is(findErr, sql.ErrNoRows) {
 		return fmt.Errorf("reference %q: %w", referenceKey, ErrAssetPinReferenceNotFound)
@@ -495,11 +559,7 @@ func (s *FlatSQLStore) DeleteExpiredAssetPinReference(ctx context.Context, refer
 	if _, err := insertAssetPinAuditEvent(ctx, tx, event); err != nil {
 		return err
 	}
-	payload := auxiliaryAssetPinReferenceDelete{ReferenceKey: referenceKey, Event: event}
-	if err := s.appendAuxiliaryMetadata(auxiliaryMetadataEvent{
-		Kind:                    auxiliaryEventAssetPinReferenceDelete,
-		AssetPinReferenceDelete: &payload,
-	}); err != nil {
+	if err := s.appendAuxiliaryMetadata(metadataEvent); err != nil {
 		return fmt.Errorf("append asset pin reference delete metadata: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -516,13 +576,20 @@ func (s *FlatSQLStore) AppendAssetPinAuditEvent(ctx context.Context, event Asset
 	if err := requireAssetPinContext(ctx); err != nil {
 		return err
 	}
-	event, err := prepareAssetPinAuditEvent(event, assetPinNow())
+	event, err := prepareAssetPinAuditEvent(event)
 	if err != nil {
 		return err
+	}
+	metadataEvent := auxiliaryMetadataEvent{
+		Kind:               auxiliaryEventAssetPinAuditAppend,
+		AssetPinAuditEvent: &event,
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkAuxiliaryAssetFrame(metadataEvent); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin asset pin audit append: %w", err)
@@ -536,10 +603,7 @@ func (s *FlatSQLStore) AppendAssetPinAuditEvent(ctx context.Context, event Asset
 	if _, err := insertAssetPinAuditEvent(ctx, tx, event); err != nil {
 		return err
 	}
-	if err := s.appendAuxiliaryMetadata(auxiliaryMetadataEvent{
-		Kind:               auxiliaryEventAssetPinAuditAppend,
-		AssetPinAuditEvent: &event,
-	}); err != nil {
+	if err := s.appendAuxiliaryMetadata(metadataEvent); err != nil {
 		return fmt.Errorf("append asset pin audit metadata: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -761,8 +825,8 @@ func (s *FlatSQLStore) ListAssetPinAuditEvents(ctx context.Context, query AssetP
 }
 
 func (s *FlatSQLStore) applyAssetOIDCReceiptConsume(receipt AssetOIDCReceipt) error {
-	receipt = normalizeAssetOIDCReceipt(receipt)
-	if err := validateAssetOIDCReceipt(receipt); err != nil {
+	receipt, err := prepareAssetOIDCReceipt(receipt)
+	if err != nil {
 		return err
 	}
 	ctx := context.Background()
@@ -781,12 +845,19 @@ func (s *FlatSQLStore) applyAssetOIDCReceiptConsume(receipt AssetOIDCReceipt) er
 }
 
 func (s *FlatSQLStore) applyAssetPinReferenceUpsert(payload auxiliaryAssetPinReferenceUpsert) error {
-	ref, err := prepareAssetPinReference(payload.Reference, time.Time{})
+	ref, err := prepareAssetPinReference(payload.Reference)
 	if err != nil {
 		return err
 	}
-	event := completeAssetPinAuditEvent(payload.Event, ref)
-	event, err = prepareAssetPinAuditEvent(event, time.Time{})
+	event, err := completeAssetPinAuditEvent(payload.Event, ref)
+	if err != nil {
+		return err
+	}
+	event, err = bindAssetPinMutationDigest(event, auxiliaryEventAssetPinReferenceUpsert, ref)
+	if err != nil {
+		return err
+	}
+	event, err = prepareAssetPinAuditEvent(event)
 	if err != nil {
 		return err
 	}
@@ -811,11 +882,15 @@ func (s *FlatSQLStore) applyAssetPinReferenceUpsert(payload auxiliaryAssetPinRef
 }
 
 func (s *FlatSQLStore) applyAssetPinReferenceTransition(payload auxiliaryAssetPinReferenceTransition) error {
-	transition, err := prepareAssetPinReferenceTransition(payload.Transition, time.Time{})
+	transition, err := prepareAssetPinReferenceTransition(payload.Transition)
 	if err != nil {
 		return err
 	}
-	event, err := prepareAssetPinAuditEvent(payload.Event, time.Time{})
+	event, err := bindAssetPinMutationDigest(payload.Event, auxiliaryEventAssetPinReferenceTransition, transition)
+	if err != nil {
+		return err
+	}
+	event, err = prepareAssetPinAuditEvent(event)
 	if err != nil {
 		return err
 	}
@@ -829,6 +904,17 @@ func (s *FlatSQLStore) applyAssetPinReferenceTransition(payload auxiliaryAssetPi
 		return err
 	} else if same {
 		return nil
+	}
+	ref, err := findAssetPinReferenceWhere(ctx, tx, "reference_key = ?", transition.ReferenceKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("reference %q: %w", transition.ReferenceKey, ErrAssetPinReferenceNotFound)
+	}
+	if err != nil {
+		return fmt.Errorf("find replayed asset pin reference for audit binding: %w", err)
+	}
+	event, err = completeAssetPinAuditEvent(event, ref)
+	if err != nil {
+		return err
 	}
 	if err := transitionAssetPinReferenceTo(ctx, tx, transition); err != nil {
 		return err
@@ -844,7 +930,15 @@ func (s *FlatSQLStore) applyAssetPinReferenceDelete(payload auxiliaryAssetPinRef
 	if payload.ReferenceKey == "" {
 		return errors.New("replayed asset pin reference delete is missing reference key")
 	}
-	event, err := prepareAssetPinAuditEvent(payload.Event, time.Time{})
+	if auditReferenceKey := strings.TrimSpace(payload.Event.ReferenceKey); auditReferenceKey != "" && auditReferenceKey != payload.ReferenceKey {
+		return fmt.Errorf("asset pin audit reference key %q does not match mutation %q: %w", auditReferenceKey, payload.ReferenceKey, ErrAssetPinAuditConflict)
+	}
+	payload.Event.ReferenceKey = payload.ReferenceKey
+	event, err := bindAssetPinMutationDigest(payload.Event, auxiliaryEventAssetPinReferenceDelete, auxiliaryAssetPinReferenceDelete{ReferenceKey: payload.ReferenceKey})
+	if err != nil {
+		return err
+	}
+	event, err = prepareAssetPinAuditEvent(event)
 	if err != nil {
 		return err
 	}
@@ -859,6 +953,16 @@ func (s *FlatSQLStore) applyAssetPinReferenceDelete(payload auxiliaryAssetPinRef
 	} else if same {
 		return nil
 	}
+	ref, findErr := findAssetPinReferenceWhere(ctx, tx, "reference_key = ?", payload.ReferenceKey)
+	if findErr != nil && !errors.Is(findErr, sql.ErrNoRows) {
+		return fmt.Errorf("find replayed asset pin reference for audit binding: %w", findErr)
+	}
+	if findErr == nil {
+		event, err = completeAssetPinAuditEvent(event, ref)
+		if err != nil {
+			return err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sdn_asset_pin_refs WHERE reference_key = ?`, payload.ReferenceKey); err != nil {
 		return fmt.Errorf("replay asset pin reference delete: %w", err)
 	}
@@ -869,7 +973,7 @@ func (s *FlatSQLStore) applyAssetPinReferenceDelete(payload auxiliaryAssetPinRef
 }
 
 func (s *FlatSQLStore) applyAssetPinAuditAppend(event AssetPinAuditEvent) error {
-	event, err := prepareAssetPinAuditEvent(event, time.Time{})
+	event, err := prepareAssetPinAuditEvent(event)
 	if err != nil {
 		return err
 	}
@@ -948,8 +1052,18 @@ func findAssetOIDCReceiptTo(ctx context.Context, queryer assetPinQueryer, digest
 }
 
 func upsertAssetPinReferenceTo(ctx context.Context, exec assetPinQueryExecer, ref AssetPinReference) error {
+	existing, err := findAssetPinReferenceWhere(ctx, exec, "reference_key = ?", ref.ReferenceKey)
+	if err == nil {
+		if equalAssetPinReference(existing, ref) {
+			return nil
+		}
+		return fmt.Errorf("reference key %q already has different persisted data: %w", ref.ReferenceKey, ErrAssetPinReferenceConflict)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("check existing asset pin reference: %w", err)
+	}
 	var owner string
-	err := exec.QueryRowContext(ctx, `SELECT reference_key FROM sdn_asset_pin_refs WHERE candidate_key = ?`, ref.CandidateKey).Scan(&owner)
+	err = exec.QueryRowContext(ctx, `SELECT reference_key FROM sdn_asset_pin_refs WHERE candidate_key = ?`, ref.CandidateKey).Scan(&owner)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("check asset candidate key ownership: %w", err)
 	}
@@ -963,21 +1077,6 @@ func upsertAssetPinReferenceTo(ctx context.Context, exec assetPinQueryExecer, re
 			github_issue, workflow_run_id, decision_sha256,
 			created_at, updated_at, expires_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(reference_key) DO UPDATE SET
-			candidate_key = excluded.candidate_key,
-			cid = excluded.cid,
-			sha256 = excluded.sha256,
-			byte_count = excluded.byte_count,
-			state = excluded.state,
-			source_url = excluded.source_url,
-			license_name = excluded.license_name,
-			attribution = excluded.attribution,
-			metadata_json = excluded.metadata_json,
-			github_issue = excluded.github_issue,
-			workflow_run_id = excluded.workflow_run_id,
-			decision_sha256 = excluded.decision_sha256,
-			updated_at = excluded.updated_at,
-			expires_at = excluded.expires_at
 	`, ref.ReferenceKey, ref.CandidateKey, ref.CID, ref.SHA256, ref.ByteCount,
 		string(ref.State), ref.SourceURL, ref.LicenseName, ref.Attribution,
 		ref.MetadataJSON, ref.GitHubIssue, ref.WorkflowRunID, ref.DecisionSHA256,
@@ -986,6 +1085,25 @@ func upsertAssetPinReferenceTo(ctx context.Context, exec assetPinQueryExecer, re
 		return fmt.Errorf("upsert asset pin reference: %w", err)
 	}
 	return nil
+}
+
+func equalAssetPinReference(left, right AssetPinReference) bool {
+	return left.ReferenceKey == right.ReferenceKey &&
+		left.CandidateKey == right.CandidateKey &&
+		left.CID == right.CID &&
+		left.SHA256 == right.SHA256 &&
+		left.ByteCount == right.ByteCount &&
+		left.State == right.State &&
+		left.SourceURL == right.SourceURL &&
+		left.LicenseName == right.LicenseName &&
+		left.Attribution == right.Attribution &&
+		left.MetadataJSON == right.MetadataJSON &&
+		left.GitHubIssue == right.GitHubIssue &&
+		left.WorkflowRunID == right.WorkflowRunID &&
+		left.DecisionSHA256 == right.DecisionSHA256 &&
+		left.CreatedAt.Equal(right.CreatedAt) &&
+		left.UpdatedAt.Equal(right.UpdatedAt) &&
+		left.ExpiresAt.Equal(right.ExpiresAt)
 }
 
 func transitionAssetPinReferenceTo(ctx context.Context, exec assetPinQueryExecer, transition AssetPinReferenceTransition) error {
@@ -1001,6 +1119,9 @@ func transitionAssetPinReferenceTo(ctx context.Context, exec assetPinQueryExecer
 	}
 	if transition.UpdatedAt.Before(ref.CreatedAt) {
 		return errors.New("asset pin transition updated_at precedes reference created_at")
+	}
+	if transition.UpdatedAt.Before(ref.UpdatedAt) {
+		return fmt.Errorf("reference %q transition updated_at precedes current updated_at: %w", transition.ReferenceKey, ErrAssetPinReferenceConflict)
 	}
 	decisionSHA256 := transition.DecisionSHA256
 	if decisionSHA256 == "" {
@@ -1033,13 +1154,13 @@ func transitionAssetPinReferenceTo(ctx context.Context, exec assetPinQueryExecer
 func insertAssetPinAuditEvent(ctx context.Context, exec assetPinQueryExecer, event AssetPinAuditEvent) (bool, error) {
 	result, err := exec.ExecContext(ctx, `
 		INSERT INTO sdn_asset_pin_events (
-			event_id, event_kind, result, token_digest,
+			event_id, mutation_digest, event_kind, result, token_digest,
 			repository, git_ref, workflow_ref, actor, workflow_run_id,
 			run_attempt, commit_sha, candidate_key, reference_key,
 			cid, sha256, byte_count, detail, occurred_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(event_id) DO NOTHING
-	`, event.EventID, event.Kind, event.Result, event.TokenDigest,
+	`, event.EventID, event.MutationDigest, event.Kind, event.Result, event.TokenDigest,
 		event.Repository, event.Ref, event.WorkflowRef, event.Actor, event.WorkflowRunID,
 		event.RunAttempt, event.CommitSHA, event.CandidateKey, event.ReferenceKey,
 		event.CID, event.SHA256, event.ByteCount, event.Detail, assetPinTimestamp(event.OccurredAt))
@@ -1071,7 +1192,28 @@ func assetPinAuditEventAlreadyApplied(ctx context.Context, queryer assetPinQuery
 	if err != nil {
 		return false, fmt.Errorf("find existing asset pin audit event: %w", err)
 	}
-	if !equalAssetPinAuditEvent(existing, event) {
+	candidate := event
+	if candidate.MutationDigest != "" {
+		if candidate.CandidateKey == "" {
+			candidate.CandidateKey = existing.CandidateKey
+		}
+		if candidate.ReferenceKey == "" {
+			candidate.ReferenceKey = existing.ReferenceKey
+		}
+		if candidate.CID == "" {
+			candidate.CID = existing.CID
+		}
+		if candidate.SHA256 == "" {
+			candidate.SHA256 = existing.SHA256
+		}
+		if candidate.ByteCount == 0 {
+			candidate.ByteCount = existing.ByteCount
+		}
+		if candidate.WorkflowRunID == "" {
+			candidate.WorkflowRunID = existing.WorkflowRunID
+		}
+	}
+	if !equalAssetPinAuditEvent(existing, candidate) {
 		return false, fmt.Errorf("event ID %q: %w", event.EventID, ErrAssetPinAuditConflict)
 	}
 	return true, nil
@@ -1157,7 +1299,7 @@ func scanAssetPinAuditEvent(scanner assetPinScanner) (AssetPinAuditEvent, error)
 	var event AssetPinAuditEvent
 	var occurredAt string
 	if err := scanner.Scan(
-		&event.EventID, &event.Kind, &event.Result, &event.TokenDigest,
+		&event.EventID, &event.MutationDigest, &event.Kind, &event.Result, &event.TokenDigest,
 		&event.Repository, &event.Ref, &event.WorkflowRef, &event.Actor,
 		&event.WorkflowRunID, &event.RunAttempt, &event.CommitSHA,
 		&event.CandidateKey, &event.ReferenceKey, &event.CID,
@@ -1173,7 +1315,16 @@ func scanAssetPinAuditEvent(scanner assetPinScanner) (AssetPinAuditEvent, error)
 	return event, nil
 }
 
-func prepareAssetPinReference(ref AssetPinReference, defaultTime time.Time) (AssetPinReference, error) {
+func prepareAssetPinReference(ref AssetPinReference) (AssetPinReference, error) {
+	if err := validateAssetPinPersistedTime("asset pin reference created_at", ref.CreatedAt, false); err != nil {
+		return AssetPinReference{}, err
+	}
+	if err := validateAssetPinPersistedTime("asset pin reference updated_at", ref.UpdatedAt, false); err != nil {
+		return AssetPinReference{}, err
+	}
+	if err := validateAssetPinPersistedTime("asset pin reference expires_at", ref.ExpiresAt, true); err != nil {
+		return AssetPinReference{}, err
+	}
 	ref.ReferenceKey = strings.TrimSpace(ref.ReferenceKey)
 	ref.CandidateKey = strings.TrimSpace(ref.CandidateKey)
 	ref.CID = strings.TrimSpace(ref.CID)
@@ -1213,12 +1364,6 @@ func prepareAssetPinReference(ref AssetPinReference, defaultTime time.Time) (Ass
 		return AssetPinReference{}, err
 	}
 	ref.MetadataJSON = canonical
-	if ref.CreatedAt.IsZero() {
-		ref.CreatedAt = defaultTime
-	}
-	if ref.UpdatedAt.IsZero() {
-		ref.UpdatedAt = ref.CreatedAt
-	}
 	ref.CreatedAt = normalizeAssetPinTime(ref.CreatedAt)
 	ref.UpdatedAt = normalizeAssetPinTime(ref.UpdatedAt)
 	ref.ExpiresAt = normalizeAssetPinTime(ref.ExpiresAt)
@@ -1228,10 +1373,19 @@ func prepareAssetPinReference(ref AssetPinReference, defaultTime time.Time) (Ass
 	if ref.UpdatedAt.Before(ref.CreatedAt) {
 		return AssetPinReference{}, errors.New("asset pin reference updated_at precedes created_at")
 	}
+	if !ref.ExpiresAt.IsZero() && ref.ExpiresAt.Before(ref.UpdatedAt) {
+		return AssetPinReference{}, errors.New("asset pin reference expires_at precedes updated_at")
+	}
 	return ref, nil
 }
 
-func prepareAssetPinReferenceTransition(transition AssetPinReferenceTransition, defaultTime time.Time) (AssetPinReferenceTransition, error) {
+func prepareAssetPinReferenceTransition(transition AssetPinReferenceTransition) (AssetPinReferenceTransition, error) {
+	if err := validateAssetPinPersistedTime("asset pin transition updated_at", transition.UpdatedAt, false); err != nil {
+		return AssetPinReferenceTransition{}, err
+	}
+	if err := validateAssetPinPersistedTime("asset pin transition expires_at", transition.ExpiresAt, true); err != nil {
+		return AssetPinReferenceTransition{}, err
+	}
 	transition.ReferenceKey = strings.TrimSpace(transition.ReferenceKey)
 	transition.FromState = AssetReferenceState(strings.TrimSpace(string(transition.FromState)))
 	transition.ToState = AssetReferenceState(strings.TrimSpace(string(transition.ToState)))
@@ -1254,19 +1408,23 @@ func prepareAssetPinReferenceTransition(transition AssetPinReferenceTransition, 
 	if transition.DecisionSHA256 != "" && !isAssetSHA256(transition.DecisionSHA256) {
 		return AssetPinReferenceTransition{}, errors.New("asset decision SHA-256 must be lowercase hex")
 	}
-	if transition.UpdatedAt.IsZero() {
-		transition.UpdatedAt = defaultTime
-	}
 	transition.UpdatedAt = normalizeAssetPinTime(transition.UpdatedAt)
 	transition.ExpiresAt = normalizeAssetPinTime(transition.ExpiresAt)
 	if transition.UpdatedAt.IsZero() {
 		return AssetPinReferenceTransition{}, errors.New("asset pin transition updated_at is required")
 	}
+	if !transition.ExpiresAt.IsZero() && transition.ExpiresAt.Before(transition.UpdatedAt) {
+		return AssetPinReferenceTransition{}, errors.New("asset pin transition expires_at precedes updated_at")
+	}
 	return transition, nil
 }
 
-func prepareAssetPinAuditEvent(event AssetPinAuditEvent, defaultTime time.Time) (AssetPinAuditEvent, error) {
+func prepareAssetPinAuditEvent(event AssetPinAuditEvent) (AssetPinAuditEvent, error) {
+	if err := validateAssetPinPersistedTime("asset pin audit occurred_at", event.OccurredAt, false); err != nil {
+		return AssetPinAuditEvent{}, err
+	}
 	event.EventID = strings.TrimSpace(event.EventID)
+	event.MutationDigest = strings.ToLower(strings.TrimSpace(event.MutationDigest))
 	event.Kind = strings.TrimSpace(event.Kind)
 	event.Result = strings.TrimSpace(event.Result)
 	event.TokenDigest = strings.ToLower(strings.TrimSpace(event.TokenDigest))
@@ -1288,6 +1446,9 @@ func prepareAssetPinAuditEvent(event AssetPinAuditEvent, defaultTime time.Time) 
 	if event.Kind == "" {
 		return AssetPinAuditEvent{}, errors.New("asset pin audit event kind is required")
 	}
+	if event.MutationDigest != "" && !isAssetSHA256(event.MutationDigest) {
+		return AssetPinAuditEvent{}, errors.New("asset pin audit mutation digest must be lowercase SHA-256 hex")
+	}
 	if event.Result == "" {
 		return AssetPinAuditEvent{}, errors.New("asset pin audit event result is required")
 	}
@@ -1300,9 +1461,6 @@ func prepareAssetPinAuditEvent(event AssetPinAuditEvent, defaultTime time.Time) 
 	if event.ByteCount < 0 {
 		return AssetPinAuditEvent{}, errors.New("asset pin audit byte count must be non-negative")
 	}
-	if event.OccurredAt.IsZero() {
-		event.OccurredAt = defaultTime
-	}
 	event.OccurredAt = normalizeAssetPinTime(event.OccurredAt)
 	if event.OccurredAt.IsZero() {
 		return AssetPinAuditEvent{}, errors.New("asset pin audit occurred_at is required")
@@ -1310,18 +1468,57 @@ func prepareAssetPinAuditEvent(event AssetPinAuditEvent, defaultTime time.Time) 
 	return event, nil
 }
 
-func completeAssetPinAuditEvent(event AssetPinAuditEvent, ref AssetPinReference) AssetPinAuditEvent {
-	event.CandidateKey = firstNonEmpty(event.CandidateKey, ref.CandidateKey)
-	event.ReferenceKey = firstNonEmpty(event.ReferenceKey, ref.ReferenceKey)
-	event.CID = firstNonEmpty(event.CID, ref.CID)
-	event.SHA256 = firstNonEmpty(event.SHA256, ref.SHA256)
+func completeAssetPinAuditEvent(event AssetPinAuditEvent, ref AssetPinReference) (AssetPinAuditEvent, error) {
+	identities := []struct {
+		name string
+		got  *string
+		want string
+	}{
+		{name: "candidate key", got: &event.CandidateKey, want: ref.CandidateKey},
+		{name: "reference key", got: &event.ReferenceKey, want: ref.ReferenceKey},
+		{name: "CID", got: &event.CID, want: ref.CID},
+		{name: "SHA-256", got: &event.SHA256, want: ref.SHA256},
+	}
+	for _, identity := range identities {
+		value := strings.TrimSpace(*identity.got)
+		want := strings.TrimSpace(identity.want)
+		if identity.name == "SHA-256" {
+			value = strings.ToLower(value)
+			want = strings.ToLower(want)
+		}
+		if value != "" && value != want {
+			return AssetPinAuditEvent{}, fmt.Errorf("asset pin audit %s %q does not match mutation %q: %w", identity.name, value, want, ErrAssetPinAuditConflict)
+		}
+		*identity.got = want
+	}
+	if event.ByteCount != 0 && event.ByteCount != ref.ByteCount {
+		return AssetPinAuditEvent{}, fmt.Errorf("asset pin audit byte count %d does not match mutation %d: %w", event.ByteCount, ref.ByteCount, ErrAssetPinAuditConflict)
+	}
 	if event.ByteCount == 0 {
 		event.ByteCount = ref.ByteCount
 	}
 	if event.WorkflowRunID == "" {
 		event.WorkflowRunID = ref.WorkflowRunID
 	}
-	return event
+	return event, nil
+}
+
+func bindAssetPinMutationDigest(event AssetPinAuditEvent, kind string, payload any) (AssetPinAuditEvent, error) {
+	encoded, err := json.Marshal(struct {
+		Kind    string `json:"kind"`
+		Payload any    `json:"payload"`
+	}{Kind: kind, Payload: payload})
+	if err != nil {
+		return AssetPinAuditEvent{}, fmt.Errorf("encode asset pin mutation digest: %w", err)
+	}
+	sum := sha256.Sum256(encoded)
+	want := hex.EncodeToString(sum[:])
+	got := strings.ToLower(strings.TrimSpace(event.MutationDigest))
+	if got != "" && got != want {
+		return AssetPinAuditEvent{}, fmt.Errorf("asset pin audit mutation digest %q does not match operation %q: %w", got, want, ErrAssetPinAuditConflict)
+	}
+	event.MutationDigest = want
+	return event, nil
 }
 
 func normalizeAssetOIDCReceipt(receipt AssetOIDCReceipt) AssetOIDCReceipt {
@@ -1336,6 +1533,20 @@ func normalizeAssetOIDCReceipt(receipt AssetOIDCReceipt) AssetOIDCReceipt {
 	receipt.ExpiresAt = normalizeAssetPinTime(receipt.ExpiresAt)
 	receipt.ConsumedAt = normalizeAssetPinTime(receipt.ConsumedAt)
 	return receipt
+}
+
+func prepareAssetOIDCReceipt(receipt AssetOIDCReceipt) (AssetOIDCReceipt, error) {
+	if err := validateAssetPinPersistedTime("asset OIDC receipt expires_at", receipt.ExpiresAt, false); err != nil {
+		return AssetOIDCReceipt{}, err
+	}
+	if err := validateAssetPinPersistedTime("asset OIDC receipt consumed_at", receipt.ConsumedAt, false); err != nil {
+		return AssetOIDCReceipt{}, err
+	}
+	receipt = normalizeAssetOIDCReceipt(receipt)
+	if err := validateAssetOIDCReceipt(receipt); err != nil {
+		return AssetOIDCReceipt{}, err
+	}
+	return receipt, nil
 }
 
 func validateAssetOIDCReceipt(receipt AssetOIDCReceipt) error {
@@ -1471,6 +1682,7 @@ func equalAssetPinAuditEvent(left, right AssetPinAuditEvent) bool {
 	left = normalizeAssetPinAuditForComparison(left)
 	right = normalizeAssetPinAuditForComparison(right)
 	return left.EventID == right.EventID &&
+		left.MutationDigest == right.MutationDigest &&
 		left.Kind == right.Kind &&
 		left.Result == right.Result &&
 		left.TokenDigest == right.TokenDigest &&
@@ -1492,6 +1704,7 @@ func equalAssetPinAuditEvent(left, right AssetPinAuditEvent) bool {
 
 func normalizeAssetPinAuditForComparison(event AssetPinAuditEvent) AssetPinAuditEvent {
 	event.EventID = strings.TrimSpace(event.EventID)
+	event.MutationDigest = strings.ToLower(strings.TrimSpace(event.MutationDigest))
 	event.Kind = strings.TrimSpace(event.Kind)
 	event.Result = strings.TrimSpace(event.Result)
 	event.TokenDigest = strings.ToLower(strings.TrimSpace(event.TokenDigest))
@@ -1530,6 +1743,20 @@ func normalizeAssetPinTime(value time.Time) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(0, value.UnixNano()).UTC()
+}
+
+func validateAssetPinPersistedTime(name string, value time.Time, allowZero bool) error {
+	if value.IsZero() {
+		if allowZero {
+			return nil
+		}
+		return fmt.Errorf("%s is required", name)
+	}
+	nanos := value.UnixNano()
+	if !time.Unix(0, nanos).Equal(value) {
+		return fmt.Errorf("%s is outside the UnixNano range", name)
+	}
+	return nil
 }
 
 func assetPinTimestamp(value time.Time) string {
