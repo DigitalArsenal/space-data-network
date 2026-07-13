@@ -357,9 +357,17 @@ func pinUnixFSFile(ctx context.Context, ipfsAPIURL, path, expectedRawCID string)
 
 // PinAssetGLB pins a GLB as a deterministic 256 KiB-chunked UnixFS file.
 func PinAssetGLB(ctx context.Context, apiURL, path string) (string, error) {
-	return pinUnixFSFileWithOptions(ctx, apiURL, path, "", pinUnixFSFileOptions{
+	cidValue, err := pinUnixFSFileWithOptions(ctx, apiURL, path, "", pinUnixFSFileOptions{
 		Chunker: "size-262144",
 	})
+	if err != nil {
+		return "", err
+	}
+	parsedCID, err := cid.Decode(strings.TrimSpace(cidValue))
+	if err != nil {
+		return "", fmt.Errorf("invalid cid returned by IPFS add: %w", err)
+	}
+	return parsedCID.String(), nil
 }
 
 // UnpinAssetCID removes an asset pin through Kubo's pin/rm command.
@@ -368,7 +376,11 @@ func UnpinAssetCID(ctx context.Context, apiURL, cidValue string) error {
 	if cidValue == "" {
 		return fmt.Errorf("cid is required")
 	}
-	return postKuboCommand(ctx, apiURL, "/api/v0/pin/rm", url.Values{"arg": {cidValue}})
+	parsedCID, err := cid.Decode(cidValue)
+	if err != nil {
+		return fmt.Errorf("invalid cid: %w", err)
+	}
+	return postKuboCommand(ctx, apiURL, "/api/v0/pin/rm", url.Values{"arg": {parsedCID.String()}})
 }
 
 func postKuboCommand(ctx context.Context, apiURL, commandPath string, values url.Values) error {
@@ -385,6 +397,7 @@ func postKuboCommand(ctx context.Context, apiURL, commandPath string, values url
 	}
 	query := reqURL.Query()
 	for key, valueList := range values {
+		query.Del(key)
 		for _, value := range valueList {
 			query.Add(key, value)
 		}
@@ -400,10 +413,19 @@ func postKuboCommand(ctx context.Context, apiURL, commandPath string, values url
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxKuboCommandErrorBodyBytes+1))
 		return nil
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxKuboCommandErrorBodyBytes))
-	return fmt.Errorf("IPFS command %s failed with status %d: %s", commandPath, resp.StatusCode, strings.TrimSpace(string(body)))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxKuboCommandErrorBodyBytes+1))
+	truncated := len(body) > maxKuboCommandErrorBodyBytes
+	if truncated {
+		body = body[:maxKuboCommandErrorBodyBytes]
+	}
+	message := strings.TrimSpace(string(body))
+	if truncated {
+		message += " [truncated]"
+	}
+	return fmt.Errorf("IPFS command %s failed with status %d: %s", commandPath, resp.StatusCode, message)
 }
 
 func pinUnixFSFileWithOptions(ctx context.Context, ipfsAPIURL, path, expectedRawCID string, options pinUnixFSFileOptions) (string, error) {
