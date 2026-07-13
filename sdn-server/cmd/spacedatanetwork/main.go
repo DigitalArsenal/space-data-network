@@ -25,6 +25,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -636,6 +637,26 @@ func defaultHDWalletWasmCandidates() []string {
 	}
 }
 
+func validateAssetPinPreNodeConfig(cfg *config.Config) error {
+	if cfg == nil {
+		return errors.New("daemon configuration is required")
+	}
+	if cfg.AssetPins.Enabled && !cfg.Admin.Enabled {
+		return errors.New("asset pin capability requires the admin listener to be enabled")
+	}
+	return nil
+}
+
+func validateAssetPinAdminUIAvailability(cfg *config.Config, available bool) error {
+	if cfg == nil {
+		return errors.New("daemon configuration is required")
+	}
+	if cfg.AssetPins.Enabled && !available {
+		return errors.New("asset pin capability requires an available admin HTTP surface")
+	}
+	return nil
+}
+
 func runDaemon(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -645,6 +666,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
+	}
+	if err := validateAssetPinPreNodeConfig(cfg); err != nil {
+		return err
 	}
 
 	// Override listen address if specified
@@ -802,6 +826,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				adminUIHandler = legacyAdminUI
 				log.Warn("Falling back to legacy inline admin UI because no hosted admin build was found")
 			}
+		}
+		if err := validateAssetPinAdminUIAvailability(cfg, adminUIHandler != nil); err != nil {
+			return err
 		}
 		if adminUIHandler == nil {
 			log.Warn("Admin UI disabled because no hosted or legacy admin handler could be created")
@@ -1780,7 +1807,7 @@ type assetPinVerifierSlot struct {
 }
 
 func (s *assetPinVerifierSlot) VerifyAndConsume(ctx context.Context, rawToken string, kind assetpin.WorkflowKind) (assetpin.Claims, error) {
-	if s == nil || s.verifier == nil {
+	if s == nil || isNilLikeAssetPinCapabilityDependency(s.verifier) {
 		return assetpin.Claims{}, assetpin.ErrTokenReceipt
 	}
 	return s.verifier.VerifyAndConsume(ctx, rawToken, kind)
@@ -1812,7 +1839,7 @@ func composeAssetPinCapability(
 	if ctx == nil {
 		return assetPinCapability{}, errors.New("asset pin capability context is required")
 	}
-	if isNilAssetPinCapabilityStore(store) {
+	if isNilLikeAssetPinCapabilityDependency(store) {
 		return assetPinCapability{}, errors.New("asset pin capability requires local storage")
 	}
 	if !cfg.Enabled {
@@ -1836,7 +1863,7 @@ func composeAssetPinCapability(
 	if err != nil {
 		return assetPinCapability{}, fmt.Errorf("configure asset pin Kubo client: %w", err)
 	}
-	if pinner == nil {
+	if isNilLikeAssetPinCapabilityDependency(pinner) {
 		return assetPinCapability{}, errors.New("asset pin Kubo client is required")
 	}
 
@@ -1851,7 +1878,7 @@ func composeAssetPinCapability(
 	if err != nil {
 		return assetPinCapability{}, fmt.Errorf("configure asset pin handler: %w", err)
 	}
-	if routes == nil {
+	if isNilLikeAssetPinCapabilityDependency(routes) {
 		return assetPinCapability{}, errors.New("asset pin handler is required")
 	}
 	if probeErr := dependencies.probeKubo(ctx, canonicalKuboURL); probeErr != nil {
@@ -1863,7 +1890,7 @@ func composeAssetPinCapability(
 	if discoveryErr != nil {
 		return unavailableAssetPinCapability("GitHub OIDC discovery unavailable", discoveryErr), nil
 	}
-	if verifier == nil {
+	if isNilLikeAssetPinCapabilityDependency(verifier) {
 		return assetPinCapability{}, errors.New("asset pin verifier is required")
 	}
 	verifierSlot.verifier = verifier
@@ -1938,11 +1965,11 @@ func probeAssetPinKuboReadiness(ctx context.Context, apiURL string) error {
 	return nil
 }
 
-func isNilAssetPinCapabilityStore(store assetPinCapabilityStore) bool {
-	if store == nil {
+func isNilLikeAssetPinCapabilityDependency(dependency any) bool {
+	if dependency == nil {
 		return true
 	}
-	value := reflect.ValueOf(store)
+	value := reflect.ValueOf(dependency)
 	switch value.Kind() {
 	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
 		return value.IsNil()
@@ -1963,6 +1990,9 @@ func canonicalAssetPinKuboAPIURL(raw string) (string, error) {
 		parsed.Fragment != "" || parsed.RawFragment != "" || parsed.RawPath != "" ||
 		parsed.String() != raw {
 		return "", errors.New("asset pin Kubo API URL must be a canonical absolute HTTP base URL without userinfo, query, or fragment")
+	}
+	if err := validateAssetPinURLExplicitPort(parsed); err != nil {
+		return "", errors.New("asset pin Kubo API URL has an invalid explicit port")
 	}
 	normalizedPath := strings.TrimSuffix(parsed.Path, "/")
 	if normalizedPath != "" && path.Clean(normalizedPath) != normalizedPath {
@@ -1998,6 +2028,52 @@ func validateAssetPinCapabilityOIDCConfig(cfg config.AssetPinConfig) error {
 		issuer.Fragment != "" || issuer.RawFragment != "" ||
 		issuer.String() != cfg.Issuer {
 		return errors.New("asset pin capability issuer must be a canonical absolute HTTPS URL without userinfo, query, or fragment")
+	}
+	if err := validateAssetPinURLExplicitPort(issuer); err != nil {
+		return errors.New("asset pin capability issuer has an invalid explicit port")
+	}
+	return nil
+}
+
+func validateAssetPinURLExplicitPort(parsed *url.URL) error {
+	if parsed == nil {
+		return errors.New("URL is required")
+	}
+
+	host := parsed.Host
+	port := ""
+	if strings.HasPrefix(host, "[") {
+		closingBracket := strings.LastIndexByte(host, ']')
+		if closingBracket < 0 {
+			return errors.New("IPv6 host is missing a closing bracket")
+		}
+		suffix := host[closingBracket+1:]
+		if suffix == "" {
+			return nil
+		}
+		if !strings.HasPrefix(suffix, ":") {
+			return errors.New("IPv6 host has an invalid port separator")
+		}
+		port = suffix[1:]
+	} else {
+		separator := strings.LastIndexByte(host, ':')
+		if separator < 0 {
+			return nil
+		}
+		port = host[separator+1:]
+	}
+
+	if port == "" {
+		return errors.New("explicit port is empty")
+	}
+	for _, digit := range port {
+		if digit < '0' || digit > '9' {
+			return errors.New("explicit port is not numeric")
+		}
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return errors.New("explicit port is outside the valid range")
 	}
 	return nil
 }
