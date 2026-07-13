@@ -14,7 +14,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
-func TestAuxiliaryMetadataDeduplicatesIdenticalAssetReceiptFrame(t *testing.T) {
+func TestAuxiliaryMetadataDeduplicatesSemanticallyEquivalentAssetReceiptFrame(t *testing.T) {
 	path := filepath.Join(t.TempDir(), auxiliaryMetadataFileName)
 	journal, err := openAuxiliaryMetadataStore(path, false)
 	if err != nil {
@@ -41,8 +41,10 @@ func TestAuxiliaryMetadataDeduplicatesIdenticalAssetReceiptFrame(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat journal after first append: %v", err)
 	}
-	if err := journal.Append(frame); err != nil {
-		t.Fatalf("identical Append() error = %v", err)
+	replayed := receipt
+	replayed.ConsumedAt = receipt.ConsumedAt.Add(time.Nanosecond)
+	if err := journal.Append(auxiliaryMetadataEvent{Kind: auxiliaryEventAssetOIDCReceiptConsume, AssetOIDCReceipt: &replayed}); err != nil {
+		t.Fatalf("semantically equivalent Append() error = %v", err)
 	}
 	after, err := os.Stat(path)
 	if err != nil {
@@ -164,6 +166,8 @@ func TestAuxiliaryMetadataRejectsConflictingAssetFrameBeforeAppend(t *testing.T)
 	}
 	conflictingReceipt := receipt
 	conflictingReceipt.Actor = "different-bot"
+	conflictingExpiry := receipt
+	conflictingExpiry.ExpiresAt = receipt.ExpiresAt.Add(time.Second)
 	ref := testAssetPinReference("reference-frame-conflict", "candidate-frame-conflict", "bafybeiframeconflict", strings.Repeat("8", 64), AssetReferenceStaged, now, now.Add(time.Hour))
 	event := testAssetPinEvent("event-frame-conflict", "reference_upsert", ref, now)
 	conflictingEvent := event
@@ -175,9 +179,15 @@ func TestAuxiliaryMetadataRejectsConflictingAssetFrameBeforeAppend(t *testing.T)
 		wantErr  error
 	}{
 		{
-			name:     "receipt digest",
+			name:     "receipt claim",
 			first:    auxiliaryMetadataEvent{Kind: auxiliaryEventAssetOIDCReceiptConsume, AssetOIDCReceipt: &receipt},
 			conflict: auxiliaryMetadataEvent{Kind: auxiliaryEventAssetOIDCReceiptConsume, AssetOIDCReceipt: &conflictingReceipt},
+			wantErr:  ErrAssetOIDCReceiptConflict,
+		},
+		{
+			name:     "receipt expiry",
+			first:    auxiliaryMetadataEvent{Kind: auxiliaryEventAssetOIDCReceiptConsume, AssetOIDCReceipt: &receipt},
+			conflict: auxiliaryMetadataEvent{Kind: auxiliaryEventAssetOIDCReceiptConsume, AssetOIDCReceipt: &conflictingExpiry},
 			wantErr:  ErrAssetOIDCReceiptConflict,
 		},
 		{
