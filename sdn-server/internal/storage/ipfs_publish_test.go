@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -114,7 +115,7 @@ func TestPinAssetGLBUsesDeterministicKuboAddOptions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cidValue, err := PinAssetGLB(context.Background(), server.URL, assetPath)
+	cidValue, err := PinAssetGLB(context.Background(), server.URL+"?only-hash=true&nocopy=true", assetPath)
 	if err != nil {
 		t.Fatalf("PinAssetGLB failed: %v", err)
 	}
@@ -142,6 +143,348 @@ func TestPinAssetGLBRejectsMalformedKuboCID(t *testing.T) {
 	}
 	if cidValue != "" {
 		t.Fatalf("CID = %q, want empty result on malformed Kubo response", cidValue)
+	}
+}
+
+func TestCalculateAssetGLBCIDUsesOnlyHashWithoutPinning(t *testing.T) {
+	assetBytes := []byte("glTF fixture")
+	assetPath := filepath.Join(t.TempDir(), "vehicle.glb")
+	if err := os.WriteFile(assetPath, assetBytes, 0o600); err != nil {
+		t.Fatalf("write asset fixture: %v", err)
+	}
+	expectedQuery := url.Values{
+		"chunker":             {"size-262144"},
+		"cid-version":         {"1"},
+		"hash":                {"sha2-256"},
+		"only-hash":           {"true"},
+		"pin":                 {"false"},
+		"progress":            {"false"},
+		"raw-leaves":          {"true"},
+		"wrap-with-directory": {"false"},
+	}.Encode()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v0/add" {
+			t.Errorf("path = %q, want /api/v0/add", r.URL.Path)
+		}
+		if r.URL.RawQuery != expectedQuery {
+			t.Errorf("query = %q, want %q", r.URL.RawQuery, expectedQuery)
+		}
+		reader, err := r.MultipartReader()
+		if err != nil {
+			t.Errorf("create multipart reader: %v", err)
+			http.Error(w, "invalid multipart body", http.StatusBadRequest)
+			return
+		}
+		part, err := reader.NextPart()
+		if err != nil {
+			t.Errorf("read multipart part: %v", err)
+			http.Error(w, "missing multipart part", http.StatusBadRequest)
+			return
+		}
+		body, err := io.ReadAll(part)
+		if err != nil {
+			t.Errorf("read multipart body: %v", err)
+			http.Error(w, "unreadable multipart body", http.StatusBadRequest)
+			return
+		}
+		if !bytes.Equal(body, assetBytes) {
+			t.Errorf("multipart body = %q, want %q", body, assetBytes)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"Name":"vehicle.glb","Hash":"`+testAssetCID+`","Size":"12"}`+"\n")
+	}))
+	defer server.Close()
+
+	cidValue, err := CalculateAssetGLBCID(context.Background(), server.URL+"?pin=true&nocopy=true", assetPath)
+	if err != nil {
+		t.Fatalf("CalculateAssetGLBCID failed: %v", err)
+	}
+	if cidValue != testAssetCID {
+		t.Fatalf("CID = %q, want %q", cidValue, testAssetCID)
+	}
+}
+
+func TestCalculateAndPinAssetGLBCIDsMatch(t *testing.T) {
+	assetPath := filepath.Join(t.TempDir(), "vehicle.glb")
+	if err := os.WriteFile(assetPath, []byte("glTF fixture"), 0o600); err != nil {
+		t.Fatalf("write asset fixture: %v", err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"Name":"vehicle.glb","Hash":"`+testAssetCID+`","Size":"12"}`+"\n")
+	}))
+	defer server.Close()
+
+	plannedCID, err := CalculateAssetGLBCID(context.Background(), server.URL, assetPath)
+	if err != nil {
+		t.Fatalf("CalculateAssetGLBCID failed: %v", err)
+	}
+	pinnedCID, err := PinAssetGLB(context.Background(), server.URL, assetPath)
+	if err != nil {
+		t.Fatalf("PinAssetGLB failed: %v", err)
+	}
+	if plannedCID != pinnedCID {
+		t.Fatalf("planned CID = %q, pinned CID = %q", plannedCID, pinnedCID)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want calculate then pin", requests)
+	}
+}
+
+func TestAssetGLBAddRejectsUnsafeKuboResponses(t *testing.T) {
+	parsedCID, err := cid.Decode(testAssetCID)
+	if err != nil {
+		t.Fatalf("decode asset CID fixture: %v", err)
+	}
+	cidV0 := cid.NewCidV0(parsedCID.Hash()).String()
+	validResponse := `{"Name":"vehicle.glb","Hash":"` + testAssetCID + `","Size":"12"}`
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "empty response", body: ""},
+		{name: "missing CID", body: `{"Name":"vehicle.glb"}`},
+		{name: "CIDv0", body: `{"Hash":"` + cidV0 + `"}`},
+		{name: "conflicting CID fields", body: `{"Hash":"` + testAssetCID + `","Cid":"` + testOtherCID + `"}`},
+		{name: "multiple objects", body: validResponse + "\n" + validResponse + "\n"},
+		{name: "malformed JSON", body: `{"Hash":`},
+		{name: "non-JSON trailer", body: validResponse + " trailing"},
+		{name: "oversized response", body: `{"Name":"` + strings.Repeat("x", (64<<10)+1) + `","Hash":"` + testAssetCID + `"}`},
+	}
+	operations := []struct {
+		name string
+		run  func(context.Context, string, string) (string, error)
+	}{
+		{name: "calculate", run: CalculateAssetGLBCID},
+		{name: "pin", run: PinAssetGLB},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for _, operation := range operations {
+				t.Run(operation.name, func(t *testing.T) {
+					assetPath := filepath.Join(t.TempDir(), "vehicle.glb")
+					if err := os.WriteFile(assetPath, []byte("glTF fixture"), 0o600); err != nil {
+						t.Fatalf("write asset fixture: %v", err)
+					}
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						_, _ = io.Copy(io.Discard, r.Body)
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = io.WriteString(w, test.body)
+					}))
+					defer server.Close()
+
+					cidValue, err := operation.run(context.Background(), server.URL, assetPath)
+					if err == nil {
+						t.Fatalf("result = %q, want unsafe Kubo response error", cidValue)
+					}
+					if cidValue != "" {
+						t.Fatalf("CID = %q, want empty result on unsafe Kubo response", cidValue)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestAssetGLBAddAcceptsOneEquivalentCIDObjectWithTrailingWhitespace(t *testing.T) {
+	parsedCID, err := cid.Decode(testAssetCID)
+	if err != nil {
+		t.Fatalf("decode asset CID fixture: %v", err)
+	}
+	alternateCID, err := parsedCID.StringOfBase(multibase.Base58BTC)
+	if err != nil {
+		t.Fatalf("encode alternate asset CID: %v", err)
+	}
+	response := `{"Hash":"` + testAssetCID + `","Cid":"` + alternateCID + `"}` + "\n\t "
+	operations := []struct {
+		name string
+		run  func(context.Context, string, string) (string, error)
+	}{
+		{name: "calculate", run: CalculateAssetGLBCID},
+		{name: "pin", run: PinAssetGLB},
+	}
+
+	for _, operation := range operations {
+		t.Run(operation.name, func(t *testing.T) {
+			assetPath := filepath.Join(t.TempDir(), "vehicle.glb")
+			if err := os.WriteFile(assetPath, []byte("glTF fixture"), 0o600); err != nil {
+				t.Fatalf("write asset fixture: %v", err)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				_, _ = io.WriteString(w, response)
+			}))
+			defer server.Close()
+
+			cidValue, err := operation.run(context.Background(), server.URL, assetPath)
+			if err != nil {
+				t.Fatalf("%s failed: %v", operation.name, err)
+			}
+			if cidValue != testAssetCID {
+				t.Fatalf("CID = %q, want canonical %q", cidValue, testAssetCID)
+			}
+		})
+	}
+}
+
+func TestAssetKuboClientHasServerControlledTimeout(t *testing.T) {
+	client := newAssetKuboHTTPClient()
+	if client.Timeout != 30*time.Second {
+		t.Fatalf("asset Kubo timeout = %v, want 30s", client.Timeout)
+	}
+}
+
+func TestAssetGLBAddClientTimeoutStopsStalledResponse(t *testing.T) {
+	assetPath := filepath.Join(t.TempDir(), "vehicle.glb")
+	if err := os.WriteFile(assetPath, []byte("glTF fixture"), 0o600); err != nil {
+		t.Fatalf("write asset fixture: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	client := &http.Client{Timeout: 50 * time.Millisecond}
+	startedAt := time.Now()
+	_, err := addAssetGLBWithClient(context.Background(), client, server.URL, assetPath, assetKuboAddOptions{OnlyHash: true})
+	if err == nil {
+		t.Fatal("asset add succeeded with stalled Kubo response")
+	}
+	if elapsed := time.Since(startedAt); elapsed > time.Second {
+		t.Fatalf("stalled asset add returned after %v, want bounded client timeout", elapsed)
+	}
+}
+
+func TestCalculateAssetGLBCIDHonorsCallerCancellation(t *testing.T) {
+	assetPath := filepath.Join(t.TempDir(), "vehicle.glb")
+	if err := os.WriteFile(assetPath, []byte("glTF fixture"), 0o600); err != nil {
+		t.Fatalf("write asset fixture: %v", err)
+	}
+	responseStarted := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		close(responseStarted)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, err := CalculateAssetGLBCID(ctx, server.URL, assetPath)
+		result <- err
+	}()
+	select {
+	case <-responseStarted:
+	case <-time.After(time.Second):
+		t.Fatal("Kubo response did not start")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("CalculateAssetGLBCID error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("CalculateAssetGLBCID did not return after cancellation")
+	}
+}
+
+func TestAssetGLBAddBoundsNonSuccessResponse(t *testing.T) {
+	assetPath := filepath.Join(t.TempDir(), "vehicle.glb")
+	if err := os.WriteFile(assetPath, []byte("glTF fixture"), 0o600); err != nil {
+		t.Fatalf("write asset fixture: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write(bytes.Repeat([]byte("x"), maxAssetKuboAddResponseBytes*2))
+	}))
+	defer server.Close()
+
+	_, err := CalculateAssetGLBCID(context.Background(), server.URL, assetPath)
+	if err == nil {
+		t.Fatal("CalculateAssetGLBCID succeeded, want non-2xx error")
+	}
+	if !strings.Contains(err.Error(), "[truncated]") {
+		t.Fatalf("error missing truncation marker: %v", err)
+	}
+	if len(err.Error()) > maxAssetKuboAddResponseBytes+512 {
+		t.Fatalf("error length = %d, want bounded preview", len(err.Error()))
+	}
+}
+
+func TestAssetGLBAddEarlyExitDoesNotLeakMultipartWriter(t *testing.T) {
+	assetPath := filepath.Join(t.TempDir(), "vehicle.glb")
+	if err := os.WriteFile(assetPath, bytes.Repeat([]byte("x"), 1<<20), 0o600); err != nil {
+		t.Fatalf("write asset fixture: %v", err)
+	}
+	tests := []struct {
+		name   string
+		client assetKuboDoer
+	}{
+		{
+			name: "transport error",
+			client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("transport failed before reading body")
+			})},
+		},
+		{
+			name: "early response",
+			client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusBadRequest,
+					Status:     "400 Bad Request",
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader("rejected")),
+					Request:    req,
+				}, nil
+			})},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runtime.GC()
+			baseline := runtime.NumGoroutine()
+			for attempt := 0; attempt < 20; attempt++ {
+				result := make(chan error, 1)
+				go func() {
+					_, err := addAssetGLBWithClient(context.Background(), test.client, "https://kubo.invalid", assetPath, assetKuboAddOptions{Pin: true})
+					result <- err
+				}()
+				select {
+				case err := <-result:
+					if err == nil {
+						t.Fatal("asset add succeeded, want early-exit error")
+					}
+				case <-time.After(time.Second):
+					t.Fatal("asset add hung waiting for multipart writer")
+				}
+			}
+
+			deadline := time.Now().Add(time.Second)
+			for runtime.NumGoroutine() > baseline+4 && time.Now().Before(deadline) {
+				runtime.GC()
+				time.Sleep(10 * time.Millisecond)
+			}
+			if got := runtime.NumGoroutine(); got > baseline+4 {
+				t.Fatalf("goroutines after early exits = %d, baseline %d", got, baseline)
+			}
+		})
 	}
 }
 
@@ -256,6 +599,53 @@ func TestUnpinAssetCIDBoundsNonSuccessResponse(t *testing.T) {
 	}
 }
 
+func TestUnpinAssetCIDTreatsCompleteNotPinnedResponseAsSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, "Error: CID is not pinned")
+	}))
+	defer server.Close()
+
+	if err := UnpinAssetCID(context.Background(), server.URL, testAssetCID); err != nil {
+		t.Fatalf("UnpinAssetCID failed for already-missing pin: %v", err)
+	}
+}
+
+func TestUnpinAssetCIDRejectsTruncatedNotPinnedPrefix(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, "not pinned "+strings.Repeat("x", maxKuboCommandErrorBodyBytes*2))
+	}))
+	defer server.Close()
+
+	err := UnpinAssetCID(context.Background(), server.URL, testAssetCID)
+	if err == nil {
+		t.Fatal("UnpinAssetCID accepted truncated not-pinned prefix")
+	}
+	if !strings.Contains(err.Error(), "[truncated]") {
+		t.Fatalf("error = %q, want explicit truncation marker", err)
+	}
+}
+
+func TestPostKuboCommandClientTimeoutStopsStalledResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	client := &http.Client{Timeout: 50 * time.Millisecond}
+	startedAt := time.Now()
+	err := postKuboCommandWithClient(context.Background(), client, server.URL, "/api/v0/pin/rm", url.Values{"arg": {testAssetCID}})
+	if err == nil {
+		t.Fatal("Kubo command succeeded with stalled response")
+	}
+	if elapsed := time.Since(startedAt); elapsed > time.Second {
+		t.Fatalf("stalled Kubo command returned after %v, want bounded client timeout", elapsed)
+	}
+}
+
 func TestUnpinAssetCIDDoesNotMarkCompleteErrorPreviewTruncated(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
@@ -274,8 +664,7 @@ func TestUnpinAssetCIDDoesNotMarkCompleteErrorPreviewTruncated(t *testing.T) {
 
 func TestUnpinAssetCIDBoundedlyDrainsSuccessResponse(t *testing.T) {
 	body := &trackingResponseBody{data: bytes.Repeat([]byte("x"), 64*1024)}
-	previousClient := http.DefaultClient
-	http.DefaultClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Status:     "200 OK",
@@ -284,10 +673,9 @@ func TestUnpinAssetCIDBoundedlyDrainsSuccessResponse(t *testing.T) {
 			Request:    req,
 		}, nil
 	})}
-	t.Cleanup(func() { http.DefaultClient = previousClient })
 
-	if err := UnpinAssetCID(context.Background(), "https://kubo.invalid", testAssetCID); err != nil {
-		t.Fatalf("UnpinAssetCID failed: %v", err)
+	if err := postKuboCommandWithClient(context.Background(), client, "https://kubo.invalid", "/api/v0/pin/rm", url.Values{"arg": {testAssetCID}}); err != nil {
+		t.Fatalf("postKuboCommandWithClient failed: %v", err)
 	}
 	if body.readBytes == 0 {
 		t.Fatal("successful response body was not drained")
@@ -302,18 +690,16 @@ func TestUnpinAssetCIDBoundedlyDrainsSuccessResponse(t *testing.T) {
 
 func TestUnpinAssetCIDHonorsContextCancellation(t *testing.T) {
 	requestStarted := make(chan struct{})
-	previousClient := http.DefaultClient
-	http.DefaultClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		close(requestStarted)
 		<-req.Context().Done()
 		return nil, req.Context().Err()
 	})}
-	t.Cleanup(func() { http.DefaultClient = previousClient })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() {
-		result <- UnpinAssetCID(ctx, "https://kubo.invalid", testAssetCID)
+		result <- postKuboCommandWithClient(ctx, client, "https://kubo.invalid", "/api/v0/pin/rm", url.Values{"arg": {testAssetCID}})
 	}()
 
 	select {

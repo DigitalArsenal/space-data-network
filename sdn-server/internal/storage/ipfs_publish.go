@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ipfs/go-cid"
 	car "github.com/ipld/go-car/v2"
@@ -43,7 +44,24 @@ type pinUnixFSFileOptions struct {
 	Chunker string
 }
 
-const maxKuboCommandErrorBodyBytes = 4 * 1024
+const (
+	maxKuboCommandErrorBodyBytes = 4 * 1024
+	maxAssetKuboAddResponseBytes = 64 * 1024
+	assetKuboRequestTimeout      = 30 * time.Second
+)
+
+type assetKuboDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+type assetKuboAddOptions struct {
+	Pin      bool
+	OnlyHash bool
+}
+
+func newAssetKuboHTTPClient() *http.Client {
+	return &http.Client{Timeout: assetKuboRequestTimeout}
+}
 
 // PublishDatasetExportToIPFS pins exported shard and index bytes through a Kubo RPC API.
 func PublishDatasetExportToIPFS(ctx context.Context, ipfsAPIURL string, export *DatasetExport) (*PublishedDatasetExport, error) {
@@ -357,17 +375,121 @@ func pinUnixFSFile(ctx context.Context, ipfsAPIURL, path, expectedRawCID string)
 
 // PinAssetGLB pins a GLB as a deterministic 256 KiB-chunked UnixFS file.
 func PinAssetGLB(ctx context.Context, apiURL, path string) (string, error) {
-	cidValue, err := pinUnixFSFileWithOptions(ctx, apiURL, path, "", pinUnixFSFileOptions{
-		Chunker: "size-262144",
-	})
-	if err != nil {
-		return "", err
+	return addAssetGLBWithClient(ctx, newAssetKuboHTTPClient(), apiURL, path, assetKuboAddOptions{Pin: true})
+}
+
+// CalculateAssetGLBCID calculates the deterministic asset CID without storing
+// or pinning the file in Kubo.
+func CalculateAssetGLBCID(ctx context.Context, apiURL, path string) (string, error) {
+	return addAssetGLBWithClient(ctx, newAssetKuboHTTPClient(), apiURL, path, assetKuboAddOptions{OnlyHash: true})
+}
+
+func addAssetGLBWithClient(ctx context.Context, client assetKuboDoer, apiURL, path string, options assetKuboAddOptions) (string, error) {
+	if client == nil {
+		return "", fmt.Errorf("asset Kubo client is required")
 	}
-	parsedCID, err := cid.Decode(strings.TrimSpace(cidValue))
-	if err != nil {
-		return "", fmt.Errorf("invalid cid returned by IPFS add: %w", err)
+	if strings.TrimSpace(apiURL) == "" {
+		return "", fmt.Errorf("ipfs api url is required")
 	}
-	return parsedCID.String(), nil
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	if options.Pin == options.OnlyHash {
+		return "", fmt.Errorf("exactly one asset Kubo add mode is required")
+	}
+
+	endpoint, err := url.JoinPath(strings.TrimRight(apiURL, "/"), "/api/v0/add")
+	if err != nil {
+		return "", fmt.Errorf("build IPFS URL: %w", err)
+	}
+	reqURL, err := url.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("parse IPFS URL: %w", err)
+	}
+	query := make(url.Values)
+	query.Set("cid-version", "1")
+	query.Set("raw-leaves", "true")
+	query.Set("hash", "sha2-256")
+	query.Set("wrap-with-directory", "false")
+	query.Set("progress", "false")
+	query.Set("chunker", "size-262144")
+	if options.Pin {
+		query.Set("pin", "true")
+		query.Del("only-hash")
+	} else {
+		query.Set("pin", "false")
+		query.Set("only-hash", "true")
+	}
+	reqURL.RawQuery = query.Encode()
+
+	reader, writer := io.Pipe()
+	multipartWriter := multipart.NewWriter(writer)
+	writerDone := make(chan error, 1)
+	go func() {
+		writeErr := writeAssetGLBMultipart(path, multipartWriter)
+		if writeErr == nil {
+			writeErr = multipartWriter.Close()
+		}
+		if writeErr != nil {
+			_ = writer.CloseWithError(writeErr)
+		} else {
+			_ = writer.Close()
+		}
+		writerDone <- writeErr
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), reader)
+	if err != nil {
+		_ = reader.CloseWithError(err)
+		<-writerDone
+		return "", fmt.Errorf("create IPFS request: %w", err)
+	}
+	req.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+
+	resp, err := client.Do(req)
+	if err != nil {
+		_ = reader.CloseWithError(err)
+		<-writerDone
+		return "", fmt.Errorf("post IPFS add: %w", err)
+	}
+	_ = reader.CloseWithError(fmt.Errorf("IPFS add response arrived before multipart shutdown"))
+	writerErr := <-writerDone
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 && writerErr != nil {
+		return "", fmt.Errorf("write IPFS multipart request: %w", writerErr)
+	}
+	body, truncated, err := readBoundedKuboBody(resp.Body, maxAssetKuboAddResponseBytes)
+	if err != nil {
+		return "", fmt.Errorf("read IPFS add response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := strings.TrimSpace(string(body))
+		if truncated {
+			message += " [truncated]"
+		}
+		return "", fmt.Errorf("IPFS add failed with status %d: %s", resp.StatusCode, message)
+	}
+	if truncated {
+		return "", fmt.Errorf("IPFS add response exceeds %d bytes", maxAssetKuboAddResponseBytes)
+	}
+	return parseAssetKuboAddCID(body)
+}
+
+func writeAssetGLBMultipart(path string, multipartWriter *multipart.Writer) error {
+	part, err := multipartWriter.CreateFormFile("file", filepath.Base(path))
+	if err != nil {
+		return fmt.Errorf("create IPFS multipart field: %w", err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", path, err)
+	}
+	defer file.Close()
+	if _, err := io.Copy(part, file); err != nil {
+		return fmt.Errorf("write IPFS multipart field: %w", err)
+	}
+	return nil
 }
 
 // UnpinAssetCID removes an asset pin through Kubo's pin/rm command.
@@ -384,6 +506,13 @@ func UnpinAssetCID(ctx context.Context, apiURL, cidValue string) error {
 }
 
 func postKuboCommand(ctx context.Context, apiURL, commandPath string, values url.Values) error {
+	return postKuboCommandWithClient(ctx, newAssetKuboHTTPClient(), apiURL, commandPath, values)
+}
+
+func postKuboCommandWithClient(ctx context.Context, client assetKuboDoer, apiURL, commandPath string, values url.Values) error {
+	if client == nil {
+		return fmt.Errorf("asset Kubo client is required")
+	}
 	if strings.TrimSpace(apiURL) == "" {
 		return fmt.Errorf("ipfs api url is required")
 	}
@@ -407,21 +536,25 @@ func postKuboCommand(ctx context.Context, apiURL, commandPath string, values url
 	if err != nil {
 		return fmt.Errorf("create IPFS command request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("post IPFS command: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxKuboCommandErrorBodyBytes+1))
+		if _, err := io.Copy(io.Discard, io.LimitReader(resp.Body, maxKuboCommandErrorBodyBytes+1)); err != nil {
+			return fmt.Errorf("read IPFS command response: %w", err)
+		}
 		return nil
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxKuboCommandErrorBodyBytes+1))
-	truncated := len(body) > maxKuboCommandErrorBodyBytes
-	if truncated {
-		body = body[:maxKuboCommandErrorBodyBytes]
+	body, truncated, err := readBoundedKuboBody(resp.Body, maxKuboCommandErrorBodyBytes)
+	if err != nil {
+		return fmt.Errorf("read IPFS command response: %w", err)
 	}
 	message := strings.TrimSpace(string(body))
+	if !truncated && strings.Contains(strings.ToLower(message), "not pinned") {
+		return nil
+	}
 	if truncated {
 		message += " [truncated]"
 	}
@@ -540,6 +673,62 @@ func pinUnixFSFileWithOptions(ctx context.Context, ipfsAPIURL, path, expectedRaw
 		return "", fmt.Errorf("IPFS add response missing CID")
 	}
 	return cidValue, nil
+}
+
+func readBoundedKuboBody(body io.Reader, limit int64) ([]byte, bool, error) {
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(data)) <= limit {
+		return data, false, nil
+	}
+	return data[:limit], true, nil
+}
+
+func parseAssetKuboAddCID(body []byte) (string, error) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	var result struct {
+		Hash string `json:"Hash"`
+		CID  string `json:"Cid"`
+	}
+	if err := decoder.Decode(&result); err != nil {
+		return "", fmt.Errorf("decode IPFS add response: %w", err)
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return "", fmt.Errorf("decode IPFS add response: multiple JSON objects")
+		}
+		return "", fmt.Errorf("decode IPFS add trailing response: %w", err)
+	}
+
+	hashValue := strings.TrimSpace(result.Hash)
+	cidValue := strings.TrimSpace(result.CID)
+	if hashValue == "" && cidValue == "" {
+		return "", fmt.Errorf("IPFS add response missing CID")
+	}
+	var canonical string
+	for _, value := range []string{hashValue, cidValue} {
+		if value == "" {
+			continue
+		}
+		parsed, err := cid.Decode(value)
+		if err != nil {
+			return "", fmt.Errorf("invalid cid returned by IPFS add: %w", err)
+		}
+		if parsed.Version() != 1 {
+			return "", fmt.Errorf("IPFS add returned CIDv%d, want CIDv1", parsed.Version())
+		}
+		if canonical == "" {
+			canonical = parsed.String()
+			continue
+		}
+		if canonical != parsed.String() {
+			return "", fmt.Errorf("IPFS add response contains conflicting CIDs")
+		}
+	}
+	return canonical, nil
 }
 
 func pinRawBlock(ctx context.Context, ipfsAPIURL, path, expectedCID string) (string, error) {
