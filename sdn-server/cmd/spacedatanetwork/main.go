@@ -24,6 +24,7 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -38,6 +39,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/adminui"
 	"github.com/spacedatanetwork/sdn-server/internal/api"
+	"github.com/spacedatanetwork/sdn-server/internal/assetpin"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
@@ -843,6 +845,25 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux := http.NewServeMux()
 			var wsUpgradeProxy http.Handler
 
+			if cfg.AssetPins.Enabled {
+				assetCapability, err := composeAssetPinCapability(
+					ctx,
+					n.Store(),
+					cfg.Admin.IPFSAPIURL,
+					cfg.AssetPins,
+					defaultAssetPinCapabilityDependencies(),
+				)
+				if err != nil {
+					return fmt.Errorf("configure asset pin capability: %w", err)
+				}
+				registerAssetPinCapabilityRoutes(adminMux, assetCapability.Handler)
+				if assetCapability.HealthErr != nil {
+					log.Errorf("Asset pin capability health error: %v", assetCapability.HealthErr)
+				} else {
+					log.Infof("GitHub OIDC asset capability available at %s://%s/api/v1/assets/pin", adminScheme, adminAddr)
+				}
+			}
+
 			if adminTLS {
 				listenAddrStrings := make([]string, 0, len(n.ListenAddrs()))
 				for _, addr := range n.ListenAddrs() {
@@ -1531,30 +1552,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					}
 
 					adminSecurityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						// Default-deny: gate all API and plugin routes behind auth,
-						// except explicitly listed public endpoints.
-						if cfg.Admin.RequireAuth {
-							if authHandler == nil {
-								http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
-								return
-							}
-
-							path := r.URL.Path
-							isAPIOrPlugin := strings.HasPrefix(path, "/api/") ||
-								strings.HasPrefix(path, "/orbpro-key-broker/")
-
-							if isAPIOrPlugin && !publicAPIRequest(r.Method, path) {
-								minTrust := peers.Standard
-								if isAdminOnlyAPIPath(path) {
-									minTrust = peers.Admin
-								}
-								authHandler.RequireAuth(minTrust, func(w http.ResponseWriter, r *http.Request) {
-									adminMux.ServeHTTP(w, r)
-								})(w, r)
-								return
-							}
-						}
-						adminMux.ServeHTTP(w, r)
+						serveAdminMuxRequest(w, r, adminMux, cfg.Admin.RequireAuth, authHandler, publicAPIRequest)
 					}), tlsManager.Mode(), publicAPIRequest).ServeHTTP(w, r)
 				}),
 			}
@@ -1740,6 +1738,336 @@ func datasetPublicationSigningKey(cfg *config.Config, raw []byte) ([]byte, error
 		return nil, fmt.Errorf("publication signing identity is unavailable")
 	}
 	return storefrontSigningKeyFromRaw(identity.SigningKey.PrivateKey)
+}
+
+const (
+	assetPinCapabilityUnavailableJSON = "{\"error\":{\"message\":\"asset pin capability unavailable\"}}\n"
+	assetPinKuboProbeTimeout          = 5 * time.Second
+	assetPinKuboProbeMaxResponseBytes = 64 << 10
+)
+
+type assetPinCapabilityStore interface {
+	api.AssetPinStore
+	ConsumeAssetOIDCToken(context.Context, storage.AssetOIDCReceipt) error
+	Path() string
+}
+
+type assetPinCapabilityRoutes interface {
+	http.Handler
+	RegisterRoutes(*http.ServeMux)
+}
+
+type assetPinCapabilityDependencies struct {
+	clock       func() time.Time
+	probeKubo   func(context.Context, string) error
+	newPinner   func(string) (api.AssetPinPinner, error)
+	newHandler  func(api.AssetPinHandlerOptions) (assetPinCapabilityRoutes, error)
+	newVerifier func(context.Context, config.AssetPinConfig, assetpin.TokenReceiptConsumer) (api.AssetPinVerifier, error)
+}
+
+type assetPinCapability struct {
+	Handler   http.Handler
+	HealthErr error
+}
+
+// assetPinVerifierSlot lets static handler validation run before OIDC
+// discovery. It is assigned before its private mux is created or returned, so
+// no request can observe an unset verifier.
+type assetPinVerifierSlot struct {
+	verifier api.AssetPinVerifier
+}
+
+func (s *assetPinVerifierSlot) VerifyAndConsume(ctx context.Context, rawToken string, kind assetpin.WorkflowKind) (assetpin.Claims, error) {
+	if s == nil || s.verifier == nil {
+		return assetpin.Claims{}, assetpin.ErrTokenReceipt
+	}
+	return s.verifier.VerifyAndConsume(ctx, rawToken, kind)
+}
+
+func defaultAssetPinCapabilityDependencies() assetPinCapabilityDependencies {
+	return assetPinCapabilityDependencies{
+		clock:     func() time.Time { return time.Now().UTC() },
+		probeKubo: probeAssetPinKuboReadiness,
+		newPinner: func(apiURL string) (api.AssetPinPinner, error) {
+			return api.NewKuboAssetPinner(apiURL)
+		},
+		newHandler: func(options api.AssetPinHandlerOptions) (assetPinCapabilityRoutes, error) {
+			return api.NewAssetPinHandler(options)
+		},
+		newVerifier: func(ctx context.Context, cfg config.AssetPinConfig, consumer assetpin.TokenReceiptConsumer) (api.AssetPinVerifier, error) {
+			return assetpin.NewVerifier(ctx, cfg, consumer)
+		},
+	}
+}
+
+func composeAssetPinCapability(
+	ctx context.Context,
+	store assetPinCapabilityStore,
+	ipfsAPIURL string,
+	cfg config.AssetPinConfig,
+	dependencies assetPinCapabilityDependencies,
+) (assetPinCapability, error) {
+	if ctx == nil {
+		return assetPinCapability{}, errors.New("asset pin capability context is required")
+	}
+	if isNilAssetPinCapabilityStore(store) {
+		return assetPinCapability{}, errors.New("asset pin capability requires local storage")
+	}
+	if !cfg.Enabled {
+		return assetPinCapability{}, errors.New("asset pin capability is disabled")
+	}
+	if err := validateAssetPinCapabilityOIDCConfig(cfg); err != nil {
+		return assetPinCapability{}, err
+	}
+	if dependencies.clock == nil || dependencies.probeKubo == nil || dependencies.newPinner == nil || dependencies.newHandler == nil || dependencies.newVerifier == nil {
+		return assetPinCapability{}, errors.New("asset pin capability dependencies are incomplete")
+	}
+	kuboURL, err := url.Parse(strings.TrimSpace(ipfsAPIURL))
+	if err != nil || (kuboURL.Scheme != "http" && kuboURL.Scheme != "https") || kuboURL.Host == "" {
+		return assetPinCapability{}, errors.New("asset pin Kubo API URL must be an absolute HTTP URL")
+	}
+	storePath := strings.TrimSpace(store.Path())
+	if storePath == "" {
+		return assetPinCapability{}, errors.New("asset pin capability storage path is required")
+	}
+	pinner, err := dependencies.newPinner(ipfsAPIURL)
+	if err != nil {
+		return assetPinCapability{}, fmt.Errorf("configure asset pin Kubo client: %w", err)
+	}
+	if pinner == nil {
+		return assetPinCapability{}, errors.New("asset pin Kubo client is required")
+	}
+
+	verifierSlot := &assetPinVerifierSlot{}
+	routes, err := dependencies.newHandler(api.AssetPinHandlerOptions{
+		Verifier: verifierSlot,
+		Store:    store,
+		Pinner:   pinner,
+		Config:   cfg,
+		DataDir:  filepath.Dir(storePath),
+	})
+	if err != nil {
+		return assetPinCapability{}, fmt.Errorf("configure asset pin handler: %w", err)
+	}
+	if routes == nil {
+		return assetPinCapability{}, errors.New("asset pin handler is required")
+	}
+	if probeErr := dependencies.probeKubo(ctx, ipfsAPIURL); probeErr != nil {
+		return unavailableAssetPinCapability("Kubo readiness unavailable", probeErr), nil
+	}
+
+	receiptConsumer := newAssetPinTokenReceiptConsumer(store, dependencies.clock)
+	verifier, discoveryErr := dependencies.newVerifier(ctx, cfg, receiptConsumer)
+	if discoveryErr != nil {
+		return unavailableAssetPinCapability("GitHub OIDC discovery unavailable", discoveryErr), nil
+	}
+	if verifier == nil {
+		return assetPinCapability{}, errors.New("asset pin verifier is required")
+	}
+	verifierSlot.verifier = verifier
+
+	privateMux := http.NewServeMux()
+	routes.RegisterRoutes(privateMux)
+	return assetPinCapability{Handler: privateMux}, nil
+}
+
+func unavailableAssetPinCapability(message string, cause error) assetPinCapability {
+	return assetPinCapability{
+		Handler:   http.HandlerFunc(writeAssetPinCapabilityUnavailable),
+		HealthErr: fmt.Errorf("%s: %w", message, cause),
+	}
+}
+
+func probeAssetPinKuboReadiness(ctx context.Context, apiURL string) error {
+	if ctx == nil {
+		return errors.New("Kubo readiness context is required")
+	}
+	endpoint, err := url.JoinPath(strings.TrimRight(apiURL, "/"), "/api/v0/version")
+	if err != nil {
+		return errors.New("build Kubo readiness URL")
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return errors.New("parse Kubo readiness URL")
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+
+	probeCtx, cancel := context.WithTimeout(ctx, assetPinKuboProbeTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(probeCtx, http.MethodPost, parsed.String(), nil)
+	if err != nil {
+		return errors.New("build Kubo readiness request")
+	}
+	client := &http.Client{
+		Timeout: assetPinKuboProbeTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return errors.New("Kubo readiness redirect refused")
+		},
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("call Kubo readiness RPC: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("Kubo readiness RPC returned status %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, assetPinKuboProbeMaxResponseBytes+1))
+	if err != nil {
+		return errors.New("read Kubo readiness response")
+	}
+	if len(body) == 0 || len(body) > assetPinKuboProbeMaxResponseBytes {
+		return errors.New("Kubo readiness response is empty or oversized")
+	}
+	var payload struct {
+		Version string `json:"Version"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if err := decoder.Decode(&payload); err != nil {
+		return errors.New("decode Kubo readiness response")
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return errors.New("Kubo readiness response contains trailing data")
+	}
+	if payload.Version == "" || strings.TrimSpace(payload.Version) != payload.Version {
+		return errors.New("Kubo readiness response has no valid version")
+	}
+	return nil
+}
+
+func isNilAssetPinCapabilityStore(store assetPinCapabilityStore) bool {
+	if store == nil {
+		return true
+	}
+	value := reflect.ValueOf(store)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
+}
+
+func validateAssetPinCapabilityOIDCConfig(cfg config.AssetPinConfig) error {
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "issuer", value: cfg.Issuer},
+		{name: "audience", value: cfg.Audience},
+		{name: "repository", value: cfg.Repository},
+		{name: "ref", value: cfg.Ref},
+		{name: "pin workflow", value: cfg.PinWorkflow},
+		{name: "decision workflow", value: cfg.DecisionWorkflow},
+	} {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("asset pin capability %s is required", field.name)
+		}
+	}
+	issuer, err := url.Parse(strings.TrimSpace(cfg.Issuer))
+	if err != nil || issuer.Scheme != "https" || issuer.Hostname() == "" || issuer.User != nil || issuer.Fragment != "" {
+		return errors.New("asset pin capability issuer must be an absolute HTTPS URL")
+	}
+	return nil
+}
+
+func newAssetPinTokenReceiptConsumer(store interface {
+	ConsumeAssetOIDCToken(context.Context, storage.AssetOIDCReceipt) error
+}, clock func() time.Time) assetpin.TokenReceiptConsumer {
+	return func(ctx context.Context, digest string, expiresAt time.Time, claims assetpin.Claims) error {
+		err := store.ConsumeAssetOIDCToken(ctx, storage.AssetOIDCReceipt{
+			Digest:      digest,
+			ExpiresAt:   expiresAt.UTC(),
+			Repository:  claims.Repository,
+			Ref:         claims.Ref,
+			WorkflowRef: claims.WorkflowRef,
+			Actor:       claims.Actor,
+			RunID:       claims.RunID,
+			RunAttempt:  claims.RunAttempt,
+			SHA:         claims.SHA,
+			ConsumedAt:  clock().UTC(),
+		})
+		if errors.Is(err, storage.ErrAssetOIDCTokenReplay) {
+			return assetpin.ErrTokenReplay
+		}
+		return err
+	}
+}
+
+func registerAssetPinCapabilityRoutes(mux *http.ServeMux, handler http.Handler) {
+	mux.Handle("POST /api/v1/assets/pin", handler)
+	mux.Handle("POST /api/v1/assets/reference-state", handler)
+}
+
+func writeAssetPinCapabilityUnavailable(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_, _ = io.WriteString(w, assetPinCapabilityUnavailableJSON)
+}
+
+func isAssetOIDCCapabilityRequest(method string, path string) bool {
+	if method != http.MethodPost {
+		return false
+	}
+	switch path {
+	case "/api/v1/assets/pin", "/api/v1/assets/reference-state":
+		return true
+	default:
+		return false
+	}
+}
+
+func assetOIDCCapabilityRequestPath(r *http.Request) string {
+	if r != nil && r.URL != nil && r.URL.RawPath != "" && r.URL.RawPath != r.URL.Path {
+		return r.URL.RawPath
+	}
+	if r == nil || r.URL == nil {
+		return ""
+	}
+	return r.URL.Path
+}
+
+// serveAdminMuxRequest is the daemon's wallet-authentication wall. Asset OIDC
+// routes bypass only this wallet check; they remain outside the anonymous
+// gateway policy and enforce their own workflow token before reading a body.
+func serveAdminMuxRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+	adminMux http.Handler,
+	requireAuth bool,
+	authHandler *auth.Handler,
+	publicAPIRequest func(method, path string) bool,
+) {
+	// Default-deny: gate all API and plugin routes behind auth, except
+	// explicitly listed public endpoints and the two exact OIDC capabilities.
+	if requireAuth {
+		if isAssetOIDCCapabilityRequest(r.Method, assetOIDCCapabilityRequestPath(r)) {
+			adminMux.ServeHTTP(w, r)
+			return
+		}
+		if authHandler == nil {
+			http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
+		requestPath := r.URL.Path
+		isAPIOrPlugin := strings.HasPrefix(requestPath, "/api/") ||
+			strings.HasPrefix(requestPath, "/orbpro-key-broker/")
+
+		if isAPIOrPlugin && !publicAPIRequest(r.Method, requestPath) {
+			minTrust := peers.Standard
+			if isAdminOnlyAPIPath(requestPath) {
+				minTrust = peers.Admin
+			}
+			authHandler.RequireAuth(minTrust, func(w http.ResponseWriter, r *http.Request) {
+				adminMux.ServeHTTP(w, r)
+			})(w, r)
+			return
+		}
+	}
+	adminMux.ServeHTTP(w, r)
 }
 
 func isPublicAPIPath(path string) bool {
