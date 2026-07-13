@@ -1489,13 +1489,12 @@ func TestAssetPinKuboAndLedgerFailureCleanup(t *testing.T) {
 	glb := testGLB([]byte("cleanup"))
 	parts := []testMultipartPart{{name: "metadata", data: testCanonicalMetadata(glb, "candidate-cleanup")}, {name: "file", filename: "asset.glb", data: glb}}
 
-	t.Run("Kubo failure", func(t *testing.T) {
+	t.Run("Kubo pin call failure", func(t *testing.T) {
 		rig := newAssetPinTestRig(t, nil)
-		rig.pinner.pinErr = errors.New("kubo failed")
+		const backendError = "kubo socket failed at /private/backend.sock"
+		rig.pinner.pinErr = errors.New(backendError)
 		response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
-		if response.Code != http.StatusBadGateway {
-			t.Fatalf("status = %d, want 502; body=%s", response.Code, response.Body.String())
-		}
+		assertAssetPinKuboUnavailable(t, response, backendError)
 		if rig.pinner.unpinCalls != 0 || len(rig.store.upserts) != 0 {
 			t.Fatalf("Kubo failure unpin/upsert = %d/%d, want 0/0", rig.pinner.unpinCalls, len(rig.store.upserts))
 		}
@@ -1573,12 +1572,13 @@ func TestAssetPinCIDPlanningFailureCreatesNoMarkerOrPin(t *testing.T) {
 	glb := testGLB([]byte("plan-failure"))
 	parts := []testMultipartPart{{name: "metadata", data: testCanonicalMetadata(glb, "candidate-plan-failure")}, {name: "file", filename: "asset.glb", data: glb}}
 	tests := []struct {
-		name string
-		cid  string
-		err  error
+		name       string
+		cid        string
+		err        error
+		wantStatus int
 	}{
-		{name: "backend failure", err: errors.New("only-hash unavailable")},
-		{name: "noncanonical response", cid: "not-a-cid"},
+		{name: "backend failure", err: errors.New("only-hash unavailable with backend detail"), wantStatus: http.StatusServiceUnavailable},
+		{name: "noncanonical response", cid: "not-a-cid", wantStatus: http.StatusBadGateway},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1586,8 +1586,10 @@ func TestAssetPinCIDPlanningFailureCreatesNoMarkerOrPin(t *testing.T) {
 			rig.pinner.calculatedCID = test.cid
 			rig.pinner.calculateErr = test.err
 			response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
-			if response.Code != http.StatusBadGateway {
-				t.Fatalf("status = %d, want 502; body=%s", response.Code, response.Body.String())
+			if test.err != nil {
+				assertAssetPinKuboUnavailable(t, response, test.err.Error())
+			} else if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", response.Code, test.wantStatus, response.Body.String())
 			}
 			if rig.pinner.calculateCalls != 1 || rig.pinner.pinCalls != 0 || len(rig.recovery.markers) != 0 || len(rig.store.upserts) != 0 {
 				t.Fatalf("calculate/pin/markers/upserts = %d/%d/%d/%d, want 1/0/0/0", rig.pinner.calculateCalls, rig.pinner.pinCalls, len(rig.recovery.markers), len(rig.store.upserts))
@@ -1617,10 +1619,12 @@ func TestAssetPinRecoveryMarkerOutcomeTable(t *testing.T) {
 	t.Run("Kubo uncertainty retains expected CID and blocks crash-equivalent retry", func(t *testing.T) {
 		_, parts, referenceKey := newRequest(t, "candidate-kubo-uncertain")
 		rig := newAssetPinTestRig(t, nil)
-		rig.pinner.pinErr = errors.New("Kubo response lost")
+		const backendError = "Kubo response lost after private dial detail"
+		rig.pinner.pinErr = errors.New(backendError)
 		response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
 		marker, ok := rig.recovery.marker(referenceKey)
-		if response.Code != http.StatusBadGateway || !ok || marker.Phase != assetpin.AssetPinRecoveryIntent || marker.ExpectedCID != testAssetCID || marker.CID != "" {
+		assertAssetPinKuboUnavailable(t, response, backendError)
+		if !ok || marker.Phase != assetpin.AssetPinRecoveryIntent || marker.ExpectedCID != testAssetCID || marker.CID != "" {
 			t.Fatalf("status/marker = %d/%+v/%v; body=%s", response.Code, marker, ok, response.Body.String())
 		}
 		response = serveAssetPin(rig.handler, testMultipartRequest(t, parts))
@@ -2193,6 +2197,23 @@ func serveAssetPin(handler *AssetPinHandler, req *http.Request) *httptest.Respon
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, req)
 	return response
+}
+
+func assertAssetPinKuboUnavailable(t *testing.T, response *httptest.ResponseRecorder, backendError string) {
+	t.Helper()
+	const wantBody = "{\"error\":{\"message\":\"asset pin backend unavailable\"}}\n"
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body=%s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", response.Header().Get("Content-Type"))
+	}
+	if response.Body.String() != wantBody {
+		t.Fatalf("body = %q, want fixed sanitized JSON %q", response.Body.String(), wantBody)
+	}
+	if strings.Contains(response.Body.String(), backendError) {
+		t.Fatalf("response leaked Kubo error detail %q: %s", backendError, response.Body.String())
+	}
 }
 
 func testGLB(payload []byte) []byte {

@@ -260,10 +260,16 @@ func TestGenerateOpenAPIAssetOIDCCapabilitiesUseExplicitSecurity(t *testing.T) {
 
 	pinOperation := opAt(t, doc, "/api/v1/assets/pin", "post")
 	pinResponses := pinOperation["responses"].(map[string]interface{})
-	for _, status := range []string{"409", "502", "507"} {
+	for _, status := range []string{"409", "502", "503", "507"} {
 		if _, ok := pinResponses[status]; !ok {
 			t.Fatalf("asset pin responses = %#v, want runtime outcome %s", pinResponses, status)
 		}
+	}
+	if description := pinResponses["502"].(map[string]interface{})["description"]; description != "Kubo returned an invalid or inconsistent deterministic asset CID." {
+		t.Fatalf("asset pin 502 description = %q, want invalid/inconsistent Kubo CID", description)
+	}
+	if description := pinResponses["503"].(map[string]interface{})["description"]; description != "OIDC, ledger, asset pin storage, or Kubo unavailable." {
+		t.Fatalf("asset pin 503 description = %q, want explicit Kubo unavailability", description)
 	}
 	pinRequest := pinOperation["requestBody"].(map[string]interface{})
 	pinContent := pinRequest["content"].(map[string]interface{})
