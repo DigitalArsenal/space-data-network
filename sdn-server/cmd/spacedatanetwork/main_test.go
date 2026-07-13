@@ -182,6 +182,60 @@ func TestIsAssetOIDCCapabilityRequestIsLiteralAndPOSTOnly(t *testing.T) {
 	}
 }
 
+func TestValidateAssetPinPreNodeConfigRequiresAdminListener(t *testing.T) {
+	if err := validateAssetPinPreNodeConfig(nil); err == nil {
+		t.Fatal("validateAssetPinPreNodeConfig(nil) succeeded")
+	}
+	tests := []struct {
+		name    string
+		admin   bool
+		assets  bool
+		wantErr bool
+	}{
+		{name: "disabled capability with disabled admin", admin: false, assets: false},
+		{name: "disabled capability with enabled admin", admin: true, assets: false},
+		{name: "enabled capability with enabled admin", admin: true, assets: true},
+		{name: "enabled capability with disabled admin", admin: false, assets: true, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Admin.Enabled = test.admin
+			cfg.AssetPins.Enabled = test.assets
+			err := validateAssetPinPreNodeConfig(cfg)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validateAssetPinPreNodeConfig() error = %v, wantErr %v", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateAssetPinAdminUIAvailabilityFailsClosed(t *testing.T) {
+	if err := validateAssetPinAdminUIAvailability(nil, true); err == nil {
+		t.Fatal("validateAssetPinAdminUIAvailability(nil) succeeded")
+	}
+	tests := []struct {
+		name        string
+		assets      bool
+		uiAvailable bool
+		wantErr     bool
+	}{
+		{name: "disabled capability without UI", assets: false, uiAvailable: false},
+		{name: "enabled capability with UI", assets: true, uiAvailable: true},
+		{name: "enabled capability without UI", assets: true, uiAvailable: false, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.AssetPins.Enabled = test.assets
+			err := validateAssetPinAdminUIAvailability(cfg, test.uiAvailable)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validateAssetPinAdminUIAvailability() error = %v, wantErr %v", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestAdminWalletWallBypassesOnlyExactAssetOIDCCapabilities(t *testing.T) {
 	authHandler, _ := newAdminSession(t, peers.Standard)
 	adminMux := http.NewServeMux()
@@ -500,6 +554,12 @@ func TestComposeAssetPinCapabilityRejectsNoncanonicalSecurityInputsBeforeEffects
 		{name: "Kubo leading whitespace", apiURL: " http://127.0.0.1:5001"},
 		{name: "Kubo trailing whitespace", apiURL: "http://127.0.0.1:5001 "},
 		{name: "Kubo hostless", apiURL: "http://:5001"},
+		{name: "Kubo IPv4 empty port", apiURL: "http://127.0.0.1:"},
+		{name: "Kubo hostname nonnumeric port", apiURL: "http://localhost:notaport"},
+		{name: "Kubo hostname zero port", apiURL: "http://localhost:0"},
+		{name: "Kubo IPv4 out of range port", apiURL: "http://127.0.0.1:65536"},
+		{name: "Kubo IPv6 empty port", apiURL: "http://[::1]:"},
+		{name: "Kubo IPv6 out of range port", apiURL: "http://[::1]:70000"},
 		{name: "Kubo userinfo", apiURL: "http://user:secret@127.0.0.1:5001"},
 		{name: "Kubo query", apiURL: "http://127.0.0.1:5001?token=secret"},
 		{name: "Kubo empty query", apiURL: "http://127.0.0.1:5001?"},
@@ -509,6 +569,11 @@ func TestComposeAssetPinCapabilityRejectsNoncanonicalSecurityInputsBeforeEffects
 		{name: "issuer query", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Issuer += "?tenant=secret" }},
 		{name: "issuer fragment", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Issuer += "#fragment" }},
 		{name: "issuer userinfo", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Issuer = "https://user:secret@issuer.example" }},
+		{name: "issuer hostname empty port", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Issuer = "https://issuer.example:" }},
+		{name: "issuer hostname nonnumeric port", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Issuer = "https://issuer.example:notaport" }},
+		{name: "issuer hostname zero port", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Issuer = "https://issuer.example:0" }},
+		{name: "issuer hostname out of range port", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Issuer = "https://issuer.example:65536" }},
+		{name: "issuer IPv6 out of range port", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Issuer = "https://[::1]:70000" }},
 		{name: "audience trailing whitespace", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Audience += " " }},
 		{name: "repository leading whitespace", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Repository = " " + c.Repository }},
 		{name: "ref trailing whitespace", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Ref += "\n" }},
@@ -548,6 +613,32 @@ func TestComposeAssetPinCapabilityRejectsNoncanonicalSecurityInputsBeforeEffects
 				t.Fatalf("noncanonical static input triggered %d constructor/probe/discovery calls", calls)
 			}
 		})
+	}
+}
+
+func TestAssetPinURLExplicitPortValidationAcceptsIPv4HostnameAndIPv6Bounds(t *testing.T) {
+	validKuboURLs := []string{
+		"http://127.0.0.1:1",
+		"https://kubo.example:65535/reverse-proxy",
+		"http://[::1]:5001",
+	}
+	for _, raw := range validKuboURLs {
+		if _, err := canonicalAssetPinKuboAPIURL(raw); err != nil {
+			t.Fatalf("canonicalAssetPinKuboAPIURL(%q) error = %v", raw, err)
+		}
+	}
+
+	validIssuers := []string{
+		"https://127.0.0.1:1",
+		"https://issuer.example:65535/tenant",
+		"https://[::1]:443",
+	}
+	for _, issuer := range validIssuers {
+		cfg := config.Default().AssetPins
+		cfg.Issuer = issuer
+		if err := validateAssetPinCapabilityOIDCConfig(cfg); err != nil {
+			t.Fatalf("validateAssetPinCapabilityOIDCConfig(%q) error = %v", issuer, err)
+		}
 	}
 }
 
@@ -765,6 +856,87 @@ func TestComposeAssetPinCapabilityValidatesProductionHandlerBeforeOIDCDiscovery(
 	}
 }
 
+func TestComposeAssetPinCapabilityRejectsTypedNilDependenciesBeforeExposure(t *testing.T) {
+	newFixture := func(t *testing.T) (*fakeAssetPinCapabilityStore, config.AssetPinConfig, assetPinCapabilityDependencies, *int, *int) {
+		t.Helper()
+		store := &fakeAssetPinCapabilityStore{path: filepath.Join(t.TempDir(), "sdn.db")}
+		cfg := config.Default().AssetPins
+		cfg.Enabled = true
+		probeCalls := 0
+		verifierCalls := 0
+		dependencies := assetPinCapabilityDependencies{
+			clock: func() time.Time { return time.Now().UTC() },
+			probeKubo: func(context.Context, string) error {
+				probeCalls++
+				return nil
+			},
+			newPinner: func(string) (api.AssetPinPinner, error) {
+				return &fakeAssetPinCapabilityPinner{}, nil
+			},
+			newHandler: func(api.AssetPinHandlerOptions) (assetPinCapabilityRoutes, error) {
+				return &fakeAssetPinCapabilityRoutes{}, nil
+			},
+			newVerifier: func(context.Context, config.AssetPinConfig, assetpin.TokenReceiptConsumer) (api.AssetPinVerifier, error) {
+				verifierCalls++
+				return &fakeAssetPinCapabilityVerifier{}, nil
+			},
+		}
+		return store, cfg, dependencies, &probeCalls, &verifierCalls
+	}
+
+	t.Run("pinner", func(t *testing.T) {
+		store, cfg, dependencies, probeCalls, verifierCalls := newFixture(t)
+		handlerCalls := 0
+		var typedNil *fakeAssetPinCapabilityPinner
+		dependencies.newPinner = func(string) (api.AssetPinPinner, error) { return typedNil, nil }
+		dependencies.newHandler = func(api.AssetPinHandlerOptions) (assetPinCapabilityRoutes, error) {
+			handlerCalls++
+			return &fakeAssetPinCapabilityRoutes{}, nil
+		}
+
+		if _, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, dependencies); err == nil {
+			t.Fatal("composeAssetPinCapability() accepted a typed-nil pinner")
+		}
+		if handlerCalls != 0 || *probeCalls != 0 || *verifierCalls != 0 {
+			t.Fatalf("typed-nil pinner triggered later effects: handler=%d probe=%d verifier=%d", handlerCalls, *probeCalls, *verifierCalls)
+		}
+	})
+
+	t.Run("routes", func(t *testing.T) {
+		store, cfg, dependencies, probeCalls, verifierCalls := newFixture(t)
+		var typedNil *fakeAssetPinCapabilityRoutes
+		dependencies.newHandler = func(api.AssetPinHandlerOptions) (assetPinCapabilityRoutes, error) { return typedNil, nil }
+
+		if _, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, dependencies); err == nil {
+			t.Fatal("composeAssetPinCapability() accepted typed-nil routes")
+		}
+		if *probeCalls != 0 || *verifierCalls != 0 {
+			t.Fatalf("typed-nil routes triggered later effects: probe=%d verifier=%d", *probeCalls, *verifierCalls)
+		}
+	})
+
+	t.Run("verifier", func(t *testing.T) {
+		store, cfg, dependencies, probeCalls, verifierCalls := newFixture(t)
+		routes := &fakeAssetPinCapabilityRoutes{}
+		dependencies.newHandler = func(api.AssetPinHandlerOptions) (assetPinCapabilityRoutes, error) { return routes, nil }
+		var typedNil *fakeAssetPinCapabilityVerifier
+		dependencies.newVerifier = func(context.Context, config.AssetPinConfig, assetpin.TokenReceiptConsumer) (api.AssetPinVerifier, error) {
+			(*verifierCalls)++
+			return typedNil, nil
+		}
+
+		if _, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, dependencies); err == nil {
+			t.Fatal("composeAssetPinCapability() accepted a typed-nil verifier")
+		}
+		if *probeCalls != 1 || *verifierCalls != 1 {
+			t.Fatalf("typed-nil verifier construction order: probe=%d verifier=%d, want 1 each", *probeCalls, *verifierCalls)
+		}
+		if routes.registrations != 0 {
+			t.Fatalf("typed-nil verifier exposed routes with %d registration calls", routes.registrations)
+		}
+	})
+}
+
 type fakeAssetPinCapabilityStore struct {
 	path       string
 	receipt    storage.AssetOIDCReceipt
@@ -813,7 +985,8 @@ func (*fakeAssetPinCapabilityVerifier) VerifyAndConsume(context.Context, string,
 }
 
 type fakeAssetPinCapabilityRoutes struct {
-	calls int
+	calls         int
+	registrations int
 }
 
 func (h *fakeAssetPinCapabilityRoutes) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
@@ -822,6 +995,7 @@ func (h *fakeAssetPinCapabilityRoutes) ServeHTTP(w http.ResponseWriter, _ *http.
 }
 
 func (h *fakeAssetPinCapabilityRoutes) RegisterRoutes(mux *http.ServeMux) {
+	h.registrations++
 	mux.Handle("POST /api/v1/assets/pin", h)
 	mux.Handle("POST /api/v1/assets/reference-state", h)
 }

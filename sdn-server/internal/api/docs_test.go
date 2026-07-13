@@ -259,6 +259,12 @@ func TestGenerateOpenAPIAssetOIDCCapabilitiesUseExplicitSecurity(t *testing.T) {
 	}
 
 	pinOperation := opAt(t, doc, "/api/v1/assets/pin", "post")
+	pinResponses := pinOperation["responses"].(map[string]interface{})
+	for _, status := range []string{"409", "502", "507"} {
+		if _, ok := pinResponses[status]; !ok {
+			t.Fatalf("asset pin responses = %#v, want runtime outcome %s", pinResponses, status)
+		}
+	}
 	pinRequest := pinOperation["requestBody"].(map[string]interface{})
 	pinContent := pinRequest["content"].(map[string]interface{})
 	pinMultipart := pinContent["multipart/form-data"].(map[string]interface{})
