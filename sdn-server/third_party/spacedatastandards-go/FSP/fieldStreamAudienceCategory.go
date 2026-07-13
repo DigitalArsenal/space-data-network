@@ -4,7 +4,7 @@ package FSP
 
 import "strconv"
 
-// / Field Stream Policy for marketplace-protected live streams
+/// Field Stream Policy for marketplace-protected live streams
 type fieldStreamAudienceCategory int8
 
 const (
