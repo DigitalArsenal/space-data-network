@@ -5511,21 +5511,30 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 		filter.Limit = maxLimit
 	}
 
+	// Source tags are projected unconditionally (LEFT JOIN) so readers like the
+	// OD fit pipeline can group records per provider. The grouped subquery pins
+	// ONE tag row per (schema, cid) for projection — a record can carry several
+	// tag rows (multi-producer mirrors, re-imports under a new batch id), so
+	// projection is one-of-many by design. Tag FILTERS below deliberately do NOT
+	// use this join: they must match ANY tag row (e.g. a record re-tagged under
+	// a second batch id still matches a query for that batch), so they run as an
+	// EXISTS over the raw table.
 	query := fmt.Sprintf(`
 		SELECT d.cid, d.peer_id, d.timestamp,
-		       d.stream_path, d.stream_offset, d.record_length, d.signature_hex
+		       d.stream_path, d.stream_offset, d.record_length, d.signature_hex,
+		       tags.provider_id, tags.source_name, tags.batch_id
 		FROM %s d
 		INNER JOIN sdn_record_index idx
 		  ON idx.schema_name = ? AND idx.cid = d.cid
+		LEFT JOIN (
+			SELECT schema_name, cid, provider_id, source_name, batch_id
+			FROM sdn_record_source_tags
+			WHERE schema_name = ?
+			GROUP BY schema_name, cid
+		) tags ON tags.schema_name = idx.schema_name AND tags.cid = idx.cid
 	`, tableName)
 
-	args := []interface{}{filter.SchemaName}
-	if filter.ProviderID != "" || filter.SourceName != "" || filter.BatchID != "" {
-		query += `
-		INNER JOIN sdn_record_source_tags tags
-		  ON tags.schema_name = idx.schema_name AND tags.cid = idx.cid
-		`
-	}
+	args := []interface{}{filter.SchemaName, filter.SchemaName}
 	query += `
 		WHERE 1=1
 	`
@@ -5572,25 +5581,32 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 		query += ` AND COALESCE(idx.epoch_unix, idx.source_timestamp) <= ?`
 		args = append(args, filter.To.Unix())
 	}
-	if providerID := strings.TrimSpace(filter.ProviderID); providerID != "" {
-		query += ` AND tags.provider_id = ?`
-		args = append(args, providerID)
-	}
-	if sourceName := strings.TrimSpace(filter.SourceName); sourceName != "" {
-		query += ` AND tags.source_name = ?`
-		args = append(args, sourceName)
-	}
-	if batchID := strings.TrimSpace(filter.BatchID); batchID != "" {
-		query += ` AND tags.batch_id = ?`
-		args = append(args, batchID)
+	providerID := strings.TrimSpace(filter.ProviderID)
+	sourceName := strings.TrimSpace(filter.SourceName)
+	batchID := strings.TrimSpace(filter.BatchID)
+	if providerID != "" || sourceName != "" || batchID != "" {
+		// ANY-row semantics: all requested tag conditions must hold on a single
+		// tag row, but not necessarily the row the projection picked.
+		query += ` AND EXISTS (
+			SELECT 1 FROM sdn_record_source_tags ft
+			WHERE ft.schema_name = idx.schema_name AND ft.cid = idx.cid`
+		if providerID != "" {
+			query += ` AND ft.provider_id = ?`
+			args = append(args, providerID)
+		}
+		if sourceName != "" {
+			query += ` AND ft.source_name = ?`
+			args = append(args, sourceName)
+		}
+		if batchID != "" {
+			query += ` AND ft.batch_id = ?`
+			args = append(args, batchID)
+		}
+		query += `)`
 	}
 
 	if filter.OrderByCID {
-		if filter.ProviderID != "" || filter.SourceName != "" || filter.BatchID != "" {
-			query += ` ORDER BY tags.cid ASC LIMIT ?`
-		} else {
-			query += ` ORDER BY d.cid ASC LIMIT ?`
-		}
+		query += ` ORDER BY d.cid ASC LIMIT ?`
 	} else {
 		query += ` ORDER BY COALESCE(idx.epoch_unix, idx.source_timestamp) DESC, d.cid ASC LIMIT ?`
 	}
@@ -5613,10 +5629,17 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 		var streamPath string
 		var streamOffset, recordLength int64
 		var signatureHex sql.NullString
-		if err := rows.Scan(&rec.CID, &rec.PeerID, &ts, &streamPath, &streamOffset, &recordLength, &signatureHex); err != nil {
+		var tagProviderID, tagSourceName, tagBatchID sql.NullString
+		if err := rows.Scan(&rec.CID, &rec.PeerID, &ts, &streamPath, &streamOffset, &recordLength, &signatureHex,
+			&tagProviderID, &tagSourceName, &tagBatchID); err != nil {
 			return nil, fmt.Errorf("failed scanning indexed row: %w", err)
 		}
 		rec.Timestamp = time.Unix(ts, 0).UTC()
+		rec.SourceTags = SourceTags{
+			ProviderID: tagProviderID.String,
+			SourceName: tagSourceName.String,
+			BatchID:    tagBatchID.String,
+		}
 		if err := s.hydrateRecordData(rec, streamPath, streamOffset, recordLength, signatureHex); err != nil {
 			return nil, fmt.Errorf("failed reading indexed record data: %w", err)
 		}
