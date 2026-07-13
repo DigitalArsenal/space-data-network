@@ -331,7 +331,7 @@ func (h *AssetPinHandler) handleAssetReferenceState(w http.ResponseWriter, r *ht
 			return
 		}
 		if errors.Is(err, storage.ErrAssetPinReferenceConflict) || errors.Is(err, storage.ErrAssetPinAuditConflict) {
-			h.writeAssetReferenceStateConflictResult(w, r, request, target)
+			h.writeAssetReferenceStateConflictResult(w, r, request, target, decidedAt)
 			return
 		}
 		writeError(w, http.StatusServiceUnavailable, "asset pin ledger unavailable")
@@ -340,7 +340,7 @@ func (h *AssetPinHandler) handleAssetReferenceState(w http.ResponseWriter, r *ht
 	h.writeAssetReferenceStateSuccess(w, ref.CandidateKey, ref.CID, target, transition.ExpiresAt)
 }
 
-func (h *AssetPinHandler) writeAssetReferenceStateConflictResult(w http.ResponseWriter, r *http.Request, request assetReferenceStateRequest, target storage.AssetReferenceState) {
+func (h *AssetPinHandler) writeAssetReferenceStateConflictResult(w http.ResponseWriter, r *http.Request, request assetReferenceStateRequest, target storage.AssetReferenceState, decidedAt time.Time) {
 	ref, found, err := h.store.FindAssetPinReferenceByCandidateKey(r.Context(), request.CandidateKey)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "asset pin ledger unavailable")
@@ -354,7 +354,7 @@ func (h *AssetPinHandler) writeAssetReferenceStateConflictResult(w http.Response
 		writeError(w, http.StatusServiceUnavailable, "asset pin ledger unavailable")
 		return
 	}
-	if ref.State != target || ref.GitHubIssue != request.IssueNumber || ref.DecisionSHA256 != request.DecisionSHA256 {
+	if decidedAt.Before(ref.UpdatedAt) || ref.State != target || ref.GitHubIssue != request.IssueNumber || ref.DecisionSHA256 != request.DecisionSHA256 {
 		writeError(w, http.StatusConflict, "asset reference state conflicts with the requested transition")
 		return
 	}

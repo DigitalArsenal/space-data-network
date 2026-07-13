@@ -170,6 +170,32 @@ func (s *barrierAssetPinStore) durableTransitionCount() int {
 	return s.durableTransitions
 }
 
+type laterFirstAssetPinStore struct {
+	*barrierAssetPinStore
+
+	laterDecisionAt time.Time
+	laterCommitted  chan struct{}
+}
+
+func newLaterFirstAssetPinStore(store *fakeAssetPinStore, laterDecisionAt time.Time) *laterFirstAssetPinStore {
+	return &laterFirstAssetPinStore{
+		barrierAssetPinStore: newBarrierAssetPinStore(store),
+		laterDecisionAt:      laterDecisionAt,
+		laterCommitted:       make(chan struct{}),
+	}
+}
+
+func (s *laterFirstAssetPinStore) TransitionAssetPinReference(ctx context.Context, transition storage.AssetPinReferenceTransition, event storage.AssetPinAuditEvent) error {
+	if transition.UpdatedAt.Before(s.laterDecisionAt) {
+		<-s.laterCommitted
+	}
+	err := s.barrierAssetPinStore.TransitionAssetPinReference(ctx, transition, event)
+	if transition.UpdatedAt.Equal(s.laterDecisionAt) {
+		close(s.laterCommitted)
+	}
+	return err
+}
+
 func (f *fakeAssetPinStore) TransitionAssetPinReference(_ context.Context, transition storage.AssetPinReferenceTransition, event storage.AssetPinAuditEvent) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1136,7 +1162,7 @@ func TestAssetReferenceStateConcurrentSemanticRetryWritesOneTransition(t *testin
 	}
 }
 
-func TestAssetReferenceStateCrossHandlerSemanticRetryWritesOneDurableTransition(t *testing.T) {
+func TestAssetReferenceStateCrossHandlerIdenticalTimesWriteOneDurableTransition(t *testing.T) {
 	rig := newAssetPinTestRig(t, nil)
 	sharedStore := newBarrierAssetPinStore(rig.store)
 	rig.handler.store = sharedStore
@@ -1184,6 +1210,74 @@ func TestAssetReferenceStateCrossHandlerSemanticRetryWritesOneDurableTransition(
 	}
 	if persisted.State != storage.AssetReferenceReviewOpen || persisted.GitHubIssue != 6160 || persisted.DecisionSHA256 != "" {
 		t.Fatalf("persisted reference = %+v, want exact review_open target", persisted)
+	}
+}
+
+func TestAssetReferenceStateCrossHandlerEarlierDecisionConflictsAfterLaterDecisionWins(t *testing.T) {
+	rig := newAssetPinTestRig(t, nil)
+	earlierDecisionAt := rig.now.Add(time.Minute)
+	laterDecisionAt := rig.now.Add(2 * time.Minute)
+	sharedStore := newLaterFirstAssetPinStore(rig.store, laterDecisionAt)
+	rig.handler.store = sharedStore
+	secondHandler, err := NewAssetPinHandler(AssetPinHandlerOptions{
+		Verifier: rig.verifier,
+		Store:    sharedStore,
+		Capacity: rig.capacity,
+		Pinner:   rig.pinner,
+		Recovery: rig.recovery,
+		Config:   rig.cfg,
+		DataDir:  rig.dataDir,
+		Clock:    func() time.Time { return rig.now },
+	})
+	if err != nil {
+		t.Fatalf("NewAssetPinHandler(second handler) error = %v", err)
+	}
+
+	candidateKey := "candidate-cross-handler-monotonic-time"
+	stored := testAPIAssetReferenceForState(rig, candidateKey, storage.AssetReferenceStaged)
+	rig.store.byCandidate[candidateKey] = stored
+	rig.store.byReference[stored.ReferenceKey] = stored
+
+	type result struct {
+		name     string
+		response *httptest.ResponseRecorder
+	}
+	type decisionRequest struct {
+		name      string
+		handler   *AssetPinHandler
+		decidedAt time.Time
+	}
+	responses := make(chan result, 2)
+	requests := []decisionRequest{
+		{name: "earlier", handler: rig.handler, decidedAt: earlierDecisionAt},
+		{name: "later", handler: secondHandler, decidedAt: laterDecisionAt},
+	}
+	for _, request := range requests {
+		go func(request decisionRequest) {
+			body := fmt.Sprintf(`{"candidateKey":%q,"decidedAt":%q,"decisionSha256":"","issueNumber":7170,"state":"review_open"}`, candidateKey, request.decidedAt.Format(time.RFC3339Nano))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/reference-state", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer cross-handler-"+request.name+"-token")
+			responses <- result{name: request.name, response: serveAssetPin(request.handler, req)}
+		}(request)
+	}
+	statuses := make(map[string]int, 2)
+	for i := 0; i < 2; i++ {
+		response := <-responses
+		statuses[response.name] = response.response.Code
+	}
+	if statuses["later"] != http.StatusOK || statuses["earlier"] != http.StatusConflict {
+		t.Fatalf("cross-handler statuses = %#v, want later 200 and earlier 409", statuses)
+	}
+
+	rig.store.mu.Lock()
+	durableAudits := len(rig.store.byEvent)
+	persisted := rig.store.byCandidate[candidateKey]
+	rig.store.mu.Unlock()
+	if sharedStore.durableTransitionCount() != 1 || durableAudits != 1 {
+		t.Fatalf("durable transitions/audits = %d/%d, want 1/1", sharedStore.durableTransitionCount(), durableAudits)
+	}
+	if !persisted.UpdatedAt.Equal(laterDecisionAt) {
+		t.Fatalf("persisted updatedAt = %s, want later decision %s", persisted.UpdatedAt, laterDecisionAt)
 	}
 }
 
