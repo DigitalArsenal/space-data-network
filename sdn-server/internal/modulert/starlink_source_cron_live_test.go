@@ -68,22 +68,20 @@ func TestStarlinkSourceCronLivePull(t *testing.T) {
 	reg := modulert.NewCapabilityRegistry()
 	// REAL outbound HTTP — the pull GETs the live Starlink MANIFEST.txt.
 	reg.Register("http", caps.NewHTTPCapFactory())
-	reg.Register("storage_write", func(_ *modulert.Module) modulert.CapHandler {
+	reg.Register("storage_ingest", func(_ *modulert.Module) modulert.CapHandler {
 		return func(op string, _ []byte) ([]byte, error) {
 			record(op)
-			return liveOKJSON(map[string]interface{}{"written": true}), nil
+			return liveOKJSON(map[string]interface{}{"inserted": 1}), nil
 		}
 	})
 	reg.Register("wallet_sign", func(_ *modulert.Module) modulert.CapHandler {
 		return func(op string, _ []byte) ([]byte, error) {
 			record(op)
-			key := make([]byte, 32)
-			for i := range key {
-				key[i] = byte(i + 1)
-			}
+			// keyslot.sign host-side oracle: detached signature, never a raw key.
+			sig := make([]byte, 64)
 			return liveOKJSON(map[string]interface{}{
-				"__type": "bytes",
-				"base64": base64.StdEncoding.EncodeToString(key),
+				"signature": base64.StdEncoding.EncodeToString(sig),
+				"algorithm": "ed25519",
 			}), nil
 		}
 	})
@@ -130,7 +128,7 @@ func TestStarlinkSourceCronLivePull(t *testing.T) {
 		mu.Lock()
 		got := append([]string(nil), ops...)
 		mu.Unlock()
-		if containsAll(got, []string{"storage.write", "keyslot.get", "crypto.sign", "pubsub.publish"}) {
+		if containsAll(got, []string{"storage.ingest_with_source", "keyslot.sign", "pubsub.publish"}) {
 			break
 		}
 		select {

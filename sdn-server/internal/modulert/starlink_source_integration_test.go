@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 
 	"github.com/spacedatanetwork/sdn-server/internal/testsupport"
 )
@@ -52,9 +56,23 @@ const (
 var starlinkFakeSignature = bytes.Repeat([]byte{0x2b}, 64)
 
 type starlinkStorageWrite struct {
-	schema string
-	record []byte // decoded (base64) record bytes as written by the module
-	cid    string // content id the fake host assigned and returned
+	schema       string
+	record       []byte // decoded record bytes from the size-prefixed ingest stream
+	cid          string // CIDv1 (raw, sha2-256) mirroring the host store's go-cid computation
+	providerID   string
+	sourceName   string
+	batchID      string
+	contentKeyID string
+	reconcile    string
+}
+
+// mustMultihashSum mirrors the host store's multihash computation (sha2-256).
+func mustMultihashSum(data []byte) mh.Multihash {
+	m, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		panic(err)
+	}
+	return m
 }
 
 type starlinkPublish struct {
@@ -73,7 +91,7 @@ type starlinkPublish struct {
 //	http.request  (fetch the MANIFEST listing)
 //	  then, per planned object (capped by objectCap, default 25):
 //	http.request  (fetch that object's raw MEME ephemeris file)
-//	storage.write (store the canonical CCSDS OEM record, schema "OEM")
+//	storage.ingest_with_source (canonical CCSDS OEM record + SourceTags, schema "OEM")
 //	keyslot.sign  (host-side signing oracle over the record's CID)
 //	pubsub.publish(schema-exact PNM pointer + provenance sidecar)
 //
@@ -98,7 +116,7 @@ func TestStarlinkSourcePullDrivesHostCapSequence(t *testing.T) {
 	// Recording + capturing fake capabilities. Each returns the minimal valid cap
 	// result the C++ module's run_pull parses so it proceeds to the next step, and
 	// records the dispatched operation so we can assert ordering. Payloads for
-	// storage.write and pubsub.publish are captured + decoded for the invariant
+	// storage.ingest_with_source and pubsub.publish are captured + decoded for the invariant
 	// assertions below.
 	var mu sync.Mutex
 	var ops []string
@@ -136,26 +154,46 @@ func TestStarlinkSourcePullDrivesHostCapSequence(t *testing.T) {
 			}), nil
 		}
 	})
-	reg.Register("storage_write", func(_ *Module) CapHandler {
+	reg.Register("storage_ingest", func(_ *Module) CapHandler {
 		return func(op string, payload []byte) ([]byte, error) {
 			record(op)
 			var req struct {
-				Schema string `json:"schema"`
-				Data   string `json:"data"`
+				Schema       string `json:"schema"`
+				ProviderID   string `json:"provider_id"`
+				SourceName   string `json:"source_name"`
+				SourceURL    string `json:"source_url"`
+				BatchID      string `json:"batch_id"`
+				ContentKeyID string `json:"content_key_id"`
+				Reconcile    string `json:"reconcile"`
+				Records      string `json:"records"`
 			}
 			_ = json.Unmarshal(payload, &req)
-			recordBytes, _ := base64.StdEncoding.DecodeString(req.Data)
-			// Deterministic content id derived from the stored bytes, so the PNM's
-			// CID/MULTIFORMAT_ADDRESS can be bound back to this write.
-			cid := "cid-" + sha256Hex(recordBytes)
+			stream, _ := base64.StdEncoding.DecodeString(req.Records)
+			// Single-record size-prefixed stream: [u32le len][bytes].
+			var recordBytes []byte
+			if len(stream) >= 4 {
+				n := binary.LittleEndian.Uint32(stream[:4])
+				if len(stream) >= 4+int(n) {
+					recordBytes = stream[4 : 4+n]
+				}
+			}
+			// The module computes the CID in-guest (CIDv1 raw sha2-256); the mock
+			// mirrors the host store's go-cid computation so the PNM binding check
+			// stays end-to-end.
+			c := cid.NewCidV1(cid.Raw, mustMultihashSum(recordBytes)).String()
 			mu.Lock()
 			storageWrites = append(storageWrites, starlinkStorageWrite{
-				schema: req.Schema,
-				record: recordBytes,
-				cid:    cid,
+				schema:       req.Schema,
+				record:       recordBytes,
+				cid:          c,
+				providerID:   req.ProviderID,
+				sourceName:   req.SourceName,
+				batchID:      req.BatchID,
+				contentKeyID: req.ContentKeyID,
+				reconcile:    req.Reconcile,
 			})
 			mu.Unlock()
-			return okJSON(map[string]interface{}{"cid": cid}), nil
+			return okJSON(map[string]interface{}{"schema": req.Schema, "inserted": 1, "batch_id": req.BatchID}), nil
 		}
 	})
 	reg.Register("wallet_sign", func(_ *Module) CapHandler {
@@ -197,7 +235,7 @@ func TestStarlinkSourcePullDrivesHostCapSequence(t *testing.T) {
 	})
 
 	// The real starlink-source manifest declares sensitive capabilities (http,
-	// pubsub, storage_write, wallet_sign) that require explicit operator approval
+	// pubsub, storage_ingest, wallet_sign) that require explicit operator approval
 	// before NewModule will load it (default-deny). Pre-approve them so this test
 	// keeps exercising the host-capability sequence; approval enforcement itself is
 	// covered by capability_policy_test.go.
@@ -206,7 +244,7 @@ func TestStarlinkSourcePullDrivesHostCapSequence(t *testing.T) {
 		t.Fatalf("NewCapabilityPolicyStore failed: %v", err)
 	}
 	moduleHash := ContentHashHex(wasmBytes)
-	for _, capability := range []string{"http", "pubsub", "storage_write", "wallet_sign"} {
+	for _, capability := range []string{"http", "pubsub", "storage_ingest", "wallet_sign"} {
 		if _, err := policy.Approve(CapabilityApproval{
 			ModuleHash: moduleHash,
 			Capability: capability,
@@ -249,7 +287,7 @@ func TestStarlinkSourcePullDrivesHostCapSequence(t *testing.T) {
 	if !hasMethod(manifest, "pull") {
 		t.Fatalf("expected pull method, got %+v", manifest.Methods)
 	}
-	for _, cap := range []string{"http", "storage_write", "wallet_sign", "crypto_sign", "pubsub"} {
+	for _, cap := range []string{"http", "storage_ingest", "wallet_sign", "crypto_sign", "pubsub"} {
 		if !hasCapability(manifest, cap) {
 			t.Fatalf("expected capability %q, got %v", cap, manifest.Capabilities)
 		}
@@ -275,12 +313,12 @@ func TestStarlinkSourcePullDrivesHostCapSequence(t *testing.T) {
 	mu.Unlock()
 
 	// ── Invariant 1: A2.2b host-cap sequence ────────────────────────────────────
-	// http (MANIFEST) → http (per-object MEME) → storage.write → keyslot.sign →
+	// http (MANIFEST) → http (per-object MEME) → storage.ingest_with_source → keyslot.sign →
 	// pubsub.publish. With a single-entry manifest the loop runs exactly once.
 	want := []string{
 		"http.request",   // MANIFEST listing
 		"http.request",   // per-object MEME fetch
-		"storage.write",  // canonical OEM record
+		"storage.ingest_with_source", // canonical OEM record + SourceTags
 		"keyslot.sign",   // host-side signing oracle over the CID
 		"pubsub.publish", // schema-exact PNM pointer + provenance
 	}
@@ -289,16 +327,18 @@ func TestStarlinkSourcePullDrivesHostCapSequence(t *testing.T) {
 		t.Fatalf("expected exactly 2 http.request (MANIFEST + 1 object), got %d in %v", n, got)
 	}
 	if len(gotStorage) != 1 {
-		t.Fatalf("expected exactly 1 storage.write, got %d", len(gotStorage))
+		t.Fatalf("expected exactly 1 storage.ingest_with_source, got %d", len(gotStorage))
 	}
 	if len(gotPublishes) != 1 {
 		t.Fatalf("expected exactly 1 pubsub.publish, got %d", len(gotPublishes))
 	}
 
-	// ── Invariant 2: storage.write carries a schema-exact canonical OEM record ───
+	// ── Invariant 2: the ingest carries a schema-exact canonical OEM record with
+	// honest SourceTags (reconcile "none" is load-bearing: indexed-duplicates
+	// reconcile would delete distinct sibling objects on multi-object providers) ───
 	sw := gotStorage[0]
 	if sw.schema != "OEM" {
-		t.Fatalf("expected storage.write schema OEM (honest canonical type, not a raw-blob mislabel), got %q", sw.schema)
+		t.Fatalf("expected ingest schema OEM (honest canonical type, not a raw-blob mislabel), got %q", sw.schema)
 	}
 	// Schema-exact CAPITALIZED SDS keys must be present verbatim (NORAD_CAT_ID, not
 	// norad_cat_id) — Go's json decoder is case-insensitive, so assert on the raw
@@ -313,6 +353,18 @@ func TestStarlinkSourcePullDrivesHostCapSequence(t *testing.T) {
 	}
 	if bytes.Contains(sw.record, []byte("norad_cat_id")) {
 		t.Fatalf("OEM record leaked a lowercase norad_cat_id key (schema capitalization rule): %s", sw.record)
+	}
+	if sw.providerID != "spacex-starlink" || sw.sourceName != "spacex-starlink" {
+		t.Fatalf("expected SourceTags provider_id/source_name spacex-starlink, got %q/%q", sw.providerID, sw.sourceName)
+	}
+	if want := sha256Hex([]byte(starlinkMemeBody)); sw.batchID != want {
+		t.Fatalf("expected batch_id = raw MEME sha256 %q, got %q", want, sw.batchID)
+	}
+	if sw.contentKeyID != "public" {
+		t.Fatalf("expected content_key_id %q, got %q", "public", sw.contentKeyID)
+	}
+	if sw.reconcile != "none" {
+		t.Fatalf("expected reconcile %q (indexed-duplicates would drop sibling objects), got %q", "none", sw.reconcile)
 	}
 
 	var oem struct {
