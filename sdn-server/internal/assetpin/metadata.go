@@ -514,9 +514,9 @@ func assetPinRecoveryMarkerPath(directory, referenceKey string) (string, error) 
 }
 
 func writeAssetPinRecoveryMarker(directory, path string, marker AssetPinRecoveryMarker, replace bool) error {
-	data, err := json.Marshal(marker)
+	data, err := marshalCanonicalAssetPinRecoveryMarker(marker)
 	if err != nil {
-		return fmt.Errorf("encode asset pin recovery marker: %w", err)
+		return err
 	}
 	if len(data) > AssetPinRecoveryMarkerMaxBytes {
 		return fmt.Errorf("%w: encoded marker exceeds limit", ErrInvalidAssetPinRecoveryMarker)
@@ -614,7 +614,7 @@ func decodeAssetPinRecoveryMarker(data []byte) (AssetPinRecoveryMarker, error) {
 	if err := requireJSONEOF(decoder); err != nil {
 		return AssetPinRecoveryMarker{}, fmt.Errorf("%w: trailing marker data", ErrInvalidAssetPinRecoveryMarker)
 	}
-	canonical, err := json.Marshal(marker)
+	canonical, err := marshalCanonicalAssetPinRecoveryMarker(marker)
 	if err != nil || !bytes.Equal(data, canonical) {
 		return AssetPinRecoveryMarker{}, fmt.Errorf("%w: marker is not canonical JSON", ErrInvalidAssetPinRecoveryMarker)
 	}
@@ -622,6 +622,20 @@ func decodeAssetPinRecoveryMarker(data []byte) (AssetPinRecoveryMarker, error) {
 		return AssetPinRecoveryMarker{}, err
 	}
 	return marker, nil
+}
+
+func marshalCanonicalAssetPinRecoveryMarker(marker AssetPinRecoveryMarker) ([]byte, error) {
+	var output bytes.Buffer
+	encoder := json.NewEncoder(&output)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(marker); err != nil {
+		return nil, fmt.Errorf("encode canonical asset pin recovery marker: %w", err)
+	}
+	encoded := output.Bytes()
+	if len(encoded) == 0 || encoded[len(encoded)-1] != '\n' {
+		return nil, errors.New("canonical asset pin recovery marker encoder omitted terminator")
+	}
+	return append([]byte(nil), encoded[:len(encoded)-1]...), nil
 }
 
 func validateAssetPinRecoveryMarker(marker AssetPinRecoveryMarker) error {

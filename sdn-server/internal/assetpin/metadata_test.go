@@ -274,6 +274,41 @@ func TestAssetPinRecoveryMarkerAdmitsWorstCaseCanonicalMetadataAtLimit(t *testin
 	}
 }
 
+func TestAssetPinRecoveryMarkerAdmitsHTMLSensitiveCanonicalMetadataAtLimit(t *testing.T) {
+	dataDir := t.TempDir()
+	marker := testAssetPinRecoveryMarker("candidate-marker-max-html-metadata", "5")
+	emptyMetadata := recoveryMetadataJSON(t, marker, "")
+	remaining := AssetPinRecoveryMetadataMaxBytes - len(emptyMetadata)
+	pattern := "<>&"
+	marker.Attribution = strings.Repeat(pattern, remaining/len(pattern)) + pattern[:remaining%len(pattern)]
+	marker.MetadataJSON = recoveryMetadataJSON(t, marker, marker.Attribution)
+	if len(marker.MetadataJSON) != AssetPinRecoveryMetadataMaxBytes {
+		t.Fatalf("metadata length = %d, want %d", len(marker.MetadataJSON), AssetPinRecoveryMetadataMaxBytes)
+	}
+	store, err := NewFileAssetPinRecoveryStore(dataDir)
+	if err != nil {
+		t.Fatalf("NewFileAssetPinRecoveryStore() error = %v", err)
+	}
+	if err := store.CreateIntent(marker); err != nil {
+		t.Fatalf("CreateIntent(HTML-sensitive max metadata) error = %v", err)
+	}
+	loaded, ok, err := store.Load(marker.ReferenceKey)
+	if err != nil || !ok || !reflect.DeepEqual(loaded, marker) {
+		t.Fatalf("Load(HTML-sensitive max metadata) = %+v, %v, %v", loaded, ok, err)
+	}
+	path := filepath.Join(dataDir, "asset-pins", "recovery", marker.ReferenceKey+".json")
+	encoded, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read HTML-sensitive marker: %v", err)
+	}
+	if len(encoded) > AssetPinRecoveryMarkerMaxBytes {
+		t.Fatalf("encoded marker length = %d, exceeds %d", len(encoded), AssetPinRecoveryMarkerMaxBytes)
+	}
+	if bytes.Contains(encoded, []byte(`\u003c`)) || bytes.Contains(encoded, []byte(`\u003e`)) || bytes.Contains(encoded, []byte(`\u0026`)) {
+		t.Fatal("canonical recovery marker HTML-escaped metadata")
+	}
+}
+
 func TestAssetPinDirectoriesRejectSymlinkComponents(t *testing.T) {
 	dataDir := t.TempDir()
 	target := t.TempDir()
@@ -338,7 +373,10 @@ func testAssetPinRecoveryMarker(candidateKey, discriminator string) AssetPinReco
 
 func recoveryMetadataJSON(t *testing.T, marker AssetPinRecoveryMarker, attribution string) string {
 	t.Helper()
-	data, err := json.Marshal(map[string]any{
+	var output bytes.Buffer
+	encoder := json.NewEncoder(&output)
+	encoder.SetEscapeHTML(false)
+	err := encoder.Encode(map[string]any{
 		"attribution":   attribution,
 		"candidateKey":  marker.CandidateKey,
 		"licenseName":   marker.LicenseName,
@@ -347,9 +385,9 @@ func recoveryMetadataJSON(t *testing.T, marker AssetPinRecoveryMarker, attributi
 		"sourceUrl":     marker.SourceURL,
 	})
 	if err != nil {
-		t.Fatalf("marshal recovery metadata: %v", err)
+		t.Fatalf("encode recovery metadata: %v", err)
 	}
-	return string(data)
+	return strings.TrimSuffix(output.String(), "\n")
 }
 
 func recoveryTestHash(value string) string {
