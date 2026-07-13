@@ -188,8 +188,8 @@ func NewAssetPinHandler(options AssetPinHandlerOptions) (*AssetPinHandler, error
 	}, nil
 }
 
-// RegisterRoutes registers only the narrow upload handler. Daemon-level
-// authentication bypass composition remains the caller's responsibility.
+// RegisterRoutes registers both narrow asset capability endpoints.
+// Daemon-level authentication bypass composition remains the caller's responsibility.
 func (h *AssetPinHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/v1/assets/pin", h)
 	mux.HandleFunc("POST /api/v1/assets/reference-state", h.handleAssetReferenceState)
@@ -331,13 +331,34 @@ func (h *AssetPinHandler) handleAssetReferenceState(w http.ResponseWriter, r *ht
 			return
 		}
 		if errors.Is(err, storage.ErrAssetPinReferenceConflict) || errors.Is(err, storage.ErrAssetPinAuditConflict) {
-			writeError(w, http.StatusConflict, "asset reference state conflicts with the requested transition")
+			h.writeAssetReferenceStateConflictResult(w, r, request, target)
 			return
 		}
 		writeError(w, http.StatusServiceUnavailable, "asset pin ledger unavailable")
 		return
 	}
 	h.writeAssetReferenceStateSuccess(w, ref.CandidateKey, ref.CID, target, transition.ExpiresAt)
+}
+
+func (h *AssetPinHandler) writeAssetReferenceStateConflictResult(w http.ResponseWriter, r *http.Request, request assetReferenceStateRequest, target storage.AssetReferenceState) {
+	ref, found, err := h.store.FindAssetPinReferenceByCandidateKey(r.Context(), request.CandidateKey)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "asset pin ledger unavailable")
+		return
+	}
+	if !found {
+		writeError(w, http.StatusConflict, "asset reference state conflicts with the requested transition")
+		return
+	}
+	if !assetReferenceStateStoredValid(ref, request.CandidateKey) {
+		writeError(w, http.StatusServiceUnavailable, "asset pin ledger unavailable")
+		return
+	}
+	if ref.State != target || ref.GitHubIssue != request.IssueNumber || ref.DecisionSHA256 != request.DecisionSHA256 {
+		writeError(w, http.StatusConflict, "asset reference state conflicts with the requested transition")
+		return
+	}
+	h.writeAssetReferenceStateSuccess(w, ref.CandidateKey, ref.CID, ref.State, ref.ExpiresAt)
 }
 
 func parseCanonicalAssetReferenceStateRequest(body io.Reader) (assetReferenceStateRequest, time.Time, error) {

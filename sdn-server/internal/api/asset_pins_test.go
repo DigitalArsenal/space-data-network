@@ -67,6 +67,7 @@ type fakeAssetPinStore struct {
 	transitions        []storage.AssetPinReferenceTransition
 	events             []storage.AssetPinAuditEvent
 	transitionErr      error
+	candidateFind      func(int, string) (storage.AssetPinReference, bool, error)
 	byCandidate        map[string]storage.AssetPinReference
 	byReference        map[string]storage.AssetPinReference
 	byEvent            map[string]storage.AssetPinAuditEvent
@@ -81,8 +82,14 @@ func (f *fakeAssetPinStore) FindAssetBySHA256(_ context.Context, _ string) (stor
 
 func (f *fakeAssetPinStore) FindAssetPinReferenceByCandidateKey(_ context.Context, candidateKey string) (storage.AssetPinReference, bool, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.candidateFindCalls++
+	call := f.candidateFindCalls
+	find := f.candidateFind
+	if find != nil {
+		f.mu.Unlock()
+		return find(call, candidateKey)
+	}
+	defer f.mu.Unlock()
 	if f.candidateFindErr != nil {
 		return storage.AssetPinReference{}, false, f.candidateFindErr
 	}
@@ -111,6 +118,56 @@ func (f *fakeAssetPinStore) UpsertAssetPinReference(_ context.Context, ref stora
 	f.byReference[ref.ReferenceKey] = ref
 	f.byEvent[event.EventID] = event
 	return nil
+}
+
+type barrierAssetPinStore struct {
+	*fakeAssetPinStore
+
+	barrierMu          sync.Mutex
+	initialReads       int
+	initialReadsReady  chan struct{}
+	durableTransitions int
+}
+
+func newBarrierAssetPinStore(store *fakeAssetPinStore) *barrierAssetPinStore {
+	return &barrierAssetPinStore{
+		fakeAssetPinStore: store,
+		initialReadsReady: make(chan struct{}),
+	}
+}
+
+func (s *barrierAssetPinStore) FindAssetPinReferenceByCandidateKey(ctx context.Context, candidateKey string) (storage.AssetPinReference, bool, error) {
+	ref, found, err := s.fakeAssetPinStore.FindAssetPinReferenceByCandidateKey(ctx, candidateKey)
+
+	s.barrierMu.Lock()
+	wait := s.initialReads < 2
+	if wait {
+		s.initialReads++
+		if s.initialReads == 2 {
+			close(s.initialReadsReady)
+		}
+	}
+	s.barrierMu.Unlock()
+	if wait {
+		<-s.initialReadsReady
+	}
+	return ref, found, err
+}
+
+func (s *barrierAssetPinStore) TransitionAssetPinReference(ctx context.Context, transition storage.AssetPinReferenceTransition, event storage.AssetPinAuditEvent) error {
+	err := s.fakeAssetPinStore.TransitionAssetPinReference(ctx, transition, event)
+	if err == nil {
+		s.barrierMu.Lock()
+		s.durableTransitions++
+		s.barrierMu.Unlock()
+	}
+	return err
+}
+
+func (s *barrierAssetPinStore) durableTransitionCount() int {
+	s.barrierMu.Lock()
+	defer s.barrierMu.Unlock()
+	return s.durableTransitions
 }
 
 func (f *fakeAssetPinStore) TransitionAssetPinReference(_ context.Context, transition storage.AssetPinReferenceTransition, event storage.AssetPinAuditEvent) error {
@@ -951,6 +1008,96 @@ func TestAssetReferenceStateConflictsAndStoreFailuresMapToBoundedStatuses(t *tes
 	})
 }
 
+func TestAssetReferenceStateConflictRereadOnlyAcceptsExactPersistedTarget(t *testing.T) {
+	tests := []struct {
+		name          string
+		transitionErr error
+		reread        func(*assetPinTestRig, string) (storage.AssetPinReference, bool, error)
+		status        int
+	}{
+		{
+			name:          "reference conflict exact target",
+			transitionErr: storage.ErrAssetPinReferenceConflict,
+			reread: func(rig *assetPinTestRig, candidateKey string) (storage.AssetPinReference, bool, error) {
+				ref := testAPIAssetReferenceForState(rig, candidateKey, storage.AssetReferenceReviewOpen)
+				ref.GitHubIssue = 42
+				return ref, true, nil
+			},
+			status: http.StatusOK,
+		},
+		{
+			name:          "audit conflict exact target",
+			transitionErr: storage.ErrAssetPinAuditConflict,
+			reread: func(rig *assetPinTestRig, candidateKey string) (storage.AssetPinReference, bool, error) {
+				ref := testAPIAssetReferenceForState(rig, candidateKey, storage.AssetReferenceReviewOpen)
+				ref.GitHubIssue = 42
+				return ref, true, nil
+			},
+			status: http.StatusOK,
+		},
+		{
+			name:          "reread backend",
+			transitionErr: storage.ErrAssetPinReferenceConflict,
+			reread: func(_ *assetPinTestRig, _ string) (storage.AssetPinReference, bool, error) {
+				return storage.AssetPinReference{}, false, errors.New("database offline")
+			},
+			status: http.StatusServiceUnavailable,
+		},
+		{
+			name:          "reread missing",
+			transitionErr: storage.ErrAssetPinAuditConflict,
+			reread: func(_ *assetPinTestRig, _ string) (storage.AssetPinReference, bool, error) {
+				return storage.AssetPinReference{}, false, nil
+			},
+			status: http.StatusConflict,
+		},
+		{
+			name:          "reread corrupt exact target",
+			transitionErr: storage.ErrAssetPinReferenceConflict,
+			reread: func(rig *assetPinTestRig, candidateKey string) (storage.AssetPinReference, bool, error) {
+				ref := testAPIAssetReferenceForState(rig, candidateKey, storage.AssetReferenceReviewOpen)
+				ref.GitHubIssue = 42
+				ref.CID = ""
+				return ref, true, nil
+			},
+			status: http.StatusServiceUnavailable,
+		},
+		{
+			name:          "reread conflicting state",
+			transitionErr: storage.ErrAssetPinReferenceConflict,
+			reread: func(rig *assetPinTestRig, candidateKey string) (storage.AssetPinReference, bool, error) {
+				return testAPIAssetReferenceForState(rig, candidateKey, storage.AssetReferenceApproved), true, nil
+			},
+			status: http.StatusConflict,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rig := newAssetPinTestRig(t, nil)
+			candidateKey := "candidate-conflict-reread-" + strings.ReplaceAll(test.name, " ", "-")
+			stored := testAPIAssetReferenceForState(rig, candidateKey, storage.AssetReferenceStaged)
+			rig.store.byCandidate[candidateKey] = stored
+			rig.store.byReference[stored.ReferenceKey] = stored
+			rig.store.transitionErr = test.transitionErr
+			rig.store.candidateFind = func(call int, key string) (storage.AssetPinReference, bool, error) {
+				if call == 1 {
+					return stored, true, nil
+				}
+				return test.reread(rig, key)
+			}
+
+			response := serveAssetReferenceStateTestRequest(rig, candidateKey, storage.AssetReferenceReviewOpen, 42, "", rig.now)
+			if response.Code != test.status {
+				t.Fatalf("status = %d body = %s, want %d", response.Code, response.Body.String(), test.status)
+			}
+			if rig.store.candidateFindCalls != 2 {
+				t.Fatalf("candidate reads = %d, want initial read plus conflict reread", rig.store.candidateFindCalls)
+			}
+		})
+	}
+}
+
 func serveAssetReferenceStateTestRequest(rig *assetPinTestRig, candidateKey string, state storage.AssetReferenceState, issue int64, digest string, decidedAt time.Time) *httptest.ResponseRecorder {
 	body := fmt.Sprintf(`{"candidateKey":%q,"decidedAt":%q,"decisionSha256":%q,"issueNumber":%d,"state":%q}`, candidateKey, decidedAt.Format(time.RFC3339Nano), digest, issue, state)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/reference-state", strings.NewReader(body))
@@ -986,6 +1133,57 @@ func TestAssetReferenceStateConcurrentSemanticRetryWritesOneTransition(t *testin
 	}
 	if rig.verifier.calls != 2 || len(rig.store.transitions) != 1 || len(rig.store.events) != 1 {
 		t.Fatalf("concurrent retry = verifier %d transitions %d events %d, want 2/1/1", rig.verifier.calls, len(rig.store.transitions), len(rig.store.events))
+	}
+}
+
+func TestAssetReferenceStateCrossHandlerSemanticRetryWritesOneDurableTransition(t *testing.T) {
+	rig := newAssetPinTestRig(t, nil)
+	sharedStore := newBarrierAssetPinStore(rig.store)
+	rig.handler.store = sharedStore
+	secondHandler, err := NewAssetPinHandler(AssetPinHandlerOptions{
+		Verifier: rig.verifier,
+		Store:    sharedStore,
+		Capacity: rig.capacity,
+		Pinner:   rig.pinner,
+		Recovery: rig.recovery,
+		Config:   rig.cfg,
+		DataDir:  rig.dataDir,
+		Clock:    func() time.Time { return rig.now },
+	})
+	if err != nil {
+		t.Fatalf("NewAssetPinHandler(second handler) error = %v", err)
+	}
+
+	candidateKey := "candidate-cross-handler-state"
+	stored := testAPIAssetReferenceForState(rig, candidateKey, storage.AssetReferenceStaged)
+	rig.store.byCandidate[candidateKey] = stored
+	rig.store.byReference[stored.ReferenceKey] = stored
+	body := fmt.Sprintf(`{"candidateKey":%q,"decidedAt":%q,"decisionSha256":"","issueNumber":6160,"state":"review_open"}`, candidateKey, rig.now.Format(time.RFC3339Nano))
+
+	responses := make(chan *httptest.ResponseRecorder, 2)
+	for index, handler := range []*AssetPinHandler{rig.handler, secondHandler} {
+		go func(index int, handler *AssetPinHandler) {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/reference-state", strings.NewReader(body))
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer cross-handler-token-%d", index))
+			responses <- serveAssetPin(handler, req)
+		}(index, handler)
+	}
+	for i := 0; i < 2; i++ {
+		response := <-responses
+		if response.Code != http.StatusOK {
+			t.Fatalf("cross-handler response status = %d body = %s, want 200", response.Code, response.Body.String())
+		}
+	}
+
+	rig.store.mu.Lock()
+	durableAudits := len(rig.store.byEvent)
+	persisted := rig.store.byCandidate[candidateKey]
+	rig.store.mu.Unlock()
+	if sharedStore.durableTransitionCount() != 1 || durableAudits != 1 {
+		t.Fatalf("durable transitions/audits = %d/%d, want 1/1", sharedStore.durableTransitionCount(), durableAudits)
+	}
+	if persisted.State != storage.AssetReferenceReviewOpen || persisted.GitHubIssue != 6160 || persisted.DecisionSHA256 != "" {
+		t.Fatalf("persisted reference = %+v, want exact review_open target", persisted)
 	}
 }
 
