@@ -39,6 +39,7 @@ type fakeAssetPinVerifier struct {
 	calls  int
 	token  string
 	kind   assetpin.WorkflowKind
+	verify func(string, assetpin.WorkflowKind) (assetpin.Claims, error)
 }
 
 func (f *fakeAssetPinVerifier) VerifyAndConsume(_ context.Context, token string, kind assetpin.WorkflowKind) (assetpin.Claims, error) {
@@ -47,6 +48,9 @@ func (f *fakeAssetPinVerifier) VerifyAndConsume(_ context.Context, token string,
 	f.calls++
 	f.token = token
 	f.kind = kind
+	if f.verify != nil {
+		return f.verify(token, kind)
+	}
 	return f.claims, f.err
 }
 
@@ -60,7 +64,9 @@ type fakeAssetPinStore struct {
 	findCalls          int
 	candidateFindCalls int
 	upserts            []storage.AssetPinReference
+	transitions        []storage.AssetPinReferenceTransition
 	events             []storage.AssetPinAuditEvent
+	transitionErr      error
 	byCandidate        map[string]storage.AssetPinReference
 	byReference        map[string]storage.AssetPinReference
 	byEvent            map[string]storage.AssetPinAuditEvent
@@ -103,6 +109,32 @@ func (f *fakeAssetPinStore) UpsertAssetPinReference(_ context.Context, ref stora
 	}
 	f.byCandidate[ref.CandidateKey] = ref
 	f.byReference[ref.ReferenceKey] = ref
+	f.byEvent[event.EventID] = event
+	return nil
+}
+
+func (f *fakeAssetPinStore) TransitionAssetPinReference(_ context.Context, transition storage.AssetPinReferenceTransition, event storage.AssetPinAuditEvent) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.transitions = append(f.transitions, transition)
+	f.events = append(f.events, event)
+	if f.transitionErr != nil {
+		return f.transitionErr
+	}
+	ref, ok := f.byReference[transition.ReferenceKey]
+	if !ok {
+		return storage.ErrAssetPinReferenceNotFound
+	}
+	if ref.State != transition.FromState {
+		return storage.ErrAssetPinReferenceConflict
+	}
+	ref.State = transition.ToState
+	ref.GitHubIssue = transition.GitHubIssue
+	ref.DecisionSHA256 = transition.DecisionSHA256
+	ref.UpdatedAt = transition.UpdatedAt
+	ref.ExpiresAt = transition.ExpiresAt
+	f.byReference[ref.ReferenceKey] = ref
+	f.byCandidate[ref.CandidateKey] = ref
 	f.byEvent[event.EventID] = event
 	return nil
 }
@@ -325,6 +357,635 @@ func TestAssetPinMethodGatePrecedesAuthenticationAndBodyRead(t *testing.T) {
 	}
 	if reader.read {
 		t.Fatal("wrong-method request body was read")
+	}
+}
+
+func TestAssetReferenceStateReviewOpen(t *testing.T) {
+	rig := newAssetPinTestRig(t, nil)
+	glb := testGLB([]byte("review-open"))
+	candidateKey := "candidate-review-open"
+	metadata := testCanonicalMetadata(glb, candidateKey)
+	stored := testStoredAssetPinReference(glb, candidateKey, metadata, rig.now)
+	rig.store.byCandidate[candidateKey] = stored
+	rig.store.byReference[stored.ReferenceKey] = stored
+
+	body := fmt.Sprintf(`{"candidateKey":%q,"decidedAt":%q,"decisionSha256":"","issueNumber":42,"state":"review_open"}`, candidateKey, rig.now.Format(time.RFC3339Nano))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/reference-state", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer good-token")
+	response := serveAssetPin(rig.handler, req)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s, want 200", response.Code, response.Body.String())
+	}
+	if rig.verifier.calls != 1 || rig.verifier.kind != assetpin.WorkflowPin {
+		t.Fatalf("verifier = calls %d kind %q, want one pin verification", rig.verifier.calls, rig.verifier.kind)
+	}
+	if len(rig.store.transitions) != 1 {
+		t.Fatalf("transitions = %d, want 1", len(rig.store.transitions))
+	}
+	transition := rig.store.transitions[0]
+	if transition.FromState != storage.AssetReferenceStaged ||
+		transition.ToState != storage.AssetReferenceReviewOpen ||
+		transition.GitHubIssue != 42 || transition.DecisionSHA256 != "" ||
+		!transition.UpdatedAt.Equal(rig.now) || !transition.ExpiresAt.Equal(stored.ExpiresAt) {
+		t.Fatalf("transition = %+v, want staged to review_open retaining expiry", transition)
+	}
+}
+
+func TestAssetReferenceStateApprovedUsesDecisionWorkflowAndNullExpiry(t *testing.T) {
+	rig := newAssetPinTestRig(t, nil)
+	glb := testGLB([]byte("approve"))
+	candidateKey := "candidate-approve"
+	stored := testStoredAssetPinReference(glb, candidateKey, testCanonicalMetadata(glb, candidateKey), rig.now)
+	stored.State = storage.AssetReferenceReviewOpen
+	stored.GitHubIssue = 77
+	rig.store.byCandidate[candidateKey] = stored
+	rig.store.byReference[stored.ReferenceKey] = stored
+	digest := strings.Repeat("a", 64)
+	body := fmt.Sprintf(`{"candidateKey":%q,"decidedAt":%q,"decisionSha256":%q,"issueNumber":77,"state":"approved"}`, candidateKey, rig.now.Format(time.RFC3339Nano), digest)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/reference-state", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer decision-token")
+	response := serveAssetPin(rig.handler, req)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s, want 200", response.Code, response.Body.String())
+	}
+	if rig.verifier.calls != 1 || rig.verifier.kind != assetpin.WorkflowDecision || rig.verifier.token != "decision-token" {
+		t.Fatalf("verifier = calls %d kind %q token %q, want decision verification", rig.verifier.calls, rig.verifier.kind, rig.verifier.token)
+	}
+	if len(rig.store.transitions) != 1 {
+		t.Fatalf("transitions = %d, want 1", len(rig.store.transitions))
+	}
+	transition := rig.store.transitions[0]
+	if transition.FromState != storage.AssetReferenceReviewOpen || transition.ToState != storage.AssetReferenceApproved ||
+		transition.GitHubIssue != 77 || transition.DecisionSHA256 != digest || !transition.ExpiresAt.IsZero() {
+		t.Fatalf("transition = %+v, want review_open to approved with null expiry", transition)
+	}
+	var responseBody struct {
+		CandidateKey string                      `json:"candidateKey"`
+		CID          string                      `json:"cid"`
+		State        storage.AssetReferenceState `json:"state"`
+		ExpiresAt    *string                     `json:"expiresAt"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &responseBody); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if responseBody.CandidateKey != candidateKey || responseBody.CID != stored.CID || responseBody.State != storage.AssetReferenceApproved || responseBody.ExpiresAt != nil {
+		t.Fatalf("response = %+v, want approved with null expiry", responseBody)
+	}
+}
+
+func TestAssetReferenceStateRejectedAndSupersededExpireThirtyDaysAfterDecision(t *testing.T) {
+	tests := []struct {
+		name        string
+		from        storage.AssetReferenceState
+		to          storage.AssetReferenceState
+		priorDigest string
+	}{
+		{name: "reject review", from: storage.AssetReferenceReviewOpen, to: storage.AssetReferenceRejected},
+		{name: "supersede approval", from: storage.AssetReferenceApproved, to: storage.AssetReferenceSuperseded, priorDigest: strings.Repeat("b", 64)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rig := newAssetPinTestRig(t, nil)
+			glb := testGLB([]byte(test.name))
+			candidateKey := "candidate-" + strings.ReplaceAll(test.name, " ", "-")
+			stored := testStoredAssetPinReference(glb, candidateKey, testCanonicalMetadata(glb, candidateKey), rig.now)
+			stored.State = test.from
+			stored.GitHubIssue = 88
+			stored.DecisionSHA256 = test.priorDigest
+			if test.from == storage.AssetReferenceApproved {
+				stored.ExpiresAt = time.Time{}
+			}
+			rig.store.byCandidate[candidateKey] = stored
+			rig.store.byReference[stored.ReferenceKey] = stored
+			digest := strings.Repeat("c", 64)
+			body := fmt.Sprintf(`{"candidateKey":%q,"decidedAt":%q,"decisionSha256":%q,"issueNumber":88,"state":%q}`, candidateKey, rig.now.Format(time.RFC3339Nano), digest, test.to)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/reference-state", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer decision-token")
+			response := serveAssetPin(rig.handler, req)
+
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d body = %s, want 200", response.Code, response.Body.String())
+			}
+			if len(rig.store.transitions) != 1 {
+				t.Fatalf("transitions = %d, want 1", len(rig.store.transitions))
+			}
+			transition := rig.store.transitions[0]
+			wantExpiry := rig.now.Add(30 * 24 * time.Hour)
+			if transition.FromState != test.from || transition.ToState != test.to || transition.DecisionSHA256 != digest || !transition.ExpiresAt.Equal(wantExpiry) {
+				t.Fatalf("transition = %+v, want %s to %s expiring %s", transition, test.from, test.to, wantExpiry)
+			}
+			var responseBody struct {
+				ExpiresAt string `json:"expiresAt"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &responseBody); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if responseBody.ExpiresAt != wantExpiry.Format(time.RFC3339Nano) {
+				t.Fatalf("expiresAt = %q, want %q", responseBody.ExpiresAt, wantExpiry.Format(time.RFC3339Nano))
+			}
+		})
+	}
+}
+
+func TestAssetReferenceStateIdenticalSemanticRetryConsumesTokenWithoutAnotherTransition(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    storage.AssetReferenceState
+		issue    int64
+		digest   string
+		expires  func(time.Time) time.Time
+		workflow assetpin.WorkflowKind
+	}{
+		{name: "review opened", state: storage.AssetReferenceReviewOpen, issue: 91, expires: func(now time.Time) time.Time { return now.Add(89 * 24 * time.Hour) }, workflow: assetpin.WorkflowPin},
+		{name: "rejected", state: storage.AssetReferenceRejected, issue: 92, digest: strings.Repeat("d", 64), expires: func(now time.Time) time.Time { return now.Add(-time.Hour).Add(30 * 24 * time.Hour) }, workflow: assetpin.WorkflowDecision},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rig := newAssetPinTestRig(t, nil)
+			glb := testGLB([]byte(test.name))
+			candidateKey := "candidate-retry-" + strings.ReplaceAll(test.name, " ", "-")
+			stored := testStoredAssetPinReference(glb, candidateKey, testCanonicalMetadata(glb, candidateKey), rig.now)
+			stored.State = test.state
+			stored.GitHubIssue = test.issue
+			stored.DecisionSHA256 = test.digest
+			stored.CreatedAt = rig.now.Add(-2 * time.Hour)
+			stored.UpdatedAt = rig.now.Add(-time.Hour)
+			stored.ExpiresAt = test.expires(rig.now)
+			rig.store.byCandidate[candidateKey] = stored
+			rig.store.byReference[stored.ReferenceKey] = stored
+			body := fmt.Sprintf(`{"candidateKey":%q,"decidedAt":%q,"decisionSha256":%q,"issueNumber":%d,"state":%q}`, candidateKey, rig.now.Format(time.RFC3339Nano), test.digest, test.issue, test.state)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/reference-state", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer fresh-retry-token")
+			response := serveAssetPin(rig.handler, req)
+
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d body = %s, want semantic retry 200", response.Code, response.Body.String())
+			}
+			if rig.verifier.calls != 1 || rig.verifier.kind != test.workflow {
+				t.Fatalf("verifier = calls %d kind %q, want one %q verification", rig.verifier.calls, rig.verifier.kind, test.workflow)
+			}
+			if len(rig.store.transitions) != 0 || len(rig.store.events) != 0 {
+				t.Fatalf("semantic retry wrote transitions/events = %d/%d, want 0/0", len(rig.store.transitions), len(rig.store.events))
+			}
+		})
+	}
+}
+
+func TestAssetReferenceStateRejectsNonMonotonicOrExpiredReviewTime(t *testing.T) {
+	tests := []struct {
+		name      string
+		decidedAt func(storage.AssetPinReference) time.Time
+	}{
+		{name: "before current update", decidedAt: func(ref storage.AssetPinReference) time.Time { return ref.UpdatedAt.Add(-time.Nanosecond) }},
+		{name: "after staged expiry", decidedAt: func(ref storage.AssetPinReference) time.Time { return ref.ExpiresAt.Add(time.Nanosecond) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rig := newAssetPinTestRig(t, nil)
+			glb := testGLB([]byte(test.name))
+			candidateKey := "candidate-time-" + strings.ReplaceAll(test.name, " ", "-")
+			stored := testStoredAssetPinReference(glb, candidateKey, testCanonicalMetadata(glb, candidateKey), rig.now)
+			rig.store.byCandidate[candidateKey] = stored
+			rig.store.byReference[stored.ReferenceKey] = stored
+			body := fmt.Sprintf(`{"candidateKey":%q,"decidedAt":%q,"decisionSha256":"","issueNumber":99,"state":"review_open"}`, candidateKey, test.decidedAt(stored).Format(time.RFC3339Nano))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/reference-state", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer good-token")
+			response := serveAssetPin(rig.handler, req)
+
+			if response.Code != http.StatusConflict {
+				t.Fatalf("status = %d body = %s, want 409", response.Code, response.Body.String())
+			}
+			if len(rig.store.transitions) != 0 {
+				t.Fatalf("transitions = %d, want 0", len(rig.store.transitions))
+			}
+		})
+	}
+
+	t.Run("decision retention overflows UnixNano", func(t *testing.T) {
+		rig := newAssetPinTestRig(t, nil)
+		candidateKey := "candidate-time-overflow"
+		stored := testAPIAssetReferenceForState(rig, candidateKey, storage.AssetReferenceReviewOpen)
+		maximum, err := time.Parse(time.RFC3339Nano, "2262-04-11T23:47:16.854775807Z")
+		if err != nil {
+			t.Fatalf("parse maximum UnixNano time: %v", err)
+		}
+		stored.CreatedAt = maximum.Add(-2 * time.Hour)
+		stored.UpdatedAt = maximum.Add(-time.Hour)
+		stored.ExpiresAt = maximum
+		rig.store.byCandidate[candidateKey] = stored
+		rig.store.byReference[stored.ReferenceKey] = stored
+		response := serveAssetReferenceStateTestRequest(rig, candidateKey, storage.AssetReferenceRejected, stored.GitHubIssue, strings.Repeat("b", 64), maximum)
+		if response.Code != http.StatusConflict || len(rig.store.transitions) != 0 {
+			t.Fatalf("overflow decision = status %d transitions %d, want 409/0", response.Code, len(rig.store.transitions))
+		}
+	})
+}
+
+func TestAssetReferenceStateCanonicalParserRejectsNoncanonicalAndInvalidBodies(t *testing.T) {
+	canonicalTime := "2026-07-13T12:30:45.123456789Z"
+	valid := `{"candidateKey":"candidate-canonical","decidedAt":"` + canonicalTime + `","decisionSha256":"","issueNumber":42,"state":"review_open"}`
+	request, decidedAt, err := parseCanonicalAssetReferenceStateRequest(strings.NewReader(valid))
+	if err != nil {
+		t.Fatalf("parse valid canonical request: %v", err)
+	}
+	if request.CandidateKey != "candidate-canonical" || request.IssueNumber != 42 || request.State != "review_open" || decidedAt.Format(time.RFC3339Nano) != canonicalTime {
+		t.Fatalf("parsed request = %+v at %s", request, decidedAt)
+	}
+
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "empty", raw: ""},
+		{name: "unknown field", raw: `{"candidateKey":"candidate-canonical","decidedAt":"` + canonicalTime + `","decisionSha256":"","extra":true,"issueNumber":42,"state":"review_open"}`},
+		{name: "duplicate field", raw: `{"candidateKey":"candidate-canonical","candidateKey":"candidate-canonical","decidedAt":"` + canonicalTime + `","decisionSha256":"","issueNumber":42,"state":"review_open"}`},
+		{name: "missing field", raw: `{"candidateKey":"candidate-canonical","decidedAt":"` + canonicalTime + `","issueNumber":42,"state":"review_open"}`},
+		{name: "wrong field order", raw: `{"state":"review_open","issueNumber":42,"decisionSha256":"","decidedAt":"` + canonicalTime + `","candidateKey":"candidate-canonical"}`},
+		{name: "leading whitespace", raw: " " + valid},
+		{name: "trailing newline", raw: valid + "\n"},
+		{name: "trailing value", raw: valid + `null`},
+		{name: "fractional issue", raw: strings.Replace(valid, `"issueNumber":42`, `"issueNumber":42.0`, 1)},
+		{name: "exponent issue", raw: strings.Replace(valid, `"issueNumber":42`, `"issueNumber":4.2e1`, 1)},
+		{name: "quoted issue", raw: strings.Replace(valid, `"issueNumber":42`, `"issueNumber":"42"`, 1)},
+		{name: "zero issue", raw: strings.Replace(valid, `"issueNumber":42`, `"issueNumber":0`, 1)},
+		{name: "negative issue", raw: strings.Replace(valid, `"issueNumber":42`, `"issueNumber":-1`, 1)},
+		{name: "candidate leading space", raw: strings.Replace(valid, `"candidateKey":"candidate-canonical"`, `"candidateKey":" candidate-canonical"`, 1)},
+		{name: "candidate trailing space", raw: strings.Replace(valid, `"candidateKey":"candidate-canonical"`, `"candidateKey":"candidate-canonical "`, 1)},
+		{name: "non UTC timestamp", raw: strings.Replace(valid, canonicalTime, "2026-07-13T12:30:45.123456789+00:00", 1)},
+		{name: "noncanonical fractional timestamp", raw: strings.Replace(valid, canonicalTime, "2026-07-13T12:30:45.1200Z", 1)},
+		{name: "timestamp outside UnixNano", raw: strings.Replace(valid, canonicalTime, "2500-01-01T00:00:00Z", 1)},
+		{name: "unsupported abandoned", raw: strings.Replace(valid, `"state":"review_open"`, `"state":"abandoned"`, 1)},
+		{name: "review digest", raw: strings.Replace(valid, `"decisionSha256":""`, `"decisionSha256":"`+strings.Repeat("a", 64)+`"`, 1)},
+		{name: "decision missing digest", raw: strings.Replace(valid, `"state":"review_open"`, `"state":"approved"`, 1)},
+		{name: "decision uppercase digest", raw: strings.Replace(strings.Replace(valid, `"state":"review_open"`, `"state":"approved"`, 1), `"decisionSha256":""`, `"decisionSha256":"`+strings.Repeat("A", 64)+`"`, 1)},
+		{name: "oversized", raw: valid + strings.Repeat(" ", assetReferenceStateBodyMaxBytes)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, _, err := parseCanonicalAssetReferenceStateRequest(strings.NewReader(test.raw)); err == nil {
+				t.Fatal("parseCanonicalAssetReferenceStateRequest() accepted invalid body")
+			}
+		})
+	}
+}
+
+func TestAssetReferenceStateMethodAuthAndBodyOrdering(t *testing.T) {
+	canonicalBody := `{"candidateKey":"candidate-order","decidedAt":"2026-07-13T12:30:45.123456789Z","decisionSha256":"","issueNumber":42,"state":"review_open"}`
+
+	t.Run("wrong method is rejected before auth and body", func(t *testing.T) {
+		rig := newAssetPinTestRig(t, nil)
+		reader := &trackingReader{}
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/assets/reference-state", reader)
+		response := serveAssetPin(rig.handler, req)
+		if response.Code != http.StatusMethodNotAllowed || rig.verifier.calls != 0 || reader.read {
+			t.Fatalf("wrong method = status %d verifier %d body-read %v", response.Code, rig.verifier.calls, reader.read)
+		}
+	})
+
+	t.Run("malformed bearer is rejected before body", func(t *testing.T) {
+		for _, header := range []string{"Basic no", " Bearer token", "Bearer  token", "Bearer\ttoken", "Bearer token ", "Bearer token extra"} {
+			rig := newAssetPinTestRig(t, nil)
+			reader := &trackingReader{}
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/reference-state", reader)
+			req.Header.Set("Authorization", header)
+			response := serveAssetPin(rig.handler, req)
+			if response.Code != http.StatusUnauthorized || rig.verifier.calls != 0 || reader.read {
+				t.Fatalf("malformed auth %q = status %d verifier %d body-read %v", header, response.Code, rig.verifier.calls, reader.read)
+			}
+		}
+	})
+
+	t.Run("body is validated before token consumption", func(t *testing.T) {
+		rig := newAssetPinTestRig(t, nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/reference-state", strings.NewReader("{}"))
+		req.Header.Set("Authorization", "Bearer token")
+		response := serveAssetPin(rig.handler, req)
+		if response.Code != http.StatusBadRequest || rig.verifier.calls != 0 || rig.store.candidateFindCalls != 0 {
+			t.Fatalf("invalid body = status %d verifier %d store %d", response.Code, rig.verifier.calls, rig.store.candidateFindCalls)
+		}
+	})
+
+	for _, auth := range []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{name: "invalid", err: assetpin.ErrInvalidToken, status: http.StatusUnauthorized},
+		{name: "replay", err: assetpin.ErrTokenReplay, status: http.StatusUnauthorized},
+		{name: "backend", err: assetpin.ErrTokenReceipt, status: http.StatusServiceUnavailable},
+	} {
+		t.Run(auth.name, func(t *testing.T) {
+			rig := newAssetPinTestRig(t, nil)
+			rig.verifier.err = auth.err
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/reference-state", strings.NewReader(canonicalBody))
+			req.Header.Set("Authorization", "Bearer token")
+			response := serveAssetPin(rig.handler, req)
+			if response.Code != auth.status || rig.verifier.calls != 1 || rig.store.candidateFindCalls != 0 {
+				t.Fatalf("auth failure = status %d verifier %d store %d; want %d/1/0", response.Code, rig.verifier.calls, rig.store.candidateFindCalls, auth.status)
+			}
+		})
+	}
+
+	t.Run("route is exact", func(t *testing.T) {
+		rig := newAssetPinTestRig(t, nil)
+		for _, path := range []string{"/api/v1/assets/reference-state/", "/api/v1/assets/reference-state/suffix"} {
+			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(canonicalBody))
+			req.Header.Set("Authorization", "Bearer token")
+			response := serveAssetPin(rig.handler, req)
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("path %q status = %d, want 404", path, response.Code)
+			}
+		}
+	})
+}
+
+func TestAssetReferenceStateWorkflowCapabilitiesRemainSeparated(t *testing.T) {
+	t.Run("decision token cannot pin", func(t *testing.T) {
+		rig := newAssetPinTestRig(t, nil)
+		claims := rig.verifier.claims
+		rig.verifier.verify = func(token string, kind assetpin.WorkflowKind) (assetpin.Claims, error) {
+			if token == "decision-token" && kind == assetpin.WorkflowPin {
+				return assetpin.Claims{}, assetpin.ErrInvalidToken
+			}
+			return claims, nil
+		}
+		glb := testGLB([]byte("decision-cannot-pin"))
+		req := testMultipartRequest(t, []testMultipartPart{{name: "metadata", data: testCanonicalMetadata(glb, "candidate-decision-cannot-pin")}, {name: "file", filename: "asset.glb", data: glb}})
+		req.Header.Set("Authorization", "Bearer decision-token")
+		response := serveAssetPin(rig.handler, req)
+		if response.Code != http.StatusUnauthorized || rig.verifier.kind != assetpin.WorkflowPin || rig.store.candidateFindCalls != 0 || rig.pinner.pinCalls != 0 {
+			t.Fatalf("decision pin = status %d kind %q store %d pins %d", response.Code, rig.verifier.kind, rig.store.candidateFindCalls, rig.pinner.pinCalls)
+		}
+	})
+
+	t.Run("upload token cannot decide", func(t *testing.T) {
+		rig := newAssetPinTestRig(t, nil)
+		claims := rig.verifier.claims
+		rig.verifier.verify = func(token string, kind assetpin.WorkflowKind) (assetpin.Claims, error) {
+			if token == "upload-token" && kind == assetpin.WorkflowDecision {
+				return assetpin.Claims{}, assetpin.ErrInvalidToken
+			}
+			return claims, nil
+		}
+		body := `{"candidateKey":"candidate-upload-cannot-decide","decidedAt":"2026-07-13T12:30:45.123456789Z","decisionSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","issueNumber":42,"state":"approved"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/reference-state", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer upload-token")
+		response := serveAssetPin(rig.handler, req)
+		if response.Code != http.StatusUnauthorized || rig.verifier.kind != assetpin.WorkflowDecision || rig.store.candidateFindCalls != 0 {
+			t.Fatalf("upload decision = status %d kind %q store %d", response.Code, rig.verifier.kind, rig.store.candidateFindCalls)
+		}
+	})
+}
+
+func TestAssetReferenceStateAPILifecycleMatrix(t *testing.T) {
+	states := []storage.AssetReferenceState{
+		storage.AssetReferenceStaged,
+		storage.AssetReferenceReviewOpen,
+		storage.AssetReferenceApproved,
+		storage.AssetReferenceRejected,
+		storage.AssetReferenceSuperseded,
+		storage.AssetReferenceAbandoned,
+	}
+	targets := []storage.AssetReferenceState{
+		storage.AssetReferenceReviewOpen,
+		storage.AssetReferenceApproved,
+		storage.AssetReferenceRejected,
+		storage.AssetReferenceSuperseded,
+	}
+	allowed := map[[2]storage.AssetReferenceState]bool{
+		{storage.AssetReferenceStaged, storage.AssetReferenceReviewOpen}:   true,
+		{storage.AssetReferenceReviewOpen, storage.AssetReferenceApproved}: true,
+		{storage.AssetReferenceReviewOpen, storage.AssetReferenceRejected}: true,
+		{storage.AssetReferenceApproved, storage.AssetReferenceSuperseded}: true,
+	}
+	for _, from := range states {
+		for _, target := range targets {
+			name := string(from) + "_to_" + string(target)
+			t.Run(name, func(t *testing.T) {
+				rig := newAssetPinTestRig(t, nil)
+				candidateKey := "candidate-api-matrix-" + name
+				stored := testAPIAssetReferenceForState(rig, candidateKey, from)
+				rig.store.byCandidate[candidateKey] = stored
+				rig.store.byReference[stored.ReferenceKey] = stored
+				issue := stored.GitHubIssue
+				if issue == 0 {
+					issue = 4242
+				}
+				digest := strings.Repeat("b", 64)
+				if target == storage.AssetReferenceReviewOpen {
+					digest = ""
+				}
+				if from == target {
+					issue = stored.GitHubIssue
+					digest = stored.DecisionSHA256
+				}
+				body := fmt.Sprintf(`{"candidateKey":%q,"decidedAt":%q,"decisionSha256":%q,"issueNumber":%d,"state":%q}`, candidateKey, rig.now.Format(time.RFC3339Nano), digest, issue, target)
+				req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/reference-state", strings.NewReader(body))
+				req.Header.Set("Authorization", "Bearer matrix-token")
+				response := serveAssetPin(rig.handler, req)
+
+				wantOK := from == target || allowed[[2]storage.AssetReferenceState{from, target}]
+				wantStatus := http.StatusConflict
+				if wantOK {
+					wantStatus = http.StatusOK
+				}
+				if response.Code != wantStatus {
+					t.Fatalf("status = %d body = %s, want %d", response.Code, response.Body.String(), wantStatus)
+				}
+				wantTransitions := 0
+				if allowed[[2]storage.AssetReferenceState{from, target}] {
+					wantTransitions = 1
+				}
+				if len(rig.store.transitions) != wantTransitions {
+					t.Fatalf("transitions = %d, want %d", len(rig.store.transitions), wantTransitions)
+				}
+			})
+		}
+	}
+}
+
+func testAPIAssetReferenceForState(rig *assetPinTestRig, candidateKey string, state storage.AssetReferenceState) storage.AssetPinReference {
+	glb := testGLB([]byte(candidateKey))
+	ref := testStoredAssetPinReference(glb, candidateKey, testCanonicalMetadata(glb, candidateKey), rig.now)
+	ref.State = state
+	switch state {
+	case storage.AssetReferenceStaged:
+		ref.GitHubIssue = 0
+	case storage.AssetReferenceReviewOpen:
+		ref.GitHubIssue = 4242
+	case storage.AssetReferenceApproved:
+		ref.GitHubIssue = 4242
+		ref.DecisionSHA256 = strings.Repeat("a", 64)
+		ref.ExpiresAt = time.Time{}
+	case storage.AssetReferenceRejected, storage.AssetReferenceSuperseded:
+		ref.GitHubIssue = 4242
+		ref.DecisionSHA256 = strings.Repeat("a", 64)
+		ref.CreatedAt = rig.now.Add(-2 * time.Hour)
+		ref.UpdatedAt = rig.now.Add(-time.Hour)
+		ref.ExpiresAt = ref.UpdatedAt.Add(30 * 24 * time.Hour)
+	case storage.AssetReferenceAbandoned:
+		ref.GitHubIssue = 0
+		ref.CreatedAt = rig.now.Add(-2 * time.Hour)
+		ref.UpdatedAt = rig.now.Add(-time.Hour)
+		ref.ExpiresAt = rig.now.Add(time.Hour)
+	}
+	return ref
+}
+
+func TestAssetReferenceStateAuditAndResponseAreBoundAndMinimal(t *testing.T) {
+	rig := newAssetPinTestRig(t, nil)
+	candidateKey := "candidate-audit-state"
+	stored := testAPIAssetReferenceForState(rig, candidateKey, storage.AssetReferenceStaged)
+	rig.store.byCandidate[candidateKey] = stored
+	rig.store.byReference[stored.ReferenceKey] = stored
+	body := fmt.Sprintf(`{"candidateKey":%q,"decidedAt":%q,"decisionSha256":"","issueNumber":313,"state":"review_open"}`, candidateKey, rig.now.Format(time.RFC3339Nano))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/reference-state", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer fresh-audit-token")
+	response := serveAssetPin(rig.handler, req)
+
+	if response.Code != http.StatusOK || len(rig.store.events) != 1 {
+		t.Fatalf("response status/events = %d/%d body %s, want 200/1", response.Code, len(rig.store.events), response.Body.String())
+	}
+	event := rig.store.events[0]
+	wantEventIDInput := "asset-reference-state:v1\n" + fmt.Sprintf("%d:%s\n%s\n%s\n%d\n", len(candidateKey), candidateKey, storage.AssetReferenceStaged, storage.AssetReferenceReviewOpen, 313)
+	if event.EventID != stableTestID(wantEventIDInput) || event.Kind != "asset_reference_state" || event.Result != "review_open" ||
+		event.TokenDigest != stableTestID("fresh-audit-token") || event.Repository != rig.verifier.claims.Repository ||
+		event.Ref != rig.verifier.claims.Ref || event.WorkflowRef != rig.verifier.claims.WorkflowRef || event.Actor != rig.verifier.claims.Actor ||
+		event.WorkflowRunID != rig.verifier.claims.RunID || event.RunAttempt != rig.verifier.claims.RunAttempt || event.CommitSHA != rig.verifier.claims.SHA ||
+		event.CandidateKey != stored.CandidateKey || event.ReferenceKey != stored.ReferenceKey || event.CID != stored.CID || event.SHA256 != stored.SHA256 ||
+		event.ByteCount != stored.ByteCount || event.Detail != `{"decisionSha256":"","issueNumber":313,"state":"review_open"}` || !event.OccurredAt.Equal(rig.now) {
+		t.Fatalf("audit event = %+v, want fully bound review transition", event)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", event), "fresh-audit-token") {
+		t.Fatal("audit event persisted the raw bearer token")
+	}
+	var responseObject map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &responseObject); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(responseObject) != 4 || responseObject["candidateKey"] != candidateKey || responseObject["cid"] != stored.CID || responseObject["state"] != "review_open" || responseObject["expiresAt"] != stored.ExpiresAt.Format(time.RFC3339Nano) {
+		t.Fatalf("response object = %#v, want exactly candidateKey/cid/state/expiresAt", responseObject)
+	}
+}
+
+func TestAssetReferenceStateConflictsAndStoreFailuresMapToBoundedStatuses(t *testing.T) {
+	t.Run("missing candidate", func(t *testing.T) {
+		rig := newAssetPinTestRig(t, nil)
+		response := serveAssetReferenceStateTestRequest(rig, "missing-candidate", storage.AssetReferenceReviewOpen, 42, "", rig.now)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("status = %d body = %s, want 404", response.Code, response.Body.String())
+		}
+	})
+
+	t.Run("lookup backend", func(t *testing.T) {
+		rig := newAssetPinTestRig(t, nil)
+		rig.store.candidateFindErr = errors.New("database offline")
+		response := serveAssetReferenceStateTestRequest(rig, "candidate-store-error", storage.AssetReferenceReviewOpen, 42, "", rig.now)
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d body = %s, want 503", response.Code, response.Body.String())
+		}
+	})
+
+	for _, test := range []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{name: "state conflict", err: storage.ErrAssetPinReferenceConflict, status: http.StatusConflict},
+		{name: "audit conflict", err: storage.ErrAssetPinAuditConflict, status: http.StatusConflict},
+		{name: "removed concurrently", err: storage.ErrAssetPinReferenceNotFound, status: http.StatusNotFound},
+		{name: "recovery required", err: storage.ErrAssetPinLedgerRecoveryRequired, status: http.StatusServiceUnavailable},
+		{name: "backend", err: errors.New("database offline"), status: http.StatusServiceUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rig := newAssetPinTestRig(t, nil)
+			candidateKey := "candidate-store-" + strings.ReplaceAll(test.name, " ", "-")
+			stored := testAPIAssetReferenceForState(rig, candidateKey, storage.AssetReferenceStaged)
+			rig.store.byCandidate[candidateKey] = stored
+			rig.store.byReference[stored.ReferenceKey] = stored
+			rig.store.transitionErr = test.err
+			response := serveAssetReferenceStateTestRequest(rig, candidateKey, storage.AssetReferenceReviewOpen, 42, "", rig.now)
+			if response.Code != test.status {
+				t.Fatalf("status = %d body = %s, want %d", response.Code, response.Body.String(), test.status)
+			}
+		})
+	}
+
+	t.Run("issue mismatch", func(t *testing.T) {
+		rig := newAssetPinTestRig(t, nil)
+		candidateKey := "candidate-issue-mismatch"
+		stored := testAPIAssetReferenceForState(rig, candidateKey, storage.AssetReferenceReviewOpen)
+		rig.store.byCandidate[candidateKey] = stored
+		rig.store.byReference[stored.ReferenceKey] = stored
+		response := serveAssetReferenceStateTestRequest(rig, candidateKey, storage.AssetReferenceApproved, stored.GitHubIssue+1, strings.Repeat("b", 64), rig.now)
+		if response.Code != http.StatusConflict || len(rig.store.transitions) != 0 {
+			t.Fatalf("issue mismatch = status %d transitions %d, want 409/0", response.Code, len(rig.store.transitions))
+		}
+	})
+
+	t.Run("same target conflicting digest", func(t *testing.T) {
+		rig := newAssetPinTestRig(t, nil)
+		candidateKey := "candidate-digest-conflict"
+		stored := testAPIAssetReferenceForState(rig, candidateKey, storage.AssetReferenceApproved)
+		rig.store.byCandidate[candidateKey] = stored
+		rig.store.byReference[stored.ReferenceKey] = stored
+		response := serveAssetReferenceStateTestRequest(rig, candidateKey, storage.AssetReferenceApproved, stored.GitHubIssue, strings.Repeat("b", 64), rig.now)
+		if response.Code != http.StatusConflict || len(rig.store.transitions) != 0 {
+			t.Fatalf("digest conflict = status %d transitions %d, want 409/0", response.Code, len(rig.store.transitions))
+		}
+	})
+
+	t.Run("corrupt stored lifecycle", func(t *testing.T) {
+		rig := newAssetPinTestRig(t, nil)
+		candidateKey := "candidate-corrupt-state"
+		stored := testAPIAssetReferenceForState(rig, candidateKey, storage.AssetReferenceApproved)
+		stored.DecisionSHA256 = ""
+		rig.store.byCandidate[candidateKey] = stored
+		rig.store.byReference[stored.ReferenceKey] = stored
+		response := serveAssetReferenceStateTestRequest(rig, candidateKey, storage.AssetReferenceSuperseded, stored.GitHubIssue, strings.Repeat("b", 64), rig.now)
+		if response.Code != http.StatusServiceUnavailable || len(rig.store.transitions) != 0 {
+			t.Fatalf("corrupt state = status %d transitions %d, want 503/0", response.Code, len(rig.store.transitions))
+		}
+	})
+}
+
+func serveAssetReferenceStateTestRequest(rig *assetPinTestRig, candidateKey string, state storage.AssetReferenceState, issue int64, digest string, decidedAt time.Time) *httptest.ResponseRecorder {
+	body := fmt.Sprintf(`{"candidateKey":%q,"decidedAt":%q,"decisionSha256":%q,"issueNumber":%d,"state":%q}`, candidateKey, decidedAt.Format(time.RFC3339Nano), digest, issue, state)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/reference-state", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer good-token")
+	return serveAssetPin(rig.handler, req)
+}
+
+func TestAssetReferenceStateConcurrentSemanticRetryWritesOneTransition(t *testing.T) {
+	rig := newAssetPinTestRig(t, nil)
+	candidateKey := "candidate-concurrent-state"
+	stored := testAPIAssetReferenceForState(rig, candidateKey, storage.AssetReferenceStaged)
+	rig.store.byCandidate[candidateKey] = stored
+	rig.store.byReference[stored.ReferenceKey] = stored
+	body := fmt.Sprintf(`{"candidateKey":%q,"decidedAt":%q,"decisionSha256":"","issueNumber":5150,"state":"review_open"}`, candidateKey, rig.now.Format(time.RFC3339Nano))
+
+	responses := make(chan *httptest.ResponseRecorder, 2)
+	var start sync.WaitGroup
+	start.Add(1)
+	for i := 0; i < 2; i++ {
+		go func(index int) {
+			start.Wait()
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/reference-state", strings.NewReader(body))
+			req.Header.Set("Authorization", fmt.Sprintf("Bearer fresh-token-%d", index))
+			responses <- serveAssetPin(rig.handler, req)
+		}(i)
+	}
+	start.Done()
+	for i := 0; i < 2; i++ {
+		response := <-responses
+		if response.Code != http.StatusOK {
+			t.Fatalf("concurrent response status = %d body = %s, want 200", response.Code, response.Body.String())
+		}
+	}
+	if rig.verifier.calls != 2 || len(rig.store.transitions) != 1 || len(rig.store.events) != 1 {
+		t.Fatalf("concurrent retry = verifier %d transitions %d events %d, want 2/1/1", rig.verifier.calls, len(rig.store.transitions), len(rig.store.events))
 	}
 }
 

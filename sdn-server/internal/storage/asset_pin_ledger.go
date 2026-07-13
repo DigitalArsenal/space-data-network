@@ -25,6 +25,8 @@ const (
 	AssetReferenceRejected   AssetReferenceState = "rejected"
 	AssetReferenceSuperseded AssetReferenceState = "superseded"
 	AssetReferenceAbandoned  AssetReferenceState = "abandoned"
+
+	assetPinDecisionRetention = 30 * 24 * time.Hour
 )
 
 var (
@@ -1151,19 +1153,14 @@ func transitionAssetPinReferenceTo(ctx context.Context, exec assetPinQueryExecer
 	if transition.UpdatedAt.Before(ref.UpdatedAt) {
 		return fmt.Errorf("reference %q transition updated_at precedes current updated_at: %w", transition.ReferenceKey, ErrAssetPinReferenceConflict)
 	}
-	decisionSHA256 := transition.DecisionSHA256
-	if decisionSHA256 == "" {
-		decisionSHA256 = ref.DecisionSHA256
-	}
-	githubIssue := transition.GitHubIssue
-	if githubIssue == 0 {
-		githubIssue = ref.GitHubIssue
+	if err := validateAssetPinTransitionAgainstReference(ref, transition); err != nil {
+		return err
 	}
 	result, err := exec.ExecContext(ctx, `
 		UPDATE sdn_asset_pin_refs
 		SET state = ?, github_issue = ?, decision_sha256 = ?, updated_at = ?, expires_at = ?
 		WHERE reference_key = ? AND state = ?
-	`, string(transition.ToState), githubIssue, decisionSHA256,
+	`, string(transition.ToState), transition.GitHubIssue, transition.DecisionSHA256,
 		assetPinTimestamp(transition.UpdatedAt), nullableAssetPinTime(transition.ExpiresAt),
 		transition.ReferenceKey, string(transition.FromState))
 	if err != nil {
@@ -1314,6 +1311,9 @@ func scanAssetPinReference(scanner assetPinScanner) (AssetPinReference, error) {
 			return AssetPinReference{}, fmt.Errorf("decode asset pin reference expires_at: %w", err)
 		}
 	}
+	if err := validateAssetPinReferenceLifecycle(ref); err != nil {
+		return AssetPinReference{}, fmt.Errorf("stored asset pin reference lifecycle is invalid: %w", err)
+	}
 	return ref, nil
 }
 
@@ -1362,7 +1362,11 @@ func prepareAssetPinReference(ref AssetPinReference) (AssetPinReference, error) 
 	ref.LicenseName = strings.TrimSpace(ref.LicenseName)
 	ref.Attribution = strings.TrimSpace(ref.Attribution)
 	ref.WorkflowRunID = strings.TrimSpace(ref.WorkflowRunID)
-	ref.DecisionSHA256 = strings.ToLower(strings.TrimSpace(ref.DecisionSHA256))
+	decisionSHA256 := strings.TrimSpace(ref.DecisionSHA256)
+	if decisionSHA256 != ref.DecisionSHA256 || strings.ToLower(decisionSHA256) != decisionSHA256 {
+		return AssetPinReference{}, errors.New("asset decision SHA-256 must use canonical lowercase hex")
+	}
+	ref.DecisionSHA256 = decisionSHA256
 	if ref.ReferenceKey == "" {
 		return AssetPinReference{}, errors.New("asset pin reference key is required")
 	}
@@ -1404,10 +1408,55 @@ func prepareAssetPinReference(ref AssetPinReference) (AssetPinReference, error) 
 	if !ref.ExpiresAt.IsZero() && ref.ExpiresAt.Before(ref.UpdatedAt) {
 		return AssetPinReference{}, errors.New("asset pin reference expires_at precedes updated_at")
 	}
+	if err := validateAssetPinReferenceLifecycle(ref); err != nil {
+		return AssetPinReference{}, err
+	}
 	return ref, nil
 }
 
+func validateAssetPinReferenceLifecycle(ref AssetPinReference) error {
+	finiteExpiry := !ref.ExpiresAt.IsZero() && !ref.ExpiresAt.Before(ref.UpdatedAt)
+	switch ref.State {
+	case AssetReferenceStaged:
+		if ref.GitHubIssue != 0 || ref.DecisionSHA256 != "" || !finiteExpiry {
+			return errors.New("staged reference requires zero issue, empty decision digest, and finite expiry")
+		}
+	case AssetReferenceReviewOpen:
+		if ref.GitHubIssue <= 0 || ref.DecisionSHA256 != "" || !finiteExpiry {
+			return errors.New("review_open reference requires a positive issue, empty decision digest, and finite expiry")
+		}
+	case AssetReferenceApproved:
+		if ref.GitHubIssue <= 0 || !isAssetSHA256(ref.DecisionSHA256) || !ref.ExpiresAt.IsZero() {
+			return errors.New("approved reference requires a positive issue, decision digest, and zero expiry")
+		}
+	case AssetReferenceRejected, AssetReferenceSuperseded:
+		wantExpiry := ref.UpdatedAt.Add(assetPinDecisionRetention)
+		if ref.GitHubIssue <= 0 || !isAssetSHA256(ref.DecisionSHA256) ||
+			!assetPinTimeInUnixNanoRange(wantExpiry) || !ref.ExpiresAt.Equal(wantExpiry) {
+			return errors.New("rejected and superseded references require a positive issue, decision digest, and 30-day expiry")
+		}
+	case AssetReferenceAbandoned:
+		if ref.GitHubIssue < 0 || ref.DecisionSHA256 != "" || !finiteExpiry {
+			return errors.New("abandoned reference requires a non-negative issue, empty decision digest, and finite expiry")
+		}
+	default:
+		return fmt.Errorf("unknown asset reference state %q", ref.State)
+	}
+	return nil
+}
+
 func prepareAssetPinReferenceTransition(transition AssetPinReferenceTransition) (AssetPinReferenceTransition, error) {
+	transition, err := prepareAssetPinReferenceTransitionInput(transition)
+	if err != nil {
+		return AssetPinReferenceTransition{}, err
+	}
+	if err := validateAssetPinTransitionTarget(transition); err != nil {
+		return AssetPinReferenceTransition{}, err
+	}
+	return transition, nil
+}
+
+func prepareAssetPinReferenceTransitionInput(transition AssetPinReferenceTransition) (AssetPinReferenceTransition, error) {
 	if err := validateAssetPinPersistedTime("asset pin transition updated_at", transition.UpdatedAt, false); err != nil {
 		return AssetPinReferenceTransition{}, err
 	}
@@ -1417,7 +1466,11 @@ func prepareAssetPinReferenceTransition(transition AssetPinReferenceTransition) 
 	transition.ReferenceKey = strings.TrimSpace(transition.ReferenceKey)
 	transition.FromState = AssetReferenceState(strings.TrimSpace(string(transition.FromState)))
 	transition.ToState = AssetReferenceState(strings.TrimSpace(string(transition.ToState)))
-	transition.DecisionSHA256 = strings.ToLower(strings.TrimSpace(transition.DecisionSHA256))
+	decisionSHA256 := strings.TrimSpace(transition.DecisionSHA256)
+	if decisionSHA256 != transition.DecisionSHA256 || strings.ToLower(decisionSHA256) != decisionSHA256 {
+		return AssetPinReferenceTransition{}, fmt.Errorf("asset decision SHA-256 must use canonical lowercase hex: %w", ErrAssetPinReferenceConflict)
+	}
+	transition.DecisionSHA256 = decisionSHA256
 	if transition.ReferenceKey == "" {
 		return AssetPinReferenceTransition{}, errors.New("asset pin transition reference key is required")
 	}
@@ -1427,8 +1480,8 @@ func prepareAssetPinReferenceTransition(transition AssetPinReferenceTransition) 
 	if !validAssetReferenceState(transition.ToState) {
 		return AssetPinReferenceTransition{}, fmt.Errorf("unknown asset reference state %q", transition.ToState)
 	}
-	if transition.FromState == transition.ToState {
-		return AssetPinReferenceTransition{}, errors.New("asset pin transition must change state")
+	if !validAssetPinTransition(transition.FromState, transition.ToState) {
+		return AssetPinReferenceTransition{}, fmt.Errorf("asset pin transition %q to %q is forbidden: %w", transition.FromState, transition.ToState, ErrAssetPinReferenceConflict)
 	}
 	if transition.GitHubIssue < 0 {
 		return AssetPinReferenceTransition{}, errors.New("asset pin transition GitHub issue must be non-negative")
@@ -1445,6 +1498,64 @@ func prepareAssetPinReferenceTransition(transition AssetPinReferenceTransition) 
 		return AssetPinReferenceTransition{}, errors.New("asset pin transition expires_at precedes updated_at")
 	}
 	return transition, nil
+}
+
+func validateAssetPinTransitionTarget(transition AssetPinReferenceTransition) error {
+	conflict := func(message string) error {
+		return fmt.Errorf("asset pin transition %s: %w", message, ErrAssetPinReferenceConflict)
+	}
+	switch transition.ToState {
+	case AssetReferenceReviewOpen:
+		if transition.GitHubIssue <= 0 || transition.DecisionSHA256 != "" || transition.ExpiresAt.IsZero() {
+			return conflict("review_open requires a positive issue, empty decision digest, and finite expiry")
+		}
+	case AssetReferenceApproved:
+		if transition.GitHubIssue <= 0 || !isAssetSHA256(transition.DecisionSHA256) || !transition.ExpiresAt.IsZero() {
+			return conflict("approved requires a positive issue, decision digest, and zero expiry")
+		}
+	case AssetReferenceRejected, AssetReferenceSuperseded:
+		if transition.GitHubIssue <= 0 || !isAssetSHA256(transition.DecisionSHA256) {
+			return conflict("authoritative decision requires a positive issue and decision digest")
+		}
+		wantExpiry := transition.UpdatedAt.Add(assetPinDecisionRetention)
+		if !assetPinTimeInUnixNanoRange(wantExpiry) || !transition.ExpiresAt.Equal(wantExpiry) {
+			return conflict("rejected and superseded expiry must equal updated_at plus 30 days")
+		}
+	case AssetReferenceAbandoned:
+		if transition.DecisionSHA256 != "" || transition.ExpiresAt.IsZero() {
+			return conflict("abandoned requires an empty decision digest and finite expiry")
+		}
+	default:
+		return conflict("has an unsupported target state")
+	}
+	return nil
+}
+
+func validateAssetPinTransitionAgainstReference(ref AssetPinReference, transition AssetPinReferenceTransition) error {
+	conflict := func(message string) error {
+		return fmt.Errorf("reference %q %s: %w", ref.ReferenceKey, message, ErrAssetPinReferenceConflict)
+	}
+	switch {
+	case ref.State == AssetReferenceStaged && transition.ToState == AssetReferenceReviewOpen:
+		if ref.GitHubIssue != 0 || ref.DecisionSHA256 != "" || !transition.ExpiresAt.Equal(ref.ExpiresAt) {
+			return conflict("review_open must retain the staged expiry and add only the issue")
+		}
+	case ref.State == AssetReferenceReviewOpen && (transition.ToState == AssetReferenceApproved || transition.ToState == AssetReferenceRejected):
+		if ref.GitHubIssue <= 0 || transition.GitHubIssue != ref.GitHubIssue || ref.DecisionSHA256 != "" {
+			return conflict("decision must preserve the opened review issue")
+		}
+	case ref.State == AssetReferenceApproved && transition.ToState == AssetReferenceSuperseded:
+		if ref.GitHubIssue <= 0 || transition.GitHubIssue != ref.GitHubIssue || transition.DecisionSHA256 == ref.DecisionSHA256 {
+			return conflict("supersede must preserve the issue and replace the approval digest")
+		}
+	case (ref.State == AssetReferenceStaged || ref.State == AssetReferenceReviewOpen) && transition.ToState == AssetReferenceAbandoned:
+		if transition.GitHubIssue != ref.GitHubIssue || ref.DecisionSHA256 != "" {
+			return conflict("abandon must preserve the issue and empty decision digest")
+		}
+	default:
+		return conflict("has a forbidden lifecycle transition")
+	}
+	return nil
 }
 
 func prepareAssetPinAuditEvent(event AssetPinAuditEvent) (AssetPinAuditEvent, error) {
@@ -1639,6 +1750,19 @@ func validAssetReferenceState(state AssetReferenceState) bool {
 	}
 }
 
+func validAssetPinTransition(from, to AssetReferenceState) bool {
+	switch from {
+	case AssetReferenceStaged:
+		return to == AssetReferenceReviewOpen || to == AssetReferenceAbandoned
+	case AssetReferenceReviewOpen:
+		return to == AssetReferenceApproved || to == AssetReferenceRejected || to == AssetReferenceAbandoned
+	case AssetReferenceApproved:
+		return to == AssetReferenceSuperseded
+	default:
+		return false
+	}
+}
+
 func assetPinReferenceExpired(ref AssetPinReference, now time.Time) bool {
 	if ref.ExpiresAt.IsZero() || ref.ExpiresAt.After(now) {
 		return false
@@ -1799,6 +1923,10 @@ func validateAssetPinPersistedTime(name string, value time.Time, allowZero bool)
 		return fmt.Errorf("%s is outside the UnixNano range", name)
 	}
 	return nil
+}
+
+func assetPinTimeInUnixNanoRange(value time.Time) bool {
+	return !value.IsZero() && time.Unix(0, value.UnixNano()).Equal(value)
 }
 
 func assetPinTimestamp(value time.Time) string {
