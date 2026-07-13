@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -32,6 +33,50 @@ type Config struct {
 	Ingest     IngestConfig     `yaml:"ingest"`
 	Gateway    GatewayConfig    `yaml:"gateway"`
 	TipQueue   TipQueueConfig   `yaml:"tip_queue"`
+	AssetPins  AssetPinConfig   `yaml:"asset_pins"`
+}
+
+// AssetPinConfig controls the opt-in GitHub Actions asset pin capability.
+type AssetPinConfig struct {
+	Enabled           bool          `yaml:"enabled"`
+	Issuer            string        `yaml:"issuer"`
+	Audience          string        `yaml:"audience"`
+	Repository        string        `yaml:"repository"`
+	Ref               string        `yaml:"ref"`
+	PinWorkflow       string        `yaml:"pin_workflow"`
+	DecisionWorkflow  string        `yaml:"decision_workflow"`
+	GatewayURL        string        `yaml:"gateway_url"`
+	KuboRepoPath      string        `yaml:"kubo_repo_path"`
+	MaxUploadBytes    int64         `yaml:"max_upload_bytes"`
+	MinFreeBytes      int64         `yaml:"min_free_bytes"`
+	RetentionInterval time.Duration `yaml:"retention_interval"`
+}
+
+// EffectiveMaxUploadBytes returns the configured upload limit or the safe
+// default when the configured value is not positive.
+func (c AssetPinConfig) EffectiveMaxUploadBytes() int64 {
+	if c.MaxUploadBytes > 0 {
+		return c.MaxUploadBytes
+	}
+	return 10_000_000
+}
+
+// EffectiveMinFreeBytes returns the configured free-space floor or the safe
+// default when the configured value is not positive.
+func (c AssetPinConfig) EffectiveMinFreeBytes() int64 {
+	if c.MinFreeBytes > 0 {
+		return c.MinFreeBytes
+	}
+	return 10 << 30
+}
+
+// EffectiveRetentionInterval returns the configured retention cadence or the
+// safe default when the configured value is not positive.
+func (c AssetPinConfig) EffectiveRetentionInterval() time.Duration {
+	if c.RetentionInterval > 0 {
+		return c.RetentionInterval
+	}
+	return time.Hour
 }
 
 // TipQueueConfig makes the pubsub.TipQueue resource caps (Task D4:
@@ -943,6 +988,17 @@ func Default() *Config {
 			DefaultQuotaBytes: 100 * 1024 * 1024, // 100MB
 			MinTrustLevel:     "standard",
 		},
+		AssetPins: AssetPinConfig{
+			Enabled:          false,
+			Issuer:           "https://token.actions.githubusercontent.com",
+			Audience:         "sdn-asset-models",
+			Repository:       "DigitalArsenal/asset-models",
+			Ref:              "refs/heads/main",
+			PinWorkflow:      "DigitalArsenal/asset-models/.github/workflows/asset-loop.yml@refs/heads/main",
+			DecisionWorkflow: "DigitalArsenal/asset-models/.github/workflows/review-decision.yml@refs/heads/main",
+			GatewayURL:       "https://sdn.spaceaware.io/ipfs",
+			KuboRepoPath:     "/mnt/volume_nyc3_01/ipfs",
+		},
 		Flows: FlowsConfig{
 			Enabled:        true,
 			StoragePath:    filepath.Join(dataPath, "flows"),
@@ -1029,6 +1085,41 @@ func Load(path string) (*Config, error) {
 // end of Load, on both the default config and a config file that was
 // successfully parsed.
 func (c *Config) validate() error {
+	if c.AssetPins.MaxUploadBytes < 0 {
+		return fmt.Errorf("asset_pins.max_upload_bytes must not be negative")
+	}
+	if c.AssetPins.MinFreeBytes < 0 {
+		return fmt.Errorf("asset_pins.min_free_bytes must not be negative")
+	}
+	if c.AssetPins.RetentionInterval < 0 {
+		return fmt.Errorf("asset_pins.retention_interval must not be negative")
+	}
+	if c.AssetPins.Enabled {
+		required := []struct {
+			path  string
+			value string
+		}{
+			{path: "asset_pins.issuer", value: c.AssetPins.Issuer},
+			{path: "asset_pins.audience", value: c.AssetPins.Audience},
+			{path: "asset_pins.repository", value: c.AssetPins.Repository},
+			{path: "asset_pins.ref", value: c.AssetPins.Ref},
+			{path: "asset_pins.pin_workflow", value: c.AssetPins.PinWorkflow},
+			{path: "asset_pins.decision_workflow", value: c.AssetPins.DecisionWorkflow},
+			{path: "asset_pins.gateway_url", value: c.AssetPins.GatewayURL},
+			{path: "asset_pins.kubo_repo_path", value: c.AssetPins.KuboRepoPath},
+		}
+		for _, field := range required {
+			if strings.TrimSpace(field.value) == "" {
+				return fmt.Errorf("%s is required when asset_pins.enabled is true", field.path)
+			}
+		}
+	}
+	if strings.TrimSpace(c.AssetPins.GatewayURL) != "" {
+		gatewayURL, err := url.Parse(c.AssetPins.GatewayURL)
+		if err != nil || !strings.EqualFold(gatewayURL.Scheme, "https") || gatewayURL.Host == "" {
+			return fmt.Errorf("asset_pins.gateway_url must be an absolute HTTPS URL")
+		}
+	}
 	for _, mount := range c.Flows.Mounts {
 		if !strings.HasPrefix(mount.Path, "/api/") {
 			return fmt.Errorf(

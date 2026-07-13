@@ -1,0 +1,19 @@
+# Asset pinning is opt-in. Keep this disabled until the host is ready to
+# authenticate the fixed GitHub Actions workflows and persist approved assets.
+# When enabled, issuer, audience, repository, ref, pin_workflow,
+# decision_workflow, gateway_url, and kubo_repo_path are all required;
+# gateway_url must be an absolute HTTPS URL.
+asset_pins:
+  enabled: false
+  issuer: https://token.actions.githubusercontent.com
+  audience: sdn-asset-models
+  repository: DigitalArsenal/asset-models
+  ref: refs/heads/main
+  pin_workflow: DigitalArsenal/asset-models/.github/workflows/asset-loop.yml@refs/heads/main
+  decision_workflow: DigitalArsenal/asset-models/.github/workflows/review-decision.yml@refs/heads/main
+  gateway_url: https://sdn.spaceaware.io/ipfs
+  kubo_repo_path: /mnt/volume_nyc3_01/ipfs
+  # Zero or omitted bounds use these safe defaults.
+  max_upload_bytes: 10000000
+  min_free_bytes: 10737418240
+  retention_interval: 1h
