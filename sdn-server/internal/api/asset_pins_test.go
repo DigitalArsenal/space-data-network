@@ -16,7 +16,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 const testAssetCID = "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e"
 
 type fakeAssetPinVerifier struct {
+	mu     sync.Mutex
 	claims assetpin.Claims
 	err    error
 	calls  int
@@ -36,6 +39,8 @@ type fakeAssetPinVerifier struct {
 }
 
 func (f *fakeAssetPinVerifier) VerifyAndConsume(_ context.Context, token string, kind assetpin.WorkflowKind) (assetpin.Claims, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls++
 	f.token = token
 	f.kind = kind
@@ -43,27 +48,64 @@ func (f *fakeAssetPinVerifier) VerifyAndConsume(_ context.Context, token string,
 }
 
 type fakeAssetPinStore struct {
-	foundRef  storage.AssetPinReference
-	found     bool
-	findErr   error
-	upsertErr error
-	findCalls int
-	upserts   []storage.AssetPinReference
-	events    []storage.AssetPinAuditEvent
+	mu                 sync.Mutex
+	foundRef           storage.AssetPinReference
+	found              bool
+	findErr            error
+	upsertErr          error
+	candidateFindErr   error
+	findCalls          int
+	candidateFindCalls int
+	upserts            []storage.AssetPinReference
+	events             []storage.AssetPinAuditEvent
+	byCandidate        map[string]storage.AssetPinReference
+	byReference        map[string]storage.AssetPinReference
+	byEvent            map[string]storage.AssetPinAuditEvent
 }
 
 func (f *fakeAssetPinStore) FindAssetBySHA256(_ context.Context, _ string) (storage.AssetPinReference, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.findCalls++
 	return f.foundRef, f.found, f.findErr
 }
 
+func (f *fakeAssetPinStore) FindAssetPinReferenceByCandidateKey(_ context.Context, candidateKey string) (storage.AssetPinReference, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.candidateFindCalls++
+	if f.candidateFindErr != nil {
+		return storage.AssetPinReference{}, false, f.candidateFindErr
+	}
+	ref, ok := f.byCandidate[candidateKey]
+	return ref, ok, nil
+}
+
 func (f *fakeAssetPinStore) UpsertAssetPinReference(_ context.Context, ref storage.AssetPinReference, event storage.AssetPinAuditEvent) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.upserts = append(f.upserts, ref)
 	f.events = append(f.events, event)
-	return f.upsertErr
+	if f.upsertErr != nil {
+		return f.upsertErr
+	}
+	if existing, ok := f.byCandidate[ref.CandidateKey]; ok && !reflect.DeepEqual(existing, ref) {
+		return storage.ErrAssetPinReferenceConflict
+	}
+	if existing, ok := f.byReference[ref.ReferenceKey]; ok && !reflect.DeepEqual(existing, ref) {
+		return storage.ErrAssetPinReferenceConflict
+	}
+	if existing, ok := f.byEvent[event.EventID]; ok && !reflect.DeepEqual(existing, event) {
+		return storage.ErrAssetPinAuditConflict
+	}
+	f.byCandidate[ref.CandidateKey] = ref
+	f.byReference[ref.ReferenceKey] = ref
+	f.byEvent[event.EventID] = event
+	return nil
 }
 
 type fakeAssetPinCapacity struct {
+	mu        sync.Mutex
 	available uint64
 	err       error
 	calls     int
@@ -71,12 +113,15 @@ type fakeAssetPinCapacity struct {
 }
 
 func (f *fakeAssetPinCapacity) AvailableBytes(path string) (uint64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls++
 	f.path = path
 	return f.available, f.err
 }
 
 type fakeAssetPinner struct {
+	mu         sync.Mutex
 	cid        string
 	pinErr     error
 	unpinErr   error
@@ -88,18 +133,95 @@ type fakeAssetPinner struct {
 }
 
 func (f *fakeAssetPinner) PinAssetGLB(ctx context.Context, path string) (string, error) {
+	f.mu.Lock()
 	f.pinCalls++
 	f.path = path
-	if f.pinFunc != nil {
-		return f.pinFunc(ctx, path)
+	callback := f.pinFunc
+	cidValue := f.cid
+	err := f.pinErr
+	f.mu.Unlock()
+	if callback != nil {
+		return callback(ctx, path)
 	}
-	return f.cid, f.pinErr
+	return cidValue, err
 }
 
 func (f *fakeAssetPinner) UnpinAssetCID(_ context.Context, cid string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.unpinCalls++
 	f.unpinned = cid
 	return f.unpinErr
+}
+
+type fakeAssetPinRecoveryStore struct {
+	mu        sync.Mutex
+	markers   map[string]assetpin.AssetPinRecoveryMarker
+	calls     []string
+	createErr error
+	markErr   error
+	loadErr   error
+	removeErr error
+}
+
+func (f *fakeAssetPinRecoveryStore) CreateIntent(marker assetpin.AssetPinRecoveryMarker) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "create")
+	if f.createErr != nil {
+		return f.createErr
+	}
+	if _, exists := f.markers[marker.ReferenceKey]; exists {
+		return assetpin.ErrAssetPinRecoveryMarkerExists
+	}
+	f.markers[marker.ReferenceKey] = marker
+	return nil
+}
+
+func (f *fakeAssetPinRecoveryStore) MarkPinned(referenceKey, cidValue string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "mark_pinned")
+	if f.markErr != nil {
+		return f.markErr
+	}
+	marker, ok := f.markers[referenceKey]
+	if !ok {
+		return assetpin.ErrAssetPinRecoveryMarkerConflict
+	}
+	marker.Phase = assetpin.AssetPinRecoveryPinnedUncommitted
+	marker.CID = cidValue
+	f.markers[referenceKey] = marker
+	return nil
+}
+
+func (f *fakeAssetPinRecoveryStore) Load(referenceKey string) (assetpin.AssetPinRecoveryMarker, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "load")
+	if f.loadErr != nil {
+		return assetpin.AssetPinRecoveryMarker{}, false, f.loadErr
+	}
+	marker, ok := f.markers[referenceKey]
+	return marker, ok, nil
+}
+
+func (f *fakeAssetPinRecoveryStore) Remove(referenceKey string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "remove")
+	if f.removeErr != nil {
+		return f.removeErr
+	}
+	delete(f.markers, referenceKey)
+	return nil
+}
+
+func (f *fakeAssetPinRecoveryStore) marker(referenceKey string) (assetpin.AssetPinRecoveryMarker, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	marker, ok := f.markers[referenceKey]
+	return marker, ok
 }
 
 type assetPinTestRig struct {
@@ -108,6 +230,7 @@ type assetPinTestRig struct {
 	store    *fakeAssetPinStore
 	capacity *fakeAssetPinCapacity
 	pinner   *fakeAssetPinner
+	recovery *fakeAssetPinRecoveryStore
 	cfg      config.AssetPinConfig
 	dataDir  string
 	now      time.Time
@@ -129,15 +252,21 @@ func newAssetPinTestRig(t *testing.T, configure func(*AssetPinHandlerOptions)) *
 		SHA:         strings.Repeat("c", 40),
 		ExpiresAt:   now.Add(time.Hour).Unix(),
 	}}
-	store := &fakeAssetPinStore{}
+	store := &fakeAssetPinStore{
+		byCandidate: make(map[string]storage.AssetPinReference),
+		byReference: make(map[string]storage.AssetPinReference),
+		byEvent:     make(map[string]storage.AssetPinAuditEvent),
+	}
 	capacity := &fakeAssetPinCapacity{available: 1 << 30}
 	pinner := &fakeAssetPinner{cid: testAssetCID}
+	recovery := &fakeAssetPinRecoveryStore{markers: make(map[string]assetpin.AssetPinRecoveryMarker)}
 	dataDir := t.TempDir()
 	options := AssetPinHandlerOptions{
 		Verifier: verifier,
 		Store:    store,
 		Capacity: capacity,
 		Pinner:   pinner,
+		Recovery: recovery,
 		Config:   cfg,
 		DataDir:  dataDir,
 		Clock:    func() time.Time { return now },
@@ -152,7 +281,7 @@ func newAssetPinTestRig(t *testing.T, configure func(*AssetPinHandlerOptions)) *
 	return &assetPinTestRig{
 		handler: handler, verifier: verifier, store: store,
 		capacity: capacity, pinner: pinner, cfg: options.Config,
-		dataDir: dataDir, now: now,
+		recovery: recovery, dataDir: handler.dataDir, now: now,
 	}
 }
 
@@ -425,6 +554,102 @@ func TestAssetPinKuboAndLedgerFailureCleanup(t *testing.T) {
 	})
 }
 
+func TestAssetPinRecoveryMarkerOutcomeTable(t *testing.T) {
+	newRequest := func(t *testing.T, candidateKey string) ([]byte, []testMultipartPart, string) {
+		t.Helper()
+		glb := testGLB([]byte(candidateKey))
+		parts := []testMultipartPart{{name: "metadata", data: testCanonicalMetadata(glb, candidateKey)}, {name: "file", filename: "asset.glb", data: glb}}
+		return glb, parts, stableTestID("asset-pin-reference:v1\n" + candidateKey)
+	}
+
+	t.Run("marker create failure prevents pin", func(t *testing.T) {
+		_, parts, _ := newRequest(t, "candidate-marker-create-failure")
+		rig := newAssetPinTestRig(t, nil)
+		rig.recovery.createErr = errors.New("marker unavailable")
+		response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
+		if response.Code != http.StatusServiceUnavailable || rig.pinner.pinCalls != 0 || len(rig.store.upserts) != 0 {
+			t.Fatalf("status/pin/upsert = %d/%d/%d; body=%s", response.Code, rig.pinner.pinCalls, len(rig.store.upserts), response.Body.String())
+		}
+	})
+
+	t.Run("Kubo uncertainty retains intent", func(t *testing.T) {
+		_, parts, referenceKey := newRequest(t, "candidate-kubo-uncertain")
+		rig := newAssetPinTestRig(t, nil)
+		rig.pinner.pinErr = errors.New("Kubo response lost")
+		response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
+		marker, ok := rig.recovery.marker(referenceKey)
+		if response.Code != http.StatusBadGateway || !ok || marker.Phase != assetpin.AssetPinRecoveryIntent || marker.CID != "" {
+			t.Fatalf("status/marker = %d/%+v/%v; body=%s", response.Code, marker, ok, response.Body.String())
+		}
+	})
+
+	t.Run("mark-pinned failure unpins and removes after confirmation", func(t *testing.T) {
+		_, parts, referenceKey := newRequest(t, "candidate-mark-pinned-failure")
+		rig := newAssetPinTestRig(t, nil)
+		rig.recovery.markErr = errors.New("marker update failed")
+		response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
+		_, ok := rig.recovery.marker(referenceKey)
+		if response.Code != http.StatusServiceUnavailable || rig.pinner.unpinCalls != 1 || ok || len(rig.store.upserts) != 0 {
+			t.Fatalf("status/unpin/marker/upsert = %d/%d/%v/%d; body=%s", response.Code, rig.pinner.unpinCalls, ok, len(rig.store.upserts), response.Body.String())
+		}
+	})
+
+	t.Run("ordinary ledger failure and confirmed unpin remove marker", func(t *testing.T) {
+		_, parts, referenceKey := newRequest(t, "candidate-ledger-failure-unpinned")
+		rig := newAssetPinTestRig(t, nil)
+		rig.store.upsertErr = errors.New("ledger failed")
+		response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
+		_, ok := rig.recovery.marker(referenceKey)
+		if response.Code != http.StatusServiceUnavailable || rig.pinner.unpinCalls != 1 || ok {
+			t.Fatalf("status/unpin/marker = %d/%d/%v; body=%s", response.Code, rig.pinner.unpinCalls, ok, response.Body.String())
+		}
+	})
+
+	t.Run("unpin failure retains pinned marker", func(t *testing.T) {
+		_, parts, referenceKey := newRequest(t, "candidate-unpin-failure")
+		rig := newAssetPinTestRig(t, nil)
+		rig.store.upsertErr = errors.New("ledger failed")
+		rig.pinner.unpinErr = errors.New("unpin failed")
+		response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
+		marker, ok := rig.recovery.marker(referenceKey)
+		if response.Code != http.StatusServiceUnavailable || rig.pinner.unpinCalls != 1 || !ok || marker.Phase != assetpin.AssetPinRecoveryPinnedUncommitted || marker.CID != testAssetCID {
+			t.Fatalf("status/unpin/marker = %d/%d/%+v/%v; body=%s", response.Code, rig.pinner.unpinCalls, marker, ok, response.Body.String())
+		}
+	})
+
+	t.Run("recovery-required retains marker without unpin", func(t *testing.T) {
+		_, parts, referenceKey := newRequest(t, "candidate-recovery-required-marker")
+		rig := newAssetPinTestRig(t, nil)
+		rig.store.upsertErr = fmt.Errorf("uncertain commit: %w", storage.ErrAssetPinLedgerRecoveryRequired)
+		response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
+		marker, ok := rig.recovery.marker(referenceKey)
+		if response.Code != http.StatusServiceUnavailable || rig.pinner.unpinCalls != 0 || !ok || marker.Phase != assetpin.AssetPinRecoveryPinnedUncommitted {
+			t.Fatalf("status/unpin/marker = %d/%d/%+v/%v; body=%s", response.Code, rig.pinner.unpinCalls, marker, ok, response.Body.String())
+		}
+	})
+
+	t.Run("ledger success with stale marker is retry-cleanable", func(t *testing.T) {
+		_, parts, referenceKey := newRequest(t, "candidate-stale-marker")
+		rig := newAssetPinTestRig(t, nil)
+		rig.recovery.removeErr = errors.New("remove failed")
+		response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
+		if response.Code != http.StatusServiceUnavailable || rig.pinner.pinCalls != 1 || len(rig.store.upserts) != 1 {
+			t.Fatalf("first status/pin/upsert = %d/%d/%d; body=%s", response.Code, rig.pinner.pinCalls, len(rig.store.upserts), response.Body.String())
+		}
+		if marker, ok := rig.recovery.marker(referenceKey); !ok || marker.Phase != assetpin.AssetPinRecoveryPinnedUncommitted {
+			t.Fatalf("stale marker = %+v/%v", marker, ok)
+		}
+		rig.recovery.removeErr = nil
+		response = serveAssetPin(rig.handler, testMultipartRequest(t, parts))
+		if response.Code != http.StatusCreated || rig.pinner.pinCalls != 1 || len(rig.store.upserts) != 1 {
+			t.Fatalf("retry status/pin/upsert = %d/%d/%d; body=%s", response.Code, rig.pinner.pinCalls, len(rig.store.upserts), response.Body.String())
+		}
+		if _, ok := rig.recovery.marker(referenceKey); ok {
+			t.Fatal("exact candidate retry did not clear stale marker")
+		}
+	})
+}
+
 func TestAssetPinFirstPinStreamsTempAndPersistsStagedAudit(t *testing.T) {
 	glb := testGLB([]byte("first-pin"))
 	candidateKey := "candidate-first-pin"
@@ -509,6 +734,133 @@ func TestAssetPinFirstPinStreamsTempAndPersistsStagedAudit(t *testing.T) {
 	}
 }
 
+func TestAssetPinCandidateRetryIsIdempotentOrConflictsDeterministically(t *testing.T) {
+	glb := testGLB([]byte("candidate-retry"))
+	candidateKey := "candidate-retry"
+	metadata := testCanonicalMetadataWithAttribution(glb, candidateKey, "Artist")
+
+	t.Run("exact staged retry", func(t *testing.T) {
+		rig := newAssetPinTestRig(t, nil)
+		stored := testStoredAssetPinReference(glb, candidateKey, metadata, rig.now)
+		rig.store.byCandidate[candidateKey] = stored
+		response := serveAssetPin(rig.handler, testMultipartRequest(t, []testMultipartPart{{name: "metadata", data: metadata}, {name: "file", filename: "asset.glb", data: glb}}))
+		if response.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201; body=%s", response.Code, response.Body.String())
+		}
+		var result map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if result["alreadyExisted"] != true || result["cid"] != stored.CID || result["pinState"] != "staged" {
+			t.Fatalf("retry response = %#v", result)
+		}
+		if rig.store.findCalls != 0 || rig.capacity.calls != 0 || rig.pinner.pinCalls != 0 || len(rig.store.upserts) != 0 {
+			t.Fatalf("retry side effects find/capacity/pin/upsert = %d/%d/%d/%d", rig.store.findCalls, rig.capacity.calls, rig.pinner.pinCalls, len(rig.store.upserts))
+		}
+	})
+
+	mismatches := []struct {
+		name   string
+		mutate func(*storage.AssetPinReference)
+	}{
+		{name: "reference key", mutate: func(ref *storage.AssetPinReference) { ref.ReferenceKey = strings.Repeat("a", 64) }},
+		{name: "candidate identity", mutate: func(ref *storage.AssetPinReference) { ref.CandidateKey = "different-candidate" }},
+		{name: "SHA", mutate: func(ref *storage.AssetPinReference) { ref.SHA256 = strings.Repeat("b", 64) }},
+		{name: "byte count", mutate: func(ref *storage.AssetPinReference) { ref.ByteCount++ }},
+		{name: "source", mutate: func(ref *storage.AssetPinReference) { ref.SourceURL = "https://example.test/other.glb" }},
+		{name: "license", mutate: func(ref *storage.AssetPinReference) { ref.LicenseName = "Apache-2.0" }},
+		{name: "attribution", mutate: func(ref *storage.AssetPinReference) { ref.Attribution = "Other Artist" }},
+		{name: "metadata", mutate: func(ref *storage.AssetPinReference) { ref.MetadataJSON = "{}" }},
+		{name: "lifecycle state", mutate: func(ref *storage.AssetPinReference) { ref.State = storage.AssetReferenceReviewOpen }},
+	}
+	for _, mismatch := range mismatches {
+		t.Run(mismatch.name+" conflict", func(t *testing.T) {
+			rig := newAssetPinTestRig(t, nil)
+			stored := testStoredAssetPinReference(glb, candidateKey, metadata, rig.now)
+			mismatch.mutate(&stored)
+			rig.store.byCandidate[candidateKey] = stored
+			response := serveAssetPin(rig.handler, testMultipartRequest(t, []testMultipartPart{{name: "metadata", data: metadata}, {name: "file", filename: "asset.glb", data: glb}}))
+			if response.Code != http.StatusConflict {
+				t.Fatalf("status = %d, want 409; body=%s", response.Code, response.Body.String())
+			}
+			if rig.pinner.pinCalls != 0 || len(rig.store.upserts) != 0 {
+				t.Fatalf("conflict pin/upsert = %d/%d, want 0/0", rig.pinner.pinCalls, len(rig.store.upserts))
+			}
+		})
+	}
+
+	t.Run("corrupt stored CID", func(t *testing.T) {
+		rig := newAssetPinTestRig(t, nil)
+		stored := testStoredAssetPinReference(glb, candidateKey, metadata, rig.now)
+		stored.CID = "not-a-cid"
+		rig.store.byCandidate[candidateKey] = stored
+		response := serveAssetPin(rig.handler, testMultipartRequest(t, []testMultipartPart{{name: "metadata", data: metadata}, {name: "file", filename: "asset.glb", data: glb}}))
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503; body=%s", response.Code, response.Body.String())
+		}
+	})
+}
+
+func TestAssetPinCandidateAbsentWithRecoveryMarkerDoesNotRepin(t *testing.T) {
+	glb := testGLB([]byte("pending-recovery"))
+	candidateKey := "candidate-pending-recovery"
+	referenceKey := stableTestID("asset-pin-reference:v1\n" + candidateKey)
+	rig := newAssetPinTestRig(t, nil)
+	rig.recovery.markers[referenceKey] = assetpin.AssetPinRecoveryMarker{
+		SchemaVersion: 1, Phase: assetpin.AssetPinRecoveryPinnedUncommitted,
+		ReferenceKey: referenceKey, CID: testAssetCID,
+	}
+	response := serveAssetPin(rig.handler, testMultipartRequest(t, []testMultipartPart{{name: "metadata", data: testCanonicalMetadata(glb, candidateKey)}, {name: "file", filename: "asset.glb", data: glb}}))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body=%s", response.Code, response.Body.String())
+	}
+	if rig.store.findCalls != 0 || rig.capacity.calls != 0 || rig.pinner.pinCalls != 0 || len(rig.store.upserts) != 0 {
+		t.Fatalf("pending recovery side effects find/capacity/pin/upsert = %d/%d/%d/%d", rig.store.findCalls, rig.capacity.calls, rig.pinner.pinCalls, len(rig.store.upserts))
+	}
+}
+
+func TestAssetPinConcurrentIdenticalCandidatePinsAndUpsertsOnce(t *testing.T) {
+	glb := testGLB([]byte("concurrent-candidate"))
+	candidateKey := "candidate-concurrent"
+	parts := []testMultipartPart{{name: "metadata", data: testCanonicalMetadata(glb, candidateKey)}, {name: "file", filename: "asset.glb", data: glb}}
+	rig := newAssetPinTestRig(t, nil)
+	requests := []*http.Request{testMultipartRequest(t, parts), testMultipartRequest(t, parts)}
+	responses := make([]*httptest.ResponseRecorder, 2)
+	start := make(chan struct{})
+	var wait sync.WaitGroup
+	for index := range requests {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			<-start
+			responses[index] = serveAssetPin(rig.handler, requests[index])
+		}(index)
+	}
+	close(start)
+	wait.Wait()
+
+	alreadyExisted := map[bool]int{}
+	for _, response := range responses {
+		if response.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201; body=%s", response.Code, response.Body.String())
+		}
+		var result struct {
+			AlreadyExisted bool `json:"alreadyExisted"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		alreadyExisted[result.AlreadyExisted]++
+	}
+	if alreadyExisted[false] != 1 || alreadyExisted[true] != 1 {
+		t.Fatalf("alreadyExisted results = %v, want one false and one true", alreadyExisted)
+	}
+	if rig.pinner.pinCalls != 1 || len(rig.store.upserts) != 1 || len(rig.store.events) != 1 {
+		t.Fatalf("pin/upsert/event = %d/%d/%d, want 1/1/1", rig.pinner.pinCalls, len(rig.store.upserts), len(rig.store.events))
+	}
+	assertNoAssetPinTempFiles(t, rig.dataDir)
+}
+
 func TestAssetPinExistingSHADeduplicatesWithoutCapacityPinOrUnpin(t *testing.T) {
 	glb := testGLB([]byte("deduplicated"))
 	candidateKey := "candidate-deduplicated"
@@ -563,6 +915,78 @@ func TestAssetPinFailsClosedOnInvalidCID(t *testing.T) {
 	})
 }
 
+func TestAssetPinBoundsAuthorizedConcurrentBodyStaging(t *testing.T) {
+	glb := testGLB([]byte("upload-slot"))
+	request := testMultipartRequest(t, []testMultipartPart{{name: "metadata", data: testCanonicalMetadata(glb, "candidate-upload-slot")}, {name: "file", filename: "asset.glb", data: glb}})
+	body, err := io.ReadAll(request.Body)
+	if err != nil {
+		t.Fatalf("read test multipart body: %v", err)
+	}
+	contentType := request.Header.Get("Content-Type")
+	blocked := &blockingReader{reader: bytes.NewReader(body), entered: make(chan struct{}), release: make(chan struct{})}
+	rig := newAssetPinTestRig(t, nil)
+	rig.handler.uploadSlots = make(chan struct{}, 1)
+	firstResult := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		firstResult <- serveAssetPin(rig.handler, authorizedPinRequest(blocked, contentType))
+	}()
+	<-blocked.entered
+
+	untouched := &trackingReader{}
+	second := serveAssetPin(rig.handler, authorizedPinRequest(untouched, contentType))
+	if second.Code != http.StatusServiceUnavailable {
+		t.Fatalf("saturated status = %d, want 503; body=%s", second.Code, second.Body.String())
+	}
+	if untouched.read {
+		t.Fatal("saturated authorized request body was read")
+	}
+	close(blocked.release)
+	if first := <-firstResult; first.Code != http.StatusCreated {
+		t.Fatalf("first status = %d, want 201; body=%s", first.Code, first.Body.String())
+	}
+}
+
+func TestAssetPinRejectsSymlinkedTempDirectory(t *testing.T) {
+	glb := testGLB([]byte("symlink-temp"))
+	rig := newAssetPinTestRig(t, nil)
+	target := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(rig.dataDir, "asset-pins")); err != nil {
+		t.Fatalf("create asset-pins symlink: %v", err)
+	}
+	response := serveAssetPin(rig.handler, testMultipartRequest(t, []testMultipartPart{{name: "metadata", data: testCanonicalMetadata(glb, "candidate-symlink-temp")}, {name: "file", filename: "asset.glb", data: glb}}))
+	if response.Code != http.StatusServiceUnavailable || rig.pinner.pinCalls != 0 {
+		t.Fatalf("status/pin = %d/%d, want 503/0; body=%s", response.Code, rig.pinner.pinCalls, response.Body.String())
+	}
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		t.Fatalf("read symlink target: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("symlink target was modified: %v", entries)
+	}
+}
+
+func TestAssetPinTempRemovalFailureIsReportedWithoutPathLeak(t *testing.T) {
+	glb := testGLB([]byte("cleanup-report"))
+	rig := newAssetPinTestRig(t, nil)
+	reported := 0
+	rig.handler.removeTempFile = func(path string) error {
+		_ = os.Remove(path)
+		return errors.New("remove failed at " + path)
+	}
+	rig.handler.reportCleanupFailure = func() { reported++ }
+	response := serveAssetPin(rig.handler, testMultipartRequest(t, []testMultipartPart{{name: "metadata", data: testCanonicalMetadata(glb, "candidate-cleanup-report")}, {name: "file", filename: "asset.glb", data: glb}}))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", response.Code, response.Body.String())
+	}
+	if reported != 1 {
+		t.Fatalf("cleanup reports = %d, want 1", reported)
+	}
+	if strings.Contains(response.Body.String(), rig.dataDir) || strings.Contains(response.Body.String(), "remove failed") {
+		t.Fatalf("response leaked cleanup detail: %s", response.Body.String())
+	}
+}
+
 func TestAssetPinHandlerConstructorRequiresSafeDependencies(t *testing.T) {
 	cfg := config.Default().AssetPins
 	base := AssetPinHandlerOptions{
@@ -580,6 +1004,9 @@ func TestAssetPinHandlerConstructorRequiresSafeDependencies(t *testing.T) {
 		{name: "data dir", mutate: func(o *AssetPinHandlerOptions) { o.DataDir = "" }},
 		{name: "Kubo repo", mutate: func(o *AssetPinHandlerOptions) { o.Config.KuboRepoPath = "" }},
 		{name: "gateway", mutate: func(o *AssetPinHandlerOptions) { o.Config.GatewayURL = "http://example.test/ipfs" }},
+		{name: "hostless gateway", mutate: func(o *AssetPinHandlerOptions) { o.Config.GatewayURL = "https://:443" }},
+		{name: "negative max upload", mutate: func(o *AssetPinHandlerOptions) { o.Config.MaxUploadBytes = -1 }},
+		{name: "negative free floor", mutate: func(o *AssetPinHandlerOptions) { o.Config.MinFreeBytes = -1 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -597,6 +1024,19 @@ type trackingReader struct{ read bool }
 func (r *trackingReader) Read(_ []byte) (int, error) {
 	r.read = true
 	return 0, io.EOF
+}
+
+type blockingReader struct {
+	reader  *bytes.Reader
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (r *blockingReader) Read(buffer []byte) (int, error) {
+	r.once.Do(func() { close(r.entered) })
+	<-r.release
+	return r.reader.Read(buffer)
 }
 
 type testMultipartPart struct {
@@ -674,9 +1114,40 @@ func stableTestID(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func testStoredAssetPinReference(glb []byte, candidateKey string, metadata []byte, now time.Time) storage.AssetPinReference {
+	return storage.AssetPinReference{
+		ReferenceKey:  stableTestID("asset-pin-reference:v1\n" + candidateKey),
+		CandidateKey:  candidateKey,
+		CID:           testAssetCID,
+		SHA256:        testSHA256(glb),
+		ByteCount:     int64(len(glb)),
+		State:         storage.AssetReferenceStaged,
+		SourceURL:     "https://example.test/model.glb",
+		LicenseName:   "CC0-1.0",
+		Attribution:   extractTestAttribution(metadata),
+		MetadataJSON:  string(metadata),
+		WorkflowRunID: "original-workflow-run",
+		CreatedAt:     now.Add(-time.Minute),
+		UpdatedAt:     now.Add(-time.Minute),
+		ExpiresAt:     now.Add(90*24*time.Hour - time.Minute),
+	}
+}
+
+func extractTestAttribution(metadata []byte) string {
+	var value struct {
+		Attribution string `json:"attribution"`
+	}
+	_ = json.Unmarshal(metadata, &value)
+	return value.Attribution
+}
+
 func assertNoAssetPinTempFiles(t *testing.T, dataDir string) {
 	t.Helper()
-	err := filepath.WalkDir(dataDir, func(path string, entry os.DirEntry, err error) error {
+	tempDir := filepath.Join(dataDir, "asset-pins", "tmp")
+	if _, err := os.Lstat(tempDir); errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	err := filepath.WalkDir(tempDir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

@@ -33,6 +33,7 @@ const (
 	assetPinMetadataMaxBytes   int64 = 64 << 10
 	assetPinStagedLifetime           = 90 * 24 * time.Hour
 	assetPinCleanupTimeout           = 10 * time.Second
+	assetPinConcurrentUploads        = 2
 )
 
 // AssetPinVerifier is the upload handler's narrow OIDC security dependency.
@@ -42,6 +43,7 @@ type AssetPinVerifier interface {
 
 // AssetPinStore is the upload handler's journaled reference-ledger dependency.
 type AssetPinStore interface {
+	FindAssetPinReferenceByCandidateKey(context.Context, string) (storage.AssetPinReference, bool, error)
 	FindAssetBySHA256(context.Context, string) (storage.AssetPinReference, bool, error)
 	UpsertAssetPinReference(context.Context, storage.AssetPinReference, storage.AssetPinAuditEvent) error
 }
@@ -57,12 +59,21 @@ type AssetPinPinner interface {
 	UnpinAssetCID(context.Context, string) error
 }
 
+// AssetPinRecoveryStore durably bridges a new Kubo pin to its ledger upsert.
+type AssetPinRecoveryStore interface {
+	CreateIntent(assetpin.AssetPinRecoveryMarker) error
+	MarkPinned(referenceKey, cidValue string) error
+	Load(referenceKey string) (assetpin.AssetPinRecoveryMarker, bool, error)
+	Remove(referenceKey string) error
+}
+
 // AssetPinHandlerOptions supplies the bounded upload handler dependencies.
 type AssetPinHandlerOptions struct {
 	Verifier AssetPinVerifier
 	Store    AssetPinStore
 	Capacity AssetPinCapacity
 	Pinner   AssetPinPinner
+	Recovery AssetPinRecoveryStore
 	Config   config.AssetPinConfig
 	DataDir  string
 	Clock    func() time.Time
@@ -72,17 +83,21 @@ type AssetPinHandlerOptions struct {
 // Serializing the ledger lookup/pin/upsert section prevents same-SHA races from
 // pinning twice and then unpinning content retained by a concurrent reference.
 type AssetPinHandler struct {
-	verifier       AssetPinVerifier
-	store          AssetPinStore
-	capacity       AssetPinCapacity
-	pinner         AssetPinPinner
-	config         config.AssetPinConfig
-	tempDir        string
-	gatewayURL     string
-	maxUploadBytes int64
-	minFreeBytes   uint64
-	clock          func() time.Time
-	mutationMu     sync.Mutex
+	verifier             AssetPinVerifier
+	store                AssetPinStore
+	capacity             AssetPinCapacity
+	pinner               AssetPinPinner
+	recovery             AssetPinRecoveryStore
+	config               config.AssetPinConfig
+	dataDir              string
+	gatewayURL           string
+	maxUploadBytes       int64
+	minFreeBytes         uint64
+	clock                func() time.Time
+	uploadSlots          chan struct{}
+	removeTempFile       func(string) error
+	reportCleanupFailure func()
+	mutationMu           sync.Mutex
 }
 
 // NewAssetPinHandler validates and binds the upload capability dependencies.
@@ -99,6 +114,12 @@ func NewAssetPinHandler(options AssetPinHandlerOptions) (*AssetPinHandler, error
 	if options.Capacity == nil {
 		options.Capacity = statFSAssetPinCapacity{}
 	}
+	if options.Config.MaxUploadBytes < 0 {
+		return nil, errors.New("asset pin upload limit must be non-negative")
+	}
+	if options.Config.MinFreeBytes < 0 {
+		return nil, errors.New("asset pin free-space floor must be non-negative")
+	}
 	dataDir := strings.TrimSpace(options.DataDir)
 	if dataDir == "" {
 		return nil, errors.New("asset pin data directory is required")
@@ -106,6 +127,20 @@ func NewAssetPinHandler(options AssetPinHandlerOptions) (*AssetPinHandler, error
 	dataDir, err := filepath.Abs(dataDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve asset pin data directory: %w", err)
+	}
+	dataDir, err = filepath.EvalSymlinks(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve asset pin data directory symlinks: %w", err)
+	}
+	dataInfo, err := os.Stat(dataDir)
+	if err != nil || !dataInfo.IsDir() {
+		return nil, errors.New("asset pin data directory must exist")
+	}
+	if options.Recovery == nil {
+		options.Recovery, err = assetpin.NewFileAssetPinRecoveryStore(dataDir)
+		if err != nil {
+			return nil, fmt.Errorf("create asset pin recovery store: %w", err)
+		}
 	}
 	if strings.TrimSpace(options.Config.KuboRepoPath) == "" {
 		return nil, errors.New("asset pin Kubo repository path is required")
@@ -122,9 +157,6 @@ func NewAssetPinHandler(options AssetPinHandlerOptions) (*AssetPinHandler, error
 		return nil, errors.New("asset pin upload limit must be positive")
 	}
 	minFreeBytes := options.Config.EffectiveMinFreeBytes()
-	if minFreeBytes < 0 {
-		return nil, errors.New("asset pin free-space floor must be non-negative")
-	}
 	clock := options.Clock
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
@@ -134,12 +166,18 @@ func NewAssetPinHandler(options AssetPinHandlerOptions) (*AssetPinHandler, error
 		store:          options.Store,
 		capacity:       options.Capacity,
 		pinner:         options.Pinner,
+		recovery:       options.Recovery,
 		config:         options.Config,
-		tempDir:        filepath.Join(dataDir, "asset-pins", "tmp"),
+		dataDir:        dataDir,
 		gatewayURL:     gatewayURL,
 		maxUploadBytes: maxUploadBytes,
 		minFreeBytes:   uint64(minFreeBytes),
 		clock:          clock,
+		uploadSlots:    make(chan struct{}, assetPinConcurrentUploads),
+		removeTempFile: os.Remove,
+		reportCleanupFailure: func() {
+			log.Warn("Asset pin cleanup failed; reconciliation is required")
+		},
 	}, nil
 }
 
@@ -173,13 +211,20 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "asset pin authorization unavailable")
 		return
 	}
+	select {
+	case h.uploadSlots <- struct{}{}:
+		defer func() { <-h.uploadSlots }()
+	default:
+		writeError(w, http.StatusServiceUnavailable, "asset upload capacity unavailable")
+		return
+	}
 
 	upload, status, err := h.readUpload(w, r)
 	if err != nil {
 		writeError(w, status, assetPinUploadErrorMessage(status))
 		return
 	}
-	defer os.Remove(upload.tempPath)
+	defer h.cleanupTempFile(upload.tempPath)
 
 	metadata, canonicalMetadata, err := assetpin.ParseCanonicalMetadata(upload.metadata)
 	if err != nil {
@@ -193,6 +238,49 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	h.mutationMu.Lock()
 	defer h.mutationMu.Unlock()
+
+	now := normalizeAssetPinHandlerTime(h.clock())
+	referenceKey := stableAssetPinID("asset-pin-reference:v1\n" + metadata.CandidateKey)
+	eventID := stableAssetPinID("asset-pin-upsert:v1\n" + referenceKey)
+	tokenDigest := stableAssetPinID(token)
+
+	candidate, candidateExists, err := h.store.FindAssetPinReferenceByCandidateKey(r.Context(), metadata.CandidateKey)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "asset pin ledger unavailable")
+		return
+	}
+	if candidateExists {
+		cidValue, cidErr := canonicalAssetCID(candidate.CID)
+		if cidErr != nil {
+			writeError(w, http.StatusServiceUnavailable, "asset pin ledger unavailable")
+			return
+		}
+		if candidate.State != storage.AssetReferenceStaged || !assetPinCandidateMatches(
+			candidate, referenceKey, metadata, canonicalMetadata, upload,
+		) {
+			writeError(w, http.StatusConflict, "asset candidate conflicts with an existing submission")
+			return
+		}
+		if _, markerExists, markerErr := h.recovery.Load(referenceKey); markerErr != nil {
+			writeError(w, http.StatusServiceUnavailable, "asset pin recovery unavailable")
+			return
+		} else if markerExists {
+			if err := h.recovery.Remove(referenceKey); err != nil {
+				h.reportCleanupFailure()
+				writeError(w, http.StatusServiceUnavailable, "asset pin recovery unavailable")
+				return
+			}
+		}
+		h.writeAssetPinSuccess(w, cidValue, upload, true)
+		return
+	}
+	if _, markerExists, markerErr := h.recovery.Load(referenceKey); markerErr != nil {
+		writeError(w, http.StatusServiceUnavailable, "asset pin recovery unavailable")
+		return
+	} else if markerExists {
+		writeError(w, http.StatusServiceUnavailable, "asset pin recovery pending")
+		return
+	}
 
 	existing, alreadyExisted, err := h.store.FindAssetBySHA256(r.Context(), upload.sha256)
 	if err != nil {
@@ -219,6 +307,34 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInsufficientStorage, "insufficient asset pin storage")
 			return
 		}
+		intent := assetpin.AssetPinRecoveryMarker{
+			SchemaVersion: 1,
+			Phase:         assetpin.AssetPinRecoveryIntent,
+			ReferenceKey:  referenceKey,
+			EventID:       eventID,
+			CandidateKey:  metadata.CandidateKey,
+			SHA256:        upload.sha256,
+			ByteCount:     upload.byteCount,
+			SourceURL:     metadata.SourceURL,
+			LicenseName:   metadata.LicenseName,
+			Attribution:   metadata.Attribution,
+			MetadataJSON:  string(canonicalMetadata),
+			TokenDigest:   tokenDigest,
+			Repository:    claims.Repository,
+			Ref:           claims.Ref,
+			WorkflowRef:   claims.WorkflowRef,
+			Actor:         claims.Actor,
+			WorkflowRunID: claims.RunID,
+			RunAttempt:    claims.RunAttempt,
+			CommitSHA:     claims.SHA,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+			ExpiresAt:     now.Add(assetPinStagedLifetime),
+		}
+		if err := h.recovery.CreateIntent(intent); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "asset pin recovery unavailable")
+			return
+		}
 		cidValue, err = h.pinner.PinAssetGLB(r.Context(), upload.tempPath)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "asset pin backend failed")
@@ -229,11 +345,18 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadGateway, "asset pin backend failed")
 			return
 		}
+		if err := h.recovery.MarkPinned(referenceKey, cidValue); err != nil {
+			if h.confirmAssetUnpin(r.Context(), cidValue) {
+				if removeErr := h.recovery.Remove(referenceKey); removeErr != nil {
+					h.reportCleanupFailure()
+				}
+			}
+			writeError(w, http.StatusServiceUnavailable, "asset pin recovery unavailable")
+			return
+		}
 		newlyPinned = true
 	}
 
-	now := normalizeAssetPinHandlerTime(h.clock())
-	referenceKey := stableAssetPinID("asset-pin-reference:v1\n" + metadata.CandidateKey)
 	result := "deduplicated"
 	if newlyPinned {
 		result = "pinned"
@@ -255,10 +378,10 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:     now.Add(assetPinStagedLifetime),
 	}
 	event := storage.AssetPinAuditEvent{
-		EventID:       stableAssetPinID("asset-pin-upsert:v1\n" + referenceKey),
+		EventID:       eventID,
 		Kind:          "asset_pin_upload",
 		Result:        result,
-		TokenDigest:   stableAssetPinID(token),
+		TokenDigest:   tokenDigest,
 		Repository:    claims.Repository,
 		Ref:           claims.Ref,
 		WorkflowRef:   claims.WorkflowRef,
@@ -275,14 +398,26 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.store.UpsertAssetPinReference(r.Context(), reference, event); err != nil {
 		if newlyPinned && !errors.Is(err, storage.ErrAssetPinLedgerRecoveryRequired) {
-			cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), assetPinCleanupTimeout)
-			_ = h.pinner.UnpinAssetCID(cleanupContext, cidValue)
-			cancel()
+			if h.confirmAssetUnpin(r.Context(), cidValue) {
+				if removeErr := h.recovery.Remove(referenceKey); removeErr != nil {
+					h.reportCleanupFailure()
+				}
+			}
 		}
 		writeError(w, http.StatusServiceUnavailable, "asset pin ledger unavailable")
 		return
 	}
+	if newlyPinned {
+		if err := h.recovery.Remove(referenceKey); err != nil {
+			h.reportCleanupFailure()
+			writeError(w, http.StatusServiceUnavailable, "asset pin recovery unavailable")
+			return
+		}
+	}
+	h.writeAssetPinSuccess(w, cidValue, upload, alreadyExisted)
+}
 
+func (h *AssetPinHandler) writeAssetPinSuccess(w http.ResponseWriter, cidValue string, upload assetPinUpload, alreadyExisted bool) {
 	gatewayURL, err := url.JoinPath(h.gatewayURL, cidValue)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "asset gateway unavailable")
@@ -296,6 +431,23 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		PinState:       string(storage.AssetReferenceStaged),
 		AlreadyExisted: alreadyExisted,
 	})
+}
+
+func (h *AssetPinHandler) confirmAssetUnpin(ctx context.Context, cidValue string) bool {
+	cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), assetPinCleanupTimeout)
+	defer cancel()
+	return h.pinner.UnpinAssetCID(cleanupContext, cidValue) == nil
+}
+
+func assetPinCandidateMatches(candidate storage.AssetPinReference, referenceKey string, metadata assetpin.Metadata, canonicalMetadata []byte, upload assetPinUpload) bool {
+	return candidate.ReferenceKey == referenceKey &&
+		candidate.CandidateKey == metadata.CandidateKey &&
+		candidate.SHA256 == upload.sha256 &&
+		candidate.ByteCount == upload.byteCount &&
+		candidate.SourceURL == metadata.SourceURL &&
+		candidate.LicenseName == metadata.LicenseName &&
+		candidate.Attribution == metadata.Attribution &&
+		candidate.MetadataJSON == string(canonicalMetadata)
 }
 
 type assetPinUpload struct {
@@ -319,7 +471,7 @@ func (h *AssetPinHandler) readUpload(w http.ResponseWriter, r *http.Request) (up
 	success := false
 	defer func() {
 		if !success && upload.tempPath != "" {
-			_ = os.Remove(upload.tempPath)
+			h.cleanupTempFile(upload.tempPath)
 		}
 	}()
 
@@ -357,15 +509,12 @@ func (h *AssetPinHandler) readUpload(w http.ResponseWriter, r *http.Request) (up
 				return upload, http.StatusBadRequest, errors.New("duplicate or invalid file part")
 			}
 			seenFile = true
-			if err := os.MkdirAll(h.tempDir, 0o700); err != nil {
+			tempDir, tempDirErr := assetpin.SecureAssetPinTempDir(h.dataDir)
+			if tempDirErr != nil {
 				_ = part.Close()
-				return upload, http.StatusServiceUnavailable, err
+				return upload, http.StatusServiceUnavailable, tempDirErr
 			}
-			if err := os.Chmod(h.tempDir, 0o700); err != nil {
-				_ = part.Close()
-				return upload, http.StatusServiceUnavailable, err
-			}
-			file, createErr := os.CreateTemp(h.tempDir, "asset-*.glb")
+			file, createErr := os.CreateTemp(tempDir, "asset-*.glb")
 			if createErr != nil {
 				_ = part.Close()
 				return upload, http.StatusServiceUnavailable, createErr
@@ -407,6 +556,15 @@ func (h *AssetPinHandler) readUpload(w http.ResponseWriter, r *http.Request) (up
 	}
 	success = true
 	return upload, 0, nil
+}
+
+func (h *AssetPinHandler) cleanupTempFile(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	if err := h.removeTempFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		h.reportCleanupFailure()
+	}
 }
 
 type assetPinResponse struct {
@@ -483,7 +641,7 @@ func assetPinUploadErrorMessage(status int) string {
 
 func validateAssetGatewayURL(raw string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", errors.New("asset pin gateway must be an HTTPS base URL")
 	}
 	return strings.TrimRight(parsed.String(), "/"), nil
