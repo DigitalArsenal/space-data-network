@@ -2,7 +2,10 @@ package storage
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
+	"hash/crc32"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +13,234 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
+
+func TestAuxiliaryMetadataDeduplicatesIdenticalAssetReceiptFrame(t *testing.T) {
+	path := filepath.Join(t.TempDir(), auxiliaryMetadataFileName)
+	journal, err := openAuxiliaryMetadataStore(path, false)
+	if err != nil {
+		t.Fatalf("openAuxiliaryMetadataStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = journal.Close() })
+	receipt := AssetOIDCReceipt{
+		Digest:      strings.Repeat("1", 64),
+		ExpiresAt:   time.Date(2026, 7, 13, 21, 0, 0, 123456789, time.UTC),
+		Repository:  "SpaceDataNetwork/asset-models",
+		Ref:         "refs/heads/main",
+		WorkflowRef: "SpaceDataNetwork/asset-models/.github/workflows/pin.yml@refs/heads/main",
+		Actor:       "asset-bot",
+		RunID:       "123456789",
+		RunAttempt:  "1",
+		SHA:         strings.Repeat("2", 40),
+		ConsumedAt:  time.Date(2026, 7, 13, 20, 55, 0, 987654321, time.UTC),
+	}
+	frame := auxiliaryMetadataEvent{Kind: auxiliaryEventAssetOIDCReceiptConsume, AssetOIDCReceipt: &receipt}
+	if err := journal.Append(frame); err != nil {
+		t.Fatalf("first Append() error = %v", err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat journal after first append: %v", err)
+	}
+	if err := journal.Append(frame); err != nil {
+		t.Fatalf("identical Append() error = %v", err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat journal after duplicate append: %v", err)
+	}
+	if after.Size() != before.Size() {
+		t.Fatalf("journal size after identical frame = %d, want %d", after.Size(), before.Size())
+	}
+}
+
+func TestAuxiliaryMetadataRebuildsAssetFrameIndexOnOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), auxiliaryMetadataFileName)
+	receipt := AssetOIDCReceipt{
+		Digest:      strings.Repeat("3", 64),
+		ExpiresAt:   time.Date(2026, 7, 13, 22, 0, 0, 123456789, time.UTC),
+		Repository:  "SpaceDataNetwork/asset-models",
+		Ref:         "refs/heads/main",
+		WorkflowRef: "SpaceDataNetwork/asset-models/.github/workflows/pin.yml@refs/heads/main",
+		Actor:       "asset-bot",
+		RunID:       "987654321",
+		RunAttempt:  "2",
+		SHA:         strings.Repeat("4", 40),
+		ConsumedAt:  time.Date(2026, 7, 13, 21, 55, 0, 987654321, time.UTC),
+	}
+	frame := auxiliaryMetadataEvent{Kind: auxiliaryEventAssetOIDCReceiptConsume, AssetOIDCReceipt: &receipt}
+	journal, err := openAuxiliaryMetadataStore(path, false)
+	if err != nil {
+		t.Fatalf("first openAuxiliaryMetadataStore() error = %v", err)
+	}
+	if err := journal.Append(frame); err != nil {
+		t.Fatalf("first Append() error = %v", err)
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatalf("first Close() error = %v", err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat journal before reopen: %v", err)
+	}
+
+	reopened, err := openAuxiliaryMetadataStore(path, false)
+	if err != nil {
+		t.Fatalf("reopen openAuxiliaryMetadataStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	if err := reopened.Append(frame); err != nil {
+		t.Fatalf("Append() after reopen error = %v", err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat journal after reopen append: %v", err)
+	}
+	if after.Size() != before.Size() {
+		t.Fatalf("journal size after reopened identical frame = %d, want %d", after.Size(), before.Size())
+	}
+}
+
+func TestAuxiliaryMetadataDeduplicatesIdenticalAssetEventFrames(t *testing.T) {
+	now := time.Date(2026, 7, 13, 22, 30, 0, 123456789, time.UTC)
+	ref := testAssetPinReference("reference-frame-dedupe", "candidate-frame-dedupe", "bafybeiframededupe", strings.Repeat("5", 64), AssetReferenceStaged, now, now.Add(time.Hour))
+	event := testAssetPinEvent("event-frame-dedupe", "reference_upsert", ref, now)
+	transition := AssetPinReferenceTransition{
+		ReferenceKey: ref.ReferenceKey,
+		FromState:    AssetReferenceStaged,
+		ToState:      AssetReferenceReviewOpen,
+		UpdatedAt:    now.Add(time.Nanosecond),
+	}
+	tests := []struct {
+		name  string
+		frame auxiliaryMetadataEvent
+	}{
+		{name: "upsert", frame: auxiliaryMetadataEvent{Kind: auxiliaryEventAssetPinReferenceUpsert, AssetPinReferenceUpsert: &auxiliaryAssetPinReferenceUpsert{Reference: ref, Event: event}}},
+		{name: "transition", frame: auxiliaryMetadataEvent{Kind: auxiliaryEventAssetPinReferenceTransition, AssetPinReferenceTransition: &auxiliaryAssetPinReferenceTransition{Transition: transition, Event: event}}},
+		{name: "delete", frame: auxiliaryMetadataEvent{Kind: auxiliaryEventAssetPinReferenceDelete, AssetPinReferenceDelete: &auxiliaryAssetPinReferenceDelete{ReferenceKey: ref.ReferenceKey, Event: event}}},
+		{name: "standalone audit", frame: auxiliaryMetadataEvent{Kind: auxiliaryEventAssetPinAuditAppend, AssetPinAuditEvent: &event}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), auxiliaryMetadataFileName)
+			journal, err := openAuxiliaryMetadataStore(path, false)
+			if err != nil {
+				t.Fatalf("openAuxiliaryMetadataStore() error = %v", err)
+			}
+			t.Cleanup(func() { _ = journal.Close() })
+			if err := journal.Append(tc.frame); err != nil {
+				t.Fatalf("first Append() error = %v", err)
+			}
+			before, err := os.Stat(path)
+			if err != nil {
+				t.Fatalf("stat journal after first append: %v", err)
+			}
+			if err := journal.Append(tc.frame); err != nil {
+				t.Fatalf("identical Append() error = %v", err)
+			}
+			after, err := os.Stat(path)
+			if err != nil {
+				t.Fatalf("stat journal after duplicate append: %v", err)
+			}
+			if after.Size() != before.Size() {
+				t.Fatalf("journal size after identical frame = %d, want %d", after.Size(), before.Size())
+			}
+		})
+	}
+}
+
+func TestAuxiliaryMetadataRejectsConflictingAssetFrameBeforeAppend(t *testing.T) {
+	now := time.Date(2026, 7, 13, 23, 0, 0, 123456789, time.UTC)
+	receipt := AssetOIDCReceipt{
+		Digest:      strings.Repeat("6", 64),
+		ExpiresAt:   now.Add(time.Hour),
+		Repository:  "SpaceDataNetwork/asset-models",
+		Ref:         "refs/heads/main",
+		WorkflowRef: "SpaceDataNetwork/asset-models/.github/workflows/pin.yml@refs/heads/main",
+		Actor:       "asset-bot",
+		RunID:       "123456789",
+		RunAttempt:  "1",
+		SHA:         strings.Repeat("7", 40),
+		ConsumedAt:  now,
+	}
+	conflictingReceipt := receipt
+	conflictingReceipt.Actor = "different-bot"
+	ref := testAssetPinReference("reference-frame-conflict", "candidate-frame-conflict", "bafybeiframeconflict", strings.Repeat("8", 64), AssetReferenceStaged, now, now.Add(time.Hour))
+	event := testAssetPinEvent("event-frame-conflict", "reference_upsert", ref, now)
+	conflictingEvent := event
+	conflictingEvent.Detail = "different payload"
+	tests := []struct {
+		name     string
+		first    auxiliaryMetadataEvent
+		conflict auxiliaryMetadataEvent
+		wantErr  error
+	}{
+		{
+			name:     "receipt digest",
+			first:    auxiliaryMetadataEvent{Kind: auxiliaryEventAssetOIDCReceiptConsume, AssetOIDCReceipt: &receipt},
+			conflict: auxiliaryMetadataEvent{Kind: auxiliaryEventAssetOIDCReceiptConsume, AssetOIDCReceipt: &conflictingReceipt},
+			wantErr:  ErrAssetOIDCReceiptConflict,
+		},
+		{
+			name:     "audit event ID",
+			first:    auxiliaryMetadataEvent{Kind: auxiliaryEventAssetPinReferenceUpsert, AssetPinReferenceUpsert: &auxiliaryAssetPinReferenceUpsert{Reference: ref, Event: event}},
+			conflict: auxiliaryMetadataEvent{Kind: auxiliaryEventAssetPinReferenceUpsert, AssetPinReferenceUpsert: &auxiliaryAssetPinReferenceUpsert{Reference: ref, Event: conflictingEvent}},
+			wantErr:  ErrAssetPinAuditConflict,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), auxiliaryMetadataFileName)
+			journal, err := openAuxiliaryMetadataStore(path, false)
+			if err != nil {
+				t.Fatalf("openAuxiliaryMetadataStore() error = %v", err)
+			}
+			t.Cleanup(func() { _ = journal.Close() })
+			if err := journal.Append(tc.first); err != nil {
+				t.Fatalf("first Append() error = %v", err)
+			}
+			before, err := os.Stat(path)
+			if err != nil {
+				t.Fatalf("stat journal before conflict: %v", err)
+			}
+			if err := journal.Append(tc.conflict); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("conflicting Append() error = %v, want %v", err, tc.wantErr)
+			}
+			after, err := os.Stat(path)
+			if err != nil {
+				t.Fatalf("stat journal after conflict: %v", err)
+			}
+			if after.Size() != before.Size() {
+				t.Fatalf("journal size after conflict = %d, want %d", after.Size(), before.Size())
+			}
+		})
+	}
+}
+
+func TestAuxiliaryMetadataOpenRejectsConflictingAssetFrames(t *testing.T) {
+	path := filepath.Join(t.TempDir(), auxiliaryMetadataFileName)
+	now := time.Date(2026, 7, 13, 23, 15, 0, 123456789, time.UTC)
+	ref := testAssetPinReference("reference-open-conflict", "candidate-open-conflict", "bafybeiopenconflict", strings.Repeat("9", 64), AssetReferenceStaged, now, now.Add(time.Hour))
+	event := testAssetPinEvent("event-open-conflict", "reference_upsert", ref, now)
+	first := auxiliaryMetadataEvent{Kind: auxiliaryEventAssetPinReferenceUpsert, AssetPinReferenceUpsert: &auxiliaryAssetPinReferenceUpsert{Reference: ref, Event: event}}
+	journal, err := openAuxiliaryMetadataStore(path, false)
+	if err != nil {
+		t.Fatalf("openAuxiliaryMetadataStore() error = %v", err)
+	}
+	if err := journal.Append(first); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	conflictingEvent := event
+	conflictingEvent.Detail = "conflicting frame already on disk"
+	conflict := auxiliaryMetadataEvent{Kind: auxiliaryEventAssetPinReferenceUpsert, AssetPinReferenceUpsert: &auxiliaryAssetPinReferenceUpsert{Reference: ref, Event: conflictingEvent}}
+	appendRawAuxiliaryFrameForTest(t, path, conflict)
+	if _, err := openAuxiliaryMetadataStore(path, false); !errors.Is(err, ErrAssetPinAuditConflict) {
+		t.Fatalf("openAuxiliaryMetadataStore(conflicting journal) error = %v, want ErrAssetPinAuditConflict", err)
+	}
+}
 
 func TestAuxiliaryMetadataReplaysAssetPinReceiptsReferencesTransitionsDeletionsAndEvents(t *testing.T) {
 	ctx := context.Background()
@@ -73,7 +304,8 @@ func TestAuxiliaryMetadataReplaysAssetPinReceiptsReferencesTransitionsDeletionsA
 		t.Fatalf("TransitionAssetPinReference(kept) error = %v", err)
 	}
 
-	deleted := testAssetPinReference("reference-deleted", "candidate-deleted", "bafybeireplaydeleted", strings.Repeat("8", 64), AssetReferenceStaged, now.Add(4*time.Nanosecond), time.Date(2020, 1, 1, 0, 0, 0, 112233445, time.UTC))
+	deletedAt := time.Date(2019, 1, 1, 0, 0, 0, 112233445, time.UTC)
+	deleted := testAssetPinReference("reference-deleted", "candidate-deleted", "bafybeireplaydeleted", strings.Repeat("8", 64), AssetReferenceStaged, deletedAt, time.Date(2020, 1, 1, 0, 0, 0, 112233445, time.UTC))
 	if err := store.UpsertAssetPinReference(ctx, deleted, testAssetPinEvent("event-deleted-upsert", "reference_upsert", deleted, deleted.UpdatedAt)); err != nil {
 		t.Fatalf("UpsertAssetPinReference(deleted) error = %v", err)
 	}
@@ -164,7 +396,8 @@ func TestAuxiliaryMetadataAssetReplayIsIdempotentWhenCandidateKeyIsReused(t *tes
 	}
 	now := time.Date(2026, 7, 13, 18, 0, 0, 123456789, time.UTC)
 	const candidateKey = "candidate-reused-after-delete"
-	first := testAssetPinReference("reference-reused-first", candidateKey, "bafybeireusedfirst", strings.Repeat("a", 64), AssetReferenceStaged, now, time.Date(2020, 1, 1, 0, 0, 0, 987654321, time.UTC))
+	firstCreatedAt := time.Date(2019, 1, 1, 0, 0, 0, 987654321, time.UTC)
+	first := testAssetPinReference("reference-reused-first", candidateKey, "bafybeireusedfirst", strings.Repeat("a", 64), AssetReferenceStaged, firstCreatedAt, time.Date(2020, 1, 1, 0, 0, 0, 987654321, time.UTC))
 	firstEvent := testAssetPinEvent("event-reused-first-upsert", "reference_upsert", first, now)
 	if err := store.UpsertAssetPinReference(ctx, first, firstEvent); err != nil {
 		t.Fatalf("UpsertAssetPinReference(first) error = %v", err)
@@ -287,7 +520,8 @@ func TestAuxiliaryMetadataAssetReplayDoesNotRepeatAppliedDelete(t *testing.T) {
 		t.Fatalf("NewFlatSQLStore() error = %v", err)
 	}
 	now := time.Date(2026, 7, 13, 19, 0, 0, 314159265, time.UTC)
-	first := testAssetPinReference("reference-delete-recreated", "candidate-delete-recreated", "bafybeideleteold", strings.Repeat("e", 64), AssetReferenceStaged, now, time.Date(2020, 1, 1, 0, 0, 0, 271828182, time.UTC))
+	firstCreatedAt := time.Date(2019, 1, 1, 0, 0, 0, 271828182, time.UTC)
+	first := testAssetPinReference("reference-delete-recreated", "candidate-delete-recreated", "bafybeideleteold", strings.Repeat("e", 64), AssetReferenceStaged, firstCreatedAt, time.Date(2020, 1, 1, 0, 0, 0, 271828182, time.UTC))
 	if err := store.UpsertAssetPinReference(ctx, first, testAssetPinEvent("event-delete-recreated-old-upsert", "reference_upsert", first, now)); err != nil {
 		t.Fatalf("UpsertAssetPinReference(old) error = %v", err)
 	}
@@ -394,7 +628,8 @@ func TestAuxiliaryMetadataAssetApplyConflictsDoNotMutateFinalState(t *testing.T)
 
 	t.Run("delete", func(t *testing.T) {
 		store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
-		ref := testAssetPinReference("reference-apply-delete-conflict", "candidate-apply-delete-conflict", "bafybeiapplydeleteold", strings.Repeat("6", 64), AssetReferenceStaged, now, time.Date(2020, 1, 1, 0, 0, 0, 141421356, time.UTC))
+		createdAt := time.Date(2019, 1, 1, 0, 0, 0, 141421356, time.UTC)
+		ref := testAssetPinReference("reference-apply-delete-conflict", "candidate-apply-delete-conflict", "bafybeiapplydeleteold", strings.Repeat("6", 64), AssetReferenceStaged, createdAt, time.Date(2020, 1, 1, 0, 0, 0, 141421356, time.UTC))
 		if err := store.UpsertAssetPinReference(ctx, ref, testAssetPinEvent("event-apply-delete-upsert", "reference_upsert", ref, now)); err != nil {
 			t.Fatalf("UpsertAssetPinReference(old) error = %v", err)
 		}
@@ -445,6 +680,25 @@ func TestAuxiliaryMetadataAssetApplyConflictsDoNotMutateFinalState(t *testing.T)
 	})
 }
 
+func TestAuxiliaryMetadataAssetDeleteBindsAuditIdentityBeforeMutation(t *testing.T) {
+	store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
+	ctx := context.Background()
+	createdAt := time.Date(2019, 1, 1, 0, 0, 0, 123456789, time.UTC)
+	ref := testAssetPinReference("reference-apply-delete-identity", "candidate-apply-delete-identity", "bafybeiapplydeleteidentity", strings.Repeat("8", 64), AssetReferenceStaged, createdAt, createdAt.Add(time.Hour))
+	if err := store.UpsertAssetPinReference(ctx, ref, testAssetPinEvent("event-apply-delete-identity-upsert", "reference_upsert", ref, createdAt)); err != nil {
+		t.Fatalf("UpsertAssetPinReference() error = %v", err)
+	}
+	event := testAssetPinEvent("event-apply-delete-identity", "reference_delete", ref, time.Date(2026, 7, 14, 3, 0, 0, 987654321, time.UTC))
+	event.CID = "bafybeiapplydeleteidentityother"
+	if err := store.applyAssetPinReferenceDelete(auxiliaryAssetPinReferenceDelete{ReferenceKey: ref.ReferenceKey, Event: event}); !errors.Is(err, ErrAssetPinAuditConflict) {
+		t.Fatalf("applyAssetPinReferenceDelete() error = %v, want ErrAssetPinAuditConflict", err)
+	}
+	got, ok, err := store.FindAssetPinReference(ctx, ref.ReferenceKey)
+	if err != nil || !ok || got.CID != ref.CID {
+		t.Fatalf("reference after replayed delete identity conflict = %+v, %v, %v; want unchanged", got, ok, err)
+	}
+}
+
 func assertRecreatedReferenceFinalState(t *testing.T, ctx context.Context, store *FlatSQLStore, want AssetPinReference) {
 	t.Helper()
 	got, ok, err := store.FindAssetPinReference(ctx, want.ReferenceKey)
@@ -478,5 +732,35 @@ func assertReusedCandidateFinalState(t *testing.T, ctx context.Context, store *F
 	}
 	if got.ReferenceKey != want.ReferenceKey || got.CID != want.CID || got.State != want.State {
 		t.Fatalf("reused candidate owner = %+v, want %+v", got, want)
+	}
+}
+
+func appendRawAuxiliaryFrameForTest(t *testing.T, path string, event auxiliaryMetadataEvent) {
+	t.Helper()
+	payload, err := encodeAuxiliaryMetadataEvent(event)
+	if err != nil {
+		t.Fatalf("encodeAuxiliaryMetadataEvent() error = %v", err)
+	}
+	var header [8]byte
+	binary.LittleEndian.PutUint32(header[0:], uint32(len(payload)))
+	binary.LittleEndian.PutUint32(header[4:], crc32.ChecksumIEEE(payload))
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatalf("open journal for raw append: %v", err)
+	}
+	if _, err := f.Write(header[:]); err != nil {
+		_ = f.Close()
+		t.Fatalf("write raw journal header: %v", err)
+	}
+	if _, err := f.Write(payload); err != nil {
+		_ = f.Close()
+		t.Fatalf("write raw journal payload: %v", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		t.Fatalf("sync raw journal frame: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close raw journal append: %v", err)
 	}
 }

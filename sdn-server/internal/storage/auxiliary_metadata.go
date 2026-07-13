@@ -1,12 +1,14 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -33,6 +35,7 @@ type auxiliaryMetadataStore struct {
 	path        string
 	readOnly    bool
 	replayLimit int64
+	assetFrames map[string][]byte
 }
 
 type auxiliaryMetadataEvent struct {
@@ -72,7 +75,7 @@ func openAuxiliaryMetadataStore(path string, readOnly bool) (*auxiliaryMetadataS
 		f, err := os.OpenFile(path, os.O_RDONLY, 0)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return &auxiliaryMetadataStore{path: path, readOnly: true}, nil
+				return &auxiliaryMetadataStore{path: path, readOnly: true, assetFrames: map[string][]byte{}}, nil
 			}
 			return nil, fmt.Errorf("auxiliary metadata: open read-only: %w", err)
 		}
@@ -81,7 +84,12 @@ func openAuxiliaryMetadataStore(path string, readOnly bool) (*auxiliaryMetadataS
 			f.Close()
 			return nil, err
 		}
-		return &auxiliaryMetadataStore{f: f, path: path, readOnly: true, replayLimit: valid}, nil
+		assetFrames, err := scanAuxiliaryAssetFrames(f, valid)
+		if err != nil {
+			f.Close()
+			return nil, err
+		}
+		return &auxiliaryMetadataStore{f: f, path: path, readOnly: true, replayLimit: valid, assetFrames: assetFrames}, nil
 	}
 
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
@@ -89,6 +97,11 @@ func openAuxiliaryMetadataStore(path string, readOnly bool) (*auxiliaryMetadataS
 		return nil, fmt.Errorf("auxiliary metadata: open: %w", err)
 	}
 	valid, err := scanRecordCatalogValidLength(f)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	assetFrames, err := scanAuxiliaryAssetFrames(f, valid)
 	if err != nil {
 		f.Close()
 		return nil, err
@@ -101,7 +114,37 @@ func openAuxiliaryMetadataStore(path string, readOnly bool) (*auxiliaryMetadataS
 		f.Close()
 		return nil, err
 	}
-	return &auxiliaryMetadataStore{f: f, path: path}, nil
+	return &auxiliaryMetadataStore{f: f, path: path, assetFrames: assetFrames}, nil
+}
+
+func scanAuxiliaryAssetFrames(f *os.File, size int64) (map[string][]byte, error) {
+	frames := map[string][]byte{}
+	var off int64
+	var hdr [8]byte
+	for off < size {
+		if _, err := f.ReadAt(hdr[:], off); err != nil {
+			return nil, err
+		}
+		n := int64(binary.LittleEndian.Uint32(hdr[0:]))
+		payload := make([]byte, n)
+		if _, err := f.ReadAt(payload, off+8); err != nil {
+			return nil, err
+		}
+		event, err := decodeAuxiliaryMetadataEvent(payload)
+		if err != nil {
+			return nil, err
+		}
+		identity := auxiliaryAssetFrameIdentity(event)
+		if existing, ok := frames[identity]; identity != "" && ok {
+			if !bytes.Equal(existing, payload) {
+				return nil, auxiliaryAssetFrameConflict(identity)
+			}
+		} else if identity != "" {
+			frames[identity] = bytes.Clone(payload)
+		}
+		off += 8 + n
+	}
+	return frames, nil
 }
 
 func (m *auxiliaryMetadataStore) Append(event auxiliaryMetadataEvent) error {
@@ -117,6 +160,13 @@ func (m *auxiliaryMetadataStore) Append(event auxiliaryMetadataEvent) error {
 	if err != nil {
 		return err
 	}
+	identity := auxiliaryAssetFrameIdentity(event)
+	if err := m.checkAssetFrameLocked(identity, payload); err != nil {
+		return err
+	}
+	if _, ok := m.assetFrames[identity]; identity != "" && ok {
+		return nil
+	}
 	var hdr [8]byte
 	binary.LittleEndian.PutUint32(hdr[0:], uint32(len(payload)))
 	binary.LittleEndian.PutUint32(hdr[4:], crc32.ChecksumIEEE(payload))
@@ -126,7 +176,71 @@ func (m *auxiliaryMetadataStore) Append(event auxiliaryMetadataEvent) error {
 	if _, err := m.f.Write(payload); err != nil {
 		return err
 	}
-	return m.f.Sync()
+	if err := m.f.Sync(); err != nil {
+		return err
+	}
+	if identity != "" {
+		m.assetFrames[identity] = bytes.Clone(payload)
+	}
+	return nil
+}
+
+func (m *auxiliaryMetadataStore) CheckAssetFrame(event auxiliaryMetadataEvent) error {
+	if m == nil {
+		return nil
+	}
+	payload, err := encodeAuxiliaryMetadataEvent(event)
+	if err != nil {
+		return err
+	}
+	identity := auxiliaryAssetFrameIdentity(event)
+	if identity == "" {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.checkAssetFrameLocked(identity, payload)
+}
+
+func (m *auxiliaryMetadataStore) checkAssetFrameLocked(identity string, payload []byte) error {
+	existing, ok := m.assetFrames[identity]
+	if !ok || bytes.Equal(existing, payload) {
+		return nil
+	}
+	return auxiliaryAssetFrameConflict(identity)
+}
+
+func auxiliaryAssetFrameIdentity(event auxiliaryMetadataEvent) string {
+	switch event.Kind {
+	case auxiliaryEventAssetOIDCReceiptConsume:
+		if event.AssetOIDCReceipt != nil {
+			return "receipt:" + strings.ToLower(strings.TrimSpace(event.AssetOIDCReceipt.Digest))
+		}
+	case auxiliaryEventAssetPinReferenceUpsert:
+		if event.AssetPinReferenceUpsert != nil {
+			return "event:" + strings.TrimSpace(event.AssetPinReferenceUpsert.Event.EventID)
+		}
+	case auxiliaryEventAssetPinReferenceTransition:
+		if event.AssetPinReferenceTransition != nil {
+			return "event:" + strings.TrimSpace(event.AssetPinReferenceTransition.Event.EventID)
+		}
+	case auxiliaryEventAssetPinReferenceDelete:
+		if event.AssetPinReferenceDelete != nil {
+			return "event:" + strings.TrimSpace(event.AssetPinReferenceDelete.Event.EventID)
+		}
+	case auxiliaryEventAssetPinAuditAppend:
+		if event.AssetPinAuditEvent != nil {
+			return "event:" + strings.TrimSpace(event.AssetPinAuditEvent.EventID)
+		}
+	}
+	return ""
+}
+
+func auxiliaryAssetFrameConflict(identity string) error {
+	if strings.HasPrefix(identity, "receipt:") {
+		return fmt.Errorf("auxiliary asset frame %q: %w", identity, ErrAssetOIDCReceiptConflict)
+	}
+	return fmt.Errorf("auxiliary asset frame %q: %w", identity, ErrAssetPinAuditConflict)
 }
 
 func (m *auxiliaryMetadataStore) Replay(store *FlatSQLStore) (int, error) {
@@ -217,6 +331,13 @@ func (s *FlatSQLStore) appendAuxiliaryMetadata(event auxiliaryMetadataEvent) err
 		return nil
 	}
 	return s.auxiliaryMetadata.Append(event)
+}
+
+func (s *FlatSQLStore) checkAuxiliaryAssetFrame(event auxiliaryMetadataEvent) error {
+	if s == nil || s.auxiliaryMetadata == nil {
+		return nil
+	}
+	return s.auxiliaryMetadata.CheckAssetFrame(event)
 }
 
 func (s *FlatSQLStore) applyAuxiliaryMetadataEvent(event auxiliaryMetadataEvent) error {
