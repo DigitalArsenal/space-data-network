@@ -195,7 +195,7 @@ func TestAdminWalletWallBypassesOnlyExactAssetOIDCCapabilities(t *testing.T) {
 	for _, path := range []string{"/api/v1/assets/pin", "/api/v1/assets/reference-state"} {
 		req := httptest.NewRequest(http.MethodPost, path, nil)
 		rec := httptest.NewRecorder()
-		serveAdminMuxRequest(rec, req, adminMux, true, authHandler, notPublicAPI)
+		serveAdminMuxRequest(rec, req, adminMux, true, true, authHandler, notPublicAPI)
 		if rec.Code != http.StatusNoContent {
 			t.Fatalf("exact POST %s status = %d, want %d", path, rec.Code, http.StatusNoContent)
 		}
@@ -221,7 +221,7 @@ func TestAdminWalletWallBypassesOnlyExactAssetOIDCCapabilities(t *testing.T) {
 	for _, variant := range variants {
 		req := httptest.NewRequest(variant.method, variant.path, nil)
 		rec := httptest.NewRecorder()
-		serveAdminMuxRequest(rec, req, adminMux, true, authHandler, notPublicAPI)
+		serveAdminMuxRequest(rec, req, adminMux, true, true, authHandler, notPublicAPI)
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("variant %s %s status = %d, want wallet-gated %d", variant.method, variant.path, rec.Code, http.StatusUnauthorized)
 		}
@@ -242,7 +242,7 @@ func TestAdminWalletWallExactAssetOIDCCapabilityDoesNotRequireWalletBackend(t *t
 	for _, path := range []string{"/api/v1/assets/pin", "/api/v1/assets/reference-state"} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, path, nil)
-		serveAdminMuxRequest(rec, req, adminMux, true, nil, notPublicAPI)
+		serveAdminMuxRequest(rec, req, adminMux, true, true, nil, notPublicAPI)
 		if rec.Code != http.StatusNoContent {
 			t.Fatalf("exact POST %s with no wallet backend status = %d, want %d", path, rec.Code, http.StatusNoContent)
 		}
@@ -262,13 +262,45 @@ func TestAdminWalletWallExactAssetOIDCCapabilityDoesNotRequireWalletBackend(t *t
 	} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(variant.method, variant.path, nil)
-		serveAdminMuxRequest(rec, req, adminMux, true, nil, notPublicAPI)
+		serveAdminMuxRequest(rec, req, adminMux, true, true, nil, notPublicAPI)
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("variant %s %s with no wallet backend status = %d, want legacy %d", variant.method, variant.path, rec.Code, http.StatusServiceUnavailable)
 		}
 	}
 	if calls != 2 {
 		t.Fatalf("variant reached capability handler; calls = %d, want 2", calls)
+	}
+}
+
+func TestAdminWalletWallDoesNotBypassUnmountedAssetOIDCPaths(t *testing.T) {
+	authHandler, _ := newAdminSession(t, peers.Standard)
+	adminMux := http.NewServeMux()
+	catchAllCalls := 0
+	adminMux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		catchAllCalls++
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	for _, path := range []string{"/api/v1/assets/pin", "/api/v1/assets/reference-state"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		serveAdminMuxRequest(rec, req, adminMux, true, false, authHandler, notPublicAPI)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("unmounted POST %s status = %d, want wallet-gated %d", path, rec.Code, http.StatusUnauthorized)
+		}
+	}
+	if catchAllCalls != 0 {
+		t.Fatalf("unmounted capability paths reached broad API handler %d times", catchAllCalls)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/assets/pin", nil)
+	serveAdminMuxRequest(rec, req, adminMux, true, false, nil, notPublicAPI)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unmounted path without wallet backend status = %d, want legacy %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if catchAllCalls != 0 {
+		t.Fatalf("unmounted path reached broad API handler with no wallet backend")
 	}
 }
 
@@ -452,6 +484,106 @@ func TestComposeAssetPinCapabilityRejectsStaticFailuresBeforeDiscovery(t *testin
 				t.Fatalf("Kubo readiness probe called for static failure: before=%d after=%d", probeBefore, probeCalls)
 			}
 		})
+	}
+}
+
+func TestComposeAssetPinCapabilityRejectsNoncanonicalSecurityInputsBeforeEffects(t *testing.T) {
+	baseConfig := config.Default().AssetPins
+	baseConfig.Enabled = true
+	store := &fakeAssetPinCapabilityStore{path: filepath.Join(t.TempDir(), "sdn.db")}
+
+	tests := []struct {
+		name   string
+		apiURL string
+		mutate func(*config.AssetPinConfig)
+	}{
+		{name: "Kubo leading whitespace", apiURL: " http://127.0.0.1:5001"},
+		{name: "Kubo trailing whitespace", apiURL: "http://127.0.0.1:5001 "},
+		{name: "Kubo hostless", apiURL: "http://:5001"},
+		{name: "Kubo userinfo", apiURL: "http://user:secret@127.0.0.1:5001"},
+		{name: "Kubo query", apiURL: "http://127.0.0.1:5001?token=secret"},
+		{name: "Kubo empty query", apiURL: "http://127.0.0.1:5001?"},
+		{name: "Kubo fragment", apiURL: "http://127.0.0.1:5001#fragment"},
+		{name: "Kubo encoded path", apiURL: "http://127.0.0.1:5001/%61pi"},
+		{name: "issuer leading whitespace", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Issuer = " " + c.Issuer }},
+		{name: "issuer query", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Issuer += "?tenant=secret" }},
+		{name: "issuer fragment", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Issuer += "#fragment" }},
+		{name: "issuer userinfo", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Issuer = "https://user:secret@issuer.example" }},
+		{name: "audience trailing whitespace", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Audience += " " }},
+		{name: "repository leading whitespace", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Repository = " " + c.Repository }},
+		{name: "ref trailing whitespace", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.Ref += "\n" }},
+		{name: "pin workflow leading whitespace", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.PinWorkflow = "\t" + c.PinWorkflow }},
+		{name: "decision workflow trailing whitespace", apiURL: "http://127.0.0.1:5001", mutate: func(c *config.AssetPinConfig) { c.DecisionWorkflow += " " }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := baseConfig
+			if test.mutate != nil {
+				test.mutate(&cfg)
+			}
+			calls := 0
+			dependencies := assetPinCapabilityDependencies{
+				clock: func() time.Time { return time.Now().UTC() },
+				newPinner: func(string) (api.AssetPinPinner, error) {
+					calls++
+					return &fakeAssetPinCapabilityPinner{}, nil
+				},
+				newHandler: func(api.AssetPinHandlerOptions) (assetPinCapabilityRoutes, error) {
+					calls++
+					return &fakeAssetPinCapabilityRoutes{}, nil
+				},
+				probeKubo: func(context.Context, string) error {
+					calls++
+					return nil
+				},
+				newVerifier: func(context.Context, config.AssetPinConfig, assetpin.TokenReceiptConsumer) (api.AssetPinVerifier, error) {
+					calls++
+					return &fakeAssetPinCapabilityVerifier{}, nil
+				},
+			}
+			if _, err := composeAssetPinCapability(context.Background(), store, test.apiURL, cfg, dependencies); err == nil {
+				t.Fatal("composeAssetPinCapability() accepted noncanonical static input")
+			}
+			if calls != 0 {
+				t.Fatalf("noncanonical static input triggered %d constructor/probe/discovery calls", calls)
+			}
+		})
+	}
+}
+
+func TestComposeAssetPinCapabilityUsesOneCanonicalPathOnlyKuboBase(t *testing.T) {
+	store := &fakeAssetPinCapabilityStore{path: filepath.Join(t.TempDir(), "sdn.db")}
+	cfg := config.Default().AssetPins
+	cfg.Enabled = true
+	const canonicalURL = "http://127.0.0.1:5001/reverse-proxy"
+	var pinnerURL, probeURL string
+	dependencies := assetPinCapabilityDependencies{
+		clock: func() time.Time { return time.Now().UTC() },
+		newPinner: func(apiURL string) (api.AssetPinPinner, error) {
+			pinnerURL = apiURL
+			return &fakeAssetPinCapabilityPinner{}, nil
+		},
+		newHandler: func(api.AssetPinHandlerOptions) (assetPinCapabilityRoutes, error) {
+			return &fakeAssetPinCapabilityRoutes{}, nil
+		},
+		probeKubo: func(_ context.Context, apiURL string) error {
+			probeURL = apiURL
+			return nil
+		},
+		newVerifier: func(context.Context, config.AssetPinConfig, assetpin.TokenReceiptConsumer) (api.AssetPinVerifier, error) {
+			return &fakeAssetPinCapabilityVerifier{}, nil
+		},
+	}
+
+	capability, err := composeAssetPinCapability(context.Background(), store, canonicalURL+"/", cfg, dependencies)
+	if err != nil {
+		t.Fatalf("composeAssetPinCapability() error = %v", err)
+	}
+	if capability.HealthErr != nil {
+		t.Fatalf("capability health error = %v", capability.HealthErr)
+	}
+	if pinnerURL != canonicalURL || probeURL != canonicalURL {
+		t.Fatalf("canonical Kubo URLs = pinner %q, probe %q; want both %q", pinnerURL, probeURL, canonicalURL)
 	}
 }
 

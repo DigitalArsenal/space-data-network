@@ -844,6 +844,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			}
 			adminMux := http.NewServeMux()
 			var wsUpgradeProxy http.Handler
+			assetOIDCCapabilityMounted := false
 
 			if cfg.AssetPins.Enabled {
 				assetCapability, err := composeAssetPinCapability(
@@ -857,6 +858,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					return fmt.Errorf("configure asset pin capability: %w", err)
 				}
 				registerAssetPinCapabilityRoutes(adminMux, assetCapability.Handler)
+				assetOIDCCapabilityMounted = true
 				if assetCapability.HealthErr != nil {
 					log.Errorf("Asset pin capability health error: %v", assetCapability.HealthErr)
 				} else {
@@ -1552,7 +1554,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					}
 
 					adminSecurityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						serveAdminMuxRequest(w, r, adminMux, cfg.Admin.RequireAuth, authHandler, publicAPIRequest)
+						serveAdminMuxRequest(w, r, adminMux, cfg.Admin.RequireAuth, assetOIDCCapabilityMounted, authHandler, publicAPIRequest)
 					}), tlsManager.Mode(), publicAPIRequest).ServeHTTP(w, r)
 				}),
 			}
@@ -1822,15 +1824,15 @@ func composeAssetPinCapability(
 	if dependencies.clock == nil || dependencies.probeKubo == nil || dependencies.newPinner == nil || dependencies.newHandler == nil || dependencies.newVerifier == nil {
 		return assetPinCapability{}, errors.New("asset pin capability dependencies are incomplete")
 	}
-	kuboURL, err := url.Parse(strings.TrimSpace(ipfsAPIURL))
-	if err != nil || (kuboURL.Scheme != "http" && kuboURL.Scheme != "https") || kuboURL.Host == "" {
-		return assetPinCapability{}, errors.New("asset pin Kubo API URL must be an absolute HTTP URL")
+	canonicalKuboURL, err := canonicalAssetPinKuboAPIURL(ipfsAPIURL)
+	if err != nil {
+		return assetPinCapability{}, err
 	}
 	storePath := strings.TrimSpace(store.Path())
 	if storePath == "" {
 		return assetPinCapability{}, errors.New("asset pin capability storage path is required")
 	}
-	pinner, err := dependencies.newPinner(ipfsAPIURL)
+	pinner, err := dependencies.newPinner(canonicalKuboURL)
 	if err != nil {
 		return assetPinCapability{}, fmt.Errorf("configure asset pin Kubo client: %w", err)
 	}
@@ -1852,7 +1854,7 @@ func composeAssetPinCapability(
 	if routes == nil {
 		return assetPinCapability{}, errors.New("asset pin handler is required")
 	}
-	if probeErr := dependencies.probeKubo(ctx, ipfsAPIURL); probeErr != nil {
+	if probeErr := dependencies.probeKubo(ctx, canonicalKuboURL); probeErr != nil {
 		return unavailableAssetPinCapability("Kubo readiness unavailable", probeErr), nil
 	}
 
@@ -1949,6 +1951,27 @@ func isNilAssetPinCapabilityStore(store assetPinCapabilityStore) bool {
 	}
 }
 
+func canonicalAssetPinKuboAPIURL(raw string) (string, error) {
+	if raw == "" || strings.TrimSpace(raw) != raw {
+		return "", errors.New("asset pin Kubo API URL must not contain surrounding whitespace")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") ||
+		parsed.Hostname() == "" || parsed.User != nil || parsed.Opaque != "" ||
+		parsed.RawQuery != "" || parsed.ForceQuery ||
+		parsed.Fragment != "" || parsed.RawFragment != "" || parsed.RawPath != "" ||
+		parsed.String() != raw {
+		return "", errors.New("asset pin Kubo API URL must be a canonical absolute HTTP base URL without userinfo, query, or fragment")
+	}
+	normalizedPath := strings.TrimSuffix(parsed.Path, "/")
+	if normalizedPath != "" && path.Clean(normalizedPath) != normalizedPath {
+		return "", errors.New("asset pin Kubo API URL path must be canonical")
+	}
+	parsed.Path = normalizedPath
+	return parsed.String(), nil
+}
+
 func validateAssetPinCapabilityOIDCConfig(cfg config.AssetPinConfig) error {
 	for _, field := range []struct {
 		name  string
@@ -1964,10 +1987,17 @@ func validateAssetPinCapabilityOIDCConfig(cfg config.AssetPinConfig) error {
 		if strings.TrimSpace(field.value) == "" {
 			return fmt.Errorf("asset pin capability %s is required", field.name)
 		}
+		if strings.TrimSpace(field.value) != field.value {
+			return fmt.Errorf("asset pin capability %s must not contain surrounding whitespace", field.name)
+		}
 	}
-	issuer, err := url.Parse(strings.TrimSpace(cfg.Issuer))
-	if err != nil || issuer.Scheme != "https" || issuer.Hostname() == "" || issuer.User != nil || issuer.Fragment != "" {
-		return errors.New("asset pin capability issuer must be an absolute HTTPS URL")
+	issuer, err := url.Parse(cfg.Issuer)
+	if err != nil || issuer.Scheme != "https" || issuer.Hostname() == "" ||
+		issuer.User != nil || issuer.Opaque != "" || issuer.RawPath != "" ||
+		issuer.RawQuery != "" || issuer.ForceQuery ||
+		issuer.Fragment != "" || issuer.RawFragment != "" ||
+		issuer.String() != cfg.Issuer {
+		return errors.New("asset pin capability issuer must be a canonical absolute HTTPS URL without userinfo, query, or fragment")
 	}
 	return nil
 }
@@ -2037,13 +2067,14 @@ func serveAdminMuxRequest(
 	r *http.Request,
 	adminMux http.Handler,
 	requireAuth bool,
+	assetOIDCCapabilityMounted bool,
 	authHandler *auth.Handler,
 	publicAPIRequest func(method, path string) bool,
 ) {
 	// Default-deny: gate all API and plugin routes behind auth, except
 	// explicitly listed public endpoints and the two exact OIDC capabilities.
 	if requireAuth {
-		if isAssetOIDCCapabilityRequest(r.Method, assetOIDCCapabilityRequestPath(r)) {
+		if assetOIDCCapabilityMounted && isAssetOIDCCapabilityRequest(r.Method, assetOIDCCapabilityRequestPath(r)) {
 			adminMux.ServeHTTP(w, r)
 			return
 		}
