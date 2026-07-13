@@ -13,7 +13,9 @@ asset_pins:
   decision_workflow: DigitalArsenal/asset-models/.github/workflows/review-decision.yml@refs/heads/main
   gateway_url: https://sdn.spaceaware.io/ipfs
   kubo_repo_path: /mnt/volume_nyc3_01/ipfs
-  # Zero or omitted bounds use these safe defaults.
-  max_upload_bytes: 10000000
-  min_free_bytes: 10737418240
-  retention_interval: 1h
+  # Zero selects DefaultAssetPinMaxUploadBytes (10,000,000 bytes).
+  max_upload_bytes: 0
+  # Zero selects DefaultAssetPinMinFreeBytes (10 GiB).
+  min_free_bytes: 0
+  # Zero selects DefaultAssetPinRetentionInterval (one hour).
+  retention_interval: 0s
