@@ -135,6 +135,15 @@ func buildIngestRunnerConfig(c *config.Config) (ingest.Config, error) {
 		SpaceTrackLoginURL:     strings.TrimSpace(ic.SpaceTrackLoginURL),
 		SpaceTrackQueryTmpl:    strings.TrimSpace(ic.SpaceTrackQueryTmpl),
 
+		// Supplemental Space-Track lanes (A2.2c-ST). Ride the same
+		// spacetrack_enabled master switch; each defaults on and can be opted
+		// out individually.
+		SpaceTrackPublicFilesEnabled: ic.SpaceTrackEnabled && optBoolDefaultTrue(ic.SpaceTrackPublicFilesEnabled),
+		SpaceTrackCurrentGPEnabled:   ic.SpaceTrackEnabled && optBoolDefaultTrue(ic.SpaceTrackCurrentGPEnabled),
+		SpaceTrackSupplementalPoll:   dur("ingest.spacetrack_supplemental_poll_interval", ic.SpaceTrackSupplementalPoll),
+		SpaceTrackCurrentGPQueryURL:  strings.TrimSpace(ic.SpaceTrackCurrentGPQueryURL),
+		SpaceTrackPublicFilesBaseURL: strings.TrimSpace(ic.SpaceTrackPublicFilesBaseURL),
+
 		UDLEnabled:      ic.UDLEnabled,
 		UDLUsername:     strings.TrimSpace(os.Getenv("UDL_USERNAME")),
 		UDLPassword:     strings.TrimSpace(os.Getenv("UDL_PASSWORD")),
@@ -153,4 +162,14 @@ func buildIngestRunnerConfig(c *config.Config) (ingest.Config, error) {
 		return ingest.Config{}, fmt.Errorf("%s", strings.Join(parseErrs, "; "))
 	}
 	return out, nil
+}
+
+// optBoolDefaultTrue treats an unset (nil) YAML bool as true, so a supplemental
+// Space-Track lane is on by default whenever spacetrack_enabled is set and only
+// off when explicitly configured false.
+func optBoolDefaultTrue(p *bool) bool {
+	if p == nil {
+		return true
+	}
+	return *p
 }
