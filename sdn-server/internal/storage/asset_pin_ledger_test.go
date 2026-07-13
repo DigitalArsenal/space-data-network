@@ -325,6 +325,137 @@ func TestAssetPinAuditEventIDsAreAppendOnlyAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestAssetPinAuditEventEqualityCoversEveryPersistedField(t *testing.T) {
+	store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
+	ctx := context.Background()
+	now := time.Date(2026, 7, 13, 16, 15, 0, 123456789, time.UTC)
+	event := AssetPinAuditEvent{
+		EventID:       "event-all-persisted-fields",
+		Kind:          "reference_upsert",
+		Result:        "success",
+		TokenDigest:   strings.Repeat("1", 64),
+		Repository:    "SpaceDataNetwork/asset-models",
+		Ref:           "refs/heads/main",
+		WorkflowRef:   "SpaceDataNetwork/asset-models/.github/workflows/pin.yml@refs/heads/main",
+		Actor:         "asset-bot",
+		WorkflowRunID: "111111111",
+		RunAttempt:    "1",
+		CommitSHA:     strings.Repeat("2", 40),
+		CandidateKey:  "candidate-all-fields",
+		ReferenceKey:  "reference-all-fields",
+		CID:           "bafybeiallfields",
+		SHA256:        strings.Repeat("3", 64),
+		ByteCount:     4096,
+		Detail:        "original detail",
+		OccurredAt:    now,
+	}
+	if err := store.AppendAssetPinAuditEvent(ctx, event); err != nil {
+		t.Fatalf("AppendAssetPinAuditEvent() error = %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*AssetPinAuditEvent)
+	}{
+		{name: "kind", mutate: func(got *AssetPinAuditEvent) { got.Kind = "reference_transition" }},
+		{name: "result", mutate: func(got *AssetPinAuditEvent) { got.Result = "failure" }},
+		{name: "token digest", mutate: func(got *AssetPinAuditEvent) { got.TokenDigest = strings.Repeat("4", 64) }},
+		{name: "repository", mutate: func(got *AssetPinAuditEvent) { got.Repository = "SpaceDataNetwork/other" }},
+		{name: "ref", mutate: func(got *AssetPinAuditEvent) { got.Ref = "refs/heads/review" }},
+		{name: "workflow ref", mutate: func(got *AssetPinAuditEvent) {
+			got.WorkflowRef = "SpaceDataNetwork/asset-models/.github/workflows/review.yml@refs/heads/main"
+		}},
+		{name: "actor", mutate: func(got *AssetPinAuditEvent) { got.Actor = "other-bot" }},
+		{name: "workflow run ID", mutate: func(got *AssetPinAuditEvent) { got.WorkflowRunID = "222222222" }},
+		{name: "run attempt", mutate: func(got *AssetPinAuditEvent) { got.RunAttempt = "2" }},
+		{name: "commit SHA", mutate: func(got *AssetPinAuditEvent) { got.CommitSHA = strings.Repeat("5", 40) }},
+		{name: "candidate key", mutate: func(got *AssetPinAuditEvent) { got.CandidateKey = "candidate-other" }},
+		{name: "reference key", mutate: func(got *AssetPinAuditEvent) { got.ReferenceKey = "reference-other" }},
+		{name: "CID", mutate: func(got *AssetPinAuditEvent) { got.CID = "bafybeiotherfields" }},
+		{name: "SHA-256", mutate: func(got *AssetPinAuditEvent) { got.SHA256 = strings.Repeat("6", 64) }},
+		{name: "byte count", mutate: func(got *AssetPinAuditEvent) { got.ByteCount++ }},
+		{name: "detail", mutate: func(got *AssetPinAuditEvent) { got.Detail = "different detail" }},
+		{name: "occurred at", mutate: func(got *AssetPinAuditEvent) { got.OccurredAt = got.OccurredAt.Add(time.Nanosecond) }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			conflict := event
+			tc.mutate(&conflict)
+			if err := store.AppendAssetPinAuditEvent(ctx, conflict); !errors.Is(err, ErrAssetPinAuditConflict) {
+				t.Fatalf("AppendAssetPinAuditEvent(conflict) error = %v, want ErrAssetPinAuditConflict", err)
+			}
+		})
+	}
+
+	events, err := store.ListAssetPinAuditEvents(ctx, AssetPinAuditEventQuery{EventID: event.EventID})
+	if err != nil {
+		t.Fatalf("ListAssetPinAuditEvents() error = %v", err)
+	}
+	if len(events) != 1 || !equalAssetPinAuditEvent(events[0], event) {
+		t.Fatalf("persisted audit event changed after conflicts: %+v", events)
+	}
+}
+
+func TestAssetPinEventBackedMutationsAreIdempotentOnLiveRetry(t *testing.T) {
+	store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
+	ctx := context.Background()
+	now := time.Date(2026, 7, 13, 16, 20, 0, 987654321, time.UTC)
+	ref := testAssetPinReference("reference-live-retry", "candidate-live-retry", "bafybeiliveretry", strings.Repeat("7", 64), AssetReferenceStaged, now, now.Add(time.Hour))
+	upsertEvent := testAssetPinEvent("event-live-retry-upsert", "reference_upsert", ref, now)
+	if err := store.UpsertAssetPinReference(ctx, ref, upsertEvent); err != nil {
+		t.Fatalf("UpsertAssetPinReference() error = %v", err)
+	}
+	reviewedAt := now.Add(time.Nanosecond)
+	transition := AssetPinReferenceTransition{
+		ReferenceKey: ref.ReferenceKey,
+		FromState:    AssetReferenceStaged,
+		ToState:      AssetReferenceReviewOpen,
+		GitHubIssue:  7070,
+		UpdatedAt:    reviewedAt,
+	}
+	transitionEvent := testAssetPinEvent("event-live-retry-transition", "reference_transition", ref, reviewedAt)
+	transitionEvent.Result = string(AssetReferenceReviewOpen)
+	if err := store.TransitionAssetPinReference(ctx, transition, transitionEvent); err != nil {
+		t.Fatalf("TransitionAssetPinReference() error = %v", err)
+	}
+	if err := store.UpsertAssetPinReference(ctx, ref, upsertEvent); err != nil {
+		t.Fatalf("retried UpsertAssetPinReference() error = %v", err)
+	}
+	if err := store.TransitionAssetPinReference(ctx, transition, transitionEvent); err != nil {
+		t.Fatalf("retried TransitionAssetPinReference() error = %v", err)
+	}
+	got, ok, err := store.FindAssetPinReference(ctx, ref.ReferenceKey)
+	if err != nil || !ok || got.State != AssetReferenceReviewOpen || got.GitHubIssue != 7070 || !got.UpdatedAt.Equal(reviewedAt) {
+		t.Fatalf("reference after live retries = %+v, %v, %v; want review_open", got, ok, err)
+	}
+
+	deleted := testAssetPinReference("reference-live-delete-retry", "candidate-live-delete-retry", "bafybeilivedeleteold", strings.Repeat("8", 64), AssetReferenceStaged, now.Add(2*time.Nanosecond), time.Date(2020, 1, 1, 0, 0, 0, 123456789, time.UTC))
+	if err := store.UpsertAssetPinReference(ctx, deleted, testAssetPinEvent("event-live-delete-upsert", "reference_upsert", deleted, deleted.CreatedAt)); err != nil {
+		t.Fatalf("UpsertAssetPinReference(deleted) error = %v", err)
+	}
+	deleteEvent := testAssetPinEvent("event-live-delete-retry", "reference_delete", deleted, now.Add(3*time.Nanosecond))
+	if err := store.DeleteExpiredAssetPinReference(ctx, deleted.ReferenceKey, deleteEvent); err != nil {
+		t.Fatalf("DeleteExpiredAssetPinReference() error = %v", err)
+	}
+	recreated := deleted
+	recreated.CID = "bafybeilivedeletenew"
+	recreated.SHA256 = strings.Repeat("9", 64)
+	recreated.State = AssetReferenceApproved
+	recreated.CreatedAt = now.Add(4 * time.Nanosecond)
+	recreated.UpdatedAt = recreated.CreatedAt
+	recreated.ExpiresAt = time.Time{}
+	if err := store.UpsertAssetPinReference(ctx, recreated, testAssetPinEvent("event-live-delete-recreated", "reference_upsert", recreated, recreated.CreatedAt)); err != nil {
+		t.Fatalf("UpsertAssetPinReference(recreated) error = %v", err)
+	}
+	if err := store.DeleteExpiredAssetPinReference(ctx, deleted.ReferenceKey, deleteEvent); err != nil {
+		t.Fatalf("retried DeleteExpiredAssetPinReference() error = %v", err)
+	}
+	got, ok, err = store.FindAssetPinReference(ctx, recreated.ReferenceKey)
+	if err != nil || !ok || got.CID != recreated.CID || got.SHA256 != recreated.SHA256 || got.State != recreated.State {
+		t.Fatalf("recreated reference after live delete retry = %+v, %v, %v; want recreated", got, ok, err)
+	}
+}
+
 func TestAssetPinMutationConflictsDoNotPartiallyWrite(t *testing.T) {
 	store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
 	ctx := context.Background()
