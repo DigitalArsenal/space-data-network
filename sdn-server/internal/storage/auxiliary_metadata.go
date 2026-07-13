@@ -20,6 +20,11 @@ const (
 	auxiliaryEventDatasetShardPublicationDelete = "dataset_shard_publication_delete"
 	auxiliaryEventPinLedgerUpsert               = "pin_ledger_upsert"
 	auxiliaryEventDatasetReplayStateUpsert      = "dataset_replay_state_upsert"
+	auxiliaryEventAssetOIDCReceiptConsume       = "asset_oidc_receipt_consume"
+	auxiliaryEventAssetPinReferenceUpsert       = "asset_pin_reference_upsert"
+	auxiliaryEventAssetPinReferenceTransition   = "asset_pin_reference_transition"
+	auxiliaryEventAssetPinReferenceDelete       = "asset_pin_reference_delete"
+	auxiliaryEventAssetPinAuditAppend           = "asset_pin_audit_append"
 )
 
 type auxiliaryMetadataStore struct {
@@ -39,6 +44,11 @@ type auxiliaryMetadataEvent struct {
 	DatasetShardPublicationDelete *auxiliaryDatasetShardPublicationDelete `json:"dataset_shard_publication_delete,omitempty"`
 	PinLedger                     *PinLedgerEntry                         `json:"pin_ledger,omitempty"`
 	DatasetReplayState            *DatasetPublicationReplayState          `json:"dataset_replay_state,omitempty"`
+	AssetOIDCReceipt              *AssetOIDCReceipt                       `json:"asset_oidc_receipt,omitempty"`
+	AssetPinReferenceUpsert       *auxiliaryAssetPinReferenceUpsert       `json:"asset_pin_reference_upsert,omitempty"`
+	AssetPinReferenceTransition   *auxiliaryAssetPinReferenceTransition   `json:"asset_pin_reference_transition,omitempty"`
+	AssetPinReferenceDelete       *auxiliaryAssetPinReferenceDelete       `json:"asset_pin_reference_delete,omitempty"`
+	AssetPinAuditEvent            *AssetPinAuditEvent                     `json:"asset_pin_audit_event,omitempty"`
 }
 
 type auxiliaryMetadataFrame struct {
@@ -242,6 +252,31 @@ func (s *FlatSQLStore) applyAuxiliaryMetadataEvent(event auxiliaryMetadataEvent)
 			return fmt.Errorf("dataset replay state metadata event missing payload")
 		}
 		return s.applyDatasetPublicationReplayStateUpsert(*event.DatasetReplayState)
+	case auxiliaryEventAssetOIDCReceiptConsume:
+		if event.AssetOIDCReceipt == nil {
+			return fmt.Errorf("asset OIDC receipt metadata event missing payload")
+		}
+		return s.applyAssetOIDCReceiptConsume(*event.AssetOIDCReceipt)
+	case auxiliaryEventAssetPinReferenceUpsert:
+		if event.AssetPinReferenceUpsert == nil {
+			return fmt.Errorf("asset pin reference upsert metadata event missing payload")
+		}
+		return s.applyAssetPinReferenceUpsert(*event.AssetPinReferenceUpsert)
+	case auxiliaryEventAssetPinReferenceTransition:
+		if event.AssetPinReferenceTransition == nil {
+			return fmt.Errorf("asset pin reference transition metadata event missing payload")
+		}
+		return s.applyAssetPinReferenceTransition(*event.AssetPinReferenceTransition)
+	case auxiliaryEventAssetPinReferenceDelete:
+		if event.AssetPinReferenceDelete == nil {
+			return fmt.Errorf("asset pin reference delete metadata event missing payload")
+		}
+		return s.applyAssetPinReferenceDelete(*event.AssetPinReferenceDelete)
+	case auxiliaryEventAssetPinAuditAppend:
+		if event.AssetPinAuditEvent == nil {
+			return fmt.Errorf("asset pin audit metadata event missing payload")
+		}
+		return s.applyAssetPinAuditAppend(*event.AssetPinAuditEvent)
 	default:
 		return fmt.Errorf("unknown auxiliary metadata event kind %q", event.Kind)
 	}
