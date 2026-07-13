@@ -1246,6 +1246,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// can connect using the raw IP without DNS.
 			adminMux.HandleFunc("/sdn/libp2p.js", handleLibp2pJS(n))
 
+			// C2 (OWNER DIRECTIVE 2026-07-11 conjunction-only ship): choose
+			// which embedded UI the "/" surface serves. Default = conjunction
+			// (shipped); SDN_UI_MODE=spaceaware restores the full app for dev.
+			// Resolved once here so the /login wiring (below) and the "/"
+			// surface handler (further below) agree on the mode.
+			frontendUIMode := resolveUIMode()
+			log.Infof("Primary UI mode: %s (SDN_UI_MODE)", frontendUIMode)
+
 			// HD wallet authentication
 			if cfg.Admin.RequireAuth {
 				// The user store owns the private auth database; the session
@@ -1278,11 +1286,19 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						authHandler.SetNodeSigningAttestation(att)
 					}
 				}
-				// U1.2: the embedded SpaceAware login (spaceaware_ui.go, served by
-				// the "/" frontend surface) owns GET /login in this binary; the
-				// legacy wallet-gated page moves to /login/legacy for wallet
-				// creation / first-admin bootstrap.
-				authHandler.SetExternalLoginUI(true)
+				// /login wiring depends on the primary UI mode:
+				//   - spaceaware (dev): U1.2 behavior — the embedded SpaceAware
+				//     login (spaceaware_ui.go, served by the "/" frontend
+				//     surface) owns GET /login; the legacy wallet-gated page
+				//     moves to /login/legacy for wallet creation / first-admin
+				//     bootstrap.
+				//   - conjunction (SHIPPED default, C2): the SpaceAware login
+				//     screen is descoped, so /login reverts to the legacy
+				//     wallet-gated page (external login UI off). That page stays
+				//     mounted as the wallet-CREATION / first-admin surface for
+				//     operators; the conjunction app itself is anonymous and
+				//     never authenticates.
+				authHandler.SetExternalLoginUI(frontendUIMode == uiModeSpaceAware)
 				authHandler.RegisterRoutes(adminMux)
 				n.SetModulePublishAuthorizer(func(xpub string) (license.ModulePublishPrincipal, error) {
 					user, err := authHandler.UserStore().GetUser(xpub)
@@ -1496,8 +1512,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 				frontendHandler = adminLandingHandler(http.NotFoundHandler(), landingHTML)
 			}
-			adminMux.Handle("/", makeFrontendSurfaceHandler(frontendHandler, authHandler, cfg.Admin.RequireAuth))
-			log.Infof("SDN UI at %s://%s/ from %s (admin portal remains at /admin)", adminScheme, adminAddr, cfg.Admin.FrontendPath)
+			adminMux.Handle("/", makeUISurfaceHandler(frontendHandler, authHandler, cfg.Admin.RequireAuth, frontendUIMode))
+			log.Infof("SDN UI at %s://%s/ from %s (mode: %s; admin portal remains at /admin)", adminScheme, adminAddr, cfg.Admin.FrontendPath, frontendUIMode)
 
 			adminServer = &http.Server{
 				Addr:              adminAddr,
