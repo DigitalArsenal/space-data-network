@@ -150,3 +150,333 @@ func TestAuxiliaryMetadataReplaysAssetPinReceiptsReferencesTransitionsDeletionsA
 		t.Fatalf("deleted reference after second replay = ok %v, err %v; want absent", ok, err)
 	}
 }
+
+func TestAuxiliaryMetadataAssetReplayIsIdempotentWhenCandidateKeyIsReused(t *testing.T) {
+	ctx := context.Background()
+	basePath := filepath.Join(t.TempDir(), "store")
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator() error = %v", err)
+	}
+	store, err := NewFlatSQLStore(basePath, validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore() error = %v", err)
+	}
+	now := time.Date(2026, 7, 13, 18, 0, 0, 123456789, time.UTC)
+	const candidateKey = "candidate-reused-after-delete"
+	first := testAssetPinReference("reference-reused-first", candidateKey, "bafybeireusedfirst", strings.Repeat("a", 64), AssetReferenceStaged, now, time.Date(2020, 1, 1, 0, 0, 0, 987654321, time.UTC))
+	firstEvent := testAssetPinEvent("event-reused-first-upsert", "reference_upsert", first, now)
+	if err := store.UpsertAssetPinReference(ctx, first, firstEvent); err != nil {
+		t.Fatalf("UpsertAssetPinReference(first) error = %v", err)
+	}
+	deleteEvent := testAssetPinEvent("event-reused-first-delete", "reference_delete", first, now.Add(time.Nanosecond))
+	if err := store.DeleteExpiredAssetPinReference(ctx, first.ReferenceKey, deleteEvent); err != nil {
+		t.Fatalf("DeleteExpiredAssetPinReference(first) error = %v", err)
+	}
+	second := testAssetPinReference("reference-reused-second", candidateKey, "bafybeireusedsecond", strings.Repeat("b", 64), AssetReferenceApproved, now.Add(2*time.Nanosecond), time.Time{})
+	secondEvent := testAssetPinEvent("event-reused-second-upsert", "reference_upsert", second, second.CreatedAt)
+	if err := store.UpsertAssetPinReference(ctx, second, secondEvent); err != nil {
+		t.Fatalf("UpsertAssetPinReference(second) error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := NewFlatSQLStore(basePath, validator)
+	if err != nil {
+		t.Fatalf("reopen NewFlatSQLStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	assertReusedCandidateFinalState(t, ctx, reopened, first.ReferenceKey, second)
+
+	replayedFrames, err := reopened.auxiliaryMetadata.Replay(reopened)
+	if err != nil {
+		t.Fatalf("second auxiliary Replay() error = %v", err)
+	}
+	if replayedFrames != 3 {
+		t.Fatalf("second auxiliary Replay() frames = %d, want 3", replayedFrames)
+	}
+	assertReusedCandidateFinalState(t, ctx, reopened, first.ReferenceKey, second)
+	events, err := reopened.ListAssetPinAuditEvents(ctx, AssetPinAuditEventQuery{})
+	if err != nil {
+		t.Fatalf("ListAssetPinAuditEvents() error = %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("audit events after second replay = %d, want 3", len(events))
+	}
+}
+
+func TestAuxiliaryMetadataAssetReplayIsIdempotentAfterTransitions(t *testing.T) {
+	ctx := context.Background()
+	basePath := filepath.Join(t.TempDir(), "store")
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator() error = %v", err)
+	}
+	store, err := NewFlatSQLStore(basePath, validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore() error = %v", err)
+	}
+	now := time.Date(2026, 7, 13, 18, 30, 0, 246813579, time.UTC)
+	ref := testAssetPinReference("reference-transition-replay", "candidate-transition-replay", "bafybeitransitionreplay", strings.Repeat("c", 64), AssetReferenceStaged, now, now.Add(time.Hour))
+	if err := store.UpsertAssetPinReference(ctx, ref, testAssetPinEvent("event-transition-replay-upsert", "reference_upsert", ref, now)); err != nil {
+		t.Fatalf("UpsertAssetPinReference() error = %v", err)
+	}
+	reviewedAt := now.Add(time.Nanosecond)
+	reviewEvent := testAssetPinEvent("event-transition-replay-review", "reference_transition", ref, reviewedAt)
+	reviewEvent.Result = string(AssetReferenceReviewOpen)
+	if err := store.TransitionAssetPinReference(ctx, AssetPinReferenceTransition{
+		ReferenceKey: ref.ReferenceKey,
+		FromState:    AssetReferenceStaged,
+		ToState:      AssetReferenceReviewOpen,
+		GitHubIssue:  5150,
+		UpdatedAt:    reviewedAt,
+	}, reviewEvent); err != nil {
+		t.Fatalf("review TransitionAssetPinReference() error = %v", err)
+	}
+	approvedAt := now.Add(2 * time.Nanosecond)
+	decisionSHA := strings.Repeat("d", 64)
+	approvedEvent := testAssetPinEvent("event-transition-replay-approved", "reference_transition", ref, approvedAt)
+	approvedEvent.Result = string(AssetReferenceApproved)
+	if err := store.TransitionAssetPinReference(ctx, AssetPinReferenceTransition{
+		ReferenceKey:   ref.ReferenceKey,
+		FromState:      AssetReferenceReviewOpen,
+		ToState:        AssetReferenceApproved,
+		DecisionSHA256: decisionSHA,
+		UpdatedAt:      approvedAt,
+	}, approvedEvent); err != nil {
+		t.Fatalf("approve TransitionAssetPinReference() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := NewFlatSQLStore(basePath, validator)
+	if err != nil {
+		t.Fatalf("reopen NewFlatSQLStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	assertTransitionReplayFinalState(t, ctx, reopened, ref.ReferenceKey, approvedAt, decisionSHA)
+
+	replayedFrames, err := reopened.auxiliaryMetadata.Replay(reopened)
+	if err != nil {
+		t.Fatalf("second auxiliary Replay() error = %v", err)
+	}
+	if replayedFrames != 3 {
+		t.Fatalf("second auxiliary Replay() frames = %d, want 3", replayedFrames)
+	}
+	assertTransitionReplayFinalState(t, ctx, reopened, ref.ReferenceKey, approvedAt, decisionSHA)
+	events, err := reopened.ListAssetPinAuditEvents(ctx, AssetPinAuditEventQuery{})
+	if err != nil {
+		t.Fatalf("ListAssetPinAuditEvents() error = %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("audit events after second replay = %d, want 3", len(events))
+	}
+}
+
+func TestAuxiliaryMetadataAssetReplayDoesNotRepeatAppliedDelete(t *testing.T) {
+	ctx := context.Background()
+	basePath := filepath.Join(t.TempDir(), "store")
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator() error = %v", err)
+	}
+	store, err := NewFlatSQLStore(basePath, validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore() error = %v", err)
+	}
+	now := time.Date(2026, 7, 13, 19, 0, 0, 314159265, time.UTC)
+	first := testAssetPinReference("reference-delete-recreated", "candidate-delete-recreated", "bafybeideleteold", strings.Repeat("e", 64), AssetReferenceStaged, now, time.Date(2020, 1, 1, 0, 0, 0, 271828182, time.UTC))
+	if err := store.UpsertAssetPinReference(ctx, first, testAssetPinEvent("event-delete-recreated-old-upsert", "reference_upsert", first, now)); err != nil {
+		t.Fatalf("UpsertAssetPinReference(old) error = %v", err)
+	}
+	deleteEvent := testAssetPinEvent("event-delete-recreated-delete", "reference_delete", first, now.Add(time.Nanosecond))
+	if err := store.DeleteExpiredAssetPinReference(ctx, first.ReferenceKey, deleteEvent); err != nil {
+		t.Fatalf("DeleteExpiredAssetPinReference() error = %v", err)
+	}
+	recreated := testAssetPinReference(first.ReferenceKey, first.CandidateKey, "bafybeideleterecreated", strings.Repeat("f", 64), AssetReferenceApproved, now.Add(2*time.Nanosecond), time.Time{})
+	recreated.GitHubIssue = 9090
+	recreated.DecisionSHA256 = strings.Repeat("1", 64)
+	if err := store.UpsertAssetPinReference(ctx, recreated, testAssetPinEvent("event-delete-recreated-new-upsert", "reference_upsert", recreated, recreated.CreatedAt)); err != nil {
+		t.Fatalf("UpsertAssetPinReference(recreated) error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	reopened, err := NewFlatSQLStore(basePath, validator)
+	if err != nil {
+		t.Fatalf("reopen NewFlatSQLStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	assertRecreatedReferenceFinalState(t, ctx, reopened, recreated)
+
+	replayedFrames, err := reopened.auxiliaryMetadata.Replay(reopened)
+	if err != nil {
+		t.Fatalf("second auxiliary Replay() error = %v", err)
+	}
+	if replayedFrames != 3 {
+		t.Fatalf("second auxiliary Replay() frames = %d, want 3", replayedFrames)
+	}
+	assertRecreatedReferenceFinalState(t, ctx, reopened, recreated)
+	events, err := reopened.ListAssetPinAuditEvents(ctx, AssetPinAuditEventQuery{})
+	if err != nil {
+		t.Fatalf("ListAssetPinAuditEvents() error = %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("audit events after second replay = %d, want 3", len(events))
+	}
+}
+
+func TestAuxiliaryMetadataAssetApplyConflictsDoNotMutateFinalState(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 13, 19, 30, 0, 161803398, time.UTC)
+
+	t.Run("upsert", func(t *testing.T) {
+		store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
+		ref := testAssetPinReference("reference-apply-upsert-conflict", "candidate-apply-upsert-conflict", "bafybeiapplyupsert", strings.Repeat("2", 64), AssetReferenceStaged, now, now.Add(time.Hour))
+		event := testAssetPinEvent("event-apply-upsert-conflict", "reference_upsert", ref, now)
+		if err := store.UpsertAssetPinReference(ctx, ref, event); err != nil {
+			t.Fatalf("UpsertAssetPinReference() error = %v", err)
+		}
+		mutated := ref
+		mutated.CID = "bafybeiapplyupsertmutated"
+		mutated.SHA256 = strings.Repeat("3", 64)
+		conflict := event
+		conflict.Detail = "conflicting upsert event"
+		if err := store.applyAssetPinReferenceUpsert(auxiliaryAssetPinReferenceUpsert{Reference: mutated, Event: conflict}); !errors.Is(err, ErrAssetPinAuditConflict) {
+			t.Fatalf("applyAssetPinReferenceUpsert(conflict) error = %v, want ErrAssetPinAuditConflict", err)
+		}
+		got, ok, err := store.FindAssetPinReference(ctx, ref.ReferenceKey)
+		if err != nil || !ok || got.CID != ref.CID || got.SHA256 != ref.SHA256 || got.State != ref.State {
+			t.Fatalf("reference after conflicting upsert = %+v, %v, %v; want original", got, ok, err)
+		}
+	})
+
+	t.Run("transition", func(t *testing.T) {
+		store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
+		ref := testAssetPinReference("reference-apply-transition-conflict", "candidate-apply-transition-conflict", "bafybeiapplytransition", strings.Repeat("4", 64), AssetReferenceStaged, now, now.Add(time.Hour))
+		if err := store.UpsertAssetPinReference(ctx, ref, testAssetPinEvent("event-apply-transition-upsert", "reference_upsert", ref, now)); err != nil {
+			t.Fatalf("UpsertAssetPinReference() error = %v", err)
+		}
+		transitionedAt := now.Add(time.Nanosecond)
+		event := testAssetPinEvent("event-apply-transition-conflict", "reference_transition", ref, transitionedAt)
+		event.Result = string(AssetReferenceReviewOpen)
+		if err := store.TransitionAssetPinReference(ctx, AssetPinReferenceTransition{
+			ReferenceKey: ref.ReferenceKey,
+			FromState:    AssetReferenceStaged,
+			ToState:      AssetReferenceReviewOpen,
+			GitHubIssue:  6060,
+			UpdatedAt:    transitionedAt,
+		}, event); err != nil {
+			t.Fatalf("TransitionAssetPinReference() error = %v", err)
+		}
+		conflict := event
+		conflict.Detail = "conflicting transition event"
+		if err := store.applyAssetPinReferenceTransition(auxiliaryAssetPinReferenceTransition{
+			Transition: AssetPinReferenceTransition{
+				ReferenceKey:   ref.ReferenceKey,
+				FromState:      AssetReferenceReviewOpen,
+				ToState:        AssetReferenceApproved,
+				DecisionSHA256: strings.Repeat("5", 64),
+				UpdatedAt:      transitionedAt.Add(time.Nanosecond),
+			},
+			Event: conflict,
+		}); !errors.Is(err, ErrAssetPinAuditConflict) {
+			t.Fatalf("applyAssetPinReferenceTransition(conflict) error = %v, want ErrAssetPinAuditConflict", err)
+		}
+		got, ok, err := store.FindAssetPinReference(ctx, ref.ReferenceKey)
+		if err != nil || !ok || got.State != AssetReferenceReviewOpen || got.GitHubIssue != 6060 || got.DecisionSHA256 != "" {
+			t.Fatalf("reference after conflicting transition = %+v, %v, %v; want review_open", got, ok, err)
+		}
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
+		ref := testAssetPinReference("reference-apply-delete-conflict", "candidate-apply-delete-conflict", "bafybeiapplydeleteold", strings.Repeat("6", 64), AssetReferenceStaged, now, time.Date(2020, 1, 1, 0, 0, 0, 141421356, time.UTC))
+		if err := store.UpsertAssetPinReference(ctx, ref, testAssetPinEvent("event-apply-delete-upsert", "reference_upsert", ref, now)); err != nil {
+			t.Fatalf("UpsertAssetPinReference(old) error = %v", err)
+		}
+		deleteEvent := testAssetPinEvent("event-apply-delete-conflict", "reference_delete", ref, now.Add(time.Nanosecond))
+		if err := store.DeleteExpiredAssetPinReference(ctx, ref.ReferenceKey, deleteEvent); err != nil {
+			t.Fatalf("DeleteExpiredAssetPinReference() error = %v", err)
+		}
+		recreated := ref
+		recreated.CID = "bafybeiapplydeletenew"
+		recreated.SHA256 = strings.Repeat("7", 64)
+		recreated.State = AssetReferenceApproved
+		recreated.CreatedAt = now.Add(2 * time.Nanosecond)
+		recreated.UpdatedAt = recreated.CreatedAt
+		recreated.ExpiresAt = time.Time{}
+		if err := store.UpsertAssetPinReference(ctx, recreated, testAssetPinEvent("event-apply-delete-recreated", "reference_upsert", recreated, recreated.CreatedAt)); err != nil {
+			t.Fatalf("UpsertAssetPinReference(recreated) error = %v", err)
+		}
+		conflict := deleteEvent
+		conflict.Detail = "conflicting delete event"
+		if err := store.applyAssetPinReferenceDelete(auxiliaryAssetPinReferenceDelete{ReferenceKey: ref.ReferenceKey, Event: conflict}); !errors.Is(err, ErrAssetPinAuditConflict) {
+			t.Fatalf("applyAssetPinReferenceDelete(conflict) error = %v, want ErrAssetPinAuditConflict", err)
+		}
+		got, ok, err := store.FindAssetPinReference(ctx, ref.ReferenceKey)
+		if err != nil || !ok || got.CID != recreated.CID || got.SHA256 != recreated.SHA256 || got.State != recreated.State {
+			t.Fatalf("reference after conflicting delete = %+v, %v, %v; want recreated", got, ok, err)
+		}
+	})
+
+	t.Run("standalone audit", func(t *testing.T) {
+		store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
+		event := testAssetPinEvent("event-apply-standalone-conflict", "reconcile", AssetPinReference{}, now)
+		event.Detail = "original standalone event"
+		if err := store.AppendAssetPinAuditEvent(ctx, event); err != nil {
+			t.Fatalf("AppendAssetPinAuditEvent() error = %v", err)
+		}
+		conflict := event
+		conflict.Detail = "conflicting standalone event"
+		if err := store.applyAssetPinAuditAppend(conflict); !errors.Is(err, ErrAssetPinAuditConflict) {
+			t.Fatalf("applyAssetPinAuditAppend(conflict) error = %v, want ErrAssetPinAuditConflict", err)
+		}
+		events, err := store.ListAssetPinAuditEvents(ctx, AssetPinAuditEventQuery{EventID: event.EventID})
+		if err != nil {
+			t.Fatalf("ListAssetPinAuditEvents() error = %v", err)
+		}
+		if len(events) != 1 || !equalAssetPinAuditEvent(events[0], event) {
+			t.Fatalf("standalone audit event changed after conflict: %+v", events)
+		}
+	})
+}
+
+func assertRecreatedReferenceFinalState(t *testing.T, ctx context.Context, store *FlatSQLStore, want AssetPinReference) {
+	t.Helper()
+	got, ok, err := store.FindAssetPinReference(ctx, want.ReferenceKey)
+	if err != nil || !ok {
+		t.Fatalf("recreated reference lookup = %+v, %v, %v; want present", got, ok, err)
+	}
+	if got.CID != want.CID || got.SHA256 != want.SHA256 || got.State != want.State || got.GitHubIssue != want.GitHubIssue || got.DecisionSHA256 != want.DecisionSHA256 {
+		t.Fatalf("recreated reference = %+v, want %+v", got, want)
+	}
+}
+
+func assertTransitionReplayFinalState(t *testing.T, ctx context.Context, store *FlatSQLStore, referenceKey string, updatedAt time.Time, decisionSHA string) {
+	t.Helper()
+	got, ok, err := store.FindAssetPinReference(ctx, referenceKey)
+	if err != nil || !ok {
+		t.Fatalf("transitioned reference lookup = %+v, %v, %v; want present", got, ok, err)
+	}
+	if got.State != AssetReferenceApproved || got.GitHubIssue != 5150 || got.DecisionSHA256 != decisionSHA || !got.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("transitioned reference = %+v, want final approved state", got)
+	}
+}
+
+func assertReusedCandidateFinalState(t *testing.T, ctx context.Context, store *FlatSQLStore, deletedReferenceKey string, want AssetPinReference) {
+	t.Helper()
+	if _, ok, err := store.FindAssetPinReference(ctx, deletedReferenceKey); err != nil || ok {
+		t.Fatalf("deleted first reference lookup = ok %v, err %v; want absent", ok, err)
+	}
+	got, ok, err := store.FindAssetPinReferenceByCandidateKey(ctx, want.CandidateKey)
+	if err != nil || !ok {
+		t.Fatalf("reused candidate lookup = %+v, %v, %v; want second reference", got, ok, err)
+	}
+	if got.ReferenceKey != want.ReferenceKey || got.CID != want.CID || got.State != want.State {
+		t.Fatalf("reused candidate owner = %+v, want %+v", got, want)
+	}
+}

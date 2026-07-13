@@ -796,6 +796,11 @@ func (s *FlatSQLStore) applyAssetPinReferenceUpsert(payload auxiliaryAssetPinRef
 		return fmt.Errorf("begin replayed asset pin upsert: %w", err)
 	}
 	defer tx.Rollback()
+	if same, err := assetPinAuditEventAlreadyApplied(ctx, tx, event); err != nil {
+		return err
+	} else if same {
+		return nil
+	}
 	if err := upsertAssetPinReferenceTo(ctx, tx, ref); err != nil {
 		return err
 	}
@@ -820,6 +825,11 @@ func (s *FlatSQLStore) applyAssetPinReferenceTransition(payload auxiliaryAssetPi
 		return fmt.Errorf("begin replayed asset pin transition: %w", err)
 	}
 	defer tx.Rollback()
+	if same, err := assetPinAuditEventAlreadyApplied(ctx, tx, event); err != nil {
+		return err
+	} else if same {
+		return nil
+	}
 	if err := transitionAssetPinReferenceTo(ctx, tx, transition); err != nil {
 		return err
 	}
@@ -844,6 +854,11 @@ func (s *FlatSQLStore) applyAssetPinReferenceDelete(payload auxiliaryAssetPinRef
 		return fmt.Errorf("begin replayed asset pin delete: %w", err)
 	}
 	defer tx.Rollback()
+	if same, err := assetPinAuditEventAlreadyApplied(ctx, tx, event); err != nil {
+		return err
+	} else if same {
+		return nil
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sdn_asset_pin_refs WHERE reference_key = ?`, payload.ReferenceKey); err != nil {
 		return fmt.Errorf("replay asset pin reference delete: %w", err)
 	}
@@ -858,8 +873,21 @@ func (s *FlatSQLStore) applyAssetPinAuditAppend(event AssetPinAuditEvent) error 
 	if err != nil {
 		return err
 	}
-	_, err = insertAssetPinAuditEvent(context.Background(), s.db, event)
-	return err
+	ctx := context.Background()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin replayed asset pin audit append: %w", err)
+	}
+	defer tx.Rollback()
+	if same, err := assetPinAuditEventAlreadyApplied(ctx, tx, event); err != nil {
+		return err
+	} else if same {
+		return nil
+	}
+	if _, err := insertAssetPinAuditEvent(ctx, tx, event); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 type assetPinExecer interface {
