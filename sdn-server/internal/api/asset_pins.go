@@ -1,10 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,12 +31,14 @@ import (
 )
 
 const (
-	assetPinHardMaxUploadBytes int64 = 10_000_000
-	assetPinBodyOverheadBytes  int64 = 1 << 20
-	assetPinMetadataMaxBytes   int64 = 64 << 10
-	assetPinStagedLifetime           = 90 * 24 * time.Hour
-	assetPinCleanupTimeout           = 10 * time.Second
-	assetPinConcurrentUploads        = 2
+	assetPinHardMaxUploadBytes      int64 = 10_000_000
+	assetPinBodyOverheadBytes       int64 = 1 << 20
+	assetPinMetadataMaxBytes        int64 = 64 << 10
+	assetPinStagedLifetime                = 90 * 24 * time.Hour
+	assetPinCleanupTimeout                = 10 * time.Second
+	assetPinConcurrentUploads             = 2
+	assetReferenceStateBodyMaxBytes       = 4 << 10
+	assetReferenceDecisionLifetime        = 30 * 24 * time.Hour
 )
 
 // AssetPinVerifier is the upload handler's narrow OIDC security dependency.
@@ -46,6 +51,7 @@ type AssetPinStore interface {
 	FindAssetPinReferenceByCandidateKey(context.Context, string) (storage.AssetPinReference, bool, error)
 	FindAssetBySHA256(context.Context, string) (storage.AssetPinReference, bool, error)
 	UpsertAssetPinReference(context.Context, storage.AssetPinReference, storage.AssetPinAuditEvent) error
+	TransitionAssetPinReference(context.Context, storage.AssetPinReferenceTransition, storage.AssetPinAuditEvent) error
 }
 
 // AssetPinCapacity reports bytes available to the daemon on a filesystem.
@@ -186,6 +192,282 @@ func NewAssetPinHandler(options AssetPinHandlerOptions) (*AssetPinHandler, error
 // authentication bypass composition remains the caller's responsibility.
 func (h *AssetPinHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/v1/assets/pin", h)
+	mux.HandleFunc("POST /api/v1/assets/reference-state", h.handleAssetReferenceState)
+}
+
+type assetReferenceStateRequest struct {
+	CandidateKey   string `json:"candidateKey"`
+	DecidedAt      string `json:"decidedAt"`
+	DecisionSHA256 string `json:"decisionSha256"`
+	IssueNumber    int64  `json:"issueNumber"`
+	State          string `json:"state"`
+}
+
+type assetReferenceStateResponse struct {
+	CandidateKey string                      `json:"candidateKey"`
+	CID          string                      `json:"cid"`
+	State        storage.AssetReferenceState `json:"state"`
+	ExpiresAt    *time.Time                  `json:"expiresAt"`
+}
+
+type assetReferenceStateDetail struct {
+	DecisionSHA256 string                      `json:"decisionSha256"`
+	IssueNumber    int64                       `json:"issueNumber"`
+	State          storage.AssetReferenceState `json:"state"`
+}
+
+func (h *AssetPinHandler) handleAssetReferenceState(w http.ResponseWriter, r *http.Request) {
+	token, ok := assetBearerToken(r.Header)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	request, decidedAt, err := parseCanonicalAssetReferenceStateRequest(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid asset reference state request")
+		return
+	}
+	target := storage.AssetReferenceState(request.State)
+	workflow := assetpin.WorkflowDecision
+	if target == storage.AssetReferenceReviewOpen {
+		workflow = assetpin.WorkflowPin
+	}
+	claims, err := h.verifier.VerifyAndConsume(r.Context(), token, workflow)
+	if err != nil {
+		if errors.Is(err, assetpin.ErrMissingToken) ||
+			errors.Is(err, assetpin.ErrInvalidToken) ||
+			errors.Is(err, assetpin.ErrTokenReplay) {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "asset reference authorization unavailable")
+		return
+	}
+
+	h.mutationMu.Lock()
+	defer h.mutationMu.Unlock()
+	ref, found, err := h.store.FindAssetPinReferenceByCandidateKey(r.Context(), request.CandidateKey)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "asset pin ledger unavailable")
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "asset candidate not found")
+		return
+	}
+	if !assetReferenceStateStoredValid(ref, request.CandidateKey) {
+		writeError(w, http.StatusServiceUnavailable, "asset pin ledger unavailable")
+		return
+	}
+	if decidedAt.Before(ref.UpdatedAt) {
+		writeError(w, http.StatusConflict, "asset reference state conflicts with the requested transition")
+		return
+	}
+	if ref.State == target {
+		if ref.GitHubIssue != request.IssueNumber || ref.DecisionSHA256 != request.DecisionSHA256 {
+			writeError(w, http.StatusConflict, "asset reference state conflicts with the requested transition")
+			return
+		}
+		h.writeAssetReferenceStateSuccess(w, ref.CandidateKey, ref.CID, ref.State, ref.ExpiresAt)
+		return
+	}
+	transition := storage.AssetPinReferenceTransition{
+		ReferenceKey:   ref.ReferenceKey,
+		FromState:      ref.State,
+		ToState:        target,
+		GitHubIssue:    request.IssueNumber,
+		DecisionSHA256: request.DecisionSHA256,
+		UpdatedAt:      decidedAt,
+	}
+	switch {
+	case ref.State == storage.AssetReferenceStaged && target == storage.AssetReferenceReviewOpen && !ref.ExpiresAt.Before(decidedAt):
+		transition.ExpiresAt = ref.ExpiresAt
+	case ref.State == storage.AssetReferenceReviewOpen && target == storage.AssetReferenceApproved && ref.GitHubIssue == request.IssueNumber:
+		transition.ExpiresAt = time.Time{}
+	case ref.State == storage.AssetReferenceReviewOpen && target == storage.AssetReferenceRejected && ref.GitHubIssue == request.IssueNumber:
+		transition.ExpiresAt = decidedAt.Add(assetReferenceDecisionLifetime)
+	case ref.State == storage.AssetReferenceApproved && target == storage.AssetReferenceSuperseded && ref.GitHubIssue == request.IssueNumber && ref.DecisionSHA256 != request.DecisionSHA256:
+		transition.ExpiresAt = decidedAt.Add(assetReferenceDecisionLifetime)
+	default:
+		writeError(w, http.StatusConflict, "asset reference state conflicts with the requested transition")
+		return
+	}
+	if !transition.ExpiresAt.IsZero() && !time.Unix(0, transition.ExpiresAt.UnixNano()).Equal(transition.ExpiresAt) {
+		writeError(w, http.StatusConflict, "asset reference state conflicts with the requested transition")
+		return
+	}
+	detail, err := marshalCanonicalAssetReferenceStateDetail(assetReferenceStateDetail{
+		DecisionSHA256: request.DecisionSHA256,
+		IssueNumber:    request.IssueNumber,
+		State:          target,
+	})
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "asset reference transition unavailable")
+		return
+	}
+	event := storage.AssetPinAuditEvent{
+		EventID:       assetReferenceStateEventID(ref.CandidateKey, ref.State, target, request.IssueNumber, request.DecisionSHA256),
+		Kind:          "asset_reference_state",
+		Result:        string(target),
+		TokenDigest:   stableAssetPinID(token),
+		Repository:    claims.Repository,
+		Ref:           claims.Ref,
+		WorkflowRef:   claims.WorkflowRef,
+		Actor:         claims.Actor,
+		WorkflowRunID: claims.RunID,
+		RunAttempt:    claims.RunAttempt,
+		CommitSHA:     claims.SHA,
+		CandidateKey:  ref.CandidateKey,
+		ReferenceKey:  ref.ReferenceKey,
+		CID:           ref.CID,
+		SHA256:        ref.SHA256,
+		ByteCount:     ref.ByteCount,
+		Detail:        detail,
+		OccurredAt:    decidedAt,
+	}
+	if err := h.store.TransitionAssetPinReference(r.Context(), transition, event); err != nil {
+		if errors.Is(err, storage.ErrAssetPinReferenceNotFound) {
+			writeError(w, http.StatusNotFound, "asset candidate not found")
+			return
+		}
+		if errors.Is(err, storage.ErrAssetPinReferenceConflict) || errors.Is(err, storage.ErrAssetPinAuditConflict) {
+			writeError(w, http.StatusConflict, "asset reference state conflicts with the requested transition")
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "asset pin ledger unavailable")
+		return
+	}
+	h.writeAssetReferenceStateSuccess(w, ref.CandidateKey, ref.CID, target, transition.ExpiresAt)
+}
+
+func parseCanonicalAssetReferenceStateRequest(body io.Reader) (assetReferenceStateRequest, time.Time, error) {
+	raw, err := io.ReadAll(io.LimitReader(body, assetReferenceStateBodyMaxBytes+1))
+	if err != nil || len(raw) == 0 || len(raw) > assetReferenceStateBodyMaxBytes {
+		return assetReferenceStateRequest{}, time.Time{}, errors.New("invalid bounded request body")
+	}
+	var request assetReferenceStateRequest
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		return assetReferenceStateRequest{}, time.Time{}, err
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return assetReferenceStateRequest{}, time.Time{}, errors.New("trailing JSON data")
+	}
+	canonical, err := marshalCanonicalAssetReferenceStateRequest(request)
+	if err != nil || !bytes.Equal(raw, canonical) {
+		return assetReferenceStateRequest{}, time.Time{}, errors.New("request is not canonical JSON")
+	}
+	if request.CandidateKey == "" || strings.TrimSpace(request.CandidateKey) != request.CandidateKey || request.IssueNumber <= 0 {
+		return assetReferenceStateRequest{}, time.Time{}, errors.New("invalid candidate or issue")
+	}
+	state := storage.AssetReferenceState(request.State)
+	switch state {
+	case storage.AssetReferenceReviewOpen:
+		if request.DecisionSHA256 != "" {
+			return assetReferenceStateRequest{}, time.Time{}, errors.New("review request contains a decision digest")
+		}
+	case storage.AssetReferenceApproved, storage.AssetReferenceRejected, storage.AssetReferenceSuperseded:
+		if !isLowerAssetSHA256(request.DecisionSHA256) {
+			return assetReferenceStateRequest{}, time.Time{}, errors.New("invalid decision digest")
+		}
+	default:
+		return assetReferenceStateRequest{}, time.Time{}, errors.New("unsupported asset reference state")
+	}
+	decidedAt, err := time.Parse(time.RFC3339Nano, request.DecidedAt)
+	if err != nil || decidedAt.Location() != time.UTC || decidedAt.Format(time.RFC3339Nano) != request.DecidedAt ||
+		!time.Unix(0, decidedAt.UnixNano()).Equal(decidedAt) {
+		return assetReferenceStateRequest{}, time.Time{}, errors.New("invalid decision time")
+	}
+	return request, decidedAt, nil
+}
+
+func marshalCanonicalAssetReferenceStateRequest(request assetReferenceStateRequest) ([]byte, error) {
+	var output bytes.Buffer
+	encoder := json.NewEncoder(&output)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(request); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(output.Bytes(), []byte{'\n'}), nil
+}
+
+func marshalCanonicalAssetReferenceStateDetail(detail assetReferenceStateDetail) (string, error) {
+	var output bytes.Buffer
+	encoder := json.NewEncoder(&output)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(detail); err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(output.String(), "\n"), nil
+}
+
+func assetReferenceStateEventID(candidateKey string, from, to storage.AssetReferenceState, issue int64, digest string) string {
+	identity := strconv.Itoa(len(candidateKey)) + ":" + candidateKey + "\n" + string(from) + "\n" + string(to) + "\n" + strconv.FormatInt(issue, 10) + "\n" + digest
+	return stableAssetPinID("asset-reference-state:v1\n" + identity)
+}
+
+func isLowerAssetSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func assetReferenceStateStoredValid(ref storage.AssetPinReference, candidateKey string) bool {
+	if ref.CandidateKey != candidateKey ||
+		ref.ReferenceKey != stableAssetPinID("asset-pin-reference:v1\n"+candidateKey) ||
+		ref.ByteCount <= 0 || !isLowerAssetSHA256(ref.SHA256) ||
+		ref.CreatedAt.IsZero() || ref.UpdatedAt.IsZero() || ref.UpdatedAt.Before(ref.CreatedAt) ||
+		!time.Unix(0, ref.CreatedAt.UnixNano()).Equal(ref.CreatedAt) ||
+		!time.Unix(0, ref.UpdatedAt.UnixNano()).Equal(ref.UpdatedAt) {
+		return false
+	}
+	if _, err := canonicalAssetCID(ref.CID); err != nil {
+		return false
+	}
+	expiryValid := func() bool {
+		return !ref.ExpiresAt.IsZero() &&
+			time.Unix(0, ref.ExpiresAt.UnixNano()).Equal(ref.ExpiresAt) &&
+			!ref.ExpiresAt.Before(ref.UpdatedAt)
+	}
+	switch ref.State {
+	case storage.AssetReferenceStaged:
+		return ref.GitHubIssue == 0 && ref.DecisionSHA256 == "" && expiryValid()
+	case storage.AssetReferenceReviewOpen:
+		return ref.GitHubIssue > 0 && ref.DecisionSHA256 == "" && expiryValid()
+	case storage.AssetReferenceApproved:
+		return ref.GitHubIssue > 0 && isLowerAssetSHA256(ref.DecisionSHA256) && ref.ExpiresAt.IsZero()
+	case storage.AssetReferenceRejected, storage.AssetReferenceSuperseded:
+		if ref.GitHubIssue <= 0 || !isLowerAssetSHA256(ref.DecisionSHA256) || !expiryValid() {
+			return false
+		}
+		wantExpiry := ref.UpdatedAt.Add(assetReferenceDecisionLifetime)
+		return time.Unix(0, wantExpiry.UnixNano()).Equal(wantExpiry) && ref.ExpiresAt.Equal(wantExpiry)
+	case storage.AssetReferenceAbandoned:
+		return ref.GitHubIssue >= 0 && ref.DecisionSHA256 == "" && expiryValid()
+	default:
+		return false
+	}
+}
+
+func (h *AssetPinHandler) writeAssetReferenceStateSuccess(w http.ResponseWriter, candidateKey, cidValue string, state storage.AssetReferenceState, expiresAt time.Time) {
+	var expiry *time.Time
+	if !expiresAt.IsZero() {
+		normalized := normalizeAssetPinHandlerTime(expiresAt)
+		expiry = &normalized
+	}
+	writeJSON(w, http.StatusOK, assetReferenceStateResponse{
+		CandidateKey: candidateKey,
+		CID:          cidValue,
+		State:        state,
+		ExpiresAt:    expiry,
+	})
 }
 
 // ServeHTTP implements the bounded upload endpoint.
@@ -619,11 +901,15 @@ func assetBearerToken(header http.Header) (string, bool) {
 	if len(values) != 1 {
 		return "", false
 	}
-	fields := strings.Fields(values[0])
-	if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") || fields[1] == "" {
+	value := values[0]
+	if len(value) <= len("Bearer ") || !strings.EqualFold(value[:len("Bearer ")], "Bearer ") {
 		return "", false
 	}
-	return fields[1], true
+	token := value[len("Bearer "):]
+	if strings.IndexAny(token, " \t\r\n\v\f") >= 0 {
+		return "", false
+	}
+	return token, true
 }
 
 func assetPinCapacityAvailable(available uint64, byteCount int64, minFree uint64) bool {

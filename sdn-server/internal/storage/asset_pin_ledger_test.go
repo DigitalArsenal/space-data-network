@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -201,7 +202,7 @@ func TestAssetPinCommitFailureBlocksCompetingTransitionUntilReopen(t *testing.T)
 		ToState:      AssetReferenceReviewOpen,
 		GitHubIssue:  5150,
 		UpdatedAt:    now.Add(time.Minute),
-		ExpiresAt:    now.Add(4 * time.Hour),
+		ExpiresAt:    ref.ExpiresAt,
 	}
 	firstEvent := testAssetPinEvent("event-transition-commit-first", "reference_transition", ref, first.UpdatedAt)
 	firstEvent.Result = string(first.ToState)
@@ -651,6 +652,8 @@ func TestAssetPinReferenceUpsertIsInsertOrFullEquivalence(t *testing.T) {
 		{name: "byte count", mutate: func(ref *AssetPinReference) { ref.ByteCount++ }},
 		{name: "state and expiry", mutate: func(ref *AssetPinReference) {
 			ref.State = AssetReferenceStaged
+			ref.GitHubIssue = 0
+			ref.DecisionSHA256 = ""
 			ref.ExpiresAt = ref.UpdatedAt.Add(time.Hour)
 		}},
 		{name: "source URL", mutate: func(ref *AssetPinReference) { ref.SourceURL = "https://example.test/assets/other.glb" }},
@@ -662,7 +665,10 @@ func TestAssetPinReferenceUpsertIsInsertOrFullEquivalence(t *testing.T) {
 		{name: "decision digest", mutate: func(ref *AssetPinReference) { ref.DecisionSHA256 = strings.Repeat("8", 64) }},
 		{name: "created_at", mutate: func(ref *AssetPinReference) { ref.CreatedAt = ref.CreatedAt.Add(-time.Nanosecond) }},
 		{name: "updated_at", mutate: func(ref *AssetPinReference) { ref.UpdatedAt = ref.UpdatedAt.Add(time.Nanosecond) }},
-		{name: "expiry", mutate: func(ref *AssetPinReference) { ref.ExpiresAt = ref.UpdatedAt.Add(time.Hour) }},
+		{name: "expiry", mutate: func(ref *AssetPinReference) {
+			ref.State = AssetReferenceRejected
+			ref.ExpiresAt = ref.UpdatedAt.Add(30 * 24 * time.Hour)
+		}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -754,6 +760,7 @@ func TestAssetPinTransitionPayloadIsBoundToStableEventID(t *testing.T) {
 		ToState:      AssetReferenceReviewOpen,
 		GitHubIssue:  4242,
 		UpdatedAt:    reviewedAt,
+		ExpiresAt:    ref.ExpiresAt,
 	}, event); err != nil {
 		t.Fatalf("first TransitionAssetPinReference() error = %v", err)
 	}
@@ -761,6 +768,7 @@ func TestAssetPinTransitionPayloadIsBoundToStableEventID(t *testing.T) {
 		ReferenceKey:   ref.ReferenceKey,
 		FromState:      AssetReferenceReviewOpen,
 		ToState:        AssetReferenceApproved,
+		GitHubIssue:    4242,
 		DecisionSHA256: strings.Repeat("d", 64),
 		UpdatedAt:      reviewedAt.Add(time.Second),
 	}, event); !errors.Is(err, ErrAssetPinAuditConflict) {
@@ -786,7 +794,9 @@ func TestAssetPinTransitionRejectsAuditIdentityMismatchWithoutMutation(t *testin
 		ReferenceKey: ref.ReferenceKey,
 		FromState:    AssetReferenceStaged,
 		ToState:      AssetReferenceReviewOpen,
+		GitHubIssue:  4242,
 		UpdatedAt:    event.OccurredAt,
+		ExpiresAt:    ref.ExpiresAt,
 	}, event); !errors.Is(err, ErrAssetPinAuditConflict) {
 		t.Fatalf("TransitionAssetPinReference() error = %v, want ErrAssetPinAuditConflict", err)
 	}
@@ -863,11 +873,11 @@ func TestAssetPinJournalConflictIsDetectedBeforeSQLMutation(t *testing.T) {
 			t.Fatalf("UpsertAssetPinReference() error = %v", err)
 		}
 		event := testAssetPinEvent("event-preflight-transition", "reference_transition", ref, now.Add(time.Second))
-		first := AssetPinReferenceTransition{ReferenceKey: ref.ReferenceKey, FromState: AssetReferenceStaged, ToState: AssetReferenceReviewOpen, UpdatedAt: event.OccurredAt}
+		first := AssetPinReferenceTransition{ReferenceKey: ref.ReferenceKey, FromState: AssetReferenceStaged, ToState: AssetReferenceReviewOpen, GitHubIssue: 4242, UpdatedAt: event.OccurredAt, ExpiresAt: ref.ExpiresAt}
 		if err := store.auxiliaryMetadata.Append(prepareAssetPinTransitionFrameForTest(t, ref, first, event)); err != nil {
 			t.Fatalf("append durable transition frame: %v", err)
 		}
-		conflict := AssetPinReferenceTransition{ReferenceKey: ref.ReferenceKey, FromState: AssetReferenceApproved, ToState: AssetReferenceRejected, UpdatedAt: event.OccurredAt.Add(time.Second)}
+		conflict := AssetPinReferenceTransition{ReferenceKey: ref.ReferenceKey, FromState: AssetReferenceStaged, ToState: AssetReferenceReviewOpen, GitHubIssue: 4243, UpdatedAt: event.OccurredAt.Add(time.Second), ExpiresAt: ref.ExpiresAt}
 		if err := store.TransitionAssetPinReference(ctx, conflict, event); !errors.Is(err, ErrAssetPinAuditConflict) {
 			t.Fatalf("TransitionAssetPinReference() error = %v, want journal ErrAssetPinAuditConflict before CAS", err)
 		}
@@ -966,7 +976,7 @@ func TestAssetPinPublicWritesCommitAfterDurableFrameRetry(t *testing.T) {
 		if err := store.UpsertAssetPinReference(ctx, ref, testAssetPinEvent("event-durable-transition-upsert", "reference_upsert", ref, now)); err != nil {
 			t.Fatalf("UpsertAssetPinReference() error = %v", err)
 		}
-		transition := AssetPinReferenceTransition{ReferenceKey: ref.ReferenceKey, FromState: AssetReferenceStaged, ToState: AssetReferenceReviewOpen, GitHubIssue: 8181, UpdatedAt: now.Add(time.Second)}
+		transition := AssetPinReferenceTransition{ReferenceKey: ref.ReferenceKey, FromState: AssetReferenceStaged, ToState: AssetReferenceReviewOpen, GitHubIssue: 8181, UpdatedAt: now.Add(time.Second), ExpiresAt: ref.ExpiresAt}
 		event := testAssetPinEvent("event-durable-transition", "reference_transition", ref, transition.UpdatedAt)
 		event.Result = string(AssetReferenceReviewOpen)
 		frame := prepareAssetPinTransitionFrameForTest(t, ref, transition, event)
@@ -1046,25 +1056,22 @@ func TestAssetPinReferenceStatesExpiryAndValidation(t *testing.T) {
 	cases := []struct {
 		key       string
 		state     AssetReferenceState
+		createdAt time.Time
 		expiresAt time.Time
 		protected bool
 		expired   bool
 	}{
-		{key: "approved-past", state: AssetReferenceApproved, expiresAt: now.Add(-time.Hour), protected: true},
-		{key: "review-past", state: AssetReferenceReviewOpen, expiresAt: now.Add(-time.Hour), protected: true},
-		{key: "staged-zero", state: AssetReferenceStaged, protected: true},
-		{key: "staged-past", state: AssetReferenceStaged, expiresAt: now.Add(-time.Hour), expired: true},
-		{key: "rejected-future", state: AssetReferenceRejected, expiresAt: now.Add(time.Hour), protected: true},
-		{key: "superseded-past", state: AssetReferenceSuperseded, expiresAt: now.Add(-time.Second), expired: true},
-		{key: "abandoned-past", state: AssetReferenceAbandoned, expiresAt: now.Add(-time.Second), expired: true},
-		{key: "abandoned-zero", state: AssetReferenceAbandoned},
+		{key: "approved", state: AssetReferenceApproved, createdAt: now.Add(-time.Hour), protected: true},
+		{key: "review-past", state: AssetReferenceReviewOpen, createdAt: now.Add(-2 * time.Hour), expiresAt: now.Add(-time.Hour), protected: true},
+		{key: "staged-future", state: AssetReferenceStaged, createdAt: now.Add(-time.Hour), expiresAt: now.Add(time.Hour), protected: true},
+		{key: "staged-past", state: AssetReferenceStaged, createdAt: now.Add(-2 * time.Hour), expiresAt: now.Add(-time.Hour), expired: true},
+		{key: "rejected-future", state: AssetReferenceRejected, createdAt: now.Add(-29 * 24 * time.Hour), protected: true},
+		{key: "superseded-past", state: AssetReferenceSuperseded, createdAt: now.Add(-31 * 24 * time.Hour), expired: true},
+		{key: "abandoned-past", state: AssetReferenceAbandoned, createdAt: now.Add(-2 * time.Hour), expiresAt: now.Add(-time.Second), expired: true},
+		{key: "abandoned-future", state: AssetReferenceAbandoned, createdAt: now, expiresAt: now.Add(time.Hour)},
 	}
-	for i, tc := range cases {
-		createdAt := now.Add(time.Duration(i) * time.Nanosecond)
-		if !tc.expiresAt.IsZero() && tc.expiresAt.Before(createdAt) {
-			createdAt = tc.expiresAt.Add(-time.Hour)
-		}
-		ref := testAssetPinReference("reference-"+tc.key, "candidate-"+tc.key, cid, sha256, tc.state, createdAt, tc.expiresAt)
+	for _, tc := range cases {
+		ref := testAssetPinReference("reference-"+tc.key, "candidate-"+tc.key, cid, sha256, tc.state, tc.createdAt, tc.expiresAt)
 		if err := store.UpsertAssetPinReference(ctx, ref, testAssetPinEvent("event-"+tc.key, "reference_upsert", ref, ref.UpdatedAt)); err != nil {
 			t.Fatalf("UpsertAssetPinReference(%s) error = %v", tc.key, err)
 		}
@@ -1100,16 +1107,22 @@ func TestAssetPinReferenceStatesExpiryAndValidation(t *testing.T) {
 		}
 	}
 
-	deleteEvent := testAssetPinEvent("event-delete-staged-past", "reference_delete", expired[0], time.Now().UTC())
-	deleteEvent.ReferenceKey = "reference-staged-past"
+	var stagedPast AssetPinReference
+	for _, ref := range expired {
+		if ref.ReferenceKey == "reference-staged-past" {
+			stagedPast = ref
+			break
+		}
+	}
+	deleteEvent := testAssetPinEvent("event-delete-staged-past", "reference_delete", stagedPast, time.Now().UTC())
 	if err := store.DeleteExpiredAssetPinReference(ctx, "reference-staged-past", deleteEvent); err != nil {
 		t.Fatalf("DeleteExpiredAssetPinReference(expired) error = %v", err)
 	}
 	if _, ok, err := store.FindAssetPinReference(ctx, "reference-staged-past"); err != nil || ok {
 		t.Fatalf("deleted reference lookup = ok %v, err %v; want absent", ok, err)
 	}
-	protectedEvent := testAssetPinEvent("event-delete-approved", "reference_delete", AssetPinReference{ReferenceKey: "reference-approved-past"}, time.Now().UTC())
-	if err := store.DeleteExpiredAssetPinReference(ctx, "reference-approved-past", protectedEvent); !errors.Is(err, ErrAssetPinReferenceNotExpired) {
+	protectedEvent := testAssetPinEvent("event-delete-approved", "reference_delete", AssetPinReference{ReferenceKey: "reference-approved"}, time.Now().UTC())
+	if err := store.DeleteExpiredAssetPinReference(ctx, "reference-approved", protectedEvent); !errors.Is(err, ErrAssetPinReferenceNotExpired) {
 		t.Fatalf("DeleteExpiredAssetPinReference(approved) error = %v, want ErrAssetPinReferenceNotExpired", err)
 	}
 
@@ -1118,11 +1131,11 @@ func TestAssetPinReferenceStatesExpiryAndValidation(t *testing.T) {
 		t.Fatal("UpsertAssetPinReference() accepted unknown state")
 	}
 	if err := store.TransitionAssetPinReference(ctx, AssetPinReferenceTransition{
-		ReferenceKey: "reference-staged-zero",
+		ReferenceKey: "reference-staged-future",
 		FromState:    AssetReferenceStaged,
 		ToState:      AssetReferenceState("pending"),
 		UpdatedAt:    now.Add(time.Minute),
-	}, testAssetPinEvent("event-invalid-transition", "reference_transition", AssetPinReference{ReferenceKey: "reference-staged-zero"}, now)); err == nil {
+	}, testAssetPinEvent("event-invalid-transition", "reference_transition", AssetPinReference{ReferenceKey: "reference-staged-future"}, now)); err == nil {
 		t.Fatal("TransitionAssetPinReference() accepted unknown target state")
 	}
 }
@@ -1155,7 +1168,9 @@ func TestAssetPinReferenceTimesAreMonotonic(t *testing.T) {
 			ReferenceKey: ref.ReferenceKey,
 			FromState:    AssetReferenceStaged,
 			ToState:      AssetReferenceReviewOpen,
+			GitHubIssue:  4242,
 			UpdatedAt:    transitionedAt,
+			ExpiresAt:    ref.ExpiresAt,
 		}, testAssetPinEvent("event-time-backward", "reference_transition", ref, transitionedAt)); err == nil {
 			t.Fatal("TransitionAssetPinReference() accepted updated_at before current updated_at")
 		}
@@ -1228,8 +1243,8 @@ func TestAssetPinReferencePreservesCanonicalMetadataAndPreciseTimes(t *testing.T
 	if !got.CreatedAt.Equal(createdAt) || !got.UpdatedAt.Equal(updatedAt) {
 		t.Fatalf("stored timestamps = created %v updated %v, want %v and %v", got.CreatedAt, got.UpdatedAt, createdAt, updatedAt)
 	}
-	if !got.ExpiresAt.IsZero() {
-		t.Fatalf("zero expiry was not preserved: %v", got.ExpiresAt)
+	if !got.ExpiresAt.Equal(normalizeAssetPinTime(ref.ExpiresAt)) {
+		t.Fatalf("expiry = %v, want %v", got.ExpiresAt, normalizeAssetPinTime(ref.ExpiresAt))
 	}
 	if got.MetadataJSON != `{"a":{"x":1,"y":2},"z":[3,2,1]}` {
 		t.Fatalf("MetadataJSON = %q, want canonical sorted JSON", got.MetadataJSON)
@@ -1241,8 +1256,8 @@ func TestAssetPinReferencePreservesCanonicalMetadataAndPreciseTimes(t *testing.T
 	if err := store.db.QueryRow(`SELECT expires_at IS NULL FROM sdn_asset_pin_refs WHERE reference_key = ?`, ref.ReferenceKey).Scan(&expiryIsNull); err != nil {
 		t.Fatalf("read zero expiry representation: %v", err)
 	}
-	if !expiryIsNull {
-		t.Fatal("zero expiry must be stored as SQL NULL")
+	if expiryIsNull {
+		t.Fatal("finite staged expiry must not be stored as SQL NULL")
 	}
 }
 
@@ -1401,6 +1416,7 @@ func TestAssetPinEventBackedMutationsAreIdempotentOnLiveRetry(t *testing.T) {
 		ToState:      AssetReferenceReviewOpen,
 		GitHubIssue:  7070,
 		UpdatedAt:    reviewedAt,
+		ExpiresAt:    ref.ExpiresAt,
 	}
 	transitionEvent := testAssetPinEvent("event-live-retry-transition", "reference_transition", ref, reviewedAt)
 	transitionEvent.Result = string(AssetReferenceReviewOpen)
@@ -1431,6 +1447,8 @@ func TestAssetPinEventBackedMutationsAreIdempotentOnLiveRetry(t *testing.T) {
 	recreated.CID = "bafybeilivedeletenew"
 	recreated.SHA256 = strings.Repeat("9", 64)
 	recreated.State = AssetReferenceApproved
+	recreated.GitHubIssue = 4242
+	recreated.DecisionSHA256 = strings.Repeat("a", 64)
 	recreated.CreatedAt = now.Add(4 * time.Nanosecond)
 	recreated.UpdatedAt = recreated.CreatedAt
 	recreated.ExpiresAt = time.Time{}
@@ -1506,7 +1524,7 @@ func TestAssetPinMutationConflictsDoNotPartiallyWrite(t *testing.T) {
 	}
 }
 
-func TestAssetPinTransitionPreservesExistingDecisionDigest(t *testing.T) {
+func TestAssetPinTransitionReplacesApprovalDecisionDigest(t *testing.T) {
 	store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
 	ctx := context.Background()
 	now := time.Date(2026, 7, 13, 16, 45, 0, 246813579, time.UTC)
@@ -1522,6 +1540,7 @@ func TestAssetPinTransitionPreservesExistingDecisionDigest(t *testing.T) {
 		ReferenceKey:   ref.ReferenceKey,
 		FromState:      AssetReferenceReviewOpen,
 		ToState:        AssetReferenceApproved,
+		GitHubIssue:    ref.GitHubIssue,
 		DecisionSHA256: decisionSHA,
 		UpdatedAt:      approvedAt,
 	}, approvedEvent); err != nil {
@@ -1529,14 +1548,17 @@ func TestAssetPinTransitionPreservesExistingDecisionDigest(t *testing.T) {
 	}
 
 	supersededAt := approvedAt.Add(time.Second)
+	supersedeSHA := strings.Repeat("d", 64)
 	supersededEvent := testAssetPinEvent("event-decision-superseded", "reference_transition", ref, supersededAt)
 	supersededEvent.Result = string(AssetReferenceSuperseded)
 	if err := store.TransitionAssetPinReference(ctx, AssetPinReferenceTransition{
-		ReferenceKey: ref.ReferenceKey,
-		FromState:    AssetReferenceApproved,
-		ToState:      AssetReferenceSuperseded,
-		UpdatedAt:    supersededAt,
-		ExpiresAt:    supersededAt.Add(time.Hour),
+		ReferenceKey:   ref.ReferenceKey,
+		FromState:      AssetReferenceApproved,
+		ToState:        AssetReferenceSuperseded,
+		GitHubIssue:    ref.GitHubIssue,
+		DecisionSHA256: supersedeSHA,
+		UpdatedAt:      supersededAt,
+		ExpiresAt:      supersededAt.Add(30 * 24 * time.Hour),
 	}, supersededEvent); err != nil {
 		t.Fatalf("supersede TransitionAssetPinReference() error = %v", err)
 	}
@@ -1545,8 +1567,8 @@ func TestAssetPinTransitionPreservesExistingDecisionDigest(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("FindAssetPinReference() = %+v, %v, %v; want present", got, ok, err)
 	}
-	if got.State != AssetReferenceSuperseded || got.DecisionSHA256 != decisionSHA {
-		t.Fatalf("superseded reference = state %q decision %q, want %q and retained %q", got.State, got.DecisionSHA256, AssetReferenceSuperseded, decisionSHA)
+	if got.State != AssetReferenceSuperseded || got.DecisionSHA256 != supersedeSHA {
+		t.Fatalf("superseded reference = state %q decision %q, want %q and replacement %q", got.State, got.DecisionSHA256, AssetReferenceSuperseded, supersedeSHA)
 	}
 }
 
@@ -1569,7 +1591,7 @@ func TestAssetPinTransitionSetsAndPreservesGitHubIssue(t *testing.T) {
 		ToState:      AssetReferenceReviewOpen,
 		GitHubIssue:  4242,
 		UpdatedAt:    reviewAt,
-		ExpiresAt:    time.Time{},
+		ExpiresAt:    ref.ExpiresAt,
 	}, reviewEvent); err != nil {
 		t.Fatalf("review-open TransitionAssetPinReference() error = %v", err)
 	}
@@ -1585,7 +1607,7 @@ func TestAssetPinTransitionSetsAndPreservesGitHubIssue(t *testing.T) {
 		ReferenceKey:   ref.ReferenceKey,
 		FromState:      AssetReferenceReviewOpen,
 		ToState:        AssetReferenceApproved,
-		GitHubIssue:    0,
+		GitHubIssue:    4242,
 		DecisionSHA256: strings.Repeat("e", 64),
 		UpdatedAt:      approvedAt,
 	}, approvedEvent); err != nil {
@@ -1598,6 +1620,444 @@ func TestAssetPinTransitionSetsAndPreservesGitHubIssue(t *testing.T) {
 	if got.State != AssetReferenceApproved || got.GitHubIssue != 4242 {
 		t.Fatalf("approved reference = state %q issue %d, want approved with preserved issue 4242", got.State, got.GitHubIssue)
 	}
+}
+
+func TestAssetPinTransitionLifecycleMatrix(t *testing.T) {
+	states := []AssetReferenceState{
+		AssetReferenceStaged,
+		AssetReferenceReviewOpen,
+		AssetReferenceApproved,
+		AssetReferenceRejected,
+		AssetReferenceSuperseded,
+		AssetReferenceAbandoned,
+	}
+	allowed := map[[2]AssetReferenceState]bool{
+		{AssetReferenceStaged, AssetReferenceReviewOpen}:    true,
+		{AssetReferenceStaged, AssetReferenceAbandoned}:     true,
+		{AssetReferenceReviewOpen, AssetReferenceApproved}:  true,
+		{AssetReferenceReviewOpen, AssetReferenceRejected}:  true,
+		{AssetReferenceReviewOpen, AssetReferenceAbandoned}: true,
+		{AssetReferenceApproved, AssetReferenceSuperseded}:  true,
+	}
+	ctx := context.Background()
+	baseTime := time.Date(2026, 7, 14, 8, 0, 0, 123456789, time.UTC)
+	for _, from := range states {
+		for _, to := range states {
+			name := string(from) + "_to_" + string(to)
+			t.Run(name, func(t *testing.T) {
+				store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
+				ref := validAssetPinReferenceForState("reference-matrix-"+name, "candidate-matrix-"+name, from, baseTime)
+				if err := store.UpsertAssetPinReference(ctx, ref, testAssetPinEvent("event-matrix-upsert-"+name, "reference_upsert", ref, baseTime)); err != nil {
+					t.Fatalf("UpsertAssetPinReference() error = %v", err)
+				}
+				updatedAt := baseTime.Add(time.Second)
+				transition := AssetPinReferenceTransition{
+					ReferenceKey: ref.ReferenceKey,
+					FromState:    from,
+					ToState:      to,
+					GitHubIssue:  ref.GitHubIssue,
+					UpdatedAt:    updatedAt,
+				}
+				switch to {
+				case AssetReferenceStaged:
+					transition.GitHubIssue = 0
+					transition.ExpiresAt = updatedAt.Add(time.Hour)
+				case AssetReferenceReviewOpen:
+					transition.GitHubIssue = 4242
+					transition.ExpiresAt = ref.ExpiresAt
+				case AssetReferenceApproved:
+					if transition.GitHubIssue == 0 {
+						transition.GitHubIssue = 4242
+					}
+					transition.DecisionSHA256 = strings.Repeat("b", 64)
+				case AssetReferenceRejected, AssetReferenceSuperseded:
+					if transition.GitHubIssue == 0 {
+						transition.GitHubIssue = 4242
+					}
+					transition.DecisionSHA256 = strings.Repeat("b", 64)
+					transition.ExpiresAt = updatedAt.Add(30 * 24 * time.Hour)
+				case AssetReferenceAbandoned:
+					transition.ExpiresAt = updatedAt
+				}
+				event := testAssetPinEvent("event-matrix-transition-"+name, "asset_reference_state", ref, updatedAt)
+				event.Result = string(to)
+				err := store.TransitionAssetPinReference(ctx, transition, event)
+				if !allowed[[2]AssetReferenceState{from, to}] {
+					if !errors.Is(err, ErrAssetPinReferenceConflict) {
+						t.Fatalf("forbidden transition error = %v, want ErrAssetPinReferenceConflict", err)
+					}
+					got, ok, findErr := store.FindAssetPinReference(ctx, ref.ReferenceKey)
+					if findErr != nil || !ok || got.State != from {
+						t.Fatalf("reference after forbidden transition = %+v, %v, %v; want unchanged %s", got, ok, findErr, from)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("allowed transition error = %v", err)
+				}
+				got, ok, findErr := store.FindAssetPinReference(ctx, ref.ReferenceKey)
+				if findErr != nil || !ok || got.State != to || got.GitHubIssue != transition.GitHubIssue || got.DecisionSHA256 != transition.DecisionSHA256 || !got.ExpiresAt.Equal(transition.ExpiresAt) {
+					t.Fatalf("reference after allowed transition = %+v, %v, %v; want %+v", got, ok, findErr, transition)
+				}
+			})
+		}
+	}
+}
+
+func TestAssetPinTransitionEnforcesIssueDigestAndExpiryInvariants(t *testing.T) {
+	now := time.Date(2026, 7, 14, 9, 0, 0, 123456789, time.UTC)
+	tests := []struct {
+		name   string
+		from   AssetReferenceState
+		to     AssetReferenceState
+		mutate func(*AssetPinReferenceTransition, AssetPinReference)
+	}{
+		{name: "review requires positive issue", from: AssetReferenceStaged, to: AssetReferenceReviewOpen, mutate: func(tr *AssetPinReferenceTransition, _ AssetPinReference) { tr.GitHubIssue = 0 }},
+		{name: "review forbids digest", from: AssetReferenceStaged, to: AssetReferenceReviewOpen, mutate: func(tr *AssetPinReferenceTransition, _ AssetPinReference) {
+			tr.DecisionSHA256 = strings.Repeat("c", 64)
+		}},
+		{name: "review retains staged expiry", from: AssetReferenceStaged, to: AssetReferenceReviewOpen, mutate: func(tr *AssetPinReferenceTransition, _ AssetPinReference) {
+			tr.ExpiresAt = tr.ExpiresAt.Add(time.Second)
+		}},
+		{name: "approval preserves issue", from: AssetReferenceReviewOpen, to: AssetReferenceApproved, mutate: func(tr *AssetPinReferenceTransition, _ AssetPinReference) { tr.GitHubIssue++ }},
+		{name: "approval requires digest", from: AssetReferenceReviewOpen, to: AssetReferenceApproved, mutate: func(tr *AssetPinReferenceTransition, _ AssetPinReference) { tr.DecisionSHA256 = "" }},
+		{name: "approval requires lowercase digest", from: AssetReferenceReviewOpen, to: AssetReferenceApproved, mutate: func(tr *AssetPinReferenceTransition, _ AssetPinReference) {
+			tr.DecisionSHA256 = strings.Repeat("C", 64)
+		}},
+		{name: "approval has no expiry", from: AssetReferenceReviewOpen, to: AssetReferenceApproved, mutate: func(tr *AssetPinReferenceTransition, _ AssetPinReference) { tr.ExpiresAt = tr.UpdatedAt.Add(time.Hour) }},
+		{name: "rejection preserves issue", from: AssetReferenceReviewOpen, to: AssetReferenceRejected, mutate: func(tr *AssetPinReferenceTransition, _ AssetPinReference) { tr.GitHubIssue++ }},
+		{name: "rejection expires exactly thirty days", from: AssetReferenceReviewOpen, to: AssetReferenceRejected, mutate: func(tr *AssetPinReferenceTransition, _ AssetPinReference) {
+			tr.ExpiresAt = tr.ExpiresAt.Add(time.Nanosecond)
+		}},
+		{name: "supersede preserves issue", from: AssetReferenceApproved, to: AssetReferenceSuperseded, mutate: func(tr *AssetPinReferenceTransition, _ AssetPinReference) { tr.GitHubIssue++ }},
+		{name: "supersede replaces digest", from: AssetReferenceApproved, to: AssetReferenceSuperseded, mutate: func(tr *AssetPinReferenceTransition, ref AssetPinReference) { tr.DecisionSHA256 = ref.DecisionSHA256 }},
+		{name: "abandon preserves issue", from: AssetReferenceReviewOpen, to: AssetReferenceAbandoned, mutate: func(tr *AssetPinReferenceTransition, _ AssetPinReference) { tr.GitHubIssue++ }},
+		{name: "abandon forbids digest", from: AssetReferenceReviewOpen, to: AssetReferenceAbandoned, mutate: func(tr *AssetPinReferenceTransition, _ AssetPinReference) {
+			tr.DecisionSHA256 = strings.Repeat("c", 64)
+		}},
+		{name: "abandon requires finite expiry", from: AssetReferenceStaged, to: AssetReferenceAbandoned, mutate: func(tr *AssetPinReferenceTransition, _ AssetPinReference) { tr.ExpiresAt = time.Time{} }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
+			ref := validAssetPinReferenceForState("reference-invariant-"+strings.ReplaceAll(test.name, " ", "-"), "candidate-invariant-"+strings.ReplaceAll(test.name, " ", "-"), test.from, now)
+			if err := store.UpsertAssetPinReference(context.Background(), ref, testAssetPinEvent("event-invariant-upsert-"+strings.ReplaceAll(test.name, " ", "-"), "reference_upsert", ref, now)); err != nil {
+				t.Fatalf("UpsertAssetPinReference() error = %v", err)
+			}
+			transition := validAssetPinTransitionForTest(ref, test.to, now.Add(time.Second))
+			test.mutate(&transition, ref)
+			event := testAssetPinEvent("event-invariant-transition-"+strings.ReplaceAll(test.name, " ", "-"), "asset_reference_state", ref, transition.UpdatedAt)
+			err := store.TransitionAssetPinReference(context.Background(), transition, event)
+			if !errors.Is(err, ErrAssetPinReferenceConflict) {
+				t.Fatalf("TransitionAssetPinReference() error = %v, want ErrAssetPinReferenceConflict", err)
+			}
+			got, ok, findErr := store.FindAssetPinReference(context.Background(), ref.ReferenceKey)
+			if findErr != nil || !ok || got != ref {
+				t.Fatalf("reference after invalid transition = %+v, %v, %v; want unchanged %+v", got, ok, findErr, ref)
+			}
+			events, listErr := store.ListAssetPinAuditEvents(context.Background(), AssetPinAuditEventQuery{EventID: event.EventID})
+			if listErr != nil || len(events) != 0 {
+				t.Fatalf("invalid transition audit events = %+v, %v; want none", events, listErr)
+			}
+		})
+	}
+}
+
+func TestAssetPinReferenceUpsertEnforcesLifecycleInvariants(t *testing.T) {
+	now := time.Date(2026, 7, 14, 10, 0, 0, 123456789, time.UTC)
+	tests := []struct {
+		name   string
+		state  AssetReferenceState
+		mutate func(*AssetPinReference)
+	}{
+		{name: "staged issue", state: AssetReferenceStaged, mutate: func(ref *AssetPinReference) { ref.GitHubIssue = 1 }},
+		{name: "staged digest", state: AssetReferenceStaged, mutate: func(ref *AssetPinReference) { ref.DecisionSHA256 = strings.Repeat("c", 64) }},
+		{name: "staged zero expiry", state: AssetReferenceStaged, mutate: func(ref *AssetPinReference) { ref.ExpiresAt = time.Time{} }},
+		{name: "review zero issue", state: AssetReferenceReviewOpen, mutate: func(ref *AssetPinReference) { ref.GitHubIssue = 0 }},
+		{name: "review digest", state: AssetReferenceReviewOpen, mutate: func(ref *AssetPinReference) { ref.DecisionSHA256 = strings.Repeat("c", 64) }},
+		{name: "review zero expiry", state: AssetReferenceReviewOpen, mutate: func(ref *AssetPinReference) { ref.ExpiresAt = time.Time{} }},
+		{name: "approved zero issue", state: AssetReferenceApproved, mutate: func(ref *AssetPinReference) { ref.GitHubIssue = 0 }},
+		{name: "approved missing digest", state: AssetReferenceApproved, mutate: func(ref *AssetPinReference) { ref.DecisionSHA256 = "" }},
+		{name: "approved uppercase digest", state: AssetReferenceApproved, mutate: func(ref *AssetPinReference) { ref.DecisionSHA256 = strings.Repeat("C", 64) }},
+		{name: "approved finite expiry", state: AssetReferenceApproved, mutate: func(ref *AssetPinReference) { ref.ExpiresAt = now.Add(time.Hour) }},
+		{name: "rejected wrong expiry", state: AssetReferenceRejected, mutate: func(ref *AssetPinReference) { ref.ExpiresAt = ref.ExpiresAt.Add(time.Nanosecond) }},
+		{name: "superseded missing digest", state: AssetReferenceSuperseded, mutate: func(ref *AssetPinReference) { ref.DecisionSHA256 = "" }},
+		{name: "abandoned digest", state: AssetReferenceAbandoned, mutate: func(ref *AssetPinReference) { ref.DecisionSHA256 = strings.Repeat("c", 64) }},
+		{name: "abandoned zero expiry", state: AssetReferenceAbandoned, mutate: func(ref *AssetPinReference) { ref.ExpiresAt = time.Time{} }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
+			key := strings.ReplaceAll(test.name, " ", "-")
+			ref := validAssetPinReferenceForState("reference-upsert-"+key, "candidate-upsert-"+key, test.state, now)
+			test.mutate(&ref)
+			event := testAssetPinEvent("event-upsert-"+key, "reference_upsert", ref, now)
+			if err := store.UpsertAssetPinReference(context.Background(), ref, event); err == nil {
+				t.Fatal("UpsertAssetPinReference() accepted invalid lifecycle fields")
+			}
+			if _, ok, err := store.FindAssetPinReference(context.Background(), ref.ReferenceKey); err != nil || ok {
+				t.Fatalf("invalid reference lookup = ok %v err %v, want absent", ok, err)
+			}
+		})
+	}
+}
+
+func TestAssetPinReplayRejectsMalformedLegacyDecisionAndExpiryTransitions(t *testing.T) {
+	tests := []struct {
+		name       string
+		transition func(AssetPinReference, time.Time) AssetPinReferenceTransition
+	}{
+		{
+			name: "approval missing persisted issue",
+			transition: func(ref AssetPinReference, updatedAt time.Time) AssetPinReferenceTransition {
+				return AssetPinReferenceTransition{
+					ReferenceKey: ref.ReferenceKey, FromState: AssetReferenceReviewOpen, ToState: AssetReferenceApproved,
+					DecisionSHA256: strings.Repeat("c", 64), UpdatedAt: updatedAt,
+				}
+			},
+		},
+		{
+			name: "rejection has noncanonical retention expiry",
+			transition: func(ref AssetPinReference, updatedAt time.Time) AssetPinReferenceTransition {
+				return AssetPinReferenceTransition{
+					ReferenceKey: ref.ReferenceKey, FromState: AssetReferenceReviewOpen, ToState: AssetReferenceRejected,
+					GitHubIssue: ref.GitHubIssue, DecisionSHA256: strings.Repeat("d", 64), UpdatedAt: updatedAt,
+					ExpiresAt: updatedAt.Add(30*24*time.Hour + time.Nanosecond),
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			basePath := filepath.Join(t.TempDir(), "store")
+			store := newAssetPinTestStore(t, basePath)
+			ctx := context.Background()
+			now := time.Date(2026, 7, 14, 10, 30, 0, 123456789, time.UTC)
+			ref := validAssetPinReferenceForState("reference-malformed-replay", "candidate-malformed-replay", AssetReferenceStaged, now)
+			if err := store.UpsertAssetPinReference(ctx, ref, testAssetPinEvent("event-malformed-replay-upsert", "reference_upsert", ref, now)); err != nil {
+				t.Fatalf("UpsertAssetPinReference() error = %v", err)
+			}
+			review := validAssetPinTransitionForTest(ref, AssetReferenceReviewOpen, now.Add(time.Second))
+			if err := store.TransitionAssetPinReference(ctx, review, testAssetPinEvent("event-malformed-replay-review", "asset_reference_state", ref, review.UpdatedAt)); err != nil {
+				t.Fatalf("TransitionAssetPinReference(review) error = %v", err)
+			}
+			current, ok, err := store.FindAssetPinReference(ctx, ref.ReferenceKey)
+			if err != nil || !ok {
+				t.Fatalf("FindAssetPinReference() = %+v, %v, %v; want review reference", current, ok, err)
+			}
+			malformed := test.transition(current, now.Add(2*time.Second))
+			event := testAssetPinEvent("event-malformed-replay-decision", "asset_reference_state", current, malformed.UpdatedAt)
+			event.Result = string(malformed.ToState)
+			payload := auxiliaryAssetPinReferenceTransition{Transition: malformed, Event: event}
+			if err := store.auxiliaryMetadata.Append(auxiliaryMetadataEvent{
+				Kind: auxiliaryEventAssetPinReferenceTransition, AssetPinReferenceTransition: &payload,
+			}); err != nil {
+				t.Fatalf("append malformed legacy frame: %v", err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+			if _, err := newFlatSQLStoreWithoutTestCleanup(basePath); !errors.Is(err, ErrAssetPinReferenceConflict) {
+				t.Fatalf("reopen malformed legacy journal error = %v, want ErrAssetPinReferenceConflict", err)
+			}
+		})
+	}
+}
+
+func TestAssetPinTransitionConcurrentRetriesAndConflicts(t *testing.T) {
+	now := time.Date(2026, 7, 14, 11, 0, 0, 123456789, time.UTC)
+
+	t.Run("identical event is idempotent", func(t *testing.T) {
+		store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
+		ref := validAssetPinReferenceForState("reference-concurrent-identical", "candidate-concurrent-identical", AssetReferenceStaged, now)
+		if err := store.UpsertAssetPinReference(context.Background(), ref, testAssetPinEvent("event-concurrent-identical-upsert", "reference_upsert", ref, now)); err != nil {
+			t.Fatalf("UpsertAssetPinReference() error = %v", err)
+		}
+		transition := validAssetPinTransitionForTest(ref, AssetReferenceReviewOpen, now.Add(time.Second))
+		event := testAssetPinEvent("event-concurrent-identical", "asset_reference_state", ref, transition.UpdatedAt)
+		event.Result = string(transition.ToState)
+		errorsOut := make(chan error, 2)
+		var start sync.WaitGroup
+		start.Add(1)
+		for i := 0; i < 2; i++ {
+			go func() {
+				start.Wait()
+				errorsOut <- store.TransitionAssetPinReference(context.Background(), transition, event)
+			}()
+		}
+		start.Done()
+		for i := 0; i < 2; i++ {
+			if err := <-errorsOut; err != nil {
+				t.Fatalf("identical concurrent transition error = %v", err)
+			}
+		}
+		events, err := store.ListAssetPinAuditEvents(context.Background(), AssetPinAuditEventQuery{EventID: event.EventID})
+		if err != nil || len(events) != 1 {
+			t.Fatalf("identical transition events = %+v, %v; want one", events, err)
+		}
+	})
+
+	t.Run("different decisions have one winner", func(t *testing.T) {
+		store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
+		ref := validAssetPinReferenceForState("reference-concurrent-conflict", "candidate-concurrent-conflict", AssetReferenceReviewOpen, now)
+		if err := store.UpsertAssetPinReference(context.Background(), ref, testAssetPinEvent("event-concurrent-conflict-upsert", "reference_upsert", ref, now)); err != nil {
+			t.Fatalf("UpsertAssetPinReference() error = %v", err)
+		}
+		errorsOut := make(chan error, 2)
+		var start sync.WaitGroup
+		start.Add(1)
+		for i, digestChar := range []string{"b", "c"} {
+			transition := validAssetPinTransitionForTest(ref, AssetReferenceApproved, now.Add(time.Second))
+			transition.DecisionSHA256 = strings.Repeat(digestChar, 64)
+			event := testAssetPinEvent(fmt.Sprintf("event-concurrent-conflict-%d", i), "asset_reference_state", ref, transition.UpdatedAt)
+			event.Result = string(transition.ToState)
+			go func(transition AssetPinReferenceTransition, event AssetPinAuditEvent) {
+				start.Wait()
+				errorsOut <- store.TransitionAssetPinReference(context.Background(), transition, event)
+			}(transition, event)
+		}
+		start.Done()
+		successes, conflicts := 0, 0
+		for i := 0; i < 2; i++ {
+			err := <-errorsOut
+			switch {
+			case err == nil:
+				successes++
+			case errors.Is(err, ErrAssetPinReferenceConflict):
+				conflicts++
+			default:
+				t.Fatalf("unexpected concurrent decision error = %v", err)
+			}
+		}
+		if successes != 1 || conflicts != 1 {
+			t.Fatalf("concurrent decisions = %d successes/%d conflicts, want 1/1", successes, conflicts)
+		}
+		got, ok, err := store.FindAssetPinReference(context.Background(), ref.ReferenceKey)
+		if err != nil || !ok || got.State != AssetReferenceApproved || (got.DecisionSHA256 != strings.Repeat("b", 64) && got.DecisionSHA256 != strings.Repeat("c", 64)) {
+			t.Fatalf("winning decision = %+v, %v, %v", got, ok, err)
+		}
+	})
+}
+
+func TestAssetPinAllowedTransitionsReplayToIdenticalLifecycleState(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	store := newAssetPinTestStore(t, basePath)
+	ctx := context.Background()
+	now := time.Date(2026, 7, 14, 12, 0, 0, 123456789, time.UTC)
+	refs := []AssetPinReference{
+		validAssetPinReferenceForState("reference-replay-superseded", "candidate-replay-superseded", AssetReferenceStaged, now),
+		validAssetPinReferenceForState("reference-replay-rejected", "candidate-replay-rejected", AssetReferenceStaged, now),
+		validAssetPinReferenceForState("reference-replay-abandoned-staged", "candidate-replay-abandoned-staged", AssetReferenceStaged, now),
+		validAssetPinReferenceForState("reference-replay-abandoned-review", "candidate-replay-abandoned-review", AssetReferenceStaged, now),
+	}
+	for index := range refs {
+		ref := refs[index]
+		if err := store.UpsertAssetPinReference(ctx, ref, testAssetPinEvent(fmt.Sprintf("event-replay-upsert-%d", index), "reference_upsert", ref, now)); err != nil {
+			t.Fatalf("UpsertAssetPinReference(%d) error = %v", index, err)
+		}
+	}
+	apply := func(ref *AssetPinReference, transition AssetPinReferenceTransition, eventID string) {
+		t.Helper()
+		event := testAssetPinEvent(eventID, "asset_reference_state", *ref, transition.UpdatedAt)
+		event.Result = string(transition.ToState)
+		if err := store.TransitionAssetPinReference(ctx, transition, event); err != nil {
+			t.Fatalf("TransitionAssetPinReference(%s) error = %v", eventID, err)
+		}
+		ref.State = transition.ToState
+		ref.GitHubIssue = transition.GitHubIssue
+		ref.DecisionSHA256 = transition.DecisionSHA256
+		ref.UpdatedAt = transition.UpdatedAt
+		ref.ExpiresAt = transition.ExpiresAt
+	}
+
+	review := validAssetPinTransitionForTest(refs[0], AssetReferenceReviewOpen, now.Add(time.Second))
+	apply(&refs[0], review, "event-replay-superseded-review")
+	approve := validAssetPinTransitionForTest(refs[0], AssetReferenceApproved, now.Add(2*time.Second))
+	apply(&refs[0], approve, "event-replay-superseded-approve")
+	supersede := validAssetPinTransitionForTest(refs[0], AssetReferenceSuperseded, now.Add(3*time.Second))
+	supersede.DecisionSHA256 = strings.Repeat("c", 64)
+	apply(&refs[0], supersede, "event-replay-superseded-final")
+
+	review = validAssetPinTransitionForTest(refs[1], AssetReferenceReviewOpen, now.Add(4*time.Second))
+	apply(&refs[1], review, "event-replay-rejected-review")
+	reject := validAssetPinTransitionForTest(refs[1], AssetReferenceRejected, now.Add(5*time.Second))
+	apply(&refs[1], reject, "event-replay-rejected-final")
+
+	abandon := validAssetPinTransitionForTest(refs[2], AssetReferenceAbandoned, now.Add(6*time.Second))
+	apply(&refs[2], abandon, "event-replay-abandoned-staged-final")
+
+	review = validAssetPinTransitionForTest(refs[3], AssetReferenceReviewOpen, now.Add(7*time.Second))
+	apply(&refs[3], review, "event-replay-abandoned-review-open")
+	abandon = validAssetPinTransitionForTest(refs[3], AssetReferenceAbandoned, now.Add(8*time.Second))
+	apply(&refs[3], abandon, "event-replay-abandoned-review-final")
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	reopened, err := newFlatSQLStoreWithoutTestCleanup(basePath)
+	if err != nil {
+		t.Fatalf("reopen NewFlatSQLStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	for _, want := range refs {
+		got, ok, err := reopened.FindAssetPinReference(ctx, want.ReferenceKey)
+		if err != nil || !ok || got != want {
+			t.Fatalf("replayed reference %q = %+v, %v, %v; want %+v", want.ReferenceKey, got, ok, err, want)
+		}
+	}
+}
+
+func newFlatSQLStoreWithoutTestCleanup(basePath string) (*FlatSQLStore, error) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		return nil, err
+	}
+	return NewFlatSQLStore(basePath, validator)
+}
+
+func validAssetPinTransitionForTest(ref AssetPinReference, to AssetReferenceState, updatedAt time.Time) AssetPinReferenceTransition {
+	transition := AssetPinReferenceTransition{
+		ReferenceKey: ref.ReferenceKey,
+		FromState:    ref.State,
+		ToState:      to,
+		GitHubIssue:  ref.GitHubIssue,
+		UpdatedAt:    updatedAt,
+	}
+	switch to {
+	case AssetReferenceReviewOpen:
+		transition.GitHubIssue = 4242
+		transition.ExpiresAt = ref.ExpiresAt
+	case AssetReferenceApproved:
+		transition.DecisionSHA256 = strings.Repeat("b", 64)
+	case AssetReferenceRejected, AssetReferenceSuperseded:
+		transition.DecisionSHA256 = strings.Repeat("b", 64)
+		transition.ExpiresAt = updatedAt.Add(30 * 24 * time.Hour)
+	case AssetReferenceAbandoned:
+		transition.ExpiresAt = updatedAt
+	}
+	return transition
+}
+
+func validAssetPinReferenceForState(referenceKey, candidateKey string, state AssetReferenceState, updatedAt time.Time) AssetPinReference {
+	ref := testAssetPinReference(referenceKey, candidateKey, "bafybeimatrixcid"+strings.ReplaceAll(string(state), "_", ""), strings.Repeat("a", 64), state, updatedAt, updatedAt.Add(90*24*time.Hour))
+	switch state {
+	case AssetReferenceStaged:
+		ref.GitHubIssue = 0
+	case AssetReferenceReviewOpen:
+		ref.GitHubIssue = 4242
+	case AssetReferenceApproved:
+		ref.GitHubIssue = 4242
+		ref.DecisionSHA256 = strings.Repeat("a", 64)
+		ref.ExpiresAt = time.Time{}
+	case AssetReferenceRejected, AssetReferenceSuperseded:
+		ref.GitHubIssue = 4242
+		ref.DecisionSHA256 = strings.Repeat("a", 64)
+		ref.ExpiresAt = updatedAt.Add(30 * 24 * time.Hour)
+	case AssetReferenceAbandoned:
+		ref.GitHubIssue = 0
+		ref.ExpiresAt = updatedAt
+	}
+	return ref
 }
 
 func newAssetPinTestStore(t *testing.T, basePath string) *FlatSQLStore {
@@ -1633,7 +2093,7 @@ func assertSingleAssetOIDCReceiptForTest(t *testing.T, ctx context.Context, stor
 }
 
 func testAssetPinReference(referenceKey, candidateKey, cid, sha256 string, state AssetReferenceState, createdAt, expiresAt time.Time) AssetPinReference {
-	return AssetPinReference{
+	ref := AssetPinReference{
 		ReferenceKey:  referenceKey,
 		CandidateKey:  candidateKey,
 		CID:           cid,
@@ -1644,12 +2104,35 @@ func testAssetPinReference(referenceKey, candidateKey, cid, sha256 string, state
 		LicenseName:   "CC-BY-4.0",
 		Attribution:   "Example Artist",
 		MetadataJSON:  `{"format":"glb","polygon_count":1024}`,
-		GitHubIssue:   101,
 		WorkflowRunID: "123456789",
 		CreatedAt:     createdAt,
 		UpdatedAt:     createdAt,
 		ExpiresAt:     expiresAt,
 	}
+	switch state {
+	case AssetReferenceStaged:
+		if ref.ExpiresAt.IsZero() && !createdAt.IsZero() {
+			ref.ExpiresAt = createdAt.Add(90 * 24 * time.Hour)
+		}
+	case AssetReferenceReviewOpen:
+		ref.GitHubIssue = 101
+		if ref.ExpiresAt.IsZero() && !createdAt.IsZero() {
+			ref.ExpiresAt = createdAt.Add(90 * 24 * time.Hour)
+		}
+	case AssetReferenceApproved:
+		ref.GitHubIssue = 101
+		ref.DecisionSHA256 = strings.Repeat("f", 64)
+		ref.ExpiresAt = time.Time{}
+	case AssetReferenceRejected, AssetReferenceSuperseded:
+		ref.GitHubIssue = 101
+		ref.DecisionSHA256 = strings.Repeat("f", 64)
+		ref.ExpiresAt = createdAt.Add(30 * 24 * time.Hour)
+	case AssetReferenceAbandoned:
+		if ref.ExpiresAt.IsZero() {
+			ref.ExpiresAt = createdAt
+		}
+	}
+	return ref
 }
 
 func testAssetPinEvent(eventID, kind string, ref AssetPinReference, occurredAt time.Time) AssetPinAuditEvent {
