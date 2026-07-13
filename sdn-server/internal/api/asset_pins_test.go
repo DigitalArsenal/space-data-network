@@ -27,7 +27,10 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
-const testAssetCID = "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e"
+const (
+	testAssetCID          = "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e"
+	testAssetAlternateCID = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
+)
 
 type fakeAssetPinVerifier struct {
 	mu     sync.Mutex
@@ -121,15 +124,34 @@ func (f *fakeAssetPinCapacity) AvailableBytes(path string) (uint64, error) {
 }
 
 type fakeAssetPinner struct {
-	mu         sync.Mutex
-	cid        string
-	pinErr     error
-	unpinErr   error
-	pinCalls   int
-	unpinCalls int
-	path       string
-	unpinned   string
-	pinFunc    func(context.Context, string) (string, error)
+	mu             sync.Mutex
+	calculatedCID  string
+	calculateErr   error
+	cid            string
+	pinErr         error
+	unpinErr       error
+	calculateCalls int
+	pinCalls       int
+	unpinCalls     int
+	calculatePath  string
+	path           string
+	unpinned       string
+	calculateFunc  func(context.Context, string) (string, error)
+	pinFunc        func(context.Context, string) (string, error)
+}
+
+func (f *fakeAssetPinner) CalculateAssetGLBCID(ctx context.Context, path string) (string, error) {
+	f.mu.Lock()
+	f.calculateCalls++
+	f.calculatePath = path
+	callback := f.calculateFunc
+	cidValue := f.calculatedCID
+	err := f.calculateErr
+	f.mu.Unlock()
+	if callback != nil {
+		return callback(ctx, path)
+	}
+	return cidValue, err
 }
 
 func (f *fakeAssetPinner) PinAssetGLB(ctx context.Context, path string) (string, error) {
@@ -258,7 +280,7 @@ func newAssetPinTestRig(t *testing.T, configure func(*AssetPinHandlerOptions)) *
 		byEvent:     make(map[string]storage.AssetPinAuditEvent),
 	}
 	capacity := &fakeAssetPinCapacity{available: 1 << 30}
-	pinner := &fakeAssetPinner{cid: testAssetCID}
+	pinner := &fakeAssetPinner{calculatedCID: testAssetCID, cid: testAssetCID}
 	recovery := &fakeAssetPinRecoveryStore{markers: make(map[string]assetpin.AssetPinRecoveryMarker)}
 	dataDir := t.TempDir()
 	options := AssetPinHandlerOptions{
@@ -554,6 +576,73 @@ func TestAssetPinKuboAndLedgerFailureCleanup(t *testing.T) {
 	})
 }
 
+func TestAssetPinPlansDeterministicCIDBeforeMarkerAndPin(t *testing.T) {
+	glb := testGLB([]byte("plan-before-pin"))
+	candidateKey := "candidate-plan-before-pin"
+	referenceKey := stableTestID("asset-pin-reference:v1\n" + candidateKey)
+	parts := []testMultipartPart{{name: "metadata", data: testCanonicalMetadata(glb, candidateKey)}, {name: "file", filename: "asset.glb", data: glb}}
+	rig := newAssetPinTestRig(t, nil)
+	rig.pinner.calculateFunc = func(_ context.Context, path string) (string, error) {
+		if rig.capacity.calls != 1 {
+			t.Fatalf("capacity calls before CID calculation = %d, want 1", rig.capacity.calls)
+		}
+		if _, exists := rig.recovery.marker(referenceKey); exists {
+			t.Fatal("recovery marker existed before side-effect-free CID calculation")
+		}
+		if rig.pinner.pinCalls != 0 {
+			t.Fatalf("pin calls before CID calculation = %d, want 0", rig.pinner.pinCalls)
+		}
+		if path == "" {
+			t.Fatal("CID calculation received an empty staged path")
+		}
+		return testAssetCID, nil
+	}
+	rig.pinner.pinFunc = func(_ context.Context, path string) (string, error) {
+		marker, exists := rig.recovery.marker(referenceKey)
+		if !exists || marker.Phase != assetpin.AssetPinRecoveryIntent || marker.ExpectedCID != testAssetCID || marker.CID != "" {
+			t.Fatalf("intent before pin = %+v/%v", marker, exists)
+		}
+		if rig.pinner.calculateCalls != 1 || path != rig.pinner.calculatePath {
+			t.Fatalf("calculate calls/path before pin = %d/%q; pin path=%q", rig.pinner.calculateCalls, rig.pinner.calculatePath, path)
+		}
+		return testAssetCID, nil
+	}
+	response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", response.Code, response.Body.String())
+	}
+	if rig.pinner.calculateCalls != 1 || rig.pinner.pinCalls != 1 || len(rig.store.upserts) != 1 {
+		t.Fatalf("calculate/pin/upsert = %d/%d/%d, want 1/1/1", rig.pinner.calculateCalls, rig.pinner.pinCalls, len(rig.store.upserts))
+	}
+}
+
+func TestAssetPinCIDPlanningFailureCreatesNoMarkerOrPin(t *testing.T) {
+	glb := testGLB([]byte("plan-failure"))
+	parts := []testMultipartPart{{name: "metadata", data: testCanonicalMetadata(glb, "candidate-plan-failure")}, {name: "file", filename: "asset.glb", data: glb}}
+	tests := []struct {
+		name string
+		cid  string
+		err  error
+	}{
+		{name: "backend failure", err: errors.New("only-hash unavailable")},
+		{name: "noncanonical response", cid: "not-a-cid"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rig := newAssetPinTestRig(t, nil)
+			rig.pinner.calculatedCID = test.cid
+			rig.pinner.calculateErr = test.err
+			response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
+			if response.Code != http.StatusBadGateway {
+				t.Fatalf("status = %d, want 502; body=%s", response.Code, response.Body.String())
+			}
+			if rig.pinner.calculateCalls != 1 || rig.pinner.pinCalls != 0 || len(rig.recovery.markers) != 0 || len(rig.store.upserts) != 0 {
+				t.Fatalf("calculate/pin/markers/upserts = %d/%d/%d/%d, want 1/0/0/0", rig.pinner.calculateCalls, rig.pinner.pinCalls, len(rig.recovery.markers), len(rig.store.upserts))
+			}
+		})
+	}
+}
+
 func TestAssetPinRecoveryMarkerOutcomeTable(t *testing.T) {
 	newRequest := func(t *testing.T, candidateKey string) ([]byte, []testMultipartPart, string) {
 		t.Helper()
@@ -567,19 +656,23 @@ func TestAssetPinRecoveryMarkerOutcomeTable(t *testing.T) {
 		rig := newAssetPinTestRig(t, nil)
 		rig.recovery.createErr = errors.New("marker unavailable")
 		response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
-		if response.Code != http.StatusServiceUnavailable || rig.pinner.pinCalls != 0 || len(rig.store.upserts) != 0 {
-			t.Fatalf("status/pin/upsert = %d/%d/%d; body=%s", response.Code, rig.pinner.pinCalls, len(rig.store.upserts), response.Body.String())
+		if response.Code != http.StatusServiceUnavailable || rig.pinner.calculateCalls != 1 || rig.pinner.pinCalls != 0 || len(rig.store.upserts) != 0 {
+			t.Fatalf("status/calculate/pin/upsert = %d/%d/%d/%d; body=%s", response.Code, rig.pinner.calculateCalls, rig.pinner.pinCalls, len(rig.store.upserts), response.Body.String())
 		}
 	})
 
-	t.Run("Kubo uncertainty retains intent", func(t *testing.T) {
+	t.Run("Kubo uncertainty retains expected CID and blocks crash-equivalent retry", func(t *testing.T) {
 		_, parts, referenceKey := newRequest(t, "candidate-kubo-uncertain")
 		rig := newAssetPinTestRig(t, nil)
 		rig.pinner.pinErr = errors.New("Kubo response lost")
 		response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
 		marker, ok := rig.recovery.marker(referenceKey)
-		if response.Code != http.StatusBadGateway || !ok || marker.Phase != assetpin.AssetPinRecoveryIntent || marker.CID != "" {
+		if response.Code != http.StatusBadGateway || !ok || marker.Phase != assetpin.AssetPinRecoveryIntent || marker.ExpectedCID != testAssetCID || marker.CID != "" {
 			t.Fatalf("status/marker = %d/%+v/%v; body=%s", response.Code, marker, ok, response.Body.String())
+		}
+		response = serveAssetPin(rig.handler, testMultipartRequest(t, parts))
+		if response.Code != http.StatusServiceUnavailable || rig.pinner.calculateCalls != 1 || rig.pinner.pinCalls != 1 || len(rig.store.upserts) != 0 {
+			t.Fatalf("retry status/calculate/pin/upsert = %d/%d/%d/%d; body=%s", response.Code, rig.pinner.calculateCalls, rig.pinner.pinCalls, len(rig.store.upserts), response.Body.String())
 		}
 	})
 
@@ -593,6 +686,49 @@ func TestAssetPinRecoveryMarkerOutcomeTable(t *testing.T) {
 			t.Fatalf("status/unpin/marker/upsert = %d/%d/%v/%d; body=%s", response.Code, rig.pinner.unpinCalls, ok, len(rig.store.upserts), response.Body.String())
 		}
 	})
+
+	t.Run("mark-pinned failure and failed unpin retain expected CID", func(t *testing.T) {
+		_, parts, referenceKey := newRequest(t, "candidate-mark-pinned-unpin-failure")
+		rig := newAssetPinTestRig(t, nil)
+		rig.recovery.markErr = errors.New("marker update failed")
+		rig.pinner.unpinErr = errors.New("unpin failed")
+		reported := 0
+		rig.handler.reportCleanupFailure = func() { reported++ }
+		response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
+		marker, ok := rig.recovery.marker(referenceKey)
+		if response.Code != http.StatusServiceUnavailable || rig.pinner.unpinCalls != 1 || !ok || marker.Phase != assetpin.AssetPinRecoveryIntent || marker.ExpectedCID != testAssetCID || marker.CID != "" || reported != 1 || len(rig.store.upserts) != 0 {
+			t.Fatalf("status/unpin/marker/reported/upsert = %d/%d/%+v/%v/%d/%d; body=%s", response.Code, rig.pinner.unpinCalls, marker, ok, reported, len(rig.store.upserts), response.Body.String())
+		}
+	})
+
+	for _, unpinFails := range []bool{false, true} {
+		name := "observed CID mismatch unpins and removes marker"
+		if unpinFails {
+			name = "observed CID mismatch retains both CIDs when unpin fails"
+		}
+		t.Run(name, func(t *testing.T) {
+			_, parts, referenceKey := newRequest(t, "candidate-observed-mismatch-"+fmt.Sprint(unpinFails))
+			rig := newAssetPinTestRig(t, nil)
+			rig.pinner.cid = testAssetAlternateCID
+			if unpinFails {
+				rig.pinner.unpinErr = errors.New("unpin failed")
+			}
+			reported := 0
+			rig.handler.reportCleanupFailure = func() { reported++ }
+			response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
+			marker, ok := rig.recovery.marker(referenceKey)
+			if response.Code != http.StatusBadGateway || rig.pinner.unpinCalls != 1 || rig.pinner.unpinned != testAssetAlternateCID || len(rig.store.upserts) != 0 {
+				t.Fatalf("status/unpin/CID/upsert = %d/%d/%q/%d; body=%s", response.Code, rig.pinner.unpinCalls, rig.pinner.unpinned, len(rig.store.upserts), response.Body.String())
+			}
+			if unpinFails {
+				if !ok || marker.Phase != assetpin.AssetPinRecoveryPinnedUncommitted || marker.ExpectedCID != testAssetCID || marker.CID != testAssetAlternateCID || reported != 1 {
+					t.Fatalf("retained mismatch marker/reported = %+v/%v/%d", marker, ok, reported)
+				}
+			} else if ok || reported != 0 {
+				t.Fatalf("confirmed mismatch cleanup marker/reported = %+v/%v/%d", marker, ok, reported)
+			}
+		})
+	}
 
 	t.Run("ordinary ledger failure and confirmed unpin remove marker", func(t *testing.T) {
 		_, parts, referenceKey := newRequest(t, "candidate-ledger-failure-unpinned")
@@ -610,10 +746,12 @@ func TestAssetPinRecoveryMarkerOutcomeTable(t *testing.T) {
 		rig := newAssetPinTestRig(t, nil)
 		rig.store.upsertErr = errors.New("ledger failed")
 		rig.pinner.unpinErr = errors.New("unpin failed")
+		reported := 0
+		rig.handler.reportCleanupFailure = func() { reported++ }
 		response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
 		marker, ok := rig.recovery.marker(referenceKey)
-		if response.Code != http.StatusServiceUnavailable || rig.pinner.unpinCalls != 1 || !ok || marker.Phase != assetpin.AssetPinRecoveryPinnedUncommitted || marker.CID != testAssetCID {
-			t.Fatalf("status/unpin/marker = %d/%d/%+v/%v; body=%s", response.Code, rig.pinner.unpinCalls, marker, ok, response.Body.String())
+		if response.Code != http.StatusServiceUnavailable || rig.pinner.unpinCalls != 1 || !ok || marker.Phase != assetpin.AssetPinRecoveryPinnedUncommitted || marker.ExpectedCID != testAssetCID || marker.CID != testAssetCID || reported != 1 {
+			t.Fatalf("status/unpin/marker/reported = %d/%d/%+v/%v/%d; body=%s", response.Code, rig.pinner.unpinCalls, marker, ok, reported, response.Body.String())
 		}
 	})
 
@@ -623,7 +761,7 @@ func TestAssetPinRecoveryMarkerOutcomeTable(t *testing.T) {
 		rig.store.upsertErr = fmt.Errorf("uncertain commit: %w", storage.ErrAssetPinLedgerRecoveryRequired)
 		response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
 		marker, ok := rig.recovery.marker(referenceKey)
-		if response.Code != http.StatusServiceUnavailable || rig.pinner.unpinCalls != 0 || !ok || marker.Phase != assetpin.AssetPinRecoveryPinnedUncommitted {
+		if response.Code != http.StatusServiceUnavailable || rig.pinner.unpinCalls != 0 || !ok || marker.Phase != assetpin.AssetPinRecoveryPinnedUncommitted || marker.ExpectedCID != testAssetCID || marker.CID != testAssetCID {
 			t.Fatalf("status/unpin/marker = %d/%d/%+v/%v; body=%s", response.Code, rig.pinner.unpinCalls, marker, ok, response.Body.String())
 		}
 	})
@@ -653,11 +791,21 @@ func TestAssetPinRecoveryMarkerOutcomeTable(t *testing.T) {
 func TestAssetPinFirstPinStreamsTempAndPersistsStagedAudit(t *testing.T) {
 	glb := testGLB([]byte("first-pin"))
 	candidateKey := "candidate-first-pin"
+	referenceKey := stableTestID("asset-pin-reference:v1\n" + candidateKey)
 	metadata := testCanonicalMetadataWithAttribution(glb, candidateKey, "Artist <Name>")
 	rig := newAssetPinTestRig(t, nil)
 	requestContextKey := struct{}{}
 	req := testMultipartRequest(t, []testMultipartPart{{name: "metadata", data: metadata}, {name: "file", filename: "asset.glb", data: glb}})
 	req = req.WithContext(context.WithValue(req.Context(), requestContextKey, "present"))
+	rig.pinner.calculateFunc = func(ctx context.Context, path string) (string, error) {
+		if ctx.Value(requestContextKey) != "present" {
+			t.Fatal("request context was not preserved to CID calculator")
+		}
+		if path == "" {
+			t.Fatal("CID calculator path was empty")
+		}
+		return testAssetCID, nil
+	}
 	rig.pinner.pinFunc = func(ctx context.Context, path string) (string, error) {
 		if ctx.Value(requestContextKey) != "present" {
 			t.Fatal("request context was not preserved to pinner")
@@ -681,6 +829,10 @@ func TestAssetPinFirstPinStreamsTempAndPersistsStagedAudit(t *testing.T) {
 		if !bytes.Equal(got, glb) {
 			t.Fatalf("streamed temp differs from GLB")
 		}
+		marker, ok := rig.recovery.marker(referenceKey)
+		if !ok || marker.ExpectedCID != testAssetCID || marker.CID != "" || marker.Phase != assetpin.AssetPinRecoveryIntent {
+			t.Fatalf("pre-pin intent marker = %+v/%v", marker, ok)
+		}
 		return testAssetCID, nil
 	}
 
@@ -692,8 +844,8 @@ func TestAssetPinFirstPinStreamsTempAndPersistsStagedAudit(t *testing.T) {
 	if rig.verifier.calls != 1 || rig.verifier.token != "good-token" || rig.verifier.kind != assetpin.WorkflowPin {
 		t.Fatalf("verification = calls %d token %q kind %q", rig.verifier.calls, rig.verifier.token, rig.verifier.kind)
 	}
-	if len(rig.store.upserts) != 1 || len(rig.store.events) != 1 {
-		t.Fatalf("upserts/events = %d/%d, want 1/1", len(rig.store.upserts), len(rig.store.events))
+	if rig.pinner.calculateCalls != 1 || rig.pinner.pinCalls != 1 || len(rig.store.upserts) != 1 || len(rig.store.events) != 1 {
+		t.Fatalf("calculate/pin/upserts/events = %d/%d/%d/%d, want 1/1/1/1", rig.pinner.calculateCalls, rig.pinner.pinCalls, len(rig.store.upserts), len(rig.store.events))
 	}
 	ref := rig.store.upserts[0]
 	if ref.ReferenceKey != stableTestID("asset-pin-reference:v1\n"+candidateKey) ||
@@ -754,8 +906,8 @@ func TestAssetPinCandidateRetryIsIdempotentOrConflictsDeterministically(t *testi
 		if result["alreadyExisted"] != true || result["cid"] != stored.CID || result["pinState"] != "staged" {
 			t.Fatalf("retry response = %#v", result)
 		}
-		if rig.store.findCalls != 0 || rig.capacity.calls != 0 || rig.pinner.pinCalls != 0 || len(rig.store.upserts) != 0 {
-			t.Fatalf("retry side effects find/capacity/pin/upsert = %d/%d/%d/%d", rig.store.findCalls, rig.capacity.calls, rig.pinner.pinCalls, len(rig.store.upserts))
+		if rig.store.findCalls != 0 || rig.capacity.calls != 0 || rig.pinner.calculateCalls != 0 || rig.pinner.pinCalls != 0 || len(rig.store.upserts) != 0 {
+			t.Fatalf("retry side effects find/capacity/calculate/pin/upsert = %d/%d/%d/%d/%d", rig.store.findCalls, rig.capacity.calls, rig.pinner.calculateCalls, rig.pinner.pinCalls, len(rig.store.upserts))
 		}
 	})
 
@@ -772,6 +924,7 @@ func TestAssetPinCandidateRetryIsIdempotentOrConflictsDeterministically(t *testi
 		{name: "attribution", mutate: func(ref *storage.AssetPinReference) { ref.Attribution = "Other Artist" }},
 		{name: "metadata", mutate: func(ref *storage.AssetPinReference) { ref.MetadataJSON = "{}" }},
 		{name: "lifecycle state", mutate: func(ref *storage.AssetPinReference) { ref.State = storage.AssetReferenceReviewOpen }},
+		{name: "expired staged row", mutate: func(ref *storage.AssetPinReference) { ref.ExpiresAt = time.Unix(1, 0).UTC() }},
 	}
 	for _, mismatch := range mismatches {
 		t.Run(mismatch.name+" conflict", func(t *testing.T) {
@@ -855,8 +1008,8 @@ func TestAssetPinConcurrentIdenticalCandidatePinsAndUpsertsOnce(t *testing.T) {
 	if alreadyExisted[false] != 1 || alreadyExisted[true] != 1 {
 		t.Fatalf("alreadyExisted results = %v, want one false and one true", alreadyExisted)
 	}
-	if rig.pinner.pinCalls != 1 || len(rig.store.upserts) != 1 || len(rig.store.events) != 1 {
-		t.Fatalf("pin/upsert/event = %d/%d/%d, want 1/1/1", rig.pinner.pinCalls, len(rig.store.upserts), len(rig.store.events))
+	if rig.pinner.calculateCalls != 1 || rig.pinner.pinCalls != 1 || len(rig.store.upserts) != 1 || len(rig.store.events) != 1 {
+		t.Fatalf("calculate/pin/upsert/event = %d/%d/%d/%d, want 1/1/1/1", rig.pinner.calculateCalls, rig.pinner.pinCalls, len(rig.store.upserts), len(rig.store.events))
 	}
 	assertNoAssetPinTempFiles(t, rig.dataDir)
 }
@@ -872,8 +1025,8 @@ func TestAssetPinExistingSHADeduplicatesWithoutCapacityPinOrUnpin(t *testing.T) 
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503; body=%s", response.Code, response.Body.String())
 	}
-	if rig.capacity.calls != 0 || rig.pinner.pinCalls != 0 || rig.pinner.unpinCalls != 0 {
-		t.Fatalf("dedup capacity/pin/unpin = %d/%d/%d, want 0/0/0", rig.capacity.calls, rig.pinner.pinCalls, rig.pinner.unpinCalls)
+	if rig.capacity.calls != 0 || rig.pinner.calculateCalls != 0 || rig.pinner.pinCalls != 0 || rig.pinner.unpinCalls != 0 {
+		t.Fatalf("dedup capacity/calculate/pin/unpin = %d/%d/%d/%d, want 0/0/0/0", rig.capacity.calls, rig.pinner.calculateCalls, rig.pinner.pinCalls, rig.pinner.unpinCalls)
 	}
 	if len(rig.store.events) != 1 || rig.store.events[0].Result != "deduplicated" {
 		t.Fatalf("dedup event = %+v, want explicit deduplicated result", rig.store.events)
@@ -909,8 +1062,10 @@ func TestAssetPinFailsClosedOnInvalidCID(t *testing.T) {
 		rig := newAssetPinTestRig(t, nil)
 		rig.pinner.cid = "not-a-cid"
 		response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
-		if response.Code != http.StatusBadGateway || len(rig.store.upserts) != 0 {
-			t.Fatalf("status/upserts = %d/%d; body=%s", response.Code, len(rig.store.upserts), response.Body.String())
+		referenceKey := stableTestID("asset-pin-reference:v1\ncandidate-invalid-cid")
+		marker, ok := rig.recovery.marker(referenceKey)
+		if response.Code != http.StatusBadGateway || len(rig.store.upserts) != 0 || !ok || marker.ExpectedCID != testAssetCID || marker.Phase != assetpin.AssetPinRecoveryIntent || marker.CID != "" {
+			t.Fatalf("status/upserts/marker = %d/%d/%+v/%v; body=%s", response.Code, len(rig.store.upserts), marker, ok, response.Body.String())
 		}
 	})
 }

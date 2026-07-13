@@ -53,8 +53,9 @@ type AssetPinCapacity interface {
 	AvailableBytes(path string) (uint64, error)
 }
 
-// AssetPinPinner pins and unpins deterministic asset UnixFS files.
+// AssetPinPinner plans, pins, and unpins deterministic asset UnixFS files.
 type AssetPinPinner interface {
+	CalculateAssetGLBCID(context.Context, string) (string, error)
 	PinAssetGLB(context.Context, string) (string, error)
 	UnpinAssetCID(context.Context, string) error
 }
@@ -256,7 +257,7 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if candidate.State != storage.AssetReferenceStaged || !assetPinCandidateMatches(
-			candidate, referenceKey, metadata, canonicalMetadata, upload,
+			candidate, referenceKey, metadata, canonicalMetadata, upload, now,
 		) {
 			writeError(w, http.StatusConflict, "asset candidate conflicts with an existing submission")
 			return
@@ -307,12 +308,23 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInsufficientStorage, "insufficient asset pin storage")
 			return
 		}
+		expectedCID, calculateErr := h.pinner.CalculateAssetGLBCID(r.Context(), upload.tempPath)
+		if calculateErr != nil {
+			writeError(w, http.StatusBadGateway, "asset pin backend failed")
+			return
+		}
+		expectedCID, err = canonicalAssetCID(expectedCID)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "asset pin backend failed")
+			return
+		}
 		intent := assetpin.AssetPinRecoveryMarker{
 			SchemaVersion: 1,
 			Phase:         assetpin.AssetPinRecoveryIntent,
 			ReferenceKey:  referenceKey,
 			EventID:       eventID,
 			CandidateKey:  metadata.CandidateKey,
+			ExpectedCID:   expectedCID,
 			SHA256:        upload.sha256,
 			ByteCount:     upload.byteCount,
 			SourceURL:     metadata.SourceURL,
@@ -335,18 +347,18 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "asset pin recovery unavailable")
 			return
 		}
-		cidValue, err = h.pinner.PinAssetGLB(r.Context(), upload.tempPath)
+		observedCID, pinErr := h.pinner.PinAssetGLB(r.Context(), upload.tempPath)
+		if pinErr != nil {
+			writeError(w, http.StatusBadGateway, "asset pin backend failed")
+			return
+		}
+		observedCID, err = canonicalAssetCID(observedCID)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "asset pin backend failed")
 			return
 		}
-		cidValue, err = canonicalAssetCID(cidValue)
-		if err != nil {
-			writeError(w, http.StatusBadGateway, "asset pin backend failed")
-			return
-		}
-		if err := h.recovery.MarkPinned(referenceKey, cidValue); err != nil {
-			if h.confirmAssetUnpin(r.Context(), cidValue) {
+		if err := h.recovery.MarkPinned(referenceKey, observedCID); err != nil {
+			if h.compensateAssetUnpin(r.Context(), observedCID) {
 				if removeErr := h.recovery.Remove(referenceKey); removeErr != nil {
 					h.reportCleanupFailure()
 				}
@@ -354,6 +366,16 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "asset pin recovery unavailable")
 			return
 		}
+		if observedCID != expectedCID {
+			if h.compensateAssetUnpin(r.Context(), observedCID) {
+				if removeErr := h.recovery.Remove(referenceKey); removeErr != nil {
+					h.reportCleanupFailure()
+				}
+			}
+			writeError(w, http.StatusBadGateway, "asset pin backend failed")
+			return
+		}
+		cidValue = observedCID
 		newlyPinned = true
 	}
 
@@ -398,7 +420,7 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.store.UpsertAssetPinReference(r.Context(), reference, event); err != nil {
 		if newlyPinned && !errors.Is(err, storage.ErrAssetPinLedgerRecoveryRequired) {
-			if h.confirmAssetUnpin(r.Context(), cidValue) {
+			if h.compensateAssetUnpin(r.Context(), cidValue) {
 				if removeErr := h.recovery.Remove(referenceKey); removeErr != nil {
 					h.reportCleanupFailure()
 				}
@@ -439,7 +461,15 @@ func (h *AssetPinHandler) confirmAssetUnpin(ctx context.Context, cidValue string
 	return h.pinner.UnpinAssetCID(cleanupContext, cidValue) == nil
 }
 
-func assetPinCandidateMatches(candidate storage.AssetPinReference, referenceKey string, metadata assetpin.Metadata, canonicalMetadata []byte, upload assetPinUpload) bool {
+func (h *AssetPinHandler) compensateAssetUnpin(ctx context.Context, cidValue string) bool {
+	if h.confirmAssetUnpin(ctx, cidValue) {
+		return true
+	}
+	h.reportCleanupFailure()
+	return false
+}
+
+func assetPinCandidateMatches(candidate storage.AssetPinReference, referenceKey string, metadata assetpin.Metadata, canonicalMetadata []byte, upload assetPinUpload, now time.Time) bool {
 	return candidate.ReferenceKey == referenceKey &&
 		candidate.CandidateKey == metadata.CandidateKey &&
 		candidate.SHA256 == upload.sha256 &&
@@ -447,7 +477,8 @@ func assetPinCandidateMatches(candidate storage.AssetPinReference, referenceKey 
 		candidate.SourceURL == metadata.SourceURL &&
 		candidate.LicenseName == metadata.LicenseName &&
 		candidate.Attribution == metadata.Attribution &&
-		candidate.MetadataJSON == string(canonicalMetadata)
+		candidate.MetadataJSON == string(canonicalMetadata) &&
+		(candidate.ExpiresAt.IsZero() || candidate.ExpiresAt.After(now))
 }
 
 type assetPinUpload struct {
@@ -681,6 +712,10 @@ func NewKuboAssetPinner(apiURL string) (*KuboAssetPinner, error) {
 
 func (p *KuboAssetPinner) PinAssetGLB(ctx context.Context, path string) (string, error) {
 	return storage.PinAssetGLB(ctx, p.apiURL, path)
+}
+
+func (p *KuboAssetPinner) CalculateAssetGLBCID(ctx context.Context, path string) (string, error) {
+	return storage.CalculateAssetGLBCID(ctx, p.apiURL, path)
 }
 
 func (p *KuboAssetPinner) UnpinAssetCID(ctx context.Context, cidValue string) error {

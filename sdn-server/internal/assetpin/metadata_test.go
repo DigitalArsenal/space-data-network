@@ -97,6 +97,9 @@ func TestAssetPinRecoveryStorePersistsAtomicBoundedMarkers(t *testing.T) {
 	if pinned.Phase != AssetPinRecoveryPinnedUncommitted || pinned.CID != testRecoveryCID {
 		t.Fatalf("pinned marker = %+v", pinned)
 	}
+	if pinned.ExpectedCID != testRecoveryCID {
+		t.Fatalf("pinned expected CID = %q, want %q", pinned.ExpectedCID, testRecoveryCID)
+	}
 	if err := store.MarkPinned(marker.ReferenceKey, testRecoveryCID); err != nil {
 		t.Fatalf("idempotent MarkPinned() error = %v", err)
 	}
@@ -108,16 +111,16 @@ func TestAssetPinRecoveryStorePersistsAtomicBoundedMarkers(t *testing.T) {
 	if err := store.CreateIntent(second); err != nil {
 		t.Fatalf("CreateIntent(second) error = %v", err)
 	}
-	listed, err := store.List(1)
+	listed, err := store.List(2)
 	if err != nil {
-		t.Fatalf("List(1) error = %v", err)
+		t.Fatalf("List(2) error = %v", err)
 	}
-	wantFirst := marker.ReferenceKey
-	if second.ReferenceKey < wantFirst {
-		wantFirst = second.ReferenceKey
+	wantKeys := []string{marker.ReferenceKey, second.ReferenceKey}
+	if wantKeys[1] < wantKeys[0] {
+		wantKeys[0], wantKeys[1] = wantKeys[1], wantKeys[0]
 	}
-	if len(listed) != 1 || listed[0].ReferenceKey != wantFirst {
-		t.Fatalf("List(1) = %+v, want deterministic reference-key order", listed)
+	if len(listed) != 2 || listed[0].ReferenceKey != wantKeys[0] || listed[1].ReferenceKey != wantKeys[1] {
+		t.Fatalf("List(2) = %+v, want deterministic bounded-batch order", listed)
 	}
 	if _, err := store.List(0); err == nil {
 		t.Fatal("List(0) succeeded, want positive-limit error")
@@ -127,6 +130,27 @@ func TestAssetPinRecoveryStorePersistsAtomicBoundedMarkers(t *testing.T) {
 	}
 	if _, ok, err := store.Load(marker.ReferenceKey); err != nil || ok {
 		t.Fatalf("Load(removed) ok/error = %v/%v, want false/nil", ok, err)
+	}
+}
+
+func TestAssetPinRecoveryStorePreservesExpectedAndObservedCIDMismatch(t *testing.T) {
+	store, err := NewFileAssetPinRecoveryStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileAssetPinRecoveryStore() error = %v", err)
+	}
+	marker := testAssetPinRecoveryMarker("candidate-cid-mismatch", "8")
+	if err := store.CreateIntent(marker); err != nil {
+		t.Fatalf("CreateIntent() error = %v", err)
+	}
+	if err := store.MarkPinned(marker.ReferenceKey, testRecoveryAlternateCID); err != nil {
+		t.Fatalf("MarkPinned(observed mismatch) error = %v", err)
+	}
+	pinned, ok, err := store.Load(marker.ReferenceKey)
+	if err != nil || !ok {
+		t.Fatalf("Load() = %+v, %v, %v", pinned, ok, err)
+	}
+	if pinned.ExpectedCID != testRecoveryCID || pinned.CID != testRecoveryAlternateCID || pinned.Phase != AssetPinRecoveryPinnedUncommitted {
+		t.Fatalf("pinned mismatch marker = %+v", pinned)
 	}
 }
 
@@ -203,6 +227,53 @@ func TestAssetPinRecoveryStoreRejectsMalformedAndOversizedMarkers(t *testing.T) 
 	}
 }
 
+func TestAssetPinRecoveryMarkerRequiresDeterministicCIDAndBoundedPayload(t *testing.T) {
+	base := testAssetPinRecoveryMarker("candidate-marker-bounds", "7")
+	tests := []struct {
+		name   string
+		mutate func(*AssetPinRecoveryMarker)
+	}{
+		{name: "missing expected CID", mutate: func(marker *AssetPinRecoveryMarker) { marker.ExpectedCID = "" }},
+		{name: "noncanonical expected CID", mutate: func(marker *AssetPinRecoveryMarker) { marker.ExpectedCID = "not-a-cid" }},
+		{name: "asset exceeds upload maximum", mutate: func(marker *AssetPinRecoveryMarker) { marker.ByteCount = AssetPinRecoveryAssetMaxBytes + 1 }},
+		{name: "metadata exceeds upload maximum", mutate: func(marker *AssetPinRecoveryMarker) {
+			marker.Attribution = strings.Repeat("a", AssetPinRecoveryMetadataMaxBytes)
+			marker.MetadataJSON = recoveryMetadataJSON(t, *marker, marker.Attribution)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			marker := base
+			test.mutate(&marker)
+			if err := validateAssetPinRecoveryMarker(marker); !errors.Is(err, ErrInvalidAssetPinRecoveryMarker) {
+				t.Fatalf("validateAssetPinRecoveryMarker() error = %v, want ErrInvalidAssetPinRecoveryMarker", err)
+			}
+		})
+	}
+}
+
+func TestAssetPinRecoveryMarkerAdmitsWorstCaseCanonicalMetadataAtLimit(t *testing.T) {
+	marker := testAssetPinRecoveryMarker("candidate-marker-max-metadata", "6")
+	emptyMetadata := recoveryMetadataJSON(t, marker, "")
+	backslashCount := (AssetPinRecoveryMetadataMaxBytes - len(emptyMetadata)) / 2
+	marker.Attribution = strings.Repeat(`\`, backslashCount)
+	marker.MetadataJSON = recoveryMetadataJSON(t, marker, marker.Attribution)
+	if len(marker.MetadataJSON) > AssetPinRecoveryMetadataMaxBytes || len(marker.MetadataJSON) < AssetPinRecoveryMetadataMaxBytes-2 {
+		t.Fatalf("metadata length = %d, want within two bytes of %d", len(marker.MetadataJSON), AssetPinRecoveryMetadataMaxBytes)
+	}
+	store, err := NewFileAssetPinRecoveryStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileAssetPinRecoveryStore() error = %v", err)
+	}
+	if err := store.CreateIntent(marker); err != nil {
+		t.Fatalf("CreateIntent(max metadata) error = %v", err)
+	}
+	loaded, ok, err := store.Load(marker.ReferenceKey)
+	if err != nil || !ok || !reflect.DeepEqual(loaded, marker) {
+		t.Fatalf("Load(max metadata) = %+v, %v, %v", loaded, ok, err)
+	}
+}
+
 func TestAssetPinDirectoriesRejectSymlinkComponents(t *testing.T) {
 	dataDir := t.TempDir()
 	target := t.TempDir()
@@ -230,7 +301,10 @@ func TestAssetPinDirectoriesRejectSymlinkComponents(t *testing.T) {
 	}
 }
 
-const testRecoveryCID = "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e"
+const (
+	testRecoveryCID          = "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e"
+	testRecoveryAlternateCID = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
+)
 
 func testAssetPinRecoveryMarker(candidateKey, discriminator string) AssetPinRecoveryMarker {
 	sha := strings.Repeat(discriminator, 64)
@@ -242,6 +316,7 @@ func testAssetPinRecoveryMarker(candidateKey, discriminator string) AssetPinReco
 		ReferenceKey:  recoveryTestHash("asset-pin-reference:v1\n" + candidateKey),
 		EventID:       recoveryTestHash("asset-pin-upsert:v1\n" + recoveryTestHash("asset-pin-reference:v1\n"+candidateKey)),
 		CandidateKey:  candidateKey,
+		ExpectedCID:   testRecoveryCID,
 		SHA256:        sha,
 		ByteCount:     128,
 		SourceURL:     "https://example.test/model.glb",
@@ -259,6 +334,22 @@ func testAssetPinRecoveryMarker(candidateKey, discriminator string) AssetPinReco
 		UpdatedAt:     now,
 		ExpiresAt:     now.Add(90 * 24 * time.Hour),
 	}
+}
+
+func recoveryMetadataJSON(t *testing.T, marker AssetPinRecoveryMarker, attribution string) string {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{
+		"attribution":   attribution,
+		"candidateKey":  marker.CandidateKey,
+		"licenseName":   marker.LicenseName,
+		"schemaVersion": 1,
+		"sha256":        marker.SHA256,
+		"sourceUrl":     marker.SourceURL,
+	})
+	if err != nil {
+		t.Fatalf("marshal recovery metadata: %v", err)
+	}
+	return string(data)
 }
 
 func recoveryTestHash(value string) string {

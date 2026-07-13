@@ -224,8 +224,10 @@ const (
 	AssetPinRecoveryIntent            AssetPinRecoveryPhase = "pin_intent"
 	AssetPinRecoveryPinnedUncommitted AssetPinRecoveryPhase = "pinned_uncommitted"
 
-	AssetPinRecoveryMarkerMaxBytes = 128 << 10
-	AssetPinRecoveryListMax        = 1000
+	AssetPinRecoveryMarkerMaxBytes   = 256 << 10
+	AssetPinRecoveryMetadataMaxBytes = 64 << 10
+	AssetPinRecoveryAssetMaxBytes    = 10_000_000
+	AssetPinRecoveryListMax          = 1000
 )
 
 var (
@@ -244,6 +246,7 @@ type AssetPinRecoveryMarker struct {
 	ReferenceKey  string                `json:"referenceKey"`
 	EventID       string                `json:"eventId"`
 	CandidateKey  string                `json:"candidateKey"`
+	ExpectedCID   string                `json:"expectedCid"`
 	CID           string                `json:"cid"`
 	SHA256        string                `json:"sha256"`
 	ByteCount     int64                 `json:"byteCount"`
@@ -369,8 +372,9 @@ func (s *FileAssetPinRecoveryStore) Load(referenceKey string) (AssetPinRecoveryM
 	return loadAssetPinRecoveryMarker(directory, referenceKey)
 }
 
-// List returns up to limit markers in deterministic reference-key order.
-// The caller must request a positive bound; larger requests are capped.
+// List returns markers from one bounded directory batch, sorted by reference
+// key. Ignored non-marker entries can make the result shorter than limit.
+// Task 8 must add an opaque cursor before callers can enumerate later batches.
 func (s *FileAssetPinRecoveryStore) List(limit int) ([]AssetPinRecoveryMarker, error) {
 	if limit <= 0 {
 		return nil, errors.New("asset pin recovery marker limit must be positive")
@@ -384,15 +388,18 @@ func (s *FileAssetPinRecoveryStore) List(limit int) ([]AssetPinRecoveryMarker, e
 	if err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(directory)
+	directoryHandle, err := os.Open(directory)
 	if err != nil {
-		return nil, fmt.Errorf("list asset pin recovery markers: %w", err)
+		return nil, fmt.Errorf("open asset pin recovery marker directory: %w", err)
 	}
-	markers := make([]AssetPinRecoveryMarker, 0, min(limit, len(entries)))
+	defer directoryHandle.Close()
+	entries, err := directoryHandle.ReadDir(limit)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("list bounded asset pin recovery marker batch: %w", err)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	markers := make([]AssetPinRecoveryMarker, 0, len(entries))
 	for _, entry := range entries {
-		if len(markers) == limit {
-			break
-		}
 		name := entry.Name()
 		if !strings.HasSuffix(name, ".json") {
 			continue
@@ -632,8 +639,8 @@ func validateAssetPinRecoveryMarker(marker AssetPinRecoveryMarker) error {
 		marker.EventID != assetPinRecoveryStableID("asset-pin-upsert:v1\n"+marker.ReferenceKey) {
 		return invalid("deterministic identities do not match candidate")
 	}
-	if marker.ByteCount <= 0 {
-		return invalid("byteCount must be positive")
+	if marker.ByteCount <= 0 || marker.ByteCount > AssetPinRecoveryAssetMaxBytes {
+		return invalid("byteCount is outside the accepted upload range")
 	}
 	for _, field := range []struct {
 		name     string
@@ -659,12 +666,19 @@ func validateAssetPinRecoveryMarker(marker AssetPinRecoveryMarker) error {
 			return invalid(field.name + " has surrounding whitespace")
 		}
 	}
+	if len(marker.MetadataJSON) > AssetPinRecoveryMetadataMaxBytes {
+		return invalid("metadataJson exceeds the accepted upload limit")
+	}
 	metadata, canonical, err := ParseCanonicalMetadata([]byte(marker.MetadataJSON))
 	if err != nil || string(canonical) != marker.MetadataJSON ||
 		metadata.CandidateKey != marker.CandidateKey || metadata.SHA256 != marker.SHA256 ||
 		metadata.SourceURL != marker.SourceURL || metadata.LicenseName != marker.LicenseName ||
 		metadata.Attribution != marker.Attribution {
 		return invalid("canonical metadata does not match marker identity")
+	}
+	expectedCID, err := canonicalRecoveryCID(marker.ExpectedCID)
+	if err != nil || expectedCID != marker.ExpectedCID {
+		return invalid("expectedCid must be canonical CIDv1")
 	}
 	switch marker.Phase {
 	case AssetPinRecoveryIntent:
