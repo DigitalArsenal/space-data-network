@@ -145,6 +145,18 @@ case-insensitive and specs/docs write `X-SDN-Record-Count`.
    for `/api/v1/query` (semantically a read) and the auth bootstrap
    (`/api/auth/challenge|verify`).
 
+**Shipped UI consumer (context, not a gateway route).** This document covers
+`/api/**` only. The daemon also serves a UI at `/` — since the 2026-07-11
+owner directive that is the **conjunction screening app**
+(`cmd/spacedatanetwork/conjunction_ui.go`, `SDN_UI_MODE` default), a single
+self-contained artifact that runs **anonymously**: its only network calls are
+same-origin GETs to the public read endpoints in the allowlist below
+(`/api/v1/{peers,channels,stats}` + `/api/v1/data/health`). It never
+authenticates and never links to `/login`, so the auth wall here is unchanged
+by it. UI serving (route `/`, the `SDN_UI_MODE=spaceaware` dev switch, the
+legacy `/login` bootstrap page) is documented in the repo `README.md` — not in
+this API spec.
+
 **Where each existing route lands** (disposition under this policy):
 
 | Surface (today) | Today | Under this policy |

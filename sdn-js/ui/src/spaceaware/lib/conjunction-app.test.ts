@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyConjunctionAppNav,
   conjunctionAppSessionChip,
+  conjunctionAppShows3dLink,
 } from './conjunction-app';
 
 describe('classifyConjunctionAppNav', () => {
@@ -36,6 +37,21 @@ describe('classifyConjunctionAppNav', () => {
     ]) {
       expect(classifyConjunctionAppNav(path)).toBe('descoped');
     }
+  });
+});
+
+describe('conjunctionAppShows3dLink (C3 OPEN IN 3D disposition)', () => {
+  it('hides the OPEN IN 3D affordance in the standalone ship', () => {
+    // The standalone build must NOT surface the "3D" button — it targets the
+    // descoped /orbital route, which is not bundled here.
+    expect(conjunctionAppShows3dLink()).toBe(false);
+  });
+
+  it('the affordance it hides is exactly the descoped Orbital route', () => {
+    // Ties the visibility decision to the descoped-route fact: the button would
+    // navigate to /orbital?group=, which classifyConjunctionAppNav rejects.
+    expect(classifyConjunctionAppNav('/orbital')).toBe('descoped');
+    expect(classifyConjunctionAppNav('/orbital?group=leo-a')).toBe('descoped');
   });
 });
 

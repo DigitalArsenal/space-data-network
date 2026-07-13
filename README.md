@@ -36,9 +36,23 @@ Space Data Network enables real-time sharing of space situational awareness data
 
 ## Current UI Surfaces
 
-- `/` is the browser-first SDN UI.
-- `/webui` is the upstream-style IPFS WebUI.
+- `/` serves the **conjunction screening app** — the shipped, browser-first SDN
+  UI. It is a single self-contained artifact (all JS/CSS/fonts inlined,
+  no wasm) embedded in the daemon and served from memory. It runs anonymously
+  against public read endpoints (`/api/v1/{peers,channels,stats}`,
+  `/api/v1/data/health`) — no login is required or offered.
+- `/login` is the **legacy wallet-bootstrap surface** (wallet creation and
+  first-admin bootstrap for operators). The conjunction app never links to it;
+  it is the daemon's own wallet-gated page.
+- `/webui` is the upstream-style IPFS WebUI (unchanged).
 - `/admin` is reserved for admin and auth flows.
+
+The shipped UI is conjunction-only (owner directive 2026-07-11). The full
+SpaceAware app (login screen, console, BMC2 boards, orbital, gantt) stays in the
+source tree, dormant, behind a dev switch: set `SDN_UI_MODE=spaceaware` to serve
+that route skeleton for local development. With the switch unset (the shipped
+default), the daemon serves the conjunction app at `/` and returns 404 for the
+descoped SpaceAware screens.
 
 The SDN browser path uses `sdn-js` plus the generic async capability surfaces from `space-data-module-sdk` and the existing `hd-wallet-wasm` and `hd-wallet-ui` identity stack. It uses direct SDN APIs and browser-safe package exports without a helper service.
 

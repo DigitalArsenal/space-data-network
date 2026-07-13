@@ -80,6 +80,9 @@ func TestServeConjunctionUI(t *testing.T) {
 	if got := res.Header.Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", got)
 	}
+	if got := res.Header.Get("Content-Security-Policy"); got != conjunctionCSP {
+		t.Errorf("CSP = %q, want %q", got, conjunctionCSP)
+	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "window.__SDN_CONFIG__") {
 		t.Error("served body missing injected window.__SDN_CONFIG__")
@@ -103,6 +106,46 @@ func TestServeConjunctionUI(t *testing.T) {
 	serveConjunctionUI(rec, httptest.NewRequest(http.MethodPost, "/", nil))
 	if rec.Result().StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("POST status = %d, want 405", rec.Result().StatusCode)
+	}
+}
+
+// TestConjunctionCSP asserts the Content-Security-Policy served with the
+// conjunction UI (C3) is present and encodes the self-hosting posture: the
+// exfiltration-blocking connect-src 'self', locked default/object/base-uri,
+// clickjacking/form protections, and the inline-allowing script/style +
+// data:-font directives the single-file build requires. A regression that
+// loosens connect-src to allow a third-party host, or drops the header, fails
+// here.
+func TestConjunctionCSP(t *testing.T) {
+	rec := httptest.NewRecorder()
+	serveConjunctionUI(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	csp := rec.Result().Header.Get("Content-Security-Policy")
+	if csp == "" {
+		t.Fatal("conjunction UI served without a Content-Security-Policy header")
+	}
+	for _, directive := range []string{
+		"default-src 'self'",
+		"connect-src 'self'",
+		"object-src 'none'",
+		"base-uri 'none'",
+		"frame-ancestors 'none'",
+		"form-action 'none'",
+		"script-src 'self' 'unsafe-inline'",
+		"style-src 'self' 'unsafe-inline'",
+		"font-src 'self' data:",
+		"img-src 'self' data:",
+	} {
+		if !strings.Contains(csp, directive) {
+			t.Errorf("CSP missing directive %q; got %q", directive, csp)
+		}
+	}
+	// connect-src must NOT be widened to any external host (exfiltration guard).
+	if strings.Contains(csp, "connect-src 'self' http") || strings.Contains(csp, "connect-src *") {
+		t.Errorf("CSP connect-src is widened beyond 'self': %q", csp)
+	}
+	// No wasm ships with the conjunction UI (C1), so no eval escape hatch.
+	if strings.Contains(csp, "unsafe-eval") {
+		t.Errorf("CSP unexpectedly allows unsafe-eval: %q", csp)
 	}
 }
 
@@ -142,6 +185,9 @@ func TestFrontendSurfaceHandlerConjunctionMode(t *testing.T) {
 		}
 		if got := rec.Header().Get("Cross-Origin-Opener-Policy"); got != "same-origin" {
 			t.Errorf("%s: COOP = %q, want same-origin", p, got)
+		}
+		if got := rec.Header().Get("Content-Security-Policy"); got != conjunctionCSP {
+			t.Errorf("%s: CSP = %q, want %q", p, got, conjunctionCSP)
 		}
 	}
 
