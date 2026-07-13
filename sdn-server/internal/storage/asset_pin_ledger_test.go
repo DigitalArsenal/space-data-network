@@ -85,6 +85,53 @@ func TestAssetPinOIDCTokenDigestIsConsumedAtomicallyOnce(t *testing.T) {
 	}
 }
 
+func TestAssetPinOIDCTokenReplayUsesSemanticReceiptIdentity(t *testing.T) {
+	basePath := filepath.Join(t.TempDir(), "store")
+	store := newAssetPinTestStore(t, basePath)
+	ctx := context.Background()
+	consumedAt := time.Date(2026, 7, 13, 12, 30, 0, 123456789, time.UTC)
+	receipt := AssetOIDCReceipt{
+		Digest:      strings.Repeat("c", 64),
+		ExpiresAt:   consumedAt.Add(10 * time.Minute),
+		Repository:  "SpaceDataNetwork/asset-models",
+		Ref:         "refs/heads/main",
+		WorkflowRef: "SpaceDataNetwork/asset-models/.github/workflows/pin.yml@refs/heads/main",
+		Actor:       "asset-bot",
+		RunID:       "semantic-replay",
+		RunAttempt:  "1",
+		SHA:         strings.Repeat("d", 40),
+		ConsumedAt:  consumedAt,
+	}
+	if err := store.ConsumeAssetOIDCToken(ctx, receipt); err != nil {
+		t.Fatalf("first ConsumeAssetOIDCToken() error = %v", err)
+	}
+	journalSize := auxiliaryJournalSizeForTest(t, basePath)
+
+	replayed := receipt
+	replayed.ConsumedAt = consumedAt.Add(time.Nanosecond)
+	if err := store.ConsumeAssetOIDCToken(ctx, replayed); !errors.Is(err, ErrAssetOIDCTokenReplay) {
+		t.Fatalf("second ConsumeAssetOIDCToken() error = %v, want ErrAssetOIDCTokenReplay", err)
+	}
+	if got := auxiliaryJournalSizeForTest(t, basePath); got != journalSize {
+		t.Fatalf("journal size after semantic replay = %d, want %d", got, journalSize)
+	}
+	assertSingleAssetOIDCReceiptForTest(t, ctx, store, receipt)
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	reopened := newAssetPinTestStore(t, basePath)
+	assertSingleAssetOIDCReceiptForTest(t, ctx, reopened, receipt)
+	frames, err := reopened.auxiliaryMetadata.Replay(reopened)
+	if err != nil {
+		t.Fatalf("second Replay() error = %v", err)
+	}
+	if frames != 1 {
+		t.Fatalf("replayed auxiliary frames = %d, want 1 receipt frame", frames)
+	}
+	assertSingleAssetOIDCReceiptForTest(t, ctx, reopened, receipt)
+}
+
 func TestAssetPinPublicWritesRequireExplicitPersistedTimestamps(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -594,11 +641,17 @@ func TestAssetPinPublicWritesCommitAfterDurableFrameRetry(t *testing.T) {
 			t.Fatalf("append durable receipt frame: %v", err)
 		}
 		before := auxiliaryJournalSizeForTest(t, basePath)
-		if err := store.ConsumeAssetOIDCToken(ctx, receipt); err != nil {
+		retry := receipt
+		retry.ConsumedAt = now.Add(time.Nanosecond)
+		if err := store.ConsumeAssetOIDCToken(ctx, retry); err != nil {
 			t.Fatalf("ConsumeAssetOIDCToken() retry error = %v", err)
 		}
-		if _, ok, err := store.FindAssetOIDCReceipt(ctx, receipt.Digest); err != nil || !ok {
-			t.Fatalf("receipt after retry = ok %v, err %v; want present", ok, err)
+		got, ok, err := store.FindAssetOIDCReceipt(ctx, receipt.Digest)
+		if err != nil || !ok {
+			t.Fatalf("receipt after retry = %+v, ok %v, err %v; want present", got, ok, err)
+		}
+		if !got.ConsumedAt.Equal(receipt.ConsumedAt) {
+			t.Fatalf("receipt consumed_at after retry = %v, want first durable timestamp %v", got.ConsumedAt, receipt.ConsumedAt)
 		}
 		if after := auxiliaryJournalSizeForTest(t, basePath); after != before {
 			t.Fatalf("receipt journal size after retry = %d, want %d", after, before)
@@ -1278,6 +1331,24 @@ func newAssetPinTestStore(t *testing.T, basePath string) *FlatSQLStore {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return store
+}
+
+func assertSingleAssetOIDCReceiptForTest(t *testing.T, ctx context.Context, store *FlatSQLStore, want AssetOIDCReceipt) {
+	t.Helper()
+	got, ok, err := store.FindAssetOIDCReceipt(ctx, want.Digest)
+	if err != nil || !ok {
+		t.Fatalf("FindAssetOIDCReceipt() = %+v, %v, %v; want present", got, ok, err)
+	}
+	if !equalAssetOIDCReceipt(got, want) {
+		t.Fatalf("FindAssetOIDCReceipt() = %+v, want first receipt %+v", got, want)
+	}
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sdn_asset_oidc_receipts WHERE digest = ?`, want.Digest).Scan(&count); err != nil {
+		t.Fatalf("count OIDC receipts: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("stored OIDC receipt rows = %d, want 1", count)
+	}
 }
 
 func testAssetPinReference(referenceKey, candidateKey, cid, sha256 string, state AssetReferenceState, createdAt, expiresAt time.Time) AssetPinReference {

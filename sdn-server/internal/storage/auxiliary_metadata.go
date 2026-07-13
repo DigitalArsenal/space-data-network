@@ -136,7 +136,11 @@ func scanAuxiliaryAssetFrames(f *os.File, size int64) (map[string][]byte, error)
 		}
 		identity := auxiliaryAssetFrameIdentity(event)
 		if existing, ok := frames[identity]; identity != "" && ok {
-			if !bytes.Equal(existing, payload) {
+			equal, err := equalAuxiliaryAssetFramePayloads(identity, existing, payload)
+			if err != nil {
+				return nil, err
+			}
+			if !equal {
 				return nil, auxiliaryAssetFrameConflict(identity)
 			}
 		} else if identity != "" {
@@ -202,12 +206,70 @@ func (m *auxiliaryMetadataStore) CheckAssetFrame(event auxiliaryMetadataEvent) e
 	return m.checkAssetFrameLocked(identity, payload)
 }
 
+func (m *auxiliaryMetadataStore) ResolveAssetOIDCReceipt(receipt AssetOIDCReceipt) (AssetOIDCReceipt, error) {
+	if m == nil {
+		return receipt, nil
+	}
+	event := auxiliaryMetadataEvent{Kind: auxiliaryEventAssetOIDCReceiptConsume, AssetOIDCReceipt: &receipt}
+	payload, err := encodeAuxiliaryMetadataEvent(event)
+	if err != nil {
+		return AssetOIDCReceipt{}, err
+	}
+	identity := auxiliaryAssetFrameIdentity(event)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing, ok := m.assetFrames[identity]
+	if !ok {
+		return receipt, nil
+	}
+	equal, err := equalAuxiliaryAssetFramePayloads(identity, existing, payload)
+	if err != nil {
+		return AssetOIDCReceipt{}, err
+	}
+	if !equal {
+		return AssetOIDCReceipt{}, auxiliaryAssetFrameConflict(identity)
+	}
+	durable, err := decodeAuxiliaryMetadataEvent(existing)
+	if err != nil {
+		return AssetOIDCReceipt{}, err
+	}
+	if durable.AssetOIDCReceipt == nil {
+		return AssetOIDCReceipt{}, fmt.Errorf("auxiliary asset frame %q is missing its receipt", identity)
+	}
+	return *durable.AssetOIDCReceipt, nil
+}
+
 func (m *auxiliaryMetadataStore) checkAssetFrameLocked(identity string, payload []byte) error {
 	existing, ok := m.assetFrames[identity]
-	if !ok || bytes.Equal(existing, payload) {
+	if !ok {
+		return nil
+	}
+	equal, err := equalAuxiliaryAssetFramePayloads(identity, existing, payload)
+	if err != nil {
+		return err
+	}
+	if equal {
 		return nil
 	}
 	return auxiliaryAssetFrameConflict(identity)
+}
+
+func equalAuxiliaryAssetFramePayloads(identity string, left, right []byte) (bool, error) {
+	if !strings.HasPrefix(identity, "receipt:") {
+		return bytes.Equal(left, right), nil
+	}
+	leftEvent, err := decodeAuxiliaryMetadataEvent(left)
+	if err != nil {
+		return false, err
+	}
+	rightEvent, err := decodeAuxiliaryMetadataEvent(right)
+	if err != nil {
+		return false, err
+	}
+	if leftEvent.AssetOIDCReceipt == nil || rightEvent.AssetOIDCReceipt == nil {
+		return false, fmt.Errorf("auxiliary asset frame %q is missing its receipt", identity)
+	}
+	return equalAssetOIDCReceiptIdentity(*leftEvent.AssetOIDCReceipt, *rightEvent.AssetOIDCReceipt), nil
 }
 
 func auxiliaryAssetFrameIdentity(event auxiliaryMetadataEvent) string {

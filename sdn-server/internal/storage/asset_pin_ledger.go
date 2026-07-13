@@ -308,13 +308,18 @@ func (s *FlatSQLStore) ConsumeAssetOIDCToken(ctx context.Context, receipt AssetO
 	if err != nil {
 		return err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.auxiliaryMetadata != nil {
+		receipt, err = s.auxiliaryMetadata.ResolveAssetOIDCReceipt(receipt)
+		if err != nil {
+			return err
+		}
+	}
 	metadataEvent := auxiliaryMetadataEvent{
 		Kind:             auxiliaryEventAssetOIDCReceiptConsume,
 		AssetOIDCReceipt: &receipt,
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if err := s.checkAuxiliaryAssetFrame(metadataEvent); err != nil {
 		return err
 	}
@@ -838,7 +843,7 @@ func (s *FlatSQLStore) applyAssetOIDCReceiptConsume(receipt AssetOIDCReceipt) er
 	if err != nil {
 		return fmt.Errorf("read replayed asset OIDC receipt: %w", err)
 	}
-	if !equalAssetOIDCReceipt(existing, receipt) {
+	if !equalAssetOIDCReceiptIdentity(existing, receipt) {
 		return fmt.Errorf("digest %s: %w", receipt.Digest, ErrAssetOIDCReceiptConflict)
 	}
 	return nil
@@ -1676,6 +1681,20 @@ func equalAssetOIDCReceipt(left, right AssetOIDCReceipt) bool {
 		left.RunAttempt == right.RunAttempt &&
 		left.SHA == right.SHA &&
 		left.ConsumedAt.Equal(right.ConsumedAt)
+}
+
+func equalAssetOIDCReceiptIdentity(left, right AssetOIDCReceipt) bool {
+	left = normalizeAssetOIDCReceipt(left)
+	right = normalizeAssetOIDCReceipt(right)
+	return left.Digest == right.Digest &&
+		left.ExpiresAt.Equal(right.ExpiresAt) &&
+		left.Repository == right.Repository &&
+		left.Ref == right.Ref &&
+		left.WorkflowRef == right.WorkflowRef &&
+		left.Actor == right.Actor &&
+		left.RunID == right.RunID &&
+		left.RunAttempt == right.RunAttempt &&
+		left.SHA == right.SHA
 }
 
 func equalAssetPinAuditEvent(left, right AssetPinAuditEvent) bool {
