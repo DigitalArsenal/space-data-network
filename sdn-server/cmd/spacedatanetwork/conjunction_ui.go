@@ -42,6 +42,39 @@ import (
 //go:embed embedded/conjunction_app.html
 var conjunctionAppHTML []byte
 
+// conjunctionCSP is the Content-Security-Policy served with the conjunction UI
+// (C3). The conjunction artifact is a single self-contained document — all
+// JS/CSS inline, all fonts inlined as data: URIs, and its only network calls
+// are same-origin GETs to /api/v1/* — so this policy enforces that
+// fully-self-hosted posture at the browser layer, complementing the build-time
+// forbidden-host audit and the runtime zero-external-request verification.
+//
+//   - connect-src 'self' is the load-bearing directive: it blocks any
+//     exfiltration / third-party beacon the single-file bundle would otherwise
+//     be able to make. The app only fetches /api/v1/{peers,channels,stats} +
+//     /api/v1/data/health, all same-origin.
+//   - default/img/font/object/base-uri lock every other fetch to self (+ data:
+//     for the inlined woff2 fonts and any inline images).
+//   - frame-ancestors 'none' + form-action 'none' add clickjacking / form-
+//     hijack protection; the conjunction app has no <form> and is never framed.
+//   - script-src/style-src carry 'unsafe-inline' because the packaging hard
+//     rule inlines the single module script (plus the serve-time __SDN_CONFIG__
+//     script) and Svelte emits inline style="" attributes throughout; a
+//     nonce/hash pass over the embedded artifact is the noted future hardening,
+//     but 'unsafe-inline' here does NOT weaken the exfiltration protection that
+//     connect-src provides. No wasm ships (C1), so no 'wasm-unsafe-eval'; no
+//     workers/blob:, so no worker-src.
+const conjunctionCSP = "default-src 'self'; " +
+	"base-uri 'none'; " +
+	"object-src 'none'; " +
+	"frame-ancestors 'none'; " +
+	"form-action 'none'; " +
+	"script-src 'self' 'unsafe-inline'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; " +
+	"font-src 'self' data:; " +
+	"connect-src 'self'"
+
 // uiMode selects which embedded UI the daemon serves at the primary route.
 type uiMode int
 
@@ -117,6 +150,7 @@ func serveConjunctionUI(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 	w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
+	w.Header().Set("Content-Security-Policy", conjunctionCSP)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)

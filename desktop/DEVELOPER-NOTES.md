@@ -2,6 +2,40 @@
 
 Below are helpful notes for developers hacking on or releasing new versions of IPFS Desktop.
 
+## SDN UI packaging — conjunction-only ship (decision recorded 2026-07-13, C3)
+
+Status of the desktop app under the owner's 2026-07-11 **conjunction-only**
+directive (`SDN_SPACEAWARE_UI_LOOP.md` Phase C): **NEEDS WORK, release-gated —
+not implemented in C3.** No desktop code changes ship now (also under the
+no-deploy / no-node-upgrade hold).
+
+Finding: the desktop dashboard does **not** wrap the daemon-served UI. The
+dashboard `BrowserWindow` (`src/dashboard/index.js`) loads its **own bundled
+copy** of the SDN UI from `assets/sdn-ui/` via a custom `sdn:` file protocol
+(`src/static-scheme.js` `registerFileProtocol` + `src/static-http-server.js`
+`ROUTES.sdn = 'assets/sdn-ui'`). That bundle is a stale pre-conjunction React
+SPA (`index.html` → `#root`, IPFS-webui-derived), independent of the daemon's
+in-binary conjunction artifact. So the daemon's conjunction-only ship (the
+Svelte app served at `/`, `cmd/spacedatanetwork/conjunction_ui.go`) does **not**
+automatically reach desktop.
+
+To deliver the conjunction-only experience in desktop, a future (release-gated)
+change must do one of:
+
+1. **Recommended — wrap the daemon.** Repoint the dashboard window to load the
+   daemon's HTTP `/` (the conjunction UI) instead of the bundled `sdn:` scheme,
+   making the daemon-served, in-binary conjunction artifact the single source of
+   truth (no second bundle to keep in sync). Confirm COOP/COEP + the new CSP
+   (`connect-src 'self'`, `frame-ancestors 'none'`) are compatible with the
+   Electron `BrowserWindow` load (top-level navigation, not framed — CSP
+   `frame-ancestors` does not block it).
+2. **Alternative — rebundle.** Rebuild `assets/sdn-ui/` from the conjunction
+   single-file artifact (`sdn-js npm run build:conjunction`) and keep serving it
+   over the `sdn:` scheme. Simpler diff, but duplicates the artifact and must be
+   rebuilt every UI release.
+
+Neither is done here; C3 only records the decision (task item 5).
+
 ## Release checklist
 
 Before cutting a new release of IPFS Desktop, please go through the following process:

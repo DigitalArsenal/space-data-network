@@ -36,7 +36,11 @@
     type ConsoleHealthChipState,
   } from './lib/console';
   import { parseHealthResponse } from './lib/login';
-  import { classifyConjunctionAppNav, conjunctionAppSessionChip } from './lib/conjunction-app';
+  import {
+    classifyConjunctionAppNav,
+    conjunctionAppSessionChip,
+    conjunctionAppShows3dLink,
+  } from './lib/conjunction-app';
 
   const HEALTH_REFRESH_MS = 30_000;
 
@@ -57,9 +61,11 @@
 
   /**
    * Navigation for the reused ConjunctionView. Its only `navigate()` caller is
-   * the "OPEN IN 3D" affordance, which targets the descoped `/orbital` view;
-   * in the conjunction-only ship that screen is not bundled, so this is a
-   * documented no-op for descoped targets (see `classifyConjunctionAppNav`).
+   * the "OPEN IN 3D" affordance, which targets the descoped `/orbital` view.
+   * In this ship that button is HIDDEN (`show3dLink={false}` below, C3
+   * disposition), so `navigate()` is not reached for a descoped target in
+   * practice; it remains a defensive documented no-op for descoped targets
+   * (see `classifyConjunctionAppNav`) should any future caller appear.
    */
   function navigate(path: string) {
     if (classifyConjunctionAppNav(path) === 'internal') {
@@ -112,7 +118,7 @@
   </header>
 
   <div class="conj-app-content">
-    <ConjunctionView {apiClient} {navigate} />
+    <ConjunctionView {apiClient} {navigate} show3dLink={conjunctionAppShows3dLink()} />
   </div>
 </div>
 

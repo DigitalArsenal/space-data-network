@@ -40,6 +40,22 @@ export function classifyConjunctionAppNav(path: string): ConjunctionAppNavKind {
   return 'descoped';
 }
 
+/**
+ * Whether the standalone conjunction ship surfaces `ConjunctionView`'s "OPEN IN
+ * 3D" affordance (the small "3D" button in `ConjunctionTaskPanel`). That button
+ * targets `/orbital?group=` — a DESCOPED route (see `classifyConjunctionAppNav`)
+ * that this ship does not bundle. Rather than present a control that navigates
+ * nowhere, the standalone build hides it (C3 disposition). The full SpaceAware
+ * console (`ConsoleShell`) keeps it: `ConjunctionView` defaults its `show3dLink`
+ * prop to `true`, and ONLY `ConjunctionApp` (the standalone entry) passes the
+ * value from this function. Flipping this to `true` would resurrect a dead
+ * button — the paired `classifyConjunctionAppNav('/orbital') === 'descoped'`
+ * test documents why it must stay `false`.
+ */
+export function conjunctionAppShows3dLink(): boolean {
+  return false;
+}
+
 export interface ConjunctionAppChip {
   label: string;
   color: string;
