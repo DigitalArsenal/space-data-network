@@ -294,7 +294,7 @@ func TestAuxiliaryMetadataReplaysAssetPinReceiptsReferencesTransitionsDeletionsA
 		ToState:      AssetReferenceReviewOpen,
 		GitHubIssue:  4242,
 		UpdatedAt:    reviewedAt,
-		ExpiresAt:    time.Time{},
+		ExpiresAt:    kept.ExpiresAt,
 	}, reviewEvent); err != nil {
 		t.Fatalf("TransitionAssetPinReference(review open) error = %v", err)
 	}
@@ -306,7 +306,7 @@ func TestAuxiliaryMetadataReplaysAssetPinReceiptsReferencesTransitionsDeletionsA
 		ReferenceKey:   kept.ReferenceKey,
 		FromState:      AssetReferenceReviewOpen,
 		ToState:        AssetReferenceApproved,
-		GitHubIssue:    0,
+		GitHubIssue:    4242,
 		DecisionSHA256: decisionSHA,
 		UpdatedAt:      transitionedAt,
 		ExpiresAt:      time.Time{},
@@ -474,6 +474,7 @@ func TestAuxiliaryMetadataAssetReplayIsIdempotentAfterTransitions(t *testing.T) 
 		ToState:      AssetReferenceReviewOpen,
 		GitHubIssue:  5150,
 		UpdatedAt:    reviewedAt,
+		ExpiresAt:    ref.ExpiresAt,
 	}, reviewEvent); err != nil {
 		t.Fatalf("review TransitionAssetPinReference() error = %v", err)
 	}
@@ -485,6 +486,7 @@ func TestAuxiliaryMetadataAssetReplayIsIdempotentAfterTransitions(t *testing.T) 
 		ReferenceKey:   ref.ReferenceKey,
 		FromState:      AssetReferenceReviewOpen,
 		ToState:        AssetReferenceApproved,
+		GitHubIssue:    5150,
 		DecisionSHA256: decisionSHA,
 		UpdatedAt:      approvedAt,
 	}, approvedEvent); err != nil {
@@ -613,6 +615,7 @@ func TestAuxiliaryMetadataAssetApplyConflictsDoNotMutateFinalState(t *testing.T)
 			ToState:      AssetReferenceReviewOpen,
 			GitHubIssue:  6060,
 			UpdatedAt:    transitionedAt,
+			ExpiresAt:    ref.ExpiresAt,
 		}, event); err != nil {
 			t.Fatalf("TransitionAssetPinReference() error = %v", err)
 		}
@@ -623,6 +626,7 @@ func TestAuxiliaryMetadataAssetApplyConflictsDoNotMutateFinalState(t *testing.T)
 				ReferenceKey:   ref.ReferenceKey,
 				FromState:      AssetReferenceReviewOpen,
 				ToState:        AssetReferenceApproved,
+				GitHubIssue:    6060,
 				DecisionSHA256: strings.Repeat("5", 64),
 				UpdatedAt:      transitionedAt.Add(time.Nanosecond),
 			},
@@ -651,6 +655,8 @@ func TestAuxiliaryMetadataAssetApplyConflictsDoNotMutateFinalState(t *testing.T)
 		recreated.CID = "bafybeiapplydeletenew"
 		recreated.SHA256 = strings.Repeat("7", 64)
 		recreated.State = AssetReferenceApproved
+		recreated.GitHubIssue = 4242
+		recreated.DecisionSHA256 = strings.Repeat("8", 64)
 		recreated.CreatedAt = now.Add(2 * time.Nanosecond)
 		recreated.UpdatedAt = recreated.CreatedAt
 		recreated.ExpiresAt = time.Time{}
