@@ -78,7 +78,14 @@ func (s *FlatSQLStore) beginAssetPinTransaction(ctx context.Context, operation s
 
 func (s *FlatSQLStore) appendAndCommitAssetPinMutation(tx assetPinTransaction, event auxiliaryMetadataEvent, appendOperation, commitOperation string) error {
 	if err := s.appendAuxiliaryMetadata(event); err != nil {
-		return fmt.Errorf("%s: %w", appendOperation, err)
+		appendErr := fmt.Errorf("%s: %w", appendOperation, err)
+		if errors.Is(err, errAuxiliaryMetadataAppendRecoveryRequired) {
+			// The caller still holds s.mu, so publish the poison state before any
+			// queued asset mutation can acquire the lock and append another frame.
+			s.assetPinLedgerRecovery.Store(true)
+			return errors.Join(appendErr, ErrAssetPinLedgerRecoveryRequired)
+		}
+		return appendErr
 	}
 	if err := tx.Commit(); err != nil {
 		// The caller still holds s.mu, so publish the poison state before any

@@ -275,6 +275,111 @@ func TestAssetPinAppendFailureDoesNotRequireRecovery(t *testing.T) {
 	}
 }
 
+func TestAssetPinAppendOutcomeControlsRecovery(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name             string
+		mode             auxiliaryAppendFaultMode
+		wantRecovery     bool
+		wantBytesChanged bool
+		wantFirst        bool
+		wantSecond       bool
+	}{
+		{
+			name:             "partial payload write",
+			mode:             auxiliaryAppendFaultPartialPayload,
+			wantRecovery:     true,
+			wantBytesChanged: true,
+		},
+		{
+			name:             "reported sync error",
+			mode:             auxiliaryAppendFaultSync,
+			wantRecovery:     true,
+			wantBytesChanged: true,
+			wantFirst:        true,
+		},
+		{
+			name:         "zero byte header failure",
+			mode:         auxiliaryAppendFaultZeroHeader,
+			wantRecovery: false,
+			wantSecond:   true,
+		},
+		{
+			name:         "negative write count",
+			mode:         auxiliaryAppendFaultNegativeCount,
+			wantRecovery: true,
+		},
+		{
+			name:         "oversized write count",
+			mode:         auxiliaryAppendFaultOversizedCount,
+			wantRecovery: true,
+		},
+	}
+	for i, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			basePath := filepath.Join(t.TempDir(), "store")
+			store := newAssetPinTestStore(t, basePath)
+			now := time.Date(2026, 7, 14, 5, i, 0, 123456789, time.UTC)
+			candidateKey := "candidate-append-outcome-" + strings.ReplaceAll(tc.name, " ", "-")
+			first := testAssetPinReference("reference-append-outcome-first-"+strings.ReplaceAll(tc.name, " ", "-"), candidateKey, "bafybeiappendoutcomefirst", strings.Repeat("5", 64), AssetReferenceStaged, now, now.Add(time.Hour))
+			second := testAssetPinReference("reference-append-outcome-second-"+strings.ReplaceAll(tc.name, " ", "-"), candidateKey, "bafybeiappendoutcomesecond", strings.Repeat("6", 64), AssetReferenceStaged, now.Add(time.Second), now.Add(2*time.Hour))
+			faultErr := errors.New("injected auxiliary append failure")
+			fault := &faultingAuxiliaryMetadataAppendFile{
+				delegate: store.auxiliaryMetadata.appendFile,
+				mode:     tc.mode,
+				err:      faultErr,
+			}
+			store.auxiliaryMetadata.appendFile = fault
+
+			before := auxiliaryJournalSizeForTest(t, basePath)
+			err := store.UpsertAssetPinReference(ctx, first, testAssetPinEvent("event-append-outcome-first-"+strings.ReplaceAll(tc.name, " ", "-"), "reference_upsert", first, first.CreatedAt))
+			if !errors.Is(err, faultErr) {
+				t.Fatalf("first UpsertAssetPinReference() error = %v, want injected append failure", err)
+			}
+			if got := errors.Is(err, ErrAssetPinLedgerRecoveryRequired); got != tc.wantRecovery {
+				t.Errorf("first UpsertAssetPinReference() recovery error = %v, want %v: %v", got, tc.wantRecovery, err)
+			}
+			afterFirst := auxiliaryJournalSizeForTest(t, basePath)
+			if got := afterFirst > before; got != tc.wantBytesChanged {
+				t.Fatalf("journal bytes changed after first append = %v (size %d -> %d), want %v", got, before, afterFirst, tc.wantBytesChanged)
+			}
+
+			if tc.wantRecovery {
+				if err := store.UpsertAssetPinReference(ctx, second, testAssetPinEvent("event-append-outcome-second-"+strings.ReplaceAll(tc.name, " ", "-"), "reference_upsert", second, second.CreatedAt)); !errors.Is(err, ErrAssetPinLedgerRecoveryRequired) {
+					t.Fatalf("second UpsertAssetPinReference() error = %v, want ErrAssetPinLedgerRecoveryRequired", err)
+				}
+				if afterSecond := auxiliaryJournalSizeForTest(t, basePath); afterSecond != afterFirst {
+					t.Fatalf("journal size after blocked second append = %d, want %d", afterSecond, afterFirst)
+				}
+			} else {
+				store.auxiliaryMetadata.appendFile = fault.delegate
+				if err := store.UpsertAssetPinReference(ctx, second, testAssetPinEvent("event-append-outcome-second-"+strings.ReplaceAll(tc.name, " ", "-"), "reference_upsert", second, second.CreatedAt)); err != nil {
+					t.Fatalf("second UpsertAssetPinReference() error = %v, want success after restoring append backend", err)
+				}
+			}
+
+			if err := store.Close(); err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+			reopened := newAssetPinTestStore(t, basePath)
+			gotFirst, firstOK, err := reopened.FindAssetPinReference(ctx, first.ReferenceKey)
+			if err != nil || firstOK != tc.wantFirst {
+				t.Fatalf("first reference after reopen = %+v, %v, %v; want present %v", gotFirst, firstOK, err, tc.wantFirst)
+			}
+			if firstOK && !equalAssetPinReference(gotFirst, first) {
+				t.Fatalf("first reference after reopen = %+v, want %+v", gotFirst, first)
+			}
+			gotSecond, secondOK, err := reopened.FindAssetPinReference(ctx, second.ReferenceKey)
+			if err != nil || secondOK != tc.wantSecond {
+				t.Fatalf("second reference after reopen = %+v, %v, %v; want present %v", gotSecond, secondOK, err, tc.wantSecond)
+			}
+			if secondOK && !equalAssetPinReference(gotSecond, second) {
+				t.Fatalf("second reference after reopen = %+v, want %+v", gotSecond, second)
+			}
+		})
+	}
+}
+
 func TestAssetPinQueryCutoffsRejectUnixNanoOverflow(t *testing.T) {
 	store := newAssetPinTestStore(t, filepath.Join(t.TempDir(), "store"))
 	ctx := context.Background()
@@ -1661,4 +1766,62 @@ type failingAssetPinTransaction struct {
 
 func (tx failingAssetPinTransaction) Commit() error {
 	return tx.commitErr
+}
+
+type auxiliaryAppendFaultMode int
+
+const (
+	auxiliaryAppendFaultPartialPayload auxiliaryAppendFaultMode = iota
+	auxiliaryAppendFaultSync
+	auxiliaryAppendFaultZeroHeader
+	auxiliaryAppendFaultNegativeCount
+	auxiliaryAppendFaultOversizedCount
+)
+
+type faultingAuxiliaryMetadataAppendFile struct {
+	delegate auxiliaryMetadataAppendFile
+	mode     auxiliaryAppendFaultMode
+	err      error
+	writes   int
+}
+
+func (file *faultingAuxiliaryMetadataAppendFile) Write(payload []byte) (int, error) {
+	file.writes++
+	switch file.mode {
+	case auxiliaryAppendFaultPartialPayload:
+		if file.writes == 2 {
+			limit := len(payload) / 2
+			if limit == 0 {
+				limit = 1
+			}
+			n, err := file.delegate.Write(payload[:limit])
+			if err != nil {
+				return n, err
+			}
+			return n, file.err
+		}
+	case auxiliaryAppendFaultZeroHeader:
+		if file.writes == 1 {
+			return 0, file.err
+		}
+	case auxiliaryAppendFaultNegativeCount:
+		if file.writes == 1 {
+			return -1, file.err
+		}
+	case auxiliaryAppendFaultOversizedCount:
+		if file.writes == 1 {
+			return len(payload) + 1, file.err
+		}
+	}
+	return file.delegate.Write(payload)
+}
+
+func (file *faultingAuxiliaryMetadataAppendFile) Sync() error {
+	if err := file.delegate.Sync(); err != nil {
+		return err
+	}
+	if file.mode == auxiliaryAppendFaultSync {
+		return file.err
+	}
+	return nil
 }
