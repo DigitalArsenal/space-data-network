@@ -234,7 +234,12 @@ func GenerateOpenAPI(opts DocsHandlerOptions) ([]byte, error) {
 		}
 		op := decl.operation
 		op["x-sdn-served-by"] = "native"
-		stampAnonymous(op, opts.EffectiveAnonymous, decl.method, decl.path)
+		if decl.security != nil {
+			op["x-sdn-anonymous"] = false
+			op["security"] = decl.security
+		} else {
+			stampAnonymous(op, opts.EffectiveAnonymous, decl.method, decl.path)
+		}
 		addOperation(paths, decl.path, decl.method, op)
 		if _, ok := tagSet[decl.tag]; !ok {
 			tagSet[decl.tag] = decl.tagDescription
@@ -310,6 +315,13 @@ func GenerateOpenAPI(opts DocsHandlerOptions) ([]byte, error) {
 				"ETag": openAPIObj{
 					"description": "Strong, content-derived entity tag for the record stream (deterministic FNV-1a 64 over the stream bytes). Identical for both encodings' underlying stream; use with If-None-Match for 304 revalidation.",
 					"schema":      openAPIObj{"type": "string"},
+				},
+			},
+			"securitySchemes": openAPIObj{
+				"githubOIDC": openAPIObj{
+					"type":         "http",
+					"scheme":       "bearer",
+					"bearerFormat": "JWT",
 				},
 			},
 		},
@@ -484,6 +496,7 @@ type staticRouteDecl struct {
 	tag            string
 	tagDescription string
 	plannedIn      string // planned decls only
+	security       []openAPIObj
 	operation      openAPIObj
 }
 
@@ -531,7 +544,78 @@ func formatParam() openAPIObj {
 // the spec. Everything else native stays out of the public gateway spec on
 // purpose (docs/gateway-api.md §4 records where each native route lands).
 func nativeRouteDecls() []staticRouteDecl {
+	githubOIDCSecurity := []openAPIObj{{"githubOIDC": []string{}}}
 	return []staticRouteDecl{
+		{
+			path: "/api/v1/assets/pin", method: "POST",
+			tag: "asset-review", tagDescription: "License-cleared 3D asset review ingestion and lifecycle state.",
+			security: githubOIDCSecurity,
+			operation: openAPIObj{
+				"operationId": "pinAssetReviewCandidate",
+				"summary":     "Pin one reviewed GLB candidate",
+				"description": "GitHub Actions OIDC capability for the configured asset upload workflow. The GLB is bounded, validated, deterministically pinned, and staged for human review.",
+				"requestBody": openAPIObj{
+					"required": true,
+					"content": openAPIObj{
+						"multipart/form-data": openAPIObj{
+							"schema": openAPIObj{
+								"type":     "object",
+								"required": []string{"metadata", "file"},
+								"properties": openAPIObj{
+									"metadata": openAPIObj{"type": "string", "description": "Canonical asset provenance JSON."},
+									"file":     openAPIObj{"type": "string", "format": "binary", "description": "Binary glTF 2.0 (GLB), at most 10,000,000 bytes."},
+								},
+							},
+						},
+					},
+				},
+				"responses": openAPIObj{
+					"201": openAPIObj{"description": "Candidate staged and pinned, or matched to an existing deterministic pin."},
+					"400": openAPIObj{"description": "Malformed request or metadata."},
+					"401": openAPIObj{"description": "Missing, invalid, or replayed GitHub OIDC token."},
+					"413": openAPIObj{"description": "Upload exceeds the configured bound."},
+					"422": openAPIObj{"description": "GLB or digest integrity validation failed."},
+					"503": openAPIObj{"description": "OIDC, ledger, capacity, or pin backend unavailable."},
+				},
+			},
+		},
+		{
+			path: "/api/v1/assets/reference-state", method: "POST",
+			tag: "asset-review", tagDescription: "License-cleared 3D asset review ingestion and lifecycle state.",
+			security: githubOIDCSecurity,
+			operation: openAPIObj{
+				"operationId": "setAssetReferenceState",
+				"summary":     "Apply one trusted asset review state",
+				"description": "GitHub Actions OIDC capability for opening a review issue or applying an authoritative approved, rejected, or superseded decision.",
+				"requestBody": openAPIObj{
+					"required": true,
+					"content": openAPIObj{
+						ContentTypeJSON: openAPIObj{
+							"schema": openAPIObj{
+								"type":                 "object",
+								"additionalProperties": false,
+								"required":             []string{"candidateKey", "state", "issueNumber", "decisionSha256", "decidedAt"},
+								"properties": openAPIObj{
+									"candidateKey":   openAPIObj{"type": "string"},
+									"state":          openAPIObj{"type": "string", "enum": []string{"review_open", "approved", "rejected", "superseded"}},
+									"issueNumber":    openAPIObj{"type": "integer", "minimum": 1},
+									"decisionSha256": openAPIObj{"type": "string"},
+									"decidedAt":      openAPIObj{"type": "string", "format": "date-time"},
+								},
+							},
+						},
+					},
+				},
+				"responses": openAPIObj{
+					"200": openAPIObj{"description": "Reference state applied or confirmed idempotently."},
+					"400": openAPIObj{"description": "Request is not the canonical review-state JSON contract."},
+					"401": openAPIObj{"description": "Missing, invalid, wrong-workflow, or replayed GitHub OIDC token."},
+					"404": openAPIObj{"description": "Candidate not found."},
+					"409": openAPIObj{"description": "Requested lifecycle transition conflicts with stored state."},
+					"503": openAPIObj{"description": "OIDC or ledger unavailable."},
+				},
+			},
+		},
 		{
 			path: "/api/v1/data/health", method: "GET",
 			tag: "node", tagDescription: "Node status and identity (native routes; migrate to flows later).",

@@ -198,6 +198,109 @@ func TestGenerateOpenAPINativeAndPlanned(t *testing.T) {
 	}
 }
 
+func TestGenerateOpenAPIAssetOIDCCapabilitiesUseExplicitSecurity(t *testing.T) {
+	spec, err := GenerateOpenAPI(DocsHandlerOptions{
+		Version: "asset-capability-test",
+		Flows:   []FlowDocSource{testFlow()},
+		EffectiveAnonymous: func(string, string) bool {
+			// Explicit capability security must override even an accidentally
+			// permissive anonymous policy without changing ordinary route stamps.
+			return true
+		},
+	})
+	if err != nil {
+		t.Fatalf("GenerateOpenAPI: %v", err)
+	}
+	var doc map[string]interface{}
+	if err := json.Unmarshal(spec, &doc); err != nil {
+		t.Fatalf("unmarshal generated spec: %v", err)
+	}
+
+	tests := []struct {
+		path        string
+		operationID string
+		successCode string
+	}{
+		{path: "/api/v1/assets/pin", operationID: "pinAssetReviewCandidate", successCode: "201"},
+		{path: "/api/v1/assets/reference-state", operationID: "setAssetReferenceState", successCode: "200"},
+	}
+	for _, test := range tests {
+		op := opAt(t, doc, test.path, "post")
+		if op["operationId"] != test.operationID {
+			t.Fatalf("POST %s operationId = %v, want %s", test.path, op["operationId"], test.operationID)
+		}
+		if op["x-sdn-served-by"] != "native" {
+			t.Fatalf("POST %s x-sdn-served-by = %v, want native", test.path, op["x-sdn-served-by"])
+		}
+		if status, exists := op["x-sdn-status"]; exists {
+			t.Fatalf("POST %s unexpectedly has non-native status %v", test.path, status)
+		}
+		if op["x-sdn-anonymous"] != false {
+			t.Fatalf("POST %s x-sdn-anonymous = %v, want false", test.path, op["x-sdn-anonymous"])
+		}
+		security, ok := op["security"].([]interface{})
+		if !ok || len(security) != 1 {
+			t.Fatalf("POST %s security = %#v, want one githubOIDC requirement", test.path, op["security"])
+		}
+		requirement, ok := security[0].(map[string]interface{})
+		if !ok || len(requirement) != 1 {
+			t.Fatalf("POST %s security requirement = %#v", test.path, security[0])
+		}
+		if _, ok := requirement["githubOIDC"].([]interface{}); !ok {
+			t.Fatalf("POST %s security = %#v, want githubOIDC empty scopes", test.path, requirement)
+		}
+		if _, ok := requirement["sdnSession"]; ok {
+			t.Fatalf("POST %s must never advertise sdnSession security", test.path)
+		}
+		responses, _ := op["responses"].(map[string]interface{})
+		if _, ok := responses[test.successCode]; !ok {
+			t.Fatalf("POST %s responses = %#v, want native success %s", test.path, responses, test.successCode)
+		}
+	}
+
+	pinOperation := opAt(t, doc, "/api/v1/assets/pin", "post")
+	pinRequest := pinOperation["requestBody"].(map[string]interface{})
+	pinContent := pinRequest["content"].(map[string]interface{})
+	pinMultipart := pinContent["multipart/form-data"].(map[string]interface{})
+	pinSchema := pinMultipart["schema"].(map[string]interface{})
+	required := pinSchema["required"].([]interface{})
+	if len(required) != 2 || required[0] != "metadata" || required[1] != "file" {
+		t.Fatalf("asset pin multipart required fields = %#v, want [metadata file]", required)
+	}
+	properties := pinSchema["properties"].(map[string]interface{})
+	if _, ok := properties["metadata"]; !ok {
+		t.Fatal("asset pin multipart metadata property missing")
+	}
+	if _, ok := properties["file"]; !ok {
+		t.Fatal("asset pin multipart file property missing")
+	}
+	if _, ok := properties["asset"]; ok {
+		t.Fatal("asset pin multipart must not document unsupported asset property")
+	}
+
+	components := doc["components"].(map[string]interface{})
+	securitySchemes, ok := components["securitySchemes"].(map[string]interface{})
+	if !ok {
+		t.Fatal("components.securitySchemes missing")
+	}
+	githubOIDC, ok := securitySchemes["githubOIDC"].(map[string]interface{})
+	if !ok {
+		t.Fatal("components.securitySchemes.githubOIDC missing")
+	}
+	if githubOIDC["type"] != "http" || githubOIDC["scheme"] != "bearer" || githubOIDC["bearerFormat"] != "JWT" {
+		t.Fatalf("githubOIDC scheme = %#v", githubOIDC)
+	}
+
+	// Ordinary routes still use the existing effective-anonymous stamping.
+	health := opAt(t, doc, "/api/v1/data/health", "get")
+	if health["x-sdn-anonymous"] != true {
+		t.Fatalf("ordinary native anonymous stamp drifted: %v", health["x-sdn-anonymous"])
+	}
+	if _, exists := health["security"]; exists {
+		t.Fatalf("ordinary anonymous route unexpectedly has security: %#v", health["security"])
+	}
+}
+
 // A mounted flow claiming a path shadows the planned declaration for it —
 // the spec self-updates as Phase G lands.
 func TestGenerateOpenAPIMountedFlowShadowsPlanned(t *testing.T) {

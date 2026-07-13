@@ -8,6 +8,8 @@ import (
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,6 +27,7 @@ import (
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/spacedatanetwork/sdn-server/internal/api"
+	"github.com/spacedatanetwork/sdn-server/internal/assetpin"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 	"github.com/spacedatanetwork/sdn-server/internal/channels"
@@ -35,6 +38,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 	"github.com/spacedatanetwork/sdn-server/plugins"
 )
@@ -136,6 +140,558 @@ func TestNodeSecurityPublicAPIRequestPolicy(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIsAssetOIDCCapabilityRequestIsLiteralAndPOSTOnly(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		want   bool
+	}{
+		{name: "pin", method: http.MethodPost, path: "/api/v1/assets/pin", want: true},
+		{name: "reference state", method: http.MethodPost, path: "/api/v1/assets/reference-state", want: true},
+		{name: "get", method: http.MethodGet, path: "/api/v1/assets/pin"},
+		{name: "head", method: http.MethodHead, path: "/api/v1/assets/pin"},
+		{name: "options", method: http.MethodOptions, path: "/api/v1/assets/pin"},
+		{name: "lowercase method", method: "post", path: "/api/v1/assets/pin"},
+		{name: "case variant", method: http.MethodPost, path: "/api/v1/assets/Pin"},
+		{name: "trailing slash", method: http.MethodPost, path: "/api/v1/assets/pin/"},
+		{name: "suffix", method: http.MethodPost, path: "/api/v1/assets/pin/extra"},
+		{name: "prefix", method: http.MethodPost, path: "/prefix/api/v1/assets/pin"},
+		{name: "encoded letter", method: http.MethodPost, path: "/api/v1/assets/%70in"},
+		{name: "encoded slash", method: http.MethodPost, path: "/api/v1/assets%2Fpin"},
+		{name: "reference trailing slash", method: http.MethodPost, path: "/api/v1/assets/reference-state/"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isAssetOIDCCapabilityRequest(test.method, test.path); got != test.want {
+				t.Fatalf("isAssetOIDCCapabilityRequest(%q, %q) = %v, want %v", test.method, test.path, got, test.want)
+			}
+		})
+	}
+
+	for _, path := range []string{"/api/v1/assets/pin", "/api/v1/assets/reference-state"} {
+		if isPublicAPIRequest(http.MethodPost, path) {
+			t.Fatalf("%s must remain outside the public API policy", path)
+		}
+	}
+}
+
+func TestAdminWalletWallBypassesOnlyExactAssetOIDCCapabilities(t *testing.T) {
+	authHandler, _ := newAdminSession(t, peers.Standard)
+	adminMux := http.NewServeMux()
+	calls := 0
+	capabilityHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusNoContent)
+	})
+	registerAssetPinCapabilityRoutes(adminMux, capabilityHandler)
+
+	for _, path := range []string{"/api/v1/assets/pin", "/api/v1/assets/reference-state"} {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		rec := httptest.NewRecorder()
+		serveAdminMuxRequest(rec, req, adminMux, true, authHandler, notPublicAPI)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("exact POST %s status = %d, want %d", path, rec.Code, http.StatusNoContent)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("exact capability calls = %d, want 2", calls)
+	}
+
+	variants := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/v1/assets/pin"},
+		{http.MethodHead, "/api/v1/assets/pin"},
+		{http.MethodOptions, "/api/v1/assets/pin"},
+		{http.MethodPost, "/api/v1/assets/pin/"},
+		{http.MethodPost, "/api/v1/assets/pin/extra"},
+		{http.MethodPost, "/api/v1/assets/Pin"},
+		{http.MethodPost, "/api/v1/assets/%70in"},
+		{http.MethodPost, "/api/v1/assets%2Fpin"},
+		{http.MethodPost, "/api/v1/assets/reference-state/"},
+	}
+	for _, variant := range variants {
+		req := httptest.NewRequest(variant.method, variant.path, nil)
+		rec := httptest.NewRecorder()
+		serveAdminMuxRequest(rec, req, adminMux, true, authHandler, notPublicAPI)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("variant %s %s status = %d, want wallet-gated %d", variant.method, variant.path, rec.Code, http.StatusUnauthorized)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("variant reached capability handler; calls = %d, want 2", calls)
+	}
+}
+
+func TestAdminWalletWallExactAssetOIDCCapabilityDoesNotRequireWalletBackend(t *testing.T) {
+	adminMux := http.NewServeMux()
+	calls := 0
+	registerAssetPinCapabilityRoutes(adminMux, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	for _, path := range []string{"/api/v1/assets/pin", "/api/v1/assets/reference-state"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		serveAdminMuxRequest(rec, req, adminMux, true, nil, notPublicAPI)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("exact POST %s with no wallet backend status = %d, want %d", path, rec.Code, http.StatusNoContent)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("exact capability calls = %d, want 2", calls)
+	}
+
+	for _, variant := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/v1/assets/pin"},
+		{http.MethodPost, "/api/v1/assets/pin/"},
+		{http.MethodPost, "/api/v1/assets/%70in"},
+		{http.MethodPost, "/api/v1/assets/reference-state/"},
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(variant.method, variant.path, nil)
+		serveAdminMuxRequest(rec, req, adminMux, true, nil, notPublicAPI)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("variant %s %s with no wallet backend status = %d, want legacy %d", variant.method, variant.path, rec.Code, http.StatusServiceUnavailable)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("variant reached capability handler; calls = %d, want 2", calls)
+	}
+}
+
+func TestComposeAssetPinCapabilityHealthyMountUsesNodeInputs(t *testing.T) {
+	now := time.Date(2026, 7, 13, 19, 20, 21, 123, time.FixedZone("offset", -4*60*60))
+	store := &fakeAssetPinCapabilityStore{path: filepath.Join(t.TempDir(), "sdn.db")}
+	cfg := config.Default().AssetPins
+	cfg.Enabled = true
+	pinner := &fakeAssetPinCapabilityPinner{}
+	verifier := &fakeAssetPinCapabilityVerifier{}
+	routes := &fakeAssetPinCapabilityRoutes{}
+	var consumed assetpin.TokenReceiptConsumer
+	dependencies := assetPinCapabilityDependencies{
+		clock: func() time.Time { return now },
+		probeKubo: func(_ context.Context, apiURL string) error {
+			if apiURL != "http://127.0.0.1:5001" {
+				t.Fatalf("Kubo probe URL = %q", apiURL)
+			}
+			return nil
+		},
+		newPinner: func(apiURL string) (api.AssetPinPinner, error) {
+			if apiURL != "http://127.0.0.1:5001" {
+				t.Fatalf("Kubo URL = %q", apiURL)
+			}
+			return pinner, nil
+		},
+		newHandler: func(options api.AssetPinHandlerOptions) (assetPinCapabilityRoutes, error) {
+			if options.Store != store || options.Pinner != pinner || options.Verifier == nil {
+				t.Fatalf("handler options not composed from store/pinner/verifier: %#v", options)
+			}
+			if options.Config != cfg {
+				t.Fatalf("handler config = %#v, want %#v", options.Config, cfg)
+			}
+			if options.DataDir != filepath.Dir(store.Path()) {
+				t.Fatalf("handler data dir = %q, want %q", options.DataDir, filepath.Dir(store.Path()))
+			}
+			return routes, nil
+		},
+		newVerifier: func(_ context.Context, got config.AssetPinConfig, consumer assetpin.TokenReceiptConsumer) (api.AssetPinVerifier, error) {
+			if got != cfg {
+				t.Fatalf("verifier config = %#v, want %#v", got, cfg)
+			}
+			consumed = consumer
+			return verifier, nil
+		},
+	}
+
+	capability, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, dependencies)
+	if err != nil {
+		t.Fatalf("composeAssetPinCapability() error = %v", err)
+	}
+	if capability.HealthErr != nil {
+		t.Fatalf("capability health error = %v", capability.HealthErr)
+	}
+	if consumed == nil {
+		t.Fatal("token receipt consumer was not supplied to verifier")
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/unrelated", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusAccepted) })
+	registerAssetPinCapabilityRoutes(mux, capability.Handler)
+	for _, path := range []string{"/api/v1/assets/pin", "/api/v1/assets/reference-state"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("POST %s status = %d, want %d", path, rec.Code, http.StatusNoContent)
+		}
+	}
+	if routes.calls != 2 {
+		t.Fatalf("healthy route calls = %d, want 2", routes.calls)
+	}
+	for _, path := range []string{"/api/v1/assets/pin/", "/api/v1/assets/pin/extra", "/api/v1/assets/reference-state/"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("POST %s status = %d, want exact-registration 404", path, rec.Code)
+		}
+	}
+	if routes.calls != 2 {
+		t.Fatalf("non-exact route reached handler; calls = %d", routes.calls)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/unrelated", nil))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("unrelated route status = %d, want %d", rec.Code, http.StatusAccepted)
+	}
+}
+
+func TestAssetPinTokenReceiptConsumerMapsStorageReceiptAndReplay(t *testing.T) {
+	now := time.Date(2026, 7, 13, 23, 24, 25, 456, time.FixedZone("offset", 3*60*60))
+	expiresAt := now.Add(5 * time.Minute).UTC()
+	claims := assetpin.Claims{
+		Repository: "DigitalArsenal/asset-models", Ref: "refs/heads/main",
+		WorkflowRef: "DigitalArsenal/asset-models/.github/workflows/asset-loop.yml@refs/heads/main",
+		Actor:       "review-bot", RunID: "101", RunAttempt: "2", SHA: strings.Repeat("a", 40),
+	}
+	store := &fakeAssetPinCapabilityStore{}
+	consumer := newAssetPinTokenReceiptConsumer(store, func() time.Time { return now })
+	if err := consumer(context.Background(), strings.Repeat("b", 64), expiresAt, claims); err != nil {
+		t.Fatalf("consume receipt: %v", err)
+	}
+	want := storage.AssetOIDCReceipt{
+		Digest: strings.Repeat("b", 64), ExpiresAt: expiresAt,
+		Repository: claims.Repository, Ref: claims.Ref, WorkflowRef: claims.WorkflowRef,
+		Actor: claims.Actor, RunID: claims.RunID, RunAttempt: claims.RunAttempt, SHA: claims.SHA,
+		ConsumedAt: now.UTC(),
+	}
+	if store.receipt != want {
+		t.Fatalf("stored receipt = %#v, want %#v", store.receipt, want)
+	}
+
+	store.consumeErr = fmt.Errorf("wrapped: %w", storage.ErrAssetOIDCTokenReplay)
+	if err := consumer(context.Background(), strings.Repeat("c", 64), expiresAt, claims); !errors.Is(err, assetpin.ErrTokenReplay) {
+		t.Fatalf("replay error = %v, want assetpin.ErrTokenReplay", err)
+	}
+	store.consumeErr = errors.New("ledger unavailable")
+	if err := consumer(context.Background(), strings.Repeat("d", 64), expiresAt, claims); err == nil || errors.Is(err, assetpin.ErrTokenReplay) {
+		t.Fatalf("ledger error = %v, want original non-replay failure", err)
+	}
+}
+
+func TestComposeAssetPinCapabilityRejectsStaticFailuresBeforeDiscovery(t *testing.T) {
+	cfg := config.Default().AssetPins
+	cfg.Enabled = true
+	validStore := &fakeAssetPinCapabilityStore{path: filepath.Join(t.TempDir(), "sdn.db")}
+	discoveryCalls := 0
+	probeCalls := 0
+	dependencies := assetPinCapabilityDependencies{
+		clock: func() time.Time { return time.Now().UTC() },
+		probeKubo: func(context.Context, string) error {
+			probeCalls++
+			return nil
+		},
+		newPinner: func(string) (api.AssetPinPinner, error) { return &fakeAssetPinCapabilityPinner{}, nil },
+		newHandler: func(api.AssetPinHandlerOptions) (assetPinCapabilityRoutes, error) {
+			return &fakeAssetPinCapabilityRoutes{}, nil
+		},
+		newVerifier: func(context.Context, config.AssetPinConfig, assetpin.TokenReceiptConsumer) (api.AssetPinVerifier, error) {
+			discoveryCalls++
+			return &fakeAssetPinCapabilityVerifier{}, nil
+		},
+	}
+	var typedNilEdgeStore *fakeAssetPinCapabilityStore
+
+	tests := []struct {
+		name       string
+		store      assetPinCapabilityStore
+		apiURL     string
+		config     config.AssetPinConfig
+		customDeps *assetPinCapabilityDependencies
+	}{
+		{name: "nil edge store", store: nil, apiURL: "http://127.0.0.1:5001", config: cfg},
+		{name: "typed nil edge store", store: typedNilEdgeStore, apiURL: "http://127.0.0.1:5001", config: cfg},
+		{name: "disabled", store: validStore, apiURL: "http://127.0.0.1:5001", config: func() config.AssetPinConfig { c := cfg; c.Enabled = false; return c }()},
+		{name: "empty Kubo URL", store: validStore, apiURL: "", config: cfg},
+		{name: "invalid Kubo URL", store: validStore, apiURL: "unix:///var/run/kubo.sock", config: cfg},
+		{name: "invalid issuer", store: validStore, apiURL: "http://127.0.0.1:5001", config: func() config.AssetPinConfig { c := cfg; c.Issuer = "://bad"; return c }()},
+		{name: "invalid handler data", store: validStore, apiURL: "http://127.0.0.1:5001", config: cfg, customDeps: func() *assetPinCapabilityDependencies {
+			d := dependencies
+			d.newHandler = func(api.AssetPinHandlerOptions) (assetPinCapabilityRoutes, error) {
+				return nil, errors.New("invalid data directory")
+			}
+			return &d
+		}()},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			deps := dependencies
+			if test.customDeps != nil {
+				deps = *test.customDeps
+			}
+			before := discoveryCalls
+			probeBefore := probeCalls
+			if _, err := composeAssetPinCapability(context.Background(), test.store, test.apiURL, test.config, deps); err == nil {
+				t.Fatal("composeAssetPinCapability() succeeded, want static failure")
+			}
+			if discoveryCalls != before {
+				t.Fatalf("OIDC discovery called for static failure: before=%d after=%d", before, discoveryCalls)
+			}
+			if probeCalls != probeBefore {
+				t.Fatalf("Kubo readiness probe called for static failure: before=%d after=%d", probeBefore, probeCalls)
+			}
+		})
+	}
+}
+
+func TestComposeAssetPinCapabilityDegradesOnlyCapabilityRoutes(t *testing.T) {
+	store := &fakeAssetPinCapabilityStore{path: filepath.Join(t.TempDir(), "sdn.db")}
+	cfg := config.Default().AssetPins
+	cfg.Enabled = true
+	secretDiscoveryError := errors.New("provider secret-discovery-detail")
+	dependencies := assetPinCapabilityDependencies{
+		clock:     func() time.Time { return time.Now().UTC() },
+		probeKubo: func(context.Context, string) error { return nil },
+		newPinner: func(string) (api.AssetPinPinner, error) { return &fakeAssetPinCapabilityPinner{}, nil },
+		newHandler: func(api.AssetPinHandlerOptions) (assetPinCapabilityRoutes, error) {
+			return &fakeAssetPinCapabilityRoutes{}, nil
+		},
+		newVerifier: func(context.Context, config.AssetPinConfig, assetpin.TokenReceiptConsumer) (api.AssetPinVerifier, error) {
+			return nil, secretDiscoveryError
+		},
+	}
+
+	capability, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, dependencies)
+	if err != nil {
+		t.Fatalf("composeAssetPinCapability() static error = %v", err)
+	}
+	if !errors.Is(capability.HealthErr, secretDiscoveryError) {
+		t.Fatalf("health error = %v, want wrapped discovery error", capability.HealthErr)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/unrelated", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	registerAssetPinCapabilityRoutes(mux, capability.Handler)
+
+	for _, path := range []string{"/api/v1/assets/pin", "/api/v1/assets/reference-state"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, strings.NewReader("sensitive request")))
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("degraded POST %s status = %d, want %d", path, rec.Code, http.StatusServiceUnavailable)
+		}
+		if got := rec.Header().Get("Content-Type"); got != "application/json" {
+			t.Fatalf("degraded Content-Type = %q", got)
+		}
+		if body := rec.Body.String(); body != assetPinCapabilityUnavailableJSON || strings.Contains(body, "secret-discovery-detail") {
+			t.Fatalf("degraded body = %q, want fixed sanitized JSON", body)
+		}
+		if rec.Body.Len() > 256 {
+			t.Fatalf("degraded body length = %d, want bounded", rec.Body.Len())
+		}
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/unrelated", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("unrelated route status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
+func TestComposeAssetPinCapabilityKuboOutageDegradesWithoutOIDCDiscovery(t *testing.T) {
+	store := &fakeAssetPinCapabilityStore{path: filepath.Join(t.TempDir(), "sdn.db")}
+	cfg := config.Default().AssetPins
+	cfg.Enabled = true
+	secretProbeError := errors.New("kubo secret-readiness-detail")
+	discoveryCalls := 0
+	dependencies := assetPinCapabilityDependencies{
+		clock:     func() time.Time { return time.Now().UTC() },
+		probeKubo: func(context.Context, string) error { return secretProbeError },
+		newPinner: func(string) (api.AssetPinPinner, error) { return &fakeAssetPinCapabilityPinner{}, nil },
+		newHandler: func(api.AssetPinHandlerOptions) (assetPinCapabilityRoutes, error) {
+			return &fakeAssetPinCapabilityRoutes{}, nil
+		},
+		newVerifier: func(context.Context, config.AssetPinConfig, assetpin.TokenReceiptConsumer) (api.AssetPinVerifier, error) {
+			discoveryCalls++
+			return &fakeAssetPinCapabilityVerifier{}, nil
+		},
+	}
+
+	capability, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, dependencies)
+	if err != nil {
+		t.Fatalf("composeAssetPinCapability() static error = %v", err)
+	}
+	if !errors.Is(capability.HealthErr, secretProbeError) {
+		t.Fatalf("health error = %v, want wrapped Kubo probe error", capability.HealthErr)
+	}
+	if discoveryCalls != 0 {
+		t.Fatalf("OIDC discovery calls = %d, want 0 while Kubo is unavailable", discoveryCalls)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/unrelated", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	registerAssetPinCapabilityRoutes(mux, capability.Handler)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/assets/pin", nil))
+	if rec.Code != http.StatusServiceUnavailable || rec.Body.String() != assetPinCapabilityUnavailableJSON {
+		t.Fatalf("Kubo-degraded response = %d %q", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "secret-readiness-detail") {
+		t.Fatalf("Kubo probe error leaked into response: %q", rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/unrelated", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("unrelated route status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
+func TestProbeAssetPinKuboReadinessUsesBoundedOfficialVersionRPC(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost || r.URL.Path != "/api/v0/version" || r.URL.RawQuery != "" {
+				t.Fatalf("probe request = %s %s", r.Method, r.URL.RequestURI())
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"Version":"0.36.0","Commit":"fixture","Repo":"18"}`))
+		}))
+		defer server.Close()
+		if err := probeAssetPinKuboReadiness(context.Background(), server.URL); err != nil {
+			t.Fatalf("probeAssetPinKuboReadiness() error = %v", err)
+		}
+	})
+
+	tests := []struct {
+		name string
+		body string
+		code int
+	}{
+		{name: "non success", code: http.StatusBadGateway, body: "secret upstream detail"},
+		{name: "empty body", code: http.StatusOK},
+		{name: "malformed JSON", code: http.StatusOK, body: `{"Version":`},
+		{name: "trailing JSON", code: http.StatusOK, body: `{"Version":"0.36.0"}{}`},
+		{name: "missing version", code: http.StatusOK, body: `{"Repo":"18"}`},
+		{name: "oversized body", code: http.StatusOK, body: `{"Version":"` + strings.Repeat("x", assetPinKuboProbeMaxResponseBytes) + `"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(test.code)
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer server.Close()
+			err := probeAssetPinKuboReadiness(context.Background(), server.URL)
+			if err == nil {
+				t.Fatal("probeAssetPinKuboReadiness() succeeded, want failure")
+			}
+			if strings.Contains(err.Error(), "secret upstream detail") {
+				t.Fatalf("probe error leaked response body: %v", err)
+			}
+		})
+	}
+
+	t.Run("caller deadline", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			<-r.Context().Done()
+		}))
+		defer server.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+		defer cancel()
+		started := time.Now()
+		if err := probeAssetPinKuboReadiness(ctx, server.URL); err == nil {
+			t.Fatal("probeAssetPinKuboReadiness() ignored caller deadline")
+		}
+		if elapsed := time.Since(started); elapsed > time.Second {
+			t.Fatalf("probe returned after %s, want bounded caller cancellation", elapsed)
+		}
+	})
+}
+
+func TestComposeAssetPinCapabilityValidatesProductionHandlerBeforeOIDCDiscovery(t *testing.T) {
+	cfg := config.Default().AssetPins
+	cfg.Enabled = true
+	store := &fakeAssetPinCapabilityStore{path: filepath.Join(t.TempDir(), "missing", "sdn.db")}
+	discoveryCalls := 0
+	dependencies := defaultAssetPinCapabilityDependencies()
+	dependencies.newVerifier = func(context.Context, config.AssetPinConfig, assetpin.TokenReceiptConsumer) (api.AssetPinVerifier, error) {
+		discoveryCalls++
+		return &fakeAssetPinCapabilityVerifier{}, nil
+	}
+
+	if _, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, dependencies); err == nil {
+		t.Fatal("composeAssetPinCapability() accepted a missing data directory")
+	}
+	if discoveryCalls != 0 {
+		t.Fatalf("OIDC discovery calls = %d, want 0 before static handler validation", discoveryCalls)
+	}
+}
+
+type fakeAssetPinCapabilityStore struct {
+	path       string
+	receipt    storage.AssetOIDCReceipt
+	consumeErr error
+}
+
+func (s *fakeAssetPinCapabilityStore) Path() string { return s.path }
+
+func (s *fakeAssetPinCapabilityStore) ConsumeAssetOIDCToken(_ context.Context, receipt storage.AssetOIDCReceipt) error {
+	s.receipt = receipt
+	return s.consumeErr
+}
+
+func (*fakeAssetPinCapabilityStore) FindAssetPinReferenceByCandidateKey(context.Context, string) (storage.AssetPinReference, bool, error) {
+	return storage.AssetPinReference{}, false, nil
+}
+
+func (*fakeAssetPinCapabilityStore) FindAssetBySHA256(context.Context, string) (storage.AssetPinReference, bool, error) {
+	return storage.AssetPinReference{}, false, nil
+}
+
+func (*fakeAssetPinCapabilityStore) UpsertAssetPinReference(context.Context, storage.AssetPinReference, storage.AssetPinAuditEvent) error {
+	return nil
+}
+
+func (*fakeAssetPinCapabilityStore) TransitionAssetPinReference(context.Context, storage.AssetPinReferenceTransition, storage.AssetPinAuditEvent) error {
+	return nil
+}
+
+type fakeAssetPinCapabilityPinner struct{}
+
+func (*fakeAssetPinCapabilityPinner) CalculateAssetGLBCID(context.Context, string) (string, error) {
+	return "", nil
+}
+
+func (*fakeAssetPinCapabilityPinner) PinAssetGLB(context.Context, string) (string, error) {
+	return "", nil
+}
+
+func (*fakeAssetPinCapabilityPinner) UnpinAssetCID(context.Context, string) error { return nil }
+
+type fakeAssetPinCapabilityVerifier struct{}
+
+func (*fakeAssetPinCapabilityVerifier) VerifyAndConsume(context.Context, string, assetpin.WorkflowKind) (assetpin.Claims, error) {
+	return assetpin.Claims{}, nil
+}
+
+type fakeAssetPinCapabilityRoutes struct {
+	calls int
+}
+
+func (h *fakeAssetPinCapabilityRoutes) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	h.calls++
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *fakeAssetPinCapabilityRoutes) RegisterRoutes(mux *http.ServeMux) {
+	mux.Handle("POST /api/v1/assets/pin", h)
+	mux.Handle("POST /api/v1/assets/reference-state", h)
 }
 
 func TestNodeSecurityAdminOnlyAPIPathPolicy(t *testing.T) {
