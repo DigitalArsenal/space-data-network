@@ -37,6 +37,7 @@ Thumbs.db
 # Build outputs
 dist/
 dist-spaceaware/
+dist-conjunction/
 build/
 out/
 *.exe
