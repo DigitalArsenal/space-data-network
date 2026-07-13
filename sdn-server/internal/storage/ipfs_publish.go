@@ -43,6 +43,8 @@ type pinUnixFSFileOptions struct {
 	Chunker string
 }
 
+const maxKuboCommandErrorBodyBytes = 4 * 1024
+
 // PublishDatasetExportToIPFS pins exported shard and index bytes through a Kubo RPC API.
 func PublishDatasetExportToIPFS(ctx context.Context, ipfsAPIURL string, export *DatasetExport) (*PublishedDatasetExport, error) {
 	if export == nil {
@@ -351,6 +353,57 @@ func RemoveStaleShardGroupCARFiles(outputDir string, keepPaths ...string) error 
 
 func pinUnixFSFile(ctx context.Context, ipfsAPIURL, path, expectedRawCID string) (string, error) {
 	return pinUnixFSFileWithOptions(ctx, ipfsAPIURL, path, expectedRawCID, pinUnixFSFileOptions{})
+}
+
+// PinAssetGLB pins a GLB as a deterministic 256 KiB-chunked UnixFS file.
+func PinAssetGLB(ctx context.Context, apiURL, path string) (string, error) {
+	return pinUnixFSFileWithOptions(ctx, apiURL, path, "", pinUnixFSFileOptions{
+		Chunker: "size-262144",
+	})
+}
+
+// UnpinAssetCID removes an asset pin through Kubo's pin/rm command.
+func UnpinAssetCID(ctx context.Context, apiURL, cidValue string) error {
+	cidValue = strings.TrimSpace(cidValue)
+	if cidValue == "" {
+		return fmt.Errorf("cid is required")
+	}
+	return postKuboCommand(ctx, apiURL, "/api/v0/pin/rm", url.Values{"arg": {cidValue}})
+}
+
+func postKuboCommand(ctx context.Context, apiURL, commandPath string, values url.Values) error {
+	if strings.TrimSpace(apiURL) == "" {
+		return fmt.Errorf("ipfs api url is required")
+	}
+	endpoint, err := url.JoinPath(strings.TrimRight(apiURL, "/"), commandPath)
+	if err != nil {
+		return fmt.Errorf("build IPFS URL: %w", err)
+	}
+	reqURL, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("parse IPFS URL: %w", err)
+	}
+	query := reqURL.Query()
+	for key, valueList := range values {
+		for _, value := range valueList {
+			query.Add(key, value)
+		}
+	}
+	reqURL.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), nil)
+	if err != nil {
+		return fmt.Errorf("create IPFS command request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("post IPFS command: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxKuboCommandErrorBodyBytes))
+	return fmt.Errorf("IPFS command %s failed with status %d: %s", commandPath, resp.StatusCode, strings.TrimSpace(string(body)))
 }
 
 func pinUnixFSFileWithOptions(ctx context.Context, ipfsAPIURL, path, expectedRawCID string, options pinUnixFSFileOptions) (string, error) {
