@@ -105,15 +105,30 @@ REQUIRED_KIB="$((SOURCE_KIB + 10485760))"
 test "$AVAILABLE_KIB" -ge "$REQUIRED_KIB"
 
 test "$(sudo systemctl show --property=LoadState --value ipfs.service)" = "loaded"
+command -v xargs >/dev/null
 KUBO_ENVIRONMENT="$(sudo systemctl show --property=Environment --value ipfs.service)"
-SOURCE_IPFS_PATH_ASSIGNMENTS="$(
+case "$KUBO_ENVIRONMENT" in
+  *$'\n'*|*$'\r'*)
+    unset KUBO_ENVIRONMENT
+    printf 'Malformed serialized environment for ipfs.service\n' >&2
+    exit 1
+    ;;
+esac
+if ! KUBO_ENVIRONMENT_ASSIGNMENTS="$(
   printf '%s\n' "$KUBO_ENVIRONMENT" |
-    tr '[:space:]' '\n' |
+    xargs -n 1 printf '%s\n' 2>/dev/null
+)"; then
+  unset KUBO_ENVIRONMENT
+  printf 'Malformed serialized environment for ipfs.service\n' >&2
+  exit 1
+fi
+SOURCE_IPFS_PATH_ASSIGNMENTS="$(
+  printf '%s\n' "$KUBO_ENVIRONMENT_ASSIGNMENTS" |
     awk '/^IPFS_PATH=/ { print }'
 )"
 test "$(printf '%s\n' "$SOURCE_IPFS_PATH_ASSIGNMENTS" | awk 'NF { count++ } END { print count + 0 }')" = "1"
 test "$SOURCE_IPFS_PATH_ASSIGNMENTS" = "IPFS_PATH=/var/lib/ipfs"
-unset KUBO_ENVIRONMENT SOURCE_IPFS_PATH_ASSIGNMENTS
+unset KUBO_ENVIRONMENT KUBO_ENVIRONMENT_ASSIGNMENTS SOURCE_IPFS_PATH_ASSIGNMENTS
 sudo systemctl --no-pager --full status ipfs.service space-data-network.service
 SOURCE_PEER_ID="$(sudo env IPFS_PATH=/var/lib/ipfs ipfs id --format='<id>')"
 SOURCE_PIN_COUNT="$(sudo env IPFS_PATH=/var/lib/ipfs ipfs pin ls --type=recursive --quiet | LC_ALL=C sort -u | awk 'NF { count++ } END { print count + 0 }')"
@@ -168,13 +183,14 @@ Kubo `ReadWritePaths` entry for the destination. The copy never uses
 under `/var/lib/ipfs`.
 
 Before any mutation, the script also requires `ipfs.service` to be loaded and
-its effective `Environment` to contain exactly one whitespace-delimited
-`IPFS_PATH=` assignment whose value is `/var/lib/ipfs`. Unrelated environment
-assignments are allowed. A missing unit or a missing, duplicated, quoted,
-escaped, or mismatched `IPFS_PATH` fails closed without stopping a service or
-changing the source, destination, or drop-in. The failure message reports only
-whether the effective `IPFS_PATH` is missing, ambiguous, or mismatched; it does
-not print the unit's full environment.
+quote/escape-aware parsing of its serialized effective `Environment` to yield
+exactly one `IPFS_PATH=` assignment whose decoded value is `/var/lib/ipfs`.
+Unrelated assignments, including quoted values containing spaces, are allowed.
+A missing unit, malformed serialization, or a missing, duplicated, or
+mismatched `IPFS_PATH` fails closed without stopping a service or changing the
+source, destination, or drop-in. The failure message reports only whether the
+effective `IPFS_PATH` is missing, ambiguous, or mismatched; it does not print
+the unit's full environment.
 
 After Kubo starts, the script gives the API and gateway up to 30 attempts with
 a one-second delay between attempts (and bounded per-request timeouts). API

@@ -154,7 +154,7 @@ if ((EUID != 0)) && [[ "${SDN_KUBO_MIGRATION_ALLOW_NON_ROOT:-0}" != "1" ]]; then
     fail "Run this migration as root."
 fi
 
-for required_command in systemctl ipfs rsync findmnt realpath df du curl chown; do
+for required_command in systemctl ipfs rsync findmnt realpath df du curl chown xargs; do
     command -v "$required_command" >/dev/null 2>&1 || fail "Required command is missing: $required_command"
 done
 
@@ -167,28 +167,27 @@ kubo_load_state="$(systemctl show --property=LoadState --value "$KUBO_SERVICE")"
     fail "$KUBO_SERVICE is not loaded (LoadState=${kubo_load_state:-<empty>}); refusing migration."
 kubo_environment="$(systemctl show --property=Environment --value "$KUBO_SERVICE")" || \
     fail "Could not inspect the effective Environment of $KUBO_SERVICE."
-kubo_environment_words="${kubo_environment//$'\n'/ }"
-read -r -a kubo_environment_assignments <<< "$kubo_environment_words"
+if [[ "$kubo_environment" == *$'\n'* || "$kubo_environment" == *$'\r'* ]]; then
+    fail "$KUBO_SERVICE effective IPFS_PATH is ambiguous; refusing migration."
+fi
+if ! kubo_environment_assignments="$(
+    printf '%s\n' "$kubo_environment" |
+        xargs -n 1 printf '%s\n' 2>/dev/null
+)"; then
+    fail "$KUBO_SERVICE effective IPFS_PATH is ambiguous; refusing migration."
+fi
 effective_ipfs_path=""
 ipfs_path_assignment_count=0
-ipfs_path_ambiguous=0
-for environment_assignment in "${kubo_environment_assignments[@]}"; do
+while IFS= read -r environment_assignment; do
+    [[ -n "$environment_assignment" ]] || continue
     case "$environment_assignment" in
         IPFS_PATH=*)
             ((ipfs_path_assignment_count += 1))
             effective_ipfs_path="${environment_assignment#IPFS_PATH=}"
-            if [[ "$effective_ipfs_path" == *\"* || \
-                "$effective_ipfs_path" == *\'* || \
-                "$effective_ipfs_path" == *\\* ]]; then
-                ipfs_path_ambiguous=1
-            fi
-            ;;
-        \"IPFS_PATH=*|\'IPFS_PATH=*)
-            ipfs_path_ambiguous=1
             ;;
     esac
-done
-if ((ipfs_path_ambiguous || ipfs_path_assignment_count > 1)); then
+done <<< "$kubo_environment_assignments"
+if ((ipfs_path_assignment_count > 1)); then
     fail "$KUBO_SERVICE effective IPFS_PATH is ambiguous; refusing migration."
 fi
 if ((ipfs_path_assignment_count == 0)); then
