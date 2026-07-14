@@ -235,8 +235,11 @@ func (h *PublishHandler) handlePublish(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Store
-	cid, err := h.store.Store(schema, data, peerID, nil)
+	// Store — with source tags when the publisher identifies its lane
+	// (?source_name=&provider_id=&batch_id=&source_url=). Tagged records feed
+	// the per-(source,batch) progress aggregates on /api/v1/stats; untagged
+	// publishes keep the legacy path.
+	cid, err := h.storeWithOptionalTags(schema, data, peerID, r)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to store record: "+err.Error())
 		return
@@ -361,7 +364,7 @@ func (h *PublishHandler) handlePublishBatch(w http.ResponseWriter, r *http.Reque
 			}
 		}
 
-		cid, err := h.store.Store(schema, data, peerID, nil)
+		cid, err := h.storeWithOptionalTags(schema, data, peerID, r)
 		if err != nil {
 			results = append(results, map[string]interface{}{
 				"error": "store failed: " + err.Error(),
@@ -401,4 +404,24 @@ func (h *PublishHandler) isSchemaAllowed(schema string) bool {
 		}
 	}
 	return false
+}
+
+// storeWithOptionalTags stores a published record, attaching SourceTags when
+// the request identifies its lane via query params (?source_name= and/or
+// ?provider_id=, plus optional batch_id / source_url). The producer peer is
+// always recorded on tagged stores so tagged publishes stay attributable.
+func (h *PublishHandler) storeWithOptionalTags(schema string, data []byte, peerID string, r *http.Request) (string, error) {
+	q := r.URL.Query()
+	sourceName := strings.TrimSpace(q.Get("source_name"))
+	providerID := strings.TrimSpace(q.Get("provider_id"))
+	if sourceName == "" && providerID == "" {
+		return h.store.Store(schema, data, peerID, nil)
+	}
+	return h.store.StoreWithSourceTags(schema, data, peerID, nil, storage.SourceTags{
+		ProviderID:     providerID,
+		SourceName:     sourceName,
+		SourceURL:      strings.TrimSpace(q.Get("source_url")),
+		BatchID:        strings.TrimSpace(q.Get("batch_id")),
+		ProducerPeerID: peerID,
+	})
 }
