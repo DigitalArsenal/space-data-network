@@ -96,32 +96,63 @@
   .tile .val.small { font-size: 12px; line-height: 1.5; }
   .tile .foot { font-family: var(--mono); font-size: 9.5px; color: var(--dimmer); margin-top: 6px; }
 
-  .tablewrap { border: 1px solid var(--edge); background: var(--panel); overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; min-width: 940px; }
+  /* Filter/sort toolbar. */
+  .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
+  .toolbar input[type="text"] {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
+    background: var(--panel2); color: var(--ink); border: 1px solid var(--edge2);
+    padding: 6px 10px; flex: 0 1 300px; min-width: 180px; max-width: 100%;
+  }
+  .toolbar input[type="text"]:focus { outline: none; border-color: var(--accent); }
+  .toolbar input::placeholder { color: var(--dimmer); text-transform: uppercase; letter-spacing: 0.08em; }
+  .toolbar .count { font-family: var(--mono); font-size: 10.5px; color: var(--dim);
+    text-transform: uppercase; letter-spacing: 0.06em; }
+  .toolbar .count.empty { color: var(--ref); }
+
+  /* No x-scroll: the table is table-layout:fixed at width:100%, so it can never
+     exceed its container; long cell values wrap (overflow-wrap) or truncate with
+     a title tooltip (.trunc). There is deliberately NO overflow-x scroller. */
+  .tablewrap { border: 1px solid var(--edge); background: var(--panel); }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   thead th { font-size: 10px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--dim);
     text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--edge2); font-weight: 600;
-    background: var(--panel2); white-space: nowrap; }
+    background: var(--panel2); white-space: normal; vertical-align: bottom; }
+  th .th-inner { display: flex; align-items: baseline; gap: 6px; justify-content: space-between; }
+  th .th-label { overflow-wrap: anywhere; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--ink); }
+  th.sortable:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+  .sortind { flex: 0 0 auto; color: var(--dimmer); font-size: 9px; line-height: 1; }
+  th[aria-sort="ascending"], th[aria-sort="descending"] { color: var(--ink); }
+  th[aria-sort="ascending"] .sortind, th[aria-sort="descending"] .sortind { color: var(--accent); }
   tbody td { padding: 9px 10px; border-bottom: 1px solid var(--edge); vertical-align: top; }
   tbody tr:last-child td { border-bottom: none; }
   tbody tr:hover td { background: #10151b; }
+  tbody tr.empty td { text-align: center; color: var(--dim); font-family: var(--mono); font-size: 11px;
+    padding: 18px 10px; text-transform: uppercase; letter-spacing: 0.06em; }
   .prov { font-weight: 600; }
-  .prov .name { text-transform: uppercase; letter-spacing: 0.04em; }
-  .prov .tok { font-family: var(--mono); font-size: 10px; color: var(--dim); margin-top: 3px; }
+  .prov .name { text-transform: uppercase; letter-spacing: 0.04em; overflow-wrap: anywhere; }
+  .prov .tok { font-family: var(--mono); font-size: 10px; color: var(--dim); margin-top: 3px; overflow-wrap: anywhere; }
   .up { font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
-  .cell-note { font-family: var(--mono); font-size: 9.5px; color: var(--dimmer); margin-top: 4px; }
+  .cell-note { font-family: var(--mono); font-size: 9.5px; color: var(--dimmer); margin-top: 4px; overflow-wrap: anywhere; }
   .nd { font-family: var(--mono); font-size: 10px; color: var(--nodata); }
-  .val-mono { font-family: var(--mono); font-size: 11px; }
+  .val-mono { font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
+  /* Single-line truncation that keeps the full value in a title tooltip. */
+  .trunc { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  /* Tooltip (house style — no external lib). */
+  /* Tooltip (house style — no external lib). Hidden state is display:none so a
+     latent tooltip never contributes to document width (no phantom x-scroll);
+     right-edge columns open leftward (.tip-right) and width is viewport-capped. */
   .tip { position: relative; border-bottom: 1px dotted var(--dimmer); cursor: help; }
   .tip .tiptext {
-    visibility: hidden; opacity: 0; transition: opacity .12s; position: absolute; z-index: 20;
-    left: 0; top: calc(100% + 6px); width: max-content; max-width: 320px;
+    display: none; position: absolute; z-index: 20;
+    left: 0; top: calc(100% + 6px); width: max-content; max-width: min(320px, 84vw);
     background: #05070a; color: var(--ink); border: 1px solid var(--edge2);
     padding: 7px 9px; font-family: var(--mono); font-size: 10.5px; line-height: 1.5; text-transform: none;
-    letter-spacing: 0; box-shadow: 0 6px 20px rgba(0,0,0,.5); pointer-events: none;
+    letter-spacing: 0; box-shadow: 0 6px 20px rgba(0,0,0,.5); pointer-events: none; white-space: normal;
   }
-  .tip:hover .tiptext { visibility: visible; opacity: 1; }
+  .tip:hover .tiptext, .tip:focus-within .tiptext { display: block; }
+  .tip-right .tiptext { left: auto; right: 0; }
 
   .legend { border: 1px solid var(--edge); background: var(--panel); padding: 12px 14px; margin-top: 16px; }
   .legend h2 { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer); margin: 0 0 9px; }
@@ -158,20 +189,14 @@
 
   <section>
     <div class="sectlabel">Per-provider status — 7 Tier-1 ingest lanes</div>
+    <div class="toolbar">
+      <input id="prov-filter" type="text" placeholder="Filter providers…" autocomplete="off" spellcheck="false" aria-label="Filter providers by name, token, upstream, or status">
+      <span class="count" id="prov-count"></span>
+    </div>
     <div class="tablewrap">
       <table>
-        <thead>
-          <tr>
-            <th>Provider</th>
-            <th>Upstream</th>
-            <th><span class="tip">Channel<span class="tiptext">LIVE. Present when a channel on /api/v1/channels carries this provider's data-source or supgp topic.</span></span></th>
-            <th><span class="tip">Topic<span class="tiptext">LIVE. Present when /api/v1/pubsub/topics advertises this provider's data-source or supgp topic.</span></span></th>
-            <th><span class="tip">Last Pull<span class="tiptext">No anonymous surface. Per-provider last-pull exists only at /api/v1/data/local-replica-stats (last_synced_at), which requires Standard auth.</span></span></th>
-            <th><span class="tip">Objects Fitted<span class="tiptext">No anonymous surface. Per-source record counts exist only at /api/v1/data/summary, which requires Admin auth. OD "objects fitted" has no route at all.</span></span></th>
-            <th><span class="tip">RMS Δ vs CelesTrak<span class="tiptext">REF. From the modules-CI A2.4 parity gates (no runtime route). Positive Δ = our fit RMS above CelesTrak SupGP.</span></span></th>
-            <th><span class="tip">Gate<span class="tiptext">REF. Checked-in A2.7 provider-gate-status: HARD-PASS = beats-CelesTrak RMS; INTERIM = element-range only; BLOCKED = data access / spec missing.</span></span></th>
-          </tr>
-        </thead>
+        <colgroup id="prov-cols"></colgroup>
+        <thead><tr id="prov-head"></tr></thead>
         <tbody id="prov-body"></tbody>
       </table>
     </div>
@@ -235,6 +260,49 @@
   function providerTopics(key) {
     return ["sdn/data-source/" + key, "sdn/supgp/" + key];
   }
+
+  // ---- Column model: single source of truth for the colgroup widths, the
+  // sortable headers, and per-row cell rendering. Widths are percentages that
+  // sum to 100 so the table (table-layout:fixed, width:100%) always fits its
+  // container at any width — no horizontal scroller.
+  //
+  // Sort semantics (honesty-preserving): text columns sort case-insensitively;
+  // Channel/Topic sort by a live-presence ordinal; Gate sorts by a severity
+  // ordinal (HARD-PASS < INTERIM < BLOCKED). A cell with no comparable datum —
+  // an unreadable NO-DATA live surface, or an "n/a" REF value — carries
+  // last:true and is pushed to the BOTTOM in both sort directions. Sorting never
+  // fabricates an ordering for a cell that has no value.
+  var GATE_ORDINAL = { "HARD-PASS": 0, "INTERIM": 1, "BLOCKED": 2 };
+  var COLUMNS = [
+    { id: "provider", label: "Provider", width: "15%", sortable: true,
+      sortKey: function (r) { return { v: r.p.name.toLowerCase(), last: false }; } },
+    { id: "upstream", label: "Upstream", width: "15%", sortable: true,
+      sortKey: function (r) { return { v: r.p.upstream.toLowerCase(), last: false }; } },
+    { id: "channel", label: "Channel", width: "9%", sortable: true,
+      tip: "LIVE. Present when a channel on /api/v1/channels carries this provider's data-source or supgp topic.",
+      sortKey: function (r) { return r.chPresent === null ? { v: 0, last: true } : { v: r.chPresent ? 2 : 1, last: false }; } },
+    { id: "topic", label: "Topic", width: "9%", sortable: true,
+      tip: "LIVE. Present when /api/v1/pubsub/topics advertises this provider's data-source or supgp topic.",
+      sortKey: function (r) { return r.tpPresent === null ? { v: 0, last: true } : { v: r.tpPresent ? 2 : 1, last: false }; } },
+    { id: "lastpull", label: "Last Pull", width: "12%", sortable: false,
+      tip: "No anonymous surface. Per-provider last-pull exists only at /api/v1/data/local-replica-stats (last_synced_at), which requires Standard auth." },
+    { id: "fitted", label: "Objects Fitted", width: "12%", sortable: false,
+      tip: "No anonymous surface. Per-source record counts exist only at /api/v1/data/summary, which requires Admin auth. OD \"objects fitted\" has no route at all." },
+    { id: "rms", label: "RMS Δ vs CelesTrak", width: "18%", sortable: true, tipRight: true,
+      tip: "REF. From the modules-CI A2.4 parity gates (no runtime route). Positive Δ = our fit RMS above CelesTrak SupGP.",
+      sortKey: function (r) {
+        var s = r.p.rms;
+        if (/n\/a/i.test(s)) return { v: "", last: true };
+        return { v: s.toLowerCase(), last: false };
+      } },
+    { id: "gate", label: "Gate", width: "10%", sortable: true, tipRight: true,
+      tip: "REF. Checked-in A2.7 provider-gate-status: HARD-PASS = beats-CelesTrak RMS; INTERIM = element-range only; BLOCKED = data access / spec missing.",
+      sortKey: function (r) { var o = GATE_ORDINAL[r.p.gate]; return { v: (o == null ? 99 : o), last: false }; } }
+  ];
+  function colById(id) { for (var i = 0; i < COLUMNS.length; i++) { if (COLUMNS[i].id === id) return COLUMNS[i]; } return null; }
+
+  // Sort/filter state for the provider table. sortCol=null → registry order.
+  var provState = { rows: [], sortCol: null, sortDir: 1, filter: "" };
 
   var SOURCE_REFS = [
     "api.starlink.com/public-files/ephemerides/MANIFEST.txt",
@@ -387,69 +455,188 @@
   }
   function pillFor(p) { var s = el("span", "pill " + p.cls, p.txt); return s; }
 
+  // Build the colgroup + sortable header row once from COLUMNS.
+  function buildProvColsAndHead() {
+    var cg = document.getElementById("prov-cols");
+    var hr = document.getElementById("prov-head");
+    cg.innerHTML = ""; hr.innerHTML = "";
+    COLUMNS.forEach(function (col) {
+      var c = document.createElement("col"); c.style.width = col.width; cg.appendChild(c);
+
+      var th = document.createElement("th");
+      th.setAttribute("data-col", col.id);
+      var inner = el("div", "th-inner");
+
+      var lab;
+      if (col.tip) {
+        lab = el("span", "tip" + (col.tipRight ? " tip-right" : ""));
+        lab.appendChild(el("span", "th-label", col.label));
+        lab.appendChild(el("span", "tiptext", col.tip));
+      } else {
+        lab = el("span", "th-label", col.label);
+      }
+      inner.appendChild(lab);
+
+      if (col.sortable) {
+        th.className = "sortable";
+        th.setAttribute("aria-sort", "none");
+        th.setAttribute("tabindex", "0");
+        inner.appendChild(el("span", "sortind", "↕")); // ↕ neutral
+        var onSort = function () { toggleSort(col.id); };
+        th.addEventListener("click", onSort);
+        th.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); onSort(); }
+        });
+      }
+      th.appendChild(inner);
+      hr.appendChild(th);
+    });
+  }
+
+  function toggleSort(colId) {
+    if (provState.sortCol === colId) { provState.sortDir = -provState.sortDir; }
+    else { provState.sortCol = colId; provState.sortDir = 1; }
+    renderProvTable();
+  }
+
+  // Stable sort: NO-DATA/no-value cells (last:true) always sink to the bottom;
+  // among comparable cells, numeric keys compare numerically and text keys via
+  // localeCompare; equal keys keep their original (registry) order.
+  function sortProvRows(rows) {
+    if (!provState.sortCol) return rows.slice();
+    var col = colById(provState.sortCol), dir = provState.sortDir;
+    var dec = rows.map(function (r, i) { return { r: r, i: i, k: col.sortKey(r) }; });
+    dec.sort(function (a, b) {
+      if (a.k.last !== b.k.last) return a.k.last ? 1 : -1;
+      if (a.k.last && b.k.last) return a.i - b.i;
+      var av = a.k.v, bv = b.k.v, c;
+      if (typeof av === "number" && typeof bv === "number") c = av - bv;
+      else c = String(av).localeCompare(String(bv));
+      if (c !== 0) return dir * c;
+      return a.i - b.i;
+    });
+    return dec.map(function (d) { return d.r; });
+  }
+
+  // Case-insensitive substring across the provider/name/status columns.
+  function provRowMatches(r, q) {
+    if (!q) return true;
+    var p = r.p;
+    var chLabel = r.chPresent === null ? "no data" : (r.chPresent ? "present" : "none");
+    var tpLabel = r.tpPresent === null ? "no data" : (r.tpPresent ? "active" : "idle");
+    var hay = [p.name, p.token, p.upstream, p.gate, p.rms, chLabel, tpLabel].join(" ").toLowerCase();
+    return hay.indexOf(q) !== -1;
+  }
+
+  function buildProvRows(channelTopics, pubsubTopics) {
+    return PROVIDERS.map(function (p) {
+      var wanted = providerTopics(p.key);
+      return { p: p, chPresent: hasAnyTopic(channelTopics, wanted), tpPresent: hasAnyTopic(pubsubTopics, wanted) };
+    });
+  }
+
+  // renderProviders rebuilds the row model from live topic data; renderProvTable
+  // re-applies the current filter + sort and repaints tbody (called on every
+  // filter keystroke and header click without refetching).
   function renderProviders(channelTopics, pubsubTopics) {
+    provState.rows = buildProvRows(channelTopics, pubsubTopics);
+    renderProvTable();
+  }
+
+  function renderProvTable() {
     var body = document.getElementById("prov-body");
     body.innerHTML = "";
-    PROVIDERS.forEach(function (p) {
-      var wanted = providerTopics(p.key);
-      var tr = el("tr");
+    var q = provState.filter.trim().toLowerCase();
+    var rows = sortProvRows(provState.rows).filter(function (r) { return provRowMatches(r, q); });
 
-      var c0 = el("td", "prov");
-      c0.appendChild(el("div", "name", p.name));
-      c0.appendChild(el("div", "tok", "CelesTrak " + p.token));
-      tr.appendChild(c0);
+    if (rows.length === 0) {
+      var tr = el("tr", "empty");
+      var td = el("td", null, q ? ("No providers match “" + provState.filter.trim() + "”") : "No providers");
+      td.setAttribute("colspan", String(COLUMNS.length));
+      tr.appendChild(td); body.appendChild(tr);
+    } else {
+      rows.forEach(function (r) {
+        var tr = el("tr");
+        COLUMNS.forEach(function (col) { tr.appendChild(cellFor(col, r)); });
+        body.appendChild(tr);
+      });
+    }
 
-      tr.appendChild((function () { var td = el("td"); td.appendChild(el("span", "up", p.upstream)); return td; })());
+    var cnt = document.getElementById("prov-count");
+    if (cnt) {
+      cnt.textContent = "showing " + rows.length + " of " + provState.rows.length;
+      if (rows.length === 0 && provState.rows.length > 0) cnt.classList.add("empty");
+      else cnt.classList.remove("empty");
+    }
 
-      // CHANNEL (LIVE)
-      var chPresent = hasAnyTopic(channelTopics, wanted);
-      var chp = livePill(chPresent, "PRESENT", "none");
-      tr.appendChild(cellPill(chp, chPresent === null ? "/api/v1/channels" : null));
+    // Header sort indicators + aria-sort.
+    var ths = document.querySelectorAll("#prov-head th");
+    for (var i = 0; i < ths.length; i++) {
+      var th = ths[i];
+      if (!th.classList.contains("sortable")) continue;
+      var ind = th.querySelector(".sortind");
+      if (th.getAttribute("data-col") === provState.sortCol) {
+        th.setAttribute("aria-sort", provState.sortDir === 1 ? "ascending" : "descending");
+        if (ind) ind.textContent = provState.sortDir === 1 ? "▲" : "▼"; // ▲ ▼
+      } else {
+        th.setAttribute("aria-sort", "none");
+        if (ind) ind.textContent = "↕"; // ↕
+      }
+    }
+  }
 
-      // TOPIC (LIVE)
-      var tpPresent = hasAnyTopic(pubsubTopics, wanted);
-      var tpp = livePill(tpPresent, "ACTIVE", "idle");
-      tr.appendChild(cellPill(tpp, tpPresent === null ? "/api/v1/pubsub/topics" : null));
-
-      // LAST PULL (NO DATA — auth-gated)
-      tr.appendChild((function () {
-        var td = el("td");
+  // Build one <td> for a (column, row) pair. Honesty labels are unchanged from
+  // A2.5: LIVE channel/topic pills, NO-DATA cells that name the auth-gated
+  // surface, REF cells for the compile-time A2.4/A2.7 gate facts.
+  function cellFor(col, r) {
+    var p = r.p, td;
+    switch (col.id) {
+      case "provider":
+        td = el("td", "prov");
+        td.appendChild(el("div", "name", p.name));
+        td.appendChild(el("div", "tok", "CelesTrak " + p.token));
+        return td;
+      case "upstream":
+        td = el("td");
+        var up = el("span", "up trunc", p.upstream);
+        up.title = p.upstream; // full value preserved (house rule)
+        td.appendChild(up);
+        return td;
+      case "channel":
+        return cellPill(livePill(r.chPresent, "PRESENT", "none"), r.chPresent === null ? "/api/v1/channels" : null);
+      case "topic":
+        return cellPill(livePill(r.tpPresent, "ACTIVE", "idle"), r.tpPresent === null ? "/api/v1/pubsub/topics" : null);
+      case "lastpull":
+        td = el("td");
         td.appendChild(pillFor({ cls: "nodata", txt: "NO DATA" }));
         td.appendChild(el("div", "cell-note", "/api/v1/data/local-replica-stats · auth"));
         return td;
-      })());
-
-      // OBJECTS FITTED (NO DATA — auth-gated / no route)
-      tr.appendChild((function () {
-        var td = el("td");
+      case "fitted":
+        td = el("td");
         td.appendChild(pillFor({ cls: "nodata", txt: "NO DATA" }));
         td.appendChild(el("div", "cell-note", "/api/v1/data/summary · auth"));
         return td;
-      })());
-
-      // RMS Δ (REF)
-      tr.appendChild((function () {
-        var td = el("td");
-        var wrap = el("span", "tip");
-        wrap.appendChild(el("span", "val-mono", p.rms));
+      case "rms":
+        td = el("td");
+        var wrap = el("span", "tip tip-right");
+        var val = el("span", "val-mono", p.rms);
+        val.title = p.rmsNote;
+        wrap.appendChild(val);
         wrap.appendChild(el("span", "tiptext", p.rmsNote));
         td.appendChild(wrap);
-        var pillRow = el("div", "cell-note"); td.appendChild(pillRow);
-        var ref = el("span", "pill ref", "REF · A2.4"); pillRow.appendChild(ref);
+        var pillRow = el("div", "cell-note");
+        pillRow.appendChild(el("span", "pill ref", "REF · A2.4"));
+        td.appendChild(pillRow);
         return td;
-      })());
-
-      // GATE (REF)
-      tr.appendChild((function () {
-        var td = el("td");
+      case "gate":
+        td = el("td");
         td.appendChild(pillFor({ cls: p.gateClass, txt: p.gate }));
         td.appendChild(el("div", "cell-note", "REF · A2.7 gate-status"));
         return td;
-      })());
-
-      body.appendChild(tr);
-    });
+    }
+    return el("td");
   }
+
   function cellPill(p, ndSurface) {
     var td = el("td");
     td.appendChild(pillFor(p));
@@ -503,6 +690,10 @@
       renderProviders(collectTopicStrings(channels), collectTopicStrings(topics));
     });
   }
+
+  buildProvColsAndHead();
+  var filterInput = document.getElementById("prov-filter");
+  filterInput.addEventListener("input", function () { provState.filter = filterInput.value; renderProvTable(); });
 
   renderSourceRefs();
   renderProviders(null, null); // paint the honest no-data skeleton immediately
