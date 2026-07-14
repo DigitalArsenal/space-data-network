@@ -232,39 +232,7 @@
     <div class="tiles" id="tiles"></div>
   </section>
 
-  <section>
-    <div class="sectlabel">Live OD parity vs CelesTrak SupGP — captured 2026-07-14T14:04Z, fitted 14:06Z (REF · modules a64ac1d, scripts/live-parity-report.mjs)</div>
-    <div class="tablewrap">
-      <table>
-        <colgroup>
-          <col style="width:12%"><col style="width:26%"><col style="width:16%"><col style="width:20%"><col style="width:26%">
-        </colgroup>
-        <thead><tr><th>NORAD</th><th>Object</th><th>OrbPro RMS km</th><th>CelesTrak RMS km</th><th>Result</th></tr></thead>
-        <tbody id="parity-body"></tbody>
-      </table>
-    </div>
-    <div class="sub" style="margin-top:6px">
-      Starlink: both sides fit the <b>same-day</b> SpaceX MEME ephemerides (created 2026-07-14 ~10:05Z);
-      CelesTrak column is the RMS CelesTrak publishes with its own SupGP fit — beaten <b>10/10</b>.
-      ISS: same-ephemeris rule (owner ruling 2026-07-13) — CelesTrak's own Segment-01 elements re-scored
-      by the same SGP4 over the identical NASA OEM states.
-    </div>
-  </section>
 
-  <section>
-    <div class="sectlabel">Per-provider status — 14 ingest lanes (7 Tier-1 OD + 7 CelesTrak SupGP)</div>
-    <div class="toolbar">
-      <input id="prov-filter" type="text" placeholder="Filter providers…" autocomplete="off" spellcheck="false" aria-label="Filter providers by name, token, upstream, or status">
-      <span class="count" id="prov-count"></span>
-    </div>
-    <div class="tablewrap">
-      <table>
-        <colgroup id="prov-cols"></colgroup>
-        <thead><tr id="prov-head"></tr></thead>
-        <tbody id="prov-body"></tbody>
-      </table>
-    </div>
-  </section>
 
   <div class="legend">
     <h2>Provenance legend</h2>
@@ -292,46 +260,6 @@
   // ---- fabricated telemetry.
   var NONINDEP_RMS_NOTE = "CelesTrak-fitted SupGP re-published, non-independent — CelesTrak's own fit, not OrbPro OD, so there is no RMS-vs-CelesTrak comparison for this lane.";
 
-  // ---- LIVE PARITY (REF): 2026-07-14 capture+fit, modules a64ac1d
-  // ---- (tests/data/supgp-reference/{starlink,iss}-live-20260714 + PROVENANCE.md).
-  // ---- Checked-in run output, not fabricated telemetry.
-  var LIVE_PARITY = [
-    { norad: 67850, name: "STARLINK-36840", ours: "0.116", ct: "0.177", beat: true },
-    { norad: 67851, name: "STARLINK-36348", ours: "0.097", ct: "0.223", beat: true },
-    { norad: 67852, name: "STARLINK-36276", ours: "0.086", ct: "0.182", beat: true },
-    { norad: 67853, name: "STARLINK-36785", ours: "0.085", ct: "0.180", beat: true },
-    { norad: 67854, name: "STARLINK-36608", ours: "0.072", ct: "0.206", beat: true },
-    { norad: 67855, name: "STARLINK-36838", ours: "0.099", ct: "0.175", beat: true },
-    { norad: 67856, name: "STARLINK-36843", ours: "0.090", ct: "0.206", beat: true },
-    { norad: 67857, name: "STARLINK-36828", ours: "0.100", ct: "0.211", beat: true },
-    { norad: 67858, name: "STARLINK-36837", ours: "0.110", ct: "0.181", beat: true },
-    { norad: 67859, name: "STARLINK-36393", ours: "0.082", ct: "0.216", beat: true },
-    { norad: 25544, name: "ISS (same-ephemeris)", ours: "0.071", ct: "0.111", beat: true }
-  ];
-  (function renderLiveParity() {
-    var body = document.getElementById("parity-body");
-    if (!body) return;
-    for (var i = 0; i < LIVE_PARITY.length; i++) {
-      var r = LIVE_PARITY[i];
-      var tr = document.createElement("tr");
-      function cell(text) {
-        var td = document.createElement("td");
-        td.textContent = text;
-        tr.appendChild(td);
-      }
-      cell(String(r.norad));
-      cell(r.name);
-      cell(r.ours);
-      cell(r.ct);
-      var td = document.createElement("td");
-      var pill = document.createElement("span");
-      pill.className = r.beat ? "pill live" : "pill nodata";
-      pill.textContent = r.beat ? "BEATS CELESTRAK" : "no beat";
-      td.appendChild(pill);
-      tr.appendChild(td);
-      body.appendChild(tr);
-    }
-  })();
   var PROVIDERS = [
     { key: "spacex-starlink", name: "SpaceX Starlink", token: "SpaceX-E",
       upstream: "api.starlink.com · MEME",
@@ -612,6 +540,7 @@
   function buildProvColsAndHead() {
     var cg = document.getElementById("prov-cols");
     var hr = document.getElementById("prov-head");
+    if (!cg || !hr) return; // provider table removed (owner: ONE table)
     cg.innerHTML = ""; hr.innerHTML = "";
     COLUMNS.forEach(function (col) {
       var c = document.createElement("col"); c.style.width = col.width; cg.appendChild(c);
@@ -698,6 +627,7 @@
 
   function renderProvTable() {
     var body = document.getElementById("prov-body");
+    if (!body) return; // provider table removed (owner: ONE table)
     body.innerHTML = "";
     var q = provState.filter.trim().toLowerCase();
     var rows = sortProvRows(provState.rows).filter(function (r) { return provRowMatches(r, q); });
@@ -716,6 +646,7 @@
     }
 
     var cnt = document.getElementById("prov-count");
+    if (!cnt) return;
     if (cnt) {
       cnt.textContent = "showing " + rows.length + " of " + provState.rows.length;
       if (rows.length === 0 && provState.rows.length > 0) cnt.classList.add("empty");
@@ -1079,7 +1010,7 @@
 
   buildProvColsAndHead();
   var filterInput = document.getElementById("prov-filter");
-  filterInput.addEventListener("input", function () { provState.filter = filterInput.value; renderProvTable(); });
+  if (filterInput) filterInput.addEventListener("input", function () { provState.filter = filterInput.value; renderProvTable(); });
 
   renderSourceRefs();
   renderProviders(null, null); // paint the honest no-data skeleton immediately
