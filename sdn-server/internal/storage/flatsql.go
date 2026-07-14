@@ -2108,7 +2108,10 @@ func (s *FlatSQLStore) StoreWithSourceTags(schemaName string, data []byte, peerI
 // and releases the lock between windows so readers interleave; batch replay
 // stays idempotent (CID-checked, source-batch reconcile) so a mid-batch
 // failure converges on retry exactly like the per-record ingest path.
-const storeWriteChunkSize = 128
+// A cold CI runner took about 1.7 seconds per 128-record window while the
+// durable record-catalog append synced under this lock. Keep windows at 64
+// records so one slow sync retains margin below the two-second reader budget.
+const storeWriteChunkSize = 64
 
 // StoreBatch stores FlatBuffer records in chunked store-lock windows
 // (storeWriteChunkSize records per lock hold + transaction) without
@@ -4243,7 +4246,10 @@ func (s *FlatSQLStore) DataSummary() (*DataSummary, error) {
 func (s *FlatSQLStore) CountRawRecords(filter RawRecordQuery) (int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.countRawRecordsLocked(filter)
+}
 
+func (s *FlatSQLStore) countRawRecordsLocked(filter RawRecordQuery) (int64, error) {
 	filter.SchemaName = strings.TrimSpace(filter.SchemaName)
 	if filter.SchemaName == "" {
 		return 0, errors.New("schema name is required")
