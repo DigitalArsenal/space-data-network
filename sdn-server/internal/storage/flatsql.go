@@ -2052,6 +2052,13 @@ type SourceBatchProgress struct {
 	FirstSeenUnix int64
 	LastSeenUnix  int64
 	UpdatedAtUnix int64
+	// ObjectCount is the number of DISTINCT NORAD_CAT_IDs among the batch's
+	// records and LatestEpochUnix the newest indexed record EPOCH — the two
+	// CelesTrak-supplemental-style facts ("objects" vs "element sets",
+	// "data current as of") the board renders per source. Both are 0 when the
+	// schema has no indexed norad/epoch (non-OMM lanes).
+	ObjectCount     int64
+	LatestEpochUnix int64
 }
 
 // RawRecordQuery filters raw FlatBuffer records for UI and node-to-node reads.
@@ -4284,13 +4291,19 @@ func (s *FlatSQLStore) SourceBatchProgress() ([]SourceBatchProgress, error) {
 		       SUM(ss.total_bytes) AS total_bytes,
 		       MAX(ss.updated_at) AS updated_at,
 		       MIN(t.first_seen) AS first_seen,
-		       MAX(t.last_seen) AS last_seen
+		       MAX(t.last_seen) AS last_seen,
+		       MAX(t.object_count) AS object_count,
+		       MAX(t.latest_epoch) AS latest_epoch
 		FROM sdn_record_source_summary ss
 		LEFT JOIN (
-			SELECT schema_name, provider_id, source_name, batch_id,
-			       MIN(created_at) AS first_seen, MAX(created_at) AS last_seen
-			FROM sdn_record_source_tags
-			GROUP BY schema_name, provider_id, source_name, batch_id
+			SELECT tg.schema_name, tg.provider_id, tg.source_name, tg.batch_id,
+			       MIN(tg.created_at) AS first_seen, MAX(tg.created_at) AS last_seen,
+			       COUNT(DISTINCT ix.norad_cat_id) AS object_count,
+			       MAX(ix.epoch_unix) AS latest_epoch
+			FROM sdn_record_source_tags tg
+			LEFT JOIN sdn_record_index ix
+			  ON ix.schema_name = tg.schema_name AND ix.cid = tg.cid
+			GROUP BY tg.schema_name, tg.provider_id, tg.source_name, tg.batch_id
 		) t
 		  ON t.schema_name = ss.schema_name
 		 AND t.provider_id = ss.provider_id
@@ -4308,16 +4321,19 @@ func (s *FlatSQLStore) SourceBatchProgress() ([]SourceBatchProgress, error) {
 	out := make([]SourceBatchProgress, 0)
 	for rows.Next() {
 		var p SourceBatchProgress
-		var updatedAt, firstSeen, lastSeen sql.NullInt64
+		var updatedAt, firstSeen, lastSeen, objectCount, latestEpoch sql.NullInt64
 		if err := rows.Scan(
 			&p.SchemaName, &p.ProviderID, &p.SourceName, &p.BatchID,
 			&p.Count, &p.TotalBytes, &updatedAt, &firstSeen, &lastSeen,
+			&objectCount, &latestEpoch,
 		); err != nil {
 			return nil, fmt.Errorf("scan source batch progress: %w", err)
 		}
 		p.UpdatedAtUnix = updatedAt.Int64
 		p.FirstSeenUnix = firstSeen.Int64
 		p.LastSeenUnix = lastSeen.Int64
+		p.ObjectCount = objectCount.Int64
+		p.LatestEpochUnix = latestEpoch.Int64
 		out = append(out, p)
 	}
 	if err := rows.Err(); err != nil {
