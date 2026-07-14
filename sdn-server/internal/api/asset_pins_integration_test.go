@@ -4,14 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -51,37 +50,6 @@ const (
 	assetPinIntegrationCommitSHA        = "0123456789abcdef0123456789abcdef01234567"
 	assetPinIntegrationKeyID            = "asset-pin-integration-test-key"
 )
-
-// This is fixed, test-only RSA material. It is not a credential and cannot
-// authorize anything outside the local httptest OIDC provider created below.
-const assetPinIntegrationPrivateKeyPEM = `-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCqW33Wq6iXnXJe
-FQWfx5HLAHPzGg6WtX68caQpmD9x9dXlLGQrxdbpkuQGTdkfr5b4Cf+7VR6EC7s4
-NakaW3YgbOKJfMTHEHxdW/7w8p+BqDLHEDHyRmGr6/z7PoTvGz9REkJUm9zeVvob
-x+AprPWFJxGZOY4BDECAHh5YULhwnGTbc3BTbsEzP8/qFb/zqtNDzMkQv9Y0Qrdx
-rZT1Gj6aKQ18fqnkYFtL3YJ1RKp9LRSX62URrGDGQzu6tv9Q4Z265Zod2N29X+Pj
-JFT83PPKbGqEH3AykYbjgF5nEcqab1g9buXJ9A7prygpO0PhdJaIPO16g8hD9HGY
-sQdjr/HNAgMBAAECggEAJqXjApSnBt59V8LFJ96KwNc1du1uadp7Ch1t9NHJcv0m
-rXtIrnWPsCXW/Wcj3wBi65q5HbLN3X8b1kC2QHiHcAvDyRU5P0AKNtPsHpWsgim6
-e1a9Pg2hkvNSzVz9o5E26BmQWsmRbg+lZjAONuY6PR8D6xMXmD1DVM2AbODDNyil
-DjGSyiD4/IaN+T+/MBQNktm4Qpy0kjmOsdMQg02HKkTb2AB6/F9Tc5aAWShG1rTZ
-TL4GcY9ZrWfnvooU6ELmU87Ja8HSY/fNviwhkF454FCMdGt46JBlovmwFw8sxd4B
-Ba/GTpKjojgE+bjyqHguvd7n3pol4GAWHbmgxnlQAQKBgQDanfBnBaibIYryOKv8
-IZKIUJRFSWKtaoFoViOKTcqhhTndzfmZ9066qwos01sQbcHIkYK6KU+T7UpNAHqg
-ldB3bkikzaKLRa5ap9XO3Dp7w3b87BWIU1hD6vaNV2IHjRM1EqTm5+qD2QMhSe7E
-WWmpBn8tm4md69ciC+NtmZFbAQKBgQDHfPee+CtWh5/iuV9tLokCTucNuaRABEKi
-3hMO4gY4vNh9oX9LWTpnNQGMmUrrR1lj094ttEOJeht8odLMMrPIT2rve/WdGERX
-4n9b+ADa0NoShwdEBehd+tKhmFe+1T/rLc5ED0U3yH/TDMpkGH0h4jQcnduT4fbE
-mjzbJeQSzQKBgCyZcAP0eZM8YpZLzXpgdv5sQfNop0LtqXzZpeJ/QEl3XnjLnpI0
-i9E1N5wxejB907zRQrQr3Vo2XKQc5ud/6MmUrClC8lgrXQiNmObcsumw1MOAflwT
-dLxWYPowy4Ty2OpI5W9d/M/tI+BUrutLumyLMMLjKk4XYQpHFpyzaZ4BAoGBALLO
-Ck1M99tpWSApM6VzTo7pFiSxPs26g9fj4YU3hogYjJuew7BP3A9h7W+Ofx6AJ1lZ
-MA4bQ2XYMwb1LTKmR4rF1H2vyCj09V0owSs4EdwP00dEDHkmKm8CQQVivVNpZQ9x
-US6j2VD0v8316vrpEE/spvT3cTcOFNeHwABV6CYJAoGAVS21GokbTje1Cw2V4aQ4
-rKajV8r5OO4gHkT3W6XCwzdaGbTi7oMKcTHORH8yZbNHatBFi/Xya10NsB3cBDA7
-5rBIEVW9a8fnriCePR7tsSLl4YV/XBk1u1yZpZwqbVRg7rOImHhrt/8d2iE1N0O+
-YoDSV/LF5AmZeM33QC94NKE=
------END PRIVATE KEY-----`
 
 func TestAssetPinMinimalGLBFixture(t *testing.T) {
 	// The fixture is generated locally from the three positions and three
@@ -164,6 +132,39 @@ func TestAssetPinMinimalGLBFixture(t *testing.T) {
 		binary.LittleEndian.Uint16(bin[38:40]) != 1 ||
 		binary.LittleEndian.Uint16(bin[40:42]) != 2 {
 		t.Fatalf("GLB BIN chunk does not encode the expected one-triangle geometry")
+	}
+}
+
+func TestAssetPinIntegrationKuboPinLookupResponseMatchesCurrentKubo(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/minimal.glb")
+	if err != nil {
+		t.Fatalf("read deterministic GLB fixture: %v", err)
+	}
+	kubo := newAssetPinIntegrationKubo(t, fixture)
+	kubo.mu.Lock()
+	kubo.pinned = true
+	kubo.mu.Unlock()
+
+	query := url.Values{"arg": {assetPinIntegrationFixtureCID}, "type": {"recursive"}}.Encode()
+	request, err := http.NewRequest(http.MethodPost, kubo.server.URL+"/api/v0/pin/ls?"+query, nil)
+	if err != nil {
+		t.Fatalf("build local Kubo pin/ls request: %v", err)
+	}
+	response, err := kubo.server.Client().Do(request)
+	if err != nil {
+		t.Fatalf("request local Kubo pin/ls: %v", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read local Kubo pin/ls response: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("local Kubo pin/ls status = %d, want %d: %s", response.StatusCode, http.StatusOK, body)
+	}
+	want := fmt.Sprintf(`{"Keys":{"%s":{"Type":"recursive","Name":""}}}`, assetPinIntegrationFixtureCID)
+	if string(body) != want {
+		t.Fatalf("local Kubo pin/ls response = %s, want current Kubo response %s", body, want)
 	}
 }
 
@@ -615,20 +616,9 @@ type assetPinIntegrationOIDC struct {
 
 func newAssetPinIntegrationOIDC(t *testing.T) *assetPinIntegrationOIDC {
 	t.Helper()
-	block, _ := pem.Decode([]byte(assetPinIntegrationPrivateKeyPEM))
-	if block == nil {
-		t.Fatal("decode fixed test-only OIDC private key PEM")
-	}
-	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		t.Fatalf("parse fixed test-only OIDC private key: %v", err)
-	}
-	privateKey, ok := parsed.(*rsa.PrivateKey)
-	if !ok {
-		t.Fatalf("fixed test-only OIDC key type = %T, want RSA", parsed)
-	}
-	if err := privateKey.Validate(); err != nil {
-		t.Fatalf("validate fixed test-only OIDC key: %v", err)
+		t.Fatalf("generate ephemeral OIDC signing key: %v", err)
 	}
 	provider := &assetPinIntegrationOIDC{privateKey: privateKey}
 	mux := http.NewServeMux()
@@ -767,7 +757,7 @@ func (k *assetPinIntegrationKubo) serveHTTP(t *testing.T, w http.ResponseWriter,
 			_, _ = fmt.Fprintf(w, `{"Message":"path %s is not pinned","Code":0,"Type":"error"}`, assetPinIntegrationFixtureCID)
 			return
 		}
-		_, _ = fmt.Fprintf(w, `{"Keys":{"%s":{"Type":"recursive"}}}`, assetPinIntegrationFixtureCID)
+		_, _ = fmt.Fprintf(w, `{"Keys":{"%s":{"Type":"recursive","Name":""}}}`, assetPinIntegrationFixtureCID)
 	case "/api/v0/pin/rm":
 		wantQuery := url.Values{"arg": {assetPinIntegrationFixtureCID}}.Encode()
 		if r.URL.RawQuery != wantQuery {
