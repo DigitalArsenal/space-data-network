@@ -3,7 +3,7 @@ module github.com/spacedatanetwork/sdn-server
 go 1.25.0
 
 require (
-	github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.136.0
+	github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.154.0
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/emersion/go-vcard v0.0.0-20241024213814-c9703dde27ff
@@ -20,6 +20,7 @@ require (
 	github.com/makiuchi-d/gozxing v0.1.1
 	github.com/mr-tron/base58 v1.2.0
 	github.com/multiformats/go-multiaddr v0.16.1
+	github.com/multiformats/go-multibase v0.2.0
 	github.com/multiformats/go-multihash v0.2.3
 	github.com/prometheus/client_golang v1.23.2
 	github.com/second-state/WasmEdge-go v0.14.0
@@ -85,7 +86,6 @@ require (
 	github.com/multiformats/go-base36 v0.2.0 // indirect
 	github.com/multiformats/go-multiaddr-dns v0.4.1 // indirect
 	github.com/multiformats/go-multiaddr-fmt v0.1.0 // indirect
-	github.com/multiformats/go-multibase v0.2.0 // indirect
 	github.com/multiformats/go-multicodec v0.10.0 // indirect
 	github.com/multiformats/go-multistream v0.6.1 // indirect
 	github.com/multiformats/go-varint v0.1.0 // indirect

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync/atomic"
 	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
@@ -92,6 +93,21 @@ type SDSExchangeHandler struct {
 	rateLimiter *PeerRateLimiter
 	syncHandler SyncLogHandler
 	pnmHandler  PubSubPNMHandler
+
+	// droppedNoStore counts protocol operations skipped because this node has
+	// no local store (config mode: edge). An edge node still subscribes to
+	// every schema pubsub topic and still exposes the SDS exchange stream
+	// handler, so record messages and exchange requests reach the store
+	// boundary with store == nil; dereferencing it SIGSEGVs. The guards below
+	// skip the store op and bump this counter instead of panicking.
+	droppedNoStore atomic.Uint64
+}
+
+// DroppedNoStore returns the number of protocol operations skipped because
+// this node has no local store (edge mode). Exposed for observability and
+// tests; safe to call concurrently.
+func (h *SDSExchangeHandler) DroppedNoStore() uint64 {
+	return h.droppedNoStore.Load()
 }
 
 // ErrRateLimited is returned when a peer exceeds the rate limit.
@@ -226,6 +242,15 @@ func (h *SDSExchangeHandler) handleDataRequest(ctx context.Context, s network.St
 		return
 	}
 
+	// Edge-mode fail-safe: no local store means nothing to serve. Reject
+	// without dereferencing the nil store (would SIGSEGV).
+	if h.store == nil {
+		n := h.droppedNoStore.Add(1)
+		log.Debugf("edge mode (no store): rejecting data request for %s from %s (dropped=%d)", schemaName, s.Conn().RemotePeer().ShortString(), n)
+		s.Write([]byte{RespReject})
+		return
+	}
+
 	// Lookup data
 	data, err := h.store.Get(string(schemaName), string(cid))
 	if err != nil {
@@ -317,6 +342,15 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 		return
 	}
 
+	// Edge-mode fail-safe: no local store means we cannot accept a push.
+	// Reject without dereferencing the nil store (would SIGSEGV).
+	if h.store == nil {
+		n := h.droppedNoStore.Add(1)
+		log.Debugf("edge mode (no store): rejecting data push for %s from %s (dropped=%d)", schemaName, peerID.ShortString(), n)
+		s.Write([]byte{RespReject})
+		return
+	}
+
 	// Store data
 	cid, err := h.store.Store(string(schemaName), data, peerID.String(), nil)
 	if err != nil {
@@ -381,6 +415,15 @@ func (h *SDSExchangeHandler) handleQuery(ctx context.Context, s network.Stream) 
 	query := make([]byte, queryLen)
 	if _, err := io.ReadFull(s, query); err != nil {
 		log.Warnf("Failed to read query: %v", err)
+		return
+	}
+
+	// Edge-mode fail-safe: no local store means nothing to query. Reject
+	// without dereferencing the nil store (would SIGSEGV).
+	if h.store == nil {
+		n := h.droppedNoStore.Add(1)
+		log.Debugf("edge mode (no store): rejecting query for %s from %s (dropped=%d)", schemaName, s.Conn().RemotePeer().ShortString(), n)
+		s.Write([]byte{RespReject})
 		return
 	}
 
@@ -463,6 +506,16 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 			log.Warnf("PubSub PNM rejected: validation failed from %s on %s: %v", from.ShortString(), schema, err)
 			return fmt.Errorf("PNM validation failed: %w", err)
 		}
+		// Edge-mode fail-safe: a node with no local store (config mode: edge)
+		// still subscribes to every schema pubsub topic, so PNM announcements
+		// reach here with h.store == nil. Skip the store write (and the
+		// downstream materialize handler, which also needs the store), count
+		// the drop, and return nil so the caller does not re-log per message.
+		if h.store == nil {
+			n := h.droppedNoStore.Add(1)
+			log.Debugf("edge mode (no store): dropping PNM announcement from %s on %s (dropped=%d)", from.ShortString(), schema, n)
+			return nil
+		}
 		if _, err := h.store.Store("PNM.fbs", data, from.String(), nil); err != nil {
 			return fmt.Errorf("failed to store PNM: %w", err)
 		}
@@ -482,6 +535,21 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 	if err := h.validator.Validate(ctx, schema, msgData); err != nil {
 		log.Warnf("PubSub message rejected: validation failed for %s from %s: %v", schema, from.ShortString(), err)
 		return fmt.Errorf("validation failed: %w", err)
+	}
+
+	// Edge-mode fail-safe: a node with no local store (config mode: edge)
+	// still subscribes to every schema pubsub topic, so SDS record messages
+	// reach this store boundary with h.store == nil. Dereferencing it in
+	// Store()/storeOne() SIGSEGVs — this was the prod host-01 (sdn.spaceaware.io)
+	// crash loop (~one panic every 30 min from the remaining external
+	// publisher, systemd restart ~15s outage). Skip the store write, count
+	// the drop, log at debug (this fires on every publication reaching an edge
+	// node — a per-message warn would be noise), and return nil so the caller
+	// does not re-log per message.
+	if h.store == nil {
+		n := h.droppedNoStore.Add(1)
+		log.Debugf("edge mode (no store): dropping %s record from %s (dropped=%d)", schema, from.ShortString(), n)
+		return nil
 	}
 
 	// Store data

@@ -1592,6 +1592,24 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 				frontendHandler = adminLandingHandler(http.NotFoundHandler(), landingHTML)
 			}
+			// A2.10 (OWNER DIRECTIVE 2026-07-13): the SDN apps launcher. GET
+			// /apps/ lists every APP record the daemon serves (conjunction +
+			// supplemental-omm today, enumerated from the internal/appmanifest
+			// record/embed API — adding an app is a data change, not a new route);
+			// GET /apps/<appId>/ serves each app's decoded inline UI page with the
+			// conjunction-grade header set + __SDN_CONFIG__ injection. Mounted on
+			// adminMux AHEAD of the "/" surface (ServeMux longest-prefix match), so
+			// it works in BOTH conjunction and spaceaware UI modes and never
+			// shadows the primary UI at "/". Public/anonymous by construction (no
+			// RequireAuth wrapper) — these are public app pages, whose data sources
+			// are the same anonymous-safe gateway surfaces the conjunction app uses.
+			if appsHandler, appsErr := makeAppsHandler(); appsErr != nil {
+				log.Warnf("Could not mount /apps/ launcher: %v", appsErr)
+			} else {
+				adminMux.Handle("/apps/", appsHandler)
+				log.Infof("SDN apps launcher at %s://%s/apps/", adminScheme, adminAddr)
+			}
+
 			adminMux.Handle("/", makeUISurfaceHandler(frontendHandler, authHandler, cfg.Admin.RequireAuth, frontendUIMode))
 			log.Infof("SDN UI at %s://%s/ from %s (mode: %s; admin portal remains at /admin)", adminScheme, adminAddr, cfg.Admin.FrontendPath, frontendUIMode)
 

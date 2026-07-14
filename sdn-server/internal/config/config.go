@@ -302,6 +302,20 @@ type IngestConfig struct {
 	SpaceTrackLoginURL     string `yaml:"spacetrack_login_url,omitempty"`
 	SpaceTrackQueryTmpl    string `yaml:"spacetrack_query_template,omitempty"`
 
+	// Supplemental Space-Track lanes (App 2 / A2.2c-ST). Both ride the same
+	// spacetrack_enabled master switch; each can be individually opted out
+	// (unset = enabled when spacetrack_enabled is true). Credentials via env,
+	// as above.
+	//   - publicfiles: operator-ephemeris CCSDS OEM (ISS/NASA-JSC today; new
+	//     providers such as Kuiper/SpaceX onboard automatically when Space-Track
+	//     shares files — no code change).
+	//   - current-gp: full-catalog CCSDS OMM JSON snapshots (feeds A2.7).
+	SpaceTrackPublicFilesEnabled *bool  `yaml:"spacetrack_publicfiles_enabled,omitempty"`
+	SpaceTrackCurrentGPEnabled   *bool  `yaml:"spacetrack_current_gp_enabled,omitempty"`
+	SpaceTrackSupplementalPoll   string `yaml:"spacetrack_supplemental_poll_interval,omitempty"` // default 6h
+	SpaceTrackCurrentGPQueryURL  string `yaml:"spacetrack_current_gp_query_url,omitempty"`
+	SpaceTrackPublicFilesBaseURL string `yaml:"spacetrack_publicfiles_base_url,omitempty"`
+
 	// Unified Data Library sync worker (credentials via env, see above).
 	UDLEnabled      bool   `yaml:"udl_enabled"`
 	UDLBaseURL      string `yaml:"udl_base_url,omitempty"`

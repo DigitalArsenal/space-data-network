@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<ndm>
+    <oem id="CCSDS_OEM_VERS" version="1.0">
+        <header>
+            <CREATION_DATE>2026-194T14:40:15.008Z</CREATION_DATE>
+            <ORIGINATOR>JSC</ORIGINATOR>
+        </header>
+        <body>
+            <segment>
+                <metadata>
+                    <OBJECT_NAME>8000</OBJECT_NAME>
+                    <OBJECT_ID>01</OBJECT_ID>
+                    <CENTER_NAME>EARTH</CENTER_NAME>
+                    <REF_FRAME>EME2000</REF_FRAME>
+                    <TIME_SYSTEM>UTC</TIME_SYSTEM>
+                    <START_TIME>2026-194T12:00:00.000Z</START_TIME>
+                    <STOP_TIME>2026-209T12:00:00.000Z</STOP_TIME>
+                </metadata>
+                <data>
+                    <COMMENT>ISS TOPO Ephemeris GMT 194-209</COMMENT>
+                    <COMMENT>MASS=469114.3</COMMENT>
+                    <COMMENT>DRAG_AREA=1138.3</COMMENT>
+                    <COMMENT>DRAG_COEFF=1.5</COMMENT>
+                    <stateVector>
+                        <EPOCH>2026-194T12:00:00.000Z</EPOCH>
+                        <X units="km">-4024.53611737582</X>
+                        <Y units="km">3872.28693455442</Y>
+                        <Z units="km">-3874.98177205298</Z>
+                        <X_DOT units="km/s">-6.07123816590603</X_DOT>
+                        <Y_DOT units="km/s">-2.18271154818452</Y_DOT>
+                        <Z_DOT units="km/s">4.12530324917983</Z_DOT>
+                    </stateVector>
+                    <stateVector>
+                        <EPOCH>2026-194T12:04:00.000Z</EPOCH>
+                        <X units="km">-5317.82248871279</X>
+                        <Y units="km">3214.19529807693</Y>
+                        <Z units="km">-2755.8609509971</Z>
+                        <X_DOT units="km/s">-4.64014785460052</X_DOT>
+                        <Y_DOT units="km/s">-3.26816371446073</Y_DOT>
+                        <Z_DOT units="km/s">5.14387789227347</Z_DOT>
+                    </stateVector>
+                    <stateVector>
+                        <EPOCH>2026-194T12:08:00.000Z</EPOCH>
+                        <X units="km">-6224.62498672887</X>
+                        <Y units="km">2322.52968947656</Y>
+                        <Z units="km">-1435.91246578463</Z>
+                        <X_DOT units="km/s">-2.87013629438915</X_DOT>
+                        <Y_DOT units="km/s">-4.117165151156749</Y_DOT>
+                        <Z_DOT units="km/s">5.78846444232778</Z_DOT>
+                    </stateVector>
+                    <stateVector>
+                        <EPOCH>2026-194T12:12:00.000Z</EPOCH>
+                        <X units="km">-6678.63590356771</X>
+                        <Y units="km">1261.93221391041</Y>
+                        <Z units="km">-11.2339243986531</Z>
+                        <X_DOT units="km/s">-0.8900188300686</X_DOT>
+                        <Y_DOT units="km/s">-4.66720266420756</Y_DOT>
+                        <Z_DOT units="km/s">6.01115223414499</Z_DOT>
+                    </stateVector>
+                    <stateVector>
+                        <EPOCH>2026-194T12:16:00.000Z</EPOCH>
+                        <X units="km">-6646.60696122547</X>
+                        <Y units="km">109.506026206943</Y>
+                        <Z units="km">1414.2616846835</Z>
+                        <X_DOT units="km/s">1.15526950726346</X_DOT>
+                        <Y_DOT units="km/s">-4.87767036133317</Y_DOT>
+                        <Z_DOT units="km/s">5.79520298628834</Z_DOT>
+                    </stateVector>
+                    <!-- FIXTURE: trimmed from NASA-JSC ISS 15-day public ephemeris
+                         downloaded from Space-Track publicfiles download?name=NASAJSC_Ephemeris_23644_15Day_2026-07-13UTC14:46:19_01.zip
+                         (outer zip -> 15Day_SpaceTrack_Public_071326.zip -> ISS.260713_144014.OEM_J2K_EPH.xml)
+                         on 2026-07-13. Original had 5400+ stateVectors; first 5 kept. -->
+                </data>
+            </segment>
+        </body>
+    </oem>
+</ndm>
