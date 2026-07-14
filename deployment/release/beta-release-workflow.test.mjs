@@ -50,16 +50,19 @@ test('CI quick checks share an explicit step-local WasmEdge directory', () => {
 
   assert.match(
     ciStep,
-    /^        env:\n          WASMEDGE_DIR:\s*.+\.wasmedge\s*$/m,
-    'Run CI step must explicitly pass a .wasmedge directory; installer defaults are shell-local',
+    /^        env:\n          WASMEDGE_DIR: \$\{\{ runner\.temp \}\}\/\.wasmedge[ \t]*$/m,
+    'Run CI step must explicitly pass runner.temp/.wasmedge; installer defaults are shell-local',
   );
 
-  const installIndex = ciStep.indexOf('./scripts/install-wasmedge.sh');
-  const quickCheckIndex = ciStep.indexOf('./scripts/ci-local.sh quick');
+  const installCommand = /^          \.\/scripts\/install-wasmedge\.sh[ \t]*$/m.exec(ciStep);
+  const quickCheckCommand = /^          \.\/scripts\/ci-local\.sh quick[ \t]*$/m.exec(ciStep);
 
-  assert.ok(installIndex >= 0, 'Run CI step must install WasmEdge');
-  assert.ok(quickCheckIndex >= 0, 'Run CI step must run the quick local checks');
-  assert.ok(installIndex < quickCheckIndex, 'Run CI step must install WasmEdge before running quick checks');
+  assert.ok(installCommand, 'Run CI step must install WasmEdge with an active shell command');
+  assert.ok(quickCheckCommand, 'Run CI step must run the quick local checks with an active shell command');
+  assert.ok(
+    installCommand.index < quickCheckCommand.index,
+    'Run CI step must install WasmEdge before running quick checks',
+  );
 });
 
 test('beta release workflow publishes public beta artifacts', () => {
