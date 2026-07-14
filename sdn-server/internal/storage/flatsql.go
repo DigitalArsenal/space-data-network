@@ -61,6 +61,12 @@ func engineAOTCacheDir() string {
 	return filepath.Join(os.TempDir(), engineAOTCacheDirName)
 }
 
+// EngineAOTCacheDir exposes the daemon's AOT cache directory so the
+// `prewarm-aot` maintenance command compiles into the IDENTICAL directory the
+// daemon reads at startup (resolution must not drift — same process, same
+// HOME/XDG_CACHE_HOME yields the same path).
+func EngineAOTCacheDir() string { return engineAOTCacheDir() }
+
 // FlatSQLStore provides storage over the in-process FlatSQL-WASM engine:
 // record payloads live in append-only stream files, and durable record
 // metadata lives in the compact record-catalog log. The engine's SQLite

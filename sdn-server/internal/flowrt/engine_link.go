@@ -40,6 +40,11 @@ const EngineLinkCapability = "storage_engine_link"
 // shim.
 const LinkShimModuleName = "flatsql_link"
 
+// linkShimAOTCachePrefix names the shim's AOT artifacts in the shared cache.
+// The mount-time compile (httpmount.go) and PrewarmLinkShimAOT MUST agree on
+// it or a prewarmed shim won't be found.
+const linkShimAOTCachePrefix = "flatsqllink"
+
 // flatsqlLinkShimWasm is the deterministic flatsql_link shim (assembled by
 // the SDK's src/flow/flatsqlLinkShim.js; also shipped in linked flow bundles
 // as flatsql-link-shim.wasm). Its ONLY import is flatsql.memory — pure code,
@@ -47,6 +52,15 @@ const LinkShimModuleName = "flatsql_link"
 //
 //go:embed flatsql-link-shim.wasm
 var flatsqlLinkShimWasm []byte
+
+// PrewarmLinkShimAOT AOT-compiles the embedded flatsql_link shim into cacheDir
+// under the same prefix engine-linked flow HTTP/cron mounts load (see
+// httpmount.go). See flatsqlrt.PrewarmAOTArtifact. The shim is only loaded AOT
+// for engine-linked flows on runtimes with the linked-AOT fix; prewarming it
+// keeps a first-mount compile off the request path.
+func PrewarmLinkShimAOT(cacheDir string) (path string, alreadyPresent bool, err error) {
+	return flatsqlrt.PrewarmAOTArtifact(cacheDir, linkShimAOTCachePrefix, flatsqlLinkShimWasm)
+}
 
 // EngineLinkProvider is what a mount needs from the store to serve linked
 // artifacts. *storage.FlatSQLStore implements it.
