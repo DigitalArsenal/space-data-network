@@ -1,0 +1,515 @@
+<!doctype html>
+<!--
+  Supplemental OMM — Provider Status Board (App 2 of the SDN apps program).
+
+  Single self-contained HTML+CSS+JS document. NO external references of any kind
+  (no CDN scripts, no external fonts, no remote images): every network call this
+  page makes is a same-origin GET to the node's ANONYMOUS /api/v1 gateway
+  surfaces. This is the inline CONTENT of the App 2 SDS $APP record — the whole
+  file is the record's entry UI page.
+
+  HONESTY CONTRACT (see the LEGEND at the bottom of the page):
+    LIVE    — value fetched this session from a real anonymous gateway surface.
+    REF     — checked-in A2.4 / A2.7 gate fact (compile-time truth, not live
+              telemetry): RMS-vs-CelesTrak deltas and per-provider gate status
+              come from the modules-CI parity gates, which have no runtime route.
+    NO DATA — no anonymous surface can feed this cell today. The cell names the
+              exact surface that WOULD feed it (auth-gated or not-yet-built), so
+              the gap is explicit rather than invented.
+
+  There is currently NO anonymous route exposing per-provider last-pull times or
+  objects-fitted counts (those live only behind Standard/Admin auth at
+  /api/v1/data/local-replica-stats and /api/v1/data/summary), and NO route at all
+  for OD fit / RMS. This board does not invent them — it renders honest NO DATA
+  with the surface named, and surfaces the two genuinely-anonymous per-provider
+  signals that DO exist: channel presence (/api/v1/channels) and pubsub-topic
+  presence (/api/v1/pubsub/topics), matched against each provider's known topics.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Supplemental OMM — Provider Status Board</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #12161b;
+    --panel2: #171c22;
+    --edge: #262d36;
+    --edge2: #333c48;
+    --ink: #d6dde5;
+    --dim: #7d8794;
+    --dimmer: #565f6b;
+    --live: #46d19e;
+    --ref: #d7a24a;
+    --nodata: #5a636f;
+    --blocked: #c95c5c;
+    --interim: #d7a24a;
+    --pass: #46d19e;
+    --accent: #4a90d9;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sys: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; border-radius: 0 !important; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--sys); }
+  body { font-size: 13px; line-height: 1.4; -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 18px 16px 40px; }
+
+  header { border: 1px solid var(--edge); background: var(--panel); padding: 14px 16px; }
+  .titlerow { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 15px; letter-spacing: 0.14em; text-transform: uppercase; margin: 0; font-weight: 600; }
+  .appid { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+  .sub { color: var(--dim); font-size: 11.5px; margin-top: 5px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 11px; align-items: center; }
+  .meta .kv { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+  .meta .kv b { color: var(--ink); font-weight: 600; }
+  .spacer { flex: 1; }
+  button {
+    font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    background: var(--panel2); color: var(--ink); border: 1px solid var(--edge2);
+    padding: 6px 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: #fff; }
+  button:active { background: #0d1116; }
+
+  .pill { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 2px 7px; border: 1px solid var(--edge2); color: var(--dim); white-space: nowrap; }
+  .pill.live { color: var(--live); border-color: #244b3d; background: #0e1a15; }
+  .pill.ref { color: var(--ref); border-color: #4a3c1f; background: #1a150c; }
+  .pill.nodata { color: var(--nodata); border-color: var(--edge); }
+  .pill.pass { color: var(--pass); border-color: #244b3d; background: #0e1a15; }
+  .pill.interim { color: var(--interim); border-color: #4a3c1f; background: #1a150c; }
+  .pill.blocked { color: var(--blocked); border-color: #4a2626; background: #1a0e0e; }
+
+  section { margin-top: 16px; }
+  .sectlabel { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer);
+    margin: 0 0 8px 1px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; }
+  .tile { border: 1px solid var(--edge); background: var(--panel); padding: 10px 12px; }
+  .tile .lab { font-size: 10px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--dim); }
+  .tile .val { font-family: var(--mono); font-size: 19px; margin-top: 5px; color: var(--ink); }
+  .tile .val.small { font-size: 12px; line-height: 1.5; }
+  .tile .foot { font-family: var(--mono); font-size: 9.5px; color: var(--dimmer); margin-top: 6px; }
+
+  .tablewrap { border: 1px solid var(--edge); background: var(--panel); overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; min-width: 940px; }
+  thead th { font-size: 10px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--dim);
+    text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--edge2); font-weight: 600;
+    background: var(--panel2); white-space: nowrap; }
+  tbody td { padding: 9px 10px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: #10151b; }
+  .prov { font-weight: 600; }
+  .prov .name { text-transform: uppercase; letter-spacing: 0.04em; }
+  .prov .tok { font-family: var(--mono); font-size: 10px; color: var(--dim); margin-top: 3px; }
+  .up { font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
+  .cell-note { font-family: var(--mono); font-size: 9.5px; color: var(--dimmer); margin-top: 4px; }
+  .nd { font-family: var(--mono); font-size: 10px; color: var(--nodata); }
+  .val-mono { font-family: var(--mono); font-size: 11px; }
+
+  /* Tooltip (house style — no external lib). */
+  .tip { position: relative; border-bottom: 1px dotted var(--dimmer); cursor: help; }
+  .tip .tiptext {
+    visibility: hidden; opacity: 0; transition: opacity .12s; position: absolute; z-index: 20;
+    left: 0; top: calc(100% + 6px); width: max-content; max-width: 320px;
+    background: #05070a; color: var(--ink); border: 1px solid var(--edge2);
+    padding: 7px 9px; font-family: var(--mono); font-size: 10.5px; line-height: 1.5; text-transform: none;
+    letter-spacing: 0; box-shadow: 0 6px 20px rgba(0,0,0,.5); pointer-events: none;
+  }
+  .tip:hover .tiptext { visibility: visible; opacity: 1; }
+
+  .legend { border: 1px solid var(--edge); background: var(--panel); padding: 12px 14px; margin-top: 16px; }
+  .legend h2 { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer); margin: 0 0 9px; }
+  .legend .row { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 7px; font-size: 11.5px; color: var(--dim); }
+  .legend .row:last-child { margin-bottom: 0; }
+  .legend b { color: var(--ink); }
+  footer { margin-top: 22px; font-family: var(--mono); font-size: 10px; color: var(--dimmer); line-height: 1.7; }
+  footer .refs { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="titlerow">
+      <h1>Supplemental OMM — Provider Status Board</h1>
+      <span class="appid" id="app-id">io.spaceaware.supplemental-omm</span>
+    </div>
+    <div class="sub">App 2 · supplemental TLE/OMM ingest + OD parity vs CelesTrak</div>
+    <div class="meta">
+      <span class="kv">NODE&nbsp;<b id="node-id">…</b></span>
+      <span class="kv">VERSION&nbsp;<b id="node-version">…</b></span>
+      <span class="kv">DATA PLANE&nbsp;<span id="health-pill" class="pill nodata">…</span></span>
+      <span class="spacer"></span>
+      <span class="kv">UPDATED&nbsp;<b id="updated">—</b></span>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+
+  <section>
+    <div class="sectlabel">Node-wide catalog (LIVE · anonymous /api/v1/stats + /api/v1/catalog)</div>
+    <div class="tiles" id="tiles"></div>
+  </section>
+
+  <section>
+    <div class="sectlabel">Per-provider status — 7 Tier-1 ingest lanes</div>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Upstream</th>
+            <th><span class="tip">Channel<span class="tiptext">LIVE. Present when a channel on /api/v1/channels carries this provider's data-source or supgp topic.</span></span></th>
+            <th><span class="tip">Topic<span class="tiptext">LIVE. Present when /api/v1/pubsub/topics advertises this provider's data-source or supgp topic.</span></span></th>
+            <th><span class="tip">Last Pull<span class="tiptext">No anonymous surface. Per-provider last-pull exists only at /api/v1/data/local-replica-stats (last_synced_at), which requires Standard auth.</span></span></th>
+            <th><span class="tip">Objects Fitted<span class="tiptext">No anonymous surface. Per-source record counts exist only at /api/v1/data/summary, which requires Admin auth. OD "objects fitted" has no route at all.</span></span></th>
+            <th><span class="tip">RMS Δ vs CelesTrak<span class="tiptext">REF. From the modules-CI A2.4 parity gates (no runtime route). Positive Δ = our fit RMS above CelesTrak SupGP.</span></span></th>
+            <th><span class="tip">Gate<span class="tiptext">REF. Checked-in A2.7 provider-gate-status: HARD-PASS = beats-CelesTrak RMS; INTERIM = element-range only; BLOCKED = data access / spec missing.</span></span></th>
+          </tr>
+        </thead>
+        <tbody id="prov-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="legend">
+    <h2>Provenance legend</h2>
+    <div class="row"><span class="pill live">LIVE</span><span>Fetched this session from a real <b>anonymous</b> same-origin gateway surface. Absent providers render honestly (channel <b>none</b> / topic <b>idle</b>) — the surface exists, the node just has no rows yet.</span></div>
+    <div class="row"><span class="pill ref">REF</span><span>Checked-in <b>A2.4 / A2.7</b> gate fact (compile-time truth, not live telemetry). RMS-vs-CelesTrak deltas and gate status come from the modules parity suite, which has no HTTP route.</span></div>
+    <div class="row"><span class="pill nodata">NO DATA</span><span>No anonymous surface can feed this cell today; the cell names the exact surface (auth-gated or not-yet-built). This board never invents an endpoint.</span></div>
+  </div>
+
+  <footer>
+    <div>SDS $APP record #2 · inline entry UI page · zero non-same-origin requests · all fetches → <span id="api-base">/api/v1</span>/*</div>
+    <div>Module refs: 7 provider adapters + OD fit-pipeline + catalog-synthesis. Data refs: OEM (both) · OMM (fitted, GPS almanac, synthesized catalog). Parity ground truth: CelesTrak SupGP.</div>
+    <div class="refs" id="src-refs"></div>
+  </footer>
+</div>
+
+<script>
+"use strict";
+(function () {
+  var CFG = (typeof window !== "undefined" && window.__SDN_CONFIG__) || {};
+  var API = (CFG.apiBase && String(CFG.apiBase)) || "/api/v1";
+  document.getElementById("api-base").textContent = API;
+
+  // ---- Static provider registry (7 Tier-1 lanes). Topics + upstreams + the
+  // ---- checked-in A2.4/A2.7 REF facts. Nothing here is fabricated telemetry.
+  var PROVIDERS = [
+    { key: "spacex-starlink", name: "SpaceX Starlink", token: "SpaceX-E",
+      upstream: "api.starlink.com · MEME",
+      gate: "HARD-PASS", gateClass: "pass",
+      rms: "beats CT · 10/10", rmsNote: "MEME→OEM; fitted RMS 0.236 km" },
+    { key: "iss", name: "ISS (ZARYA)", token: "ISS-E",
+      upstream: "nasa-public-data S3 · CCSDS OEM",
+      gate: "INTERIM", gateClass: "interim",
+      rms: "0.080 vs 0.067 km (Δ +13 m)", rmsNote: "element-range gate; beats-CT pending A2.4c fitter convergence" },
+    { key: "oneweb", name: "OneWeb", token: "OneWeb-E",
+      upstream: "ephemeris.oneweb.net · LTEF",
+      gate: "BLOCKED", gateClass: "blocked",
+      rms: "n/a", rmsNote: "LTEF encoding undocumented — owner-assist for the spec" },
+    { key: "gps", name: "GPS", token: "GPS-A",
+      upstream: "navcen.uscg.gov · YUMA almanac",
+      gate: "BLOCKED", gateClass: "blocked",
+      rms: "n/a", rmsNote: "almanac ≠ state ephemeris; nothing to fit (needs IGS precise + PRN→NORAD)" },
+    { key: "glonass", name: "GLONASS", token: "GLONASS-RE",
+      upstream: "ftp.glonass-iac.ru · SP3-d",
+      gate: "INTERIM", gateClass: "interim",
+      rms: "RMS 2.06 km · elem-range", rmsNote: "IGS20/GPS-time as-declared; element-range gate MM[2.0,2.3] i[63,67]°" },
+    { key: "intelsat", name: "Intelsat", token: "Intelsat-11P",
+      upstream: "my.intelsat.com · ECF",
+      gate: "INTERIM", gateClass: "interim",
+      rms: "MM 8e-4 · non-indep", rmsNote: "RAAN/argp ill-conditioned at near-zero incl/ecc; name→NORAD registry (owner-assist)" },
+    { key: "cpf", name: "CPF (ILRS)", token: "CPF",
+      upstream: "edc.dgfi.tum.de · CPF v2",
+      gate: "INTERIM", gateClass: "interim",
+      rms: "pred-vs-pred · elem-range", rmsNote: "compares two prediction products, not raw-vs-fit" }
+  ];
+  // A provider's channel/topic can appear under either the raw data-source lane
+  // or the OD fit (supgp) lane — match both prefixes.
+  function providerTopics(key) {
+    return ["sdn/data-source/" + key, "sdn/supgp/" + key];
+  }
+
+  var SOURCE_REFS = [
+    "api.starlink.com/public-files/ephemerides/MANIFEST.txt",
+    "nasa-public-data.s3.amazonaws.com/…/ISS.OEM_J2K_EPH.txt",
+    "ephemeris.oneweb.net/ltef/ltef.csv",
+    "navcen.uscg.gov/…/current_yuma.alm",
+    "ftp.glonass-iac.ru/MCC/PRODUCTS/LATEST/Final.sp3",
+    "my.intelsat.com/ephemeris/public",
+    "edc.dgfi.tum.de/pub/slr/cpf_predicts_v2/",
+    "celestrak.org/…/sup-gp.php (parity ref)",
+    "space-track.org/publicfiles/",
+    "space-track.org/basicspacedata/query/class/gp"
+  ];
+
+  // ---- Fetch helper. Classifies the outcome honestly so cells can name the
+  // ---- surface state: ok | auth | pending(404) | unreachable(network/offline).
+  function getJSON(path) {
+    return fetch(API + path, { headers: { "Accept": "application/json" }, credentials: "same-origin" })
+      .then(function (r) {
+        if (r.status === 401 || r.status === 403) return { __state: "auth", __status: r.status };
+        if (r.status === 404) return { __state: "pending", __status: 404 };
+        if (!r.ok) return { __state: "pending", __status: r.status };
+        return r.json().then(function (j) { return { __state: "ok", data: j }; })
+          .catch(function () { return { __state: "pending", __status: r.status }; });
+      })
+      .catch(function () { return { __state: "unreachable" }; });
+  }
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function fmtInt(n) {
+    if (typeof n !== "number" || !isFinite(n)) return "—";
+    return n.toLocaleString("en-US");
+  }
+  function fmtBytes(n) {
+    if (typeof n !== "number" || !isFinite(n)) return "—";
+    var u = ["B", "KB", "MB", "GB", "TB"], i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i === 0 ? n : n.toFixed(1)) + " " + u[i];
+  }
+
+  // Normalize the many possible shapes of a "list of topics/channels" into a
+  // flat array of topic strings, tolerating: {topics:[...]}, {results:[...]},
+  // bare arrays, arrays of strings, arrays of {topic|name|standardCode}.
+  function collectTopicStrings(res) {
+    if (!res || res.__state !== "ok") return null; // null = surface not readable
+    var d = res.data, arr = null;
+    if (Array.isArray(d)) arr = d;
+    else if (d && Array.isArray(d.topics)) arr = d.topics;
+    else if (d && Array.isArray(d.results)) arr = d.results;
+    else if (d && Array.isArray(d.channels)) arr = d.channels;
+    else if (d && Array.isArray(d.messages)) arr = d.messages;
+    if (!arr) return [];
+    var out = [];
+    arr.forEach(function (x) {
+      if (typeof x === "string") { out.push(x); return; }
+      if (x && typeof x === "object") {
+        ["topic", "name", "standardCode", "channel", "id"].forEach(function (k) {
+          if (typeof x[k] === "string") out.push(x[k]);
+        });
+      }
+    });
+    return out;
+  }
+  function hasAnyTopic(haystack, wanted) {
+    if (!haystack) return null;
+    for (var i = 0; i < haystack.length; i++) {
+      for (var j = 0; j < wanted.length; j++) {
+        if (haystack[i] === wanted[j] || haystack[i].indexOf(wanted[j]) === 0) return true;
+      }
+    }
+    return false;
+  }
+
+  function livePill(present, presentLabel, absentLabel) {
+    if (present === null) return { cls: "nodata", txt: "NO DATA" };
+    return present ? { cls: "live", txt: presentLabel } : { cls: "nodata", txt: absentLabel };
+  }
+
+  // ---- Renderers ----
+  function renderTiles(stats, catalog) {
+    var host = document.getElementById("tiles");
+    host.innerHTML = "";
+    var schemaMap = {}; // schema -> {count, bytes, oldest, newest}
+    var totalRecords = null, totalBytes = null, peersFromStats = null;
+
+    if (stats && stats.__state === "ok" && stats.data) {
+      var s = stats.data;
+      if (typeof s.total_records === "number") totalRecords = s.total_records;
+      if (typeof s.total_bytes === "number") totalBytes = s.total_bytes;
+      if (typeof s.connected_peers === "number") peersFromStats = s.connected_peers;
+      (s.schemas || []).forEach(function (row) {
+        if (row && row.schema) schemaMap[row.schema] = { count: row.count, bytes: row.total_bytes };
+      });
+    }
+    if (catalog && catalog.__state === "ok" && catalog.data && Array.isArray(catalog.data.schemas)) {
+      catalog.data.schemas.forEach(function (row) {
+        var name = row.name || row.schema;
+        if (!name) return;
+        var cur = schemaMap[name] || {};
+        cur.count = (typeof cur.count === "number") ? cur.count : row.record_count;
+        cur.newest = row.newest_epoch; cur.oldest = row.oldest_epoch;
+        schemaMap[name] = cur;
+      });
+    }
+
+    function schemaTile(label, schema) {
+      var t = el("div", "tile");
+      t.appendChild(el("div", "lab", label));
+      var m = schemaMap[schema];
+      if (m && typeof m.count === "number") {
+        t.appendChild(el("div", "val", fmtInt(m.count)));
+        var foot = "records";
+        if (m.newest) foot = "newest epoch " + String(m.newest).slice(0, 19).replace("T", " ");
+        t.appendChild(el("div", "foot", foot));
+      } else if ((stats && stats.__state === "ok") || (catalog && catalog.__state === "ok")) {
+        var v = el("div", "val small"); v.appendChild(pillFor({ cls: "nodata", txt: "0 / none" })); t.appendChild(v);
+        t.appendChild(el("div", "foot", "no " + schema + " records on this node yet"));
+      } else {
+        t.appendChild(unreachableVal(stats, catalog));
+        t.appendChild(el("div", "foot", "/api/v1/stats · /api/v1/catalog"));
+      }
+      return t;
+    }
+    host.appendChild(schemaTile("OEM ephemeris (ingested)", "OEM"));
+    host.appendChild(schemaTile("OMM (fitted + catalog)", "OMM"));
+
+    var tr = el("div", "tile");
+    tr.appendChild(el("div", "lab", "Total records"));
+    if (totalRecords !== null) { tr.appendChild(el("div", "val", fmtInt(totalRecords))); tr.appendChild(el("div", "foot", fmtBytes(totalBytes) + " on disk")); }
+    else { tr.appendChild(unreachableVal(stats)); tr.appendChild(el("div", "foot", "/api/v1/stats")); }
+    host.appendChild(tr);
+
+    var pk = el("div", "tile");
+    pk.appendChild(el("div", "lab", "Connected peers"));
+    if (peersFromStats !== null) { pk.appendChild(el("div", "val", fmtInt(peersFromStats))); pk.appendChild(el("div", "foot", "gossip mesh")); }
+    else { pk.appendChild(unreachableVal(stats)); pk.appendChild(el("div", "foot", "/api/v1/stats · /api/v1/peers")); }
+    host.appendChild(pk);
+  }
+
+  function unreachableVal(a, b) {
+    var v = el("div", "val small");
+    var st = (a && a.__state) || (b && b.__state);
+    v.appendChild(pillFor({ cls: "nodata", txt: st === "unreachable" ? "UNREACHABLE" : "NO DATA" }));
+    return v;
+  }
+  function pillFor(p) { var s = el("span", "pill " + p.cls, p.txt); return s; }
+
+  function renderProviders(channelTopics, pubsubTopics) {
+    var body = document.getElementById("prov-body");
+    body.innerHTML = "";
+    PROVIDERS.forEach(function (p) {
+      var wanted = providerTopics(p.key);
+      var tr = el("tr");
+
+      var c0 = el("td", "prov");
+      c0.appendChild(el("div", "name", p.name));
+      c0.appendChild(el("div", "tok", "CelesTrak " + p.token));
+      tr.appendChild(c0);
+
+      tr.appendChild((function () { var td = el("td"); td.appendChild(el("span", "up", p.upstream)); return td; })());
+
+      // CHANNEL (LIVE)
+      var chPresent = hasAnyTopic(channelTopics, wanted);
+      var chp = livePill(chPresent, "PRESENT", "none");
+      tr.appendChild(cellPill(chp, chPresent === null ? "/api/v1/channels" : null));
+
+      // TOPIC (LIVE)
+      var tpPresent = hasAnyTopic(pubsubTopics, wanted);
+      var tpp = livePill(tpPresent, "ACTIVE", "idle");
+      tr.appendChild(cellPill(tpp, tpPresent === null ? "/api/v1/pubsub/topics" : null));
+
+      // LAST PULL (NO DATA — auth-gated)
+      tr.appendChild((function () {
+        var td = el("td");
+        td.appendChild(pillFor({ cls: "nodata", txt: "NO DATA" }));
+        td.appendChild(el("div", "cell-note", "/api/v1/data/local-replica-stats · auth"));
+        return td;
+      })());
+
+      // OBJECTS FITTED (NO DATA — auth-gated / no route)
+      tr.appendChild((function () {
+        var td = el("td");
+        td.appendChild(pillFor({ cls: "nodata", txt: "NO DATA" }));
+        td.appendChild(el("div", "cell-note", "/api/v1/data/summary · auth"));
+        return td;
+      })());
+
+      // RMS Δ (REF)
+      tr.appendChild((function () {
+        var td = el("td");
+        var wrap = el("span", "tip");
+        wrap.appendChild(el("span", "val-mono", p.rms));
+        wrap.appendChild(el("span", "tiptext", p.rmsNote));
+        td.appendChild(wrap);
+        var pillRow = el("div", "cell-note"); td.appendChild(pillRow);
+        var ref = el("span", "pill ref", "REF · A2.4"); pillRow.appendChild(ref);
+        return td;
+      })());
+
+      // GATE (REF)
+      tr.appendChild((function () {
+        var td = el("td");
+        td.appendChild(pillFor({ cls: p.gateClass, txt: p.gate }));
+        td.appendChild(el("div", "cell-note", "REF · A2.7 gate-status"));
+        return td;
+      })());
+
+      body.appendChild(tr);
+    });
+  }
+  function cellPill(p, ndSurface) {
+    var td = el("td");
+    td.appendChild(pillFor(p));
+    if (ndSurface) td.appendChild(el("div", "cell-note", ndSurface + " · unreadable"));
+    return td;
+  }
+
+  function renderHeader(idRes, verRes, healthRes) {
+    var idEl = document.getElementById("node-id");
+    if (idRes && idRes.__state === "ok" && idRes.data) {
+      var d = idRes.data;
+      var pid = d.peer_id || d.peerId || d.id || (d.node && d.node.peer_id) || "";
+      idEl.textContent = pid ? shortId(pid) : "unavailable";
+      if (pid) idEl.title = pid;
+    } else { idEl.textContent = idRes && idRes.__state === "unreachable" ? "offline" : "unavailable"; }
+
+    var vEl = document.getElementById("node-version");
+    if (verRes && verRes.__state === "ok" && verRes.data) {
+      var vd = verRes.data;
+      vEl.textContent = vd.version || vd.build || vd.commit || "unavailable";
+    } else { vEl.textContent = verRes && verRes.__state === "unreachable" ? "offline" : "unavailable"; }
+
+    var hp = document.getElementById("health-pill");
+    hp.className = "pill";
+    if (healthRes && healthRes.__state === "ok" && healthRes.data) {
+      var ok = (healthRes.data.status === "ok");
+      hp.classList.add(ok ? "live" : "blocked");
+      hp.textContent = ok ? "OK" : String(healthRes.data.status || "DEGRADED").toUpperCase();
+    } else if (healthRes && healthRes.__state === "unreachable") {
+      hp.classList.add("nodata"); hp.textContent = "OFFLINE";
+    } else { hp.classList.add("nodata"); hp.textContent = "NO DATA"; }
+  }
+  function shortId(s) { s = String(s); return s.length > 18 ? s.slice(0, 8) + "…" + s.slice(-6) : s; }
+
+  function renderSourceRefs() {
+    var host = document.getElementById("src-refs");
+    host.innerHTML = "";
+    SOURCE_REFS.forEach(function (u) { host.appendChild(el("span", null, "· " + u)); });
+  }
+
+  function refresh() {
+    document.getElementById("updated").textContent = new Date().toISOString().slice(0, 19).replace("T", " ") + "Z";
+    Promise.all([
+      getJSON("/id"), getJSON("/version"), getJSON("/data/health"),
+      getJSON("/stats"), getJSON("/catalog"),
+      getJSON("/channels"), getJSON("/pubsub/topics")
+    ]).then(function (r) {
+      var idRes = r[0], verRes = r[1], healthRes = r[2], stats = r[3], catalog = r[4], channels = r[5], topics = r[6];
+      renderHeader(idRes, verRes, healthRes);
+      renderTiles(stats, catalog);
+      renderProviders(collectTopicStrings(channels), collectTopicStrings(topics));
+    });
+  }
+
+  renderSourceRefs();
+  renderProviders(null, null); // paint the honest no-data skeleton immediately
+  renderTiles(null, null);
+  document.getElementById("refresh").addEventListener("click", refresh);
+  refresh();
+})();
+</script>
+</body>
+</html>
