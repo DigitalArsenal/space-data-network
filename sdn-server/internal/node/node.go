@@ -2352,7 +2352,10 @@ func (n *Node) runStorageQuotaGCWithTicks(ticks <-chan time.Time) {
 		select {
 		case <-n.ctx.Done():
 			return
-		case <-ticks:
+		case _, ok := <-ticks:
+			if !ok {
+				return
+			}
 			if n.ctx.Err() != nil {
 				return
 			}
