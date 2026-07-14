@@ -242,6 +242,46 @@ func TestRunStorageQuotaGCLoopSkipsBufferedTickWhenAlreadyCancelled(t *testing.T
 	}
 }
 
+func TestRunStorageQuotaGCLoopStopsWhenTickChannelCloses(t *testing.T) {
+	n := newQuotaWiringTestNode(t)
+	n.config.Storage.MaxSize = "1B"
+
+	for i := 0; i < 5; i++ {
+		payload := []byte(fmt.Sprintf("filler-record-payload-bytes-%d", i))
+		if _, err := n.store.Store("RFM.fbs", payload, "TestPeer", nil); err != nil {
+			t.Fatalf("seed record %d failed: %v", i, err)
+		}
+	}
+	before, err := n.store.LiveRecordBytes()
+	if err != nil {
+		t.Fatalf("LiveRecordBytes failed: %v", err)
+	}
+
+	ticks := make(chan time.Time)
+	close(ticks)
+	n.wg.Add(1)
+	go n.runStorageQuotaGCWithTicks(ticks)
+
+	done := make(chan struct{})
+	go func() {
+		n.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runStorageQuotaGCWithTicks did not exit after its tick channel closed")
+	}
+
+	after, err := n.store.LiveRecordBytes()
+	if err != nil {
+		t.Fatalf("LiveRecordBytes (after) failed: %v", err)
+	}
+	if after != before {
+		t.Fatalf("quota loop processed closed tick channel: live bytes before=%d after=%d", before, after)
+	}
+}
+
 // TestMaterializeDatasetPublicationPNMTriggersStorageQuotaEviction proves
 // the OTHER Task D3 wiring point: a successful trusted-peer materialization
 // dispatches enforceStorageQuota in the background (subscribeFullyTrustedPeer
