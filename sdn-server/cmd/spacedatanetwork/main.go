@@ -1445,6 +1445,20 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 			}
 
+			// When the operator explicitly disables admin authentication, keep
+			// the enabled publishing surface available without accidentally
+			// falling through to the broader /api/v1/data/ flow mount. Attribute
+			// every write to this node's stable peer ID so quota and provenance
+			// records remain individually auditable. The authenticated default
+			// remains registered inside the RequireAuth branch above.
+			if !cfg.Admin.RequireAuth && n.Store() != nil && cfg.Publishing.Enabled {
+				quotas := api.NewStorageQuotaManager(n.Store(), cfg.Publishing.DefaultQuotaBytes)
+				publishAPI := api.NewPublishHandler(n.Store(), n.Validator(), quotas, &cfg.Publishing, nil)
+				publishAPI.SetLogService(n.LogService())
+				publishAPI.RegisterUnauthenticatedRoutes(adminMux, n.PeerID().String())
+				log.Infof("Publish API available without authentication at %s://%s/api/v1/data/publish/", adminScheme, adminAddr)
+			}
+
 			// ----------------------------------------------------------------
 			// Plugin upload API (admin-only, requires auth + license plugin)
 			// ----------------------------------------------------------------
