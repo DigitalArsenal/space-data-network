@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 import {
   VENDORED_FBS_BY_CODE,
@@ -13,13 +12,12 @@ import {
   parseFbsSchema,
 } from './standards-fbs';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 // Independent read of the real vendored files (NOT through the glob under
 // test) — this is what the byte-equality tests compare against, so a bug in
 // the glob itself can't hide behind comparing the glob to itself.
-const REPO_ROOT = path.resolve(__dirname, '../../../../..');
 function readVendoredFileDirect(code: string): string {
-  return readFileSync(path.join(REPO_ROOT, 'node_modules/spacedatastandards.org/schema', code, 'main.fbs'), 'utf8');
+  return readFileSync(require.resolve(`spacedatastandards.org/schema/${code}/main.fbs`), 'utf8');
 }
 
 // ---------------------------------------------------------------------------
