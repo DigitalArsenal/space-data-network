@@ -4,26 +4,35 @@
 
   Single self-contained HTML+CSS+JS document. NO external references of any kind
   (no CDN scripts, no external fonts, no remote images): every network call this
-  page makes is a same-origin GET to the node's ANONYMOUS /api/v1 gateway
-  surfaces. This is the inline CONTENT of the App 2 SDS $APP record — the whole
-  file is the record's entry UI page.
+  page makes is a same-origin GET to the node's ANONYMOUS gateway surfaces. This
+  is the inline CONTENT of the App 2 SDS $APP record — the whole file is the
+  record's entry UI page.
+
+  ONE TABLE (owner directive 2026-07-14): a single consolidated table, one row
+  per ingest lane. Clicking a row expands it (accessible: the row is a button
+  with aria-expanded; a colspan detail row unfolds) into a stats strip + a
+  paginated per-satellite table (with a NORAD search box).
 
   HONESTY CONTRACT (see the LEGEND at the bottom of the page):
     LIVE    — value fetched this session from a real anonymous gateway surface.
-    REF     — checked-in A2.4 / A2.7 gate fact (compile-time truth, not live
-              telemetry): RMS-vs-CelesTrak deltas and per-provider gate status
-              come from the modules-CI parity gates, which have no runtime route.
+    REF     — checked-in run/gate fact (compile-time truth, not live telemetry):
+              RMS-vs-CelesTrak parity, per-provider gate status, and the full-run
+              milestone numbers come from the modules pipeline run report / CI
+              parity gates, which have no runtime route.
     NO DATA — no anonymous surface can feed this cell today. The cell names the
-              exact surface that WOULD feed it (auth-gated or not-yet-built), so
-              the gap is explicit rather than invented.
+              exact surface that WOULD feed it, so the gap is explicit.
 
-  There is currently NO anonymous route exposing per-provider last-pull times or
-  objects-fitted counts (those live only behind Standard/Admin auth at
-  /api/v1/data/local-replica-stats and /api/v1/data/summary), and NO route at all
-  for OD fit / RMS. This board does not invent them — it renders honest NO DATA
-  with the surface named, and surfaces the two genuinely-anonymous per-provider
-  signals that DO exist: channel presence (/api/v1/channels) and pubsub-topic
-  presence (/api/v1/pubsub/topics), matched against each provider's known topics.
+  Anonymous surfaces this board reads:
+    /api/v1/stats        → sources[] per-(schema,provider,source,batch): live
+                           count / distinct objects / newest epoch / first+last
+                           record arrival / mean·min·max OD fit RMS (km).
+    /api/v1/data/index   → per-record page {norad, epoch, rms, cid} for a lane's
+                           drill-down (NORAD substring search + pagination).
+    /api/node/info       → agent_version for the header VERSION cell.
+    /api/v1/catalog      → node-wide schema counts.
+  Per-provider last-pull and objects-fitted counts still live only behind
+  Standard/Admin auth (/api/v1/data/local-replica-stats, /api/v1/data/summary);
+  the board never invents them — an idle lane renders honestly as idle.
 -->
 <html lang="en">
 <head>
@@ -76,6 +85,8 @@
   }
   button:hover { border-color: var(--accent); color: #fff; }
   button:active { background: #0d1116; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button:disabled:hover { border-color: var(--edge2); color: var(--ink); }
 
   .pill { font-family: var(--mono); font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.06em;
     padding: 2px 7px; border: 1px solid var(--edge2); color: var(--dim); white-space: nowrap; }
@@ -88,10 +99,9 @@
   /* NON-INDEPENDENT: a distinct violet gate class (not pass-green, not interim-amber,
      not blocked-red) for the A2.9 CelesTrak-fitted SupGP lanes — republished, never
      our own OD, so neither a pass nor a hard failure. It is the widest gate token
-     (15 chars); the gate column is sized to hold it on one line at >=1100px, and
-     white-space:normal lets it break cleanly at the hyphen (NON- / INDEPENDENT)
-     — never mid-word — as a graceful fallback below that, so it can never force the
-     fixed-layout table to overflow (the no-x-scroll invariant). */
+     (15 chars); the gate column is sized to hold it, and white-space:normal lets it
+     break cleanly at the hyphen (NON- / INDEPENDENT) — never mid-word — so it can
+     never force the fixed-layout table to overflow (the no-x-scroll invariant). */
   .pill.nonindep { color: var(--nonindep); border-color: #3b2d52; background: #150f1d;
     white-space: normal; }
 
@@ -105,6 +115,10 @@
   .tile .val { font-family: var(--mono); font-size: 24.5px; margin-top: 5px; color: var(--ink); }
   .tile .val.small { font-size: 15.5px; line-height: 1.5; }
   .tile .foot { font-family: var(--mono); font-size: 12.5px; color: var(--dimmer); margin-top: 6px; }
+  /* LAST FULL RUN strip: same tiles, slightly tighter numeral so the p50/p90/p99
+     triple fits on one line, amber REF framing. */
+  .runstrip .tile { border-color: #4a3c1f; }
+  .runstrip .tile .val { font-size: 19.5px; }
 
   /* Filter/sort toolbar. */
   .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
@@ -119,9 +133,9 @@
     text-transform: uppercase; letter-spacing: 0.06em; }
   .toolbar .count.empty { color: var(--ref); }
 
-  /* No x-scroll: the table is table-layout:fixed at width:100%, so it can never
-     exceed its container; long cell values wrap (overflow-wrap) or truncate with
-     a title tooltip (.trunc). There is deliberately NO overflow-x scroller. */
+  /* No x-scroll: every table here is table-layout:fixed at width:100%, so it can
+     never exceed its container; long cell values wrap (overflow-wrap) or truncate
+     with a title tooltip (.trunc). There is deliberately NO overflow-x scroller. */
   .tablewrap { border: 1px solid var(--edge); background: var(--panel); }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   thead th { font-size: 13px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--dim);
@@ -137,18 +151,56 @@
   th[aria-sort="ascending"] .sortind, th[aria-sort="descending"] .sortind { color: var(--accent); }
   tbody td { padding: 9px 10px; border-bottom: 1px solid var(--edge); vertical-align: top; }
   tbody tr:last-child td { border-bottom: none; }
-  tbody tr:hover td { background: #10151b; }
-  tbody tr.empty td { text-align: center; color: var(--dim); font-family: var(--mono); font-size: 14.5px;
-    padding: 18px 10px; text-transform: uppercase; letter-spacing: 0.06em; }
   .prov { font-weight: 600; }
   .prov .name { text-transform: uppercase; letter-spacing: 0.04em; overflow-wrap: anywhere; }
+  .prov .caret { color: var(--dim); margin-right: 7px; font-size: 12px; display: inline-block; width: 10px; }
   .prov .tok { font-family: var(--mono); font-size: 13px; color: var(--dim); margin-top: 3px; overflow-wrap: anywhere; }
   .up { font-family: var(--mono); font-size: 13.5px; color: var(--dim); }
   .cell-note { font-family: var(--mono); font-size: 12.5px; color: var(--dimmer); margin-top: 4px; overflow-wrap: anywhere; }
-  .nd { font-family: var(--mono); font-size: 13px; color: var(--nodata); }
   .val-mono { font-family: var(--mono); font-size: 14.5px; overflow-wrap: anywhere; }
   /* Single-line truncation that keeps the full value in a title tooltip. */
   .trunc { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Consolidated lane table: clickable rows + colspan detail expansion. */
+  tr.lane { cursor: pointer; }
+  tr.lane:hover td { background: #10151b; }
+  tr.lane:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
+  tr.lane.idle td { color: var(--dim); }
+  tr.lane.idle .prov .name { color: var(--dim); }
+  tr.lane.open td { background: #10151b; }
+  .pipe-obj { font-family: var(--mono); font-size: 18px; color: var(--ink); }
+  tr.lane.idle .pipe-obj { color: var(--dimmer); }
+  .pipe-rate { font-family: var(--mono); font-size: 14px; color: var(--live); }
+  .pipe-sub { font-family: var(--mono); font-size: 12.5px; color: var(--dimmer); margin-top: 4px; overflow-wrap: anywhere; }
+  tr.empty td { text-align: center; color: var(--dim); font-family: var(--mono); font-size: 14.5px;
+    padding: 18px 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+  tr.detail > td { background: #0d1116; padding: 0; border-bottom: 1px solid var(--edge2); }
+  .detail-inner { padding: 14px; }
+  .det-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-bottom: 12px; }
+  .det-stat { border: 1px solid var(--edge); background: var(--panel); padding: 8px 10px; }
+  .det-stat .lab { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); }
+  .det-stat .val { font-family: var(--mono); font-size: 16.5px; margin-top: 4px; color: var(--ink); overflow-wrap: anywhere; }
+  .det-ref { border: 1px solid var(--edge); background: var(--panel); padding: 10px 12px; margin-bottom: 12px;
+    font-size: 14px; color: var(--dim); line-height: 1.5; }
+  .det-ref .hd { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .det-ref .ln { margin-top: 5px; overflow-wrap: anywhere; }
+  .det-ref b { color: var(--ink); }
+  .subtools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .subtools input[type="text"] {
+    font-family: var(--mono); font-size: 14px; letter-spacing: 0.04em;
+    background: var(--panel2); color: var(--ink); border: 1px solid var(--edge2);
+    padding: 5px 9px; flex: 0 1 240px; min-width: 150px; max-width: 100%;
+  }
+  .subtools input[type="text"]:focus { outline: none; border-color: var(--accent); }
+  .subtools input::placeholder { color: var(--dimmer); text-transform: uppercase; letter-spacing: 0.06em; }
+  .subtools .count { font-family: var(--mono); font-size: 13px; color: var(--dim);
+    text-transform: uppercase; letter-spacing: 0.05em; margin-left: auto; }
+  .subtable td, .subtable th { padding: 7px 9px; }
+  .subtable td { font-family: var(--mono); font-size: 13.5px; color: var(--ink); }
+  .subtable .muted { color: var(--dimmer); }
+  .pager { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .pager .pageinfo { font-family: var(--mono); font-size: 13px; color: var(--dim); }
 
   /* Tooltip (house style — no external lib). Hidden state is display:none so a
      latent tooltip never contributes to document width (no phantom x-scroll);
@@ -171,18 +223,6 @@
   .legend b { color: var(--ink); }
   footer { margin-top: 22px; font-family: var(--mono); font-size: 13px; color: var(--dimmer); line-height: 1.7; }
   footer .refs { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
-
-  /* LIVE PIPELINE section. Idle lanes are dimmed but never hidden (honesty
-     contract: a provider with no active batch renders as idle, not omitted).
-     The rate/age cell notes reuse the .cell-note mono convention; the table is
-     table-layout:fixed like every other table here, so it cannot x-scroll. */
-  tbody tr.idle td { color: var(--dim); }
-  tbody tr.idle .prov .name { color: var(--dim); }
-  .pipe-obj { font-family: var(--mono); font-size: 19.5px; color: var(--ink); }
-  tr.idle .pipe-obj { color: var(--dimmer); }
-  .pipe-rate { font-family: var(--mono); font-size: 14.5px; color: var(--live); }
-  .pipe-sub { font-family: var(--mono); font-size: 12.5px; color: var(--dimmer); margin-top: 4px; overflow-wrap: anywhere; }
-
 </style>
 </head>
 <body>
@@ -204,26 +244,31 @@
     </div>
   </header>
 
+  <section id="last-full-run">
+    <div class="sectlabel">Last full run — Starlink constellation (REF · modules 8d9c39d · 2026-07-14)</div>
+    <div class="tiles runstrip" id="run-tiles"></div>
+  </section>
+
   <section id="live-pipeline">
-    <div class="sectlabel">LIVE pipeline — fitted-OMM publish progress (LIVE · anonymous /api/v1/stats · polling 5s)</div>
+    <div class="sectlabel">Live pipeline — per-lane publish progress (LIVE · anonymous /api/v1/stats · polling 5s)</div>
     <div class="tiles" id="pipe-tiles"></div>
-    <div class="tablewrap" style="margin-top:8px">
+    <div class="toolbar">
+      <input id="lane-filter" type="text" placeholder="Filter lanes…" autocomplete="off" spellcheck="false" aria-label="Filter lanes by provider, token, gate, or source">
+      <span class="count" id="lane-count"></span>
+    </div>
+    <div class="tablewrap">
       <table>
-        <colgroup>
-          <col style="width:20%"><col style="width:17%"><col style="width:9%"><col style="width:9%"><col style="width:16%"><col style="width:12%"><col style="width:17%">
-        </colgroup>
-        <thead><tr>
-          <th>Provider / lane</th><th>Data current as of (epoch)</th><th>ElSets</th><th>Objects</th><th>Pull started</th><th>Rate</th><th>Last record</th>
-        </tr></thead>
-        <tbody id="pipe-body"></tbody>
+        <colgroup id="lane-cols"></colgroup>
+        <thead><tr id="lane-head"></tr></thead>
+        <tbody id="lane-body"></tbody>
       </table>
     </div>
     <div class="sub" style="margin-top:6px">
-      CelesTrak-supplemental-style stats per lane, from this node's records
-      (<span class="val-mono">/api/v1/stats</span> → sources[], active batch = newest batch_id per
-      source): <b>Data current as of</b> = newest record EPOCH; <b>ElSets</b> = element sets in the
-      batch; <b>Objects</b> = distinct NORAD IDs; rate = ElSets/min from count deltas across the poll
-      window. A lane with no records yet renders honestly as <b>idle</b>.
+      One row per ingest lane, from this node's records (<span class="val-mono">/api/v1/stats</span> →
+      sources[], active batch = newest batch_id per source). <b>Data current as of</b> = newest record
+      EPOCH; <b>ElSets</b> = element sets in the batch; <b>Objects</b> = distinct NORAD IDs;
+      <b>Mean RMS</b> = OD fit RMS averaged over the batch's indexed records (fitted lanes only). Click a
+      row to drill into its satellites. RMS stats cover records indexed since the rms-index deploy.
     </div>
   </section>
 
@@ -232,17 +277,15 @@
     <div class="tiles" id="tiles"></div>
   </section>
 
-
-
   <div class="legend">
     <h2>Provenance legend</h2>
-    <div class="row"><span class="pill live">LIVE</span><span>Fetched this session from a real <b>anonymous</b> same-origin gateway surface. Absent providers render honestly (channel <b>none</b> / topic <b>idle</b>) — the surface exists, the node just has no rows yet.</span></div>
-    <div class="row"><span class="pill ref">REF</span><span>Checked-in <b>A2.4 / A2.7</b> gate fact (compile-time truth, not live telemetry). RMS-vs-CelesTrak deltas and gate status come from the modules parity suite, which has no HTTP route.</span></div>
+    <div class="row"><span class="pill live">LIVE</span><span>Fetched this session from a real <b>anonymous</b> same-origin gateway surface. A lane with no active batch renders honestly as <b>idle</b> — the surface exists, the node just has no rows yet.</span></div>
+    <div class="row"><span class="pill ref">REF</span><span>Checked-in run/gate fact (compile-time truth, not live telemetry). RMS-vs-CelesTrak parity, gate status, and the full-run milestone numbers come from the modules pipeline run report, which has no HTTP route.</span></div>
     <div class="row"><span class="pill nodata">NO DATA</span><span>No anonymous surface can feed this cell today; the cell names the exact surface (auth-gated or not-yet-built). This board never invents an endpoint.</span></div>
   </div>
 
   <footer>
-    <div>SDS $APP record #2 · inline entry UI page · zero non-same-origin requests · all fetches → <span id="api-base">/api/v1</span>/*</div>
+    <div>SDS $APP record #2 · inline entry UI page · zero non-same-origin requests · all fetches → <span id="api-base">/api/v1</span>/* and <span id="root-base">/api</span>/node/info</div>
     <div>Module refs: 8 provider adapters (7 Tier-1 OD + celestrak-supgp) + OD fit-pipeline + catalog-synthesis. Data refs: OEM (both) · OMM (fitted, GPS almanac, synthesized catalog). Parity ground truth: CelesTrak SupGP.</div>
     <div class="refs" id="src-refs"></div>
   </footer>
@@ -253,13 +296,44 @@
 (function () {
   var CFG = (typeof window !== "undefined" && window.__SDN_CONFIG__) || {};
   var API = (CFG.apiBase && String(CFG.apiBase)) || "/api/v1";
+  // Root API base (one level above the versioned base): /api/v1 -> /api. The
+  // node-info surface that carries agent_version lives at /api/node/info (the
+  // versioned /api/v1/node/info is auth-gated), so it is fetched off this root.
+  var ROOT = API.replace(/\/v1\/?$/, "");
+  if (ROOT === API) ROOT = API.replace(/\/?$/, "");
   document.getElementById("api-base").textContent = API;
+  document.getElementById("root-base").textContent = ROOT;
 
-  // ---- Static provider registry (14 lanes: 7 Tier-1 OD + 7 CelesTrak SupGP).
-  // ---- Topics + upstreams + the checked-in A2.4/A2.7 REF facts. Nothing here is
-  // ---- fabricated telemetry.
+  // ---- LAST FULL RUN (REF): checked-in milestone from the modules pipeline run
+  // ---- report (analysis/od, commit 8d9c39d, 2026-07-14). NOT live telemetry.
+  var LAST_FULL_RUN = [
+    { lab: "Total end-to-end", val: "118 s", foot: "10,820 objects" },
+    { lab: "Fit throughput", val: "93 sats/s", foot: "24 workers" },
+    { lab: "Download", val: "~280 MB/s", foot: "2.2 Gb/s · saturated" },
+    { lab: "Beat CelesTrak", val: "87.0%", foot: "9,413 / 10,816" },
+    { lab: "Space-Track matched", val: "10,740", foot: "of 10,820" },
+    { lab: "RMS p50/p90/p99 km", val: "0.117 / 0.209 / 0.266", foot: "fit residual" }
+  ];
+
+  // ---- Per-lane checked-in run summary (REF) for the row expansion, keyed by
+  // ---- provider key. Only the Starlink full-run has one today.
+  var RUN_SUMMARIES = {
+    "spacex-starlink": {
+      tag: "Full run · modules 8d9c39d · 2026-07-14",
+      lines: [
+        "118 s end-to-end for 10,820 objects — fit 93 sats/s across 24 workers.",
+        "Download ~280 MB/s (2.2 Gb/s, link saturated).",
+        "Beat CelesTrak 9,413/10,816 = 87.0%; Space-Track matched 10,740/10,820.",
+        "RMS p50 0.117 / p90 0.209 / p99 0.266 km."
+      ]
+    }
+  };
+
   var NONINDEP_RMS_NOTE = "CelesTrak-fitted SupGP re-published, non-independent — CelesTrak's own fit, not OrbPro OD, so there is no RMS-vs-CelesTrak comparison for this lane.";
 
+  // ---- Static provider registry (14 lanes: 7 Tier-1 OD + 7 CelesTrak SupGP).
+  // ---- Upstreams + the checked-in gate/parity REF facts (folded into the row
+  // ---- expansion). Nothing here is fabricated telemetry.
   var PROVIDERS = [
     { key: "spacex-starlink", name: "SpaceX Starlink", token: "SpaceX-E",
       upstream: "api.starlink.com · MEME",
@@ -290,11 +364,9 @@
       gate: "INTERIM", gateClass: "interim",
       rms: "pred-vs-pred · elem-range", rmsNote: "compares two prediction products, not raw-vs-fit" },
     // ---- A2.9 CelesTrak SupGP lanes (7 non-independent providers). One token-
-    // ---- parameterized adapter (com.orbpro.celestrak-supgp) re-publishes CelesTrak's
-    // ---- OWN fitted SupGP OMM sets for providers with no public raw ephemeris, under a
-    // ---- distinct SourceName per provider. These are CelesTrak's fits, NOT our OD — so
-    // ---- there is no OrbPro-vs-CelesTrak RMS comparison (rms n/a). Same channel/topic
-    // ---- wiring as the Tier-1 lanes (topic sdn/data-source/<key>).
+    // ---- parameterized adapter re-publishes CelesTrak's OWN fitted SupGP OMM
+    // ---- sets for providers with no public raw ephemeris. These are CelesTrak's
+    // ---- fits, NOT our OD — so there is no OrbPro-vs-CelesTrak RMS comparison.
     { key: "ses", name: "SES", token: "SES-E",
       upstream: "celestrak.org · SupGP",
       gate: "NON-INDEPENDENT", gateClass: "nonindep",
@@ -324,59 +396,6 @@
       gate: "NON-INDEPENDENT", gateClass: "nonindep",
       rms: "n/a", rmsNote: NONINDEP_RMS_NOTE }
   ];
-  // A provider's channel/topic can appear under either the raw data-source lane
-  // or the OD fit (supgp) lane — match both prefixes.
-  function providerTopics(key) {
-    return ["sdn/data-source/" + key, "sdn/supgp/" + key];
-  }
-
-  // ---- Column model: single source of truth for the colgroup widths, the
-  // sortable headers, and per-row cell rendering. Widths are percentages that
-  // sum to 100 so the table (table-layout:fixed, width:100%) always fits its
-  // container at any width — no horizontal scroller.
-  //
-  // Sort semantics (honesty-preserving): text columns sort case-insensitively;
-  // Channel/Topic sort by a live-presence ordinal; Gate sorts by a severity
-  // ordinal (HARD-PASS < INTERIM < NON-INDEPENDENT < BLOCKED). Ordinal choice
-  // documented: HARD-PASS (independent RMS beat) is strongest; INTERIM (our own
-  // fit, element-tolerance check only) ranks above NON-INDEPENDENT (CelesTrak's
-  // fit re-published — no OrbPro OD at all, but a real published SupGP set), which
-  // in turn ranks above BLOCKED (no trustworthy datum at source). A cell with no
-  // comparable datum — an unreadable NO-DATA live surface, or an "n/a" REF value
-  // (every NON-INDEPENDENT lane's RMS) — carries last:true and is pushed to the
-  // BOTTOM in both sort directions. Sorting never fabricates an ordering for a
-  // cell that has no value.
-  var GATE_ORDINAL = { "HARD-PASS": 0, "INTERIM": 1, "NON-INDEPENDENT": 2, "BLOCKED": 3 };
-  var COLUMNS = [
-    { id: "provider", label: "Provider", width: "15%", sortable: true,
-      sortKey: function (r) { return { v: r.p.name.toLowerCase(), last: false }; } },
-    { id: "upstream", label: "Upstream", width: "15%", sortable: true,
-      sortKey: function (r) { return { v: r.p.upstream.toLowerCase(), last: false }; } },
-    { id: "channel", label: "Channel", width: "9%", sortable: true,
-      tip: "LIVE. Present when a channel on /api/v1/channels carries this provider's data-source or supgp topic.",
-      sortKey: function (r) { return r.chPresent === null ? { v: 0, last: true } : { v: r.chPresent ? 2 : 1, last: false }; } },
-    { id: "topic", label: "Topic", width: "9%", sortable: true,
-      tip: "LIVE. Present when /api/v1/pubsub/topics advertises this provider's data-source or supgp topic.",
-      sortKey: function (r) { return r.tpPresent === null ? { v: 0, last: true } : { v: r.tpPresent ? 2 : 1, last: false }; } },
-    { id: "lastpull", label: "Last Pull", width: "11%", sortable: false,
-      tip: "No anonymous surface. Per-provider last-pull exists only at /api/v1/data/local-replica-stats (last_synced_at), which requires Standard auth." },
-    { id: "fitted", label: "Objects Fitted", width: "11%", sortable: false,
-      tip: "No anonymous surface. Per-source record counts exist only at /api/v1/data/summary, which requires Admin auth. OD \"objects fitted\" has no route at all." },
-    { id: "rms", label: "RMS Δ vs CelesTrak", width: "16%", sortable: true, tipRight: true,
-      tip: "REF. From the modules-CI A2.4 parity gates (no runtime route). Positive Δ = our fit RMS above CelesTrak SupGP.",
-      sortKey: function (r) {
-        var s = r.p.rms;
-        if (/n\/a/i.test(s)) return { v: "", last: true };
-        return { v: s.toLowerCase(), last: false };
-      } },
-    { id: "gate", label: "Gate", width: "14%", sortable: true, tipRight: true,
-      tip: "REF. Checked-in A2.7 provider-gate-status: HARD-PASS = beats-CelesTrak RMS; INTERIM = element-range only; NON-INDEPENDENT = CelesTrak-fitted SupGP re-published (no OrbPro OD lane); BLOCKED = data access / spec missing.",
-      sortKey: function (r) { var o = GATE_ORDINAL[r.p.gate]; return { v: (o == null ? 99 : o), last: false }; } }
-  ];
-  function colById(id) { for (var i = 0; i < COLUMNS.length; i++) { if (COLUMNS[i].id === id) return COLUMNS[i]; } return null; }
-
-  // Sort/filter state for the provider table. sortCol=null → registry order.
-  var provState = { rows: [], sortCol: null, sortDir: 1, filter: "" };
 
   var SOURCE_REFS = [
     "api.starlink.com/public-files/ephemerides/MANIFEST.txt",
@@ -398,18 +417,25 @@
     "celestrak.org/…/sup-gp.php?SOURCE=CSS-E"
   ];
 
-  // ---- Fetch helper. Classifies the outcome honestly so cells can name the
-  // ---- surface state: ok | auth | pending(404) | unreachable(network/offline).
+  var GATE_ORDINAL = { "HARD-PASS": 0, "INTERIM": 1, "NON-INDEPENDENT": 2, "BLOCKED": 3 };
+
+  // ---- Fetch helpers. getJSON is versioned-base relative (API + path);
+  // ---- getJSONRoot is root relative (ROOT + path, for /api/node/info). Both
+  // ---- classify the outcome honestly: ok | auth | pending(404) | unreachable.
+  function classify(r) {
+    if (r.status === 401 || r.status === 403) return Promise.resolve({ __state: "auth", __status: r.status });
+    if (r.status === 404) return Promise.resolve({ __state: "pending", __status: 404 });
+    if (!r.ok) return Promise.resolve({ __state: "pending", __status: r.status });
+    return r.json().then(function (j) { return { __state: "ok", data: j }; })
+      .catch(function () { return { __state: "pending", __status: r.status }; });
+  }
   function getJSON(path) {
     return fetch(API + path, { headers: { "Accept": "application/json" }, credentials: "same-origin" })
-      .then(function (r) {
-        if (r.status === 401 || r.status === 403) return { __state: "auth", __status: r.status };
-        if (r.status === 404) return { __state: "pending", __status: 404 };
-        if (!r.ok) return { __state: "pending", __status: r.status };
-        return r.json().then(function (j) { return { __state: "ok", data: j }; })
-          .catch(function () { return { __state: "pending", __status: r.status }; });
-      })
-      .catch(function () { return { __state: "unreachable" }; });
+      .then(classify).catch(function () { return { __state: "unreachable" }; });
+  }
+  function getJSONRoot(path) {
+    return fetch(ROOT + path, { headers: { "Accept": "application/json" }, credentials: "same-origin" })
+      .then(classify).catch(function () { return { __state: "unreachable" }; });
   }
 
   function el(tag, cls, text) {
@@ -428,50 +454,47 @@
     while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
     return (i === 0 ? n : n.toFixed(1)) + " " + u[i];
   }
+  function fmtRMS(v) { return (typeof v === "number" && isFinite(v)) ? v.toFixed(3) : null; }
+  function pillFor(p) { return el("span", "pill " + p.cls, p.txt); }
+  function shortId(s) { s = String(s); return s.length > 14 ? s.slice(0, 7) + "…" + s.slice(-5) : s; }
+  function parseMs(iso) { if (!iso) return 0; var ms = Date.parse(iso); return isNaN(ms) ? 0 : ms; }
+  function ageStr(iso) {
+    var ms = parseMs(iso);
+    if (!ms) return null;
+    var s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+    if (s < 60) return s + "s ago";
+    if (s < 3600) return Math.floor(s / 60) + "m ago";
+    if (s < 86400) return Math.floor(s / 3600) + "h ago";
+    return Math.floor(s / 86400) + "d ago";
+  }
+  function isoTime(iso) { return iso ? String(iso).slice(0, 19).replace("T", " ") + "Z" : null; }
 
-  // Normalize the many possible shapes of a "list of topics/channels" into a
-  // flat array of topic strings, tolerating: {topics:[...]}, {results:[...]},
-  // bare arrays, arrays of strings, arrays of {topic|name|standardCode}.
-  function collectTopicStrings(res) {
-    if (!res || res.__state !== "ok") return null; // null = surface not readable
-    var d = res.data, arr = null;
-    if (Array.isArray(d)) arr = d;
-    else if (d && Array.isArray(d.topics)) arr = d.topics;
-    else if (d && Array.isArray(d.results)) arr = d.results;
-    else if (d && Array.isArray(d.channels)) arr = d.channels;
-    else if (d && Array.isArray(d.messages)) arr = d.messages;
-    if (!arr) return [];
-    var out = [];
-    arr.forEach(function (x) {
-      if (typeof x === "string") { out.push(x); return; }
-      if (x && typeof x === "object") {
-        ["topic", "name", "standardCode", "channel", "id"].forEach(function (k) {
-          if (typeof x[k] === "string") out.push(x[k]);
-        });
-      }
+  // ---- Node-wide catalog tiles + header + run strip -------------------------
+  function renderRunStrip() {
+    var host = document.getElementById("run-tiles");
+    host.innerHTML = "";
+    LAST_FULL_RUN.forEach(function (t) {
+      var d = el("div", "tile");
+      var lab = el("div", "lab");
+      lab.appendChild(document.createTextNode(t.lab + " "));
+      lab.appendChild(el("span", "pill ref", "REF"));
+      d.appendChild(lab);
+      d.appendChild(el("div", "val", t.val));
+      if (t.foot) d.appendChild(el("div", "foot", t.foot));
+      host.appendChild(d);
     });
-    return out;
-  }
-  function hasAnyTopic(haystack, wanted) {
-    if (!haystack) return null;
-    for (var i = 0; i < haystack.length; i++) {
-      for (var j = 0; j < wanted.length; j++) {
-        if (haystack[i] === wanted[j] || haystack[i].indexOf(wanted[j]) === 0) return true;
-      }
-    }
-    return false;
   }
 
-  function livePill(present, presentLabel, absentLabel) {
-    if (present === null) return { cls: "nodata", txt: "NO DATA" };
-    return present ? { cls: "live", txt: presentLabel } : { cls: "nodata", txt: absentLabel };
+  function unreachableVal(a, b) {
+    var v = el("div", "val small");
+    var st = (a && a.__state) || (b && b.__state);
+    v.appendChild(pillFor({ cls: "nodata", txt: st === "unreachable" ? "UNREACHABLE" : "NO DATA" }));
+    return v;
   }
-
-  // ---- Renderers ----
   function renderTiles(stats, catalog) {
     var host = document.getElementById("tiles");
     host.innerHTML = "";
-    var schemaMap = {}; // schema -> {count, bytes, oldest, newest}
+    var schemaMap = {};
     var totalRecords = null, totalBytes = null, peersFromStats = null;
 
     if (stats && stats.__state === "ok" && stats.data) {
@@ -528,207 +551,7 @@
     host.appendChild(pk);
   }
 
-  function unreachableVal(a, b) {
-    var v = el("div", "val small");
-    var st = (a && a.__state) || (b && b.__state);
-    v.appendChild(pillFor({ cls: "nodata", txt: st === "unreachable" ? "UNREACHABLE" : "NO DATA" }));
-    return v;
-  }
-  function pillFor(p) { var s = el("span", "pill " + p.cls, p.txt); return s; }
-
-  // Build the colgroup + sortable header row once from COLUMNS.
-  function buildProvColsAndHead() {
-    var cg = document.getElementById("prov-cols");
-    var hr = document.getElementById("prov-head");
-    if (!cg || !hr) return; // provider table removed (owner: ONE table)
-    cg.innerHTML = ""; hr.innerHTML = "";
-    COLUMNS.forEach(function (col) {
-      var c = document.createElement("col"); c.style.width = col.width; cg.appendChild(c);
-
-      var th = document.createElement("th");
-      th.setAttribute("data-col", col.id);
-      var inner = el("div", "th-inner");
-
-      var lab;
-      if (col.tip) {
-        lab = el("span", "tip" + (col.tipRight ? " tip-right" : ""));
-        lab.appendChild(el("span", "th-label", col.label));
-        lab.appendChild(el("span", "tiptext", col.tip));
-      } else {
-        lab = el("span", "th-label", col.label);
-      }
-      inner.appendChild(lab);
-
-      if (col.sortable) {
-        th.className = "sortable";
-        th.setAttribute("aria-sort", "none");
-        th.setAttribute("tabindex", "0");
-        inner.appendChild(el("span", "sortind", "↕")); // ↕ neutral
-        var onSort = function () { toggleSort(col.id); };
-        th.addEventListener("click", onSort);
-        th.addEventListener("keydown", function (e) {
-          if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); onSort(); }
-        });
-      }
-      th.appendChild(inner);
-      hr.appendChild(th);
-    });
-  }
-
-  function toggleSort(colId) {
-    if (provState.sortCol === colId) { provState.sortDir = -provState.sortDir; }
-    else { provState.sortCol = colId; provState.sortDir = 1; }
-    renderProvTable();
-  }
-
-  // Stable sort: NO-DATA/no-value cells (last:true) always sink to the bottom;
-  // among comparable cells, numeric keys compare numerically and text keys via
-  // localeCompare; equal keys keep their original (registry) order.
-  function sortProvRows(rows) {
-    if (!provState.sortCol) return rows.slice();
-    var col = colById(provState.sortCol), dir = provState.sortDir;
-    var dec = rows.map(function (r, i) { return { r: r, i: i, k: col.sortKey(r) }; });
-    dec.sort(function (a, b) {
-      if (a.k.last !== b.k.last) return a.k.last ? 1 : -1;
-      if (a.k.last && b.k.last) return a.i - b.i;
-      var av = a.k.v, bv = b.k.v, c;
-      if (typeof av === "number" && typeof bv === "number") c = av - bv;
-      else c = String(av).localeCompare(String(bv));
-      if (c !== 0) return dir * c;
-      return a.i - b.i;
-    });
-    return dec.map(function (d) { return d.r; });
-  }
-
-  // Case-insensitive substring across the provider/name/status columns.
-  function provRowMatches(r, q) {
-    if (!q) return true;
-    var p = r.p;
-    var chLabel = r.chPresent === null ? "no data" : (r.chPresent ? "present" : "none");
-    var tpLabel = r.tpPresent === null ? "no data" : (r.tpPresent ? "active" : "idle");
-    var hay = [p.name, p.token, p.upstream, p.gate, p.rms, chLabel, tpLabel].join(" ").toLowerCase();
-    return hay.indexOf(q) !== -1;
-  }
-
-  function buildProvRows(channelTopics, pubsubTopics) {
-    return PROVIDERS.map(function (p) {
-      var wanted = providerTopics(p.key);
-      return { p: p, chPresent: hasAnyTopic(channelTopics, wanted), tpPresent: hasAnyTopic(pubsubTopics, wanted) };
-    });
-  }
-
-  // renderProviders rebuilds the row model from live topic data; renderProvTable
-  // re-applies the current filter + sort and repaints tbody (called on every
-  // filter keystroke and header click without refetching).
-  function renderProviders(channelTopics, pubsubTopics) {
-    provState.rows = buildProvRows(channelTopics, pubsubTopics);
-    renderProvTable();
-  }
-
-  function renderProvTable() {
-    var body = document.getElementById("prov-body");
-    if (!body) return; // provider table removed (owner: ONE table)
-    body.innerHTML = "";
-    var q = provState.filter.trim().toLowerCase();
-    var rows = sortProvRows(provState.rows).filter(function (r) { return provRowMatches(r, q); });
-
-    if (rows.length === 0) {
-      var tr = el("tr", "empty");
-      var td = el("td", null, q ? ("No providers match “" + provState.filter.trim() + "”") : "No providers");
-      td.setAttribute("colspan", String(COLUMNS.length));
-      tr.appendChild(td); body.appendChild(tr);
-    } else {
-      rows.forEach(function (r) {
-        var tr = el("tr");
-        COLUMNS.forEach(function (col) { tr.appendChild(cellFor(col, r)); });
-        body.appendChild(tr);
-      });
-    }
-
-    var cnt = document.getElementById("prov-count");
-    if (!cnt) return;
-    if (cnt) {
-      cnt.textContent = "showing " + rows.length + " of " + provState.rows.length;
-      if (rows.length === 0 && provState.rows.length > 0) cnt.classList.add("empty");
-      else cnt.classList.remove("empty");
-    }
-
-    // Header sort indicators + aria-sort.
-    var ths = document.querySelectorAll("#prov-head th");
-    for (var i = 0; i < ths.length; i++) {
-      var th = ths[i];
-      if (!th.classList.contains("sortable")) continue;
-      var ind = th.querySelector(".sortind");
-      if (th.getAttribute("data-col") === provState.sortCol) {
-        th.setAttribute("aria-sort", provState.sortDir === 1 ? "ascending" : "descending");
-        if (ind) ind.textContent = provState.sortDir === 1 ? "▲" : "▼"; // ▲ ▼
-      } else {
-        th.setAttribute("aria-sort", "none");
-        if (ind) ind.textContent = "↕"; // ↕
-      }
-    }
-  }
-
-  // Build one <td> for a (column, row) pair. Honesty labels are unchanged from
-  // A2.5: LIVE channel/topic pills, NO-DATA cells that name the auth-gated
-  // surface, REF cells for the compile-time A2.4/A2.7 gate facts.
-  function cellFor(col, r) {
-    var p = r.p, td;
-    switch (col.id) {
-      case "provider":
-        td = el("td", "prov");
-        td.appendChild(el("div", "name", p.name));
-        td.appendChild(el("div", "tok", "CelesTrak " + p.token));
-        return td;
-      case "upstream":
-        td = el("td");
-        var up = el("span", "up trunc", p.upstream);
-        up.title = p.upstream; // full value preserved (house rule)
-        td.appendChild(up);
-        return td;
-      case "channel":
-        return cellPill(livePill(r.chPresent, "PRESENT", "none"), r.chPresent === null ? "/api/v1/channels" : null);
-      case "topic":
-        return cellPill(livePill(r.tpPresent, "ACTIVE", "idle"), r.tpPresent === null ? "/api/v1/pubsub/topics" : null);
-      case "lastpull":
-        td = el("td");
-        td.appendChild(pillFor({ cls: "nodata", txt: "NO DATA" }));
-        td.appendChild(el("div", "cell-note", "/api/v1/data/local-replica-stats · auth"));
-        return td;
-      case "fitted":
-        td = el("td");
-        td.appendChild(pillFor({ cls: "nodata", txt: "NO DATA" }));
-        td.appendChild(el("div", "cell-note", "/api/v1/data/summary · auth"));
-        return td;
-      case "rms":
-        td = el("td");
-        var wrap = el("span", "tip tip-right");
-        var val = el("span", "val-mono", p.rms);
-        val.title = p.rmsNote;
-        wrap.appendChild(val);
-        wrap.appendChild(el("span", "tiptext", p.rmsNote));
-        td.appendChild(wrap);
-        var pillRow = el("div", "cell-note");
-        pillRow.appendChild(el("span", "pill ref", "REF · A2.4"));
-        td.appendChild(pillRow);
-        return td;
-      case "gate":
-        td = el("td");
-        td.appendChild(pillFor({ cls: p.gateClass, txt: p.gate }));
-        td.appendChild(el("div", "cell-note", "REF · A2.7 gate-status"));
-        return td;
-    }
-    return el("td");
-  }
-
-  function cellPill(p, ndSurface) {
-    var td = el("td");
-    td.appendChild(pillFor(p));
-    if (ndSurface) td.appendChild(el("div", "cell-note", ndSurface + " · unreadable"));
-    return td;
-  }
-
-  function renderHeader(idRes, verRes, healthRes) {
+  function renderHeader(idRes, nodeInfoRes, healthRes) {
     var idEl = document.getElementById("node-id");
     if (idRes && idRes.__state === "ok" && idRes.data) {
       var d = idRes.data;
@@ -737,11 +560,14 @@
       if (pid) idEl.title = pid;
     } else { idEl.textContent = idRes && idRes.__state === "unreachable" ? "offline" : "unavailable"; }
 
+    // VERSION: agent_version from the anonymous /api/node/info surface (the
+    // versioned /api/v1/node/info is auth-gated; /api/v1/version omits the field).
     var vEl = document.getElementById("node-version");
-    if (verRes && verRes.__state === "ok" && verRes.data) {
-      var vd = verRes.data;
-      vEl.textContent = vd.version || vd.build || vd.commit || "unavailable";
-    } else { vEl.textContent = verRes && verRes.__state === "unreachable" ? "offline" : "unavailable"; }
+    if (nodeInfoRes && nodeInfoRes.__state === "ok" && nodeInfoRes.data) {
+      var av = nodeInfoRes.data.agent_version || nodeInfoRes.data.version || "";
+      vEl.textContent = av ? String(av) : "unavailable";
+      if (av) vEl.title = String(av);
+    } else { vEl.textContent = nodeInfoRes && nodeInfoRes.__state === "unreachable" ? "offline" : "unavailable"; }
 
     var hp = document.getElementById("health-pill");
     hp.className = "pill";
@@ -753,7 +579,6 @@
       hp.classList.add("nodata"); hp.textContent = "OFFLINE";
     } else { hp.classList.add("nodata"); hp.textContent = "NO DATA"; }
   }
-  function shortId(s) { s = String(s); return s.length > 18 ? s.slice(0, 8) + "…" + s.slice(-6) : s; }
 
   function renderSourceRefs() {
     var host = document.getElementById("src-refs");
@@ -761,26 +586,8 @@
     SOURCE_REFS.forEach(function (u) { host.appendChild(el("span", null, "· " + u)); });
   }
 
-  // ---- LIVE PIPELINE (fitted-OMM publish progress) --------------------------
-  // /api/v1/stats now returns a `sources` array: one row per
-  // (schema, provider_id, source_name, batch_id) that has records, each with a
-  // live `count`, `total_bytes`, and ISO `first_seen`/`last_seen`/`updated_at`.
-  // The constellation pipeline publishes fitted OMM records to this node as each
-  // object is OD'd, tagged with SourceName + BatchID (batch id =
-  // sha256(provider+startedAt)); the rising per-source count IS the pull
-  // progress. This section keeps only OMM lanes, groups each provider's rows,
-  // picks the ACTIVE batch (newest last record), and renders start / count /
-  // rate / age. Providers with no OMM rows render honestly as idle. Rate is
-  // derived client-side from the count delta across the poll window (nothing
-  // fabricated: a warming-up lane shows "…", a stalled lane shows 0/min).
-  var PIPE_WINDOW_MS = 60000;
-  var pipeHist = {}; // laneKey -> [{ t: ms, c: count }]
-
+  // ---- Lane matching + rate history ----------------------------------------
   function normKey(s) { return String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]+/g, ""); }
-
-  // Match a source row to a known provider by comparing normalized identity
-  // tokens (source_name / provider_id vs each provider's key / name / token).
-  // Substring matches require length >= 3 to avoid spurious collisions.
   function matchProvider(sourceName, providerID) {
     var cands = [normKey(sourceName), normKey(providerID)].filter(Boolean);
     if (!cands.length) return null;
@@ -798,33 +605,23 @@
     return null;
   }
 
+  var PIPE_WINDOW_MS = 60000;
+  var pipeHist = {}; // laneKey -> [{ t, c }]
   function pushHist(key, count) {
     var now = Date.now();
     var arr = pipeHist[key] || (pipeHist[key] = []);
-    var lastSample = arr.length ? arr[arr.length - 1] : null;
-    if (!lastSample || lastSample.c !== count || (now - lastSample.t) > 4000) arr.push({ t: now, c: count });
+    var last = arr.length ? arr[arr.length - 1] : null;
+    if (!last || last.c !== count || (now - last.t) > 4000) arr.push({ t: now, c: count });
     while (arr.length > 2 && (now - arr[0].t) > PIPE_WINDOW_MS) arr.shift();
     return arr;
   }
   function ratePerMin(arr) {
-    if (!arr || arr.length < 2) return null; // still warming up
+    if (!arr || arr.length < 2) return null;
     var first = arr[0], last = arr[arr.length - 1];
     var dt = (last.t - first.t) / 1000, dc = last.c - first.c;
     if (dt <= 0 || dc < 0) return 0;
     return (dc / dt) * 60;
   }
-  function parseMs(iso) { if (!iso) return 0; var ms = Date.parse(iso); return isNaN(ms) ? 0 : ms; }
-  function ageStr(iso) {
-    var ms = parseMs(iso);
-    if (!ms) return null;
-    var s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
-    if (s < 60) return s + "s ago";
-    if (s < 3600) return Math.floor(s / 60) + "m ago";
-    if (s < 86400) return Math.floor(s / 3600) + "h ago";
-    return Math.floor(s / 86400) + "d ago";
-  }
-  function isoTime(iso) { return iso ? String(iso).slice(0, 19).replace("T", " ") + "Z" : null; }
-
   function activeBatch(rows) {
     var best = null, bestT = -1, total = 0, batches = {};
     rows.forEach(function (r) {
@@ -836,16 +633,83 @@
     return { row: best, total: total, batchCount: Object.keys(batches).length };
   }
 
-  function pipeCell(text, cls) { var td = el("td"); td.appendChild(el("div", cls || null, text)); return td; }
+  // ---- Single consolidated lane table --------------------------------------
+  // laneState.rows is the per-poll lane model (display order: active first).
+  // expanded/drill persist across polls so an open drill-down keeps its page +
+  // search while live cells keep updating.
+  var LANE_COLUMNS = [
+    { id: "provider", label: "Provider / lane", width: "20%", sortable: true },
+    { id: "gate", label: "Gate", width: "13%", sortable: true },
+    { id: "epoch", label: "Data current as of (epoch)", width: "15%", sortable: true },
+    { id: "elsets", label: "ElSets", width: "9%", sortable: true },
+    { id: "objects", label: "Objects", width: "11%", sortable: true },
+    { id: "rms", label: "Mean RMS (km)", width: "11%", sortable: true },
+    { id: "rate", label: "Rate", width: "8%", sortable: true },
+    { id: "last", label: "Last record", width: "13%", sortable: true }
+  ];
+  var laneState = { rows: [], sortCol: null, sortDir: 1, filter: "", reachable: false };
+  var expanded = {};   // laneKey -> true
+  var drill = {};      // laneKey -> { page, limit, total, norad, rows, state, src }
+  var searchDebounce = {};
 
-  function renderPipeline(statsRes) {
+  function laneSortKey(colId, l) {
+    switch (colId) {
+      case "provider": return { v: l.name.toLowerCase(), last: false };
+      case "gate": { var o = GATE_ORDINAL[l.gate]; return { v: (o == null ? 99 : o), last: (l.gate == null) }; }
+      case "epoch": return l.latestEpochMs ? { v: l.latestEpochMs, last: false } : { v: 0, last: true };
+      case "elsets": return l.active ? { v: l.count, last: false } : { v: 0, last: true };
+      case "objects": return (l.active && l.objects != null) ? { v: l.objects, last: false } : { v: 0, last: true };
+      case "rms": return (l.meanRMS != null) ? { v: l.meanRMS, last: false } : { v: 0, last: true };
+      case "rate": return (l.rate != null) ? { v: l.rate, last: false } : { v: 0, last: true };
+      case "last": return l.lastMs ? { v: l.lastMs, last: false } : { v: 0, last: true };
+    }
+    return { v: 0, last: true };
+  }
+  function laneMatches(l, q) {
+    if (!q) return true;
+    var src = l.source || {};
+    var hay = [l.name, l.token, l.gate || "", src.source_name || "", src.provider_id || ""].join(" ").toLowerCase();
+    return hay.indexOf(q) !== -1;
+  }
+
+  function buildLaneColsAndHead() {
+    var cg = document.getElementById("lane-cols");
+    var hr = document.getElementById("lane-head");
+    cg.innerHTML = ""; hr.innerHTML = "";
+    LANE_COLUMNS.forEach(function (col) {
+      var c = document.createElement("col"); c.style.width = col.width; cg.appendChild(c);
+      var th = document.createElement("th");
+      th.setAttribute("data-col", col.id);
+      var inner = el("div", "th-inner");
+      inner.appendChild(el("span", "th-label", col.label));
+      if (col.sortable) {
+        th.className = "sortable";
+        th.setAttribute("aria-sort", "none");
+        th.setAttribute("tabindex", "0");
+        inner.appendChild(el("span", "sortind", "↕"));
+        var onSort = function () {
+          if (laneState.sortCol === col.id) { laneState.sortDir = -laneState.sortDir; }
+          else { laneState.sortCol = col.id; laneState.sortDir = 1; }
+          renderLaneTable();
+        };
+        th.addEventListener("click", onSort);
+        th.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); onSort(); }
+        });
+      }
+      th.appendChild(inner);
+      hr.appendChild(th);
+    });
+  }
+
+  function buildLanes(statsRes) {
     var sources = [];
     if (statsRes && statsRes.__state === "ok" && statsRes.data && Array.isArray(statsRes.data.sources)) {
       sources = statsRes.data.sources;
     }
-    var reachable = !!(statsRes && (statsRes.__state === "ok" || statsRes === "skeleton"));
+    laneState.reachable = !!(statsRes && (statsRes.__state === "ok" || statsRes === "skeleton"));
 
-    // Keep OMM lanes only; group matched providers, collect unmatched as extras.
+    // OMM lanes only; group matched providers, collect unmatched as extras.
     var byProvider = {}, extras = [];
     sources.forEach(function (row) {
       if (!row || !/^OMM/i.test(String(row.schema || ""))) return;
@@ -854,115 +718,434 @@
       else { extras.push(row); }
     });
 
+    function laneFromActive(base, ab) {
+      var r = ab && ab.row ? ab.row : null;
+      var lane = base;
+      lane.active = !!r;
+      lane.batchCount = ab ? ab.batchCount : 0;
+      if (r) {
+        lane.source = { schema: r.schema || "OMM.fbs", provider_id: r.provider_id || "", source_name: r.source_name || "", batch_id: r.batch_id || "" };
+        lane.count = (typeof r.count === "number") ? r.count : 0;
+        lane.objects = (typeof r.objects === "number" && r.objects > 0) ? r.objects : null;
+        lane.latestEpoch = r.latest_epoch || null;
+        lane.latestEpochMs = parseMs(r.latest_epoch);
+        lane.firstSeen = r.first_seen || null;
+        lane.lastSeen = r.last_seen || r.updated_at || null;
+        lane.lastMs = parseMs(r.last_seen || r.updated_at);
+        lane.meanRMS = (typeof r.mean_rms === "number") ? r.mean_rms : null;
+        lane.minRMS = (typeof r.min_rms === "number") ? r.min_rms : null;
+        lane.maxRMS = (typeof r.max_rms === "number") ? r.max_rms : null;
+        lane.batchId = r.batch_id || "";
+        lane.rate = ratePerMin(pushHist(lane.laneKey, lane.count));
+      } else {
+        lane.source = null; lane.count = 0; lane.objects = null; lane.latestEpoch = null;
+        lane.latestEpochMs = 0; lane.firstSeen = null; lane.lastSeen = null; lane.lastMs = 0;
+        lane.meanRMS = null; lane.minRMS = null; lane.maxRMS = null; lane.batchId = ""; lane.rate = null;
+        pipeHist[lane.laneKey] = [];
+      }
+      return lane;
+    }
+
     var lanes = [];
     PROVIDERS.forEach(function (p) {
       var slot = byProvider[p.key];
-      lanes.push(slot
-        ? { name: p.name, token: "CelesTrak " + p.token, active: true, ab: activeBatch(slot.rows), laneKey: "prov:" + p.key }
-        : { name: p.name, token: "CelesTrak " + p.token, active: false, ab: null, laneKey: "prov:" + p.key });
+      lanes.push(laneFromActive({
+        laneKey: "prov:" + p.key, key: p.key, provider: p,
+        name: p.name, token: "CelesTrak " + p.token,
+        gate: p.gate, gateClass: p.gateClass
+      }, slot ? activeBatch(slot.rows) : null));
     });
     extras.forEach(function (row) {
-      lanes.push({
+      var key = "src:" + (row.source_name || "") + "|" + (row.provider_id || "");
+      lanes.push(laneFromActive({
+        laneKey: key, key: key, provider: null,
         name: row.source_name || row.provider_id || "(unnamed source)",
         token: row.provider_id ? "provider " + row.provider_id : "unmatched source",
-        active: true, raw: true,
-        ab: { row: row, total: (typeof row.count === "number" ? row.count : 0), batchCount: 1 },
-        laneKey: "src:" + (row.source_name || "") + "|" + (row.provider_id || "")
-      });
+        gate: null, gateClass: "nodata"
+      }, activeBatch([row])));
     });
 
-    // Active lanes first (by objects desc), then idle in registry order.
+    // Default order: active lanes first (by objects/count desc), then idle in
+    // registry order, extras appended.
     lanes = lanes.map(function (l, i) { return { l: l, i: i }; }).sort(function (a, b) {
       if (a.l.active !== b.l.active) return a.l.active ? -1 : 1;
       if (a.l.active && b.l.active) {
-        var ca = a.l.ab && a.l.ab.row ? (a.l.ab.row.count || 0) : 0;
-        var cb = b.l.ab && b.l.ab.row ? (b.l.ab.row.count || 0) : 0;
+        var ca = a.l.count || 0, cb = b.l.count || 0;
         if (ca !== cb) return cb - ca;
       }
       return a.i - b.i;
     }).map(function (d) { return d.l; });
 
-    // Aggregate tiles.
-    var activeCount = 0, totalObjs = 0, newestMs = 0;
-    lanes.forEach(function (l) {
-      if (!l.active || !l.ab || !l.ab.row) return;
-      activeCount++;
-      totalObjs += (l.ab.row.count || 0);
-      var ms = parseMs(l.ab.row.last_seen || l.ab.row.updated_at);
-      if (ms > newestMs) newestMs = ms;
-    });
-    renderPipeTiles(reachable, activeCount, lanes.length, totalObjs, newestMs);
+    laneState.rows = lanes;
+  }
 
-    // Table body.
-    var body = document.getElementById("pipe-body");
+  function sortedFilteredLanes() {
+    var q = laneState.filter.trim().toLowerCase();
+    var rows = laneState.rows.filter(function (l) { return laneMatches(l, q); });
+    if (laneState.sortCol) {
+      var dir = laneState.sortDir;
+      rows = rows.map(function (r, i) { return { r: r, i: i, k: laneSortKey(laneState.sortCol, r) }; }).sort(function (a, b) {
+        if (a.k.last !== b.k.last) return a.k.last ? 1 : -1;
+        if (a.k.last && b.k.last) return a.i - b.i;
+        var av = a.k.v, bv = b.k.v, c;
+        if (typeof av === "number" && typeof bv === "number") c = av - bv;
+        else c = String(av).localeCompare(String(bv));
+        if (c !== 0) return dir * c;
+        return a.i - b.i;
+      }).map(function (d) { return d.r; });
+    }
+    return rows;
+  }
+
+  function renderLaneTable() {
+    var body = document.getElementById("lane-body");
+    if (!body) return;
+
+    // Preserve drill-down search focus + caret across the poll re-render.
+    var focusLane = null, focusVal = "", focusStart = 0, focusEnd = 0;
+    var act = document.activeElement;
+    if (act && act.classList && act.classList.contains("drill-search")) {
+      focusLane = act.getAttribute("data-lane"); focusVal = act.value;
+      focusStart = act.selectionStart; focusEnd = act.selectionEnd;
+    }
+
     body.innerHTML = "";
-    lanes.forEach(function (l) {
-      var tr = el("tr", l.active ? null : "idle");
+    var rows = sortedFilteredLanes();
+    var colCount = LANE_COLUMNS.length;
 
-      var prov = el("td", "prov");
-      prov.appendChild(el("div", "name", l.name));
-      prov.appendChild(el("div", "tok", l.token));
-      tr.appendChild(prov);
+    if (rows.length === 0) {
+      var tr = el("tr", "empty");
+      var td = el("td", null, laneState.filter.trim() ? ("No lanes match “" + laneState.filter.trim() + "”") : "No lanes");
+      td.setAttribute("colspan", String(colCount));
+      tr.appendChild(td); body.appendChild(tr);
+    } else {
+      rows.forEach(function (l) {
+        body.appendChild(laneSummaryRow(l, colCount));
+        if (expanded[l.laneKey]) body.appendChild(laneDetailRow(l, colCount));
+      });
+    }
 
-      if (l.active && l.ab && l.ab.row) {
-        var r = l.ab.row;
+    var cnt = document.getElementById("lane-count");
+    if (cnt) {
+      var active = laneState.rows.filter(function (l) { return l.active; }).length;
+      cnt.textContent = "showing " + rows.length + " of " + laneState.rows.length + " · " + active + " pulling";
+      cnt.classList.toggle("empty", rows.length === 0 && laneState.rows.length > 0);
+    }
 
-        // CelesTrak-supplemental-style: "data current as of" = newest indexed
-        // record EPOCH in the active batch (honest — when the node has no
-        // epoch index for the lane, render a dash, never a substitute time).
-        var epochTd = el("td");
-        epochTd.appendChild(el("div", "up", isoTime(r.latest_epoch) || "—"));
-        var epochAge = ageStr(r.latest_epoch);
-        if (epochAge) epochTd.appendChild(el("div", "pipe-sub", "epoch age " + epochAge));
-        tr.appendChild(epochTd);
-
-        var setsTd = el("td");
-        setsTd.appendChild(el("div", "pipe-obj", fmtInt(r.count)));
-        var note = "batch " + shortId(String(r.batch_id || "—"));
-        if (l.ab.batchCount > 1) note += " · +" + (l.ab.batchCount - 1) + " older";
-        setsTd.appendChild(el("div", "pipe-sub", note));
-        tr.appendChild(setsTd);
-
-        var distinctTd = el("td");
-        distinctTd.appendChild(el("div", "pipe-obj",
-          (typeof r.objects === "number" && r.objects > 0) ? fmtInt(r.objects) : "—"));
-        tr.appendChild(distinctTd);
-
-        var start = el("td");
-        start.appendChild(el("div", "up", isoTime(r.first_seen) || "—"));
-        var startAge = ageStr(r.first_seen);
-        if (startAge) start.appendChild(el("div", "pipe-sub", "first record " + startAge));
-        tr.appendChild(start);
-
-        var arr = pushHist(l.laneKey, r.count || 0);
-        var rate = ratePerMin(arr);
-        var rateTd = el("td");
-        if (rate === null) rateTd.appendChild(el("div", "pipe-sub", "… warming up"));
-        else rateTd.appendChild(el("div", "pipe-rate", (rate >= 10 ? Math.round(rate) : rate.toFixed(1)) + "/min"));
-        tr.appendChild(rateTd);
-
-        var lastTd = el("td");
-        var lastAge = ageStr(r.last_seen || r.updated_at);
-        var lp = el("span", "pill live", lastAge || "LIVE");
-        lastTd.appendChild(lp);
-        var lt = isoTime(r.last_seen || r.updated_at);
-        if (lt) lastTd.appendChild(el("div", "pipe-sub", lt));
-        tr.appendChild(lastTd);
+    // Header sort indicators.
+    var ths = document.querySelectorAll("#lane-head th");
+    for (var i = 0; i < ths.length; i++) {
+      var th = ths[i];
+      if (!th.classList.contains("sortable")) continue;
+      var ind = th.querySelector(".sortind");
+      if (th.getAttribute("data-col") === laneState.sortCol) {
+        th.setAttribute("aria-sort", laneState.sortDir === 1 ? "ascending" : "descending");
+        if (ind) ind.textContent = laneState.sortDir === 1 ? "▲" : "▼";
       } else {
-        tr.appendChild(pipeCell("—", "up"));
-        var idlePill = el("td"); idlePill.appendChild(pillFor({ cls: "nodata", txt: reachable ? "IDLE" : "NO DATA" }));
-        tr.appendChild(idlePill);
-        tr.appendChild(pipeCell("—", "pipe-sub"));
-        tr.appendChild(pipeCell("—", "up"));
-        tr.appendChild(pipeCell("—", "pipe-sub"));
-        tr.appendChild(pipeCell(reachable ? "no active batch" : "/api/v1/stats · unreachable", "pipe-sub"));
-        pipeHist[l.laneKey] = []; // reset warm-up history when a lane goes idle
+        th.setAttribute("aria-sort", "none");
+        if (ind) ind.textContent = "↕";
       }
-      body.appendChild(tr);
+    }
+
+    if (focusLane) {
+      var input = body.querySelector('.drill-search[data-lane="' + cssEscape(focusLane) + '"]');
+      if (input) {
+        input.value = focusVal;
+        try { input.focus(); input.setSelectionRange(focusStart, focusEnd); } catch (e) {}
+      }
+    }
+  }
+
+  function cssEscape(s) { return String(s).replace(/["\\]/g, "\\$&"); }
+
+  function laneSummaryRow(l, colCount) {
+    var open = !!expanded[l.laneKey];
+    var tr = el("tr", "lane" + (l.active ? "" : " idle") + (open ? " open" : ""));
+    tr.setAttribute("role", "button");
+    tr.setAttribute("tabindex", "0");
+    tr.setAttribute("aria-expanded", open ? "true" : "false");
+    tr.addEventListener("click", function () { toggleLane(l); });
+    tr.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); toggleLane(l); }
+    });
+
+    // Provider / lane
+    var prov = el("td", "prov");
+    var nameLine = el("div", "name");
+    nameLine.appendChild(el("span", "caret", open ? "▾" : "▸"));
+    nameLine.appendChild(document.createTextNode(l.name));
+    prov.appendChild(nameLine);
+    prov.appendChild(el("div", "tok", l.token));
+    tr.appendChild(prov);
+
+    // Gate
+    var gateTd = el("td");
+    if (l.gate) {
+      gateTd.appendChild(pillFor({ cls: l.gateClass, txt: l.gate }));
+      gateTd.appendChild(el("div", "cell-note", "REF · A2.7 gate"));
+    } else {
+      gateTd.appendChild(pillFor({ cls: "nodata", txt: "UNTAGGED" }));
+      gateTd.appendChild(el("div", "cell-note", "unmatched source lane"));
+    }
+    tr.appendChild(gateTd);
+
+    if (l.active) {
+      // Data current as of (epoch)
+      var epochTd = el("td");
+      epochTd.appendChild(el("div", "up", isoTime(l.latestEpoch) || "—"));
+      var ea = ageStr(l.latestEpoch);
+      if (ea) epochTd.appendChild(el("div", "pipe-sub", "epoch age " + ea));
+      tr.appendChild(epochTd);
+
+      // ElSets
+      var setsTd = el("td");
+      setsTd.appendChild(el("div", "pipe-obj", fmtInt(l.count)));
+      var note = "batch " + shortId(l.batchId || "—");
+      if (l.batchCount > 1) note += " · +" + (l.batchCount - 1) + " older";
+      setsTd.appendChild(el("div", "pipe-sub", note));
+      tr.appendChild(setsTd);
+
+      // Objects
+      var objTd = el("td");
+      objTd.appendChild(el("div", "pipe-obj", l.objects != null ? fmtInt(l.objects) : "—"));
+      tr.appendChild(objTd);
+
+      // Mean RMS
+      tr.appendChild(laneRMSCell(l));
+
+      // Rate
+      var rateTd = el("td");
+      if (l.rate === null) rateTd.appendChild(el("div", "pipe-sub", "… warming up"));
+      else rateTd.appendChild(el("div", "pipe-rate", (l.rate >= 10 ? Math.round(l.rate) : l.rate.toFixed(1)) + "/min"));
+      tr.appendChild(rateTd);
+
+      // Last record
+      var lastTd = el("td");
+      lastTd.appendChild(el("span", "pill live", ageStr(l.lastSeen) || "LIVE"));
+      var lt = isoTime(l.lastSeen);
+      if (lt) lastTd.appendChild(el("div", "pipe-sub", lt));
+      tr.appendChild(lastTd);
+    } else {
+      var idleTd = el("td");
+      idleTd.appendChild(pillFor({ cls: "nodata", txt: laneState.reachable ? "IDLE" : "NO DATA" }));
+      idleTd.appendChild(el("div", "pipe-sub", laneState.reachable ? "no active batch" : "/api/v1/stats · unreachable"));
+      tr.appendChild(idleTd);
+      tr.appendChild(cell("—", "pipe-obj"));
+      tr.appendChild(cell("—", "pipe-obj"));
+      tr.appendChild(laneRMSCell(l));
+      tr.appendChild(cell("—", "pipe-sub"));
+      tr.appendChild(cell("—", "pipe-sub"));
+    }
+    return tr;
+  }
+  function cell(text, cls) { var td = el("td"); td.appendChild(el("div", cls || null, text)); return td; }
+
+  // Mean RMS cell: LIVE aggregate when present; else "n/a" for lanes whose gate
+  // has no independent OD RMS (non-independent / blocked), else a plain dash.
+  function laneRMSCell(l) {
+    var td = el("td");
+    var live = fmtRMS(l.meanRMS);
+    if (live != null) {
+      td.appendChild(el("div", "val-mono", live));
+      var sub = "mean";
+      if (l.minRMS != null && l.maxRMS != null) sub = fmtRMS(l.minRMS) + "–" + fmtRMS(l.maxRMS);
+      td.appendChild(el("div", "pipe-sub", sub));
+    } else if (l.provider && (l.provider.gateClass === "nonindep" || l.provider.gateClass === "blocked")) {
+      td.appendChild(el("div", "up", "n/a"));
+      td.appendChild(el("div", "pipe-sub", "no OrbPro OD"));
+    } else {
+      td.appendChild(el("div", "up", "—"));
+      td.appendChild(el("div", "pipe-sub", "no fit RMS yet"));
+    }
+    return td;
+  }
+
+  function toggleLane(l) {
+    if (expanded[l.laneKey]) { delete expanded[l.laneKey]; renderLaneTable(); return; }
+    expanded[l.laneKey] = true;
+    var d = ensureDrill(l);
+    if (l.source && d.state === "idle") { d.page = 1; loadDrill(l); }
+    else renderLaneTable();
+  }
+
+  function ensureDrill(l) {
+    if (!drill[l.laneKey]) drill[l.laneKey] = { page: 1, limit: 50, total: 0, norad: "", rows: [], state: "idle", src: null };
+    return drill[l.laneKey];
+  }
+  function loadDrill(l) {
+    var d = ensureDrill(l);
+    if (!l.source) { d.state = "empty"; d.rows = []; d.total = 0; renderLaneTable(); return; }
+    d.src = l.source;
+    d.state = "loading";
+    renderLaneTable();
+    var s = l.source;
+    var qs = "?schema=" + encodeURIComponent(s.schema || "OMM.fbs") +
+      "&source_name=" + encodeURIComponent(s.source_name || "") +
+      "&provider_id=" + encodeURIComponent(s.provider_id || "") +
+      "&batch_id=" + encodeURIComponent(s.batch_id || "") +
+      "&page=" + d.page + "&limit=" + d.limit;
+    if (d.norad) qs += "&norad=" + encodeURIComponent(d.norad);
+    getJSON("/data/index" + qs).then(function (res) {
+      var cur = drill[l.laneKey];
+      if (!cur) return;
+      if (res && res.__state === "ok" && res.data) {
+        cur.total = res.data.total || 0;
+        cur.rows = Array.isArray(res.data.rows) ? res.data.rows : [];
+        cur.limit = res.data.limit || cur.limit;
+        cur.page = res.data.page || cur.page;
+        cur.state = "ok";
+      } else if (res && res.__state === "auth") { cur.state = "auth"; }
+      else if (res && res.__state === "pending") { cur.state = "pending"; }
+      else if (res && res.__state === "unreachable") { cur.state = "unreachable"; }
+      else { cur.state = "error"; }
+      renderLaneTable();
     });
   }
 
-  function renderPipeTiles(reachable, activeCount, laneCount, totalObjs, newestMs) {
+  function laneDetailRow(l, colCount) {
+    var tr = el("tr", "detail");
+    var td = el("td"); td.setAttribute("colspan", String(colCount));
+    var inner = el("div", "detail-inner");
+
+    // Stats strip (live batch aggregates).
+    var strip = el("div", "det-stats");
+    function stat(lab, val) { var s = el("div", "det-stat"); s.appendChild(el("div", "lab", lab)); s.appendChild(el("div", "val", val)); strip.appendChild(s); }
+    if (l.active) {
+      stat("Mean RMS (km)", fmtRMS(l.meanRMS) || "—");
+      stat("Min RMS (km)", fmtRMS(l.minRMS) || "—");
+      stat("Max RMS (km)", fmtRMS(l.maxRMS) || "—");
+      stat("Newest epoch", isoTime(l.latestEpoch) || "—");
+      stat("ElSets", fmtInt(l.count));
+      stat("Distinct objects", l.objects != null ? fmtInt(l.objects) : "—");
+      stat("Pull started", isoTime(l.firstSeen) || "—");
+      stat("Batch id", shortId(l.batchId || "—"));
+    } else {
+      stat("Status", laneState.reachable ? "idle — no active batch" : "stats unreachable");
+    }
+    inner.appendChild(strip);
+
+    // REF facts (gate + parity + optional run summary).
+    if (l.provider) {
+      var ref = el("div", "det-ref");
+      var hd = el("div", "hd");
+      hd.appendChild(pillFor({ cls: l.provider.gateClass, txt: l.provider.gate }));
+      hd.appendChild(el("span", "pill ref", "REF"));
+      hd.appendChild(el("span", null, l.provider.upstream));
+      ref.appendChild(hd);
+      ref.appendChild(el("div", "ln", l.provider.rmsNote));
+      var rs = RUN_SUMMARIES[l.provider.key];
+      if (rs) {
+        var head = el("div", "ln");
+        var b = el("b"); b.textContent = rs.tag; head.appendChild(b);
+        ref.appendChild(head);
+        rs.lines.forEach(function (line) { ref.appendChild(el("div", "ln", "· " + line)); });
+      }
+      inner.appendChild(ref);
+    }
+
+    // Per-satellite paginated table (from /api/v1/data/index).
+    inner.appendChild(laneDrillBlock(l));
+
+    td.appendChild(inner);
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function laneDrillBlock(l) {
+    var d = ensureDrill(l);
+    var block = el("div");
+
+    var tools = el("div", "subtools");
+    var search = document.createElement("input");
+    search.type = "text";
+    search.className = "drill-search";
+    search.setAttribute("data-lane", l.laneKey);
+    search.setAttribute("placeholder", "Search NORAD…");
+    search.setAttribute("autocomplete", "off");
+    search.setAttribute("spellcheck", "false");
+    search.setAttribute("aria-label", "Search satellites by NORAD id");
+    search.value = d.norad || "";
+    search.addEventListener("click", function (e) { e.stopPropagation(); });
+    search.addEventListener("input", function () {
+      var v = search.value.replace(/[^0-9]/g, "");
+      d.norad = v;
+      if (searchDebounce[l.laneKey]) clearTimeout(searchDebounce[l.laneKey]);
+      searchDebounce[l.laneKey] = setTimeout(function () { d.page = 1; loadDrill(l); }, 300);
+    });
+    tools.appendChild(search);
+    var cnt = el("span", "count");
+    if (d.state === "ok") {
+      var from = d.total === 0 ? 0 : (d.page - 1) * d.limit + 1;
+      var to = Math.min(d.total, d.page * d.limit);
+      cnt.textContent = d.total === 0 ? "0 records" : ("records " + from + "–" + to + " of " + d.total);
+    } else if (d.state === "loading") { cnt.textContent = "loading…"; }
+    tools.appendChild(cnt);
+    block.appendChild(tools);
+
+    var wrap = el("div", "tablewrap");
+    var tbl = document.createElement("table");
+    tbl.className = "subtable";
+    var cg = document.createElement("colgroup");
+    ["24%", "34%", "20%", "22%"].forEach(function (w) { var c = document.createElement("col"); c.style.width = w; cg.appendChild(c); });
+    tbl.appendChild(cg);
+    var thead = document.createElement("thead");
+    var htr = document.createElement("tr");
+    ["NORAD", "Epoch", "RMS (km)", "Record (CID)"].forEach(function (h) { var th = document.createElement("th"); th.textContent = h; htr.appendChild(th); });
+    thead.appendChild(htr); tbl.appendChild(thead);
+    var tbody = document.createElement("tbody");
+
+    if (d.state === "ok" && d.rows.length > 0) {
+      d.rows.forEach(function (row) {
+        var rtr = document.createElement("tr");
+        rtr.appendChild(subCell(row.norad != null ? String(row.norad) : "—", row.norad == null));
+        rtr.appendChild(subCell(isoTime(row.epoch) || "—", row.epoch == null));
+        rtr.appendChild(subCell(fmtRMS(row.rms) || "—", row.rms == null));
+        var cidTd = document.createElement("td");
+        var cidSpan = el("span", "trunc", row.cid ? shortId(row.cid) : "—");
+        if (row.cid) cidSpan.title = row.cid;
+        cidTd.appendChild(cidSpan);
+        rtr.appendChild(cidTd);
+        tbody.appendChild(rtr);
+      });
+    } else {
+      var etr = el("tr", "empty");
+      var etd = document.createElement("td"); etd.setAttribute("colspan", "4");
+      etd.textContent = drillEmptyText(l, d);
+      etr.appendChild(etd); tbody.appendChild(etr);
+    }
+    tbl.appendChild(tbody); wrap.appendChild(tbl); block.appendChild(wrap);
+
+    // Pager.
+    if (d.state === "ok" && d.total > d.limit) {
+      var pager = el("div", "pager");
+      var prev = document.createElement("button"); prev.type = "button"; prev.textContent = "‹ Prev";
+      var next = document.createElement("button"); next.type = "button"; next.textContent = "Next ›";
+      var pages = Math.max(1, Math.ceil(d.total / d.limit));
+      prev.disabled = d.page <= 1; next.disabled = d.page >= pages;
+      prev.addEventListener("click", function (e) { e.stopPropagation(); if (d.page > 1) { d.page--; loadDrill(l); } });
+      next.addEventListener("click", function (e) { e.stopPropagation(); if (d.page < pages) { d.page++; loadDrill(l); } });
+      pager.appendChild(prev);
+      pager.appendChild(el("span", "pageinfo", "page " + d.page + " / " + pages));
+      pager.appendChild(next);
+      block.appendChild(pager);
+    }
+    return block;
+  }
+  function subCell(text, muted) { var td = document.createElement("td"); var s = el("span", muted ? "muted" : null, text); td.appendChild(s); return td; }
+  function drillEmptyText(l, d) {
+    if (!l.source) return "No active batch — no satellites to list";
+    switch (d.state) {
+      case "loading": return "Loading satellites…";
+      case "auth": return "Per-record index requires auth";
+      case "pending": return "/api/v1/data/index · not available on this node";
+      case "unreachable": return "/api/v1/data/index · unreachable";
+      case "error": return "Could not load satellites";
+      default: return d.norad ? ("No satellites match NORAD “" + d.norad + "”") : "No satellites indexed for this lane yet";
+    }
+  }
+
+  // ---- Aggregate pipeline tiles ---------------------------------------------
+  function renderPipeTiles() {
     var host = document.getElementById("pipe-tiles");
     host.innerHTML = "";
     function tile(lab, valNode, foot) {
@@ -972,54 +1155,67 @@
       if (foot != null) t.appendChild(el("div", "foot", foot));
       host.appendChild(t);
     }
-    if (!reachable) {
+    if (!laneState.reachable) {
       var v0 = el("div", "val small"); v0.appendChild(pillFor({ cls: "nodata", txt: "NO DATA" }));
       tile("Pull status", v0, "/api/v1/stats unreachable");
       return;
     }
-    var vLanes = el("div", "val", activeCount + " / " + laneCount);
-    tile("Lanes pulling", vLanes, activeCount === 0 ? "no active batch yet" : "active / total lanes");
-
-    tile("Objects OD'd (active)", el("div", "val", fmtInt(totalObjs)),
-      activeCount === 0 ? "awaiting first fitted OMM" : "records across active batches");
-
+    var active = 0, totalObjs = 0, newestMs = 0, rmsVals = [];
+    laneState.rows.forEach(function (l) {
+      if (!l.active) return;
+      active++;
+      totalObjs += (l.count || 0);
+      if (l.lastMs > newestMs) newestMs = l.lastMs;
+      if (l.meanRMS != null) rmsVals.push(l.meanRMS);
+    });
+    tile("Lanes pulling", el("div", "val", active + " / " + laneState.rows.length), active === 0 ? "no active batch yet" : "active / total lanes");
+    tile("Records (active)", el("div", "val", fmtInt(totalObjs)), active === 0 ? "awaiting first record" : "element sets across active batches");
     var ageNode;
-    if (newestMs > 0) { ageNode = el("div", "val", ageStr(new Date(newestMs).toISOString()) || "—"); }
+    if (newestMs > 0) ageNode = el("div", "val", ageStr(new Date(newestMs).toISOString()) || "—");
     else { ageNode = el("div", "val small"); ageNode.appendChild(pillFor({ cls: "nodata", txt: "IDLE" })); }
-    tile("Newest record", ageNode, newestMs > 0 ? "most recent OD'd object" : "pipeline idle");
+    tile("Newest record", ageNode, newestMs > 0 ? "most recent published object" : "pipeline idle");
+    var rmsNode;
+    if (rmsVals.length) {
+      var mean = rmsVals.reduce(function (a, b) { return a + b; }, 0) / rmsVals.length;
+      rmsNode = el("div", "val", fmtRMS(mean));
+      tile("Mean fit RMS (km)", rmsNode, "over " + rmsVals.length + " fitted lane" + (rmsVals.length === 1 ? "" : "s"));
+    } else {
+      rmsNode = el("div", "val small"); rmsNode.appendChild(pillFor({ cls: "nodata", txt: "—" }));
+      tile("Mean fit RMS (km)", rmsNode, "no fitted-lane RMS yet");
+    }
   }
 
-  function pollPipeline() {
-    getJSON("/stats").then(renderPipeline);
+  // ---- Poll orchestration ---------------------------------------------------
+  function applyStats(statsRes) {
+    buildLanes(statsRes);
+    renderPipeTiles();
+    renderLaneTable();
   }
+  function pollPipeline() { getJSON("/stats").then(applyStats); }
 
   function refresh() {
     document.getElementById("updated").textContent = new Date().toISOString().slice(0, 19).replace("T", " ") + "Z";
     Promise.all([
-      getJSON("/id"), getJSON("/version"), getJSON("/data/health"),
-      getJSON("/stats"), getJSON("/catalog"),
-      getJSON("/channels"), getJSON("/pubsub/topics")
+      getJSON("/id"), getJSONRoot("/node/info"), getJSON("/data/health"),
+      getJSON("/stats"), getJSON("/catalog")
     ]).then(function (r) {
-      var idRes = r[0], verRes = r[1], healthRes = r[2], stats = r[3], catalog = r[4], channels = r[5], topics = r[6];
-      renderHeader(idRes, verRes, healthRes);
-      renderTiles(stats, catalog);
-      renderProviders(collectTopicStrings(channels), collectTopicStrings(topics));
-      renderPipeline(stats); // reuse the stats already fetched this cycle
+      renderHeader(r[0], r[1], r[2]);
+      renderTiles(r[3], r[4]);
+      applyStats(r[3]);
     });
   }
 
-  buildProvColsAndHead();
-  var filterInput = document.getElementById("prov-filter");
-  if (filterInput) filterInput.addEventListener("input", function () { provState.filter = filterInput.value; renderProvTable(); });
-
+  // ---- Boot -----------------------------------------------------------------
+  buildLaneColsAndHead();
+  renderRunStrip();
   renderSourceRefs();
-  renderProviders(null, null); // paint the honest no-data skeleton immediately
+  var filterInput = document.getElementById("lane-filter");
+  if (filterInput) filterInput.addEventListener("input", function () { laneState.filter = filterInput.value; renderLaneTable(); });
+
   renderTiles(null, null);
-  renderPipeline("skeleton"); // paint all lanes idle until the first poll lands
+  applyStats("skeleton"); // honest idle skeleton until the first poll lands
   document.getElementById("refresh").addEventListener("click", refresh);
   refresh();
-  // Fast pipeline cadence: poll /api/v1/stats every 5s so objects-OD'd, rate,
-  // and last-record age update live without a full page refresh.
   setInterval(pollPipeline, 5000);
 })();
 </script>
