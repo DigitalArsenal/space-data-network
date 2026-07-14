@@ -240,9 +240,9 @@ async function runTests() {
       publishedCid = body.cid;
     });
 
-    await test('published CID is a valid hex SHA-256 hash', async () => {
+    await test('published CID is a valid raw CIDv1 SHA-256 identifier', async () => {
       if (!publishedCid) throw new Error('SKIP');
-      assert(/^[a-f0-9]{64}$/.test(publishedCid), `CID should be 64-char hex, got "${publishedCid}"`);
+      assert(/^bafkrei[a-z2-7]{52}$/.test(publishedCid), `CID should be a base32 raw CIDv1, got "${publishedCid}"`);
     });
 
     await test('publish a second message with different schema', async () => {
@@ -277,9 +277,9 @@ async function runTests() {
       }
     });
 
-    await test('GET /api/v1/data/{schema}/{cid} retrieves specific record', async () => {
+    await test('GET /api/v1/data/records/{schema}/{cid} retrieves specific record', async () => {
       if (!publishedCid) throw new Error('SKIP');
-      const resp = await httpGet(`${baseUrl}/api/v1/data/PNM.fbs/${publishedCid}`);
+      const resp = await httpGet(`${baseUrl}/api/v1/data/records/PNM.fbs/${publishedCid}`);
       if (resp.status === 404) {
         // Endpoint format may differ — not a failure
         throw new Error('SKIP');
@@ -394,17 +394,17 @@ async function runTests() {
         fileName: 'batch-record-2.cdm',
       });
 
-      // Batch format: [uint32BE length | data] for each record
+      // Native FlatSQL batch format: [uint32LE length | data] for each record.
       const buf = new ArrayBuffer(4 + record1.length + 4 + record2.length);
       const view = new DataView(buf);
       let offset = 0;
 
-      view.setUint32(offset, record1.length, false); // big-endian
+      view.setUint32(offset, record1.length, true);
       offset += 4;
       new Uint8Array(buf, offset, record1.length).set(record1);
       offset += record1.length;
 
-      view.setUint32(offset, record2.length, false);
+      view.setUint32(offset, record2.length, true);
       offset += 4;
       new Uint8Array(buf, offset, record2.length).set(record2);
 

@@ -113,6 +113,9 @@ func (h *PublishHandler) SetLogService(ls *logservice.Service) {
 
 // RegisterRoutes registers publish API routes.
 func (h *PublishHandler) RegisterRoutes(mux *http.ServeMux) {
+	if h.authHandler == nil {
+		panic("PublishHandler.RegisterRoutes requires an authentication handler")
+	}
 	minTrust := peers.Standard
 	if h.cfg.MinTrustLevel != "" {
 		if parsed, err := peers.ParseTrustLevel(h.cfg.MinTrustLevel); err == nil {
@@ -120,8 +123,32 @@ func (h *PublishHandler) RegisterRoutes(mux *http.ServeMux) {
 		}
 	}
 
-	mux.HandleFunc("/api/v1/data/publish/", h.authHandler.RequireAuth(minTrust, h.handlePublish))
-	mux.HandleFunc("/api/v1/data/publish/batch/", h.authHandler.RequireAuth(minTrust, h.handlePublishBatch))
+	h.registerRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc {
+		return h.authHandler.RequireAuth(minTrust, next)
+	})
+}
+
+// RegisterUnauthenticatedRoutes explicitly mounts publishing for a node whose
+// operator disabled admin authentication. The supplied principal is recorded
+// as the publisher identity for quotas, provenance, and audit instead of
+// silently falling through to another /api/v1/data/ handler.
+func (h *PublishHandler) RegisterUnauthenticatedRoutes(mux *http.ServeMux, principal string) {
+	principal = strings.TrimSpace(principal)
+	if principal == "" {
+		panic("PublishHandler.RegisterUnauthenticatedRoutes requires an audit principal")
+	}
+	session := &auth.Session{XPub: principal, TrustLevel: peers.Untrusted}
+	h.registerRoutes(mux, func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			ctx := auth.ContextWithSession(r.Context(), session)
+			next(w, r.WithContext(ctx))
+		}
+	})
+}
+
+func (h *PublishHandler) registerRoutes(mux *http.ServeMux, protect func(http.HandlerFunc) http.HandlerFunc) {
+	mux.HandleFunc("/api/v1/data/publish/", protect(h.handlePublish))
+	mux.HandleFunc("/api/v1/data/publish/batch/", protect(h.handlePublishBatch))
 }
 
 func (h *PublishHandler) handlePublish(w http.ResponseWriter, r *http.Request) {
