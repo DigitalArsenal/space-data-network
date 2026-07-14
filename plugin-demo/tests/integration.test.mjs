@@ -226,12 +226,6 @@ async function runTests() {
       assertEqual(fid, '$PNM', 'file identifier');
 
       const resp = await httpPost(`${baseUrl}/api/v1/data/publish/PNM.fbs`, pnmBytes);
-
-      if (resp.status === 401 || resp.status === 403 || resp.status === 404) {
-        // Auth required or publish routes not mounted — skip publishing tests
-        throw new Error('SKIP');
-      }
-
       assertEqual(resp.status, 201, `publish status (body: ${await resp.clone().text()})`);
       const body = await resp.json();
       assert(body.cid, 'response should have cid');
@@ -259,7 +253,6 @@ async function runTests() {
       assertEqual(fid, '$OMM', 'file identifier');
 
       const resp = await httpPost(`${baseUrl}/api/v1/data/publish/OMM.fbs`, ommBytes);
-      if (resp.status === 401 || resp.status === 403 || resp.status === 404) throw new Error('SKIP');
       assertEqual(resp.status, 201, `publish OMM status`);
     });
 
@@ -280,11 +273,7 @@ async function runTests() {
     await test('GET /api/v1/data/records/{schema}/{cid} retrieves specific record', async () => {
       if (!publishedCid) throw new Error('SKIP');
       const resp = await httpGet(`${baseUrl}/api/v1/data/records/PNM.fbs/${publishedCid}`);
-      if (resp.status === 404) {
-        // Endpoint format may differ — not a failure
-        throw new Error('SKIP');
-      }
-      assert(resp.status < 500, `expected non-500, got ${resp.status}`);
+      assertEqual(resp.status, 200, `record retrieval status`);
     });
 
     /* ── Section 4: Published Record History ── */
@@ -412,8 +401,6 @@ async function runTests() {
         `${baseUrl}/api/v1/data/publish/batch/PNM.fbs`,
         new Uint8Array(buf),
       );
-      if (resp.status === 401 || resp.status === 403) throw new Error('SKIP');
-      if (resp.status === 404) throw new Error('SKIP'); // batch endpoint may not exist
       // 201 or 200 both acceptable
       assert(resp.status < 300, `batch publish status ${resp.status}`);
     });
