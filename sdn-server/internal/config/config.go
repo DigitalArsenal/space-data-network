@@ -2,7 +2,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -472,6 +474,90 @@ type PublishingConfig struct {
 
 	// MinTrustLevel is the minimum peer trust level for publishing (default: "standard").
 	MinTrustLevel string `yaml:"min_trust_level"`
+
+	// LocalPublishAddr optionally starts a SEPARATE, loopback-only HTTP listener
+	// carrying only the publish routes, with no HTTP authentication, for a data
+	// pipeline running ON this host (e.g. the constellation OD pipeline writing
+	// its fitted OMM/OCM records into this node's own store).
+	//
+	// This exists because the daemon's single admin/API listener is reverse-proxied
+	// to the public internet by nginx, so every public request already arrives at
+	// the daemon from 127.0.0.1. Authenticating by client IP on THAT listener would
+	// therefore expose writes to the whole internet. A second socket, bound to a
+	// loopback address the proxy does not forward to, is the only safe local lane.
+	//
+	// Hard requirements, enforced at startup by ValidateLoopbackListenAddr:
+	//   - must be a literal loopback IP (127.0.0.0/8 or ::1) with a port;
+	//     0.0.0.0, ::, a hostname, or a routable IP is a fatal config error;
+	//   - the reverse proxy must NEVER be configured to forward to this port.
+	//
+	// Empty (the default) disables the lane entirely.
+	LocalPublishAddr string `yaml:"local_publish_addr"`
+}
+
+// ErrListenAddrNotLoopback marks a listen address that is not loopback-only.
+var ErrListenAddrNotLoopback = errors.New("listen address must be a literal loopback IP")
+
+// ValidateLoopbackListenAddr enforces that addr binds to loopback only.
+//
+// It deliberately requires a LITERAL loopback IP: an empty host ("" / ":5011")
+// binds all interfaces, and a hostname such as "localhost" resolves through
+// /etc/hosts and DNS, neither of which is a trustworthy security boundary.
+func ValidateLoopbackListenAddr(addr string) error {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return fmt.Errorf("%w: address is empty", ErrListenAddrNotLoopback)
+	}
+
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("%w: %q is not a host:port address: %v", ErrListenAddrNotLoopback, addr, err)
+	}
+	if strings.TrimSpace(port) == "" {
+		return fmt.Errorf("%w: %q has no port", ErrListenAddrNotLoopback, addr)
+	}
+
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return fmt.Errorf("%w: %q has no host, which binds every interface", ErrListenAddrNotLoopback, addr)
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return fmt.Errorf("%w: %q is a hostname, not a literal IP", ErrListenAddrNotLoopback, host)
+	}
+	if !ip.IsLoopback() {
+		return fmt.Errorf("%w: %q is not loopback", ErrListenAddrNotLoopback, host)
+	}
+
+	return nil
+}
+
+// ListenLoopback binds a TCP listener on addr, which MUST be loopback-only.
+//
+// The address is validated before binding AND the real bound address is asserted
+// afterwards, so the socket a caller receives is guaranteed loopback. A listener
+// that somehow came up on a routable interface is closed rather than served: for
+// an unauthenticated lane the failure mode must be closed, never "listening on
+// 0.0.0.0 and hoping the firewall covers it" (ufw is inactive on the prod hosts,
+// so the bind IS the boundary).
+func ListenLoopback(addr string) (net.Listener, error) {
+	if err := ValidateLoopbackListenAddr(addr); err != nil {
+		return nil, err
+	}
+
+	listener, err := net.Listen("tcp", strings.TrimSpace(addr))
+	if err != nil {
+		return nil, fmt.Errorf("bind %s: %w", addr, err)
+	}
+
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok || !tcpAddr.IP.IsLoopback() {
+		listener.Close()
+		return nil, fmt.Errorf("%w: bound to %s", ErrListenAddrNotLoopback, listener.Addr())
+	}
+
+	return listener, nil
 }
 
 // BlockchainConfig holds RPC settings for crypto payment verification.

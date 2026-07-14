@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -144,6 +145,96 @@ func (h *PublishHandler) RegisterUnauthenticatedRoutes(mux *http.ServeMux, princ
 			next(w, r.WithContext(ctx))
 		}
 	})
+}
+
+// RegisterLocalLaneRoutes mounts the publish routes on a PRIVATE mux that is
+// served by a separate, loopback-bound listener (config publishing.local_publish_addr)
+// for a data pipeline running ON this host. It is the ONLY unauthenticated write
+// lane on a node that has admin auth enabled.
+//
+// SECURITY — why this is a second socket and not an exemption on the public one:
+// nginx reverse-proxies the public listener, so a request from the internet already
+// reaches the daemon with RemoteAddr 127.0.0.1. Any "loopback ⇒ trusted" rule on
+// the public listener would hand writes to the entire internet, and X-Forwarded-For
+// / X-Real-IP are attacker-controlled and can never carry an auth decision. The
+// authority here comes from the SOCKET — a listener bound to a loopback address that
+// the reverse proxy does not forward to — not from an inspected client address.
+//
+// The loopback check below is defence in depth, not the primary control: it fails
+// closed if the listener is ever misconfigured onto a routable interface, and it
+// rejects any request bearing proxy headers, which would mean someone has put a
+// reverse proxy in front of this lane.
+func (h *PublishHandler) RegisterLocalLaneRoutes(mux *http.ServeMux, principal string) {
+	principal = strings.TrimSpace(principal)
+	if principal == "" {
+		panic("PublishHandler.RegisterLocalLaneRoutes requires an audit principal")
+	}
+	session := &auth.Session{XPub: principal, TrustLevel: peers.Admin}
+
+	protect := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if err := requireLoopbackClient(r); err != nil {
+				writeError(w, http.StatusForbidden, "local publish lane: "+err.Error())
+				return
+			}
+			ctx := auth.ContextWithSession(r.Context(), session)
+			next(w, r.WithContext(ctx))
+		}
+	}
+
+	h.registerRoutes(mux, protect)
+
+	// Query-param alias so an operator/pipeline can name the schema without
+	// building a path: POST /api/v1/admin/publish?schema=OMM.fbs&source_name=...
+	mux.HandleFunc("/api/v1/admin/publish", protect(h.aliasPublish("/api/v1/data/publish/", h.handlePublish)))
+	mux.HandleFunc("/api/v1/admin/publish/batch", protect(h.aliasPublish("/api/v1/data/publish/batch/", h.handlePublishBatch)))
+}
+
+// aliasPublish adapts ?schema=NAME to the path-based publish handlers.
+func (h *PublishHandler) aliasPublish(prefix string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		schema := strings.TrimSpace(r.URL.Query().Get("schema"))
+		if schema == "" {
+			writeError(w, http.StatusBadRequest, "missing schema query parameter")
+			return
+		}
+		if err := sds.ValidateSchemaName(schema); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid schema name: "+err.Error())
+			return
+		}
+		rewritten := r.Clone(r.Context())
+		rewritten.URL.Path = prefix + schema
+		next(w, rewritten)
+	}
+}
+
+// requireLoopbackClient rejects anything that did not come from a process on this
+// host over the loopback interface. See RegisterLocalLaneRoutes for why this is a
+// backstop rather than the primary control.
+func requireLoopbackClient(r *http.Request) error {
+	// A proxy header on the private lane means a reverse proxy has been placed in
+	// front of it — exactly the misconfiguration this lane must never survive.
+	// We do not parse these headers (they are forgeable); their mere presence is
+	// disqualifying.
+	for _, header := range []string{"X-Forwarded-For", "X-Real-IP", "Forwarded", "X-Forwarded-Host"} {
+		if r.Header.Get(header) != "" {
+			return fmt.Errorf("request carries %s: this lane must never be reverse-proxied", header)
+		}
+	}
+
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("client %q is not on the loopback interface", r.RemoteAddr)
+	}
+	return nil
 }
 
 func (h *PublishHandler) registerRoutes(mux *http.ServeMux, protect func(http.HandlerFunc) http.HandlerFunc) {

@@ -4,6 +4,7 @@ package sds
 import (
 	"context"
 	"embed"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"regexp"
@@ -261,16 +262,18 @@ var SupportedSchemas = []string{
 
 // Validator validates data against SDS schemas.
 type Validator struct {
-	flatc   *wasm.FlatcModule
-	schemas map[string]int // schema name -> schema ID
-	mu      sync.RWMutex
+	flatc       *wasm.FlatcModule
+	schemas     map[string]int    // schema name -> schema ID
+	identifiers map[string]string // schema name -> 4-byte FlatBuffers file_identifier
+	mu          sync.RWMutex
 }
 
 // NewValidator creates a new SDS validator.
 func NewValidator(flatc *wasm.FlatcModule) (*Validator, error) {
 	v := &Validator{
-		flatc:   flatc,
-		schemas: make(map[string]int),
+		flatc:       flatc,
+		schemas:     make(map[string]int),
+		identifiers: make(map[string]string),
 	}
 
 	ctx := context.Background()
@@ -317,6 +320,14 @@ func (v *Validator) AddSchema(ctx context.Context, name string, content []byte) 
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
+	// Record the schema's declared FlatBuffers file_identifier (if any). This is
+	// what makes envelope verification schema-bound rather than merely
+	// structural: an OMM record must actually carry "$OMM". 174 of the 175
+	// embedded SDS schemas declare one.
+	if ident, ok := parseFileIdentifier(content); ok {
+		v.identifiers[name] = ident
+	}
+
 	// If WASM module is available, use it
 	if v.flatc != nil {
 		id, err := v.flatc.AddSchema(ctx, name, content)
@@ -332,7 +343,34 @@ func (v *Validator) AddSchema(ctx context.Context, name string, content []byte) 
 	return nil
 }
 
+// fileIdentifierRegex matches a FlatBuffers `file_identifier "$OMM";` declaration.
+var fileIdentifierRegex = regexp.MustCompile(`(?m)^\s*file_identifier\s*"([^"]{4})"\s*;`)
+
+// parseFileIdentifier extracts the 4-byte file_identifier declared by an .fbs schema.
+func parseFileIdentifier(content []byte) (string, bool) {
+	m := fileIdentifierRegex.FindSubmatch(content)
+	if m == nil {
+		return "", false
+	}
+	return string(m[1]), true
+}
+
+// FileIdentifier returns the FlatBuffers file_identifier declared by a schema.
+func (v *Validator) FileIdentifier(schemaName string) (string, bool) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	ident, ok := v.identifiers[schemaName]
+	return ident, ok
+}
+
 // Validate validates data against a schema.
+//
+// Envelope verification (VerifyEnvelope) runs on EVERY path, with or without the
+// optional flatc WASM module. This is deliberate: findWasmPath() only probes a
+// handful of build-tree paths, so in every packaged deployment flatc is nil —
+// and the old "no WASM ⇒ just check the data is non-empty" fallback meant a
+// 1-byte junk body was stored as if it were a valid SDS record. Structure plus
+// the schema's declared file_identifier are now always enforced.
 func (v *Validator) Validate(ctx context.Context, schemaName string, data []byte) error {
 	v.mu.RLock()
 	schemaID, ok := v.schemas[schemaName]
@@ -342,23 +380,159 @@ func (v *Validator) Validate(ctx context.Context, schemaName string, data []byte
 		return fmt.Errorf("unknown schema: %s", schemaName)
 	}
 
-	// If WASM module is available, use it to validate
-	if v.flatc != nil {
-		// Try to parse as FlatBuffer - if it succeeds, data is valid
-		_, err := v.flatc.BinaryToJSON(ctx, schemaID, data)
-		if err != nil {
-			return fmt.Errorf("validation failed for %s: %w", schemaName, err)
-		}
-		return nil
+	if err := v.VerifyEnvelope(schemaName, data); err != nil {
+		return err
 	}
 
-	// Without WASM, perform basic validation
-	// Just check that data is not empty
-	if len(data) == 0 {
-		return fmt.Errorf("empty data for schema %s", schemaName)
+	// When the WASM module is available, additionally parse the buffer through
+	// flatc for full field-level validation.
+	if v.flatc != nil {
+		if _, err := v.flatc.BinaryToJSON(ctx, schemaID, data); err != nil {
+			return fmt.Errorf("validation failed for %s: %w", schemaName, err)
+		}
 	}
 
 	return nil
+}
+
+// FlatBuffers envelope constants.
+const (
+	fileIdentifierLength = 4
+	sizePrefixLength     = 4
+	// minFlatBufferLength is a root uoffset32 (4) + the vtable it must point at (4).
+	minFlatBufferLength = 8
+)
+
+// VerifyEnvelope checks that data is a structurally valid FlatBuffer for
+// schemaName, without requiring the flatc WASM module.
+//
+// Two wire forms are accepted:
+//
+//   - size-prefixed (the canonical SDN form — every internal builder finishes with
+//     FinishSizePrefixed<X>Buffer, and the FlatSQL store only decodes records that
+//     satisfy <X>.SizePrefixedXBufferHasIdentifier), and
+//   - a plain finished buffer, tolerated for producers that call Finish directly.
+//
+// In both forms the root table offset, the vtable it points at, and the table's
+// inline size must all land inside the buffer, and — when the schema declares a
+// file_identifier — the buffer must actually carry it. Junk bytes fail all of
+// these, which is the point.
+func (v *Validator) VerifyEnvelope(schemaName string, data []byte) error {
+	v.mu.RLock()
+	ident, hasIdent := v.identifiers[schemaName]
+	v.mu.RUnlock()
+
+	if len(data) == 0 {
+		return fmt.Errorf("empty data for schema %s", schemaName)
+	}
+	if len(data) < minFlatBufferLength {
+		return fmt.Errorf(
+			"invalid %s record: %d bytes is shorter than the minimum FlatBuffer (%d bytes)",
+			schemaName, len(data), minFlatBufferLength,
+		)
+	}
+
+	// Canonical form first: size-prefixed.
+	if inner, ok := sizePrefixedPayload(data); ok {
+		if err := verifyFlatBufferRoot(inner); err == nil {
+			if !hasIdent || bufferHasIdentifier(inner, ident) {
+				return nil
+			}
+		}
+	}
+
+	// Tolerated form: a plain finished buffer.
+	if err := verifyFlatBufferRoot(data); err == nil {
+		if !hasIdent || bufferHasIdentifier(data, ident) {
+			return nil
+		}
+	}
+
+	if hasIdent {
+		return fmt.Errorf(
+			"invalid %s record: not a FlatBuffer carrying file identifier %q (%d bytes, %s)",
+			schemaName, ident, len(data), describeIdentifier(data),
+		)
+	}
+	return fmt.Errorf("invalid %s record: not a structurally valid FlatBuffer (%d bytes)", schemaName, len(data))
+}
+
+// sizePrefixedPayload returns the inner buffer of a size-prefixed FlatBuffer when
+// the leading uint32 exactly accounts for the remaining bytes.
+func sizePrefixedPayload(data []byte) ([]byte, bool) {
+	if len(data) < sizePrefixLength+minFlatBufferLength {
+		return nil, false
+	}
+	size := binary.LittleEndian.Uint32(data[:sizePrefixLength])
+	if int64(size) != int64(len(data))-sizePrefixLength {
+		return nil, false
+	}
+	return data[sizePrefixLength:], true
+}
+
+// bufferHasIdentifier reports whether a plain finished buffer carries identifier.
+func bufferHasIdentifier(buf []byte, identifier string) bool {
+	if len(buf) < minFlatBufferLength {
+		return false
+	}
+	return string(buf[sizePrefixLength:sizePrefixLength+fileIdentifierLength]) == identifier
+}
+
+// verifyFlatBufferRoot walks the root table header of a plain finished buffer and
+// checks that every offset it declares stays inside the buffer.
+func verifyFlatBufferRoot(buf []byte) error {
+	n := int64(len(buf))
+	if n < minFlatBufferLength {
+		return fmt.Errorf("buffer too short: %d bytes", n)
+	}
+
+	root := int64(binary.LittleEndian.Uint32(buf[:4]))
+	if root < 4 || root+4 > n {
+		return fmt.Errorf("root table offset %d outside buffer of %d bytes", root, n)
+	}
+
+	// The root table starts with an soffset32 back to its vtable.
+	soffset := int64(int32(binary.LittleEndian.Uint32(buf[root : root+4])))
+	vtable := root - soffset
+	if vtable < 0 || vtable+4 > n {
+		return fmt.Errorf("vtable offset %d outside buffer of %d bytes", vtable, n)
+	}
+
+	vtableSize := int64(binary.LittleEndian.Uint16(buf[vtable : vtable+2]))
+	if vtableSize < 4 || vtable+vtableSize > n {
+		return fmt.Errorf("vtable size %d outside buffer of %d bytes", vtableSize, n)
+	}
+
+	tableSize := int64(binary.LittleEndian.Uint16(buf[vtable+2 : vtable+4]))
+	if tableSize < 4 || root+tableSize > n {
+		return fmt.Errorf("root table size %d outside buffer of %d bytes", tableSize, n)
+	}
+
+	return nil
+}
+
+// describeIdentifier renders the identifier bytes actually present, for errors.
+func describeIdentifier(data []byte) string {
+	if inner, ok := sizePrefixedPayload(data); ok && len(inner) >= minFlatBufferLength {
+		return fmt.Sprintf("size-prefixed identifier %q", sanitizeIdentifier(inner[sizePrefixLength:sizePrefixLength+fileIdentifierLength]))
+	}
+	if len(data) >= minFlatBufferLength {
+		return fmt.Sprintf("identifier %q", sanitizeIdentifier(data[sizePrefixLength:sizePrefixLength+fileIdentifierLength]))
+	}
+	return "no identifier"
+}
+
+// sanitizeIdentifier renders non-printable identifier bytes as dots.
+func sanitizeIdentifier(b []byte) string {
+	out := make([]byte, len(b))
+	for i, c := range b {
+		if c < 0x20 || c > 0x7e {
+			out[i] = '.'
+			continue
+		}
+		out[i] = c
+	}
+	return string(out)
 }
 
 // JSONToFlatBuffer converts JSON data to FlatBuffer binary.
