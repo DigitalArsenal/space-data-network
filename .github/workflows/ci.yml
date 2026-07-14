@@ -38,6 +38,8 @@ jobs:
           cache-dependency-path: sdn-js/package-lock.json
 
       - name: Run CI checks (same as pre-push)
+        env:
+          WASMEDGE_DIR: ${{ runner.temp }}/.wasmedge
         run: |
           chmod +x scripts/ci-local.sh scripts/oss-preflight.sh scripts/install-wasmedge.sh scripts/go-with-wasmedge.sh
           ./scripts/install-wasmedge.sh
