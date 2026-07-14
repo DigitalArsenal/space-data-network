@@ -37,11 +37,44 @@ func WithPrecompiledAOTCache(dir string) Option {
 // AOT reports whether this runtime is executing an AOT-compiled artifact.
 func (r *Runtime) AOT() bool { return r.aot }
 
+// engineAOTPrefix names the engine's AOT artifacts in the shared cache
+// (<prefix>-<hash>-we<ver>.aot.wasm). The runtime's on-open load and
+// PrewarmEngineAOT MUST agree on it or a prewarmed artifact won't be found.
+const engineAOTPrefix = "flatsql"
+
 // ensureAOT returns AOT-compiled bytes for wasm, compiling into cacheDir on
 // first use. The cache key is the sha256 of the portable module, so engine
 // upgrades recompile automatically.
 func ensureAOT(cacheDir string, wasm []byte) ([]byte, error) {
-	return EnsureAOTArtifact(cacheDir, "flatsql", wasm)
+	return EnsureAOTArtifact(cacheDir, engineAOTPrefix, wasm)
+}
+
+// PrewarmAOTArtifact AOT-compiles wasm into cacheDir under prefix unless it is
+// already cached, returning the artifact path and whether it was already
+// present. It is the maintenance/prewarm entry point behind the
+// `prewarm-aot` CLI command: production daemons open the engine with
+// WithPrecompiledAOTCache and never compile on the service path, so an
+// operator runs the prewarm once per host to populate the cache. Idempotent:
+// a second call finds the artifact and reports alreadyPresent=true without
+// recompiling. A non-nil error (compiler unavailable, compile failure) is
+// meant to be surfaced with a non-zero exit.
+func PrewarmAOTArtifact(cacheDir, prefix string, wasm []byte) (path string, alreadyPresent bool, err error) {
+	path = aotArtifactPath(cacheDir, prefix, wasm)
+	if cached, readErr := os.ReadFile(path); readErr == nil && len(cached) > 0 {
+		return path, true, nil
+	}
+	if _, err = EnsureAOTArtifact(cacheDir, prefix, wasm); err != nil {
+		return path, false, err
+	}
+	return path, false, nil
+}
+
+// PrewarmEngineAOT AOT-compiles the embedded FlatSQL engine into cacheDir,
+// producing the exact "flatsql"-prefixed artifact the daemon loads via
+// WithPrecompiledAOTCache (keyed on the embedded engine bytes AND the
+// libwasmedge runtime version). See PrewarmAOTArtifact.
+func PrewarmEngineAOT(cacheDir string) (path string, alreadyPresent bool, err error) {
+	return PrewarmAOTArtifact(cacheDir, engineAOTPrefix, flatsqlWasm)
 }
 
 // LoadAOTArtifact returns a precompiled AOT artifact from cacheDir for the
