@@ -138,14 +138,26 @@
     margin: 0 0 12px 1px; }
 
   .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
-  .tile { border: 1px solid var(--edge); background: var(--panel); padding: 14px 16px; text-align: left; }
-  .tile .lab { font-size: 14.5px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--dim); }
-  .tile .val { font-family: var(--mono); font-size: 27px; margin-top: 9px; color: var(--ink); }
+  /* ONE-LINE tile strips: every box shares the row equally and the strip never
+     wraps — content adapts INSIDE its box (inner wrap/shrink), and because the
+     columns are fractions of the container the strip can never force
+     horizontal scroll. Applied to the report-card and aggregate strips. */
+  .tiles.oneline { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 1fr; }
+  .tile { border: 1px solid var(--edge); background: var(--panel); padding: 14px 16px; text-align: left;
+    min-width: 0; }
+  .tile .lab { font-size: 14.5px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--dim);
+    overflow-wrap: anywhere; }
+  .tile .val { font-family: var(--mono); font-size: 27px; margin-top: 9px; color: var(--ink);
+    overflow-wrap: anywhere; }
   .tile .val.small { font-size: 17px; line-height: 1.5; }
-  .tile .foot { font-family: var(--mono); font-size: 14px; color: var(--dimmer); margin-top: 9px; }
-  /* Milestone report-card tiles (RUNS view): slightly tighter numeral so the
-     p50/p90/p99 triple fits on one line. Clean numbers only — no tag chips. */
-  .runstrip .tile .val { font-size: 22px; }
+  .tile .foot { font-family: var(--mono); font-size: 14px; color: var(--dimmer); margin-top: 9px;
+    overflow-wrap: anywhere; }
+  /* Milestone report-card tiles (RUNS view): tighter numeral so six boxes fit
+     one line; long values (the RMS percentile triple) wrap WITHIN their box. */
+  .runstrip .tile .val { font-size: 19px; }
+  /* Aggregate strips sized for a one-line row. */
+  .tiles.oneline .tile .val { font-size: 22px; }
+  .tiles.oneline.runstrip .tile .val { font-size: 19px; }
 
   /* Filter/sort toolbar. */
   .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -297,7 +309,7 @@
   <div id="view-lanes">
     <section id="live-pipeline">
       <div class="sectlabel">Live pipeline — per-lane publish progress (LIVE · anonymous /api/v1/stats · polling 5s)</div>
-      <div class="tiles" id="pipe-tiles"></div>
+      <div class="tiles oneline" id="pipe-tiles"></div>
       <div class="toolbar" style="margin-top:14px">
         <input id="lane-filter" type="text" placeholder="Filter lanes…" autocomplete="off" spellcheck="false" aria-label="Filter lanes by provider, token, gate, or source">
         <span class="count" id="lane-count"></span>
@@ -322,14 +334,14 @@
 
     <section>
       <div class="sectlabel">Node-wide catalog (LIVE · anonymous /api/v1/stats + /api/v1/catalog)</div>
-      <div class="tiles" id="tiles"></div>
+      <div class="tiles oneline" id="tiles"></div>
     </section>
   </div>
 
   <div id="view-runs" hidden>
     <section id="ref-run-report">
       <div class="sectlabel">Last full constellation run — Starlink · 2026-07-14</div>
-      <div class="tiles runstrip" id="run-tiles"></div>
+      <div class="tiles oneline runstrip" id="run-tiles"></div>
     </section>
 
     <section id="runs-list">
