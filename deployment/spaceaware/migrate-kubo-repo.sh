@@ -7,7 +7,7 @@ set -Eeuo pipefail
 SOURCE_REPO="${SDN_KUBO_MIGRATION_SOURCE_REPO:-/var/lib/ipfs}"
 DESTINATION_REPO="${SDN_KUBO_MIGRATION_DESTINATION_REPO:-/mnt/volume_nyc3_01/ipfs}"
 VOLUME_MOUNT="${SDN_KUBO_MIGRATION_VOLUME_MOUNT:-/mnt/volume_nyc3_01}"
-DROP_IN="${SDN_KUBO_MIGRATION_DROP_IN:-/etc/systemd/system/kubo.service.d/20-volume-repo.conf}"
+DROP_IN="${SDN_KUBO_MIGRATION_DROP_IN:-/etc/systemd/system/ipfs.service.d/20-volume-repo.conf}"
 REPO_OWNER="${SDN_KUBO_MIGRATION_REPO_OWNER:-ipfs:ipfs}"
 STORAGE_MAX="${SDN_KUBO_MIGRATION_STORAGE_MAX:-120GB}"
 HEADROOM_KIB="${SDN_KUBO_MIGRATION_HEADROOM_KIB:-10485760}"
@@ -17,9 +17,9 @@ HTTP_DELAY_SECONDS="${SDN_KUBO_MIGRATION_HTTP_DELAY_SECONDS:-1}"
 readonly DROP_IN REPO_OWNER STORAGE_MAX
 readonly HEADROOM_KIB HTTP_ATTEMPTS HTTP_DELAY_SECONDS
 readonly SDN_SERVICE="space-data-network.service"
-readonly KUBO_SERVICE="kubo.service"
-readonly KUBO_API_URL="http://127.0.0.1:5001/api/v0/id"
-readonly KUBO_GATEWAY_URL="http://127.0.0.1:8080"
+readonly KUBO_SERVICE="ipfs.service"
+readonly KUBO_API_URL="http://127.0.0.1:5002/api/v0/id"
+readonly KUBO_GATEWAY_URL="http://127.0.0.1:8091"
 
 STATE_DIR=""
 DROP_IN_BACKUP=""
@@ -159,9 +159,19 @@ for required_command in systemctl ipfs rsync findmnt realpath df du curl chown; 
 done
 
 [[ -d "$SOURCE_REPO" ]] || fail "Source Kubo repository does not exist: $SOURCE_REPO"
-[[ ! -L "$DESTINATION_REPO" ]] || fail "Destination repository must not be a symlink: $DESTINATION_REPO"
-
 canonical_source_repo="$(realpath "$SOURCE_REPO")" || fail "Could not canonicalize source repository: $SOURCE_REPO"
+
+kubo_load_state="$(systemctl show --property=LoadState --value "$KUBO_SERVICE")" || \
+    fail "Could not inspect the load state of $KUBO_SERVICE."
+[[ "$kubo_load_state" == "loaded" ]] || \
+    fail "$KUBO_SERVICE is not loaded (LoadState=${kubo_load_state:-<empty>}); refusing migration."
+kubo_environment="$(systemctl show --property=Environment --value "$KUBO_SERVICE")" || \
+    fail "Could not inspect the effective Environment of $KUBO_SERVICE."
+expected_kubo_environment="IPFS_PATH=$canonical_source_repo"
+[[ "$kubo_environment" == "$expected_kubo_environment" ]] || \
+    fail "$KUBO_SERVICE effective Environment must be exactly $expected_kubo_environment before migration; got ${kubo_environment:-<empty>}."
+
+[[ ! -L "$DESTINATION_REPO" ]] || fail "Destination repository must not be a symlink: $DESTINATION_REPO"
 canonical_volume_mount="$(realpath "$VOLUME_MOUNT")" || fail "Could not canonicalize volume mount: $VOLUME_MOUNT"
 
 if ! mounted_volume_target="$(findmnt --noheadings --mountpoint "$VOLUME_MOUNT" --output TARGET)"; then

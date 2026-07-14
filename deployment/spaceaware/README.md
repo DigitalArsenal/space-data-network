@@ -104,7 +104,9 @@ AVAILABLE_KIB="$(df -Pk /mnt/volume_nyc3_01 | awk 'NR == 2 { print $4 }')"
 REQUIRED_KIB="$((SOURCE_KIB + 10485760))"
 test "$AVAILABLE_KIB" -ge "$REQUIRED_KIB"
 
-sudo systemctl --no-pager --full status kubo.service space-data-network.service
+test "$(sudo systemctl show --property=LoadState --value ipfs.service)" = "loaded"
+test "$(sudo systemctl show --property=Environment --value ipfs.service)" = "IPFS_PATH=/var/lib/ipfs"
+sudo systemctl --no-pager --full status ipfs.service space-data-network.service
 SOURCE_PEER_ID="$(sudo env IPFS_PATH=/var/lib/ipfs ipfs id --format='<id>')"
 SOURCE_PIN_COUNT="$(sudo env IPFS_PATH=/var/lib/ipfs ipfs pin ls --type=recursive --quiet | LC_ALL=C sort -u | awk 'NF { count++ } END { print count + 0 }')"
 test -n "$SOURCE_PEER_ID"
@@ -120,16 +122,16 @@ later:
 ```bash
 sudo test ! -e /root/kubo-volume-migration-preflight
 sudo install -d -m 0700 /root/kubo-volume-migration-preflight
-if sudo test -e /etc/systemd/system/kubo.service.d/20-volume-repo.conf; then
-  sudo cp -a /etc/systemd/system/kubo.service.d/20-volume-repo.conf \
+if sudo test -e /etc/systemd/system/ipfs.service.d/20-volume-repo.conf; then
+  sudo cp -a /etc/systemd/system/ipfs.service.d/20-volume-repo.conf \
     /root/kubo-volume-migration-preflight/drop-in.conf
 else
   sudo touch /root/kubo-volume-migration-preflight/drop-in.absent
 fi
-if sudo systemctl is-active --quiet kubo.service; then
-  printf 'active\n' | sudo tee /root/kubo-volume-migration-preflight/kubo.state >/dev/null
+if sudo systemctl is-active --quiet ipfs.service; then
+  printf 'active\n' | sudo tee /root/kubo-volume-migration-preflight/ipfs.state >/dev/null
 else
-  printf 'inactive\n' | sudo tee /root/kubo-volume-migration-preflight/kubo.state >/dev/null
+  printf 'inactive\n' | sudo tee /root/kubo-volume-migration-preflight/ipfs.state >/dev/null
 fi
 if sudo systemctl is-active --quiet space-data-network.service; then
   printf 'active\n' | sudo tee /root/kubo-volume-migration-preflight/sdn.state >/dev/null
@@ -150,12 +152,17 @@ It refuses a missing mount, insufficient free space, fewer than five recursive
 pins, any destination symlink, a canonical source alias or volume escape, a
 nested destination mount, a changed peer ID, a lower post-copy pin count, a
 missing sample pin, or an unhealthy local API/gateway. It stops
-`space-data-network.service` before `kubo.service`, copies with
+`space-data-network.service` before `ipfs.service`, copies with
 `rsync -aHAX --numeric-ids`, sets
 `Datastore.StorageMax` to `120GB`, and installs both `IPFS_PATH` and an additive
 Kubo `ReadWritePaths` entry for the destination. The copy never uses
 `--delete`, and the script never writes, changes ownership, or removes anything
 under `/var/lib/ipfs`.
+
+Before any mutation, the script also requires `ipfs.service` to be loaded and
+its effective `Environment` to be exactly `IPFS_PATH=/var/lib/ipfs`. A missing
+unit or any missing or mismatched `IPFS_PATH` fails closed without stopping a
+service or changing the source, destination, or drop-in.
 
 After Kubo starts, the script gives the API and gateway up to 30 attempts with
 a one-second delay between attempts (and bounded per-request timeouts). API
@@ -169,8 +176,8 @@ and one deterministic gateway sample:
 
 ```bash
 test "$(findmnt --noheadings --mountpoint /mnt/volume_nyc3_01 --output TARGET)" = "/mnt/volume_nyc3_01"
-sudo systemctl show kubo.service --property=Environment --value | tr ' ' '\n' | grep -Fx 'IPFS_PATH=/mnt/volume_nyc3_01/ipfs'
-sudo systemctl show kubo.service --property=ReadWritePaths --value | tr ' ' '\n' | grep -Fx '/mnt/volume_nyc3_01/ipfs'
+sudo systemctl show ipfs.service --property=Environment --value | tr ' ' '\n' | grep -Fx 'IPFS_PATH=/mnt/volume_nyc3_01/ipfs'
+sudo systemctl show ipfs.service --property=ReadWritePaths --value | tr ' ' '\n' | grep -Fx '/mnt/volume_nyc3_01/ipfs'
 for ROOT_OWNED_PATH in \
   /opt/spacedatanetwork \
   /opt/spacedatanetwork/deployment \
@@ -179,7 +186,7 @@ for ROOT_OWNED_PATH in \
   test "$(sudo stat -c '%U:%G %a' "$ROOT_OWNED_PATH")" = "root:root 755"
 done
 test "$(sudo env IPFS_PATH=/mnt/volume_nyc3_01/ipfs ipfs config Datastore.StorageMax)" = "120GB"
-sudo systemctl is-active --quiet kubo.service
+sudo systemctl is-active --quiet ipfs.service
 sudo systemctl is-active --quiet space-data-network.service
 
 DESTINATION_PEER_ID="$(sudo env IPFS_PATH=/mnt/volume_nyc3_01/ipfs ipfs id --format='<id>')"
@@ -187,10 +194,10 @@ DESTINATION_PIN_COUNT="$(sudo env IPFS_PATH=/mnt/volume_nyc3_01/ipfs ipfs pin ls
 test "$DESTINATION_PEER_ID" = "$SOURCE_PEER_ID"
 test "$DESTINATION_PIN_COUNT" -ge "$SOURCE_PIN_COUNT"
 
-curl -fsS --max-time 10 --request POST http://127.0.0.1:5001/api/v0/id >/dev/null
+curl -fsS --max-time 10 --request POST http://127.0.0.1:5002/api/v0/id >/dev/null
 SAMPLE_CID="$(sudo env IPFS_PATH=/mnt/volume_nyc3_01/ipfs ipfs pin ls --type=recursive --quiet | LC_ALL=C sort -u | head -n 1)"
 test -n "$SAMPLE_CID"
-curl -fsSIL --max-time 20 "http://127.0.0.1:8080/ipfs/${SAMPLE_CID}" >/dev/null
+curl -fsSIL --max-time 20 "http://127.0.0.1:8091/ipfs/${SAMPLE_CID}" >/dev/null
 sudo test -d /var/lib/ipfs
 ```
 
@@ -223,19 +230,19 @@ snapshot and restore Kubo before SDN:
 
 ```bash
 sudo systemctl stop space-data-network.service
-sudo systemctl stop kubo.service
+sudo systemctl stop ipfs.service
 if sudo test -e /root/kubo-volume-migration-preflight/drop-in.absent; then
-  sudo rm -f /etc/systemd/system/kubo.service.d/20-volume-repo.conf
+  sudo rm -f /etc/systemd/system/ipfs.service.d/20-volume-repo.conf
 else
   sudo cp -a /root/kubo-volume-migration-preflight/drop-in.conf \
-    /etc/systemd/system/kubo.service.d/20-volume-repo.conf
+    /etc/systemd/system/ipfs.service.d/20-volume-repo.conf
 fi
 sudo systemctl daemon-reload
 
-if test "$(sudo cat /root/kubo-volume-migration-preflight/kubo.state)" = "active"; then
-  sudo systemctl start kubo.service
+if test "$(sudo cat /root/kubo-volume-migration-preflight/ipfs.state)" = "active"; then
+  sudo systemctl start ipfs.service
 else
-  sudo systemctl stop kubo.service
+  sudo systemctl stop ipfs.service
 fi
 if test "$(sudo cat /root/kubo-volume-migration-preflight/sdn.state)" = "active"; then
   sudo systemctl start space-data-network.service
@@ -243,8 +250,8 @@ else
   sudo systemctl stop space-data-network.service
 fi
 
-sudo systemctl show kubo.service --property=Environment --value
-sudo systemctl --no-pager --full status kubo.service space-data-network.service
+sudo systemctl show ipfs.service --property=Environment --value
+sudo systemctl --no-pager --full status ipfs.service space-data-network.service
 sudo test -d /var/lib/ipfs
 ```
 
