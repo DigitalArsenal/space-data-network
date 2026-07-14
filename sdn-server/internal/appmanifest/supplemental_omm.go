@@ -28,10 +28,11 @@ import (
 // same checked-in file from disk and asserts the record's decoded CONTENT
 // byte-equals it (and that the embed matches the checked-in file).
 //
-// UNLIKE the conjunction app, App 2 is NOT pure-UI: it composes NINE member
-// modules — the seven Tier-1 provider source adapters, the OD fit-pipeline, and
-// the catalog-synthesis module — plus data refs and source refs, so the record
-// exercises the full $APP field surface (modules + data + sources + inline UI).
+// UNLIKE the conjunction app, App 2 is NOT pure-UI: it composes TEN member
+// modules — the seven Tier-1 provider source adapters, the CelesTrak SupGP
+// multi-provider adapter (A2.9), the OD fit-pipeline, and the catalog-synthesis
+// module — plus data refs and source refs, so the record exercises the full $APP
+// field surface (modules + data + sources + inline UI).
 
 //go:embed embedded/supplemental_omm_board.html
 var supplementalOMMBoardHTML []byte
@@ -103,6 +104,12 @@ var supplementalOMMModules = []ModuleRef{
 		Description: "CPF source adapter: ILRS CPF v2 predictions via anonymous EDC (position-only) → canonical OEM records + PNM on sdn/data-source/cpf.",
 	},
 	{
+		ID: "src-celestrak-supgp", PluginID: "com.orbpro.celestrak-supgp", Version: "1.0.0",
+		ContentHash: "b6efbb2519793cb898dc288e7301c3052027442d7406dac3c3d042ab9e102595",
+		Role:        "provider-adapter",
+		Description: "CelesTrak SupGP multi-provider adapter (A2.9): one token-parameterized lane over CelesTrak's PUBLISHED SupGP OMM sets for seven providers with no public raw ephemeris (SES/Planet/Iridium/Telesat/Kuiper/AST/CSS), re-emitted as schema-exact OMM records HONESTLY labeled non-independent (data_source=CelesTrak SupGP, distinct SourceName per provider) — these are CelesTrak's own fits, NOT OrbPro OD — + PNM on sdn/data-source/<provider>.",
+	},
+	{
 		ID: "od-fit-pipeline", PluginID: "com.orbpro.od-fit-pipeline", Version: "0.1.0",
 		ContentHash: "7b43935c3adaa1cdbc2c4d4c041ffddafce3723fd7a438937534bb084734dffd",
 		Role:        "od-fit",
@@ -146,8 +153,10 @@ var supplementalOMMData = []DataRef{
 // Source refs (all external-api): the seven Tier-1 provider upstreams the
 // adapters fetch (honest URLs from the adapter READMEs / the A2.1 inventory),
 // the CelesTrak SupGP endpoint that is the parity ground truth for the A2.4
-// gates, and the two Space-Track lanes (publicfiles operator ephemeris + the gp
-// current-catalog class) that feed catalog synthesis.
+// gates, the two Space-Track lanes (publicfiles operator ephemeris + the gp
+// current-catalog class) that feed catalog synthesis, and the seven CelesTrak
+// SupGP per-token ingest endpoints (A2.9) the celestrak-supgp adapter re-publishes
+// as honestly non-independent OMM lanes.
 var supplementalOMMSources = []SourceRef{
 	{ID: "up-starlink", Kind: SourceKindExternalAPI, Ref: "https://api.starlink.com/public-files/ephemerides/MANIFEST.txt", Description: "SpaceX Starlink MEME ephemeris manifest (public)."},
 	{ID: "up-iss", Kind: SourceKindExternalAPI, Ref: "https://nasa-public-data.s3.amazonaws.com/iss-coords/current/ISS_OEM/ISS.OEM_J2K_EPH.txt", Description: "NASA public ISS CCSDS OEM ephemeris (public S3)."},
@@ -159,6 +168,16 @@ var supplementalOMMSources = []SourceRef{
 	{ID: "ref-celestrak-supgp", Kind: SourceKindExternalAPI, Ref: "https://celestrak.org/NORAD/elements/supplemental/sup-gp.php", Description: "CelesTrak Supplemental GP (SupGP) — the parity ground truth for the A2.4 RMS/element gates."},
 	{ID: "st-publicfiles", Kind: SourceKindExternalAPI, Ref: "https://www.space-track.org/publicfiles/", Description: "Space-Track publicfiles operator-ephemeris lane (credentialed; flat loadpublicdata listing → OEM)."},
 	{ID: "st-gp", Kind: SourceKindExternalAPI, Ref: "https://www.space-track.org/basicspacedata/query/class/gp", Description: "Space-Track gp current-catalog class (credentialed; full-catalog schema-exact OMM+MPE feeding catalog synthesis)."},
+	// A2.9 — the seven CelesTrak SupGP per-token ingest endpoints the celestrak-supgp
+	// multi-provider adapter fetches. These are CelesTrak-FITTED SupGP sets re-published
+	// per provider: honestly non-independent (not OrbPro OD, no independent RMS gate).
+	{ID: "supgp-ses", Kind: SourceKindExternalAPI, Ref: "https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?SOURCE=SES-E", Description: "CelesTrak SupGP — SES (SES-E). CelesTrak-fitted, re-published as OMM; non-independent (not OrbPro OD)."},
+	{ID: "supgp-planet", Kind: SourceKindExternalAPI, Ref: "https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?SOURCE=Planet", Description: "CelesTrak SupGP — Planet. CelesTrak-fitted, re-published as OMM; non-independent (not OrbPro OD)."},
+	{ID: "supgp-iridium", Kind: SourceKindExternalAPI, Ref: "https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?SOURCE=Iridium", Description: "CelesTrak SupGP — Iridium. CelesTrak-fitted, re-published as OMM; non-independent (not OrbPro OD)."},
+	{ID: "supgp-telesat", Kind: SourceKindExternalAPI, Ref: "https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?SOURCE=Telesat", Description: "CelesTrak SupGP — Telesat. CelesTrak-fitted, re-published as OMM; non-independent (not OrbPro OD)."},
+	{ID: "supgp-kuiper", Kind: SourceKindExternalAPI, Ref: "https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?SOURCE=Kuiper-E", Description: "CelesTrak SupGP — Kuiper (Kuiper-E). CelesTrak-fitted, re-published as OMM; non-independent (not OrbPro OD)."},
+	{ID: "supgp-ast", Kind: SourceKindExternalAPI, Ref: "https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?SOURCE=AST", Description: "CelesTrak SupGP — AST SpaceMobile (AST). CelesTrak-fitted, re-published as OMM; non-independent (not OrbPro OD)."},
+	{ID: "supgp-css", Kind: SourceKindExternalAPI, Ref: "https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?SOURCE=CSS-E", Description: "CelesTrak SupGP — CSS (CSS-E). CelesTrak-fitted, re-published as OMM; non-independent (not OrbPro OD)."},
 }
 
 // SupplementalOMMBoardHTML returns the go:embedded App 2 status-board bytes (the
@@ -178,17 +197,19 @@ func SupplementalOMMBoardHTML() []byte {
 //
 // Modeling decisions (documented honestly):
 //
-//   - MODULES: nine member modules — the seven Tier-1 provider adapters, the OD
-//     fit-pipeline, and the catalog-synthesis module — referenced by PluginID +
-//     the isomorphic dist wasm ContentHash (the runtime-loaded identity).
+//   - MODULES: ten member modules — the seven Tier-1 provider adapters, the
+//     CelesTrak SupGP multi-provider adapter (A2.9), the OD fit-pipeline, and the
+//     catalog-synthesis module — referenced by PluginID + the isomorphic dist wasm
+//     ContentHash (the runtime-loaded identity).
 //
 //   - DATA: OEM (both — adapters produce, fit-pipeline consumes), fitted OMM
 //     (produced by the fit pipeline), the GPS almanac OMM lane, and the
 //     synthesized catalog OMM. The synthesis summary has no SDS schema code and
 //     is described rather than modeled as a DataRef.
 //
-//   - SOURCES (kind external-api): the seven honest provider upstreams, the
-//     CelesTrak SupGP parity reference, and the two Space-Track lanes.
+//   - SOURCES (kind external-api): the seven honest Tier-1 provider upstreams, the
+//     CelesTrak SupGP parity reference, the two Space-Track lanes, and the seven
+//     CelesTrak SupGP per-token ingest endpoints (A2.9, non-independent).
 //
 //   - UI: exactly one inline, entry page — the whole self-contained status board
 //     as BASE64_GZIP CONTENT (chosen by size: the board is ~25 KB raw, gzips
