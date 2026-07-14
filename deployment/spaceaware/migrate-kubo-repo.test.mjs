@@ -57,6 +57,10 @@ function writeStates(states) {
   writeFileSync(env.STUB_SYSTEMCTL_STATE, JSON.stringify(states));
 }
 
+function readSystemctlProperties() {
+  return JSON.parse(readFileSync(env.STUB_SYSTEMCTL_PROPERTIES, 'utf8'));
+}
+
 function finish(code = 0) {
   process.exit(code);
 }
@@ -65,6 +69,21 @@ if (command === 'systemctl') {
   const action = args[0];
   const unit = args.at(-1);
   const states = readStates();
+  if (action === 'show') {
+    const property = args
+      .find((argument) => argument.startsWith('--property='))
+      ?.slice('--property='.length);
+    const unitProperties = readSystemctlProperties()[unit];
+    if (property === 'LoadState') {
+      process.stdout.write((unitProperties?.loadState || 'not-found') + '\n');
+      finish();
+    }
+    if (property === 'Environment') {
+      process.stdout.write((unitProperties?.environment || '') + '\n');
+      finish();
+    }
+    finish(1);
+  }
   if (action === 'is-active') {
     finish(states[unit] === 'active' ? 0 : 3);
   }
@@ -174,7 +193,9 @@ async function makeFixture(t, {
   previousDropIn = '[Service]\nEnvironment=IPFS_PATH=/srv/old-kubo\n',
   previousDropInMode = 0o640,
   sdnState = 'active',
-  kuboState = 'active',
+  ipfsState = 'active',
+  ipfsUnitLoadState = 'loaded',
+  ipfsUnitEnvironment,
 } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'sdn-kubo-migration-')));
   t.after(async () => rm(root, { recursive: true, force: true }));
@@ -183,8 +204,9 @@ async function makeFixture(t, {
   const sourceRepo = join(root, 'var-lib-ipfs');
   const volumeMount = join(root, 'volume');
   const destinationRepo = join(volumeMount, 'ipfs');
-  const dropIn = join(root, 'systemd', 'kubo.service.d', '20-volume-repo.conf');
+  const dropIn = join(root, 'systemd', 'ipfs.service.d', '20-volume-repo.conf');
   const stateFile = join(root, 'systemctl-state.json');
+  const propertiesFile = join(root, 'systemctl-properties.json');
   const callLog = join(root, 'calls.jsonl');
   const driver = join(root, 'stub-driver.cjs');
 
@@ -200,7 +222,13 @@ async function makeFixture(t, {
   await writeFile(join(sourceRepo, 'blocks', 'source-only'), 'source repository must stay unchanged\n');
   await writeFile(stateFile, JSON.stringify({
     'space-data-network.service': sdnState,
-    'kubo.service': kuboState,
+    'ipfs.service': ipfsState,
+  }));
+  await writeFile(propertiesFile, JSON.stringify({
+    'ipfs.service': {
+      loadState: ipfsUnitLoadState,
+      environment: ipfsUnitEnvironment ?? `IPFS_PATH=${sourceRepo}`,
+    },
   }));
   await writeFile(callLog, '');
   await writeFile(driver, stubDriver);
@@ -216,7 +244,7 @@ async function makeFixture(t, {
   }
 
   if (previousDropIn !== null) {
-    await mkdir(join(root, 'systemd', 'kubo.service.d'), { recursive: true });
+    await mkdir(join(root, 'systemd', 'ipfs.service.d'), { recursive: true });
     await writeFile(dropIn, previousDropIn);
     await chmod(dropIn, previousDropInMode);
   }
@@ -227,6 +255,7 @@ async function makeFixture(t, {
     STUB_DRIVER: driver,
     STUB_CALL_LOG: callLog,
     STUB_SYSTEMCTL_STATE: stateFile,
+    STUB_SYSTEMCTL_PROPERTIES: propertiesFile,
     STUB_MOUNT_PRESENT: mountPresent ? '1' : '0',
     STUB_DF_AVAILABLE_KIB: String(availableKib),
     STUB_SOURCE_PEER_ID: '12D3KooWFixturePeer',
@@ -294,7 +323,27 @@ async function assertRefusedBeforeDestinationMutation(fixture, result, messagePa
   await assertSourceSentinelsUnchanged(fixture, sourceBefore);
   await assertPriorStateRestored(fixture, {
     'space-data-network.service': 'active',
-    'kubo.service': 'active',
+    'ipfs.service': 'active',
+  });
+}
+
+async function assertPreflightRefusedWithoutMutation(fixture, result, messagePattern, sourceBefore) {
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, messagePattern);
+
+  const calls = await fixture.calls();
+  assert.equal(calls.some(({ command }) => command === 'rsync'), false);
+  assert.equal(calls.some(({ command }) => command === 'chown'), false);
+  assert.equal(calls.some(({ command, args }) =>
+    command === 'ipfs' && args[0] === 'config'), false);
+  assert.equal(calls.some(({ command, args }) =>
+    command === 'systemctl'
+      && (args[0] === 'start' || args[0] === 'stop' || args[0] === 'daemon-reload')), false);
+  await assert.rejects(stat(fixture.destinationRepo), { code: 'ENOENT' });
+  await assertSourceSentinelsUnchanged(fixture, sourceBefore);
+  await assertPriorStateRestored(fixture, {
+    'space-data-network.service': 'active',
+    'ipfs.service': 'active',
   });
 }
 
@@ -313,15 +362,64 @@ async function readSourceSentinels(fixture) {
   };
 }
 
-test('production migration defaults use the hosted volume paths', async () => {
+test('production migration defaults use the live ipfs.service topology', async () => {
   const migration = await readFile(scriptPath, 'utf8');
 
   assert.match(migration, /^set -Eeuo pipefail$/m);
   assert.match(migration, /:-\/var\/lib\/ipfs}/);
   assert.match(migration, /:-\/mnt\/volume_nyc3_01\/ipfs}/);
-  assert.match(migration, /:-\/etc\/systemd\/system\/kubo\.service\.d\/20-volume-repo\.conf}/);
+  assert.match(migration, /:-\/etc\/systemd\/system\/ipfs\.service\.d\/20-volume-repo\.conf}/);
   assert.match(migration, /:-ipfs:ipfs}/);
   assert.match(migration, /:-120GB}/);
+  assert.match(migration, /^readonly KUBO_SERVICE="ipfs\.service"$/m);
+  assert.match(migration, /^readonly KUBO_API_URL="http:\/\/127\.0\.0\.1:5002\/api\/v0\/id"$/m);
+  assert.match(migration, /^readonly KUBO_GATEWAY_URL="http:\/\/127\.0\.0\.1:8091"$/m);
+  assert.doesNotMatch(migration, /kubo\.service|127\.0\.0\.1:5001|127\.0\.0\.1:8080/);
+});
+
+test('refuses a missing ipfs.service before any repository or service mutation', async (t) => {
+  const fixture = await makeFixture(t, { ipfsUnitLoadState: 'not-found' });
+  const sourceBefore = await readSourceSentinels(fixture);
+
+  const result = await fixture.run();
+
+  await assertPreflightRefusedWithoutMutation(
+    fixture,
+    result,
+    /ipfs\.service.*not loaded/i,
+    sourceBefore,
+  );
+  assert.deepEqual((await fixture.calls())[0]?.args, [
+    'show',
+    '--property=LoadState',
+    '--value',
+    'ipfs.service',
+  ]);
+});
+
+test('refuses a missing or mismatched effective IPFS_PATH before any mutation', async (t) => {
+  for (const [name, ipfsUnitEnvironment] of [
+    ['missing', 'KUBO_PROFILE=server'],
+    ['mismatched', 'IPFS_PATH=/srv/wrong-ipfs'],
+  ]) {
+    await t.test(name, async (subtest) => {
+      const fixture = await makeFixture(subtest, { ipfsUnitEnvironment });
+      const sourceBefore = await readSourceSentinels(fixture);
+
+      const result = await fixture.run();
+
+      await assertPreflightRefusedWithoutMutation(
+        fixture,
+        result,
+        /ipfs\.service.*effective Environment.*exactly IPFS_PATH=/i,
+        sourceBefore,
+      );
+      assert.deepEqual((await fixture.calls()).slice(0, 2).map(({ args }) => args), [
+        ['show', '--property=LoadState', '--value', 'ipfs.service'],
+        ['show', '--property=Environment', '--value', 'ipfs.service'],
+      ]);
+    });
+  }
 });
 
 test('deploy adds the optional volume path only for the exact SpaceAware config', async () => {
@@ -391,7 +489,7 @@ test('refuses to migrate when the destination volume is not mounted', async (t) 
   assert.equal((await fixture.calls()).some(({ command }) => command === 'rsync'), false);
   await assertPriorStateRestored(fixture, {
     'space-data-network.service': 'active',
-    'kubo.service': 'active',
+    'ipfs.service': 'active',
   });
 });
 
@@ -404,7 +502,7 @@ test('refuses to migrate when free space is below source size plus headroom', as
   assert.equal((await fixture.calls()).some(({ command }) => command === 'rsync'), false);
   await assertPriorStateRestored(fixture, {
     'space-data-network.service': 'active',
-    'kubo.service': 'active',
+    'ipfs.service': 'active',
   });
 });
 
@@ -419,7 +517,7 @@ test('refuses to merge a source repository into a non-empty destination', async 
   assert.equal((await fixture.calls()).some(({ command }) => command === 'rsync'), false);
   await assertPriorStateRestored(fixture, {
     'space-data-network.service': 'active',
-    'kubo.service': 'active',
+    'ipfs.service': 'active',
   });
 });
 
@@ -518,12 +616,12 @@ test('refuses an existing destination resolved by findmnt to a nested mount', as
 
 test('peer-ID mismatch restores the exact drop-in and every prior service-state combination', async (t) => {
   for (const sdnState of ['active', 'inactive']) {
-    for (const kuboState of ['active', 'inactive']) {
-      await t.test(`${sdnState} SDN, ${kuboState} Kubo`, async (subtest) => {
+    for (const ipfsState of ['active', 'inactive']) {
+      await t.test(`${sdnState} SDN, ${ipfsState} Kubo`, async (subtest) => {
         const fixture = await makeFixture(subtest, {
           destinationPeerId: '12D3KooWDifferentPeer',
           sdnState,
-          kuboState,
+          ipfsState,
         });
         const result = await fixture.run();
 
@@ -531,7 +629,7 @@ test('peer-ID mismatch restores the exact drop-in and every prior service-state 
         assert.match(result.stderr, /peer ID mismatch/i);
         await assertPriorStateRestored(fixture, {
           'space-data-network.service': sdnState,
-          'kubo.service': kuboState,
+          'ipfs.service': ipfsState,
         });
       });
     }
@@ -541,7 +639,7 @@ test('peer-ID mismatch restores the exact drop-in and every prior service-state 
 test('rsync failure restores the prior drop-in and service states without mutating source', async (t) => {
   const fixture = await makeFixture(t, {
     sdnState: 'active',
-    kuboState: 'inactive',
+    ipfsState: 'inactive',
   });
   const sourceBefore = await readSourceSentinels(fixture);
 
@@ -555,7 +653,7 @@ test('rsync failure restores the prior drop-in and service states without mutati
   await assertSourceSentinelsUnchanged(fixture, sourceBefore);
   await assertPriorStateRestored(fixture, {
     'space-data-network.service': 'active',
-    'kubo.service': 'inactive',
+    'ipfs.service': 'inactive',
   });
 });
 
@@ -567,7 +665,7 @@ test('API and gateway failures each restore the prior drop-in and service states
     await t.test(failure, async (subtest) => {
       const fixture = await makeFixture(subtest, {
         sdnState: 'inactive',
-        kuboState: 'active',
+        ipfsState: 'active',
       });
       const sourceBefore = await readSourceSentinels(fixture);
 
@@ -584,7 +682,7 @@ test('API and gateway failures each restore the prior drop-in and service states
       await assertSourceSentinelsUnchanged(fixture, sourceBefore);
       await assertPriorStateRestored(fixture, {
         'space-data-network.service': 'inactive',
-        'kubo.service': 'active',
+        'ipfs.service': 'active',
       });
     });
   }
@@ -595,7 +693,7 @@ test('lower post-copy recursive pin count fails and removes a newly installed dr
     destinationPins: sourcePins.slice(0, -1),
     previousDropIn: null,
     sdnState: 'inactive',
-    kuboState: 'active',
+    ipfsState: 'active',
   });
   const result = await fixture.run();
 
@@ -603,7 +701,7 @@ test('lower post-copy recursive pin count fails and removes a newly installed dr
   assert.match(result.stderr, /recursive pin count decreased/i);
   await assertPriorStateRestored(fixture, {
     'space-data-network.service': 'inactive',
-    'kubo.service': 'active',
+    'ipfs.service': 'active',
   });
 });
 
@@ -624,7 +722,7 @@ test('same pin count still fails when one deterministic sample pin is absent', a
   assert.match(result.stderr, /sample recursive pin missing/i);
   await assertPriorStateRestored(fixture, {
     'space-data-network.service': 'active',
-    'kubo.service': 'active',
+    'ipfs.service': 'active',
   });
 });
 
@@ -650,13 +748,19 @@ test('copies without deleting source, verifies Kubo, then starts SDN', async (t)
   );
   assert.deepEqual(await fixture.states(), {
     'space-data-network.service': 'active',
-    'kubo.service': 'active',
+    'ipfs.service': 'active',
   });
 
   const calls = await fixture.calls();
   const indexOf = (predicate) => calls.findIndex(predicate);
+  const unitLoadStateCheck = indexOf(({ command, args }) =>
+    command === 'systemctl'
+      && args.join(' ') === 'show --property=LoadState --value ipfs.service');
+  const unitEnvironmentCheck = indexOf(({ command, args }) =>
+    command === 'systemctl'
+      && args.join(' ') === 'show --property=Environment --value ipfs.service');
   const sdnStop = indexOf(({ command, args }) => command === 'systemctl' && args[0] === 'stop' && args[1] === 'space-data-network.service');
-  const kuboStop = indexOf(({ command, args }) => command === 'systemctl' && args[0] === 'stop' && args[1] === 'kubo.service');
+  const kuboStop = indexOf(({ command, args }) => command === 'systemctl' && args[0] === 'stop' && args[1] === 'ipfs.service');
   const rsync = indexOf(({ command }) => command === 'rsync');
   const storageMaxConfig = indexOf(({ command, args, ipfsPath }) =>
     command === 'ipfs'
@@ -665,15 +769,23 @@ test('copies without deleting source, verifies Kubo, then starts SDN', async (t)
   const finalChown = indexOf(({ command, args }) =>
     command === 'chown'
       && args.join(' ') === `-R ipfs:ipfs ${fixture.destinationRepo}`);
-  const kuboStart = indexOf(({ command, args }) => command === 'systemctl' && args[0] === 'start' && args[1] === 'kubo.service');
-  const apiCheck = indexOf(({ command, args }) => command === 'curl' && args.some((arg) => arg.includes('/api/v0/id')));
+  const kuboStart = indexOf(({ command, args }) => command === 'systemctl' && args[0] === 'start' && args[1] === 'ipfs.service');
+  const apiCheck = indexOf(({ command, args }) =>
+    command === 'curl' && args.includes('http://127.0.0.1:5002/api/v0/id'));
   const destinationIdentityCheck = indexOf(({ command, args, ipfsPath }) =>
     command === 'ipfs'
       && args[0] === 'id'
       && ipfsPath === fixture.destinationRepo);
-  const gatewayCheck = indexOf(({ command, args }) => command === 'curl' && args.some((arg) => arg.includes('/ipfs/')));
+  const gatewayCheck = indexOf(({ command, args }) =>
+    command === 'curl' && args.includes('http://127.0.0.1:8091/ipfs/bafy-alpha'));
   const sdnStart = indexOf(({ command, args }) => command === 'systemctl' && args[0] === 'start' && args[1] === 'space-data-network.service');
 
+  assert.ok(
+    unitLoadStateCheck >= 0
+      && unitLoadStateCheck < unitEnvironmentCheck
+      && unitEnvironmentCheck < sdnStop,
+    'the loaded-unit and exact source IPFS_PATH checks must precede every mutation',
+  );
   assert.ok(sdnStop >= 0 && sdnStop < kuboStop, 'SDN must stop before Kubo');
   assert.ok(kuboStop < rsync && rsync < kuboStart, 'copy must happen while Kubo is stopped');
   assert.ok(
