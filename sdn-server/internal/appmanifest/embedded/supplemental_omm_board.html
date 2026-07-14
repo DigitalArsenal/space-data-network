@@ -244,22 +244,15 @@
   .tip:hover .tiptext, .tip:focus-within .tiptext { display: block; }
   .tip-right .tiptext { left: auto; right: 0; }
 
-  /* RUN CONTROLS (RUNS view): provider checklist + runner command + actions. */
-  .controls { border: 1px solid var(--edge); background: var(--panel); padding: 16px 18px; }
-  .provgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px 16px; }
-  .provcheck { display: flex; align-items: flex-start; gap: 10px; font-size: 16px; color: var(--ink); cursor: pointer; }
-  .provcheck input { width: 18px; height: 18px; margin-top: 4px; accent-color: var(--accent); cursor: pointer; flex: 0 0 auto; }
-  .provcheck.off { color: var(--dim); }
-  .provcheck.disabled { cursor: not-allowed; color: var(--dimmer); }
-  .provcheck.disabled input { cursor: not-allowed; }
-  .provcheck .why { display: block; font-family: var(--mono); font-size: 13px; color: var(--dimmer); margin-top: 3px; }
-  .ctl-note { font-family: var(--mono); font-size: 14px; color: var(--dimmer); margin-top: 14px; line-height: 1.7; overflow-wrap: anywhere; }
-  .ctl-warn { font-family: var(--mono); font-size: 14.5px; color: var(--ref); margin-top: 12px; overflow-wrap: anywhere; }
-  .cmdblock { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; }
-  .cmdblock code { flex: 1 1 auto; display: block; font-family: var(--mono); font-size: 14px; line-height: 1.7;
-    background: #05070a; border: 1px solid var(--edge2); color: var(--ink); padding: 11px 13px;
-    white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }
-  .cmdblock button { flex: 0 0 auto; }
+  /* Provider enable/disable checkbox ON the lane row (first column). Large
+     box + generous hit area; stops row-expansion propagation itself. */
+  .lane-check { display: flex; align-items: flex-start; gap: 12px; }
+  .lane-check input { width: 23px; height: 23px; margin: 1px 0 0; padding: 0; accent-color: var(--accent);
+    cursor: pointer; flex: 0 0 auto; }
+  .lane-check input:disabled { cursor: not-allowed; }
+  .lane-check .lane-id { flex: 1 1 auto; min-width: 0; }
+
+  /* Per-run actions (RUNS view expansion). */
   .runacts { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
   .runacts button.danger { color: var(--blocked); border-color: #4a2626; }
   .runacts button.danger:hover { border-color: var(--blocked); color: #ff9d9d; }
@@ -321,7 +314,9 @@
         sources[], active batch = newest batch_id per source). <b>Data current as of</b> = newest record
         EPOCH; <b>ElSets</b> = element sets in the batch; <b>Objects</b> = distinct NORAD IDs;
         <b>Mean RMS</b> = OD fit RMS averaged over the batch's indexed records (fitted lanes only). Click a
-        row to drill into its satellites. RMS stats cover records indexed since the rms-index deploy.
+        row to drill into its satellites. The checkbox enables or disables that provider on this node
+        (a disabled provider's row stays visible). RMS statistics cover the records this node has
+        indexed with a fit RMS; records without one are excluded, never zero-filled.
       </div>
     </section>
 
@@ -332,25 +327,6 @@
   </div>
 
   <div id="view-runs" hidden>
-    <section id="run-controls">
-      <div class="sectlabel">Run controls — provider selection (persisted on this node · /api/v1/admin/runs/providers)</div>
-      <div class="controls">
-        <div class="provgrid" id="prov-checklist"></div>
-        <div class="ctl-warn" id="ctl-admin-state" hidden></div>
-        <div class="ctl-note">External pipeline runner command for the current selection (run from the
-        space-data-network-modules repo — this node cannot spawn it):</div>
-        <div class="cmdblock">
-          <code id="runner-cmd"></code>
-          <button id="runner-cmd-copy" type="button">Copy</button>
-        </div>
-        <div class="ctl-note">Runner contract: between publish chunks the pipeline polls
-        <span class="val-mono">GET /api/v1/runs/flags?batch_id=…</span> and aborts cleanly when its batch is
-        stop-flagged; at startup it reads <span class="val-mono">GET /api/v1/runs/providers</span> and intersects
-        the node's selection with its own provider arguments (a key absent from the selection is enabled).
-        Provider keys are the SourceNames this node's stats report.</div>
-      </div>
-    </section>
-
     <section id="ref-run-report">
       <div class="sectlabel">Last full constellation run — Starlink · 2026-07-14</div>
       <div class="tiles runstrip" id="run-tiles"></div>
@@ -377,13 +353,13 @@
   <div class="legend">
     <h2>Provenance legend</h2>
     <div class="row"><span class="pill live">LIVE</span><span>Fetched this session from a real <b>anonymous</b> same-origin gateway surface. A lane with no active batch renders honestly as <b>idle</b> — the surface exists, the node just has no rows yet.</span></div>
-    <div class="row"><span class="pill ref">REF</span><span>Checked-in run/gate fact (compile-time truth, not live telemetry). RMS-vs-CelesTrak parity, gate status, and the full-run milestone numbers come from the modules pipeline run report, which has no HTTP route.</span></div>
+    <div class="row"><span class="pill ref">REF</span><span>Recorded fact (not live telemetry from this node): RMS-vs-CelesTrak parity results, provider gate status, and the full-run milestone numbers.</span></div>
     <div class="row"><span class="pill nodata">NO DATA</span><span>No anonymous surface can feed this cell today; the cell names the exact surface (auth-gated or not-yet-built). This board never invents an endpoint.</span></div>
   </div>
 
   <footer>
     <div>SDS $APP record #2 · inline entry UI page · zero non-same-origin requests · all fetches → <span id="api-base">/api/v1</span>/* and <span id="root-base">/api</span>/node/info</div>
-    <div>Last-full-run milestone numbers on the Runs screen are checked-in from the modules pipeline run report (modules 8d9c39d, 2026-07-14) — not live telemetry, and not matched to a batch in the live runs list.</div>
+    <div>Last-full-run milestone numbers on the Runs screen are a recorded run report (2026-07-14) — not live telemetry from this node, and not matched to a batch in the live runs list.</div>
     <div>Module refs: 8 provider adapters (7 Tier-1 OD + celestrak-supgp) + OD fit-pipeline + catalog-synthesis. Data refs: OEM (both) · OMM (fitted, GPS almanac, synthesized catalog). Parity ground truth: CelesTrak SupGP.</div>
     <div class="refs" id="src-refs"></div>
   </footer>
@@ -417,7 +393,7 @@
   // ---- provider key. Only the Starlink full-run has one today.
   var RUN_SUMMARIES = {
     "spacex-starlink": {
-      tag: "Full run · modules 8d9c39d · 2026-07-14",
+      tag: "Full constellation run · 2026-07-14",
       lines: [
         "118 s end-to-end for 10,820 objects — fit 93 sats/s across 24 workers.",
         "Download ~280 MB/s (2.2 Gb/s, link saturated).",
@@ -436,7 +412,7 @@
     { key: "spacex-starlink", name: "SpaceX Starlink", token: "SpaceX-E",
       upstream: "api.starlink.com · MEME",
       gate: "HARD-PASS", gateClass: "pass",
-      rms: "beats CT · 10/10 (live 2026-07-14)", rmsNote: "MEME→OEM; live same-day pairs: ours 0.072–0.116 km vs CelesTrak 0.175–0.223 km, all 10 beaten (modules a64ac1d)" },
+      rms: "beats CT · 10/10 (live 2026-07-14)", rmsNote: "MEME→OEM; live same-day pairs: ours 0.072–0.116 km vs CelesTrak 0.175–0.223 km, all 10 beaten" },
     { key: "iss", name: "ISS (ZARYA)", token: "ISS-E",
       upstream: "nasa-public-data S3 · CCSDS OEM",
       gate: "HARD-PASS", gateClass: "pass",
@@ -996,20 +972,45 @@
       if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); toggleLane(l); }
     });
 
-    // Provider / lane
+    // Provider / lane. Registry lanes carry a LARGE enable/disable checkbox on
+    // the row itself: checked = the provider is enabled on this node (persisted
+    // selection + schedule toggling). Unchecking never hides the row.
     var prov = el("td", "prov");
+    var wrap = el("div", "lane-check");
+    if (l.provider) {
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      var unrunnable = laneUnrunnable(l.provider);
+      var blocked = adminBlockedReason();
+      cb.checked = unrunnable ? false : providerEnabled(l.provider.key);
+      cb.disabled = unrunnable || !!blocked;
+      cb.setAttribute("aria-label", (cb.checked ? "Disable" : "Enable") + " provider " + l.name);
+      if (unrunnable) cb.title = "blocked: " + (l.provider.rmsNote || "no producible source");
+      else if (blocked) cb.title = blocked;
+      else cb.title = cb.checked ? "Provider enabled on this node — uncheck to disable" : "Provider disabled on this node — check to enable";
+      cb.addEventListener("click", function (e) { e.stopPropagation(); });
+      cb.addEventListener("keydown", function (e) { e.stopPropagation(); });
+      cb.addEventListener("change", function (e) {
+        e.stopPropagation();
+        toggleProvider(l.provider.key, cb.checked, cb);
+      });
+      wrap.appendChild(cb);
+    }
+    var idBlock = el("div", "lane-id");
     var nameLine = el("div", "name");
     nameLine.appendChild(el("span", "caret", open ? "▾" : "▸"));
     nameLine.appendChild(document.createTextNode(l.name));
-    prov.appendChild(nameLine);
-    prov.appendChild(el("div", "tok", l.token));
+    idBlock.appendChild(nameLine);
+    idBlock.appendChild(el("div", "tok", l.token));
+    wrap.appendChild(idBlock);
+    prov.appendChild(wrap);
     tr.appendChild(prov);
 
     // Gate
     var gateTd = el("td");
     if (l.gate) {
       gateTd.appendChild(pillFor({ cls: l.gateClass, txt: l.gate }));
-      gateTd.appendChild(el("div", "cell-note", "REF · A2.7 gate"));
+      gateTd.appendChild(el("div", "cell-note", "gate status"));
     } else {
       gateTd.appendChild(pillFor({ cls: "nodata", txt: "UNTAGGED" }));
       gateTd.appendChild(el("div", "cell-note", "unmatched source lane"));
@@ -1459,71 +1460,16 @@
     return runControls.selection.hasOwnProperty(key) ? !!runControls.selection[key] : true;
   }
 
-  // Only the oneweb RAW lane is un-runnable (LTEF spec blocked at source) —
+  // Only the oneweb RAW lane has no producible source (blocked at source) —
   // every other lane, including gps (almanac catalog) and the BLOCKED-gate
   // parity lanes, has a live publishable source and stays selectable.
   function laneUnrunnable(p) { return p.key === "oneweb"; }
 
-  // The external-runner command, reflecting the current selection. Provider
-  // keys are the SourceNames the node's stats report; the command shape is the
-  // observed real constellation-pipeline invocation.
-  function runnerCommand() {
-    var keys = [];
-    PROVIDERS.forEach(function (p) {
-      if (laneUnrunnable(p)) return;
-      if (providerEnabled(p.key)) keys.push(p.key);
-    });
-    var origin = (typeof location !== "undefined" && location.origin) ? location.origin : "https://<node>";
-    return "node scripts/constellation-pipeline.mjs --providers " + (keys.length ? keys.join(",") : "<none-selected>") +
-      " --publish --publish-url " + origin +
-      " --publish-batch 100 --publish-concurrency 4 --publish-timeout-ms 60000 --emit-ocm";
-  }
-
-  function renderRunnerCmd() {
-    var code = document.getElementById("runner-cmd");
-    if (code) code.textContent = runnerCommand();
-  }
-
   function adminBlockedReason() {
-    if (runControls.admin === "auth") return "admin surface requires authentication — controls disabled (sign in on the node admin UI)";
-    if (runControls.admin === "unreachable") return "admin surface unreachable — controls disabled";
-    if (runControls.admin === "unknown") return "admin surface not probed yet";
+    if (runControls.admin === "auth") return "requires node authentication";
+    if (runControls.admin === "unreachable") return "node control surface unreachable";
+    if (runControls.admin === "unknown") return "node control surface not checked yet";
     return null;
-  }
-
-  function renderProviderChecklist() {
-    var host = document.getElementById("prov-checklist");
-    if (!host) return;
-    host.innerHTML = "";
-    var blocked = adminBlockedReason();
-    var warn = document.getElementById("ctl-admin-state");
-    if (warn) {
-      if (blocked && runControls.admin !== "unknown") { warn.hidden = false; warn.textContent = blocked; }
-      else { warn.hidden = true; warn.textContent = ""; }
-    }
-    PROVIDERS.forEach(function (p) {
-      var lab = document.createElement("label");
-      var isBlockedLane = laneUnrunnable(p);
-      var enabled = providerEnabled(p.key);
-      lab.className = "provcheck" + (isBlockedLane ? " disabled" : (enabled ? "" : " off"));
-      var cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = isBlockedLane ? false : enabled;
-      cb.disabled = isBlockedLane || !!blocked;
-      cb.setAttribute("data-key", p.key);
-      cb.addEventListener("change", function () { toggleProvider(p.key, cb.checked, cb); });
-      lab.appendChild(cb);
-      var txt = el("span");
-      txt.appendChild(document.createTextNode(p.name));
-      var why = null;
-      if (isBlockedLane) why = "blocked: " + (p.rmsNote || "no runnable lane");
-      else why = p.key;
-      var whyEl = el("span", "why", why);
-      txt.appendChild(whyEl);
-      lab.appendChild(txt);
-      host.appendChild(lab);
-    });
-    renderRunnerCmd();
   }
 
   function toggleProvider(key, enabled, cb) {
@@ -1543,18 +1489,18 @@
         runControls.admin = (res && res.__state === "auth") ? "auth" : "unreachable";
         if (cb) cb.checked = providerEnabled(key);
       }
-      renderProviderChecklist();
+      renderLaneTable();
     });
   }
 
   function refreshRunControls() {
     // Anonymous reads first (selection + stop flags) — these must work even
-    // when the admin surface is gated.
+    // when the node control surface is gated.
     getJSON("/runs/providers").then(function (res) {
       if (res && res.__state === "ok" && res.data && res.data.providers) {
         runControls.selection = res.data.providers;
       }
-      renderProviderChecklist();
+      renderLaneTable();
     });
     getJSON("/runs/flags").then(function (res) {
       var flags = {};
@@ -1564,13 +1510,12 @@
       runControls.flags = flags;
       renderRunsTable();
     });
-    // Admin probe (GET on the admin route classifies reachability honestly).
+    // Control-surface probe (GET classifies reachability honestly).
     getJSON("/admin/runs/providers").then(function (res) {
       if (res && res.__state === "ok") runControls.admin = "ok";
       else if (res && res.__state === "auth") runControls.admin = "auth";
-      else if (res && res.__state === "unreachable") runControls.admin = "unreachable";
       else runControls.admin = "unreachable";
-      renderProviderChecklist();
+      renderLaneTable();
       renderRunsTable();
     });
   }
@@ -1589,12 +1534,12 @@
     postJSON("/admin/runs/stop" + qs).then(function (res) {
       if (res && res.__state === "ok" && res.data && res.data.stop === true) {
         runControls.flags[r.batch_id] = { batch_id: r.batch_id, requested_at: res.data.requested_at };
-        setRunNote(run.key, "ok", "stop flag set " + (res.data.requested_at || "") + " — the runner aborts at its next poll of /api/v1/runs/flags");
+        setRunNote(run.key, "ok", "stop requested " + (res.data.requested_at || "") + " — takes effect when the producer next checks in");
       } else if (res && res.__state === "auth") {
         runControls.admin = "auth";
-        setRunNote(run.key, "err", "stop refused: admin authentication required");
+        setRunNote(run.key, "err", "stop refused: requires node authentication");
       } else {
-        setRunNote(run.key, "err", "stop failed: admin surface unreachable");
+        setRunNote(run.key, "err", "stop failed: node control surface unreachable");
       }
     });
   }
@@ -1613,9 +1558,9 @@
         pollPipeline(); // refresh the runs list from the store truth
       } else if (res && res.__state === "auth") {
         runControls.admin = "auth";
-        setRunNote(run.key, "err", "clear refused: admin authentication required");
+        setRunNote(run.key, "err", "clear refused: requires node authentication");
       } else {
-        setRunNote(run.key, "err", "clear failed: admin surface unreachable");
+        setRunNote(run.key, "err", "clear failed: node control surface unreachable");
       }
     });
   }
@@ -1669,54 +1614,37 @@
       bar.appendChild(cancel);
     }
 
-    // RESTART — module-scheduled lanes fire run-now; external-runner lanes get
-    // the copyable command (the node cannot spawn the external runner).
+    // RESTART — node-side only: module-scheduled lanes fire run-now on this
+    // node. When the producer is not managed by this node, the action renders
+    // disabled with the plain reason.
     var prov = matchProvider(run.source.source_name, run.source.provider_id);
+    var restart = document.createElement("button");
+    restart.type = "button";
+    restart.textContent = "Restart";
     if (prov && prov.module && prov.module.id && prov.module.method) {
-      var runNow = document.createElement("button");
-      runNow.type = "button";
-      runNow.textContent = "Restart (run now)";
-      runNow.disabled = !!blocked;
-      if (blocked) runNow.title = blocked;
-      runNow.addEventListener("click", function (e) {
+      restart.disabled = !!blocked;
+      if (blocked) restart.title = blocked;
+      else restart.title = "Runs this lane's schedule now";
+      restart.addEventListener("click", function (e) {
         e.stopPropagation();
-        if (runNow.disabled) return;
+        if (restart.disabled) return;
         postJSON("/modules/runtime/" + encodeURIComponent(prov.module.id) + "/schedules/" + encodeURIComponent(prov.module.method) + "/run")
           .then(function (res) {
-            if (res && res.__state === "ok") setRunNote(run.key, "ok", "module schedule fired (run-now)");
-            else if (res && res.__state === "auth") setRunNote(run.key, "err", "run-now refused: admin authentication required");
-            else setRunNote(run.key, "err", "run-now failed: module runtime unreachable");
+            if (res && res.__state === "ok") setRunNote(run.key, "ok", "restart triggered");
+            else if (res && res.__state === "auth") setRunNote(run.key, "err", "restart refused: requires node authentication");
+            else setRunNote(run.key, "err", "restart failed: node control surface unreachable");
           });
       });
-      bar.appendChild(runNow);
     } else {
-      var copyCmd = document.createElement("button");
-      copyCmd.type = "button";
-      copyCmd.textContent = "Restart (copy command)";
-      copyCmd.title = "External-runner lane — the node cannot spawn the pipeline; copies the CLI command (also shown in Run controls above)";
-      copyCmd.addEventListener("click", function (e) {
-        e.stopPropagation();
-        copyText(runnerCommand(), function (ok) {
-          setRunNote(run.key, ok ? "ok" : "err", ok
-            ? "runner command copied — run it from the space-data-network-modules repo"
-            : "copy failed — select the command in Run controls above");
-        });
-      });
-      bar.appendChild(copyCmd);
+      restart.disabled = true;
+      restart.title = "producer not managed by this node";
     }
+    bar.appendChild(restart);
 
     var note = runControls.notes[run.key];
     if (note) bar.appendChild(el("span", "actnote " + (note.cls || ""), note.text));
     else if (flag) bar.appendChild(el("span", "actnote", "stop requested " + (flag.requested_at || "")));
     return bar;
-  }
-
-  function copyText(text, done) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
-      return;
-    }
-    done(false);
   }
 
   function runDetailRow(run, colCount) {
@@ -1760,7 +1688,7 @@
       ref.appendChild(su);
     }
     ref.appendChild(el("div", "ln", "Provider id " + (r.provider_id || "—") + " · source " + (r.source_name || "—") +
-      " · RMS aggregates cover records indexed since the rms-index deploy (older records carry no RMS and are excluded, never zero-filled)."));
+      " · RMS aggregates cover the records this node has indexed with a fit RMS; records without one are excluded, never zero-filled."));
     inner.appendChild(ref);
 
     td.appendChild(inner);
@@ -1849,14 +1777,6 @@
   renderSourceRefs();
   document.getElementById("nav-lanes").addEventListener("click", function () { setView("lanes"); });
   document.getElementById("nav-runs").addEventListener("click", function () { setView("runs"); });
-  var cmdCopyBtn = document.getElementById("runner-cmd-copy");
-  if (cmdCopyBtn) cmdCopyBtn.addEventListener("click", function () {
-    copyText(runnerCommand(), function (ok) {
-      cmdCopyBtn.textContent = ok ? "Copied" : "Copy failed — select the text";
-      setTimeout(function () { cmdCopyBtn.textContent = "Copy"; }, 2500);
-    });
-  });
-  renderProviderChecklist();
   var filterInput = document.getElementById("lane-filter");
   if (filterInput) filterInput.addEventListener("input", function () { laneState.filter = filterInput.value; renderLaneTable(); });
 
