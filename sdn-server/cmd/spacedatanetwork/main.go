@@ -1005,6 +1005,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			})
 			runsAPI.RegisterRoutes(adminMux)
 			log.Infof("Run controls at %s://%s/api/v1/admin/runs/{clear,stop,providers} (+ anonymous /api/v1/runs/{flags,providers})", adminScheme, adminAddr)
+
+			// Store maintenance (admin write): on-demand record-catalog
+			// re-sync without a restart — replays journal-only records back
+			// into the SQL control tables + rebuilds source summaries so
+			// stats sources[]/data index recover. Behind the same admin wall.
+			storeAdminAPI := api.NewStoreAdminHandler(n.Store())
+			storeAdminAPI.RegisterRoutes(adminMux)
+			log.Infof("Store maintenance API at %s://%s/api/v1/admin/store/hydrate", adminScheme, adminAddr)
 			searchAPI := api.NewSearchHandlerWithOptions(n.Store(), api.SearchHandlerOptions{
 				LiveBackend: newLiveDHTSearchBackend(n),
 			})

@@ -1589,11 +1589,26 @@ func (n *Node) StartConfiguredFlowServices(ctx context.Context) {
 	}()
 }
 
+// recordCatalogHydrationLogEvery bounds how often the background record-catalog
+// replay logs progress (roughly every N applied records).
+const recordCatalogHydrationLogEvery = 25000
+
 // StartBackgroundRecordCatalogHydration primes provider query state after the
-// daemon has had a chance to bind admin/network surfaces. Startup hydrates
-// only the linked-query OMM engine hot window from compact metadata; full
-// record-catalog table replay is a maintenance/on-demand task, not daemon
-// startup work.
+// daemon has bound its admin/network surfaces. It runs entirely in a background
+// goroutine so daemon boot time is unaffected:
+//
+//  1. the linked-query OMM engine hot window is loaded from compact metadata
+//     (fast — makes epoch/nearest linked-data flows usable first), then
+//  2. the FULL record-catalog metadata is replayed into the SQL control tables
+//     and the derived source summaries are rebuilt, so records written before
+//     the last restart become visible again to /api/v1/stats sources[],
+//     /api/v1/data/index, and batch clear.
+//
+// Without step (2) — the historical bug this method fixes — pre-restart records
+// live only in the journal/stream files after a daemon (re)start and silently
+// vanish from the board on every restart / prod deploy, because boot hydrates
+// only the engine hot window and the full catalog replay was never wired to a
+// caller.
 func (n *Node) StartBackgroundRecordCatalogHydration(ctx context.Context) {
 	if n == nil || n.store == nil {
 		return
@@ -1602,6 +1617,11 @@ func (n *Node) StartBackgroundRecordCatalogHydration(ctx context.Context) {
 		n.wg.Add(1)
 		go func() {
 			defer n.wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Errorf("FlatSQL background record-catalog hydration panicked: %v", r)
+				}
+			}()
 			select {
 			case <-ctx.Done():
 				return
@@ -1609,15 +1629,61 @@ func (n *Node) StartBackgroundRecordCatalogHydration(ctx context.Context) {
 				return
 			default:
 			}
+
+			// (1) Fast engine hot window so linked-data flows work first.
 			count, err := n.store.HydrateEngineHotWindowFromRecordCatalog()
 			if err != nil {
 				log.Errorf("FlatSQL compact engine hot-window hydration failed: %v", err)
-				return
+			} else {
+				log.Infof("FlatSQL compact engine hot-window hydration complete: %d records", count)
 			}
-			log.Infof("FlatSQL compact engine hot-window hydration complete: %d records", count)
-			log.Info("FlatSQL full record-catalog metadata replay deferred outside daemon startup")
+
+			// (2) Full control-table replay + derived source summaries.
+			n.hydrateFullRecordCatalog()
 		}()
 	})
+}
+
+// hydrateFullRecordCatalog replays the full compact record catalog into the SQL
+// control tables and rebuilds the derived source summaries, with progress and
+// completion logging (counts + duration). Panic-safe on its own so a replay bug
+// is contained to this goroutine and never brings the daemon down.
+func (n *Node) hydrateFullRecordCatalog() {
+	if n == nil || n.store == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf("FlatSQL full record-catalog replay panicked: %v", r)
+		}
+	}()
+
+	start := time.Now()
+	log.Info("FlatSQL full record-catalog metadata replay starting (background post-boot)")
+	logged := 0
+	progress := func(done int) {
+		if done-logged >= recordCatalogHydrationLogEvery {
+			logged = done
+			log.Infof("FlatSQL record-catalog replay progress: %d records", done)
+		}
+	}
+	replayed, err := n.store.ReplayRecordCatalog(false, progress)
+	if err != nil {
+		log.Errorf("FlatSQL full record-catalog replay failed after %s: %v", time.Since(start).Round(time.Millisecond), err)
+		return
+	}
+	if err := n.store.RebuildSourceSummaries(); err != nil {
+		log.Errorf("FlatSQL source-summary rebuild after replay failed: %v", err)
+		return
+	}
+
+	sources, total := 0, int64(0)
+	if summary, sErr := n.store.DataSummary(); sErr == nil && summary != nil {
+		sources = len(summary.Sources)
+		total = summary.TotalRecords
+	}
+	log.Infof("FlatSQL full record-catalog hydration complete: replayed=%d sources=%d total_records=%d in %s",
+		replayed, sources, total, time.Since(start).Round(time.Millisecond))
 }
 
 func (n *Node) setupSchemaPubSubTopics(ctx context.Context) {

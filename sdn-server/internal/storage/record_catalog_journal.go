@@ -217,6 +217,15 @@ func (j *recordCatalogJournal) AppendAll(events []recordCatalogEvent) error {
 }
 
 func (j *recordCatalogJournal) Replay(store *FlatSQLStore) (int, error) {
+	return j.replay(store, nil)
+}
+
+// replay is Replay with an optional progress callback invoked with the running
+// applied-frame count at each replay batch boundary (recordCatalogReplayBatchSize
+// frames). progress may be nil. It is used by the post-boot background
+// record-catalog hydration to emit "replayed N records" progress on
+// provider-scale catalogs (celestrak nodes carry 150k+ records).
+func (j *recordCatalogJournal) replay(store *FlatSQLStore, progress func(done int)) (int, error) {
 	if j == nil || j.f == nil {
 		return 0, nil
 	}
@@ -313,6 +322,9 @@ func (j *recordCatalogJournal) Replay(store *FlatSQLStore) (int, error) {
 		if count%recordCatalogReplayBatchSize == 0 {
 			if err := commitTx(); err != nil {
 				return count, fmt.Errorf("record catalog frame at %d: commit replay batch: %w", off, err)
+			}
+			if progress != nil {
+				progress(count)
 			}
 		}
 		off += 8 + n

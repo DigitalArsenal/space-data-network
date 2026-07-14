@@ -370,12 +370,33 @@ func (s *FlatSQLStore) RebuildDerivedState() error {
 	return nil
 }
 
-// HydrateRecordCatalog replays compact record metadata into the in-memory
-// control tables. It is intended for daemons opened with
+// ReplayRecordCatalog replays compact record metadata into the in-memory
+// control tables (the per-producer record tables, sdn_record_index, and
+// sdn_record_source_tags). It is intended for daemons opened with
 // WithDeferredRecordCatalogReplay so API surfaces can start before provider-
-// scale catalog hydration. The store write lock is held for consistency.
-func (s *FlatSQLStore) HydrateRecordCatalog() (int, error) {
-	if s.recordCatalogHydrated.Load() {
+// scale catalog hydration (celestrak nodes carry 150k+ records).
+//
+// force=false is a one-shot: it no-ops once the catalog is hydrated for this
+// process, which is how the post-boot background hydration runs it. force=true
+// always re-runs, for the on-demand admin re-sync — safe because every row
+// apply is an idempotent upsert (INSERT OR IGNORE on the record tables,
+// ON CONFLICT DO UPDATE on the index/tags), so replaying an already-current
+// catalog converges to the same rows.
+//
+// progress (may be nil) is invoked with the running replayed-record count at
+// each replay batch boundary, for background progress logging.
+//
+// The store write lock is held for the entire replay so no live publish ever
+// observes a half-replayed catalog (consistency; it also keeps a historical
+// delete/GC frame from racing a concurrent live re-add). This is acceptable
+// because the replay runs in a background goroutine — only the write path
+// waits, never boot or reads — and on the engines that matter it is a
+// seconds-scale operation: production daemons ship the precompiled AOT engine
+// (~100x interpreted throughput) and dev catalogs are small. It matches the
+// existing full-catalog Replay under the same lock in the engine-poison
+// recovery path (engine_link.go).
+func (s *FlatSQLStore) ReplayRecordCatalog(force bool, progress func(done int)) (int, error) {
+	if !force && s.recordCatalogHydrated.Load() {
 		return 0, nil
 	}
 	s.recordCatalogHydrating.Store(true)
@@ -383,16 +404,38 @@ func (s *FlatSQLStore) HydrateRecordCatalog() (int, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !force && s.recordCatalogHydrated.Load() {
+		return 0, nil // another caller hydrated while we waited for the lock
+	}
 	if s.recordCatalog == nil {
 		s.recordCatalogHydrated.Store(true)
 		return 0, nil
 	}
-	count, err := s.recordCatalog.Replay(s)
+	count, err := s.recordCatalog.replay(s, progress)
 	if err != nil {
 		return count, err
 	}
 	s.recordCatalogHydrated.Store(true)
 	return count, nil
+}
+
+// HydrateRecordCatalog is the one-shot, no-progress form of ReplayRecordCatalog,
+// used by the post-boot background hydration.
+func (s *FlatSQLStore) HydrateRecordCatalog() (int, error) {
+	return s.ReplayRecordCatalog(false, nil)
+}
+
+// RebuildSourceSummaries recomputes the derived sdn_record_source_summary
+// aggregate (which feeds /api/v1/stats sources[] and drives batch-clear
+// bookkeeping) from the durable source-tag + record tables. It is cheap — one
+// grouped aggregate per schema — and safe to run on demand; it holds the store
+// write lock. Run it after ReplayRecordCatalog so the summary reflects the
+// freshly replayed control tables (a daemon opened with
+// WithDeferredRecordCatalogReplay has no summaries until this runs).
+func (s *FlatSQLStore) RebuildSourceSummaries() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rebuildSourceSummariesFromDurableState()
 }
 
 // HydrateEngineHotWindowFromRecordCatalog loads only the OMM engine hot window
