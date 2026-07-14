@@ -31,6 +31,7 @@ package main
 // admin API wall (adminSecurityMiddleware + RequireAuth) is unchanged.
 
 import (
+	"bytes"
 	_ "embed"
 	"net/http"
 	"os"
@@ -74,6 +75,38 @@ const conjunctionCSP = "default-src 'self'; " +
 	"img-src 'self' data:; " +
 	"font-src 'self' data:; " +
 	"connect-src 'self'"
+
+// appsLauncherLink is a serve-time-injected, fully self-contained affordance
+// that surfaces the /apps/ launcher on the served conjunction UI (A2.10 item 3:
+// "surface an APPS link on the conjunction page WITHOUT rebuilding the sdn-js
+// artifact"). It is a single same-origin anchor with an inline style attribute —
+// allowed by conjunctionCSP's style-src 'unsafe-inline' — carrying no script and
+// making no network request until clicked, so it preserves the zero-external-
+// request / console-clean posture. It is injected before </body> at serve time
+// (via injectAppsLauncherLink); the embedded conjunction artifact and the App 1
+// APP-record drift gate are untouched (they cover the embed bytes, not the
+// serve-time bytes). House style: uppercase, square corners, monospace, no arrow
+// glyph, with a title tooltip.
+const appsLauncherLink = `<a href="/apps/" title="Open the SDN apps launcher" ` +
+	`style="position:fixed;bottom:12px;right:12px;z-index:2147483000;` +
+	`font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;` +
+	`font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:#8fd6ff;` +
+	`background:#0a0e14;border:1px solid #2a3a4a;padding:7px 12px;text-decoration:none;">APPS</a>`
+
+// injectAppsLauncherLink inserts the /apps/ launcher affordance before the final
+// </body> of the served conjunction document (appending to the end if no </body>
+// is present). It operates on serve-time bytes only.
+func injectAppsLauncherLink(html []byte) []byte {
+	link := []byte(appsLauncherLink)
+	if idx := bytes.LastIndex(html, []byte("</body>")); idx >= 0 {
+		out := make([]byte, 0, len(html)+len(link))
+		out = append(out, html[:idx]...)
+		out = append(out, link...)
+		out = append(out, html[idx:]...)
+		return out
+	}
+	return append(html, link...)
+}
 
 // uiMode selects which embedded UI the daemon serves at the primary route.
 type uiMode int
@@ -155,6 +188,9 @@ func serveConjunctionUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	if r.Method != http.MethodHead {
-		_, _ = w.Write(injectFrontendConfig(conjunctionAppHTML))
+		// Inject the /apps/ launcher affordance (A2.10 item 3) at serve time, on
+		// top of the __SDN_CONFIG__ injection, without touching the embedded
+		// artifact or its drift gate.
+		_, _ = w.Write(injectAppsLauncherLink(injectFrontendConfig(conjunctionAppHTML)))
 	}
 }
