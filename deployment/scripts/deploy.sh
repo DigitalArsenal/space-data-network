@@ -168,7 +168,7 @@ cat > ${override_dir}/spaceaware-runtime.conf <<'EOF'
 [Service]
 User=root
 Group=root
-ReadWritePaths=/opt/data /var/lib/spacedatanetwork
+ReadWritePaths=/opt/data /var/lib/spacedatanetwork /mnt/volume_nyc3_01/ipfs
 EOF"
     else
         ssh_cmd "$ip" "rm -f ${override_dir}/config-path.conf ${override_dir}/spaceaware-runtime.conf"
