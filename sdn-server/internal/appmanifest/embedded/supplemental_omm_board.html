@@ -171,6 +171,24 @@
   .legend b { color: var(--ink); }
   footer { margin-top: 22px; font-family: var(--mono); font-size: 10px; color: var(--dimmer); line-height: 1.7; }
   footer .refs { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
+
+  /* LIVE PIPELINE section. Idle lanes are dimmed but never hidden (honesty
+     contract: a provider with no active batch renders as idle, not omitted).
+     The rate/age cell notes reuse the .cell-note mono convention; the table is
+     table-layout:fixed like every other table here, so it cannot x-scroll. */
+  tbody tr.idle td { color: var(--dim); }
+  tbody tr.idle .prov .name { color: var(--dim); }
+  .pipe-obj { font-family: var(--mono); font-size: 15px; color: var(--ink); }
+  tr.idle .pipe-obj { color: var(--dimmer); }
+  .pipe-rate { font-family: var(--mono); font-size: 11px; color: var(--live); }
+  .pipe-sub { font-family: var(--mono); font-size: 9.5px; color: var(--dimmer); margin-top: 4px; overflow-wrap: anywhere; }
+
+  /* Reserved placeholder (another worker mounts the three-way viewer here).
+     Deliberately renders NO data — only an honest "reserved / not yet" note. */
+  .placeholder { border: 1px dashed var(--edge2); background: var(--panel);
+    padding: 20px 14px; text-align: center; }
+  .placeholder .ph-note { font-family: var(--mono); font-size: 10.5px; color: var(--dimmer);
+    text-transform: uppercase; letter-spacing: 0.08em; }
 </style>
 </head>
 <body>
@@ -191,6 +209,35 @@
       <button id="refresh" type="button">Refresh</button>
     </div>
   </header>
+
+  <section id="live-pipeline">
+    <div class="sectlabel">LIVE pipeline — fitted-OMM publish progress (LIVE · anonymous /api/v1/stats · polling 5s)</div>
+    <div class="tiles" id="pipe-tiles"></div>
+    <div class="tablewrap" style="margin-top:8px">
+      <table>
+        <colgroup>
+          <col style="width:24%"><col style="width:22%"><col style="width:15%"><col style="width:17%"><col style="width:22%">
+        </colgroup>
+        <thead><tr>
+          <th>Provider / lane</th><th>Pull started</th><th>Objects OD'd</th><th>Rate</th><th>Last record</th>
+        </tr></thead>
+        <tbody id="pipe-body"></tbody>
+      </table>
+    </div>
+    <div class="sub" style="margin-top:6px">
+      Each lane counts fitted OMM records published to <b>this node</b> for its active batch
+      (newest batch_id per source on <span class="val-mono">/api/v1/stats</span> → sources[]).
+      Objects OD'd = live record count; rate = objects/min from the count delta across the poll
+      window; a lane with no records yet renders honestly as <b>idle</b>.
+    </div>
+  </section>
+
+  <section id="track-comparison">
+    <div class="sectlabel">Track comparison — OD'd vs Space-Track vs CelesTrak</div>
+    <div class="placeholder">
+      <div class="ph-note" id="track-comparison-body">Reserved — three-way track viewer mounts here (not yet available on this node)</div>
+    </div>
+  </section>
 
   <section>
     <div class="sectlabel">Node-wide catalog (LIVE · anonymous /api/v1/stats + /api/v1/catalog)</div>
@@ -795,6 +842,221 @@
     SOURCE_REFS.forEach(function (u) { host.appendChild(el("span", null, "· " + u)); });
   }
 
+  // ---- LIVE PIPELINE (fitted-OMM publish progress) --------------------------
+  // /api/v1/stats now returns a `sources` array: one row per
+  // (schema, provider_id, source_name, batch_id) that has records, each with a
+  // live `count`, `total_bytes`, and ISO `first_seen`/`last_seen`/`updated_at`.
+  // The constellation pipeline publishes fitted OMM records to this node as each
+  // object is OD'd, tagged with SourceName + BatchID (batch id =
+  // sha256(provider+startedAt)); the rising per-source count IS the pull
+  // progress. This section keeps only OMM lanes, groups each provider's rows,
+  // picks the ACTIVE batch (newest last record), and renders start / count /
+  // rate / age. Providers with no OMM rows render honestly as idle. Rate is
+  // derived client-side from the count delta across the poll window (nothing
+  // fabricated: a warming-up lane shows "…", a stalled lane shows 0/min).
+  var PIPE_WINDOW_MS = 60000;
+  var pipeHist = {}; // laneKey -> [{ t: ms, c: count }]
+
+  function normKey(s) { return String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]+/g, ""); }
+
+  // Match a source row to a known provider by comparing normalized identity
+  // tokens (source_name / provider_id vs each provider's key / name / token).
+  // Substring matches require length >= 3 to avoid spurious collisions.
+  function matchProvider(sourceName, providerID) {
+    var cands = [normKey(sourceName), normKey(providerID)].filter(Boolean);
+    if (!cands.length) return null;
+    for (var i = 0; i < PROVIDERS.length; i++) {
+      var pc = [normKey(PROVIDERS[i].key), normKey(PROVIDERS[i].name), normKey(PROVIDERS[i].token)];
+      for (var a = 0; a < cands.length; a++) {
+        for (var b = 0; b < pc.length; b++) {
+          if (!pc[b]) continue;
+          if (cands[a] === pc[b]) return PROVIDERS[i];
+          var shorter = cands[a].length < pc[b].length ? cands[a] : pc[b];
+          if (shorter.length >= 3 && (cands[a].indexOf(pc[b]) !== -1 || pc[b].indexOf(cands[a]) !== -1)) return PROVIDERS[i];
+        }
+      }
+    }
+    return null;
+  }
+
+  function pushHist(key, count) {
+    var now = Date.now();
+    var arr = pipeHist[key] || (pipeHist[key] = []);
+    var lastSample = arr.length ? arr[arr.length - 1] : null;
+    if (!lastSample || lastSample.c !== count || (now - lastSample.t) > 4000) arr.push({ t: now, c: count });
+    while (arr.length > 2 && (now - arr[0].t) > PIPE_WINDOW_MS) arr.shift();
+    return arr;
+  }
+  function ratePerMin(arr) {
+    if (!arr || arr.length < 2) return null; // still warming up
+    var first = arr[0], last = arr[arr.length - 1];
+    var dt = (last.t - first.t) / 1000, dc = last.c - first.c;
+    if (dt <= 0 || dc < 0) return 0;
+    return (dc / dt) * 60;
+  }
+  function parseMs(iso) { if (!iso) return 0; var ms = Date.parse(iso); return isNaN(ms) ? 0 : ms; }
+  function ageStr(iso) {
+    var ms = parseMs(iso);
+    if (!ms) return null;
+    var s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+    if (s < 60) return s + "s ago";
+    if (s < 3600) return Math.floor(s / 60) + "m ago";
+    if (s < 86400) return Math.floor(s / 3600) + "h ago";
+    return Math.floor(s / 86400) + "d ago";
+  }
+  function isoTime(iso) { return iso ? String(iso).slice(0, 19).replace("T", " ") + "Z" : null; }
+
+  function activeBatch(rows) {
+    var best = null, bestT = -1, total = 0, batches = {};
+    rows.forEach(function (r) {
+      total += (typeof r.count === "number" ? r.count : 0);
+      batches[r.batch_id || ""] = true;
+      var t = parseMs(r.last_seen || r.updated_at || r.first_seen);
+      if (best === null || t >= bestT) { best = r; bestT = t; }
+    });
+    return { row: best, total: total, batchCount: Object.keys(batches).length };
+  }
+
+  function pipeCell(text, cls) { var td = el("td"); td.appendChild(el("div", cls || null, text)); return td; }
+
+  function renderPipeline(statsRes) {
+    var sources = [];
+    if (statsRes && statsRes.__state === "ok" && statsRes.data && Array.isArray(statsRes.data.sources)) {
+      sources = statsRes.data.sources;
+    }
+    var reachable = !!(statsRes && (statsRes.__state === "ok" || statsRes === "skeleton"));
+
+    // Keep OMM lanes only; group matched providers, collect unmatched as extras.
+    var byProvider = {}, extras = [];
+    sources.forEach(function (row) {
+      if (!row || !/^OMM/i.test(String(row.schema || ""))) return;
+      var p = matchProvider(row.source_name, row.provider_id);
+      if (p) { (byProvider[p.key] || (byProvider[p.key] = { p: p, rows: [] })).rows.push(row); }
+      else { extras.push(row); }
+    });
+
+    var lanes = [];
+    PROVIDERS.forEach(function (p) {
+      var slot = byProvider[p.key];
+      lanes.push(slot
+        ? { name: p.name, token: "CelesTrak " + p.token, active: true, ab: activeBatch(slot.rows), laneKey: "prov:" + p.key }
+        : { name: p.name, token: "CelesTrak " + p.token, active: false, ab: null, laneKey: "prov:" + p.key });
+    });
+    extras.forEach(function (row) {
+      lanes.push({
+        name: row.source_name || row.provider_id || "(unnamed source)",
+        token: row.provider_id ? "provider " + row.provider_id : "unmatched source",
+        active: true, raw: true,
+        ab: { row: row, total: (typeof row.count === "number" ? row.count : 0), batchCount: 1 },
+        laneKey: "src:" + (row.source_name || "") + "|" + (row.provider_id || "")
+      });
+    });
+
+    // Active lanes first (by objects desc), then idle in registry order.
+    lanes = lanes.map(function (l, i) { return { l: l, i: i }; }).sort(function (a, b) {
+      if (a.l.active !== b.l.active) return a.l.active ? -1 : 1;
+      if (a.l.active && b.l.active) {
+        var ca = a.l.ab && a.l.ab.row ? (a.l.ab.row.count || 0) : 0;
+        var cb = b.l.ab && b.l.ab.row ? (b.l.ab.row.count || 0) : 0;
+        if (ca !== cb) return cb - ca;
+      }
+      return a.i - b.i;
+    }).map(function (d) { return d.l; });
+
+    // Aggregate tiles.
+    var activeCount = 0, totalObjs = 0, newestMs = 0;
+    lanes.forEach(function (l) {
+      if (!l.active || !l.ab || !l.ab.row) return;
+      activeCount++;
+      totalObjs += (l.ab.row.count || 0);
+      var ms = parseMs(l.ab.row.last_seen || l.ab.row.updated_at);
+      if (ms > newestMs) newestMs = ms;
+    });
+    renderPipeTiles(reachable, activeCount, lanes.length, totalObjs, newestMs);
+
+    // Table body.
+    var body = document.getElementById("pipe-body");
+    body.innerHTML = "";
+    lanes.forEach(function (l) {
+      var tr = el("tr", l.active ? null : "idle");
+
+      var prov = el("td", "prov");
+      prov.appendChild(el("div", "name", l.name));
+      prov.appendChild(el("div", "tok", l.token));
+      tr.appendChild(prov);
+
+      if (l.active && l.ab && l.ab.row) {
+        var r = l.ab.row;
+        var start = el("td");
+        start.appendChild(el("div", "up", isoTime(r.first_seen) || "—"));
+        var startAge = ageStr(r.first_seen);
+        if (startAge) start.appendChild(el("div", "pipe-sub", "first record " + startAge));
+        tr.appendChild(start);
+
+        var objTd = el("td");
+        objTd.appendChild(el("div", "pipe-obj", fmtInt(r.count)));
+        var note = "batch " + shortId(String(r.batch_id || "—"));
+        if (l.ab.batchCount > 1) note += " · +" + (l.ab.batchCount - 1) + " older";
+        objTd.appendChild(el("div", "pipe-sub", note));
+        tr.appendChild(objTd);
+
+        var arr = pushHist(l.laneKey, r.count || 0);
+        var rate = ratePerMin(arr);
+        var rateTd = el("td");
+        if (rate === null) rateTd.appendChild(el("div", "pipe-sub", "… warming up"));
+        else rateTd.appendChild(el("div", "pipe-rate", (rate >= 10 ? Math.round(rate) : rate.toFixed(1)) + "/min"));
+        tr.appendChild(rateTd);
+
+        var lastTd = el("td");
+        var lastAge = ageStr(r.last_seen || r.updated_at);
+        var lp = el("span", "pill live", lastAge || "LIVE");
+        lastTd.appendChild(lp);
+        var lt = isoTime(r.last_seen || r.updated_at);
+        if (lt) lastTd.appendChild(el("div", "pipe-sub", lt));
+        tr.appendChild(lastTd);
+      } else {
+        tr.appendChild(pipeCell(reachable ? "—" : "—", "up"));
+        var idlePill = el("td"); idlePill.appendChild(pillFor({ cls: "nodata", txt: reachable ? "IDLE" : "NO DATA" }));
+        tr.appendChild(idlePill);
+        tr.appendChild(pipeCell("—", "pipe-sub"));
+        tr.appendChild(pipeCell(reachable ? "no active batch" : "/api/v1/stats · unreachable", "pipe-sub"));
+        pipeHist[l.laneKey] = []; // reset warm-up history when a lane goes idle
+      }
+      body.appendChild(tr);
+    });
+  }
+
+  function renderPipeTiles(reachable, activeCount, laneCount, totalObjs, newestMs) {
+    var host = document.getElementById("pipe-tiles");
+    host.innerHTML = "";
+    function tile(lab, valNode, foot) {
+      var t = el("div", "tile");
+      t.appendChild(el("div", "lab", lab));
+      t.appendChild(valNode);
+      if (foot != null) t.appendChild(el("div", "foot", foot));
+      host.appendChild(t);
+    }
+    if (!reachable) {
+      var v0 = el("div", "val small"); v0.appendChild(pillFor({ cls: "nodata", txt: "NO DATA" }));
+      tile("Pull status", v0, "/api/v1/stats unreachable");
+      return;
+    }
+    var vLanes = el("div", "val", activeCount + " / " + laneCount);
+    tile("Lanes pulling", vLanes, activeCount === 0 ? "no active batch yet" : "active / total lanes");
+
+    tile("Objects OD'd (active)", el("div", "val", fmtInt(totalObjs)),
+      activeCount === 0 ? "awaiting first fitted OMM" : "records across active batches");
+
+    var ageNode;
+    if (newestMs > 0) { ageNode = el("div", "val", ageStr(new Date(newestMs).toISOString()) || "—"); }
+    else { ageNode = el("div", "val small"); ageNode.appendChild(pillFor({ cls: "nodata", txt: "IDLE" })); }
+    tile("Newest record", ageNode, newestMs > 0 ? "most recent OD'd object" : "pipeline idle");
+  }
+
+  function pollPipeline() {
+    getJSON("/stats").then(renderPipeline);
+  }
+
   function refresh() {
     document.getElementById("updated").textContent = new Date().toISOString().slice(0, 19).replace("T", " ") + "Z";
     Promise.all([
@@ -806,6 +1068,7 @@
       renderHeader(idRes, verRes, healthRes);
       renderTiles(stats, catalog);
       renderProviders(collectTopicStrings(channels), collectTopicStrings(topics));
+      renderPipeline(stats); // reuse the stats already fetched this cycle
     });
   }
 
@@ -816,8 +1079,12 @@
   renderSourceRefs();
   renderProviders(null, null); // paint the honest no-data skeleton immediately
   renderTiles(null, null);
+  renderPipeline("skeleton"); // paint all lanes idle until the first poll lands
   document.getElementById("refresh").addEventListener("click", refresh);
   refresh();
+  // Fast pipeline cadence: poll /api/v1/stats every 5s so objects-OD'd, rate,
+  // and last-record age update live without a full page refresh.
+  setInterval(pollPipeline, 5000);
 })();
 </script>
 </body>
