@@ -1566,6 +1566,15 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					authHandler,
 					n.ListenAddrs,
 				)
+				// SDN peer counts for /api/v1/stats — the anonymous read
+				// surface app boards poll. Same evidence as the dashboard's
+				// /api/peers/sdn (epm.BuildObservedSDNPeers), so "SDN peers"
+				// on a board can never disagree with the peer list.
+				coreAPI.SetSDNPeerCounter(func() api.SDNPeerCounts {
+					counts := observedSDNPeerCounts(n)
+					return api.SDNPeerCounts{Connected: counts.Connected, Known: counts.Known}
+				})
+
 				// Mounted gateway flows claim mux paths (incl. the trimmed
 				// exact alias of trailing-slash subtree mounts); the core
 				// API yields claimed surfaces — G.2: the peers-discovery
@@ -3133,6 +3142,9 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 		info["suite_version"] = versioninfo.SuiteVersion
 		info["standards_version"] = versioninfo.SpaceDataStandardsVersion
 		info["advertisement_flag"] = versioninfo.CurrentAdvertisementFlag
+		// Peer populations, split: the raw libp2p/DHT swarm (ipfs) and the
+		// subset that are real SDN nodes (sdn connected / sdn_known observed).
+		info["peers"] = nodeInfoPeerCounts(n)
 
 		addrs := n.ListenAddrs()
 		addrStrings := make([]string, len(addrs))
@@ -4041,6 +4053,68 @@ func handlePeerGraph(n *node.Node) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(data)
+	}
+}
+
+// observedSDNPeerCounts reports how many of this node's peers are actual Space
+// Data Network nodes — connected now (headline) and known overall — from the
+// same evidence as the observed-peer list served at /api/peers/sdn, so the two
+// surfaces can never disagree. Callers pair it with the raw libp2p/DHT swarm
+// count (host.Network().Peers()) to show "SDN peers" beside "IPFS peers".
+//
+// It is read on anonymous, frequently-polled surfaces (/api/v1/stats,
+// /api/node/info), so it is bounded: the peer registry and advertisement maps
+// are mutex-guarded and a stalled writer elsewhere in the node must never turn
+// a status poll into a hung request. On timeout the counts read as zero rather
+// than blocking the response.
+func observedSDNPeerCounts(n *node.Node) epm.SDNPeerCounts {
+	if n == nil {
+		return epm.SDNPeerCounts{}
+	}
+	host := n.Host()
+	if host == nil {
+		return epm.SDNPeerCounts{}
+	}
+
+	done := make(chan epm.SDNPeerCounts, 1)
+	go func() {
+		registry := n.PeerRegistry()
+		var registryPeers []*peers.TrustedPeer
+		if registry != nil {
+			registryPeers = registry.ListPeers()
+		}
+		done <- epm.CountSDNPeers(
+			epm.BuildGraphSnapshot(host, registry),
+			registryPeers,
+			n.SDNAdvertisementFlagsByPeer(),
+			n.SDNAdvertisementAddrsByPeer(),
+		)
+	}()
+
+	select {
+	case counts := <-done:
+		return counts
+	case <-time.After(2 * time.Second):
+		return epm.SDNPeerCounts{}
+	}
+}
+
+// nodeInfoPeerCounts builds the /api/node/info peers block: the raw libp2p/DHT
+// swarm count (ipfs) beside the SDN-node counts (sdn = connected, sdn_known =
+// observed incl. advertisement-discovered peers not connected right now). Same
+// shape as the peers block on /api/v1/stats.
+func nodeInfoPeerCounts(n *node.Node) map[string]interface{} {
+	ipfs := 0
+	if n != nil {
+		if host := n.Host(); host != nil {
+			ipfs = len(host.Network().Peers())
+		}
+	}
+	counts := observedSDNPeerCounts(n)
+	return map[string]interface{}{
+		"ipfs":      ipfs,
+		"sdn":       counts.Connected,
+		"sdn_known": counts.Known,
 	}
 }
 

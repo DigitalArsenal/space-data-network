@@ -80,6 +80,52 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 	return out
 }
 
+// SDNPeerCounts summarizes how many of the peers this node knows about are
+// actual Space Data Network nodes, as opposed to the raw libp2p/DHT swarm.
+//
+// Connected is the headline number: SDN peers with a live connection right now
+// (an online peer graph node carrying SDN evidence — an SDN agent version or an
+// /space-data-network//spacedatanetwork protocol on the connection, or the same
+// evidence recorded in the peer registry; see isConnectedSDNPeer).
+//
+// Known is the full observed-SDN-peer set (BuildObservedSDNPeers): connected SDN
+// peers PLUS peers discovered through SDN advertisement rendezvous that are not
+// currently connected. Known >= Connected always.
+type SDNPeerCounts struct {
+	Connected int `json:"connected"`
+	Known     int `json:"known"`
+}
+
+// CountSDNPeers derives the SDN peer counts from exactly the same evidence the
+// SDN dashboard's observed-peer list uses, so the numbers can never disagree
+// with /api/peers/sdn.
+func CountSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.TrustedPeer, advertisementFlagsByPeer map[string][]string, advertisementAddrsByPeer map[string][]string) SDNPeerCounts {
+	if snapshot == nil {
+		return SDNPeerCounts{}
+	}
+
+	observed := BuildObservedSDNPeers(snapshot, registryPeers, advertisementFlagsByPeer, advertisementAddrsByPeer)
+	online := make(map[string]bool, len(snapshot.Nodes))
+	for _, node := range snapshot.Nodes {
+		peerID := strings.TrimSpace(node.PeerID)
+		if peerID == "" {
+			continue
+		}
+		online[peerID] = online[peerID] || node.IsOnline
+	}
+
+	counts := SDNPeerCounts{Known: len(observed)}
+	for _, entry := range observed {
+		if entry == nil {
+			continue
+		}
+		if online[entry.ID.String()] {
+			counts.Connected++
+		}
+	}
+	return counts
+}
+
 func sdnPeerIDsFromSnapshot(snapshot *PeerGraphSnapshot, registryByID map[string]*peers.TrustedPeer) []string {
 	if snapshot == nil {
 		return nil

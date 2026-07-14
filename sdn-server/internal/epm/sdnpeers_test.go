@@ -191,6 +191,71 @@ func TestBuildObservedSDNPeersIncludesConnectedSDNDesktopWithoutAdvertisement(t 
 	}
 }
 
+// TestCountSDNPeersSplitsConnectedFromKnown proves the SDN peer counts served
+// to the app boards are a strict subset of the libp2p swarm: an IPFS-only peer
+// is never counted, a connected peer speaking an SDN protocol is the headline
+// "connected" number, and an advertisement-discovered peer that is not
+// currently connected only raises "known".
+func TestCountSDNPeersSplitsConnectedFromKnown(t *testing.T) {
+	t.Parallel()
+
+	localID := mustPeerID(t)
+	sdnConnectedID := mustPeerID(t)
+	ipfsOnlyID := mustPeerID(t)
+	sdnOfflineID := mustPeerID(t)
+
+	snapshot := &PeerGraphSnapshot{
+		LocalPeerID: localID.String(),
+		Nodes: []PeerNode{
+			{PeerID: localID.String(), IsOnline: true, AgentVersion: "spacedatanetwork/1.0.3"},
+			{PeerID: sdnConnectedID.String(), IsOnline: true},
+			{PeerID: ipfsOnlyID.String(), IsOnline: true, AgentVersion: "kubo/0.28.0"},
+			{PeerID: sdnOfflineID.String(), IsOnline: false},
+		},
+		Edges: []PeerEdge{
+			{
+				SourcePeerID: localID.String(),
+				TargetPeerID: sdnConnectedID.String(),
+				Protocols:    []string{"/spacedatanetwork/sds-exchange/1.0.0"},
+			},
+			{
+				SourcePeerID: localID.String(),
+				TargetPeerID: ipfsOnlyID.String(),
+				Protocols:    []string{"/ipfs/bitswap/1.2.0", "/ipfs/kad/1.0.0"},
+			},
+		},
+	}
+
+	counts := CountSDNPeers(
+		snapshot,
+		nil,
+		// The offline peer is known only through SDN advertisement discovery.
+		map[string][]string{sdnOfflineID.String(): {"sdn/1.0.3"}},
+		nil,
+	)
+
+	if counts.Connected != 1 {
+		t.Fatalf("Connected = %d, want 1 (only the SDN-protocol peer; the IPFS-only peer must not count)", counts.Connected)
+	}
+	if counts.Known != 2 {
+		t.Fatalf("Known = %d, want 2 (connected SDN peer + advertisement-discovered offline SDN peer)", counts.Known)
+	}
+	if counts.Known != len(BuildObservedSDNPeers(snapshot, nil, map[string][]string{sdnOfflineID.String(): {"sdn/1.0.3"}}, nil)) {
+		t.Fatalf("Known must equal the observed SDN peer list served at /api/peers/sdn")
+	}
+	if counts.Connected > counts.Known {
+		t.Fatalf("Connected (%d) must never exceed Known (%d)", counts.Connected, counts.Known)
+	}
+}
+
+func TestCountSDNPeersNilSnapshot(t *testing.T) {
+	t.Parallel()
+
+	if got := CountSDNPeers(nil, nil, nil, nil); got.Connected != 0 || got.Known != 0 {
+		t.Fatalf("CountSDNPeers(nil) = %+v, want zero counts", got)
+	}
+}
+
 func mustPeerID(t *testing.T) peer.ID {
 	t.Helper()
 
