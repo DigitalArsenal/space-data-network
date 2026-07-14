@@ -2033,6 +2033,27 @@ type DataSourceSummary struct {
 	TotalBytes        int64
 }
 
+// SourceBatchProgress is one live pipeline-progress row per
+// (schema, provider, source, batch) that has records, aggregated across
+// producer identities. It carries the current record count + byte total plus
+// the first/last record arrival times (per-record ingest created_at) and the
+// summary's last-update time. It powers the ANONYMOUS pipeline-progress surface
+// exposed on /api/v1/stats (App 2 supplemental-OMM board): the rising Count is
+// the "objects fitted so far" signal, FirstSeenUnix is when the batch's first
+// record landed ("pull started"), and LastSeenUnix drives "last-record age".
+// Unix values are 0 when unknown.
+type SourceBatchProgress struct {
+	SchemaName    string
+	ProviderID    string
+	SourceName    string
+	BatchID       string
+	Count         int64
+	TotalBytes    int64
+	FirstSeenUnix int64
+	LastSeenUnix  int64
+	UpdatedAtUnix int64
+}
+
 // RawRecordQuery filters raw FlatBuffer records for UI and node-to-node reads.
 type RawRecordQuery struct {
 	SchemaName        string
@@ -4245,6 +4266,64 @@ func (s *FlatSQLStore) DataSummary() (*DataSummary, error) {
 	}
 
 	return summary, nil
+}
+
+// SourceBatchProgress returns one live progress row per
+// (schema, provider, source, batch) with a positive record count, aggregating
+// across producer identities. Counts/bytes/updated_at come from the maintained
+// source-summary table; the first/last record arrival times come from the
+// per-record source-tags created_at column. It is a read-only aggregate, safe
+// for the anonymous /api/v1/stats pipeline-progress surface.
+func (s *FlatSQLStore) SourceBatchProgress() ([]SourceBatchProgress, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT ss.schema_name, ss.provider_id, ss.source_name, ss.batch_id,
+		       SUM(ss.record_count) AS count,
+		       SUM(ss.total_bytes) AS total_bytes,
+		       MAX(ss.updated_at) AS updated_at,
+		       MIN(t.first_seen) AS first_seen,
+		       MAX(t.last_seen) AS last_seen
+		FROM sdn_record_source_summary ss
+		LEFT JOIN (
+			SELECT schema_name, provider_id, source_name, batch_id,
+			       MIN(created_at) AS first_seen, MAX(created_at) AS last_seen
+			FROM sdn_record_source_tags
+			GROUP BY schema_name, provider_id, source_name, batch_id
+		) t
+		  ON t.schema_name = ss.schema_name
+		 AND t.provider_id = ss.provider_id
+		 AND t.source_name = ss.source_name
+		 AND t.batch_id = ss.batch_id
+		GROUP BY ss.schema_name, ss.provider_id, ss.source_name, ss.batch_id
+		HAVING SUM(ss.record_count) > 0
+		ORDER BY ss.schema_name ASC, ss.provider_id ASC, ss.source_name ASC, ss.batch_id ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query source batch progress: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]SourceBatchProgress, 0)
+	for rows.Next() {
+		var p SourceBatchProgress
+		var updatedAt, firstSeen, lastSeen sql.NullInt64
+		if err := rows.Scan(
+			&p.SchemaName, &p.ProviderID, &p.SourceName, &p.BatchID,
+			&p.Count, &p.TotalBytes, &updatedAt, &firstSeen, &lastSeen,
+		); err != nil {
+			return nil, fmt.Errorf("scan source batch progress: %w", err)
+		}
+		p.UpdatedAtUnix = updatedAt.Int64
+		p.FirstSeenUnix = firstSeen.Int64
+		p.LastSeenUnix = lastSeen.Int64
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate source batch progress: %w", err)
+	}
+	return out, nil
 }
 
 // CountRawRecords returns a filtered raw-record count without hydrating

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
@@ -173,10 +174,83 @@ func TestCoreAPI_Stats_EmptyStore(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	for _, field := range []string{"connected_peers", "total_records", "total_bytes", "schemas"} {
+	for _, field := range []string{"connected_peers", "total_records", "total_bytes", "schemas", "sources"} {
 		if _, ok := body[field]; !ok {
 			t.Errorf("field %q missing from stats response", field)
 		}
+	}
+	// sources is always present (possibly empty) so the App 2 pipeline board can
+	// rely on it without a shape guard.
+	if _, ok := body["sources"].([]interface{}); !ok {
+		t.Errorf("sources field is not an array, got %T", body["sources"])
+	}
+}
+
+// TestCoreAPI_Stats_IncludesSourceBatchProgress proves the anonymous stats
+// surface carries per-(schema, provider, source, batch) live pipeline progress:
+// a rising record count plus first/last record arrival timestamps. This is the
+// surface the App 2 supplemental-OMM board polls to show pull progress.
+func TestCoreAPI_Stats_IncludesSourceBatchProgress(t *testing.T) {
+	store, _, validator := newDataAPITestStoreWithBasePath(t)
+	storeDataAPITestOMMWithBatch(t, store, 25544, "ISS (ZARYA)", "2026-05-05", "batch-alpha")
+	storeDataAPITestOMMWithBatch(t, store, 56775, "STARLINK-6292", "2026-05-06", "batch-alpha")
+
+	h := &CoreAPIHandler{
+		peerID:    peer.ID("12D3KooWTestPeerID"),
+		store:     store,
+		validator: validator,
+		rl:        newRateLimiter(),
+	}
+	mux := newTestCoreAPIMux(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		TotalRecords int64 `json:"total_records"`
+		Sources      []struct {
+			Schema     string `json:"schema"`
+			ProviderID string `json:"provider_id"`
+			SourceName string `json:"source_name"`
+			BatchID    string `json:"batch_id"`
+			Count      int64  `json:"count"`
+			FirstSeen  string `json:"first_seen"`
+			LastSeen   string `json:"last_seen"`
+			UpdatedAt  string `json:"updated_at"`
+		} `json:"sources"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.TotalRecords < 2 {
+		t.Fatalf("total_records = %d, want >= 2", body.TotalRecords)
+	}
+
+	var found bool
+	for _, s := range body.Sources {
+		if s.Schema == "OMM.fbs" && s.ProviderID == "space-data-network-02" &&
+			s.SourceName == "celestrak-gp" && s.BatchID == "batch-alpha" {
+			found = true
+			if s.Count != 2 {
+				t.Fatalf("OMM batch-alpha count = %d, want 2 (rising pull progress)", s.Count)
+			}
+			if s.FirstSeen == "" || s.LastSeen == "" {
+				t.Fatalf("progress row missing timestamps: first_seen=%q last_seen=%q", s.FirstSeen, s.LastSeen)
+			}
+			if _, err := time.Parse(time.RFC3339, s.FirstSeen); err != nil {
+				t.Fatalf("first_seen %q is not RFC3339: %v", s.FirstSeen, err)
+			}
+			if _, err := time.Parse(time.RFC3339, s.LastSeen); err != nil {
+				t.Fatalf("last_seen %q is not RFC3339: %v", s.LastSeen, err)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no OMM batch-alpha progress row in sources: %+v", body.Sources)
 	}
 }
 

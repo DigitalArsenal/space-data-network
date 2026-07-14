@@ -229,6 +229,7 @@ func (h *CoreAPIHandler) handleStats(w http.ResponseWriter, r *http.Request) {
 		"total_records":   int64(0),
 		"total_bytes":     int64(0),
 		"schemas":         []interface{}{},
+		"sources":         []interface{}{},
 	}
 
 	if h.store != nil {
@@ -244,6 +245,36 @@ func (h *CoreAPIHandler) handleStats(w http.ResponseWriter, r *http.Request) {
 			resp["total_records"] = summary.TotalRecords
 			resp["total_bytes"] = summary.TotalBytes
 			resp["schemas"] = schemaList
+		}
+
+		// Per-(schema, provider, source, batch) live pipeline progress. This is
+		// the anonymous read surface the App 2 supplemental-OMM board polls to
+		// render pull progress: the rising count per source/batch is the
+		// "objects fitted so far" signal, first_seen is when the batch's first
+		// record landed, last_seen drives last-record age. Read-only aggregate.
+		if progress, err := h.store.SourceBatchProgress(); err == nil {
+			sources := make([]map[string]interface{}, 0, len(progress))
+			for _, p := range progress {
+				row := map[string]interface{}{
+					"schema":      p.SchemaName,
+					"provider_id": p.ProviderID,
+					"source_name": p.SourceName,
+					"batch_id":    p.BatchID,
+					"count":       p.Count,
+					"total_bytes": p.TotalBytes,
+				}
+				if p.FirstSeenUnix > 0 {
+					row["first_seen"] = time.Unix(p.FirstSeenUnix, 0).UTC().Format(time.RFC3339)
+				}
+				if p.LastSeenUnix > 0 {
+					row["last_seen"] = time.Unix(p.LastSeenUnix, 0).UTC().Format(time.RFC3339)
+				}
+				if p.UpdatedAtUnix > 0 {
+					row["updated_at"] = time.Unix(p.UpdatedAtUnix, 0).UTC().Format(time.RFC3339)
+				}
+				sources = append(sources, row)
+			}
+			resp["sources"] = sources
 		}
 	}
 

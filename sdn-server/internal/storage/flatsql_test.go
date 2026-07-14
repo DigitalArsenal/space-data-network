@@ -745,6 +745,80 @@ func TestFlatSQLStoreDataSummaryGroupsBySchemaAndSource(t *testing.T) {
 	}
 }
 
+func TestFlatSQLStoreSourceBatchProgress(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-source-progress-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	// Two records in one (provider, source, batch) published by DIFFERENT
+	// producers must aggregate into a single progress row with count 2.
+	iss := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build()
+	star := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK").Build()
+	if _, err := store.StoreWithSourceTags("OMM.fbs", iss, "peer-alpha", nil, SourceTags{
+		ProviderID: "spacex-starlink", SourceName: "spacex-starlink", BatchID: "batch-1", ContentKeyID: "key-alpha",
+	}); err != nil {
+		t.Fatalf("store iss failed: %v", err)
+	}
+	if _, err := store.StoreWithSourceTags("OMM.fbs", star, "peer-bravo", nil, SourceTags{
+		ProviderID: "spacex-starlink", SourceName: "spacex-starlink", BatchID: "batch-1", ContentKeyID: "key-bravo",
+	}); err != nil {
+		t.Fatalf("store star failed: %v", err)
+	}
+	// A second provider/batch to prove rows stay distinct.
+	iss2 := sds.NewOMMBuilder().WithNoradCatID(25545).WithObjectName("ISS-2").Build()
+	if _, err := store.StoreWithSourceTags("OMM.fbs", iss2, "peer-alpha", nil, SourceTags{
+		ProviderID: "iss", SourceName: "iss", BatchID: "batch-2", ContentKeyID: "key-alpha",
+	}); err != nil {
+		t.Fatalf("store iss2 failed: %v", err)
+	}
+
+	progress, err := store.SourceBatchProgress()
+	if err != nil {
+		t.Fatalf("SourceBatchProgress failed: %v", err)
+	}
+
+	var starlink, issRow *SourceBatchProgress
+	for i := range progress {
+		p := &progress[i]
+		if p.SchemaName == "OMM.fbs" && p.SourceName == "spacex-starlink" && p.BatchID == "batch-1" {
+			starlink = p
+		}
+		if p.SchemaName == "OMM.fbs" && p.SourceName == "iss" && p.BatchID == "batch-2" {
+			issRow = p
+		}
+	}
+	if starlink == nil {
+		t.Fatalf("no starlink batch-1 progress row: %+v", progress)
+	}
+	if starlink.Count != 2 {
+		t.Fatalf("starlink batch-1 count = %d, want 2 (aggregated across producers)", starlink.Count)
+	}
+	if starlink.FirstSeenUnix <= 0 || starlink.LastSeenUnix <= 0 {
+		t.Fatalf("starlink timestamps not populated: first=%d last=%d", starlink.FirstSeenUnix, starlink.LastSeenUnix)
+	}
+	if starlink.LastSeenUnix < starlink.FirstSeenUnix {
+		t.Fatalf("last_seen %d before first_seen %d", starlink.LastSeenUnix, starlink.FirstSeenUnix)
+	}
+	if starlink.UpdatedAtUnix <= 0 {
+		t.Fatalf("starlink updated_at not populated: %d", starlink.UpdatedAtUnix)
+	}
+	if issRow == nil || issRow.Count != 1 {
+		t.Fatalf("iss batch-2 progress row wrong: %+v", issRow)
+	}
+}
+
 func TestFlatSQLStoreMaintainsSourceSummaryForMultipleProducers(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-source-summary-test-*")
 	if err != nil {
