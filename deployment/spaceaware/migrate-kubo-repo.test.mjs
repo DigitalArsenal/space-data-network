@@ -16,6 +16,7 @@ import { delimiter, join } from 'node:path';
 import { test } from 'node:test';
 
 const scriptPath = new URL('./migrate-kubo-repo.sh', import.meta.url);
+const readmePath = new URL('./README.md', import.meta.url);
 const deployScriptPath = new URL('../scripts/deploy.sh', import.meta.url);
 
 const sourcePins = [
@@ -381,6 +382,27 @@ test('production migration defaults use the live ipfs.service topology', async (
     /for required_command in systemctl ipfs rsync findmnt realpath df du curl chown xargs; do/,
   );
   assert.doesNotMatch(migration, /kubo\.service|127\.0\.0\.1:5001|127\.0\.0\.1:8080/);
+});
+
+test('README safely decodes post-migration systemd properties before exact checks', async () => {
+  const readme = await readFile(readmePath, 'utf8');
+  const verificationStart = readme.indexOf('### Verification');
+  const verificationEnd = readme.indexOf('### Rollback', verificationStart);
+  const verification = readme.slice(verificationStart, verificationEnd);
+
+  assert.match(verification, /set -o pipefail/);
+  assert.match(
+    verification,
+    /systemctl show ipfs\.service --property=Environment --value \|\s+xargs -n 1 printf '%s\\n' 2>\/dev\/null \|\s+grep -Fx 'IPFS_PATH=\/mnt\/volume_nyc3_01\/ipfs'/,
+  );
+  assert.match(
+    verification,
+    /systemctl show ipfs\.service --property=ReadWritePaths --value \|\s+xargs -n 1 printf '%s\\n' 2>\/dev\/null \|\s+grep -Fx '\/mnt\/volume_nyc3_01\/ipfs'/,
+  );
+  assert.doesNotMatch(
+    verification,
+    /systemctl show ipfs\.service --property=(?:Environment|ReadWritePaths) --value \| tr ' ' '\\n'/,
+  );
 });
 
 test('refuses a missing ipfs.service before any repository or service mutation', async (t) => {
