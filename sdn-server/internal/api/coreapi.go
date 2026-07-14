@@ -55,6 +55,26 @@ type CoreAPIHandler struct {
 	rl           *rateLimiter
 	listenAddrs  func() []multiaddr.Multiaddr
 	policyEngine auth.PolicyEngine // optional; nil = policies disabled
+
+	// sdnPeerCounter reports how many of the connected/known peers are actual
+	// SDN nodes (as opposed to the raw libp2p/DHT swarm). Injected from the
+	// node (epm.CountSDNPeers) so this package stays free of a node import.
+	// nil = SDN peer state unavailable; the stats surface then reports 0.
+	sdnPeerCounter func() SDNPeerCounts
+}
+
+// SDNPeerCounts mirrors epm.SDNPeerCounts for the /api/v1/stats peers block:
+// Connected = SDN peers with a live connection now (the headline number),
+// Known = every observed SDN peer including advertisement-discovered ones that
+// are not currently connected. Both are strict subsets of the IPFS swarm count.
+type SDNPeerCounts struct {
+	Connected int `json:"connected"`
+	Known     int `json:"known"`
+}
+
+// SetSDNPeerCounter attaches the SDN peer-state source. Pass nil to disable.
+func (h *CoreAPIHandler) SetSDNPeerCounter(fn func() SDNPeerCounts) {
+	h.sdnPeerCounter = fn
 }
 
 // NewCoreAPIHandler constructs a CoreAPIHandler from the individual dependencies.
@@ -219,17 +239,33 @@ func (h *CoreAPIHandler) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// IPFS peers: the raw libp2p/DHT swarm connection count.
 	connectedPeers := 0
 	if h.h2pHost != nil {
 		connectedPeers = len(h.h2pHost.Network().Peers())
 	}
 
+	// SDN peers: the subset of the swarm that are actual Space Data Network
+	// nodes (SDN protocol / SDN agent version / SDN advertisement evidence —
+	// epm.CountSDNPeers, the same source as the dashboard's /api/peers/sdn).
+	sdnCounts := SDNPeerCounts{}
+	if h.sdnPeerCounter != nil {
+		sdnCounts = h.sdnPeerCounter()
+	}
+
 	resp := map[string]interface{}{
+		// connected_peers is the historical IPFS/libp2p swarm count; kept
+		// verbatim for backward compatibility. New consumers read peers.*.
 		"connected_peers": connectedPeers,
-		"total_records":   int64(0),
-		"total_bytes":     int64(0),
-		"schemas":         []interface{}{},
-		"sources":         []interface{}{},
+		"peers": map[string]interface{}{
+			"ipfs":      connectedPeers,
+			"sdn":       sdnCounts.Connected,
+			"sdn_known": sdnCounts.Known,
+		},
+		"total_records": int64(0),
+		"total_bytes":   int64(0),
+		"schemas":       []interface{}{},
+		"sources":       []interface{}{},
 	}
 
 	if h.store != nil {

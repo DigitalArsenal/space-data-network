@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 
@@ -183,6 +184,110 @@ func TestCoreAPI_Stats_EmptyStore(t *testing.T) {
 	// rely on it without a shape guard.
 	if _, ok := body["sources"].([]interface{}); !ok {
 		t.Errorf("sources field is not an array, got %T", body["sources"])
+	}
+}
+
+// TestCoreAPI_Stats_PeersBlockSplitsSDNFromIPFS proves the anonymous stats
+// surface reports the two peer populations separately: peers.ipfs is the raw
+// libp2p/DHT swarm connection count, peers.sdn is the count of connected peers
+// that are actual Space Data Network nodes (with peers.sdn_known covering the
+// wider observed set, incl. advertisement-discovered nodes not connected now).
+// The legacy connected_peers field must keep meaning the IPFS swarm count.
+func TestCoreAPI_Stats_PeersBlockSplitsSDNFromIPFS(t *testing.T) {
+	// A real two-host swarm: the client holds exactly one libp2p connection,
+	// so the IPFS count is 1 and comes from the host, not from the SDN source.
+	server, err := libp2p.New()
+	if err != nil {
+		t.Fatalf("create server host: %v", err)
+	}
+	defer server.Close()
+	client, err := libp2p.New()
+	if err != nil {
+		t.Fatalf("create client host: %v", err)
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx, peer.AddrInfo{ID: server.ID(), Addrs: server.Addrs()}); err != nil {
+		t.Fatalf("connect hosts: %v", err)
+	}
+
+	h := &CoreAPIHandler{
+		peerID:  client.ID(),
+		h2pHost: client,
+		rl:      newRateLimiter(),
+	}
+	// The node's real SDN peer state (epm.CountSDNPeers) is injected here; the
+	// swarm peer is a plain libp2p host, so a truthful counter reports 0 SDN
+	// peers connected while the IPFS count is 1.
+	h.SetSDNPeerCounter(func() SDNPeerCounts { return SDNPeerCounts{Connected: 0, Known: 2} })
+
+	mux := newTestCoreAPIMux(h)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		ConnectedPeers int `json:"connected_peers"`
+		Peers          struct {
+			IPFS     *int `json:"ipfs"`
+			SDN      *int `json:"sdn"`
+			SDNKnown *int `json:"sdn_known"`
+		} `json:"peers"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Peers.IPFS == nil || body.Peers.SDN == nil || body.Peers.SDNKnown == nil {
+		t.Fatalf("peers block missing ipfs/sdn/sdn_known: %+v", body.Peers)
+	}
+	if *body.Peers.IPFS != 1 {
+		t.Errorf("peers.ipfs = %d, want 1 (the live swarm connection)", *body.Peers.IPFS)
+	}
+	if body.ConnectedPeers != *body.Peers.IPFS {
+		t.Errorf("connected_peers = %d, must stay equal to peers.ipfs = %d (backward compat)", body.ConnectedPeers, *body.Peers.IPFS)
+	}
+	if *body.Peers.SDN != 0 {
+		t.Errorf("peers.sdn = %d, want 0 (the swarm peer is not an SDN node)", *body.Peers.SDN)
+	}
+	if *body.Peers.SDNKnown != 2 {
+		t.Errorf("peers.sdn_known = %d, want 2 (from the injected SDN peer state)", *body.Peers.SDNKnown)
+	}
+}
+
+// TestCoreAPI_Stats_PeersBlockWithoutSDNSource proves the peers block is always
+// present and zero-valued when no SDN peer-state source is wired (e.g. a node
+// without a peer registry), so the board never has to shape-guard it.
+func TestCoreAPI_Stats_PeersBlockWithoutSDNSource(t *testing.T) {
+	h, _ := newTestCoreAPIHandler(t)
+	mux := newTestCoreAPIMux(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Peers struct {
+			IPFS     *int `json:"ipfs"`
+			SDN      *int `json:"sdn"`
+			SDNKnown *int `json:"sdn_known"`
+		} `json:"peers"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Peers.IPFS == nil || body.Peers.SDN == nil || body.Peers.SDNKnown == nil {
+		t.Fatalf("peers block missing ipfs/sdn/sdn_known: %+v", body.Peers)
+	}
+	if *body.Peers.IPFS != 0 || *body.Peers.SDN != 0 || *body.Peers.SDNKnown != 0 {
+		t.Errorf("peers = %+v, want all zero with no host and no SDN source", body.Peers)
 	}
 }
 

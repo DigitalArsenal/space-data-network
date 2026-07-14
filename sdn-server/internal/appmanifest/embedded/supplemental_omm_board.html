@@ -595,20 +595,40 @@
     v.appendChild(pillFor({ cls: "nodata", txt: st === "unreachable" ? "UNREACHABLE" : "NO DATA" }));
     return v;
   }
-  function renderTiles(stats, catalog) {
+  // nodeInfo is the peer-count fallback: /api/node/info carries the same peers
+  // block as /api/v1/stats and answers even when the stats aggregate is slow.
+  function renderTiles(stats, catalog, nodeInfo) {
     var host = document.getElementById("tiles");
     host.innerHTML = "";
     var schemaMap = {};
-    var totalRecords = null, totalBytes = null, peersFromStats = null;
+    var totalRecords = null, totalBytes = null;
+    // Two distinct peer populations: the raw libp2p/DHT swarm (ipfsPeers) and
+    // the subset of it that are actual Space Data Network nodes (sdnPeers =
+    // connected now, sdnKnown = also counting advertisement-discovered nodes
+    // this node has seen but is not connected to right now).
+    var ipfsPeers = null, sdnPeers = null, sdnKnown = null;
 
     if (stats && stats.__state === "ok" && stats.data) {
       var s = stats.data;
       if (typeof s.total_records === "number") totalRecords = s.total_records;
       if (typeof s.total_bytes === "number") totalBytes = s.total_bytes;
-      if (typeof s.connected_peers === "number") peersFromStats = s.connected_peers;
+      if (typeof s.connected_peers === "number") ipfsPeers = s.connected_peers;
+      if (s.peers && typeof s.peers === "object") {
+        if (typeof s.peers.ipfs === "number") ipfsPeers = s.peers.ipfs;
+        if (typeof s.peers.sdn === "number") sdnPeers = s.peers.sdn;
+        if (typeof s.peers.sdn_known === "number") sdnKnown = s.peers.sdn_known;
+      }
       (s.schemas || []).forEach(function (row) {
         if (row && row.schema) schemaMap[row.schema] = { count: row.count, bytes: row.total_bytes };
       });
+    }
+    // Peer-count fallback: /api/node/info serves the same peers block and stays
+    // responsive when the stats aggregate is not.
+    if (sdnPeers === null && nodeInfo && nodeInfo.__state === "ok" && nodeInfo.data && nodeInfo.data.peers && typeof nodeInfo.data.peers === "object") {
+      var np = nodeInfo.data.peers;
+      if (typeof np.ipfs === "number" && ipfsPeers === null) ipfsPeers = np.ipfs;
+      if (typeof np.sdn === "number") sdnPeers = np.sdn;
+      if (typeof np.sdn_known === "number") sdnKnown = np.sdn_known;
     }
     if (catalog && catalog.__state === "ok" && catalog.data && Array.isArray(catalog.data.schemas)) {
       catalog.data.schemas.forEach(function (row) {
@@ -648,10 +668,34 @@
     else { tr.appendChild(unreachableVal(stats)); tr.appendChild(el("div", "foot", "/api/v1/stats")); }
     host.appendChild(tr);
 
+    // SDN peers first (headline): nodes that actually speak the Space Data
+    // Network protocols. IPFS peers second: the whole libp2p/DHT swarm, of
+    // which the SDN nodes are a small subset.
+    var sp = el("div", "tile");
+    sp.appendChild(el("div", "lab", "SDN peers"));
+    if (sdnPeers !== null) {
+      sp.appendChild(el("div", "val", fmtInt(sdnPeers)));
+      var sdnFoot = "connected SDN nodes";
+      if (sdnKnown !== null && sdnKnown > sdnPeers) sdnFoot = "connected · " + fmtInt(sdnKnown) + " known";
+      sp.appendChild(el("div", "foot", sdnFoot));
+      sp.title = "Peers running Space Data Network nodes (SDN protocols / SDN advertisement)"
+        + (sdnKnown !== null ? " — " + fmtInt(sdnPeers) + " connected now, " + fmtInt(sdnKnown) + " known to this node" : "");
+    } else {
+      sp.appendChild(unreachableVal(stats));
+      sp.appendChild(el("div", "foot", "connected SDN nodes"));
+    }
+    host.appendChild(sp);
+
     var pk = el("div", "tile");
-    pk.appendChild(el("div", "lab", "Connected peers"));
-    if (peersFromStats !== null) { pk.appendChild(el("div", "val", fmtInt(peersFromStats))); pk.appendChild(el("div", "foot", "gossip mesh")); }
-    else { pk.appendChild(unreachableVal(stats)); pk.appendChild(el("div", "foot", "/api/v1/stats · /api/v1/peers")); }
+    pk.appendChild(el("div", "lab", "IPFS peers"));
+    if (ipfsPeers !== null) {
+      pk.appendChild(el("div", "val", fmtInt(ipfsPeers)));
+      pk.appendChild(el("div", "foot", "libp2p swarm"));
+      pk.title = "All libp2p/DHT swarm connections, SDN and non-SDN alike";
+    } else {
+      pk.appendChild(unreachableVal(stats));
+      pk.appendChild(el("div", "foot", "libp2p swarm"));
+    }
     host.appendChild(pk);
   }
 
@@ -1776,7 +1820,7 @@
       getJSON("/stats"), getJSON("/catalog")
     ]).then(function (r) {
       renderHeader(r[0], r[1], r[2]);
-      renderTiles(r[3], r[4]);
+      renderTiles(r[3], r[4], r[1]);
       applyStats(r[3]);
     });
     refreshRunControls();
@@ -1792,7 +1836,7 @@
   var filterInput = document.getElementById("lane-filter");
   if (filterInput) filterInput.addEventListener("input", function () { laneState.filter = filterInput.value; renderLaneTable(); });
 
-  renderTiles(null, null);
+  renderTiles(null, null, null);
   applyStats("skeleton"); // honest idle skeleton until the first poll lands
   document.getElementById("refresh").addEventListener("click", refresh);
   refresh();
