@@ -49,7 +49,12 @@ ingest:
   celestrak_interval: 3h
   satcat_interval: 3h
   space_weather_interval: 3h
-  spacetrack_enabled: false
+  # Enabled 2026-07-13 (A2.2c-ST/A2.10 owner directive). Credentials come from
+  # SPACETRACK_IDENTITY/SPACETRACK_PASSWORD via the service unit
+  # EnvironmentFile (/etc/spacedatanetwork/spacetrack.env, host-only, 600) —
+  # never from this repo. Lanes: publicfiles operator-OEM + current-gp
+  # full-catalog snapshots (6h poll), in-lane rate-limited (<30/min).
+  spacetrack_enabled: true
   udl_enabled: false
   http_timeout: 900s
   dataset_publish_url: http://127.0.0.1:5001/api/v1/admin/dataset-updates/publish
