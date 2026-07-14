@@ -8,8 +8,8 @@
   is the inline CONTENT of the App 2 SDS $APP record — the whole file is the
   record's entry UI page.
 
-  TWO VIEWS (owner directives 2026-07-14): a LANES | RUNS switcher in the header
-  (no routing — both views live in this document).
+  TWO VIEWS (owner directives 2026-07-14): a LANES | RUNS top navigation menu at
+  the very top of the page (no routing — both views live in this document).
     LANES — the single consolidated lane table, one row per ingest lane.
             Clicking a row expands it (accessible: the row is a button with
             aria-expanded; a colspan detail row unfolds) into a stats strip +
@@ -54,9 +54,9 @@
     --panel2: #171c22;
     --edge: #262d36;
     --edge2: #333c48;
-    --ink: #d6dde5;
-    --dim: #7d8794;
-    --dimmer: #565f6b;
+    --ink: #dde4ec;
+    --dim: #939dab;
+    --dimmer: #707b88;
     --live: #46d19e;
     --ref: #d7a24a;
     --nodata: #5a636f;
@@ -70,25 +70,41 @@
   }
   * { box-sizing: border-box; border-radius: 0 !important; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--sys); }
-  body { font-size: 17px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  /* Readability: 19.5px base (owner: "bigger text"), left-aligned everywhere —
+     including wrapped text — no centered blocks anywhere on the page. */
+  body { font-size: 19.5px; line-height: 1.55; -webkit-font-smoothing: antialiased; text-align: left; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
 
-  .wrap { max-width: 1120px; margin: 0 auto; padding: 18px 16px 40px; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 0 18px 44px; }
 
-  header { border: 1px solid var(--edge); background: var(--panel); padding: 14px 16px; }
-  .titlerow { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-  h1 { font-size: 19.5px; letter-spacing: 0.14em; text-transform: uppercase; margin: 0; font-weight: 600; }
-  .appid { font-family: var(--mono); font-size: 14.5px; color: var(--dim); }
-  .sub { color: var(--dim); font-size: 15px; margin-top: 5px; text-transform: uppercase; letter-spacing: 0.06em; }
+  /* Top navigation menu (owner: "'lanes' and 'runs' should be in a top menu").
+     Full-width bar at the very top of the page, generous click targets, active
+     view marked by aria-pressed (accent underline + brighter ink). */
+  .topmenu { display: flex; border: 1px solid var(--edge); border-top: none; background: var(--panel);
+    margin: 0 -18px 22px; padding: 0 18px; }
+  .topmenu button {
+    font-family: var(--mono); font-size: 17px; text-transform: uppercase; letter-spacing: 0.12em;
+    background: transparent; color: var(--dim); border: none; border-right: 1px solid var(--edge);
+    padding: 16px 38px; cursor: pointer;
+  }
+  .topmenu button:first-child { border-left: 1px solid var(--edge); }
+  .topmenu button:hover { color: #fff; background: #10151b; border-color: var(--edge); }
+  .topmenu button[aria-pressed="true"] { color: #fff; background: #14202e; box-shadow: inset 0 -3px 0 var(--accent); }
+
+  header { border: 1px solid var(--edge); background: var(--panel); padding: 16px 18px; }
+  .titlerow { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  h1 { font-size: 22.5px; letter-spacing: 0.14em; text-transform: uppercase; margin: 0; font-weight: 600; }
+  .appid { font-family: var(--mono); font-size: 16px; color: var(--dim); }
+  .sub { color: var(--dim); font-size: 16.5px; margin-top: 7px; text-transform: uppercase; letter-spacing: 0.06em; }
   .meta { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
-  .meta .kv { font-family: var(--mono); font-size: 14.5px; color: var(--dim); }
+  .meta .kv { font-family: var(--mono); font-size: 16px; color: var(--dim); }
   .meta .kv b { color: var(--ink); font-weight: 600; }
   .spacer { flex: 1; }
   button {
-    font-family: var(--mono); font-size: 14.5px; text-transform: uppercase; letter-spacing: 0.08em;
+    font-family: var(--mono); font-size: 16px; text-transform: uppercase; letter-spacing: 0.08em;
     background: var(--panel2); color: var(--ink); border: 1px solid var(--edge2);
-    padding: 6px 12px; cursor: pointer;
+    padding: 7px 14px; cursor: pointer;
   }
   button:hover { border-color: var(--accent); color: #fff; }
   button:active { background: #0d1116; }
@@ -98,8 +114,8 @@
   /* Pills carry their own breathing room (owner: "text and tags need to be
      spaced better with margin around them") — inline-block + margin so a pill
      never sits flush against neighboring text in any cell/tile/legend row. */
-  .pill { font-family: var(--mono); font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.06em;
-    display: inline-block; padding: 3px 9px; margin: 2px 8px 2px 0; border: 1px solid var(--edge2);
+  .pill { font-family: var(--mono); font-size: 14.5px; text-transform: uppercase; letter-spacing: 0.06em;
+    display: inline-block; padding: 3px 10px; margin: 2px 8px 2px 0; border: 1px solid var(--edge2);
     color: var(--dim); white-space: nowrap; }
   .pill:last-child { margin-right: 0; }
   .pill.live { color: var(--live); border-color: #244b3d; background: #0e1a15; }
@@ -117,39 +133,30 @@
   .pill.nonindep { color: var(--nonindep); border-color: #3b2d52; background: #150f1d;
     white-space: normal; }
 
-  section { margin-top: 26px; }
-  .sectlabel { font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer);
+  section { margin-top: 28px; }
+  .sectlabel { font-size: 15px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer);
     margin: 0 0 12px 1px; }
 
-  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; }
-  .tile { border: 1px solid var(--edge); background: var(--panel); padding: 13px 15px; }
-  .tile .lab { font-size: 13px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--dim); }
-  .tile .val { font-family: var(--mono); font-size: 24.5px; margin-top: 9px; color: var(--ink); }
-  .tile .val.small { font-size: 15.5px; line-height: 1.5; }
-  .tile .foot { font-family: var(--mono); font-size: 12.5px; color: var(--dimmer); margin-top: 9px; }
-  /* REF report card tiles (RUNS view): slightly tighter numeral so the
-     p50/p90/p99 triple fits on one line, amber REF framing. */
-  .runstrip .tile { border-color: #4a3c1f; }
-  .runstrip .tile .val { font-size: 19.5px; }
-
-  /* View switcher (LANES | RUNS). Plain buttons, aria-pressed drives styling —
-     no routing, both views live in this one document. */
-  .viewnav { display: flex; gap: 10px; margin-top: 14px; }
-  .viewnav button { padding: 7px 18px; }
-  .viewnav button[aria-pressed="true"] {
-    color: #fff; border-color: var(--accent); background: #14202e;
-  }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+  .tile { border: 1px solid var(--edge); background: var(--panel); padding: 14px 16px; text-align: left; }
+  .tile .lab { font-size: 14.5px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--dim); }
+  .tile .val { font-family: var(--mono); font-size: 27px; margin-top: 9px; color: var(--ink); }
+  .tile .val.small { font-size: 17px; line-height: 1.5; }
+  .tile .foot { font-family: var(--mono); font-size: 14px; color: var(--dimmer); margin-top: 9px; }
+  /* Milestone report-card tiles (RUNS view): slightly tighter numeral so the
+     p50/p90/p99 triple fits on one line. Clean numbers only — no tag chips. */
+  .runstrip .tile .val { font-size: 22px; }
 
   /* Filter/sort toolbar. */
   .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
   .toolbar input[type="text"] {
-    font-family: var(--mono); font-size: 14.5px; letter-spacing: 0.04em;
+    font-family: var(--mono); font-size: 16px; letter-spacing: 0.04em;
     background: var(--panel2); color: var(--ink); border: 1px solid var(--edge2);
-    padding: 6px 10px; flex: 0 1 300px; min-width: 180px; max-width: 100%;
+    padding: 7px 11px; flex: 0 1 320px; min-width: 190px; max-width: 100%;
   }
   .toolbar input[type="text"]:focus { outline: none; border-color: var(--accent); }
   .toolbar input::placeholder { color: var(--dimmer); text-transform: uppercase; letter-spacing: 0.08em; }
-  .toolbar .count { font-family: var(--mono); font-size: 13.5px; color: var(--dim);
+  .toolbar .count { font-family: var(--mono); font-size: 15px; color: var(--dim);
     text-transform: uppercase; letter-spacing: 0.06em; }
   .toolbar .count.empty { color: var(--ref); }
 
@@ -158,26 +165,26 @@
      with a title tooltip (.trunc). There is deliberately NO overflow-x scroller. */
   .tablewrap { border: 1px solid var(--edge); background: var(--panel); }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  thead th { font-size: 13px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--dim);
-    text-align: left; padding: 12px 13px; border-bottom: 1px solid var(--edge2); font-weight: 600;
+  thead th { font-size: 14.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim);
+    text-align: left; padding: 13px 12px; border-bottom: 1px solid var(--edge2); font-weight: 600;
     background: var(--panel2); white-space: normal; vertical-align: bottom; }
   th .th-inner { display: flex; align-items: baseline; gap: 6px; justify-content: space-between; }
   th .th-label { overflow-wrap: anywhere; }
   th.sortable { cursor: pointer; user-select: none; }
   th.sortable:hover { color: var(--ink); }
   th.sortable:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
-  .sortind { flex: 0 0 auto; color: var(--dimmer); font-size: 11.5px; line-height: 1; }
+  .sortind { flex: 0 0 auto; color: var(--dimmer); font-size: 13px; line-height: 1; }
   th[aria-sort="ascending"], th[aria-sort="descending"] { color: var(--ink); }
   th[aria-sort="ascending"] .sortind, th[aria-sort="descending"] .sortind { color: var(--accent); }
-  tbody td { padding: 12px 13px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  tbody td { padding: 13px 14px; border-bottom: 1px solid var(--edge); vertical-align: top; text-align: left; }
   tbody tr:last-child td { border-bottom: none; }
   .prov { font-weight: 600; }
   .prov .name { text-transform: uppercase; letter-spacing: 0.04em; overflow-wrap: anywhere; }
-  .prov .caret { color: var(--dim); margin-right: 8px; font-size: 12px; display: inline-block; width: 11px; }
-  .prov .tok { font-family: var(--mono); font-size: 13px; color: var(--dim); margin-top: 6px; overflow-wrap: anywhere; }
-  .up { font-family: var(--mono); font-size: 13.5px; color: var(--dim); }
-  .cell-note { font-family: var(--mono); font-size: 12.5px; color: var(--dimmer); margin-top: 7px; overflow-wrap: anywhere; }
-  .val-mono { font-family: var(--mono); font-size: 14.5px; overflow-wrap: anywhere; }
+  .prov .caret { color: var(--dim); margin-right: 8px; font-size: 13px; display: inline-block; width: 12px; }
+  .prov .tok { font-family: var(--mono); font-size: 14.5px; color: var(--dim); margin-top: 6px; overflow-wrap: anywhere; }
+  .up { font-family: var(--mono); font-size: 15.5px; color: var(--dim); }
+  .cell-note { font-family: var(--mono); font-size: 14px; color: var(--dimmer); margin-top: 7px; overflow-wrap: anywhere; }
+  .val-mono { font-family: var(--mono); font-size: 16px; overflow-wrap: anywhere; }
   /* Single-line truncation that keeps the full value in a title tooltip. */
   .trunc { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -188,39 +195,40 @@
   tr.lane.idle td { color: var(--dim); }
   tr.lane.idle .prov .name { color: var(--dim); }
   tr.lane.open td { background: #10151b; }
-  .pipe-obj { font-family: var(--mono); font-size: 18px; color: var(--ink); }
+  .pipe-obj { font-family: var(--mono); font-size: 21px; color: var(--ink); }
   tr.lane.idle .pipe-obj { color: var(--dimmer); }
-  .pipe-rate { font-family: var(--mono); font-size: 14px; color: var(--live); }
-  .pipe-sub { font-family: var(--mono); font-size: 12.5px; color: var(--dimmer); margin-top: 7px; overflow-wrap: anywhere; }
-  tr.empty td { text-align: center; color: var(--dim); font-family: var(--mono); font-size: 14.5px;
-    padding: 22px 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .pipe-rate { font-family: var(--mono); font-size: 15.5px; color: var(--live); }
+  .pipe-sub { font-family: var(--mono); font-size: 14px; color: var(--dimmer); margin-top: 7px; overflow-wrap: anywhere; }
+  /* Empty states left-aligned like all other content (no centered blocks). */
+  tr.empty td { text-align: left; color: var(--dim); font-family: var(--mono); font-size: 16px;
+    padding: 22px 14px; text-transform: uppercase; letter-spacing: 0.06em; }
 
   tr.detail > td { background: #0d1116; padding: 0; border-bottom: 1px solid var(--edge2); }
-  .detail-inner { padding: 18px; }
-  .det-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
-  .det-stat { border: 1px solid var(--edge); background: var(--panel); padding: 11px 13px; }
-  .det-stat .lab { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); }
-  .det-stat .val { font-family: var(--mono); font-size: 16.5px; margin-top: 8px; color: var(--ink); overflow-wrap: anywhere; }
-  .det-ref { border: 1px solid var(--edge); background: var(--panel); padding: 13px 15px; margin-bottom: 16px;
-    font-size: 14px; color: var(--dim); line-height: 1.6; }
+  .detail-inner { padding: 18px; text-align: left; }
+  .det-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .det-stat { border: 1px solid var(--edge); background: var(--panel); padding: 12px 14px; text-align: left; }
+  .det-stat .lab { font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); }
+  .det-stat .val { font-family: var(--mono); font-size: 18.5px; margin-top: 8px; color: var(--ink); overflow-wrap: anywhere; }
+  .det-ref { border: 1px solid var(--edge); background: var(--panel); padding: 14px 16px; margin-bottom: 16px;
+    font-size: 16px; color: var(--dim); line-height: 1.6; text-align: left; }
   .det-ref .hd { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; flex-wrap: wrap; }
   .det-ref .ln { margin-top: 8px; overflow-wrap: anywhere; }
   .det-ref b { color: var(--ink); }
   .subtools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
   .subtools input[type="text"] {
-    font-family: var(--mono); font-size: 14px; letter-spacing: 0.04em;
+    font-family: var(--mono); font-size: 15.5px; letter-spacing: 0.04em;
     background: var(--panel2); color: var(--ink); border: 1px solid var(--edge2);
-    padding: 5px 9px; flex: 0 1 240px; min-width: 150px; max-width: 100%;
+    padding: 6px 10px; flex: 0 1 260px; min-width: 160px; max-width: 100%;
   }
   .subtools input[type="text"]:focus { outline: none; border-color: var(--accent); }
   .subtools input::placeholder { color: var(--dimmer); text-transform: uppercase; letter-spacing: 0.06em; }
-  .subtools .count { font-family: var(--mono); font-size: 13px; color: var(--dim);
+  .subtools .count { font-family: var(--mono); font-size: 14.5px; color: var(--dim);
     text-transform: uppercase; letter-spacing: 0.05em; margin-left: auto; }
-  .subtable td, .subtable th { padding: 10px 12px; }
-  .subtable td { font-family: var(--mono); font-size: 13.5px; color: var(--ink); }
+  .subtable td, .subtable th { padding: 11px 13px; }
+  .subtable td { font-family: var(--mono); font-size: 15.5px; color: var(--ink); }
   .subtable .muted { color: var(--dimmer); }
   .pager { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
-  .pager .pageinfo { font-family: var(--mono); font-size: 13px; color: var(--dim); }
+  .pager .pageinfo { font-family: var(--mono); font-size: 14.5px; color: var(--dim); }
 
   /* Tooltip (house style — no external lib). Hidden state is display:none so a
      latent tooltip never contributes to document width (no phantom x-scroll);
@@ -230,24 +238,29 @@
     display: none; position: absolute; z-index: 20;
     left: 0; top: calc(100% + 6px); width: max-content; max-width: min(320px, 84vw);
     background: #05070a; color: var(--ink); border: 1px solid var(--edge2);
-    padding: 7px 9px; font-family: var(--mono); font-size: 13.5px; line-height: 1.5; text-transform: none;
+    padding: 8px 10px; font-family: var(--mono); font-size: 15px; line-height: 1.55; text-transform: none;
     letter-spacing: 0; box-shadow: 0 6px 20px rgba(0,0,0,.5); pointer-events: none; white-space: normal;
   }
   .tip:hover .tiptext, .tip:focus-within .tiptext { display: block; }
   .tip-right .tiptext { left: auto; right: 0; }
 
-  .legend { border: 1px solid var(--edge); background: var(--panel); padding: 15px 17px; margin-top: 26px; }
-  .legend h2 { font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer); margin: 0 0 12px; }
-  .legend .row { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 11px; font-size: 15px; color: var(--dim); }
+  .legend { border: 1px solid var(--edge); background: var(--panel); padding: 16px 18px; margin-top: 28px; }
+  .legend h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer); margin: 0 0 12px; }
+  .legend .row { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 11px; font-size: 16.5px; color: var(--dim); }
   .legend .row:last-child { margin-bottom: 0; }
   .legend b { color: var(--ink); }
-  footer { margin-top: 28px; font-family: var(--mono); font-size: 13px; color: var(--dimmer); line-height: 1.8; }
+  footer { margin-top: 30px; font-family: var(--mono); font-size: 14px; color: var(--dimmer); line-height: 1.8; }
   footer .refs { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; }
 </style>
 </head>
 <body>
 
 <div class="wrap">
+  <nav class="topmenu" aria-label="Board views">
+    <button id="nav-lanes" type="button" aria-pressed="true">Lanes</button>
+    <button id="nav-runs" type="button" aria-pressed="false">Runs</button>
+  </nav>
+
   <header>
     <div class="titlerow">
       <h1>Supplemental OMM — Provider Status Board</h1>
@@ -262,10 +275,6 @@
       <span class="kv">UPDATED&nbsp;<b id="updated">—</b></span>
       <button id="refresh" type="button">Refresh</button>
     </div>
-    <nav class="viewnav" aria-label="Board views">
-      <button id="nav-lanes" type="button" aria-pressed="true">Lanes</button>
-      <button id="nav-runs" type="button" aria-pressed="false">Runs</button>
-    </nav>
   </header>
 
   <div id="view-lanes">
@@ -300,13 +309,7 @@
 
   <div id="view-runs" hidden>
     <section id="ref-run-report">
-      <div class="sectlabel">Last full constellation run — Starlink (REF · modules 8d9c39d · 2026-07-14)</div>
-      <div class="det-ref" style="margin-bottom:12px">
-        <div class="hd"><span class="pill ref">REF · checked-in run report</span></div>
-        <div class="ln">Milestone numbers from the modules pipeline run report — compile-time truth,
-        not live telemetry, and not matched to a batch listed below (the run predates this node's
-        current store).</div>
-      </div>
+      <div class="sectlabel">Last full constellation run — Starlink · 2026-07-14</div>
       <div class="tiles runstrip" id="run-tiles"></div>
     </section>
 
@@ -337,6 +340,7 @@
 
   <footer>
     <div>SDS $APP record #2 · inline entry UI page · zero non-same-origin requests · all fetches → <span id="api-base">/api/v1</span>/* and <span id="root-base">/api</span>/node/info</div>
+    <div>Last-full-run milestone numbers on the Runs screen are checked-in from the modules pipeline run report (modules 8d9c39d, 2026-07-14) — not live telemetry, and not matched to a batch in the live runs list.</div>
     <div>Module refs: 8 provider adapters (7 Tier-1 OD + celestrak-supgp) + OD fit-pipeline + catalog-synthesis. Data refs: OEM (both) · OMM (fitted, GPS almanac, synthesized catalog). Parity ground truth: CelesTrak SupGP.</div>
     <div class="refs" id="src-refs"></div>
   </footer>
@@ -535,16 +539,15 @@
     br.setAttribute("aria-pressed", showRuns ? "true" : "false");
   }
 
-  // ---- REF report card (RUNS view): the checked-in full-run milestone --------
+  // ---- Report card (RUNS view): the checked-in full-run milestone. Clean
+  // ---- titles + numbers, no tag chips (owner directive) — the checked-in /
+  // ---- not-live provenance lives as fine print in the page footer.
   function renderRunStrip() {
     var host = document.getElementById("run-tiles");
     host.innerHTML = "";
     LAST_FULL_RUN.forEach(function (t) {
       var d = el("div", "tile");
-      var lab = el("div", "lab");
-      lab.appendChild(document.createTextNode(t.lab + " "));
-      lab.appendChild(el("span", "pill ref", "REF"));
-      d.appendChild(lab);
+      d.appendChild(el("div", "lab", t.lab));
       d.appendChild(el("div", "val", t.val));
       if (t.foot) d.appendChild(el("div", "foot", t.foot));
       host.appendChild(d);
@@ -704,14 +707,14 @@
   // expanded/drill persist across polls so an open drill-down keeps its page +
   // search while live cells keep updating.
   var LANE_COLUMNS = [
-    { id: "provider", label: "Provider / lane", width: "20%", sortable: true },
-    { id: "gate", label: "Gate", width: "13%", sortable: true },
-    { id: "epoch", label: "Data current as of (epoch)", width: "15%", sortable: true },
-    { id: "elsets", label: "ElSets", width: "9%", sortable: true },
-    { id: "objects", label: "Objects", width: "11%", sortable: true },
-    { id: "rms", label: "Mean RMS (km)", width: "11%", sortable: true },
+    { id: "provider", label: "Provider / lane", width: "18%", sortable: true },
+    { id: "gate", label: "Gate", width: "11%", sortable: true },
+    { id: "epoch", label: "Data current as of (epoch)", width: "14%", sortable: true },
+    { id: "elsets", label: "ElSets", width: "10%", sortable: true },
+    { id: "objects", label: "Objects", width: "12%", sortable: true },
+    { id: "rms", label: "Mean RMS (km)", width: "12%", sortable: true },
     { id: "rate", label: "Rate", width: "8%", sortable: true },
-    { id: "last", label: "Last record", width: "13%", sortable: true }
+    { id: "last", label: "Last record", width: "15%", sortable: true }
   ];
   var laneState = { rows: [], sortCol: null, sortDir: 1, filter: "", reachable: false };
   var expanded = {};   // laneKey -> true
@@ -981,8 +984,15 @@
 
       // Rate
       var rateTd = el("td");
-      if (l.rate === null) rateTd.appendChild(el("div", "pipe-sub", "… warming up"));
-      else rateTd.appendChild(el("div", "pipe-rate", (l.rate >= 10 ? Math.round(l.rate) : l.rate.toFixed(1)) + "/min"));
+      if (l.rate === null) {
+        // Warm-up state, sized for the narrow Rate column (no mid-word wrap).
+        rateTd.appendChild(el("div", "up", "…"));
+        var warm = el("div", "pipe-sub", "warm-up");
+        warm.title = "Rate needs two polls of rising counts before it can be computed honestly.";
+        rateTd.appendChild(warm);
+      } else {
+        rateTd.appendChild(el("div", "pipe-rate", (l.rate >= 10 ? Math.round(l.rate) : l.rate.toFixed(1)) + "/min"));
+      }
       tr.appendChild(rateTd);
 
       // Last record
@@ -1092,10 +1102,10 @@
 
     // REF facts (gate + parity + optional run summary).
     if (l.provider) {
+      // Gate pill stays (owner: lane gate pills stay); no bare REF chip.
       var ref = el("div", "det-ref");
       var hd = el("div", "hd");
       hd.appendChild(pillFor({ cls: l.provider.gateClass, txt: l.provider.gate }));
-      hd.appendChild(el("span", "pill ref", "REF"));
       hd.appendChild(el("span", null, l.provider.upstream));
       ref.appendChild(hd);
       ref.appendChild(el("div", "ln", l.provider.rmsNote));
@@ -1216,13 +1226,13 @@
   // newest/active batch the lanes view keys on. Clicking a run expands its full
   // summary. All values are the live stats aggregates; nothing is synthesized.
   var RUNS_COLUMNS = [
-    { label: "Provider / run", width: "24%" },
+    { label: "Provider / run", width: "22%" },
     { label: "Run started", width: "15%" },
-    { label: "Duration", width: "10%" },
+    { label: "Duration", width: "11%" },
     { label: "ElSets", width: "9%" },
-    { label: "Objects", width: "9%" },
-    { label: "Mean RMS (km)", width: "12%" },
-    { label: "Data current as of (epoch)", width: "21%" }
+    { label: "Objects", width: "11%" },
+    { label: "Mean RMS (km)", width: "13%" },
+    { label: "Data current as of (epoch)", width: "19%" }
   ];
   var runsState = { rows: [], reachable: false };
   var runsExpanded = {}; // runKey -> true
@@ -1385,10 +1395,11 @@
     stat("Schema", r.schema || "—");
     inner.appendChild(strip);
 
+    // Clean text summary — no tag chips in run boxes (owner directive).
     var ref = el("div", "det-ref");
     var hd = el("div", "hd");
-    hd.appendChild(el("span", "pill live", "LIVE · /api/v1/stats"));
-    hd.appendChild(el("span", null, run.name + " — batch summary"));
+    var title = el("b"); title.textContent = run.name + " — batch summary";
+    hd.appendChild(title);
     ref.appendChild(hd);
     var bid = el("div", "ln");
     var bb = el("b"); bb.textContent = "Batch id: "; bid.appendChild(bb);
