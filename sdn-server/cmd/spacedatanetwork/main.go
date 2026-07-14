@@ -723,6 +723,32 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create node: %w", err)
 	}
+	var assetRetainer *assetpin.Retainer
+	if cfg.AssetPins.Enabled {
+		if n.Store() == nil || strings.TrimSpace(n.Store().Path()) == "" {
+			return errors.New("asset retention requires local storage")
+		}
+		kuboURL, err := canonicalAssetPinKuboAPIURL(cfg.Admin.IPFSAPIURL)
+		if err != nil {
+			return fmt.Errorf("configure asset retention Kubo client: %w", err)
+		}
+		retentionPins, err := assetpin.NewKuboRetentionClient(kuboURL)
+		if err != nil {
+			return fmt.Errorf("configure asset retention Kubo client: %w", err)
+		}
+		recoveryStore, err := assetpin.NewFileAssetPinRecoveryStore(filepath.Dir(n.Store().Path()))
+		if err != nil {
+			return fmt.Errorf("configure asset pin recovery reconciliation: %w", err)
+		}
+		assetRetainer, err = assetpin.NewRetainer(assetpin.RetainerOptions{
+			Store:    n.Store(),
+			Pins:     retentionPins,
+			Recovery: recoveryStore,
+		})
+		if err != nil {
+			return fmt.Errorf("configure asset retention: %w", err)
+		}
+	}
 
 	torStartTimeout := 30 * time.Second
 	if raw := strings.TrimSpace(cfg.Tor.StartTimeout); raw != "" {
@@ -1625,6 +1651,35 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	var (
+		assetRetentionCancel context.CancelFunc
+		assetRetentionDone   <-chan struct{}
+	)
+	stopAssetRetention := func() {
+		if assetRetentionCancel == nil {
+			return
+		}
+		assetRetentionCancel()
+		<-assetRetentionDone
+		assetRetentionCancel = nil
+	}
+	defer stopAssetRetention()
+	if assetRetainer != nil {
+		retentionCtx, cancelRetention := context.WithCancel(ctx)
+		done := make(chan struct{})
+		assetRetentionCancel = cancelRetention
+		assetRetentionDone = done
+		go func() {
+			defer close(done)
+			assetRetainer.Run(
+				retentionCtx,
+				cfg.AssetPins.EffectiveRetentionInterval(),
+				func() time.Time { return time.Now().UTC() },
+				func(err error) { log.Errorf("Asset pin retention sweep failed: %v", err) },
+			)
+		}()
+	}
+
 	n.StartBackgroundRecordCatalogHydration(ctx)
 	n.StartConfiguredFlowServices(ctx)
 
@@ -1660,6 +1715,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	stopAssetRetention()
 	return n.Stop()
 }
 
