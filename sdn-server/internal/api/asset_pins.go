@@ -647,6 +647,10 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if observedCID != cidValue {
+				// The observed CID may already be owned by an unrelated reference,
+				// so this fail-closed path must not unpin it. The existing ledger row
+				// still protects the expected CID; the mismatch is non-destructive
+				// reconciliation work rather than a data-loss condition.
 				writeError(w, http.StatusBadGateway, "asset pin backend failed")
 				return
 			}
