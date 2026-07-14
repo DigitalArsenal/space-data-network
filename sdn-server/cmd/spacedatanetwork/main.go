@@ -954,6 +954,57 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// n.MountFlows (config flows.mounts) — loop C.4 cutover.
 			dataAPI := api.NewDataQueryHandler(n.Store())
 			dataAPI.RegisterRoutes(adminMux)
+
+			// Run controls (App 2 owner directive): stop / clear / provider
+			// selection. Writes live under /api/v1/admin/runs/* (behind the
+			// same top-level admin-auth wall as every admin API via
+			// isAdminOnlyAPIPath); GET /api/v1/runs/{flags,providers} are
+			// anonymous reads for the board + the external pipeline runner
+			// (contract documented in internal/api/runs_control.go). The
+			// module toggler flips cron schedules of runtime modules whose id
+			// matches the provider key; external-runner lanes report "none".
+			runsAPI := api.NewRunsControlHandler(n.Store(), func(ctx context.Context, providerKey string, enabled bool) (int, error) {
+				mgr := n.PluginManager()
+				if mgr == nil {
+					return 0, nil
+				}
+				norm := func(s string) string {
+					return strings.ToLower(strings.NewReplacer("-", "", "_", "", ".", "").Replace(strings.TrimSpace(s)))
+				}
+				want := norm(providerKey)
+				if want == "" {
+					return 0, nil
+				}
+				updated := 0
+				snapshot := mgr.RuntimeSnapshot()
+				for _, mod := range snapshot.Modules {
+					if !strings.Contains(norm(mod.ID), want) {
+						continue
+					}
+					for _, sched := range mod.Schedules {
+						if sched.Enabled == enabled {
+							continue // already in the requested state
+						}
+						_, err := mgr.SaveRuntimeModuleSchedule(ctx, mod.ID, sched.MethodID, plugins.RuntimeModuleScheduleConfig{
+							Enabled:        enabled,
+							Interval:       sched.Interval,
+							CronExpression: sched.CronExpression,
+							Timezone:       sched.Timezone,
+							Jitter:         sched.Jitter,
+							Backoff:        sched.Backoff,
+							RetryBudget:    sched.RetryBudget,
+							MaxRuntime:     sched.MaxRuntime,
+						})
+						if err != nil {
+							return updated, err
+						}
+						updated++
+					}
+				}
+				return updated, nil
+			})
+			runsAPI.RegisterRoutes(adminMux)
+			log.Infof("Run controls at %s://%s/api/v1/admin/runs/{clear,stop,providers} (+ anonymous /api/v1/runs/{flags,providers})", adminScheme, adminAddr)
 			searchAPI := api.NewSearchHandlerWithOptions(n.Store(), api.SearchHandlerOptions{
 				LiveBackend: newLiveDHTSearchBackend(n),
 			})
@@ -2322,6 +2373,13 @@ func isPublicReadAPIPath(path string) bool {
 		// Anonymous per-record index page for the App 2 board's per-satellite
 		// drill-down (NORAD/epoch/RMS/CID over sdn_record_index). Read-only.
 		"/api/v1/data/index",
+		// Run-control anonymous READS (writes stay behind the admin wall at
+		// /api/v1/admin/runs/*): cooperative stop flags the external pipeline
+		// runner polls between publish chunks, and the persisted provider
+		// selection it intersects with its own --providers args. Contract in
+		// internal/api/runs_control.go.
+		"/api/v1/runs/flags",
+		"/api/v1/runs/providers",
 		// Flow-served record retrieval (loop C.4: the data-retrieval flow
 		// mounted at /api/v1/data/ owns routing/format/ETag inside wasm).
 		"/api/v1/data/omm/bulk",
