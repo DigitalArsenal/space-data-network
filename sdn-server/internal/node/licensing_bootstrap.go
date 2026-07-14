@@ -105,6 +105,12 @@ func (n *Node) buildModuleNodeContext() (*modulert.NodeContext, error) {
 	if n != nil && n.host != nil {
 		nodeCtx.PeerID = n.host.ID().String()
 	}
+	if n != nil && n.config != nil {
+		// Operator override for the SCHEDULED (cron / run-now) module invoke
+		// budget on slow hosts. Zero (unset) leaves the modulert built-in
+		// default (10m) in force; interactive invokes are never affected.
+		nodeCtx.ScheduledInvokeTimeout = n.config.Modules.ScheduledInvokeTimeout
+	}
 	signingSeed, wrappingKey, err := n.moduleRuntimeKeySlots()
 	if err != nil {
 		return nil, err

@@ -46,6 +46,17 @@ type NodeContext struct {
 	// capability_policy.go.
 	CapabilityPolicy *CapabilityPolicyStore
 
+	// ScheduledInvokeTimeout overrides the per-call wall-clock budget for
+	// SCHEDULED module invocations (cron ticker + run-now admin, both routed
+	// through Module.InvokeCron). Zero selects the modulert built-in default
+	// (defaultScheduledInvokeTimeout, 10m). INTERACTIVE invocations
+	// (protocol/HTTP handlers) are never affected — they keep the tight 30s
+	// defaultInvokeTimeout. Operator-tunable via the node config field
+	// modules.scheduled_invoke_timeout, threaded in by node.go's
+	// buildModuleNodeContext for slow (e.g. single-vCPU) hosts. The fuel
+	// budget scales proportionally with this value (see Module.scheduledBudget).
+	ScheduledInvokeTimeout time.Duration
+
 	// ModuleSignaturePolicy is the operator-controlled publication-trailer
 	// signature trust policy consulted at module load time, before the
 	// module is admitted (loop I1 — defensive hardening, FAIL CLOSED once

@@ -34,6 +34,22 @@ type Config struct {
 	Gateway    GatewayConfig    `yaml:"gateway"`
 	TipQueue   TipQueueConfig   `yaml:"tip_queue"`
 	AssetPins  AssetPinConfig   `yaml:"asset_pins"`
+	Modules    ModulesConfig    `yaml:"modules"`
+}
+
+// ModulesConfig tunes the module-sdk WASM runtime (internal/modulert).
+type ModulesConfig struct {
+	// ScheduledInvokeTimeout is the per-call wall-clock budget for a SCHEDULED
+	// module method run — a cron ticker fire or the run-now admin action.
+	// INTERACTIVE (protocol/HTTP) invokes are unaffected and keep the runtime's
+	// tight built-in default. Raise this on slow hosts (e.g. a single-vCPU
+	// node) where a data-source pull — fetch → parse ephemeris → per-record
+	// CID + sign → publish — legitimately needs minutes; production evidence
+	// showed every catalog cron pull tripping the 30s interactive cap. When
+	// unset (0) the module runtime applies its built-in default (10m). The fuel
+	// budget scales proportionally with this value. YAML:
+	// modules.scheduled_invoke_timeout, e.g. "10m", "20m".
+	ScheduledInvokeTimeout time.Duration `yaml:"scheduled_invoke_timeout"`
 }
 
 // AssetPinConfig controls the opt-in GitHub Actions asset pin capability.
