@@ -37,6 +37,31 @@ test('workflows opt into Node 24 for GitHub actions and project scripts', () => 
   }
 });
 
+test('CI quick checks share an explicit step-local WasmEdge directory', () => {
+  const workflow = readRepoFile('.github/workflows/ci.yml');
+  const stepHeader = '      - name: Run CI checks (same as pre-push)';
+  const stepStarts = [...workflow.matchAll(/^      - name: Run CI checks \(same as pre-push\)$/gm)];
+
+  assert.equal(stepStarts.length, 1, 'CI workflow must define exactly one local-equivalent checks step');
+
+  const stepStart = stepStarts[0].index;
+  const nextStepStart = workflow.indexOf('\n      - ', stepStart + stepHeader.length);
+  const ciStep = workflow.slice(stepStart, nextStepStart === -1 ? workflow.length : nextStepStart);
+
+  assert.match(
+    ciStep,
+    /^        env:\n          WASMEDGE_DIR:\s*.+\.wasmedge\s*$/m,
+    'Run CI step must explicitly pass a .wasmedge directory; installer defaults are shell-local',
+  );
+
+  const installIndex = ciStep.indexOf('./scripts/install-wasmedge.sh');
+  const quickCheckIndex = ciStep.indexOf('./scripts/ci-local.sh quick');
+
+  assert.ok(installIndex >= 0, 'Run CI step must install WasmEdge');
+  assert.ok(quickCheckIndex >= 0, 'Run CI step must run the quick local checks');
+  assert.ok(installIndex < quickCheckIndex, 'Run CI step must install WasmEdge before running quick checks');
+});
+
 test('beta release workflow publishes public beta artifacts', () => {
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
   const license = readRepoFile('LICENSE');
