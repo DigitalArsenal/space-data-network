@@ -47,7 +47,7 @@ import (
 )
 
 // supersedeChunkSize bounds the CIDs evicted per store-lock window. Larger
-// than storeWriteChunkSize (128) because eviction rows are index-only work
+// than storeWriteChunkSize because eviction rows are index-only work
 // (no stream appends, no FlatBuffer verification), but still small enough
 // that a lock hold stays in the low tens of milliseconds.
 const supersedeChunkSize = 2048

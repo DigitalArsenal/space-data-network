@@ -11,6 +11,7 @@ package storage
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,6 +28,23 @@ func TestStoreWriteChunkSizeBoundsColdRunnerLockWork(t *testing.T) {
 	const maxColdRunnerChunkSize = 64
 	if storeWriteChunkSize > maxColdRunnerChunkSize {
 		t.Fatalf("storeWriteChunkSize = %d, want <= %d to bound each write-lock window", storeWriteChunkSize, maxColdRunnerChunkSize)
+	}
+}
+
+func TestLockWindowReadViolationUsesCompleteCountLatency(t *testing.T) {
+	lockWait := 12 * time.Millisecond
+	total := readBudget + time.Nanosecond
+	err := lockWindowReadViolation(4, total, lockWait)
+	if err == nil {
+		t.Fatal("complete count latency above the budget must be rejected")
+	}
+	for _, want := range []string{total.String(), "lock wait " + lockWait.String()} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("violation %q does not contain %q", err, want)
+		}
+	}
+	if err := lockWindowReadViolation(4, readBudget, lockWait); err != nil {
+		t.Fatalf("latency exactly at the budget must remain valid: %v", err)
 	}
 }
 
@@ -148,6 +166,13 @@ func (s *FlatSQLStore) countRawRecordsWithLockWait(filter RawRecordQuery) (int64
 	return count, lockWait, err
 }
 
+func lockWindowReadViolation(read int, total, lockWait time.Duration) error {
+	if total <= readBudget {
+		return nil
+	}
+	return fmt.Errorf("read %d took %s for the complete count during concurrent write (budget %s, lock wait %s): writes are starving readers again", read, total, readBudget, lockWait)
+}
+
 // sampleReadsResponsive runs the complete raw-record count query but measures
 // mutex acquisition separately from cold SQL/WASM work. It returns violations
 // instead of failing so callers can always join the writer before Fatal/cleanup.
@@ -173,8 +198,8 @@ func sampleReadsResponsive(store *FlatSQLStore, schemaName string, done <-chan s
 		if total > sample.worstTotal {
 			sample.worstTotal = total
 		}
-		if lockWait > readBudget {
-			sample.err = fmt.Errorf("read %d waited %s for the store lock during concurrent write (budget %s): writes are starving readers again", sample.reads, lockWait, readBudget)
+		if err := lockWindowReadViolation(sample.reads, total, lockWait); err != nil {
+			sample.err = err
 			return sample
 		}
 		sample.reads++
@@ -201,6 +226,9 @@ func TestReadsStayResponsiveDuringBatchStore(t *testing.T) {
 		SourceURL:    "https://celestrak.example/satcat",
 		BatchID:      "lock-window-batch",
 		ContentKeyID: "public",
+	}
+	if _, err := store.CountRawRecords(RawRecordQuery{SchemaName: "CAT.fbs"}); err != nil {
+		t.Fatalf("warm CountRawRecords before concurrent batch: %v", err)
 	}
 
 	writeTask := startLockWindowWriteTask(t, func() (int, error) {
@@ -258,6 +286,9 @@ func TestReadsStayResponsiveDuringShardImport(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("ExportDatasetWindow failed: %v", err)
+	}
+	if _, err := subscriberStore.CountRawRecords(RawRecordQuery{SchemaName: "CAT.fbs"}); err != nil {
+		t.Fatalf("warm CountRawRecords before concurrent shard import: %v", err)
 	}
 
 	writeTask := startLockWindowWriteTask(t, func() (int, error) {
