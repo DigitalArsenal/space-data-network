@@ -278,6 +278,18 @@ func (h *CoreAPIHandler) handleStats(w http.ResponseWriter, r *http.Request) {
 				if p.LatestEpochUnix > 0 {
 					row["latest_epoch"] = time.Unix(p.LatestEpochUnix, 0).UTC().Format(time.RFC3339)
 				}
+				// OD fit RMS (km) aggregates over the batch's indexed records.
+				// Emitted only when the lane has an RMS-bearing record (fitted
+				// OMM); omitted (never zero-filled) for raw/republished lanes.
+				if p.MeanRMS != nil {
+					row["mean_rms"] = *p.MeanRMS
+				}
+				if p.MinRMS != nil {
+					row["min_rms"] = *p.MinRMS
+				}
+				if p.MaxRMS != nil {
+					row["max_rms"] = *p.MaxRMS
+				}
 				sources = append(sources, row)
 			}
 			resp["sources"] = sources

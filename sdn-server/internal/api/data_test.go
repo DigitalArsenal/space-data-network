@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -860,6 +861,120 @@ func TestDataRecordEndpointReturnsRawFlatBuffer(t *testing.T) {
 	}
 	if got := rec.Body.Bytes(); string(got) != string(payload) {
 		t.Fatal("record endpoint did not return original raw FlatBuffer payload")
+	}
+}
+
+// storeFittedOMMJSON stores a fitted OMM record the way the OD fit-pipeline
+// does: schema-exact JSON text carrying a top-level "RMS" (km). The store
+// indexes norad/epoch/rms from the JSON (extractOMMJSONIndexedFields).
+func storeFittedOMMJSON(t *testing.T, store *storage.FlatSQLStore, norad uint32, epoch, rms, batchID string) {
+	t.Helper()
+	rec := []byte(fmt.Sprintf(`{"OBJECT_ID":"FIT-%d","EPOCH":"%s","NORAD_CAT_ID":%d,"RMS":"%s","CONVERGED":true}`, norad, epoch, norad, rms))
+	if _, err := store.StoreWithSourceTags("OMM.fbs", rec, "peer-fit", nil, storage.SourceTags{
+		ProviderID: "od-fit-pipeline", SourceName: "od-fit-pipeline", BatchID: batchID, ContentKeyID: "public",
+	}); err != nil {
+		t.Fatalf("store fitted OMM JSON failed: %v", err)
+	}
+}
+
+type recordIndexResponse struct {
+	Schema string `json:"schema"`
+	Total  int64  `json:"total"`
+	Page   int    `json:"page"`
+	Limit  int    `json:"limit"`
+	Rows   []struct {
+		Norad *int64   `json:"norad"`
+		Epoch *string  `json:"epoch"`
+		RMS   *float64 `json:"rms"`
+		CID   string   `json:"cid"`
+	} `json:"rows"`
+}
+
+func getRecordIndex(t *testing.T, mux *http.ServeMux, query string) recordIndexResponse {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/index"+query, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("index %s status = %d, body=%s", query, rec.Code, rec.Body.String())
+	}
+	var out recordIndexResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode index response failed: %v (body=%s)", err, rec.Body.String())
+	}
+	return out
+}
+
+func TestDataRecordIndexPaginationSearchAndTags(t *testing.T) {
+	store := newDataAPITestStore(t)
+	// 3 raw FlatBuffer OMM (celestrak-gp lane) — no RMS.
+	storeDataAPITestOMMWithBatch(t, store, 25544, "ISS", "2026-05-05", "batch-gp")
+	storeDataAPITestOMMWithBatch(t, store, 40909, "STARLINK-A", "2026-05-06", "batch-gp")
+	storeDataAPITestOMMWithBatch(t, store, 40910, "STARLINK-B", "2026-05-07", "batch-gp")
+	// 2 fitted OMM JSON (od-fit lane) — carry RMS.
+	storeFittedOMMJSON(t, store, 12345, "2026-07-14T10:00:00Z", "0.120", "batch-fit")
+	storeFittedOMMJSON(t, store, 12399, "2026-07-14T10:05:00Z", "0.340", "batch-fit")
+
+	mux := http.NewServeMux()
+	NewDataQueryHandler(store).RegisterRoutes(mux)
+
+	// (1) Whole schema: 5 records; "OMM" alias normalizes to OMM.fbs.
+	all := getRecordIndex(t, mux, "?schema=OMM")
+	if all.Schema != "OMM.fbs" {
+		t.Fatalf("schema normalization = %q, want OMM.fbs", all.Schema)
+	}
+	if all.Total != 5 {
+		t.Fatalf("total = %d, want 5", all.Total)
+	}
+
+	// (2) Source-lane filter: the raw GP lane has 3 records, all rms null.
+	gp := getRecordIndex(t, mux, "?schema=OMM.fbs&source_name=celestrak-gp&provider_id=space-data-network-02")
+	if gp.Total != 3 || len(gp.Rows) != 3 {
+		t.Fatalf("gp lane total=%d rows=%d, want 3/3", gp.Total, len(gp.Rows))
+	}
+	for _, r := range gp.Rows {
+		if r.RMS != nil {
+			t.Fatalf("raw GP record should have null rms, got %v", *r.RMS)
+		}
+		if r.Norad == nil || r.Epoch == nil || r.CID == "" {
+			t.Fatalf("gp row missing fields: %+v", r)
+		}
+	}
+
+	// (3) Fitted lane carries RMS + is newest-epoch-first.
+	fit := getRecordIndex(t, mux, "?schema=OMM.fbs&source_name=od-fit-pipeline")
+	if fit.Total != 2 || len(fit.Rows) != 2 {
+		t.Fatalf("fit lane total=%d rows=%d, want 2/2", fit.Total, len(fit.Rows))
+	}
+	if fit.Rows[0].RMS == nil || *fit.Rows[0].RMS < 0.339 || *fit.Rows[0].RMS > 0.341 {
+		t.Fatalf("fit newest row rms = %v, want ~0.340 (newest epoch first)", fit.Rows[0].RMS)
+	}
+
+	// (4) NORAD substring search — "123" matches 12345 + 12399, not the GP set.
+	search := getRecordIndex(t, mux, "?schema=OMM.fbs&norad=123")
+	if search.Total != 2 {
+		t.Fatalf("norad=123 total = %d, want 2", search.Total)
+	}
+	// A wildcard-injection attempt is sanitized to digits (empty -> no filter).
+	inject := getRecordIndex(t, mux, "?schema=OMM.fbs&norad=%25")
+	if inject.Total != 5 {
+		t.Fatalf("norad=%%25 (sanitized) total = %d, want 5 (no filter)", inject.Total)
+	}
+
+	// (5) Pagination over the fitted lane: 1 per page, distinct CIDs, total stable.
+	p1 := getRecordIndex(t, mux, "?schema=OMM.fbs&source_name=od-fit-pipeline&limit=1&page=1")
+	p2 := getRecordIndex(t, mux, "?schema=OMM.fbs&source_name=od-fit-pipeline&limit=1&page=2")
+	if p1.Total != 2 || p2.Total != 2 || len(p1.Rows) != 1 || len(p2.Rows) != 1 {
+		t.Fatalf("pagination totals/rows wrong: p1=%+v p2=%+v", p1, p2)
+	}
+	if p1.Rows[0].CID == p2.Rows[0].CID {
+		t.Fatalf("pages 1 and 2 returned the same record %s", p1.Rows[0].CID)
+	}
+
+	// (6) limit is clamped to the 200 max.
+	clamped := getRecordIndex(t, mux, "?schema=OMM.fbs&limit=5000")
+	if clamped.Limit != 200 {
+		t.Fatalf("limit clamp = %d, want 200", clamped.Limit)
 	}
 }
 
