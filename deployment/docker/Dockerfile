@@ -2,7 +2,7 @@
 # Single container image. Defaults to a full node; operators can override the
 # command to run the edge relay binary from the same image.
 
-FROM golang:1.24-bookworm AS builder
+FROM golang:1.25-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \

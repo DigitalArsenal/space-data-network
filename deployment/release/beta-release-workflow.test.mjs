@@ -132,6 +132,21 @@ test('Docker release image copies local Go replacement modules before dependency
   );
 });
 
+test('Docker release builder Go version matches the server module Go directive', () => {
+  const dockerfile = readRepoFile('deployment/docker/Dockerfile');
+  const goMod = readRepoFile('sdn-server/go.mod');
+  const builderVersion = /^FROM\s+golang:(\d+)\.(\d+)(?:\.\d+)?(?:-[^\s]+)?\s+AS\s+builder\s*$/im.exec(dockerfile);
+  const moduleVersion = /^go\s+(\d+)\.(\d+)(?:\.\d+)?\s*$/m.exec(goMod);
+
+  assert.ok(builderVersion, 'Dockerfile must declare a versioned golang builder image');
+  assert.ok(moduleVersion, 'sdn-server/go.mod must declare a Go version');
+  assert.equal(
+    `${builderVersion[1]}.${builderVersion[2]}`,
+    `${moduleVersion[1]}.${moduleVersion[2]}`,
+    'Docker builder Go major.minor must match the sdn-server module Go major.minor',
+  );
+});
+
 test('beta release workflow builds updater wasm once before platform CLI archives', () => {
   const workflow = readRepoFile('.github/workflows/beta-release-artifacts.yml');
 
