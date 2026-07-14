@@ -203,9 +203,15 @@ Confirm the live unit environment, repository configuration, services, API,
 and one deterministic gateway sample:
 
 ```bash
+set -o pipefail
+command -v xargs >/dev/null
 test "$(findmnt --noheadings --mountpoint /mnt/volume_nyc3_01 --output TARGET)" = "/mnt/volume_nyc3_01"
-sudo systemctl show ipfs.service --property=Environment --value | tr ' ' '\n' | grep -Fx 'IPFS_PATH=/mnt/volume_nyc3_01/ipfs'
-sudo systemctl show ipfs.service --property=ReadWritePaths --value | tr ' ' '\n' | grep -Fx '/mnt/volume_nyc3_01/ipfs'
+sudo systemctl show ipfs.service --property=Environment --value |
+  xargs -n 1 printf '%s\n' 2>/dev/null |
+  grep -Fx 'IPFS_PATH=/mnt/volume_nyc3_01/ipfs'
+sudo systemctl show ipfs.service --property=ReadWritePaths --value |
+  xargs -n 1 printf '%s\n' 2>/dev/null |
+  grep -Fx '/mnt/volume_nyc3_01/ipfs'
 for ROOT_OWNED_PATH in \
   /opt/spacedatanetwork \
   /opt/spacedatanetwork/deployment \
