@@ -69,6 +69,17 @@ The destination is a dedicated Kubo repository directory on the exact mounted
 volume; for the first rollout it should be absent or empty and must not contain
 unrelated files.
 
+The standard SpaceAware binary deploy (the command above using the exact
+`deployment/spaceaware/servers.yaml` config) installs the migration at
+`/opt/spacedatanetwork/deployment/spaceaware/migrate-kubo-repo.sh`. It restores
+`root:root` ownership and mode `0755` on `/opt/spacedatanetwork`, both
+`deployment` directories, and the script in the same remote command that
+finishes recursive service ownership, before any service restart. Other deploy
+configs neither receive this script nor the NYC volume allowlist. The
+SpaceAware SDN unit uses optional systemd syntax
+`-/mnt/volume_nyc3_01/ipfs`, so deploying before the migration creates the
+directory cannot fail solely because that path is absent.
+
 ### Preflight
 
 Connect to `sdn.spaceaware.io`, confirm the exact attached mount (not merely a
@@ -80,9 +91,14 @@ ssh sdn.spaceaware.io
 
 test "$(findmnt --noheadings --mountpoint /mnt/volume_nyc3_01 --output TARGET)" = "/mnt/volume_nyc3_01"
 sudo test -d /var/lib/ipfs
+sudo test ! -L /mnt/volume_nyc3_01/ipfs
 if sudo test -e /mnt/volume_nyc3_01/ipfs; then
   test -z "$(sudo find /mnt/volume_nyc3_01/ipfs -mindepth 1 -print -quit)"
+  DESTINATION_PROBE=/mnt/volume_nyc3_01/ipfs
+else
+  DESTINATION_PROBE=/mnt/volume_nyc3_01
 fi
+test "$(findmnt --noheadings --target "$DESTINATION_PROBE" --output TARGET)" = "/mnt/volume_nyc3_01"
 SOURCE_KIB="$(sudo du -sk /var/lib/ipfs | awk 'NR == 1 { print $1 }')"
 AVAILABLE_KIB="$(df -Pk /mnt/volume_nyc3_01 | awk 'NR == 2 { print $4 }')"
 REQUIRED_KIB="$((SOURCE_KIB + 10485760))"
@@ -131,9 +147,11 @@ sudo /opt/spacedatanetwork/deployment/spaceaware/migrate-kubo-repo.sh
 ```
 
 It refuses a missing mount, insufficient free space, fewer than five recursive
-pins, a changed peer ID, a lower post-copy pin count, a missing sample pin, or
-an unhealthy local API/gateway. It stops `space-data-network.service` before
-`kubo.service`, copies with `rsync -aHAX --numeric-ids`, sets
+pins, any destination symlink, a canonical source alias or volume escape, a
+nested destination mount, a changed peer ID, a lower post-copy pin count, a
+missing sample pin, or an unhealthy local API/gateway. It stops
+`space-data-network.service` before `kubo.service`, copies with
+`rsync -aHAX --numeric-ids`, sets
 `Datastore.StorageMax` to `120GB`, and installs both `IPFS_PATH` and an additive
 Kubo `ReadWritePaths` entry for the destination. The copy never uses
 `--delete`, and the script never writes, changes ownership, or removes anything
@@ -153,6 +171,13 @@ and one deterministic gateway sample:
 test "$(findmnt --noheadings --mountpoint /mnt/volume_nyc3_01 --output TARGET)" = "/mnt/volume_nyc3_01"
 sudo systemctl show kubo.service --property=Environment --value | tr ' ' '\n' | grep -Fx 'IPFS_PATH=/mnt/volume_nyc3_01/ipfs'
 sudo systemctl show kubo.service --property=ReadWritePaths --value | tr ' ' '\n' | grep -Fx '/mnt/volume_nyc3_01/ipfs'
+for ROOT_OWNED_PATH in \
+  /opt/spacedatanetwork \
+  /opt/spacedatanetwork/deployment \
+  /opt/spacedatanetwork/deployment/spaceaware \
+  /opt/spacedatanetwork/deployment/spaceaware/migrate-kubo-repo.sh; do
+  test "$(sudo stat -c '%U:%G %a' "$ROOT_OWNED_PATH")" = "root:root 755"
+done
 test "$(sudo env IPFS_PATH=/mnt/volume_nyc3_01/ipfs ipfs config Datastore.StorageMax)" = "120GB"
 sudo systemctl is-active --quiet kubo.service
 sudo systemctl is-active --quiet space-data-network.service

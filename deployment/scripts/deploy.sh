@@ -117,6 +117,35 @@ rsync_cmd() {
     rsync -az --delete -e "$transport" "$src" "${SSH_USER}@${ip}:${dest}"
 }
 
+is_spaceaware_config() {
+    local canonical_config
+    local canonical_expected
+
+    canonical_config="$(realpath "$CONFIG_FILE")" || return 1
+    canonical_expected="$(realpath "${DEPLOY_DIR}/spaceaware/servers.yaml")" || return 1
+
+    [[ "$canonical_config" == "$canonical_expected" ]]
+}
+
+deploy_spaceaware_migration_script() {
+    local ip=$1
+
+    if ! is_spaceaware_config; then
+        return
+    fi
+
+    ssh_cmd "$ip" "mkdir -p /opt/spacedatanetwork/deployment/spaceaware"
+    scp_cmd "${DEPLOY_DIR}/spaceaware/migrate-kubo-repo.sh" "$ip" "/opt/spacedatanetwork/deployment/spaceaware/migrate-kubo-repo.sh"
+}
+
+spaceaware_migration_hardening_command() {
+    if ! is_spaceaware_config; then
+        return
+    fi
+
+    printf '%s' " && chown root:root /opt/spacedatanetwork /opt/spacedatanetwork/deployment /opt/spacedatanetwork/deployment/spaceaware /opt/spacedatanetwork/deployment/spaceaware/migrate-kubo-repo.sh && chmod 0755 /opt/spacedatanetwork /opt/spacedatanetwork/deployment /opt/spacedatanetwork/deployment/spaceaware /opt/spacedatanetwork/deployment/spaceaware/migrate-kubo-repo.sh"
+}
+
 service_name() {
     case "$1" in
         full) echo "space-data-network" ;;
@@ -156,6 +185,11 @@ configure_full_node_systemd_overrides() {
     local service=$2
     local config_dir=$3
     local override_dir="/etc/systemd/system/${service}.service.d"
+    local read_write_paths="/opt/data /var/lib/spacedatanetwork"
+
+    if is_spaceaware_config; then
+        read_write_paths+=" -/mnt/volume_nyc3_01/ipfs"
+    fi
 
     ssh_cmd "$ip" "mkdir -p ${override_dir}"
 
@@ -168,7 +202,7 @@ cat > ${override_dir}/spaceaware-runtime.conf <<'EOF'
 [Service]
 User=root
 Group=root
-ReadWritePaths=/opt/data /var/lib/spacedatanetwork /mnt/volume_nyc3_01/ipfs
+ReadWritePaths=${read_write_paths}
 EOF"
     else
         ssh_cmd "$ip" "rm -f ${override_dir}/config-path.conf ${override_dir}/spaceaware-runtime.conf"
@@ -423,10 +457,13 @@ deploy_binary() {
 
         local full_service
         local config_dir
+        local spaceaware_migration_hardening
         full_service="$(full_node_service_name "$ip")"
         config_dir="$(full_node_config_dir "$ip" "$full_service")"
+        spaceaware_migration_hardening="$(spaceaware_migration_hardening_command)"
 
         ssh_cmd "$ip" "mkdir -p /opt/spacedatanetwork/bin /opt/spacedatanetwork/admin-ui /opt/spacedatanetwork/webui /opt/spacedatanetwork/sdn-server /opt/spacedatanetwork/scripts ${config_dir} /var/lib/spacedatanetwork/frontend /var/lib/spacedatanetwork/data && id -u sdn >/dev/null 2>&1 || useradd --system --home /var/lib/spacedatanetwork --shell /usr/sbin/nologin sdn"
+        deploy_spaceaware_migration_script "$ip"
 
         rsync_cmd "${PROJECT_ROOT}/sdn-server/" "$ip" "/opt/spacedatanetwork/sdn-server/"
         rsync_cmd "${PROJECT_ROOT}/scripts/" "$ip" "/opt/spacedatanetwork/scripts/"
@@ -444,7 +481,8 @@ deploy_binary() {
         fi
         configure_full_node_systemd_overrides "$ip" "$full_service" "$config_dir"
 
-        ssh_cmd "$ip" "chmod 755 ${config_dir} && chown root:root ${config_dir}/config.yaml && chmod 644 ${config_dir}/config.yaml && chmod +x /opt/spacedatanetwork/scripts/install-wasmedge.sh /opt/spacedatanetwork/scripts/go-with-wasmedge.sh && WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge /opt/spacedatanetwork/scripts/go-with-wasmedge.sh build -o /opt/spacedatanetwork/bin/spacedatanetwork ./cmd/spacedatanetwork && chown -R sdn:sdn /opt/spacedatanetwork /var/lib/spacedatanetwork && systemctl daemon-reload && systemctl enable ${full_service} && systemctl restart ${full_service} && if [ '${full_service}' = 'space-data-network' ]; then systemctl disable --now spacedatanetwork >/dev/null 2>&1 || true; fi"
+        ssh_cmd "$ip" "chmod 755 ${config_dir} && chown root:root ${config_dir}/config.yaml && chmod 644 ${config_dir}/config.yaml && chmod +x /opt/spacedatanetwork/scripts/install-wasmedge.sh /opt/spacedatanetwork/scripts/go-with-wasmedge.sh && WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge /opt/spacedatanetwork/scripts/go-with-wasmedge.sh build -o /opt/spacedatanetwork/bin/spacedatanetwork ./cmd/spacedatanetwork && chown -R sdn:sdn /opt/spacedatanetwork /var/lib/spacedatanetwork${spaceaware_migration_hardening}"
+        ssh_cmd "$ip" "systemctl daemon-reload && systemctl enable ${full_service} && systemctl restart ${full_service} && if [ '${full_service}' = 'space-data-network' ]; then systemctl disable --now spacedatanetwork >/dev/null 2>&1 || true; fi"
         configure_spaceaware_public_wss_proxy "$ip" "$config_dir"
 
         log_success "Deployed full node bundle to $ip"
