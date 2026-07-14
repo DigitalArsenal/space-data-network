@@ -167,9 +167,35 @@ kubo_load_state="$(systemctl show --property=LoadState --value "$KUBO_SERVICE")"
     fail "$KUBO_SERVICE is not loaded (LoadState=${kubo_load_state:-<empty>}); refusing migration."
 kubo_environment="$(systemctl show --property=Environment --value "$KUBO_SERVICE")" || \
     fail "Could not inspect the effective Environment of $KUBO_SERVICE."
-expected_kubo_environment="IPFS_PATH=$canonical_source_repo"
-[[ "$kubo_environment" == "$expected_kubo_environment" ]] || \
-    fail "$KUBO_SERVICE effective Environment must be exactly $expected_kubo_environment before migration; got ${kubo_environment:-<empty>}."
+kubo_environment_words="${kubo_environment//$'\n'/ }"
+read -r -a kubo_environment_assignments <<< "$kubo_environment_words"
+effective_ipfs_path=""
+ipfs_path_assignment_count=0
+ipfs_path_ambiguous=0
+for environment_assignment in "${kubo_environment_assignments[@]}"; do
+    case "$environment_assignment" in
+        IPFS_PATH=*)
+            ((ipfs_path_assignment_count += 1))
+            effective_ipfs_path="${environment_assignment#IPFS_PATH=}"
+            if [[ "$effective_ipfs_path" == *\"* || \
+                "$effective_ipfs_path" == *\'* || \
+                "$effective_ipfs_path" == *\\* ]]; then
+                ipfs_path_ambiguous=1
+            fi
+            ;;
+        \"IPFS_PATH=*|\'IPFS_PATH=*)
+            ipfs_path_ambiguous=1
+            ;;
+    esac
+done
+if ((ipfs_path_ambiguous || ipfs_path_assignment_count > 1)); then
+    fail "$KUBO_SERVICE effective IPFS_PATH is ambiguous; refusing migration."
+fi
+if ((ipfs_path_assignment_count == 0)); then
+    fail "$KUBO_SERVICE effective IPFS_PATH is missing; refusing migration."
+fi
+[[ "$effective_ipfs_path" == "$canonical_source_repo" ]] || \
+    fail "$KUBO_SERVICE effective IPFS_PATH is mismatched; refusing migration."
 
 [[ ! -L "$DESTINATION_REPO" ]] || fail "Destination repository must not be a symlink: $DESTINATION_REPO"
 canonical_volume_mount="$(realpath "$VOLUME_MOUNT")" || fail "Could not canonicalize volume mount: $VOLUME_MOUNT"

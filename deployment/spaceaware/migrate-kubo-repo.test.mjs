@@ -227,7 +227,9 @@ async function makeFixture(t, {
   await writeFile(propertiesFile, JSON.stringify({
     'ipfs.service': {
       loadState: ipfsUnitLoadState,
-      environment: ipfsUnitEnvironment ?? `IPFS_PATH=${sourceRepo}`,
+      environment: typeof ipfsUnitEnvironment === 'function'
+        ? ipfsUnitEnvironment(sourceRepo)
+        : (ipfsUnitEnvironment ?? `IPFS_PATH=${sourceRepo}`),
     },
   }));
   await writeFile(callLog, '');
@@ -397,10 +399,29 @@ test('refuses a missing ipfs.service before any repository or service mutation',
   ]);
 });
 
-test('refuses a missing or mismatched effective IPFS_PATH before any mutation', async (t) => {
-  for (const [name, ipfsUnitEnvironment] of [
-    ['missing', 'KUBO_PROFILE=server'],
-    ['mismatched', 'IPFS_PATH=/srv/wrong-ipfs'],
+test('refuses a missing, mismatched, or ambiguous effective IPFS_PATH before any mutation', async (t) => {
+  const secretSentinel = 'fixture-secret-must-not-leak';
+  for (const [name, ipfsUnitEnvironment, messagePattern] of [
+    [
+      'missing',
+      `KUBO_PROFILE=server KUBO_SECRET=${secretSentinel}`,
+      /effective IPFS_PATH is missing/i,
+    ],
+    [
+      'mismatched',
+      `IPFS_PATH=/srv/wrong-ipfs KUBO_SECRET=${secretSentinel}`,
+      /effective IPFS_PATH is mismatched/i,
+    ],
+    [
+      'duplicate',
+      (sourceRepo) => `IPFS_PATH=${sourceRepo} IPFS_PATH=${sourceRepo} KUBO_SECRET=${secretSentinel}`,
+      /effective IPFS_PATH is ambiguous/i,
+    ],
+    [
+      'quoted',
+      (sourceRepo) => `IPFS_PATH="${sourceRepo}" KUBO_SECRET=${secretSentinel}`,
+      /effective IPFS_PATH is ambiguous/i,
+    ],
   ]) {
     await t.test(name, async (subtest) => {
       const fixture = await makeFixture(subtest, { ipfsUnitEnvironment });
@@ -411,9 +432,11 @@ test('refuses a missing or mismatched effective IPFS_PATH before any mutation', 
       await assertPreflightRefusedWithoutMutation(
         fixture,
         result,
-        /ipfs\.service.*effective Environment.*exactly IPFS_PATH=/i,
+        messagePattern,
         sourceBefore,
       );
+      assert.doesNotMatch(result.stderr, new RegExp(secretSentinel));
+      assert.doesNotMatch(result.stderr, /KUBO_SECRET=/);
       assert.deepEqual((await fixture.calls()).slice(0, 2).map(({ args }) => args), [
         ['show', '--property=LoadState', '--value', 'ipfs.service'],
         ['show', '--property=Environment', '--value', 'ipfs.service'],
@@ -726,8 +749,11 @@ test('same pin count still fails when one deterministic sample pin is absent', a
   });
 });
 
-test('copies without deleting source, verifies Kubo, then starts SDN', async (t) => {
-  const fixture = await makeFixture(t);
+test('allows unrelated environment assignments, preserves source, verifies Kubo, then starts SDN', async (t) => {
+  const fixture = await makeFixture(t, {
+    ipfsUnitEnvironment: (sourceRepo) =>
+      `IPFS_PATH=${sourceRepo} KUBO_PROFILE=server`,
+  });
   const sourceConfigBefore = await readFile(join(fixture.sourceRepo, 'config'));
   const sourceBlockBefore = await readFile(join(fixture.sourceRepo, 'blocks', 'source-only'));
   const result = await fixture.run();
