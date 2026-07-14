@@ -29,9 +29,13 @@ var log = logging.Logger("modulert")
 // _initialize, ...) is subject to both: WasmEdge aborts the guest itself
 // once either budget is spent, hard-interrupting it and leaving the runtime
 // usable for the next call. The module-sdk manifest (Manifest, manifest.go)
-// has no field to override these per module, so every module currently
-// gets the same budget — see the B3 report's follow-up note for the exact
-// manifest/config plumbing that would be needed to make this overridable.
+// deliberately still has no field to override these — a module must never be
+// able to self-grant a bigger budget (that would be an untrusted-CPU DoS
+// vector). Where a larger budget is legitimately needed, the HOST grants it
+// per-call: scheduled/cron invocations pick up the wider budget below via the
+// InvokeCron seam (wasmrt.WithExecBudget), operator-tunable through config
+// (modules.scheduled_invoke_timeout). Interactive invocations keep these
+// tight defaults.
 const (
 	// defaultInvokeTimeout is the wall-clock budget per Execute call,
 	// hard-enforced via WasmEdge async-execute + cancel (modules here are
@@ -45,6 +49,43 @@ const (
 	// module work while deterministically bounding a hot loop regardless of
 	// host CPU speed.
 	defaultInvokeCostLimit = 4_000_000_000
+)
+
+// Scheduled-invocation budgets. The interactive defaults above (30s / 4e9)
+// are the fail-closed baseline for request-scoped calls (protocol/HTTP
+// handlers, which pass a ctx deadline). SCHEDULED work — a cron ticker fire
+// or the run-now admin action, both of which reach the guest through
+// InvokeCron — is a different animal: a data-source adapter pull (fetch →
+// parse ephemeris → per-record CID + sign → publish) legitimately runs for
+// minutes on a slow (1 vCPU) production host, blowing past the 30s
+// interactive cap. Prod evidence: on the celestrak node every iss-source and
+// spacex-starlink-source pull failed with
+//
+//	plugin_invoke_stream(pull): wasm execution exceeded wall-clock timeout:
+//	"plugin_invoke_stream" exceeded 30s
+//
+// The larger budget is granted per-call by the HOST at the InvokeCron seam
+// (see InvokeCron), never by the module manifest — a module cannot self-grant
+// unbounded CPU. A ctx deadline still narrows it (ExecuteContext semantics
+// preserved). Operators on especially slow hosts can raise the wall-clock
+// budget via config (modules.scheduled_invoke_timeout), which auto-scales the
+// fuel budget proportionally.
+const (
+	// defaultScheduledInvokeTimeout is the per-call wall-clock budget for a
+	// scheduled/cron/run-now module invocation. The 10m default comfortably
+	// covers a full multi-thousand-record ephemeris pull-parse-sign-publish
+	// cycle on a 1 vCPU host while still hard-bounding a runaway guest (the
+	// async interrupt fires at the budget; modulert modules are never
+	// dedicated-thread, so the wall-clock bound is always hard-enforced).
+	defaultScheduledInvokeTimeout = 10 * time.Minute
+	// defaultScheduledInvokeCostLimit scales the fuel budget proportionally to
+	// the wall-clock ratio (10m / 30s = 20x) so a large in-guest parse
+	// (per-record CID/sign over thousands of records) keeps the same
+	// instructions-per-second ceiling it had under the 30s interactive budget,
+	// just over a longer window — rather than trading a wall-clock failure for
+	// a fuel-exhaustion one. A pure-compute runaway is still ultimately bounded
+	// by the 10m wall-clock interrupt even if it somehow outran this.
+	defaultScheduledInvokeCostLimit uint = defaultInvokeCostLimit * 20
 )
 
 // Module is the generic module-sdk runtime. It loads any space-data-module-sdk
@@ -78,6 +119,19 @@ type Module struct {
 	// UIDescriptor().URL stays "" for modules with no declared UI, exactly
 	// as before this field existed (H1 loop).
 	uiURL string
+
+	// scheduledInvokeTimeout is the per-call wall-clock budget granted to
+	// SCHEDULED invocations (cron + run-now) at the InvokeCron seam. Zero
+	// selects defaultScheduledInvokeTimeout. Populated from
+	// NodeContext.ScheduledInvokeTimeout at construction, which an operator
+	// can tune via config (modules.scheduled_invoke_timeout) for slow hosts.
+	// Interactive invokes never consult this — they keep defaultInvokeTimeout.
+	scheduledInvokeTimeout time.Duration
+	// scheduledInvokeCostLimit is the per-call fuel budget for scheduled
+	// invocations. Zero selects a value scaled proportionally to the resolved
+	// wall-clock budget (see scheduledBudget), keeping the interactive
+	// instructions-per-second ceiling over the longer scheduled window.
+	scheduledInvokeCostLimit uint
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -146,12 +200,49 @@ func NewModule(wasmBytes []byte, capReg *CapabilityRegistry, nodeCtx *NodeContex
 		nodeCtx:   nodeCtx,
 		capReg:    capReg,
 	}
+	if nodeCtx != nil {
+		// Operator-tunable scheduled budget (config
+		// modules.scheduled_invoke_timeout → NodeContext). Zero means "use the
+		// built-in default", applied by scheduledBudget().
+		m.scheduledInvokeTimeout = nodeCtx.ScheduledInvokeTimeout
+	}
 
 	if err := m.Load(context.Background()); err != nil {
 		return nil, err
 	}
 
 	return m, nil
+}
+
+// scheduledBudget resolves the per-call resource budget granted to a
+// SCHEDULED invocation (cron ticker + run-now admin, both via InvokeCron).
+// The wall-clock budget is the operator override (NodeContext) when set, else
+// defaultScheduledInvokeTimeout. The fuel budget is the operator override when
+// set, else it is scaled proportionally to the resolved wall-clock budget so a
+// hand-tuned longer timeout also gets proportionally more fuel — keeping the
+// interactive instructions-per-second ceiling over the longer window instead
+// of trading a wall-clock failure for a fuel-exhaustion one.
+func (m *Module) scheduledBudget() wasmrt.ExecBudget {
+	timeout := m.scheduledInvokeTimeout
+	if timeout <= 0 {
+		timeout = defaultScheduledInvokeTimeout
+	}
+	cost := m.scheduledInvokeCostLimit
+	if cost == 0 {
+		if timeout == defaultScheduledInvokeTimeout {
+			cost = defaultScheduledInvokeCostLimit
+		} else {
+			// Scale fuel ∝ wall-clock: cost = defaultInvokeCostLimit *
+			// (timeout / defaultInvokeTimeout). Computed in float64 to avoid
+			// the uint64 overflow of the intermediate product
+			// (defaultInvokeCostLimit * timeout is ~e21 for multi-minute
+			// timeouts, well past uint64's ~1.8e19 ceiling); the operand
+			// magnitudes and the result are all exactly representable.
+			ratio := float64(timeout) / float64(defaultInvokeTimeout)
+			cost = uint(float64(defaultInvokeCostLimit) * ratio)
+		}
+	}
+	return wasmrt.ExecBudget{Timeout: timeout, CostLimit: cost}
 }
 
 // Load instantiates the module artifact and refreshes the manifest without
@@ -581,6 +672,15 @@ func (m *Module) CronMethods() []plugins.CronMethodSpec {
 }
 
 func (m *Module) InvokeCron(ctx context.Context, method string, input []byte) ([]byte, error) {
+	// Scheduled seam. Both the cron ticker (Manager.scheduleCronMethods) and
+	// the run-now admin path (Manager.RunRuntimeModuleScheduleNow) reach the
+	// guest exclusively through InvokeCron, so this is the single place the
+	// HOST grants the larger scheduled budget. The manifest never reaches this
+	// — a module cannot self-grant it. Interactive paths call InvokeMethod /
+	// InvokeMethodFrames directly and keep the tight defaultInvokeTimeout. A
+	// caller-supplied ctx deadline still narrows the budget (see
+	// wasmrt.effectiveTimeout / ExecuteContext).
+	ctx = wasmrt.WithExecBudget(ctx, m.scheduledBudget())
 	output, err := m.InvokeMethod(ctx, method, input)
 	m.recordTimerResult(err)
 	return output, err

@@ -148,6 +148,56 @@ func WithCostLimit(limit uint) Option {
 	return func(c *config) { c.costLimit = limit }
 }
 
+// ExecBudget is a per-CALL resource-budget override, carried on the Go
+// context by the HOST for a single Execute/ExecuteContext call. It RAISES (or
+// lowers) the module's configured default per-Execute budget for that one
+// call, letting a trusted host caller — e.g. a scheduled cron invocation that
+// legitimately runs for minutes — grant a larger wall-clock/fuel allowance
+// than the tight interactive default WITHOUT weakening the default for every
+// other call. A zero field means "use the module's configured default".
+//
+// This is a host-only knob: Go context values cannot be set by guest WASM, so
+// a module can never self-grant a bigger budget through this path. The
+// module's WithExecTimeout/WithCostLimit defaults remain the fail-closed
+// baseline — a call with no ExecBudget on its context is bounded exactly as
+// before. A ctx deadline still narrows the resulting wall-clock budget when
+// the deadline is sooner (see effectiveTimeout), so a large scheduled budget
+// never defeats an even-sooner request-scoped deadline.
+//
+// Note: CostLimit only bites if cost accounting was enabled at module creation
+// (WithCostLimit > 0); a per-call CostLimit cannot turn fuel metering on for a
+// module that was created without it.
+type ExecBudget struct {
+	// Timeout is the wall-clock budget for the call. 0 = use module default.
+	Timeout time.Duration
+	// CostLimit is the WasmEdge instruction-cost budget for the call.
+	// 0 = use module default.
+	CostLimit uint
+}
+
+type execBudgetKey struct{}
+
+// WithExecBudget returns a context carrying a per-call ExecBudget override.
+// Intended for host callers that know a specific call should run under a
+// different budget than the module default (e.g. modulert's scheduled/cron
+// seam grants a multi-minute budget; interactive callers leave it unset).
+func WithExecBudget(ctx context.Context, b ExecBudget) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, execBudgetKey{}, b)
+}
+
+// execBudgetFrom extracts a per-call ExecBudget override from ctx, if the host
+// attached one via WithExecBudget.
+func execBudgetFrom(ctx context.Context) (ExecBudget, bool) {
+	if ctx == nil {
+		return ExecBudget{}, false
+	}
+	b, ok := ctx.Value(execBudgetKey{}).(ExecBudget)
+	return b, ok
+}
+
 func WithWASI() Option {
 	return func(c *config) { c.enableWASI = true }
 }
@@ -326,25 +376,29 @@ func (m *Module) runAsyncWithTimeout(timeout time.Duration, name string, params 
 	return nil, fmt.Errorf("%w: %q exceeded %s", ErrExecutionTimeout, name, timeout)
 }
 
-// applyCostBudget raises the VM's cumulative WasmEdge cost limit by
-// m.costLimit above whatever has already been spent, giving the upcoming
-// Execute call a fresh fuel budget. WasmEdge's cost counter is cumulative
-// for the VM's lifetime (the Go bindings do not expose a per-call reset), so
-// "per invocation" fuel is implemented by ratcheting the limit up each call
-// rather than resetting the counter.
-func (m *Module) applyCostBudget() {
+// applyCostBudget raises the VM's cumulative WasmEdge cost limit by cost
+// above whatever has already been spent, giving the upcoming Execute call a
+// fresh fuel budget. WasmEdge's cost counter is cumulative for the VM's
+// lifetime (the Go bindings do not expose a per-call reset), so "per
+// invocation" fuel is implemented by ratcheting the limit up each call rather
+// than resetting the counter. cost is the module default (m.costLimit) unless
+// a per-call ExecBudget override raised it (see executeDirect).
+func (m *Module) applyCostBudget(cost uint) {
 	stats := m.vm.GetStatistics()
 	if stats == nil {
 		return
 	}
-	stats.SetCostLimit(stats.GetTotalCost() + m.costLimit)
+	stats.SetCostLimit(stats.GetTotalCost() + cost)
 }
 
-// effectiveTimeout resolves the wall-clock budget for one Execute call: the
-// module's configured default (WithExecTimeout), narrowed to ctx's deadline
-// when ctx has one and it is sooner. Zero means "no wall-clock enforcement".
-func (m *Module) effectiveTimeout(ctx context.Context) time.Duration {
-	timeout := m.execTimeout
+// effectiveTimeout resolves the wall-clock budget for one Execute call from a
+// base budget (the module's WithExecTimeout default, or a per-call ExecBudget
+// override chosen by the host), narrowed to ctx's deadline when ctx has one
+// and it is sooner. Zero means "no wall-clock enforcement". The ctx-deadline
+// narrowing is preserved for both the default and the override path, so an
+// even-sooner request-scoped deadline always wins.
+func (m *Module) effectiveTimeout(ctx context.Context, base time.Duration) time.Duration {
+	timeout := base
 	if dl, ok := ctx.Deadline(); ok {
 		remain := time.Until(dl)
 		if remain <= 0 {
@@ -382,11 +436,29 @@ func (m *Module) executeDirect(ctx context.Context, name string, params ...inter
 		return nil, err
 	}
 
-	if m.costLimit > 0 {
-		m.applyCostBudget()
+	// Per-call budget: start from the module's configured defaults, then let a
+	// host-attached ExecBudget override RAISE (or lower) them for this one
+	// call. Guest WASM cannot set a Go context value, so this is never a
+	// module self-grant — the host caller decides (e.g. modulert grants a
+	// multi-minute budget on the scheduled/cron seam, while interactive
+	// invokes leave it unset and keep the tight default). The ctx deadline
+	// still narrows the resulting wall-clock budget below.
+	costLimit := m.costLimit
+	base := m.execTimeout
+	if b, ok := execBudgetFrom(ctx); ok {
+		if b.CostLimit > 0 {
+			costLimit = b.CostLimit
+		}
+		if b.Timeout > 0 {
+			base = b.Timeout
+		}
 	}
 
-	timeout := m.effectiveTimeout(ctx)
+	if costLimit > 0 {
+		m.applyCostBudget(costLimit)
+	}
+
+	timeout := m.effectiveTimeout(ctx, base)
 	if timeout > 0 && !m.dedicatedThread {
 		return m.runAsyncWithTimeout(timeout, name, params...)
 	}
@@ -578,7 +650,10 @@ func (m *Module) Execute(name string, params ...interface{}) ([]interface{}, err
 // module's configured wall-clock budget to ctx's deadline when ctx has one
 // and it is sooner (B3: per-invocation timeout threaded from the caller).
 // An already-canceled/expired ctx fails fast without starting the guest
-// call. Fuel (WithCostLimit) enforcement is unaffected by ctx.
+// call. When the host attached a per-call ExecBudget to ctx (WithExecBudget),
+// that budget replaces the module's wall-clock/fuel defaults for this call
+// (still subject to the ctx-deadline narrowing above); otherwise fuel
+// (WithCostLimit) enforcement is unaffected by ctx.
 func (m *Module) ExecuteContext(ctx context.Context, name string, params ...interface{}) ([]interface{}, error) {
 	if ctx == nil {
 		ctx = context.Background()

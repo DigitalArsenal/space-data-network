@@ -8,6 +8,29 @@ import (
 	"time"
 )
 
+func TestModulesConfigDefaultsToUnsetScheduledTimeout(t *testing.T) {
+	// Unset (0) means the module runtime applies its own built-in default
+	// (10m) — config must not silently invent a different one.
+	if cfg := Default(); cfg.Modules.ScheduledInvokeTimeout != 0 {
+		t.Fatalf("Default().Modules.ScheduledInvokeTimeout = %s, want 0 (runtime default applies)", cfg.Modules.ScheduledInvokeTimeout)
+	}
+}
+
+func TestLoadModulesScheduledInvokeTimeoutFromYAML(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	yamlDoc := "modules:\n  scheduled_invoke_timeout: 20m\n"
+	if err := os.WriteFile(configPath, []byte(yamlDoc), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() = %v", err)
+	}
+	if got := cfg.Modules.ScheduledInvokeTimeout; got != 20*time.Minute {
+		t.Fatalf("Modules.ScheduledInvokeTimeout = %s, want 20m", got)
+	}
+}
+
 func TestDefaultAssetPinConfigIsSecureAndBounded(t *testing.T) {
 	cfg := Default()
 
