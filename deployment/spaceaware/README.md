@@ -292,3 +292,44 @@ sudo test -d /var/lib/ipfs
 This rollback changes only the service configuration and service states. It
 does not delete either repository; `/var/lib/ipfs` remains the authoritative
 rollback copy.
+
+## Production rollout record — 2026-07-14 UTC
+
+The guarded Kubo migration and GitHub OIDC asset-pin canary completed on
+2026-07-14 UTC with SDN component commit
+`b50e30505cf82334f563006fab0302cc1087c4fc` deployed.
+
+- Kubo moved from `/var/lib/ipfs` to
+  `/mnt/volume_nyc3_01/ipfs`; `/var/lib/ipfs` remains intact as the rollback
+  copy.
+- The recursive pin set was 2,081 before migration and 2,081 immediately
+  after migration, with zero missing pins. The verified canary increased the
+  live set to 2,082.
+- The Kubo peer-ID SHA-256 digest was
+  `f44e506fb87f5a54732778189d6f35829e638a47edbbf715abbf167959d94b45`.
+  The raw peer ID is intentionally omitted from this deployment record.
+- The effective Kubo repository path is the mounted volume, its storage cap is
+  `120GB`, and both `ipfs.service` and `space-data-network.service` were active
+  after independent API and gateway checks.
+- The live SDN config uses `mode: full` because the asset reference ledger
+  requires local FlatSQL storage. Asset pinning is enabled only for the exact
+  `DigitalArsenal/asset-models` main-branch pin and decision workflows.
+- Unauthenticated POSTs to `/api/v1/assets/pin` and
+  `/api/v1/assets/reference-state` returned the bounded JSON `401` response,
+  and both OpenAPI operations advertised only `githubOIDC` security.
+
+The generated one-triangle GLB canary ran in GitHub Actions run
+`29320830677` against asset-models commit
+`59582effebdece854bbb5ab9bd601b864ea81b9f` and issue `#25`.
+
+- CID: `bafkreiawliivuqf4nhinllryxnnpll5ckdipak2phi6bvo7de7idnzb2vq`
+- SHA-256: `165a115a40bc69d0d5ae38bb5af5afa250d0f02b4f3a3c1abbe327d036e43aac`
+- Byte length: `476`
+- Ledger lifecycle: `staged` to `review_open`
+- Audit results: `asset_pin_upload=pinned` and
+  `asset_reference_state=review_open`
+
+The public and local gateways returned the exact expected bytes, Kubo reported
+the CID as a recursive pin, and the journal contained two distinct one-time
+OIDC receipts with the expected repository, ref, workflow, run, attempt, and
+commit provenance. No JWT or raw token material was recorded.
