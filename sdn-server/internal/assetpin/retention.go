@@ -323,72 +323,167 @@ func (r *Retainer) abandonStaleReferences(ctx context.Context, now time.Time) (m
 
 func (r *Retainer) recoverPendingPins(ctx context.Context, now time.Time) (map[string]struct{}, bool, error) {
 	blockedCIDs := make(map[string]struct{})
+	ownership := newRecoveryCIDOwnership()
+	// Complete this read-only pass before any recovery mutation. Otherwise a
+	// lexicographically earlier mismatch could unpin content claimed by a later
+	// marker that has not yet reached the ledger.
+	if err := r.walkRecoveryMarkers(ctx, func(marker AssetPinRecoveryMarker) error {
+		ownership.addExpectedClaim(marker.ReferenceKey, marker.ExpectedCID)
+		if marker.UpdatedAt.Add(retentionRecoveryGracePeriod).After(now) {
+			return nil
+		}
+		found, err := retentionCall(ctx, r.callTimeout, func(callCtx context.Context) (retentionReferenceResult, error) {
+			value, ok, findErr := r.store.FindAssetPinReference(callCtx, marker.ReferenceKey)
+			return retentionReferenceResult{reference: value, found: ok}, findErr
+		})
+		if err != nil {
+			return fmt.Errorf("preflight marker %s ledger reference: %w", marker.ReferenceKey, err)
+		}
+		if found.found && !recoveryMarkerMatchesReference(marker, found.reference) {
+			return &AssetPinRecoveryLedgerConflictError{
+				ReferenceKey: marker.ReferenceKey,
+				ExpectedCID:  marker.ExpectedCID,
+				ActualCID:    found.reference.CID,
+			}
+		}
+		return nil
+	}); err != nil {
+		return blockedCIDs, true, err
+	}
+
 	var recoveryErrors []error
 	blocksAllRetention := false
+	walkErr := r.walkRecoveryMarkers(ctx, func(marker AssetPinRecoveryMarker) error {
+		fresh := marker.UpdatedAt.Add(retentionRecoveryGracePeriod).After(now)
+		err := r.recoverMarker(ctx, now, marker, ownership)
+		if errors.Is(err, errAssetPinRecoveryOwnershipDeferred) {
+			blockedCIDs[marker.ExpectedCID] = struct{}{}
+			blockedCIDs[marker.CID] = struct{}{}
+			return nil
+		}
+		if err != nil {
+			if errors.Is(err, ErrInvalidAssetPinRecoveryMarker) || errors.Is(err, ErrUnsafeAssetPinDirectory) ||
+				errors.Is(err, ErrAssetPinRecoveryMarkerConflict) {
+				blocksAllRetention = true
+			}
+			if marker.ExpectedCID != "" {
+				blockedCIDs[marker.ExpectedCID] = struct{}{}
+			}
+			if marker.CID != "" {
+				blockedCIDs[marker.CID] = struct{}{}
+			}
+			var conflict *AssetPinRecoveryLedgerConflictError
+			if errors.As(err, &conflict) && conflict.ActualCID != "" {
+				blockedCIDs[conflict.ActualCID] = struct{}{}
+			}
+			recoveryErrors = append(recoveryErrors, fmt.Errorf("marker %s: %w", marker.ReferenceKey, err))
+			if errors.Is(err, ErrAssetPinRecoveryMarkerConflict) {
+				return err
+			}
+			return nil
+		}
+		if fresh {
+			blockedCIDs[marker.ExpectedCID] = struct{}{}
+			if marker.CID != "" {
+				blockedCIDs[marker.CID] = struct{}{}
+			}
+		}
+		return nil
+	})
+	if walkErr != nil {
+		if !errors.Is(walkErr, ErrAssetPinRecoveryMarkerConflict) {
+			recoveryErrors = append(recoveryErrors, walkErr)
+		}
+		return blockedCIDs, true, errors.Join(recoveryErrors...)
+	}
+	return blockedCIDs, blocksAllRetention, errors.Join(recoveryErrors...)
+}
+
+func (r *Retainer) walkRecoveryMarkers(ctx context.Context, visit func(AssetPinRecoveryMarker) error) error {
 	cursor := ""
 	for {
 		if err := ctx.Err(); err != nil {
-			return blockedCIDs, true, errors.Join(append(recoveryErrors, err)...)
+			return err
 		}
 		markers, next, err := r.recovery.ListPage(ctx, cursor, r.recoveryPageSize)
 		if err != nil {
-			return blockedCIDs, true, errors.Join(append(recoveryErrors, err)...)
+			return err
 		}
 		if len(markers) > r.recoveryPageSize {
-			return blockedCIDs, true, errors.Join(append(recoveryErrors, errors.New("asset pin recovery store exceeded its page bound"))...)
+			return errors.New("asset pin recovery store exceeded its page bound")
 		}
 		for index := 1; index < len(markers); index++ {
 			if markers[index-1].ReferenceKey >= markers[index].ReferenceKey {
-				return blockedCIDs, true, errors.Join(append(recoveryErrors, errors.New("asset pin recovery page is not strictly ordered"))...)
+				return errors.New("asset pin recovery page is not strictly ordered")
 			}
+		}
+		if len(markers) == r.recoveryPageSize &&
+			(next == "" || next <= cursor || next != markers[len(markers)-1].ReferenceKey) {
+			return errors.New("asset pin recovery store returned an invalid cursor")
 		}
 		for _, marker := range markers {
 			if err := ctx.Err(); err != nil {
-				return blockedCIDs, true, errors.Join(append(recoveryErrors, err)...)
+				return err
 			}
 			if cursor != "" && marker.ReferenceKey <= cursor {
-				return blockedCIDs, true, errors.Join(append(recoveryErrors, errors.New("asset pin recovery cursor did not advance"))...)
+				return errors.New("asset pin recovery cursor did not advance")
 			}
-			fresh := marker.UpdatedAt.Add(retentionRecoveryGracePeriod).After(now)
-			if err := r.recoverMarker(ctx, now, marker); err != nil {
-				if errors.Is(err, ErrInvalidAssetPinRecoveryMarker) || errors.Is(err, ErrUnsafeAssetPinDirectory) ||
-					errors.Is(err, ErrAssetPinRecoveryMarkerConflict) {
-					blocksAllRetention = true
-				}
-				if marker.ExpectedCID != "" {
-					blockedCIDs[marker.ExpectedCID] = struct{}{}
-				}
-				if marker.CID != "" {
-					blockedCIDs[marker.CID] = struct{}{}
-				}
-				var conflict *AssetPinRecoveryLedgerConflictError
-				if errors.As(err, &conflict) && conflict.ActualCID != "" {
-					blockedCIDs[conflict.ActualCID] = struct{}{}
-				}
-				recoveryErrors = append(recoveryErrors, fmt.Errorf("marker %s: %w", marker.ReferenceKey, err))
-				if errors.Is(err, ErrAssetPinRecoveryMarkerConflict) {
-					return blockedCIDs, true, errors.Join(recoveryErrors...)
-				}
-				continue
+			if err := validateAssetPinRecoveryMarker(marker); err != nil {
+				return fmt.Errorf("marker %s: %w", marker.ReferenceKey, err)
 			}
-			if fresh {
-				blockedCIDs[marker.ExpectedCID] = struct{}{}
-				if marker.CID != "" {
-					blockedCIDs[marker.CID] = struct{}{}
+			if visit != nil {
+				if err := visit(marker); err != nil {
+					return err
 				}
 			}
 		}
 		if len(markers) < r.recoveryPageSize {
-			return blockedCIDs, blocksAllRetention, errors.Join(recoveryErrors...)
-		}
-		if next == "" || next <= cursor || next != markers[len(markers)-1].ReferenceKey {
-			return blockedCIDs, true, errors.Join(append(recoveryErrors, errors.New("asset pin recovery store returned an invalid cursor"))...)
+			return nil
 		}
 		cursor = next
 	}
 }
 
-func (r *Retainer) recoverMarker(ctx context.Context, now time.Time, marker AssetPinRecoveryMarker) error {
+type recoveryCIDOwnershipClaim struct {
+	firstOwner string
+	ownerCount int
+}
+
+// recoveryCIDOwnership counts unique expected-CID claims. A mismatch marker's
+// unexpected observed CID is deliberately excluded so it cannot protect its
+// own cleanup forever.
+type recoveryCIDOwnership struct {
+	byExpectedCID map[string]recoveryCIDOwnershipClaim
+}
+
+func newRecoveryCIDOwnership() *recoveryCIDOwnership {
+	return &recoveryCIDOwnership{byExpectedCID: make(map[string]recoveryCIDOwnershipClaim)}
+}
+
+func (o *recoveryCIDOwnership) addExpectedClaim(referenceKey, cidValue string) {
+	if o == nil || referenceKey == "" || cidValue == "" {
+		return
+	}
+	claim, found := o.byExpectedCID[cidValue]
+	if !found {
+		o.byExpectedCID[cidValue] = recoveryCIDOwnershipClaim{firstOwner: referenceKey, ownerCount: 1}
+		return
+	}
+	if claim.firstOwner != referenceKey {
+		claim.ownerCount++
+		o.byExpectedCID[cidValue] = claim
+	}
+}
+
+func (o *recoveryCIDOwnership) hasOtherExpectedOwner(referenceKey, cidValue string) bool {
+	if o == nil {
+		return false
+	}
+	claim, found := o.byExpectedCID[cidValue]
+	return found && (claim.firstOwner != referenceKey || claim.ownerCount > 1)
+}
+
+func (r *Retainer) recoverMarker(ctx context.Context, now time.Time, marker AssetPinRecoveryMarker, ownership *recoveryCIDOwnership) error {
 	if err := validateAssetPinRecoveryMarker(marker); err != nil {
 		return err
 	}
@@ -425,7 +520,7 @@ func (r *Retainer) recoverMarker(ctx context.Context, now time.Time, marker Asse
 	}
 
 	if marker.Phase == AssetPinRecoveryPinnedUncommitted && marker.CID != marker.ExpectedCID {
-		return r.compensateMismatchedMarker(ctx, now, marker)
+		return r.compensateMismatchedMarker(ctx, now, marker, ownership)
 	}
 	pinned, err := r.isPinned(ctx, marker.ExpectedCID)
 	if err != nil {
@@ -453,6 +548,8 @@ type retentionReferenceResult struct {
 	found     bool
 }
 
+var errAssetPinRecoveryOwnershipDeferred = errors.New("asset pin recovery cleanup deferred by another marker owner")
+
 // AssetPinRecoveryLedgerConflictError identifies the committed CID involved
 // in a marker/ledger integrity conflict while classifying as the package-wide
 // recovery-marker conflict sentinel.
@@ -470,7 +567,7 @@ func (e *AssetPinRecoveryLedgerConflictError) Unwrap() error {
 	return ErrAssetPinRecoveryMarkerConflict
 }
 
-func (r *Retainer) compensateMismatchedMarker(ctx context.Context, now time.Time, marker AssetPinRecoveryMarker) error {
+func (r *Retainer) compensateMismatchedMarker(ctx context.Context, now time.Time, marker AssetPinRecoveryMarker, ownership *recoveryCIDOwnership) error {
 	pinned, err := r.isPinned(ctx, marker.CID)
 	if err != nil {
 		return err
@@ -486,6 +583,9 @@ func (r *Retainer) compensateMismatchedMarker(ctx context.Context, now time.Time
 			return errors.New("protected asset reference count is negative")
 		}
 		if protected == 0 {
+			if ownership.hasOtherExpectedOwner(marker.ReferenceKey, marker.CID) {
+				return errAssetPinRecoveryOwnershipDeferred
+			}
 			if err := r.unpin(ctx, marker.CID); err != nil {
 				return err
 			}

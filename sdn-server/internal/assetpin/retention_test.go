@@ -428,6 +428,39 @@ func TestRetainerMarkerLedgerConflictBlocksWholeDestructiveSweep(t *testing.T) {
 	}
 }
 
+func TestRetainerPrescanFindsLaterLedgerConflictBeforeMismatchCompensation(t *testing.T) {
+	const unrelatedLedgerCID = "bafkreicfbpehrnn2ynqbs7tf7cu4rj57tsw222kkna33ytyfaz6v37oniu"
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	first := testAssetPinRecoveryMarker("candidate-prescan-conflict-order-a", "4")
+	second := testAssetPinRecoveryMarker("candidate-prescan-conflict-order-b", "5")
+	lower, higher := first, second
+	if lower.ReferenceKey > higher.ReferenceKey {
+		lower, higher = higher, lower
+	}
+	mismatch := lower
+	mismatch.Phase = AssetPinRecoveryPinnedUncommitted
+	mismatch.CID = testRecoveryAlternateCID
+	conflict := higher
+	conflict.Phase = AssetPinRecoveryPinnedUncommitted
+	conflict.CID = conflict.ExpectedCID
+	committed := retentionReferenceFromMarker(conflict)
+	committed.CID = unrelatedLedgerCID
+	store := newFakeRetentionStore(now, committed)
+	pins := &fakeRetentionPins{pinned: map[string]bool{
+		testRecoveryAlternateCID: true,
+		unrelatedLedgerCID:       true,
+	}}
+	retainer := mustTestRetainer(t, store, pins, newFakeRecoveryPager(mismatch, conflict))
+
+	err := retainer.Sweep(context.Background(), now)
+	if !errors.Is(err, ErrAssetPinRecoveryMarkerConflict) {
+		t.Fatalf("Sweep() error = %v, want later marker conflict", err)
+	}
+	if len(pins.unpinCalls) != 0 {
+		t.Fatalf("mismatch compensation ran before complete conflict prescan: %v", pins.unpinCalls)
+	}
+}
+
 func TestRetainerSweepRecoversPinnedMarkerBeforeRetention(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	marker := testAssetPinRecoveryMarker("candidate-retainer-recovery", "8")
@@ -481,6 +514,97 @@ func TestRetainerSweepSafelyHandlesIntentAndCIDMismatchMarkers(t *testing.T) {
 	}
 	if got, want := pins.unpinCalls, []string{mismatch.CID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("mismatch compensation = %v, want %v", got, want)
+	}
+}
+
+func TestRetainerMismatchCompensationPreservesOtherRecoveryOwnershipInEitherOrder(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	first := testAssetPinRecoveryMarker("candidate-recovery-owner-order-a", "1")
+	second := testAssetPinRecoveryMarker("candidate-recovery-owner-order-b", "2")
+	lower, higher := first, second
+	if lower.ReferenceKey > higher.ReferenceKey {
+		lower, higher = higher, lower
+	}
+	orders := []struct {
+		name       string
+		mismatch   AssetPinRecoveryMarker
+		legitimate AssetPinRecoveryMarker
+	}{
+		{name: "mismatch marker first", mismatch: lower, legitimate: higher},
+		{name: "legitimate marker first", mismatch: higher, legitimate: lower},
+	}
+	freshnesses := []struct {
+		name  string
+		fresh bool
+	}{
+		{name: "fresh legitimate owner", fresh: true},
+		{name: "stale legitimate owner", fresh: false},
+	}
+
+	for _, freshness := range freshnesses {
+		for _, order := range orders {
+			t.Run(freshness.name+"/"+order.name, func(t *testing.T) {
+				mismatch := order.mismatch
+				mismatch.Phase = AssetPinRecoveryPinnedUncommitted
+				mismatch.CID = testRecoveryAlternateCID
+
+				legitimate := order.legitimate
+				legitimate.ExpectedCID = testRecoveryAlternateCID
+				legitimate.Phase = AssetPinRecoveryPinnedUncommitted
+				legitimate.CID = legitimate.ExpectedCID
+				if freshness.fresh {
+					legitimate.CreatedAt = now.Add(-time.Minute)
+					legitimate.UpdatedAt = legitimate.CreatedAt
+					legitimate.ExpiresAt = legitimate.CreatedAt.Add(90 * 24 * time.Hour)
+				}
+
+				store := newFakeRetentionStore(now)
+				pins := &fakeRetentionPins{pinned: map[string]bool{testRecoveryAlternateCID: true}}
+				recovery := newFakeRecoveryPager(mismatch, legitimate)
+				retainer := mustTestRetainer(t, store, pins, recovery)
+
+				if err := retainer.Sweep(context.Background(), now); err != nil {
+					t.Fatalf("first Sweep() error = %v", err)
+				}
+				if len(pins.unpinCalls) != 0 {
+					t.Fatalf("shared recovery CID was unpinned on first sweep: %v", pins.unpinCalls)
+				}
+
+				if freshness.fresh {
+					if !recovery.has(mismatch.ReferenceKey) || !recovery.has(legitimate.ReferenceKey) {
+						t.Fatalf("deferred recovery markers were consumed: %+v", recovery.markers)
+					}
+					if _, found := store.reference(legitimate.ReferenceKey); found {
+						t.Fatal("fresh legitimate marker committed before its grace period")
+					}
+				}
+				if recovery.has(mismatch.ReferenceKey) {
+					secondSweepAt := now.Add(time.Minute)
+					if freshness.fresh {
+						secondSweepAt = now.Add(retentionRecoveryGracePeriod + 2*time.Minute)
+					}
+					if err := retainer.Sweep(context.Background(), secondSweepAt); err != nil {
+						t.Fatalf("second Sweep() error = %v", err)
+					}
+					if recovery.has(mismatch.ReferenceKey) {
+						if err := retainer.Sweep(context.Background(), secondSweepAt.Add(time.Minute)); err != nil {
+							t.Fatalf("third Sweep() error = %v", err)
+						}
+					}
+				}
+
+				legitimateRef, found := store.reference(legitimate.ReferenceKey)
+				if !found || legitimateRef.CID != testRecoveryAlternateCID {
+					t.Fatalf("legitimate recovery reference = %+v, %v", legitimateRef, found)
+				}
+				if recovery.has(mismatch.ReferenceKey) || recovery.has(legitimate.ReferenceKey) {
+					t.Fatalf("recoverable markers remain after ownership committed: %+v", recovery.markers)
+				}
+				if len(pins.unpinCalls) != 0 {
+					t.Fatalf("shared recovery CID was unpinned: %v", pins.unpinCalls)
+				}
+			})
+		}
 	}
 }
 
