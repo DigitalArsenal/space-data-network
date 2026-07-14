@@ -47,6 +47,7 @@
     --blocked: #c95c5c;
     --interim: #d7a24a;
     --pass: #46d19e;
+    --nonindep: #b48ce0;
     --accent: #4a90d9;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
     --sys: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
@@ -84,6 +85,15 @@
   .pill.pass { color: var(--pass); border-color: #244b3d; background: #0e1a15; }
   .pill.interim { color: var(--interim); border-color: #4a3c1f; background: #1a150c; }
   .pill.blocked { color: var(--blocked); border-color: #4a2626; background: #1a0e0e; }
+  /* NON-INDEPENDENT: a distinct violet gate class (not pass-green, not interim-amber,
+     not blocked-red) for the A2.9 CelesTrak-fitted SupGP lanes — republished, never
+     our own OD, so neither a pass nor a hard failure. It is the widest gate token
+     (15 chars); the gate column is sized to hold it on one line at >=1100px, and
+     white-space:normal lets it break cleanly at the hyphen (NON- / INDEPENDENT)
+     — never mid-word — as a graceful fallback below that, so it can never force the
+     fixed-layout table to overflow (the no-x-scroll invariant). */
+  .pill.nonindep { color: var(--nonindep); border-color: #3b2d52; background: #150f1d;
+    white-space: normal; }
 
   section { margin-top: 16px; }
   .sectlabel { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer);
@@ -188,7 +198,7 @@
   </section>
 
   <section>
-    <div class="sectlabel">Per-provider status — 7 Tier-1 ingest lanes</div>
+    <div class="sectlabel">Per-provider status — 14 ingest lanes (7 Tier-1 OD + 7 CelesTrak SupGP)</div>
     <div class="toolbar">
       <input id="prov-filter" type="text" placeholder="Filter providers…" autocomplete="off" spellcheck="false" aria-label="Filter providers by name, token, upstream, or status">
       <span class="count" id="prov-count"></span>
@@ -211,7 +221,7 @@
 
   <footer>
     <div>SDS $APP record #2 · inline entry UI page · zero non-same-origin requests · all fetches → <span id="api-base">/api/v1</span>/*</div>
-    <div>Module refs: 7 provider adapters + OD fit-pipeline + catalog-synthesis. Data refs: OEM (both) · OMM (fitted, GPS almanac, synthesized catalog). Parity ground truth: CelesTrak SupGP.</div>
+    <div>Module refs: 8 provider adapters (7 Tier-1 OD + celestrak-supgp) + OD fit-pipeline + catalog-synthesis. Data refs: OEM (both) · OMM (fitted, GPS almanac, synthesized catalog). Parity ground truth: CelesTrak SupGP.</div>
     <div class="refs" id="src-refs"></div>
   </footer>
 </div>
@@ -223,8 +233,10 @@
   var API = (CFG.apiBase && String(CFG.apiBase)) || "/api/v1";
   document.getElementById("api-base").textContent = API;
 
-  // ---- Static provider registry (7 Tier-1 lanes). Topics + upstreams + the
-  // ---- checked-in A2.4/A2.7 REF facts. Nothing here is fabricated telemetry.
+  // ---- Static provider registry (14 lanes: 7 Tier-1 OD + 7 CelesTrak SupGP).
+  // ---- Topics + upstreams + the checked-in A2.4/A2.7 REF facts. Nothing here is
+  // ---- fabricated telemetry.
+  var NONINDEP_RMS_NOTE = "CelesTrak-fitted SupGP re-published, non-independent — CelesTrak's own fit, not OrbPro OD, so there is no RMS-vs-CelesTrak comparison for this lane.";
   var PROVIDERS = [
     { key: "spacex-starlink", name: "SpaceX Starlink", token: "SpaceX-E",
       upstream: "api.starlink.com · MEME",
@@ -253,7 +265,41 @@
     { key: "cpf", name: "CPF (ILRS)", token: "CPF",
       upstream: "edc.dgfi.tum.de · CPF v2",
       gate: "INTERIM", gateClass: "interim",
-      rms: "pred-vs-pred · elem-range", rmsNote: "compares two prediction products, not raw-vs-fit" }
+      rms: "pred-vs-pred · elem-range", rmsNote: "compares two prediction products, not raw-vs-fit" },
+    // ---- A2.9 CelesTrak SupGP lanes (7 non-independent providers). One token-
+    // ---- parameterized adapter (com.orbpro.celestrak-supgp) re-publishes CelesTrak's
+    // ---- OWN fitted SupGP OMM sets for providers with no public raw ephemeris, under a
+    // ---- distinct SourceName per provider. These are CelesTrak's fits, NOT our OD — so
+    // ---- there is no OrbPro-vs-CelesTrak RMS comparison (rms n/a). Same channel/topic
+    // ---- wiring as the Tier-1 lanes (topic sdn/data-source/<key>).
+    { key: "ses", name: "SES", token: "SES-E",
+      upstream: "celestrak.org · SupGP",
+      gate: "NON-INDEPENDENT", gateClass: "nonindep",
+      rms: "n/a", rmsNote: NONINDEP_RMS_NOTE },
+    { key: "planet", name: "Planet", token: "Planet",
+      upstream: "celestrak.org · SupGP",
+      gate: "NON-INDEPENDENT", gateClass: "nonindep",
+      rms: "n/a", rmsNote: NONINDEP_RMS_NOTE },
+    { key: "iridium", name: "Iridium", token: "Iridium",
+      upstream: "celestrak.org · SupGP",
+      gate: "NON-INDEPENDENT", gateClass: "nonindep",
+      rms: "n/a", rmsNote: NONINDEP_RMS_NOTE },
+    { key: "telesat", name: "Telesat", token: "Telesat",
+      upstream: "celestrak.org · SupGP",
+      gate: "NON-INDEPENDENT", gateClass: "nonindep",
+      rms: "n/a", rmsNote: NONINDEP_RMS_NOTE },
+    { key: "kuiper", name: "Kuiper", token: "Kuiper-E",
+      upstream: "celestrak.org · SupGP",
+      gate: "NON-INDEPENDENT", gateClass: "nonindep",
+      rms: "n/a", rmsNote: NONINDEP_RMS_NOTE },
+    { key: "ast-spacemobile", name: "AST SpaceMobile", token: "AST",
+      upstream: "celestrak.org · SupGP",
+      gate: "NON-INDEPENDENT", gateClass: "nonindep",
+      rms: "n/a", rmsNote: NONINDEP_RMS_NOTE },
+    { key: "css", name: "CSS", token: "CSS-E",
+      upstream: "celestrak.org · SupGP",
+      gate: "NON-INDEPENDENT", gateClass: "nonindep",
+      rms: "n/a", rmsNote: NONINDEP_RMS_NOTE }
   ];
   // A provider's channel/topic can appear under either the raw data-source lane
   // or the OD fit (supgp) lane — match both prefixes.
@@ -268,11 +314,16 @@
   //
   // Sort semantics (honesty-preserving): text columns sort case-insensitively;
   // Channel/Topic sort by a live-presence ordinal; Gate sorts by a severity
-  // ordinal (HARD-PASS < INTERIM < BLOCKED). A cell with no comparable datum —
-  // an unreadable NO-DATA live surface, or an "n/a" REF value — carries
-  // last:true and is pushed to the BOTTOM in both sort directions. Sorting never
-  // fabricates an ordering for a cell that has no value.
-  var GATE_ORDINAL = { "HARD-PASS": 0, "INTERIM": 1, "BLOCKED": 2 };
+  // ordinal (HARD-PASS < INTERIM < NON-INDEPENDENT < BLOCKED). Ordinal choice
+  // documented: HARD-PASS (independent RMS beat) is strongest; INTERIM (our own
+  // fit, element-tolerance check only) ranks above NON-INDEPENDENT (CelesTrak's
+  // fit re-published — no OrbPro OD at all, but a real published SupGP set), which
+  // in turn ranks above BLOCKED (no trustworthy datum at source). A cell with no
+  // comparable datum — an unreadable NO-DATA live surface, or an "n/a" REF value
+  // (every NON-INDEPENDENT lane's RMS) — carries last:true and is pushed to the
+  // BOTTOM in both sort directions. Sorting never fabricates an ordering for a
+  // cell that has no value.
+  var GATE_ORDINAL = { "HARD-PASS": 0, "INTERIM": 1, "NON-INDEPENDENT": 2, "BLOCKED": 3 };
   var COLUMNS = [
     { id: "provider", label: "Provider", width: "15%", sortable: true,
       sortKey: function (r) { return { v: r.p.name.toLowerCase(), last: false }; } },
@@ -284,19 +335,19 @@
     { id: "topic", label: "Topic", width: "9%", sortable: true,
       tip: "LIVE. Present when /api/v1/pubsub/topics advertises this provider's data-source or supgp topic.",
       sortKey: function (r) { return r.tpPresent === null ? { v: 0, last: true } : { v: r.tpPresent ? 2 : 1, last: false }; } },
-    { id: "lastpull", label: "Last Pull", width: "12%", sortable: false,
+    { id: "lastpull", label: "Last Pull", width: "11%", sortable: false,
       tip: "No anonymous surface. Per-provider last-pull exists only at /api/v1/data/local-replica-stats (last_synced_at), which requires Standard auth." },
-    { id: "fitted", label: "Objects Fitted", width: "12%", sortable: false,
+    { id: "fitted", label: "Objects Fitted", width: "11%", sortable: false,
       tip: "No anonymous surface. Per-source record counts exist only at /api/v1/data/summary, which requires Admin auth. OD \"objects fitted\" has no route at all." },
-    { id: "rms", label: "RMS Δ vs CelesTrak", width: "18%", sortable: true, tipRight: true,
+    { id: "rms", label: "RMS Δ vs CelesTrak", width: "16%", sortable: true, tipRight: true,
       tip: "REF. From the modules-CI A2.4 parity gates (no runtime route). Positive Δ = our fit RMS above CelesTrak SupGP.",
       sortKey: function (r) {
         var s = r.p.rms;
         if (/n\/a/i.test(s)) return { v: "", last: true };
         return { v: s.toLowerCase(), last: false };
       } },
-    { id: "gate", label: "Gate", width: "10%", sortable: true, tipRight: true,
-      tip: "REF. Checked-in A2.7 provider-gate-status: HARD-PASS = beats-CelesTrak RMS; INTERIM = element-range only; BLOCKED = data access / spec missing.",
+    { id: "gate", label: "Gate", width: "14%", sortable: true, tipRight: true,
+      tip: "REF. Checked-in A2.7 provider-gate-status: HARD-PASS = beats-CelesTrak RMS; INTERIM = element-range only; NON-INDEPENDENT = CelesTrak-fitted SupGP re-published (no OrbPro OD lane); BLOCKED = data access / spec missing.",
       sortKey: function (r) { var o = GATE_ORDINAL[r.p.gate]; return { v: (o == null ? 99 : o), last: false }; } }
   ];
   function colById(id) { for (var i = 0; i < COLUMNS.length; i++) { if (COLUMNS[i].id === id) return COLUMNS[i]; } return null; }
@@ -314,7 +365,14 @@
     "edc.dgfi.tum.de/pub/slr/cpf_predicts_v2/",
     "celestrak.org/…/sup-gp.php (parity ref)",
     "space-track.org/publicfiles/",
-    "space-track.org/basicspacedata/query/class/gp"
+    "space-track.org/basicspacedata/query/class/gp",
+    "celestrak.org/…/sup-gp.php?SOURCE=SES-E",
+    "celestrak.org/…/sup-gp.php?SOURCE=Planet",
+    "celestrak.org/…/sup-gp.php?SOURCE=Iridium",
+    "celestrak.org/…/sup-gp.php?SOURCE=Telesat",
+    "celestrak.org/…/sup-gp.php?SOURCE=Kuiper-E",
+    "celestrak.org/…/sup-gp.php?SOURCE=AST",
+    "celestrak.org/…/sup-gp.php?SOURCE=CSS-E"
   ];
 
   // ---- Fetch helper. Classifies the outcome honestly so cells can name the

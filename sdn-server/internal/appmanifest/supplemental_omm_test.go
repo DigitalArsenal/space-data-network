@@ -67,14 +67,14 @@ func TestSupplementalOMMRecordDriftGate(t *testing.T) {
 	if app.ID != SupplementalOMMAppID {
 		t.Fatalf("app id = %q, want %q", app.ID, SupplementalOMMAppID)
 	}
-	if len(app.Modules) != 9 {
-		t.Fatalf("supplemental-omm app must reference 9 modules (7 adapters + fit-pipeline + catalog-synthesis), got %d", len(app.Modules))
+	if len(app.Modules) != 10 {
+		t.Fatalf("supplemental-omm app must reference 10 modules (8 adapters + fit-pipeline + catalog-synthesis), got %d", len(app.Modules))
 	}
 	if len(app.Data) != 4 {
 		t.Fatalf("supplemental-omm app must have 4 data refs, got %d", len(app.Data))
 	}
-	if len(app.Sources) != 10 {
-		t.Fatalf("supplemental-omm app must have 10 source refs, got %d", len(app.Sources))
+	if len(app.Sources) != 17 {
+		t.Fatalf("supplemental-omm app must have 17 source refs, got %d", len(app.Sources))
 	}
 	if len(app.Pages) != 1 {
 		t.Fatalf("supplemental-omm app must have exactly one UI page, got %d", len(app.Pages))
