@@ -77,9 +77,38 @@ func WithWasmBytes(b []byte) Option {
 // multiple databases. All calls are serialized on the underlying module lock:
 // the engine is compiled single-threaded (SQLITE_THREADSAFE=0).
 type Runtime struct {
-	mod      *wasmrt.Module
-	aot      bool
-	poisoned bool
+	mod         *wasmrt.Module
+	aot         bool
+	aotPath     string
+	aotMiss     string
+	aotCacheDir string
+	poisoned    bool
+}
+
+// EngineMode describes how this runtime is executing the engine, for boot-time
+// observability. Silent interpreter fallback (a stale AOT cache key after an
+// engine-bytes or libwasmedge upgrade) has bitten production twice: it has no
+// symptom other than a ~100x slowdown, so the daemon logs this at startup.
+type EngineMode struct {
+	AOT bool // true: executing a precompiled native artifact
+	// ArtifactPath is the AOT artifact actually loaded (AOT only).
+	ArtifactPath string
+	// CacheDir is the AOT cache that was consulted ("" if AOT was not requested).
+	CacheDir string
+	// MissReason explains why the precompiled artifact was not used (interpreted
+	// fallback only).
+	MissReason string
+}
+
+// Mode reports how the engine is executing (AOT + artifact path, or interpreted
+// plus the reason the artifact was not loaded).
+func (r *Runtime) Mode() EngineMode {
+	return EngineMode{
+		AOT:          r.aot,
+		ArtifactPath: r.aotPath,
+		CacheDir:     r.aotCacheDir,
+		MissReason:   r.aotMiss,
+	}
 }
 
 // Poisoned reports whether this runtime has trapped.
@@ -113,17 +142,28 @@ func New(opts ...Option) (*Runtime, error) {
 
 	runBytes := cfg.wasmBytes
 	aot := false
+	aotPath := ""
+	aotMiss := ""
 	if cfg.aotCacheDir != "" {
 		var compiled []byte
 		var err error
 		if cfg.aotCompileOnMiss {
 			compiled, err = ensureAOT(cfg.aotCacheDir, cfg.wasmBytes)
 		} else {
-			compiled, err = LoadAOTArtifact(cfg.aotCacheDir, "flatsql", cfg.wasmBytes)
+			compiled, err = LoadAOTArtifact(cfg.aotCacheDir, engineAOTPrefix, cfg.wasmBytes)
 		}
 		if err == nil {
 			runBytes = compiled
 			aot = true
+			// Record WHICH artifact we are actually executing so the daemon can
+			// log it at boot. A cache-key mismatch (engine bytes or libwasmedge
+			// version changed) silently degrades to the interpreter; without this
+			// the only symptom is "everything is 100x slower" in production.
+			aotPath = aotArtifactPath(cfg.aotCacheDir, engineAOTPrefix, cfg.wasmBytes)
+		} else {
+			// Keep the reason so callers can log WHY they fell back rather than
+			// just that they did (expected-path miss vs. a real load failure).
+			aotMiss = err.Error()
 		}
 		// On cache miss or compile failure, fall back to interpreting the
 		// portable bytes; callers can check Runtime.AOT() and warn. Daemon
@@ -155,7 +195,7 @@ func New(opts ...Option) (*Runtime, error) {
 		mod.Release()
 		return nil, fmt.Errorf("flatsqlrt: _initialize: %w", err)
 	}
-	return &Runtime{mod: mod, aot: aot}, nil
+	return &Runtime{mod: mod, aot: aot, aotPath: aotPath, aotMiss: aotMiss, aotCacheDir: cfg.aotCacheDir}, nil
 }
 
 // Close releases the WasmEdge VM and all engine memory. Databases created on

@@ -4,6 +4,7 @@ package storage
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -85,6 +86,16 @@ type FlatSQLStore struct {
 	recordCatalogHydrated  atomic.Bool
 	engineHotHydrating     atomic.Bool
 	engineHotHydrated      atomic.Bool
+	// hydrationShield protects records that LIVE traffic (re)writes while a
+	// background record-catalog replay is in flight, so a historical
+	// delete/GC/batch-clear frame can never land on top of a live re-add of the
+	// same content-addressed CID. See record_catalog_replay.go.
+	hydrationShield hydrationShield
+	// hydrateMu serializes full record-catalog replays against each other (the
+	// post-boot background hydrate vs. the admin re-sync trigger). It is NOT the
+	// store write lock: a replay must never hold that for its duration or it
+	// starves readers.
+	hydrateMu sync.Mutex
 	validator              *sds.Validator
 	dbPath                 string
 	basePath               string
@@ -247,14 +258,25 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 	if err != nil {
 		return nil, fmt.Errorf("failed to start FlatSQL engine: %w", err)
 	}
-	if !engine.AOT() {
+	// Always log the engine mode at open — AOT vs interpreted, and WHICH artifact
+	// is executing. A stale AOT cache key (engine bytes or libwasmedge version
+	// bumped without re-running `prewarm-aot`) degrades silently to the
+	// interpreter, whose only symptom is a ~100x slowdown; production has been
+	// burned by that twice, and an unconditional boot line is the cheapest way to
+	// tell "slow because interpreted" from "slow because of a real regression".
+	if mode := engine.Mode(); mode.AOT {
+		log.Infof("FlatSQL engine mode: AOT (precompiled artifact %s)", mode.ArtifactPath)
+	} else {
 		// Interpreted execution is ~100x slower for query workloads (loop
 		// A.3). Static production daemons ship WITHOUT the AOT compiler —
 		// deploys must place a precompiled universal-wasm artifact into the
 		// cache dir (flatsql-<sha256[:8]>-we<runtime-version>.aot.wasm, keyed
 		// on the embedded engine bytes AND the libwasmedge version, loop C.9)
 		// so this warning never fires in production.
-		log.Warnf("FlatSQL engine running INTERPRETED (no precompiled AOT artifact in %s; daemon startup never compiles wasm artifacts) — queries will be ~100x slower", engineAOTCacheDir())
+		log.Warnf("FlatSQL engine mode: INTERPRETED — no precompiled AOT artifact loaded from %s (%s); "+
+			"daemon startup never compiles wasm artifacts. Run `spacedatanetwork prewarm-aot` as the daemon's user. "+
+			"Queries and record-catalog hydration will be ~100x slower.",
+			mode.CacheDir, mode.MissReason)
 	}
 	engineDB, err := engine.CreateDatabase(engineRecordSchema, "sdn-control")
 	if err != nil {
@@ -323,6 +345,13 @@ func newFlatSQLStore(basePath string, validator *sds.Validator, readOnly bool, o
 		engineEpoch:     1,
 	}
 
+	// Every live catalog mutation funnels through the journal append, which is
+	// where the hydration shield learns what live traffic touched during a
+	// background replay (record_catalog_replay.go).
+	if recordCatalog != nil {
+		recordCatalog.onAppend = store.hydrationShield.note
+	}
+
 	// Initialize tables for all schemas
 	if err := store.initTables(); err != nil {
 		store.Close()
@@ -384,34 +413,66 @@ func (s *FlatSQLStore) RebuildDerivedState() error {
 // catalog converges to the same rows.
 //
 // progress (may be nil) is invoked with the running replayed-record count at
-// each replay batch boundary, for background progress logging.
+// each replay window boundary, for background progress logging.
 //
-// The store write lock is held for the entire replay so no live publish ever
-// observes a half-replayed catalog (consistency; it also keeps a historical
-// delete/GC frame from racing a concurrent live re-add). This is acceptable
-// because the replay runs in a background goroutine — only the write path
-// waits, never boot or reads — and on the engines that matter it is a
-// seconds-scale operation: production daemons ship the precompiled AOT engine
-// (~100x interpreted throughput) and dev catalogs are small. It matches the
-// existing full-catalog Replay under the same lock in the engine-poison
-// recovery path (engine_link.go).
+// LOCKING. The replay does NOT hold the store write lock for its duration — an
+// earlier cut did, and it starved every reader (/api/v1/stats blocked for the
+// whole replay, so the board was dead exactly when operators looked at it; the
+// same failure mode as the 2026-07-06 blackout that produced storeWriteChunkSize).
+// Instead the journal replay takes and RELEASES the write lock around each
+// bounded window (recordCatalogReplayWindow frames), so s.mu.RLock readers
+// interleave throughout.
+//
+// Correctness with the lock released mid-replay:
+//
+//   - Records are CONTENT ADDRESSED, so a replayed historical upsert of a CID
+//     and a live re-add of that same CID carry identical derived index/tag
+//     values: whichever lands second is a no-op in substance (INSERT OR IGNORE
+//     on the record row, ON CONFLICT DO UPDATE to identical values elsewhere).
+//   - The dangerous case is the reverse ordering on a DESTRUCTIVE frame: a
+//     historical RecordDelete / SourceKeep / GCOlderThan must never be applied
+//     on top of a live re-add of the same CID. The hydration shield
+//     (record_catalog_replay.go) records every CID live traffic writes while the
+//     replay is in flight, and the destructive appliers skip shielded CIDs. Live
+//     state is by definition newer than the pre-boot journal prefix, so "live
+//     wins" is the correct — and only safe — resolution.
 func (s *FlatSQLStore) ReplayRecordCatalog(force bool, progress func(done int)) (int, error) {
+	return s.ReplayRecordCatalogContext(context.Background(), force, progress)
+}
+
+// ReplayRecordCatalogContext is ReplayRecordCatalog with cancellation. The
+// replay checks ctx between windows, so a daemon shutting down mid-hydration
+// stops within one window instead of making the process ignore SIGTERM until the
+// whole catalog has been replayed (the pre-fix daemon did exactly that: it sat
+// at 100% CPU through a 14-minute shutdown because the hydration goroutine was
+// still grinding and the node's WaitGroup could not drain). A cancelled replay
+// simply leaves the catalog un-hydrated; it is re-run on the next boot and every
+// row apply is an idempotent upsert.
+func (s *FlatSQLStore) ReplayRecordCatalogContext(ctx context.Context, force bool, progress func(done int)) (int, error) {
 	if !force && s.recordCatalogHydrated.Load() {
 		return 0, nil
-	}
-	s.recordCatalogHydrating.Store(true)
-	defer s.recordCatalogHydrating.Store(false)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !force && s.recordCatalogHydrated.Load() {
-		return 0, nil // another caller hydrated while we waited for the lock
 	}
 	if s.recordCatalog == nil {
 		s.recordCatalogHydrated.Store(true)
 		return 0, nil
 	}
-	count, err := s.recordCatalog.replay(s, progress)
+
+	// Serialize hydrations against each other (background boot hydrate vs. the
+	// admin re-sync trigger) without holding the store write lock.
+	s.hydrateMu.Lock()
+	defer s.hydrateMu.Unlock()
+	if !force && s.recordCatalogHydrated.Load() {
+		return 0, nil // another caller hydrated while we waited
+	}
+
+	s.recordCatalogHydrating.Store(true)
+	s.hydrationShield.activate()
+	defer func() {
+		s.hydrationShield.deactivate()
+		s.recordCatalogHydrating.Store(false)
+	}()
+
+	count, err := s.recordCatalog.replayChunked(ctx, s, progress)
 	if err != nil {
 		return count, err
 	}

@@ -1662,7 +1662,7 @@ func (n *Node) StartBackgroundRecordCatalogHydration(ctx context.Context) {
 			}
 
 			// (2) Full control-table replay + derived source summaries.
-			n.hydrateFullRecordCatalog()
+			n.hydrateFullRecordCatalog(ctx)
 		}()
 	})
 }
@@ -1671,7 +1671,11 @@ func (n *Node) StartBackgroundRecordCatalogHydration(ctx context.Context) {
 // control tables and rebuilds the derived source summaries, with progress and
 // completion logging (counts + duration). Panic-safe on its own so a replay bug
 // is contained to this goroutine and never brings the daemon down.
-func (n *Node) hydrateFullRecordCatalog() {
+//
+// The replay itself takes and releases the store write lock per window, so it
+// never starves readers, and it honours ctx so a shutdown mid-hydration drains
+// promptly instead of leaving the process grinding through SIGTERM.
+func (n *Node) hydrateFullRecordCatalog(ctx context.Context) {
 	if n == nil || n.store == nil {
 		return
 	}
@@ -1687,11 +1691,16 @@ func (n *Node) hydrateFullRecordCatalog() {
 	progress := func(done int) {
 		if done-logged >= recordCatalogHydrationLogEvery {
 			logged = done
-			log.Infof("FlatSQL record-catalog replay progress: %d records", done)
+			log.Infof("FlatSQL record-catalog replay progress: %d records in %s", done, time.Since(start).Round(time.Millisecond))
 		}
 	}
-	replayed, err := n.store.ReplayRecordCatalog(false, progress)
+	replayed, err := n.store.ReplayRecordCatalogContext(ctx, false, progress)
 	if err != nil {
+		if ctx.Err() != nil {
+			log.Infof("FlatSQL full record-catalog replay cancelled at %d records after %s (shutdown); it resumes on next boot",
+				replayed, time.Since(start).Round(time.Millisecond))
+			return
+		}
 		log.Errorf("FlatSQL full record-catalog replay failed after %s: %v", time.Since(start).Round(time.Millisecond), err)
 		return
 	}
