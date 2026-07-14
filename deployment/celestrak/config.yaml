@@ -72,3 +72,10 @@ peers:
   trusted_peers:
     - /ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
     - /ip4/159.203.150.8/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
+
+# Module scheduled-run budget (2026-07-14, SDN 7d473ec4): the 1-vCPU celestrak
+# host runs modulert wasm interpreted and the in-daemon ingest competes for
+# the core, so adapter pulls need far more than the 10m scheduled default.
+# Interactive invokes keep the 30s fail-closed cap regardless.
+modules:
+  scheduled_invoke_timeout: 60m
