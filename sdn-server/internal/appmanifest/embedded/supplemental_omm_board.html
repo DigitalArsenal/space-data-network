@@ -244,6 +244,30 @@
   .tip:hover .tiptext, .tip:focus-within .tiptext { display: block; }
   .tip-right .tiptext { left: auto; right: 0; }
 
+  /* RUN CONTROLS (RUNS view): provider checklist + runner command + actions. */
+  .controls { border: 1px solid var(--edge); background: var(--panel); padding: 16px 18px; }
+  .provgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px 16px; }
+  .provcheck { display: flex; align-items: flex-start; gap: 10px; font-size: 16px; color: var(--ink); cursor: pointer; }
+  .provcheck input { width: 18px; height: 18px; margin-top: 4px; accent-color: var(--accent); cursor: pointer; flex: 0 0 auto; }
+  .provcheck.off { color: var(--dim); }
+  .provcheck.disabled { cursor: not-allowed; color: var(--dimmer); }
+  .provcheck.disabled input { cursor: not-allowed; }
+  .provcheck .why { display: block; font-family: var(--mono); font-size: 13px; color: var(--dimmer); margin-top: 3px; }
+  .ctl-note { font-family: var(--mono); font-size: 14px; color: var(--dimmer); margin-top: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+  .ctl-warn { font-family: var(--mono); font-size: 14.5px; color: var(--ref); margin-top: 12px; overflow-wrap: anywhere; }
+  .cmdblock { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; }
+  .cmdblock code { flex: 1 1 auto; display: block; font-family: var(--mono); font-size: 14px; line-height: 1.7;
+    background: #05070a; border: 1px solid var(--edge2); color: var(--ink); padding: 11px 13px;
+    white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }
+  .cmdblock button { flex: 0 0 auto; }
+  .runacts { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+  .runacts button.danger { color: var(--blocked); border-color: #4a2626; }
+  .runacts button.danger:hover { border-color: var(--blocked); color: #ff9d9d; }
+  .runacts button.armed { background: #1a0e0e; color: #ff9d9d; border-color: var(--blocked); }
+  .runacts .actnote { font-family: var(--mono); font-size: 14px; color: var(--dimmer); overflow-wrap: anywhere; }
+  .runacts .actnote.ok { color: var(--live); }
+  .runacts .actnote.err { color: var(--blocked); }
+
   .legend { border: 1px solid var(--edge); background: var(--panel); padding: 16px 18px; margin-top: 28px; }
   .legend h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer); margin: 0 0 12px; }
   .legend .row { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 11px; font-size: 16.5px; color: var(--dim); }
@@ -308,6 +332,25 @@
   </div>
 
   <div id="view-runs" hidden>
+    <section id="run-controls">
+      <div class="sectlabel">Run controls — provider selection (persisted on this node · /api/v1/admin/runs/providers)</div>
+      <div class="controls">
+        <div class="provgrid" id="prov-checklist"></div>
+        <div class="ctl-warn" id="ctl-admin-state" hidden></div>
+        <div class="ctl-note">External pipeline runner command for the current selection (run from the
+        space-data-network-modules repo — this node cannot spawn it):</div>
+        <div class="cmdblock">
+          <code id="runner-cmd"></code>
+          <button id="runner-cmd-copy" type="button">Copy</button>
+        </div>
+        <div class="ctl-note">Runner contract: between publish chunks the pipeline polls
+        <span class="val-mono">GET /api/v1/runs/flags?batch_id=…</span> and aborts cleanly when its batch is
+        stop-flagged; at startup it reads <span class="val-mono">GET /api/v1/runs/providers</span> and intersects
+        the node's selection with its own provider arguments (a key absent from the selection is enabled).
+        Provider keys are the SourceNames this node's stats report.</div>
+      </div>
+    </section>
+
     <section id="ref-run-report">
       <div class="sectlabel">Last full constellation run — Starlink · 2026-07-14</div>
       <div class="tiles runstrip" id="run-tiles"></div>
@@ -447,6 +490,10 @@
       gate: "NON-INDEPENDENT", gateClass: "nonindep",
       rms: "n/a", rmsNote: NONINDEP_RMS_NOTE },
     { key: "css", name: "CSS", token: "CSS-E",
+      upstream: "celestrak.org · SupGP",
+      gate: "NON-INDEPENDENT", gateClass: "nonindep",
+      rms: "n/a", rmsNote: NONINDEP_RMS_NOTE },
+    { key: "oneweb-supgp", name: "OneWeb (SupGP)", token: "OneWeb-E",
       upstream: "celestrak.org · SupGP",
       gate: "NON-INDEPENDENT", gateClass: "nonindep",
       rms: "n/a", rmsNote: NONINDEP_RMS_NOTE }
@@ -657,15 +704,26 @@
 
   // ---- Lane matching + rate history ----------------------------------------
   function normKey(s) { return String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]+/g, ""); }
+  // Two passes: EXACT key/name/token matches win over substring matches, so
+  // an "oneweb-supgp" source binds to the OneWeb (SupGP) lane rather than the
+  // blocked oneweb raw lane whose key is its substring.
   function matchProvider(sourceName, providerID) {
     var cands = [normKey(sourceName), normKey(providerID)].filter(Boolean);
     if (!cands.length) return null;
-    for (var i = 0; i < PROVIDERS.length; i++) {
-      var pc = [normKey(PROVIDERS[i].key), normKey(PROVIDERS[i].name), normKey(PROVIDERS[i].token)];
-      for (var a = 0; a < cands.length; a++) {
-        for (var b = 0; b < pc.length; b++) {
+    var i, a, b, pc;
+    for (i = 0; i < PROVIDERS.length; i++) {
+      pc = [normKey(PROVIDERS[i].key), normKey(PROVIDERS[i].name), normKey(PROVIDERS[i].token)];
+      for (a = 0; a < cands.length; a++) {
+        for (b = 0; b < pc.length; b++) {
+          if (pc[b] && cands[a] === pc[b]) return PROVIDERS[i];
+        }
+      }
+    }
+    for (i = 0; i < PROVIDERS.length; i++) {
+      pc = [normKey(PROVIDERS[i].key), normKey(PROVIDERS[i].name), normKey(PROVIDERS[i].token)];
+      for (a = 0; a < cands.length; a++) {
+        for (b = 0; b < pc.length; b++) {
           if (!pc[b]) continue;
-          if (cands[a] === pc[b]) return PROVIDERS[i];
           var shorter = cands[a].length < pc[b].length ? cands[a] : pc[b];
           if (shorter.length >= 3 && (cands[a].indexOf(pc[b]) !== -1 || pc[b].indexOf(cands[a]) !== -1)) return PROVIDERS[i];
         }
@@ -1373,11 +1431,301 @@
     return tr;
   }
 
+  // ---- Run controls (stop / clear / restart / provider selection) -----------
+  // Writes go to the ADMIN surface (/api/v1/admin/runs/*): on an auth-gated or
+  // unreachable node the controls render disabled with the honest reason —
+  // never fake success. Reads (flags + selection) are anonymous.
+  var runControls = {
+    admin: "unknown",      // ok | auth | unreachable | unknown
+    selection: {},         // provider key -> bool (absent = enabled default)
+    flags: {},             // batch_id -> {requested_at}
+    clearArmed: {},        // runKey -> true (two-step clear confirm)
+    notes: {}              // runKey -> {cls, text} action feedback
+  };
+
+  function postJSON(path) {
+    return fetch(API + path, { method: "POST", headers: { "Accept": "application/json" }, credentials: "same-origin" })
+      .then(classify).catch(function () { return { __state: "unreachable" }; });
+  }
+  function postJSONBody(path, body) {
+    return fetch(API + path, {
+      method: "POST", credentials: "same-origin",
+      headers: { "Accept": "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(classify).catch(function () { return { __state: "unreachable" }; });
+  }
+
+  function providerEnabled(key) {
+    return runControls.selection.hasOwnProperty(key) ? !!runControls.selection[key] : true;
+  }
+
+  // Only the oneweb RAW lane is un-runnable (LTEF spec blocked at source) —
+  // every other lane, including gps (almanac catalog) and the BLOCKED-gate
+  // parity lanes, has a live publishable source and stays selectable.
+  function laneUnrunnable(p) { return p.key === "oneweb"; }
+
+  // The external-runner command, reflecting the current selection. Provider
+  // keys are the SourceNames the node's stats report; the command shape is the
+  // observed real constellation-pipeline invocation.
+  function runnerCommand() {
+    var keys = [];
+    PROVIDERS.forEach(function (p) {
+      if (laneUnrunnable(p)) return;
+      if (providerEnabled(p.key)) keys.push(p.key);
+    });
+    var origin = (typeof location !== "undefined" && location.origin) ? location.origin : "https://<node>";
+    return "node scripts/constellation-pipeline.mjs --providers " + (keys.length ? keys.join(",") : "<none-selected>") +
+      " --publish --publish-url " + origin +
+      " --publish-batch 100 --publish-concurrency 4 --publish-timeout-ms 60000 --emit-ocm";
+  }
+
+  function renderRunnerCmd() {
+    var code = document.getElementById("runner-cmd");
+    if (code) code.textContent = runnerCommand();
+  }
+
+  function adminBlockedReason() {
+    if (runControls.admin === "auth") return "admin surface requires authentication — controls disabled (sign in on the node admin UI)";
+    if (runControls.admin === "unreachable") return "admin surface unreachable — controls disabled";
+    if (runControls.admin === "unknown") return "admin surface not probed yet";
+    return null;
+  }
+
+  function renderProviderChecklist() {
+    var host = document.getElementById("prov-checklist");
+    if (!host) return;
+    host.innerHTML = "";
+    var blocked = adminBlockedReason();
+    var warn = document.getElementById("ctl-admin-state");
+    if (warn) {
+      if (blocked && runControls.admin !== "unknown") { warn.hidden = false; warn.textContent = blocked; }
+      else { warn.hidden = true; warn.textContent = ""; }
+    }
+    PROVIDERS.forEach(function (p) {
+      var lab = document.createElement("label");
+      var isBlockedLane = laneUnrunnable(p);
+      var enabled = providerEnabled(p.key);
+      lab.className = "provcheck" + (isBlockedLane ? " disabled" : (enabled ? "" : " off"));
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = isBlockedLane ? false : enabled;
+      cb.disabled = isBlockedLane || !!blocked;
+      cb.setAttribute("data-key", p.key);
+      cb.addEventListener("change", function () { toggleProvider(p.key, cb.checked, cb); });
+      lab.appendChild(cb);
+      var txt = el("span");
+      txt.appendChild(document.createTextNode(p.name));
+      var why = null;
+      if (isBlockedLane) why = "blocked: " + (p.rmsNote || "no runnable lane");
+      else why = p.key;
+      var whyEl = el("span", "why", why);
+      txt.appendChild(whyEl);
+      lab.appendChild(txt);
+      host.appendChild(lab);
+    });
+    renderRunnerCmd();
+  }
+
+  function toggleProvider(key, enabled, cb) {
+    // Explicit full map of every checkable provider — the operator's intent,
+    // no defaults left implicit once a choice has been made.
+    var map = {};
+    PROVIDERS.forEach(function (p) {
+      if (laneUnrunnable(p)) return;
+      map[p.key] = (p.key === key) ? enabled : providerEnabled(p.key);
+    });
+    postJSONBody("/admin/runs/providers", { providers: map }).then(function (res) {
+      if (res && res.__state === "ok" && res.data && res.data.providers) {
+        runControls.selection = res.data.providers;
+        runControls.admin = "ok";
+      } else {
+        // Honest revert: the node did not accept the change.
+        runControls.admin = (res && res.__state === "auth") ? "auth" : "unreachable";
+        if (cb) cb.checked = providerEnabled(key);
+      }
+      renderProviderChecklist();
+    });
+  }
+
+  function refreshRunControls() {
+    // Anonymous reads first (selection + stop flags) — these must work even
+    // when the admin surface is gated.
+    getJSON("/runs/providers").then(function (res) {
+      if (res && res.__state === "ok" && res.data && res.data.providers) {
+        runControls.selection = res.data.providers;
+      }
+      renderProviderChecklist();
+    });
+    getJSON("/runs/flags").then(function (res) {
+      var flags = {};
+      if (res && res.__state === "ok" && res.data && Array.isArray(res.data.flags)) {
+        res.data.flags.forEach(function (f) { if (f && f.batch_id) flags[f.batch_id] = f; });
+      }
+      runControls.flags = flags;
+      renderRunsTable();
+    });
+    // Admin probe (GET on the admin route classifies reachability honestly).
+    getJSON("/admin/runs/providers").then(function (res) {
+      if (res && res.__state === "ok") runControls.admin = "ok";
+      else if (res && res.__state === "auth") runControls.admin = "auth";
+      else if (res && res.__state === "unreachable") runControls.admin = "unreachable";
+      else runControls.admin = "unreachable";
+      renderProviderChecklist();
+      renderRunsTable();
+    });
+  }
+
+  function setRunNote(runKey, cls, text) {
+    runControls.notes[runKey] = { cls: cls, text: text };
+    renderRunsTable();
+  }
+
+  function stopRun(run) {
+    var r = run.source;
+    var qs = "?batch_id=" + encodeURIComponent(r.batch_id || "") +
+      "&schema=" + encodeURIComponent(r.schema || "") +
+      "&source_name=" + encodeURIComponent(r.source_name || "") +
+      "&provider_id=" + encodeURIComponent(r.provider_id || "");
+    postJSON("/admin/runs/stop" + qs).then(function (res) {
+      if (res && res.__state === "ok" && res.data && res.data.stop === true) {
+        runControls.flags[r.batch_id] = { batch_id: r.batch_id, requested_at: res.data.requested_at };
+        setRunNote(run.key, "ok", "stop flag set " + (res.data.requested_at || "") + " — the runner aborts at its next poll of /api/v1/runs/flags");
+      } else if (res && res.__state === "auth") {
+        runControls.admin = "auth";
+        setRunNote(run.key, "err", "stop refused: admin authentication required");
+      } else {
+        setRunNote(run.key, "err", "stop failed: admin surface unreachable");
+      }
+    });
+  }
+
+  function clearRun(run) {
+    var r = run.source;
+    var qs = "?schema=" + encodeURIComponent(r.schema || "") +
+      "&provider_id=" + encodeURIComponent(r.provider_id || "") +
+      "&source_name=" + encodeURIComponent(r.source_name || "") +
+      "&batch_id=" + encodeURIComponent(r.batch_id || "");
+    postJSON("/admin/runs/clear" + qs).then(function (res) {
+      delete runControls.clearArmed[run.key];
+      if (res && res.__state === "ok" && res.data) {
+        setRunNote(run.key, "ok", "cleared: " + fmtInt(res.data.tags_deleted) + " tag rows + " +
+          fmtInt(res.data.records_deleted) + " records deleted (records shared with other batches survive)");
+        pollPipeline(); // refresh the runs list from the store truth
+      } else if (res && res.__state === "auth") {
+        runControls.admin = "auth";
+        setRunNote(run.key, "err", "clear refused: admin authentication required");
+      } else {
+        setRunNote(run.key, "err", "clear failed: admin surface unreachable");
+      }
+    });
+  }
+
+  // A run is STOPPABLE while its last record is fresh (the runner is likely
+  // still publishing); stale runs render the honest reason instead.
+  var RUN_ACTIVE_WINDOW_MS = 10 * 60 * 1000;
+
+  function runActionsBar(run) {
+    var bar = el("div", "runacts");
+    var blocked = adminBlockedReason();
+    var flag = runControls.flags[run.source.batch_id || ""];
+    var active = run.lastMs > 0 && (Date.now() - run.lastMs) < RUN_ACTIVE_WINDOW_MS;
+
+    // STOP — cooperative flag; only meaningful for a run still publishing.
+    var stopBtn = document.createElement("button");
+    stopBtn.type = "button";
+    stopBtn.textContent = flag ? "Stop requested" : "Stop";
+    stopBtn.disabled = !!blocked || !!flag || !active;
+    if (blocked) stopBtn.title = blocked;
+    else if (flag) stopBtn.title = "stop already requested " + (flag.requested_at || "");
+    else if (!active) stopBtn.title = "run idle (last record " + (ageStr(run.source.last_seen) || "long ago") + ") — nothing to stop";
+    stopBtn.addEventListener("click", function (e) { e.stopPropagation(); if (!stopBtn.disabled) stopRun(run); });
+    bar.appendChild(stopBtn);
+
+    // CLEAR — two-step confirm that names what will be deleted.
+    var clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    var armed = !!runControls.clearArmed[run.key];
+    clearBtn.className = armed ? "danger armed" : "danger";
+    clearBtn.textContent = armed
+      ? ("Confirm: delete " + fmtInt(run.count) + " ElSets of batch " + shortId(run.source.batch_id || ""))
+      : "Clear";
+    clearBtn.disabled = !!blocked;
+    if (blocked) clearBtn.title = blocked;
+    else clearBtn.title = armed
+      ? "Deletes this batch's records + tags; records shared with other batches survive"
+      : "Click twice to delete this run's records from the node";
+    clearBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (clearBtn.disabled) return;
+      if (!runControls.clearArmed[run.key]) { runControls.clearArmed[run.key] = true; renderRunsTable(); }
+      else clearRun(run);
+    });
+    bar.appendChild(clearBtn);
+    if (armed) {
+      var cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.textContent = "Cancel";
+      cancel.addEventListener("click", function (e) { e.stopPropagation(); delete runControls.clearArmed[run.key]; renderRunsTable(); });
+      bar.appendChild(cancel);
+    }
+
+    // RESTART — module-scheduled lanes fire run-now; external-runner lanes get
+    // the copyable command (the node cannot spawn the external runner).
+    var prov = matchProvider(run.source.source_name, run.source.provider_id);
+    if (prov && prov.module && prov.module.id && prov.module.method) {
+      var runNow = document.createElement("button");
+      runNow.type = "button";
+      runNow.textContent = "Restart (run now)";
+      runNow.disabled = !!blocked;
+      if (blocked) runNow.title = blocked;
+      runNow.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (runNow.disabled) return;
+        postJSON("/modules/runtime/" + encodeURIComponent(prov.module.id) + "/schedules/" + encodeURIComponent(prov.module.method) + "/run")
+          .then(function (res) {
+            if (res && res.__state === "ok") setRunNote(run.key, "ok", "module schedule fired (run-now)");
+            else if (res && res.__state === "auth") setRunNote(run.key, "err", "run-now refused: admin authentication required");
+            else setRunNote(run.key, "err", "run-now failed: module runtime unreachable");
+          });
+      });
+      bar.appendChild(runNow);
+    } else {
+      var copyCmd = document.createElement("button");
+      copyCmd.type = "button";
+      copyCmd.textContent = "Restart (copy command)";
+      copyCmd.title = "External-runner lane — the node cannot spawn the pipeline; copies the CLI command (also shown in Run controls above)";
+      copyCmd.addEventListener("click", function (e) {
+        e.stopPropagation();
+        copyText(runnerCommand(), function (ok) {
+          setRunNote(run.key, ok ? "ok" : "err", ok
+            ? "runner command copied — run it from the space-data-network-modules repo"
+            : "copy failed — select the command in Run controls above");
+        });
+      });
+      bar.appendChild(copyCmd);
+    }
+
+    var note = runControls.notes[run.key];
+    if (note) bar.appendChild(el("span", "actnote " + (note.cls || ""), note.text));
+    else if (flag) bar.appendChild(el("span", "actnote", "stop requested " + (flag.requested_at || "")));
+    return bar;
+  }
+
+  function copyText(text, done) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+      return;
+    }
+    done(false);
+  }
+
   function runDetailRow(run, colCount) {
     var tr = el("tr", "detail");
     var td = el("td"); td.setAttribute("colspan", String(colCount));
     var inner = el("div", "detail-inner");
     var r = run.source;
+
+    inner.appendChild(runActionsBar(run));
 
     var strip = el("div", "det-stats");
     function stat(lab, val) { var s = el("div", "det-stat"); s.appendChild(el("div", "lab", lab)); s.appendChild(el("div", "val", val)); strip.appendChild(s); }
@@ -1469,7 +1817,17 @@
     renderLaneTable();
     renderRunsTable();
   }
-  function pollPipeline() { getJSON("/stats").then(applyStats); }
+  function pollPipeline() {
+    getJSON("/stats").then(applyStats);
+    // Stop flags are tiny and drive the per-run STOP state — poll alongside.
+    getJSON("/runs/flags").then(function (res) {
+      if (res && res.__state === "ok" && res.data && Array.isArray(res.data.flags)) {
+        var flags = {};
+        res.data.flags.forEach(function (f) { if (f && f.batch_id) flags[f.batch_id] = f; });
+        runControls.flags = flags;
+      }
+    });
+  }
 
   function refresh() {
     document.getElementById("updated").textContent = new Date().toISOString().slice(0, 19).replace("T", " ") + "Z";
@@ -1481,6 +1839,7 @@
       renderTiles(r[3], r[4]);
       applyStats(r[3]);
     });
+    refreshRunControls();
   }
 
   // ---- Boot -----------------------------------------------------------------
@@ -1490,6 +1849,14 @@
   renderSourceRefs();
   document.getElementById("nav-lanes").addEventListener("click", function () { setView("lanes"); });
   document.getElementById("nav-runs").addEventListener("click", function () { setView("runs"); });
+  var cmdCopyBtn = document.getElementById("runner-cmd-copy");
+  if (cmdCopyBtn) cmdCopyBtn.addEventListener("click", function () {
+    copyText(runnerCommand(), function (ok) {
+      cmdCopyBtn.textContent = ok ? "Copied" : "Copy failed — select the text";
+      setTimeout(function () { cmdCopyBtn.textContent = "Copy"; }, 2500);
+    });
+  });
+  renderProviderChecklist();
   var filterInput = document.getElementById("lane-filter");
   if (filterInput) filterInput.addEventListener("input", function () { laneState.filter = filterInput.value; renderLaneTable(); });
 
