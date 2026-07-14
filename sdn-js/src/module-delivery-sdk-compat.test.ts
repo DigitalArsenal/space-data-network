@@ -31,6 +31,7 @@ import {
 import {
   cleanupCompilation,
   compileModuleFromSource,
+  ModuleThreadModel,
 } from 'space-data-module-sdk/compiler';
 
 vi.mock('./crypto/hd-wallet', async () => {
@@ -62,6 +63,7 @@ async function compilePublicHelperModule() {
       version: '1.0.0',
       pluginFamily: 'analysis',
       invokeSurfaces: ['direct'],
+      runtimeTargets: ['browser', 'wasmedge'],
       capabilities: [],
       externalInterfaces: [],
       methods: [
@@ -111,8 +113,7 @@ int echo(void) {
   return 0;
 }
 `,
-    importedMemory: true,
-    sharedMemory: true,
+    threadModel: ModuleThreadModel.SINGLE_THREAD,
   });
 }
 
@@ -148,6 +149,14 @@ describe('module-delivery SDK compatibility', () => {
     const contentKey = new Uint8Array(32).fill(0x37);
     try {
       const wasmBytes = compilation.wasmBytes;
+      expect(compilation.threadModel).toBe(ModuleThreadModel.SINGLE_THREAD);
+      expect(compilation.compiler).toBe('em++ (emception)');
+      expect(
+        Array.from(new Set(
+          WebAssembly.Module.imports(new WebAssembly.Module(wasmBytes))
+            .map(({ module }) => module),
+        )).sort(),
+      ).toEqual(['wasi_snapshot_preview1']);
       const encryptedBundleBytes = await encryptBundleBytes(wasmBytes, contentKey);
       const contentHash = await sha256(encryptedBundleBytes);
       const fetched = await fetchEncryptedModuleBundle(
@@ -212,17 +221,23 @@ describe('module-delivery SDK compatibility', () => {
         fetched.encryptedBundleBytes,
         unwrappedKey,
       );
-      const harness = await ui.loadDecryptedModule(decryptedWasm, {
-        sharedMemory: true,
-        initialMemoryBytes: 64 * 1024 * 1024,
-        maximumMemoryBytes: 2 * 1024 * 1024 * 1024,
-      });
+      const harness = await ui.loadDecryptedModule(decryptedWasm);
       const response = await ui.invokeLoadedModule<{
         statusCode: number;
         outputs: Array<{ payload: Uint8Array }>;
       }>(harness, {
         methodId: 'echo',
-        inputs: [],
+        // A non-empty owned payload selects the SDK's portable serialized-PIV
+        // path; an empty payload arena is reserved for the shared external-
+        // arena ABI.
+        inputs: [{
+          portId: 'request',
+          typeRef: {
+            schemaName: 'Blob.fbs',
+            fileIdentifier: 'BLOB',
+          },
+          payload: new Uint8Array([0x01]),
+        }],
       });
 
       expect(decryptedWasm).toEqual(wasmBytes);

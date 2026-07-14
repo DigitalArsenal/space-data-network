@@ -107,10 +107,10 @@ describe('live-delivery', () => {
     ]);
   });
 
-  it('uses direct external arena invocation for direct-surface SDK harnesses', async () => {
+  it('uses direct external arena invocation for shared direct-surface SDK harnesses', async () => {
     const invoke = vi.fn(async () => ({ statusCode: 1, outputs: [] }));
     const invokeDirect = vi.fn(async () => ({ statusCode: 0, outputs: [] }));
-    const memory = new WebAssembly.Memory({ initial: 1 });
+    const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
     const response = await invokeLoadedModule(
       {
         runtime: { surface: 'direct' },
@@ -130,6 +130,25 @@ describe('live-delivery', () => {
       externalArena: expect.any(Uint8Array),
     });
     expect((invokeDirect.mock.calls[0]?.[0] as { externalArena: Uint8Array }).externalArena.buffer).toBe(memory.buffer);
+  });
+
+  it('uses serialized direct invocation for portable single-thread module memory', async () => {
+    const invoke = vi.fn(async () => ({ statusCode: 0, outputs: [] }));
+    const invokeDirect = vi.fn(async () => ({ statusCode: 1, outputs: [] }));
+    const request = { methodId: 'echo', inputs: [] };
+    const response = await invokeLoadedModule(
+      {
+        runtime: { surface: 'direct' },
+        memory: new WebAssembly.Memory({ initial: 1 }),
+        invoke,
+        invokeDirect,
+      },
+      request,
+    );
+
+    expect(response.statusCode).toBe(0);
+    expect(invoke).toHaveBeenCalledWith(request);
+    expect(invokeDirect).not.toHaveBeenCalled();
   });
 
   it('fails closed for encrypted grant key unwraps that must run in client-decrypt WASM', async () => {

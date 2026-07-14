@@ -271,7 +271,10 @@ export async function invokeLoadedModule<TResult = unknown>(
 }
 
 function shouldUseDirectExternalArena(harness: LoadedModuleHarnessLike, request: unknown): boolean {
-  if (harness.runtime?.surface !== 'direct') {
+  if (
+    harness.runtime?.surface !== 'direct' ||
+    !isSharedArrayBufferLike(harness.memory?.buffer)
+  ) {
     return false;
   }
   return request !== null &&
@@ -279,6 +282,13 @@ function shouldUseDirectExternalArena(harness: LoadedModuleHarnessLike, request:
     !Array.isArray(request) &&
     !(request instanceof Uint8Array) &&
     !('externalArena' in request);
+}
+
+function isSharedArrayBufferLike(value: ArrayBufferLike | undefined): boolean {
+  return value !== undefined &&
+    typeof SharedArrayBuffer === 'function' &&
+    (value instanceof SharedArrayBuffer ||
+      Object.prototype.toString.call(value) === '[object SharedArrayBuffer]');
 }
 
 function prepareInvokeRequest(harness: LoadedModuleHarnessLike, request: unknown): unknown {
