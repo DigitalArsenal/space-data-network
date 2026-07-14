@@ -724,7 +724,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create node: %w", err)
 	}
 	var assetRetainer *assetpin.Retainer
+	var assetMutationGate *assetpin.MutationGate
 	if cfg.AssetPins.Enabled {
+		assetMutationGate = assetpin.NewMutationGate()
 		if n.Store() == nil || strings.TrimSpace(n.Store().Path()) == "" {
 			return errors.New("asset retention requires local storage")
 		}
@@ -744,6 +746,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			Store:    n.Store(),
 			Pins:     retentionPins,
 			Recovery: recoveryStore,
+			Gate:     assetMutationGate,
 		})
 		if err != nil {
 			return fmt.Errorf("configure asset retention: %w", err)
@@ -905,6 +908,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					n.Store(),
 					cfg.Admin.IPFSAPIURL,
 					cfg.AssetPins,
+					assetMutationGate,
 					defaultAssetPinCapabilityDependencies(),
 				)
 				if err != nil {
@@ -1890,6 +1894,7 @@ func composeAssetPinCapability(
 	store assetPinCapabilityStore,
 	ipfsAPIURL string,
 	cfg config.AssetPinConfig,
+	gate *assetpin.MutationGate,
 	dependencies assetPinCapabilityDependencies,
 ) (assetPinCapability, error) {
 	if ctx == nil {
@@ -1900,6 +1905,9 @@ func composeAssetPinCapability(
 	}
 	if !cfg.Enabled {
 		return assetPinCapability{}, errors.New("asset pin capability is disabled")
+	}
+	if gate == nil {
+		return assetPinCapability{}, errors.New("asset pin mutation gate is required")
 	}
 	if err := validateAssetPinCapabilityOIDCConfig(cfg); err != nil {
 		return assetPinCapability{}, err
@@ -1928,6 +1936,7 @@ func composeAssetPinCapability(
 		Verifier: verifierSlot,
 		Store:    store,
 		Pinner:   pinner,
+		Gate:     gate,
 		Config:   cfg,
 		DataDir:  filepath.Dir(storePath),
 	})
