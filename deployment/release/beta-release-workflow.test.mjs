@@ -20,6 +20,28 @@ function readRepoFile(relativePath) {
   return readFileSync(join(repoRoot, relativePath), 'utf8');
 }
 
+function extractShellFunction(script, functionName) {
+  const escapedName = functionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const header = new RegExp(`^${escapedName}\\(\\) \\{[ \\t]*$`, 'm').exec(script);
+
+  assert.ok(header, `${functionName} must be defined as a shell function`);
+
+  const bodyStart = header.index + header[0].length;
+  const remainder = script.slice(bodyStart);
+  const nextFunction = /^[_a-zA-Z][_a-zA-Z0-9]*\(\) \{[ \t]*$/m.exec(remainder);
+
+  return remainder.slice(0, nextFunction?.index ?? remainder.length);
+}
+
+function extractGoTestArguments(functionBody, functionName) {
+  const invocations = [...functionBody.matchAll(
+    /^[ \t]*"\$ROOT\/scripts\/go-with-wasmedge\.sh"[ \t]+test((?:[ \t]+\S+)+)[ \t]*$/gm,
+  )];
+
+  assert.equal(invocations.length, 1, `${functionName} must contain exactly one active Go test invocation`);
+  return invocations[0][1].trim().split(/\s+/);
+}
+
 test('workflows opt into Node 24 for GitHub actions and project scripts', () => {
   for (const workflowPath of workflowPaths) {
     const workflow = readRepoFile(workflowPath);
@@ -63,6 +85,23 @@ test('CI quick checks share an explicit step-local WasmEdge directory', () => {
     installCommand.index < quickCheckCommand.index,
     'Run CI step must install WasmEdge before running quick checks',
   );
+});
+
+test('local Go suites serialize package builds while bypassing the test cache', () => {
+  const script = readRepoFile('scripts/ci-local.sh');
+  const goArgs = extractGoTestArguments(extractShellFunction(script, 'run_go'), 'run_go');
+  const raceArgs = extractGoTestArguments(extractShellFunction(script, 'run_go_race'), 'run_go_race');
+
+  for (const [functionName, args] of [['run_go', goArgs], ['run_go_race', raceArgs]]) {
+    assert.ok(args.includes('-p=1'), `${functionName} must serialize package builds with -p=1`);
+    assert.deepEqual(
+      args.slice(-2),
+      ['-count=1', './...'],
+      `${functionName} must bypass cached results for the complete module`,
+    );
+  }
+
+  assert.ok(raceArgs.includes('-race'), 'run_go_race must retain Go race detection');
 });
 
 test('beta release workflow publishes public beta artifacts', () => {
