@@ -414,6 +414,13 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 
 // capPrefixFromName maps a capability string to the hostcall operation prefix.
 func capPrefixFromName(cap string) string {
+	// Credential-keystore lanes: every "secrets:<id>" capability is served by
+	// the single "secrets" hostcall handler (caps/secrets.go), which re-checks
+	// the exact lane per call — the same one-handler/many-capabilities shape as
+	// the storage_* family below.
+	if strings.HasPrefix(cap, SecretsCapabilityPrefix) {
+		return "secrets"
+	}
 	switch cap {
 	case "protocol_handle", "protocol_dial":
 		return "protocol"

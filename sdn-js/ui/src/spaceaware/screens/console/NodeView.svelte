@@ -72,6 +72,13 @@
     serviceStatusDotColor,
   } from '../../lib/node-data';
   import {
+    buildCredentialRows,
+    clearCredential,
+    loadCredentialStatuses,
+    saveCredential,
+    type CredentialRow,
+  } from '../../lib/credentials-data';
+  import {
     buildNetmapPoints,
     formatNetmapCountryCount,
     netmapPointColor,
@@ -135,6 +142,54 @@
   const storageView = $derived(buildNodeStorageView(dashboard?.stats ?? null, dashboard?.nodeInfo?.standardsVersion));
   const healthChipStyle = $derived(consoleHealthChipStyle(healthState));
 
+  // --- PROVIDER CREDENTIALS (write-only) --------------------------------
+  //
+  // The daemon exposes credential STATUS only; there is no endpoint that
+  // returns a stored secret. Nothing below ever holds a stored password: the
+  // password input is a write buffer, cleared the moment a save resolves, and
+  // never pre-filled from the node.
+  let credentialRows = $state<CredentialRow[]>(buildCredentialRows([]));
+  let credentialNotice = $state<string | null>(null);
+  let credentialBusy = $state<string | null>(null);
+  let credentialMessages = $state<Record<string, string>>({});
+  let credentialUsername = $state<Record<string, string>>({});
+  let credentialSecret = $state<Record<string, string>>({});
+  let credentialVerify = $state<Record<string, boolean>>({});
+
+  async function refreshCredentials() {
+    const result = await loadCredentialStatuses(apiClient);
+    credentialRows = result.rows;
+    credentialNotice = result.notice;
+  }
+
+  async function onSaveCredential(id: string) {
+    const username = (credentialUsername[id] ?? '').trim();
+    const secret = credentialSecret[id] ?? '';
+    if (!username || !secret) {
+      credentialMessages = { ...credentialMessages, [id]: 'IDENTITY AND SECRET ARE REQUIRED' };
+      return;
+    }
+    credentialBusy = id;
+    const result = await saveCredential(apiClient, id, username, secret, credentialVerify[id] === true);
+    // Clear the write buffer immediately — the secret must not linger in
+    // component state after the request resolves.
+    credentialSecret = { ...credentialSecret, [id]: '' };
+    credentialMessages = { ...credentialMessages, [id]: result.message };
+    credentialBusy = null;
+    if (result.ok) {
+      credentialUsername = { ...credentialUsername, [id]: '' };
+      await refreshCredentials();
+    }
+  }
+
+  async function onClearCredential(id: string) {
+    credentialBusy = id;
+    const result = await clearCredential(apiClient, id);
+    credentialMessages = { ...credentialMessages, [id]: result.message };
+    credentialBusy = null;
+    if (result.ok) await refreshCredentials();
+  }
+
   onMount(() => {
     try {
       layout = loadNodeLayout(window.localStorage);
@@ -144,6 +199,7 @@
     void loadNodeDashboardData(apiClient).then((data) => {
       dashboard = data;
     });
+    void refreshCredentials();
   });
 
   function triggerDownload(content: string, filename: string, mimeType: string) {
@@ -603,6 +659,88 @@
           <!-- Session-gated surface: anonymous/offline degrades to an empty
                list, and a fresh ring is legitimately empty too. -->
           <div class="sdn-widget-status-sub sdn-widget-status-sub--plain">NO ACTIVITY YET</div>
+        {/if}
+      {:else if w.id === 'credentials'}
+        <!-- PROVIDER CREDENTIALS (write-only).
+
+             The node stores these encrypted at rest and never returns a stored
+             secret to any caller, so this widget can only ever show whether a
+             lane is CONFIGURED — never the value. The secret input is a write
+             buffer: never pre-filled, cleared on save.
+
+             Status dot follows the console honesty rule — green only on a
+             confirmed successful probe; a stored-but-unprobed credential is
+             neutral (unknown), never a fabricated red. -->
+        <div class="sdn-widget-title">PROVIDER CREDENTIALS</div>
+        {#if credentialNotice}
+          <div class="sdn-widget-status-sub sdn-widget-status-sub--plain">{credentialNotice}</div>
+        {:else}
+          <div class="sdn-cred-list">
+            {#each credentialRows as row (row.lane.id)}
+              <div class="sdn-cred-row">
+                <div class="sdn-cred-head">
+                  <span class="sdn-cred-dot" style={`background:${row.dotColor};box-shadow:0 0 6px ${row.dotColor};`}
+                  ></span>
+                  <span class="sdn-cred-label">{row.lane.label}</span>
+                  <span class="sdn-cred-state">{row.stateLabel}</span>
+                </div>
+                <div class="sdn-cred-purpose">{row.lane.purpose}</div>
+                {#if row.status.configured && row.status.usernameMasked}
+                  <div class="sdn-cred-purpose">ACCOUNT {row.status.usernameMasked}</div>
+                {/if}
+
+                <div class="sdn-cred-form">
+                  <input
+                    class="sdn-cred-input"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder={row.lane.usernameLabel}
+                    aria-label={`${row.lane.label} ${row.lane.usernameLabel}`}
+                    bind:value={credentialUsername[row.lane.id]}
+                  />
+                  <!-- Never pre-filled with the stored value: the node has no
+                       route that would return it. -->
+                  <input
+                    class="sdn-cred-input"
+                    type="password"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="SECRET"
+                    aria-label={`${row.lane.label} secret`}
+                    bind:value={credentialSecret[row.lane.id]}
+                  />
+                </div>
+
+                <div class="sdn-cred-actions">
+                  <label class="sdn-cred-verify">
+                    <input type="checkbox" bind:checked={credentialVerify[row.lane.id]} />
+                    VERIFY ON SAVE
+                  </label>
+                  <button
+                    class="sdn-cred-btn"
+                    type="button"
+                    disabled={credentialBusy === row.lane.id}
+                    onclick={() => onSaveCredential(row.lane.id)}
+                  >
+                    {row.status.configured ? 'REPLACE' : 'SAVE'}
+                  </button>
+                  <button
+                    class="sdn-cred-btn"
+                    type="button"
+                    disabled={credentialBusy === row.lane.id || !row.status.configured}
+                    onclick={() => onClearCredential(row.lane.id)}
+                  >
+                    CLEAR
+                  </button>
+                </div>
+
+                {#if credentialMessages[row.lane.id]}
+                  <div class="sdn-cred-msg">{credentialMessages[row.lane.id]}</div>
+                {/if}
+              </div>
+            {/each}
+          </div>
         {/if}
       {/if}
     </section>
@@ -1331,5 +1469,132 @@
     font-size: 15.5px;
     color: #35c9d8;
     line-height: 1;
+  }
+
+  /* --- PROVIDER CREDENTIALS ------------------------------------------- */
+
+  .sdn-cred-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 4px;
+  }
+
+  .sdn-cred-row {
+    border-top: 1px solid rgba(120, 160, 180, 0.16);
+    padding-top: 10px;
+  }
+
+  .sdn-cred-row:first-child {
+    border-top: none;
+    padding-top: 0;
+  }
+
+  .sdn-cred-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .sdn-cred-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex: none;
+  }
+
+  .sdn-cred-label {
+    font-size: 12px;
+    color: #eaf6f8;
+    letter-spacing: 0.04em;
+  }
+
+  .sdn-cred-state {
+    margin-left: auto;
+    font-size: 10.5px;
+    color: #7d929b;
+    letter-spacing: 0.04em;
+  }
+
+  .sdn-cred-purpose {
+    font-size: 10.5px;
+    color: #7d929b;
+    margin-top: 4px;
+    letter-spacing: 0.03em;
+  }
+
+  .sdn-cred-form {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .sdn-cred-input {
+    flex: 1 1 0;
+    min-width: 0;
+    background: rgba(10, 22, 30, 0.7);
+    border: 1px solid rgba(120, 160, 180, 0.28);
+    border-radius: 3px;
+    padding: 6px 8px;
+    font: inherit;
+    font-size: 11px;
+    color: #eaf6f8;
+    letter-spacing: 0.03em;
+  }
+
+  .sdn-cred-input:focus {
+    outline: none;
+    border-color: rgba(120, 190, 230, 0.6);
+  }
+
+  .sdn-cred-input::placeholder {
+    color: #5c7481;
+  }
+
+  .sdn-cred-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .sdn-cred-verify {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-right: auto;
+    font-size: 10px;
+    color: #7d929b;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+  }
+
+  .sdn-cred-btn {
+    background: rgba(74, 166, 224, 0.08);
+    border: 1px solid rgba(120, 160, 180, 0.32);
+    border-radius: 3px;
+    padding: 5px 12px;
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    color: #cfe4ea;
+    cursor: pointer;
+  }
+
+  .sdn-cred-btn:hover:not(:disabled) {
+    border-color: rgba(120, 190, 230, 0.6);
+    color: #eaf6f8;
+  }
+
+  .sdn-cred-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  .sdn-cred-msg {
+    margin-top: 7px;
+    font-size: 10px;
+    color: #7d929b;
+    letter-spacing: 0.03em;
   }
 </style>
