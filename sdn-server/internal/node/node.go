@@ -2332,8 +2332,6 @@ func (n *Node) enforceStorageQuota() {
 // the same ticker/n.ctx-shutdown shape as maintainBootstrapConnections and
 // the dataset-publication catch-up loops elsewhere in this file.
 func (n *Node) runStorageQuotaGC() {
-	defer n.wg.Done()
-
 	interval, err := n.config.Storage.ResolveGCInterval()
 	if err != nil {
 		log.Warnf("Storage quota GC: invalid storage.gc_interval, using default: %v", err)
@@ -2341,11 +2339,23 @@ func (n *Node) runStorageQuotaGC() {
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	n.runStorageQuotaGCWithTicks(ticker.C)
+}
+
+func (n *Node) runStorageQuotaGCWithTicks(ticks <-chan time.Time) {
+	defer n.wg.Done()
+
+	if n.ctx.Err() != nil {
+		return
+	}
 	for {
 		select {
 		case <-n.ctx.Done():
 			return
-		case <-ticker.C:
+		case <-ticks:
+			if n.ctx.Err() != nil {
+				return
+			}
 			n.enforceStorageQuota()
 		}
 	}

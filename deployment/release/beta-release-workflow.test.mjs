@@ -101,6 +101,16 @@ test('local Go suites serialize package builds while bypassing the test cache', 
     );
   }
 
+  assert.deepEqual(
+    goArgs.filter((arg) => arg.startsWith('-timeout=')),
+    ['-timeout=20m'],
+    'run_go must have exactly one explicit 20-minute timeout for cold WasmEdge runners',
+  );
+  assert.deepEqual(
+    raceArgs.filter((arg) => arg.startsWith('-timeout=')),
+    ['-timeout=30m'],
+    'run_go_race must have exactly one explicit 30-minute timeout for serialized race builds',
+  );
   assert.ok(raceArgs.includes('-race'), 'run_go_race must retain Go race detection');
 });
 
