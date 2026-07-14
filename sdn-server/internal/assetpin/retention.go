@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ import (
 
 const (
 	defaultRetentionCallTimeout      = 10 * time.Second
+	defaultRetentionSweepTimeout     = 5 * time.Minute
 	defaultRetentionRecoveryPageSize = 100
 	retentionRecoveryGracePeriod     = 10 * time.Minute
 	retentionRecoveryReadBatchSize   = 128
@@ -52,7 +54,7 @@ type RetentionPins interface {
 
 // RetentionRecoveryStore provides stable, bounded pages of crash markers.
 type RetentionRecoveryStore interface {
-	ListPage(afterReferenceKey string, limit int) ([]AssetPinRecoveryMarker, string, error)
+	ListPage(context.Context, string, int) ([]AssetPinRecoveryMarker, string, error)
 	Remove(referenceKey string) error
 }
 
@@ -61,7 +63,9 @@ type RetainerOptions struct {
 	Store            RetentionStore
 	Pins             RetentionPins
 	Recovery         RetentionRecoveryStore
+	Gate             *MutationGate
 	CallTimeout      time.Duration
+	SweepTimeout     time.Duration
 	RecoveryPageSize int
 }
 
@@ -72,26 +76,37 @@ type Retainer struct {
 	store            RetentionStore
 	pins             RetentionPins
 	recovery         RetentionRecoveryStore
+	gate             *MutationGate
 	callTimeout      time.Duration
+	sweepTimeout     time.Duration
 	recoveryPageSize int
 }
 
 // NewRetainer validates and binds a retention worker.
 func NewRetainer(options RetainerOptions) (*Retainer, error) {
-	if options.Store == nil {
+	if isNilRetentionDependency(options.Store) {
 		return nil, errors.New("asset retention store is required")
 	}
-	if options.Pins == nil {
+	if isNilRetentionDependency(options.Pins) {
 		return nil, errors.New("asset retention Kubo client is required")
 	}
-	if options.Recovery == nil {
+	if isNilRetentionDependency(options.Recovery) {
 		return nil, errors.New("asset retention recovery store is required")
+	}
+	if options.Gate == nil || options.Gate.token == nil {
+		return nil, errors.New("asset pin mutation gate is required")
 	}
 	if options.CallTimeout < 0 {
 		return nil, errors.New("asset retention call timeout must not be negative")
 	}
 	if options.CallTimeout == 0 {
 		options.CallTimeout = defaultRetentionCallTimeout
+	}
+	if options.SweepTimeout < 0 {
+		return nil, errors.New("asset retention sweep timeout must not be negative")
+	}
+	if options.SweepTimeout == 0 {
+		options.SweepTimeout = defaultRetentionSweepTimeout
 	}
 	if options.RecoveryPageSize < 0 {
 		return nil, errors.New("asset retention recovery page size must not be negative")
@@ -106,9 +121,24 @@ func NewRetainer(options RetainerOptions) (*Retainer, error) {
 		store:            options.Store,
 		pins:             options.Pins,
 		recovery:         options.Recovery,
+		gate:             options.Gate,
 		callTimeout:      options.CallTimeout,
+		sweepTimeout:     options.SweepTimeout,
 		recoveryPageSize: options.RecoveryPageSize,
 	}, nil
+}
+
+func isNilRetentionDependency(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
+	}
 }
 
 // Sweep first resolves crash markers, then abandons stale review candidates,
@@ -122,10 +152,38 @@ func (r *Retainer) Sweep(ctx context.Context, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	sweepCtx, cancel := context.WithTimeout(ctx, r.sweepTimeout)
+	defer cancel()
+	release, err := r.gate.Acquire(sweepCtx)
+	if err != nil {
+		return fmt.Errorf("acquire asset pin mutation gate: %w", err)
+	}
+	var sweepErrors []error
+	func() {
+		defer release()
+		sweepErrors = r.sweepMutations(sweepCtx, now)
+	}()
+
+	// Reconciliation is read-only and deliberately runs outside the mutation
+	// gate so API uploads and state transitions are not blocked by a full-ledger
+	// Kubo scan.
+	if reconcileErr := r.reconcileLedgerPins(sweepCtx); reconcileErr != nil {
+		sweepErrors = append(sweepErrors, reconcileErr)
+	}
+	if contextErr := sweepCtx.Err(); contextErr != nil {
+		sweepErrors = append(sweepErrors, contextErr)
+	}
+	return errors.Join(sweepErrors...)
+}
+
+func (r *Retainer) sweepMutations(ctx context.Context, now time.Time) []error {
 	var sweepErrors []error
 	recoveryBlockedCIDs, recoveryBlocksAll, recoveryErr := r.recoverPendingPins(ctx, now)
 	if recoveryErr != nil {
 		sweepErrors = append(sweepErrors, fmt.Errorf("recover pending asset pin: %w", recoveryErr))
+	}
+	if recoveryBlocksAll {
+		return sweepErrors
 	}
 	blockedCIDs, blockAllRetention, abandonErr := r.abandonStaleReferences(ctx, now)
 	if blockedCIDs == nil {
@@ -138,12 +196,6 @@ func (r *Retainer) Sweep(ctx context.Context, now time.Time) error {
 	if abandonErr != nil {
 		sweepErrors = append(sweepErrors, fmt.Errorf("abandon stale asset reference: %w", abandonErr))
 	}
-	// Reconcile the complete post-transition ledger snapshot before retention
-	// deletes any rows, so every ledger CID is checked at least once per sweep.
-	if reconcileErr := r.reconcileLedgerPins(ctx); reconcileErr != nil {
-		sweepErrors = append(sweepErrors, reconcileErr)
-	}
-
 	expired, err := retentionCall(ctx, r.callTimeout, func(callCtx context.Context) ([]storage.AssetPinReference, error) {
 		return r.store.ListExpiredAssetPinReferences(callCtx, now)
 	})
@@ -153,6 +205,10 @@ func (r *Retainer) Sweep(ctx context.Context, now time.Time) error {
 	}
 	groups := make(map[string][]storage.AssetPinReference)
 	for _, ref := range expired {
+		if err := ctx.Err(); err != nil {
+			sweepErrors = append(sweepErrors, err)
+			return sweepErrors
+		}
 		if strings.TrimSpace(ref.CID) == "" || strings.TrimSpace(ref.ReferenceKey) == "" {
 			sweepErrors = append(sweepErrors, errors.New("expired asset reference has an empty identity"))
 			continue
@@ -167,6 +223,10 @@ func (r *Retainer) Sweep(ctx context.Context, now time.Time) error {
 	}
 	cids := sortedRetentionKeys(groups)
 	for _, cidValue := range cids {
+		if err := ctx.Err(); err != nil {
+			sweepErrors = append(sweepErrors, err)
+			return sweepErrors
+		}
 		refs := groups[cidValue]
 		sort.Slice(refs, func(i, j int) bool { return refs[i].ReferenceKey < refs[j].ReferenceKey })
 		protected, countErr := retentionCall(ctx, r.callTimeout, func(callCtx context.Context) (int, error) {
@@ -188,6 +248,10 @@ func (r *Retainer) Sweep(ctx context.Context, now time.Time) error {
 			}
 		}
 		for _, ref := range refs {
+			if err := ctx.Err(); err != nil {
+				sweepErrors = append(sweepErrors, err)
+				return sweepErrors
+			}
 			event := retentionDeleteEvent(ref)
 			deleteErr := retentionCallErr(ctx, r.callTimeout, func(callCtx context.Context) error {
 				return r.store.DeleteExpiredAssetPinReference(callCtx, ref.ReferenceKey, event)
@@ -197,7 +261,7 @@ func (r *Retainer) Sweep(ctx context.Context, now time.Time) error {
 			}
 		}
 	}
-	return errors.Join(sweepErrors...)
+	return sweepErrors
 }
 
 func (r *Retainer) abandonStaleReferences(ctx context.Context, now time.Time) (map[string]struct{}, bool, error) {
@@ -211,6 +275,10 @@ func (r *Retainer) abandonStaleReferences(ctx context.Context, now time.Time) (m
 	var transitionErrors []error
 	sort.Slice(refs, func(i, j int) bool { return refs[i].ReferenceKey < refs[j].ReferenceKey })
 	for _, ref := range refs {
+		if err := ctx.Err(); err != nil {
+			transitionErrors = append(transitionErrors, err)
+			break
+		}
 		if ref.State != storage.AssetReferenceStaged && ref.State != storage.AssetReferenceReviewOpen {
 			continue
 		}
@@ -259,7 +327,10 @@ func (r *Retainer) recoverPendingPins(ctx context.Context, now time.Time) (map[s
 	blocksAllRetention := false
 	cursor := ""
 	for {
-		markers, next, err := r.recovery.ListPage(cursor, r.recoveryPageSize)
+		if err := ctx.Err(); err != nil {
+			return blockedCIDs, true, errors.Join(append(recoveryErrors, err)...)
+		}
+		markers, next, err := r.recovery.ListPage(ctx, cursor, r.recoveryPageSize)
 		if err != nil {
 			return blockedCIDs, true, errors.Join(append(recoveryErrors, err)...)
 		}
@@ -272,12 +343,16 @@ func (r *Retainer) recoverPendingPins(ctx context.Context, now time.Time) (map[s
 			}
 		}
 		for _, marker := range markers {
+			if err := ctx.Err(); err != nil {
+				return blockedCIDs, true, errors.Join(append(recoveryErrors, err)...)
+			}
 			if cursor != "" && marker.ReferenceKey <= cursor {
 				return blockedCIDs, true, errors.Join(append(recoveryErrors, errors.New("asset pin recovery cursor did not advance"))...)
 			}
 			fresh := marker.UpdatedAt.Add(retentionRecoveryGracePeriod).After(now)
 			if err := r.recoverMarker(ctx, now, marker); err != nil {
-				if errors.Is(err, ErrInvalidAssetPinRecoveryMarker) || errors.Is(err, ErrUnsafeAssetPinDirectory) {
+				if errors.Is(err, ErrInvalidAssetPinRecoveryMarker) || errors.Is(err, ErrUnsafeAssetPinDirectory) ||
+					errors.Is(err, ErrAssetPinRecoveryMarkerConflict) {
 					blocksAllRetention = true
 				}
 				if marker.ExpectedCID != "" {
@@ -286,7 +361,14 @@ func (r *Retainer) recoverPendingPins(ctx context.Context, now time.Time) (map[s
 				if marker.CID != "" {
 					blockedCIDs[marker.CID] = struct{}{}
 				}
+				var conflict *AssetPinRecoveryLedgerConflictError
+				if errors.As(err, &conflict) && conflict.ActualCID != "" {
+					blockedCIDs[conflict.ActualCID] = struct{}{}
+				}
 				recoveryErrors = append(recoveryErrors, fmt.Errorf("marker %s: %w", marker.ReferenceKey, err))
+				if errors.Is(err, ErrAssetPinRecoveryMarkerConflict) {
+					return blockedCIDs, true, errors.Join(recoveryErrors...)
+				}
 				continue
 			}
 			if fresh {
@@ -326,7 +408,11 @@ func (r *Retainer) recoverMarker(ctx context.Context, now time.Time, marker Asse
 	}
 	if found.found {
 		if !recoveryMarkerMatchesReference(marker, found.reference) {
-			return errors.New("recovery marker conflicts with committed ledger reference")
+			return &AssetPinRecoveryLedgerConflictError{
+				ReferenceKey: marker.ReferenceKey,
+				ExpectedCID:  marker.ExpectedCID,
+				ActualCID:    found.reference.CID,
+			}
 		}
 		pinned, pinErr := r.isPinned(ctx, found.reference.CID)
 		if pinErr != nil {
@@ -367,6 +453,23 @@ type retentionReferenceResult struct {
 	found     bool
 }
 
+// AssetPinRecoveryLedgerConflictError identifies the committed CID involved
+// in a marker/ledger integrity conflict while classifying as the package-wide
+// recovery-marker conflict sentinel.
+type AssetPinRecoveryLedgerConflictError struct {
+	ReferenceKey string
+	ExpectedCID  string
+	ActualCID    string
+}
+
+func (e *AssetPinRecoveryLedgerConflictError) Error() string {
+	return "asset pin recovery marker conflicts with committed ledger reference"
+}
+
+func (e *AssetPinRecoveryLedgerConflictError) Unwrap() error {
+	return ErrAssetPinRecoveryMarkerConflict
+}
+
 func (r *Retainer) compensateMismatchedMarker(ctx context.Context, now time.Time, marker AssetPinRecoveryMarker) error {
 	pinned, err := r.isPinned(ctx, marker.CID)
 	if err != nil {
@@ -400,6 +503,9 @@ func (r *Retainer) reconcileLedgerPins(ctx context.Context) error {
 	}
 	unique := make(map[string]struct{}, len(refs))
 	for _, ref := range refs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if strings.TrimSpace(ref.CID) == "" {
 			return fmt.Errorf("ledger reference %s has an empty CID", ref.ReferenceKey)
 		}
@@ -412,6 +518,10 @@ func (r *Retainer) reconcileLedgerPins(ctx context.Context) error {
 	sort.Strings(cids)
 	var reconcileErrors []error
 	for _, cidValue := range cids {
+		if err := ctx.Err(); err != nil {
+			reconcileErrors = append(reconcileErrors, err)
+			break
+		}
 		pinned, pinErr := r.isPinned(ctx, cidValue)
 		if pinErr != nil {
 			reconcileErrors = append(reconcileErrors, fmt.Errorf("reconcile asset CID %s: %w", cidValue, pinErr))
@@ -609,9 +719,17 @@ func retentionCallErr(ctx context.Context, timeout time.Duration, call func(cont
 // of recovery markers. It scans directory entries in bounded batches and
 // retains only the smallest requested keys, so memory never scales with the
 // directory size and a restart can resume from an opaque last-key cursor.
-func (s *FileAssetPinRecoveryStore) ListPage(afterReferenceKey string, limit int) ([]AssetPinRecoveryMarker, string, error) {
+// Successive pages rescan the directory (O(N²) in the worst case), but every
+// bounded read and marker load observes the caller's whole-sweep deadline.
+func (s *FileAssetPinRecoveryStore) ListPage(ctx context.Context, afterReferenceKey string, limit int) ([]AssetPinRecoveryMarker, string, error) {
 	if s == nil {
 		return nil, "", errors.New("asset pin recovery store is required")
+	}
+	if ctx == nil {
+		return nil, "", errors.New("asset pin recovery context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
 	}
 	if afterReferenceKey != "" && !isLowerSHA256(afterReferenceKey) {
 		return nil, "", errors.New("asset pin recovery cursor must be a lowercase SHA-256 key")
@@ -622,8 +740,19 @@ func (s *FileAssetPinRecoveryStore) ListPage(afterReferenceKey string, limit int
 	if limit > AssetPinRecoveryListMax {
 		limit = AssetPinRecoveryListMax
 	}
-	s.mu.Lock()
+	retry := time.NewTicker(time.Millisecond)
+	defer retry.Stop()
+	for !s.mu.TryLock() {
+		select {
+		case <-ctx.Done():
+			return nil, "", ctx.Err()
+		case <-retry.C:
+		}
+	}
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	directory, err := ensurePrivateAssetPinDirectory(s.dataDir, "recovery")
 	if err != nil {
 		return nil, "", err
@@ -636,6 +765,9 @@ func (s *FileAssetPinRecoveryStore) ListPage(afterReferenceKey string, limit int
 
 	keys := make([]string, 0, limit+retentionRecoveryReadBatchSize)
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
+		}
 		entries, readErr := handle.ReadDir(retentionRecoveryReadBatchSize)
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
 			return nil, "", fmt.Errorf("list bounded asset pin recovery marker page: %w", readErr)
@@ -666,6 +798,9 @@ func (s *FileAssetPinRecoveryStore) ListPage(afterReferenceKey string, limit int
 	sort.Strings(keys)
 	markers := make([]AssetPinRecoveryMarker, 0, len(keys))
 	for _, key := range keys {
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
+		}
 		marker, ok, loadErr := loadAssetPinRecoveryMarker(directory, key)
 		if loadErr != nil {
 			return nil, "", loadErr
@@ -768,20 +903,48 @@ func decodeExactKuboPinLookupReceipt(body []byte, cidValue string) bool {
 	if !ok || returnedCID != cidValue || !decodeExactJSONDelimiter(decoder, '{') || !decoder.More() {
 		return false
 	}
-	entryKey, ok := decodeExactJSONStringToken(decoder)
-	if !ok || entryKey != "Type" {
+	if !decodeExactKuboPinEntry(decoder) {
 		return false
 	}
-	var pinType string
-	if err := decoder.Decode(&pinType); err != nil || pinType != "recursive" || decoder.More() {
-		return false
-	}
-	if !decodeExactJSONDelimiter(decoder, '}') || decoder.More() ||
-		!decodeExactJSONDelimiter(decoder, '}') || decoder.More() ||
+	if decoder.More() || !decodeExactJSONDelimiter(decoder, '}') || decoder.More() ||
 		!decodeExactJSONDelimiter(decoder, '}') {
 		return false
 	}
 	return requireJSONEOF(decoder) == nil
+}
+
+func decodeExactKuboPinEntry(decoder *json.Decoder) bool {
+	seen := make(map[string]struct{}, 2)
+	pinType := ""
+	for decoder.More() {
+		key, ok := decodeExactJSONStringToken(decoder)
+		if !ok {
+			return false
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return false
+		}
+		seen[key] = struct{}{}
+		switch key {
+		case "Type":
+			if err := decoder.Decode(&pinType); err != nil {
+				return false
+			}
+		case "Name":
+			var name string
+			if err := decoder.Decode(&name); err != nil {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	if !decodeExactJSONDelimiter(decoder, '}') || pinType != "recursive" {
+		return false
+	}
+	_, hasType := seen["Type"]
+	_, hasName := seen["Name"]
+	return hasType && (len(seen) == 1 || len(seen) == 2 && hasName)
 }
 
 func decodeExactKuboUnpinReceipt(body []byte, cidValue string) bool {
@@ -847,6 +1010,7 @@ func recognizedKuboMissingPin(status int, body []byte, cidValue string) bool {
 		return false
 	}
 	for _, recognized := range []string{
+		"not pinned or pinned indirectly",
 		"path is not pinned",
 		"path " + cidValue + " is not pinned",
 		"path '" + cidValue + "' is not pinned",

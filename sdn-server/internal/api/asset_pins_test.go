@@ -240,6 +240,8 @@ func (f *fakeAssetPinCapacity) AvailableBytes(path string) (uint64, error) {
 
 type fakeAssetPinner struct {
 	mu             sync.Mutex
+	pinned         bool
+	checkErr       error
 	calculatedCID  string
 	calculateErr   error
 	cid            string
@@ -248,11 +250,26 @@ type fakeAssetPinner struct {
 	calculateCalls int
 	pinCalls       int
 	unpinCalls     int
+	checkCalls     int
 	calculatePath  string
 	path           string
 	unpinned       string
 	calculateFunc  func(context.Context, string) (string, error)
 	pinFunc        func(context.Context, string) (string, error)
+	checkFunc      func(context.Context, string) (bool, error)
+}
+
+func (f *fakeAssetPinner) IsAssetCIDPinned(ctx context.Context, cid string) (bool, error) {
+	f.mu.Lock()
+	f.checkCalls++
+	callback := f.checkFunc
+	pinned := f.pinned
+	err := f.checkErr
+	f.mu.Unlock()
+	if callback != nil {
+		return callback(ctx, cid)
+	}
+	return pinned, err
 }
 
 func (f *fakeAssetPinner) CalculateAssetGLBCID(ctx context.Context, path string) (string, error) {
@@ -395,7 +412,7 @@ func newAssetPinTestRig(t *testing.T, configure func(*AssetPinHandlerOptions)) *
 		byEvent:     make(map[string]storage.AssetPinAuditEvent),
 	}
 	capacity := &fakeAssetPinCapacity{available: 1 << 30}
-	pinner := &fakeAssetPinner{calculatedCID: testAssetCID, cid: testAssetCID}
+	pinner := &fakeAssetPinner{pinned: true, calculatedCID: testAssetCID, cid: testAssetCID}
 	recovery := &fakeAssetPinRecoveryStore{markers: make(map[string]assetpin.AssetPinRecoveryMarker)}
 	dataDir := t.TempDir()
 	options := AssetPinHandlerOptions{
@@ -404,6 +421,7 @@ func newAssetPinTestRig(t *testing.T, configure func(*AssetPinHandlerOptions)) *
 		Capacity: capacity,
 		Pinner:   pinner,
 		Recovery: recovery,
+		Gate:     assetpin.NewMutationGate(),
 		Config:   cfg,
 		DataDir:  dataDir,
 		Clock:    func() time.Time { return now },
@@ -1172,9 +1190,12 @@ func TestAssetReferenceStateCrossHandlerIdenticalTimesWriteOneDurableTransition(
 		Capacity: rig.capacity,
 		Pinner:   rig.pinner,
 		Recovery: rig.recovery,
-		Config:   rig.cfg,
-		DataDir:  rig.dataDir,
-		Clock:    func() time.Time { return rig.now },
+		// Separate gates model independent daemon processes and continue to
+		// exercise the store's durable cross-process conflict handling.
+		Gate:    assetpin.NewMutationGate(),
+		Config:  rig.cfg,
+		DataDir: rig.dataDir,
+		Clock:   func() time.Time { return rig.now },
 	})
 	if err != nil {
 		t.Fatalf("NewAssetPinHandler(second handler) error = %v", err)
@@ -1225,9 +1246,12 @@ func TestAssetReferenceStateCrossHandlerEarlierDecisionConflictsAfterLaterDecisi
 		Capacity: rig.capacity,
 		Pinner:   rig.pinner,
 		Recovery: rig.recovery,
-		Config:   rig.cfg,
-		DataDir:  rig.dataDir,
-		Clock:    func() time.Time { return rig.now },
+		// Separate gates model independent daemon processes and continue to
+		// exercise the store's durable cross-process ordering guarantees.
+		Gate:    assetpin.NewMutationGate(),
+		Config:  rig.cfg,
+		DataDir: rig.dataDir,
+		Clock:   func() time.Time { return rig.now },
 	})
 	if err != nil {
 		t.Fatalf("NewAssetPinHandler(second handler) error = %v", err)
@@ -1985,6 +2009,9 @@ func TestAssetPinExistingSHADeduplicatesWithoutCapacityPinOrUnpin(t *testing.T) 
 	if rig.capacity.calls != 0 || rig.pinner.calculateCalls != 0 || rig.pinner.pinCalls != 0 || rig.pinner.unpinCalls != 0 {
 		t.Fatalf("dedup capacity/calculate/pin/unpin = %d/%d/%d/%d, want 0/0/0/0", rig.capacity.calls, rig.pinner.calculateCalls, rig.pinner.pinCalls, rig.pinner.unpinCalls)
 	}
+	if rig.pinner.checkCalls != 1 {
+		t.Fatalf("dedup pin checks = %d, want 1", rig.pinner.checkCalls)
+	}
 	if len(rig.store.events) != 1 || rig.store.events[0].Result != "deduplicated" {
 		t.Fatalf("dedup event = %+v, want explicit deduplicated result", rig.store.events)
 	}
@@ -2001,6 +2028,174 @@ func TestAssetPinExistingSHADeduplicatesWithoutCapacityPinOrUnpin(t *testing.T) 
 	if len(result) != 6 || result["alreadyExisted"] != true || result["cid"] != testAssetCID {
 		t.Fatalf("dedup response = %#v", result)
 	}
+}
+
+func TestAssetPinExistingSHAMissingAfterRetentionUnpinIsRepinned(t *testing.T) {
+	glb := testGLB([]byte("retention-unpinned-delete-failed"))
+	parts := []testMultipartPart{{name: "metadata", data: testCanonicalMetadata(glb, "candidate-repin")}, {name: "file", filename: "asset.glb", data: glb}}
+	rig := newAssetPinTestRig(t, nil)
+	// This durable row models retention successfully unpinning a CID and then
+	// failing to delete its retry row. SHA deduplication must repair the pin.
+	rig.store.found = true
+	rig.store.foundRef = storage.AssetPinReference{CID: testAssetCID, SHA256: testSHA256(glb), ByteCount: int64(len(glb))}
+	rig.pinner.pinned = false
+
+	response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", response.Code, response.Body.String())
+	}
+	if rig.pinner.checkCalls != 1 || rig.capacity.calls != 1 || rig.pinner.pinCalls != 1 || rig.pinner.unpinCalls != 0 {
+		t.Fatalf("repair check/capacity/pin/unpin = %d/%d/%d/%d, want 1/1/1/0", rig.pinner.checkCalls, rig.capacity.calls, rig.pinner.pinCalls, rig.pinner.unpinCalls)
+	}
+	if len(rig.store.events) != 1 || rig.store.events[0].Result != "repinned" {
+		t.Fatalf("repair audit = %+v, want repinned", rig.store.events)
+	}
+	if len(rig.recovery.calls) != 1 || rig.recovery.calls[0] != "load" {
+		t.Fatalf("repair recovery calls = %v, want no new marker", rig.recovery.calls)
+	}
+
+	// The old ledger row remains the durable owner/recovery record, so a new
+	// reference upsert failure must not compensate by removing the repaired pin.
+	rig.store.upsertErr = errors.New("injected new reference failure")
+	response = serveAssetPin(rig.handler, testMultipartRequest(t, []testMultipartPart{{name: "metadata", data: testCanonicalMetadata(glb, "candidate-repin-upsert-failure")}, {name: "file", filename: "asset.glb", data: glb}}))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("failure status = %d, want 503; body=%s", response.Code, response.Body.String())
+	}
+	if rig.pinner.unpinCalls != 0 {
+		t.Fatalf("repaired durable pin was compensated after upsert failure: %d unpins", rig.pinner.unpinCalls)
+	}
+}
+
+func TestAssetPinExistingSHAPinVerificationAndRepairFailClosed(t *testing.T) {
+	glb := testGLB([]byte("dedup-repair-fail-closed"))
+	parts := []testMultipartPart{{name: "metadata", data: testCanonicalMetadata(glb, "candidate-repair-failure")}, {name: "file", filename: "asset.glb", data: glb}}
+	tests := []struct {
+		name       string
+		configure  func(*assetPinTestRig)
+		wantStatus int
+		wantPin    int
+		wantUnpin  int
+	}{
+		{name: "lookup unavailable", wantStatus: http.StatusServiceUnavailable, configure: func(rig *assetPinTestRig) {
+			rig.pinner.checkErr = errors.New("Kubo lookup unavailable")
+		}},
+		{name: "capacity unavailable", wantStatus: http.StatusServiceUnavailable, configure: func(rig *assetPinTestRig) {
+			rig.pinner.pinned = false
+			rig.capacity.err = errors.New("statfs unavailable")
+		}},
+		{name: "capacity floor", wantStatus: http.StatusInsufficientStorage, configure: func(rig *assetPinTestRig) {
+			rig.pinner.pinned = false
+			rig.capacity.available = 0
+		}},
+		{name: "repin unavailable", wantStatus: http.StatusServiceUnavailable, wantPin: 1, configure: func(rig *assetPinTestRig) {
+			rig.pinner.pinned = false
+			rig.pinner.pinErr = errors.New("Kubo pin unavailable")
+		}},
+		{name: "malformed repin CID", wantStatus: http.StatusBadGateway, wantPin: 1, configure: func(rig *assetPinTestRig) {
+			rig.pinner.pinned = false
+			rig.pinner.cid = "not-a-cid"
+		}},
+		{name: "mismatched repin CID may be shared", wantStatus: http.StatusBadGateway, wantPin: 1, wantUnpin: 0, configure: func(rig *assetPinTestRig) {
+			rig.pinner.pinned = false
+			rig.pinner.cid = testAssetAlternateCID
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rig := newAssetPinTestRig(t, nil)
+			rig.store.found = true
+			rig.store.foundRef = storage.AssetPinReference{CID: testAssetCID, SHA256: testSHA256(glb), ByteCount: int64(len(glb))}
+			test.configure(rig)
+			response := serveAssetPin(rig.handler, testMultipartRequest(t, parts))
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", response.Code, test.wantStatus, response.Body.String())
+			}
+			if rig.pinner.checkCalls != 1 || rig.pinner.pinCalls != test.wantPin || rig.pinner.unpinCalls != test.wantUnpin || len(rig.store.upserts) != 0 {
+				t.Fatalf("check/pin/unpin/upsert = %d/%d/%d/%d, want 1/%d/%d/0", rig.pinner.checkCalls, rig.pinner.pinCalls, rig.pinner.unpinCalls, len(rig.store.upserts), test.wantPin, test.wantUnpin)
+			}
+			if strings.Contains(response.Body.String(), "Kubo") || strings.Contains(response.Body.String(), "not-a-cid") {
+				t.Fatalf("response leaked backend detail: %s", response.Body.String())
+			}
+		})
+	}
+}
+
+func TestAssetPinMutationGateCoversUploadAndReferenceState(t *testing.T) {
+	t.Run("upload", func(t *testing.T) {
+		rig := newAssetPinTestRig(t, nil)
+		release, err := rig.handler.gate.Acquire(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		glb := testGLB([]byte("gate-upload"))
+		request := testMultipartRequest(t, []testMultipartPart{{name: "metadata", data: testCanonicalMetadata(glb, "candidate-gate-upload")}, {name: "file", filename: "asset.glb", data: glb}})
+		result := make(chan *httptest.ResponseRecorder, 1)
+		go func() {
+			result <- serveAssetPin(rig.handler, request)
+		}()
+		waitForAssetPinTempFile(t, rig.dataDir)
+		select {
+		case response := <-result:
+			t.Fatalf("upload completed while mutation gate was held: status=%d body=%s", response.Code, response.Body.String())
+		case <-time.After(20 * time.Millisecond):
+		}
+		rig.store.mu.Lock()
+		storeCalls := rig.store.candidateFindCalls + rig.store.findCalls + len(rig.store.upserts)
+		rig.store.mu.Unlock()
+		if storeCalls != 0 || rig.pinner.pinCalls != 0 {
+			t.Fatalf("upload mutated while gate held: store=%d pin=%d", storeCalls, rig.pinner.pinCalls)
+		}
+		release()
+		if response := <-result; response.Code != http.StatusCreated {
+			t.Fatalf("status = %d, want 201; body=%s", response.Code, response.Body.String())
+		}
+	})
+
+	t.Run("reference state", func(t *testing.T) {
+		rig := newAssetPinTestRig(t, nil)
+		candidateKey := "candidate-gate-state"
+		stored := testAPIAssetReferenceForState(rig, candidateKey, storage.AssetReferenceStaged)
+		rig.store.byCandidate[candidateKey] = stored
+		rig.store.byReference[stored.ReferenceKey] = stored
+		release, err := rig.handler.gate.Acquire(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		result := make(chan *httptest.ResponseRecorder, 1)
+		go func() {
+			result <- serveAssetReferenceStateTestRequest(rig, candidateKey, storage.AssetReferenceReviewOpen, 42, "", rig.now)
+		}()
+		deadline := time.Now().Add(time.Second)
+		verified := false
+		for !verified && time.Now().Before(deadline) {
+			rig.verifier.mu.Lock()
+			verified = rig.verifier.calls > 0
+			rig.verifier.mu.Unlock()
+			if !verified {
+				time.Sleep(time.Millisecond)
+			}
+		}
+		if !verified {
+			t.Fatal("reference-state authorization did not complete before gate assertion")
+		}
+		select {
+		case response := <-result:
+			t.Fatalf("reference state completed while mutation gate was held: status=%d body=%s", response.Code, response.Body.String())
+		case <-time.After(20 * time.Millisecond):
+		}
+		rig.store.mu.Lock()
+		findCalls := rig.store.candidateFindCalls
+		rig.store.mu.Unlock()
+		if findCalls != 0 {
+			t.Fatalf("reference state read/mutated while gate held: finds=%d", findCalls)
+		}
+		release()
+		if response := <-result; response.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body=%s", response.Code, response.Body.String())
+		}
+	})
 }
 
 func TestAssetPinFailsClosedOnInvalidCID(t *testing.T) {
@@ -2104,6 +2299,7 @@ func TestAssetPinHandlerConstructorRequiresSafeDependencies(t *testing.T) {
 	base := AssetPinHandlerOptions{
 		Verifier: &fakeAssetPinVerifier{}, Store: &fakeAssetPinStore{},
 		Capacity: &fakeAssetPinCapacity{}, Pinner: &fakeAssetPinner{},
+		Gate:   assetpin.NewMutationGate(),
 		Config: cfg, DataDir: t.TempDir(),
 	}
 	tests := []struct {
@@ -2113,6 +2309,7 @@ func TestAssetPinHandlerConstructorRequiresSafeDependencies(t *testing.T) {
 		{name: "verifier", mutate: func(o *AssetPinHandlerOptions) { o.Verifier = nil }},
 		{name: "store", mutate: func(o *AssetPinHandlerOptions) { o.Store = nil }},
 		{name: "pinner", mutate: func(o *AssetPinHandlerOptions) { o.Pinner = nil }},
+		{name: "gate", mutate: func(o *AssetPinHandlerOptions) { o.Gate = nil }},
 		{name: "data dir", mutate: func(o *AssetPinHandlerOptions) { o.DataDir = "" }},
 		{name: "Kubo repo", mutate: func(o *AssetPinHandlerOptions) { o.Config.KuboRepoPath = "" }},
 		{name: "gateway", mutate: func(o *AssetPinHandlerOptions) { o.Config.GatewayURL = "http://example.test/ipfs" }},
@@ -2268,6 +2465,23 @@ func extractTestAttribution(metadata []byte) string {
 	}
 	_ = json.Unmarshal(metadata, &value)
 	return value.Attribution
+}
+
+func waitForAssetPinTempFile(t *testing.T, dataDir string) {
+	t.Helper()
+	tempDir := filepath.Join(dataDir, "asset-pins", "tmp")
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		entries, err := os.ReadDir(tempDir)
+		if err == nil && len(entries) > 0 {
+			return
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("read asset pin temp directory: %v", err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("asset upload did not finish staging before gate assertion")
 }
 
 func assertNoAssetPinTempFiles(t *testing.T, dataDir string) {

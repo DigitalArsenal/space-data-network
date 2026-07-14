@@ -117,7 +117,7 @@ func TestRetainerSweepPersistsJournaledTransitionAndDelete(t *testing.T) {
 }
 
 func TestRetainerSweepKeepsFailedUnpinRetryable(t *testing.T) {
-	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	expired := retentionReference("retry-unpin", "cid-retry", storage.AssetReferenceRejected, now.Add(-31*24*time.Hour), now.Add(-24*time.Hour))
 	store := newFakeRetentionStore(now, expired)
 	pins := &fakeRetentionPins{
@@ -218,6 +218,7 @@ func TestRetainerSweepBoundsEveryKuboCall(t *testing.T) {
 		Store:            store,
 		Pins:             pins,
 		Recovery:         newFakeRecoveryPager(),
+		Gate:             NewMutationGate(),
 		CallTimeout:      20 * time.Millisecond,
 		RecoveryPageSize: 2,
 	})
@@ -232,6 +233,198 @@ func TestRetainerSweepBoundsEveryKuboCall(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("bounded Kubo call returned after %v", elapsed)
+	}
+}
+
+func TestRetainerMutationGateIsContextAwareAndRequired(t *testing.T) {
+	gate := NewMutationGate()
+	freeCancelled, cancelFree := context.WithCancel(context.Background())
+	cancelFree()
+	if _, err := gate.Acquire(freeCancelled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Acquire(cancelled free gate) error = %v, want context.Canceled", err)
+	}
+	release, err := gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("Acquire(first) error = %v", err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := gate.Acquire(cancelled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Acquire(cancelled) error = %v, want context.Canceled", err)
+	}
+	release()
+	secondRelease, err := gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("Acquire(after release) error = %v", err)
+	}
+	secondRelease()
+
+	valid := RetainerOptions{
+		Store:    newFakeRetentionStore(time.Now().UTC()),
+		Pins:     &fakeRetentionPins{},
+		Recovery: newFakeRecoveryPager(),
+		Gate:     NewMutationGate(),
+	}
+	retainer, err := NewRetainer(valid)
+	if err != nil {
+		t.Fatalf("NewRetainer(defaults) error = %v", err)
+	}
+	if retainer.sweepTimeout != defaultRetentionSweepTimeout {
+		t.Fatalf("default sweep timeout = %v, want %v", retainer.sweepTimeout, defaultRetentionSweepTimeout)
+	}
+	var typedNilStore *fakeRetentionStore
+	var typedNilPins *fakeRetentionPins
+	var typedNilRecovery *fakeRecoveryPager
+	var typedNilGate *MutationGate
+	tests := []struct {
+		name   string
+		mutate func(*RetainerOptions)
+	}{
+		{name: "nil store", mutate: func(options *RetainerOptions) { options.Store = nil }},
+		{name: "typed nil store", mutate: func(options *RetainerOptions) { options.Store = typedNilStore }},
+		{name: "nil pins", mutate: func(options *RetainerOptions) { options.Pins = nil }},
+		{name: "typed nil pins", mutate: func(options *RetainerOptions) { options.Pins = typedNilPins }},
+		{name: "nil recovery", mutate: func(options *RetainerOptions) { options.Recovery = nil }},
+		{name: "typed nil recovery", mutate: func(options *RetainerOptions) { options.Recovery = typedNilRecovery }},
+		{name: "nil gate", mutate: func(options *RetainerOptions) { options.Gate = nil }},
+		{name: "typed nil gate", mutate: func(options *RetainerOptions) { options.Gate = typedNilGate }},
+		{name: "negative sweep timeout", mutate: func(options *RetainerOptions) { options.SweepTimeout = -time.Second }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			options := valid
+			test.mutate(&options)
+			if retainer, err := NewRetainer(options); err == nil || retainer != nil {
+				t.Fatalf("NewRetainer() = %#v, %v; want fail-closed dependency rejection", retainer, err)
+			}
+		})
+	}
+}
+
+func TestRetainerGateCoversMutationAndReleasesBeforeReconciliation(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	expired := retentionReference("gate-expired", "cid-gate", storage.AssetReferenceRejected, now.Add(-31*24*time.Hour), now.Add(-time.Hour))
+	approved := retentionReference("gate-approved", "cid-approved", storage.AssetReferenceApproved, now.Add(-31*24*time.Hour), time.Time{})
+	store := newFakeRetentionStore(now, expired, approved)
+	deleteStarted := make(chan struct{})
+	allowDelete := make(chan struct{})
+	store.deleteStarted = deleteStarted
+	store.allowDelete = allowDelete
+	checkStarted := make(chan struct{})
+	allowCheck := make(chan struct{})
+	pins := &fakeRetentionPins{
+		pinned:       map[string]bool{expired.CID: true, approved.CID: true},
+		checkStarted: checkStarted,
+		allowCheck:   allowCheck,
+	}
+	gate := NewMutationGate()
+	retainer, err := NewRetainer(RetainerOptions{
+		Store: store, Pins: pins, Recovery: newFakeRecoveryPager(), Gate: gate,
+		CallTimeout: time.Second, SweepTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() { result <- retainer.Sweep(context.Background(), now) }()
+
+	select {
+	case <-deleteStarted:
+	case <-time.After(time.Second):
+		t.Fatal("retention delete did not start")
+	}
+	blockedCtx, cancelBlocked := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelBlocked()
+	if release, err := gate.Acquire(blockedCtx); !errors.Is(err, context.DeadlineExceeded) {
+		if err == nil {
+			release()
+		}
+		t.Fatalf("gate acquired during destructive retention: %v", err)
+	}
+	close(allowDelete)
+
+	select {
+	case <-checkStarted:
+	case <-time.After(time.Second):
+		t.Fatal("read-only reconciliation did not start")
+	}
+	release, err := gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("gate remained held during reconciliation: %v", err)
+	}
+	release()
+	close(allowCheck)
+	if err := <-result; err != nil {
+		t.Fatalf("Sweep() error = %v", err)
+	}
+}
+
+func TestRetainerSweepHasGlobalDeadlineAndCancelableRecoveryPaging(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	recovery := &blockingRetentionRecoveryPager{started: make(chan struct{})}
+	retainer, err := NewRetainer(RetainerOptions{
+		Store: newFakeRetentionStore(now), Pins: &fakeRetentionPins{}, Recovery: recovery,
+		Gate: NewMutationGate(), CallTimeout: time.Second, SweepTimeout: 20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	err = retainer.Sweep(context.Background(), now)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Sweep() error = %v, want global deadline", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("global deadline returned after %v", elapsed)
+	}
+
+	fileStore, err := NewFileAssetPinRecoveryStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := fileStore.ListPage(cancelled, "", 1); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ListPage(cancelled) error = %v, want context.Canceled", err)
+	}
+	fileStore.mu.Lock()
+	blocked, cancelBlocked := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	_, _, blockedErr := fileStore.ListPage(blocked, "", 1)
+	cancelBlocked()
+	fileStore.mu.Unlock()
+	if !errors.Is(blockedErr, context.DeadlineExceeded) {
+		t.Fatalf("ListPage(contended) error = %v, want context deadline", blockedErr)
+	}
+}
+
+func TestRetainerMarkerLedgerConflictBlocksWholeDestructiveSweep(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	marker := testAssetPinRecoveryMarker("candidate-retainer-ledger-conflict", "3")
+	marker.Phase = AssetPinRecoveryPinnedUncommitted
+	marker.CID = marker.ExpectedCID
+	committed := retentionReferenceFromMarker(marker)
+	committed.CID = testRecoveryAlternateCID
+	expired := retentionReference("conflict-expired", testRecoveryCID, storage.AssetReferenceRejected, now.Add(-31*24*time.Hour), now.Add(-time.Hour))
+	store := newFakeRetentionStore(now, committed, expired)
+	pins := &fakeRetentionPins{pinned: map[string]bool{
+		committed.CID: true,
+		expired.CID:   true,
+	}}
+	retainer := mustTestRetainer(t, store, pins, newFakeRecoveryPager(marker))
+
+	err := retainer.Sweep(context.Background(), now)
+	if !errors.Is(err, ErrAssetPinRecoveryMarkerConflict) {
+		t.Fatalf("Sweep() error = %v, want ErrAssetPinRecoveryMarkerConflict", err)
+	}
+	var conflict *AssetPinRecoveryLedgerConflictError
+	if !errors.As(err, &conflict) || conflict.ActualCID != committed.CID {
+		t.Fatalf("Sweep() conflict = %#v, want actual ledger CID %q", conflict, committed.CID)
+	}
+	if len(pins.unpinCalls) != 0 || len(store.deleteKinds()) != 0 {
+		t.Fatalf("integrity conflict allowed destructive retention: unpins=%v deletes=%v", pins.unpinCalls, store.deleteKinds())
+	}
+	if _, exists := store.reference(expired.ReferenceKey); !exists {
+		t.Fatal("integrity conflict deleted an unrelated expired retry row")
 	}
 }
 
@@ -435,7 +628,7 @@ func TestRetainerFileRecoveryPagesAreBoundedAndDeterministic(t *testing.T) {
 	var got []string
 	cursor := ""
 	for {
-		page, next, err := store.ListPage(cursor, 2)
+		page, next, err := store.ListPage(context.Background(), cursor, 2)
 		if err != nil {
 			t.Fatalf("ListPage(%q) error = %v", cursor, err)
 		}
@@ -483,6 +676,25 @@ func TestRetainerKuboPinLookupIsStrictAndBounded(t *testing.T) {
 		}
 	})
 
+	for _, receipt := range []string{
+		`{"Keys":{"` + testRecoveryCID + `":{"Type":"recursive","Name":""}}}`,
+		`{"Keys":{"` + testRecoveryCID + `":{"Name":"reviewed asset","Type":"recursive"}}}`,
+	} {
+		t.Run("Kubo v0.39 named recursive pin", func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, receipt)
+			}))
+			defer server.Close()
+			client, err := NewKuboRetentionClient(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pinned, err := client.IsAssetCIDPinned(context.Background(), testRecoveryCID); err != nil || !pinned {
+				t.Fatalf("IsAssetCIDPinned() = %v, %v; want named recursive pin", pinned, err)
+			}
+		})
+	}
+
 	t.Run("missing is explicit false", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -496,6 +708,22 @@ func TestRetainerKuboPinLookupIsStrictAndBounded(t *testing.T) {
 		pinned, err := client.IsAssetCIDPinned(context.Background(), testRecoveryCID)
 		if err != nil || pinned {
 			t.Fatalf("IsAssetCIDPinned() = %v, %v; want explicit missing", pinned, err)
+		}
+	})
+
+	t.Run("Boxo not-pinned error is explicit false", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"Message":"not pinned or pinned indirectly","Code":0,"Type":"error"}`)
+		}))
+		defer server.Close()
+		client, err := NewKuboRetentionClient(server.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pinned, err := client.IsAssetCIDPinned(context.Background(), testRecoveryCID)
+		if err != nil || pinned {
+			t.Fatalf("IsAssetCIDPinned() = %v, %v; want exact Boxo missing pin", pinned, err)
 		}
 	})
 
@@ -663,6 +891,9 @@ func TestRetainerKuboRequiresExactProtocolReceipts(t *testing.T) {
 			{name: "unknown entry", status: http.StatusOK, body: `{"Keys":{"` + testRecoveryCID + `":{"Type":"recursive","backend-secret-field":true}}}`},
 			{name: "duplicate keys", status: http.StatusOK, body: `{"Keys":{"` + testRecoveryCID + `":{"Type":"recursive"}},"Keys":{"` + testRecoveryCID + `":{"Type":"recursive"}}}`},
 			{name: "duplicate type", status: http.StatusOK, body: `{"Keys":{"` + testRecoveryCID + `":{"Type":"recursive","Type":"recursive"}}}`},
+			{name: "name wrong type", status: http.StatusOK, body: `{"Keys":{"` + testRecoveryCID + `":{"Type":"recursive","Name":7}}}`},
+			{name: "duplicate name", status: http.StatusOK, body: `{"Keys":{"` + testRecoveryCID + `":{"Type":"recursive","Name":"","Name":""}}}`},
+			{name: "name without type", status: http.StatusOK, body: `{"Keys":{"` + testRecoveryCID + `":{"Name":"asset"}}}`},
 			{name: "trailing data", status: http.StatusOK, body: valid + ` backend-secret-trailer`},
 		}
 		for _, test := range tests {
@@ -833,6 +1064,7 @@ func mustTestRetainer(t *testing.T, store RetentionStore, pins RetentionPins, re
 		Store:            store,
 		Pins:             pins,
 		Recovery:         recovery,
+		Gate:             NewMutationGate(),
 		CallTimeout:      100 * time.Millisecond,
 		RecoveryPageSize: 2,
 	})
@@ -869,6 +1101,8 @@ type fakeRetentionStore struct {
 	listCalls        int
 	upsertErr        error
 	transitionErrFor map[string]error
+	deleteStarted    chan struct{}
+	allowDelete      chan struct{}
 }
 
 func newFakeRetentionStore(now time.Time, refs ...storage.AssetPinReference) *fakeRetentionStore {
@@ -972,7 +1206,21 @@ func (s *fakeRetentionStore) CountProtectedAssetReferences(_ context.Context, ci
 	return count, nil
 }
 
-func (s *fakeRetentionStore) DeleteExpiredAssetPinReference(_ context.Context, key string, event storage.AssetPinAuditEvent) error {
+func (s *fakeRetentionStore) DeleteExpiredAssetPinReference(ctx context.Context, key string, event storage.AssetPinAuditEvent) error {
+	if s.deleteStarted != nil {
+		select {
+		case <-s.deleteStarted:
+		default:
+			close(s.deleteStarted)
+		}
+	}
+	if s.allowDelete != nil {
+		select {
+		case <-s.allowDelete:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ref, ok := s.refs[key]
@@ -1038,12 +1286,28 @@ type fakeRetentionPins struct {
 	unpinCalls   []string
 	failUnpinFor map[string]int
 	blockChecks  bool
+	checkStarted chan struct{}
+	allowCheck   chan struct{}
 }
 
 func (p *fakeRetentionPins) IsAssetCIDPinned(ctx context.Context, cid string) (bool, error) {
 	if p.blockChecks {
 		<-ctx.Done()
 		return false, ctx.Err()
+	}
+	if p.checkStarted != nil {
+		select {
+		case <-p.checkStarted:
+		default:
+			close(p.checkStarted)
+		}
+	}
+	if p.allowCheck != nil {
+		select {
+		case <-p.allowCheck:
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -1077,7 +1341,10 @@ func newFakeRecoveryPager(markers ...AssetPinRecoveryMarker) *fakeRecoveryPager 
 	return store
 }
 
-func (s *fakeRecoveryPager) ListPage(after string, limit int) ([]AssetPinRecoveryMarker, string, error) {
+func (s *fakeRecoveryPager) ListPage(ctx context.Context, after string, limit int) ([]AssetPinRecoveryMarker, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.listErr != nil {
@@ -1103,6 +1370,22 @@ func (s *fakeRecoveryPager) ListPage(after string, limit int) ([]AssetPinRecover
 	}
 	return page, next, nil
 }
+
+type blockingRetentionRecoveryPager struct {
+	started chan struct{}
+}
+
+func (s *blockingRetentionRecoveryPager) ListPage(ctx context.Context, _ string, _ int) ([]AssetPinRecoveryMarker, string, error) {
+	select {
+	case <-s.started:
+	default:
+		close(s.started)
+	}
+	<-ctx.Done()
+	return nil, "", ctx.Err()
+}
+
+func (*blockingRetentionRecoveryPager) Remove(string) error { return nil }
 
 func (s *fakeRecoveryPager) Remove(referenceKey string) error {
 	s.mu.Lock()

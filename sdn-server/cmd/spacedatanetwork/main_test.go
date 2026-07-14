@@ -364,6 +364,7 @@ func TestComposeAssetPinCapabilityHealthyMountUsesNodeInputs(t *testing.T) {
 	cfg := config.Default().AssetPins
 	cfg.Enabled = true
 	pinner := &fakeAssetPinCapabilityPinner{}
+	gate := assetpin.NewMutationGate()
 	verifier := &fakeAssetPinCapabilityVerifier{}
 	routes := &fakeAssetPinCapabilityRoutes{}
 	var consumed assetpin.TokenReceiptConsumer
@@ -382,7 +383,7 @@ func TestComposeAssetPinCapabilityHealthyMountUsesNodeInputs(t *testing.T) {
 			return pinner, nil
 		},
 		newHandler: func(options api.AssetPinHandlerOptions) (assetPinCapabilityRoutes, error) {
-			if options.Store != store || options.Pinner != pinner || options.Verifier == nil {
+			if options.Store != store || options.Pinner != pinner || options.Verifier == nil || options.Gate != gate {
 				t.Fatalf("handler options not composed from store/pinner/verifier: %#v", options)
 			}
 			if options.Config != cfg {
@@ -402,7 +403,7 @@ func TestComposeAssetPinCapabilityHealthyMountUsesNodeInputs(t *testing.T) {
 		},
 	}
 
-	capability, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, dependencies)
+	capability, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, gate, dependencies)
 	if err != nil {
 		t.Fatalf("composeAssetPinCapability() error = %v", err)
 	}
@@ -528,7 +529,7 @@ func TestComposeAssetPinCapabilityRejectsStaticFailuresBeforeDiscovery(t *testin
 			}
 			before := discoveryCalls
 			probeBefore := probeCalls
-			if _, err := composeAssetPinCapability(context.Background(), test.store, test.apiURL, test.config, deps); err == nil {
+			if _, err := composeAssetPinCapability(context.Background(), test.store, test.apiURL, test.config, assetpin.NewMutationGate(), deps); err == nil {
 				t.Fatal("composeAssetPinCapability() succeeded, want static failure")
 			}
 			if discoveryCalls != before {
@@ -606,7 +607,7 @@ func TestComposeAssetPinCapabilityRejectsNoncanonicalSecurityInputsBeforeEffects
 					return &fakeAssetPinCapabilityVerifier{}, nil
 				},
 			}
-			if _, err := composeAssetPinCapability(context.Background(), store, test.apiURL, cfg, dependencies); err == nil {
+			if _, err := composeAssetPinCapability(context.Background(), store, test.apiURL, cfg, assetpin.NewMutationGate(), dependencies); err == nil {
 				t.Fatal("composeAssetPinCapability() accepted noncanonical static input")
 			}
 			if calls != 0 {
@@ -666,7 +667,7 @@ func TestComposeAssetPinCapabilityUsesOneCanonicalPathOnlyKuboBase(t *testing.T)
 		},
 	}
 
-	capability, err := composeAssetPinCapability(context.Background(), store, canonicalURL+"/", cfg, dependencies)
+	capability, err := composeAssetPinCapability(context.Background(), store, canonicalURL+"/", cfg, assetpin.NewMutationGate(), dependencies)
 	if err != nil {
 		t.Fatalf("composeAssetPinCapability() error = %v", err)
 	}
@@ -695,7 +696,7 @@ func TestComposeAssetPinCapabilityDegradesOnlyCapabilityRoutes(t *testing.T) {
 		},
 	}
 
-	capability, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, dependencies)
+	capability, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, assetpin.NewMutationGate(), dependencies)
 	if err != nil {
 		t.Fatalf("composeAssetPinCapability() static error = %v", err)
 	}
@@ -748,7 +749,7 @@ func TestComposeAssetPinCapabilityKuboOutageDegradesWithoutOIDCDiscovery(t *test
 		},
 	}
 
-	capability, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, dependencies)
+	capability, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, assetpin.NewMutationGate(), dependencies)
 	if err != nil {
 		t.Fatalf("composeAssetPinCapability() static error = %v", err)
 	}
@@ -848,7 +849,7 @@ func TestComposeAssetPinCapabilityValidatesProductionHandlerBeforeOIDCDiscovery(
 		return &fakeAssetPinCapabilityVerifier{}, nil
 	}
 
-	if _, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, dependencies); err == nil {
+	if _, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, assetpin.NewMutationGate(), dependencies); err == nil {
 		t.Fatal("composeAssetPinCapability() accepted a missing data directory")
 	}
 	if discoveryCalls != 0 {
@@ -894,7 +895,7 @@ func TestComposeAssetPinCapabilityRejectsTypedNilDependenciesBeforeExposure(t *t
 			return &fakeAssetPinCapabilityRoutes{}, nil
 		}
 
-		if _, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, dependencies); err == nil {
+		if _, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, assetpin.NewMutationGate(), dependencies); err == nil {
 			t.Fatal("composeAssetPinCapability() accepted a typed-nil pinner")
 		}
 		if handlerCalls != 0 || *probeCalls != 0 || *verifierCalls != 0 {
@@ -907,7 +908,7 @@ func TestComposeAssetPinCapabilityRejectsTypedNilDependenciesBeforeExposure(t *t
 		var typedNil *fakeAssetPinCapabilityRoutes
 		dependencies.newHandler = func(api.AssetPinHandlerOptions) (assetPinCapabilityRoutes, error) { return typedNil, nil }
 
-		if _, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, dependencies); err == nil {
+		if _, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, assetpin.NewMutationGate(), dependencies); err == nil {
 			t.Fatal("composeAssetPinCapability() accepted typed-nil routes")
 		}
 		if *probeCalls != 0 || *verifierCalls != 0 {
@@ -925,7 +926,7 @@ func TestComposeAssetPinCapabilityRejectsTypedNilDependenciesBeforeExposure(t *t
 			return typedNil, nil
 		}
 
-		if _, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, dependencies); err == nil {
+		if _, err := composeAssetPinCapability(context.Background(), store, "http://127.0.0.1:5001", cfg, assetpin.NewMutationGate(), dependencies); err == nil {
 			t.Fatal("composeAssetPinCapability() accepted a typed-nil verifier")
 		}
 		if *probeCalls != 1 || *verifierCalls != 1 {
@@ -967,6 +968,10 @@ func (*fakeAssetPinCapabilityStore) TransitionAssetPinReference(context.Context,
 }
 
 type fakeAssetPinCapabilityPinner struct{}
+
+func (*fakeAssetPinCapabilityPinner) IsAssetCIDPinned(context.Context, string) (bool, error) {
+	return true, nil
+}
 
 func (*fakeAssetPinCapabilityPinner) CalculateAssetGLBCID(context.Context, string) (string, error) {
 	return "", nil

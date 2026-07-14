@@ -61,6 +61,7 @@ type AssetPinCapacity interface {
 
 // AssetPinPinner plans, pins, and unpins deterministic asset UnixFS files.
 type AssetPinPinner interface {
+	IsAssetCIDPinned(context.Context, string) (bool, error)
 	CalculateAssetGLBCID(context.Context, string) (string, error)
 	PinAssetGLB(context.Context, string) (string, error)
 	UnpinAssetCID(context.Context, string) error
@@ -81,6 +82,7 @@ type AssetPinHandlerOptions struct {
 	Capacity AssetPinCapacity
 	Pinner   AssetPinPinner
 	Recovery AssetPinRecoveryStore
+	Gate     *assetpin.MutationGate
 	Config   config.AssetPinConfig
 	DataDir  string
 	Clock    func() time.Time
@@ -95,6 +97,7 @@ type AssetPinHandler struct {
 	capacity             AssetPinCapacity
 	pinner               AssetPinPinner
 	recovery             AssetPinRecoveryStore
+	gate                 *assetpin.MutationGate
 	config               config.AssetPinConfig
 	dataDir              string
 	gatewayURL           string
@@ -117,6 +120,9 @@ func NewAssetPinHandler(options AssetPinHandlerOptions) (*AssetPinHandler, error
 	}
 	if options.Pinner == nil {
 		return nil, errors.New("asset pin pinner is required")
+	}
+	if options.Gate == nil {
+		return nil, errors.New("asset pin mutation gate is required")
 	}
 	if options.Capacity == nil {
 		options.Capacity = statFSAssetPinCapacity{}
@@ -174,6 +180,7 @@ func NewAssetPinHandler(options AssetPinHandlerOptions) (*AssetPinHandler, error
 		capacity:       options.Capacity,
 		pinner:         options.Pinner,
 		recovery:       options.Recovery,
+		gate:           options.Gate,
 		config:         options.Config,
 		dataDir:        dataDir,
 		gatewayURL:     gatewayURL,
@@ -244,6 +251,12 @@ func (h *AssetPinHandler) handleAssetReferenceState(w http.ResponseWriter, r *ht
 		return
 	}
 
+	release, err := h.gate.Acquire(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "asset pin mutation unavailable")
+		return
+	}
+	defer release()
 	h.mutationMu.Lock()
 	defer h.mutationMu.Unlock()
 	ref, found, err := h.store.FindAssetPinReferenceByCandidateKey(r.Context(), request.CandidateKey)
@@ -540,6 +553,12 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	release, err := h.gate.Acquire(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "asset pin mutation unavailable")
+		return
+	}
+	defer release()
 	h.mutationMu.Lock()
 	defer h.mutationMu.Unlock()
 
@@ -594,12 +613,44 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	cidValue := ""
 	newlyPinned := false
+	repinned := false
 	if alreadyExisted {
 		cidValue, err = canonicalAssetCID(existing.CID)
 		if err != nil || (existing.SHA256 != "" && existing.SHA256 != upload.sha256) ||
 			(existing.ByteCount != 0 && existing.ByteCount != upload.byteCount) {
 			writeError(w, http.StatusServiceUnavailable, "asset pin ledger unavailable")
 			return
+		}
+		pinned, pinLookupErr := h.pinner.IsAssetCIDPinned(r.Context(), cidValue)
+		if pinLookupErr != nil {
+			writeError(w, http.StatusServiceUnavailable, "asset pin backend unavailable")
+			return
+		}
+		if !pinned {
+			available, capacityErr := h.capacity.AvailableBytes(h.config.KuboRepoPath)
+			if capacityErr != nil {
+				writeError(w, http.StatusServiceUnavailable, "asset capacity unavailable")
+				return
+			}
+			if !assetPinCapacityAvailable(available, upload.byteCount, h.minFreeBytes) {
+				writeError(w, http.StatusInsufficientStorage, "insufficient asset pin storage")
+				return
+			}
+			observedCID, pinErr := h.pinner.PinAssetGLB(r.Context(), upload.tempPath)
+			if pinErr != nil {
+				writeError(w, http.StatusServiceUnavailable, "asset pin backend unavailable")
+				return
+			}
+			observedCID, err = canonicalAssetCID(observedCID)
+			if err != nil {
+				writeError(w, http.StatusBadGateway, "asset pin backend failed")
+				return
+			}
+			if observedCID != cidValue {
+				writeError(w, http.StatusBadGateway, "asset pin backend failed")
+				return
+			}
+			repinned = true
 		}
 	} else {
 		available, capacityErr := h.capacity.AvailableBytes(h.config.KuboRepoPath)
@@ -685,6 +736,8 @@ func (h *AssetPinHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	result := "deduplicated"
 	if newlyPinned {
 		result = "pinned"
+	} else if repinned {
+		result = "repinned"
 	}
 	reference := storage.AssetPinReference{
 		ReferenceKey:  referenceKey,
@@ -1005,7 +1058,8 @@ func (statFSAssetPinCapacity) AvailableBytes(path string) (uint64, error) {
 
 // KuboAssetPinner binds the generic asset pinner contract to one Kubo API.
 type KuboAssetPinner struct {
-	apiURL string
+	apiURL    string
+	retention *assetpin.KuboRetentionClient
 }
 
 // NewKuboAssetPinner constructs the production storage-backed asset pinner.
@@ -1014,7 +1068,19 @@ func NewKuboAssetPinner(apiURL string) (*KuboAssetPinner, error) {
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 		return nil, errors.New("Kubo API URL must be an absolute HTTP URL")
 	}
-	return &KuboAssetPinner{apiURL: strings.TrimRight(parsed.String(), "/")}, nil
+	canonicalURL := strings.TrimRight(parsed.String(), "/")
+	retention, err := assetpin.NewKuboRetentionClient(canonicalURL)
+	if err != nil {
+		return nil, err
+	}
+	return &KuboAssetPinner{apiURL: canonicalURL, retention: retention}, nil
+}
+
+func (p *KuboAssetPinner) IsAssetCIDPinned(ctx context.Context, cidValue string) (bool, error) {
+	if p == nil || p.retention == nil {
+		return false, errors.New("Kubo asset pinner is required")
+	}
+	return p.retention.IsAssetCIDPinned(ctx, cidValue)
 }
 
 func (p *KuboAssetPinner) PinAssetGLB(ctx context.Context, path string) (string, error) {
