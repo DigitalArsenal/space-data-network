@@ -5,8 +5,10 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   stat,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -75,7 +77,11 @@ if (command === 'systemctl') {
 
 if (command === 'findmnt') {
   if (env.STUB_MOUNT_PRESENT === '0') finish(1);
-  process.stdout.write((env.SDN_KUBO_MIGRATION_VOLUME_MOUNT || '/mnt/volume_nyc3_01') + '\n');
+  const volumeMount = env.SDN_KUBO_MIGRATION_VOLUME_MOUNT || '/mnt/volume_nyc3_01';
+  const resolvedTarget = args.includes('--target')
+    ? (env.STUB_FINDMNT_TARGET || volumeMount)
+    : volumeMount;
+  process.stdout.write(resolvedTarget + '\n');
   finish();
 }
 
@@ -170,7 +176,7 @@ async function makeFixture(t, {
   sdnState = 'active',
   kuboState = 'active',
 } = {}) {
-  const root = await mkdtemp(join(tmpdir(), 'sdn-kubo-migration-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'sdn-kubo-migration-')));
   t.after(async () => rm(root, { recursive: true, force: true }));
 
   const bin = join(root, 'bin');
@@ -240,6 +246,7 @@ async function makeFixture(t, {
   return {
     root,
     sourceRepo,
+    volumeMount,
     destinationRepo,
     dropIn,
     stateFile,
@@ -273,9 +280,41 @@ async function assertPriorStateRestored(fixture, expectedStates) {
   assert.equal((await stat(fixture.dropIn)).mode & 0o777, fixture.previousDropInMode);
 }
 
-test('production defaults and SDN systemd allowlist use the hosted volume paths', async () => {
+async function assertRefusedBeforeDestinationMutation(fixture, result, messagePattern, sourceBefore) {
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, messagePattern);
+
+  const calls = await fixture.calls();
+  assert.equal(calls.some(({ command }) => command === 'rsync'), false);
+  assert.equal(calls.some(({ command }) => command === 'chown'), false);
+  assert.equal(calls.some(({ command, args }) =>
+    command === 'ipfs' && args[0] === 'config'), false);
+  assert.equal(calls.some(({ command, args }) =>
+    command === 'systemctl' && (args[0] === 'stop' || args[0] === 'start')), false);
+  await assertSourceSentinelsUnchanged(fixture, sourceBefore);
+  await assertPriorStateRestored(fixture, {
+    'space-data-network.service': 'active',
+    'kubo.service': 'active',
+  });
+}
+
+async function assertSourceSentinelsUnchanged(fixture, sourceBefore) {
+  assert.equal(await readFile(join(fixture.sourceRepo, 'config'), 'utf8'), sourceBefore.config);
+  assert.equal(
+    await readFile(join(fixture.sourceRepo, 'blocks', 'source-only'), 'utf8'),
+    sourceBefore.block,
+  );
+}
+
+async function readSourceSentinels(fixture) {
+  return {
+    config: await readFile(join(fixture.sourceRepo, 'config'), 'utf8'),
+    block: await readFile(join(fixture.sourceRepo, 'blocks', 'source-only'), 'utf8'),
+  };
+}
+
+test('production migration defaults use the hosted volume paths', async () => {
   const migration = await readFile(scriptPath, 'utf8');
-  const deploy = await readFile(deployScriptPath, 'utf8');
 
   assert.match(migration, /^set -Eeuo pipefail$/m);
   assert.match(migration, /:-\/var\/lib\/ipfs}/);
@@ -283,7 +322,64 @@ test('production defaults and SDN systemd allowlist use the hosted volume paths'
   assert.match(migration, /:-\/etc\/systemd\/system\/kubo\.service\.d\/20-volume-repo\.conf}/);
   assert.match(migration, /:-ipfs:ipfs}/);
   assert.match(migration, /:-120GB}/);
-  assert.match(deploy, /ReadWritePaths=\/opt\/data \/var\/lib\/spacedatanetwork \/mnt\/volume_nyc3_01\/ipfs/);
+});
+
+test('deploy adds the optional volume path only for the exact SpaceAware config', async () => {
+  const deploy = await readFile(deployScriptPath, 'utf8');
+
+  assert.match(
+    deploy,
+    /is_spaceaware_config\(\) \{[\s\S]*canonical_config="\$\(realpath "\$CONFIG_FILE"\)"[\s\S]*canonical_expected="\$\(realpath "\$\{DEPLOY_DIR}\/spaceaware\/servers\.yaml"\)"[\s\S]*\[\[ "\$canonical_config" == "\$canonical_expected" \]\]/,
+  );
+  assert.match(
+    deploy,
+    /read_write_paths="\/opt\/data \/var\/lib\/spacedatanetwork"/,
+  );
+  assert.match(
+    deploy,
+    /if is_spaceaware_config; then\s+read_write_paths\+=" -\/mnt\/volume_nyc3_01\/ipfs"\s+fi/,
+  );
+  assert.match(deploy, /ReadWritePaths=\$\{read_write_paths}/);
+  assert.doesNotMatch(
+    deploy,
+    /ReadWritePaths=\/opt\/data \/var\/lib\/spacedatanetwork \/mnt\/volume_nyc3_01\/ipfs/,
+  );
+});
+
+test('SpaceAware binary deploy installs and root-hardens the migration script before restart', async () => {
+  const deploy = await readFile(deployScriptPath, 'utf8');
+  const remoteScript = '/opt/spacedatanetwork/deployment/spaceaware/migrate-kubo-repo.sh';
+
+  assert.match(
+    deploy,
+    /deploy_spaceaware_migration_script\(\) \{[\s\S]*if ! is_spaceaware_config; then\s+return\s+fi[\s\S]*mkdir -p \/opt\/spacedatanetwork\/deployment\/spaceaware[\s\S]*scp_cmd "\$\{DEPLOY_DIR}\/spaceaware\/migrate-kubo-repo\.sh" "\$ip" "\/opt\/spacedatanetwork\/deployment\/spaceaware\/migrate-kubo-repo\.sh"/,
+  );
+  assert.match(
+    deploy,
+    /spaceaware_migration_hardening_command\(\) \{[\s\S]*if ! is_spaceaware_config; then[\s\S]*return[\s\S]*fi[\s\S]*chown root:root \/opt\/spacedatanetwork \/opt\/spacedatanetwork\/deployment \/opt\/spacedatanetwork\/deployment\/spaceaware \/opt\/spacedatanetwork\/deployment\/spaceaware\/migrate-kubo-repo\.sh[\s\S]*chmod 0755 \/opt\/spacedatanetwork \/opt\/spacedatanetwork\/deployment \/opt\/spacedatanetwork\/deployment\/spaceaware \/opt\/spacedatanetwork\/deployment\/spaceaware\/migrate-kubo-repo\.sh/,
+  );
+
+  const deployBinaryStart = deploy.indexOf('deploy_binary() {');
+  const deployBinaryEnd = deploy.indexOf('\n    case $type in', deployBinaryStart);
+  const fullBinaryDeploy = deploy.slice(deployBinaryStart, deployBinaryEnd);
+  const copy = fullBinaryDeploy.indexOf('deploy_spaceaware_migration_script "$ip"');
+  const recursiveServiceChown = fullBinaryDeploy.indexOf(
+    'chown -R sdn:sdn /opt/spacedatanetwork /var/lib/spacedatanetwork',
+  );
+  const sameRemoteHardening = fullBinaryDeploy.indexOf(
+    'chown -R sdn:sdn /opt/spacedatanetwork /var/lib/spacedatanetwork${spaceaware_migration_hardening}"',
+  );
+  const restart = fullBinaryDeploy.indexOf(
+    'systemctl daemon-reload && systemctl enable ${full_service} && systemctl restart ${full_service}',
+  );
+
+  assert.ok(copy >= 0, `missing copy of ${remoteScript}`);
+  assert.ok(copy < recursiveServiceChown, 'migration script must be copied before recursive service ownership');
+  assert.ok(
+    sameRemoteHardening >= recursiveServiceChown && sameRemoteHardening < restart,
+    'the same remote command must restore the root-owned ancestor chain before returning or restarting',
+  );
+  assert.doesNotMatch(fullBinaryDeploy, /harden_spaceaware_migration_script "\$ip"/);
 });
 
 test('refuses to migrate when the destination volume is not mounted', async (t) => {
@@ -327,6 +423,99 @@ test('refuses to merge a source repository into a non-empty destination', async 
   });
 });
 
+test('refuses a destination symlink that redirects outside the mounted volume', async (t) => {
+  const fixture = await makeFixture(t);
+  const outside = join(fixture.root, 'outside-volume');
+  await mkdir(outside);
+  await symlink(outside, fixture.destinationRepo, 'dir');
+  const sourceBefore = await readSourceSentinels(fixture);
+
+  const result = await fixture.run();
+
+  await assertRefusedBeforeDestinationMutation(
+    fixture,
+    result,
+    /destination repository.*symlink/i,
+    sourceBefore,
+  );
+});
+
+test('refuses a destination symlink whose referent is inside the source repository', async (t) => {
+  const fixture = await makeFixture(t);
+  const sourceReferent = join(fixture.sourceRepo, 'redirect-target');
+  await mkdir(sourceReferent);
+  await symlink(sourceReferent, fixture.destinationRepo, 'dir');
+  const sourceBefore = await readSourceSentinels(fixture);
+
+  const result = await fixture.run({ STUB_RSYNC_FAIL: '1' });
+
+  await assertRefusedBeforeDestinationMutation(
+    fixture,
+    result,
+    /destination repository.*symlink/i,
+    sourceBefore,
+  );
+});
+
+test('refuses a destination whose canonical parent escapes the mounted volume', async (t) => {
+  const fixture = await makeFixture(t);
+  const outside = join(fixture.root, 'outside-parent');
+  const linkedParent = join(fixture.volumeMount, 'linked-parent');
+  await mkdir(outside);
+  await symlink(outside, linkedParent, 'dir');
+  fixture.env.SDN_KUBO_MIGRATION_DESTINATION_REPO = join(linkedParent, 'ipfs');
+  const sourceBefore = await readSourceSentinels(fixture);
+
+  const result = await fixture.run();
+
+  await assertRefusedBeforeDestinationMutation(
+    fixture,
+    result,
+    /canonical destination.*outside.*volume/i,
+    sourceBefore,
+  );
+});
+
+test('refuses a lexical destination path that canonically aliases the source', async (t) => {
+  const fixture = await makeFixture(t);
+  fixture.env.SDN_KUBO_MIGRATION_DESTINATION_REPO =
+    `${fixture.volumeMount}/../var-lib-ipfs`;
+  const sourceBefore = await readSourceSentinels(fixture);
+
+  const result = await fixture.run();
+
+  await assertRefusedBeforeDestinationMutation(
+    fixture,
+    result,
+    /canonical source and destination.*same/i,
+    sourceBefore,
+  );
+});
+
+test('refuses an existing destination resolved by findmnt to a nested mount', async (t) => {
+  const fixture = await makeFixture(t);
+  await mkdir(fixture.destinationRepo);
+  const sourceBefore = await readSourceSentinels(fixture);
+
+  const result = await fixture.run({ STUB_FINDMNT_TARGET: fixture.destinationRepo });
+
+  await assertRefusedBeforeDestinationMutation(
+    fixture,
+    result,
+    /destination.*nested mount.*exact volume/i,
+    sourceBefore,
+  );
+  const targetCall = (await fixture.calls()).find(({ command, args }) =>
+    command === 'findmnt' && args.includes('--target'));
+  assert.deepEqual(targetCall?.args, [
+    '--noheadings',
+    '--target',
+    fixture.destinationRepo,
+    '--output',
+    'TARGET',
+  ]);
+});
+
 test('peer-ID mismatch restores the exact drop-in and every prior service-state combination', async (t) => {
   for (const sdnState of ['active', 'inactive']) {
     for (const kuboState of ['active', 'inactive']) {
@@ -346,6 +535,58 @@ test('peer-ID mismatch restores the exact drop-in and every prior service-state 
         });
       });
     }
+  }
+});
+
+test('rsync failure restores the prior drop-in and service states without mutating source', async (t) => {
+  const fixture = await makeFixture(t, {
+    sdnState: 'active',
+    kuboState: 'inactive',
+  });
+  const sourceBefore = await readSourceSentinels(fixture);
+
+  const result = await fixture.run({ STUB_RSYNC_FAIL: '1' });
+
+  assert.notEqual(result.code, 0);
+  const calls = await fixture.calls();
+  assert.equal(calls.some(({ command }) => command === 'rsync'), true);
+  assert.equal(calls.some(({ command, args }) =>
+    command === 'ipfs' && args[0] === 'config'), false);
+  await assertSourceSentinelsUnchanged(fixture, sourceBefore);
+  await assertPriorStateRestored(fixture, {
+    'space-data-network.service': 'active',
+    'kubo.service': 'inactive',
+  });
+});
+
+test('API and gateway failures each restore the prior drop-in and service states', async (t) => {
+  for (const [failure, messagePattern] of [
+    ['api', /Kubo API did not become ready/i],
+    ['gateway', /Kubo gateway did not serve sample pin/i],
+  ]) {
+    await t.test(failure, async (subtest) => {
+      const fixture = await makeFixture(subtest, {
+        sdnState: 'inactive',
+        kuboState: 'active',
+      });
+      const sourceBefore = await readSourceSentinels(fixture);
+
+      const result = await fixture.run({ STUB_CURL_FAILURE: failure });
+
+      assert.notEqual(result.code, 0);
+      assert.match(result.stderr, messagePattern);
+      const calls = await fixture.calls();
+      assert.equal(calls.some(({ command, args }) =>
+        command === 'curl'
+          && args.some((argument) => failure === 'api'
+            ? argument.includes('/api/v0/id')
+            : argument.includes('/ipfs/'))), true);
+      await assertSourceSentinelsUnchanged(fixture, sourceBefore);
+      await assertPriorStateRestored(fixture, {
+        'space-data-network.service': 'inactive',
+        'kubo.service': 'active',
+      });
+    });
   }
 });
 

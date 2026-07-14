@@ -14,7 +14,7 @@ HEADROOM_KIB="${SDN_KUBO_MIGRATION_HEADROOM_KIB:-10485760}"
 HTTP_ATTEMPTS="${SDN_KUBO_MIGRATION_HTTP_ATTEMPTS:-30}"
 HTTP_DELAY_SECONDS="${SDN_KUBO_MIGRATION_HTTP_DELAY_SECONDS:-1}"
 
-readonly SOURCE_REPO DESTINATION_REPO VOLUME_MOUNT DROP_IN REPO_OWNER STORAGE_MAX
+readonly DROP_IN REPO_OWNER STORAGE_MAX
 readonly HEADROOM_KIB HTTP_ATTEMPTS HTTP_DELAY_SECONDS
 readonly SDN_SERVICE="space-data-network.service"
 readonly KUBO_SERVICE="kubo.service"
@@ -154,20 +154,67 @@ if ((EUID != 0)) && [[ "${SDN_KUBO_MIGRATION_ALLOW_NON_ROOT:-0}" != "1" ]]; then
     fail "Run this migration as root."
 fi
 
-for required_command in systemctl ipfs rsync findmnt df du curl chown; do
+for required_command in systemctl ipfs rsync findmnt realpath df du curl chown; do
     command -v "$required_command" >/dev/null 2>&1 || fail "Required command is missing: $required_command"
 done
 
 [[ -d "$SOURCE_REPO" ]] || fail "Source Kubo repository does not exist: $SOURCE_REPO"
-[[ "$SOURCE_REPO" != "$DESTINATION_REPO" ]] || fail "Source and destination repositories must differ."
-case "$DESTINATION_REPO" in
-    "$VOLUME_MOUNT"/*) ;;
-    *) fail "Destination repository must be inside $VOLUME_MOUNT." ;;
-esac
+[[ ! -L "$DESTINATION_REPO" ]] || fail "Destination repository must not be a symlink: $DESTINATION_REPO"
 
-if ! findmnt --noheadings --mountpoint "$VOLUME_MOUNT" --output TARGET >/dev/null 2>&1; then
+canonical_source_repo="$(realpath "$SOURCE_REPO")" || fail "Could not canonicalize source repository: $SOURCE_REPO"
+canonical_volume_mount="$(realpath "$VOLUME_MOUNT")" || fail "Could not canonicalize volume mount: $VOLUME_MOUNT"
+
+if ! mounted_volume_target="$(findmnt --noheadings --mountpoint "$VOLUME_MOUNT" --output TARGET)"; then
     fail "$VOLUME_MOUNT is not a mounted filesystem; refusing to copy into the root filesystem."
 fi
+canonical_mounted_volume="$(realpath "$mounted_volume_target")" || \
+    fail "Could not canonicalize mounted volume target: $mounted_volume_target"
+[[ "$canonical_mounted_volume" == "$canonical_volume_mount" ]] || \
+    fail "Mounted volume target does not match the canonical volume: $mounted_volume_target"
+
+if [[ -e "$DESTINATION_REPO" ]]; then
+    [[ -d "$DESTINATION_REPO" ]] || fail "Destination repository exists but is not a directory: $DESTINATION_REPO"
+    canonical_destination_repo="$(realpath "$DESTINATION_REPO")" || \
+        fail "Could not canonicalize destination repository: $DESTINATION_REPO"
+    destination_mount_probe="$canonical_destination_repo"
+else
+    destination_parent="$(dirname "$DESTINATION_REPO")"
+    destination_name="$(basename "$DESTINATION_REPO")"
+    [[ "$destination_name" != "." && "$destination_name" != ".." ]] || \
+        fail "Destination repository must name a child directory: $DESTINATION_REPO"
+    [[ -d "$destination_parent" ]] || fail "Destination parent does not exist: $destination_parent"
+    canonical_destination_parent="$(realpath "$destination_parent")" || \
+        fail "Could not canonicalize destination parent: $destination_parent"
+    canonical_destination_repo="${canonical_destination_parent%/}/${destination_name}"
+    destination_mount_probe="$canonical_destination_parent"
+fi
+
+if [[ "$canonical_destination_repo" == "$canonical_source_repo" ]]; then
+    fail "Canonical source and destination are the same path: $canonical_source_repo"
+fi
+case "$canonical_destination_repo" in
+    "$canonical_source_repo"/*)
+        fail "Canonical destination is nested inside the source repository: $canonical_destination_repo"
+        ;;
+esac
+case "$canonical_destination_repo" in
+    "$canonical_volume_mount"/*) ;;
+    *) fail "Canonical destination is outside the exact volume: $canonical_destination_repo" ;;
+esac
+
+if ! destination_mount_target="$(findmnt --noheadings --target "$destination_mount_probe" --output TARGET)"; then
+    fail "Could not resolve the destination filesystem for $destination_mount_probe."
+fi
+canonical_destination_mount="$(realpath "$destination_mount_target")" || \
+    fail "Could not canonicalize destination mount target: $destination_mount_target"
+if [[ "$canonical_destination_mount" != "$canonical_volume_mount" ]]; then
+    fail "Destination resolves to a nested mount instead of the exact volume: $destination_mount_target"
+fi
+
+SOURCE_REPO="$canonical_source_repo"
+VOLUME_MOUNT="$canonical_volume_mount"
+DESTINATION_REPO="$canonical_destination_repo"
+readonly SOURCE_REPO VOLUME_MOUNT DESTINATION_REPO
 
 if [[ -e "$DESTINATION_REPO" || -L "$DESTINATION_REPO" ]]; then
     [[ -d "$DESTINATION_REPO" ]] || fail "Destination repository exists but is not a directory: $DESTINATION_REPO"
