@@ -8,10 +8,17 @@
   is the inline CONTENT of the App 2 SDS $APP record — the whole file is the
   record's entry UI page.
 
-  ONE TABLE (owner directive 2026-07-14): a single consolidated table, one row
-  per ingest lane. Clicking a row expands it (accessible: the row is a button
-  with aria-expanded; a colspan detail row unfolds) into a stats strip + a
-  paginated per-satellite table (with a NORAD search box).
+  TWO VIEWS (owner directives 2026-07-14): a LANES | RUNS switcher in the header
+  (no routing — both views live in this document).
+    LANES — the single consolidated lane table, one row per ingest lane.
+            Clicking a row expands it (accessible: the row is a button with
+            aria-expanded; a colspan detail row unfolds) into a stats strip +
+            a paginated per-satellite table (with a NORAD search box).
+    RUNS  — a report screen, separate from the lanes table: the checked-in
+            LAST FULL RUN milestone card (REF) plus a live list of pipeline
+            runs — one row per (schema, provider, source, batch) from
+            /api/v1/stats sources[], every batch incl. interrupted ones.
+            Clicking a run row expands its full summary.
 
   HONESTY CONTRACT (see the LEGEND at the bottom of the page):
     LIVE    — value fetched this session from a real anonymous gateway surface.
@@ -63,7 +70,7 @@
   }
   * { box-sizing: border-box; border-radius: 0 !important; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--sys); }
-  body { font-size: 17px; line-height: 1.4; -webkit-font-smoothing: antialiased; }
+  body { font-size: 17px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
 
@@ -74,7 +81,7 @@
   h1 { font-size: 19.5px; letter-spacing: 0.14em; text-transform: uppercase; margin: 0; font-weight: 600; }
   .appid { font-family: var(--mono); font-size: 14.5px; color: var(--dim); }
   .sub { color: var(--dim); font-size: 15px; margin-top: 5px; text-transform: uppercase; letter-spacing: 0.06em; }
-  .meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 11px; align-items: center; }
+  .meta { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
   .meta .kv { font-family: var(--mono); font-size: 14.5px; color: var(--dim); }
   .meta .kv b { color: var(--ink); font-weight: 600; }
   .spacer { flex: 1; }
@@ -88,8 +95,13 @@
   button:disabled { opacity: .4; cursor: not-allowed; }
   button:disabled:hover { border-color: var(--edge2); color: var(--ink); }
 
+  /* Pills carry their own breathing room (owner: "text and tags need to be
+     spaced better with margin around them") — inline-block + margin so a pill
+     never sits flush against neighboring text in any cell/tile/legend row. */
   .pill { font-family: var(--mono); font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.06em;
-    padding: 2px 7px; border: 1px solid var(--edge2); color: var(--dim); white-space: nowrap; }
+    display: inline-block; padding: 3px 9px; margin: 2px 8px 2px 0; border: 1px solid var(--edge2);
+    color: var(--dim); white-space: nowrap; }
+  .pill:last-child { margin-right: 0; }
   .pill.live { color: var(--live); border-color: #244b3d; background: #0e1a15; }
   .pill.ref { color: var(--ref); border-color: #4a3c1f; background: #1a150c; }
   .pill.nodata { color: var(--nodata); border-color: var(--edge); }
@@ -105,23 +117,31 @@
   .pill.nonindep { color: var(--nonindep); border-color: #3b2d52; background: #150f1d;
     white-space: normal; }
 
-  section { margin-top: 16px; }
+  section { margin-top: 26px; }
   .sectlabel { font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer);
-    margin: 0 0 8px 1px; }
+    margin: 0 0 12px 1px; }
 
-  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; }
-  .tile { border: 1px solid var(--edge); background: var(--panel); padding: 10px 12px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; }
+  .tile { border: 1px solid var(--edge); background: var(--panel); padding: 13px 15px; }
   .tile .lab { font-size: 13px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--dim); }
-  .tile .val { font-family: var(--mono); font-size: 24.5px; margin-top: 5px; color: var(--ink); }
+  .tile .val { font-family: var(--mono); font-size: 24.5px; margin-top: 9px; color: var(--ink); }
   .tile .val.small { font-size: 15.5px; line-height: 1.5; }
-  .tile .foot { font-family: var(--mono); font-size: 12.5px; color: var(--dimmer); margin-top: 6px; }
-  /* LAST FULL RUN strip: same tiles, slightly tighter numeral so the p50/p90/p99
-     triple fits on one line, amber REF framing. */
+  .tile .foot { font-family: var(--mono); font-size: 12.5px; color: var(--dimmer); margin-top: 9px; }
+  /* REF report card tiles (RUNS view): slightly tighter numeral so the
+     p50/p90/p99 triple fits on one line, amber REF framing. */
   .runstrip .tile { border-color: #4a3c1f; }
   .runstrip .tile .val { font-size: 19.5px; }
 
+  /* View switcher (LANES | RUNS). Plain buttons, aria-pressed drives styling —
+     no routing, both views live in this one document. */
+  .viewnav { display: flex; gap: 10px; margin-top: 14px; }
+  .viewnav button { padding: 7px 18px; }
+  .viewnav button[aria-pressed="true"] {
+    color: #fff; border-color: var(--accent); background: #14202e;
+  }
+
   /* Filter/sort toolbar. */
-  .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
+  .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
   .toolbar input[type="text"] {
     font-family: var(--mono); font-size: 14.5px; letter-spacing: 0.04em;
     background: var(--panel2); color: var(--ink); border: 1px solid var(--edge2);
@@ -139,7 +159,7 @@
   .tablewrap { border: 1px solid var(--edge); background: var(--panel); }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   thead th { font-size: 13px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--dim);
-    text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--edge2); font-weight: 600;
+    text-align: left; padding: 12px 13px; border-bottom: 1px solid var(--edge2); font-weight: 600;
     background: var(--panel2); white-space: normal; vertical-align: bottom; }
   th .th-inner { display: flex; align-items: baseline; gap: 6px; justify-content: space-between; }
   th .th-label { overflow-wrap: anywhere; }
@@ -149,14 +169,14 @@
   .sortind { flex: 0 0 auto; color: var(--dimmer); font-size: 11.5px; line-height: 1; }
   th[aria-sort="ascending"], th[aria-sort="descending"] { color: var(--ink); }
   th[aria-sort="ascending"] .sortind, th[aria-sort="descending"] .sortind { color: var(--accent); }
-  tbody td { padding: 9px 10px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  tbody td { padding: 12px 13px; border-bottom: 1px solid var(--edge); vertical-align: top; }
   tbody tr:last-child td { border-bottom: none; }
   .prov { font-weight: 600; }
   .prov .name { text-transform: uppercase; letter-spacing: 0.04em; overflow-wrap: anywhere; }
-  .prov .caret { color: var(--dim); margin-right: 7px; font-size: 12px; display: inline-block; width: 10px; }
-  .prov .tok { font-family: var(--mono); font-size: 13px; color: var(--dim); margin-top: 3px; overflow-wrap: anywhere; }
+  .prov .caret { color: var(--dim); margin-right: 8px; font-size: 12px; display: inline-block; width: 11px; }
+  .prov .tok { font-family: var(--mono); font-size: 13px; color: var(--dim); margin-top: 6px; overflow-wrap: anywhere; }
   .up { font-family: var(--mono); font-size: 13.5px; color: var(--dim); }
-  .cell-note { font-family: var(--mono); font-size: 12.5px; color: var(--dimmer); margin-top: 4px; overflow-wrap: anywhere; }
+  .cell-note { font-family: var(--mono); font-size: 12.5px; color: var(--dimmer); margin-top: 7px; overflow-wrap: anywhere; }
   .val-mono { font-family: var(--mono); font-size: 14.5px; overflow-wrap: anywhere; }
   /* Single-line truncation that keeps the full value in a title tooltip. */
   .trunc { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -171,22 +191,22 @@
   .pipe-obj { font-family: var(--mono); font-size: 18px; color: var(--ink); }
   tr.lane.idle .pipe-obj { color: var(--dimmer); }
   .pipe-rate { font-family: var(--mono); font-size: 14px; color: var(--live); }
-  .pipe-sub { font-family: var(--mono); font-size: 12.5px; color: var(--dimmer); margin-top: 4px; overflow-wrap: anywhere; }
+  .pipe-sub { font-family: var(--mono); font-size: 12.5px; color: var(--dimmer); margin-top: 7px; overflow-wrap: anywhere; }
   tr.empty td { text-align: center; color: var(--dim); font-family: var(--mono); font-size: 14.5px;
-    padding: 18px 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+    padding: 22px 12px; text-transform: uppercase; letter-spacing: 0.06em; }
 
   tr.detail > td { background: #0d1116; padding: 0; border-bottom: 1px solid var(--edge2); }
-  .detail-inner { padding: 14px; }
-  .det-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-bottom: 12px; }
-  .det-stat { border: 1px solid var(--edge); background: var(--panel); padding: 8px 10px; }
+  .detail-inner { padding: 18px; }
+  .det-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .det-stat { border: 1px solid var(--edge); background: var(--panel); padding: 11px 13px; }
   .det-stat .lab { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); }
-  .det-stat .val { font-family: var(--mono); font-size: 16.5px; margin-top: 4px; color: var(--ink); overflow-wrap: anywhere; }
-  .det-ref { border: 1px solid var(--edge); background: var(--panel); padding: 10px 12px; margin-bottom: 12px;
-    font-size: 14px; color: var(--dim); line-height: 1.5; }
-  .det-ref .hd { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-  .det-ref .ln { margin-top: 5px; overflow-wrap: anywhere; }
+  .det-stat .val { font-family: var(--mono); font-size: 16.5px; margin-top: 8px; color: var(--ink); overflow-wrap: anywhere; }
+  .det-ref { border: 1px solid var(--edge); background: var(--panel); padding: 13px 15px; margin-bottom: 16px;
+    font-size: 14px; color: var(--dim); line-height: 1.6; }
+  .det-ref .hd { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; flex-wrap: wrap; }
+  .det-ref .ln { margin-top: 8px; overflow-wrap: anywhere; }
   .det-ref b { color: var(--ink); }
-  .subtools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+  .subtools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
   .subtools input[type="text"] {
     font-family: var(--mono); font-size: 14px; letter-spacing: 0.04em;
     background: var(--panel2); color: var(--ink); border: 1px solid var(--edge2);
@@ -196,10 +216,10 @@
   .subtools input::placeholder { color: var(--dimmer); text-transform: uppercase; letter-spacing: 0.06em; }
   .subtools .count { font-family: var(--mono); font-size: 13px; color: var(--dim);
     text-transform: uppercase; letter-spacing: 0.05em; margin-left: auto; }
-  .subtable td, .subtable th { padding: 7px 9px; }
+  .subtable td, .subtable th { padding: 10px 12px; }
   .subtable td { font-family: var(--mono); font-size: 13.5px; color: var(--ink); }
   .subtable .muted { color: var(--dimmer); }
-  .pager { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .pager { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
   .pager .pageinfo { font-family: var(--mono); font-size: 13px; color: var(--dim); }
 
   /* Tooltip (house style — no external lib). Hidden state is display:none so a
@@ -216,13 +236,13 @@
   .tip:hover .tiptext, .tip:focus-within .tiptext { display: block; }
   .tip-right .tiptext { left: auto; right: 0; }
 
-  .legend { border: 1px solid var(--edge); background: var(--panel); padding: 12px 14px; margin-top: 16px; }
-  .legend h2 { font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer); margin: 0 0 9px; }
-  .legend .row { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 7px; font-size: 15px; color: var(--dim); }
+  .legend { border: 1px solid var(--edge); background: var(--panel); padding: 15px 17px; margin-top: 26px; }
+  .legend h2 { font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer); margin: 0 0 12px; }
+  .legend .row { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 11px; font-size: 15px; color: var(--dim); }
   .legend .row:last-child { margin-bottom: 0; }
   .legend b { color: var(--ink); }
-  footer { margin-top: 22px; font-family: var(--mono); font-size: 13px; color: var(--dimmer); line-height: 1.7; }
-  footer .refs { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
+  footer { margin-top: 28px; font-family: var(--mono); font-size: 13px; color: var(--dimmer); line-height: 1.8; }
+  footer .refs { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -242,40 +262,71 @@
       <span class="kv">UPDATED&nbsp;<b id="updated">—</b></span>
       <button id="refresh" type="button">Refresh</button>
     </div>
+    <nav class="viewnav" aria-label="Board views">
+      <button id="nav-lanes" type="button" aria-pressed="true">Lanes</button>
+      <button id="nav-runs" type="button" aria-pressed="false">Runs</button>
+    </nav>
   </header>
 
-  <section id="last-full-run">
-    <div class="sectlabel">Last full run — Starlink constellation (REF · modules 8d9c39d · 2026-07-14)</div>
-    <div class="tiles runstrip" id="run-tiles"></div>
-  </section>
+  <div id="view-lanes">
+    <section id="live-pipeline">
+      <div class="sectlabel">Live pipeline — per-lane publish progress (LIVE · anonymous /api/v1/stats · polling 5s)</div>
+      <div class="tiles" id="pipe-tiles"></div>
+      <div class="toolbar" style="margin-top:14px">
+        <input id="lane-filter" type="text" placeholder="Filter lanes…" autocomplete="off" spellcheck="false" aria-label="Filter lanes by provider, token, gate, or source">
+        <span class="count" id="lane-count"></span>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <colgroup id="lane-cols"></colgroup>
+          <thead><tr id="lane-head"></tr></thead>
+          <tbody id="lane-body"></tbody>
+        </table>
+      </div>
+      <div class="sub" style="margin-top:10px">
+        One row per ingest lane, from this node's records (<span class="val-mono">/api/v1/stats</span> →
+        sources[], active batch = newest batch_id per source). <b>Data current as of</b> = newest record
+        EPOCH; <b>ElSets</b> = element sets in the batch; <b>Objects</b> = distinct NORAD IDs;
+        <b>Mean RMS</b> = OD fit RMS averaged over the batch's indexed records (fitted lanes only). Click a
+        row to drill into its satellites. RMS stats cover records indexed since the rms-index deploy.
+      </div>
+    </section>
 
-  <section id="live-pipeline">
-    <div class="sectlabel">Live pipeline — per-lane publish progress (LIVE · anonymous /api/v1/stats · polling 5s)</div>
-    <div class="tiles" id="pipe-tiles"></div>
-    <div class="toolbar">
-      <input id="lane-filter" type="text" placeholder="Filter lanes…" autocomplete="off" spellcheck="false" aria-label="Filter lanes by provider, token, gate, or source">
-      <span class="count" id="lane-count"></span>
-    </div>
-    <div class="tablewrap">
-      <table>
-        <colgroup id="lane-cols"></colgroup>
-        <thead><tr id="lane-head"></tr></thead>
-        <tbody id="lane-body"></tbody>
-      </table>
-    </div>
-    <div class="sub" style="margin-top:6px">
-      One row per ingest lane, from this node's records (<span class="val-mono">/api/v1/stats</span> →
-      sources[], active batch = newest batch_id per source). <b>Data current as of</b> = newest record
-      EPOCH; <b>ElSets</b> = element sets in the batch; <b>Objects</b> = distinct NORAD IDs;
-      <b>Mean RMS</b> = OD fit RMS averaged over the batch's indexed records (fitted lanes only). Click a
-      row to drill into its satellites. RMS stats cover records indexed since the rms-index deploy.
-    </div>
-  </section>
+    <section>
+      <div class="sectlabel">Node-wide catalog (LIVE · anonymous /api/v1/stats + /api/v1/catalog)</div>
+      <div class="tiles" id="tiles"></div>
+    </section>
+  </div>
 
-  <section>
-    <div class="sectlabel">Node-wide catalog (LIVE · anonymous /api/v1/stats + /api/v1/catalog)</div>
-    <div class="tiles" id="tiles"></div>
-  </section>
+  <div id="view-runs" hidden>
+    <section id="ref-run-report">
+      <div class="sectlabel">Last full constellation run — Starlink (REF · modules 8d9c39d · 2026-07-14)</div>
+      <div class="det-ref" style="margin-bottom:12px">
+        <div class="hd"><span class="pill ref">REF · checked-in run report</span></div>
+        <div class="ln">Milestone numbers from the modules pipeline run report — compile-time truth,
+        not live telemetry, and not matched to a batch listed below (the run predates this node's
+        current store).</div>
+      </div>
+      <div class="tiles runstrip" id="run-tiles"></div>
+    </section>
+
+    <section id="runs-list">
+      <div class="sectlabel">Pipeline runs on this node (LIVE · anonymous /api/v1/stats · one row per provider + batch)</div>
+      <div class="tablewrap">
+        <table>
+          <colgroup id="runs-cols"></colgroup>
+          <thead><tr id="runs-head"></tr></thead>
+          <tbody id="runs-body"></tbody>
+        </table>
+      </div>
+      <div class="sub" style="margin-top:10px">
+        Every (provider, schema, batch) with records on this node is a run — including interrupted
+        ones. <b>Run started</b> = first record arrival; <b>Duration</b> = first→last record;
+        <b>Mean RMS</b> = OD fit RMS over the batch's indexed records (fitted lanes only). Click a run
+        for its full summary.
+      </div>
+    </section>
+  </div>
 
   <div class="legend">
     <h2>Provenance legend</h2>
@@ -469,7 +520,22 @@
   }
   function isoTime(iso) { return iso ? String(iso).slice(0, 19).replace("T", " ") + "Z" : null; }
 
-  // ---- Node-wide catalog tiles + header + run strip -------------------------
+  // ---- View switcher (LANES | RUNS) -----------------------------------------
+  // Both views live in this one document; the nav buttons toggle [hidden] and
+  // aria-pressed. No routing, no libraries.
+  function setView(view) {
+    var lanes = document.getElementById("view-lanes");
+    var runs = document.getElementById("view-runs");
+    var bl = document.getElementById("nav-lanes");
+    var br = document.getElementById("nav-runs");
+    var showRuns = (view === "runs");
+    lanes.hidden = showRuns;
+    runs.hidden = !showRuns;
+    bl.setAttribute("aria-pressed", showRuns ? "false" : "true");
+    br.setAttribute("aria-pressed", showRuns ? "true" : "false");
+  }
+
+  // ---- REF report card (RUNS view): the checked-in full-run milestone --------
   function renderRunStrip() {
     var host = document.getElementById("run-tiles");
     host.innerHTML = "";
@@ -1144,6 +1210,205 @@
     }
   }
 
+  // ---- RUNS report screen -----------------------------------------------------
+  // One row per (schema, provider, source, batch) from /api/v1/stats sources[] —
+  // EVERY batch with records is a run (including interrupted ones), not just the
+  // newest/active batch the lanes view keys on. Clicking a run expands its full
+  // summary. All values are the live stats aggregates; nothing is synthesized.
+  var RUNS_COLUMNS = [
+    { label: "Provider / run", width: "24%" },
+    { label: "Run started", width: "15%" },
+    { label: "Duration", width: "10%" },
+    { label: "ElSets", width: "9%" },
+    { label: "Objects", width: "9%" },
+    { label: "Mean RMS (km)", width: "12%" },
+    { label: "Data current as of (epoch)", width: "21%" }
+  ];
+  var runsState = { rows: [], reachable: false };
+  var runsExpanded = {}; // runKey -> true
+
+  function durStr(sec) {
+    if (typeof sec !== "number" || !isFinite(sec) || sec < 0) return null;
+    sec = Math.round(sec);
+    if (sec < 60) return sec + "s";
+    if (sec < 3600) return Math.floor(sec / 60) + "m " + (sec % 60) + "s";
+    return Math.floor(sec / 3600) + "h " + Math.floor((sec % 3600) / 60) + "m";
+  }
+
+  function buildRuns(statsRes) {
+    var sources = [];
+    if (statsRes && statsRes.__state === "ok" && statsRes.data && Array.isArray(statsRes.data.sources)) {
+      sources = statsRes.data.sources;
+    }
+    runsState.reachable = !!(statsRes && (statsRes.__state === "ok" || statsRes === "skeleton"));
+
+    var runs = sources.map(function (r) {
+      var p = matchProvider(r.source_name, r.provider_id);
+      var firstMs = parseMs(r.first_seen), lastMs = parseMs(r.last_seen || r.updated_at);
+      var durSec = (firstMs && lastMs && lastMs >= firstMs) ? (lastMs - firstMs) / 1000 : null;
+      var count = (typeof r.count === "number") ? r.count : 0;
+      return {
+        key: [r.schema || "", r.provider_id || "", r.source_name || "", r.batch_id || ""].join("|"),
+        name: p ? p.name : (r.source_name || r.provider_id || "(unnamed source)"),
+        token: (r.schema || "?") + (p ? " · CelesTrak " + p.token : (r.provider_id ? " · provider " + r.provider_id : " · unmatched source")),
+        source: r,
+        firstMs: firstMs, lastMs: lastMs, durSec: durSec, count: count,
+        objects: (typeof r.objects === "number" && r.objects > 0) ? r.objects : null,
+        meanRMS: (typeof r.mean_rms === "number") ? r.mean_rms : null,
+        minRMS: (typeof r.min_rms === "number") ? r.min_rms : null,
+        maxRMS: (typeof r.max_rms === "number") ? r.max_rms : null,
+        // ElSets/min over the run window; null when the window is degenerate.
+        rate: (durSec && durSec > 0) ? (count / durSec) * 60 : null
+      };
+    });
+    // Newest run first (by start time); rows with no first_seen sink.
+    runs.sort(function (a, b) {
+      if (!!b.firstMs !== !!a.firstMs) return b.firstMs ? 1 : -1;
+      if (b.firstMs !== a.firstMs) return b.firstMs - a.firstMs;
+      return String(a.key).localeCompare(String(b.key));
+    });
+    runsState.rows = runs;
+  }
+
+  function buildRunsColsAndHead() {
+    var cg = document.getElementById("runs-cols");
+    var hr = document.getElementById("runs-head");
+    cg.innerHTML = ""; hr.innerHTML = "";
+    RUNS_COLUMNS.forEach(function (col) {
+      var c = document.createElement("col"); c.style.width = col.width; cg.appendChild(c);
+      var th = document.createElement("th");
+      th.appendChild(el("span", "th-label", col.label));
+      hr.appendChild(th);
+    });
+  }
+
+  function renderRunsTable() {
+    var body = document.getElementById("runs-body");
+    if (!body) return;
+    body.innerHTML = "";
+    var colCount = RUNS_COLUMNS.length;
+
+    if (runsState.rows.length === 0) {
+      var tr = el("tr", "empty");
+      var td = el("td", null, runsState.reachable ? "No runs recorded on this node yet" : "/api/v1/stats · unreachable");
+      td.setAttribute("colspan", String(colCount));
+      tr.appendChild(td); body.appendChild(tr);
+      return;
+    }
+    runsState.rows.forEach(function (run) {
+      body.appendChild(runSummaryRow(run, colCount));
+      if (runsExpanded[run.key]) body.appendChild(runDetailRow(run, colCount));
+    });
+  }
+
+  function runSummaryRow(run, colCount) {
+    var open = !!runsExpanded[run.key];
+    var tr = el("tr", "lane" + (open ? " open" : ""));
+    tr.setAttribute("role", "button");
+    tr.setAttribute("tabindex", "0");
+    tr.setAttribute("aria-expanded", open ? "true" : "false");
+    var toggle = function () {
+      if (runsExpanded[run.key]) delete runsExpanded[run.key];
+      else runsExpanded[run.key] = true;
+      renderRunsTable();
+    };
+    tr.addEventListener("click", toggle);
+    tr.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); toggle(); }
+    });
+
+    var prov = el("td", "prov");
+    var nameLine = el("div", "name");
+    nameLine.appendChild(el("span", "caret", open ? "▾" : "▸"));
+    nameLine.appendChild(document.createTextNode(run.name));
+    prov.appendChild(nameLine);
+    prov.appendChild(el("div", "tok", run.token));
+    tr.appendChild(prov);
+
+    var startTd = el("td");
+    startTd.appendChild(el("div", "up", isoTime(run.source.first_seen) || "—"));
+    var sa = ageStr(run.source.first_seen);
+    if (sa) startTd.appendChild(el("div", "pipe-sub", sa));
+    tr.appendChild(startTd);
+
+    var durTd = el("td");
+    durTd.appendChild(el("div", "up", durStr(run.durSec) || "—"));
+    tr.appendChild(durTd);
+
+    var setsTd = el("td");
+    setsTd.appendChild(el("div", "pipe-obj", fmtInt(run.count)));
+    tr.appendChild(setsTd);
+
+    var objTd = el("td");
+    objTd.appendChild(el("div", "pipe-obj", run.objects != null ? fmtInt(run.objects) : "—"));
+    tr.appendChild(objTd);
+
+    var rmsTd = el("td");
+    var rms = fmtRMS(run.meanRMS);
+    if (rms != null) {
+      rmsTd.appendChild(el("div", "val-mono", rms));
+      if (run.minRMS != null && run.maxRMS != null) rmsTd.appendChild(el("div", "pipe-sub", fmtRMS(run.minRMS) + "–" + fmtRMS(run.maxRMS)));
+    } else {
+      rmsTd.appendChild(el("div", "up", "—"));
+      rmsTd.appendChild(el("div", "pipe-sub", "no fit RMS"));
+    }
+    tr.appendChild(rmsTd);
+
+    var epochTd = el("td");
+    epochTd.appendChild(el("div", "up", isoTime(run.source.latest_epoch) || "—"));
+    var ea = ageStr(run.source.latest_epoch);
+    if (ea) epochTd.appendChild(el("div", "pipe-sub", "epoch age " + ea));
+    tr.appendChild(epochTd);
+
+    return tr;
+  }
+
+  function runDetailRow(run, colCount) {
+    var tr = el("tr", "detail");
+    var td = el("td"); td.setAttribute("colspan", String(colCount));
+    var inner = el("div", "detail-inner");
+    var r = run.source;
+
+    var strip = el("div", "det-stats");
+    function stat(lab, val) { var s = el("div", "det-stat"); s.appendChild(el("div", "lab", lab)); s.appendChild(el("div", "val", val)); strip.appendChild(s); }
+    stat("ElSets", fmtInt(run.count));
+    stat("Distinct objects", run.objects != null ? fmtInt(run.objects) : "—");
+    stat("Bytes", fmtBytes(typeof r.total_bytes === "number" ? r.total_bytes : NaN));
+    stat("Run started", isoTime(r.first_seen) || "—");
+    stat("Last record", isoTime(r.last_seen || r.updated_at) || "—");
+    stat("Duration", durStr(run.durSec) || "—");
+    stat("Rate", run.rate != null ? ((run.rate >= 10 ? Math.round(run.rate) : run.rate.toFixed(1)) + "/min") : "—");
+    stat("Data current as of", isoTime(r.latest_epoch) || "—");
+    stat("Mean RMS (km)", fmtRMS(run.meanRMS) || "—");
+    stat("Min RMS (km)", fmtRMS(run.minRMS) || "—");
+    stat("Max RMS (km)", fmtRMS(run.maxRMS) || "—");
+    stat("Schema", r.schema || "—");
+    inner.appendChild(strip);
+
+    var ref = el("div", "det-ref");
+    var hd = el("div", "hd");
+    hd.appendChild(el("span", "pill live", "LIVE · /api/v1/stats"));
+    hd.appendChild(el("span", null, run.name + " — batch summary"));
+    ref.appendChild(hd);
+    var bid = el("div", "ln");
+    var bb = el("b"); bb.textContent = "Batch id: "; bid.appendChild(bb);
+    bid.appendChild(document.createTextNode(r.batch_id || "—"));
+    ref.appendChild(bid);
+    if (r.source_url) {
+      var su = el("div", "ln");
+      var sb = el("b"); sb.textContent = "Source URL: "; su.appendChild(sb);
+      su.appendChild(document.createTextNode(String(r.source_url)));
+      ref.appendChild(su);
+    }
+    ref.appendChild(el("div", "ln", "Provider id " + (r.provider_id || "—") + " · source " + (r.source_name || "—") +
+      " · RMS aggregates cover records indexed since the rms-index deploy (older records carry no RMS and are excluded, never zero-filled)."));
+    inner.appendChild(ref);
+
+    td.appendChild(inner);
+    tr.appendChild(td);
+    return tr;
+  }
+
   // ---- Aggregate pipeline tiles ---------------------------------------------
   function renderPipeTiles() {
     var host = document.getElementById("pipe-tiles");
@@ -1188,8 +1453,10 @@
   // ---- Poll orchestration ---------------------------------------------------
   function applyStats(statsRes) {
     buildLanes(statsRes);
+    buildRuns(statsRes);
     renderPipeTiles();
     renderLaneTable();
+    renderRunsTable();
   }
   function pollPipeline() { getJSON("/stats").then(applyStats); }
 
@@ -1207,8 +1474,11 @@
 
   // ---- Boot -----------------------------------------------------------------
   buildLaneColsAndHead();
+  buildRunsColsAndHead();
   renderRunStrip();
   renderSourceRefs();
+  document.getElementById("nav-lanes").addEventListener("click", function () { setView("lanes"); });
+  document.getElementById("nav-runs").addEventListener("click", function () { setView("runs"); });
   var filterInput = document.getElementById("lane-filter");
   if (filterInput) filterInput.addEventListener("input", function () { laneState.filter = filterInput.value; renderLaneTable(); });
 
