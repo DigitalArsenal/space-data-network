@@ -183,12 +183,6 @@
   .pipe-rate { font-family: var(--mono); font-size: 11px; color: var(--live); }
   .pipe-sub { font-family: var(--mono); font-size: 9.5px; color: var(--dimmer); margin-top: 4px; overflow-wrap: anywhere; }
 
-  /* Reserved placeholder (another worker mounts the three-way viewer here).
-     Deliberately renders NO data — only an honest "reserved / not yet" note. */
-  .placeholder { border: 1px dashed var(--edge2); background: var(--panel);
-    padding: 20px 14px; text-align: center; }
-  .placeholder .ph-note { font-family: var(--mono); font-size: 10.5px; color: var(--dimmer);
-    text-transform: uppercase; letter-spacing: 0.08em; }
 </style>
 </head>
 <body>
@@ -216,26 +210,20 @@
     <div class="tablewrap" style="margin-top:8px">
       <table>
         <colgroup>
-          <col style="width:24%"><col style="width:22%"><col style="width:15%"><col style="width:17%"><col style="width:22%">
+          <col style="width:20%"><col style="width:17%"><col style="width:9%"><col style="width:9%"><col style="width:16%"><col style="width:12%"><col style="width:17%">
         </colgroup>
         <thead><tr>
-          <th>Provider / lane</th><th>Pull started</th><th>Objects OD'd</th><th>Rate</th><th>Last record</th>
+          <th>Provider / lane</th><th>Data current as of (epoch)</th><th>ElSets</th><th>Objects</th><th>Pull started</th><th>Rate</th><th>Last record</th>
         </tr></thead>
         <tbody id="pipe-body"></tbody>
       </table>
     </div>
     <div class="sub" style="margin-top:6px">
-      Each lane counts fitted OMM records published to <b>this node</b> for its active batch
-      (newest batch_id per source on <span class="val-mono">/api/v1/stats</span> → sources[]).
-      Objects OD'd = live record count; rate = objects/min from the count delta across the poll
-      window; a lane with no records yet renders honestly as <b>idle</b>.
-    </div>
-  </section>
-
-  <section id="track-comparison">
-    <div class="sectlabel">Track comparison — OD'd vs Space-Track vs CelesTrak</div>
-    <div class="placeholder">
-      <div class="ph-note" id="track-comparison-body">Reserved — three-way track viewer mounts here (not yet available on this node)</div>
+      CelesTrak-supplemental-style stats per lane, from this node's records
+      (<span class="val-mono">/api/v1/stats</span> → sources[], active batch = newest batch_id per
+      source): <b>Data current as of</b> = newest record EPOCH; <b>ElSets</b> = element sets in the
+      batch; <b>Objects</b> = distinct NORAD IDs; rate = ElSets/min from count deltas across the poll
+      window. A lane with no records yet renders honestly as <b>idle</b>.
     </div>
   </section>
 
@@ -987,18 +975,33 @@
 
       if (l.active && l.ab && l.ab.row) {
         var r = l.ab.row;
+
+        // CelesTrak-supplemental-style: "data current as of" = newest indexed
+        // record EPOCH in the active batch (honest — when the node has no
+        // epoch index for the lane, render a dash, never a substitute time).
+        var epochTd = el("td");
+        epochTd.appendChild(el("div", "up", isoTime(r.latest_epoch) || "—"));
+        var epochAge = ageStr(r.latest_epoch);
+        if (epochAge) epochTd.appendChild(el("div", "pipe-sub", "epoch age " + epochAge));
+        tr.appendChild(epochTd);
+
+        var setsTd = el("td");
+        setsTd.appendChild(el("div", "pipe-obj", fmtInt(r.count)));
+        var note = "batch " + shortId(String(r.batch_id || "—"));
+        if (l.ab.batchCount > 1) note += " · +" + (l.ab.batchCount - 1) + " older";
+        setsTd.appendChild(el("div", "pipe-sub", note));
+        tr.appendChild(setsTd);
+
+        var distinctTd = el("td");
+        distinctTd.appendChild(el("div", "pipe-obj",
+          (typeof r.objects === "number" && r.objects > 0) ? fmtInt(r.objects) : "—"));
+        tr.appendChild(distinctTd);
+
         var start = el("td");
         start.appendChild(el("div", "up", isoTime(r.first_seen) || "—"));
         var startAge = ageStr(r.first_seen);
         if (startAge) start.appendChild(el("div", "pipe-sub", "first record " + startAge));
         tr.appendChild(start);
-
-        var objTd = el("td");
-        objTd.appendChild(el("div", "pipe-obj", fmtInt(r.count)));
-        var note = "batch " + shortId(String(r.batch_id || "—"));
-        if (l.ab.batchCount > 1) note += " · +" + (l.ab.batchCount - 1) + " older";
-        objTd.appendChild(el("div", "pipe-sub", note));
-        tr.appendChild(objTd);
 
         var arr = pushHist(l.laneKey, r.count || 0);
         var rate = ratePerMin(arr);
@@ -1015,9 +1018,11 @@
         if (lt) lastTd.appendChild(el("div", "pipe-sub", lt));
         tr.appendChild(lastTd);
       } else {
-        tr.appendChild(pipeCell(reachable ? "—" : "—", "up"));
+        tr.appendChild(pipeCell("—", "up"));
         var idlePill = el("td"); idlePill.appendChild(pillFor({ cls: "nodata", txt: reachable ? "IDLE" : "NO DATA" }));
         tr.appendChild(idlePill);
+        tr.appendChild(pipeCell("—", "pipe-sub"));
+        tr.appendChild(pipeCell("—", "up"));
         tr.appendChild(pipeCell("—", "pipe-sub"));
         tr.appendChild(pipeCell(reachable ? "no active batch" : "/api/v1/stats · unreachable", "pipe-sub"));
         pipeHist[l.laneKey] = []; // reset warm-up history when a lane goes idle

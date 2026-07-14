@@ -272,6 +272,12 @@ func (h *CoreAPIHandler) handleStats(w http.ResponseWriter, r *http.Request) {
 				if p.UpdatedAtUnix > 0 {
 					row["updated_at"] = time.Unix(p.UpdatedAtUnix, 0).UTC().Format(time.RFC3339)
 				}
+				if p.ObjectCount > 0 {
+					row["objects"] = p.ObjectCount
+				}
+				if p.LatestEpochUnix > 0 {
+					row["latest_epoch"] = time.Unix(p.LatestEpochUnix, 0).UTC().Format(time.RFC3339)
+				}
 				sources = append(sources, row)
 			}
 			resp["sources"] = sources
