@@ -47,16 +47,20 @@ import (
 //     the manifest schema has no separate "keyslot" capability name (see
 //     caps/keyslot.go), so wallet_sign IS the "keyslot (any key operations)"
 //     capability referenced in the loop B1 spec.
+//
 //   - http, protocol_dial: unrestricted outbound network to arbitrary
 //     hosts/peers (SSRF, data exfiltration, abuse-as-relay).
+//
 //   - process_exec, host_control: arbitrary code execution / host control.
 //     Neither is currently wired to a factory in node.go buildCapRegistry,
 //     but both are tiered here pre-emptively so a future factory addition
 //     is fail-closed by default rather than silently trusted.
+//
 //   - storage_write, storage_ingest: mutate the node's persisted SDS store
 //     or write raw provenance-tracked ingest data to disk ("ingest" in the
 //     loop B1 spec is storage_ingest — see caps/storage.go
 //     handleIngestWithSource).
+//
 //   - storage_query, storage_adapter: gated as sensitive alongside
 //     storage_write/storage_ingest, NOT merely "read-only benign".
 //     caps/storage.go registers ONE handler shared by all four storage_*
@@ -70,11 +74,29 @@ import (
 //     queries read the node's whole persisted SDS store, and the two-layer
 //     posture (policy approval + per-op gate) is deliberate defense in
 //     depth; see caps/storage.go for the per-op checks.
+//
 //   - ipfs: pins/adds arbitrary content to the local IPFS daemon, reachable
 //     by the public swarm — exfiltration and unbounded local-disk risk.
+//
 //   - pubsub: broadcasts arbitrary messages under the node's identity to
 //     every peer subscribed to a topic — spam/spoofing/DoS risk, the same
 //     class of outbound-network abuse as http/protocol_dial.
+//
+//   - secrets:* — one capability per credential lane in the node's encrypted
+//     credential keystore (internal/secrets; caps/secrets.go serves the
+//     "secrets" hostcall prefix). This is the ONLY capability family that
+//     hands a guest raw plaintext secret material, so it is the most
+//     dangerous name in this map: a module granted secrets:spacetrack holds
+//     the operator's actual Space-Track password. It is gated PER LANE — an
+//     approval for secrets:spacetrack conveys nothing about secrets:edc_cpf —
+//     and caps/secrets.go re-checks the exact lane on every call.
+//
+//     Every lane must be listed here explicitly. IsSensitiveCapability is an
+//     allowlist-of-what-to-gate, NOT "deny anything unrecognized" (see the
+//     note on the function): a secrets:* name absent from this map would be
+//     treated as benign and DEFAULT-ALLOWED to every module. When a new
+//     credential lane is added to internal/secrets, add it here in the same
+//     change.
 var sensitiveCapabilities = map[string]bool{
 	"wallet_sign":     true,
 	"http":            true,
@@ -87,6 +109,11 @@ var sensitiveCapabilities = map[string]bool{
 	"storage_adapter": true,
 	"ipfs":            true,
 	"pubsub":          true,
+
+	// Credential-keystore lanes (internal/secrets). See the block comment above.
+	"secrets:spacetrack": true,
+	"secrets:edc_cpf":    true,
+	"secrets:myintelsat": true,
 }
 
 // benignCapabilities lists capability names that default-allow with no
@@ -175,8 +202,27 @@ var benignCapabilities = map[string]bool{
 // (or benignCapabilities, with a documented reason) as part of that change —
 // see the process_exec/host_control comment above for the pattern.
 func IsSensitiveCapability(cap string) bool {
-	return sensitiveCapabilities[strings.TrimSpace(cap)]
+	cap = strings.TrimSpace(cap)
+
+	// The secrets:* family is gated BY PREFIX, not only by the entries in
+	// sensitiveCapabilities. Those entries remain (they are the documented,
+	// reviewable list), but a lane added to internal/secrets without a
+	// corresponding map entry would otherwise fall through to "unrecognized =
+	// benign = default-allow" and hand its plaintext to every module. For the
+	// one capability family that exports raw secret material, unrecognized must
+	// mean DENIED, not allowed. This is the deliberate exception to the
+	// allowlist-of-what-to-gate rule described above.
+	if strings.HasPrefix(cap, SecretsCapabilityPrefix) {
+		return true
+	}
+
+	return sensitiveCapabilities[cap]
 }
+
+// SecretsCapabilityPrefix names the credential-keystore capability family.
+// Every capability beginning with it is sensitive (see IsSensitiveCapability)
+// and maps to the "secrets" hostcall prefix (see capPrefixFromName).
+const SecretsCapabilityPrefix = "secrets:"
 
 // ---------------------------------------------------------------------
 // Persisted operator approvals

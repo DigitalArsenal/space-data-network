@@ -46,6 +46,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/credstore"
 	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
@@ -928,6 +929,28 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 	reg.Register("crypto_key_agreement", cryptoFac)
 	reg.Register("crypto_kdf", cryptoFac)
 	reg.Register("wallet_sign", caps.NewKeyslotCapFactory())
+
+	// Credential-keystore capabilities ("secrets:<lane>") — the node's
+	// operator-entered provider credentials, encrypted at rest under the node's
+	// own key material (internal/credstore).
+	//
+	// Registered PER LANE so an operator approval for secrets:spacetrack grants
+	// exactly the Space-Track credential and nothing else; caps/secrets.go
+	// re-checks the requested lane on every call. Every secrets:* name is
+	// sensitive (modulert.IsSensitiveCapability gates the whole prefix), so a
+	// module declaring one is DENIED AT LOAD unless the operator approved that
+	// content hash for that lane.
+	//
+	// If the store cannot be opened the capability is simply not registered:
+	// modules get "operation not supported" — fail closed, never a silent grant.
+	if credStore, cerr := credstore.NewStore(n.config.Storage.Path, credstore.RootPassword(n.config.Security.KeyPassword)); cerr != nil {
+		log.Warnf("credential store unavailable; secrets capabilities not registered: %v", cerr)
+	} else {
+		secretsFac := caps.NewSecretsCapFactory(credStore)
+		for _, lane := range credstore.AllIDs() {
+			reg.RegisterBridgeAware(caps.CapabilityForID(lane), secretsFac)
+		}
+	}
 
 	// PubSub capability — requires libp2p pubsub to be running
 	if n.pubsub != nil {

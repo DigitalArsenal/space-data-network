@@ -383,7 +383,16 @@ describe('removeNodeWidget / addNodeWidget / availableNodeWidgets', () => {
   it('availableNodeWidgets excludes widgets already in the layout, preserving catalog order', () => {
     const layout: NodeLayout = [{ id: 'health', span: 4 }];
     const available = availableNodeWidgets(layout).map((w) => w.id);
-    expect(available).toEqual(['identity', 'service', 'netmap', 'throughput', 'peersum', 'storage', 'activity']);
+    expect(available).toEqual([
+      'identity',
+      'service',
+      'netmap',
+      'throughput',
+      'peersum',
+      'storage',
+      'activity',
+      'credentials',
+    ]);
   });
 
   it('availableNodeWidgets is empty once every widget is placed', () => {

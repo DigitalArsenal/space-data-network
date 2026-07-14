@@ -44,6 +44,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/credstore"
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
@@ -1502,6 +1503,38 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					if jsFile, cssFile := auth.WalletAssets(); jsFile != "" {
 						legacyAdminUI.SetWalletAssets(jsFile, cssFile)
 					}
+				}
+			}
+
+			// ----------------------------------------------------------------
+			// Provider-credential API (admin-only, WRITE-ONLY, fails closed)
+			// ----------------------------------------------------------------
+			//
+			// Operator-entered third-party credentials (Space-Track today),
+			// stored encrypted at rest under the node's own key material
+			// (internal/credstore) — NEVER as an SDS record, which would
+			// replicate the credential to every peer.
+			//
+			// Registered UNCONDITIONALLY and gated inside the handler. That is
+			// deliberate: nginx on the public host has no /api/ location block,
+			// so a catch-all forwards every /api/** path here and the daemon's
+			// own auth is the only thing in front of these routes. The handler
+			// refuses to serve (503) whenever authentication is disabled or
+			// unavailable — it never falls open, and because the gate lives
+			// inside the handler it also survives a widened
+			// gateway.anonymous.allow. Status only: no route returns a stored
+			// secret to any caller.
+			if credStore, cerr := credstore.NewStore(cfg.Storage.Path, credstore.RootPassword(cfg.Security.KeyPassword)); cerr != nil {
+				log.Warnf("credential store unavailable; provider-credential API not mounted: %v", cerr)
+			} else {
+				credAPI := api.NewCredentialsHandler(credStore, authHandler, cfg.Admin.RequireAuth, map[string]api.Verifier{
+					credstore.IDSpaceTrack: credstore.NewSpaceTrackVerifier(),
+				})
+				credAPI.RegisterRoutes(adminMux)
+				if cfg.Admin.RequireAuth {
+					log.Infof("Provider credential API at %s://%s/api/v1/admin/credentials (admin auth required)", adminScheme, adminAddr)
+				} else {
+					log.Warnf("Provider credential API mounted but REFUSING to serve: admin.require_auth is disabled (fail closed)")
 				}
 			}
 

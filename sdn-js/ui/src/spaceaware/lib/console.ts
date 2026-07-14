@@ -292,7 +292,8 @@ export type NodeWidgetId =
   | 'throughput'
   | 'peersum'
   | 'storage'
-  | 'activity';
+  | 'activity'
+  | 'credentials';
 
 export interface NodeWidgetSpec {
   id: NodeWidgetId;
@@ -313,6 +314,7 @@ export const NODE_WIDGET_ORDER: readonly NodeWidgetId[] = [
   'peersum',
   'storage',
   'activity',
+  'credentials',
 ];
 
 export const NODE_WIDGETS: Record<NodeWidgetId, NodeWidgetSpec> = {
@@ -324,6 +326,7 @@ export const NODE_WIDGETS: Record<NodeWidgetId, NodeWidgetSpec> = {
   peersum: { id: 'peersum', title: 'PEER SUMMARY', spans: [4, 6], defaultSpan: 4 },
   storage: { id: 'storage', title: 'STORAGE · FLATSQL', spans: [4, 6], defaultSpan: 4 },
   activity: { id: 'activity', title: 'ACTIVITY LOG', spans: [4, 8, 12], defaultSpan: 8 },
+  credentials: { id: 'credentials', title: 'PROVIDER CREDENTIALS', spans: [4, 6, 8], defaultSpan: 6 },
 };
 
 export interface NodeLayoutEntry {
