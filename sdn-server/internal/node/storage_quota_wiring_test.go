@@ -161,13 +161,11 @@ func TestEnforceStorageQuotaNoOpWhenMaxSizeUnresolvable(t *testing.T) {
 
 // TestRunStorageQuotaGCLoopEvictsAndRespectsShutdown is the periodic-loop
 // seam test (mirrors the TTL-sweeper/catch-up-loop wiring pattern this
-// file's D1/D2 tests already use): starting the goroutine directly (as
-// Start() does when n.store != nil) must actually run enforceStorageQuota
-// on the configured cadence, and must exit promptly once n.ctx is
+// file's D1/D2 tests already use): one explicit tick must run
+// enforceStorageQuota, and the loop must exit promptly once n.ctx is
 // cancelled.
 func TestRunStorageQuotaGCLoopEvictsAndRespectsShutdown(t *testing.T) {
 	n := newQuotaWiringTestNode(t)
-	n.config.Storage.GCInterval = "10ms"
 	n.config.Storage.MaxSize = "1B"
 
 	for i := 0; i < 5; i++ {
@@ -177,8 +175,10 @@ func TestRunStorageQuotaGCLoopEvictsAndRespectsShutdown(t *testing.T) {
 		}
 	}
 
+	ticks := make(chan time.Time, 1)
 	n.wg.Add(1)
-	go n.runStorageQuotaGC()
+	go n.runStorageQuotaGCWithTicks(ticks)
+	ticks <- time.Now()
 
 	evicted := waitForCondition(t, 2*time.Second, func() bool {
 		live, err := n.store.LiveRecordBytes()
@@ -198,6 +198,47 @@ func TestRunStorageQuotaGCLoopEvictsAndRespectsShutdown(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("runStorageQuotaGC did not exit within 2s of context cancellation")
+	}
+}
+
+func TestRunStorageQuotaGCLoopSkipsBufferedTickWhenAlreadyCancelled(t *testing.T) {
+	n := newQuotaWiringTestNode(t)
+	n.config.Storage.MaxSize = "1B"
+
+	for i := 0; i < 5; i++ {
+		payload := []byte(fmt.Sprintf("filler-record-payload-bytes-%d", i))
+		if _, err := n.store.Store("RFM.fbs", payload, "TestPeer", nil); err != nil {
+			t.Fatalf("seed record %d failed: %v", i, err)
+		}
+	}
+	before, err := n.store.LiveRecordBytes()
+	if err != nil {
+		t.Fatalf("LiveRecordBytes failed: %v", err)
+	}
+
+	ticks := make(chan time.Time, 1)
+	ticks <- time.Now()
+	n.cancel()
+	n.wg.Add(1)
+	go n.runStorageQuotaGCWithTicks(ticks)
+
+	done := make(chan struct{})
+	go func() {
+		n.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runStorageQuotaGCWithTicks did not exit when started with a cancelled context")
+	}
+
+	after, err := n.store.LiveRecordBytes()
+	if err != nil {
+		t.Fatalf("LiveRecordBytes (after) failed: %v", err)
+	}
+	if after != before {
+		t.Fatalf("cancelled quota loop processed buffered tick: live bytes before=%d after=%d", before, after)
 	}
 }
 

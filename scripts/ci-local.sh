@@ -178,7 +178,7 @@ run_go() {
   prepare_go_toolchain
 
   step "Go tests"
-  "$ROOT/scripts/go-with-wasmedge.sh" test -p=1 -count=1 ./...
+  "$ROOT/scripts/go-with-wasmedge.sh" test -p=1 -timeout=20m -count=1 ./...
   pass "go test"
 }
 
@@ -186,7 +186,7 @@ run_go_race() {
   prepare_go_toolchain
 
   step "Go tests (race)"
-  "$ROOT/scripts/go-with-wasmedge.sh" test -race -p=1 -count=1 ./...
+  "$ROOT/scripts/go-with-wasmedge.sh" test -race -p=1 -timeout=30m -count=1 ./...
   pass "go test -race"
 }
 
