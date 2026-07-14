@@ -10,9 +10,8 @@ package storage
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +19,16 @@ import (
 )
 
 const readBudget = 2 * time.Second
+
+func TestStoreWriteChunkSizeBoundsColdRunnerLockWork(t *testing.T) {
+	// Run 29309719300 averaged about 1.7s per 128-record write window on a
+	// cold runner. Keep each window at no more than half that work so the
+	// existing two-second lock-wait regression budget has useful margin.
+	const maxColdRunnerChunkSize = 64
+	if storeWriteChunkSize > maxColdRunnerChunkSize {
+		t.Fatalf("storeWriteChunkSize = %d, want <= %d to bound each write-lock window", storeWriteChunkSize, maxColdRunnerChunkSize)
+	}
+}
 
 func newLockWindowStore(t *testing.T, dir string) *FlatSQLStore {
 	t.Helper()
@@ -33,6 +42,76 @@ func newLockWindowStore(t *testing.T, dir string) *FlatSQLStore {
 	}
 	t.Cleanup(func() { store.Close() })
 	return store
+}
+
+type lockWindowWriteResult struct {
+	written int
+	err     error
+}
+
+type lockWindowWriteTask struct {
+	result     chan lockWindowWriteResult
+	done       chan struct{}
+	waitOnce   sync.Once
+	waitResult lockWindowWriteResult
+}
+
+// startLockWindowWriteTask registers its join after the store's cleanup. Go's
+// LIFO cleanup order therefore guarantees the writer is finished before the
+// store can close, even when the test returns early after a failed probe.
+func startLockWindowWriteTask(t *testing.T, write func() (int, error)) *lockWindowWriteTask {
+	t.Helper()
+	task := &lockWindowWriteTask{
+		result: make(chan lockWindowWriteResult, 1),
+		done:   make(chan struct{}),
+	}
+	ready := make(chan struct{})
+	start := make(chan struct{})
+	go func() {
+		close(ready)
+		<-start
+		written, err := write()
+		task.result <- lockWindowWriteResult{written: written, err: err}
+		close(task.done)
+	}()
+	<-ready
+	t.Cleanup(func() { task.Wait() })
+	close(start)
+	return task
+}
+
+func (task *lockWindowWriteTask) Wait() lockWindowWriteResult {
+	task.waitOnce.Do(func() {
+		task.waitResult = <-task.result
+		<-task.done
+	})
+	return task.waitResult
+}
+
+func (task *lockWindowWriteTask) Done() <-chan struct{} {
+	return task.done
+}
+
+func TestLockWindowWriteTaskCleanupJoinsBeforeStoreCleanup(t *testing.T) {
+	var writerFinished bool
+	var storeCleanupSawFinished bool
+	t.Run("implicit cleanup join", func(t *testing.T) {
+		// This stands in for newLockWindowStore's earlier cleanup.
+		t.Cleanup(func() { storeCleanupSawFinished = writerFinished })
+
+		release := make(chan struct{})
+		startLockWindowWriteTask(t, func() (int, error) {
+			<-release
+			writerFinished = true
+			return 1, nil
+		})
+		// Release runs first, then the task join, then the simulated store close.
+		t.Cleanup(func() { close(release) })
+	})
+
+	if !storeCleanupSawFinished {
+		t.Fatal("store cleanup ran before the writer was joined")
+	}
 }
 
 func buildLockWindowCATRecords(t *testing.T, n int) [][]byte {
@@ -49,39 +128,72 @@ func buildLockWindowCATRecords(t *testing.T, n int) [][]byte {
 	return records
 }
 
-// assertReadsResponsive samples reads until done flips, failing if any single
-// read exceeds readBudget. Returns the number of reads and the worst latency.
-func assertReadsResponsive(t *testing.T, store *FlatSQLStore, schemaName string, done *atomic.Bool) (int, time.Duration) {
-	t.Helper()
-	reads := 0
-	var worst time.Duration
-	for !done.Load() {
+type lockWindowReadSample struct {
+	reads         int
+	worstLockWait time.Duration
+	worstTotal    time.Duration
+	err           error
+}
+
+// countRawRecordsWithLockWait runs the same complete count path as
+// CountRawRecords while reporting only the time spent acquiring the store
+// read lock. Keeping lock wait separate prevents cold SQL/WASM startup from
+// hiding or falsely reporting write-lock starvation in the regression test.
+func (s *FlatSQLStore) countRawRecordsWithLockWait(filter RawRecordQuery) (int64, time.Duration, error) {
+	start := time.Now()
+	s.mu.RLock()
+	lockWait := time.Since(start)
+	defer s.mu.RUnlock()
+	count, err := s.countRawRecordsLocked(filter)
+	return count, lockWait, err
+}
+
+// sampleReadsResponsive runs the complete raw-record count query but measures
+// mutex acquisition separately from cold SQL/WASM work. It returns violations
+// instead of failing so callers can always join the writer before Fatal/cleanup.
+func sampleReadsResponsive(store *FlatSQLStore, schemaName string, done <-chan struct{}) lockWindowReadSample {
+	var sample lockWindowReadSample
+	for {
+		select {
+		case <-done:
+			return sample
+		default:
+		}
+
 		start := time.Now()
-		if _, err := store.CountRawRecords(RawRecordQuery{SchemaName: schemaName}); err != nil {
-			t.Fatalf("read %d during concurrent write failed: %v", reads, err)
+		_, lockWait, err := store.countRawRecordsWithLockWait(RawRecordQuery{SchemaName: schemaName})
+		total := time.Since(start)
+		if err != nil {
+			sample.err = fmt.Errorf("read %d during concurrent write failed: %w", sample.reads, err)
+			return sample
 		}
-		elapsed := time.Since(start)
-		if elapsed > worst {
-			worst = elapsed
+		if lockWait > sample.worstLockWait {
+			sample.worstLockWait = lockWait
 		}
-		if elapsed > readBudget {
-			t.Fatalf("read %d took %s during concurrent write (budget %s): writes are starving readers again", reads, elapsed, readBudget)
+		if total > sample.worstTotal {
+			sample.worstTotal = total
 		}
-		reads++
-		time.Sleep(10 * time.Millisecond)
+		if lockWait > readBudget {
+			sample.err = fmt.Errorf("read %d waited %s for the store lock during concurrent write (budget %s): writes are starving readers again", sample.reads, lockWait, readBudget)
+			return sample
+		}
+		sample.reads++
+
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-done:
+			timer.Stop()
+			return sample
+		case <-timer.C:
+		}
 	}
-	return reads, worst
 }
 
 func TestReadsStayResponsiveDuringBatchStore(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "flatsql-lock-window-batch-*")
-	if err != nil {
-		t.Fatalf("temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 	store := newLockWindowStore(t, filepath.Join(tmpDir, "db"))
 
-	const n = storeWriteChunkSize*4 + 17 // several chunk windows + a ragged tail
+	const n = 529 // eight 64-record windows + a ragged tail
 	records := buildLockWindowCATRecords(t, n)
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
@@ -91,26 +203,19 @@ func TestReadsStayResponsiveDuringBatchStore(t *testing.T) {
 		ContentKeyID: "public",
 	}
 
-	var done atomic.Bool
-	type result struct {
-		inserted int
-		err      error
-	}
-	writeResult := make(chan result, 1)
-	go func() {
-		inserted, err := store.StoreBatchWithSourceTags("CAT.fbs", records, "source:celestrak", nil, tags)
-		done.Store(true)
-		writeResult <- result{inserted, err}
-	}()
-
-	reads, worst := assertReadsResponsive(t, store, "CAT.fbs", &done)
-
-	res := <-writeResult
+	writeTask := startLockWindowWriteTask(t, func() (int, error) {
+		return store.StoreBatchWithSourceTags("CAT.fbs", records, "source:celestrak", nil, tags)
+	})
+	readSample := sampleReadsResponsive(store, "CAT.fbs", writeTask.Done())
+	res := writeTask.Wait()
 	if res.err != nil {
 		t.Fatalf("StoreBatchWithSourceTags failed: %v", res.err)
 	}
-	if res.inserted != n {
-		t.Fatalf("inserted = %d, want %d (chunking must not drop or double records)", res.inserted, n)
+	if res.written != n {
+		t.Fatalf("inserted = %d, want %d (chunking must not drop or double records)", res.written, n)
+	}
+	if readSample.err != nil {
+		t.Fatal(readSample.err)
 	}
 	count, err := store.CountRawRecords(RawRecordQuery{SchemaName: "CAT.fbs"})
 	if err != nil {
@@ -119,23 +224,19 @@ func TestReadsStayResponsiveDuringBatchStore(t *testing.T) {
 	if count != int64(n) {
 		t.Fatalf("final record count = %d, want %d", count, n)
 	}
-	if reads == 0 {
+	if readSample.reads == 0 {
 		t.Fatalf("reader never sampled during the batch write; test proves nothing")
 	}
-	t.Logf("batch write of %d records: %d concurrent reads, worst read %s (budget %s)", n, reads, worst, readBudget)
+	t.Logf("batch write of %d records: %d concurrent reads, worst lock wait %s (budget %s), worst complete count %s", n, readSample.reads, readSample.worstLockWait, readBudget, readSample.worstTotal)
 }
 
 func TestReadsStayResponsiveDuringShardImport(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "flatsql-lock-window-import-*")
-	if err != nil {
-		t.Fatalf("temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	providerStore := newLockWindowStore(t, filepath.Join(tmpDir, "provider-db"))
 	subscriberStore := newLockWindowStore(t, filepath.Join(tmpDir, "subscriber-db"))
 
-	const n = storeWriteChunkSize*3 + 5
+	const n = 389 // six 64-record windows + a ragged tail
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
 		SourceName:   "celestrak-satcat",
@@ -159,26 +260,20 @@ func TestReadsStayResponsiveDuringShardImport(t *testing.T) {
 		t.Fatalf("ExportDatasetWindow failed: %v", err)
 	}
 
-	var done atomic.Bool
-	type result struct {
-		imported int
-		err      error
-	}
-	importResult := make(chan result, 1)
-	go func() {
+	writeTask := startLockWindowWriteTask(t, func() (int, error) {
 		imported, _, err := subscriberStore.ImportDatasetShardFromFiles(export.ShardPath, export.IndexPath, "celestrak.eth")
-		done.Store(true)
-		importResult <- result{imported, err}
-	}()
-
-	reads, worst := assertReadsResponsive(t, subscriberStore, "CAT.fbs", &done)
-
-	res := <-importResult
+		return imported, err
+	})
+	readSample := sampleReadsResponsive(subscriberStore, "CAT.fbs", writeTask.Done())
+	res := writeTask.Wait()
 	if res.err != nil {
 		t.Fatalf("ImportDatasetShardFromFiles failed: %v", res.err)
 	}
-	if res.imported != n {
-		t.Fatalf("imported = %d, want %d (chunking must not drop or double records)", res.imported, n)
+	if res.written != n {
+		t.Fatalf("imported = %d, want %d (chunking must not drop or double records)", res.written, n)
+	}
+	if readSample.err != nil {
+		t.Fatal(readSample.err)
 	}
 	count, err := subscriberStore.CountRawRecords(RawRecordQuery{SchemaName: "CAT.fbs"})
 	if err != nil {
@@ -187,8 +282,8 @@ func TestReadsStayResponsiveDuringShardImport(t *testing.T) {
 	if count != int64(n) {
 		t.Fatalf("final record count = %d, want %d", count, n)
 	}
-	if reads == 0 {
+	if readSample.reads == 0 {
 		t.Fatalf("reader never sampled during the shard import; test proves nothing")
 	}
-	t.Logf("shard import of %d records: %d concurrent reads, worst read %s (budget %s)", n, reads, worst, readBudget)
+	t.Logf("shard import of %d records: %d concurrent reads, worst lock wait %s (budget %s), worst complete count %s", n, readSample.reads, readSample.worstLockWait, readBudget, readSample.worstTotal)
 }
