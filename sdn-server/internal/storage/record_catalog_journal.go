@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"container/heap"
+	"context"
 	"database/sql"
 	"encoding/binary"
 	"fmt"
@@ -36,6 +37,12 @@ type recordCatalogJournal struct {
 	path        string
 	readOnly    bool
 	replayLimit int64
+
+	// onAppend observes every LIVE catalog mutation. It is the single funnel
+	// through which the hydration shield learns which records live traffic
+	// (re)wrote while a background replay is in flight, so a historical
+	// destructive frame can never clobber them. Nil outside a store.
+	onAppend func([]recordCatalogEvent)
 }
 
 type recordCatalogEvent struct {
@@ -213,126 +220,248 @@ func (j *recordCatalogJournal) AppendAll(events []recordCatalogEvent) error {
 	if _, err := j.f.Write(out); err != nil {
 		return err
 	}
-	return j.f.Sync()
+	if err := j.f.Sync(); err != nil {
+		return err
+	}
+	// Tell the hydration shield which records this live write touched. The
+	// caller holds the store write lock across this append, and a concurrent
+	// background replay applies each window under that same lock, so the live
+	// row and its shield entry become visible to the replay together — the
+	// replay can never see the row without the shield entry that protects it.
+	if j.onAppend != nil {
+		j.onAppend(events)
+	}
+	return nil
 }
 
 func (j *recordCatalogJournal) Replay(store *FlatSQLStore) (int, error) {
 	return j.replay(store, nil)
 }
 
-// replay is Replay with an optional progress callback invoked with the running
-// applied-frame count at each replay batch boundary (recordCatalogReplayBatchSize
-// frames). progress may be nil. It is used by the post-boot background
-// record-catalog hydration to emit "replayed N records" progress on
-// provider-scale catalogs (celestrak nodes carry 150k+ records).
+// replay applies the whole catalog INLINE, without touching the store write
+// lock: it is used where the caller already owns the store (initial open) or
+// already holds the write lock (engine-poison recovery in engine_link.go).
+// progress may be nil.
 func (j *recordCatalogJournal) replay(store *FlatSQLStore, progress func(done int)) (int, error) {
+	return j.replayFrames(context.Background(), store, progress, false)
+}
+
+// replayChunked applies the catalog in bounded windows, ACQUIRING AND RELEASING
+// the store write lock around each one so that readers (/api/v1/stats and every
+// other s.mu.RLock path) interleave and are never starved for the length of the
+// replay. It is the form the post-boot background hydration uses.
+//
+// See record_catalog_replay.go for why releasing the lock mid-replay is safe:
+// upserts are content-addressed and therefore idempotent against live re-adds,
+// and the hydration shield stops a historical destructive frame from landing on
+// top of a live re-add of the same CID.
+func (j *recordCatalogJournal) replayChunked(ctx context.Context, store *FlatSQLStore, progress func(done int)) (int, error) {
+	return j.replayFrames(ctx, store, progress, true)
+}
+
+// replayFrames drives the journal. Frames are applied in journal order; runs of
+// upserts are accumulated and written as multi-row INSERTs (see
+// recordCatalogReplayBatch), which is what turns a per-record, ~4-engine-calls
+// replay into a batched one.
+//
+// When chunked, each window takes the store write lock, applies at most
+// recordCatalogReplayWindow frames in one transaction, and releases the lock.
+// Lock order is always store.mu -> journal.mu, matching the live write path
+// (which holds store.mu across its journal append), so the two can never
+// deadlock against each other.
+func (j *recordCatalogJournal) replayFrames(ctx context.Context, store *FlatSQLStore, progress func(done int), chunked bool) (int, error) {
 	if j == nil || j.f == nil {
 		return 0, nil
 	}
-	j.mu.Lock()
-	defer j.mu.Unlock()
 
+	// Snapshot the journal length once: frames appended by LIVE writes after the
+	// replay starts are, by construction, already applied to the control tables
+	// by the writer itself and must not be replayed on top of newer state.
+	j.mu.Lock()
 	info, err := j.f.Stat()
 	if err != nil {
+		j.mu.Unlock()
 		return 0, err
 	}
 	size := info.Size()
 	if j.readOnly {
 		size = j.replayLimit
 	}
+	j.mu.Unlock()
+
+	// The rowid resolver must know the highest rowid the journal will ask for
+	// BEFORE it hands out any fresh rowid, or a fresh rowid could collide with an
+	// explicit one in a later frame. One cheap scan of the frame headers gives it
+	// (see replayRowIDState for why colliding rowids exist at all).
+	journalMaxRowID, err := j.scanMaxRowID(size)
+	if err != nil {
+		return 0, err
+	}
+	rowIDs, err := newReplayRowIDState(store, journalMaxRowID)
+	if err != nil {
+		return 0, err
+	}
+
 	var off int64
-	var hdr [8]byte
 	count := 0
-	var tx *sql.Tx
 	knownProducerTables := map[string]bool{}
-	beginTx := func() error {
-		if tx != nil {
-			return nil
-		}
-		var err error
-		tx, err = store.db.Begin()
-		return err
-	}
-	commitTx := func() error {
-		if tx == nil {
-			return nil
-		}
-		err := tx.Commit()
-		tx = nil
-		return err
-	}
-	rollbackTx := func() {
-		if tx != nil {
-			_ = tx.Rollback()
-			tx = nil
-		}
-	}
-	defer rollbackTx()
 
 	for off < size {
-		if _, err := j.f.ReadAt(hdr[:], off); err != nil {
+		// Cancellation is checked BETWEEN windows: a shutdown mid-hydration
+		// drains within one window instead of wedging the process.
+		if err := ctx.Err(); err != nil {
 			return count, err
+		}
+		applied, next, err := j.replayWindow(store, off, size, knownProducerTables, rowIDs, chunked)
+		count += applied
+		if err != nil {
+			return count, err
+		}
+		if next == off {
+			break // defensive: never spin on a zero-length window
+		}
+		off = next
+		if progress != nil {
+			progress(count)
+		}
+	}
+	return count, nil
+}
+
+// replayWindow applies up to recordCatalogReplayWindow frames starting at off,
+// under (when chunked) one store-write-lock hold and one transaction. It returns
+// the number of frames applied and the offset to resume from.
+// scanMaxRowID reads the journal's frame stream and returns the highest
+// Index.RowID any record-upsert frame carries (0 if none). Header-only work plus
+// a decode per frame — ~0.1s for the 171k-frame dev catalog.
+func (j *recordCatalogJournal) scanMaxRowID(size int64) (int64, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	var off int64
+	var hdr [8]byte
+	var max int64
+	for off < size {
+		if _, err := j.f.ReadAt(hdr[:], off); err != nil {
+			return 0, err
 		}
 		n := int64(binary.LittleEndian.Uint32(hdr[0:]))
 		payload := make([]byte, n)
 		if _, err := j.f.ReadAt(payload, off+8); err != nil {
-			return count, err
+			return 0, err
 		}
 		event, err := decodeRecordCatalogEvent(payload)
 		if err != nil {
-			return count, fmt.Errorf("record catalog frame at %d: %w", off, err)
+			return 0, fmt.Errorf("record catalog frame at %d: %w", off, err)
 		}
+		if event.Kind == recordCatalogEventRecordUpsert && event.Index.RowID > max {
+			max = event.Index.RowID
+		}
+		off += 8 + n
+	}
+	return max, nil
+}
+
+func (j *recordCatalogJournal) replayWindow(
+	store *FlatSQLStore,
+	off, size int64,
+	knownProducerTables map[string]bool,
+	rowIDs *replayRowIDState,
+	chunked bool,
+) (int, int64, error) {
+	if chunked {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	var batch recordCatalogReplayBatch
+	tableOf := map[string]string{}
+	tableFor := func(event recordCatalogEvent) (string, error) {
+		name, ok := tableOf[event.CID+"\x00"+event.PeerID+"\x00"+event.SchemaName]
+		if !ok {
+			return ProducerStandardTableName(routedProducerID(event.PeerID), event.SchemaName)
+		}
+		return name, nil
+	}
+
+	// flush writes the accumulated upserts in ONE transaction. Producer tables
+	// are created during accumulation (DDL, outside the transaction), so flush
+	// only ever runs INSERTs.
+	flush := func() error {
+		if batch.len() == 0 {
+			return nil
+		}
+		tx, err := store.db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin replay batch: %w", err)
+		}
+		if err := batch.flush(store, tx, tableFor, rowIDs); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit replay batch: %w", err)
+		}
+		batch.reset()
+		return nil
+	}
+
+	var hdr [8]byte
+	applied := 0
+	for off < size && applied < recordCatalogReplayWindow {
+		if _, err := j.f.ReadAt(hdr[:], off); err != nil {
+			return applied, off, err
+		}
+		n := int64(binary.LittleEndian.Uint32(hdr[0:]))
+		payload := make([]byte, n)
+		if _, err := j.f.ReadAt(payload, off+8); err != nil {
+			return applied, off, err
+		}
+		event, err := decodeRecordCatalogEvent(payload)
+		if err != nil {
+			return applied, off, fmt.Errorf("record catalog frame at %d: %w", off, err)
+		}
+
 		switch event.Kind {
 		case recordCatalogEventRecordUpsert:
 			tableName, err := ProducerStandardTableName(routedProducerID(event.PeerID), event.SchemaName)
 			if err != nil {
-				return count, fmt.Errorf("record catalog frame at %d: %w", off, err)
+				return applied, off, fmt.Errorf("record catalog frame at %d: %w", off, err)
 			}
 			if !knownProducerTables[tableName] {
-				if err := commitTx(); err != nil {
-					return count, fmt.Errorf("record catalog frame at %d: commit before table init: %w", off, err)
-				}
+				// DDL must not run inside the batch transaction.
 				if _, err := store.ensureProducerStandardTable(routedProducerID(event.PeerID), event.SchemaName); err != nil {
-					return count, fmt.Errorf("record catalog frame at %d: %w", off, err)
+					return applied, off, fmt.Errorf("record catalog frame at %d: %w", off, err)
 				}
 				knownProducerTables[tableName] = true
 			}
-			if err := beginTx(); err != nil {
-				return count, fmt.Errorf("record catalog frame at %d: begin replay batch: %w", off, err)
-			}
-			if err := store.applyRecordCatalogRecordUpsertTo(tx, event, tableName); err != nil {
-				return count, fmt.Errorf("record catalog frame at %d: %w", off, err)
-			}
+			tableOf[event.CID+"\x00"+event.PeerID+"\x00"+event.SchemaName] = tableName
+			batch.records = append(batch.records, event)
 		case recordCatalogEventTagUpsert:
-			if err := beginTx(); err != nil {
-				return count, fmt.Errorf("record catalog frame at %d: begin replay batch: %w", off, err)
-			}
-			if err := store.applyRecordCatalogTagUpsertTo(tx, event); err != nil {
-				return count, fmt.Errorf("record catalog frame at %d: %w", off, err)
-			}
+			batch.tags = append(batch.tags, event)
 		default:
-			if err := commitTx(); err != nil {
-				return count, fmt.Errorf("record catalog frame at %d: commit before scope event: %w", off, err)
+			// A destructive frame (RecordDelete / SourceKeep / GCOlderThan) must
+			// observe everything the journal applied before it: flush first, then
+			// apply it outside the batch transaction (these appliers write through
+			// store.db directly, and consult the hydration shield so they can
+			// never delete a record that live traffic re-added mid-replay).
+			if err := flush(); err != nil {
+				return applied, off, fmt.Errorf("record catalog frame at %d: %w", off, err)
 			}
 			if err := store.applyRecordCatalogEvent(event); err != nil {
-				return count, fmt.Errorf("record catalog frame at %d: %w", off, err)
+				return applied, off, fmt.Errorf("record catalog frame at %d: %w", off, err)
 			}
 		}
-		count++
-		if count%recordCatalogReplayBatchSize == 0 {
-			if err := commitTx(); err != nil {
-				return count, fmt.Errorf("record catalog frame at %d: commit replay batch: %w", off, err)
-			}
-			if progress != nil {
-				progress(count)
-			}
-		}
+		applied++
 		off += 8 + n
 	}
-	if err := commitTx(); err != nil {
-		return count, fmt.Errorf("record catalog final replay batch: %w", err)
+
+	if err := flush(); err != nil {
+		return applied, off, err
 	}
-	return count, nil
+	return applied, off, nil
 }
 
 func (j *recordCatalogJournal) ReplayEngineHotWindow(store *FlatSQLStore, schemaName string, limit int) (int, error) {
@@ -1352,6 +1481,12 @@ func (s *FlatSQLStore) applyRecordCatalogRecordDelete(schemaName, cid string) er
 	if strings.TrimSpace(schemaName) == "" || strings.TrimSpace(cid) == "" {
 		return fmt.Errorf("record delete requires schema and cid")
 	}
+	// A historical delete must never take out a record that LIVE traffic re-added
+	// while this replay was running: the live re-add is strictly newer than any
+	// frame in the pre-boot journal prefix. Inert outside a replay.
+	if s.hydrationShield.has(schemaName, cid) {
+		return nil
+	}
 	tableName, err := sds.SchemaNameToTable(schemaName)
 	if err != nil {
 		return err
@@ -1392,6 +1527,11 @@ func (s *FlatSQLStore) applyRecordCatalogSourceKeep(schemaName, providerID, sour
 	`), schemaName, providerID, sourceName, keepBatch); err != nil {
 		return err
 	}
+	// Never let a historical batch-clear delete records that live traffic
+	// re-added mid-replay. Inert outside a replay.
+	if err := s.unshieldTempCIDs("temp_sdn_record_catalog_source_keep_cids", schemaName); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(flatsqldrv.WithoutJournal(`
 		DELETE FROM sdn_record_source_tags
 		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id <> ?
@@ -1420,6 +1560,11 @@ func (s *FlatSQLStore) applyRecordCatalogGCOlderThan(schemaName string, cutoffUn
 		INSERT OR IGNORE INTO temp_sdn_record_catalog_gc_cids (cid)
 		SELECT cid FROM %s WHERE timestamp < ?
 	`, readSource)), cutoffUnix); err != nil {
+		return err
+	}
+	// Never let a historical GC sweep delete records that live traffic re-added
+	// mid-replay. Inert outside a replay.
+	if err := s.unshieldTempCIDs("temp_sdn_record_catalog_gc_cids", schemaName); err != nil {
 		return err
 	}
 	if err := s.applyRecordCatalogRecordSetDelete(schemaName, tableName, `cid IN (SELECT cid FROM temp_sdn_record_catalog_gc_cids)`); err != nil {
