@@ -829,6 +829,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	// Start admin server if enabled
 	var adminServer *http.Server
 	var httpChallengeServer *http.Server
+	var localPublishServer *http.Server
 	var authHandler *auth.Handler
 	var storefrontSvc *storefront.Service
 	var storefrontStore *storefront.Store
@@ -1746,6 +1747,84 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// ------------------------------------------------------------------
+	// Local publish lane — a SEPARATE loopback-bound listener carrying only
+	// the publish routes, with no HTTP auth, for a pipeline running ON this
+	// host (e.g. the constellation OD pipeline writing its fitted OMM/OCM
+	// records into this node's own store).
+	//
+	// It is a second socket on purpose. The admin/API listener above is what
+	// nginx reverse-proxies to, so public traffic already reaches the daemon
+	// from 127.0.0.1; trusting the client IP THERE would publish writes to the
+	// internet. Authority here comes from the socket — a loopback address the
+	// proxy does not forward to — so the public listener's require_auth
+	// semantics are left completely untouched.
+	//
+	// Disabled unless publishing.local_publish_addr is set. A non-loopback
+	// value is a fatal config error, never a silent public bind.
+	// ------------------------------------------------------------------
+	if localPublishAddr := strings.TrimSpace(cfg.Publishing.LocalPublishAddr); localPublishAddr != "" {
+		if err := config.ValidateLoopbackListenAddr(localPublishAddr); err != nil {
+			return fmt.Errorf("publishing.local_publish_addr: %w", err)
+		}
+		if !cfg.Publishing.Enabled {
+			return fmt.Errorf("publishing.local_publish_addr is set but publishing.enabled is false")
+		}
+		if n.Store() == nil {
+			return fmt.Errorf("publishing.local_publish_addr requires a node with storage (mode != edge)")
+		}
+
+		// Validates the address AND asserts the REAL bound address is loopback,
+		// closing the socket rather than serving if it is not. ufw is inactive on
+		// the prod hosts, so this bind is the boundary — it must fail closed.
+		listener, err := config.ListenLoopback(localPublishAddr)
+		if err != nil {
+			return fmt.Errorf("local publish lane: %w", err)
+		}
+
+		localMux := http.NewServeMux()
+		localQuotas := api.NewStorageQuotaManager(n.Store(), cfg.Publishing.DefaultQuotaBytes)
+		localPublishAPI := api.NewPublishHandler(n.Store(), n.Validator(), localQuotas, &cfg.Publishing, nil)
+		localPublishAPI.SetLogService(n.LogService())
+		localPublishAPI.RegisterLocalLaneRoutes(localMux, n.PeerID().String())
+
+		// GET /api/v1/stats on the lane too: the pipeline's completeness gate
+		// polls it to confirm the node persisted the batch it just acked, so a
+		// write-only lane would fail every run. It is already an anonymous read
+		// on the public listener, so this adds no surface — it just spares the
+		// pipeline from needing a second (TLS) base URL for reads.
+		localCoreAPI := api.NewCoreAPIHandler(
+			n.PeerID(),
+			n.Host(),
+			n.PubSub(),
+			n,
+			n.Store(),
+			n.Validator(),
+			&cfg.Admin,
+			nil, // no auth handler: this mux is reachable only over loopback
+			n.ListenAddrs,
+		)
+		localCoreAPI.RegisterLocalLaneReadRoutes(localMux)
+
+		localPublishServer = &http.Server{
+			Handler:           localMux,
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       5 * time.Minute,
+			WriteTimeout:      5 * time.Minute,
+			IdleTimeout:       120 * time.Second,
+		}
+		go func() {
+			if err := localPublishServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+				log.Warnf("Local publish lane error: %v", err)
+			}
+		}()
+		log.Infof(
+			"Local publish lane (loopback only, NO auth) at http://%s/api/v1/data/publish/{schema} "+
+				"and /api/v1/admin/publish?schema= — attributed to %s. NEVER reverse-proxy this port.",
+			listener.Addr(), n.PeerID().String(),
+		)
+	}
+
 	var (
 		assetRetentionCancel context.CancelFunc
 		assetRetentionDone   <-chan struct{}
@@ -1795,6 +1874,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	}
 	if httpChallengeServer != nil {
 		httpChallengeServer.Shutdown(ctx)
+	}
+	if localPublishServer != nil {
+		localPublishServer.Shutdown(ctx)
 	}
 	if storefrontSvc != nil {
 		if err := storefrontSvc.Close(); err != nil {

@@ -101,10 +101,19 @@ func TestValidatorValidateBasic(t *testing.T) {
 		t.Error("Expected error for unknown schema")
 	}
 
-	// Test validation with known schema (basic validation without WASM)
+	// A known schema is NOT a licence to store arbitrary bytes. Without the flatc
+	// WASM module (the state of every packaged deployment) validation used to
+	// degrade to a non-empty check, so this JSON blob was accepted and stored as
+	// if it were an OMM record. It must be rejected on structure + file identifier.
 	err = validator.Validate(ctx, "OMM.fbs", []byte(`{"satellite": "ISS"}`))
+	if err == nil {
+		t.Error("Expected error for a JSON payload published as an OMM FlatBuffer")
+	}
+
+	// A real OMM record still validates without WASM.
+	err = validator.Validate(ctx, "OMM.fbs", NewOMMBuilder().WithNoradCatID(25544).Build())
 	if err != nil {
-		t.Errorf("Unexpected validation error: %v", err)
+		t.Errorf("Unexpected validation error for a real OMM record: %v", err)
 	}
 
 	// Test validation with empty data
