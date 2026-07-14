@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -65,18 +66,43 @@ func newQuotaWiringTestNode(t *testing.T) *Node {
 	if err != nil {
 		t.Fatalf("NewFlatSQLStore failed: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
 
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-
-	return &Node{
+	n := &Node{
 		store: store,
 		config: &config.Config{
 			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "store")},
 		},
 		ctx:    ctx,
 		cancel: cancel,
+	}
+	t.Cleanup(func() {
+		cancel()
+		n.wg.Wait()
+		if err := store.Close(); err != nil {
+			t.Errorf("close quota wiring test store: %v", err)
+		}
+	})
+
+	return n
+}
+
+func TestNewQuotaWiringTestNodeCleanupWaitsForWorkers(t *testing.T) {
+	var workerFinished atomic.Bool
+
+	t.Run("worker", func(t *testing.T) {
+		n := newQuotaWiringTestNode(t)
+		n.wg.Add(1)
+		go func() {
+			defer n.wg.Done()
+			<-n.ctx.Done()
+			time.Sleep(25 * time.Millisecond)
+			workerFinished.Store(true)
+		}()
+	})
+
+	if !workerFinished.Load() {
+		t.Fatal("newQuotaWiringTestNode cleanup returned before its worker finished")
 	}
 }
 
