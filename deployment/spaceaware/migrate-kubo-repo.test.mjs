@@ -26,7 +26,15 @@ const sourcePins = [
 ];
 
 const stubDriver = String.raw`#!/usr/bin/env node
-const { appendFileSync, cpSync, mkdirSync, readFileSync, readdirSync, writeFileSync } = require('node:fs');
+const {
+  appendFileSync,
+  cpSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  writeFileSync,
+} = require('node:fs');
 const { basename, join } = require('node:path');
 
 const command = process.argv[2];
@@ -114,7 +122,15 @@ if (command === 'ipfs') {
     process.stdout.write(pins.join('\n') + (pins.length ? '\n' : ''));
     finish();
   }
-  if (args[0] === 'config' && args[1] === 'Datastore.StorageMax') finish();
+  if (args[0] === 'config' && args[1] === 'Datastore.StorageMax') {
+    const configPath = join(env.IPFS_PATH, 'config');
+    const replacementPath = configPath + '.atomic-replacement';
+    const config = JSON.parse(readFileSync(configPath, 'utf8'));
+    config.Datastore = { ...(config.Datastore || {}), StorageMax: args[2] };
+    writeFileSync(replacementPath, JSON.stringify(config) + '\n', { mode: 0o600 });
+    renameSync(replacementPath, configPath);
+    finish();
+  }
   finish(2);
 }
 
@@ -384,6 +400,10 @@ test('copies without deleting source, verifies Kubo, then starts SDN', async (t)
     sourceBlockBefore.toString(),
   );
   assert.equal(
+    JSON.parse(await readFile(join(fixture.destinationRepo, 'config'), 'utf8')).Datastore.StorageMax,
+    '120GB',
+  );
+  assert.equal(
     await readFile(fixture.dropIn, 'utf8'),
     `[Service]\nEnvironment=IPFS_PATH=${fixture.destinationRepo}\nReadWritePaths=${fixture.destinationRepo}\n`,
   );
@@ -397,6 +417,13 @@ test('copies without deleting source, verifies Kubo, then starts SDN', async (t)
   const sdnStop = indexOf(({ command, args }) => command === 'systemctl' && args[0] === 'stop' && args[1] === 'space-data-network.service');
   const kuboStop = indexOf(({ command, args }) => command === 'systemctl' && args[0] === 'stop' && args[1] === 'kubo.service');
   const rsync = indexOf(({ command }) => command === 'rsync');
+  const storageMaxConfig = indexOf(({ command, args, ipfsPath }) =>
+    command === 'ipfs'
+      && args.join(' ') === 'config Datastore.StorageMax 120GB'
+      && ipfsPath === fixture.destinationRepo);
+  const finalChown = indexOf(({ command, args }) =>
+    command === 'chown'
+      && args.join(' ') === `-R ipfs:ipfs ${fixture.destinationRepo}`);
   const kuboStart = indexOf(({ command, args }) => command === 'systemctl' && args[0] === 'start' && args[1] === 'kubo.service');
   const apiCheck = indexOf(({ command, args }) => command === 'curl' && args.some((arg) => arg.includes('/api/v0/id')));
   const destinationIdentityCheck = indexOf(({ command, args, ipfsPath }) =>
@@ -408,6 +435,10 @@ test('copies without deleting source, verifies Kubo, then starts SDN', async (t)
 
   assert.ok(sdnStop >= 0 && sdnStop < kuboStop, 'SDN must stop before Kubo');
   assert.ok(kuboStop < rsync && rsync < kuboStart, 'copy must happen while Kubo is stopped');
+  assert.ok(
+    storageMaxConfig < finalChown && finalChown < kuboStart,
+    'final recursive ownership repair must follow config replacement and precede Kubo start',
+  );
   assert.ok(
     kuboStart < apiCheck
       && apiCheck < destinationIdentityCheck
