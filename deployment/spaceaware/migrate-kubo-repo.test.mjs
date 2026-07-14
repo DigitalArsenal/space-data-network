@@ -376,6 +376,10 @@ test('production migration defaults use the live ipfs.service topology', async (
   assert.match(migration, /^readonly KUBO_SERVICE="ipfs\.service"$/m);
   assert.match(migration, /^readonly KUBO_API_URL="http:\/\/127\.0\.0\.1:5002\/api\/v0\/id"$/m);
   assert.match(migration, /^readonly KUBO_GATEWAY_URL="http:\/\/127\.0\.0\.1:8091"$/m);
+  assert.match(
+    migration,
+    /for required_command in systemctl ipfs rsync findmnt realpath df du curl chown xargs; do/,
+  );
   assert.doesNotMatch(migration, /kubo\.service|127\.0\.0\.1:5001|127\.0\.0\.1:8080/);
 });
 
@@ -418,9 +422,21 @@ test('refuses a missing, mismatched, or ambiguous effective IPFS_PATH before any
       /effective IPFS_PATH is ambiguous/i,
     ],
     [
-      'quoted',
-      (sourceRepo) => `IPFS_PATH="${sourceRepo}" KUBO_SECRET=${secretSentinel}`,
+      'malformed quote',
+      (sourceRepo) => `"IPFS_PATH=${sourceRepo} KUBO_SECRET=${secretSentinel}`,
       /effective IPFS_PATH is ambiguous/i,
+    ],
+    [
+      'quoted unrelated value containing IPFS_PATH text',
+      (sourceRepo) =>
+        `"KUBO_NOTE=before IPFS_PATH=${sourceRepo} after" KUBO_SECRET=${secretSentinel}`,
+      /effective IPFS_PATH is missing/i,
+    ],
+    [
+      'escaped-space unrelated value containing IPFS_PATH text',
+      (sourceRepo) =>
+        `KUBO_NOTE=before\\ IPFS_PATH=${sourceRepo}\\ after KUBO_SECRET=${secretSentinel}`,
+      /effective IPFS_PATH is missing/i,
     ],
   ]) {
     await t.test(name, async (subtest) => {
@@ -443,6 +459,17 @@ test('refuses a missing, mismatched, or ambiguous effective IPFS_PATH before any
       ]);
     });
   }
+});
+
+test('safely decodes a quoted serialized IPFS_PATH assignment', async (t) => {
+  const fixture = await makeFixture(t, {
+    ipfsUnitEnvironment: (sourceRepo) =>
+      `"IPFS_PATH=${sourceRepo}" KUBO_PROFILE=server`,
+  });
+
+  const result = await fixture.run();
+
+  assert.equal(result.code, 0, result.stderr);
 });
 
 test('deploy adds the optional volume path only for the exact SpaceAware config', async () => {
@@ -752,7 +779,7 @@ test('same pin count still fails when one deterministic sample pin is absent', a
 test('allows unrelated environment assignments, preserves source, verifies Kubo, then starts SDN', async (t) => {
   const fixture = await makeFixture(t, {
     ipfsUnitEnvironment: (sourceRepo) =>
-      `IPFS_PATH=${sourceRepo} KUBO_PROFILE=server`,
+      `IPFS_PATH=${sourceRepo} "KUBO_NOTE=before deployment after" KUBO_PROFILE=server`,
   });
   const sourceConfigBefore = await readFile(join(fixture.sourceRepo, 'config'));
   const sourceBlockBefore = await readFile(join(fixture.sourceRepo, 'blocks', 'source-only'));
