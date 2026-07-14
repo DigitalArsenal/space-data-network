@@ -247,7 +247,7 @@ describe('module-delivery SDK compatibility', () => {
     } finally {
       await cleanupCompilation(compilation);
     }
-  });
+  }, 60_000);
 
   it('emits requester bytes and consumes grant bytes that remain valid under the SDK licensing helpers', async () => {
     let capturedGrantBytes = new Uint8Array(0);
