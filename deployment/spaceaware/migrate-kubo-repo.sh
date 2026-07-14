@@ -228,8 +228,8 @@ systemctl stop "$KUBO_SERVICE"
 
 mkdir -p "$DESTINATION_REPO"
 rsync -aHAX --numeric-ids "${SOURCE_REPO%/}/" "${DESTINATION_REPO%/}/"
-chown -R "$REPO_OWNER" "$DESTINATION_REPO"
 IPFS_PATH="$DESTINATION_REPO" ipfs config Datastore.StorageMax "$STORAGE_MAX"
+chown -R "$REPO_OWNER" "$DESTINATION_REPO"
 
 mkdir -p "$DROP_IN_DIR"
 DROP_IN_TEMP="${DROP_IN}.tmp.$$"
