@@ -1542,6 +1542,78 @@ func TestFlatSQLStoreStoreWithSourceTags(t *testing.T) {
 	if string(matches[0].Data) != string(testData) {
 		t.Fatalf("matched data = %s, want %s", matches[0].Data, testData)
 	}
+
+	// Regression (A2.6 finding): the storage.query read path must PROJECT the
+	// source tags, not just filter on them — the OD fit pipeline groups records
+	// per provider via SourceTags.SourceName, and an empty projection silently
+	// classifies every record as unconfigured.
+	indexed, err := store.QueryIndexedRecords(IndexedRecordQuery{
+		SchemaName:          "OMM.fbs",
+		Limit:               10,
+		AllowLargeResultSet: false,
+	})
+	if err != nil {
+		t.Fatalf("QueryIndexedRecords failed: %v", err)
+	}
+	if len(indexed) != 1 {
+		t.Fatalf("QueryIndexedRecords returned %d records, want 1", len(indexed))
+	}
+	if indexed[0].SourceTags.SourceName != tags.SourceName {
+		t.Fatalf("projected SourceTags.SourceName = %q, want %q (read-projection regression)", indexed[0].SourceTags.SourceName, tags.SourceName)
+	}
+	if indexed[0].SourceTags.ProviderID != tags.ProviderID {
+		t.Fatalf("projected SourceTags.ProviderID = %q, want %q", indexed[0].SourceTags.ProviderID, tags.ProviderID)
+	}
+	if indexed[0].SourceTags.BatchID != tags.BatchID {
+		t.Fatalf("projected SourceTags.BatchID = %q, want %q", indexed[0].SourceTags.BatchID, tags.BatchID)
+	}
+
+	// Filtered path still works over the projected LEFT JOIN.
+	filtered, err := store.QueryIndexedRecords(IndexedRecordQuery{
+		SchemaName: "OMM.fbs",
+		SourceName: tags.SourceName,
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("QueryIndexedRecords(SourceName) failed: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].CID != cid {
+		t.Fatalf("filtered QueryIndexedRecords = %d records (cid %v), want the tagged record", len(filtered), func() string {
+			if len(filtered) > 0 {
+				return filtered[0].CID
+			}
+			return "<none>"
+		}())
+	}
+	if none, err := store.QueryIndexedRecords(IndexedRecordQuery{
+		SchemaName: "OMM.fbs",
+		SourceName: "not-a-real-source",
+		Limit:      10,
+	}); err != nil || len(none) != 0 {
+		t.Fatalf("filter on unknown source: got %d records, err %v; want 0, nil", len(none), err)
+	}
+
+	// Re-tag the same record under a second batch id: a record carries multiple
+	// tag rows, and the filter must match ANY of them (the projection picks one
+	// row, but filtering runs over the raw table — the two are decoupled).
+	tags2 := tags
+	tags2.BatchID = "20260505T180000Z"
+	if _, err := store.StoreWithSourceTags("OMM.fbs", testData, "source:celestrak", nil, tags2); err != nil {
+		t.Fatalf("re-tag StoreWithSourceTags failed: %v", err)
+	}
+	for _, wantBatch := range []string{tags.BatchID, tags2.BatchID} {
+		got, err := store.QueryIndexedRecords(IndexedRecordQuery{
+			SchemaName: "OMM.fbs",
+			BatchID:    wantBatch,
+			Limit:      10,
+		})
+		if err != nil {
+			t.Fatalf("QueryIndexedRecords(BatchID=%s) failed: %v", wantBatch, err)
+		}
+		if len(got) != 1 || got[0].CID != cid {
+			t.Fatalf("BatchID=%s: got %d records, want the re-tagged record exactly once", wantBatch, len(got))
+		}
+	}
 }
 
 func TestFlatSQLStoreUpsertSourceTagsLeavesExistingTagTimestampStable(t *testing.T) {

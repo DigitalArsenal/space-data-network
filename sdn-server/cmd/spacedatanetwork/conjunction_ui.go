@@ -31,6 +31,7 @@ package main
 // admin API wall (adminSecurityMiddleware + RequireAuth) is unchanged.
 
 import (
+	"bytes"
 	_ "embed"
 	"net/http"
 	"os"
@@ -41,6 +42,71 @@ import (
 
 //go:embed embedded/conjunction_app.html
 var conjunctionAppHTML []byte
+
+// conjunctionCSP is the Content-Security-Policy served with the conjunction UI
+// (C3). The conjunction artifact is a single self-contained document — all
+// JS/CSS inline, all fonts inlined as data: URIs, and its only network calls
+// are same-origin GETs to /api/v1/* — so this policy enforces that
+// fully-self-hosted posture at the browser layer, complementing the build-time
+// forbidden-host audit and the runtime zero-external-request verification.
+//
+//   - connect-src 'self' is the load-bearing directive: it blocks any
+//     exfiltration / third-party beacon the single-file bundle would otherwise
+//     be able to make. The app only fetches /api/v1/{peers,channels,stats} +
+//     /api/v1/data/health, all same-origin.
+//   - default/img/font/object/base-uri lock every other fetch to self (+ data:
+//     for the inlined woff2 fonts and any inline images).
+//   - frame-ancestors 'none' + form-action 'none' add clickjacking / form-
+//     hijack protection; the conjunction app has no <form> and is never framed.
+//   - script-src/style-src carry 'unsafe-inline' because the packaging hard
+//     rule inlines the single module script (plus the serve-time __SDN_CONFIG__
+//     script) and Svelte emits inline style="" attributes throughout; a
+//     nonce/hash pass over the embedded artifact is the noted future hardening,
+//     but 'unsafe-inline' here does NOT weaken the exfiltration protection that
+//     connect-src provides. No wasm ships (C1), so no 'wasm-unsafe-eval'; no
+//     workers/blob:, so no worker-src.
+const conjunctionCSP = "default-src 'self'; " +
+	"base-uri 'none'; " +
+	"object-src 'none'; " +
+	"frame-ancestors 'none'; " +
+	"form-action 'none'; " +
+	"script-src 'self' 'unsafe-inline'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; " +
+	"font-src 'self' data:; " +
+	"connect-src 'self'"
+
+// appsLauncherLink is a serve-time-injected, fully self-contained affordance
+// that surfaces the /apps/ launcher on the served conjunction UI (A2.10 item 3:
+// "surface an APPS link on the conjunction page WITHOUT rebuilding the sdn-js
+// artifact"). It is a single same-origin anchor with an inline style attribute —
+// allowed by conjunctionCSP's style-src 'unsafe-inline' — carrying no script and
+// making no network request until clicked, so it preserves the zero-external-
+// request / console-clean posture. It is injected before </body> at serve time
+// (via injectAppsLauncherLink); the embedded conjunction artifact and the App 1
+// APP-record drift gate are untouched (they cover the embed bytes, not the
+// serve-time bytes). House style: uppercase, square corners, monospace, no arrow
+// glyph, with a title tooltip.
+const appsLauncherLink = `<a href="/apps/" title="Open the SDN apps launcher" ` +
+	`style="position:fixed;bottom:12px;right:12px;z-index:2147483000;` +
+	`font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;` +
+	`font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:#8fd6ff;` +
+	`background:#0a0e14;border:1px solid #2a3a4a;padding:7px 12px;text-decoration:none;">APPS</a>`
+
+// injectAppsLauncherLink inserts the /apps/ launcher affordance before the final
+// </body> of the served conjunction document (appending to the end if no </body>
+// is present). It operates on serve-time bytes only.
+func injectAppsLauncherLink(html []byte) []byte {
+	link := []byte(appsLauncherLink)
+	if idx := bytes.LastIndex(html, []byte("</body>")); idx >= 0 {
+		out := make([]byte, 0, len(html)+len(link))
+		out = append(out, html[:idx]...)
+		out = append(out, link...)
+		out = append(out, html[idx:]...)
+		return out
+	}
+	return append(html, link...)
+}
 
 // uiMode selects which embedded UI the daemon serves at the primary route.
 type uiMode int
@@ -117,10 +183,14 @@ func serveConjunctionUI(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 	w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
+	w.Header().Set("Content-Security-Policy", conjunctionCSP)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	if r.Method != http.MethodHead {
-		_, _ = w.Write(injectFrontendConfig(conjunctionAppHTML))
+		// Inject the /apps/ launcher affordance (A2.10 item 3) at serve time, on
+		// top of the __SDN_CONFIG__ injection, without touching the embedded
+		// artifact or its drift gate.
+		_, _ = w.Write(injectAppsLauncherLink(injectFrontendConfig(conjunctionAppHTML)))
 	}
 }

@@ -3,6 +3,9 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { SPACEAWARE_ROUTES } from '../../../ui/src/spaceaware/router';
+import { classifyConjunctionAppNav } from '../../../ui/src/spaceaware/lib/conjunction-app';
+
 const uiSrcPath = path.resolve(__dirname, '../../../ui/src');
 const mainEntryPath = path.join(uiSrcPath, 'main.ts');
 
@@ -55,7 +58,9 @@ describe('sdn upstream webui cutover contract', () => {
       'screens/LocalDataScreen.svelte',
       'screens/NodeScreen.svelte',
       'screens/PeersScreen.svelte',
+      'spaceaware/ConjunctionApp.svelte',
       'spaceaware/SpaceAwareApp.svelte',
+      'spaceaware/conjunction-main.ts',
       'spaceaware/fonts/LICENSE.md',
       'spaceaware/fonts/chakra-petch-latin-400.woff2',
       'spaceaware/fonts/chakra-petch-latin-500.woff2',
@@ -69,6 +74,8 @@ describe('sdn upstream webui cutover contract', () => {
       'spaceaware/lib/bmc2.ts',
       'spaceaware/lib/channels-data.test.ts',
       'spaceaware/lib/channels-data.ts',
+      'spaceaware/lib/conjunction-app.test.ts',
+      'spaceaware/lib/conjunction-app.ts',
       'spaceaware/lib/conjunction-data.test.ts',
       'spaceaware/lib/conjunction-data.ts',
       'spaceaware/lib/console.test.ts',
@@ -182,5 +189,57 @@ describe('sdn upstream webui cutover contract', () => {
     expect(source).toContain('ReactDOM.render(');
     expect(source).toContain('<DndProvider backend={DndBackend}>');
     expect(source).not.toContain('<RootDocumentTitleSync />');
+  });
+});
+
+/**
+ * Conjunction-only ship surface contract (SDN_SPACEAWARE_UI_LOOP.md Phase C —
+ * OWNER DIRECTIVE 2026-07-11 "ship with the conjunction app ONLY"). This is the
+ * app-side half of the cutover: the standalone `ConjunctionApp` mounts at `/`
+ * and treats every full-app screen except the conjunction experience as
+ * descoped-and-not-bundled. The daemon-side half — actual route registration
+ * (descoped screens → 404) and the anonymous-vs-gated API wall — is enforced in
+ * Go by `sdn-server/cmd/spacedatanetwork/conjunction_ui_test.go`
+ * (`TestFrontendSurfaceHandlerConjunctionMode` + `TestConjunctionDataSourcesStayAnonymous`).
+ * Keeping both halves red on the same facts means a regression that re-registers
+ * a descoped route or re-adds it to the in-app navigation set fails a test.
+ */
+describe('conjunction-only ship surface (Phase C cutover contract)', () => {
+  // The full SpaceAware route skeleton stays committed & dormant (served only
+  // under SDN_UI_MODE=spaceaware for dev). The shipped conjunction app owns
+  // exactly one of these routes as an in-app surface; the rest are descoped.
+  const conjunctionInAppRoute = '/console/conjunction';
+
+  it('serves the conjunction app at the primary route "/"', () => {
+    // Primary shipped route is bare "/" (the app reads its only deep link,
+    // ?group=, from the query string preserved on "/").
+    expect(classifyConjunctionAppNav('/')).toBe('internal');
+    expect(classifyConjunctionAppNav('')).toBe('internal');
+    expect(classifyConjunctionAppNav('/?group=iss-env')).toBe('internal');
+  });
+
+  it('treats every descoped SpaceAware route as not-bundled (the 404 set)', () => {
+    // Every route in the dormant skeleton except the conjunction view itself is
+    // descoped — mirror of the daemon handler's 404 set. If someone re-adds one
+    // to the in-app surface, classifyConjunctionAppNav stops returning
+    // 'descoped' for it and this fails.
+    const descoped = SPACEAWARE_ROUTES.filter((r) => r !== conjunctionInAppRoute);
+    expect(descoped.length).toBeGreaterThan(10); // sanity: the skeleton is broad
+    for (const route of descoped) {
+      expect(classifyConjunctionAppNav(route), route).toBe('descoped');
+    }
+  });
+
+  it('keeps /console/conjunction as the only in-app alias', () => {
+    expect(classifyConjunctionAppNav(conjunctionInAppRoute)).toBe('internal');
+    expect(SPACEAWARE_ROUTES).toContain(conjunctionInAppRoute);
+  });
+
+  it('classifies the legacy /login bootstrap surface as descoped (never in-app)', () => {
+    // /login is the legacy wallet-creation / first-admin bootstrap page served
+    // by the daemon's own handler (not the conjunction app, which never
+    // authenticates). It must never be an in-app conjunction surface.
+    expect(classifyConjunctionAppNav('/login')).toBe('descoped');
+    expect(SPACEAWARE_ROUTES).toContain('/login');
   });
 });

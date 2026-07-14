@@ -83,7 +83,15 @@
   import type { QueryOutputMode } from '../../lib/query-data';
   import type { SdnApiClient } from '../../../lib/auth/sdn-api-client';
 
-  let { apiClient, navigate }: { apiClient: SdnApiClient; navigate: (path: string) => void } = $props();
+  // `show3dLink` gates the "OPEN IN 3D" (→ `/orbital?group=`) affordance. It
+  // defaults to `true` so the full SpaceAware console (`ConsoleShell`) is
+  // unchanged; the standalone conjunction ship (`ConjunctionApp`) passes `false`
+  // because `/orbital` is descoped and not bundled there (C3 disposition).
+  let {
+    apiClient,
+    navigate,
+    show3dLink = true,
+  }: { apiClient: SdnApiClient; navigate: (path: string) => void; show3dLink?: boolean } = $props();
 
   // SCREEN TARGET (real groups)
   let groups = $state<SharedGroup[]>([]);
@@ -196,6 +204,7 @@
     selectedGroupId={resolvedGroupId}
     onSelectGroup={selectGroupPill}
     {targetStrip}
+    {show3dLink}
     onOpen3d={open3d}
     sourceRows={sourceRowViews}
     onMoveSource={moveSource}

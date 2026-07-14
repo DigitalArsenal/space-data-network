@@ -71,11 +71,26 @@ type AppManifest struct {
 	// Sources is the set of upstream data sources this app depends on.
 	// Optional.
 	Sources []SourceRef `json:"sources,omitempty"`
-	// UI is the app's web UI entry, if it has one. Optional — an app with
-	// no UI entry (e.g. a headless data pipeline) leaves this nil, and
-	// resolution/UIDescriptor wiring is a no-op for it, exactly like a
-	// module with no UI today.
+	// UI is the app's legacy single web UI entry, if it has one. Optional.
+	// DEPRECATED in favor of Pages (below), which mirrors schema/APP's
+	// UI:[APPUIPage] list field-for-field and additionally supports inline,
+	// self-contained pages. UI is retained so pre-Pages manifests keep
+	// parsing/validating/resolving unchanged (the JSON/MBL back-compat lane).
+	// New apps use Pages. The $APP FlatBuffer lane (ToAPP/FromAPP) is
+	// canonical on Pages and does not carry this legacy field — see app_fb.go.
 	UI *UIEntry `json:"ui,omitempty"`
+	// Pages is the app's UI page list, mirroring schema/APP's UI:[APPUIPage]
+	// field-for-field. Each page is EITHER inline (self-contained Content in
+	// the string form named by Encoding, with ContentSHA256 over the decoded
+	// bytes) OR module-served (ModuleID+URL). Exactly one page is the Entry
+	// when Pages is non-empty. Optional — a headless app leaves this nil.
+	Pages []UIPage `json:"pages,omitempty"`
+	// CreatedAt / UpdatedAt mirror schema/APP CREATED_AT / UPDATED_AT: RFC 3339
+	// UTC fixed-millisecond timestamps. Optional; left empty in the canonical
+	// deterministic record (a release-signing step stamps them) so the record
+	// stays byte-stable for the drift gate.
+	CreatedAt string `json:"createdAt,omitempty"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 
 // ModuleRef identifies one member module by referencing its existing $PLG /
@@ -191,6 +206,84 @@ type UIEntry struct {
 	TextColor string `json:"textColor,omitempty"`
 }
 
+// UIPage is one UI page of an app, mirroring schema/APP's APPUIPage
+// field-for-field so the $APP FlatBuffer round-trip (app_fb.go) is a
+// mechanical field copy. Exactly one of the two delivery mechanisms must be
+// populated per page:
+//
+//   - inline: Content (in the string form named by Encoding) is non-empty and
+//     ModuleID+URL are empty. ContentSHA256 must equal the lowercase hex
+//     SHA-256 of the DECODED bytes (verified in Validate).
+//   - module-served: ModuleID (a Modules[].ID) and URL are set and Content is
+//     empty.
+//
+// JSON key <-> schema/APP .fbs field mapping (keys stay camelCase to match the
+// rest of this package; the field SET and semantics mirror the .fbs exactly):
+//
+//	id            <-> ID
+//	title         <-> TITLE
+//	description   <-> DESCRIPTION
+//	icon          <-> ICON
+//	color         <-> COLOR
+//	textColor     <-> TEXT_COLOR
+//	content       <-> CONTENT
+//	encoding      <-> ENCODING
+//	mediaType     <-> MEDIA_TYPE
+//	contentSha256 <-> CONTENT_SHA256
+//	entry         <-> ENTRY
+//	moduleId      <-> MODULE_ID
+//	url           <-> URL
+type UIPage struct {
+	// ID is an app-local stable reference for this page. Required, unique
+	// within Pages.
+	ID string `json:"id"`
+	// Title falls back to the app Name when empty.
+	Title string `json:"title,omitempty"`
+	// Description falls back to the app Description when empty.
+	Description string `json:"description,omitempty"`
+	// Icon is a launcher icon identifier or inline data URI.
+	Icon string `json:"icon,omitempty"`
+	// Color is the launcher accent color (CSS color syntax).
+	Color string `json:"color,omitempty"`
+	// TextColor is the launcher text color (CSS color syntax).
+	TextColor string `json:"textColor,omitempty"`
+	// Content is the inlined, self-contained page in the string form declared
+	// by Encoding. Empty when the page is module-served via ModuleID+URL.
+	Content string `json:"content,omitempty"`
+	// Encoding is the string form of Content. Empty normalizes to utf8.
+	Encoding UIContentEncoding `json:"encoding,omitempty"`
+	// MediaType is the IANA media type of the decoded page bytes (e.g.
+	// text/html).
+	MediaType string `json:"mediaType,omitempty"`
+	// ContentSHA256 is the lowercase hex SHA-256 of the DECODED page bytes.
+	// Required for inline pages; verified in Validate.
+	ContentSHA256 string `json:"contentSha256,omitempty"`
+	// Entry is true for the page the launcher opens first. Exactly one page in
+	// Pages must set this.
+	Entry bool `json:"entry,omitempty"`
+	// ModuleID, when module-served, must equal a Modules[].ID.
+	ModuleID string `json:"moduleId,omitempty"`
+	// URL, when module-served, is the path/entrypoint the module serves the
+	// page at.
+	URL string `json:"url,omitempty"`
+}
+
+// IsInline reports whether the page carries its content inline (as opposed to
+// being served by a member module).
+func (p UIPage) IsInline() bool {
+	return strings.TrimSpace(p.Content) != ""
+}
+
+// DecodedContent returns the decoded page bytes for an inline page (the bytes
+// ContentSHA256 covers). It errors for a module-served page or an unsupported
+// encoding.
+func (p UIPage) DecodedContent() ([]byte, error) {
+	if !p.IsInline() {
+		return nil, fmt.Errorf("app manifest: page %q has no inline content to decode", p.ID)
+	}
+	return p.Encoding.decodeContent(p.Content)
+}
+
 // MarshalCanonicalJSON serializes the manifest to its canonical wire form:
 // encoding/json's default struct-field-order encoding. There is no map
 // field anywhere in AppManifest's graph, so this is already deterministic —
@@ -234,8 +327,14 @@ func (a *AppManifest) Validate() error {
 	if strings.TrimSpace(a.Version) == "" {
 		return errors.New("app manifest: version is required")
 	}
-	if len(a.Modules) == 0 {
-		return errors.New("app manifest: at least one module is required")
+	// An app must contain something to run or show. Modules are no longer
+	// mandatory on their own (schema/APP makes MODULES optional): a pure-UI
+	// app — like the conjunction app — declares zero modules and one or more
+	// UI pages instead. The historical "at least one module is required"
+	// wording is preserved for the no-modules-no-pages case so pre-Pages
+	// callers/tests see the same message.
+	if len(a.Modules) == 0 && len(a.Pages) == 0 {
+		return errors.New("app manifest: at least one module is required (or at least one UI page for a pure-UI app)")
 	}
 
 	moduleIDs := make(map[string]bool, len(a.Modules))
@@ -304,6 +403,61 @@ func (a *AppManifest) Validate() error {
 		}
 	}
 
+	if len(a.Pages) > 0 {
+		pageIDs := make(map[string]bool, len(a.Pages))
+		entryCount := 0
+		for i, page := range a.Pages {
+			id := strings.TrimSpace(page.ID)
+			if id == "" {
+				return fmt.Errorf("app manifest: pages[%d]: id is required", i)
+			}
+			if pageIDs[id] {
+				return fmt.Errorf("app manifest: pages[%d]: duplicate page id %q", i, id)
+			}
+			pageIDs[id] = true
+
+			inline := page.IsInline()
+			moduleServed := strings.TrimSpace(page.ModuleID) != "" || strings.TrimSpace(page.URL) != ""
+			// Exactly-one-of: inline Content XOR module-served (ModuleID+URL).
+			if inline == moduleServed {
+				return fmt.Errorf("app manifest: pages[%d] (%s): exactly one of inline content or moduleId+url must be set", i, id)
+			}
+
+			if inline {
+				if !page.Encoding.valid() {
+					return fmt.Errorf("app manifest: pages[%d] (%s): unknown content encoding %q", i, id, page.Encoding)
+				}
+				decoded, err := page.Encoding.decodeContent(page.Content)
+				if err != nil {
+					return fmt.Errorf("app manifest: pages[%d] (%s): %w", i, id, err)
+				}
+				if strings.TrimSpace(page.ContentSHA256) == "" {
+					return fmt.Errorf("app manifest: pages[%d] (%s): contentSha256 is required for an inline page", i, id)
+				}
+				if want, got := strings.ToLower(strings.TrimSpace(page.ContentSHA256)), sha256Hex(decoded); want != got {
+					return fmt.Errorf("app manifest: pages[%d] (%s): contentSha256 mismatch: declares %s, decoded content hashes to %s", i, id, want, got)
+				}
+			} else {
+				if strings.TrimSpace(page.ModuleID) == "" {
+					return fmt.Errorf("app manifest: pages[%d] (%s): moduleId is required for a module-served page", i, id)
+				}
+				if strings.TrimSpace(page.URL) == "" {
+					return fmt.Errorf("app manifest: pages[%d] (%s): url is required for a module-served page", i, id)
+				}
+				if !moduleIDs[page.ModuleID] {
+					return fmt.Errorf("app manifest: pages[%d] (%s): moduleId %q does not match any modules[].id", i, id, page.ModuleID)
+				}
+			}
+
+			if page.Entry {
+				entryCount++
+			}
+		}
+		if entryCount != 1 {
+			return fmt.Errorf("app manifest: exactly one UI page must be marked entry (found %d)", entryCount)
+		}
+	}
+
 	return nil
 }
 
@@ -340,9 +494,15 @@ type Resolution struct {
 	ModuleByID map[string]ModuleRef
 	Data       []ResolvedData
 	Sources    []ResolvedSource
-	// UI is nil when the manifest declares no UI entry (a headless app),
-	// exactly mirroring a module with no UIProvider today.
+	// UI is nil when the manifest declares no legacy UI entry (a headless app
+	// or a Pages-based app), exactly mirroring a module with no UIProvider.
 	UI *ResolvedUI
+	// Pages is a copy of the manifest's UI page list (nil when none).
+	Pages []UIPage
+	// EntryPage points at the one Pages entry marked Entry (nil when Pages is
+	// empty). Validate has already guaranteed exactly one when Pages is
+	// non-empty, so a non-empty Pages always yields a non-nil EntryPage.
+	EntryPage *UIPage
 }
 
 // Resolve validates the manifest and cross-references every Modules[],
@@ -391,6 +551,16 @@ func (a *AppManifest) Resolve() (*Resolution, error) {
 		ModuleByID: moduleByID,
 		Data:       resolvedData,
 		Sources:    resolvedSources,
+	}
+
+	if len(a.Pages) > 0 {
+		resolution.Pages = append([]UIPage(nil), a.Pages...)
+		for i := range resolution.Pages {
+			if resolution.Pages[i].Entry {
+				resolution.EntryPage = &resolution.Pages[i]
+				break
+			}
+		}
 	}
 
 	if a.UI != nil {

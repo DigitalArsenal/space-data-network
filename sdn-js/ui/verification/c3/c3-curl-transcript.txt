@@ -1,0 +1,44 @@
+# C3 curl cross-checks — conjunction-only ship close-out (CSP + descoped + anonymous)
+# Captured 2026-07-13T16:22:06Z against scratch daemon 127.0.0.1:15080 (SDN_UI_MODE unset => conjunction default)
+
+## GET / headers (CSP added in C3)
+HTTP/1.1 200 OK
+Cache-Control: no-store
+Content-Security-Policy: default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'
+Content-Type: text/html; charset=utf-8
+Cross-Origin-Embedder-Policy: require-corp
+Cross-Origin-Opener-Policy: same-origin
+X-Content-Type-Options: nosniff
+served bytes=231208  conj-root_occurrences=5
+
+## Descoped SpaceAware screens — expect 404
+  /console                 404
+  /console/node            404
+  /console/peers           404
+  /console/groups          404
+  /console/data            404
+  /console/channels        404
+  /console/conjunction     404
+  /orbital                 404
+  /gantt                   404
+  /bmc2                    404
+  /bmc2/f4                 404
+
+## Conjunction anonymous data sources — expect 200
+  /api/v1/peers            200
+  /api/v1/channels         200
+  /api/v1/stats            200
+  /api/v1/data/health      200
+
+## Admin/operator APIs anonymous — expect 401
+  /api/v1/data/summary     401
+  /api/auth/me             401
+
+## Legacy wallet surfaces — expect 200
+  /login                   200
+  /webui/                  200
+
+## / CSP directive present?
+  connect-src 'self' PRESENT
+
+## Descoped route CSP note: 404 responses carry no CSP (only the served HTML does)

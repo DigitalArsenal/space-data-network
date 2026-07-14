@@ -3,7 +3,9 @@
    * "CONJUNCTION TASK · CONFIGURE" panel (loop task U3.9) — the red-accent
    * board at the top of the CONJUNCTION console view. Ground truth:
    * `SDN Console.dc.html:592-694` — a 🔒 "MANEUVER INTENT NEVER LEAVES THIS
-   * NODE" chip, a SCREEN TARGET pill row + "3D" link + status strip, three
+   * NODE" chip, a SCREEN TARGET pill row + "3D" link (gated by `show3dLink`,
+   * default true — the standalone conjunction ship passes false since /orbital
+   * is descoped there, C3) + status strip, three
    * numbered columns (① DATA SOURCES precedence stack / ② PROPAGATOR radio
    * cards / ③ SCREENING CRITERIA steppers) separated by `→` glyphs, a LIVE
    * STREAM STATUS card + ONE-OFF RUN button, and a corner one-off backfill
@@ -39,6 +41,7 @@
     selectedGroupId,
     onSelectGroup,
     targetStrip,
+    show3dLink = true,
     onOpen3d,
     sourceRows,
     onMoveSource,
@@ -69,6 +72,7 @@
     selectedGroupId: string | null;
     onSelectGroup: (id: string) => void;
     targetStrip: ConjunctionTargetStripView | null;
+    show3dLink?: boolean;
     onOpen3d: () => void;
     sourceRows: ConjunctionSourceRowView[];
     onMoveSource: (id: string, direction: -1 | 1) => void;
@@ -132,9 +136,11 @@
         <span class="sdn-conj-target-empty">NO GROUPS AVAILABLE — create one in GROUPS first</span>
       {/if}
     </div>
-    <button type="button" class="sdn-conj-3d-btn" disabled={!targetStrip} title="Open this group in the 3D Orbital Console" onclick={onOpen3d}>
-      3D
-    </button>
+    {#if show3dLink}
+      <button type="button" class="sdn-conj-3d-btn" disabled={!targetStrip} title="Open this group in the 3D Orbital Console" onclick={onOpen3d}>
+        3D
+      </button>
+    {/if}
   </div>
 
   {#if targetStrip}

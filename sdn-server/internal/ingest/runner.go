@@ -115,6 +115,17 @@ type Config struct {
 	SpaceTrackBatchSleep   time.Duration
 	SpaceTrackPollInterval time.Duration
 
+	// Supplemental Space-Track lanes (A2.2c-ST): operator-ephemeris OEM from
+	// publicfiles + current full-catalog gp OMM snapshots. Gated by the same
+	// SpaceTrackEnabled master switch (deploy-time decision) plus per-lane
+	// toggles. All requests pass through a single shared rate limiter.
+	SpaceTrackPublicFilesEnabled bool
+	SpaceTrackCurrentGPEnabled   bool
+	SpaceTrackSupplementalPoll   time.Duration
+	SpaceTrackPublicFilesBaseURL string        // override publicfiles base (default www.space-track.org/publicfiles/query/class)
+	SpaceTrackCurrentGPQueryURL  string        // override current-gp JSON query URL
+	SpaceTrackMinRequestGap      time.Duration // minimum gap between Space-Track requests (default 2s)
+
 	UDLEnabled      bool
 	UDLUsername     string
 	UDLPassword     string
@@ -140,6 +151,7 @@ type Runner struct {
 	ownsStore   bool
 	httpClient  *http.Client
 	checkpoints *checkpointStore
+	stLimiter   *rateLimiter
 }
 
 // NewRunner constructs a Runner that opens (and owns) its own store at
@@ -218,6 +230,18 @@ func newRunner(cfg Config, store *storage.FlatSQLStore) (*Runner, error) {
 	if cfg.SpaceTrackBatchSleep <= 0 {
 		cfg.SpaceTrackBatchSleep = 3 * time.Second
 	}
+	if cfg.SpaceTrackSupplementalPoll <= 0 {
+		cfg.SpaceTrackSupplementalPoll = 6 * time.Hour
+	}
+	if cfg.SpaceTrackPublicFilesBaseURL == "" {
+		cfg.SpaceTrackPublicFilesBaseURL = defaultSpaceTrackPublicFilesBaseURL
+	}
+	if cfg.SpaceTrackCurrentGPQueryURL == "" {
+		cfg.SpaceTrackCurrentGPQueryURL = defaultSpaceTrackCurrentGPQueryURL
+	}
+	if cfg.SpaceTrackMinRequestGap <= 0 {
+		cfg.SpaceTrackMinRequestGap = 2 * time.Second
+	}
 	if cfg.UDLBaseURL == "" {
 		cfg.UDLBaseURL = defaultUDLBaseURL
 	}
@@ -282,6 +306,7 @@ func newRunner(cfg Config, store *storage.FlatSQLStore) (*Runner, error) {
 			},
 		},
 		checkpoints: cp,
+		stLimiter:   newRateLimiter(cfg.SpaceTrackMinRequestGap, spaceTrackPerMinuteCap, spaceTrackPerHourCap),
 	}, nil
 }
 
@@ -311,11 +336,13 @@ func (r *Runner) Run(ctx context.Context) error {
 	satTicker := time.NewTicker(r.cfg.SatcatInterval)
 	spwTicker := time.NewTicker(r.cfg.SpaceWeatherInterval)
 	stTicker := time.NewTicker(r.cfg.SpaceTrackPollInterval)
+	stSupTicker := time.NewTicker(r.cfg.SpaceTrackSupplementalPoll)
 	udlTicker := time.NewTicker(r.cfg.UDLPollInterval)
 	defer gpTicker.Stop()
 	defer satTicker.Stop()
 	defer spwTicker.Stop()
 	defer stTicker.Stop()
+	defer stSupTicker.Stop()
 	defer udlTicker.Stop()
 
 	for {
@@ -337,6 +364,10 @@ func (r *Runner) Run(ctx context.Context) error {
 		case <-stTicker.C:
 			if err := r.syncSpaceTrackGapFill(ctx); err != nil {
 				log.Warnf("Space-Track gap-fill failed: %v", err)
+			}
+		case <-stSupTicker.C:
+			if err := r.syncSpaceTrackSupplemental(ctx); err != nil {
+				log.Warnf("Space-Track supplemental sync failed: %v", err)
 			}
 		case <-udlTicker.C:
 			if err := r.syncUDL(ctx); err != nil {
@@ -379,6 +410,15 @@ func (r *Runner) runCycle(ctx context.Context) error {
 		return err
 	}
 	if err := r.syncSpaceTrackGapFill(ctx); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := ctx.Err(); err != nil {
+		if len(errs) > 0 {
+			return errors.New(strings.Join(errs, "; "))
+		}
+		return err
+	}
+	if err := r.syncSpaceTrackSupplemental(ctx); err != nil {
 		errs = append(errs, err.Error())
 	}
 	if err := ctx.Err(); err != nil {
@@ -879,13 +919,21 @@ func (r *Runner) spaceTrackLogin(ctx context.Context) error {
 }
 
 func (r *Runner) ingestGPData(content []byte, sourcePeer string, tags ...storage.SourceTags) (int, int, string, error) {
-	var countOMM, countMPE int
-	normalized := sha256.New()
-
 	rows, err := parseCSV(content)
 	if err != nil {
 		return 0, 0, "", err
 	}
+	return r.ingestGPRows(rows, sourcePeer, tags...)
+}
+
+// ingestGPRows builds OMM + MPE records from already-parsed GP rows. Both the
+// CelesTrak CSV lane (parseCSV) and the Space-Track current-gp JSON lane
+// (parseSpaceTrackJSONRecords) feed this shared core so the OMM/MPE field
+// mapping stays byte-identical across sources.
+func (r *Runner) ingestGPRows(rows []map[string]string, sourcePeer string, tags ...storage.SourceTags) (int, int, string, error) {
+	var countOMM, countMPE int
+	normalized := sha256.New()
+
 	if err := requireCSVColumn(rows, "GP", "NORAD_CAT_ID", "NORAD_CAT_NUM"); err != nil {
 		return 0, 0, "", err
 	}

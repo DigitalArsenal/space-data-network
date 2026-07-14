@@ -4,7 +4,7 @@ package FSM
 
 import "strconv"
 
-// / Field Stream Message for marketplace-protected live streams
+/// Field Stream Message for marketplace-protected live streams
 type fieldStreamValueStateCategory int8
 
 const (

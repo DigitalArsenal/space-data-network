@@ -47,6 +47,9 @@ var (
 	ingestSpaceTrackPoll       time.Duration
 	ingestSpaceTrackLoginURL   string
 	ingestSpaceTrackQueryTmpl  string
+	ingestSpaceTrackPublicFiles bool
+	ingestSpaceTrackCurrentGP   bool
+	ingestSpaceTrackSupPoll     time.Duration
 	ingestUDLEnabled           bool
 	ingestUDLUsername          string
 	ingestUDLPassword          string
@@ -83,6 +86,9 @@ func init() {
 	ingestCmd.Flags().DurationVar(&ingestSpaceTrackPoll, "spacetrack-poll-interval", 30*time.Minute, "Space-Track gap-fill poll interval")
 	ingestCmd.Flags().StringVar(&ingestSpaceTrackLoginURL, "spacetrack-login-url", "", "override Space-Track login URL")
 	ingestCmd.Flags().StringVar(&ingestSpaceTrackQueryTmpl, "spacetrack-query-template", "", "Space-Track query URL template with two %s placeholders for start/end day")
+	ingestCmd.Flags().BoolVar(&ingestSpaceTrackPublicFiles, "spacetrack-publicfiles-enabled", true, "enable Space-Track publicfiles operator-ephemeris (CCSDS OEM) lane (requires --spacetrack-enabled)")
+	ingestCmd.Flags().BoolVar(&ingestSpaceTrackCurrentGP, "spacetrack-current-gp-enabled", true, "enable Space-Track current full-catalog gp (OMM) lane (requires --spacetrack-enabled)")
+	ingestCmd.Flags().DurationVar(&ingestSpaceTrackSupPoll, "spacetrack-supplemental-poll-interval", 6*time.Hour, "Space-Track supplemental (publicfiles + current-gp) poll interval")
 
 	ingestCmd.Flags().BoolVar(&ingestUDLEnabled, "udl-enabled", true, "enable Unified Data Library (UDL) sync worker")
 	ingestCmd.Flags().StringVar(&ingestUDLUsername, "udl-username", "", "UDL basic auth username (or UDL_USERNAME env)")
@@ -207,6 +213,10 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		SpaceTrackPollInterval: ingestSpaceTrackPoll,
 		SpaceTrackLoginURL:     ingestSpaceTrackLoginURL,
 		SpaceTrackQueryTmpl:    ingestSpaceTrackQueryTmpl,
+
+		SpaceTrackPublicFilesEnabled: ingestSpaceTrackEnabled && ingestSpaceTrackPublicFiles,
+		SpaceTrackCurrentGPEnabled:   ingestSpaceTrackEnabled && ingestSpaceTrackCurrentGP,
+		SpaceTrackSupplementalPoll:   ingestSpaceTrackSupPoll,
 
 		UDLEnabled:      ingestUDLEnabled,
 		UDLUsername:     udlUsername,
