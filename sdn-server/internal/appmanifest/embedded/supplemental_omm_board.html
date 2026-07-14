@@ -54,7 +54,7 @@
   }
   * { box-sizing: border-box; border-radius: 0 !important; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--sys); }
-  body { font-size: 13px; line-height: 1.4; -webkit-font-smoothing: antialiased; }
+  body { font-size: 17px; line-height: 1.4; -webkit-font-smoothing: antialiased; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
 
@@ -62,22 +62,22 @@
 
   header { border: 1px solid var(--edge); background: var(--panel); padding: 14px 16px; }
   .titlerow { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-  h1 { font-size: 15px; letter-spacing: 0.14em; text-transform: uppercase; margin: 0; font-weight: 600; }
-  .appid { font-family: var(--mono); font-size: 11px; color: var(--dim); }
-  .sub { color: var(--dim); font-size: 11.5px; margin-top: 5px; text-transform: uppercase; letter-spacing: 0.06em; }
+  h1 { font-size: 19.5px; letter-spacing: 0.14em; text-transform: uppercase; margin: 0; font-weight: 600; }
+  .appid { font-family: var(--mono); font-size: 14.5px; color: var(--dim); }
+  .sub { color: var(--dim); font-size: 15px; margin-top: 5px; text-transform: uppercase; letter-spacing: 0.06em; }
   .meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 11px; align-items: center; }
-  .meta .kv { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+  .meta .kv { font-family: var(--mono); font-size: 14.5px; color: var(--dim); }
   .meta .kv b { color: var(--ink); font-weight: 600; }
   .spacer { flex: 1; }
   button {
-    font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    font-family: var(--mono); font-size: 14.5px; text-transform: uppercase; letter-spacing: 0.08em;
     background: var(--panel2); color: var(--ink); border: 1px solid var(--edge2);
     padding: 6px 12px; cursor: pointer;
   }
   button:hover { border-color: var(--accent); color: #fff; }
   button:active { background: #0d1116; }
 
-  .pill { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+  .pill { font-family: var(--mono); font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.06em;
     padding: 2px 7px; border: 1px solid var(--edge2); color: var(--dim); white-space: nowrap; }
   .pill.live { color: var(--live); border-color: #244b3d; background: #0e1a15; }
   .pill.ref { color: var(--ref); border-color: #4a3c1f; background: #1a150c; }
@@ -96,26 +96,26 @@
     white-space: normal; }
 
   section { margin-top: 16px; }
-  .sectlabel { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer);
+  .sectlabel { font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer);
     margin: 0 0 8px 1px; }
 
   .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; }
   .tile { border: 1px solid var(--edge); background: var(--panel); padding: 10px 12px; }
-  .tile .lab { font-size: 10px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--dim); }
-  .tile .val { font-family: var(--mono); font-size: 19px; margin-top: 5px; color: var(--ink); }
-  .tile .val.small { font-size: 12px; line-height: 1.5; }
-  .tile .foot { font-family: var(--mono); font-size: 9.5px; color: var(--dimmer); margin-top: 6px; }
+  .tile .lab { font-size: 13px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--dim); }
+  .tile .val { font-family: var(--mono); font-size: 24.5px; margin-top: 5px; color: var(--ink); }
+  .tile .val.small { font-size: 15.5px; line-height: 1.5; }
+  .tile .foot { font-family: var(--mono); font-size: 12.5px; color: var(--dimmer); margin-top: 6px; }
 
   /* Filter/sort toolbar. */
   .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
   .toolbar input[type="text"] {
-    font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
+    font-family: var(--mono); font-size: 14.5px; letter-spacing: 0.04em;
     background: var(--panel2); color: var(--ink); border: 1px solid var(--edge2);
     padding: 6px 10px; flex: 0 1 300px; min-width: 180px; max-width: 100%;
   }
   .toolbar input[type="text"]:focus { outline: none; border-color: var(--accent); }
   .toolbar input::placeholder { color: var(--dimmer); text-transform: uppercase; letter-spacing: 0.08em; }
-  .toolbar .count { font-family: var(--mono); font-size: 10.5px; color: var(--dim);
+  .toolbar .count { font-family: var(--mono); font-size: 13.5px; color: var(--dim);
     text-transform: uppercase; letter-spacing: 0.06em; }
   .toolbar .count.empty { color: var(--ref); }
 
@@ -124,7 +124,7 @@
      a title tooltip (.trunc). There is deliberately NO overflow-x scroller. */
   .tablewrap { border: 1px solid var(--edge); background: var(--panel); }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  thead th { font-size: 10px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--dim);
+  thead th { font-size: 13px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--dim);
     text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--edge2); font-weight: 600;
     background: var(--panel2); white-space: normal; vertical-align: bottom; }
   th .th-inner { display: flex; align-items: baseline; gap: 6px; justify-content: space-between; }
@@ -132,21 +132,21 @@
   th.sortable { cursor: pointer; user-select: none; }
   th.sortable:hover { color: var(--ink); }
   th.sortable:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
-  .sortind { flex: 0 0 auto; color: var(--dimmer); font-size: 9px; line-height: 1; }
+  .sortind { flex: 0 0 auto; color: var(--dimmer); font-size: 11.5px; line-height: 1; }
   th[aria-sort="ascending"], th[aria-sort="descending"] { color: var(--ink); }
   th[aria-sort="ascending"] .sortind, th[aria-sort="descending"] .sortind { color: var(--accent); }
   tbody td { padding: 9px 10px; border-bottom: 1px solid var(--edge); vertical-align: top; }
   tbody tr:last-child td { border-bottom: none; }
   tbody tr:hover td { background: #10151b; }
-  tbody tr.empty td { text-align: center; color: var(--dim); font-family: var(--mono); font-size: 11px;
+  tbody tr.empty td { text-align: center; color: var(--dim); font-family: var(--mono); font-size: 14.5px;
     padding: 18px 10px; text-transform: uppercase; letter-spacing: 0.06em; }
   .prov { font-weight: 600; }
   .prov .name { text-transform: uppercase; letter-spacing: 0.04em; overflow-wrap: anywhere; }
-  .prov .tok { font-family: var(--mono); font-size: 10px; color: var(--dim); margin-top: 3px; overflow-wrap: anywhere; }
-  .up { font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
-  .cell-note { font-family: var(--mono); font-size: 9.5px; color: var(--dimmer); margin-top: 4px; overflow-wrap: anywhere; }
-  .nd { font-family: var(--mono); font-size: 10px; color: var(--nodata); }
-  .val-mono { font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
+  .prov .tok { font-family: var(--mono); font-size: 13px; color: var(--dim); margin-top: 3px; overflow-wrap: anywhere; }
+  .up { font-family: var(--mono); font-size: 13.5px; color: var(--dim); }
+  .cell-note { font-family: var(--mono); font-size: 12.5px; color: var(--dimmer); margin-top: 4px; overflow-wrap: anywhere; }
+  .nd { font-family: var(--mono); font-size: 13px; color: var(--nodata); }
+  .val-mono { font-family: var(--mono); font-size: 14.5px; overflow-wrap: anywhere; }
   /* Single-line truncation that keeps the full value in a title tooltip. */
   .trunc { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -158,18 +158,18 @@
     display: none; position: absolute; z-index: 20;
     left: 0; top: calc(100% + 6px); width: max-content; max-width: min(320px, 84vw);
     background: #05070a; color: var(--ink); border: 1px solid var(--edge2);
-    padding: 7px 9px; font-family: var(--mono); font-size: 10.5px; line-height: 1.5; text-transform: none;
+    padding: 7px 9px; font-family: var(--mono); font-size: 13.5px; line-height: 1.5; text-transform: none;
     letter-spacing: 0; box-shadow: 0 6px 20px rgba(0,0,0,.5); pointer-events: none; white-space: normal;
   }
   .tip:hover .tiptext, .tip:focus-within .tiptext { display: block; }
   .tip-right .tiptext { left: auto; right: 0; }
 
   .legend { border: 1px solid var(--edge); background: var(--panel); padding: 12px 14px; margin-top: 16px; }
-  .legend h2 { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer); margin: 0 0 9px; }
-  .legend .row { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 7px; font-size: 11.5px; color: var(--dim); }
+  .legend h2 { font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer); margin: 0 0 9px; }
+  .legend .row { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 7px; font-size: 15px; color: var(--dim); }
   .legend .row:last-child { margin-bottom: 0; }
   .legend b { color: var(--ink); }
-  footer { margin-top: 22px; font-family: var(--mono); font-size: 10px; color: var(--dimmer); line-height: 1.7; }
+  footer { margin-top: 22px; font-family: var(--mono); font-size: 13px; color: var(--dimmer); line-height: 1.7; }
   footer .refs { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
 
   /* LIVE PIPELINE section. Idle lanes are dimmed but never hidden (honesty
@@ -178,10 +178,10 @@
      table-layout:fixed like every other table here, so it cannot x-scroll. */
   tbody tr.idle td { color: var(--dim); }
   tbody tr.idle .prov .name { color: var(--dim); }
-  .pipe-obj { font-family: var(--mono); font-size: 15px; color: var(--ink); }
+  .pipe-obj { font-family: var(--mono); font-size: 19.5px; color: var(--ink); }
   tr.idle .pipe-obj { color: var(--dimmer); }
-  .pipe-rate { font-family: var(--mono); font-size: 11px; color: var(--live); }
-  .pipe-sub { font-family: var(--mono); font-size: 9.5px; color: var(--dimmer); margin-top: 4px; overflow-wrap: anywhere; }
+  .pipe-rate { font-family: var(--mono); font-size: 14.5px; color: var(--live); }
+  .pipe-sub { font-family: var(--mono); font-size: 12.5px; color: var(--dimmer); margin-top: 4px; overflow-wrap: anywhere; }
 
 </style>
 </head>
