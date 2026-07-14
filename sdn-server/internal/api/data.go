@@ -55,6 +55,7 @@ func NewDataQueryHandler(store *storage.FlatSQLStore) *DataQueryHandler {
 // http.ServeMux, so the two coexist on the same mux.
 func (h *DataQueryHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/data/health", h.handleHealth)
+	mux.HandleFunc("/api/v1/data/index", h.handleRecordIndex)
 	mux.HandleFunc("/api/v1/data/summary", h.handleSummary)
 	mux.HandleFunc("/api/v1/data/datastores", h.handleDatastores)
 	mux.HandleFunc("/api/v1/data/scan", h.handleScan)
@@ -77,6 +78,119 @@ func (h *DataQueryHandler) handleHealth(w http.ResponseWriter, r *http.Request) 
 		"time":      time.Now().UTC().Format(time.RFC3339),
 	}
 	writeJSON(w, http.StatusOK, payload)
+}
+
+// recordIndexMaxLimit caps a single index page — the surface is a UI drill-down,
+// not a bulk export.
+const recordIndexMaxLimit = 200
+
+// handleRecordIndex serves the ANONYMOUS per-record index page the App 2
+// supplemental-OMM board drills into when a lane row is expanded:
+//
+//	GET /api/v1/data/index?schema=OMM.fbs&source_name=&provider_id=&batch_id=&norad=&page=&limit=
+//	-> {total, page, limit, rows:[{norad, epoch (RFC3339), rms, cid}]}
+//
+// It reads sdn_record_index (joined to sdn_record_source_tags for the source
+// lane filter) — no FlatBuffer payloads are hydrated. norad is a NORAD substring
+// (digits only), matched via CAST(norad_cat_id AS TEXT) LIKE. Read-only.
+func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.ensureStore(w) {
+		return
+	}
+
+	values := r.URL.Query()
+	schema := normalizeRecordIndexSchema(firstNonEmptyDataString(values.Get("schema"), values.Get("schema_name"), values.Get("schemaName")))
+
+	page := parsePositiveIntParam(values.Get("page"), 1)
+	limit := parsePositiveIntParam(values.Get("limit"), 50)
+	if limit > recordIndexMaxLimit {
+		limit = recordIndexMaxLimit
+	}
+
+	rows, total, err := h.store.RecordIndexPage(storage.RecordIndexPageQuery{
+		SchemaName: schema,
+		ProviderID: firstNonEmptyDataString(values.Get("provider_id"), values.Get("providerId")),
+		SourceName: firstNonEmptyDataString(values.Get("source_name"), values.Get("sourceName")),
+		BatchID:    firstNonEmptyDataString(values.Get("batch_id"), values.Get("batchId")),
+		NoradLike:  digitsOnly(values.Get("norad")),
+		Limit:      limit,
+		Offset:     (page - 1) * limit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	out := make([]map[string]interface{}, 0, len(rows))
+	for _, rr := range rows {
+		m := map[string]interface{}{"cid": rr.CID}
+		if rr.NoradCatID != nil {
+			m["norad"] = *rr.NoradCatID
+		} else {
+			m["norad"] = nil
+		}
+		if rr.EpochUnix != nil {
+			m["epoch"] = time.Unix(*rr.EpochUnix, 0).UTC().Format(time.RFC3339)
+		} else {
+			m["epoch"] = nil
+		}
+		if rr.RMS != nil {
+			m["rms"] = *rr.RMS
+		} else {
+			m["rms"] = nil
+		}
+		out = append(out, m)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"schema": schema,
+		"total":  total,
+		"page":   page,
+		"limit":  limit,
+		"rows":   out,
+	})
+}
+
+// normalizeRecordIndexSchema maps a caller schema alias to the canonical stored
+// schema_name (e.g. "OMM" -> "OMM.fbs"); empty defaults to OMM.fbs.
+func normalizeRecordIndexSchema(schema string) string {
+	schema = strings.TrimSpace(schema)
+	if schema == "" {
+		return "OMM.fbs"
+	}
+	if !strings.Contains(schema, ".") {
+		return schema + ".fbs"
+	}
+	return schema
+}
+
+// parsePositiveIntParam parses a positive integer query param, falling back to
+// def for empty/invalid/non-positive input.
+func parsePositiveIntParam(raw string, def int) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		return def
+	}
+	return n
+}
+
+// digitsOnly strips every non-digit rune — NORAD IDs are numeric, and this keeps
+// LIKE wildcards (% _) out of the substring filter.
+func digitsOnly(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func (h *DataQueryHandler) handleSummary(w http.ResponseWriter, r *http.Request) {

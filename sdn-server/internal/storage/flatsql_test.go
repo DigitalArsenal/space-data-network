@@ -784,12 +784,25 @@ func TestFlatSQLStoreSourceBatchProgress(t *testing.T) {
 		t.Fatalf("store iss2 failed: %v", err)
 	}
 
+	// OD fit-pipeline lane: fitted OMM records are stored as schema-exact JSON
+	// text carrying a top-level "RMS" (km). Two records => mean/min/max RMS
+	// aggregate over the lane. (The FlatBuffer lanes above carry no RMS.)
+	fitA := []byte(`{"OBJECT_ID":"1998-067A","EPOCH":"2026-07-14T10:00:00Z","NORAD_CAT_ID":25544,"RMS":"0.100","CONVERGED":true}`)
+	fitB := []byte(`{"OBJECT_ID":"2019-074B","EPOCH":"2026-07-14T10:05:00Z","NORAD_CAT_ID":40909,"RMS":"0.200","CONVERGED":true}`)
+	for _, rec := range [][]byte{fitA, fitB} {
+		if _, err := store.StoreWithSourceTags("OMM.fbs", rec, "peer-fit", nil, SourceTags{
+			ProviderID: "od-fit-pipeline", SourceName: "od-fit-pipeline", BatchID: "batch-fit", ContentKeyID: "key-fit",
+		}); err != nil {
+			t.Fatalf("store fitted OMM failed: %v", err)
+		}
+	}
+
 	progress, err := store.SourceBatchProgress()
 	if err != nil {
 		t.Fatalf("SourceBatchProgress failed: %v", err)
 	}
 
-	var starlink, issRow *SourceBatchProgress
+	var starlink, issRow, fitRow *SourceBatchProgress
 	for i := range progress {
 		p := &progress[i]
 		if p.SchemaName == "OMM.fbs" && p.SourceName == "spacex-starlink" && p.BatchID == "batch-1" {
@@ -797,6 +810,9 @@ func TestFlatSQLStoreSourceBatchProgress(t *testing.T) {
 		}
 		if p.SchemaName == "OMM.fbs" && p.SourceName == "iss" && p.BatchID == "batch-2" {
 			issRow = p
+		}
+		if p.SchemaName == "OMM.fbs" && p.SourceName == "od-fit-pipeline" && p.BatchID == "batch-fit" {
+			fitRow = p
 		}
 	}
 	if starlink == nil {
@@ -816,6 +832,37 @@ func TestFlatSQLStoreSourceBatchProgress(t *testing.T) {
 	}
 	if issRow == nil || issRow.Count != 1 {
 		t.Fatalf("iss batch-2 progress row wrong: %+v", issRow)
+	}
+
+	// FlatBuffer OMM lanes carry no OD fit RMS — the aggregates stay nil.
+	if starlink.MeanRMS != nil {
+		t.Fatalf("starlink (FlatBuffer OMM) MeanRMS should be nil, got %v", *starlink.MeanRMS)
+	}
+
+	// The fitted-OMM JSON lane aggregates RMS: mean 0.15, min 0.10, max 0.20 km.
+	if fitRow == nil {
+		t.Fatalf("no od-fit-pipeline batch-fit progress row: %+v", progress)
+	}
+	if fitRow.Count != 2 {
+		t.Fatalf("od-fit count = %d, want 2", fitRow.Count)
+	}
+	if fitRow.ObjectCount != 2 {
+		t.Fatalf("od-fit ObjectCount = %d, want 2 (JSON OMM norad indexed)", fitRow.ObjectCount)
+	}
+	if fitRow.LatestEpochUnix <= 0 {
+		t.Fatalf("od-fit LatestEpochUnix not populated (JSON OMM epoch indexed): %d", fitRow.LatestEpochUnix)
+	}
+	if fitRow.MeanRMS == nil || fitRow.MinRMS == nil || fitRow.MaxRMS == nil {
+		t.Fatalf("od-fit RMS aggregates nil: mean=%v min=%v max=%v", fitRow.MeanRMS, fitRow.MinRMS, fitRow.MaxRMS)
+	}
+	if v := *fitRow.MeanRMS; v < 0.1499 || v > 0.1501 {
+		t.Fatalf("od-fit MeanRMS = %v, want ~0.15", v)
+	}
+	if v := *fitRow.MinRMS; v < 0.0999 || v > 0.1001 {
+		t.Fatalf("od-fit MinRMS = %v, want ~0.10", v)
+	}
+	if v := *fitRow.MaxRMS; v < 0.1999 || v > 0.2001 {
+		t.Fatalf("od-fit MaxRMS = %v, want ~0.20", v)
 	}
 }
 

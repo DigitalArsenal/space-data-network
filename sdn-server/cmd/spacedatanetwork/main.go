@@ -2319,6 +2319,9 @@ func isPublicReadAPIPath(path string) bool {
 		"/api/storefront/listings",
 		"/api/v1/catalog",
 		"/api/v1/data/health",
+		// Anonymous per-record index page for the App 2 board's per-satellite
+		// drill-down (NORAD/epoch/RMS/CID over sdn_record_index). Read-only.
+		"/api/v1/data/index",
 		// Flow-served record retrieval (loop C.4: the data-retrieval flow
 		// mounted at /api/v1/data/ owns routing/format/ETag inside wasm).
 		"/api/v1/data/omm/bulk",
