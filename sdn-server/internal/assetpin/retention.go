@@ -724,31 +724,14 @@ func (c *KuboRetentionClient) IsAssetCIDPinned(ctx context.Context, cidValue str
 	if err != nil {
 		return false, err
 	}
-	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+	if status != http.StatusOK {
 		if recognizedKuboMissingPin(status, body, cidValue) {
 			return false, nil
 		}
 		return false, fmt.Errorf("Kubo pin/ls failed with status %d", status)
 	}
-	var response struct {
-		Keys map[string]struct {
-			Type string `json:"Type"`
-		} `json:"Keys"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&response); err != nil {
-		return false, errors.New("Kubo pin/ls returned invalid bounded JSON")
-	}
-	if err := requireJSONEOF(decoder); err != nil {
-		return false, errors.New("Kubo pin/ls returned invalid bounded JSON")
-	}
-	entry, ok := response.Keys[cidValue]
-	if !ok {
-		return false, errors.New("Kubo pin/ls omitted the requested recursive pin")
-	}
-	if len(response.Keys) != 1 || entry.Type != "recursive" {
-		return false, errors.New("Kubo pin/ls returned an inconsistent recursive pin")
+	if !decodeExactKuboPinLookupReceipt(body, cidValue) {
+		return false, errors.New("Kubo pin/ls returned an invalid success receipt")
 	}
 	return true, nil
 }
@@ -760,13 +743,81 @@ func (c *KuboRetentionClient) UnpinAssetCID(ctx context.Context, cidValue string
 	if err != nil {
 		return err
 	}
-	if status >= http.StatusOK && status < http.StatusMultipleChoices {
-		return nil
+	if status != http.StatusOK {
+		if recognizedKuboMissingPin(status, body, cidValue) {
+			return nil
+		}
+		return fmt.Errorf("Kubo pin/rm failed with status %d", status)
 	}
-	if recognizedKuboMissingPin(status, body, cidValue) {
-		return nil
+	if !decodeExactKuboUnpinReceipt(body, cidValue) {
+		return errors.New("Kubo pin/rm returned an invalid success receipt")
 	}
-	return fmt.Errorf("Kubo pin/rm failed with status %d", status)
+	return nil
+}
+
+func decodeExactKuboPinLookupReceipt(body []byte, cidValue string) bool {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if !decodeExactJSONDelimiter(decoder, '{') || !decoder.More() {
+		return false
+	}
+	key, ok := decodeExactJSONStringToken(decoder)
+	if !ok || key != "Keys" || !decodeExactJSONDelimiter(decoder, '{') || !decoder.More() {
+		return false
+	}
+	returnedCID, ok := decodeExactJSONStringToken(decoder)
+	if !ok || returnedCID != cidValue || !decodeExactJSONDelimiter(decoder, '{') || !decoder.More() {
+		return false
+	}
+	entryKey, ok := decodeExactJSONStringToken(decoder)
+	if !ok || entryKey != "Type" {
+		return false
+	}
+	var pinType string
+	if err := decoder.Decode(&pinType); err != nil || pinType != "recursive" || decoder.More() {
+		return false
+	}
+	if !decodeExactJSONDelimiter(decoder, '}') || decoder.More() ||
+		!decodeExactJSONDelimiter(decoder, '}') || decoder.More() ||
+		!decodeExactJSONDelimiter(decoder, '}') {
+		return false
+	}
+	return requireJSONEOF(decoder) == nil
+}
+
+func decodeExactKuboUnpinReceipt(body []byte, cidValue string) bool {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if !decodeExactJSONDelimiter(decoder, '{') || !decoder.More() {
+		return false
+	}
+	key, ok := decodeExactJSONStringToken(decoder)
+	if !ok || key != "Pins" || !decodeExactJSONDelimiter(decoder, '[') || !decoder.More() {
+		return false
+	}
+	returnedCID, ok := decodeExactJSONStringToken(decoder)
+	if !ok || returnedCID != cidValue || decoder.More() ||
+		!decodeExactJSONDelimiter(decoder, ']') || decoder.More() ||
+		!decodeExactJSONDelimiter(decoder, '}') {
+		return false
+	}
+	return requireJSONEOF(decoder) == nil
+}
+
+func decodeExactJSONDelimiter(decoder *json.Decoder, want json.Delim) bool {
+	if decoder == nil {
+		return false
+	}
+	token, err := decoder.Token()
+	delimiter, ok := token.(json.Delim)
+	return err == nil && ok && delimiter == want
+}
+
+func decodeExactJSONStringToken(decoder *json.Decoder) (string, bool) {
+	if decoder == nil {
+		return "", false
+	}
+	token, err := decoder.Token()
+	value, ok := token.(string)
+	return value, err == nil && ok
 }
 
 func validateRetentionExplicitPort(parsed *url.URL) error {

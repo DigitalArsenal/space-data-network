@@ -640,6 +640,142 @@ func TestRetainerKuboPinLookupIsStrictAndBounded(t *testing.T) {
 	})
 }
 
+func TestRetainerKuboRequiresExactProtocolReceipts(t *testing.T) {
+	t.Run("pin ls", func(t *testing.T) {
+		valid := `{"Keys":{"` + testRecoveryCID + `":{"Type":"recursive"}}}`
+		tests := []struct {
+			name   string
+			status int
+			body   string
+		}{
+			{name: "other 2xx", status: http.StatusCreated, body: valid},
+			{name: "no content", status: http.StatusNoContent},
+			{name: "empty", status: http.StatusOK},
+			{name: "html", status: http.StatusOK, body: `<html>backend-secret</html>`},
+			{name: "empty object", status: http.StatusOK, body: `{}`},
+			{name: "empty keys", status: http.StatusOK, body: `{"Keys":{}}`},
+			{name: "multiple keys", status: http.StatusOK, body: `{"Keys":{"` + testRecoveryCID + `":{"Type":"recursive"},"` + testRecoveryAlternateCID + `":{"Type":"recursive"}}}`},
+			{name: "wrong key", status: http.StatusOK, body: `{"Keys":{"` + testRecoveryAlternateCID + `":{"Type":"recursive"}}}`},
+			{name: "wrong type", status: http.StatusOK, body: `{"Keys":{"` + testRecoveryCID + `":{"Type":"direct"}}}`},
+			{name: "case variant keys", status: http.StatusOK, body: `{"keys":{"` + testRecoveryCID + `":{"Type":"recursive"}}}`},
+			{name: "case variant type", status: http.StatusOK, body: `{"Keys":{"` + testRecoveryCID + `":{"type":"recursive"}}}`},
+			{name: "unknown root", status: http.StatusOK, body: `{"Keys":{"` + testRecoveryCID + `":{"Type":"recursive"}},"backend-secret-field":true}`},
+			{name: "unknown entry", status: http.StatusOK, body: `{"Keys":{"` + testRecoveryCID + `":{"Type":"recursive","backend-secret-field":true}}}`},
+			{name: "duplicate keys", status: http.StatusOK, body: `{"Keys":{"` + testRecoveryCID + `":{"Type":"recursive"}},"Keys":{"` + testRecoveryCID + `":{"Type":"recursive"}}}`},
+			{name: "duplicate type", status: http.StatusOK, body: `{"Keys":{"` + testRecoveryCID + `":{"Type":"recursive","Type":"recursive"}}}`},
+			{name: "trailing data", status: http.StatusOK, body: valid + ` backend-secret-trailer`},
+		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(test.status)
+					_, _ = io.WriteString(w, test.body)
+				}))
+				defer server.Close()
+				client, err := NewKuboRetentionClient(server.URL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if pinned, err := client.IsAssetCIDPinned(context.Background(), testRecoveryCID); err == nil {
+					t.Fatalf("IsAssetCIDPinned() = %v, nil; want uncertain protocol error", pinned)
+				} else if strings.Contains(err.Error(), "backend-secret") {
+					t.Fatalf("pin/ls error leaked body-derived text: %v", err)
+				}
+			})
+		}
+	})
+
+	t.Run("pin rm", func(t *testing.T) {
+		valid := `{"Pins":["` + testRecoveryCID + `"]}`
+		tests := []struct {
+			name   string
+			status int
+			body   string
+		}{
+			{name: "other 2xx", status: http.StatusCreated, body: valid},
+			{name: "no content", status: http.StatusNoContent},
+			{name: "empty", status: http.StatusOK},
+			{name: "html", status: http.StatusOK, body: `<html>backend-secret</html>`},
+			{name: "empty object", status: http.StatusOK, body: `{}`},
+			{name: "empty pins", status: http.StatusOK, body: `{"Pins":[]}`},
+			{name: "multiple pins", status: http.StatusOK, body: `{"Pins":["` + testRecoveryCID + `","` + testRecoveryAlternateCID + `"]}`},
+			{name: "wrong pin", status: http.StatusOK, body: `{"Pins":["` + testRecoveryAlternateCID + `"]}`},
+			{name: "case variant", status: http.StatusOK, body: `{"pins":["` + testRecoveryCID + `"]}`},
+			{name: "unknown field", status: http.StatusOK, body: `{"Pins":["` + testRecoveryCID + `"],"backend-secret-field":true}`},
+			{name: "duplicate pins", status: http.StatusOK, body: `{"Pins":["` + testRecoveryCID + `"],"Pins":["` + testRecoveryCID + `"]}`},
+			{name: "trailing data", status: http.StatusOK, body: valid + ` backend-secret-trailer`},
+		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(test.status)
+					_, _ = io.WriteString(w, test.body)
+				}))
+				defer server.Close()
+				client, err := NewKuboRetentionClient(server.URL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := client.UnpinAssetCID(context.Background(), testRecoveryCID); err == nil {
+					t.Fatal("UnpinAssetCID() accepted uncertain protocol receipt")
+				} else if strings.Contains(err.Error(), "backend-secret") {
+					t.Fatalf("pin/rm error leaked body-derived text: %v", err)
+				}
+			})
+		}
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, valid)
+		}))
+		defer server.Close()
+		client, err := NewKuboRetentionClient(server.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := client.UnpinAssetCID(context.Background(), testRecoveryCID); err != nil {
+			t.Fatalf("exact pin/rm receipt error = %v", err)
+		}
+	})
+}
+
+func TestRetainerSweepRetainsRowsWhenKuboUnpinReceiptIsUncertain(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	expired := retentionReference("uncertain-unpin-receipt", testRecoveryCID, storage.AssetReferenceRejected, now.Add(-31*24*time.Hour), now.Add(-time.Hour))
+	store := newFakeRetentionStore(now, expired)
+	unpinRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v0/pin/ls":
+			_, _ = io.WriteString(w, `{"Keys":{"`+testRecoveryCID+`":{"Type":"recursive"}}}`)
+		case "/api/v0/pin/rm":
+			unpinRequests++
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	pins, err := NewKuboRetentionClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retainer := mustTestRetainer(t, store, pins, newFakeRecoveryPager())
+
+	err = retainer.Sweep(context.Background(), now)
+	if err == nil || !strings.Contains(err.Error(), "pin/rm") {
+		t.Fatalf("Sweep() error = %v, want sanitized uncertain pin/rm failure", err)
+	}
+	if _, exists := store.reference(expired.ReferenceKey); !exists {
+		t.Fatal("uncertain Kubo unpin receipt deleted the retry row")
+	}
+	if unpinRequests != 1 {
+		t.Fatalf("pin/rm requests = %d, want one", unpinRequests)
+	}
+	if len(store.deleteKinds()) != 0 {
+		t.Fatalf("uncertain receipt wrote delete audit: %v", store.deleteKinds())
+	}
+}
+
 func TestRetainerRunSweepsAtStartupAndStopsWithContext(t *testing.T) {
 	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	store := newFakeRetentionStore(now)
