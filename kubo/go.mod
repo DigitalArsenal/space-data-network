@@ -98,6 +98,7 @@ require (
 require (
 	github.com/AndreasBriese/bbloom v0.0.0-20190825152654-46b345b51c96 // indirect
 	github.com/DataDog/zstd v1.5.7 // indirect
+	github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.154.0
 	github.com/Jorropo/jsync v1.0.1 // indirect
 	github.com/RaduBerinde/axisds v0.0.0-20250419182453-5135a0650657 // indirect
 	github.com/RaduBerinde/btreemap v0.0.0-20250419174037-3d62b7205d54 // indirect
@@ -140,6 +141,7 @@ require (
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v0.0.5-0.20231225225746-43d5d4cd4e0e // indirect
+	github.com/google/flatbuffers v25.12.19+incompatible
 	github.com/google/gopacket v1.1.19 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
@@ -225,7 +227,7 @@ require (
 	github.com/rivo/uniseg v0.4.4 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/rs/cors v1.11.1 // indirect
-	github.com/second-state/WasmEdge-go v0.14.0 // indirect
+	github.com/second-state/WasmEdge-go v0.14.0
 	github.com/slok/go-http-metrics v0.13.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/texttheater/golang-levenshtein v1.0.1 // indirect
@@ -272,3 +274,5 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 )
+
+replace github.com/DigitalArsenal/spacedatastandards.org/lib/go => ./sdn/third_party/spacedatastandards-go
