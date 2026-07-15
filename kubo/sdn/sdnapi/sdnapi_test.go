@@ -1,17 +1,22 @@
 package sdnapi_test
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	blockstore "github.com/ipfs/boxo/blockstore"
 	ds "github.com/ipfs/go-datastore"
 	dssync "github.com/ipfs/go-datastore/sync"
 
+	"github.com/ipfs/kubo/sdn/appmanifest"
 	"github.com/ipfs/kubo/sdn/flatsqlrt"
 	"github.com/ipfs/kubo/sdn/sdnapi"
 	"github.com/ipfs/kubo/sdn/sdnstore"
@@ -355,5 +360,72 @@ func TestNilStore(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s status = %d, want 200", path, rec.Code)
 		}
+	}
+}
+
+// depsWithBlockstore is testDeps plus a live block store backing the module
+// endpoint, so GET /sdn/v1/module?hash= can resolve stored module bytes.
+func depsWithBlockstore(st *sdnstore.Store, bs blockstore.Blockstore) sdnapi.Deps {
+	d := testDeps(st)
+	d.Blockstore = func() appmanifest.ModuleBlockstore { return bs }
+	return d
+}
+
+// GET /sdn/v1/module?hash= is the PAGE-side module fetch: it returns the exact
+// WASM bytes a CONTENT_HASH addresses, as application/wasm, with the served
+// body hashing back to the requested CONTENT_HASH (the isomorphic contract's
+// source-of-truth: the page loads these very bytes under the node's ABI).
+func TestModuleEndpoint(t *testing.T) {
+	mds := dssync.MutexWrap(ds.NewMapDatastore())
+	bs := blockstore.NewBlockstore(mds)
+
+	// A stand-in "module artifact": StoreModuleBytes derives the CONTENT_HASH
+	// (sha-256 hex) exactly as an $APP's APPModuleRef would advertise it.
+	wasm := []byte("\x00asm\x01\x00\x00\x00 not-a-real-module but content-addressed")
+	hash, _, err := appmanifest.StoreModuleBytes(t.Context(), bs, wasm)
+	if err != nil {
+		t.Fatalf("StoreModuleBytes: %v", err)
+	}
+
+	h := sdnapi.NewHandler(depsWithBlockstore(newTestStore(t), bs))
+
+	// Present hash → 200 application/wasm, byte-identical body, digest matches.
+	rec, hdr := get(t, h, "/sdn/v1/module?hash="+hash)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("module status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if ct := hdr.Get("Content-Type"); ct != "application/wasm" {
+		t.Errorf("content-type = %q, want application/wasm", ct)
+	}
+	if got := rec.Body.Bytes(); !bytes.Equal(got, wasm) {
+		t.Errorf("served body (%d bytes) != stored module bytes (%d bytes)", len(got), len(wasm))
+	}
+	sum := sha256.Sum256(rec.Body.Bytes())
+	if hex.EncodeToString(sum[:]) != hash {
+		t.Errorf("served body does not hash back to the requested CONTENT_HASH")
+	}
+
+	// Well-formed but absent hash → 404 (not present in the block store).
+	absent := hex.EncodeToString(sha256.New().Sum(nil)) // 64 hex chars, never stored
+	if rec, _ := get(t, h, "/sdn/v1/module?hash="+absent); rec.Code != http.StatusNotFound {
+		t.Errorf("absent hash status = %d, want 404", rec.Code)
+	}
+
+	// Missing hash param → 400.
+	if rec, _ := get(t, h, "/sdn/v1/module"); rec.Code != http.StatusBadRequest {
+		t.Errorf("missing hash status = %d, want 400", rec.Code)
+	}
+
+	// Malformed hash (wrong length / non-hex) → 400.
+	for _, bad := range []string{"deadbeef", strings.Repeat("z", 64)} {
+		if rec, _ := get(t, h, "/sdn/v1/module?hash="+bad); rec.Code != http.StatusBadRequest {
+			t.Errorf("malformed hash %q status = %d, want 400", bad, rec.Code)
+		}
+	}
+
+	// No block store wired → 503.
+	nbs := sdnapi.NewHandler(testDeps(newTestStore(t)))
+	if rec, _ := get(t, nbs, "/sdn/v1/module?hash="+hash); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("no-blockstore status = %d, want 503", rec.Code)
 	}
 }

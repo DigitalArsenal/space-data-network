@@ -46,6 +46,7 @@ import (
 
 	pluginsdnflag "github.com/ipfs/kubo/plugin/plugins/sdnflag"
 	pluginsdnruntime "github.com/ipfs/kubo/plugin/plugins/sdnruntime"
+	"github.com/ipfs/kubo/sdn/appmanifest"
 	"github.com/ipfs/kubo/sdn/channels"
 	sdnapihttp "github.com/ipfs/kubo/sdn/sdnapi"
 	"github.com/ipfs/kubo/sdn/sdnstore"
@@ -140,6 +141,16 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 				out = append(out, id.String())
 			}
 			return out
+		},
+		// Blockstore backs GET /sdn/v1/module?hash=: the node's own
+		// content-addressed store is where modules resolved by an $APP's
+		// APPModuleRef.CONTENT_HASH live, so the page harness fetches the exact
+		// bytes the node would load and runs them under the same ABI.
+		Blockstore: func() appmanifest.ModuleBlockstore {
+			if node.Blockstore == nil {
+				return nil
+			}
+			return node.Blockstore
 		},
 	}
 
