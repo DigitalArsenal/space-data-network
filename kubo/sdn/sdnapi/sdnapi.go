@@ -29,14 +29,31 @@ package sdnapi
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/ipfs/kubo/sdn/appmanifest"
 	"github.com/ipfs/kubo/sdn/channels"
+	"github.com/ipfs/kubo/sdn/sdncron"
 	"github.com/ipfs/kubo/sdn/sdnstore"
 )
+
+// ModuleAdmin is the module cron/config control surface the settings endpoints
+// drive. *sdncron.Scheduler satisfies it; tests supply a fake. A nil
+// Deps.Modules (or a nil return) means the runtime is not up yet: the module
+// endpoints report empty/unavailable rather than crashing.
+type ModuleAdmin interface {
+	// List returns every registered module with its effective timers + config.
+	List() []sdncron.ModuleView
+	// Config returns a module's stored config; false for an unknown module.
+	Config(id string) (sdncron.ModuleConfig, bool)
+	// ApplyConfig validates + persists a module's config and reschedules its
+	// live timers, returning the applied config. Errors: sdncron.ErrUnknownModule
+	// (404), sdncron.ErrInvalidConfig (400), else 500.
+	ApplyConfig(id string, cfg sdncron.ModuleConfig) (sdncron.ModuleConfig, error)
+}
 
 // DefaultDataLimit is the number of records /sdn/v1/data returns when no limit
 // is given. MaxDataLimit caps an explicit limit so a response stays bounded.
@@ -77,6 +94,10 @@ type Deps struct {
 	// SAME blockstore the node serves modules from (verify-by-hash). A nil
 	// Blockstore (or nil return) makes the module endpoint report 503.
 	Blockstore func() appmanifest.ModuleBlockstore
+	// Modules returns the module cron/config control surface (the live cron
+	// scheduler), or nil when the runtime is disabled or not started. It backs
+	// GET /sdn/v1/modules and the module config endpoints.
+	Modules func() ModuleAdmin
 }
 
 // NewHandler builds the read-only SDN HTTP API over deps. Routes are method-
@@ -92,6 +113,9 @@ func NewHandler(deps Deps) http.Handler {
 	mux.HandleFunc("GET /sdn/v1/apps", h.apps)
 	mux.HandleFunc("GET /sdn/v1/apps/{id}", h.appUI)
 	mux.HandleFunc("GET /sdn/v1/module", h.module)
+	mux.HandleFunc("GET /sdn/v1/modules", h.modules)
+	mux.HandleFunc("GET /sdn/v1/modules/{id}/config", h.moduleConfigGet)
+	mux.HandleFunc("PUT /sdn/v1/modules/{id}/config", h.moduleConfigPut)
 	return mux
 }
 
@@ -111,6 +135,13 @@ func (h *handler) blockstore() appmanifest.ModuleBlockstore {
 		return nil
 	}
 	return h.deps.Blockstore()
+}
+
+func (h *handler) modulesAdmin() ModuleAdmin {
+	if h.deps.Modules == nil {
+		return nil
+	}
+	return h.deps.Modules()
 }
 
 // ---------------------------------------------------------------------------
@@ -486,6 +517,80 @@ func (h *handler) module(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(wasm)
+}
+
+// ---------------------------------------------------------------------------
+// Module cron settings API (the operator surface for user-configurable,
+// self-scheduling modules).
+// ---------------------------------------------------------------------------
+
+// modules lists every registered module with its timers (effective interval),
+// stored config, running flag, and last-run time. Empty when the runtime is not
+// up.
+func (h *handler) modules(w http.ResponseWriter, _ *http.Request) {
+	out := []sdncron.ModuleView{}
+	if adm := h.modulesAdmin(); adm != nil {
+		if list := adm.List(); list != nil {
+			out = list
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// moduleConfigGet returns one module's stored config object. Unknown module ->
+// 404; runtime not up -> 503.
+func (h *handler) moduleConfigGet(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "module id is required")
+		return
+	}
+	adm := h.modulesAdmin()
+	if adm == nil {
+		writeErr(w, http.StatusServiceUnavailable, "module runtime unavailable")
+		return
+	}
+	cfg, ok := adm.Config(id)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "unknown module")
+		return
+	}
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+// moduleConfigPut validates + persists a module's config (including the cron
+// interval) and reschedules its live timers, returning the applied config.
+// Malformed body -> 400; unknown module -> 404; runtime not up -> 503.
+func (h *handler) moduleConfigPut(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "module id is required")
+		return
+	}
+	adm := h.modulesAdmin()
+	if adm == nil {
+		writeErr(w, http.StatusServiceUnavailable, "module runtime unavailable")
+		return
+	}
+	var cfg sdncron.ModuleConfig
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err := dec.Decode(&cfg); err != nil {
+		writeErr(w, http.StatusBadRequest, "malformed config: body must be a JSON object")
+		return
+	}
+	applied, err := adm.ApplyConfig(id, cfg)
+	switch {
+	case errors.Is(err, sdncron.ErrUnknownModule):
+		writeErr(w, http.StatusNotFound, "unknown module")
+		return
+	case errors.Is(err, sdncron.ErrInvalidConfig):
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	case err != nil:
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, applied)
 }
 
 // ---------------------------------------------------------------------------

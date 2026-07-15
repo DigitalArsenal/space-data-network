@@ -110,6 +110,17 @@ var sensitiveCapabilities = map[string]bool{
 	"ipfs":            true,
 	"pubsub":          true,
 
+	// schedule_cron lets a RUNNING module change its own live cron schedule and
+	// persist a config override to the node home directory (sdn/sdncron wires
+	// the factory in sdnservices.BuildServices). That is a real mutation +
+	// disk-write side effect, so — per the "when buildCapRegistry gains a real
+	// factory, classify it" rule below — it is gated: a module may self-schedule
+	// only after an operator approves schedule_cron for its content hash. A
+	// module that merely DECLARES a Timer still gets scheduled with no approval
+	// (CronMethods/InvokeCron read manifest.Timers directly); this capability is
+	// only for self-RESCHEDULING at runtime.
+	"schedule_cron": true,
+
 	// Credential-keystore lanes (internal/secrets). See the block comment above.
 	"secrets:spacetrack": true,
 	"secrets:edc_cpf":    true,
