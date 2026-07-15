@@ -28,6 +28,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	logging "github.com/ipfs/go-log/v2"
 	core "github.com/ipfs/kubo/core"
@@ -35,7 +36,9 @@ import (
 
 	"github.com/ipfs/kubo/sdn/flatsqlrt"
 	"github.com/ipfs/kubo/sdn/modulert"
+	"github.com/ipfs/kubo/sdn/plugins"
 	"github.com/ipfs/kubo/sdn/sdnapps"
+	"github.com/ipfs/kubo/sdn/sdncron"
 	"github.com/ipfs/kubo/sdn/sdnservices"
 	"github.com/ipfs/kubo/sdn/sdnstore"
 	"github.com/ipfs/kubo/sdn/sds"
@@ -109,16 +112,26 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 		runtimeOpts = append(runtimeOpts, flatsqlrt.WithAOTCache(aotDir))
 	}
 
+	// Per-module cron configuration lives under the repo home dir so a module's
+	// user-tunable schedule (and other inputs) survive restarts:
+	// <repo>/sdn/modules/<moduleId>.json (0600, atomic writes).
+	modulesConfigDir := ""
+	if p.repoPath != "" {
+		modulesConfigDir = filepath.Join(p.repoPath, "sdn", "modules")
+	}
+
 	deps := sdnservices.Deps{
-		Blockstore:     node.Blockstore,
-		Datastore:      node.Repo.Datastore(),
-		PubSub:         node.PubSub, // optional; nil => storage-only
-		Schemas:        defaultSchemas(),
-		HotWindow:      p.hotWindow,
-		RuntimeOptions: runtimeOpts,
-		Policy:         policy,
-		PeerID:         node.Identity.String(),
-		FallbackSource: node.Identity.String(),
+		Blockstore:       node.Blockstore,
+		Datastore:        node.Repo.Datastore(),
+		PubSub:           node.PubSub, // optional; nil => storage-only
+		Schemas:          defaultSchemas(),
+		HotWindow:        p.hotWindow,
+		RuntimeOptions:   runtimeOpts,
+		Policy:           policy,
+		PeerID:           node.Identity.String(),
+		FallbackSource:   node.Identity.String(),
+		ModulesConfigDir: modulesConfigDir,
+		CronLog:          log.Infof,
 	}
 
 	svc, err := sdnservices.BuildServices(deps)
@@ -148,6 +161,33 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 		} else {
 			log.Infof("SDN dev OMM seed: stored %d OMM record(s) (SDN_DEV_SEED_OMM set)", n)
 		}
+	}
+
+	// Optional demo cron module (off by default; mirrors SDN_DEV_SEED_OMM). When
+	// SDN_CRON_DEMO is set, register a native heartbeat CronModule so a fresh
+	// node has a registered, self-scheduling module to observe on GET
+	// /sdn/v1/modules and drive from the settings API — the live evidence for
+	// the cron scheduler foundation. Never enabled in a production config.
+	if svc.Scheduler != nil && os.Getenv("SDN_CRON_DEMO") != "" {
+		if err := svc.Scheduler.Register(sdncron.Registration{
+			Module:  newDemoCronModule("cron-demo"),
+			Name:    "Cron Demo (heartbeat)",
+			Version: "0.1.0",
+		}); err != nil {
+			log.Warnf("SDN cron demo module registration failed: %v", err)
+		} else {
+			log.Infof("SDN cron demo module registered (SDN_CRON_DEMO set): id=cron-demo timer=heartbeat")
+		}
+	}
+
+	// Start the cron scheduler after modules are registered; it fires each
+	// registered module's timers on their effective interval (config override,
+	// else manifest default) and stops when the node context is cancelled
+	// (svc.Close() below, on node ctx Done, calls Scheduler.Stop()).
+	if svc.Scheduler != nil {
+		svc.Scheduler.Start(node.Context())
+		mods, timers := svc.Scheduler.Summary()
+		log.Infof("SDN cron scheduler started: %d module(s), %d timer(s); per-module config dir=%q", mods, timers, modulesConfigDir)
 	}
 
 	if node.PubSub == nil {
@@ -247,6 +287,42 @@ func setServices(s *sdnservices.Services) {
 	servicesMu.Lock()
 	liveServices = s
 	servicesMu.Unlock()
+}
+
+// ---------------------------------------------------------------------------
+// Demo cron module (SDN_CRON_DEMO).
+//
+// A native sdncron.CronModule used as the live-evidence module for the cron
+// scheduler foundation: it declares one "heartbeat" timer (default 15s) and, on
+// each scheduled fire, logs a heartbeat and returns a small JSON result. It has
+// no capabilities and touches nothing, so it is safe to register on any node —
+// but it is gated behind SDN_CRON_DEMO so production nodes stay clean. A real
+// WASM module (modulert.Module) plugs into the same scheduler seam unchanged.
+// ---------------------------------------------------------------------------
+
+type demoCronModule struct {
+	id    string
+	count atomic.Int64
+}
+
+func newDemoCronModule(id string) *demoCronModule { return &demoCronModule{id: id} }
+
+func (d *demoCronModule) ID() string { return d.id }
+
+func (d *demoCronModule) CronMethods() []plugins.CronMethodSpec {
+	return []plugins.CronMethodSpec{{
+		Method:          "heartbeat",
+		Description:     "Demo heartbeat: proves the SDN cron scheduler fires registered module timers.",
+		DefaultInterval: "15s",
+		Input:           "none",
+		Output:          "json",
+	}}
+}
+
+func (d *demoCronModule) InvokeCron(_ context.Context, method string, _ []byte) ([]byte, error) {
+	n := d.count.Add(1)
+	log.Infof("SDN cron demo module %q fired: method=%s count=%d", d.id, method, n)
+	return []byte(fmt.Sprintf(`{"ok":true,"module":%q,"method":%q,"count":%d}`, d.id, method, n)), nil
 }
 
 // ---------------------------------------------------------------------------

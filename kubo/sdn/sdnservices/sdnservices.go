@@ -41,6 +41,7 @@ import (
 	"github.com/ipfs/kubo/sdn/channels"
 	"github.com/ipfs/kubo/sdn/flatsqlrt"
 	"github.com/ipfs/kubo/sdn/modulert"
+	"github.com/ipfs/kubo/sdn/sdncron"
 	"github.com/ipfs/kubo/sdn/sdnstore"
 )
 
@@ -78,6 +79,14 @@ type Deps struct {
 	// FallbackSource attributes a storage write whose payload omits "source"
 	// and whose module id is unavailable. Optional.
 	FallbackSource string
+
+	// ModulesConfigDir is the home-directory folder where per-module cron
+	// configuration is persisted (<repo>/sdn/modules). Optional: an empty dir
+	// puts the config store in no-persistence mode (schedules run on manifest
+	// defaults and do not survive a restart).
+	ModulesConfigDir string
+	// CronLog is an optional printf-style sink for the cron scheduler.
+	CronLog sdncron.Logger
 }
 
 // Services is the live SDN services bundle a node holds.
@@ -93,7 +102,18 @@ type Services struct {
 	// NodeCtx carries the operator capability policy and node identity into
 	// every module loaded via LoadModule.
 	NodeCtx *modulert.NodeContext
+	// Scheduler fires each registered module's timers on their effective
+	// interval and is the target of both the schedule_cron capability and the
+	// settings API. Start it after registering modules; Stop on node shutdown.
+	Scheduler *sdncron.Scheduler
+	// ConfigStore persists per-module cron configuration under the home dir.
+	ConfigStore *sdncron.ConfigStore
 }
+
+// A real WASM module (modulert.Module) must satisfy the cron scheduler seam so
+// it can be registered and fired on its manifest timers exactly like the test
+// double — this static assertion fails the build if that ever drifts.
+var _ sdncron.CronModule = (*modulert.Module)(nil)
 
 // storageCapabilityNames are the four storage_* manifest capabilities that all
 // route to the single "storage" hostcall handler. The factory is registered
@@ -156,11 +176,32 @@ func BuildServices(deps Deps) (*Services, error) {
 		capReg.RegisterBridgeAware("pubsub", NewPubSubCapFactory(ch))
 	}
 
+	// Per-module cron config store + scheduler. The schedule_cron capability is
+	// wired here so a running module can register/update its own schedule; it is
+	// classified SENSITIVE (modulert), so this factory only ever runs for a
+	// module an operator has approved for schedule_cron (fail closed). The
+	// handler routes the module's schedule.* hostcalls to the live scheduler.
+	configStore, err := sdncron.NewConfigStore(deps.ModulesConfigDir)
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("sdnservices: open module config store: %w", err)
+	}
+	scheduler := sdncron.NewScheduler(configStore, deps.CronLog)
+	capReg.RegisterBridgeAware("schedule_cron", func(mod *modulert.Module, _ *modulert.HostBridge) modulert.CapHandler {
+		id := ""
+		if mod != nil {
+			id = mod.ID()
+		}
+		return modulert.CapHandler(scheduler.CronCapHandler(id))
+	})
+
 	return &Services{
-		Store:    store,
-		Channels: ch,
-		CapReg:   capReg,
-		NodeCtx:  nodeCtx,
+		Store:       store,
+		Channels:    ch,
+		CapReg:      capReg,
+		NodeCtx:     nodeCtx,
+		Scheduler:   scheduler,
+		ConfigStore: configStore,
 	}, nil
 }
 
@@ -181,6 +222,9 @@ func (s *Services) LoadModule(wasmBytes []byte) (*modulert.Module, error) {
 func (s *Services) Close() {
 	if s == nil {
 		return
+	}
+	if s.Scheduler != nil {
+		s.Scheduler.Stop()
 	}
 	if s.Store != nil {
 		s.Store.Close()

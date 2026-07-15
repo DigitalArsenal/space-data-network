@@ -152,6 +152,15 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 			}
 			return node.Blockstore
 		},
+		// Modules backs GET /sdn/v1/modules and the module config endpoints: the
+		// live cron scheduler is the module cron/config control surface. Resolved
+		// lazily so the listener can start before the runtime services exist.
+		Modules: func() sdnapihttp.ModuleAdmin {
+			if s := pluginsdnruntime.Services(); s != nil && s.Scheduler != nil {
+				return s.Scheduler
+			}
+			return nil
+		},
 	}
 
 	ln, err := net.Listen("tcp", p.addr)
