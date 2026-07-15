@@ -118,6 +118,15 @@ type Config struct {
 	// RuntimeOptions are passed through to the FlatSQL engine (e.g. an AOT
 	// cache dir). Optional.
 	RuntimeOptions []flatsqlrt.Option
+	// OnStore, if set, is the fan-out hook: it is invoked once, after a record
+	// is durably stored (block + index + engine ingest), for each NEWLY stored
+	// (source, type, cid) record — never for an idempotent, byte-identical
+	// re-store. The channels layer supplies a hook here (via Channels.Publisher)
+	// to stream the record out to its (source, standard) gossipsub channel;
+	// sdnstore itself does not import channels. A non-nil error fails the Store
+	// call, so a caller wanting best-effort fan-out should swallow publish
+	// errors inside the hook. Optional.
+	OnStore func(ctx context.Context, source, sdsType string, recordCID cid.Cid, fb []byte) error
 }
 
 // Store keys SDS records by (source, 3-letter type) over a kubo blockstore,
@@ -128,6 +137,8 @@ type Store struct {
 	schemas   SchemaProvider
 	epochOf   EpochExtractor
 	hotWindow int
+
+	onStore func(ctx context.Context, source, sdsType string, recordCID cid.Cid, fb []byte) error
 
 	mu  sync.Mutex // serializes engine + catalog mutation; the engine is single-threaded
 	rt  *flatsqlrt.Runtime
@@ -187,6 +198,7 @@ func Open(cfg Config) (*Store, error) {
 		schemas:   cfg.Schemas,
 		epochOf:   cfg.EpochOf,
 		hotWindow: hw,
+		onStore:   cfg.OnStore,
 		rt:        rt,
 		dbs:       make(map[string]*typeDB),
 	}, nil
@@ -332,6 +344,14 @@ func (s *Store) Store(ctx context.Context, source, sdsType string, fb []byte) (c
 	}
 	if _, err := tdb.db.IngestOneWithSource(fb, source); err != nil {
 		return cid.Undef, fmt.Errorf("sdnstore: FlatSQL ingest: %w", err)
+	}
+
+	// Fan-out hook: only for this newly stored record (the idempotent re-store
+	// path returned above). Runs after the record is durable in every store.
+	if s.onStore != nil {
+		if err := s.onStore(ctx, source, t, c, fb); err != nil {
+			return cid.Undef, fmt.Errorf("sdnstore: OnStore fan-out: %w", err)
+		}
 	}
 	return c, nil
 }
