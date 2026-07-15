@@ -84,7 +84,7 @@ func TestRecordsRoundTrip(t *testing.T) {
 	want := map[string]struct {
 		schema, transport, locatorHas string
 	}{
-		"supplemental-omm": {"OMM", "gateway_route", "type=OMM"},
+		"supplemental-omm": {"OMM", "gateway_route", "/sdn/v1/runs"},
 		"conjunction":      {"CDM", "gateway_route", "type=CDM"},
 	}
 	for id, exp := range want {
@@ -111,8 +111,8 @@ func TestRecordsRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: DecodedContent: %v", id, err)
 		}
-		if !strings.Contains(string(decoded), "/sdn/v1/data") {
-			t.Errorf("%s: entry page does not reference /sdn/v1/data", id)
+		if !strings.Contains(string(decoded), "/sdn/v1/") {
+			t.Errorf("%s: entry page does not reference the node's /sdn/v1/ API", id)
 		}
 		sum := sha256.Sum256(decoded)
 		if got := hex.EncodeToString(sum[:]); got != p.ContentSHA256 {
@@ -158,6 +158,91 @@ func TestSelfContained(t *testing.T) {
 		if !strings.Contains(content, "/sdn/v1/") {
 			t.Errorf("%s: entry page does not use the node's /sdn/v1/ API", m.ID)
 		}
+	}
+}
+
+// TestOMMBoardWiring asserts the Supplemental-OMM board's entry page is wired to
+// the node's REAL run + module-config API (not the old thin record listing) and
+// self-hosts its two font families same-origin, with no external-origin URL. It
+// pins the owner-specified board content: run history, the live/current run's
+// stats, the searchable per-object NORAD rows with RMS + CelesTrak/Space-Track
+// parity, the TLE/OMM/CDM element downloads, and the provider checkbox + cron
+// controls that persist through the module config.
+func TestOMMBoardWiring(t *testing.T) {
+	ms, err := sdnapps.Manifests()
+	if err != nil {
+		t.Fatalf("Manifests: %v", err)
+	}
+	var board string
+	for _, m := range ms {
+		if m.ID == "supplemental-omm" {
+			if len(m.Pages) == 1 {
+				board = m.Pages[0].Content
+			}
+		}
+	}
+	if board == "" {
+		t.Fatal("supplemental-omm app or its entry page is missing")
+	}
+
+	// Real run API: list + live run, run detail, searchable per-object rows, and
+	// the per-object VCM-format element downloads.
+	for _, needle := range []string{
+		"/sdn/v1/runs",            // run list + live run
+		"/objects",                // searchable per-object rows
+		"?search=",                // NORAD search
+		"/download?format=",       // element download route
+		`"tle"`, `"omm"`, `"cdm"`, // TLE / OMM / CDM (VCM) formats
+		"remaining_seconds", // live run: time remaining
+		"objects_remaining", // live run: objects remaining
+		"current_avg_rms",   // live run: current average RMS
+		"ephemeris_files",   // ephemeris files processed
+		"celestrak_rms",     // parity vs CelesTrak
+		"spacetrack_rms",    // parity vs Space-Track OMM
+		"beats_celestrak",   // beats flag
+		"omm_cid",           // produced OMM record CID
+	} {
+		if !strings.Contains(board, needle) {
+			t.Errorf("board entry page does not wire %q", needle)
+		}
+	}
+
+	// Provider selection + cron persist through the module config PUT.
+	for _, needle := range []string{
+		"/sdn/v1/modules/supplemental-omm/config",
+		"enabled_providers",
+		"interval_ms",
+	} {
+		if !strings.Contains(board, needle) {
+			t.Errorf("board entry page does not wire provider/cron config %q", needle)
+		}
+	}
+
+	// Every owner-listed provider has a checkbox row.
+	for _, p := range []string{"spacex-starlink", "iss", "gps", "glonass", "cpf", "intelsat", "oneweb"} {
+		if !strings.Contains(board, p) {
+			t.Errorf("board is missing provider %q", p)
+		}
+	}
+
+	// Honest empty state (a fresh node has no runs) rather than fake rows.
+	if !strings.Contains(board, "NO RUNS YET") {
+		t.Error("board does not carry the honest 'NO RUNS YET' empty state")
+	}
+
+	// Fonts are self-hosted same-origin under /fonts/*.woff2 — never fetched
+	// off-host (that is what keeps the whole page same-origin).
+	if !strings.Contains(board, ".woff2") || !strings.Contains(board, "/fonts/") {
+		t.Error("board does not self-host its web fonts at the same-origin /fonts/ path")
+	}
+	for _, ff := range []string{"chakra-400.woff2", "chakra-600.woff2", "chakra-700.woff2", "plex-400.woff2"} {
+		if !strings.Contains(board, "/fonts/"+ff) {
+			t.Errorf("board does not self-host %q under /fonts/", ff)
+		}
+	}
+	// No external origin of any kind (defense in depth alongside TestSelfContained).
+	if strings.Contains(board, "http://") || strings.Contains(board, "https://") {
+		t.Error("board contains an external-origin URL")
 	}
 }
 

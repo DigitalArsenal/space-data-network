@@ -1,271 +1,890 @@
 <!doctype html>
 <!--
-  Supplemental OMM — Provider Status Board (App 2 of the SDN apps program),
-  ported to the kubo-based SDN node.
+  Supplemental OMM — OD-fit Run Board (App 2 of the SDN apps program), ported to
+  the kubo-based SDN node and rebuilt to the SpaceAware.io "SDN Console" design
+  system (design/sdn_design + design_handoff/DESIGN_TOKENS.md): canvas #04060a
+  with a radial page glow, Chakra Petch (display) + IBM Plex Mono (data)
+  self-hosted same-origin from /fonts/*.woff2, border-radius:0 everywhere except
+  status dots, cyan/ice accents, square ticked instrument panels, glowing status
+  dots. NO directional arrow glyphs on any control.
 
-  Single self-contained HTML+CSS+JS document. NO external references of any kind
-  (no CDN scripts, no external fonts, no remote images): every network call this
-  page makes is a same-origin GET to the node's read-only SDN API under
-  /sdn/v1/*. This whole file is the inline CONTENT of the App 2 SDS $APP record —
-  the record's entry UI page — served by the node at /sdn/v1/apps/supplemental-omm.
+  Single self-contained HTML+CSS+JS document. NO external references of ANY kind
+  (no CDN scripts, no external fonts, no remote images): every network call is a
+  same-origin GET/PUT to this node's SDN API under /sdn/v1/*, and the two font
+  families are the node's own self-hosted latin-subset woff2 served at /fonts/*.
+  This whole file is the inline CONTENT of the App 2 SDS $APP record — the
+  record's entry UI page — served by the node at /sdn/v1/apps/supplemental-omm.
 
-  Data model (new node API):
-    GET /sdn/v1/node                          → node identity (peer id, pubsub).
-    GET /sdn/v1/data/sources                  → the (source, type) catalog; the
-                                                board keeps type == "OMM".
-    GET /sdn/v1/data?source=<p>&type=OMM      → per-provider OMM record listing
-                                                {cid, size, file_id}, bounded.
+  API wiring (all same-origin /sdn/v1/*):
+    GET  /sdn/v1/runs                                  run list + the live run
+    GET  /sdn/v1/runs/{id}                             one run: summary + rows
+    GET  /sdn/v1/runs/{id}/objects?search=<NORAD>      searchable per-object rows
+    GET  /sdn/v1/runs/{id}/objects/{norad}/download?format=tle|omm|cdm
+    GET  /sdn/v1/modules/supplemental-omm/config       provider set + cron
+    PUT  /sdn/v1/modules/supplemental-omm/config       persist provider set + cron
+    GET  /sdn/v1/modules                               effective cron interval
+    GET  /sdn/v1/node                                  node identity (best effort)
 
-  HONESTY CONTRACT (see the LEGEND at the bottom):
-    LIVE    — value fetched this session from the node's read-only API.
-    NO DATA — no OMM lane exists on this node yet. The board never invents rows.
+  HONESTY CONTRACT: a fresh node has NO runs -> the board says "NO RUNS YET",
+  never invents rows. Values are LIVE (fetched this session) or an honest dash.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
-<title>Supplemental OMM — Provider Status Board</title>
+<title>Supplemental OMM — OD-fit Run Board</title>
 <style>
+  /* -------------------------------------------------------------- fonts */
+  /* Self-hosted latin-subset woff2, served same-origin by the node at
+     /fonts/*.woff2 (absolute path: this page is served under /sdn/v1/apps/…,
+     the fonts under /fonts/…, same origin). No external font fetch. */
+  @font-face { font-family:'Chakra Petch'; font-style:normal; font-weight:400; font-display:swap; src:url('/fonts/chakra-400.woff2') format('woff2'); }
+  @font-face { font-family:'Chakra Petch'; font-style:normal; font-weight:500; font-display:swap; src:url('/fonts/chakra-500.woff2') format('woff2'); }
+  @font-face { font-family:'Chakra Petch'; font-style:normal; font-weight:600; font-display:swap; src:url('/fonts/chakra-600.woff2') format('woff2'); }
+  @font-face { font-family:'Chakra Petch'; font-style:normal; font-weight:700; font-display:swap; src:url('/fonts/chakra-700.woff2') format('woff2'); }
+  @font-face { font-family:'IBM Plex Mono'; font-style:normal; font-weight:400; font-display:swap; src:url('/fonts/plex-400.woff2') format('woff2'); }
+  @font-face { font-family:'IBM Plex Mono'; font-style:normal; font-weight:500; font-display:swap; src:url('/fonts/plex-500.woff2') format('woff2'); }
+  @font-face { font-family:'IBM Plex Mono'; font-style:normal; font-weight:600; font-display:swap; src:url('/fonts/plex-600.woff2') format('woff2'); }
+
+  /* -------------------------------------------------------------- tokens */
   :root {
-    --bg: #0b0d10; --panel: #12161b; --panel2: #171c22;
-    --edge: #262d36; --edge2: #333c48;
-    --ink: #dde4ec; --dim: #939dab; --dimmer: #707b88;
-    --live: #46d19e; --nodata: #5a636f; --blocked: #c95c5c; --accent: #4a90d9;
-    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-    --sys: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    color-scheme: dark;
+    --canvas:#04060a; --panel-well:#090d12;
+    --panel-raised:linear-gradient(178deg,#16252f,#0a141b);
+    --header-bg:rgba(10,15,21,0.92);
+    --line:rgba(90,150,180,0.22); --line-soft:rgba(90,150,180,0.12);
+    --line-faint:rgba(90,150,180,0.07); --line-strong:rgba(90,150,180,0.3);
+    --ink:#eaf6f8; --body:#c7d6dd; --body-2:#cfe3ec; --muted:#9fb3bc;
+    --muted-2:#7d929b; --kicker:#5a7a8a; --kicker-2:#5d7681; --faint:#48606b;
+    --cyan:#35c9d8; --cyan-light:#9fe9f2; --ice:#9fd4f5; --ice-2:#4aa6e0;
+    --green:#5ad6a0; --amber:#ffb24d; --red:#ff6b6b; --red-light:#ff8d8d;
+    --font-display:'Chakra Petch','IBM Plex Mono',ui-monospace,monospace;
+    --font-mono:'IBM Plex Mono',ui-monospace,'SFMono-Regular',Menlo,monospace;
   }
-  * { box-sizing: border-box; border-radius: 0 !important; }
-  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--sys); }
-  body { font-size: 18px; line-height: 1.55; -webkit-font-smoothing: antialiased; text-align: left; }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  .wrap { max-width: 1200px; margin: 0 auto; padding: 22px 18px 44px; }
-
-  header { border: 1px solid var(--edge); background: var(--panel); padding: 16px 18px; }
-  .titlerow { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
-  h1 { font-size: 21px; letter-spacing: 0.14em; text-transform: uppercase; margin: 0; font-weight: 600; }
-  .appid { font-family: var(--mono); font-size: 15px; color: var(--dim); }
-  .sub { color: var(--dim); font-size: 15px; margin-top: 7px; text-transform: uppercase; letter-spacing: 0.06em; }
-  .meta { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
-  .meta .kv { font-family: var(--mono); font-size: 14px; color: var(--dim); }
-  .meta .kv b { color: var(--ink); font-weight: 600; }
-  .spacer { flex: 1; }
-  button {
-    font-family: var(--mono); font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em;
-    background: var(--panel2); color: var(--ink); border: 1px solid var(--edge2);
-    padding: 7px 14px; cursor: pointer;
+  * { box-sizing:border-box; border-radius:0; }
+  html, body { margin:0; padding:0; min-height:100%; background:var(--canvas); }
+  body {
+    font-family:var(--font-mono); color:var(--body);
+    background:radial-gradient(circle at 50% -8%, #0a1722, #04060a 55%) fixed;
+    -webkit-font-smoothing:antialiased; font-size:14px; line-height:1.55;
   }
-  button:hover { border-color: var(--accent); color: #fff; }
-  button:disabled { opacity: .4; cursor: not-allowed; }
+  ::-webkit-scrollbar { width:8px; height:8px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:rgba(110,170,190,0.25); }
+  @keyframes sdn-pulse { 0%,100%{opacity:1;} 50%{opacity:.32;} }
+  @keyframes sdn-spin { to { transform:rotate(360deg); } }
+  a { color:var(--ice); text-decoration:none; }
+  a:hover { color:var(--ink); }
 
-  .pill { font-family: var(--mono); font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
-    display: inline-block; padding: 3px 10px; margin: 2px 8px 2px 0; border: 1px solid var(--edge2);
-    color: var(--dim); white-space: nowrap; }
-  .pill.live { color: var(--live); border-color: var(--live); }
-  .pill.nodata { color: var(--nodata); border-color: var(--nodata); }
+  .wrap { max-width:1220px; margin:0 auto; padding:0 22px 56px; }
 
-  .banner { margin-top: 16px; border: 1px solid var(--blocked); background: #1a1113; color: #f0c4c4;
-    padding: 12px 16px; font-family: var(--mono); font-size: 14px; display: none; }
-  .banner.show { display: block; }
-
-  .lanes { margin-top: 18px; display: flex; flex-direction: column; gap: 12px; }
-  .lane { border: 1px solid var(--edge); background: var(--panel); }
-  .lane > .lanehead {
-    display: flex; align-items: center; gap: 14px; width: 100%; text-align: left;
-    background: var(--panel2); border: none; border-bottom: 1px solid var(--edge);
-    padding: 14px 18px; text-transform: none; letter-spacing: normal;
+  /* -------------------------------------------------------------- top bar */
+  .top-bar {
+    position:sticky; top:0; z-index:10;
+    display:flex; align-items:center; justify-content:space-between; gap:18px;
+    border-bottom:1px solid rgba(90,150,180,0.18); background:var(--header-bg);
+    backdrop-filter:blur(6px); padding:16px 22px; margin:0 -22px 20px;
   }
-  .lane > .lanehead:hover { background: #10151b; }
-  .lane .provider { font-family: var(--mono); font-size: 16px; color: var(--ink); font-weight: 600; letter-spacing: 0.02em; }
-  .lane .count { font-family: var(--mono); font-size: 14px; color: var(--dim); }
-  .lane .chev { color: var(--dim); font-family: var(--mono); }
-  .lanebody { padding: 0; display: none; }
-  .lane.open .lanebody { display: block; }
-  .lane.open .chev { color: var(--accent); }
+  .brand { display:flex; align-items:center; gap:14px; min-width:0; }
+  .mark { width:30px; height:30px; flex:none; display:grid; place-items:center;
+    color:var(--cyan); font-size:22px; line-height:1;
+    border:1px solid rgba(53,201,216,0.4); background:rgba(53,201,216,0.07); }
+  .eyebrow { font-size:10px; letter-spacing:0.22em; color:var(--kicker-2); margin:0 0 5px; }
+  .title-line { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  .title-line h1 { margin:0; font-family:var(--font-display); font-weight:700;
+    font-size:23px; letter-spacing:0.12em; color:var(--ink); }
+  .title-sub { font-size:11px; letter-spacing:0.16em; color:var(--kicker-2); }
+  .appid { font-family:var(--font-mono); font-size:11px; letter-spacing:0.06em;
+    color:var(--muted); border:1px solid var(--line-strong); padding:2px 8px; }
+  .status-strip { display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:flex-end; }
+  .status-chip { display:inline-flex; align-items:center; gap:7px;
+    border:1px solid var(--line-strong); padding:5px 11px; font-size:11.5px;
+    letter-spacing:0.08em; color:var(--muted); background:transparent; }
+  .status-chip .dot { width:7px; height:7px; border-radius:50%;
+    background:currentColor; box-shadow:0 0 7px currentColor; }
+  .status-chip.good { color:var(--green); border-color:rgba(90,214,160,0.4); background:rgba(90,214,160,0.06); }
+  .status-chip.live { color:var(--cyan); border-color:rgba(53,201,216,0.45); background:rgba(53,201,216,0.07); }
+  .status-chip.live .dot { animation:sdn-pulse 1.5s ease-in-out infinite; }
+  .status-chip.warn { color:var(--amber); border-color:rgba(255,178,77,0.4); background:rgba(255,178,77,0.06); }
+  .status-chip.bad { color:var(--red); border-color:rgba(255,107,107,0.4); background:rgba(255,107,107,0.06); }
 
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 9px 18px; border-bottom: 1px solid var(--edge); font-family: var(--mono); font-size: 13.5px; }
-  th { color: var(--dimmer); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; font-size: 12px; }
-  td.cid { color: var(--dim); word-break: break-all; }
-  td.num { color: var(--ink); }
-  tr:last-child td { border-bottom: none; }
+  /* -------------------------------------------------------------- grid + panels */
+  .grid { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:14px; align-content:start; }
+  .span-4 { grid-column:span 4; } .span-5 { grid-column:span 5; }
+  .span-7 { grid-column:span 7; } .span-8 { grid-column:span 8; } .span-12 { grid-column:span 12; }
 
-  .empty { margin-top: 18px; border: 1px dashed var(--edge2); background: var(--panel); padding: 26px 20px;
-    color: var(--dim); font-family: var(--mono); font-size: 15px; }
-  .empty b { color: var(--ink); }
+  .panel { position:relative; background:var(--panel-raised); border:1px solid var(--line);
+    box-shadow:inset 0 1px 0 rgba(150,210,240,0.14), inset 0 -10px 30px rgba(0,0,0,0.4);
+    padding:16px 17px; }
+  .panel.ticked::before, .panel.ticked::after,
+  .panel.ticked > .tick-b::before, .panel.ticked > .tick-b::after {
+    content:""; position:absolute; width:9px; height:9px;
+    border-color:var(--tick,#4aa6e0); border-style:solid; border-width:0; }
+  .panel.ticked::before { top:-1px; left:-1px; border-top-width:1px; border-left-width:1px; }
+  .panel.ticked::after { top:-1px; right:-1px; border-top-width:1px; border-right-width:1px; }
+  .panel.ticked > .tick-b::before { bottom:-1px; left:-1px; border-bottom-width:1px; border-left-width:1px; }
+  .panel.ticked > .tick-b::after { bottom:-1px; right:-1px; border-bottom-width:1px; border-right-width:1px; }
 
-  .legend { margin-top: 26px; border-top: 1px solid var(--edge); padding-top: 16px; color: var(--dimmer);
-    font-family: var(--mono); font-size: 13px; }
-  .legend .row { margin: 6px 0; }
-  footer { margin-top: 22px; color: var(--dimmer); font-family: var(--mono); font-size: 12.5px; }
+  .panel-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:13px; }
+  .panel-kicker { font-size:10px; letter-spacing:0.2em; color:var(--kicker); margin:0; }
+  .panel-head .panel-kicker { margin:0; }
+
+  /* -------------------------------------------------------------- readouts */
+  .readout { display:flex; align-items:baseline; gap:9px; }
+  .readout .dot { width:9px; height:9px; border-radius:50%; background:currentColor; box-shadow:0 0 9px currentColor; }
+  .readout .big { font-family:var(--font-display); font-weight:700; font-size:30px; letter-spacing:0.05em; color:var(--ink); font-variant-numeric:tabular-nums; }
+  .readout .unit { font-size:12px; color:var(--muted-2); letter-spacing:0.06em; }
+  .readout-sub { font-size:11px; color:var(--muted-2); margin:5px 0 14px; letter-spacing:0.04em; }
+  .meter { height:7px; background:rgba(90,150,180,0.14); margin-top:12px; }
+  .meter > span { display:block; height:100%; background:linear-gradient(90deg,#35c9d8,#4aa6e0); }
+
+  .two-up { display:grid; grid-template-columns:1fr 1fr; gap:12px 18px; margin-top:4px; }
+  .dl dt { font-size:9.5px; letter-spacing:0.14em; color:var(--kicker); margin:0; }
+  .dl dd { font-size:14px; color:var(--body-2); margin:2px 0 0; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+  .dl dd.mono { font-family:var(--font-mono); }
+  .dl dd.hi { color:var(--ink); }
+
+  /* -------------------------------------------------------------- chips + tags */
+  .chip { display:inline-flex; align-items:center; gap:5px; font-size:10px; letter-spacing:0.1em;
+    color:var(--muted); border:1px solid var(--line-strong); padding:1px 6px; white-space:nowrap; }
+  .chip.cyan { color:var(--cyan); border-color:rgba(53,201,216,0.45); }
+  .chip.ice { color:var(--ice); border-color:rgba(120,190,230,0.45); }
+  .chip.good { color:var(--green); border-color:rgba(90,214,160,0.4); }
+  .chip.warn { color:var(--amber); border-color:rgba(255,178,77,0.4); }
+  .chip.bad { color:var(--red); border-color:rgba(255,107,107,0.4); }
+  .tag { font-size:9px; letter-spacing:0.1em; padding:1px 6px; color:var(--kicker);
+    background:rgba(255,255,255,0.015); border:1px solid var(--line-soft); }
+
+  /* -------------------------------------------------------------- buttons */
+  .btn { display:inline-flex; align-items:center; gap:6px; background:transparent;
+    border:1px solid var(--line-strong); color:var(--muted); padding:6px 13px;
+    font-family:var(--font-display); font-weight:600; font-size:11px; letter-spacing:0.08em;
+    cursor:pointer; transition:border-color .14s,color .14s,background .14s; text-decoration:none; }
+  .btn:hover { border-color:rgba(120,190,230,0.6); color:var(--ink); background:rgba(74,166,224,0.08); }
+  .btn.primary { background:rgba(53,201,216,0.14); border-color:rgba(53,201,216,0.5); color:var(--cyan-light); }
+  .btn.primary:hover { background:rgba(53,201,216,0.22); border-color:rgba(53,201,216,0.7); }
+  .btn.sm { padding:3px 8px; font-size:10px; letter-spacing:0.06em; }
+  .btn:disabled { cursor:not-allowed; opacity:0.5; }
+  .btn:disabled:hover { border-color:var(--line-strong); color:var(--muted); background:transparent; }
+  .actions { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+
+  /* -------------------------------------------------------------- inputs + checkboxes */
+  .field { display:flex; flex-direction:column; gap:6px; }
+  .field .fld-label { font-size:9.5px; letter-spacing:0.14em; color:var(--kicker); }
+  .field .hint { font-size:10.5px; color:var(--muted-2); letter-spacing:0; }
+  .input { background:var(--panel-well); border:1px solid rgba(90,150,180,0.2); color:var(--ink);
+    padding:8px 10px; font-family:var(--font-mono); font-size:12.5px; outline:none; width:100%; }
+  .input:focus { border-color:rgba(120,190,230,0.6); }
+
+  .prov-row { display:grid; grid-template-columns:auto 1fr auto; gap:12px; align-items:center;
+    padding:10px 4px; border-bottom:1px solid var(--line-faint); cursor:pointer; }
+  .prov-row:last-child { border-bottom:none; }
+  .prov-row:hover { background:rgba(74,166,224,0.06); }
+  .prov-name { font-family:var(--font-display); font-weight:600; font-size:14px; color:var(--ink); letter-spacing:0.02em; }
+  .prov-id { font-size:9.5px; letter-spacing:0.1em; color:#6f8693; margin-top:2px; }
+  .chk { position:relative; display:inline-flex; }
+  .chk input { position:absolute; opacity:0; width:0; height:0; }
+  .chk .box { width:17px; height:17px; border:1px solid var(--line-strong); display:inline-grid;
+    place-items:center; color:transparent; font-size:12px; line-height:1; transition:border-color .12s,color .12s,background .12s; }
+  .chk input:checked + .box { border-color:var(--cyan); color:var(--cyan); background:rgba(53,201,216,0.12); }
+  .chk input:focus-visible + .box { outline:1px solid var(--ice); outline-offset:1px; }
+  .prov-disabled { opacity:0.55; pointer-events:none; }
+
+  .timer-row { display:grid; grid-template-columns:1fr 130px; gap:10px 12px; align-items:end; }
+  .divider { display:flex; align-items:center; gap:8px; margin:6px 0 2px; }
+  .divider .lbl2 { font-size:10px; letter-spacing:0.2em; color:var(--kicker); }
+  .divider .rule { flex:1; height:1px; background:rgba(90,150,180,0.1); }
+
+  /* -------------------------------------------------------------- runs list */
+  .runs { display:flex; flex-direction:column; }
+  .runs .head, .runs .row { display:grid; grid-template-columns:1.6fr 0.9fr 1.5fr 0.8fr 0.9fr 0.7fr; gap:0 12px; align-items:center; }
+  .runs .head { padding:0 6px 8px; border-bottom:1px solid var(--line-soft); font-size:9.5px; letter-spacing:0.14em; color:var(--kicker); }
+  .runs .row { padding:11px 6px; border-bottom:1px solid var(--line-faint); cursor:pointer; }
+  .runs .row:hover { background:rgba(74,166,224,0.07); }
+  .runs .row.selected { background:rgba(74,166,224,0.1); border-left:2px solid var(--cyan); padding-left:4px; }
+  .runs .row:last-child { border-bottom:none; }
+  .run-id { font-family:var(--font-mono); font-size:12.5px; color:var(--ink); overflow-wrap:anywhere; }
+  .run-started { font-size:10.5px; color:var(--muted-2); margin-top:2px; }
+  .cell-mono { font-family:var(--font-mono); font-size:12px; color:var(--body-2); font-variant-numeric:tabular-nums; }
+  .cell-dim { font-size:11px; color:var(--muted); overflow-wrap:anywhere; }
+  .num { text-align:right; font-variant-numeric:tabular-nums; }
+
+  /* -------------------------------------------------------------- objects table */
+  .table-scroll { overflow-x:auto; }
+  table.obj { width:100%; border-collapse:collapse; min-width:900px; }
+  table.obj th, table.obj td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line-faint); font-family:var(--font-mono); font-size:12.5px; white-space:nowrap; }
+  table.obj th { color:var(--kicker); text-transform:uppercase; letter-spacing:0.1em; font-weight:600; font-size:9.5px; border-bottom:1px solid var(--line-soft); }
+  table.obj td.num, table.obj th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  table.obj tr:last-child td { border-bottom:none; }
+  table.obj tr:hover td { background:rgba(74,166,224,0.05); }
+  td.cid { color:var(--muted); }
+  td.hi { color:var(--ink); }
+  .dl-links { display:flex; gap:5px; }
+
+  /* -------------------------------------------------------------- states + legend */
+  .state-block { display:flex; flex-direction:column; gap:6px; padding:26px 22px;
+    border:1px dashed var(--line-strong); background:rgba(9,13,18,0.5); color:var(--muted); font-size:12.5px; }
+  .state-block strong { font-family:var(--font-display); font-weight:700; font-size:15px; letter-spacing:0.08em; color:var(--ink); }
+  .state-block.loading { border-style:solid; }
+  .state-block.loading strong { color:var(--ice); }
+  .spinner { width:12px; height:12px; border:2px solid rgba(120,190,230,0.3); border-top-color:var(--ice);
+    border-radius:50%; display:inline-block; animation:sdn-spin .9s linear infinite; margin-right:8px; vertical-align:-1px; }
+  .notice { border:1px solid var(--line); border-left:3px solid var(--amber); padding:10px 13px;
+    background:rgba(255,178,77,0.05); color:var(--muted); font-size:12px; line-height:1.5; margin-top:12px; }
+  .notice.bad { border-left-color:var(--red); background:rgba(255,107,107,0.05); }
+  .notice.good { border-left-color:var(--green); background:rgba(90,214,160,0.05); }
+  .notice strong { color:var(--ink); }
+
+  .legend { margin-top:22px; border-top:1px solid var(--line-soft); padding-top:16px;
+    color:var(--kicker-2); font-family:var(--font-mono); font-size:11.5px; display:flex; flex-wrap:wrap; gap:8px 20px; }
+  footer { margin-top:14px; color:var(--faint); font-family:var(--font-mono); font-size:11px; letter-spacing:0.04em; }
+  .mono { font-family:var(--font-mono); }
+
+  @media (max-width:960px) {
+    .span-4, .span-5, .span-7, .span-8 { grid-column:span 12; }
+    .runs .head, .runs .row { grid-template-columns:1.4fr 1.2fr 0.8fr 0.8fr; }
+    .runs .col-prov, .runs .col-eph { display:none; }
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <div class="titlerow">
-      <h1>Supplemental OMM</h1>
-      <span class="appid" id="appid">$APP · supplemental-omm</span>
+
+  <header class="top-bar">
+    <div class="brand">
+      <span class="mark" aria-hidden="true">&#9672;</span>
+      <div>
+        <p class="eyebrow">SPACE DATA NETWORK &middot; APPS PROGRAM</p>
+        <div class="title-line">
+          <h1>SUPPLEMENTAL OMM</h1>
+          <span class="title-sub">&middot; APP 2 &middot; OD-FIT RUN BOARD</span>
+          <span class="appid" id="appid">$APP &middot; supplemental-omm</span>
+        </div>
+      </div>
     </div>
-    <div class="sub">Provider Status Board — per-provider OMM record listing served by this SDN node</div>
-    <div class="meta">
-      <span class="kv">NODE <b id="peer">—</b></span>
-      <span class="kv">PUBSUB <b id="pubsub">—</b></span>
-      <span class="kv">OMM LANES <b id="lanecount">—</b></span>
-      <span class="spacer"></span>
-      <button id="refresh" type="button">Refresh</button>
+    <div class="status-strip" id="status-strip" aria-live="polite">
+      <span class="status-chip"><span class="dot"></span>CONNECTING</span>
     </div>
   </header>
 
-  <div class="banner" id="banner"></div>
+  <!-- ============================ ROW 1: current run + providers ============================ -->
+  <div class="grid">
+    <section class="panel ticked span-8" style="--tick:#35c9d8"><span class="tick-b"></span>
+      <div class="panel-head">
+        <p class="panel-kicker" id="current-kicker">CURRENT RUN</p>
+        <span id="current-status"></span>
+      </div>
+      <div id="current-body">
+        <div class="state-block loading"><strong><span class="spinner"></span>LOADING</strong><span>reading the node run history</span></div>
+      </div>
+    </section>
 
-  <div class="lanes" id="lanes"></div>
-  <div class="empty" id="empty" style="display:none">
-    <b>NO DATA.</b> This node has no OMM lanes yet. When a provider stores OMM
-    records under a (source, type=&quot;OMM&quot;) lane, each lane appears here with its
-    live per-provider record listing (from <code>/sdn/v1/data?source=&lt;provider&gt;&amp;type=OMM</code>).
+    <section class="panel ticked span-4" style="--tick:#9fd4f5"><span class="tick-b"></span>
+      <div class="panel-head">
+        <p class="panel-kicker">PROVIDERS &middot; PULLED PER RUN</p>
+        <span class="chip ice" id="prov-count">&mdash;</span>
+      </div>
+      <div id="providers-body">
+        <div class="state-block loading"><strong><span class="spinner"></span>LOADING</strong><span>reading module config</span></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ============================ ROW 2: runs done ============================ -->
+  <div class="grid" style="margin-top:14px">
+    <section class="panel ticked span-12" style="--tick:#4aa6e0"><span class="tick-b"></span>
+      <div class="panel-head">
+        <p class="panel-kicker">RUNS DONE &middot; OD-FIT EXECUTION HISTORY</p>
+        <span class="chip" id="runs-count">&mdash;</span>
+      </div>
+      <div id="runs-body">
+        <div class="state-block loading"><strong><span class="spinner"></span>LOADING</strong><span>reading /sdn/v1/runs</span></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ============================ ROW 3: selected run detail (objects) ============================ -->
+  <div class="grid" style="margin-top:14px">
+    <section class="panel ticked span-12" style="--tick:#35c9d8"><span class="tick-b"></span>
+      <div class="panel-head">
+        <p class="panel-kicker" id="detail-kicker">NORAD CAT IDS PROCESSED</p>
+        <div class="actions" id="detail-meta"></div>
+      </div>
+      <div class="field" id="search-field" style="max-width:340px;margin-bottom:14px;display:none">
+        <span class="fld-label">SEARCH NORAD CAT ID</span>
+        <input class="input" id="search" type="search" inputmode="numeric" placeholder="e.g. 25544" autocomplete="off">
+      </div>
+      <div id="detail-body">
+        <div class="state-block"><strong>NO RUN SELECTED</strong><span>Select a run above to inspect its fitted objects.</span></div>
+      </div>
+    </section>
   </div>
 
   <div class="legend">
-    <div class="row"><span class="pill live">LIVE</span> fetched this session from the node's read-only <code>/sdn/v1/*</code> API.</div>
-    <div class="row"><span class="pill nodata">NO DATA</span> no OMM lane exists on this node — the board shows nothing rather than inventing rows.</div>
+    <span><span class="chip cyan">LIVE</span> value fetched this session from the node's <span class="mono">/sdn/v1/*</span> API.</span>
+    <span><span class="chip good">BEATS</span> our fitted RMS is strictly lower than the CelesTrak SupGP reference.</span>
+    <span><span class="chip">&mdash;</span> no data on this node yet &mdash; the board shows nothing rather than inventing rows.</span>
   </div>
-  <footer id="foot">Supplemental OMM · SDS $APP record · self-contained, same-origin only.</footer>
+  <footer id="foot">Supplemental OMM &middot; SDS $APP record &middot; self-contained, same-origin only (/sdn/v1 + /fonts).</footer>
 </div>
 
 <script>
 (function () {
   "use strict";
-  var TYPE = "OMM";
+
+  var API = "/sdn/v1";
+  var MODULE_ID = "supplemental-omm";
+
+  // Canonical provider set the run engine can pull per run (owner list). Any
+  // provider already enabled in the stored config but not listed here is merged
+  // in at render time so the board never hides an enabled provider.
+  var PROVIDERS = [
+    { id: "spacex-starlink", label: "SpaceX Starlink" },
+    { id: "iss",             label: "ISS" },
+    { id: "gps",             label: "GPS" },
+    { id: "glonass",         label: "GLONASS" },
+    { id: "cpf",             label: "CPF" },
+    { id: "intelsat",        label: "Intelsat" },
+    { id: "oneweb",          label: "OneWeb" }
+  ];
+
   var $ = function (id) { return document.getElementById(id); };
 
+  var state = {
+    runs: [],
+    live: null,            // LiveRun snapshot or null
+    selectedRunId: null,
+    detailRun: null,       // full Run of the selected id
+    search: "",
+    config: null,          // stored ModuleConfig
+    configOk: false,       // config endpoint reachable + module registered
+    configMsg: "",         // why not, when configOk is false
+    effectiveIntervalMs: null,
+    notice: null,          // {kind, text}
+    liveDeadline: null,    // ms epoch the live countdown targets
+    liveRemaining: null    // last server-reported remaining seconds
+  };
+
+  // ------------------------------------------------------------ fetch
   function getJSON(path) {
-    return fetch(path, { headers: { "Accept": "application/json" }, credentials: "same-origin" })
+    return fetch(path, { headers: { Accept: "application/json" } })
       .then(function (r) {
-        if (!r.ok) throw new Error(path + " → HTTP " + r.status);
-        return r.json();
+        if (!r.ok) return { ok: false, status: r.status };
+        return r.json().then(function (d) { return { ok: true, status: r.status, data: d }; });
+      })
+      .catch(function (e) { return { ok: false, status: 0, error: String(e && e.message || e) }; });
+  }
+  function putJSON(path, body) {
+    return fetch(path, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (d) {
+        if (!r.ok) return { ok: false, status: r.status, error: (d && d.error) || ("HTTP " + r.status) };
+        return { ok: true, status: r.status, data: d };
       });
+    }).catch(function (e) { return { ok: false, status: 0, error: String(e && e.message || e) }; });
   }
 
-  function shortCID(cid) {
-    if (!cid || cid.length <= 22) return cid || "";
-    return cid.slice(0, 12) + "…" + cid.slice(-8);
+  // ------------------------------------------------------------ helpers
+  function esc(v) {
+    return String(v == null ? "" : v)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function attr(v) { return esc(v).replace(/`/g, "&#96;"); }
+
+  function fmtRms(v) {
+    var n = Number(v);
+    if (!isFinite(n) || n <= 0) return "—";
+    if (n >= 100) return n.toFixed(1);
+    if (n >= 1) return n.toFixed(3);
+    return n.toFixed(4);
+  }
+  function fmtRmsPtr(v) { return (v == null) ? "—" : fmtRms(v); }
+  function fmtInt(n) { var x = Number(n); return isFinite(x) ? String(x) : "—"; }
+  function shortCid(cid) {
+    if (!cid) return "—";
+    if (cid.length <= 20) return cid;
+    return cid.slice(0, 10) + "…" + cid.slice(-6);
+  }
+  function humanMs(ms) {
+    var n = Number(ms);
+    if (!isFinite(n) || n <= 0) return "—";
+    if (n % 3600000 === 0) return (n / 3600000) + "h";
+    if (n % 60000 === 0) return (n / 60000) + "m";
+    if (n % 1000 === 0) return (n / 1000) + "s";
+    return n + "ms";
+  }
+  function fmtDur(sec) {
+    var s = Math.max(0, Math.round(Number(sec) || 0));
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+    var pad = function (x) { return (x < 10 ? "0" : "") + x; };
+    if (h > 0) return h + ":" + pad(m) + ":" + pad(ss);
+    return pad(m) + ":" + pad(ss);
+  }
+  function fmtStarted(iso) {
+    if (!iso) return "—";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return esc(iso);
+    var pad = function (x) { return (x < 10 ? "0" : "") + x; };
+    return d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate()) +
+      " " + pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()) + ":" + pad(d.getUTCSeconds()) + "Z";
+  }
+  function statusChip(status) {
+    var s = String(status || "").toLowerCase();
+    if (s === "running") return '<span class="chip cyan">RUNNING</span>';
+    if (s === "completed") return '<span class="chip good">COMPLETED</span>';
+    if (s === "failed") return '<span class="chip bad">FAILED</span>';
+    return '<span class="chip">' + esc((status || "—").toUpperCase()) + '</span>';
+  }
+  function loadingBlock(label) {
+    return '<div class="state-block loading"><strong><span class="spinner"></span>LOADING</strong><span>' + esc(label) + '</span></div>';
+  }
+  function emptyBlock(title, detail) {
+    return '<div class="state-block"><strong>' + esc(title) + '</strong><span>' + esc(detail) + '</span></div>';
+  }
+  function byStartedDesc(a, b) {
+    return new Date(b.started).getTime() - new Date(a.started).getTime();
   }
 
-  function banner(msg) {
-    var b = $("banner");
-    if (!msg) { b.className = "banner"; b.textContent = ""; return; }
-    b.className = "banner show";
-    b.textContent = msg;
-  }
-
-  function renderLane(provider, data) {
-    var recs = (data && data.records) || [];
-    var total = (data && typeof data.total === "number") ? data.total : recs.length;
-
-    var lane = document.createElement("div");
-    lane.className = "lane";
-
-    var head = document.createElement("button");
-    head.type = "button";
-    head.className = "lanehead";
-    head.setAttribute("aria-expanded", "false");
-    head.innerHTML =
-      '<span class="chev">▸</span>' +
-      '<span class="provider"></span>' +
-      '<span class="spacer" style="flex:1"></span>' +
-      '<span class="count"></span>';
-    head.querySelector(".provider").textContent = provider;
-    head.querySelector(".count").textContent = total + " OMM record" + (total === 1 ? "" : "s") +
-      (data && data.returned < total ? "  (showing " + data.returned + ")" : "");
-
-    var body = document.createElement("div");
-    body.className = "lanebody";
-
-    if (recs.length === 0) {
-      var e = document.createElement("div");
-      e.style.cssText = "padding:14px 18px;color:var(--dim);font-family:var(--mono);font-size:13.5px";
-      e.textContent = "lane present, no records returned.";
-      body.appendChild(e);
+  // ------------------------------------------------------------ status strip
+  function renderStatus(nodeOnline, pubsub) {
+    var chips = [];
+    if (nodeOnline === false) {
+      chips.push('<span class="status-chip bad"><span class="dot"></span>NODE UNAVAILABLE</span>');
+    } else if (nodeOnline === true) {
+      chips.push('<span class="status-chip good"><span class="dot"></span>NODE ONLINE</span>');
+    }
+    var n = state.runs.length;
+    chips.push('<span class="status-chip"><span class="dot" style="box-shadow:none;background:#5a7a8a"></span>' + n + ' RUN' + (n === 1 ? '' : 'S') + '</span>');
+    if (state.live) {
+      chips.push('<span class="status-chip live"><span class="dot"></span>RUN LIVE</span>');
     } else {
-      var t = document.createElement("table");
-      t.innerHTML = "<thead><tr><th>#</th><th>CID</th><th>Size (bytes)</th><th>Record</th></tr></thead>";
-      var tb = document.createElement("tbody");
-      recs.forEach(function (rec, i) {
-        var tr = document.createElement("tr");
-        var td0 = document.createElement("td"); td0.className = "num"; td0.textContent = String(i + 1);
-        var td1 = document.createElement("td"); td1.className = "cid"; td1.title = rec.cid || ""; td1.textContent = shortCID(rec.cid);
-        var td2 = document.createElement("td"); td2.className = "num"; td2.textContent = String(rec.size != null ? rec.size : "");
-        var td3 = document.createElement("td"); td3.className = "num"; td3.textContent = rec.file_id || "";
-        tr.appendChild(td0); tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
-        tb.appendChild(tr);
-      });
-      t.appendChild(tb);
-      body.appendChild(t);
+      chips.push('<span class="status-chip"><span class="dot" style="box-shadow:none;background:#5a7a8a"></span>IDLE</span>');
+    }
+    chips.push('<button class="btn sm" id="refresh" type="button" title="Reload run history + config">REFRESH</button>');
+    $("status-strip").innerHTML = chips.join("");
+    var rb = $("refresh");
+    if (rb) rb.addEventListener("click", function () { loadAll(); });
+  }
+
+  // ------------------------------------------------------------ current run panel
+  function renderCurrent() {
+    var body = $("current-body"), stat = $("current-status"), kick = $("current-kicker");
+
+    if (state.live) {
+      kick.textContent = "CURRENT RUN";
+      stat.innerHTML = '<span class="chip cyan">RUNNING</span>';
+      var lv = state.live;
+      var remaining = (state.liveDeadline != null)
+        ? (state.liveDeadline - Date.now()) / 1000
+        : lv.remaining_seconds;
+      var pct = lv.objects_total > 0 ? Math.round((lv.objects_done / lv.objects_total) * 100) : 0;
+      body.innerHTML =
+        '<div class="readout" style="color:var(--cyan)"><span class="dot" style="animation:sdn-pulse 1.5s ease-in-out infinite"></span>' +
+          '<span class="big">' + fmtRms(lv.current_avg_rms) + '</span><span class="unit">KM &middot; CURRENT AVG RMS</span></div>' +
+        '<div class="readout-sub">run <span class="mono" style="color:var(--ice)">' + esc(lv.id) + '</span> &middot; ' + esc((lv.providers || []).join(", ") || "no providers") + '</div>' +
+        '<div class="two-up"><dl class="dl">' +
+          row("RUN ID", esc(lv.id), "mono hi") +
+          row("TIME REMAINING", '<span id="live-remaining">' + fmtDur(remaining) + '</span>', "hi") +
+          row("OBJECTS REMAINING", fmtInt(lv.objects_remaining), "hi") +
+          row("OBJECTS DONE", fmtInt(lv.objects_done) + " / " + fmtInt(lv.objects_total), "") +
+        '</dl></div>' +
+        '<div class="meter"><span style="width:' + pct + '%"></span></div>';
+      return;
     }
 
-    head.addEventListener("click", function () {
-      var open = lane.classList.toggle("open");
-      head.setAttribute("aria-expanded", open ? "true" : "false");
-      head.querySelector(".chev").textContent = open ? "▾" : "▸";
-    });
-
-    lane.appendChild(head);
-    lane.appendChild(body);
-    return lane;
+    // No live run: show the most recent completed run as the latest run.
+    kick.textContent = "LATEST RUN";
+    var runs = state.runs.slice().sort(byStartedDesc);
+    if (runs.length === 0) {
+      stat.innerHTML = "";
+      body.innerHTML = emptyBlock("NO RUNS YET", "This node has recorded no OD-fit runs. The supplemental-OMM module fits enabled providers on its cron cadence; the first run appears here.");
+      return;
+    }
+    var r = runs[0];
+    stat.innerHTML = statusChip(r.status);
+    var color = r.status === "failed" ? "var(--red)" : "var(--cyan)";
+    body.innerHTML =
+      '<div class="readout" style="color:' + color + '"><span class="dot" style="box-shadow:0 0 9px ' + color + '"></span>' +
+        '<span class="big">' + fmtRms(r.avg_rms) + '</span><span class="unit">KM &middot; FLEET AVG RMS</span></div>' +
+      '<div class="readout-sub">run <span class="mono" style="color:var(--ice)">' + esc(r.id) + '</span> &middot; finished ' + fmtStarted(r.finished || r.started) + '</div>' +
+      '<div class="two-up"><dl class="dl">' +
+        row("RUN ID", esc(r.id), "mono hi") +
+        row("TIME REMAINING", "COMPLETE", "") +
+        row("OBJECTS REMAINING", "0", "") +
+        row("OBJECTS PROCESSED", fmtInt(r.objects_done) + " / " + fmtInt(r.objects_total), "hi") +
+        row("EPHEMERIS FILES", fmtInt(r.ephemeris_files), "hi") +
+        row("BEATS CELESTRAK", fmtInt(r.beat_count), "") +
+      '</dl></div>' +
+      (r.error ? '<div class="notice bad"><strong>RUN ERROR</strong> &middot; ' + esc(r.error) + '</div>' : '');
   }
 
-  function load() {
-    banner("");
-    $("refresh").disabled = true;
-    $("lanes").innerHTML = "";
-    $("empty").style.display = "none";
-    $("lanecount").textContent = "…";
+  function row(label, valHtml, cls) {
+    return '<div class="row"><dt>' + esc(label) + '</dt><dd class="' + (cls || "") + '">' + valHtml + '</dd></div>';
+  }
 
-    getJSON("/sdn/v1/node").then(function (node) {
-      $("peer").textContent = node && node.peer_id ? node.peer_id : "(unknown)";
-      $("pubsub").textContent = node && node.pubsub_enabled ? "on" : "off";
-    }).catch(function () { /* header is best-effort */ });
+  // Local 1s countdown between polls, so TIME REMAINING ticks smoothly.
+  setInterval(function () {
+    if (!state.live || state.liveDeadline == null) return;
+    var el = $("live-remaining");
+    if (el) el.textContent = fmtDur((state.liveDeadline - Date.now()) / 1000);
+  }, 1000);
 
-    getJSON("/sdn/v1/data/sources").then(function (catalog) {
-      var providers = (catalog || [])
-        .filter(function (c) { return c && c.type === TYPE; })
-        .map(function (c) { return c.source; });
-      $("lanecount").textContent = String(providers.length);
+  // ------------------------------------------------------------ providers panel
+  function enabledSet() {
+    var out = {};
+    var cfg = state.config || {};
+    var arr = Array.isArray(cfg.enabled_providers) ? cfg.enabled_providers : [];
+    arr.forEach(function (p) { if (typeof p === "string") out[p] = true; });
+    return out;
+  }
+  function providerRows() {
+    var enabled = enabledSet();
+    var seen = {};
+    var list = PROVIDERS.slice();
+    PROVIDERS.forEach(function (p) { seen[p.id] = true; });
+    // Merge any enabled-but-unlisted provider so it is never hidden.
+    Object.keys(enabled).forEach(function (id) {
+      if (!seen[id]) { list.push({ id: id, label: id }); seen[id] = true; }
+    });
+    return list.map(function (p) {
+      var on = !!enabled[p.id];
+      return '' +
+        '<label class="prov-row" data-prov="' + attr(p.id) + '">' +
+          '<span class="chk"><input type="checkbox" ' + (on ? "checked" : "") + ' data-prov-check="' + attr(p.id) + '"' + (state.configOk ? "" : " disabled") + '><span class="box">✓</span></span>' +
+          '<span><span class="prov-name">' + esc(p.label) + '</span><span class="prov-id mono">' + esc(p.id) + '</span></span>' +
+          (on ? '<span class="chip cyan">ENABLED</span>' : '<span class="chip">OFF</span>') +
+        '</label>';
+    }).join("");
+  }
+  function renderProviders() {
+    var body = $("providers-body");
+    var enabled = enabledSet();
+    var count = Object.keys(enabled).length;
+    $("prov-count").textContent = state.configOk ? (count + " ON") : "—";
 
-      if (providers.length === 0) {
-        $("empty").style.display = "block";
-        $("refresh").disabled = false;
+    if (!state.configOk) {
+      body.innerHTML = emptyBlock("CONFIG UNAVAILABLE", state.configMsg || "The supplemental-OMM run engine is not up yet; provider selection is read-only until it registers.");
+      return;
+    }
+
+    var intervalMs = state.effectiveIntervalMs;
+    var cfgInterval = (state.config && Number(state.config.interval_ms)) || null;
+    var shown = cfgInterval || intervalMs;
+
+    body.innerHTML =
+      '<div class="' + (state.configOk ? "" : "prov-disabled") + '">' + providerRows() + '</div>' +
+      '<div class="divider" style="margin-top:14px"><span class="lbl2">CRON SCHEDULE</span><span class="rule"></span></div>' +
+      '<div class="timer-row" style="margin-top:8px">' +
+        '<div class="field"><span class="fld-label">RUN TIMER</span>' +
+          '<span class="hint">fires <span class="mono">run</span> every <span style="color:var(--ice)">' + esc(humanMs(shown)) + '</span> &middot; manifest default hourly</span></div>' +
+        '<div class="field"><label class="fld-label" for="interval">INTERVAL (ms)</label>' +
+          '<input class="input" id="interval" type="number" min="1" step="1" inputmode="numeric" value="' + attr(shown != null ? String(shown) : "") + '"></div>' +
+      '</div>' +
+      '<div class="actions" style="margin-top:14px">' +
+        '<button class="btn primary" id="prov-save" type="button">SAVE PROVIDER SET</button>' +
+        '<button class="btn" id="prov-reset" type="button">RESET</button>' +
+      '</div>' +
+      (state.notice ? '<div class="notice ' + esc(state.notice.kind) + '">' + esc(state.notice.text) + '</div>' : '') +
+      '<p class="hint" style="margin-top:10px">Saving PUTs <span class="mono">/sdn/v1/modules/supplemental-omm/config</span> &middot; enabled providers are pulled on the next run.</p>';
+
+    // Live chip + counter feedback as boxes toggle (before save).
+    body.querySelectorAll("[data-prov-check]").forEach(function (cb) {
+      cb.addEventListener("change", function () {
+        var labelRow = cb.closest(".prov-row");
+        var chip = labelRow ? labelRow.querySelector(".chip") : null;
+        if (chip) {
+          chip.className = cb.checked ? "chip cyan" : "chip";
+          chip.textContent = cb.checked ? "ENABLED" : "OFF";
+        }
+        var on = body.querySelectorAll("[data-prov-check]:checked").length;
+        $("prov-count").textContent = on + " ON";
+      });
+    });
+    var save = $("prov-save");
+    if (save) save.addEventListener("click", saveProviders);
+    var reset = $("prov-reset");
+    if (reset) reset.addEventListener("click", function () { state.notice = null; loadConfig().then(renderProviders); });
+  }
+
+  function saveProviders() {
+    // Read selections + interval SYNCHRONOUSLY before any await/re-render.
+    var checks = document.querySelectorAll("#providers-body [data-prov-check]");
+    var enabled = [];
+    checks.forEach(function (cb) { if (cb.checked) enabled.push(cb.getAttribute("data-prov-check")); });
+    var intervalEl = $("interval");
+    var intervalMs = intervalEl ? parseInt(intervalEl.value, 10) : NaN;
+    var badInterval = intervalEl && intervalEl.value !== "" && (!isFinite(intervalMs) || intervalMs <= 0);
+    if (badInterval) {
+      state.notice = { kind: "bad", text: "Cron interval must be a positive integer (milliseconds)." };
+      renderProviders();
+      return;
+    }
+
+    $("providers-body").innerHTML = loadingBlock("applying provider set + schedule");
+
+    // Re-read the stored config so opaque keys (reference lanes, timers) round-trip.
+    getJSON(API + "/modules/" + MODULE_ID + "/config").then(function (res) {
+      var base = (res.ok && res.data && typeof res.data === "object") ? res.data : {};
+      var cfg = {};
+      Object.keys(base).forEach(function (k) { cfg[k] = base[k]; });
+      cfg.enabled_providers = enabled;
+      if (intervalEl && intervalEl.value !== "" && isFinite(intervalMs) && intervalMs > 0) {
+        cfg.interval_ms = intervalMs;
+      }
+      putJSON(API + "/modules/" + MODULE_ID + "/config", cfg).then(function (put) {
+        if (!put.ok) {
+          state.notice = { kind: "bad", text: "Config rejected (" + put.error + ")." };
+          renderProviders();
+          return;
+        }
+        state.config = put.data || cfg;
+        state.notice = { kind: "good", text: "Provider set applied: " + (enabled.length ? enabled.join(", ") : "none enabled") + "." };
+        // Refresh effective interval from the module list, then re-render.
+        loadModuleInterval().then(renderProviders);
+      });
+    });
+  }
+
+  function loadConfig() {
+    return getJSON(API + "/modules/" + MODULE_ID + "/config").then(function (res) {
+      if (res.ok && res.data && typeof res.data === "object") {
+        state.config = res.data; state.configOk = true; state.configMsg = "";
+      } else {
+        state.config = null; state.configOk = false;
+        state.configMsg = res.status === 404
+          ? "The supplemental-OMM module is not registered on this node."
+          : (res.status === 503
+              ? "The module runtime is not up yet."
+              : "Could not read the module config (HTTP " + (res.status || 0) + ").");
+      }
+    });
+  }
+  function loadModuleInterval() {
+    return getJSON(API + "/modules").then(function (res) {
+      state.effectiveIntervalMs = null;
+      if (res.ok && Array.isArray(res.data)) {
+        var m = res.data.find(function (x) { return x && x.id === MODULE_ID; });
+        if (m && Array.isArray(m.timers)) {
+          var t = m.timers.find(function (x) { return x && x.id === "run"; }) || m.timers[0];
+          if (t) state.effectiveIntervalMs = t.interval_ms;
+        }
+      }
+    });
+  }
+
+  // ------------------------------------------------------------ runs list
+  function renderRunsList() {
+    var body = $("runs-body");
+    $("runs-count").textContent = state.runs.length + (state.runs.length === 1 ? " RUN" : " RUNS");
+    var runs = state.runs.slice().sort(byStartedDesc);
+    if (runs.length === 0) {
+      body.innerHTML = emptyBlock("NO RUNS YET", "No OD-fit run has been recorded on this node. Enable one or more providers and let the cron fire, or trigger a live-smoke run.");
+      return;
+    }
+    var head = '<div class="head">' +
+      '<span>RUN ID</span><span>STATUS</span><span class="col-prov">PROVIDERS</span>' +
+      '<span class="num col-eph">EPH</span><span class="num">AVG RMS</span><span class="num">BEATS</span></div>';
+    var rows = runs.map(function (r) {
+      var sel = (r.id === state.selectedRunId) ? " selected" : "";
+      return '<div class="row' + sel + '" data-run="' + attr(r.id) + '" tabindex="0" role="button">' +
+        '<div><div class="run-id">' + esc(r.id) + '</div><div class="run-started">' + fmtStarted(r.started) + '</div></div>' +
+        '<div>' + statusChip(r.status) + '</div>' +
+        '<div class="cell-dim col-prov">' + esc((r.providers || []).join(", ") || "—") + '</div>' +
+        '<div class="cell-mono num col-eph">' + fmtInt(r.ephemeris_files) + '</div>' +
+        '<div class="cell-mono num">' + fmtRms(r.avg_rms) + '</div>' +
+        '<div class="cell-mono num">' + fmtInt(r.beat_count) + '</div>' +
+        '</div>';
+    }).join("");
+    body.innerHTML = '<div class="runs">' + head + rows + '</div>';
+    body.querySelectorAll("[data-run]").forEach(function (el) {
+      var pick = function () { selectRun(el.getAttribute("data-run")); };
+      el.addEventListener("click", pick);
+      el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+    });
+  }
+
+  // ------------------------------------------------------------ run detail (objects)
+  function selectRun(id) {
+    state.selectedRunId = id;
+    renderRunsList();
+    loadDetail();
+  }
+
+  function loadDetail() {
+    var id = state.selectedRunId;
+    if (!id) {
+      $("detail-body").innerHTML = emptyBlock("NO RUN SELECTED", "Select a run above to inspect its fitted objects.");
+      $("search-field").style.display = "none";
+      $("detail-meta").innerHTML = "";
+      return;
+    }
+    $("search-field").style.display = "";
+    $("detail-body").innerHTML = loadingBlock("reading run " + id);
+    getJSON(API + "/runs/" + encodeURIComponent(id)).then(function (res) {
+      if (state.selectedRunId !== id) return;
+      if (!res.ok) {
+        state.detailRun = null;
+        $("detail-meta").innerHTML = "";
+        $("detail-body").innerHTML = emptyBlock("RUN UNAVAILABLE", res.status === 404 ? "That run is no longer present on the node." : "Could not read the run (HTTP " + (res.status || 0) + ").");
         return;
       }
-
-      var jobs = providers.map(function (p) {
-        return getJSON("/sdn/v1/data?source=" + encodeURIComponent(p) + "&type=" + TYPE)
-          .then(function (data) { return { provider: p, data: data }; })
-          .catch(function (err) { return { provider: p, data: null, error: err.message }; });
-      });
-
-      Promise.all(jobs).then(function (results) {
-        var frag = document.createDocumentFragment();
-        results.forEach(function (r) {
-          if (r.error) { banner("Some lanes failed to load: " + r.error); }
-          frag.appendChild(renderLane(r.provider, r.data || { records: [], total: 0, returned: 0 }));
-        });
-        $("lanes").appendChild(frag);
-        // Auto-expand when there is a single lane so data is visible immediately.
-        if (results.length === 1) { $("lanes").querySelector(".lanehead").click(); }
-        $("refresh").disabled = false;
-      });
-    }).catch(function (err) {
-      banner("Failed to reach the node API: " + err.message);
-      $("lanecount").textContent = "—";
-      $("refresh").disabled = false;
+      state.detailRun = res.data;
+      renderDetailMeta(res.data);
+      loadObjects();
     });
   }
 
-  $("refresh").addEventListener("click", load);
-  load();
+  function renderDetailMeta(run) {
+    $("detail-meta").innerHTML =
+      '<span class="tag">RUN ' + esc(run.id) + '</span>' +
+      statusChip(run.status) +
+      '<span class="chip ice">' + fmtInt(run.ephemeris_files) + ' EPHEMERIS FILE' + (run.ephemeris_files === 1 ? '' : 'S') + '</span>' +
+      '<span class="chip cyan">AVG RMS ' + fmtRms(run.avg_rms) + ' KM</span>' +
+      '<span class="chip good">' + fmtInt(run.beat_count) + ' BEATS CELESTRAK</span>';
+  }
+
+  function loadObjects() {
+    var id = state.selectedRunId;
+    if (!id) return;
+    var q = state.search ? ("?search=" + encodeURIComponent(state.search)) : "";
+    getJSON(API + "/runs/" + encodeURIComponent(id) + "/objects" + q).then(function (res) {
+      if (state.selectedRunId !== id) return;
+      var body = $("detail-body");
+      if (!res.ok) {
+        body.innerHTML = emptyBlock("OBJECTS UNAVAILABLE", "Could not read the run's objects (HTTP " + (res.status || 0) + ").");
+        return;
+      }
+      var objs = (res.data && Array.isArray(res.data.objects)) ? res.data.objects : [];
+      var total = (res.data && typeof res.data.total === "number") ? res.data.total : objs.length;
+      if (objs.length === 0) {
+        body.innerHTML = state.search
+          ? emptyBlock("NO MATCH", "No fitted object in run " + id + " matches “" + state.search + "”.")
+          : emptyBlock("NO OBJECTS", "Run " + id + " fitted no objects (no enabled provider returned ephemeris).");
+        return;
+      }
+      body.innerHTML = renderObjectsTable(id, objs, total);
+    });
+  }
+
+  function renderObjectsTable(runId, objs, total) {
+    var head =
+      '<thead><tr>' +
+        '<th>NORAD</th><th>OBJECT</th><th>PROVIDER</th>' +
+        '<th class="num">RMS (KM)</th><th class="num">CELESTRAK RMS</th><th class="num">SPACE-TRACK RMS</th>' +
+        '<th>PARITY</th><th>OMM CID</th><th>ELEMENTS (VCM)</th>' +
+      '</tr></thead>';
+    var rows = objs.map(function (o) {
+      var parity;
+      if (o.error) parity = '<span class="chip bad">ERROR</span>';
+      else if (o.beats_celestrak === true) parity = '<span class="chip good">BEATS</span>';
+      else if (o.beats_celestrak === false) parity = '<span class="chip warn">BEHIND</span>';
+      else if (!o.converged) parity = '<span class="chip warn">NO CONV</span>';
+      else parity = '<span class="chip">—</span>';
+
+      var norad = o.norad;
+      var base = API + "/runs/" + encodeURIComponent(runId) + "/objects/" + encodeURIComponent(norad) + "/download?format=";
+      var dl = o.error ? '<span class="cell-dim">—</span>' :
+        '<span class="dl-links">' +
+          '<a class="btn sm" href="' + attr(base + "tle") + '" download title="Download NORAD TLE">TLE</a>' +
+          '<a class="btn sm" href="' + attr(base + "omm") + '" download title="Download CCSDS OMM (KVN)">OMM</a>' +
+          '<a class="btn sm" href="' + attr(base + "cdm") + '" download title="Download Space Force VCM element block">CDM</a>' +
+        '</span>';
+
+      return '<tr>' +
+        '<td class="hi">' + esc(norad) + '</td>' +
+        '<td>' + esc(o.object_name || "—") + '</td>' +
+        '<td class="cell-dim">' + esc(o.provider || "—") + '</td>' +
+        '<td class="num hi">' + (o.error ? "—" : fmtRms(o.rms)) + '</td>' +
+        '<td class="num">' + fmtRmsPtr(o.celestrak_rms) + '</td>' +
+        '<td class="num">' + fmtRmsPtr(o.spacetrack_rms) + '</td>' +
+        '<td>' + parity + '</td>' +
+        '<td class="cid" title="' + attr(o.omm_cid || "") + '">' + esc(shortCid(o.omm_cid)) + '</td>' +
+        '<td>' + dl + '</td>' +
+        (o.error ? '</tr><tr><td colspan="9" class="cell-dim" style="color:var(--red-light)">' + esc(o.error) + '</td>' : '') +
+        '</tr>';
+    }).join("");
+    var note = '<p class="hint" style="margin-top:10px">' + total + ' object' + (total === 1 ? '' : 's') +
+      ' &middot; RMS = position-residual over the SGP4 fit (km, TEME) &middot; CelesTrak / Space-Track columns are the reference’s OWN elements scored on the SAME ephemeris.</p>';
+    return '<div class="table-scroll"><table class="obj">' + head + '<tbody>' + rows + '</tbody></table></div>' + note;
+  }
+
+  // ------------------------------------------------------------ load orchestration
+  function ensureSelection() {
+    if (state.selectedRunId && state.runs.some(function (r) { return r.id === state.selectedRunId; })) return;
+    // Prefer the live run, else the most recent completed run.
+    if (state.live) { state.selectedRunId = state.live.id; }
+    else {
+      var runs = state.runs.slice().sort(byStartedDesc);
+      state.selectedRunId = runs.length ? runs[0].id : null;
+    }
+  }
+
+  function loadRuns() {
+    return getJSON(API + "/runs").then(function (res) {
+      if (res.ok && res.data) {
+        state.runs = Array.isArray(res.data.runs) ? res.data.runs : [];
+        var newLive = res.data.live || null;
+        if (newLive) {
+          state.live = newLive;
+          state.liveRemaining = newLive.remaining_seconds;
+          state.liveDeadline = Date.now() + (Number(newLive.remaining_seconds) || 0) * 1000;
+        } else {
+          state.live = null; state.liveDeadline = null; state.liveRemaining = null;
+        }
+      }
+      var hadSel = state.selectedRunId;
+      ensureSelection();
+      renderStatus(true);
+      renderCurrent();
+      renderRunsList();
+      if (state.selectedRunId && state.selectedRunId !== hadSel) loadDetail();
+    });
+  }
+
+  function loadAll() {
+    return Promise.all([
+      loadRuns(),
+      loadConfig().then(function () { return loadModuleInterval(); }).then(renderProviders)
+    ]);
+  }
+
+  // Node identity for the status strip (best effort; the board works without it).
+  function loadNode() {
+    return getJSON(API + "/node").then(function (res) {
+      // renderStatus is driven by loadRuns; only flip to bad if node is clearly down.
+      if (!res.ok) renderStatus(false);
+    });
+  }
+
+  // ------------------------------------------------------------ search (debounced)
+  var searchTimer = null;
+  function bindSearch() {
+    var el = $("search");
+    if (!el) return;
+    el.addEventListener("input", function () {
+      state.search = el.value.trim();
+      if (searchTimer) clearTimeout(searchTimer);
+      searchTimer = setTimeout(loadObjects, 220);
+    });
+  }
+
+  // ------------------------------------------------------------ poll (live runs)
+  setInterval(function () {
+    // Cheap poll: keep the run list + current-run panel live. When a run is
+    // executing this surfaces progress; when idle it just confirms no change.
+    loadRuns();
+  }, 4000);
+
+  // ------------------------------------------------------------ boot
+  bindSearch();
+  renderStatus(true);
+  loadNode();
+  loadAll();
 })();
 </script>
 </body>
