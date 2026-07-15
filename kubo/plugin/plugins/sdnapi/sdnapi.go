@@ -180,8 +180,28 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 		return fmt.Errorf("sdnapi: listen on %s: %w", p.addr, err)
 	}
 
+	// Credential-entry admin routes (GET/PUT/DELETE /sdn/v1/admin/credentials):
+	// the operator surface for the third-party data-source credentials ephemeris
+	// modules fetch through the capability-gated "secrets" hostcall. Mounted on
+	// this SAME loopback listener but guarded independently: fail closed and
+	// loopback-only (requestFromLoopback), so credential management stays
+	// same-host even if the operator points Addr at a public interface. A nil
+	// keystore (runtime disabled/not started/could not open) makes every route
+	// report 503; no route ever returns plaintext (write-only store).
+	credsHandler := sdnapihttp.NewCredentialsHandler(sdnapihttp.CredentialsDeps{
+		Store: func() sdnapihttp.CredentialStore {
+			// Return a true nil interface (not a typed-nil) when unavailable so
+			// the handler's nil check fires and reports 503.
+			if s := pluginsdnruntime.CredentialStore(); s != nil {
+				return s
+			}
+			return nil
+		},
+		Authorized: requestFromLoopback,
+	})
+
 	p.srv = &http.Server{
-		Handler:           newRootHandler(sdnapihttp.NewHandler(deps), sdnui.Handler()),
+		Handler:           newRootHandler(sdnapihttp.NewHandler(deps), sdnui.Handler(), credsHandler),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -223,11 +243,35 @@ func (p *sdnAPIPlugin) Close() error {
 // request path unchanged, so the API's own GET /sdn/v1/{node,peers,...} routes
 // still match. The console and the API it drives are therefore same-origin,
 // which is what lets the page fetch /sdn/v1/* with no cross-origin request.
-func newRootHandler(api, ui http.Handler) http.Handler {
+func newRootHandler(api, ui, creds http.Handler) http.Handler {
 	mux := http.NewServeMux()
+	// The credential admin routes claim their exact prefix; because it is more
+	// specific than the "/sdn/v1/" subtree, ServeMux routes credential requests
+	// to the guarded creds handler and everything else under /sdn/v1/ to the
+	// read-only API. The full request path is forwarded unchanged, so each
+	// handler's own method+path routes still match.
+	mux.Handle("/sdn/v1/admin/credentials", creds)
+	mux.Handle("/sdn/v1/admin/credentials/", creds)
 	mux.Handle("/sdn/v1/", api)
 	mux.Handle("/", ui)
 	return mux
+}
+
+// requestFromLoopback reports whether an HTTP request originates from the local
+// host. It is the authorization gate for the credential-entry admin routes: even
+// if the operator (mis)configures the listener onto a public Addr, credential
+// management stays restricted to same-host clients. Fail closed — an
+// unparseable or non-loopback RemoteAddr is refused.
+func requestFromLoopback(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	return ip != nil && ip.IsLoopback()
 }
 
 // installerAdapter maps the sdnmodules.Installer pipeline onto the read-only
