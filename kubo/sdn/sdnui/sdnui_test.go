@@ -19,8 +19,9 @@ func get(t *testing.T, h http.Handler, method, target string) *httptest.Response
 	return rec
 }
 
-// The console root returns the app shell: 200, text/html, containing the shell
-// markup and all five screen names, and it references the /sdn/v1 API.
+// The console root returns the app shell: 200, text/html, containing the design
+// rail markup and all six screen names (including the new Modules screen), and
+// it references the /sdn/v1 API.
 func TestServesAppShell(t *testing.T) {
 	rec := get(t, sdnui.Handler(), http.MethodGet, "/")
 	if rec.Code != http.StatusOK {
@@ -30,14 +31,16 @@ func TestServesAppShell(t *testing.T) {
 		t.Errorf("content-type = %q, want text/html", ct)
 	}
 	body := rec.Body.String()
-	for _, needle := range []string{"app-shell", "Space Data Network"} {
+	// The design shell: the collapsible left icon rail + the brand.
+	for _, needle := range []string{"app-shell", "sdn-rail", "nav-i", "Space Data Network"} {
 		if !strings.Contains(body, needle) {
 			t.Errorf("app shell HTML missing %q", needle)
 		}
 	}
-	for _, screen := range []string{"Node", "Peers", "Data", "Channels", "Conjunction"} {
+	// Every rail screen label, uppercase per the design (Chakra Petch labels).
+	for _, screen := range []string{"NODE", "PEERS", "DATA", "CHANNELS", "APPS", "MODULES"} {
 		if !strings.Contains(body, ">"+screen+"<") {
-			t.Errorf("app shell HTML missing screen name %q", screen)
+			t.Errorf("app shell HTML missing rail screen name %q", screen)
 		}
 	}
 	if !strings.Contains(body, "/sdn/v1") {
@@ -47,8 +50,10 @@ func TestServesAppShell(t *testing.T) {
 
 func TestServesAssets(t *testing.T) {
 	cases := map[string]string{
-		"/styles.css": "text/css",
-		"/app.js":     "text/javascript",
+		"/styles.css":             "text/css",
+		"/app.js":                 "text/javascript",
+		"/fonts/chakra-600.woff2": "font/woff2",
+		"/fonts/plex-400.woff2":   "font/woff2",
 	}
 	for path, wantCT := range cases {
 		rec := get(t, sdnui.Handler(), http.MethodGet, path)
@@ -65,14 +70,19 @@ func TestServesAssets(t *testing.T) {
 	}
 }
 
-// The JS actually wires the screens to the live endpoints.
+// The JS actually wires the screens to the live endpoints, including the new
+// Modules screen and its mutating config PUT.
 func TestJSWiresLiveEndpoints(t *testing.T) {
 	rec := get(t, sdnui.Handler(), http.MethodGet, "/app.js")
 	js := rec.Body.String()
-	for _, endpoint := range []string{"/node", "/peers", "/data/sources", "/data?source=", "/channels", "/apps", "API_BASE = '/sdn/v1'"} {
+	for _, endpoint := range []string{"/node", "/peers", "/data/sources", "/data?source=", "/channels", "/apps", "/modules", "/config", "API_BASE = '/sdn/v1'"} {
 		if !strings.Contains(js, endpoint) {
 			t.Errorf("app.js does not reference %q", endpoint)
 		}
+	}
+	// The Modules settings drawer saves a schedule via an HTTP PUT.
+	if !strings.Contains(js, "'PUT'") {
+		t.Errorf("app.js does not issue a PUT for the module config save")
 	}
 }
 
