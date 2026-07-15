@@ -11,6 +11,7 @@ import (
 	pluginpebbleds "github.com/ipfs/kubo/plugin/plugins/pebbleds"
 	pluginpeerlog "github.com/ipfs/kubo/plugin/plugins/peerlog"
 	pluginsdnflag "github.com/ipfs/kubo/plugin/plugins/sdnflag"
+	pluginsdnruntime "github.com/ipfs/kubo/plugin/plugins/sdnruntime"
 	plugintelemetry "github.com/ipfs/kubo/plugin/plugins/telemetry"
 )
 
@@ -27,6 +28,7 @@ func init() {
 	Preload(pluginpebbleds.Plugins...)
 	Preload(pluginpeerlog.Plugins...)
 	Preload(pluginsdnflag.Plugins...)
+	Preload(pluginsdnruntime.Plugins...)
 	Preload(pluginfxtest.Plugins...)
 	Preload(pluginnopfs.Plugins...)
 	Preload(plugintelemetry.Plugins...)
