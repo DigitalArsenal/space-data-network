@@ -1,9 +1,14 @@
 package sdnapi
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	plugin "github.com/ipfs/kubo/plugin"
+
+	"github.com/ipfs/kubo/sdn/sdnui"
 )
 
 func TestInitDefaults(t *testing.T) {
@@ -57,4 +62,45 @@ func TestLoopbackClassification(t *testing.T) {
 
 func TestImplementsPluginDaemonInternal(t *testing.T) {
 	var _ plugin.PluginDaemonInternal = (*sdnAPIPlugin)(nil)
+}
+
+// The single loopback listener serves the console at "/" and the JSON API
+// under /sdn/v1/ from one handler. The API subtree must win over the console
+// catch-all, and the console must serve the app shell at the root.
+func TestRootHandlerRoutesUIAndAPI(t *testing.T) {
+	apiMarker := "SDN-API-MARKER"
+	api := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(apiMarker + " " + r.URL.Path))
+	})
+	root := newRootHandler(api, sdnui.Handler())
+
+	// API subtree reaches the API handler with the full path intact.
+	rec := httptest.NewRecorder()
+	root.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sdn/v1/node", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), apiMarker) {
+		t.Errorf("GET /sdn/v1/node -> code=%d body=%q, want API handler", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "/sdn/v1/node") {
+		t.Errorf("API handler received a rewritten path: %q", rec.Body.String())
+	}
+
+	// Root serves the console app shell.
+	rec = httptest.NewRecorder()
+	root.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / code = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("GET / content-type = %q, want text/html", ct)
+	}
+	if !strings.Contains(rec.Body.String(), "app-shell") {
+		t.Errorf("GET / did not serve the console app shell")
+	}
+
+	// Console assets are served, not routed to the API.
+	rec = httptest.NewRecorder()
+	root.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/app.js", nil))
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), apiMarker) {
+		t.Errorf("GET /app.js -> code=%d, want console asset (not API)", rec.Code)
+	}
 }

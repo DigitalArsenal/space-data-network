@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Space Data Network — Node Console</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="side-nav" aria-label="Primary">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">SDN</div>
+          <div>
+            <strong>Space Data Network</strong>
+            <span>Node console</span>
+          </div>
+        </div>
+        <nav class="nav-list">
+          <button data-route="node" class="nav-item active" type="button">Node</button>
+          <button data-route="peers" class="nav-item" type="button">Peers</button>
+          <button data-route="data" class="nav-item" type="button">Data</button>
+          <button data-route="channels" class="nav-item" type="button">Channels</button>
+          <button data-route="conjunction" class="nav-item" type="button">Conjunction</button>
+        </nav>
+        <div class="side-foot">
+          <span class="muted">Served by the local node.</span>
+          <span class="muted mono" id="api-base">/sdn/v1</span>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="top-bar">
+          <div>
+            <p class="eyebrow">Space operations network console</p>
+            <h1 id="screen-title">Node</h1>
+          </div>
+          <div class="status-strip" id="status-strip" aria-live="polite">
+            <span class="status-chip" id="chip-node">connecting</span>
+          </div>
+        </header>
+
+        <section id="screen" class="screen" aria-live="polite"></section>
+      </main>
+    </div>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>

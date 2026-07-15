@@ -1,8 +1,10 @@
-// Package sdnapi is the SDN read-only HTTP API plugin: the third SDN addition
-// to upstream kubo (alongside sdnflag and sdnruntime). It exposes a live SDN
-// node's state — identity, peers, the stored (source, type) catalog, bounded
-// record listings, channels and installed apps — as small JSON for the SDN UI.
-// Phase 7 of the kubo rebase.
+// Package sdnapi is the SDN read-only HTTP API + operator-console plugin: the
+// third SDN addition to upstream kubo (alongside sdnflag and sdnruntime). It
+// exposes a live SDN node's state — identity, peers, the stored (source, type)
+// catalog, bounded record listings, channels and installed apps — as small
+// JSON under /sdn/v1/*, and (Phase 8) serves the self-contained static SDN
+// operator console (kubo/sdn/sdnui) at "/" on the SAME loopback listener, so
+// the node serves its own UI with no external assets and no extra port.
 //
 // # Zero core patch — the node serves it directly, kubo-style
 //
@@ -47,6 +49,7 @@ import (
 	"github.com/ipfs/kubo/sdn/channels"
 	sdnapihttp "github.com/ipfs/kubo/sdn/sdnapi"
 	"github.com/ipfs/kubo/sdn/sdnstore"
+	"github.com/ipfs/kubo/sdn/sdnui"
 )
 
 var log = logging.Logger("plugin/sdnapi")
@@ -146,14 +149,14 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 	}
 
 	p.srv = &http.Server{
-		Handler:           sdnapihttp.NewHandler(deps),
+		Handler:           newRootHandler(sdnapihttp.NewHandler(deps), sdnui.Handler()),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	if isLoopbackAddr(p.addr) {
-		log.Infof("SDN HTTP API listening on http://%s (loopback; read-only)", ln.Addr())
+		log.Infof("SDN console + HTTP API listening on http://%s (loopback; read-only; UI at /, API under /sdn/v1/)", ln.Addr())
 	} else {
-		log.Warnf("SDN HTTP API listening on http://%s — this is NOT loopback: the node's SDN state surface is reachable off-host (operator-configured Addr)", ln.Addr())
+		log.Warnf("SDN console + HTTP API listening on http://%s — this is NOT loopback: the node's SDN console and state surface are reachable off-host (operator-configured Addr)", ln.Addr())
 	}
 
 	go func() {
@@ -178,6 +181,21 @@ func (p *sdnAPIPlugin) Close() error {
 		return p.srv.Close()
 	}
 	return nil
+}
+
+// newRootHandler composes the single loopback listener's routing: the
+// read-only JSON API owns the /sdn/v1/ subtree, and the embedded static
+// operator console (kubo/sdn/sdnui) owns everything else — "/" serves the app
+// shell, "/styles.css" and "/app.js" its assets, and any other path is 404.
+// Because the API is mounted on a subtree pattern, ServeMux forwards the full
+// request path unchanged, so the API's own GET /sdn/v1/{node,peers,...} routes
+// still match. The console and the API it drives are therefore same-origin,
+// which is what lets the page fetch /sdn/v1/* with no cross-origin request.
+func newRootHandler(api, ui http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/sdn/v1/", api)
+	mux.Handle("/", ui)
+	return mux
 }
 
 // isLoopbackAddr reports whether host:port binds a loopback interface. A host
