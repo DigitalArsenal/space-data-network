@@ -44,6 +44,30 @@ type pluginInvokeResponse struct {
 	PayloadArena []byte
 }
 
+// EncodeInvokeRequestFrames encodes an SDS $PIV plugin-invoke request for the
+// given method id and input frames. These are the exact bytes plugin_invoke_stream
+// consumes — and the exact bytes a COMMAND-surface module expects on stdin (an
+// emscripten-built module, e.g. analysis/od, whose main() reads a $PIV request
+// from stdin, dispatches it, and writes the $PIV response to stdout). It lets a
+// host drive such a command module with the same request encoding the reactor ABI
+// uses.
+func EncodeInvokeRequestFrames(methodID string, frames []InvokeInputFrame) ([]byte, error) {
+	return encodePluginInvokeRequestFrames(methodID, frames)
+}
+
+// DecodeInvokeResponsePayload decodes an SDS $PIV plugin-invoke response (as
+// written to stdout by a command-surface module, or returned by
+// plugin_invoke_stream) and returns the payload of the preferred output port,
+// falling back to the first output frame. A non-zero status / error envelope is
+// surfaced as an error (same rule as the reactor path).
+func DecodeInvokeResponsePayload(responseBytes []byte, preferredPortID string) ([]byte, error) {
+	resp, err := decodePluginInvokeResponseBytes(responseBytes)
+	if err != nil {
+		return nil, err
+	}
+	return extractPluginInvokePayload(resp, preferredPortID)
+}
+
 func encodePluginInvokeRequest(methodID string, payload []byte) ([]byte, error) {
 	return encodePluginInvokeRequestFrames(methodID, []InvokeInputFrame{
 		{

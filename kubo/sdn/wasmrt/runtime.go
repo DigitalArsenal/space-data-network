@@ -341,6 +341,23 @@ func (m *Module) runSync(name string, params ...interface{}) ([]interface{}, err
 	return m.vm.Execute(name, params...)
 }
 
+// HasFunction reports whether the instantiated module exports a function with
+// the given name. It lets the host run the correct guest runtime-init entry
+// (WASI-reactor _initialize vs emscripten-command __wasm_call_ctors) without
+// triggering a "function not found" trap on a module that exports neither.
+func (m *Module) HasFunction(name string) bool {
+	if m == nil || m.vm == nil {
+		return false
+	}
+	names, _ := m.vm.GetFunctionList()
+	for _, n := range names {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
 // runAsyncWithTimeout invokes an export via WasmEdge's async-execute path
 // and hard-interrupts it (WasmEdge_AsyncCancel) if it has not completed
 // within timeout. On breach the in-flight execution is canceled and reaped

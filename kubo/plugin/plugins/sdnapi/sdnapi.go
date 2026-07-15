@@ -200,8 +200,21 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 		Authorized: requestFromLoopback,
 	})
 
+	// Supplemental-OMM RUN API (GET /sdn/v1/runs...): the read-only board surface
+	// over the node's OD-fit run history. A SEPARATE handler (like credentials),
+	// mounted on this same loopback listener. Reader resolved lazily; a true nil
+	// interface when the run engine is not up yet so the routes report empty.
+	runsHandler := sdnapihttp.NewRunsHandler(sdnapihttp.RunsDeps{
+		Reader: func() sdnapihttp.RunsReader {
+			if s := pluginsdnruntime.Runs(); s != nil {
+				return s
+			}
+			return nil
+		},
+	})
+
 	p.srv = &http.Server{
-		Handler:           newRootHandler(sdnapihttp.NewHandler(deps), sdnui.Handler(), credsHandler),
+		Handler:           newRootHandler(sdnapihttp.NewHandler(deps), sdnui.Handler(), credsHandler, runsHandler),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -243,15 +256,17 @@ func (p *sdnAPIPlugin) Close() error {
 // request path unchanged, so the API's own GET /sdn/v1/{node,peers,...} routes
 // still match. The console and the API it drives are therefore same-origin,
 // which is what lets the page fetch /sdn/v1/* with no cross-origin request.
-func newRootHandler(api, ui, creds http.Handler) http.Handler {
+func newRootHandler(api, ui, creds, runs http.Handler) http.Handler {
 	mux := http.NewServeMux()
-	// The credential admin routes claim their exact prefix; because it is more
-	// specific than the "/sdn/v1/" subtree, ServeMux routes credential requests
-	// to the guarded creds handler and everything else under /sdn/v1/ to the
+	// The credential admin + runs routes claim their exact prefixes; because they
+	// are more specific than the "/sdn/v1/" subtree, ServeMux routes those requests
+	// to their dedicated handlers and everything else under /sdn/v1/ to the
 	// read-only API. The full request path is forwarded unchanged, so each
 	// handler's own method+path routes still match.
 	mux.Handle("/sdn/v1/admin/credentials", creds)
 	mux.Handle("/sdn/v1/admin/credentials/", creds)
+	mux.Handle("/sdn/v1/runs", runs)
+	mux.Handle("/sdn/v1/runs/", runs)
 	mux.Handle("/sdn/v1/", api)
 	mux.Handle("/", ui)
 	return mux

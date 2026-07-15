@@ -352,8 +352,23 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 		return nil, nil, nil, fmt.Errorf("failed to create WASM module: %w", err)
 	}
 
-	// Call _initialize
-	mod.Execute("_initialize")
+	// Run the guest's runtime init before the manifest read or any invoke.
+	// WASI reactor modules (the module-SDK default) export _initialize, which
+	// runs global constructors + sets up the guest heap. Emscripten command-style
+	// builds (e.g. the analysis/od module) instead run their constructors via
+	// __wasm_call_ctors. Match the module-SDK's own service-mode runner: prefer
+	// _initialize, else __wasm_call_ctors. We deliberately do NOT fall back to
+	// _start — that runs a command module's main()/serve-loop and proc_exits the
+	// instance, so plugin_invoke_stream could never be driven afterwards.
+	// Guarding on HasFunction avoids a "function not found" trap (which otherwise
+	// leaves the guest heap uninitialized and makes plugin_alloc fault) on a
+	// module that exports neither.
+	switch {
+	case mod.HasFunction("_initialize"):
+		mod.Execute("_initialize")
+	case mod.HasFunction("__wasm_call_ctors"):
+		mod.Execute("__wasm_call_ctors")
+	}
 
 	// Read manifest
 	manifest, err := ReadManifest(mod)

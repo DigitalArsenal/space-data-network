@@ -76,7 +76,11 @@ func TestRootHandlerRoutesUIAndAPI(t *testing.T) {
 	creds := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(credsMarker + " " + r.URL.Path))
 	})
-	root := newRootHandler(api, sdnui.Handler(), creds)
+	runsMarker := "SDN-RUNS-MARKER"
+	runs := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(runsMarker + " " + r.URL.Path))
+	})
+	root := newRootHandler(api, sdnui.Handler(), creds, runs)
 
 	// API subtree reaches the API handler with the full path intact.
 	rec := httptest.NewRecorder()
@@ -94,6 +98,18 @@ func TestRootHandlerRoutesUIAndAPI(t *testing.T) {
 	root.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/sdn/v1/admin/credentials/spacetrack", nil))
 	if !strings.Contains(rec.Body.String(), credsMarker) {
 		t.Errorf("PUT /sdn/v1/admin/credentials/spacetrack -> body=%q, want credentials handler", rec.Body.String())
+	}
+
+	// The runs prefix wins over the /sdn/v1/ subtree and reaches the runs handler.
+	rec = httptest.NewRecorder()
+	root.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sdn/v1/runs", nil))
+	if !strings.Contains(rec.Body.String(), runsMarker) {
+		t.Errorf("GET /sdn/v1/runs -> body=%q, want runs handler", rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	root.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sdn/v1/runs/abc/objects", nil))
+	if !strings.Contains(rec.Body.String(), runsMarker) {
+		t.Errorf("GET /sdn/v1/runs/abc/objects -> body=%q, want runs handler", rec.Body.String())
 	}
 
 	// Root serves the console app shell.
