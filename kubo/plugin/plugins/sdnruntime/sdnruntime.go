@@ -305,6 +305,15 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 	p.maybeInstallCelestrakReferenceSet(node.Context(), flowInstaller, installer, svc)
 	// --- END celestrak reference set ---
 
+	// --- BEGIN supplemental-OMM OD run engine (see sdnruns.go) ---
+	// Build + register the supplemental-OMM run engine (cron module
+	// "supplemental-omm", default hourly): each fire OD-fits enabled providers'
+	// operator ephemeris to OMMs via the real analysis/od WASM module, compares to
+	// CelesTrak/Space-Track references, and records a run (served at /sdn/v1/runs).
+	// Registered before the scheduler starts so its timer begins with the others.
+	startSupplementalOMMRuns(node, svc, installer, sdnDir)
+	// --- END supplemental-OMM OD run engine ---
+
 	// Start the cron scheduler after modules are registered; it fires each
 	// registered module's timers on their effective interval (config override,
 	// else manifest default) and stops when the node context is cancelled
