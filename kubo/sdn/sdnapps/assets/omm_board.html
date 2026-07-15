@@ -1,0 +1,272 @@
+<!doctype html>
+<!--
+  Supplemental OMM — Provider Status Board (App 2 of the SDN apps program),
+  ported to the kubo-based SDN node.
+
+  Single self-contained HTML+CSS+JS document. NO external references of any kind
+  (no CDN scripts, no external fonts, no remote images): every network call this
+  page makes is a same-origin GET to the node's read-only SDN API under
+  /sdn/v1/*. This whole file is the inline CONTENT of the App 2 SDS $APP record —
+  the record's entry UI page — served by the node at /sdn/v1/apps/supplemental-omm.
+
+  Data model (new node API):
+    GET /sdn/v1/node                          → node identity (peer id, pubsub).
+    GET /sdn/v1/data/sources                  → the (source, type) catalog; the
+                                                board keeps type == "OMM".
+    GET /sdn/v1/data?source=<p>&type=OMM      → per-provider OMM record listing
+                                                {cid, size, file_id}, bounded.
+
+  HONESTY CONTRACT (see the LEGEND at the bottom):
+    LIVE    — value fetched this session from the node's read-only API.
+    NO DATA — no OMM lane exists on this node yet. The board never invents rows.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Supplemental OMM — Provider Status Board</title>
+<style>
+  :root {
+    --bg: #0b0d10; --panel: #12161b; --panel2: #171c22;
+    --edge: #262d36; --edge2: #333c48;
+    --ink: #dde4ec; --dim: #939dab; --dimmer: #707b88;
+    --live: #46d19e; --nodata: #5a636f; --blocked: #c95c5c; --accent: #4a90d9;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sys: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; border-radius: 0 !important; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--sys); }
+  body { font-size: 18px; line-height: 1.55; -webkit-font-smoothing: antialiased; text-align: left; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 22px 18px 44px; }
+
+  header { border: 1px solid var(--edge); background: var(--panel); padding: 16px 18px; }
+  .titlerow { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  h1 { font-size: 21px; letter-spacing: 0.14em; text-transform: uppercase; margin: 0; font-weight: 600; }
+  .appid { font-family: var(--mono); font-size: 15px; color: var(--dim); }
+  .sub { color: var(--dim); font-size: 15px; margin-top: 7px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .meta { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
+  .meta .kv { font-family: var(--mono); font-size: 14px; color: var(--dim); }
+  .meta .kv b { color: var(--ink); font-weight: 600; }
+  .spacer { flex: 1; }
+  button {
+    font-family: var(--mono); font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em;
+    background: var(--panel2); color: var(--ink); border: 1px solid var(--edge2);
+    padding: 7px 14px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+
+  .pill { font-family: var(--mono); font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
+    display: inline-block; padding: 3px 10px; margin: 2px 8px 2px 0; border: 1px solid var(--edge2);
+    color: var(--dim); white-space: nowrap; }
+  .pill.live { color: var(--live); border-color: var(--live); }
+  .pill.nodata { color: var(--nodata); border-color: var(--nodata); }
+
+  .banner { margin-top: 16px; border: 1px solid var(--blocked); background: #1a1113; color: #f0c4c4;
+    padding: 12px 16px; font-family: var(--mono); font-size: 14px; display: none; }
+  .banner.show { display: block; }
+
+  .lanes { margin-top: 18px; display: flex; flex-direction: column; gap: 12px; }
+  .lane { border: 1px solid var(--edge); background: var(--panel); }
+  .lane > .lanehead {
+    display: flex; align-items: center; gap: 14px; width: 100%; text-align: left;
+    background: var(--panel2); border: none; border-bottom: 1px solid var(--edge);
+    padding: 14px 18px; text-transform: none; letter-spacing: normal;
+  }
+  .lane > .lanehead:hover { background: #10151b; }
+  .lane .provider { font-family: var(--mono); font-size: 16px; color: var(--ink); font-weight: 600; letter-spacing: 0.02em; }
+  .lane .count { font-family: var(--mono); font-size: 14px; color: var(--dim); }
+  .lane .chev { color: var(--dim); font-family: var(--mono); }
+  .lanebody { padding: 0; display: none; }
+  .lane.open .lanebody { display: block; }
+  .lane.open .chev { color: var(--accent); }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 18px; border-bottom: 1px solid var(--edge); font-family: var(--mono); font-size: 13.5px; }
+  th { color: var(--dimmer); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; font-size: 12px; }
+  td.cid { color: var(--dim); word-break: break-all; }
+  td.num { color: var(--ink); }
+  tr:last-child td { border-bottom: none; }
+
+  .empty { margin-top: 18px; border: 1px dashed var(--edge2); background: var(--panel); padding: 26px 20px;
+    color: var(--dim); font-family: var(--mono); font-size: 15px; }
+  .empty b { color: var(--ink); }
+
+  .legend { margin-top: 26px; border-top: 1px solid var(--edge); padding-top: 16px; color: var(--dimmer);
+    font-family: var(--mono); font-size: 13px; }
+  .legend .row { margin: 6px 0; }
+  footer { margin-top: 22px; color: var(--dimmer); font-family: var(--mono); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="titlerow">
+      <h1>Supplemental OMM</h1>
+      <span class="appid" id="appid">$APP · supplemental-omm</span>
+    </div>
+    <div class="sub">Provider Status Board — per-provider OMM record listing served by this SDN node</div>
+    <div class="meta">
+      <span class="kv">NODE <b id="peer">—</b></span>
+      <span class="kv">PUBSUB <b id="pubsub">—</b></span>
+      <span class="kv">OMM LANES <b id="lanecount">—</b></span>
+      <span class="spacer"></span>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+
+  <div class="banner" id="banner"></div>
+
+  <div class="lanes" id="lanes"></div>
+  <div class="empty" id="empty" style="display:none">
+    <b>NO DATA.</b> This node has no OMM lanes yet. When a provider stores OMM
+    records under a (source, type=&quot;OMM&quot;) lane, each lane appears here with its
+    live per-provider record listing (from <code>/sdn/v1/data?source=&lt;provider&gt;&amp;type=OMM</code>).
+  </div>
+
+  <div class="legend">
+    <div class="row"><span class="pill live">LIVE</span> fetched this session from the node's read-only <code>/sdn/v1/*</code> API.</div>
+    <div class="row"><span class="pill nodata">NO DATA</span> no OMM lane exists on this node — the board shows nothing rather than inventing rows.</div>
+  </div>
+  <footer id="foot">Supplemental OMM · SDS $APP record · self-contained, same-origin only.</footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var TYPE = "OMM";
+  var $ = function (id) { return document.getElementById(id); };
+
+  function getJSON(path) {
+    return fetch(path, { headers: { "Accept": "application/json" }, credentials: "same-origin" })
+      .then(function (r) {
+        if (!r.ok) throw new Error(path + " → HTTP " + r.status);
+        return r.json();
+      });
+  }
+
+  function shortCID(cid) {
+    if (!cid || cid.length <= 22) return cid || "";
+    return cid.slice(0, 12) + "…" + cid.slice(-8);
+  }
+
+  function banner(msg) {
+    var b = $("banner");
+    if (!msg) { b.className = "banner"; b.textContent = ""; return; }
+    b.className = "banner show";
+    b.textContent = msg;
+  }
+
+  function renderLane(provider, data) {
+    var recs = (data && data.records) || [];
+    var total = (data && typeof data.total === "number") ? data.total : recs.length;
+
+    var lane = document.createElement("div");
+    lane.className = "lane";
+
+    var head = document.createElement("button");
+    head.type = "button";
+    head.className = "lanehead";
+    head.setAttribute("aria-expanded", "false");
+    head.innerHTML =
+      '<span class="chev">▸</span>' +
+      '<span class="provider"></span>' +
+      '<span class="spacer" style="flex:1"></span>' +
+      '<span class="count"></span>';
+    head.querySelector(".provider").textContent = provider;
+    head.querySelector(".count").textContent = total + " OMM record" + (total === 1 ? "" : "s") +
+      (data && data.returned < total ? "  (showing " + data.returned + ")" : "");
+
+    var body = document.createElement("div");
+    body.className = "lanebody";
+
+    if (recs.length === 0) {
+      var e = document.createElement("div");
+      e.style.cssText = "padding:14px 18px;color:var(--dim);font-family:var(--mono);font-size:13.5px";
+      e.textContent = "lane present, no records returned.";
+      body.appendChild(e);
+    } else {
+      var t = document.createElement("table");
+      t.innerHTML = "<thead><tr><th>#</th><th>CID</th><th>Size (bytes)</th><th>Record</th></tr></thead>";
+      var tb = document.createElement("tbody");
+      recs.forEach(function (rec, i) {
+        var tr = document.createElement("tr");
+        var td0 = document.createElement("td"); td0.className = "num"; td0.textContent = String(i + 1);
+        var td1 = document.createElement("td"); td1.className = "cid"; td1.title = rec.cid || ""; td1.textContent = shortCID(rec.cid);
+        var td2 = document.createElement("td"); td2.className = "num"; td2.textContent = String(rec.size != null ? rec.size : "");
+        var td3 = document.createElement("td"); td3.className = "num"; td3.textContent = rec.file_id || "";
+        tr.appendChild(td0); tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+        tb.appendChild(tr);
+      });
+      t.appendChild(tb);
+      body.appendChild(t);
+    }
+
+    head.addEventListener("click", function () {
+      var open = lane.classList.toggle("open");
+      head.setAttribute("aria-expanded", open ? "true" : "false");
+      head.querySelector(".chev").textContent = open ? "▾" : "▸";
+    });
+
+    lane.appendChild(head);
+    lane.appendChild(body);
+    return lane;
+  }
+
+  function load() {
+    banner("");
+    $("refresh").disabled = true;
+    $("lanes").innerHTML = "";
+    $("empty").style.display = "none";
+    $("lanecount").textContent = "…";
+
+    getJSON("/sdn/v1/node").then(function (node) {
+      $("peer").textContent = node && node.peer_id ? node.peer_id : "(unknown)";
+      $("pubsub").textContent = node && node.pubsub_enabled ? "on" : "off";
+    }).catch(function () { /* header is best-effort */ });
+
+    getJSON("/sdn/v1/data/sources").then(function (catalog) {
+      var providers = (catalog || [])
+        .filter(function (c) { return c && c.type === TYPE; })
+        .map(function (c) { return c.source; });
+      $("lanecount").textContent = String(providers.length);
+
+      if (providers.length === 0) {
+        $("empty").style.display = "block";
+        $("refresh").disabled = false;
+        return;
+      }
+
+      var jobs = providers.map(function (p) {
+        return getJSON("/sdn/v1/data?source=" + encodeURIComponent(p) + "&type=" + TYPE)
+          .then(function (data) { return { provider: p, data: data }; })
+          .catch(function (err) { return { provider: p, data: null, error: err.message }; });
+      });
+
+      Promise.all(jobs).then(function (results) {
+        var frag = document.createDocumentFragment();
+        results.forEach(function (r) {
+          if (r.error) { banner("Some lanes failed to load: " + r.error); }
+          frag.appendChild(renderLane(r.provider, r.data || { records: [], total: 0, returned: 0 }));
+        });
+        $("lanes").appendChild(frag);
+        // Auto-expand when there is a single lane so data is visible immediately.
+        if (results.length === 1) { $("lanes").querySelector(".lanehead").click(); }
+        $("refresh").disabled = false;
+      });
+    }).catch(function (err) {
+      banner("Failed to reach the node API: " + err.message);
+      $("lanecount").textContent = "—";
+      $("refresh").disabled = false;
+    });
+  }
+
+  $("refresh").addEventListener("click", load);
+  load();
+})();
+</script>
+</body>
+</html>

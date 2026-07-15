@@ -275,3 +275,73 @@ func TestStoreAndReadBySourceType_DurableAcrossReopen(t *testing.T) {
 		t.Fatalf("engine returned %d records for srcB, want %d", len(framesB), len(recsB))
 	}
 }
+
+// TestStoreManifest_NoSchemaNeeded proves the composition write-path: a record
+// of a type with NO registered FlatSQL schema (here "APP") stores as a
+// content-addressed block + durable index + catalog entry, reads back
+// byte-identically via ReadBySourceType, shows up in the catalog, and is
+// idempotent — all WITHOUT touching the FlatSQL engine (Store() would fail for
+// an unschema'd type at ingest).
+func TestStoreManifest_NoSchemaNeeded(t *testing.T) {
+	ctx := context.Background()
+	mds := dssync.MutexWrap(ds.NewMapDatastore())
+	bs := blockstore.NewBlockstore(mds)
+
+	st, err := sdnstore.Open(sdnstore.Config{
+		Blockstore:     bs,
+		Datastore:      mds,
+		Schemas:        ommSchemas(), // knows OMM only; NOT "APP"
+		RuntimeOptions: []flatsqlrt.Option{flatsqlrt.WithAOTCache(sharedAOTDir(t))},
+	})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	// A schemaless type goes through Store()'s engine path and must fail there.
+	if _, err := st.Store(ctx, "sdn", "APP", []byte("opaque-record-bytes")); err == nil {
+		t.Fatal("Store of an unschema'd type should fail (no FlatSQL schema for APP)")
+	}
+
+	rec := []byte("this is an opaque $APP-like record body")
+	c1, err := st.StoreManifest(ctx, "sdn", "APP", rec)
+	if err != nil {
+		t.Fatalf("StoreManifest: %v", err)
+	}
+
+	// Idempotent: re-storing byte-identical bytes returns the same CID and adds
+	// no second index entry.
+	c2, err := st.StoreManifest(ctx, "sdn", "APP", rec)
+	if err != nil {
+		t.Fatalf("StoreManifest (re-store): %v", err)
+	}
+	if !c1.Equals(c2) {
+		t.Fatalf("re-store CID = %s, want %s", c2, c1)
+	}
+
+	got, err := st.ReadBySourceType(ctx, "sdn", "APP")
+	if err != nil {
+		t.Fatalf("ReadBySourceType: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("read back %d records, want 1 (idempotent)", len(got))
+	}
+	if string(got[0]) != string(rec) {
+		t.Fatalf("read-back bytes differ from stored record")
+	}
+
+	// The (source, type) pair is in the catalog.
+	cat, err := st.Catalog(ctx)
+	if err != nil {
+		t.Fatalf("Catalog: %v", err)
+	}
+	found := false
+	for _, ce := range cat {
+		if ce.Source == "sdn" && ce.Type == "APP" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("catalog missing (sdn, APP): %+v", cat)
+	}
+}

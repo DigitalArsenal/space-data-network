@@ -23,6 +23,7 @@
 package sdnruntime
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,8 +35,10 @@ import (
 
 	"github.com/ipfs/kubo/sdn/flatsqlrt"
 	"github.com/ipfs/kubo/sdn/modulert"
+	"github.com/ipfs/kubo/sdn/sdnapps"
 	"github.com/ipfs/kubo/sdn/sdnservices"
 	"github.com/ipfs/kubo/sdn/sdnstore"
+	"github.com/ipfs/kubo/sdn/sds"
 )
 
 var log = logging.Logger("plugin/sdnruntime")
@@ -124,6 +127,29 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 	}
 	setServices(svc)
 
+	// Install the SDN apps program's $APP records (Supplemental OMM + Conjunction)
+	// into the node's record store so the node lists them at GET /sdn/v1/apps and
+	// serves each app's inline UI at GET /sdn/v1/apps/<id>. Idempotent: the store
+	// keys records by content, so re-seeding on a later boot is a no-op.
+	if n, err := sdnapps.Seed(node.Context(), svc.Store); err != nil {
+		log.Warnf("SDN apps seed failed: %v", err)
+	} else {
+		log.Infof("SDN apps installed: %d $APP record(s) under (source=%q, type=%q)", n, sdnapps.Source, sdnapps.SDSType)
+	}
+
+	// Optional developer OMM seed (off by default). When SDN_DEV_SEED_OMM is set,
+	// a handful of real OMM FlatBuffers are stored under a couple of provider
+	// lanes so the Supplemental OMM board has live records to render on a fresh
+	// isolated repo. This is a local dev/verification affordance only — never
+	// enabled in a production config.
+	if os.Getenv("SDN_DEV_SEED_OMM") != "" {
+		if n, err := seedDevOMM(node.Context(), svc.Store); err != nil {
+			log.Warnf("SDN dev OMM seed failed: %v", err)
+		} else {
+			log.Infof("SDN dev OMM seed: stored %d OMM record(s) (SDN_DEV_SEED_OMM set)", n)
+		}
+	}
+
 	if node.PubSub == nil {
 		log.Warnf("SDN runtime active (STORAGE-ONLY): node pubsub is disabled (Pubsub.Enabled=false) — channel fan-out and the pubsub module capability are unavailable; peer=%s", node.Identity)
 	} else {
@@ -142,6 +168,58 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 }
 
 func (*sdnRuntimePlugin) Close() error { return nil }
+
+// seedDevOMM stores a small set of real OMM FlatBuffers under two provider lanes
+// (celestrak-gp, spacex) so a fresh isolated repo has live OMM records for the
+// Supplemental OMM board to render. Gated behind SDN_DEV_SEED_OMM by the caller;
+// it uses the sds OMM builder (the same fixture the storage tests use) and the
+// store's normal Store path (OMM has a registered FlatSQL schema). Idempotent:
+// byte-identical records dedup by content.
+func seedDevOMM(ctx context.Context, store *sdnstore.Store) (int, error) {
+	if store == nil {
+		return 0, fmt.Errorf("sdnruntime: store is nil")
+	}
+	type sat struct {
+		norad uint32
+		name  string
+		epoch string
+		mm    float64
+		inc   float64
+	}
+	lanes := map[string][]sat{
+		"celestrak-gp": {
+			{25544, "ISS (ZARYA)", "2026-07-15T00:00:00Z", 15.50, 51.64},
+			{20580, "HST", "2026-07-15T00:00:00Z", 15.09, 28.47},
+			{33591, "NOAA 19", "2026-07-15T00:00:00Z", 14.13, 99.19},
+		},
+		"spacex": {
+			{44713, "STARLINK-1007", "2026-07-15T00:00:00Z", 15.06, 53.05},
+			{44714, "STARLINK-1008", "2026-07-15T00:00:00Z", 15.06, 53.05},
+		},
+	}
+	n := 0
+	for source, sats := range lanes {
+		for _, s := range sats {
+			sized := sds.NewOMMBuilder().
+				WithNoradCatID(s.norad).
+				WithObjectName(s.name).
+				WithObjectID(fmt.Sprintf("2024-%03dA", s.norad%1000)).
+				WithEpoch(s.epoch).
+				WithMeanMotion(s.mm).
+				WithEccentricity(0.0001).
+				WithInclination(s.inc).
+				WithOriginator(source).
+				Build()
+			// sds builds a size-prefixed OMM; sdnstore.Store takes a single
+			// FlatBuffer without the 4-byte size prefix.
+			if _, err := store.Store(ctx, source, "OMM", sized[4:]); err != nil {
+				return n, fmt.Errorf("sdnruntime: seed OMM %s/%d: %w", source, s.norad, err)
+			}
+			n++
+		}
+	}
+	return n, nil
+}
 
 // ---------------------------------------------------------------------------
 // Package-level accessor for the live SDN services.
