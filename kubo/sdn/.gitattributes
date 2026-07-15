@@ -1,0 +1,5 @@
+# WASM engine artifacts are binary. The kubo root .gitattributes default
+# `* text eol=lf` would otherwise apply EOL normalization to them, corrupting
+# the bytes and breaking the embedded-artifact sha256 gate
+# (flatsqlrt.TestEmbeddedArtifact).
+*.wasm binary
