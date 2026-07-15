@@ -9,13 +9,14 @@
 
 const API_BASE = '/sdn/v1';
 
-const routes = ['node', 'peers', 'data', 'channels', 'conjunction'];
+const routes = ['node', 'peers', 'data', 'channels', 'conjunction', 'modules'];
 const titles = {
   node: 'Node',
   peers: 'Peers',
   data: 'Data',
   channels: 'Channels',
   conjunction: 'Conjunction',
+  modules: 'Modules',
 };
 
 const state = {
@@ -105,6 +106,7 @@ function renderCurrentScreen() {
   if (state.route === 'data') return renderData();
   if (state.route === 'channels') return renderChannels();
   if (state.route === 'conjunction') return renderConjunction();
+  if (state.route === 'modules') return renderModules();
   return renderNode();
 }
 
@@ -471,6 +473,106 @@ function installedAppsTable(apps) {
       </table>
     </div>
   `;
+}
+
+// ---------------------------------------------------------------------------
+// Modules screen — the PAGE-side module loader.
+//
+// "Modules load into the JS harness the same as SDN nodes." Given a module
+// CONTENT_HASH that the node can resolve (GET /sdn/v1/module?hash=), this screen
+// fetches the exact WASM bytes, verifies the sha-256 in-page, instantiates the
+// module in a stock browser WebAssembly runtime under the SAME
+// plugin_invoke_stream ABI the node runs it under (via ./module-harness.js),
+// invokes a declared method, and shows the decoded $PIV result — which is
+// byte-for-byte the result the node runtime returns for the same input.
+// ---------------------------------------------------------------------------
+
+async function renderModules() {
+  const res = await fetchJSON('/apps');
+  const apps = res.ok && Array.isArray(res.data) ? res.data : [];
+  const appsBlock = res.ok
+    ? (apps.length ? installedAppsTable(apps) : emptyBlock('No apps installed', 'No SDN apps are installed on this node; you can still load a module by CONTENT_HASH below.'))
+    : unavailableBlock(`The apps catalog is unavailable (${escapeHtml(res.error)}).`);
+  if (state.route !== 'modules') return;
+  screen.innerHTML = `
+    <div class="grid">
+      <section class="panel span-12">
+        <div class="panel-head">
+          <h2>Load a module in this page</h2>
+          <span class="chip state-trusted">isomorphic</span>
+        </div>
+        <p class="muted">Fetch a module by <span class="mono">CONTENT_HASH</span> from <span class="mono">/sdn/v1/module?hash=</span>, verify its sha-256 in-browser, instantiate it under the same <span class="mono">plugin_invoke_stream</span> ABI the node uses, and invoke a declared method. The decoded result mirrors the node-side runtime for the same input.</p>
+        <div class="form-row">
+          <label>CONTENT_HASH (64 hex)
+            <input id="mod-hash" class="mono" type="text" spellcheck="false" placeholder="sha-256 hex of the module artifact" style="width:100%">
+          </label>
+        </div>
+        <div class="form-row">
+          <label>Method id
+            <input id="mod-method" class="mono" type="text" spellcheck="false" value="server_configure_runtime" style="width:100%">
+          </label>
+        </div>
+        <div class="actions">
+          <button class="button" id="mod-run" type="button">Load in page &amp; invoke</button>
+        </div>
+        <div id="mod-result" style="margin-top:12px"></div>
+      </section>
+      <section class="panel span-12">
+        <h2>Installed Apps</h2>
+        <p class="muted">SDN apps stored on this node (from <span class="mono">/sdn/v1/apps</span>). App module refs carry the CONTENT_HASH you can load above.</p>
+        ${appsBlock}
+      </section>
+    </div>
+  `;
+  const runBtn = document.querySelector('#mod-run');
+  if (runBtn) runBtn.addEventListener('click', runModuleInvoke);
+}
+
+async function runModuleInvoke() {
+  const hashEl = document.querySelector('#mod-hash');
+  const methodEl = document.querySelector('#mod-method');
+  const out = document.querySelector('#mod-result');
+  const hash = (hashEl.value || '').trim().toLowerCase();
+  const method = (methodEl.value || '').trim();
+  if (!/^[0-9a-f]{64}$/.test(hash)) {
+    out.innerHTML = unavailableBlock('Enter a 64-character hex CONTENT_HASH.');
+    return;
+  }
+  if (!method) {
+    out.innerHTML = unavailableBlock('Enter a method id to invoke.');
+    return;
+  }
+  out.innerHTML = loadingBlock(`fetching + instantiating module ${hash.slice(0, 12)}… in this page`);
+  try {
+    const harness = await import('./module-harness.js');
+    const { instance } = await harness.loadModuleByHash(hash, { apiBase: API_BASE });
+    const result = instance.invoke(method, null);
+    const manifest = safeManifestName(instance);
+    out.innerHTML = `
+      <div class="panel" style="background:transparent">
+        <h3>In-page invoke result <span class="chip state-active">loaded in browser</span></h3>
+        <dl class="detail-list">
+          ${manifest ? `<div><dt>Module</dt><dd class="mono wrap-any">${escapeHtml(manifest)}</dd></div>` : ''}
+          <div><dt>Method</dt><dd class="mono">${escapeHtml(method)}</dd></div>
+          <div><dt>Status code</dt><dd class="mono">${escapeHtml(String(result.statusCode))}</dd></div>
+          <div><dt>PIV status</dt><dd class="mono">${escapeHtml(String(result.status))}</dd></div>
+          ${result.errorCode ? `<div><dt>Error code</dt><dd class="mono">${escapeHtml(result.errorCode)}</dd></div>` : ''}
+          ${result.errorMessage ? `<div><dt>Error message</dt><dd class="wrap-any">${escapeHtml(result.errorMessage)}</dd></div>` : ''}
+          <div><dt>Output frames</dt><dd class="mono">${escapeHtml(String(result.outputs.length))}</dd></div>
+        </dl>
+        <p class="subtle">This is the same structured $PIV result the node runtime returns for the same method + input — the isomorphic guarantee.</p>
+      </div>`;
+  } catch (err) {
+    out.innerHTML = unavailableBlock(`In-page load/invoke failed: ${escapeHtml(String(err && err.message ? err.message : err))}`);
+  }
+}
+
+function safeManifestName(instance) {
+  try {
+    const bytes = instance.readManifest();
+    if (!bytes || bytes.length < 8) return null;
+    return `${bytes.length} bytes manifest`;
+  } catch { return null; }
 }
 
 // ---------------------------------------------------------------------------

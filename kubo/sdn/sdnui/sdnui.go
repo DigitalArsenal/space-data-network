@@ -15,9 +15,13 @@
 //
 // # Read-only, GET-only
 //
-// Like the API it fronts, this surface is read-only. Handler serves exactly
-// three assets by exact path (/, /styles.css, /app.js) to GET requests;
-// everything else — unknown path or non-GET method — is a plain 404.
+// Like the API it fronts, this surface is read-only. Handler serves the console
+// shell and its assets by exact path (/, /styles.css, /app.js, and the
+// self-contained page module harness /module-harness.js + its vendored
+// /flatbuffers.js) to GET requests; everything else — unknown path or non-GET
+// method — is a plain 404. The page harness fetches module WASM bytes from the
+// API's /sdn/v1/module?hash= endpoint and runs them in-page under the same
+// plugin_invoke_stream ABI the node uses; it makes no external-origin request.
 package sdnui
 
 import (
@@ -26,11 +30,12 @@ import (
 	"net/http"
 )
 
-// Assets holds the embedded static console (index.html, styles.css, app.js).
+// Assets holds the embedded static console (index.html, styles.css, app.js,
+// the page module harness module-harness.js and its vendored flatbuffers.js).
 // It is exported so provenance/self-containment checks (e.g. the package test
 // that forbids external-origin URLs) can walk exactly what ships in the binary.
 //
-//go:embed assets/index.html assets/styles.css assets/app.js
+//go:embed assets/index.html assets/styles.css assets/app.js assets/module-harness.js assets/flatbuffers.js
 var Assets embed.FS
 
 // asset is one embedded file plus the Content-Type it is served with.
@@ -42,9 +47,11 @@ type asset struct {
 // routeAssets maps a request path to its embedded file. Only these exact paths
 // are served; there is no directory listing and no path traversal.
 var routeAssets = map[string]asset{
-	"/":           {path: "assets/index.html", contentType: "text/html; charset=utf-8"},
-	"/styles.css": {path: "assets/styles.css", contentType: "text/css; charset=utf-8"},
-	"/app.js":     {path: "assets/app.js", contentType: "text/javascript; charset=utf-8"},
+	"/":                  {path: "assets/index.html", contentType: "text/html; charset=utf-8"},
+	"/styles.css":        {path: "assets/styles.css", contentType: "text/css; charset=utf-8"},
+	"/app.js":            {path: "assets/app.js", contentType: "text/javascript; charset=utf-8"},
+	"/module-harness.js": {path: "assets/module-harness.js", contentType: "text/javascript; charset=utf-8"},
+	"/flatbuffers.js":    {path: "assets/flatbuffers.js", contentType: "text/javascript; charset=utf-8"},
 }
 
 type uiHandler struct{}

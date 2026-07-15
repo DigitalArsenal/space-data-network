@@ -27,9 +27,11 @@
 package sdnapi
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/ipfs/kubo/sdn/appmanifest"
 	"github.com/ipfs/kubo/sdn/channels"
@@ -68,6 +70,13 @@ type Deps struct {
 	IPFSPeers func() []string
 	// SDNPeers returns the peers discovered via the SDN flag namespace.
 	SDNPeers func() []string
+	// Blockstore returns the node's content-addressed block store, or nil when
+	// it is not available yet. It backs GET /sdn/v1/module?hash=<sha256hex>,
+	// which resolves an $APP APPModuleRef.CONTENT_HASH to the exact module WASM
+	// bytes so the PAGE-side harness can load a module by content hash over the
+	// SAME blockstore the node serves modules from (verify-by-hash). A nil
+	// Blockstore (or nil return) makes the module endpoint report 503.
+	Blockstore func() appmanifest.ModuleBlockstore
 }
 
 // NewHandler builds the read-only SDN HTTP API over deps. Routes are method-
@@ -81,6 +90,7 @@ func NewHandler(deps Deps) http.Handler {
 	mux.HandleFunc("GET /sdn/v1/data", h.data)
 	mux.HandleFunc("GET /sdn/v1/channels", h.channels)
 	mux.HandleFunc("GET /sdn/v1/apps", h.apps)
+	mux.HandleFunc("GET /sdn/v1/module", h.module)
 	return mux
 }
 
@@ -93,6 +103,13 @@ func (h *handler) store() *sdnstore.Store {
 		return nil
 	}
 	return h.deps.Store()
+}
+
+func (h *handler) blockstore() appmanifest.ModuleBlockstore {
+	if h.deps.Blockstore == nil {
+		return nil
+	}
+	return h.deps.Blockstore()
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +350,56 @@ func (h *handler) apps(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// module serves the raw WASM bytes of a module addressed by its
+// APPModuleRef.CONTENT_HASH (64 lowercase hex chars of the SHA-256 of the
+// portable module artifact). It is the PAGE-side counterpart to the node's own
+// module resolution: the page harness fetches these exact bytes and loads the
+// module in-browser under the SAME plugin_invoke_stream ABI the node runs it
+// under, so "modules load into the JS harness the same as SDN nodes".
+//
+// The bytes are resolved through appmanifest.ResolveModuleByContentHash, which
+// re-hashes the fetched block and rejects any mismatch — the response is
+// verify-by-hash at the source, and the page re-verifies the digest again after
+// download (defense in depth). A well-formed hash that is not stored is a plain
+// 404; a malformed hash is a 400; no block store yet is a 503.
+func (h *handler) module(w http.ResponseWriter, r *http.Request) {
+	hash := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hash")))
+	if hash == "" {
+		writeErr(w, http.StatusBadRequest, "hash query parameter is required")
+		return
+	}
+	// Validate the CONTENT_HASH shape up front so a malformed hash is a client
+	// error (400), distinct from a well-formed-but-absent module (404).
+	if len(hash) != 64 {
+		writeErr(w, http.StatusBadRequest, "hash must be 64 hex characters (sha-256)")
+		return
+	}
+	if _, err := hex.DecodeString(hash); err != nil {
+		writeErr(w, http.StatusBadRequest, "hash must be valid hex")
+		return
+	}
+
+	bs := h.blockstore()
+	if bs == nil {
+		writeErr(w, http.StatusServiceUnavailable, "module store unavailable")
+		return
+	}
+
+	wasm, err := appmanifest.ResolveModuleByContentHash(r.Context(), bs, hash)
+	if err != nil {
+		// A validated hash that does not resolve means the block is not present
+		// (or was substituted and failed the verify-by-hash check): 404, not 500.
+		writeErr(w, http.StatusNotFound, "module not found for content hash")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/wasm")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(wasm)
 }
 
 // ---------------------------------------------------------------------------
