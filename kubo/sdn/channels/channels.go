@@ -54,6 +54,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 
@@ -247,6 +248,20 @@ type Channels struct {
 // New wraps a gossipsub instance for channel fan-out.
 func New(ps *pubsub.PubSub) *Channels {
 	return &Channels{ps: ps, topics: make(map[string]*pubsub.Topic)}
+}
+
+// Topics returns the wire-topic names this Channels has joined so far
+// (published to or subscribed from) — the currently-active channel set. It is
+// read-only and safe to call concurrently (e.g. from a status API goroutine).
+func (c *Channels) Topics() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, 0, len(c.topics))
+	for name := range c.topics {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (c *Channels) joinTopic(name string) (*pubsub.Topic, error) {

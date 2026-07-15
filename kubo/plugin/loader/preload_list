@@ -13,6 +13,7 @@ pebbleds github.com/ipfs/kubo/plugin/plugins/pebbleds *
 peerlog github.com/ipfs/kubo/plugin/plugins/peerlog *
 sdnflag github.com/ipfs/kubo/plugin/plugins/sdnflag *
 sdnruntime github.com/ipfs/kubo/plugin/plugins/sdnruntime *
+sdnapi github.com/ipfs/kubo/plugin/plugins/sdnapi *
 fxtest github.com/ipfs/kubo/plugin/plugins/fxtest *
 nopfs github.com/ipfs/kubo/plugin/plugins/nopfs *
 telemetry github.com/ipfs/kubo/plugin/plugins/telemetry *
