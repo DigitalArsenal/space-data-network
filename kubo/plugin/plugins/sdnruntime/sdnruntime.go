@@ -24,6 +24,7 @@ package sdnruntime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,6 +42,7 @@ import (
 	"github.com/ipfs/kubo/sdn/plugins"
 	"github.com/ipfs/kubo/sdn/sdnapps"
 	"github.com/ipfs/kubo/sdn/sdncron"
+	"github.com/ipfs/kubo/sdn/sdnflows"
 	"github.com/ipfs/kubo/sdn/sdnmodules"
 	"github.com/ipfs/kubo/sdn/sdnservices"
 	"github.com/ipfs/kubo/sdn/sdnstore"
@@ -119,8 +121,10 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 	// user-tunable schedule (and other inputs) survive restarts:
 	// <repo>/sdn/modules/<moduleId>.json (0600, atomic writes).
 	modulesConfigDir := ""
+	sdnDir := ""
 	if p.repoPath != "" {
-		modulesConfigDir = filepath.Join(p.repoPath, "sdn", "modules")
+		sdnDir = filepath.Join(p.repoPath, "sdn")
+		modulesConfigDir = filepath.Join(sdnDir, "modules")
 	}
 
 	deps := sdnservices.Deps{
@@ -134,7 +138,10 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 		PeerID:           node.Identity.String(),
 		FallbackSource:   node.Identity.String(),
 		ModulesConfigDir: modulesConfigDir,
-		CronLog:          log.Infof,
+		// Owner rule: the http cap's CelesTrak/Space-Track fetch ledger (3h
+		// no-refetch window, >= 2.5s serial spacing) persists under <repo>/sdn.
+		FetchLedgerDir: sdnDir,
+		CronLog:        log.Infof,
 	}
 
 	svc, err := sdnservices.BuildServices(deps)
@@ -156,6 +163,18 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 		return fmt.Errorf("sdnruntime: build module installer: %w", err)
 	}
 	setInstaller(installer)
+
+	// Flow install + register pipeline (sdnflows): loads a compiled .flow.json
+	// bundle (chaining WASM module nodes) and registers it as a timer-served
+	// flow with the SAME cron scheduler modules use, so a flow both fires its
+	// host-cron timer (fetch -> parse -> store) on its cadence and appears at
+	// GET /sdn/v1/modules alongside modules. The installed-flows registry lives
+	// under <repo>/sdn/flows.
+	flowInstaller, err := buildFlowInstaller(svc, sdnDir)
+	if err != nil {
+		return fmt.Errorf("sdnruntime: build flow installer: %w", err)
+	}
+	setFlowInstaller(flowInstaller)
 
 	// Install the SDN apps program's $APP records (Supplemental OMM + Conjunction)
 	// into the node's record store so the node lists them at GET /sdn/v1/apps and
@@ -212,6 +231,22 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 		}
 	}
 
+	// Optional developer install of a REAL compiled flow bundle (off by default;
+	// a local/live-smoke affordance, mirroring SDN_INSTALL_WASM — never enabled
+	// in a production config). When SDN_INSTALL_FLOW=<bundle dir> is set, the
+	// node installs that flow through the sdnflows pipeline: it records DEV
+	// operator approvals for the flow's declared sensitive capabilities (so the
+	// fail-closed gate admits it), loads + registers the flow with the cron
+	// scheduler, and persists it. SDN_FLOW_CONFIG=<json> supplies the flow's node
+	// CONFIG (e.g. celestrak_space_weather_url pointing at a reachable stub —
+	// celestrak.org is firewalled from a workstation); SDN_FLOW_INTERVAL=<dur>
+	// overrides every timer interval so the fire is observable quickly.
+	if fp := strings.TrimSpace(os.Getenv("SDN_INSTALL_FLOW")); fp != "" {
+		if err := devInstallFlow(node.Context(), flowInstaller, svc, fp); err != nil {
+			log.Warnf("SDN_INSTALL_FLOW install failed for %q: %v", fp, err)
+		}
+	}
+
 	// Re-establish the persisted installed-modules set + install any operator
 	// drop-in *.wasm (before the scheduler starts, so every module's timers begin
 	// together). Tolerant: a module whose bytes are missing or whose sensitive
@@ -220,6 +255,15 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 		log.Warnf("SDN module installer boot failed: %v", err)
 	} else if n > 0 {
 		log.Infof("SDN module installer: re-registered %d installed WASM module(s) at boot", n)
+	}
+
+	// Re-establish the persisted installed-FLOWS set (before the scheduler
+	// starts, alongside modules). Tolerant: a flow whose bundle is missing or
+	// whose sensitive capabilities are no longer approved is logged and skipped.
+	if n, err := flowInstaller.Boot(node.Context(), nil); err != nil {
+		log.Warnf("SDN flow installer boot failed: %v", err)
+	} else if n > 0 {
+		log.Infof("SDN flow installer: re-registered %d installed flow(s) at boot", n)
 	}
 
 	// Start the cron scheduler after modules are registered; it fires each
@@ -242,7 +286,9 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 	// durable blockstore/datastore are the node's and are left untouched).
 	go func() {
 		<-node.Context().Done()
-		installer.Close() // close loaded module runtimes first
+		flowInstaller.Close() // close loaded flow runtimes first
+		setFlowInstaller(nil)
+		installer.Close() // close loaded module runtimes
 		setInstaller(nil)
 		svc.Close() // stops the scheduler + closes the store engine
 		setServices(nil)
@@ -359,6 +405,127 @@ func setInstaller(in *sdnmodules.Installer) {
 	installerMu.Unlock()
 }
 
+// ---------------------------------------------------------------------------
+// Package-level accessor for the live FLOW installer (the sdnflows pipeline).
+// Mirrors Installer()/Services(): stashed on Start so a later API/admin surface
+// can reach it.
+// ---------------------------------------------------------------------------
+
+var (
+	flowInstallerMu   sync.RWMutex
+	liveFlowInstaller *sdnflows.Installer
+)
+
+// FlowInstaller returns the live flow installer, or nil if the runtime plugin
+// is disabled or has not started yet.
+func FlowInstaller() *sdnflows.Installer {
+	flowInstallerMu.RLock()
+	defer flowInstallerMu.RUnlock()
+	return liveFlowInstaller
+}
+
+func setFlowInstaller(in *sdnflows.Installer) {
+	flowInstallerMu.Lock()
+	liveFlowInstaller = in
+	flowInstallerMu.Unlock()
+}
+
+// buildFlowInstaller constructs the flow install pipeline over the live
+// services and the <repo>/sdn/flows registry directory. sdnDir may be "" (no
+// repo path), in which case the registry is in no-persistence mode.
+func buildFlowInstaller(svc *sdnservices.Services, sdnDir string) (*sdnflows.Installer, error) {
+	flowsDir := ""
+	if sdnDir != "" {
+		flowsDir = filepath.Join(sdnDir, "flows")
+	}
+	registry, err := sdnflows.NewRegistry(flowsDir)
+	if err != nil {
+		return nil, err
+	}
+	return sdnflows.New(sdnflows.Config{
+		Services: svc,
+		Registry: registry,
+		Log:      log.Infof,
+	})
+}
+
+// devInstallFlow is the SDN_INSTALL_FLOW boot affordance: it reads a compiled
+// flow bundle from disk, records DEV operator approvals for its declared
+// sensitive capabilities (so the fail-closed gate admits it), and installs +
+// registers it through the pipeline. SDN_FLOW_CONFIG (JSON) is the flow's node
+// CONFIG (URL overrides etc.); SDN_FLOW_INTERVAL overrides every timer's
+// interval. Local/live-smoke only.
+func devInstallFlow(ctx context.Context, installer *sdnflows.Installer, svc *sdnservices.Services, bundleDir string) error {
+	raw, err := os.ReadFile(filepath.Join(bundleDir, "runtime.wasm"))
+	if err != nil {
+		return fmt.Errorf("read flow runtime.wasm: %w", err)
+	}
+	portable, _, err := modulert.EnforceModuleSignaturePolicy(nil, raw)
+	if err != nil {
+		return fmt.Errorf("strip flow trailer: %w", err)
+	}
+	hash := modulert.ContentHashHex(portable)
+	if svc.NodeCtx != nil && svc.NodeCtx.CapabilityPolicy != nil {
+		for _, cap := range devSensitiveCapabilities {
+			if _, err := svc.NodeCtx.CapabilityPolicy.Approve(modulert.CapabilityApproval{
+				ModuleHash: hash,
+				Capability: cap,
+				ApprovedBy: "dev:SDN_INSTALL_FLOW",
+				Note:       "auto-approved by SDN_INSTALL_FLOW developer affordance (local only)",
+			}); err != nil {
+				return fmt.Errorf("dev-approve %s: %w", cap, err)
+			}
+		}
+		log.Warnf("SDN_INSTALL_FLOW (DEV, local only): auto-approved sensitive capabilities for flow hash %s… — this MUST NOT be used in production", hash[:12])
+	}
+
+	spec := sdnflows.FlowSpec{Ref: bundleDir}
+	if cfg := strings.TrimSpace(os.Getenv("SDN_FLOW_CONFIG")); cfg != "" {
+		var m map[string]interface{}
+		if err := json.Unmarshal([]byte(cfg), &m); err != nil {
+			return fmt.Errorf("SDN_FLOW_CONFIG is not valid JSON: %w", err)
+		}
+		spec.Config = m
+	}
+	if iv := strings.TrimSpace(os.Getenv("SDN_FLOW_INTERVAL")); iv != "" {
+		// Apply the override to every timer the bundle declares by reading its
+		// flow.json triggers.
+		spec.Intervals = flowIntervalOverrides(bundleDir, iv)
+	}
+
+	f, err := installer.Install(spec, "dev:SDN_INSTALL_FLOW")
+	if err != nil {
+		return err
+	}
+	log.Infof("SDN_INSTALL_FLOW: installed + registered flow id=%q hash=%s… timers=%v", f.ID, hash[:12], f.Timers)
+	return nil
+}
+
+// flowIntervalOverrides reads a bundle's flow.json timer triggers and maps each
+// to the given interval duration string (for SDN_FLOW_INTERVAL).
+func flowIntervalOverrides(bundleDir, interval string) map[string]string {
+	data, err := os.ReadFile(filepath.Join(bundleDir, "flow.json"))
+	if err != nil {
+		return nil
+	}
+	var topo struct {
+		Triggers []struct {
+			TriggerID string `json:"triggerId"`
+			Kind      string `json:"kind"`
+		} `json:"triggers"`
+	}
+	if json.Unmarshal(data, &topo) != nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, t := range topo.Triggers {
+		if t.Kind == "timer" && t.TriggerID != "" {
+			out[t.TriggerID] = interval
+		}
+	}
+	return out
+}
+
 // buildInstaller constructs the module install pipeline over the live services,
 // the node blockstore, and the <repo>/sdn/modules registry directory (with an
 // install/ drop-in subdirectory). modulesConfigDir may be "" (no repo path), in
@@ -472,8 +639,14 @@ func (d *demoCronModule) InvokeCron(_ context.Context, method string, _ []byte) 
 
 func defaultSchemas() sdnstore.SchemaProvider {
 	return sdnstore.SchemaProviderFunc(func(t string) (schema, fileID, tableName string, ok bool) {
-		if t == "OMM" {
+		switch t {
+		case "OMM":
 			return ommSchema, "$OMM", "OMM", true
+		case "SPW":
+			// Space weather — the type the CelesTrak SPW ingest flow lands. A
+			// later phase replaces this per-type shipping with the full SDS
+			// registry; the wiring (Deps.Schemas) does not change.
+			return spwSchema, "$SPW", "SPW", true
 		}
 		return "", "", "", false
 	})
@@ -529,4 +702,33 @@ const ommSchema = `
   }
   root_type OMM;
   file_identifier "$OMM";
+`
+
+// spwSchema is the CelesTrak Space Weather (SPW) FlatSQL table shape — the
+// type the CelesTrak SPW ingest flow lands records under. Enums included
+// because the SPW table references F107DataType.
+const spwSchema = `
+  enum FluxQualifier: byte { OBSERVED = 0, BURST_ADJUSTED = 1, INTERPOLATED_EXTRAPOLATED = 2, NO_OBSERVATION = 3, CELESTRAK_INTERPOLATED = 4 }
+  enum F107DataType: byte { OBS = 0, INT = 1, PRD = 2, PRM = 3 }
+  table SPW {
+    DATE: string;
+    BSRN: int;
+    ND: int;
+    KP1: int; KP2: int; KP3: int; KP4: int; KP5: int; KP6: int; KP7: int; KP8: int;
+    KP_SUM: int;
+    AP1: int; AP2: int; AP3: int; AP4: int; AP5: int; AP6: int; AP7: int; AP8: int;
+    AP_AVG: int;
+    CP: float;
+    C9: int;
+    ISN: int;
+    F107_OBS: float;
+    F107_ADJ: float;
+    F107_DATA_TYPE: F107DataType;
+    F107_OBS_CENTER81: float;
+    F107_OBS_LAST81: float;
+    F107_ADJ_CENTER81: float;
+    F107_ADJ_LAST81: float;
+  }
+  root_type SPW;
+  file_identifier "$SPW";
 `

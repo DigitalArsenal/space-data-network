@@ -85,6 +85,11 @@ type Deps struct {
 	// puts the config store in no-persistence mode (schedules run on manifest
 	// defaults and do not survive a restart).
 	ModulesConfigDir string
+	// FetchLedgerDir is the home-directory folder the http cap persists its
+	// CelesTrak/Space-Track fetch ledger under (owner rule: <Repo.Path>/sdn/).
+	// Optional: empty => in-memory ledger (spacing + within-process 3h TTL
+	// still enforced, but the TTL does not survive a restart).
+	FetchLedgerDir string
 	// CronLog is an optional printf-style sink for the cron scheduler.
 	CronLog sdncron.Logger
 }
@@ -175,6 +180,12 @@ func BuildServices(deps Deps) (*Services, error) {
 	if ch != nil {
 		capReg.RegisterBridgeAware("pubsub", NewPubSubCapFactory(ch))
 	}
+	// Outbound HTTP capability (fetch flows: CelesTrak ingest, supplemental
+	// OMM). Fail-closed/operator-gated by module content hash (http is a
+	// modulert sensitiveCapability); the factory additionally re-checks the
+	// grant per call and enforces the owner's CelesTrak/Space-Track fetch
+	// policy (>= 2.5s spacing + 3h URL ledger persisted under FetchLedgerDir).
+	capReg.RegisterBridgeAware("http", NewHTTPCapFactory(HTTPCapConfig{LedgerDir: deps.FetchLedgerDir}))
 
 	// Per-module cron config store + scheduler. The schedule_cron capability is
 	// wired here so a running module can register/update its own schedule; it is
