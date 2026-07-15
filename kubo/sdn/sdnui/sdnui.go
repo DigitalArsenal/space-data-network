@@ -31,11 +31,15 @@ import (
 )
 
 // Assets holds the embedded static console (index.html, styles.css, app.js,
-// the page module harness module-harness.js and its vendored flatbuffers.js).
-// It is exported so provenance/self-containment checks (e.g. the package test
-// that forbids external-origin URLs) can walk exactly what ships in the binary.
+// the page module harness module-harness.js and its vendored flatbuffers.js)
+// plus the self-hosted latin-subset web fonts under assets/fonts (Chakra Petch
+// + IBM Plex Mono, the design's display + mono families). Self-hosting the
+// fonts is what keeps the console offline/same-origin: the page makes NO Google
+// Fonts request. It is exported so provenance/self-containment checks (e.g. the
+// package test that forbids external-origin URLs) can walk exactly what ships in
+// the binary.
 //
-//go:embed assets/index.html assets/styles.css assets/app.js assets/module-harness.js assets/flatbuffers.js
+//go:embed assets/index.html assets/styles.css assets/app.js assets/module-harness.js assets/flatbuffers.js assets/fonts/*.woff2
 var Assets embed.FS
 
 // asset is one embedded file plus the Content-Type it is served with.
@@ -45,13 +49,23 @@ type asset struct {
 }
 
 // routeAssets maps a request path to its embedded file. Only these exact paths
-// are served; there is no directory listing and no path traversal.
+// are served; there is no directory listing and no path traversal. The
+// self-hosted web fonts are served same-origin under /fonts/*.woff2 so the
+// console's @font-face rules resolve without any external Google Fonts request.
 var routeAssets = map[string]asset{
 	"/":                  {path: "assets/index.html", contentType: "text/html; charset=utf-8"},
 	"/styles.css":        {path: "assets/styles.css", contentType: "text/css; charset=utf-8"},
 	"/app.js":            {path: "assets/app.js", contentType: "text/javascript; charset=utf-8"},
 	"/module-harness.js": {path: "assets/module-harness.js", contentType: "text/javascript; charset=utf-8"},
 	"/flatbuffers.js":    {path: "assets/flatbuffers.js", contentType: "text/javascript; charset=utf-8"},
+
+	"/fonts/chakra-400.woff2": {path: "assets/fonts/chakra-400.woff2", contentType: "font/woff2"},
+	"/fonts/chakra-500.woff2": {path: "assets/fonts/chakra-500.woff2", contentType: "font/woff2"},
+	"/fonts/chakra-600.woff2": {path: "assets/fonts/chakra-600.woff2", contentType: "font/woff2"},
+	"/fonts/chakra-700.woff2": {path: "assets/fonts/chakra-700.woff2", contentType: "font/woff2"},
+	"/fonts/plex-400.woff2":   {path: "assets/fonts/plex-400.woff2", contentType: "font/woff2"},
+	"/fonts/plex-500.woff2":   {path: "assets/fonts/plex-500.woff2", contentType: "font/woff2"},
+	"/fonts/plex-600.woff2":   {path: "assets/fonts/plex-600.woff2", contentType: "font/woff2"},
 }
 
 type uiHandler struct{}

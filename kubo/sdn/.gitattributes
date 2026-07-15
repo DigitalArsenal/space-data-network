@@ -3,3 +3,9 @@
 # the bytes and breaking the embedded-artifact sha256 gate
 # (flatsqlrt.TestEmbeddedArtifact).
 *.wasm binary
+
+# Self-hosted console web fonts (sdn/sdnui/assets/fonts) are Brotli-compressed
+# binary; the same `* text eol=lf` default would corrupt them (they carry stray
+# CRLF byte sequences), breaking the go:embed'd @font-face assets.
+*.woff2 binary
+*.woff binary
