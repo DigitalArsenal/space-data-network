@@ -91,6 +91,11 @@ func (p *sdnFlagPlugin) Start(node *core.IpfsNode) error {
 	if err := logging.SetLogLevel("plugin/sdnflag", "info"); err != nil {
 		return fmt.Errorf("failed to set log level: %w", err)
 	}
+	// Publish this started instance so the read-only API surface (a separate
+	// plugin) can reach the discovered SDN peer set and the membership
+	// namespace without duplicating discovery. Set before the DHT guard so the
+	// namespace is reportable even when the node is offline.
+	setActive(p)
 	if node.DHT == nil {
 		log.Warn("SDN flag: DHT unavailable (offline?); SDN advertisement disabled")
 		return nil
@@ -177,3 +182,49 @@ func (p *sdnFlagPlugin) SDNPeers() []peer.ID {
 }
 
 func (*sdnFlagPlugin) Close() error { return nil }
+
+// ---------------------------------------------------------------------------
+// Package-level accessors for the running plugin instance.
+//
+// kubo's plugin API hands a plugin no way to publish a value back to the node
+// or to a sibling plugin, so — exactly as sdnruntime does with its live
+// services — sdnflag stashes the started instance in a package singleton on
+// Start. The sdnapi plugin reads the SDN peer set and membership namespace
+// through these accessors rather than re-running discovery.
+// ---------------------------------------------------------------------------
+
+var (
+	activeMu sync.RWMutex
+	active   *sdnFlagPlugin
+)
+
+func setActive(p *sdnFlagPlugin) {
+	activeMu.Lock()
+	active = p
+	activeMu.Unlock()
+}
+
+// SDNPeers returns the peer IDs discovered via the SDN flag namespace by the
+// running plugin instance, or nil when the plugin is disabled or has not
+// started yet.
+func SDNPeers() []peer.ID {
+	activeMu.RLock()
+	p := active
+	activeMu.RUnlock()
+	if p == nil {
+		return nil
+	}
+	return p.SDNPeers()
+}
+
+// Namespace returns the SDN membership rendezvous namespace of the running
+// plugin instance, or "" when the plugin is disabled or has not started yet.
+func Namespace() string {
+	activeMu.RLock()
+	p := active
+	activeMu.RUnlock()
+	if p == nil {
+		return ""
+	}
+	return p.namespace
+}

@@ -401,6 +401,44 @@ func (s *Store) Sources(ctx context.Context, sdsType string) ([]string, error) {
 	return s.catalogSources(ctx, t)
 }
 
+// CatalogEntry is one (source, 3-letter type) pair known to the store.
+type CatalogEntry struct {
+	Source string `json:"source"`
+	Type   string `json:"type"`
+}
+
+// Catalog returns every (source, 3-letter type) pair recorded in the durable
+// catalog, sorted by (type, source). It reads only the catalog keyspace — one
+// entry per pair — so its cost is proportional to the number of distinct
+// (source, type) pairs, NOT the number of records. That makes it a cheap
+// enumeration for a status/API surface that needs the shape of the store
+// without scanning the record index.
+func (s *Store) Catalog(ctx context.Context) ([]CatalogEntry, error) {
+	res, err := s.idx.Query(ctx, dsq.Query{Prefix: nsCat + "/"})
+	if err != nil {
+		return nil, fmt.Errorf("sdnstore: catalog query: %w", err)
+	}
+	defer res.Close()
+	var out []CatalogEntry
+	for r := range res.Next() {
+		if r.Error != nil {
+			return nil, r.Error
+		}
+		var ce CatalogEntry
+		if err := json.Unmarshal(r.Value, &ce); err != nil {
+			return nil, fmt.Errorf("sdnstore: decode catalog entry: %w", err)
+		}
+		out = append(out, ce)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Type != out[j].Type {
+			return out[i].Type < out[j].Type
+		}
+		return out[i].Source < out[j].Source
+	})
+	return out, nil
+}
+
 // Query runs read-only SQL for (source, type) against the FlatSQL engine and
 // returns the aligned size-prefixed FlatBuffer stream (every selected cell must
 // be a BLOB; use the hidden `_data` column). The (source, type) hot window is
