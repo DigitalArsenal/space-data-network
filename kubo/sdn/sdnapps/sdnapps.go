@@ -11,9 +11,12 @@
 // lives outside its $APP record: the node stores the record and serves the
 // inline page straight from it.
 //
-//   - Supplemental OMM (App 2): a per-provider OMM status board. Its dataflow is
-//     one TO_PAGE / OMM / GATEWAY_ROUTE entry whose locator is the node's own
-//     read-only OMM route template; the page fetches /sdn/v1/data?source=…&type=OMM.
+//   - Supplemental OMM (App 2): the OD-fit run board. Its dataflow is one TO_PAGE
+//     / OMM / GATEWAY_ROUTE entry whose locator is the node's own read-only run
+//     route; the page fetches /sdn/v1/runs (run history + the live run), each
+//     run's per-object RMS + CelesTrak/Space-Track parity, the searchable NORAD
+//     rows, and the downloadable TLE/OMM/VCM elements, and it edits the run
+//     engine's provider set + cron via /sdn/v1/modules/supplemental-omm/config.
 //   - Conjunction (App 1): a working shell. Its dataflow is one TO_PAGE / CDM /
 //     GATEWAY_ROUTE entry; the page renders the node's CDM records or an honest
 //     "no conjunction data yet" state. The heavy screening logic is out of scope.
@@ -97,16 +100,16 @@ func ommApp() (*appmanifest.AppManifest, error) {
 	}
 	return &appmanifest.AppManifest{
 		ID:          "supplemental-omm",
-		Name:        "Supplemental OMM — Provider Status Board",
-		Version:     "1.0.0",
-		Description: "App 2 of the SDN apps program: a per-provider OMM (Orbit Mean-Elements Message) status board served inline by the SDN node.",
+		Name:        "Supplemental OMM — OD-fit Run Board",
+		Version:     "1.1.0",
+		Description: "App 2 of the SDN apps program: the supplemental-OMM (Orbit Mean-Elements Message) OD-fit run board served inline by the SDN node — run history, per-object RMS with CelesTrak/Space-Track parity, downloadable elements, and the run engine's provider + cron controls.",
 		Dataflow: []appmanifest.DataflowEntry{{
-			Name:        "omm-in",
+			Name:        "omm-runs",
 			Direction:   appmanifest.FlowDirectionToPage,
 			SDSSchema:   "OMM",
 			Transport:   appmanifest.FlowTransportGatewayRoute,
-			Locator:     "/sdn/v1/data?source={source}&type=OMM",
-			Description: "Per-provider OMM records delivered to the page over the node's read-only gateway route.",
+			Locator:     "/sdn/v1/runs",
+			Description: "Supplemental-OMM OD-fit run history (runs, per-object RMS + CelesTrak/Space-Track reference parity, and downloadable TLE/OMM/VCM elements) delivered to the page over the node's read-only gateway route.",
 		}},
 		Pages: []appmanifest.UIPage{page},
 	}, nil
