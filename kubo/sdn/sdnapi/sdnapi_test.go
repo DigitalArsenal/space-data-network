@@ -338,6 +338,109 @@ func TestApps_EmptyByDefault(t *testing.T) {
 	}
 }
 
+// storeApp installs an inline-UI $APP record into the store via the composition
+// write-path (StoreManifest, no FlatSQL schema needed for type "APP"), so the
+// apps list + app-UI routes have a real installed app to serve.
+func storeApp(t *testing.T, st *sdnstore.Store, id, name, html string) {
+	t.Helper()
+	sum := sha256.Sum256([]byte(html))
+	app := &appmanifest.AppManifest{
+		ID:      id,
+		Name:    name,
+		Version: "1.0.0",
+		Dataflow: []appmanifest.DataflowEntry{{
+			Name:      "omm-in",
+			Direction: appmanifest.FlowDirectionToPage,
+			SDSSchema: "OMM",
+			Transport: appmanifest.FlowTransportGatewayRoute,
+			Locator:   "/sdn/v1/data?source={source}&type=OMM",
+		}},
+		Pages: []appmanifest.UIPage{{
+			ID:            "main",
+			Content:       html,
+			Encoding:      appmanifest.EncodingUTF8,
+			MediaType:     "text/html; charset=utf-8",
+			ContentSHA256: hex.EncodeToString(sum[:]),
+			Entry:         true,
+		}},
+	}
+	buf, err := app.ToAPP()
+	if err != nil {
+		t.Fatalf("ToAPP: %v", err)
+	}
+	if _, err := st.StoreManifest(t.Context(), "sdn", "APP", buf); err != nil {
+		t.Fatalf("StoreManifest: %v", err)
+	}
+}
+
+// GET /sdn/v1/apps lists an installed $APP record with its decoded id/name/
+// version and page count.
+func TestAppsList_Installed(t *testing.T) {
+	st := newTestStore(t)
+	storeApp(t, st, "supplemental-omm", "Supplemental OMM", "<!doctype html><title>omm</title><body>fetch /sdn/v1/data</body>")
+	h := sdnapi.NewHandler(testDeps(st))
+
+	rec, _ := get(t, h, "/sdn/v1/apps")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got []struct {
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Version string `json:"version"`
+		Source  string `json:"source"`
+		CID     string `json:"cid"`
+		Pages   int    `json:"pages"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
+	}
+	if len(got) != 1 {
+		t.Fatalf("apps = %d, want 1: %+v", len(got), got)
+	}
+	if got[0].ID != "supplemental-omm" || got[0].Name != "Supplemental OMM" || got[0].Version != "1.0.0" {
+		t.Errorf("app summary = %+v", got[0])
+	}
+	if got[0].Source != "sdn" || got[0].CID == "" || got[0].Pages != 1 {
+		t.Errorf("app source/cid/pages = %q/%q/%d", got[0].Source, got[0].CID, got[0].Pages)
+	}
+}
+
+// GET /sdn/v1/apps/<id> serves the app's inline entry page straight from the
+// $APP record, as text/html, and the body is the exact page bytes.
+func TestAppUI_ServesInlinePage(t *testing.T) {
+	st := newTestStore(t)
+	html := "<!doctype html><title>omm board</title><body><script>fetch('/sdn/v1/data/sources')</script></body>"
+	storeApp(t, st, "supplemental-omm", "Supplemental OMM", html)
+	h := sdnapi.NewHandler(testDeps(st))
+
+	rec, hdr := get(t, h, "/sdn/v1/apps/supplemental-omm")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if ct := hdr.Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Errorf("content-type = %q, want text/html", ct)
+	}
+	body := rec.Body.String()
+	if body != html {
+		t.Errorf("served body does not match stored inline page; got %d bytes", len(body))
+	}
+	if !strings.Contains(body, "/sdn/v1/data") {
+		t.Errorf("served app UI does not reference /sdn/v1/data")
+	}
+}
+
+// An unknown app id is a plain 404.
+func TestAppUI_UnknownIs404(t *testing.T) {
+	st := newTestStore(t)
+	storeApp(t, st, "supplemental-omm", "Supplemental OMM", "<!doctype html><body>/sdn/v1/data</body>")
+	h := sdnapi.NewHandler(testDeps(st))
+	rec, _ := get(t, h, "/sdn/v1/apps/does-not-exist")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown app status = %d, want 404", rec.Code)
+	}
+}
+
 // A GET-only surface: non-GET is 405.
 func TestMethodNotAllowed(t *testing.T) {
 	h := sdnapi.NewHandler(testDeps(newTestStore(t)))

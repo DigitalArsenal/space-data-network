@@ -90,6 +90,7 @@ func NewHandler(deps Deps) http.Handler {
 	mux.HandleFunc("GET /sdn/v1/data", h.data)
 	mux.HandleFunc("GET /sdn/v1/channels", h.channels)
 	mux.HandleFunc("GET /sdn/v1/apps", h.apps)
+	mux.HandleFunc("GET /sdn/v1/apps/{id}", h.appUI)
 	mux.HandleFunc("GET /sdn/v1/module", h.module)
 	return mux
 }
@@ -350,6 +351,91 @@ func (h *handler) apps(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// appUI serves an installed app's inline entry UI page straight from its $APP
+// record. It resolves the app by its manifest ID (GET /sdn/v1/apps/<id>) across
+// every stored (source, "APP") record, decodes the entry APPUIPage's inline
+// content, and serves it with the page's declared media type (defaulting to
+// text/html). This is the node serving its own apps: the same read-only store
+// that lists apps at /sdn/v1/apps also hands back each app's self-contained page,
+// same-origin, so the page's own fetch(/sdn/v1/data…) calls reach this node.
+//
+// A page-less or module-served app (no inline entry page) is a 404 here — this
+// route serves inline content only. An unknown ID is a 404.
+func (h *handler) appUI(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "app id is required")
+		return
+	}
+	st := h.store()
+	if st == nil {
+		http.NotFound(w, r)
+		return
+	}
+	cat, err := st.Catalog(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, ce := range cat {
+		if ce.Type != "APP" {
+			continue
+		}
+		recs, err := st.ReadBySourceType(r.Context(), ce.Source, "APP")
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for _, fb := range recs {
+			m, err := appmanifest.FromAPP(fb)
+			if err != nil || m == nil || m.ID != id {
+				continue
+			}
+			page := entryPage(m)
+			if page == nil || !page.IsInline() {
+				writeErr(w, http.StatusNotFound, "app has no inline UI page")
+				return
+			}
+			body, err := page.DecodedContent()
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			ct := page.MediaType
+			if ct == "" {
+				ct = "text/html; charset=utf-8"
+			}
+			w.Header().Set("Content-Type", ct)
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
+			return
+		}
+	}
+	http.NotFound(w, r)
+}
+
+// entryPage returns the app's entry UI page (the one marked Entry), falling back
+// to the first inline page when none is explicitly the entry. Returns nil when
+// the manifest declares no pages.
+func entryPage(m *appmanifest.AppManifest) *appmanifest.UIPage {
+	if m == nil || len(m.Pages) == 0 {
+		return nil
+	}
+	for i := range m.Pages {
+		if m.Pages[i].Entry {
+			return &m.Pages[i]
+		}
+	}
+	for i := range m.Pages {
+		if m.Pages[i].IsInline() {
+			return &m.Pages[i]
+		}
+	}
+	return nil
 }
 
 // module serves the raw WASM bytes of a module addressed by its

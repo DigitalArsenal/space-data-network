@@ -1,0 +1,210 @@
+<!doctype html>
+<!--
+  Conjunction Screening (App 1 of the SDN apps program), ported to the
+  kubo-based SDN node as a working SHELL.
+
+  Single self-contained HTML+CSS+JS document. NO external references of any kind.
+  Every network call is a same-origin GET to the node's read-only SDN API under
+  /sdn/v1/*. This whole file is the inline CONTENT of the App 1 SDS $APP record —
+  served by the node at /sdn/v1/apps/conjunction.
+
+  Scope note: the full conjunction-screening app (the 6 MB SpaceAware build) is
+  NOT ported here. This shell (a) loads and declares the app's data contract and
+  (b) renders whatever Conjunction Data Message (CDM) records the node actually
+  holds — or an HONEST "no conjunction data yet" state. It never fabricates
+  conjunction results.
+
+  Data model (new node API):
+    GET /sdn/v1/node                          → node identity.
+    GET /sdn/v1/data/sources                  → the (source, type) catalog; the
+                                                shell keeps type == "CDM".
+    GET /sdn/v1/data?source=<p>&type=CDM      → per-provider CDM record listing.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Conjunction Screening</title>
+<style>
+  :root {
+    --bg: #0b0d10; --panel: #12161b; --panel2: #171c22;
+    --edge: #262d36; --edge2: #333c48;
+    --ink: #dde4ec; --dim: #939dab; --dimmer: #707b88;
+    --live: #46d19e; --nodata: #5a636f; --blocked: #c95c5c; --accent: #4a90d9;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sys: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; border-radius: 0 !important; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--sys); }
+  body { font-size: 18px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 22px 18px 44px; }
+  header { border: 1px solid var(--edge); background: var(--panel); padding: 16px 18px; }
+  .titlerow { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  h1 { font-size: 21px; letter-spacing: 0.14em; text-transform: uppercase; margin: 0; font-weight: 600; }
+  .appid { font-family: var(--mono); font-size: 15px; color: var(--dim); }
+  .sub { color: var(--dim); font-size: 15px; margin-top: 7px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .meta { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
+  .meta .kv { font-family: var(--mono); font-size: 14px; color: var(--dim); }
+  .meta .kv b { color: var(--ink); font-weight: 600; }
+  .spacer { flex: 1; }
+  button {
+    font-family: var(--mono); font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em;
+    background: var(--panel2); color: var(--ink); border: 1px solid var(--edge2); padding: 7px 14px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+
+  .contract { margin-top: 18px; border: 1px solid var(--edge); background: var(--panel); padding: 14px 18px; }
+  .contract h2 { font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dimmer); margin: 0 0 10px; }
+  .flow { font-family: var(--mono); font-size: 14px; color: var(--dim); margin: 5px 0; }
+  .flow b { color: var(--ink); }
+  .pill { font-family: var(--mono); font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
+    display: inline-block; padding: 2px 9px; margin-right: 8px; border: 1px solid var(--edge2); color: var(--dim); }
+
+  .banner { margin-top: 16px; border: 1px solid var(--blocked); background: #1a1113; color: #f0c4c4;
+    padding: 12px 16px; font-family: var(--mono); font-size: 14px; display: none; }
+  .banner.show { display: block; }
+
+  .lanes { margin-top: 18px; display: flex; flex-direction: column; gap: 12px; }
+  .lane { border: 1px solid var(--edge); background: var(--panel); }
+  .lanehead { display: flex; align-items: center; gap: 14px; background: var(--panel2);
+    border-bottom: 1px solid var(--edge); padding: 12px 18px; }
+  .provider { font-family: var(--mono); font-size: 15px; color: var(--ink); font-weight: 600; }
+  .count { font-family: var(--mono); font-size: 13.5px; color: var(--dim); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 18px; border-bottom: 1px solid var(--edge); font-family: var(--mono); font-size: 13.5px; }
+  th { color: var(--dimmer); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; font-size: 12px; }
+  td.cid { color: var(--dim); word-break: break-all; }
+  tr:last-child td { border-bottom: none; }
+
+  .empty { margin-top: 18px; border: 1px dashed var(--edge2); background: var(--panel); padding: 26px 20px;
+    color: var(--dim); font-family: var(--mono); font-size: 15px; }
+  .empty b { color: var(--ink); }
+  footer { margin-top: 22px; color: var(--dimmer); font-family: var(--mono); font-size: 12.5px;
+    border-top: 1px solid var(--edge); padding-top: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="titlerow">
+      <h1>Conjunction Screening</h1>
+      <span class="appid" id="appid">$APP · conjunction</span>
+    </div>
+    <div class="sub">App 1 shell — declares its data contract and renders the node's CDM records</div>
+    <div class="meta">
+      <span class="kv">NODE <b id="peer">—</b></span>
+      <span class="kv">CDM LANES <b id="lanecount">—</b></span>
+      <span class="spacer"></span>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+
+  <div class="contract">
+    <h2>Data Contract</h2>
+    <div class="flow">
+      <span class="pill">TO_PAGE</span><span class="pill">CDM</span><span class="pill">GATEWAY_ROUTE</span>
+      <b>Conjunction Data Messages</b> delivered to the page over the node's read-only gateway
+      (<code>/sdn/v1/data?source=&lt;provider&gt;&amp;type=CDM</code>).
+    </div>
+  </div>
+
+  <div class="banner" id="banner"></div>
+
+  <div class="lanes" id="lanes"></div>
+  <div class="empty" id="empty" style="display:none">
+    <b>NO CONJUNCTION DATA YET.</b> This node holds no CDM (Conjunction Data
+    Message) records. When a screening module publishes CDM records to
+    (source, type=&quot;CDM&quot;) lanes, this shell renders them here. It never
+    fabricates conjunction results.
+  </div>
+
+  <footer>Conjunction Screening · SDS $APP record · self-contained, same-origin only. Full screening logic is out of scope for this shell.</footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var TYPE = "CDM";
+  var $ = function (id) { return document.getElementById(id); };
+
+  function getJSON(path) {
+    return fetch(path, { headers: { "Accept": "application/json" }, credentials: "same-origin" })
+      .then(function (r) { if (!r.ok) throw new Error(path + " → HTTP " + r.status); return r.json(); });
+  }
+  function shortCID(cid) {
+    if (!cid || cid.length <= 22) return cid || "";
+    return cid.slice(0, 12) + "…" + cid.slice(-8);
+  }
+  function banner(msg) {
+    var b = $("banner");
+    if (!msg) { b.className = "banner"; b.textContent = ""; return; }
+    b.className = "banner show"; b.textContent = msg;
+  }
+
+  function renderLane(provider, data) {
+    var recs = (data && data.records) || [];
+    var total = (data && typeof data.total === "number") ? data.total : recs.length;
+    var lane = document.createElement("div");
+    lane.className = "lane";
+    var head = document.createElement("div");
+    head.className = "lanehead";
+    head.innerHTML = '<span class="provider"></span><span class="spacer" style="flex:1"></span><span class="count"></span>';
+    head.querySelector(".provider").textContent = provider;
+    head.querySelector(".count").textContent = total + " CDM record" + (total === 1 ? "" : "s");
+    lane.appendChild(head);
+    if (recs.length) {
+      var t = document.createElement("table");
+      t.innerHTML = "<thead><tr><th>#</th><th>CID</th><th>Size (bytes)</th><th>Record</th></tr></thead>";
+      var tb = document.createElement("tbody");
+      recs.forEach(function (rec, i) {
+        var tr = document.createElement("tr");
+        tr.innerHTML = "<td>" + (i + 1) + "</td><td class='cid'></td><td>" +
+          (rec.size != null ? rec.size : "") + "</td><td>" + (rec.file_id || "") + "</td>";
+        var c = tr.querySelector(".cid"); c.title = rec.cid || ""; c.textContent = shortCID(rec.cid);
+        tb.appendChild(tr);
+      });
+      t.appendChild(tb); lane.appendChild(t);
+    }
+    return lane;
+  }
+
+  function load() {
+    banner(""); $("refresh").disabled = true;
+    $("lanes").innerHTML = ""; $("empty").style.display = "none"; $("lanecount").textContent = "…";
+
+    getJSON("/sdn/v1/node").then(function (node) {
+      $("peer").textContent = node && node.peer_id ? node.peer_id : "(unknown)";
+    }).catch(function () {});
+
+    getJSON("/sdn/v1/data/sources").then(function (catalog) {
+      var providers = (catalog || []).filter(function (c) { return c && c.type === TYPE; })
+        .map(function (c) { return c.source; });
+      $("lanecount").textContent = String(providers.length);
+      if (providers.length === 0) { $("empty").style.display = "block"; $("refresh").disabled = false; return; }
+      var jobs = providers.map(function (p) {
+        return getJSON("/sdn/v1/data?source=" + encodeURIComponent(p) + "&type=" + TYPE)
+          .then(function (data) { return { provider: p, data: data }; })
+          .catch(function (err) { return { provider: p, data: null, error: err.message }; });
+      });
+      Promise.all(jobs).then(function (results) {
+        var frag = document.createDocumentFragment();
+        results.forEach(function (r) {
+          if (r.error) banner("Some lanes failed to load: " + r.error);
+          frag.appendChild(renderLane(r.provider, r.data || { records: [], total: 0 }));
+        });
+        $("lanes").appendChild(frag); $("refresh").disabled = false;
+      });
+    }).catch(function (err) {
+      banner("Failed to reach the node API: " + err.message);
+      $("lanecount").textContent = "—"; $("refresh").disabled = false;
+    });
+  }
+
+  $("refresh").addEventListener("click", load);
+  load();
+})();
+</script>
+</body>
+</html>

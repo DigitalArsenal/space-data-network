@@ -356,6 +356,78 @@ func (s *Store) Store(ctx context.Context, source, sdsType string, fb []byte) (c
 	return c, nil
 }
 
+// StoreManifest durably stores one COMPOSITION record — an SDS record that is
+// read back whole rather than queried tabularly, e.g. an $APP record — tagged by
+// (source, 3-letter type). Like Store it writes the FlatBuffer bytes as a
+// content-addressed block, records (source, type, cid, seq) in the durable index
+// and the (source, type) pair in the catalog, and is idempotent for
+// byte-identical records. UNLIKE Store it does NOT ingest the record into the
+// FlatSQL query engine and therefore needs NO per-type FlatSQL schema:
+// composition records are served only through ReadBySourceType (whole-record) and
+// enumerated through Catalog, neither of which touches the engine, so ingesting
+// them would only inflate engine residency (a single $APP inlines its whole UI
+// page) for a table nothing queries. This is the write-path the app installer
+// (sdn/sdnapps) uses to install $APP records the node then lists at
+// GET /sdn/v1/apps and serves at GET /sdn/v1/apps/<id>.
+func (s *Store) StoreManifest(ctx context.Context, source, sdsType string, fb []byte) (cid.Cid, error) {
+	t, err := normalizeType(sdsType)
+	if err != nil {
+		return cid.Undef, err
+	}
+	if source = strings.TrimSpace(source); source == "" {
+		return cid.Undef, errors.New("sdnstore: source must be non-empty")
+	}
+	if len(fb) == 0 {
+		return cid.Undef, errors.New("sdnstore: record bytes must be non-empty")
+	}
+
+	c, err := blockCID(fb)
+	if err != nil {
+		return cid.Undef, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Durable block (content-addressed; Has-guarded to avoid a redundant Put).
+	if has, err := s.bs.Has(ctx, c); err != nil {
+		return cid.Undef, fmt.Errorf("sdnstore: blockstore Has: %w", err)
+	} else if !has {
+		blk, err := blocks.NewBlockWithCid(fb, c)
+		if err != nil {
+			return cid.Undef, err
+		}
+		if err := s.bs.Put(ctx, blk); err != nil {
+			return cid.Undef, fmt.Errorf("sdnstore: blockstore Put: %w", err)
+		}
+	}
+
+	// Durable index. A pre-existing entry means this exact record was already
+	// stored; the write is idempotent.
+	rk := recKey(t, source, c.String())
+	if exists, err := s.idx.Has(ctx, rk); err != nil {
+		return cid.Undef, fmt.Errorf("sdnstore: index Has: %w", err)
+	} else if exists {
+		return c, nil
+	}
+
+	seq, err := s.nextSeqLocked(ctx)
+	if err != nil {
+		return cid.Undef, err
+	}
+	entryBytes, err := json.Marshal(indexEntry{CID: c.String(), Seq: seq, Size: len(fb)})
+	if err != nil {
+		return cid.Undef, err
+	}
+	if err := s.idx.Put(ctx, rk, entryBytes); err != nil {
+		return cid.Undef, fmt.Errorf("sdnstore: index Put: %w", err)
+	}
+	if err := s.ensureCatalogLocked(ctx, t, source); err != nil {
+		return cid.Undef, err
+	}
+	return c, nil
+}
+
 // ReadBySourceType returns every stored record for (source, type) as raw
 // FlatBuffer bytes, reconstructed directly from the durable index + blockstore.
 // This path does NOT touch the FlatSQL engine, which is exactly what proves
