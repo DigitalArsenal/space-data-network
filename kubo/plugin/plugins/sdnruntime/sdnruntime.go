@@ -56,6 +56,9 @@ type sdnRuntimePlugin struct {
 	enabled   bool
 	repoPath  string
 	hotWindow int
+	// role is the node's configured role (Config.Role), e.g. "celestrak" to
+	// bring up the host-02 CelesTrak reference set. Env SDN_ROLE also applies.
+	role string
 }
 
 var _ plugin.PluginDaemonInternal = (*sdnRuntimePlugin)(nil)
@@ -81,6 +84,10 @@ func (p *sdnRuntimePlugin) Init(env *plugin.Environment) error {
 			}
 			if v, ok := cfg["HotWindow"].(float64); ok && v > 0 {
 				p.hotWindow = int(v)
+			}
+			// Node role gate for the CelesTrak reference set (see celestrak_set.go).
+			if v, ok := cfg["Role"].(string); ok {
+				p.role = v
 			}
 		}
 	}
@@ -289,6 +296,14 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 	} else if n > 0 {
 		log.Infof("SDN flow installer: re-registered %d installed flow(s) at boot", n)
 	}
+
+	// --- BEGIN celestrak reference set (host-02 role; see celestrak_set.go) ---
+	// When this node is in the "celestrak" role (SDN_ROLE=celestrak env or
+	// Config.Role), install the owner-mandated 3h CelesTrak reference set —
+	// GP + SupGP + Space Weather + GPS almanac + SATCAT — before the scheduler
+	// starts so every reference timer begins together. No-op on other nodes.
+	p.maybeInstallCelestrakReferenceSet(node.Context(), flowInstaller, installer, svc)
+	// --- END celestrak reference set ---
 
 	// Start the cron scheduler after modules are registered; it fires each
 	// registered module's timers on their effective interval (config override,
