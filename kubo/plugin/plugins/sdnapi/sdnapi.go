@@ -34,6 +34,7 @@ package sdnapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -49,6 +50,7 @@ import (
 	"github.com/ipfs/kubo/sdn/appmanifest"
 	"github.com/ipfs/kubo/sdn/channels"
 	sdnapihttp "github.com/ipfs/kubo/sdn/sdnapi"
+	"github.com/ipfs/kubo/sdn/sdnmodules"
 	"github.com/ipfs/kubo/sdn/sdnstore"
 	"github.com/ipfs/kubo/sdn/sdnui"
 )
@@ -161,6 +163,16 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 			}
 			return nil
 		},
+		// Installer backs POST /sdn/v1/admin/modules/install (loopback + fail
+		// closed): the real WASM-module install + register pipeline. Resolved
+		// lazily; nil until the runtime is up. The adapter maps the pipeline's
+		// types + sentinel errors onto the sdnapi surface.
+		Installer: func() sdnapihttp.ModuleInstaller {
+			if in := pluginsdnruntime.Installer(); in != nil {
+				return installerAdapter{in}
+			}
+			return nil
+		},
 	}
 
 	ln, err := net.Listen("tcp", p.addr)
@@ -216,6 +228,40 @@ func newRootHandler(api, ui http.Handler) http.Handler {
 	mux.Handle("/sdn/v1/", api)
 	mux.Handle("/", ui)
 	return mux
+}
+
+// installerAdapter maps the sdnmodules.Installer pipeline onto the read-only
+// API package's ModuleInstaller interface, translating grant/view types and the
+// pipeline's sentinel errors (ErrInstallDenied/ErrModuleNotFound) onto the
+// sdnapi sentinels the route maps to 403/404. This keeps the pure sdnapi
+// package free of a dependency on the pipeline package.
+type installerAdapter struct{ in *sdnmodules.Installer }
+
+func (a installerAdapter) AdminInstall(ctx context.Context, contentHash string, grants []sdnapihttp.CapabilityGrant) (sdnapihttp.InstalledModuleView, error) {
+	mg := make([]sdnmodules.CapabilityGrant, 0, len(grants))
+	for _, g := range grants {
+		mg = append(mg, sdnmodules.CapabilityGrant{Capability: g.Capability, ApprovedBy: g.ApprovedBy, Note: g.Note})
+	}
+	m, err := a.in.AdminInstall(ctx, contentHash, mg)
+	if err != nil {
+		switch {
+		case errors.Is(err, sdnmodules.ErrInstallDenied):
+			return sdnapihttp.InstalledModuleView{}, fmt.Errorf("%w: %v", sdnapihttp.ErrInstallDenied, err)
+		case errors.Is(err, sdnmodules.ErrModuleNotFound):
+			return sdnapihttp.InstalledModuleView{}, fmt.Errorf("%w: %v", sdnapihttp.ErrModuleNotFound, err)
+		default:
+			return sdnapihttp.InstalledModuleView{}, err
+		}
+	}
+	return sdnapihttp.InstalledModuleView{
+		ID:          m.ID,
+		ContentHash: m.ContentHash,
+		Name:        m.Name,
+		Version:     m.Version,
+		Enabled:     m.Enabled,
+		Source:      m.Source,
+		Timers:      m.Timers,
+	}, nil
 }
 
 // isLoopbackAddr reports whether host:port binds a loopback interface. A host

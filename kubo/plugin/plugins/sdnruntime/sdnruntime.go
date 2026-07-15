@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -34,11 +35,13 @@ import (
 	core "github.com/ipfs/kubo/core"
 	plugin "github.com/ipfs/kubo/plugin"
 
+	"github.com/ipfs/kubo/sdn/appmanifest"
 	"github.com/ipfs/kubo/sdn/flatsqlrt"
 	"github.com/ipfs/kubo/sdn/modulert"
 	"github.com/ipfs/kubo/sdn/plugins"
 	"github.com/ipfs/kubo/sdn/sdnapps"
 	"github.com/ipfs/kubo/sdn/sdncron"
+	"github.com/ipfs/kubo/sdn/sdnmodules"
 	"github.com/ipfs/kubo/sdn/sdnservices"
 	"github.com/ipfs/kubo/sdn/sdnstore"
 	"github.com/ipfs/kubo/sdn/sds"
@@ -140,6 +143,20 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 	}
 	setServices(svc)
 
+	// Real WASM-module install + register pipeline. The installed-modules
+	// registry lives alongside the per-module cron config under
+	// <repo>/sdn/modules (installed.json), and an optional operator drop-in
+	// directory <repo>/sdn/modules/install/*.wasm is scanned at boot. The
+	// installer loads each module through svc.LoadModule (fail-closed capability
+	// gate, keyed by content hash) and registers the resulting real
+	// *modulert.Module with the cron scheduler — closing the gap the cron demo
+	// left (a NATIVE heartbeat stub).
+	installer, err := buildInstaller(svc, node.Blockstore, modulesConfigDir)
+	if err != nil {
+		return fmt.Errorf("sdnruntime: build module installer: %w", err)
+	}
+	setInstaller(installer)
+
 	// Install the SDN apps program's $APP records (Supplemental OMM + Conjunction)
 	// into the node's record store so the node lists them at GET /sdn/v1/apps and
 	// serves each app's inline UI at GET /sdn/v1/apps/<id>. Idempotent: the store
@@ -163,6 +180,21 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 		}
 	}
 
+	// Optional developer install of a REAL WASM module (off by default; a
+	// local/live-smoke affordance, mirroring SDN_DEV_SEED_OMM / SDN_CRON_DEMO —
+	// never enabled in a production config). When SDN_INSTALL_WASM=<path> is set,
+	// the node installs that real module-sdk .wasm through the pipeline: it
+	// records DEV operator approvals for the module's declared sensitive
+	// capabilities (so the fail-closed gate admits it), stores the bytes in the
+	// blockstore, loads + registers the real module with the cron scheduler, and
+	// persists it to the installed-modules registry. This is the live evidence
+	// that a real WASM module (not a native stub) rides the cron path.
+	if p := strings.TrimSpace(os.Getenv("SDN_INSTALL_WASM")); p != "" {
+		if err := devInstallWasm(node.Context(), installer, svc, p); err != nil {
+			log.Warnf("SDN_INSTALL_WASM install failed for %q: %v", p, err)
+		}
+	}
+
 	// Optional demo cron module (off by default; mirrors SDN_DEV_SEED_OMM). When
 	// SDN_CRON_DEMO is set, register a native heartbeat CronModule so a fresh
 	// node has a registered, self-scheduling module to observe on GET
@@ -178,6 +210,16 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 		} else {
 			log.Infof("SDN cron demo module registered (SDN_CRON_DEMO set): id=cron-demo timer=heartbeat")
 		}
+	}
+
+	// Re-establish the persisted installed-modules set + install any operator
+	// drop-in *.wasm (before the scheduler starts, so every module's timers begin
+	// together). Tolerant: a module whose bytes are missing or whose sensitive
+	// capabilities are no longer approved is logged and skipped.
+	if n, err := installer.Boot(node.Context()); err != nil {
+		log.Warnf("SDN module installer boot failed: %v", err)
+	} else if n > 0 {
+		log.Infof("SDN module installer: re-registered %d installed WASM module(s) at boot", n)
 	}
 
 	// Start the cron scheduler after modules are registered; it fires each
@@ -196,11 +238,13 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 		log.Infof("SDN runtime active: storage + channel fan-out wired; module runtime capability-gated by %q; peer=%s", policyPath, node.Identity)
 	}
 
-	// Release the store engine when the node shuts down (the durable
-	// blockstore/datastore are the node's and are left untouched).
+	// Release the store engine + module runtimes when the node shuts down (the
+	// durable blockstore/datastore are the node's and are left untouched).
 	go func() {
 		<-node.Context().Done()
-		svc.Close()
+		installer.Close() // close loaded module runtimes first
+		setInstaller(nil)
+		svc.Close() // stops the scheduler + closes the store engine
 		setServices(nil)
 	}()
 
@@ -287,6 +331,97 @@ func setServices(s *sdnservices.Services) {
 	servicesMu.Lock()
 	liveServices = s
 	servicesMu.Unlock()
+}
+
+// ---------------------------------------------------------------------------
+// Package-level accessor for the live module installer (the real WASM-module
+// install + register pipeline). The sdnapi plugin reaches it through Installer()
+// to serve POST /sdn/v1/admin/modules/install on its loopback listener — the
+// same stash-on-Start pattern Services() uses.
+// ---------------------------------------------------------------------------
+
+var (
+	installerMu   sync.RWMutex
+	liveInstaller *sdnmodules.Installer
+)
+
+// Installer returns the live module installer, or nil if the runtime plugin is
+// disabled or has not started yet.
+func Installer() *sdnmodules.Installer {
+	installerMu.RLock()
+	defer installerMu.RUnlock()
+	return liveInstaller
+}
+
+func setInstaller(in *sdnmodules.Installer) {
+	installerMu.Lock()
+	liveInstaller = in
+	installerMu.Unlock()
+}
+
+// buildInstaller constructs the module install pipeline over the live services,
+// the node blockstore, and the <repo>/sdn/modules registry directory (with an
+// install/ drop-in subdirectory). modulesConfigDir may be "" (no repo path), in
+// which case the registry is in no-persistence mode.
+func buildInstaller(svc *sdnservices.Services, bs appmanifest.ModuleBlockstore, modulesConfigDir string) (*sdnmodules.Installer, error) {
+	registry, err := sdnmodules.NewRegistry(modulesConfigDir)
+	if err != nil {
+		return nil, err
+	}
+	dropinDir := ""
+	if modulesConfigDir != "" {
+		dropinDir = filepath.Join(modulesConfigDir, "install")
+	}
+	return sdnmodules.New(sdnmodules.Config{
+		Services:   svc,
+		Blockstore: bs,
+		Registry:   registry,
+		DropinDir:  dropinDir,
+		Log:        log.Infof,
+	})
+}
+
+// devSensitiveCapabilities is the fixed set of sensitive capabilities the
+// SDN_INSTALL_WASM developer affordance auto-approves for the installed module's
+// content hash so the fail-closed gate admits a real data-source/analysis module
+// locally. It is the union of sensitive capabilities the bundled real modules
+// declare; a module requesting a sensitive capability outside this set is still
+// refused (fail closed holds even for the dev path). NEVER used in production —
+// the whole SDN_INSTALL_WASM path is env-gated and off by default.
+var devSensitiveCapabilities = []string{
+	"http", "storage_query", "storage_write", "storage_adapter", "storage_ingest",
+	"wallet_sign", "pubsub", "schedule_cron", "ipfs", "protocol_dial",
+}
+
+// devInstallWasm is the SDN_INSTALL_WASM boot affordance: it reads a real
+// module-sdk .wasm from disk, records DEV operator approvals for its declared
+// sensitive capabilities (so the fail-closed gate admits it), and installs +
+// registers it through the pipeline. Local/live-smoke only.
+func devInstallWasm(ctx context.Context, installer *sdnmodules.Installer, svc *sdnservices.Services, path string) error {
+	wasm, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read wasm: %w", err)
+	}
+	hash := modulert.ContentHashHex(wasm)
+	if svc.NodeCtx != nil && svc.NodeCtx.CapabilityPolicy != nil {
+		for _, cap := range devSensitiveCapabilities {
+			if _, err := svc.NodeCtx.CapabilityPolicy.Approve(modulert.CapabilityApproval{
+				ModuleHash: hash,
+				Capability: cap,
+				ApprovedBy: "dev:SDN_INSTALL_WASM",
+				Note:       "auto-approved by SDN_INSTALL_WASM developer affordance (local only)",
+			}); err != nil {
+				return fmt.Errorf("dev-approve %s: %w", cap, err)
+			}
+		}
+		log.Warnf("SDN_INSTALL_WASM (DEV, local only): auto-approved sensitive capabilities for module hash %s… — this MUST NOT be used in production", hash[:12])
+	}
+	m, err := installer.InstallBytes(ctx, wasm, "dev:SDN_INSTALL_WASM")
+	if err != nil {
+		return err
+	}
+	log.Infof("SDN_INSTALL_WASM: installed + registered real WASM module id=%q hash=%s… timers=%v", m.ID, hash[:12], m.Timers)
+	return nil
 }
 
 // ---------------------------------------------------------------------------

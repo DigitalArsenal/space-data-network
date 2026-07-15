@@ -27,6 +27,7 @@
 package sdnapi
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -54,6 +55,51 @@ type ModuleAdmin interface {
 	// (404), sdncron.ErrInvalidConfig (400), else 500.
 	ApplyConfig(id string, cfg sdncron.ModuleConfig) (sdncron.ModuleConfig, error)
 }
+
+// CapabilityGrant is one operator capability approval carried on an admin
+// install request: it authorizes the module (identified by the request's
+// content hash) to use Capability. Fail-closed still holds — a sensitive
+// capability the module declares but the grants omit refuses the install.
+type CapabilityGrant struct {
+	Capability string
+	ApprovedBy string
+	Note       string
+}
+
+// InstalledModuleView is the admin install route's response shape: the installed
+// module's identity, content hash, display fields, enabled flag and declared
+// timer method ids.
+type InstalledModuleView struct {
+	ID          string   `json:"id"`
+	ContentHash string   `json:"content_hash"`
+	Name        string   `json:"name,omitempty"`
+	Version     string   `json:"version,omitempty"`
+	Enabled     bool     `json:"enabled"`
+	Source      string   `json:"source,omitempty"`
+	Timers      []string `json:"timers"`
+}
+
+// ModuleInstaller is the loopback admin install surface: it records the operator
+// capability grants against the module's content hash and installs the module
+// (fail closed). *sdnmodules.Installer satisfies it (adapted by the plugin); a
+// nil Deps.Installer (or nil return) disables the admin install route (503).
+// The adapter maps sdnmodules' sentinels to these so the route stays decoupled
+// from the pipeline package: ErrModuleNotFound -> 404, ErrInstallDenied -> 403,
+// else 400.
+type ModuleInstaller interface {
+	AdminInstall(ctx context.Context, contentHash string, grants []CapabilityGrant) (InstalledModuleView, error)
+}
+
+// Sentinel errors a ModuleInstaller returns (via the plugin adapter) so the
+// admin install route can pick the right status code.
+var (
+	// ErrModuleNotFound: the content hash is well-formed but no matching block is
+	// present in the node's store -> 404.
+	ErrModuleNotFound = errors.New("sdnapi: module not found")
+	// ErrInstallDenied: the module requests a sensitive capability no operator
+	// approval covers (fail closed) -> 403.
+	ErrInstallDenied = errors.New("sdnapi: module install denied by capability policy")
+)
 
 // DefaultDataLimit is the number of records /sdn/v1/data returns when no limit
 // is given. MaxDataLimit caps an explicit limit so a response stays bounded.
@@ -98,6 +144,13 @@ type Deps struct {
 	// scheduler), or nil when the runtime is disabled or not started. It backs
 	// GET /sdn/v1/modules and the module config endpoints.
 	Modules func() ModuleAdmin
+	// Installer returns the loopback module install surface (the real WASM-module
+	// install + register pipeline), or nil when the runtime is disabled/not
+	// started. It backs POST /sdn/v1/admin/modules/install. Nil (or a nil return)
+	// makes the admin install route report 503. The route is intended to be
+	// served only on the plugin's loopback listener; it is additionally fail
+	// closed (a module's unapproved sensitive capabilities refuse the install).
+	Installer func() ModuleInstaller
 }
 
 // NewHandler builds the read-only SDN HTTP API over deps. Routes are method-
@@ -116,6 +169,7 @@ func NewHandler(deps Deps) http.Handler {
 	mux.HandleFunc("GET /sdn/v1/modules", h.modules)
 	mux.HandleFunc("GET /sdn/v1/modules/{id}/config", h.moduleConfigGet)
 	mux.HandleFunc("PUT /sdn/v1/modules/{id}/config", h.moduleConfigPut)
+	mux.HandleFunc("POST /sdn/v1/admin/modules/install", h.moduleInstall)
 	return mux
 }
 
@@ -142,6 +196,13 @@ func (h *handler) modulesAdmin() ModuleAdmin {
 		return nil
 	}
 	return h.deps.Modules()
+}
+
+func (h *handler) installer() ModuleInstaller {
+	if h.deps.Installer == nil {
+		return nil
+	}
+	return h.deps.Installer()
 }
 
 // ---------------------------------------------------------------------------
@@ -591,6 +652,85 @@ func (h *handler) moduleConfigPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, applied)
+}
+
+// installRequest is the POST /sdn/v1/admin/modules/install body: a module
+// CONTENT_HASH already present in the node's block store plus the operator
+// capability grant that authorizes its sensitive capabilities. Capabilities may
+// be given as a plain string list (approved_by applies to all) and/or a richer
+// grants array (per-grant approver + note); both are merged.
+type installRequest struct {
+	ContentHash  string            `json:"content_hash"`
+	ApprovedBy   string            `json:"approved_by,omitempty"`
+	Capabilities []string          `json:"capabilities,omitempty"`
+	Grants       []installGrantReq `json:"grants,omitempty"`
+}
+
+type installGrantReq struct {
+	Capability string `json:"capability"`
+	ApprovedBy string `json:"approved_by,omitempty"`
+	Note       string `json:"note,omitempty"`
+}
+
+// moduleInstall installs a real WASM module the node already holds (addressed by
+// CONTENT_HASH) and registers it with the cron scheduler, after recording the
+// operator's capability grant. It is fail closed: a module declaring a sensitive
+// capability the grant does not cover is refused (403), nothing is registered.
+//
+// This route mutates node state, so it is meant to be served ONLY on the
+// plugin's loopback listener (127.0.0.1); exposing the API off-host is an
+// explicit operator choice the plugin already warns about.
+func (h *handler) moduleInstall(w http.ResponseWriter, r *http.Request) {
+	inst := h.installer()
+	if inst == nil {
+		writeErr(w, http.StatusServiceUnavailable, "module installer unavailable")
+		return
+	}
+	var req installRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err := dec.Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "malformed request: body must be a JSON object")
+		return
+	}
+	hash := strings.ToLower(strings.TrimSpace(req.ContentHash))
+	if len(hash) != 64 {
+		writeErr(w, http.StatusBadRequest, "content_hash must be 64 hex characters (sha-256)")
+		return
+	}
+	if _, err := hex.DecodeString(hash); err != nil {
+		writeErr(w, http.StatusBadRequest, "content_hash must be valid hex")
+		return
+	}
+
+	grants := make([]CapabilityGrant, 0, len(req.Capabilities)+len(req.Grants))
+	for _, c := range req.Capabilities {
+		if c = strings.TrimSpace(c); c != "" {
+			grants = append(grants, CapabilityGrant{Capability: c, ApprovedBy: req.ApprovedBy})
+		}
+	}
+	for _, g := range req.Grants {
+		if c := strings.TrimSpace(g.Capability); c != "" {
+			by := g.ApprovedBy
+			if strings.TrimSpace(by) == "" {
+				by = req.ApprovedBy
+			}
+			grants = append(grants, CapabilityGrant{Capability: c, ApprovedBy: by, Note: g.Note})
+		}
+	}
+
+	view, err := inst.AdminInstall(r.Context(), hash, grants)
+	switch {
+	case errors.Is(err, ErrInstallDenied):
+		writeErr(w, http.StatusForbidden, err.Error())
+		return
+	case errors.Is(err, ErrModuleNotFound):
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	case err != nil:
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 // ---------------------------------------------------------------------------
