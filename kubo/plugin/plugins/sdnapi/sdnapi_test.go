@@ -72,7 +72,11 @@ func TestRootHandlerRoutesUIAndAPI(t *testing.T) {
 	api := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(apiMarker + " " + r.URL.Path))
 	})
-	root := newRootHandler(api, sdnui.Handler())
+	credsMarker := "SDN-CREDS-MARKER"
+	creds := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(credsMarker + " " + r.URL.Path))
+	})
+	root := newRootHandler(api, sdnui.Handler(), creds)
 
 	// API subtree reaches the API handler with the full path intact.
 	rec := httptest.NewRecorder()
@@ -82,6 +86,14 @@ func TestRootHandlerRoutesUIAndAPI(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "/sdn/v1/node") {
 		t.Errorf("API handler received a rewritten path: %q", rec.Body.String())
+	}
+
+	// The credential admin prefix wins over the /sdn/v1/ subtree and reaches the
+	// guarded credential handler, not the read-only API.
+	rec = httptest.NewRecorder()
+	root.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/sdn/v1/admin/credentials/spacetrack", nil))
+	if !strings.Contains(rec.Body.String(), credsMarker) {
+		t.Errorf("PUT /sdn/v1/admin/credentials/spacetrack -> body=%q, want credentials handler", rec.Body.String())
 	}
 
 	// Root serves the console app shell.

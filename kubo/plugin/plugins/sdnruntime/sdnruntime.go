@@ -37,6 +37,7 @@ import (
 	plugin "github.com/ipfs/kubo/plugin"
 
 	"github.com/ipfs/kubo/sdn/appmanifest"
+	"github.com/ipfs/kubo/sdn/credstore"
 	"github.com/ipfs/kubo/sdn/flatsqlrt"
 	"github.com/ipfs/kubo/sdn/modulert"
 	"github.com/ipfs/kubo/sdn/plugins"
@@ -127,6 +128,27 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 		modulesConfigDir = filepath.Join(sdnDir, "modules")
 	}
 
+	// Encrypted-at-rest credential keystore (<repo>/sdn/secrets/credentials.enc,
+	// 0600). Its root key is derived DETERMINISTICALLY from the node's unlocked
+	// libp2p identity private key (core.IpfsNode.PrivateKey.Raw()) + the machine
+	// fingerprint + the hostname, so it re-derives unattended on every boot but a
+	// copied file will not decrypt on another host/identity. Fail closed: with no
+	// identity key, no repo path, or a resolve error, credStore stays nil — the
+	// secrets capability is not registered and the credential API reports 503,
+	// never a weaker key. The store is stashed for the sdnapi plugin's loopback
+	// credential-entry routes (see CredentialStore()).
+	var credStore *credstore.Store
+	if sdnDir != "" && node.PrivateKey != nil {
+		if raw, err := node.PrivateKey.Raw(); err != nil {
+			log.Warnf("SDN credential store unavailable: node identity key material inaccessible: %v", err)
+		} else if st, err := credstore.OpenStore(sdnDir, raw); err != nil {
+			log.Warnf("SDN credential store unavailable: %v", err)
+		} else {
+			credStore = st
+		}
+	}
+	setCredentialStore(credStore)
+
 	deps := sdnservices.Deps{
 		Blockstore:       node.Blockstore,
 		Datastore:        node.Repo.Datastore(),
@@ -142,6 +164,8 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 		// no-refetch window, >= 2.5s serial spacing) persists under <repo>/sdn.
 		FetchLedgerDir: sdnDir,
 		CronLog:        log.Infof,
+		// Credential keystore backing the secrets:<id> capability (nil-safe).
+		CredStore: credStore,
 	}
 
 	svc, err := sdnservices.BuildServices(deps)
@@ -403,6 +427,33 @@ func setInstaller(in *sdnmodules.Installer) {
 	installerMu.Lock()
 	liveInstaller = in
 	installerMu.Unlock()
+}
+
+// ---------------------------------------------------------------------------
+// Package-level accessor for the node's encrypted-at-rest credential keystore.
+// The sdnapi plugin reaches it through CredentialStore() to serve the loopback
+// credential-entry admin routes (GET/PUT/DELETE /sdn/v1/admin/credentials) —
+// the same stash-on-Start pattern Services()/Installer() use. nil when the
+// runtime is disabled, not started, or the keystore could not be opened
+// (fail closed: the credential routes then report 503).
+// ---------------------------------------------------------------------------
+
+var (
+	credStoreMu    sync.RWMutex
+	liveCredential *credstore.Store
+)
+
+// CredentialStore returns the live credential keystore, or nil when unavailable.
+func CredentialStore() *credstore.Store {
+	credStoreMu.RLock()
+	defer credStoreMu.RUnlock()
+	return liveCredential
+}
+
+func setCredentialStore(s *credstore.Store) {
+	credStoreMu.Lock()
+	liveCredential = s
+	credStoreMu.Unlock()
 }
 
 // ---------------------------------------------------------------------------

@@ -39,6 +39,7 @@ import (
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 
 	"github.com/ipfs/kubo/sdn/channels"
+	"github.com/ipfs/kubo/sdn/credstore"
 	"github.com/ipfs/kubo/sdn/flatsqlrt"
 	"github.com/ipfs/kubo/sdn/modulert"
 	"github.com/ipfs/kubo/sdn/sdncron"
@@ -92,6 +93,15 @@ type Deps struct {
 	FetchLedgerDir string
 	// CronLog is an optional printf-style sink for the cron scheduler.
 	CronLog sdncron.Logger
+
+	// CredStore is the node's encrypted-at-rest credential keystore
+	// (sdn/credstore), opened by the plugin from the node's unlocked libp2p
+	// identity key. When non-nil, the secrets:<id> capability is registered for
+	// every credstore.AllIDs lane so an operator-approved data-source module
+	// (Space-Track etc.) can fetch its credential through the "secrets" hostcall.
+	// Optional: nil => the secrets capability is not registered (a module
+	// declaring it fails to provision, as the host cannot satisfy it).
+	CredStore *credstore.Store
 }
 
 // Services is the live SDN services bundle a node holds.
@@ -186,6 +196,20 @@ func BuildServices(deps Deps) (*Services, error) {
 	// grant per call and enforces the owner's CelesTrak/Space-Track fetch
 	// policy (>= 2.5s spacing + 3h URL ledger persisted under FetchLedgerDir).
 	capReg.RegisterBridgeAware("http", NewHTTPCapFactory(HTTPCapConfig{LedgerDir: deps.FetchLedgerDir}))
+
+	// Credential-keystore capability (secrets:<id>): a data-source module the
+	// operator approved for a lane fetches that credential through the "secrets"
+	// hostcall. Registered under each credstore.AllIDs lane name (like the
+	// storage_* family) so whichever lane a module declares resolves to the one
+	// handler; the handler re-checks the exact lane per call. secrets:* is a
+	// modulert sensitive capability, so an unapproved module is denied at load
+	// (fail closed). Only wired when the node opened a keystore.
+	if deps.CredStore != nil {
+		secretsFactory := NewSecretsCapFactory(deps.CredStore)
+		for _, id := range credstore.AllIDs() {
+			capReg.RegisterBridgeAware(CapabilityForID(id), secretsFactory)
+		}
+	}
 
 	// Per-module cron config store + scheduler. The schedule_cron capability is
 	// wired here so a running module can register/update its own schedule; it is
