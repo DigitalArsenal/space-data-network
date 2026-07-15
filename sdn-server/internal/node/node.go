@@ -941,9 +941,14 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 	// module declaring one is DENIED AT LOAD unless the operator approved that
 	// content hash for that lane.
 	//
-	// If the store cannot be opened the capability is simply not registered:
-	// modules get "operation not supported" — fail closed, never a silent grant.
-	if credStore, cerr := credstore.NewStore(n.config.Storage.Path, credstore.RootPassword(n.config.Security.KeyPassword)); cerr != nil {
+	// The root key is derived from the UNLOCKED node identity private key (plus
+	// the machine fingerprint and hostname) via IdentityKeyMaterial(), which
+	// reads the in-memory key the node already unlocked at boot — buildCapRegistry
+	// runs well after the libp2p host is up, so the key is available here. If it
+	// is NOT (host not yet up, or SDN_KEY_PASSWORD-only node missing its
+	// override), OpenStore fails closed and the capability is simply not
+	// registered: modules get "operation not supported" — never a silent grant.
+	if credStore, cerr := credstore.OpenStore(n.config.Storage.Path, n.IdentityKeyMaterial()); cerr != nil {
 		log.Warnf("credential store unavailable; secrets capabilities not registered: %v", cerr)
 	} else {
 		secretsFac := caps.NewSecretsCapFactory(credStore)

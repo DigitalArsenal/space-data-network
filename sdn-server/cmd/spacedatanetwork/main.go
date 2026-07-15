@@ -1524,7 +1524,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// inside the handler it also survives a widened
 			// gateway.anonymous.allow. Status only: no route returns a stored
 			// secret to any caller.
-			if credStore, cerr := credstore.NewStore(cfg.Storage.Path, credstore.RootPassword(cfg.Security.KeyPassword)); cerr != nil {
+			//
+			// The at-rest key is derived from the UNLOCKED node identity private
+			// key (n.IdentityKeyMaterial(), already unlocked at boot — it is used
+			// the same way at daemon startup above) plus the machine fingerprint
+			// and hostname. OpenStore fails closed if that key is unavailable, so
+			// the API is not mounted rather than opened under a weaker key.
+			if credStore, cerr := credstore.OpenStore(cfg.Storage.Path, n.IdentityKeyMaterial()); cerr != nil {
 				log.Warnf("credential store unavailable; provider-credential API not mounted: %v", cerr)
 			} else {
 				credAPI := api.NewCredentialsHandler(credStore, authHandler, cfg.Admin.RequireAuth, map[string]api.Verifier{

@@ -23,18 +23,47 @@
 //	AEAD  XChaCha20-Poly1305, random 24-byte nonce per write
 //	File  magic || salt(32) || nonce(24) || ciphertext
 //
-// The root key is the node's existing key material, resolved exactly as the node
-// resolves the password for its identity key and mnemonic (RootPassword below):
-// SDN_KEY_PASSWORD > config security.key_password > keys.DeriveDefaultPassword()
-// (Argon2id over the stable hardware fingerprint; deliberately NOT the hostname,
-// NOT the peer ID, NOT a constant).
+// # ROOT KEY — deterministic, machine-bound, no external secret
 //
-// That root is then domain-separated with HKDF-SHA256 so the credential
-// keystore's passphrase is not literally the node identity key's passphrase:
+// The DEFAULT root key is derived deterministically from THREE inputs the node
+// can reproduce on every boot with NO env var, NO prompt, and NO external secret
+// (owner directive: unattended operation). Same machine + same node identity +
+// same hostname => same root => decrypts the same credentials.enc:
 //
-//	credstorePassphrase = HKDF-SHA256(ikm=rootPassword, info="sdn/secrets/credstore/v1")
+//  1. machine state   keys.DeriveDefaultPassword() — Argon2id over the stable
+//     hardware fingerprint; the SAME mechanism the node already
+//     relies on to unlock its own identity key at rest, so it
+//     adds no new fragility.
 //
-// Compromise of one does not hand the attacker the other's passphrase directly.
+//  2. node key pair   the UNLOCKED libp2p identity private key's raw bytes
+//     (node.IdentityKeyMaterial()). Never re-read from node.key
+//     here, never with a hardcoded password — the in-memory key
+//     the node already unlocked at boot is passed in.
+//
+//  3. machine name    the hostname (os.Hostname()).
+//
+//     rootKey = HKDF-SHA256(ikm = len||machineState || len||nodePrivKey || len||hostname,
+//     info = "sdn/secrets/credstore/root/v2")
+//
+// The resolved root is then domain-separated again with HKDF-SHA256 (info
+// "sdn/secrets/credstore/v1") into the actual keystore passphrase and sealed
+// with the Argon2id + XChaCha20-Poly1305 envelope above (per-write random salt
+// and nonce). Only the root IKM changed vs the first cut; the envelope is
+// unchanged.
+//
+// SECURITY POSTURE: binding to (2) and (3) defeats FILE EXFILTRATION —
+// credentials.enc copied to another host, or opened under a different node
+// identity, will not decrypt. It does NOT defend against code running as the
+// same user on the same host: a deterministic, no-external-secret key is
+// inherently re-derivable there. That is the accepted cost of unattended boot.
+//
+// OVERRIDE: SDN_KEY_PASSWORD, if set, replaces the derivation and is used
+// verbatim. Once used it must remain set on every subsequent boot, or the
+// keystore becomes undecryptable.
+//
+// FAIL CLOSED: if the node identity key is unavailable at init, ResolveRoot
+// returns an error and the credential routes refuse to serve — a weaker key is
+// never substituted.
 //
 // # WRITE-ONLY FROM THE OUTSIDE
 //
@@ -47,6 +76,7 @@ package credstore
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -161,20 +191,91 @@ type Store struct {
 	passphrase []byte
 }
 
-// RootPassword resolves the node's root key password exactly as the node does
-// for its identity key and mnemonic: SDN_KEY_PASSWORD, then config
-// security.key_password, then the machine-derived default.
+// rootHKDFInfo domain-separates the three-input root derivation. Bumping the
+// "/v2" suffix is a breaking change: it re-derives the root and orphans any
+// existing credentials.enc.
+const rootHKDFInfo = "sdn/secrets/credstore/root/v2"
+
+// ResolveRoot resolves the credential-keystore root key.
 //
-// Kept here (rather than reaching into internal/node) so the credential store
-// can be constructed without a running Node.
-func RootPassword(configuredKeyPassword string) string {
+// Override: if SDN_KEY_PASSWORD is set it is returned verbatim (and MUST stay
+// set on every subsequent boot, or the keystore becomes undecryptable).
+//
+// Default: the deterministic three-input derivation binding the keystore to this
+// machine + this node identity + this hostname (see the package doc). It FAILS
+// CLOSED — never a weaker key — if the node identity key or the hostname is
+// unavailable.
+//
+// nodePrivKey MUST be the UNLOCKED identity private key's raw bytes
+// (node.IdentityKeyMaterial()); ResolveRoot zeroizes the slice before returning,
+// so callers must pass a fresh copy (IdentityKeyMaterial already returns one).
+func ResolveRoot(nodePrivKey []byte) (string, error) {
+	defer zero(nodePrivKey)
 	if env := os.Getenv("SDN_KEY_PASSWORD"); env != "" {
-		return env
+		return env, nil
 	}
-	if configuredKeyPassword != "" {
-		return configuredKeyPassword
+	hostname, err := os.Hostname()
+	if err != nil || strings.TrimSpace(hostname) == "" {
+		return "", errors.New("credstore: hostname unavailable; refusing to derive root key")
 	}
-	return keys.DeriveDefaultPassword()
+	return DeriveRootKey(keys.DeriveDefaultPassword(), nodePrivKey, hostname)
+}
+
+// DeriveRootKey combines the three machine-binding inputs into a 32-byte root
+// key via HKDF-SHA256. Every input is REQUIRED; a missing input fails closed
+// rather than yielding a weaker key.
+//
+// Exposed (not merely used by ResolveRoot) so tests can vary each input
+// independently and assert the machine-binding — changing the machine state,
+// the node key, or the hostname must change the root.
+func DeriveRootKey(machineState string, nodePrivKey []byte, hostname string) (string, error) {
+	if machineState == "" {
+		return "", errors.New("credstore: machine fingerprint unavailable; refusing to derive root key")
+	}
+	if len(nodePrivKey) == 0 {
+		return "", errors.New("credstore: node identity key unavailable; refusing to derive a weaker root key")
+	}
+	if strings.TrimSpace(hostname) == "" {
+		return "", errors.New("credstore: hostname unavailable; refusing to derive root key")
+	}
+
+	// Length-prefixed concatenation: an unambiguous encoding so no shift between
+	// inputs (a hostname suffix vs a key prefix, say) can collide with a
+	// different triple.
+	var ikm []byte
+	ikm = appendField(ikm, []byte(machineState))
+	ikm = appendField(ikm, nodePrivKey)
+	ikm = appendField(ikm, []byte(hostname))
+	defer zero(ikm)
+
+	r := hkdf.New(sha256.New, ikm, nil, []byte(rootHKDFInfo))
+	out := make([]byte, 32)
+	if _, err := io.ReadFull(r, out); err != nil {
+		return "", fmt.Errorf("credstore: derive root key: %w", err)
+	}
+	return string(out), nil
+}
+
+// appendField appends an 8-byte big-endian length prefix followed by b.
+func appendField(dst, b []byte) []byte {
+	var l [8]byte
+	binary.BigEndian.PutUint64(l[:], uint64(len(b)))
+	dst = append(dst, l[:]...)
+	return append(dst, b...)
+}
+
+// OpenStore resolves the machine-bound root key and opens the keystore in one
+// call. Fails closed (no weaker-key fallback) if the node identity key is
+// unavailable — the caller must then refuse to serve the credential routes.
+//
+// nodePrivKey is the unlocked identity private key's raw bytes; it is zeroized
+// during resolution.
+func OpenStore(storageDir string, nodePrivKey []byte) (*Store, error) {
+	root, err := ResolveRoot(nodePrivKey)
+	if err != nil {
+		return nil, err
+	}
+	return NewStore(storageDir, root)
 }
 
 // derivePassphrase domain-separates the root password for credential-keystore use.
