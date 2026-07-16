@@ -80,7 +80,11 @@ func TestRootHandlerRoutesUIAndAPI(t *testing.T) {
 	runs := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(runsMarker + " " + r.URL.Path))
 	})
-	root := newRootHandler(api, sdnui.Handler(), creds, runs)
+	nodeEPMMarker := "SDN-NODEEPM-MARKER"
+	nodeEPM := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(nodeEPMMarker + " " + r.URL.Path))
+	})
+	root := newRootHandler(api, sdnui.Handler(), creds, runs, nodeEPM)
 
 	// API subtree reaches the API handler with the full path intact.
 	rec := httptest.NewRecorder()
@@ -90,6 +94,16 @@ func TestRootHandlerRoutesUIAndAPI(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "/sdn/v1/node") {
 		t.Errorf("API handler received a rewritten path: %q", rec.Body.String())
+	}
+
+	// The exact node EPM export routes win over the /sdn/v1/ subtree and reach
+	// the export handler, while the bare /sdn/v1/node route stays on the API.
+	for _, path := range []string{"/sdn/v1/node/epm", "/sdn/v1/node/vcard", "/sdn/v1/node/qr"} {
+		rec = httptest.NewRecorder()
+		root.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if !strings.Contains(rec.Body.String(), nodeEPMMarker) {
+			t.Errorf("GET %s -> body=%q, want node EPM handler", path, rec.Body.String())
+		}
 	}
 
 	// The credential admin prefix wins over the /sdn/v1/ subtree and reaches the
