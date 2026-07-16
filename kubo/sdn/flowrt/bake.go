@@ -40,9 +40,19 @@ import (
 // BakeModuleRef names a module to link into a baked flow. PluginID is required;
 // ContentHash, when set, is verified against the staged guest-link object's
 // sha256 (fail-closed on mismatch).
+//
+// Phase-2 Part-B (network fetch-to-bake): when a referenced module is NOT staged
+// locally and BundleHash is set, the node fetches its guest-link bundle by that
+// content hash from the blockstore, verifies the Ed25519 Signature (over the
+// bundle-hash digest) by SignerPubKey against the trusted signer set (signed-
+// only, fail-closed), and stages it before linking. BundleHash addresses the
+// whole module bundle envelope, distinct from ContentHash (the staged object).
 type BakeModuleRef struct {
-	PluginID    string `json:"pluginId"`
-	ContentHash string `json:"contentHash,omitempty"`
+	PluginID     string `json:"pluginId"`
+	ContentHash  string `json:"contentHash,omitempty"`
+	BundleHash   string `json:"bundleHash,omitempty"`
+	Signature    string `json:"signature,omitempty"`
+	SignerPubKey string `json:"signerPubKey,omitempty"`
 }
 
 // BakeRequest is the POST body for the node-side bake path. FlowJSON is the full
@@ -129,6 +139,15 @@ type Baker struct {
 	home           flowcc.Home
 	cc             *flowcc.Compiler
 	maxMemoryPages uint32
+
+	// fetcher, when attached (SetNetModules), resolves a referenced module that
+	// is NOT staged locally by fetching its signed bundle by content hash and
+	// staging it before linking (Phase-2 Part-B fetch-to-bake). nil leaves the
+	// bake path local-only.
+	fetcher *NetModuleFetcher
+	// catalog is the node's set of network-advertised signed modules the palette
+	// lists (source "network"). Always non-nil (NewBaker seeds an empty catalog).
+	catalog *NetModuleCatalog
 }
 
 // NewBaker constructs a Baker against a staged flowcc home. It fails if the
@@ -142,8 +161,33 @@ func NewBaker(home flowcc.Home, maxMemoryPages uint32) (*Baker, error) {
 	if err != nil {
 		return nil, fmt.Errorf("flowrt: init flowcc compiler: %w", err)
 	}
-	return &Baker{home: home, cc: cc, maxMemoryPages: maxMemoryPages}, nil
+	return &Baker{home: home, cc: cc, maxMemoryPages: maxMemoryPages, catalog: NewNetModuleCatalog()}, nil
 }
+
+// SetNetModules attaches the network-module fetcher (fetch-to-bake) enabling the
+// node to resolve unstaged, signed modules by content hash. Passing a nil fetcher
+// disables network fetch. The catalog (palette's network source) is always live.
+func (b *Baker) SetNetModules(fetcher *NetModuleFetcher) { b.fetcher = fetcher }
+
+// NetCatalog returns the node's network-module catalog (never nil).
+func (b *Baker) NetCatalog() *NetModuleCatalog { return b.catalog }
+
+// PublishNetworkModule verifies a signed module bundle and registers it in the
+// catalog so the editor lists it as a network module. Requires a fetcher.
+func (b *Baker) PublishNetworkModule(ctx context.Context, ref BakeModuleRef) (NetModuleEntry, error) {
+	if b.fetcher == nil {
+		return NetModuleEntry{}, fmt.Errorf("flowrt: network module path not enabled (no blockstore/fetcher attached)")
+	}
+	e, err := b.fetcher.PublishNetworkModule(ctx, ref)
+	if err != nil {
+		return NetModuleEntry{}, err
+	}
+	b.catalog.Put(e)
+	return e, nil
+}
+
+// Home returns the baker's flowcc home (used by the network-module staging path).
+func (b *Baker) Home() flowcc.Home { return b.home }
 
 // Bake resolves the request's modules, generates the per-flow descriptor,
 // compiles + links the composed runtime.wasm, and returns it (NOT yet
@@ -165,8 +209,10 @@ func (b *Baker) Bake(ctx context.Context, req BakeRequest) (*BakeResult, error) 
 	}
 
 	// Resolve every linked node to its staged guest-link entry symbol, and
-	// collect the distinct module objects to link.
-	gen, deps, err := b.resolve(&g, req.ModuleRefs)
+	// collect the distinct module objects to link. A referenced module that is
+	// not staged locally is fetched by content hash + verified + staged first
+	// (Part-B fetch-to-bake) when the ref carries a signed BundleHash.
+	gen, deps, err := b.resolve(ctx, &g, req.ModuleRefs)
 	if err != nil {
 		return nil, err
 	}
@@ -234,12 +280,19 @@ type depObject struct {
 
 // resolve validates the graph, resolves each linked node's entry symbol from the
 // staged module metadata, generates the descriptor sources, and loads the
-// distinct module objects (verifying content hashes when refs supply them).
-func (b *Baker) resolve(g *bakeGraph, refs []BakeModuleRef) (*generated, []depObject, error) {
-	// Content-hash pins keyed by pluginId (optional).
+// distinct module objects (verifying content hashes when refs supply them). A
+// referenced module not staged locally is fetched by content hash + signature-
+// verified + staged first when its ref carries a signed BundleHash (Part-B).
+func (b *Baker) resolve(ctx context.Context, g *bakeGraph, refs []BakeModuleRef) (*generated, []depObject, error) {
+	// Content-hash pins + full refs keyed by pluginId (optional).
 	pin := map[string]string{}
+	refByPlugin := map[string]BakeModuleRef{}
 	for _, r := range refs {
-		if r.PluginID != "" && r.ContentHash != "" {
+		if r.PluginID == "" {
+			continue
+		}
+		refByPlugin[r.PluginID] = r
+		if r.ContentHash != "" {
 			pin[r.PluginID] = strings.ToLower(r.ContentHash)
 		}
 	}
@@ -266,6 +319,11 @@ func (b *Baker) resolve(g *bakeGraph, refs []BakeModuleRef) (*generated, []depOb
 		}
 		if n.PluginID == "" || n.MethodID == "" {
 			return nil, nil, fmt.Errorf("bake: linked node %q missing pluginId/methodId", n.NodeID)
+		}
+		// Fetch-to-bake: if the module is not staged locally, fetch + verify +
+		// stage it by its signed content hash before resolving its symbol.
+		if err := b.ensureStaged(ctx, n.PluginID, refByPlugin); err != nil {
+			return nil, nil, err
 		}
 		meta, err := b.home.LoadModuleMetadata(n.PluginID)
 		if err != nil {
@@ -304,6 +362,37 @@ func (b *Baker) resolve(g *bakeGraph, refs []BakeModuleRef) (*generated, []depOb
 		return nil, nil, err
 	}
 	return gen, deps, nil
+}
+
+// ensureStaged makes sure pluginID's guest-link object is staged locally,
+// fetching + verifying + staging it by content hash when it is not. The fetch
+// ref is taken from the explicit moduleRefs, or (when the bake omitted the
+// signed fields) from the node's network-module catalog entry — either way the
+// signed-only gate runs before the module is staged. A module already staged, or
+// one with no network ref available, is left to the normal staged-metadata read
+// (which errors clearly if the module truly is not available).
+func (b *Baker) ensureStaged(ctx context.Context, pluginID string, refByPlugin map[string]BakeModuleRef) error {
+	if _, err := b.home.LoadModuleMetadata(pluginID); err == nil {
+		return nil // already staged
+	}
+	if b.fetcher == nil {
+		return nil // no network fetch path; the staged-metadata read reports the miss
+	}
+	ref, ok := refByPlugin[pluginID]
+	if !ok || ref.BundleHash == "" {
+		// The editor may reference a catalog module without echoing its signed
+		// fields; recover them from the verified catalog entry.
+		if e, found := b.catalog.Get(pluginID); found {
+			ref = e.ref()
+		}
+	}
+	if ref.BundleHash == "" {
+		return nil // nothing to fetch by; leave the miss to the metadata read
+	}
+	if err := b.fetcher.FetchAndStage(ctx, b.home, ref); err != nil {
+		return fmt.Errorf("bake: fetch-to-stage module %q: %w", pluginID, err)
+	}
+	return nil
 }
 
 // compileFlowRuntime compiles the FLOW-AGNOSTIC flow_runtime.cpp into

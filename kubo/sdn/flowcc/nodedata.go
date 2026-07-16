@@ -151,6 +151,11 @@ type ModuleMetadata struct {
 	SymbolPrefix  string             `json:"symbolPrefix"`
 	MethodSymbols map[string]string  `json:"methodSymbols"`
 	MethodPorts   []MethodPortSchema `json:"methodPorts,omitempty"`
+	// Source records how the module reached the home: "" (or "local") for a
+	// module staged from a local dist tree, "network" for one fetched by content
+	// hash from the blockstore (Phase 2 Part B). The palette surfaces this so the
+	// editor can mark network-fetched modules distinctly from local-staged ones.
+	Source string `json:"source,omitempty"`
 }
 
 // MethodPortSchema carries one method's schema-typed input/output ports, keyed
@@ -249,43 +254,92 @@ func StageModule(home Home, pluginID, linkObjPath, metadataPath, manifestPath st
 	return nil
 }
 
-// stageModuleMetadata writes the enriched metadata.json into the home: the
-// dist metadata verbatim, plus MethodPorts derived from the plugin manifest when
-// one is available. If the manifest is missing/unparsable the metadata is copied
-// through unchanged, so a module always stages even with no port schema.
+// StageModuleBytes stages one module directly from in-memory bytes (the Phase-2
+// Part-B fetch-to-bake path): objectBytes is the guest-link module-link.o,
+// metadataBytes the dist metadata.json, manifestBytes the plugin-manifest.json
+// (may be nil). source ("network"/"local") is recorded in the staged metadata so
+// the palette can mark network-fetched modules. It writes the same enriched
+// metadata.json StageModule writes, so a fetched module bakes identically to a
+// locally staged one.
+func StageModuleBytes(home Home, pluginID string, objectBytes, metadataBytes, manifestBytes []byte, source string) error {
+	if pluginID == "" {
+		return fmt.Errorf("flowcc: StageModuleBytes: empty pluginId")
+	}
+	if len(objectBytes) == 0 {
+		return fmt.Errorf("flowcc: StageModuleBytes %q: empty object", pluginID)
+	}
+	if len(metadataBytes) == 0 {
+		return fmt.Errorf("flowcc: StageModuleBytes %q: empty metadata", pluginID)
+	}
+	dir := home.ModuleDir(pluginID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "module-link.o"), objectBytes, 0o644); err != nil {
+		return fmt.Errorf("flowcc: stage module %q object: %w", pluginID, err)
+	}
+	if err := writeEnrichedMetadata(filepath.Join(dir, "metadata.json"), metadataBytes, manifestBytes, source); err != nil {
+		return fmt.Errorf("flowcc: stage module %q metadata: %w", pluginID, err)
+	}
+	return nil
+}
+
+// stageModuleMetadata writes the enriched metadata.json into the home from the
+// on-disk dist metadata + manifest paths (the local-stage path).
 func stageModuleMetadata(destPath, srcMetadataPath, manifestPath string) error {
 	raw, err := os.ReadFile(srcMetadataPath)
 	if err != nil {
 		return err
 	}
-	ports := methodPortsFromManifest(manifestPath) // nil on missing/unparsable
-	if len(ports) == 0 {
-		// No enrichment to add — preserve the dist metadata byte-for-byte.
-		return os.WriteFile(destPath, raw, 0o644)
+	var manifestBytes []byte
+	if manifestPath != "" {
+		manifestBytes, _ = os.ReadFile(manifestPath) // best-effort; nil tolerated
+	}
+	return writeEnrichedMetadata(destPath, raw, manifestBytes, "")
+}
+
+// writeEnrichedMetadata writes the dist metadata.json to destPath, adding the
+// manifest-derived MethodPorts (when a parsable manifest is supplied) and the
+// source marker. If nothing needs enriching the metadata is written byte-for-byte
+// (except when a source marker must be recorded), so a module always stages even
+// with no port schema.
+func writeEnrichedMetadata(destPath string, metadataBytes, manifestBytes []byte, source string) error {
+	ports := methodPortsFromManifestBytes(manifestBytes) // nil on missing/unparsable
+	if len(ports) == 0 && source == "" {
+		return os.WriteFile(destPath, metadataBytes, 0o644)
 	}
 	var meta ModuleMetadata
-	if err := json.Unmarshal(raw, &meta); err != nil {
+	if err := json.Unmarshal(metadataBytes, &meta); err != nil {
 		// Metadata we cannot parse still stages verbatim (bake reads it itself).
-		return os.WriteFile(destPath, raw, 0o644)
+		return os.WriteFile(destPath, metadataBytes, 0o644)
 	}
-	meta.MethodPorts = ports
+	if len(ports) > 0 {
+		meta.MethodPorts = ports
+	}
+	if source != "" {
+		meta.Source = source
+	}
 	out, err := json.MarshalIndent(&meta, "", "  ")
 	if err != nil {
-		return os.WriteFile(destPath, raw, 0o644)
+		return os.WriteFile(destPath, metadataBytes, 0o644)
 	}
 	return os.WriteFile(destPath, out, 0o644)
 }
 
-// methodPortsFromManifest reads a module's plugin-manifest.json and extracts the
-// per-method schema-typed ports (acceptedTypeSets -> SDS type tokens). It returns
-// nil for an empty path, a missing/unreadable file, or a manifest with no
-// methods, so callers can treat "no port schema" uniformly.
-func methodPortsFromManifest(manifestPath string) []MethodPortSchema {
-	if manifestPath == "" {
-		return nil
-	}
-	b, err := os.ReadFile(manifestPath)
-	if err != nil {
+// MethodPortsFromManifestBytes is the exported form of methodPortsFromManifestBytes:
+// it derives a module's per-method schema-typed ports from plugin-manifest.json
+// bytes. Used by the network-module path (fetch-to-bake) to reconstruct a fetched
+// module's palette ports without writing the manifest to disk first.
+func MethodPortsFromManifestBytes(b []byte) []MethodPortSchema {
+	return methodPortsFromManifestBytes(b)
+}
+
+// methodPortsFromManifestBytes extracts the per-method schema-typed ports
+// (acceptedTypeSets -> SDS type tokens) from plugin-manifest.json bytes. It
+// returns nil for empty/unparsable input or a manifest with no methods, so
+// callers can treat "no port schema" uniformly.
+func methodPortsFromManifestBytes(b []byte) []MethodPortSchema {
+	if len(b) == 0 {
 		return nil
 	}
 	var m struct {
