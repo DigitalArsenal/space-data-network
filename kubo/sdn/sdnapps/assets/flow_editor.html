@@ -140,6 +140,8 @@
   .pal-item:active { cursor:grabbing; }
   .pal-item .pi-dot { width:8px; height:8px; flex:none; background:var(--cyan); box-shadow:0 0 7px var(--cyan); }
   .pal-item.cap .pi-dot { background:var(--ice); box-shadow:0 0 7px var(--ice); }
+  .pal-item.net .pi-dot { background:var(--amber); box-shadow:0 0 7px var(--amber); }
+  .pal-item.net:hover { border-color:rgba(255,178,77,0.5); background:rgba(255,178,77,0.08); }
   .pal-item .pi-name { font-family:var(--font-display); font-weight:600; font-size:12px; color:var(--ink); letter-spacing:0.02em; }
   .pal-item .pi-sub { font-size:9px; color:var(--muted-2); letter-spacing:0.04em; }
   .pal-empty { font-size:11px; color:var(--muted-2); padding:10px 4px; line-height:1.6; }
@@ -226,6 +228,22 @@
   .toast.show { display:block; }
   .toast .tt-k { display:block; margin-bottom:4px; font-family:var(--font-display); font-weight:600;
     font-size:9px; letter-spacing:0.16em; color:var(--red); }
+
+  /* --------------------------------------------------- palette drag ghost */
+  /* A live floating preview of the node being dragged from the palette; it
+     follows the cursor the whole drag (create on drag-start, remove on drop). */
+  .drag-ghost { position:fixed; z-index:80; pointer-events:none; width:190px;
+    background:var(--panel-raised); border:1px solid var(--cyan); opacity:0.94;
+    box-shadow:0 0 0 1px rgba(53,201,216,0.45), 0 10px 28px rgba(0,0,0,0.55);
+    transform:translate(-50%,-15px); }
+  .drag-ghost .dg-head { display:flex; align-items:center; gap:7px; padding:7px 9px;
+    border-bottom:1px solid var(--line-soft); background:rgba(10,20,26,0.6); }
+  .drag-ghost .dg-dot { width:8px; height:8px; flex:none; background:var(--cyan); box-shadow:0 0 6px var(--cyan); }
+  .drag-ghost.cap .dg-dot { background:var(--ice); box-shadow:0 0 6px var(--ice); }
+  .drag-ghost.net .dg-dot { background:var(--amber); box-shadow:0 0 6px var(--amber); }
+  .drag-ghost .dg-title { flex:1; min-width:0; font-family:var(--font-display); font-weight:600;
+    font-size:12px; color:var(--ink); letter-spacing:0.02em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .drag-ghost .dg-sub { font-size:8.5px; letter-spacing:0.06em; color:var(--muted-2); padding:3px 9px 6px; overflow-wrap:anywhere; }
 </style>
 </head>
 <body>
@@ -310,6 +328,7 @@
     flowId: "default",
     palette: { capabilities: [], modules: [] },
     methodIndex: {},          // "pluginId::methodId" -> {pluginId, methodId, kind, inputPorts, outputPorts}
+    netRefs: {},              // pluginId -> { bundleHash, signature, signerPubKey } for network modules
     nodes: {},                // nodeId -> node model
     edges: [],                // { id, fromNodeId, fromPortId, toNodeId, toPortId }
     triggers: {},             // triggerId -> { id, x, y }
@@ -355,7 +374,13 @@
 
   function indexPalette(pal) {
     state.methodIndex = {};
+    state.netRefs = {};
     function add(mod, kind) {
+      // Network modules carry a signed content-hash ref the node fetches + stages
+      // at bake time (fetch-to-bake); remember it per pluginId for assembleGraph.
+      if (mod.source === "network" && mod.bundleHash) {
+        state.netRefs[mod.pluginId] = { bundleHash: mod.bundleHash, signature: mod.signature, signerPubKey: mod.signerPubKey };
+      }
       (mod.methods || []).forEach(function (m) {
         var inP = normPorts(m.inputPorts, "in"), outP = normPorts(m.outputPorts, "out");
         state.methodIndex[methodKey(mod.pluginId, m.methodId)] = {
@@ -399,26 +424,30 @@
 
   function renderPalette() {
     var pal = state.palette, html = "";
-    function group(title, mods, kind) {
+    function group(title, mods, itemClass, sub) {
       if (!mods || !mods.length) return "";
       var g = '<div class="pal-group"><div class="grp-label"><span>' + esc(title) + '</span><span class="rule"></span></div>';
       mods.forEach(function (mod) {
         if (!mod.methods || !mod.methods.length) return;
         g += '<div class="pal-mod">' + esc(mod.pluginId) + "</div>";
         mod.methods.forEach(function (m) {
-          g += '<div class="pal-item ' + (kind === "capability" ? "cap" : "") + '" ' +
+          g += '<div class="pal-item ' + itemClass + '" ' +
             'data-plugin="' + esc(mod.pluginId) + '" data-method="' + esc(m.methodId) + '" ' +
             'title="' + esc((m.description || "")) + '">' +
             '<span class="pi-dot"></span><div style="min-width:0">' +
             '<div class="pi-name">' + esc(m.methodId) + "</div>" +
-            '<div class="pi-sub">' + (kind === "capability" ? "host capability" : "bakeable module") + "</div>" +
+            '<div class="pi-sub">' + esc(sub) + "</div>" +
             "</div></div>";
         });
       });
       return g + "</div>";
     }
-    html += group("STAGED MODULES", pal.modules, "module");
-    html += group("HOST CAPABILITIES", pal.capabilities, "capability");
+    var mods = pal.modules || [];
+    var localMods = mods.filter(function (m) { return m.source !== "network"; });
+    var netMods = mods.filter(function (m) { return m.source === "network"; });
+    html += group("STAGED MODULES", localMods, "", "bakeable module");
+    html += group("NETWORK MODULES", netMods, "net", "network · signed · fetch-to-bake");
+    html += group("HOST CAPABILITIES", pal.capabilities, "cap", "host capability");
     if (!html) html = '<div class="pal-empty">No node types available. The node has no staged modules or host capabilities to compose.</div>';
     paletteBody.innerHTML = html;
     Array.prototype.forEach.call(paletteBody.querySelectorAll(".pal-item"), function (el) {
@@ -720,11 +749,29 @@
   function onPalettePointerDown(ev) {
     var item = ev.currentTarget;
     var pluginId = item.dataset.plugin, methodId = item.dataset.method;
-    var moved = false, startX = ev.clientX, startY = ev.clientY;
-    function move(e) { if (Math.abs(e.clientX - startX) > 4 || Math.abs(e.clientY - startY) > 4) moved = true; }
+    var kindClass = item.classList.contains("cap") ? "cap" : item.classList.contains("net") ? "net" : "";
+    var moved = false, startX = ev.clientX, startY = ev.clientY, ghost = null;
+    // Live drag preview: a floating clone that follows the cursor from the first
+    // movement until drop, so the node being placed is visible the whole drag.
+    function ensureGhost() {
+      if (ghost) return;
+      ghost = document.createElement("div");
+      ghost.className = "drag-ghost " + kindClass;
+      ghost.innerHTML = '<div class="dg-head"><span class="dg-dot"></span>' +
+        '<span class="dg-title">' + esc(methodId) + "</span></div>" +
+        '<div class="dg-sub">' + esc(shortId(pluginId)) + "</div>";
+      document.body.appendChild(ghost);
+    }
+    function positionGhost(x, y) { if (ghost) { ghost.style.left = x + "px"; ghost.style.top = y + "px"; } }
+    function removeGhost() { if (ghost) { ghost.remove(); ghost = null; } }
+    function move(e) {
+      if (!moved && (Math.abs(e.clientX - startX) > 4 || Math.abs(e.clientY - startY) > 4)) moved = true;
+      if (moved) { ensureGhost(); positionGhost(e.clientX, e.clientY); }
+    }
     function up(e) {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      removeGhost();
       var p;
       if (moved) {
         var overCanvas = canvasScroll.contains(document.elementFromPoint(e.clientX, e.clientY));
@@ -766,7 +813,12 @@
     var triggerBindings = state.bindings.map(function (b) { return { triggerId: b.triggerId, targetNodeId: b.targetNodeId, targetPortId: b.targetPortId }; });
     var refSet = {};
     Object.keys(state.nodes).forEach(function (id) { if (state.nodes[id].kind === "module") refSet[state.nodes[id].pluginId] = true; });
-    var moduleRefs = Object.keys(refSet).map(function (p) { return { pluginId: p }; });
+    var moduleRefs = Object.keys(refSet).map(function (p) {
+      var ref = { pluginId: p };
+      var nr = state.netRefs[p];   // network module -> carry its signed fetch-to-bake ref
+      if (nr) { ref.bundleHash = nr.bundleHash; ref.signature = nr.signature; ref.signerPubKey = nr.signerPubKey; }
+      return ref;
+    });
     return {
       flowJson: { programId: programId, name: name, version: "0.1.0", nodes: nodes, edges: edges, triggers: triggers, triggerBindings: triggerBindings },
       moduleRefs: moduleRefs

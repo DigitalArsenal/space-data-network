@@ -52,6 +52,17 @@ func RegisterAPI(mux *http.ServeMux, mgr *FlowManager) {
 		handlePalette(w, r, mgr)
 	})
 
+	// Publish a network-advertised SIGNED module into this node's catalog so the
+	// editor lists it (Part-B). The bundle is fetched by content hash + signature-
+	// verified here; the guest-link object is staged lazily at bake time.
+	mux.HandleFunc("/api/v1/flows/modules/publish", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		handlePublishNetworkModule(w, r, mgr)
+	})
+
 	// Routes with flow ID in the path: /api/v1/flows/{id}/*
 	mux.HandleFunc("/api/v1/flows/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/flows/")
@@ -184,6 +195,44 @@ func handleBake(w http.ResponseWriter, r *http.Request, mgr *FlowManager) {
 		"flowRuntimeObj": res.FlowRuntimeO,
 		"cacheHit":       res.CacheHit,
 		"bakeMillis":     res.Elapsed.Milliseconds(),
+	})
+}
+
+// handlePublishNetworkModule verifies a signed module bundle (fetch-by-hash +
+// signed-only Ed25519 gate) and registers it in the node's network-module
+// catalog so GET /api/v1/flows/palette lists it. A verification failure is a 400
+// (bad/untrusted signature); a node with no network path attached is a 501.
+func handlePublishNetworkModule(w http.ResponseWriter, r *http.Request, mgr *FlowManager) {
+	if mgr.Baker() == nil {
+		http.Error(w, "network module path not enabled: node has no staged flowcc toolchain", http.StatusNotImplemented)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1*1024*1024))
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+	var ref BakeModuleRef
+	if err := json.Unmarshal(body, &ref); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	e, err := mgr.Baker().PublishNetworkModule(r.Context(), ref)
+	if err != nil {
+		http.Error(w, "publish failed: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	methodIDs := make([]string, 0, len(e.Methods))
+	for _, m := range e.Methods {
+		methodIDs = append(methodIDs, m.MethodID)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":     "published",
+		"pluginId":   e.PluginID,
+		"source":     "network",
+		"bundleHash": e.BundleHash,
+		"methods":    methodIDs,
 	})
 }
 

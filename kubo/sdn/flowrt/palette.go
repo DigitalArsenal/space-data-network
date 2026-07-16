@@ -51,14 +51,21 @@ type PaletteMethod struct {
 	OutputPorts []PalettePort `json:"outputPorts"`
 }
 
-// PaletteModule is one locally-available node source and its methods. Kind is
-// "module" for a staged guest-link module (linked-direct, bakeable) or
-// "capability" for a host capability node.
+// PaletteModule is one available node source and its methods. Kind is "module"
+// for a bakeable guest-link module or "capability" for a host capability node.
+// Source is "local" for a locally staged module, "network" for one advertised as
+// a content-addressed signed bundle (Part-B). For a network module the signed
+// ref (BundleHash/Signature/SignerPubKey) is carried so the editor can bake it
+// via fetch-to-bake — the node fetches + verifies + stages it at bake time.
 type PaletteModule struct {
 	PluginID     string          `json:"pluginId"`
 	Name         string          `json:"name,omitempty"`
 	PluginFamily string          `json:"pluginFamily,omitempty"`
 	Kind         string          `json:"kind"`
+	Source       string          `json:"source,omitempty"`
+	BundleHash   string          `json:"bundleHash,omitempty"`
+	Signature    string          `json:"signature,omitempty"`
+	SignerPubKey string          `json:"signerPubKey,omitempty"`
 	Methods      []PaletteMethod `json:"methods"`
 }
 
@@ -73,6 +80,7 @@ type Palette struct {
 // ports from the staged metadata's MethodPorts).
 type StagedModule struct {
 	PluginID string
+	Source   string // "" / "local", or "network" when fetched by content hash
 	Methods  []StagedMethod
 }
 
@@ -132,7 +140,7 @@ func stagedModulesFromHome(home flowcc.Home) ([]StagedModule, error) {
 			methods = append(methods, sm)
 		}
 		sort.Slice(methods, func(i, j int) bool { return methods[i].MethodID < methods[j].MethodID })
-		out = append(out, StagedModule{PluginID: pluginID, Methods: methods})
+		out = append(out, StagedModule{PluginID: pluginID, Source: meta.Source, Methods: methods})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].PluginID < out[j].PluginID })
 	return out, nil
@@ -148,11 +156,23 @@ func handlePalette(w http.ResponseWriter, r *http.Request, mgr *FlowManager) {
 		Capabilities: capabilityPalette(),
 		Modules:      []PaletteModule{},
 	}
+	staffed := map[string]bool{}
 	if b := mgr.Baker(); b != nil {
 		if staged, err := b.StagedModules(); err == nil {
 			for _, sm := range staged {
+				staffed[sm.PluginID] = true
 				pal.Modules = append(pal.Modules, stagedModulePalette(sm))
 			}
+		}
+		// Merge network-advertised signed modules the node knows about but has
+		// not staged yet (Part-B). They carry the signed content-hash ref so the
+		// editor can bake them via fetch-to-bake. A network module already staged
+		// (e.g. fetched by an earlier bake) is skipped — the staged entry wins.
+		for _, e := range b.NetCatalog().List() {
+			if staffed[e.PluginID] {
+				continue
+			}
+			pal.Modules = append(pal.Modules, networkModulePalette(e))
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -164,8 +184,37 @@ func handlePalette(w http.ResponseWriter, r *http.Request, mgr *FlowManager) {
 // back to the generic linked-direct in/out ports (untyped "any") so the editor
 // still renders + wires it.
 func stagedModulePalette(sm StagedModule) PaletteModule {
-	methods := make([]PaletteMethod, 0, len(sm.Methods))
-	for _, m := range sm.Methods {
+	source := sm.Source
+	if source == "" {
+		source = "local"
+	}
+	return PaletteModule{
+		PluginID: sm.PluginID,
+		Kind:     "module",
+		Source:   source,
+		Methods:  paletteMethods(sm.Methods),
+	}
+}
+
+// networkModulePalette adapts a network-advertised signed module (not yet
+// staged) into a palette module carrying its signed ref for fetch-to-bake.
+func networkModulePalette(e NetModuleEntry) PaletteModule {
+	return PaletteModule{
+		PluginID:     e.PluginID,
+		Kind:         "module",
+		Source:       "network",
+		BundleHash:   e.BundleHash,
+		Signature:    e.Signature,
+		SignerPubKey: e.SignerPubKey,
+		Methods:      paletteMethods(e.Methods),
+	}
+}
+
+// paletteMethods maps staged/network methods to palette methods, defaulting a
+// method with no manifest-derived ports to the generic in/out ("any") ports.
+func paletteMethods(ms []StagedMethod) []PaletteMethod {
+	methods := make([]PaletteMethod, 0, len(ms))
+	for _, m := range ms {
 		in := portSchemaToPalette(m.InputPorts)
 		out := portSchemaToPalette(m.OutputPorts)
 		if len(in) == 0 {
@@ -174,13 +223,9 @@ func stagedModulePalette(sm StagedModule) PaletteModule {
 		if len(out) == 0 {
 			out = []PalettePort{{PortID: "out", Any: true}}
 		}
-		methods = append(methods, PaletteMethod{
-			MethodID:    m.MethodID,
-			InputPorts:  in,
-			OutputPorts: out,
-		})
+		methods = append(methods, PaletteMethod{MethodID: m.MethodID, InputPorts: in, OutputPorts: out})
 	}
-	return PaletteModule{PluginID: sm.PluginID, Kind: "module", Methods: methods}
+	return methods
 }
 
 // portSchemaToPalette maps the staged (flowcc) port schema onto the palette wire
