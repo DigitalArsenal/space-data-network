@@ -216,6 +216,16 @@
     color:var(--muted-2); font-size:12px; text-align:center; line-height:1.9; pointer-events:none;
     border:1px dashed var(--line-strong); padding:16px 22px; background:rgba(9,13,18,0.5); }
   .canvas-hint strong { color:var(--ice); font-family:var(--font-display); letter-spacing:0.06em; }
+
+  /* --------------------------------------------------------- wire-reject toast */
+  .toast { position:fixed; left:50%; bottom:26px; transform:translateX(-50%);
+    max-width:560px; z-index:60; border:1px solid rgba(255,107,107,0.55); border-left:3px solid var(--red);
+    background:rgba(24,10,10,0.96); color:var(--red-light); font-family:var(--font-mono); font-size:12px;
+    letter-spacing:0.03em; line-height:1.45; padding:10px 15px; box-shadow:0 8px 28px rgba(0,0,0,0.55);
+    display:none; overflow-wrap:anywhere; }
+  .toast.show { display:block; }
+  .toast .tt-k { display:block; margin-bottom:4px; font-family:var(--font-display); font-weight:600;
+    font-size:9px; letter-spacing:0.16em; color:var(--red); }
 </style>
 </head>
 <body>
@@ -274,6 +284,8 @@
     </div>
   </div>
 
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
   <div class="dock">
     <div class="dock-col">
       <p class="dock-kicker"><span>ASSEMBLED FLOW GRAPH</span><span class="rule"></span><span class="dim" id="graph-refs">refs: 0</span></p>
@@ -327,19 +339,62 @@
   }
 
   // ------------------------------------------------------------- palette
+  // normPorts accepts the Phase-2 typed port objects ({portId,types,any}) and
+  // tolerates a legacy string port id (treated as untyped "any"). An empty list
+  // falls back to a single generic port so a method always renders + wires.
+  function normPorts(arr, fallbackId) {
+    var list = (arr || []).map(function (p) {
+      if (p && typeof p === "object") {
+        return { portId: String(p.portId), types: (p.types || []).slice(), any: !!p.any };
+      }
+      return { portId: String(p), types: [], any: true };
+    });
+    if (!list.length) list = [{ portId: fallbackId, types: [], any: true }];
+    return list;
+  }
+
   function indexPalette(pal) {
     state.methodIndex = {};
     function add(mod, kind) {
       (mod.methods || []).forEach(function (m) {
+        var inP = normPorts(m.inputPorts, "in"), outP = normPorts(m.outputPorts, "out");
         state.methodIndex[methodKey(mod.pluginId, m.methodId)] = {
           pluginId: mod.pluginId, methodId: m.methodId, kind: kind,
-          inputPorts: (m.inputPorts && m.inputPorts.length) ? m.inputPorts.slice() : ["in"],
-          outputPorts: (m.outputPorts && m.outputPorts.length) ? m.outputPorts.slice() : ["out"]
+          inPorts: inP, outPorts: outP,                       // typed port descriptors
+          inputPorts: inP.map(function (p) { return p.portId; }),   // ids only (geometry)
+          outputPorts: outP.map(function (p) { return p.portId; })
         };
       });
     }
     (pal.modules || []).forEach(function (mod) { add(mod, "module"); });
     (pal.capabilities || []).forEach(function (mod) { add(mod, "capability"); });
+  }
+
+  // portTypeOf resolves a live node's port schema (from the palette index) for
+  // the type-compatibility check. Unknown node/port -> untyped "any".
+  function portTypeOf(nodeId, dir, portId) {
+    var n = state.nodes[nodeId];
+    if (!n) return { any: true, types: [] };
+    var mi = state.methodIndex[methodKey(n.pluginId, n.methodId)];
+    if (!mi) return { any: true, types: [] };
+    var list = dir === "out" ? (mi.outPorts || []) : (mi.inPorts || []);
+    for (var i = 0; i < list.length; i++) { if (list[i].portId === portId) return list[i]; }
+    return { any: true, types: [] };
+  }
+
+  // wireVerdict decides whether producer(out).portId -> consumer(in).portId is a
+  // legal wire: allowed iff the producer's output SDS type is in the consumer
+  // input's accepted set. An undeclared/empty/any port on either side = "any"
+  // (accepts anything). Reject carries a human reason.
+  function wireVerdict(outNodeId, outPort, inNodeId, inPort) {
+    var po = portTypeOf(outNodeId, "out", outPort), pi = portTypeOf(inNodeId, "in", inPort);
+    var ot = po.types || [], it = pi.types || [];
+    if (po.any || pi.any || !ot.length || !it.length) return { ok: true };
+    var itl = it.map(function (t) { return String(t).toLowerCase(); });
+    for (var i = 0; i < ot.length; i++) {
+      if (itl.indexOf(String(ot[i]).toLowerCase()) >= 0) return { ok: true };
+    }
+    return { ok: false, reason: ot.join("/") + " not accepted by " + inPort + " (accepts: " + it.join(", ") + ")" };
   }
 
   function renderPalette() {
@@ -428,13 +483,21 @@
     el.innerHTML = head + body;
     return el;
   }
-  function portHtml(n, dir, idx, label) {
-    var subH = (n.kind === "trigger") ? 0 : 0; // body is already offset below sub
+  function portHtml(n, dir, idx, portId) {
     var top = PORT_TOP + idx * PORT_ROW;
     var side = dir === "out" ? "right:-6px;" : "left:-6px;";
-    return '<div class="port ' + dir + '" data-node="' + n.id + '" data-dir="' + dir + '" data-port="' + esc(label) +
+    // data-port stays the raw portId (edges/routing key); the visible label adds
+    // the SDS type for typed ports so the schema is legible on the canvas.
+    return '<div class="port ' + dir + '" data-node="' + n.id + '" data-dir="' + dir + '" data-port="' + esc(portId) +
       '" data-idx="' + idx + '" style="top:' + top + "px;" + side + '"></div>' +
-      '<div class="port-label ' + dir + '" style="top:' + (top + 1) + 'px">' + esc(label) + "</div>";
+      '<div class="port-label ' + dir + '" style="top:' + (top + 1) + 'px">' + esc(portDisplayLabel(n, dir, portId)) + "</div>";
+  }
+  // portDisplayLabel appends the SDS type token(s) to a typed port's label
+  // ("mean_elements ·OMM"); wildcard/untyped ports show just the portId.
+  function portDisplayLabel(n, dir, portId) {
+    var t = portTypeOf(n.id, dir, portId);
+    if (!t.any && t.types && t.types.length) return portId + " ·" + t.types.join("/");
+    return portId;
   }
 
   // ------------------------------------------------------------- render
@@ -612,20 +675,45 @@
   function tryConnect(fromNode, fromDir, fromPort, targetPortEl) {
     var toNode = targetPortEl.dataset.node, toDir = targetPortEl.dataset.dir, toPort = targetPortEl.dataset.port;
     if (fromNode === toNode) return;
-    // normalize to out->in
-    var out, outPort, inn, inPort;
-    if (fromDir === "out" && toDir === "in") { out = fromNode; outPort = fromPort; inn = toNode; inPort = toPort; }
-    else if (fromDir === "in" && toDir === "out") { out = toNode; outPort = toPort; inn = fromNode; inPort = fromPort; }
-    else return; // out->out or in->in not allowed
+    // normalize to out->in, then run the shared connect + schema gate.
+    if (fromDir === "out" && toDir === "in") return commitConnection(fromNode, fromPort, toNode, toPort);
+    if (fromDir === "in" && toDir === "out") return commitConnection(toNode, toPort, fromNode, fromPort);
+    return; // out->out or in->in not allowed
+  }
+
+  // commitConnection is the single wire-creation path (drag-release AND the
+  // scripted tryWire hook both call it). Trigger bindings are untyped (fire is a
+  // control pulse). Node->node edges are gated by wireVerdict: an incompatible
+  // wire is rejected with a human reason and NO edge is created. Returns a
+  // verdict {ok, reason?, kind?} so scripted verification can assert on it.
+  function commitConnection(out, outPort, inn, inPort) {
+    if (out === inn) return { ok: false, reason: "cannot wire a node to itself" };
     if (state.triggers[out]) {
-      if (state.triggers[inn]) return; // trigger -> trigger not allowed
+      if (state.triggers[inn]) return { ok: false, reason: "trigger cannot wire to a trigger" };
       state.bindings.push({ id: "b" + (state.seq++), triggerId: out, targetNodeId: inn, targetPortId: inPort });
-    } else {
-      if (state.triggers[inn]) return; // node -> trigger not allowed
-      var dup = state.edges.some(function (e) { return e.fromNodeId === out && e.fromPortId === outPort && e.toNodeId === inn && e.toPortId === inPort; });
-      if (!dup) state.edges.push({ id: "e" + (state.seq++), fromNodeId: out, fromPortId: outPort, toNodeId: inn, toPortId: inPort });
+      render();
+      return { ok: true, kind: "bind" };
     }
+    if (state.triggers[inn]) return { ok: false, reason: "cannot wire a node output into a trigger" };
+    var v = wireVerdict(out, outPort, inn, inPort);
+    if (!v.ok) { flashReject(v.reason); return v; }
+    var dup = state.edges.some(function (e) { return e.fromNodeId === out && e.fromPortId === outPort && e.toNodeId === inn && e.toPortId === inPort; });
+    if (!dup) state.edges.push({ id: "e" + (state.seq++), fromNodeId: out, fromPortId: outPort, toNodeId: inn, toPortId: inPort });
     render();
+    return { ok: true, kind: "edge" };
+  }
+
+  // flashReject surfaces a rejected wire's reason as a transient toast (and keeps
+  // state.lastReject for scripted verification).
+  var toastTimer = null;
+  function flashReject(reason) {
+    state.lastReject = reason;
+    var el = $("toast");
+    if (!el) return;
+    el.innerHTML = '<span class="tt-k">WIRE REJECTED &middot; SCHEMA MISMATCH</span>' + esc(reason);
+    el.classList.add("show");
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.remove("show"); }, 5000);
   }
 
   // ------------------------------------------------------------- palette drag-to-create
@@ -839,6 +927,13 @@
     connect: function (fromNodeId, fromPortId, toNodeId, toPortId) {
       state.edges.push({ id: "e" + (state.seq++), fromNodeId: fromNodeId, fromPortId: fromPortId, toNodeId: toNodeId, toPortId: toPortId }); render();
     },
+    // tryWire runs the REAL schema-gated connect path (same as a drag release)
+    // and returns the verdict {ok, reason?, kind?} — used by scripted verification.
+    tryWire: function (fromNodeId, fromPortId, toNodeId, toPortId) {
+      return commitConnection(fromNodeId, fromPortId, toNodeId, toPortId);
+    },
+    portTypeOf: portTypeOf,
+    lastReject: function () { return state.lastReject || ""; },
     bindTrigger: function (triggerId, targetNodeId, targetPortId) {
       state.bindings.push({ id: "b" + (state.seq++), triggerId: triggerId, targetNodeId: targetNodeId, targetPortId: targetPortId || "in" }); render();
     },

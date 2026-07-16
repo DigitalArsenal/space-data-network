@@ -132,7 +132,10 @@ func stageBakeHome(t *testing.T, a bakeAssets) flowcc.Home {
 	for _, m := range bakeModules {
 		obj := filepath.Join(a.modulesRoot, m.relDir, "module-link.o")
 		meta := filepath.Join(a.modulesRoot, m.relDir, "metadata.json")
-		if err := flowcc.StageModule(home, m.pluginID, obj, meta); err != nil {
+		// plugin-manifest.json is the sibling of the dist/guest-link dir; its
+		// typed ports enrich the staged metadata (Phase 2). Missing is tolerated.
+		manifest := filepath.Join(a.modulesRoot, m.relDir, "..", "plugin-manifest.json")
+		if err := flowcc.StageModule(home, m.pluginID, obj, meta, manifest); err != nil {
 			t.Fatalf("StageModule %s: %v", m.pluginID, err)
 		}
 	}
