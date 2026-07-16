@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strconv"
 	"sync"
 
@@ -342,3 +343,165 @@ func dupFD(fd int) (int, error) { return syscallDup(fd) }
 
 // closeFD closes a raw fd, ignoring errors.
 func closeFD(fd int) { _ = syscallClose(fd) }
+
+// ConcurrentFitter is a Fitter that can fit multiple objects at once. The Runner
+// fans a run's object loop out to Concurrency() worker goroutines when its Fitter
+// implements this — each worker drives its own resident instance in parallel. A
+// plain Fitter (e.g. CommandFitter, which is process-wide serialized by
+// odStartMu) runs the loop sequentially.
+type ConcurrentFitter interface {
+	Fitter
+	// Concurrency is the number of Fit calls that can safely run at once.
+	Concurrency() int
+}
+
+// ReactorFitter drives the REAL analysis/od WASM module as a RESIDENT WASI
+// REACTOR. The reactor build (dist/isomorphic/module.wasm) exports
+// _initialize/__wasm_call_ctors + plugin_invoke_stream and has NO _start, so
+// modulert hosts it as a live instance (Load runs _initialize once) and every
+// fit reuses that instance via plugin_invoke_stream — no per-fit module reload,
+// no temp-file stdio wiring, and NO process-wide odStartMu lock. It keeps a POOL
+// of N resident instances so Concurrency() fits run truly in parallel (N
+// single-threaded OD instances at once). It is safe for concurrent use.
+//
+// The request encoding is byte-identical to CommandFitter's (both call
+// EncodeInvokeRequestFrames/encodePluginInvokeRequestFrames with the same meme +
+// options frames), and the fit computation is the same C++ code, so a reactor
+// fit returns the SAME result (RMS, converged, mean elements) as the command
+// fit for the same ephemeris — see TestReactorCommandFitParity.
+type ReactorFitter struct {
+	log     Logger
+	resolve func() ([]byte, error)
+	n       int
+
+	mu     sync.Mutex
+	loaded bool
+	free   chan *modulert.Module // buffered to n: semaphore + free list
+	all    []*modulert.Module
+	policy *modulert.CapabilityPolicyStore
+}
+
+// NewReactorFitter builds a resident-reactor fitter over the analysis/od reactor
+// module bytes returned by resolve. n is the pool size (concurrent fits); n <= 0
+// selects runtime.NumCPU(). The modules are created lazily on the first Fit.
+func NewReactorFitter(resolve func() ([]byte, error), n int, log Logger) *ReactorFitter {
+	if n <= 0 {
+		n = runtime.NumCPU()
+	}
+	if n < 1 {
+		n = 1
+	}
+	return &ReactorFitter{resolve: resolve, n: n, log: log}
+}
+
+// Concurrency reports the resident-instance pool size.
+func (f *ReactorFitter) Concurrency() int { return f.n }
+
+func (f *ReactorFitter) logf(format string, args ...interface{}) {
+	if f.log != nil {
+		f.log(format, args...)
+	}
+}
+
+// ensureLoaded resolves the reactor wasm once and spins up the resident-instance
+// pool. Each modulert.NewModule call instantiates the wasm and runs its
+// _initialize (global ctors), so every pooled instance is ready to be driven via
+// plugin_invoke_stream.
+func (f *ReactorFitter) ensureLoaded() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.loaded {
+		return nil
+	}
+	if f.resolve == nil {
+		return fmt.Errorf("sdnruns: no analysis/od reactor module resolver configured")
+	}
+	wasm, err := f.resolve()
+	if err != nil {
+		return err
+	}
+	if len(wasm) == 0 {
+		return fmt.Errorf("sdnruns: analysis/od reactor module (orbit-determination) is not available")
+	}
+	// analysis/od declares NO capabilities, so a default-deny policy admits it.
+	policy, _ := modulert.NewCapabilityPolicyStore("")
+	f.policy = policy
+
+	free := make(chan *modulert.Module, f.n)
+	all := make([]*modulert.Module, 0, f.n)
+	for i := 0; i < f.n; i++ {
+		mod, err := modulert.NewModule(wasm, nil, &modulert.NodeContext{CapabilityPolicy: policy})
+		if err != nil {
+			for _, m := range all {
+				m.Close()
+			}
+			return fmt.Errorf("sdnruns: load analysis/od reactor instance %d/%d: %w", i+1, f.n, err)
+		}
+		if id := mod.ID(); id != "orbit-determination" {
+			f.logf("sdnruns: unexpected od reactor module id %q", id)
+		}
+		all = append(all, mod)
+		free <- mod
+	}
+	f.free = free
+	f.all = all
+	f.loaded = true
+	return nil
+}
+
+// Fit invokes od.fit on a free resident instance via plugin_invoke_stream with
+// the ephemeris on the "meme" port and JSON options on the "options" port,
+// returning the parsed "result"-port JSON. It blocks until a pooled instance is
+// free, so at most Concurrency() fits execute concurrently.
+func (f *ReactorFitter) Fit(ctx context.Context, ephemeris []byte, opts FitOptions) (*FitResult, error) {
+	if err := f.ensureLoaded(); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	optsJSON, err := json.Marshal(opts)
+	if err != nil {
+		return nil, fmt.Errorf("sdnruns: encode fit options: %w", err)
+	}
+
+	// Acquire a resident instance (semaphore); return it no matter what.
+	var mod *modulert.Module
+	select {
+	case mod = <-f.free:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	defer func() { f.free <- mod }()
+
+	payload, err := mod.InvokeMethodFramesPort(ctx, odMethodID, []modulert.InvokeInputFrame{
+		{PortID: odMemePort, Payload: ephemeris},
+		{PortID: odOptionsPort, Payload: optsJSON},
+	}, odResultPort)
+	if err != nil {
+		return nil, fmt.Errorf("sdnruns: analysis/od reactor fit: %w", err)
+	}
+
+	var res FitResult
+	if err := json.Unmarshal(payload, &res); err != nil {
+		return nil, fmt.Errorf("sdnruns: decode fit result (%d bytes): %w", len(payload), err)
+	}
+	if res.Error != "" {
+		return nil, fmt.Errorf("sdnruns: analysis/od fit error: %s", res.Error)
+	}
+	return &res, nil
+}
+
+// Close releases every resident instance. Safe to call once after the fitter is
+// no longer in use.
+func (f *ReactorFitter) Close() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, m := range f.all {
+		m.Close()
+	}
+	f.all = nil
+	f.free = nil
+	f.loaded = false
+}

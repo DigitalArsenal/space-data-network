@@ -754,8 +754,20 @@ func (m *Module) InvokeMethod(ctx context.Context, methodID string, payload []by
 	})
 }
 
-// InvokeMethodFrames calls plugin_invoke_stream with an SDK-style multi-port input request.
+// InvokeMethodFrames calls plugin_invoke_stream with an SDK-style multi-port
+// input request, returning the "response" output port (falling back to the first
+// output frame when no port is named "response").
 func (m *Module) InvokeMethodFrames(ctx context.Context, methodID string, inputFrames []InvokeInputFrame) (payload []byte, err error) {
+	return m.InvokeMethodFramesPort(ctx, methodID, inputFrames, "response")
+}
+
+// InvokeMethodFramesPort calls plugin_invoke_stream with an SDK-style multi-port
+// input request and returns the payload of preferredOutputPort (falling back to
+// the first output frame when that port is absent). This is the RESIDENT-reactor
+// drive path: the module is loaded once (Load ran _initialize/__wasm_call_ctors)
+// and every call reuses the live instance — no _start, no per-call process. It
+// serializes per-Module (m.mu); run N Modules to fit N objects concurrently.
+func (m *Module) InvokeMethodFramesPort(ctx context.Context, methodID string, inputFrames []InvokeInputFrame, preferredOutputPort string) (payload []byte, err error) {
 	started := time.Now()
 	defer func() {
 		m.recordInvokeResult(started, err)
@@ -830,7 +842,7 @@ func (m *Module) InvokeMethodFrames(ctx context.Context, methodID string, inputF
 		return nil, fmt.Errorf("decode invoke response: %w (raw %d bytes: %.400q)", err, len(responseBytes), responseBytes)
 	}
 
-	return extractPluginInvokePayload(response, "response")
+	return extractPluginInvokePayload(response, preferredOutputPort)
 }
 
 // Manifest returns the parsed manifest.

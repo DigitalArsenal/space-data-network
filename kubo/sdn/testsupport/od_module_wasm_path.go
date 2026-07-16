@@ -23,6 +23,22 @@ var odModuleWasmPathSuffixes = [][]string{
 	},
 }
 
+// odCommandModuleWasmPathSuffixes locate the analysis/od COMMAND-surface WASM
+// artifact (module.command.wasm): the legacy WASI command build whose _start
+// reads a $PIV request from stdin. dist/isomorphic/module.wasm is now the
+// RESIDENT REACTOR build; the command build is retained beside it purely as the
+// reactor==command RMS parity reference (TestReactorCommandFitParity).
+var odCommandModuleWasmPathSuffixes = [][]string{
+	{
+		"space-data-network-modules",
+		"analysis",
+		"od",
+		"dist",
+		"isomorphic",
+		"module.command.wasm",
+	},
+}
+
 // odEphemerisFixtureSuffixes locate a REAL, checked-in operator ephemeris the OD
 // fit consumes: the trimmed NASA public ISS OEM (CCSDS KVN, EME2000/UTC, ~12h of
 // 4-min position+velocity state vectors, NORAD 25544). It is the canned
@@ -104,6 +120,17 @@ func SkipIfNoODModuleWasm(t testing.TB) string {
 		return path
 	}
 	t.Skip("real analysis/od module WASM artifact not available in this checkout")
+	return ""
+}
+
+// SkipIfNoODCommandModuleWasm returns the analysis/od COMMAND-surface module WASM
+// path (module.command.wasm), skipping the test when the artifact is not present.
+func SkipIfNoODCommandModuleWasm(t testing.TB) string {
+	t.Helper()
+	if path, ok := findStackArtifact(t, 2, "SDN_OD_COMMAND_MODULE_WASM_PATH", odCommandModuleWasmPathSuffixes); ok {
+		return path
+	}
+	t.Skip("analysis/od command-surface module WASM (module.command.wasm) not available in this checkout")
 	return ""
 }
 
