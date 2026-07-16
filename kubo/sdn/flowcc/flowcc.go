@@ -123,12 +123,23 @@ func New(llvmBoxPath string) (*Compiler, error) {
 // sysrootPath falls back to the SDN_LLVM_SYSROOT environment variable; if that
 // is also empty the compiler runs header-less-only (the overlay has no lower
 // layer). A non-empty sysroot path must name an existing directory.
+//
+// Resolution order for BOTH the box and the sysroot is: explicit argument >
+// environment variable > node-data home default (ResolveHome). The home default
+// lets a booted node bake with no SDN_LLVM_* env plumbing once the toolchain is
+// staged (see nodedata.go); env still overrides.
 func NewWithSysroot(llvmBoxPath, sysrootPath string) (*Compiler, error) {
+	home := ResolveHome()
 	if llvmBoxPath == "" {
 		llvmBoxPath = os.Getenv(EnvLLVMBoxWasm)
 	}
 	if llvmBoxPath == "" {
-		return nil, fmt.Errorf("flowcc: no llvm-box.wasm path (pass a path or set %s)", EnvLLVMBoxWasm)
+		if p := home.BoxPath(); fileExists(p) {
+			llvmBoxPath = p
+		}
+	}
+	if llvmBoxPath == "" {
+		return nil, fmt.Errorf("flowcc: no llvm-box.wasm path (pass a path, set %s, or stage %s)", EnvLLVMBoxWasm, home.BoxPath())
 	}
 	b, err := os.ReadFile(llvmBoxPath)
 	if err != nil {
@@ -139,6 +150,11 @@ func NewWithSysroot(llvmBoxPath, sysrootPath string) (*Compiler, error) {
 	}
 	if sysrootPath == "" {
 		sysrootPath = os.Getenv(EnvLLVMSysroot)
+	}
+	if sysrootPath == "" {
+		if d := home.SysrootDir(); dirExists(d) {
+			sysrootPath = d
+		}
 	}
 	if sysrootPath != "" {
 		fi, err := os.Stat(sysrootPath)
