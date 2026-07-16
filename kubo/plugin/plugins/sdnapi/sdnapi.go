@@ -39,16 +39,19 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	logging "github.com/ipfs/go-log/v2"
 	core "github.com/ipfs/kubo/core"
 	plugin "github.com/ipfs/kubo/plugin"
+	ic "github.com/libp2p/go-libp2p/core/crypto"
 
 	pluginsdnflag "github.com/ipfs/kubo/plugin/plugins/sdnflag"
 	pluginsdnruntime "github.com/ipfs/kubo/plugin/plugins/sdnruntime"
 	"github.com/ipfs/kubo/sdn/appmanifest"
 	"github.com/ipfs/kubo/sdn/channels"
+	"github.com/ipfs/kubo/sdn/nodeepm"
 	sdnapihttp "github.com/ipfs/kubo/sdn/sdnapi"
 	"github.com/ipfs/kubo/sdn/sdnmodules"
 	"github.com/ipfs/kubo/sdn/sdnstore"
@@ -213,8 +216,24 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 		},
 	})
 
+	// Node EPM / vCard / QR export (GET /sdn/v1/node/{epm,vcard,qr}): the node's
+	// self-signed $EPM record, built ONCE from its libp2p identity and memoized
+	// so the exported record (and its signature timestamp) is stable across
+	// requests. A SEPARATE handler mounted on this same loopback listener.
+	var (
+		epmOnce   sync.Once
+		epmCached []byte
+		epmErr    error
+	)
+	nodeEPMHandler := sdnapihttp.NewNodeEPMHandler(sdnapihttp.NodeEPMDeps{
+		EPM: func() ([]byte, error) {
+			epmOnce.Do(func() { epmCached, epmErr = buildNodeEPM(node) })
+			return epmCached, epmErr
+		},
+	})
+
 	p.srv = &http.Server{
-		Handler:           newRootHandler(sdnapihttp.NewHandler(deps), sdnui.Handler(), credsHandler, runsHandler),
+		Handler:           newRootHandler(sdnapihttp.NewHandler(deps), sdnui.Handler(), credsHandler, runsHandler, nodeEPMHandler),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -256,7 +275,7 @@ func (p *sdnAPIPlugin) Close() error {
 // request path unchanged, so the API's own GET /sdn/v1/{node,peers,...} routes
 // still match. The console and the API it drives are therefore same-origin,
 // which is what lets the page fetch /sdn/v1/* with no cross-origin request.
-func newRootHandler(api, ui, creds, runs http.Handler) http.Handler {
+func newRootHandler(api, ui, creds, runs, nodeEPM http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	// The credential admin + runs routes claim their exact prefixes; because they
 	// are more specific than the "/sdn/v1/" subtree, ServeMux routes those requests
@@ -267,9 +286,51 @@ func newRootHandler(api, ui, creds, runs http.Handler) http.Handler {
 	mux.Handle("/sdn/v1/admin/credentials/", creds)
 	mux.Handle("/sdn/v1/runs", runs)
 	mux.Handle("/sdn/v1/runs/", runs)
+	// The node EPM export routes are registered as EXACT patterns (not a
+	// /sdn/v1/node/ subtree) so they never shadow or redirect the read-only API's
+	// exact GET /sdn/v1/node route: /sdn/v1/node stays on the API, while
+	// /sdn/v1/node/{epm,vcard,qr} route to the export handler.
+	mux.Handle("/sdn/v1/node/epm", nodeEPM)
+	mux.Handle("/sdn/v1/node/vcard", nodeEPM)
+	mux.Handle("/sdn/v1/node/qr", nodeEPM)
 	mux.Handle("/sdn/v1/", api)
 	mux.Handle("/", ui)
 	return mux
+}
+
+// buildNodeEPM builds the node's self-signed $EPM record from its libp2p
+// identity: the peer ID, the Ed25519 public key as the signing key, the node's
+// listen multiaddrs, and a self-signature produced by the node private key. The
+// node identity must be Ed25519 (the kubo default); any other key type is
+// refused rather than silently producing an unverifiable record.
+func buildNodeEPM(node *core.IpfsNode) ([]byte, error) {
+	priv := node.PrivateKey
+	if priv == nil {
+		return nil, fmt.Errorf("node has no private key")
+	}
+	pub := priv.GetPublic()
+	if pub.Type() != ic.Ed25519 {
+		return nil, fmt.Errorf("node identity is not Ed25519 (type %v); EPM signing key unavailable", pub.Type())
+	}
+	pubRaw, err := pub.Raw()
+	if err != nil {
+		return nil, fmt.Errorf("export node public key: %w", err)
+	}
+
+	peerID := node.Identity.String()
+	var multiaddrs []string
+	if node.PeerHost != nil {
+		for _, a := range node.PeerHost.Addrs() {
+			multiaddrs = append(multiaddrs, a.String()+"/p2p/"+peerID)
+		}
+	}
+
+	return nodeepm.BuildNodeEPM(nodeepm.Identity{
+		PeerID:     peerID,
+		SigningPub: pubRaw,
+		Multiaddrs: multiaddrs,
+		Sign:       func(payload []byte) ([]byte, error) { return priv.Sign(payload) },
+	})
 }
 
 // requestFromLoopback reports whether an HTTP request originates from the local

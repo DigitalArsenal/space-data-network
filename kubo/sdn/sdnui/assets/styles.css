@@ -620,6 +620,26 @@ pre.data, textarea.data {
 a.link { color: var(--ice); text-decoration: none; }
 a.link:hover { color: var(--ink); }
 
+/* Identity export (EPM JSON / vCard / QR) output panel. */
+.export-out { margin-top: 14px; }
+.export-out .divider { margin-top: 0; }
+pre.export-json { max-height: 260px; }
+.qr-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 14px;
+  background: #ffffff;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+}
+.qr-img {
+  width: 220px;
+  height: 220px;
+  max-width: 100%;
+  image-rendering: pixelated;
+  display: block;
+}
+
 @media (max-width: 900px) {
   .sdn-rail { width: 66px; }
   .span-4, .span-5, .span-6, .span-7, .span-8 { grid-column: span 12; }
