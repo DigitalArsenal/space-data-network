@@ -102,6 +102,12 @@ type Deps struct {
 	// Optional: nil => the secrets capability is not registered (a module
 	// declaring it fails to provision, as the host cannot satisfy it).
 	CredStore *credstore.Store
+
+	// BackupSource is the node-side backup-source read surface the repurposed
+	// storage_adapter capability exposes to a backup flow (spec A.4;
+	// *sdnbackup.BackupSource satisfies it). Optional: nil => storage.adapter.*
+	// operations fail closed (this node has no backup source).
+	BackupSource BackupReadSurface
 }
 
 // Services is the live SDN services bundle a node holds.
@@ -183,7 +189,11 @@ func BuildServices(deps Deps) (*Services, error) {
 	}
 
 	capReg := modulert.NewCapabilityRegistry()
-	storageFactory := NewStorageCapFactory(store, deps.FallbackSource)
+	// storage_* family, including the repurposed storage_adapter (spec A.4): when
+	// a BackupSource is wired, storage.adapter.list_units/get_unit expose the
+	// node's backup units to an operator-approved backup flow; otherwise those
+	// ops fail closed.
+	storageFactory := NewStorageCapFactoryWithSource(store, deps.FallbackSource, deps.BackupSource)
 	for _, name := range storageCapabilityNames {
 		capReg.RegisterBridgeAware(name, storageFactory)
 	}

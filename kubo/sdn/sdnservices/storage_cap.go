@@ -12,6 +12,20 @@ import (
 	"github.com/ipfs/kubo/sdn/sdnstore"
 )
 
+// BackupReadSurface is the node-side backup-source read surface the repurposed
+// storage_adapter capability exposes (spec A.4). It is a primitive-typed
+// interface (JSON in / JSON + bytes out) deliberately, so this package need not
+// import sdn/sdnbackup — which would form a cycle (sdnbackup -> sdnmodules ->
+// sdnservices). *sdnbackup.BackupSource satisfies it structurally.
+type BackupReadSurface interface {
+	// BackupUnitsJSON returns a JSON array of {contentHash, kind, size, meta}
+	// unit descriptors (bytes omitted). An empty kinds slice means every kind.
+	BackupUnitsJSON(ctx context.Context, kinds []string) ([]byte, error)
+	// BackupUnitBytes fetches one unit's bytes by content hash, plus its kind
+	// and meta (JSON).
+	BackupUnitBytes(ctx context.Context, contentHash string) (kind string, metaJSON []byte, data []byte, err error)
+}
+
 // storageOpTimeout bounds each storage hostcall's access to the durable
 // stores. Cap handlers have no ctx parameter, so a bounded background context
 // is derived per operation.
@@ -44,7 +58,18 @@ const storageOpTimeout = 30 * time.Second
 //	storage.sources — {"type":"OMM"}                                               (requires storage_query) -> {"sources":["..."]}
 //	storage.query   — {"source":"...","type":"OMM","sql":"SELECT ..."}             (requires storage_query) -> {"stream_b64":"...","records":N}
 //	storage.ingest_with_source — {"schema":"SPW.fbs","source_name":"...","records":{"$bin":0},...}  (requires storage_ingest) -> {"inserted":N,"cids":[...]}
+//	storage.adapter.list_units — {"kinds":["module_wasm",...]}                     (requires storage_adapter) -> {"units":[{"contentHash","kind","size","meta"}]}
+//	storage.adapter.get_unit   — {"contentHash":"<hex>"}                           (requires storage_adapter) -> {"contentHash","kind","bytes_b64","meta"}
 func NewStorageCapFactory(store *sdnstore.Store, fallbackSource string) modulert.BridgeCapFactory {
+	return NewStorageCapFactoryWithSource(store, fallbackSource, nil)
+}
+
+// NewStorageCapFactoryWithSource is NewStorageCapFactory plus the node-side
+// backup-source read surface behind the repurposed storage_adapter capability
+// (spec A.4): when backupSource is non-nil, storage.adapter.list_units and
+// storage.adapter.get_unit enumerate + fetch the node's backup units for a
+// backup flow. When nil those ops fail closed (the node has no backup source).
+func NewStorageCapFactoryWithSource(store *sdnstore.Store, fallbackSource string, backupSource BackupReadSurface) modulert.BridgeCapFactory {
 	return func(mod *modulert.Module, bridge *modulert.HostBridge) modulert.CapHandler {
 		source := strings.TrimSpace(fallbackSource)
 		if mod != nil {
@@ -52,7 +77,7 @@ func NewStorageCapFactory(store *sdnstore.Store, fallbackSource string) modulert
 				source = id
 			}
 		}
-		s := &storageCapAdapter{store: store, fallbackSource: source, bridge: bridge}
+		s := &storageCapAdapter{store: store, fallbackSource: source, bridge: bridge, backupSource: backupSource}
 		return s.handle
 	}
 }
@@ -67,6 +92,9 @@ type storageCapAdapter struct {
 	// authority for the per-operation capability checks below. May be nil on
 	// legacy provisioning paths, in which case every gated op fails closed.
 	bridge *modulert.HostBridge
+	// backupSource is the node-side backup-source read surface exposed by the
+	// repurposed storage_adapter capability. Nil => storage.adapter.* fail closed.
+	backupSource BackupReadSurface
 }
 
 func (s *storageCapAdapter) has(cap string) bool {
@@ -181,9 +209,66 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		}
 		return s.ingestWithSource(ctx, p)
 
+	case "storage.adapter.list_units":
+		// POLICY: the repurposed storage_adapter grant (spec A.4) gates the
+		// node-side backup-source read surface. storage_query/write do NOT imply
+		// it. Fail closed when no backup source is wired.
+		if !s.has("storage_adapter") {
+			return errCapJSON("storage.adapter.list_units requires the storage_adapter capability grant"), nil
+		}
+		return s.adapterListUnits(ctx, payload), nil
+
+	case "storage.adapter.get_unit":
+		if !s.has("storage_adapter") {
+			return errCapJSON("storage.adapter.get_unit requires the storage_adapter capability grant"), nil
+		}
+		return s.adapterGetUnit(ctx, str("contentHash")), nil
+
 	default:
 		return errCapJSON(fmt.Sprintf("unknown storage operation: %s", operation)), nil
 	}
+}
+
+// adapterListUnits enumerates the node's backup units (modules, flows, records,
+// on-disk config) for a backup flow — the READ half of the repurposed
+// storage_adapter capability (spec A.4). Bytes are omitted here (fetched per
+// unit via get_unit); only {contentHash, kind, size, meta} descriptors return.
+func (s *storageCapAdapter) adapterListUnits(ctx context.Context, payload []byte) []byte {
+	if s.backupSource == nil {
+		return errCapJSON("storage.adapter.list_units: this node has no backup source configured")
+	}
+	var req struct {
+		Kinds []string `json:"kinds"`
+	}
+	if len(payload) > 0 {
+		_ = json.Unmarshal(payload, &req)
+	}
+	unitsJSON, err := s.backupSource.BackupUnitsJSON(ctx, req.Kinds)
+	if err != nil {
+		return errCapJSON("storage.adapter.list_units failed: " + err.Error())
+	}
+	return okCapJSON(map[string]interface{}{"units": json.RawMessage(unitsJSON)})
+}
+
+// adapterGetUnit fetches one backup unit's bytes by content hash — the FETCH
+// half of the repurposed storage_adapter capability (spec A.4).
+func (s *storageCapAdapter) adapterGetUnit(ctx context.Context, contentHash string) []byte {
+	if s.backupSource == nil {
+		return errCapJSON("storage.adapter.get_unit: this node has no backup source configured")
+	}
+	if strings.TrimSpace(contentHash) == "" {
+		return errCapJSON("storage.adapter.get_unit requires a contentHash")
+	}
+	kind, metaJSON, data, err := s.backupSource.BackupUnitBytes(ctx, contentHash)
+	if err != nil {
+		return errCapJSON("storage.adapter.get_unit failed: " + err.Error())
+	}
+	return okCapJSON(map[string]interface{}{
+		"contentHash": contentHash,
+		"kind":        kind,
+		"bytes_b64":   encodeBase64Cap(data),
+		"meta":        json.RawMessage(metaJSON),
+	})
 }
 
 // ingestWithSource persists a size-prefixed FlatBuffer record stream authored
