@@ -148,7 +148,20 @@ type Baker struct {
 	// catalog is the node's set of network-advertised signed modules the palette
 	// lists (source "network"). Always non-nil (NewBaker seeds an empty catalog).
 	catalog *NetModuleCatalog
+
+	// publisher, when attached (SetPublisher), signs a published flow-module's
+	// content-hash digest with the node's publisher key. nil leaves the publish
+	// path disabled (the endpoint returns a clean 501).
+	publisher PublicationSigner
 }
+
+// PublicationSigner signs a module bundle's content-hash digest with the node's
+// publisher key, returning the base64 Ed25519 signature + the 32-byte hex public
+// key. It is the EXACT primitive modulert's module publication signature uses
+// (Ed25519 over the content-hash digest — see modulert.ModuleSignaturePolicy), so
+// a flow published as a module verifies through the SAME signed-only gate as any
+// other module. On a live node it is fed the node's Ed25519 identity signer.
+type PublicationSigner func(digest []byte) (signatureB64, publicKeyHex string, err error)
 
 // NewBaker constructs a Baker against a staged flowcc home. It fails if the
 // toolchain (llvm-box.wasm + sysroot + template) is not staged — callers that
@@ -168,6 +181,89 @@ func NewBaker(home flowcc.Home, maxMemoryPages uint32) (*Baker, error) {
 // node to resolve unstaged, signed modules by content hash. Passing a nil fetcher
 // disables network fetch. The catalog (palette's network source) is always live.
 func (b *Baker) SetNetModules(fetcher *NetModuleFetcher) { b.fetcher = fetcher }
+
+// SetPublisher attaches the node's publisher signer, enabling the publish-flow-
+// as-a-module path (Baker.PublishFlowAsModule + POST /api/v1/flows/modules/
+// publish-flow). Passing nil disables it.
+func (b *Baker) SetPublisher(signer PublicationSigner) { b.publisher = signer }
+
+// PublishFlowAsModule bakes a composed flow into a re-composable guest-link
+// module, content-addresses + signs it with the node's publisher key, and
+// registers it in the network catalog so the palette lists it — reusing the EXACT
+// ModuleBundle / StoreModuleBytes / signed-only publish path any other module
+// takes (owner rule: the result IS a module). Requires both a fetcher (blockstore)
+// and a publisher (signer) attached.
+func (b *Baker) PublishFlowAsModule(ctx context.Context, spec SubflowSpec) (*PublishedFlowModule, error) {
+	if b.fetcher == nil {
+		return nil, fmt.Errorf("flowrt: publish path not enabled (no blockstore/fetcher attached)")
+	}
+	if b.publisher == nil {
+		return nil, fmt.Errorf("flowrt: publish path not enabled (no publisher signer attached)")
+	}
+	mod, err := b.EmitSubflowModule(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	bundleBytes, err := MarshalBundle(&ModuleBundle{
+		PluginID: mod.PluginID, Object: mod.GuestLinkObj, Metadata: mod.Metadata, Manifest: mod.Manifest,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("flowrt: marshal flow-module bundle: %w", err)
+	}
+	contentHash, err := b.fetcher.StoreBundle(ctx, bundleBytes)
+	if err != nil {
+		return nil, err
+	}
+	digest, err := hex.DecodeString(contentHash)
+	if err != nil {
+		return nil, fmt.Errorf("flowrt: bad content hash %q: %w", contentHash, err)
+	}
+	sigB64, pubHex, err := b.publisher(digest)
+	if err != nil {
+		return nil, fmt.Errorf("flowrt: sign flow-module bundle: %w", err)
+	}
+	ref := BakeModuleRef{PluginID: mod.PluginID, BundleHash: contentHash, Signature: sigB64, SignerPubKey: pubHex}
+	// Register through the SAME signed-only publish gate every network module
+	// takes (fail-closed): if the node does not trust its own publisher key, this
+	// rejects — the published module never enters the catalog unverified.
+	entry, err := b.PublishNetworkModule(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	methods := make([]string, 0, len(entry.Methods))
+	for _, m := range entry.Methods {
+		methods = append(methods, m.MethodID)
+	}
+	return &PublishedFlowModule{
+		PluginID:      mod.PluginID,
+		Method:        mod.Method,
+		ContentHash:   contentHash,
+		Signature:     sigB64,
+		SignerPubKey:  pubHex,
+		Methods:       methods,
+		Inputs:        mod.Inputs,
+		Outputs:       mod.Outputs,
+		InnerModules:  mod.Modules,
+		GuestLinkSize: len(mod.GuestLinkObj),
+		FinalizedSize: len(mod.Finalized),
+	}, nil
+}
+
+// PublishedFlowModule reports the outcome of publishing a flow as a module: the
+// content-addressed, signed reference a palette lists + a fetch-to-bake resolves.
+type PublishedFlowModule struct {
+	PluginID      string                `json:"pluginId"`
+	Method        string                `json:"method"`
+	ContentHash   string                `json:"contentHash"`
+	Signature     string                `json:"signature"`
+	SignerPubKey  string                `json:"signerPubKey"`
+	Methods       []string              `json:"methods"`
+	Inputs        []SubflowExternalPort `json:"inputs"`
+	Outputs       []SubflowExternalPort `json:"outputs"`
+	InnerModules  []string              `json:"innerModules"`
+	GuestLinkSize int                   `json:"guestLinkSize"`
+	FinalizedSize int                   `json:"finalizedSize"`
+}
 
 // NetCatalog returns the node's network-module catalog (never nil).
 func (b *Baker) NetCatalog() *NetModuleCatalog { return b.catalog }

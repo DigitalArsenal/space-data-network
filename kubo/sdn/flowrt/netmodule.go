@@ -74,6 +74,22 @@ func NewNetModuleFetcher(bs appmanifest.ModuleBlockstore, trusted []ed25519.Publ
 	return &NetModuleFetcher{bs: bs, trusted: trusted}
 }
 
+// StoreBundle content-addresses a module bundle in the fetcher's blockstore and
+// returns its bundle hash — the content hash the editor references and a
+// publisher signs. It is the publish-side counterpart of fetchAndVerify: the
+// flow-module publish path (Baker.PublishFlowAsModule) persists a freshly
+// emitted flow-module here so a later fetch-to-bake resolves it by hash.
+func (f *NetModuleFetcher) StoreBundle(ctx context.Context, bundleBytes []byte) (string, error) {
+	if f == nil || f.bs == nil {
+		return "", fmt.Errorf("netmodule: no blockstore configured")
+	}
+	ch, _, err := appmanifest.StoreModuleBytes(ctx, f.bs, bundleBytes)
+	if err != nil {
+		return "", fmt.Errorf("netmodule: store bundle: %w", err)
+	}
+	return ch, nil
+}
+
 // FetchAndStage fetches + verifies + stages a network module into `home` so it
 // becomes bakeable. Signed-only.
 func (f *NetModuleFetcher) FetchAndStage(ctx context.Context, home flowcc.Home, ref BakeModuleRef) error {

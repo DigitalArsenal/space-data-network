@@ -63,6 +63,17 @@ func RegisterAPI(mux *http.ServeMux, mgr *FlowManager) {
 		handlePublishNetworkModule(w, r, mgr)
 	})
 
+	// Publish a COMPOSED FLOW as a re-composable module (Phase 4): the node bakes
+	// the flow into a guest-link object, content-addresses + signs it, and lists it
+	// in the palette (source "network", signed) so it composes into other flows.
+	mux.HandleFunc("/api/v1/flows/modules/publish-flow", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		handlePublishFlowModule(w, r, mgr)
+	})
+
 	// Routes with flow ID in the path: /api/v1/flows/{id}/*
 	mux.HandleFunc("/api/v1/flows/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/flows/")
@@ -233,6 +244,78 @@ func handlePublishNetworkModule(w http.ResponseWriter, r *http.Request, mgr *Flo
 		"source":     "network",
 		"bundleHash": e.BundleHash,
 		"methods":    methodIDs,
+	})
+}
+
+// PublishFlowModuleRequest is the POST body for /api/v1/flows/modules/publish-flow:
+// a composed flow graph plus the optional module identity + aggregate-port
+// declaration. When Inputs/Outputs are omitted the flow's unbound ports are
+// auto-derived.
+type PublishFlowModuleRequest struct {
+	FlowJSON     json.RawMessage       `json:"flowJson"`
+	PluginID     string                `json:"pluginId,omitempty"`
+	Method       string                `json:"method,omitempty"`
+	Inputs       []SubflowExternalPort `json:"inputs,omitempty"`
+	Outputs      []SubflowExternalPort `json:"outputs,omitempty"`
+	FinalizeWasm bool                  `json:"finalizeWasm,omitempty"`
+}
+
+// handlePublishFlowModule bakes a composed flow into a signed, re-composable
+// guest-link module and registers it in the node's palette. A node with no
+// toolchain returns 501; a node with the toolchain but no blockstore/publisher
+// wired returns 501 with the specific reason; a bad graph is a 400.
+func handlePublishFlowModule(w http.ResponseWriter, r *http.Request, mgr *FlowManager) {
+	if mgr.Baker() == nil {
+		http.Error(w, "publish path not enabled: node has no staged flowcc toolchain", http.StatusNotImplemented)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 16*1024*1024))
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+	var req PublishFlowModuleRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(req.FlowJSON) == 0 {
+		http.Error(w, "missing flowJson", http.StatusBadRequest)
+		return
+	}
+	spec := SubflowSpec{
+		PluginID:     req.PluginID,
+		Method:       req.Method,
+		FlowJSON:     req.FlowJSON,
+		Inputs:       req.Inputs,
+		Outputs:      req.Outputs,
+		FinalizeWasm: req.FinalizeWasm,
+	}
+	res, err := mgr.Baker().PublishFlowAsModule(r.Context(), spec)
+	if err != nil {
+		// A disabled publish path (no blockstore/publisher) is a 501; anything else
+		// (bad graph, sign/store failure, untrusted self-key) is a 400.
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "publish path not enabled") {
+			status = http.StatusNotImplemented
+		}
+		http.Error(w, "publish failed: "+err.Error(), status)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":         "published",
+		"source":         "network",
+		"pluginId":       res.PluginID,
+		"method":         res.Method,
+		"contentHash":    res.ContentHash,
+		"signerPubKey":   res.SignerPubKey,
+		"methods":        res.Methods,
+		"inputs":         res.Inputs,
+		"outputs":        res.Outputs,
+		"innerModules":   res.InnerModules,
+		"guestLinkBytes": res.GuestLinkSize,
+		"finalizedBytes": res.FinalizedSize,
 	})
 }
 

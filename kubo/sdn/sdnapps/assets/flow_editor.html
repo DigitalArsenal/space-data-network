@@ -267,6 +267,7 @@
     <div class="status-strip" id="status-strip" aria-live="polite">
       <span class="status-chip"><span class="dot"></span>CONNECTING</span>
     </div>
+    <button class="btn" id="publish-btn" title="Bake this flow into a signed, re-composable module and list it in the palette so it can be wired into other flows">PUBLISH AS MODULE</button>
     <button class="btn primary" id="deploy-btn" title="Assemble the graph and POST it to the node bake endpoint">DEPLOY</button>
   </header>
 
@@ -870,6 +871,62 @@
     });
   }
 
+  // ------------------------------------------------------------- publish
+  // Bake the composed flow into a signed, re-composable MODULE (a "sub-flow"):
+  // the node emits a guest-link object exposing the flow's aggregate ports as one
+  // method, content-addresses + signs it, and lists it in the palette (NETWORK
+  // MODULES) so it wires into other flows — "a module is a degenerate flow".
+  var publishing = false;
+  function publish() {
+    if (publishing) return;
+    var g = assembleGraph();
+    var linked = g.flowJson.nodes.filter(function (n) { return !n.dispatchModel || n.dispatchModel === "linked-direct"; });
+    if (!g.flowJson.nodes.length) { showResult({ notice: "bad", html: "<strong>Nothing to publish.</strong> Add at least one module node to the canvas." }); return; }
+    if (!linked.length) { showResult({ notice: "bad", html: "<strong>No bakeable node.</strong> A publishable flow-module needs at least one staged-module node." }); return; }
+    publishing = true;
+    var btn = $("publish-btn"); btn.disabled = true; btn.textContent = "PUBLISHING";
+    setStatus([{ cls: "live", text: "PUBLISHING" }]);
+    var t0 = Date.now();
+    var tick = setInterval(function () {
+      var s = ((Date.now() - t0) / 1000).toFixed(1);
+      resultBody.innerHTML = '<div class="notice live"><span class="spinner"></span> <strong>Publishing flow as a module&hellip;</strong> baking + signing the guest-link object &middot; <span style="font-variant-numeric:tabular-nums">' + s + "s</span></div>";
+    }, 100);
+    fetch("/api/v1/flows/modules/publish-flow", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ flowJson: g.flowJson, pluginId: g.flowJson.programId, method: "run" })
+    }).then(function (res) {
+      return res.text().then(function (text) { return { ok: res.ok, status: res.status, text: text }; });
+    }).then(function (r) {
+      clearInterval(tick);
+      var elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      if (!r.ok) {
+        setStatus([{ cls: "bad", text: "PUBLISH FAILED" }]);
+        showResult({ notice: "bad", html: "<strong>Publish failed (HTTP " + r.status + ")</strong><br><span class=\"dim\">" + esc(r.text.trim() || "no detail") + "</span><br><span class=\"dim\">elapsed " + elapsed + "s</span>" });
+        return;
+      }
+      var d; try { d = JSON.parse(r.text); } catch (e) { d = {}; }
+      setStatus([{ cls: "good", text: "PUBLISHED" }]);
+      resultBody.innerHTML =
+        '<div class="notice good"><strong>Flow published as a module.</strong> It now appears under NETWORK MODULES in the palette and composes into other flows.</div>' +
+        '<dl class="kv" style="margin-top:10px">' +
+        "<dt>PLUGIN</dt><dd class=\"hi\">" + esc(d.pluginId || "—") + "</dd>" +
+        "<dt>METHOD</dt><dd>" + esc(d.method || "run") + "</dd>" +
+        "<dt>HASH</dt><dd>" + esc(d.contentHash ? d.contentHash.slice(0, 16) + "…" : "—") + "</dd>" +
+        "<dt>SIGNER</dt><dd>" + esc(d.signerPubKey ? d.signerPubKey.slice(0, 16) + "…" : "—") + "</dd>" +
+        "<dt>PORTS</dt><dd>" + esc((d.inputs || []).map(function (p) { return p.extPort; }).join(", ") + " → " + (d.outputs || []).map(function (p) { return p.extPort; }).join(", ")) + "</dd>" +
+        "<dt>INNER</dt><dd>" + esc((d.innerModules || []).map(shortId).join(", ") || "—") + "</dd>" +
+        "<dt>ELAPSED</dt><dd>" + esc(elapsed) + " s (wall)</dd>" +
+        "</dl>";
+      loadPalette(); // surface the freshly published flow-module in the palette
+    }).catch(function (err) {
+      clearInterval(tick);
+      setStatus([{ cls: "bad", text: "PUBLISH ERROR" }]);
+      showResult({ notice: "bad", html: "<strong>Request failed.</strong><br><span class=\"dim\">" + esc(String(err)) + "</span>" });
+    }).then(function () {
+      publishing = false; btn.disabled = false; btn.textContent = "PUBLISH AS MODULE";
+    });
+  }
+
   function showResult(o) {
     if (o.html) { resultBody.innerHTML = '<div class="notice ' + (o.notice || "") + '">' + o.html + "</div>"; return; }
     var d = o.result || {};
@@ -950,6 +1007,7 @@
 
   // buttons + keys
   $("deploy-btn").addEventListener("click", deploy);
+  $("publish-btn").addEventListener("click", publish);
   $("add-trigger-btn").addEventListener("click", function () {
     var p = cascadePos(); makeTrigger(Math.max(0, p.x), Math.max(0, p.y)); render();
   });

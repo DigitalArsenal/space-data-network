@@ -19,12 +19,15 @@ package flowrt
 // bake_test.go).
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/ipfs/kubo/sdn/appmanifest"
@@ -187,6 +190,98 @@ func TestSubflowRecompositionEndToEnd(t *testing.T) {
 		t.Fatalf("fetch-to-bake recursion failed: fAdvanced=%v dAdvanced=%v", fAdv2, dAdv2)
 	}
 	t.Logf("★★★ FULL LOOP PROVEN: F published (content-addressed + Ed25519-signed) -> G baked via signed fetch-to-bake -> ran with F executing its inner flow")
+}
+
+// TestPublishFlowModuleEndpoint proves Task 2: the POST /api/v1/flows/modules/
+// publish-flow endpoint bakes a composed flow into a signed module via the SAME
+// ModuleBundle/StoreModuleBytes/signed publish path, and the palette then lists it
+// as a signed network module ready to compose into another flow.
+func TestPublishFlowModuleEndpoint(t *testing.T) {
+	a := resolveBakeAssets(t)
+	home := stageBakeHome(t, a)
+
+	cfg := flowconfig.FlowsConfig{Enabled: true, StoragePath: t.TempDir(), MaxMemoryPages: 2048}
+	mgr, err := NewFlowManager(cfg, plugins.New(), HandlerMap{})
+	if err != nil {
+		t.Fatalf("NewFlowManager: %v", err)
+	}
+	baker, err := NewBaker(home, 2048)
+	if err != nil {
+		t.Fatalf("NewBaker: %v", err)
+	}
+	// Wire the network path the way the live node does (Task 3): a blockstore + a
+	// self-trusted Ed25519 publisher signer.
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	bs := newMemBlockstore()
+	baker.SetNetModules(NewNetModuleFetcher(bs, []ed25519.PublicKey{pub}))
+	baker.SetPublisher(func(digest []byte) (string, string, error) {
+		return base64.StdEncoding.EncodeToString(ed25519.Sign(priv, digest)), hex.EncodeToString(pub), nil
+	})
+	mgr.SetBaker(baker)
+
+	mux := http.NewServeMux()
+	RegisterAPI(mux, mgr)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	reqBody, _ := json.Marshal(PublishFlowModuleRequest{
+		FlowJSON: json.RawMessage(subflowFFlowJSON),
+		PluginID: subflowFPluginID,
+		Method:   "run",
+		Inputs:   []SubflowExternalPort{{ExtPort: "fin", NodeID: "c", Port: "trigger", Any: true}},
+		Outputs:  []SubflowExternalPort{{ExtPort: "fout", NodeID: "c", Port: "time", Any: true}},
+	})
+	resp, err := http.Post(srv.URL+"/api/v1/flows/modules/publish-flow", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("POST publish-flow: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		var buf bytes.Buffer
+		buf.ReadFrom(resp.Body)
+		t.Fatalf("publish-flow status=%d body=%s", resp.StatusCode, buf.String())
+	}
+	var out struct {
+		Status       string   `json:"status"`
+		PluginID     string   `json:"pluginId"`
+		ContentHash  string   `json:"contentHash"`
+		SignerPubKey string   `json:"signerPubKey"`
+		Methods      []string `json:"methods"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode publish response: %v", err)
+	}
+	if out.Status != "published" || out.PluginID != subflowFPluginID || len(out.ContentHash) != 64 || out.SignerPubKey != hex.EncodeToString(pub) {
+		t.Fatalf("unexpected publish response: %+v", out)
+	}
+	t.Logf("★ published flow-module via endpoint: pluginId=%s hash=%s signer=%s… methods=%v",
+		out.PluginID, out.ContentHash[:12], out.SignerPubKey[:12], out.Methods)
+
+	// The palette now lists the published flow-module as a signed network module.
+	presp, err := http.Get(srv.URL + "/api/v1/flows/palette")
+	if err != nil {
+		t.Fatalf("GET palette: %v", err)
+	}
+	defer presp.Body.Close()
+	var pal Palette
+	if err := json.NewDecoder(presp.Body).Decode(&pal); err != nil {
+		t.Fatalf("decode palette: %v", err)
+	}
+	var found *PaletteModule
+	for i := range pal.Modules {
+		if pal.Modules[i].PluginID == subflowFPluginID {
+			found = &pal.Modules[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("published flow-module not in palette")
+	}
+	if found.Source != "network" || found.Signature == "" || found.SignerPubKey != hex.EncodeToString(pub) || found.BundleHash != out.ContentHash {
+		t.Fatalf("palette entry not signed-network as expected: %+v", found)
+	}
+	t.Logf("★★ palette lists it: pluginId=%s source=%s signed=%v methods=%d — composable into another flow",
+		found.PluginID, found.Source, found.Signature != "", len(found.Methods))
 }
 
 // bakeRunG bakes + deploys G, drives its trigger once, and reports whether the
