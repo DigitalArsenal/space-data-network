@@ -3,11 +3,17 @@ package flowcc
 import (
 	"encoding/binary"
 	"os"
-	"path/filepath"
 	"syscall"
 
 	"github.com/second-state/WasmEdge-go/wasmedge"
 )
+
+// dirCursor is an open directory stream: the merged overlay entry list (built
+// once at openat) plus a cursor into it that getdents64 advances.
+type dirCursor struct {
+	entries []dirEnt
+	pos     int
+}
 
 // dispatch is the Go port of emshim2.c's cb(): the single host-function body
 // switched on semantic id. mem is the guest's default linear memory for this
@@ -111,6 +117,7 @@ func (rs *runState) dispatch(sem int, cf *wasmedge.CallingFrame, in []interface{
 
 	case hFdClose:
 		fd := i32(in[0])
+		delete(rs.dirs, fd)
 		if fd > 2 {
 			syscall.Close(int(fd))
 		}
@@ -126,23 +133,29 @@ func (rs *runState) dispatch(sem int, cf *wasmedge.CallingFrame, in []interface{
 	case hOpenat:
 		pp := u32(in[1])
 		mf := i32(in[2])
-		hp := rs.hostPath(cstr(mem, pp))
+		guest := cstr(mem, pp)
 		hf := mflagsToHost(mf)
-		if hf&syscall.O_CREAT != 0 {
-			_ = os.MkdirAll(filepath.Dir(hp), 0o755)
-		}
-		fd, err := syscall.Open(hp, hf, 0o644)
+		fd, err := rs.ov.open(guest, hf, 0o644)
 		if rs.verbose {
-			os.Stderr.WriteString("[flowcc] openat " + hp + " -> " + itoa(fd) + "\n")
+			os.Stderr.WriteString("[flowcc] openat " + guest + " -> " + itoa(fd) + "\n")
 		}
 		if err != nil {
 			return retI32(negErrno(err)), wasmedge.Result_Success
+		}
+		// Track directory streams so getdents64 can serve a MERGED overlay
+		// listing (both layers), independent of which layer the fd points at.
+		var st syscall.Stat_t
+		if syscall.Fstat(fd, &st) == nil && st.Mode&syscall.S_IFMT == syscall.S_IFDIR {
+			rs.dirs[int32(fd)] = &dirCursor{entries: rs.ov.readMergedDir(guest)}
 		}
 		return retI32(int32(fd)), wasmedge.Result_Success
 
 	case hStat64, hLstat64:
 		pp, buf := u32(in[0]), u32(in[1])
-		hp := rs.hostPath(cstr(mem, pp))
+		hp, _, ok := rs.ov.resolveExisting(cstr(mem, pp))
+		if !ok {
+			return retI32(-weENOENT), wasmedge.Result_Success
+		}
 		var st syscall.Stat_t
 		var err error
 		if sem == hLstat64 {
@@ -158,7 +171,10 @@ func (rs *runState) dispatch(sem int, cf *wasmedge.CallingFrame, in []interface{
 
 	case hNewfstatat:
 		pp, buf := u32(in[1]), u32(in[2])
-		hp := rs.hostPath(cstr(mem, pp))
+		hp, _, ok := rs.ov.resolveExisting(cstr(mem, pp))
+		if !ok {
+			return retI32(-weENOENT), wasmedge.Result_Success
+		}
 		var st syscall.Stat_t
 		if err := syscall.Stat(hp, &st); err != nil {
 			return retI32(negErrno(err)), wasmedge.Result_Success
@@ -181,7 +197,10 @@ func (rs *runState) dispatch(sem int, cf *wasmedge.CallingFrame, in []interface{
 
 	case hFaccessat:
 		pp := u32(in[1])
-		hp := rs.hostPath(cstr(mem, pp))
+		hp, _, ok := rs.ov.resolveExisting(cstr(mem, pp))
+		if !ok {
+			return retI32(-weENOENT), wasmedge.Result_Success
+		}
 		if err := syscall.Access(hp, 0 /*F_OK*/); err != nil {
 			return retI32(negErrno(err)), wasmedge.Result_Success
 		}
@@ -189,11 +208,14 @@ func (rs *runState) dispatch(sem int, cf *wasmedge.CallingFrame, in []interface{
 
 	case hReadlinkat:
 		pp, buf, bs := u32(in[1]), u32(in[2]), u32(in[3])
-		hp := rs.hostPath(cstr(mem, pp))
+		hp, _, ok := rs.ov.resolveExisting(cstr(mem, pp))
+		if !ok {
+			return retI32(-weENOENT), wasmedge.Result_Success
+		}
 		lk := make([]byte, 1024)
 		n, err := syscall.Readlink(hp, lk)
 		if err != nil || n < 0 {
-			return retI32(-22 /*-EINVAL*/), wasmedge.Result_Success
+			return retI32(-weEINVAL), wasmedge.Result_Success
 		}
 		if uint32(n) > bs {
 			n = int(bs)
@@ -211,15 +233,23 @@ func (rs *runState) dispatch(sem int, cf *wasmedge.CallingFrame, in []interface{
 
 	case hMkdirat:
 		pp := u32(in[1])
-		hp := rs.hostPath(cstr(mem, pp))
+		hp, ok := rs.ov.scratchPath(cstr(mem, pp))
+		if !ok {
+			return retI32(-weEACCES), wasmedge.Result_Success
+		}
 		if err := syscall.Mkdir(hp, 0o755); err != nil {
 			return retI32(negErrno(err)), wasmedge.Result_Success
 		}
 		return okI32, wasmedge.Result_Success
 
 	case hUnlinkat:
+		// Mutations only ever affect the writable scratch; the sysroot is
+		// read-only, so a path present only in the sysroot yields ENOENT here.
 		pp := u32(in[1])
-		hp := rs.hostPath(cstr(mem, pp))
+		hp, ok := rs.ov.scratchPath(cstr(mem, pp))
+		if !ok {
+			return retI32(-weEACCES), wasmedge.Result_Success
+		}
 		if err := syscall.Unlink(hp); err != nil {
 			return retI32(negErrno(err)), wasmedge.Result_Success
 		}
@@ -227,8 +257,11 @@ func (rs *runState) dispatch(sem int, cf *wasmedge.CallingFrame, in []interface{
 
 	case hRenameat:
 		p1, p2 := u32(in[1]), u32(in[3])
-		a := rs.hostPath(cstr(mem, p1))
-		b := rs.hostPath(cstr(mem, p2))
+		a, ok1 := rs.ov.scratchPath(cstr(mem, p1))
+		b, ok2 := rs.ov.scratchPath(cstr(mem, p2))
+		if !ok1 || !ok2 {
+			return retI32(-weEACCES), wasmedge.Result_Success
+		}
 		if err := syscall.Rename(a, b); err != nil {
 			return retI32(negErrno(err)), wasmedge.Result_Success
 		}
@@ -236,7 +269,10 @@ func (rs *runState) dispatch(sem int, cf *wasmedge.CallingFrame, in []interface{
 
 	case hRmdir:
 		pp := u32(in[0])
-		hp := rs.hostPath(cstr(mem, pp))
+		hp, ok := rs.ov.scratchPath(cstr(mem, pp))
+		if !ok {
+			return retI32(-weEACCES), wasmedge.Result_Success
+		}
 		if err := syscall.Rmdir(hp); err != nil {
 			return retI32(negErrno(err)), wasmedge.Result_Success
 		}
@@ -254,7 +290,34 @@ func (rs *runState) dispatch(sem int, cf *wasmedge.CallingFrame, in []interface{
 		return okI32, wasmedge.Result_Success
 
 	case hGetdents64:
-		return retI32(-38 /*-ENOSYS*/), wasmedge.Result_Success
+		// Serve the merged directory stream built at openat, in emscripten's
+		// fixed 280-byte dirent layout (d_ino@0, d_off@8, d_reclen@16=280,
+		// d_type@18, d_name@19..). Returns bytes written; 0 at end of stream.
+		fd := i32(in[0])
+		dirp, count := u32(in[1]), u32(in[2])
+		dc := rs.dirs[fd]
+		if dc == nil {
+			return retI32(0), wasmedge.Result_Success
+		}
+		const structSize = 280
+		var pos uint32
+		for dc.pos < len(dc.entries) && pos+structSize <= count {
+			e := dc.entries[dc.pos]
+			var rec [structSize]byte
+			binary.LittleEndian.PutUint64(rec[0:], uint64(dc.pos+1))              // d_ino (synthetic, nonzero)
+			binary.LittleEndian.PutUint64(rec[8:], uint64((dc.pos+1)*structSize)) // d_off
+			binary.LittleEndian.PutUint16(rec[16:], structSize)                   // d_reclen
+			rec[18] = e.dtype                                                     // d_type
+			nb := []byte(e.name)
+			if len(nb) > 255 {
+				nb = nb[:255]
+			}
+			copy(rec[19:], nb) // d_name (NUL padding already zero)
+			memSet(mem, dirp+pos, rec[:])
+			pos += structSize
+			dc.pos++
+		}
+		return retI32(int32(pos)), wasmedge.Result_Success
 
 	case hMemcpyBig:
 		d, s, n := u32(in[0]), u32(in[1]), u32(in[2])
@@ -312,14 +375,110 @@ func (rs *runState) dispatch(sem int, cf *wasmedge.CallingFrame, in []interface{
 	case hDlinit, hCallSighandler:
 		return nil, wasmedge.Result_Success
 
+	case hMmapJs:
+		return rs.doMmap(cf, mem, in)
+
+	case hMunmapJs:
+		// __munmap_js(addr, len, prot, flags, fd, offset). A writable mapping
+		// (PROT_WRITE) is how wasm-ld/clang emit their OUTPUT: they mmap the
+		// freshly ftruncated file, fill the buffer, then unmap expecting the
+		// bytes to be flushed back. Mirror emscripten's doMsync and write the
+		// dirty region to the file; a no-op here silently drops every output.
+		addr, length, prot := u32(in[0]), u32(in[1]), i32(in[2])
+		fd := i32(in[4])
+		off := int64(i32(in[5]))
+		if prot&2 != 0 && fd > 2 && length > 0 {
+			if data, ok := memGet(mem, addr, length); ok {
+				_, _ = syscall.Pwrite(int(fd), data, off)
+			}
+		}
+		return okI32, wasmedge.Result_Success
+
 	case hStubI:
 		return okI32, wasmedge.Result_Success
 	case hStubEnoent:
-		return retI32(-2 /*-ENOENT*/), wasmedge.Result_Success
+		return retI32(-weENOENT), wasmedge.Result_Success
 	case hStubV:
 		return nil, wasmedge.Result_Success
 	}
 	return rs.trap()
+}
+
+// doMmap is the Go port of emscripten's __mmap_js(len, prot, flags, fd, off,
+// allocated, addr). clang maps large source/header files instead of read()ing
+// them, AND wasm-ld/clang emit their OUTPUT through a writable mapping, so a
+// working mmap is required for any real compile — a stub makes clang see empty
+// headers and drops the linker output. It mirrors emscripten's MEMFS.mmap:
+// allocate a guest buffer via the guest's own malloc, copy the file's bytes
+// [off, off+len) into it, and hand back the pointer. Read mappings leak until
+// the VM is torn down (emscripten leaks them too); writable mappings are
+// flushed back to the file by the munmap handler (see hMunmapJs).
+func (rs *runState) doMmap(cf *wasmedge.CallingFrame, mem *wasmedge.Memory, in []interface{}) ([]interface{}, wasmedge.Result) {
+	length := u32(in[0])
+	fd := i32(in[3])
+	off := int64(i32(in[4]))
+	allocatedPtr := u32(in[5])
+	addrPtr := u32(in[6])
+	if fd <= 2 || length == 0 {
+		return retI32(-weENODEV), wasmedge.Result_Success
+	}
+
+	// Match emscripten's mmapAlloc: round the region up to a 64KiB page and
+	// zero-fill it, then copy the file bytes into the front. The zero tail is
+	// what gives clang's null-terminated MemoryBuffer a readable 0 just past the
+	// file (clang loads that byte); a tight length-sized buffer instead faults
+	// with an out-of-bounds read when the file ends exactly on a page boundary.
+	allocLen := (length + 0xffff) &^ uint32(0xffff)
+	data := make([]byte, allocLen) // zero-filled tail
+	// Read the FULL region: a single pread may return a short count for large
+	// files, and a truncated (silently zero-filled) mapping makes clang parse
+	// garbage, so loop until length bytes or EOF.
+	for got := 0; got < int(length); {
+		n, err := syscall.Pread(int(fd), data[got:length], off+int64(got))
+		if err != nil {
+			return retI32(negErrno(err)), wasmedge.Result_Success
+		}
+		if n == 0 {
+			break // EOF: shorter file, remainder stays zero
+		}
+		got += n
+	}
+
+	// Allocate the destination in the guest heap. This re-enters the guest and
+	// can grow linear memory, so re-fetch the memory handle afterwards.
+	ptr, ok := rs.guestMalloc(cf, allocLen)
+	if !ok || ptr == 0 {
+		return retI32(-weENOMEM), wasmedge.Result_Success
+	}
+	if m2 := cf.GetMemoryByIndex(0); m2 != nil {
+		mem = m2
+	}
+	if !memSet(mem, ptr, data) {
+		return retI32(-weEFAULT), wasmedge.Result_Success
+	}
+	wr32(mem, allocatedPtr, 1) // we allocated the region (munmap may free it)
+	wr32(mem, addrPtr, ptr)
+	return okI32, wasmedge.Result_Success
+}
+
+// guestMalloc invokes the guest's own malloc export from inside a host callback
+// (same re-entrant executor mechanism the SjLj invoke_* trampolines use) and
+// returns the resulting guest pointer.
+func (rs *runState) guestMalloc(cf *wasmedge.CallingFrame, size uint32) (uint32, bool) {
+	ex := cf.GetExecutor()
+	mod := cf.GetModule()
+	if ex == nil || mod == nil {
+		return 0, false
+	}
+	fn := mod.FindFunction(expMalloc)
+	if fn == nil {
+		return 0, false
+	}
+	r, err := ex.Invoke(fn, int32(size))
+	if err != nil || len(r) == 0 {
+		return 0, false
+	}
+	return u32(r[0]), true
 }
 
 // writeFD routes a guest fd_write to captured stdout/stderr (fd 1/2) or a real
@@ -437,12 +596,19 @@ func (rs *runState) doInvoke(cf *wasmedge.CallingFrame, in []interface{}, nargs 
 	return nil, wasmedge.Result_Fail
 }
 
-// writeStat serializes a host stat into the 104-byte emscripten stat64 layout
-// (identical field offsets to emshim2.c's write_stat).
+// writeStat serializes a host stat into emscripten's struct stat. The struct is
+// 112 bytes (matching the glue's doStat), and CRUCIALLY the real ino_t st_ino
+// lives at offset 104 — the 32-bit field at offset 8 is only musl's
+// __st_ino_truncated. clang derives every file/directory's UniqueID from the
+// real st_ino, so a struct that stops at 104 bytes (as an earlier version did)
+// leaves st_ino reading uninitialized guest memory, collapsing every file to one
+// identity: search-dir dedup then drops all but one include path and every
+// header aliases the main source (#include nested too deeply). Writing offset
+// 104/108 is what makes real, header-using compiles work.
 func writeStat(mem *wasmedge.Memory, buf uint32, st *syscall.Stat_t) {
-	b := make([]byte, 104)
+	b := make([]byte, 112)
 	binary.LittleEndian.PutUint32(b[0:], uint32(st.Dev))
-	binary.LittleEndian.PutUint32(b[8:], uint32(st.Ino))
+	binary.LittleEndian.PutUint32(b[8:], uint32(st.Ino)) // __st_ino_truncated
 	binary.LittleEndian.PutUint32(b[12:], uint32(st.Mode))
 	binary.LittleEndian.PutUint32(b[16:], uint32(st.Nlink))
 	binary.LittleEndian.PutUint32(b[20:], uint32(st.Uid))
@@ -452,15 +618,18 @@ func writeStat(mem *wasmedge.Memory, buf uint32, st *syscall.Stat_t) {
 	binary.LittleEndian.PutUint32(b[44:], uint32(uint64(st.Size)>>32))
 	binary.LittleEndian.PutUint32(b[48:], 4096)
 	binary.LittleEndian.PutUint32(b[52:], uint32(st.Blocks))
+	binary.LittleEndian.PutUint32(b[104:], uint32(st.Ino)) // real st_ino (low)
+	binary.LittleEndian.PutUint32(b[108:], uint32(uint64(st.Ino)>>32))
 	memSet(mem, buf, b)
 }
 
 // writeCharDevStat serializes a synthetic character-device stat for stdio fds
 // (0/1/2), which are captured/redirected rather than backed by real files.
 func writeCharDevStat(mem *wasmedge.Memory, buf uint32, fd int32) {
-	b := make([]byte, 104)
+	b := make([]byte, 112)
 	binary.LittleEndian.PutUint32(b[0:], 1)                              // dev
-	binary.LittleEndian.PutUint32(b[8:], uint32(fd)+1)                   // ino
+	binary.LittleEndian.PutUint32(b[8:], uint32(fd)+1)                   // __st_ino_truncated
+	binary.LittleEndian.PutUint32(b[104:], uint32(fd)+1)                 // real st_ino
 	binary.LittleEndian.PutUint32(b[12:], uint32(syscall.S_IFCHR)|0o666) // mode
 	binary.LittleEndian.PutUint32(b[16:], 1)                             // nlink
 	binary.LittleEndian.PutUint32(b[48:], 4096)                          // blksize

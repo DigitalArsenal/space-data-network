@@ -60,6 +60,8 @@ const (
 	hStubI      // present, returns 0
 	hStubEnoent // present, returns -ENOENT (-2)
 	hStubV      // present, void no-op
+	hMmapJs     // emscripten __mmap_js: map a file region into guest memory
+	hMunmapJs   // emscripten __munmap_js: write a dirty mapping back to its file
 )
 
 // impDef mirrors emshim2.c's ImpDef: minified name, param count, result kind
@@ -85,7 +87,7 @@ var impTable = []impDef{
 	{"B", 4, 1, hStubI /*utimensat*/}, {"C", 0, 1, hGetHeapMax}, {"D", 2, 1, hStubEnoent /*symlink*/},
 	{"E", 3, 1, hStubEnoent /*statfs64*/}, {"F", 4, 1, hRenameat}, {"G", 1, 1, hRmdir},
 	{"H", 4, 1, hReadlinkat}, {"I", 3, 1, hGetdents64}, {"J", 2, 0, hCallSighandler},
-	{"K", 7, 1, hStubEnoent /*mmap_js*/}, {"L", 6, 1, hStubI /*munmap_js*/}, {"M", 3, 1, hMkdirat},
+	{"K", 7, 1, hMmapJs /*mmap_js*/}, {"L", 6, 1, hMunmapJs /*munmap_js*/}, {"M", 3, 1, hMkdirat},
 	{"N", 2, 1, hGetcwd}, {"O", 2, 1, hLstat64}, {"P", 4, 1, hNewfstatat},
 	{"Q", 2, 1, hStat64}, {"R", 2, 1, hFstat64}, {"S", 3, 1, hStubI /*fchown32*/},
 	{"T", 2, 1, hStubI /*fchmod*/}, {"U", 0, 1, hMonotonic}, {"V", 2, 0, hGmtime},
@@ -178,12 +180,55 @@ func cstr(mem *wasmedge.Memory, off uint32) string {
 func i32(v interface{}) int32  { return wasmrtInt32(v) }
 func u32(v interface{}) uint32 { return uint32(wasmrtInt32(v)) }
 
-// negErrno maps a Go syscall errno to the negative-errno the guest expects.
+// WASI/emscripten errno values. The guest (emscripten's musl) does NOT use the
+// host's POSIX errno numbers — it uses the WASI numbering, where e.g. ENOENT=44
+// and EACCES=2 (the reverse of common POSIX, where ENOENT=2/EACCES=13). A host
+// syscall failure must therefore be translated before it is handed back, or the
+// guest mis-reads it: returning POSIX ENOENT (-2) reads as WASI EACCES, so every
+// "file not found" during a header search surfaces as a fatal "Permission
+// denied" and standard-library compiles cannot find any header.
+const (
+	weSuccess      = 0
+	weEACCES       = 2
+	weEEXIST       = 20
+	weEFAULT       = 21
+	weEINVAL       = 28
+	weEISDIR       = 31
+	weENODEV       = 43
+	weENOENT       = 44
+	weENOMEM       = 48
+	weENOSYS       = 52
+	weENOTDIR      = 54
+	weENOTEMPTY    = 55
+	weENAMETOOLONG = 37
+)
+
+// posixToWASI maps host POSIX errno values to the WASI numbers the guest uses.
+// Keyed by the platform's syscall.Errno constants so it is portable across
+// darwin/linux (the constants carry each platform's POSIX value).
+var posixToWASI = map[syscall.Errno]int32{
+	syscall.EPERM: 63, syscall.ENOENT: 44, syscall.ESRCH: 71, syscall.EINTR: 27,
+	syscall.EIO: 29, syscall.ENXIO: 60, syscall.E2BIG: 1, syscall.ENOEXEC: 45,
+	syscall.EBADF: 8, syscall.ECHILD: 12, syscall.EAGAIN: 6, syscall.ENOMEM: 48,
+	syscall.EACCES: 2, syscall.EFAULT: 21, syscall.EBUSY: 10, syscall.EEXIST: 20,
+	syscall.EXDEV: 75, syscall.ENODEV: 43, syscall.ENOTDIR: 54, syscall.EISDIR: 31,
+	syscall.EINVAL: 28, syscall.ENFILE: 41, syscall.EMFILE: 33, syscall.ENOTTY: 59,
+	syscall.ETXTBSY: 74, syscall.EFBIG: 22, syscall.ENOSPC: 51, syscall.ESPIPE: 70,
+	syscall.EROFS: 69, syscall.EMLINK: 34, syscall.EPIPE: 64, syscall.EDOM: 18,
+	syscall.ERANGE: 68, syscall.ENAMETOOLONG: 37, syscall.ENOSYS: 52,
+	syscall.ENOTEMPTY: 55, syscall.ELOOP: 32, syscall.EOVERFLOW: 61,
+}
+
+// negErrno maps a host syscall error to the negative WASI errno the guest
+// expects. Unknown errnos fall back to WASI EINVAL.
 func negErrno(err error) int32 {
 	if errno, ok := err.(syscall.Errno); ok {
-		return -int32(errno)
+		if w, ok := posixToWASI[errno]; ok {
+			return -w
+		}
+		return -weEINVAL
 	}
-	return -int32(syscall.EINVAL)
+	return -weEINVAL
 }
 
 // retI32 / retVoid / retF64 build host-callback return slices per reskind.

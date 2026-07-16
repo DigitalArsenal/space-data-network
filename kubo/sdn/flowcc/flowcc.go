@@ -27,8 +27,20 @@
 // catches the trap, runs stackRestore + setThrew, and returns 0 — again
 // exactly as emshim2.c does.
 //
-// P1 scope: the FS is backed by a per-Run temp directory (mirroring
-// emshim2.c's host-rooted FS). Real sysroot mounting for full compiles is P2.
+// FS model (P2): the guest filesystem is a two-layer overlay (see overlay.go).
+// A per-Run writable scratch (upper layer) is stacked over an optional shared
+// read-only sysroot (lower layer, emception's cache/sysroot: libc++/libc++abi
+// headers + wasm-EH runtime libs). The scratch shadows the sysroot, which is
+// mounted ONCE at the guest prefix /sysroot and shared read-only across
+// concurrent Runs (only the scratch is per-Run). With no sysroot configured the
+// overlay degenerates to the P1 scratch-only model, which is all the header-less
+// parity test needs.
+//
+// Two host-vs-guest ABI details are load-bearing for real (header-using)
+// compiles: the guest's struct stat carries the authoritative ino_t st_ino at
+// offset 104 (see writeStat), and the guest uses WASI errno numbers, not POSIX
+// (see negErrno) — returning POSIX ENOENT(2) reads as WASI EACCES, turning
+// every missing-header probe into a fatal "Permission denied".
 package flowcc
 
 import (
@@ -65,12 +77,21 @@ const hostModuleName = "a"
 // New is called with an empty path.
 const EnvLLVMBoxWasm = "SDN_LLVM_BOX_WASM"
 
-// Compiler holds the loaded llvm-box.wasm bytes. It is safe for concurrent
-// use: each Run builds a fresh, isolated VM (matching the "fresh process per
-// invocation" model of emshim2.c and the Node reference driver), so no guest
-// state leaks between calls.
+// EnvLLVMSysroot names the environment variable pointing at the extracted
+// read-only sysroot directory when a compiler is constructed with an empty
+// sysroot path. It mirrors EnvLLVMBoxWasm. When unset (and no explicit path is
+// given) the compiler runs header-less-only.
+const EnvLLVMSysroot = "SDN_LLVM_SYSROOT"
+
+// Compiler holds the loaded llvm-box.wasm bytes and, optionally, the host path
+// of a shared read-only sysroot directory. It is safe for concurrent use: each
+// Run builds a fresh, isolated VM (matching the "fresh process per invocation"
+// model of emshim2.c and the Node reference driver) over its own writable
+// scratch, while the sysroot is only ever read, so no guest state leaks between
+// calls and one sysroot backs every concurrent Run.
 type Compiler struct {
-	wasm []byte
+	wasm    []byte
+	sysroot string // host path of the read-only sysroot dir ("" = none)
 }
 
 // Result is the outcome of a single Run.
@@ -91,9 +112,18 @@ type Result struct {
 }
 
 // New loads llvm-box.wasm from llvmBoxPath. If llvmBoxPath is empty it falls
-// back to the SDN_LLVM_BOX_WASM environment variable. Embedding/shipping the
-// artifact is P2/P4 and intentionally out of scope here.
+// back to the SDN_LLVM_BOX_WASM environment variable. The sysroot is taken from
+// the SDN_LLVM_SYSROOT environment variable if set; otherwise the compiler runs
+// header-less-only. Shipping/embedding the artifacts is P4 and out of scope.
 func New(llvmBoxPath string) (*Compiler, error) {
+	return NewWithSysroot(llvmBoxPath, "")
+}
+
+// NewWithSysroot is New with an explicit read-only sysroot directory. An empty
+// sysrootPath falls back to the SDN_LLVM_SYSROOT environment variable; if that
+// is also empty the compiler runs header-less-only (the overlay has no lower
+// layer). A non-empty sysroot path must name an existing directory.
+func NewWithSysroot(llvmBoxPath, sysrootPath string) (*Compiler, error) {
 	if llvmBoxPath == "" {
 		llvmBoxPath = os.Getenv(EnvLLVMBoxWasm)
 	}
@@ -107,7 +137,19 @@ func New(llvmBoxPath string) (*Compiler, error) {
 	if len(b) < 8 || b[0] != 0x00 || b[1] != 'a' || b[2] != 's' || b[3] != 'm' {
 		return nil, errors.New("flowcc: file is not a WASM module")
 	}
-	return &Compiler{wasm: b}, nil
+	if sysrootPath == "" {
+		sysrootPath = os.Getenv(EnvLLVMSysroot)
+	}
+	if sysrootPath != "" {
+		fi, err := os.Stat(sysrootPath)
+		if err != nil {
+			return nil, fmt.Errorf("flowcc: stat sysroot: %w", err)
+		}
+		if !fi.IsDir() {
+			return nil, fmt.Errorf("flowcc: sysroot %q is not a directory", sysrootPath)
+		}
+	}
+	return &Compiler{wasm: b, sysroot: sysrootPath}, nil
 }
 
 // Run executes one tool invocation. args is the full guest argv (args[0]
@@ -127,17 +169,23 @@ func (c *Compiler) Run(ctx context.Context, args []string, inFiles map[string][]
 		return Result{}, errors.New("flowcc: empty args")
 	}
 
-	root, err := os.MkdirTemp("", "flowcc-root-")
+	scratch, err := os.MkdirTemp("", "flowcc-scratch-")
 	if err != nil {
 		return Result{}, fmt.Errorf("flowcc: mktemp: %w", err)
 	}
-	defer os.RemoveAll(root)
+	defer os.RemoveAll(scratch)
 
-	if err := seedRoot(root, inFiles); err != nil {
+	if err := seedRoot(scratch, inFiles); err != nil {
 		return Result{}, err
 	}
 
-	rs := &runState{root: root, verbose: os.Getenv("FLOWCC_VERBOSE") != ""}
+	// The scratch is per-Run and writable; the sysroot (if any) is shared and
+	// only ever read, so it is not copied here.
+	rs := &runState{
+		ov:      &overlay{scratch: scratch, sysroot: c.sysroot},
+		dirs:    map[int32]*dirCursor{},
+		verbose: os.Getenv("FLOWCC_VERBOSE") != "",
+	}
 
 	conf := wasmedge.NewConfigure() // bare config, exactly like emshim2.c
 	vm := wasmedge.NewVMWithConfig(conf)
@@ -234,7 +282,9 @@ func (c *Compiler) Run(ctx context.Context, args []string, inFiles map[string][]
 		return res, fmt.Errorf("flowcc: %s (_main) trapped: %w", expMain, mainErr)
 	}
 
-	out, err := collectFiles(root)
+	// Only the scratch is collected: outputs always land there, and the shared
+	// read-only sysroot (tens of MB) is never part of a Run's output.
+	out, err := collectFiles(scratch)
 	if err != nil {
 		return res, err
 	}
@@ -246,7 +296,8 @@ func (c *Compiler) Run(ctx context.Context, args []string, inFiles map[string][]
 // (replaces emshim2.c's process globals; scoping it per Run makes Compiler
 // concurrency-safe).
 type runState struct {
-	root         string
+	ov           *overlay
+	dirs         map[int32]*dirCursor // open directory streams, keyed by host fd
 	stdout       []byte
 	stderr       []byte
 	longjmp      bool
@@ -284,17 +335,6 @@ func mflagsToHost(mf int32) int {
 		hf |= syscall.O_DIRECTORY
 	}
 	return hf
-}
-
-// hostPath maps a guest path to a host path under root, with containment.
-func (rs *runState) hostPath(guest string) string {
-	clean := filepath.Clean(guest)
-	joined := filepath.Join(rs.root, clean)
-	// Containment guard: never escape the run root.
-	if joined != rs.root && !strings.HasPrefix(joined, rs.root+string(os.PathSeparator)) {
-		return filepath.Join(rs.root, "__blocked__")
-	}
-	return joined
 }
 
 func seedRoot(root string, inFiles map[string][]byte) error {
