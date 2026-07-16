@@ -34,6 +34,9 @@ package sdnapi
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -55,6 +58,7 @@ import (
 	"github.com/ipfs/kubo/sdn/flowcc"
 	"github.com/ipfs/kubo/sdn/flowconfig"
 	"github.com/ipfs/kubo/sdn/flowrt"
+	"github.com/ipfs/kubo/sdn/modulert"
 	"github.com/ipfs/kubo/sdn/nodeepm"
 	"github.com/ipfs/kubo/sdn/plugins"
 	sdnapihttp "github.com/ipfs/kubo/sdn/sdnapi"
@@ -245,7 +249,7 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 	// endpoint. The baker is attached only when the node has the flowcc toolchain
 	// staged; without it the bake route returns its own clean "toolchain not
 	// staged" 501, and the palette still lists the host capability nodes.
-	flowsHandler, flowsNote := p.buildFlowsHandler()
+	flowsHandler, flowsNote := p.buildFlowsHandler(node)
 
 	p.srv = &http.Server{
 		Handler:           newRootHandler(sdnapihttp.NewHandler(deps), sdnui.Handler(), credsHandler, runsHandler, nodeEPMHandler, flowsHandler),
@@ -293,7 +297,7 @@ func (p *sdnAPIPlugin) Close() error {
 // serves the palette (host capabilities) and returns the bake path's clean 501
 // on Deploy. It never fails the plugin: if the manager cannot be built it logs
 // and returns a nil handler (the routes are simply not mounted).
-func (p *sdnAPIPlugin) buildFlowsHandler() (http.Handler, string) {
+func (p *sdnAPIPlugin) buildFlowsHandler(node *core.IpfsNode) (http.Handler, string) {
 	home := flowcc.ResolveHome()
 	cfg := flowconfig.FlowsConfig{
 		Enabled:        true,
@@ -310,6 +314,14 @@ func (p *sdnAPIPlugin) buildFlowsHandler() (http.Handler, string) {
 		if baker, berr := flowrt.NewBaker(home, cfg.MaxMemoryPages); berr == nil {
 			fm.SetBaker(baker)
 			note = "mounted at /api/v1/flows/ — bake path ENABLED (flowcc toolchain staged at " + home.Root() + ")"
+			// Phase-4 Task 3: wire the network-module path to the node's REAL
+			// blockstore + a trust root + the node's publisher signer, so
+			// fetch-to-bake and publish-as-a-module work on a live node (not just
+			// the test harness). Best-effort: a node missing a blockstore or a
+			// non-Ed25519 identity keeps the bake path but no network publish.
+			if netNote := wireFlowNetModules(baker, node); netNote != "" {
+				note += "; " + netNote
+			}
 			// Prewarm the flow-agnostic runtime object in the background so the
 			// first editor Deploy hits the ~3s link-only path instead of paying
 			// the one-time ~35s runtime compile inline on the first bake.
@@ -327,6 +339,58 @@ func (p *sdnAPIPlugin) buildFlowsHandler() (http.Handler, string) {
 	mux := http.NewServeMux()
 	flowrt.RegisterAPI(mux, fm)
 	return mux, note
+}
+
+// wireFlowNetModules attaches the node's REAL content-addressed blockstore and a
+// live trust root to the flow baker's network-module path (Phase-4 Task 3):
+//
+//   - The fetcher's blockstore is node.Blockstore — the SAME store an $APP's
+//     content-hash module refs resolve from — so a published flow-module is
+//     persisted where a fetch-to-bake reads it.
+//   - The trust root is a modulert.ModuleSignaturePolicy whose TrustedSigners
+//     includes the node's own Ed25519 publisher key, so the node trusts (and can
+//     fetch-to-bake) flow-modules it publishes. Additional external publisher keys
+//     are added by extending this policy (the same signer-key model the module
+//     load gate uses). Signed-only stays fail-closed: an untrusted signer is
+//     refused.
+//   - The publisher signer signs a bundle's content-hash digest with the node's
+//     Ed25519 identity — the SAME Ed25519-over-content-hash primitive modulert's
+//     module publication signature uses, so a flow published as a module verifies
+//     through the identical gate as any other module.
+//
+// Returns a short status note (empty when nothing could be wired). Never fails
+// the plugin: a node without a blockstore or with a non-Ed25519 identity simply
+// keeps bake without network publish.
+func wireFlowNetModules(baker *flowrt.Baker, node *core.IpfsNode) string {
+	if node == nil || node.Blockstore == nil {
+		return "network publish DISABLED (no blockstore)"
+	}
+	priv := node.PrivateKey
+	if priv == nil || priv.GetPublic().Type() != ic.Ed25519 {
+		return "network publish DISABLED (node identity is not Ed25519)"
+	}
+	pubRaw, err := priv.GetPublic().Raw()
+	if err != nil || len(pubRaw) != ed25519.PublicKeySize {
+		return "network publish DISABLED (could not export node publisher key)"
+	}
+
+	// Trust root: the node's own publisher key (self-trust), expressed as the
+	// modulert publication-signature policy so external publisher keys can be
+	// added the same way the module load gate trusts them.
+	policy := &modulert.ModuleSignaturePolicy{
+		TrustedSigners: []ed25519.PublicKey{ed25519.PublicKey(append([]byte(nil), pubRaw...))},
+	}
+	baker.SetNetModules(flowrt.NewNetModuleFetcher(node.Blockstore, policy.TrustedSigners))
+
+	pubHex := hex.EncodeToString(pubRaw)
+	baker.SetPublisher(func(digest []byte) (string, string, error) {
+		sig, serr := priv.Sign(digest) // Ed25519 over the content-hash digest
+		if serr != nil {
+			return "", "", serr
+		}
+		return base64.StdEncoding.EncodeToString(sig), pubHex, nil
+	})
+	return "network publish ENABLED (blockstore + self-trusted Ed25519 publisher " + pubHex[:12] + "…)"
 }
 
 // newRootHandler composes the single loopback listener's routing: the
