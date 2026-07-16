@@ -310,6 +310,16 @@ func (p *sdnAPIPlugin) buildFlowsHandler() (http.Handler, string) {
 		if baker, berr := flowrt.NewBaker(home, cfg.MaxMemoryPages); berr == nil {
 			fm.SetBaker(baker)
 			note = "mounted at /api/v1/flows/ — bake path ENABLED (flowcc toolchain staged at " + home.Root() + ")"
+			// Prewarm the flow-agnostic runtime object in the background so the
+			// first editor Deploy hits the ~3s link-only path instead of paying
+			// the one-time ~35s runtime compile inline on the first bake.
+			go func() {
+				if cached, perr := baker.PrewarmRuntime(context.Background()); perr != nil {
+					log.Warnf("SDN flow bake prewarm failed: %v", perr)
+				} else {
+					log.Infof("SDN flow bake prewarm ready (runtime cached=%v)", cached)
+				}
+			}()
 		} else {
 			note = fmt.Sprintf("mounted at /api/v1/flows/ — toolchain present but baker init failed (%v); Deploy returns 501", berr)
 		}
