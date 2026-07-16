@@ -136,13 +136,41 @@ func (h Home) Staged() bool {
 // dist/guest-link directory: the guest-link object's exported entry symbols,
 // keyed by method id. It is the authoritative (pluginId, method) -> symbol map
 // the bake descriptor generator resolves against.
+//
+// MethodPorts is the Phase-2 enrichment: the per-method schema-typed ports
+// derived from the module's plugin-manifest.json at stage time (see
+// methodPortsFromManifest). It carries each port's SDS type token(s) so the
+// palette + flow editor can reject wires whose producer output type is not in
+// the consumer input's accepted set. It is absent for a module staged without a
+// manifest (the editor then treats those ports as untyped "any").
 type ModuleMetadata struct {
-	Version       int               `json:"version"`
-	Format        string            `json:"format"`
-	Language      string            `json:"language"`
-	ThreadModel   string            `json:"threadModel"`
-	SymbolPrefix  string            `json:"symbolPrefix"`
-	MethodSymbols map[string]string `json:"methodSymbols"`
+	Version       int                `json:"version"`
+	Format        string             `json:"format"`
+	Language      string             `json:"language"`
+	ThreadModel   string             `json:"threadModel"`
+	SymbolPrefix  string             `json:"symbolPrefix"`
+	MethodSymbols map[string]string  `json:"methodSymbols"`
+	MethodPorts   []MethodPortSchema `json:"methodPorts,omitempty"`
+}
+
+// MethodPortSchema carries one method's schema-typed input/output ports, keyed
+// by methodId (matching a MethodSymbols key). Derived from plugin-manifest.json.
+type MethodPortSchema struct {
+	MethodID    string       `json:"methodId"`
+	InputPorts  []PortSchema `json:"inputPorts,omitempty"`
+	OutputPorts []PortSchema `json:"outputPorts,omitempty"`
+}
+
+// PortSchema is one port's identity + the SDS type(s) it produces (output) or
+// accepts (input). Types holds normalized SDS type tokens (fileIdentifier with a
+// leading '$' stripped, else rootTypeName, else the schema basename). Any is set
+// when the manifest declares acceptsAnyFlatbuffer for the port — a wildcard that
+// accepts/produces anything. A port with neither Types nor Any is undeclared and
+// is likewise treated as "any" by the wire-compatibility check.
+type PortSchema struct {
+	PortID string   `json:"portId"`
+	Types  []string `json:"types,omitempty"`
+	Any    bool     `json:"any,omitempty"`
 }
 
 // LoadModuleMetadata reads a staged module's metadata.json.
@@ -199,8 +227,12 @@ func StageToolchain(home Home, srcBox, srcSysroot, srcTemplateDir string) error 
 
 // StageModule stages one module's guest-link object + metadata under the home,
 // keyed by pluginId. linkObjPath is the module's dist/guest-link/module-link.o
-// and metadataPath its dist/guest-link/metadata.json.
-func StageModule(home Home, pluginID, linkObjPath, metadataPath string) error {
+// and metadataPath its dist/guest-link/metadata.json. manifestPath, when
+// non-empty and readable, is the module's dist/plugin-manifest.json — its
+// per-method schema-typed ports are merged into the staged metadata.json as
+// MethodPorts so the palette + editor can type-check wires. A missing or
+// unparsable manifest is not an error (the module stages without port types).
+func StageModule(home Home, pluginID, linkObjPath, metadataPath, manifestPath string) error {
 	if pluginID == "" {
 		return fmt.Errorf("flowcc: StageModule: empty pluginId")
 	}
@@ -211,10 +243,135 @@ func StageModule(home Home, pluginID, linkObjPath, metadataPath string) error {
 	if err := copyFile(linkObjPath, filepath.Join(dir, "module-link.o")); err != nil {
 		return fmt.Errorf("flowcc: stage module %q object: %w", pluginID, err)
 	}
-	if err := copyFile(metadataPath, filepath.Join(dir, "metadata.json")); err != nil {
+	if err := stageModuleMetadata(filepath.Join(dir, "metadata.json"), metadataPath, manifestPath); err != nil {
 		return fmt.Errorf("flowcc: stage module %q metadata: %w", pluginID, err)
 	}
 	return nil
+}
+
+// stageModuleMetadata writes the enriched metadata.json into the home: the
+// dist metadata verbatim, plus MethodPorts derived from the plugin manifest when
+// one is available. If the manifest is missing/unparsable the metadata is copied
+// through unchanged, so a module always stages even with no port schema.
+func stageModuleMetadata(destPath, srcMetadataPath, manifestPath string) error {
+	raw, err := os.ReadFile(srcMetadataPath)
+	if err != nil {
+		return err
+	}
+	ports := methodPortsFromManifest(manifestPath) // nil on missing/unparsable
+	if len(ports) == 0 {
+		// No enrichment to add — preserve the dist metadata byte-for-byte.
+		return os.WriteFile(destPath, raw, 0o644)
+	}
+	var meta ModuleMetadata
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		// Metadata we cannot parse still stages verbatim (bake reads it itself).
+		return os.WriteFile(destPath, raw, 0o644)
+	}
+	meta.MethodPorts = ports
+	out, err := json.MarshalIndent(&meta, "", "  ")
+	if err != nil {
+		return os.WriteFile(destPath, raw, 0o644)
+	}
+	return os.WriteFile(destPath, out, 0o644)
+}
+
+// methodPortsFromManifest reads a module's plugin-manifest.json and extracts the
+// per-method schema-typed ports (acceptedTypeSets -> SDS type tokens). It returns
+// nil for an empty path, a missing/unreadable file, or a manifest with no
+// methods, so callers can treat "no port schema" uniformly.
+func methodPortsFromManifest(manifestPath string) []MethodPortSchema {
+	if manifestPath == "" {
+		return nil
+	}
+	b, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return nil
+	}
+	var m struct {
+		Methods []struct {
+			MethodID    string         `json:"methodId"`
+			InputPorts  []manifestPort `json:"inputPorts"`
+			OutputPorts []manifestPort `json:"outputPorts"`
+		} `json:"methods"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil
+	}
+	out := make([]MethodPortSchema, 0, len(m.Methods))
+	for _, meth := range m.Methods {
+		if meth.MethodID == "" {
+			continue
+		}
+		out = append(out, MethodPortSchema{
+			MethodID:    meth.MethodID,
+			InputPorts:  portSchemas(meth.InputPorts),
+			OutputPorts: portSchemas(meth.OutputPorts),
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// manifestPort mirrors the acceptedTypeSets shape of a plugin-manifest.json port.
+type manifestPort struct {
+	PortID           string `json:"portId"`
+	AcceptedTypeSets []struct {
+		AllowedTypes []struct {
+			SchemaName           string `json:"schemaName"`
+			FileIdentifier       string `json:"fileIdentifier"`
+			RootTypeName         string `json:"rootTypeName"`
+			AcceptsAnyFlatbuffer bool   `json:"acceptsAnyFlatbuffer"`
+		} `json:"allowedTypes"`
+	} `json:"acceptedTypeSets"`
+}
+
+// portSchemas reduces a method's manifest ports to PortSchema: the union of
+// concrete SDS type tokens across the port's acceptedTypeSets, with Any set when
+// any allowedType is an acceptsAnyFlatbuffer wildcard.
+func portSchemas(ports []manifestPort) []PortSchema {
+	out := make([]PortSchema, 0, len(ports))
+	for _, p := range ports {
+		ps := PortSchema{PortID: p.PortID}
+		seen := map[string]bool{}
+		for _, set := range p.AcceptedTypeSets {
+			for _, a := range set.AllowedTypes {
+				if a.AcceptsAnyFlatbuffer {
+					ps.Any = true
+					continue
+				}
+				tok := sdsTypeToken(a.FileIdentifier, a.RootTypeName, a.SchemaName)
+				if tok != "" && !seen[tok] {
+					seen[tok] = true
+					ps.Types = append(ps.Types, tok)
+				}
+			}
+		}
+		out = append(out, ps)
+	}
+	return out
+}
+
+// sdsTypeToken derives a stable, human-readable SDS type token for wire matching:
+// the fileIdentifier with a leading '$' stripped (e.g. "$OMM" -> "OMM"), else the
+// rootTypeName, else the schema basename with a trailing ".fbs"/path removed.
+func sdsTypeToken(fileID, rootType, schema string) string {
+	if fileID != "" {
+		return strings.TrimPrefix(fileID, "$")
+	}
+	if rootType != "" {
+		return rootType
+	}
+	s := schema
+	if strings.HasSuffix(s, ".fbs") {
+		if i := strings.LastIndex(s, "/"); i >= 0 {
+			s = s[i+1:]
+		}
+		s = strings.TrimSuffix(s, ".fbs")
+	}
+	return s
 }
 
 // StageModulesFromDist walks a modules monorepo dist tree and stages every
@@ -240,7 +397,13 @@ func StageModulesFromDist(home Home, distRoot string) ([]string, error) {
 		if pluginID == "" {
 			return nil
 		}
-		if err := StageModule(home, pluginID, p, metaPath); err != nil {
+		// dist/plugin-manifest.json is the sibling of dist/guest-link; its typed
+		// ports enrich the staged metadata (Phase 2). Absent is tolerated.
+		manifestPath := filepath.Join(filepath.Dir(gdir), "plugin-manifest.json")
+		if _, err := os.Stat(manifestPath); err != nil {
+			manifestPath = ""
+		}
+		if err := StageModule(home, pluginID, p, metaPath, manifestPath); err != nil {
 			return err
 		}
 		staged = append(staged, pluginID)

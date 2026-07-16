@@ -25,17 +25,30 @@ import (
 	"net/http"
 	"os"
 	"sort"
+
+	"github.com/ipfs/kubo/sdn/flowcc"
 )
 
-// PaletteMethod is one draggable node type: a module/capability method plus the
-// port ids a wire can attach to. In Phase 1 a staged module's method carries the
-// generic linked-direct ports ("in"/"out"); a capability method carries the
-// ports declared in its descriptor. Phase 2 adds an SDS schema per port here.
+// PalettePort is one draggable-node port with its SDS schema type(s). Types are
+// the normalized SDS type tokens (e.g. "OMM", "CDM") the port produces (output)
+// or accepts (input); Any marks an acceptsAnyFlatbuffer wildcard. A port with
+// neither is undeclared and the editor treats it as "any" — it wires to anything.
+type PalettePort struct {
+	PortID string   `json:"portId"`
+	Types  []string `json:"types,omitempty"`
+	Any    bool     `json:"any,omitempty"`
+}
+
+// PaletteMethod is one draggable node type: a module/capability method plus its
+// typed ports. Phase 2 carries each port's SDS type set (Types/Any) so the editor
+// can reject a wire whose producer output type is not in the consumer input's
+// accepted set. A staged module's ports come from its manifest (via the staged
+// metadata's MethodPorts); a capability method's ports are untyped ("any").
 type PaletteMethod struct {
-	MethodID    string   `json:"methodId"`
-	Description string   `json:"description,omitempty"`
-	InputPorts  []string `json:"inputPorts"`
-	OutputPorts []string `json:"outputPorts"`
+	MethodID    string        `json:"methodId"`
+	Description string        `json:"description,omitempty"`
+	InputPorts  []PalettePort `json:"inputPorts"`
+	OutputPorts []PalettePort `json:"outputPorts"`
 }
 
 // PaletteModule is one locally-available node source and its methods. Kind is
@@ -55,11 +68,21 @@ type Palette struct {
 	Modules      []PaletteModule `json:"modules"`
 }
 
-// StagedModule is one guest-link module staged for baking, with the method ids
-// its metadata.json exports an entry symbol for.
+// StagedModule is one guest-link module staged for baking, with the methods its
+// metadata.json exports an entry symbol for (each carrying its schema-typed
+// ports from the staged metadata's MethodPorts).
 type StagedModule struct {
 	PluginID string
-	Methods  []string
+	Methods  []StagedMethod
+}
+
+// StagedMethod is one bakeable method plus its schema-typed ports. Ports are nil
+// when the module was staged without a manifest (the editor treats those as
+// untyped "any").
+type StagedMethod struct {
+	MethodID    string
+	InputPorts  []flowcc.PortSchema
+	OutputPorts []flowcc.PortSchema
 }
 
 // StagedModules enumerates the guest-link modules staged under the baker's
@@ -67,10 +90,17 @@ type StagedModule struct {
 // pluginId; for the dotted java-style pluginIds SDN modules use, the directory
 // name is the pluginId verbatim. The methods come from the staged metadata.json
 // — the same map the bake resolves entry symbols from — so every method listed
-// here is one this node can bake. A missing modules/ dir (no modules staged)
-// returns an empty slice, not an error.
+// here is one this node can bake; each method's typed ports come from the same
+// metadata's MethodPorts (the manifest schema captured at stage time). A missing
+// modules/ dir (no modules staged) returns an empty slice, not an error.
 func (b *Baker) StagedModules() ([]StagedModule, error) {
-	entries, err := os.ReadDir(b.home.ModulesDir())
+	return stagedModulesFromHome(b.home)
+}
+
+// stagedModulesFromHome is the home-scoped enumerator (Baker-independent so the
+// palette can list staged modules without holding a Baker reference).
+func stagedModulesFromHome(home flowcc.Home) ([]StagedModule, error) {
+	entries, err := os.ReadDir(home.ModulesDir())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -83,15 +113,25 @@ func (b *Baker) StagedModules() ([]StagedModule, error) {
 			continue
 		}
 		pluginID := e.Name()
-		meta, err := b.home.LoadModuleMetadata(pluginID)
+		meta, err := home.LoadModuleMetadata(pluginID)
 		if err != nil {
 			continue // a dir without a readable metadata.json is not a staged module
 		}
-		methods := make([]string, 0, len(meta.MethodSymbols))
-		for m := range meta.MethodSymbols {
-			methods = append(methods, m)
+		// Index the manifest-derived port schema by methodId for O(1) lookup.
+		portsByMethod := make(map[string]flowcc.MethodPortSchema, len(meta.MethodPorts))
+		for _, mp := range meta.MethodPorts {
+			portsByMethod[mp.MethodID] = mp
 		}
-		sort.Strings(methods)
+		methods := make([]StagedMethod, 0, len(meta.MethodSymbols))
+		for m := range meta.MethodSymbols {
+			sm := StagedMethod{MethodID: m}
+			if mp, ok := portsByMethod[m]; ok {
+				sm.InputPorts = mp.InputPorts
+				sm.OutputPorts = mp.OutputPorts
+			}
+			methods = append(methods, sm)
+		}
+		sort.Slice(methods, func(i, j int) bool { return methods[i].MethodID < methods[j].MethodID })
 		out = append(out, StagedModule{PluginID: pluginID, Methods: methods})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].PluginID < out[j].PluginID })
@@ -111,24 +151,49 @@ func handlePalette(w http.ResponseWriter, r *http.Request, mgr *FlowManager) {
 	if b := mgr.Baker(); b != nil {
 		if staged, err := b.StagedModules(); err == nil {
 			for _, sm := range staged {
-				methods := make([]PaletteMethod, 0, len(sm.Methods))
-				for _, m := range sm.Methods {
-					methods = append(methods, PaletteMethod{
-						MethodID:    m,
-						InputPorts:  []string{"in"},
-						OutputPorts: []string{"out"},
-					})
-				}
-				pal.Modules = append(pal.Modules, PaletteModule{
-					PluginID: sm.PluginID,
-					Kind:     "module",
-					Methods:  methods,
-				})
+				pal.Modules = append(pal.Modules, stagedModulePalette(sm))
 			}
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(pal)
+}
+
+// stagedModulePalette adapts one staged module into a palette module with its
+// methods' schema-typed ports. A method with no manifest-derived ports falls
+// back to the generic linked-direct in/out ports (untyped "any") so the editor
+// still renders + wires it.
+func stagedModulePalette(sm StagedModule) PaletteModule {
+	methods := make([]PaletteMethod, 0, len(sm.Methods))
+	for _, m := range sm.Methods {
+		in := portSchemaToPalette(m.InputPorts)
+		out := portSchemaToPalette(m.OutputPorts)
+		if len(in) == 0 {
+			in = []PalettePort{{PortID: "in", Any: true}}
+		}
+		if len(out) == 0 {
+			out = []PalettePort{{PortID: "out", Any: true}}
+		}
+		methods = append(methods, PaletteMethod{
+			MethodID:    m.MethodID,
+			InputPorts:  in,
+			OutputPorts: out,
+		})
+	}
+	return PaletteModule{PluginID: sm.PluginID, Kind: "module", Methods: methods}
+}
+
+// portSchemaToPalette maps the staged (flowcc) port schema onto the palette wire
+// shape.
+func portSchemaToPalette(ports []flowcc.PortSchema) []PalettePort {
+	if len(ports) == 0 {
+		return nil
+	}
+	out := make([]PalettePort, 0, len(ports))
+	for _, p := range ports {
+		out = append(out, PalettePort{PortID: p.PortID, Types: p.Types, Any: p.Any})
+	}
+	return out
 }
 
 // capabilityPalette adapts the host capability descriptors into palette modules.
@@ -159,22 +224,25 @@ func capabilityPalette() []PaletteModule {
 			Kind:         "capability",
 		}
 		for _, m := range d.Methods {
-			in := m.InputPorts
-			if in == nil {
-				in = []string{}
-			}
-			outp := m.OutputPorts
-			if outp == nil {
-				outp = []string{}
-			}
 			mod.Methods = append(mod.Methods, PaletteMethod{
 				MethodID:    m.MethodID,
 				Description: m.Description,
-				InputPorts:  in,
-				OutputPorts: outp,
+				InputPorts:  capabilityPorts(m.InputPorts),
+				OutputPorts: capabilityPorts(m.OutputPorts),
 			})
 		}
 		out = append(out, mod)
+	}
+	return out
+}
+
+// capabilityPorts wraps a capability descriptor's string port ids as untyped
+// palette ports (Any: true) — host-capability ports carry no SDS schema yet, so
+// they accept/produce anything. Always returns a non-nil (possibly empty) slice.
+func capabilityPorts(ids []string) []PalettePort {
+	out := make([]PalettePort, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, PalettePort{PortID: id, Any: true})
 	}
 	return out
 }
