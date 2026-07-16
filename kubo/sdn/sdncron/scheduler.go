@@ -249,9 +249,17 @@ func (s *Scheduler) runTimer(ctx context.Context, r *registered, tc *timerCtl) {
 }
 
 // fire runs one scheduled invocation. InvokeCron applies the module's own
-// scheduled resource budget; errors are logged, never fatal.
+// scheduled resource budget; errors are logged, never fatal. The module's
+// configured timer_input (if any) is passed as the invoke payload — the
+// config-driven seam for a data-source module's pull config (e.g. objectCap).
+// The config is read under s.mu, then released before the (potentially minutes-
+// long) guest execution.
 func (s *Scheduler) fire(ctx context.Context, r *registered, method string) {
-	_, err := r.mod.InvokeCron(ctx, method, nil)
+	s.mu.Lock()
+	input := r.config.timerInput()
+	s.mu.Unlock()
+
+	_, err := r.mod.InvokeCron(ctx, method, input)
 	r.statsMu.Lock()
 	r.lastRun = time.Now().UTC()
 	r.statsMu.Unlock()
