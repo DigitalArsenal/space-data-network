@@ -306,6 +306,49 @@ extern "C" void plugin_set_error(const char *error_code, const char *error_messa
 }
 
 // ---------------------------------------------------------------------------
+// Generic shim I/O control — lets a caller INSIDE this same wasm drive a linked
+// guest-link entry over the SHARED invocation shim: stage a set of input frames,
+// call the entry, then read back the frames it pushed. This is the primitive a
+// SUB-FLOW module wrapper uses (a baked flow re-exported as a single guest-link
+// method — see sdn/flowrt/subflow.go): the wrapper reads the outer node's
+// aggregate inputs (plugin_get_input_*), then for each of its inner nodes stages
+// that node's queued frames here, calls the inner entry, and harvests the outputs
+// — all over the one shim. Because no second flow_runtime/scheduler is linked in,
+// the sub-flow object carries NO duplicate runtime symbols and needs no symbol
+// renaming to compose into an outer flow. Inert for ordinary flows (unreferenced).
+// ---------------------------------------------------------------------------
+FLOW_EXPORT void space_data_module_shim_reset_inputs(void) { g_shim_inputs.clear(); }
+
+FLOW_EXPORT void space_data_module_shim_add_input(const char *port_id, const uint8_t *payload,
+                                                  uint32_t payload_length) {
+  plugin_input_frame_t input;
+  memset(&input, 0, sizeof(input));
+  input.port_id = port_id;
+  input.payload = payload;
+  input.payload_length = payload_length;
+  input.byte_length = payload_length;
+  input.size = payload_length;
+  input.alignment = 8;
+  input.required_alignment = 1;
+  input.wire_format = PLUGIN_PAYLOAD_WIRE_FORMAT_ALIGNED_BINARY;
+  g_shim_inputs.push_back(input);
+}
+
+FLOW_EXPORT uint32_t space_data_module_shim_output_count(void) {
+  return static_cast<uint32_t>(g_shim_outputs.size());
+}
+FLOW_EXPORT const char *space_data_module_shim_output_port(uint32_t index) {
+  return index < g_shim_outputs.size() ? g_shim_outputs[index].port.c_str() : "";
+}
+FLOW_EXPORT const uint8_t *space_data_module_shim_output_payload(uint32_t index) {
+  if (index >= g_shim_outputs.size() || g_shim_outputs[index].payload.empty()) return nullptr;
+  return g_shim_outputs[index].payload.data();
+}
+FLOW_EXPORT uint32_t space_data_module_shim_output_size(uint32_t index) {
+  return index < g_shim_outputs.size() ? static_cast<uint32_t>(g_shim_outputs[index].payload.size()) : 0;
+}
+
+// ---------------------------------------------------------------------------
 // space_data_module_runtime_* exports
 // ---------------------------------------------------------------------------
 
