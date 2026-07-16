@@ -75,6 +75,12 @@ func (h Home) Root() string { return h.root }
 // BoxPath is the resolved llvm-box.wasm location.
 func (h Home) BoxPath() string { return filepath.Join(h.root, "llvm-box.wasm") }
 
+// BoxAotPath is the AOT-compiled llvm-box artifact (WasmEdge universal-wasm
+// format: native code in a custom section, still a valid .wasm). It sits next to
+// the interpreted box; when present the Compiler loads it so clang/wasm-ld run
+// native instead of interpreted. See CompileBoxAOT (aot.go).
+func (h Home) BoxAotPath() string { return h.BoxPath() + ".aot" }
+
 // SysrootDir is the resolved sysroot tree location.
 func (h Home) SysrootDir() string { return filepath.Join(h.root, "sysroot") }
 

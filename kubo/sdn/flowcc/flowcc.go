@@ -92,6 +92,10 @@ const EnvLLVMSysroot = "SDN_LLVM_SYSROOT"
 type Compiler struct {
 	wasm    []byte
 	sysroot string // host path of the read-only sysroot dir ("" = none)
+	// aotPath, when set, is a WasmEdge AOT-compiled universal-wasm build of the
+	// box; Run loads it (native execution of clang/wasm-ld) instead of
+	// interpreting c.wasm. Empty = interpreter mode (fallback). See aot.go.
+	aotPath string
 }
 
 // Result is the outcome of a single Run.
@@ -165,8 +169,22 @@ func NewWithSysroot(llvmBoxPath, sysrootPath string) (*Compiler, error) {
 			return nil, fmt.Errorf("flowcc: sysroot %q is not a directory", sysrootPath)
 		}
 	}
-	return &Compiler{wasm: b, sysroot: sysrootPath}, nil
+	// Prefer an AOT-compiled box sitting next to the interpreted one (see
+	// aot.go). It runs clang/wasm-ld native, cutting the residual link-only bake
+	// time. Falls back silently to interpreter mode when absent. FLOWCC_NO_AOT
+	// forces interpreter mode (used to prove identical output).
+	aotPath := ""
+	if os.Getenv("FLOWCC_NO_AOT") == "" {
+		if cand := llvmBoxPath + ".aot"; fileExists(cand) {
+			aotPath = cand
+		}
+	}
+	return &Compiler{wasm: b, sysroot: sysrootPath, aotPath: aotPath}, nil
 }
+
+// AOTEnabled reports whether this compiler loads an AOT-compiled box (native)
+// rather than interpreting the .wasm.
+func (c *Compiler) AOTEnabled() bool { return c.aotPath != "" }
 
 // Run executes one tool invocation. args is the full guest argv (args[0]
 // selects the tool: "clang" → clang, "lld" → wasm-ld). inFiles seeds the run
@@ -213,7 +231,14 @@ func (c *Compiler) Run(ctx context.Context, args []string, inFiles map[string][]
 		return Result{}, fmt.Errorf("flowcc: register host module: %w", err)
 	}
 
-	if err := vm.LoadWasmBuffer(c.wasm); err != nil {
+	// Load the AOT box (native) from file when present; else interpret the
+	// in-memory .wasm. AOT is loaded from a path so WasmEdge picks up the native
+	// custom section (mmap); the imports resolve at instantiation either way.
+	if c.aotPath != "" {
+		if err := vm.LoadWasmFile(c.aotPath); err != nil {
+			return Result{}, fmt.Errorf("flowcc: load AOT box %s: %w", c.aotPath, err)
+		}
+	} else if err := vm.LoadWasmBuffer(c.wasm); err != nil {
 		return Result{}, fmt.Errorf("flowcc: load: %w", err)
 	}
 	if err := vm.Validate(); err != nil {
