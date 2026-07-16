@@ -1,0 +1,854 @@
+<!doctype html>
+<!--
+  SDN Flow Editor (App 3 of the SDN apps program) — a Node-RED-style flow editor
+  that is itself an SDS $APP record. Compose the node's locally-available modules
+  into a flow graph on a hand-rolled node/edge canvas, then Deploy: the graph is
+  POSTed to this node's proven bake endpoint, which composes + links a runtime.wasm
+  from the referenced modules' guest-link objects and runs it.
+
+  Single self-contained HTML+CSS+JS document. NO external references of ANY kind
+  (no CDN scripts, no external fonts, no remote images): every network call is a
+  same-origin GET/POST to this node. The two font families are the node's own
+  self-hosted latin-subset woff2 served at /fonts/*. This whole file is the inline
+  CONTENT of the App 3 SDS $APP record — the record's entry UI page — served by the
+  node at /sdn/v1/apps/flow-editor.
+
+  API wiring (all same-origin):
+    GET  /api/v1/flows/palette   local node-type catalog: host capabilities +
+                                 every guest-link module staged for baking (Phase 1
+                                 local source; Phase 2 swaps in network discovery)
+    GET  /sdn/v1/modules         the node's registered modules (status readout)
+    GET  /sdn/v1/node            node identity (best effort)
+    POST /api/v1/flows/bake      { flowJson, moduleRefs } -> bake + install + run a
+                                 composed runtime.wasm; returns programId + bakeMillis
+
+  DESIGN: SpaceAware.io "SDN Console" system — canvas #04060a, Chakra Petch +
+  IBM Plex Mono self-hosted, border-radius 0, cyan/ice accents. NO directional
+  arrow glyphs on any button/nav label (flow edges are functional controls where
+  the arrow IS the control — those carry an arrowhead marker, which is allowed).
+
+  HONESTY CONTRACT: the palette is whatever the node actually has staged; a node
+  with no toolchain staged shows only the host capability nodes and a Deploy there
+  returns the bake path's clean "toolchain not staged" error, surfaced verbatim.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>SDN Flow Editor</title>
+<style>
+  @font-face { font-family:'Chakra Petch'; font-style:normal; font-weight:400; font-display:swap; src:url('/fonts/chakra-400.woff2') format('woff2'); }
+  @font-face { font-family:'Chakra Petch'; font-style:normal; font-weight:500; font-display:swap; src:url('/fonts/chakra-500.woff2') format('woff2'); }
+  @font-face { font-family:'Chakra Petch'; font-style:normal; font-weight:600; font-display:swap; src:url('/fonts/chakra-600.woff2') format('woff2'); }
+  @font-face { font-family:'Chakra Petch'; font-style:normal; font-weight:700; font-display:swap; src:url('/fonts/chakra-700.woff2') format('woff2'); }
+  @font-face { font-family:'IBM Plex Mono'; font-style:normal; font-weight:400; font-display:swap; src:url('/fonts/plex-400.woff2') format('woff2'); }
+  @font-face { font-family:'IBM Plex Mono'; font-style:normal; font-weight:500; font-display:swap; src:url('/fonts/plex-500.woff2') format('woff2'); }
+  @font-face { font-family:'IBM Plex Mono'; font-style:normal; font-weight:600; font-display:swap; src:url('/fonts/plex-600.woff2') format('woff2'); }
+
+  :root {
+    color-scheme: dark;
+    --canvas:#04060a; --panel-well:#090d12;
+    --panel-raised:linear-gradient(178deg,#16252f,#0a141b);
+    --header-bg:rgba(10,15,21,0.92);
+    --line:rgba(90,150,180,0.22); --line-soft:rgba(90,150,180,0.12);
+    --line-faint:rgba(90,150,180,0.07); --line-strong:rgba(90,150,180,0.3);
+    --ink:#eaf6f8; --body:#c7d6dd; --body-2:#cfe3ec; --muted:#9fb3bc;
+    --muted-2:#7d929b; --kicker:#5a7a8a; --kicker-2:#5d7681; --faint:#48606b;
+    --cyan:#35c9d8; --cyan-light:#9fe9f2; --ice:#9fd4f5; --ice-2:#4aa6e0;
+    --green:#5ad6a0; --amber:#ffb24d; --red:#ff6b6b; --red-light:#ff8d8d;
+    --font-display:'Chakra Petch','IBM Plex Mono',ui-monospace,monospace;
+    --font-mono:'IBM Plex Mono',ui-monospace,'SFMono-Regular',Menlo,monospace;
+  }
+  * { box-sizing:border-box; border-radius:0; }
+  html, body { margin:0; padding:0; height:100%; background:var(--canvas); }
+  body {
+    font-family:var(--font-mono); color:var(--body);
+    background:radial-gradient(circle at 50% -8%, #0a1722, #04060a 55%) fixed;
+    -webkit-font-smoothing:antialiased; font-size:13px; line-height:1.5;
+    display:flex; flex-direction:column; height:100vh; overflow:hidden;
+  }
+  ::-webkit-scrollbar { width:9px; height:9px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:rgba(110,170,190,0.25); }
+  @keyframes sdn-pulse { 0%,100%{opacity:1;} 50%{opacity:.32;} }
+  @keyframes sdn-spin { to { transform:rotate(360deg); } }
+  a { color:var(--ice); text-decoration:none; }
+
+  /* --------------------------------------------------------- top bar */
+  .top-bar {
+    flex:none; display:flex; align-items:center; gap:16px;
+    border-bottom:1px solid rgba(90,150,180,0.18); background:var(--header-bg);
+    backdrop-filter:blur(6px); padding:11px 18px;
+  }
+  .brand { display:flex; align-items:center; gap:12px; min-width:0; }
+  .mark { width:28px; height:28px; flex:none; display:grid; place-items:center;
+    color:var(--cyan); font-size:20px; line-height:1;
+    border:1px solid rgba(53,201,216,0.4); background:rgba(53,201,216,0.07); }
+  .eyebrow { font-size:9px; letter-spacing:0.22em; color:var(--kicker-2); margin:0 0 3px; }
+  .title-line { display:flex; align-items:baseline; gap:10px; }
+  .title-line h1 { margin:0; font-family:var(--font-display); font-weight:700;
+    font-size:18px; letter-spacing:0.11em; color:var(--ink); }
+  .title-sub { font-size:10px; letter-spacing:0.15em; color:var(--kicker-2); }
+  .spring { flex:1; }
+  .flow-name { display:flex; align-items:center; gap:8px; }
+  .flow-name label { font-size:9px; letter-spacing:0.15em; color:var(--kicker); }
+  .status-strip { display:flex; gap:7px; align-items:center; }
+  .status-chip { display:inline-flex; align-items:center; gap:6px;
+    border:1px solid var(--line-strong); padding:5px 10px; font-size:11px;
+    letter-spacing:0.07em; color:var(--muted); background:transparent; white-space:nowrap; }
+  .status-chip .dot { width:7px; height:7px; border-radius:50%;
+    background:currentColor; box-shadow:0 0 7px currentColor; }
+  .status-chip.good { color:var(--green); border-color:rgba(90,214,160,0.4); background:rgba(90,214,160,0.06); }
+  .status-chip.live { color:var(--cyan); border-color:rgba(53,201,216,0.45); background:rgba(53,201,216,0.07); }
+  .status-chip.live .dot { animation:sdn-pulse 1.5s ease-in-out infinite; }
+  .status-chip.warn { color:var(--amber); border-color:rgba(255,178,77,0.4); background:rgba(255,178,77,0.06); }
+  .status-chip.bad { color:var(--red); border-color:rgba(255,107,107,0.4); background:rgba(255,107,107,0.06); }
+
+  /* --------------------------------------------------------- buttons + inputs */
+  .btn { display:inline-flex; align-items:center; gap:6px; background:transparent;
+    border:1px solid var(--line-strong); color:var(--muted); padding:6px 13px;
+    font-family:var(--font-display); font-weight:600; font-size:11px; letter-spacing:0.08em;
+    cursor:pointer; transition:border-color .14s,color .14s,background .14s; text-decoration:none; }
+  .btn:hover { border-color:rgba(120,190,230,0.6); color:var(--ink); background:rgba(74,166,224,0.08); }
+  .btn.primary { background:rgba(53,201,216,0.14); border-color:rgba(53,201,216,0.5); color:var(--cyan-light); }
+  .btn.primary:hover { background:rgba(53,201,216,0.22); border-color:rgba(53,201,216,0.7); }
+  .btn.sm { padding:3px 9px; font-size:10px; letter-spacing:0.06em; }
+  .btn:disabled { cursor:not-allowed; opacity:0.45; }
+  .btn:disabled:hover { border-color:var(--line-strong); color:var(--muted); background:transparent; }
+  .input { background:var(--panel-well); border:1px solid rgba(90,150,180,0.2); color:var(--ink);
+    padding:6px 9px; font-family:var(--font-mono); font-size:12px; outline:none; }
+  .input:focus { border-color:rgba(120,190,230,0.6); }
+
+  /* --------------------------------------------------------- editor layout */
+  .editor { flex:1; display:flex; min-height:0; }
+  .palette { flex:none; width:266px; border-right:1px solid var(--line-soft);
+    background:rgba(9,13,18,0.55); display:flex; flex-direction:column; min-height:0; }
+  .palette-head { flex:none; padding:12px 14px 10px; border-bottom:1px solid var(--line-faint); }
+  .palette-kicker { font-size:9.5px; letter-spacing:0.2em; color:var(--kicker); margin:0 0 4px; }
+  .palette-hint { font-size:10px; color:var(--muted-2); }
+  .palette-body { flex:1; overflow-y:auto; padding:8px 10px 20px; }
+  .pal-group { margin-bottom:14px; }
+  .pal-group > .grp-label { display:flex; align-items:center; gap:7px; font-size:9px;
+    letter-spacing:0.16em; color:var(--kicker-2); margin:8px 2px 6px; }
+  .pal-group > .grp-label .rule { flex:1; height:1px; background:rgba(90,150,180,0.1); }
+  .pal-mod { font-size:9px; letter-spacing:0.08em; color:var(--muted-2); margin:8px 3px 4px; overflow-wrap:anywhere; }
+  .pal-item { display:flex; align-items:center; gap:8px; padding:7px 9px; margin:3px 0;
+    border:1px solid var(--line-soft); background:rgba(20,32,40,0.5); cursor:grab;
+    transition:border-color .12s, background .12s; user-select:none; }
+  .pal-item:hover { border-color:rgba(53,201,216,0.5); background:rgba(53,201,216,0.08); }
+  .pal-item:active { cursor:grabbing; }
+  .pal-item .pi-dot { width:8px; height:8px; flex:none; background:var(--cyan); box-shadow:0 0 7px var(--cyan); }
+  .pal-item.cap .pi-dot { background:var(--ice); box-shadow:0 0 7px var(--ice); }
+  .pal-item .pi-name { font-family:var(--font-display); font-weight:600; font-size:12px; color:var(--ink); letter-spacing:0.02em; }
+  .pal-item .pi-sub { font-size:9px; color:var(--muted-2); letter-spacing:0.04em; }
+  .pal-empty { font-size:11px; color:var(--muted-2); padding:10px 4px; line-height:1.6; }
+
+  /* --------------------------------------------------------- canvas */
+  .canvas-wrap { flex:1; position:relative; min-width:0; display:flex; flex-direction:column; }
+  .canvas-toolbar { flex:none; display:flex; align-items:center; gap:8px; padding:8px 14px;
+    border-bottom:1px solid var(--line-faint); background:rgba(9,13,18,0.4); }
+  .canvas-toolbar .tb-label { font-size:9.5px; letter-spacing:0.16em; color:var(--kicker); }
+  .canvas-scroll { flex:1; overflow:auto; position:relative; }
+  .surface { position:relative; width:3200px; height:2000px;
+    background-image:
+      linear-gradient(rgba(90,150,180,0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(90,150,180,0.05) 1px, transparent 1px);
+    background-size:26px 26px; }
+  svg.edges { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; overflow:visible; }
+  svg.edges path.edge { fill:none; stroke:var(--ice-2); stroke-width:2; pointer-events:stroke; cursor:pointer; }
+  svg.edges path.edge:hover { stroke:var(--cyan); }
+  svg.edges path.edge.sel { stroke:var(--cyan-light); stroke-width:2.6; }
+  svg.edges path.bind { fill:none; stroke:var(--amber); stroke-width:2; stroke-dasharray:5 4; pointer-events:stroke; cursor:pointer; }
+  svg.edges path.temp { fill:none; stroke:var(--cyan); stroke-width:2; stroke-dasharray:4 4; opacity:0.85; pointer-events:none; }
+
+  .node { position:absolute; width:190px; background:var(--panel-raised);
+    border:1px solid var(--line); box-shadow:inset 0 1px 0 rgba(150,210,240,0.12), 0 6px 20px rgba(0,0,0,0.4); }
+  .node.sel { border-color:var(--cyan); box-shadow:0 0 0 1px rgba(53,201,216,0.5), 0 6px 22px rgba(0,0,0,0.5); }
+  .node.trigger { width:150px; }
+  .node-head { display:flex; align-items:center; gap:7px; padding:7px 9px; cursor:grab;
+    border-bottom:1px solid var(--line-soft); background:rgba(10,20,26,0.5); }
+  .node-head:active { cursor:grabbing; }
+  .node.trigger .node-head { background:rgba(40,30,10,0.5); border-bottom-color:rgba(255,178,77,0.2); }
+  .node-head .nh-dot { width:8px; height:8px; flex:none; background:var(--cyan); box-shadow:0 0 6px var(--cyan); }
+  .node.cap .node-head .nh-dot { background:var(--ice); box-shadow:0 0 6px var(--ice); }
+  .node.trigger .node-head .nh-dot { background:var(--amber); box-shadow:0 0 6px var(--amber); border-radius:50%; }
+  .node-head .nh-title { flex:1; min-width:0; font-family:var(--font-display); font-weight:600;
+    font-size:12px; color:var(--ink); letter-spacing:0.02em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .node-head .nh-close { flex:none; width:15px; height:15px; display:grid; place-items:center;
+    font-size:12px; color:var(--muted-2); cursor:pointer; border:1px solid transparent; line-height:1; }
+  .node-head .nh-close:hover { color:var(--red-light); border-color:rgba(255,107,107,0.4); }
+  .node-sub { font-size:8.5px; letter-spacing:0.06em; color:var(--muted-2); padding:4px 9px 2px; overflow-wrap:anywhere; }
+  .node-body { position:relative; padding:6px 0 8px; }
+  .port { position:absolute; width:12px; height:12px; background:#0a141b;
+    border:2px solid var(--ice-2); cursor:crosshair; z-index:3; }
+  .port:hover { border-color:var(--cyan); background:rgba(53,201,216,0.3); box-shadow:0 0 8px var(--cyan); }
+  .port.in { border-radius:50%; }
+  .port.out { border-color:var(--cyan); }
+  .port.tgt-ok { border-color:var(--green); background:rgba(90,214,160,0.35); box-shadow:0 0 8px var(--green); }
+  .port-label { position:absolute; font-size:9px; color:var(--muted-2); white-space:nowrap; letter-spacing:0.04em; }
+  .port-label.in { left:14px; }
+  .port-label.out { right:14px; text-align:right; }
+
+  /* --------------------------------------------------------- output dock */
+  .dock { flex:none; border-top:1px solid var(--line-soft); background:rgba(9,13,18,0.7);
+    max-height:236px; display:flex; min-height:0; }
+  .dock-col { flex:1; min-width:0; padding:12px 15px; overflow:auto; }
+  .dock-col + .dock-col { border-left:1px solid var(--line-faint); }
+  .dock-col.narrow { flex:none; width:340px; }
+  .dock-kicker { font-size:9px; letter-spacing:0.18em; color:var(--kicker); margin:0 0 8px; display:flex; align-items:center; gap:8px; }
+  .dock-kicker .rule { flex:1; height:1px; background:rgba(90,150,180,0.1); }
+  pre.json { margin:0; font-family:var(--font-mono); font-size:11px; color:var(--body-2); white-space:pre; line-height:1.45; }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:4px 14px; font-size:11.5px; }
+  .kv dt { color:var(--kicker); letter-spacing:0.1em; font-size:9px; align-self:center; }
+  .kv dd { margin:0; color:var(--body-2); font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+  .kv dd.hi { color:var(--ink); font-family:var(--font-display); font-weight:600; }
+  .spinner { width:12px; height:12px; border:2px solid rgba(120,190,230,0.3); border-top-color:var(--ice);
+    border-radius:50%; display:inline-block; animation:sdn-spin .9s linear infinite; vertical-align:-1px; }
+  .notice { border:1px solid var(--line); border-left:3px solid var(--amber); padding:9px 12px;
+    background:rgba(255,178,77,0.05); color:var(--muted); font-size:11.5px; line-height:1.5; }
+  .notice.bad { border-left-color:var(--red); background:rgba(255,107,107,0.05); }
+  .notice.good { border-left-color:var(--green); background:rgba(90,214,160,0.05); }
+  .notice.live { border-left-color:var(--cyan); background:rgba(53,201,216,0.06); }
+  .notice strong { color:var(--ink); }
+  .dim { color:var(--muted-2); font-size:11px; }
+  .canvas-hint { position:absolute; left:50%; top:80px; transform:translateX(-50%);
+    color:var(--muted-2); font-size:12px; text-align:center; line-height:1.9; pointer-events:none;
+    border:1px dashed var(--line-strong); padding:16px 22px; background:rgba(9,13,18,0.5); }
+  .canvas-hint strong { color:var(--ice); font-family:var(--font-display); letter-spacing:0.06em; }
+</style>
+</head>
+<body>
+
+  <header class="top-bar">
+    <div class="brand">
+      <span class="mark" aria-hidden="true">&#9672;</span>
+      <div>
+        <p class="eyebrow">SPACE DATA NETWORK &middot; APPS PROGRAM</p>
+        <div class="title-line">
+          <h1>FLOW EDITOR</h1>
+          <span class="title-sub">&middot; APP 3 &middot; COMPOSE &amp; BAKE</span>
+        </div>
+      </div>
+    </div>
+    <div class="flow-name">
+      <label for="flow-name-input">FLOW</label>
+      <input class="input" id="flow-name-input" value="editor demo" size="18" spellcheck="false" title="Flow name (becomes the programId slug)">
+    </div>
+    <span class="spring"></span>
+    <div class="status-strip" id="status-strip" aria-live="polite">
+      <span class="status-chip"><span class="dot"></span>CONNECTING</span>
+    </div>
+    <button class="btn primary" id="deploy-btn" title="Assemble the graph and POST it to the node bake endpoint">DEPLOY</button>
+  </header>
+
+  <div class="editor">
+    <aside class="palette">
+      <div class="palette-head">
+        <p class="palette-kicker">MODULE PALETTE</p>
+        <div class="palette-hint" id="palette-hint">Loading node types from this node&hellip;</div>
+      </div>
+      <div class="palette-body" id="palette-body"></div>
+    </aside>
+
+    <div class="canvas-wrap">
+      <div class="canvas-toolbar">
+        <span class="tb-label">CANVAS</span>
+        <button class="btn sm" id="add-trigger-btn" title="Add a timer trigger; wire its port to a node input to bind it">ADD TRIGGER</button>
+        <button class="btn sm" id="delete-sel-btn" title="Delete the selected node or edge (or press Delete)">DELETE SELECTED</button>
+        <button class="btn sm" id="clear-btn" title="Remove every node and edge">CLEAR</button>
+        <span class="spring"></span>
+        <span class="tb-label" id="graph-counts">0 NODES &middot; 0 EDGES</span>
+      </div>
+      <div class="canvas-scroll" id="canvas-scroll">
+        <div class="surface" id="surface">
+          <svg class="edges" id="edges"></svg>
+          <div class="canvas-hint" id="canvas-hint">
+            <strong>COMPOSE A FLOW</strong><br>
+            Drag a module method from the palette onto the canvas (or click it).<br>
+            Drag an <em>out</em> port to an <em>in</em> port to wire nodes.<br>
+            Add a trigger, bind it to a node, then DEPLOY.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="dock">
+    <div class="dock-col">
+      <p class="dock-kicker"><span>ASSEMBLED FLOW GRAPH</span><span class="rule"></span><span class="dim" id="graph-refs">refs: 0</span></p>
+      <pre class="json" id="graph-json">{}</pre>
+    </div>
+    <div class="dock-col narrow">
+      <p class="dock-kicker"><span>BAKE RESULT</span><span class="rule"></span></p>
+      <div id="result-body"><div class="dim">Deploy a flow to bake + run it on this node. A new flow's first bake compiles a fresh runtime and can take ~30s; a re-bake of the same graph is cached and fast.</div></div>
+    </div>
+  </div>
+
+<script>
+"use strict";
+(function () {
+  // ------------------------------------------------------------- constants
+  var W = 190, TRIG_W = 150, HEAD_H = 30, PORT_TOP = 14, PORT_ROW = 22, PORT_HALF = 6;
+  var PROGRAM_PREFIX = "com.digitalarsenal.flows.";
+  var LS_PREFIX = "sdn.flow-editor.";
+
+  // ------------------------------------------------------------- state
+  var state = {
+    flowId: "default",
+    palette: { capabilities: [], modules: [] },
+    methodIndex: {},          // "pluginId::methodId" -> {pluginId, methodId, kind, inputPorts, outputPorts}
+    nodes: {},                // nodeId -> node model
+    edges: [],                // { id, fromNodeId, fromPortId, toNodeId, toPortId }
+    triggers: {},             // triggerId -> { id, x, y }
+    bindings: [],             // { id, triggerId, targetNodeId, targetPortId }
+    seq: 1,
+    selected: null            // { kind:"node"|"edge"|"bind", id }
+  };
+
+  // ------------------------------------------------------------- dom refs
+  var $ = function (id) { return document.getElementById(id); };
+  var surface = $("surface"), edgesSvg = $("edges"), canvasScroll = $("canvas-scroll");
+  var statusStrip = $("status-strip"), paletteBody = $("palette-body"), paletteHint = $("palette-hint");
+  var graphJson = $("graph-json"), resultBody = $("result-body"), graphCounts = $("graph-counts");
+  var graphRefs = $("graph-refs"), canvasHint = $("canvas-hint"), flowNameInput = $("flow-name-input");
+
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]; }); }
+  function shortId(id) { var p = String(id).split("."); return p.length > 1 ? p[p.length - 1] : id; }
+  function slug(s) { return (String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")) || "untitled"; }
+  function methodKey(p, m) { return p + "::" + m; }
+
+  // ------------------------------------------------------------- status
+  function setStatus(chips) {
+    statusStrip.innerHTML = chips.map(function (c) {
+      return '<span class="status-chip ' + (c.cls || "") + '"><span class="dot"></span>' + esc(c.text) + "</span>";
+    }).join("");
+  }
+
+  // ------------------------------------------------------------- palette
+  function indexPalette(pal) {
+    state.methodIndex = {};
+    function add(mod, kind) {
+      (mod.methods || []).forEach(function (m) {
+        state.methodIndex[methodKey(mod.pluginId, m.methodId)] = {
+          pluginId: mod.pluginId, methodId: m.methodId, kind: kind,
+          inputPorts: (m.inputPorts && m.inputPorts.length) ? m.inputPorts.slice() : ["in"],
+          outputPorts: (m.outputPorts && m.outputPorts.length) ? m.outputPorts.slice() : ["out"]
+        };
+      });
+    }
+    (pal.modules || []).forEach(function (mod) { add(mod, "module"); });
+    (pal.capabilities || []).forEach(function (mod) { add(mod, "capability"); });
+  }
+
+  function renderPalette() {
+    var pal = state.palette, html = "";
+    function group(title, mods, kind) {
+      if (!mods || !mods.length) return "";
+      var g = '<div class="pal-group"><div class="grp-label"><span>' + esc(title) + '</span><span class="rule"></span></div>';
+      mods.forEach(function (mod) {
+        if (!mod.methods || !mod.methods.length) return;
+        g += '<div class="pal-mod">' + esc(mod.pluginId) + "</div>";
+        mod.methods.forEach(function (m) {
+          g += '<div class="pal-item ' + (kind === "capability" ? "cap" : "") + '" ' +
+            'data-plugin="' + esc(mod.pluginId) + '" data-method="' + esc(m.methodId) + '" ' +
+            'title="' + esc((m.description || "")) + '">' +
+            '<span class="pi-dot"></span><div style="min-width:0">' +
+            '<div class="pi-name">' + esc(m.methodId) + "</div>" +
+            '<div class="pi-sub">' + (kind === "capability" ? "host capability" : "bakeable module") + "</div>" +
+            "</div></div>";
+        });
+      });
+      return g + "</div>";
+    }
+    html += group("STAGED MODULES", pal.modules, "module");
+    html += group("HOST CAPABILITIES", pal.capabilities, "capability");
+    if (!html) html = '<div class="pal-empty">No node types available. The node has no staged modules or host capabilities to compose.</div>';
+    paletteBody.innerHTML = html;
+    Array.prototype.forEach.call(paletteBody.querySelectorAll(".pal-item"), function (el) {
+      el.addEventListener("pointerdown", onPalettePointerDown);
+    });
+  }
+
+  // ------------------------------------------------------------- geometry
+  function nodeRows(n) { return Math.max(n.inputPorts.length, n.outputPorts.length, 1); }
+  function nodeHeight(n) {
+    if (n.kind === "trigger") return HEAD_H + PORT_TOP + PORT_ROW;
+    return HEAD_H + 18 + PORT_TOP + nodeRows(n) * PORT_ROW;
+  }
+  function portCenter(n, dir, idx) {
+    var w = n.kind === "trigger" ? TRIG_W : W;
+    var subH = (n.kind === "trigger") ? 0 : 18;
+    var top = n.y + HEAD_H + subH + PORT_TOP + idx * PORT_ROW + PORT_HALF;
+    return { x: dir === "out" ? n.x + w : n.x, y: top };
+  }
+
+  // ------------------------------------------------------------- node model + dom
+  function makeNode(pluginId, methodId, kind, x, y) {
+    var mi = state.methodIndex[methodKey(pluginId, methodId)] || { inputPorts: ["in"], outputPorts: ["out"], kind: kind || "module" };
+    var id = "n" + (state.seq++);
+    var n = {
+      id: id, pluginId: pluginId, methodId: methodId, kind: mi.kind || kind || "module",
+      inputPorts: mi.inputPorts.slice(), outputPorts: mi.outputPorts.slice(),
+      x: Math.round(x), y: Math.round(y)
+    };
+    state.nodes[id] = n;
+    return n;
+  }
+  function makeTrigger(x, y) {
+    var id = "t" + (state.seq++);
+    var t = { id: id, x: Math.round(x), y: Math.round(y) };
+    state.triggers[id] = t;
+    return t;
+  }
+
+  function nodeDom(n) {
+    var el = document.createElement("div");
+    el.className = "node " + (n.kind === "capability" ? "cap" : n.kind === "trigger" ? "trigger" : "");
+    el.dataset.node = n.id;
+    var w = n.kind === "trigger" ? TRIG_W : W;
+    el.style.left = n.x + "px"; el.style.top = n.y + "px"; el.style.width = w + "px";
+    var title = n.kind === "trigger" ? "TIMER TRIGGER" : n.methodId;
+    var head = '<div class="node-head" data-drag="1">' +
+      '<span class="nh-dot"></span><span class="nh-title" title="' + esc(n.pluginId ? n.pluginId + " · " + n.methodId : "timer trigger") + '">' + esc(title) + "</span>" +
+      '<span class="nh-close" data-close="1" title="Delete this node">&#10005;</span></div>';
+    var body = "";
+    if (n.kind !== "trigger") {
+      body += '<div class="node-sub">' + esc(shortId(n.pluginId)) + "</div>";
+    }
+    body += '<div class="node-body" style="height:' + (nodeHeight(n) - HEAD_H - (n.kind === "trigger" ? 0 : 18)) + 'px">';
+    if (n.kind === "trigger") {
+      body += portHtml(n, "out", 0, "fire");
+    } else {
+      n.inputPorts.forEach(function (p, i) { body += portHtml(n, "in", i, p); });
+      n.outputPorts.forEach(function (p, i) { body += portHtml(n, "out", i, p); });
+    }
+    body += "</div>";
+    el.innerHTML = head + body;
+    return el;
+  }
+  function portHtml(n, dir, idx, label) {
+    var subH = (n.kind === "trigger") ? 0 : 0; // body is already offset below sub
+    var top = PORT_TOP + idx * PORT_ROW;
+    var side = dir === "out" ? "right:-6px;" : "left:-6px;";
+    return '<div class="port ' + dir + '" data-node="' + n.id + '" data-dir="' + dir + '" data-port="' + esc(label) +
+      '" data-idx="' + idx + '" style="top:' + top + "px;" + side + '"></div>' +
+      '<div class="port-label ' + dir + '" style="top:' + (top + 1) + 'px">' + esc(label) + "</div>";
+  }
+
+  // ------------------------------------------------------------- render
+  function render() {
+    // nodes
+    Array.prototype.forEach.call(surface.querySelectorAll(".node"), function (el) { el.remove(); });
+    Object.keys(state.nodes).forEach(function (id) { surface.appendChild(nodeDom(state.nodes[id])); });
+    Object.keys(state.triggers).forEach(function (id) {
+      var t = state.triggers[id];
+      surface.appendChild(nodeDom({ id: id, kind: "trigger", x: t.x, y: t.y, inputPorts: [], outputPorts: ["fire"], pluginId: "", methodId: "" }));
+    });
+    wireNodeEvents();
+    renderEdges();
+    var total = Object.keys(state.nodes).length, tcount = Object.keys(state.triggers).length;
+    graphCounts.textContent = (total + tcount) + " NODE" + (total + tcount === 1 ? "" : "S") + " · " + state.edges.length + " EDGE" + (state.edges.length === 1 ? "" : "S");
+    canvasHint.style.display = (total + tcount) ? "none" : "block";
+    if (state.selected) {
+      var selEl = surface.querySelector('.node[data-node="' + state.selected.id + '"]');
+      if (selEl && state.selected.kind === "node") selEl.classList.add("sel");
+    }
+    updateGraphPreview();
+    saveLayout();
+  }
+
+  // SVG defs + a persistent temp path, built with innerHTML so the asset carries
+  // no createElementNS namespace literal (keeps the page fully same-origin/offline).
+  var DEFS =
+    '<defs>' +
+    '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4aa6e0"></path></marker>' +
+    '<marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#ffb24d"></path></marker>' +
+    '</defs>' +
+    '<path class="temp" id="temp-edge" style="display:none" d=""></path>';
+
+  function edgePath(a, b) {
+    var dx = Math.max(40, Math.abs(b.x - a.x) * 0.5);
+    return "M" + a.x + "," + a.y + " C" + (a.x + dx) + "," + a.y + " " + (b.x - dx) + "," + b.y + " " + b.x + "," + b.y;
+  }
+  function pathMarkup(id, cls, marker, d) {
+    var sel = state.selected && state.selected.id === id ? " sel" : "";
+    return '<path class="' + cls + sel + '" d="' + d + '" marker-end="url(#' + marker + ')" ' +
+      'data-id="' + id + '" data-kind="' + (cls === "bind" ? "bind" : "edge") + '"></path>';
+  }
+  function renderEdges() {
+    var s = DEFS;
+    state.edges.forEach(function (e) {
+      var from = state.nodes[e.fromNodeId], to = state.nodes[e.toNodeId];
+      if (!from || !to) return;
+      var a = portCenter(from, "out", Math.max(0, from.outputPorts.indexOf(e.fromPortId)));
+      var b = portCenter(to, "in", Math.max(0, to.inputPorts.indexOf(e.toPortId)));
+      s += pathMarkup(e.id, "edge", "arrow", edgePath(a, b));
+    });
+    state.bindings.forEach(function (bd) {
+      var t = state.triggers[bd.triggerId], to = state.nodes[bd.targetNodeId];
+      if (!t || !to) return;
+      var a = portCenter({ x: t.x, y: t.y, kind: "trigger", inputPorts: [], outputPorts: ["fire"] }, "out", 0);
+      var b = portCenter(to, "in", Math.max(0, to.inputPorts.indexOf(bd.targetPortId)));
+      s += pathMarkup(bd.id, "bind", "arrow-amber", edgePath(a, b));
+    });
+    edgesSvg.innerHTML = s;
+  }
+
+  // ------------------------------------------------------------- selection
+  function selectItem(kind, id) {
+    state.selected = { kind: kind, id: id };
+    Array.prototype.forEach.call(surface.querySelectorAll(".node.sel"), function (el) { el.classList.remove("sel"); });
+    Array.prototype.forEach.call(edgesSvg.querySelectorAll("path.sel"), function (el) { el.classList.remove("sel"); });
+    if (kind === "node") {
+      var el = surface.querySelector('.node[data-node="' + id + '"]');
+      if (el) el.classList.add("sel");
+    } else {
+      var p = edgesSvg.querySelector('path[data-id="' + id + '"]');
+      if (p) p.classList.add("sel");
+    }
+  }
+  function deleteSelected() {
+    if (!state.selected) return;
+    var s = state.selected;
+    if (s.kind === "node") {
+      delete state.nodes[s.id];
+      delete state.triggers[s.id];
+      state.edges = state.edges.filter(function (e) { return e.fromNodeId !== s.id && e.toNodeId !== s.id; });
+      state.bindings = state.bindings.filter(function (b) { return b.triggerId !== s.id && b.targetNodeId !== s.id; });
+    } else if (s.kind === "edge") {
+      state.edges = state.edges.filter(function (e) { return e.id !== s.id; });
+    } else if (s.kind === "bind") {
+      state.bindings = state.bindings.filter(function (b) { return b.id !== s.id; });
+    }
+    state.selected = null;
+    render();
+  }
+
+  // ------------------------------------------------------------- node events (drag + ports)
+  function wireNodeEvents() {
+    Array.prototype.forEach.call(surface.querySelectorAll(".node"), function (el) {
+      var id = el.dataset.node;
+      var head = el.querySelector(".node-head");
+      head.addEventListener("pointerdown", function (ev) {
+        if (ev.target.dataset.close) return;
+        ev.stopPropagation();
+        selectItem("node", id);
+        startNodeDrag(id, ev);
+      });
+      var close = el.querySelector("[data-close]");
+      if (close) close.addEventListener("pointerdown", function (ev) {
+        ev.stopPropagation(); ev.preventDefault();
+        delete state.nodes[id]; delete state.triggers[id];
+        state.edges = state.edges.filter(function (e) { return e.fromNodeId !== id && e.toNodeId !== id; });
+        state.bindings = state.bindings.filter(function (b) { return b.triggerId !== id && b.targetNodeId !== id; });
+        if (state.selected && state.selected.id === id) state.selected = null;
+        render();
+      });
+      Array.prototype.forEach.call(el.querySelectorAll(".port"), function (port) {
+        port.addEventListener("pointerdown", function (ev) { ev.stopPropagation(); startPortDrag(port, ev); });
+      });
+    });
+  }
+
+  function clientToSurface(clientX, clientY) {
+    var r = surface.getBoundingClientRect();
+    return { x: clientX - r.left, y: clientY - r.top };
+  }
+
+  function startNodeDrag(id, ev) {
+    var n = state.nodes[id] || state.triggers[id];
+    if (!n) return;
+    var start = clientToSurface(ev.clientX, ev.clientY);
+    var ox = start.x - n.x, oy = start.y - n.y;
+    function move(e) {
+      var p = clientToSurface(e.clientX, e.clientY);
+      n.x = Math.max(0, Math.round(p.x - ox)); n.y = Math.max(0, Math.round(p.y - oy));
+      var el = surface.querySelector('.node[data-node="' + id + '"]');
+      if (el) { el.style.left = n.x + "px"; el.style.top = n.y + "px"; }
+      renderEdges();
+    }
+    function up() {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      updateGraphPreview(); saveLayout();
+    }
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+
+  function startPortDrag(port, ev) {
+    var fromNode = port.dataset.node, fromDir = port.dataset.dir, fromPort = port.dataset.port;
+    var temp = document.getElementById("temp-edge");
+    var srcModel = state.nodes[fromNode] || { x: state.triggers[fromNode].x, y: state.triggers[fromNode].y, kind: "trigger", inputPorts: [], outputPorts: ["fire"] };
+    var srcIdx = fromDir === "out" ? Math.max(0, (srcModel.outputPorts || ["fire"]).indexOf(fromPort)) : Math.max(0, srcModel.inputPorts.indexOf(fromPort));
+    var a = portCenter(srcModel, fromDir, srcIdx);
+    if (temp) temp.style.display = "";
+    highlightTargets(fromNode, fromDir);
+    function move(e) {
+      var p = clientToSurface(e.clientX, e.clientY);
+      if (temp) temp.setAttribute("d", edgePath(a, p));
+    }
+    function up(e) {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      if (temp) { temp.style.display = "none"; temp.setAttribute("d", ""); }
+      clearTargets();
+      var tgt = document.elementFromPoint(e.clientX, e.clientY);
+      if (tgt && tgt.classList.contains("port")) tryConnect(fromNode, fromDir, fromPort, tgt);
+    }
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+  function highlightTargets(fromNode, fromDir) {
+    var wantDir = fromDir === "out" ? "in" : "out";
+    Array.prototype.forEach.call(surface.querySelectorAll(".port." + wantDir), function (p) {
+      if (p.dataset.node !== fromNode) p.classList.add("tgt-ok");
+    });
+  }
+  function clearTargets() { Array.prototype.forEach.call(surface.querySelectorAll(".port.tgt-ok"), function (p) { p.classList.remove("tgt-ok"); }); }
+
+  function tryConnect(fromNode, fromDir, fromPort, targetPortEl) {
+    var toNode = targetPortEl.dataset.node, toDir = targetPortEl.dataset.dir, toPort = targetPortEl.dataset.port;
+    if (fromNode === toNode) return;
+    // normalize to out->in
+    var out, outPort, inn, inPort;
+    if (fromDir === "out" && toDir === "in") { out = fromNode; outPort = fromPort; inn = toNode; inPort = toPort; }
+    else if (fromDir === "in" && toDir === "out") { out = toNode; outPort = toPort; inn = fromNode; inPort = fromPort; }
+    else return; // out->out or in->in not allowed
+    if (state.triggers[out]) {
+      if (state.triggers[inn]) return; // trigger -> trigger not allowed
+      state.bindings.push({ id: "b" + (state.seq++), triggerId: out, targetNodeId: inn, targetPortId: inPort });
+    } else {
+      if (state.triggers[inn]) return; // node -> trigger not allowed
+      var dup = state.edges.some(function (e) { return e.fromNodeId === out && e.fromPortId === outPort && e.toNodeId === inn && e.toPortId === inPort; });
+      if (!dup) state.edges.push({ id: "e" + (state.seq++), fromNodeId: out, fromPortId: outPort, toNodeId: inn, toPortId: inPort });
+    }
+    render();
+  }
+
+  // ------------------------------------------------------------- palette drag-to-create
+  function onPalettePointerDown(ev) {
+    var item = ev.currentTarget;
+    var pluginId = item.dataset.plugin, methodId = item.dataset.method;
+    var moved = false, startX = ev.clientX, startY = ev.clientY;
+    function move(e) { if (Math.abs(e.clientX - startX) > 4 || Math.abs(e.clientY - startY) > 4) moved = true; }
+    function up(e) {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      var p;
+      if (moved) {
+        var overCanvas = canvasScroll.contains(document.elementFromPoint(e.clientX, e.clientY));
+        if (!overCanvas) return;
+        p = clientToSurface(e.clientX, e.clientY);
+        p.x -= W / 2; p.y -= HEAD_H / 2;
+      } else {
+        p = cascadePos();
+      }
+      var n = makeNode(pluginId, methodId, item.classList.contains("cap") ? "capability" : "module", Math.max(0, p.x), Math.max(0, p.y));
+      selectItem("node", n.id);
+      render();
+    }
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+  var cascadeN = 0;
+  function cascadePos() {
+    var base = { x: canvasScroll.scrollLeft + 90, y: canvasScroll.scrollTop + 70 };
+    var p = { x: base.x + (cascadeN % 6) * 40, y: base.y + (cascadeN % 6) * 46 + Math.floor(cascadeN / 6) * 20 };
+    cascadeN++;
+    return p;
+  }
+
+  // ------------------------------------------------------------- graph assembly
+  function assembleGraph() {
+    var name = flowNameInput.value.trim() || "untitled";
+    var programId = PROGRAM_PREFIX + slug(name);
+    var nodes = Object.keys(state.nodes).map(function (id) {
+      var n = state.nodes[id];
+      var node = { nodeId: id, pluginId: n.pluginId, methodId: n.methodId, kind: "transform" };
+      if (n.kind === "capability") node.dispatchModel = "host-capability";
+      return node;
+    });
+    var edges = state.edges.map(function (e) {
+      return { edgeId: e.id, fromNodeId: e.fromNodeId, fromPortId: e.fromPortId, toNodeId: e.toNodeId, toPortId: e.toPortId };
+    });
+    var triggers = Object.keys(state.triggers).map(function (id) { return { triggerId: id, kind: "timer", source: "host-cron" }; });
+    var triggerBindings = state.bindings.map(function (b) { return { triggerId: b.triggerId, targetNodeId: b.targetNodeId, targetPortId: b.targetPortId }; });
+    var refSet = {};
+    Object.keys(state.nodes).forEach(function (id) { if (state.nodes[id].kind === "module") refSet[state.nodes[id].pluginId] = true; });
+    var moduleRefs = Object.keys(refSet).map(function (p) { return { pluginId: p }; });
+    return {
+      flowJson: { programId: programId, name: name, version: "0.1.0", nodes: nodes, edges: edges, triggers: triggers, triggerBindings: triggerBindings },
+      moduleRefs: moduleRefs
+    };
+  }
+  function updateGraphPreview() {
+    var g = assembleGraph();
+    graphJson.textContent = JSON.stringify(g.flowJson, null, 2);
+    graphRefs.textContent = "refs: " + g.moduleRefs.length;
+  }
+
+  // ------------------------------------------------------------- deploy
+  var deploying = false;
+  function deploy() {
+    if (deploying) return;
+    var g = assembleGraph();
+    var linked = g.flowJson.nodes.filter(function (n) { return !n.dispatchModel || n.dispatchModel === "linked-direct"; });
+    if (!g.flowJson.nodes.length) { showResult({ notice: "bad", html: "<strong>Nothing to bake.</strong> Add at least one module node to the canvas." }); return; }
+    if (!linked.length) { showResult({ notice: "bad", html: "<strong>No bakeable node.</strong> A flow needs at least one staged-module node (host-capability nodes alone can’t be baked)." }); return; }
+    deploying = true;
+    var btn = $("deploy-btn"); btn.disabled = true; btn.textContent = "BAKING";
+    setStatus([{ cls: "live", text: "BAKING" }]);
+    var t0 = Date.now();
+    var tick = setInterval(function () {
+      var s = ((Date.now() - t0) / 1000).toFixed(1);
+      resultBody.innerHTML = '<div class="notice live"><span class="spinner"></span> <strong>Baking flow&hellip;</strong> composing + linking runtime.wasm on the node &middot; <span style="font-variant-numeric:tabular-nums">' + s + "s</span><br><span class=\"dim\">A new flow’s first bake compiles a fresh runtime (~30s); it does not freeze the editor.</span></div>";
+    }, 100);
+    fetch("/api/v1/flows/bake", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(g)
+    }).then(function (res) {
+      return res.text().then(function (text) { return { ok: res.ok, status: res.status, text: text }; });
+    }).then(function (r) {
+      clearInterval(tick);
+      var elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      if (!r.ok) {
+        setStatus([{ cls: "bad", text: "BAKE FAILED" }]);
+        showResult({ notice: "bad", html: "<strong>Bake failed (HTTP " + r.status + ")</strong><br><span class=\"dim\">" + esc(r.text.trim() || "no detail") + "</span><br><span class=\"dim\">elapsed " + elapsed + "s</span>" });
+        return;
+      }
+      var data; try { data = JSON.parse(r.text); } catch (e) { data = {}; }
+      setStatus([{ cls: "good", text: "BAKED + RUNNING" }]);
+      showResult({ result: data, elapsed: elapsed });
+    }).catch(function (err) {
+      clearInterval(tick);
+      setStatus([{ cls: "bad", text: "BAKE ERROR" }]);
+      showResult({ notice: "bad", html: "<strong>Request failed.</strong><br><span class=\"dim\">" + esc(String(err)) + "</span>" });
+    }).then(function () {
+      deploying = false; btn.disabled = false; btn.textContent = "DEPLOY";
+    });
+  }
+
+  function showResult(o) {
+    if (o.html) { resultBody.innerHTML = '<div class="notice ' + (o.notice || "") + '">' + o.html + "</div>"; return; }
+    var d = o.result || {};
+    var bakeMs = (d.bakeMillis != null) ? d.bakeMillis : "—";
+    resultBody.innerHTML =
+      '<div class="notice good"><strong>Flow baked &amp; running.</strong> The node composed, linked, installed and started a runtime.wasm.</div>' +
+      '<dl class="kv" style="margin-top:10px">' +
+      "<dt>STATUS</dt><dd class=\"hi\">" + esc(d.status || "baked") + "</dd>" +
+      "<dt>PROGRAM</dt><dd>" + esc(d.programId || "—") + "</dd>" +
+      "<dt>BAKE</dt><dd class=\"hi\">" + esc(bakeMs) + " ms" + (d.cacheHit ? " (cache hit)" : "") + "</dd>" +
+      "<dt>WASM</dt><dd>" + esc(d.wasmBytes != null ? d.wasmBytes + " bytes" : "—") + "</dd>" +
+      "<dt>MODULES</dt><dd>" + esc((d.modules || []).map(shortId).join(", ") || "—") + "</dd>" +
+      "<dt>ELAPSED</dt><dd>" + esc(o.elapsed || "—") + " s (wall)</dd>" +
+      "</dl>";
+  }
+
+  // ------------------------------------------------------------- persistence
+  function saveLayout() {
+    try {
+      var snap = { flowName: flowNameInput.value, seq: state.seq,
+        nodes: state.nodes, edges: state.edges, triggers: state.triggers, bindings: state.bindings };
+      localStorage.setItem(LS_PREFIX + state.flowId, JSON.stringify(snap));
+    } catch (e) { /* storage unavailable — layout just isn't persisted */ }
+  }
+  function loadLayout() {
+    try {
+      var raw = localStorage.getItem(LS_PREFIX + state.flowId);
+      if (!raw) return;
+      var snap = JSON.parse(raw);
+      state.nodes = snap.nodes || {}; state.edges = snap.edges || [];
+      state.triggers = snap.triggers || {}; state.bindings = snap.bindings || [];
+      state.seq = snap.seq || 1;
+      if (snap.flowName) flowNameInput.value = snap.flowName;
+      // re-hydrate port lists from the current palette where known
+      Object.keys(state.nodes).forEach(function (id) {
+        var n = state.nodes[id];
+        var mi = state.methodIndex[methodKey(n.pluginId, n.methodId)];
+        if (mi) { n.inputPorts = mi.inputPorts.slice(); n.outputPorts = mi.outputPorts.slice(); n.kind = mi.kind; }
+        else { n.inputPorts = n.inputPorts || ["in"]; n.outputPorts = n.outputPorts || ["out"]; }
+      });
+    } catch (e) { /* ignore corrupt layout */ }
+  }
+
+  // ------------------------------------------------------------- boot
+  function loadStatus() {
+    fetch("/sdn/v1/node").then(function (r) { return r.ok ? r.json() : null; }).then(function (n) {
+      var chips = [{ cls: "good", text: "NODE LIVE" }];
+      loadModuleCount(chips);
+    }).catch(function () { loadModuleCount([{ cls: "warn", text: "NODE OFFLINE" }]); });
+  }
+  function loadModuleCount(chips) {
+    fetch("/sdn/v1/modules").then(function (r) { return r.ok ? r.json() : []; }).then(function (mods) {
+      var c = Array.isArray(mods) ? mods.length : 0;
+      chips.push({ cls: "", text: c + " REGISTERED" });
+      setStatus(chips);
+    }).catch(function () { setStatus(chips); });
+  }
+
+  function loadPalette() {
+    fetch("/api/v1/flows/palette").then(function (r) {
+      if (!r.ok) throw new Error("palette HTTP " + r.status);
+      return r.json();
+    }).then(function (pal) {
+      state.palette = pal || { capabilities: [], modules: [] };
+      indexPalette(state.palette);
+      var mc = (state.palette.modules || []).length, cc = (state.palette.capabilities || []).length;
+      paletteHint.innerHTML = mc + " staged module" + (mc === 1 ? "" : "s") + " &middot; " + cc + " host capabilit" + (cc === 1 ? "y" : "ies");
+      renderPalette();
+      loadLayout();
+      render();
+    }).catch(function (err) {
+      paletteHint.innerHTML = '<span style="color:var(--red-light)">palette unavailable</span>';
+      paletteBody.innerHTML = '<div class="pal-empty">Could not load node types: ' + esc(String(err.message || err)) +
+        '<br><br>This node may not have the flow bake API mounted. The editor still renders; Deploy will report the node’s error.</div>';
+      loadLayout(); render();
+    });
+  }
+
+  // buttons + keys
+  $("deploy-btn").addEventListener("click", deploy);
+  $("add-trigger-btn").addEventListener("click", function () {
+    var p = cascadePos(); makeTrigger(Math.max(0, p.x), Math.max(0, p.y)); render();
+  });
+  $("delete-sel-btn").addEventListener("click", deleteSelected);
+  $("clear-btn").addEventListener("click", function () {
+    state.nodes = {}; state.edges = []; state.triggers = {}; state.bindings = []; state.selected = null; render();
+  });
+  flowNameInput.addEventListener("input", function () { updateGraphPreview(); saveLayout(); });
+  surface.addEventListener("pointerdown", function (ev) {
+    if (ev.target === surface || ev.target === edgesSvg) { state.selected = null; render(); }
+  });
+  // Edge/binding selection via delegation (paths are rebuilt by innerHTML).
+  edgesSvg.addEventListener("pointerdown", function (ev) {
+    var p = ev.target;
+    if (p && p.dataset && p.dataset.id) { ev.stopPropagation(); selectItem(p.dataset.kind, p.dataset.id); }
+  });
+  window.addEventListener("keydown", function (ev) {
+    if ((ev.key === "Delete" || ev.key === "Backspace") && state.selected &&
+        document.activeElement && document.activeElement.tagName !== "INPUT") { ev.preventDefault(); deleteSelected(); }
+  });
+
+  // programmatic hook (used for scripted verification; the UI is the real path)
+  window.flowEditor = {
+    state: state,
+    addNode: function (pluginId, methodId, kind, x, y) { var n = makeNode(pluginId, methodId, kind || "module", x || cascadePos().x, y || cascadePos().y); render(); return n.id; },
+    addTrigger: function (x, y) { var t = makeTrigger(x || 120, y || 120); render(); return t.id; },
+    connect: function (fromNodeId, fromPortId, toNodeId, toPortId) {
+      state.edges.push({ id: "e" + (state.seq++), fromNodeId: fromNodeId, fromPortId: fromPortId, toNodeId: toNodeId, toPortId: toPortId }); render();
+    },
+    bindTrigger: function (triggerId, targetNodeId, targetPortId) {
+      state.bindings.push({ id: "b" + (state.seq++), triggerId: triggerId, targetNodeId: targetNodeId, targetPortId: targetPortId || "in" }); render();
+    },
+    deploy: deploy,
+    assemble: assembleGraph
+  };
+
+  loadStatus();
+  loadPalette();
+})();
+</script>
+</body>
+</html>

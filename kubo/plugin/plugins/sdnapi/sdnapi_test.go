@@ -84,7 +84,21 @@ func TestRootHandlerRoutesUIAndAPI(t *testing.T) {
 	nodeEPM := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(nodeEPMMarker + " " + r.URL.Path))
 	})
-	root := newRootHandler(api, sdnui.Handler(), creds, runs, nodeEPM)
+	flowsMarker := "SDN-FLOWS-MARKER"
+	flows := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(flowsMarker + " " + r.URL.Path))
+	})
+	root := newRootHandler(api, sdnui.Handler(), creds, runs, nodeEPM, flows)
+
+	// The flow-platform subtree wins over the "/" console catch-all and reaches
+	// the flow handler with the full path intact (the editor $APP posts here).
+	for _, path := range []string{"/api/v1/flows/bake", "/api/v1/flows/palette"} {
+		rec := httptest.NewRecorder()
+		root.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if !strings.Contains(rec.Body.String(), flowsMarker) || !strings.Contains(rec.Body.String(), path) {
+			t.Errorf("GET %s -> body=%q, want flows handler with intact path", path, rec.Body.String())
+		}
+	}
 
 	// API subtree reaches the API handler with the full path intact.
 	rec := httptest.NewRecorder()

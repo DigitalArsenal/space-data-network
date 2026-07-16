@@ -38,6 +38,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -51,7 +52,11 @@ import (
 	pluginsdnruntime "github.com/ipfs/kubo/plugin/plugins/sdnruntime"
 	"github.com/ipfs/kubo/sdn/appmanifest"
 	"github.com/ipfs/kubo/sdn/channels"
+	"github.com/ipfs/kubo/sdn/flowcc"
+	"github.com/ipfs/kubo/sdn/flowconfig"
+	"github.com/ipfs/kubo/sdn/flowrt"
 	"github.com/ipfs/kubo/sdn/nodeepm"
+	"github.com/ipfs/kubo/sdn/plugins"
 	sdnapihttp "github.com/ipfs/kubo/sdn/sdnapi"
 	"github.com/ipfs/kubo/sdn/sdnmodules"
 	"github.com/ipfs/kubo/sdn/sdnstore"
@@ -68,7 +73,8 @@ type sdnAPIPlugin struct {
 	enabled bool
 	addr    string
 
-	srv *http.Server
+	srv     *http.Server
+	flowMgr *flowrt.FlowManager
 }
 
 var _ plugin.PluginDaemonInternal = (*sdnAPIPlugin)(nil)
@@ -232,10 +238,20 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 		},
 	})
 
+	// Flow platform API (POST /api/v1/flows/bake + GET /api/v1/flows/palette and
+	// the rest of the flow-management surface): the compose-and-deploy backend the
+	// Flow Editor $APP (served at /sdn/v1/apps/flow-editor on THIS same listener)
+	// drives. Mounting it here makes the editor page same-origin with the bake
+	// endpoint. The baker is attached only when the node has the flowcc toolchain
+	// staged; without it the bake route returns its own clean "toolchain not
+	// staged" 501, and the palette still lists the host capability nodes.
+	flowsHandler, flowsNote := p.buildFlowsHandler()
+
 	p.srv = &http.Server{
-		Handler:           newRootHandler(sdnapihttp.NewHandler(deps), sdnui.Handler(), credsHandler, runsHandler, nodeEPMHandler),
+		Handler:           newRootHandler(sdnapihttp.NewHandler(deps), sdnui.Handler(), credsHandler, runsHandler, nodeEPMHandler, flowsHandler),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	log.Infof("SDN flow platform API: %s", flowsNote)
 
 	if isLoopbackAddr(p.addr) {
 		log.Infof("SDN console + HTTP API listening on http://%s (loopback; read-only; UI at /, API under /sdn/v1/)", ln.Addr())
@@ -261,10 +277,46 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 }
 
 func (p *sdnAPIPlugin) Close() error {
+	if p.flowMgr != nil {
+		p.flowMgr.CloseAll()
+	}
 	if p.srv != nil {
 		return p.srv.Close()
 	}
 	return nil
+}
+
+// buildFlowsHandler constructs the flow-platform HTTP surface mounted under
+// /api/v1/flows/ on the loopback listener. It builds a FlowManager backed by the
+// node-data flow store (a sibling of the flowcc toolchain home) and attaches a
+// Baker only when that toolchain is staged, so a node with no toolchain still
+// serves the palette (host capabilities) and returns the bake path's clean 501
+// on Deploy. It never fails the plugin: if the manager cannot be built it logs
+// and returns a nil handler (the routes are simply not mounted).
+func (p *sdnAPIPlugin) buildFlowsHandler() (http.Handler, string) {
+	home := flowcc.ResolveHome()
+	cfg := flowconfig.FlowsConfig{
+		Enabled:        true,
+		StoragePath:    filepath.Join(filepath.Dir(home.Root()), "flows"),
+		MaxMemoryPages: 2048,
+	}
+	fm, err := flowrt.NewFlowManager(cfg, plugins.New(), flowrt.HandlerMap{})
+	if err != nil {
+		return nil, fmt.Sprintf("NOT mounted: flow manager init failed (%v)", err)
+	}
+	p.flowMgr = fm
+	note := "mounted at /api/v1/flows/ — bake path DISABLED (flowcc toolchain not staged; Deploy returns 501)"
+	if home.Staged() {
+		if baker, berr := flowrt.NewBaker(home, cfg.MaxMemoryPages); berr == nil {
+			fm.SetBaker(baker)
+			note = "mounted at /api/v1/flows/ — bake path ENABLED (flowcc toolchain staged at " + home.Root() + ")"
+		} else {
+			note = fmt.Sprintf("mounted at /api/v1/flows/ — toolchain present but baker init failed (%v); Deploy returns 501", berr)
+		}
+	}
+	mux := http.NewServeMux()
+	flowrt.RegisterAPI(mux, fm)
+	return mux, note
 }
 
 // newRootHandler composes the single loopback listener's routing: the
@@ -275,8 +327,17 @@ func (p *sdnAPIPlugin) Close() error {
 // request path unchanged, so the API's own GET /sdn/v1/{node,peers,...} routes
 // still match. The console and the API it drives are therefore same-origin,
 // which is what lets the page fetch /sdn/v1/* with no cross-origin request.
-func newRootHandler(api, ui, creds, runs, nodeEPM http.Handler) http.Handler {
+func newRootHandler(api, ui, creds, runs, nodeEPM, flows http.Handler) http.Handler {
 	mux := http.NewServeMux()
+	// The flow-platform API owns the /api/v1/flows/ subtree (bake + palette +
+	// flow management). It is more specific than the "/" console catch-all, so
+	// ServeMux routes it to the flow handler; the editor $APP served under
+	// /sdn/v1/apps/ reaches it same-origin. Absent (nil) when the manager could
+	// not be built — the routes are simply unmounted.
+	if flows != nil {
+		mux.Handle("/api/v1/flows", flows)
+		mux.Handle("/api/v1/flows/", flows)
+	}
 	// The credential admin + runs routes claim their exact prefixes; because they
 	// are more specific than the "/sdn/v1/" subtree, ServeMux routes those requests
 	// to their dedicated handlers and everything else under /sdn/v1/ to the
