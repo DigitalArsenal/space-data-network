@@ -10,6 +10,7 @@ import (
 	"github.com/ipfs/kubo/sdn/flowconfig"
 	"github.com/ipfs/kubo/sdn/modulert"
 	"github.com/ipfs/kubo/sdn/plugins"
+	"github.com/ipfs/kubo/sdn/wasmrt"
 )
 
 // FlowManager owns the flow store, running FlowPlugin instances, and
@@ -33,8 +34,41 @@ type FlowManager struct {
 	sigPolicyMu sync.RWMutex
 	sigPolicy   *modulert.ModuleSignaturePolicy
 
+	// baker, when attached (SetBaker), enables the node-side BAKE deploy path
+	// (POST /api/v1/flows/bake): the node compiles + links the composed
+	// runtime.wasm from a flow graph + staged module objects using its own
+	// flowcc toolchain. nil (the default) leaves only the prebuilt-wasm deploy
+	// path active, so nodes without a staged toolchain are unaffected.
+	baker *Baker
+
 	mu      sync.Mutex
 	running map[string]*FlowPlugin // programID → running plugin
+}
+
+// SetBaker attaches the node-side flow baker, enabling the BAKE deploy path.
+// Passing nil disables it. Left unset, only the prebuilt-wasm deploy path is
+// served.
+func (m *FlowManager) SetBaker(baker *Baker) { m.baker = baker }
+
+// Baker returns the attached baker (nil if the node cannot bake).
+func (m *FlowManager) Baker() *Baker { return m.baker }
+
+// BakeAndDeploy bakes a flow from its graph + module refs, then installs and
+// starts it through the SAME Deploy path the prebuilt route uses. It requires a
+// baker be attached (SetBaker).
+func (m *FlowManager) BakeAndDeploy(ctx context.Context, req BakeRequest) (*BakeResult, string, error) {
+	if m.baker == nil {
+		return nil, "", fmt.Errorf("bake deploy path not enabled (no toolchain staged)")
+	}
+	res, err := m.baker.Bake(ctx, req)
+	if err != nil {
+		return nil, "", err
+	}
+	programID, err := m.Deploy(ctx, res.Wasm, res.FlowJSON, nil)
+	if err != nil {
+		return res, "", err
+	}
+	return res, programID, nil
 }
 
 // SetModuleSignaturePolicy installs the publication-trailer signature trust
@@ -248,8 +282,17 @@ func (m *FlowManager) loadAndRegister(ctx context.Context, flow *InstalledFlow) 
 		json.Unmarshal(data, &program)
 	}
 
-	// Create flow runtime
-	rt, err := NewFlowRuntime(wasmBytes, m.cfg.MaxMemoryPages)
+	// Create flow runtime. Composed/baked flows dispatch their nodes to
+	// linked-direct module guest code that imports the module-SDK hostcall
+	// module (space_data_module_host); supply it via the sdn/modulert bridge so
+	// the artifact instantiates. An empty NodeContext with no granted
+	// capabilities is enough to load and STEP the FSM — any capability hostcall
+	// returns an error envelope (never a trap), so the flow still advances.
+	// (Phase 0: real capability wiring is the node-integration follow-up; a
+	// flow that imports no host module simply ignores this extra import module.)
+	bridge := modulert.NewHostBridge(&modulert.NodeContext{}, nil)
+	rt, err := NewFlowRuntime(wasmBytes, m.cfg.MaxMemoryPages,
+		wasmrt.WithHostModule(modulert.HostcallImportModule, bridge.BuildWasmEdgeHostFuncs()))
 	if err != nil {
 		return fmt.Errorf("create flow runtime: %w", err)
 	}

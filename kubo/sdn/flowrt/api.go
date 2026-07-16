@@ -28,6 +28,14 @@ func RegisterAPI(mux *http.ServeMux, mgr *FlowManager) {
 		handleDeploy(w, r, mgr)
 	})
 
+	mux.HandleFunc("/api/v1/flows/bake", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		handleBake(w, r, mgr)
+	})
+
 	mux.HandleFunc("/api/v1/flows/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -128,6 +136,46 @@ func handleDeploy(w http.ResponseWriter, r *http.Request, mgr *FlowManager) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":    "deployed",
 		"programId": programID,
+	})
+}
+
+// handleBake serves the node-side BAKE deploy path: POST a flow graph + module
+// refs, the node bakes the composed runtime.wasm with its own flowcc toolchain
+// and installs+starts it. Falls back with 501 when no toolchain is staged.
+func handleBake(w http.ResponseWriter, r *http.Request, mgr *FlowManager) {
+	if mgr.Baker() == nil {
+		http.Error(w, "bake path not enabled: node has no staged flowcc toolchain", http.StatusNotImplemented)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 16*1024*1024)) // 16MB: a graph, not a wasm
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+	var req BakeRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(req.FlowJSON) == 0 {
+		http.Error(w, "missing flowJson", http.StatusBadRequest)
+		return
+	}
+
+	res, programID, err := mgr.BakeAndDeploy(r.Context(), req)
+	if err != nil {
+		http.Error(w, "bake failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":         "baked",
+		"programId":      programID,
+		"modules":        res.Modules,
+		"wasmBytes":      len(res.Wasm),
+		"flowRuntimeObj": res.FlowRuntimeO,
+		"cacheHit":       res.CacheHit,
+		"bakeMillis":     res.Elapsed.Milliseconds(),
 	})
 }
 
