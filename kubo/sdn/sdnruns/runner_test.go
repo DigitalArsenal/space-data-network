@@ -36,10 +36,11 @@ func TestSupplementalOMMRun_RealODFit(t *testing.T) {
 	wasmPath := testsupport.SkipIfNoODModuleWasm(t)
 	fixturePath := testsupport.SkipIfNoODEphemerisFixture(t)
 
-	// ── Fitter over the REAL analysis/od WASM module (command surface) ─────────
-	fitter := sdnruns.NewCommandFitter(func() ([]byte, error) {
+	// ── Fitter over the REAL analysis/od WASM module (resident reactor) ────────
+	fitter := sdnruns.NewReactorFitter(func() ([]byte, error) {
 		return os.ReadFile(wasmPath)
-	}, t.Logf)
+	}, 1, t.Logf)
+	defer fitter.Close()
 
 	// ── Node record store (OMM schema) + seeded CelesTrak SupGP reference ──────
 	store := openOMMStore(t)

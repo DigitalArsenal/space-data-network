@@ -91,15 +91,18 @@ func startSupplementalOMMRuns(node *core.IpfsNode, svc *sdnservices.Services, in
 
 	ctx := node.Context()
 
-	// Fitter over the REAL analysis/od module. It needs the module's raw WASM
-	// bytes (a fresh instance per fit — the command surface proc_exits after one
-	// request). Resolve, in order: the installed module by its blockstore content
-	// hash; else an explicit SDN_OD_MODULE_WASM path; else the SDN_INSTALL_WASM
-	// path the operator installed od from (the natural local source). The
-	// blockstore is addressed by the raw-artifact hash, so the content-hash lookup
-	// only hits when the installed artifact's canonical hash equals its raw hash;
-	// the path fallbacks make the run work in every local install case.
-	fitter := sdnruns.NewCommandFitter(func() ([]byte, error) {
+	// Fitter over the REAL analysis/od module, driven as a RESIDENT WASI REACTOR:
+	// the reactor build (dist/isomorphic/module.wasm) exports
+	// _initialize/plugin_invoke_stream (no _start), so modulert hosts a POOL of
+	// live instances and the run fits objects across them IN PARALLEL — no per-fit
+	// module reload, no process-wide lock. Pool size 0 → runtime.NumCPU() (2 on the
+	// prod node). Resolve the module bytes, in order: the installed module by its
+	// blockstore content hash; else an explicit SDN_OD_MODULE_WASM path; else the
+	// SDN_INSTALL_WASM path the operator installed od from. The blockstore is
+	// addressed by the raw-artifact hash, so the content-hash lookup only hits when
+	// the installed artifact's canonical hash equals its raw hash; the path
+	// fallbacks make the run work in every local install case.
+	fitter := sdnruns.NewReactorFitter(func() ([]byte, error) {
 		if installer != nil && node.Blockstore != nil {
 			if mod := installer.Module(odModuleID); mod != nil {
 				if b, err := appmanifest.ResolveModuleByContentHash(ctx, node.Blockstore, mod.ContentHash()); err == nil {
@@ -115,7 +118,7 @@ func startSupplementalOMMRuns(node *core.IpfsNode, svc *sdnservices.Services, in
 			}
 		}
 		return nil, fmt.Errorf("analysis/od module (%s) is not installed and no od WASM path is configured", odModuleID)
-	}, log.Infof)
+	}, 0, log.Infof)
 
 	runner, err := sdnruns.NewRunner(sdnruns.Config{
 		Fitter: fitter,

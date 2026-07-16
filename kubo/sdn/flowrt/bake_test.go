@@ -383,6 +383,124 @@ func TestBakeNewFlowLinkOnly(t *testing.T) {
 	t.Logf("★★ NEW flow baked LINK-ONLY, installed, and RAN: %d node(s) stepped", advanced)
 }
 
+// bakeTwoInputGateFlowJSON is a single-node flow whose node is bound to
+// decision-gate.branch — a method that declares TWO typed input ports (decision,
+// stream) in its plugin-manifest.json (Phase-2 staged). Two triggers each deliver
+// a frame to ONE of those ports, so the node's required-ports set (typed inputs ∩
+// wired ports) is {decision, stream}. It exists to prove a multi-input node fires
+// only once BOTH required inputs have a queued frame.
+const bakeTwoInputGateFlowJSON = `{
+  "programId": "com.digitalarsenal.flows.two-input-gate",
+  "name": "Two-Input Required-Ports Gate",
+  "version": "0.1.0",
+  "nodes": [
+    { "nodeId": "gate", "pluginId": "com.digitalarsenal.foundation.decision-gate", "methodId": "branch", "kind": "transform" }
+  ],
+  "edges": [],
+  "triggers": [
+    { "triggerId": "t-decision", "kind": "manual", "source": "test" },
+    { "triggerId": "t-stream",   "kind": "manual", "source": "test" }
+  ],
+  "triggerBindings": [
+    { "triggerId": "t-decision", "targetNodeId": "gate", "targetPortId": "decision" },
+    { "triggerId": "t-stream",   "targetNodeId": "gate", "targetPortId": "stream" }
+  ]
+}`
+
+// TestBakeRequiredPortsTwoInputGate is the required-ports correctness proof: a
+// node bound to a 2-typed-input method (decision-gate.branch: decision + stream),
+// with both ports wired, must NOT become ready on one input and MUST become ready
+// once BOTH inputs have arrived. This exercises the fix that replaces bake.go's
+// hard-coded required_port_count=0 (which made every node fire on any single
+// queued frame) with real per-node required-port rows the in-wasm scheduler's
+// flow_node_is_ready gates on.
+func TestBakeRequiredPortsTwoInputGate(t *testing.T) {
+	a := resolveBakeAssets(t)
+	home := stageBakeHome(t, a)
+
+	storeDir := t.TempDir()
+	cfg := flowconfig.FlowsConfig{Enabled: true, StoragePath: storeDir, MaxMemoryPages: 2048}
+	mgr, err := NewFlowManager(cfg, plugins.New(), HandlerMap{})
+	if err != nil {
+		t.Fatalf("NewFlowManager: %v", err)
+	}
+	baker, err := NewBaker(home, 2048)
+	if err != nil {
+		t.Fatalf("NewBaker: %v", err)
+	}
+	mgr.SetBaker(baker)
+	ctx := context.Background()
+
+	_, programID, err := mgr.BakeAndDeploy(ctx, BakeRequest{FlowJSON: json.RawMessage(bakeTwoInputGateFlowJSON)})
+	if err != nil {
+		t.Fatalf("BakeAndDeploy two-input gate: %v", err)
+	}
+	mgr.mu.Lock()
+	fp := mgr.running[programID]
+	mgr.mu.Unlock()
+	if fp == nil || fp.runtime == nil {
+		t.Fatalf("two-input gate flow did not load into a running FlowRuntime")
+	}
+	rt := fp.runtime
+	if rt.NodeCount != 1 || rt.TriggerCount != 2 {
+		t.Fatalf("gate ABI mismatch: NodeCount=%d TriggerCount=%d, want 1/2", rt.NodeCount, rt.TriggerCount)
+	}
+
+	gateReady := func() bool {
+		st, err := rt.GetNodeRuntimeState(0)
+		if err != nil {
+			t.Fatalf("GetNodeRuntimeState(0): %v", err)
+		}
+		return st.Ready
+	}
+	gateInvocations := func() uint64 {
+		st, err := rt.GetNodeRuntimeState(0)
+		if err != nil {
+			t.Fatalf("GetNodeRuntimeState(0): %v", err)
+		}
+		return st.InvocationCount
+	}
+
+	rt.ResetState()
+
+	// Deliver ONLY the "decision" input (trigger 0). The gate has TWO required
+	// ports, so one input must NOT make it ready — the old required_port_count=0
+	// behavior would (incorrectly) mark it ready here.
+	rt.EnqueueTrigger(0)
+	if gateReady() {
+		t.Fatalf("gate became ready with only the \"decision\" input — required-ports gate not applied (fires on any single frame)")
+	}
+	// A not-ready node is never invoked, even after a full drain.
+	if _, err := rt.Drain(ctx, HandlerMap{}, DrainOptions{MaxIterations: 16}); err != nil {
+		t.Fatalf("Drain (one input): %v", err)
+	}
+	if got := gateInvocations(); got != 0 {
+		t.Fatalf("gate fired with only one of two required inputs (InvocationCount=%d)", got)
+	}
+	if gateReady() {
+		t.Fatalf("gate ready after draining with one input; must wait for both required ports")
+	}
+	t.Logf("with 1/2 required inputs: gate ready=false, invocations=0 (correctly waiting)")
+
+	// Now deliver the second required input ("stream", trigger 1). BOTH required
+	// ports now have a queued frame, so the gate becomes ready.
+	rt.EnqueueTrigger(1)
+	if !gateReady() {
+		t.Fatalf("gate NOT ready after BOTH required inputs (decision+stream) arrived — required-ports gate over-restricts")
+	}
+	t.Logf("★ with 2/2 required inputs: gate ready=true — a 2-input node fires only after BOTH inputs arrive")
+
+	// Draining now fires the gate (a real linked-direct entry): proves the ready
+	// gate actually opens end-to-end.
+	if _, err := rt.Drain(ctx, HandlerMap{}, DrainOptions{MaxIterations: 64}); err != nil {
+		t.Fatalf("Drain (both inputs): %v", err)
+	}
+	if got := gateInvocations(); got == 0 {
+		t.Fatalf("gate did not fire after both required inputs were present")
+	}
+	t.Logf("★★ gate fired once both required inputs were present (InvocationCount=%d)", gateInvocations())
+}
+
 // TestBakeNewFlowLinkOnlyAOT measures the Part-1+2 end state (link-only bake on
 // an AOT-compiled box). It is OPT-IN (SDN_FLOWCC_AOT_BAKE=1) because AOT-
 // compiling the 58 MB box is a multi-minute one-shot; the default suite skips it.

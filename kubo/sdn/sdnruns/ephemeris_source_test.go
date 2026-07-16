@@ -142,7 +142,8 @@ func TestStoreBackedSource_RealODFit_MultiObject(t *testing.T) {
 	}
 
 	source := sdnruns.NewStoreEphemerisSource(store, nil, t.Logf)
-	fitter := sdnruns.NewCommandFitter(func() ([]byte, error) { return os.ReadFile(wasmPath) }, t.Logf)
+	fitter := sdnruns.NewReactorFitter(func() ([]byte, error) { return os.ReadFile(wasmPath) }, len(objects), t.Logf)
+	defer fitter.Close()
 	runsStore, err := sdnruns.NewStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("runs store: %v", err)

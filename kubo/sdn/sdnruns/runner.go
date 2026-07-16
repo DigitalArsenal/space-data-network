@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	cid "github.com/ipfs/go-cid"
@@ -240,12 +241,7 @@ func (r *Runner) RunProviders(ctx context.Context, cfg RunConfig) (*Run, error) 
 		produced = DefaultProducedSource
 	}
 
-	for _, eph := range objects {
-		obj := r.fitOne(ctx, eph, produced, celestrak, spacetrack)
-		if err := r.cfg.Runs.AppendObject(run.ID, obj); err != nil {
-			r.logf("sdnruns: run %s append object %d failed: %v", run.ID, obj.Norad, err)
-		}
-	}
+	r.fitObjects(ctx, run.ID, objects, produced, celestrak, spacetrack)
 
 	if err := r.cfg.Runs.FinishRun(run.ID, StatusCompleted, ""); err != nil {
 		return nil, fmt.Errorf("sdnruns: finish run: %w", err)
@@ -256,6 +252,58 @@ func (r *Runner) RunProviders(ctx context.Context, cfg RunConfig) (*Run, error) 
 	}
 	r.logf("sdnruns: run %s completed: objects=%d avg_rms=%.3f beats=%d", final.ID, final.ObjectsDone, final.AvgRMS, final.BeatCount)
 	return &final, nil
+}
+
+// fitObjects fits every object and appends each result to the run. When the
+// Fitter is a ConcurrentFitter (e.g. ReactorFitter, a pool of resident OD reactor
+// instances), the object loop fans out to Concurrency() worker goroutines that
+// fit objects IN PARALLEL — the whole point of the resident-reactor conversion:
+// N single-threaded OD instances running at once instead of one _start per
+// object. A plain Fitter (CommandFitter, process-wide serialized by odStartMu)
+// runs sequentially. AppendObject is store-mutex guarded, so concurrent appends
+// are safe; the reference index maps are read-only here. Object order in the run
+// record is not significant (rows are keyed/searched by NORAD).
+func (r *Runner) fitObjects(ctx context.Context, runID string, objects []Ephemeris, produced string, celestrak, spacetrack map[uint32]ReferenceElements) {
+	workers := 1
+	if cf, ok := r.cfg.Fitter.(ConcurrentFitter); ok {
+		if c := cf.Concurrency(); c > 1 {
+			workers = c
+		}
+	}
+	if workers > len(objects) {
+		workers = len(objects)
+	}
+
+	appendResult := func(eph Ephemeris) {
+		obj := r.fitOne(ctx, eph, produced, celestrak, spacetrack)
+		if err := r.cfg.Runs.AppendObject(runID, obj); err != nil {
+			r.logf("sdnruns: run %s append object %d failed: %v", runID, obj.Norad, err)
+		}
+	}
+
+	if workers <= 1 {
+		for _, eph := range objects {
+			appendResult(eph)
+		}
+		return
+	}
+
+	jobs := make(chan Ephemeris)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for eph := range jobs {
+				appendResult(eph)
+			}
+		}()
+	}
+	for _, eph := range objects {
+		jobs <- eph
+	}
+	close(jobs)
+	wg.Wait()
 }
 
 // fitOne runs the REAL OD fit for one object, produces + stores the OMM, and
