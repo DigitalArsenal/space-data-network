@@ -118,8 +118,14 @@ func startSupplementalOMMRuns(node *core.IpfsNode, svc *sdnservices.Services, in
 	}, log.Infof)
 
 	runner, err := sdnruns.NewRunner(sdnruns.Config{
-		Fitter:  fitter,
-		Source:  &embeddedEphemerisSource{},
+		Fitter: fitter,
+		// Store-backed ephemeris source: reads EVERY per-object OEM record each
+		// enabled provider's data-source module ingested (source lane -> "OEM") and
+		// fits them all. The embedded ISS OEM fixture stands in ONLY for provider
+		// "iss" when its store lane is empty (the firewalled local live-smoke), so a
+		// node with no ingested data still produces its one ISS fit while a node that
+		// HAS ingested a constellation fits every stored object.
+		Source:  sdnruns.NewStoreEphemerisSource(svc.Store, issOEMFixture, log.Infof),
 		Records: svc.Store,
 		Runs:    store,
 		Resolve: func() sdnruns.RunConfig { return resolveRunConfig(svc.ConfigStore) },
@@ -210,28 +216,6 @@ func resolveRunConfig(cs *sdncron.ConfigStore) sdnruns.RunConfig {
 		cfg.ProducedSource = s
 	}
 	return cfg
-}
-
-// embeddedEphemerisSource is the stubbed ephemeris source for the local live
-// smoke: it yields the embedded real ISS OEM for provider "iss". The production
-// source (invoking the firewalled data-source WASM modules over the http
-// capability) is a drop-in EphemerisSource replacing this; the OD fit downstream
-// is real regardless.
-type embeddedEphemerisSource struct{}
-
-func (embeddedEphemerisSource) Pull(_ context.Context, provider string) ([]sdnruns.Ephemeris, error) {
-	if provider != "iss" || len(issOEMFixture) == 0 {
-		return nil, nil
-	}
-	return []sdnruns.Ephemeris{{
-		Provider:   "iss",
-		Format:     "oem",
-		ObjectName: "ISS",
-		ObjectID:   "1998-067-A",
-		NoradCatID: 25544,
-		DataSource: "ISS-E",
-		Bytes:      append([]byte(nil), issOEMFixture...),
-	}}, nil
 }
 
 // seedSupplementalReferences stores the real same-day CelesTrak SupGP ISS

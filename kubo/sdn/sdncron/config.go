@@ -46,6 +46,14 @@ import (
 const (
 	configKeyIntervalMs = "interval_ms"
 	configKeyTimers     = "timers"
+	// configKeyTimerInput is an OPTIONAL object the scheduler passes as the
+	// invoke-request payload to a module's timer method on every scheduled fire
+	// (it is nil when unset, preserving the prior no-payload behaviour). It is the
+	// config-driven seam for a data-source module's pull config — e.g.
+	// {"timer_input":{"objectCap":100000}} raises the per-pull object cap so a
+	// provider ingests its full constellation, not the module's built-in default —
+	// and is editable from the Modules settings API like any other config key.
+	configKeyTimerInput = "timer_input"
 )
 
 // ModuleConfig is a per-module configuration object (see the package doc for
@@ -76,7 +84,31 @@ func (c ModuleConfig) Validate() error {
 			}
 		}
 	}
+	if v, ok := c[configKeyTimerInput]; ok {
+		if _, ok := v.(map[string]interface{}); !ok {
+			return fmt.Errorf("%q must be a JSON object of timer-invoke input fields", configKeyTimerInput)
+		}
+	}
 	return nil
+}
+
+// timerInput returns the scheduled-invoke input payload for a fired timer: the
+// JSON encoding of the reserved timer_input object, or nil when it is unset or
+// empty (nil preserves the historical no-payload fire). A module's timer method
+// receives these bytes as its invoke request (e.g. a data-source pull config).
+func (c ModuleConfig) timerInput() []byte {
+	if c == nil {
+		return nil
+	}
+	obj, ok := c[configKeyTimerInput].(map[string]interface{})
+	if !ok || len(obj) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 // intervalMs returns the module-wide interval override (reserved key
