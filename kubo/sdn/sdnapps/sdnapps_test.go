@@ -47,8 +47,8 @@ func TestManifestsValidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Manifests: %v", err)
 	}
-	if len(ms) != 2 {
-		t.Fatalf("got %d manifests, want 2", len(ms))
+	if len(ms) != 3 {
+		t.Fatalf("got %d manifests, want 3", len(ms))
 	}
 	ids := map[string]bool{}
 	for _, m := range ms {
@@ -67,7 +67,7 @@ func TestManifestsValidate(t *testing.T) {
 			t.Errorf("%s: expected one dataflow entry, got %d", m.ID, len(m.Dataflow))
 		}
 	}
-	if !ids["supplemental-omm"] || !ids["conjunction"] {
+	if !ids["supplemental-omm"] || !ids["conjunction"] || !ids["flow-editor"] {
 		t.Fatalf("missing expected app ids, got %v", ids)
 	}
 }
@@ -83,9 +83,11 @@ func TestRecordsRoundTrip(t *testing.T) {
 	}
 	want := map[string]struct {
 		schema, transport, locatorHas string
+		direction                     appmanifest.FlowDirection
 	}{
-		"supplemental-omm": {"OMM", "gateway_route", "/sdn/v1/runs"},
-		"conjunction":      {"CDM", "gateway_route", "type=CDM"},
+		"supplemental-omm": {"OMM", "gateway_route", "/sdn/v1/runs", appmanifest.FlowDirectionToPage},
+		"conjunction":      {"CDM", "gateway_route", "type=CDM", appmanifest.FlowDirectionToPage},
+		"flow-editor":      {"PLG", "gateway_route", "/api/v1/flows/bake", appmanifest.FlowDirectionFromPage},
 	}
 	for id, exp := range want {
 		buf, ok := recs[id]
@@ -123,8 +125,8 @@ func TestRecordsRoundTrip(t *testing.T) {
 			t.Fatalf("%s: dataflow = %d, want 1", id, len(m.Dataflow))
 		}
 		f := m.Dataflow[0]
-		if f.Direction != appmanifest.FlowDirectionToPage {
-			t.Errorf("%s: dataflow direction = %q, want to_page", id, f.Direction)
+		if f.Direction != exp.direction {
+			t.Errorf("%s: dataflow direction = %q, want %q", id, f.Direction, exp.direction)
 		}
 		if f.SDSSchema != exp.schema {
 			t.Errorf("%s: dataflow sdsSchema = %q, want %q", id, f.SDSSchema, exp.schema)
@@ -246,6 +248,53 @@ func TestOMMBoardWiring(t *testing.T) {
 	}
 }
 
+// TestFlowEditorWiring asserts the Flow Editor's entry page wires the node's
+// palette + bake API, self-hosts its fonts same-origin, and carries no external
+// origin. It pins the Phase-1 contract: the palette source (GET
+// /api/v1/flows/palette) and the deploy target (POST /api/v1/flows/bake).
+func TestFlowEditorWiring(t *testing.T) {
+	ms, err := sdnapps.Manifests()
+	if err != nil {
+		t.Fatalf("Manifests: %v", err)
+	}
+	var page string
+	for _, m := range ms {
+		if m.ID == "flow-editor" && len(m.Pages) == 1 {
+			page = m.Pages[0].Content
+		}
+	}
+	if page == "" {
+		t.Fatal("flow-editor app or its entry page is missing")
+	}
+
+	// Palette source + bake target (the Phase-1 compose/deploy contract).
+	for _, needle := range []string{
+		"/api/v1/flows/palette", // local node-type catalog (palette source)
+		"/api/v1/flows/bake",    // deploy target (compose + link + run)
+		"moduleRefs",            // bake payload carries the used modules
+		"triggerBindings",       // full graph: triggers bound to node ports
+		"bakeMillis",            // result renders the node's bake wall time
+	} {
+		if !strings.Contains(page, needle) {
+			t.Errorf("flow editor page does not wire %q", needle)
+		}
+	}
+
+	// Uses the node's read-only API for status (keeps the page same-origin).
+	if !strings.Contains(page, "/sdn/v1/") {
+		t.Error("flow editor page does not use the node's /sdn/v1/ API")
+	}
+
+	// Fonts self-hosted same-origin under /fonts/*.woff2 — never fetched off-host.
+	if !strings.Contains(page, ".woff2") || !strings.Contains(page, "/fonts/") {
+		t.Error("flow editor page does not self-host its web fonts at /fonts/")
+	}
+	// No external origin of any kind (defense in depth alongside TestSelfContained).
+	if strings.Contains(page, "http://") || strings.Contains(page, "https://") {
+		t.Error("flow editor page contains an external-origin URL")
+	}
+}
+
 // TestSeedIdempotent stores every app via Seed, then seeds again: the second
 // pass writes no new distinct records (content-addressed dedup), and both apps
 // land under the single (Source, "APP") pair.
@@ -255,17 +304,17 @@ func TestSeedIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Seed: %v", err)
 	}
-	if n != 2 {
-		t.Fatalf("first Seed stored %d, want 2", n)
+	if n != 3 {
+		t.Fatalf("first Seed stored %d, want 3", n)
 	}
-	if len(fs.byCID) != 2 {
-		t.Fatalf("distinct records after first Seed = %d, want 2", len(fs.byCID))
+	if len(fs.byCID) != 3 {
+		t.Fatalf("distinct records after first Seed = %d, want 3", len(fs.byCID))
 	}
 	if _, err := sdnapps.Seed(context.Background(), fs); err != nil {
 		t.Fatalf("second Seed: %v", err)
 	}
-	if len(fs.byCID) != 2 {
-		t.Fatalf("distinct records after re-seed = %d, want 2 (idempotent)", len(fs.byCID))
+	if len(fs.byCID) != 3 {
+		t.Fatalf("distinct records after re-seed = %d, want 3 (idempotent)", len(fs.byCID))
 	}
 	if !fs.pairs[sdnapps.Source+"|"+sdnapps.SDSType] {
 		t.Fatalf("apps were not stored under (%q, %q)", sdnapps.Source, sdnapps.SDSType)

@@ -44,6 +44,14 @@ func RegisterAPI(mux *http.ServeMux, mgr *FlowManager) {
 		handleCapabilities(w, r)
 	})
 
+	mux.HandleFunc("/api/v1/flows/palette", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		handlePalette(w, r, mgr)
+	})
+
 	// Routes with flow ID in the path: /api/v1/flows/{id}/*
 	mux.HandleFunc("/api/v1/flows/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/flows/")

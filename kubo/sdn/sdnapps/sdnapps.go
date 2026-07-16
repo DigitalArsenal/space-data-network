@@ -57,7 +57,7 @@ const Source = "sdn"
 // SDSType is the 3-letter SDS record type an app record is stored under.
 const SDSType = "APP"
 
-//go:embed assets/omm_board.html assets/conjunction.html
+//go:embed assets/omm_board.html assets/conjunction.html assets/flow_editor.html
 var assets embed.FS
 
 // ManifestStore is the minimal write surface Seed needs: the sdnstore method
@@ -143,6 +143,37 @@ func conjunctionApp() (*appmanifest.AppManifest, error) {
 	}, nil
 }
 
+// flowEditorApp builds the SDN Flow Editor $APP manifest (App 3): a Node-RED-style
+// editor that composes the node's locally-available modules into a flow graph and
+// deploys it through the node's own bake endpoint. Its declared data contract is
+// the flow graph it emits FROM the page to the bake route.
+func flowEditorApp() (*appmanifest.AppManifest, error) {
+	page, err := inlinePage(
+		"editor",
+		"SDN Flow Editor",
+		"Compose locally-available modules into a flow and bake it on this node.",
+		"assets/flow_editor.html",
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &appmanifest.AppManifest{
+		ID:          "flow-editor",
+		Name:        "SDN Flow Editor",
+		Version:     "0.1.0",
+		Description: "App 3 of the SDN apps program: a Node-RED-style flow editor served inline by the SDN node. Its palette is the node's locally-available node types (host capabilities + every guest-link module staged for baking, from GET /api/v1/flows/palette); compose a flow on a hand-rolled node/edge canvas, then Deploy to POST the graph to the node's proven bake endpoint (POST /api/v1/flows/bake), which composes, links, installs and runs a runtime.wasm.",
+		Dataflow: []appmanifest.DataflowEntry{{
+			Name:        "flow-bake",
+			Direction:   appmanifest.FlowDirectionFromPage,
+			SDSSchema:   "PLG",
+			Transport:   appmanifest.FlowTransportGatewayRoute,
+			Locator:     "/api/v1/flows/bake",
+			Description: "The composed flow graph (nodes/edges/triggers/triggerBindings + moduleRefs) emitted from the page to the node's bake route, which composes + links a runtime.wasm from the referenced modules and runs it.",
+		}},
+		Pages: []appmanifest.UIPage{page},
+	}, nil
+}
+
 // Manifests returns the app manifests in a stable order (OMM board first). Each
 // is Validate-clean.
 func Manifests() ([]*appmanifest.AppManifest, error) {
@@ -154,7 +185,11 @@ func Manifests() ([]*appmanifest.AppManifest, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := []*appmanifest.AppManifest{omm, conj}
+	editor, err := flowEditorApp()
+	if err != nil {
+		return nil, err
+	}
+	out := []*appmanifest.AppManifest{omm, conj, editor}
 	for _, m := range out {
 		if err := m.Validate(); err != nil {
 			return nil, fmt.Errorf("sdnapps: %s: %w", m.ID, err)
