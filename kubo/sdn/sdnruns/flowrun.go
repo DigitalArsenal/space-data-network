@@ -62,12 +62,9 @@ func (e *FlowRunEngine) RunProvider(ctx context.Context, provider string) (*flow
 	if err != nil {
 		return nil, fmt.Errorf("sdnruns: provider %q invoke: %w", provider, err)
 	}
-	records, err := splitOEMStream(stream)
+	res, err := flowrt.RunOEMStream(ctx, e.pool, stream, e.sink, e.batch)
 	if err != nil {
-		return nil, fmt.Errorf("sdnruns: provider %q $OEM stream: %w", provider, err)
+		return nil, fmt.Errorf("sdnruns: provider %q: %w", provider, err)
 	}
-	if len(records) == 0 {
-		return &flowrt.OEMBatchResult{}, nil
-	}
-	return flowrt.RunOEMBatch(ctx, e.pool, records, e.sink, e.batch)
+	return res, nil
 }
