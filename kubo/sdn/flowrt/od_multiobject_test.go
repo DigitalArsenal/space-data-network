@@ -11,7 +11,6 @@ package flowrt
 
 import (
 	"context"
-	"sync"
 	"testing"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OEM"
@@ -137,22 +136,17 @@ func TestODFlowMultiObjectDistinctNORAD(t *testing.T) {
 
 	const N = 4
 	pool := NewFlowPool(res.Wasm, N, 2048)
-	feed := NewObjectFeeder(records)
 	sink := &recordingSink{}
-	handlers := HandlerMap{
-		odFlowFeederPluginID + ":emit":   NewObjectFeederHandler(feed, "oem"),
-		odFlowStorePluginID + ":persist": NewStoreHandler(sink, "supplemental-omm"),
+	// Drive the whole transient set through the pool via the reusable RunOEMBatch
+	// primitive — the exact entry point the OD run engine calls after splitting a
+	// provider's $OEM stream.
+	if _, err := RunOEMBatch(ctx, pool, records, sink, OEMBatchConfig{
+		FeederPluginID: odFlowFeederPluginID, FeederPort: "oem",
+		StorePluginID: odFlowStorePluginID, StoreSource: "supplemental-omm",
+		Drain: DrainOptions{MaxIterations: 256},
+	}); err != nil {
+		t.Fatalf("RunOEMBatch: %v", err)
 	}
-
-	var wg sync.WaitGroup
-	for i := 0; i < K; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, _ = pool.Run(ctx, 0, handlers, DrainOptions{MaxIterations: 256})
-		}()
-	}
-	wg.Wait()
 
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
