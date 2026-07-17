@@ -18,7 +18,8 @@
 //     in-wasm linked-direct/drain_linked] -> ApplyInvocationResult ->
 //     CompleteInvocation). This is the core run path; it does NOT require the
 //     deferred data layer (linkedSection is an optional, nil-by-default hook).
-//   - store.go      — on-disk installed-flow store (runtime.wasm/flow.json).
+//   - store.go      — on-disk installed-flow store (runtime.wasm/flow.plg,
+//     the flow graph as a $PLG FlatBuffer).
 //   - hostfuncs.go  — the "sdn"/"env" host modules (clock/random/log + the
 //     C++ exception stubs).
 //   - handlers.go   — Handler/HandlerMap resolution + the frame/result types.
@@ -30,9 +31,6 @@
 //     is satisfied by the minimal Manager added in sdn/plugins/manager_min.go.
 //   - api.go        — the /api/v1/flows REST management surface (list / deploy
 //     / get / delete / start / stop / status / capabilities).
-//   - apidoc.go     — PARTIAL: the declarative flow-manifest "api" extension
-//     types + parseFlowAPIDoc port cleanly; the three MountedFlow accessor
-//     methods were deferred with httpmount.go (see the note in apidoc.go).
 //
 // # config.FlowsConfig trim (sdn/flowconfig)
 //

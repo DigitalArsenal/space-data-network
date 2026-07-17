@@ -23,7 +23,7 @@ func newMemBlockstore() blockstore.Blockstore {
 
 // seedNode stands up a small node worth of backup units: two installed modules
 // (WASM bytes in the blockstore + registry) and one installed flow (a
-// runtime.wasm + flow.json + artifact.json triple on disk), plus a backup
+// runtime.wasm + flow.plg + artifact.json triple on disk), plus a backup
 // config file. It returns a BackupSource over all of them.
 func seedNode(t *testing.T) (*sdnbackup.BackupSource, blockstore.Blockstore, map[string][]byte) {
 	t.Helper()
@@ -67,13 +67,17 @@ func seedNode(t *testing.T) (*sdnbackup.BackupSource, blockstore.Blockstore, map
 		t.Fatalf("new flow store: %v", err)
 	}
 	flowWASM := []byte("\x00asm\x01\x00\x00\x00; flow runtime — celestrak ingest")
-	flowJSON := []byte(`{"programId":"flow-celestrak","name":"CelesTrak Ingest","version":"2.0.0"}`)
+	flowPLG := flowrt.BuildFlowPLG(flowrt.FlowSpec{
+		ProgramID: "flow-celestrak",
+		Name:      "CelesTrak Ingest",
+		Version:   "2.0.0",
+	})
 	artifact := []byte(`{"compiledAt":"2026-07-16T00:00:00Z","nodes":3}`)
-	if err := flows.Install("flow-celestrak", flowWASM, flowJSON, artifact); err != nil {
+	if err := flows.Install("flow-celestrak", flowWASM, flowPLG, artifact); err != nil {
 		t.Fatalf("install flow: %v", err)
 	}
 	originals["flow:flow-celestrak:wasm"] = flowWASM
-	originals["flow:flow-celestrak:json"] = flowJSON
+	originals["flow:flow-celestrak:plg"] = flowPLG
 	originals["flow:flow-celestrak:artifact"] = artifact
 
 	// A backup config file (config kind).
@@ -245,7 +249,7 @@ func TestBackupVerifyRestoreRoundTrip(t *testing.T) {
 		t.Fatalf("get restored flow: %v", err)
 	}
 	assertFileEquals(t, filepath.Join(freshFlow.Dir, "runtime.wasm"), originals["flow:flow-celestrak:wasm"])
-	assertFileEquals(t, filepath.Join(freshFlow.Dir, "flow.json"), originals["flow:flow-celestrak:json"])
+	assertFileEquals(t, filepath.Join(freshFlow.Dir, "flow.plg"), originals["flow:flow-celestrak:plg"])
 	assertFileEquals(t, filepath.Join(freshFlow.Dir, "artifact.json"), originals["flow:flow-celestrak:artifact"])
 }
 

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PLG"
 	"github.com/ipfs/kubo/sdn/plugins"
 )
 
@@ -20,13 +21,44 @@ type FlowProgram struct {
 	Triggers    []FlowTrigger `json:"triggers"`
 }
 
-// FlowTrigger describes a trigger from the flow JSON.
+// FlowTrigger describes a trigger from the flow definition ($PLG FLOW_TRIGGERS).
 type FlowTrigger struct {
 	TriggerID         string `json:"triggerId"`
 	Kind              string `json:"kind"`
 	Source            string `json:"source"`
 	DefaultIntervalMs int    `json:"defaultIntervalMs"`
 	HTTPPath          string `json:"httpPath,omitempty"`
+}
+
+// parseFlowProgramPLG parses a flow's $PLG FlatBuffer into the FlowProgram
+// metadata the FlowPlugin adapter needs (V1: PLG.PLUGIN_ID -> programId,
+// PLG.NAME/VERSION/DESCRIPTION, FLOW_TRIGGERS -> triggers). This is the
+// JSON-free replacement for the old json.Unmarshal(flow.json, &FlowProgram).
+func parseFlowProgramPLG(buf []byte) (FlowProgram, error) {
+	var prog FlowProgram
+	if len(buf) < 8 || !PLG.PLGBufferHasIdentifier(buf) {
+		return prog, fmt.Errorf("flowrt: not a $PLG FlatBuffer")
+	}
+	root := PLG.GetRootAsPLG(buf, 0)
+	prog.ProgramID = string(root.PLUGIN_ID())
+	prog.Name = string(root.NAME())
+	prog.Version = string(root.VERSION())
+	prog.Description = string(root.DESCRIPTION())
+
+	var trig PLG.PLGFlowTrigger
+	for i := 0; i < root.FLOW_TRIGGERSLength(); i++ {
+		if !root.FLOW_TRIGGERS(&trig, i) {
+			continue
+		}
+		prog.Triggers = append(prog.Triggers, FlowTrigger{
+			TriggerID:         string(trig.TRIGGER_ID()),
+			Kind:              string(trig.KIND()),
+			Source:            string(trig.SOURCE()),
+			DefaultIntervalMs: int(trig.DEFAULT_INTERVAL_MS()),
+			HTTPPath:          string(trig.HTTP_PATH()),
+		})
+	}
+	return prog, nil
 }
 
 // FlowPlugin wraps a FlowRuntime to implement the SDN plugin manager interfaces.

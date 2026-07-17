@@ -1,5 +1,5 @@
 // Package sdnflows is the SDN node FLOW install + register pipeline: it turns a
-// compiled .flow.json bundle (chaining WASM module nodes) into a running,
+// compiled flow bundle (chaining WASM module nodes) into a running,
 // cron-scheduled flow on a kubo-based SDN node, and persists which flows are
 // installed so the set re-registers on the next boot.
 //
@@ -11,7 +11,7 @@
 // its host-cron timer on its effective interval AND appears at
 // GET /sdn/v1/modules alongside modules — flows are runnable units on the node.
 //
-// Given a flow bundle reference (a directory holding runtime.wasm + flow.json,
+// Given a flow bundle reference (a directory holding runtime.wasm + flow.plg,
 // the deps having been linked into runtime.wasm at compile time) the installer:
 //
 //  1. loads the bundle through flowrt.LoadFlowService — WASI + flow host funcs +

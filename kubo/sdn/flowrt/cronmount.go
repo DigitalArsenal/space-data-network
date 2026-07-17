@@ -89,25 +89,9 @@ type ServiceFlow struct {
 	lastInvokeAt    time.Time
 }
 
-// serviceBundleTopology is the flow.json subset needed for timer triggers.
-type serviceBundleTopology struct {
-	ProgramID string `json:"programId"`
-	Name      string `json:"name"`
-	Version   string `json:"version"`
-	Triggers  []struct {
-		TriggerID         string `json:"triggerId"`
-		Kind              string `json:"kind"`
-		DefaultIntervalMs int    `json:"defaultIntervalMs"`
-	} `json:"triggers"`
-	TriggerBindings []struct {
-		TriggerID    string `json:"triggerId"`
-		TargetPortID string `json:"targetPortId"`
-	} `json:"triggerBindings"`
-}
-
 // resolveFlowArtifact maps a flow reference (a bundle directory or a direct
 // runtime.wasm path) to the artifact wasm path and the bundle directory holding
-// flow.json.
+// flow.plg.
 func resolveFlowArtifact(flowRef string) (wasmPath, bundleDir string, err error) {
 	info, statErr := os.Stat(flowRef)
 	if statErr != nil {
@@ -237,12 +221,11 @@ func LoadFlowService(flowRef string, intervals map[string]string, config map[str
 		lastTimerStatus: "never-run",
 	}
 
-	// Timer triggers + bound ports come from the bundle topology (mechanical
-	// lookup, no interpretation).
+	// Timer triggers + bound ports come from the bundle's flow.plg ($PLG
+	// FlatBuffer) topology (mechanical lookup, no interpretation).
 	if bundleDir != "" {
-		if data, readErr := os.ReadFile(filepath.Join(bundleDir, "flow.json")); readErr == nil {
-			var topo serviceBundleTopology
-			if json.Unmarshal(data, &topo) == nil {
+		if data, readErr := os.ReadFile(filepath.Join(bundleDir, "flow.plg")); readErr == nil {
+			if topo, perr := parsePLGGraph(data); perr == nil {
 				if topo.ProgramID != "" {
 					sf.programID = topo.ProgramID
 				}
@@ -282,7 +265,7 @@ func LoadFlowService(flowRef string, intervals map[string]string, config map[str
 	}
 	if len(sf.triggers) == 0 {
 		inst.rt.Release()
-		return nil, fmt.Errorf("flow service %q declares no timer triggers (bundle flow.json required)", flowRef)
+		return nil, fmt.Errorf("flow service %q declares no timer triggers (bundle flow.plg required)", flowRef)
 	}
 
 	// Egress sinks = the artifact's host-dispatch nodes.

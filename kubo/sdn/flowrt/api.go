@@ -121,8 +121,9 @@ type DeployPayload struct {
 	// WASMBase64 is the compiled flow WASM binary, base64-encoded.
 	WASMBase64 string `json:"wasmBase64"`
 
-	// FlowJSON is the original flow graph definition.
-	FlowJSON json.RawMessage `json:"flowJson"`
+	// FlowPLG is the flow definition as a $PLG FlatBuffer (base64-encoded on
+	// the wire — encoding/json encodes a []byte field as base64).
+	FlowPLG []byte `json:"flowPlg"`
 
 	// ArtifactMeta is optional compiled artifact metadata.
 	ArtifactMeta json.RawMessage `json:"artifactMeta,omitempty"`
@@ -145,8 +146,8 @@ func handleDeploy(w http.ResponseWriter, r *http.Request, mgr *FlowManager) {
 		http.Error(w, "missing wasmBase64", http.StatusBadRequest)
 		return
 	}
-	if len(payload.FlowJSON) == 0 {
-		http.Error(w, "missing flowJson", http.StatusBadRequest)
+	if len(payload.FlowPLG) == 0 {
+		http.Error(w, "missing flowPlg", http.StatusBadRequest)
 		return
 	}
 
@@ -156,7 +157,7 @@ func handleDeploy(w http.ResponseWriter, r *http.Request, mgr *FlowManager) {
 		return
 	}
 
-	programID, err := mgr.Deploy(r.Context(), wasmBytes, payload.FlowJSON, payload.ArtifactMeta)
+	programID, err := mgr.Deploy(r.Context(), wasmBytes, payload.FlowPLG, payload.ArtifactMeta)
 	if err != nil {
 		http.Error(w, "deploy failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -187,8 +188,8 @@ func handleBake(w http.ResponseWriter, r *http.Request, mgr *FlowManager) {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if len(req.FlowJSON) == 0 {
-		http.Error(w, "missing flowJson", http.StatusBadRequest)
+	if len(req.FlowPLG) == 0 {
+		http.Error(w, "missing flowPlg", http.StatusBadRequest)
 		return
 	}
 
@@ -252,7 +253,7 @@ func handlePublishNetworkModule(w http.ResponseWriter, r *http.Request, mgr *Flo
 // declaration. When Inputs/Outputs are omitted the flow's unbound ports are
 // auto-derived.
 type PublishFlowModuleRequest struct {
-	FlowJSON     json.RawMessage       `json:"flowJson"`
+	FlowPLG      []byte                `json:"flowPlg"`
 	PluginID     string                `json:"pluginId,omitempty"`
 	Method       string                `json:"method,omitempty"`
 	Inputs       []SubflowExternalPort `json:"inputs,omitempty"`
@@ -279,14 +280,14 @@ func handlePublishFlowModule(w http.ResponseWriter, r *http.Request, mgr *FlowMa
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if len(req.FlowJSON) == 0 {
-		http.Error(w, "missing flowJson", http.StatusBadRequest)
+	if len(req.FlowPLG) == 0 {
+		http.Error(w, "missing flowPlg", http.StatusBadRequest)
 		return
 	}
 	spec := SubflowSpec{
 		PluginID:     req.PluginID,
 		Method:       req.Method,
-		FlowJSON:     req.FlowJSON,
+		FlowPLG:      req.FlowPLG,
 		Inputs:       req.Inputs,
 		Outputs:      req.Outputs,
 		FinalizeWasm: req.FinalizeWasm,

@@ -271,7 +271,7 @@ type capabilityPolicyFile struct {
 // as a JSON file, keyed by module content hash. This mirrors the
 // lightweight JSON-file persistence pattern used elsewhere in this codebase
 // for operator-controlled install state (e.g. flowrt.FlowStore's
-// artifact.json / flow.json) rather than coupling capability policy to the
+// artifact.json / flow.plg) rather than coupling capability policy to the
 // FlatSQL record store — a small operator allowlist has no need for the
 // record/CID/provenance machinery internal/storage provides.
 //

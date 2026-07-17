@@ -63,9 +63,9 @@ type SubflowExternalPort struct {
 // Node-RED subflow output can tap an internal wire), which is why explicit
 // mappings are additive over auto-derivation, not replaced by it.
 type SubflowSpec struct {
-	PluginID     string          // module pluginId (default: flow programId)
-	Method       string          // aggregate method id (default: "run")
-	FlowJSON     json.RawMessage // the composed flow graph
+	PluginID     string // module pluginId (default: flow programId)
+	Method       string // aggregate method id (default: "run")
+	FlowPLG      []byte // the composed flow graph as a $PLG FlatBuffer
 	Inputs       []SubflowExternalPort
 	Outputs      []SubflowExternalPort
 	FinalizeWasm bool // also emit a finalized module.wasm (Bake the flow standalone)
@@ -106,15 +106,15 @@ func guestLinkSymbolPrefix(pluginID string) string {
 // partial-links it with the distinct inner module objects into a single
 // relocatable module-link.o. The result stages/publishes like any module.
 func (b *Baker) EmitSubflowModule(ctx context.Context, spec SubflowSpec) (*SubflowModule, error) {
-	if len(spec.FlowJSON) == 0 {
-		return nil, fmt.Errorf("subflow: missing flowJson")
+	if len(spec.FlowPLG) == 0 {
+		return nil, fmt.Errorf("subflow: missing flowPlg")
 	}
-	var g bakeGraph
-	if err := json.Unmarshal(spec.FlowJSON, &g); err != nil {
-		return nil, fmt.Errorf("subflow: parse flowJson: %w", err)
+	g, err := parsePLGGraph(spec.FlowPLG)
+	if err != nil {
+		return nil, fmt.Errorf("subflow: parse flowPlg: %w", err)
 	}
 	if g.ProgramID == "" {
-		return nil, fmt.Errorf("subflow: flowJson missing programId")
+		return nil, fmt.Errorf("subflow: flowPlg missing programId (PLUGIN_ID)")
 	}
 	if len(g.Nodes) == 0 {
 		return nil, fmt.Errorf("subflow: flow has no nodes")
@@ -133,7 +133,7 @@ func (b *Baker) EmitSubflowModule(ctx context.Context, spec SubflowSpec) (*Subfl
 
 	// Resolve every inner node to its staged guest-link entry symbol + typed
 	// input/output ports, and collect the distinct inner module objects to link.
-	sub, err := b.resolveSubflow(&g)
+	sub, err := b.resolveSubflow(g)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func (b *Baker) EmitSubflowModule(ctx context.Context, spec SubflowSpec) (*Subfl
 	inputs := spec.Inputs
 	outputs := spec.Outputs
 	if len(inputs) == 0 && len(outputs) == 0 {
-		inputs, outputs = deriveAggregatePorts(&g, sub)
+		inputs, outputs = deriveAggregatePorts(g, sub)
 	}
 	if len(inputs) == 0 && len(outputs) == 0 {
 		return nil, fmt.Errorf("subflow: flow %q exposes no aggregate ports (all inner ports are internally wired); declare Inputs/Outputs explicitly", g.ProgramID)
@@ -151,7 +151,7 @@ func (b *Baker) EmitSubflowModule(ctx context.Context, spec SubflowSpec) (*Subfl
 
 	// Generate + compile the driver wrapper, then partial-link it with the inner
 	// module objects into one relocatable guest-link object.
-	wrapperCpp := generateSubflowWrapper(&g, sub, inputs, outputs, entry)
+	wrapperCpp := generateSubflowWrapper(g, sub, inputs, outputs, entry)
 	invokeHdr, err := os.ReadFile(b.home.InvokeHeaderPath())
 	if err != nil {
 		return nil, fmt.Errorf("subflow: read space_data_module_invoke.h: %w", err)
@@ -182,7 +182,7 @@ func (b *Baker) EmitSubflowModule(ctx context.Context, spec SubflowSpec) (*Subfl
 	}
 
 	if spec.FinalizeWasm {
-		res, ferr := b.Bake(ctx, BakeRequest{FlowJSON: append([]byte(nil), spec.FlowJSON...)})
+		res, ferr := b.Bake(ctx, BakeRequest{FlowPLG: append([]byte(nil), spec.FlowPLG...)})
 		if ferr != nil {
 			return nil, fmt.Errorf("subflow: finalize module.wasm: %w", ferr)
 		}

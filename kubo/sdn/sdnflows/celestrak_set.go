@@ -67,7 +67,7 @@ const CelestrakRoleName = "celestrak"
 type ReferenceKind string
 
 const (
-	// KindFlow is a compiled .flow.json bundle (runtime.wasm + flow.json)
+	// KindFlow is a compiled flow bundle (runtime.wasm + flow.plg)
 	// installed through sdnflows.Installer; its timer id is TimerID.
 	KindFlow ReferenceKind = "flow"
 	// KindModule is a standalone data-source module.wasm installed through the

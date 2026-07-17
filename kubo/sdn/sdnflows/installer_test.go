@@ -154,6 +154,7 @@ type spwHarness struct {
 func newSPWHarness(t *testing.T) *spwHarness {
 	t.Helper()
 	bundle := findSPWBundle(t)
+	ensureBundlePLG(t, bundle) // V1: the flow-runtime reads flow.plg, not flow.json
 
 	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Last-Modified", spwLastModified)

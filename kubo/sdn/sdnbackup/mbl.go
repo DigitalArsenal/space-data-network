@@ -20,7 +20,7 @@ import (
 //   - BlobToMBL / BlobFromMBL — one TRANSPORT entry carrying a backup unit's
 //     bytes, self-verifying by sha256 AND by entry_id == content hash.
 //   - FlowBundleToMBL / FlowBundleFromMBL — a flow's on-disk triple
-//     {runtime.wasm, flow.json, artifact.json} as three entries, so the one
+//     {runtime.wasm, flow.plg, artifact.json} as three entries, so the one
 //     non-content-addressed substrate becomes one content-hashable blob.
 //   - BuildReceiptMBL / ParseReceiptMBL — one attestation entry per backup
 //     unit plus a JSON summary entry (the $PNM/$REC stand-in, spec A.3/D.2).
@@ -31,7 +31,7 @@ const (
 	mediaOctetStream     = "application/octet-stream"
 	mediaJSON            = "application/json"
 	sectionFlowWASM      = "flow.runtime.wasm"
-	sectionFlowJSON      = "flow.json"
+	sectionFlowPLG       = "flow.plg"
 	sectionFlowArtifact  = "flow.artifact.json"
 	sectionBlobDesc      = "sdn.backup.blob"
 	sectionReceiptHeader = "sdn.backup.receipt"
@@ -233,8 +233,9 @@ func BlobFromMBL(buf []byte) (BackupBlob, error) {
 
 // FlowBundleToMBL wraps a flow's on-disk triple as a three-entry $MBL. The
 // programId rides in the wasm entry's description so restore can Install it
-// even when flow.json is absent. flowJSON and artifact are optional.
-func FlowBundleToMBL(programID string, wasm, flowJSON, artifact []byte) ([]byte, error) {
+// even when flow.plg is absent. flowPLG (the flow's $PLG FlatBuffer) and
+// artifact are optional.
+func FlowBundleToMBL(programID string, wasm, flowPLG, artifact []byte) ([]byte, error) {
 	if len(wasm) == 0 {
 		return nil, errors.New("sdnbackup: flow bundle requires runtime.wasm bytes")
 	}
@@ -247,14 +248,14 @@ func FlowBundleToMBL(programID string, wasm, flowJSON, artifact []byte) ([]byte,
 		Payload:   wasm,
 		Desc:      programID,
 	}}
-	if len(flowJSON) > 0 {
+	if len(flowPLG) > 0 {
 		entries = append(entries, mblEntry{
-			EntryID:   "flow.json",
+			EntryID:   "flow.plg",
 			Role:      MBL.ModuleBundleEntryRoleMANIFEST,
-			Section:   sectionFlowJSON,
-			Encoding:  MBL.ModulePayloadEncodingJSON_UTF8,
-			MediaType: mediaJSON,
-			Payload:   flowJSON,
+			Section:   sectionFlowPLG,
+			Encoding:  MBL.ModulePayloadEncodingRAW_BYTES,
+			MediaType: mediaOctetStream,
+			Payload:   flowPLG,
 		})
 	}
 	if len(artifact) > 0 {
@@ -271,7 +272,7 @@ func FlowBundleToMBL(programID string, wasm, flowJSON, artifact []byte) ([]byte,
 }
 
 // FlowBundleFromMBL is the inverse of FlowBundleToMBL.
-func FlowBundleFromMBL(buf []byte) (programID string, wasm, flowJSON, artifact []byte, err error) {
+func FlowBundleFromMBL(buf []byte) (programID string, wasm, flowPLG, artifact []byte, err error) {
 	format, entries, err := parseMBL(buf)
 	if err != nil {
 		return "", nil, nil, nil, err
@@ -284,8 +285,8 @@ func FlowBundleFromMBL(buf []byte) (programID string, wasm, flowJSON, artifact [
 		case sectionFlowWASM:
 			wasm = e.Payload
 			programID = e.Desc
-		case sectionFlowJSON:
-			flowJSON = e.Payload
+		case sectionFlowPLG:
+			flowPLG = e.Payload
 		case sectionFlowArtifact:
 			artifact = e.Payload
 		}
@@ -293,5 +294,5 @@ func FlowBundleFromMBL(buf []byte) (programID string, wasm, flowJSON, artifact [
 	if len(wasm) == 0 {
 		return "", nil, nil, nil, errors.New("sdnbackup: flow bundle $MBL carries no runtime.wasm entry")
 	}
-	return programID, wasm, flowJSON, artifact, nil
+	return programID, wasm, flowPLG, artifact, nil
 }
