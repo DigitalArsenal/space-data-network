@@ -642,6 +642,15 @@ func (b *Baker) link(ctx context.Context, flowRuntimeO, descriptorO []byte, deps
 	link = append(link,
 		"--export-if-defined=emscripten_stack_get_current",
 		"--export-if-defined=_emscripten_stack_restore",
+		// The host writes payloads INTO guest memory (writeOutputFrames ->
+		// mod.Allocate*) whenever a HOST-model node EMITS output frames — e.g. the
+		// object-feeder source (object_feeder.go) injecting a per-object $OEM. That
+		// path calls the guest's "malloc"/"free" exports (wasmrt defaults;
+		// descriptor.malloc_symbol_ptr = "malloc"). -ldlmalloc provides them, but
+		// wasm-ld drops unreferenced exports, so a runtime with only host SINK nodes
+		// never surfaced them. Export them so host->guest injection works.
+		"--export-if-defined=malloc",
+		"--export-if-defined=free",
 	)
 	for _, e := range bakeRuntimeExports() {
 		link = append(link, "--export="+e)
