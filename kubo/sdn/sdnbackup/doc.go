@@ -3,7 +3,7 @@
 //
 // The model is "everything is a content-addressed blob": a node already stores
 // its modules (WASM bytes in the blockstore), its flows (a runtime.wasm +
-// flow.json + artifact.json triple on disk) and its SDS records (FlatBuffer
+// flow.plg + artifact.json triple on disk) and its SDS records (FlatBuffer
 // bytes in the blockstore) as durable, self-verifying units. This package fans
 // those units out to one or more STORAGE ADAPTERS and can restore them again.
 //

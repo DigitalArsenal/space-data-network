@@ -21,7 +21,7 @@ const registryFileName = "installed-flows.json"
 type InstalledEntry struct {
 	// ID is the flow's programId (its scheduler id). Display/id only.
 	ID string `json:"id"`
-	// Ref is the bundle reference (directory holding runtime.wasm + flow.json)
+	// Ref is the bundle reference (directory holding runtime.wasm + flow.plg)
 	// the bytes re-load from on a later boot.
 	Ref string `json:"ref"`
 	// Name / Version are display fields captured at install time.

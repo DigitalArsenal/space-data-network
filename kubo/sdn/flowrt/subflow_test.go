@@ -38,50 +38,52 @@ import (
 
 const subflowFPluginID = "com.digitalarsenal.flows.subflow-clockjson"
 
-// subflowFFlowJSON: F's inner graph — clock.now(c) -> omm-json.encode(j). Its
+// subflowFFlowPLG: F's inner graph — clock.now(c) -> omm-json.encode(j). Its
 // aggregate ports are declared explicitly by the test (fin -> c.trigger,
 // fout <- c.time). c.time is BOTH wired to j.stream AND tapped as fout, so F emits
 // a guaranteed clock timestamp on fout while still routing into its second inner
 // node (proving inner routing, not a 1-node passthrough).
-const subflowFFlowJSON = `{
-  "programId": "com.digitalarsenal.flows.subflow-clockjson",
-  "name": "Subflow Clock->Json",
-  "version": "0.1.0",
-  "nodes": [
-    { "nodeId": "c", "pluginId": "com.digitalarsenal.hostcap.clock",        "methodId": "now",    "kind": "transform" },
-    { "nodeId": "j", "pluginId": "com.digitalarsenal.foundation.omm-json",  "methodId": "encode", "kind": "transform" }
-  ],
-  "edges": [
-    { "edgeId": "e0", "fromNodeId": "c", "fromPortId": "time", "toNodeId": "j", "toPortId": "stream" }
-  ],
-  "triggers": [],
-  "triggerBindings": []
-}`
+func subflowFFlowPLG() []byte {
+	return BuildFlowPLG(FlowSpec{
+		ProgramID: "com.digitalarsenal.flows.subflow-clockjson",
+		Name:      "Subflow Clock->Json",
+		Version:   "0.1.0",
+		Nodes: []FlowNodeSpec{
+			{NodeID: "c", PluginID: "com.digitalarsenal.hostcap.clock", MethodID: "now", Kind: "transform"},
+			{NodeID: "j", PluginID: "com.digitalarsenal.foundation.omm-json", MethodID: "encode", Kind: "transform"},
+		},
+		Edges: []FlowEdgeSpec{
+			{EdgeID: "e0", FromNodeID: "c", FromPortID: "time", ToNodeID: "j", ToPortID: "stream"},
+		},
+	})
+}
 
-// subflowGFlowJSON: the OUTER flow. Node f is the flow-module F; node d is an
+// subflowGFlowPLG: the OUTER flow. Node f is the flow-module F; node d is an
 // ordinary module (decision-gate.dispatch). A timer trigger feeds F.fin; F's fout
 // feeds d.decision. Baking G must link F's guest-link object + decision-gate's and
 // run both.
-const subflowGFlowJSON = `{
-  "programId": "com.digitalarsenal.flows.subflow-g",
-  "name": "Subflow G (re-composes F)",
-  "version": "0.1.0",
-  "nodes": [
-    { "nodeId": "f", "pluginId": "com.digitalarsenal.flows.subflow-clockjson", "methodId": "run",      "kind": "transform" },
-    { "nodeId": "d", "pluginId": "com.digitalarsenal.foundation.decision-gate", "methodId": "dispatch", "kind": "transform" }
-  ],
-  "edges": [
-    { "edgeId": "e0", "fromNodeId": "f", "fromPortId": "fout", "toNodeId": "d", "toPortId": "decision" }
-  ],
-  "triggers": [ { "triggerId": "t0", "kind": "timer", "source": "host-cron" } ],
-  "triggerBindings": [ { "triggerId": "t0", "targetNodeId": "f", "targetPortId": "fin" } ]
-}`
+func subflowGFlowPLG() []byte {
+	return BuildFlowPLG(FlowSpec{
+		ProgramID: "com.digitalarsenal.flows.subflow-g",
+		Name:      "Subflow G (re-composes F)",
+		Version:   "0.1.0",
+		Nodes: []FlowNodeSpec{
+			{NodeID: "f", PluginID: "com.digitalarsenal.flows.subflow-clockjson", MethodID: "run", Kind: "transform"},
+			{NodeID: "d", PluginID: "com.digitalarsenal.foundation.decision-gate", MethodID: "dispatch", Kind: "transform"},
+		},
+		Edges: []FlowEdgeSpec{
+			{EdgeID: "e0", FromNodeID: "f", FromPortID: "fout", ToNodeID: "d", ToPortID: "decision"},
+		},
+		Triggers:        []FlowTriggerSpec{{TriggerID: "t0", Kind: "timer", Source: "host-cron"}},
+		TriggerBindings: []FlowTriggerBindingSpec{{TriggerID: "t0", TargetNodeID: "f", TargetPortID: "fin"}},
+	})
+}
 
 func subflowSpec() SubflowSpec {
 	return SubflowSpec{
 		PluginID:     subflowFPluginID,
 		Method:       "run",
-		FlowJSON:     json.RawMessage(subflowFFlowJSON),
+		FlowPLG:      subflowFFlowPLG(),
 		Inputs:       []SubflowExternalPort{{ExtPort: "fin", NodeID: "c", Port: "trigger", Any: true}},
 		Outputs:      []SubflowExternalPort{{ExtPort: "fout", NodeID: "c", Port: "time", Any: true}},
 		FinalizeWasm: true,
@@ -225,7 +227,7 @@ func TestPublishFlowModuleEndpoint(t *testing.T) {
 	defer srv.Close()
 
 	reqBody, _ := json.Marshal(PublishFlowModuleRequest{
-		FlowJSON: json.RawMessage(subflowFFlowJSON),
+		FlowPLG:  subflowFFlowPLG(),
 		PluginID: subflowFPluginID,
 		Method:   "run",
 		Inputs:   []SubflowExternalPort{{ExtPort: "fin", NodeID: "c", Port: "trigger", Any: true}},
@@ -288,7 +290,7 @@ func TestPublishFlowModuleEndpoint(t *testing.T) {
 // F node (index 0) and the decision-gate node (index 1) advanced.
 func bakeRunG(t *testing.T, ctx context.Context, mgr *FlowManager, refs []BakeModuleRef) (fAdvanced, dAdvanced bool) {
 	t.Helper()
-	req := BakeRequest{FlowJSON: json.RawMessage(subflowGFlowJSON), ModuleRefs: refs}
+	req := BakeRequest{FlowPLG: subflowGFlowPLG(), ModuleRefs: refs}
 	_, programID, err := mgr.BakeAndDeploy(ctx, req)
 	if err != nil {
 		t.Fatalf("BakeAndDeploy(G): %v", err)

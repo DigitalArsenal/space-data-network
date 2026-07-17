@@ -2,7 +2,6 @@ package flowrt
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
@@ -64,7 +63,7 @@ func (m *FlowManager) BakeAndDeploy(ctx context.Context, req BakeRequest) (*Bake
 	if err != nil {
 		return nil, "", err
 	}
-	programID, err := m.Deploy(ctx, res.Wasm, res.FlowJSON, nil)
+	programID, err := m.Deploy(ctx, res.Wasm, res.FlowPLG, nil)
 	if err != nil {
 		return res, "", err
 	}
@@ -131,18 +130,19 @@ func (m *FlowManager) LoadAll(ctx context.Context) error {
 	return nil
 }
 
-// Deploy installs and starts a new flow from a deployment payload.
-func (m *FlowManager) Deploy(ctx context.Context, wasmBytes []byte, flowJSON []byte, artifactMeta []byte) (string, error) {
+// Deploy installs and starts a new flow from a deployment payload. flowPLG is
+// the flow definition as a $PLG FlatBuffer.
+func (m *FlowManager) Deploy(ctx context.Context, wasmBytes []byte, flowPLG []byte, artifactMeta []byte) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Parse the flow program
-	var program FlowProgram
-	if err := json.Unmarshal(flowJSON, &program); err != nil {
-		return "", fmt.Errorf("parse flow JSON: %w", err)
+	// Parse the flow program from its $PLG FlatBuffer.
+	program, err := parseFlowProgramPLG(flowPLG)
+	if err != nil {
+		return "", fmt.Errorf("parse flow $PLG: %w", err)
 	}
 	if program.ProgramID == "" {
-		return "", fmt.Errorf("flow JSON missing programId")
+		return "", fmt.Errorf("flow $PLG missing programId (PLUGIN_ID)")
 	}
 
 	// Check max flows limit
@@ -170,7 +170,7 @@ func (m *FlowManager) Deploy(ctx context.Context, wasmBytes []byte, flowJSON []b
 	}
 
 	// Install to disk
-	if err := m.store.Install(program.ProgramID, wasmBytes, flowJSON, artifactMeta); err != nil {
+	if err := m.store.Install(program.ProgramID, wasmBytes, flowPLG, artifactMeta); err != nil {
 		return "", fmt.Errorf("install flow: %w", err)
 	}
 
@@ -271,15 +271,28 @@ func (m *FlowManager) loadAndRegister(ctx context.Context, flow *InstalledFlow) 
 		return fmt.Errorf("flow %q: %w", flow.ProgramID, sigErr)
 	}
 
-	// Parse flow program for triggers
-	var program FlowProgram
-	program.ProgramID = flow.ProgramID
-	program.Name = flow.Name
-	program.Version = flow.Version
-
-	flowJSONPath := m.store.FlowJSONPath(flow.ProgramID)
-	if data, err := os.ReadFile(flowJSONPath); err == nil {
-		json.Unmarshal(data, &program)
+	// Parse flow program for triggers from the installed flow.plg ($PLG). The
+	// dir-derived identity is the fallback if the $PLG omits a field.
+	program := FlowProgram{
+		ProgramID: flow.ProgramID,
+		Name:      flow.Name,
+		Version:   flow.Version,
+	}
+	flowPLGPath := m.store.FlowPLGPath(flow.ProgramID)
+	if data, err := os.ReadFile(flowPLGPath); err == nil {
+		if prog, perr := parseFlowProgramPLG(data); perr == nil {
+			if prog.ProgramID != "" {
+				program.ProgramID = prog.ProgramID
+			}
+			if prog.Name != "" {
+				program.Name = prog.Name
+			}
+			if prog.Version != "" {
+				program.Version = prog.Version
+			}
+			program.Description = prog.Description
+			program.Triggers = prog.Triggers
+		}
 	}
 
 	// Create flow runtime. Composed/baked flows dispatch their nodes to

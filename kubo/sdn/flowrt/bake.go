@@ -25,7 +25,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -55,20 +54,22 @@ type BakeModuleRef struct {
 	SignerPubKey string `json:"signerPubKey,omitempty"`
 }
 
-// BakeRequest is the POST body for the node-side bake path. FlowJSON is the full
-// flow document (the same graph flowCompiler.js consumes: programId + nodes +
-// edges + triggers + triggerBindings). ModuleRefs is OPTIONAL — the distinct
-// pluginIds referenced by the graph's linked nodes are baked in regardless; an
-// explicit ref list only adds content-hash pinning.
+// BakeRequest is the POST body for the node-side bake path. FlowPLG is the full
+// flow definition as a $PLG FlatBuffer (V1: the flow graph IS the SDS $PLG
+// record — programId=PLUGIN_ID + FLOW_NODES + FLOW_EDGES + FLOW_TRIGGERS +
+// FLOW_TRIGGER_BINDINGS). Over HTTP it rides as base64 (encoding/json encodes a
+// []byte field as base64). ModuleRefs is OPTIONAL — the distinct pluginIds
+// referenced by the graph's linked nodes are baked in regardless; an explicit
+// ref list only adds content-hash pinning.
 type BakeRequest struct {
-	FlowJSON   json.RawMessage `json:"flowJson"`
+	FlowPLG    []byte          `json:"flowPlg"`
 	ModuleRefs []BakeModuleRef `json:"moduleRefs,omitempty"`
 }
 
 // BakeResult reports what a bake produced (for the HTTP response + tests).
 type BakeResult struct {
 	Wasm         []byte
-	FlowJSON     []byte
+	FlowPLG      []byte
 	ProgramID    string
 	Modules      []string      // distinct pluginIds linked, sorted
 	FlowRuntimeO int           // bytes of the (possibly cached) flow_runtime.o
@@ -77,25 +78,28 @@ type BakeResult struct {
 }
 
 // ---------------------------------------------------------------------------
-// Flow-graph subset the descriptor generator reads.
+// Flow-graph subset the descriptor generator reads. These are INTERNAL structs
+// only (V1: no JSON tags — they are populated from the $PLG FlatBuffer by
+// parsePLGGraph, never json.Unmarshal). The descriptor generator + link logic
+// downstream read these verbatim; only the input format changed.
 // ---------------------------------------------------------------------------
 
 type bakeGraph struct {
-	ProgramID       string               `json:"programId"`
-	Name            string               `json:"name"`
-	Version         string               `json:"version"`
-	Nodes           []bakeNode           `json:"nodes"`
-	Edges           []bakeEdge           `json:"edges"`
-	Triggers        []bakeTrigger        `json:"triggers"`
-	TriggerBindings []bakeTriggerBinding `json:"triggerBindings"`
+	ProgramID       string
+	Name            string
+	Version         string
+	Nodes           []bakeNode
+	Edges           []bakeEdge
+	Triggers        []bakeTrigger
+	TriggerBindings []bakeTriggerBinding
 }
 
 type bakeNode struct {
-	NodeID        string `json:"nodeId"`
-	PluginID      string `json:"pluginId"`
-	MethodID      string `json:"methodId"`
-	Kind          string `json:"kind"`
-	DispatchModel string `json:"dispatchModel"` // "" -> linked-direct
+	NodeID        string
+	PluginID      string
+	MethodID      string
+	Kind          string
+	DispatchModel string // "" -> linked-direct
 }
 
 // linked reports whether this node dispatches via a linked-direct guest-link
@@ -112,20 +116,24 @@ func (n bakeNode) model() string {
 }
 
 type bakeEdge struct {
-	FromNodeID string `json:"fromNodeId"`
-	FromPortID string `json:"fromPortId"`
-	ToNodeID   string `json:"toNodeId"`
-	ToPortID   string `json:"toPortId"`
+	FromNodeID string
+	FromPortID string
+	ToNodeID   string
+	ToPortID   string
 }
 
 type bakeTrigger struct {
-	TriggerID string `json:"triggerId"`
+	TriggerID         string
+	Kind              string
+	Source            string
+	DefaultIntervalMs int
+	HTTPPath          string
 }
 
 type bakeTriggerBinding struct {
-	TriggerID    string `json:"triggerId"`
-	TargetNodeID string `json:"targetNodeId"`
-	TargetPortID string `json:"targetPortId"`
+	TriggerID    string
+	TargetNodeID string
+	TargetPortID string
 }
 
 // ---------------------------------------------------------------------------
@@ -290,15 +298,15 @@ func (b *Baker) Home() flowcc.Home { return b.home }
 // installed). It reproduces flow_bake_test.go's proven flags verbatim.
 func (b *Baker) Bake(ctx context.Context, req BakeRequest) (*BakeResult, error) {
 	start := time.Now()
-	if len(req.FlowJSON) == 0 {
-		return nil, fmt.Errorf("bake: missing flowJson")
+	if len(req.FlowPLG) == 0 {
+		return nil, fmt.Errorf("bake: missing flowPlg")
 	}
-	var g bakeGraph
-	if err := json.Unmarshal(req.FlowJSON, &g); err != nil {
-		return nil, fmt.Errorf("bake: parse flowJson: %w", err)
+	g, err := parsePLGGraph(req.FlowPLG)
+	if err != nil {
+		return nil, fmt.Errorf("bake: parse flowPlg: %w", err)
 	}
 	if g.ProgramID == "" {
-		return nil, fmt.Errorf("bake: flowJson missing programId")
+		return nil, fmt.Errorf("bake: flowPlg missing programId (PLUGIN_ID)")
 	}
 	if len(g.Nodes) == 0 {
 		return nil, fmt.Errorf("bake: flow has no nodes")
@@ -308,7 +316,7 @@ func (b *Baker) Bake(ctx context.Context, req BakeRequest) (*BakeResult, error) 
 	// collect the distinct module objects to link. A referenced module that is
 	// not staged locally is fetched by content hash + verified + staged first
 	// (Part-B fetch-to-bake) when the ref carries a signed BundleHash.
-	gen, deps, err := b.resolve(ctx, &g, req.ModuleRefs)
+	gen, deps, err := b.resolve(ctx, g, req.ModuleRefs)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +365,7 @@ func (b *Baker) Bake(ctx context.Context, req BakeRequest) (*BakeResult, error) 
 	}
 	return &BakeResult{
 		Wasm:         wasm,
-		FlowJSON:     append([]byte(nil), req.FlowJSON...),
+		FlowPLG:      append([]byte(nil), req.FlowPLG...),
 		ProgramID:    g.ProgramID,
 		Modules:      mods,
 		FlowRuntimeO: len(flowRuntimeO),

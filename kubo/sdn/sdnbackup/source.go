@@ -167,9 +167,9 @@ func (s *BackupSource) flowUnits() ([]BackupBlob, error) {
 		if err != nil {
 			return nil, fmt.Errorf("sdnbackup: read flow %q runtime.wasm: %w", f.ProgramID, err)
 		}
-		flowJSON, _ := os.ReadFile(filepath.Join(f.Dir, "flow.json"))
+		flowPLG, _ := os.ReadFile(filepath.Join(f.Dir, "flow.plg"))
 		artifact, _ := os.ReadFile(filepath.Join(f.Dir, "artifact.json"))
-		bundle, err := FlowBundleToMBL(f.ProgramID, wasm, flowJSON, artifact)
+		bundle, err := FlowBundleToMBL(f.ProgramID, wasm, flowPLG, artifact)
 		if err != nil {
 			return nil, fmt.Errorf("sdnbackup: wrap flow %q bundle: %w", f.ProgramID, err)
 		}

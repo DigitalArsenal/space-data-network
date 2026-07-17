@@ -17,7 +17,7 @@ import (
 // NodeRestager re-installs restored blobs into a live node by kind (spec C.7):
 //
 //	module_wasm     -> StoreModuleBytes(bs, wasm) then Registry.Put(InstalledEntry)
-//	flow_bundle     -> FlowStore.Install(programId, wasm, flow.json, artifact.json)
+//	flow_bundle     -> FlowStore.Install(programId, wasm, flow.plg, artifact.json)
 //	sds_record      -> sdnstore.Store(source, type, fb)
 //	app_manifest    -> sdnstore.StoreManifest(source, "APP", fb)
 //	module_registry -> write installed.json back under FileRoot
@@ -113,14 +113,14 @@ func (n *NodeRestager) restageFlow(blob BackupBlob) error {
 	if n.Flows == nil {
 		return fmt.Errorf("sdnbackup: restage flow: no flow store configured")
 	}
-	programID, wasm, flowJSON, artifact, err := FlowBundleFromMBL(blob.Bytes)
+	programID, wasm, flowPLG, artifact, err := FlowBundleFromMBL(blob.Bytes)
 	if err != nil {
 		return fmt.Errorf("sdnbackup: restage flow: %w", err)
 	}
 	if programID == "" {
 		programID = blob.Meta.ProgramID
 	}
-	if err := n.Flows.Install(programID, wasm, flowJSON, artifact); err != nil {
+	if err := n.Flows.Install(programID, wasm, flowPLG, artifact); err != nil {
 		return fmt.Errorf("sdnbackup: restage flow install: %w", err)
 	}
 	return nil

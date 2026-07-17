@@ -111,6 +111,16 @@ func newCelestrakHarness(t *testing.T) *celestrakHarness {
 	if !ok {
 		t.Skip("space-data-network-modules dist not found (set SDN_MODULES_DIST)")
 	}
+	// V1: the flow-runtime reads flow.plg. Transcode each resolvable flow
+	// bundle's flow.json into a sibling flow.plg before install.
+	for _, m := range sdnflows.CelestrakReferenceSet() {
+		if m.Kind != sdnflows.KindFlow {
+			continue
+		}
+		if path, ok := m.Resolve(distRoot); ok {
+			ensureBundlePLG(t, path)
+		}
+	}
 
 	mds := dssync.MutexWrap(ds.NewMapDatastore())
 	bs := blockstore.NewBlockstore(mds)

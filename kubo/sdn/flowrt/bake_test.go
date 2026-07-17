@@ -1,7 +1,7 @@
 package flowrt
 
 // bake_test.go is the Phase-0 make-or-break for the SDN Flow Platform: prove the
-// node-side BAKE deploy path works end-to-end — POST a REAL flow.json + module
+// node-side BAKE deploy path works end-to-end — POST a REAL flow $PLG + module
 // refs to /api/v1/flows/bake, the node resolves the refs to STAGED guest-link
 // objects, generates the per-flow descriptor, compiles + links a composed
 // runtime.wasm with its OWN flowcc toolchain, installs it, and the installed
@@ -32,25 +32,28 @@ import (
 // scratchpad session dir (matches flowcc/flow_bake_test.go defaults).
 const bakeScratch = "/private/tmp/claude-501/-Users-tj-software-spacedatanetwork-stack/8a9a46ba-3833-472b-bfb4-4c3869499342/scratchpad"
 
-// bakeE2EFlowJSON is a real 3-node linked-direct flow: omm-json.encode ->
+// bakeE2EFlowPLG is a real 3-node linked-direct flow: omm-json.encode ->
 // decision-gate.dispatch -> clock.now, driven by one timer trigger bound to the
-// first node. The pluginIds/methodIds match the staged modules' metadata.json.
-const bakeE2EFlowJSON = `{
-  "programId": "com.digitalarsenal.flows.bake-e2e",
-  "name": "Bake E2E Flow",
-  "version": "0.1.0",
-  "nodes": [
-    { "nodeId": "n0-ommjson", "pluginId": "com.digitalarsenal.foundation.omm-json",     "methodId": "encode",   "kind": "transform" },
-    { "nodeId": "n1-gate",    "pluginId": "com.digitalarsenal.foundation.decision-gate", "methodId": "dispatch", "kind": "transform" },
-    { "nodeId": "n2-clock",   "pluginId": "com.digitalarsenal.hostcap.clock",            "methodId": "now",      "kind": "transform" }
-  ],
-  "edges": [
-    { "edgeId": "e0", "fromNodeId": "n0-ommjson", "fromPortId": "out", "toNodeId": "n1-gate",  "toPortId": "in" },
-    { "edgeId": "e1", "fromNodeId": "n1-gate",    "fromPortId": "out", "toNodeId": "n2-clock", "toPortId": "in" }
-  ],
-  "triggers": [ { "triggerId": "t0", "kind": "timer", "source": "host-cron" } ],
-  "triggerBindings": [ { "triggerId": "t0", "targetNodeId": "n0-ommjson", "targetPortId": "in" } ]
-}`
+// first node, expressed as a $PLG FlatBuffer. The pluginIds/methodIds match the
+// staged modules' metadata.json.
+func bakeE2EFlowPLG() []byte {
+	return BuildFlowPLG(FlowSpec{
+		ProgramID: "com.digitalarsenal.flows.bake-e2e",
+		Name:      "Bake E2E Flow",
+		Version:   "0.1.0",
+		Nodes: []FlowNodeSpec{
+			{NodeID: "n0-ommjson", PluginID: "com.digitalarsenal.foundation.omm-json", MethodID: "encode", Kind: "transform"},
+			{NodeID: "n1-gate", PluginID: "com.digitalarsenal.foundation.decision-gate", MethodID: "dispatch", Kind: "transform"},
+			{NodeID: "n2-clock", PluginID: "com.digitalarsenal.hostcap.clock", MethodID: "now", Kind: "transform"},
+		},
+		Edges: []FlowEdgeSpec{
+			{EdgeID: "e0", FromNodeID: "n0-ommjson", FromPortID: "out", ToNodeID: "n1-gate", ToPortID: "in"},
+			{EdgeID: "e1", FromNodeID: "n1-gate", FromPortID: "out", ToNodeID: "n2-clock", ToPortID: "in"},
+		},
+		Triggers:        []FlowTriggerSpec{{TriggerID: "t0", Kind: "timer", Source: "host-cron"}},
+		TriggerBindings: []FlowTriggerBindingSpec{{TriggerID: "t0", TargetNodeID: "n0-ommjson", TargetPortID: "in"}},
+	})
+}
 
 // bakeModule is one staged module's identity + dist location relative to the
 // modules monorepo root.
@@ -172,7 +175,7 @@ func TestBakeDeployEndToEnd(t *testing.T) {
 	// Build the POST body: the full flow graph + explicit module refs (with
 	// content-hash pins to exercise the fail-closed verify path).
 	reqBody := map[string]interface{}{
-		"flowJson": json.RawMessage(bakeE2EFlowJSON),
+		"flowPlg": bakeE2EFlowPLG(),
 		"moduleRefs": []map[string]string{
 			{"pluginId": "com.digitalarsenal.foundation.omm-json", "contentHash": sha256File(t, a, bakeModules[0])},
 			{"pluginId": "com.digitalarsenal.foundation.decision-gate", "contentHash": sha256File(t, a, bakeModules[1])},
@@ -262,7 +265,7 @@ func TestBakeDeployEndToEnd(t *testing.T) {
 
 	// Measure the cache-hit re-bake (Task 3): a re-bake of the same flow serves
 	// flow_runtime.o from cache, so only the (fast) link runs.
-	res2, err := baker.Bake(context.Background(), BakeRequest{FlowJSON: json.RawMessage(bakeE2EFlowJSON)})
+	res2, err := baker.Bake(context.Background(), BakeRequest{FlowPLG: bakeE2EFlowPLG()})
 	if err != nil {
 		t.Fatalf("re-bake: %v", err)
 	}
@@ -273,25 +276,27 @@ func TestBakeDeployEndToEnd(t *testing.T) {
 		res2.CacheHit, res2.Elapsed.Milliseconds(), out.BakeMillis)
 }
 
-// bakeNewFlowJSON is a STRUCTURALLY DIFFERENT flow from bakeE2EFlowJSON: a
+// bakeNewFlowPLG is a STRUCTURALLY DIFFERENT flow from bakeE2EFlowPLG: a
 // 2-node linked-direct flow (omm-json.encode -> clock.now), different node/edge
 // counts, different programId. It shares NO per-flow compile input with flow A,
 // so a link-only bake must reuse the flow-agnostic flow_runtime.o (CacheHit)
 // rather than recompiling the 867-line runtime.
-const bakeNewFlowJSON = `{
-  "programId": "com.digitalarsenal.flows.bake-new",
-  "name": "Bake New Flow",
-  "version": "0.1.0",
-  "nodes": [
-    { "nodeId": "a-ommjson", "pluginId": "com.digitalarsenal.foundation.omm-json", "methodId": "encode", "kind": "transform" },
-    { "nodeId": "b-clock",   "pluginId": "com.digitalarsenal.hostcap.clock",       "methodId": "now",    "kind": "transform" }
-  ],
-  "edges": [
-    { "edgeId": "e0", "fromNodeId": "a-ommjson", "fromPortId": "out", "toNodeId": "b-clock", "toPortId": "in" }
-  ],
-  "triggers": [ { "triggerId": "t0", "kind": "timer", "source": "host-cron" } ],
-  "triggerBindings": [ { "triggerId": "t0", "targetNodeId": "a-ommjson", "targetPortId": "in" } ]
-}`
+func bakeNewFlowPLG() []byte {
+	return BuildFlowPLG(FlowSpec{
+		ProgramID: "com.digitalarsenal.flows.bake-new",
+		Name:      "Bake New Flow",
+		Version:   "0.1.0",
+		Nodes: []FlowNodeSpec{
+			{NodeID: "a-ommjson", PluginID: "com.digitalarsenal.foundation.omm-json", MethodID: "encode", Kind: "transform"},
+			{NodeID: "b-clock", PluginID: "com.digitalarsenal.hostcap.clock", MethodID: "now", Kind: "transform"},
+		},
+		Edges: []FlowEdgeSpec{
+			{EdgeID: "e0", FromNodeID: "a-ommjson", FromPortID: "out", ToNodeID: "b-clock", ToPortID: "in"},
+		},
+		Triggers:        []FlowTriggerSpec{{TriggerID: "t0", Kind: "timer", Source: "host-cron"}},
+		TriggerBindings: []FlowTriggerBindingSpec{{TriggerID: "t0", TargetNodeID: "a-ommjson", TargetPortID: "in"}},
+	})
+}
 
 // TestBakeNewFlowLinkOnly is the Phase-0b proof: once the flow-agnostic
 // flow_runtime.o is warm, baking a BRAND-NEW flow is LINK-ONLY (no 34s runtime
@@ -323,7 +328,7 @@ func TestBakeNewFlowLinkOnly(t *testing.T) {
 	t.Logf("PrewarmRuntime: cachedAlready=%v elapsed=%dms", warmCached, time.Since(warmStart).Milliseconds())
 
 	// Bake+deploy flow A (3-node). With a warm runtime this is already link-only.
-	resA, _, err := mgr.BakeAndDeploy(ctx, BakeRequest{FlowJSON: json.RawMessage(bakeE2EFlowJSON)})
+	resA, _, err := mgr.BakeAndDeploy(ctx, BakeRequest{FlowPLG: bakeE2EFlowPLG()})
 	if err != nil {
 		t.Fatalf("BakeAndDeploy flow A: %v", err)
 	}
@@ -334,7 +339,7 @@ func TestBakeNewFlowLinkOnly(t *testing.T) {
 
 	// Bake+deploy the STRUCTURALLY DIFFERENT flow B (2-node). THE PROOF: a brand-
 	// new flow must be link-only (CacheHit) and fast.
-	resB, programB, err := mgr.BakeAndDeploy(ctx, BakeRequest{FlowJSON: json.RawMessage(bakeNewFlowJSON)})
+	resB, programB, err := mgr.BakeAndDeploy(ctx, BakeRequest{FlowPLG: bakeNewFlowPLG()})
 	if err != nil {
 		t.Fatalf("BakeAndDeploy flow B: %v", err)
 	}
@@ -383,29 +388,30 @@ func TestBakeNewFlowLinkOnly(t *testing.T) {
 	t.Logf("★★ NEW flow baked LINK-ONLY, installed, and RAN: %d node(s) stepped", advanced)
 }
 
-// bakeTwoInputGateFlowJSON is a single-node flow whose node is bound to
+// bakeTwoInputGateFlowPLG is a single-node flow whose node is bound to
 // decision-gate.branch — a method that declares TWO typed input ports (decision,
 // stream) in its plugin-manifest.json (Phase-2 staged). Two triggers each deliver
 // a frame to ONE of those ports, so the node's required-ports set (typed inputs ∩
 // wired ports) is {decision, stream}. It exists to prove a multi-input node fires
 // only once BOTH required inputs have a queued frame.
-const bakeTwoInputGateFlowJSON = `{
-  "programId": "com.digitalarsenal.flows.two-input-gate",
-  "name": "Two-Input Required-Ports Gate",
-  "version": "0.1.0",
-  "nodes": [
-    { "nodeId": "gate", "pluginId": "com.digitalarsenal.foundation.decision-gate", "methodId": "branch", "kind": "transform" }
-  ],
-  "edges": [],
-  "triggers": [
-    { "triggerId": "t-decision", "kind": "manual", "source": "test" },
-    { "triggerId": "t-stream",   "kind": "manual", "source": "test" }
-  ],
-  "triggerBindings": [
-    { "triggerId": "t-decision", "targetNodeId": "gate", "targetPortId": "decision" },
-    { "triggerId": "t-stream",   "targetNodeId": "gate", "targetPortId": "stream" }
-  ]
-}`
+func bakeTwoInputGateFlowPLG() []byte {
+	return BuildFlowPLG(FlowSpec{
+		ProgramID: "com.digitalarsenal.flows.two-input-gate",
+		Name:      "Two-Input Required-Ports Gate",
+		Version:   "0.1.0",
+		Nodes: []FlowNodeSpec{
+			{NodeID: "gate", PluginID: "com.digitalarsenal.foundation.decision-gate", MethodID: "branch", Kind: "transform"},
+		},
+		Triggers: []FlowTriggerSpec{
+			{TriggerID: "t-decision", Kind: "manual", Source: "test"},
+			{TriggerID: "t-stream", Kind: "manual", Source: "test"},
+		},
+		TriggerBindings: []FlowTriggerBindingSpec{
+			{TriggerID: "t-decision", TargetNodeID: "gate", TargetPortID: "decision"},
+			{TriggerID: "t-stream", TargetNodeID: "gate", TargetPortID: "stream"},
+		},
+	})
+}
 
 // TestBakeRequiredPortsTwoInputGate is the required-ports correctness proof: a
 // node bound to a 2-typed-input method (decision-gate.branch: decision + stream),
@@ -431,7 +437,7 @@ func TestBakeRequiredPortsTwoInputGate(t *testing.T) {
 	mgr.SetBaker(baker)
 	ctx := context.Background()
 
-	_, programID, err := mgr.BakeAndDeploy(ctx, BakeRequest{FlowJSON: json.RawMessage(bakeTwoInputGateFlowJSON)})
+	_, programID, err := mgr.BakeAndDeploy(ctx, BakeRequest{FlowPLG: bakeTwoInputGateFlowPLG()})
 	if err != nil {
 		t.Fatalf("BakeAndDeploy two-input gate: %v", err)
 	}
@@ -531,11 +537,11 @@ func TestBakeNewFlowLinkOnlyAOT(t *testing.T) {
 	}
 	t.Logf("PrewarmRuntime (AOT box): %dms", time.Since(tw).Milliseconds())
 
-	resA, err := baker.Bake(ctx, BakeRequest{FlowJSON: json.RawMessage(bakeE2EFlowJSON)})
+	resA, err := baker.Bake(ctx, BakeRequest{FlowPLG: bakeE2EFlowPLG()})
 	if err != nil {
 		t.Fatalf("bake A: %v", err)
 	}
-	resB, err := baker.Bake(ctx, BakeRequest{FlowJSON: json.RawMessage(bakeNewFlowJSON)})
+	resB, err := baker.Bake(ctx, BakeRequest{FlowPLG: bakeNewFlowPLG()})
 	if err != nil {
 		t.Fatalf("bake B: %v", err)
 	}

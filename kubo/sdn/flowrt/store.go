@@ -1,7 +1,6 @@
 package flowrt
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,7 +22,7 @@ type InstalledFlow struct {
 //	  {programId}/
 //	    artifact.json   — compiled artifact metadata
 //	    runtime.wasm    — WASM binary
-//	    flow.json       — original flow graph (for editor round-trip)
+//	    flow.plg        — flow definition as a $PLG FlatBuffer (V1)
 type FlowStore struct {
 	basePath string
 }
@@ -36,8 +35,9 @@ func NewFlowStore(basePath string) (*FlowStore, error) {
 	return &FlowStore{basePath: basePath}, nil
 }
 
-// Install writes a flow artifact to disk.
-func (s *FlowStore) Install(programID string, wasmBytes []byte, flowJSON []byte, artifactMeta []byte) error {
+// Install writes a flow artifact to disk. flowPLG is the flow definition as a
+// $PLG FlatBuffer (persisted verbatim as flow.plg).
+func (s *FlowStore) Install(programID string, wasmBytes []byte, flowPLG []byte, artifactMeta []byte) error {
 	dir := filepath.Join(s.basePath, sanitizeID(programID))
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create flow dir: %w", err)
@@ -46,9 +46,9 @@ func (s *FlowStore) Install(programID string, wasmBytes []byte, flowJSON []byte,
 	if err := os.WriteFile(filepath.Join(dir, "runtime.wasm"), wasmBytes, 0644); err != nil {
 		return fmt.Errorf("write wasm: %w", err)
 	}
-	if len(flowJSON) > 0 {
-		if err := os.WriteFile(filepath.Join(dir, "flow.json"), flowJSON, 0644); err != nil {
-			return fmt.Errorf("write flow.json: %w", err)
+	if len(flowPLG) > 0 {
+		if err := os.WriteFile(filepath.Join(dir, "flow.plg"), flowPLG, 0644); err != nil {
+			return fmt.Errorf("write flow.plg: %w", err)
 		}
 	}
 	if len(artifactMeta) > 0 {
@@ -91,11 +91,12 @@ func (s *FlowStore) List() ([]*InstalledFlow, error) {
 			Dir:       dir,
 		}
 
-		// Try to read flow.json for metadata
-		if data, err := os.ReadFile(filepath.Join(dir, "flow.json")); err == nil {
-			var prog FlowProgram
-			if json.Unmarshal(data, &prog) == nil {
-				flow.ProgramID = prog.ProgramID
+		// Try to read flow.plg ($PLG FlatBuffer) for metadata
+		if data, err := os.ReadFile(filepath.Join(dir, "flow.plg")); err == nil {
+			if prog, perr := parseFlowProgramPLG(data); perr == nil {
+				if prog.ProgramID != "" {
+					flow.ProgramID = prog.ProgramID
+				}
 				flow.Name = prog.Name
 				flow.Version = prog.Version
 			}
@@ -119,9 +120,8 @@ func (s *FlowStore) Get(programID string) (*InstalledFlow, error) {
 		Dir:       dir,
 	}
 
-	if data, err := os.ReadFile(filepath.Join(dir, "flow.json")); err == nil {
-		var prog FlowProgram
-		if json.Unmarshal(data, &prog) == nil {
+	if data, err := os.ReadFile(filepath.Join(dir, "flow.plg")); err == nil {
+		if prog, perr := parseFlowProgramPLG(data); perr == nil {
 			flow.Name = prog.Name
 			flow.Version = prog.Version
 		}
@@ -134,9 +134,10 @@ func (s *FlowStore) WASMPath(programID string) string {
 	return filepath.Join(s.basePath, sanitizeID(programID), "runtime.wasm")
 }
 
-// FlowJSONPath returns the path to the flow.json for an installed flow.
-func (s *FlowStore) FlowJSONPath(programID string) string {
-	return filepath.Join(s.basePath, sanitizeID(programID), "flow.json")
+// FlowPLGPath returns the path to the flow.plg ($PLG FlatBuffer) for an
+// installed flow.
+func (s *FlowStore) FlowPLGPath(programID string) string {
+	return filepath.Join(s.basePath, sanitizeID(programID), "flow.plg")
 }
 
 // sanitizeID replaces path-unsafe characters in a program ID.
