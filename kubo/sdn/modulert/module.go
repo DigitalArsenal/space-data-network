@@ -845,6 +845,72 @@ func (m *Module) InvokeMethodFramesPort(ctx context.Context, methodID string, in
 	return extractPluginInvokePayload(response, preferredOutputPort)
 }
 
+// InvokeMethodRaw runs the module's plugin_invoke_stream with a RAW request payload
+// and returns the RAW response bytes — without SDK PIV request-framing or response
+// decoding. This is the invocation path for COMMAND modules (e.g. the OD-flow
+// data-source providers) whose plugin_invoke_stream reads a raw payload (an
+// optional JSON config) and returns a raw payload (the $OEM stream), rather than
+// the PIV-framed request/response the resident-reactor InvokeMethod path uses.
+// Serializes per-Module (m.mu), like InvokeMethod.
+func (m *Module) InvokeMethodRaw(ctx context.Context, payload []byte) (out []byte, err error) {
+	started := time.Now()
+	defer func() { m.recordInvokeResult(started, err) }()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.mod == nil {
+		return nil, fmt.Errorf("module not loaded")
+	}
+	if m.paused {
+		return nil, fmt.Errorf("module paused")
+	}
+
+	var reqPtr uint32
+	if len(payload) > 0 {
+		reqPtr, err = m.mod.Allocate(payload)
+		if err != nil {
+			return nil, fmt.Errorf("allocate raw request: %w", err)
+		}
+		defer m.mod.SecureDeallocate(reqPtr, uint32(len(payload)))
+	}
+
+	responseLenPtr, err := m.mod.AllocateSize(4)
+	if err != nil {
+		return nil, fmt.Errorf("allocate response length: %w", err)
+	}
+	defer m.mod.SecureDeallocate(responseLenPtr, 4)
+	if err = m.mod.WriteMemory(responseLenPtr, []byte{0, 0, 0, 0}); err != nil {
+		return nil, fmt.Errorf("zero response length: %w", err)
+	}
+
+	results, err := m.mod.ExecuteContext(ctx, "plugin_invoke_stream",
+		int32(reqPtr), int32(len(payload)), int32(responseLenPtr),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("plugin_invoke_stream(raw): %w", err)
+	}
+
+	responsePtr := uint32(wasmrt.ToInt32(results[0]))
+	responseLenBytes, err := m.mod.ReadMemory(responseLenPtr, 4)
+	if err != nil {
+		return nil, fmt.Errorf("read response length: %w", err)
+	}
+	responseLen, err := decodeUint32LE(responseLenBytes)
+	if err != nil {
+		return nil, fmt.Errorf("decode response length: %w", err)
+	}
+	if responseLen == 0 {
+		return nil, fmt.Errorf("plugin_invoke_stream(raw) returned an empty response")
+	}
+	if responsePtr == 0 {
+		return nil, fmt.Errorf("plugin_invoke_stream(raw) returned a null response pointer")
+	}
+	defer m.mod.SecureDeallocate(responsePtr, responseLen)
+
+	return m.mod.ReadMemory(responsePtr, responseLen)
+}
+
 // Manifest returns the parsed manifest.
 func (m *Module) Manifest() *Manifest { return m.manifest }
 
