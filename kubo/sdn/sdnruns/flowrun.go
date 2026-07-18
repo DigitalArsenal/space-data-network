@@ -24,8 +24,15 @@ import (
 // ProviderInvoker runs a data-source provider module's `pull` method and returns
 // its raw output: the $OEM STREAM ([u32le count] then N × [u32le len][$OEM]) the
 // module emits in memory. Backed by modulert in production; a stub in tests.
+//
+// objectCap bounds the objects a single pull fetches+emits (per-pull politeness /
+// budget control): a provider fetches one upstream file per object serially, so a
+// full constellation cannot complete inside one wasm invocation. objectCap <= 0
+// leaves the module's built-in default; a positive value is passed to the module
+// as its `objectCap` pull config. Operator-tunable live via the supplemental-omm
+// module config key `object_cap`.
 type ProviderInvoker interface {
-	InvokePull(ctx context.Context, provider string) ([]byte, error)
+	InvokePull(ctx context.Context, provider string, objectCap int) ([]byte, error)
 }
 
 // FlowRunEngine fits a provider's objects through the baked OD flow + FlowPool.
@@ -77,8 +84,8 @@ func NewFlowRunEngine(runtimeWasm []byte, poolSize int, maxMemoryPages uint32, i
 // RunProvider invokes one provider, splits its in-memory $OEM stream, and fits every
 // object through the pool (results persisted by the flow's store node). A provider
 // that yields no objects is a no-op (empty result, no error).
-func (e *FlowRunEngine) RunProvider(ctx context.Context, provider string) (*flowrt.OEMBatchResult, error) {
-	stream, err := e.invoke.InvokePull(ctx, provider)
+func (e *FlowRunEngine) RunProvider(ctx context.Context, provider string, objectCap int) (*flowrt.OEMBatchResult, error) {
+	stream, err := e.invoke.InvokePull(ctx, provider, objectCap)
 	if err != nil {
 		return nil, fmt.Errorf("sdnruns: provider %q invoke: %w", provider, err)
 	}

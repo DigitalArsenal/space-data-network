@@ -23,7 +23,7 @@ func TestModulertProviderInvokerResolveError(t *testing.T) {
 		func(context.Context, string) ([]byte, error) { return nil, errors.New("not installed") },
 		nil,
 	)
-	if _, err := inv.InvokePull(context.Background(), "spacex"); err == nil {
+	if _, err := inv.InvokePull(context.Background(), "spacex", 0); err == nil {
 		t.Fatal("expected resolve error to propagate")
 	}
 }

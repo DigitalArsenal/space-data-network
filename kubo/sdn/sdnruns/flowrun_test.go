@@ -14,7 +14,7 @@ type stubInvoker struct {
 	err error
 }
 
-func (s stubInvoker) InvokePull(_ context.Context, _ string) ([]byte, error) { return s.out, s.err }
+func (s stubInvoker) InvokePull(_ context.Context, _ string, _ int) ([]byte, error) { return s.out, s.err }
 
 var stubBatchCfg = flowrt.OEMBatchConfig{FeederPluginID: "feeder", StorePluginID: "store"}
 
@@ -29,7 +29,7 @@ func TestFlowRunEngineEmptyStreamIsNoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFlowRunEngine: %v", err)
 	}
-	res, err := eng.RunProvider(context.Background(), "spacex")
+	res, err := eng.RunProvider(context.Background(), "spacex", 0)
 	if err != nil {
 		t.Fatalf("RunProvider: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestFlowRunEngineEmptyStreamIsNoop(t *testing.T) {
 
 func TestFlowRunEngineInvokeErrorPropagates(t *testing.T) {
 	eng, _ := NewFlowRunEngine([]byte{0x00}, 2, 1024, stubInvoker{err: errors.New("boom")}, nil, stubBatchCfg)
-	if _, err := eng.RunProvider(context.Background(), "spacex"); err == nil {
+	if _, err := eng.RunProvider(context.Background(), "spacex", 0); err == nil {
 		t.Fatalf("expected the invoke error to propagate")
 	}
 }
@@ -49,7 +49,7 @@ func TestFlowRunEngineBadStreamErrors(t *testing.T) {
 	bad := make([]byte, 4)
 	binary.LittleEndian.PutUint32(bad, 1) // claims 1 record, provides no data
 	eng, _ := NewFlowRunEngine([]byte{0x00}, 2, 1024, stubInvoker{out: bad}, nil, stubBatchCfg)
-	if _, err := eng.RunProvider(context.Background(), "spacex"); err == nil {
+	if _, err := eng.RunProvider(context.Background(), "spacex", 0); err == nil {
 		t.Fatalf("expected a stream-split error")
 	}
 }

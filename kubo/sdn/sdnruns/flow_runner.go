@@ -58,6 +58,9 @@ func (r *FlowRunner) resolveConfig() RunConfig {
 		if strings.TrimSpace(got.ProducedSource) != "" {
 			cfg.ProducedSource = got.ProducedSource
 		}
+		if got.ObjectCap > 0 {
+			cfg.ObjectCap = got.ObjectCap
+		}
 	}
 	return cfg
 }
@@ -115,7 +118,7 @@ func (r *FlowRunner) RunProviders(ctx context.Context, cfg RunConfig) (*Run, err
 	r.logf("sdnruns: flow run %s started: providers=%v", run.ID, providers)
 
 	for _, p := range providers {
-		res, err := r.engine.RunProvider(ctx, p)
+		res, err := r.engine.RunProvider(ctx, p, cfg.ObjectCap)
 		if err != nil {
 			r.logf("sdnruns: provider %q run failed: %v", p, err)
 			continue
