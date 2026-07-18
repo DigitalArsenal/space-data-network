@@ -856,6 +856,13 @@ func (m *Module) InvokeMethodRaw(ctx context.Context, payload []byte) (out []byt
 	started := time.Now()
 	defer func() { m.recordInvokeResult(started, err) }()
 
+	// Scheduled seam. The only caller is the supplemental-OMM OD run engine's
+	// provider invoker (sdnruns/flowrun_invoker.go), a cron-driven batch path —
+	// a full-constellation $OEM pull (Starlink 10k+) needs the wider scheduled
+	// budget, never the tight interactive defaultInvokeTimeout. Mirror InvokeCron:
+	// the HOST grants the budget here; a caller ctx deadline still narrows it.
+	ctx = wasmrt.WithExecBudget(ctx, m.scheduledBudget())
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
