@@ -36,6 +36,26 @@ type FlowRunEngine struct {
 	batch  flowrt.OEMBatchConfig
 }
 
+// odFlowFeederPluginID / odFlowStorePluginID name the deploy OD flow's host nodes;
+// they MUST match the baked runtime.wasm asset (see flowrt TestBakeODRuntimeAsset).
+const (
+	odFlowFeederPluginID = "io.spacedatanetwork.object-feeder"
+	odFlowStorePluginID  = "io.spacedatanetwork.store"
+)
+
+// NewFlowRunEngineForOD builds the engine with the standard OD-flow node config
+// (feeder/store ids, "oem" port, produced-source lane), so callers need not import
+// flowrt. poolSize<=0 selects NumCPU. sink persists results + collects $OMM rows.
+func NewFlowRunEngineForOD(runtimeWasm []byte, poolSize int, invoke ProviderInvoker, sink *CollectingSink) (*FlowRunEngine, error) {
+	return NewFlowRunEngine(runtimeWasm, poolSize, 2048, invoke, sink, flowrt.OEMBatchConfig{
+		FeederPluginID: odFlowFeederPluginID,
+		FeederPort:     "oem",
+		StorePluginID:  odFlowStorePluginID,
+		StoreSource:    DefaultProducedSource,
+		Drain:          flowrt.DrainOptions{MaxIterations: 256},
+	})
+}
+
 // NewFlowRunEngine builds the engine over a baked OD runtime.wasm. poolSize resident
 // instances fit objects in parallel; maxMemoryPages bounds each instance's guest
 // heap. invoke supplies provider $OEM streams; sink persists the fit results.

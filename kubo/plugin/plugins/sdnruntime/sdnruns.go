@@ -43,6 +43,38 @@ import (
 // odModuleID is the analysis/od module's plugin id (its cron/registry key).
 const odModuleID = "orbit-determination"
 
+// providerModuleID maps a run-config provider token to its installed data-source
+// module id (sdnflows.OperatorEphemerisSet). gps + celestrak-supgp are NOT OD
+// ephemeris providers and are intentionally absent.
+var providerModuleID = map[string]string{
+	"iss":             "com.orbpro.iss-source",
+	"spacex":          "com.orbpro.spacex-starlink-source",
+	"spacex-starlink": "com.orbpro.spacex-starlink-source",
+	"starlink":        "com.orbpro.spacex-starlink-source",
+	"oneweb":          "com.orbpro.oneweb-source",
+	"glonass":         "com.orbpro.glonass-source",
+	"intelsat":        "com.orbpro.intelsat-source",
+	"cpf":             "com.orbpro.cpf-source",
+}
+
+// resolveODRuntimeWasm loads the baked OD flow runtime.wasm asset (feeder ->
+// od.fit -> store) — a build-time artifact (flowrt TestBakeODRuntimeAsset) the
+// build/deploy ships with the node. Path: SDN_OD_RUNTIME_WASM.
+func resolveODRuntimeWasm() ([]byte, error) {
+	p := strings.TrimSpace(os.Getenv("SDN_OD_RUNTIME_WASM"))
+	if p == "" {
+		return nil, fmt.Errorf("SDN_OD_RUNTIME_WASM not set (baked OD runtime.wasm asset path)")
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil, fmt.Errorf("read OD runtime.wasm %q: %w", p, err)
+	}
+	if len(b) == 0 {
+		return nil, fmt.Errorf("OD runtime.wasm %q is empty", p)
+	}
+	return b, nil
+}
+
 // issOEMFixture is a real, checked-in trimmed NASA public ISS OEM (CCSDS KVN,
 // EME2000/UTC, ~12 h of 4-min position+velocity state vectors, NORAD 25544). It
 // stands in for the firewalled operator-ephemeris fetch in the SDN_SUPPLEMENTAL_OMM_RUN
@@ -91,49 +123,53 @@ func startSupplementalOMMRuns(node *core.IpfsNode, svc *sdnservices.Services, in
 
 	ctx := node.Context()
 
-	// Fitter over the REAL analysis/od module, driven as a RESIDENT WASI REACTOR:
-	// the reactor build (dist/isomorphic/module.wasm) exports
-	// _initialize/plugin_invoke_stream (no _start), so modulert hosts a POOL of
-	// live instances and the run fits objects across them IN PARALLEL — no per-fit
-	// module reload, no process-wide lock. Pool size 0 → runtime.NumCPU() (2 on the
-	// prod node). Resolve the module bytes, in order: the installed module by its
-	// blockstore content hash; else an explicit SDN_OD_MODULE_WASM path; else the
-	// SDN_INSTALL_WASM path the operator installed od from. The blockstore is
-	// addressed by the raw-artifact hash, so the content-hash lookup only hits when
-	// the installed artifact's canonical hash equals its raw hash; the path
-	// fallbacks make the run work in every local install case.
-	fitter := sdnruns.NewReactorFitter(func() ([]byte, error) {
-		if installer != nil && node.Blockstore != nil {
-			if mod := installer.Module(odModuleID); mod != nil {
-				if b, err := appmanifest.ResolveModuleByContentHash(ctx, node.Blockstore, mod.ContentHash()); err == nil {
-					return b, nil
-				}
-			}
-		}
-		for _, env := range []string{"SDN_OD_MODULE_WASM", "SDN_INSTALL_WASM"} {
-			if p := strings.TrimSpace(os.Getenv(env)); p != "" {
-				if b, err := os.ReadFile(p); err == nil && looksLikeODModule(b) {
-					return b, nil
-				}
-			}
-		}
-		return nil, fmt.Errorf("analysis/od module (%s) is not installed and no od WASM path is configured", odModuleID)
-	}, 0, log.Infof)
+	// OD-FLOW CUT-OVER: the run engine now drives the baked $PIV OD flow
+	// (feeder -> od.fit -> store) over a FlowPool. Per provider it invokes the
+	// data-source module's `pull` (in-memory $OEM STREAM, never stored), splits it,
+	// and fits every object through the pool; only the RESULTS ($OMM/$OCM/$OBD) are
+	// persisted, by the flow's host store node. This replaces the store-backed
+	// StoreEphemerisSource + ReactorFitter + Go buildOMM path.
+	//
+	// The baked OD runtime.wasm is a build-time asset (SDN_OD_RUNTIME_WASM); absent
+	// => the run engine is unavailable (logged, never fatal — no old-path fallback).
+	runtimeWasm, rerr := resolveODRuntimeWasm()
+	if rerr != nil {
+		log.Warnf("SDN supplemental-OMM flow engine unavailable: %v", rerr)
+		return
+	}
 
-	runner, err := sdnruns.NewRunner(sdnruns.Config{
-		Fitter: fitter,
-		// Store-backed ephemeris source: reads EVERY per-object OEM record each
-		// enabled provider's data-source module ingested (source lane -> "OEM") and
-		// fits them all. The embedded ISS OEM fixture stands in ONLY for provider
-		// "iss" when its store lane is empty (the firewalled local live-smoke), so a
-		// node with no ingested data still produces its one ISS fit while a node that
-		// HAS ingested a constellation fits every stored object.
-		Source:  sdnruns.NewStoreEphemerisSource(svc.Store, issOEMFixture, log.Infof),
-		Records: svc.Store,
-		Runs:    store,
-		Resolve: func() sdnruns.RunConfig { return resolveRunConfig(svc.ConfigStore) },
-		Log:     log.Infof,
-	})
+	// Provider $OEM-stream invoker: resolve a provider's installed data-source
+	// module, load it with the node caps (http), invoke its raw "pull".
+	resolver := func(rctx context.Context, provider string) ([]byte, error) {
+		id, ok := providerModuleID[strings.ToLower(strings.TrimSpace(provider))]
+		if !ok {
+			return nil, fmt.Errorf("no data-source module mapped for provider %q", provider)
+		}
+		if installer == nil || node.Blockstore == nil {
+			return nil, fmt.Errorf("module resolver unavailable (installer/blockstore nil)")
+		}
+		mod := installer.Module(id)
+		if mod == nil {
+			return nil, fmt.Errorf("provider module %q (%s) is not installed", provider, id)
+		}
+		return appmanifest.ResolveModuleByContentHash(rctx, node.Blockstore, mod.ContentHash())
+	}
+	invoker, ierr := sdnruns.NewModulertProviderInvoker(svc.LoadModule, resolver, nil)
+	if ierr != nil {
+		log.Warnf("SDN supplemental-OMM invoker unavailable: %v", ierr)
+		return
+	}
+
+	// The flow store node persists results through this sink, which also collects
+	// each produced $OMM as a run object row. Pool size 0 -> runtime.NumCPU().
+	sink := sdnruns.NewCollectingSink(svc.Store)
+	engine, eerr := sdnruns.NewFlowRunEngineForOD(runtimeWasm, 0, invoker, sink)
+	if eerr != nil {
+		log.Warnf("SDN supplemental-OMM flow engine build failed: %v", eerr)
+		return
+	}
+	runner, err := sdnruns.NewFlowRunner(engine, sink, store,
+		func() sdnruns.RunConfig { return resolveRunConfig(svc.ConfigStore) }, log.Infof)
 	if err != nil {
 		log.Warnf("SDN supplemental-OMM runner unavailable: %v", err)
 		return
