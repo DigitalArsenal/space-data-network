@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/ipfs/kubo/sdn/flowrt"
@@ -14,7 +15,91 @@ type stubInvoker struct {
 	err error
 }
 
-func (s stubInvoker) InvokePull(_ context.Context, _ string, _ int) ([]byte, error) { return s.out, s.err }
+// recordingInvoker answers a Probe with a u32le total and every batch with an
+// empty $OEM stream (count=0, a RunOEMStream no-op), recording the batch windows
+// it was asked for so the orchestration can be asserted.
+type recordingInvoker struct {
+	total   int
+	mu      sync.Mutex
+	probes  int
+	batches []PullOpts
+}
+
+func (r *recordingInvoker) InvokePull(_ context.Context, _ string, opts PullOpts) ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if opts.Probe {
+		r.probes++
+		b := make([]byte, 4)
+		binary.LittleEndian.PutUint32(b, uint32(r.total))
+		return b, nil
+	}
+	r.batches = append(r.batches, opts)
+	return []byte{0, 0, 0, 0}, nil // empty $OEM stream
+}
+
+func TestRunBatchedProbesThenFansBatches(t *testing.T) {
+	inv := &recordingInvoker{total: 10}
+	eng, err := NewFlowRunEngine([]byte{0x00}, 2, 1024, inv, nil, stubBatchCfg)
+	if err != nil {
+		t.Fatalf("NewFlowRunEngine: %v", err)
+	}
+	eng.batched = map[string]bool{"spacex": true}
+	eng.batchSize = 4
+	eng.batchConc = 3
+	if _, err := eng.RunProvider(context.Background(), "spacex", 100); err != nil {
+		t.Fatalf("RunProvider: %v", err)
+	}
+	if inv.probes != 1 {
+		t.Fatalf("probes = %d, want 1", inv.probes)
+	}
+	// total=10, batchSize=4 -> windows [0,4)[4,4)[8,2). Order is nondeterministic
+	// (concurrent), so assert the SET of (offset,count) covers every object once.
+	if len(inv.batches) != 3 {
+		t.Fatalf("batches = %d, want 3", len(inv.batches))
+	}
+	covered := map[int]int{}
+	for _, b := range inv.batches {
+		if b.ObjectCap != 100 {
+			t.Fatalf("batch objectCap = %d, want 100", b.ObjectCap)
+		}
+		for i := b.Offset; i < b.Offset+b.Count; i++ {
+			covered[i]++
+		}
+	}
+	for i := 0; i < 10; i++ {
+		if covered[i] != 1 {
+			t.Fatalf("object %d covered %d times, want 1", i, covered[i])
+		}
+	}
+}
+
+func TestBuildPullConfig(t *testing.T) {
+	cases := []struct {
+		opts PullOpts
+		want string
+	}{
+		{PullOpts{ObjectCap: 0, Offset: -1, Count: -1}, ""}, // fallback (nil)
+		{PullOpts{ObjectCap: 100, Offset: -1, Count: -1}, `{"objectCap":100}`},
+		{PullOpts{ObjectCap: 100, Probe: true}, `{"objectCap":100,"probe":true}`},
+		{PullOpts{ObjectCap: 100, Offset: 8, Count: 4}, `{"objectCap":100,"offset":8,"count":4}`},
+		{PullOpts{Offset: 0, Count: 64}, `{"offset":0,"count":64}`},
+	}
+	for _, c := range cases {
+		got := buildPullConfig(nil, c.opts)
+		if c.want == "" {
+			if got != nil {
+				t.Fatalf("opts %+v: got %q, want nil fallback", c.opts, got)
+			}
+			continue
+		}
+		if string(got) != c.want {
+			t.Fatalf("opts %+v: got %q, want %q", c.opts, got, c.want)
+		}
+	}
+}
+
+func (s stubInvoker) InvokePull(_ context.Context, _ string, _ PullOpts) ([]byte, error) { return s.out, s.err }
 
 var stubBatchCfg = flowrt.OEMBatchConfig{FeederPluginID: "feeder", StorePluginID: "store"}
 
@@ -29,7 +114,7 @@ func TestFlowRunEngineEmptyStreamIsNoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFlowRunEngine: %v", err)
 	}
-	res, err := eng.RunProvider(context.Background(), "spacex", 0)
+	res, err := eng.RunProvider(context.Background(), "iss", 0)
 	if err != nil {
 		t.Fatalf("RunProvider: %v", err)
 	}
@@ -40,7 +125,7 @@ func TestFlowRunEngineEmptyStreamIsNoop(t *testing.T) {
 
 func TestFlowRunEngineInvokeErrorPropagates(t *testing.T) {
 	eng, _ := NewFlowRunEngine([]byte{0x00}, 2, 1024, stubInvoker{err: errors.New("boom")}, nil, stubBatchCfg)
-	if _, err := eng.RunProvider(context.Background(), "spacex", 0); err == nil {
+	if _, err := eng.RunProvider(context.Background(), "iss", 0); err == nil {
 		t.Fatalf("expected the invoke error to propagate")
 	}
 }
@@ -49,7 +134,7 @@ func TestFlowRunEngineBadStreamErrors(t *testing.T) {
 	bad := make([]byte, 4)
 	binary.LittleEndian.PutUint32(bad, 1) // claims 1 record, provides no data
 	eng, _ := NewFlowRunEngine([]byte{0x00}, 2, 1024, stubInvoker{out: bad}, nil, stubBatchCfg)
-	if _, err := eng.RunProvider(context.Background(), "spacex", 0); err == nil {
+	if _, err := eng.RunProvider(context.Background(), "iss", 0); err == nil {
 		t.Fatalf("expected a stream-split error")
 	}
 }

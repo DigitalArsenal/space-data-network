@@ -168,6 +168,9 @@ func startSupplementalOMMRuns(node *core.IpfsNode, svc *sdnservices.Services, in
 		log.Warnf("SDN supplemental-OMM flow engine build failed: %v", eerr)
 		return
 	}
+	// Surface large-provider batch progress (Starlink ~10.8k objects is driven as
+	// host-concurrent range-fetch batches).
+	engine.SetLog(log.Infof)
 	runner, err := sdnruns.NewFlowRunner(engine, sink, store,
 		func() sdnruns.RunConfig { return resolveRunConfig(svc.ConfigStore) }, log.Infof)
 	if err != nil {

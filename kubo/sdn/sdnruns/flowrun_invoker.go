@@ -40,12 +40,14 @@ func NewModulertProviderInvoker(load ProviderModuleLoader, resolve ProviderWasmR
 }
 
 // InvokePull resolves + loads the provider module and runs its `pull`, returning
-// the in-memory $OEM stream. The module instance is closed after the call.
+// the in-memory $OEM stream (or, in Probe mode, a bare u32le object count). The
+// module instance is closed after the call.
 //
-// objectCap > 0 overrides p.config with a `{"objectCap":N}` pull config so the run
-// engine bounds how many objects the provider fetches per pull (see ProviderInvoker
-// doc). objectCap <= 0 passes p.config unchanged (nil => the module's own default).
-func (p *ModulertProviderInvoker) InvokePull(ctx context.Context, provider string, objectCap int) ([]byte, error) {
+// The pull config JSON is built from opts: objectCap bounds the total objects,
+// offset/count select a batch window (omitted when < 0), and probe asks for just
+// the count. When opts is entirely default (cap<=0, offset<0, count<0, no probe)
+// p.config is passed unchanged (nil => the module's own defaults).
+func (p *ModulertProviderInvoker) InvokePull(ctx context.Context, provider string, opts PullOpts) ([]byte, error) {
 	wasm, err := p.resolve(ctx, provider)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %q module: %w", provider, err)
@@ -55,13 +57,41 @@ func (p *ModulertProviderInvoker) InvokePull(ctx context.Context, provider strin
 		return nil, fmt.Errorf("load %q module: %w", provider, err)
 	}
 	defer func() { _ = mod.Close() }()
-	config := p.config
-	if objectCap > 0 {
-		config = []byte(fmt.Sprintf(`{"objectCap":%d}`, objectCap))
-	}
+	config := buildPullConfig(p.config, opts)
 	out, err := mod.InvokeMethodRaw(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("invoke %q pull: %w", provider, err)
 	}
 	return out, nil
+}
+
+// buildPullConfig renders a provider pull config from opts. Returns fallback
+// unchanged when opts carries nothing to express.
+func buildPullConfig(fallback []byte, opts PullOpts) []byte {
+	if opts.ObjectCap <= 0 && opts.Offset < 0 && opts.Count < 0 && !opts.Probe {
+		return fallback
+	}
+	parts := make([]string, 0, 4)
+	if opts.ObjectCap > 0 {
+		parts = append(parts, fmt.Sprintf(`"objectCap":%d`, opts.ObjectCap))
+	}
+	if opts.Probe {
+		parts = append(parts, `"probe":true`)
+	} else {
+		if opts.Offset >= 0 {
+			parts = append(parts, fmt.Sprintf(`"offset":%d`, opts.Offset))
+		}
+		if opts.Count >= 0 {
+			parts = append(parts, fmt.Sprintf(`"count":%d`, opts.Count))
+		}
+	}
+	out := "{"
+	for i, s := range parts {
+		if i > 0 {
+			out += ","
+		}
+		out += s
+	}
+	out += "}"
+	return []byte(out)
 }
