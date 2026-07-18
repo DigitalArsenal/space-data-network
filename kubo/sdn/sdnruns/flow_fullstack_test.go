@@ -29,7 +29,7 @@ var issOEMFixtureBin []byte
 // modulert provider-module invoke, which is proven separately).
 type stubStreamInvoker struct{ stream []byte }
 
-func (s stubStreamInvoker) InvokePull(context.Context, string) ([]byte, error) {
+func (s stubStreamInvoker) InvokePull(context.Context, string, int) ([]byte, error) {
 	return s.stream, nil
 }
 

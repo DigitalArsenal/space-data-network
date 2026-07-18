@@ -254,6 +254,13 @@ func resolveRunConfig(cs *sdncron.ConfigStore) sdnruns.RunConfig {
 	if s, ok := raw["produced_source"].(string); ok && strings.TrimSpace(s) != "" {
 		cfg.ProducedSource = s
 	}
+	// object_cap bounds per-provider objects fetched+fit per pull. A provider
+	// fetches one upstream file per object serially, so the full constellation
+	// cannot complete in one scheduled invocation; this caps the per-pull work.
+	// JSON numbers decode to float64. 0/absent leaves each module's default.
+	if v, ok := raw["object_cap"].(float64); ok && v > 0 {
+		cfg.ObjectCap = int(v)
+	}
 	return cfg
 }
 

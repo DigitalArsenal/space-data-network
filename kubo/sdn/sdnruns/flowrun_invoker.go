@@ -41,7 +41,11 @@ func NewModulertProviderInvoker(load ProviderModuleLoader, resolve ProviderWasmR
 
 // InvokePull resolves + loads the provider module and runs its `pull`, returning
 // the in-memory $OEM stream. The module instance is closed after the call.
-func (p *ModulertProviderInvoker) InvokePull(ctx context.Context, provider string) ([]byte, error) {
+//
+// objectCap > 0 overrides p.config with a `{"objectCap":N}` pull config so the run
+// engine bounds how many objects the provider fetches per pull (see ProviderInvoker
+// doc). objectCap <= 0 passes p.config unchanged (nil => the module's own default).
+func (p *ModulertProviderInvoker) InvokePull(ctx context.Context, provider string, objectCap int) ([]byte, error) {
 	wasm, err := p.resolve(ctx, provider)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %q module: %w", provider, err)
@@ -51,7 +55,11 @@ func (p *ModulertProviderInvoker) InvokePull(ctx context.Context, provider strin
 		return nil, fmt.Errorf("load %q module: %w", provider, err)
 	}
 	defer func() { _ = mod.Close() }()
-	out, err := mod.InvokeMethodRaw(ctx, p.config)
+	config := p.config
+	if objectCap > 0 {
+		config = []byte(fmt.Sprintf(`{"objectCap":%d}`, objectCap))
+	}
+	out, err := mod.InvokeMethodRaw(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("invoke %q pull: %w", provider, err)
 	}
