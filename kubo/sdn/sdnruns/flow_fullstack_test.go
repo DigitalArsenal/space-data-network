@@ -29,7 +29,7 @@ var issOEMFixtureBin []byte
 // modulert provider-module invoke, which is proven separately).
 type stubStreamInvoker struct{ stream []byte }
 
-func (s stubStreamInvoker) InvokePull(context.Context, string, int) ([]byte, error) {
+func (s stubStreamInvoker) InvokePull(context.Context, string, PullOpts) ([]byte, error) {
 	return s.stream, nil
 }
 
@@ -85,7 +85,7 @@ func TestFlowRunnerEndToEnd(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	runner, err := NewFlowRunner(engine, sink, runStore,
-		func() RunConfig { return RunConfig{EnabledProviders: []string{"spacex"}, ProducedSource: DefaultProducedSource} },
+		func() RunConfig { return RunConfig{EnabledProviders: []string{"intelsat"}, ProducedSource: DefaultProducedSource} },
 		t.Logf)
 	if err != nil {
 		t.Fatalf("NewFlowRunner: %v", err)
