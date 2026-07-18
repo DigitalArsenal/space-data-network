@@ -4,7 +4,7 @@ package sdnruns
 // the cut-over from the Fitter/StoreEphemerisSource path. On its cron tick it, for
 // each enabled provider, invokes the provider module (in-memory $OEM stream), fits
 // every object through the pool (feeder -> od.fit -> store), and records the run
-// from the produced $OMM rows the collectingSink captured. Ephemeris is never
+// from the produced $OMM rows the CollectingSink captured. Ephemeris is never
 // stored; only the fit RESULTS ($OMM/$OCM/$OBD) are persisted by the flow's store
 // node. Registers with the node cron scheduler under the SAME ModuleID as the old
 // runner, so it takes its place (default hourly).
@@ -21,7 +21,7 @@ import (
 // FlowRunner is a sdncron.CronModule.
 type FlowRunner struct {
 	engine  *FlowRunEngine
-	sink    *collectingSink
+	sink    *CollectingSink
 	runs    *Store
 	resolve func() RunConfig
 	log     Logger
@@ -29,12 +29,12 @@ type FlowRunner struct {
 
 // NewFlowRunner builds the flow-driven run engine. engine, sink and runs are
 // required; resolve supplies the effective RunConfig (nil => ConfigDefault).
-func NewFlowRunner(engine *FlowRunEngine, sink *collectingSink, runs *Store, resolve func() RunConfig, log Logger) (*FlowRunner, error) {
+func NewFlowRunner(engine *FlowRunEngine, sink *CollectingSink, runs *Store, resolve func() RunConfig, log Logger) (*FlowRunner, error) {
 	if engine == nil {
 		return nil, fmt.Errorf("sdnruns: FlowRunner requires a FlowRunEngine")
 	}
 	if sink == nil {
-		return nil, fmt.Errorf("sdnruns: FlowRunner requires a collectingSink")
+		return nil, fmt.Errorf("sdnruns: FlowRunner requires a CollectingSink")
 	}
 	if runs == nil {
 		return nil, fmt.Errorf("sdnruns: FlowRunner requires a run Store")
