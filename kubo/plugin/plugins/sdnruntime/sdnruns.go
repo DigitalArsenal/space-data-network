@@ -32,6 +32,7 @@ import (
 	core "github.com/ipfs/kubo/core"
 
 	"github.com/ipfs/kubo/sdn/appmanifest"
+	"github.com/ipfs/kubo/sdn/flatsqlrt"
 	"github.com/ipfs/kubo/sdn/sdncron"
 	"github.com/ipfs/kubo/sdn/sdnmodules"
 	"github.com/ipfs/kubo/sdn/sdnruns"
@@ -138,6 +139,25 @@ func startSupplementalOMMRuns(node *core.IpfsNode, svc *sdnservices.Services, in
 		return
 	}
 
+	// AOT-compile the baked OD runtime.wasm to native code. Interpreted WasmEdge
+	// runs the SGP4 differential-correction fit ~1000x slower than native (~5 s vs
+	// ~1 ms/object), which is THE full-constellation bottleneck. EnsureAOTArtifact
+	// compiles once into <repo>/sdn/od-aot (keyed by bytes + WasmEdge version) and
+	// reuses the cached artifact on every later boot — the same compile-on-miss
+	// mechanism the FlatSQL engine uses. First boot after a runtime change pays the
+	// one-time compile; a failure falls back to the portable (interpreted) bytes so
+	// the node still runs, just slowly.
+	odRuntime := runtimeWasm
+	if strings.TrimSpace(sdnDir) != "" {
+		aotDir := filepath.Join(sdnDir, "od-aot")
+		if aot, aerr := flatsqlrt.EnsureAOTArtifact(aotDir, "od-runtime", runtimeWasm); aerr != nil {
+			log.Warnf("SDN supplemental-OMM: OD runtime AOT compile failed; fits run INTERPRETED (slow): %v", aerr)
+		} else if len(aot) > 0 {
+			odRuntime = aot
+			log.Infof("SDN supplemental-OMM: OD runtime AOT-compiled to native (%d bytes) — fits run at native speed", len(aot))
+		}
+	}
+
 	// Provider $OEM-stream invoker: resolve a provider's installed data-source
 	// module, load it with the node caps (http), invoke its raw "pull".
 	resolver := func(rctx context.Context, provider string) ([]byte, error) {
@@ -163,7 +183,7 @@ func startSupplementalOMMRuns(node *core.IpfsNode, svc *sdnservices.Services, in
 	// The flow store node persists results through this sink, which also collects
 	// each produced $OMM as a run object row. Pool size 0 -> runtime.NumCPU().
 	sink := sdnruns.NewCollectingSink(svc.Store)
-	engine, eerr := sdnruns.NewFlowRunEngineForOD(runtimeWasm, 0, invoker, sink)
+	engine, eerr := sdnruns.NewFlowRunEngineForOD(odRuntime, 0, invoker, sink)
 	if eerr != nil {
 		log.Warnf("SDN supplemental-OMM flow engine build failed: %v", eerr)
 		return
