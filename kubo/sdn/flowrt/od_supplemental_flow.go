@@ -5,29 +5,33 @@ package flowrt
 // This is the ONE composed wasi-threads flow the node bakes + runs for the full
 // catalog: five in-wasm provider fetch/parse nodes each emit operator ephemeris
 // ($OEM) on their typed "oem" port; the threaded OD node fits each with its
-// std::thread work-stealing pool; and the store node persists ONLY the results
-// ($OMM/$OCM/$OBD) via the storage.ingest_with_source host capability. $OEM is
-// held in memory for the fit and NEVER wired to the store — the in-memory-only
-// invariant is structural here (no edge carries $OEM to storage-ingest).
+// std::thread work-stealing pool; and the in-wasm FlatSQL store node persists ONLY
+// the results ($OMM/$OCM/$OBD), appending a wrapper FlatBuffer per record to the
+// store engine's arena via the flatsql.ingest_record trampoline (opaque bytes; the
+// host never decodes a record). $OEM is held in memory for the fit and NEVER wired
+// to the store — the in-memory-only invariant is structural here (no edge carries
+// $OEM to the store node).
 //
 // ALL nodes are linked-direct wasi-threads guest-links (threadModel="wasi-threads"),
 // so the bake takes the wasi-threads path (shared-memory reactor + WithWASIThreads
 // + AOT-at-load) and the dual-path gate never mixes ABIs. The Go host contributes
-// ONLY the http/fs/storage capability primitives; it never fetches, batches,
-// caps, or stores in Go.
+// ONLY capability primitives — the http connector (providers fetch) and the fs
+// connector (opaque store snapshots); it never fetches, batches, caps, derives a
+// record, or stores in Go.
 //
 // Node/port IDs are the SHIPPED guest-link identities:
 //   providers  com.orbpro.{spacex-starlink,glonass,intelsat,cpf,iss}-source .emit -> port "oem"
 //   od         orbit-determination .fit  : in "oem"  -> out "omm","ocm","obd"
-//   store      com.digitalarsenal.hostcap.storage-ingest .ingest : in "records"
+//   store      com.digitalarsenal.hostcap.flatsql-store .store : in "records"
 //
 // OneWeb is excluded (LTEF metadata-only — no state vectors, not fittable). GPS +
 // CelesTrak-SupGP are NOT sources. No per-object cap: each provider pulls its full
 // constellation (module-owned), the OD node fits every object.
 
-// ODSupplementalStorePluginID is the store node id. The wasi-threads storage-ingest
-// guest-link keeps this same id/method/ports as the emscripten one — only its
-// metadata.threadModel flips to "wasi-threads" so it co-links with the flow.
+// ODSupplementalStorePluginID is the in-wasm FlatSQL store node id. It is a
+// wasi-threads guest-link that co-links into the composed reactor; it persists
+// $OMM/$OCM/$OBD by arena ingest (flatsql.ingest_record) — never the repudiated
+// Go storage sink.
 const (
 	ODSupplementalStorePluginID = "com.digitalarsenal.hostcap.flatsql-store"
 	ODSupplementalStoreMethod   = "store"

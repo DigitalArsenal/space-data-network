@@ -31,6 +31,10 @@ type InstalledEntry struct {
 	Intervals map[string]string `json:"intervals,omitempty"`
 	// Config is the per-flow node CONFIG served via plugin.getConfig.
 	Config map[string]interface{} `json:"config,omitempty"`
+	// Capabilities is the declared capability set for an engine-linked composed
+	// flow (empty for ordinary manifest-carrying bundles); the mount provisions
+	// exactly these on a boot re-install.
+	Capabilities []string `json:"capabilities,omitempty"`
 	// Enabled gates boot re-registration.
 	Enabled bool `json:"enabled"`
 	// Source is a provenance tag: "admin", "boot-set", "direct".

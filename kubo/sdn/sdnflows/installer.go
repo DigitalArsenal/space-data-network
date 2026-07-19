@@ -59,6 +59,12 @@ type FlowSpec struct {
 	Ref       string                 `json:"ref"`
 	Intervals map[string]string      `json:"intervals,omitempty"`
 	Config    map[string]interface{} `json:"config,omitempty"`
+	// Capabilities is the DECLARED capability set for an engine-linked composed
+	// flow (the OD write lane), which carries no module-manifest ABI to read. The
+	// mount provisions exactly these (fail-closed against the operator policy for
+	// the flow's content hash). Empty for ordinary flow bundles, whose caps come
+	// from their embedded manifest.
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 // InstalledFlow is the read model for one installed + registered flow.
@@ -151,7 +157,7 @@ func (in *Installer) install(spec FlowSpec, source string, persist bool) (Instal
 	if strings.TrimSpace(spec.Ref) == "" {
 		return InstalledFlow{}, errors.New("sdnflows: flow spec has empty ref")
 	}
-	sf, err := flowrt.LoadFlowService(spec.Ref, spec.Intervals, spec.Config, in.deps())
+	sf, err := flowrt.LoadFlowService(spec.Ref, spec.Intervals, spec.Config, in.deps(), spec.Capabilities)
 	if err != nil {
 		if strings.Contains(err.Error(), "capability policy") {
 			return InstalledFlow{}, fmt.Errorf("%w: %s: %v", ErrInstallDenied, spec.Ref, err)
@@ -200,12 +206,13 @@ func (in *Installer) install(spec FlowSpec, source string, persist bool) (Instal
 
 func (in *Installer) persist(id string, spec FlowSpec, source string) error {
 	if err := in.reg.Put(InstalledEntry{
-		ID:        id,
-		Ref:       spec.Ref,
-		Intervals: spec.Intervals,
-		Config:    spec.Config,
-		Enabled:   true,
-		Source:    source,
+		ID:           id,
+		Ref:          spec.Ref,
+		Intervals:    spec.Intervals,
+		Config:       spec.Config,
+		Capabilities: spec.Capabilities,
+		Enabled:      true,
+		Source:       source,
 	}); err != nil {
 		return fmt.Errorf("sdnflows: persist registry entry for %q: %w", id, err)
 	}
@@ -250,7 +257,7 @@ func (in *Installer) Boot(ctx context.Context, bootSet []FlowSpec) (int, error) 
 		if !e.Enabled {
 			continue
 		}
-		if _, err := in.install(FlowSpec{Ref: e.Ref, Intervals: e.Intervals, Config: e.Config}, e.Source, false); err != nil {
+		if _, err := in.install(FlowSpec{Ref: e.Ref, Intervals: e.Intervals, Config: e.Config, Capabilities: e.Capabilities}, e.Source, false); err != nil {
 			in.logf("sdnflows: boot: register %q failed; skipping: %v", e.ID, err)
 			continue
 		}

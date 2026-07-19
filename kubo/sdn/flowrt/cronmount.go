@@ -110,7 +110,7 @@ func resolveFlowArtifact(flowRef string) (wasmPath, bundleDir string, err error)
 // sensitive capability the operator has not approved for its content hash
 // (default-deny, fail closed). Bridge-mode only: a bundle that imports the
 // store engine ("flatsql") is rejected by the caller before this runs.
-func loadFlowInstance(wasmBytes []byte, pages uint32, deps FlowServiceDeps, contentHash string) (*flowInstance, *modulert.Manifest, error) {
+func loadFlowInstance(wasmBytes []byte, pages uint32, deps FlowServiceDeps, contentHash, flowID string, declaredCaps []string) (*flowInstance, *modulert.Manifest, error) {
 	bridge := modulert.NewHostBridge(deps.NodeCtx, nil)
 
 	rt, err := NewFlowRuntime(wasmBytes, pages,
@@ -119,22 +119,42 @@ func loadFlowInstance(wasmBytes []byte, pages uint32, deps FlowServiceDeps, cont
 		return nil, nil, fmt.Errorf("load flow module: %w", err)
 	}
 
-	manifest, err := modulert.ReadManifest(rt.Module())
-	if err != nil {
-		rt.Release()
-		return nil, nil, fmt.Errorf("read flow manifest: %w", err)
-	}
-
-	// The engine-link capability would be satisfied by a mount's engine link,
-	// not a hostcall handler — a bridge-mode service flow that declares it is
-	// mis-compiled for this path.
-	capabilities := make([]string, 0, len(manifest.Capabilities))
-	for _, capability := range manifest.Capabilities {
-		if capability == EngineLinkCapability {
-			rt.Release()
-			return nil, nil, fmt.Errorf("flow %q declares %s; engine-linked flows are not supported on the timer-served path (bridge-mode only)", manifest.PluginID, EngineLinkCapability)
+	var manifest *modulert.Manifest
+	var capabilities []string
+	if wasmImportsModule(wasmBytes, engineImportModule) {
+		// Composed engine-linked flow (the OD write lane): it is a flow REACTOR,
+		// not a single module, so it exposes no plugin-manifest ABI (ReadManifest
+		// would fail). Its identity comes from the $PLG (flowID) and its declared
+		// capability set from the install spec — the first-party role reference set
+		// that also recorded the operator approval for THIS content hash. The mount
+		// provisions EXACTLY those declared caps. The engine-link itself is wired by
+		// NewFlowRuntime (the in-wasm FlatSQL store), never a bridge capability, so
+		// EngineLinkCapability must not appear in declaredCaps.
+		for _, c := range declaredCaps {
+			if c == EngineLinkCapability {
+				rt.Release()
+				return nil, nil, fmt.Errorf("flow %q: %s is not a bridge capability (the engine link is wired by NewFlowRuntime)", flowID, EngineLinkCapability)
+			}
 		}
-		capabilities = append(capabilities, capability)
+		manifest = &modulert.Manifest{PluginID: flowID, Capabilities: append([]string(nil), declaredCaps...)}
+		capabilities = manifest.Capabilities
+	} else {
+		manifest, err = modulert.ReadManifest(rt.Module())
+		if err != nil {
+			rt.Release()
+			return nil, nil, fmt.Errorf("read flow manifest: %w", err)
+		}
+		// The engine-link capability would be satisfied by a mount's engine link,
+		// not a hostcall handler — a non-engine-linked bridge-mode service flow that
+		// declares it is mis-compiled for this path.
+		capabilities = make([]string, 0, len(manifest.Capabilities))
+		for _, capability := range manifest.Capabilities {
+			if capability == EngineLinkCapability {
+				rt.Release()
+				return nil, nil, fmt.Errorf("flow %q declares %s; engine-linked flows are not supported on the timer-served path (bridge-mode only)", manifest.PluginID, EngineLinkCapability)
+			}
+			capabilities = append(capabilities, capability)
+		}
 	}
 
 	var policy *modulert.CapabilityPolicyStore
@@ -159,7 +179,7 @@ func loadFlowInstance(wasmBytes []byte, pages uint32, deps FlowServiceDeps, cont
 // triggerId -> Go duration string to override the bundle default; config is the
 // per-flow node CONFIG the bridge builtin plugin.getConfig serves the flow's
 // nodes (URL overrides etc. — configuration, never host code).
-func LoadFlowService(flowRef string, intervals map[string]string, config map[string]interface{}, deps FlowServiceDeps) (*ServiceFlow, error) {
+func LoadFlowService(flowRef string, intervals map[string]string, config map[string]interface{}, deps FlowServiceDeps, declaredCaps []string) (*ServiceFlow, error) {
 	wasmPath, bundleDir, err := resolveFlowArtifact(flowRef)
 	if err != nil {
 		return nil, err
@@ -212,7 +232,18 @@ func LoadFlowService(flowRef string, intervals map[string]string, config map[str
 		instDeps.NodeCtx = &nodeCtx
 	}
 
-	inst, manifest, err := loadFlowInstance(wasmBytes, pages, instDeps, contentHash)
+	// Engine-linked composed flows carry no module manifest; their identity is the
+	// $PLG ProgramID. Read it up front for the mount's provision identity.
+	flowID := ""
+	if bundleDir != "" {
+		if data, e := os.ReadFile(filepath.Join(bundleDir, "flow.plg")); e == nil {
+			if topo, pe := parsePLGGraph(data); pe == nil {
+				flowID = topo.ProgramID
+			}
+		}
+	}
+
+	inst, manifest, err := loadFlowInstance(wasmBytes, pages, instDeps, contentHash, flowID, declaredCaps)
 	if err != nil {
 		return nil, err
 	}
