@@ -223,6 +223,13 @@
   .chk input:checked + .box { border-color:var(--cyan); color:var(--cyan); background:rgba(53,201,216,0.12); }
   .chk input:focus-visible + .box { outline:1px solid var(--ice); outline-offset:1px; }
   .prov-disabled { opacity:0.55; pointer-events:none; }
+  /* one provider row the flow can never enable (known-unfittable, e.g. GPS/OneWeb):
+     visually distinct from a normal toggleable row — dimmed, no pointer cursor,
+     the checkbox itself stays a REAL disabled control (never clickable-then-reverted). */
+  .prov-row-disabled { cursor:default; opacity:0.6; }
+  .prov-row-disabled:hover { background:transparent; }
+  .prov-row-disabled .chk .box { border-color:var(--line-faint); }
+  .prov-reason { display:block; font-size:10.5px; color:var(--muted-2); margin-top:3px; font-style:italic; }
 
   .timer-row { display:grid; grid-template-columns:1fr 130px; gap:10px 12px; align-items:end; }
   .divider { display:flex; align-items:center; gap:8px; margin:6px 0 2px; }
@@ -571,16 +578,40 @@
     arr.forEach(function (p) { if (typeof p === "string") out[p] = true; });
     return out;
   }
+  // unfittableProviders() reads the server's known-unfittable registry
+  // (config.unfittable_providers — GPS/OneWeb today, with an explicit reason
+  // each) so the board never hardcodes a copy that could drift from the
+  // backend's own truth (see plugin/plugins/sdnapi/omm_compat.go's
+  // knownUnfittableProviders — the single source of these reasons).
+  function unfittableProviders() {
+    var cfg = state.config || {};
+    return Array.isArray(cfg.unfittable_providers) ? cfg.unfittable_providers : [];
+  }
+  // declaredProviders() is the flow's ACTUAL fittable/toggleable set — real
+  // $PLG topology metadata from the server (config.declared_providers),
+  // never a hardcoded guess, so this stays truthful if the fittable set ever
+  // changes (e.g. a GLONASS FTP fix bringing a new provider online).
+  function declaredProviders() {
+    var cfg = state.config || {};
+    return Array.isArray(cfg.declared_providers) ? cfg.declared_providers : [];
+  }
   function providerRows() {
     var enabled = enabledSet();
+    var unfittableIds = {};
+    unfittableProviders().forEach(function (p) { unfittableIds[p.provider] = true; });
+
     var seen = {};
-    var list = PROVIDERS.slice();
-    PROVIDERS.forEach(function (p) { seen[p.id] = true; });
-    // Merge any enabled-but-unlisted provider so it is never hidden.
+    var list = declaredProviders().map(function (id) { return { id: id, label: providerLabel(id) }; });
+    list.forEach(function (p) { seen[p.id] = true; });
+    // Merge any enabled-but-undeclared id the board doesn't otherwise know
+    // about (defensive: never hide a provider the stored config already
+    // enabled) — EXCEPT a known-unfittable one, which always renders in the
+    // disabled section below instead, even if a stale config still lists it.
     Object.keys(enabled).forEach(function (id) {
-      if (!seen[id]) { list.push({ id: id, label: id }); seen[id] = true; }
+      if (!seen[id] && !unfittableIds[id]) { list.push({ id: id, label: providerLabel(id) }); seen[id] = true; }
     });
-    return list.map(function (p) {
+
+    var toggleable = list.map(function (p) {
       var on = !!enabled[p.id];
       return '' +
         '<label class="prov-row" data-prov="' + attr(p.id) + '">' +
@@ -589,6 +620,21 @@
           (on ? '<span class="chip cyan">ENABLED</span>' : '<span class="chip">OFF</span>') +
         '</label>';
     }).join("");
+
+    // Permanently-disabled rows: a REAL disabled checkbox (never clickable-
+    // then-reverted) plus the inline reason — never a silent snap-back.
+    var disabled = unfittableProviders().map(function (p) {
+      return '' +
+        '<label class="prov-row prov-row-disabled" data-prov-unfittable="' + attr(p.provider) + '">' +
+          '<span class="chk"><input type="checkbox" disabled><span class="box"></span></span>' +
+          '<span><span class="prov-name">' + esc(p.label || p.provider) + '</span>' +
+            '<span class="prov-id mono">' + esc(p.provider) + '</span>' +
+            '<span class="prov-reason">' + esc(p.reason || "Not fittable.") + '</span></span>' +
+          '<span class="chip">NOT FITTABLE</span>' +
+        '</label>';
+    }).join("");
+
+    return toggleable + disabled;
   }
   function humanMs(ms) {
     var n = Number(ms);
@@ -680,7 +726,19 @@
           return;
         }
         state.config = put.data || cfg;
-        state.notice = { kind: "good", text: "Provider set applied: " + (enabled.length ? enabled.join(", ") : "none enabled") + "." };
+        // The backend never silently drops an entry: anything it could not
+        // enable (a known-unfittable id, or an unrecognized one) comes back
+        // named in `rejected` with why — surface that explicitly rather than
+        // just showing "applied" over a save that partly didn't take.
+        var rejected = (put.data && Array.isArray(put.data.rejected)) ? put.data.rejected : [];
+        if (rejected.length) {
+          // state.notice.text is escaped once, at render time (renderProviders) —
+          // keep this raw so the reason text is never double-escaped.
+          var names = rejected.map(function (r) { return r.provider + " (" + r.reason + ")"; }).join("; ");
+          state.notice = { kind: "bad", text: "Saved the fittable selection, but could not enable: " + names + "." };
+        } else {
+          state.notice = { kind: "good", text: "Provider set applied: " + (enabled.length ? enabled.join(", ") : "none enabled") + "." };
+        }
         // Refresh effective interval from the module list, then re-render.
         loadModuleInterval().then(renderProviders);
       });
