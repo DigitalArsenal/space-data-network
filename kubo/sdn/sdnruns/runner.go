@@ -88,12 +88,6 @@ type RunConfig struct {
 	CelestrakSource  string
 	SpacetrackSource string
 	ProducedSource   string
-	// ObjectCap bounds how many objects each provider fetches+fits per pull
-	// (module config key `object_cap`). A provider fetches one upstream file per
-	// object serially, so a full constellation cannot complete in one wasm
-	// invocation; this caps the per-pull work to what finishes inside the
-	// scheduled budget. 0 leaves each module's built-in default.
-	ObjectCap int
 }
 
 // Config wires a Runner.
