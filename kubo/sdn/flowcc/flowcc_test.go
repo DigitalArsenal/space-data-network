@@ -42,8 +42,6 @@ extern "C" int safe(int x){
 	shaTplSrc = "ec2dac725b3ddfc898cd6970ef7bfa9a6e986b5cb9a0c3a1ca9a2a417ba8117d"
 	shaTplO   = "32da7c92a74a05ecd643da1678d2c73d019df3b380c4a8feb2d47232cc8b5694"
 
-	defaultBox = "/private/tmp/claude-501/-Users-tj-software-spacedatanetwork-stack/8a9a46ba-3833-472b-bfb4-4c3869499342/scratchpad/phase2/llvm-box.wasm"
-
 	// --- P2 real (sysroot-using) compile ---
 	//
 	// progSrc is a C++ program that pulls in the standard library (<vector>,
@@ -78,8 +76,6 @@ extern "C" int run_test(int x) {
 	shaProgO    = "e651b8bb285ba8d313dc1a11827a9f4e19db97e7fccdc08189d74ad8d96a1fa9"
 	shaProgWasm = "b7bda325916f4c64bf5bce7dbcd39e3bdf8f61555c2896a18936043f1c5fd6f7"
 
-	defaultSysroot = "/private/tmp/claude-501/-Users-tj-software-spacedatanetwork-stack/8a9a46ba-3833-472b-bfb4-4c3869499342/scratchpad/phase2/sysroot"
-
 	// EnvFlowccGlue names an OPTIONAL env var pointing at emception's
 	// llvm-box.mjs glue. When set, TestRealCompileVsNodeLive regenerates the
 	// reference live under Node and cross-checks it against the Go host output;
@@ -89,12 +85,15 @@ extern "C" int run_test(int x) {
 )
 
 // sysrootPathForTest resolves the sysroot dir the same way New does (env first,
-// then the scratchpad default).
+// then the staged flowcc home, ResolveHome().SysrootDir()).
 func sysrootPathForTest() string {
 	if p := os.Getenv(EnvLLVMSysroot); p != "" {
 		return p
 	}
-	return defaultSysroot
+	// Fall back to a STAGED flowcc home (ResolveHome()) rather than an
+	// ephemeral session scratchpad. A node staged via sdn/flowcc/toolchain
+	// resolves here with no extra env; SDN_LLVM_SYSROOT still overrides.
+	return ResolveHome().SysrootDir()
 }
 
 // realCompileArgv / realLinkArgv are the guest argv for the real compile and
@@ -124,7 +123,9 @@ func boxPath() string {
 	if p := os.Getenv(EnvLLVMBoxWasm); p != "" {
 		return p
 	}
-	return defaultBox
+	// Fall back to a STAGED flowcc home (ResolveHome()) rather than an
+	// ephemeral session scratchpad; SDN_LLVM_BOX_WASM still overrides.
+	return ResolveHome().BoxPath()
 }
 
 func sha(b []byte) string {

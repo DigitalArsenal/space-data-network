@@ -29,9 +29,6 @@ import (
 	"github.com/ipfs/kubo/sdn/plugins"
 )
 
-// scratchpad session dir (matches flowcc/flow_bake_test.go defaults).
-const bakeScratch = "/private/tmp/claude-501/-Users-tj-software-spacedatanetwork-stack/8a9a46ba-3833-472b-bfb4-4c3869499342/scratchpad"
-
 // bakeE2EFlowPLG is a real 3-node linked-direct flow: omm-json.encode ->
 // decision-gate.dispatch -> clock.now, driven by one timer trigger bound to the
 // first node, expressed as a $PLG FlatBuffer. The pluginIds/methodIds match the
@@ -75,9 +72,15 @@ type bakeAssets struct {
 
 func resolveBakeAssets(t *testing.T) bakeAssets {
 	t.Helper()
-	box := envOr("SDN_LLVM_BOX_WASM", filepath.Join(bakeScratch, "phase2", "llvm-box.wasm"))
-	sysroot := envOr("SDN_LLVM_SYSROOT", filepath.Join(bakeScratch, "phase2", "sysroot"))
-	tpl := envOr("SDN_FLOWCC_BAKE_DIR", filepath.Join(bakeScratch, "linkspike"))
+	// Defaults resolve from a STAGED flowcc home (flowcc.ResolveHome():
+	// $SDN_FLOWCC_HOME | $IPFS_PATH/sdn/flowcc | ~/.ipfs/sdn/flowcc) rather than an
+	// ephemeral session scratchpad, so a node that ran stage-toolchain.sh
+	// (sdn/flowcc/toolchain) exercises the bake path with no extra env. The
+	// SDN_LLVM_* / SDN_FLOWCC_BAKE_DIR env vars still override.
+	home := flowcc.ResolveHome()
+	box := envOr("SDN_LLVM_BOX_WASM", home.BoxPath())
+	sysroot := envOr("SDN_LLVM_SYSROOT", home.SysrootDir())
+	tpl := envOr("SDN_FLOWCC_BAKE_DIR", home.TemplateDir())
 	if _, err := os.Stat(box); err != nil {
 		t.Skipf("llvm-box.wasm not available at %s (set SDN_LLVM_BOX_WASM): %v", box, err)
 	}
