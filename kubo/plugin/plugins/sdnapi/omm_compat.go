@@ -83,6 +83,78 @@ func ommDeclaredProviderShortIDs(sf *flowrt.ServiceFlow) []string {
 	return out
 }
 
+// unfittableProvider is a KNOWN, NAMED provider the board can offer as a
+// read-only, permanently-disabled row with an inline reason — never a
+// silent drop. This is a static registry (not derived from the flow), since
+// these providers have NO flow node at all (there is nothing in
+// SourceProviderPluginIDs to derive them from); it exists purely so the
+// board can explain, rather than just refuse, an operator's attempt to
+// enable them. If a provider here ever becomes fittable (e.g. a GLONASS FTP
+// fix), the fix is to DELETE its entry here — the flow's declared provider
+// set (ommDeclaredProviderShortIDs) is what actually drives what is
+// enable-able, this registry only ever narrows what can be requested.
+type unfittableProvider struct {
+	Provider string `json:"provider"`
+	Label    string `json:"label"`
+	Reason   string `json:"reason"`
+}
+
+// knownUnfittableProviders: keep in sync with the board's static PROVIDERS
+// list in omm_board.html (the "gps"/"oneweb" rows) — this is the single
+// source of truth for WHY they cannot be enabled; the board renders exactly
+// these reasons rather than hardcoding its own copy.
+var knownUnfittableProviders = []unfittableProvider{
+	{Provider: "gps", Label: "GPS", Reason: "Almanac feed (SEM/YUMA); not an OD source per data policy."},
+	{Provider: "oneweb", Label: "OneWeb", Reason: "LTEF feed is metadata-only (no state vectors); not fittable."},
+}
+
+// rejectedProvider is one entry PUT's enabled_providers named that could not
+// be enabled, with why — returned alongside the normalized (accepted) set
+// rather than silently stripped or a hard failure, so the board can show an
+// explicit notice naming exactly what was rejected and why.
+type rejectedProvider struct {
+	Provider string `json:"provider"`
+	Reason   string `json:"reason"`
+}
+
+// unfittableReason returns the known reason for provider, or a generic
+// fallback for a string the board/operator sent that matches neither a
+// flow-declared provider nor a known-unfittable one (e.g. a typo).
+func unfittableReason(provider string) string {
+	for _, u := range knownUnfittableProviders {
+		if u.Provider == provider {
+			return u.Reason
+		}
+	}
+	return "not a provider this flow declares"
+}
+
+// splitEnabledProviders partitions a PUT's raw enabled_providers array into
+// the accepted (declared-fittable) set and a rejected list with reasons —
+// deduplicated, accepted set sorted for a deterministic response. Never
+// silent: every entry that is not in declared ends up in rejected.
+func splitEnabledProviders(raw []interface{}, declared []string) (accepted []string, rejected []rejectedProvider) {
+	declaredSet := make(map[string]bool, len(declared))
+	for _, d := range declared {
+		declaredSet[d] = true
+	}
+	seen := make(map[string]bool, len(raw))
+	for _, v := range raw {
+		p, ok := v.(string)
+		if !ok || p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		if declaredSet[p] {
+			accepted = append(accepted, p)
+		} else {
+			rejected = append(rejected, rejectedProvider{Provider: p, Reason: unfittableReason(p)})
+		}
+	}
+	sort.Strings(accepted)
+	return accepted, rejected
+}
+
 // asPositiveMs coerces a decoded JSON number (float64, the shape
 // encoding/json produces for a plain map[string]interface{} decode) or a Go
 // integer into a positive int64 millisecond interval.
@@ -145,6 +217,18 @@ func (a ommCompatModuleAdmin) effectiveConfig(sf *flowrt.ServiceFlow) sdncron.Mo
 		out["enabled_providers"] = ommDeclaredProviderShortIDs(sf)
 	}
 	out["interval_ms"] = float64(a.effectiveIntervalMs(sf))
+	// declared_providers is ALWAYS the flow's full fittable set (real $PLG
+	// topology metadata), independent of which subset is currently enabled —
+	// the board needs this to render every toggleable row even after an
+	// operator has saved a partial selection (enabled_providers alone would
+	// make every unchecked-but-still-fittable provider vanish from the panel
+	// with no way to switch it back on — the load-bearing bug this field
+	// exists to prevent).
+	out["declared_providers"] = ommDeclaredProviderShortIDs(sf)
+	// unfittable_providers is ALWAYS present (never conditional on a PUT) so
+	// the board can render the gps/oneweb rows as permanently-disabled with
+	// their reason on first load, not just after a rejected save attempt.
+	out["unfittable_providers"] = knownUnfittableProviders
 	return sdncron.ModuleConfig(out)
 }
 
@@ -213,6 +297,7 @@ func (a ommCompatModuleAdmin) ApplyConfig(id string, cfg sdncron.ModuleConfig) (
 	nodeCfg := make(map[string]interface{}, len(cfg))
 	var intervalMs int64
 	hasInterval := false
+	var rejected []rejectedProvider
 	for k, v := range cfg {
 		switch k {
 		case "interval_ms":
@@ -226,6 +311,21 @@ func (a ommCompatModuleAdmin) ApplyConfig(id string, cfg sdncron.ModuleConfig) (
 			// this flow (one host-cron trigger, aliased as "run" for compat
 			// display only): dropped rather than persisted as a misleading
 			// opaque node-config key.
+		case "enabled_providers":
+			// Explicit, never-silent validation: only the flow's DECLARED
+			// (fittable) providers persist. Anything else — a known-
+			// unfittable id like "gps"/"oneweb", or an unrecognized string —
+			// is stripped here AND named back in the response's `rejected`
+			// field with why, rather than silently accepted-then-ignored or
+			// silently dropped (the reported bug: the UI had no way to know
+			// its selection didn't take).
+			arr, ok := v.([]interface{})
+			if !ok {
+				return nil, fmt.Errorf("%w: enabled_providers must be an array of provider ids", sdncron.ErrInvalidConfig)
+			}
+			accepted, rej := splitEnabledProviders(arr, ommDeclaredProviderShortIDs(sf))
+			nodeCfg["enabled_providers"] = accepted
+			rejected = rej
 		default:
 			nodeCfg[k] = v
 		}
@@ -241,5 +341,13 @@ func (a ommCompatModuleAdmin) ApplyConfig(id string, cfg sdncron.ModuleConfig) (
 	if fi := pluginsdnruntime.FlowInstaller(); fi != nil {
 		fi.SetFlowNodeConfig(ommFlowProgramID, nodeCfg)
 	}
-	return a.effectiveConfig(sf), nil
+	applied := a.effectiveConfig(sf)
+	if len(rejected) > 0 {
+		// Accept-and-strip, never a hard failure: the accepted providers
+		// still save; `rejected` lets the board surface an explicit notice
+		// naming exactly what didn't take and why, instead of the checkbox
+		// just silently snapping back.
+		applied["rejected"] = rejected
+	}
+	return applied, nil
 }

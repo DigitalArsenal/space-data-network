@@ -15,6 +15,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/ipfs/kubo/sdn/flowrt"
 	"github.com/ipfs/kubo/sdn/sdncron"
 )
 
@@ -131,6 +132,96 @@ func TestOmmDeclaredProviderShortIDsSorted(t *testing.T) {
 	for i := range want {
 		if short[i] != want[i] {
 			t.Fatalf("sorted short ids = %v, want %v", short, want)
+		}
+	}
+}
+
+// TestUnfittableReason proves the known-unfittable registry names the exact,
+// owner-specced reason for gps/oneweb, and a sane generic fallback for
+// anything else (a typo, or a genuinely unknown provider id) — never blank.
+func TestUnfittableReason(t *testing.T) {
+	if got := unfittableReason("gps"); got == "" || got != "Almanac feed (SEM/YUMA); not an OD source per data policy." {
+		t.Fatalf("unfittableReason(gps) = %q", got)
+	}
+	if got := unfittableReason("oneweb"); got == "" || got != "LTEF feed is metadata-only (no state vectors); not fittable." {
+		t.Fatalf("unfittableReason(oneweb) = %q", got)
+	}
+	if got := unfittableReason("not-a-real-provider"); got == "" {
+		t.Fatalf("unfittableReason(unknown) should carry a generic, non-blank reason")
+	}
+}
+
+// TestSplitEnabledProvidersNeverSilent proves a PUT's enabled_providers never
+// silently drops an unfittable/unknown entry: it comes back named in
+// `rejected` with a reason, while every declared-fittable entry is kept
+// (deduplicated, sorted) — the fix for the reported bug (the UI had no way
+// to know gps/oneweb didn't take).
+func TestSplitEnabledProvidersNeverSilent(t *testing.T) {
+	declared := []string{"iss", "cpf", "glonass", "intelsat", "spacex-starlink"}
+	raw := []interface{}{"iss", "gps", "cpf", "cpf", "oneweb", "bogus-typo", 42, ""}
+
+	accepted, rejected := splitEnabledProviders(raw, declared)
+
+	if len(accepted) != 2 || accepted[0] != "cpf" || accepted[1] != "iss" {
+		t.Fatalf("accepted = %v, want [cpf iss] (deduplicated, sorted, fittable only)", accepted)
+	}
+	if len(rejected) != 3 {
+		t.Fatalf("rejected = %+v, want 3 entries (gps, oneweb, bogus-typo)", rejected)
+	}
+	byProvider := map[string]string{}
+	for _, r := range rejected {
+		byProvider[r.Provider] = r.Reason
+	}
+	if byProvider["gps"] == "" || byProvider["oneweb"] == "" || byProvider["bogus-typo"] == "" {
+		t.Fatalf("every rejected entry must carry a non-blank reason: %+v", rejected)
+	}
+	if byProvider["gps"] != unfittableReason("gps") {
+		t.Fatalf("rejected gps reason = %q, want the known-unfittable reason", byProvider["gps"])
+	}
+}
+
+// TestSplitEnabledProvidersAllAccepted proves the "no rejects" case returns
+// an empty rejected slice (so ApplyConfig knows not to attach the field).
+func TestSplitEnabledProvidersAllAccepted(t *testing.T) {
+	accepted, rejected := splitEnabledProviders(
+		[]interface{}{"iss", "cpf"},
+		[]string{"iss", "cpf", "glonass"},
+	)
+	if len(accepted) != 2 || len(rejected) != 0 {
+		t.Fatalf("accepted=%v rejected=%v, want [cpf iss] and none rejected", accepted, rejected)
+	}
+}
+
+// TestEffectiveConfigAlwaysIncludesDeclaredProviders is a regression test for
+// a guardian-caught bug: effectiveConfig's GET response failed to expose
+// declared_providers at all, even though the board depends on it to render
+// EVERY fittable provider row (checked or not) — without it, saving a
+// partial enabled_providers selection makes every OTHER fittable-but-now-
+// disabled provider vanish from the panel with no row left to re-enable it,
+// a strictly worse version of the exact "selection silently doesn't take"
+// bug this file's fix was meant to kill. Asserts the field is ALWAYS present
+// and equals the SAME ommDeclaredProviderShortIDs the PUT-side validator
+// (splitEnabledProviders) already uses — one source of truth, never two.
+func TestEffectiveConfigAlwaysIncludesDeclaredProviders(t *testing.T) {
+	sf := &flowrt.ServiceFlow{} // zero-value: SourceProviderPluginIDs() = nil, fine for this structural check
+	a := ommCompatModuleAdmin{}
+	cfg := a.effectiveConfig(sf)
+
+	got, ok := cfg["declared_providers"]
+	if !ok {
+		t.Fatalf("effectiveConfig() does not include declared_providers at all")
+	}
+	gotSlice, ok := got.([]string)
+	if !ok {
+		t.Fatalf("declared_providers = %#v (%T), want []string", got, got)
+	}
+	want := ommDeclaredProviderShortIDs(sf)
+	if len(gotSlice) != len(want) {
+		t.Fatalf("declared_providers = %v, want %v (ommDeclaredProviderShortIDs)", gotSlice, want)
+	}
+	for i := range want {
+		if gotSlice[i] != want[i] {
+			t.Fatalf("declared_providers = %v, want %v", gotSlice, want)
 		}
 	}
 }
