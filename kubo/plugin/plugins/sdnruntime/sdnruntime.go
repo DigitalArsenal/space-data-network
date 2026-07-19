@@ -309,10 +309,11 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 	// When this node is in the "omm" role (SDN_ROLE=omm env or Config.Role), BAKE
 	// the ONE composed wasi-threads OD flow (five in-wasm providers -> threaded fit
 	// -> in-wasm FlatSQL store) and mount it as a timer-served flow before the
-	// scheduler starts. This REPLACES the old per-provider operator-ephemeris module
-	// set (maybeInstallOperatorEphemerisSet, now dead code queued for the purge
-	// node): the ONE wasm flow does the fetch + threaded fit + $OMM/$OCM/$OBD store,
-	// $OEM in-memory only. No-op on other nodes.
+	// scheduler starts. This REPLACES the old per-provider operator-ephemeris
+	// module set (formerly maybeInstallOperatorEphemerisSet; removed by the
+	// Go-orchestration purge — see operator_omm_flow.go): the ONE wasm flow does
+	// the fetch + threaded fit + $OMM/$OCM/$OBD store, $OEM in-memory only. No-op
+	// on other nodes.
 	p.maybeInstallOperatorOMMFlow(node.Context(), flowInstaller, svc)
 	// --- END supplemental-OMM OD flow ---
 
