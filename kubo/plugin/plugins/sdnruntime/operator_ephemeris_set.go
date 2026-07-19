@@ -11,21 +11,20 @@ package sdnruntime
 // It mirrors maybeInstallCelestrakReferenceSet (celestrak_set.go): role implies
 // APPROVAL of the first-party set, so it records the operator approvals each
 // module's declared sensitive capabilities need to clear the fail-closed gate,
-// installs each module.wasm through the sdnmodules installer, and then seeds each
-// module's home-dir config with a HIGH per-pull object cap (timer_input.objectCap)
-// so a provider ingests its full constellation, not the module's built-in default.
+// installs each module.wasm through the sdnmodules installer, and schedules its
+// "pull" cron. Per the no-caps rule it seeds NO host-side per-pull object cap:
+// how much of its constellation a provider pulls is a MODULE concern, never Go
+// orchestration/batching from the host.
 //
-// The seeded cap is config: it is written to <repo>/sdn/modules/<id>.json and is
-// editable from the Modules settings API. The operator-source fetch cadence is
-// enforced independently by the http capability; this file only registers +
-// schedules and never weakens a fetch spacing or ledger.
+// The operator-source fetch cadence is enforced independently by the http
+// capability; this file only registers + schedules and never weakens a fetch
+// spacing or ledger.
 
 import (
 	"context"
 	"os"
 
 	"github.com/ipfs/kubo/sdn/modulert"
-	"github.com/ipfs/kubo/sdn/sdncron"
 	"github.com/ipfs/kubo/sdn/sdnflows"
 	"github.com/ipfs/kubo/sdn/sdnmodules"
 	"github.com/ipfs/kubo/sdn/sdnservices"
@@ -51,8 +50,8 @@ func (p *sdnRuntimePlugin) maybeInstallOperatorEphemerisSet(
 		log.Warnf("SDN omm role: modules dist not found (set SDN_MODULES_DIST); operator ephemeris set NOT installed")
 		return
 	}
-	log.Infof("SDN omm role ACTIVE: registering operator ephemeris source set from %q (per-pull objectCap=%d)",
-		distRoot, sdnflows.OperatorEphemerisObjectCap)
+	log.Infof("SDN omm role ACTIVE: registering operator ephemeris source set from %q (no host-seeded cap; full-catalog pull is module-owned)",
+		distRoot)
 
 	installed := 0
 	for _, m := range sdnflows.OperatorEphemerisSet() {
@@ -76,22 +75,12 @@ func (p *sdnRuntimePlugin) maybeInstallOperatorEphemerisSet(
 			continue
 		}
 
-		// Seed the HIGH per-pull object cap into the module's home-dir config so
-		// the next pull ingests the full constellation (config-driven; editable in
-		// the Modules UI). The scheduler passes timer_input as the pull payload.
-		if svc.Scheduler != nil {
-			cfg := sdncron.ModuleConfig{
-				"timer_input": map[string]interface{}{
-					"objectCap": sdnflows.OperatorEphemerisObjectCap,
-				},
-			}
-			if _, cerr := svc.Scheduler.ApplyConfig(mod.ID, cfg); cerr != nil {
-				log.Warnf("SDN operator ephemeris MODULE %s: seed objectCap config failed: %v", m.Name, cerr)
-			}
-		}
+		// No host-side object cap is seeded (no-caps rule): the module owns how
+		// much of its constellation each "pull" covers. The host only registers +
+		// schedules; it never batches or caps a pull.
 		installed++
-		log.Infof("SDN operator ephemeris MODULE registered: %s (%s) timer=%s objectCap=%d",
-			m.Name, mod.ID, m.TimerID, sdnflows.OperatorEphemerisObjectCap)
+		log.Infof("SDN operator ephemeris MODULE registered: %s (%s) timer=%s (no host cap)",
+			m.Name, mod.ID, m.TimerID)
 	}
 	log.Infof("SDN operator ephemeris set: %d module(s) registered on the omm role", installed)
 }

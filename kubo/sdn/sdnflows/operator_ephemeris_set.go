@@ -14,9 +14,10 @@ package sdnflows
 // tree, the manifest cron method the pull runs on ("pull"), and the sensitive
 // capabilities the role approves. The sdnruntime plugin's role-gated
 // orchestration (maybeInstallOperatorEphemerisSet) installs them through the
-// sdnmodules installer and seeds each a HIGH per-pull object cap in its config so
-// a provider ingests its FULL constellation (Starlink alone is 10k+), not the
-// module's built-in per-pull default.
+// sdnmodules installer and schedules their "pull" cron. It seeds NO host-side
+// object cap: the no-caps rule means each provider module owns how much of its
+// constellation it pulls (Starlink alone is 10k+) - the host never batches or
+// caps a pull. A per-pull cap is a MODULE concern, not Go orchestration.
 //
 // Providers whose upstream needs credentials register the same way and simply
 // no-op (empty fetch) until the operator supplies creds — registration never
@@ -34,14 +35,6 @@ import "os"
 // whose SDN_ROLE env (or configured role) names this registers the operator
 // data-source modules; every other node leaves the set dormant.
 const OMMRoleName = "omm"
-
-// OperatorEphemerisObjectCap is the per-pull object cap the role seeds into each
-// operator data-source module's config (the config-driven `objectCap` the
-// module's parse_config reads). It is set high enough to cover the full Starlink
-// constellation (10k+) with headroom, replacing the module's built-in per-pull
-// default (e.g. Starlink's 25). Operators can lower it per module from the
-// Modules settings API (the timer_input config key).
-const OperatorEphemerisObjectCap int64 = 100000
 
 // OMMRoleEnabled reports whether this node is in the OMM role (SDN_ROLE env or
 // the given configuredRole names "omm"; comma/space/semicolon-separated lists
