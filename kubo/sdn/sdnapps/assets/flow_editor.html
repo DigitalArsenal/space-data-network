@@ -24,8 +24,9 @@
 
   DESIGN: SpaceAware.io "SDN Console" system — canvas #04060a, Chakra Petch +
   IBM Plex Mono self-hosted, border-radius 0, cyan/ice accents. NO directional
-  arrow glyphs on any button/nav label (flow edges are functional controls where
-  the arrow IS the control — those carry an arrowhead marker, which is allowed).
+  arrow glyphs anywhere in the editor — not on buttons/nav labels, and not on
+  the canvas either: edge/binding lines terminate flush into the port circle
+  they connect to, with no arrowhead marker of any kind.
 
   HONESTY CONTRACT: the palette is whatever the node actually has staged; a node
   with no toolchain staged shows only the host capability nodes and a Deploy there
@@ -65,7 +66,7 @@
   body {
     font-family:var(--font-mono); color:var(--body);
     background:radial-gradient(circle at 50% -8%, #0a1722, #04060a 55%) fixed;
-    -webkit-font-smoothing:antialiased; font-size:13px; line-height:1.5;
+    -webkit-font-smoothing:antialiased; font-size:17px; line-height:1.5;
     display:flex; flex-direction:column; height:100vh; overflow:hidden;
   }
   ::-webkit-scrollbar { width:9px; height:9px; }
@@ -82,20 +83,20 @@
     backdrop-filter:blur(6px); padding:11px 18px;
   }
   .brand { display:flex; align-items:center; gap:12px; min-width:0; }
-  .mark { width:28px; height:28px; flex:none; display:grid; place-items:center;
-    color:var(--cyan); font-size:20px; line-height:1;
+  .mark { width:34px; height:34px; flex:none; display:grid; place-items:center;
+    color:var(--cyan); font-size:26px; line-height:1;
     border:1px solid rgba(53,201,216,0.4); background:rgba(53,201,216,0.07); }
-  .eyebrow { font-size:9px; letter-spacing:0.22em; color:var(--kicker-2); margin:0 0 3px; }
+  .eyebrow { font-size:12px; letter-spacing:0.22em; color:var(--kicker-2); margin:0 0 3px; }
   .title-line { display:flex; align-items:baseline; gap:10px; }
   .title-line h1 { margin:0; font-family:var(--font-display); font-weight:700;
-    font-size:18px; letter-spacing:0.11em; color:var(--ink); }
-  .title-sub { font-size:10px; letter-spacing:0.15em; color:var(--kicker-2); }
+    font-size:23px; letter-spacing:0.11em; color:var(--ink); }
+  .title-sub { font-size:13px; letter-spacing:0.15em; color:var(--kicker-2); }
   .spring { flex:1; }
   .flow-name { display:flex; align-items:center; gap:8px; }
-  .flow-name label { font-size:9px; letter-spacing:0.15em; color:var(--kicker); }
+  .flow-name label { font-size:12px; letter-spacing:0.15em; color:var(--kicker); }
   .status-strip { display:flex; gap:7px; align-items:center; }
   .status-chip { display:inline-flex; align-items:center; gap:6px;
-    border:1px solid var(--line-strong); padding:5px 10px; font-size:11px;
+    border:1px solid var(--line-strong); padding:5px 10px; font-size:14px;
     letter-spacing:0.07em; color:var(--muted); background:transparent; white-space:nowrap; }
   .status-chip .dot { width:7px; height:7px; border-radius:50%;
     background:currentColor; box-shadow:0 0 7px currentColor; }
@@ -108,31 +109,31 @@
   /* --------------------------------------------------------- buttons + inputs */
   .btn { display:inline-flex; align-items:center; gap:6px; background:transparent;
     border:1px solid var(--line-strong); color:var(--muted); padding:6px 13px;
-    font-family:var(--font-display); font-weight:600; font-size:11px; letter-spacing:0.08em;
+    font-family:var(--font-display); font-weight:600; font-size:14px; letter-spacing:0.08em;
     cursor:pointer; transition:border-color .14s,color .14s,background .14s; text-decoration:none; }
   .btn:hover { border-color:rgba(120,190,230,0.6); color:var(--ink); background:rgba(74,166,224,0.08); }
   .btn.primary { background:rgba(53,201,216,0.14); border-color:rgba(53,201,216,0.5); color:var(--cyan-light); }
   .btn.primary:hover { background:rgba(53,201,216,0.22); border-color:rgba(53,201,216,0.7); }
-  .btn.sm { padding:3px 9px; font-size:10px; letter-spacing:0.06em; }
+  .btn.sm { padding:3px 9px; font-size:13px; letter-spacing:0.06em; }
   .btn:disabled { cursor:not-allowed; opacity:0.45; }
   .btn:disabled:hover { border-color:var(--line-strong); color:var(--muted); background:transparent; }
   .input { background:var(--panel-well); border:1px solid rgba(90,150,180,0.2); color:var(--ink);
-    padding:6px 9px; font-family:var(--font-mono); font-size:12px; outline:none; }
+    padding:6px 9px; font-family:var(--font-mono); font-size:16px; outline:none; }
   .input:focus { border-color:rgba(120,190,230,0.6); }
 
   /* --------------------------------------------------------- editor layout */
   .editor { flex:1; display:flex; min-height:0; }
-  .palette { flex:none; width:266px; border-right:1px solid var(--line-soft);
+  .palette { flex:none; width:300px; border-right:1px solid var(--line-soft);
     background:rgba(9,13,18,0.55); display:flex; flex-direction:column; min-height:0; }
   .palette-head { flex:none; padding:12px 14px 10px; border-bottom:1px solid var(--line-faint); }
-  .palette-kicker { font-size:9.5px; letter-spacing:0.2em; color:var(--kicker); margin:0 0 4px; }
-  .palette-hint { font-size:10px; color:var(--muted-2); }
+  .palette-kicker { font-size:12px; letter-spacing:0.2em; color:var(--kicker); margin:0 0 4px; }
+  .palette-hint { font-size:13px; color:var(--muted-2); }
   .palette-body { flex:1; overflow-y:auto; padding:8px 10px 20px; }
   .pal-group { margin-bottom:14px; }
-  .pal-group > .grp-label { display:flex; align-items:center; gap:7px; font-size:9px;
+  .pal-group > .grp-label { display:flex; align-items:center; gap:7px; font-size:12px;
     letter-spacing:0.16em; color:var(--kicker-2); margin:8px 2px 6px; }
   .pal-group > .grp-label .rule { flex:1; height:1px; background:rgba(90,150,180,0.1); }
-  .pal-mod { font-size:9px; letter-spacing:0.08em; color:var(--muted-2); margin:8px 3px 4px; overflow-wrap:anywhere; }
+  .pal-mod { font-size:12px; letter-spacing:0.08em; color:var(--muted-2); margin:8px 3px 4px; overflow-wrap:anywhere; }
   .pal-item { display:flex; align-items:center; gap:8px; padding:7px 9px; margin:3px 0;
     border:1px solid var(--line-soft); background:rgba(20,32,40,0.5); cursor:grab;
     transition:border-color .12s, background .12s; user-select:none; }
@@ -142,15 +143,15 @@
   .pal-item.cap .pi-dot { background:var(--ice); box-shadow:0 0 7px var(--ice); }
   .pal-item.net .pi-dot { background:var(--amber); box-shadow:0 0 7px var(--amber); }
   .pal-item.net:hover { border-color:rgba(255,178,77,0.5); background:rgba(255,178,77,0.08); }
-  .pal-item .pi-name { font-family:var(--font-display); font-weight:600; font-size:12px; color:var(--ink); letter-spacing:0.02em; }
-  .pal-item .pi-sub { font-size:9px; color:var(--muted-2); letter-spacing:0.04em; }
-  .pal-empty { font-size:11px; color:var(--muted-2); padding:10px 4px; line-height:1.6; }
+  .pal-item .pi-name { font-family:var(--font-display); font-weight:600; font-size:16px; color:var(--ink); letter-spacing:0.02em; }
+  .pal-item .pi-sub { font-size:12px; color:var(--muted-2); letter-spacing:0.04em; }
+  .pal-empty { font-size:14px; color:var(--muted-2); padding:10px 4px; line-height:1.6; }
 
   /* --------------------------------------------------------- canvas */
   .canvas-wrap { flex:1; position:relative; min-width:0; display:flex; flex-direction:column; }
   .canvas-toolbar { flex:none; display:flex; align-items:center; gap:8px; padding:8px 14px;
     border-bottom:1px solid var(--line-faint); background:rgba(9,13,18,0.4); }
-  .canvas-toolbar .tb-label { font-size:9.5px; letter-spacing:0.16em; color:var(--kicker); }
+  .canvas-toolbar .tb-label { font-size:12px; letter-spacing:0.16em; color:var(--kicker); }
   .canvas-scroll { flex:1; overflow:auto; position:relative; }
   .surface { position:relative; width:3200px; height:2000px;
     background-image:
@@ -164,11 +165,11 @@
   svg.edges path.bind { fill:none; stroke:var(--amber); stroke-width:2; stroke-dasharray:5 4; pointer-events:stroke; cursor:pointer; }
   svg.edges path.temp { fill:none; stroke:var(--cyan); stroke-width:2; stroke-dasharray:4 4; opacity:0.85; pointer-events:none; }
 
-  .node { position:absolute; width:190px; background:var(--panel-raised);
+  .node { position:absolute; width:250px; background:var(--panel-raised);
     border:1px solid var(--line); box-shadow:inset 0 1px 0 rgba(150,210,240,0.12), 0 6px 20px rgba(0,0,0,0.4); }
   .node.sel { border-color:var(--cyan); box-shadow:0 0 0 1px rgba(53,201,216,0.5), 0 6px 22px rgba(0,0,0,0.5); }
-  .node.trigger { width:150px; }
-  .node-head { display:flex; align-items:center; gap:7px; padding:7px 9px; cursor:grab;
+  .node.trigger { width:200px; }
+  .node-head { display:flex; align-items:center; gap:7px; padding:9px 11px; cursor:grab;
     border-bottom:1px solid var(--line-soft); background:rgba(10,20,26,0.5); }
   .node-head:active { cursor:grabbing; }
   .node.trigger .node-head { background:rgba(40,30,10,0.5); border-bottom-color:rgba(255,178,77,0.2); }
@@ -176,63 +177,65 @@
   .node.cap .node-head .nh-dot { background:var(--ice); box-shadow:0 0 6px var(--ice); }
   .node.trigger .node-head .nh-dot { background:var(--amber); box-shadow:0 0 6px var(--amber); border-radius:50%; }
   .node-head .nh-title { flex:1; min-width:0; font-family:var(--font-display); font-weight:600;
-    font-size:12px; color:var(--ink); letter-spacing:0.02em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .node-head .nh-close { flex:none; width:15px; height:15px; display:grid; place-items:center;
-    font-size:12px; color:var(--muted-2); cursor:pointer; border:1px solid transparent; line-height:1; }
+    font-size:16px; color:var(--ink); letter-spacing:0.02em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .node-head .nh-close { flex:none; width:20px; height:20px; display:grid; place-items:center;
+    font-size:16px; color:var(--muted-2); cursor:pointer; border:1px solid transparent; line-height:1; }
   .node-head .nh-close:hover { color:var(--red-light); border-color:rgba(255,107,107,0.4); }
-  .node-sub { font-size:8.5px; letter-spacing:0.06em; color:var(--muted-2); padding:4px 9px 2px; overflow-wrap:anywhere; }
+  .node-sub { font-size:11px; letter-spacing:0.06em; color:var(--muted-2); padding:4px 11px 2px; overflow-wrap:anywhere; }
   .node-body { position:relative; padding:6px 0 8px; }
-  .port { position:absolute; width:12px; height:12px; background:#0a141b;
-    border:2px solid var(--ice-2); cursor:crosshair; z-index:3; }
+  /* Node-RED-style ports: equal-size circles on BOTH sides, no squares, centered
+     vertically as a group around the node body's mid-height (see portLocalTop /
+     portCenter in the script — geometry is presentation-only). */
+  .port { position:absolute; width:14px; height:14px; background:#0a141b;
+    border:2px solid var(--ice-2); border-radius:50%; cursor:crosshair; z-index:3; }
   .port:hover { border-color:var(--cyan); background:rgba(53,201,216,0.3); box-shadow:0 0 8px var(--cyan); }
-  .port.in { border-radius:50%; }
   .port.out { border-color:var(--cyan); }
   .port.tgt-ok { border-color:var(--green); background:rgba(90,214,160,0.35); box-shadow:0 0 8px var(--green); }
-  .port-label { position:absolute; font-size:9px; color:var(--muted-2); white-space:nowrap; letter-spacing:0.04em; }
-  .port-label.in { left:14px; }
-  .port-label.out { right:14px; text-align:right; }
+  .port-label { position:absolute; font-size:12px; color:var(--muted-2); white-space:nowrap; letter-spacing:0.04em; }
+  .port-label.in { left:18px; }
+  .port-label.out { right:18px; text-align:right; }
 
   /* --------------------------------------------------------- output dock */
   .dock { flex:none; border-top:1px solid var(--line-soft); background:rgba(9,13,18,0.7);
     max-height:236px; display:flex; min-height:0; }
   .dock-col { flex:1; min-width:0; padding:12px 15px; overflow:auto; }
   .dock-col + .dock-col { border-left:1px solid var(--line-faint); }
-  .dock-col.narrow { flex:none; width:340px; }
-  .dock-kicker { font-size:9px; letter-spacing:0.18em; color:var(--kicker); margin:0 0 8px; display:flex; align-items:center; gap:8px; }
+  .dock-col.narrow { flex:none; width:380px; }
+  .dock-kicker { font-size:12px; letter-spacing:0.18em; color:var(--kicker); margin:0 0 8px; display:flex; align-items:center; gap:8px; }
   .dock-kicker .rule { flex:1; height:1px; background:rgba(90,150,180,0.1); }
-  pre.json { margin:0; font-family:var(--font-mono); font-size:11px; color:var(--body-2); white-space:pre; line-height:1.45; }
-  .kv { display:grid; grid-template-columns:auto 1fr; gap:4px 14px; font-size:11.5px; }
-  .kv dt { color:var(--kicker); letter-spacing:0.1em; font-size:9px; align-self:center; }
+  pre.json { margin:0; font-family:var(--font-mono); font-size:14px; color:var(--body-2); white-space:pre; line-height:1.45; }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:4px 14px; font-size:15px; }
+  .kv dt { color:var(--kicker); letter-spacing:0.1em; font-size:12px; align-self:center; }
   .kv dd { margin:0; color:var(--body-2); font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
   .kv dd.hi { color:var(--ink); font-family:var(--font-display); font-weight:600; }
   .spinner { width:12px; height:12px; border:2px solid rgba(120,190,230,0.3); border-top-color:var(--ice);
     border-radius:50%; display:inline-block; animation:sdn-spin .9s linear infinite; vertical-align:-1px; }
   .notice { border:1px solid var(--line); border-left:3px solid var(--amber); padding:9px 12px;
-    background:rgba(255,178,77,0.05); color:var(--muted); font-size:11.5px; line-height:1.5; }
+    background:rgba(255,178,77,0.05); color:var(--muted); font-size:15px; line-height:1.5; }
   .notice.bad { border-left-color:var(--red); background:rgba(255,107,107,0.05); }
   .notice.good { border-left-color:var(--green); background:rgba(90,214,160,0.05); }
   .notice.live { border-left-color:var(--cyan); background:rgba(53,201,216,0.06); }
   .notice strong { color:var(--ink); }
-  .dim { color:var(--muted-2); font-size:11px; }
+  .dim { color:var(--muted-2); font-size:14px; }
   .canvas-hint { position:absolute; left:50%; top:80px; transform:translateX(-50%);
-    color:var(--muted-2); font-size:12px; text-align:center; line-height:1.9; pointer-events:none;
+    color:var(--muted-2); font-size:16px; text-align:center; line-height:1.9; pointer-events:none;
     border:1px dashed var(--line-strong); padding:16px 22px; background:rgba(9,13,18,0.5); }
   .canvas-hint strong { color:var(--ice); font-family:var(--font-display); letter-spacing:0.06em; }
 
   /* --------------------------------------------------------- wire-reject toast */
   .toast { position:fixed; left:50%; bottom:26px; transform:translateX(-50%);
     max-width:560px; z-index:60; border:1px solid rgba(255,107,107,0.55); border-left:3px solid var(--red);
-    background:rgba(24,10,10,0.96); color:var(--red-light); font-family:var(--font-mono); font-size:12px;
+    background:rgba(24,10,10,0.96); color:var(--red-light); font-family:var(--font-mono); font-size:16px;
     letter-spacing:0.03em; line-height:1.45; padding:10px 15px; box-shadow:0 8px 28px rgba(0,0,0,0.55);
     display:none; overflow-wrap:anywhere; }
   .toast.show { display:block; }
   .toast .tt-k { display:block; margin-bottom:4px; font-family:var(--font-display); font-weight:600;
-    font-size:9px; letter-spacing:0.16em; color:var(--red); }
+    font-size:12px; letter-spacing:0.16em; color:var(--red); }
 
   /* --------------------------------------------------- palette drag ghost */
   /* A live floating preview of the node being dragged from the palette; it
      follows the cursor the whole drag (create on drag-start, remove on drop). */
-  .drag-ghost { position:fixed; z-index:80; pointer-events:none; width:190px;
+  .drag-ghost { position:fixed; z-index:80; pointer-events:none; width:250px;
     background:var(--panel-raised); border:1px solid var(--cyan); opacity:0.94;
     box-shadow:0 0 0 1px rgba(53,201,216,0.45), 0 10px 28px rgba(0,0,0,0.55);
     transform:translate(-50%,-15px); }
@@ -242,8 +245,8 @@
   .drag-ghost.cap .dg-dot { background:var(--ice); box-shadow:0 0 6px var(--ice); }
   .drag-ghost.net .dg-dot { background:var(--amber); box-shadow:0 0 6px var(--amber); }
   .drag-ghost .dg-title { flex:1; min-width:0; font-family:var(--font-display); font-weight:600;
-    font-size:12px; color:var(--ink); letter-spacing:0.02em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .drag-ghost .dg-sub { font-size:8.5px; letter-spacing:0.06em; color:var(--muted-2); padding:3px 9px 6px; overflow-wrap:anywhere; }
+    font-size:16px; color:var(--ink); letter-spacing:0.02em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .drag-ghost .dg-sub { font-size:11px; letter-spacing:0.06em; color:var(--muted-2); padding:3px 9px 6px; overflow-wrap:anywhere; }
 </style>
 </head>
 <body>
@@ -320,7 +323,7 @@
 "use strict";
 (function () {
   // ------------------------------------------------------------- constants
-  var W = 190, TRIG_W = 150, HEAD_H = 30, PORT_TOP = 14, PORT_ROW = 22, PORT_HALF = 6;
+  var W = 250, TRIG_W = 200, HEAD_H = 40, SUB_H = 22, PORT_ROW = 28, PORT_PAD = 18, PORT_HALF = 7;
   var PROGRAM_PREFIX = "com.digitalarsenal.flows.";
   var LS_PREFIX = "sdn.flow-editor.";
 
@@ -457,15 +460,26 @@
   }
 
   // ------------------------------------------------------------- geometry
-  function nodeRows(n) { return Math.max(n.inputPorts.length, n.outputPorts.length, 1); }
-  function nodeHeight(n) {
-    if (n.kind === "trigger") return HEAD_H + PORT_TOP + PORT_ROW;
-    return HEAD_H + 18 + PORT_TOP + nodeRows(n) * PORT_ROW;
+  // Node-RED-style port layout: each side's ports are centered AS A GROUP around
+  // the vertical midpoint of the node body (not stacked downward from the top),
+  // so a single port sits exactly at mid-height and multiple ports on one side
+  // distribute evenly above/below that center — matching Node-RED's stacking.
+  function nodeRows(n) { return Math.max((n.inputPorts || []).length, (n.outputPorts || []).length, 1); }
+  function bodyHeight(n) { return nodeRows(n) * PORT_ROW + 2 * PORT_PAD; }
+  // portLocalTop is the port's top-left CSS "top" offset relative to the
+  // node-body element's own top edge (ports are absolutely positioned within
+  // it, so this is the coordinate space portHtml renders into).
+  function portLocalTop(n, dir, idx) {
+    var list = dir === "out" ? (n.outputPorts || []) : (n.inputPorts || []);
+    var count = list.length || 1;
+    var groupH = (count - 1) * PORT_ROW;
+    var centerY = bodyHeight(n) / 2 - groupH / 2 + idx * PORT_ROW;
+    return centerY - PORT_HALF;
   }
   function portCenter(n, dir, idx) {
     var w = n.kind === "trigger" ? TRIG_W : W;
-    var subH = (n.kind === "trigger") ? 0 : 18;
-    var top = n.y + HEAD_H + subH + PORT_TOP + idx * PORT_ROW + PORT_HALF;
+    var subH = n.kind === "trigger" ? 0 : SUB_H;
+    var top = n.y + HEAD_H + subH + portLocalTop(n, dir, idx) + PORT_HALF;
     return { x: dir === "out" ? n.x + w : n.x, y: top };
   }
 
@@ -502,7 +516,7 @@
     if (n.kind !== "trigger") {
       body += '<div class="node-sub">' + esc(shortId(n.pluginId)) + "</div>";
     }
-    body += '<div class="node-body" style="height:' + (nodeHeight(n) - HEAD_H - (n.kind === "trigger" ? 0 : 18)) + 'px">';
+    body += '<div class="node-body" style="height:' + bodyHeight(n) + 'px">';
     if (n.kind === "trigger") {
       body += portHtml(n, "out", 0, "fire");
     } else {
@@ -514,13 +528,16 @@
     return el;
   }
   function portHtml(n, dir, idx, portId) {
-    var top = PORT_TOP + idx * PORT_ROW;
-    var side = dir === "out" ? "right:-6px;" : "left:-6px;";
+    var top = portLocalTop(n, dir, idx);
+    // port sized 2*PORT_HALF and centered ON the node's edge (half in, half out),
+    // same offset for "in" (left) and "out" (right) sides — equal circles both.
+    var side = dir === "out" ? "right:-" + PORT_HALF + "px;" : "left:-" + PORT_HALF + "px;";
     // data-port stays the raw portId (edges/routing key); the visible label adds
-    // the SDS type for typed ports so the schema is legible on the canvas.
+    // the SDS type for typed ports so the schema is legible on the canvas. The
+    // label's top is nudged so its line-box centers on the (now-centered) port.
     return '<div class="port ' + dir + '" data-node="' + n.id + '" data-dir="' + dir + '" data-port="' + esc(portId) +
       '" data-idx="' + idx + '" style="top:' + top + "px;" + side + '"></div>' +
-      '<div class="port-label ' + dir + '" style="top:' + (top + 1) + 'px">' + esc(portDisplayLabel(n, dir, portId)) + "</div>";
+      '<div class="port-label ' + dir + '" style="top:' + (top - 2) + 'px">' + esc(portDisplayLabel(n, dir, portId)) + "</div>";
   }
   // portDisplayLabel appends the SDS type token(s) to a typed port's label
   // ("mean_elements ·OMM"); wildcard/untyped ports show just the portId.
@@ -552,22 +569,20 @@
     saveLayout();
   }
 
-  // SVG defs + a persistent temp path, built with innerHTML so the asset carries
-  // no createElementNS namespace literal (keeps the page fully same-origin/offline).
-  var DEFS =
-    '<defs>' +
-    '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4aa6e0"></path></marker>' +
-    '<marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#ffb24d"></path></marker>' +
-    '</defs>' +
-    '<path class="temp" id="temp-edge" style="display:none" d=""></path>';
+  // A persistent temp path (the live drag preview), built with innerHTML so the
+  // asset carries no createElementNS namespace literal (keeps the page fully
+  // same-origin/offline). NO arrowhead markers anywhere on the canvas: edgePath
+  // already ends exactly at portCenter, so every edge/binding line plugs flush
+  // into the port circle it connects to — no marker, no gap, no arrow glyph.
+  var DEFS = '<path class="temp" id="temp-edge" style="display:none" d=""></path>';
 
   function edgePath(a, b) {
     var dx = Math.max(40, Math.abs(b.x - a.x) * 0.5);
     return "M" + a.x + "," + a.y + " C" + (a.x + dx) + "," + a.y + " " + (b.x - dx) + "," + b.y + " " + b.x + "," + b.y;
   }
-  function pathMarkup(id, cls, marker, d) {
+  function pathMarkup(id, cls, d) {
     var sel = state.selected && state.selected.id === id ? " sel" : "";
-    return '<path class="' + cls + sel + '" d="' + d + '" marker-end="url(#' + marker + ')" ' +
+    return '<path class="' + cls + sel + '" d="' + d + '" ' +
       'data-id="' + id + '" data-kind="' + (cls === "bind" ? "bind" : "edge") + '"></path>';
   }
   function renderEdges() {
@@ -577,14 +592,14 @@
       if (!from || !to) return;
       var a = portCenter(from, "out", Math.max(0, from.outputPorts.indexOf(e.fromPortId)));
       var b = portCenter(to, "in", Math.max(0, to.inputPorts.indexOf(e.toPortId)));
-      s += pathMarkup(e.id, "edge", "arrow", edgePath(a, b));
+      s += pathMarkup(e.id, "edge", edgePath(a, b));
     });
     state.bindings.forEach(function (bd) {
       var t = state.triggers[bd.triggerId], to = state.nodes[bd.targetNodeId];
       if (!t || !to) return;
       var a = portCenter({ x: t.x, y: t.y, kind: "trigger", inputPorts: [], outputPorts: ["fire"] }, "out", 0);
       var b = portCenter(to, "in", Math.max(0, to.inputPorts.indexOf(bd.targetPortId)));
-      s += pathMarkup(bd.id, "bind", "arrow-amber", edgePath(a, b));
+      s += pathMarkup(bd.id, "bind", edgePath(a, b));
     });
     edgesSvg.innerHTML = s;
   }
