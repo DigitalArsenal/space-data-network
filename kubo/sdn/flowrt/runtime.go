@@ -2,6 +2,7 @@ package flowrt
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -22,6 +23,11 @@ var log = logging.Logger("flowrt")
 type FlowRuntime struct {
 	mod *wasmrt.Module
 	mu  sync.Mutex
+
+	// store is the per-flow dedicated-thread in-wasm FlatSQL engine, attached
+	// when the composed artifact is engine-linked (imports module "flatsql").
+	// nil for bridge-mode / non-store flows. Closed (snapshotted) on Release.
+	store *LinkedStore
 
 	// Descriptor counts cached at init
 	NodeCount    uint32
@@ -100,9 +106,28 @@ func NewFlowRuntime(wasmBytes []byte, maxMemoryPages uint32, extraOpts ...wasmrt
 	// the shared memory into the flow's "env" host module, so the sdn/env plugin
 	// ABI and the shared memory coexist. A single-thread emscripten flow lacks the
 	// contract and loads EXACTLY as before (unchanged path).
+	var linkedStore *LinkedStore
 	if scanWasmThreadFeatures(wasmBytes).isIsomorphicPthreads() {
 		opts = append(opts, wasmrt.WithWASIThreads())
 		log.Infof("Flow runtime: artifact declares the isomorphic wasi-threads contract — enabling WithWASIThreads (guest pthreads run under WasmEdge)")
+		// Engine-linked in-wasm FlatSQL store: the composed flow imports the ONE
+		// symbol flatsql.exec_envelope. Attach a dedicated-thread flatsqlrt engine
+		// and resolve that import to the exec_envelope host trampoline (proven-safe
+		// composition — the engine can NOT join the WithWASIThreads executor). ALL
+		// record logic is in-wasm; the host moves opaque bytes + opaque snapshots.
+		if wasmImportsModule(wasmBytes, engineImportModule) {
+			home := flowcc.ResolveHome()
+			storeDir := filepath.Join(home.CacheDir(), "flow-store")
+			sum := sha256.Sum256(wasmBytes)
+			snap := filepath.Join(storeDir, fmt.Sprintf("%x.snapshot", sum[:16]))
+			ls, serr := OpenLinkedStore(filepath.Join(storeDir, "aot"), snap)
+			if serr != nil {
+				return nil, fmt.Errorf("flowrt: attach in-wasm FlatSQL store: %w", serr)
+			}
+			linkedStore = ls
+			opts = append(opts, wasmrt.WithHostModule(engineImportModule, []wasmrt.HostFunc{ls.ExecEnvelopeHostFunc()}))
+			log.Infof("Flow runtime: engine-linked in-wasm FlatSQL store attached (flatsql.exec_envelope; opaque snapshot %s)", snap)
+		}
 		// AOT-at-load: a wasi-threads composed artifact runs ~95x slower AND does
 		// not parallelize when INTERPRETED (measured); AOT is required for both
 		// speed and real thread scaling. Compile once, cache by content hash
@@ -117,13 +142,16 @@ func NewFlowRuntime(wasmBytes []byte, maxMemoryPages uint32, extraOpts ...wasmrt
 
 	mod, err := wasmrt.NewModule(wasmBytes, opts...)
 	if err != nil {
+		if linkedStore != nil {
+			linkedStore.Close()
+		}
 		return nil, fmt.Errorf("failed to create flow WASM module: %w", err)
 	}
 
 	// Call _initialize if present (WASI reactor pattern)
 	mod.Execute("_initialize")
 
-	rt := &FlowRuntime{mod: mod}
+	rt := &FlowRuntime{mod: mod, store: linkedStore}
 
 	// Cache descriptor counts
 	rt.NodeCount = rt.callUint32(runtimeExportNodeDescriptorCount)
@@ -182,12 +210,25 @@ func (rt *FlowRuntime) WorkerOSThreadIDs() []int64 {
 	return rt.mod.WorkerOSThreadIDs()
 }
 
-// Release frees all WasmEdge resources.
+// Release frees all WasmEdge resources (snapshotting the store first).
 func (rt *FlowRuntime) Release() {
+	if rt.store != nil {
+		rt.store.Close()
+		rt.store = nil
+	}
 	if rt.mod != nil {
 		rt.mod.Release()
 		rt.mod = nil
 	}
+}
+
+// SnapshotStore persists the in-wasm FlatSQL store's opaque snapshot (no-op when
+// the flow has no linked store). Call after a drain that wrote records.
+func (rt *FlowRuntime) SnapshotStore() error {
+	if rt.store == nil {
+		return nil
+	}
+	return rt.store.Snapshot()
 }
 
 // Module returns the underlying wasmrt.Module for advanced use.

@@ -186,8 +186,13 @@ func LoadFlowService(flowRef string, intervals map[string]string, config map[str
 	// hashes to record an approval).
 	contentHash := modulert.ContentHashHex(wasmBytes)
 
+	// Engine-linked wasi-threads flows (the supplemental-OMM OD write lane) are
+	// ADMITTED: NewFlowRuntime attaches a dedicated-thread in-wasm FlatSQL engine
+	// and resolves flatsql.exec_envelope to the store trampoline (all record logic
+	// in-wasm; host moves opaque bytes). Non-threaded engine-linked flows are not
+	// a supported shape and will fail to instantiate cleanly at load.
 	if wasmImportsModule(wasmBytes, engineImportModule) {
-		return nil, fmt.Errorf("flow service %q links the store engine (imports %q); timer-served flows support bridge-mode artifacts only", flowRef, engineImportModule)
+		log.Infof("flow service %q is engine-linked (imports %q) — in-wasm FlatSQL store wired at load", flowRef, engineImportModule)
 	}
 
 	pages := deps.MaxMemoryPages

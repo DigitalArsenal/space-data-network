@@ -67,6 +67,9 @@ WT="$HOME_DIR/sysroot-wasi-threads"; rm -rf "$WT"; mkdir -p "$WT/lib"
 CID="$(docker create "$WASI_IMAGE")"
 docker cp "$CID:/opt/wasi-sdk/share/wasi-sysroot/include" "$WT/" >/dev/null
 docker cp "$CID:/opt/wasi-sdk/share/wasi-sysroot/lib/wasm32-wasip1-threads" "$WT/lib/" >/dev/null
+# compiler-rt builtins (__multi3 etc.) — the bake links wasm-ld directly (not the
+# clang driver), so it must resolve these; drop the archive beside libc.a.
+docker cp "$CID:/opt/wasi-sdk/lib/clang/18/lib/wasip1/libclang_rt.builtins-wasm32.a" "$WT/lib/wasm32-wasip1-threads/" >/dev/null
 docker rm "$CID" >/dev/null
 
 echo "==> (3) graft the box's clang-16 builtin headers into the threads sysroot" >&2

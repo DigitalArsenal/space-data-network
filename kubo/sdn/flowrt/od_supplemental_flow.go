@@ -29,8 +29,8 @@ package flowrt
 // guest-link keeps this same id/method/ports as the emscripten one — only its
 // metadata.threadModel flips to "wasi-threads" so it co-links with the flow.
 const (
-	ODSupplementalStorePluginID = "com.digitalarsenal.hostcap.storage-ingest"
-	ODSupplementalStoreMethod   = "ingest"
+	ODSupplementalStorePluginID = "com.digitalarsenal.hostcap.flatsql-store"
+	ODSupplementalStoreMethod   = "store"
 	ODSupplementalStorePort     = "records"
 	ODSupplementalODPluginID    = "orbit-determination"
 )
