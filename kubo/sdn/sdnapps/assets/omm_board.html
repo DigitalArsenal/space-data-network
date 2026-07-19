@@ -333,7 +333,10 @@
     <section class="panel ticked span-12" style="--tick:#9fd4f5"><span class="tick-b"></span>
       <div class="panel-head">
         <p class="panel-kicker">PROVIDERS &middot; PULLED PER RUN</p>
-        <span class="chip ice" id="prov-count">&mdash;</span>
+        <span style="display:flex; align-items:center; gap:10px">
+          <span class="chip ice" id="prov-count">&mdash;</span>
+          <button class="btn sm" id="prov-toggle" type="button" aria-expanded="true" aria-controls="providers-body" title="Collapse">&minus;</button>
+        </span>
       </div>
       <div id="providers-body">
         <div class="state-block loading"><strong><span class="spinner"></span>LOADING</strong><span>reading module config</span></div>
@@ -1161,6 +1164,29 @@
     });
   }
 
+  // ------------------------------------------------------------ providers panel collapse (persisted, plain +/- text, no arrow glyphs)
+  var PROV_COLLAPSE_KEY = "sdn-omm-board-providers-collapsed";
+  function setProvidersCollapsed(collapsed) {
+    var body = $("providers-body");
+    var btn = $("prov-toggle");
+    if (body) body.style.display = collapsed ? "none" : "";
+    if (btn) {
+      btn.textContent = collapsed ? "+" : "−"; // "+" to expand, "−" (minus sign) to collapse
+      btn.title = collapsed ? "Expand" : "Collapse";
+      btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    }
+    try { window.localStorage.setItem(PROV_COLLAPSE_KEY, collapsed ? "1" : "0"); } catch (e) { /* localStorage unavailable — collapse state just does not persist */ }
+  }
+  function loadProvidersCollapsed() {
+    try { return window.localStorage.getItem(PROV_COLLAPSE_KEY) === "1"; } catch (e) { return false; }
+  }
+  function bindProvidersToggle() {
+    var btn = $("prov-toggle");
+    if (!btn) return;
+    btn.addEventListener("click", function () { setProvidersCollapsed(btn.getAttribute("aria-expanded") === "true"); });
+    setProvidersCollapsed(loadProvidersCollapsed()); // default expanded (localStorage unset -> false)
+  }
+
   // ------------------------------------------------------------ search (debounced)
   var searchTimer = null;
   function bindSearch() {
@@ -1184,6 +1210,7 @@
   // ------------------------------------------------------------ boot
   bindSearch();
   bindBulkControls();
+  bindProvidersToggle();
   renderStatus(true);
   loadNode();
   renderView();
