@@ -811,7 +811,7 @@ func (b *Baker) linkThreaded(ctx context.Context, flowRuntimeO, descriptorO []by
 	sr := "/sysroot/lib/wasm32-wasip1-threads"
 	link = append(link,
 		"-L"+sr, sr+"/crt1-reactor.o",
-		"-lc", "-lc++", "-lc++abi",
+		"-lc", "-lc++", "-lc++abi", "-lclang_rt.builtins-wasm32",
 		"-o", "/work/runtime.wasm",
 	)
 	res, err := b.ccThreads.Run(ctx, link, inFiles)

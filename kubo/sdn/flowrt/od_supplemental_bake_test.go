@@ -38,7 +38,7 @@ var odSupModules = []odSupModule{
 	{"com.orbpro.cpf-source", "data-source/cpf-source"},
 	{"com.orbpro.iss-source", "data-source/iss-source"},
 	{ODSupplementalODPluginID, "analysis/od"},
-	{ODSupplementalStorePluginID, "hostcap/storage-ingest"},
+	{ODSupplementalStorePluginID, "hostcap/flatsql-store"},
 }
 
 func TestODSupplementalOMMBakes(t *testing.T) {
@@ -115,6 +115,14 @@ func TestODSupplementalOMMBakes(t *testing.T) {
 	feat := scanWasmThreadFeatures(res.Wasm)
 	if !feat.isIsomorphicPthreads() {
 		t.Fatalf("baked supplemental-OMM artifact does NOT declare the wasi-threads contract")
+	}
+	// Positive store invariant: the composed artifact is ENGINE-LINKED (imports
+	// module "flatsql" — the in-wasm FlatSQL store), NOT the Go storage sink.
+	if !wasmImportsModule(res.Wasm, engineImportModule) {
+		t.Fatalf("composed artifact does NOT import module %q — the in-wasm FlatSQL store is not linked", engineImportModule)
+	}
+	if wasmImportsModule(res.Wasm, "storage") {
+		t.Fatalf("composed artifact imports a 'storage' module — the repudiated Go storage sink must not be present")
 	}
 	mgr.mu.Lock()
 	fp := mgr.running[programID]
