@@ -170,9 +170,13 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 		// Modules backs GET /sdn/v1/modules and the module config endpoints: the
 		// live cron scheduler is the module cron/config control surface. Resolved
 		// lazily so the listener can start before the runtime services exist.
+		// Wrapped in the compat shim (omm_compat.go) so the supplemental-OMM
+		// board's hardcoded "supplemental-omm" config-panel id resolves to the
+		// mounted OD ServiceFlow (org.sdn.flows.od-supplemental-omm) instead of
+		// 404ing — every other module id is unaffected, passed straight through.
 		Modules: func() sdnapihttp.ModuleAdmin {
 			if s := pluginsdnruntime.Services(); s != nil && s.Scheduler != nil {
-				return s.Scheduler
+				return ommCompatModuleAdmin{real: s.Scheduler}
 			}
 			return nil
 		},

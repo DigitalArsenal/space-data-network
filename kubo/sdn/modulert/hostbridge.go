@@ -80,7 +80,16 @@ const HostcallImportModule = "space_data_module_host"
 type HostBridge struct {
 	granted     map[string]bool
 	capHandlers map[string]CapHandler // capability prefix → handler
-	nodeCtx     *NodeContext
+
+	// nodeCtxMu guards nodeCtx: normally set once at construction and read for
+	// the lifetime of the bridge, but the operator settings API (the
+	// supplemental-OMM config surface) can push a LIVE config update via
+	// SetConfigLive after load, taken up by the flow's plugin.getConfig calls
+	// from the NEXT trigger fire onward. The swap always installs a PRIVATE
+	// NodeContext copy (see SetConfigLive), so this bridge's mutation can never
+	// bleed into another module/flow instance sharing the original pointer.
+	nodeCtxMu sync.RWMutex
+	nodeCtx   *NodeContext
 
 	// Response buffer for the sync hostcall protocol.
 	lastStatus  int32
@@ -130,6 +139,33 @@ func (hb *HostBridge) ResetBodyRefs() {
 	hb.bodyRefMu.Lock()
 	defer hb.bodyRefMu.Unlock()
 	hb.bodyRefs = nil
+}
+
+// currentNodeCtx returns the bridge's live NodeContext pointer (nil-safe),
+// under the read lock SetConfigLive's swap respects.
+func (hb *HostBridge) currentNodeCtx() *NodeContext {
+	hb.nodeCtxMu.RLock()
+	defer hb.nodeCtxMu.RUnlock()
+	return hb.nodeCtx
+}
+
+// SetConfigLive replaces the CONFIG object this bridge's plugin.getConfig
+// hostcall serves, effective for every call from here on (the flow's next
+// trigger fire, per the operator settings API's "no forced re-fire" contract —
+// this never invokes the guest itself). It always detaches this bridge onto a
+// PRIVATE NodeContext copy first: several flow/module instances can share one
+// NodeContext (the node-wide identity/policy context), and mutating a shared
+// struct in place would leak this flow's config into every other instance
+// holding the same pointer. Safe to call concurrently with hostcall dispatch.
+func (hb *HostBridge) SetConfigLive(cfg map[string]interface{}) {
+	hb.nodeCtxMu.Lock()
+	defer hb.nodeCtxMu.Unlock()
+	var nc NodeContext
+	if hb.nodeCtx != nil {
+		nc = *hb.nodeCtx
+	}
+	nc.Config = cfg
+	hb.nodeCtx = &nc
 }
 
 // NewHostBridge creates a per-module host bridge.
@@ -247,18 +283,18 @@ func (hb *HostBridge) Dispatch(operation string, payload []byte) []byte {
 		}
 		return okJSON(operations)
 	case "node.publicKey":
-		if hb.nodeCtx != nil && hb.nodeCtx.PublicKeyHex != "" {
-			return okJSON(hb.nodeCtx.PublicKeyHex)
+		if nc := hb.currentNodeCtx(); nc != nil && nc.PublicKeyHex != "" {
+			return okJSON(nc.PublicKeyHex)
 		}
 		return errJSON("node public key not available")
 	case "node.peerId":
-		if hb.nodeCtx != nil && hb.nodeCtx.PeerID != "" {
-			return okJSON(hb.nodeCtx.PeerID)
+		if nc := hb.currentNodeCtx(); nc != nil && nc.PeerID != "" {
+			return okJSON(nc.PeerID)
 		}
 		return errJSON("node peer ID not available")
 	case "plugin.getConfig":
-		if hb.nodeCtx != nil && hb.nodeCtx.Config != nil {
-			return okJSON(hb.nodeCtx.Config)
+		if nc := hb.currentNodeCtx(); nc != nil && nc.Config != nil {
+			return okJSON(nc.Config)
 		}
 		return okJSON(map[string]interface{}{})
 	}

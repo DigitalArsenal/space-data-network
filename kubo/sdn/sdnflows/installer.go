@@ -314,6 +314,46 @@ func (in *Installer) Flow(id string) *flowrt.ServiceFlow {
 	return in.loaded[id]
 }
 
+// StoredConfig returns a copy of id's persisted per-flow node CONFIG (the
+// opaque, flow-defined tuning keys — never the reserved cron scheduling keys,
+// which live in the scheduler's own config store), or nil when the flow has no
+// registry entry or no config yet. Read-only.
+func (in *Installer) StoredConfig(id string) map[string]interface{} {
+	e, ok, err := in.reg.Get(id)
+	if err != nil || !ok || len(e.Config) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{}, len(e.Config))
+	for k, v := range e.Config {
+		out[k] = v
+	}
+	return out
+}
+
+// SetFlowNodeConfig updates a LOADED flow's live per-node CONFIG (served to
+// its wasm nodes via plugin.getConfig from the NEXT trigger fire onward — it
+// never forces one) and persists it into the installed-flows registry so a
+// reboot re-applies it. This is the operator settings API's write path for a
+// flow's opaque, module-defined tuning keys (e.g. enabled_providers); interval
+// edits stay the cron scheduler's ApplyConfig, not this. Returns false when id
+// is not currently loaded (nothing to update).
+func (in *Installer) SetFlowNodeConfig(id string, cfg map[string]interface{}) bool {
+	in.mu.Lock()
+	sf, ok := in.loaded[id]
+	in.mu.Unlock()
+	if !ok {
+		return false
+	}
+	sf.SetNodeConfig(cfg)
+	if e, ok2, err := in.reg.Get(id); err == nil && ok2 {
+		e.Config = cfg
+		if perr := in.reg.Put(e); perr != nil {
+			in.logf("sdnflows: persist node config for %q failed: %v", id, perr)
+		}
+	}
+	return true
+}
+
 // Close releases every loaded flow handle. The scheduler is owned by the
 // Services bundle (svc.Close stops it); this only closes the flow runtimes.
 func (in *Installer) Close() {
