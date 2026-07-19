@@ -111,7 +111,18 @@ func EnsureAOTArtifact(cacheDir, prefix string, wasm []byte) ([]byte, error) {
 		return nil, fmt.Errorf("flatsqlrt: create AOT cache dir: %w", err)
 	}
 
-	compiler := wasmedge.NewCompiler()
+	// Enable the threads proposal so a shared-memory/atomics (wasi-threads)
+	// composed artifact AOT-compiles — WasmEdge's default AOT compiler rejects
+	// atomics ("requires enabling Threads proposal"). Harmless for non-threaded
+	// modules (flatsql uses neither atomics nor shared memory), so this stays a
+	// single reusable AOT path (no fork).
+	conf := wasmedge.NewConfigure()
+	if conf == nil {
+		return nil, fmt.Errorf("flatsqlrt: WasmEdge AOT configure unavailable")
+	}
+	defer conf.Release()
+	conf.AddConfig(wasmedge.THREADS)
+	compiler := wasmedge.NewCompilerWithConfig(conf)
 	if compiler == nil {
 		return nil, fmt.Errorf("flatsqlrt: WasmEdge AOT compiler unavailable")
 	}

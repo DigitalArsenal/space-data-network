@@ -111,6 +111,35 @@ func (h Home) ModuleMetadataPath(pluginID string) string {
 	return filepath.Join(h.ModuleDir(pluginID), "metadata.json")
 }
 
+// SysrootWasiThreadsDir is the resolved wasm32-wasip1-threads sysroot tree —
+// present only in toolchain v2. It holds the wasi-sdk-24 threads sysroot (libc/
+// libc++/crt) plus the box's clang-16 builtin headers grafted in so the box can
+// compile the (libc++-free) per-flow descriptor.cpp for the threads target. The
+// emscripten SysrootDir stays the single-thread path.
+func (h Home) SysrootWasiThreadsDir() string { return filepath.Join(h.root, "sysroot-wasi-threads") }
+
+// FlowRuntimeThreadsObjPath is the PREBUILT, flow-agnostic flow_runtime.o for the
+// wasm32-wasip1-threads target — native-built with wasi-sdk-24 (the box's clang-16
+// cannot compile flow_runtime.cpp's libc++ includes against wasi-sdk-24 headers)
+// and shipped as staged node data, identical in kind to a guest-link .o. The
+// isomorphic bake LINK (wasm-ld) still runs in the box on both server and client.
+func (h Home) FlowRuntimeThreadsObjPath() string {
+	return filepath.Join(h.TemplateDir(), "flow_runtime.threads.o")
+}
+
+// ThreadsStaged reports whether the wasi-threads bake bits (v2) are present: the
+// threads sysroot + the prebuilt flow_runtime.threads.o. A node without them can
+// still bake single-thread emscripten flows; only wasi-threads flows require them.
+func (h Home) ThreadsStaged() bool {
+	if fi, err := os.Stat(h.SysrootWasiThreadsDir()); err != nil || !fi.IsDir() {
+		return false
+	}
+	if fi, err := os.Stat(h.FlowRuntimeThreadsObjPath()); err != nil || fi.IsDir() {
+		return false
+	}
+	return true
+}
+
 // CacheDir / FlowRuntimeCacheDir hold compiled-object caches.
 func (h Home) CacheDir() string { return filepath.Join(h.root, "cache") }
 func (h Home) FlowRuntimeCacheDir() string {
