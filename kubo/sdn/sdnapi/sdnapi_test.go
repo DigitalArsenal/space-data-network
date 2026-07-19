@@ -430,6 +430,61 @@ func TestAppUI_ServesInlinePage(t *testing.T) {
 	}
 }
 
+// Re-seeding an app with CHANGED content (e.g. shipping a binary with an
+// edited board.html — StoreManifest is content-addressed, so different bytes
+// land as a NEW block under the same (source, "APP") pair rather than
+// overwriting the old one) must serve the NEWEST content, never a stale
+// version an earlier boot already stored. Regression test for the bug where
+// appUI walked ReadBySourceType's oldest-first order and returned on the
+// FIRST id match — i.e. the OLDEST content — forever hiding every content
+// update to an already-seeded app.
+func TestAppUI_ReseededContentServesNewest(t *testing.T) {
+	st := newTestStore(t)
+	storeApp(t, st, "supplemental-omm", "Supplemental OMM", "<!doctype html><title>v1</title><body>old board</body>")
+	storeApp(t, st, "supplemental-omm", "Supplemental OMM", "<!doctype html><title>v2</title><body>NEW board content</body>")
+	h := sdnapi.NewHandler(testDeps(st))
+
+	rec, _ := get(t, h, "/sdn/v1/apps/supplemental-omm")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "NEW board content") {
+		t.Errorf("appUI served stale content after re-seed; got %d bytes: %.120s", len(body), body)
+	}
+	if strings.Contains(body, "old board") {
+		t.Errorf("appUI served the OLD re-seeded content instead of the newest")
+	}
+}
+
+// GET /sdn/v1/apps must not list the SAME app id twice just because it was
+// re-seeded with different content across boots — the listing shows one tile
+// per installed app, carrying the newest version's summary.
+func TestAppsList_ReseededContentDedupes(t *testing.T) {
+	st := newTestStore(t)
+	storeApp(t, st, "supplemental-omm", "Supplemental OMM", "<!doctype html><body>v1</body>")
+	storeApp(t, st, "supplemental-omm", "Supplemental OMM", "<!doctype html><body>v2 (newer)</body>")
+	h := sdnapi.NewHandler(testDeps(st))
+
+	rec, _ := get(t, h, "/sdn/v1/apps")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got []struct {
+		ID  string `json:"id"`
+		CID string `json:"cid"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
+	}
+	if len(got) != 1 {
+		t.Fatalf("apps = %d, want 1 (deduped): %+v", len(got), got)
+	}
+	if got[0].ID != "supplemental-omm" {
+		t.Errorf("app id = %q", got[0].ID)
+	}
+}
+
 // An unknown app id is a plain 404.
 func TestAppUI_UnknownIs404(t *testing.T) {
 	st := newTestStore(t)

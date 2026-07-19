@@ -6,7 +6,8 @@
   with a radial page glow, Chakra Petch (display) + IBM Plex Mono (data)
   self-hosted same-origin from /fonts/*.woff2, border-radius:0 everywhere except
   status dots, cyan/ice accents, square ticked instrument panels, glowing status
-  dots. NO directional arrow glyphs on any control.
+  dots. NO directional arrow glyphs on any control (nav/pagination uses the
+  words PREV / NEXT / BACK TO RUN LOG, never an arrow character).
 
   Single self-contained HTML+CSS+JS document. NO external references of ANY kind
   (no CDN scripts, no external fonts, no remote images): every network call is a
@@ -15,15 +16,36 @@
   This whole file is the inline CONTENT of the App 2 SDS $APP record — the
   record's entry UI page — served by the node at /sdn/v1/apps/supplemental-omm.
 
+  # Layout (owner-directed reconfiguration)
+  The board has NO standalone "latest run" / "current run" snapshot box — that
+  panel is deleted outright, not hidden. The main element is a single paginated
+  RUN LOG table (5 runs per page): a run currently executing on this node is
+  synthesized from the `live` field and always shown as the TOP row of page 1
+  with status "ongoing" (never invented — absent when the node reports no live
+  run). Clicking a row REPLACES the run-log table with a drill-down view: a
+  single-row table of that run's own stats (same columns as the log), and below
+  it a paginated (10 objects per page) searchable table of every object the run
+  fitted. A "BACK TO RUN LOG" control returns to the run log (no arrow glyph).
+
   API wiring (all same-origin /sdn/v1/*):
     GET  /sdn/v1/runs                                  run list + the live run
     GET  /sdn/v1/runs/{id}                             one run: summary + rows
-    GET  /sdn/v1/runs/{id}/objects?search=<NORAD>      searchable per-object rows
+    GET  /sdn/v1/runs/{id}/objects?search=<text>        searchable per-object rows
     GET  /sdn/v1/runs/{id}/objects/{norad}/download?format=tle|omm|cdm
     GET  /sdn/v1/modules/supplemental-omm/config       provider set + cron
     PUT  /sdn/v1/modules/supplemental-omm/config       persist provider set + cron
     GET  /sdn/v1/modules                               effective cron interval
     GET  /sdn/v1/node                                  node identity (best effort)
+
+  Pagination note: /sdn/v1/runs/{id}/objects already filters server-side via
+  `search` (substring over NORAD id / object name / object id); it returns the
+  full matching set in one response (no offset/limit param exists today). The
+  10-per-page objects table therefore paginates CLIENT-SIDE over that
+  server-filtered array. The run log's 5-per-page pagination is also
+  client-side over the (small, node-local) run list GET /sdn/v1/runs already
+  returns whole. If a provider's per-run object count grows to catalog scale,
+  add page/page_size params to the objects route for true server-side paging —
+  out of scope here (documented choice, not a silent limitation).
 
   HONESTY CONTRACT: a fresh node has NO runs -> the board says "NO RUNS YET",
   never invents rows. Values are LIVE (fetched this session) or an honest dash.
@@ -111,8 +133,7 @@
 
   /* -------------------------------------------------------------- grid + panels */
   .grid { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:14px; align-content:start; }
-  .span-4 { grid-column:span 4; } .span-5 { grid-column:span 5; }
-  .span-7 { grid-column:span 7; } .span-8 { grid-column:span 8; } .span-12 { grid-column:span 12; }
+  .span-12 { grid-column:span 12; }
 
   .panel { position:relative; background:var(--panel-raised); border:1px solid var(--line);
     box-shadow:inset 0 1px 0 rgba(150,210,240,0.14), inset 0 -10px 30px rgba(0,0,0,0.4);
@@ -126,35 +147,21 @@
   .panel.ticked > .tick-b::before { bottom:-1px; left:-1px; border-bottom-width:1px; border-left-width:1px; }
   .panel.ticked > .tick-b::after { bottom:-1px; right:-1px; border-bottom-width:1px; border-right-width:1px; }
 
-  .panel-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:13px; }
+  .panel-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:13px; flex-wrap:wrap; }
   .panel-kicker { font-size:10px; letter-spacing:0.2em; color:var(--kicker); margin:0; }
   .panel-head .panel-kicker { margin:0; }
-
-  /* -------------------------------------------------------------- readouts */
-  .readout { display:flex; align-items:baseline; gap:9px; }
-  .readout .dot { width:9px; height:9px; border-radius:50%; background:currentColor; box-shadow:0 0 9px currentColor; }
-  .readout .big { font-family:var(--font-display); font-weight:700; font-size:30px; letter-spacing:0.05em; color:var(--ink); font-variant-numeric:tabular-nums; }
-  .readout .unit { font-size:12px; color:var(--muted-2); letter-spacing:0.06em; }
-  .readout-sub { font-size:11px; color:var(--muted-2); margin:5px 0 14px; letter-spacing:0.04em; }
-  .meter { height:7px; background:rgba(90,150,180,0.14); margin-top:12px; }
-  .meter > span { display:block; height:100%; background:linear-gradient(90deg,#35c9d8,#4aa6e0); }
-
-  .two-up { display:grid; grid-template-columns:1fr 1fr; gap:12px 18px; margin-top:4px; }
-  .dl dt { font-size:9.5px; letter-spacing:0.14em; color:var(--kicker); margin:0; }
-  .dl dd { font-size:14px; color:var(--body-2); margin:2px 0 0; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
-  .dl dd.mono { font-family:var(--font-mono); }
-  .dl dd.hi { color:var(--ink); }
 
   /* -------------------------------------------------------------- chips + tags */
   .chip { display:inline-flex; align-items:center; gap:5px; font-size:10px; letter-spacing:0.1em;
     color:var(--muted); border:1px solid var(--line-strong); padding:1px 6px; white-space:nowrap; }
+  .chip .dot { width:6px; height:6px; border-radius:50%; background:currentColor; box-shadow:0 0 6px currentColor; display:inline-block; }
   .chip.cyan { color:var(--cyan); border-color:rgba(53,201,216,0.45); }
   .chip.ice { color:var(--ice); border-color:rgba(120,190,230,0.45); }
   .chip.good { color:var(--green); border-color:rgba(90,214,160,0.4); }
   .chip.warn { color:var(--amber); border-color:rgba(255,178,77,0.4); }
   .chip.bad { color:var(--red); border-color:rgba(255,107,107,0.4); }
-  .tag { font-size:9px; letter-spacing:0.1em; padding:1px 6px; color:var(--kicker);
-    background:rgba(255,255,255,0.015); border:1px solid var(--line-soft); }
+  .chip.ongoing { color:var(--cyan); border-color:rgba(53,201,216,0.55); background:rgba(53,201,216,0.12); }
+  .chip.ongoing .dot { animation:sdn-pulse 1.5s ease-in-out infinite; }
 
   /* -------------------------------------------------------------- buttons */
   .btn { display:inline-flex; align-items:center; gap:6px; background:transparent;
@@ -196,12 +203,13 @@
   .divider .lbl2 { font-size:10px; letter-spacing:0.2em; color:var(--kicker); }
   .divider .rule { flex:1; height:1px; background:rgba(90,150,180,0.1); }
 
-  /* -------------------------------------------------------------- runs list */
+  /* -------------------------------------------------------------- run rows (log + single-row detail) */
   .runs { display:flex; flex-direction:column; }
   .runs .head, .runs .row { display:grid; grid-template-columns:1.6fr 0.9fr 1.5fr 0.8fr 0.9fr 0.7fr; gap:0 12px; align-items:center; }
   .runs .head { padding:0 6px 8px; border-bottom:1px solid var(--line-soft); font-size:9.5px; letter-spacing:0.14em; color:var(--kicker); }
-  .runs .row { padding:11px 6px; border-bottom:1px solid var(--line-faint); cursor:pointer; }
-  .runs .row:hover { background:rgba(74,166,224,0.07); }
+  .runs .row { padding:11px 6px; border-bottom:1px solid var(--line-faint); }
+  .runs .row[data-run] { cursor:pointer; }
+  .runs .row[data-run]:hover { background:rgba(74,166,224,0.07); }
   .runs .row.selected { background:rgba(74,166,224,0.1); border-left:2px solid var(--cyan); padding-left:4px; }
   .runs .row:last-child { border-bottom:none; }
   .run-id { font-family:var(--font-mono); font-size:12.5px; color:var(--ink); overflow-wrap:anywhere; }
@@ -209,6 +217,10 @@
   .cell-mono { font-family:var(--font-mono); font-size:12px; color:var(--body-2); font-variant-numeric:tabular-nums; }
   .cell-dim { font-size:11px; color:var(--muted); overflow-wrap:anywhere; }
   .num { text-align:right; font-variant-numeric:tabular-nums; }
+
+  /* -------------------------------------------------------------- pagination */
+  .pagination { display:flex; align-items:center; justify-content:center; gap:16px; margin-top:14px; }
+  .pagination .pg-info { font-size:10.5px; letter-spacing:0.12em; color:var(--muted-2); font-variant-numeric:tabular-nums; }
 
   /* -------------------------------------------------------------- objects table */
   .table-scroll { overflow-x:auto; }
@@ -242,7 +254,6 @@
   .mono { font-family:var(--font-mono); }
 
   @media (max-width:960px) {
-    .span-4, .span-5, .span-7, .span-8 { grid-column:span 12; }
     .runs .head, .runs .row { grid-template-columns:1.4fr 1.2fr 0.8fr 0.8fr; }
     .runs .col-prov, .runs .col-eph { display:none; }
   }
@@ -268,19 +279,9 @@
     </div>
   </header>
 
-  <!-- ============================ ROW 1: current run + providers ============================ -->
+  <!-- ============================ PROVIDERS + SCHEDULE ============================ -->
   <div class="grid">
-    <section class="panel ticked span-8" style="--tick:#35c9d8"><span class="tick-b"></span>
-      <div class="panel-head">
-        <p class="panel-kicker" id="current-kicker">CURRENT RUN</p>
-        <span id="current-status"></span>
-      </div>
-      <div id="current-body">
-        <div class="state-block loading"><strong><span class="spinner"></span>LOADING</strong><span>reading the node run history</span></div>
-      </div>
-    </section>
-
-    <section class="panel ticked span-4" style="--tick:#9fd4f5"><span class="tick-b"></span>
+    <section class="panel ticked span-12" style="--tick:#9fd4f5"><span class="tick-b"></span>
       <div class="panel-head">
         <p class="panel-kicker">PROVIDERS &middot; PULLED PER RUN</p>
         <span class="chip ice" id="prov-count">&mdash;</span>
@@ -291,38 +292,47 @@
     </section>
   </div>
 
-  <!-- ============================ ROW 2: runs done ============================ -->
+  <!-- ============================ MAIN ELEMENT: RUN LOG (paginated) ============================ -->
   <div class="grid" style="margin-top:14px">
-    <section class="panel ticked span-12" style="--tick:#4aa6e0"><span class="tick-b"></span>
+    <section class="panel ticked span-12" id="runlog-view" style="--tick:#35c9d8"><span class="tick-b"></span>
       <div class="panel-head">
-        <p class="panel-kicker">RUNS DONE &middot; OD-FIT EXECUTION HISTORY</p>
-        <span class="chip" id="runs-count">&mdash;</span>
+        <p class="panel-kicker">RUN LOG &middot; OD-FIT EXECUTION HISTORY</p>
+        <span class="chip" id="runlog-count">&mdash;</span>
       </div>
-      <div id="runs-body">
+      <div id="runlog-body">
         <div class="state-block loading"><strong><span class="spinner"></span>LOADING</strong><span>reading /sdn/v1/runs</span></div>
       </div>
+      <div id="runlog-pagination"></div>
     </section>
-  </div>
 
-  <!-- ============================ ROW 3: selected run detail (objects) ============================ -->
-  <div class="grid" style="margin-top:14px">
-    <section class="panel ticked span-12" style="--tick:#35c9d8"><span class="tick-b"></span>
+    <!-- ============================ DRILL-DOWN: REPLACES the run log ============================ -->
+    <section class="panel ticked span-12" id="detail-view" style="--tick:#35c9d8; display:none"><span class="tick-b"></span>
       <div class="panel-head">
-        <p class="panel-kicker" id="detail-kicker">NORAD CAT IDS PROCESSED</p>
-        <div class="actions" id="detail-meta"></div>
+        <p class="panel-kicker">RUN DETAIL</p>
+        <button class="btn sm" id="detail-back" type="button">BACK TO RUN LOG</button>
       </div>
-      <div class="field" id="search-field" style="max-width:340px;margin-bottom:14px;display:none">
-        <span class="fld-label">SEARCH NORAD CAT ID</span>
-        <input class="input" id="search" type="search" inputmode="numeric" placeholder="e.g. 25544" autocomplete="off">
+
+      <div id="detail-stats">
+        <div class="state-block loading"><strong><span class="spinner"></span>LOADING</strong><span>reading run</span></div>
       </div>
-      <div id="detail-body">
-        <div class="state-block"><strong>NO RUN SELECTED</strong><span>Select a run above to inspect its fitted objects.</span></div>
+
+      <div class="divider" style="margin-top:18px"><span class="lbl2">FITTED OBJECTS</span><span class="rule"></span></div>
+
+      <div class="field" style="max-width:340px;margin:12px 0 14px">
+        <span class="fld-label">SEARCH OBJECTS</span>
+        <input class="input" id="search" type="search" placeholder="e.g. 25544 or object name" autocomplete="off">
       </div>
+
+      <div id="detail-objects">
+        <div class="state-block"><strong>NO RUN SELECTED</strong><span>Select a run from the log to inspect its fitted objects.</span></div>
+      </div>
+      <div id="detail-objects-pagination"></div>
     </section>
   </div>
 
   <div class="legend">
     <span><span class="chip cyan">LIVE</span> value fetched this session from the node's <span class="mono">/sdn/v1/*</span> API.</span>
+    <span><span class="chip ongoing"><span class="dot"></span>ONGOING</span> a run currently executing on this node &mdash; always the top row of page 1.</span>
     <span><span class="chip good">BEATS</span> our fitted RMS is strictly lower than the CelesTrak SupGP reference.</span>
     <span><span class="chip">&mdash;</span> no data on this node yet &mdash; the board shows nothing rather than inventing rows.</span>
   </div>
@@ -335,6 +345,8 @@
 
   var API = "/sdn/v1";
   var MODULE_ID = "supplemental-omm";
+  var RUN_PAGE_SIZE = 5;
+  var OBJ_PAGE_SIZE = 10;
 
   // Canonical provider set the run engine can pull per run (owner list). Any
   // provider already enabled in the stored config but not listed here is merged
@@ -352,18 +364,23 @@
   var $ = function (id) { return document.getElementById(id); };
 
   var state = {
-    runs: [],
-    live: null,            // LiveRun snapshot or null
+    runs: [],              // Summary[] as returned by GET /sdn/v1/runs (may
+                            // include the live run's own row too — filtered out
+                            // of the log in favor of the synthesized ongoing row)
+    live: null,             // LiveRun snapshot or null
+    view: "list",           // "list" | "detail"
+    listPage: 1,            // run-log page, 1-based, RUN_PAGE_SIZE per page
     selectedRunId: null,
-    detailRun: null,       // full Run of the selected id
+    detailRun: null,        // full Run of the selected id
+    objects: [],            // ObjectResult[] for the selected run (server search-filtered)
+    objectsTotal: 0,
+    objPage: 1,              // objects page, 1-based, OBJ_PAGE_SIZE per page
     search: "",
-    config: null,          // stored ModuleConfig
-    configOk: false,       // config endpoint reachable + module registered
-    configMsg: "",         // why not, when configOk is false
+    config: null,            // stored ModuleConfig
+    configOk: false,         // config endpoint reachable + module registered
+    configMsg: "",           // why not, when configOk is false
     effectiveIntervalMs: null,
-    notice: null,          // {kind, text}
-    liveDeadline: null,    // ms epoch the live countdown targets
-    liveRemaining: null    // last server-reported remaining seconds
+    notice: null             // {kind, text}
   };
 
   // ------------------------------------------------------------ fetch
@@ -404,26 +421,11 @@
     return n.toFixed(4);
   }
   function fmtRmsPtr(v) { return (v == null) ? "—" : fmtRms(v); }
-  function fmtInt(n) { var x = Number(n); return isFinite(x) ? String(x) : "—"; }
+  function fmtInt(n) { if (n == null) return "—"; var x = Number(n); return isFinite(x) ? String(x) : "—"; }
   function shortCid(cid) {
     if (!cid) return "—";
     if (cid.length <= 20) return cid;
     return cid.slice(0, 10) + "…" + cid.slice(-6);
-  }
-  function humanMs(ms) {
-    var n = Number(ms);
-    if (!isFinite(n) || n <= 0) return "—";
-    if (n % 3600000 === 0) return (n / 3600000) + "h";
-    if (n % 60000 === 0) return (n / 60000) + "m";
-    if (n % 1000 === 0) return (n / 1000) + "s";
-    return n + "ms";
-  }
-  function fmtDur(sec) {
-    var s = Math.max(0, Math.round(Number(sec) || 0));
-    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
-    var pad = function (x) { return (x < 10 ? "0" : "") + x; };
-    if (h > 0) return h + ":" + pad(m) + ":" + pad(ss);
-    return pad(m) + ":" + pad(ss);
   }
   function fmtStarted(iso) {
     if (!iso) return "—";
@@ -435,6 +437,7 @@
   }
   function statusChip(status) {
     var s = String(status || "").toLowerCase();
+    if (s === "ongoing") return '<span class="chip ongoing"><span class="dot"></span>ONGOING</span>';
     if (s === "running") return '<span class="chip cyan">RUNNING</span>';
     if (s === "completed") return '<span class="chip good">COMPLETED</span>';
     if (s === "failed") return '<span class="chip bad">FAILED</span>';
@@ -449,16 +452,20 @@
   function byStartedDesc(a, b) {
     return new Date(b.started).getTime() - new Date(a.started).getTime();
   }
+  function paginate(arr, page, size) {
+    var start = (page - 1) * size;
+    return arr.slice(start, start + size);
+  }
 
   // ------------------------------------------------------------ status strip
-  function renderStatus(nodeOnline, pubsub) {
+  function renderStatus(nodeOnline) {
     var chips = [];
     if (nodeOnline === false) {
       chips.push('<span class="status-chip bad"><span class="dot"></span>NODE UNAVAILABLE</span>');
     } else if (nodeOnline === true) {
       chips.push('<span class="status-chip good"><span class="dot"></span>NODE ONLINE</span>');
     }
-    var n = state.runs.length;
+    var n = combinedRunRows().length;
     chips.push('<span class="status-chip"><span class="dot" style="box-shadow:none;background:#5a7a8a"></span>' + n + ' RUN' + (n === 1 ? '' : 'S') + '</span>');
     if (state.live) {
       chips.push('<span class="status-chip live"><span class="dot"></span>RUN LIVE</span>');
@@ -470,69 +477,6 @@
     var rb = $("refresh");
     if (rb) rb.addEventListener("click", function () { loadAll(); });
   }
-
-  // ------------------------------------------------------------ current run panel
-  function renderCurrent() {
-    var body = $("current-body"), stat = $("current-status"), kick = $("current-kicker");
-
-    if (state.live) {
-      kick.textContent = "CURRENT RUN";
-      stat.innerHTML = '<span class="chip cyan">RUNNING</span>';
-      var lv = state.live;
-      var remaining = (state.liveDeadline != null)
-        ? (state.liveDeadline - Date.now()) / 1000
-        : lv.remaining_seconds;
-      var pct = lv.objects_total > 0 ? Math.round((lv.objects_done / lv.objects_total) * 100) : 0;
-      body.innerHTML =
-        '<div class="readout" style="color:var(--cyan)"><span class="dot" style="animation:sdn-pulse 1.5s ease-in-out infinite"></span>' +
-          '<span class="big">' + fmtRms(lv.current_avg_rms) + '</span><span class="unit">KM &middot; CURRENT AVG RMS</span></div>' +
-        '<div class="readout-sub">run <span class="mono" style="color:var(--ice)">' + esc(lv.id) + '</span> &middot; ' + esc((lv.providers || []).join(", ") || "no providers") + '</div>' +
-        '<div class="two-up"><dl class="dl">' +
-          row("RUN ID", esc(lv.id), "mono hi") +
-          row("TIME REMAINING", '<span id="live-remaining">' + fmtDur(remaining) + '</span>', "hi") +
-          row("OBJECTS REMAINING", fmtInt(lv.objects_remaining), "hi") +
-          row("OBJECTS DONE", fmtInt(lv.objects_done) + " / " + fmtInt(lv.objects_total), "") +
-        '</dl></div>' +
-        '<div class="meter"><span style="width:' + pct + '%"></span></div>';
-      return;
-    }
-
-    // No live run: show the most recent completed run as the latest run.
-    kick.textContent = "LATEST RUN";
-    var runs = state.runs.slice().sort(byStartedDesc);
-    if (runs.length === 0) {
-      stat.innerHTML = "";
-      body.innerHTML = emptyBlock("NO RUNS YET", "This node has recorded no OD-fit runs. The supplemental-OMM module fits enabled providers on its cron cadence; the first run appears here.");
-      return;
-    }
-    var r = runs[0];
-    stat.innerHTML = statusChip(r.status);
-    var color = r.status === "failed" ? "var(--red)" : "var(--cyan)";
-    body.innerHTML =
-      '<div class="readout" style="color:' + color + '"><span class="dot" style="box-shadow:0 0 9px ' + color + '"></span>' +
-        '<span class="big">' + fmtRms(r.avg_rms) + '</span><span class="unit">KM &middot; FLEET AVG RMS</span></div>' +
-      '<div class="readout-sub">run <span class="mono" style="color:var(--ice)">' + esc(r.id) + '</span> &middot; finished ' + fmtStarted(r.finished || r.started) + '</div>' +
-      '<div class="two-up"><dl class="dl">' +
-        row("RUN ID", esc(r.id), "mono hi") +
-        row("TIME REMAINING", "COMPLETE", "") +
-        row("OBJECTS REMAINING", "0", "") +
-        row("OBJECTS PROCESSED", fmtInt(r.objects_done) + " / " + fmtInt(r.objects_total), "hi") +
-        row("EPHEMERIS FILES", fmtInt(r.ephemeris_files), "hi") +
-        row("BEATS CELESTRAK", fmtInt(r.beat_count), "") +
-      '</dl></div>' +
-      (r.error ? '<div class="notice bad"><strong>RUN ERROR</strong> &middot; ' + esc(r.error) + '</div>' : '');
-  }
-
-  function row(label, valHtml, cls) {
-    return '<div class="row"><dt>' + esc(label) + '</dt><dd class="' + (cls || "") + '">' + valHtml + '</dd></div>';
-  }
-
-  // Local 1s countdown between polls, so TIME REMAINING ticks smoothly.
-  setInterval(function () {
-    if (!state.live || state.liveDeadline == null) return;
-    var el = $("live-remaining");
-    if (el) el.textContent = fmtDur((state.liveDeadline - Date.now()) / 1000);
-  }, 1000);
 
   // ------------------------------------------------------------ providers panel
   function enabledSet() {
@@ -560,6 +504,14 @@
           (on ? '<span class="chip cyan">ENABLED</span>' : '<span class="chip">OFF</span>') +
         '</label>';
     }).join("");
+  }
+  function humanMs(ms) {
+    var n = Number(ms);
+    if (!isFinite(n) || n <= 0) return "—";
+    if (n % 3600000 === 0) return (n / 3600000) + "h";
+    if (n % 60000 === 0) return (n / 60000) + "m";
+    if (n % 1000 === 0) return (n / 1000) + "s";
+    return n + "ms";
   }
   function renderProviders() {
     var body = $("providers-body");
@@ -677,97 +629,203 @@
     });
   }
 
-  // ------------------------------------------------------------ runs list
-  function renderRunsList() {
-    var body = $("runs-body");
-    $("runs-count").textContent = state.runs.length + (state.runs.length === 1 ? " RUN" : " RUNS");
-    var runs = state.runs.slice().sort(byStartedDesc);
-    if (runs.length === 0) {
-      body.innerHTML = emptyBlock("NO RUNS YET", "No OD-fit run has been recorded on this node. Enable one or more providers and let the cron fire, or trigger a live-smoke run.");
-      return;
-    }
-    var head = '<div class="head">' +
+  // ------------------------------------------------------------ run row rendering (shared by the log and the single-row detail table)
+  function runHeadHTML() {
+    return '<div class="head">' +
       '<span>RUN ID</span><span>STATUS</span><span class="col-prov">PROVIDERS</span>' +
       '<span class="num col-eph">EPH</span><span class="num">AVG RMS</span><span class="num">BEATS</span></div>';
-    var rows = runs.map(function (r) {
-      var sel = (r.id === state.selectedRunId) ? " selected" : "";
-      return '<div class="row' + sel + '" data-run="' + attr(r.id) + '" tabindex="0" role="button">' +
-        '<div><div class="run-id">' + esc(r.id) + '</div><div class="run-started">' + fmtStarted(r.started) + '</div></div>' +
-        '<div>' + statusChip(r.status) + '</div>' +
-        '<div class="cell-dim col-prov">' + esc((r.providers || []).join(", ") || "—") + '</div>' +
-        '<div class="cell-mono num col-eph">' + fmtInt(r.ephemeris_files) + '</div>' +
-        '<div class="cell-mono num">' + fmtRms(r.avg_rms) + '</div>' +
-        '<div class="cell-mono num">' + fmtInt(r.beat_count) + '</div>' +
-        '</div>';
-    }).join("");
-    body.innerHTML = '<div class="runs">' + head + rows + '</div>';
-    body.querySelectorAll("[data-run]").forEach(function (el) {
+  }
+  function runRowHTML(row, opts) {
+    opts = opts || {};
+    var sel = opts.selected ? " selected" : "";
+    var dataAttr = opts.clickable === false ? "" : ' data-run="' + attr(row.id) + '" tabindex="0" role="button"';
+    return '<div class="row' + sel + '"' + dataAttr + '>' +
+      '<div><div class="run-id">' + esc(row.id) + '</div><div class="run-started">' + fmtStarted(row.started) + '</div></div>' +
+      '<div>' + statusChip(row.status) + '</div>' +
+      '<div class="cell-dim col-prov">' + esc((row.providers || []).join(", ") || "—") + '</div>' +
+      '<div class="cell-mono num col-eph">' + fmtInt(row.ephemeris_files) + '</div>' +
+      '<div class="cell-mono num">' + fmtRms(row.avg_rms) + '</div>' +
+      '<div class="cell-mono num">' + fmtInt(row.beat_count) + '</div>' +
+      '</div>';
+  }
+  function bindRunRowClicks(container) {
+    container.querySelectorAll("[data-run]").forEach(function (el) {
       var pick = function () { selectRun(el.getAttribute("data-run")); };
       el.addEventListener("click", pick);
       el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
     });
   }
-
-  // ------------------------------------------------------------ run detail (objects)
-  function selectRun(id) {
-    state.selectedRunId = id;
-    renderRunsList();
-    loadDetail();
+  function renderPagination(containerId, page, totalPages, onChange) {
+    var el = $(containerId);
+    if (!el) return;
+    if (totalPages <= 1) { el.innerHTML = ""; return; }
+    el.innerHTML =
+      '<div class="pagination">' +
+        '<button class="btn sm" id="' + containerId + '-prev" type="button"' + (page <= 1 ? " disabled" : "") + '>PREV</button>' +
+        '<span class="pg-info">PAGE ' + page + ' / ' + totalPages + '</span>' +
+        '<button class="btn sm" id="' + containerId + '-next" type="button"' + (page >= totalPages ? " disabled" : "") + '>NEXT</button>' +
+      '</div>';
+    var prev = $(containerId + "-prev"), next = $(containerId + "-next");
+    if (prev) prev.addEventListener("click", function () { if (page > 1) onChange(page - 1); });
+    if (next) next.addEventListener("click", function () { if (page < totalPages) onChange(page + 1); });
   }
 
-  function loadDetail() {
-    var id = state.selectedRunId;
-    if (!id) {
-      $("detail-body").innerHTML = emptyBlock("NO RUN SELECTED", "Select a run above to inspect its fitted objects.");
-      $("search-field").style.display = "none";
-      $("detail-meta").innerHTML = "";
+  // ------------------------------------------------------------ synthesized "ongoing" row
+  function liveRow() {
+    var lv = state.live;
+    if (!lv) return null;
+    return {
+      id: lv.id,
+      started: lv.started,
+      status: "ongoing",
+      providers: lv.providers,
+      ephemeris_files: null,
+      avg_rms: lv.current_avg_rms,
+      beat_count: null
+    };
+  }
+  // combinedRunRows() builds the run-log's full row set: the synthesized
+  // "ongoing" row (if a run is live) ALWAYS first, then every completed/failed
+  // run newest-first. The live run's own Summary (status "running") is present
+  // in state.runs too — filtered out here so it is never shown twice.
+  function combinedRunRows() {
+    var out = [];
+    var lv = liveRow();
+    if (lv) out.push(lv);
+    var liveId = lv ? lv.id : null;
+    state.runs.slice().sort(byStartedDesc).forEach(function (r) {
+      if (liveId && r.id === liveId) return;
+      out.push(r);
+    });
+    return out;
+  }
+
+  // ------------------------------------------------------------ run log (main element)
+  function renderRunLogView() {
+    var combined = combinedRunRows();
+    $("runlog-count").textContent = combined.length + (combined.length === 1 ? " RUN" : " RUNS");
+    var body = $("runlog-body");
+    if (combined.length === 0) {
+      body.innerHTML = emptyBlock("NO RUNS YET", "No OD-fit run has been recorded on this node. Enable one or more providers and let the schedule fire; the first run appears here.");
+      $("runlog-pagination").innerHTML = "";
       return;
     }
-    $("search-field").style.display = "";
-    $("detail-body").innerHTML = loadingBlock("reading run " + id);
+    var totalPages = Math.max(1, Math.ceil(combined.length / RUN_PAGE_SIZE));
+    if (state.listPage > totalPages) state.listPage = totalPages;
+    if (state.listPage < 1) state.listPage = 1;
+    var pageRows = paginate(combined, state.listPage, RUN_PAGE_SIZE);
+    var rowsHtml = pageRows.map(function (r) {
+      return runRowHTML(r, { selected: r.id === state.selectedRunId });
+    }).join("");
+    body.innerHTML = '<div class="runs">' + runHeadHTML() + rowsHtml + '</div>';
+    bindRunRowClicks(body);
+    renderPagination("runlog-pagination", state.listPage, totalPages, function (p) {
+      state.listPage = p;
+      renderRunLogView();
+    });
+  }
+
+  // ------------------------------------------------------------ view switching
+  function renderView() {
+    var isDetail = state.view === "detail";
+    $("runlog-view").style.display = isDetail ? "none" : "";
+    $("detail-view").style.display = isDetail ? "" : "none";
+    if (!isDetail) renderRunLogView();
+  }
+  function selectRun(id) {
+    state.selectedRunId = id;
+    state.view = "detail";
+    state.search = "";
+    state.objPage = 1;
+    state.detailRun = null;
+    state.objects = [];
+    state.objectsTotal = 0;
+    var searchInput = $("search");
+    if (searchInput) searchInput.value = "";
+    renderView();
+    loadDetail();
+  }
+  function goBackToList() {
+    state.view = "list";
+    state.selectedRunId = null;
+    renderView();
+  }
+
+  // ------------------------------------------------------------ drill-down (single-row stats + paginated objects)
+  function loadDetail() {
+    var id = state.selectedRunId;
+    if (!id) return;
+    $("detail-stats").innerHTML = loadingBlock("reading run " + id);
+    $("detail-objects").innerHTML = "";
+    $("detail-objects-pagination").innerHTML = "";
     getJSON(API + "/runs/" + encodeURIComponent(id)).then(function (res) {
       if (state.selectedRunId !== id) return;
       if (!res.ok) {
         state.detailRun = null;
-        $("detail-meta").innerHTML = "";
-        $("detail-body").innerHTML = emptyBlock("RUN UNAVAILABLE", res.status === 404 ? "That run is no longer present on the node." : "Could not read the run (HTTP " + (res.status || 0) + ").");
+        $("detail-stats").innerHTML = emptyBlock("RUN UNAVAILABLE", res.status === 404 ? "That run is no longer present on the node." : "Could not read the run (HTTP " + (res.status || 0) + ").");
         return;
       }
       state.detailRun = res.data;
-      renderDetailMeta(res.data);
+      renderDetailStats();
       loadObjects();
     });
   }
 
-  function renderDetailMeta(run) {
-    $("detail-meta").innerHTML =
-      '<span class="tag">RUN ' + esc(run.id) + '</span>' +
-      statusChip(run.status) +
-      '<span class="chip ice">' + fmtInt(run.ephemeris_files) + ' EPHEMERIS FILE' + (run.ephemeris_files === 1 ? '' : 'S') + '</span>' +
-      '<span class="chip cyan">AVG RMS ' + fmtRms(run.avg_rms) + ' KM</span>' +
-      '<span class="chip good">' + fmtInt(run.beat_count) + ' BEATS CELESTRAK</span>';
+  function renderDetailStats() {
+    var run = state.detailRun;
+    if (!run) return;
+    var isLive = !!(state.live && state.live.id === run.id);
+    var row = {
+      id: run.id,
+      started: run.started,
+      status: isLive ? "ongoing" : run.status,
+      providers: run.providers,
+      ephemeris_files: run.ephemeris_files,
+      avg_rms: isLive ? state.live.current_avg_rms : run.avg_rms,
+      beat_count: run.beat_count
+    };
+    $("detail-stats").innerHTML =
+      '<div class="runs">' + runHeadHTML() + runRowHTML(row, { clickable: false }) + '</div>' +
+      (run.error ? '<div class="notice bad"><strong>RUN ERROR</strong> &middot; ' + esc(run.error) + '</div>' : '');
   }
 
   function loadObjects() {
     var id = state.selectedRunId;
     if (!id) return;
     var q = state.search ? ("?search=" + encodeURIComponent(state.search)) : "";
+    $("detail-objects").innerHTML = loadingBlock("reading run " + id + " objects");
+    $("detail-objects-pagination").innerHTML = "";
     getJSON(API + "/runs/" + encodeURIComponent(id) + "/objects" + q).then(function (res) {
       if (state.selectedRunId !== id) return;
-      var body = $("detail-body");
       if (!res.ok) {
-        body.innerHTML = emptyBlock("OBJECTS UNAVAILABLE", "Could not read the run's objects (HTTP " + (res.status || 0) + ").");
+        $("detail-objects").innerHTML = emptyBlock("OBJECTS UNAVAILABLE", "Could not read the run's objects (HTTP " + (res.status || 0) + ").");
         return;
       }
-      var objs = (res.data && Array.isArray(res.data.objects)) ? res.data.objects : [];
-      var total = (res.data && typeof res.data.total === "number") ? res.data.total : objs.length;
-      if (objs.length === 0) {
-        body.innerHTML = state.search
-          ? emptyBlock("NO MATCH", "No fitted object in run " + id + " matches “" + state.search + "”.")
-          : emptyBlock("NO OBJECTS", "Run " + id + " fitted no objects (no enabled provider returned ephemeris).");
-        return;
-      }
-      body.innerHTML = renderObjectsTable(id, objs, total);
+      state.objects = (res.data && Array.isArray(res.data.objects)) ? res.data.objects : [];
+      state.objectsTotal = (res.data && typeof res.data.total === "number") ? res.data.total : state.objects.length;
+      state.objPage = 1;
+      renderObjectsView();
+    });
+  }
+
+  function renderObjectsView() {
+    var container = $("detail-objects");
+    var objs = state.objects;
+    if (objs.length === 0) {
+      container.innerHTML = state.search
+        ? emptyBlock("NO MATCH", "No fitted object in run " + state.selectedRunId + " matches “" + state.search + "”.")
+        : emptyBlock("NO OBJECTS", "Run " + state.selectedRunId + " fitted no objects (no enabled provider returned ephemeris).");
+      $("detail-objects-pagination").innerHTML = "";
+      return;
+    }
+    var totalPages = Math.max(1, Math.ceil(objs.length / OBJ_PAGE_SIZE));
+    if (state.objPage > totalPages) state.objPage = totalPages;
+    if (state.objPage < 1) state.objPage = 1;
+    var pageObjs = paginate(objs, state.objPage, OBJ_PAGE_SIZE);
+    container.innerHTML = renderObjectsTable(state.selectedRunId, pageObjs, state.objectsTotal);
+    renderPagination("detail-objects-pagination", state.objPage, totalPages, function (p) {
+      state.objPage = p;
+      renderObjectsView();
     });
   }
 
@@ -809,40 +867,27 @@
         '</tr>';
     }).join("");
     var note = '<p class="hint" style="margin-top:10px">' + total + ' object' + (total === 1 ? '' : 's') +
+      ' matched' + (state.search ? ' “' + esc(state.search) + '”' : '') +
       ' &middot; RMS = position-residual over the SGP4 fit (km, TEME) &middot; CelesTrak / Space-Track columns are the reference’s OWN elements scored on the SAME ephemeris.</p>';
     return '<div class="table-scroll"><table class="obj">' + head + '<tbody>' + rows + '</tbody></table></div>' + note;
   }
 
   // ------------------------------------------------------------ load orchestration
-  function ensureSelection() {
-    if (state.selectedRunId && state.runs.some(function (r) { return r.id === state.selectedRunId; })) return;
-    // Prefer the live run, else the most recent completed run.
-    if (state.live) { state.selectedRunId = state.live.id; }
-    else {
-      var runs = state.runs.slice().sort(byStartedDesc);
-      state.selectedRunId = runs.length ? runs[0].id : null;
-    }
-  }
-
   function loadRuns() {
     return getJSON(API + "/runs").then(function (res) {
       if (res.ok && res.data) {
         state.runs = Array.isArray(res.data.runs) ? res.data.runs : [];
-        var newLive = res.data.live || null;
-        if (newLive) {
-          state.live = newLive;
-          state.liveRemaining = newLive.remaining_seconds;
-          state.liveDeadline = Date.now() + (Number(newLive.remaining_seconds) || 0) * 1000;
-        } else {
-          state.live = null; state.liveDeadline = null; state.liveRemaining = null;
-        }
+        state.live = res.data.live || null;
       }
-      var hadSel = state.selectedRunId;
-      ensureSelection();
       renderStatus(true);
-      renderCurrent();
-      renderRunsList();
-      if (state.selectedRunId && state.selectedRunId !== hadSel) loadDetail();
+      if (state.view === "list") {
+        renderRunLogView();
+      } else if (state.detailRun && state.live && state.live.id === state.detailRun.id) {
+        // The run being inspected is the live run: refresh its stats row from
+        // the freshly polled LiveRun snapshot (cheap; does not touch the
+        // objects table / pagination / search the user is browsing).
+        renderDetailStats();
+      }
     });
   }
 
@@ -875,15 +920,19 @@
 
   // ------------------------------------------------------------ poll (live runs)
   setInterval(function () {
-    // Cheap poll: keep the run list + current-run panel live. When a run is
-    // executing this surfaces progress; when idle it just confirms no change.
+    // Cheap poll: keep the run log + (if inspecting the live run) its detail
+    // stats current. When a run is executing this surfaces progress; when
+    // idle it just confirms no change.
     loadRuns();
   }, 4000);
 
   // ------------------------------------------------------------ boot
   bindSearch();
+  var backBtn = $("detail-back");
+  if (backBtn) backBtn.addEventListener("click", goBackToList);
   renderStatus(true);
   loadNode();
+  renderView();
   loadAll();
 })();
 </script>

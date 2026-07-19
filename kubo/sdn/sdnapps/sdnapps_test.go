@@ -166,10 +166,14 @@ func TestSelfContained(t *testing.T) {
 // TestOMMBoardWiring asserts the Supplemental-OMM board's entry page is wired to
 // the node's REAL run + module-config API (not the old thin record listing) and
 // self-hosts its two font families same-origin, with no external-origin URL. It
-// pins the owner-specified board content: run history, the live/current run's
-// stats, the searchable per-object NORAD rows with RMS + CelesTrak/Space-Track
-// parity, the TLE/OMM/CDM element downloads, and the provider checkbox + cron
-// controls that persist through the module config.
+// pins the owner-directed run-log/drill-down contract (2026-07-19 reconfiguration):
+// a single paginated RUN LOG (no standalone "latest run" box — deleted outright),
+// a synthesized "ongoing" row for a currently-executing run, and a row-click
+// drill-down that REPLACES the log with a single-row run-stats table plus a
+// paginated, searchable per-object table with RMS + CelesTrak/Space-Track parity
+// and TLE/OMM/CDM element downloads, and a BACK TO RUN LOG control (no arrow
+// glyphs anywhere), alongside the provider checkbox + cron controls that persist
+// through the module config.
 func TestOMMBoardWiring(t *testing.T) {
 	ms, err := sdnapps.Manifests()
 	if err != nil {
@@ -195,17 +199,50 @@ func TestOMMBoardWiring(t *testing.T) {
 		"?search=",                // NORAD search
 		"/download?format=",       // element download route
 		`"tle"`, `"omm"`, `"cdm"`, // TLE / OMM / CDM (VCM) formats
-		"remaining_seconds", // live run: time remaining
-		"objects_remaining", // live run: objects remaining
-		"current_avg_rms",   // live run: current average RMS
-		"ephemeris_files",   // ephemeris files processed
-		"celestrak_rms",     // parity vs CelesTrak
-		"spacetrack_rms",    // parity vs Space-Track OMM
-		"beats_celestrak",   // beats flag
-		"omm_cid",           // produced OMM record CID
+		"current_avg_rms", // live run: current average RMS
+		"ephemeris_files", // ephemeris files processed
+		"celestrak_rms",   // parity vs CelesTrak
+		"spacetrack_rms",  // parity vs Space-Track OMM
+		"beats_celestrak", // beats flag
+		"omm_cid",         // produced OMM record CID
 	} {
 		if !strings.Contains(board, needle) {
 			t.Errorf("board entry page does not wire %q", needle)
+		}
+	}
+
+	// Owner-directed run-log/drill-down contract: the main element is a
+	// paginated run log (no standalone "latest run" box — see the negative
+	// assertions below), a synthesized "ongoing" status for a live run, and a
+	// row-click drill-down with a BACK control (no arrow glyph).
+	for _, needle := range []string{
+		"RUN LOG",           // the main element's panel kicker
+		"ongoing",           // synthesized live-run status token
+		"ONGOING",           // its rendered chip label
+		"RUN DETAIL",        // the drill-down panel kicker
+		"BACK TO RUN LOG",   // the back control (plain text, no arrow glyph)
+		"SEARCH OBJECTS",    // the drill-down's plaintext search bar label
+		"runlog-pagination", // run-log pagination container (5/page)
+		"PREV", "NEXT",      // pagination controls are words, never arrows
+	} {
+		if !strings.Contains(board, needle) {
+			t.Errorf("board entry page does not wire %q", needle)
+		}
+	}
+
+	// The old standalone "latest run" / "current run" snapshot box is DELETED
+	// outright (owner rule: no tombstones or hidden remnants) — these ids only
+	// ever existed on that removed panel.
+	for _, needle := range []string{"current-body", "current-kicker", "current-status", "live-remaining"} {
+		if strings.Contains(board, needle) {
+			t.Errorf("board still carries a remnant of the deleted 'latest run' box: %q", needle)
+		}
+	}
+
+	// No directional arrow glyphs anywhere on the page (owner hard rule).
+	for _, glyph := range []string{"→", "←", "▶", "◀", "›", "‹", "»", "«", "➡", "⬅"} {
+		if strings.Contains(board, glyph) {
+			t.Errorf("board contains a directional arrow glyph %q", glyph)
 		}
 	}
 

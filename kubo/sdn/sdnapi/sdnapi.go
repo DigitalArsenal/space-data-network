@@ -414,6 +414,17 @@ func (h *handler) apps(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// order preserves each distinct (source, app id) pair's FIRST-seen position
+	// so the listing is stable across re-seeds; byKey holds the entry, which a
+	// later (newer) record for the same id overwrites — see the ReadBySourceType
+	// doc: it returns oldest-Seq-first, so re-seeding an app's content with new
+	// bytes (a changed inline UI page, e.g. after a board edit) appends a NEW
+	// block rather than replacing the old one. Without this dedup, GET
+	// /sdn/v1/apps would list the SAME app id once per historical seed.
+	// Records that fail to decode (no usable id) are never deduped — they still
+	// surface individually as {source, cid, size} so nothing silently vanishes.
+	var order []string
+	byKey := map[string]appResp{}
 	for _, ce := range cat {
 		if ce.Type != "APP" {
 			continue
@@ -432,15 +443,27 @@ func (h *handler) apps(w http.ResponseWriter, r *http.Request) {
 			entry := appResp{Source: ce.Source, CID: cidStr, Size: len(fb)}
 			// Best-effort decode: an $APP record summarizes to id/name/version.
 			// A record that does not parse still surfaces (source, cid, size).
+			var key string
 			if m, err := appmanifest.FromAPP(fb); err == nil && m != nil {
 				entry.ID = m.ID
 				entry.Name = m.Name
 				entry.Version = m.Version
 				entry.Modules = len(m.Modules)
 				entry.Pages = len(m.Pages)
+				key = ce.Source + "\x00" + m.ID
 			}
-			out = append(out, entry)
+			if key == "" {
+				out = append(out, entry)
+				continue
+			}
+			if _, seen := byKey[key]; !seen {
+				order = append(order, key)
+			}
+			byKey[key] = entry // last write wins: recs is oldest-first, so this is the newest
 		}
+	}
+	for _, key := range order {
+		out = append(out, byKey[key])
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -452,6 +475,13 @@ func (h *handler) apps(w http.ResponseWriter, r *http.Request) {
 // text/html). This is the node serving its own apps: the same read-only store
 // that lists apps at /sdn/v1/apps also hands back each app's self-contained page,
 // same-origin, so the page's own fetch(/sdn/v1/data…) calls reach this node.
+//
+// Re-seeding an app with CHANGED content (e.g. a board.html edit shipped in a
+// new binary) appends a NEW block rather than overwriting the old one —
+// ReadBySourceType returns oldest-Seq-first — so this walks the matching
+// records NEWEST FIRST and serves the first (== most recently stored) one. A
+// node that has re-seeded the same app id multiple times across boots must
+// serve the LATEST content, never a stale one a prior boot already stored.
 //
 // A page-less or module-served app (no inline entry page) is a 404 here — this
 // route serves inline content only. An unknown ID is a 404.
@@ -480,7 +510,8 @@ func (h *handler) appUI(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		for _, fb := range recs {
+		for i := len(recs) - 1; i >= 0; i-- {
+			fb := recs[i]
 			m, err := appmanifest.FromAPP(fb)
 			if err != nil || m == nil || m.ID != id {
 				continue
