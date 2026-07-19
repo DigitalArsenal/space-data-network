@@ -366,3 +366,45 @@ func TestSPWFlowBootReRegisters(t *testing.T) {
 		t.Fatalf("boot-registered flow not in scheduler: %v", svc2.Scheduler.List())
 	}
 }
+
+// TestInstallerStoredConfigAndSetFlowNodeConfig proves the settings-surface
+// read/write path a mounted flow's config panel needs (the supplemental-OMM
+// compat shim uses the SAME two methods): StoredConfig reflects what Install
+// persisted, and SetFlowNodeConfig both persists a NEW config (StoredConfig
+// picks it up) and live-applies it to the loaded ServiceFlow (proven at the
+// flowrt-package level by TestServiceFlowSetNodeConfig; here we confirm the
+// Installer plumbs through to the SAME registry entry an operator's GET reads).
+func TestInstallerStoredConfigAndSetFlowNodeConfig(t *testing.T) {
+	h := newSPWHarness(t)
+	h.approveFlow(t)
+
+	installed, err := h.installer.Install(h.spec(), "test")
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+
+	stored := h.installer.StoredConfig(installed.ID)
+	if stored == nil || stored["celestrak_space_weather_url"] != h.stub.URL+"/sw-all.csv" {
+		t.Fatalf("StoredConfig after Install = %#v, want the install spec's Config", stored)
+	}
+
+	newCfg := map[string]interface{}{
+		"celestrak_space_weather_url": h.stub.URL + "/sw-all.csv",
+		"enabled_providers":           []interface{}{"iss", "cpf"},
+	}
+	if ok := h.installer.SetFlowNodeConfig(installed.ID, newCfg); !ok {
+		t.Fatalf("SetFlowNodeConfig(%q) = false, want true (flow is loaded)", installed.ID)
+	}
+	after := h.installer.StoredConfig(installed.ID)
+	providers, ok := after["enabled_providers"].([]interface{})
+	if !ok || len(providers) != 2 {
+		t.Fatalf("StoredConfig after SetFlowNodeConfig = %#v, want enabled_providers=[iss cpf]", after)
+	}
+
+	if ok := h.installer.SetFlowNodeConfig("no-such-flow-id", newCfg); ok {
+		t.Fatalf("SetFlowNodeConfig on an unloaded id should return false")
+	}
+	if got := h.installer.StoredConfig("no-such-flow-id"); got != nil {
+		t.Fatalf("StoredConfig for an unknown id = %#v, want nil", got)
+	}
+}

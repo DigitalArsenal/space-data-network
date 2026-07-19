@@ -77,6 +77,11 @@ type ServiceFlow struct {
 	manifest  *modulert.Manifest
 	triggers  []serviceTrigger
 	egress    []string
+	// sourceProviderPluginIDs is the plugin id of every $PLG "source"-kind node
+	// in the bundle's topology (the flow's declared providers), captured at
+	// load from flow.plg — read-only settings-surface metadata, never used to
+	// gate a fetch. Nil for a bundle with no source nodes or no bundle dir.
+	sourceProviderPluginIDs []string
 
 	mu   sync.Mutex
 	inst *flowInstance
@@ -296,6 +301,15 @@ func LoadFlowService(flowRef string, intervals map[string]string, config map[str
 					}
 					sf.triggers = append(sf.triggers, st)
 				}
+				// Declared providers: every "source"-kind node's plugin id, in
+				// topology order — settings-surface read metadata only (e.g. the
+				// operator config panel's default enabled set). Never consulted to
+				// gate a fetch; the flow always drives every source node it wires.
+				for _, n := range topo.Nodes {
+					if n.Kind == "source" && n.PluginID != "" {
+						sf.sourceProviderPluginIDs = append(sf.sourceProviderPluginIDs, n.PluginID)
+					}
+				}
 			}
 		}
 	}
@@ -484,6 +498,30 @@ func (sf *ServiceFlow) Triggers() []serviceTrigger {
 	out := make([]serviceTrigger, len(sf.triggers))
 	copy(out, sf.triggers)
 	return out
+}
+
+// SourceProviderPluginIDs lists the plugin id of every $PLG "source"-kind node
+// in the bundle's topology (the flow's declared providers), in topology order.
+// Read-only settings-surface metadata (e.g. the operator config panel's
+// default enabled set) — never used to gate a fetch.
+func (sf *ServiceFlow) SourceProviderPluginIDs() []string {
+	out := make([]string, len(sf.sourceProviderPluginIDs))
+	copy(out, sf.sourceProviderPluginIDs)
+	return out
+}
+
+// SetNodeConfig replaces the per-flow node CONFIG served to this flow's wasm
+// nodes via plugin.getConfig, effective from the NEXT trigger fire onward (it
+// never forces one). This is the operator settings API's write path for
+// opaque, module-defined tuning keys (e.g. enabled_providers) — the reserved
+// scheduling keys (interval_ms/timers) stay the cron scheduler's concern, not
+// this flow's node CONFIG. A no-op when the flow is closed.
+func (sf *ServiceFlow) SetNodeConfig(cfg map[string]interface{}) {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
+	if sf.inst != nil {
+		sf.inst.bridge.SetConfigLive(cfg)
+	}
 }
 
 // --- plugins.UIProvider interface ---
