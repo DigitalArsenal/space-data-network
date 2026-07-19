@@ -480,12 +480,10 @@ func StageModulesFromDist(home Home, distRoot string) ([]string, error) {
 		if pluginID == "" {
 			return nil
 		}
-		// dist/plugin-manifest.json is the sibling of dist/guest-link; its typed
-		// ports enrich the staged metadata (Phase 2). Absent is tolerated.
-		manifestPath := filepath.Join(filepath.Dir(gdir), "plugin-manifest.json")
-		if _, err := os.Stat(manifestPath); err != nil {
-			manifestPath = ""
-		}
+		// The module's plugin-manifest.json (typed ports enrich the staged
+		// metadata, Phase 2). Modules ship it INSIDE dist/guest-link/; older
+		// layouts put it at the dist/ level. Resolve either. Absent is tolerated.
+		manifestPath := resolveDistManifest(gdir)
 		if err := StageModule(home, pluginID, p, metaPath, manifestPath); err != nil {
 			return err
 		}
@@ -496,15 +494,36 @@ func StageModulesFromDist(home Home, distRoot string) ([]string, error) {
 }
 
 // pluginIDFromDist reads the pluginId for a module given its dist/guest-link
-// directory, checking the sibling dist/plugin-manifest.json first.
+// directory, from its plugin-manifest.json in either supported location
+// (dist/guest-link/plugin-manifest.json — the shipped module layout — or the
+// dist/ level).
 func pluginIDFromDist(guestLinkDir string) string {
-	manifest := filepath.Join(filepath.Dir(guestLinkDir), "plugin-manifest.json")
+	manifest := resolveDistManifest(guestLinkDir)
+	if manifest == "" {
+		return ""
+	}
 	if b, err := os.ReadFile(manifest); err == nil {
 		var m struct {
 			PluginID string `json:"pluginId"`
 		}
 		if json.Unmarshal(b, &m) == nil && m.PluginID != "" {
 			return m.PluginID
+		}
+	}
+	return ""
+}
+
+// resolveDistManifest returns the module's plugin-manifest.json path given its
+// dist/guest-link directory, checking the actual shipped location
+// (dist/guest-link/plugin-manifest.json) first, then the dist/ level. Returns ""
+// when neither exists.
+func resolveDistManifest(guestLinkDir string) string {
+	for _, cand := range []string{
+		filepath.Join(guestLinkDir, "plugin-manifest.json"),
+		filepath.Join(filepath.Dir(guestLinkDir), "plugin-manifest.json"),
+	} {
+		if fi, err := os.Stat(cand); err == nil && fi.Mode().IsRegular() {
+			return cand
 		}
 	}
 	return ""
