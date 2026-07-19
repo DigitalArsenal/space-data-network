@@ -90,6 +90,7 @@ type config struct {
 	registeredName    string
 	linkedModules     []*Module
 	namedWasm         []namedWasmSpec
+	wasiThreads       bool
 
 	// execTimeout is the default per-Execute wall-clock budget (0 disables
 	// wall-clock enforcement — the pre-B3 behavior). See WithExecTimeout.
@@ -301,6 +302,13 @@ type Module struct {
 	// corresponding enforcement — see WithExecTimeout / WithCostLimit.
 	execTimeout time.Duration
 	costLimit   uint
+
+	// threads is non-nil when the module was created WithWASIThreads: a
+	// wasi-threads module runs on the low-level Loader/Store/Executor backend
+	// (VM-free) so the host can share ONE linear-memory instance across the
+	// per-thread instances it spawns. When set, m.vm is nil and execution,
+	// memory access, and teardown route through this backend. See wasithreads.go.
+	threads *threadsBackend
 }
 
 // execRequest carries one guest call to the dedicated execution thread.
@@ -335,6 +343,9 @@ func (m *Module) startExecThread() {
 // through the named registered instance when the module was created
 // WithRegisteredName.
 func (m *Module) runSync(name string, params ...interface{}) ([]interface{}, error) {
+	if m.threads != nil {
+		return m.threads.execute(name, params...)
+	}
 	if m.registeredName != "" {
 		return m.vm.ExecuteRegistered(m.registeredName, name, params...)
 	}
@@ -346,7 +357,13 @@ func (m *Module) runSync(name string, params ...interface{}) ([]interface{}, err
 // (WASI-reactor _initialize vs emscripten-command __wasm_call_ctors) without
 // triggering a "function not found" trap on a module that exports neither.
 func (m *Module) HasFunction(name string) bool {
-	if m == nil || m.vm == nil {
+	if m == nil {
+		return false
+	}
+	if m.threads != nil {
+		return m.threads.hasFunction(name)
+	}
+	if m.vm == nil {
 		return false
 	}
 	names, _ := m.vm.GetFunctionList()
@@ -401,7 +418,12 @@ func (m *Module) runAsyncWithTimeout(timeout time.Duration, name string, params 
 // than resetting the counter. cost is the module default (m.costLimit) unless
 // a per-call ExecBudget override raised it (see executeDirect).
 func (m *Module) applyCostBudget(cost uint) {
-	stats := m.vm.GetStatistics()
+	var stats *wasmedge.Statistics
+	if m.threads != nil {
+		stats = m.threads.mainStats
+	} else {
+		stats = m.vm.GetStatistics()
+	}
 	if stats == nil {
 		return
 	}
@@ -513,6 +535,12 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 	}
 	for _, o := range opts {
 		o(cfg)
+	}
+
+	// wasi-threads modules use the low-level VM-free backend (shared memory
+	// across per-thread instances). Everything below is the high-level VM path.
+	if cfg.wasiThreads {
+		return newThreadsModule(wasmBytes, cfg)
 	}
 
 	conf := wasmedge.NewConfigure()
@@ -681,6 +709,9 @@ func (m *Module) ExecuteContext(ctx context.Context, name string, params ...inte
 // memory returns the default linear memory ("memory") from the active (or
 // named registered) module.
 func (m *Module) memory() (*wasmedge.Memory, error) {
+	if m.threads != nil {
+		return m.threads.memory()
+	}
 	var mod *wasmedge.Module
 	if m.registeredName != "" {
 		mod = m.vm.GetRegisteredModule(m.registeredName)
@@ -713,7 +744,7 @@ func (m *Module) RegisteredInstance() *wasmedge.Module {
 
 // MemoryStats returns the current and configured maximum linear memory sizes.
 func (m *Module) MemoryStats() (MemoryStats, error) {
-	if m == nil || m.vm == nil {
+	if m == nil || (m.vm == nil && m.threads == nil) {
 		return MemoryStats{}, ErrNoModule
 	}
 	mem, err := m.memory()
@@ -722,7 +753,10 @@ func (m *Module) MemoryStats() (MemoryStats, error) {
 	}
 	pages := uint64(mem.GetPageSize())
 	maxPages := uint64(0)
-	if m.conf != nil {
+	switch {
+	case m.threads != nil:
+		maxPages = m.threads.maxMemoryPages()
+	case m.conf != nil:
 		maxPages = uint64(m.conf.GetMaxMemoryPage())
 	}
 	const wasmPageSize = uint64(65536)
@@ -830,6 +864,10 @@ func (m *Module) Release() {
 		close(m.execCh)
 		m.execWG.Wait()
 		m.execCh = nil
+	}
+	if m.threads != nil {
+		m.threads.release()
+		m.threads = nil
 	}
 	if m.vm != nil {
 		m.vm.Release()
