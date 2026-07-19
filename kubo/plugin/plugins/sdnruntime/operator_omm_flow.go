@@ -7,9 +7,11 @@ package sdnruntime
 // fit -> in-wasm FlatSQL store) on the node and mounts it as a timer-served
 // ServiceFlow.
 //
-// It REPLACES the old per-provider operator-ephemeris MODULE set
-// (maybeInstallOperatorEphemerisSet), which registered seven data-source modules
-// that each pulled + stored per-object $OEM through the Go storage sink. Here the
+// It REPLACES the old per-provider operator-ephemeris MODULE set (formerly
+// maybeInstallOperatorEphemerisSet, deleted by the Go-orchestration purge —
+// sdn/sdnflows/operator_ephemeris_set.go and this package's own
+// operator_ephemeris_set.go), which registered seven data-source modules that
+// each pulled + stored per-object $OEM through the Go storage sink. Here the
 // ONE wasm flow does the fetch, the threaded fit, and the $OMM/$OCM/$OBD arena
 // store — all in-wasm. Ephemeris is in-memory only; no $OEM is persisted.
 //
