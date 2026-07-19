@@ -144,8 +144,13 @@ type bakeTriggerBinding struct {
 // concurrent use: flowcc.Compiler.Run is concurrency-safe and the flow_runtime.o
 // cache is content-addressed (write-once by sha).
 type Baker struct {
-	home           flowcc.Home
-	cc             *flowcc.Compiler
+	home flowcc.Home
+	cc   *flowcc.Compiler
+	// ccThreads is the wasi-threads compiler (box + the wasm32-wasip1-threads
+	// sysroot). nil when toolchain v2 is not staged; a wasi-threads flow bake
+	// then fails with a clear "toolchain not staged" error. Single-thread flows
+	// never touch it.
+	ccThreads      *flowcc.Compiler
 	maxMemoryPages uint32
 
 	// fetcher, when attached (SetNetModules), resolves a referenced module that
@@ -182,7 +187,18 @@ func NewBaker(home flowcc.Home, maxMemoryPages uint32) (*Baker, error) {
 	if err != nil {
 		return nil, fmt.Errorf("flowrt: init flowcc compiler: %w", err)
 	}
-	return &Baker{home: home, cc: cc, maxMemoryPages: maxMemoryPages, catalog: NewNetModuleCatalog()}, nil
+	b := &Baker{home: home, cc: cc, maxMemoryPages: maxMemoryPages, catalog: NewNetModuleCatalog()}
+	// Toolchain v2 (optional): a wasi-threads compiler over the wasm32-wasip1-
+	// threads sysroot. Present only when the threads sysroot is staged; its
+	// absence leaves single-thread bakes fully functional.
+	if home.ThreadsStaged() {
+		ccT, terr := flowcc.NewWithSysroot(home.BoxPath(), home.SysrootWasiThreadsDir())
+		if terr != nil {
+			return nil, fmt.Errorf("flowrt: init wasi-threads flowcc compiler: %w", terr)
+		}
+		b.ccThreads = ccT
+	}
+	return b, nil
 }
 
 // SetNetModules attaches the network-module fetcher (fetch-to-bake) enabling the
@@ -316,9 +332,12 @@ func (b *Baker) Bake(ctx context.Context, req BakeRequest) (*BakeResult, error) 
 	// collect the distinct module objects to link. A referenced module that is
 	// not staged locally is fetched by content hash + verified + staged first
 	// (Part-B fetch-to-bake) when the ref carries a signed BundleHash.
-	gen, deps, err := b.resolve(ctx, g, req.ModuleRefs)
+	gen, deps, threaded, err := b.resolve(ctx, g, req.ModuleRefs)
 	if err != nil {
 		return nil, err
+	}
+	if threaded && b.ccThreads == nil {
+		return nil, fmt.Errorf("bake: flow requires the wasi-threads toolchain (v2) but it is not staged (SysrootWasiThreadsDir + flow_runtime.threads.o); run StageToolchain with the v2 tarball")
 	}
 
 	// The flow-runtime sources are FLOW-AGNOSTIC and vendored (link-only bake):
@@ -337,7 +356,16 @@ func (b *Baker) Bake(ctx context.Context, req BakeRequest) (*BakeResult, error) 
 	// includes any per-flow data, so the SAME cached object serves EVERY flow.
 	// The 867-line runtime is compiled once (~34s cold) and every subsequent new
 	// flow is link-only.
-	flowRuntimeO, cacheHit, err := b.compileFlowRuntime(ctx, runtimeCpp, abiHdr, invokeHdr)
+	// Threaded flows link the PREBUILT, native-built flow_runtime.threads.o
+	// (shipped as staged data); single-thread flows compile the flow-agnostic
+	// runtime in the box (cached). The isomorphic LINK runs in the box either way.
+	var flowRuntimeO []byte
+	var cacheHit bool
+	if threaded {
+		flowRuntimeO, err = b.threadedFlowRuntimeObj()
+	} else {
+		flowRuntimeO, cacheHit, err = b.compileFlowRuntime(ctx, runtimeCpp, abiHdr, invokeHdr)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -345,18 +373,31 @@ func (b *Baker) Bake(ctx context.Context, req BakeRequest) (*BakeResult, error) 
 	// Stage 2: compile the generated per-flow descriptor.cpp (tiny; not cached).
 	// It DEFINES g_flow_program (counts + tables + entry table) that the
 	// flow-agnostic runtime binds at link time.
-	descriptorO, err := b.compileDescriptor(ctx, gen.descriptorCpp, abiHdr)
+	descriptorO, err := b.compileDescriptor(ctx, gen.descriptorCpp, abiHdr, threaded)
 	if err != nil {
 		return nil, err
 	}
 
 	// Stage 3: link the composed runtime.wasm.
-	wasm, err := b.link(ctx, flowRuntimeO, descriptorO, deps)
+	var wasm []byte
+	if threaded {
+		wasm, err = b.linkThreaded(ctx, flowRuntimeO, descriptorO, deps)
+	} else {
+		wasm, err = b.link(ctx, flowRuntimeO, descriptorO, deps)
+	}
 	if err != nil {
 		return nil, err
 	}
 	if len(wasm) < 8 || wasm[0] != 0x00 || wasm[1] != 'a' || wasm[2] != 's' || wasm[3] != 'm' {
 		return nil, fmt.Errorf("bake: linked artifact is not a WASM module")
+	}
+	// C1: a wasi-threads flow's artifact MUST declare the isomorphic pthreads
+	// contract (shared imported memory + wasi.thread-spawn import + wasi_thread_
+	// start export, no emscripten hooks) — never ship one that cannot thread.
+	if threaded {
+		if err := assertWasiThreadsContract(wasm); err != nil {
+			return nil, fmt.Errorf("bake: %w", err)
+		}
 	}
 
 	mods := make([]string, 0, len(deps))
@@ -387,7 +428,7 @@ type depObject struct {
 // distinct module objects (verifying content hashes when refs supply them). A
 // referenced module not staged locally is fetched by content hash + signature-
 // verified + staged first when its ref carries a signed BundleHash (Part-B).
-func (b *Baker) resolve(ctx context.Context, g *bakeGraph, refs []BakeModuleRef) (*generated, []depObject, error) {
+func (b *Baker) resolve(ctx context.Context, g *bakeGraph, refs []BakeModuleRef) (*generated, []depObject, bool, error) {
 	// Content-hash pins + full refs keyed by pluginId (optional).
 	pin := map[string]string{}
 	refByPlugin := map[string]BakeModuleRef{}
@@ -405,10 +446,10 @@ func (b *Baker) resolve(ctx context.Context, g *bakeGraph, refs []BakeModuleRef)
 	nodeIndex := make(map[string]int, len(g.Nodes))
 	for i, n := range g.Nodes {
 		if n.NodeID == "" {
-			return nil, nil, fmt.Errorf("bake: node[%d] missing nodeId", i)
+			return nil, nil, false, fmt.Errorf("bake: node[%d] missing nodeId", i)
 		}
 		if _, dup := nodeIndex[n.NodeID]; dup {
-			return nil, nil, fmt.Errorf("bake: duplicate nodeId %q", n.NodeID)
+			return nil, nil, false, fmt.Errorf("bake: duplicate nodeId %q", n.NodeID)
 		}
 		nodeIndex[n.NodeID] = i
 	}
@@ -416,6 +457,7 @@ func (b *Baker) resolve(ctx context.Context, g *bakeGraph, refs []BakeModuleRef)
 	// Resolve each linked node's symbol; collect distinct module objects.
 	depByPlugin := map[string]*depObject{}
 	var deps []depObject
+	threadedCount, singleCount := 0, 0           // module thread-model tally (dual-path gate)
 	symbols := make([]string, len(g.Nodes))      // "" for host nodes
 	inputPorts := make([][]string, len(g.Nodes)) // per node: bound method's typed input port ids
 	for i, n := range g.Nodes {
@@ -423,20 +465,20 @@ func (b *Baker) resolve(ctx context.Context, g *bakeGraph, refs []BakeModuleRef)
 			continue
 		}
 		if n.PluginID == "" || n.MethodID == "" {
-			return nil, nil, fmt.Errorf("bake: linked node %q missing pluginId/methodId", n.NodeID)
+			return nil, nil, false, fmt.Errorf("bake: linked node %q missing pluginId/methodId", n.NodeID)
 		}
 		// Fetch-to-bake: if the module is not staged locally, fetch + verify +
 		// stage it by its signed content hash before resolving its symbol.
 		if err := b.ensureStaged(ctx, n.PluginID, refByPlugin); err != nil {
-			return nil, nil, err
+			return nil, nil, false, err
 		}
 		meta, err := b.home.LoadModuleMetadata(n.PluginID)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, false, err
 		}
 		sym := meta.MethodSymbols[n.MethodID]
 		if sym == "" {
-			return nil, nil, fmt.Errorf("bake: module %q exports no symbol for method %q (have %v)",
+			return nil, nil, false, fmt.Errorf("bake: module %q exports no symbol for method %q (have %v)",
 				n.PluginID, n.MethodID, methodKeys(meta.MethodSymbols))
 		}
 		symbols[i] = sym
@@ -449,28 +491,42 @@ func (b *Baker) resolve(ctx context.Context, g *bakeGraph, refs []BakeModuleRef)
 			objPath := b.home.ModuleLinkObjectPath(n.PluginID)
 			ob, err := os.ReadFile(objPath)
 			if err != nil {
-				return nil, nil, fmt.Errorf("bake: read staged object for %q: %w", n.PluginID, err)
+				return nil, nil, false, fmt.Errorf("bake: read staged object for %q: %w", n.PluginID, err)
 			}
 			if want, ok := pin[n.PluginID]; ok {
 				got := sha256Hex(ob)
 				if got != want {
-					return nil, nil, fmt.Errorf("bake: module %q content-hash mismatch: staged %s, ref %s", n.PluginID, got, want)
+					return nil, nil, false, fmt.Errorf("bake: module %q content-hash mismatch: staged %s, ref %s", n.PluginID, got, want)
 				}
 			}
 			d := depObject{pluginID: n.PluginID, index: len(deps), bytes: ob}
 			deps = append(deps, d)
 			depByPlugin[n.PluginID] = &deps[len(deps)-1]
+			if meta.ThreadModel == "wasi-threads" {
+				threadedCount++
+			} else {
+				singleCount++
+			}
 		}
 	}
 	if len(deps) == 0 {
-		return nil, nil, fmt.Errorf("bake: flow has no linked-direct nodes to bake")
+		return nil, nil, false, fmt.Errorf("bake: flow has no linked-direct nodes to bake")
 	}
+
+	// Dual-path gate: a flow is a wasi-threads bake iff any linked module is a
+	// wasi-threads guest-link. Mixing emscripten + wasi-threads objects in one
+	// flow is a HARD ERROR — their libc/libc++ ABIs and memory models cannot
+	// co-link.
+	if threadedCount > 0 && singleCount > 0 {
+		return nil, nil, false, fmt.Errorf("bake: flow mixes %d wasi-threads and %d single-thread modules; a flow must be uniformly one thread model (incompatible libc ABIs cannot co-link)", threadedCount, singleCount)
+	}
+	threaded := threadedCount > 0
 
 	gen, err := generateDescriptorSources(g, nodeIndex, symbols, inputPorts, len(deps))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
-	return gen, deps, nil
+	return gen, deps, threaded, nil
 }
 
 // methodInputPortIDs returns the declared (typed) input port ids of methodID from
@@ -581,10 +637,18 @@ func (b *Baker) PrewarmRuntime(ctx context.Context) (cached bool, err error) {
 // descriptor fills the dispatch-descriptor string pointers in a static
 // constructor (reinterpret_cast is not a constant expression). The compile is
 // tiny (~0.1s) since the descriptor is only counts + tables + an entry table.
-func (b *Baker) compileDescriptor(ctx context.Context, descriptorCpp string, abiHdr []byte) ([]byte, error) {
+func (b *Baker) compileDescriptor(ctx context.Context, descriptorCpp string, abiHdr []byte, threaded bool) ([]byte, error) {
+	// The per-flow descriptor.cpp is libc++-FREE (only <stdint.h> via
+	// flow_descriptor_abi.h), so the box compiles it for BOTH targets — this
+	// keeps the per-flow compile isomorphic (C2). Threaded uses the wasm32-
+	// wasip1-threads compiler/flags; single-thread the emscripten ones.
+	cc, flags := b.cc, flowRuntimeCompileFlags
+	if threaded {
+		cc, flags = b.ccThreads, flowRuntimeThreadsCompileFlags
+	}
 	compile := append([]string{"clang", "clang", "-c", "/work/descriptor.cpp", "-I/work",
-		"-o", "/work/descriptor.o"}, flowRuntimeCompileFlags...)
-	res, err := b.cc.Run(ctx, compile, map[string][]byte{
+		"-o", "/work/descriptor.o"}, flags...)
+	res, err := cc.Run(ctx, compile, map[string][]byte{
 		"/work/descriptor.cpp":        []byte(descriptorCpp),
 		"/work/flow_descriptor_abi.h": abiHdr,
 	})
@@ -642,13 +706,14 @@ func (b *Baker) link(ctx context.Context, flowRuntimeO, descriptorO []byte, deps
 	link = append(link,
 		"--export-if-defined=emscripten_stack_get_current",
 		"--export-if-defined=_emscripten_stack_restore",
-		// The host writes payloads INTO guest memory (writeOutputFrames ->
-		// mod.Allocate*) whenever a HOST-model node EMITS output frames — e.g. the
-		// object-feeder source (object_feeder.go) injecting a per-object $OEM. That
-		// path calls the guest's "malloc"/"free" exports (wasmrt defaults;
-		// descriptor.malloc_symbol_ptr = "malloc"). -ldlmalloc provides them, but
-		// wasm-ld drops unreferenced exports, so a runtime with only host SINK nodes
-		// never surfaced them. Export them so host->guest injection works.
+		// The in-wasm frame-marshalling path (runtime.go writeOutputFrames ->
+		// mod.Allocate*) allocates guest memory for output frames, calling the
+		// guest's "malloc"/"free" exports (wasmrt defaults; descriptor.malloc_
+		// symbol_ptr = "malloc"). -ldlmalloc provides them, but wasm-ld drops
+		// unreferenced exports, so a runtime with only host SINK nodes never
+		// surfaced them. Export them so frame marshalling can allocate. (The
+		// repudiated host->guest per-object $OEM feeder was deleted with the Go
+		// orchestration purge — no host injects $OEM into guest memory.)
 		"--export-if-defined=malloc",
 		"--export-if-defined=free",
 	)
@@ -683,6 +748,106 @@ var flowRuntimeCompileFlags = []string{
 }
 
 const flowRuntimeCompileFlagsKey = "wasm32-emscripten|c++17|O3|fignore-exceptions|fno-rtti|fvisibility=hidden|mbulk-memory|NDEBUG|EMSCRIPTEN|v1"
+
+// flowRuntimeThreadsCompileFlags compile the (libc++-free) per-flow descriptor.cpp
+// for the wasm32-wasip1-threads target in the box. flow_runtime.cpp itself is
+// NOT box-compiled for this target (its libc++ includes need wasi-sdk header
+// ordering the box's clang-16 lacks) — it is the prebuilt native
+// flow_runtime.threads.o instead.
+var flowRuntimeThreadsCompileFlags = []string{
+	"--target=wasm32-wasip1-threads", "--sysroot=/sysroot",
+	"-std=c++17", "-O3", "-fignore-exceptions", "-fno-rtti",
+	"-fvisibility=hidden", "-pthread", "-matomics", "-mbulk-memory", "-DNDEBUG",
+}
+
+// threadedFlowRuntimeObj returns the prebuilt, native-built (wasi-sdk-24)
+// flow-agnostic flow_runtime.threads.o shipped as staged node data (toolchain v2).
+func (b *Baker) threadedFlowRuntimeObj() ([]byte, error) {
+	obj, err := os.ReadFile(b.home.FlowRuntimeThreadsObjPath())
+	if err != nil {
+		return nil, fmt.Errorf("bake: read prebuilt flow_runtime.threads.o: %w", err)
+	}
+	if len(obj) == 0 {
+		return nil, fmt.Errorf("bake: prebuilt flow_runtime.threads.o is empty")
+	}
+	return obj, nil
+}
+
+// linkThreaded links the composed wasi-threads runtime.wasm: a SHARED-MEMORY
+// reactor (--entry=_initialize) over the wasm32-wasip1-threads sysroot, preserving
+// the wasi.thread-spawn import / wasi_thread_start export the guest-links' pthread
+// use brings in. Memory is imported + shared + growable to 2 GiB (wasi-libc malloc
+// grows it — no fixed-heap hack). The box's lld-16 does NOT accept --export-memory
+// (host provides the shared memory as an import), so it is omitted.
+func (b *Baker) linkThreaded(ctx context.Context, flowRuntimeO, descriptorO []byte, deps []depObject) ([]byte, error) {
+	inFiles := map[string][]byte{
+		"/work/flow_runtime.o": flowRuntimeO,
+		"/work/descriptor.o":   descriptorO,
+	}
+	link := []string{
+		"lld", "wasm-ld",
+		"--entry=_initialize",
+		"--export-table",
+		"--allow-undefined", "--import-undefined",
+		"--shared-memory", "--import-memory", "--max-memory=2147483648",
+		"-z", "stack-size=1048576", "--global-base=1024",
+		"--strip-debug",
+		"/work/flow_runtime.o", "/work/descriptor.o",
+	}
+	for _, d := range deps {
+		name := "/work/dep" + strconv.Itoa(d.index) + ".o"
+		inFiles[name] = d.bytes
+		link = append(link, name)
+	}
+	// malloc/free stay exported: the in-wasm frame marshalling path still
+	// allocates guest memory for output frames (runtime.go writeOutputFrames).
+	link = append(link,
+		"--export-if-defined=malloc",
+		"--export-if-defined=free",
+	)
+	for _, e := range bakeRuntimeExports() {
+		link = append(link, "--export="+e)
+	}
+	sr := "/sysroot/lib/wasm32-wasip1-threads"
+	link = append(link,
+		"-L"+sr, sr+"/crt1-reactor.o",
+		"-lc", "-lc++", "-lc++abi",
+		"-o", "/work/runtime.wasm",
+	)
+	res, err := b.ccThreads.Run(ctx, link, inFiles)
+	if err != nil || res.ExitCode != 0 {
+		return nil, fmt.Errorf("bake: wasi-threads wasm-ld link: err=%v exit=%d stderr=%q", err, res.ExitCode, res.Stderr)
+	}
+	wasm, ok := res.OutFiles["/work/runtime.wasm"]
+	if !ok {
+		return nil, fmt.Errorf("bake: wasi-threads link produced no runtime.wasm")
+	}
+	return wasm, nil
+}
+
+// assertWasiThreadsContract is the C1 bake guard: a wasi-threads flow's artifact
+// MUST declare the isomorphic pthreads contract or the bake fails (never ship an
+// un-threadable "wasi-threads" flow). Same contract the SDK enforces on modules.
+func assertWasiThreadsContract(wasm []byte) error {
+	f := scanWasmThreadFeatures(wasm)
+	var missing []string
+	if !f.SharedImportedMemory {
+		missing = append(missing, "shared imported env.memory")
+	}
+	if !f.ThreadSpawnImport {
+		missing = append(missing, "wasi.thread-spawn import")
+	}
+	if !f.ThreadStartExport {
+		missing = append(missing, "wasi_thread_start export")
+	}
+	if f.EmscriptenThreadHook {
+		missing = append(missing, "UNEXPECTED emscripten JS thread hook")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("wasi-threads artifact guard FAILED (missing/violating: %v) — flow declared wasi-threads but the linked runtime does not thread under WasmEdge", missing)
+	}
+	return nil
+}
 
 // bakeRuntimeExports is the flow-artifact export surface wasm-ld must keep: the
 // full compiled-runtime ABI runtime.go reads (compiledRuntimeExportNames) plus

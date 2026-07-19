@@ -90,6 +90,26 @@ cp "$BOX" "$STAGE/llvm-box.wasm"
 cp -R "$SYSROOT" "$STAGE/sysroot"
 cp "$TPL_INVOKE" "$STAGE/template/space_data_module_invoke.h"
 cp "$TPL_RUNTIME" "$STAGE/template/flow_runtime.cpp"
+
+# Toolchain v2 (optional): the wasi-threads bake bits. Included when SRC carries
+# them (produced by build-threads-bits.sh: sysroot-wasi-threads/ + template/
+# flow_runtime.threads.o). Absent = a v1-shaped tarball (single-thread bakes
+# only); present = v2 (single-thread AND wasi-threads bakes).
+THREADS_SYSROOT="$SRC/sysroot-wasi-threads"
+THREADS_OBJ="$SRC/template/flow_runtime.threads.o"
+HAVE_THREADS=0
+THREADS_OBJ_SHA=""; THREADS_OBJ_BYTES=0; THREADS_SYSROOT_ROLLUP=""; THREADS_SYSROOT_FILES=0
+if [ -d "$THREADS_SYSROOT" ] && [ -f "$THREADS_OBJ" ]; then
+  HAVE_THREADS=1
+  cp -R "$THREADS_SYSROOT" "$STAGE/sysroot-wasi-threads"
+  cp "$THREADS_OBJ" "$STAGE/template/flow_runtime.threads.o"
+  THREADS_OBJ_SHA="$(sha256 "$THREADS_OBJ")"
+  THREADS_OBJ_BYTES="$(wc -c < "$THREADS_OBJ" | tr -d ' ')"
+  THREADS_SYSROOT_ROLLUP="$(cd "$THREADS_SYSROOT" && find . -type f | LC_ALL=C sort | xargs shasum -a256 2>/dev/null | sha256_stdin)"
+  THREADS_SYSROOT_FILES="$(find "$THREADS_SYSROOT" -type f | wc -l | tr -d ' ')"
+  echo "==> v2: including wasi-threads bits (sysroot-wasi-threads/ + flow_runtime.threads.o)" >&2
+fi
+
 find "$STAGE" -name '._*' -delete 2>/dev/null || true
 find "$STAGE" -exec touch -t 200001010000 {} + 2>/dev/null || true
 
@@ -123,6 +143,12 @@ INVOKE_HDR_SHA256 $INVOKE_SHA
 INVOKE_HDR_BYTES $INVOKE_BYTES
 FLOW_RUNTIME_CPP_SHA256 $RUNTIME_SHA
 FLOW_RUNTIME_CPP_BYTES $RUNTIME_BYTES
+HAVE_WASI_THREADS $HAVE_THREADS
+FLOW_RUNTIME_THREADS_O_SHA256 $THREADS_OBJ_SHA
+FLOW_RUNTIME_THREADS_O_BYTES $THREADS_OBJ_BYTES
+# WASI_THREADS_SYSROOT_ROLLUP_SHA256 = sha256( find . -type f | LC_ALL=C sort | xargs shasum -a256 )
+WASI_THREADS_SYSROOT_ROLLUP_SHA256 $THREADS_SYSROOT_ROLLUP
+WASI_THREADS_SYSROOT_FILES $THREADS_SYSROOT_FILES
 TARBALL_NAME flowcc-toolchain-${VERSION}.tar.gz
 TARBALL_SHA256 $TARBALL_SHA
 TARBALL_BYTES $TARBALL_BYTES

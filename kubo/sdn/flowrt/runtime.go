@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 
 	logging "github.com/ipfs/go-log/v2"
+	"github.com/ipfs/kubo/sdn/flatsqlrt"
+	"github.com/ipfs/kubo/sdn/flowcc"
 	"github.com/ipfs/kubo/sdn/modulert"
 	"github.com/ipfs/kubo/sdn/wasmrt"
 )
@@ -60,6 +63,21 @@ type flowNodeInfo struct {
 	DispatchModel string
 }
 
+// aotCompileComposedArtifact AOT-compiles the ONE composed flow artifact for the
+// node's WasmEdge, caching by content hash under the flowcc home. It REUSES the
+// shared EnsureAOTArtifact path (threads-enabled) — never a per-provider-module
+// AOT. Returns (aotBytes, true) on success; on any failure it logs LOUDLY and
+// returns (nil, false) so the caller interprets the portable bytes.
+func aotCompileComposedArtifact(wasm []byte) ([]byte, bool) {
+	cacheDir := filepath.Join(flowcc.ResolveHome().CacheDir(), "flow-aot")
+	aot, err := flatsqlrt.EnsureAOTArtifact(cacheDir, "flowrt-composed", wasm)
+	if err != nil || len(aot) == 0 {
+		log.Warnf("Flow runtime: AOT compile of the composed wasi-threads artifact FAILED (%v) — falling back to INTERPRETED, which is ~95x slower and does NOT parallelize threads. This must be fixed for prod.", err)
+		return nil, false
+	}
+	return aot, true
+}
+
 // NewFlowRuntime loads a compiled flow WASM artifact and binds the runtime ABI.
 // Extra wasmrt options (e.g. additional host import modules such as the
 // module-SDK hostcall bridge) are appended after the defaults.
@@ -75,6 +93,25 @@ func NewFlowRuntime(wasmBytes []byte, maxMemoryPages uint32, extraOpts ...wasmrt
 	}
 	if maxMemoryPages > 0 {
 		opts = append(opts, wasmrt.WithMaxMemoryPages(maxMemoryPages))
+	}
+	// Auto-enable wasi-threads for a baked artifact that declares the isomorphic
+	// pthreads contract (shared imported env.memory + wasi.thread-spawn import +
+	// wasi_thread_start export, no emscripten hooks). The wasi-threads host merges
+	// the shared memory into the flow's "env" host module, so the sdn/env plugin
+	// ABI and the shared memory coexist. A single-thread emscripten flow lacks the
+	// contract and loads EXACTLY as before (unchanged path).
+	if scanWasmThreadFeatures(wasmBytes).isIsomorphicPthreads() {
+		opts = append(opts, wasmrt.WithWASIThreads())
+		log.Infof("Flow runtime: artifact declares the isomorphic wasi-threads contract — enabling WithWASIThreads (guest pthreads run under WasmEdge)")
+		// AOT-at-load: a wasi-threads composed artifact runs ~95x slower AND does
+		// not parallelize when INTERPRETED (measured); AOT is required for both
+		// speed and real thread scaling. Compile once, cache by content hash
+		// (sha(wasm)+WasmEdge version); on failure fall back to interpreted with a
+		// LOUD warning. Scope: the ONE composed artifact only (C3).
+		if aot, ok := aotCompileComposedArtifact(wasmBytes); ok {
+			wasmBytes = aot
+			log.Infof("Flow runtime: loaded AOT-compiled wasi-threads artifact (native code; threads parallelize)")
+		}
 	}
 	opts = append(opts, extraOpts...)
 
@@ -119,6 +156,30 @@ func NewFlowRuntime(wasmBytes []byte, maxMemoryPages uint32, extraOpts ...wasmrt
 		rt.NodeCount, rt.EdgeCount, rt.TriggerCount, rt.DepCount, rt.hasDrainLinked)
 
 	return rt, nil
+}
+
+// ThreadPeak / ThreadSpawnCount / WorkerOSThreadIDs expose the wasi-threads host
+// counters for the running artifact (0/empty for a single-thread flow). They are
+// the live proof that guest pthreads spawn + run under WasmEdge on the node.
+func (rt *FlowRuntime) ThreadPeak() int {
+	if rt.mod == nil {
+		return 0
+	}
+	return rt.mod.PeakConcurrentThreads()
+}
+
+func (rt *FlowRuntime) ThreadSpawnCount() int {
+	if rt.mod == nil {
+		return 0
+	}
+	return rt.mod.ThreadSpawnCount()
+}
+
+func (rt *FlowRuntime) WorkerOSThreadIDs() []int64 {
+	if rt.mod == nil {
+		return nil
+	}
+	return rt.mod.WorkerOSThreadIDs()
 }
 
 // Release frees all WasmEdge resources.
