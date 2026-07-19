@@ -7,7 +7,7 @@
   self-hosted same-origin from /fonts/*.woff2, border-radius:0 everywhere except
   status dots, cyan/ice accents, square ticked instrument panels, glowing status
   dots. NO directional arrow glyphs on any control (nav/pagination uses the
-  words PREV / NEXT / BACK TO RUN LOG, never an arrow character).
+  words PREV / NEXT / breadcrumb crumb labels, never an arrow character).
 
   Single self-contained HTML+CSS+JS document. NO external references of ANY kind
   (no CDN scripts, no external fonts, no remote images): every network call is a
@@ -16,26 +16,46 @@
   This whole file is the inline CONTENT of the App 2 SDS $APP record — the
   record's entry UI page — served by the node at /sdn/v1/apps/supplemental-omm.
 
-  # Layout (owner-directed reconfiguration)
+  # Data source (owner-directed cutover)
+  The run log is DERIVED from the mounted OD flow (org.sdn.flows.od-supplemental-omm)
+  via sdn/sdnodresults: real fire-history-bounded runs, or — on a fresh process
+  with no fire history yet — a one-time "backfill" pseudo-run surfacing whatever
+  a PRIOR process already stored (e.g. a completed full-catalog drain). The old
+  sdnruns.Store (Go-orchestration era, inert per the SDN_OD_FLOW_LOOP.md STOP
+  block) is no longer this board's data source; a node with no OD flow mounted
+  honestly shows "NO RUNS YET", never a stale historical row.
+
+  # Layout (owner-directed two-level drill-down)
   The board has NO standalone "latest run" / "current run" snapshot box — that
   panel is deleted outright, not hidden. The main element is a single paginated
   RUN LOG table (5 runs per page): a run currently executing on this node is
   synthesized from the `live` field and always shown as the TOP row of page 1
   with status "ongoing" (never invented — absent when the node reports no live
-  run). Clicking a row REPLACES the run-log table with a drill-down view: a
-  single-row table of that run's own stats (same columns as the log), and below
-  it a paginated (10 objects per page) searchable table of every object the run
-  fitted. A "BACK TO RUN LOG" control returns to the run log (no arrow glyph).
+  run). Clicking a row drills down to LEVEL 1 (every provider the flow
+  DECLARES, with per-provider stats honestly flagged Unavailable until
+  per-object provider attribution is wired — see sdn/sdnodresults' package doc
+  for exactly what telemetry is missing and why). Clicking a provider drills
+  to LEVEL 2: a searchable (10/page), downloadable table of the run's fitted
+  objects (real $OMM identity + $OBD fit telemetry — WRMS/iterations/fit-span —
+  joined by NORAD), plus bulk download. Navigation is BIG CHUNKY BREADCRUMBS
+  (RUN LOG / <run-id> / <provider>), each crumb clickable to jump back a level
+  — there is NO "back" button anywhere (no arrow glyph either way).
+
+  Bulk download: no server-side zip bundling exists today (documented choice,
+  not a silent gap) — "download selected/all matching" triggers one same-origin
+  GET per record (content-addressed, exact stored bytes), staggered client-side
+  so the browser never treats it as a popup flood.
 
   API wiring (all same-origin /sdn/v1/*):
-    GET  /sdn/v1/runs                                  run list + the live run
-    GET  /sdn/v1/runs/{id}                             one run: summary + rows
-    GET  /sdn/v1/runs/{id}/objects?search=<text>        searchable per-object rows
-    GET  /sdn/v1/runs/{id}/objects/{norad}/download?format=tle|omm|cdm
-    GET  /sdn/v1/modules/supplemental-omm/config       provider set + cron
-    PUT  /sdn/v1/modules/supplemental-omm/config       persist provider set + cron
-    GET  /sdn/v1/modules                               effective cron interval
-    GET  /sdn/v1/node                                  node identity (best effort)
+    GET  /sdn/v1/runs                                   run list + the live run
+    GET  /sdn/v1/runs/{id}                              one run's single-row stats
+    GET  /sdn/v1/runs/{id}/providers                     LEVEL 1: declared providers
+    GET  /sdn/v1/runs/{id}/objects?search=<text>         LEVEL 2: searchable objects
+    GET  /sdn/v1/runs/{id}/download?cid=<cid>            one record, exact stored bytes
+    GET  /sdn/v1/modules/supplemental-omm/config        provider set + cron
+    PUT  /sdn/v1/modules/supplemental-omm/config        persist provider set + cron
+    GET  /sdn/v1/modules                                effective cron interval
+    GET  /sdn/v1/node                                   node identity (best effort)
 
   Pagination note: /sdn/v1/runs/{id}/objects already filters server-side via
   `search` (substring over NORAD id / object name / object id); it returns the
@@ -203,6 +223,28 @@
   .divider .lbl2 { font-size:10px; letter-spacing:0.2em; color:var(--kicker); }
   .divider .rule { flex:1; height:1px; background:rgba(90,150,180,0.1); }
 
+  /* -------------------------------------------------------------- breadcrumbs (BIG CHUNKY, no arrow glyphs) */
+  .breadcrumbs { display:flex; flex-wrap:wrap; align-items:center; gap:0; }
+  .crumb { font-family:var(--font-display); font-weight:700; font-size:15px; letter-spacing:0.06em;
+    background:transparent; border:1px solid var(--line-strong); color:var(--muted);
+    padding:9px 16px; cursor:pointer; }
+  .crumb:hover:not(.current) { border-color:rgba(120,190,230,0.6); color:var(--ink); background:rgba(74,166,224,0.08); }
+  .crumb.current { color:var(--cyan-light); border-color:rgba(53,201,216,0.55); background:rgba(53,201,216,0.12); cursor:default; }
+  .crumb-sep { display:inline-flex; align-items:center; justify-content:center; width:34px; color:var(--kicker);
+    font-family:var(--font-display); font-weight:700; font-size:15px; }
+
+  /* -------------------------------------------------------------- Level-1 provider table */
+  .prov-stats { display:flex; flex-direction:column; }
+  .prov-stats .head, .prov-stats .row { display:grid; grid-template-columns:1.4fr 0.7fr 0.7fr 0.9fr 0.7fr 0.7fr 1.2fr; gap:0 12px; align-items:center; }
+  .prov-stats .head { padding:0 6px 8px; border-bottom:1px solid var(--line-soft); font-size:9.5px; letter-spacing:0.14em; color:var(--kicker); }
+  .prov-stats .row { padding:11px 6px; border-bottom:1px solid var(--line-faint); cursor:pointer; }
+  .prov-stats .row:hover { background:rgba(74,166,224,0.07); }
+  .prov-stats .row:last-child { border-bottom:none; }
+
+  /* -------------------------------------------------------------- bulk download */
+  .bulk-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:10px 0 4px; }
+  .select-col { width:26px; }
+
   /* -------------------------------------------------------------- run rows (log + single-row detail) */
   .runs { display:flex; flex-direction:column; }
   .runs .head, .runs .row { display:grid; grid-template-columns:1.6fr 0.9fr 1.5fr 0.8fr 0.9fr 0.7fr; gap:0 12px; align-items:center; }
@@ -308,25 +350,50 @@
     <!-- ============================ DRILL-DOWN: REPLACES the run log ============================ -->
     <section class="panel ticked span-12" id="detail-view" style="--tick:#35c9d8; display:none"><span class="tick-b"></span>
       <div class="panel-head">
-        <p class="panel-kicker">RUN DETAIL</p>
-        <button class="btn sm" id="detail-back" type="button">BACK TO RUN LOG</button>
+        <nav class="breadcrumbs" id="breadcrumbs" aria-label="Drill-down navigation"></nav>
       </div>
 
       <div id="detail-stats">
         <div class="state-block loading"><strong><span class="spinner"></span>LOADING</strong><span>reading run</span></div>
       </div>
 
-      <div class="divider" style="margin-top:18px"><span class="lbl2">FITTED OBJECTS</span><span class="rule"></span></div>
-
-      <div class="field" style="max-width:340px;margin:12px 0 14px">
-        <span class="fld-label">SEARCH OBJECTS</span>
-        <input class="input" id="search" type="search" placeholder="e.g. 25544 or object name" autocomplete="off">
+      <!-- ---------------- LEVEL 1: every provider the flow declares ---------------- -->
+      <div id="level-providers">
+        <div class="divider" style="margin-top:18px"><span class="lbl2">PROVIDERS IN THIS RUN</span><span class="rule"></span></div>
+        <div id="providers-level-body">
+          <div class="state-block loading"><strong><span class="spinner"></span>LOADING</strong><span>reading providers</span></div>
+        </div>
       </div>
 
-      <div id="detail-objects">
-        <div class="state-block"><strong>NO RUN SELECTED</strong><span>Select a run from the log to inspect its fitted objects.</span></div>
+      <!-- ---------------- LEVEL 2: one provider's fitted objects ---------------- -->
+      <div id="level-objects" style="display:none">
+        <div class="divider" style="margin-top:18px"><span class="lbl2">FITTED OBJECTS</span><span class="rule"></span></div>
+
+        <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; margin:12px 0 6px">
+          <div class="field" style="max-width:340px">
+            <span class="fld-label">SEARCH OBJECTS</span>
+            <input class="input" id="search" type="search" placeholder="e.g. 25544 or object name" autocomplete="off">
+          </div>
+          <div class="field" style="max-width:260px">
+            <span class="fld-label">DATA SOURCE</span>
+            <select class="input" id="source-filter" disabled>
+              <option>All sources (not yet attributable)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="bulk-bar">
+          <button class="btn" id="dl-select-all" type="button">SELECT ALL ON PAGE</button>
+          <button class="btn" id="dl-clear" type="button">CLEAR SELECTION</button>
+          <button class="btn primary" id="dl-selected" type="button" disabled>DOWNLOAD SELECTED (0)</button>
+          <button class="btn" id="dl-all-matching" type="button">DOWNLOAD ALL MATCHING (0)</button>
+        </div>
+
+        <div id="detail-objects">
+          <div class="state-block"><strong>NO RUN SELECTED</strong><span>Select a run from the log to inspect its fitted objects.</span></div>
+        </div>
+        <div id="detail-objects-pagination"></div>
       </div>
-      <div id="detail-objects-pagination"></div>
     </section>
   </div>
 
@@ -362,20 +429,27 @@
   ];
 
   var $ = function (id) { return document.getElementById(id); };
+  function providerLabel(id) {
+    var found = PROVIDERS.filter(function (p) { return p.id === id; })[0];
+    return found ? found.label : id;
+  }
 
   var state = {
-    runs: [],              // Summary[] as returned by GET /sdn/v1/runs (may
+    runs: [],              // RunSummary[] as returned by GET /sdn/v1/runs (may
                             // include the live run's own row too — filtered out
                             // of the log in favor of the synthesized ongoing row)
     live: null,             // LiveRun snapshot or null
-    view: "list",           // "list" | "detail"
+    view: "list",           // "list" | "providers" (Level 1) | "objects" (Level 2)
     listPage: 1,            // run-log page, 1-based, RUN_PAGE_SIZE per page
     selectedRunId: null,
-    detailRun: null,        // full Run of the selected id
-    objects: [],            // ObjectResult[] for the selected run (server search-filtered)
+    selectedProvider: null, // provider short id chosen at Level 1, for Level 2's breadcrumb
+    detailRun: null,        // RunSummary of the selected id (the single-row stats table)
+    providers: [],          // ProviderStat[] for the selected run (Level 1)
+    objects: [],            // ObjectRow[] for the selected run (server search-filtered)
     objectsTotal: 0,
     objPage: 1,              // objects page, 1-based, OBJ_PAGE_SIZE per page
     search: "",
+    selected: {},            // omm_cid -> true, the Level-2 bulk-download selection
     config: null,            // stored ModuleConfig
     configOk: false,         // config endpoint reachable + module registered
     configMsg: "",           // why not, when configOk is false
@@ -727,37 +801,77 @@
 
   // ------------------------------------------------------------ view switching
   function renderView() {
-    var isDetail = state.view === "detail";
-    $("runlog-view").style.display = isDetail ? "none" : "";
-    $("detail-view").style.display = isDetail ? "" : "none";
-    if (!isDetail) renderRunLogView();
+    var inDrillDown = state.view === "providers" || state.view === "objects";
+    $("runlog-view").style.display = inDrillDown ? "none" : "";
+    $("detail-view").style.display = inDrillDown ? "" : "none";
+    if (!inDrillDown) { renderRunLogView(); return; }
+    renderBreadcrumbs();
+    $("level-providers").style.display = state.view === "providers" ? "" : "none";
+    $("level-objects").style.display = state.view === "objects" ? "" : "none";
   }
-  function selectRun(id) {
-    state.selectedRunId = id;
-    state.view = "detail";
-    state.search = "";
-    state.objPage = 1;
-    state.detailRun = null;
-    state.objects = [];
-    state.objectsTotal = 0;
-    var searchInput = $("search");
-    if (searchInput) searchInput.value = "";
-    renderView();
-    loadDetail();
+
+  // ------------------------------------------------------------ breadcrumbs (no BACK button — big chunky crumbs)
+  function renderBreadcrumbs() {
+    var parts = [];
+    parts.push('<button class="crumb' + (state.view ? "" : " current") + '" data-crumb="list" type="button">RUN LOG</button>');
+    if (state.view === "providers" || state.view === "objects") {
+      parts.push('<span class="crumb-sep">/</span>');
+      parts.push('<button class="crumb' + (state.view === "providers" ? " current" : "") + '" data-crumb="providers" type="button">' + esc(state.selectedRunId) + '</button>');
+    }
+    if (state.view === "objects") {
+      parts.push('<span class="crumb-sep">/</span>');
+      parts.push('<button class="crumb current" data-crumb="objects" type="button" disabled>' + esc(providerLabel(state.selectedProvider)) + '</button>');
+    }
+    var nav = $("breadcrumbs");
+    nav.innerHTML = parts.join("");
+    nav.querySelectorAll("[data-crumb]").forEach(function (btn) {
+      var target = btn.getAttribute("data-crumb");
+      if (target === "list") btn.addEventListener("click", goToList);
+      if (target === "providers") btn.addEventListener("click", function () { goToProviders(state.selectedRunId); });
+    });
   }
-  function goBackToList() {
+
+  function goToList() {
     state.view = "list";
     state.selectedRunId = null;
+    state.selectedProvider = null;
     renderView();
   }
 
-  // ------------------------------------------------------------ drill-down (single-row stats + paginated objects)
-  function loadDetail() {
+  function selectRun(id) {
+    goToProviders(id);
+  }
+
+  function goToProviders(id) {
+    state.selectedRunId = id;
+    state.selectedProvider = null;
+    state.view = "providers";
+    state.detailRun = null;
+    state.providers = [];
+    renderView();
+    loadDetailStats();
+    loadProviders();
+  }
+
+  function goToObjects(providerId) {
+    state.selectedProvider = providerId;
+    state.view = "objects";
+    state.search = "";
+    state.objPage = 1;
+    state.objects = [];
+    state.objectsTotal = 0;
+    state.selected = {};
+    var searchInput = $("search");
+    if (searchInput) searchInput.value = "";
+    renderView();
+    loadObjects();
+  }
+
+  // ------------------------------------------------------------ single-row run stats (shown at both drill-down levels)
+  function loadDetailStats() {
     var id = state.selectedRunId;
     if (!id) return;
     $("detail-stats").innerHTML = loadingBlock("reading run " + id);
-    $("detail-objects").innerHTML = "";
-    $("detail-objects-pagination").innerHTML = "";
     getJSON(API + "/runs/" + encodeURIComponent(id)).then(function (res) {
       if (state.selectedRunId !== id) return;
       if (!res.ok) {
@@ -767,7 +881,6 @@
       }
       state.detailRun = res.data;
       renderDetailStats();
-      loadObjects();
     });
   }
 
@@ -786,9 +899,60 @@
     };
     $("detail-stats").innerHTML =
       '<div class="runs">' + runHeadHTML() + runRowHTML(row, { clickable: false }) + '</div>' +
-      (run.error ? '<div class="notice bad"><strong>RUN ERROR</strong> &middot; ' + esc(run.error) + '</div>' : '');
+      (run.error ? '<div class="notice bad"><strong>RUN ERROR</strong> &middot; ' + esc(run.error) + '</div>' : '') +
+      (run.note ? '<div class="notice"><strong>NOTE</strong> &middot; ' + esc(run.note) + '</div>' : '');
   }
 
+  // ------------------------------------------------------------ LEVEL 1: providers table
+  function loadProviders() {
+    var id = state.selectedRunId;
+    if (!id) return;
+    $("providers-level-body").innerHTML = loadingBlock("reading run " + id + " providers");
+    getJSON(API + "/runs/" + encodeURIComponent(id) + "/providers").then(function (res) {
+      if (state.selectedRunId !== id) return;
+      if (!res.ok) {
+        $("providers-level-body").innerHTML = emptyBlock("PROVIDERS UNAVAILABLE", "Could not read the run's providers (HTTP " + (res.status || 0) + ").");
+        return;
+      }
+      state.providers = (res.data && Array.isArray(res.data.providers)) ? res.data.providers : [];
+      renderProvidersLevel();
+    });
+  }
+
+  function renderProvidersLevel() {
+    var body = $("providers-level-body");
+    var rows = state.providers;
+    if (rows.length === 0) {
+      body.innerHTML = emptyBlock("NO PROVIDERS DECLARED", "This run's flow declares no source providers.");
+      return;
+    }
+    var head =
+      '<div class="head"><span>PROVIDER</span><span class="num">TOTAL</span><span class="num">BEATS</span>' +
+      '<span class="num">AVG RMS</span><span class="num">SKIPPED</span><span class="num">ERRORS</span><span>LAST PULLED</span></div>';
+    var body_rows = rows.map(function (p) {
+      return '<div class="row" data-provider="' + attr(p.provider) + '" tabindex="0" role="button">' +
+        '<div class="prov-name">' + esc(p.label || p.provider) + '</div>' +
+        '<div class="cell-mono num">' + (p.unavailable ? "—" : fmtInt(p.total)) + '</div>' +
+        '<div class="cell-mono num">' + (p.unavailable ? "—" : fmtInt(p.beats)) + '</div>' +
+        '<div class="cell-mono num">' + (p.unavailable ? "—" : fmtRms(p.avg_rms)) + '</div>' +
+        '<div class="cell-mono num">' + (p.unavailable ? "—" : fmtInt(p.skipped)) + '</div>' +
+        '<div class="cell-mono num">' + (p.unavailable ? "—" : fmtInt(p.errors)) + '</div>' +
+        '<div class="cell-dim">' + (p.unavailable ? "—" : esc(p.last_pulled || "—")) + '</div>' +
+        '</div>';
+    }).join("");
+    var note = rows[0] && rows[0].unavailable
+      ? '<div class="notice"><strong>PER-PROVIDER STATS NOT YET ATTRIBUTABLE</strong> &middot; ' + esc(rows[0].note) + '</div>'
+      : '';
+    body.innerHTML = '<div class="prov-stats">' + head + body_rows + '</div>' + note +
+      '<p class="hint" style="margin-top:10px">Click a provider to inspect this run’s fitted objects (the objects table below is the run’s FULL object set until per-object provider attribution ships).</p>';
+    body.querySelectorAll("[data-provider]").forEach(function (el) {
+      var pick = function () { goToObjects(el.getAttribute("data-provider")); };
+      el.addEventListener("click", pick);
+      el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+    });
+  }
+
+  // ------------------------------------------------------------ LEVEL 2: searchable, paginated, downloadable objects
   function loadObjects() {
     var id = state.selectedRunId;
     if (!id) return;
@@ -811,10 +975,11 @@
   function renderObjectsView() {
     var container = $("detail-objects");
     var objs = state.objects;
+    updateBulkBar();
     if (objs.length === 0) {
       container.innerHTML = state.search
         ? emptyBlock("NO MATCH", "No fitted object in run " + state.selectedRunId + " matches “" + state.search + "”.")
-        : emptyBlock("NO OBJECTS", "Run " + state.selectedRunId + " fitted no objects (no enabled provider returned ephemeris).");
+        : emptyBlock("NO OBJECTS", "Run " + state.selectedRunId + " fitted no objects.");
       $("detail-objects-pagination").innerHTML = "";
       return;
     }
@@ -823,53 +988,104 @@
     if (state.objPage < 1) state.objPage = 1;
     var pageObjs = paginate(objs, state.objPage, OBJ_PAGE_SIZE);
     container.innerHTML = renderObjectsTable(state.selectedRunId, pageObjs, state.objectsTotal);
+    bindObjectRowChecks(container);
     renderPagination("detail-objects-pagination", state.objPage, totalPages, function (p) {
       state.objPage = p;
       renderObjectsView();
     });
   }
 
+  function downloadURL(runId, cid) {
+    return API + "/runs/" + encodeURIComponent(runId) + "/download?cid=" + encodeURIComponent(cid);
+  }
+
   function renderObjectsTable(runId, objs, total) {
     var head =
       '<thead><tr>' +
-        '<th>NORAD</th><th>OBJECT</th><th>PROVIDER</th>' +
-        '<th class="num">RMS (KM)</th><th class="num">CELESTRAK RMS</th><th class="num">SPACE-TRACK RMS</th>' +
-        '<th>PARITY</th><th>OMM CID</th><th>ELEMENTS (VCM)</th>' +
+        '<th class="select-col"></th><th>NORAD</th><th>OBJECT</th><th>PROVIDER</th><th>SOURCE</th>' +
+        '<th class="num">RMS (KM)</th><th class="num">ITERATIONS</th><th class="num">FIT SPAN (D)</th>' +
+        '<th>EPOCH</th><th>DOWNLOAD</th>' +
       '</tr></thead>';
     var rows = objs.map(function (o) {
-      var parity;
-      if (o.error) parity = '<span class="chip bad">ERROR</span>';
-      else if (o.beats_celestrak === true) parity = '<span class="chip good">BEATS</span>';
-      else if (o.beats_celestrak === false) parity = '<span class="chip warn">BEHIND</span>';
-      else if (!o.converged) parity = '<span class="chip warn">NO CONV</span>';
-      else parity = '<span class="chip">—</span>';
-
-      var norad = o.norad;
-      var base = API + "/runs/" + encodeURIComponent(runId) + "/objects/" + encodeURIComponent(norad) + "/download?format=";
-      var dl = o.error ? '<span class="cell-dim">—</span>' :
-        '<span class="dl-links">' +
-          '<a class="btn sm" href="' + attr(base + "tle") + '" download title="Download NORAD TLE">TLE</a>' +
-          '<a class="btn sm" href="' + attr(base + "omm") + '" download title="Download CCSDS OMM (KVN)">OMM</a>' +
-          '<a class="btn sm" href="' + attr(base + "cdm") + '" download title="Download Space Force VCM element block">CDM</a>' +
-        '</span>';
-
+      var dl = o.omm_cid
+        ? '<span class="dl-links">' +
+            '<a class="btn sm" href="' + attr(downloadURL(runId, o.omm_cid)) + '" download title="Download the exact stored $OMM FlatBuffer">OMM</a>' +
+            (o.obd_cid ? '<a class="btn sm" href="' + attr(downloadURL(runId, o.obd_cid)) + '" download title="Download the exact stored $OBD FlatBuffer">OBD</a>' : '') +
+          '</span>'
+        : '<span class="cell-dim">—</span>';
+      var checked = state.selected[o.omm_cid] ? " checked" : "";
       return '<tr>' +
-        '<td class="hi">' + esc(norad) + '</td>' +
+        '<td class="select-col"><input type="checkbox" data-obj-check="' + attr(o.omm_cid || "") + '"' + (o.omm_cid ? "" : " disabled") + checked + '></td>' +
+        '<td class="hi">' + esc(o.norad) + '</td>' +
         '<td>' + esc(o.object_name || "—") + '</td>' +
-        '<td class="cell-dim">' + esc(o.provider || "—") + '</td>' +
-        '<td class="num hi">' + (o.error ? "—" : fmtRms(o.rms)) + '</td>' +
-        '<td class="num">' + fmtRmsPtr(o.celestrak_rms) + '</td>' +
-        '<td class="num">' + fmtRmsPtr(o.spacetrack_rms) + '</td>' +
-        '<td>' + parity + '</td>' +
-        '<td class="cid" title="' + attr(o.omm_cid || "") + '">' + esc(shortCid(o.omm_cid)) + '</td>' +
+        '<td class="cell-dim">' + (o.unattributed ? "—" : esc(o.provider || "—")) + '</td>' +
+        '<td class="cell-dim">' + (o.unattributed ? "—" : esc(o.source || "—")) + '</td>' +
+        '<td class="num hi">' + (o.has_rms ? fmtRms(o.rms) : "—") + '</td>' +
+        '<td class="num">' + (o.has_rms ? fmtInt(o.iterations) : "—") + '</td>' +
+        '<td class="num">' + (o.fit_span_days ? o.fit_span_days.toFixed(2) : "—") + '</td>' +
+        '<td class="cell-dim">' + esc(o.epoch || "—") + '</td>' +
         '<td>' + dl + '</td>' +
-        (o.error ? '</tr><tr><td colspan="9" class="cell-dim" style="color:var(--red-light)">' + esc(o.error) + '</td>' : '') +
         '</tr>';
     }).join("");
     var note = '<p class="hint" style="margin-top:10px">' + total + ' object' + (total === 1 ? '' : 's') +
       ' matched' + (state.search ? ' “' + esc(state.search) + '”' : '') +
-      ' &middot; RMS = position-residual over the SGP4 fit (km, TEME) &middot; CelesTrak / Space-Track columns are the reference’s OWN elements scored on the SAME ephemeris.</p>';
+      ' &middot; RMS = position-residual over the SGP4 fit (km, TEME), from the stored $OBD &middot; PROVIDER/SOURCE show — until per-object attribution ships (see the providers table above).</p>';
     return '<div class="table-scroll"><table class="obj">' + head + '<tbody>' + rows + '</tbody></table></div>' + note;
+  }
+
+  function bindObjectRowChecks(container) {
+    container.querySelectorAll("[data-obj-check]").forEach(function (cb) {
+      cb.addEventListener("change", function () {
+        var cid = cb.getAttribute("data-obj-check");
+        if (cb.checked) state.selected[cid] = true; else delete state.selected[cid];
+        updateBulkBar();
+      });
+    });
+  }
+
+  function selectedCount() { return Object.keys(state.selected).length; }
+
+  function updateBulkBar() {
+    var n = selectedCount();
+    var dlBtn = $("dl-selected");
+    if (dlBtn) { dlBtn.textContent = "DOWNLOAD SELECTED (" + n + ")"; dlBtn.disabled = n === 0; }
+    var allBtn = $("dl-all-matching");
+    if (allBtn) allBtn.textContent = "DOWNLOAD ALL MATCHING (" + state.objects.length + ")";
+  }
+
+  // Sequential, staggered downloads (documented choice: no server-side zip
+  // bundling exists today — see sdn/sdnapi/runs.go's download route doc —
+  // so bulk download triggers one same-origin GET per record, spaced out so
+  // the browser never treats it as a popup flood).
+  function sequentialDownload(cids) {
+    var runId = state.selectedRunId;
+    cids.forEach(function (cid, i) {
+      setTimeout(function () {
+        var a = document.createElement("a");
+        a.href = downloadURL(runId, cid);
+        a.download = "";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }, i * 260);
+    });
+  }
+
+  function bindBulkControls() {
+    var selectAll = $("dl-select-all");
+    if (selectAll) selectAll.addEventListener("click", function () {
+      var start = (state.objPage - 1) * OBJ_PAGE_SIZE;
+      state.objects.slice(start, start + OBJ_PAGE_SIZE).forEach(function (o) { if (o.omm_cid) state.selected[o.omm_cid] = true; });
+      renderObjectsView();
+    });
+    var clear = $("dl-clear");
+    if (clear) clear.addEventListener("click", function () { state.selected = {}; renderObjectsView(); });
+    var dlSelected = $("dl-selected");
+    if (dlSelected) dlSelected.addEventListener("click", function () { sequentialDownload(Object.keys(state.selected)); });
+    var dlAll = $("dl-all-matching");
+    if (dlAll) dlAll.addEventListener("click", function () {
+      sequentialDownload(state.objects.map(function (o) { return o.omm_cid; }).filter(Boolean));
+    });
   }
 
   // ------------------------------------------------------------ load orchestration
@@ -928,8 +1144,7 @@
 
   // ------------------------------------------------------------ boot
   bindSearch();
-  var backBtn = $("detail-back");
-  if (backBtn) backBtn.addEventListener("click", goBackToList);
+  bindBulkControls();
   renderStatus(true);
   loadNode();
   renderView();

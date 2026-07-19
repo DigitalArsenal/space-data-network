@@ -1,43 +1,41 @@
 package sdnapi
 
-// Supplemental-OMM RUN API — the read-only board surface over the node's OD-fit
-// run history. It is a SEPARATE handler from the core NewHandler surface (like the
-// credentials admin handler): it owns the /sdn/v1/runs subtree and is mounted on
-// the same loopback listener by the kubo plugin. Every route is GET.
+// Supplemental-OMM RUN API — the read-only board surface over the node's
+// REAL OD-fit results, derived from the mounted OD ServiceFlow's fire history
+// + its linked FlatSQL store (sdn/sdnodresults). It is a SEPARATE handler
+// from the core NewHandler surface (like the credentials admin handler): it
+// owns the /sdn/v1/runs subtree and is mounted on the same loopback listener
+// by the kubo plugin. Every route is GET.
 //
-//	GET /sdn/v1/runs                                   list runs (+ the live run)
-//	GET /sdn/v1/runs/{id}                              one run: summary + per-object stats
-//	GET /sdn/v1/runs/{id}/objects?search=<NORAD>       searchable per-object rows
-//	GET /sdn/v1/runs/{id}/objects/{norad}/download?format=tle|omm|cdm
-//	                                                   VCM-format element download
+//	GET /sdn/v1/runs                                        run log (+ the live run)
+//	GET /sdn/v1/runs/{id}                                   one run's single-row stats
+//	GET /sdn/v1/runs/{id}/providers                          LEVEL 1: declared providers
+//	GET /sdn/v1/runs/{id}/objects?search=<text>              LEVEL 2: searchable objects
+//	GET /sdn/v1/runs/{id}/download?cid=<cid>                 one record, exact stored bytes
 //
-// The reader is resolved per request (nil until the runtime is up), so the
-// listener may start before the run engine exists and still report empty.
+// This REPLACES the disconnected, inert sdnruns.Store as the run log's data
+// source (the pre-existing Go-orchestration run engine, made fully inert per
+// the SDN_OD_FLOW_LOOP.md STOP block — see plugin/plugins/sdnruntime/sdnruns.go
+// — its 82 historical rows are stale and no longer reflect what the WASM
+// engine actually stores; derived runs from the flow's OWN fire history are
+// the run log going forward). The reader is resolved per request (nil before
+// the runtime is up, or on a node with no OD flow mounted), so the listener
+// may start before the run engine exists and still report an honest empty
+// result — never a crash, never an invented row.
 
 import (
-	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
-	"github.com/ipfs/kubo/sdn/sdnruns"
+	"github.com/ipfs/kubo/sdn/sdnodresults"
 )
-
-// RunsReader is the read surface over the supplemental-OMM run store.
-// *sdnruns.Store satisfies it.
-type RunsReader interface {
-	List() []sdnruns.Summary
-	Get(id string) (sdnruns.Run, error)
-	Objects(id, search string) ([]sdnruns.ObjectResult, error)
-	Object(id string, norad uint32) (sdnruns.ObjectResult, error)
-	Live() (sdnruns.LiveRun, bool)
-}
 
 // RunsDeps are the live sources the run API reads.
 type RunsDeps struct {
-	// Reader returns the live run store, or nil when the run engine is not up yet
-	// (the routes then report empty/unavailable rather than crashing).
-	Reader func() RunsReader
+	// Reader returns the live OD-results reader, or nil when the OD flow is
+	// not mounted / the runtime is not up yet (the routes then report empty
+	// rather than crashing — the honest fallback for a node with no OD flow).
+	Reader func() *sdnodresults.Reader
 }
 
 type runsHandler struct {
@@ -51,12 +49,13 @@ func NewRunsHandler(deps RunsDeps) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /sdn/v1/runs", h.list)
 	mux.HandleFunc("GET /sdn/v1/runs/{id}", h.get)
+	mux.HandleFunc("GET /sdn/v1/runs/{id}/providers", h.providers)
 	mux.HandleFunc("GET /sdn/v1/runs/{id}/objects", h.objects)
-	mux.HandleFunc("GET /sdn/v1/runs/{id}/objects/{norad}/download", h.download)
+	mux.HandleFunc("GET /sdn/v1/runs/{id}/download", h.download)
 	return mux
 }
 
-func (h *runsHandler) reader() RunsReader {
+func (h *runsHandler) reader() *sdnodresults.Reader {
 	if h.deps.Reader == nil {
 		return nil
 	}
@@ -66,14 +65,14 @@ func (h *runsHandler) reader() RunsReader {
 // runsListResp is the GET /sdn/v1/runs body: every run's summary plus the live
 // (currently executing) run, so the board can render progress at a glance.
 type runsListResp struct {
-	Runs []sdnruns.Summary `json:"runs"`
-	Live *sdnruns.LiveRun  `json:"live"`
+	Runs []sdnodresults.RunSummary `json:"runs"`
+	Live *sdnodresults.LiveRun     `json:"live"`
 }
 
 func (h *runsHandler) list(w http.ResponseWriter, _ *http.Request) {
-	resp := runsListResp{Runs: []sdnruns.Summary{}}
+	resp := runsListResp{Runs: []sdnodresults.RunSummary{}}
 	if rd := h.reader(); rd != nil {
-		if list := rd.List(); list != nil {
+		if list := rd.Runs(); list != nil {
 			resp.Runs = list
 		}
 		if live, ok := rd.Live(); ok {
@@ -91,27 +90,54 @@ func (h *runsHandler) get(w http.ResponseWriter, r *http.Request) {
 	}
 	rd := h.reader()
 	if rd == nil {
-		writeErr(w, http.StatusServiceUnavailable, "run engine unavailable")
+		writeErr(w, http.StatusServiceUnavailable, "the OD flow is not mounted on this node")
 		return
 	}
-	run, err := rd.Get(id)
-	if errors.Is(err, sdnruns.ErrRunNotFound) {
+	run, ok := rd.Run(id)
+	if !ok {
 		writeErr(w, http.StatusNotFound, "run not found")
-		return
-	}
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, run)
 }
 
-// objectsResp is the GET /sdn/v1/runs/{id}/objects body.
+// providersResp is the GET /sdn/v1/runs/{id}/providers body — LEVEL 1 of the
+// drill-down: one row per provider the flow DECLARES, honestly flagged when
+// its per-provider stats are not yet attributable (see sdnodresults' doc).
+type providersResp struct {
+	RunID     string                      `json:"run_id"`
+	Providers []sdnodresults.ProviderStat `json:"providers"`
+}
+
+func (h *runsHandler) providers(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "run id is required")
+		return
+	}
+	rd := h.reader()
+	if rd == nil {
+		writeErr(w, http.StatusServiceUnavailable, "the OD flow is not mounted on this node")
+		return
+	}
+	providers, ok := rd.RunProviders(id)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "run not found")
+		return
+	}
+	if providers == nil {
+		providers = []sdnodresults.ProviderStat{}
+	}
+	writeJSON(w, http.StatusOK, providersResp{RunID: id, Providers: providers})
+}
+
+// objectsResp is the GET /sdn/v1/runs/{id}/objects body — LEVEL 2 of the
+// drill-down: real per-object rows, searchable by norad/name/object id.
 type objectsResp struct {
-	RunID   string                 `json:"run_id"`
-	Search  string                 `json:"search,omitempty"`
-	Total   int                    `json:"total"`
-	Objects []sdnruns.ObjectResult `json:"objects"`
+	RunID   string                   `json:"run_id"`
+	Search  string                   `json:"search,omitempty"`
+	Total   int                      `json:"total"`
+	Objects []sdnodresults.ObjectRow `json:"objects"`
 }
 
 func (h *runsHandler) objects(w http.ResponseWriter, r *http.Request) {
@@ -122,61 +148,56 @@ func (h *runsHandler) objects(w http.ResponseWriter, r *http.Request) {
 	}
 	rd := h.reader()
 	if rd == nil {
-		writeErr(w, http.StatusServiceUnavailable, "run engine unavailable")
+		writeErr(w, http.StatusServiceUnavailable, "the OD flow is not mounted on this node")
 		return
 	}
 	search := strings.TrimSpace(r.URL.Query().Get("search"))
-	objs, err := rd.Objects(id, search)
-	if errors.Is(err, sdnruns.ErrRunNotFound) {
+	objs, ok := rd.RunObjects(id, search)
+	if !ok {
 		writeErr(w, http.StatusNotFound, "run not found")
 		return
 	}
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
 	if objs == nil {
-		objs = []sdnruns.ObjectResult{}
+		objs = []sdnodresults.ObjectRow{}
 	}
 	writeJSON(w, http.StatusOK, objectsResp{RunID: id, Search: search, Total: len(objs), Objects: objs})
 }
 
+// download serves ONE record's exact stored bytes by its content-addressed
+// cid (?cid=<cid>) — the canonical, byte-for-byte downloadable form. The run
+// id in the path scopes the download to routes the board already renders
+// per-run, but the lookup itself is by cid across the whole store (a cid is
+// globally content-addressed; this keeps the endpoint honest rather than
+// silently 404ing a valid record because of a run-boundary mismatch).
 func (h *runsHandler) download(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimSpace(r.PathValue("id"))
-	if id == "" {
-		writeErr(w, http.StatusBadRequest, "run id is required")
-		return
-	}
-	noradStr := strings.TrimSpace(r.PathValue("norad"))
-	norad64, err := strconv.ParseUint(noradStr, 10, 32)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "norad must be a positive integer")
+	cid := strings.TrimSpace(r.URL.Query().Get("cid"))
+	if cid == "" {
+		writeErr(w, http.StatusBadRequest, "cid query parameter is required")
 		return
 	}
 	rd := h.reader()
 	if rd == nil {
-		writeErr(w, http.StatusServiceUnavailable, "run engine unavailable")
+		writeErr(w, http.StatusServiceUnavailable, "the OD flow is not mounted on this node")
 		return
 	}
-	obj, err := rd.Object(id, uint32(norad64))
-	if errors.Is(err, sdnruns.ErrRunNotFound) {
-		writeErr(w, http.StatusNotFound, "run or object not found")
-		return
-	}
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	format := r.URL.Query().Get("format")
-	body, contentType, filename, ok := sdnruns.RenderElements(obj, format)
+	data, table, ok := rd.DownloadRecord(cid)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "format must be one of tle, omm, cdm")
+		writeErr(w, http.StatusNotFound, "record not found for that cid")
 		return
 	}
-	w.Header().Set("Content-Type", contentType)
+	sdsType, ext := "", "bin"
+	switch table {
+	case "sds_omm":
+		sdsType, ext = "OMM", "omm.fb"
+	case "sds_ocm":
+		sdsType, ext = "OCM", "ocm.fb"
+	case "sds_obd":
+		sdsType, ext = "OBD", "obd.fb"
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	w.Header().Set("X-SDS-Type", sdsType)
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+cid+"."+ext+"\"")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(body))
+	_, _ = w.Write(data)
 }

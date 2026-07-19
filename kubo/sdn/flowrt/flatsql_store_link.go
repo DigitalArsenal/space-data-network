@@ -23,7 +23,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+
+	flatbuffers "github.com/google/flatbuffers/go"
 
 	"github.com/ipfs/kubo/sdn/flatsqlrt"
 	"github.com/ipfs/kubo/sdn/wasmrt"
@@ -216,6 +219,74 @@ func (s *LinkedStore) ingestRecord(buf []byte) int64 {
 		return -3
 	}
 	return int64(seq)
+}
+
+// BuildTestWrapperRow constructs one store-node wrapper FlatBuffer — the
+// EXACT shape ingest_record expects (cid/provider/source_name/batch_id/data,
+// stamped with the given store-local file identifier SOMM/SOCM/SOBD) — and
+// IngestTestRow below appends it directly to a store's arena. Both exist SO
+// OTHER READ-SIDE PACKAGES (e.g. sdn/sdnodresults) can build realistic
+// fixtures over a real LinkedStore without a full wasm mount. Production
+// records always arrive through the wasm store node's ingest_record
+// trampoline (IngestRecordHostFunc) — this is a test/fixture convenience,
+// never a second production write path.
+func BuildTestWrapperRow(fileID, cid, provider, sourceName, batchID string, data []byte) []byte {
+	b := flatbuffers.NewBuilder(256 + len(data))
+	cidOff := b.CreateString(cid)
+	provOff := b.CreateString(provider)
+	srcOff := b.CreateString(sourceName)
+	batchOff := b.CreateString(batchID)
+	dataOff := b.CreateByteVector(data)
+	b.StartObject(5)
+	b.PrependUOffsetTSlot(0, cidOff, 0)
+	b.PrependUOffsetTSlot(1, provOff, 0)
+	b.PrependUOffsetTSlot(2, srcOff, 0)
+	b.PrependUOffsetTSlot(3, batchOff, 0)
+	b.PrependUOffsetTSlot(4, dataOff, 0)
+	root := b.EndObject()
+	b.FinishWithFileIdentifier(root, []byte(fileID))
+	return b.FinishedBytes()
+}
+
+// IngestTestRow appends one BuildTestWrapperRow fixture directly to s's
+// arena. See BuildTestWrapperRow's doc — test/fixture use only.
+func (s *LinkedStore) IngestTestRow(fileID, cid, provider, sourceName, batchID string, data []byte) error {
+	if seq := s.ingestRecord(BuildTestWrapperRow(fileID, cid, provider, sourceName, batchID, data)); seq < 0 {
+		return fmt.Errorf("flowrt: ingest test row: rc=%d", seq)
+	}
+	return nil
+}
+
+// Query runs a READ-ONLY SQL statement against the flow's linked store and
+// returns the result — the data-surface board's search/list/download API over
+// the sds_omm/sds_ocm/sds_obd arena tables (cid/provider/source_name/batch_id/
+// data). Rejects anything but a single SELECT: this is a query surface, never
+// a second write path (records only ever arrive via the in-wasm store node's
+// ingest_record/exec_envelope trampolines above). The host does not decode the
+// `data` BLOB — callers that need record fields parse the returned bytes with
+// the SDS Go bindings.
+func (s *LinkedStore) Query(sql string, params ...interface{}) (*flatsqlrt.Result, error) {
+	if !isReadOnlySelect(sql) {
+		return nil, fmt.Errorf("flowrt: store query must be a single read-only SELECT")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.db.Query(sql, params...)
+}
+
+// isReadOnlySelect reports whether sql is (structurally) a single SELECT
+// statement: starts with SELECT (case-insensitive, ignoring leading
+// whitespace) and carries no statement-separating semicolon other than an
+// optional single trailing one. A cheap guard, not a SQL parser — the engine
+// itself still enforces real semantics; this only keeps this read surface from
+// being repurposed as a write path by an incautious caller.
+func isReadOnlySelect(sql string) bool {
+	trimmed := strings.TrimSpace(sql)
+	trimmed = strings.TrimSuffix(trimmed, ";")
+	if strings.Contains(trimmed, ";") {
+		return false
+	}
+	return len(trimmed) >= 6 && strings.EqualFold(trimmed[:6], "select")
 }
 
 // Snapshot writes an OPAQUE whole-arena ExportData blob to the snapshot path via

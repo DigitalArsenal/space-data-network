@@ -92,6 +92,14 @@ type ServiceFlow struct {
 	errorCount      uint64
 	lastTimerStatus string
 	lastInvokeAt    time.Time
+
+	// fireHistMu guards fireHist/ongoing — a SEPARATE lock from mu (which a
+	// drain holds for its full duration, sometimes minutes for a full-catalog
+	// fit), so a concurrent settings/board read is never blocked behind an
+	// in-flight fire. See firehistory.go.
+	fireHistMu sync.Mutex
+	fireHist   []FireRecord
+	ongoing    *FireRecord
 }
 
 // resolveFlowArtifact maps a flow reference (a bundle directory or a direct
@@ -391,8 +399,14 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, _ []byte) 
 }
 
 // FireTrigger runs one named timer trigger to completion (also the direct entry
-// point for tests and the admin surface).
-func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byte, error) {
+// point for tests and the admin surface). It OBSERVES this one firing into
+// the flow's FireHistory (see firehistory.go) — start/finish, outcome, and
+// (for an engine-linked flow) the store's exact rowid range this firing's
+// ingests landed in. This is bookkeeping only: FireTrigger itself decides
+// nothing about IF or WHEN to fire (the caller — the cron scheduler's ticker,
+// or a test/admin call — already made that call); it never fires itself
+// again or fires a second trigger.
+func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) (out []byte, ferr error) {
 	var trigger *serviceTrigger
 	for i := range sf.triggers {
 		if sf.triggers[i].TriggerID == triggerID {
@@ -411,6 +425,10 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 	}
 	rt := sf.inst.rt
 	defer sf.inst.bridge.ResetBodyRefs()
+
+	store := rt.Store()
+	rec := sf.beginFire(triggerID, store)
+	defer func() { sf.endFire(rec, store, ferr) }()
 
 	tick, _ := json.Marshal(map[string]string{
 		"trigger": trigger.TriggerID,
@@ -522,6 +540,19 @@ func (sf *ServiceFlow) SetNodeConfig(cfg map[string]interface{}) {
 	if sf.inst != nil {
 		sf.inst.bridge.SetConfigLive(cfg)
 	}
+}
+
+// Store returns the flow's linked in-wasm FlatSQL store for READ-ONLY queries
+// (the data-surface board's search/download API), or nil for a bridge-mode
+// flow with no engine link, or a closed flow. Never a write path — callers
+// must only issue SELECT statements (see LinkedStore.Query).
+func (sf *ServiceFlow) Store() *LinkedStore {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
+	if sf.inst == nil || sf.inst.rt == nil {
+		return nil
+	}
+	return sf.inst.rt.Store()
 }
 
 // --- plugins.UIProvider interface ---

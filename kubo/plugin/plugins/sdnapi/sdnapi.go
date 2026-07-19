@@ -63,6 +63,7 @@ import (
 	"github.com/ipfs/kubo/sdn/plugins"
 	sdnapihttp "github.com/ipfs/kubo/sdn/sdnapi"
 	"github.com/ipfs/kubo/sdn/sdnmodules"
+	"github.com/ipfs/kubo/sdn/sdnodresults"
 	"github.com/ipfs/kubo/sdn/sdnstore"
 	"github.com/ipfs/kubo/sdn/sdnui"
 )
@@ -217,17 +218,30 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 		Authorized: requestFromLoopback,
 	})
 
-	// Supplemental-OMM RUN API (GET /sdn/v1/runs...): the read-only board surface
-	// over the node's OD-fit run history. A SEPARATE handler (like credentials),
-	// mounted on this same loopback listener. Reader resolved lazily; a true nil
-	// interface when the run engine is not up yet so the routes report empty.
-	runsHandler := sdnapihttp.NewRunsHandler(sdnapihttp.RunsDeps{
-		Reader: func() sdnapihttp.RunsReader {
-			if s := pluginsdnruntime.Runs(); s != nil {
-				return s
-			}
+	// Supplemental-OMM RUN API (GET /sdn/v1/runs...): the read-only board
+	// surface over the node's REAL OD-fit results, derived from the mounted
+	// OD ServiceFlow's fire history + its linked FlatSQL store
+	// (sdn/sdnodresults) — NOT the disconnected, inert sdnruns.Store (see
+	// plugin/plugins/sdnruntime/sdnruns.go: that run engine is fully inert
+	// per the SDN_OD_FLOW_LOOP.md STOP block, so it never gains new rows;
+	// derived runs are the run log going forward). A SEPARATE handler (like
+	// credentials), mounted on this same loopback listener. The ODFlow
+	// resolved lazily so the routes report an honest empty result before the
+	// runtime is up or on a node with no OD flow mounted (the fallback for
+	// nodes without the new store).
+	odResultsReader := sdnodresults.NewReader(func() sdnodresults.ODFlow {
+		fi := pluginsdnruntime.FlowInstaller()
+		if fi == nil {
 			return nil
-		},
+		}
+		sf := fi.Flow(ommFlowProgramID)
+		if sf == nil {
+			return nil
+		}
+		return sf
+	})
+	runsHandler := sdnapihttp.NewRunsHandler(sdnapihttp.RunsDeps{
+		Reader: func() *sdnodresults.Reader { return odResultsReader },
 	})
 
 	// Node EPM / vCard / QR export (GET /sdn/v1/node/{epm,vcard,qr}): the node's

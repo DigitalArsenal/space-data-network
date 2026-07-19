@@ -164,16 +164,18 @@ func TestSelfContained(t *testing.T) {
 }
 
 // TestOMMBoardWiring asserts the Supplemental-OMM board's entry page is wired to
-// the node's REAL run + module-config API (not the old thin record listing) and
-// self-hosts its two font families same-origin, with no external-origin URL. It
-// pins the owner-directed run-log/drill-down contract (2026-07-19 reconfiguration):
-// a single paginated RUN LOG (no standalone "latest run" box — deleted outright),
-// a synthesized "ongoing" row for a currently-executing run, and a row-click
-// drill-down that REPLACES the log with a single-row run-stats table plus a
-// paginated, searchable per-object table with RMS + CelesTrak/Space-Track parity
-// and TLE/OMM/CDM element downloads, and a BACK TO RUN LOG control (no arrow
-// glyphs anywhere), alongside the provider checkbox + cron controls that persist
-// through the module config.
+// the node's REAL run + module-config API (sdn/sdnodresults, not the old thin
+// record listing, and not the disconnected sdnruns.Store) and self-hosts its two
+// font families same-origin, with no external-origin URL. It pins the
+// owner-directed TWO-LEVEL drill-down contract (2026-07-19 reconfiguration): a
+// single paginated RUN LOG (no standalone "latest run" box — deleted outright), a
+// synthesized "ongoing" row for a currently-executing run, a row-click drill-down
+// to LEVEL 1 (every provider the flow declares, honestly flagged when its stats
+// are not yet attributable), a provider-click drill-down to LEVEL 2 (a paginated,
+// searchable, downloadable per-object table with real $OMM/$OBD fit telemetry),
+// BIG CHUNKY BREADCRUMB navigation with NO back button and no arrow glyphs
+// anywhere, alongside the provider checkbox + cron controls that persist through
+// the module config.
 func TestOMMBoardWiring(t *testing.T) {
 	ms, err := sdnapps.Manifests()
 	if err != nil {
@@ -191,39 +193,43 @@ func TestOMMBoardWiring(t *testing.T) {
 		t.Fatal("supplemental-omm app or its entry page is missing")
 	}
 
-	// Real run API: list + live run, run detail, searchable per-object rows, and
-	// the per-object VCM-format element downloads.
+	// Real run API (sdn/sdnodresults-backed): list + live run, run detail, LEVEL
+	// 1 providers, searchable LEVEL 2 objects, and content-addressed download.
 	for _, needle := range []string{
-		"/sdn/v1/runs",            // run list + live run
-		"/objects",                // searchable per-object rows
-		"?search=",                // NORAD search
-		"/download?format=",       // element download route
-		`"tle"`, `"omm"`, `"cdm"`, // TLE / OMM / CDM (VCM) formats
+		"/sdn/v1/runs",    // run list + live run
+		"/providers",      // LEVEL 1: declared-provider stats
+		"/objects",        // LEVEL 2: searchable per-object rows
+		"?search=",        // NORAD/name search
+		"/download?cid=",  // content-addressed record download route
 		"current_avg_rms", // live run: current average RMS
 		"ephemeris_files", // ephemeris files processed
-		"celestrak_rms",   // parity vs CelesTrak
-		"spacetrack_rms",  // parity vs Space-Track OMM
-		"beats_celestrak", // beats flag
 		"omm_cid",         // produced OMM record CID
+		"iterations",      // $OBD fit telemetry: iterations to converge
+		"fit_span_days",   // $OBD fit telemetry: fit span
+		"unattributed",    // honest per-object provider-attribution flag
 	} {
 		if !strings.Contains(board, needle) {
 			t.Errorf("board entry page does not wire %q", needle)
 		}
 	}
 
-	// Owner-directed run-log/drill-down contract: the main element is a
-	// paginated run log (no standalone "latest run" box — see the negative
-	// assertions below), a synthesized "ongoing" status for a live run, and a
-	// row-click drill-down with a BACK control (no arrow glyph).
+	// Owner-directed two-level drill-down contract: the main element is a
+	// paginated run log, a synthesized "ongoing" status for a live run,
+	// breadcrumb navigation (no back button), a Level-1 providers table, and a
+	// Level-2 objects table with bulk-download controls.
 	for _, needle := range []string{
-		"RUN LOG",           // the main element's panel kicker
-		"ongoing",           // synthesized live-run status token
-		"ONGOING",           // its rendered chip label
-		"RUN DETAIL",        // the drill-down panel kicker
-		"BACK TO RUN LOG",   // the back control (plain text, no arrow glyph)
-		"SEARCH OBJECTS",    // the drill-down's plaintext search bar label
-		"runlog-pagination", // run-log pagination container (5/page)
-		"PREV", "NEXT",      // pagination controls are words, never arrows
+		"RUN LOG",               // the main element's panel kicker + a breadcrumb
+		"ongoing",               // synthesized live-run status token
+		"ONGOING",               // its rendered chip label
+		"breadcrumbs",           // the breadcrumb nav container
+		"PROVIDERS IN THIS RUN", // Level-1 panel heading
+		"SEARCH OBJECTS",        // Level-2's plaintext search bar label
+		"DATA SOURCE",           // Level-2's data-source filter control
+		"SELECT ALL ON PAGE",    // bulk-download: select
+		"DOWNLOAD SELECTED",     // bulk-download: selected
+		"DOWNLOAD ALL MATCHING", // bulk-download: all matching
+		"runlog-pagination",     // run-log pagination container (5/page)
+		"PREV", "NEXT",          // pagination controls are words, never arrows
 	} {
 		if !strings.Contains(board, needle) {
 			t.Errorf("board entry page does not wire %q", needle)
@@ -232,10 +238,16 @@ func TestOMMBoardWiring(t *testing.T) {
 
 	// The old standalone "latest run" / "current run" snapshot box is DELETED
 	// outright (owner rule: no tombstones or hidden remnants) — these ids only
-	// ever existed on that removed panel.
-	for _, needle := range []string{"current-body", "current-kicker", "current-status", "live-remaining"} {
+	// ever existed on that removed panel. The BACK TO RUN LOG control is ALSO
+	// deleted outright (owner rule 2026-07-19: navigation is breadcrumbs only).
+	for _, needle := range []string{
+		"current-body", "current-kicker", "current-status", "live-remaining",
+		"BACK TO RUN LOG", "detail-back",
+		"celestrak_rms", "spacetrack_rms", "beats_celestrak", // the old reference-comparison columns this engine never computes
+		"/download?format=", // the old TLE/OMM/CDM format-parameter download route
+	} {
 		if strings.Contains(board, needle) {
-			t.Errorf("board still carries a remnant of the deleted 'latest run' box: %q", needle)
+			t.Errorf("board still carries a remnant of removed UI/API: %q", needle)
 		}
 	}
 

@@ -234,6 +234,11 @@ func (rt *FlowRuntime) SnapshotStore() error {
 // Module returns the underlying wasmrt.Module for advanced use.
 func (rt *FlowRuntime) Module() *wasmrt.Module { return rt.mod }
 
+// Store returns the flow's linked in-wasm FlatSQL store (nil for a bridge-mode
+// / non-store flow) — a READ-ONLY accessor for the data-surface board's
+// search/download API. Never a write path.
+func (rt *FlowRuntime) Store() *LinkedStore { return rt.store }
+
 // ---------------------------------------------------------------------------
 // ABI wrappers — all calls are serialized by the caller's mu.Lock
 // ---------------------------------------------------------------------------
