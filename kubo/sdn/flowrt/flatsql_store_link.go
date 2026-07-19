@@ -19,6 +19,7 @@ package flowrt
 // awareness here re-creates the repudiated Go storage sink.
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -54,11 +55,16 @@ const flatsqlIngestRecordName = "ingest_record"
 // The columns match the store node's wrapper table EXACTLY (cid is the (key)
 // dedup field; data is the raw $OMM/$OCM/$OBD BLOB):
 //
-//	cid:string (key)  provider:string  source_name:string  batch_id:string  data:[ubyte]
+//	cid:string (key)  provider:string  source_name:string  batch_id:string  data:[ubyte]  pulled_at:long
+//
+// pulled_at (voffset 14, additive) is the fire timestamp (unix ms) the store node
+// writes from its "trigger" input port. Additive: old 5-field wrappers (the shipped
+// 10,847-object snapshot) still load — pulled_at reads 0 for records ingested before
+// this field existed, so a snapshot rebuild does NOT break.
 const flatsqlStoreSchema = `
-  table sds_omm { cid:string (key); provider:string; source_name:string; batch_id:string; data:[ubyte]; }
-  table sds_ocm { cid:string (key); provider:string; source_name:string; batch_id:string; data:[ubyte]; }
-  table sds_obd { cid:string (key); provider:string; source_name:string; batch_id:string; data:[ubyte]; }
+  table sds_omm { cid:string (key); provider:string; source_name:string; batch_id:string; data:[ubyte]; pulled_at:long; }
+  table sds_ocm { cid:string (key); provider:string; source_name:string; batch_id:string; data:[ubyte]; pulled_at:long; }
+  table sds_obd { cid:string (key); provider:string; source_name:string; batch_id:string; data:[ubyte]; pulled_at:long; }
 `
 
 // flatsqlStoreFileIDs maps each store-local 4-byte FlatBuffer file identifier to
@@ -86,7 +92,12 @@ type LinkedStore struct {
 	rt           *flatsqlrt.Runtime
 	db           *flatsqlrt.Database
 	snapshotPath string
-	mu           sync.Mutex
+	// pendingTombstones is the set of 1-based export ordinals (== global ingest
+	// sequences) the store node has asked to drop; compact() reclaims them. The
+	// host NEVER decides what to tombstone — the wasm store node computes the
+	// keep-latest-K policy and passes exact sequences.
+	pendingTombstones map[uint64]bool
+	mu                sync.Mutex
 }
 
 // OpenLinkedStore opens the dedicated-thread engine + a Database, rebuilding from
@@ -110,7 +121,7 @@ func OpenLinkedStore(aotCacheDir, snapshotPath string) (*LinkedStore, error) {
 			return nil, fmt.Errorf("flowrt: register store file id %s->%s: %w", m.fileID, m.table, e)
 		}
 	}
-	s := &LinkedStore{rt: rt, db: db, snapshotPath: snapshotPath}
+	s := &LinkedStore{rt: rt, db: db, snapshotPath: snapshotPath, pendingTombstones: map[uint64]bool{}}
 	if snapshotPath != "" {
 		if blob, e := os.ReadFile(snapshotPath); e == nil && len(blob) > 0 {
 			if e := db.LoadAndRebuild(blob); e != nil {
@@ -370,4 +381,271 @@ func parseExecEnvelope(env []byte) (string, []interface{}, error) {
 		}
 	}
 	return sql, params, nil
+}
+
+// ---------------------------------------------------------------------------
+// Retention trampolines (in-wasm keep-latest-K store bound). All three are DUMB:
+// the wasm store node owns the policy (which batches to drop); these host funcs
+// only run the wasm-authored SQL, tombstone the exact opaque sequences the wasm
+// chose, and mechanically reclaim by re-serializing the export minus the
+// tombstoned ordinals. No record decoding, SDS-type derivation, or keep-K logic.
+// ---------------------------------------------------------------------------
+
+// flatsqlQueryRowsName / flatsqlMarkDeletedBulkName / flatsqlCompactName are the
+// three retention symbols the store node imports from module "flatsql".
+const (
+	flatsqlQueryRowsName       = "query_rows"
+	flatsqlMarkDeletedBulkName = "mark_deleted_bulk"
+	flatsqlCompactName         = "compact"
+)
+
+// queryRows runs the store node's SELECT envelope and serializes the QueryResult
+// as [u32 row_count]([u32 col_count]([u8 type]payload)*)* — type 0=NULL, 1=INT
+// (i64le), 2=TEXT(u32len+bytes), 3=BLOB(u32len+bytes). It NEVER interprets a
+// column. Returns the serialized bytes; the caller returns the FULL length.
+func (s *LinkedStore) queryRows(env []byte) ([]byte, bool) {
+	sql, params, err := parseExecEnvelope(env)
+	if err != nil {
+		return nil, false
+	}
+	s.mu.Lock()
+	res, err := s.db.Query(sql, params...)
+	s.mu.Unlock()
+	if err != nil {
+		return nil, false
+	}
+	var b bytes.Buffer
+	var u32 [4]byte
+	var u64 [8]byte
+	binary.LittleEndian.PutUint32(u32[:], uint32(len(res.Rows)))
+	b.Write(u32[:])
+	for _, row := range res.Rows {
+		binary.LittleEndian.PutUint32(u32[:], uint32(len(row)))
+		b.Write(u32[:])
+		for _, cell := range row {
+			switch v := cell.(type) {
+			case nil:
+				b.WriteByte(0)
+			case int64:
+				b.WriteByte(1)
+				binary.LittleEndian.PutUint64(u64[:], uint64(v))
+				b.Write(u64[:])
+			case string:
+				b.WriteByte(2)
+				binary.LittleEndian.PutUint32(u32[:], uint32(len(v)))
+				b.Write(u32[:])
+				b.WriteString(v)
+			case []byte:
+				b.WriteByte(3)
+				binary.LittleEndian.PutUint32(u32[:], uint32(len(v)))
+				b.Write(u32[:])
+				b.Write(v)
+			default:
+				b.WriteByte(0)
+			}
+		}
+	}
+	return b.Bytes(), true
+}
+
+// markDeletedBulk tombstones each opaque sequence the store node passed (loop
+// Database.MarkDeleted) and records the sequences for the next compact(). It
+// never learns what a batch/record is. Returns the count tombstoned.
+func (s *LinkedStore) markDeletedBulk(table string, seqs []uint64) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var count int64
+	for _, seq := range seqs {
+		_ = s.db.MarkDeleted(table, seq)
+		s.pendingTombstones[seq] = true
+		count++
+	}
+	return count
+}
+
+// compact mechanically reclaims: export the raw size-prefixed arena stream, drop
+// the records whose 1-based ordinal (== global ingest sequence) was tombstoned,
+// LoadAndRebuild the survivors into a FRESH Database (reuse-in-place double-
+// indexes — the fresh swap is mandatory), swap the binding, and clear tombstones.
+// Returns the survivor record count. Zero record-content awareness.
+func (s *LinkedStore) compact() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.compactLocked()
+}
+
+// compactLocked is compact() assuming s.mu is HELD (ClearBatch marks + compacts
+// under one lock). Same DUMB mechanics: export -> drop tombstoned ordinals ->
+// fresh Database -> LoadAndRebuild -> swap -> clear tombstones.
+func (s *LinkedStore) compactLocked() int64 {
+	if len(s.pendingTombstones) == 0 {
+		return 0
+	}
+	blob, err := s.db.ExportData()
+	if err != nil {
+		return -3
+	}
+	frames, err := flatsqlrt.DecodeSizePrefixedStream(blob)
+	if err != nil {
+		return -4
+	}
+	var out bytes.Buffer
+	var u32 [4]byte
+	var survivors int64
+	for i, frame := range frames {
+		if s.pendingTombstones[uint64(i+1)] {
+			continue
+		}
+		binary.LittleEndian.PutUint32(u32[:], uint32(len(frame)))
+		out.Write(u32[:])
+		out.Write(frame)
+		survivors++
+	}
+	fresh, err := s.rt.CreateDatabase(flatsqlStoreSchema, "sdn_flow_store")
+	if err != nil {
+		return -5
+	}
+	for _, m := range flatsqlStoreFileIDs {
+		if e := fresh.RegisterFileID(m.fileID, m.table); e != nil {
+			fresh.Destroy()
+			return -6
+		}
+	}
+	if err := fresh.LoadAndRebuild(out.Bytes()); err != nil {
+		fresh.Destroy()
+		return -7
+	}
+	old := s.db
+	s.db = fresh
+	old.Destroy()
+	s.pendingTombstones = map[uint64]bool{}
+	return survivors
+}
+
+// QueryRowsHostFunc / MarkDeletedBulkHostFunc / CompactHostFunc expose the three
+// retention trampolines as flatsql.* host funcs (registered alongside
+// exec_envelope + ingest_record by NewFlowRuntime).
+func (s *LinkedStore) QueryRowsHostFunc() wasmrt.HostFunc {
+	i32 := func() *wasmedge.ValType { return wasmedge.NewValTypeI32() }
+	i64 := func() *wasmedge.ValType { return wasmedge.NewValTypeI64() }
+	return wasmrt.HostFunc{
+		Name:    flatsqlQueryRowsName,
+		Params:  []*wasmedge.ValType{i32(), i32(), i32(), i32()},
+		Returns: []*wasmedge.ValType{i64()},
+		Func: func(_ interface{}, cf *wasmedge.CallingFrame, params []interface{}) ([]interface{}, wasmedge.Result) {
+			envPtr := uint32(params[0].(int32))
+			envLen := uint32(params[1].(int32))
+			outPtr := uint32(params[2].(int32))
+			outCap := uint32(params[3].(int32))
+			mem := cf.GetMemoryByIndex(0)
+			if mem == nil {
+				return []interface{}{int64(-1)}, wasmedge.Result_Success
+			}
+			env, err := mem.GetData(uint(envPtr), uint(envLen))
+			if err != nil {
+				return []interface{}{int64(-1)}, wasmedge.Result_Success
+			}
+			buf, ok := s.queryRows(env)
+			if !ok {
+				return []interface{}{int64(-2)}, wasmedge.Result_Success
+			}
+			if uint32(len(buf)) <= outCap && len(buf) > 0 {
+				mem.SetData(buf, uint(outPtr), uint(len(buf)))
+			}
+			return []interface{}{int64(len(buf))}, wasmedge.Result_Success
+		},
+	}
+}
+
+func (s *LinkedStore) MarkDeletedBulkHostFunc() wasmrt.HostFunc {
+	i32 := func() *wasmedge.ValType { return wasmedge.NewValTypeI32() }
+	i64 := func() *wasmedge.ValType { return wasmedge.NewValTypeI64() }
+	return wasmrt.HostFunc{
+		Name:    flatsqlMarkDeletedBulkName,
+		Params:  []*wasmedge.ValType{i32(), i32(), i32(), i32()},
+		Returns: []*wasmedge.ValType{i64()},
+		Func: func(_ interface{}, cf *wasmedge.CallingFrame, params []interface{}) ([]interface{}, wasmedge.Result) {
+			tblPtr := uint32(params[0].(int32))
+			tblLen := uint32(params[1].(int32))
+			seqsPtr := uint32(params[2].(int32))
+			seqCount := uint32(params[3].(int32))
+			mem := cf.GetMemoryByIndex(0)
+			if mem == nil {
+				return []interface{}{int64(-1)}, wasmedge.Result_Success
+			}
+			tblBytes, err := mem.GetData(uint(tblPtr), uint(tblLen))
+			if err != nil {
+				return []interface{}{int64(-1)}, wasmedge.Result_Success
+			}
+			seqs := make([]uint64, 0, seqCount)
+			if seqCount > 0 {
+				raw, e := mem.GetData(uint(seqsPtr), uint(seqCount*8))
+				if e != nil {
+					return []interface{}{int64(-1)}, wasmedge.Result_Success
+				}
+				for i := uint32(0); i < seqCount; i++ {
+					seqs = append(seqs, binary.LittleEndian.Uint64(raw[i*8:]))
+				}
+			}
+			return []interface{}{s.markDeletedBulk(string(tblBytes), seqs)}, wasmedge.Result_Success
+		},
+	}
+}
+
+func (s *LinkedStore) CompactHostFunc() wasmrt.HostFunc {
+	i64 := func() *wasmedge.ValType { return wasmedge.NewValTypeI64() }
+	return wasmrt.HostFunc{
+		Name:    flatsqlCompactName,
+		Returns: []*wasmedge.ValType{i64()},
+		Func: func(_ interface{}, _ *wasmedge.CallingFrame, _ []interface{}) ([]interface{}, wasmedge.Result) {
+			return []interface{}{s.compact()}, wasmedge.Result_Success
+		},
+	}
+}
+
+// cellInt64 coerces a flatsqlrt scalar result cell into int64 (rowid reads).
+func cellInt64(v interface{}) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case uint64:
+		return int64(n)
+	default:
+		return 0
+	}
+}
+
+// ClearBatch is the store side of the operator "reset a run" primitive: DUMB —
+// tombstone every row whose batch_id column equals batchID across the three OD
+// write-lane tables, then compact. The caller supplies an opaque batch id; the
+// host interprets no record content, derives no SDS type, applies no policy. It
+// returns the per-table global sequences it tombstoned (PRE-compact rowids, so
+// the mount can prune its fire log by rowid-range overlap before the compact
+// renumbers) and the survivor record count.
+func (s *LinkedStore) ClearBatch(batchID string) (map[string][]int64, int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tombstoned := map[string][]int64{}
+	for _, m := range flatsqlStoreFileIDs {
+		res, err := s.db.Query("SELECT rowid FROM "+m.table+" WHERE batch_id = ?", batchID)
+		if err != nil {
+			return nil, 0, err
+		}
+		for _, row := range res.Rows {
+			if len(row) < 1 {
+				continue
+			}
+			seq := cellInt64(row[0])
+			if seq <= 0 {
+				continue
+			}
+			_ = s.db.MarkDeleted(m.table, uint64(seq))
+			s.pendingTombstones[uint64(seq)] = true
+			tombstoned[m.table] = append(tombstoned[m.table], seq)
+		}
+	}
+	survivors := s.compactLocked()
+	return tombstoned, survivors, nil
 }

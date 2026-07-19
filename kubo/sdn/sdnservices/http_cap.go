@@ -129,7 +129,9 @@ func (h *httpCapAdapter) handle(operation string, payload []byte) ([]byte, error
 		return errCapJSON("http.request refused by CelesTrak fetch policy: " + reason), nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(req.TimeoutMs)*time.Millisecond)
+	// Parent from the current fire context (nil-safe -> Background) so an
+	// operator Stop that cancels the fire aborts this in-flight fetch.
+	ctx, cancel := context.WithTimeout(h.bridge.FireContext(), time.Duration(req.TimeoutMs)*time.Millisecond)
 	defer cancel()
 
 	var bodyReader io.Reader

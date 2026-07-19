@@ -1,6 +1,7 @@
 package modulert
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
@@ -91,6 +92,16 @@ type HostBridge struct {
 	nodeCtxMu sync.RWMutex
 	nodeCtx   *NodeContext
 
+	// fireCtx is the current trigger fire's cancelable context (installed by the
+	// mount around a drain via SetFireContext, cleared after). The http cap
+	// derives each request's context from it, so an operator Stop (cancelling
+	// this context) aborts an in-flight fetch at the next http hostcall boundary.
+	// nil => not firing (FireContext returns context.Background()). Lifecycle
+	// plumbing, never orchestration — the host still decides nothing about WHEN
+	// or WHAT to fetch.
+	fireCtxMu sync.Mutex
+	fireCtx   context.Context
+
 	// Response buffer for the sync hostcall protocol.
 	lastStatus  int32
 	responseBuf []byte
@@ -147,6 +158,34 @@ func (hb *HostBridge) currentNodeCtx() *NodeContext {
 	hb.nodeCtxMu.RLock()
 	defer hb.nodeCtxMu.RUnlock()
 	return hb.nodeCtx
+}
+
+// SetFireContext installs (nil clears) the current trigger fire's cancelable
+// context. The http capability derives each request's context from it so an
+// operator Stop — cancelling this context — aborts an in-flight fetch at the
+// next http hostcall boundary. Lifecycle plumbing, never orchestration.
+func (hb *HostBridge) SetFireContext(ctx context.Context) {
+	if hb == nil {
+		return
+	}
+	hb.fireCtxMu.Lock()
+	hb.fireCtx = ctx
+	hb.fireCtxMu.Unlock()
+}
+
+// FireContext returns the current fire's context, or context.Background() when
+// no fire is in flight. Nil-safe (receiver and field).
+func (hb *HostBridge) FireContext() context.Context {
+	if hb == nil {
+		return context.Background()
+	}
+	hb.fireCtxMu.Lock()
+	ctx := hb.fireCtx
+	hb.fireCtxMu.Unlock()
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }
 
 // SetConfigLive replaces the CONFIG object this bridge's plugin.getConfig

@@ -22,6 +22,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ipfs/kubo/sdn/flowcc"
@@ -85,16 +86,39 @@ func TestODSupplementalOMMBakes(t *testing.T) {
 		}
 	}
 
-	// In-memory-only invariant (structural): $OEM is consumed ONLY by od.fit.oem.
+	// In-memory-only invariant (structural): $OEM is consumed ONLY by the OD node
+	// (n-od), on a per-provider oem_* port; NEVER by the store. Provider token is
+	// carried per-edge for the provenance sidecar.
 	spec := ODSupplementalOMMSpec()
 	consumers := odSupplementalOEMConsumers(spec)
 	if len(consumers) != len(odSupplementalProviders) {
 		t.Fatalf("expected %d provider $OEM edges, got %v", len(odSupplementalProviders), consumers)
 	}
 	for _, c := range consumers {
-		if c != "n-od.oem" {
-			t.Fatalf("in-memory-only invariant VIOLATED: $OEM consumed by %q (must be only n-od.oem)", c)
+		if !strings.HasPrefix(c, "n-od.oem") {
+			t.Fatalf("in-memory-only invariant VIOLATED: $OEM consumed by %q (must be an n-od.oem* port)", c)
 		}
+	}
+	// Attribution wiring: od.provenance -> store.provenance edge present, and the
+	// timer binds the store's fire-timestamp port.
+	hasProv := false
+	for _, e := range spec.Edges {
+		if e.FromNodeID == "n-od" && e.FromPortID == ODSupplementalODProvenancePort &&
+			e.ToNodeID == "n-store" && e.ToPortID == ODSupplementalStoreProvenancePort {
+			hasProv = true
+		}
+	}
+	if !hasProv {
+		t.Fatalf("provenance edge n-od.provenance -> n-store.provenance MISSING")
+	}
+	hasTrig := false
+	for _, b := range spec.TriggerBindings {
+		if b.TargetNodeID == "n-store" && b.TargetPortID == ODSupplementalStoreTriggerPort {
+			hasTrig = true
+		}
+	}
+	if !hasTrig {
+		t.Fatalf("store fire-timestamp binding t0 -> n-store.trigger MISSING")
 	}
 
 	cfg := flowconfig.FlowsConfig{Enabled: true, StoragePath: t.TempDir(), MaxMemoryPages: 8192}

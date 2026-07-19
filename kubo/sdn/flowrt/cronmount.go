@@ -20,7 +20,9 @@ package flowrt
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -54,8 +56,14 @@ type serviceTrigger struct {
 	TriggerID  string
 	Index      uint32
 	PortID     string
+	Ports      []string
 	IntervalMs int
 }
+
+// triggerFirePortID is the store's fire-timestamp port: a binding to this port
+// receives the host fire time as [u64le unix_ms] (a capability read — the host
+// reading its own clock), not the JSON tick. Every other bound port gets the tick.
+const triggerFirePortID = "trigger"
 
 // flowInstance is one flow runtime plus its hostcall bridge (bridge-mode; the
 // loop-C.7 direct-linkage state is not ported — see engine_link.go).
@@ -100,6 +108,11 @@ type ServiceFlow struct {
 	fireHistMu sync.Mutex
 	fireHist   []FireRecord
 	ongoing    *FireRecord
+
+	// abortMu guards fireCancel — the cancel func for the IN-FLIGHT fire's
+	// cancelable context (nil when idle). AbortFire() invokes it (operator Stop).
+	abortMu    sync.Mutex
+	fireCancel context.CancelFunc
 }
 
 // resolveFlowArtifact maps a flow reference (a bundle directory or a direct
@@ -294,10 +307,21 @@ func LoadFlowService(flowRef string, intervals map[string]string, config map[str
 						PortID:     "tick",
 						IntervalMs: trig.DefaultIntervalMs,
 					}
+					seen := map[string]bool{}
 					for _, binding := range topo.TriggerBindings {
-						if binding.TriggerID == trig.TriggerID && binding.TargetPortID != "" {
+						if binding.TriggerID != trig.TriggerID || binding.TargetPortID == "" {
+							continue
+						}
+						if !seen[binding.TargetPortID] {
+							seen[binding.TargetPortID] = true
+							st.Ports = append(st.Ports, binding.TargetPortID)
+						}
+						if binding.TargetPortID != triggerFirePortID && (st.PortID == "tick" || st.PortID == "") {
 							st.PortID = binding.TargetPortID
 						}
+					}
+					if len(st.Ports) == 0 {
+						st.Ports = []string{st.PortID}
 					}
 					if override, ok := intervals[trig.TriggerID]; ok {
 						d, derr := time.ParseDuration(override)
@@ -398,6 +422,10 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, _ []byte) 
 	return out, err
 }
 
+// ErrFireInFlight is returned by FireNow/ClearBatch when a fire is already
+// running (the operator Start/reset guard — reject, never block or corrupt).
+var ErrFireInFlight = errors.New("flow service: a fire is already in flight")
+
 // FireTrigger runs one named timer trigger to completion (also the direct entry
 // point for tests and the admin surface). It OBSERVES this one firing into
 // the flow's FireHistory (see firehistory.go) — start/finish, outcome, and
@@ -406,7 +434,130 @@ func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, _ []byte) 
 // nothing about IF or WHEN to fire (the caller — the cron scheduler's ticker,
 // or a test/admin call — already made that call); it never fires itself
 // again or fires a second trigger.
-func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) (out []byte, ferr error) {
+// FireTrigger runs one named timer trigger to completion (the cron scheduler's
+// blocking entry point). It serializes on sf.mu — a concurrent fire WAITS.
+func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byte, error) {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
+	return sf.fireLocked(ctx, triggerID)
+}
+
+// FireNow is the operator "Start" primitive: fire triggerID immediately, but —
+// unlike FireTrigger — REJECT (never block) when a fire is already in flight,
+// returning ErrFireInFlight. Idempotent-guard for the manual/admin surface (the
+// sdnapi plugin calls this from the owner's Start button). The host still
+// decides nothing about IF/WHEN autonomously — the owner's button did.
+func (sf *ServiceFlow) FireNow(ctx context.Context, triggerID string) ([]byte, error) {
+	if !sf.mu.TryLock() {
+		return nil, ErrFireInFlight
+	}
+	defer sf.mu.Unlock()
+	return sf.fireLocked(ctx, triggerID)
+}
+
+// AbortFire is the operator "Stop" primitive: cooperatively cancel the IN-FLIGHT
+// fire. Returns true if a fire was in flight (now cancelling), false if idle.
+//
+// Granularity + safety (WasmEdge 0.14.1, wasi-threads): abort is COOPERATIVE,
+// not a mid-instruction hard interrupt. Cancelling the fire's context (1) aborts
+// an in-flight http FETCH at the next hostcall boundary — the http cap derives
+// each request from the bridge fire context (see SetFireContext) — and (2) stops
+// the drain dispatching further host-model nodes at its next scheduler boundary.
+// It deliberately does NOT use WasmEdge AsyncCancel: that hard-interrupts the
+// guest mid-instruction, which cannot safely reap the live wasi-threads od.fit
+// workers, so it would risk the daemon. Consequence: a fit wave already running
+// inside one guest Execute (the threaded OD fit) runs to completion before the
+// abort is honored; the fetch phase and host-model boundaries abort promptly.
+// The daemon and linked store stay healthy either way; a partial batch may
+// remain (that is what ClearBatch/reset is for).
+func (sf *ServiceFlow) AbortFire() bool {
+	sf.abortMu.Lock()
+	cancel := sf.fireCancel
+	sf.abortMu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	return true
+}
+
+func (sf *ServiceFlow) setFireCancel(cancel context.CancelFunc) {
+	sf.abortMu.Lock()
+	sf.fireCancel = cancel
+	sf.abortMu.Unlock()
+}
+
+func (sf *ServiceFlow) clearFireCancel() {
+	sf.abortMu.Lock()
+	sf.fireCancel = nil
+	sf.abortMu.Unlock()
+}
+
+// ClearBatch is the operator "Reset / clear a run" primitive: clear every stored
+// row of the given (opaque) batch from the flow's linked store and prune the
+// matching entries from the in-memory fire log so the run board stays honest.
+// DUMB + data-admin (like dropping a table): the caller names the batch; the
+// host interprets no content and decides nothing about IF/WHEN to run. Rejected
+// with ErrFireInFlight while a fire is in flight (reset a completed/aborted run,
+// not a live one). Returns the survivor row count.
+func (sf *ServiceFlow) ClearBatch(batchID string) (int64, error) {
+	if !sf.mu.TryLock() {
+		return 0, ErrFireInFlight
+	}
+	defer sf.mu.Unlock()
+	if sf.inst == nil {
+		return 0, fmt.Errorf("flow service %q is closed", sf.programID)
+	}
+	store := sf.inst.rt.Store()
+	if store == nil {
+		return 0, fmt.Errorf("flow service %q has no linked store (nothing to reset)", sf.programID)
+	}
+	tombstoned, survivors, err := store.ClearBatch(batchID)
+	if err != nil {
+		return 0, fmt.Errorf("flow service %q clear batch %q: %w", sf.programID, batchID, err)
+	}
+	sf.pruneFireHistory(tombstoned)
+	if serr := sf.inst.rt.SnapshotStore(); serr != nil {
+		log.Warnf("flow service %q: store snapshot after ClearBatch failed: %v", sf.programID, serr)
+	}
+	return survivors, nil
+}
+
+// pruneFireHistory drops fire-log records whose per-table rowid window (After,
+// Through] overlapped any cleared rowid — the runs whose stored rows ClearBatch
+// just removed. Uses the PRE-compact rowids ClearBatch returned (fire windows
+// are in the same generation). Bookkeeping only.
+func (sf *ServiceFlow) pruneFireHistory(tombstoned map[string][]int64) {
+	if len(tombstoned) == 0 {
+		return
+	}
+	overlaps := func(r TableRange, seqs []int64) bool {
+		for _, seq := range seqs {
+			if seq > r.After && seq <= r.Through {
+				return true
+			}
+		}
+		return false
+	}
+	sf.fireHistMu.Lock()
+	defer sf.fireHistMu.Unlock()
+	kept := sf.fireHist[:0]
+	for _, rec := range sf.fireHist {
+		if overlaps(rec.OMM, tombstoned["sds_omm"]) ||
+			overlaps(rec.OCM, tombstoned["sds_ocm"]) ||
+			overlaps(rec.OBD, tombstoned["sds_obd"]) {
+			continue
+		}
+		kept = append(kept, rec)
+	}
+	sf.fireHist = kept
+}
+
+// fireLocked runs one fire assuming sf.mu is HELD (FireTrigger/FireNow acquire
+// it). It observes the fire into FireHistory and installs a cancelable fire
+// context (AbortFire/http-cap Stop plumbing). It decides nothing about IF/WHEN
+// to fire — the caller already did.
+func (sf *ServiceFlow) fireLocked(ctx context.Context, triggerID string) (out []byte, ferr error) {
 	var trigger *serviceTrigger
 	for i := range sf.triggers {
 		if sf.triggers[i].TriggerID == triggerID {
@@ -418,13 +569,23 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) (out [
 		return nil, fmt.Errorf("flow service %q has no timer trigger %q", sf.programID, triggerID)
 	}
 
-	sf.mu.Lock()
-	defer sf.mu.Unlock()
 	if sf.inst == nil {
 		return nil, fmt.Errorf("flow service %q is closed", sf.programID)
 	}
 	rt := sf.inst.rt
 	defer sf.inst.bridge.ResetBodyRefs()
+
+	// Operator Stop plumbing: a cancelable fire context. The http cap derives
+	// each request from it (bridge.SetFireContext) so a Stop aborts an in-flight
+	// fetch; the drain honors it at host-model boundaries. Cleared on return.
+	fireCtx, cancel := context.WithCancel(ctx)
+	sf.setFireCancel(cancel)
+	sf.inst.bridge.SetFireContext(fireCtx)
+	defer func() {
+		sf.inst.bridge.SetFireContext(context.Background())
+		sf.clearFireCancel()
+		cancel()
+	}()
 
 	store := rt.Store()
 	rec := sf.beginFire(triggerID, store)
@@ -434,27 +595,42 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) (out [
 		"trigger": trigger.TriggerID,
 		"firedAt": time.Now().UTC().Format(time.RFC3339),
 	})
+	// Host fire timestamp for the store's fire-timestamp port ([u64le unix_ms] ->
+	// pulled_at). A capability read (the host reads its own clock), NOT orchestration.
+	fireStamp := make([]byte, 8)
+	binary.LittleEndian.PutUint64(fireStamp, uint64(time.Now().UTC().UnixMilli()))
 
-	// One tick frame into the flow's linear memory at the trigger's bound port
-	// ([48B descriptor][port id\0][payload]).
-	portBytes := append([]byte(trigger.PortID), 0)
-	buf := make([]byte, flowFrameDescriptorSize+len(portBytes)+len(tick))
-	copy(buf[flowFrameDescriptorSize:], portBytes)
-	copy(buf[flowFrameDescriptorSize+len(portBytes):], tick)
-	framePtr, err := rt.Module().AllocateSize(uint32(len(buf)))
-	if err != nil {
-		return nil, fmt.Errorf("allocate tick frame: %w", err)
+	// One frame per DISTINCT bound port: the JSON tick to every port except the
+	// fire-timestamp port (which gets [u64le unix_ms]). The reactor routes each
+	// frame to the bindings whose target port matches the frame's port id.
+	firePorts := trigger.Ports
+	if len(firePorts) == 0 {
+		firePorts = []string{trigger.PortID}
 	}
-	encodeFrameDescriptor(buf[:flowFrameDescriptorSize], &FlowFrameDescriptor{
-		PortIDPointer: framePtr + flowFrameDescriptorSize,
-		Offset:        framePtr + flowFrameDescriptorSize + uint32(len(portBytes)),
-		Size:          uint32(len(tick)),
-		Occupied:      true,
-	})
-	if err := rt.Module().WriteMemory(framePtr, buf); err != nil {
-		return nil, fmt.Errorf("write tick frame: %w", err)
+	for _, port := range firePorts {
+		payload := tick
+		if port == triggerFirePortID {
+			payload = fireStamp
+		}
+		portBytes := append([]byte(port), 0)
+		buf := make([]byte, flowFrameDescriptorSize+len(portBytes)+len(payload))
+		copy(buf[flowFrameDescriptorSize:], portBytes)
+		copy(buf[flowFrameDescriptorSize+len(portBytes):], payload)
+		framePtr, aerr := rt.Module().AllocateSize(uint32(len(buf)))
+		if aerr != nil {
+			return nil, fmt.Errorf("allocate trigger frame (port %s): %w", port, aerr)
+		}
+		encodeFrameDescriptor(buf[:flowFrameDescriptorSize], &FlowFrameDescriptor{
+			PortIDPointer: framePtr + flowFrameDescriptorSize,
+			Offset:        framePtr + flowFrameDescriptorSize + uint32(len(portBytes)),
+			Size:          uint32(len(payload)),
+			Occupied:      true,
+		})
+		if werr := rt.Module().WriteMemory(framePtr, buf); werr != nil {
+			return nil, fmt.Errorf("write trigger frame (port %s): %w", port, werr)
+		}
+		rt.EnqueueTriggerFrame(trigger.Index, framePtr)
 	}
-	rt.EnqueueTriggerFrame(trigger.Index, framePtr)
 
 	// Drain, collecting every egress result frame verbatim.
 	var results []json.RawMessage
@@ -474,7 +650,7 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) (out [
 		handlers[key] = collect
 	}
 
-	if _, err := rt.Drain(ctx, handlers, DrainOptions{MaxIterations: 1000}); err != nil {
+	if _, err := rt.Drain(fireCtx, handlers, DrainOptions{MaxIterations: 1000}); err != nil {
 		return nil, fmt.Errorf("flow service %q trigger %q: %w", sf.programID, triggerID, err)
 	}
 
