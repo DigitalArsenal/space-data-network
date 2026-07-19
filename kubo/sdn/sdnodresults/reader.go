@@ -48,31 +48,150 @@ func (r *Reader) serviceFlow() ODFlow {
 	return r.flow()
 }
 
-// storeRow is one (cid, data) pair read from an arena table.
+// storeRow is one arena row's provenance + payload. Provider/Source/PulledAt
+// are all wrapper-schema columns declared in the SAME flowrt.flatsqlStoreSchema
+// this binary compiles against (pulled_at is additive there — an OLDER row
+// simply reads 0, never a query error — see that schema's own doc comment),
+// so there is exactly one column set to read: this binary's LinkedStore
+// schema and this package's queries are compiled together, never skewed.
 type storeRow struct {
-	CID  string
-	Data []byte
+	CID      string
+	Provider string
+	Source   string
+	PulledAt int64 // unix milliseconds; 0 when absent/unknown (an older row)
+	Data     []byte
 }
 
+// queryRange reads every row in rng from table, provenance + pulled_at
+// included, in rowid order.
 func queryRange(store *flowrt.LinkedStore, table string, rng flowrt.TableRange) []storeRow {
 	if store == nil || rng.Through <= rng.After {
 		return nil
 	}
-	res, err := store.Query("SELECT cid, data FROM "+table+" WHERE rowid > ? AND rowid <= ? ORDER BY rowid", rng.After, rng.Through)
+	res, err := store.Query(
+		"SELECT cid, provider, source_name, pulled_at, data FROM "+table+" WHERE rowid > ? AND rowid <= ? ORDER BY rowid",
+		rng.After, rng.Through,
+	)
 	if err != nil {
 		return nil
 	}
 	out := make([]storeRow, 0, len(res.Rows))
 	for _, row := range res.Rows {
-		if len(row) != 2 {
+		if len(row) != 5 {
 			continue
 		}
-		cid, _ := row[0].(string)
-		data, _ := row[1].([]byte)
-		if cid == "" || len(data) == 0 {
+		sr := storeRow{}
+		sr.CID, _ = row[0].(string)
+		sr.Provider, _ = row[1].(string)
+		sr.Source, _ = row[2].(string)
+		sr.PulledAt = asInt64(row[3])
+		data, _ := row[4].([]byte)
+		sr.Data = data
+		if sr.CID == "" || len(sr.Data) == 0 {
 			continue
 		}
-		out = append(out, storeRow{CID: cid, Data: data})
+		out = append(out, sr)
+	}
+	return out
+}
+
+// asInt coerces a flatsqlrt scalar cell (int64 or int, depending on the
+// engine's marshaling path) into a plain int.
+func asInt(v interface{}) int {
+	switch n := v.(type) {
+	case int64:
+		return int(n)
+	case int:
+		return n
+	default:
+		return 0
+	}
+}
+
+// asInt64 is asInt's int64 counterpart (for the pulled_at column).
+func asInt64(v interface{}) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	default:
+		return 0
+	}
+}
+
+// formatPulledAt renders a pulled_at cell (unix milliseconds — the OD flow's
+// store node fills it from a [u64le unix_ms] host-trigger timestamp) as an
+// RFC3339 UTC string, or "" for an absent/non-positive value.
+func formatPulledAt(unixMs int64) string {
+	if unixMs <= 0 {
+		return ""
+	}
+	return time.UnixMilli(unixMs).UTC().Format(time.RFC3339)
+}
+
+// unattributedProvider is the synthesized bucket id for records with no
+// provider tag (e.g. the pre-attribution backfill rows) — never a real
+// declared provider id, so it can never collide with one.
+const unattributedProvider = ""
+
+// providerAggregates GROUP BYs table's rows in rng by provider, returning
+// each provider's row count and (when the store carries the column) its
+// latest pulled_at, in unix milliseconds. Cheap SQL-side aggregation — no
+// BLOB decode — since totals/last-pulled need only the provenance columns.
+// The "" key (present only when SOME row in range has no provider tag) is
+// the unattributed bucket.
+func providerAggregates(store *flowrt.LinkedStore, table string, rng flowrt.TableRange) (totals map[string]int, lastPulled map[string]int64) {
+	totals = map[string]int{}
+	lastPulled = map[string]int64{}
+	if store == nil || rng.Through <= rng.After {
+		return
+	}
+	res, err := store.Query(
+		"SELECT provider, COUNT(*), COALESCE(MAX(pulled_at),0) FROM "+table+" WHERE rowid > ? AND rowid <= ? GROUP BY provider",
+		rng.After, rng.Through,
+	)
+	if err != nil {
+		return
+	}
+	for _, row := range res.Rows {
+		if len(row) != 3 {
+			continue
+		}
+		provider, _ := row[0].(string)
+		totals[provider] = asInt(row[1])
+		if ts := asInt64(row[2]); ts > 0 {
+			lastPulled[provider] = ts
+		}
+	}
+	return
+}
+
+// providerAvgWRMS decodes every $OBD row in rng and averages effectiveWRMS
+// (WRMS, or BEST_PASS_WRMS when WRMS is unset) PER PROVIDER — the module-
+// side ruling is "no wrms store column, read-side BLOB decode only," so this
+// is necessarily a per-row decode (SQL cannot aggregate a value buried in a
+// BLOB), grouped by the (SQL-column, always-present) provider field.
+func providerAvgWRMS(store *flowrt.LinkedStore, rng flowrt.TableRange) map[string]float64 {
+	sums := map[string]float64{}
+	counts := map[string]int{}
+	for _, row := range queryRange(store, "sds_obd", rng) {
+		facts, ok := decodeOBD(row.Data)
+		if !ok {
+			continue
+		}
+		wrms, ok := facts.effectiveWRMS()
+		if !ok {
+			continue
+		}
+		sums[row.Provider] += wrms
+		counts[row.Provider]++
+	}
+	out := make(map[string]float64, len(counts))
+	for p, n := range counts {
+		if n > 0 {
+			out[p] = sums[p] / float64(n)
+		}
 	}
 	return out
 }
@@ -106,8 +225,9 @@ func declaredProviders(sf ODFlow) []string {
 	return out
 }
 
-// avgWRMS decodes every $OBD row in rng and averages its WRMS (0,0 when
-// there are none or none decode).
+// avgWRMS decodes every $OBD row in rng and averages its effectiveWRMS (WRMS,
+// or BEST_PASS_WRMS when WRMS is unset) — (0,0) when there are none or none
+// decode.
 func avgWRMS(store *flowrt.LinkedStore, rng flowrt.TableRange) (avg float64, n int) {
 	var sum float64
 	for _, row := range queryRange(store, "sds_obd", rng) {
@@ -115,7 +235,11 @@ func avgWRMS(store *flowrt.LinkedStore, rng flowrt.TableRange) (avg float64, n i
 		if !ok {
 			continue
 		}
-		sum += facts.WRMS
+		wrms, ok := facts.effectiveWRMS()
+		if !ok {
+			continue
+		}
+		sum += wrms
 		n++
 	}
 	if n == 0 {
@@ -282,9 +406,15 @@ func (r *Reader) Run(id string) (RunSummary, bool) {
 	return rr.summary(sf.Store()), true
 }
 
-// RunProviders is LEVEL 1 of the drill-down: one row per DECLARED provider
-// (real $PLG topology metadata), stats honestly Unavailable — see the
-// package doc for exactly why per-provider attribution does not exist yet.
+// RunProviders is LEVEL 1 of the drill-down: real per-provider totals/avg-RMS/
+// last-pulled where the store's provider attribution covers this run (the
+// module's cid-keyed provenance sidecar — see the package doc), backward-
+// compatible with runs that predate it: when NO row in range carries a
+// provider tag (the backfill run's pre-attribution rows), every declared
+// provider is honestly Unavailable (nil, never a fabricated 0) and a single
+// synthesized "unattributed" row carries the real total for those records.
+// skipped/errors have no telemetry at any layer yet, so they stay nil with a
+// note regardless of attribution.
 func (r *Reader) RunProviders(id string) ([]ProviderStat, bool) {
 	sf := r.serviceFlow()
 	if sf == nil {
@@ -294,26 +424,96 @@ func (r *Reader) RunProviders(id string) ([]ProviderStat, bool) {
 	if !ok {
 		return nil, false
 	}
-	out := make([]ProviderStat, 0, len(rr.providers))
-	for _, p := range rr.providers {
-		out = append(out, ProviderStat{
-			Provider:    p,
-			Label:       providerLabel(p),
-			Unavailable: true,
-			Note:        noProviderAttributionNote,
-		})
+	store := sf.Store()
+
+	totals, lastPulled := providerAggregates(store, "sds_omm", rr.omm)
+	avgRMS := providerAvgWRMS(store, rr.obd)
+
+	// hasAttribution: at least one row in this run's OMM range carries a real
+	// (non-empty) provider tag. Only then can a DECLARED provider absent from
+	// totals be honestly reported as a real zero (it fired in a run we CAN
+	// attribute, it just contributed nothing) rather than "unknown."
+	hasAttribution := false
+	for p := range totals {
+		if p != unattributedProvider {
+			hasAttribution = true
+			break
+		}
 	}
+
+	order := append([]string(nil), rr.providers...)
+	seen := make(map[string]bool, len(order))
+	for _, p := range order {
+		seen[p] = true
+	}
+	for p := range totals {
+		if p != unattributedProvider && !seen[p] {
+			seen[p] = true
+			order = append(order, p)
+		}
+	}
+	sort.Strings(order)
+
+	out := make([]ProviderStat, 0, len(order)+1)
+	for _, p := range order {
+		stat := ProviderStat{Provider: p, Label: providerLabel(p)}
+		if total, ok := totals[p]; ok {
+			t := total
+			stat.Total = &t
+		} else if hasAttribution {
+			zero := 0
+			stat.Total = &zero
+		}
+		if avg, ok := avgRMS[p]; ok {
+			a := avg
+			stat.AvgRMS = &a
+		}
+		if ts, ok := lastPulled[p]; ok {
+			s := formatPulledAt(ts)
+			if s != "" {
+				stat.LastPulled = &s
+			}
+		}
+		if stat.Total == nil {
+			stat.Unavailable = true
+			stat.Note = "this run predates per-provider attribution (or predates this node's rebuild) — total/avg RMS/last-pulled cannot be determined for this provider"
+		} else {
+			stat.Note = "skipped/errors have no per-provider telemetry yet — the OD module does not emit per-provider skip/error counts"
+		}
+		out = append(out, stat)
+	}
+
+	// The unattributed bucket: real records with no provider tag (pre-
+	// attribution rows). Never vanished — surfaced as its own row.
+	if total, ok := totals[unattributedProvider]; ok && total > 0 {
+		stat := ProviderStat{
+			Provider: "unattributed",
+			Label:    "Unattributed (pre-attribution records)",
+		}
+		t := total
+		stat.Total = &t
+		if avg, ok := avgRMS[unattributedProvider]; ok {
+			a := avg
+			stat.AvgRMS = &a
+		}
+		stat.Note = "these records predate per-provider attribution (the OD flow's provenance sidecar) and cannot be attributed to a specific provider"
+		out = append(out, stat)
+	}
+
 	return out, true
 }
 
 // RunObjects is LEVEL 2 of the drill-down: real per-object rows for run id,
 // decoded from $OMM (joined to $OBD by NORAD for fit telemetry), filtered by
-// a plaintext search over norad/object name/object id. provider/source are
-// accepted for API shape stability (the board's owner-specced "filterable by
-// data source" control) but currently narrow nothing — every row is
-// Unattributed=true (see the package doc) — so passing either simply returns
-// the SAME full set; the caller should surface that honestly rather than
-// implying a working filter.
+// a plaintext search over norad/object name/object id. Provider/Source now
+// come from the store's real provenance columns (the module's cid-keyed
+// sidecar) when present; Unattributed is true only for a record that
+// genuinely carries no provider tag (pre-attribution rows), never a blanket
+// default. provider/source query params are accepted for API shape
+// stability (the board's "filterable by data source" control) but do not
+// yet narrow the result — every returned row already carries its REAL
+// provider/source (or Unattributed=true), so the caller can filter/label
+// client-side; a future server-side WHERE is additive, not a shape change.
 func (r *Reader) RunObjects(id, search string) ([]ObjectRow, bool) {
 	sf := r.serviceFlow()
 	if sf == nil {
@@ -346,7 +546,9 @@ func (r *Reader) RunObjects(id, search string) ([]ObjectRow, bool) {
 			Norad:        facts.Norad,
 			ObjectName:   facts.ObjectName,
 			ObjectID:     facts.ObjectID,
-			Unattributed: true,
+			Provider:     row.Provider,
+			Source:       row.Source,
+			Unattributed: row.Provider == "" && row.Source == "",
 			Epoch:        facts.Epoch,
 			MeanMotion:   facts.MeanMotion,
 			Eccentricity: facts.Eccentricity,
@@ -355,7 +557,9 @@ func (r *Reader) RunObjects(id, search string) ([]ObjectRow, bool) {
 		}
 		if obdRow, ok := obdByNorad[facts.Norad]; ok {
 			bf := obdFactsByNorad[facts.Norad]
-			obj.RMS, obj.HasRMS = bf.WRMS, true
+			if wrms, ok := bf.effectiveWRMS(); ok {
+				obj.RMS, obj.HasRMS = wrms, true
+			}
 			obj.Iterations = bf.Iterations
 			obj.FitSpanDays = bf.FitSpanDays
 			obj.OBDCid = obdRow.CID
