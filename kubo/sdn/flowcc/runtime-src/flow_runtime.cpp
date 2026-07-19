@@ -121,6 +121,12 @@ struct QueuedFrame {
 // host stay stable.
 static std::vector<QueuedFrame> *g_queues = nullptr;
 static FlowNodeRuntimeStateC *g_node_states = nullptr;
+// Per-node "dispatched this drain cycle" flag (cleared by reset_state, set when a
+// node's entry has run + its outputs routed). Drives multi-input-port readiness:
+// a consumer waits for ALL its edge-producers to complete, then fires on ANY
+// queued input frame — so a producer that emits 0 frames (e.g. a 404ing source
+// leaving one per-provider port empty) does not starve the consumer.
+static uint8_t *g_node_completed = nullptr;
 static FlowIngressRuntimeStateC *g_ingress_states = nullptr;
 
 static void flow_runtime_alloc() {
@@ -128,6 +134,8 @@ static void flow_runtime_alloc() {
   g_queues = new std::vector<QueuedFrame>[p.node_count];
   g_node_states = new FlowNodeRuntimeStateC[p.node_count];
   memset(g_node_states, 0, sizeof(FlowNodeRuntimeStateC) * p.node_count);
+  g_node_completed = new uint8_t[p.node_count];
+  memset(g_node_completed, 0, p.node_count);
   const uint32_t tc = p.trigger_count > 0 ? p.trigger_count : 1;
   g_ingress_states = new FlowIngressRuntimeStateC[tc];
   memset(g_ingress_states, 0, sizeof(FlowIngressRuntimeStateC) * tc);
@@ -162,14 +170,44 @@ static FlowFrameDescriptorC g_current_frames[kMaxInvocationFrames];
 static QueuedFrame g_current_owned[kMaxInvocationFrames];
 static uint32_t g_current_node = kInvalidIndex;
 
-// Readiness: a node is ready when it has queued frames AND every required
-// input port of its bound method (compiled in from the dependency manifest)
-// has at least one queued frame. Host-model nodes have no required-port rows
-// and fire on any queued frame.
+// Readiness (relaxed for multi-input-port consumers): a node is ready when it has
+// at least one queued frame on ANY input port AND every UPSTREAM EDGE-PRODUCER for
+// this drain cycle has already completed. Waiting for all producers preserves
+// single-dispatch-per-cycle + drain order (a consumer sees every producer's output
+// before it fires — od workers join, then store dispatches); firing on ANY port is
+// the relaxation that keeps a 404ing provider (which completes emitting 0 frames,
+// leaving e.g. oem_glonass empty) from starving od.fit. A trigger-fed source has no
+// edge-producers and is ready on its trigger frame. For a single-input-port flow
+// this is byte-identical: the sole producer completes before its frame is routed,
+// so the consumer fires at the same point as the old required-port check.
 static bool flow_node_is_ready(uint32_t node) {
   if (g_queues[node].empty()) return false;
+  // (1) Every upstream EDGE-PRODUCER for this drain cycle must have completed, so
+  // a multi-input consumer sees every producer's output before it fires. A
+  // producer that emits 0 frames (e.g. a 404ing source leaving oem_glonass empty)
+  // still counts as complete and does NOT starve the consumer.
+  for (uint32_t e = 0; e < g_flow_program.edge_count; e++) {
+    if (g_flow_program.edges[e].to_node != node) continue;
+    if (g_node_completed[g_flow_program.edges[e].from_node] == 0) return false;
+  }
+  // (2) Every REQUIRED port that is NOT fed by an edge (i.e. delivered by a
+  // trigger) must carry a queued frame — this preserves the explicit multi-input
+  // gate (a decision+stream node fed by two triggers fires only after BOTH
+  // arrive). Edge-fed required ports are already covered by (1): the producer
+  // ran, so the port is satisfied even if it produced 0 frames. This makes the
+  // change a strict relaxation only for edge-fed multi-input consumers (od.fit's
+  // per-provider oem_* ports); trigger-gated flows are byte-identical.
   for (uint32_t r = 0; r < g_flow_program.required_port_count; r++) {
     if (g_flow_program.required_ports[r].node_index != node) continue;
+    bool edge_fed = false;
+    for (uint32_t e = 0; e < g_flow_program.edge_count; e++) {
+      if (g_flow_program.edges[e].to_node == node &&
+          strcmp(g_flow_program.edges[e].to_port, g_flow_program.required_ports[r].port_id) == 0) {
+        edge_fed = true;
+        break;
+      }
+    }
+    if (edge_fed) continue;
     bool present = false;
     for (const QueuedFrame &frame : g_queues[node]) {
       if (strcmp(frame.port.c_str(), g_flow_program.required_ports[r].port_id) == 0) {
@@ -369,6 +407,7 @@ FLOW_EXPORT void space_data_module_runtime_reset_state(void) {
   for (uint32_t n = 0; n < g_flow_program.node_count; n++) {
     g_queues[n].clear();
     memset(&g_node_states[n], 0, sizeof(FlowNodeRuntimeStateC));
+    g_node_completed[n] = 0;
   }
   const uint32_t tc = g_flow_program.trigger_count > 0 ? g_flow_program.trigger_count : 1;
   for (uint32_t t = 0; t < tc; t++) {
@@ -450,6 +489,7 @@ FLOW_EXPORT uint32_t space_data_module_runtime_apply_node_invocation_result(
     routed++;
   }
   g_node_states[node].invocation_count++;
+  g_node_completed[node] = 1;
   g_node_states[node].consumed_frames += g_current_desc.frame_count;
   g_node_states[node].backlog_remaining = static_cast<uint32_t>(backlog_remaining);
   g_node_states[node].last_status = static_cast<uint32_t>(status_code);
@@ -611,6 +651,7 @@ FLOW_EXPORT int32_t space_data_module_runtime_dispatch_current_invocation_direct
     routed++;
   }
   g_node_states[node].invocation_count++;
+  g_node_completed[node] = 1;
   g_node_states[node].consumed_frames += g_current_desc.frame_count;
   g_node_states[node].last_status = static_cast<uint32_t>(status);
   g_node_states[node].yielded = g_shim_yielded != 0 ? 1 : 0;
