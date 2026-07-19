@@ -446,6 +446,14 @@ func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byt
 		return nil, fmt.Errorf("flow service %q trigger %q: %w", sf.programID, triggerID, err)
 	}
 
+	// Persist the engine-linked store's arena after a drain that wrote records
+	// (opaque whole-arena snapshot via the fs connector; no-op for non-store
+	// flows). Best-effort: a snapshot failure does not fail the fired trigger —
+	// the rows are still live in-process and the next fire re-snapshots.
+	if serr := rt.SnapshotStore(); serr != nil {
+		log.Warnf("flow service %q: store snapshot after trigger %q failed: %v", sf.programID, triggerID, serr)
+	}
+
 	summary, _ := json.Marshal(map[string]interface{}{
 		"trigger": triggerID,
 		"results": results,

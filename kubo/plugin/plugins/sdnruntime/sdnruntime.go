@@ -305,16 +305,16 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 	p.maybeInstallCelestrakReferenceSet(node.Context(), flowInstaller, installer, svc)
 	// --- END celestrak reference set ---
 
-	// --- BEGIN operator ephemeris set (omm role; see operator_ephemeris_set.go) ---
-	// When this node is in the "omm" role (SDN_ROLE=omm env or Config.Role),
-	// register the first-party operator ephemeris source modules (Starlink, ISS,
-	// OneWeb, GLONASS, Intelsat, CPF, GPS) with a HIGH per-pull object cap so the
-	// node ingests each provider's full constellation into the record store — the
-	// input the supplemental-OMM store-backed OD source fits. Registered before
-	// the scheduler starts so every pull timer begins together. No-op on other
-	// nodes.
-	p.maybeInstallOperatorEphemerisSet(node.Context(), installer, svc)
-	// --- END operator ephemeris set ---
+	// --- BEGIN supplemental-OMM OD flow (omm role; see operator_omm_flow.go) ---
+	// When this node is in the "omm" role (SDN_ROLE=omm env or Config.Role), BAKE
+	// the ONE composed wasi-threads OD flow (five in-wasm providers -> threaded fit
+	// -> in-wasm FlatSQL store) and mount it as a timer-served flow before the
+	// scheduler starts. This REPLACES the old per-provider operator-ephemeris module
+	// set (maybeInstallOperatorEphemerisSet, now dead code queued for the purge
+	// node): the ONE wasm flow does the fetch + threaded fit + $OMM/$OCM/$OBD store,
+	// $OEM in-memory only. No-op on other nodes.
+	p.maybeInstallOperatorOMMFlow(node.Context(), flowInstaller, svc)
+	// --- END supplemental-OMM OD flow ---
 
 	// --- BEGIN supplemental-OMM OD run engine (see sdnruns.go) ---
 	// Build + register the supplemental-OMM run engine (cron module
