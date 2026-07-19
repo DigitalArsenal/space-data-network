@@ -2,10 +2,8 @@ package modulert_test
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -41,8 +39,21 @@ func liveOKJSON(result interface{}) []byte {
 // TestStarlinkSourceCronLivePull is the WS5.6 live Go-node cron run: the
 // plugins.Manager cron scheduler (the same path the node uses for manifest
 // TIMERS) drives the module's pull against the REAL Starlink upstream
-// (api.starlink.com MANIFEST.txt) through the real HTTP host capability, and
-// the pull's store→sign→publish chain runs against recording fakes.
+// (api.starlink.com MANIFEST.txt) through the real HTTP host capability.
+//
+// Under the CURRENT module contract (post Go-orchestration purge) pull
+// returns its $OEM record directly for in-wasm consumption and never drives
+// storage_ingest/wallet_sign/crypto_sign/pubsub — this test used to wait for
+// that store→sign→publish chain, which was exactly the purged Go
+// orchestration (see starlink_source_integration_test.go's doc comment for
+// the full rationale). InvokeCron (what the cron scheduler calls) still
+// routes through the same $PIV-envelope decode as InvokeMethod, which errors
+// on pull's raw $OEM response by design; that error is expected here and is
+// not fatal to the manager. The meaningful, still-attainable assertion at
+// this call boundary (plugins.Manager, not the low-level module runtime) is
+// that a live pull actually round-trips through the real HTTP capability
+// (proving the cron wiring works end-to-end against the network) and that it
+// NEVER reaches the legacy store/sign/publish capabilities.
 //
 // Requires network; gated behind SDN_LIVE_STARLINK_CRON=1.
 func TestStarlinkSourceCronLivePull(t *testing.T) {
@@ -58,7 +69,6 @@ func TestStarlinkSourceCronLivePull(t *testing.T) {
 
 	var mu sync.Mutex
 	var ops []string
-	var pnmSigned []byte
 	record := func(op string) {
 		mu.Lock()
 		ops = append(ops, op)
@@ -68,6 +78,10 @@ func TestStarlinkSourceCronLivePull(t *testing.T) {
 	reg := modulert.NewCapabilityRegistry()
 	// REAL outbound HTTP — the pull GETs the live Starlink MANIFEST.txt.
 	reg.Register("http", caps.NewHTTPCapFactory())
+	// storage_ingest/wallet_sign/crypto_sign/pubsub are registered only because
+	// the manifest still declares them as sensitive capabilities (NewModule's
+	// fail-closed gate needs a handler present); pull must never actually call
+	// them under the current contract — see the assertion below.
 	reg.Register("storage_ingest", func(_ *modulert.Module) modulert.CapHandler {
 		return func(op string, _ []byte) ([]byte, error) {
 			record(op)
@@ -77,24 +91,13 @@ func TestStarlinkSourceCronLivePull(t *testing.T) {
 	reg.Register("wallet_sign", func(_ *modulert.Module) modulert.CapHandler {
 		return func(op string, _ []byte) ([]byte, error) {
 			record(op)
-			// keyslot.sign host-side oracle: detached signature, never a raw key.
-			sig := make([]byte, 64)
-			return liveOKJSON(map[string]interface{}{
-				"signature": base64.StdEncoding.EncodeToString(sig),
-				"algorithm": "ed25519",
-			}), nil
+			return liveOKJSON(map[string]interface{}{"signature": "", "algorithm": "ed25519"}), nil
 		}
 	})
 	reg.Register("crypto_sign", func(_ *modulert.Module) modulert.CapHandler {
-		return func(op string, payload []byte) ([]byte, error) {
+		return func(op string, _ []byte) ([]byte, error) {
 			record(op)
-			mu.Lock()
-			pnmSigned = append([]byte(nil), payload...)
-			mu.Unlock()
-			sig := make([]byte, 64)
-			return liveOKJSON(map[string]interface{}{
-				"signature": base64.StdEncoding.EncodeToString(sig),
-			}), nil
+			return liveOKJSON(map[string]interface{}{"signature": ""}), nil
 		}
 	})
 	reg.Register("pubsub", func(_ *modulert.Module) modulert.CapHandler {
@@ -122,53 +125,44 @@ func TestStarlinkSourceCronLivePull(t *testing.T) {
 	}
 	defer mgr.Close()
 
-	// Wait for the scheduler to tick and the live pull to complete the chain.
+	// Wait for the scheduler to tick and the live pull to round-trip through
+	// the real HTTP capability (MANIFEST fetch + at least one object fetch).
 	deadline := time.After(60 * time.Second)
 	for {
 		mu.Lock()
 		got := append([]string(nil), ops...)
 		mu.Unlock()
-		if containsAll(got, []string{"storage.ingest_with_source", "keyslot.sign", "pubsub.publish"}) {
+		if countLiveOp(got, "http.request") >= 2 {
 			break
 		}
 		select {
 		case <-deadline:
-			t.Fatalf("cron pull did not complete the host-cap chain in time; recorded ops: %v", got)
+			t.Fatalf("cron pull did not complete a live http.request round-trip in time; recorded ops: %v", got)
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
 
-	// The signed payload derives from the LIVE upstream fetch: the module signs
-	// its PNM pointer JSON ({"data": base64(pnm)}), which embeds the discover
-	// URL and the discovered-resource count from the real MANIFEST.txt listing.
+	// Regression guard: the purged Go-orchestration host-cap sequence
+	// (storage.ingest_with_source / keyslot.sign / pubsub.publish) must never
+	// fire — pull returns $OEM directly to its caller now.
 	mu.Lock()
-	signReq := append([]byte(nil), pnmSigned...)
+	got := append([]string(nil), ops...)
 	mu.Unlock()
-	var signPayload struct {
-		Data string `json:"data"`
-	}
-	if err := json.Unmarshal(signReq, &signPayload); err != nil {
-		t.Fatalf("crypto.sign payload is not JSON: %v (%.200q)", err, signReq)
-	}
-	pnm, err := base64.StdEncoding.DecodeString(signPayload.Data)
-	if err != nil {
-		t.Fatalf("crypto.sign data is not base64: %v", err)
-	}
-	if !strings.Contains(string(pnm), "api.starlink.com") {
-		t.Fatalf("signed PNM does not reference the live upstream: %.300q", pnm)
-	}
-	t.Logf("live cron pull completed; signed PNM: %.400s", pnm)
-}
-
-func containsAll(got, want []string) bool {
-	seen := make(map[string]bool, len(got))
-	for _, g := range got {
-		seen[g] = true
-	}
-	for _, w := range want {
-		if !seen[w] {
-			return false
+	for _, forbidden := range []string{"storage.ingest_with_source", "keyslot.sign", "pubsub.publish"} {
+		if n := countLiveOp(got, forbidden); n != 0 {
+			t.Fatalf("expected the live cron pull to NEVER drive %q (purged Go-orchestration "+
+				"host-cap sequence), got %d invocation(s) in %v", forbidden, n, got)
 		}
 	}
-	return true
+	t.Logf("live cron pull completed against the real Starlink upstream; recorded ops: %v", got)
+}
+
+func countLiveOp(ops []string, op string) int {
+	n := 0
+	for _, o := range ops {
+		if o == op {
+			n++
+		}
+	}
+	return n
 }
