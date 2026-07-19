@@ -34,10 +34,40 @@ import (
 // "flatsql". Signature: int64 exec_envelope(uint32 env_ptr, uint32 env_len).
 const flatsqlExecEnvelopeName = "exec_envelope"
 
-// flatsqlStoreInitSchema is a minimal valid schema to initialize the flow's
-// Database; the store node CREATEs its own sds_omm/sds_ocm/sds_obd tables via
-// exec_envelope, so this only bootstraps the engine.
-const flatsqlStoreInitSchema = "table _sdn_store_init { seq:int; }"
+// flatsqlIngestRecordName is the SECOND symbol the store node imports from module
+// "flatsql". Signature: int64 ingest_record(uint32 buf_ptr, uint32 buf_len). The
+// store node builds a wrapper FlatBuffer (sds_omm/sds_ocm/sds_obd shape, file
+// identifier SOMM/SOCM/SOBD) in ITS reactor memory and calls this to APPEND it to
+// the exportable arena. This is the persistence-capable write path: FlatSQL only
+// snapshots the FlatBuffer arena (ExportData), and its arena vtabs REJECT a SQL
+// INSERT ("table may not be modified") — so stored records MUST arrive via ingest,
+// not INSERT, to survive a snapshot/rebuild (restart). exec_envelope stays the
+// READ path (the store node's in-wasm dedup pre-check + queries).
+const flatsqlIngestRecordName = "ingest_record"
+
+// flatsqlStoreSchema DECLARES the OD write-lane tables sds_omm/sds_ocm/sds_obd in
+// the flow Database's FlatBuffers schema so their rows live in the ExportData
+// arena (a runtime-only `CREATE TABLE` exports 0 bytes and is LOST on restart).
+// The columns match the store node's wrapper table EXACTLY (cid is the (key)
+// dedup field; data is the raw $OMM/$OCM/$OBD BLOB):
+//
+//	cid:string (key)  provider:string  source_name:string  batch_id:string  data:[ubyte]
+const flatsqlStoreSchema = `
+  table sds_omm { cid:string (key); provider:string; source_name:string; batch_id:string; data:[ubyte]; }
+  table sds_ocm { cid:string (key); provider:string; source_name:string; batch_id:string; data:[ubyte]; }
+  table sds_obd { cid:string (key); provider:string; source_name:string; batch_id:string; data:[ubyte]; }
+`
+
+// flatsqlStoreFileIDs maps each store-local 4-byte FlatBuffer file identifier to
+// its arena table. RegisterFileID both MATERIALIZES the arena vtab and routes
+// IngestOne(wrapper) to the right table by the buffer's embedded identifier. The
+// ids are store-local (SOMM/SOCM/SOBD) — deliberately NOT the SDS ids ($OMM/...) —
+// so a raw SDS record can never be mis-ingested into a wrapper table.
+var flatsqlStoreFileIDs = []struct{ fileID, table string }{
+	{"SOMM", "sds_omm"},
+	{"SOCM", "sds_ocm"},
+	{"SOBD", "sds_obd"},
+}
 
 // ParamTag values (must match the store node's flatsql_capi.cpp ParamTag).
 const (
@@ -63,10 +93,19 @@ func OpenLinkedStore(aotCacheDir, snapshotPath string) (*LinkedStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("flowrt: open flatsql engine: %w", err)
 	}
-	db, err := rt.CreateDatabase(flatsqlStoreInitSchema, "sdn_flow_store")
+	db, err := rt.CreateDatabase(flatsqlStoreSchema, "sdn_flow_store")
 	if err != nil {
 		rt.Close()
 		return nil, fmt.Errorf("flowrt: create flow store db: %w", err)
+	}
+	// Materialize the arena vtabs so IngestOne(wrapper) lands in the exported
+	// arena (and so a rebuilt snapshot re-registers the same routing). Must run
+	// before LoadAndRebuild, mirroring flatsqlrt's export/rebuild round-trip.
+	for _, m := range flatsqlStoreFileIDs {
+		if e := db.RegisterFileID(m.fileID, m.table); e != nil {
+			rt.Close()
+			return nil, fmt.Errorf("flowrt: register store file id %s->%s: %w", m.fileID, m.table, e)
+		}
 	}
 	s := &LinkedStore{rt: rt, db: db, snapshotPath: snapshotPath}
 	if snapshotPath != "" {
@@ -96,6 +135,15 @@ func (s *LinkedStore) execEnvelope(env []byte) int64 {
 	if err != nil {
 		return -3
 	}
+	// A single-cell integer result (the store node's dedup pre-check
+	// `SELECT COUNT(*) ... WHERE cid=?` or `SELECT 1 ... LIMIT 1`) returns that
+	// scalar so the guest can branch on existence; any other result returns the
+	// row count. Either way >0 means "already stored".
+	if len(res.Rows) == 1 && len(res.Rows[0]) == 1 {
+		if n, ok := res.Rows[0][0].(int64); ok {
+			return n
+		}
+	}
 	return int64(len(res.Rows))
 }
 
@@ -122,6 +170,52 @@ func (s *LinkedStore) ExecEnvelopeHostFunc() wasmrt.HostFunc {
 			return []interface{}{s.execEnvelope(env)}, wasmedge.Result_Success
 		},
 	}
+}
+
+// IngestRecordHostFunc returns the `flatsql.ingest_record` trampoline: it copies
+// the store node's wrapper FlatBuffer out of the calling flow's (shared) memory
+// and INGESTS it into the arena, routed to sds_omm/sds_ocm/sds_obd by the
+// buffer's file identifier (SOMM/SOCM/SOBD). This is the persistence-capable
+// write path — arena rows are captured by ExportData, whereas a SQL INSERT into
+// an arena vtab is rejected by the engine. The host reads OPAQUE bytes only: no
+// decode, no SDS-type derivation, no per-record keying (that all stays in-wasm).
+func (s *LinkedStore) IngestRecordHostFunc() wasmrt.HostFunc {
+	i32 := func() *wasmedge.ValType { return wasmedge.NewValTypeI32() }
+	i64 := func() *wasmedge.ValType { return wasmedge.NewValTypeI64() }
+	return wasmrt.HostFunc{
+		Name:    flatsqlIngestRecordName,
+		Params:  []*wasmedge.ValType{i32(), i32()},
+		Returns: []*wasmedge.ValType{i64()},
+		Func: func(_ interface{}, cf *wasmedge.CallingFrame, params []interface{}) ([]interface{}, wasmedge.Result) {
+			bufPtr := uint32(params[0].(int32))
+			bufLen := uint32(params[1].(int32))
+			mem := cf.GetMemoryByIndex(0)
+			if mem == nil {
+				return []interface{}{int64(-1)}, wasmedge.Result_Success
+			}
+			buf, err := mem.GetData(uint(bufPtr), uint(bufLen))
+			if err != nil {
+				return []interface{}{int64(-1)}, wasmedge.Result_Success
+			}
+			return []interface{}{s.ingestRecord(buf)}, wasmedge.Result_Success
+		},
+	}
+}
+
+// ingestRecord appends one opaque wrapper FlatBuffer to the arena, returning the
+// engine record sequence (>=0) or a negative error. It NEVER inspects the buffer;
+// routing is by the buffer's own file identifier through the RegisterFileID map.
+func (s *LinkedStore) ingestRecord(buf []byte) int64 {
+	if len(buf) == 0 {
+		return -2
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seq, err := s.db.IngestOne(buf)
+	if err != nil {
+		return -3
+	}
+	return int64(seq)
 }
 
 // Snapshot writes an OPAQUE whole-arena ExportData blob to the snapshot path via
