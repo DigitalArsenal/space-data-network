@@ -80,6 +80,8 @@ describe('sdn upstream webui cutover contract', () => {
       'spaceaware/lib/conjunction-data.ts',
       'spaceaware/lib/console.test.ts',
       'spaceaware/lib/console.ts',
+      'spaceaware/lib/credentials-data.test.ts',
+      'spaceaware/lib/credentials-data.ts',
       'spaceaware/lib/groups-data.test.ts',
       'spaceaware/lib/groups-data.ts',
       'spaceaware/lib/login.test.ts',
