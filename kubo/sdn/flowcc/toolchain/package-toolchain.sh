@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# package-toolchain.sh — build the durable, checksummed flowcc bake-toolchain
+# artifact from a PROVEN staged home.
+#
+# The flowcc baker needs llvm-box.wasm (~58 MB) + the extracted emscripten
+# sysroot (~36 MB) staged into the node-data home before it can bake a flow
+# (home.Staged() gates the baker in plugin/plugins/sdnapi/sdnapi.go; /api/v1/
+# flows/bake returns 501 until then). Those two large binaries are emception-
+# derived and must NOT live in git. This script packages them (plus the two
+# small template files the Home layout needs) into a single reproducible tarball
+# whose INTERNAL layout is byte-for-byte the flowcc.Home layout, so extracting it
+# into a resolved home (see stage-toolchain.sh) IS staging — no Go code runs.
+#
+# CONTENT integrity (authoritative, tar-independent) is guaranteed by the
+# per-file sha256 of llvm-box.wasm, the sorted sysroot rollup hash, and the two
+# template file hashes, all recorded in SHA256SUMS. The .tar.gz sha is a
+# convenience pin (tar/gzip metadata is not bit-stable across implementations;
+# this script normalizes mtime + uid/gid to make it as reproducible as it can).
+#
+# Usage:
+#   package-toolchain.sh --src <staged-home-dir> [--out <dir>] [--version vN]
+#
+#   --src      A directory containing llvm-box.wasm, sysroot/, and
+#              template/{space_data_module_invoke.h,flow_runtime.cpp}. This is a
+#              PROVEN staged home (the one the bake tests passed against) or a
+#              home re-extracted from emception (see README.md "Re-extraction").
+#   --out      Output directory for the tarball + SHA256SUMS.
+#              Default: ~/.spacedatanetwork/flowcc-toolchain
+#   --version  Artifact version tag. Default: v1
+#
+# The written SHA256SUMS is ALSO printed to stdout so it can be committed into
+# this directory (sdn/flowcc/toolchain/SHA256SUMS) as the authoritative pin.
+set -euo pipefail
+
+VERSION="v1"
+SRC=""
+OUT="${HOME}/.spacedatanetwork/flowcc-toolchain"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --src)     SRC="$2"; shift 2 ;;
+    --out)     OUT="$2"; shift 2 ;;
+    --version) VERSION="$2"; shift 2 ;;
+    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+    *) echo "package-toolchain.sh: unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+[ -n "$SRC" ] || { echo "package-toolchain.sh: --src <staged-home-dir> is required" >&2; exit 2; }
+
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256() { sha256sum "$1" | awk '{print $1}'; }
+  sha256_stdin() { sha256sum | awk '{print $1}'; }
+  perfile() { shasum -a256 2>/dev/null || sha256sum; }
+elif command -v shasum >/dev/null 2>&1; then
+  sha256() { shasum -a256 "$1" | awk '{print $1}'; }
+  sha256_stdin() { shasum -a256 | awk '{print $1}'; }
+  perfile() { shasum -a256; }
+else
+  echo "package-toolchain.sh: need sha256sum or shasum" >&2; exit 3
+fi
+
+BOX="$SRC/llvm-box.wasm"
+SYSROOT="$SRC/sysroot"
+TPL_INVOKE="$SRC/template/space_data_module_invoke.h"
+TPL_RUNTIME="$SRC/template/flow_runtime.cpp"
+
+for f in "$BOX" "$TPL_INVOKE" "$TPL_RUNTIME"; do
+  [ -f "$f" ] || { echo "package-toolchain.sh: missing source file: $f" >&2; exit 4; }
+done
+[ -d "$SYSROOT" ] || { echo "package-toolchain.sh: missing sysroot dir: $SYSROOT" >&2; exit 4; }
+
+echo "==> computing content checksums from $SRC" >&2
+BOX_SHA="$(sha256 "$BOX")"
+BOX_BYTES="$(wc -c < "$BOX" | tr -d ' ')"
+SYSROOT_ROLLUP="$(cd "$SYSROOT" && find . -type f | LC_ALL=C sort | xargs shasum -a256 2>/dev/null | sha256_stdin)"
+SYSROOT_FILES="$(find "$SYSROOT" -type f | wc -l | tr -d ' ')"
+INVOKE_SHA="$(sha256 "$TPL_INVOKE")"
+INVOKE_BYTES="$(wc -c < "$TPL_INVOKE" | tr -d ' ')"
+RUNTIME_SHA="$(sha256 "$TPL_RUNTIME")"
+RUNTIME_BYTES="$(wc -c < "$TPL_RUNTIME" | tr -d ' ')"
+
+# Assemble a normalized staging tree (fixed mtime) so the tarball is as
+# reproducible as the tar implementation allows. Content is untouched.
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+STAGE="$WORK/flowcc-toolchain"
+mkdir -p "$STAGE/template"
+cp "$BOX" "$STAGE/llvm-box.wasm"
+cp -R "$SYSROOT" "$STAGE/sysroot"
+cp "$TPL_INVOKE" "$STAGE/template/space_data_module_invoke.h"
+cp "$TPL_RUNTIME" "$STAGE/template/flow_runtime.cpp"
+find "$STAGE" -name '._*' -delete 2>/dev/null || true
+find "$STAGE" -exec touch -t 200001010000 {} + 2>/dev/null || true
+
+mkdir -p "$OUT"
+TARBALL="$OUT/flowcc-toolchain-${VERSION}.tar.gz"
+echo "==> writing reproducible tarball $TARBALL" >&2
+TAR_FLAGS="--uid 0 --gid 0 --numeric-owner"
+if tar --version 2>/dev/null | grep -qi 'bsdtar'; then
+  TAR_FLAGS="$TAR_FLAGS --no-mac-metadata"
+fi
+( cd "$WORK" && find flowcc-toolchain -print | LC_ALL=C sort \
+    | COPYFILE_DISABLE=1 tar $TAR_FLAGS --no-recursion -cf - -T - ) \
+  | gzip -n > "$TARBALL"
+
+TARBALL_SHA="$(sha256 "$TARBALL")"
+TARBALL_BYTES="$(wc -c < "$TARBALL" | tr -d ' ')"
+
+SUMS="$OUT/SHA256SUMS"
+cat > "$SUMS" <<EOF
+# flowcc bake toolchain — content checksums (AUTHORITATIVE, tar-independent)
+# Generated by package-toolchain.sh. The content hashes below are the integrity
+# gate; the TARBALL_SHA256 is a convenience pin (tar/gzip metadata is not
+# bit-stable across implementations). stage-toolchain.sh verifies all of them.
+VERSION $VERSION
+BOX_SHA256 $BOX_SHA
+BOX_BYTES $BOX_BYTES
+# SYSROOT_ROLLUP_SHA256 = sha256( find . -type f | LC_ALL=C sort | xargs shasum -a256 )
+SYSROOT_ROLLUP_SHA256 $SYSROOT_ROLLUP
+SYSROOT_FILES $SYSROOT_FILES
+INVOKE_HDR_SHA256 $INVOKE_SHA
+INVOKE_HDR_BYTES $INVOKE_BYTES
+FLOW_RUNTIME_CPP_SHA256 $RUNTIME_SHA
+FLOW_RUNTIME_CPP_BYTES $RUNTIME_BYTES
+TARBALL_NAME flowcc-toolchain-${VERSION}.tar.gz
+TARBALL_SHA256 $TARBALL_SHA
+TARBALL_BYTES $TARBALL_BYTES
+EOF
+
+echo "==> done" >&2
+echo "    tarball: $TARBALL ($TARBALL_BYTES bytes)" >&2
+echo "    sums:    $SUMS" >&2
+echo >&2
+cat "$SUMS"
