@@ -125,7 +125,7 @@ func NewFlowRuntime(wasmBytes []byte, maxMemoryPages uint32, extraOpts ...wasmrt
 				return nil, fmt.Errorf("flowrt: attach in-wasm FlatSQL store: %w", serr)
 			}
 			linkedStore = ls
-			opts = append(opts, wasmrt.WithHostModule(engineImportModule, []wasmrt.HostFunc{ls.ExecEnvelopeHostFunc(), ls.IngestRecordHostFunc()}))
+			opts = append(opts, wasmrt.WithHostModule(engineImportModule, []wasmrt.HostFunc{ls.ExecEnvelopeHostFunc(), ls.IngestRecordHostFunc(), ls.QueryRowsHostFunc(), ls.MarkDeletedBulkHostFunc(), ls.CompactHostFunc()}))
 			log.Infof("Flow runtime: engine-linked in-wasm FlatSQL store attached (flatsql.exec_envelope; opaque snapshot %s)", snap)
 		}
 		// AOT-at-load: a wasi-threads composed artifact runs ~95x slower AND does

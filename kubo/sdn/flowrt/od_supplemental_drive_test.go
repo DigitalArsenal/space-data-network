@@ -126,30 +126,47 @@ func TestODSupplementalWasmEdgeDrive(t *testing.T) {
 	rt.SetLinkedSection(func(run func() error) error { return run() })
 	t.Logf("loaded: %d nodes, %d edges, %d triggers", rt.NodeCount, rt.EdgeCount, rt.TriggerCount)
 
-	// Enqueue one tick frame at trigger 0, bound port "config".
-	portBytes := append([]byte("config"), 0)
+	// Deliver the trigger frames the live FireTrigger delivers: the JSON tick to
+	// the providers' "config" port and the [u64le unix_ms] fire timestamp to the
+	// store's "trigger" port (a required, trigger-fed port).
 	tick, _ := json.Marshal(map[string]string{"trigger": "t0"})
-	buf := make([]byte, flowFrameDescriptorSize+len(portBytes)+len(tick))
-	copy(buf[flowFrameDescriptorSize:], portBytes)
-	copy(buf[flowFrameDescriptorSize+len(portBytes):], tick)
-	framePtr, err := rt.Module().AllocateSize(uint32(len(buf)))
-	if err != nil {
-		t.Fatalf("alloc tick: %v", err)
+	fireStamp := make([]byte, 8)
+	binary.LittleEndian.PutUint64(fireStamp, uint64(1721000000000))
+	deliver := func(port string, payload []byte) {
+		portBytes := append([]byte(port), 0)
+		buf := make([]byte, flowFrameDescriptorSize+len(portBytes)+len(payload))
+		copy(buf[flowFrameDescriptorSize:], portBytes)
+		copy(buf[flowFrameDescriptorSize+len(portBytes):], payload)
+		framePtr, aerr := rt.Module().AllocateSize(uint32(len(buf)))
+		if aerr != nil {
+			t.Fatalf("alloc %s frame: %v", port, aerr)
+		}
+		encodeFrameDescriptor(buf[:flowFrameDescriptorSize], &FlowFrameDescriptor{
+			PortIDPointer: framePtr + flowFrameDescriptorSize,
+			Offset:        framePtr + flowFrameDescriptorSize + uint32(len(portBytes)),
+			Size:          uint32(len(payload)),
+			Occupied:      true,
+		})
+		if werr := rt.Module().WriteMemory(framePtr, buf); werr != nil {
+			t.Fatalf("write %s frame: %v", port, werr)
+		}
+		rt.EnqueueTriggerFrame(0, framePtr)
 	}
-	encodeFrameDescriptor(buf[:flowFrameDescriptorSize], &FlowFrameDescriptor{
-		PortIDPointer: framePtr + flowFrameDescriptorSize,
-		Offset:        framePtr + flowFrameDescriptorSize + uint32(len(portBytes)),
-		Size:          uint32(len(tick)),
-		Occupied:      true,
-	})
-	if err := rt.Module().WriteMemory(framePtr, buf); err != nil {
-		t.Fatalf("write tick: %v", err)
-	}
-	rt.EnqueueTriggerFrame(0, framePtr)
+	deliver("config", tick)
+	deliver("trigger", fireStamp)
 
 	res, derr := rt.Drain(context.Background(), HandlerMap{}, DrainOptions{MaxIterations: 5000})
 	if derr != nil {
 		t.Fatalf("drain: %v", derr)
+	}
+	// DIAG: per-node identity + runtime state (which node is stuck?).
+	for i := uint32(0); i < rt.NodeCount; i++ {
+		info := rt.nodeInfo[i]
+		if st, e := rt.GetNodeRuntimeState(i); e == nil {
+			t.Logf("DIAG node[%d] plugin=%s method=%s state=%+v", i, info.PluginID, info.MethodID, st)
+		} else {
+			t.Logf("DIAG node[%d] plugin=%s method=%s (no state: %v)", i, info.PluginID, info.MethodID, e)
+		}
 	}
 
 	count := func(tbl string) int64 {
@@ -167,6 +184,55 @@ func TestODSupplementalWasmEdgeDrive(t *testing.T) {
 	}
 	omm, ocm, obd := count("sds_omm"), count("sds_ocm"), count("sds_obd")
 	oemLeak := count("sds_oem")
+	if rt.store != nil {
+		if r, e := rt.store.db.Query("SELECT provider, source_name, MAX(pulled_at), COUNT(*) FROM sds_omm GROUP BY provider"); e == nil {
+			for _, row := range r.Rows {
+				t.Logf("★ ATTRIBUTION: provider=%v source_name=%v max_pulled_at=%v count=%v", row[0], row[1], row[2], row[3])
+			}
+		}
+	}
+
+	// -- RESET (operator "clear a run") end-to-end: pick one stored batch, clear
+	//    it via the DUMB ClearBatch primitive, and assert (a) every row of that
+	//    batch vanishes across all three tables and (b) the arena export shrinks
+	//    -- exercising mark_deleted_bulk + compact (fresh-DB rebuild + swap)
+	//    against real composed-flow data.
+	if rt.store != nil && omm > 0 {
+		var batchID string
+		if r, e := rt.store.db.Query("SELECT batch_id FROM sds_omm WHERE batch_id != '' LIMIT 1"); e == nil && len(r.Rows) == 1 && len(r.Rows[0]) == 1 {
+			if bid, ok := r.Rows[0][0].(string); ok {
+				batchID = bid
+			}
+		}
+		if batchID == "" {
+			t.Logf("RESET: no non-empty batch_id in store; skipping ClearBatch assertion")
+		} else {
+			before, _ := rt.store.db.ExportData()
+			tomb, survivors, cerr := rt.store.ClearBatch(batchID)
+			if cerr != nil {
+				t.Fatalf("ClearBatch(%q): %v", batchID, cerr)
+			}
+			after, _ := rt.store.db.ExportData()
+			var left int64 = -1
+			if r, e := rt.store.db.Query("SELECT COUNT(*) FROM sds_omm WHERE batch_id = ?", batchID); e == nil && len(r.Rows) == 1 && len(r.Rows[0]) == 1 {
+				if n, ok := r.Rows[0][0].(int64); ok {
+					left = n
+				}
+			}
+			remain := count("sds_omm") + count("sds_ocm") + count("sds_obd")
+			t.Logf("★ RESET(ClearBatch): batch=%s tombstoned(omm/ocm/obd)=%d/%d/%d survivors=%d exportBefore=%dB exportAfter=%dB remainingRows=%d clearedBatchRowsLeft=%d",
+				batchID, len(tomb["sds_omm"]), len(tomb["sds_ocm"]), len(tomb["sds_obd"]), survivors, len(before), len(after), remain, left)
+			if left != 0 {
+				t.Fatalf("ClearBatch left %d rows of batch %s in sds_omm (want 0)", left, batchID)
+			}
+			if len(after) >= len(before) {
+				t.Fatalf("ClearBatch did not shrink the arena: before=%dB after=%dB", len(before), len(after))
+			}
+			if len(tomb["sds_omm"]) <= 0 {
+				t.Fatalf("ClearBatch tombstoned 0 sds_omm rows for a present batch")
+			}
+		}
+	}
 
 	if serr := rt.SnapshotStore(); serr != nil {
 		t.Logf("snapshot: %v", serr)

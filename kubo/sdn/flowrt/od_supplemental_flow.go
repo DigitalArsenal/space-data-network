@@ -37,16 +37,26 @@ const (
 	ODSupplementalStoreMethod   = "store"
 	ODSupplementalStorePort     = "records"
 	ODSupplementalODPluginID    = "orbit-determination"
+	// ODSupplementalStoreProvenancePort receives the OD node's CID-keyed
+	// provenance sidecar ([u32 cid_len][cid][u32 provider_len][provider][u32
+	// source_name_len][source_name]); the store maps cid -> provider/source_name.
+	ODSupplementalStoreProvenancePort = "provenance"
+	// ODSupplementalStoreTriggerPort receives the host fire timestamp
+	// ([u64le unix_ms]) -> the store's pulled_at column. Host trigger metadata =
+	// a capability read (the host reads its own clock); NOT orchestration.
+	ODSupplementalStoreTriggerPort = "trigger"
+	// ODSupplementalODProvenancePort is the OD node's provenance OUTPUT port.
+	ODSupplementalODProvenancePort = "provenance"
 )
 
 // odSupplementalProviders lists the five fittable ephemeris providers, in a
 // stable UI order. Each emits $OEM on port "oem" via method "emit".
-var odSupplementalProviders = []struct{ node, plugin string }{
-	{"n-starlink", "com.orbpro.spacex-starlink-source"},
-	{"n-glonass", "com.orbpro.glonass-source"},
-	{"n-intelsat", "com.orbpro.intelsat-source"},
-	{"n-cpf", "com.orbpro.cpf-source"},
-	{"n-iss", "com.orbpro.iss-source"},
+var odSupplementalProviders = []struct{ node, plugin, odPort string }{
+	{"n-starlink", "com.orbpro.spacex-starlink-source", "oem_starlink"},
+	{"n-glonass", "com.orbpro.glonass-source", "oem_glonass"},
+	{"n-intelsat", "com.orbpro.intelsat-source", "oem_intelsat"},
+	{"n-cpf", "com.orbpro.cpf-source", "oem_cpf"},
+	{"n-iss", "com.orbpro.iss-source", "oem_iss"},
 }
 
 // ODSupplementalOMMSpec builds the supplemental-OMM OD flow as a FlowSpec (baked
@@ -63,10 +73,11 @@ func ODSupplementalOMMSpec() FlowSpec {
 			NodeID: p.node, PluginID: p.plugin, MethodID: "emit", Kind: "source",
 			UIX: 40, UIY: float32(40 + i*110),
 		})
-		// provider.emit.oem -> od.fit.oem (all five into the OD node's oem port).
+		// provider.emit.oem -> od.fit.oem_<provider> (per-provider port so the OD
+		// node derives the provider token per-edge for the provenance sidecar).
 		edges = append(edges, FlowEdgeSpec{
 			EdgeID: "e-" + p.node, FromNodeID: p.node, FromPortID: "oem",
-			ToNodeID: "n-od", ToPortID: "oem",
+			ToNodeID: "n-od", ToPortID: p.odPort,
 		})
 		// The host-cron trigger fires each provider's emit (its "config" input tick).
 		binds = append(binds, FlowTriggerBindingSpec{
@@ -85,6 +96,17 @@ func ODSupplementalOMMSpec() FlowSpec {
 			ToNodeID: "n-store", ToPortID: ODSupplementalStorePort,
 		})
 	}
+	// od.fit.provenance -> store.provenance (CID-keyed sidecar -> provider/
+	// source_name columns). REQUIRED for per-provider attribution.
+	edges = append(edges, FlowEdgeSpec{
+		EdgeID: "e-store-provenance", FromNodeID: "n-od", FromPortID: ODSupplementalODProvenancePort,
+		ToNodeID: "n-store", ToPortID: ODSupplementalStoreProvenancePort,
+	})
+	// Host fire timestamp -> store.trigger ([u64le unix_ms] -> pulled_at). The
+	// host-cron trigger delivers the fire time as a capability read.
+	binds = append(binds, FlowTriggerBindingSpec{
+		TriggerID: "t0", TargetNodeID: "n-store", TargetPortID: ODSupplementalStoreTriggerPort,
+	})
 
 	return FlowSpec{
 		ProgramID:       "org.sdn.flows.od-supplemental-omm",
