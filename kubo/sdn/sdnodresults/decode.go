@@ -47,10 +47,11 @@ func decodeOMM(data []byte) (ommFacts, bool) {
 
 // obdFacts is the subset of one decoded $OBD this package renders.
 type obdFacts struct {
-	SatNo       uint32
-	WRMS        float64
-	Iterations  int
-	FitSpanDays float64
+	SatNo        uint32
+	WRMS         float64
+	BestPassWRMS float64
+	Iterations   int
+	FitSpanDays  float64
 }
 
 // decodeOBD parses a size-prefixed $OBD buffer the same way decodeOMM does.
@@ -64,9 +65,24 @@ func decodeOBD(data []byte) (obdFacts, bool) {
 		return obdFacts{}, false
 	}
 	return obdFacts{
-		SatNo:       o.SAT_NO(),
-		WRMS:        o.WRMS(),
-		Iterations:  int(o.NUM_ITERATIONS()),
-		FitSpanDays: o.FIT_SPAN(),
+		SatNo:        o.SAT_NO(),
+		WRMS:         o.WRMS(),
+		BestPassWRMS: o.BEST_PASS_WRMS(),
+		Iterations:   int(o.NUM_ITERATIONS()),
+		FitSpanDays:  o.FIT_SPAN(),
 	}, true
+}
+
+// effectiveWRMS is the ruled fit-quality value for averaging: WRMS, falling
+// back to BEST_PASS_WRMS when WRMS itself is unset (0) — the module-side
+// ruling is "no wrms store column, read-side BLOB decode only," and this is
+// that decode's one fallback rule. Returns (0, false) when neither is usable.
+func (f obdFacts) effectiveWRMS() (float64, bool) {
+	if f.WRMS > 0 {
+		return f.WRMS, true
+	}
+	if f.BestPassWRMS > 0 {
+		return f.BestPassWRMS, true
+	}
+	return 0, false
 }

@@ -32,12 +32,18 @@
   synthesized from the `live` field and always shown as the TOP row of page 1
   with status "ongoing" (never invented — absent when the node reports no live
   run). Clicking a row drills down to LEVEL 1 (every provider the flow
-  DECLARES, with per-provider stats honestly flagged Unavailable until
-  per-object provider attribution is wired — see sdn/sdnodresults' package doc
-  for exactly what telemetry is missing and why). Clicking a provider drills
-  to LEVEL 2: a searchable (10/page), downloadable table of the run's fitted
-  objects (real $OMM identity + $OBD fit telemetry — WRMS/iterations/fit-span —
-  joined by NORAD), plus bulk download. Navigation is BIG CHUNKY BREADCRUMBS
+  DECLARES, with REAL per-provider total/avg-RMS/last-pulled now that the OD
+  flow's store node fills provider/source_name/pulled_at per record from a
+  cid-keyed provenance sidecar — a declared provider with zero rows in an
+  attributable run shows a real 0, never "—"; a run (or record) that predates
+  the sidecar surfaces honestly as a synthesized "Unattributed" row rather
+  than vanishing; beats/skipped/errors stay "—" with a note, since no
+  telemetry exists for them at any layer yet — see sdn/sdnodresults' package
+  doc for exactly what). Clicking a provider drills to LEVEL 2: a searchable
+  (10/page), downloadable table of the run's fitted objects (real $OMM
+  identity + $OBD fit telemetry — WRMS/iterations/fit-span — joined by NORAD),
+  client-side filtered to the clicked provider (each object's own REAL
+  attribution), plus bulk download. Navigation is BIG CHUNKY BREADCRUMBS
   (RUN LOG / <run-id> / <provider>), each crumb clickable to jump back a level
   — there is NO "back" button anywhere (no arrow glyph either way).
 
@@ -240,6 +246,7 @@
   .prov-stats .row { padding:11px 6px; border-bottom:1px solid var(--line-faint); cursor:pointer; }
   .prov-stats .row:hover { background:rgba(74,166,224,0.07); }
   .prov-stats .row:last-child { border-bottom:none; }
+  .prov-stats .row-unattributed .prov-name { color:var(--muted); font-style:italic; }
 
   /* -------------------------------------------------------------- bulk download */
   .bulk-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:10px 0 4px; }
@@ -430,6 +437,7 @@
 
   var $ = function (id) { return document.getElementById(id); };
   function providerLabel(id) {
+    if (id === "unattributed") return "Unattributed";
     var found = PROVIDERS.filter(function (p) { return p.id === id; })[0];
     return found ? found.label : id;
   }
@@ -929,22 +937,37 @@
     var head =
       '<div class="head"><span>PROVIDER</span><span class="num">TOTAL</span><span class="num">BEATS</span>' +
       '<span class="num">AVG RMS</span><span class="num">SKIPPED</span><span class="num">ERRORS</span><span>LAST PULLED</span></div>';
+    // total / avg_rms / last_pulled are REAL per-provider values now (the OD
+    // flow's store node fills provider/source_name/pulled_at per record via
+    // a cid-keyed sidecar); fmtInt/fmtRms already render a null/undefined
+    // field as "—", so no row-wide "unavailable" gate is needed here anymore
+    // — only beats/skipped/errors are ALWAYS absent (no telemetry exists for
+    // them at any layer yet).
     var body_rows = rows.map(function (p) {
-      return '<div class="row" data-provider="' + attr(p.provider) + '" tabindex="0" role="button">' +
+      var cls = "row" + (p.provider === "unattributed" ? " row-unattributed" : "");
+      return '<div class="' + cls + '" data-provider="' + attr(p.provider) + '" tabindex="0" role="button">' +
         '<div class="prov-name">' + esc(p.label || p.provider) + '</div>' +
-        '<div class="cell-mono num">' + (p.unavailable ? "—" : fmtInt(p.total)) + '</div>' +
-        '<div class="cell-mono num">' + (p.unavailable ? "—" : fmtInt(p.beats)) + '</div>' +
-        '<div class="cell-mono num">' + (p.unavailable ? "—" : fmtRms(p.avg_rms)) + '</div>' +
-        '<div class="cell-mono num">' + (p.unavailable ? "—" : fmtInt(p.skipped)) + '</div>' +
-        '<div class="cell-mono num">' + (p.unavailable ? "—" : fmtInt(p.errors)) + '</div>' +
-        '<div class="cell-dim">' + (p.unavailable ? "—" : esc(p.last_pulled || "—")) + '</div>' +
+        '<div class="cell-mono num">' + fmtInt(p.total) + '</div>' +
+        '<div class="cell-mono num">' + fmtInt(p.beats) + '</div>' +
+        '<div class="cell-mono num">' + fmtRms(p.avg_rms) + '</div>' +
+        '<div class="cell-mono num">' + fmtInt(p.skipped) + '</div>' +
+        '<div class="cell-mono num">' + fmtInt(p.errors) + '</div>' +
+        '<div class="cell-dim">' + esc(p.last_pulled || "—") + '</div>' +
         '</div>';
     }).join("");
-    var note = rows[0] && rows[0].unavailable
-      ? '<div class="notice"><strong>PER-PROVIDER STATS NOT YET ATTRIBUTABLE</strong> &middot; ' + esc(rows[0].note) + '</div>'
-      : '';
-    body.innerHTML = '<div class="prov-stats">' + head + body_rows + '</div>' + note +
-      '<p class="hint" style="margin-top:10px">Click a provider to inspect this run’s fitted objects (the objects table below is the run’s FULL object set until per-object provider attribution ships).</p>';
+    // Notes can now differ per row (a declared-but-unattributed provider's
+    // note differs from an attributed provider's skipped/errors note) — show
+    // every DISTINCT note once, not just the first row's.
+    var seenNotes = {};
+    var noticeHtml = rows.map(function (p) { return p.note; }).filter(function (n) {
+      if (!n || seenNotes[n]) return false;
+      seenNotes[n] = true;
+      return true;
+    }).map(function (n) {
+      return '<div class="notice"><strong>NOTE</strong> &middot; ' + esc(n) + '</div>';
+    }).join("");
+    body.innerHTML = '<div class="prov-stats">' + head + body_rows + '</div>' + noticeHtml +
+      '<p class="hint" style="margin-top:10px">Click a provider to inspect its fitted objects.</p>';
     body.querySelectorAll("[data-provider]").forEach(function (el) {
       var pick = function () { goToObjects(el.getAttribute("data-provider")); };
       el.addEventListener("click", pick);
@@ -972,14 +995,30 @@
     });
   }
 
+  // visibleObjects narrows the server-fetched (already search-filtered) set
+  // to the provider selected at Level 1 — CLIENT-SIDE, using each object's
+  // REAL provider attribution (now that the store's cid-keyed provenance
+  // sidecar fills it). "unattributed" selects records that genuinely carry
+  // no provider tag (pre-attribution rows); any other provider id selects an
+  // exact match. This is additive UI narrowing only — the server route's
+  // own provider/source params still accept but do not yet filter (see
+  // sdnodresults.Reader.RunObjects's doc).
+  function visibleObjects() {
+    var all = state.objects;
+    var p = state.selectedProvider;
+    if (!p) return all;
+    if (p === "unattributed") return all.filter(function (o) { return o.unattributed; });
+    return all.filter(function (o) { return !o.unattributed && o.provider === p; });
+  }
+
   function renderObjectsView() {
     var container = $("detail-objects");
-    var objs = state.objects;
+    var objs = visibleObjects();
     updateBulkBar();
     if (objs.length === 0) {
       container.innerHTML = state.search
         ? emptyBlock("NO MATCH", "No fitted object in run " + state.selectedRunId + " matches “" + state.search + "”.")
-        : emptyBlock("NO OBJECTS", "Run " + state.selectedRunId + " fitted no objects.");
+        : emptyBlock("NO OBJECTS", "No fitted object in run " + state.selectedRunId + " is attributed to " + providerLabel(state.selectedProvider) + ".");
       $("detail-objects-pagination").innerHTML = "";
       return;
     }
@@ -987,7 +1026,7 @@
     if (state.objPage > totalPages) state.objPage = totalPages;
     if (state.objPage < 1) state.objPage = 1;
     var pageObjs = paginate(objs, state.objPage, OBJ_PAGE_SIZE);
-    container.innerHTML = renderObjectsTable(state.selectedRunId, pageObjs, state.objectsTotal);
+    container.innerHTML = renderObjectsTable(state.selectedRunId, pageObjs, objs.length);
     bindObjectRowChecks(container);
     renderPagination("detail-objects-pagination", state.objPage, totalPages, function (p) {
       state.objPage = p;
@@ -1050,7 +1089,7 @@
     var dlBtn = $("dl-selected");
     if (dlBtn) { dlBtn.textContent = "DOWNLOAD SELECTED (" + n + ")"; dlBtn.disabled = n === 0; }
     var allBtn = $("dl-all-matching");
-    if (allBtn) allBtn.textContent = "DOWNLOAD ALL MATCHING (" + state.objects.length + ")";
+    if (allBtn) allBtn.textContent = "DOWNLOAD ALL MATCHING (" + visibleObjects().length + ")";
   }
 
   // Sequential, staggered downloads (documented choice: no server-side zip
@@ -1075,7 +1114,7 @@
     var selectAll = $("dl-select-all");
     if (selectAll) selectAll.addEventListener("click", function () {
       var start = (state.objPage - 1) * OBJ_PAGE_SIZE;
-      state.objects.slice(start, start + OBJ_PAGE_SIZE).forEach(function (o) { if (o.omm_cid) state.selected[o.omm_cid] = true; });
+      visibleObjects().slice(start, start + OBJ_PAGE_SIZE).forEach(function (o) { if (o.omm_cid) state.selected[o.omm_cid] = true; });
       renderObjectsView();
     });
     var clear = $("dl-clear");
@@ -1084,7 +1123,7 @@
     if (dlSelected) dlSelected.addEventListener("click", function () { sequentialDownload(Object.keys(state.selected)); });
     var dlAll = $("dl-all-matching");
     if (dlAll) dlAll.addEventListener("click", function () {
-      sequentialDownload(state.objects.map(function (o) { return o.omm_cid; }).filter(Boolean));
+      sequentialDownload(visibleObjects().map(function (o) { return o.omm_cid; }).filter(Boolean));
     });
   }
 

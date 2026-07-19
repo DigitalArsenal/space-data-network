@@ -167,15 +167,21 @@ func TestSelfContained(t *testing.T) {
 // the node's REAL run + module-config API (sdn/sdnodresults, not the old thin
 // record listing, and not the disconnected sdnruns.Store) and self-hosts its two
 // font families same-origin, with no external-origin URL. It pins the
-// owner-directed TWO-LEVEL drill-down contract (2026-07-19 reconfiguration): a
-// single paginated RUN LOG (no standalone "latest run" box — deleted outright), a
-// synthesized "ongoing" row for a currently-executing run, a row-click drill-down
-// to LEVEL 1 (every provider the flow declares, honestly flagged when its stats
-// are not yet attributable), a provider-click drill-down to LEVEL 2 (a paginated,
-// searchable, downloadable per-object table with real $OMM/$OBD fit telemetry),
-// BIG CHUNKY BREADCRUMB navigation with NO back button and no arrow glyphs
-// anywhere, alongside the provider checkbox + cron controls that persist through
-// the module config.
+// owner-directed TWO-LEVEL drill-down contract (2026-07-19 reconfiguration, real
+// per-provider attribution wired 2026-07-19 per the module's cid-keyed
+// provenance sidecar): a single paginated RUN LOG (no standalone "latest run"
+// box — deleted outright), a synthesized "ongoing" row for a currently-executing
+// run, a row-click drill-down to LEVEL 1 (every provider the flow declares, with
+// REAL total/avg-RMS/last-pulled once attributed — a declared provider with zero
+// rows in an attributable run gets a real 0, never Unavailable — and an honest
+// "unattributed" row for pre-attribution records that predate the sidecar;
+// beats/skipped/errors stay "—" with a note, since no telemetry exists for them
+// at any layer yet), a provider-click drill-down to LEVEL 2 (a paginated,
+// searchable, downloadable per-object table, client-side filtered to the
+// selected provider using each object's REAL attribution, with real $OMM/$OBD
+// fit telemetry), BIG CHUNKY BREADCRUMB navigation with NO back button and no
+// arrow glyphs anywhere, alongside the provider checkbox + cron controls that
+// persist through the module config.
 func TestOMMBoardWiring(t *testing.T) {
 	ms, err := sdnapps.Manifests()
 	if err != nil {

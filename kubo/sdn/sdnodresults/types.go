@@ -10,28 +10,41 @@
 //
 // # What is real vs honestly unavailable
 //
-// REAL: run boundaries (from FireHistory's observed rowid ranges, or the
-// one-time BackfillRange pseudo-run for rows a prior process already stored),
-// object identity + fit telemetry (NORAD/name/epoch/mean-elements from $OMM,
-// WRMS/iterations/fit-span from $OBD, joined by NORAD), and downloads (the
-// exact stored $OMM/$OCM bytes by content-addressed cid).
+// REAL (as of the module's cid-keyed provenance sidecar, space-data-network-
+// modules commits 5654618/5a6d684): run boundaries (from FireHistory's
+// observed rowid ranges, or the one-time BackfillRange pseudo-run for rows a
+// prior process already stored), object identity + fit telemetry (NORAD/
+// name/epoch/mean-elements from $OMM, WRMS-or-BEST_PASS_WRMS/iterations/
+// fit-span from $OBD, joined by NORAD), downloads (the exact stored $OMM/
+// $OCM/$OBD bytes by content-addressed cid), AND per-provider totals/avg-RMS/
+// last-pulled (Level 1): the OD flow's store node now fills provider/
+// source_name/pulled_at per record from a CID-keyed sidecar the fit node
+// emits (per-provider input ports give it the provider identity per object,
+// entirely in-wasm — no data_source in the $OMM/$OCM/$OBD builders
+// themselves, so RMS parity is untouched). This package reads
+// provider/source_name/pulled_at directly as SQL columns (all three are
+// declared additively in the SAME flowrt schema this binary compiles against
+// — see storeRow's doc — so there is exactly one column set to query, never
+// a version-skew fallback) plus decodes $OBD's WRMS/BEST_PASS_WRMS per
+// provider (the module-side ruling is "no wrms store column, read-side BLOB
+// decode only," so per-provider RMS is necessarily a Go-side decode grouped
+// by the SQL provider column, never a store-side aggregate).
 //
-// HONESTLY UNAVAILABLE (flagged, never fabricated): per-provider / per-source
-// attribution. The composed flow's store node's "config" provenance port
-// (provider/source_name/batch_id) is not wired in the current topology — see
-// flatsql_store_module.cpp's read_provenance() and od_supplemental_flow.go's
-// store node port list — so every wrapper row's provider/source_name/batch_id
-// is empty today, and the OD node fans all 5 providers into ONE fit call with
-// no per-object provider tag carried through to $OMM/$OCM/$OBD. This package
-// therefore reports a run's PROVIDERS as the flow's DECLARED source-node set
-// (ServiceFlow.SourceProviderPluginIDs, real topology metadata) and marks
-// every per-provider stat (total/beats/avg_rms/skipped/errors/last_pulled) as
-// Unavailable, with a Note naming exactly the missing telemetry — never a
-// zero or empty string passed off as a real measurement. Likewise, the beats-
-// CelesTrak reference comparison the OLD Go-orchestration engine used to
-// compute is not performed by the new engine's plain fit at all (no ref*
-// options are passed — see od_supplemental_flow.go), so BeatCount is always
-// nil/unavailable, not zero.
+// BACKWARD COMPATIBILITY: records stored before the sidecar landed (e.g. the
+// pre-existing ~10,847-row full-catalog backfill) carry an empty provider
+// tag. Those records are NEVER vanished: they surface as a single synthesized
+// "unattributed" Level-1 row with a REAL total (and avg RMS, when decodable),
+// labeled plainly as pre-attribution. A DECLARED provider absent from a run's
+// totals is reported as a real 0 when the run has ANY attributed rows at all
+// (it fired in a run we can attribute; it just contributed nothing), or
+// honestly Unavailable (nil) when NONE of the run's rows carry attribution
+// yet (a run entirely predating the sidecar).
+//
+// STILL HONESTLY UNAVAILABLE (flagged, never fabricated): per-provider
+// skipped/errors (no telemetry exists at any layer for these yet) and
+// BeatCount (the new engine's plain fit performs no same-ephemeris reference
+// comparison at all — no ref* options are passed, see od_supplemental_flow.go
+// — so this is always nil, never a real zero).
 //
 // # Zero orchestration
 //
@@ -87,8 +100,10 @@ type LiveRun struct {
 
 // ObjectRow is one fitted object within a run — decoded from a REAL $OMM
 // (identity + mean elements) optionally joined to its $OBD (fit telemetry) by
-// NORAD. Provider/Source are always "—"-worthy empty strings today (see the
-// package doc); Unattributed flags that plainly so a UI never has to guess.
+// NORAD. Provider/Source are the store's real provenance columns when the
+// record was written after the module's cid-keyed sidecar landed;
+// Unattributed is true only for a record that genuinely carries neither
+// (e.g. a pre-sidecar backfill row) — never a blanket default.
 type ObjectRow struct {
 	Norad        uint32  `json:"norad"`
 	ObjectName   string  `json:"object_name,omitempty"`
@@ -109,10 +124,13 @@ type ObjectRow struct {
 }
 
 // ProviderStat is one Level-1 drill-down row: a provider the flow DECLARES
-// (real topology metadata) plus its aggregate stats for one run. Every
-// numeric/time stat is a pointer, left nil (Unavailable=true) rather than a
-// fabricated 0 when the underlying per-provider attribution does not exist
-// yet — see Note for exactly what telemetry would be needed.
+// (real topology metadata, or the synthesized "unattributed" bucket) plus
+// its aggregate stats for one run. Total/AvgRMS/LastPulled are real when the
+// store's provenance attribution covers this run; Beats/Skipped are ALWAYS
+// nil (no telemetry exists for them at any layer yet). Every numeric/time
+// stat is a pointer, left nil rather than a fabricated 0/""; Unavailable is
+// true only when this run predates provider attribution entirely for this
+// provider — see Note for exactly what is missing and why.
 type ProviderStat struct {
 	Provider    string   `json:"provider"`
 	Label       string   `json:"label"`
@@ -144,7 +162,3 @@ func providerLabel(id string) string {
 	}
 	return id
 }
-
-// noProviderAttributionNote is attached to every ProviderStat and unattributed
-// ObjectRow so the UI can surface EXACTLY what is missing, never a silent "0".
-const noProviderAttributionNote = "per-provider attribution is not yet emitted: the OD flow's store node has no provenance wired to its \"config\" port (provider/source_name/batch_id are stored empty), and the OD fit node fans all providers into one call with no per-object provider tag carried onto $OMM/$OCM/$OBD. Needs: either a per-provider config edge into the store node, or a provider field added to the fit output."

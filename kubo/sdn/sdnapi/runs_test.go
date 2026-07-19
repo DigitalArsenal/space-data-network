@@ -138,8 +138,23 @@ func TestRunsHandlerRealBackfillDrillDownAndDownload(t *testing.T) {
 		Providers []sdnodresults.ProviderStat `json:"providers"`
 	}
 	getJSON(t, mux, "/sdn/v1/runs/backfill/providers", http.StatusOK, &provResp)
-	if len(provResp.Providers) != 1 || !provResp.Providers[0].Unavailable {
-		t.Fatalf("providers (Level 1) = %+v, want one declared, honestly Unavailable provider", provResp.Providers)
+	// The declared "iss" provider is honestly Unavailable (this run predates
+	// attribution entirely), PLUS a synthesized "unattributed" row carries
+	// the real total (1) for the pre-attribution record — never vanished.
+	if len(provResp.Providers) != 2 {
+		t.Fatalf("providers (Level 1) = %+v, want 2 (declared iss + unattributed)", provResp.Providers)
+	}
+	var sawUnavailableISS, sawUnattributed bool
+	for _, p := range provResp.Providers {
+		if p.Provider == "iss" && p.Unavailable {
+			sawUnavailableISS = true
+		}
+		if p.Provider == "unattributed" && p.Total != nil && *p.Total == 1 {
+			sawUnattributed = true
+		}
+	}
+	if !sawUnavailableISS || !sawUnattributed {
+		t.Fatalf("providers (Level 1) = %+v, want honestly-Unavailable iss + a real unattributed(total=1) row", provResp.Providers)
 	}
 
 	var objResp struct {
