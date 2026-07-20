@@ -128,6 +128,26 @@ static FlowNodeRuntimeStateC *g_node_states = nullptr;
 // leaving one per-provider port empty) does not starve the consumer.
 static uint8_t *g_node_completed = nullptr;
 static FlowIngressRuntimeStateC *g_ingress_states = nullptr;
+// Per-required-port-row "ever delivered this drain cycle" flag (cleared by
+// reset_state, set the moment a frame lands on that exact (node,port) via a
+// TRIGGER BINDING — see flow_enqueue_binding). Fixes a real data-loss bug: a
+// required port that is fed by a trigger binding (not an edge) — e.g. a
+// single-shot fire-timestamp port on a node that also has a large "records"
+// backlog spanning MULTIPLE invocations (kMaxInvocationFrames=64 per call) —
+// used to require that port's frame be STILL PHYSICALLY QUEUED at every
+// subsequent readiness check. Since a trigger delivers exactly ONE frame per
+// port per fire, that frame is consumed (dequeued) by the node's FIRST
+// invocation, so every check thereafter saw it "absent" and the node could
+// never become ready again for the rest of the fire — silently stranding any
+// backlog beyond the first 64 frames for the remainder of the drain cycle
+// (observed: a 7-node OD flow's store sink consumed 64 of 158 routed frames in
+// ONE invocation, then sat permanently not-ready with 94 frames still queued).
+// The fix mirrors g_node_completed's semantics for edge-producers: "has this
+// precondition been satisfied at least once this cycle" rather than "is it
+// still sitting unconsumed right now". Edge-fed required ports are unaffected
+// (they take the edge_fed branch in flow_node_is_ready, gated by
+// g_node_completed instead).
+static uint8_t *g_required_port_satisfied = nullptr;
 
 static void flow_runtime_alloc() {
   const FlowProgramC &p = g_flow_program;
@@ -139,6 +159,8 @@ static void flow_runtime_alloc() {
   const uint32_t tc = p.trigger_count > 0 ? p.trigger_count : 1;
   g_ingress_states = new FlowIngressRuntimeStateC[tc];
   memset(g_ingress_states, 0, sizeof(FlowIngressRuntimeStateC) * tc);
+  g_required_port_satisfied = new uint8_t[p.required_port_count];
+  memset(g_required_port_satisfied, 0, p.required_port_count);
 }
 
 // Runs at _initialize (WASI-reactor __wasm_call_ctors). g_flow_program's scalar
@@ -191,12 +213,28 @@ static bool flow_node_is_ready(uint32_t node) {
     if (g_node_completed[g_flow_program.edges[e].from_node] == 0) return false;
   }
   // (2) Every REQUIRED port that is NOT fed by an edge (i.e. delivered by a
-  // trigger) must carry a queued frame — this preserves the explicit multi-input
-  // gate (a decision+stream node fed by two triggers fires only after BOTH
-  // arrive). Edge-fed required ports are already covered by (1): the producer
-  // ran, so the port is satisfied even if it produced 0 frames. This makes the
-  // change a strict relaxation only for edge-fed multi-input consumers (od.fit's
-  // per-provider oem_* ports); trigger-gated flows are byte-identical.
+  // trigger) must have been SATISFIED AT LEAST ONCE this drain cycle — this
+  // preserves the explicit multi-input gate (a decision+stream node fed by two
+  // triggers fires only after BOTH have arrived at least once) without
+  // requiring the frame to still be PHYSICALLY QUEUED on every later check.
+  // g_required_port_satisfied[r] is set once by flow_enqueue_binding the moment
+  // any frame lands on that (node,port); it is NOT cleared when the frame is
+  // later consumed. That "ever satisfied" semantics — not "currently present"
+  // — mirrors how edge-fed ports are gated by g_node_completed (1): a
+  // precondition that has been met once stays met for the rest of the cycle.
+  // Without this, a single-shot trigger-fed port (e.g. a fire timestamp) whose
+  // one frame is consumed by a multi-invocation consumer's FIRST call (its
+  // "records" backlog spans more than kMaxInvocationFrames) would make that
+  // required port look "absent" on every subsequent check — permanently
+  // stranding the rest of that consumer's backlog for the remainder of the
+  // fire (real data loss, empirically observed on the OD-flow store sink: 64
+  // of 158 routed frames consumed, then stuck not-ready with 94 left queued).
+  // Edge-fed required ports are already covered by (1): the producer ran, so
+  // the port is satisfied even if it produced 0 frames. This makes the change
+  // a strict relaxation only for trigger-fed multi-invocation consumers;
+  // single-invocation trigger-gated flows are byte-identical (the node's
+  // queue empties after its one invocation, so the top `g_queues[node].empty()`
+  // check already prevents a second dispatch regardless of this flag).
   for (uint32_t r = 0; r < g_flow_program.required_port_count; r++) {
     if (g_flow_program.required_ports[r].node_index != node) continue;
     bool edge_fed = false;
@@ -208,14 +246,7 @@ static bool flow_node_is_ready(uint32_t node) {
       }
     }
     if (edge_fed) continue;
-    bool present = false;
-    for (const QueuedFrame &frame : g_queues[node]) {
-      if (strcmp(frame.port.c_str(), g_flow_program.required_ports[r].port_id) == 0) {
-        present = true;
-        break;
-      }
-    }
-    if (!present) return false;
+    if (g_required_port_satisfied[r] == 0) return false;
   }
   return true;
 }
@@ -413,6 +444,7 @@ FLOW_EXPORT void space_data_module_runtime_reset_state(void) {
   for (uint32_t t = 0; t < tc; t++) {
     memset(&g_ingress_states[t], 0, sizeof(FlowIngressRuntimeStateC));
   }
+  memset(g_required_port_satisfied, 0, g_flow_program.required_port_count);
   g_current_node = kInvalidIndex;
 #ifdef SDN_FLATSQL_LINKED
   sdn_flatsql_link_reset_refs();
@@ -518,6 +550,17 @@ static void flow_enqueue_binding(const FlowTriggerBinding &binding, const char *
   frame.stream_id = stream_id;
   frame.sequence = sequence;
   frame.end_of_stream = end_of_stream;
+  // Mark any required-port row matching (target_node, frame.port) as satisfied
+  // for the rest of this drain cycle — see flow_node_is_ready part (2) and the
+  // g_required_port_satisfied comment above flow_runtime_alloc. This is the
+  // ONLY place trigger-bound frames are enqueued, so it is the correct (and
+  // only) place to latch "this required port has been fed at least once".
+  for (uint32_t r = 0; r < g_flow_program.required_port_count; r++) {
+    if (g_flow_program.required_ports[r].node_index == binding.target_node &&
+        strcmp(g_flow_program.required_ports[r].port_id, frame.port.c_str()) == 0) {
+      g_required_port_satisfied[r] = 1;
+    }
+  }
   g_queues[binding.target_node].push_back(static_cast<QueuedFrame &&>(frame));
   g_node_states[binding.target_node].queued_frames =
       static_cast<uint32_t>(g_queues[binding.target_node].size());
