@@ -197,10 +197,19 @@
   .btn:hover { border-color:rgba(120,190,230,0.6); color:var(--ink); background:rgba(74,166,224,0.08); }
   .btn.primary { background:rgba(53,201,216,0.14); border-color:rgba(53,201,216,0.5); color:var(--cyan-light); }
   .btn.primary:hover { background:rgba(53,201,216,0.22); border-color:rgba(53,201,216,0.7); }
+  .btn.bad { border-color:rgba(255,107,107,0.5); color:var(--red-light); }
+  .btn.bad:hover { background:rgba(255,107,107,0.12); border-color:rgba(255,107,107,0.75); color:var(--ink); }
   .btn.sm { padding:3px 8px; font-size:10px; letter-spacing:0.06em; }
   .btn:disabled { cursor:not-allowed; opacity:0.5; }
   .btn:disabled:hover { border-color:var(--line-strong); color:var(--muted); background:transparent; }
   .actions { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+
+  /* -------------------------------------------------------------- run controls (START/STOP/RESET) */
+  .run-controls { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:14px; }
+  .run-control-status { font-size:10.5px; letter-spacing:0.08em; color:var(--muted-2); }
+  .run-reset-confirm { border:1px solid rgba(255,107,107,0.35); background:rgba(255,107,107,0.05);
+    padding:12px 14px; margin-bottom:14px; display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+  .run-reset-confirm .hint { margin:0; flex:1 1 260px; }
 
   /* -------------------------------------------------------------- inputs + checkboxes */
   .field { display:flex; flex-direction:column; gap:6px; }
@@ -358,6 +367,20 @@
         <p class="panel-kicker">RUN LOG &middot; OD-FIT EXECUTION HISTORY</p>
         <span class="chip" id="runlog-count">&mdash;</span>
       </div>
+
+      <div class="run-controls">
+        <button class="btn primary" id="run-start" type="button">START RUN</button>
+        <button class="btn" id="run-stop" type="button" disabled>STOP RUN</button>
+        <button class="btn bad" id="run-reset" type="button">RESET RUN</button>
+        <span class="run-control-status" id="run-control-status"></span>
+      </div>
+      <div class="run-reset-confirm" id="run-reset-confirm" style="display:none">
+        <p class="hint">This permanently clears the stored records for run <strong class="mono" id="run-reset-target">&mdash;</strong> and its run-log entry. Type <span class="mono">RESET</span> to confirm.</p>
+        <input class="input" id="run-reset-typed" style="max-width:180px" placeholder="Type RESET" autocomplete="off">
+        <button class="btn bad" id="run-reset-confirm-btn" type="button" disabled>CONFIRM RESET</button>
+        <button class="btn" id="run-reset-cancel-btn" type="button">CANCEL</button>
+      </div>
+
       <div id="runlog-body">
         <div class="state-block loading"><strong><span class="spinner"></span>LOADING</strong><span>reading /sdn/v1/runs</span></div>
       </div>
@@ -472,7 +495,12 @@
     configOk: false,         // config endpoint reachable + module registered
     configMsg: "",           // why not, when configOk is false
     effectiveIntervalMs: null,
-    notice: null             // {kind, text}
+    notice: null,            // {kind, text}
+    runControlBusy: null,    // null | "starting" | "stopping" | "resetting" — this
+                             // client's own in-flight request, NOT the run's own
+                             // status (state.live is the source of truth for that)
+    runControlNote: "",      // last START/STOP/RESET result, shown next to the buttons
+    stoppingRequested: false // true after a successful STOP until state.live actually clears
   };
 
   // ------------------------------------------------------------ fetch
@@ -866,6 +894,145 @@
       state.listPage = p;
       renderRunLogView();
     });
+    renderRunControls();
+  }
+
+  // ------------------------------------------------------------ run controls (START / STOP / RESET)
+  // Buttons live in the run-log panel header (see #run-start/#run-stop/#run-reset
+  // in the markup). state.live is the ONE source of truth for "is a run actually
+  // ongoing" — never assumed from a click; every action re-polls via loadRuns()
+  // so the buttons reflect the node's real state, not an optimistic guess. STOP
+  // is cooperative (flowrt.AbortFire's own contract): the button shows
+  // "STOPPING…" and stays that way — driven by the next poll(s) actually
+  // clearing state.live — never flips straight to idle on the click itself.
+  function renderRunControls() {
+    var startBtn = $("run-start"), stopBtn = $("run-stop"), resetBtn = $("run-reset");
+    var statusEl = $("run-control-status");
+    if (!startBtn || !stopBtn || !resetBtn || !statusEl) return;
+    var ongoing = !!state.live;
+    var busy = !!state.runControlBusy;
+    startBtn.disabled = ongoing || busy;
+    stopBtn.disabled = !ongoing || busy;
+    // RESET only ever targets a finished/aborted run (flowrt.ClearBatch rejects
+    // outright while a fire is live) — keep it disabled the whole time one is,
+    // exactly like the "stop first, then reset" guidance the API itself gives.
+    resetBtn.disabled = ongoing || busy;
+    if (ongoing && $("run-reset-confirm").style.display !== "none") closeResetConfirm();
+
+    var text = "";
+    if (state.runControlBusy === "starting") text = "STARTING…";
+    else if (state.runControlBusy === "resetting") text = "RESETTING…";
+    else if (ongoing && state.stoppingRequested) text = "STOPPING… (cooperative cancel — finishes its current step first)";
+    else if (state.runControlNote) text = state.runControlNote;
+    if (!ongoing) state.stoppingRequested = false;
+    statusEl.textContent = text;
+  }
+
+  function runControlPost(action, body) {
+    return fetch(API + "/modules/" + MODULE_ID + "/run/" + action, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body || {})
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (d) {
+        return { ok: r.ok, status: r.status, data: d };
+      });
+    }).catch(function (e) { return { ok: false, status: 0, error: String(e && e.message || e) }; });
+  }
+  function runControlErrText(res) {
+    if (res.error) return res.error;
+    if (res.data && res.data.error) return res.data.error;
+    return "HTTP " + res.status;
+  }
+
+  function startRun() {
+    state.runControlBusy = "starting";
+    state.runControlNote = "";
+    renderRunControls();
+    runControlPost("start").then(function (res) {
+      state.runControlBusy = null;
+      state.runControlNote = res.ok ? "Run started." : ("Could not start: " + runControlErrText(res) + ".");
+      renderRunControls();
+      loadRuns();
+    });
+  }
+
+  function stopRun() {
+    state.runControlBusy = "stopping";
+    renderRunControls();
+    runControlPost("stop").then(function (res) {
+      state.runControlBusy = null;
+      if (!res.ok) {
+        state.runControlNote = "Could not stop: " + runControlErrText(res) + ".";
+        state.stoppingRequested = false;
+      } else if (res.data && res.data.status === "stopping") {
+        // Cooperative cancel: the run has not necessarily ended yet — the next
+        // poll(s) of loadRuns() clear state.live once it actually has. Until
+        // then renderRunControls() keeps showing "STOPPING…", never "idle".
+        state.runControlNote = res.data.note || "Stopping…";
+        state.stoppingRequested = true;
+      } else {
+        state.runControlNote = "No run was in flight.";
+        state.stoppingRequested = false;
+      }
+      renderRunControls();
+      loadRuns();
+    });
+  }
+
+  function openResetConfirm() {
+    var box = $("run-reset-confirm");
+    if (!box) return;
+    box.style.display = "";
+    var target = $("run-reset-target");
+    if (target) target.textContent = state.selectedRunId || (combinedRunRows()[0] && combinedRunRows()[0].id) || "the latest run";
+    var typed = $("run-reset-typed");
+    if (typed) typed.value = "";
+    var confirmBtn = $("run-reset-confirm-btn");
+    if (confirmBtn) confirmBtn.disabled = true;
+  }
+  function closeResetConfirm() {
+    var box = $("run-reset-confirm");
+    if (box) box.style.display = "none";
+  }
+
+  function confirmResetRun() {
+    state.runControlBusy = "resetting";
+    renderRunControls();
+    // No explicit batch_id: the API's own default is "the most recent real
+    // batch_id the store holds", which is exactly "the latest run" this button
+    // targets when nothing more specific is selected.
+    var body = {};
+    runControlPost("reset", body).then(function (res) {
+      state.runControlBusy = null;
+      if (!res.ok) {
+        state.runControlNote = "Could not reset: " + runControlErrText(res) + ".";
+      } else {
+        state.runControlNote = "Reset applied" + (res.data && res.data.batch_id ? (" (batch " + res.data.batch_id + ")") : "") + ".";
+      }
+      closeResetConfirm();
+      renderRunControls();
+      // The reset run's own detail/drill-down may no longer exist — fall back
+      // to the run log rather than showing a stale/empty detail view.
+      if (state.view !== "list") goToList(); else loadRuns();
+    });
+  }
+
+  function bindRunControls() {
+    var startBtn = $("run-start"), stopBtn = $("run-stop"), resetBtn = $("run-reset");
+    if (startBtn) startBtn.addEventListener("click", startRun);
+    if (stopBtn) stopBtn.addEventListener("click", stopRun);
+    if (resetBtn) resetBtn.addEventListener("click", openResetConfirm);
+    var cancelBtn = $("run-reset-cancel-btn");
+    if (cancelBtn) cancelBtn.addEventListener("click", closeResetConfirm);
+    var typed = $("run-reset-typed");
+    var confirmBtn = $("run-reset-confirm-btn");
+    if (typed && confirmBtn) {
+      typed.addEventListener("input", function () {
+        confirmBtn.disabled = typed.value.trim() !== "RESET";
+      });
+    }
+    if (confirmBtn) confirmBtn.addEventListener("click", confirmResetRun);
   }
 
   // ------------------------------------------------------------ view switching
@@ -1269,6 +1436,7 @@
   bindSearch();
   bindBulkControls();
   bindProvidersToggle();
+  bindRunControls();
   renderStatus(true);
   loadNode();
   renderView();

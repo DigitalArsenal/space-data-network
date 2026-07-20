@@ -244,6 +244,14 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 		Reader: func() *sdnodresults.Reader { return odResultsReader },
 	})
 
+	// Supplemental-OMM START/STOP/RESET admin controls (owner UI request): a
+	// SEPARATE handler (like credentials/runs), mounted on this same loopback
+	// listener. See omm_runcontrol.go for why this resolves against a local,
+	// duck-typed interface rather than a hard flowrt import — every route
+	// honestly reports 503 until the underlying ServiceFlow lifecycle
+	// primitives (a concurrent, separate workstream) land.
+	runControlHandler := newOmmRunControlHandler(resolveOmmRunControl)
+
 	// Node EPM / vCard / QR export (GET /sdn/v1/node/{epm,vcard,qr}): the node's
 	// self-signed $EPM record, built ONCE from its libp2p identity and memoized
 	// so the exported record (and its signature timestamp) is stable across
@@ -270,7 +278,7 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 	flowsHandler, flowsNote := p.buildFlowsHandler(node)
 
 	p.srv = &http.Server{
-		Handler:           newRootHandler(sdnapihttp.NewHandler(deps), sdnui.Handler(), credsHandler, runsHandler, nodeEPMHandler, flowsHandler),
+		Handler:           newRootHandler(sdnapihttp.NewHandler(deps), sdnui.Handler(), credsHandler, runsHandler, nodeEPMHandler, flowsHandler, runControlHandler),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Infof("SDN flow platform API: %s", flowsNote)
@@ -419,7 +427,7 @@ func wireFlowNetModules(baker *flowrt.Baker, node *core.IpfsNode) string {
 // request path unchanged, so the API's own GET /sdn/v1/{node,peers,...} routes
 // still match. The console and the API it drives are therefore same-origin,
 // which is what lets the page fetch /sdn/v1/* with no cross-origin request.
-func newRootHandler(api, ui, creds, runs, nodeEPM, flows http.Handler) http.Handler {
+func newRootHandler(api, ui, creds, runs, nodeEPM, flows, runControl http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	// The flow-platform API owns the /api/v1/flows/ subtree (bake + palette +
 	// flow management). It is more specific than the "/" console catch-all, so
@@ -439,6 +447,10 @@ func newRootHandler(api, ui, creds, runs, nodeEPM, flows http.Handler) http.Hand
 	mux.Handle("/sdn/v1/admin/credentials/", creds)
 	mux.Handle("/sdn/v1/runs", runs)
 	mux.Handle("/sdn/v1/runs/", runs)
+	// The run-control (START/STOP/RESET) subtree is more specific than
+	// /sdn/v1/modules/{id}/config's GET/PUT-only routes on the generic API,
+	// so it must be registered here to win the match.
+	mux.Handle("/sdn/v1/modules/supplemental-omm/run/", runControl)
 	// The node EPM export routes are registered as EXACT patterns (not a
 	// /sdn/v1/node/ subtree) so they never shadow or redirect the read-only API's
 	// exact GET /sdn/v1/node route: /sdn/v1/node stays on the API, while

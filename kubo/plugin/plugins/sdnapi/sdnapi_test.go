@@ -88,7 +88,11 @@ func TestRootHandlerRoutesUIAndAPI(t *testing.T) {
 	flows := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(flowsMarker + " " + r.URL.Path))
 	})
-	root := newRootHandler(api, sdnui.Handler(), creds, runs, nodeEPM, flows)
+	runControlMarker := "SDN-RUNCONTROL-MARKER"
+	runControl := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(runControlMarker + " " + r.URL.Path))
+	})
+	root := newRootHandler(api, sdnui.Handler(), creds, runs, nodeEPM, flows, runControl)
 
 	// The flow-platform subtree wins over the "/" console catch-all and reaches
 	// the flow handler with the full path intact (the editor $APP posts here).
@@ -138,6 +142,20 @@ func TestRootHandlerRoutesUIAndAPI(t *testing.T) {
 	root.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sdn/v1/runs/abc/objects", nil))
 	if !strings.Contains(rec.Body.String(), runsMarker) {
 		t.Errorf("GET /sdn/v1/runs/abc/objects -> body=%q, want runs handler", rec.Body.String())
+	}
+
+	// The run-control (START/STOP/RESET) prefix wins over both /sdn/v1/ and
+	// /sdn/v1/modules/{id}/config's GET/PUT-only routes on the generic API.
+	for _, path := range []string{
+		"/sdn/v1/modules/supplemental-omm/run/start",
+		"/sdn/v1/modules/supplemental-omm/run/stop",
+		"/sdn/v1/modules/supplemental-omm/run/reset",
+	} {
+		rec = httptest.NewRecorder()
+		root.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+		if !strings.Contains(rec.Body.String(), runControlMarker) {
+			t.Errorf("POST %s -> body=%q, want run-control handler", path, rec.Body.String())
+		}
 	}
 
 	// Root serves the console app shell.
