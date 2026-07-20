@@ -12,8 +12,10 @@ package sdnodresults_test
 // this — see flatsql_store_link.go) rather than a full wasm mount.
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	flatbuffers "github.com/google/flatbuffers/go"
 
@@ -117,6 +119,78 @@ func TestReaderEmptyStoreNoBackfill(t *testing.T) {
 	r := sdnodresults.NewReader(func() sdnodresults.ODFlow { return flow })
 	if got := r.Runs(); len(got) != 0 {
 		t.Fatalf("Runs() on an empty store = %v, want empty (no fabricated backfill)", got)
+	}
+}
+
+// TestReaderRunsAvoidsPerCellCatalogMaterialization is the production latency
+// regression: the list endpoint needs one real catalog average, but must not
+// read cid/provider/source/pulled_at/data through 1-3 Wasm calls per cell just
+// to decode the OBD data BLOB. Compare against that legacy query on the same
+// store/machine so the assertion is a large relative speedup, not a brittle
+// absolute wall-clock threshold.
+func TestReaderRunsAvoidsPerCellCatalogMaterialization(t *testing.T) {
+	store := newTestStore(t)
+	if err := store.IngestTestRow("SOMM", "omm-summary-anchor", "iss", "ISS-E", "batch-1", sizedOMM(t, 25544, "ISS", "x", "e")); err != nil {
+		t.Fatalf("ingest OMM anchor: %v", err)
+	}
+
+	const rows = 2000
+	obd := sizedOBD(t, 25544, 0.125, 4)
+	for i := 0; i < rows; i++ {
+		if err := store.IngestTestRow("SOBD", fmt.Sprintf("obd-summary-%04d", i), "iss", "ISS-E", "batch-1", obd); err != nil {
+			t.Fatalf("ingest OBD %d: %v", i, err)
+		}
+	}
+
+	const legacySQL = "SELECT cid, provider, source_name, pulled_at, data FROM sds_obd WHERE rowid > ? AND rowid <= ? ORDER BY rowid"
+	legacyStart := time.Now()
+	if _, err := store.Query(legacySQL, int64(0), int64(rows)); err != nil {
+		t.Fatalf("legacy per-cell query: %v", err)
+	}
+	legacyElapsed := time.Since(legacyStart)
+
+	flow := &fakeODFlow{store: store, providers: []string{"com.orbpro.iss-source"}}
+	r := sdnodresults.NewReader(func() sdnodresults.ODFlow { return flow })
+	listStart := time.Now()
+	runs := r.Runs()
+	listElapsed := time.Since(listStart)
+
+	if len(runs) != 1 || runs[0].ObjectsDone != rows || runs[0].AvgRMS != 0.125 {
+		t.Fatalf("Runs() = %+v, want one row with objects_done=%d avg_rms=0.125", runs, rows)
+	}
+	t.Logf("bulk summary=%s legacy per-cell=%s", listElapsed, legacyElapsed)
+	if listElapsed*3 >= legacyElapsed {
+		t.Fatalf("Runs() still materializes the catalog per cell: list=%s legacy=%s, want list < legacy/3", listElapsed, legacyElapsed)
+	}
+}
+
+// TestReaderRunsSkipsInvalidStoreRows preserves queryRange's established
+// per-row behavior on the new bulk path: a missing CID, empty data BLOB, or
+// malformed OBD is skipped without hiding valid neighboring fits.
+func TestReaderRunsSkipsInvalidStoreRows(t *testing.T) {
+	store := newTestStore(t)
+	if err := store.IngestTestRow("SOMM", "omm-anchor", "iss", "ISS-E", "batch-1", sizedOMM(t, 25544, "ISS", "x", "e")); err != nil {
+		t.Fatalf("ingest OMM anchor: %v", err)
+	}
+	must := func(cid string, data []byte) {
+		t.Helper()
+		if err := store.IngestTestRow("SOBD", cid, "iss", "ISS-E", "batch-1", data); err != nil {
+			t.Fatalf("ingest OBD %q: %v", cid, err)
+		}
+	}
+	must("valid-a", sizedOBD(t, 1, 0.2, 4))
+	must("", sizedOBD(t, 2, 9.9, 4))
+	must("empty-data", nil)
+	must("malformed", []byte("not-an-obd"))
+	must("valid-b", sizedOBD(t, 3, 0.4, 4))
+
+	flow := &fakeODFlow{store: store, providers: []string{"com.orbpro.iss-source"}}
+	runs := sdnodresults.NewReader(func() sdnodresults.ODFlow { return flow }).Runs()
+	if len(runs) != 1 || runs[0].ObjectsDone != 2 {
+		t.Fatalf("Runs() = %+v, want two valid neighboring fits with avg_rms=0.3", runs)
+	}
+	if diff := runs[0].AvgRMS - 0.3; diff > 1e-12 || diff < -1e-12 {
+		t.Fatalf("Runs() avg_rms = %v, want 0.3", runs[0].AvgRMS)
 	}
 }
 

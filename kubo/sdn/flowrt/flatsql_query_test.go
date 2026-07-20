@@ -9,11 +9,14 @@ package flowrt
 // OpenLinkedStore, which flatsql_store_link.go already builds everywhere.
 
 import (
+	"bytes"
 	"path/filepath"
 	"testing"
 	"time"
 
 	flatbuffers "github.com/google/flatbuffers/go"
+
+	"github.com/ipfs/kubo/sdn/flatsqlrt"
 )
 
 // queryTestStoreRow hand-builds the store node's wrapper FlatBuffer, matching
@@ -63,6 +66,69 @@ func TestLinkedStoreQueryReadOnly(t *testing.T) {
 	blob, ok := res.Rows[0][2].([]byte)
 	if !ok || string(blob) != string(dOMM) {
 		t.Fatalf("Query data BLOB mismatch: %#v", res.Rows[0][2])
+	}
+}
+
+// TestLinkedStoreQueryRecordStream proves the board can bulk-read one BLOB
+// column without materializing every result cell through individual WasmEdge
+// calls. The stream is intentionally uncached: during a live fire every ingest
+// changes the engine generation, so caching successive catalog-sized poll
+// results would retain large stale responses.
+func TestLinkedStoreQueryRecordStream(t *testing.T) {
+	type recordStreamQuerier interface {
+		QueryRecordStream(string, flatsqlrt.SandboxCaps, ...interface{}) (*flatsqlrt.RawStream, error)
+	}
+
+	dir := t.TempDir()
+	s, err := OpenLinkedStore(filepath.Join(dir, "aot"), filepath.Join(dir, "store.snapshot"))
+	if err != nil {
+		t.Fatalf("OpenLinkedStore: %v", err)
+	}
+	defer s.Close()
+
+	q, ok := interface{}(s).(recordStreamQuerier)
+	if !ok {
+		t.Fatal("LinkedStore is missing the bulk QueryRecordStream read path")
+	}
+
+	first := []byte{0, 0, 0, 0, '$', 'O', 'B', 'D', 1, 2, 3}
+	second := []byte{0, 0, 0, 0, '$', 'O', 'B', 'D', 4, 5, 6}
+	if seq := s.ingestRecord(queryTestStoreRow("SOBD", "obd-1", "iss", "ISS-E", "batch-1", first)); seq < 0 {
+		t.Fatalf("ingest first OBD failed rc=%d", seq)
+	}
+	if seq := s.ingestRecord(queryTestStoreRow("SOBD", "obd-2", "cpf", "CPF-E", "batch-1", second)); seq < 0 {
+		t.Fatalf("ingest second OBD failed rc=%d", seq)
+	}
+
+	const sql = "SELECT data FROM sds_obd WHERE rowid > ? AND rowid <= ? ORDER BY rowid"
+	caps := flatsqlrt.SandboxCaps{MaxRows: 1, MaxBytes: 1 << 20, Timeout: time.Second}
+	stream, err := q.QueryRecordStream(sql, caps, int64(1), int64(2))
+	if err != nil {
+		t.Fatalf("QueryRecordStream: %v", err)
+	}
+	if stream.Rows != 1 || stream.Columns != 1 || stream.FrameCount != 1 {
+		t.Fatalf("stream rows=%d columns=%d frames=%d, want 1/1/1", stream.Rows, stream.Columns, stream.FrameCount)
+	}
+	frames, err := flatsqlrt.DecodeSizePrefixedStream(stream.Bytes)
+	if err != nil {
+		t.Fatalf("DecodeSizePrefixedStream: %v", err)
+	}
+	if len(frames) != 1 || !bytes.Equal(frames[0], second) {
+		t.Fatalf("stream payload = %#v, want only the second OBD payload", frames)
+	}
+	if stream.CacheHit || stream.MirrorHit {
+		t.Fatalf("high-churn record stream must be uncached: cache=%v mirror=%v", stream.CacheHit, stream.MirrorHit)
+	}
+
+	again, err := q.QueryRecordStream(sql, caps, int64(1), int64(2))
+	if err != nil {
+		t.Fatalf("QueryRecordStream repeat: %v", err)
+	}
+	if again.CacheHit || again.MirrorHit {
+		t.Fatalf("repeat high-churn stream unexpectedly cached: cache=%v mirror=%v", again.CacheHit, again.MirrorHit)
+	}
+	if _, err := q.QueryRecordStream(sql, flatsqlrt.SandboxCaps{}, int64(1), int64(2)); err == nil {
+		t.Fatal("QueryRecordStream accepted unlimited sandbox caps")
 	}
 }
 
