@@ -11,6 +11,7 @@ package flowrt
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	flatbuffers "github.com/google/flatbuffers/go"
 )
@@ -105,6 +106,32 @@ func TestServiceFlowStoreNilSafety(t *testing.T) {
 	sf := &ServiceFlow{inst: &flowInstance{rt: rt}}
 	if sf.Store() != nil {
 		t.Fatalf("Store() on a bridge-mode (non-engine-linked) flow should be nil")
+	}
+}
+
+// TestServiceFlowStoreAvailableDuringFire reproduces the production run-board
+// stall: FireTrigger holds sf.mu for the full (potentially multi-hour) fire,
+// but read-only result APIs still need the already-open linked store so they
+// can render OngoingFire progress. Store must therefore not wait on the fire
+// serialization mutex.
+func TestServiceFlowStoreAvailableDuringFire(t *testing.T) {
+	want := &LinkedStore{}
+	sf := &ServiceFlow{inst: &flowInstance{rt: &FlowRuntime{store: want}}}
+
+	// Simulate FireTrigger owning the serialization lock for an in-flight fire.
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
+
+	got := make(chan *LinkedStore, 1)
+	go func() { got <- sf.Store() }()
+
+	select {
+	case store := <-got:
+		if store != want {
+			t.Fatalf("Store() during a fire = %p, want %p", store, want)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("Store() blocked behind the in-flight fire mutex")
 	}
 }
 

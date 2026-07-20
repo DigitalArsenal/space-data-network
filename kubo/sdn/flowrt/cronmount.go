@@ -91,8 +91,12 @@ type ServiceFlow struct {
 	// gate a fetch. Nil for a bundle with no source nodes or no bundle dir.
 	sourceProviderPluginIDs []string
 
-	mu   sync.Mutex
-	inst *flowInstance
+	mu sync.Mutex
+	// instMu guards the instance lifecycle for read-only accessors that must
+	// remain available while mu is held by a long-running fire. Fire/config
+	// operations still serialize on mu; Close takes both locks before release.
+	instMu sync.RWMutex
+	inst   *flowInstance
 
 	statsMu         sync.Mutex
 	startedAt       time.Time
@@ -386,6 +390,8 @@ func (sf *ServiceFlow) RegisterRoutes(mux *http.ServeMux) {}
 func (sf *ServiceFlow) Close() error {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
+	sf.instMu.Lock()
+	defer sf.instMu.Unlock()
 	if sf.inst != nil {
 		sf.inst.rt.Release()
 		sf.inst = nil
@@ -723,8 +729,8 @@ func (sf *ServiceFlow) SetNodeConfig(cfg map[string]interface{}) {
 // flow with no engine link, or a closed flow. Never a write path — callers
 // must only issue SELECT statements (see LinkedStore.Query).
 func (sf *ServiceFlow) Store() *LinkedStore {
-	sf.mu.Lock()
-	defer sf.mu.Unlock()
+	sf.instMu.RLock()
+	defer sf.instMu.RUnlock()
 	if sf.inst == nil || sf.inst.rt == nil {
 		return nil
 	}
