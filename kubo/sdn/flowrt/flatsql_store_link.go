@@ -285,6 +285,26 @@ func (s *LinkedStore) Query(sql string, params ...interface{}) (*flatsqlrt.Resul
 	return s.db.Query(sql, params...)
 }
 
+// QueryRecordStream runs a READ-ONLY SELECT whose result cells are record
+// BLOBs and returns them as one size-prefixed stream. Unlike the general
+// Query path, FlatSQL materializes the whole response artifact in-wasm and
+// copies it out once, avoiding per-cell WasmEdge calls for catalog-sized
+// board aggregates. The sandboxed engine entry point is used here because it
+// deliberately bypasses every response cache: a live OD fire changes the
+// generation on each ingest, and retaining successive catalog-sized poll
+// results would only hold stale streams in memory.
+func (s *LinkedStore) QueryRecordStream(sql string, caps flatsqlrt.SandboxCaps, params ...interface{}) (*flatsqlrt.RawStream, error) {
+	if !isReadOnlySelect(sql) {
+		return nil, fmt.Errorf("flowrt: store record-stream query must be a single read-only SELECT")
+	}
+	if caps.MaxRows == 0 || caps.MaxBytes == 0 || caps.Timeout <= 0 {
+		return nil, fmt.Errorf("flowrt: store record-stream query requires finite row, byte, and time limits")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.db.QuerySandboxedStream(sql, caps, params...)
+}
+
 // isReadOnlySelect reports whether sql is (structurally) a single SELECT
 // statement: starts with SELECT (case-insensitive, ignoring leading
 // whitespace) and carries no statement-separating semicolon other than an

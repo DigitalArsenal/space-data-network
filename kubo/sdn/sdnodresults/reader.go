@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ipfs/kubo/sdn/flatsqlrt"
 	"github.com/ipfs/kubo/sdn/flowrt"
 )
 
@@ -62,6 +63,16 @@ type storeRow struct {
 	Data     []byte
 }
 
+const (
+	// One board summary may copy at most the same 256 MiB budget FlatSQL uses
+	// for its bounded raw-stream mirror. Current retained OD runs are far below
+	// this; the cap prevents a damaged/hostile arena from monopolizing memory.
+	maxSummaryRecordStreamBytes = 256 * 1024 * 1024
+	// Stay below the board's four-second poll cadence so a pathological query
+	// cannot create an ever-growing convoy while it owns LinkedStore.mu.
+	summaryRecordStreamTimeout = 3 * time.Second
+)
+
 // queryRange reads every row in rng from table, provenance + pulled_at
 // included, in rowid order.
 func queryRange(store *flowrt.LinkedStore, table string, rng flowrt.TableRange) []storeRow {
@@ -93,6 +104,34 @@ func queryRange(store *flowrt.LinkedStore, table string, rng flowrt.TableRange) 
 		out = append(out, sr)
 	}
 	return out
+}
+
+// queryDataRange bulk-reads one table's record payloads as a single FlatSQL
+// response artifact. This is the summary/live path: it needs only the `data`
+// BLOB, so materializing cid/provider/source/pulled_at as separate cells would
+// add tens of thousands of unnecessary WasmEdge calls for a full catalog.
+func queryDataRange(store *flowrt.LinkedStore, table string, rng flowrt.TableRange) [][]byte {
+	if store == nil || rng.Through <= rng.After {
+		return nil
+	}
+	rowSpan := rng.Through - rng.After
+	stream, err := store.QueryRecordStream(
+		"SELECT data FROM "+table+" WHERE rowid > ? AND rowid <= ? AND cid != '' AND data IS NOT NULL AND length(data) > 0 ORDER BY rowid",
+		flatsqlrt.SandboxCaps{
+			MaxRows:  uint64(rowSpan),
+			MaxBytes: maxSummaryRecordStreamBytes,
+			Timeout:  summaryRecordStreamTimeout,
+		},
+		rng.After, rng.Through,
+	)
+	if err != nil || stream == nil || stream.Columns != 1 {
+		return nil
+	}
+	frames, err := flatsqlrt.DecodeSizePrefixedStream(stream.Bytes)
+	if err != nil || len(frames) != stream.Rows || stream.FrameCount != len(frames) {
+		return nil
+	}
+	return frames
 }
 
 // asInt coerces a flatsqlrt scalar cell (int64 or int, depending on the
@@ -230,8 +269,8 @@ func declaredProviders(sf ODFlow) []string {
 // decode.
 func avgWRMS(store *flowrt.LinkedStore, rng flowrt.TableRange) (avg float64, n int) {
 	var sum float64
-	for _, row := range queryRange(store, "sds_obd", rng) {
-		facts, ok := decodeOBD(row.Data)
+	for _, data := range queryDataRange(store, "sds_obd", rng) {
+		facts, ok := decodeOBD(data)
 		if !ok {
 			continue
 		}
