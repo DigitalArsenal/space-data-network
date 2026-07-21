@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import Button from '../../../../../../webui/src/components/button/button.tsx'
 import { getSharedUiRuntimeAdapter } from '../../../../../src/ui/runtime/server-adapter.js'
+import { createVCardQrPayload } from '../../../../../src/ui/runtime/identity-vcard.js'
 
 const directorySortKeys = {
   type: 'type',
@@ -805,7 +806,13 @@ function directoryRecordVCard(record) {
 }
 
 function directoryRecordQRVCard(record) {
-  return directoryRecordVCardWithOptions(record, { includeSignedPayload: false })
+  return createVCardQrPayload({
+    id: firstString(record.id, record.peerId, record.name, 'directory-record'),
+    kind: 'hosted',
+    label: firstString(record.name, record.epmJSON?.dn, 'Space Data Network'),
+    peerId: '',
+    epmJson: record.epmJSON ?? {},
+  })
 }
 
 function directoryRecordVCardWithOptions(record, { includeSignedPayload }) {

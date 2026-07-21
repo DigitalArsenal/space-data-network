@@ -80,7 +80,8 @@ describe('public EPM exports', () => {
     expect(serialized).not.toMatch(/CORE|Seed|walletPrivate|SECRET|XPriv|privateKey|privateSeed/);
   });
 
-  it('creates vCard QR payloads with profile metadata and public identity aliases', () => {
+  it('creates bounded vCard QR payloads with contact fields and one HD xpub alias only', () => {
+    const xpub = 'xpub6BpyEDT14VWygfxLMawQKhGXLCVMhJK7voSnjD7VsYYzUfQb6vbTwNhDbXwsa5KraQQgfpDzTq45TfdXQzNiFRfGoFpgbd9KymJsauL4MuT';
     const payload = createVCardQrPayload({
       id: 'alice',
       kind: 'hosted',
@@ -106,7 +107,7 @@ describe('public EPM exports', () => {
         },
         peer_id: '16Uiu2Alice',
         epm_cid: 'bafyepm',
-        xpub: 'xpub-node',
+        xpub,
         public_key: 'node-public',
         signing_public_key: 'signing-public',
         encryption_public_key: 'encryption-public',
@@ -122,24 +123,87 @@ describe('public EPM exports', () => {
     expect(payload).toContain('BEGIN:VCARD');
     expect(payload).toContain('N:Example;Alice;Q.;Dr.;PhD');
     expect(payload).toContain('FN:Dr. Alice Q. Example');
-    expect(payload).toContain('ORG:Example Orbital LLC');
     expect(payload).toContain('EMAIL:alice@example.com');
     expect(payload).toContain('TEL:+1 555 0100');
-    expect(payload).toContain('TITLE:Flight Director');
-    expect(payload).not.toContain('ROLE:Operator');
     expect(payload).toContain('ADR;TYPE=WORK:Box 42;;1 Orbit Way;Cape Canaveral;FL;32920;USA');
-    expect(payload).not.toContain('X-SDN-PEER-ID:16Uiu2Alice');
-    expect(payload).not.toContain('X-SDN-EPM-CID:bafyepm');
-    expect(payload).not.toContain('X-SDN-XPUB:xpub-node');
-    expect(unfolded).toContain('EMAIL;TYPE=INTERNET;TYPE=peerid:16Uiu2Alice@peerid.spacedatanetwork.org');
-    expect(unfolded).toContain('EMAIL;TYPE=INTERNET;TYPE=xpub:xpub-node@xpub.spacedatanetwork.org');
-    expect(payload).not.toContain('EMAIL;type=INTERNET;type=signing:signing-public@signing.spacedatanetwork.org');
-    expect(unfolded).not.toContain('EMAIL;type=INTERNET;type=encryption:encryption-public@encryption.spacedatanetwork.org');
-    expect(payload).not.toContain('EMAIL;TYPE=INTERNET:node-public@spacedatanetwork.org');
-    expect(payload).not.toContain('X-SDN-PUBLIC-KEY:node-public');
-    expect(payload).not.toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public');
-    expect(payload).not.toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:encryption-public');
-    expect(payload).not.toContain('must-not-export');
+    const xpubAlias = `EMAIL;TYPE=INTERNET;TYPE=xpub:${xpub}@xpub.spacedatanetwork.org`;
+    expect(unfolded).toContain(xpubAlias);
+    expect(unfolded.split(xpubAlias)).toHaveLength(2);
+    for (const forbidden of [
+      'PRODID',
+      'ORG:',
+      'TITLE:',
+      'ROLE:',
+      'peerid.spacedatanetwork.org',
+      'X-SDN-XPUB',
+      '16Uiu2Alice',
+      'bafyepm',
+      'node-public',
+      'signing-public',
+      'encryption-public',
+      'must-not-export',
+    ]) {
+      expect(unfolded).not.toContain(forbidden);
+    }
+    expect(new TextEncoder().encode(payload).byteLength).toBeLessThanOrEqual(512);
+  });
+
+  it('refuses to create an identity QR without the required HD xpub alias', () => {
+    expect(() => createVCardQrPayload({
+      id: 'contact-only',
+      kind: 'hosted',
+      epm_json: {
+        dn: 'Contact Only',
+        email: 'contact@example.com',
+        telephone: '+1 555 0100',
+      },
+    })).toThrow('HD extended public key is required for identity QR');
+  });
+
+  it('refuses an xpub value that cannot be stored as the vCard email alias', () => {
+    expect(() => createVCardQrPayload({
+      id: 'invalid-xpub',
+      kind: 'hosted',
+      epm_json: {
+        dn: 'Invalid Xpub',
+        xpub: 'xpub:cannot-be-an-email-local-part',
+      },
+    })).toThrow('HD extended public key is required for identity QR');
+  });
+
+  it('fits a representative contact and HD xpub payload in a version-15 level-M QR or smaller', async () => {
+    // @ts-expect-error qrcode does not ship TypeScript declarations in this package.
+    const module = await import('qrcode');
+    const qrCode = (module.default ?? module) as {
+      create: (payload: string, options: { errorCorrectionLevel: 'M' }) => { modules: { size: number } };
+    };
+    const payload = createVCardQrPayload({
+      id: 'alice',
+      kind: 'hosted',
+      label: 'Dr. Alice Q. Example',
+      peerId: '16Uiu2Alice',
+      epmJson: {
+        dn: 'Dr. Alice Q. Example',
+        given_name: 'Alice',
+        family_name: 'Example',
+        additional_name: 'Q.',
+        honorific_prefix: 'Dr.',
+        honorific_suffix: 'PhD',
+        email: 'alice@example.com',
+        telephone: '+1 555 0100',
+        address: {
+          po_box: 'Box 42',
+          street: '1 Orbit Way',
+          locality: 'Cape Canaveral',
+          region: 'FL',
+          postal_code: '32920',
+          country: 'USA',
+        },
+        xpub: 'xpub6BpyEDT14VWygfxLMawQKhGXLCVMhJK7voSnjD7VsYYzUfQb6vbTwNhDbXwsa5KraQQgfpDzTq45TfdXQzNiFRfGoFpgbd9KymJsauL4MuT',
+      },
+    });
+
+    expect(qrCode.create(payload, { errorCorrectionLevel: 'M' }).modules.size).toBeLessThanOrEqual(77);
   });
 
   it('omits signing and encryption key arrays from compact QR aliases', () => {
@@ -149,6 +213,7 @@ describe('public EPM exports', () => {
       epm_json: {
         dn: 'Local Node',
         peer_id: '12D3KooWNode',
+        xpub: 'xpub6BpyEDT14VWygfxLMawQKhGXLCVMhJK7voSnjD7VsYYzUfQb6vbTwNhDbXwsa5KraQQgfpDzTq45TfdXQzNiFRfGoFpgbd9KymJsauL4MuT',
         keys: [
           { key_type: 'signing', public_key: 'array-signing-key', derivation_path: "m/44'/0'/0'/0/0" },
           { key_type: 'encryption', public_key: 'array-encryption-key', derivation_path: "m/44'/0'/0'/1/0" },
@@ -157,7 +222,8 @@ describe('public EPM exports', () => {
     });
     const unfolded = payload.replace(/\r\n[ \t]/g, '');
 
-    expect(unfolded).toContain('EMAIL;TYPE=INTERNET;TYPE=peerid:12D3KooWNode@peerid.spacedatanetwork.org');
+    expect(unfolded).not.toContain('12D3KooWNode');
+    expect(unfolded).not.toContain('peerid.spacedatanetwork.org');
     expect(unfolded).not.toContain('array-signing-key@signing.spacedatanetwork.org');
     expect(unfolded).not.toContain('array-encryption-key@encryption.spacedatanetwork.org');
   });
@@ -211,6 +277,47 @@ describe('public EPM exports', () => {
       xpub: 'xpub6Provider',
     });
     expect(epm).not.toHaveProperty('email');
+  });
+
+  it('reduces a full daemon vCard to the same bounded contact and xpub QR contract', async () => {
+    const vcardModule = await import('./identity-vcard');
+    const reduceForQr = (vcardModule as unknown as {
+      createVCardQrPayloadFromVCard?: (payload: string) => string;
+    }).createVCardQrPayloadFromVCard;
+    expect(reduceForQr).toBeTypeOf('function');
+
+    const xpub = 'xpub6BpyEDT14VWygfxLMawQKhGXLCVMhJK7voSnjD7VsYYzUfQb6vbTwNhDbXwsa5KraQQgfpDzTq45TfdXQzNiFRfGoFpgbd9KymJsauL4MuT';
+    const full = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'PRODID:-//Space Data Network//Full EPM//EN',
+      'N:Example;Alice;;;',
+      'FN:Alice Example',
+      'ORG:Example Orbital LLC',
+      'TITLE:Flight Director',
+      'EMAIL:alice@example.com',
+      'TEL:+1 555 0100',
+      'ADR;TYPE=WORK:Box 42;;1 Orbit Way;Cape Canaveral;FL;32920;USA',
+      'X-SDN-PEER-ID:16Uiu2Alice',
+      'X-SDN-EPM-CID:bafyepm',
+      'X-SDN-EPM-B64:' + 'z'.repeat(2200),
+      `EMAIL;TYPE=INTERNET;TYPE=xpub:${xpub}@xpub.spacedatanetwork.org`,
+      'EMAIL;TYPE=INTERNET;TYPE=signing:signing-public@signing.spacedatanetwork.org',
+      'END:VCARD',
+    ].join('\r\n');
+
+    const payload = reduceForQr?.(full) ?? '';
+    const unfolded = payload.replace(/\r\n[ \t]/g, '');
+    expect(unfolded).toContain('N:Example;Alice;;;');
+    expect(unfolded).toContain('FN:Alice Example');
+    expect(unfolded).toContain('EMAIL:alice@example.com');
+    expect(unfolded).toContain('TEL:+1 555 0100');
+    expect(unfolded).toContain('ADR;TYPE=WORK:Box 42;;1 Orbit Way;Cape Canaveral;FL;32920;USA');
+    expect(unfolded).toContain(`EMAIL;TYPE=INTERNET;TYPE=xpub:${xpub}@xpub.spacedatanetwork.org`);
+    for (const forbidden of ['PRODID', 'ORG:', 'TITLE:', '16Uiu2Alice', 'bafyepm', 'X-SDN-EPM-B64', 'signing-public']) {
+      expect(unfolded).not.toContain(forbidden);
+    }
+    expect(new TextEncoder().encode(payload).byteLength).toBeLessThanOrEqual(512);
   });
 
   it('resolves role public keys and derivation paths from EPM key records when top-level fields are absent', async () => {
