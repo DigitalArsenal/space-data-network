@@ -2,6 +2,7 @@ package appmanifest
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -67,14 +68,14 @@ func TestSupplementalOMMRecordDriftGate(t *testing.T) {
 	if app.ID != SupplementalOMMAppID {
 		t.Fatalf("app id = %q, want %q", app.ID, SupplementalOMMAppID)
 	}
-	if len(app.Modules) != 10 {
-		t.Fatalf("supplemental-omm app must reference 10 modules (8 adapters + fit-pipeline + catalog-synthesis), got %d", len(app.Modules))
+	if len(app.Modules) != 9 {
+		t.Fatalf("supplemental-omm app must reference 9 modules (7 independent adapters + fit-pipeline + catalog-synthesis), got %d", len(app.Modules))
 	}
 	if len(app.Data) != 4 {
 		t.Fatalf("supplemental-omm app must have 4 data refs, got %d", len(app.Data))
 	}
-	if len(app.Sources) != 17 {
-		t.Fatalf("supplemental-omm app must have 17 source refs, got %d", len(app.Sources))
+	if len(app.Sources) != 9 {
+		t.Fatalf("supplemental-omm app must have 9 independent source refs, got %d", len(app.Sources))
 	}
 	if len(app.Pages) != 1 {
 		t.Fatalf("supplemental-omm app must have exactly one UI page, got %d", len(app.Pages))
@@ -130,6 +131,35 @@ func TestSupplementalOMMRecordDriftGate(t *testing.T) {
 
 	t.Logf("supplemental-omm record: html %d bytes, CONTENT (base64+gzip) %d bytes, $APP %d bytes; modules=%d data=%d sources=%d",
 		len(html), len(page.Content), mustToAPPLen(t, app), len(app.Modules), len(app.Data), len(app.Sources))
+}
+
+func TestSupplementalOMMHasNoProductionCelesTrakPath(t *testing.T) {
+	app, err := NewSupplementalOMMApp(SupplementalOMMBoardHTML())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(app.Modules), 9; got != want {
+		t.Fatalf("modules = %d, want %d", got, want)
+	}
+	if got, want := len(app.Sources), 9; got != want {
+		t.Fatalf("sources = %d, want %d", got, want)
+	}
+	b, err := json.Marshal(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	board := SupplementalOMMBoardHTML()
+	joined := strings.ToLower(string(append(b, board...)))
+	for _, forbidden := range []string{
+		"celestrak.org", "celestrak.com", "ref-celestrak-supgp",
+		"src-celestrak-supgp", "supgp-ses", "supgp-planet",
+		"supgp-iridium", "supgp-telesat", "supgp-kuiper",
+		"supgp-ast", "supgp-css",
+	} {
+		if strings.Contains(joined, forbidden) {
+			t.Errorf("production app contains forbidden reference %q", forbidden)
+		}
+	}
 }
 
 // TestSupplementalOMMAPPRoundTrip proves the $APP FlatBuffer round-trip
