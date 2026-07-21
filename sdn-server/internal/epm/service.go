@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
@@ -834,47 +835,61 @@ func (s *Service) GetNodeQR(size int) ([]byte, error) {
 }
 
 // GetNodeQRVCard returns a compact vCard intended for QR scanning.
-// The downloadable vCard keeps the embedded binary EPM payload; QR codes use
-// the CID and signature fields instead because embedding the full payload makes
-// the QR too dense for phones and can exceed QR encoder capacity.
+// The downloadable vCard keeps the full EPM identity projection; QR codes keep
+// only contact fields and the HD extended public key email alias so mobile
+// cameras receive a substantially less dense payload.
 func (s *Service) GetNodeQRVCard() (string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.epmBytes == nil {
 		return "", fmt.Errorf("no EPM available")
 	}
+	xpub := strings.TrimSpace(s.xpub)
+	if xpub == "" {
+		return "", fmt.Errorf("HD extended public key is required for node QR")
+	}
+	if _, err := parseXPub(xpub); err != nil {
+		return "", fmt.Errorf("HD extended public key is required for node QR: %w", err)
+	}
 
 	epmRecord := EPM.GetSizePrefixedRootAsEPM(s.epmBytes, 0)
+	displayName := nodeQRDisplayName(epmRecord)
+	familyName := stringFromBytes(epmRecord.FAMILY_NAME())
+	givenName := stringFromBytes(epmRecord.GIVEN_NAME())
+	additionalName := stringFromBytes(epmRecord.ADDITIONAL_NAME())
+	honorificPrefix := stringFromBytes(epmRecord.HONORIFIC_PREFIX())
+	honorificSuffix := stringFromBytes(epmRecord.HONORIFIC_SUFFIX())
+	if strings.TrimSpace(familyName+givenName+additionalName+honorificPrefix+honorificSuffix) == "" {
+		givenName = displayName
+	}
 	lines := []string{
 		"BEGIN:VCARD",
 		"VERSION:3.0",
-		"PRODID;VALUE=TEXT:-//Apple Inc.//iPhone OS 15.1.1//EN",
-		"N:;;;;",
-		"FN:" + escapeNodeQRVCardValue(nodeQRDisplayName(epmRecord, s.peerID)),
+		"N:" + joinNodeQRVCardValues(familyName, givenName, additionalName, honorificPrefix, honorificSuffix),
+		"FN:" + escapeNodeQRVCardValue(displayName),
 	}
-	addNodeQRVCardLine(&lines, "ORG", stringFromBytes(epmRecord.LEGAL_NAME()))
 	addNodeQRVCardLine(&lines, "EMAIL", stringFromBytes(epmRecord.EMAIL()))
 	addNodeQRVCardLine(&lines, "TEL", stringFromBytes(epmRecord.TELEPHONE()))
-	addNodeQRVCardLine(&lines, "TITLE", stringFromBytes(epmRecord.JOB_TITLE()))
-	addNodeQRVCardLine(&lines, "ROLE", stringFromBytes(epmRecord.OCCUPATION()))
-	addNodeQRVCardLine(&lines, "UID", s.peerID.String())
-	addNodeQRVCardLine(&lines, "X-SDN-DIRECTORY-KIND", "node")
-	addNodeQRVCardLine(&lines, "X-SDN-PEER-ID", s.peerID.String())
-	if cid, err := ComputeEPMCID(s.epmBytes); err == nil {
-		addNodeQRVCardLine(&lines, "X-SDN-EPM-CID", cid)
+	address := new(EPM.Address)
+	if epmRecord.ADDRESS(address) != nil {
+		addressValues := []string{
+			stringFromBytes(address.POST_OFFICE_BOX_NUMBER()),
+			"",
+			stringFromBytes(address.STREET()),
+			stringFromBytes(address.LOCALITY()),
+			stringFromBytes(address.REGION()),
+			stringFromBytes(address.POSTAL_CODE()),
+			stringFromBytes(address.COUNTRY()),
+		}
+		if strings.TrimSpace(strings.Join(addressValues, "")) != "" {
+			lines = append(lines, "ADR;TYPE=WORK:"+joinNodeQRVCardValues(addressValues...))
+		}
 	}
-	if signature := epmRecord.SIGNATURE(); signature != nil {
-		addNodeQRVCardLine(&lines, "X-SDN-EPM-SIGNATURE", string(signature))
-	}
-	if ts := epmRecord.SIGNATURE_TIMESTAMP(); ts != 0 {
-		addNodeQRVCardLine(&lines, "X-SDN-EPM-SIGNATURE-TIMESTAMP", strconv.FormatInt(ts, 10))
-	}
-	if s.identity != nil && s.identity.Addresses != nil && s.identity.Addresses.Bitcoin != nil {
-		addNodeQRVCardLine(&lines, "X-SDN-BITCOIN-ADDRESS", s.identity.Addresses.Bitcoin.Address)
-	}
-	lines = append(lines, vcard.AppleIdentityLinesFromEPM(epmRecord, nil, false)...)
-	lines = append(lines, nodeIdentityAddressEmailAliasLines(s.identity)...)
+	lines = append(lines, "EMAIL;TYPE=INTERNET;TYPE=xpub:"+xpub+"@xpub.spacedatanetwork.org")
 	lines = append(lines, "END:VCARD")
+	for i, line := range lines {
+		lines[i] = foldNodeQRVCardLine(line)
+	}
 	return strings.Join(lines, "\r\n") + "\r\n", nil
 }
 
@@ -912,13 +927,13 @@ func insertVCardLines(vcardStr string, lines []string) string {
 	return strings.TrimRight(normalized, "\n") + "\r\n" + insert + "\r\nEND:VCARD\r\n"
 }
 
-func nodeQRDisplayName(epmRecord *EPM.EPM, pid peer.ID) string {
+func nodeQRDisplayName(epmRecord *EPM.EPM) string {
 	if epmRecord != nil {
 		if dn := epmRecord.DN(); dn != nil && strings.TrimSpace(string(dn)) != "" {
 			return string(dn)
 		}
 	}
-	return "SDN Node " + pid.ShortString()
+	return "SDN Node"
 }
 
 func addNodeQRVCardLine(lines *[]string, key, value string) {
@@ -933,6 +948,33 @@ func stringFromBytes(value []byte) string {
 		return ""
 	}
 	return string(value)
+}
+
+func joinNodeQRVCardValues(values ...string) string {
+	escaped := make([]string, len(values))
+	for i, value := range values {
+		escaped[i] = escapeNodeQRVCardValue(value)
+	}
+	return strings.Join(escaped, ";")
+}
+
+func foldNodeQRVCardLine(line string) string {
+	const maxPhysicalLineBytes = 75
+	if len(line) <= maxPhysicalLineBytes {
+		return line
+	}
+
+	parts := make([]string, 0, len(line)/maxPhysicalLineBytes+1)
+	for len(line) > maxPhysicalLineBytes {
+		cut := maxPhysicalLineBytes
+		for cut > 0 && !utf8.RuneStart(line[cut]) {
+			cut--
+		}
+		parts = append(parts, line[:cut])
+		line = " " + line[cut:]
+	}
+	parts = append(parts, line)
+	return strings.Join(parts, "\r\n")
 }
 
 func escapeNodeQRVCardValue(value string) string {

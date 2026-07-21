@@ -453,7 +453,7 @@ func TestDirectoryRecordJSONEmbedsBinaryEPMForVCFExport(t *testing.T) {
 	}
 }
 
-func TestNodeQRUsesCompactVCardWithoutEmbeddedEPMPayload(t *testing.T) {
+func TestNodeQRUsesCompactContactAndXPubVCard(t *testing.T) {
 	t.Parallel()
 
 	identity, err := testDerivedIdentity()
@@ -461,45 +461,128 @@ func TestNodeQRUsesCompactVCardWithoutEmbeddedEPMPayload(t *testing.T) {
 		t.Fatalf("testDerivedIdentity failed: %v", err)
 	}
 
-	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, "xpub-test", t.TempDir())
+	const xpub = "xpub6DEcA45Z68pwH3NrnV1Tee1pLNfJYruoQkKZJxmeRdBaQAtZg9Vf5LzHVZoBR5dGpmHxWzUXTGo8w1nRS13AvmhbRcBVzduCL3TGsCsj9Mm"
+	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, xpub, t.TempDir())
+	if err := service.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	if err := service.UpdateProfile(&Profile{
+		DN:              "Dr. Alice Q. Example",
+		FamilyName:      "Example",
+		GivenName:       "Alice",
+		AdditionalName:  "Q.",
+		HonorificPrefix: "Dr.",
+		HonorificSuffix: "PhD",
+		Email:           "alice@example.com",
+		Telephone:       "+1 555 0100",
+		Address: &Address{
+			POBox:      "Box 42",
+			Street:     "1 Orbit Way",
+			Locality:   "Cape Canaveral",
+			Region:     "FL",
+			PostalCode: "32920",
+			Country:    "USA",
+		},
+	}); err != nil {
+		t.Fatalf("UpdateProfile failed: %v", err)
+	}
+
+	qrVCard, err := service.GetNodeQRVCard()
+	if err != nil {
+		t.Fatalf("GetNodeQRVCard failed: %v", err)
+	}
+	unfolded := unfoldVCardForTest(qrVCard)
+
+	for _, required := range []string{
+		"BEGIN:VCARD",
+		"VERSION:3.0",
+		"N:Example;Alice;Q.;Dr.;PhD",
+		"FN:Dr. Alice Q. Example",
+		"EMAIL:alice@example.com",
+		"TEL:+1 555 0100",
+		"ADR;TYPE=WORK:Box 42;;1 Orbit Way;Cape Canaveral;FL;32920;USA",
+		"END:VCARD",
+	} {
+		if !strings.Contains(unfolded, required) {
+			t.Fatalf("QR vCard missing %q: %s", required, qrVCard)
+		}
+	}
+	xpubAlias := "EMAIL;TYPE=INTERNET;TYPE=xpub:" + xpub + "@xpub.spacedatanetwork.org"
+	if got := strings.Count(unfolded, xpubAlias); got != 1 {
+		t.Fatalf("QR vCard xpub alias count = %d, want 1: %s", got, qrVCard)
+	}
+	for _, forbidden := range []string{
+		"PRODID", "ORG:", "TITLE:", "ROLE:", "UID:", "X-SDN-", "X-ABRELATEDNAMES:",
+		"@signing.spacedatanetwork.org", "@encryption.spacedatanetwork.org",
+		"@bitcoin.spacedatanetwork.org", "@ethereum.spacedatanetwork.org", "@solana.spacedatanetwork.org",
+		identity.PeerID.String(),
+	} {
+		if strings.Contains(unfolded, forbidden) {
+			t.Fatalf("QR vCard contains forbidden %q: %s", forbidden, qrVCard)
+		}
+	}
+	if got := len([]byte(qrVCard)); got > 512 {
+		t.Fatalf("QR vCard is %d bytes, want <= 512: %s", got, qrVCard)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(qrVCard, "\r\n"), "\r\n") {
+		if got := len([]byte(line)); got > 75 {
+			t.Fatalf("QR vCard physical line is %d bytes, want <= 75: %q", got, line)
+		}
+	}
+	qrPNG, err := service.GetNodeQR(512)
+	if err != nil {
+		t.Fatalf("GetNodeQR failed: %v", err)
+	}
+	if len(qrPNG) == 0 {
+		t.Fatal("GetNodeQR returned an empty PNG")
+	}
+}
+
+func TestNodeQRVCardDoesNotLeakPeerIDWithoutName(t *testing.T) {
+	t.Parallel()
+
+	identity, err := testDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testDerivedIdentity failed: %v", err)
+	}
+
+	const xpub = "xpub6DEcA45Z68pwH3NrnV1Tee1pLNfJYruoQkKZJxmeRdBaQAtZg9Vf5LzHVZoBR5dGpmHxWzUXTGo8w1nRS13AvmhbRcBVzduCL3TGsCsj9Mm"
+	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, xpub, t.TempDir())
+	if err := service.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	if err := service.UpdateProfile(&Profile{}); err != nil {
+		t.Fatalf("UpdateProfile failed: %v", err)
+	}
+
+	qrVCard, err := service.GetNodeQRVCard()
+	if err != nil {
+		t.Fatalf("GetNodeQRVCard failed: %v", err)
+	}
+	for _, forbidden := range []string{identity.PeerID.String(), identity.PeerID.ShortString()} {
+		if strings.Contains(qrVCard, forbidden) {
+			t.Fatalf("QR vCard leaks PeerID fragment %q: %s", forbidden, qrVCard)
+		}
+	}
+	if !strings.Contains(qrVCard, "N:;SDN Node;;;\r\nFN:SDN Node\r\n") {
+		t.Fatalf("QR vCard missing neutral unnamed-node fallback: %s", qrVCard)
+	}
+}
+
+func TestNodeQRVCardRequiresXPub(t *testing.T) {
+	t.Parallel()
+
+	identity, err := testDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testDerivedIdentity failed: %v", err)
+	}
+	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, "", t.TempDir())
 	if err := service.Init(); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	vcard, err := service.GetNodeQRVCard()
-	if err != nil {
-		t.Fatalf("GetNodeQRVCard failed: %v", err)
-	}
-	unfolded := unfoldVCardForTest(vcard)
-
-	if strings.Contains(vcard, "X-SDN-EPM-B64:") {
-		t.Fatalf("QR vCard should not embed the full binary EPM payload: %s", vcard)
-	}
-	if strings.Contains(vcard, "Binary EPM") {
-		t.Fatalf("QR vCard should not include an Apple related-name binary EPM payload: %s", vcard)
-	}
-	if !strings.Contains(vcard, "VERSION:3.0") {
-		t.Fatalf("QR vCard should use iPhone-compatible vCard 3.0: %s", vcard)
-	}
-	if !strings.Contains(vcard, "X-SDN-EPM-CID:") {
-		t.Fatalf("QR vCard missing EPM CID: %s", vcard)
-	}
-	if !strings.Contains(vcard, "X-SDN-EPM-SIGNATURE:") {
-		t.Fatalf("QR vCard missing EPM signature: %s", vcard)
-	}
-	if !strings.Contains(unfolded, "@signing.spacedatanetwork.org") {
-		t.Fatalf("QR vCard missing iPhone-visible signing key alias: %s", vcard)
-	}
-	if !strings.Contains(unfolded, "@encryption.spacedatanetwork.org") {
-		t.Fatalf("QR vCard missing iPhone-visible encryption key alias: %s", vcard)
-	}
-	if !strings.Contains(unfolded, "@bitcoin.spacedatanetwork.org") ||
-		!strings.Contains(unfolded, "@ethereum.spacedatanetwork.org") ||
-		!strings.Contains(unfolded, "@solana.spacedatanetwork.org") {
-		t.Fatalf("QR vCard missing iPhone-visible chain address aliases: %s", vcard)
-	}
-	if !strings.Contains(vcard, "X-ABRELATEDNAMES:") {
-		t.Fatalf("QR vCard missing Apple related-name fields: %s", vcard)
+	if _, err := service.GetNodeQRVCard(); err == nil || !strings.Contains(err.Error(), "HD extended public key") {
+		t.Fatalf("GetNodeQRVCard error = %v, want required HD extended public key error", err)
 	}
 }
 
