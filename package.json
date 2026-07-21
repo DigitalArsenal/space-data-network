@@ -6,7 +6,7 @@
   "scripts": {
     "docs": "cd docs && npx http-server -p 4173 -c-1",
     "docs:open": "cd docs && npx http-server -p 4173 -c-1 -o",
-    "check:nav": "node scripts/check-sdn-stack-nav.mjs sdn docs/index.html",
+    "check:nav": "node scripts/check-sdn-stack-nav.mjs sdn docs/index.html docs/onboarding.html",
     "check:public-wallet-boundary": "node scripts/check-public-wallet-boundary.mjs",
     "build:designer-ui-package": "node scripts/build-claude-designer-ui-package.mjs",
     "install:wasmedge": "./scripts/install-wasmedge.sh",
