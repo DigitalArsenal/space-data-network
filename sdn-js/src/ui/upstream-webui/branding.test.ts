@@ -231,24 +231,29 @@ describe('sdn upstream webui branding helper', () => {
     );
 
     expect(source).toContain("import QRCode from 'qrcode'");
+    expect(source).toContain("import { createVCardQrPayload } from '../../../../../src/ui/runtime/identity-vcard.js'");
     expect(source).toContain('QRCode.toDataURL(nodeProfileQRVCard(epmPayload, profile)');
     expect(source).toContain('const [epmPayload, setEPMPayload] = useState({})');
     expect(source).toContain('nodeProfileQRVCard');
-    expect(source).toContain('const displayName = firstProfileString(profile.dn, epmPayload.dn');
-    expect(source).toContain('givenName = displayName');
-    expect(source).toContain('X-SDN-EPM-CID');
-    expect(source).toContain('addProfileQRIdentityEmailLines(lines, epmPayload)');
-    expect(source).toContain('signing.spacedatanetwork.org');
-    expect(source).toContain('encryption.spacedatanetwork.org');
-    expect(source).toContain('bitcoin.spacedatanetwork.org');
-    expect(source).toContain('ethereum.spacedatanetwork.org');
-    expect(source).toContain('solana.spacedatanetwork.org');
+    expect(source).toContain('return createVCardQrPayload({');
+    expect(source).toContain('epmJson: { ...epmPayload, ...profile, address }');
     expect(source).not.toContain('/api/node/epm/qr');
-    expect(source).not.toContain('X-SDN-EPM-B64');
-    expect(source).not.toContain('X-SDN-EPM-SIGNATURE');
-    expect(source).not.toContain('X-SDN-EPM-SIGNATURE-TIMESTAMP');
-    expect(source).not.toContain('addProfileEmailAlias');
+    expect(source).not.toContain('addProfileQRIdentityEmailLines(lines, epmPayload)');
     expect(source).not.toContain("src={`/api/node/epm/qr?v=${qrVersion}`}");
+  });
+
+  it('routes Directory QR generation through the canonical compact vCard serializer', async () => {
+    const source = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/directory/DirectoryPage.js'),
+      'utf8',
+    );
+
+    expect(source).toContain("import { createVCardQrPayload } from '../../../../../src/ui/runtime/identity-vcard.js'");
+    expect(source).toContain('function directoryRecordQRVCard(record)');
+    expect(source).toContain('return createVCardQrPayload({');
+    expect(source).toContain('epmJson: record.epmJSON ?? {}');
+    expect(source).toContain('return directoryRecordVCardWithOptions(record, { includeSignedPayload: true })');
+    expect(source).not.toContain('return directoryRecordVCardWithOptions(record, { includeSignedPayload: false })');
   });
 
   it('uses common first and last name labels in the Settings profile editor', async () => {

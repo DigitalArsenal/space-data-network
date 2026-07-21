@@ -218,7 +218,7 @@ describe('SDN identity Svelte source', () => {
       'peerid.spacedatanetwork.org',
       'xpub.spacedatanetwork.org',
       'spacedatanetwork.org',
-      'Compact QR',
+      'createVCardQrPayloadFromVCard',
       'ADR;TYPE=WORK',
       'X-SDN-SIGNING-PUBLIC-KEY',
       'X-SDN-ENCRYPTION-PUBLIC-KEY',
@@ -229,6 +229,8 @@ describe('SDN identity Svelte source', () => {
       'honorific_prefix',
       'honorific_suffix',
     ]);
+    expect(runtimeSource).toContain("addCompactIdentityEmailLine(lines, 'xpub', xpub, XPUB_ALIAS_DOMAIN)");
+    expect(runtimeSource).not.toContain("addCompactIdentityEmailLine(lines, 'peerid'");
     expect(runtimeSource).not.toContain('addVCardIdentityEmailLines');
     for (const source of uiSources) {
       expect(source).toContain("../../../src/ui/runtime/identity-vcard");
@@ -236,6 +238,14 @@ describe('SDN identity Svelte source', () => {
       expect(source).not.toMatch(/function\s+addVCardLine/);
       expect(source).not.toMatch(/function\s+publicKeyEmailAddress/);
     }
+  });
+
+  it('reduces the full daemon vCard before the SpaceAware console encodes its QR', () => {
+    const source = readUiSource('spaceaware/screens/console/QrOverlay.svelte');
+
+    expect(source).toContain('createVCardQrPayloadFromVCard');
+    expect(source).toContain('encodeQrDataUrl(createVCardQrPayloadFromVCard(vcard))');
+    expect(source).not.toContain('encodeQrDataUrl(vcard)');
   });
 
   it('keeps only the edit action on the node profile card', () => {

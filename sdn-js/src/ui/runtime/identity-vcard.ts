@@ -100,21 +100,66 @@ export function createVCardQrPayload(input: Record<string, unknown> | HostedEpmR
   const displayName = pickString(epm, ['dn', 'DN', 'displayName', 'name', 'legal_name', 'legalName', 'organization', 'org'])
     || record.label
     || 'Space Data Network';
-  const peerId = record.peerId || pickString(epm, ['peer_id', 'peerId', 'PeerID']) || '';
-  const xpub = identityXpubValue(epm);
-  const lines = ['BEGIN:VCARD', 'VERSION:3.0', 'PRODID;VALUE=TEXT:-//Space Data Network//Compact QR//EN'];
+  const xpub = identityXpubValue(epm)?.trim();
+  if (!xpub || !isSafeEmailLocalPart(xpub)) {
+    throw new Error('HD extended public key is required for identity QR');
+  }
+  const lines = ['BEGIN:VCARD', 'VERSION:3.0'];
 
   addVCardStructuredName(lines, epm, displayName);
   addVCardLine(lines, 'FN', displayName);
-  addVCardLine(lines, 'ORG', pickString(epm, ['legal_name', 'legalName', 'organization', 'org']));
-  addVCardLine(lines, 'TITLE', pickString(epm, ['job_title', 'jobTitle', 'title']));
   addVCardLine(lines, 'EMAIL', pickString(epm, ['email']));
   addVCardLine(lines, 'TEL', pickString(epm, ['telephone', 'phone', 'tel']));
   addVCardAddressLine(lines, epm);
-  addCompactIdentityEmailLine(lines, 'peerid', peerId, PEER_ID_ALIAS_DOMAIN);
   addCompactIdentityEmailLine(lines, 'xpub', xpub, XPUB_ALIAS_DOMAIN);
   lines.push('END:VCARD');
   return `${lines.map(foldVCardLine).join('\r\n')}\r\n`;
+}
+
+export function createVCardQrPayloadFromVCard(vcard: string): string {
+  const lines = vcardLines(vcard);
+  const name = vcardStructuredValue(lines, 'N');
+  const address = vcardStructuredValue(lines, 'ADR');
+  const displayName = vcardValue(lines, 'FN')
+    || [name[1], name[0]].filter(Boolean).join(' ')
+    || 'Space Data Network';
+  const epm: Record<string, unknown> = {
+    dn: displayName,
+    email: vcardContactEmail(lines),
+    telephone: vcardValue(lines, 'TEL'),
+    xpub: vcardValue(lines, 'X-SDN-XPUB')
+      || vcardValue(lines, 'X-XPUB')
+      || vcardValue(lines, 'XPUB')
+      || vcardEmailAlias(lines, XPUB_ALIAS_DOMAIN, 'xpub'),
+  };
+
+  const [familyName, givenName, additionalName, honorificPrefix, honorificSuffix] = name;
+  Object.assign(epm, {
+    family_name: familyName,
+    given_name: givenName,
+    additional_name: additionalName,
+    honorific_prefix: honorificPrefix,
+    honorific_suffix: honorificSuffix,
+  });
+
+  if (address.some(Boolean)) {
+    epm.address = {
+      po_box: address[0],
+      street: address[2],
+      locality: address[3],
+      region: address[4],
+      postal_code: address[5],
+      country: address[6],
+    };
+  }
+
+  return createVCardQrPayload({
+    id: 'vcard-qr',
+    kind: 'hosted',
+    label: displayName,
+    peerId: '',
+    epmJson: epm,
+  });
 }
 
 export function publicKeyEmailAddress(publicKey: string | undefined): string | undefined {
@@ -300,6 +345,42 @@ function vcardValue(lines: string[], fieldName: string): string {
     if (parsed?.name === normalizedField) return unescapeVCardValue(parsed.value);
   }
   return '';
+}
+
+function vcardStructuredValue(lines: string[], fieldName: string): string[] {
+  const normalizedField = fieldName.toUpperCase();
+  for (const line of lines) {
+    const parsed = parseVCardLine(line);
+    if (parsed?.name !== normalizedField) continue;
+    return splitVCardStructuredValue(parsed.value).map(unescapeVCardValue);
+  }
+  return [];
+}
+
+function splitVCardStructuredValue(value: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let escaped = false;
+  for (const character of value) {
+    if (escaped) {
+      current += `\\${character}`;
+      escaped = false;
+      continue;
+    }
+    if (character === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (character === ';') {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+    current += character;
+  }
+  if (escaped) current += '\\';
+  parts.push(current);
+  return parts;
 }
 
 function vcardContactEmail(lines: string[]): string {

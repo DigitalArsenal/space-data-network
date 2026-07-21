@@ -44,6 +44,7 @@ describe('peer identity projection', () => {
       public_key: 'node-public-key',
       signing_public_key: 'signing-public-key',
       encryption_public_key: 'encryption-public-key',
+      xpub: HD_TEST_XPUB,
       epm_cid: 'bafy-peer-epm',
     });
 
@@ -59,6 +60,7 @@ describe('peer identity projection', () => {
       public_key: 'node-public-key',
       signing_public_key: 'signing-public-key',
       encryption_public_key: 'encryption-public-key',
+      xpub: HD_TEST_XPUB,
       epm_cid: 'bafy-peer-epm',
     });
 
@@ -69,7 +71,9 @@ describe('peer identity projection', () => {
     expect(payload).not.toContain('X-SDN-PUBLIC-KEY:node-public-key');
     expect(payload).not.toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public-key');
     expect(payload).not.toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:encryption-public-key');
-    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=peerid:${PEER_ID}@peerid.spacedatanetwork.org`);
+    expect(unfoldedPayload).not.toContain(PEER_ID);
+    expect(unfoldedPayload).not.toContain('peerid.spacedatanetwork.org');
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=xpub:${HD_TEST_XPUB}@xpub.spacedatanetwork.org`);
     expect(unfoldedPayload).not.toContain('signing-public-key@signing.spacedatanetwork.org');
     expect(unfoldedPayload).not.toContain('encryption-public-key@encryption.spacedatanetwork.org');
   });
@@ -196,7 +200,7 @@ describe('peer identity projection', () => {
 
     const payload = createVCardQrPayload(enriched);
     const unfoldedPayload = payload.replace(/\r\n[ \t]/g, '');
-    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=peerid:${PEER_ID}@peerid.spacedatanetwork.org`);
+    expect(unfoldedPayload).not.toContain(PEER_ID);
     expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=xpub:${HD_TEST_XPUB}@xpub.spacedatanetwork.org`);
     expect(unfoldedPayload).not.toContain(`X-SDN-XPUB:${HD_TEST_XPUB}`);
     expect(unfoldedPayload).not.toContain(`X-SDN-SIGNING-PUBLIC-KEY:${HD_TEST_SIGNING_PUBLIC_KEY}`);
@@ -220,9 +224,10 @@ describe('peer identity projection', () => {
     const payload = createVCardQrPayload(peerHostedEpmRecord(peer));
     const unfoldedPayload = payload.replace(/\r\n[ \t]/g, '');
 
-    expect(unfoldedPayload).toContain('PRODID;VALUE=TEXT:-//Space Data Network//Compact QR//EN');
+    expect(unfoldedPayload).not.toContain('PRODID');
     expect(unfoldedPayload).toContain('FN:CelesTrak Provider');
-    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=peerid:${PEER_ID}@peerid.spacedatanetwork.org`);
+    expect(unfoldedPayload).not.toContain(PEER_ID);
+    expect(unfoldedPayload).not.toContain('peerid.spacedatanetwork.org');
     expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=xpub:${HD_TEST_XPUB}@xpub.spacedatanetwork.org`);
     expect(unfoldedPayload).not.toContain('UID:');
     expect(unfoldedPayload).not.toContain('X-SDN-PEER-ID');

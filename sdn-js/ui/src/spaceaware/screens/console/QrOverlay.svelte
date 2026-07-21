@@ -17,7 +17,8 @@
    * `ui/src/components/IdentityPanel.svelte`'s established lazy-import
    * pattern, reused by `lib/node-data.ts`'s `encodeQrDataUrl`), so instead
    * this fetches the node's own `GET /api/node/epm/vcard` text on first
-   * open and encodes a REAL scannable QR client-side from it. A real QR
+   * open, reduces it to the canonical compact contact+xpub vCard, and
+   * encodes a REAL scannable QR client-side from that bounded payload. A real QR
    * needs a standard module grid (21x21 minimum, larger for a vCard-length
    * payload) which the mock's fixed 11x11 decorative grid was never sized
    * for, so the encoded PNG replaces the cell grid as a single image once
@@ -28,6 +29,7 @@
    */
   import { generateQrPlaceholderPattern } from '../../lib/console';
   import { encodeQrDataUrl, fetchVCardText } from '../../lib/node-data';
+  import { createVCardQrPayloadFromVCard } from '../../../../../src/ui/runtime/identity-vcard';
 
   let { open, onClose }: { open: boolean; onClose: () => void } = $props();
 
@@ -49,7 +51,7 @@
   async function loadRealQr(): Promise<void> {
     const vcard = await fetchVCardText();
     if (!vcard) return; // honest: keep the decorative placeholder grid, never fabricate a QR image.
-    qrDataUrl = await encodeQrDataUrl(vcard);
+    qrDataUrl = await encodeQrDataUrl(createVCardQrPayloadFromVCard(vcard));
   }
 </script>
 

@@ -3,6 +3,7 @@ import * as flatbuffers from 'flatbuffers'
 import QRCode from 'qrcode'
 import { EPM } from 'spacedatastandards.org/lib/js/EPM/EPM.js'
 import { KeyType } from 'spacedatastandards.org/lib/js/EPM/KeyType.js'
+import { createVCardQrPayload } from '../../../../../src/ui/runtime/identity-vcard.js'
 import Box from '../../../../../../webui/src/components/box/Box.js'
 import Button from '../../../../../../webui/src/components/button/button.tsx'
 import CameraIcon from '../../../../../../webui/src/icons/StrokeCamera.tsx'
@@ -33,14 +34,6 @@ const addressFields = [
   ['country', 'Country'],
   ['po_box', 'P.O. box'],
 ]
-
-const profileQRIdentityDomains = {
-  signing: 'signing.spacedatanetwork.org',
-  encryption: 'encryption.spacedatanetwork.org',
-  bitcoin: 'bitcoin.spacedatanetwork.org',
-  ethereum: 'ethereum.spacedatanetwork.org',
-  solana: 'solana.spacedatanetwork.org',
-}
 
 const settingsTabs = [
   ['profile', 'Profile'],
@@ -683,121 +676,13 @@ function ProfileImageModal({ imageURL, onClose }) {
 function nodeProfileQRVCard(epmPayload, profile) {
   const address = profile.address ?? epmPayload.address ?? {}
   const displayName = firstProfileString(profile.dn, epmPayload.dn, 'Space Data Network Node')
-  const familyName = firstProfileString(profile.family_name, epmPayload.family_name)
-  let givenName = firstProfileString(profile.given_name, epmPayload.given_name)
-  const additionalName = firstProfileString(profile.additional_name, epmPayload.additional_name)
-  const honorificPrefix = firstProfileString(profile.honorific_prefix, epmPayload.honorific_prefix)
-  const honorificSuffix = firstProfileString(profile.honorific_suffix, epmPayload.honorific_suffix)
-  if (!familyName && !givenName && !additionalName && !honorificPrefix && !honorificSuffix) {
-    givenName = displayName
-  }
-  const lines = [
-    'BEGIN:VCARD',
-    'VERSION:3.0',
-    'PRODID;VALUE=TEXT:-//Apple Inc.//iPhone OS 15.1.1//EN',
-    'N:' + [
-      familyName,
-      givenName,
-      additionalName,
-      honorificPrefix,
-      honorificSuffix,
-    ].map(escapeVCardValue).join(';'),
-    'FN:' + escapeVCardValue(displayName),
-  ]
-
-  addProfileVCardLine(lines, 'ORG', firstProfileString(profile.legal_name, epmPayload.legal_name))
-  addProfileVCardLine(lines, 'EMAIL', firstProfileString(profile.email, epmPayload.email))
-  addProfileVCardLine(lines, 'TEL', firstProfileString(profile.telephone, epmPayload.telephone))
-  addProfileVCardLine(lines, 'TITLE', firstProfileString(profile.job_title, epmPayload.job_title))
-  addProfileVCardLine(lines, 'ROLE', firstProfileString(profile.occupation, epmPayload.occupation))
-  addProfileAddressLine(lines, address)
-  addProfileVCardLine(lines, 'UID', firstProfileString(epmPayload.peer_id))
-  addProfileVCardLine(lines, 'X-SDN-DIRECTORY-KIND', firstProfileString(epmPayload.directory_kind, epmPayload.entity_type, 'node'))
-  addProfileVCardLine(lines, 'X-SDN-PEER-ID', firstProfileString(epmPayload.peer_id))
-  addProfileVCardLine(lines, 'X-SDN-EPM-CID', firstProfileString(epmPayload.epm_cid))
-  addProfileQRIdentityEmailLines(lines, epmPayload)
-
-  lines.push('END:VCARD')
-  return lines.map(foldVCardLine).join('\r\n') + '\r\n'
-}
-
-function addProfileVCardLine(lines, key, value) {
-  const trimmed = firstProfileString(value)
-  if (!trimmed) {
-    return
-  }
-  lines.push(`${key}:${escapeVCardValue(trimmed)}`)
-}
-
-function addProfileAddressLine(lines, address) {
-  if (!address || typeof address !== 'object') {
-    return
-  }
-  const parts = [
-    firstProfileString(address.po_box),
-    '',
-    firstProfileString(address.street),
-    firstProfileString(address.locality),
-    firstProfileString(address.region),
-    firstProfileString(address.postal_code),
-    firstProfileString(address.country),
-  ]
-  if (!parts.some(Boolean)) {
-    return
-  }
-  lines.push('ADR;TYPE=WORK:' + parts.map(escapeVCardValue).join(';'))
-}
-
-function addProfileQRIdentityEmailLines(lines, epmPayload) {
-  const seen = new Set()
-  const addAlias = (type, value) => {
-    const trimmed = firstProfileString(value)
-    const domain = profileQRIdentityDomains[type]
-    if (!trimmed || !domain || !isSafeEmailLocalPart(trimmed)) {
-      return
-    }
-    const line = `EMAIL;type=INTERNET;type=${type}:${trimmed}@${domain}`
-    if (seen.has(line)) {
-      return
-    }
-    seen.add(line)
-    lines.push(line)
-  }
-
-  addAlias('signing', firstProfileString(epmPayload.signing_pubkey_hex, findProfileKey(epmPayload, 'signing')))
-  addAlias('encryption', firstProfileString(epmPayload.encryption_pubkey_hex, findProfileKey(epmPayload, 'encryption')))
-  addAlias('bitcoin', firstProfileString(epmPayload.bitcoin_address, findProfileChainAddress(epmPayload, 'bitcoin')))
-  addAlias('ethereum', firstProfileString(epmPayload.ethereum_address, findProfileChainAddress(epmPayload, 'ethereum')))
-  addAlias('solana', firstProfileString(epmPayload.solana_address, findProfileChainAddress(epmPayload, 'solana')))
-}
-
-function findProfileKey(epmPayload, type) {
-  const keys = Array.isArray(epmPayload.keys) ? epmPayload.keys : []
-  for (const key of keys) {
-    const publicKey = firstProfileString(key?.public_key, key?.PUBLIC_KEY)
-    if (!publicKey) {
-      continue
-    }
-    const keyType = firstProfileString(key?.key_type, key?.KEY_TYPE).toLowerCase()
-    const addressType = firstProfileString(key?.address_type, key?.ADDRESS_TYPE).toLowerCase()
-    if (type === 'encryption' && (keyType === 'encryption' || addressType === 'x25519')) {
-      return publicKey
-    }
-    if (type === 'signing' && (keyType === 'signing' || (addressType && addressType !== 'x25519'))) {
-      return publicKey
-    }
-  }
-  return ''
-}
-
-function findProfileChainAddress(epmPayload, chain) {
-  const proofs = Array.isArray(epmPayload.chain_proofs) ? epmPayload.chain_proofs : []
-  for (const proof of proofs) {
-    if (firstProfileString(proof?.chain, proof?.CHAIN).toLowerCase() === chain) {
-      return firstProfileString(proof?.address, proof?.ADDRESS)
-    }
-  }
-  return ''
+  return createVCardQrPayload({
+    id: 'self',
+    kind: 'node-self',
+    label: displayName,
+    peerId: '',
+    epmJson: { ...epmPayload, ...profile, address },
+  })
 }
 
 function firstProfileString(...values) {
@@ -810,30 +695,6 @@ function firstProfileString(...values) {
     }
   }
   return ''
-}
-
-function isSafeEmailLocalPart(value) {
-  return /^[A-Za-z0-9._+-]+$/.test(String(value ?? '').trim())
-}
-
-function foldVCardLine(line) {
-  const value = String(line)
-  if (value.length <= 74) {
-    return value
-  }
-  const chunks = []
-  for (let offset = 0; offset < value.length; offset += 74) {
-    chunks.push(value.slice(offset, offset + 74))
-  }
-  return chunks.join('\r\n ')
-}
-
-function escapeVCardValue(value) {
-  return String(value ?? '')
-    .replace(/\\/g, '\\\\')
-    .replace(/\n/g, '\\n')
-    .replace(/,/g, '\\,')
-    .replace(/;/g, '\\;')
 }
 
 function emptyProfile() {
