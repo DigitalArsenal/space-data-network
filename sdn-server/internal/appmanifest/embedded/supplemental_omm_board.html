@@ -23,9 +23,9 @@
   HONESTY CONTRACT (see the LEGEND at the bottom of the page):
     LIVE    — value fetched this session from a real anonymous gateway surface.
     REF     — checked-in run/gate fact (compile-time truth, not live telemetry):
-              RMS-vs-CelesTrak parity, per-provider gate status, and the full-run
-              milestone numbers come from the modules pipeline run report / CI
-              parity gates, which have no runtime route.
+              offline benchmark parity, per-provider gate status, and the
+              full-run milestone numbers come from the modules pipeline run
+              report / CI parity gates, which have no runtime route.
     NO DATA — no anonymous surface can feed this cell today. The cell names the
               exact surface that WOULD feed it, so the gap is explicit.
 
@@ -63,7 +63,6 @@
     --blocked: #c95c5c;
     --interim: #d7a24a;
     --pass: #46d19e;
-    --nonindep: #b48ce0;
     --accent: #4a90d9;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
     --sys: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
@@ -124,15 +123,6 @@
   .pill.pass { color: var(--pass); border-color: #244b3d; background: #0e1a15; }
   .pill.interim { color: var(--interim); border-color: #4a3c1f; background: #1a150c; }
   .pill.blocked { color: var(--blocked); border-color: #4a2626; background: #1a0e0e; }
-  /* NON-INDEPENDENT: a distinct violet gate class (not pass-green, not interim-amber,
-     not blocked-red) for the A2.9 CelesTrak-fitted SupGP lanes — republished, never
-     our own OD, so neither a pass nor a hard failure. It is the widest gate token
-     (15 chars); the gate column is sized to hold it, and white-space:normal lets it
-     break cleanly at the hyphen (NON- / INDEPENDENT) — never mid-word — so it can
-     never force the fixed-layout table to overflow (the no-x-scroll invariant). */
-  .pill.nonindep { color: var(--nonindep); border-color: #3b2d52; background: #150f1d;
-    white-space: normal; }
-
   section { margin-top: 28px; }
   .sectlabel { font-size: 15px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer);
     margin: 0 0 12px 1px; }
@@ -295,7 +285,7 @@
       <h1>Supplemental OMM — Provider Status Board</h1>
       <span class="appid" id="app-id">io.spaceaware.supplemental-omm</span>
     </div>
-    <div class="sub">App 2 · supplemental TLE/OMM ingest + OD parity vs CelesTrak</div>
+    <div class="sub">App 2 · independent operator-source ingest + OD validation</div>
     <div class="meta">
       <span class="kv">NODE&nbsp;<b id="node-id">…</b></span>
       <span class="kv">VERSION&nbsp;<b id="node-version">…</b></span>
@@ -365,14 +355,14 @@
   <div class="legend">
     <h2>Provenance legend</h2>
     <div class="row"><span class="pill live">LIVE</span><span>Fetched this session from a real <b>anonymous</b> same-origin gateway surface. A lane with no active batch renders honestly as <b>idle</b> — the surface exists, the node just has no rows yet.</span></div>
-    <div class="row"><span class="pill ref">REF</span><span>Recorded fact (not live telemetry from this node): RMS-vs-CelesTrak parity results, provider gate status, and the full-run milestone numbers.</span></div>
+    <div class="row"><span class="pill ref">REF</span><span>Recorded fact (not live telemetry from this node): offline benchmark results, provider gate status, and the full-run milestone numbers.</span></div>
     <div class="row"><span class="pill nodata">NO DATA</span><span>No anonymous surface can feed this cell today; the cell names the exact surface (auth-gated or not-yet-built). This board never invents an endpoint.</span></div>
   </div>
 
   <footer>
     <div>SDS $APP record #2 · inline entry UI page · zero non-same-origin requests · all fetches → <span id="api-base">/api/v1</span>/* and <span id="root-base">/api</span>/node/info</div>
     <div>Last-full-run milestone numbers on the Runs screen are a recorded run report (2026-07-14) — not live telemetry from this node, and not matched to a batch in the live runs list.</div>
-    <div>Module refs: 8 provider adapters (7 Tier-1 OD + celestrak-supgp) + OD fit-pipeline + catalog-synthesis. Data refs: OEM (both) · OMM (fitted, GPS almanac, synthesized catalog). Parity ground truth: CelesTrak SupGP.</div>
+    <div>Module refs: 7 independent provider adapters + OD fit-pipeline + catalog-synthesis. Data refs: OEM (both) · OMM (fitted, GPS almanac, synthesized catalog). Parity evidence comes only from immutable offline development fixtures.</div>
     <div class="refs" id="src-refs"></div>
   </footer>
 </div>
@@ -396,7 +386,7 @@
     { lab: "Total end-to-end", val: "118 s", foot: "10,820 objects" },
     { lab: "Fit throughput", val: "93 sats/s", foot: "24 workers" },
     { lab: "Download", val: "~280 MB/s", foot: "2.2 Gb/s · saturated" },
-    { lab: "Beat CelesTrak", val: "87.0%", foot: "9,413 / 10,816" },
+    { lab: "Offline benchmark", val: "87.0%", foot: "9,413 / 10,816" },
     { lab: "Space-Track matched", val: "10,740", foot: "of 10,820" },
     { lab: "RMS p50/p90/p99 km", val: "0.117 / 0.209 / 0.266", foot: "fit residual" }
   ];
@@ -409,26 +399,24 @@
       lines: [
         "118 s end-to-end for 10,820 objects — fit 93 sats/s across 24 workers.",
         "Download ~280 MB/s (2.2 Gb/s, link saturated).",
-        "Beat CelesTrak 9,413/10,816 = 87.0%; Space-Track matched 10,740/10,820.",
+        "Offline benchmark 9,413/10,816 = 87.0%; Space-Track matched 10,740/10,820.",
         "RMS p50 0.117 / p90 0.209 / p99 0.266 km."
       ]
     }
   };
 
-  var NONINDEP_RMS_NOTE = "CelesTrak-fitted SupGP re-published, non-independent — CelesTrak's own fit, not OrbPro OD, so there is no RMS-vs-CelesTrak comparison for this lane.";
-
-  // ---- Static provider registry (14 lanes: 7 Tier-1 OD + 7 CelesTrak SupGP).
-  // ---- Upstreams + the checked-in gate/parity REF facts (folded into the row
-  // ---- expansion). Nothing here is fabricated telemetry.
+  // ---- Static registry for the seven independent production provider lanes.
+  // ---- Upstreams + the checked-in offline gate/parity REF facts are folded
+  // ---- into the row expansion. Nothing here is fabricated telemetry.
   var PROVIDERS = [
     { key: "spacex-starlink", name: "SpaceX Starlink", token: "SpaceX-E",
-      upstream: "api.starlink.com · MEME",
+      source: "api.starlink.com", producer: "SDN", status: "supported",
       gate: "HARD-PASS", gateClass: "pass",
-      rms: "beats CT · 10/10 (live 2026-07-14)", rmsNote: "MEME→OEM; live same-day pairs: ours 0.072–0.116 km vs CelesTrak 0.175–0.223 km, all 10 beaten" },
+      rms: "offline benchmark · 10/10", rmsNote: "MEME→OEM; immutable same-day fixtures: ours 0.072–0.116 km vs benchmark 0.175–0.223 km, all 10 beaten" },
     { key: "iss", name: "ISS (ZARYA)", token: "ISS-E",
       upstream: "nasa-public-data S3 · CCSDS OEM",
       gate: "HARD-PASS", gateClass: "pass",
-      rms: "0.071 vs 0.111 km (same-ephemeris)", rmsNote: "beats-CelestrakSameEphemeris gate (owner ruling 2026-07-13): both element sets scored against the identical source OEM; margin 0.040 km" },
+      rms: "0.071 vs 0.111 km (same-ephemeris)", rmsNote: "offline same-ephemeris gate: both element sets scored against the identical source OEM; margin 0.040 km" },
     { key: "oneweb", name: "OneWeb", token: "OneWeb-E",
       upstream: "ephemeris.oneweb.net · LTEF",
       gate: "BLOCKED", gateClass: "blocked",
@@ -448,43 +436,7 @@
     { key: "cpf", name: "CPF (ILRS)", token: "CPF",
       upstream: "edc.dgfi.tum.de · CPF v2",
       gate: "INTERIM", gateClass: "interim",
-      rms: "pred-vs-pred · elem-range", rmsNote: "compares two prediction products, not raw-vs-fit" },
-    // ---- A2.9 CelesTrak SupGP lanes (7 non-independent providers). One token-
-    // ---- parameterized adapter re-publishes CelesTrak's OWN fitted SupGP OMM
-    // ---- sets for providers with no public raw ephemeris. These are CelesTrak's
-    // ---- fits, NOT our OD — so there is no OrbPro-vs-CelesTrak RMS comparison.
-    { key: "ses", name: "SES", token: "SES-E",
-      upstream: "celestrak.org · SupGP",
-      gate: "NON-INDEPENDENT", gateClass: "nonindep",
-      rms: "n/a", rmsNote: NONINDEP_RMS_NOTE },
-    { key: "planet", name: "Planet", token: "Planet",
-      upstream: "celestrak.org · SupGP",
-      gate: "NON-INDEPENDENT", gateClass: "nonindep",
-      rms: "n/a", rmsNote: NONINDEP_RMS_NOTE },
-    { key: "iridium", name: "Iridium", token: "Iridium",
-      upstream: "celestrak.org · SupGP",
-      gate: "NON-INDEPENDENT", gateClass: "nonindep",
-      rms: "n/a", rmsNote: NONINDEP_RMS_NOTE },
-    { key: "telesat", name: "Telesat", token: "Telesat",
-      upstream: "celestrak.org · SupGP",
-      gate: "NON-INDEPENDENT", gateClass: "nonindep",
-      rms: "n/a", rmsNote: NONINDEP_RMS_NOTE },
-    { key: "kuiper", name: "Kuiper", token: "Kuiper-E",
-      upstream: "celestrak.org · SupGP",
-      gate: "NON-INDEPENDENT", gateClass: "nonindep",
-      rms: "n/a", rmsNote: NONINDEP_RMS_NOTE },
-    { key: "ast-spacemobile", name: "AST SpaceMobile", token: "AST",
-      upstream: "celestrak.org · SupGP",
-      gate: "NON-INDEPENDENT", gateClass: "nonindep",
-      rms: "n/a", rmsNote: NONINDEP_RMS_NOTE },
-    { key: "css", name: "CSS", token: "CSS-E",
-      upstream: "celestrak.org · SupGP",
-      gate: "NON-INDEPENDENT", gateClass: "nonindep",
-      rms: "n/a", rmsNote: NONINDEP_RMS_NOTE },
-    { key: "oneweb-supgp", name: "OneWeb (SupGP)", token: "OneWeb-E",
-      upstream: "celestrak.org · SupGP",
-      gate: "NON-INDEPENDENT", gateClass: "nonindep",
-      rms: "n/a", rmsNote: NONINDEP_RMS_NOTE }
+      rms: "pred-vs-pred · elem-range", rmsNote: "compares two prediction products, not raw-vs-fit" }
   ];
 
   var SOURCE_REFS = [
@@ -495,19 +447,11 @@
     "ftp.glonass-iac.ru/MCC/PRODUCTS/LATEST/Final.sp3",
     "my.intelsat.com/ephemeris/public",
     "edc.dgfi.tum.de/pub/slr/cpf_predicts_v2/",
-    "celestrak.org/…/sup-gp.php (parity ref)",
     "space-track.org/publicfiles/",
-    "space-track.org/basicspacedata/query/class/gp",
-    "celestrak.org/…/sup-gp.php?SOURCE=SES-E",
-    "celestrak.org/…/sup-gp.php?SOURCE=Planet",
-    "celestrak.org/…/sup-gp.php?SOURCE=Iridium",
-    "celestrak.org/…/sup-gp.php?SOURCE=Telesat",
-    "celestrak.org/…/sup-gp.php?SOURCE=Kuiper-E",
-    "celestrak.org/…/sup-gp.php?SOURCE=AST",
-    "celestrak.org/…/sup-gp.php?SOURCE=CSS-E"
+    "space-track.org/basicspacedata/query/class/gp"
   ];
 
-  var GATE_ORDINAL = { "HARD-PASS": 0, "INTERIM": 1, "NON-INDEPENDENT": 2, "BLOCKED": 3 };
+  var GATE_ORDINAL = { "HARD-PASS": 0, "INTERIM": 1, "BLOCKED": 2 };
 
   // ---- Fetch helpers. getJSON is versioned-base relative (API + path);
   // ---- getJSONRoot is root relative (ROOT + path, for /api/node/info). Both
@@ -736,9 +680,8 @@
 
   // ---- Lane matching + rate history ----------------------------------------
   function normKey(s) { return String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]+/g, ""); }
-  // Two passes: EXACT key/name/token matches win over substring matches, so
-  // an "oneweb-supgp" source binds to the OneWeb (SupGP) lane rather than the
-  // blocked oneweb raw lane whose key is its substring.
+  // Two passes: exact key/name/projection-token matches win over substring
+  // matches. Tokens are compatibility projection metadata, not live sources.
   function matchProvider(sourceName, providerID) {
     var cands = [normKey(sourceName), normKey(providerID)].filter(Boolean);
     if (!cands.length) return null;
@@ -910,7 +853,7 @@
       var slot = byProvider[p.key];
       lanes.push(laneFromActive({
         laneKey: "prov:" + p.key, key: p.key, provider: p,
-        name: p.name, token: "CelesTrak " + p.token,
+        name: p.name, token: p.token ? "projection " + p.token : "producer " + (p.producer || "SDN"),
         gate: p.gate, gateClass: p.gateClass
       }, slot ? activeBatch(slot.rows) : null));
     });
@@ -1141,7 +1084,7 @@
       var sub = "mean";
       if (l.minRMS != null && l.maxRMS != null) sub = fmtRMS(l.minRMS) + "–" + fmtRMS(l.maxRMS);
       td.appendChild(el("div", "pipe-sub", sub));
-    } else if (l.provider && (l.provider.gateClass === "nonindep" || l.provider.gateClass === "blocked")) {
+    } else if (l.provider && l.provider.gateClass === "blocked") {
       td.appendChild(el("div", "up", "n/a"));
       td.appendChild(el("div", "pipe-sub", "no OrbPro OD"));
     } else {
@@ -1221,7 +1164,7 @@
       var ref = el("div", "det-ref");
       var hd = el("div", "hd");
       hd.appendChild(pillFor({ cls: l.provider.gateClass, txt: l.provider.gate }));
-      hd.appendChild(el("span", null, l.provider.upstream));
+      hd.appendChild(el("span", null, l.provider.source || l.provider.upstream));
       ref.appendChild(hd);
       ref.appendChild(el("div", "ln", l.provider.rmsNote));
       var rs = RUN_SUMMARIES[l.provider.key];
@@ -1375,7 +1318,7 @@
       return {
         key: [r.schema || "", r.provider_id || "", r.source_name || "", r.batch_id || ""].join("|"),
         name: p ? p.name : (r.source_name || r.provider_id || "(unnamed source)"),
-        token: (r.schema || "?") + (p ? " · CelesTrak " + p.token : (r.provider_id ? " · provider " + r.provider_id : " · unmatched source")),
+        token: (r.schema || "?") + (p ? " · projection " + p.token : (r.provider_id ? " · provider " + r.provider_id : " · unmatched source")),
         source: r,
         firstMs: firstMs, lastMs: lastMs, durSec: durSec, count: count,
         objects: (typeof r.objects === "number" && r.objects > 0) ? r.objects : null,
