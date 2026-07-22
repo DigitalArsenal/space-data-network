@@ -119,7 +119,7 @@ func newTestStore(t *testing.T) *sdnstore.Store {
 	}
 	t.Cleanup(st.Close)
 	for _, r := range [][]byte{buildOMM(t, 1001, "SAT-A1"), buildOMM(t, 1002, "SAT-A2")} {
-		if _, err := st.Store(t.Context(), "celestrak-gp", "OMM", r); err != nil {
+		if _, err := st.Store(t.Context(), "provider-a", "OMM", r); err != nil {
 			t.Fatalf("store record: %v", err)
 		}
 	}
@@ -165,14 +165,14 @@ func TestDataSources(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("got %d catalog entries, want 1: %+v", len(got), got)
 	}
-	if got[0].Source != "celestrak-gp" || got[0].Type != "OMM" {
-		t.Errorf("catalog entry = %+v, want {celestrak-gp OMM}", got[0])
+	if got[0].Source != "provider-a" || got[0].Type != "OMM" {
+		t.Errorf("catalog entry = %+v, want {provider-a OMM}", got[0])
 	}
 }
 
 func TestData(t *testing.T) {
 	h := sdnapi.NewHandler(testDeps(newTestStore(t)))
-	rec, _ := get(t, h, "/sdn/v1/data?source=celestrak-gp&type=OMM")
+	rec, _ := get(t, h, "/sdn/v1/data?source=provider-a&type=OMM")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -191,7 +191,7 @@ func TestData(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
 	}
-	if got.Source != "celestrak-gp" || got.Type != "OMM" {
+	if got.Source != "provider-a" || got.Type != "OMM" {
 		t.Errorf("source/type = %s/%s", got.Source, got.Type)
 	}
 	if got.Total != 2 || got.Returned != 2 || len(got.Records) != 2 {
@@ -215,7 +215,7 @@ func TestData(t *testing.T) {
 
 func TestDataLimit(t *testing.T) {
 	h := sdnapi.NewHandler(testDeps(newTestStore(t)))
-	rec, _ := get(t, h, "/sdn/v1/data?source=celestrak-gp&type=OMM&limit=1")
+	rec, _ := get(t, h, "/sdn/v1/data?source=provider-a&type=OMM&limit=1")
 	var got struct {
 		Total    int `json:"total"`
 		Returned int `json:"returned"`
@@ -231,7 +231,7 @@ func TestDataLimit(t *testing.T) {
 
 func TestDataMissingParams(t *testing.T) {
 	h := sdnapi.NewHandler(testDeps(newTestStore(t)))
-	rec, _ := get(t, h, "/sdn/v1/data?source=celestrak-gp")
+	rec, _ := get(t, h, "/sdn/v1/data?source=provider-a")
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
@@ -311,10 +311,10 @@ func TestChannels(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("got %d channels, want 1: %+v", len(got), got)
 	}
-	if got[0].Source != "celestrak-gp" || got[0].Standard != "OMM" {
+	if got[0].Source != "provider-a" || got[0].Standard != "OMM" {
 		t.Errorf("channel = %+v", got[0])
 	}
-	if got[0].Topic != "/spacedatanetwork/channels/OMM/celestrak-gp" {
+	if got[0].Topic != "/spacedatanetwork/channels/OMM/provider-a" {
 		t.Errorf("topic = %q", got[0].Topic)
 	}
 	// No Channels dep supplied -> storage-only -> known but inactive.
@@ -377,7 +377,7 @@ func storeApp(t *testing.T, st *sdnstore.Store, id, name, html string) {
 // version and page count.
 func TestAppsList_Installed(t *testing.T) {
 	st := newTestStore(t)
-	storeApp(t, st, "supplemental-omm", "Supplemental OMM", "<!doctype html><title>omm</title><body>fetch /sdn/v1/data</body>")
+	storeApp(t, st, "weather-console", "Weather Console", "<!doctype html><title>weather</title><body>fetch /sdn/v1/data</body>")
 	h := sdnapi.NewHandler(testDeps(st))
 
 	rec, _ := get(t, h, "/sdn/v1/apps")
@@ -398,7 +398,7 @@ func TestAppsList_Installed(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("apps = %d, want 1: %+v", len(got), got)
 	}
-	if got[0].ID != "supplemental-omm" || got[0].Name != "Supplemental OMM" || got[0].Version != "1.0.0" {
+	if got[0].ID != "weather-console" || got[0].Name != "Weather Console" || got[0].Version != "1.0.0" {
 		t.Errorf("app summary = %+v", got[0])
 	}
 	if got[0].Source != "sdn" || got[0].CID == "" || got[0].Pages != 1 {
@@ -410,11 +410,11 @@ func TestAppsList_Installed(t *testing.T) {
 // $APP record, as text/html, and the body is the exact page bytes.
 func TestAppUI_ServesInlinePage(t *testing.T) {
 	st := newTestStore(t)
-	html := "<!doctype html><title>omm board</title><body><script>fetch('/sdn/v1/data/sources')</script></body>"
-	storeApp(t, st, "supplemental-omm", "Supplemental OMM", html)
+	html := "<!doctype html><title>weather console</title><body><script>fetch('/sdn/v1/data/sources')</script></body>"
+	storeApp(t, st, "weather-console", "Weather Console", html)
 	h := sdnapi.NewHandler(testDeps(st))
 
-	rec, hdr := get(t, h, "/sdn/v1/apps/supplemental-omm")
+	rec, hdr := get(t, h, "/sdn/v1/apps/weather-console")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -440,19 +440,19 @@ func TestAppUI_ServesInlinePage(t *testing.T) {
 // update to an already-seeded app.
 func TestAppUI_ReseededContentServesNewest(t *testing.T) {
 	st := newTestStore(t)
-	storeApp(t, st, "supplemental-omm", "Supplemental OMM", "<!doctype html><title>v1</title><body>old board</body>")
-	storeApp(t, st, "supplemental-omm", "Supplemental OMM", "<!doctype html><title>v2</title><body>NEW board content</body>")
+	storeApp(t, st, "weather-console", "Weather Console", "<!doctype html><title>v1</title><body>old page</body>")
+	storeApp(t, st, "weather-console", "Weather Console", "<!doctype html><title>v2</title><body>NEW page content</body>")
 	h := sdnapi.NewHandler(testDeps(st))
 
-	rec, _ := get(t, h, "/sdn/v1/apps/supplemental-omm")
+	rec, _ := get(t, h, "/sdn/v1/apps/weather-console")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "NEW board content") {
+	if !strings.Contains(body, "NEW page content") {
 		t.Errorf("appUI served stale content after re-seed; got %d bytes: %.120s", len(body), body)
 	}
-	if strings.Contains(body, "old board") {
+	if strings.Contains(body, "old page") {
 		t.Errorf("appUI served the OLD re-seeded content instead of the newest")
 	}
 }
@@ -462,8 +462,8 @@ func TestAppUI_ReseededContentServesNewest(t *testing.T) {
 // per installed app, carrying the newest version's summary.
 func TestAppsList_ReseededContentDedupes(t *testing.T) {
 	st := newTestStore(t)
-	storeApp(t, st, "supplemental-omm", "Supplemental OMM", "<!doctype html><body>v1</body>")
-	storeApp(t, st, "supplemental-omm", "Supplemental OMM", "<!doctype html><body>v2 (newer)</body>")
+	storeApp(t, st, "weather-console", "Weather Console", "<!doctype html><body>v1</body>")
+	storeApp(t, st, "weather-console", "Weather Console", "<!doctype html><body>v2 (newer)</body>")
 	h := sdnapi.NewHandler(testDeps(st))
 
 	rec, _ := get(t, h, "/sdn/v1/apps")
@@ -480,7 +480,7 @@ func TestAppsList_ReseededContentDedupes(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("apps = %d, want 1 (deduped): %+v", len(got), got)
 	}
-	if got[0].ID != "supplemental-omm" {
+	if got[0].ID != "weather-console" {
 		t.Errorf("app id = %q", got[0].ID)
 	}
 }
@@ -488,7 +488,7 @@ func TestAppsList_ReseededContentDedupes(t *testing.T) {
 // An unknown app id is a plain 404.
 func TestAppUI_UnknownIs404(t *testing.T) {
 	st := newTestStore(t)
-	storeApp(t, st, "supplemental-omm", "Supplemental OMM", "<!doctype html><body>/sdn/v1/data</body>")
+	storeApp(t, st, "weather-console", "Weather Console", "<!doctype html><body>/sdn/v1/data</body>")
 	h := sdnapi.NewHandler(testDeps(st))
 	rec, _ := get(t, h, "/sdn/v1/apps/does-not-exist")
 	if rec.Code != http.StatusNotFound {
@@ -585,5 +585,91 @@ func TestModuleEndpoint(t *testing.T) {
 	nbs := sdnapi.NewHandler(testDeps(newTestStore(t)))
 	if rec, _ := get(t, nbs, "/sdn/v1/module?hash="+hash); rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("no-blockstore status = %d, want 503", rec.Code)
+	}
+}
+
+type fakeArtifactRuntimeNodeReader struct {
+	wantHash string
+	wantKey  string
+	payload  []byte
+	media    string
+	ok       bool
+	calls    int
+}
+
+func (r *fakeArtifactRuntimeNodeReader) ReadArtifactRuntimeNode(contentHash, key string) ([]byte, string, bool) {
+	r.calls++
+	if contentHash != r.wantHash || key != r.wantKey {
+		return nil, "", false
+	}
+	return append([]byte(nil), r.payload...), r.media, r.ok
+}
+
+func TestArtifactRuntimeNodeEndpointRoutesOpaqueExactBytesByContentHash(t *testing.T) {
+	hash := strings.Repeat("a", 64)
+	key := "node-output.bin"
+	want := []byte{0x00, 0xff, 0x10, 0x00, 0x7f}
+	reader := &fakeArtifactRuntimeNodeReader{
+		wantHash: hash,
+		wantKey:  key,
+		payload:  want,
+		media:    "application/x-example-opaque",
+		ok:       true,
+	}
+	deps := testDeps(newTestStore(t))
+	deps.ArtifactRuntimeNodes = func() sdnapi.ArtifactRuntimeNodeReader { return reader }
+	h := sdnapi.NewHandler(deps)
+
+	rec, hdr := get(t, h, "/sdn/v1/artifacts/"+strings.ToUpper(hash)+"/runtime/nodes/"+key)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%q", rec.Code, rec.Body.Bytes())
+	}
+	if !bytes.Equal(rec.Body.Bytes(), want) {
+		t.Fatalf("body = %x, want exact opaque bytes %x", rec.Body.Bytes(), want)
+	}
+	if got := hdr.Get("Content-Type"); got != reader.media {
+		t.Fatalf("Content-Type = %q, want signed route media type %q", got, reader.media)
+	}
+	if got := hdr.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if reader.calls != 1 {
+		t.Fatalf("reader calls = %d, want 1", reader.calls)
+	}
+
+	reader.ok = false
+	rec, _ = get(t, h, "/sdn/v1/artifacts/"+hash+"/runtime/nodes/"+key)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("absent opaque node status = %d, want 404", rec.Code)
+	}
+}
+
+func TestArtifactRuntimeNodeEndpointRejectsMalformedAddressAndUnavailableRuntime(t *testing.T) {
+	hash := strings.Repeat("b", 64)
+	reader := &fakeArtifactRuntimeNodeReader{wantHash: hash, wantKey: "ok.bin", ok: true}
+	deps := testDeps(newTestStore(t))
+	deps.ArtifactRuntimeNodes = func() sdnapi.ArtifactRuntimeNodeReader { return reader }
+	h := sdnapi.NewHandler(deps)
+
+	for _, path := range []string{
+		"/sdn/v1/artifacts/deadbeef/runtime/nodes/ok.bin",
+		"/sdn/v1/artifacts/" + strings.Repeat("z", 64) + "/runtime/nodes/ok.bin",
+		"/sdn/v1/artifacts/" + hash + "/runtime/nodes/bad%20name.bin",
+	} {
+		rec, _ := get(t, h, path)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("GET %s status = %d, want 400", path, rec.Code)
+		}
+	}
+	if reader.calls != 0 {
+		t.Fatalf("reader called %d times for malformed addresses", reader.calls)
+	}
+
+	nilDeps := testDeps(newTestStore(t))
+	nilDeps.ArtifactRuntimeNodes = func() sdnapi.ArtifactRuntimeNodeReader { return nil }
+	nilHandler := sdnapi.NewHandler(nilDeps)
+	rec, _ := get(t, nilHandler, "/sdn/v1/artifacts/"+hash+"/runtime/nodes/ok.bin")
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unavailable runtime status = %d, want 503", rec.Code)
 	}
 }

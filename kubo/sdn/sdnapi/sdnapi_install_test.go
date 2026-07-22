@@ -47,8 +47,8 @@ func postInstall(t *testing.T, h http.Handler, body string) *httptest.ResponseRe
 // 200 and the installed-module view, and the route forwards the grants.
 func TestAdminInstallRouteSuccess(t *testing.T) {
 	fake := &fakeInstaller{view: sdnapi.InstalledModuleView{
-		ID: "com.orbpro.celestrak-supgp", ContentHash: validHash,
-		Name: "CelesTrak SupGP", Enabled: true, Timers: []string{"pull"},
+		ID: "com.example.timer-source", ContentHash: validHash,
+		Name: "Timer Source", Enabled: true, Timers: []string{"pull"},
 	}}
 	h := installHandler(fake)
 
@@ -61,7 +61,7 @@ func TestAdminInstallRouteSuccess(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
 	}
-	if got.ID != "com.orbpro.celestrak-supgp" || len(got.Timers) != 1 || got.Timers[0] != "pull" {
+	if got.ID != "com.example.timer-source" || len(got.Timers) != 1 || got.Timers[0] != "pull" {
 		t.Fatalf("unexpected view: %+v", got)
 	}
 	if fake.gotHash != validHash {

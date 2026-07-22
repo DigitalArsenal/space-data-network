@@ -27,6 +27,5 @@
 //   - caps/storage.go   — needs flatsqlrt / ingest / storage
 //   - caps/crypto.go, http.go, ipfs.go, keyslot.go, nodeactivity.go,
 //     nodestatus.go, protocol.go, pubsub.go — self-contained-ish; port when
-//     the first cap-using module (e.g. the starlink data-source integration
-//     test) is brought over.
+//     the first cap-using module integration test is brought over.
 package modulert

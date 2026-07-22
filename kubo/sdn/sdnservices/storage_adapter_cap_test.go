@@ -96,6 +96,59 @@ func TestStorageAdapterCapGatedAndFunctional(t *testing.T) {
 	}
 }
 
+func TestStorageAdapterOpaqueStateUsesBoundArtifactAndNodeIdentity(t *testing.T) {
+	backing := dssync.MutexWrap(ds.NewMapDatastore())
+	state, err := sdnservices.NewOpaqueStateStore(backing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const artifactHash = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	resolveCalls := 0
+	resolve := func(*modulert.Module) (string, string, error) {
+		resolveCalls++
+		return artifactHash, "node-a", nil
+	}
+	h := sdnservices.NewStorageCapFactoryWithOpaqueState(nil, "", nil, state, resolve)(nil, modulert.NewHostBridge(nil, []string{"storage_adapter"}))
+	if resolveCalls != 0 {
+		t.Fatalf("identity resolver called %d time(s) during provisioning, want deferred resolution after Module.Load", resolveCalls)
+	}
+
+	payload := base64.StdEncoding.EncodeToString([]byte{0, 1, 0, 2, 255})
+	replace := decodeCap(t, h, "storage.adapter.opaque.replace", `{"namespace":"primary","key":"snapshot.bin","data":"`+payload+`"}`)
+	if ok, _ := replace["ok"].(bool); !ok {
+		t.Fatalf("opaque replace failed: %v", replace)
+	}
+	if resolveCalls == 0 {
+		t.Fatal("identity resolver was not called for an opaque state operation")
+	}
+	read := decodeCap(t, h, "storage.adapter.opaque.read", `{"namespace":"primary","key":"snapshot.bin"}`)
+	result, _ := read["result"].(map[string]any)
+	got, err := base64.StdEncoding.DecodeString(result["bytes_b64"].(string))
+	if err != nil || string(got) != string([]byte{0, 1, 0, 2, 255}) {
+		t.Fatalf("opaque read bytes/error = %v/%v", got, err)
+	}
+	list := decodeCap(t, h, "storage.adapter.opaque.list", `{"namespace":"primary"}`)
+	listResult, _ := list["result"].(map[string]any)
+	keys, _ := listResult["keys"].([]any)
+	if len(keys) != 1 || keys[0] != "snapshot.bin" {
+		t.Fatalf("opaque list = %v, want [snapshot.bin]", keys)
+	}
+	for _, op := range []string{"storage.adapter.opaque.sync", "storage.adapter.opaque.delete"} {
+		body := `{"namespace":"primary"}`
+		if op == "storage.adapter.opaque.delete" {
+			body = `{"namespace":"primary","key":"snapshot.bin"}`
+		}
+		if resp := decodeCap(t, h, op, body); resp["ok"] != true {
+			t.Fatalf("%s failed: %v", op, resp)
+		}
+	}
+
+	denied := sdnservices.NewStorageCapFactoryWithOpaqueState(nil, "", nil, state, resolve)(nil, modulert.NewHostBridge(nil, nil))
+	if resp := decodeCap(t, denied, "storage.adapter.opaque.list", `{"namespace":"primary"}`); resp["ok"] == true {
+		t.Fatalf("opaque list succeeded without storage_adapter grant: %v", resp)
+	}
+}
+
 func decodeCap(t *testing.T, h modulert.CapHandler, op, payload string) map[string]any {
 	t.Helper()
 	raw, err := h(op, []byte(payload))

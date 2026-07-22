@@ -150,7 +150,7 @@ func TestStoreAndReadBySourceType_DurableAcrossReopen(t *testing.T) {
 	}
 
 	// Distinct records per source (distinct bytes => distinct CIDs).
-	srcA := "celestrak-gp"
+	srcA := "provider-a"
 	srcB := "provider-two"
 	recsA := [][]byte{
 		buildOMM(t, 1001, "SAT-A1", "2026-05-10T00:00:00Z"),

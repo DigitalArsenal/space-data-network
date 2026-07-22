@@ -86,11 +86,6 @@ type Deps struct {
 	// puts the config store in no-persistence mode (schedules run on manifest
 	// defaults and do not survive a restart).
 	ModulesConfigDir string
-	// FetchLedgerDir is the home-directory folder the http cap persists its
-	// CelesTrak/Space-Track fetch ledger under (owner rule: <Repo.Path>/sdn/).
-	// Optional: empty => in-memory ledger (spacing + within-process 3h TTL
-	// still enforced, but the TTL does not survive a restart).
-	FetchLedgerDir string
 	// CronLog is an optional printf-style sink for the cron scheduler.
 	CronLog sdncron.Logger
 
@@ -114,6 +109,12 @@ type Deps struct {
 type Services struct {
 	// Store is the durable (source, type) record store.
 	Store *sdnstore.Store
+	// OpaqueState is schema-blind persistence for independently instantiated
+	// WASM nodes. The host never interprets its values.
+	OpaqueState *OpaqueStateStore
+	// Wakeups delivers only opaque, node-addressed wakeup tokens requested at
+	// absolute instants. Schedule policy remains in WASM.
+	Wakeups *WakeupBroker
 	// Channels is the per-(provider, standard) fan-out. Nil when PubSub was nil
 	// (storage-only mode).
 	Channels *channels.Channels
@@ -187,25 +188,47 @@ func BuildServices(deps Deps) (*Services, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sdnservices: open store: %w", err)
 	}
+	opaqueState, err := NewOpaqueStateStore(deps.Datastore)
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("sdnservices: open opaque state adapter: %w", err)
+	}
 
 	capReg := modulert.NewCapabilityRegistry()
+	resolveModuleIdentity := func(mod *modulert.Module) (string, string, error) {
+		if mod == nil {
+			return "", "", errors.New("independent module identity is required")
+		}
+		contentHash, pluginID := mod.BoundIdentity()
+		if contentHash == "" || pluginID == "" {
+			return "", "", errors.New("independent module identity is not loaded")
+		}
+		return contentHash, pluginID, nil
+	}
 	// storage_* family, including the repurposed storage_adapter (spec A.4): when
 	// a BackupSource is wired, storage.adapter.list_units/get_unit expose the
 	// node's backup units to an operator-approved backup flow; otherwise those
 	// ops fail closed.
-	storageFactory := NewStorageCapFactoryWithSource(store, deps.FallbackSource, deps.BackupSource)
+	storageFactory := NewStorageCapFactoryWithOpaqueState(
+		store,
+		deps.FallbackSource,
+		deps.BackupSource,
+		opaqueState,
+		resolveModuleIdentity,
+	)
 	for _, name := range storageCapabilityNames {
 		capReg.RegisterBridgeAware(name, storageFactory)
 	}
 	if ch != nil {
 		capReg.RegisterBridgeAware("pubsub", NewPubSubCapFactory(ch))
 	}
-	// Outbound HTTP capability (fetch flows: CelesTrak ingest, supplemental
-	// OMM). Fail-closed/operator-gated by module content hash (http is a
+	// Outbound HTTP capability for operator-approved fetch flows. It is
+	// fail-closed/operator-gated by module content hash (http is a
 	// modulert sensitiveCapability); the factory additionally re-checks the
-	// grant per call and enforces the owner's CelesTrak/Space-Track fetch
-	// policy (>= 2.5s spacing + 3h URL ledger persisted under FetchLedgerDir).
-	capReg.RegisterBridgeAware("http", NewHTTPCapFactory(HTTPCapConfig{LedgerDir: deps.FetchLedgerDir}))
+	// grant per call.
+	capReg.RegisterBridgeAware("http", NewHTTPCapFactory())
+	wakeups := NewWakeupBroker(nil)
+	capReg.RegisterBridgeAware("timers", NewWakeupCapFactory(wakeups, resolveModuleIdentity))
 
 	// Credential-keystore capability (secrets:<id>): a data-source module the
 	// operator approved for a lane fetches that credential through the "secrets"
@@ -242,6 +265,8 @@ func BuildServices(deps Deps) (*Services, error) {
 
 	return &Services{
 		Store:       store,
+		OpaqueState: opaqueState,
+		Wakeups:     wakeups,
 		Channels:    ch,
 		CapReg:      capReg,
 		NodeCtx:     nodeCtx,
@@ -262,6 +287,26 @@ func (s *Services) LoadModule(wasmBytes []byte) (*modulert.Module, error) {
 	return modulert.NewModule(wasmBytes, s.CapReg, s.NodeCtx)
 }
 
+// LoadModuleWithMaxMemoryPages is the bounded isomorphic-child variant of
+// LoadModule. It preserves the same capability/signature pipeline while
+// applying the generic bundle installer's explicit wasm32 page ceiling.
+func (s *Services) LoadModuleWithMaxMemoryPages(wasmBytes []byte, maxMemoryPages uint32) (*modulert.Module, error) {
+	if s == nil {
+		return nil, errors.New("sdnservices: nil Services")
+	}
+	return modulert.NewModuleWithMaxMemoryPages(wasmBytes, s.CapReg, s.NodeCtx, maxMemoryPages)
+}
+
+// LoadModuleInstanceWithMaxMemoryPages is the bounded isomorphic-child loader.
+// Capability identity is scoped to the exact outer signed bundle and bundle
+// EntryID before guest initialization and capability provisioning begin.
+func (s *Services) LoadModuleInstanceWithMaxMemoryPages(wasmBytes []byte, maxMemoryPages uint32, outerArtifactHash, entryID string) (*modulert.Module, error) {
+	if s == nil {
+		return nil, errors.New("sdnservices: nil Services")
+	}
+	return modulert.NewModuleInstanceWithMaxMemoryPages(wasmBytes, s.CapReg, s.NodeCtx, maxMemoryPages, outerArtifactHash, entryID)
+}
+
 // Close releases the store's FlatSQL engine. The durable blockstore + datastore
 // are owned by the caller (the node) and are not touched.
 func (s *Services) Close() {
@@ -270,6 +315,9 @@ func (s *Services) Close() {
 	}
 	if s.Scheduler != nil {
 		s.Scheduler.Stop()
+	}
+	if s.Wakeups != nil {
+		s.Wakeups.Close()
 	}
 	if s.Store != nil {
 		s.Store.Close()

@@ -2,6 +2,7 @@ package sdnservices
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -25,6 +26,11 @@ type BackupReadSurface interface {
 	// and meta (JSON).
 	BackupUnitBytes(ctx context.Context, contentHash string) (kind string, metaJSON []byte, data []byte, err error)
 }
+
+// OpaqueStateIdentityResolver binds generic persisted bytes to the exact
+// independently instantiated artifact and node. The guest never supplies or
+// overrides these identity fields.
+type OpaqueStateIdentityResolver func(*modulert.Module) (artifactHash, nodeID string, err error)
 
 // storageOpTimeout bounds each storage hostcall's access to the durable
 // stores. Cap handlers have no ctx parameter, so a bounded background context
@@ -70,6 +76,13 @@ func NewStorageCapFactory(store *sdnstore.Store, fallbackSource string) modulert
 // storage.adapter.get_unit enumerate + fetch the node's backup units for a
 // backup flow. When nil those ops fail closed (the node has no backup source).
 func NewStorageCapFactoryWithSource(store *sdnstore.Store, fallbackSource string, backupSource BackupReadSurface) modulert.BridgeCapFactory {
+	return NewStorageCapFactoryWithOpaqueState(store, fallbackSource, backupSource, nil, nil)
+}
+
+// NewStorageCapFactoryWithOpaqueState adds schema-blind binary persistence to
+// the existing storage_adapter capability. Existing backup adapter operations
+// remain unchanged.
+func NewStorageCapFactoryWithOpaqueState(store *sdnstore.Store, fallbackSource string, backupSource BackupReadSurface, opaqueState *OpaqueStateStore, resolveIdentity OpaqueStateIdentityResolver) modulert.BridgeCapFactory {
 	return func(mod *modulert.Module, bridge *modulert.HostBridge) modulert.CapHandler {
 		source := strings.TrimSpace(fallbackSource)
 		if mod != nil {
@@ -77,7 +90,15 @@ func NewStorageCapFactoryWithSource(store *sdnstore.Store, fallbackSource string
 				source = id
 			}
 		}
-		s := &storageCapAdapter{store: store, fallbackSource: source, bridge: bridge, backupSource: backupSource}
+		s := &storageCapAdapter{
+			store:           store,
+			fallbackSource:  source,
+			bridge:          bridge,
+			backupSource:    backupSource,
+			opaqueState:     opaqueState,
+			module:          mod,
+			resolveIdentity: resolveIdentity,
+		}
 		return s.handle
 	}
 }
@@ -95,6 +116,13 @@ type storageCapAdapter struct {
 	// backupSource is the node-side backup-source read surface exposed by the
 	// repurposed storage_adapter capability. Nil => storage.adapter.* fail closed.
 	backupSource BackupReadSurface
+	// opaqueState stores bytes without interpreting their schema or contents.
+	opaqueState     *OpaqueStateStore
+	artifactHash    string
+	nodeID          string
+	identityErr     error
+	module          *modulert.Module
+	resolveIdentity OpaqueStateIdentityResolver
 }
 
 func (s *storageCapAdapter) has(cap string) bool {
@@ -224,9 +252,99 @@ func (s *storageCapAdapter) handle(operation string, payload []byte) ([]byte, er
 		}
 		return s.adapterGetUnit(ctx, str("contentHash")), nil
 
+	case "storage.adapter.opaque.read":
+		if denied := s.requireOpaqueState(); denied != nil {
+			return denied, nil
+		}
+		value, found, err := s.opaqueState.Read(ctx, s.opaqueScope(str("namespace")), str("key"))
+		if err != nil {
+			return errCapJSON("storage.adapter.opaque.read failed: " + err.Error()), nil
+		}
+		return okCapJSON(map[string]interface{}{"found": found, "bytes_b64": base64.StdEncoding.EncodeToString(value)}), nil
+
+	case "storage.adapter.opaque.append", "storage.adapter.opaque.replace":
+		if denied := s.requireOpaqueState(); denied != nil {
+			return denied, nil
+		}
+		encoded, present := p["data"].(string)
+		if !present {
+			return errCapJSON(operation + " requires base64 data"), nil
+		}
+		value, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return errCapJSON(operation + " data is not valid base64"), nil
+		}
+		if operation == "storage.adapter.opaque.append" {
+			err = s.opaqueState.Append(ctx, s.opaqueScope(str("namespace")), str("key"), value)
+		} else {
+			err = s.opaqueState.Replace(ctx, s.opaqueScope(str("namespace")), str("key"), value)
+		}
+		if err != nil {
+			return errCapJSON(operation + " failed: " + err.Error()), nil
+		}
+		return okCapJSON(map[string]interface{}{"stored_bytes": len(value)}), nil
+
+	case "storage.adapter.opaque.list":
+		if denied := s.requireOpaqueState(); denied != nil {
+			return denied, nil
+		}
+		keys, err := s.opaqueState.List(ctx, s.opaqueScope(str("namespace")))
+		if err != nil {
+			return errCapJSON("storage.adapter.opaque.list failed: " + err.Error()), nil
+		}
+		return okCapJSON(map[string]interface{}{"keys": keys}), nil
+
+	case "storage.adapter.opaque.sync":
+		if denied := s.requireOpaqueState(); denied != nil {
+			return denied, nil
+		}
+		if err := s.opaqueState.Sync(ctx, s.opaqueScope(str("namespace"))); err != nil {
+			return errCapJSON("storage.adapter.opaque.sync failed: " + err.Error()), nil
+		}
+		return okCapJSON(map[string]interface{}{"synced": true}), nil
+
+	case "storage.adapter.opaque.delete":
+		if denied := s.requireOpaqueState(); denied != nil {
+			return denied, nil
+		}
+		if err := s.opaqueState.Delete(ctx, s.opaqueScope(str("namespace")), str("key")); err != nil {
+			return errCapJSON("storage.adapter.opaque.delete failed: " + err.Error()), nil
+		}
+		return okCapJSON(map[string]interface{}{"deleted": true}), nil
+
 	default:
 		return errCapJSON(fmt.Sprintf("unknown storage operation: %s", operation)), nil
 	}
+}
+
+func (s *storageCapAdapter) requireOpaqueState() []byte {
+	if !s.has("storage_adapter") {
+		return errCapJSON("opaque state requires the storage_adapter capability grant")
+	}
+	if s.opaqueState == nil {
+		return errCapJSON("opaque state is not configured")
+	}
+	if s.resolveIdentity == nil {
+		s.identityErr = fmt.Errorf("opaque state identity resolver is not configured")
+		s.artifactHash, s.nodeID = "", ""
+	} else {
+		// Resolve only after Module.Load has published immutable identity. This
+		// handler runs under the module invocation lock, so the resolver must use
+		// Module.BoundIdentity rather than the locking dashboard accessors.
+		s.artifactHash, s.nodeID, s.identityErr = s.resolveIdentity(s.module)
+	}
+	if s.identityErr != nil || s.artifactHash == "" || s.nodeID == "" {
+		message := "opaque state identity is unavailable"
+		if s.identityErr != nil {
+			message += ": " + s.identityErr.Error()
+		}
+		return errCapJSON(message)
+	}
+	return nil
+}
+
+func (s *storageCapAdapter) opaqueScope(namespace string) OpaqueStateScope {
+	return OpaqueStateScope{ArtifactHash: s.artifactHash, NodeID: s.nodeID, Namespace: namespace}
 }
 
 // adapterListUnits enumerates the node's backup units (modules, flows, records,
@@ -282,8 +400,7 @@ func (s *storageCapAdapter) adapterGetUnit(ctx context.Context, contentHash stri
 //
 // The provenance/raw-archive/reconcile-mode richness of the sdn-server
 // FlatSQLStore ingest surface is deliberately NOT ported: sdnstore's contract
-// is (source, 3-letter type) records, and that is what the CelesTrak ingest and
-// supplemental-OMM OD flows need to land. The meta's archive/provenance/
+// is (source, 3-letter type) records. The meta's archive/provenance/
 // reconcile fields are accepted and ignored (documented divergence).
 //
 // The payload here is the hostcall envelope's meta JSON with binary segments

@@ -29,26 +29,26 @@ import (
 // DISTINCT topics (this is what makes per-provider isolation possible).
 func TestTopicScheme(t *testing.T) {
 	// FormatChannelID grammar (ported subset).
-	id, err := channels.FormatChannelID(channels.ChannelIDInput{SourceID: "celestrak-gp", StandardCode: "OMM"})
+	id, err := channels.FormatChannelID(channels.ChannelIDInput{SourceID: "provider-a", StandardCode: "OMM"})
 	if err != nil {
 		t.Fatalf("FormatChannelID: %v", err)
 	}
-	if id != "celestrak-gp-OMM" {
-		t.Fatalf("channel id = %q, want celestrak-gp-OMM", id)
+	if id != "provider-a-OMM" {
+		t.Fatalf("channel id = %q, want provider-a-OMM", id)
 	}
 
-	// Wire topic for (celestrak-gp, OMM).
-	top, err := channels.WireTopic("celestrak-gp", "OMM")
+	// Wire topic for (provider-a, OMM).
+	top, err := channels.WireTopic("provider-a", "OMM")
 	if err != nil {
 		t.Fatalf("WireTopic: %v", err)
 	}
-	want := "/spacedatanetwork/channels/OMM/celestrak-gp"
+	want := "/spacedatanetwork/channels/OMM/provider-a"
 	if top != want {
 		t.Fatalf("topic = %q, want %q", top, want)
 	}
 
 	// Two sources of the SAME standard => distinct topics.
-	topA, _ := channels.WireTopic("celestrak-gp", "OMM")
+	topA, _ := channels.WireTopic("provider-a", "OMM")
 	topB, _ := channels.WireTopic("provider-two", "OMM")
 	if topA == topB {
 		t.Fatalf("two sources of OMM produced the same topic %q", topA)
@@ -58,8 +58,8 @@ func TestTopicScheme(t *testing.T) {
 	}
 
 	// Same source, different standard => distinct topics (isolation on standard).
-	topOMM, _ := channels.WireTopic("celestrak-gp", "OMM")
-	topCDM, _ := channels.WireTopic("celestrak-gp", "CDM")
+	topOMM, _ := channels.WireTopic("provider-a", "OMM")
+	topCDM, _ := channels.WireTopic("provider-a", "CDM")
 	if topOMM == topCDM {
 		t.Fatalf("two standards of the same source produced the same topic %q", topOMM)
 	}
@@ -74,7 +74,7 @@ func TestTopicScheme(t *testing.T) {
 	}
 
 	// Bad standard codes are rejected.
-	if _, err := channels.WireTopic("celestrak-gp", "omm"); err == nil {
+	if _, err := channels.WireTopic("provider-a", "omm"); err == nil {
 		t.Fatalf("lowercase standard should be rejected")
 	}
 	if _, err := channels.WireTopic("", "OMM"); err == nil {
@@ -184,7 +184,7 @@ func newNode(ctx context.Context, t *testing.T) (host.Host, *pubsub.PubSub) {
 
 // TestChannelFanoutAcrossNodes proves Phase 4 end-to-end: storing a real OMM
 // record on node A through the store+channels fan-out streams the exact record
-// bytes to node B, which is subscribed to the (celestrak-gp, OMM) channel over
+// bytes to node B, which is subscribed to the (provider-a, OMM) channel over
 // real gossipsub; a DIFFERENT (source,standard) channel receives nothing.
 func TestChannelFanoutAcrossNodes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -202,7 +202,7 @@ func TestChannelFanoutAcrossNodes(t *testing.T) {
 	chB := channels.New(psB)
 
 	const (
-		source = "celestrak-gp"
+		source = "provider-a"
 		std    = "OMM"
 	)
 
@@ -220,10 +220,10 @@ func TestChannelFanoutAcrossNodes(t *testing.T) {
 	}
 	defer storeA.Close()
 
-	// Node B subscribes to the exact (celestrak-gp, OMM) channel...
+	// Node B subscribes to the exact (provider-a, OMM) channel...
 	subB, err := chB.Subscribe(std, source)
 	if err != nil {
-		t.Fatalf("subscribe B (celestrak-gp, OMM): %v", err)
+		t.Fatalf("subscribe B (provider-a, OMM): %v", err)
 	}
 	defer subB.Cancel()
 
@@ -236,7 +236,7 @@ func TestChannelFanoutAcrossNodes(t *testing.T) {
 	defer subOtherSource.Cancel()
 	subOtherStd, err := chB.Subscribe("CDM", source)
 	if err != nil {
-		t.Fatalf("subscribe B (celestrak-gp, CDM): %v", err)
+		t.Fatalf("subscribe B (provider-a, CDM): %v", err)
 	}
 	defer subOtherStd.Cancel()
 
@@ -244,7 +244,7 @@ func TestChannelFanoutAcrossNodes(t *testing.T) {
 	// forms; drain-discard its own copies.
 	subA, err := chA.Subscribe(std, source)
 	if err != nil {
-		t.Fatalf("subscribe A (celestrak-gp, OMM): %v", err)
+		t.Fatalf("subscribe A (provider-a, OMM): %v", err)
 	}
 	defer subA.Cancel()
 	go func() {
@@ -255,7 +255,7 @@ func TestChannelFanoutAcrossNodes(t *testing.T) {
 		}
 	}()
 
-	// Wait for the (celestrak-gp, OMM) mesh to include the peer.
+	// Wait for the (provider-a, OMM) mesh to include the peer.
 	wireTopic, _ := channels.WireTopic(source, std)
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
@@ -285,7 +285,7 @@ func TestChannelFanoutAcrossNodes(t *testing.T) {
 		}
 	}
 	if got == nil {
-		t.Fatalf("node B never received the record on the (celestrak-gp, OMM) channel")
+		t.Fatalf("node B never received the record on the (provider-a, OMM) channel")
 	}
 
 	// The received bytes are EXACTLY the stored record.
@@ -312,5 +312,5 @@ func TestChannelFanoutAcrossNodes(t *testing.T) {
 		}
 	}
 	assertSilent("(provider-x, OMM)", subOtherSource)
-	assertSilent("(celestrak-gp, CDM)", subOtherStd)
+	assertSilent("(provider-a, CDM)", subOtherStd)
 }

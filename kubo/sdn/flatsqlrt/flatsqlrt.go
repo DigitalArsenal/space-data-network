@@ -578,7 +578,7 @@ func (d *Database) CreateUnifiedViews() error {
 
 // MarkDeleted tombstones one record (identified by its vtab `_rowid`
 // sequence) in a table or per-source shadow table (full name, e.g.
-// "OMM@celestrak-gp"). Queries skip tombstoned records immediately; the
+// "OMM@provider-a"). Queries skip tombstoned records immediately; the
 // underlying arena bytes are only reclaimed by a rebuild. CAUTION: the table
 // name MUST be a registered source/table — an unknown name throws inside the
 // engine, which traps (poisons) the no-EH build. Callers should pass names

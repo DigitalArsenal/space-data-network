@@ -1,28 +1,23 @@
 package flowrt
 
 // Timer-served flow services (loop C.8a "ingest-as-flow", ported to the kubo
-// node): a compiled flow bundle whose triggers are cron TIMERS is loaded with
+// node): a compiled flow bundle whose signed topology declares timer wakeups is
+// loaded with
 // WASI + the flow host funcs + the sdn/modulert hostcall bridge, its declared
 // capabilities provisioned from a registry (REJECTING an unsatisfiable or
 // operator-unapproved grant — fail closed), and exposed as a CronModule so the
-// sdncron.Scheduler fires each timer on its effective interval. Firing a timer
+// sdncron.Scheduler delivers each declared wakeup. Firing a timer
 // enqueues one tick frame at the trigger's bound port and drains the flow; the
 // host contributes ZERO ingest decisions — fetch URLs, parsing, attribution
-// and archive naming all live in the wasm nodes. The host supplies timers, the
-// capability hostcalls (http.request, storage.ingest_with_source,
-// plugin.getConfig) and this dumb tick pump.
+// and archive naming all live in the wasm nodes. The host supplies a clock,
+// generic capability hostcalls, and this opaque wakeup pump.
 //
-// This is the sdn-server cronmount.go ServiceFlow adapted to kubo, plus the
-// bridge-mode core of httpmount.go's loadFlowInstance. The AOT cache, HTTP
-// serving/pooling and loop-C.7 direct engine linkage are intentionally left
-// behind (see engine_link.go): timer-served ingest flows are bridge-mode and
-// land records through the storage cap into sdnstore.
+// This is a compatibility mount for ordinary manifest-bearing flow modules.
+// Composed signed isomorphic bundles use the generic signed-bundle installer.
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -60,13 +55,25 @@ type serviceTrigger struct {
 	IntervalMs int
 }
 
-// triggerFirePortID is the store's fire-timestamp port: a binding to this port
-// receives the host fire time as [u64le unix_ms] (a capability read — the host
-// reading its own clock), not the JSON tick. Every other bound port gets the tick.
-const triggerFirePortID = "trigger"
+// canonicalWakeupFrameDescriptor describes an opaque canonical wakeup copied
+// into the parent runtime for one invocation. Trigger wakeups have no signed
+// graph-edge type descriptor, so TypeDescriptorIdx must remain InvalidIndex.
+func canonicalWakeupFrameDescriptor(portPtr, payloadPtr, payloadSize uint32) *FlowFrameDescriptor {
+	return &FlowFrameDescriptor{
+		TypeDescriptorIdx: InvalidIndex,
+		PortIDPointer:     portPtr,
+		Alignment:         1,
+		Offset:            payloadPtr,
+		Size:              payloadSize,
+		Occupied:          true,
+		WireFormat:        0, // canonical FlatBuffer/opaque canonical bytes
+		Ownership:         0, // host-owned
+		Mutability:        0, // immutable
+		Lifetime:          1, // invocation
+	}
+}
 
-// flowInstance is one flow runtime plus its hostcall bridge (bridge-mode; the
-// loop-C.7 direct-linkage state is not ported — see engine_link.go).
+// flowInstance is one flow runtime plus its hostcall bridge.
 type flowInstance struct {
 	rt     *FlowRuntime
 	bridge *modulert.HostBridge
@@ -85,18 +92,9 @@ type ServiceFlow struct {
 	manifest  *modulert.Manifest
 	triggers  []serviceTrigger
 	egress    []string
-	// sourceProviderPluginIDs is the plugin id of every $PLG "source"-kind node
-	// in the bundle's topology (the flow's declared providers), captured at
-	// load from flow.plg — read-only settings-surface metadata, never used to
-	// gate a fetch. Nil for a bundle with no source nodes or no bundle dir.
-	sourceProviderPluginIDs []string
 
-	mu sync.Mutex
-	// instMu guards the instance lifecycle for read-only accessors that must
-	// remain available while mu is held by a long-running fire. Fire/config
-	// operations still serialize on mu; Close takes both locks before release.
-	instMu sync.RWMutex
-	inst   *flowInstance
+	mu   sync.Mutex
+	inst *flowInstance
 
 	statsMu         sync.Mutex
 	startedAt       time.Time
@@ -104,19 +102,6 @@ type ServiceFlow struct {
 	errorCount      uint64
 	lastTimerStatus string
 	lastInvokeAt    time.Time
-
-	// fireHistMu guards fireHist/ongoing — a SEPARATE lock from mu (which a
-	// drain holds for its full duration, sometimes minutes for a full-catalog
-	// fit), so a concurrent settings/board read is never blocked behind an
-	// in-flight fire. See firehistory.go.
-	fireHistMu sync.Mutex
-	fireHist   []FireRecord
-	ongoing    *FireRecord
-
-	// abortMu guards fireCancel — the cancel func for the IN-FLIGHT fire's
-	// cancelable context (nil when idle). AbortFire() invokes it (operator Stop).
-	abortMu    sync.Mutex
-	fireCancel context.CancelFunc
 }
 
 // resolveFlowArtifact maps a flow reference (a bundle directory or a direct
@@ -138,9 +123,13 @@ func resolveFlowArtifact(flowRef string) (wasmPath, bundleDir string, err error)
 // capability provisioning from the registry — REJECTING the load if the host
 // cannot satisfy a required capability OR if the flow bundle requests a
 // sensitive capability the operator has not approved for its content hash
-// (default-deny, fail closed). Bridge-mode only: a bundle that imports the
-// store engine ("flatsql") is rejected by the caller before this runs.
-func loadFlowInstance(wasmBytes []byte, pages uint32, deps FlowServiceDeps, contentHash, flowID string, declaredCaps []string) (*flowInstance, *modulert.Manifest, error) {
+// (default-deny, fail closed). This compatibility mount accepts only ordinary
+// manifest-bearing modules. Retired engine-linked artifacts must use neither
+// this mount nor a host-owned persistence path.
+func loadFlowInstance(wasmBytes []byte, pages uint32, deps FlowServiceDeps, contentHash string) (*flowInstance, *modulert.Manifest, error) {
+	if wasmImportsModule(wasmBytes, engineImportModule) {
+		return nil, nil, fmt.Errorf("legacy timer mount rejects retired engine-linked artifacts")
+	}
 	bridge := modulert.NewHostBridge(deps.NodeCtx, nil)
 
 	rt, err := NewFlowRuntime(wasmBytes, pages,
@@ -149,41 +138,16 @@ func loadFlowInstance(wasmBytes []byte, pages uint32, deps FlowServiceDeps, cont
 		return nil, nil, fmt.Errorf("load flow module: %w", err)
 	}
 
-	var manifest *modulert.Manifest
-	var capabilities []string
-	if wasmImportsModule(wasmBytes, engineImportModule) {
-		// Composed engine-linked flow (the OD write lane): it is a flow REACTOR,
-		// not a single module, so it exposes no plugin-manifest ABI (ReadManifest
-		// would fail). Its identity comes from the $PLG (flowID) and its declared
-		// capability set from the install spec — the first-party role reference set
-		// that also recorded the operator approval for THIS content hash. The mount
-		// provisions EXACTLY those declared caps. The engine-link itself is wired by
-		// NewFlowRuntime (the in-wasm FlatSQL store), never a bridge capability, so
-		// EngineLinkCapability must not appear in declaredCaps.
-		for _, c := range declaredCaps {
-			if c == EngineLinkCapability {
-				rt.Release()
-				return nil, nil, fmt.Errorf("flow %q: %s is not a bridge capability (the engine link is wired by NewFlowRuntime)", flowID, EngineLinkCapability)
-			}
-		}
-		manifest = &modulert.Manifest{PluginID: flowID, Capabilities: append([]string(nil), declaredCaps...)}
-		capabilities = manifest.Capabilities
-	} else {
-		manifest, err = modulert.ReadManifest(rt.Module())
-		if err != nil {
+	manifest, err := modulert.ReadManifest(rt.Module())
+	if err != nil {
+		rt.Release()
+		return nil, nil, fmt.Errorf("read flow manifest: %w", err)
+	}
+	capabilities := append([]string(nil), manifest.Capabilities...)
+	for _, capability := range capabilities {
+		if capability == EngineLinkCapability {
 			rt.Release()
-			return nil, nil, fmt.Errorf("read flow manifest: %w", err)
-		}
-		// The engine-link capability would be satisfied by a mount's engine link,
-		// not a hostcall handler — a non-engine-linked bridge-mode service flow that
-		// declares it is mis-compiled for this path.
-		capabilities = make([]string, 0, len(manifest.Capabilities))
-		for _, capability := range manifest.Capabilities {
-			if capability == EngineLinkCapability {
-				rt.Release()
-				return nil, nil, fmt.Errorf("flow %q declares %s; engine-linked flows are not supported on the timer-served path (bridge-mode only)", manifest.PluginID, EngineLinkCapability)
-			}
-			capabilities = append(capabilities, capability)
+			return nil, nil, fmt.Errorf("flow %q declares retired capability %s", manifest.PluginID, EngineLinkCapability)
 		}
 	}
 
@@ -205,11 +169,10 @@ func loadFlowInstance(wasmBytes []byte, pages uint32, deps FlowServiceDeps, cont
 }
 
 // LoadFlowService loads one timer-served flow bundle as a ServiceFlow. flowRef
-// is a bundle directory (or a direct runtime.wasm path). intervals maps
-// triggerId -> Go duration string to override the bundle default; config is the
-// per-flow node CONFIG the bridge builtin plugin.getConfig serves the flow's
-// nodes (URL overrides etc. — configuration, never host code).
-func LoadFlowService(flowRef string, intervals map[string]string, config map[string]interface{}, deps FlowServiceDeps, declaredCaps []string) (*ServiceFlow, error) {
+// is a bundle directory (or a direct runtime.wasm path). The compatibility
+// arguments are intentionally ignored: wakeup cadence and configuration policy
+// come from signed artifacts, not host-authored overrides.
+func LoadFlowService(flowRef string, _ map[string]string, _ map[string]interface{}, deps FlowServiceDeps) (*ServiceFlow, error) {
 	wasmPath, bundleDir, err := resolveFlowArtifact(flowRef)
 	if err != nil {
 		return nil, err
@@ -236,44 +199,12 @@ func LoadFlowService(flowRef string, intervals map[string]string, config map[str
 	// hashes to record an approval).
 	contentHash := modulert.ContentHashHex(wasmBytes)
 
-	// Engine-linked wasi-threads flows (the supplemental-OMM OD write lane) are
-	// ADMITTED: NewFlowRuntime attaches a dedicated-thread in-wasm FlatSQL engine
-	// and resolves flatsql.exec_envelope to the store trampoline (all record logic
-	// in-wasm; host moves opaque bytes). Non-threaded engine-linked flows are not
-	// a supported shape and will fail to instantiate cleanly at load.
-	if wasmImportsModule(wasmBytes, engineImportModule) {
-		log.Infof("flow service %q is engine-linked (imports %q) — in-wasm FlatSQL store wired at load", flowRef, engineImportModule)
-	}
-
 	pages := deps.MaxMemoryPages
 	if pages == 0 {
 		pages = 1024
 	}
 
-	// Per-flow node CONFIG: clone the NodeCtx so plugin.getConfig serves this
-	// flow's config block without mutating the shared context.
-	instDeps := deps
-	if len(config) > 0 {
-		nodeCtx := modulert.NodeContext{}
-		if deps.NodeCtx != nil {
-			nodeCtx = *deps.NodeCtx
-		}
-		nodeCtx.Config = config
-		instDeps.NodeCtx = &nodeCtx
-	}
-
-	// Engine-linked composed flows carry no module manifest; their identity is the
-	// $PLG ProgramID. Read it up front for the mount's provision identity.
-	flowID := ""
-	if bundleDir != "" {
-		if data, e := os.ReadFile(filepath.Join(bundleDir, "flow.plg")); e == nil {
-			if topo, pe := parsePLGGraph(data); pe == nil {
-				flowID = topo.ProgramID
-			}
-		}
-	}
-
-	inst, manifest, err := loadFlowInstance(wasmBytes, pages, instDeps, contentHash, flowID, declaredCaps)
+	inst, manifest, err := loadFlowInstance(wasmBytes, pages, deps, contentHash)
 	if err != nil {
 		return nil, err
 	}
@@ -313,38 +244,18 @@ func LoadFlowService(flowRef string, intervals map[string]string, config map[str
 					}
 					seen := map[string]bool{}
 					for _, binding := range topo.TriggerBindings {
-						if binding.TriggerID != trig.TriggerID || binding.TargetPortID == "" {
+						if binding.TriggerID != trig.TriggerID || binding.TargetPortID == "" || seen[binding.TargetPortID] {
 							continue
 						}
-						if !seen[binding.TargetPortID] {
-							seen[binding.TargetPortID] = true
-							st.Ports = append(st.Ports, binding.TargetPortID)
-						}
-						if binding.TargetPortID != triggerFirePortID && (st.PortID == "tick" || st.PortID == "") {
-							st.PortID = binding.TargetPortID
-						}
+						seen[binding.TargetPortID] = true
+						st.Ports = append(st.Ports, binding.TargetPortID)
 					}
 					if len(st.Ports) == 0 {
 						st.Ports = []string{st.PortID}
-					}
-					if override, ok := intervals[trig.TriggerID]; ok {
-						d, derr := time.ParseDuration(override)
-						if derr != nil {
-							inst.rt.Release()
-							return nil, fmt.Errorf("flow service %q: invalid interval override for trigger %q: %v", flowRef, trig.TriggerID, derr)
-						}
-						st.IntervalMs = int(d.Milliseconds())
+					} else {
+						st.PortID = st.Ports[0]
 					}
 					sf.triggers = append(sf.triggers, st)
-				}
-				// Declared providers: every "source"-kind node's plugin id, in
-				// topology order — settings-surface read metadata only (e.g. the
-				// operator config panel's default enabled set). Never consulted to
-				// gate a fetch; the flow always drives every source node it wires.
-				for _, n := range topo.Nodes {
-					if n.Kind == "source" && n.PluginID != "" {
-						sf.sourceProviderPluginIDs = append(sf.sourceProviderPluginIDs, n.PluginID)
-					}
 				}
 			}
 		}
@@ -390,8 +301,6 @@ func (sf *ServiceFlow) RegisterRoutes(mux *http.ServeMux) {}
 func (sf *ServiceFlow) Close() error {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
-	sf.instMu.Lock()
-	defer sf.instMu.Unlock()
 	if sf.inst != nil {
 		sf.inst.rt.Release()
 		sf.inst = nil
@@ -423,147 +332,14 @@ func (sf *ServiceFlow) CronMethods() []plugins.CronMethodSpec {
 // JSON frame enters the bound port, the flow drains, and every egress result
 // frame is collected into the returned summary.
 func (sf *ServiceFlow) InvokeCron(ctx context.Context, method string, _ []byte) ([]byte, error) {
-	out, err := sf.FireTrigger(ctx, method)
+	out, err := sf.fireTrigger(ctx, method)
 	sf.recordTimerResult(err)
 	return out, err
 }
 
-// ErrFireInFlight is returned by FireNow/ClearBatch when a fire is already
-// running (the operator Start/reset guard — reject, never block or corrupt).
-var ErrFireInFlight = errors.New("flow service: a fire is already in flight")
-
-// FireTrigger runs one named timer trigger to completion (also the direct entry
-// point for tests and the admin surface). It OBSERVES this one firing into
-// the flow's FireHistory (see firehistory.go) — start/finish, outcome, and
-// (for an engine-linked flow) the store's exact rowid range this firing's
-// ingests landed in. This is bookkeeping only: FireTrigger itself decides
-// nothing about IF or WHEN to fire (the caller — the cron scheduler's ticker,
-// or a test/admin call — already made that call); it never fires itself
-// again or fires a second trigger.
-// FireTrigger runs one named timer trigger to completion (the cron scheduler's
-// blocking entry point). It serializes on sf.mu — a concurrent fire WAITS.
-func (sf *ServiceFlow) FireTrigger(ctx context.Context, triggerID string) ([]byte, error) {
-	sf.mu.Lock()
-	defer sf.mu.Unlock()
-	return sf.fireLocked(ctx, triggerID)
-}
-
-// FireNow is the operator "Start" primitive: fire triggerID immediately, but —
-// unlike FireTrigger — REJECT (never block) when a fire is already in flight,
-// returning ErrFireInFlight. Idempotent-guard for the manual/admin surface (the
-// sdnapi plugin calls this from the owner's Start button). The host still
-// decides nothing about IF/WHEN autonomously — the owner's button did.
-func (sf *ServiceFlow) FireNow(ctx context.Context, triggerID string) ([]byte, error) {
-	if !sf.mu.TryLock() {
-		return nil, ErrFireInFlight
-	}
-	defer sf.mu.Unlock()
-	return sf.fireLocked(ctx, triggerID)
-}
-
-// AbortFire is the operator "Stop" primitive: cooperatively cancel the IN-FLIGHT
-// fire. Returns true if a fire was in flight (now cancelling), false if idle.
-//
-// Granularity + safety (WasmEdge 0.14.1, wasi-threads): abort is COOPERATIVE,
-// not a mid-instruction hard interrupt. Cancelling the fire's context (1) aborts
-// an in-flight http FETCH at the next hostcall boundary — the http cap derives
-// each request from the bridge fire context (see SetFireContext) — and (2) stops
-// the drain dispatching further host-model nodes at its next scheduler boundary.
-// It deliberately does NOT use WasmEdge AsyncCancel: that hard-interrupts the
-// guest mid-instruction, which cannot safely reap the live wasi-threads od.fit
-// workers, so it would risk the daemon. Consequence: a fit wave already running
-// inside one guest Execute (the threaded OD fit) runs to completion before the
-// abort is honored; the fetch phase and host-model boundaries abort promptly.
-// The daemon and linked store stay healthy either way; a partial batch may
-// remain (that is what ClearBatch/reset is for).
-func (sf *ServiceFlow) AbortFire() bool {
-	sf.abortMu.Lock()
-	cancel := sf.fireCancel
-	sf.abortMu.Unlock()
-	if cancel == nil {
-		return false
-	}
-	cancel()
-	return true
-}
-
-func (sf *ServiceFlow) setFireCancel(cancel context.CancelFunc) {
-	sf.abortMu.Lock()
-	sf.fireCancel = cancel
-	sf.abortMu.Unlock()
-}
-
-func (sf *ServiceFlow) clearFireCancel() {
-	sf.abortMu.Lock()
-	sf.fireCancel = nil
-	sf.abortMu.Unlock()
-}
-
-// ClearBatch is the operator "Reset / clear a run" primitive: clear every stored
-// row of the given (opaque) batch from the flow's linked store and prune the
-// matching entries from the in-memory fire log so the run board stays honest.
-// DUMB + data-admin (like dropping a table): the caller names the batch; the
-// host interprets no content and decides nothing about IF/WHEN to run. Rejected
-// with ErrFireInFlight while a fire is in flight (reset a completed/aborted run,
-// not a live one). Returns the survivor row count.
-func (sf *ServiceFlow) ClearBatch(batchID string) (int64, error) {
-	if !sf.mu.TryLock() {
-		return 0, ErrFireInFlight
-	}
-	defer sf.mu.Unlock()
-	if sf.inst == nil {
-		return 0, fmt.Errorf("flow service %q is closed", sf.programID)
-	}
-	store := sf.inst.rt.Store()
-	if store == nil {
-		return 0, fmt.Errorf("flow service %q has no linked store (nothing to reset)", sf.programID)
-	}
-	tombstoned, survivors, err := store.ClearBatch(batchID)
-	if err != nil {
-		return 0, fmt.Errorf("flow service %q clear batch %q: %w", sf.programID, batchID, err)
-	}
-	sf.pruneFireHistory(tombstoned)
-	if serr := sf.inst.rt.SnapshotStore(); serr != nil {
-		log.Warnf("flow service %q: store snapshot after ClearBatch failed: %v", sf.programID, serr)
-	}
-	return survivors, nil
-}
-
-// pruneFireHistory drops fire-log records whose per-table rowid window (After,
-// Through] overlapped any cleared rowid — the runs whose stored rows ClearBatch
-// just removed. Uses the PRE-compact rowids ClearBatch returned (fire windows
-// are in the same generation). Bookkeeping only.
-func (sf *ServiceFlow) pruneFireHistory(tombstoned map[string][]int64) {
-	if len(tombstoned) == 0 {
-		return
-	}
-	overlaps := func(r TableRange, seqs []int64) bool {
-		for _, seq := range seqs {
-			if seq > r.After && seq <= r.Through {
-				return true
-			}
-		}
-		return false
-	}
-	sf.fireHistMu.Lock()
-	defer sf.fireHistMu.Unlock()
-	kept := sf.fireHist[:0]
-	for _, rec := range sf.fireHist {
-		if overlaps(rec.OMM, tombstoned["sds_omm"]) ||
-			overlaps(rec.OCM, tombstoned["sds_ocm"]) ||
-			overlaps(rec.OBD, tombstoned["sds_obd"]) {
-			continue
-		}
-		kept = append(kept, rec)
-	}
-	sf.fireHist = kept
-}
-
-// fireLocked runs one fire assuming sf.mu is HELD (FireTrigger/FireNow acquire
-// it). It observes the fire into FireHistory and installs a cancelable fire
-// context (AbortFire/http-cap Stop plumbing). It decides nothing about IF/WHEN
-// to fire — the caller already did.
-func (sf *ServiceFlow) fireLocked(ctx context.Context, triggerID string) (out []byte, ferr error) {
+// FireTrigger runs one named timer trigger to completion. The scheduler invokes
+// the same path through InvokeCron.
+func (sf *ServiceFlow) fireTrigger(ctx context.Context, triggerID string) ([]byte, error) {
 	var trigger *serviceTrigger
 	for i := range sf.triggers {
 		if sf.triggers[i].TriggerID == triggerID {
@@ -575,67 +351,50 @@ func (sf *ServiceFlow) fireLocked(ctx context.Context, triggerID string) (out []
 		return nil, fmt.Errorf("flow service %q has no timer trigger %q", sf.programID, triggerID)
 	}
 
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
 	if sf.inst == nil {
 		return nil, fmt.Errorf("flow service %q is closed", sf.programID)
 	}
 	rt := sf.inst.rt
 	defer sf.inst.bridge.ResetBodyRefs()
-
-	// Operator Stop plumbing: a cancelable fire context. The http cap derives
-	// each request from it (bridge.SetFireContext) so a Stop aborts an in-flight
-	// fetch; the drain honors it at host-model boundaries. Cleared on return.
-	fireCtx, cancel := context.WithCancel(ctx)
-	sf.setFireCancel(cancel)
-	sf.inst.bridge.SetFireContext(fireCtx)
-	defer func() {
-		sf.inst.bridge.SetFireContext(context.Background())
-		sf.clearFireCancel()
-		cancel()
-	}()
-
-	store := rt.Store()
-	rec := sf.beginFire(triggerID, store)
-	defer func() { sf.endFire(rec, store, ferr) }()
+	sf.inst.bridge.SetFireContext(ctx)
+	defer sf.inst.bridge.SetFireContext(context.Background())
 
 	tick, _ := json.Marshal(map[string]string{
 		"trigger": trigger.TriggerID,
 		"firedAt": time.Now().UTC().Format(time.RFC3339),
 	})
-	// Host fire timestamp for the store's fire-timestamp port ([u64le unix_ms] ->
-	// pulled_at). A capability read (the host reads its own clock), NOT orchestration.
-	fireStamp := make([]byte, 8)
-	binary.LittleEndian.PutUint64(fireStamp, uint64(time.Now().UTC().UnixMilli()))
 
-	// One frame per DISTINCT bound port: the JSON tick to every port except the
-	// fire-timestamp port (which gets [u64le unix_ms]). The reactor routes each
-	// frame to the bindings whose target port matches the frame's port id.
-	firePorts := trigger.Ports
-	if len(firePorts) == 0 {
-		firePorts = []string{trigger.PortID}
+	// Enqueue the same opaque tick at every distinct port bound to this trigger.
+	ports := trigger.Ports
+	if len(ports) == 0 {
+		ports = []string{trigger.PortID}
 	}
-	for _, port := range firePorts {
-		payload := tick
-		if port == triggerFirePortID {
-			payload = fireStamp
-		}
+	for _, port := range ports {
 		portBytes := append([]byte(port), 0)
-		buf := make([]byte, flowFrameDescriptorSize+len(portBytes)+len(payload))
+		buf := make([]byte, flowFrameDescriptorSize+len(portBytes)+len(tick))
 		copy(buf[flowFrameDescriptorSize:], portBytes)
-		copy(buf[flowFrameDescriptorSize+len(portBytes):], payload)
-		framePtr, aerr := rt.Module().AllocateSize(uint32(len(buf)))
-		if aerr != nil {
-			return nil, fmt.Errorf("allocate trigger frame (port %s): %w", port, aerr)
+		copy(buf[flowFrameDescriptorSize+len(portBytes):], tick)
+		framePtr, err := rt.Module().AllocateSize(uint32(len(buf)))
+		if err != nil {
+			return nil, fmt.Errorf("allocate tick frame for port %q: %w", port, err)
 		}
-		encodeFrameDescriptor(buf[:flowFrameDescriptorSize], &FlowFrameDescriptor{
-			PortIDPointer: framePtr + flowFrameDescriptorSize,
-			Offset:        framePtr + flowFrameDescriptorSize + uint32(len(portBytes)),
-			Size:          uint32(len(payload)),
-			Occupied:      true,
-		})
-		if werr := rt.Module().WriteMemory(framePtr, buf); werr != nil {
-			return nil, fmt.Errorf("write trigger frame (port %s): %w", port, werr)
+		encodeFrameDescriptor(buf[:flowFrameDescriptorSize], canonicalWakeupFrameDescriptor(
+			framePtr+flowFrameDescriptorSize,
+			framePtr+flowFrameDescriptorSize+uint32(len(portBytes)),
+			uint32(len(tick)),
+		))
+		if err := rt.Module().WriteMemory(framePtr, buf); err != nil {
+			rt.Module().Deallocate(framePtr)
+			return nil, fmt.Errorf("write tick frame for port %q: %w", port, err)
 		}
-		rt.EnqueueTriggerFrame(trigger.Index, framePtr)
+		if err := rt.EnqueueTriggerFrame(trigger.Index, framePtr); err != nil {
+			rt.Module().Deallocate(framePtr)
+			return nil, fmt.Errorf("enqueue tick frame for port %q: %w", port, err)
+		}
+		// The parent runtime copies an accepted canonical trigger frame.
+		rt.Module().Deallocate(framePtr)
 	}
 
 	// Drain, collecting every egress result frame verbatim.
@@ -656,16 +415,8 @@ func (sf *ServiceFlow) fireLocked(ctx context.Context, triggerID string) (out []
 		handlers[key] = collect
 	}
 
-	if _, err := rt.Drain(fireCtx, handlers, DrainOptions{MaxIterations: 1000}); err != nil {
+	if _, err := rt.Drain(ctx, handlers, DrainOptions{MaxIterations: 1000}); err != nil {
 		return nil, fmt.Errorf("flow service %q trigger %q: %w", sf.programID, triggerID, err)
-	}
-
-	// Persist the engine-linked store's arena after a drain that wrote records
-	// (opaque whole-arena snapshot via the fs connector; no-op for non-store
-	// flows). Best-effort: a snapshot failure does not fail the fired trigger —
-	// the rows are still live in-process and the next fire re-snapshots.
-	if serr := rt.SnapshotStore(); serr != nil {
-		log.Warnf("flow service %q: store snapshot after trigger %q failed: %v", sf.programID, triggerID, serr)
 	}
 
 	summary, _ := json.Marshal(map[string]interface{}{
@@ -698,43 +449,6 @@ func (sf *ServiceFlow) Triggers() []serviceTrigger {
 	out := make([]serviceTrigger, len(sf.triggers))
 	copy(out, sf.triggers)
 	return out
-}
-
-// SourceProviderPluginIDs lists the plugin id of every $PLG "source"-kind node
-// in the bundle's topology (the flow's declared providers), in topology order.
-// Read-only settings-surface metadata (e.g. the operator config panel's
-// default enabled set) — never used to gate a fetch.
-func (sf *ServiceFlow) SourceProviderPluginIDs() []string {
-	out := make([]string, len(sf.sourceProviderPluginIDs))
-	copy(out, sf.sourceProviderPluginIDs)
-	return out
-}
-
-// SetNodeConfig replaces the per-flow node CONFIG served to this flow's wasm
-// nodes via plugin.getConfig, effective from the NEXT trigger fire onward (it
-// never forces one). This is the operator settings API's write path for
-// opaque, module-defined tuning keys (e.g. enabled_providers) — the reserved
-// scheduling keys (interval_ms/timers) stay the cron scheduler's concern, not
-// this flow's node CONFIG. A no-op when the flow is closed.
-func (sf *ServiceFlow) SetNodeConfig(cfg map[string]interface{}) {
-	sf.mu.Lock()
-	defer sf.mu.Unlock()
-	if sf.inst != nil {
-		sf.inst.bridge.SetConfigLive(cfg)
-	}
-}
-
-// Store returns the flow's linked in-wasm FlatSQL store for READ-ONLY queries
-// (the data-surface board's search/download API), or nil for a bridge-mode
-// flow with no engine link, or a closed flow. Never a write path — callers
-// must only issue SELECT statements (see LinkedStore.Query).
-func (sf *ServiceFlow) Store() *LinkedStore {
-	sf.instMu.RLock()
-	defer sf.instMu.RUnlock()
-	if sf.inst == nil || sf.inst.rt == nil {
-		return nil
-	}
-	return sf.inst.rt.Store()
 }
 
 // --- plugins.UIProvider interface ---
