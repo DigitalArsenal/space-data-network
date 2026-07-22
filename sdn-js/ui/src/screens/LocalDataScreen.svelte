@@ -82,7 +82,7 @@
     RawDataRecord,
     SdnBackend,
   } from '../../../src/ui/runtime/sdn-backend';
-  import { verify as verifyEd25519Signature } from '../../../src/crypto/hd-wallet';
+  import { ed25519 } from '@noble/curves/ed25519';
   import CAT_SCHEMA from '../../../node_modules/spacedatastandards.org/schema/CAT/main.fbs?raw';
   import EPM_SCHEMA from '../../../node_modules/spacedatastandards.org/schema/EPM/main.fbs?raw';
   import MPE_SCHEMA from '../../../node_modules/spacedatastandards.org/schema/MPE/main.fbs?raw';
@@ -2930,7 +2930,7 @@
     if (!signatureBytes || signatureBytes.byteLength !== 64) {
       return 'Cannot verify: PNM signature is not a 64-byte Ed25519 signature.';
     }
-    const valid = await verifyEd25519Signature(publicKey, new TextEncoder().encode(cid), signatureBytes);
+    const valid = ed25519.verify(signatureBytes, new TextEncoder().encode(cid), publicKey);
     return valid ? 'Signature valid for reconstituted CID payload.' : 'Signature invalid for reconstituted CID payload.';
   }
 

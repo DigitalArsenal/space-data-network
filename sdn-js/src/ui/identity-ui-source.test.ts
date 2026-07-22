@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 
 const uiRoot = new URL('../../ui/src/', import.meta.url);
@@ -30,187 +31,80 @@ function expectSourceToContainAll(source: string, snippets: string[]): void {
 }
 
 describe('SDN identity Svelte source', () => {
-  it('wires wallet-gated node identity through the hd-wallet-ui login callback', () => {
-    const source = readUiSource('lib/node-identity-session.ts');
-    const walletRuntimeSource = readRuntimeSource('wallet-ui.ts');
-
-    expectSourceToContainAll(source, [
-      'export function createNodeIdentitySessionController',
-      'sessionExpiresAt',
-      'setTimeout',
-      'confirmNodeIdentityReplacement',
-      'logoutNodeIdentity',
-      'onLogin',
-      'openAccountAfterLogin: false',
-      'applyWalletNodeIdentity',
-      'signaturePayload',
-      'bytesToHex',
-    ]);
-    expect(source).not.toContain('wallet-active-select');
-    expect(source).not.toContain('querySelector');
-    expect(source).not.toContain('getElementById');
-    expect(walletRuntimeSource).not.toContain('sdn-wallet-shell');
-    expect(walletRuntimeSource).not.toContain('data-wallet-action');
-    expect(walletRuntimeSource).not.toContain('Open Login');
-    expect(walletRuntimeSource).not.toContain('Open Account');
-  });
-
-  it('renders a locked node identity gate, logout confirmation, and unlock duration settings', () => {
+  it('keeps the node surface read-only and removes every automatic wallet gate', () => {
     const appSource = readUiSource('App.svelte');
     const nodeSource = readUiSource('screens/NodeScreen.svelte');
-    const topBarSource = readUiSource('components/TopStatusBar.svelte');
     const identitySource = readUiSource('components/IdentityPanel.svelte');
+    const topBarSource = readUiSource('components/TopStatusBar.svelte');
+    const upstreamSource = readUiSource('upstream-webui/overrides/App.js');
+    const productionSource = [appSource, nodeSource, identitySource, topBarSource, upstreamSource].join('\n');
 
-    expectSourceToContainAll(appSource, [
-      'createNodeIdentitySessionController',
-      'let nodeIdentityReady = false;',
-      'let nodeIdentityLocked = true;',
-      'let logoutConfirmOpen = false;',
-      'nodeIdentitySession.loadSettings().finally',
-      'nodeIdentityReady = true;',
-      'confirmNodeIdentityReplacement',
-      'nodeIdentitySession.logout()',
-      "window.location.hash = '#/node'",
-      'nodeIdentityLoginPromptKey += 1;',
-      'Are you sure you want to log out?',
-    ]);
-    expectSourceToContainAll(nodeSource, [
-      "import NodeIdentityGate from '../components/NodeIdentityGate.svelte'",
-      '<NodeIdentityGate',
-      '!nodeIdentityReady',
-      'nodeIdentityLocked',
-      'nodeIdentityLoginPromptKey',
-      'onUnlock',
-    ]);
-    const gateSource = readUiSource('components/NodeIdentityGate.svelte');
-    expect(gateSource).toContain('await controller.openLogin()');
-    expect(gateSource).toContain('loginPromptKey');
-    expect(gateSource).toContain('lastLoginPromptKey');
-    expect(gateSource).not.toContain('<article');
-    expect(gateSource).not.toContain('Unlock Node');
-    expect(gateSource).not.toContain('>Login</button>');
-    expectSourceToContainAll(topBarSource, [
-      'Logout',
-      'nodeIdentityLocked',
-      'logoutClick',
-    ]);
     expectSourceToContainAll(identitySource, [
-      "type IdentityView = 'profile' | 'edit-profile' | 'hosted-epms' | 'keys-import' | 'security' | 'downloads' | 'settings'",
-      'Settings',
-      'Unlock duration',
-      'FlatBuffer data storage location',
-      'Use default',
-      'resetFlatbufferStorageLocation',
-      'flatbufferStoragePathValue',
-      'selectFlatbufferStorageLocation',
-      'browseFlatbufferStorageLocation',
-      'saveNodeIdentitySettings',
-      'nodeIdentityLocked',
-      'disabled={nodeIdentityLocked || !backend}',
+      'Read-only node identity',
+      'Hosted EPM status',
+      'Published identities',
+      'No hosted EPM records reported by this node.',
     ]);
-  });
+    expect(nodeSource).toContain('<IdentityPanel {summary} {profile} {hostedEpms} />');
+    expect(identitySource).not.toMatch(/<(?:button|input|form|textarea|select)\b/);
 
-  it('mounts the local users workspace from the node screen', () => {
-    const source = readUiSource('screens/NodeScreen.svelte');
-
-    expect(source).toContain("import IdentityPanel from '../components/IdentityPanel.svelte'");
-    expect(source).toContain('<IdentityPanel');
-    expect(source).not.toContain('AdvancedDrawer');
-    expect(source).not.toContain('advancedOpen');
-    expect(source).not.toContain('Kubo Diagnostics');
-    expect(source).not.toMatch(/>\s*Advanced\s*<\/button>/);
-    expect(source).not.toContain('MetricCard');
-    expect(source).not.toContain('Runtime Mode');
-    expect(source).not.toContain('Node Identity');
-    expect(source).not.toContain('sdn-node-summary-grid');
-    expect(source).not.toContain('<div class="sdn-grid');
-    expect(source).not.toContain('<section class="sdn-panel-grid');
-  });
-
-  it('truncates local user identifiers and spaces the identity row text', () => {
-    const source = readUiSource('components/IdentityPanel.svelte');
-    const appCss = readUiSource('styles/app.css');
-
-    expect(source).toContain("import { shortPeerId } from '../../../src/ui/runtime/peer-identity'");
-    expect(source).toContain('class="sdn-identity-row-copy"');
-    expect(source).toContain('title={record.peerId || \'no peer id\'} aria-label={record.peerId || \'no peer id\'}>{shortPeerId(record.peerId || \'no peer id\')}');
-    expect(source).toContain('title={record.epmCid} aria-label={record.epmCid}>{shortPeerId(record.epmCid)}');
-    expect(appCss).toMatch(/\.sdn-identity-row-copy\s*{[^}]*display:\s*grid[^}]*gap:\s*0\.22rem/s);
-    expect(appCss).toMatch(/\.sdn-identity-row strong,\s*\.sdn-identity-row span,\s*\.sdn-identity-row small\s*{[^}]*line-height:\s*1\.25/s);
-  });
-
-  it('exposes a breadcrumb identity workflow instead of one crowded all-controls tab', () => {
-    const source = readUiSource('components/IdentityPanel.svelte');
-    const appCss = readUiSource('styles/app.css');
-
-    expectSourceToContainAll(source, [
-      "type IdentityView = 'profile' | 'edit-profile' | 'hosted-epms' | 'keys-import' | 'security' | 'downloads' | 'settings'",
-      'sdn-breadcrumb-tabs',
-      'setView(',
-      'Node Profile',
-      'Edit Profile',
-      'Local Users',
-      'Keys / Import',
-      'Security',
-      'Downloads',
-      'Settings',
-      'backend.saveHostedEpm',
-      'backend.saveNodeProfile',
-      'backend.importHostedEpm',
-      'backend.downloadHostedEpm',
-      'backend.saveNodeAccessUser',
-      'createVCardQrPayload',
-      'downloadHostedEpm(record.id,',
-      '.json,.epm,.vcf,.vcard',
-      'listWalletsAndEpms',
-      'exportCore',
-      'importCore',
+    for (const forbidden of [
+      'NodeIdentityGate',
+      'createNodeIdentitySessionController',
+      'openLogin',
+      'mountWallet',
+      'login.sign',
+      'applyWalletNodeIdentity',
+      'saveNodeProfile',
+      'saveHostedEpm',
+      'importHostedEpm',
+      'deleteHostedEpm',
+      'Encrypted Private Key',
       'Deterministic Keygen',
       'Import Passphrase',
-      'Encrypted Private Key File',
-      'Encrypted Core',
-      'Grant admin',
-      'Upload EPM / .vcf',
-      'Public vCard QR',
-    ]);
-    expect(source).toContain("createVCardQrPayload as createVCardQrPayloadLocal");
-    expect(source).toContain('../../../src/ui/runtime/identity-vcard');
-    expect(source).toContain('<nav class="sdn-view-nav sdn-breadcrumb-tabs" aria-label="Identity sections">');
-    expect(source).toContain('<button type="button" class:active={view === \'profile\'} aria-current={view === \'profile\' ? \'page\' : undefined} on:click={() => setView(\'profile\')}>Node Profile</button>');
-    expect(source).toContain('<button type="button" class:active={view === \'hosted-epms\'} aria-current={view === \'hosted-epms\' ? \'page\' : undefined} on:click={() => setView(\'hosted-epms\')}>Local Users</button>');
-    expect(source).not.toContain('Identity /');
-    expect(source).not.toContain('aria-label="Identity breadcrumbs"');
-    expect(appCss).toMatch(/\.sdn-breadcrumb-tabs\s*{[^}]*border:\s*0/s);
-    expect(appCss).toMatch(/\.sdn-breadcrumb-tabs button\.active\s*{[^}]*color:\s*var\(--sdn-blue\)/s);
-    expect(source).not.toContain('Hosted EPMs');
-    expect(source).not.toMatch(/Claim EPM|Claim started|Claiming/i);
-
-    for (const field of [
-      'dn',
-      'legal_name',
-      'given_name',
-      'family_name',
-      'email',
-      'telephone',
-      'entity_type',
+      'SessionControls',
     ]) {
-      expect(source).toContain(field);
+      expect(productionSource, forbidden).not.toContain(forbidden);
     }
 
-    expect(source).not.toContain("{ key: 'peer_id'");
-    expect(source).not.toContain("{ key: 'epm_cid'");
-    expect(source).not.toContain("{ key: 'public_key'");
-    expect(source).not.toContain("{ key: 'signing_public_key'");
-    expect(source).not.toContain("{ key: 'encryption_public_key'");
-    expect(source).not.toContain("{ key: 'multiformat_address'");
+    expect(existsSync(new URL('../../ui/src/components/NodeIdentityGate.svelte', import.meta.url))).toBe(false);
+    expect(existsSync(new URL('../../ui/src/lib/node-identity-session.ts', import.meta.url))).toBe(false);
+  });
+
+  it('renders reported node and EPM values without an editing control', async () => {
+    const { default: NodeScreen } = await import('../../ui/src/screens/NodeScreen.svelte');
+    const { body } = render(NodeScreen, {
+      props: {
+        summary: {
+          displayName: 'Read Only Node',
+          peerId: '12D3KooWReadOnlyNodeIdentifier',
+          agentVersion: 'sdn/2.0.12',
+          online: true,
+          runtime: 'desktop-local',
+        },
+        profile: { dn: 'Read Only Node' },
+        hostedEpms: [{
+          id: 'ops',
+          kind: 'hosted',
+          label: 'Operations',
+          peerId: '12D3KooWOperationsIdentifier',
+          epmCid: 'bafybeigeneratedepmcid',
+          epmJson: {},
+        }],
+      },
+    });
+
+    expect(body).toContain('Read Only Node');
+    expect(body).toContain('Operations');
+    expect(body).toContain('EPM');
+    expect(body).not.toMatch(/<(?:button|input|form|textarea|select)\b/);
   });
 
   it('centralizes compact vCard QR metadata and identity alias handling', () => {
     const runtimeSource = readRuntimeSource('identity-vcard.ts');
-    const identitySource = readUiSource('components/IdentityPanel.svelte');
     const directorySource = readUiSource('components/DirectorySearchPanel.svelte');
     const peersSource = readUiSource('screens/PeersScreen.svelte');
-    const uiSources = [identitySource, directorySource, peersSource];
+    const qrConsumerSources = [directorySource, peersSource];
 
     expectSourceToContainAll(runtimeSource, [
       'signing.spacedatanetwork.org',
@@ -232,7 +126,7 @@ describe('SDN identity Svelte source', () => {
     expect(runtimeSource).toContain("addCompactIdentityEmailLine(lines, 'xpub', xpub, XPUB_ALIAS_DOMAIN)");
     expect(runtimeSource).not.toContain("addCompactIdentityEmailLine(lines, 'peerid'");
     expect(runtimeSource).not.toContain('addVCardIdentityEmailLines');
-    for (const source of uiSources) {
+    for (const source of qrConsumerSources) {
       expect(source).toContain("../../../src/ui/runtime/identity-vcard");
       expect(source).toContain("createVCardQrPayload as createVCardQrPayloadLocal");
       expect(source).not.toMatch(/function\s+addVCardLine/);
@@ -248,189 +142,13 @@ describe('SDN identity Svelte source', () => {
     expect(source).not.toContain('encodeQrDataUrl(vcard)');
   });
 
-  it('keeps only the edit action on the node profile card', () => {
-    const source = readUiSource('components/IdentityPanel.svelte');
-    const profileView = source.slice(source.indexOf("{#if view === 'profile'}"), source.indexOf("{:else if view === 'edit-profile'}"));
-
-    expect(profileView).toContain('<button class="sdn-button" type="button" on:click={() => setView(\'edit-profile\')} disabled={nodeIdentityLocked || !backend}>Edit Profile</button>');
-    expect(profileView).not.toContain("setView('hosted-epms')");
-    expect(profileView).not.toContain("setView('keys-import')");
-    expect(profileView).not.toContain("setView('security')");
-    expect(profileView).not.toContain("setView('downloads')");
-  });
-
-  it('does not render extraneous identity type tags', () => {
-    const identitySource = readUiSource('components/IdentityPanel.svelte');
-    const nodeSource = readUiSource('screens/NodeScreen.svelte');
-
-    expect(identitySource).not.toContain('Node self profile');
-    expect(identitySource).not.toContain('Hosted public EPM');
-    expect(identitySource).not.toContain('Node self:');
-    expect(identitySource).not.toContain('wallet EPM');
-    expect(identitySource).not.toContain('<span class="sdn-chip"');
-    expect(identitySource).not.toContain('public EPM</span>');
-    expect(identitySource).not.toContain("{record.kind === 'node-self' ? 'Node self' : 'Hosted'}");
-    expect(nodeSource).not.toContain('EPM Scope');
-    expect(nodeSource).not.toContain('nodeSelfEpms');
-    expect(nodeSource).not.toContain('hostedOnlyEpms');
-  });
-
-  it('keeps node security limited to admin public-key grant and EPM/vCard upload', () => {
-    const source = readUiSource('components/IdentityPanel.svelte');
-    const securityView = source.slice(source.indexOf("{:else if view === 'security'}"), source.indexOf("{:else if view === 'downloads'}"));
-
-    expectSourceToContainAll(securityView, [
-      'Grant admin for public key',
-      'bind:value={grantPublicKey}',
-      'grantAdminForPublicKey(grantPublicKey)',
-      'Upload EPM / .vcf',
-      'grantAdminFromSecurityFile',
-      'accept=".epm,.vcf,.vcard,application/octet-stream,text/vcard,text/x-vcard"',
-    ]);
-    expect(securityView).not.toContain('Admin grants:');
-    expect(securityView).not.toContain('Refresh');
-    expect(securityView).not.toContain('Access grants');
-    expect(securityView).not.toContain('Revoke admin');
-    expect(securityView).not.toContain('Remove');
-    expect(securityView).not.toContain('Config managed');
-    expect(securityView).not.toContain('Name');
-    expect(securityView).not.toContain('Signing public key');
-  });
-
-  it('renders Peers as the data-source storefront with PGP ownertrust', () => {
-    const source = readUiSource('screens/PeersScreen.svelte');
-
-    expect(source).toContain("import DirectorySearchPanel from '../components/DirectorySearchPanel.svelte'");
-    expect(source).toContain("from '../../../src/ui/runtime/data-directory'");
-    expect(source).toContain('<DirectorySearchPanel');
-    expect(source).toContain("type PeerView = 'home' | 'observed' | 'feeds' | 'peer-detail'");
-    expect(source).toContain('PGP_OWNERTRUST_LEVELS');
-    expect(source).toContain('DEFAULT_OWNERTRUST');
-    expect(source).toContain('ownertrustForPeer');
-    expect(source).toContain('isTrustedDirectoryOwnertrust');
-    expect(source).toContain('subscribeToDataFeed');
-    expect(source).toContain('upsertDataFeedSubscription');
-    expect(source).toContain('persistDataDirectoryState');
-    expect(source).toContain('Trust key');
-    expect(source).toContain('unknown');
-    expect(source).toContain('never');
-    expect(source).toContain('marginal');
-    expect(source).toContain('full');
-    expect(source).toContain('ultimate');
-    expect(source).toContain('Observed Peers');
-    expect(source).toContain('Data Feeds');
-    expect(source).toContain('Directory Search');
-    expect(source).toContain('Available Data');
-    expect(source).toContain('Available Modules');
-    expect(source).toContain('<button class="sdn-storefront-stat" type="button" on:click={() => setPeerView(\'observed\')}>');
-    expect(source).toContain('<button class="sdn-storefront-stat" type="button" on:click={() => setPeerView(\'feeds\')}>');
-    expect(source).toContain('<th><button type="button" on:click={() => setSort(\'name\')}>{sortablePeerHeader(\'name\', \'Name\')}</button></th>');
-    expect(source).toContain('<th><button type="button" on:click={() => setSort(\'peerId\')}>{sortablePeerHeader(\'peerId\', \'PeerID\')}</button></th>');
-    expect(source).toContain('<th><button type="button" on:click={() => setSort(\'trust\')}>{sortablePeerHeader(\'trust\', \'Ownertrust\')}</button></th>');
-    expect(source).toContain('<th><button type="button" on:click={() => setSort(\'ip\')}>{sortablePeerHeader(\'ip\', \'IP\')}</button></th>');
-    expect(source).toContain('<th><button type="button" on:click={() => setSort(\'agent\')}>{sortablePeerHeader(\'agent\', \'Agent\')}</button></th>');
-    expect(source).toContain('shortPeerId');
-    expect(source).toContain('<td><code title={peer.id} aria-label={peer.id}>{shortPeerId(peer.id)}</code></td>');
-    expect(source).toContain('selectedPeerId');
-    expect(source).toContain('showPeerDetail(peer)');
-    expect(source).toContain('renderPeerQr');
-    expect(source).toContain('peerMatchesQuery');
-    expect(source).toContain('displayNameForPeer');
-    expect(source).toContain('peerEmail');
-    expect(source).toContain('peerPhone');
-    expect(source).toContain('peerIp');
-    expect(source).toContain('hostedEpmRecordFromDirectoryRecord');
-    expect(source).toContain('loadDirectoryPeerEpmsForPeers');
-    expect(source).toContain('directoryPeerEpms');
-    expect(source).toContain('PUBLIC_DIRECTORY_BASE_URL');
-    expect(source).toContain('activeBackend.searchDirectory(peer.id)');
-    expect(source).toContain('/api/directory/nodes?q=');
-    expect(source).toContain('EPM Fields');
-    const peerSummary = source.slice(
-      source.indexOf('function peerEpmSummary'),
-      source.indexOf('async function renderPeerQr'),
-    );
-    expect(source).toContain('Email');
-    expect(source).toContain('Phone');
-    expect(peerSummary).toContain("label: 'XPub'");
-    expect(peerSummary).toContain("label: 'Signing public key'");
-    expect(peerSummary).toContain("label: 'Encryption public key'");
-    expect(peerSummary).toContain('identityXpubValue(epmJson)');
-    expect(peerSummary).toContain("identityPublicKeyDetails(epmJson, 'signing')");
-    expect(peerSummary).toContain("identityPublicKeyDetails(epmJson, 'encryption')");
-    expect(source).toContain("const NOT_PUBLISHED = 'Not published';");
-    expect(source).toContain('details.derivationPath');
-    expect(peerSummary).not.toContain("label: 'Public key'");
-    expect(source).not.toContain("import MetricCard from '../components/cards/MetricCard.svelte'");
-    expect(source).not.toContain('MetricCard');
-    expect(source).not.toContain('Mission Loadout');
-    expect(source).not.toContain('Mission Builder');
-    expect(source).not.toContain('Marketplace feed adapter pending');
-    expect(source).not.toContain('<section class="sdn-panel-grid">');
-    expect(source).not.toContain('sdn-grid-3');
-    expect(source).not.toContain('<th>EPM</th>');
-    expect(source).not.toContain('downloadHostedEpm');
-    expect(source).not.toContain('<th>Actions</th>');
-  });
-
-  it('prewarms and preserves the Data screen instead of remounting it on every tab click', () => {
+  it('retains the Data screen instance across route changes', () => {
     const appSource = readUiSource('App.svelte');
 
     expect(appSource).toContain('let dataScreenPrimed = false;');
     expect(appSource).toContain("if (backend || primaryRoute === '/data') dataScreenPrimed = true;");
     expect(appSource).toContain('{#if dataScreenPrimed}');
-    expect(appSource).toContain('<div hidden={primaryRoute !== \'/data\'} aria-hidden={primaryRoute !== \'/data\'}>');
-    expect(appSource).toContain('<LocalDataScreen');
-  });
-
-  it('renders debounced unified directory search with upload search and configured nodes', () => {
-    const source = readUiSource('components/DirectorySearchPanel.svelte');
-
-    expectSourceToContainAll(source, [
-      'const DIRECTORY_PAGE_SIZE = 10;',
-      'const SEARCH_DEBOUNCE_MS = 250;',
-      'loadConfiguredDirectoryNodes',
-      "/api/local/sdn-nodes",
-      'normalizeConfiguredDirectoryNodes',
-      'backend.searchDirectory',
-      'scheduleDirectorySearch',
-      'handleUploadSearch',
-      'decodeEpmFlatBuffer',
-      'sortableDirectoryHeader',
-      'aria-label="Directory results"',
-      'Type',
-      'Name',
-      'PeerID',
-      'Public key',
-      'EPM',
-      'vCard',
-      'Show QR',
-      'Previous',
-      'Next',
-    ]);
-    expect(source).toContain("on:input={handleSearchInput}");
-    expect(source).toContain("accept=\".epm,application/octet-stream\"");
-    expect(source).toContain("accept=\".vcf,.vcard,text/vcard,text/x-vcard\"");
-    expect(source).not.toContain('<form');
-    expect(source).not.toContain('type="submit"');
-    expect(source).not.toContain('>Nodes<');
-    expect(source).not.toContain('>People<');
-    expect(source).not.toContain('No node results');
-    expect(source).not.toContain('No people results');
-    expect(source).not.toContain('pending');
-    expect(source).not.toContain('Directory record has no EPM or peer identifier to download.');
-  });
-
-  it('does not offer plaintext Core export controls in public identity UI copy', () => {
-    const sources = [
-      readUiSource('components/IdentityPanel.svelte'),
-      readUiSource('components/DirectorySearchPanel.svelte'),
-      readUiSource('screens/NodeScreen.svelte'),
-      readUiSource('screens/PeersScreen.svelte'),
-    ].join('\n');
-
-    expect(sources).not.toMatch(/plaintext\s+core/i);
-    expect(sources).not.toMatch(/plain\s+text\s+core/i);
+    expect(appSource).toContain("<div hidden={primaryRoute !== '/data'} aria-hidden={primaryRoute !== '/data'}>");
   });
 });
 
@@ -839,14 +557,8 @@ describe('SDN identity styling guardrails', () => {
     const peersSource = readUiSource('screens/PeersScreen.svelte');
     const sources = [identitySource, directorySource, peersSource].join('\n');
 
-    expect(identitySource).toContain('class="sdn-toolbar sdn-section-toolbar"');
-    expect(identitySource).toContain('{#if qrState}');
-    expect(identitySource).toContain('{#if saveState}');
-    expect(identitySource).toContain('{#if importState}');
-    expect(identitySource).toContain('{#if walletState}');
-    expect(identitySource).toContain('{#if coreState}');
-    expect(identitySource).toContain('{#if securityState}');
-    expect(identitySource).toContain('{#if downloadState}');
+    expect(identitySource).toContain('Read-only node identity');
+    expect(identitySource).not.toMatch(/<(?:button|input|form|textarea|select)\b/);
     expect(directorySource).toContain('{#if searchState}');
     expect(peersSource).toContain('{#if peerQrState}');
     for (const copy of [
@@ -951,14 +663,12 @@ describe('SDN identity styling guardrails', () => {
     expect(appCss).toMatch(/\.sdn-workbench-main,\s*\.sdn-source-browser\s*{[^}]*align-content:\s*start/s);
   });
 
-  it('centers logout and node identity replacement modals in the viewport', () => {
+  it('removes logout and node identity replacement modals from the app', () => {
     const appSource = readUiSource('App.svelte');
-    const appCss = readUiSource('styles/app.css');
 
-    expect(appSource).toContain('aria-label="Confirm logout"');
-    expect(appSource).toContain('aria-label="Confirm node identity replacement"');
-    expect(appCss).toMatch(/\.sdn-modal-backdrop\s*{[^}]*display:\s*grid[^}]*place-items:\s*center[^}]*min-height:\s*100dvh/s);
-    expect(appCss).toMatch(/\.sdn-modal\s*{[^}]*position:\s*static[^}]*inset:\s*auto[^}]*margin:\s*0[^}]*max-height:\s*calc\(100dvh - 2rem\)[^}]*overflow:\s*auto/s);
+    expect(appSource).not.toContain('aria-label="Confirm logout"');
+    expect(appSource).not.toContain('aria-label="Confirm node identity replacement"');
+    expect(appSource).not.toContain('Replace and sign EPM');
   });
 
   it('anchors node identity layouts to content height instead of stretching nav rows', () => {

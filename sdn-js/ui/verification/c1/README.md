@@ -29,15 +29,13 @@ the full app. The build FAILS if a wasm blob is present (see audit below).
 
 ## No hd-wallet wasm (the key packaging win)
 
-The full app embedded ~5 MB of hd-wallet wasm (as a `data:` URI) for the
-wallet/login flow. This ship keeps no session flow, so that wasm must not be
-bundled. It is only reachable as a dead static import chain
-(`conjunction-data.ts` → `node-data.ts` → `lib/console.ts` → `lib/login.ts`
-→ `lib/auth/local-wallet.ts` → `src/crypto/hd-wallet.ts` → `hd-wallet-wasm`).
-Two independent guards confirm it is gone:
+The old full app embedded ~5 MB of wallet wasm (as a `data:` URI) for its
+host-side credential flow. Phase 1A deleted that production import chain, so
+the conjunction build no longer relies on an alias or empty stub to exclude
+the implementation. Two independent guards keep it out:
 
-1. `hd-wallet-wasm` is aliased to an empty stub (`ui/shims/hd-wallet-wasm-empty.ts`)
-   in `ui/vite.conjunction.config.mts` for this build only.
+1. `ui/src/lib/public-wallet-boundary.test.ts` rejects protected credential or
+   crypto modules in the active and dormant app graphs.
 2. `build-conjunction-single-file.mjs` HARD-fails the build if a raw `\0asm`
    signature, a base64 `AGFzbQ` wasm data URI, or an `application/wasm`
    reference appears in the artifact.

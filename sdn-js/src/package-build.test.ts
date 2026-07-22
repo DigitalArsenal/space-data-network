@@ -228,7 +228,9 @@ describe('sdn-js package build', () => {
     async () => {
     const runtime = await import(pathToFileURL(DIST_UI_INDEX_PATH).href);
 
-    expect(typeof runtime.mountWalletUI).toBe('function');
+    expect(runtime.mountWalletUI).toBeUndefined();
+    expect(runtime.createAccountMenuController).toBeUndefined();
+    expect(runtime.installWalletStorageDiskMirror).toBeUndefined();
     expect(typeof runtime.ObservedPeerIndex).toBe('function');
     },
   );

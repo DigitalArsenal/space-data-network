@@ -1,4 +1,4 @@
-import { sha256 } from '../../crypto/hd-wallet';
+import { sha256 } from '@noble/hashes/sha256';
 import { createVCardQrPayload as createSharedVCardQrPayload } from './identity-vcard';
 
 export type HostedEpmKind = 'node-self' | 'hosted';

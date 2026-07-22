@@ -6,7 +6,9 @@
    * console rail, no routes to descoped screens, no login. The full
    * SpaceAware app (`SpaceAwareApp.svelte`) stays committed and dormant; this
    * is a separate, thinner entry whose single-file build bundles ONLY the
-   * conjunction code + fonts (no hd-wallet wasm — no session flow is kept).
+   * conjunction code + fonts. The isolated typed public wallet client is
+   * bundled for Login/Account, but wallet-origin credential, signing, and
+   * hd-wallet wasm implementation remain outside this document.
    *
    * Data sources are all anonymous-safe (`/api/v1/peers`, `/api/v1/channels`,
    * `/api/v1/stats`, plus `/api/v1/data/health` for the header chip), so the
@@ -24,6 +26,8 @@
    * authenticates; it shows a fixed honest PUBLIC · ANONYMOUS chip instead).
    */
   import { onMount } from 'svelte';
+  import PublicWalletPresenter from '../lib/PublicWalletPresenter.svelte';
+  import { getSdnWalletClient } from '../lib/auth/wallet-client';
   import ConjunctionView from './screens/console/ConjunctionView.svelte';
   import { SdnApiClient } from '../lib/auth/sdn-api-client';
   import {
@@ -45,6 +49,7 @@
   const HEALTH_REFRESH_MS = 30_000;
 
   const apiClient = new SdnApiClient();
+  const walletClient = getSdnWalletClient(document);
 
   let healthState = $state<ConsoleHealthChipState>('OFFLINE');
   const healthChip = $derived(consoleHealthChipStyle(healthState));
@@ -95,6 +100,8 @@
     </div>
 
     <div class="conj-app-header-chips">
+      <PublicWalletPresenter client={walletClient} />
+
       <span
         class="conj-app-chip"
         title={`Node health: ${healthChip.label}`}

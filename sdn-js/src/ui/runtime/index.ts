@@ -43,12 +43,6 @@ export {
   type AdminStateOptions,
 } from './admin-state';
 export {
-  createAccountMenuController,
-  type AccountMenuController,
-  type AccountMenuControllerOptions,
-  type AccountMenuSnapshot,
-} from './account-menu';
-export {
   SDNUIEventBus,
   type DeliveryTimelineEvent,
   type RuntimeEventMap,
@@ -97,16 +91,6 @@ export {
   type DecodeCanonicalPlgListingOptions,
 } from './plg-listings';
 export { ObservedPeerIndex } from './observed-peers';
-export {
-  mountWalletUI,
-  type MountedWalletUI,
-  type WalletUIOptions,
-} from './wallet-ui';
-export {
-  installWalletStorageDiskMirror,
-  isPersistedWalletLocalStorageKey,
-  type WalletStorageDiskMirror,
-} from './wallet-storage-bridge';
 export {
   createServerAdapter,
   createServerAdminAdapter,

@@ -7,6 +7,7 @@
   import { createRouter, type SpaceAwareRoute } from './router';
   import { SdnApiClient } from '../lib/auth/sdn-api-client';
   import { createAuthStore, guardRoute, type AuthSessionState } from '../lib/auth/auth-store';
+  import { getSdnWalletClient } from '../lib/auth/wallet-client';
 
   // U0.3 (D1 groundwork): one client/store for the whole app lifetime.
   // Session state is hydrated once on mount (`GET /api/auth/me`) and the
@@ -14,9 +15,11 @@
   // rule — the guard is a route decision, never a side effect of the auth
   // API itself (see auth-store.ts).
   const apiClient = new SdnApiClient();
+  const walletClient = getSdnWalletClient(document);
   let authState = $state<AuthSessionState>({ status: 'unknown', stage: 'idle', user: null, error: null });
   const authStore = createAuthStore({
     client: apiClient,
+    wallet: walletClient,
     onStateChange: (next) => {
       authState = next;
     },
@@ -44,7 +47,7 @@
 
 <div class="sa-root">
   {#if route.screen === 'login'}
-    <LoginScreen {navigate} {authStore} {authState} {apiClient} />
+    <LoginScreen {navigate} {apiClient} />
   {:else if route.screen === 'bmc2'}
     <Bmc2Router {route} {navigate} {authState} />
   {:else if route.screen === 'console'}
