@@ -308,8 +308,11 @@ func assertAppSurfaceHeaders(t *testing.T, h http.Header) {
 	if got := h.Get("Cross-Origin-Embedder-Policy"); got != "require-corp" {
 		t.Errorf("COEP = %q, want require-corp", got)
 	}
-	if got := h.Get("Content-Security-Policy"); got != conjunctionCSP {
-		t.Errorf("CSP = %q, want %q", got, conjunctionCSP)
+	if got := h.Get("Content-Security-Policy"); got != appsCSP {
+		t.Errorf("CSP = %q, want %q", got, appsCSP)
+	}
+	if strings.Contains(h.Get("Content-Security-Policy"), "wallet.spacedatanetwork.org") {
+		t.Errorf("supplemental app CSP unexpectedly permits the wallet origin: %q", h.Get("Content-Security-Policy"))
 	}
 	if got := h.Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", got)
