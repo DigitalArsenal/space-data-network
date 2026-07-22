@@ -51,11 +51,13 @@ SpaceAware cutover is an explicit second command. It refuses to run unless all
 four SpaceAware units are loaded and active and direct loopback probes for
 ports 5010, 8080, and 8081 pass. The loopback gate requires the exact activated
 release identity, structured health/provider responses, and a valid WebSocket
-handshake. It also requires `wallet.spacedatanetwork.org` to serve the HD
-Wallet login surface and fetches all three activated 2.0.28 wallet assets from
-`static.spacedatanetwork.org`, accepting them only when their SHA-384 bytes
-match the SRI values in the activated callback and OrbPro HTML. Accepting any
-arbitrary HTTP status is not sufficient. It does not restart those services.
+handshake. It also requires `wallet.spacedatanetwork.org` to serve its
+content-addressed 2.0.28 login/account JavaScript, CSS, and WASM, validating
+the entrypoint SRI and every filename digest. It separately fetches all three
+activated 2.0.28 wallet assets from `static.spacedatanetwork.org`, accepting
+them only when their SHA-384 bytes match the SRI values in the activated
+callback and OrbPro HTML. Accepting any arbitrary HTTP status is not
+sufficient. It does not restart those services.
 
 From the `space-data-network` repository root:
 

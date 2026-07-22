@@ -20,6 +20,40 @@ const reviewedAssets = [
   { path: '/assets/hd-wallet-ui/2.0.28/callback.js', body: Buffer.from('wallet callback\n'), type: 'text/javascript' },
 ];
 
+function contentAddressedWalletAsset(extension, body) {
+  const digest = createHash('sha256').update(body).digest('hex');
+  const type = {
+    css: 'text/css',
+    js: 'text/javascript',
+    wasm: 'application/wasm',
+  }[extension];
+  return { path: `/assets/wallet-origin.${digest}.${extension}`, body, type };
+}
+
+function makeWalletOriginBundle(version = '2.0.28') {
+  const wasm = contentAddressedWalletAsset(
+    'wasm',
+    Buffer.from(`fixture wallet wasm ${version}\n`),
+  );
+  const js = contentAddressedWalletAsset(
+    'js',
+    Buffer.from(`const version="${version}";const labels=["HD Wallet","Login","Account"];const wasm="${wasm.path.split('/').pop()}";\n`),
+  );
+  const css = contentAddressedWalletAsset(
+    'css',
+    Buffer.from(`/* fixture HD Wallet ${version} */\n`),
+  );
+  const index = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>SDN Wallet</title>
+<link rel="stylesheet" href="${css.path}" integrity="${integrity(css)}" crossorigin="anonymous">
+</head><body><main data-wallet-origin-root aria-live="polite"></main>
+<script type="module" src="${js.path}" integrity="${integrity(js)}" crossorigin="anonymous"></script>
+</body></html>`;
+  return { assets: [css, js, wasm], index };
+}
+
+const reviewedWalletOrigin = makeWalletOriginBundle();
+
 function integrity(asset) {
   return `sha384-${createHash('sha384').update(asset.body).digest('base64')}`;
 }
@@ -72,13 +106,15 @@ async function makeWebRoot(t) {
   return { root, index, identity, callback, orbpro };
 }
 
-function dependencyServer(corruptAsset = () => false) {
+function dependencyServer(corruptAsset = () => false, walletOrigin = () => reviewedWalletOrigin) {
   return createServer((req, res) => {
+    const currentWalletOrigin = walletOrigin();
     if (req.url === '/') {
-      res.writeHead(200, { 'Content-Type': 'text/html' }).end('<title>HD Wallet</title><button>Login</button>');
+      res.writeHead(200, { 'Content-Type': 'text/html' }).end(currentWalletOrigin.index);
       return;
     }
-    const asset = reviewedAssets.find((candidate) => candidate.path === req.url);
+    const asset = [...reviewedAssets, ...currentWalletOrigin.assets]
+      .find((candidate) => candidate.path === req.url);
     if (!asset) return void res.writeHead(404).end();
     res.writeHead(200, { 'Content-Type': asset.type }).end(corruptAsset(asset) ? Buffer.from('corrupt\n') : asset.body);
   });
@@ -100,6 +136,7 @@ function replyWebSocket(req, socket) {
 }
 
 test('loopback verification requires the exact release and a real websocket handshake', async (t) => {
+  assert.doesNotMatch(reviewedWalletOrigin.index, /HD Wallet|Login/u);
   const web = await makeWebRoot(t);
   const app = createServer((req, res) => {
     const responses = {
@@ -159,6 +196,9 @@ test('public verification checks both Host routes, callback policy, terrain, and
   let wrongRoot = false;
   let wrongProvider = false;
   let wrongAsset = false;
+  let wrongWalletAsset = false;
+  let wrongWalletWasm = false;
+  let staleWallet = false;
   const seenHosts = new Set();
   const edge = createServer((req, res) => {
     const host = String(req.headers.host || '').split(':')[0];
@@ -198,7 +238,12 @@ test('public verification checks both Host routes, callback policy, terrain, and
     if (req.url === '/api/module-delivery/provider') res.writeHead(200).end(JSON.stringify(provider));
     else res.writeHead(404).end();
   });
-  const dependencies = dependencyServer(() => wrongAsset);
+  const dependencies = dependencyServer(
+    (asset) => (wrongAsset && asset.path.startsWith('/assets/hd-wallet-ui/'))
+      || (wrongWalletAsset && asset.path.startsWith('/assets/wallet-origin.') && asset.path.endsWith('.js'))
+      || (wrongWalletWasm && asset.path.startsWith('/assets/wallet-origin.') && asset.path.endsWith('.wasm')),
+    () => makeWalletOriginBundle(staleWallet ? '2.0.27' : '2.0.28'),
+  );
   const [edgePort, spaceDirectPort, sdnDirectPort, dependencyPort] = await Promise.all([
     listen(edge), listen(spaceDirect), listen(sdnDirect), listen(dependencies),
   ]);
@@ -229,6 +274,21 @@ test('public verification checks both Host routes, callback policy, terrain, and
   assert.notEqual(failed.code, 0);
   assert.match(failed.stderr, /SRI sha384 mismatch/i);
   wrongAsset = false;
+  wrongWalletAsset = true;
+  failed = await runVerifier(args);
+  assert.notEqual(failed.code, 0);
+  assert.match(failed.stderr, /wallet origin asset sha256 does not match/i);
+  wrongWalletAsset = false;
+  wrongWalletWasm = true;
+  failed = await runVerifier(args);
+  assert.notEqual(failed.code, 0);
+  assert.match(failed.stderr, /wallet origin WASM sha256 does not match/i);
+  wrongWalletWasm = false;
+  staleWallet = true;
+  failed = await runVerifier(args);
+  assert.notEqual(failed.code, 0);
+  assert.match(failed.stderr, /hd-wallet-ui 2\.0\.28 login\/account surface/i);
+  staleWallet = false;
   wrongProvider = true;
   failed = await runVerifier(args);
   assert.notEqual(failed.code, 0);
