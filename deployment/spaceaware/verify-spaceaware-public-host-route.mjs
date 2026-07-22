@@ -165,6 +165,115 @@ function reviewedSriAssets(release) {
   return [...unique.values()];
 }
 
+function walletOriginEntrypoints(wallet) {
+  const html = wallet.body.toString('utf8');
+  if (!html.includes('<title>SDN Wallet</title>')
+      || !html.includes('data-wallet-origin-root')) {
+    fail('wallet origin root is not the reviewed SDN Wallet shell');
+  }
+
+  const assets = [];
+  for (const match of html.matchAll(/<(?:script|link)\b[^>]*>/giu)) {
+    const tag = match[0];
+    const path = tag.match(/\b(?:src|href)="([^"]+)"/iu)?.[1];
+    if (!path?.startsWith('/assets/wallet-origin.')) continue;
+    const pathMatch = /^\/assets\/wallet-origin\.([0-9a-f]{64})\.(css|js)$/u.exec(path);
+    if (!pathMatch) fail(`wallet origin root has an invalid content-addressed asset path: ${path}`);
+    const integrity = tag.match(/\bintegrity="([^"]+)"/iu)?.[1];
+    const sha384Value = integrity?.split(/\s+/u).find((value) => value.startsWith('sha384-'));
+    if (!sha384Value || !/^sha384-[A-Za-z0-9+/]+={0,2}$/u.test(sha384Value)) {
+      fail(`wallet origin root asset has no valid sha384 SRI value: ${path}`);
+    }
+    if (!/\bcrossorigin="anonymous"/iu.test(tag)) {
+      fail(`wallet origin root asset is missing crossorigin=anonymous: ${path}`);
+    }
+    if (pathMatch[2] === 'css') {
+      if (!/^<link\b/iu.test(tag) || !/\brel="stylesheet"/iu.test(tag)) {
+        fail('wallet origin stylesheet entrypoint is malformed');
+      }
+    } else if (!/^<script\b/iu.test(tag) || !/\btype="module"/iu.test(tag)) {
+      fail('wallet origin JavaScript entrypoint is not a module script');
+    }
+    assets.push({
+      path,
+      extension: pathMatch[2],
+      sha256: pathMatch[1],
+      sha384: sha384Value.slice('sha384-'.length),
+    });
+  }
+  const unique = new Map(assets.map((asset) => [asset.path, asset]));
+  const extensions = [...unique.values()].map((asset) => asset.extension).sort();
+  if (assets.length !== unique.size || unique.size !== 2 || extensions.join(',') !== 'css,js') {
+    fail(`wallet origin root must reference exactly one CSS and one JavaScript entrypoint; found ${extensions.join(',') || 'none'}`);
+  }
+  return [...unique.values()];
+}
+
+async function verifyWalletOrigin(options) {
+  let wallet;
+  try {
+    wallet = await requestAbsolute(new URL('/', options.walletOrigin), options.timeoutMs);
+  } catch (error) {
+    fail(`wallet origin is unavailable (${options.walletOrigin}): ${error.message}`);
+  }
+  expectStatus(wallet, 200, 'wallet origin root');
+  if (!headerValue(wallet, 'content-type').toLowerCase().includes('text/html')) {
+    fail('wallet origin root is not HTML');
+  }
+
+  let walletJavaScript;
+  for (const asset of walletOriginEntrypoints(wallet)) {
+    let response;
+    try {
+      response = await requestAbsolute(new URL(asset.path, options.walletOrigin), options.timeoutMs);
+    } catch (error) {
+      fail(`wallet origin asset is unavailable (${asset.path}): ${error.message}`);
+    }
+    expectStatus(response, 200, `wallet origin asset ${asset.path}`);
+    const contentType = headerValue(response, 'content-type').toLowerCase();
+    if ((asset.extension === 'css' && !contentType.includes('text/css'))
+        || (asset.extension === 'js' && !contentType.includes('javascript'))) {
+      fail(`wallet origin asset has the wrong content type: ${asset.path}`);
+    }
+    if (sha256(response.body) !== asset.sha256) {
+      fail(`wallet origin asset sha256 does not match its content-addressed path: ${asset.path}`);
+    }
+    const observedSri = createHash('sha384').update(response.body).digest('base64');
+    if (observedSri !== asset.sha384) {
+      fail(`wallet origin asset SRI sha384 mismatch: ${asset.path}`);
+    }
+    if (asset.extension === 'js') walletJavaScript = response.body;
+  }
+
+  if (!walletJavaScript
+      || !walletJavaScript.includes(Buffer.from('2.0.28'))
+      || !walletJavaScript.includes(Buffer.from('HD Wallet'))
+      || !walletJavaScript.includes(Buffer.from('Login'))
+      || !walletJavaScript.includes(Buffer.from('Account'))) {
+    fail('wallet origin JavaScript is not the reviewed hd-wallet-ui 2.0.28 login/account surface');
+  }
+  const wasmMatches = [...walletJavaScript.toString('latin1')
+    .matchAll(/wallet-origin\.([0-9a-f]{64})\.wasm/gu)];
+  const wasmDigests = [...new Set(wasmMatches.map((match) => match[1]))];
+  if (wasmDigests.length !== 1) {
+    fail(`wallet origin JavaScript must reference exactly one content-addressed WASM module; found ${wasmDigests.length}`);
+  }
+  const wasmPath = `/assets/wallet-origin.${wasmDigests[0]}.wasm`;
+  let wasm;
+  try {
+    wasm = await requestAbsolute(new URL(wasmPath, options.walletOrigin), options.timeoutMs);
+  } catch (error) {
+    fail(`wallet origin WASM is unavailable (${wasmPath}): ${error.message}`);
+  }
+  expectStatus(wasm, 200, `wallet origin WASM ${wasmPath}`);
+  if (!headerValue(wasm, 'content-type').toLowerCase().includes('application/wasm')) {
+    fail(`wallet origin WASM has the wrong content type: ${wasmPath}`);
+  }
+  if (sha256(wasm.body) !== wasmDigests[0]) {
+    fail(`wallet origin WASM sha256 does not match its content-addressed path: ${wasmPath}`);
+  }
+}
+
 async function verifyWalletDependencies(options, release) {
   for (const asset of reviewedSriAssets(release)) {
     const fetchUrl = new URL(asset.url.pathname + asset.url.search, options.staticOrigin);
@@ -181,19 +290,8 @@ async function verifyWalletDependencies(options, release) {
     }
   }
 
-  let wallet;
-  try {
-    wallet = await requestAbsolute(new URL('/', options.walletOrigin), options.timeoutMs);
-  } catch (error) {
-    fail(`wallet origin is unavailable (${options.walletOrigin}): ${error.message}`);
-  }
-  expectStatus(wallet, 200, 'wallet origin root');
-  if (!headerValue(wallet, 'content-type').toLowerCase().includes('text/html')
-      || !wallet.body.includes(Buffer.from('HD Wallet'))
-      || !wallet.body.includes(Buffer.from('Login'))) {
-    fail('wallet origin root is not the reviewed HD Wallet login surface');
-  }
-  process.stdout.write('Verified wallet origin and three exact hd-wallet-ui 2.0.28 SRI assets.\n');
+  await verifyWalletOrigin(options);
+  process.stdout.write('Verified the content-addressed hd-wallet-ui 2.0.28 wallet origin and three exact static SRI assets.\n');
 }
 
 function requestEndpoint({
