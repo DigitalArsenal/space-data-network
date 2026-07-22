@@ -7,6 +7,25 @@ The deployment config uses `host: sdn.spaceaware.io` on purpose. Keep the real
 address and key material in `~/.ssh/config`; do not commit machine-specific SSH
 paths or IP addresses here.
 
+The production edge terminates TLS for both `spaceaware.io` and
+`sdn.spaceaware.io` in one Nginx server. The hosts intentionally have different
+homepage backends: SpaceAware stays on the local Kubo gateway at port 5020,
+while the SDN homepage, callback, and other non-IPFS paths use the SDN HTTPS
+listener at port 18443. WebSocket upgrades continue to use the SDN listener at
+port 18080. `install-public-host-route.mjs` applies that split atomically,
+requires the reviewed pre-change shape, validates Nginx before reload, and
+restores the original config if validation or reload fails. Durable backups go
+under `/var/backups/spacedatanetwork/nginx`, outside Nginx's
+`sites-enabled/*` include. A retry validates and reloads even when the desired
+file is already installed, so an interruption between replacement and reload
+is recoverable. Installers serialize through
+`/run/sdn-public-host-route.lock`, recheck the config immediately around
+replacement and reload, and never roll back over a concurrent operator edit.
+The binary deploy invokes the installer only when the exact
+`deployment/spaceaware/servers.yaml` target is selected, after the required
+module-delivery sidecar is active and its local root, wallet callback, and
+provider endpoints pass direct probes.
+
 From the `space-data-network` repository root:
 
 ```bash
