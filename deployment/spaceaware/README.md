@@ -7,24 +7,55 @@ The deployment config uses `host: sdn.spaceaware.io` on purpose. Keep the real
 address and key material in `~/.ssh/config`; do not commit machine-specific SSH
 paths or IP addresses here.
 
-The production edge terminates TLS for both `spaceaware.io` and
-`sdn.spaceaware.io` in one Nginx server. The hosts intentionally have different
-homepage backends: SpaceAware stays on the local Kubo gateway at port 5020,
-while the SDN homepage, callback, and other non-IPFS paths use the SDN HTTPS
-listener at port 18443. WebSocket upgrades continue to use the SDN listener at
-port 18080. `install-public-host-route.mjs` applies that split atomically,
-requires the reviewed pre-change shape, validates Nginx before reload, and
-restores the original config if validation or reload fails. Durable backups go
-under `/var/backups/spacedatanetwork/nginx`, outside Nginx's
-`sites-enabled/*` include. A retry validates and reloads even when the desired
-file is already installed, so an interruption between replacement and reload
-is recoverable. Installers serialize through
-`/run/sdn-public-host-route.lock`, recheck the config immediately around
-replacement and reload, and never roll back over a concurrent operator edit.
-The binary deploy invokes the installer only when the exact
-`deployment/spaceaware/servers.yaml` target is selected, after the required
-module-delivery sidecar is active and its local root, wallet callback, and
-provider endpoints pass direct probes.
+The production edge terminates TLS for `spaceaware.io`, `www.spaceaware.io`,
+and `sdn.spaceaware.io` in Nginx. The first-stage
+`install-public-host-route.mjs` keeps SpaceAware on the local Kubo gateway at
+port 5020 while routing the SDN homepage, callback, and other non-IPFS paths to
+the SDN HTTPS listener at port 18443. SDN WebSocket upgrades use port 18080.
+
+After a signed SpaceAware external-proxy release has been installed, the
+separate `cutover-spaceaware` command splits the shared TLS server into two
+host-specific server blocks. SpaceAware and www then use the SpaceAware SDN
+HTTP service at `127.0.0.1:5010`, WebSocket upgrades on `/` and `/p2p/*` use
+`127.0.0.1:8080`, and terrain paths use `127.0.0.1:8081`. The SDN host remains
+on ports 18443 and 18080. The private `/asset-ipfs/` route and immutable CID
+cache behavior are retained on both hosts.
+
+Both installers apply their change atomically, require a reviewed source
+shape, validate Nginx before reload, and restore the original config if
+validation or reload fails. Durable backups go under
+`/var/backups/spacedatanetwork/nginx`, outside Nginx's `sites-enabled/*`
+include. A retry validates and reloads even when the desired file is already
+installed, so an interruption between replacement and reload is recoverable.
+The installers serialize through `/run/sdn-public-host-route.lock`, recheck the
+config immediately around replacement and reload, and never roll back over a
+concurrent operator edit.
+The final cutover is pinned to the reviewed production source digest and its
+deterministic canonical split digest; any manual byte drift fails closed for
+operator review instead of being partially transformed.
+
+The final cutover additionally runs
+`verify-spaceaware-public-host-route.mjs` after reload while the original file
+is still available for rollback. The verifier connects directly to
+`127.0.0.1:443` with the production SNI and Host values, bypassing external
+DNS/CDN state. It requires the public SpaceAware release identity and callback
+bytes to match `/opt/spaceaware/current/web`, validates callback method and
+security headers, parses the health and provider JSON contracts, checks both
+terrain prefixes, compares each public provider key and peer ID with its direct
+5010/18443 backend, and completes RFC 6455 handshakes through both public hosts.
+Any failure restores, validates, and reloads the pre-cutover Nginx file.
+
+The normal binary deploy invokes only the first-stage SDN installer, and only
+when the exact `deployment/spaceaware/servers.yaml` target is selected. The
+SpaceAware cutover is an explicit second command. It refuses to run unless all
+four SpaceAware units are loaded and active and direct loopback probes for
+ports 5010, 8080, and 8081 pass. The loopback gate requires the exact activated
+release identity, structured health/provider responses, and a valid WebSocket
+handshake. It also requires `wallet.spacedatanetwork.org` to serve the HD
+Wallet login surface and fetches all three activated 2.0.28 wallet assets from
+`static.spacedatanetwork.org`, accepting them only when their SHA-384 bytes
+match the SRI values in the activated callback and OrbPro HTML. Accepting any
+arbitrary HTTP status is not sufficient. It does not restart those services.
 
 From the `space-data-network` repository root:
 
@@ -35,6 +66,21 @@ From the `space-data-network` repository root:
   -b \
   deploy full
 ```
+
+Once the SpaceAware release is active in external-proxy mode, cut its public
+hosts over without redeploying or restarting either application:
+
+```bash
+./deployment/scripts/deploy.sh \
+  -c deployment/spaceaware/servers.yaml \
+  -u root \
+  cutover-spaceaware
+```
+
+Use `-n` first to confirm the exact target. The cutover command installs the
+reviewed readiness wrapper and route installer under
+`/opt/spacedatanetwork/deployment/spaceaware/`, together with the shared
+verifier; no route file is changed until all readiness checks pass.
 
 Before deploying from a development workstation, make sure the local desktop
 tool is running so the bundled desktop/Kubo integration is healthy in the same

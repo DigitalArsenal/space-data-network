@@ -13,6 +13,7 @@ import {
 } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { validateFinalConfig } from './install-spaceaware-public-host-route.mjs';
 
 const oldMap = `map $http_upgrade $sdn_upgrade_backend {
     default http://127.0.0.1:5020;
@@ -36,6 +37,8 @@ const routedLocations = [
   'location /',
 ];
 const lockHeldEnvironment = 'SDN_PUBLIC_HOST_ROUTE_LOCK_HELD';
+const spaceawareCutoverMarker = '# spaceaware-public-host-route: spaceaware-v1';
+const sdnCutoverMarker = '# spaceaware-public-host-route: sdn-v1';
 
 function fail(message) {
   throw new Error(message);
@@ -82,6 +85,16 @@ function locateBlock(text, header) {
   fail(`unexpected nginx config: unterminated ${header} block`);
 }
 
+function isManagedSpaceAwareCutover(text) {
+  const markerCount = count(text, spaceawareCutoverMarker) + count(text, sdnCutoverMarker);
+  if (markerCount === 0) return false;
+  if (markerCount !== 2) {
+    fail('unexpected nginx config: partial SpaceAware public-host cutover markers');
+  }
+  validateFinalConfig(text);
+  return true;
+}
+
 function routeLocation(text, header) {
   const block = locateBlock(text, header);
   const oldProxy = 'proxy_pass http://127.0.0.1:5020;';
@@ -97,6 +110,8 @@ function routeLocation(text, header) {
 }
 
 export function transformConfig(text) {
+  if (isManagedSpaceAwareCutover(text)) return text;
+
   if (count(text, 'server_name spaceaware.io www.spaceaware.io sdn.spaceaware.io;') !== 1) {
     fail('unexpected nginx config: shared SpaceAware/SDN server_name is missing or duplicated');
   }

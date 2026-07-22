@@ -28,6 +28,8 @@ Usage: $0 [OPTIONS] COMMAND [TYPE]
 
 Commands:
     deploy      Deploy to servers (optionally specify type: full, edge, registry)
+    cutover-spaceaware
+                Route spaceaware.io to an already healthy SpaceAware release
     status      Check status of all servers
     logs        Fetch logs from servers
     stop        Stop services on servers
@@ -218,9 +220,14 @@ configure_spaceaware_public_host_route() {
 
     ssh_cmd "$ip" "mkdir -p /opt/spacedatanetwork/deployment/spaceaware"
     scp_cmd "${DEPLOY_DIR}/spaceaware/install-public-host-route.mjs" "$ip" "/opt/spacedatanetwork/deployment/spaceaware/install-public-host-route.mjs"
+    scp_cmd "${DEPLOY_DIR}/spaceaware/install-spaceaware-public-host-route.mjs" "$ip" "/opt/spacedatanetwork/deployment/spaceaware/install-spaceaware-public-host-route.mjs"
     ssh_cmd "$ip" "set -euo pipefail
-chown root:root /opt/spacedatanetwork/deployment/spaceaware/install-public-host-route.mjs
-chmod 0755 /opt/spacedatanetwork/deployment/spaceaware/install-public-host-route.mjs
+chown root:root \
+    /opt/spacedatanetwork/deployment/spaceaware/install-public-host-route.mjs \
+    /opt/spacedatanetwork/deployment/spaceaware/install-spaceaware-public-host-route.mjs
+chmod 0755 \
+    /opt/spacedatanetwork/deployment/spaceaware/install-public-host-route.mjs \
+    /opt/spacedatanetwork/deployment/spaceaware/install-spaceaware-public-host-route.mjs
 systemctl cat space-data-network-module-delivery.service >/dev/null
 systemctl restart space-data-network-module-delivery.service
 systemctl is-active --quiet space-data-network-module-delivery.service
@@ -237,6 +244,30 @@ for attempt in \$(seq 1 30); do
 done
 test "\$sidecar_ready" = true
 node /opt/spacedatanetwork/deployment/spaceaware/install-public-host-route.mjs"
+}
+
+cutover_spaceaware_public_host_route() {
+    local ip=$1
+
+    if ! is_spaceaware_config; then
+        log_error "SpaceAware public-host cutover requires deployment/spaceaware/servers.yaml."
+        return 1
+    fi
+
+    ssh_cmd "$ip" "mkdir -p /opt/spacedatanetwork/deployment/spaceaware"
+    scp_cmd "${DEPLOY_DIR}/spaceaware/install-spaceaware-public-host-route.mjs" "$ip" "/opt/spacedatanetwork/deployment/spaceaware/install-spaceaware-public-host-route.mjs"
+    scp_cmd "${DEPLOY_DIR}/spaceaware/verify-spaceaware-public-host-route.mjs" "$ip" "/opt/spacedatanetwork/deployment/spaceaware/verify-spaceaware-public-host-route.mjs"
+    scp_cmd "${DEPLOY_DIR}/spaceaware/cutover-spaceaware-public-host-route.sh" "$ip" "/opt/spacedatanetwork/deployment/spaceaware/cutover-spaceaware-public-host-route.sh"
+    ssh_cmd "$ip" "set -euo pipefail
+chown root:root \
+    /opt/spacedatanetwork/deployment/spaceaware/install-spaceaware-public-host-route.mjs \
+    /opt/spacedatanetwork/deployment/spaceaware/verify-spaceaware-public-host-route.mjs \
+    /opt/spacedatanetwork/deployment/spaceaware/cutover-spaceaware-public-host-route.sh
+chmod 0755 \
+    /opt/spacedatanetwork/deployment/spaceaware/install-spaceaware-public-host-route.mjs \
+    /opt/spacedatanetwork/deployment/spaceaware/verify-spaceaware-public-host-route.mjs \
+    /opt/spacedatanetwork/deployment/spaceaware/cutover-spaceaware-public-host-route.sh
+/opt/spacedatanetwork/deployment/spaceaware/cutover-spaceaware-public-host-route.sh"
 }
 
 prepare_full_node_assets() {
@@ -590,6 +621,34 @@ do_deploy() {
     done
 }
 
+do_spaceaware_cutover() {
+    local endpoint
+    local found="false"
+
+    if ! is_spaceaware_config; then
+        log_error "SpaceAware public-host cutover requires deployment/spaceaware/servers.yaml."
+        return 1
+    fi
+
+    while IFS= read -r line; do
+        endpoint="$(parse_server_endpoint "$line")"
+        if [[ -z "$endpoint" ]]; then
+            continue
+        fi
+        found="true"
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log_info "[DRY-RUN] Would cut spaceaware.io over on $endpoint after loopback readiness checks"
+        else
+            cutover_spaceaware_public_host_route "$endpoint"
+        fi
+    done < <(sed -n "/^full_nodes:/,/^[a-z]/p" "$CONFIG_FILE")
+
+    if [[ "$found" != "true" ]]; then
+        log_error "No full node target found for SpaceAware public-host cutover."
+        return 1
+    fi
+}
+
 # Parse arguments
 SSH_KEY="${HOME}/.ssh/sdn_deploy_key"
 SSH_USER="root"
@@ -607,7 +666,7 @@ while [[ $# -gt 0 ]]; do
         -b|--binary) USE_DOCKER="false"; shift ;;
         -n|--dry-run) DRY_RUN="true"; shift ;;
         -h|--help) usage ;;
-        deploy|status|logs|stop|restart)
+        deploy|status|logs|stop|restart|cutover-spaceaware)
             COMMAND="$1"
             TYPE="${2:-}"
             shift
@@ -623,6 +682,13 @@ done
 case $COMMAND in
     deploy)
         do_deploy "$TYPE"
+        ;;
+    cutover-spaceaware)
+        if [[ -n "$TYPE" ]]; then
+            log_error "cutover-spaceaware does not accept a server type."
+            exit 1
+        fi
+        do_spaceaware_cutover
         ;;
     status)
         log_info "Checking server status..."
