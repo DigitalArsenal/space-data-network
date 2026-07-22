@@ -209,40 +209,34 @@ EOF"
     fi
 }
 
-configure_spaceaware_public_wss_proxy() {
+configure_spaceaware_public_host_route() {
     local ip=$1
-    local config_dir=$2
 
-    if [[ "$config_dir" != "/etc/space-data-network" ]]; then
+    if ! is_spaceaware_config; then
         return
     fi
 
-    ssh_cmd "$ip" "if [ -f /etc/nginx/sites-enabled/spaceaware ]; then
-python3 - <<'PY'
-from pathlib import Path
-
-path = Path('/etc/nginx/sites-enabled/spaceaware')
-text = path.read_text()
-next_text = text.replace(
-    'server_name spaceaware.io www.spaceaware.io;',
-    'server_name spaceaware.io www.spaceaware.io sdn.spaceaware.io;',
-)
-next_text = next_text.replace(
-    'proxy_pass http://127.0.0.1:18080;',
-    'proxy_pass http://127.0.0.1:8080;',
-)
-if next_text != text:
-    backup = path.with_suffix(path.suffix + '.pre-sdn-wss-route')
-    if not backup.exists():
-        backup.write_text(text)
-    path.write_text(next_text)
-PY
-nginx -t
-systemctl reload nginx
-fi
-if systemctl cat space-data-network-module-delivery.service >/dev/null 2>&1; then
-    systemctl restart space-data-network-module-delivery.service || true
-fi"
+    ssh_cmd "$ip" "mkdir -p /opt/spacedatanetwork/deployment/spaceaware"
+    scp_cmd "${DEPLOY_DIR}/spaceaware/install-public-host-route.mjs" "$ip" "/opt/spacedatanetwork/deployment/spaceaware/install-public-host-route.mjs"
+    ssh_cmd "$ip" "set -euo pipefail
+chown root:root /opt/spacedatanetwork/deployment/spaceaware/install-public-host-route.mjs
+chmod 0755 /opt/spacedatanetwork/deployment/spaceaware/install-public-host-route.mjs
+systemctl cat space-data-network-module-delivery.service >/dev/null
+systemctl restart space-data-network-module-delivery.service
+systemctl is-active --quiet space-data-network-module-delivery.service
+sidecar_ready=false
+for attempt in \$(seq 1 30); do
+    if curl -kfsS --connect-timeout 5 --max-time 15 https://127.0.0.1:18443/ | grep -F 'sdn-node-console-v1' >/dev/null \
+        && curl -kfsS --connect-timeout 5 --max-time 15 https://127.0.0.1:18443/ | grep -F '2.0.28' >/dev/null \
+        && curl -kfsS --connect-timeout 5 --max-time 15 https://127.0.0.1:18443/wallet/callback | grep -F 'Completing wallet connection' >/dev/null \
+        && curl -kfsS --connect-timeout 5 --max-time 15 https://127.0.0.1:18443/api/module-delivery/provider >/dev/null; then
+        sidecar_ready=true
+        break
+    fi
+    sleep 1
+done
+test "\$sidecar_ready" = true
+node /opt/spacedatanetwork/deployment/spaceaware/install-public-host-route.mjs"
 }
 
 prepare_full_node_assets() {
@@ -483,7 +477,7 @@ deploy_binary() {
 
         ssh_cmd "$ip" "chmod 755 ${config_dir} && chown root:root ${config_dir}/config.yaml && chmod 644 ${config_dir}/config.yaml && chmod +x /opt/spacedatanetwork/scripts/install-wasmedge.sh /opt/spacedatanetwork/scripts/go-with-wasmedge.sh && WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge /opt/spacedatanetwork/scripts/go-with-wasmedge.sh build -o /opt/spacedatanetwork/bin/spacedatanetwork ./cmd/spacedatanetwork && chown -R sdn:sdn /opt/spacedatanetwork /var/lib/spacedatanetwork${spaceaware_migration_hardening}"
         ssh_cmd "$ip" "systemctl daemon-reload && systemctl enable ${full_service} && systemctl restart ${full_service} && if [ '${full_service}' = 'space-data-network' ]; then systemctl disable --now spacedatanetwork >/dev/null 2>&1 || true; fi"
-        configure_spaceaware_public_wss_proxy "$ip" "$config_dir"
+        configure_spaceaware_public_host_route "$ip"
 
         log_success "Deployed full node bundle to $ip"
         return
