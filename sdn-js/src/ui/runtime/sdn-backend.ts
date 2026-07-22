@@ -410,55 +410,6 @@ export interface NodeAccessUserInput {
   signingPubKeyHex?: string;
 }
 
-export interface NodeIdentitySettings {
-  ttlMs: number | 'app';
-  flatbufferStoragePath?: string;
-  updatedAt?: string;
-  session?: NodeIdentityPersistedSession;
-}
-
-export interface FlatbufferStorageLocationSelection {
-  canceled: boolean;
-  path: string | null;
-}
-
-export interface NodeIdentityPersistedSession {
-  unlocked: boolean;
-  expiresAt?: string | null;
-  profile?: Record<string, unknown> | null;
-}
-
-export interface WalletNodeIdentityPayload {
-  peerId: string;
-  xpub?: string;
-  walletAccountId?: string;
-  walletAccountLabel?: string;
-  identityPublicKey?: string;
-  signingPublicKey: string;
-  encryptionPublicKey?: string;
-  signature?: string;
-  signaturePayload?: string;
-  signatureTimestamp?: number;
-}
-
-export interface WalletNodeIdentityApplyOptions {
-  replace?: boolean;
-}
-
-export interface NodeIdentityApplyResult {
-  status: 'updated' | 'unchanged' | 'mismatch';
-  profile?: Record<string, unknown>;
-  current?: Record<string, unknown>;
-  proposed?: Record<string, unknown>;
-}
-
-export interface WalletStorageSnapshot {
-  entries: Record<string, string>;
-  encryptedAtRest: boolean;
-  storage?: string;
-  updatedAt?: string | null;
-}
-
 export interface SdnBackend {
   readonly mode: SdnBackendMode;
   readonly channels: ChannelBackend;
@@ -468,17 +419,6 @@ export interface SdnBackend {
   getHealth(): Promise<BackendResult<SdnHealth>>;
   getNodeProfile(): Promise<BackendResult<Record<string, unknown>>>;
   saveNodeProfile(profile: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>>;
-  getNodeIdentitySettings(): Promise<BackendResult<NodeIdentitySettings>>;
-  saveNodeIdentitySettings(settings: NodeIdentitySettings): Promise<BackendResult<NodeIdentitySettings>>;
-  selectFlatbufferStorageLocation(currentPath?: string | null): Promise<BackendResult<FlatbufferStorageLocationSelection>>;
-  applyWalletNodeIdentity(payload: WalletNodeIdentityPayload, options?: WalletNodeIdentityApplyOptions): Promise<BackendResult<NodeIdentityApplyResult>>;
-  logoutNodeIdentity(): Promise<BackendResult<Record<string, unknown>>>;
-  getWalletStorage(): Promise<BackendResult<WalletStorageSnapshot>>;
-  saveWalletStorage(entries: Record<string, string | null>): Promise<BackendResult<WalletStorageSnapshot>>;
-  listWalletsAndEpms(): Promise<BackendResult<Array<Record<string, unknown>>>>;
-  beginClaimEpm(): Promise<BackendResult<Record<string, unknown>>>;
-  exportCore(): Promise<BackendResult<Record<string, unknown>>>;
-  importCore(core: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>>;
   listNodeAccessUsers(): Promise<BackendResult<NodeAccessUser[]>>;
   saveNodeAccessUser(user: NodeAccessUserInput): Promise<BackendResult<Record<string, unknown>>>;
   revokeNodeAdmin(xpub: string): Promise<BackendResult<Record<string, unknown>>>;

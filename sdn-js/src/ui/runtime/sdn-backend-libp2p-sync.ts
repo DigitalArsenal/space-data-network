@@ -31,8 +31,6 @@ import {
   type LocalObjectSummary,
   type NodeAccessUser,
   type NodeAccessUserInput,
-  type NodeIdentityApplyResult,
-  type NodeIdentitySettings,
   type NodeSummary,
   type ObservedSdnPeer,
   type RawDataQuery,
@@ -212,50 +210,6 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     },
     async saveNodeProfile(): Promise<BackendResult<Record<string, unknown>>> {
       return createCapabilityResult('saveNodeProfile', 'local-only', 'configured remote node profile edits are not available from the data explorer');
-    },
-    async getNodeIdentitySettings(): Promise<BackendResult<NodeIdentitySettings>> {
-      return createCapabilityResult('getNodeIdentitySettings', 'local-only', 'node identity unlock settings are local to the desktop app', { ttlMs: 3600000 });
-    },
-    async saveNodeIdentitySettings(settings: NodeIdentitySettings): Promise<BackendResult<NodeIdentitySettings>> {
-      return createCapabilityResult('saveNodeIdentitySettings', 'local-only', 'node identity unlock settings are local to the desktop app', settings);
-    },
-    async selectFlatbufferStorageLocation(): Promise<BackendResult<{ canceled: boolean; path: string | null }>> {
-      return createCapabilityResult('selectFlatbufferStorageLocation', 'local-only', 'FlatBuffer storage locations are selected on the local desktop app', {
-        canceled: true,
-        path: null,
-      });
-    },
-    async applyWalletNodeIdentity(): Promise<BackendResult<NodeIdentityApplyResult>> {
-      return createCapabilityResult('applyWalletNodeIdentity', 'local-only', 'wallet-backed node identity changes must run on the local desktop node');
-    },
-    async logoutNodeIdentity(): Promise<BackendResult<Record<string, unknown>>> {
-      return createAvailableResult('logoutNodeIdentity', { ok: true });
-    },
-    async getWalletStorage() {
-      return createCapabilityResult('getWalletStorage', 'local-only', 'wallet storage is local to the desktop app', {
-        entries: {},
-        encryptedAtRest: false,
-      });
-    },
-    async saveWalletStorage(entries: Record<string, string | null>) {
-      return createCapabilityResult('saveWalletStorage', 'local-only', 'wallet storage is local to the desktop app', {
-        entries: Object.fromEntries(
-          Object.entries(entries).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-        ),
-        encryptedAtRest: false,
-      });
-    },
-    async listWalletsAndEpms(): Promise<BackendResult<Array<Record<string, unknown>>>> {
-      return createCapabilityResult('listWalletsAndEpms', 'local-only', 'wallet and EPM management must run on a local node', []);
-    },
-    async beginClaimEpm(): Promise<BackendResult<Record<string, unknown>>> {
-      return createCapabilityResult('beginClaimEpm', 'local-only', 'EPM claim must run on a local node');
-    },
-    async exportCore(): Promise<BackendResult<Record<string, unknown>>> {
-      return createCapabilityResult('exportCore', 'local-only', 'Core export must run on a local node');
-    },
-    async importCore(): Promise<BackendResult<Record<string, unknown>>> {
-      return createCapabilityResult('importCore', 'local-only', 'Core import must run on a local node');
     },
     async listNodeAccessUsers(): Promise<BackendResult<NodeAccessUser[]>> {
       return createCapabilityResult('listNodeAccessUsers', 'permission-required', 'node access users require an authenticated server session', []);

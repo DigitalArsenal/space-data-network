@@ -400,23 +400,22 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).toContain('Binary EPM');
   });
 
-  it('adds a single root-only account control that opens the wallet UI account surface', async () => {
+  it('does not add a legacy wallet account control to the upstream root overlay', async () => {
     const source = await fs.readFile(
       path.join(uiSrcPath, 'overrides/App.js'),
       'utf8',
     );
 
-    expect(source).toContain('GlyphUser');
+    expect(source).not.toContain('GlyphUser');
     expect(source).not.toContain('StrokeUser');
     expect(source).not.toContain('GlyphPower');
     expect(source).not.toContain('StrokePower');
-    expect(source).toContain('/api/auth/logout');
-    expect(source).toContain('mountWalletUI');
-    expect(source).toContain('openAccount');
+    expect(source).not.toContain('/api/auth/logout');
+    expect(source).not.toContain('mountWalletUI');
+    expect(source).not.toContain('openAccount');
     expect(source).not.toContain('openLogin');
-    expect(source.indexOf("<Connected className='joyride-app-status' />")).toBeLessThan(
-      source.indexOf("<SessionControls className='ml1' />"),
-    );
+    expect(source).not.toContain('SessionControls');
+    expect(source).toContain("<Connected className='joyride-app-status' />");
   });
 
   it('uses SDN node info for the root status node identity instead of upstream identity context', async () => {
