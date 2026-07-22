@@ -1420,7 +1420,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				if cfgDisplayPath == "" {
 					cfgDisplayPath = config.DefaultPath()
 				}
-				authHandler = auth.NewHandler(userStore, sessionStore, sessionTTL, cfg.Admin.WalletUIPath, cfgDisplayPath)
+				// The generic in-process wallet UI is a development-only legacy
+				// surface. Shipped conjunction mode uses the isolated typed wallet
+				// presenter and must not expose the legacy asset path or advertise it
+				// through /api/auth/status.
+				legacyWalletUIPath := legacyWalletUIPathForMode(frontendUIMode, cfg.Admin.WalletUIPath)
+				authHandler = auth.NewHandler(userStore, sessionStore, sessionTTL, legacyWalletUIPath, cfgDisplayPath)
 				authHandler.SetTLSManager(tlsManager)
 				if epmSvc := n.EPMService(); epmSvc != nil {
 					if att := epmSvc.GetIdentityAttestation(); att != nil {
@@ -1433,12 +1438,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				//     surface) owns GET /login; the legacy wallet-gated page
 				//     moves to /login/legacy for wallet creation / first-admin
 				//     bootstrap.
-				//   - conjunction (SHIPPED default, C2): the SpaceAware login
-				//     screen is descoped, so /login reverts to the legacy
-				//     wallet-gated page (external login UI off). That page stays
-				//     mounted as the wallet-CREATION / first-admin surface for
-				//     operators; the conjunction app itself is anonymous and
-				//     never authenticates.
+				//   - conjunction (SHIPPED default, C2): neither legacy login route
+				//     is registered. The visible wallet presenter is isolated from
+				//     this origin and the read-only conjunction shell owns the UI.
 				authHandler.SetExternalLoginUI(frontendUIMode == uiModeSpaceAware)
 				authHandler.RegisterRoutes(adminMux)
 				n.SetModulePublishAuthorizer(func(xpub string) (license.ModulePublishPrincipal, error) {
@@ -1455,7 +1457,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						Admin:            user.TrustLevel >= peers.Admin,
 					}, nil
 				})
-				log.Infof("HD wallet authentication enabled at %s://%s/login", adminScheme, adminAddr)
+				if frontendUIMode == uiModeSpaceAware {
+					log.Infof("HD wallet authentication enabled at %s://%s/login", adminScheme, adminAddr)
+				} else {
+					log.Infof("Authentication session APIs enabled; legacy wallet login UI disabled in conjunction mode")
+				}
 
 				if n.DirectoryService() != nil {
 					adminDirectoryHandler := directory.NewAdminHTTPHandler(n.DirectoryService())
@@ -1487,21 +1493,20 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					log.Infof("Pinning policy API available at %s://%s/api/v1/admin/pinning", adminScheme, adminAddr)
 				}
 
-				// Serve wallet-ui static files if configured
-				if walletUIPath := strings.TrimSpace(cfg.Admin.WalletUIPath); walletUIPath != "" {
-					serveRoot := auth.WalletUIStaticRoot(walletUIPath)
-					if serveRoot == "" {
-						serveRoot = walletUIPath
-					}
-					adminMux.Handle("/wallet-ui/", http.StripPrefix("/wallet-ui/", http.FileServer(http.Dir(serveRoot))))
+				// Serve wallet-ui static files only for the explicitly selected
+				// SpaceAware development surface. Production conjunction mode must
+				// leave /wallet-ui unregistered even when old config still names it.
+				if serveRoot, mounted := registerLegacyWalletStaticFiles(adminMux, frontendUIMode, legacyWalletUIPath); mounted {
 					log.Infof("Wallet UI served at %s://%s/wallet-ui/ from %s", adminScheme, adminAddr, serveRoot)
 				}
 
-				// Discover wallet-ui assets for the login page and the legacy admin UI fallback.
-				auth.DiscoverWalletAssets(cfg.Admin.WalletUIPath)
-				if legacyAdminUI != nil {
-					if jsFile, cssFile := auth.WalletAssets(); jsFile != "" {
-						legacyAdminUI.SetWalletAssets(jsFile, cssFile)
+				if frontendUIMode == uiModeSpaceAware {
+					// Discover legacy assets only in the same development-only mode.
+					auth.DiscoverWalletAssets(legacyWalletUIPath)
+					if legacyAdminUI != nil {
+						if jsFile, cssFile := auth.WalletAssets(); jsFile != "" {
+							legacyAdminUI.SetWalletAssets(jsFile, cssFile)
+						}
 					}
 				}
 			}
@@ -1757,7 +1762,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			}
 			go func() {
 				if cfg.Admin.RequireAuth && authHandler != nil {
-					log.Infof("Admin interface at %s://%s/admin (requires HD wallet login at /login)", adminScheme, adminAddr)
+					if frontendUIMode == uiModeConjunction {
+						log.Infof("Admin interface at %s://%s/admin (requires external wallet authorization from the SDN UI at /)", adminScheme, adminAddr)
+					} else {
+						log.Infof("Admin interface at %s://%s/admin (requires HD wallet login at /login)", adminScheme, adminAddr)
+					}
 				} else {
 					log.Infof("Admin interface available at %s://%s/admin", adminScheme, adminAddr)
 				}
@@ -2624,6 +2633,15 @@ func adminSecurityMiddleware(next http.Handler, tlsMode string, publicAPIRequest
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
+		}
+
+		// The wallet callback is an exact, read-only static route. Let its
+		// handler own method rejection so every non-GET/HEAD request receives
+		// the callback-specific 405, Allow, and cache-isolation headers even
+		// when a stale admin session cookie is present.
+		if isWalletCallbackPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
 		}
 
 		// CSRF protection: for state-changing requests using cookie auth,

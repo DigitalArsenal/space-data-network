@@ -43,17 +43,17 @@ import (
 //go:embed embedded/conjunction_app.html
 var conjunctionAppHTML []byte
 
+//go:embed embedded/wallet_callback.html
+var walletCallbackHTML []byte
+
 // conjunctionCSP is the Content-Security-Policy served with the conjunction UI
 // (C3). The conjunction artifact is a single self-contained document — all
-// JS/CSS inline, all fonts inlined as data: URIs, and its only network calls
-// are same-origin GETs to /api/v1/* — so this policy enforces that
-// fully-self-hosted posture at the browser layer, complementing the build-time
-// forbidden-host audit and the runtime zero-external-request verification.
+// JS/CSS inline and all fonts inlined as data: URIs. Its network calls are
+// same-origin GETs to /api/v1/* plus the one reviewed wallet origin used by the
+// typed public presenter.
 //
-//   - connect-src 'self' is the load-bearing directive: it blocks any
-//     exfiltration / third-party beacon the single-file bundle would otherwise
-//     be able to make. The app only fetches /api/v1/{peers,channels,stats} +
-//     /api/v1/data/health, all same-origin.
+//   - connect-src permits self and exactly https://wallet.spacedatanetwork.org.
+//     No wildcard, alternate host, websocket, or blob destination is allowed.
 //   - default/img/font/object/base-uri lock every other fetch to self (+ data:
 //     for the inlined woff2 fonts and any inline images).
 //   - frame-ancestors 'none' + form-action 'none' add clickjacking / form-
@@ -61,9 +61,8 @@ var conjunctionAppHTML []byte
 //   - script-src/style-src carry 'unsafe-inline' because the packaging hard
 //     rule inlines the single module script (plus the serve-time __SDN_CONFIG__
 //     script) and Svelte emits inline style="" attributes throughout; a
-//     nonce/hash pass over the embedded artifact is the noted future hardening,
-//     but 'unsafe-inline' here does NOT weaken the exfiltration protection that
-//     connect-src provides. No wasm ships (C1), so no 'wasm-unsafe-eval'; no
+//     nonce/hash pass over the embedded artifact is the noted future hardening.
+//     No wasm ships (C1), so no 'wasm-unsafe-eval'; no
 //     workers/blob:, so no worker-src.
 const conjunctionCSP = "default-src 'self'; " +
 	"base-uri 'none'; " +
@@ -74,7 +73,22 @@ const conjunctionCSP = "default-src 'self'; " +
 	"style-src 'self' 'unsafe-inline'; " +
 	"img-src 'self' data:; " +
 	"font-src 'self' data:; " +
-	"connect-src 'self'"
+	"connect-src 'self' https://wallet.spacedatanetwork.org"
+
+// walletCallbackCSP isolates the generated callback document from every
+// application capability except loading its immutable helper from the reviewed
+// static asset origin. The helper completes the opener handshake using browser
+// primitives; it does not need a connect-src destination.
+const walletCallbackCSP = "default-src 'none'; " +
+	"script-src https://static.spacedatanetwork.org; " +
+	"style-src 'none'; " +
+	"connect-src 'none'; " +
+	"img-src 'none'; " +
+	"font-src 'none'; " +
+	"object-src 'none'; " +
+	"base-uri 'none'; " +
+	"frame-ancestors 'none'; " +
+	"form-action 'none'"
 
 // appsLauncherLink is a serve-time-injected, fully self-contained affordance
 // that surfaces the /apps/ launcher on the served conjunction UI (A2.10 item 3:
@@ -150,6 +164,31 @@ func makeUISurfaceHandler(frontendHandler http.Handler, authHandler *auth.Handle
 	return makeFrontendSurfaceHandler(frontendHandler, authHandler, requireAuth)
 }
 
+// legacyWalletUIPathForMode strips legacy wallet configuration from the
+// shipped conjunction server. This value is passed into auth.Handler as well
+// as the optional static mount, so /api/auth/status and routing cannot disagree.
+func legacyWalletUIPathForMode(mode uiMode, configuredPath string) string {
+	if mode != uiModeSpaceAware {
+		return ""
+	}
+	return strings.TrimSpace(configuredPath)
+}
+
+// registerLegacyWalletStaticFiles mounts the generic wallet bundle only for
+// the explicitly selected SpaceAware development mode.
+func registerLegacyWalletStaticFiles(mux *http.ServeMux, mode uiMode, configuredPath string) (string, bool) {
+	walletUIPath := legacyWalletUIPathForMode(mode, configuredPath)
+	if walletUIPath == "" {
+		return "", false
+	}
+	serveRoot := auth.WalletUIStaticRoot(walletUIPath)
+	if serveRoot == "" {
+		serveRoot = walletUIPath
+	}
+	mux.Handle("/wallet-ui/", http.StripPrefix("/wallet-ui/", http.FileServer(http.Dir(serveRoot))))
+	return serveRoot, true
+}
+
 // makeConjunctionSurfaceHandler serves the conjunction-only ship (C2). The
 // conjunction app is THE UI at the primary route "/"; deep links use the
 // ?group= query string (preserved on "/"), so no path-based routes are needed.
@@ -159,6 +198,10 @@ func makeUISurfaceHandler(frontendHandler http.Handler, authHandler *auth.Handle
 // falls through to the disk frontend handler and its own 404s.
 func makeConjunctionSurfaceHandler(frontendHandler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isWalletCallbackPath(r.URL.Path) {
+			serveWalletCallback(w, r)
+			return
+		}
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 			serveConjunctionUI(w, r)
 			return
@@ -169,6 +212,36 @@ func makeConjunctionSurfaceHandler(frontendHandler http.Handler) http.Handler {
 		}
 		frontendHandler.ServeHTTP(w, r)
 	})
+}
+
+func isWalletCallbackPath(requestPath string) bool {
+	return requestPath == "/wallet/callback" ||
+		requestPath == "/wallet/callback/" ||
+		requestPath == "/wallet-callback.html"
+}
+
+// serveWalletCallback serves the pinner-generated callback document without
+// mutation. It is deliberately separate from runtime-config injection and all
+// SPA fallbacks: the wallet helper validates this callback URI exactly.
+func serveWalletCallback(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", walletCallbackCSP)
+	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+	w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
+
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(walletCallbackHTML)
+	}
 }
 
 // serveConjunctionUI serves the embedded single-file conjunction artifact from

@@ -192,18 +192,26 @@ func makeAppsHandler() (http.Handler, error) {
 	}), nil
 }
 
-// setAppSurfaceHeaders applies the conjunction-grade cross-origin-isolation +
-// CSP + no-store header set shared by the launcher and every app page. It reuses
-// conjunctionCSP (conjunction_ui.go) as the single self-hosting CSP source of
-// truth: default/connect/img/font/object/base-uri locked to self (+ data: for
-// inlined fonts/images), the exfiltration-blocking connect-src 'self', and
-// 'unsafe-inline' script/style for the single-file inline bundles. If a future
-// app needs a wider policy (workers/blob:/wasm), give it a per-app CSP rather
-// than widening this shared one.
+// appsCSP preserves the self-hosted policy for launcher/supplemental app pages.
+// The conjunction shell has one additional wallet connection destination, so
+// sharing its policy here would unnecessarily widen unrelated app surfaces.
+const appsCSP = "default-src 'self'; " +
+	"base-uri 'none'; " +
+	"object-src 'none'; " +
+	"frame-ancestors 'none'; " +
+	"form-action 'none'; " +
+	"script-src 'self' 'unsafe-inline'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; " +
+	"font-src 'self' data:; " +
+	"connect-src 'self'"
+
+// setAppSurfaceHeaders applies the cross-origin-isolation, isolated app CSP,
+// and no-store header set shared by the launcher and every supplemental page.
 func setAppSurfaceHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 	w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
-	w.Header().Set("Content-Security-Policy", conjunctionCSP)
+	w.Header().Set("Content-Security-Policy", appsCSP)
 	w.Header().Set("Cache-Control", "no-store")
 }
 

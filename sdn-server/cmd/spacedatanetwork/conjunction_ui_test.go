@@ -1,10 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/auth"
 )
 
 // TestResolveUIModeDefaultsToConjunction locks in the SHIPPED default: with
@@ -111,10 +117,10 @@ func TestServeConjunctionUI(t *testing.T) {
 
 // TestConjunctionCSP asserts the Content-Security-Policy served with the
 // conjunction UI (C3) is present and encodes the self-hosting posture: the
-// exfiltration-blocking connect-src 'self', locked default/object/base-uri,
+// narrowly scoped self + wallet connect-src, locked default/object/base-uri,
 // clickjacking/form protections, and the inline-allowing script/style +
 // data:-font directives the single-file build requires. A regression that
-// loosens connect-src to allow a third-party host, or drops the header, fails
+// loosens connect-src beyond the reviewed wallet host, or drops the header, fails
 // here.
 func TestConjunctionCSP(t *testing.T) {
 	rec := httptest.NewRecorder()
@@ -125,7 +131,7 @@ func TestConjunctionCSP(t *testing.T) {
 	}
 	for _, directive := range []string{
 		"default-src 'self'",
-		"connect-src 'self'",
+		"connect-src 'self' https://wallet.spacedatanetwork.org",
 		"object-src 'none'",
 		"base-uri 'none'",
 		"frame-ancestors 'none'",
@@ -139,13 +145,103 @@ func TestConjunctionCSP(t *testing.T) {
 			t.Errorf("CSP missing directive %q; got %q", directive, csp)
 		}
 	}
-	// connect-src must NOT be widened to any external host (exfiltration guard).
-	if strings.Contains(csp, "connect-src 'self' http") || strings.Contains(csp, "connect-src *") {
-		t.Errorf("CSP connect-src is widened beyond 'self': %q", csp)
+	// The typed public client talks to exactly one external origin. No wildcard,
+	// alternate wallet host, or additional network scheme is permitted.
+	if strings.Contains(csp, "connect-src *") || strings.Contains(csp, " wss:") || strings.Contains(csp, " blob:") {
+		t.Errorf("CSP connect-src is widened beyond the reviewed wallet origin: %q", csp)
 	}
 	// No wasm ships with the conjunction UI (C1), so no eval escape hatch.
 	if strings.Contains(csp, "unsafe-eval") {
 		t.Errorf("CSP unexpectedly allows unsafe-eval: %q", csp)
+	}
+}
+
+// TestWalletCallbackIsExactAndNoStore locks the generated callback document to
+// its isolated route. Both accepted spellings are served before the SPA
+// fallback, GET returns the exact embedded bytes, and HEAD returns no body.
+func TestWalletCallbackIsExactAndNoStore(t *testing.T) {
+	if len(walletCallbackHTML) == 0 {
+		t.Fatal("embedded wallet callback is empty")
+	}
+
+	surface := makeUISurfaceHandler(http.NotFoundHandler(), nil, true, uiModeConjunction)
+	// Exercise the same outer security middleware used by the admin server. The
+	// callback-specific policy must override its generic referrer policy.
+	handler := adminSecurityMiddleware(surface, "", func(string, string) bool { return false })
+
+	for _, path := range []string{"/wallet/callback", "/wallet/callback/", "/wallet-callback.html"} {
+		t.Run(path, func(t *testing.T) {
+			for _, method := range []string{http.MethodGet, http.MethodHead} {
+				rec := httptest.NewRecorder()
+				handler.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("%s %s: status = %d, want 200", method, path, rec.Code)
+				}
+				assertWalletCallbackHeaders(t, rec.Header())
+				if method == http.MethodHead {
+					if rec.Body.Len() != 0 {
+						t.Fatalf("HEAD body length = %d, want 0", rec.Body.Len())
+					}
+					return
+				}
+				if !bytes.Equal(rec.Body.Bytes(), walletCallbackHTML) {
+					t.Fatal("GET body differs from exact embedded wallet callback bytes")
+				}
+				if strings.Contains(rec.Body.String(), "conj-root") || strings.Contains(rec.Body.String(), "window.__SDN_CONFIG__") {
+					t.Fatal("wallet callback received application-shell bytes")
+				}
+			}
+		})
+	}
+}
+
+func TestWalletCallbackRejectsOtherMethodsBeforeFallback(t *testing.T) {
+	var fellThrough bool
+	surface := makeUISurfaceHandler(frontendSentinel(&fellThrough), nil, true, uiModeConjunction)
+	handler := adminSecurityMiddleware(surface, "", func(string, string) bool { return false })
+
+	for _, path := range []string{"/wallet/callback", "/wallet/callback/", "/wallet-callback.html"} {
+		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions} {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(method, path, nil)
+			// Even a stale authenticated cookie and hostile Origin must reach the
+			// callback's method guard, not be turned into a generic CSRF response.
+			req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: "stale"})
+			req.Header.Set("Origin", "https://hostile.example")
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Errorf("%s %s: status = %d, want 405", method, path, rec.Code)
+			}
+			if got := rec.Header().Get("Allow"); got != "GET, HEAD" {
+				t.Errorf("%s %s: Allow = %q, want GET, HEAD", method, path, got)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("%s %s: Cache-Control = %q, want no-store", method, path, got)
+			}
+			if fellThrough {
+				t.Errorf("%s %s reached the frontend fallback", method, path)
+				fellThrough = false
+			}
+			if strings.Contains(rec.Body.String(), "disk-frontend") || strings.Contains(rec.Body.String(), "conj-root") {
+				t.Errorf("%s %s received fallback application bytes", method, path)
+			}
+		}
+	}
+}
+
+func assertWalletCallbackHeaders(t *testing.T, header http.Header) {
+	t.Helper()
+	wants := map[string]string{
+		"Cache-Control":           "no-store",
+		"Content-Type":            "text/html; charset=utf-8",
+		"Content-Security-Policy": walletCallbackCSP,
+		"Referrer-Policy":         "no-referrer",
+		"X-Content-Type-Options":  "nosniff",
+	}
+	for name, want := range wants {
+		if got := header.Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
 	}
 }
 
@@ -237,6 +333,59 @@ func TestFrontendSurfaceHandlerConjunctionMode(t *testing.T) {
 		}
 		if body := rec.Body.String(); body != "disk-frontend" {
 			t.Errorf("%s: body = %q, want disk-frontend passthrough", p, body)
+		}
+	}
+}
+
+func TestConjunctionProductionRoutesExcludeLegacyWalletUIAndConfiguration(t *testing.T) {
+	walletRoot := t.TempDir()
+	legacyBytes := []byte("LEGACY_GENERIC_WALLET_SECRET_RUNTIME")
+	if err := os.WriteFile(filepath.Join(walletRoot, "legacy-wallet.js"), legacyBytes, 0o644); err != nil {
+		t.Fatalf("write legacy fixture: %v", err)
+	}
+
+	userStore, err := auth.NewUserStore(filepath.Join(t.TempDir(), "auth.db"), nil)
+	if err != nil {
+		t.Fatalf("create user store: %v", err)
+	}
+	t.Cleanup(func() { _ = userStore.Close() })
+
+	mux := http.NewServeMux()
+	productionWalletPath := legacyWalletUIPathForMode(uiModeConjunction, walletRoot)
+	if productionWalletPath != "" {
+		t.Fatalf("conjunction wallet UI path = %q, want empty", productionWalletPath)
+	}
+	authHandler := auth.NewHandler(userStore, nil, time.Hour, productionWalletPath, "/config.yaml")
+	authHandler.SetExternalLoginUI(false)
+	authHandler.RegisterRoutes(mux)
+	if serveRoot, mounted := registerLegacyWalletStaticFiles(mux, uiModeConjunction, walletRoot); mounted || serveRoot != "" {
+		t.Fatalf("conjunction legacy static mount = (%q, %v), want disabled", serveRoot, mounted)
+	}
+	mux.Handle("/", makeConjunctionSurfaceHandler(http.NotFoundHandler()))
+
+	for _, requestPath := range []string{"/login", "/login/legacy", "/wallet-ui/legacy-wallet.js"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, requestPath, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s status = %d, want 404", requestPath, rec.Code)
+		}
+		if bytes.Contains(rec.Body.Bytes(), legacyBytes) || strings.Contains(rec.Body.String(), "hd-wallet") {
+			t.Errorf("GET %s exposed legacy wallet bytes", requestPath)
+		}
+	}
+
+	status := httptest.NewRecorder()
+	mux.ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/api/auth/status", nil))
+	if status.Code != http.StatusOK {
+		t.Fatalf("GET /api/auth/status status = %d, want 200", status.Code)
+	}
+	for _, want := range []string{
+		`"wallet_ui_configured":false`,
+		`"wallet_js_file":""`,
+		`"wallet_css_file":""`,
+	} {
+		if !strings.Contains(status.Body.String(), want) {
+			t.Errorf("auth status missing %s: %s", want, status.Body.String())
 		}
 	}
 }
