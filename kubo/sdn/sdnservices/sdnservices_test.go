@@ -162,7 +162,7 @@ func TestSDNRuntimeStackWired(t *testing.T) {
 	defer cancel()
 
 	const (
-		source   = "celestrak-gp"
+		source   = "provider-a"
 		std      = "OMM"
 		modHash  = "00aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd" // stand-in module content hash
 		fallback = "sdn-node"

@@ -7,10 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MBL"
+	plg "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PLG"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/ipfs/kubo/sdn/license"
 	"github.com/ipfs/kubo/sdn/testsupport"
@@ -121,6 +123,257 @@ func buildSignedModuleArtifact(t *testing.T, portable []byte, signer ed25519.Pri
 	return appendPublicationTrailer(portable, recBytes)
 }
 
+type testBundleMember struct {
+	ID          string
+	Role        MBL.ModuleBundleEntryRole
+	SectionName string
+	Encoding    MBL.ModulePayloadEncoding
+	MediaType   string
+	Flags       uint32
+	Payload     []byte
+	Description string
+}
+
+func bundleMemberStatement(member testBundleMember) map[string]interface{} {
+	sum := sha256.Sum256(member.Payload)
+	return map[string]interface{}{
+		"entryId":         member.ID,
+		"role":            int(member.Role),
+		"sectionName":     member.SectionName,
+		"typeRef":         nil,
+		"payloadEncoding": int(member.Encoding),
+		"mediaType":       member.MediaType,
+		"flags":           int(member.Flags),
+		"sha256Hex":       hex.EncodeToString(sum[:]),
+		"payloadLength":   len(member.Payload),
+		"description":     member.Description,
+	}
+}
+
+func sdkBundleSignatureDigest(t *testing.T, portable []byte, members []testBundleMember) []byte {
+	t.Helper()
+	sorted := append([]testBundleMember(nil), members...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+	entries := make([]map[string]interface{}, 0, len(sorted))
+	for _, member := range sorted {
+		entries = append(entries, bundleMemberStatement(member))
+	}
+	moduleHash := sha256.Sum256(portable)
+	manifestHashHex := ""
+	for _, member := range members {
+		if member.ID == "manifest" || member.Role == MBL.ModuleBundleEntryRoleMANIFEST {
+			sum := sha256.Sum256(member.Payload)
+			manifestHashHex = hex.EncodeToString(sum[:])
+			break
+		}
+	}
+	statement := map[string]interface{}{
+		"version":       1,
+		"bundleVersion": 1,
+		"moduleFormat":  "space-data-module",
+		"canonicalization": map[string]interface{}{
+			"version":                     1,
+			"strippedCustomSectionPrefix": "sds.",
+			"bundleSectionName":           "rec.mbl",
+			"hashAlgorithm":               "sha256",
+		},
+		"canonicalModuleHashHex": hex.EncodeToString(moduleHash[:]),
+		"manifestHashHex":        manifestHashHex,
+		"manifestExportSymbol":   "plugin_get_manifest_flatbuffer",
+		"manifestSizeSymbol":     "plugin_get_manifest_flatbuffer_size",
+		"entries":                entries,
+	}
+	canonical, err := json.Marshal(statement)
+	if err != nil {
+		t.Fatalf("marshal SDK bundle statement: %v", err)
+	}
+	digest := sha256.Sum256(canonical)
+	return digest[:]
+}
+
+func buildSDKBundleScopedArtifact(t *testing.T, portable []byte, members []testBundleMember, signer ed25519.PrivateKey, preservedSignature []byte) ([]byte, []byte) {
+	t.Helper()
+	signatureJSON := append([]byte(nil), preservedSignature...)
+	if signatureJSON == nil {
+		pub := signer.Public().(ed25519.PublicKey)
+		digest := sdkBundleSignatureDigest(t, portable, members)
+		payload := moduleSignaturePayload{
+			Algorithm:           moduleSignatureAlgorithm,
+			KeyID:               "sdk-bundle-test",
+			PublicKeyHex:        hex.EncodeToString(pub),
+			SignatureHex:        hex.EncodeToString(ed25519.Sign(signer, digest)),
+			SignedHashHex:       hex.EncodeToString(digest),
+			SignedHashAlgorithm: "sha256-sdn-module-bundle-v1",
+		}
+		var err error
+		signatureJSON, err = json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal bundle signature: %v", err)
+		}
+	}
+
+	b := flatbuffers.NewBuilder(2048)
+	all := append([]testBundleMember(nil), members...)
+	all = append(all, testBundleMember{
+		ID:          moduleSignatureEntryID,
+		Role:        MBL.ModuleBundleEntryRoleSIGNATURE,
+		SectionName: moduleSignatureSectionName,
+		Encoding:    MBL.ModulePayloadEncodingJSON_UTF8,
+		MediaType:   "application/json",
+		Payload:     signatureJSON,
+	})
+	entryOffsets := make([]flatbuffers.UOffsetT, 0, len(all))
+	for _, member := range all {
+		id := b.CreateString(member.ID)
+		section := b.CreateString(member.SectionName)
+		mediaType := b.CreateString(member.MediaType)
+		description := b.CreateString(member.Description)
+		payload := b.CreateByteVector(member.Payload)
+		hash := sha256.Sum256(member.Payload)
+		hashOffset := b.CreateByteVector(hash[:])
+		MBL.ModuleBundleEntryStart(b)
+		MBL.ModuleBundleEntryAddEntryId(b, id)
+		MBL.ModuleBundleEntryAddRole(b, member.Role)
+		MBL.ModuleBundleEntryAddSectionName(b, section)
+		MBL.ModuleBundleEntryAddPayloadEncoding(b, member.Encoding)
+		MBL.ModuleBundleEntryAddMediaType(b, mediaType)
+		MBL.ModuleBundleEntryAddFlags(b, member.Flags)
+		MBL.ModuleBundleEntryAddSha256(b, hashOffset)
+		MBL.ModuleBundleEntryAddPayload(b, payload)
+		MBL.ModuleBundleEntryAddDescription(b, description)
+		entryOffsets = append(entryOffsets, MBL.ModuleBundleEntryEnd(b))
+	}
+
+	MBL.MBLStartEntriesVector(b, len(entryOffsets))
+	for i := len(entryOffsets) - 1; i >= 0; i-- {
+		b.PrependUOffsetT(entryOffsets[i])
+	}
+	entriesOffset := b.EndVector(len(entryOffsets))
+	prefix := b.CreateString("sds.")
+	section := b.CreateString("rec.mbl")
+	hashAlgorithm := b.CreateString("sha256")
+	MBL.CanonicalizationRuleStart(b)
+	MBL.CanonicalizationRuleAddVersion(b, 1)
+	MBL.CanonicalizationRuleAddStrippedCustomSectionPrefix(b, prefix)
+	MBL.CanonicalizationRuleAddBundleSectionName(b, section)
+	MBL.CanonicalizationRuleAddHashAlgorithm(b, hashAlgorithm)
+	canonicalization := MBL.CanonicalizationRuleEnd(b)
+	moduleHash := sha256.Sum256(portable)
+	moduleHashOffset := b.CreateByteVector(moduleHash[:])
+	var manifestHash []byte
+	for _, member := range members {
+		if member.ID == "manifest" || member.Role == MBL.ModuleBundleEntryRoleMANIFEST {
+			sum := sha256.Sum256(member.Payload)
+			manifestHash = sum[:]
+			break
+		}
+	}
+	manifestHashOffset := b.CreateByteVector(manifestHash)
+	format := b.CreateString("space-data-module")
+	manifestExport := b.CreateString("plugin_get_manifest_flatbuffer")
+	manifestSize := b.CreateString("plugin_get_manifest_flatbuffer_size")
+	MBL.MBLStart(b)
+	MBL.MBLAddBundleVersion(b, 1)
+	MBL.MBLAddModuleFormat(b, format)
+	MBL.MBLAddCanonicalization(b, canonicalization)
+	MBL.MBLAddCanonicalModuleHash(b, moduleHashOffset)
+	MBL.MBLAddManifestHash(b, manifestHashOffset)
+	MBL.MBLAddManifestExportSymbol(b, manifestExport)
+	MBL.MBLAddManifestSizeSymbol(b, manifestSize)
+	MBL.MBLAddEntries(b, entriesOffset)
+	mblOffset := MBL.MBLEnd(b)
+
+	standard := b.CreateString("MBL")
+	b.StartObject(3)
+	b.PrependUOffsetTSlot(2, standard, 0)
+	b.PrependUOffsetTSlot(1, mblOffset, 0)
+	b.PrependByteSlot(0, recRecordTypeMBL, 0)
+	recordOffset := b.EndObject()
+	b.StartVector(4, 1, 4)
+	b.PrependUOffsetT(recordOffset)
+	recordsOffset := b.EndVector(1)
+	version := b.CreateString("1.0.0")
+	b.StartObject(2)
+	b.PrependUOffsetTSlot(1, recordsOffset, 0)
+	b.PrependUOffsetTSlot(0, version, 0)
+	recOffset := b.EndObject()
+	b.FinishWithFileIdentifier(recOffset, []byte(publicationTrailerMagic))
+	return appendPublicationTrailer(portable, b.FinishedBytes()), signatureJSON
+}
+
+func buildCapabilityPLGManifest(t *testing.T, pluginID, capability string) []byte {
+	t.Helper()
+	b := flatbuffers.NewBuilder(256)
+	pluginIDOffset := b.CreateString(pluginID)
+	nameOffset := b.CreateString(pluginID)
+	versionOffset := b.CreateString("1.0.0")
+	capabilityOffset := b.CreateString(capability)
+	plg.PluginCapabilityStart(b)
+	plg.PluginCapabilityAddNAME(b, capabilityOffset)
+	plg.PluginCapabilityAddREQUIRED(b, true)
+	capabilityRecord := plg.PluginCapabilityEnd(b)
+	plg.PLGStartCAPABILITIESVector(b, 1)
+	b.PrependUOffsetT(capabilityRecord)
+	capabilities := b.EndVector(1)
+	plg.PLGStart(b)
+	plg.PLGAddPLUGIN_ID(b, pluginIDOffset)
+	plg.PLGAddNAME(b, nameOffset)
+	plg.PLGAddVERSION(b, versionOffset)
+	plg.PLGAddCAPABILITIES(b, capabilities)
+	manifest := plg.PLGEnd(b)
+	b.FinishWithFileIdentifier(manifest, []byte("$PLG"))
+	return append([]byte(nil), b.FinishedBytes()...)
+}
+
+func TestNewModuleDeniesSignedCapabilityBeforeWASMStartSectionRuns(t *testing.T) {
+	pub, priv := mustGenerateEd25519Key(t)
+	manifest := buildCapabilityPLGManifest(t, "org.example.trapping-start", "http")
+	// Valid minimal WASM whose start section immediately executes unreachable.
+	// If capability admission happens after instantiation, WasmEdge reports the
+	// trap instead of the operator-policy denial this test requires.
+	trappingStartWASM := []byte{
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+		0x03, 0x02, 0x01, 0x00,
+		0x08, 0x01, 0x00,
+		0x0a, 0x05, 0x01, 0x03, 0x00, 0x00, 0x0b,
+	}
+	artifact, _ := buildSDKBundleScopedArtifact(t, trappingStartWASM, []testBundleMember{{
+		ID:          "manifest",
+		Role:        MBL.ModuleBundleEntryRoleMANIFEST,
+		SectionName: "sds.manifest",
+		Encoding:    MBL.ModulePayloadEncodingFLATBUFFER,
+		MediaType:   "application/octet-stream",
+		Payload:     manifest,
+	}}, priv, nil)
+	capabilityPolicy, err := NewCapabilityPolicyStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = NewModule(artifact, nil, &NodeContext{
+		CapabilityPolicy: capabilityPolicy,
+		ModuleSignaturePolicy: &ModuleSignaturePolicy{
+			TrustedSigners: []ed25519.PublicKey{pub},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "http") || !strings.Contains(err.Error(), "unapproved sensitive") {
+		t.Fatalf("NewModule() error = %v, want signed-manifest capability denial before start-section trap", err)
+	}
+}
+
+func TestSignedManifestIdentityRequiresExactGuestBytes(t *testing.T) {
+	signed := buildCapabilityPLGManifest(t, "org.example.exact-manifest", "http")
+	guest := append([]byte(nil), signed...)
+	if err := verifyExactGuestManifestBytes(signed, guest); err != nil {
+		t.Fatalf("identical signed and guest manifests error = %v", err)
+	}
+	guest = append(guest, 0)
+	if err := verifyExactGuestManifestBytes(signed, guest); err == nil {
+		t.Fatal("byte-distinct guest manifest was accepted")
+	}
+}
+
 // --- verifyPublicationSignature / enforceModuleSignaturePolicy -----------
 
 func TestVerifyPublicationSignatureAcceptsCorrectlySignedArtifact(t *testing.T) {
@@ -142,6 +395,55 @@ func TestVerifyPublicationSignatureAcceptsCorrectlySignedArtifact(t *testing.T) 
 	}
 	if got, want := status.SignerPubKeyHex, hex.EncodeToString(pub); got != want {
 		t.Fatalf("status.SignerPubKeyHex = %q, want %q", got, want)
+	}
+}
+
+func TestVerifyModuleBundleAcceptsSDKBundleScopedMembers(t *testing.T) {
+	pub, priv := mustGenerateEd25519Key(t)
+	members := []testBundleMember{
+		{ID: "app.app", Role: MBL.ModuleBundleEntryRoleAUXILIARY, SectionName: "sdn.app.record", Encoding: MBL.ModulePayloadEncodingFLATBUFFER, MediaType: "application/octet-stream", Payload: []byte{5, 6, 7, 8}, Description: "opaque app"},
+		{ID: "flow.plg", Role: MBL.ModuleBundleEntryRoleMANIFEST, SectionName: "sdn.flow.plg", Encoding: MBL.ModulePayloadEncodingFLATBUFFER, MediaType: "application/octet-stream", Payload: []byte{1, 2, 3, 4}, Description: "opaque graph"},
+	}
+	artifact, _ := buildSDKBundleScopedArtifact(t, wasmHeader, members, priv, nil)
+
+	portable, bundle, status, err := VerifyModuleBundle(artifact, []ed25519.PublicKey{pub})
+	if err != nil {
+		t.Fatalf("VerifyModuleBundle() error = %v", err)
+	}
+	if !bytesEqual(portable, wasmHeader) || !status.Verified || status.SignatureScope != "bundle" {
+		t.Fatalf("portable/status = %x %+v", portable, status)
+	}
+	if len(bundle.Entries) != len(members) {
+		t.Fatalf("verified member count = %d, want %d", len(bundle.Entries), len(members))
+	}
+	for i, want := range []string{"app.app", "flow.plg"} {
+		if bundle.Entries[i].EntryID != want {
+			t.Fatalf("entry %d id = %q, want %q", i, bundle.Entries[i].EntryID, want)
+		}
+	}
+}
+
+func TestVerifyModuleBundleRejectsRehashedMemberTampering(t *testing.T) {
+	pub, priv := mustGenerateEd25519Key(t)
+	members := []testBundleMember{{ID: "opaque.bin", Role: MBL.ModuleBundleEntryRoleAUXILIARY, SectionName: "sdn.test.opaque", Encoding: MBL.ModulePayloadEncodingRAW_BYTES, MediaType: "application/octet-stream", Payload: []byte{1, 2, 3}}}
+	_, signature := buildSDKBundleScopedArtifact(t, wasmHeader, members, priv, nil)
+	members[0].Payload = []byte{1, 2, 4}
+	tampered, _ := buildSDKBundleScopedArtifact(t, wasmHeader, members, priv, signature)
+
+	if _, _, _, err := VerifyModuleBundle(tampered, []ed25519.PublicKey{pub}); err == nil || !strings.Contains(err.Error(), "signed digest") {
+		t.Fatalf("VerifyModuleBundle(rehashed tamper) error = %v, want signed digest rejection", err)
+	}
+}
+
+func TestVerifyModuleBundleRejectsDuplicateEntryID(t *testing.T) {
+	pub, priv := mustGenerateEd25519Key(t)
+	original := []testBundleMember{{ID: "opaque.bin", Role: MBL.ModuleBundleEntryRoleAUXILIARY, Payload: []byte{1}}}
+	_, signature := buildSDKBundleScopedArtifact(t, wasmHeader, original, priv, nil)
+	duplicate := append(original, testBundleMember{ID: "opaque.bin", Role: MBL.ModuleBundleEntryRoleAUXILIARY, Payload: []byte{2}})
+	artifact, _ := buildSDKBundleScopedArtifact(t, wasmHeader, duplicate, priv, signature)
+
+	if _, _, _, err := VerifyModuleBundle(artifact, []ed25519.PublicKey{pub}); err == nil || !strings.Contains(err.Error(), "duplicate entryId") {
+		t.Fatalf("VerifyModuleBundle(duplicate) error = %v, want duplicate entryId rejection", err)
 	}
 }
 

@@ -6,10 +6,13 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	piv "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PIV"
+	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/ipfs/kubo/sdn/wasmrt"
 	"github.com/second-state/WasmEdge-go/wasmedge"
 )
@@ -73,6 +76,56 @@ type NodeContext struct {
 // CapHandler is a function that handles a capability-gated hostcall operation.
 type CapHandler func(operation string, payload []byte) ([]byte, error)
 
+// InvokeOutputFrame is one independently owned output emitted by a child
+// module invocation. Payload is copied out of the child response arena before
+// plugin_invoke_stream returns to its caller.
+type InvokeOutputFrame struct {
+	PortID            string
+	Payload           []byte
+	Alignment         uint32
+	WireFormat        byte
+	SchemaName        string
+	FileIdentifier    string
+	SchemaVersion     string
+	SchemaHash        []byte
+	RootTypeName      string
+	FixedStringLength uint16
+	ByteLength        uint32
+	RequiredAlignment uint16
+	Ownership         byte
+	Mutability        byte
+	FrameID           uint64
+}
+
+// InvokeFrameSetResult preserves the complete multi-port result of a child
+// module invocation. It is the application-blind seam a flow host uses when a
+// signed parent runtime dispatches to independently instantiated signed nodes.
+type InvokeFrameSetResult struct {
+	StatusCode       int32
+	Yielded          bool
+	BacklogRemaining uint32
+	Outputs          []InvokeOutputFrame
+}
+
+// BoundIdentity returns immutable identity fields after Module.Load. Unlike
+// ID and ContentHash it deliberately takes no Module mutex, so capability
+// handlers may call it while plugin_invoke_stream already holds that mutex.
+// Callers must only use it for a loaded module passed to its own provisioned
+// capability handler.
+func (m *Module) BoundIdentity() (contentHash, pluginID string) {
+	if m == nil {
+		return "", ""
+	}
+	if m.instanceArtifactHash != "" && m.instanceNodeID != "" {
+		return m.instanceArtifactHash, m.instanceNodeID
+	}
+	contentHash = m.contentHash
+	if m.manifest != nil {
+		pluginID = m.manifest.PluginID
+	}
+	return contentHash, pluginID
+}
+
 // HostcallImportModule is the SDK-owned sync hostcall import module.
 const HostcallImportModule = "space_data_module_host"
 
@@ -81,30 +134,20 @@ const HostcallImportModule = "space_data_module_host"
 type HostBridge struct {
 	granted     map[string]bool
 	capHandlers map[string]CapHandler // capability prefix → handler
+	nodeCtx     *NodeContext
 
-	// nodeCtxMu guards nodeCtx: normally set once at construction and read for
-	// the lifetime of the bridge, but the operator settings API (the
-	// supplemental-OMM config surface) can push a LIVE config update via
-	// SetConfigLive after load, taken up by the flow's plugin.getConfig calls
-	// from the NEXT trigger fire onward. The swap always installs a PRIVATE
-	// NodeContext copy (see SetConfigLive), so this bridge's mutation can never
-	// bleed into another module/flow instance sharing the original pointer.
-	nodeCtxMu sync.RWMutex
-	nodeCtx   *NodeContext
-
-	// fireCtx is the current trigger fire's cancelable context (installed by the
-	// mount around a drain via SetFireContext, cleared after). The http cap
-	// derives each request's context from it, so an operator Stop (cancelling
-	// this context) aborts an in-flight fetch at the next http hostcall boundary.
-	// nil => not firing (FireContext returns context.Background()). Lifecycle
-	// plumbing, never orchestration — the host still decides nothing about WHEN
-	// or WHAT to fetch.
-	fireCtxMu sync.Mutex
-	fireCtx   context.Context
+	// invokeCtx is the current scheduled invocation context. Capability
+	// handlers derive cancellable work from it; nil means no invocation.
+	invokeCtxMu sync.Mutex
+	invokeCtx   context.Context
 
 	// Response buffer for the sync hostcall protocol.
-	lastStatus  int32
-	responseBuf []byte
+	responseGate chan struct{}
+	responseMu   sync.RWMutex
+	lastStatus   int32
+	responseBuf  []byte
+	responseLive bool
+	responseRead bool
 
 	// Body-reference registry (loop C.5c near-zero-copy egress): capability
 	// handlers answering in "deliver":"ref" mode register the result buffer
@@ -115,6 +158,194 @@ type HostBridge struct {
 	bodyRefMu   sync.Mutex
 	bodyRefs    map[uint64][]byte
 	bodyRefNext uint64
+}
+
+// InvokeMethodFrameSet calls plugin_invoke_stream while preserving every
+// output port. Module.InvokeMethodFrames intentionally selects one preferred
+// output for request/response callers; a flow host must instead forward the
+// whole frame set selected by the signed graph.
+func (m *Module) InvokeMethodFrameSet(ctx context.Context, methodID string, inputFrames []InvokeInputFrame) (result *InvokeFrameSetResult, err error) {
+	started := time.Now()
+	defer func() {
+		m.recordInvokeResult(started, err)
+	}()
+
+	if m == nil {
+		return nil, fmt.Errorf("module is nil")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.mod == nil {
+		return nil, fmt.Errorf("module not loaded")
+	}
+	if m.paused {
+		return nil, fmt.Errorf("module paused")
+	}
+
+	req, err := encodeFrameSetInvokeRequest(methodID, inputFrames)
+	if err != nil {
+		return nil, fmt.Errorf("encode invoke request: %w", err)
+	}
+	reqPtr, err := m.mod.Allocate(req)
+	if err != nil {
+		return nil, fmt.Errorf("allocate request: %w", err)
+	}
+	defer m.mod.SecureDeallocate(reqPtr, uint32(len(req)))
+
+	responseLenPtr, err := m.mod.AllocateSize(4)
+	if err != nil {
+		return nil, fmt.Errorf("allocate response length: %w", err)
+	}
+	defer m.mod.SecureDeallocate(responseLenPtr, 4)
+	if err := m.mod.WriteMemory(responseLenPtr, []byte{0, 0, 0, 0}); err != nil {
+		return nil, fmt.Errorf("zero response length: %w", err)
+	}
+
+	results, err := m.mod.ExecuteContext(ctx, "plugin_invoke_stream",
+		int32(reqPtr), int32(len(req)), int32(responseLenPtr))
+	if err != nil {
+		return nil, fmt.Errorf("plugin_invoke_stream(%s): %w", methodID, err)
+	}
+	responsePtr := uint32(wasmrt.ToInt32(results[0]))
+	responseLenBytes, err := m.mod.ReadMemory(responseLenPtr, 4)
+	if err != nil {
+		return nil, fmt.Errorf("read response length: %w", err)
+	}
+	responseLen, err := decodeUint32LE(responseLenBytes)
+	if err != nil {
+		return nil, fmt.Errorf("decode response length: %w", err)
+	}
+	if responseLen == 0 {
+		return nil, fmt.Errorf("plugin_invoke_stream(%s) returned an empty response", methodID)
+	}
+	if responsePtr == 0 {
+		return nil, fmt.Errorf("plugin_invoke_stream(%s) returned a null response pointer", methodID)
+	}
+	defer m.mod.SecureDeallocate(responsePtr, responseLen)
+	responseBytes, err := m.mod.ReadMemory(responsePtr, responseLen)
+	if err != nil {
+		return nil, fmt.Errorf("read invoke response: %w", err)
+	}
+	response, err := decodePluginInvokeResponseBytes(responseBytes)
+	if err != nil {
+		return nil, fmt.Errorf("decode invoke response: %w", err)
+	}
+	return invokeFrameSetFromResponseReader(response, m.mod.ReadMemory)
+}
+
+// InvokeScheduledMethodFrameSet is the multi-port form of InvokeCron: it grants
+// the operator-bounded scheduled execution budget while preserving every
+// output frame for the parent flow runtime.
+func (m *Module) InvokeScheduledMethodFrameSet(ctx context.Context, methodID string, inputFrames []InvokeInputFrame) (*InvokeFrameSetResult, error) {
+	if m == nil {
+		return nil, errors.New("module is nil")
+	}
+	ctx = wasmrt.WithExecBudget(ctx, m.scheduledBudget())
+	if m.bridge != nil {
+		m.bridge.SetFireContext(ctx)
+		defer m.bridge.SetFireContext(nil)
+	}
+	result, err := m.InvokeMethodFrameSet(ctx, methodID, inputFrames)
+	m.recordTimerResult(err)
+	return result, err
+}
+
+func encodeFrameSetInvokeRequest(methodID string, inputFrames []InvokeInputFrame) ([]byte, error) {
+	if len(inputFrames) > 0 {
+		return encodePluginInvokeRequestFrames(methodID, inputFrames)
+	}
+	if methodID == "" {
+		return nil, errors.New("method id is required")
+	}
+	// A generic wakeup callback may declare every input optional. Preserve
+	// that declaration as a real zero-frame PIV request instead of fabricating
+	// a schema-bearing body in the host.
+	builder := flatbuffers.NewBuilder(128)
+	method := builder.CreateString(methodID)
+	piv.PIVRequestStart(builder)
+	piv.PIVRequestAddMethodId(builder, method)
+	request := piv.PIVRequestEnd(builder)
+	piv.PIVStart(builder)
+	piv.PIVAddRequest(builder, request)
+	root := piv.PIVEnd(builder)
+	piv.FinishPIVBuffer(builder, root)
+	return builder.FinishedBytes(), nil
+}
+
+func invokeFrameSetFromResponse(response *pluginInvokeResponse) (*InvokeFrameSetResult, error) {
+	return invokeFrameSetFromResponseReader(response, nil)
+}
+
+func invokeFrameSetFromResponseReader(response *pluginInvokeResponse, readGuest func(uint32, uint32) ([]byte, error)) (*InvokeFrameSetResult, error) {
+	if response == nil {
+		return nil, errors.New("plugin invoke response is required")
+	}
+	if response.StatusCode != 0 || response.ErrorCode != "" || response.ErrorMessage != "" {
+		if response.ErrorMessage != "" {
+			return nil, fmt.Errorf("plugin invoke failed (%d): %s", response.StatusCode, response.ErrorMessage)
+		}
+		if response.ErrorCode != "" {
+			return nil, fmt.Errorf("plugin invoke failed (%d): %s", response.StatusCode, response.ErrorCode)
+		}
+		return nil, fmt.Errorf("plugin invoke failed with status %d", response.StatusCode)
+	}
+	result := &InvokeFrameSetResult{
+		StatusCode:       response.StatusCode,
+		Yielded:          response.Yielded,
+		BacklogRemaining: response.BacklogRemaining,
+	}
+	result.Outputs = make([]InvokeOutputFrame, 0, len(response.OutputFrames))
+	for _, frame := range response.OutputFrames {
+		if err := validateInvokeFrameLayout(frame, len(response.PayloadArena)); err != nil {
+			return nil, err
+		}
+		if frame.Mutability != byte(piv.EnumValuesbufferMutability["IMMUTABLE"]) &&
+			frame.Ownership != byte(piv.EnumValuesbufferOwnership["TRANSFERRED"]) {
+			return nil, fmt.Errorf("plugin invoke output port %q mutable bytes are not transferred", frame.PortID)
+		}
+		end := uint64(frame.Offset) + uint64(frame.Size)
+		var payload []byte
+		if end <= uint64(len(response.PayloadArena)) {
+			payload = append([]byte(nil), response.PayloadArena[frame.Offset:uint32(end)]...)
+		} else {
+			// Reactor modules may return plugin-owned frames addressed directly
+			// in their linear memory and omit PAYLOAD_ARENA. Copy them while the
+			// child instance is still locked and alive.
+			if readGuest == nil {
+				return nil, fmt.Errorf(
+					"plugin invoke output port %q exceeds payload arena: offset=%d size=%d arena=%d",
+					frame.PortID, frame.Offset, frame.Size, len(response.PayloadArena),
+				)
+			}
+			if frame.Offset%frame.Alignment != 0 ||
+				(frame.WireFormat == payloadWireFormatAlignedBinary && frame.Offset%uint32(frame.RequiredAlignment) != 0) {
+				return nil, fmt.Errorf("plugin-owned output port %q address %d violates alignment %d/%d", frame.PortID, frame.Offset, frame.Alignment, frame.RequiredAlignment)
+			}
+			guestPayload, err := readGuest(frame.Offset, frame.Size)
+			if err != nil {
+				return nil, fmt.Errorf("read plugin-owned output port %q: %w", frame.PortID, err)
+			}
+			payload = append([]byte(nil), guestPayload...)
+		}
+		result.Outputs = append(result.Outputs, InvokeOutputFrame{
+			PortID:            frame.PortID,
+			Payload:           payload,
+			Alignment:         frame.Alignment,
+			WireFormat:        frame.WireFormat,
+			SchemaName:        frame.SchemaName,
+			FileIdentifier:    frame.FileIdentifier,
+			SchemaVersion:     frame.SchemaVersion,
+			SchemaHash:        append([]byte(nil), frame.SchemaHash...),
+			RootTypeName:      frame.RootTypeName,
+			FixedStringLength: frame.FixedStringLength,
+			ByteLength:        frame.ByteLength,
+			RequiredAlignment: frame.RequiredAlignment,
+			Ownership:         byte(piv.EnumValuesbufferOwnership["HOST_OWNED"]),
+			Mutability:        byte(piv.EnumValuesbufferMutability["IMMUTABLE"]),
+			FrameID:           frame.FrameID,
+		})
+	}
+	return result, nil
 }
 
 // PutBodyRef registers a byte buffer for out-of-band body delivery and
@@ -152,59 +383,29 @@ func (hb *HostBridge) ResetBodyRefs() {
 	hb.bodyRefs = nil
 }
 
-// currentNodeCtx returns the bridge's live NodeContext pointer (nil-safe),
-// under the read lock SetConfigLive's swap respects.
-func (hb *HostBridge) currentNodeCtx() *NodeContext {
-	hb.nodeCtxMu.RLock()
-	defer hb.nodeCtxMu.RUnlock()
-	return hb.nodeCtx
-}
-
-// SetFireContext installs (nil clears) the current trigger fire's cancelable
-// context. The http capability derives each request's context from it so an
-// operator Stop — cancelling this context — aborts an in-flight fetch at the
-// next http hostcall boundary. Lifecycle plumbing, never orchestration.
+// SetFireContext installs the current scheduled invocation context.
 func (hb *HostBridge) SetFireContext(ctx context.Context) {
 	if hb == nil {
 		return
 	}
-	hb.fireCtxMu.Lock()
-	hb.fireCtx = ctx
-	hb.fireCtxMu.Unlock()
+	hb.invokeCtxMu.Lock()
+	hb.invokeCtx = ctx
+	hb.invokeCtxMu.Unlock()
 }
 
-// FireContext returns the current fire's context, or context.Background() when
-// no fire is in flight. Nil-safe (receiver and field).
+// FireContext returns the current scheduled invocation context, or a
+// background context when no invocation is active.
 func (hb *HostBridge) FireContext() context.Context {
 	if hb == nil {
 		return context.Background()
 	}
-	hb.fireCtxMu.Lock()
-	ctx := hb.fireCtx
-	hb.fireCtxMu.Unlock()
+	hb.invokeCtxMu.Lock()
+	ctx := hb.invokeCtx
+	hb.invokeCtxMu.Unlock()
 	if ctx == nil {
 		return context.Background()
 	}
 	return ctx
-}
-
-// SetConfigLive replaces the CONFIG object this bridge's plugin.getConfig
-// hostcall serves, effective for every call from here on (the flow's next
-// trigger fire, per the operator settings API's "no forced re-fire" contract —
-// this never invokes the guest itself). It always detaches this bridge onto a
-// PRIVATE NodeContext copy first: several flow/module instances can share one
-// NodeContext (the node-wide identity/policy context), and mutating a shared
-// struct in place would leak this flow's config into every other instance
-// holding the same pointer. Safe to call concurrently with hostcall dispatch.
-func (hb *HostBridge) SetConfigLive(cfg map[string]interface{}) {
-	hb.nodeCtxMu.Lock()
-	defer hb.nodeCtxMu.Unlock()
-	var nc NodeContext
-	if hb.nodeCtx != nil {
-		nc = *hb.nodeCtx
-	}
-	nc.Config = cfg
-	hb.nodeCtx = &nc
 }
 
 // NewHostBridge creates a per-module host bridge.
@@ -214,13 +415,79 @@ func NewHostBridge(nodeCtx *NodeContext, grantedCaps []string) *HostBridge {
 		granted[c] = true
 	}
 	hb := &HostBridge{
-		granted:     granted,
-		capHandlers: make(map[string]CapHandler),
-		nodeCtx:     nodeCtx,
-		lastStatus:  0,
-		responseBuf: encodeHostcallEnvelope(map[string]interface{}{"ok": true, "result": nil}, nil),
+		granted:      granted,
+		capHandlers:  make(map[string]CapHandler),
+		nodeCtx:      nodeCtx,
+		responseGate: make(chan struct{}, 1),
+		lastStatus:   0,
+		responseBuf:  encodeHostcallEnvelope(map[string]interface{}{"ok": true, "result": nil}, nil),
 	}
 	return hb
+}
+
+// beginResponse publishes one completed sync-hostcall exchange. Dispatch work
+// happens before this method, so concurrent requests can perform network I/O in
+// parallel; only the short response_len/read/status/clear sequence is
+// serialized. This is required by the SDK ABI, which has no request identifier
+// on its response accessors.
+func (hb *HostBridge) beginResponse(status int32, response []byte) {
+	hb.responseGate <- struct{}{}
+	hb.responseMu.Lock()
+	hb.lastStatus = status
+	hb.responseBuf = append(hb.responseBuf[:0], response...)
+	hb.responseLive = true
+	hb.responseRead = false
+	hb.responseMu.Unlock()
+}
+
+func (hb *HostBridge) responseLength() int32 {
+	hb.responseMu.RLock()
+	defer hb.responseMu.RUnlock()
+	return int32(len(hb.responseBuf))
+}
+
+func (hb *HostBridge) responseBytes(limit uint32) []byte {
+	hb.responseMu.Lock()
+	defer hb.responseMu.Unlock()
+	n := len(hb.responseBuf)
+	if uint64(n) > uint64(limit) {
+		n = int(limit)
+	}
+	if hb.responseLive {
+		hb.responseRead = true
+	}
+	return append([]byte(nil), hb.responseBuf[:n]...)
+}
+
+func (hb *HostBridge) responseStatus() int32 {
+	hb.responseMu.RLock()
+	defer hb.responseMu.RUnlock()
+	return hb.lastStatus
+}
+
+func (hb *HostBridge) clearResponse() {
+	hb.responseMu.Lock()
+	// SDK guests clear once before beginning a call and once after copying the
+	// response. Concurrent workers may issue the first clear while another
+	// completed call owns the single response slot. Only a response that has
+	// actually been copied may be released; a pre-call clear cannot steal it.
+	if hb.responseLive && !hb.responseRead {
+		hb.responseMu.Unlock()
+		return
+	}
+	release := hb.responseLive
+	hb.lastStatus = 0
+	hb.responseBuf = encodeHostcallEnvelope(map[string]interface{}{"ok": true, "result": nil}, nil)
+	hb.responseLive = false
+	hb.responseRead = false
+	hb.responseMu.Unlock()
+	if !release {
+		return
+	}
+	select {
+	case <-hb.responseGate:
+	default:
+	}
 }
 
 // RegisterCapHandler registers a handler for operations with the given prefix.
@@ -322,18 +589,18 @@ func (hb *HostBridge) Dispatch(operation string, payload []byte) []byte {
 		}
 		return okJSON(operations)
 	case "node.publicKey":
-		if nc := hb.currentNodeCtx(); nc != nil && nc.PublicKeyHex != "" {
-			return okJSON(nc.PublicKeyHex)
+		if hb.nodeCtx != nil && hb.nodeCtx.PublicKeyHex != "" {
+			return okJSON(hb.nodeCtx.PublicKeyHex)
 		}
 		return errJSON("node public key not available")
 	case "node.peerId":
-		if nc := hb.currentNodeCtx(); nc != nil && nc.PeerID != "" {
-			return okJSON(nc.PeerID)
+		if hb.nodeCtx != nil && hb.nodeCtx.PeerID != "" {
+			return okJSON(hb.nodeCtx.PeerID)
 		}
 		return errJSON("node peer ID not available")
 	case "plugin.getConfig":
-		if nc := hb.currentNodeCtx(); nc != nil && nc.Config != nil {
-			return okJSON(nc.Config)
+		if hb.nodeCtx != nil && hb.nodeCtx.Config != nil {
+			return okJSON(hb.nodeCtx.Config)
 		}
 		return okJSON(map[string]interface{}{})
 	}
@@ -385,21 +652,19 @@ func (hb *HostBridge) BuildWasmEdgeHostFuncs() []wasmrt.HostFunc {
 
 		mem := cf.GetMemoryByIndex(0)
 		if mem == nil {
-			hb.lastStatus = 1
-			hb.responseBuf = encodeHostcallEnvelope(map[string]interface{}{
+			hb.beginResponse(1, encodeHostcallEnvelope(map[string]interface{}{
 				"ok":    false,
 				"error": map[string]string{"message": "no memory"},
-			}, nil)
+			}, nil))
 			return []interface{}{int32(1)}, wasmedge.Result_Success
 		}
 
 		opBytes, err := mem.GetData(uint(opPtr), uint(opLen))
 		if err != nil {
-			hb.lastStatus = 1
-			hb.responseBuf = encodeHostcallEnvelope(map[string]interface{}{
+			hb.beginResponse(1, encodeHostcallEnvelope(map[string]interface{}{
 				"ok":    false,
 				"error": map[string]string{"message": "failed to read operation"},
-			}, nil)
+			}, nil))
 			return []interface{}{int32(1)}, wasmedge.Result_Success
 		}
 
@@ -407,27 +672,24 @@ func (hb *HostBridge) BuildWasmEdgeHostFuncs() []wasmrt.HostFunc {
 		if payloadLen > 0 {
 			payloadBytes, err = mem.GetData(uint(payloadPtr), uint(payloadLen))
 			if err != nil {
-				hb.lastStatus = 1
-				hb.responseBuf = encodeHostcallEnvelope(map[string]interface{}{
+				hb.beginResponse(1, encodeHostcallEnvelope(map[string]interface{}{
 					"ok":    false,
 					"error": map[string]string{"message": "failed to read payload"},
-				}, nil)
+				}, nil))
 				return []interface{}{int32(1)}, wasmedge.Result_Success
 			}
 		}
 
 		jsonPayload, err := decodeHostcallEnvelopePayload(payloadBytes)
 		if err != nil {
-			hb.lastStatus = 1
-			hb.responseBuf = encodeHostcallEnvelope(map[string]interface{}{
+			hb.beginResponse(1, encodeHostcallEnvelope(map[string]interface{}{
 				"ok":    false,
 				"error": map[string]string{"message": err.Error()},
-			}, nil)
+			}, nil))
 			return []interface{}{int32(1)}, wasmedge.Result_Success
 		}
 
-		hb.responseBuf = encodeHostcallJSONResponse(hb.Dispatch(string(opBytes), jsonPayload))
-		hb.lastStatus = 0
+		hb.beginResponse(0, encodeHostcallJSONResponse(hb.Dispatch(string(opBytes), jsonPayload)))
 		return []interface{}{int32(0)}, wasmedge.Result_Success
 	}
 
@@ -441,7 +703,7 @@ func (hb *HostBridge) BuildWasmEdgeHostFuncs() []wasmrt.HostFunc {
 		{
 			Name: "response_len",
 			Func: func(_ interface{}, _ *wasmedge.CallingFrame, _ []interface{}) ([]interface{}, wasmedge.Result) {
-				return []interface{}{int32(len(hb.responseBuf))}, wasmedge.Result_Success
+				return []interface{}{hb.responseLength()}, wasmedge.Result_Success
 			},
 			Returns: []*wasmedge.ValType{i32()},
 		},
@@ -454,14 +716,11 @@ func (hb *HostBridge) BuildWasmEdgeHostFuncs() []wasmrt.HostFunc {
 				if mem == nil {
 					return []interface{}{int32(0)}, wasmedge.Result_Success
 				}
-				toCopy := uint32(len(hb.responseBuf))
-				if toCopy > dstLen {
-					toCopy = dstLen
+				response := hb.responseBytes(dstLen)
+				if len(response) > 0 {
+					mem.SetData(response, uint(dstPtr), uint(len(response)))
 				}
-				if toCopy > 0 {
-					mem.SetData(hb.responseBuf[:toCopy], uint(dstPtr), uint(toCopy))
-				}
-				return []interface{}{int32(toCopy)}, wasmedge.Result_Success
+				return []interface{}{int32(len(response))}, wasmedge.Result_Success
 			},
 			Params:  []*wasmedge.ValType{i32(), i32()},
 			Returns: []*wasmedge.ValType{i32()},
@@ -469,8 +728,7 @@ func (hb *HostBridge) BuildWasmEdgeHostFuncs() []wasmrt.HostFunc {
 		{
 			Name: "clear_response",
 			Func: func(_ interface{}, _ *wasmedge.CallingFrame, _ []interface{}) ([]interface{}, wasmedge.Result) {
-				hb.lastStatus = 0
-				hb.responseBuf = encodeHostcallEnvelope(map[string]interface{}{"ok": true, "result": nil}, nil)
+				hb.clearResponse()
 				return []interface{}{int32(0)}, wasmedge.Result_Success
 			},
 			Returns: []*wasmedge.ValType{i32()},
@@ -478,7 +736,7 @@ func (hb *HostBridge) BuildWasmEdgeHostFuncs() []wasmrt.HostFunc {
 		{
 			Name: "last_status_code",
 			Func: func(_ interface{}, _ *wasmedge.CallingFrame, _ []interface{}) ([]interface{}, wasmedge.Result) {
-				return []interface{}{hb.lastStatus}, wasmedge.Result_Success
+				return []interface{}{hb.responseStatus()}, wasmedge.Result_Success
 			},
 			Returns: []*wasmedge.ValType{i32()},
 		},

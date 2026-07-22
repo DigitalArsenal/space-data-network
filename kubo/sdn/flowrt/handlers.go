@@ -66,11 +66,26 @@ type InvocationArgs struct {
 
 // FrameData represents a single typed frame in an invocation.
 type FrameData struct {
-	PortID      string
-	Bytes       []byte
-	StreamID    uint32
-	Sequence    uint32
-	EndOfStream bool
+	PortID            string
+	Bytes             []byte
+	TypeDescriptorIdx uint32
+	SchemaName        string
+	FileIdentifier    string
+	SchemaVersion     string
+	SchemaHash        []byte
+	RootTypeName      string
+	WireFormat        byte
+	FixedStringLength uint32
+	ByteLength        uint32
+	RequiredAlignment uint32
+	Alignment         uint32
+	Ownership         byte
+	Mutability        byte
+	Lifetime          byte
+	FrameID           uint64
+	StreamID          uint32
+	Sequence          uint32
+	EndOfStream       bool
 }
 
 // InvocationResult is the output from a handler.
@@ -83,11 +98,26 @@ type InvocationResult struct {
 
 // FrameOutput is a single output frame produced by a handler.
 type FrameOutput struct {
-	PortID      string
-	Bytes       []byte
-	StreamID    uint32
-	Sequence    uint32
-	EndOfStream bool
+	PortID            string
+	Bytes             []byte
+	TypeDescriptorIdx uint32
+	SchemaName        string
+	FileIdentifier    string
+	SchemaVersion     string
+	SchemaHash        []byte
+	RootTypeName      string
+	WireFormat        byte
+	FixedStringLength uint32
+	ByteLength        uint32
+	RequiredAlignment uint32
+	Alignment         uint32
+	Ownership         byte
+	Mutability        byte
+	Lifetime          byte
+	FrameID           uint64
+	StreamID          uint32
+	Sequence          uint32
+	EndOfStream       bool
 }
 
 // DrainOptions controls the drain loop behavior.

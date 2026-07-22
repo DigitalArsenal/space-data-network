@@ -31,6 +31,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -88,6 +89,15 @@ type InstalledModuleView struct {
 // else 400.
 type ModuleInstaller interface {
 	AdminInstall(ctx context.Context, contentHash string, grants []CapabilityGrant) (InstalledModuleView, error)
+}
+
+// ArtifactRuntimeNodeReader is the application-blind latest-value surface for
+// outputs explicitly routed by a signed flow artifact. The content hash
+// selects the installed signed bundle and key is an opaque URL-safe name from
+// that bundle's signed metadata. Implementations return exact payload bytes;
+// this API never decodes their schema or invents route keys.
+type ArtifactRuntimeNodeReader interface {
+	ReadArtifactRuntimeNode(contentHash, key string) (payload []byte, mediaType string, ok bool)
 }
 
 // Sentinel errors a ModuleInstaller returns (via the plugin adapter) so the
@@ -151,6 +161,10 @@ type Deps struct {
 	// served only on the plugin's loopback listener; it is additionally fail
 	// closed (a module's unapproved sensitive capabilities refuse the install).
 	Installer func() ModuleInstaller
+	// ArtifactRuntimeNodes returns the live, content-hash-addressed opaque
+	// runtime-node output reader. A nil source means the signed-flow runtime has
+	// not started, so its route reports 503 rather than an empty status record.
+	ArtifactRuntimeNodes func() ArtifactRuntimeNodeReader
 }
 
 // NewHandler builds the read-only SDN HTTP API over deps. Routes are method-
@@ -170,6 +184,7 @@ func NewHandler(deps Deps) http.Handler {
 	mux.HandleFunc("GET /sdn/v1/modules/{id}/config", h.moduleConfigGet)
 	mux.HandleFunc("PUT /sdn/v1/modules/{id}/config", h.moduleConfigPut)
 	mux.HandleFunc("POST /sdn/v1/admin/modules/install", h.moduleInstall)
+	mux.HandleFunc("GET /sdn/v1/artifacts/{contentHash}/runtime/nodes/{key}", h.artifactRuntimeNode)
 	return mux
 }
 
@@ -203,6 +218,13 @@ func (h *handler) installer() ModuleInstaller {
 		return nil
 	}
 	return h.deps.Installer()
+}
+
+func (h *handler) artifactRuntimeNodes() ArtifactRuntimeNodeReader {
+	if h.deps.ArtifactRuntimeNodes == nil {
+		return nil
+	}
+	return h.deps.ArtifactRuntimeNodes()
 }
 
 // ---------------------------------------------------------------------------
@@ -609,6 +631,60 @@ func (h *handler) module(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(wasm)
+}
+
+// artifactRuntimeNode serves one exact opaque output selected by the signed
+// parent artifact's content hash and signed runtimeNodeRoutes key. The host
+// does not parse the body, derive application names, or fall back to another
+// artifact: an unpublished key is simply absent.
+func (h *handler) artifactRuntimeNode(w http.ResponseWriter, r *http.Request) {
+	contentHash := strings.ToLower(strings.TrimSpace(r.PathValue("contentHash")))
+	if len(contentHash) != 64 {
+		writeErr(w, http.StatusBadRequest, "artifact content hash must be 64 hex characters (sha-256)")
+		return
+	}
+	if _, err := hex.DecodeString(contentHash); err != nil {
+		writeErr(w, http.StatusBadRequest, "artifact content hash must be valid hex")
+		return
+	}
+	key := r.PathValue("key")
+	if !validOpaqueRuntimeNodeKey(key) {
+		writeErr(w, http.StatusBadRequest, "runtime node key must be a URL-safe opaque name")
+		return
+	}
+	reader := h.artifactRuntimeNodes()
+	if reader == nil {
+		writeErr(w, http.StatusServiceUnavailable, "signed flow runtime unavailable")
+		return
+	}
+	payload, mediaType, ok := reader.ReadArtifactRuntimeNode(contentHash, key)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "artifact runtime node output not found")
+		return
+	}
+	if _, _, err := mime.ParseMediaType(mediaType); err != nil {
+		writeErr(w, http.StatusInternalServerError, "artifact runtime node media type is invalid")
+		return
+	}
+	w.Header().Set("Content-Type", mediaType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(payload)
+}
+
+func validOpaqueRuntimeNodeKey(key string) bool {
+	if key == "" || len(key) > 255 {
+		return false
+	}
+	for _, char := range key {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '.' || char == '_' || char == '-' {
+			continue
+		}
+		return false
+	}
+	return key != "." && key != ".."
 }
 
 // ---------------------------------------------------------------------------
