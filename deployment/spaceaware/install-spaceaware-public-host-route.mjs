@@ -19,8 +19,19 @@ const sdnServerName = 'server_name sdn.spaceaware.io;';
 const spaceawareMarker = '# spaceaware-public-host-route: spaceaware-v1';
 const sdnMarker = '# spaceaware-public-host-route: sdn-v1';
 const lockHeldEnvironment = 'SPACEAWARE_PUBLIC_HOST_ROUTE_LOCK_HELD';
-const reviewedSourceSha256 = '6e1a45893917d9a34af7b004e263eedff389fa2b6c45bd6a4af07335f3842e7d';
-const reviewedFinalSha256 = '0cd3509325acf0e3928fd6dd7c892d3e5d4301791e7db0e01e9874942bf79d51';
+const reviewedSourceSha256 = '4f523da298477080025ceee09866b38f9e47c4d8c1df7b5f0a55ffbe1170de26';
+const reviewedFinalSha256 = '5ca3b835a42a226842d227d007bbfb1120b9b07775da671ea31d3cd7efbb4aab';
+const reviewedHistoricalFinalSha256 = '0cd3509325acf0e3928fd6dd7c892d3e5d4301791e7db0e01e9874942bf79d51';
+
+const sidecarRootSdnMaps = `map $host $sdn_http_backend {
+    default http://127.0.0.1:5020;
+    sdn.spaceaware.io https://127.0.0.1:18443;
+}
+
+map $http_upgrade $sdn_upgrade_backend {
+    default $sdn_http_backend;
+    websocket http://127.0.0.1:18080;
+}`;
 
 const sdnMaps = `map $host $sdn_http_backend {
     default http://127.0.0.1:5020;
@@ -28,7 +39,7 @@ const sdnMaps = `map $host $sdn_http_backend {
 }
 
 map $http_upgrade $sdn_upgrade_backend {
-    default $sdn_http_backend;
+    default http://127.0.0.1:5020;
     websocket http://127.0.0.1:18080;
 }`;
 
@@ -60,10 +71,28 @@ map $request_method $spaceaware_wallet_referrer {
     HEAD "no-referrer";
 }`;
 
+const sdnConsoleAssetPaths = [
+  '/styles.css',
+  '/app.js',
+  '/module-harness.js',
+  '/flatbuffers.js',
+  '/fonts/chakra-400.woff2',
+  '/fonts/chakra-500.woff2',
+  '/fonts/chakra-600.woff2',
+  '/fonts/chakra-700.woff2',
+  '/fonts/plex-400.woff2',
+  '/fonts/plex-500.woff2',
+  '/fonts/plex-600.woff2',
+];
+const sdnConsoleLocations = sdnConsoleAssetPaths.map((path) => `    location = ${path} {
+        proxy_pass http://127.0.0.1:5020;
+    }`).join('\n\n');
+
 const sourceLocationHeaders = [
   '^~ /cli-bundle/',
   '^~ /p2p/',
   '= /index.html',
+  ...sdnConsoleAssetPaths.map((path) => `= ${path}`),
   '^~ /assets/',
   '^~ /TestData/',
   '^~ /ipfs/terrain/',
@@ -223,7 +252,13 @@ function validateSourceConfig(text) {
   requireOnce(fallback, 'proxy_pass $sdn_http_backend;', 'shared HTTP fallback route');
   const p2p = locationBlock(shared.value, '^~ /p2p/');
   requireOnce(p2p, 'proxy_pass http://127.0.0.1:8080;', 'pre-cutover p2p route');
-  for (const header of ['= /index.html', '^~ /assets/', '^~ /TestData/']) {
+  const index = locationBlock(shared.value, '= /index.html');
+  requireOnce(index, 'proxy_pass http://127.0.0.1:5020/;', 'pre-cutover SDN console index route');
+  for (const path of sdnConsoleAssetPaths) {
+    const consoleAsset = locationBlock(shared.value, `= ${path}`);
+    requireOnce(consoleAsset, 'proxy_pass http://127.0.0.1:5020;', `pre-cutover SDN console asset ${path}`);
+  }
+  for (const header of ['^~ /assets/', '^~ /TestData/']) {
     const staticRoute = locationBlock(shared.value, header);
     requireOnce(staticRoute, 'proxy_pass $sdn_http_backend;', `pre-cutover ${header} route`);
   }
@@ -311,6 +346,12 @@ export function validateFinalConfig(text) {
   requireOnce(sdnRoot, 'proxy_pass $sdn_upgrade_backend;', 'SDN websocket-aware root route');
   const sdnP2p = locationBlock(sdn, '^~ /p2p/');
   requireOnce(sdnP2p, 'proxy_pass $sdn_upgrade_backend;', 'SDN p2p websocket route');
+  const sdnIndex = locationBlock(sdn, '= /index.html');
+  requireOnce(sdnIndex, 'proxy_pass http://127.0.0.1:5020/;', 'SDN console index route');
+  for (const path of sdnConsoleAssetPaths) {
+    const consoleAsset = locationBlock(sdn, `= ${path}`);
+    requireOnce(consoleAsset, 'proxy_pass http://127.0.0.1:5020;', `SDN console asset ${path}`);
+  }
   const sdnFallback = locationBlock(sdn, '/');
   requireOnce(sdnFallback, 'proxy_pass $sdn_http_backend;', 'SDN HTTP fallback route');
   const sdnModule = locationBlock(sdn, '^~ /api/module-delivery/');
@@ -320,8 +361,9 @@ export function validateFinalConfig(text) {
   requireOnce(sdnAsset, 'Cache-Control "public, max-age=31536000, immutable" always;', 'SDN immutable asset IPFS cache policy');
   requireProxyInventory(sdn, [
     ...Array(2).fill('$sdn_upgrade_backend'),
-    ...Array(4).fill('$sdn_http_backend'),
-    ...Array(2).fill('http://127.0.0.1:5020'),
+    ...Array(3).fill('$sdn_http_backend'),
+    ...Array(13).fill('http://127.0.0.1:5020'),
+    'http://127.0.0.1:5020/',
     'http://127.0.0.1:8080',
     'http://10.132.0.3:8080/ipfs/',
     'https://127.0.0.1:18443',
@@ -330,6 +372,47 @@ export function validateFinalConfig(text) {
   if (sdn.includes('http://127.0.0.1:5010') || sdn.includes('http://127.0.0.1:8081')) {
     fail('unexpected nginx config: SDN server contains a SpaceAware backend');
   }
+}
+
+export function transformManagedFinalConfig(text) {
+  const digest = createHash('sha256').update(text).digest('hex');
+  if (digest === reviewedFinalSha256) {
+    validateFinalConfig(text);
+    return text;
+  }
+  if (digest !== reviewedHistoricalFinalSha256) {
+    validateFinalConfig(text);
+  }
+
+  requireOnce(text, sidecarRootSdnMaps, 'historical SDN sidecar-root maps');
+  requireOnce(text, spaceawareMarker, 'historical SpaceAware cutover marker');
+  requireOnce(text, sdnMarker, 'historical SDN cutover marker');
+  const historicalSdn = namedServer(text, sdnServerName);
+  const historicalIndex = locationBlock(historicalSdn.value, '= /index.html');
+  requireOnce(
+    historicalIndex,
+    'proxy_pass $sdn_http_backend;',
+    'historical SDN sidecar-root index route',
+  );
+  let repairedSdn = historicalSdn.value.replace(
+    historicalIndex,
+    historicalIndex.replace(
+      'proxy_pass $sdn_http_backend;',
+      'proxy_pass http://127.0.0.1:5020/;',
+    ),
+  );
+  const repairedIndex = locationBlock(repairedSdn, '= /index.html');
+  const insertion = repairedSdn.indexOf(repairedIndex) + repairedIndex.length;
+  repairedSdn = repairedSdn.slice(0, insertion)
+    + `\n\n${sdnConsoleLocations}`
+    + repairedSdn.slice(insertion);
+
+  let repaired = text.slice(0, historicalSdn.start)
+    + repairedSdn
+    + text.slice(historicalSdn.end);
+  repaired = repaired.replace(sidecarRootSdnMaps, sdnMaps);
+  validateFinalConfig(repaired);
+  return repaired;
 }
 
 function securityHeaders(indent, {
@@ -489,8 +572,7 @@ ${cacheHeaders(120)}
 
 export function transformConfig(text) {
   if (count(text, spaceawareMarker) || count(text, sdnMarker)) {
-    validateFinalConfig(text);
-    return text;
+    return transformManagedFinalConfig(text);
   }
 
   const shared = validateSourceConfig(text);

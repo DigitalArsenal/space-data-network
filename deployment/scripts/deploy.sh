@@ -221,13 +221,16 @@ configure_spaceaware_public_host_route() {
     ssh_cmd "$ip" "mkdir -p /opt/spacedatanetwork/deployment/spaceaware"
     scp_cmd "${DEPLOY_DIR}/spaceaware/install-public-host-route.mjs" "$ip" "/opt/spacedatanetwork/deployment/spaceaware/install-public-host-route.mjs"
     scp_cmd "${DEPLOY_DIR}/spaceaware/install-spaceaware-public-host-route.mjs" "$ip" "/opt/spacedatanetwork/deployment/spaceaware/install-spaceaware-public-host-route.mjs"
+    scp_cmd "${DEPLOY_DIR}/spaceaware/verify-spaceaware-public-host-route.mjs" "$ip" "/opt/spacedatanetwork/deployment/spaceaware/verify-spaceaware-public-host-route.mjs"
     ssh_cmd "$ip" "set -euo pipefail
 chown root:root \
     /opt/spacedatanetwork/deployment/spaceaware/install-public-host-route.mjs \
-    /opt/spacedatanetwork/deployment/spaceaware/install-spaceaware-public-host-route.mjs
+    /opt/spacedatanetwork/deployment/spaceaware/install-spaceaware-public-host-route.mjs \
+    /opt/spacedatanetwork/deployment/spaceaware/verify-spaceaware-public-host-route.mjs
 chmod 0755 \
     /opt/spacedatanetwork/deployment/spaceaware/install-public-host-route.mjs \
-    /opt/spacedatanetwork/deployment/spaceaware/install-spaceaware-public-host-route.mjs
+    /opt/spacedatanetwork/deployment/spaceaware/install-spaceaware-public-host-route.mjs \
+    /opt/spacedatanetwork/deployment/spaceaware/verify-spaceaware-public-host-route.mjs
 systemctl cat space-data-network-module-delivery.service >/dev/null
 systemctl restart space-data-network-module-delivery.service
 systemctl is-active --quiet space-data-network-module-delivery.service
@@ -243,7 +246,8 @@ for attempt in \$(seq 1 30); do
     sleep 1
 done
 test "\$sidecar_ready" = true
-node /opt/spacedatanetwork/deployment/spaceaware/install-public-host-route.mjs"
+node /opt/spacedatanetwork/deployment/spaceaware/install-public-host-route.mjs \
+    --verify-script /opt/spacedatanetwork/deployment/spaceaware/verify-spaceaware-public-host-route.mjs"
 }
 
 cutover_spaceaware_public_host_route() {

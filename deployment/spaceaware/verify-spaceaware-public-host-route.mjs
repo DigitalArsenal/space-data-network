@@ -13,6 +13,19 @@ const callbackCsp = "default-src 'none'; script-src https://static.spacedatanetw
 const runtimeConfigInjection = Buffer.from('<script>window.__SDN_CONFIG__={apiBase:"/api/v1",serverBaseUrl:window.location.origin,ipfsDashboardUrl:"/webui/"};</script>');
 const websocketGuid = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const maximumResponseBytes = 64 * 1024 * 1024;
+const sdnConsoleAssets = [
+  { path: '/styles.css', type: 'text/css' },
+  { path: '/app.js', type: 'javascript' },
+  { path: '/module-harness.js', type: 'javascript' },
+  { path: '/flatbuffers.js', type: 'javascript' },
+  { path: '/fonts/chakra-400.woff2', type: 'woff2' },
+  { path: '/fonts/chakra-500.woff2', type: 'woff2' },
+  { path: '/fonts/chakra-600.woff2', type: 'woff2' },
+  { path: '/fonts/chakra-700.woff2', type: 'woff2' },
+  { path: '/fonts/plex-400.woff2', type: 'woff2' },
+  { path: '/fonts/plex-500.woff2', type: 'woff2' },
+  { path: '/fonts/plex-600.woff2', type: 'woff2' },
+];
 
 function fail(message) {
   throw new Error(message);
@@ -374,6 +387,42 @@ function validateSpaceawareRoot(response, activatedIndex, description) {
   fail(`${description} does not match activated index`);
 }
 
+function validateSdnConsoleRoot(response, description) {
+  expectStatus(response, 200, description);
+  if (!headerValue(response, 'content-type').toLowerCase().includes('text/html')) {
+    fail(`${description} is not HTML`);
+  }
+  const body = response.body.toString('utf8');
+  for (const marker of [
+    'Space Data Network — Node Console',
+    'class="app-shell"',
+    'class="sdn-rail"',
+    '>NODE<',
+    '>PEERS<',
+    '>DATA<',
+    '>CHANNELS<',
+    '>APPS<',
+    '>MODULES<',
+    '/sdn/v1',
+  ]) {
+    if (!body.includes(marker)) fail(`${description} is missing reviewed console marker ${marker}`);
+  }
+}
+
+function validateSdnConsoleAsset(response, asset, description) {
+  expectStatus(response, 200, description);
+  const contentType = headerValue(response, 'content-type').toLowerCase();
+  if (!contentType.includes(asset.type)) {
+    fail(`${description} has the wrong content type (${contentType || 'missing'})`);
+  }
+}
+
+function expectSameBody(publicResponse, directResponse, description) {
+  if (!publicResponse.body.equals(directResponse.body)) {
+    fail(`${description} does not match direct console`);
+  }
+}
+
 function validateHealth(response, description) {
   expectStatus(response, 200, description);
   const health = parseJson(response.body, description);
@@ -552,14 +601,6 @@ async function verifyPublic(options, release) {
     path: '/api/module-delivery/provider',
     timeoutMs: options.timeoutMs,
   }), 'SpaceAware direct provider');
-  const directSdnProvider = validateProvider(await requestEndpoint({
-    protocol: options.sdnHttpProtocol,
-    connectAddress: options.connectAddress,
-    port: options.sdnHttpPort,
-    host: options.sdnHost,
-    path: '/api/module-delivery/provider',
-    timeoutMs: options.timeoutMs,
-  }), 'SDN direct provider');
 
   const root = await edgeRequest(options, options.spaceawareHost, '/');
   validateSpaceawareRoot(root, release.index, 'SpaceAware public root');
@@ -618,20 +659,88 @@ async function verifyPublic(options, release) {
     fail(`SpaceAware www public release identity does not match activated release ${release.identity.releaseId}`);
   }
 
+  await verifySdnPublic(options, release.callback);
+  process.stdout.write(`Verified both public hosts plus the www alias through the edge listener; SpaceAware release ${release.identity.releaseId}.\n`);
+}
+
+async function verifySdnPublic(options, expectedCallback = null) {
+  const requestDirectConsole = (path) => requestEndpoint({
+    protocol: 'http',
+    connectAddress: options.connectAddress,
+    port: options.sdnConsolePort,
+    host: options.sdnHost,
+    path,
+    timeoutMs: options.timeoutMs,
+  });
+  const requestDirectSidecar = (path) => requestEndpoint({
+    protocol: options.sdnHttpProtocol,
+    connectAddress: options.connectAddress,
+    port: options.sdnHttpPort,
+    host: options.sdnHost,
+    path,
+    timeoutMs: options.timeoutMs,
+  });
+  const directSdnConsoleRoot = await requestDirectConsole('/');
+  validateSdnConsoleRoot(directSdnConsoleRoot, 'SDN direct console root');
+  const directSdnProvider = validateProvider(
+    await requestDirectSidecar('/api/module-delivery/provider'),
+    'SDN direct provider',
+  );
+
   const sdnRoot = await edgeRequest(options, options.sdnHost, '/');
-  expectStatus(sdnRoot, 200, 'SDN public root');
-  if (!sdnRoot.body.includes(Buffer.from('sdn-node-console-v1'))
-      || !sdnRoot.body.includes(Buffer.from('2.0.28'))) {
-    fail('SDN public root is not the reviewed 2.0.28 SDN node console');
+  validateSdnConsoleRoot(sdnRoot, 'SDN public root');
+  expectSameBody(sdnRoot, directSdnConsoleRoot, 'SDN public root');
+  const sdnIndex = await edgeRequest(options, options.sdnHost, '/index.html');
+  validateSdnConsoleRoot(sdnIndex, 'SDN public console index');
+  expectSameBody(sdnIndex, directSdnConsoleRoot, 'SDN public console index');
+  for (const asset of sdnConsoleAssets) {
+    const [direct, publicResponse] = await Promise.all([
+      requestDirectConsole(asset.path),
+      edgeRequest(options, options.sdnHost, asset.path),
+    ]);
+    validateSdnConsoleAsset(direct, asset, `SDN direct console asset ${asset.path}`);
+    validateSdnConsoleAsset(publicResponse, asset, `SDN public console asset ${asset.path}`);
+    expectSameBody(publicResponse, direct, `SDN public console asset ${asset.path}`);
   }
-  const sdnCallback = await edgeRequest(options, options.sdnHost, '/wallet/callback');
+  const [directCallback, sdnCallback] = await Promise.all([
+    requestDirectSidecar('/wallet/callback'),
+    edgeRequest(options, options.sdnHost, '/wallet/callback'),
+  ]);
+  expectStatus(directCallback, 200, 'SDN direct wallet callback');
   expectStatus(sdnCallback, 200, 'SDN public wallet callback');
-  expectBody(sdnCallback, release.callback, 'SDN public wallet callback');
+  if (!sdnCallback.body.equals(directCallback.body)) {
+    fail('SDN public wallet callback does not match direct sidecar');
+  }
+  if (expectedCallback !== null) {
+    expectBody(directCallback, expectedCallback, 'SDN direct wallet callback');
+    expectBody(sdnCallback, expectedCallback, 'SDN public wallet callback');
+  }
   const sdnProvider = validateProvider(
     await edgeRequest(options, options.sdnHost, '/api/module-delivery/provider'),
     'SDN public provider',
   );
   expectSameProvider(sdnProvider, directSdnProvider, 'SDN public');
+  const [directApps, publicApps] = await Promise.all([
+    requestDirectSidecar('/apps/'),
+    edgeRequest(options, options.sdnHost, '/apps/'),
+  ]);
+  expectStatus(directApps, 200, 'SDN direct Apps launcher');
+  expectStatus(publicApps, 200, 'SDN public Apps launcher');
+  if (!headerValue(publicApps, 'content-type').toLowerCase().includes('text/html')) {
+    fail('SDN public Apps launcher is not HTML');
+  }
+  if (!publicApps.body.equals(directApps.body)) {
+    fail('SDN public Apps launcher does not match direct sidecar');
+  }
+  await websocketHandshake({
+    protocol: options.edgeProtocol,
+    connectAddress: options.connectAddress,
+    port: options.edgePort,
+    host: options.sdnHost,
+    path: '/',
+    timeoutMs: options.timeoutMs,
+    description: 'SDN public root',
+  });
   await websocketHandshake({
     protocol: options.edgeProtocol,
     connectAddress: options.connectAddress,
@@ -641,7 +750,7 @@ async function verifyPublic(options, release) {
     timeoutMs: options.timeoutMs,
     description: 'SDN public host',
   });
-  process.stdout.write(`Verified both public hosts plus the www alias through the edge listener; SpaceAware release ${release.identity.releaseId}.\n`);
+  process.stdout.write('Verified SDN public Node console, Apps sidecar, and websocket routes.\n');
 }
 
 function parsePositiveInteger(value, flag) {
@@ -684,6 +793,7 @@ function parseArgs(argv) {
     terrainPort: 8081,
     sdnHttpProtocol: 'https',
     sdnHttpPort: 18443,
+    sdnConsolePort: 5020,
     edgeProtocol: 'https',
     edgePort: 443,
     spaceawareHost: 'spaceaware.io',
@@ -702,6 +812,7 @@ function parseArgs(argv) {
     ['--terrain-port', ['terrainPort', (value) => parsePositiveInteger(value, '--terrain-port')]],
     ['--sdn-http-protocol', ['sdnHttpProtocol', String]],
     ['--sdn-http-port', ['sdnHttpPort', (value) => parsePositiveInteger(value, '--sdn-http-port')]],
+    ['--sdn-console-port', ['sdnConsolePort', (value) => parsePositiveInteger(value, '--sdn-console-port')]],
     ['--edge-protocol', ['edgeProtocol', String]],
     ['--edge-port', ['edgePort', (value) => parsePositiveInteger(value, '--edge-port')]],
     ['--spaceaware-host', ['spaceawareHost', String]],
@@ -714,11 +825,13 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 2) {
     const entry = values.get(argv[index]);
     if (!entry || argv[index + 1] == null) {
-      fail(`usage: ${basename(process.argv[1])} --mode loopback|public [connection options]`);
+      fail(`usage: ${basename(process.argv[1])} --mode loopback|public|sdn-public [connection options]`);
     }
     options[entry[0]] = entry[1](argv[index + 1]);
   }
-  if (!['loopback', 'public'].includes(options.mode)) fail('--mode must be loopback or public');
+  if (!['loopback', 'public', 'sdn-public'].includes(options.mode)) {
+    fail('--mode must be loopback, public, or sdn-public');
+  }
   if (!['http', 'https'].includes(options.edgeProtocol)) fail('--edge-protocol must be http or https');
   if (!['http', 'https'].includes(options.sdnHttpProtocol)) fail('--sdn-http-protocol must be http or https');
   for (const [name, value] of [['connect address', options.connectAddress], ['SpaceAware host', options.spaceawareHost], ['www host', options.wwwHost], ['SDN host', options.sdnHost]]) {
@@ -729,6 +842,10 @@ function parseArgs(argv) {
 
 async function main(argv) {
   const options = parseArgs(argv);
+  if (options.mode === 'sdn-public') {
+    await verifySdnPublic(options);
+    return;
+  }
   const release = await loadActivatedRelease(options.webRoot);
   await verifyWalletDependencies(options, release);
   if (options.mode === 'loopback') await verifyLoopback(options, release);

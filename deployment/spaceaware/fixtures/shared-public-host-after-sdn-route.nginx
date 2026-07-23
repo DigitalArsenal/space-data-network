@@ -4,7 +4,7 @@ map $host $sdn_http_backend {
 }
 
 map $http_upgrade $sdn_upgrade_backend {
-    default $sdn_http_backend;
+    default http://127.0.0.1:5020;
     websocket http://127.0.0.1:18080;
 }
 
@@ -41,9 +41,53 @@ server {
     }
 
     location = /index.html {
-        proxy_pass $sdn_http_backend;
+        proxy_pass http://127.0.0.1:5020/;
         proxy_hide_header Cache-Control;
         add_header Cache-Control "public, max-age=120" always;
+    }
+
+    location = /styles.css {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /app.js {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /module-harness.js {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /flatbuffers.js {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /fonts/chakra-400.woff2 {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /fonts/chakra-500.woff2 {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /fonts/chakra-600.woff2 {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /fonts/chakra-700.woff2 {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /fonts/plex-400.woff2 {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /fonts/plex-500.woff2 {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /fonts/plex-600.woff2 {
+        proxy_pass http://127.0.0.1:5020;
     }
 
     location ^~ /assets/ {
