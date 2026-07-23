@@ -659,11 +659,13 @@ async function verifyPublic(options, release) {
     fail(`SpaceAware www public release identity does not match activated release ${release.identity.releaseId}`);
   }
 
-  await verifySdnPublic(options, release.callback);
+  await verifySdnPublic(options, release.callback, { requireP2pWebsocket: true });
   process.stdout.write(`Verified both public hosts plus the www alias through the edge listener; SpaceAware release ${release.identity.releaseId}.\n`);
 }
 
-async function verifySdnPublic(options, expectedCallback = null) {
+async function verifySdnPublic(options, expectedCallback = null, {
+  requireP2pWebsocket = false,
+} = {}) {
   const requestDirectConsole = (path) => requestEndpoint({
     protocol: 'http',
     connectAddress: options.connectAddress,
@@ -741,16 +743,21 @@ async function verifySdnPublic(options, expectedCallback = null) {
     timeoutMs: options.timeoutMs,
     description: 'SDN public root',
   });
-  await websocketHandshake({
-    protocol: options.edgeProtocol,
-    connectAddress: options.connectAddress,
-    port: options.edgePort,
-    host: options.sdnHost,
-    path: `/p2p/${sdnProvider.peerId}`,
-    timeoutMs: options.timeoutMs,
-    description: 'SDN public host',
-  });
-  process.stdout.write('Verified SDN public Node console, Apps sidecar, and websocket routes.\n');
+  if (requireP2pWebsocket) {
+    await websocketHandshake({
+      protocol: options.edgeProtocol,
+      connectAddress: options.connectAddress,
+      port: options.edgePort,
+      host: options.sdnHost,
+      path: `/p2p/${sdnProvider.peerId}`,
+      timeoutMs: options.timeoutMs,
+      description: 'SDN public host',
+    });
+  }
+  // The first-stage shared-host repair keeps `/p2p/<peer>` on Kubo's HTTP
+  // gateway. The final split-host cutover routes it to the WebSocket backend
+  // and opts into the additional handshake above.
+  process.stdout.write('Verified SDN public Node console, Apps sidecar, and websocket route.\n');
 }
 
 function parsePositiveInteger(value, flag) {

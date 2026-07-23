@@ -230,7 +230,9 @@ test('public verification checks both Host routes, callback policy, terrain, and
   let wrongWalletWasm = false;
   let wrongConsoleAsset = false;
   let staleWallet = false;
+  let allowSdnP2pUpgrade = true;
   const seenHosts = new Set();
+  const sdnUpgradePaths = [];
   const edge = createServer((req, res) => {
     const host = String(req.headers.host || '').split(':')[0];
     seenHosts.add(host);
@@ -272,7 +274,17 @@ test('public verification checks both Host routes, callback policy, terrain, and
     }
     res.writeHead(404).end();
   });
-  edge.on('upgrade', (req, socket) => replyWebSocket(req, socket));
+  edge.on('upgrade', (req, socket) => {
+    const host = String(req.headers.host || '').split(':')[0];
+    if (host === 'sdn.test') {
+      sdnUpgradePaths.push(req.url);
+      if (req.url !== '/' && !allowSdnP2pUpgrade) {
+        socket.end('HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n');
+        return;
+      }
+    }
+    replyWebSocket(req, socket);
+  });
   const spaceDirect = createServer((req, res) => {
     if (req.url === '/api/module-delivery/provider') res.writeHead(200).end(JSON.stringify(provider));
     else res.writeHead(404).end();
@@ -329,12 +341,16 @@ test('public verification checks both Host routes, callback policy, terrain, and
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /both public hosts/i);
   assert.ok(seenHosts.has('www.spaceaware.test'));
+  assert.deepEqual(sdnUpgradePaths, ['/', `/p2p/${provider.peerId}`]);
 
+  sdnUpgradePaths.length = 0;
+  allowSdnP2pUpgrade = false;
   const sdnOnlyArgs = [...args];
   sdnOnlyArgs[sdnOnlyArgs.indexOf('--mode') + 1] = 'sdn-public';
   const sdnOnly = await runVerifier(sdnOnlyArgs);
   assert.equal(sdnOnly.code, 0, sdnOnly.stderr);
-  assert.match(sdnOnly.stdout, /SDN public Node console, Apps sidecar, and websocket routes/i);
+  assert.match(sdnOnly.stdout, /SDN public Node console, Apps sidecar, and websocket route/i);
+  assert.deepEqual(sdnUpgradePaths, ['/']);
 
   wrongConsoleAsset = true;
   let failed = await runVerifier(args);
