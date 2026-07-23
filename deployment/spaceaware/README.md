@@ -10,20 +10,24 @@ paths or IP addresses here.
 The production edge terminates TLS for `spaceaware.io`, `www.spaceaware.io`,
 and `sdn.spaceaware.io` in Nginx. The first-stage
 `install-public-host-route.mjs` keeps SpaceAware on the local Kubo gateway at
-port 5020 while routing the SDN homepage, callback, and other non-IPFS paths to
-the SDN HTTPS listener at port 18443. SDN WebSocket upgrades use port 18080.
+port 5020. For the SDN host, normal `/`, `/index.html`, and the exact SDN Node
+Console assets route to port 5020; WebSocket upgrades use port 18080. The
+installed-app launcher, wallet, module-delivery APIs, and other SDN fallbacks
+remain on the SDN HTTPS sidecar at port 18443.
 
 After a signed SpaceAware external-proxy release has been installed, the
 separate `cutover-spaceaware` command splits the shared TLS server into two
 host-specific server blocks. SpaceAware and www then use the SpaceAware SDN
 HTTP service at `127.0.0.1:5010`, WebSocket upgrades on `/` and `/p2p/*` use
-`127.0.0.1:8080`, and terrain paths use `127.0.0.1:8081`. The SDN host remains
-on ports 18443 and 18080. The private `/asset-ipfs/` route and immutable CID
-cache behavior are retained on both hosts.
+`127.0.0.1:8080`, and terrain paths use `127.0.0.1:8081`. The SDN host retains
+the 5020 Node Console, 18443 application sidecar, and 18080 WebSocket split.
+The private `/asset-ipfs/` route and immutable CID cache behavior are retained
+on both hosts.
 
 Both installers apply their change atomically, require a reviewed source
 shape, validate Nginx before reload, and restore the original config if
-validation or reload fails. Durable backups go under
+validation, reload, or transactional public-route verification fails. Durable
+backups go under
 `/var/backups/spacedatanetwork/nginx`, outside Nginx's `sites-enabled/*`
 include. A retry validates and reloads even when the desired file is already
 installed, so an interruption between replacement and reload is recoverable.
@@ -34,16 +38,20 @@ The final cutover is pinned to the reviewed production source digest and its
 deterministic canonical split digest; any manual byte drift fails closed for
 operator review instead of being partially transformed.
 
-The final cutover additionally runs
-`verify-spaceaware-public-host-route.mjs` after reload while the original file
-is still available for rollback. The verifier connects directly to
+Both deployment paths run `verify-spaceaware-public-host-route.mjs` after
+reload while the original file is still available for rollback. The normal SDN
+deploy uses its shared `sdn-public` contract; the final SpaceAware cutover uses
+the complete two-host contract. The verifier connects directly to
 `127.0.0.1:443` with the production SNI and Host values, bypassing external
 DNS/CDN state. It requires the public SpaceAware release identity and callback
 bytes to match `/opt/spaceaware/current/web`, validates callback method and
 security headers, parses the health and provider JSON contracts, checks both
 terrain prefixes, compares each public provider key and peer ID with its direct
-5010/18443 backend, and completes RFC 6455 handshakes through both public hosts.
-Any failure restores, validates, and reloads the pre-cutover Nginx file.
+5010/18443 backend, compares the public SDN console HTML and all exact console
+assets byte-for-byte with the direct 5020 backend, confirms `/apps/` still
+matches the 18443 sidecar, and completes RFC 6455 handshakes through both public
+hosts (including the SDN root and `/p2p/*`). Any failure restores, validates,
+and reloads the pre-cutover Nginx file.
 
 The normal binary deploy invokes only the first-stage SDN installer, and only
 when the exact `deployment/spaceaware/servers.yaml` target is selected. The
@@ -107,6 +115,8 @@ production service after deploy:
   -b \
   status
 curl -fsS https://sdn.spaceaware.io/ >/dev/null
+curl -fsS https://sdn.spaceaware.io/app.js >/dev/null
+curl -fsS https://sdn.spaceaware.io/apps/ >/dev/null
 curl -fsS https://sdn.spaceaware.io/webui/ >/dev/null
 ```
 

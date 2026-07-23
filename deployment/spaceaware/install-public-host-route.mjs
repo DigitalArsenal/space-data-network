@@ -13,14 +13,14 @@ import {
 } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { validateFinalConfig } from './install-spaceaware-public-host-route.mjs';
+import { transformManagedFinalConfig } from './install-spaceaware-public-host-route.mjs';
 
 const oldMap = `map $http_upgrade $sdn_upgrade_backend {
     default http://127.0.0.1:5020;
     websocket http://127.0.0.1:18080;
 }`;
 
-const hostAwareMaps = `map $host $sdn_http_backend {
+const sidecarRootMaps = `map $host $sdn_http_backend {
     default http://127.0.0.1:5020;
     sdn.spaceaware.io https://127.0.0.1:18443;
 }
@@ -30,12 +30,37 @@ map $http_upgrade $sdn_upgrade_backend {
     websocket http://127.0.0.1:18080;
 }`;
 
-const routedLocations = [
-  'location = /index.html',
+const hostAwareMaps = `map $host $sdn_http_backend {
+    default http://127.0.0.1:5020;
+    sdn.spaceaware.io https://127.0.0.1:18443;
+}
+
+map $http_upgrade $sdn_upgrade_backend {
+    default http://127.0.0.1:5020;
+    websocket http://127.0.0.1:18080;
+}`;
+
+const sidecarLocations = [
   'location ^~ /assets/',
   'location ^~ /TestData/',
   'location /',
 ];
+const consoleAssetPaths = [
+  '/styles.css',
+  '/app.js',
+  '/module-harness.js',
+  '/flatbuffers.js',
+  '/fonts/chakra-400.woff2',
+  '/fonts/chakra-500.woff2',
+  '/fonts/chakra-600.woff2',
+  '/fonts/chakra-700.woff2',
+  '/fonts/plex-400.woff2',
+  '/fonts/plex-500.woff2',
+  '/fonts/plex-600.woff2',
+];
+const consoleLocations = consoleAssetPaths.map((path) => `    location = ${path} {
+        proxy_pass http://127.0.0.1:5020;
+    }`).join('\n\n');
 const lockHeldEnvironment = 'SDN_PUBLIC_HOST_ROUTE_LOCK_HELD';
 const spaceawareCutoverMarker = '# spaceaware-public-host-route: spaceaware-v1';
 const sdnCutoverMarker = '# spaceaware-public-host-route: sdn-v1';
@@ -85,17 +110,16 @@ function locateBlock(text, header) {
   fail(`unexpected nginx config: unterminated ${header} block`);
 }
 
-function isManagedSpaceAwareCutover(text) {
+function transformManagedSpaceAwareCutover(text) {
   const markerCount = count(text, spaceawareCutoverMarker) + count(text, sdnCutoverMarker);
-  if (markerCount === 0) return false;
+  if (markerCount === 0) return null;
   if (markerCount !== 2) {
     fail('unexpected nginx config: partial SpaceAware public-host cutover markers');
   }
-  validateFinalConfig(text);
-  return true;
+  return transformManagedFinalConfig(text);
 }
 
-function routeLocation(text, header) {
+function routeLocationToSidecar(text, header) {
   const block = locateBlock(text, header);
   const oldProxy = 'proxy_pass http://127.0.0.1:5020;';
   const newProxy = 'proxy_pass $sdn_http_backend;';
@@ -109,8 +133,51 @@ function routeLocation(text, header) {
   fail(`unexpected nginx config: ${header} must contain exactly one recognized proxy_pass`);
 }
 
+function routeConsoleIndex(text) {
+  const header = 'location = /index.html';
+  const block = locateBlock(text, header);
+  const desiredProxy = 'proxy_pass http://127.0.0.1:5020/;';
+  const recognized = [
+    desiredProxy,
+    'proxy_pass http://127.0.0.1:5020;',
+    'proxy_pass $sdn_http_backend;',
+  ];
+  const matches = recognized.filter((proxy) => count(block.value, proxy) === 1);
+  if (matches.length !== 1
+      || recognized.some((proxy) => count(block.value, proxy) > 1)) {
+    fail(`unexpected nginx config: ${header} must contain exactly one recognized proxy_pass`);
+  }
+  if (matches[0] === desiredProxy) return text;
+  const nextBlock = block.value.replace(matches[0], desiredProxy);
+  return text.slice(0, block.start) + nextBlock + text.slice(block.end);
+}
+
+function ensureConsoleLocations(text) {
+  const counts = consoleAssetPaths.map((path) => (
+    count(text, `    location = ${path} {`)
+  ));
+  if (counts.every((value) => value === 0)) {
+    const index = locateBlock(text, 'location = /index.html');
+    return text.slice(0, index.end)
+      + `\n\n${consoleLocations}`
+      + text.slice(index.end);
+  }
+  if (!counts.every((value) => value === 1)) {
+    fail('unexpected nginx config: SDN console asset routes are partial or duplicated');
+  }
+  for (const path of consoleAssetPaths) {
+    const block = locateBlock(text, `location = ${path}`).value;
+    if (count(block, 'proxy_pass http://127.0.0.1:5020;') !== 1
+        || count(block, 'proxy_pass ') !== 1) {
+      fail(`unexpected nginx config: SDN console asset route is not canonical: ${path}`);
+    }
+  }
+  return text;
+}
+
 export function transformConfig(text) {
-  if (isManagedSpaceAwareCutover(text)) return text;
+  const managedCutover = transformManagedSpaceAwareCutover(text);
+  if (managedCutover !== null) return managedCutover;
 
   if (count(text, 'server_name spaceaware.io www.spaceaware.io sdn.spaceaware.io;') !== 1) {
     fail('unexpected nginx config: shared SpaceAware/SDN server_name is missing or duplicated');
@@ -118,16 +185,21 @@ export function transformConfig(text) {
 
   let next = text;
   const oldMapCount = count(next, oldMap);
+  const sidecarRootMapsCount = count(next, sidecarRootMaps);
   const newMapCount = count(next, hostAwareMaps);
-  if (oldMapCount === 1 && newMapCount === 0) {
+  if (oldMapCount === 1 && sidecarRootMapsCount === 0 && newMapCount === 0) {
     next = next.replace(oldMap, hostAwareMaps);
-  } else if (oldMapCount === 0 && newMapCount === 1) {
+  } else if (oldMapCount === 0 && sidecarRootMapsCount === 1 && newMapCount === 0) {
+    next = next.replace(sidecarRootMaps, hostAwareMaps);
+  } else if (oldMapCount === 1 && sidecarRootMapsCount === 0 && newMapCount === 1) {
     // Already transformed; validate every routed location below.
   } else {
     fail('unexpected nginx config: public backend map is missing, duplicated, or partially edited');
   }
 
-  for (const header of routedLocations) next = routeLocation(next, header);
+  next = routeConsoleIndex(next);
+  for (const header of sidecarLocations) next = routeLocationToSidecar(next, header);
+  next = ensureConsoleLocations(next);
 
   const root = locateBlock(next, 'location = /').value;
   if (count(root, 'proxy_pass $sdn_upgrade_backend;') !== 1) {
@@ -288,7 +360,24 @@ async function rollbackOwnedConfig({
   throw trigger;
 }
 
-async function install(configPath, backupDir) {
+async function validateVerifierPath(verifierPath) {
+  if (!isAbsolute(verifierPath)) fail(`SDN public-host verifier path must be absolute: ${verifierPath}`);
+  const verifierStat = await lstat(verifierPath);
+  if (!verifierStat.isFile() || verifierStat.isSymbolicLink()) {
+    fail(`SDN public-host verifier must be a regular file: ${verifierPath}`);
+  }
+  return verifierPath;
+}
+
+function verifySdnPublicHost(verifierPath) {
+  runChecked(
+    process.execPath,
+    [verifierPath, '--mode', 'sdn-public'],
+    'SDN public-host verification',
+  );
+}
+
+async function install(configPath, backupDir, verifierPath) {
   const original = await readRegularFileNoFollow(configPath);
   const originalText = original.bytes.toString('utf8');
   const transformedText = transformConfig(originalText);
@@ -299,6 +388,8 @@ async function install(configPath, backupDir) {
     await assertCurrentDigest(configPath, originalDigest, 'between validation and reload');
     runChecked('systemctl', ['reload', 'nginx'], 'nginx reload');
     await assertCurrentDigest(configPath, originalDigest, 'after reload');
+    verifySdnPublicHost(verifierPath);
+    await assertCurrentDigest(configPath, originalDigest, 'after SDN public-host verification');
     process.stdout.write(`SDN public host route already installed and reloaded in ${configPath}\n`);
     return;
   }
@@ -350,6 +441,20 @@ async function install(configPath, backupDir) {
     });
   }
 
+  try {
+    verifySdnPublicHost(verifierPath);
+    await assertCurrentDigest(configPath, candidateDigest, 'after SDN public-host verification');
+  } catch (error) {
+    await rollbackOwnedConfig({
+      trigger: error,
+      description: 'SDN public-host verification',
+      configPath,
+      original,
+      candidateDigest,
+      reload: true,
+    });
+  }
+
   process.stdout.write(`Installed SDN public host route in ${configPath}; backup: ${backupPath}\n`);
 }
 
@@ -357,6 +462,7 @@ function parseArgs(argv) {
   let configPath = '/etc/nginx/sites-enabled/spaceaware';
   let backupDir = '/var/backups/spacedatanetwork/nginx';
   let lockPath = '/run/sdn-public-host-route.lock';
+  let verifierPath = resolve(dirname(process.argv[1]), 'verify-spaceaware-public-host-route.mjs');
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === '--config' && argv[index + 1]) {
       configPath = argv[index + 1];
@@ -367,17 +473,26 @@ function parseArgs(argv) {
     } else if (argv[index] === '--lock-path' && argv[index + 1]) {
       lockPath = argv[index + 1];
       index += 1;
+    } else if (argv[index] === '--verify-script' && argv[index + 1]) {
+      verifierPath = argv[index + 1];
+      index += 1;
     } else {
-      fail(`usage: ${basename(process.argv[1])} [--config PATH] [--backup-dir PATH] [--lock-path PATH]`);
+      fail(`usage: ${basename(process.argv[1])} [--config PATH] [--backup-dir PATH] [--lock-path PATH] [--verify-script PATH]`);
     }
   }
-  return { configPath, backupDir, lockPath };
+  return { configPath, backupDir, lockPath, verifierPath };
 }
 
 async function main(argv) {
-  const { configPath, backupDir, lockPath } = parseArgs(argv);
+  const {
+    configPath,
+    backupDir,
+    lockPath,
+    verifierPath,
+  } = parseArgs(argv);
+  const safeVerifierPath = await validateVerifierPath(verifierPath);
   if (process.env[lockHeldEnvironment] === '1') {
-    await install(configPath, backupDir);
+    await install(configPath, backupDir, safeVerifierPath);
     return;
   }
 

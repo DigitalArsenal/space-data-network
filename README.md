@@ -36,23 +36,23 @@ Space Data Network enables real-time sharing of space situational awareness data
 
 ## Current UI Surfaces
 
-- `/` serves the **conjunction screening app** — the shipped, browser-first SDN
-  UI. It is a single self-contained artifact (all JS/CSS/fonts inlined,
-  no wasm) embedded in the daemon and served from memory. It runs anonymously
-  against public read endpoints (`/api/v1/{peers,channels,stats}`,
-  `/api/v1/data/health`) — no login is required or offered.
+- `/` on a Kubo-integrated or production SDN node serves the **SDN Node
+  Console** from `kubo/sdn/sdnui/assets`. Its rail exposes Node, Peers, Data,
+  Channels, Apps, and Modules, backed by the node's `/sdn/v1` API.
+- `/apps/` on the standalone service is the installed-app launcher, with
+  application pages such as `/apps/conjunction/`. Kubo also exposes installed
+  application records and pages below `/sdn/v1/apps/`.
 - `/login` is the **legacy wallet-bootstrap surface** (wallet creation and
-  first-admin bootstrap for operators). The conjunction app never links to it;
-  it is the daemon's own wallet-gated page.
+  first-admin bootstrap for operators).
 - `/webui` is the upstream-style IPFS WebUI (unchanged).
 - `/admin` is reserved for admin and auth flows.
 
-The shipped UI is conjunction-only (owner directive 2026-07-11). The full
-SpaceAware app (login screen, console, BMC2 boards, orbital, gantt) stays in the
-source tree, dormant, behind a dev switch: set `SDN_UI_MODE=spaceaware` to serve
-that route skeleton for local development. With the switch unset (the shipped
-default), the daemon serves the conjunction app at `/` and returns 404 for the
-descoped SpaceAware screens.
+The standalone `sdn-server` listener can still serve the embedded conjunction
+application at its own `/` route. Production reverse-proxy configuration must
+not use that sidecar root as a replacement for the Kubo SDN Node Console:
+normal public `/`, `/index.html`, and the console's exact assets route to the
+Kubo console, while `/apps/`, wallet, and application API fallbacks remain on
+the standalone service.
 
 The SDN browser path uses `sdn-js` plus the generic async capability surfaces from `space-data-module-sdk` and the existing `hd-wallet-wasm` and `hd-wallet-ui` identity stack. It uses direct SDN APIs and browser-safe package exports without a helper service.
 

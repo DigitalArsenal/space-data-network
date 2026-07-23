@@ -19,6 +19,36 @@ const reviewedAssets = [
   { path: '/assets/hd-wallet-ui/2.0.28/public.js', body: Buffer.from('wallet public client\n'), type: 'text/javascript' },
   { path: '/assets/hd-wallet-ui/2.0.28/callback.js', body: Buffer.from('wallet callback\n'), type: 'text/javascript' },
 ];
+const sdnConsoleRoot = Buffer.from(`<!doctype html>
+<title>Space Data Network — Node Console</title>
+<div id="sdn-node-console-v1" class="app-shell">
+  <nav class="sdn-rail">
+    <span>NODE</span><span>PEERS</span><span>DATA</span>
+    <span>CHANNELS</span><span>APPS</span><span>MODULES</span>
+  </nav>
+  <code>/sdn/v1</code>
+</div>
+`);
+const sdnAppsRoot = Buffer.from('<!doctype html><title>SDN APPS</title><main>Installed applications</main>\n');
+const sdnConsoleAssets = [
+  { path: '/styles.css', body: Buffer.from('/* SDN Node Console */\n'), type: 'text/css' },
+  { path: '/app.js', body: Buffer.from('console.info("SDN Node Console");\n'), type: 'text/javascript' },
+  { path: '/module-harness.js', body: Buffer.from('export const harness = true;\n'), type: 'text/javascript' },
+  { path: '/flatbuffers.js', body: Buffer.from('export const flatbuffers = true;\n'), type: 'text/javascript' },
+  ...[
+    'chakra-400.woff2',
+    'chakra-500.woff2',
+    'chakra-600.woff2',
+    'chakra-700.woff2',
+    'plex-400.woff2',
+    'plex-500.woff2',
+    'plex-600.woff2',
+  ].map((name) => ({
+    path: `/fonts/${name}`,
+    body: Buffer.from(`fixture ${name}\n`),
+    type: 'font/woff2',
+  })),
+];
 
 function contentAddressedWalletAsset(extension, body) {
   const digest = createHash('sha256').update(body).digest('hex');
@@ -198,6 +228,7 @@ test('public verification checks both Host routes, callback policy, terrain, and
   let wrongAsset = false;
   let wrongWalletAsset = false;
   let wrongWalletWasm = false;
+  let wrongConsoleAsset = false;
   let staleWallet = false;
   const seenHosts = new Set();
   const edge = createServer((req, res) => {
@@ -223,7 +254,19 @@ test('public verification checks both Host routes, callback policy, terrain, and
       if (req.url === '/terrain/__terrain-cache/health' || req.url === '/ipfs/terrain/__terrain-cache/health') return void res.writeHead(200).end('ok');
     }
     if (host === 'sdn.test') {
-      if (req.url === '/') return void res.writeHead(200).end('<div id="sdn-node-console-v1">2.0.28</div>');
+      if (req.url === '/' || req.url === '/index.html') {
+        return void res.writeHead(200, { 'Content-Type': 'text/html' }).end(sdnConsoleRoot);
+      }
+      const consoleAsset = sdnConsoleAssets.find((candidate) => candidate.path === req.url);
+      if (consoleAsset) {
+        const body = wrongConsoleAsset && consoleAsset.path === '/app.js'
+          ? Buffer.from('corrupt public console JavaScript\n')
+          : consoleAsset.body;
+        return void res.writeHead(200, { 'Content-Type': consoleAsset.type }).end(body);
+      }
+      if (req.url === '/apps/') {
+        return void res.writeHead(200, { 'Content-Type': 'text/html' }).end(sdnAppsRoot);
+      }
       if (req.url === '/wallet/callback') return void res.writeHead(200).end(web.callback);
       if (req.url === '/api/module-delivery/provider') return void res.writeHead(200).end(JSON.stringify(provider));
     }
@@ -236,7 +279,18 @@ test('public verification checks both Host routes, callback policy, terrain, and
   });
   const sdnDirect = createServer((req, res) => {
     if (req.url === '/api/module-delivery/provider') res.writeHead(200).end(JSON.stringify(provider));
+    else if (req.url === '/apps/') res.writeHead(200, { 'Content-Type': 'text/html' }).end(sdnAppsRoot);
+    else if (req.url === '/wallet/callback') res.writeHead(200, { 'Content-Type': 'text/html' }).end(web.callback);
     else res.writeHead(404).end();
+  });
+  const sdnConsoleDirect = createServer((req, res) => {
+    if (req.url === '/' || req.url === '/index.html') {
+      res.writeHead(200, { 'Content-Type': 'text/html' }).end(sdnConsoleRoot);
+      return;
+    }
+    const asset = sdnConsoleAssets.find((candidate) => candidate.path === req.url);
+    if (!asset) return void res.writeHead(404).end();
+    res.writeHead(200, { 'Content-Type': asset.type }).end(asset.body);
   });
   const dependencies = dependencyServer(
     (asset) => (wrongAsset && asset.path.startsWith('/assets/hd-wallet-ui/'))
@@ -244,10 +298,16 @@ test('public verification checks both Host routes, callback policy, terrain, and
       || (wrongWalletWasm && asset.path.startsWith('/assets/wallet-origin.') && asset.path.endsWith('.wasm')),
     () => makeWalletOriginBundle(staleWallet ? '2.0.27' : '2.0.28'),
   );
-  const [edgePort, spaceDirectPort, sdnDirectPort, dependencyPort] = await Promise.all([
-    listen(edge), listen(spaceDirect), listen(sdnDirect), listen(dependencies),
+  const [edgePort, spaceDirectPort, sdnDirectPort, sdnConsolePort, dependencyPort] = await Promise.all([
+    listen(edge), listen(spaceDirect), listen(sdnDirect), listen(sdnConsoleDirect), listen(dependencies),
   ]);
-  t.after(async () => Promise.all([close(edge), close(spaceDirect), close(sdnDirect), close(dependencies)]));
+  t.after(async () => Promise.all([
+    close(edge),
+    close(spaceDirect),
+    close(sdnDirect),
+    close(sdnConsoleDirect),
+    close(dependencies),
+  ]));
 
   const args = [
     '--mode', 'public',
@@ -260,6 +320,7 @@ test('public verification checks both Host routes, callback policy, terrain, and
     '--spaceaware-http-port', String(spaceDirectPort),
     '--sdn-http-port', String(sdnDirectPort),
     '--sdn-http-protocol', 'http',
+    '--sdn-console-port', String(sdnConsolePort),
     '--static-origin', `http://127.0.0.1:${dependencyPort}`,
     '--wallet-origin', `http://127.0.0.1:${dependencyPort}`,
     '--timeout-ms', '2000',
@@ -269,8 +330,19 @@ test('public verification checks both Host routes, callback policy, terrain, and
   assert.match(result.stdout, /both public hosts/i);
   assert.ok(seenHosts.has('www.spaceaware.test'));
 
-  wrongAsset = true;
+  const sdnOnlyArgs = [...args];
+  sdnOnlyArgs[sdnOnlyArgs.indexOf('--mode') + 1] = 'sdn-public';
+  const sdnOnly = await runVerifier(sdnOnlyArgs);
+  assert.equal(sdnOnly.code, 0, sdnOnly.stderr);
+  assert.match(sdnOnly.stdout, /SDN public Node console, Apps sidecar, and websocket routes/i);
+
+  wrongConsoleAsset = true;
   let failed = await runVerifier(args);
+  assert.notEqual(failed.code, 0);
+  assert.match(failed.stderr, /SDN public console asset .* does not match direct console/i);
+  wrongConsoleAsset = false;
+  wrongAsset = true;
+  failed = await runVerifier(args);
   assert.notEqual(failed.code, 0);
   assert.match(failed.stderr, /SRI sha384 mismatch/i);
   wrongAsset = false;

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import {
   chmod,
@@ -14,6 +15,7 @@ import {
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { test } from 'node:test';
+import { transformConfig as transformCanonicalConfig } from './install-spaceaware-public-host-route.mjs';
 
 const installerPath = new URL('./install-spaceaware-public-host-route.mjs', import.meta.url);
 const sdnInstallerPath = new URL('./install-public-host-route.mjs', import.meta.url);
@@ -21,6 +23,55 @@ const readinessPath = new URL('./cutover-spaceaware-public-host-route.sh', impor
 const deployScriptPath = new URL('../scripts/deploy.sh', import.meta.url);
 const sourceFixturePath = new URL('./fixtures/shared-public-host-after-sdn-route.nginx', import.meta.url);
 const sourceConfig = await readFile(sourceFixturePath, 'utf8');
+const consoleAssetPaths = [
+  '/styles.css',
+  '/app.js',
+  '/module-harness.js',
+  '/flatbuffers.js',
+  '/fonts/chakra-400.woff2',
+  '/fonts/chakra-500.woff2',
+  '/fonts/chakra-600.woff2',
+  '/fonts/chakra-700.woff2',
+  '/fonts/plex-400.woff2',
+  '/fonts/plex-500.woff2',
+  '/fonts/plex-600.woff2',
+];
+
+function historicalSidecarRootFinalConfig() {
+  let config = transformCanonicalConfig(sourceConfig);
+  config = config.replace(
+    `map $http_upgrade $sdn_upgrade_backend {
+    default http://127.0.0.1:5020;
+    websocket http://127.0.0.1:18080;
+}`,
+    `map $http_upgrade $sdn_upgrade_backend {
+    default $sdn_http_backend;
+    websocket http://127.0.0.1:18080;
+}`,
+  );
+  config = config.replace(
+    `    location = /index.html {
+        proxy_pass http://127.0.0.1:5020/;`,
+    `    location = /index.html {
+        proxy_pass $sdn_http_backend;`,
+  );
+  for (const path of consoleAssetPaths) {
+    config = config.replace(
+      `
+
+    location = ${path} {
+        proxy_pass http://127.0.0.1:5020;
+    }`,
+      '',
+    );
+  }
+  assert.equal(
+    createHash('sha256').update(config).digest('hex'),
+    '0cd3509325acf0e3928fd6dd7c892d3e5d4301791e7db0e01e9874942bf79d51',
+    'historical final fixture must remain byte-identical to the deployed canonical config',
+  );
+  return config;
+}
 
 async function run(command, args, options) {
   return await new Promise((resolve, reject) => {
@@ -48,6 +99,7 @@ async function makeFixture(t, {
   verifyExit = 0,
   mutateDuringNginx = false,
   flockBusy = false,
+  initialConfig = sourceConfig,
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'spaceaware-public-host-route-'));
   t.after(async () => rm(root, { recursive: true, force: true }));
@@ -60,7 +112,7 @@ async function makeFixture(t, {
   const verifierPath = join(root, 'verify-route.mjs');
   await mkdir(bin);
   await mkdir(configDir);
-  await writeFile(configPath, sourceConfig, { mode: 0o640 });
+  await writeFile(configPath, initialConfig, { mode: 0o640 });
   await writeFile(callLog, '');
   await writeFile(verifierPath, `
 import fs from 'node:fs';
@@ -102,7 +154,7 @@ exit 127
       '--backup-dir', selectedBackupDir,
       '--lock-path', lockPath,
     ];
-    if (selectedInstaller.pathname === installerPath.pathname) {
+    if ([installerPath.pathname, sdnInstallerPath.pathname].includes(selectedInstaller.pathname)) {
       args.push('--verify-script', verifierPath);
     }
     return await run(process.execPath, args, {
@@ -151,6 +203,24 @@ test('splits the public hosts and applies the signed SpaceAware route contract',
   const sdn = serverBlock(installed, '# spaceaware-public-host-route: sdn-v1');
   assert.doesNotMatch(sdn, /127\.0\.0\.1:(?:5010|8081)/);
   assert.match(sdn, /location = \/ \{\s+proxy_pass \$sdn_upgrade_backend;/);
+  assert.match(installed, /map \$http_upgrade \$sdn_upgrade_backend \{\s+default http:\/\/127\.0\.0\.1:5020;\s+websocket http:\/\/127\.0\.0\.1:18080;\s+\}/);
+  assert.match(sdn, /location = \/index\.html \{[\s\S]*?proxy_pass http:\/\/127\.0\.0\.1:5020\/;/);
+  for (const path of [
+    '/styles.css',
+    '/app.js',
+    '/module-harness.js',
+    '/flatbuffers.js',
+    '/fonts/chakra-400.woff2',
+    '/fonts/chakra-500.woff2',
+    '/fonts/chakra-600.woff2',
+    '/fonts/chakra-700.woff2',
+    '/fonts/plex-400.woff2',
+    '/fonts/plex-500.woff2',
+    '/fonts/plex-600.woff2',
+  ]) {
+    const escaped = path.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+    assert.match(sdn, new RegExp(`location = ${escaped} \\{[\\s\\S]*?proxy_pass http://127\\.0\\.0\\.1:5020;`));
+  }
   assert.match(sdn, /location \^~ \/p2p\/ \{[\s\S]*?proxy_pass \$sdn_upgrade_backend;/);
   assert.match(sdn, /location \/ \{\s+proxy_pass \$sdn_http_backend;/);
   assert.match(sdn, /location \^~ \/api\/module-delivery\/[\s\S]*?proxy_pass https:\/\/127\.0\.0\.1:18443;/);
@@ -199,6 +269,22 @@ test('the SDN route installer accepts and reloads the final split config', async
   assert.equal(sdnRetry.code, 0, sdnRetry.stderr);
   assert.match(sdnRetry.stdout, /already installed/i);
   assert.match(await readFile(fixture.callLog, 'utf8'), /systemctl reload nginx/);
+});
+
+test('the normal SDN deploy repairs the exact historical split sidecar-root config', async (t) => {
+  const historical = historicalSidecarRootFinalConfig();
+  const fixture = await makeFixture(t, { initialConfig: historical });
+  const result = await fixture.invoke(sdnInstallerPath);
+  assert.equal(result.code, 0, result.stderr);
+
+  const installed = await readFile(fixture.configPath, 'utf8');
+  assert.equal(installed, transformCanonicalConfig(sourceConfig));
+  assert.match(installed, /map \$http_upgrade \$sdn_upgrade_backend \{\s+default http:\/\/127\.0\.0\.1:5020;/);
+  assert.equal((installed.match(/location = \/styles\.css \{/gu) || []).length, 1);
+  const backups = (await readdir(fixture.backupDir))
+    .filter((name) => name.startsWith('spaceaware.pre-sdn-public-route.'));
+  assert.equal(backups.length, 1);
+  assert.equal(await readFile(join(fixture.backupDir, backups[0]), 'utf8'), historical);
 });
 
 test('the SDN route installer rejects drift anywhere in the managed final split config', async (t) => {

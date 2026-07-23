@@ -110,6 +110,11 @@ ${routed}
         location / { add_header X-Mock-Backend sdn-http always; return 200 "sdn-http:$uri"; }
     }
     server {
+        listen 5020;
+        default_type text/plain;
+        location / { add_header X-Mock-Backend sdn-console always; return 200 "sdn-console:$uri"; }
+    }
+    server {
         listen 18080;
         default_type text/plain;
         location / { add_header X-Mock-Backend sdn-websocket always; return 200 "sdn-websocket:$uri"; }
@@ -177,7 +182,39 @@ ${routed}
   assert.equal(response.headers.allow, 'GET, HEAD');
 
   response = await edgeRequest(port, 'sdn.spaceaware.io', '/');
-  assert.equal(response.headers['x-mock-backend'], 'sdn-http');
+  assert.equal(response.body, 'sdn-console:/');
+  assert.equal(response.headers['x-mock-backend'], 'sdn-console');
+  response = await edgeRequest(port, 'sdn.spaceaware.io', '/index.html');
+  assert.equal(response.body, 'sdn-console:/');
+  assert.equal(response.headers['x-mock-backend'], 'sdn-console');
+  for (const path of [
+    '/styles.css',
+    '/app.js',
+    '/module-harness.js',
+    '/flatbuffers.js',
+    '/fonts/chakra-400.woff2',
+    '/fonts/plex-600.woff2',
+  ]) {
+    response = await edgeRequest(port, 'sdn.spaceaware.io', path);
+    assert.equal(response.body, `sdn-console:${path}`);
+    assert.equal(response.headers['x-mock-backend'], 'sdn-console');
+  }
+  for (const path of [
+    '/apps/',
+    '/wallet/callback',
+    '/api/module-delivery/provider',
+  ]) {
+    response = await edgeRequest(port, 'sdn.spaceaware.io', path);
+    assert.equal(response.body, `sdn-http:${path}`);
+    assert.equal(response.headers['x-mock-backend'], 'sdn-http');
+  }
+  response = await edgeRequest(
+    port,
+    'sdn.spaceaware.io',
+    '/',
+    { Upgrade: 'websocket', Connection: 'Upgrade' },
+  );
+  assert.equal(response.headers['x-mock-backend'], 'sdn-websocket');
   response = await edgeRequest(port, 'sdn.spaceaware.io', '/p2p/peer', { Upgrade: 'websocket' });
   assert.equal(response.headers['x-mock-backend'], 'sdn-websocket');
 });
