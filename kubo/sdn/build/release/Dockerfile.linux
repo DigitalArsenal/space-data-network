@@ -85,3 +85,20 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # Export just the artifact tree (ipfs + lib/) to the local output dir.
 FROM scratch AS artifact
 COPY --from=build /out/ /
+
+# test-env: the exact build environment (Go toolchain + patched WasmEdge)
+# with NO source baked in — scripts/test-docker.sh bind-mounts the repo and
+# runs `go test` inside, so tests execute against the same libwasmedge the
+# prod binary links. Kept as a separate target so `--target artifact`
+# release builds are unaffected.
+FROM golang:${GO_VER}-bookworm AS test-env
+COPY --from=wasmedge /opt/wasmedge /opt/wasmedge
+RUN set -eux; \
+    if [ -d /opt/wasmedge/lib64 ] && [ ! -e /opt/wasmedge/lib ]; then ln -s lib64 /opt/wasmedge/lib; fi; \
+    ls /opt/wasmedge/lib/libwasmedge.so*
+ENV CGO_ENABLED=1 \
+    GOTOOLCHAIN=local \
+    CGO_CFLAGS="-I/opt/wasmedge/include" \
+    CGO_LDFLAGS="-L/opt/wasmedge/lib -lwasmedge" \
+    LD_LIBRARY_PATH=/opt/wasmedge/lib
+WORKDIR /src
