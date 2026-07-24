@@ -152,10 +152,11 @@ describe('sdn-js package build', () => {
     expect(packageJson.scripts?.prepublishOnly).not.toContain('--prefix');
   });
 
-  it('keeps the full UI build separate from the package publish build', async () => {
+  it('builds only the package core (UI apps removed — owner clean slate 2026-07-24)', async () => {
     const packageJson = JSON.parse(await fs.readFile(PACKAGE_JSON_PATH, 'utf8'));
 
-    expect(packageJson.scripts?.build).toContain('build:ui');
+    expect(packageJson.scripts?.build).toContain('build:core');
+    expect(packageJson.scripts?.build).not.toContain('build:ui');
     expect(packageJson.scripts?.buildPackage ?? packageJson.scripts?.['build:package']).toContain('build:core');
     expect(packageJson.scripts?.prepublishOnly).toBe(
       'npm run check:versions && npm run build:package',
