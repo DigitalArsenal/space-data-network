@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Space Data Network</title>
+<style>
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+}
+
+/* Textured black: layered radial glows, a fine diagonal grain, and CRT
+   scanlines — all pure CSS, zero external fetches. */
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    repeating-linear-gradient(0deg, rgba(0, 255, 102, 0.028) 0px, rgba(0, 255, 102, 0.028) 1px, transparent 1px, transparent 3px),
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.016) 0px, rgba(255, 255, 255, 0.016) 1px, transparent 1px, transparent 5px),
+    radial-gradient(ellipse 70% 55% at 50% 42%, rgba(0, 80, 34, 0.32) 0%, transparent 65%),
+    radial-gradient(ellipse 120% 90% at 50% 110%, rgba(0, 40, 18, 0.5) 0%, transparent 60%),
+    #010302;
+}
+
+main {
+  text-align: center;
+  padding: 0 24px;
+}
+
+h1 {
+  margin: 0;
+  font-family: "Michroma", "Eurostile", "Bank Gothic", "Orbitron",
+    "Avenir Next Condensed", "Arial Narrow", ui-monospace, "SF Mono",
+    Menlo, Consolas, monospace;
+  font-size: clamp(28px, 6.5vw, 92px);
+  font-weight: 700;
+  letter-spacing: 0.34em;
+  text-indent: 0.34em; /* balance the trailing tracking so it centers true */
+  text-transform: uppercase;
+  color: #38ff8e;
+  text-shadow:
+    0 0 6px rgba(56, 255, 142, 0.85),
+    0 0 22px rgba(0, 255, 102, 0.45),
+    0 0 64px rgba(0, 255, 102, 0.25);
+  animation: sdn-hum 4.8s ease-in-out infinite;
+}
+
+.rule {
+  width: min(52vw, 560px);
+  height: 1px;
+  margin: 28px auto 0;
+  background: linear-gradient(90deg, transparent, rgba(56, 255, 142, 0.65), transparent);
+  box-shadow: 0 0 12px rgba(0, 255, 102, 0.35);
+}
+
+@keyframes sdn-hum {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.86; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  h1 { animation: none; }
+}
+</style>
+</head>
+<body>
+<main>
+<h1>Space&nbsp;Data&nbsp;Network</h1>
+<div class="rule"></div>
+</main>
+</body>
+</html>

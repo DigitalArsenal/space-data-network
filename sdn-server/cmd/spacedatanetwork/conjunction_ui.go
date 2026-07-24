@@ -45,29 +45,12 @@ const placeholderCSP = "default-src 'none'; " +
 	"frame-ancestors 'none'; " +
 	"form-action 'none'"
 
-const placeholderHTML = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Space Data Network</title>
-<style>
-html,body{margin:0;height:100%;background:#04060a;color:#8fd6ff;
-font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-display:flex;align-items:center;justify-content:center;}
-main{text-align:center;letter-spacing:0.08em;}
-h1{font-size:16px;font-weight:600;text-transform:uppercase;letter-spacing:0.22em;color:#dfeeff;}
-p{color:#5b7f95;margin-top:10px;}
-</style>
-</head>
-<body>
-<main>
-<h1>Space Data Network</h1>
-<p>Node online. Interface arriving shortly.</p>
-</main>
-</body>
-</html>
-`
+// placeholderHTML is the single self-contained interim page served at "/"
+// (owner directive 2026-07-24: the SPACE DATA NETWORK wordmark, green on
+// textured black) until the new UI codebase lands.
+//
+//go:embed embedded/placeholder.html
+var placeholderHTML []byte
 
 // makeRootPlaceholderHandler serves the minimal placeholder at "/" and the
 // wallet callback routes; everything else under the root surface 404s.
@@ -90,7 +73,7 @@ func makeRootPlaceholderHandler() http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		if r.Method != http.MethodHead {
-			_, _ = w.Write([]byte(placeholderHTML))
+			_, _ = w.Write(placeholderHTML)
 		}
 	})
 }

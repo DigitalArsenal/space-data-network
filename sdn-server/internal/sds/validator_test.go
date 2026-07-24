@@ -273,7 +273,7 @@ var internalSchemas = map[string]bool{
 }
 
 const (
-	expectedStandardSchemaCount = 171
+	expectedStandardSchemaCount = 172 // +APP (Application Package Manifest, SDS v1.155.0)
 	expectedInternalSchemaCount = 4
 	expectedTotalSchemaCount    = expectedStandardSchemaCount + expectedInternalSchemaCount
 )

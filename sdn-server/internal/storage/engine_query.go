@@ -83,8 +83,10 @@ type QuerySurfaceTable struct {
 }
 
 // engineSchemaBaseTables are the SDS record tables routed into the engine
-// (only OMM so far — loop B.3 slice; further standards join here).
-var engineSchemaBaseTables = []string{"OMM"}
+// (loop B.3 slice started with OMM; APP joins for installed-app enumeration
+// per the Iris/Themis $APP composition ruling 2026-07-24 — installed apps
+// are rows queried from the store, never a directory scan).
+var engineSchemaBaseTables = []string{"APP", "OMM"}
 
 // PublicQuerySurface enumerates the tables/views/columns the sandboxed
 // public query may read, straight from the live engine (no hand-maintained
