@@ -1,5 +1,16 @@
 # FlatSQL as a Linked Component Dependency
 
+> **Historical proof, superseded architecture — 2026-07-21:** This document
+> proves earlier host-linked-engine experiments but no longer defines the
+> target runtime. FlatSQL must be a signed, pluggable WASM flow node. Go and
+> JavaScript hosts provide only equivalent generic opaque persistence,
+> shared-arena, network, clock/wakeup, and lifecycle adapters. Do not implement
+> the live host-store linkage, `storage_engine_link`, host-side FlatSQL query
+> semantics, or host-owned rows/regions described below. Every module port must
+> instead support paired canonical FlatBuffer and aligned-binary
+> representations selected by `PIV`/`TAB.WIRE_FORMAT`. The remainder is kept as
+> migration and benchmark evidence.
+
 Loop C.3c3 phase 1 — feasibility, design, and proof for storage-needing
 modules declaring the FlatSQL engine as a **dependency** and calling its
 exports **directly in-wasm** against the host store's **live engine

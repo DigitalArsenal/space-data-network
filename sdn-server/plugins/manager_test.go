@@ -154,17 +154,17 @@ func TestSaveRuntimeModuleSchedulePersistsCadenceAndHistory(t *testing.T) {
 	dir := t.TempDir()
 	mgr := New()
 	plugin := &fakeRuntimePlugin{
-		id: "celestrak-provider",
+		id: "weather-provider",
 		descriptor: RuntimeModuleDescriptor{
 			Manifest: &RuntimeModuleManifest{
-				PluginID: "celestrak-provider",
-				Name:     "CelesTrak Provider",
+				PluginID: "weather-provider",
+				Name:     "Weather Provider",
 			},
 		},
 		cron: []CronMethodSpec{
 			{
-				Method:          "sync_full_catalog",
-				Description:     "Sync CelesTrak full catalog",
+				Method:          "refresh",
+				Description:     "Refresh provider data",
 				DefaultInterval: "3h",
 				Input:           "json",
 				Output:          "json",
@@ -178,7 +178,7 @@ func TestSaveRuntimeModuleSchedulePersistsCadenceAndHistory(t *testing.T) {
 		t.Fatalf("StartAll failed: %v", err)
 	}
 
-	_, err := mgr.SaveRuntimeModuleSchedule(context.Background(), "celestrak-provider", "sync_full_catalog", RuntimeModuleScheduleConfig{
+	_, err := mgr.SaveRuntimeModuleSchedule(context.Background(), "weather-provider", "refresh", RuntimeModuleScheduleConfig{
 		Enabled:        true,
 		Interval:       "45m",
 		CronExpression: "*/45 * * * *",
@@ -187,10 +187,10 @@ func TestSaveRuntimeModuleSchedulePersistsCadenceAndHistory(t *testing.T) {
 		MaxRuntime:     "10m",
 	})
 	if err == nil {
-		t.Fatal("SaveRuntimeModuleSchedule accepted 45m CelesTrak cadence, want minimum cadence error")
+		t.Fatal("SaveRuntimeModuleSchedule accepted 45m cadence below the manifest-declared minimum")
 	}
 
-	schedule, err := mgr.SaveRuntimeModuleSchedule(context.Background(), "celestrak-provider", "sync_full_catalog", RuntimeModuleScheduleConfig{
+	schedule, err := mgr.SaveRuntimeModuleSchedule(context.Background(), "weather-provider", "refresh", RuntimeModuleScheduleConfig{
 		Enabled:        true,
 		Interval:       "3h",
 		CronExpression: "0 */3 * * *",
@@ -204,23 +204,23 @@ func TestSaveRuntimeModuleSchedulePersistsCadenceAndHistory(t *testing.T) {
 		t.Fatalf("SaveRuntimeModuleSchedule failed: %v", err)
 	}
 	if schedule.Interval != "3h0m0s" || schedule.Timezone != "America/New_York" || schedule.MinInterval != "3h0m0s" {
-		t.Fatalf("schedule = %#v, want normalized 3h CelesTrak schedule", schedule)
+		t.Fatalf("schedule = %#v, want normalized manifest-constrained 3h schedule", schedule)
 	}
 	if schedule.NextRunAt == "" || len(schedule.IntervalPresets) == 0 {
 		t.Fatalf("schedule next/presets = %#v, want next run and presets", schedule)
 	}
 
-	history, err := mgr.RuntimeModuleCommandHistory("celestrak-provider")
+	history, err := mgr.RuntimeModuleCommandHistory("weather-provider")
 	if err != nil {
 		t.Fatalf("RuntimeModuleCommandHistory failed: %v", err)
 	}
-	if len(history) != 1 || history[0].Command != "save-schedule" || history[0].MethodID != "sync_full_catalog" {
+	if len(history) != 1 || history[0].Command != "save-schedule" || history[0].MethodID != "refresh" {
 		t.Fatalf("history = %#v, want save-schedule entry", history)
 	}
 
 	restored := New()
 	restoredPlugin := &fakeRuntimePlugin{
-		id:   "celestrak-provider",
+		id:   "weather-provider",
 		cron: plugin.cron,
 	}
 	if err := restored.Register(restoredPlugin); err != nil {
@@ -232,6 +232,37 @@ func TestSaveRuntimeModuleSchedulePersistsCadenceAndHistory(t *testing.T) {
 	restoredSnapshot := restored.RuntimeSnapshot()
 	if got := restoredSnapshot.Modules[0].Schedules[0].CronExpression; got != "0 */3 * * *" {
 		t.Fatalf("restored cron expression = %q, want persisted expression", got)
+	}
+}
+
+func TestRuntimeScheduleCadenceDoesNotInspectProviderNames(t *testing.T) {
+	for _, pluginID := range []string{"weather-provider", "celestrak-shaped-provider-name"} {
+		t.Run(pluginID, func(t *testing.T) {
+			mgr := New()
+			plugin := &fakeRuntimePlugin{
+				id: pluginID,
+				cron: []CronMethodSpec{
+					{Method: "refresh", DefaultInterval: "45m", Input: "none", Output: "json"},
+				},
+			}
+			if err := mgr.Register(plugin); err != nil {
+				t.Fatalf("Register failed: %v", err)
+			}
+			if err := mgr.StartAll(context.Background(), RuntimeContext{Mode: "test"}); err != nil {
+				t.Fatalf("StartAll failed: %v", err)
+			}
+
+			schedule, err := mgr.SaveRuntimeModuleSchedule(context.Background(), pluginID, "refresh", RuntimeModuleScheduleConfig{
+				Enabled:  true,
+				Interval: "45m",
+			})
+			if err != nil {
+				t.Fatalf("manifest-declared cadence was rejected based on provider name: %v", err)
+			}
+			if got, want := schedule.MinInterval, "45m0s"; got != want {
+				t.Fatalf("minimum interval = %q, want manifest-declared %q", got, want)
+			}
+		})
 	}
 }
 

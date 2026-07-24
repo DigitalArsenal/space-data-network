@@ -211,7 +211,7 @@ func (a *p2pCapAdapter) handle(operation string, payload []byte, bridge *moduler
 // ---------------------------------------------------------------------------
 
 // pnmFileIDSchema extracts the ".fbs" segment of a colon-delimited PNM
-// FILE_ID (e.g. "celestrak:gp:OMM.fbs:2026-05-06T03:00:00Z" -> "OMM.fbs"),
+// FILE_ID (e.g. "provider:gp:OMM.fbs:2026-05-06T03:00:00Z" -> "OMM.fbs"),
 // mirroring the dataset-pnms CLI rule.
 func pnmFileIDSchema(fileID string) string {
 	for _, part := range strings.Split(fileID, ":") {

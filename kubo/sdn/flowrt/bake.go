@@ -665,9 +665,9 @@ func (b *Baker) compileDescriptor(ctx context.Context, descriptorCpp string, abi
 // bakeInitialMemoryBytes is the composed runtime's fixed initial linear memory
 // (64 MiB, page-aligned). The bake sysroot's libstandalonewasm has a stubbed
 // emscripten_resize_heap (no memory.grow), so the heap cannot grow at runtime;
-// this reserves enough upfront for a real data-producing guest (matches
-// analysis/od's INITIAL_MEMORY). Replace with a memgrow libstandalonewasm to
-// restore true growth (then this can shrink back to the default).
+// this reserves enough upfront for an allocation-heavy data-producing guest.
+// Replace with a memgrow libstandalonewasm to restore true growth (then this
+// can shrink back to the default).
 const bakeInitialMemoryBytes = 67108864
 
 // link runs the STANDALONE_WASM reactor link line (flow_bake_test.go verbatim),
@@ -685,14 +685,11 @@ func (b *Baker) link(ctx context.Context, flowRuntimeO, descriptorO []byte, deps
 		// The bake sysroot ships only the NON-growth libstandalonewasm, whose
 		// emscripten_resize_heap is a 4-byte no-op stub (no memory.grow) — so the
 		// composed runtime CANNOT grow its heap (verified: no memory.grow opcode
-		// anywhere; sbrk -> resize_heap stub -> fails). The reference bake modules
-		// (omm-json's "[]" is SSO, clock/decision-gate) never allocate past the
-		// tiny default heap, so this was latent. A real data-producing guest
-		// (oem-source builds a $OEM FlatBuffer; od.fit runs an Eigen SGP4 fit)
-		// exhausts it and dlmalloc traps. Until the memgrow libstandalonewasm is
-		// staged into the sysroot, give the runtime a fixed initial heap large
-		// enough for the guest peak — 64 MiB, matching analysis/od's own
-		// INITIAL_MEMORY. (initial<=max=2 GiB; page-aligned.)
+		// anywhere; sbrk -> resize_heap stub -> fails). Small reference modules
+		// never allocate past the tiny default heap, so this was latent. An
+		// allocation-heavy guest exhausts it and dlmalloc traps. Until the memgrow
+		// libstandalonewasm is staged into the sysroot, give the runtime a fixed
+		// 64 MiB initial heap. (initial<=max=2 GiB; page-aligned.)
 		"--initial-memory=" + strconv.Itoa(bakeInitialMemoryBytes),
 		"--max-memory=2147483648", "-z", "stack-size=65536", "--global-base=1024",
 		"--strip-debug",
@@ -711,9 +708,7 @@ func (b *Baker) link(ctx context.Context, flowRuntimeO, descriptorO []byte, deps
 		// guest's "malloc"/"free" exports (wasmrt defaults; descriptor.malloc_
 		// symbol_ptr = "malloc"). -ldlmalloc provides them, but wasm-ld drops
 		// unreferenced exports, so a runtime with only host SINK nodes never
-		// surfaced them. Export them so frame marshalling can allocate. (The
-		// repudiated host->guest per-object $OEM feeder was deleted with the Go
-		// orchestration purge — no host injects $OEM into guest memory.)
+		// surfaced them. Export them so frame marshalling can allocate.
 		"--export-if-defined=malloc",
 		"--export-if-defined=free",
 	)

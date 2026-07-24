@@ -459,15 +459,15 @@ const defaultIngestMinFreeDiskBytes = 5 * 1024 * 1024 * 1024
 //	{
 //	  "schema": "OMM.fbs",
 //	  "provider_id": "space-data-network-02",     (required)
-//	  "source_name": "celestrak-gp",              (required)
+//	  "source_name": "provider-gp",              (required)
 //	  "source_url":  "https://...",               (optional)
 //	  "batch_id":    "<sha256 of source payload>",(required)
 //	  "content_key_id": "public",                 (optional)
-//	  "source_peer": "source:celestrak",          (optional)
+//	  "source_peer": "source:provider",          (optional)
 //	  "records": {"$bin":0},                      (size-prefixed record stream)
 //	  "reconcile": "none"|"duplicates"|"current", (default "duplicates")
-//	  "archive": {"source":"celestrak","name":"catalog.csv","raw":{"$bin":1}},
-//	  "provenance": {"source":"celestrak-gp","json":{"$bin":2}}
+//	  "archive": {"source":"provider","name":"catalog.csv","raw":{"$bin":1}},
+//	  "provenance": {"source":"provider-gp","json":{"$bin":2}}
 //	}
 func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str func(string) string) []byte {
 	if s.bridge == nil || !s.bridge.HasCapability("storage_ingest") {
@@ -557,9 +557,8 @@ func (s *storageCapAdapter) handleIngestWithSource(p map[string]interface{}, str
 	}
 
 	if reconcile == "current" {
-		// Drop records from OLD batches of this provider/source (the runner's
-		// reconcileCelestrakCurrentSourceBatch, used for snapshot sources like
-		// SATCAT where only the newest batch is meaningful).
+		// Drop records from older batches when the module declares current-snapshot
+		// semantics for this provider/source.
 		batchResult, err := s.store.ReconcileSourceBatch(schema, tags.ProviderID, tags.SourceName, tags.BatchID, true)
 		if err != nil {
 			return errCapJSON("post-ingest current-batch reconcile failed: " + err.Error())

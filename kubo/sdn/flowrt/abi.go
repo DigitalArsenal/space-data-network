@@ -12,23 +12,26 @@ import (
 const InvalidIndex = 0xFFFFFFFF
 
 const (
-	runtimeExportNodeDescriptorCount       = "space_data_module_runtime_get_node_descriptor_count"
-	runtimeExportEdgeDescriptorCount       = "space_data_module_runtime_get_edge_descriptor_count"
-	runtimeExportTriggerDescriptorCount    = "space_data_module_runtime_get_trigger_descriptor_count"
-	runtimeExportDependencyDescriptorCount = "space_data_module_runtime_get_dependency_descriptor_count"
-	runtimeExportResetState                = "space_data_module_runtime_reset_state"
-	runtimeExportReadyNode                 = "space_data_module_runtime_get_ready_node_index"
-	runtimeExportBeginInvocation           = "space_data_module_runtime_begin_node_invocation"
-	runtimeExportCurrentInvocation         = "space_data_module_runtime_get_current_invocation_descriptor"
-	runtimeExportApplyInvocationResult     = "space_data_module_runtime_apply_node_invocation_result"
-	runtimeExportCompleteInvocation        = "space_data_module_runtime_complete_node_invocation"
-	runtimeExportEnqueueTriggerFrames      = "space_data_module_runtime_enqueue_trigger_frames"
-	runtimeExportEnqueueTriggerFrame       = "space_data_module_runtime_enqueue_trigger_frame"
-	runtimeExportNodeDispatchDescriptors   = "space_data_module_runtime_get_node_dispatch_descriptors"
-	runtimeExportDependencyDescriptors     = "space_data_module_runtime_get_dependency_descriptors"
-	runtimeExportNodeStates                = "space_data_module_runtime_get_node_states"
-	runtimeExportIngressStates             = "space_data_module_runtime_get_ingress_states"
-	runtimeExportDispatchCurrentInvocation = "space_data_module_runtime_dispatch_current_invocation_direct"
+	runtimeExportNodeDescriptorCount         = "space_data_module_runtime_get_node_descriptor_count"
+	runtimeExportEdgeDescriptorCount         = "space_data_module_runtime_get_edge_descriptor_count"
+	runtimeExportTriggerDescriptorCount      = "space_data_module_runtime_get_trigger_descriptor_count"
+	runtimeExportDependencyDescriptorCount   = "space_data_module_runtime_get_dependency_descriptor_count"
+	runtimeExportResetState                  = "space_data_module_runtime_reset_state"
+	runtimeExportReadyNode                   = "space_data_module_runtime_get_ready_node_index"
+	runtimeExportBeginInvocation             = "space_data_module_runtime_begin_node_invocation"
+	runtimeExportCurrentInvocation           = "space_data_module_runtime_get_current_invocation_descriptor"
+	runtimeExportApplyInvocationResult       = "space_data_module_runtime_apply_node_invocation_result"
+	runtimeExportCompleteInvocation          = "space_data_module_runtime_complete_node_invocation"
+	runtimeExportEnqueueTriggerFrames        = "space_data_module_runtime_enqueue_trigger_frames"
+	runtimeExportEnqueueTriggerFrame         = "space_data_module_runtime_enqueue_trigger_frame"
+	runtimeExportEdgeDescriptors             = "space_data_module_runtime_get_edge_descriptors"
+	runtimeExportRoutingState                = "space_data_module_runtime_get_routing_state"
+	runtimeExportCurrentInvocationGeneration = "space_data_module_runtime_get_current_invocation_generation"
+	runtimeExportNodeDispatchDescriptors     = "space_data_module_runtime_get_node_dispatch_descriptors"
+	runtimeExportDependencyDescriptors       = "space_data_module_runtime_get_dependency_descriptors"
+	runtimeExportNodeStates                  = "space_data_module_runtime_get_node_states"
+	runtimeExportIngressStates               = "space_data_module_runtime_get_ingress_states"
+	runtimeExportDispatchCurrentInvocation   = "space_data_module_runtime_dispatch_current_invocation_direct"
 	// OPTIONAL (loop C.5c): in-wasm scheduler loop running every ready
 	// linked-direct node inside one call. Hosts probe for it and fall back
 	// to per-node driving when the artifact predates it.
@@ -48,6 +51,9 @@ var compiledRuntimeExportNames = []string{
 	runtimeExportCompleteInvocation,
 	runtimeExportEnqueueTriggerFrames,
 	runtimeExportEnqueueTriggerFrame,
+	runtimeExportEdgeDescriptors,
+	runtimeExportRoutingState,
+	runtimeExportCurrentInvocationGeneration,
 	runtimeExportNodeDispatchDescriptors,
 	runtimeExportDependencyDescriptors,
 	runtimeExportNodeStates,
@@ -75,6 +81,10 @@ type FlowFrameDescriptor struct {
 	TraceToken        uint64
 	EndOfStream       bool
 	Occupied          bool
+	WireFormat        byte
+	Ownership         byte
+	Mutability        byte
+	Lifetime          byte
 }
 
 const flowFrameDescriptorSize = 48
@@ -83,6 +93,13 @@ func readFrameDescriptor(mod *wasmrt.Module, ptr uint32) (*FlowFrameDescriptor, 
 	buf, err := mod.ReadMemory(ptr, flowFrameDescriptorSize)
 	if err != nil {
 		return nil, fmt.Errorf("read FlowFrameDescriptor at %d: %w", ptr, err)
+	}
+	return decodeFrameDescriptorBytes(buf)
+}
+
+func decodeFrameDescriptorBytes(buf []byte) (*FlowFrameDescriptor, error) {
+	if len(buf) != flowFrameDescriptorSize {
+		return nil, fmt.Errorf("decode FlowFrameDescriptor: got %d bytes, want %d", len(buf), flowFrameDescriptorSize)
 	}
 	return &FlowFrameDescriptor{
 		IngressIndex:      binary.LittleEndian.Uint32(buf[0:4]),
@@ -96,6 +113,10 @@ func readFrameDescriptor(mod *wasmrt.Module, ptr uint32) (*FlowFrameDescriptor, 
 		TraceToken:        binary.LittleEndian.Uint64(buf[32:40]),
 		EndOfStream:       buf[40] != 0,
 		Occupied:          buf[41] != 0,
+		WireFormat:        buf[42],
+		Ownership:         buf[43],
+		Mutability:        buf[44],
+		Lifetime:          buf[45],
 	}, nil
 }
 
@@ -119,12 +140,92 @@ func encodeFrameDescriptor(buf []byte, fd *FlowFrameDescriptor) {
 	if fd.Occupied {
 		buf[41] = 1
 	}
+	buf[42] = fd.WireFormat
+	buf[43] = fd.Ownership
+	buf[44] = fd.Mutability
+	buf[45] = fd.Lifetime
+	buf[46] = 0
+	buf[47] = 0
 }
 
 func writeFrameDescriptor(mod *wasmrt.Module, ptr uint32, fd *FlowFrameDescriptor) error {
 	buf := make([]byte, flowFrameDescriptorSize)
 	encodeFrameDescriptor(buf, fd)
 	return mod.WriteMemory(ptr, buf)
+}
+
+// ---------------------------------------------------------------------------
+// FlowEdge — 64 bytes, alignment 4 (wasm32 pointer fields)
+// ---------------------------------------------------------------------------
+
+// FlowEdgeDescriptor is the exact signed edge/type table compiled into the
+// parent flow runtime. Pointer fields address immutable strings/bytes in that
+// runtime's linear memory; the host copies those values before dispatch.
+type FlowEdgeDescriptor struct {
+	FromNode                   uint32
+	FromPortPointer            uint32
+	ToNode                     uint32
+	ToPortPointer              uint32
+	SchemaNamePointer          uint32
+	FileIdentifierPointer      uint32
+	SchemaVersionPointer       uint32
+	SchemaHashPointer          uint32
+	SchemaHashSize             uint32
+	RootTypeNamePointer        uint32
+	CanonicalFallbackAvailable uint32
+	AlignedEligible            uint32
+	AlignedLayoutFields        uint32
+	AlignedByteLength          uint32
+	AlignedFixedStringLength   uint32
+	AlignedRequiredAlignment   uint32
+}
+
+const flowEdgeDescriptorSize = 64
+
+func decodeFlowEdgeDescriptorBytes(buf []byte) (*FlowEdgeDescriptor, error) {
+	if len(buf) != flowEdgeDescriptorSize {
+		return nil, fmt.Errorf("decode FlowEdge: got %d bytes, want %d", len(buf), flowEdgeDescriptorSize)
+	}
+	fields := make([]uint32, flowEdgeDescriptorSize/4)
+	for index := range fields {
+		fields[index] = binary.LittleEndian.Uint32(buf[index*4 : index*4+4])
+	}
+	return &FlowEdgeDescriptor{
+		FromNode:                   fields[0],
+		FromPortPointer:            fields[1],
+		ToNode:                     fields[2],
+		ToPortPointer:              fields[3],
+		SchemaNamePointer:          fields[4],
+		FileIdentifierPointer:      fields[5],
+		SchemaVersionPointer:       fields[6],
+		SchemaHashPointer:          fields[7],
+		SchemaHashSize:             fields[8],
+		RootTypeNamePointer:        fields[9],
+		CanonicalFallbackAvailable: fields[10],
+		AlignedEligible:            fields[11],
+		AlignedLayoutFields:        fields[12],
+		AlignedByteLength:          fields[13],
+		AlignedFixedStringLength:   fields[14],
+		AlignedRequiredAlignment:   fields[15],
+	}, nil
+}
+
+func readFlowEdgeDescriptor(mod *wasmrt.Module, ptr uint32) (*FlowEdgeDescriptor, error) {
+	buf, err := mod.ReadMemory(ptr, flowEdgeDescriptorSize)
+	if err != nil {
+		return nil, fmt.Errorf("read FlowEdge at %d: %w", ptr, err)
+	}
+	return decodeFlowEdgeDescriptorBytes(buf)
+}
+
+// decodeRoutingResult preserves the signed SDK result. Negative values are
+// descriptor/routing rejection codes and must never be reinterpreted as a
+// large successful uint32 count.
+func decodeRoutingResult(result int32) (uint32, error) {
+	if result < 0 {
+		return 0, fmt.Errorf("flow runtime rejected invocation output with code %d", result)
+	}
+	return uint32(result), nil
 }
 
 // ---------------------------------------------------------------------------

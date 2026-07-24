@@ -55,15 +55,8 @@ const (
 // are the fail-closed baseline for request-scoped calls (protocol/HTTP
 // handlers, which pass a ctx deadline). SCHEDULED work — a cron ticker fire
 // or the run-now admin action, both of which reach the guest through
-// InvokeCron — is a different animal: a data-source adapter pull (fetch →
-// parse ephemeris → per-record CID + sign → publish) legitimately runs for
-// minutes on a slow (1 vCPU) production host, blowing past the 30s
-// interactive cap. Prod evidence: on the celestrak node every iss-source and
-// spacex-starlink-source pull failed with
-//
-//	plugin_invoke_stream(pull): wasm execution exceeded wall-clock timeout:
-//	"plugin_invoke_stream" exceeded 30s
-//
+// InvokeCron — may legitimately run for minutes on a slow production host,
+// blowing past the 30s interactive cap.
 // The larger budget is granted per-call by the HOST at the InvokeCron seam
 // (see InvokeCron), never by the module manifest — a module cannot self-grant
 // unbounded CPU. A ctx deadline still narrows it (ExecuteContext semantics
@@ -352,8 +345,20 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 		return nil, nil, nil, fmt.Errorf("failed to create WASM module: %w", err)
 	}
 
-	// Call _initialize
-	mod.Execute("_initialize")
+	// Run a guest initializer when the artifact declares one. Initialization
+	// failures are load failures; an uninitialized module must never be admitted.
+	switch {
+	case mod.HasFunction("_initialize"):
+		if _, initErr := mod.Execute("_initialize"); initErr != nil {
+			mod.Release()
+			return nil, nil, nil, fmt.Errorf("run WASI reactor initialization: %w", initErr)
+		}
+	case mod.HasFunction("__wasm_call_ctors"):
+		if _, initErr := mod.Execute("__wasm_call_ctors"); initErr != nil {
+			mod.Release()
+			return nil, nil, nil, fmt.Errorf("run command module constructors: %w", initErr)
+		}
+	}
 
 	// Read manifest
 	manifest, err := ReadManifest(mod)

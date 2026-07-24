@@ -23,8 +23,6 @@ const (
 	SPWSchema = "SPW.fbs"
 )
 
-var celesTrakDatasetSchemas = []string{OMMSchema, MPESchema, CATSchema, SPWSchema}
-
 const (
 	DatasetFeedHeadTopicPrefix = "/space-data-network/feed-heads/1.0.0/"
 	DatasetFeedHeadMessageType = "sdn.dataset.feed_head.v1"
@@ -38,9 +36,8 @@ type SchemaPublisher interface {
 // DatasetUpdateAnnouncement describes where a signed dataset-update PNM should
 // be announced.
 type DatasetUpdateAnnouncement struct {
-	PNM               []byte
-	Schemas           []string
-	CombinedCelesTrak bool
+	PNM     []byte
+	Schemas []string
 }
 
 // DatasetFeedHeadAnnouncement is the small mutable feed-head message replicas
@@ -143,9 +140,7 @@ func VerifyDatasetFeedHead(ann DatasetFeedHeadAnnouncement, providerPublicKey ed
 }
 
 // PublishDatasetUpdatePNM publishes one signed dataset-update PNM to the PNM
-// topic and the affected dataset schema topics. Combined CelesTrak updates are
-// announced on OMM, CAT, and SPW so consumers watching any source family can
-// discover the same signed manifest CID.
+// topic and every explicitly declared dataset schema topic.
 func PublishDatasetUpdatePNM(ctx context.Context, publisher SchemaPublisher, ann DatasetUpdateAnnouncement) error {
 	if publisher == nil {
 		return ErrNoPublisher
@@ -304,7 +299,7 @@ func hasSizePrefixedPNMIdentifier(data []byte) (ok bool) {
 
 func datasetUpdateAnnouncementSchemas(ann DatasetUpdateAnnouncement) ([]string, error) {
 	seen := make(map[string]bool)
-	schemas := make([]string, 0, 1+len(ann.Schemas)+len(celesTrakDatasetSchemas))
+	schemas := make([]string, 0, 1+len(ann.Schemas))
 	add := func(schema string) error {
 		normalized := normalizeDatasetUpdateSchema(schema)
 		if err := sds.ValidateSchemaName(normalized); err != nil {
@@ -323,13 +318,6 @@ func datasetUpdateAnnouncementSchemas(ann DatasetUpdateAnnouncement) ([]string, 
 	for _, schema := range ann.Schemas {
 		if err := add(schema); err != nil {
 			return nil, err
-		}
-	}
-	if ann.CombinedCelesTrak {
-		for _, schema := range celesTrakDatasetSchemas {
-			if err := add(schema); err != nil {
-				return nil, err
-			}
 		}
 	}
 	return schemas, nil

@@ -3,7 +3,6 @@ package storage
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -96,10 +95,10 @@ type FlatSQLStore struct {
 	// store write lock: a replay must never hold that for its duration or it
 	// starves readers.
 	hydrateMu sync.Mutex
-	validator              *sds.Validator
-	dbPath                 string
-	basePath               string
-	streamDir              string
+	validator *sds.Validator
+	dbPath    string
+	basePath  string
+	streamDir string
 	// lock is the exclusive single-writer liveness lock on
 	// <basePath>/store.lock (storelock.go, loop C.6b) — held for the
 	// store's whole lifetime, released by Close. Nil for read-only opens
@@ -403,7 +402,7 @@ func (s *FlatSQLStore) RebuildDerivedState() error {
 // control tables (the per-producer record tables, sdn_record_index, and
 // sdn_record_source_tags). It is intended for daemons opened with
 // WithDeferredRecordCatalogReplay so API surfaces can start before provider-
-// scale catalog hydration (celestrak nodes carry 150k+ records).
+// scale catalog hydration (catalogfixture nodes carry 150k+ records).
 //
 // force=false is a one-shot: it no-ops once the catalog is hydrated for this
 // process, which is how the post-boot background hydration runs it. force=true
@@ -608,15 +607,6 @@ func (s *FlatSQLStore) initTables() error {
 	if err := s.ensureColumn("sdn_record_index", "ops_status_code", "TEXT"); err != nil {
 		return err
 	}
-	// OD fit-quality metric (km). Populated for fitted OMM records that carry a
-	// top-level "RMS" (OrbPro OD fit-pipeline) or a "FIT_RMS_KM=" COMMENT token;
-	// NULL for every raw/GP/republished record that has no independent fit RMS.
-	// Records indexed before this column existed keep a NULL rms — AVG/MIN/MAX
-	// over the column ignore NULLs, so old rows never skew the lane RMS stats.
-	if err := s.ensureColumn("sdn_record_index", "rms", "REAL"); err != nil {
-		return err
-	}
-
 	if err := s.createStartupIndex("sdn_record_index", "idx_sdn_record_index_lookup", recordIndexExisted, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_lookup
 		ON sdn_record_index (schema_name, epoch_day, norad_cat_id, entity_id, source_timestamp DESC)
@@ -2150,11 +2140,8 @@ type DataSourceSummary struct {
 // (schema, provider, source, batch) that has records, aggregated across
 // producer identities. It carries the current record count + byte total plus
 // the first/last record arrival times (per-record ingest created_at) and the
-// summary's last-update time. It powers the ANONYMOUS pipeline-progress surface
-// exposed on /api/v1/stats (App 2 supplemental-OMM board): the rising Count is
-// the "objects fitted so far" signal, FirstSeenUnix is when the batch's first
-// record landed ("pull started"), and LastSeenUnix drives "last-record age".
-// Unix values are 0 when unknown.
+// summary's last-update time. It powers a schema-neutral anonymous progress
+// surface. Unix values are 0 when unknown.
 type SourceBatchProgress struct {
 	SchemaName    string
 	ProviderID    string
@@ -2165,21 +2152,6 @@ type SourceBatchProgress struct {
 	FirstSeenUnix int64
 	LastSeenUnix  int64
 	UpdatedAtUnix int64
-	// ObjectCount is the number of DISTINCT NORAD_CAT_IDs among the batch's
-	// records and LatestEpochUnix the newest indexed record EPOCH — the two
-	// CelesTrak-supplemental-style facts ("objects" vs "element sets",
-	// "data current as of") the board renders per source. Both are 0 when the
-	// schema has no indexed norad/epoch (non-OMM lanes).
-	ObjectCount     int64
-	LatestEpochUnix int64
-	// MeanRMS/MinRMS/MaxRMS aggregate the OD fit RMS (km) over the batch's
-	// indexed records (sdn_record_index.rms). Only fitted OMM lanes carry an
-	// RMS; every raw/GP/republished lane leaves these nil. SQL AVG/MIN/MAX
-	// ignore NULLs, so records indexed before the rms column existed never skew
-	// the lane stats. nil = the batch has no RMS-bearing record.
-	MeanRMS *float64
-	MinRMS  *float64
-	MaxRMS  *float64
 }
 
 // RawRecordQuery filters raw FlatBuffer records for UI and node-to-node reads.
@@ -2256,7 +2228,7 @@ func (s *FlatSQLStore) StoreWithSourceTags(schemaName string, data []byte, peerI
 
 // storeWriteChunkSize bounds how many records one store-lock window (write
 // RWMutex hold + control transaction + stream-appender session) processes.
-// A full-catalog batch (~32K CelesTrak GP records) under ONE lock hold
+// A full-catalog batch (~32K CatalogFixture GP records) under ONE lock hold
 // starved every reader for the whole drain — the 2026-07-06 production
 // blackout: API queries waited >11 minutes on s.mu.RLock while a dataset
 // shard import held the write lock. Chunking commits each window atomically
@@ -4412,24 +4384,12 @@ func (s *FlatSQLStore) SourceBatchProgress() ([]SourceBatchProgress, error) {
 		       SUM(ss.total_bytes) AS total_bytes,
 		       MAX(ss.updated_at) AS updated_at,
 		       MIN(t.first_seen) AS first_seen,
-		       MAX(t.last_seen) AS last_seen,
-		       MAX(t.object_count) AS object_count,
-		       MAX(t.latest_epoch) AS latest_epoch,
-		       MAX(t.mean_rms) AS mean_rms,
-		       MAX(t.min_rms) AS min_rms,
-		       MAX(t.max_rms) AS max_rms
+		       MAX(t.last_seen) AS last_seen
 		FROM sdn_record_source_summary ss
 		LEFT JOIN (
 			SELECT tg.schema_name, tg.provider_id, tg.source_name, tg.batch_id,
-			       MIN(tg.created_at) AS first_seen, MAX(tg.created_at) AS last_seen,
-			       COUNT(DISTINCT ix.norad_cat_id) AS object_count,
-			       MAX(ix.epoch_unix) AS latest_epoch,
-			       AVG(ix.rms) AS mean_rms,
-			       MIN(ix.rms) AS min_rms,
-			       MAX(ix.rms) AS max_rms
+			       MIN(tg.created_at) AS first_seen, MAX(tg.created_at) AS last_seen
 			FROM sdn_record_source_tags tg
-			LEFT JOIN sdn_record_index ix
-			  ON ix.schema_name = tg.schema_name AND ix.cid = tg.cid
 			GROUP BY tg.schema_name, tg.provider_id, tg.source_name, tg.batch_id
 		) t
 		  ON t.schema_name = ss.schema_name
@@ -4448,32 +4408,16 @@ func (s *FlatSQLStore) SourceBatchProgress() ([]SourceBatchProgress, error) {
 	out := make([]SourceBatchProgress, 0)
 	for rows.Next() {
 		var p SourceBatchProgress
-		var updatedAt, firstSeen, lastSeen, objectCount, latestEpoch sql.NullInt64
-		var meanRMS, minRMS, maxRMS sql.NullFloat64
+		var updatedAt, firstSeen, lastSeen sql.NullInt64
 		if err := rows.Scan(
 			&p.SchemaName, &p.ProviderID, &p.SourceName, &p.BatchID,
 			&p.Count, &p.TotalBytes, &updatedAt, &firstSeen, &lastSeen,
-			&objectCount, &latestEpoch, &meanRMS, &minRMS, &maxRMS,
 		); err != nil {
 			return nil, fmt.Errorf("scan source batch progress: %w", err)
 		}
 		p.UpdatedAtUnix = updatedAt.Int64
 		p.FirstSeenUnix = firstSeen.Int64
 		p.LastSeenUnix = lastSeen.Int64
-		p.ObjectCount = objectCount.Int64
-		p.LatestEpochUnix = latestEpoch.Int64
-		if meanRMS.Valid {
-			v := meanRMS.Float64
-			p.MeanRMS = &v
-		}
-		if minRMS.Valid {
-			v := minRMS.Float64
-			p.MinRMS = &v
-		}
-		if maxRMS.Valid {
-			v := maxRMS.Float64
-			p.MaxRMS = &v
-		}
 		out = append(out, p)
 	}
 	if err := rows.Err(); err != nil {
@@ -4503,14 +4447,12 @@ type RecordIndexPageQuery struct {
 type RecordIndexRow struct {
 	NoradCatID *int64
 	EpochUnix  *int64
-	RMS        *float64
 	CID        string
 }
 
 // RecordIndexPage returns a page of indexed records (newest EPOCH first) plus
 // the total match count, over sdn_record_index joined to sdn_record_source_tags
-// for the source-lane filter. Read-only aggregate surface for the App 2 board's
-// per-satellite drill-down; no FlatBuffer payloads are hydrated.
+// for the source-lane filter. No FlatBuffer payloads are hydrated.
 func (s *FlatSQLStore) RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexRow, int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -4562,7 +4504,7 @@ func (s *FlatSQLStore) RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexRow
 	}
 	pageArgs := append(append([]interface{}{}, args...), limit, offset)
 	rows, err := s.db.Query(`
-		SELECT ix.norad_cat_id, ix.epoch_unix, ix.rms, ix.cid
+		SELECT ix.norad_cat_id, ix.epoch_unix, ix.cid
 		FROM sdn_record_index ix
 		WHERE `+whereSQL+`
 		ORDER BY ix.epoch_unix DESC, ix.cid ASC
@@ -4575,9 +4517,8 @@ func (s *FlatSQLStore) RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexRow
 	out := make([]RecordIndexRow, 0, limit)
 	for rows.Next() {
 		var norad, epoch sql.NullInt64
-		var rms sql.NullFloat64
 		var cid string
-		if err := rows.Scan(&norad, &epoch, &rms, &cid); err != nil {
+		if err := rows.Scan(&norad, &epoch, &cid); err != nil {
 			return nil, 0, fmt.Errorf("scan record index page: %w", err)
 		}
 		row := RecordIndexRow{CID: cid}
@@ -4588,10 +4529,6 @@ func (s *FlatSQLStore) RecordIndexPage(q RecordIndexPageQuery) ([]RecordIndexRow
 		if epoch.Valid {
 			v := epoch.Int64
 			row.EpochUnix = &v
-		}
-		if rms.Valid {
-			v := rms.Float64
-			row.RMS = &v
 		}
 		out = append(out, row)
 	}
@@ -5887,7 +5824,7 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 	}
 
 	// Source tags are projected unconditionally (LEFT JOIN) so readers like the
-	// OD fit pipeline can group records per provider. The grouped subquery pins
+	// Downstream consumers can group records per provider. The grouped subquery pins
 	// ONE tag row per (schema, cid) for projection — a record can carry several
 	// tag rows (multi-producer mirrors, re-imports under a new batch id), so
 	// projection is one-of-many by design. Tag FILTERS below deliberately do NOT
@@ -6074,7 +6011,6 @@ type indexedFields struct {
 	opsStatusCode string
 	epochUnix     *int64
 	epochDay      string
-	rms           *float64
 }
 
 func (s *FlatSQLStore) upsertRecordIndex(schemaName, cid string, sourceTimestamp int64, data []byte) error {
@@ -6116,16 +6052,11 @@ func upsertRecordIndexExec(exec sqlExecer, schemaName, cid string, sourceTimesta
 	if fields.epochDay != "" {
 		day = fields.epochDay
 	}
-	var rms interface{}
-	if fields.rms != nil {
-		rms = *fields.rms
-	}
-
 	_, err = exec.Exec(flatsqldrv.WithoutJournal(`
 		INSERT INTO sdn_record_index (
-			schema_name, cid, norad_cat_id, entity_id, object_type, ops_status_code, epoch_unix, epoch_day, rms, source_timestamp
+			schema_name, cid, norad_cat_id, entity_id, object_type, ops_status_code, epoch_unix, epoch_day, source_timestamp
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(schema_name, cid) DO UPDATE SET
 			norad_cat_id = excluded.norad_cat_id,
 			entity_id = excluded.entity_id,
@@ -6133,9 +6064,8 @@ func upsertRecordIndexExec(exec sqlExecer, schemaName, cid string, sourceTimesta
 			ops_status_code = excluded.ops_status_code,
 			epoch_unix = excluded.epoch_unix,
 			epoch_day = excluded.epoch_day,
-			rms = excluded.rms,
 			source_timestamp = excluded.source_timestamp
-	`), schemaName, cid, norad, entity, objectType, opsStatusCode, epoch, day, rms, sourceTimestamp)
+	`), schemaName, cid, norad, entity, objectType, opsStatusCode, epoch, day, sourceTimestamp)
 	if err != nil {
 		return fmt.Errorf("failed to upsert index row: %w", err)
 	}
@@ -6150,15 +6080,6 @@ func extractIndexedFields(schemaName string, data []byte) (*indexedFields, error
 	case "OMM.fbs":
 		omm, err := parseOMM(data)
 		if err != nil {
-			// Fitted OMM records (OrbPro OD fit-pipeline, App 2 A2.3) are stored
-			// as schema-exact OMM JSON text rather than FlatBuffers, and the fit
-			// RMS (km) lives in the top-level "RMS" field. Index norad/epoch/RMS
-			// from the JSON so the fit lane's objects/epoch and mean-RMS stats
-			// populate. A payload that is neither a FlatBuffer nor OMM JSON falls
-			// through to a bare index row (the FlatBuffer parse error).
-			if jf, ok := extractOMMJSONIndexedFields(data); ok {
-				return jf, nil
-			}
 			return nil, err
 		}
 		if id := omm.NORAD_CAT_ID(); id > 0 {
@@ -6178,13 +6099,6 @@ func extractIndexedFields(schemaName string, data []byte) (*indexedFields, error
 				out.epochDay = time.Unix(epochUnix, 0).UTC().Format("2006-01-02")
 			}
 		}
-		// A FlatBuffer OMM carries a fit RMS only when it was OD-fitted and the
-		// value was preserved in the CCSDS COMMENT provenance ("FIT_RMS_KM=");
-		// raw GP / republished SupGP FlatBuffers have none, so rms stays NULL.
-		if rms, ok := rmsFromCommentBytes(omm.COMMENT()); ok {
-			out.rms = &rms
-		}
-
 	case "MPE.fbs":
 		mpe, err := parseMPE(data)
 		if err != nil {
@@ -6224,112 +6138,6 @@ func extractIndexedFields(schemaName string, data []byte) (*indexedFields, error
 	}
 
 	return out, nil
-}
-
-// extractOMMJSONIndexedFields indexes an OMM record stored as schema-exact JSON
-// text (the OrbPro OD fit-pipeline path — see analysis/od/fit-pipeline). It reads
-// the identity/epoch/RMS the pipeline emits: NORAD_CAT_ID (bare number),
-// EPOCH (ISO string), OBJECT_ID (string), and the top-level "RMS" (km, quoted).
-// The bool result is false when the bytes are not a JSON object at all, so the
-// caller can fall back to the FlatBuffer parse error / bare index row.
-func extractOMMJSONIndexedFields(data []byte) (*indexedFields, bool) {
-	trimmed := bytes.TrimSpace(data)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return nil, false
-	}
-	var j struct {
-		NoradCatID json.RawMessage `json:"NORAD_CAT_ID"`
-		ObjectID   string          `json:"OBJECT_ID"`
-		Epoch      string          `json:"EPOCH"`
-		RMS        json.RawMessage `json:"RMS"`
-	}
-	if err := json.Unmarshal(trimmed, &j); err != nil {
-		return nil, false
-	}
-	out := &indexedFields{}
-	if n, ok := parseJSONScalarUint32(j.NoradCatID); ok && n > 0 {
-		out.noradCatID = &n
-	}
-	out.entityID = strings.TrimSpace(j.ObjectID)
-	if epochStr := strings.TrimSpace(j.Epoch); epochStr != "" {
-		if epochUnix, err := parseEpochString(epochStr); err == nil {
-			out.epochUnix = &epochUnix
-			out.epochDay = time.Unix(epochUnix, 0).UTC().Format("2006-01-02")
-		}
-	}
-	if r, ok := parseJSONScalarFloat(j.RMS); ok {
-		out.rms = &r
-	}
-	return out, true
-}
-
-// jsonScalarString unwraps a JSON scalar (quoted string or bare number) to its
-// raw text. Fitted OMM JSON quotes RMS ("0.116") but leaves NORAD_CAT_ID bare;
-// Space-Track GP JSON quotes everything — both are tolerated here.
-func jsonScalarString(raw json.RawMessage) string {
-	s := strings.TrimSpace(string(raw))
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		if unq, err := strconv.Unquote(s); err == nil {
-			return strings.TrimSpace(unq)
-		}
-		return strings.TrimSpace(s[1 : len(s)-1])
-	}
-	return s
-}
-
-func parseJSONScalarUint32(raw json.RawMessage) (uint32, bool) {
-	s := jsonScalarString(raw)
-	if s == "" || strings.EqualFold(s, "null") {
-		return 0, false
-	}
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil || f < 0 {
-		return 0, false
-	}
-	return uint32(f), true
-}
-
-func parseJSONScalarFloat(raw json.RawMessage) (float64, bool) {
-	s := jsonScalarString(raw)
-	if s == "" || strings.EqualFold(s, "null") {
-		return 0, false
-	}
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, false
-	}
-	return f, true
-}
-
-// rmsFromCommentBytes pulls a fit RMS (km) out of an OMM COMMENT provenance
-// block. The OD fit-pipeline embeds "FIT_RMS_KM=<value>" in the CCSDS COMMENT;
-// a bare "RMS=<value>" is also accepted. Returns false when no such token is
-// present (every non-fitted FlatBuffer OMM).
-func rmsFromCommentBytes(comment []byte) (float64, bool) {
-	if len(comment) == 0 {
-		return 0, false
-	}
-	s := string(comment)
-	for _, key := range []string{"FIT_RMS_KM=", "RMS="} {
-		i := strings.Index(s, key)
-		if i < 0 {
-			continue
-		}
-		rest := s[i+len(key):]
-		j := 0
-		for j < len(rest) {
-			c := rest[j]
-			if c == '+' || c == '-' || c == '.' || c == 'e' || c == 'E' || (c >= '0' && c <= '9') {
-				j++
-				continue
-			}
-			break
-		}
-		if f, err := strconv.ParseFloat(strings.TrimSpace(rest[:j]), 64); err == nil {
-			return f, true
-		}
-	}
-	return 0, false
 }
 
 func normalizeIndexEnum(value string) string {

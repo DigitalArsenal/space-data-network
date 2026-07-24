@@ -98,7 +98,7 @@ func TestImportLegacySQLiteStoresHistoricalOMMWithSourceProvenance(t *testing.T)
 	sourceTotal, err := store.CountRawRecords(storage.RawRecordQuery{
 		SchemaName: "OMM.fbs",
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-gp-historical",
+		SourceName: "legacy-gp-historical",
 	})
 	if err != nil {
 		t.Fatalf("CountRawRecords source failed: %v", err)
@@ -114,7 +114,7 @@ func TestImportLegacySQLiteStoresHistoricalOMMWithSourceProvenance(t *testing.T)
 		t.Fatalf("source summaries = %d, want 1: %#v", len(summary.Sources), summary.Sources)
 	}
 	got := summary.Sources[0]
-	if got.ProviderID != "space-data-network-02" || got.SourceName != "celestrak-gp-historical" || got.BatchID == "" || got.ProducerPeerID != "source:legacy-sqlite" || got.Count != 2 {
+	if got.ProviderID != "space-data-network-02" || got.SourceName != "legacy-gp-historical" || got.BatchID == "" || got.ProducerPeerID != "source:legacy-sqlite" || got.Count != 2 {
 		t.Fatalf("unexpected source summary: %#v", got)
 	}
 
@@ -277,7 +277,7 @@ func TestImportLegacySQLiteCanStoreHistoricalOMMInSourceDatastoreNamespace(t *te
 		SchemaName:    "OMM.fbs",
 		SourcePeerID:  "source:legacy-sqlite",
 		ProviderID:    "space-data-network-02",
-		SourceName:    "celestrak-gp-historical",
+		SourceName:    "legacy-gp-historical",
 		BatchHead:     batchID,
 		QueryProfile:  storage.DatasetPublicationQueryProfile,
 		SnapshotID:    batchID,
@@ -434,7 +434,7 @@ func TestImportLegacySQLiteCanPublishHistoricalOMMArtifactsWithoutMaterializingR
 	publications, err := namespaceStore.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp-historical",
+		SourceName:   "legacy-gp-historical",
 		BatchID:      batchID,
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 	})
@@ -518,7 +518,7 @@ func TestImportLegacySQLitePlanOnlyCanRegisterHistoricalArtifactsWithNodeSigning
 	importLegacyPublicationPlanOutput = planPath
 	importLegacyPublicationProviderPeerID = "16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4"
 	importLegacyPublicationProviderEPMCID = "bafy-provider-epm"
-	importLegacyPublicationDatasetID = "sdn-omm-celestrak-gp-historical"
+	importLegacyPublicationDatasetID = "sdn-omm-legacy-gp-historical"
 
 	if err := runImportLegacySQLite(nil, nil); err != nil {
 		t.Fatalf("runImportLegacySQLite plan-only failed: %v", err)
@@ -596,7 +596,7 @@ admin:
 	publications, err := namespaceStore.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp-historical",
+		SourceName:   "legacy-gp-historical",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 	})
 	if err != nil {
@@ -608,7 +608,7 @@ admin:
 	manifest, err := datasync.OpenManifest(namespaceStore, datasync.QueryRequest{
 		Schema:       "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp-historical",
+		SourceName:   "legacy-gp-historical",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Limit:        50_000,
 	}, datasync.MaxSyncChunkLimit)
@@ -655,7 +655,7 @@ func TestRegisterLegacyPublicationPlanChunksLargeShardGroupCARBundles(t *testing
 		pub := storage.DatasetShardPublication{
 			SchemaName:   "OMM.fbs",
 			ProviderID:   "space-data-network-02",
-			SourceName:   "celestrak-gp-historical",
+			SourceName:   "legacy-gp-historical",
 			QueryProfile: storage.DatasetPublicationQueryProfile,
 			Offset:       i * 50_000,
 			Limit:        50_000,
@@ -677,7 +677,7 @@ func TestRegisterLegacyPublicationPlanChunksLargeShardGroupCARBundles(t *testing
 	publications, err = store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp-historical",
+		SourceName:   "legacy-gp-historical",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 	})
 	if err != nil {
@@ -690,7 +690,7 @@ func TestRegisterLegacyPublicationPlanChunksLargeShardGroupCARBundles(t *testing
 	entries, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
 		SchemaName:        "OMM.fbs",
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp-historical",
+		SourceName:        "legacy-gp-historical",
 		QueryProfile:      storage.DatasetPublicationQueryProfile,
 		Role:              "shard-group-car",
 		VerificationState: "verified",
@@ -710,7 +710,7 @@ func TestRegisterLegacyPublicationPlanChunksLargeShardGroupCARBundles(t *testing
 	manifest, err := datasync.OpenManifest(store, datasync.QueryRequest{
 		Schema:       "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp-historical",
+		SourceName:   "legacy-gp-historical",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Limit:        50_000,
 	}, datasync.MaxSyncChunkLimit)
@@ -751,7 +751,7 @@ func TestRebuildDatasetPublicationShardGroupCARBundlesPublishesExistingShards(t 
 		if err := store.UpsertDatasetShardPublication(storage.DatasetShardPublication{
 			SchemaName:   "OMM.fbs",
 			ProviderID:   "space-data-network-02",
-			SourceName:   "celestrak-gp",
+			SourceName:   "catalogfixture-gp",
 			QueryProfile: storage.DatasetPublicationQueryProfile,
 			Offset:       i * 50_000,
 			Limit:        50_000,
@@ -770,7 +770,7 @@ func TestRebuildDatasetPublicationShardGroupCARBundlesPublishesExistingShards(t 
 		SchemaName:        "OMM.fbs",
 		ProviderPeerID:    "16Uiu2HAmProvider",
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
+		SourceName:        "catalogfixture-gp",
 		QueryProfile:      storage.DatasetPublicationQueryProfile,
 		SnapshotID:        "old-partial-head",
 		Head:              "old-partial-head",
@@ -797,7 +797,7 @@ func TestRebuildDatasetPublicationShardGroupCARBundlesPublishesExistingShards(t 
 		OutputDir:         filepath.Join(tmpDir, "dataset-publications"),
 		Schema:            "OMM.fbs",
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
+		SourceName:        "catalogfixture-gp",
 		QueryProfile:      storage.DatasetPublicationQueryProfile,
 		ProviderPeerID:    "16Uiu2HAmProvider",
 		ProviderPublicKey: "provider-public-key",
@@ -819,7 +819,7 @@ func TestRebuildDatasetPublicationShardGroupCARBundlesPublishesExistingShards(t 
 	manifest, err := datasync.OpenManifest(store, datasync.QueryRequest{
 		Schema:       "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Limit:        50_000,
 	}, datasync.MaxSyncChunkLimit)
@@ -837,7 +837,7 @@ func TestRebuildDatasetPublicationShardGroupCARBundlesPublishesExistingShards(t 
 		CID:               "bafy-old-partial-car",
 		SchemaName:        "OMM.fbs",
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
+		SourceName:        "catalogfixture-gp",
 		QueryProfile:      storage.DatasetPublicationQueryProfile,
 		Role:              "shard-group-car",
 		VerificationState: "stale",

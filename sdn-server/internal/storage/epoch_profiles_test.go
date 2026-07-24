@@ -19,13 +19,13 @@ func TestFlatSQLStoreQueriesOMMEpochProfilesByCatalogObject(t *testing.T) {
 	}
 	defer store.Close()
 
-	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "batch-001", ContentKeyID: "public"}
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "catalogfixture-gp", BatchID: "batch-001", ContentKeyID: "public"}
 	if _, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().
 		WithNoradCatID(25544).
 		WithObjectName("ISS-BACKFILL").
 		WithObjectID("1998-067A").
 		WithEpoch("2026-05-10T12:00:00Z").
-		Build(), "source:celestrak", nil, tags); err != nil {
+		Build(), "source:catalogfixture", nil, tags); err != nil {
 		t.Fatalf("store backfill OMM failed: %v", err)
 	}
 	if _, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().
@@ -33,7 +33,7 @@ func TestFlatSQLStoreQueriesOMMEpochProfilesByCatalogObject(t *testing.T) {
 		WithObjectName("ISS-FORWARD").
 		WithObjectID("1998-067A").
 		WithEpoch("2026-05-12T12:00:00Z").
-		Build(), "source:celestrak", nil, tags); err != nil {
+		Build(), "source:catalogfixture", nil, tags); err != nil {
 		t.Fatalf("store forward OMM failed: %v", err)
 	}
 	if _, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().
@@ -41,7 +41,7 @@ func TestFlatSQLStoreQueriesOMMEpochProfilesByCatalogObject(t *testing.T) {
 		WithObjectName("OTHER-EXACT").
 		WithObjectID("2015-049A").
 		WithEpoch("2026-05-11T18:00:00Z").
-		Build(), "source:celestrak", nil, tags); err != nil {
+		Build(), "source:catalogfixture", nil, tags); err != nil {
 		t.Fatalf("store exact OMM failed: %v", err)
 	}
 
@@ -59,7 +59,7 @@ func TestFlatSQLStoreQueriesOMMEpochProfilesByCatalogObject(t *testing.T) {
 		Profile:       EpochProfileAsOf,
 		At:            target,
 		ProviderID:    "space-data-network-02",
-		SourceName:    "celestrak-gp",
+		SourceName:    "catalogfixture-gp",
 		Limit:         10,
 		IncludeSource: true,
 	})
@@ -77,7 +77,7 @@ func TestFlatSQLStoreQueriesOMMEpochProfilesByCatalogObject(t *testing.T) {
 		Profile:    EpochProfileForward,
 		At:         target,
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-gp",
+		SourceName: "catalogfixture-gp",
 		Limit:      10,
 	})
 	if err != nil {
@@ -111,7 +111,7 @@ func TestFlatSQLStoreQueriesOMMEpochProfilesByCatalogObject(t *testing.T) {
 		SchemaName: "OMM.fbs",
 		Profile:    EpochProfileCoverage,
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-gp",
+		SourceName: "catalogfixture-gp",
 	})
 	if err != nil {
 		t.Fatalf("QueryEpochCoverage failed: %v", err)
@@ -135,7 +135,7 @@ func TestFlatSQLStoreCountsEpochProfilesWithoutApplyingPageLimit(t *testing.T) {
 	}
 	defer store.Close()
 
-	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "batch-001", ContentKeyID: "public"}
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "catalogfixture-gp", BatchID: "batch-001", ContentKeyID: "public"}
 	storeOMMEpochProfileTestRecord(t, store, 25544, "ISS-BACKFILL", "2026-05-10T12:00:00Z", tags)
 	storeOMMEpochProfileTestRecord(t, store, 25544, "ISS-FORWARD", "2026-05-12T12:00:00Z", tags)
 	storeOMMEpochProfileTestRecord(t, store, 40909, "DAY-A", "2026-05-11T06:00:00Z", tags)
@@ -147,7 +147,7 @@ func TestFlatSQLStoreCountsEpochProfilesWithoutApplyingPageLimit(t *testing.T) {
 		Profile:    EpochProfileDay,
 		Day:        "2026-05-11",
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-gp",
+		SourceName: "catalogfixture-gp",
 		Limit:      1,
 	})
 	if err != nil {
@@ -163,7 +163,7 @@ func TestFlatSQLStoreCountsEpochProfilesWithoutApplyingPageLimit(t *testing.T) {
 		Profile:    EpochProfileAsOf,
 		At:         target,
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-gp",
+		SourceName: "catalogfixture-gp",
 		Limit:      1,
 	})
 	if err != nil {
@@ -178,7 +178,7 @@ func TestFlatSQLStoreCountsEpochProfilesWithoutApplyingPageLimit(t *testing.T) {
 		Profile:         EpochProfileNearest,
 		At:              target,
 		ProviderID:      "space-data-network-02",
-		SourceName:      "celestrak-gp",
+		SourceName:      "catalogfixture-gp",
 		MaxDeltaSeconds: 6 * 3600,
 		Limit:           1,
 	})
@@ -201,7 +201,7 @@ func TestFlatSQLStoreQueriesOMMEpochWindowAsHalfOpenRange(t *testing.T) {
 	}
 	defer store.Close()
 
-	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "batch-001", ContentKeyID: "public"}
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "catalogfixture-gp", BatchID: "batch-001", ContentKeyID: "public"}
 	storeOMMEpochProfileTestRecord(t, store, 10001, "WINDOW-START", "2026-05-11T00:00:00Z", tags)
 	storeOMMEpochProfileTestRecord(t, store, 10002, "WINDOW-MIDDLE", "2026-05-11T12:00:00Z", tags)
 	storeOMMEpochProfileTestRecord(t, store, 10003, "WINDOW-END", "2026-05-12T00:00:00Z", tags)
@@ -214,7 +214,7 @@ func TestFlatSQLStoreQueriesOMMEpochWindowAsHalfOpenRange(t *testing.T) {
 		From:       &from,
 		To:         &to,
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-gp",
+		SourceName: "catalogfixture-gp",
 		Limit:      10,
 	})
 	if err != nil {
@@ -237,7 +237,7 @@ func storeOMMEpochProfileTestRecord(t *testing.T, store *FlatSQLStore, norad uin
 		WithObjectName(objectName).
 		WithObjectID("TEST").
 		WithEpoch(epoch).
-		Build(), "source:celestrak", nil, tags); err != nil {
+		Build(), "source:catalogfixture", nil, tags); err != nil {
 		t.Fatalf("store OMM %s failed: %v", objectName, err)
 	}
 }

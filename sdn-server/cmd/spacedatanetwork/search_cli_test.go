@@ -162,11 +162,11 @@ func TestSearchProvidersDaemonModeUsesSharedSearchAPI(t *testing.T) {
 		_, _ = w.Write([]byte(`{
 			"count": 1,
 			"results": [{
-				"peer_id": "16Uiu2HCelesTrak",
-				"dn": "CelesTrak",
+				"peer_id": "16Uiu2HCatalogFixture",
+				"dn": "CatalogFixture",
 				"schema_name": "OMM.fbs",
 				"provider_id": "space-data-network-02",
-				"source_name": "celestrak-gp",
+				"source_name": "catalogfixture-gp",
 				"local_rows": 42
 			}]
 		}`))
@@ -175,10 +175,10 @@ func TestSearchProvidersDaemonModeUsesSharedSearchAPI(t *testing.T) {
 
 	var out bytes.Buffer
 	err := runSearchProviders(&out, searchProviderOptions{
-		Query:        "celestrak",
+		Query:        "catalogfixture",
 		Schema:       "OMM",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Mode:         "daemon",
 		APIURL:       server.URL,
@@ -197,10 +197,10 @@ func TestSearchProvidersDaemonModeUsesSharedSearchAPI(t *testing.T) {
 		t.Fatalf("session cookie = %q", receivedCookie)
 	}
 	wantBody := map[string]any{
-		"query":         "celestrak",
+		"query":         "catalogfixture",
 		"schema":        "OMM",
 		"provider_id":   "space-data-network-02",
-		"source_name":   "celestrak-gp",
+		"source_name":   "catalogfixture-gp",
 		"query_profile": storage.DatasetPublicationQueryProfile,
 		"mode":          "daemon",
 		"limit":         float64(7),
@@ -215,7 +215,7 @@ func TestSearchProvidersDaemonModeUsesSharedSearchAPI(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
 		t.Fatalf("decode provider search JSON: %v\n%s", err, out.String())
 	}
-	if body.Count != 1 || body.Results[0]["peer_id"] != "16Uiu2HCelesTrak" || body.Results[0]["local_rows"] != float64(42) {
+	if body.Count != 1 || body.Results[0]["peer_id"] != "16Uiu2HCatalogFixture" || body.Results[0]["local_rows"] != float64(42) {
 		t.Fatalf("unexpected daemon provider search output: %#v", body)
 	}
 }
@@ -280,7 +280,7 @@ func TestWriteSearchResultJSONAndCSV(t *testing.T) {
 		Results: []map[string]any{{
 			"schema_name":  "OMM.fbs",
 			"provider_id":  "space-data-network-02",
-			"source_name":  "celestrak-gp",
+			"source_name":  "catalogfixture-gp",
 			"local_rows":   int64(42),
 			"cached_bytes": int64(2048),
 		}},
@@ -299,7 +299,7 @@ func TestWriteSearchResultJSONAndCSV(t *testing.T) {
       "local_rows": 42,
       "provider_id": "space-data-network-02",
       "schema_name": "OMM.fbs",
-      "source_name": "celestrak-gp"
+      "source_name": "catalogfixture-gp"
     }
   ]
 }
@@ -325,7 +325,7 @@ func TestWriteSearchResultJSONAndCSV(t *testing.T) {
 	}
 	wantRecords := [][]string{
 		{"schema_name", "provider_id", "source_name", "local_rows", "cached_bytes"},
-		{"OMM.fbs", "space-data-network-02", "celestrak-gp", "42", "2048"},
+		{"OMM.fbs", "space-data-network-02", "catalogfixture-gp", "42", "2048"},
 	}
 	if !reflect.DeepEqual(records, wantRecords) {
 		t.Fatalf("CSV records = %#v, want %#v", records, wantRecords)
@@ -421,9 +421,9 @@ func TestSearchStandardsDoesNotMatchLocalCounts(t *testing.T) {
 func TestSearchProviderSortUsesStableTieBreakers(t *testing.T) {
 	rows := []map[string]any{
 		{
-			"dn":                  "CelesTrak",
+			"dn":                  "CatalogFixture",
 			"provider_id":         "space-data-network-02",
-			"source_name":         "celestrak-gp",
+			"source_name":         "catalogfixture-gp",
 			"schema_name":         "OMM.fbs",
 			"batch_id":            "batch-b",
 			"query_profile":       storage.DatasetPublicationQueryProfile,
@@ -432,9 +432,9 @@ func TestSearchProviderSortUsesStableTieBreakers(t *testing.T) {
 			"snapshot_id":         "snapshot-b",
 		},
 		{
-			"dn":                  "CelesTrak",
+			"dn":                  "CatalogFixture",
 			"provider_id":         "space-data-network-02",
-			"source_name":         "celestrak-gp",
+			"source_name":         "catalogfixture-gp",
 			"schema_name":         "OMM.fbs",
 			"batch_id":            "batch-a",
 			"query_profile":       storage.DatasetPublicationQueryProfile,
@@ -455,7 +455,7 @@ func TestSearchDataSortUsesStableTieBreakers(t *testing.T) {
 		{
 			"schema_name":         "OMM.fbs",
 			"provider_id":         "space-data-network-02",
-			"source_name":         "celestrak-gp",
+			"source_name":         "catalogfixture-gp",
 			"batch_id":            "test-batch",
 			"query_profile":       "profile-b",
 			"provider_peer_id":    "peer-b",
@@ -465,7 +465,7 @@ func TestSearchDataSortUsesStableTieBreakers(t *testing.T) {
 		{
 			"schema_name":         "OMM.fbs",
 			"provider_id":         "space-data-network-02",
-			"source_name":         "celestrak-gp",
+			"source_name":         "catalogfixture-gp",
 			"batch_id":            "test-batch",
 			"query_profile":       "profile-a",
 			"provider_peer_id":    "peer-a",
@@ -487,7 +487,7 @@ func TestSearchProvidersJSONEnrichesDirectoryWithReplicaStats(t *testing.T) {
 
 	var out bytes.Buffer
 	err := runSearchProviders(&out, searchProviderOptions{
-		Query:        "celestrak.eth",
+		Query:        "catalogfixture.eth",
 		Schema:       "OMM",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Format:       "json",
@@ -504,7 +504,7 @@ func TestSearchProvidersJSONEnrichesDirectoryWithReplicaStats(t *testing.T) {
 		t.Fatalf("provider result count = %#v", body)
 	}
 	row := body.Results[0]
-	if row["peer_id"] != "16Uiu2HCelesTrak" || row["provider_id"] != "space-data-network-02" || row["schema_name"] != "OMM.fbs" {
+	if row["peer_id"] != "16Uiu2HCatalogFixture" || row["provider_id"] != "space-data-network-02" || row["schema_name"] != "OMM.fbs" {
 		t.Fatalf("unexpected provider row: %#v", row)
 	}
 	if row["local_rows"] != float64(1) && row["local_rows"] != int64(1) {
@@ -513,7 +513,7 @@ func TestSearchProvidersJSONEnrichesDirectoryWithReplicaStats(t *testing.T) {
 }
 
 func TestSearchProvidersProviderIDAliasResolvesBeforeStatsFilter(t *testing.T) {
-	tests := []string{"celestrak.eth", "16Uiu2HCelesTrak"}
+	tests := []string{"catalogfixture.eth", "16Uiu2HCatalogFixture"}
 	for _, providerID := range tests {
 		t.Run(providerID, func(t *testing.T) {
 			cfgPath, store := newSyncCLITestStore(t)
@@ -539,7 +539,7 @@ func TestSearchProvidersProviderIDAliasResolvesBeforeStatsFilter(t *testing.T) {
 				t.Fatalf("provider result count = %#v", body)
 			}
 			row := body.Results[0]
-			if row["peer_id"] != "16Uiu2HCelesTrak" || row["provider_id"] != "space-data-network-02" || row["schema_name"] != "OMM.fbs" {
+			if row["peer_id"] != "16Uiu2HCatalogFixture" || row["provider_id"] != "space-data-network-02" || row["schema_name"] != "OMM.fbs" {
 				t.Fatalf("unexpected provider row for %q: %#v", providerID, row)
 			}
 		})
@@ -571,7 +571,7 @@ func TestSearchProvidersDottedProviderAliasResolvesBeforeStatsFilter(t *testing.
 		t.Fatalf("provider result count = %#v", body)
 	}
 	row := body.Results[0]
-	if row["peer_id"] != "16Uiu2HCelesTrak" || row["provider_id"] != "space-data-network-02" || row["schema_name"] != "OMM.fbs" {
+	if row["peer_id"] != "16Uiu2HCatalogFixture" || row["provider_id"] != "space-data-network-02" || row["schema_name"] != "OMM.fbs" {
 		t.Fatalf("unexpected provider row: %#v", row)
 	}
 }
@@ -640,7 +640,7 @@ func TestSearchProvidersCanonicalIDEnrichesDirectoryByMatchedPeer(t *testing.T) 
 		t.Fatalf("provider result count = %#v", body)
 	}
 	row := body.Results[0]
-	if row["peer_id"] != "16Uiu2HCelesTrak" || row["dn"] != "CelesTrak No Provider ID" || row["provider_id"] != "space-data-network-02" {
+	if row["peer_id"] != "16Uiu2HCatalogFixture" || row["dn"] != "CatalogFixture No Provider ID" || row["provider_id"] != "space-data-network-02" {
 		t.Fatalf("canonical provider ID row was not directory enriched: %#v", row)
 	}
 }
@@ -669,7 +669,7 @@ func TestSearchProvidersCanonicalIDMatchesStatsWithoutProviderID(t *testing.T) {
 		t.Fatalf("provider result count = %#v", body)
 	}
 	row := body.Results[0]
-	if row["peer_id"] != "16Uiu2HCelesTrak" || row["dn"] != "CelesTrak" || row["provider_id"] != "" || row["local_rows"] != float64(1) || row["pinned_rows"] != float64(1) {
+	if row["peer_id"] != "16Uiu2HCatalogFixture" || row["dn"] != "CatalogFixture" || row["provider_id"] != "" || row["local_rows"] != float64(1) || row["pinned_rows"] != float64(1) {
 		t.Fatalf("canonical provider ID did not match peer-only stats: %#v", row)
 	}
 }
@@ -692,7 +692,7 @@ func TestSearchProvidersReplicaFiltersSkipDirectoryOnlyRows(t *testing.T) {
 	var out bytes.Buffer
 	err := runSearchProviders(&out, searchProviderOptions{
 		Schema:       "OMM",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Format:       "json",
 	})
@@ -704,7 +704,7 @@ func TestSearchProvidersReplicaFiltersSkipDirectoryOnlyRows(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
 		t.Fatalf("decode provider search JSON: %v\n%s", err, out.String())
 	}
-	if body.Count != 1 || len(body.Results) != 1 || body.Results[0]["peer_id"] != "16Uiu2HCelesTrak" {
+	if body.Count != 1 || len(body.Results) != 1 || body.Results[0]["peer_id"] != "16Uiu2HCatalogFixture" {
 		t.Fatalf("provider rows with replica filter = %#v", body)
 	}
 }
@@ -759,7 +759,7 @@ func TestSearchProvidersCSVUsesStableColumns(t *testing.T) {
 
 	var out bytes.Buffer
 	err := runSearchProviders(&out, searchProviderOptions{
-		Query:  "CelesTrak",
+		Query:  "CatalogFixture",
 		Format: "csv",
 	})
 	if err != nil {
@@ -769,7 +769,7 @@ func TestSearchProvidersCSVUsesStableColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode provider CSV: %v\n%s", err, out.String())
 	}
-	if len(records) != 2 || records[0][0] != "peer_id" || records[1][0] != "16Uiu2HCelesTrak" {
+	if len(records) != 2 || records[0][0] != "peer_id" || records[1][0] != "16Uiu2HCatalogFixture" {
 		t.Fatalf("provider CSV = %#v", records)
 	}
 	wantHeader := []string{
@@ -784,7 +784,7 @@ func TestSearchProvidersCSVUsesStableColumns(t *testing.T) {
 	for i, field := range records[0] {
 		headerIndex[field] = i
 	}
-	if records[1][headerIndex["provider_peer_id"]] != "16Uiu2HCelesTrak" ||
+	if records[1][headerIndex["provider_peer_id"]] != "16Uiu2HCatalogFixture" ||
 		records[1][headerIndex["provider_public_key"]] != "provider-public-key" ||
 		records[1][headerIndex["snapshot_id"]] != "head-2" {
 		t.Fatalf("provider CSV row missing replica identity fields: %#v", records)
@@ -810,7 +810,7 @@ func TestSearchDataFiltersBySchemaAndProvider(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &body); err != nil {
 		t.Fatalf("decode data search JSON: %v\n%s", err, out.String())
 	}
-	if body.Count != 1 || body.Results[0]["source_name"] != "celestrak-gp" {
+	if body.Count != 1 || body.Results[0]["source_name"] != "catalogfixture-gp" {
 		t.Fatalf("unexpected data search body: %#v", body)
 	}
 }
@@ -820,16 +820,16 @@ func seedSearchCLIDottedAlias(t *testing.T, store *storage.FlatSQLStore) {
 
 	if err := store.UpsertDirectoryRecord(storage.DirectoryRecord{
 		Kind:           "node",
-		PeerID:         "16Uiu2HCelesTrak",
-		DN:             "CelesTrak",
-		LegalName:      "CelesTrak",
+		PeerID:         "16Uiu2HCatalogFixture",
+		DN:             "CatalogFixture",
+		LegalName:      "CatalogFixture",
 		BitcoinAddress: "bc1qspacedatanetwork000000000000000000000000",
 		EPMCID:         "bafkreigh2akiscaildcagqrb7hf7vsgkl2kpdx3obxxm2pvshpwrsp7m2a",
 		Source:         "test",
 		EPMJSON: `{
 			"xpub": "xpub661MyMwAqRbcFexample",
 			"aliases": ["sdn.spaceaware"],
-			"ens_names": ["celestrak.eth"]
+			"ens_names": ["catalogfixture.eth"]
 		}`,
 		UpdatedAt: 1779689334,
 	}); err != nil {
@@ -842,15 +842,15 @@ func seedSearchCLIDirectoryWithoutProviderID(t *testing.T, store *storage.FlatSQ
 
 	if err := store.UpsertDirectoryRecord(storage.DirectoryRecord{
 		Kind:           "node",
-		PeerID:         "16Uiu2HCelesTrak",
-		DN:             "CelesTrak No Provider ID",
-		LegalName:      "CelesTrak",
+		PeerID:         "16Uiu2HCatalogFixture",
+		DN:             "CatalogFixture No Provider ID",
+		LegalName:      "CatalogFixture",
 		BitcoinAddress: "bc1qspacedatanetwork000000000000000000000000",
 		EPMCID:         "bafkreigh2akiscaildcagqrb7hf7vsgkl2kpdx3obxxm2pvshpwrsp7m2a",
 		Source:         "test",
 		EPMJSON: `{
 			"xpub": "xpub661MyMwAqRbcFexample",
-			"ens_names": ["celestrak.eth"]
+			"ens_names": ["catalogfixture.eth"]
 		}`,
 		UpdatedAt: 1779689334,
 	}); err != nil {
@@ -863,14 +863,14 @@ func seedSearchCLIReplicaWithoutProviderID(t *testing.T, store *storage.FlatSQLS
 
 	payload := sds.NewOMMBuilder().
 		WithNoradCatID(56775).
-		WithObjectName("STARLINK-6292").
+		WithObjectName("SATELLITE-6292").
 		WithEpoch("2026-05-25T06:08:54Z").
 		Build()
-	if _, err := store.StoreWithSourceTags("OMM.fbs", payload, "16Uiu2HCelesTrak", nil, storage.SourceTags{
+	if _, err := store.StoreWithSourceTags("OMM.fbs", payload, "16Uiu2HCatalogFixture", nil, storage.SourceTags{
 		ProviderID:        "source-tags-provider-only",
-		SourceName:        "celestrak-gp",
+		SourceName:        "catalogfixture-gp",
 		BatchID:           "test-batch",
-		ProducerPeerID:    "16Uiu2HCelesTrak",
+		ProducerPeerID:    "16Uiu2HCatalogFixture",
 		ProducerPublicKey: "provider-public-key",
 	}); err != nil {
 		t.Fatalf("store OMM failed: %v", err)
@@ -879,9 +879,9 @@ func seedSearchCLIReplicaWithoutProviderID(t *testing.T, store *storage.FlatSQLS
 	if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
 		CID:               "bafkshard-omm-peer-only",
 		SchemaName:        "OMM.fbs",
-		ProviderPeerID:    "16Uiu2HCelesTrak",
+		ProviderPeerID:    "16Uiu2HCatalogFixture",
 		ProviderPublicKey: "provider-public-key",
-		SourceName:        "celestrak-gp",
+		SourceName:        "catalogfixture-gp",
 		BatchID:           "test-batch",
 		QueryProfile:      storage.DatasetPublicationQueryProfile,
 		SnapshotID:        "head-peer-only",
@@ -898,15 +898,15 @@ func seedSearchCLIReplicaWithoutProviderID(t *testing.T, store *storage.FlatSQLS
 	}
 	if err := store.UpsertDirectoryRecord(storage.DirectoryRecord{
 		Kind:           "node",
-		PeerID:         "16Uiu2HCelesTrak",
-		DN:             "CelesTrak",
-		LegalName:      "CelesTrak",
+		PeerID:         "16Uiu2HCatalogFixture",
+		DN:             "CatalogFixture",
+		LegalName:      "CatalogFixture",
 		BitcoinAddress: "bc1qspacedatanetwork000000000000000000000000",
 		EPMCID:         "bafkreigh2akiscaildcagqrb7hf7vsgkl2kpdx3obxxm2pvshpwrsp7m2a",
 		Source:         "test",
 		EPMJSON: `{
 			"provider_id": "space-data-network-02",
-			"peer_id": "16Uiu2HCelesTrak",
+			"peer_id": "16Uiu2HCatalogFixture",
 			"signing_public_key": "provider-public-key"
 		}`,
 		UpdatedAt: verifiedAt.Unix(),

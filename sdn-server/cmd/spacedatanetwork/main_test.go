@@ -127,7 +127,7 @@ func TestNodeSecurityPublicAPIRequestPolicy(t *testing.T) {
 		{http.MethodPost, "/api/v0/pin/add", false},
 		{http.MethodPost, "/api/v1/data/publish/OMM.fbs", false},
 		{http.MethodPost, "/api/v1/data/publish/batch/OMM.fbs", false},
-		{http.MethodPost, "/api/v1/modules/runtime/celestrak-provider/schedules/full/run", false},
+		{http.MethodPost, "/api/v1/modules/runtime/catalogfixture-provider/schedules/full/run", false},
 		{http.MethodPost, "/api/v1/admin/dataset-updates/publish", false},
 	}
 
@@ -1019,7 +1019,7 @@ func TestNodeSecurityAdminOnlyAPIPathPolicy(t *testing.T) {
 		"/api/v1/search/data",
 		"/api/v1/conjunction/screen",
 		"/api/v1/data/records/EPM.fbs/12D3KooW",
-		"/api/v1/modules/runtime/celestrak-provider/schedules/full/run",
+		"/api/v1/modules/runtime/catalogfixture-provider/schedules/full/run",
 		"/api/v1/admin/dataset-updates/publish",
 		"/api/admin/frontend/files",
 		"/api/v1/plugins/upload",
@@ -1067,7 +1067,7 @@ Host space-data-network-01 sdn.spaceaware.io
     HostName 159.203.150.8
     User root
 
-Host space-data-network-02 celestrak.eth
+Host space-data-network-02 provider.example
     HostName 167.172.219.213
     User root
 
@@ -1817,7 +1817,7 @@ func TestHandleModuleRuntimeMutationSavesAndRunsSchedule(t *testing.T) {
 	t.Parallel()
 
 	mgr := plugins.New()
-	plugin := &runtimeMutationTestPlugin{id: "celestrak-provider"}
+	plugin := &runtimeMutationTestPlugin{id: "catalogfixture-provider"}
 	if err := mgr.Register(plugin); err != nil {
 		t.Fatalf("Register failed: %v", err)
 	}
@@ -1827,7 +1827,7 @@ func TestHandleModuleRuntimeMutationSavesAndRunsSchedule(t *testing.T) {
 
 	scheduleReq := httptest.NewRequest(
 		http.MethodPatch,
-		"/api/v1/modules/runtime/celestrak-provider/schedules/sync_full_catalog",
+		"/api/v1/modules/runtime/catalogfixture-provider/schedules/sync_full_catalog",
 		bytes.NewBufferString(`{"enabled":true,"interval":"45m","timezone":"UTC"}`),
 	)
 	scheduleRecorder := httptest.NewRecorder()
@@ -1838,7 +1838,7 @@ func TestHandleModuleRuntimeMutationSavesAndRunsSchedule(t *testing.T) {
 
 	scheduleReq = httptest.NewRequest(
 		http.MethodPatch,
-		"/api/v1/modules/runtime/celestrak-provider/schedules/sync_full_catalog",
+		"/api/v1/modules/runtime/catalogfixture-provider/schedules/sync_full_catalog",
 		bytes.NewBufferString(`{"enabled":true,"interval":"3h","cronExpression":"0 */3 * * *","timezone":"UTC","retryBudget":2,"maxRuntime":"30m"}`),
 	)
 	scheduleRecorder = httptest.NewRecorder()
@@ -1854,7 +1854,7 @@ func TestHandleModuleRuntimeMutationSavesAndRunsSchedule(t *testing.T) {
 		t.Fatalf("schedule payload = %#v", schedulePayload)
 	}
 
-	runReq := httptest.NewRequest(http.MethodPost, "/api/v1/modules/runtime/celestrak-provider/schedules/sync_full_catalog/run", nil)
+	runReq := httptest.NewRequest(http.MethodPost, "/api/v1/modules/runtime/catalogfixture-provider/schedules/sync_full_catalog/run", nil)
 	runRecorder := httptest.NewRecorder()
 	handleModuleRuntimeMutation(mgr)(runRecorder, runReq)
 	if runRecorder.Code != http.StatusOK {
@@ -2826,11 +2826,11 @@ func (p *runtimeMutationTestPlugin) RuntimeDescriptor() plugins.RuntimeModuleDes
 }
 
 func (p *runtimeMutationTestPlugin) CronMethods() []plugins.CronMethodSpec {
-	if p.id == "celestrak-provider" {
+	if p.id == "catalogfixture-provider" {
 		return []plugins.CronMethodSpec{
 			{
 				Method:          "sync_full_catalog",
-				Description:     "Sync CelesTrak full catalog",
+				Description:     "Sync CatalogFixture full catalog",
 				DefaultInterval: "3h",
 				Input:           "json",
 				Output:          "json",

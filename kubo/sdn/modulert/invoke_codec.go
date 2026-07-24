@@ -9,16 +9,30 @@ import (
 )
 
 const (
-	invokeArenaAlignment = 8
+	invokeArenaAlignment    = 8
+	maxInvokeFrameAlignment = uint32(1<<16 - 1)
 
 	payloadWireFormatFlatbuffer    = 0
 	payloadWireFormatAlignedBinary = 1
 )
 
 type pluginInvokeFrame struct {
-	PortID string
-	Offset uint32
-	Size   uint32
+	PortID            string
+	Offset            uint32
+	Size              uint32
+	Alignment         uint32
+	WireFormat        byte
+	SchemaName        string
+	FileIdentifier    string
+	SchemaVersion     string
+	SchemaHash        []byte
+	RootTypeName      string
+	FixedStringLength uint16
+	ByteLength        uint32
+	RequiredAlignment uint16
+	Ownership         byte
+	Mutability        byte
+	FrameID           uint64
 }
 
 type InvokeInputFrame struct {
@@ -28,26 +42,33 @@ type InvokeInputFrame struct {
 	Size              uint32
 	SchemaName        string
 	FileIdentifier    string
+	SchemaVersion     string
+	SchemaHash        []byte
 	RootTypeName      string
 	WireFormat        byte
 	FixedStringLength uint16
 	ByteLength        uint32
 	RequiredAlignment uint16
-	Alignment         uint16
+	Alignment         uint32
+	Ownership         byte
+	Mutability        byte
+	FrameID           uint64
 }
 
 type pluginInvokeResponse struct {
-	StatusCode   int32
-	ErrorCode    string
-	ErrorMessage string
-	OutputFrames []pluginInvokeFrame
-	PayloadArena []byte
+	StatusCode       int32
+	Yielded          bool
+	BacklogRemaining uint32
+	ErrorCode        string
+	ErrorMessage     string
+	OutputFrames     []pluginInvokeFrame
+	PayloadArena     []byte
 }
 
 // EncodeInvokeRequestFrames encodes an SDS $PIV plugin-invoke request for the
 // given method id and input frames. These are the exact bytes plugin_invoke_stream
 // consumes — and the exact bytes a COMMAND-surface module expects on stdin (an
-// emscripten-built module, e.g. analysis/od, whose main() reads a $PIV request
+// emscripten-built command module whose main() reads a $PIV request
 // from stdin, dispatches it, and writes the $PIV response to stdout). It lets a
 // host drive such a command module with the same request encoding the reactor ABI
 // uses.
@@ -131,13 +152,35 @@ func packInvokeInputFrames(frames []InvokeInputFrame) ([]InvokeInputFrame, []byt
 		if frame.PortID == "" {
 			return nil, nil, 0, fmt.Errorf("input frame port id is required")
 		}
-
-		payload := append([]byte(nil), frame.Payload...)
-		alignment := normalizeInvokeAlignment(frame.Alignment, frame.RequiredAlignment)
-		if uint32(alignment) > arenaAlignment {
-			arenaAlignment = uint32(alignment)
+		if frame.WireFormat > payloadWireFormatAlignedBinary {
+			return nil, nil, 0, fmt.Errorf("input frame %q has invalid wire format %d", frame.PortID, frame.WireFormat)
 		}
-		alignedOffset := alignInvokeOffset(offset, alignment)
+		if frame.Ownership > byte(piv.EnumValuesbufferOwnership["TRANSFERRED"]) {
+			return nil, nil, 0, fmt.Errorf("input frame %q has invalid ownership %d", frame.PortID, frame.Ownership)
+		}
+		if frame.Mutability > byte(piv.EnumValuesbufferMutability["APPEND_ONLY"]) {
+			return nil, nil, 0, fmt.Errorf("input frame %q has invalid mutability %d", frame.PortID, frame.Mutability)
+		}
+
+		alignment := normalizeInvokeAlignment(frame.Alignment, frame.RequiredAlignment)
+		if !isPowerOfTwo32(alignment) {
+			return nil, nil, 0, fmt.Errorf("input frame %q alignment %d is not a power of two", frame.PortID, alignment)
+		}
+		if alignment > maxInvokeFrameAlignment {
+			return nil, nil, 0, fmt.Errorf("input frame %q alignment %d exceeds the module ABI limit", frame.PortID, alignment)
+		}
+		if alignment > arenaAlignment {
+			arenaAlignment = alignment
+		}
+		alignedOffset, ok := alignInvokeOffsetChecked(offset, alignment)
+		if !ok {
+			return nil, nil, 0, fmt.Errorf("input frame %q aligned offset overflows uint32", frame.PortID)
+		}
+		payloadEnd := uint64(alignedOffset) + uint64(len(frame.Payload))
+		if payloadEnd > uint64(^uint32(0)) {
+			return nil, nil, 0, fmt.Errorf("input frame %q exceeds the uint32 payload arena", frame.PortID)
+		}
+		payload := append([]byte(nil), frame.Payload...)
 		padding := int(alignedOffset - offset)
 		if padding > 0 {
 			payloadArena = append(payloadArena, make([]byte, padding)...)
@@ -153,18 +196,23 @@ func packInvokeInputFrames(frames []InvokeInputFrame) ([]InvokeInputFrame, []byt
 		frame.Offset = alignedOffset
 		frame.Size = uint32(len(payload))
 		frame.Alignment = alignment
+		// Payload bytes were copied into the request arena owned by this host.
+		// Ownership and mutability from a source arena cannot cross the instance
+		// boundary; the effective TAB contract is host-owned and immutable.
+		frame.Ownership = byte(piv.EnumValuesbufferOwnership["HOST_OWNED"])
+		frame.Mutability = byte(piv.EnumValuesbufferMutability["IMMUTABLE"])
 		packed = append(packed, frame)
 
-		offset = alignedOffset + uint32(len(payload))
+		offset = uint32(payloadEnd)
 	}
 
 	return packed, payloadArena, arenaAlignment, nil
 }
 
-func normalizeInvokeAlignment(alignment uint16, requiredAlignment uint16) uint16 {
+func normalizeInvokeAlignment(alignment uint32, requiredAlignment uint16) uint32 {
 	normalized := alignment
-	if requiredAlignment > normalized {
-		normalized = requiredAlignment
+	if uint32(requiredAlignment) > normalized {
+		normalized = uint32(requiredAlignment)
 	}
 	if normalized < invokeArenaAlignment {
 		return invokeArenaAlignment
@@ -207,8 +255,23 @@ func buildPIVTAB(builder *flatbuffers.Builder, frame InvokeInputFrame) flatbuffe
 	if typeRefOffset != 0 {
 		piv.TABAddTypeRef(builder, typeRefOffset)
 	}
-	piv.TABAddMutability(builder, piv.EnumValuesbufferMutability["IMMUTABLE"])
-	piv.TABAddOwnership(builder, piv.EnumValuesbufferOwnership["HOST_OWNED"])
+	mutability := piv.EnumValuesbufferMutability["IMMUTABLE"]
+	if frame.Mutability == byte(piv.EnumValuesbufferMutability["SINGLE_WRITER_MUTABLE"]) {
+		mutability = piv.EnumValuesbufferMutability["SINGLE_WRITER_MUTABLE"]
+	} else if frame.Mutability == byte(piv.EnumValuesbufferMutability["APPEND_ONLY"]) {
+		mutability = piv.EnumValuesbufferMutability["APPEND_ONLY"]
+	}
+	ownership := piv.EnumValuesbufferOwnership["HOST_OWNED"]
+	if frame.Ownership == byte(piv.EnumValuesbufferOwnership["PLUGIN_OWNED"]) {
+		ownership = piv.EnumValuesbufferOwnership["PLUGIN_OWNED"]
+	} else if frame.Ownership == byte(piv.EnumValuesbufferOwnership["TRANSFERRED"]) {
+		ownership = piv.EnumValuesbufferOwnership["TRANSFERRED"]
+	}
+	piv.TABAddMutability(builder, mutability)
+	piv.TABAddOwnership(builder, ownership)
+	if frame.FrameID != 0 {
+		piv.TABAddFrameId(builder, frame.FrameID)
+	}
 	if portIDOffset != 0 {
 		piv.TABAddPortId(builder, portIDOffset)
 	}
@@ -216,7 +279,8 @@ func buildPIVTAB(builder *flatbuffers.Builder, frame InvokeInputFrame) flatbuffe
 }
 
 func buildFlatBufferTypeRef(builder *flatbuffers.Builder, frame InvokeInputFrame) flatbuffers.UOffsetT {
-	if frame.SchemaName == "" && frame.FileIdentifier == "" && frame.RootTypeName == "" {
+	if frame.SchemaName == "" && frame.FileIdentifier == "" && frame.SchemaVersion == "" &&
+		len(frame.SchemaHash) == 0 && frame.RootTypeName == "" {
 		return 0
 	}
 
@@ -227,6 +291,14 @@ func buildFlatBufferTypeRef(builder *flatbuffers.Builder, frame InvokeInputFrame
 	fileIdentifierOffset := flatbuffers.UOffsetT(0)
 	if frame.FileIdentifier != "" {
 		fileIdentifierOffset = builder.CreateString(frame.FileIdentifier)
+	}
+	schemaVersionOffset := flatbuffers.UOffsetT(0)
+	if frame.SchemaVersion != "" {
+		schemaVersionOffset = builder.CreateString(frame.SchemaVersion)
+	}
+	schemaHashOffset := flatbuffers.UOffsetT(0)
+	if len(frame.SchemaHash) > 0 {
+		schemaHashOffset = builder.CreateByteVector(frame.SchemaHash)
 	}
 	rootTypeNameOffset := flatbuffers.UOffsetT(0)
 	if frame.RootTypeName != "" {
@@ -240,21 +312,45 @@ func buildFlatBufferTypeRef(builder *flatbuffers.Builder, frame InvokeInputFrame
 	if fileIdentifierOffset != 0 {
 		piv.FlatBufferTypeRefAddFileIdentifier(builder, fileIdentifierOffset)
 	}
+	if schemaVersionOffset != 0 {
+		piv.FlatBufferTypeRefAddSchemaVersion(builder, schemaVersionOffset)
+	}
+	if schemaHashOffset != 0 {
+		piv.FlatBufferTypeRefAddSchemaHash(builder, schemaHashOffset)
+	}
 	if rootTypeNameOffset != 0 {
 		piv.FlatBufferTypeRefAddRootType(builder, rootTypeNameOffset)
+	}
+	wireFormat := piv.EnumValuespayloadWireFormat["FLATBUFFER"]
+	if frame.WireFormat == payloadWireFormatAlignedBinary {
+		wireFormat = piv.EnumValuespayloadWireFormat["ALIGNED_BINARY"]
+	}
+	piv.FlatBufferTypeRefAddWireFormat(builder, wireFormat)
+	if frame.FixedStringLength != 0 {
+		piv.FlatBufferTypeRefAddFixedStringLength(builder, frame.FixedStringLength)
+	}
+	if frame.ByteLength != 0 {
+		piv.FlatBufferTypeRefAddByteLength(builder, frame.ByteLength)
+	}
+	if frame.RequiredAlignment != 0 {
+		piv.FlatBufferTypeRefAddRequiredAlignment(builder, frame.RequiredAlignment)
 	}
 	return piv.FlatBufferTypeRefEnd(builder)
 }
 
-func alignInvokeOffset(offset uint32, alignment uint16) uint32 {
+func alignInvokeOffsetChecked(offset uint32, alignment uint32) (uint32, bool) {
 	if alignment <= 1 {
-		return offset
+		return offset, true
 	}
-	remainder := offset % uint32(alignment)
+	remainder := offset % alignment
 	if remainder == 0 {
-		return offset
+		return offset, true
 	}
-	return offset + uint32(alignment) - remainder
+	padding := alignment - remainder
+	if padding > ^uint32(0)-offset {
+		return 0, false
+	}
+	return offset + padding, true
 }
 
 func decodePluginInvokeResponseBytes(data []byte) (*pluginInvokeResponse, error) {
@@ -269,10 +365,12 @@ func decodePluginInvokeResponseBytes(data []byte) (*pluginInvokeResponse, error)
 	}
 
 	response := &pluginInvokeResponse{
-		StatusCode:   envelope.StatusCode(),
-		ErrorCode:    string(envelope.ErrorCode()),
-		ErrorMessage: string(envelope.ErrorMessage()),
-		PayloadArena: append([]byte(nil), envelope.PayloadArenaBytes()...),
+		StatusCode:       envelope.StatusCode(),
+		Yielded:          envelope.Yielded(),
+		BacklogRemaining: envelope.BacklogRemaining(),
+		ErrorCode:        string(envelope.ErrorCode()),
+		ErrorMessage:     string(envelope.ErrorMessage()),
+		PayloadArena:     append([]byte(nil), envelope.PayloadArenaBytes()...),
 	}
 
 	outputCount := envelope.OutputsLength()
@@ -282,14 +380,76 @@ func decodePluginInvokeResponseBytes(data []byte) (*pluginInvokeResponse, error)
 		if !envelope.Outputs(&frameTable, index) {
 			continue
 		}
-		response.OutputFrames = append(response.OutputFrames, pluginInvokeFrame{
-			PortID: string(frameTable.PortId()),
-			Offset: frameTable.Offset(),
-			Size:   frameTable.Size(),
-		})
+		frame := pluginInvokeFrame{
+			PortID:     string(frameTable.PortId()),
+			Offset:     frameTable.Offset(),
+			Size:       frameTable.Size(),
+			Alignment:  frameTable.Alignment(),
+			WireFormat: byte(frameTable.WireFormat()),
+			Ownership:  byte(frameTable.Ownership()),
+			Mutability: byte(frameTable.Mutability()),
+			FrameID:    frameTable.FrameId(),
+		}
+		if frame.WireFormat > payloadWireFormatAlignedBinary {
+			return nil, fmt.Errorf("plugin invoke output frame %q has invalid wire format %d", frame.PortID, frame.WireFormat)
+		}
+		if frame.Ownership > byte(piv.EnumValuesbufferOwnership["TRANSFERRED"]) {
+			return nil, fmt.Errorf("plugin invoke output frame %q has invalid ownership %d", frame.PortID, frame.Ownership)
+		}
+		if frame.Mutability > byte(piv.EnumValuesbufferMutability["APPEND_ONLY"]) {
+			return nil, fmt.Errorf("plugin invoke output frame %q has invalid mutability %d", frame.PortID, frame.Mutability)
+		}
+		if typeRef := frameTable.TypeRef(nil); typeRef != nil {
+			frame.SchemaName = string(typeRef.SchemaName())
+			frame.FileIdentifier = string(typeRef.FileIdentifier())
+			frame.SchemaVersion = string(typeRef.SchemaVersion())
+			frame.SchemaHash = append([]byte(nil), typeRef.SchemaHashBytes()...)
+			frame.RootTypeName = string(typeRef.RootType())
+			frame.FixedStringLength = typeRef.FixedStringLength()
+			frame.ByteLength = typeRef.ByteLength()
+			frame.RequiredAlignment = typeRef.RequiredAlignment()
+			if byte(typeRef.WireFormat()) != frame.WireFormat {
+				return nil, fmt.Errorf("plugin invoke output frame %q TAB/type wire formats differ", frame.PortID)
+			}
+		}
+		if err := validateInvokeFrameLayout(frame, len(response.PayloadArena)); err != nil {
+			return nil, err
+		}
+		response.OutputFrames = append(response.OutputFrames, frame)
 	}
 
 	return response, nil
+}
+
+func validateInvokeFrameLayout(frame pluginInvokeFrame, arenaLength int) error {
+	if frame.Alignment == 0 || !isPowerOfTwo32(frame.Alignment) {
+		return fmt.Errorf("plugin invoke output frame %q has invalid alignment %d", frame.PortID, frame.Alignment)
+	}
+	if frame.Alignment > maxInvokeFrameAlignment {
+		return fmt.Errorf("plugin invoke output frame %q alignment %d exceeds the module ABI limit", frame.PortID, frame.Alignment)
+	}
+	end := uint64(frame.Offset) + uint64(frame.Size)
+	if end <= uint64(arenaLength) && frame.Offset%frame.Alignment != 0 {
+		return fmt.Errorf("plugin invoke output frame %q offset %d is not aligned to %d", frame.PortID, frame.Offset, frame.Alignment)
+	}
+	if frame.WireFormat != payloadWireFormatAlignedBinary {
+		return nil
+	}
+	if frame.RequiredAlignment == 0 || !isPowerOfTwo32(uint32(frame.RequiredAlignment)) ||
+		frame.Alignment < uint32(frame.RequiredAlignment) {
+		return fmt.Errorf("plugin invoke aligned output frame %q has invalid required alignment %d/%d", frame.PortID, frame.RequiredAlignment, frame.Alignment)
+	}
+	if end <= uint64(arenaLength) && frame.Offset%uint32(frame.RequiredAlignment) != 0 {
+		return fmt.Errorf("plugin invoke aligned output frame %q offset %d violates required alignment %d", frame.PortID, frame.Offset, frame.RequiredAlignment)
+	}
+	if frame.ByteLength == 0 || frame.ByteLength != frame.Size {
+		return fmt.Errorf("plugin invoke aligned output frame %q byte length %d does not match size %d", frame.PortID, frame.ByteLength, frame.Size)
+	}
+	return nil
+}
+
+func isPowerOfTwo32(value uint32) bool {
+	return value != 0 && value&(value-1) == 0
 }
 
 func extractPluginInvokePayload(response *pluginInvokeResponse, preferredPortID string) ([]byte, error) {

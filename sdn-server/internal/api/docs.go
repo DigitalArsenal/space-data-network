@@ -769,7 +769,7 @@ func plannedRouteDecls() []staticRouteDecl {
 			operation: openAPIObj{
 				"operationId": "getPeerStandardLatest",
 				"summary":     "Provider's newest published dataset for a standard",
-				"description": "The newest dataset the provider peer published for the standard (e.g. celestrak.eth × OMM), served from this node's OPT-IN pin (gateway.pin config; each publish SUPERSEDES the previous pin). Not pinned and not locally available → honest 404/503 carrying the PNM pointer — v1 never silently proxies.",
+				"description": "The newest dataset the provider peer published for the standard, served from this node's OPT-IN pin (gateway.pin config; each publish SUPERSEDES the previous pin). Not pinned and not locally available → honest 404/503 carrying the PNM pointer — v1 never silently proxies.",
 				"parameters": []interface{}{peerIDParam, openAPIObj{
 					"name": "standard", "in": "path", "required": true,
 					"schema":      openAPIObj{"type": "string"},

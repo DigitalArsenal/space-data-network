@@ -16,10 +16,10 @@ func TestFlatSQLStoreIdentityNamespacesIsolateRecords(t *testing.T) {
 
 	identity := DatastoreIdentity{
 		SchemaName:      "OMM",
-		SourcePeerID:    "16Uiu2HAmCelestrak",
+		SourcePeerID:    "16Uiu2HAmCatalogFixture",
 		SourcePublicKey: "provider-public-key",
 		ProviderID:      "space-data-network-02",
-		SourceName:      "celestrak-gp-historical",
+		SourceName:      "catalogfixture-gp-historical",
 		BatchHead:       "feed-head-2",
 		QueryProfile:    "epoch.day",
 		CanonicalParams: map[string]string{"day": "2024-01-01", "fill": "as_of"},
@@ -59,7 +59,7 @@ func TestFlatSQLStoreIdentityNamespacesIsolateRecords(t *testing.T) {
 		WithObjectName("ISS").
 		WithEpoch("2024-01-01T00:00:00Z").
 		Build()
-	cid, err := store.Store("OMM.fbs", payload, "16Uiu2HAmCelestrak", nil)
+	cid, err := store.Store("OMM.fbs", payload, "16Uiu2HAmCatalogFixture", nil)
 	if err != nil {
 		t.Fatalf("store OMM failed: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestFlatSQLStoreIdentityNamespacesIsolateRecords(t *testing.T) {
 	}
 
 	otherIdentity := identity
-	otherIdentity.SourceName = "celestrak-gp"
+	otherIdentity.SourceName = "catalogfixture-gp"
 	otherStore, err := NewFlatSQLStoreForIdentity(basePath, validator, otherIdentity)
 	if err != nil {
 		t.Fatalf("open other identity failed: %v", err)
@@ -115,7 +115,7 @@ func TestFlatSQLStoreIdentityNamespacesRegisterForDiscovery(t *testing.T) {
 		SchemaName:    "OMM.fbs",
 		SourcePeerID:  "source:legacy-sqlite",
 		ProviderID:    "space-data-network-02",
-		SourceName:    "celestrak-gp-historical",
+		SourceName:    "catalogfixture-gp-historical",
 		BatchHead:     "historical-head",
 		QueryProfile:  DatasetPublicationQueryProfile,
 		SnapshotID:    "historical-head",
@@ -123,7 +123,7 @@ func TestFlatSQLStoreIdentityNamespacesRegisterForDiscovery(t *testing.T) {
 		ArtifactHash:  "historical-head",
 	}
 	second := first
-	second.SourceName = "celestrak-gp"
+	second.SourceName = "catalogfixture-gp"
 	second.BatchHead = "live-head"
 	second.SnapshotID = "live-head"
 	second.HighWaterMark = "live-head"
@@ -161,7 +161,7 @@ func TestFlatSQLStoreIdentityNamespacesRegisterForDiscovery(t *testing.T) {
 	if entries[0].Key == entries[1].Key {
 		t.Fatalf("registry has duplicate keys: %#v", entries)
 	}
-	if entries[0].Identity.SourceName != "celestrak-gp" || entries[1].Identity.SourceName != "celestrak-gp-historical" {
+	if entries[0].Identity.SourceName != "catalogfixture-gp" || entries[1].Identity.SourceName != "catalogfixture-gp-historical" {
 		t.Fatalf("registry entries not sorted by provider/source identity: %#v", entries)
 	}
 }

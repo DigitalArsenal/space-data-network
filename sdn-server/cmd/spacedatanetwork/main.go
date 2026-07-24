@@ -957,57 +957,6 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			dataAPI := api.NewDataQueryHandler(n.Store())
 			dataAPI.RegisterRoutes(adminMux)
 
-			// Run controls (App 2 owner directive): stop / clear / provider
-			// selection. Writes live under /api/v1/admin/runs/* (behind the
-			// same top-level admin-auth wall as every admin API via
-			// isAdminOnlyAPIPath); GET /api/v1/runs/{flags,providers} are
-			// anonymous reads for the board + the external pipeline runner
-			// (contract documented in internal/api/runs_control.go). The
-			// module toggler flips cron schedules of runtime modules whose id
-			// matches the provider key; external-runner lanes report "none".
-			runsAPI := api.NewRunsControlHandler(n.Store(), func(ctx context.Context, providerKey string, enabled bool) (int, error) {
-				mgr := n.PluginManager()
-				if mgr == nil {
-					return 0, nil
-				}
-				norm := func(s string) string {
-					return strings.ToLower(strings.NewReplacer("-", "", "_", "", ".", "").Replace(strings.TrimSpace(s)))
-				}
-				want := norm(providerKey)
-				if want == "" {
-					return 0, nil
-				}
-				updated := 0
-				snapshot := mgr.RuntimeSnapshot()
-				for _, mod := range snapshot.Modules {
-					if !strings.Contains(norm(mod.ID), want) {
-						continue
-					}
-					for _, sched := range mod.Schedules {
-						if sched.Enabled == enabled {
-							continue // already in the requested state
-						}
-						_, err := mgr.SaveRuntimeModuleSchedule(ctx, mod.ID, sched.MethodID, plugins.RuntimeModuleScheduleConfig{
-							Enabled:        enabled,
-							Interval:       sched.Interval,
-							CronExpression: sched.CronExpression,
-							Timezone:       sched.Timezone,
-							Jitter:         sched.Jitter,
-							Backoff:        sched.Backoff,
-							RetryBudget:    sched.RetryBudget,
-							MaxRuntime:     sched.MaxRuntime,
-						})
-						if err != nil {
-							return updated, err
-						}
-						updated++
-					}
-				}
-				return updated, nil
-			})
-			runsAPI.RegisterRoutes(adminMux)
-			log.Infof("Run controls at %s://%s/api/v1/admin/runs/{clear,stop,providers} (+ anonymous /api/v1/runs/{flags,providers})", adminScheme, adminAddr)
-
 			// Store maintenance (admin write): on-demand record-catalog
 			// re-sync without a restart — replays journal-only records back
 			// into the SQL control tables + rebuilds source summaries so
@@ -1392,8 +1341,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// (shipped); SDN_UI_MODE=spaceaware restores the full app for dev.
 			// Resolved once here so the /login wiring (below) and the "/"
 			// surface handler (further below) agree on the mode.
-			frontendUIMode := resolveUIMode()
-			log.Infof("Primary UI mode: %s (SDN_UI_MODE)", frontendUIMode)
+			log.Info("Primary UI: embedded SDS $APP record")
 
 			// HD wallet authentication
 			if cfg.Admin.RequireAuth {
@@ -1439,7 +1387,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				//     mounted as the wallet-CREATION / first-admin surface for
 				//     operators; the conjunction app itself is anonymous and
 				//     never authenticates.
-				authHandler.SetExternalLoginUI(frontendUIMode == uiModeSpaceAware)
+				authHandler.SetExternalLoginUI(false)
 				authHandler.RegisterRoutes(adminMux)
 				n.SetModulePublishAuthorizer(func(xpub string) (license.ModulePublishPrincipal, error) {
 					user, err := authHandler.UserStore().GetUser(xpub)
@@ -1701,30 +1649,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.HandleFunc("/admin/", serveAdminUI)
 
 			// ----------------------------------------------------------------
-			// Public homepage at / — intentionally separate from /admin.
+			// Public homepage at / — the decoded entry page of the embedded SDS
+			// $APP record, intentionally separate from /admin and static paths.
 			// ----------------------------------------------------------------
-			frontendHandler, frontendErr := makeFrontendHandler(cfg.Admin.FrontendPath)
-			if frontendErr != nil {
-				log.Warnf("Could not serve frontend_path %q at /: %v", cfg.Admin.FrontendPath, frontendErr)
-				homepageFile := publicHomepageFile(cfg.Admin.FrontendPath, cfg.Admin.HomepageFile)
-				landingHTML := loadLandingPageFallback(homepageFile)
-				if buildAssetsDir := resolveBuildAssetsDir(homepageFile); buildAssetsDir != "" {
-					adminMux.Handle("/Build/", http.StripPrefix("/Build/", http.FileServer(http.Dir(buildAssetsDir))))
-					log.Infof("Static build assets at %s://%s/Build/ from %s", adminScheme, adminAddr, buildAssetsDir)
-				}
-				frontendHandler = adminLandingHandler(http.NotFoundHandler(), landingHTML)
-			}
-			// A2.10 (OWNER DIRECTIVE 2026-07-13): the SDN apps launcher. GET
-			// /apps/ lists every APP record the daemon serves (conjunction +
-			// supplemental-omm today, enumerated from the internal/appmanifest
-			// record/embed API — adding an app is a data change, not a new route);
+			// GET /apps/ lists the embedded APP records served by this daemon;
 			// GET /apps/<appId>/ serves each app's decoded inline UI page with the
-			// conjunction-grade header set + __SDN_CONFIG__ injection. Mounted on
-			// adminMux AHEAD of the "/" surface (ServeMux longest-prefix match), so
-			// it works in BOTH conjunction and spaceaware UI modes and never
-			// shadows the primary UI at "/". Public/anonymous by construction (no
-			// RequireAuth wrapper) — these are public app pages, whose data sources
-			// are the same anonymous-safe gateway surfaces the conjunction app uses.
+			// common APP-surface header set + __SDN_CONFIG__ injection. Mounted on
+			// adminMux ahead of the homepage (ServeMux longest-prefix match).
 			if appsHandler, appsErr := makeAppsHandler(); appsErr != nil {
 				log.Warnf("Could not mount /apps/ launcher: %v", appsErr)
 			} else {
@@ -1732,8 +1663,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				log.Infof("SDN apps launcher at %s://%s/apps/", adminScheme, adminAddr)
 			}
 
-			adminMux.Handle("/", makeUISurfaceHandler(frontendHandler, authHandler, cfg.Admin.RequireAuth, frontendUIMode))
-			log.Infof("SDN UI at %s://%s/ from %s (mode: %s; admin portal remains at /admin)", adminScheme, adminAddr, cfg.Admin.FrontendPath, frontendUIMode)
+			rootAppSlug, rootAppErr := primaryEmbeddedAppSlug()
+			if rootAppErr != nil {
+				return fmt.Errorf("load configured root SDS $APP: %w", rootAppErr)
+			}
+			rootAppHandler, rootAppErr := makeEmbeddedAppSurfaceHandler(rootAppSlug)
+			if rootAppErr != nil {
+				return fmt.Errorf("mount embedded SDN UI $APP: %w", rootAppErr)
+			}
+			adminMux.Handle("/", rootAppHandler)
+			log.Infof("SDN UI at %s://%s/ from embedded SDS $APP (admin portal remains at /admin)", adminScheme, adminAddr)
 
 			adminServer = &http.Server{
 				Addr:              adminAddr,
@@ -2508,16 +2447,8 @@ func isPublicReadAPIPath(path string) bool {
 		"/api/storefront/listings",
 		"/api/v1/catalog",
 		"/api/v1/data/health",
-		// Anonymous per-record index page for the App 2 board's per-satellite
-		// drill-down (NORAD/epoch/RMS/CID over sdn_record_index). Read-only.
+		// Anonymous per-record index page for explicitly selected schemas.
 		"/api/v1/data/index",
-		// Run-control anonymous READS (writes stay behind the admin wall at
-		// /api/v1/admin/runs/*): cooperative stop flags the external pipeline
-		// runner polls between publish chunks, and the persisted provider
-		// selection it intersects with its own --providers args. Contract in
-		// internal/api/runs_control.go.
-		"/api/v1/runs/flags",
-		"/api/v1/runs/providers",
 		// Flow-served record retrieval (loop C.4: the data-retrieval flow
 		// mounted at /api/v1/data/ owns routing/format/ETag inside wasm).
 		"/api/v1/data/omm/bulk",
@@ -3059,16 +2990,7 @@ func loadInjectedFrontendIndex(indexPath string) ([]byte, error) {
 }
 
 func makeFrontendSurfaceHandler(frontendHandler http.Handler, _ *auth.Handler, _ bool) http.Handler {
-	serve := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// SpaceAware UI routes are served from the artifact embedded in this
-		// binary (spaceaware_ui.go) — never from disk (packaging hard rule).
-		if isSpaceAwareUIPath(r.URL.Path) {
-			serveSpaceAwareUI(w, r)
-			return
-		}
-		frontendHandler.ServeHTTP(w, r)
-	})
-	return serve
+	return frontendHandler
 }
 
 // injectFrontendConfig injects SDN runtime configuration into index.html.
@@ -3946,8 +3868,7 @@ func isConfiguredSDNSSHAlias(alias string) bool {
 		return false
 	}
 	return strings.HasPrefix(alias, "space-data-network-") ||
-		alias == "sdn.spaceaware.io" ||
-		alias == "celestrak.eth"
+		alias == "sdn.spaceaware.io"
 }
 
 // handleNodeEPMJSON returns the node's EPM as JSON.

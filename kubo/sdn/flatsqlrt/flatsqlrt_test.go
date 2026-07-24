@@ -60,15 +60,15 @@ const ommTestSchema = `
   file_identifier "$OMM";
 `
 
-// starlink6292SizePrefixed is a real $OMM FlatBuffer (STARLINK-6292, NORAD
-// 56775) WITH its 4-byte size prefix — the same fixture as
+// sampleOMMSizePrefixed is a representative $OMM FlatBuffer (OBJECT-A-6292,
+// catalog 56775) with its 4-byte size prefix — the same fixture as
 // flatsql/test/wasm-generic-extractor.test.ts (which strips the prefix for
 // ingestBuffers; we keep it for the stream-ingest path).
-const starlink6292Base64 = "HAEAAEgAAAAkT01NAAAAADwAVAAAAAwACABQAEwAEAAAAAAAAAAAAAAARAAAADwANAAsACQAHAAUAAAAAAAAAAAAAAAAAAAABABIADwAAABQAAAAVAAAAGAAAAB4AAAAxEKtad4BV0DByqFFtsBwQGZmZmZmnGJAXf5D+u1/UUCej3xvHS04P22KKnBw9y1AUAAAAMfdAABkAAAAcAAAAAEAAABVAAAACAAAAFNETi1URVNUAAAAABQAAAAyMDI2LTA1LTExVDEwOjI2OjQxWgAAAAAFAAAARUFSVEgAAAAUAAAAMjAyNi0wNS0xMFQxMDo0NTozMVoAAAAACQAAADIwMjMtMDc4SgAAAA0AAABTVEFSTElOSy02MjkyAAAA"
+const sampleOMMBase64 = "HAEAAEgAAAAkT01NAAAAADwAVAAAAAwACABQAEwAEAAAAAAAAAAAAAAARAAAADwANAAsACQAHAAUAAAAAAAAAAAAAAAAAAAABABIADwAAABQAAAAVAAAAGAAAAB4AAAAxEKtad4BV0DByqFFtsBwQGZmZmZmnGJAXf5D+u1/UUCej3xvHS04P22KKnBw9y1AUAAAAMfdAABkAAAAcAAAAAEAAABVAAAACAAAAFNETi1URVNUAAAAABQAAAAyMDI2LTA1LTExVDEwOjI2OjQxWgAAAAAFAAAARUFSVEgAAAAUAAAAMjAyNi0wNS0xMFQxMDo0NTozMVoAAAAACQAAADIwMjMtMDc4SgAAAA0AAABPQkpFQ1QtQS02MjkyAAAA"
 
 func fixtureStream(t *testing.T) []byte {
 	t.Helper()
-	b, err := base64.StdEncoding.DecodeString(starlink6292Base64)
+	b, err := base64.StdEncoding.DecodeString(sampleOMMBase64)
 	if err != nil {
 		t.Fatalf("decode fixture: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestQueryErrorSurfaceWithoutPoisoning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Query after errors: %v", err)
 	}
-	if len(res.Rows) != 1 || res.Rows[0][0] != "STARLINK-6292" {
+	if len(res.Rows) != 1 || res.Rows[0][0] != "OBJECT-A-6292" {
 		t.Fatalf("post-error query rows: %#v", res.Rows)
 	}
 	if rt.Poisoned() {
@@ -274,7 +274,7 @@ func TestIngestStreamAndQuery(t *testing.T) {
 		t.Fatalf("got %d rows, want 1 (columns=%v)", len(res.Rows), res.Columns)
 	}
 	row := res.Rows[0]
-	if row[0] != "STARLINK-6292" || row[1] != "2023-078J" || row[2] != int64(56775) {
+	if row[0] != "OBJECT-A-6292" || row[1] != "2023-078J" || row[2] != int64(56775) {
 		t.Fatalf("unexpected row: %#v", row)
 	}
 }
@@ -290,7 +290,7 @@ func TestIngestOneAndParamTypes(t *testing.T) {
 	// String + float params through the TLV path.
 	res, err := db.Query(
 		"SELECT NORAD_CAT_ID FROM OMM WHERE OBJECT_NAME = ? AND MEAN_MOTION > ?",
-		"STARLINK-6292", 1.0)
+		"OBJECT-A-6292", 1.0)
 	if err != nil {
 		t.Fatalf("Query with params: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestQueryTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QueryTemplate: %v", err)
 	}
-	if len(res.Rows) != 1 || res.Rows[0][0] != "STARLINK-6292" {
+	if len(res.Rows) != 1 || res.Rows[0][0] != "OBJECT-A-6292" {
 		t.Fatalf("unexpected template result: %#v", res.Rows)
 	}
 	if _, err := db.QueryTemplate("nope"); err == nil {
@@ -455,7 +455,7 @@ func TestExportAndRebuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Query after rebuild: %v", err)
 	}
-	if len(res.Rows) != 1 || res.Rows[0][0] != "STARLINK-6292" {
+	if len(res.Rows) != 1 || res.Rows[0][0] != "OBJECT-A-6292" {
 		t.Fatalf("rebuilt store query: %#v", res.Rows)
 	}
 }

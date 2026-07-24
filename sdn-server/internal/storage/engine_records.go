@@ -242,7 +242,7 @@ func (s *FlatSQLStore) enforceEngineHotWindowLocked(schemaName string) error {
 		if !ok {
 			continue
 		}
-		// source carries the FULL shadow-table name ("OMM@celestrak-gp") as
+		// source carries the FULL shadow-table name ("OMM@catalogfixture-gp") as
 		// reported by the unified view — exactly the name MarkDeleted keys
 		// on, and guaranteed registered (it came from the engine itself).
 		if err := s.engineDB.MarkDeleted(source, uint64(seq)); err != nil {
@@ -398,7 +398,7 @@ func (s *FlatSQLStore) readStreamRecordCached(files map[string]*os.File, streamP
 // forward) over the unified OMM view and returns the aligned size-prefixed
 // FlatBuffer frame stream — the wire format served to the network — without
 // hydrating anything from stream files. sourceName is the bare source (e.g.
-// "celestrak-gp"); empty means all sources. limit <= 0 means no limit.
+// "catalogfixture-gp"); empty means all sources. limit <= 0 means no limit.
 func (s *FlatSQLStore) QueryEpochRawStream(schemaName string, sourceName string, profile string, epochUnix float64, limit int) (*flatsqlrt.RawStream, error) {
 	if normalizeSchemaNameForEpoch(schemaName) != engineOMMSchemaName {
 		return nil, fmt.Errorf("engine epoch queries support only %s (got %q)", engineOMMSchemaName, schemaName)
@@ -419,7 +419,7 @@ func (s *FlatSQLStore) QueryEpochRawStream(schemaName string, sourceName string,
 	sourceShadow := ""
 	if src := strings.TrimSpace(sourceName); src != "" {
 		// The unified view's _source column carries the FULL shadow-table
-		// name ("OMM@celestrak-gp"), not the bare source.
+		// name ("OMM@catalogfixture-gp"), not the bare source.
 		sourceShadow = "OMM@" + src
 	}
 	limitParam := int64(limit)

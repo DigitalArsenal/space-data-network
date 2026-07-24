@@ -6,22 +6,37 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/spacedatanetwork/sdn-server/internal/appmanifest"
 )
 
-// TestResolveServedAppsRegistry proves the data-driven registry resolves both
-// apps (conjunction + supplemental-omm) with the expected slugs/ids and that
-// each resolved page byte-equals decode(record) — i.e. the current serving
-// artifact for that app. Adding App 3 is a data change in appServingSpecs();
-// this test then just gets a third expected entry.
+func decodedEmbeddedAppPage(t *testing.T, slug string) []byte {
+	t.Helper()
+	manifest, err := embeddedAppManifest(slug)
+	if err != nil {
+		t.Fatalf("embeddedAppManifest(%q): %v", slug, err)
+	}
+	resolution, err := manifest.Resolve()
+	if err != nil {
+		t.Fatalf("resolve %q: %v", slug, err)
+	}
+	if resolution.EntryPage == nil {
+		t.Fatalf("%q has no entry page", slug)
+	}
+	page, err := resolution.EntryPage.DecodedContent()
+	if err != nil {
+		t.Fatalf("decode %q entry page: %v", slug, err)
+	}
+	return page
+}
+
+// TestResolveServedAppsRegistry proves the embedded registry is decoded from
+// SDS $APP records and includes the SDN UI homepage application.
 func TestResolveServedAppsRegistry(t *testing.T) {
 	apps, err := resolveServedApps()
 	if err != nil {
 		t.Fatalf("resolveServedApps() error = %v", err)
 	}
-	if len(apps) != 2 {
-		t.Fatalf("resolveServedApps() returned %d apps, want 2 (conjunction + supplemental-omm)", len(apps))
+	if len(apps) < 1 {
+		t.Fatalf("resolveServedApps() returned %d apps, want at least the SDN UI", len(apps))
 	}
 
 	bySlug := map[string]resolvedApp{}
@@ -29,39 +44,26 @@ func TestResolveServedAppsRegistry(t *testing.T) {
 		bySlug[a.slug] = a
 	}
 
-	conj, ok := bySlug["conjunction"]
+	sdnUI, ok := bySlug["spaceaware"]
 	if !ok {
-		t.Fatal("registry missing the conjunction app")
+		t.Fatal("registry missing the SDN UI app")
 	}
-	if conj.id != appmanifest.ConjunctionAppID {
-		t.Errorf("conjunction id = %q, want %q", conj.id, appmanifest.ConjunctionAppID)
+	if sdnUI.id != "io.spaceaware.sdn-ui" {
+		t.Errorf("SDN UI id = %q, want io.spaceaware.sdn-ui", sdnUI.id)
 	}
-	if conj.mediaType != "text/html" {
-		t.Errorf("conjunction mediaType = %q, want text/html", conj.mediaType)
+	if sdnUI.mediaType != "text/html" {
+		t.Errorf("SDN UI mediaType = %q, want text/html", sdnUI.mediaType)
 	}
-	// The served page must byte-equal decode(record), which for conjunction is
-	// the embedded serving artifact itself.
-	if !bytes.Equal(conj.page, conjunctionAppHTML) {
-		t.Errorf("conjunction resolved page (%d bytes) does not byte-equal the embedded artifact (%d bytes)", len(conj.page), len(conjunctionAppHTML))
-	}
-
-	supp, ok := bySlug["supplemental-omm"]
-	if !ok {
-		t.Fatal("registry missing the supplemental-omm app")
-	}
-	if supp.id != appmanifest.SupplementalOMMAppID {
-		t.Errorf("supplemental-omm id = %q, want %q", supp.id, appmanifest.SupplementalOMMAppID)
-	}
-	// Consumed ONLY via the record/embed API — the served page must byte-equal
-	// the current embedded board (read through the record), never a snapshot.
-	if !bytes.Equal(supp.page, appmanifest.SupplementalOMMBoardHTML()) {
-		t.Errorf("supplemental-omm resolved page (%d bytes) does not byte-equal the embedded board via the record/embed API (%d bytes)", len(supp.page), len(appmanifest.SupplementalOMMBoardHTML()))
+	// The served page must byte-equal decode($APP), not a second HTML embed.
+	if !bytes.Equal(sdnUI.page, decodedEmbeddedAppPage(t, "spaceaware")) {
+		t.Errorf("SDN UI resolved page (%d bytes) does not byte-equal decoded embedded $APP", len(sdnUI.page))
 	}
 }
 
 // TestAppsLauncher exercises GET /apps/: 200, the conjunction-grade header set,
 // text/html, self-contained (zero external references), and a listing that names
-// and links BOTH apps. Served with no auth headers — these are public pages.
+// and links the remaining embedded app. Served with no auth headers — this is
+// a public page.
 func TestAppsLauncher(t *testing.T) {
 	handler, err := makeAppsHandler()
 	if err != nil {
@@ -81,12 +83,9 @@ func TestAppsLauncher(t *testing.T) {
 
 	body := rec.Body.String()
 	for _, want := range []string{
-		appmanifest.ConjunctionAppName,
-		appmanifest.SupplementalOMMAppName,
-		`href="/apps/conjunction/"`,
-		`href="/apps/supplemental-omm/"`,
-		appmanifest.ConjunctionAppID,
-		appmanifest.SupplementalOMMAppID,
+		"Space Data Network",
+		`href="/apps/spaceaware/"`,
+		"io.spaceaware.sdn-ui",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("launcher body missing %q", want)
@@ -112,7 +111,7 @@ func TestAppsLauncher(t *testing.T) {
 	}
 }
 
-// TestAppsPerAppPages exercises GET /apps/<slug>/ for both apps: 200, the
+// TestAppsPerAppPages exercises GET /apps/<slug>/: 200, the
 // conjunction-grade header set, and body == injectFrontendConfig(decode(record))
 // — the served page is the app read through the record with the same
 // __SDN_CONFIG__ injection serveConjunctionUI performs. Both the trailing-slash
@@ -127,8 +126,7 @@ func TestAppsPerAppPages(t *testing.T) {
 		slug string
 		want []byte // decode(record) for this app
 	}{
-		{"conjunction", conjunctionAppHTML},
-		{"supplemental-omm", appmanifest.SupplementalOMMBoardHTML()},
+		{"spaceaware", decodedEmbeddedAppPage(t, "spaceaware")},
 	}
 	for _, tc := range cases {
 		for _, path := range []string{"/apps/" + tc.slug + "/", "/apps/" + tc.slug} {
@@ -164,8 +162,8 @@ func TestAppsUnknown404(t *testing.T) {
 	for _, path := range []string{
 		"/apps/nope/",
 		"/apps/nope",
-		"/apps/conjunction/sub",
-		"/apps/supplemental-omm/assets/x.js",
+		"/apps/spaceaware/sub",
+		"/apps/unknown/assets/x.js",
 	} {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
@@ -190,39 +188,36 @@ func TestAppsMethodNotAllowed(t *testing.T) {
 	}
 }
 
-// TestAppsSurfaceCoexistsWithConjunction is the A2.10 cutover-contract surface
-// block: a mux mirroring main.go's wiring (the /apps/ subtree registered ahead
-// of the "/" conjunction surface). It proves the new /apps/* surface serves the
-// launcher + both app pages, that "/apps" redirects to "/apps/", that the
-// conjunction app still owns "/" — and, crucially, that adding /apps/* does NOT
-// un-404 any descoped SpaceAware screen (the C2/C3 404 contract still holds).
-func TestAppsSurfaceCoexistsWithConjunction(t *testing.T) {
+// TestAppsSurfaceSharesTheEmbeddedRootRecord proves / and /apps/spaceaware/ serve
+// the same decoded embedded $APP page through the same generic resolver.
+func TestAppsSurfaceSharesTheEmbeddedRootRecord(t *testing.T) {
 	appsHandler, err := makeAppsHandler()
 	if err != nil {
 		t.Fatalf("makeAppsHandler() error = %v", err)
 	}
-	var fell bool
-	surface := makeUISurfaceHandler(frontendSentinel(&fell), nil, true, uiModeConjunction)
+	surface, err := makeEmbeddedAppSurfaceHandler("spaceaware")
+	if err != nil {
+		t.Fatalf("makeEmbeddedAppSurfaceHandler() error = %v", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.Handle("/apps/", appsHandler)
 	mux.Handle("/", surface)
 
-	// The conjunction app still owns "/".
+	// The SDN UI APP owns "/".
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "conj-root") {
-		t.Fatalf("GET /: code=%d, conjunction app not served", rec.Code)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Space Data Network") {
+		t.Fatalf("GET /: code=%d, SDN UI app not served", rec.Code)
 	}
 
-	// /apps/ launcher + both app pages served through the same mux.
+	// /apps/ launcher + SDN UI page served through the same mux.
 	for _, tc := range []struct {
 		path    string
 		wantSub string
 	}{
-		{"/apps/", appmanifest.SupplementalOMMAppName},
-		{"/apps/conjunction/", "conj-root"},
-		{"/apps/supplemental-omm/", "window.__SDN_CONFIG__"},
+		{"/apps/", "Space Data Network"},
+		{"/apps/spaceaware/", "SpaceAware"},
 	} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
@@ -253,53 +248,16 @@ func TestAppsSurfaceCoexistsWithConjunction(t *testing.T) {
 		t.Errorf("GET /apps/does-not-exist/ status = %d, want 404", rec.Code)
 	}
 
-	// THE CONTRACT: every descoped SpaceAware screen STILL 404s — adding /apps/*
-	// must not re-open any of them.
-	descoped := []string{
-		"/login", "/console", "/console/node", "/console/peers", "/console/groups",
-		"/console/data", "/console/channels", "/console/conjunction",
-		"/orbital", "/gantt", "/bmc2", "/bmc2/f1", "/bmc2/f4",
-	}
-	for _, p := range descoped {
-		fell = false
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("descoped %s: status = %d, want 404 (still descoped after /apps/* added)", p, rec.Code)
-		}
-		if fell {
-			t.Errorf("descoped %s: fell through to disk frontend, want 404", p)
-		}
+	// Root is a single-page APP; unrecognized path routes do not become a
+	// separate static frontend surface.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/not-an-app-route", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("GET /not-an-app-route status = %d, want 404", rec.Code)
 	}
 }
 
-// TestServeConjunctionUIInjectsAppsLink proves the served conjunction UI carries
-// the /apps/ launcher affordance (A2.10 item 3), that it is a same-origin anchor
-// (no external reference), and that the embedded artifact itself is untouched
-// (the injection is serve-time only).
-func TestServeConjunctionUIInjectsAppsLink(t *testing.T) {
-	rec := httptest.NewRecorder()
-	serveConjunctionUI(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	body := rec.Body.String()
-
-	if !strings.Contains(body, `href="/apps/"`) {
-		t.Error("served conjunction UI missing the /apps/ launcher link")
-	}
-	if !strings.Contains(body, ">APPS</a>") {
-		t.Error("served conjunction UI missing the APPS launcher affordance label")
-	}
-	// Same-origin only: the injected link must not introduce an external host.
-	if strings.Contains(appsLauncherLink, "http://") || strings.Contains(appsLauncherLink, "https://") {
-		t.Errorf("apps launcher link is not same-origin: %q", appsLauncherLink)
-	}
-	// The embedded artifact is untouched by the serve-time injection.
-	if bytes.Contains(conjunctionAppHTML, []byte(`href="/apps/"`)) {
-		t.Error("embedded conjunction artifact unexpectedly contains the injected /apps/ link (injection must be serve-time only)")
-	}
-}
-
-// assertAppSurfaceHeaders checks the conjunction-grade header set applied to
-// every /apps/ response (COOP/COEP/CSP/no-store).
+// assertAppSurfaceHeaders checks the generic APP header set.
 func assertAppSurfaceHeaders(t *testing.T, h http.Header) {
 	t.Helper()
 	if got := h.Get("Cross-Origin-Opener-Policy"); got != "same-origin" {
@@ -308,8 +266,8 @@ func assertAppSurfaceHeaders(t *testing.T, h http.Header) {
 	if got := h.Get("Cross-Origin-Embedder-Policy"); got != "require-corp" {
 		t.Errorf("COEP = %q, want require-corp", got)
 	}
-	if got := h.Get("Content-Security-Policy"); got != conjunctionCSP {
-		t.Errorf("CSP = %q, want %q", got, conjunctionCSP)
+	if got := h.Get("Content-Security-Policy"); got != appSurfaceCSP {
+		t.Errorf("CSP = %q, want %q", got, appSurfaceCSP)
 	}
 	if got := h.Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", got)

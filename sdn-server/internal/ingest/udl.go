@@ -24,7 +24,7 @@ import (
 //
 // Feeds implemented (only schemas with existing builders are targeted):
 //   - /udl/elset -> OMM.fbs (sds.OMMBuilder)
-//   - /udl/sgi   -> SPW.fbs (buildSPW, same path as CelesTrak space weather)
+//   - /udl/sgi   -> SPW.fbs (shared buildSPW normalization path)
 //
 // /udl/conjunction is intentionally NOT implemented because no CDM builder
 // exists in internal/sds/builders.go. /udl/statevector is likewise skipped
@@ -436,7 +436,7 @@ func (r *Runner) ingestUDLElsetRecords(records []map[string]string, sourcePeer s
 			builder = builder.WithMeanAnomaly(v)
 		}
 		// SGP4 propagation terms + element-set identity (same mapping as the
-		// CelesTrak GP path; UDL elset uses REV_NO/EPHEM_TYPE spellings).
+		// Shared GP mapping; UDL elset uses REV_NO/EPHEM_TYPE spellings.
 		if v, ok := parseFloat(getValue(record, "BSTAR", "B_STAR")); ok {
 			builder = builder.WithBStar(v)
 		}
@@ -475,7 +475,7 @@ func (r *Runner) ingestUDLElsetRecords(records []map[string]string, sourcePeer s
 }
 
 // ingestUDLSGIRecords maps UDL Solar/Geomagnetic Index records to SPW
-// FlatBuffers via the shared buildSPW path used by CelesTrak space weather.
+// FlatBuffers via the shared buildSPW normalization path.
 // Field mapping: SGI_DATE -> DATE, F10 -> F107_OBS, F10B -> F107_OBS_CENTER81,
 // AP -> AP_AVG (rounded), KP -> KP_SUM (stored in tenths).
 func (r *Runner) ingestUDLSGIRecords(records []map[string]string, sourcePeer string, tags storage.SourceTags) (int, string, map[string]int, []string, error) {

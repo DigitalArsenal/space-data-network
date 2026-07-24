@@ -671,8 +671,7 @@ func (n *Node) init() error {
 	n.licensingModule = licensingModule
 	n.registerModulePublishHandler()
 
-	// Register the remaining on-disk plugin-catalog modules (data-source
-	// adapters, od-fit-pipeline, catalog-synthesis, etc.) with the plugin
+	// Register the remaining on-disk plugin-catalog modules with the plugin
 	// manager so their manifest `timers`/cron blocks get scheduled by the
 	// StartAll call below. This must run AFTER the licensing module is
 	// registered (so registerCatalogPlugins' already-registered guard skips
@@ -685,8 +684,8 @@ func (n *Node) init() error {
 	// net effect was that a node with modules staged in
 	// <storage.path>/license/plugins/catalog.json parsed the catalog (via
 	// loadPluginRegistry above) but never registered or ran anything from it,
-	// so no data-source / od-fit / catalog-synthesis module ever reached the
-	// scheduler. Failures here are non-fatal by contract: a bad module in the
+	// so no catalog module ever reached the scheduler. Failures here are
+	// non-fatal by contract: a bad module in the
 	// catalog must never take the node down (registerCatalogPlugins collects
 	// per-module errors, marks each failing module's runtime status "error",
 	// and returns them joined; we log and continue).

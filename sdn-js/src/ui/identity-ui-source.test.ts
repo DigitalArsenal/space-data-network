@@ -764,6 +764,7 @@ describe('SDN data worker source', () => {
     const serviceWorkerSource = readUiSource('lib/coi-serviceworker.js');
 
     expect(mainSource).toContain('ensureCrossOriginIsolation');
+    expect(mainSource).toContain('VITE_EMBEDDED_SDN_APP');
     expectSourceToContainAll(coiSource, [
       'coi-serviceworker.js',
       'globalThis.crossOriginIsolated',

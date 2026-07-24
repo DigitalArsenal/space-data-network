@@ -42,8 +42,6 @@ ExecStart=/opt/spacedatanetwork/bin/spacedatanetwork \
     ingest \
     --storage-path ${SDN_STORAGE_PATH} \
     --raw-path ${SDN_RAW_PATH} \
-    --celestrak-interval 1h \
-    --satcat-interval 24h \
     --spacetrack-enabled true \
     --spacetrack-batch-days 3 \
     --spacetrack-batch-sleep 3s \

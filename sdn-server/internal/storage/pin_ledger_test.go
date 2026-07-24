@@ -22,10 +22,10 @@ func TestFlatSQLStoreRecordsDurablePinLedgerEntries(t *testing.T) {
 	entry := PinLedgerEntry{
 		CID:               "bafkshard",
 		SchemaName:        "OMM.fbs",
-		ProviderPeerID:    "16Uiu2HCelesTrak",
+		ProviderPeerID:    "16Uiu2HCatalogFixture",
 		ProviderPublicKey: "provider-public-key",
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
+		SourceName:        "catalogfixture-gp",
 		BatchID:           "batch-001",
 		QueryProfile:      DatasetPublicationQueryProfile,
 		SnapshotID:        "head-2",
@@ -45,7 +45,7 @@ func TestFlatSQLStoreRecordsDurablePinLedgerEntries(t *testing.T) {
 
 	entries, err := store.ListPinLedgerEntries(PinLedgerQuery{
 		SchemaName:     "OMM.fbs",
-		ProviderPeerID: "16Uiu2HCelesTrak",
+		ProviderPeerID: "16Uiu2HCatalogFixture",
 		QueryProfile:   DatasetPublicationQueryProfile,
 	})
 	if err != nil {
@@ -77,12 +77,12 @@ func TestFlatSQLStoreReportsLocalReplicaStatsFromRowsAndPinLedger(t *testing.T) 
 	}
 	defer store.Close()
 
-	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "batch-001", ContentKeyID: "public"}
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "catalogfixture-gp", BatchID: "batch-001", ContentKeyID: "public"}
 	if _, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().
 		WithNoradCatID(25544).
 		WithObjectName("ISS").
 		WithEpoch("2026-05-12T00:00:00Z").
-		Build(), "source:celestrak", nil, tags); err != nil {
+		Build(), "source:catalogfixture", nil, tags); err != nil {
 		t.Fatalf("store OMM failed: %v", err)
 	}
 	verifiedAt := time.Unix(1_778_436_120, 0).UTC()
@@ -90,10 +90,10 @@ func TestFlatSQLStoreReportsLocalReplicaStatsFromRowsAndPinLedger(t *testing.T) 
 		{
 			CID:               "bafkshard-a",
 			SchemaName:        "OMM.fbs",
-			ProviderPeerID:    "16Uiu2HCelesTrak",
+			ProviderPeerID:    "16Uiu2HCatalogFixture",
 			ProviderPublicKey: "provider-public-key",
 			ProviderID:        "space-data-network-02",
-			SourceName:        "celestrak-gp",
+			SourceName:        "catalogfixture-gp",
 			BatchID:           "batch-001",
 			QueryProfile:      DatasetPublicationQueryProfile,
 			SnapshotID:        "head-2",
@@ -109,10 +109,10 @@ func TestFlatSQLStoreReportsLocalReplicaStatsFromRowsAndPinLedger(t *testing.T) 
 		{
 			CID:               "bafkshard-b",
 			SchemaName:        "OMM.fbs",
-			ProviderPeerID:    "16Uiu2HCelesTrak",
+			ProviderPeerID:    "16Uiu2HCatalogFixture",
 			ProviderPublicKey: "provider-public-key",
 			ProviderID:        "space-data-network-02",
-			SourceName:        "celestrak-gp",
+			SourceName:        "catalogfixture-gp",
 			BatchID:           "batch-001",
 			QueryProfile:      DatasetPublicationQueryProfile,
 			SnapshotID:        "head-3",
@@ -134,7 +134,7 @@ func TestFlatSQLStoreReportsLocalReplicaStatsFromRowsAndPinLedger(t *testing.T) 
 	stats, err := store.LocalReplicaStats(LocalReplicaStatsQuery{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "batch-001",
 		QueryProfile: DatasetPublicationQueryProfile,
 	})
@@ -167,12 +167,12 @@ func TestFlatSQLStoreReportsLocalReplicaStatsFromDatasetShardPublications(t *tes
 	}
 	defer store.Close()
 
-	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "batch-001", ContentKeyID: "public"}
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "catalogfixture-gp", BatchID: "batch-001", ContentKeyID: "public"}
 	for _, record := range [][]byte{
 		sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").WithEpoch("2026-05-12T00:00:00Z").Build(),
-		sds.NewOMMBuilder().WithNoradCatID(56775).WithObjectName("STARLINK-6292").WithEpoch("2026-05-12T00:01:00Z").Build(),
+		sds.NewOMMBuilder().WithNoradCatID(56775).WithObjectName("SATELLITE-6292").WithEpoch("2026-05-12T00:01:00Z").Build(),
 	} {
-		if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:celestrak", nil, tags); err != nil {
+		if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:catalogfixture", nil, tags); err != nil {
 			t.Fatalf("store OMM failed: %v", err)
 		}
 	}
@@ -181,7 +181,7 @@ func TestFlatSQLStoreReportsLocalReplicaStatsFromDatasetShardPublications(t *tes
 	if err := store.UpsertDatasetShardPublication(DatasetShardPublication{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "batch-001",
 		QueryProfile: DatasetPublicationQueryProfile,
 		Offset:       0,
@@ -199,7 +199,7 @@ func TestFlatSQLStoreReportsLocalReplicaStatsFromDatasetShardPublications(t *tes
 	stats, err := store.LocalReplicaStats(LocalReplicaStatsQuery{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		QueryProfile: DatasetPublicationQueryProfile,
 	})
 	if err != nil {
@@ -231,12 +231,12 @@ func TestFlatSQLStoreDeduplicatesLocalReplicaStatsFromPinAndPublicationLedgers(t
 	}
 	defer store.Close()
 
-	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "batch-001", ContentKeyID: "public"}
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "catalogfixture-gp", BatchID: "batch-001", ContentKeyID: "public"}
 	if _, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().
 		WithNoradCatID(25544).
 		WithObjectName("ISS").
 		WithEpoch("2026-05-12T00:00:00Z").
-		Build(), "source:celestrak", nil, tags); err != nil {
+		Build(), "source:catalogfixture", nil, tags); err != nil {
 		t.Fatalf("store OMM failed: %v", err)
 	}
 
@@ -244,7 +244,7 @@ func TestFlatSQLStoreDeduplicatesLocalReplicaStatsFromPinAndPublicationLedgers(t
 	if err := store.UpsertDatasetShardPublication(DatasetShardPublication{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "batch-001",
 		QueryProfile: DatasetPublicationQueryProfile,
 		Offset:       0,
@@ -262,10 +262,10 @@ func TestFlatSQLStoreDeduplicatesLocalReplicaStatsFromPinAndPublicationLedgers(t
 	if err := store.UpsertPinLedgerEntry(PinLedgerEntry{
 		CID:               "bafkshard-a",
 		SchemaName:        "OMM.fbs",
-		ProviderPeerID:    "16Uiu2HCelesTrak",
+		ProviderPeerID:    "16Uiu2HCatalogFixture",
 		ProviderPublicKey: "provider-public-key",
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
+		SourceName:        "catalogfixture-gp",
 		BatchID:           "batch-001",
 		QueryProfile:      DatasetPublicationQueryProfile,
 		SnapshotID:        "pin-head",
@@ -284,7 +284,7 @@ func TestFlatSQLStoreDeduplicatesLocalReplicaStatsFromPinAndPublicationLedgers(t
 	stats, err := store.LocalReplicaStats(LocalReplicaStatsQuery{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "batch-001",
 		QueryProfile: DatasetPublicationQueryProfile,
 	})

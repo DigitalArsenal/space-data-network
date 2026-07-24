@@ -222,8 +222,8 @@ func TestReadsStayResponsiveDuringBatchStore(t *testing.T) {
 	records := buildLockWindowCATRecords(t, n)
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-satcat",
-		SourceURL:    "https://celestrak.example/satcat",
+		SourceName:   "catalogfixture-satcat",
+		SourceURL:    "https://fixture.test/satcat",
 		BatchID:      "lock-window-batch",
 		ContentKeyID: "public",
 	}
@@ -232,7 +232,7 @@ func TestReadsStayResponsiveDuringBatchStore(t *testing.T) {
 	}
 
 	writeTask := startLockWindowWriteTask(t, func() (int, error) {
-		return store.StoreBatchWithSourceTags("CAT.fbs", records, "source:celestrak", nil, tags)
+		return store.StoreBatchWithSourceTags("CAT.fbs", records, "source:catalogfixture", nil, tags)
 	})
 	readSample := sampleReadsResponsive(store, "CAT.fbs", writeTask.Done())
 	res := writeTask.Wait()
@@ -267,12 +267,12 @@ func TestReadsStayResponsiveDuringShardImport(t *testing.T) {
 	const n = 389 // six 64-record windows + a ragged tail
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-satcat",
-		SourceURL:    "https://celestrak.example/satcat",
+		SourceName:   "catalogfixture-satcat",
+		SourceURL:    "https://fixture.test/satcat",
 		BatchID:      "lock-window-shard",
 		ContentKeyID: "public",
 	}
-	if inserted, err := providerStore.StoreBatchWithSourceTags("CAT.fbs", buildLockWindowCATRecords(t, n), "source:celestrak", nil, tags); err != nil || inserted != n {
+	if inserted, err := providerStore.StoreBatchWithSourceTags("CAT.fbs", buildLockWindowCATRecords(t, n), "source:catalogfixture", nil, tags); err != nil || inserted != n {
 		t.Fatalf("seed provider store: inserted=%d err=%v", inserted, err)
 	}
 	export, err := providerStore.ExportDatasetWindow(filepath.Join(tmpDir, "export"), IndexedRecordQuery{
@@ -292,7 +292,7 @@ func TestReadsStayResponsiveDuringShardImport(t *testing.T) {
 	}
 
 	writeTask := startLockWindowWriteTask(t, func() (int, error) {
-		imported, _, err := subscriberStore.ImportDatasetShardFromFiles(export.ShardPath, export.IndexPath, "celestrak.eth")
+		imported, _, err := subscriberStore.ImportDatasetShardFromFiles(export.ShardPath, export.IndexPath, "catalogfixture.eth")
 		return imported, err
 	})
 	readSample := sampleReadsResponsive(subscriberStore, "CAT.fbs", writeTask.Done())

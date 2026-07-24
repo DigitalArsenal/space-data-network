@@ -29,10 +29,10 @@ func TestReplayRecordCatalogRestoresJournalOnlyRecords(t *testing.T) {
 	}
 
 	base := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC).Unix()
-	celestrak := SourceTags{ProviderID: "prov-a", SourceName: "celestrak-gp", BatchID: "batch-1"}
+	catalogfixture := SourceTags{ProviderID: "prov-a", SourceName: "catalogfixture-gp", BatchID: "batch-1"}
 	other := SourceTags{ProviderID: "prov-b", SourceName: "provider-two", BatchID: "batch-1"}
 
-	celestrakRecords := [][]byte{
+	catalogfixtureRecords := [][]byte{
 		buildEngineOMM(t, 1001, "SAT-1001", base),
 		buildEngineOMM(t, 1002, "SAT-1002", base+86400),
 		buildEngineOMM(t, 1003, "SAT-1003", base+2*86400),
@@ -43,8 +43,8 @@ func TestReplayRecordCatalogRestoresJournalOnlyRecords(t *testing.T) {
 	}
 	const wantRecords = 5
 
-	if _, err := store.StoreBatchWithSourceTags("OMM.fbs", celestrakRecords, "peer-a", nil, celestrak); err != nil {
-		t.Fatalf("store celestrak batch: %v", err)
+	if _, err := store.StoreBatchWithSourceTags("OMM.fbs", catalogfixtureRecords, "peer-a", nil, catalogfixture); err != nil {
+		t.Fatalf("store catalogfixture batch: %v", err)
 	}
 	if _, err := store.StoreBatchWithSourceTags("OMM.fbs", otherRecords, "peer-b", nil, other); err != nil {
 		t.Fatalf("store other batch: %v", err)
@@ -108,10 +108,10 @@ func TestReplayRecordCatalogRestoresJournalOnlyRecords(t *testing.T) {
 		t.Fatalf("AFTER hydrate: total_records=%d, want %d", summaryAfter.TotalRecords, wantRecords)
 	}
 	if len(summaryAfter.Sources) != 2 {
-		t.Fatalf("AFTER hydrate: sources=%d, want 2 (celestrak-gp + provider-two)", len(summaryAfter.Sources))
+		t.Fatalf("AFTER hydrate: sources=%d, want 2 (catalogfixture-gp + provider-two)", len(summaryAfter.Sources))
 	}
-	if got := sourceRecordCount(summaryAfter.Sources, "prov-a", "celestrak-gp"); got != 3 {
-		t.Fatalf("AFTER hydrate: celestrak-gp count=%d, want 3", got)
+	if got := sourceRecordCount(summaryAfter.Sources, "prov-a", "catalogfixture-gp"); got != 3 {
+		t.Fatalf("AFTER hydrate: catalogfixture-gp count=%d, want 3", got)
 	}
 	if got := sourceRecordCount(summaryAfter.Sources, "prov-b", "provider-two"); got != 2 {
 		t.Fatalf("AFTER hydrate: provider-two count=%d, want 2", got)

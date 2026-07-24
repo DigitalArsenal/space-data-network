@@ -149,7 +149,7 @@ func TestFlatSQLImportFastPathUsesInsertedRowIDForSourceSummary(t *testing.T) {
 	}
 
 	// WS7.3d routed-only: the fast path inserts into the producer's table.
-	routedTable, err := store.ensureProducerStandardTable("source:celestrak", "OMM.fbs")
+	routedTable, err := store.ensureProducerStandardTable("source:catalogfixture", "OMM.fbs")
 	if err != nil {
 		t.Fatalf("ensureProducerStandardTable failed: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestFlatSQLImportFastPathUsesInsertedRowIDForSourceSummary(t *testing.T) {
 	defer tx.Rollback()
 
 	cid := computeCID(record)
-	rowID, err := insertSchemaMetadataReturningRowID(tx, routedTable, cid, "source:celestrak", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000)
+	rowID, err := insertSchemaMetadataReturningRowID(tx, routedTable, cid, "source:catalogfixture", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000)
 	if err != nil {
 		t.Fatalf("insertSchemaMetadataReturningRowID failed: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestFlatSQLImportFastPathUsesInsertedRowIDForSourceSummary(t *testing.T) {
 	}
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "fast-import-batch",
 		ContentKeyID: "public",
 	}
@@ -222,7 +222,7 @@ func TestNewFlatSQLStoreMigratesExistingCanonicalBlobTableToStreamMetadata(t *te
 	}
 	if _, err := db.Exec(`
 		INSERT INTO OMM (cid, peer_id, timestamp, data, signature)
-		VALUES ('canonical-cid', 'source:celestrak', 1700000000, ?, x'010203')
+		VALUES ('canonical-cid', 'source:catalogfixture', 1700000000, ?, x'010203')
 	`, payload); err != nil {
 		t.Fatalf("insert existing canonical record failed: %v", err)
 	}
@@ -263,9 +263,9 @@ func TestNewFlatSQLStoreMigratesLegacySDSTableToCanonicalSchemaTable(t *testing.
 	if err != nil {
 		t.Fatalf("open sqlite db failed: %v", err)
 	}
-	legacyPayload := []byte("legacy-omm-payload")
+	legacyPayload := []byte("legacy-catalog-payload")
 	if _, err := db.Exec(`
-		CREATE TABLE sds_omm (
+		CREATE TABLE sds_cat (
 			cid TEXT PRIMARY KEY,
 			peer_id TEXT NOT NULL,
 			timestamp INTEGER NOT NULL,
@@ -278,8 +278,8 @@ func TestNewFlatSQLStoreMigratesLegacySDSTableToCanonicalSchemaTable(t *testing.
 		t.Fatalf("create legacy schema table failed: %v", err)
 	}
 	if _, err := db.Exec(`
-		INSERT INTO sds_omm (cid, peer_id, timestamp, data, signature)
-		VALUES ('legacy-cid', 'source:celestrak', 1700000000, ?, NULL)
+		INSERT INTO sds_cat (cid, peer_id, timestamp, data, signature)
+		VALUES ('legacy-cid', 'source:catalogfixture', 1700000000, ?, NULL)
 	`, legacyPayload); err != nil {
 		t.Fatalf("insert legacy record failed: %v", err)
 	}
@@ -297,19 +297,19 @@ func TestNewFlatSQLStoreMigratesLegacySDSTableToCanonicalSchemaTable(t *testing.
 	}
 	defer store.Close()
 
-	if exists, err := store.tableExists("OMM"); err != nil {
+	if exists, err := store.tableExists("CAT"); err != nil {
 		t.Fatalf("canonical table lookup failed: %v", err)
 	} else if !exists {
-		t.Fatal("canonical OMM table was not created from legacy sds_omm")
+		t.Fatal("canonical CAT table was not created from the legacy fixture")
 	}
-	if exists, err := store.tableExists("sds_omm"); err != nil {
+	if exists, err := store.tableExists("sds_cat"); err != nil {
 		t.Fatalf("legacy table lookup failed: %v", err)
 	} else if exists {
-		t.Fatal("legacy sds_omm table still exists after migration")
+		t.Fatal("legacy fixture table still exists after migration")
 	}
-	assertNoSQLiteBlobColumns(t, store, "OMM")
-	assertHasColumns(t, store, "OMM", "stream_path", "stream_offset", "record_length", "signature_hex")
-	record, err := store.Get("OMM.fbs", "legacy-cid")
+	assertNoSQLiteBlobColumns(t, store, "CAT")
+	assertHasColumns(t, store, "CAT", "stream_path", "stream_offset", "record_length", "signature_hex")
+	record, err := store.Get("CAT.fbs", "legacy-cid")
 	if err != nil {
 		t.Fatalf("migrated record lookup failed: %v", err)
 	}
@@ -355,8 +355,8 @@ func TestCopyBlobSchemaRowsToMetadataTableSkipsExistingMetadataRows(t *testing.T
 	if _, err := store.db.Exec(`
 		INSERT INTO sds_cat (cid, peer_id, timestamp, data, signature)
 		VALUES
-			('existing-cid', 'source:celestrak', 1700000000, ?, NULL),
-			('new-cid', 'source:celestrak', 1700000001, ?, NULL)
+			('existing-cid', 'source:catalogfixture', 1700000000, ?, NULL),
+			('new-cid', 'source:catalogfixture', 1700000001, ?, NULL)
 	`, existingPayload, newPayload); err != nil {
 		t.Fatalf("insert legacy records failed: %v", err)
 	}
@@ -369,7 +369,7 @@ func TestCopyBlobSchemaRowsToMetadataTableSkipsExistingMetadataRows(t *testing.T
 	if err := store.createSchemaMetadataTable("CAT"); err != nil {
 		t.Fatalf("create canonical legacy table failed: %v", err)
 	}
-	if err := insertSchemaMetadata(store.db, "CAT", "existing-cid", "source:celestrak", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000); err != nil {
+	if err := insertSchemaMetadata(store.db, "CAT", "existing-cid", "source:catalogfixture", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000); err != nil {
 		t.Fatalf("insert existing metadata failed: %v", err)
 	}
 	streamFile := filepath.Join(tmpDir, streamPath)
@@ -472,8 +472,8 @@ func TestFlatSQLStoreQueryIndexedRecordsCommonCatalogFilters(t *testing.T) {
 
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-satcat-csv",
-		SourceURL:    "https://celestrak.org/pub/satcat.csv",
+		SourceName:   "catalogfixture-satcat-csv",
+		SourceURL:    "https://fixture.test/pub/satcat.csv",
 		BatchID:      "batch-001",
 		ContentKeyID: "public",
 	}
@@ -492,11 +492,11 @@ func TestFlatSQLStoreQueryIndexedRecordsCommonCatalogFilters(t *testing.T) {
 		WithOpsStatus("DECAYED").
 		Build()
 
-	payloadCID, err := store.StoreWithSourceTags("CAT.fbs", payloadBytes, "source:celestrak", nil, tags)
+	payloadCID, err := store.StoreWithSourceTags("CAT.fbs", payloadBytes, "source:catalogfixture", nil, tags)
 	if err != nil {
 		t.Fatalf("StoreWithSourceTags payload failed: %v", err)
 	}
-	if _, err := store.StoreWithSourceTags("CAT.fbs", rocketBytes, "source:celestrak", nil, tags); err != nil {
+	if _, err := store.StoreWithSourceTags("CAT.fbs", rocketBytes, "source:catalogfixture", nil, tags); err != nil {
 		t.Fatalf("StoreWithSourceTags rocket failed: %v", err)
 	}
 
@@ -548,7 +548,7 @@ func TestFlatSQLStoreQueryIndexedRecordsCommonCatalogFilters(t *testing.T) {
 		From:       &from,
 		To:         &to,
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-satcat-csv",
+		SourceName: "catalogfixture-satcat-csv",
 		BatchID:    "batch-001",
 		Limit:      10,
 	})
@@ -562,7 +562,7 @@ func TestFlatSQLStoreQueryIndexedRecordsCommonCatalogFilters(t *testing.T) {
 	byCID, err := store.QueryIndexedRecords(IndexedRecordQuery{
 		SchemaName: "CAT.fbs",
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-satcat-csv",
+		SourceName: "catalogfixture-satcat-csv",
 		BatchID:    "batch-001",
 		Limit:      10,
 		OrderByCID: true,
@@ -601,11 +601,11 @@ func TestFlatSQLStoreQueryRecentRecordsAvoidsIndexJoin(t *testing.T) {
 	defer store.Close()
 
 	first := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build()
-	second := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK").Build()
-	if _, err := store.Store("OMM.fbs", first, "source:celestrak", nil); err != nil {
+	second := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("SATELLITE").Build()
+	if _, err := store.Store("OMM.fbs", first, "source:catalogfixture", nil); err != nil {
 		t.Fatalf("store first OMM failed: %v", err)
 	}
-	if _, err := store.Store("OMM.fbs", second, "source:celestrak", nil); err != nil {
+	if _, err := store.Store("OMM.fbs", second, "source:catalogfixture", nil); err != nil {
 		t.Fatalf("store second OMM failed: %v", err)
 	}
 
@@ -642,17 +642,17 @@ func TestFlatSQLStoreQueryRecentRecordsPrefersLatestSourceTagMaterialization(t *
 	current := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("CURRENT").Build()
 	laterInsertedButOlderMaterialization := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("OLDER").Build()
 
-	currentCID, err := store.StoreWithSourceTags("OMM.fbs", current, "source:celestrak", nil, SourceTags{
+	currentCID, err := store.StoreWithSourceTags("OMM.fbs", current, "source:catalogfixture", nil, SourceTags{
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-gp",
+		SourceName: "catalogfixture-gp",
 		BatchID:    "current-batch",
 	})
 	if err != nil {
 		t.Fatalf("store current OMM failed: %v", err)
 	}
-	olderCID, err := store.StoreWithSourceTags("OMM.fbs", laterInsertedButOlderMaterialization, "source:celestrak", nil, SourceTags{
+	olderCID, err := store.StoreWithSourceTags("OMM.fbs", laterInsertedButOlderMaterialization, "source:catalogfixture", nil, SourceTags{
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-gp",
+		SourceName: "catalogfixture-gp",
 		BatchID:    "older-batch",
 	})
 	if err != nil {
@@ -708,14 +708,14 @@ func TestFlatSQLStoreDataSummaryGroupsBySchemaAndSource(t *testing.T) {
 		WithOpsStatus("OPERATIONAL").
 		Build()
 	epm := sds.NewEPMBuilder().
-		WithDN("CelesTrak Node").
+		WithDN("CatalogFixture Node").
 		WithEmail("operator@example.test").
 		WithMultiAddrs([]string{"/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWDataSummary"}).
 		Build()
 
-	if _, err := store.StoreWithSourceTags("CAT.fbs", cat, "source:celestrak", nil, SourceTags{
+	if _, err := store.StoreWithSourceTags("CAT.fbs", cat, "source:catalogfixture", nil, SourceTags{
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-satcat-csv",
+		SourceName: "catalogfixture-satcat-csv",
 		BatchID:    "satcat-batch",
 	}); err != nil {
 		t.Fatalf("store CAT failed: %v", err)
@@ -737,7 +737,7 @@ func TestFlatSQLStoreDataSummaryGroupsBySchemaAndSource(t *testing.T) {
 	if got := findSchemaCount(summary.Schemas, "EPM.fbs"); got != 1 {
 		t.Fatalf("EPM schema count = %d, want local EPM count 1", got)
 	}
-	if got := findSourceCount(summary.Sources, "CAT.fbs", "space-data-network-02", "celestrak-satcat-csv"); got != 1 {
+	if got := findSourceCount(summary.Sources, "CAT.fbs", "space-data-network-02", "catalogfixture-satcat-csv"); got != 1 {
 		t.Fatalf("CAT source count = %d, want 1", got)
 	}
 	if got := findSourceCount(summary.Sources, "EPM.fbs", "local-node", "local-epm"); got != 1 {
@@ -764,37 +764,24 @@ func TestFlatSQLStoreSourceBatchProgress(t *testing.T) {
 
 	// Two records in one (provider, source, batch) published by DIFFERENT
 	// producers must aggregate into a single progress row with count 2.
-	iss := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build()
-	star := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK").Build()
-	if _, err := store.StoreWithSourceTags("OMM.fbs", iss, "peer-alpha", nil, SourceTags{
-		ProviderID: "spacex-starlink", SourceName: "spacex-starlink", BatchID: "batch-1", ContentKeyID: "key-alpha",
+	first := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("OBJECT-A").Build()
+	second := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("OBJECT-B").Build()
+	if _, err := store.StoreWithSourceTags("OMM.fbs", first, "peer-alpha", nil, SourceTags{
+		ProviderID: "provider-alpha", SourceName: "source-alpha", BatchID: "batch-1", ContentKeyID: "key-alpha",
 	}); err != nil {
-		t.Fatalf("store iss failed: %v", err)
+		t.Fatalf("store first record failed: %v", err)
 	}
-	if _, err := store.StoreWithSourceTags("OMM.fbs", star, "peer-bravo", nil, SourceTags{
-		ProviderID: "spacex-starlink", SourceName: "spacex-starlink", BatchID: "batch-1", ContentKeyID: "key-bravo",
+	if _, err := store.StoreWithSourceTags("OMM.fbs", second, "peer-bravo", nil, SourceTags{
+		ProviderID: "provider-alpha", SourceName: "source-alpha", BatchID: "batch-1", ContentKeyID: "key-bravo",
 	}); err != nil {
-		t.Fatalf("store star failed: %v", err)
+		t.Fatalf("store second record failed: %v", err)
 	}
 	// A second provider/batch to prove rows stay distinct.
-	iss2 := sds.NewOMMBuilder().WithNoradCatID(25545).WithObjectName("ISS-2").Build()
-	if _, err := store.StoreWithSourceTags("OMM.fbs", iss2, "peer-alpha", nil, SourceTags{
-		ProviderID: "iss", SourceName: "iss", BatchID: "batch-2", ContentKeyID: "key-alpha",
+	third := sds.NewOMMBuilder().WithNoradCatID(25545).WithObjectName("OBJECT-C").Build()
+	if _, err := store.StoreWithSourceTags("OMM.fbs", third, "peer-alpha", nil, SourceTags{
+		ProviderID: "provider-beta", SourceName: "source-beta", BatchID: "batch-2", ContentKeyID: "key-alpha",
 	}); err != nil {
-		t.Fatalf("store iss2 failed: %v", err)
-	}
-
-	// OD fit-pipeline lane: fitted OMM records are stored as schema-exact JSON
-	// text carrying a top-level "RMS" (km). Two records => mean/min/max RMS
-	// aggregate over the lane. (The FlatBuffer lanes above carry no RMS.)
-	fitA := []byte(`{"OBJECT_ID":"1998-067A","EPOCH":"2026-07-14T10:00:00Z","NORAD_CAT_ID":25544,"RMS":"0.100","CONVERGED":true}`)
-	fitB := []byte(`{"OBJECT_ID":"2019-074B","EPOCH":"2026-07-14T10:05:00Z","NORAD_CAT_ID":40909,"RMS":"0.200","CONVERGED":true}`)
-	for _, rec := range [][]byte{fitA, fitB} {
-		if _, err := store.StoreWithSourceTags("OMM.fbs", rec, "peer-fit", nil, SourceTags{
-			ProviderID: "od-fit-pipeline", SourceName: "od-fit-pipeline", BatchID: "batch-fit", ContentKeyID: "key-fit",
-		}); err != nil {
-			t.Fatalf("store fitted OMM failed: %v", err)
-		}
+		t.Fatalf("store third record failed: %v", err)
 	}
 
 	progress, err := store.SourceBatchProgress()
@@ -802,67 +789,33 @@ func TestFlatSQLStoreSourceBatchProgress(t *testing.T) {
 		t.Fatalf("SourceBatchProgress failed: %v", err)
 	}
 
-	var starlink, issRow, fitRow *SourceBatchProgress
+	var alpha, beta *SourceBatchProgress
 	for i := range progress {
 		p := &progress[i]
-		if p.SchemaName == "OMM.fbs" && p.SourceName == "spacex-starlink" && p.BatchID == "batch-1" {
-			starlink = p
+		if p.SchemaName == "OMM.fbs" && p.SourceName == "source-alpha" && p.BatchID == "batch-1" {
+			alpha = p
 		}
-		if p.SchemaName == "OMM.fbs" && p.SourceName == "iss" && p.BatchID == "batch-2" {
-			issRow = p
-		}
-		if p.SchemaName == "OMM.fbs" && p.SourceName == "od-fit-pipeline" && p.BatchID == "batch-fit" {
-			fitRow = p
+		if p.SchemaName == "OMM.fbs" && p.SourceName == "source-beta" && p.BatchID == "batch-2" {
+			beta = p
 		}
 	}
-	if starlink == nil {
-		t.Fatalf("no starlink batch-1 progress row: %+v", progress)
+	if alpha == nil {
+		t.Fatalf("no source-alpha batch-1 progress row: %+v", progress)
 	}
-	if starlink.Count != 2 {
-		t.Fatalf("starlink batch-1 count = %d, want 2 (aggregated across producers)", starlink.Count)
+	if alpha.Count != 2 {
+		t.Fatalf("source-alpha batch-1 count = %d, want 2 (aggregated across producers)", alpha.Count)
 	}
-	if starlink.FirstSeenUnix <= 0 || starlink.LastSeenUnix <= 0 {
-		t.Fatalf("starlink timestamps not populated: first=%d last=%d", starlink.FirstSeenUnix, starlink.LastSeenUnix)
+	if alpha.FirstSeenUnix <= 0 || alpha.LastSeenUnix <= 0 {
+		t.Fatalf("source-alpha timestamps not populated: first=%d last=%d", alpha.FirstSeenUnix, alpha.LastSeenUnix)
 	}
-	if starlink.LastSeenUnix < starlink.FirstSeenUnix {
-		t.Fatalf("last_seen %d before first_seen %d", starlink.LastSeenUnix, starlink.FirstSeenUnix)
+	if alpha.LastSeenUnix < alpha.FirstSeenUnix {
+		t.Fatalf("last_seen %d before first_seen %d", alpha.LastSeenUnix, alpha.FirstSeenUnix)
 	}
-	if starlink.UpdatedAtUnix <= 0 {
-		t.Fatalf("starlink updated_at not populated: %d", starlink.UpdatedAtUnix)
+	if alpha.UpdatedAtUnix <= 0 {
+		t.Fatalf("source-alpha updated_at not populated: %d", alpha.UpdatedAtUnix)
 	}
-	if issRow == nil || issRow.Count != 1 {
-		t.Fatalf("iss batch-2 progress row wrong: %+v", issRow)
-	}
-
-	// FlatBuffer OMM lanes carry no OD fit RMS — the aggregates stay nil.
-	if starlink.MeanRMS != nil {
-		t.Fatalf("starlink (FlatBuffer OMM) MeanRMS should be nil, got %v", *starlink.MeanRMS)
-	}
-
-	// The fitted-OMM JSON lane aggregates RMS: mean 0.15, min 0.10, max 0.20 km.
-	if fitRow == nil {
-		t.Fatalf("no od-fit-pipeline batch-fit progress row: %+v", progress)
-	}
-	if fitRow.Count != 2 {
-		t.Fatalf("od-fit count = %d, want 2", fitRow.Count)
-	}
-	if fitRow.ObjectCount != 2 {
-		t.Fatalf("od-fit ObjectCount = %d, want 2 (JSON OMM norad indexed)", fitRow.ObjectCount)
-	}
-	if fitRow.LatestEpochUnix <= 0 {
-		t.Fatalf("od-fit LatestEpochUnix not populated (JSON OMM epoch indexed): %d", fitRow.LatestEpochUnix)
-	}
-	if fitRow.MeanRMS == nil || fitRow.MinRMS == nil || fitRow.MaxRMS == nil {
-		t.Fatalf("od-fit RMS aggregates nil: mean=%v min=%v max=%v", fitRow.MeanRMS, fitRow.MinRMS, fitRow.MaxRMS)
-	}
-	if v := *fitRow.MeanRMS; v < 0.1499 || v > 0.1501 {
-		t.Fatalf("od-fit MeanRMS = %v, want ~0.15", v)
-	}
-	if v := *fitRow.MinRMS; v < 0.0999 || v > 0.1001 {
-		t.Fatalf("od-fit MinRMS = %v, want ~0.10", v)
-	}
-	if v := *fitRow.MaxRMS; v < 0.1999 || v > 0.2001 {
-		t.Fatalf("od-fit MaxRMS = %v, want ~0.20", v)
+	if beta == nil || beta.Count != 1 {
+		t.Fatalf("source-beta batch-2 progress row wrong: %+v", beta)
 	}
 }
 
@@ -884,10 +837,10 @@ func TestFlatSQLStoreMaintainsSourceSummaryForMultipleProducers(t *testing.T) {
 	defer store.Close()
 
 	alpha := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build()
-	bravo := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK").Build()
+	bravo := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("SATELLITE").Build()
 	if _, err := store.StoreWithSourceTags("OMM.fbs", alpha, "peer-alpha", nil, SourceTags{
 		ProviderID:   "peer-alpha",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "alpha-batch",
 		ContentKeyID: "alpha-public-key",
 	}); err != nil {
@@ -895,7 +848,7 @@ func TestFlatSQLStoreMaintainsSourceSummaryForMultipleProducers(t *testing.T) {
 	}
 	if _, err := store.StoreWithSourceTags("OMM.fbs", bravo, "peer-bravo", nil, SourceTags{
 		ProviderID:   "peer-bravo",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "bravo-batch",
 		ContentKeyID: "bravo-public-key",
 	}); err != nil {
@@ -1033,7 +986,7 @@ func TestFlatSQLStoreStoresSameRecordCIDForMultipleProducers(t *testing.T) {
 	omm := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build()
 	alphaCID, err := store.StoreWithSourceTags("OMM.fbs", omm, "peer-alpha", nil, SourceTags{
 		ProviderID:        "provider-alpha",
-		SourceName:        "celestrak-gp",
+		SourceName:        "catalogfixture-gp",
 		BatchID:           "alpha-batch",
 		ContentKeyID:      "alpha-content-key",
 		ProducerPeerID:    "peer-alpha",
@@ -1044,7 +997,7 @@ func TestFlatSQLStoreStoresSameRecordCIDForMultipleProducers(t *testing.T) {
 	}
 	bravoCID, err := store.StoreWithSourceTags("OMM.fbs", omm, "peer-bravo", nil, SourceTags{
 		ProviderID:        "provider-bravo",
-		SourceName:        "celestrak-gp",
+		SourceName:        "catalogfixture-gp",
 		BatchID:           "bravo-batch",
 		ContentKeyID:      "bravo-content-key",
 		ProducerPeerID:    "peer-bravo",
@@ -1098,9 +1051,9 @@ func TestFlatSQLStoreQueryRawRecordsReturnsRawFlatBuffersByProducerAndType(t *te
 		WithObjectType("PAYLOAD").
 		WithOpsStatus("OPERATIONAL").
 		Build()
-	cid, err := store.StoreWithSourceTags("CAT.fbs", cat, "source:celestrak", nil, SourceTags{
+	cid, err := store.StoreWithSourceTags("CAT.fbs", cat, "source:catalogfixture", nil, SourceTags{
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-satcat-csv",
+		SourceName: "catalogfixture-satcat-csv",
 		BatchID:    "satcat-batch",
 	})
 	if err != nil {
@@ -1110,7 +1063,7 @@ func TestFlatSQLStoreQueryRawRecordsReturnsRawFlatBuffersByProducerAndType(t *te
 	records, err := store.QueryRawRecords(RawRecordQuery{
 		SchemaName: "CAT.fbs",
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-satcat-csv",
+		SourceName: "catalogfixture-satcat-csv",
 		BatchID:    "satcat-batch",
 		Limit:      10,
 	})
@@ -1126,7 +1079,7 @@ func TestFlatSQLStoreQueryRawRecordsReturnsRawFlatBuffersByProducerAndType(t *te
 	if string(records[0].Data) != string(cat) {
 		t.Fatal("raw query did not return original FlatBuffer bytes")
 	}
-	if records[0].SourceTags.ProviderID != "space-data-network-02" || records[0].SourceTags.SourceName != "celestrak-satcat-csv" {
+	if records[0].SourceTags.ProviderID != "space-data-network-02" || records[0].SourceTags.SourceName != "catalogfixture-satcat-csv" {
 		t.Fatalf("source tags not populated: %#v", records[0].SourceTags)
 	}
 }
@@ -1150,24 +1103,24 @@ func TestFlatSQLStoreCountRawRecordsMatchesSourceFiltersWithoutHydratingRows(t *
 	defer store.Close()
 
 	ommA := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build()
-	ommB := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK").Build()
+	ommB := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("SATELLITE").Build()
 	ommC := sds.NewOMMBuilder().WithNoradCatID(43013).WithObjectName("OTHER").Build()
 	ommUntagged := sds.NewOMMBuilder().WithNoradCatID(99901).WithObjectName("UNTAGGED").Build()
-	if _, err := store.StoreWithSourceTags("OMM.fbs", ommA, "source:celestrak", nil, SourceTags{
+	if _, err := store.StoreWithSourceTags("OMM.fbs", ommA, "source:catalogfixture", nil, SourceTags{
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
+		SourceName:        "catalogfixture-gp",
 		BatchID:           "batch-a",
-		ProducerPeerID:    "peer-celestrak",
-		ProducerPublicKey: "public-celestrak",
+		ProducerPeerID:    "peer-catalogfixture",
+		ProducerPublicKey: "public-catalogfixture",
 	}); err != nil {
 		t.Fatalf("store OMM A failed: %v", err)
 	}
-	if _, err := store.StoreWithSourceTags("OMM.fbs", ommB, "source:celestrak", nil, SourceTags{
+	if _, err := store.StoreWithSourceTags("OMM.fbs", ommB, "source:catalogfixture", nil, SourceTags{
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
+		SourceName:        "catalogfixture-gp",
 		BatchID:           "batch-a",
-		ProducerPeerID:    "peer-celestrak",
-		ProducerPublicKey: "public-celestrak",
+		ProducerPeerID:    "peer-catalogfixture",
+		ProducerPublicKey: "public-catalogfixture",
 	}); err != nil {
 		t.Fatalf("store OMM B failed: %v", err)
 	}
@@ -1187,9 +1140,9 @@ func TestFlatSQLStoreCountRawRecordsMatchesSourceFiltersWithoutHydratingRows(t *
 	count, err := store.CountRawRecords(RawRecordQuery{
 		SchemaName:        "OMM.fbs",
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
-		ProducerPeerID:    "peer-celestrak",
-		ProducerPublicKey: "public-celestrak",
+		SourceName:        "catalogfixture-gp",
+		ProducerPeerID:    "peer-catalogfixture",
+		ProducerPublicKey: "public-catalogfixture",
 	})
 	if err != nil {
 		t.Fatalf("CountRawRecords failed: %v", err)
@@ -1225,12 +1178,12 @@ func TestFlatSQLStoreQueryRawRecordRefsUsesRowIDCursorWithSourceFilters(t *testi
 	}
 	defer store.Close()
 
-	celestrakTags := SourceTags{
+	catalogfixtureTags := SourceTags{
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
+		SourceName:        "catalogfixture-gp",
 		BatchID:           "batch-a",
-		ProducerPeerID:    "peer-celestrak",
-		ProducerPublicKey: "public-celestrak",
+		ProducerPeerID:    "peer-catalogfixture",
+		ProducerPublicKey: "public-catalogfixture",
 	}
 	otherTags := SourceTags{
 		ProviderID:        "other-provider",
@@ -1243,22 +1196,22 @@ func TestFlatSQLStoreQueryRawRecordRefsUsesRowIDCursorWithSourceFilters(t *testi
 	ommB := sds.NewOMMBuilder().WithNoradCatID(10002).WithObjectName("B").Build()
 	ommC := sds.NewOMMBuilder().WithNoradCatID(10003).WithObjectName("C").Build()
 	ommD := sds.NewOMMBuilder().WithNoradCatID(10004).WithObjectName("D").Build()
-	cidA, err := store.StoreWithSourceTags("OMM.fbs", ommA, "source:celestrak", nil, celestrakTags)
+	cidA, err := store.StoreWithSourceTags("OMM.fbs", ommA, "source:catalogfixture", nil, catalogfixtureTags)
 	if err != nil {
 		t.Fatalf("store OMM A failed: %v", err)
 	}
 	if _, err := store.StoreWithSourceTags("OMM.fbs", ommB, "source:other", nil, otherTags); err != nil {
 		t.Fatalf("store OMM B failed: %v", err)
 	}
-	cidC, err := store.StoreWithSourceTags("OMM.fbs", ommC, "source:celestrak", nil, celestrakTags)
+	cidC, err := store.StoreWithSourceTags("OMM.fbs", ommC, "source:catalogfixture", nil, catalogfixtureTags)
 	if err != nil {
 		t.Fatalf("store OMM C failed: %v", err)
 	}
 
 	firstPage, err := store.QueryRawRecordRefs(RawRecordQuery{
 		SchemaName:     "OMM.fbs",
-		ProviderID:     celestrakTags.ProviderID,
-		SourceName:     celestrakTags.SourceName,
+		ProviderID:     catalogfixtureTags.ProviderID,
+		SourceName:     catalogfixtureTags.SourceName,
 		UseRowIDCursor: true,
 		MaxRowID:       1_000_000,
 		Limit:          2,
@@ -1275,17 +1228,17 @@ func TestFlatSQLStoreQueryRawRecordRefsUsesRowIDCursorWithSourceFilters(t *testi
 	if firstPage[0].RowID <= 0 || firstPage[1].RowID <= firstPage[0].RowID {
 		t.Fatalf("rowids = %d, %d; want increasing source-filtered row cursor", firstPage[0].RowID, firstPage[1].RowID)
 	}
-	if firstPage[0].SourceTags.ProviderID != celestrakTags.ProviderID || firstPage[0].SourceTags.ProducerPublicKey != celestrakTags.ProducerPublicKey {
+	if firstPage[0].SourceTags.ProviderID != catalogfixtureTags.ProviderID || firstPage[0].SourceTags.ProducerPublicKey != catalogfixtureTags.ProducerPublicKey {
 		t.Fatalf("source tags not preserved on first page: %#v", firstPage[0].SourceTags)
 	}
 
-	if _, err := store.StoreWithSourceTags("OMM.fbs", ommD, "source:celestrak", nil, celestrakTags); err != nil {
+	if _, err := store.StoreWithSourceTags("OMM.fbs", ommD, "source:catalogfixture", nil, catalogfixtureTags); err != nil {
 		t.Fatalf("store OMM D failed: %v", err)
 	}
 	snapshotPage, err := store.QueryRawRecordRefs(RawRecordQuery{
 		SchemaName:     "OMM.fbs",
-		ProviderID:     celestrakTags.ProviderID,
-		SourceName:     celestrakTags.SourceName,
+		ProviderID:     catalogfixtureTags.ProviderID,
+		SourceName:     catalogfixtureTags.SourceName,
 		UseRowIDCursor: true,
 		MaxRowID:       firstPage[1].RowID,
 		Limit:          10,
@@ -1294,13 +1247,13 @@ func TestFlatSQLStoreQueryRawRecordRefsUsesRowIDCursorWithSourceFilters(t *testi
 		t.Fatalf("QueryRawRecordRefs snapshot page failed: %v", err)
 	}
 	if len(snapshotPage) != 2 || snapshotPage[0].CID != cidA || snapshotPage[1].CID != cidC {
-		t.Fatalf("snapshot page = %+v, want only original celestrak rows", snapshotPage)
+		t.Fatalf("snapshot page = %+v, want only original catalogfixture rows", snapshotPage)
 	}
 
 	resumePage, err := store.QueryRawRecordRefs(RawRecordQuery{
 		SchemaName:     "OMM.fbs",
-		ProviderID:     celestrakTags.ProviderID,
-		SourceName:     celestrakTags.SourceName,
+		ProviderID:     catalogfixtureTags.ProviderID,
+		SourceName:     catalogfixtureTags.SourceName,
 		UseRowIDCursor: true,
 		AfterRowID:     firstPage[0].RowID,
 		MaxRowID:       firstPage[1].RowID,
@@ -1334,10 +1287,10 @@ func TestFlatSQLStoreRawRecordQueriesApplySubscriptionSyncFilters(t *testing.T) 
 
 	tags := SourceTags{
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
+		SourceName:        "catalogfixture-gp",
 		BatchID:           "batch-a",
-		ProducerPeerID:    "peer-celestrak",
-		ProducerPublicKey: "public-celestrak",
+		ProducerPeerID:    "peer-catalogfixture",
+		ProducerPublicKey: "public-catalogfixture",
 	}
 	ommA := sds.NewOMMBuilder().
 		WithNoradCatID(10001).
@@ -1357,21 +1310,21 @@ func TestFlatSQLStoreRawRecordQueriesApplySubscriptionSyncFilters(t *testing.T) 
 		WithObjectName("EXCLUDED").
 		WithEpoch("2026-05-12T12:00:00Z").
 		Build()
-	if _, err := store.StoreWithSourceTags("OMM.fbs", ommA, "source:celestrak", nil, tags); err != nil {
+	if _, err := store.StoreWithSourceTags("OMM.fbs", ommA, "source:catalogfixture", nil, tags); err != nil {
 		t.Fatalf("store OMM A failed: %v", err)
 	}
-	matchCID, err := store.StoreWithSourceTags("OMM.fbs", ommB, "source:celestrak", nil, tags)
+	matchCID, err := store.StoreWithSourceTags("OMM.fbs", ommB, "source:catalogfixture", nil, tags)
 	if err != nil {
 		t.Fatalf("store OMM B failed: %v", err)
 	}
-	if _, err := store.StoreWithSourceTags("OMM.fbs", ommC, "source:celestrak", nil, tags); err != nil {
+	if _, err := store.StoreWithSourceTags("OMM.fbs", ommC, "source:catalogfixture", nil, tags); err != nil {
 		t.Fatalf("store OMM C failed: %v", err)
 	}
 
 	filter := RawRecordQuery{
 		SchemaName: "OMM.fbs",
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-gp",
+		SourceName: "catalogfixture-gp",
 		Limit:      10,
 		SyncFilter: "EPOCH >= '2026-05-11T00:00:00Z' AND NORAD_CAT_ID != 30003",
 	}
@@ -1390,31 +1343,31 @@ func TestFlatSQLStoreRawRecordQueriesApplySubscriptionSyncFilters(t *testing.T) 
 		t.Fatalf("filtered records = %+v, want one CID %s", records, matchCID)
 	}
 
-	pnmCID, err := store.StoreWithSourceTags("PNM.fbs", buildTestPNM("celestrak:OMM:batch-a"), "source:celestrak", nil, SourceTags{
+	pnmCID, err := store.StoreWithSourceTags("PNM.fbs", buildTestPNM("catalogfixture:OMM:batch-a"), "source:catalogfixture", nil, SourceTags{
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-publications",
+		SourceName:        "catalogfixture-publications",
 		BatchID:           "pnm-batch",
-		ProducerPeerID:    "peer-celestrak",
-		ProducerPublicKey: "public-celestrak",
+		ProducerPeerID:    "peer-catalogfixture",
+		ProducerPublicKey: "public-catalogfixture",
 	})
 	if err != nil {
-		t.Fatalf("store CelesTrak PNM failed: %v", err)
+		t.Fatalf("store CatalogFixture PNM failed: %v", err)
 	}
 	if _, err := store.StoreWithSourceTags("PNM.fbs", buildTestPNM("other:OMM:batch-a"), "source:other", nil, SourceTags{
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-publications",
+		SourceName:        "catalogfixture-publications",
 		BatchID:           "pnm-batch",
-		ProducerPeerID:    "peer-celestrak",
-		ProducerPublicKey: "public-celestrak",
+		ProducerPeerID:    "peer-catalogfixture",
+		ProducerPublicKey: "public-catalogfixture",
 	}); err != nil {
 		t.Fatalf("store other PNM failed: %v", err)
 	}
 	pnmRecords, err := store.QueryRawRecordRefs(RawRecordQuery{
 		SchemaName: "PNM.fbs",
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-publications",
+		SourceName: "catalogfixture-publications",
 		Limit:      10,
-		SyncFilter: "FILE_ID LIKE 'celestrak:%'",
+		SyncFilter: "FILE_ID LIKE 'catalogfixture:%'",
 	})
 	if err != nil {
 		t.Fatalf("QueryRawRecordRefs PNM failed: %v", err)
@@ -1613,13 +1566,13 @@ func TestFlatSQLStoreStoreWithSourceTags(t *testing.T) {
 	testData := []byte(`{"satellite": "ISS", "norad_id": 25544}`)
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
-		SourceURL:    "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+		SourceName:   "catalogfixture-gp",
+		SourceURL:    "https://fixture.test/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
 		BatchID:      "20260505T120000Z",
 		ContentKeyID: "public",
 	}
 
-	cid, err := store.StoreWithSourceTags("OMM.fbs", testData, "source:celestrak", nil, tags)
+	cid, err := store.StoreWithSourceTags("OMM.fbs", testData, "source:catalogfixture", nil, tags)
 	if err != nil {
 		t.Fatalf("StoreWithSourceTags failed: %v", err)
 	}
@@ -1647,7 +1600,7 @@ func TestFlatSQLStoreStoreWithSourceTags(t *testing.T) {
 	matches, err := store.QuerySourceTaggedRecords(SourceTagQuery{
 		SchemaName: "OMM.fbs",
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-gp",
+		SourceName: "catalogfixture-gp",
 		BatchID:    "20260505T120000Z",
 		Limit:      10,
 	})
@@ -1665,7 +1618,7 @@ func TestFlatSQLStoreStoreWithSourceTags(t *testing.T) {
 	}
 
 	// Regression (A2.6 finding): the storage.query read path must PROJECT the
-	// source tags, not just filter on them — the OD fit pipeline groups records
+	// source tags, not just filter on them — downstream consumers group records
 	// per provider via SourceTags.SourceName, and an empty projection silently
 	// classifies every record as unconfigured.
 	indexed, err := store.QueryIndexedRecords(IndexedRecordQuery{
@@ -1719,7 +1672,7 @@ func TestFlatSQLStoreStoreWithSourceTags(t *testing.T) {
 	// row, but filtering runs over the raw table — the two are decoupled).
 	tags2 := tags
 	tags2.BatchID = "20260505T180000Z"
-	if _, err := store.StoreWithSourceTags("OMM.fbs", testData, "source:celestrak", nil, tags2); err != nil {
+	if _, err := store.StoreWithSourceTags("OMM.fbs", testData, "source:catalogfixture", nil, tags2); err != nil {
 		t.Fatalf("re-tag StoreWithSourceTags failed: %v", err)
 	}
 	for _, wantBatch := range []string{tags.BatchID, tags2.BatchID} {
@@ -1757,12 +1710,12 @@ func TestFlatSQLStoreUpsertSourceTagsLeavesExistingTagTimestampStable(t *testing
 
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
-		SourceURL:    "https://celestrak.example/gp.csv",
+		SourceName:   "catalogfixture-gp",
+		SourceURL:    "https://fixture.test/gp.csv",
 		BatchID:      "source-batch",
 		ContentKeyID: "public",
 	}
-	cid, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().Build(), "source:celestrak", nil, tags)
+	cid, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().Build(), "source:catalogfixture", nil, tags)
 	if err != nil {
 		t.Fatalf("StoreWithSourceTags failed: %v", err)
 	}
@@ -1829,10 +1782,10 @@ func TestFlatSQLStoreWaitsForExternalWriterLock(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := store.StoreWithSourceTags("OMM.fbs", []byte("writer-lock-test-record"), "source:celestrak", nil, SourceTags{
+		_, err := store.StoreWithSourceTags("OMM.fbs", []byte("writer-lock-test-record"), "source:catalogfixture", nil, SourceTags{
 			ProviderID:   "space-data-network-02",
-			SourceName:   "celestrak-gp",
-			SourceURL:    "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+			SourceName:   "catalogfixture-gp",
+			SourceURL:    "https://fixture.test/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
 			BatchID:      "writer-lock-batch",
 			ContentKeyID: "public",
 		})
@@ -1879,7 +1832,7 @@ func TestFlatSQLStoreSourceTagUpsertWaitsWhenExistingRecordReadCanProceed(t *tes
 	}
 	defer store.Close()
 
-	cid, err := store.Store("OMM.fbs", []byte("source-tag-upgrade-lock-test-record"), "source:celestrak", nil)
+	cid, err := store.Store("OMM.fbs", []byte("source-tag-upgrade-lock-test-record"), "source:catalogfixture", nil)
 	if err != nil {
 		t.Fatalf("Store failed: %v", err)
 	}
@@ -1903,8 +1856,8 @@ func TestFlatSQLStoreSourceTagUpsertWaitsWhenExistingRecordReadCanProceed(t *tes
 	go func() {
 		done <- store.UpsertSourceTags("OMM.fbs", cid, SourceTags{
 			ProviderID:   "space-data-network-02",
-			SourceName:   "celestrak-gp",
-			SourceURL:    "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+			SourceName:   "catalogfixture-gp",
+			SourceURL:    "https://fixture.test/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
 			BatchID:      "source-tag-upgrade-lock-batch",
 			ContentKeyID: "public",
 		})
@@ -1949,8 +1902,8 @@ func TestFlatSQLStoreReconcileSourceBatch(t *testing.T) {
 	}
 	defer store.Close()
 
-	currentTags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "current-batch"}
-	oldTags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "old-batch"}
+	currentTags := SourceTags{ProviderID: "space-data-network-02", SourceName: "catalogfixture-gp", BatchID: "current-batch"}
+	oldTags := SourceTags{ProviderID: "space-data-network-02", SourceName: "catalogfixture-gp", BatchID: "old-batch"}
 	currentCID, err := store.StoreWithSourceTags("OMM.fbs", []byte(`{"satellite":"current"}`), "provider", nil, currentTags)
 	if err != nil {
 		t.Fatalf("store current record: %v", err)
@@ -1960,7 +1913,7 @@ func TestFlatSQLStoreReconcileSourceBatch(t *testing.T) {
 		t.Fatalf("store old record: %v", err)
 	}
 
-	dryRun, err := store.ReconcileSourceBatch("OMM.fbs", "space-data-network-02", "celestrak-gp", "current-batch", false)
+	dryRun, err := store.ReconcileSourceBatch("OMM.fbs", "space-data-network-02", "catalogfixture-gp", "current-batch", false)
 	if err != nil {
 		t.Fatalf("dry-run reconcile source batch: %v", err)
 	}
@@ -1971,7 +1924,7 @@ func TestFlatSQLStoreReconcileSourceBatch(t *testing.T) {
 		t.Fatalf("dry run deleted old record: %v", err)
 	}
 
-	applied, err := store.ReconcileSourceBatch("OMM.fbs", "space-data-network-02", "celestrak-gp", "current-batch", true)
+	applied, err := store.ReconcileSourceBatch("OMM.fbs", "space-data-network-02", "catalogfixture-gp", "current-batch", true)
 	if err != nil {
 		t.Fatalf("apply reconcile source batch: %v", err)
 	}
@@ -2007,7 +1960,7 @@ func TestFlatSQLStoreReconcileSourceBatchIndexedDuplicates(t *testing.T) {
 	}
 	defer store.Close()
 
-	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "current-batch"}
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "catalogfixture-gp", BatchID: "current-batch"}
 	older := sds.NewOMMBuilder().
 		WithNoradCatID(25544).
 		WithObjectID("1998-067A").
@@ -2041,7 +1994,7 @@ func TestFlatSQLStoreReconcileSourceBatchIndexedDuplicates(t *testing.T) {
 		t.Fatalf("store other record: %v", err)
 	}
 
-	dryRun, err := store.ReconcileSourceBatchIndexedDuplicates("OMM.fbs", "space-data-network-02", "celestrak-gp", "current-batch", false)
+	dryRun, err := store.ReconcileSourceBatchIndexedDuplicates("OMM.fbs", "space-data-network-02", "catalogfixture-gp", "current-batch", false)
 	if err != nil {
 		t.Fatalf("dry-run duplicate reconcile: %v", err)
 	}
@@ -2052,7 +2005,7 @@ func TestFlatSQLStoreReconcileSourceBatchIndexedDuplicates(t *testing.T) {
 		t.Fatalf("dry run deleted older duplicate: %v", err)
 	}
 
-	applied, err := store.ReconcileSourceBatchIndexedDuplicates("OMM.fbs", "space-data-network-02", "celestrak-gp", "current-batch", true)
+	applied, err := store.ReconcileSourceBatchIndexedDuplicates("OMM.fbs", "space-data-network-02", "catalogfixture-gp", "current-batch", true)
 	if err != nil {
 		t.Fatalf("apply duplicate reconcile: %v", err)
 	}
@@ -2071,7 +2024,7 @@ func TestFlatSQLStoreReconcileSourceBatchIndexedDuplicates(t *testing.T) {
 	count, err := store.CountRawRecords(RawRecordQuery{
 		SchemaName: "OMM.fbs",
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-gp",
+		SourceName: "catalogfixture-gp",
 		BatchID:    "current-batch",
 	})
 	if err != nil {
@@ -2100,8 +2053,8 @@ func TestFlatSQLStoreReconcileSourceBatchIndexedDuplicatesRefreshesOnlyAffectedB
 	}
 	defer store.Close()
 
-	currentTags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "current-batch"}
-	otherTags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "other-batch"}
+	currentTags := SourceTags{ProviderID: "space-data-network-02", SourceName: "catalogfixture-gp", BatchID: "current-batch"}
+	otherTags := SourceTags{ProviderID: "space-data-network-02", SourceName: "catalogfixture-gp", BatchID: "other-batch"}
 	for _, data := range [][]byte{
 		sds.NewOMMBuilder().
 			WithNoradCatID(25544).
@@ -2178,7 +2131,7 @@ func TestFlatSQLStoreRefreshSourceBatchSummaryRepairsStaleCount(t *testing.T) {
 	}
 	defer store.Close()
 
-	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "current-batch", ContentKeyID: "public"}
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "catalogfixture-gp", BatchID: "current-batch", ContentKeyID: "public"}
 	if _, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().Build(), "provider", nil, tags); err != nil {
 		t.Fatalf("store source-tagged record: %v", err)
 	}
@@ -2222,7 +2175,7 @@ func TestFlatSQLStoreRebuildsSourceSummaryWithoutStatementLog(t *testing.T) {
 		t.Fatalf("Failed to create validator: %v", err)
 	}
 
-	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "current-batch", ContentKeyID: "public"}
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "catalogfixture-gp", BatchID: "current-batch", ContentKeyID: "public"}
 	store, err := NewFlatSQLStore(tmpDir, validator)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
@@ -2279,7 +2232,7 @@ func TestFlatSQLStoreDeferredBootRebuildsKeepStreamBackedRawRecordsAvailable(t *
 		t.Fatalf("Failed to create validator: %v", err)
 	}
 
-	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "current-batch", ContentKeyID: "public"}
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "catalogfixture-gp", BatchID: "current-batch", ContentKeyID: "public"}
 	store, err := NewFlatSQLStore(tmpDir, validator)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
@@ -2330,7 +2283,7 @@ func TestFlatSQLStoreRecordCatalogUsesCompactMetadataJournal(t *testing.T) {
 
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "current-batch",
 		ContentKeyID: "public",
 	}
@@ -2342,7 +2295,7 @@ func TestFlatSQLStoreRecordCatalogUsesCompactMetadataJournal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store first source-tagged record: %v", err)
 	}
-	secondCID, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK").Build(), "provider", nil, tags)
+	secondCID, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("SATELLITE").Build(), "provider", nil, tags)
 	if err != nil {
 		t.Fatalf("store second source-tagged record: %v", err)
 	}

@@ -23,7 +23,7 @@ func TestFlatSQLStoreRecordsDatasetShardPublications(t *testing.T) {
 	pub := DatasetShardPublication{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "batch-001",
 		QueryProfile: DatasetPublicationQueryProfile,
 		Offset:       50_000,
@@ -47,7 +47,7 @@ func TestFlatSQLStoreRecordsDatasetShardPublications(t *testing.T) {
 	got, found, err := store.FindDatasetShardPublication(DatasetShardPublicationQuery{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "batch-001",
 		QueryProfile: DatasetPublicationQueryProfile,
 		Offset:       50_000,
@@ -83,7 +83,7 @@ func TestFlatSQLStoreChainsDatasetShardPublicationFeedEntries(t *testing.T) {
 		{
 			SchemaName:   "OMM.fbs",
 			ProviderID:   "space-data-network-02",
-			SourceName:   "celestrak-gp",
+			SourceName:   "catalogfixture-gp",
 			BatchID:      "batch-001",
 			QueryProfile: DatasetPublicationQueryProfile,
 			Offset:       0,
@@ -97,7 +97,7 @@ func TestFlatSQLStoreChainsDatasetShardPublicationFeedEntries(t *testing.T) {
 		{
 			SchemaName:   "OMM.fbs",
 			ProviderID:   "space-data-network-02",
-			SourceName:   "celestrak-gp",
+			SourceName:   "catalogfixture-gp",
 			BatchID:      "batch-001",
 			QueryProfile: DatasetPublicationQueryProfile,
 			Offset:       50_000,
@@ -117,7 +117,7 @@ func TestFlatSQLStoreChainsDatasetShardPublicationFeedEntries(t *testing.T) {
 	publications, err := store.ListDatasetShardPublications(DatasetShardPublicationQuery{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "batch-001",
 		QueryProfile: DatasetPublicationQueryProfile,
 	})
@@ -153,7 +153,7 @@ func TestFlatSQLStoreFindsLargestDatasetShardPublicationLimit(t *testing.T) {
 		{
 			SchemaName:   "OMM.fbs",
 			ProviderID:   "space-data-network-02",
-			SourceName:   "celestrak-gp",
+			SourceName:   "catalogfixture-gp",
 			BatchID:      "batch-001",
 			QueryProfile: DatasetPublicationQueryProfile,
 			Offset:       0,
@@ -166,7 +166,7 @@ func TestFlatSQLStoreFindsLargestDatasetShardPublicationLimit(t *testing.T) {
 		{
 			SchemaName:   "OMM.fbs",
 			ProviderID:   "space-data-network-02",
-			SourceName:   "celestrak-gp",
+			SourceName:   "catalogfixture-gp",
 			BatchID:      "batch-001",
 			QueryProfile: DatasetPublicationQueryProfile,
 			Offset:       0,
@@ -185,7 +185,7 @@ func TestFlatSQLStoreFindsLargestDatasetShardPublicationLimit(t *testing.T) {
 	limit, found, err := store.FindLargestDatasetShardPublicationLimit(DatasetShardPublicationQuery{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		QueryProfile: DatasetPublicationQueryProfile,
 	})
 	if err != nil {
@@ -214,7 +214,7 @@ func TestFlatSQLStoreDeletesDatasetShardPublicationsAtOrAfterOffset(t *testing.T
 		{
 			SchemaName:   "OMM.fbs",
 			ProviderID:   "space-data-network-02",
-			SourceName:   "celestrak-gp",
+			SourceName:   "catalogfixture-gp",
 			BatchID:      "batch-001",
 			QueryProfile: DatasetPublicationQueryProfile,
 			Offset:       0,
@@ -227,7 +227,7 @@ func TestFlatSQLStoreDeletesDatasetShardPublicationsAtOrAfterOffset(t *testing.T
 		{
 			SchemaName:   "OMM.fbs",
 			ProviderID:   "space-data-network-02",
-			SourceName:   "celestrak-gp",
+			SourceName:   "catalogfixture-gp",
 			BatchID:      "batch-001",
 			QueryProfile: DatasetPublicationQueryProfile,
 			Offset:       50_000,
@@ -240,7 +240,7 @@ func TestFlatSQLStoreDeletesDatasetShardPublicationsAtOrAfterOffset(t *testing.T
 		{
 			SchemaName:   "OMM.fbs",
 			ProviderID:   "space-data-network-02",
-			SourceName:   "celestrak-gp",
+			SourceName:   "catalogfixture-gp",
 			BatchID:      "batch-001",
 			QueryProfile: DatasetPublicationQueryProfile,
 			Offset:       100_000,
@@ -253,7 +253,7 @@ func TestFlatSQLStoreDeletesDatasetShardPublicationsAtOrAfterOffset(t *testing.T
 		{
 			SchemaName:   "OMM.fbs",
 			ProviderID:   "space-data-network-02",
-			SourceName:   "celestrak-gp",
+			SourceName:   "catalogfixture-gp",
 			BatchID:      "other-batch",
 			QueryProfile: DatasetPublicationQueryProfile,
 			Offset:       50_000,
@@ -272,7 +272,7 @@ func TestFlatSQLStoreDeletesDatasetShardPublicationsAtOrAfterOffset(t *testing.T
 	deleted, err := store.DeleteDatasetShardPublicationsAtOrAfterOffset(DatasetShardPublicationQuery{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "batch-001",
 		QueryProfile: DatasetPublicationQueryProfile,
 		Limit:        50_000,
@@ -287,7 +287,7 @@ func TestFlatSQLStoreDeletesDatasetShardPublicationsAtOrAfterOffset(t *testing.T
 	publications, err := store.ListDatasetShardPublications(DatasetShardPublicationQuery{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "batch-001",
 		QueryProfile: DatasetPublicationQueryProfile,
 	})
@@ -300,7 +300,7 @@ func TestFlatSQLStoreDeletesDatasetShardPublicationsAtOrAfterOffset(t *testing.T
 	other, err := store.ListDatasetShardPublications(DatasetShardPublicationQuery{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "other-batch",
 		QueryProfile: DatasetPublicationQueryProfile,
 	})

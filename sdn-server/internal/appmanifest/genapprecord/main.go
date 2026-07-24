@@ -4,11 +4,10 @@
 // committed as a second copy of its artifact — it is generated on demand from the
 // single source of truth.
 //
-// Two apps are supported (-app):
+// One legacy embedded app is supported (-app):
 //
 //	conjunction      App 1 — from cmd/spacedatanetwork/embedded/conjunction_app.html
 //	                 (default, unchanged from C4).
-//	supplemental-omm App 2 — from internal/appmanifest/embedded/supplemental_omm_board.html.
 //
 // Usage:
 //
@@ -59,20 +58,11 @@ func appSpecs() map[string]appSpec {
 			},
 			build: appmanifest.NewConjunctionApp,
 		},
-		"supplemental-omm": {
-			defaultHTML: func() string {
-				if root == "" {
-					return ""
-				}
-				return filepath.Join(root, "internal", "appmanifest", "embedded", "supplemental_omm_board.html")
-			},
-			build: appmanifest.NewSupplementalOMMApp,
-		},
 	}
 }
 
 func main() {
-	app := flag.String("app", "conjunction", "which app record to build: conjunction or supplemental-omm")
+	app := flag.String("app", "conjunction", "which embedded app record to build: conjunction")
 	htmlPath := flag.String("html", "", "path to the serving artifact (default: the chosen app's checked-in artifact)")
 	format := flag.String("format", "json", "output format: json (canonical JSON) or app (size-prefixed $APP FlatBuffer)")
 	out := flag.String("out", "-", "output path, or - for stdout")
@@ -80,7 +70,7 @@ func main() {
 
 	spec, ok := appSpecs()[*app]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "genapprecord: unknown -app %q (want conjunction or supplemental-omm)\n", *app)
+		fmt.Fprintf(os.Stderr, "genapprecord: unknown -app %q (want conjunction)\n", *app)
 		os.Exit(1)
 	}
 

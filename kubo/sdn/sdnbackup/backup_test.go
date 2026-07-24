@@ -66,19 +66,19 @@ func seedNode(t *testing.T) (*sdnbackup.BackupSource, blockstore.Blockstore, map
 	if err != nil {
 		t.Fatalf("new flow store: %v", err)
 	}
-	flowWASM := []byte("\x00asm\x01\x00\x00\x00; flow runtime — celestrak ingest")
+	flowWASM := []byte("\x00asm\x01\x00\x00\x00; example flow runtime")
 	flowPLG := flowrt.BuildFlowPLG(flowrt.FlowSpec{
-		ProgramID: "flow-celestrak",
-		Name:      "CelesTrak Ingest",
+		ProgramID: "flow-example",
+		Name:      "Example Flow",
 		Version:   "2.0.0",
 	})
 	artifact := []byte(`{"compiledAt":"2026-07-16T00:00:00Z","nodes":3}`)
-	if err := flows.Install("flow-celestrak", flowWASM, flowPLG, artifact); err != nil {
+	if err := flows.Install("flow-example", flowWASM, flowPLG, artifact); err != nil {
 		t.Fatalf("install flow: %v", err)
 	}
-	originals["flow:flow-celestrak:wasm"] = flowWASM
-	originals["flow:flow-celestrak:plg"] = flowPLG
-	originals["flow:flow-celestrak:artifact"] = artifact
+	originals["flow:flow-example:wasm"] = flowWASM
+	originals["flow:flow-example:plg"] = flowPLG
+	originals["flow:flow-example:artifact"] = artifact
 
 	// A backup config file (config kind).
 	cfgPath := sdnbackup.DefaultConfigPath(home)
@@ -244,13 +244,13 @@ func TestBackupVerifyRestoreRoundTrip(t *testing.T) {
 	}
 
 	// Flow: the triple must be back on disk byte-identical.
-	freshFlow, err := freshFlows.Get("flow-celestrak")
+	freshFlow, err := freshFlows.Get("flow-example")
 	if err != nil {
 		t.Fatalf("get restored flow: %v", err)
 	}
-	assertFileEquals(t, filepath.Join(freshFlow.Dir, "runtime.wasm"), originals["flow:flow-celestrak:wasm"])
-	assertFileEquals(t, filepath.Join(freshFlow.Dir, "flow.plg"), originals["flow:flow-celestrak:plg"])
-	assertFileEquals(t, filepath.Join(freshFlow.Dir, "artifact.json"), originals["flow:flow-celestrak:artifact"])
+	assertFileEquals(t, filepath.Join(freshFlow.Dir, "runtime.wasm"), originals["flow:flow-example:wasm"])
+	assertFileEquals(t, filepath.Join(freshFlow.Dir, "flow.plg"), originals["flow:flow-example:plg"])
+	assertFileEquals(t, filepath.Join(freshFlow.Dir, "artifact.json"), originals["flow:flow-example:artifact"])
 }
 
 func assertFileEquals(t *testing.T, path string, want []byte) {

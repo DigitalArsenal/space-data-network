@@ -17,7 +17,6 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -36,26 +35,14 @@ import (
 var log = logging.Logger("ingest")
 
 const (
-	defaultCelestrakCatalogURL      = "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv"
-	defaultCelestrakSatcatURL       = "https://celestrak.org/pub/satcat.txt"
-	defaultCelestrakSatcatCSVURL    = "https://celestrak.org/pub/satcat.csv"
-	defaultCelestrakSpaceWeatherURL = "https://celestrak.org/SpaceData/SW-All.csv"
-	defaultSpaceTrackLoginURL       = "https://www.space-track.org/ajaxauth/login"
-	defaultSpaceTrackQueryTmpl      = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/%s--%s/format/csv"
-	minCelestrakFetchInterval       = 3 * time.Hour
-	celestrakProviderID             = "space-data-network-02"
-	datasetPublicationChunkSize     = 50000
-	fullCatalogPublicationTimeout   = 2 * time.Hour
-	defaultMinFreeDiskBytes         = 5 * 1024 * 1024 * 1024
-	publicContentKeyID              = "public"
-	parserVersionCelestrakGP        = "celestrak-gp/v2"
-	parserVersionCelestrakSatcat    = "celestrak-satcat/v1"
-	parserVersionCelestrakSatcatCSV = "celestrak-satcat-csv/v1"
-	parserVersionCelestrakSPW       = "celestrak-space-weather/v1"
-	parserVersionSpaceTrackGP       = "spacetrack-gp-history/v1"
-	fetchRetryBudget                = 3
-	fetchRetryBackoff               = 10 * time.Millisecond
-	sourceTimestampStaleThreshold   = 7 * 24 * time.Hour
+	defaultSpaceTrackLoginURL     = "https://www.space-track.org/ajaxauth/login"
+	defaultSpaceTrackQueryTmpl    = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/%s--%s/format/csv"
+	defaultMinFreeDiskBytes       = 5 * 1024 * 1024 * 1024
+	publicContentKeyID            = "public"
+	parserVersionSpaceTrackGP     = "spacetrack-gp-history/v1"
+	fetchRetryBudget              = 3
+	fetchRetryBackoff             = 10 * time.Millisecond
+	sourceTimestampStaleThreshold = 7 * 24 * time.Hour
 )
 
 type fetchMetadata struct {
@@ -97,14 +84,6 @@ type Config struct {
 	RawPath     string
 	Once        bool
 
-	CelestrakCatalogURL      string
-	CelestrakSatcatURL       string
-	CelestrakSatcatCSVURL    string
-	CelestrakSpaceWeatherURL string
-	CelestrakInterval        time.Duration
-	SatcatInterval           time.Duration
-	SpaceWeatherInterval     time.Duration
-
 	SpaceTrackEnabled      bool
 	SpaceTrackIdentity     string
 	SpaceTrackPassword     string
@@ -114,17 +93,6 @@ type Config struct {
 	SpaceTrackBatchDays    int
 	SpaceTrackBatchSleep   time.Duration
 	SpaceTrackPollInterval time.Duration
-
-	// Supplemental Space-Track lanes (A2.2c-ST): operator-ephemeris OEM from
-	// publicfiles + current full-catalog gp OMM snapshots. Gated by the same
-	// SpaceTrackEnabled master switch (deploy-time decision) plus per-lane
-	// toggles. All requests pass through a single shared rate limiter.
-	SpaceTrackPublicFilesEnabled bool
-	SpaceTrackCurrentGPEnabled   bool
-	SpaceTrackSupplementalPoll   time.Duration
-	SpaceTrackPublicFilesBaseURL string        // override publicfiles base (default www.space-track.org/publicfiles/query/class)
-	SpaceTrackCurrentGPQueryURL  string        // override current-gp JSON query URL
-	SpaceTrackMinRequestGap      time.Duration // minimum gap between Space-Track requests (default 2s)
 
 	UDLEnabled      bool
 	UDLUsername     string
@@ -138,10 +106,6 @@ type Config struct {
 
 	HTTPTimeout      time.Duration
 	MinFreeDiskBytes int64
-
-	// DatasetPublishURL is an optional local SDN admin endpoint that exports,
-	// pins, signs, and announces dataset updates after successful CelesTrak syncs.
-	DatasetPublishURL string
 }
 
 // Runner executes source sync and ingestion loops.
@@ -151,7 +115,6 @@ type Runner struct {
 	ownsStore   bool
 	httpClient  *http.Client
 	checkpoints *checkpointStore
-	stLimiter   *rateLimiter
 }
 
 // NewRunner constructs a Runner that opens (and owns) its own store at
@@ -185,41 +148,11 @@ func newRunner(cfg Config, store *storage.FlatSQLStore) (*Runner, error) {
 		cfg.RawPath = filepath.Join(filepath.Dir(cfg.StoragePath), "raw")
 	}
 
-	if cfg.CelestrakCatalogURL == "" {
-		cfg.CelestrakCatalogURL = defaultCelestrakCatalogURL
-	}
-	if cfg.CelestrakSatcatURL == "" {
-		cfg.CelestrakSatcatURL = defaultCelestrakSatcatURL
-	}
-	if cfg.CelestrakSatcatCSVURL == "" {
-		cfg.CelestrakSatcatCSVURL = defaultCelestrakSatcatCSVURL
-	}
-	if cfg.CelestrakSpaceWeatherURL == "" {
-		cfg.CelestrakSpaceWeatherURL = defaultCelestrakSpaceWeatherURL
-	}
 	if cfg.SpaceTrackLoginURL == "" {
 		cfg.SpaceTrackLoginURL = defaultSpaceTrackLoginURL
 	}
 	if cfg.SpaceTrackQueryTmpl == "" {
 		cfg.SpaceTrackQueryTmpl = defaultSpaceTrackQueryTmpl
-	}
-	if cfg.CelestrakInterval <= 0 {
-		cfg.CelestrakInterval = minCelestrakFetchInterval
-	}
-	if cfg.CelestrakInterval < minCelestrakFetchInterval {
-		cfg.CelestrakInterval = minCelestrakFetchInterval
-	}
-	if cfg.SatcatInterval <= 0 {
-		cfg.SatcatInterval = 24 * time.Hour
-	}
-	if cfg.SatcatInterval < minCelestrakFetchInterval {
-		cfg.SatcatInterval = minCelestrakFetchInterval
-	}
-	if cfg.SpaceWeatherInterval <= 0 {
-		cfg.SpaceWeatherInterval = minCelestrakFetchInterval
-	}
-	if cfg.SpaceWeatherInterval < minCelestrakFetchInterval {
-		cfg.SpaceWeatherInterval = minCelestrakFetchInterval
 	}
 	if cfg.SpaceTrackPollInterval <= 0 {
 		cfg.SpaceTrackPollInterval = 30 * time.Minute
@@ -229,18 +162,6 @@ func newRunner(cfg Config, store *storage.FlatSQLStore) (*Runner, error) {
 	}
 	if cfg.SpaceTrackBatchSleep <= 0 {
 		cfg.SpaceTrackBatchSleep = 3 * time.Second
-	}
-	if cfg.SpaceTrackSupplementalPoll <= 0 {
-		cfg.SpaceTrackSupplementalPoll = 6 * time.Hour
-	}
-	if cfg.SpaceTrackPublicFilesBaseURL == "" {
-		cfg.SpaceTrackPublicFilesBaseURL = defaultSpaceTrackPublicFilesBaseURL
-	}
-	if cfg.SpaceTrackCurrentGPQueryURL == "" {
-		cfg.SpaceTrackCurrentGPQueryURL = defaultSpaceTrackCurrentGPQueryURL
-	}
-	if cfg.SpaceTrackMinRequestGap <= 0 {
-		cfg.SpaceTrackMinRequestGap = 2 * time.Second
 	}
 	if cfg.UDLBaseURL == "" {
 		cfg.UDLBaseURL = defaultUDLBaseURL
@@ -306,7 +227,6 @@ func newRunner(cfg Config, store *storage.FlatSQLStore) (*Runner, error) {
 			},
 		},
 		checkpoints: cp,
-		stLimiter:   newRateLimiter(cfg.SpaceTrackMinRequestGap, spaceTrackPerMinuteCap, spaceTrackPerHourCap),
 	}, nil
 }
 
@@ -332,42 +252,18 @@ func (r *Runner) Run(ctx context.Context) error {
 		log.Warnf("Initial ingest cycle finished with errors: %v", err)
 	}
 
-	gpTicker := time.NewTicker(r.cfg.CelestrakInterval)
-	satTicker := time.NewTicker(r.cfg.SatcatInterval)
-	spwTicker := time.NewTicker(r.cfg.SpaceWeatherInterval)
-	stTicker := time.NewTicker(r.cfg.SpaceTrackPollInterval)
-	stSupTicker := time.NewTicker(r.cfg.SpaceTrackSupplementalPoll)
+	spaceTrackTicker := time.NewTicker(r.cfg.SpaceTrackPollInterval)
 	udlTicker := time.NewTicker(r.cfg.UDLPollInterval)
-	defer gpTicker.Stop()
-	defer satTicker.Stop()
-	defer spwTicker.Stop()
-	defer stTicker.Stop()
-	defer stSupTicker.Stop()
+	defer spaceTrackTicker.Stop()
 	defer udlTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-gpTicker.C:
-			if err := r.syncCelestrakGP(ctx); err != nil {
-				log.Warnf("CelesTrak GP sync failed: %v", err)
-			}
-		case <-satTicker.C:
-			if err := r.syncCelestrakSatcat(ctx); err != nil {
-				log.Warnf("CelesTrak SATCAT sync failed: %v", err)
-			}
-		case <-spwTicker.C:
-			if err := r.syncCelestrakSpaceWeather(ctx); err != nil {
-				log.Warnf("CelesTrak space weather sync failed: %v", err)
-			}
-		case <-stTicker.C:
+		case <-spaceTrackTicker.C:
 			if err := r.syncSpaceTrackGapFill(ctx); err != nil {
 				log.Warnf("Space-Track gap-fill failed: %v", err)
-			}
-		case <-stSupTicker.C:
-			if err := r.syncSpaceTrackSupplemental(ctx); err != nil {
-				log.Warnf("Space-Track supplemental sync failed: %v", err)
 			}
 		case <-udlTicker.C:
 			if err := r.syncUDL(ctx); err != nil {
@@ -382,43 +278,7 @@ func (r *Runner) runCycle(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := r.syncCelestrakGP(ctx); err != nil {
-		errs = append(errs, err.Error())
-	}
-	if err := ctx.Err(); err != nil {
-		if len(errs) > 0 {
-			return errors.New(strings.Join(errs, "; "))
-		}
-		return err
-	}
-	if err := r.syncCelestrakSatcat(ctx); err != nil {
-		errs = append(errs, err.Error())
-	}
-	if err := ctx.Err(); err != nil {
-		if len(errs) > 0 {
-			return errors.New(strings.Join(errs, "; "))
-		}
-		return err
-	}
-	if err := r.syncCelestrakSpaceWeather(ctx); err != nil {
-		errs = append(errs, err.Error())
-	}
-	if err := ctx.Err(); err != nil {
-		if len(errs) > 0 {
-			return errors.New(strings.Join(errs, "; "))
-		}
-		return err
-	}
 	if err := r.syncSpaceTrackGapFill(ctx); err != nil {
-		errs = append(errs, err.Error())
-	}
-	if err := ctx.Err(); err != nil {
-		if len(errs) > 0 {
-			return errors.New(strings.Join(errs, "; "))
-		}
-		return err
-	}
-	if err := r.syncSpaceTrackSupplemental(ctx); err != nil {
 		errs = append(errs, err.Error())
 	}
 	if err := ctx.Err(); err != nil {
@@ -434,300 +294,6 @@ func (r *Runner) runCycle(ctx context.Context) error {
 		return errors.New(strings.Join(errs, "; "))
 	}
 	return nil
-}
-
-func (r *Runner) syncCelestrakGP(ctx context.Context) error {
-	if err := r.requireFreeDisk("CelesTrak GP sync"); err != nil {
-		return err
-	}
-	data, metadata, err := r.fetchWithCache(ctx, r.cfg.CelestrakCatalogURL, "celestrak-gp.csv", minCelestrakFetchInterval)
-	if err != nil {
-		return fmt.Errorf("fetch celestrak catalog: %w", err)
-	}
-
-	if !metadata.FromCache {
-		catalogArchiveName := archiveFilenameForURL(r.cfg.CelestrakCatalogURL, "catalog.csv")
-		if err := r.archiveRaw("celestrak", catalogArchiveName, data); err != nil {
-			log.Warnf("Failed to archive CelesTrak %s: %v", catalogArchiveName, err)
-		}
-	} else {
-		log.Infof("Using cached CelesTrak GP payload (minimum refresh interval: %s)", minCelestrakFetchInterval)
-	}
-
-	tags := sourceTags(celestrakProviderID, "celestrak-gp", metadata.SourceURL, data)
-	if err := r.reconcileCelestrakSourceBatchDuplicates("OMM.fbs", "celestrak-gp", tags.BatchID); err != nil {
-		r.recordIngestFailureForReview("celestrak-gp-reconcile", err)
-		return fmt.Errorf("reconcile celestrak OMM source batch before ingest replay: %w", err)
-	}
-	if err := r.reconcileCelestrakSourceBatchDuplicates("MPE.fbs", "celestrak-gp", tags.BatchID); err != nil {
-		r.recordIngestFailureForReview("celestrak-gp-reconcile", err)
-		return fmt.Errorf("reconcile celestrak MPE source batch before ingest replay: %w", err)
-	}
-	countOMM, countMPE, normalizedHash, err := r.ingestGPData(data, "source:celestrak", tags)
-	if err != nil {
-		r.recordIngestFailureForReview("celestrak-gp", err)
-		return fmt.Errorf("ingest celestrak catalog: %w", err)
-	}
-	if err := r.recordIngestBatchProvenance("celestrak-gp", data, metadata, parserVersionCelestrakGP, normalizedHash, map[string]int{
-		"OMM.fbs": countOMM,
-		"MPE.fbs": countMPE,
-	}, warningsForFetch(metadata)); err != nil {
-		log.Warnf("Failed to record CelesTrak GP provenance: %v", err)
-	}
-	if err := r.reconcileCelestrakSourceBatchDuplicates("OMM.fbs", "celestrak-gp", tags.BatchID); err != nil {
-		r.recordIngestFailureForReview("celestrak-gp-reconcile", err)
-		return fmt.Errorf("reconcile celestrak OMM source batch: %w", err)
-	}
-	if err := r.reconcileCelestrakSourceBatchDuplicates("MPE.fbs", "celestrak-gp", tags.BatchID); err != nil {
-		r.recordIngestFailureForReview("celestrak-gp-reconcile", err)
-		return fmt.Errorf("reconcile celestrak MPE source batch: %w", err)
-	}
-
-	// Publish the current source batch so recurring CelesTrak updates append
-	// small immutable deltas instead of re-exporting the historical store.
-	if err := r.requestDatasetPublication(ctx, datasetPublicationRequest{
-		Schema:            "OMM.fbs",
-		ProviderID:        celestrakProviderID,
-		SourceName:        "celestrak-gp",
-		BatchID:           tags.BatchID,
-		ChunkSize:         datasetPublicationChunkSize,
-		FullCatalog:       true,
-		CombinedCelesTrak: true,
-	}); err != nil {
-		r.recordIngestFailureForReview("celestrak-gp-publication", err)
-		return fmt.Errorf("publish celestrak OMM dataset update: %w", err)
-	}
-	if err := r.requestDatasetPublication(ctx, datasetPublicationRequest{
-		Schema:            "MPE.fbs",
-		ProviderID:        celestrakProviderID,
-		SourceName:        "celestrak-gp",
-		BatchID:           tags.BatchID,
-		ChunkSize:         datasetPublicationChunkSize,
-		FullCatalog:       true,
-		CombinedCelesTrak: true,
-	}); err != nil {
-		r.recordIngestFailureForReview("celestrak-gp-publication", err)
-		return fmt.Errorf("publish celestrak MPE dataset update: %w", err)
-	}
-
-	r.checkpoints.setString("celestrak_gp_last_success", time.Now().UTC().Format(time.RFC3339))
-	if err := r.checkpoints.save(); err != nil {
-		log.Warnf("Failed to persist checkpoints: %v", err)
-	}
-	log.Infof("CelesTrak GP sync complete: OMM=%d MPE=%d", countOMM, countMPE)
-	return nil
-}
-
-func (r *Runner) reconcileCelestrakSourceBatchDuplicates(schemaName, sourceName, batchID string) error {
-	result, err := r.store.ReconcileSourceBatchIndexedDuplicates(schemaName, celestrakProviderID, sourceName, batchID, true)
-	if err != nil {
-		return err
-	}
-	if err := r.store.RefreshSourceBatchSummary(schemaName, celestrakProviderID, sourceName, batchID); err != nil {
-		return err
-	}
-	if result.Matched > 0 || result.Deleted > 0 {
-		log.Infof("Reconciled duplicate CelesTrak source batch records: schema=%s source=%s batch=%s matched=%d deleted=%d", schemaName, sourceName, batchID, result.Matched, result.Deleted)
-	}
-	return nil
-}
-
-func (r *Runner) reconcileCelestrakCurrentSourceBatch(schemaName, sourceName, batchID string) error {
-	batchResult, err := r.store.ReconcileSourceBatch(schemaName, celestrakProviderID, sourceName, batchID, true)
-	if err != nil {
-		return err
-	}
-	if batchResult.Matched > 0 || batchResult.Deleted > 0 {
-		log.Infof("Reconciled old CelesTrak source batches: schema=%s source=%s keep_batch=%s matched=%d deleted=%d", schemaName, sourceName, batchID, batchResult.Matched, batchResult.Deleted)
-	}
-	return r.reconcileCelestrakSourceBatchDuplicates(schemaName, sourceName, batchID)
-}
-
-func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
-	if err := r.requireFreeDisk("CelesTrak SATCAT sync"); err != nil {
-		return err
-	}
-	legacyCount, legacyTags, err := r.syncCelestrakSatcatSource(ctx, r.cfg.CelestrakSatcatURL, "celestrak-satcat.txt", "satcat.txt", "celestrak-satcat", parserVersionCelestrakSatcat)
-	if err != nil {
-		return err
-	}
-	csvCount, csvTags, err := r.syncCelestrakSatcatSource(ctx, r.cfg.CelestrakSatcatCSVURL, "celestrak-satcat.csv", "satcat.csv", "celestrak-satcat-csv", parserVersionCelestrakSatcatCSV)
-	if err != nil {
-		return err
-	}
-
-	for _, tags := range []storage.SourceTags{legacyTags, csvTags} {
-		if err := r.reconcileCelestrakCurrentSourceBatch("CAT.fbs", tags.SourceName, tags.BatchID); err != nil {
-			r.recordIngestFailureForReview("celestrak-satcat-reconcile", err)
-			return fmt.Errorf("reconcile celestrak CAT source batch: %w", err)
-		}
-		if err := r.requestDatasetPublication(ctx, datasetPublicationRequest{
-			Schema:            "CAT.fbs",
-			ProviderID:        celestrakProviderID,
-			SourceName:        tags.SourceName,
-			BatchID:           tags.BatchID,
-			ChunkSize:         datasetPublicationChunkSize,
-			FullCatalog:       true,
-			CombinedCelesTrak: true,
-		}); err != nil {
-			r.recordIngestFailureForReview("celestrak-satcat-publication", err)
-			return fmt.Errorf("publish celestrak CAT dataset update: %w", err)
-		}
-	}
-
-	r.checkpoints.setString("celestrak_satcat_last_success", time.Now().UTC().Format(time.RFC3339))
-	if err := r.checkpoints.save(); err != nil {
-		log.Warnf("Failed to persist checkpoints: %v", err)
-	}
-	log.Infof("CelesTrak SATCAT sync complete: legacy_CAT=%d csv_CAT=%d", legacyCount, csvCount)
-	return nil
-}
-
-func (r *Runner) syncCelestrakSatcatSource(ctx context.Context, sourceURL, cacheName, archiveFallback, provenanceSource, parserVersion string) (int, storage.SourceTags, error) {
-	data, metadata, err := r.fetchWithCache(ctx, sourceURL, cacheName, minCelestrakFetchInterval)
-	if err != nil {
-		return 0, storage.SourceTags{}, fmt.Errorf("fetch celestrak satcat: %w", err)
-	}
-
-	if !metadata.FromCache {
-		satcatArchiveName := archiveFilenameForURL(sourceURL, archiveFallback)
-		if err := r.archiveRaw("celestrak", satcatArchiveName, data); err != nil {
-			log.Warnf("Failed to archive CelesTrak %s: %v", satcatArchiveName, err)
-		}
-	} else {
-		log.Infof("Using cached CelesTrak SATCAT payload (minimum refresh interval: %s)", minCelestrakFetchInterval)
-	}
-
-	tags := sourceTags(celestrakProviderID, provenanceSource, metadata.SourceURL, data)
-	countCAT, normalizedHash, err := r.ingestSatcatData(data, "source:celestrak", tags)
-	if err != nil {
-		r.recordIngestFailureForReview(provenanceSource, err)
-		return 0, storage.SourceTags{}, fmt.Errorf("ingest celestrak satcat: %w", err)
-	}
-	if err := r.recordIngestBatchProvenance(provenanceSource, data, metadata, parserVersion, normalizedHash, map[string]int{
-		"CAT.fbs": countCAT,
-	}, warningsForFetch(metadata)); err != nil {
-		log.Warnf("Failed to record CelesTrak SATCAT provenance: %v", err)
-	}
-	return countCAT, tags, nil
-}
-
-func (r *Runner) syncCelestrakSpaceWeather(ctx context.Context) error {
-	if err := r.requireFreeDisk("CelesTrak space weather sync"); err != nil {
-		return err
-	}
-	data, metadata, err := r.fetchWithCache(ctx, r.cfg.CelestrakSpaceWeatherURL, "celestrak-space-weather.csv", minCelestrakFetchInterval)
-	if err != nil {
-		return fmt.Errorf("fetch celestrak space weather: %w", err)
-	}
-
-	if !metadata.FromCache {
-		archiveName := archiveFilenameForURL(r.cfg.CelestrakSpaceWeatherURL, "SW-All.csv")
-		if err := r.archiveRaw("celestrak", archiveName, data); err != nil {
-			log.Warnf("Failed to archive CelesTrak %s: %v", archiveName, err)
-		}
-	} else {
-		log.Infof("Using cached CelesTrak space weather payload (minimum refresh interval: %s)", minCelestrakFetchInterval)
-	}
-
-	if latest, err := latestTimestampFromCSV(data, "DATE"); err != nil {
-		r.recordIngestFailureForReview("celestrak-space-weather", err)
-		return fmt.Errorf("validate celestrak space weather timestamp: %w", err)
-	} else if err := validateFreshSourceTimestamp("celestrak-space-weather", latest, sourceReferenceTime(metadata)); err != nil {
-		r.recordIngestFailureForReview("celestrak-space-weather", err)
-		return fmt.Errorf("validate celestrak space weather timestamp: %w", err)
-	}
-
-	tags := sourceTags(celestrakProviderID, "celestrak-space-weather", metadata.SourceURL, data)
-	countSPW, normalizedHash, err := r.ingestSpaceWeatherData(data, "source:celestrak", tags)
-	if err != nil {
-		r.recordIngestFailureForReview("celestrak-space-weather", err)
-		return fmt.Errorf("ingest celestrak space weather: %w", err)
-	}
-	if err := r.recordIngestBatchProvenance("celestrak-space-weather", data, metadata, parserVersionCelestrakSPW, normalizedHash, map[string]int{
-		"SPW.fbs": countSPW,
-	}, warningsForFetch(metadata)); err != nil {
-		log.Warnf("Failed to record CelesTrak space weather provenance: %v", err)
-	}
-
-	if err := r.requestDatasetPublication(ctx, datasetPublicationRequest{
-		Schema:            "SPW.fbs",
-		ProviderID:        celestrakProviderID,
-		SourceName:        "celestrak-space-weather",
-		BatchID:           tags.BatchID,
-		ChunkSize:         datasetPublicationChunkSize,
-		FullCatalog:       true,
-		CombinedCelesTrak: true,
-	}); err != nil {
-		r.recordIngestFailureForReview("celestrak-space-weather-publication", err)
-		return fmt.Errorf("publish celestrak SPW dataset update: %w", err)
-	}
-
-	r.checkpoints.setString("celestrak_space_weather_last_success", time.Now().UTC().Format(time.RFC3339))
-	if err := r.checkpoints.save(); err != nil {
-		log.Warnf("Failed to persist checkpoints: %v", err)
-	}
-	log.Infof("CelesTrak space weather sync complete: SPW=%d", countSPW)
-	return nil
-}
-
-type datasetPublicationRequest struct {
-	Schema            string `json:"schema"`
-	ProviderID        string `json:"providerId,omitempty"`
-	SourceName        string `json:"sourceName,omitempty"`
-	BatchID           string `json:"batchId,omitempty"`
-	DatasetID         string `json:"datasetId,omitempty"`
-	Limit             int    `json:"limit,omitempty"`
-	ChunkSize         int    `json:"chunkSize,omitempty"`
-	FullCatalog       bool   `json:"fullCatalog,omitempty"`
-	CombinedCelesTrak bool   `json:"combinedCelesTrak,omitempty"`
-}
-
-func (r *Runner) requestDatasetPublication(ctx context.Context, req datasetPublicationRequest) error {
-	publishURL := strings.TrimSpace(r.cfg.DatasetPublishURL)
-	if publishURL == "" {
-		return nil
-	}
-	standardCode := datasetPublicationRequestLogStandardCode(req.Schema)
-	body, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("encode dataset publication request for %s: %w", standardCode, err)
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, publishURL, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create dataset publication request for %s: %w", standardCode, err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := r.datasetPublicationHTTPClient(req).Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("request dataset publication for %s: %w", standardCode, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("dataset publication request for %s returned %s: %s", standardCode, resp.Status, strings.TrimSpace(string(preview)))
-	}
-	log.Infof("Dataset publication requested for %s via %s", standardCode, publishURL)
-	return nil
-}
-
-func datasetPublicationRequestLogStandardCode(schema string) string {
-	value := strings.TrimSpace(schema)
-	if strings.HasSuffix(value, ".fbs") {
-		value = strings.TrimSuffix(value, ".fbs")
-	}
-	return value
-}
-
-func (r *Runner) datasetPublicationHTTPClient(req datasetPublicationRequest) *http.Client {
-	if !req.FullCatalog && req.ChunkSize <= 0 {
-		return r.httpClient
-	}
-	client := *r.httpClient
-	if client.Timeout < fullCatalogPublicationTimeout {
-		client.Timeout = fullCatalogPublicationTimeout
-	}
-	return &client
 }
 
 func (r *Runner) syncSpaceTrackGapFill(ctx context.Context) error {
@@ -926,10 +492,9 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string, tags ...storage
 	return r.ingestGPRows(rows, sourcePeer, tags...)
 }
 
-// ingestGPRows builds OMM + MPE records from already-parsed GP rows. Both the
-// CelesTrak CSV lane (parseCSV) and the Space-Track current-gp JSON lane
-// (parseSpaceTrackJSONRecords) feed this shared core so the OMM/MPE field
-// mapping stays byte-identical across sources.
+// ingestGPRows builds OMM + MPE records from already-parsed GP rows. The
+// Space-Track CSV and UDL JSON adapters feed this shared core so the OMM/MPE
+// field mapping stays byte-identical across credentialed sources.
 func (r *Runner) ingestGPRows(rows []map[string]string, sourcePeer string, tags ...storage.SourceTags) (int, int, string, error) {
 	var countOMM, countMPE int
 	normalized := sha256.New()
@@ -1043,16 +608,10 @@ func (r *Runner) ingestGPRows(rows []map[string]string, sourcePeer string, tags 
 	return countOMM, countMPE, hex.EncodeToString(normalized.Sum(nil)), nil
 }
 
-// gpOriginatorForSource maps the GP ingest source to the CCSDS ORIGINATOR
-// (creating agency) recorded on OMMs whose source row carries no ORIGINATOR
-// column. CelesTrak GP CSV has no such column; the OMM datasets it serves
-// are CelesTrak's own product, so the honest originator is "CELESTRAK"
-// (never the sds test-builder default "SDN-TEST", which leaked into
-// production records once).
+// gpOriginatorForSource maps a GP ingest source to the CCSDS ORIGINATOR
+// recorded on OMMs whose source row carries no ORIGINATOR column.
 func gpOriginatorForSource(sourcePeer string) string {
 	switch sourcePeer {
-	case "source:celestrak":
-		return "CELESTRAK"
 	case "source:spacetrack":
 		return "SPACE-TRACK"
 	}
@@ -1215,22 +774,6 @@ func sourceSHA256(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func archiveFilenameForURL(rawURL, fallback string) string {
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil {
-		return fallback
-	}
-
-	base := strings.TrimSpace(path.Base(parsed.Path))
-	if base == "" || base == "." || base == "/" {
-		return fallback
-	}
-	if strings.EqualFold(base, "gp.php") {
-		return fallback
-	}
-	return base
-}
-
 func (r *Runner) fetchBytes(ctx context.Context, sourceURL string) ([]byte, error) {
 	data, _, err := r.fetchBytesWithMetadata(ctx, sourceURL)
 	return data, err
@@ -1306,7 +849,7 @@ func (r *Runner) fetchWithCache(ctx context.Context, sourceURL, cacheName string
 			return nil, metadata, err
 		}
 		if fallback, modTime, ok, cacheErr := readCachedPayload(cachePath, 0); cacheErr == nil && ok {
-			log.Warnf("CelesTrak fetch failed (%v); using stale cache %s", err, cachePath)
+			log.Warnf("Source fetch failed (%v); using stale cache %s", err, cachePath)
 			r.recordFetchFailure(cacheName, attempts)
 			cachedMetadata := readCachedFetchMetadata(cachePath)
 			cachedMetadata.SourceURL = sourceURL

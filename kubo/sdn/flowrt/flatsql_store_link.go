@@ -1,22 +1,13 @@
 package flowrt
 
-// flatsql_store_link.go — the LOAD-time in-wasm FlatSQL store linkage for a
-// wasi-threads composed flow (the OD supplemental-OMM write lane). Proven-safe
-// composition mechanism (TestFlatSQLLinkCompositionSpike): the flatsql engine
-// CANNOT join the WithWASIThreads executor (mutually exclusive), so it runs as a
-// DEDICATED-THREAD flatsqlrt engine and the composed flow's single import
-// `flatsql.exec_envelope` resolves to a HOST TRAMPOLINE that marshals each
-// envelope into the engine's high-level API under the engine module lock.
+// This file provides load-time FlatSQL linkage for any artifact carrying the
+// generic linked-store descriptor. The FlatSQL engine cannot join the
+// WithWASIThreads executor, so it runs on a dedicated thread and the artifact's
+// `flatsql` imports resolve to host trampolines over opaque bytes.
 //
-// The store node (com.digitalarsenal.hostcap.flatsql-store) builds an envelope in
-// ITS reactor memory and calls exec_envelope(env_ptr, env_len). ALL record logic
-// (SDS-type derivation, decode, CREATE TABLE / INSERT OR IGNORE into sds_omm/
-// sds_ocm/sds_obd) is IN-WASM in the store node's C++. The host here is DUMB: it
-// reads opaque envelope bytes from the flow's shared memory, runs the SQL, and
-// returns a row count. Persistence is an OPAQUE whole-arena ExportData snapshot
-// written via the fs connector — the host NEVER decodes a record (no type
-// derivation, no frame-splitting, no per-record keying). Growing any record
-// awareness here re-creates the repudiated Go storage sink.
+// The host reads opaque envelopes and record buffers, applies only the embedded
+// schema and identifier mappings, and snapshots the opaque arena. Record types,
+// columns, retention decisions, and application semantics remain in WASM.
 
 import (
 	"bytes"
@@ -27,8 +18,6 @@ import (
 	"strings"
 	"sync"
 
-	flatbuffers "github.com/google/flatbuffers/go"
-
 	"github.com/ipfs/kubo/sdn/flatsqlrt"
 	"github.com/ipfs/kubo/sdn/wasmrt"
 	"github.com/second-state/WasmEdge-go/wasmedge"
@@ -38,45 +27,9 @@ import (
 // "flatsql". Signature: int64 exec_envelope(uint32 env_ptr, uint32 env_len).
 const flatsqlExecEnvelopeName = "exec_envelope"
 
-// flatsqlIngestRecordName is the SECOND symbol the store node imports from module
-// "flatsql". Signature: int64 ingest_record(uint32 buf_ptr, uint32 buf_len). The
-// store node builds a wrapper FlatBuffer (sds_omm/sds_ocm/sds_obd shape, file
-// identifier SOMM/SOCM/SOBD) in ITS reactor memory and calls this to APPEND it to
-// the exportable arena. This is the persistence-capable write path: FlatSQL only
-// snapshots the FlatBuffer arena (ExportData), and its arena vtabs REJECT a SQL
-// INSERT ("table may not be modified") — so stored records MUST arrive via ingest,
-// not INSERT, to survive a snapshot/rebuild (restart). exec_envelope stays the
-// READ path (the store node's in-wasm dedup pre-check + queries).
+// flatsqlIngestRecordName appends a descriptor-mapped FlatBuffer to the
+// exportable arena. Signature: int64 ingest_record(uint32, uint32).
 const flatsqlIngestRecordName = "ingest_record"
-
-// flatsqlStoreSchema DECLARES the OD write-lane tables sds_omm/sds_ocm/sds_obd in
-// the flow Database's FlatBuffers schema so their rows live in the ExportData
-// arena (a runtime-only `CREATE TABLE` exports 0 bytes and is LOST on restart).
-// The columns match the store node's wrapper table EXACTLY (cid is the (key)
-// dedup field; data is the raw $OMM/$OCM/$OBD BLOB):
-//
-//	cid:string (key)  provider:string  source_name:string  batch_id:string  data:[ubyte]  pulled_at:long
-//
-// pulled_at (voffset 14, additive) is the fire timestamp (unix ms) the store node
-// writes from its "trigger" input port. Additive: old 5-field wrappers (the shipped
-// 10,847-object snapshot) still load — pulled_at reads 0 for records ingested before
-// this field existed, so a snapshot rebuild does NOT break.
-const flatsqlStoreSchema = `
-  table sds_omm { cid:string (key); provider:string; source_name:string; batch_id:string; data:[ubyte]; pulled_at:long; }
-  table sds_ocm { cid:string (key); provider:string; source_name:string; batch_id:string; data:[ubyte]; pulled_at:long; }
-  table sds_obd { cid:string (key); provider:string; source_name:string; batch_id:string; data:[ubyte]; pulled_at:long; }
-`
-
-// flatsqlStoreFileIDs maps each store-local 4-byte FlatBuffer file identifier to
-// its arena table. RegisterFileID both MATERIALIZES the arena vtab and routes
-// IngestOne(wrapper) to the right table by the buffer's embedded identifier. The
-// ids are store-local (SOMM/SOCM/SOBD) — deliberately NOT the SDS ids ($OMM/...) —
-// so a raw SDS record can never be mis-ingested into a wrapper table.
-var flatsqlStoreFileIDs = []struct{ fileID, table string }{
-	{"SOMM", "sds_omm"},
-	{"SOCM", "sds_ocm"},
-	{"SOBD", "sds_obd"},
-}
 
 // ParamTag values (must match the store node's flatsql_capi.cpp ParamTag).
 const (
@@ -85,12 +38,12 @@ const (
 )
 
 // LinkedStore is a per-flow dedicated-thread FlatSQL engine + Database the
-// composed flow drives via the exec_envelope trampoline. Safe for concurrent use
-// (the engine lock serializes; the OD flow's drain calls it single-threaded-in-
-// effect after od workers join).
+// composed flow drives via the exec_envelope trampoline. Safe for concurrent
+// use because the engine lock serializes access.
 type LinkedStore struct {
 	rt           *flatsqlrt.Runtime
 	db           *flatsqlrt.Database
+	descriptor   *LinkedStoreDescriptor
 	snapshotPath string
 	// pendingTombstones is the set of 1-based export ordinals (== global ingest
 	// sequences) the store node has asked to drop; compact() reclaims them. The
@@ -102,12 +55,15 @@ type LinkedStore struct {
 
 // OpenLinkedStore opens the dedicated-thread engine + a Database, rebuilding from
 // an existing OPAQUE snapshot when present (persistence across restarts).
-func OpenLinkedStore(aotCacheDir, snapshotPath string) (*LinkedStore, error) {
+func OpenLinkedStore(aotCacheDir, snapshotPath string, descriptor *LinkedStoreDescriptor) (*LinkedStore, error) {
+	if err := descriptor.validate(); err != nil {
+		return nil, fmt.Errorf("flowrt: invalid linked-store descriptor: %w", err)
+	}
 	rt, err := flatsqlrt.New(flatsqlrt.WithAOTCache(aotCacheDir))
 	if err != nil {
 		return nil, fmt.Errorf("flowrt: open flatsql engine: %w", err)
 	}
-	db, err := rt.CreateDatabase(flatsqlStoreSchema, "sdn_flow_store")
+	db, err := rt.CreateDatabase(descriptor.Schema, descriptor.Database)
 	if err != nil {
 		rt.Close()
 		return nil, fmt.Errorf("flowrt: create flow store db: %w", err)
@@ -115,13 +71,13 @@ func OpenLinkedStore(aotCacheDir, snapshotPath string) (*LinkedStore, error) {
 	// Materialize the arena vtabs so IngestOne(wrapper) lands in the exported
 	// arena (and so a rebuilt snapshot re-registers the same routing). Must run
 	// before LoadAndRebuild, mirroring flatsqlrt's export/rebuild round-trip.
-	for _, m := range flatsqlStoreFileIDs {
-		if e := db.RegisterFileID(m.fileID, m.table); e != nil {
+	for _, mapping := range descriptor.FileIdentifiers {
+		if e := db.RegisterFileID(mapping.ID, mapping.Table); e != nil {
 			rt.Close()
-			return nil, fmt.Errorf("flowrt: register store file id %s->%s: %w", m.fileID, m.table, e)
+			return nil, fmt.Errorf("flowrt: register store file id %s->%s: %w", mapping.ID, mapping.Table, e)
 		}
 	}
-	s := &LinkedStore{rt: rt, db: db, snapshotPath: snapshotPath, pendingTombstones: map[uint64]bool{}}
+	s := &LinkedStore{rt: rt, db: db, descriptor: descriptor, snapshotPath: snapshotPath, pendingTombstones: map[uint64]bool{}}
 	if snapshotPath != "" {
 		if blob, e := os.ReadFile(snapshotPath); e == nil && len(blob) > 0 {
 			if e := db.LoadAndRebuild(blob); e != nil {
@@ -186,13 +142,8 @@ func (s *LinkedStore) ExecEnvelopeHostFunc() wasmrt.HostFunc {
 	}
 }
 
-// IngestRecordHostFunc returns the `flatsql.ingest_record` trampoline: it copies
-// the store node's wrapper FlatBuffer out of the calling flow's (shared) memory
-// and INGESTS it into the arena, routed to sds_omm/sds_ocm/sds_obd by the
-// buffer's file identifier (SOMM/SOCM/SOBD). This is the persistence-capable
-// write path — arena rows are captured by ExportData, whereas a SQL INSERT into
-// an arena vtab is rejected by the engine. The host reads OPAQUE bytes only: no
-// decode, no SDS-type derivation, no per-record keying (that all stays in-wasm).
+// IngestRecordHostFunc copies one opaque FlatBuffer from shared guest memory
+// into the descriptor-mapped arena. The host does not decode the record.
 func (s *LinkedStore) IngestRecordHostFunc() wasmrt.HostFunc {
 	i32 := func() *wasmedge.ValType { return wasmedge.NewValTypeI32() }
 	i64 := func() *wasmedge.ValType { return wasmedge.NewValTypeI64() }
@@ -232,50 +183,9 @@ func (s *LinkedStore) ingestRecord(buf []byte) int64 {
 	return int64(seq)
 }
 
-// BuildTestWrapperRow constructs one store-node wrapper FlatBuffer — the
-// EXACT shape ingest_record expects (cid/provider/source_name/batch_id/data,
-// stamped with the given store-local file identifier SOMM/SOCM/SOBD) — and
-// IngestTestRow below appends it directly to a store's arena. Both exist SO
-// OTHER READ-SIDE PACKAGES (e.g. sdn/sdnodresults) can build realistic
-// fixtures over a real LinkedStore without a full wasm mount. Production
-// records always arrive through the wasm store node's ingest_record
-// trampoline (IngestRecordHostFunc) — this is a test/fixture convenience,
-// never a second production write path.
-func BuildTestWrapperRow(fileID, cid, provider, sourceName, batchID string, data []byte) []byte {
-	b := flatbuffers.NewBuilder(256 + len(data))
-	cidOff := b.CreateString(cid)
-	provOff := b.CreateString(provider)
-	srcOff := b.CreateString(sourceName)
-	batchOff := b.CreateString(batchID)
-	dataOff := b.CreateByteVector(data)
-	b.StartObject(5)
-	b.PrependUOffsetTSlot(0, cidOff, 0)
-	b.PrependUOffsetTSlot(1, provOff, 0)
-	b.PrependUOffsetTSlot(2, srcOff, 0)
-	b.PrependUOffsetTSlot(3, batchOff, 0)
-	b.PrependUOffsetTSlot(4, dataOff, 0)
-	root := b.EndObject()
-	b.FinishWithFileIdentifier(root, []byte(fileID))
-	return b.FinishedBytes()
-}
-
-// IngestTestRow appends one BuildTestWrapperRow fixture directly to s's
-// arena. See BuildTestWrapperRow's doc — test/fixture use only.
-func (s *LinkedStore) IngestTestRow(fileID, cid, provider, sourceName, batchID string, data []byte) error {
-	if seq := s.ingestRecord(BuildTestWrapperRow(fileID, cid, provider, sourceName, batchID, data)); seq < 0 {
-		return fmt.Errorf("flowrt: ingest test row: rc=%d", seq)
-	}
-	return nil
-}
-
 // Query runs a READ-ONLY SQL statement against the flow's linked store and
-// returns the result — the data-surface board's search/list/download API over
-// the sds_omm/sds_ocm/sds_obd arena tables (cid/provider/source_name/batch_id/
-// data). Rejects anything but a single SELECT: this is a query surface, never
-// a second write path (records only ever arrive via the in-wasm store node's
-// ingest_record/exec_envelope trampolines above). The host does not decode the
-// `data` BLOB — callers that need record fields parse the returned bytes with
-// the SDS Go bindings.
+// returns the result. It rejects anything but a single SELECT; records arrive
+// only through the artifact's ingest/exec trampolines.
 func (s *LinkedStore) Query(sql string, params ...interface{}) (*flatsqlrt.Result, error) {
 	if !isReadOnlySelect(sql) {
 		return nil, fmt.Errorf("flowrt: store query must be a single read-only SELECT")
@@ -290,9 +200,8 @@ func (s *LinkedStore) Query(sql string, params ...interface{}) (*flatsqlrt.Resul
 // Query path, FlatSQL materializes the whole response artifact in-wasm and
 // copies it out once, avoiding per-cell WasmEdge calls for catalog-sized
 // board aggregates. The sandboxed engine entry point is used here because it
-// deliberately bypasses every response cache: a live OD fire changes the
-// generation on each ingest, and retaining successive catalog-sized poll
-// results would only hold stale streams in memory.
+// deliberately bypasses every response cache because each ingest changes the
+// database generation.
 func (s *LinkedStore) QueryRecordStream(sql string, caps flatsqlrt.SandboxCaps, params ...interface{}) (*flatsqlrt.RawStream, error) {
 	if !isReadOnlySelect(sql) {
 		return nil, fmt.Errorf("flowrt: store record-stream query must be a single read-only SELECT")
@@ -494,9 +403,7 @@ func (s *LinkedStore) compact() int64 {
 	return s.compactLocked()
 }
 
-// compactLocked is compact() assuming s.mu is HELD (ClearBatch marks + compacts
-// under one lock). Same DUMB mechanics: export -> drop tombstoned ordinals ->
-// fresh Database -> LoadAndRebuild -> swap -> clear tombstones.
+// compactLocked is compact() assuming s.mu is held.
 func (s *LinkedStore) compactLocked() int64 {
 	if len(s.pendingTombstones) == 0 {
 		return 0
@@ -521,12 +428,12 @@ func (s *LinkedStore) compactLocked() int64 {
 		out.Write(frame)
 		survivors++
 	}
-	fresh, err := s.rt.CreateDatabase(flatsqlStoreSchema, "sdn_flow_store")
+	fresh, err := s.rt.CreateDatabase(s.descriptor.Schema, s.descriptor.Database)
 	if err != nil {
 		return -5
 	}
-	for _, m := range flatsqlStoreFileIDs {
-		if e := fresh.RegisterFileID(m.fileID, m.table); e != nil {
+	for _, mapping := range s.descriptor.FileIdentifiers {
+		if e := fresh.RegisterFileID(mapping.ID, mapping.Table); e != nil {
 			fresh.Destroy()
 			return -6
 		}
@@ -621,51 +528,4 @@ func (s *LinkedStore) CompactHostFunc() wasmrt.HostFunc {
 			return []interface{}{s.compact()}, wasmedge.Result_Success
 		},
 	}
-}
-
-// cellInt64 coerces a flatsqlrt scalar result cell into int64 (rowid reads).
-func cellInt64(v interface{}) int64 {
-	switch n := v.(type) {
-	case int64:
-		return n
-	case int:
-		return int64(n)
-	case uint64:
-		return int64(n)
-	default:
-		return 0
-	}
-}
-
-// ClearBatch is the store side of the operator "reset a run" primitive: DUMB —
-// tombstone every row whose batch_id column equals batchID across the three OD
-// write-lane tables, then compact. The caller supplies an opaque batch id; the
-// host interprets no record content, derives no SDS type, applies no policy. It
-// returns the per-table global sequences it tombstoned (PRE-compact rowids, so
-// the mount can prune its fire log by rowid-range overlap before the compact
-// renumbers) and the survivor record count.
-func (s *LinkedStore) ClearBatch(batchID string) (map[string][]int64, int64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	tombstoned := map[string][]int64{}
-	for _, m := range flatsqlStoreFileIDs {
-		res, err := s.db.Query("SELECT rowid FROM "+m.table+" WHERE batch_id = ?", batchID)
-		if err != nil {
-			return nil, 0, err
-		}
-		for _, row := range res.Rows {
-			if len(row) < 1 {
-				continue
-			}
-			seq := cellInt64(row[0])
-			if seq <= 0 {
-				continue
-			}
-			_ = s.db.MarkDeleted(m.table, uint64(seq))
-			s.pendingTombstones[uint64(seq)] = true
-			tombstoned[m.table] = append(tombstoned[m.table], seq)
-		}
-	}
-	survivors := s.compactLocked()
-	return tombstoned, survivors, nil
 }

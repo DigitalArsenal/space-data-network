@@ -76,7 +76,7 @@ func init() {
 	importLegacySQLiteCmd.Flags().Int64Var(&importLegacyMaxRows, "max-rows", 0, "stop after scanning this many rows (0 = unlimited)")
 	importLegacySQLiteCmd.Flags().BoolVar(&importLegacyStoreMPE, "store-mpe", false, "also store MPE records derived from legacy rows (optional)")
 	importLegacySQLiteCmd.Flags().StringVar(&importLegacyProviderID, "provider-id", "space-data-network-02", "SDN provider ID for imported source tags")
-	importLegacySQLiteCmd.Flags().StringVar(&importLegacySourceNameForTags, "source-name", "celestrak-gp-historical", "SDN source name for imported source tags")
+	importLegacySQLiteCmd.Flags().StringVar(&importLegacySourceNameForTags, "source-name", "legacy-gp-historical", "SDN source name for imported source tags")
 	importLegacySQLiteCmd.Flags().StringVar(&importLegacySourceURL, "source-url", "", "source URL for imported source tags (default: file://<absolute source-db>)")
 	importLegacySQLiteCmd.Flags().StringVar(&importLegacyBatchID, "batch-id", "", "batch ID for imported source tags (default: source DB metadata fingerprint)")
 	importLegacySQLiteCmd.Flags().StringVar(&importLegacyContentKeyID, "content-key-id", "public", "content key ID for imported source tags")
@@ -438,7 +438,7 @@ func legacyImportSourceTags(sourceDB, sourcePeer string) (storage.SourceTags, er
 	}
 	sourceName := strings.TrimSpace(importLegacySourceNameForTags)
 	if sourceName == "" {
-		sourceName = "celestrak-gp-historical"
+		sourceName = "legacy-gp-historical"
 	}
 	sourceURL := strings.TrimSpace(importLegacySourceURL)
 	if sourceURL == "" {
@@ -552,7 +552,7 @@ func newLegacyArtifactPublisher(cfg *config.Config, store *storage.FlatSQLStore,
 	providerEPMCID := strings.TrimSpace(importLegacyPublicationProviderEPMCID)
 	datasetID := strings.TrimSpace(importLegacyPublicationDatasetID)
 	if datasetID == "" {
-		datasetID = "sdn-omm-celestrak-gp-historical"
+		datasetID = "sdn-omm-legacy-gp-historical"
 	}
 	providerPublicKey := ""
 	if len(signingKey) == ed25519.PrivateKeySize {

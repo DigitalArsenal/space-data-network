@@ -12,6 +12,53 @@
 - `hd-wallet-wasm` and `hd-wallet-ui` are the canonical address, signature, and vCard identity surfaces.
 - Ownership boundary stays split as follows: `spacedatastandards.org` owns canonical FlatBuffer schemas, `space-data-module-sdk` owns shared invoke/licensing helpers and runtime host surfaces, `sdn-server` owns the provider-side host bridge and unified licensing-module runtime loading path, and `sdn-js` owns requester-side discovery, relay selection, and encrypted bundle fetch behavior.
 
+## Application-Blind Go Host
+
+- Supplemental OMM is one standalone signed WASM/PLG flow bundle composed of
+  independently signed and instantiated WASM nodes. Its application identity,
+  providers, graph, scheduling semantics, state, routes, and UI must not be
+  implemented or special-cased in handwritten Go.
+- Handwritten Go may provide only application-blind runtime capabilities such
+  as generic signature verification, artifact loading, generic wakeups, HTTP
+  mounting, networking, filesystem access, shared-arena validation, and opaque
+  binary persistence bridging. It may not implement cron policy, FlatSQL,
+  schema-aware storage, or any flow node.
+- Canonical SDS OMM schema and binding support remains allowed because OMM is a
+  data standard, not application control-plane code.
+- `scripts/check-no-app-specific-go.mjs` enforces this boundary across every
+  tracked Go path and source file outside `vendor/` and `third_party/`. There is
+  no handwritten-Go exception process; application behavior belongs in the
+  signed WASM artifact.
+- Supplemental OMM implementation work is scoped to
+  `repos/main-packages/space-data-network-modules/flows/supplemental-omm/` by
+  default. Before editing any handwritten Go for this effort, stop and obtain
+  explicit owner approval for the exact Go files and generic host capability
+  involved. Do not infer that approval from an implementation plan or from the
+  fact that a proposed change is application-blind.
+
+## Isomorphic Flow Host Boundary
+
+- A signed flow uses the exact same `dist/isomorphic/module.wasm` bytes and
+  content hash in the JavaScript/browser harness and WasmEdge. Do not create a
+  Go-controlled server variant or a JavaScript-controlled browser variant.
+- Go and JavaScript hosts are parity implementations of generic adapters only:
+  artifact verification/loading, declared capability enforcement, opaque byte
+  persistence, clocks/wakeups, network byte streams, shared arenas, bounds
+  checks, threads, cancellation, and teardown.
+- FlatSQL must run as a signed, pluggable WASM node in the flow. Hosts must not
+  expose FlatSQL tables, rows, SQL/query operations, schema-aware indexes, or a
+  `storage_engine_link` substitute. The flow compiler must not statically fold
+  FlatSQL into a consuming application module.
+- Cron parsing, timezone, retry, misfire, and trigger policy belong to a timer
+  WASM node. The host may only provide a clock and generic wakeup delivery.
+- Every module input and output port supports both canonical SDS FlatBuffer and
+  aligned-binary representations for the same schema identity. `PIV` and
+  `TAB.WIRE_FORMAT` select per frame.
+- Use aligned-binary only inside a proven-compatible shared arena. Network,
+  process, persistence, publication, and incompatible-memory edges fall back to
+  canonical FlatBuffer bytes. Hosts route and bounds-check descriptors but do
+  not decode or transcode application schemas.
+
 ## Product Surfaces
 
 - `/` is the SDN UI.

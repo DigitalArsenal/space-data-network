@@ -37,7 +37,7 @@ func TestAdminStoreHydrateReSyncsJournalOnlyRecords(t *testing.T) {
 		t.Fatalf("seed store: %v", err)
 	}
 	storeDataAPITestOMMInto(t, seed, 25544, "ISS", "2026-05-10")
-	storeDataAPITestOMMInto(t, seed, 40909, "STARLINK", "2026-05-11")
+	storeDataAPITestOMMInto(t, seed, 40909, "SATELLITE", "2026-05-11")
 	if err := seed.Close(); err != nil {
 		t.Fatalf("close seed store: %v", err)
 	}
@@ -150,11 +150,11 @@ func storeDataAPITestOMMInto(t *testing.T, store *storage.FlatSQLStore, norad ui
 		Build()
 	tags := storage.SourceTags{
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-gp",
-		SourceURL:  "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+		SourceName: "catalogfixture-gp",
+		SourceURL:  "https://fixture.test/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
 		BatchID:    "test-batch",
 	}
-	if _, err := store.StoreWithSourceTags("OMM.fbs", payload, "source:celestrak", nil, tags); err != nil {
+	if _, err := store.StoreWithSourceTags("OMM.fbs", payload, "source:catalogfixture", nil, tags); err != nil {
 		t.Fatalf("store OMM %d: %v", norad, err)
 	}
 }
