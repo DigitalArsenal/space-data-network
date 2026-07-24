@@ -1,5 +1,9 @@
 {
   "apps": [
-    { "slug": "spaceaware", "record": "spaceaware.app", "root": true }
+    {
+      "slug": "spaceaware",
+      "record": "sdn-ui.app",
+      "root": true
+    }
   ]
 }

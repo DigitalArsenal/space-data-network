@@ -245,7 +245,7 @@ func TestEmbeddedRootAPP(t *testing.T) {
 // entirely inline HTML document suitable for runtime extraction on each host.
 func TestEmbeddedRootAPPIsSingleFile(t *testing.T) {
 	html := string(decodedEmbeddedAppPage(t, "spaceaware"))
-	for _, want := range []string{"<title>SpaceAware · Space Data Network</title>", "<div id=\"sa-root\"></div>", "</head>"} {
+	for _, want := range []string{"<title>Space Data Network Dashboard</title>", "<div id=\"root\">", "</head>"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("embedded SDN UI page missing %q", want)
 		}
