@@ -121,6 +121,7 @@ type Config struct {
 type isomorphicNodeInstance interface {
 	ID() string
 	ContentHash() string
+	BoundIdentity() (string, string)
 	Manifest() *modulert.Manifest
 	InvokeMethodFrameSet(context.Context, string, []modulert.InvokeInputFrame) (*modulert.InvokeFrameSetResult, error)
 	InvokeScheduledMethodFrameSet(context.Context, string, []modulert.InvokeInputFrame) (*modulert.InvokeFrameSetResult, error)
@@ -129,6 +130,8 @@ type isomorphicNodeInstance interface {
 
 type isomorphicParentRuntime interface {
 	ValidateNodes([]flowrt.IsomorphicNodeArtifact) error
+	PrepareActivation() error
+	DrainPrepared(context.Context, flowrt.HandlerMap) error
 	Activate(context.Context, flowrt.HandlerMap) error
 	Release()
 }
@@ -242,7 +245,7 @@ type Installer struct {
 	isomorphic map[string]*liveIsomorphicFlow
 
 	verifyIsomorphicBundle   func([]byte) (*flowrt.IsomorphicBundleMetadata, error)
-	loadIsomorphicNode       func([]byte) (isomorphicNodeInstance, error)
+	loadIsomorphicNode       func([]byte, string, string) (isomorphicNodeInstance, error)
 	loadIsomorphicParent     func([]byte, uint32) (isomorphicParentRuntime, error)
 	storeApplicationArtifact func(context.Context, []byte) error
 }
@@ -274,8 +277,8 @@ func New(cfg Config) (*Installer, error) {
 	in.verifyIsomorphicBundle = func(signed []byte) (*flowrt.IsomorphicBundleMetadata, error) {
 		return flowrt.LoadIsomorphicBundleMetadata(signed, in.trustedSigner)
 	}
-	in.loadIsomorphicNode = func(signed []byte) (isomorphicNodeInstance, error) {
-		return in.svc.LoadModuleWithMaxMemoryPages(signed, in.max)
+	in.loadIsomorphicNode = func(signed []byte, outerArtifactHash, entryID string) (isomorphicNodeInstance, error) {
+		return in.svc.LoadModuleInstanceWithMaxMemoryPages(signed, in.max, outerArtifactHash, entryID)
 	}
 	in.loadIsomorphicParent = func(portable []byte, pages uint32) (isomorphicParentRuntime, error) {
 		runtime, err := flowrt.NewFlowRuntime(portable, pages)
@@ -371,7 +374,9 @@ func (in *Installer) installSignedBundle(ctx context.Context, ref, source string
 	if err != nil {
 		return InstalledIsomorphicFlow{}, fmt.Errorf("sdnflows: instantiate signed parent runtime: %w", err)
 	}
-	activationCtx, activationCancel := context.WithCancel(context.WithoutCancel(ctx))
+	// Startup remains owned by the install request below. Once committed,
+	// wakeups run for the installer-owned lifetime and are canceled by teardown.
+	activationCtx, activationCancel := context.WithCancel(context.Background())
 	live := &liveIsomorphicFlow{
 		metadata:         metadata,
 		parent:           parent,
@@ -392,7 +397,7 @@ func (in *Installer) installSignedBundle(ctx context.Context, ref, source string
 		if _, duplicate := live.nodes[artifact.EntryID]; duplicate {
 			return InstalledIsomorphicFlow{}, fmt.Errorf("duplicate signed child EntryID %q", artifact.EntryID)
 		}
-		node, loadErr := in.loadIsomorphicNode(artifact.SignedArtifact)
+		node, loadErr := in.loadIsomorphicNode(artifact.SignedArtifact, metadata.ContentHash, artifact.EntryID)
 		if loadErr != nil {
 			return InstalledIsomorphicFlow{}, fmt.Errorf("instantiate signed child %q: %w", artifact.EntryID, loadErr)
 		}
@@ -409,8 +414,18 @@ func (in *Installer) installSignedBundle(ctx context.Context, ref, source string
 	if err := parent.ValidateNodes(metadata.Nodes); err != nil {
 		return InstalledIsomorphicFlow{}, fmt.Errorf("validate signed parent dependency descriptors: %w", err)
 	}
+	// Enqueue and drain the signed startup trigger synchronously. Installation
+	// is atomic only after every handler in the initial graph has succeeded;
+	// failed provider, analysis, persistence, or publication work must never
+	// leave behind a false-success APP or registry record.
+	if err := parent.PrepareActivation(); err != nil {
+		return InstalledIsomorphicFlow{}, fmt.Errorf("prepare signed parent startup activation: %w", err)
+	}
 	if err := in.registerWakeupHandlers(live); err != nil {
 		return InstalledIsomorphicFlow{}, err
+	}
+	if err := parent.DrainPrepared(ctx, live.handlers); err != nil {
+		return InstalledIsomorphicFlow{}, fmt.Errorf("drain signed parent startup activation: %w", err)
 	}
 
 	view := InstalledIsomorphicFlow{
@@ -447,11 +462,6 @@ func (in *Installer) installSignedBundle(ctx context.Context, ref, source string
 	in.isomorphic[metadata.ContentHash] = live
 	in.mu.Unlock()
 	committed = true
-	// Activation drains only signed graph work, but it may include a complete
-	// multi-provider fetch. Publish the fully verified/instantiated bundle first
-	// and drain on its installer-owned lifecycle context so daemon startup and
-	// hash-addressed status reads do not wait for the benchmark to finish.
-	go in.activateIsomorphicFlow(live, "startup")
 	in.logf("sdnflows: installed signed isomorphic bundle %s (%d independently signed nodes) [source=%s]", metadata.ContentHash, len(metadata.Nodes), source)
 	return view, nil
 }
@@ -576,6 +586,9 @@ func isomorphicNodeHandler(node isomorphicNodeInstance, runtimeNodes *opaqueRunt
 		}
 		inputs := make([]modulert.InvokeInputFrame, 0, len(args.Frames))
 		for _, frame := range args.Frames {
+			if frame.WireFormat != 0 {
+				return nil, fmt.Errorf("frame %q requires canonical fallback across independently instantiated WASM memories", frame.PortID)
+			}
 			if frame.FixedStringLength > uint32(^uint16(0)) || frame.RequiredAlignment > uint32(^uint16(0)) {
 				return nil, fmt.Errorf("frame %q layout exceeds PIV uint16 bounds", frame.PortID)
 			}
@@ -601,10 +614,6 @@ func isomorphicNodeHandler(node isomorphicNodeInstance, runtimeNodes *opaqueRunt
 		if err != nil {
 			return nil, err
 		}
-		// Publication is declaration-driven: nodeId comes from the signed parent
-		// invocation and portId from the signed child output. Unknown pairs are
-		// ignored without examining the opaque payload.
-		runtimeNodes.publish(args.NodeID, result.Outputs)
 		out := &flowrt.InvocationResult{
 			StatusCode:       result.StatusCode,
 			Yielded:          result.Yielded,
@@ -612,6 +621,9 @@ func isomorphicNodeHandler(node isomorphicNodeInstance, runtimeNodes *opaqueRunt
 		}
 		out.Outputs = make([]flowrt.FrameOutput, 0, len(result.Outputs))
 		for _, frame := range result.Outputs {
+			if frame.WireFormat != 0 {
+				return nil, fmt.Errorf("output frame %q requires canonical fallback across independently instantiated WASM memories", frame.PortID)
+			}
 			out.Outputs = append(out.Outputs, flowrt.FrameOutput{
 				PortID:            frame.PortID,
 				Bytes:             append([]byte(nil), frame.Payload...),
@@ -631,6 +643,13 @@ func isomorphicNodeHandler(node isomorphicNodeInstance, runtimeNodes *opaqueRunt
 				FrameID:           frame.FrameID,
 			})
 		}
+		// Publication is declaration-driven: nodeId comes from the signed parent
+		// invocation and portId from the signed child output. Unknown pairs are
+		// ignored without examining the opaque payload. Publish only after every
+		// child output has passed the cross-instance canonical boundary check.
+		if runtimeNodes != nil {
+			runtimeNodes.publish(args.NodeID, result.Outputs)
+		}
 		return out, nil
 	}
 }
@@ -644,7 +663,8 @@ func (in *Installer) registerWakeupHandlers(live *liveIsomorphicFlow) error {
 		if !declaresWakeupCallback(manifest) {
 			continue
 		}
-		identity := sdnservices.WakeupIdentity{ArtifactHash: node.ContentHash(), NodeID: node.ID()}
+		artifactHash, nodeID := node.BoundIdentity()
+		identity := sdnservices.WakeupIdentity{ArtifactHash: artifactHash, NodeID: nodeID}
 		unregister, err := in.svc.Wakeups.Register(identity, func(sdnservices.Wakeup) {
 			in.activateIsomorphicFlow(live, "wakeup")
 		})
@@ -746,13 +766,38 @@ func (parent *wasmIsomorphicParent) readCString(pointer uint32) string {
 func (parent *wasmIsomorphicParent) Activate(ctx context.Context, handlers flowrt.HandlerMap) error {
 	parent.mu.Lock()
 	defer parent.mu.Unlock()
+	if err := parent.prepareActivationLocked(); err != nil {
+		return err
+	}
+	_, err := parent.runtime.DrainOnce(ctx, handlers)
+	return err
+}
+
+func (parent *wasmIsomorphicParent) PrepareActivation() error {
+	parent.mu.Lock()
+	defer parent.mu.Unlock()
+	return parent.prepareActivationLocked()
+}
+
+func (parent *wasmIsomorphicParent) prepareActivationLocked() error {
 	if parent.runtime == nil {
 		return errors.New("signed parent runtime is closed")
 	}
 	if parent.runtime.TriggerCount != 1 {
 		return fmt.Errorf("signed isomorphic parent declares %d ingress triggers, want exactly one generic startup/wakeup ingress", parent.runtime.TriggerCount)
 	}
-	parent.runtime.EnqueueTrigger(0)
+	if err := parent.runtime.EnqueueTriggerChecked(0); err != nil {
+		return fmt.Errorf("enqueue generic startup/wakeup trigger: %w", err)
+	}
+	return nil
+}
+
+func (parent *wasmIsomorphicParent) DrainPrepared(ctx context.Context, handlers flowrt.HandlerMap) error {
+	parent.mu.Lock()
+	defer parent.mu.Unlock()
+	if parent.runtime == nil {
+		return errors.New("signed parent runtime is closed")
+	}
 	_, err := parent.runtime.DrainOnce(ctx, handlers)
 	return err
 }

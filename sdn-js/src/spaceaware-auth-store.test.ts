@@ -2,47 +2,44 @@
  * Unit tests for the SpaceAware auth session store + route guard
  * (loop task U0.3 — D1 groundwork).
  *
- * Drives the full challenge → sign → verify → `auth/me` hydration round
- * trip against a mocked `fetch` (scripted per sdn-server/internal/auth's
- * wire shapes) using a fake `UnlockedWallet` — the real hd-wallet-wasm
- * signing path is covered separately in `spaceaware-local-wallet.test.ts`.
+ * Covers the Phase 1A server-session store. The injected public wallet client
+ * is retained as the future typed-auth seam but is not invoked: the separate
+ * server-auth-v2 cutover owns capability discovery and login operations.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SdnApiClient, SdnApiError } from '../ui/src/lib/auth/sdn-api-client';
+import { SdnApiClient } from '../ui/src/lib/auth/sdn-api-client';
 import {
   createAuthStore,
   guardRoute,
   requiresAuthenticatedSession,
-  type AuthSessionState,
 } from '../ui/src/lib/auth/auth-store';
-import type { UnlockedWallet } from '../ui/src/lib/auth/local-wallet';
+import type { getSdnWalletClient } from '../ui/src/lib/auth/wallet-client';
 
 const SERVER_BASE_URL = 'http://127.0.0.1:9999';
 
-function fakeWallet(overrides: Partial<UnlockedWallet> = {}): UnlockedWallet {
+type SdnWalletClient = ReturnType<typeof getSdnWalletClient>;
+
+function fakeWallet(): SdnWalletClient {
   return {
-    label: 'test-operator',
-    xpub: 'xpubTESTFIXTUREnotarealkey',
-    peerId: '12D3KooWTestFixturePeer',
-    signingPublicKeyHex: 'aa'.repeat(32),
-    sign: vi.fn(async () => new Uint8Array(64).fill(7)),
-    lock: vi.fn(),
-    ...overrides,
-  };
+    getSnapshot: vi.fn(() => ({ status: 'dormant', identity: null })),
+    subscribe: vi.fn(() => vi.fn()),
+    connect: vi.fn(),
+    openAccount: vi.fn(),
+    disconnect: vi.fn(),
+    destroy: vi.fn(),
+    requestSdnLoginV1: vi.fn(),
+    requestSdnLoginV2: vi.fn(),
+  } as unknown as SdnWalletClient;
 }
 
 /** Scripts a fetch mock over the exact auth endpoints (method + path routing). */
 function scriptedFetch(routes: {
-  challenge?: () => Response;
-  verify?: () => Response;
   me?: () => Response;
   logout?: () => Response;
 }) {
   return vi.fn(async (url: string, init?: RequestInit) => {
     const path = url.replace(SERVER_BASE_URL, '');
     const method = init?.method ?? 'GET';
-    if (path === '/api/auth/challenge' && method === 'POST') return routes.challenge?.() ?? new Response('', { status: 404 });
-    if (path === '/api/auth/verify' && method === 'POST') return routes.verify?.() ?? new Response('', { status: 404 });
     if (path === '/api/auth/me' && method === 'GET') return routes.me?.() ?? new Response('', { status: 404 });
     if (path === '/api/auth/logout' && method === 'POST') return routes.logout?.() ?? new Response('', { status: 404 });
     return new Response('not found', { status: 404 });
@@ -59,7 +56,7 @@ describe('auth store hydration', () => {
       me: () => Response.json({ code: 'unauthorized', message: 'not authenticated' }, { status: 401 }),
     });
     const client = new SdnApiClient({ serverBaseUrl: SERVER_BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
-    const store = createAuthStore({ client });
+    const store = createAuthStore({ client, wallet: fakeWallet() });
 
     expect(store.state.status).toBe('unknown');
     await store.hydrate();
@@ -73,7 +70,7 @@ describe('auth store hydration', () => {
       me: () => Response.json({ name: 'Test Operator', trust_level: 'full' }),
     });
     const client = new SdnApiClient({ serverBaseUrl: SERVER_BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
-    const store = createAuthStore({ client });
+    const store = createAuthStore({ client, wallet: fakeWallet() });
 
     await store.hydrate();
 
@@ -81,62 +78,38 @@ describe('auth store hydration', () => {
     expect(store.state.stage).toBe('confirmed');
     expect(store.state.user).toEqual({ name: 'Test Operator', trust_level: 'full' });
   });
-});
 
-describe('auth store challenge -> sign -> verify -> me round trip', () => {
-  it('walks stage idle -> challenge -> verify -> confirmed and ends authenticated', async () => {
+  it('keeps a non-401 hydration failure indeterminate instead of claiming the cookie is anonymous', async () => {
     const fetchImpl = scriptedFetch({
-      challenge: () => Response.json({ challenge_id: 'chal-1', challenge: 'YWJjZA', expires_at: 1000 }),
-      verify: () => Response.json({ user: { name: 'Test Operator', trust_level: 'full' }, expires_at: 2000 }),
-      me: () => Response.json({ name: 'Test Operator', trust_level: 'full' }),
+      me: () => Response.json({ code: 'server_error', message: 'temporarily unavailable' }, { status: 503 }),
     });
     const client = new SdnApiClient({ serverBaseUrl: SERVER_BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
+    const store = createAuthStore({ client, wallet: fakeWallet() });
 
-    const snapshots: AuthSessionState[] = [];
-    const store = createAuthStore({ client, onStateChange: (s) => snapshots.push(s) });
-
-    const wallet = fakeWallet();
-    await store.loginWithWallet(wallet);
-
-    expect(store.state.status).toBe('authenticated');
-    expect(store.state.user).toEqual({ name: 'Test Operator', trust_level: 'full' });
-    expect(wallet.sign).toHaveBeenCalledTimes(1);
-
-    const stages = snapshots.map((s) => s.stage);
-    expect(stages).toEqual(expect.arrayContaining(['challenge', 'verify', 'confirmed']));
-    expect(stages.indexOf('challenge')).toBeLessThan(stages.indexOf('verify'));
-    expect(stages.indexOf('verify')).toBeLessThan(stages.indexOf('confirmed'));
-  });
-
-  it('signs the exact base64-decoded challenge bytes returned by the server', async () => {
-    const fetchImpl = scriptedFetch({
-      challenge: () => Response.json({ challenge_id: 'chal-1', challenge: 'YWJjZA', expires_at: 1000 }), // "abcd"
-      verify: () => Response.json({ user: { trust_level: 'standard' }, expires_at: 2000 }),
-      me: () => Response.json({ trust_level: 'standard' }),
-    });
-    const client = new SdnApiClient({ serverBaseUrl: SERVER_BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
-    const store = createAuthStore({ client });
-    const wallet = fakeWallet();
-
-    await store.loginWithWallet(wallet);
-
-    const signed = (wallet.sign as ReturnType<typeof vi.fn>).mock.calls[0][0] as Uint8Array;
-    expect(new TextDecoder().decode(signed)).toBe('abcd');
-  });
-
-  it('surfaces a real 4xx from /api/auth/verify as a typed error and does not authenticate', async () => {
-    const fetchImpl = scriptedFetch({
-      challenge: () => Response.json({ challenge_id: 'chal-1', challenge: 'YWJjZA', expires_at: 1000 }),
-      verify: () => Response.json({ code: 'authentication_failed', message: 'authentication failed' }, { status: 403 }),
-    });
-    const client = new SdnApiClient({ serverBaseUrl: SERVER_BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
-    const store = createAuthStore({ client });
-
-    await expect(store.loginWithWallet(fakeWallet())).rejects.toBeInstanceOf(SdnApiError);
+    await store.hydrate();
 
     expect(store.state.status).toBe('error');
-    expect(store.state.error).toEqual({ code: 'authentication_failed', message: 'authentication failed' });
     expect(store.state.user).toBeNull();
+    expect(store.state.error).toEqual({ code: 'server_error', message: 'temporarily unavailable' });
+  });
+});
+
+describe('Phase 1A typed wallet boundary', () => {
+  it('retains the injected singleton without exposing or invoking a browser login bridge', async () => {
+    const fetchImpl = scriptedFetch({
+      me: () => Response.json({ code: 'unauthorized', message: 'not authenticated' }, { status: 401 }),
+    });
+    const client = new SdnApiClient({ serverBaseUrl: SERVER_BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
+    const wallet = fakeWallet();
+    const store = createAuthStore({ client, wallet });
+
+    expect(store.wallet).toBe(wallet);
+    expect(store).not.toHaveProperty('loginWithWallet');
+    await store.hydrate();
+
+    expect(wallet.connect).not.toHaveBeenCalled();
+    expect(wallet.requestSdnLoginV1).not.toHaveBeenCalled();
+    expect(wallet.requestSdnLoginV2).not.toHaveBeenCalled();
   });
 });
 
@@ -146,7 +119,7 @@ describe('auth store logout', () => {
       logout: () => Response.json({ status: 'logged_out' }),
     });
     const client = new SdnApiClient({ serverBaseUrl: SERVER_BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
-    const store = createAuthStore({ client });
+    const store = createAuthStore({ client, wallet: fakeWallet() });
 
     await store.logout();
 
@@ -154,15 +127,25 @@ describe('auth store logout', () => {
     expect(store.state.user).toBeNull();
   });
 
-  it('still clears local state to anonymous even when the logout request itself fails', async () => {
-    const fetchImpl = vi.fn(async () => {
-      throw new TypeError('network error');
+  it('keeps a failed logout indeterminate because the httpOnly cookie may still be live', async () => {
+    let failLogout = false;
+    const fetchImpl = scriptedFetch({
+      me: () => Response.json({ name: 'Still Signed In', trust_level: 'full' }),
+      logout: () => {
+        if (failLogout) throw new TypeError('network error');
+        return Response.json({ status: 'logged_out' });
+      },
     });
     const client = new SdnApiClient({ serverBaseUrl: SERVER_BASE_URL, fetchImpl: fetchImpl as unknown as typeof fetch });
-    const store = createAuthStore({ client });
+    const store = createAuthStore({ client, wallet: fakeWallet() });
+
+    await store.hydrate();
+    failLogout = true;
 
     await expect(store.logout()).rejects.toThrow();
-    expect(store.state.status).toBe('anonymous');
+    expect(store.state.status).toBe('error');
+    expect(store.state.user).toEqual({ name: 'Still Signed In', trust_level: 'full' });
+    expect(store.state.error).toEqual({ code: 'client_error', message: 'network error' });
   });
 });
 
@@ -192,6 +175,13 @@ describe('route guard (client-side; no-redirect-on-API rule lives here, not in t
   it('does not flash-redirect while hydration is still in flight (status "unknown")', () => {
     const navigate = vi.fn();
     const blocked = guardRoute({ status: 'unknown' }, { screen: 'console' }, navigate);
+    expect(blocked).toBe(false);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('does not redirect when session hydration is indeterminate after a transport or server error', () => {
+    const navigate = vi.fn();
+    const blocked = guardRoute({ status: 'error' }, { screen: 'console' }, navigate);
     expect(blocked).toBe(false);
     expect(navigate).not.toHaveBeenCalled();
   });

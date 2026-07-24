@@ -1,4 +1,4 @@
-import { sha256 } from '../../crypto/hd-wallet';
+import { sha256 } from '@noble/hashes/sha256';
 import type {
   FlatSqlSyncManifest,
   FlatSqlSyncManifestArtifactBundle,

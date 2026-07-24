@@ -2,9 +2,11 @@ package modulert
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,9 +14,96 @@ import (
 	piv "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PIV"
 )
 
+func TestModuleAdmissionRunsBeforeGuestInitialization(t *testing.T) {
+	denied := errors.New("capability denied")
+	initialized := false
+	err := runModuleInitializationAfterAdmission(
+		func() error { return denied },
+		func() error {
+			initialized = true
+			return nil
+		},
+	)
+	if !errors.Is(err, denied) {
+		t.Fatalf("runModuleInitializationAfterAdmission() error = %v, want %v", err, denied)
+	}
+	if initialized {
+		t.Fatal("guest initialization ran before capability admission")
+	}
+
+	admitted := false
+	initialized = false
+	err = runModuleInitializationAfterAdmission(
+		func() error {
+			admitted = true
+			return nil
+		},
+		func() error {
+			if !admitted {
+				t.Fatal("guest initialization ran before admission completed")
+			}
+			initialized = true
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("runModuleInitializationAfterAdmission() admitted error = %v", err)
+	}
+	if !initialized {
+		t.Fatal("admitted module did not initialize")
+	}
+}
+
 func TestHostcallImportModuleUsesSDKName(t *testing.T) {
 	if HostcallImportModule != "space_data_module_host" {
 		t.Fatalf("HostcallImportModule = %q, want space_data_module_host", HostcallImportModule)
+	}
+}
+
+func TestBoundIdentityUsesOuterBundleAndEntryForIsomorphicInstances(t *testing.T) {
+	childHash := strings.Repeat("c", 64)
+	outerHash := strings.Repeat("a", 64)
+	module := &Module{
+		contentHash:          childHash,
+		manifest:             &Manifest{PluginID: "org.example.reusable"},
+		instanceArtifactHash: outerHash,
+		instanceNodeID:       "entry-" + strings.Repeat("e", 64),
+	}
+
+	artifactHash, nodeID := module.BoundIdentity()
+	if artifactHash != outerHash || nodeID != "entry-"+strings.Repeat("e", 64) {
+		t.Fatalf("BoundIdentity() = (%q,%q), want outer bundle + entry identity", artifactHash, nodeID)
+	}
+
+	module.instanceArtifactHash = ""
+	module.instanceNodeID = ""
+	artifactHash, nodeID = module.BoundIdentity()
+	if artifactHash != childHash || nodeID != "org.example.reusable" {
+		t.Fatalf("legacy BoundIdentity() = (%q,%q), want child content hash + plugin id", artifactHash, nodeID)
+	}
+}
+
+func TestResolveModuleInstanceIdentityIsStableSafeAndEntrySpecific(t *testing.T) {
+	outer := strings.Repeat("A", 64)
+	artifactHash, first, err := resolveModuleInstanceIdentity(outer, "nodes/store.wasm")
+	if err != nil {
+		t.Fatalf("resolve first identity: %v", err)
+	}
+	_, second, err := resolveModuleInstanceIdentity(outer, "copies/store.wasm")
+	if err != nil {
+		t.Fatalf("resolve second identity: %v", err)
+	}
+	if artifactHash != strings.ToLower(outer) || first == second {
+		t.Fatalf("resolved identities = (%q,%q,%q), want normalized outer hash and distinct entries", artifactHash, first, second)
+	}
+	if !strings.HasPrefix(first, "entry-") || len(first) != len("entry-")+64 {
+		t.Fatalf("safe entry identity = %q", first)
+	}
+	if _, _, err := resolveModuleInstanceIdentity("bad", "nodes/store.wasm"); err == nil {
+		t.Fatal("invalid outer hash was accepted")
+	}
+	if _, _, err := resolveModuleInstanceIdentity(outer, ""); err == nil {
+		t.Fatal("empty entry ID was accepted")
 	}
 }
 

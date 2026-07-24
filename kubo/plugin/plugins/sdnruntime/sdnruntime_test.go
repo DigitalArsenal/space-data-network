@@ -2,8 +2,12 @@ package sdnruntime
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/ipfs/kubo/sdn/sdnflows"
 )
 
 func TestModuleSignaturePolicyFromTextIsFailClosedAndParsesDistinctPublishers(t *testing.T) {
@@ -29,6 +33,39 @@ func TestModuleSignaturePolicyFromTextIsFailClosedAndParsesDistinctPublishers(t 
 	}
 	if policy.AllowUnsignedByContentHash == nil {
 		t.Fatal("development allowlist map is nil")
+	}
+}
+
+func TestFlowInstallerBootRunsAfterDaemonStartupPathReturns(t *testing.T) {
+	entered := make(chan struct{})
+	resume := make(chan struct{})
+	reported := make(chan error, 1)
+	startFlowInstallerBoot(t.Context(), func(context.Context, []sdnflows.FlowSpec) (int, error) {
+		close(entered)
+		<-resume
+		return 1, nil
+	}, func(_ int, err error) {
+		reported <- err
+	})
+
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("background flow boot did not start")
+	}
+	select {
+	case err := <-reported:
+		t.Fatalf("flow boot reported before long activation resumed: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(resume)
+	select {
+	case err := <-reported:
+		if err != nil {
+			t.Fatalf("flow boot report error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("flow boot completion was not reported")
 	}
 }
 

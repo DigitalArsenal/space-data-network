@@ -17,18 +17,9 @@ import { defineConfig } from 'vite';
  * - assetsInlineLimit: huge → fonts become data: URIs
  * - cssCodeSplit: false + inlineDynamicImports → single CSS + single JS
  *
- * hd-wallet stub (bundle-size guard): this ship keeps NO session flow, so the
- * hd-wallet wasm glue (~5 MB) must never enter the bundle. It is only reachable
- * as a dead static import: `conjunction-data.ts` → `node-data.ts` →
- * `lib/console.ts` → `lib/login.ts` (for `networkStatusFromHealth` /
- * `parseHealthResponse`) → `lib/auth/local-wallet.ts` (for the unused
- * `LocalWalletError` class) → `src/crypto/hd-wallet.ts` → `hd-wallet-wasm`.
- * Rollup can (and here does) tree-shake the unused `LocalWalletError` binding,
- * but to make the exclusion deterministic — and independent of future edits to
- * that shared, dormant chain — the `hd-wallet-wasm` package is aliased to an
- * empty stub for THIS build only. The conjunction app never calls any wallet
- * crypto, so nothing at runtime touches the stub; the single-file build then
- * asserts (a hard audit that FAILS the build) that no wasm blob is embedded.
+ * Phase 1A removed the dormant host-side credential and crypto import chain.
+ * This build therefore needs no protected-module alias or stub. The
+ * single-file build still hard-fails if a wasm blob is ever reintroduced.
  */
 
 const __filename = fileURLToPath(import.meta.url);
@@ -38,14 +29,6 @@ export default defineConfig({
   root: __dirname,
   base: './',
   plugins: [svelte()],
-  resolve: {
-    alias: [
-      {
-        find: /^hd-wallet-wasm$/,
-        replacement: path.resolve(__dirname, 'shims/hd-wallet-wasm-empty.ts'),
-      },
-    ],
-  },
   server: {
     host: '127.0.0.1',
     port: Number.parseInt(process.env.SDN_CONJUNCTION_UI_PORT ?? '5175', 10),

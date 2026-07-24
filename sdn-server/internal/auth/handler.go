@@ -50,6 +50,7 @@ type Handler struct {
 	cookieSecureOverride *bool
 	tlsManager           *tlsmgr.Manager
 	externalLoginUI      bool // when true, an embedded UI owns GET /login; legacy page moves to /login/legacy
+	loginUIPolicySet     bool // distinguishes the backwards-compatible default from an explicit no-login production policy
 }
 
 type pendingChallenge struct {
@@ -151,15 +152,14 @@ func (h *Handler) SetTLSManager(manager *tlsmgr.Manager) {
 	h.tlsManager = manager
 }
 
-// SetExternalLoginUI declares that an embedded product UI (the SpaceAware
-// login, served by the "/" frontend surface via isSpaceAwareUIPath) owns
-// GET /login. RegisterRoutes then leaves the exact "/login" mux pattern
-// unregistered — so the frontend surface wins it — and keeps the legacy
-// wallet-gated page reachable at /login/legacy (it remains the wallet
-// CREATION surface for first-boot/first-admin bootstrap until the product
-// UI covers that flow). Call before RegisterRoutes.
+// SetExternalLoginUI selects the product login policy. true yields /login to
+// the product surface and retains the legacy bootstrap page at /login/legacy.
+// false is an explicit production no-login policy and registers neither legacy
+// page. Callers that never select a policy retain the backwards-compatible
+// /login behavior used by standalone auth integrations.
 func (h *Handler) SetExternalLoginUI(external bool) {
 	h.externalLoginUI = external
+	h.loginUIPolicySet = true
 }
 
 // RegisterRoutes registers all auth routes on the provided mux.
@@ -176,7 +176,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 		// U1.2: the embedded SpaceAware login owns /login; the legacy page
 		// stays reachable for wallet creation / recovery flows.
 		mux.HandleFunc("/login/legacy", h.handleLoginPage)
-	} else {
+	} else if !h.loginUIPolicySet {
+		// Backwards compatibility for auth.Handler consumers that do not select
+		// a product login policy. The shipped SDN server always selects one.
 		mux.HandleFunc("/login", h.handleLoginPage)
 	}
 	mux.HandleFunc("/bootstrap.crt", h.handleBootstrapCert)
@@ -187,12 +189,16 @@ func (h *Handler) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	jsFile, cssFile := WalletAssets()
+	walletUIConfigured := strings.TrimSpace(h.walletUIPath) != ""
+	jsFile, cssFile := "", ""
+	if walletUIConfigured {
+		jsFile, cssFile = WalletAssets()
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"admin_configured":     h.userStore.HasAdmin(),
 		"users_configured":     h.userStore.UserCount() > 0,
 		"config_path":          h.configPath,
-		"wallet_ui_configured": strings.TrimSpace(h.walletUIPath) != "",
+		"wallet_ui_configured": walletUIConfigured,
 		"wallet_js_file":       jsFile,
 		"wallet_css_file":      cssFile,
 	})

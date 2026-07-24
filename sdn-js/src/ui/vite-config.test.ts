@@ -108,6 +108,33 @@ describe('admin vite config', () => {
     expect(typeof plugin?.configureServer).toBe('function');
   });
 
+  it('fails a public web build whose emitted graph contains the protected wallet crypto runtime', async () => {
+    vi.resetModules();
+
+    const { default: config } = await import('../../ui/vite.config.mts');
+    const plugins = Array.isArray(config.plugins) ? config.plugins.flat() : [];
+    const plugin = plugins.find((entry) => entry && typeof entry === 'object' && entry.name === 'sdn-public-web-protected-runtime-boundary');
+
+    expect(plugin).toBeDefined();
+    expect(typeof plugin?.generateBundle).toBe('function');
+
+    const protectedChunk = {
+      type: 'chunk' as const,
+      fileName: 'assets/app.js',
+      facadeModuleId: '/repo/sdn-js/ui/src/main.ts',
+      moduleIds: ['/repo/sdn-js/ui/src/main.ts', '/repo/sdn-js/src/crypto/hd-wallet.ts'],
+      modules: {
+        '/repo/sdn-js/ui/src/main.ts': {},
+        '/repo/sdn-js/src/crypto/hd-wallet.ts': {},
+      },
+      code: 'export const publicUi = true;',
+    };
+
+    expect(() => plugin?.generateBundle?.call({} as never, {} as never, {
+      'assets/app.js': protectedChunk,
+    } as never, false)).toThrow(/protected wallet runtime/i);
+  });
+
   it('installs the Svelte plugin before the legacy upstream webui plugins', async () => {
     vi.resetModules();
 
@@ -185,7 +212,6 @@ describe('admin vite config', () => {
     const reactAlias = alias.find((entry) => entry && typeof entry === 'object' && 'find' in entry && String(entry.find) === '/^react$/');
     const reduxBundlerAlias = alias.find((entry) => entry && typeof entry === 'object' && 'find' in entry && String(entry.find) === '/^redux-bundler$/');
     const bundlerAlias = alias.find((entry) => entry && typeof entry === 'object' && 'find' in entry && String(entry.find) === '/^redux-bundler-react$/');
-    const walletWasmAlias = alias.find((entry) => entry && typeof entry === 'object' && 'find' in entry && String(entry.find) === '/^hd-wallet-wasm$/');
     const nobleCurvesAlias = findAliasFor(alias, '@noble/curves/ed25519');
     const nobleHashesAlias = findAliasFor(alias, '@noble/hashes/sha256');
     const bufferAlias = alias.find((entry) => entry && typeof entry === 'object' && 'find' in entry && String(entry.find) === '/^buffer$/');
@@ -199,7 +225,7 @@ describe('admin vite config', () => {
     expect(String(reactAlias?.replacement)).toContain('/webui/node_modules/react');
     expect(String(reduxBundlerAlias?.replacement)).toContain('/sdn-js/ui/shims/redux-bundler-bound-timers.js');
     expect(String(bundlerAlias?.replacement)).toContain('/webui/node_modules/redux-bundler-react');
-    expect(String(walletWasmAlias?.replacement)).toContain('/sdn-js/node_modules/hd-wallet-wasm/src/index.mjs');
+    expect(alias.some((entry) => entry && typeof entry === 'object' && 'find' in entry && String(entry.find) === '/^hd-wallet-wasm$/')).toBe(false);
     expect(String(nobleCurvesAlias?.replacement)).toContain('/sdn-js/node_modules/@noble/curves/$1');
     expect(String(nobleHashesAlias?.replacement)).toContain('/sdn-js/node_modules/@noble/hashes/$1');
     expect(String(bufferAlias?.replacement)).toContain('/sdn-js/node_modules/buffer/index.js');

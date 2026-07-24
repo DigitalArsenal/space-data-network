@@ -12,7 +12,12 @@ import (
 	dsq "github.com/ipfs/go-datastore/query"
 )
 
-const opaqueStateRoot = "/sdn/opaque-state/v1"
+const (
+	opaqueStateRoot                 = "/sdn/opaque-state/v1"
+	defaultOpaqueStateMaxValueBytes = 512 << 20
+	defaultOpaqueStateMaxScopeBytes = 1 << 30
+	defaultOpaqueStateMaxScopeKeys  = 1024
+)
 
 // OpaqueStateScope isolates state by the exact signed artifact, independently
 // instantiated node, and node-selected namespace. Values have no host-visible
@@ -25,15 +30,23 @@ type OpaqueStateScope struct {
 
 // OpaqueStateStore is a binary key/value adapter over the node datastore.
 type OpaqueStateStore struct {
-	datastore ds.Datastore
-	mu        sync.Mutex
+	datastore     ds.Datastore
+	maxValueBytes int
+	maxScopeBytes int64
+	maxScopeKeys  int
+	mu            sync.Mutex
 }
 
 func NewOpaqueStateStore(datastore ds.Datastore) (*OpaqueStateStore, error) {
 	if datastore == nil {
 		return nil, errors.New("opaque state datastore is required")
 	}
-	return &OpaqueStateStore{datastore: datastore}, nil
+	return &OpaqueStateStore{
+		datastore:     datastore,
+		maxValueBytes: defaultOpaqueStateMaxValueBytes,
+		maxScopeBytes: defaultOpaqueStateMaxScopeBytes,
+		maxScopeKeys:  defaultOpaqueStateMaxScopeKeys,
+	}, nil
 }
 
 func (s *OpaqueStateStore) Read(ctx context.Context, scope OpaqueStateScope, key string) ([]byte, bool, error) {
@@ -48,6 +61,9 @@ func (s *OpaqueStateStore) Read(ctx context.Context, scope OpaqueStateScope, key
 	if err != nil {
 		return nil, false, err
 	}
+	if len(value) > s.maxValueBytes {
+		return nil, false, fmt.Errorf("opaque state value exceeds value quota of %d bytes", s.maxValueBytes)
+	}
 	return append([]byte(nil), value...), true, nil
 }
 
@@ -59,7 +75,14 @@ func (s *OpaqueStateStore) Append(ctx context.Context, scope OpaqueStateScope, k
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	current, err := s.datastore.Get(ctx, datastoreKey)
+	found := err == nil
 	if err != nil && !errors.Is(err, ds.ErrNotFound) {
+		return err
+	}
+	if len(current) > s.maxValueBytes || len(data) > s.maxValueBytes-len(current) {
+		return fmt.Errorf("opaque state value quota of %d bytes exceeded", s.maxValueBytes)
+	}
+	if err := s.checkScopeQuotaLocked(ctx, scope, len(current), found, len(current)+len(data)); err != nil {
 		return err
 	}
 	combined := make([]byte, 0, len(current)+len(data))
@@ -75,7 +98,53 @@ func (s *OpaqueStateStore) Replace(ctx context.Context, scope OpaqueStateScope, 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(data) > s.maxValueBytes {
+		return fmt.Errorf("opaque state value quota of %d bytes exceeded", s.maxValueBytes)
+	}
+	current, getErr := s.datastore.Get(ctx, datastoreKey)
+	found := getErr == nil
+	if getErr != nil && !errors.Is(getErr, ds.ErrNotFound) {
+		return getErr
+	}
+	if err := s.checkScopeQuotaLocked(ctx, scope, len(current), found, len(data)); err != nil {
+		return err
+	}
 	return s.datastore.Put(ctx, datastoreKey, append([]byte(nil), data...))
+}
+
+func (s *OpaqueStateStore) checkScopeQuotaLocked(ctx context.Context, scope OpaqueStateScope, currentBytes int, currentFound bool, replacementBytes int) error {
+	prefix, err := opaqueStatePrefix(scope)
+	if err != nil {
+		return err
+	}
+	results, err := s.datastore.Query(ctx, dsq.Query{Prefix: prefix.String()})
+	if err != nil {
+		return err
+	}
+	defer results.Close()
+	entries, err := results.Rest()
+	if err != nil {
+		return err
+	}
+	totalBytes := int64(0)
+	for _, entry := range entries {
+		totalBytes += int64(len(entry.Value))
+		if totalBytes > s.maxScopeBytes {
+			return fmt.Errorf("opaque state scope byte quota of %d bytes exceeded", s.maxScopeBytes)
+		}
+	}
+	projectedKeys := len(entries)
+	if !currentFound {
+		projectedKeys++
+	}
+	if projectedKeys > s.maxScopeKeys {
+		return fmt.Errorf("opaque state scope key quota of %d entries exceeded", s.maxScopeKeys)
+	}
+	projectedBytes := totalBytes - int64(currentBytes) + int64(replacementBytes)
+	if projectedBytes > s.maxScopeBytes {
+		return fmt.Errorf("opaque state scope byte quota of %d bytes exceeded", s.maxScopeBytes)
+	}
+	return nil
 }
 
 func (s *OpaqueStateStore) List(ctx context.Context, scope OpaqueStateScope) ([]string, error) {

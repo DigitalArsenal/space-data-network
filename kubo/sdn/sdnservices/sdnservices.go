@@ -297,6 +297,16 @@ func (s *Services) LoadModuleWithMaxMemoryPages(wasmBytes []byte, maxMemoryPages
 	return modulert.NewModuleWithMaxMemoryPages(wasmBytes, s.CapReg, s.NodeCtx, maxMemoryPages)
 }
 
+// LoadModuleInstanceWithMaxMemoryPages is the bounded isomorphic-child loader.
+// Capability identity is scoped to the exact outer signed bundle and bundle
+// EntryID before guest initialization and capability provisioning begin.
+func (s *Services) LoadModuleInstanceWithMaxMemoryPages(wasmBytes []byte, maxMemoryPages uint32, outerArtifactHash, entryID string) (*modulert.Module, error) {
+	if s == nil {
+		return nil, errors.New("sdnservices: nil Services")
+	}
+	return modulert.NewModuleInstanceWithMaxMemoryPages(wasmBytes, s.CapReg, s.NodeCtx, maxMemoryPages, outerArtifactHash, entryID)
+}
+
 // Close releases the store's FlatSQL engine. The durable blockstore + datastore
 // are owned by the caller (the node) and are not touched.
 func (s *Services) Close() {

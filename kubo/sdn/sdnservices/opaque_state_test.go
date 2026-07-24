@@ -167,6 +167,38 @@ func TestOpaqueStateRejectsUnsafeSegments(t *testing.T) {
 	}
 }
 
+func TestOpaqueStateEnforcesValueScopeAndKeyQuotasWithoutMutation(t *testing.T) {
+	ctx := t.Context()
+	state, err := NewOpaqueStateStore(sync.MutexWrap(ds.NewMapDatastore()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.maxValueBytes = 8
+	state.maxScopeBytes = 10
+	state.maxScopeKeys = 2
+	scope := OpaqueStateScope{ArtifactHash: strings.Repeat("e", 64), NodeID: "node-a", Namespace: "primary"}
+
+	first := []byte("12345678")
+	if err := state.Replace(ctx, scope, "first", first); err != nil {
+		t.Fatalf("initial Replace() error = %v", err)
+	}
+	if err := state.Append(ctx, scope, "first", []byte("9")); err == nil || !strings.Contains(err.Error(), "value quota") {
+		t.Fatalf("oversized Append() error = %v, want value quota", err)
+	}
+	if got, found, err := state.Read(ctx, scope, "first"); err != nil || !found || !bytes.Equal(got, first) {
+		t.Fatalf("value after rejected append = (%q,%v,%v)", got, found, err)
+	}
+	if err := state.Replace(ctx, scope, "second", []byte("abc")); err == nil || !strings.Contains(err.Error(), "scope byte quota") {
+		t.Fatalf("scope-overflow Replace() error = %v, want scope quota", err)
+	}
+	if err := state.Replace(ctx, scope, "second", []byte("ab")); err != nil {
+		t.Fatalf("within-scope Replace() error = %v", err)
+	}
+	if err := state.Replace(ctx, scope, "third", nil); err == nil || !strings.Contains(err.Error(), "key quota") {
+		t.Fatalf("third-key Replace() error = %v, want key quota", err)
+	}
+}
+
 func TestOpaqueStateSerializesAppendWithReplace(t *testing.T) {
 	backing := &blockingOpaqueGetDatastore{
 		Datastore: sync.MutexWrap(ds.NewMapDatastore()),

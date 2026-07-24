@@ -58,50 +58,6 @@ export function createBrowserNodeBackend(): SdnBackend {
     async saveNodeProfile(profile: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>> {
       return createDegradedResult('saveNodeProfile', 'browser-node local profile persistence is scheduled for Milestone 4', profile);
     },
-    async getNodeIdentitySettings() {
-      return createDegradedResult('getNodeIdentitySettings', 'browser-node node identity sessions are scheduled for Milestone 4', { ttlMs: 3_600_000 });
-    },
-    async saveNodeIdentitySettings(settings) {
-      return createDegradedResult('saveNodeIdentitySettings', 'browser-node node identity sessions are scheduled for Milestone 4', settings);
-    },
-    async selectFlatbufferStorageLocation() {
-      return createDegradedResult('selectFlatbufferStorageLocation', 'browser-node FlatBuffer storage uses browser-managed storage only', {
-        canceled: true,
-        path: null,
-      });
-    },
-    async applyWalletNodeIdentity() {
-      return createDegradedResult('applyWalletNodeIdentity', 'browser-node wallet-backed node identity persistence is scheduled for Milestone 4');
-    },
-    async logoutNodeIdentity() {
-      return createAvailableResult('logoutNodeIdentity', { ok: true });
-    },
-    async getWalletStorage() {
-      return createDegradedResult('getWalletStorage', 'browser-node wallet storage uses browser localStorage only', {
-        entries: {},
-        encryptedAtRest: false,
-      });
-    },
-    async saveWalletStorage(entries: Record<string, string | null>) {
-      return createDegradedResult('saveWalletStorage', 'browser-node wallet storage uses browser localStorage only', {
-        entries: Object.fromEntries(
-          Object.entries(entries).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-        ),
-        encryptedAtRest: false,
-      });
-    },
-    async listWalletsAndEpms(): Promise<BackendResult<Array<Record<string, unknown>>>> {
-      return createDegradedResult('listWalletsAndEpms', 'browser wallet and EPM storage is scheduled for Milestone 4', []);
-    },
-    async beginClaimEpm(): Promise<BackendResult<Record<string, unknown>>> {
-      return createDegradedResult('beginClaimEpm', 'browser EPM claim flow is scheduled for Milestone 4');
-    },
-    async exportCore(): Promise<BackendResult<Record<string, unknown>>> {
-      return createCapabilityResult('exportCore', 'permission-required', 'Core export requires an unlocked local browser identity');
-    },
-    async importCore(core: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>> {
-      return createDegradedResult('importCore', `browser Core import is scheduled for Milestone 4 (${Object.keys(core).length} fields)`);
-    },
     async listNodeAccessUsers() {
       return createCapabilityResult('listNodeAccessUsers', 'remote-only', 'node access management requires a local or remote SDN server', []);
     },

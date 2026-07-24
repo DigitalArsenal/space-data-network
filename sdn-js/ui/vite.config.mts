@@ -2,7 +2,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
-import { defineConfig, transformWithEsbuild } from 'vite';
+import type { PluginContext } from 'rollup';
+import { defineConfig, transformWithEsbuild, type Plugin } from 'vite';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,6 +15,10 @@ const sdnUpstreamWebUiRoot = path.resolve(__dirname, 'src', 'upstream-webui');
 const coiServiceWorkerPath = path.resolve(__dirname, 'src', 'lib', 'coi-serviceworker.js');
 const proxyTarget = process.env.SDN_UI_PROXY_TARGET?.trim();
 const kuboProxyTarget = process.env.SDN_UI_KUBO_PROXY_TARGET?.trim();
+const publicWebProtectedRuntimeMarkers = Object.freeze([
+  '/src/crypto/hd-wallet.ts',
+  '/node_modules/hd-wallet-wasm/',
+]);
 const reactVirtualizedWindowScrollerOnScrollPath = path.resolve(
   upstreamWebUiRoot,
   'node_modules',
@@ -89,6 +94,71 @@ function stripReactVirtualizedWindowScrollerProptypeImport(code: string): string
   return code.replace(reactVirtualizedWindowScrollerProptypeImportPattern, '');
 }
 
+function rejectPublicWebProtectedRuntime(value: string, source: string): void {
+  const normalized = value.replaceAll('\\', '/');
+  const marker = publicWebProtectedRuntimeMarkers.find((candidate) => normalized.includes(candidate));
+  if (marker) {
+    throw new Error(`[sdn public web] protected wallet runtime ${JSON.stringify(marker)} in ${source}`);
+  }
+}
+
+function publicWebProtectedImporterChain(
+  context: Pick<PluginContext, 'getModuleInfo'>,
+  protectedId: string,
+): string {
+  const pending: Array<{ id: string; path: string[] }> = [{ id: protectedId, path: [protectedId] }];
+  const visited = new Set<string>();
+
+  while (pending.length > 0) {
+    const current = pending.shift();
+    if (!current || visited.has(current.id)) continue;
+    visited.add(current.id);
+    const info = context.getModuleInfo(current.id);
+    const importers = info ? [...info.importers, ...info.dynamicImporters] : [];
+    if (info?.isEntry || importers.length === 0) {
+      return current.path.reverse().join(' -> ');
+    }
+    for (const importer of importers) {
+      pending.push({ id: importer, path: [...current.path, importer] });
+    }
+  }
+
+  return protectedId;
+}
+
+// This is a module-graph and output gate, not a tree-shaking assumption: any
+// future import that reconnects the generic public web graph to the in-process
+// wallet WASM fails before output, and the emitted graph is checked again.
+function publicWebProtectedRuntimeBoundaryPlugin(): Plugin {
+  return {
+    name: 'sdn-public-web-protected-runtime-boundary',
+    apply: 'build',
+    enforce: 'post',
+    buildEnd() {
+      for (const moduleId of this.getModuleIds()) {
+        const normalized = moduleId.replaceAll('\\', '/');
+        if (!publicWebProtectedRuntimeMarkers.some((marker) => normalized.includes(marker))) continue;
+        rejectPublicWebProtectedRuntime(
+          moduleId,
+          `module graph ${publicWebProtectedImporterChain(this, moduleId)}`,
+        );
+      }
+    },
+    generateBundle(_options, bundle) {
+      for (const output of Object.values(bundle)) {
+        rejectPublicWebProtectedRuntime(output.fileName, `emitted filename ${output.fileName}`);
+        if (output.type !== 'chunk') continue;
+        const moduleIds = [
+          output.facadeModuleId ?? '',
+          ...output.moduleIds,
+          ...Object.keys(output.modules),
+        ].join('\n');
+        rejectPublicWebProtectedRuntime(moduleIds, `module graph for ${output.fileName}`);
+      }
+    },
+  };
+}
+
 export default defineConfig({
   root: __dirname,
   publicDir: path.resolve(upstreamWebUiRoot, 'public'),
@@ -96,6 +166,7 @@ export default defineConfig({
   envPrefix: ['VITE_', 'SDN_UI_'],
   plugins: [
     svelte(),
+    publicWebProtectedRuntimeBoundaryPlugin(),
     {
       name: 'sdn-react-virtualized-window-scroller-patch',
       transform(code, id) {
@@ -208,11 +279,6 @@ export default defineConfig({
                 secure: false,
               },
               '/login': {
-                target: proxyTarget,
-                changeOrigin: true,
-                secure: false,
-              },
-              '/wallet-ui': {
                 target: proxyTarget,
                 changeOrigin: true,
                 secure: false,
@@ -331,10 +397,6 @@ export default defineConfig({
         replacement: path.resolve(upstreamWebUiRoot, 'node_modules/classnames'),
       },
       {
-        find: /^hd-wallet-wasm$/,
-        replacement: path.resolve(packageRoot, 'node_modules/hd-wallet-wasm/src/index.mjs'),
-      },
-      {
         find: /^@noble\/curves\/(.*)$/,
         replacement: path.resolve(packageRoot, 'node_modules/@noble/curves') + '/$1',
       },
@@ -365,14 +427,6 @@ export default defineConfig({
       {
         find: /^react-virtualized\/styles\.css$/,
         replacement: path.resolve(upstreamWebUiRoot, 'node_modules/react-virtualized/styles.css'),
-      },
-      {
-        find: /^\.\/sdn-plugin\.mjs$/,
-        replacement: path.resolve(__dirname, 'shims/hd-wallet-sdn-plugin.mjs'),
-      },
-      {
-        find: /^\.\/sdn-plugin-manifest-source\.mjs$/,
-        replacement: path.resolve(__dirname, 'shims/hd-wallet-sdn-plugin-manifest-source.mjs'),
       },
     ],
   },

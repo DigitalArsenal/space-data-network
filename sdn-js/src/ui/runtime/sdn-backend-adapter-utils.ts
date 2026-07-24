@@ -22,7 +22,7 @@ import {
   type StorageSummary,
 } from './sdn-backend';
 import { normalizeIpfsArtifactPeerAddrs } from './ipfs-artifact-peers';
-import { sha256 } from '../../crypto/hd-wallet';
+import { sha256 } from '@noble/hashes/sha256';
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 export const RAW_FLATBUFFER_STREAM_CONTENT_TYPE = 'application/vnd.sdn.flatbuffers.stream';
