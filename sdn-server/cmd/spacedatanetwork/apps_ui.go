@@ -29,6 +29,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -122,6 +123,10 @@ func makeAppsHandler() (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	registryJSON, err := renderAppsRegistryJSON(apps)
+	if err != nil {
+		return nil, err
+	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -138,6 +143,19 @@ func makeAppsHandler() (http.Handler, error) {
 		}
 		if rest == "" {
 			serveAppLauncher(w, r, launcher)
+			return
+		}
+		// GET /apps/index.json — the machine-readable serving registry, so a
+		// served app (e.g. the root console's nav) can enumerate its sibling
+		// apps without hardcoding them. Same anonymous public posture as the
+		// launcher; no-store like every app-surface response.
+		if rest == "index.json" {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			w.WriteHeader(http.StatusOK)
+			if r.Method != http.MethodHead {
+				_, _ = w.Write(registryJSON)
+			}
 			return
 		}
 
@@ -171,6 +189,43 @@ func setAppSurfaceHeaders(w http.ResponseWriter) {
 
 // serveAppLauncher writes the generated launcher page with the app-surface
 // header set. The launcher makes no API calls, so it carries no __SDN_CONFIG__.
+// renderAppsRegistryJSON serializes the serving registry for /apps/index.json.
+// Launcher metadata only — never page content.
+func renderAppsRegistryJSON(apps []resolvedApp) ([]byte, error) {
+	type entry struct {
+		Slug        string `json:"slug"`
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Version     string `json:"version"`
+		Description string `json:"description"`
+		Path        string `json:"path"`
+		Root        bool   `json:"root"`
+	}
+	specs, err := embeddedAppSpecs()
+	if err != nil {
+		return nil, err
+	}
+	rootBySlug := make(map[string]bool, len(specs))
+	for _, spec := range specs {
+		rootBySlug[spec.slug] = spec.root
+	}
+	out := make([]entry, 0, len(apps))
+	for _, a := range apps {
+		out = append(out, entry{
+			Slug:        a.slug,
+			ID:          a.id,
+			Name:        a.name,
+			Version:     a.version,
+			Description: a.description,
+			Path:        "/apps/" + a.slug + "/",
+			Root:        rootBySlug[a.slug],
+		})
+	}
+	return json.Marshal(struct {
+		Apps []entry `json:"apps"`
+	}{Apps: out})
+}
+
 func serveAppLauncher(w http.ResponseWriter, r *http.Request, launcher []byte) {
 	setAppSurfaceHeaders(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
