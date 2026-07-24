@@ -45,6 +45,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ipfs/kubo/sdn/flowrt"
 	"github.com/ipfs/kubo/sdn/modulert"
@@ -239,10 +240,11 @@ type Installer struct {
 	dropinDir     string
 	trustedSigner []ed25519.PublicKey
 
-	mu         sync.Mutex
-	installMu  sync.Mutex
-	loaded     map[string]*flowrt.ServiceFlow // id -> live legacy flow handle
-	isomorphic map[string]*liveIsomorphicFlow
+	mu           sync.Mutex
+	installMu    sync.Mutex
+	loaded       map[string]*flowrt.ServiceFlow // id -> live legacy flow handle
+	isomorphic   map[string]*liveIsomorphicFlow
+	bootFailures []BootFailure
 
 	verifyIsomorphicBundle   func([]byte) (*flowrt.IsomorphicBundleMetadata, error)
 	loadIsomorphicNode       func([]byte, string, string) (isomorphicNodeInstance, error)
@@ -966,18 +968,54 @@ func (in *Installer) view(sf *flowrt.ServiceFlow, source string, enabled bool) I
 	}
 }
 
+// BootFailure records one flow/bundle that FAILED to load during Boot. A
+// skipped entry is a unit of the node that is silently not running (a
+// fail-closed capability denial, a missing bundle, a hash mismatch), so the
+// failure set is retained for the whole process lifetime and callers surface
+// it loudly instead of letting an INFO "skipping" line be the only trace.
+type BootFailure struct {
+	ID     string `json:"id"`     // registry entry id / flow ref that failed
+	Source string `json:"source"` // provenance (registry source, "boot-set", "drop-in")
+	Error  string `json:"error"`  // the load error, verbatim
+	At     string `json:"at"`     // RFC3339 UTC
+}
+
+// BootFailures returns every load failure recorded by the last Boot pass.
+func (in *Installer) BootFailures() []BootFailure {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return append([]BootFailure(nil), in.bootFailures...)
+}
+
+func (in *Installer) recordBootFailure(id, source string, err error) {
+	failure := BootFailure{
+		ID:     id,
+		Source: source,
+		Error:  err.Error(),
+		At:     time.Now().UTC().Format(time.RFC3339),
+	}
+	in.mu.Lock()
+	in.bootFailures = append(in.bootFailures, failure)
+	in.mu.Unlock()
+}
+
 // Boot re-establishes the installed-flows set on a fresh Services build: it
 // re-loads and re-registers every ENABLED persisted registry entry, then
 // installs any additional configured bootSet flows not already installed. It is
 // tolerant: an entry whose bundle is missing, or whose sensitive capabilities
-// are unapproved, is logged and skipped rather than failing the whole boot.
-// Returns the number of flows registered.
+// are unapproved, is logged and skipped rather than failing the whole boot —
+// but every skip is recorded (see BootFailures) so the caller can make the
+// failure loudly visible after startup.
 //
 // Boot registers flows but does NOT start the scheduler — the caller starts it
 // after Boot so every timer begins together.
 func (in *Installer) Boot(ctx context.Context, bootSet []FlowSpec) (int, error) {
 	registered := 0
 	seen := map[string]bool{}
+
+	in.mu.Lock()
+	in.bootFailures = nil
+	in.mu.Unlock()
 
 	entries, err := in.reg.List()
 	if err != nil {
@@ -992,6 +1030,7 @@ func (in *Installer) Boot(ctx context.Context, bootSet []FlowSpec) (int, error) 
 			flow, installErr := in.installSignedBundle(ctx, e.Ref, source, false, e.ID)
 			if installErr != nil {
 				in.logf("sdnflows: boot: restore signed bundle %q failed; skipping: %v", e.ID, installErr)
+				in.recordBootFailure(e.ID, e.Source, installErr)
 				continue
 			}
 			seen[flow.ID] = true
@@ -1000,6 +1039,7 @@ func (in *Installer) Boot(ctx context.Context, bootSet []FlowSpec) (int, error) 
 		}
 		if _, err := in.install(FlowSpec{Ref: e.Ref, Intervals: e.Intervals, Config: e.Config}, e.Source, false); err != nil {
 			in.logf("sdnflows: boot: register %q failed; skipping: %v", e.ID, err)
+			in.recordBootFailure(e.ID, e.Source, err)
 			continue
 		}
 		seen[e.ID] = true
@@ -1010,6 +1050,7 @@ func (in *Installer) Boot(ctx context.Context, bootSet []FlowSpec) (int, error) 
 		f, err := in.install(spec, "boot-set", true)
 		if err != nil {
 			in.logf("sdnflows: boot: install configured flow %q failed; skipping: %v", spec.Ref, err)
+			in.recordBootFailure(spec.Ref, "boot-set", err)
 			continue
 		}
 		if seen[f.ID] {
@@ -1032,6 +1073,7 @@ func (in *Installer) Boot(ctx context.Context, bootSet []FlowSpec) (int, error) 
 			flow, installErr := in.installSignedBundle(ctx, ref, "drop-in", true)
 			if installErr != nil {
 				in.logf("sdnflows: boot: signed bundle drop-in %q failed; skipping: %v", ref, installErr)
+				in.recordBootFailure(ref, "drop-in", installErr)
 				continue
 			}
 			if seen[flow.ID] {

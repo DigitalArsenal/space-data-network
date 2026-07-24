@@ -3126,6 +3126,14 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 			info["onion_address"] = torRuntime.OnionHost()
 		}
 
+		// Boot check surface (task sdn-licensing-module-load): every WASM
+		// module that failed to load this boot, so a fail-closed capability
+		// rejection is visible to operators without grepping the journal.
+		// API-synthesized field: lowercase keys by convention.
+		if failures := n.ModuleLoadFailures(); len(failures) > 0 {
+			info["module_load_failures"] = failures
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(info)
 	}
