@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -149,6 +150,63 @@ func TestAppsPerAppPages(t *testing.T) {
 				t.Errorf("%s body missing injected window.__SDN_CONFIG__", path)
 			}
 		}
+	}
+}
+
+// TestAppsRegistryIndexJSON exercises GET /apps/index.json: the machine-readable
+// serving registry a served app's nav uses to enumerate sibling apps. It must
+// list every registered app with its serving path and mark exactly one root.
+func TestAppsRegistryIndexJSON(t *testing.T) {
+	handler, err := makeAppsHandler()
+	if err != nil {
+		t.Fatalf("makeAppsHandler() error = %v", err)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/apps/index.json", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /apps/index.json status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
+	}
+
+	var payload struct {
+		Apps []struct {
+			Slug string `json:"slug"`
+			Name string `json:"name"`
+			Path string `json:"path"`
+			Root bool   `json:"root"`
+		} `json:"apps"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("parse registry JSON: %v", err)
+	}
+	// App-blind contract: the registry mirrors the embedded serving registry
+	// exactly — same size, every entry canonical, exactly one root.
+	specs, err := embeddedAppSpecs()
+	if err != nil {
+		t.Fatalf("embeddedAppSpecs() error = %v", err)
+	}
+	if len(payload.Apps) != len(specs) {
+		t.Errorf("registry lists %d apps, want %d (the embedded registry)", len(payload.Apps), len(specs))
+	}
+	roots := 0
+	for _, app := range payload.Apps {
+		if app.Root {
+			roots++
+		}
+		if app.Slug == "" || app.Name == "" {
+			t.Errorf("registry entry %+v missing slug or name", app)
+		}
+		if app.Path != "/apps/"+app.Slug+"/" {
+			t.Errorf("app %q path = %q, want /apps/%s/", app.Slug, app.Path, app.Slug)
+		}
+	}
+	if roots != 1 {
+		t.Errorf("registry marks %d root apps, want exactly 1", roots)
 	}
 }
 
