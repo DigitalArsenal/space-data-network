@@ -85,8 +85,40 @@ type Installer struct {
 	dropinDir string
 	log       Logger
 
-	mu     sync.Mutex
-	loaded map[string]*modulert.Module // id -> live module handle
+	mu           sync.Mutex
+	loaded       map[string]*modulert.Module // id -> live module handle
+	bootFailures []BootFailure
+}
+
+// BootFailure records one module that FAILED to load during Boot. A skipped
+// module is a unit of the node that is silently not running (missing bytes, a
+// fail-closed capability denial), so the failure set is retained for the whole
+// process lifetime and callers surface it loudly instead of letting an INFO
+// "skipping" line be the only trace.
+type BootFailure struct {
+	ID     string `json:"id"`     // registry entry id / drop-in filename that failed
+	Source string `json:"source"` // provenance (registry source or "drop-in")
+	Error  string `json:"error"`  // the load error, verbatim
+	At     string `json:"at"`     // RFC3339 UTC
+}
+
+// BootFailures returns every load failure recorded by the last Boot pass.
+func (in *Installer) BootFailures() []BootFailure {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return append([]BootFailure(nil), in.bootFailures...)
+}
+
+func (in *Installer) recordBootFailure(id, source string, err error) {
+	failure := BootFailure{
+		ID:     id,
+		Source: source,
+		Error:  err.Error(),
+		At:     time.Now().UTC().Format(time.RFC3339),
+	}
+	in.mu.Lock()
+	in.bootFailures = append(in.bootFailures, failure)
+	in.mu.Unlock()
 }
 
 // New builds an Installer. Services and Registry are required.
@@ -317,6 +349,10 @@ func (in *Installer) Boot(ctx context.Context) (int, error) {
 	registered := 0
 	seen := map[string]bool{} // content hashes handled this boot (dedup)
 
+	in.mu.Lock()
+	in.bootFailures = nil
+	in.mu.Unlock()
+
 	// 1) Re-register persisted, enabled entries by content hash.
 	entries, err := in.reg.List()
 	if err != nil {
@@ -328,6 +364,7 @@ func (in *Installer) Boot(ctx context.Context) (int, error) {
 		}
 		if e.ContentHash == "" {
 			in.logf("sdnmodules: boot: registry entry %q has no content hash; skipping", e.ID)
+			in.recordBootFailure(e.ID, e.Source, errors.New("registry entry has no content hash"))
 			continue
 		}
 		if seen[e.ContentHash] {
@@ -336,11 +373,13 @@ func (in *Installer) Boot(ctx context.Context) (int, error) {
 		seen[e.ContentHash] = true
 		if in.bs == nil {
 			in.logf("sdnmodules: boot: no blockstore; cannot re-register %q", e.ID)
+			in.recordBootFailure(e.ID, e.Source, errors.New("no blockstore; cannot re-register"))
 			continue
 		}
 		wasm, err := appmanifest.ResolveModuleByContentHash(ctx, in.bs, e.ContentHash)
 		if err != nil {
 			in.logf("sdnmodules: boot: resolve %q (%s) failed; skipping: %v", e.ID, shortHash(e.ContentHash), err)
+			in.recordBootFailure(e.ID, e.Source, err)
 			continue
 		}
 		// persist=false: the entry already exists; re-registration must not
@@ -348,6 +387,7 @@ func (in *Installer) Boot(ctx context.Context) (int, error) {
 		// skipped (an operator may have revoked an approval since install).
 		if _, err := in.installResolved(wasm, e.Source, false); err != nil {
 			in.logf("sdnmodules: boot: register %q failed; skipping: %v", e.ID, err)
+			in.recordBootFailure(e.ID, e.Source, err)
 			continue
 		}
 		registered++
@@ -385,6 +425,7 @@ func (in *Installer) installDropins(ctx context.Context, seen map[string]bool) (
 		wasm, err := os.ReadFile(path)
 		if err != nil {
 			in.logf("sdnmodules: boot: read drop-in %q failed; skipping: %v", de.Name(), err)
+			in.recordBootFailure(de.Name(), "drop-in", err)
 			continue
 		}
 		if seen[modulert.ContentHashHex(wasm)] {
@@ -393,6 +434,7 @@ func (in *Installer) installDropins(ctx context.Context, seen map[string]bool) (
 		seen[modulert.ContentHashHex(wasm)] = true
 		if _, err := in.InstallBytes(ctx, wasm, "dropin:"+de.Name()); err != nil {
 			in.logf("sdnmodules: boot: install drop-in %q failed; skipping: %v", de.Name(), err)
+			in.recordBootFailure(de.Name(), "drop-in", err)
 			continue
 		}
 		installed++

@@ -7,10 +7,12 @@ package modulert
 // top-level mux mounts behind its existing admin-session auth, exposing
 // approve/list/revoke over the persisted CapabilityPolicyStore.
 //
-// This handler is NOT wired into the running daemon's mux from this change
-// — the daemon's route table lives in cmd/spacedatanetwork/main.go, which
-// loop B1 is not permitted to edit (owned by another in-flight task). See
-// the loop B1 report for the exact snippet needed there.
+// Wired into the daemon's admin mux (cmd/spacedatanetwork/main.go, behind
+// admin-session auth) at /api/modules/capabilities[/approve|/revoke|/tiers].
+// Recording an approval for a fail-closed module load rejection:
+//   POST /api/modules/capabilities/approve
+//   {"module_hash":"<sha256 hex from the rejection log>","capability":"<cap>",
+//    "plugin_id":"...","approved_by":"...","note":"..."}   (one call per capability)
 
 import (
 	"encoding/json"

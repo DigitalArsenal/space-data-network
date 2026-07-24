@@ -181,9 +181,48 @@ type Node struct {
 	wg     sync.WaitGroup
 
 	recordCatalogHydrationOnce sync.Once
+
+	moduleLoadFailureMu sync.Mutex
+	moduleLoadFailures  []ModuleLoadFailure
 }
 
 const licensingModuleID = "licensing"
+
+// ModuleLoadFailure records one WASM module that FAILED to load at boot so the
+// failure stays loudly visible after startup (task sdn-licensing-module-load:
+// a fail-closed capability rejection or malformed manifest must never be a
+// WARN line buried in the boot log — it means the module is NOT running).
+// Exposed via Node.ModuleLoadFailures for the node-info API.
+type ModuleLoadFailure struct {
+	Stage string `json:"stage"` // which load path failed (catalog-decrypt, catalog-load, fallback-read, fallback-load, register)
+	Ref   string `json:"ref"`   // module id or wasm path
+	Error string `json:"error"` // the load error, verbatim
+	At    string `json:"at"`    // RFC3339 UTC
+}
+
+// ModuleLoadFailures returns every module load failure recorded this boot.
+func (n *Node) ModuleLoadFailures() []ModuleLoadFailure {
+	n.moduleLoadFailureMu.Lock()
+	defer n.moduleLoadFailureMu.Unlock()
+	return append([]ModuleLoadFailure(nil), n.moduleLoadFailures...)
+}
+
+// recordModuleLoadFailure appends a failure to the boot ledger and logs it at
+// ERROR level with a stable grep-able marker. Loud by design: the module is
+// not running and fail-closed policy denials require an operator action
+// (record a CapabilityApproval) to clear.
+func (n *Node) recordModuleLoadFailure(stage, ref string, err error) {
+	failure := ModuleLoadFailure{
+		Stage: stage,
+		Ref:   ref,
+		Error: err.Error(),
+		At:    time.Now().UTC().Format(time.RFC3339),
+	}
+	n.moduleLoadFailureMu.Lock()
+	n.moduleLoadFailures = append(n.moduleLoadFailures, failure)
+	n.moduleLoadFailureMu.Unlock()
+	log.Errorf("SDN BOOT CHECK: MODULE LOAD FAILED (module NOT running, fail closed): stage=%s ref=%q err=%s", stage, ref, failure.Error)
+}
 
 // newGossipSub constructs the node's GossipSub router. It intentionally
 // passes no options so go-libp2p-pubsub's default message signature policy
@@ -596,7 +635,11 @@ func (n *Node) init() error {
 
 	// Register the unified licensing runtime, then publish encrypted catalog
 	// modules through it so the delivery path matches the browser shim flow.
+	// Every failure on this path is recorded via recordModuleLoadFailure so a
+	// node that boots WITHOUT its licensing module says so loudly (ERROR log
+	// + ModuleLoadFailures surface) instead of a WARN buried at boot.
 	var licensingModule *modulert.Module
+	licensingAttempted := false
 	if reg, regErr := n.loadPluginRegistry(); regErr != nil {
 		log.Warnf("Plugin registry unavailable: %v", regErr)
 	} else if reg != nil {
@@ -607,6 +650,7 @@ func (n *Node) init() error {
 		}
 
 		if n.shouldLoadLicensingFromCatalog(reg) {
+			licensingAttempted = true
 			nodeCtx, err := n.buildModuleNodeContextWithPolicy()
 			if err != nil {
 				log.Warnf("Failed to build module node context: %v", err)
@@ -614,9 +658,9 @@ func (n *Node) init() error {
 				capReg := n.buildCapRegistry()
 				wasmBytes, err := reg.DecryptBundle(licensingModuleID, recipientKey)
 				if err != nil {
-					log.Warnf("Licensing module decryption failed: %v", err)
+					n.recordModuleLoadFailure("catalog-decrypt", licensingModuleID, err)
 				} else if mod, err := modulert.NewModule(wasmBytes, capReg, nodeCtx); err != nil {
-					log.Warnf("Licensing module load failed: %v", err)
+					n.recordModuleLoadFailure("catalog-load", licensingModuleID, err)
 				} else {
 					licensingModule = mod
 				}
@@ -628,9 +672,10 @@ func (n *Node) init() error {
 	// This uses the generic modulert runner — no plugin-type-specific Go code.
 	if licensingModule == nil {
 		if wasmPath := n.findKeyBrokerWasmPath(); wasmPath != "" {
+			licensingAttempted = true
 			kbBytes, decryptedEnvelope, loadErr := n.loadKeyBrokerWASMBytes(wasmPath)
 			if loadErr != nil {
-				log.Warnf("Failed to load module-sdk WASM from %s: %v", wasmPath, loadErr)
+				n.recordModuleLoadFailure("fallback-read", wasmPath, loadErr)
 			} else {
 				kbHash := sha256.Sum256(kbBytes)
 				if decryptedEnvelope {
@@ -646,7 +691,7 @@ func (n *Node) init() error {
 					capReg := n.buildCapRegistry()
 					mod, err := modulert.NewModule(kbBytes, capReg, nodeCtx)
 					if err != nil {
-						log.Warnf("Failed to create module from %s: %v", wasmPath, err)
+						n.recordModuleLoadFailure("fallback-load", wasmPath, err)
 					} else {
 						licensingModule = mod
 						log.Infof("Unified licensing module loaded from %s", wasmPath)
@@ -663,10 +708,17 @@ func (n *Node) init() error {
 			}
 		}
 		if err := n.plugins.Register(licensingModule); err != nil {
-			log.Warnf("Failed to register module %q: %v", licensingModule.ID(), err)
+			n.recordModuleLoadFailure("register", licensingModule.ID(), err)
 		} else {
 			log.Infof("Unified licensing module registered")
 		}
+	}
+	// Boot check (task sdn-licensing-module-load): a licensing artifact was
+	// present (catalog entry or explicit/fallback wasm path) but no licensing
+	// module is running — say so in one unmissable line beyond the per-stage
+	// failures above.
+	if licensingModule == nil && licensingAttempted {
+		log.Errorf("SDN BOOT CHECK: licensing module is NOT running — %d load failure(s) recorded; module delivery/licensing surface is DOWN on this node (see /api/node/info module_load_failures)", len(n.ModuleLoadFailures()))
 	}
 	n.licensingModule = licensingModule
 	n.registerModulePublishHandler()

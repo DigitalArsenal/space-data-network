@@ -267,9 +267,16 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 	// together). Tolerant: a module whose bytes are missing or whose sensitive
 	// capabilities are no longer approved is logged and skipped.
 	if n, err := installer.Boot(node.Context()); err != nil {
-		log.Warnf("SDN module installer boot failed: %v", err)
+		log.Errorf("SDN BOOT CHECK: module installer boot failed: %v", err)
 	} else if n > 0 {
 		log.Infof("SDN module installer: re-registered %d installed WASM module(s) at boot", n)
+	}
+	// Boot check (task sdn-licensing-module-load): a module that failed to
+	// load is a unit of the node that is silently NOT running — fail-closed
+	// capability denials and missing bytes must be loudly visible, not an
+	// INFO "skipping" line. One ERROR per failure, grep-able marker.
+	for _, failure := range installer.BootFailures() {
+		log.Errorf("SDN BOOT CHECK: MODULE LOAD FAILED (module NOT running, fail closed): id=%q source=%q err=%s", failure.ID, failure.Source, failure.Error)
 	}
 
 	// Re-establish persisted flows and scan signed drop-ins without blocking
@@ -279,9 +286,15 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 	// supports registrations added by the completed boot pass.
 	flowBootDone := startFlowInstallerBoot(node.Context(), flowInstaller.Boot, func(n int, err error) {
 		if err != nil {
-			log.Warnf("SDN flow installer boot failed: %v", err)
+			log.Errorf("SDN BOOT CHECK: flow installer boot failed: %v", err)
 		} else if n > 0 {
 			log.Infof("SDN flow installer: re-registered %d installed flow(s) at boot", n)
+		}
+		// Boot check (task sdn-licensing-module-load): every signed bundle /
+		// flow that failed to restore is loudly visible — one ERROR per
+		// failure, grep-able marker (matches the module installer above).
+		for _, failure := range flowInstaller.BootFailures() {
+			log.Errorf("SDN BOOT CHECK: FLOW/BUNDLE LOAD FAILED (flow NOT running, fail closed): id=%q source=%q err=%s", failure.ID, failure.Source, failure.Error)
 		}
 	})
 	// Start the cron scheduler after modules are registered; it fires each

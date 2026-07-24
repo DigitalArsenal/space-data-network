@@ -870,6 +870,34 @@ func TestBootRejectsSignedBundleWhoseCurrentHashDiffersFromPersistedID(t *testin
 	if count != 0 || loaded || installer.IsomorphicFlow(metadata.ContentHash) != nil {
 		t.Fatalf("substituted bundle restored: count=%d loaded=%v flow=%v", count, loaded, installer.IsomorphicFlow(metadata.ContentHash))
 	}
+
+	// Boot check (task sdn-licensing-module-load): the skipped bundle must be
+	// recorded as a loud, queryable boot failure — a fail-closed skip is a
+	// flow that is silently NOT running.
+	failures := installer.BootFailures()
+	if len(failures) != 1 {
+		t.Fatalf("BootFailures() = %d entries, want 1: %+v", len(failures), failures)
+	}
+	if failures[0].ID != persistedID {
+		t.Fatalf("BootFailures()[0].ID = %q, want %q", failures[0].ID, persistedID)
+	}
+	if !strings.Contains(failures[0].Error, "does not match persisted id") {
+		t.Fatalf("BootFailures()[0].Error = %q, want hash-mismatch error", failures[0].Error)
+	}
+	if failures[0].At == "" {
+		t.Fatal("BootFailures()[0].At is empty")
+	}
+
+	// A subsequent clean Boot resets the ledger.
+	if err := registry.Remove(persistedID); err != nil {
+		t.Fatalf("registry.Remove() error = %v", err)
+	}
+	if _, err := installer.Boot(t.Context(), nil); err != nil {
+		t.Fatalf("second Boot() error = %v", err)
+	}
+	if failures := installer.BootFailures(); len(failures) != 0 {
+		t.Fatalf("BootFailures() after clean boot = %+v, want empty", failures)
+	}
 }
 
 func writeTestBundle(path string, data []byte) error {
