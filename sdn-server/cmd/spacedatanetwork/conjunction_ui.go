@@ -72,18 +72,28 @@ func embeddedAppSpecs() ([]embeddedAppSpec, error) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("embedded apps: parse config: %w", err)
 	}
-	if len(config.Apps) != 1 {
-		return nil, fmt.Errorf("embedded apps: config must declare exactly one current app")
+	if len(config.Apps) == 0 {
+		return nil, fmt.Errorf("embedded apps: config declares no apps")
 	}
-	entry := config.Apps[0]
-	if entry.Slug == "" || entry.Record == "" || strings.Contains(entry.Record, "/") || !strings.HasSuffix(entry.Record, ".app") || !entry.Root {
-		return nil, fmt.Errorf("embedded apps: invalid current app configuration")
+	specs := make([]embeddedAppSpec, 0, len(config.Apps))
+	roots := 0
+	for _, entry := range config.Apps {
+		if entry.Slug == "" || entry.Record == "" || strings.Contains(entry.Record, "/") || !strings.HasSuffix(entry.Record, ".app") {
+			return nil, fmt.Errorf("embedded apps: invalid app configuration for %q", entry.Slug)
+		}
+		if entry.Root {
+			roots++
+		}
+		record, err := embeddedAppsFS.ReadFile("embedded/" + entry.Record)
+		if err != nil {
+			return nil, fmt.Errorf("embedded apps: read %q: %w", entry.Record, err)
+		}
+		specs = append(specs, embeddedAppSpec{slug: entry.Slug, record: record, root: entry.Root})
 	}
-	record, err := embeddedAppsFS.ReadFile("embedded/" + entry.Record)
-	if err != nil {
-		return nil, fmt.Errorf("embedded apps: read %q: %w", entry.Record, err)
+	if roots != 1 {
+		return nil, fmt.Errorf("embedded apps: config must declare exactly one root app, found %d", roots)
 	}
-	return []embeddedAppSpec{{slug: entry.Slug, record: record, root: entry.Root}}, nil
+	return specs, nil
 }
 
 func embeddedAppManifest(slug string) (*appmanifest.AppManifest, error) {

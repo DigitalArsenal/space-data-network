@@ -4,6 +4,11 @@
       "slug": "spaceaware",
       "record": "sdn-ui.app",
       "root": true
+    },
+    {
+      "slug": "supplemental-omm",
+      "record": "supplemental-omm.app",
+      "root": false
     }
   ]
 }
