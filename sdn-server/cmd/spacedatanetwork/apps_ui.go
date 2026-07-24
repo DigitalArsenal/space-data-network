@@ -154,26 +154,18 @@ func makeAppsHandler() (http.Handler, error) {
 	}), nil
 }
 
-// appsCSP preserves the self-hosted policy for launcher/supplemental app pages.
-// The conjunction shell has one additional wallet connection destination, so
-// sharing its policy here would unnecessarily widen unrelated app surfaces.
-const appsCSP = "default-src 'self'; " +
-	"base-uri 'none'; " +
-	"object-src 'none'; " +
-	"frame-ancestors 'none'; " +
-	"form-action 'none'; " +
-	"script-src 'self' 'unsafe-inline'; " +
-	"style-src 'self' 'unsafe-inline'; " +
-	"img-src 'self' data:; " +
-	"font-src 'self' data:; " +
-	"connect-src 'self'"
-
 // setAppSurfaceHeaders applies the cross-origin-isolation, isolated app CSP,
-// and no-store header set shared by the launcher and every supplemental page.
+// and no-store header set shared by the launcher and every embedded $APP page.
+// The single app-surface policy is appSurfaceCSP (conjunction_ui.go): it permits
+// in-document WebAssembly compilation ('wasm-unsafe-eval') and in-memory workers
+// (worker-src 'self' blob:) that every decoded SDS $APP page — the SDN UI root
+// homepage and supplemental apps alike — needs to run its engine. A prior
+// narrowing dropped those directives and CSP-blocked the homepage's WASM in the
+// browser (Go tests could not see it); appSurfaceCSP restores the working posture.
 func setAppSurfaceHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 	w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
-	w.Header().Set("Content-Security-Policy", appsCSP)
+	w.Header().Set("Content-Security-Policy", appSurfaceCSP)
 	w.Header().Set("Cache-Control", "no-store")
 }
 
