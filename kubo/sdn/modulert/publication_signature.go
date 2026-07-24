@@ -153,6 +153,33 @@ type VerifiedModuleBundle struct {
 	Entries                []VerifiedBundleEntry
 }
 
+func verifiedBundleManifestPayload(bundle *VerifiedModuleBundle) ([]byte, error) {
+	if bundle == nil {
+		return nil, errors.New("verified module bundle is missing")
+	}
+	var manifest []byte
+	for _, entry := range bundle.Entries {
+		isManifest := entry.EntryID == "manifest" || entry.SectionName == "sds.manifest" || entry.Role == MBL.ModuleBundleEntryRoleMANIFEST
+		if !isManifest {
+			continue
+		}
+		if entry.EntryID != "manifest" || entry.SectionName != "sds.manifest" || entry.Role != MBL.ModuleBundleEntryRoleMANIFEST {
+			return nil, fmt.Errorf("verified module manifest entry %q has noncanonical identity", entry.EntryID)
+		}
+		if manifest != nil {
+			return nil, errors.New("verified module bundle contains multiple manifest entries")
+		}
+		if len(entry.Payload) == 0 {
+			return nil, errors.New("verified module manifest payload is empty")
+		}
+		manifest = append([]byte(nil), entry.Payload...)
+	}
+	if manifest == nil {
+		return nil, errors.New("verified module bundle contains no canonical sds.manifest entry")
+	}
+	return manifest, nil
+}
+
 // verifyPublicationSignature inspects wasmBytes (the raw artifact bytes,
 // trailer included when present) for an SDS $REC publication trailer
 // carrying an MBL "signature" bundle entry, and checks it against

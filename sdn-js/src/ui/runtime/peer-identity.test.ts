@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createVCardQrPayload } from './identity-vcard';
+import { deriveHostedEpmRecordKeysFromXpub } from './peer-identity-derivation';
 import {
-  deriveHostedEpmRecordKeysFromXpub,
   hostedEpmRecordFromDirectoryRecord,
   peerDisplayName,
   peerEmail,

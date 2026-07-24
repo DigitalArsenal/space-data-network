@@ -2,7 +2,7 @@ import * as flatbuffers from 'flatbuffers';
 import { createBrowserModuleHarness } from 'space-data-module-sdk/testing/browser';
 import { KMF } from 'spacedatastandards.org/lib/js/REC/KMF.js';
 
-import { aesGcmDecryptWithIv } from '../../crypto/hd-wallet';
+import { decryptPublicAesGcm } from '../../crypto/public-runtime';
 import type {
   ModuleDeliveryEvent,
   ModuleDeliveryObserver,
@@ -129,7 +129,7 @@ export async function decryptEncryptedModuleBundle(
 
   const iv = encryptedBundleBytes.subarray(0, 12);
   const ciphertext = encryptedBundleBytes.subarray(12);
-  const decryptedBundle = await aesGcmDecryptWithIv(
+  const decryptedBundle = await decryptPublicAesGcm(
     cloneBytes(contentKey),
     cloneBytes(ciphertext),
     cloneBytes(iv),

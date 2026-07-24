@@ -120,50 +120,6 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
         return createDegradedResult('saveNodeProfile', error instanceof Error ? error.message : String(error));
       }
     },
-    async getNodeIdentitySettings() {
-      return createCapabilityResult('getNodeIdentitySettings', 'local-only', 'node identity unlock settings are local to the desktop app', { ttlMs: 3_600_000 });
-    },
-    async saveNodeIdentitySettings(settings) {
-      return createCapabilityResult('saveNodeIdentitySettings', 'local-only', 'node identity unlock settings are local to the desktop app', settings);
-    },
-    async selectFlatbufferStorageLocation() {
-      return createCapabilityResult('selectFlatbufferStorageLocation', 'local-only', 'FlatBuffer storage locations are selected on the local desktop app', {
-        canceled: true,
-        path: null,
-      });
-    },
-    async applyWalletNodeIdentity() {
-      return createCapabilityResult('applyWalletNodeIdentity', 'local-only', 'wallet-backed node identity changes must run on the local desktop node');
-    },
-    async logoutNodeIdentity() {
-      return createAvailableResult('logoutNodeIdentity', { ok: true });
-    },
-    async getWalletStorage() {
-      return createCapabilityResult('getWalletStorage', 'local-only', 'wallet storage is local to the desktop app', {
-        entries: {},
-        encryptedAtRest: false,
-      });
-    },
-    async saveWalletStorage(entries: Record<string, string | null>) {
-      return createCapabilityResult('saveWalletStorage', 'local-only', 'wallet storage is local to the desktop app', {
-        entries: Object.fromEntries(
-          Object.entries(entries).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-        ),
-        encryptedAtRest: false,
-      });
-    },
-    async listWalletsAndEpms(): Promise<BackendResult<Array<Record<string, unknown>>>> {
-      return createCapabilityResult('listWalletsAndEpms', 'local-only', 'wallet and EPM management must run on a local node', []);
-    },
-    async beginClaimEpm(): Promise<BackendResult<Record<string, unknown>>> {
-      return createCapabilityResult('beginClaimEpm', 'local-only', 'EPM claim must run on a local node');
-    },
-    async exportCore(): Promise<BackendResult<Record<string, unknown>>> {
-      return createCapabilityResult('exportCore', 'local-only', 'Core export must run on a local node');
-    },
-    async importCore(core: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>> {
-      return createCapabilityResult('importCore', 'local-only', `Core import must run on a local node (${Object.keys(core).length} fields)`);
-    },
     async listNodeAccessUsers(): Promise<BackendResult<NodeAccessUser[]>> {
       const users = await getJson<unknown>(
         fetchLike,
@@ -438,4 +394,3 @@ function authJsonRequest(method: string, body: Record<string, unknown>): Request
     body: JSON.stringify(body),
   };
 }
-

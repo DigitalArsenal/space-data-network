@@ -61,7 +61,13 @@ let html = fs.readFileSync(htmlPath, 'utf8');
  * catches any case where it is not).
  */
 function escapeScriptContent(js) {
-  return js.replaceAll('</script', '<\\/script').replaceAll('<!--', '<\\!--');
+  return js
+    // esbuild emits this whitespace character set with a literal tab before
+    // a newline. Escape the same characters so generated HTML stays
+    // diff-check clean without changing the JavaScript string value.
+    .replaceAll('[...` \t\n\\r\\f', '[...`\\x20\\t\\n\\r\\f')
+    .replaceAll('</script', '<\\/script')
+    .replaceAll('<!--', '<\\!--');
 }
 
 function escapeStyleContent(css) {

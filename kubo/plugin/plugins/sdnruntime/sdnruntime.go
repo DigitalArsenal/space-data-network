@@ -27,6 +27,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -61,6 +62,26 @@ type sdnRuntimePlugin struct {
 	enabled   bool
 	repoPath  string
 	hotWindow int
+}
+
+type flowInstallerBootFunc func(context.Context, []sdnflows.FlowSpec) (int, error)
+
+func startFlowInstallerBoot(ctx context.Context, boot flowInstallerBootFunc, report func(int, error)) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if boot == nil {
+			if report != nil {
+				report(0, errors.New("flow installer boot function is nil"))
+			}
+			return
+		}
+		count, err := boot(ctx, nil)
+		if report != nil {
+			report(count, err)
+		}
+	}()
+	return done
 }
 
 var _ plugin.PluginDaemonInternal = (*sdnRuntimePlugin)(nil)
@@ -251,14 +272,18 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 		log.Infof("SDN module installer: re-registered %d installed WASM module(s) at boot", n)
 	}
 
-	// Re-establish the persisted installed-FLOWS set (before the scheduler
-	// starts, alongside modules). Tolerant: a flow whose bundle is missing or
-	// whose sensitive capabilities are no longer approved is logged and skipped.
-	if n, err := flowInstaller.Boot(node.Context(), nil); err != nil {
-		log.Warnf("SDN flow installer boot failed: %v", err)
-	} else if n > 0 {
-		log.Infof("SDN flow installer: re-registered %d installed flow(s) at boot", n)
-	}
+	// Re-establish persisted flows and scan signed drop-ins without blocking
+	// Kubo's HTTP/RPC startup. A signed flow's first activation is deliberately
+	// atomic and may process a complete catalog before APP publication, so it
+	// runs under the node lifecycle after this plugin returns. The scheduler
+	// supports registrations added by the completed boot pass.
+	flowBootDone := startFlowInstallerBoot(node.Context(), flowInstaller.Boot, func(n int, err error) {
+		if err != nil {
+			log.Warnf("SDN flow installer boot failed: %v", err)
+		} else if n > 0 {
+			log.Infof("SDN flow installer: re-registered %d installed flow(s) at boot", n)
+		}
+	})
 	// Start the cron scheduler after modules are registered; it fires each
 	// registered module's timers on their effective interval (config override,
 	// else manifest default) and stops when the node context is cancelled
@@ -279,6 +304,7 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 	// durable blockstore/datastore are the node's and are left untouched).
 	go func() {
 		<-node.Context().Done()
+		<-flowBootDone        // activation observes node cancellation before services close
 		flowInstaller.Close() // close loaded flow runtimes first
 		setFlowInstaller(nil)
 		installer.Close() // close loaded module runtimes

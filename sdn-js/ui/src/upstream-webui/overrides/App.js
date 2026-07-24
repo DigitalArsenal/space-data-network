@@ -1,4 +1,4 @@
-import React, { Component, useEffect, useRef } from 'react'
+import React, { Component } from 'react'
 import PropTypes from 'prop-types'
 import { connect } from 'redux-bundler-react'
 import { getNavHelper } from 'internal-nav-helper'
@@ -15,65 +15,6 @@ import Notify from '../../../../../webui/src/components/notify/Notify.js'
 import Connected from '../../../../../webui/src/components/connected/Connected.js'
 import TourHelper from '../../../../../webui/src/components/tour/TourHelper.js'
 import FilesExploreForm from '../../../../../webui/src/files/explore-form/files-explore-form.tsx'
-import GlyphUser from '../../../../../webui/src/icons/GlyphUser.js'
-import { mountWalletUI } from '../../../../src/ui/runtime/wallet-ui.js'
-
-function createWalletMountHost() {
-  const host = document.createElement('div')
-  host.setAttribute('data-sdn-wallet-host', 'true')
-  host.style.display = 'none'
-  document.body.appendChild(host)
-  return host
-}
-
-function SessionControls({ className = '', size = 23 }) {
-  const hostRef = useRef(null)
-  const walletRef = useRef(null)
-
-  useEffect(() => {
-    hostRef.current = createWalletMountHost()
-    return () => {
-      const host = hostRef.current
-      const mountedWallet = walletRef.current
-      mountedWallet?.then?.((wallet) => wallet?.destroy?.()).catch?.(() => {})
-      host?.remove?.()
-    }
-  }, [])
-
-  async function ensureWallet() {
-    if (!walletRef.current) {
-      hostRef.current = hostRef.current || createWalletMountHost()
-      walletRef.current = mountWalletUI(hostRef.current, {
-        onLogout: async () => {
-          await fetch('/api/auth/logout', {
-            method: 'POST',
-            credentials: 'include'
-          })
-          window.location.assign('/login?next=%2F')
-        }
-      })
-    }
-    return walletRef.current
-  }
-
-  async function openWallet() {
-    const wallet = await ensureWallet()
-    await wallet?.openAccount?.()
-  }
-
-  return (
-    <div className={`dib ${className}`}>
-      <button type='button' className='dib pointer bn bg-transparent pa0 white-80 hover-white' onClick={openWallet} aria-label='Wallet' title='Wallet'>
-        <GlyphUser className='fill-teal o-60 glow' width={size} height={size} aria-hidden='true' />
-      </button>
-    </div>
-  )
-}
-
-SessionControls.propTypes = {
-  className: PropTypes.string,
-  size: PropTypes.number
-}
 
 export class App extends Component {
   static propTypes = {
@@ -129,7 +70,6 @@ export class App extends Component {
               <div className='dn flex-ns flex-auto items-center justify-end'>
                 {!url.startsWith('/diagnostics') && <TourHelper />}
                 <Connected className='joyride-app-status' />
-                <SessionControls className='ml1' />
               </div>
             </div>
             <main className='bg-white pv3 pa3 pa4-l'>

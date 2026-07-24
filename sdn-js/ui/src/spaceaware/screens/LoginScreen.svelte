@@ -16,72 +16,46 @@
     generateStarfield,
     nodeStepLabels,
     NODE_KEY_NO_PEER_ID_ERROR,
-    operatorStepIndexForStage,
-    operatorStepLabels,
     parseHealthResponse,
     parseNodeInfoResponse,
     parseStatsResponse,
     remainingDwellMs,
     resolvePeerIdentity,
     validateNodeKeyForm,
-    validateOperatorForm,
     type NodeHealthStatus,
     type NodeInfoSnapshot,
     type ResolvedPeerIdentity,
     type StatsSnapshot,
   } from '../lib/login';
-  import type { AuthSessionState, AuthStore } from '../../lib/auth/auth-store';
-  import { unlockLocalWallet, type UnlockedWallet } from '../../lib/auth/local-wallet';
   import type { SdnApiClient } from '../../lib/auth/sdn-api-client';
 
-  // U1.1 pixel port of login/Login.dc.html; U1.2 wires it to the real U0.3
-  // auth/data surface. Ground truth for pixels: the .dc.html inline
-  // styles/markup/script + its README.md spec — behavior now comes from
-  // `authStore`/`apiClient` instead of the old fixed-timer mock sequence.
-  // `../lib/login.ts` owns all pure logic (PRNG, validation, step view
-  // models, real-stage mapping, telemetry/peer-identity parsing) so it stays
-  // unit-testable outside the DOM/canvas/network.
+  // Dormant SpaceAware Phase 1A read-only identity lookup. Node-session
+  // authentication is intentionally absent until the server-auth-v2 cutover:
+  // this document never accepts wallet credentials or signs on the host.
+  // `../lib/login.ts` owns the pure display and peer-resolution logic so it
+  // stays unit-testable outside the DOM/canvas/network.
 
-  type AuthTab = 'operator' | 'node';
   type NetworkStatus = NodeHealthStatus;
 
   let {
     navigate,
-    authStore,
-    authState,
     apiClient,
-    defaultTab = 'operator',
     showTelemetry = true,
   }: {
     navigate: (path: string) => void;
-    authStore: AuthStore;
-    authState: AuthSessionState;
     apiClient: SdnApiClient;
-    defaultTab?: AuthTab;
     showTelemetry?: boolean;
   } = $props();
 
-  const REMEMBERED_OPERATOR_KEY = 'sa_remembered_operator';
   const TELEMETRY_REFRESH_MS = 30_000;
 
-  let tab = $state<AuthTab>(defaultTab);
-  let opId = $state('');
-  let pass = $state('');
   let nodeKey = $state('');
-  let remember = $state(false);
   let phase = $state<'idle' | 'auth' | 'ok'>('idle');
-  let operatorStep = $state(-1);
   let nodeStep = $state(-1);
   let err = $state('');
   let reqOpen = $state(false);
   let utcDate = $state('');
   let utcTime = $state('');
-
-  // Set only while awaiting `authStore.loginWithWallet(...)`, so a stale
-  // `authState.stage` left over from a PRIOR session (e.g. the user
-  // navigated back to /login while already authenticated) can never be
-  // misread as progress on an attempt that hasn't started yet.
-  let watchingAuthState = $state(false);
 
   let peerIdentity = $state<ResolvedPeerIdentity | null>(null);
 
@@ -98,27 +72,19 @@
   const authing = $derived(phase === 'auth' || phase === 'ok');
   const notAuthing = $derived(!authing);
   const granted = $derived(phase === 'ok');
-  const showOperatorForm = $derived(tab === 'operator' && !authing);
-  const showNodeForm = $derived(tab === 'node' && !authing);
 
   const netColor = $derived(
     liveNetworkStatus === 'NOMINAL' ? '#5ad6a0' : liveNetworkStatus === 'DEGRADED' ? '#ffb24d' : '#ff5b5b',
   );
 
-  const opIdError = $derived(!!err && !opId.trim());
-  const passError = $derived(!!err && !pass);
-  const nodeKeyError = $derived(!!err && tab === 'node');
+  const nodeKeyError = $derived(!!err);
 
-  const authSteps = $derived(
-    buildAuthSteps(tab === 'operator' ? operatorStepLabels() : nodeStepLabels(), tab === 'operator' ? operatorStep : nodeStep),
-  );
+  const authSteps = $derived(buildAuthSteps(nodeStepLabels(), nodeStep));
 
   const grantedText = $derived(
-    tab === 'operator'
-      ? 'ACCESS GRANTED · LOADING SDN CONSOLE'
-      : peerIdentity
-        ? `PEER VERIFIED · ${formatPeerIdentitySummary(peerIdentity)}`
-        : 'PEER RESOLVED · LOADING CATALOG',
+    peerIdentity
+      ? `PEER VERIFIED · ${formatPeerIdentitySummary(peerIdentity)}`
+      : 'PEER RESOLVED · LOADING PUBLIC VIEW',
   );
 
   const trackedDisplay = $derived(formatTelemetryCount(stats.totalRecords));
@@ -129,15 +95,6 @@
 
   let timers: ReturnType<typeof setTimeout>[] = [];
   let telemetryHandle: ReturnType<typeof setInterval> | undefined;
-
-  // Reflects the real `authStore` stage onto the operator tab's step rows
-  // while (and only while) we're awaiting our own `loginWithWallet` call —
-  // see `watchingAuthState` above.
-  $effect(() => {
-    if (!watchingAuthState) return;
-    const target = operatorStepIndexForStage(authState.stage);
-    if (target > operatorStep) operatorStep = target;
-  });
 
   function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => {
@@ -151,40 +108,9 @@
     if (remaining > 0) await sleep(remaining);
   }
 
-  function persistRememberedOperator() {
-    try {
-      if (remember) {
-        localStorage.setItem(REMEMBERED_OPERATOR_KEY, opId);
-      } else {
-        localStorage.removeItem(REMEMBERED_OPERATOR_KEY);
-      }
-    } catch {
-      // localStorage unavailable (private mode, etc.) — non-fatal.
-    }
-  }
-
-  function selectTab(next: AuthTab) {
-    tab = next;
-    err = '';
-  }
-
-  function onOpIdInput(event: Event) {
-    opId = (event.currentTarget as HTMLInputElement).value;
-    err = '';
-  }
-
-  function onPassInput(event: Event) {
-    pass = (event.currentTarget as HTMLInputElement).value;
-    err = '';
-  }
-
   function onNodeKeyInput(event: Event) {
     nodeKey = (event.currentTarget as HTMLTextAreaElement).value;
     err = '';
-  }
-
-  function toggleRemember() {
-    remember = !remember;
   }
 
   function toggleRequestAccess() {
@@ -224,50 +150,10 @@
   }
 
   /**
-   * Real operator auth (U1.2): local wallet unlock (D1 — "operator ID"
-   * labels a browser-side wallet, "passphrase" decrypts it) →
-   * `authStore.loginWithWallet` (challenge fetch → sign → verify →
-   * `auth/me` hydration, all against the shared U0.3 store so
-   * `SpaceAwareApp`'s route guard sees the resulting session). Step rows
-   * advance live off `authState.stage` via the `$effect` above; on any
-   * failure the sequence aborts, the form comes back, and the REAL error
-   * (local-wallet or `SdnApiError` message) lands in the existing banner.
-   */
-  async function runOperatorAuth() {
-    phase = 'auth';
-    operatorStep = 0;
-    err = '';
-    const startedAt = performance.now();
-    let wallet: UnlockedWallet | null = null;
-    try {
-      wallet = await unlockLocalWallet(opId, pass);
-      watchingAuthState = true;
-      try {
-        await authStore.loginWithWallet(wallet);
-      } finally {
-        watchingAuthState = false;
-      }
-      operatorStep = 2;
-      await dwell(startedAt, MIN_SEQUENCE_DWELL_MS);
-      persistRememberedOperator();
-      phase = 'ok';
-      await sleep(GRANTED_DWELL_MS);
-      navigate('/console');
-    } catch (e) {
-      phase = 'idle';
-      operatorStep = -1;
-      err = describeAuthFailure(e);
-    } finally {
-      wallet?.lock();
-    }
-  }
-
-  /**
    * Real node-key resolve (U1.2, D2 v1): resolves the peer ID (or a
    * multiaddr's trailing `/p2p/<id>`) via `GET /api/v1/peers/{peerId}`
    * through the typed client, surfaces its EPM identity, then enters a
-   * read-only explore of the public catalog — no session is created (D2:
-   * only `/console` requires auth), so this never touches `authStore`.
+   * read-only public view. No server session is created.
    */
   async function runNodeResolve() {
     phase = 'auth';
@@ -291,16 +177,6 @@
       nodeStep = -1;
       err = describeAuthFailure(e);
     }
-  }
-
-  function onSubmitOperator(event: SubmitEvent) {
-    event.preventDefault();
-    const validation = validateOperatorForm(opId, pass);
-    if (validation) {
-      err = validation;
-      return;
-    }
-    void runOperatorAuth();
   }
 
   function onSubmitNode(event: SubmitEvent) {
@@ -343,16 +219,6 @@
   }
 
   onMount(() => {
-    try {
-      const saved = localStorage.getItem(REMEMBERED_OPERATOR_KEY);
-      if (saved) {
-        opId = saved;
-        remember = true;
-      }
-    } catch {
-      // localStorage unavailable — leave fields at defaults.
-    }
-
     const tick = () => {
       const iso = new Date().toISOString();
       utcDate = iso.slice(0, 10);
@@ -409,88 +275,15 @@
         </svg>
         <div class="sa-login-brand-text">
           <div class="sa-login-wordmark">SPACE DATA NETWORK</div>
-          <div class="sa-login-kicker">SDN NODE · SECURE ACCESS</div>
+          <div class="sa-login-kicker">SDN NODE · PUBLIC IDENTITY LOOKUP</div>
         </div>
       </div>
 
       <div class="sa-login-panel">
-        <div class="sa-login-tabs">
-          <button
-            type="button"
-            class="sa-login-tab"
-            class:is-active={tab === 'operator'}
-            title="Sign in with operator credentials"
-            onclick={() => selectTab('operator')}
-          >
-            OPERATOR
-          </button>
-          <button
-            type="button"
-            class="sa-login-tab"
-            class:is-active={tab === 'node'}
-            title="Authenticate with a node peer key"
-            onclick={() => selectTab('node')}
-          >
-            NODE KEY
-          </button>
-        </div>
+        <div class="sa-login-section-title">NODE KEY · READ-ONLY</div>
 
         <div class="sa-login-body">
-          {#if showOperatorForm}
-            <form class="sa-login-form" onsubmit={onSubmitOperator}>
-              <label class="sa-login-label">
-                <span class="sa-login-label-text">OPERATOR ID</span>
-                <input
-                  type="text"
-                  id="sa-login-operator-id"
-                  name="operator-id"
-                  class="sa-login-input"
-                  class:is-error={opIdError}
-                  value={opId}
-                  oninput={onOpIdInput}
-                  placeholder="operator@spacedatanetwork.io"
-                  autocomplete="username"
-                  spellcheck="false"
-                  title="Operator ID"
-                />
-              </label>
-              <label class="sa-login-label">
-                <span class="sa-login-label-text">PASSPHRASE</span>
-                <input
-                  type="password"
-                  id="sa-login-passphrase"
-                  name="passphrase"
-                  class="sa-login-input"
-                  class:is-error={passError}
-                  value={pass}
-                  oninput={onPassInput}
-                  placeholder="••••••••••••"
-                  autocomplete="current-password"
-                  title="Passphrase"
-                />
-              </label>
-              <button
-                type="button"
-                class="sa-login-remember"
-                onclick={toggleRemember}
-                title="Keep operator ID on this terminal"
-              >
-                <span class="sa-login-remember-box" class:is-checked={remember}
-                  >{remember ? '✓' : ''}</span
-                >
-                <span class="sa-login-remember-text">REMEMBER OPERATOR ID</span>
-              </button>
-              {#if err}
-                <div class="sa-login-error">
-                  <span class="sa-login-error-icon">⚠</span>
-                  <span class="sa-login-error-text">{err}</span>
-                </div>
-              {/if}
-              <button type="submit" class="sa-login-submit" title="Authenticate and open the SDN console">
-                <span class="sa-login-submit-icon">◈</span>SIGN IN
-              </button>
-            </form>
-          {:else if showNodeForm}
+          {#if notAuthing}
             <form class="sa-login-form" onsubmit={onSubmitNode}>
               <label class="sa-login-label">
                 <span class="sa-login-label-text">PEER ID / MULTIADDR</span>
@@ -519,9 +312,9 @@
               <button
                 type="submit"
                 class="sa-login-submit"
-                title="Verify peer identity and open the SDN console"
+                title="Resolve peer identity and open the public orbital view"
               >
-                <span class="sa-login-submit-icon">◈</span>AUTHENTICATE NODE
+                <span class="sa-login-submit-icon">◈</span>RESOLVE NODE IDENTITY
               </button>
             </form>
           {:else if authing}
@@ -555,14 +348,6 @@
                 >
                   REQUEST ACCESS
                 </button>
-                <button
-                  type="button"
-                  class="sa-login-link-btn"
-                  onclick={toggleRequestAccess}
-                  title="Recover a lost operator passphrase"
-                >
-                  RECOVER PASSPHRASE
-                </button>
               </div>
               {#if reqOpen}
                 <div class="sa-login-info-note">
@@ -574,10 +359,10 @@
               <a
                 href="/orbital"
                 class="sa-login-explore"
-                title="Browse the public catalog without signing in"
+                title="Browse the public orbital view"
                 onclick={onExploreCatalog}
               >
-                <span class="sa-login-explore-icon">◯</span>EXPLORE PUBLIC CATALOG · READ-ONLY
+                <span class="sa-login-explore-icon">◯</span>EXPLORE PUBLIC VIEW · READ-ONLY
               </a>
             </div>
           {/if}
@@ -752,28 +537,14 @@
     box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
   }
 
-  .sa-login-tabs {
-    display: flex;
+  .sa-login-section-title {
     border-bottom: 1px solid rgba(110, 170, 190, 0.16);
-  }
-
-  .sa-login-tab {
-    flex: 1;
-    background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: #5a7a8a;
-    cursor: pointer;
+    color: #eaf6f8;
     font-family: 'Chakra Petch', ui-monospace, monospace;
     font-weight: 600;
-    font-size: 12px;
+    font-size: 11px;
     letter-spacing: 0.14em;
-    padding: 11px 0 9px;
-  }
-
-  .sa-login-tab.is-active {
-    border-bottom-color: #35c9d8;
-    color: #eaf6f8;
+    padding: 11px 26px 9px;
   }
 
   .sa-login-body {
@@ -800,7 +571,6 @@
     color: #5a7a8a;
   }
 
-  .sa-login-input,
   .sa-login-textarea {
     width: 100%;
     background: rgba(4, 8, 12, 0.65);
@@ -810,11 +580,6 @@
     outline: none;
   }
 
-  .sa-login-input {
-    font-size: 13px;
-    padding: 10px 12px;
-  }
-
   .sa-login-textarea {
     font-size: 11.5px;
     line-height: 1.6;
@@ -822,28 +587,18 @@
     resize: none;
   }
 
-  .sa-login-input.is-error,
   .sa-login-textarea.is-error {
     border-color: rgba(255, 107, 107, 0.55);
   }
 
-  .sa-login-input:focus,
   .sa-login-textarea:focus {
     border-color: #35c9d8;
     box-shadow: 0 0 0 1px rgba(53, 201, 216, 0.3);
   }
 
-  .sa-login-input::placeholder,
   .sa-login-textarea::placeholder {
     color: #44586a;
     opacity: 1;
-  }
-
-  .sa-login-input:-webkit-autofill,
-  .sa-login-input:-webkit-autofill:focus {
-    -webkit-text-fill-color: #eaf6f8;
-    -webkit-box-shadow: 0 0 0 40px #0a1218 inset;
-    caret-color: #eaf6f8;
   }
 
   .sa-login-hint {
@@ -858,44 +613,6 @@
   .sa-login-hint-icon {
     font-size: 12px;
     color: #7fb4d6;
-  }
-
-  .sa-login-remember {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    background: transparent;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    text-align: left;
-    width: fit-content;
-  }
-
-  .sa-login-remember-box {
-    width: 14px;
-    height: 14px;
-    flex: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid rgba(110, 170, 190, 0.4);
-    background: transparent;
-    color: #04060a;
-    font-size: 10px;
-    line-height: 1;
-    font-weight: 700;
-  }
-
-  .sa-login-remember-box.is-checked {
-    border-color: #35c9d8;
-    background: #35c9d8;
-  }
-
-  .sa-login-remember-text {
-    font-size: 10px;
-    letter-spacing: 0.14em;
-    color: #7d929b;
   }
 
   .sa-login-error {

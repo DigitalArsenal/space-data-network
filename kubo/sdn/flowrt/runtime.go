@@ -3,15 +3,11 @@ package flowrt
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"sync"
 
 	logging "github.com/ipfs/go-log/v2"
-	"github.com/ipfs/kubo/sdn/flatsqlrt"
-	"github.com/ipfs/kubo/sdn/flowcc"
 	"github.com/ipfs/kubo/sdn/modulert"
 	"github.com/ipfs/kubo/sdn/wasmrt"
 )
@@ -24,11 +20,6 @@ var log = logging.Logger("flowrt")
 type FlowRuntime struct {
 	mod *wasmrt.Module
 	mu  sync.Mutex
-
-	// store is the per-flow dedicated-thread in-wasm FlatSQL engine, attached
-	// when the composed artifact is engine-linked (imports module "flatsql").
-	// nil for bridge-mode / non-store flows. Closed (snapshotted) on Release.
-	store *LinkedStore
 
 	// Descriptor counts cached at init
 	NodeCount    uint32
@@ -90,21 +81,6 @@ type flowEdgeInfo struct {
 	AlignedEligible            bool
 }
 
-// aotCompileComposedArtifact AOT-compiles the ONE composed flow artifact for the
-// node's WasmEdge, caching by content hash under the flowcc home. It REUSES the
-// shared EnsureAOTArtifact path (threads-enabled) — never per-dependency AOT.
-// Returns (aotBytes, true) on success; on any failure it logs LOUDLY and
-// returns (nil, false) so the caller interprets the portable bytes.
-func aotCompileComposedArtifact(wasm []byte) ([]byte, bool) {
-	cacheDir := filepath.Join(flowcc.ResolveHome().CacheDir(), "flow-aot")
-	aot, err := flatsqlrt.EnsureAOTArtifact(cacheDir, "flowrt-composed", wasm)
-	if err != nil || len(aot) == 0 {
-		log.Warnf("Flow runtime: AOT compile of the composed wasi-threads artifact FAILED (%v) — falling back to INTERPRETED, which is ~95x slower and does NOT parallelize threads. This must be fixed for prod.", err)
-		return nil, false
-	}
-	return aot, true
-}
-
 // NewFlowRuntime loads a compiled flow WASM artifact and binds the runtime ABI.
 // Extra wasmrt options (e.g. additional host import modules such as the
 // module-SDK hostcall bridge) are appended after the defaults.
@@ -127,59 +103,14 @@ func NewFlowRuntime(wasmBytes []byte, maxMemoryPages uint32, extraOpts ...wasmrt
 	// the shared memory into the flow's "env" host module, so the sdn/env plugin
 	// ABI and the shared memory coexist. A single-thread emscripten flow lacks the
 	// contract and loads EXACTLY as before (unchanged path).
-	var linkedStore *LinkedStore
-	var linkedStoreDescriptor *LinkedStoreDescriptor
-	engineLinked := wasmImportsModule(wasmBytes, engineImportModule)
-	if engineLinked {
-		var descriptorErr error
-		linkedStoreDescriptor, descriptorErr = ReadLinkedStoreDescriptor(wasmBytes)
-		if descriptorErr != nil {
-			return nil, fmt.Errorf("flowrt: read linked-store descriptor: %w", descriptorErr)
-		}
-		if linkedStoreDescriptor == nil {
-			return nil, fmt.Errorf("flowrt: artifact imports %s but has no %s descriptor", engineImportModule, linkedStoreSectionName)
-		}
-	}
 	if scanWasmThreadFeatures(wasmBytes).isIsomorphicPthreads() {
 		opts = append(opts, wasmrt.WithWASIThreads())
 		log.Infof("Flow runtime: artifact declares the isomorphic wasi-threads contract — enabling WithWASIThreads (guest pthreads run under WasmEdge)")
-		// Engine-linked in-wasm FlatSQL store: the composed flow imports the ONE
-		// symbol flatsql.exec_envelope. Attach a dedicated-thread flatsqlrt engine
-		// and resolve that import to the exec_envelope host trampoline (proven-safe
-		// composition — the engine can NOT join the WithWASIThreads executor). ALL
-		// record logic is in-wasm; the host moves opaque bytes + opaque snapshots.
-		if engineLinked {
-			home := flowcc.ResolveHome()
-			storeDir := filepath.Join(home.CacheDir(), "flow-store")
-			sum := sha256.Sum256(wasmBytes)
-			snap := filepath.Join(storeDir, fmt.Sprintf("%x.snapshot", sum[:16]))
-			ls, serr := OpenLinkedStore(filepath.Join(storeDir, "aot"), snap, linkedStoreDescriptor)
-			if serr != nil {
-				return nil, fmt.Errorf("flowrt: attach in-wasm FlatSQL store: %w", serr)
-			}
-			linkedStore = ls
-			opts = append(opts, wasmrt.WithHostModule(engineImportModule, []wasmrt.HostFunc{ls.ExecEnvelopeHostFunc(), ls.IngestRecordHostFunc(), ls.QueryRowsHostFunc(), ls.MarkDeletedBulkHostFunc(), ls.CompactHostFunc()}))
-			log.Infof("Flow runtime: engine-linked in-wasm FlatSQL store attached (flatsql.exec_envelope; opaque snapshot %s)", snap)
-		}
-		// AOT-at-load: a wasi-threads composed artifact runs ~95x slower AND does
-		// not parallelize when INTERPRETED (measured); AOT is required for both
-		// speed and real thread scaling. Compile once, cache by content hash
-		// (sha(wasm)+WasmEdge version); on failure fall back to interpreted with a
-		// LOUD warning. Scope: the ONE composed artifact only (C3).
-		if aot, ok := aotCompileComposedArtifact(wasmBytes); ok {
-			wasmBytes = aot
-			log.Infof("Flow runtime: loaded AOT-compiled wasi-threads artifact (native code; threads parallelize)")
-		}
-	} else if engineLinked {
-		return nil, fmt.Errorf("flowrt: engine-linked artifacts must declare the wasi-threads contract")
 	}
 	opts = append(opts, extraOpts...)
 
 	mod, err := wasmrt.NewModule(wasmBytes, opts...)
 	if err != nil {
-		if linkedStore != nil {
-			linkedStore.Close()
-		}
 		return nil, fmt.Errorf("failed to create flow WASM module: %w", err)
 	}
 
@@ -188,22 +119,16 @@ func NewFlowRuntime(wasmBytes []byte, maxMemoryPages uint32, extraOpts ...wasmrt
 	case mod.HasFunction("_initialize"):
 		if _, initErr := mod.Execute("_initialize"); initErr != nil {
 			mod.Release()
-			if linkedStore != nil {
-				linkedStore.Close()
-			}
 			return nil, fmt.Errorf("flowrt: run WASI reactor initialization: %w", initErr)
 		}
 	case mod.HasFunction("__wasm_call_ctors"):
 		if _, initErr := mod.Execute("__wasm_call_ctors"); initErr != nil {
 			mod.Release()
-			if linkedStore != nil {
-				linkedStore.Close()
-			}
 			return nil, fmt.Errorf("flowrt: run command module constructors: %w", initErr)
 		}
 	}
 
-	rt := &FlowRuntime{mod: mod, store: linkedStore}
+	rt := &FlowRuntime{mod: mod}
 
 	// Cache descriptor counts, failing load when the required runtime ABI is
 	// absent or traps. Zero is a valid count and must not mask an export error.
@@ -244,12 +169,10 @@ func NewFlowRuntime(wasmBytes []byte, maxMemoryPages uint32, extraOpts ...wasmrt
 		}
 	}
 
-	// Probe for the optional in-wasm scheduler loop (0 iterations = no-op).
-	if _, err := rt.mod.Execute(runtimeExportDrainLinked, int32(0)); err == nil {
-		rt.hasDrainLinked = true
-	} else if _, err := rt.mod.Execute(underscoreRuntimeExportName(runtimeExportDrainLinked), int32(0)); err == nil {
-		rt.hasDrainLinked = true
-	}
+	// Select optional ABI variants by export presence only. Never probe a
+	// stateful export by executing it: a guest can mutate and then trap.
+	rt.hasDrainLinked = rt.mod.HasFunction(runtimeExportDrainLinked) ||
+		rt.mod.HasFunction(underscoreRuntimeExportName(runtimeExportDrainLinked))
 
 	log.Infof("Flow runtime loaded: %d nodes, %d edges, %d triggers, %d deps (in-wasm linked drain: %v)",
 		rt.NodeCount, rt.EdgeCount, rt.TriggerCount, rt.DepCount, rt.hasDrainLinked)
@@ -281,25 +204,12 @@ func (rt *FlowRuntime) WorkerOSThreadIDs() []int64 {
 	return rt.mod.WorkerOSThreadIDs()
 }
 
-// Release frees all WasmEdge resources (snapshotting the store first).
+// Release frees all WasmEdge resources.
 func (rt *FlowRuntime) Release() {
-	if rt.store != nil {
-		rt.store.Close()
-		rt.store = nil
-	}
 	if rt.mod != nil {
 		rt.mod.Release()
 		rt.mod = nil
 	}
-}
-
-// SnapshotStore persists the in-wasm FlatSQL store's opaque snapshot (no-op when
-// the flow has no linked store). Call after a drain that wrote records.
-func (rt *FlowRuntime) SnapshotStore() error {
-	if rt.store == nil {
-		return nil
-	}
-	return rt.store.Snapshot()
 }
 
 // Module returns the underlying wasmrt.Module for advanced use.
@@ -309,14 +219,32 @@ func (rt *FlowRuntime) Module() *wasmrt.Module { return rt.mod }
 // ABI wrappers — all calls are serialized by the caller's mu.Lock
 // ---------------------------------------------------------------------------
 
+type runtimeExecuteFunc func(name string, params ...interface{}) ([]interface{}, error)
+type runtimeHasFunction func(name string) bool
+
+func executeRuntimeExport(hasFunction runtimeHasFunction, execute runtimeExecuteFunc, name string, params ...interface{}) ([]interface{}, error) {
+	if hasFunction == nil || execute == nil {
+		return nil, errors.New("runtime export resolver is unavailable")
+	}
+	selected := name
+	if !hasFunction(selected) {
+		selected = underscoreRuntimeExportName(name)
+		if !hasFunction(selected) {
+			return nil, fmt.Errorf("required runtime export %q is missing (including underscore variant)", name)
+		}
+	}
+	res, err := execute(selected, params...)
+	if err != nil {
+		return nil, fmt.Errorf("execute runtime export %q: %w", selected, err)
+	}
+	return res, nil
+}
+
 // executeUint32 calls a required no-arg export returning a uint32.
 func (rt *FlowRuntime) executeUint32(name string) (uint32, error) {
-	res, err := rt.mod.Execute(name)
+	res, err := executeRuntimeExport(rt.mod.HasFunction, rt.mod.Execute, name)
 	if err != nil {
-		res, err = rt.mod.Execute(underscoreRuntimeExportName(name))
-		if err != nil {
-			return 0, err
-		}
+		return 0, err
 	}
 	if len(res) == 0 {
 		return 0, fmt.Errorf("export %q returned no values", name)
@@ -326,9 +254,7 @@ func (rt *FlowRuntime) executeUint32(name string) (uint32, error) {
 
 // callVoid calls a no-arg void export.
 func (rt *FlowRuntime) callVoid(name string) {
-	if _, err := rt.mod.Execute(name); err != nil {
-		rt.mod.Execute(underscoreRuntimeExportName(name))
-	}
+	_, _ = executeRuntimeExport(rt.mod.HasFunction, rt.mod.Execute, name)
 }
 
 // readCStringAt reads a null-terminated string from the module's memory.
@@ -450,14 +376,22 @@ func (rt *FlowRuntime) GetReadyNodeIndex() (uint32, error) {
 // BeginInvocation begins invocation for the given node with a frame budget.
 // Returns the number of consumed frames.
 func (rt *FlowRuntime) BeginInvocation(nodeIndex uint32, frameBudget int32) int32 {
-	res, err := rt.mod.Execute(runtimeExportBeginInvocation, int32(nodeIndex), frameBudget)
+	consumed, err := rt.beginInvocationChecked(nodeIndex, frameBudget)
 	if err != nil {
-		res, err = rt.mod.Execute(underscoreRuntimeExportName(runtimeExportBeginInvocation), int32(nodeIndex), frameBudget)
-		if err != nil {
-			return 0
-		}
+		return -1
 	}
-	return wasmrt.ToInt32(res[0])
+	return consumed
+}
+
+func (rt *FlowRuntime) beginInvocationChecked(nodeIndex uint32, frameBudget int32) (int32, error) {
+	res, err := executeRuntimeExport(rt.mod.HasFunction, rt.mod.Execute, runtimeExportBeginInvocation, int32(nodeIndex), frameBudget)
+	if err != nil {
+		return 0, fmt.Errorf("begin invocation for node %d: %w", nodeIndex, err)
+	}
+	if len(res) == 0 {
+		return 0, fmt.Errorf("begin invocation for node %d returned no values", nodeIndex)
+	}
+	return wasmrt.ToInt32(res[0]), nil
 }
 
 // GetCurrentInvocationDescriptor reads the current invocation descriptor.
@@ -482,7 +416,7 @@ func (rt *FlowRuntime) ApplyInvocationResult(nodeIndex uint32, result *Invocatio
 	if result.Yielded {
 		yielded = 1
 	}
-	res, err := rt.mod.Execute(runtimeExportApplyInvocationResult,
+	res, err := executeRuntimeExport(rt.mod.HasFunction, rt.mod.Execute, runtimeExportApplyInvocationResult,
 		int32(nodeIndex),
 		result.StatusCode,
 		int32(result.BacklogRemaining),
@@ -491,17 +425,7 @@ func (rt *FlowRuntime) ApplyInvocationResult(nodeIndex uint32, result *Invocatio
 		int32(frameCount),
 	)
 	if err != nil {
-		res, err = rt.mod.Execute(underscoreRuntimeExportName(runtimeExportApplyInvocationResult),
-			int32(nodeIndex),
-			result.StatusCode,
-			int32(result.BacklogRemaining),
-			yielded,
-			int32(framesPtr),
-			int32(frameCount),
-		)
-		if err != nil {
-			return 0, fmt.Errorf("apply invocation result for node %d: %w", nodeIndex, err)
-		}
+		return 0, fmt.Errorf("apply invocation result for node %d: %w", nodeIndex, err)
 	}
 	if len(res) == 0 {
 		return 0, fmt.Errorf("apply invocation result for node %d returned no values", nodeIndex)
@@ -511,21 +435,35 @@ func (rt *FlowRuntime) ApplyInvocationResult(nodeIndex uint32, result *Invocatio
 
 // CompleteInvocation completes the invocation for a node.
 func (rt *FlowRuntime) CompleteInvocation(nodeIndex uint32) {
-	rt.mod.Execute(runtimeExportCompleteInvocation, int32(nodeIndex))
+	_ = rt.completeInvocationChecked(nodeIndex)
+}
+
+func (rt *FlowRuntime) completeInvocationChecked(nodeIndex uint32) error {
+	if _, err := executeRuntimeExport(rt.mod.HasFunction, rt.mod.Execute, runtimeExportCompleteInvocation, int32(nodeIndex)); err != nil {
+		return fmt.Errorf("complete invocation for node %d: %w", nodeIndex, err)
+	}
+	return nil
 }
 
 // EnqueueTrigger enqueues a trigger without frame data.
 func (rt *FlowRuntime) EnqueueTrigger(triggerIndex uint32) {
-	rt.mod.Execute(runtimeExportEnqueueTriggerFrames, int32(triggerIndex))
+	_ = rt.EnqueueTriggerChecked(triggerIndex)
+}
+
+// EnqueueTriggerChecked enqueues a generic startup/wakeup trigger and surfaces
+// runtime execution failures to lifecycle callers that must fail observably.
+func (rt *FlowRuntime) EnqueueTriggerChecked(triggerIndex uint32) error {
+	if _, err := executeRuntimeExport(rt.mod.HasFunction, rt.mod.Execute, runtimeExportEnqueueTriggerFrames, int32(triggerIndex)); err != nil {
+		return fmt.Errorf("enqueue trigger %d: %w", triggerIndex, err)
+	}
+	return nil
 }
 
 // EnqueueTriggerFrame enqueues a frame to a trigger's input and surfaces any
 // parent-runtime rejection. The compiled runtime copies accepted frame bytes.
 func (rt *FlowRuntime) EnqueueTriggerFrame(triggerIndex uint32, framePtr uint32) error {
-	if _, err := rt.mod.Execute(runtimeExportEnqueueTriggerFrame, int32(triggerIndex), int32(framePtr)); err != nil {
-		if _, fallbackErr := rt.mod.Execute(underscoreRuntimeExportName(runtimeExportEnqueueTriggerFrame), int32(triggerIndex), int32(framePtr)); fallbackErr != nil {
-			return fmt.Errorf("enqueue trigger %d frame at %d: %w", triggerIndex, framePtr, err)
-		}
+	if _, err := executeRuntimeExport(rt.mod.HasFunction, rt.mod.Execute, runtimeExportEnqueueTriggerFrame, int32(triggerIndex), int32(framePtr)); err != nil {
+		return fmt.Errorf("enqueue trigger %d frame at %d: %w", triggerIndex, framePtr, err)
 	}
 	return nil
 }
@@ -617,9 +555,12 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 		// engine body-refs are harvested before it is released.
 		if rt.hasDrainLinked {
 			runLinked := func() error {
-				res, err := rt.mod.Execute(runtimeExportDrainLinked, int32(maxIter))
+				res, err := executeRuntimeExport(rt.mod.HasFunction, rt.mod.Execute, runtimeExportDrainLinked, int32(maxIter))
 				if err != nil {
 					return err
+				}
+				if len(res) == 0 {
+					return errors.New("linked drain returned no values")
 				}
 				if dispatched := wasmrt.ToInt32(res[0]); dispatched > 0 {
 					result.NodesInvoked += int(dispatched)
@@ -632,7 +573,9 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 					return result, fmt.Errorf("linked drain: %w", err)
 				}
 			} else {
-				_ = runLinked() // best-effort, host loop below is the fallback
+				if err := runLinked(); err != nil {
+					return result, fmt.Errorf("linked drain: %w", err)
+				}
 			}
 		}
 
@@ -648,11 +591,13 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 		result.Iterations++
 
 		// Begin invocation with default frame budget
-		consumed := rt.BeginInvocation(nodeIndex, 64)
+		consumed, beginErr := rt.beginInvocationChecked(nodeIndex, 64)
+		if beginErr != nil {
+			return result, fmt.Errorf("flowrt: begin node %d invocation: %w", nodeIndex, beginErr)
+		}
 		if consumed < 0 {
-			log.Warnf("BeginInvocation(%d) returned %d", nodeIndex, consumed)
-			rt.CompleteInvocation(nodeIndex)
-			continue
+			beginErr := fmt.Errorf("flowrt: begin node %d invocation rejected with status %d", nodeIndex, consumed)
+			return result, errors.Join(beginErr, rt.completeInvocationChecked(nodeIndex))
 		}
 
 		// The node's dispatch identity is static per artifact — served from
@@ -671,33 +616,33 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 		// linked-direct nodes consume their (possibly multi-megabyte) frames
 		// entirely inside the artifact's linear memory — copying them out
 		// here just to discard them was a per-dispatch stream-sized copy.
-		handler := handlers.Resolve(pluginID, methodID, dependencyID, nodeID)
-		if handler == nil {
-			log.Debugf("No handler for %s:%s (node=%s, dep=%s)", pluginID, methodID, nodeID, dependencyID)
+		handler, direct, handlerResolveErr := resolveDrainHandler(handlers, info)
+		if handlerResolveErr != nil {
 			result.HandlersSkipped++
-
-			if info.DispatchModel == "linked-direct" {
-				rt.dispatchDirect(nodeIndex)
-				result.NodesInvoked++
-				continue
+			return result, errors.Join(handlerResolveErr, rt.completeInvocationChecked(nodeIndex))
+		}
+		if direct {
+			if err := rt.dispatchDirect(nodeIndex); err != nil {
+				return result, err
 			}
-
-			rt.CompleteInvocation(nodeIndex)
+			result.NodesInvoked++
 			continue
 		}
 
 		// Host-model dispatch: read the invocation descriptor + input frames.
 		invDesc, err := rt.GetCurrentInvocationDescriptor()
 		if err != nil {
-			log.Warnf("GetCurrentInvocationDescriptor: %v", err)
-			rt.CompleteInvocation(nodeIndex)
-			continue
+			return result, errors.Join(
+				fmt.Errorf("flowrt: read current invocation descriptor for node %d: %w", nodeIndex, err),
+				rt.completeInvocationChecked(nodeIndex),
+			)
 		}
 		frames, err := rt.readInputFrames(invDesc)
 		if err != nil {
-			log.Warnf("readInputFrames: %v", err)
-			rt.CompleteInvocation(nodeIndex)
-			continue
+			return result, errors.Join(
+				fmt.Errorf("flowrt: read input frames for node %d: %w", nodeIndex, err),
+				rt.completeInvocationChecked(nodeIndex),
+			)
 		}
 
 		// Invoke handler
@@ -710,28 +655,30 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 			Frames:       frames,
 		}
 
-		handlerResult, err := handler(ctx, args)
+		handlerResult, handlerErr := handler(ctx, args)
+		handlerResult, err = validateInvocationHandlerResult(nodeIndex, pluginID, methodID, handlerResult, handlerErr)
 		if err != nil {
-			log.Warnf("Handler %s:%s error: %v", pluginID, methodID, err)
-			handlerResult = &InvocationResult{StatusCode: -1}
-		}
-		if handlerResult == nil {
-			handlerResult = &InvocationResult{StatusCode: -1}
+			return result, errors.Join(err, rt.completeInvocationChecked(nodeIndex))
 		}
 
 		// Write output frames and apply result
 		framesPtr, frameCount, lease, writeErr := rt.writeOutputFrames(nodeIndex, handlerResult.Outputs)
 		if writeErr != nil {
-			rt.CompleteInvocation(nodeIndex)
-			return result, fmt.Errorf("flowrt: prepare outputs for node %d: %w", nodeIndex, writeErr)
+			return result, errors.Join(
+				fmt.Errorf("flowrt: prepare outputs for node %d: %w", nodeIndex, writeErr),
+				rt.completeInvocationChecked(nodeIndex),
+			)
 		}
 		_, applyErr := rt.ApplyInvocationResult(nodeIndex, handlerResult, framesPtr, frameCount)
 		if lease != nil {
 			lease.Release()
 		}
-		rt.CompleteInvocation(nodeIndex)
+		completeErr := rt.completeInvocationChecked(nodeIndex)
 		if applyErr != nil {
-			return result, fmt.Errorf("flowrt: route outputs for node %d: %w", nodeIndex, applyErr)
+			return result, errors.Join(fmt.Errorf("flowrt: route outputs for node %d: %w", nodeIndex, applyErr), completeErr)
+		}
+		if completeErr != nil {
+			return result, completeErr
 		}
 		result.NodesInvoked++
 	}
@@ -746,6 +693,33 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 	}
 
 	return result, nil
+}
+
+func validateInvocationHandlerResult(nodeIndex uint32, pluginID, methodID string, handlerResult *InvocationResult, handlerErr error) (*InvocationResult, error) {
+	if handlerErr != nil {
+		return nil, fmt.Errorf("flowrt: handler %s:%s for node %d failed: %w", pluginID, methodID, nodeIndex, handlerErr)
+	}
+	if handlerResult == nil {
+		return nil, fmt.Errorf("flowrt: handler %s:%s for node %d returned a nil result", pluginID, methodID, nodeIndex)
+	}
+	if handlerResult.StatusCode != 0 {
+		return nil, fmt.Errorf("flowrt: handler %s:%s for node %d returned status %d", pluginID, methodID, nodeIndex, handlerResult.StatusCode)
+	}
+	return handlerResult, nil
+}
+
+func resolveDrainHandler(handlers HandlerMap, info flowNodeInfo) (Handler, bool, error) {
+	handler := handlers.Resolve(info.PluginID, info.MethodID, info.DependencyID, info.NodeID)
+	if handler != nil {
+		return handler, false, nil
+	}
+	if info.DispatchModel == "linked-direct" {
+		return nil, true, nil
+	}
+	return nil, false, fmt.Errorf(
+		"flowrt: no handler for plugin=%q method=%q node=%q dependency=%q dispatch=%q",
+		info.PluginID, info.MethodID, info.NodeID, info.DependencyID, info.DispatchModel,
+	)
 }
 
 // DrainOnce runs a single drain pass (convenience for trigger handlers).
@@ -812,35 +786,42 @@ func (rt *FlowRuntime) readInputFrames(inv *FlowInvocationDescriptor) ([]FrameDa
 			Sequence:          fd.Sequence,
 			EndOfStream:       fd.EndOfStream,
 		}
-		if fd.TypeDescriptorIdx < uint32(len(rt.edgeInfo)) {
-			edge := rt.edgeInfo[fd.TypeDescriptorIdx]
-			if edge.Descriptor.ToNode != inv.NodeIndex || edge.ToPort != portID {
-				return frames, fmt.Errorf("input frame %d type descriptor %d is not bound to node %d port %q", i, fd.TypeDescriptorIdx, inv.NodeIndex, portID)
-			}
-			if fd.WireFormat == 0 && !edge.CanonicalFallbackAvailable {
-				return frames, fmt.Errorf("input frame %d uses unavailable canonical fallback on edge %d", i, edge.Index)
-			}
-			if fd.WireFormat == 1 {
-				if !edge.AlignedEligible || fd.Size != edge.Descriptor.AlignedByteLength ||
-					fd.Alignment < edge.Descriptor.AlignedRequiredAlignment ||
-					fd.Offset%edge.Descriptor.AlignedRequiredAlignment != 0 {
-					return frames, fmt.Errorf("input frame %d violates aligned layout on edge %d", i, edge.Index)
-				}
-			}
-			frame.SchemaName = edge.SchemaName
-			frame.FileIdentifier = edge.FileIdentifier
-			frame.SchemaVersion = edge.SchemaVersion
-			frame.SchemaHash = append([]byte(nil), edge.SchemaHash...)
-			frame.RootTypeName = edge.RootTypeName
-			frame.FixedStringLength = edge.Descriptor.AlignedFixedStringLength
-			frame.ByteLength = edge.Descriptor.AlignedByteLength
-			frame.RequiredAlignment = edge.Descriptor.AlignedRequiredAlignment
-		} else if fd.WireFormat == 1 {
-			return frames, fmt.Errorf("input frame %d aligned representation has no signed edge type descriptor", i)
+		if err := bindInputFrameType(&frame, fd, inv.NodeIndex, rt.edgeInfo); err != nil {
+			return frames, fmt.Errorf("input frame %d: %w", i, err)
 		}
 		frames = append(frames, frame)
 	}
 	return frames, nil
+}
+
+func bindInputFrameType(frame *FrameData, fd *FlowFrameDescriptor, nodeIndex uint32, edges []flowEdgeInfo) error {
+	if frame == nil || fd == nil {
+		return errors.New("frame and descriptor are required")
+	}
+	if fd.TypeDescriptorIdx >= uint32(len(edges)) {
+		return fmt.Errorf("canonical/aligned frame has no signed type descriptor (index %d, count %d)", fd.TypeDescriptorIdx, len(edges))
+	}
+	edge := edges[fd.TypeDescriptorIdx]
+	if edge.Descriptor.ToNode != nodeIndex || edge.ToPort != frame.PortID {
+		return fmt.Errorf("type descriptor %d is not bound to node %d port %q", fd.TypeDescriptorIdx, nodeIndex, frame.PortID)
+	}
+	if fd.WireFormat == 0 && !edge.CanonicalFallbackAvailable {
+		return fmt.Errorf("canonical fallback is unavailable on descriptor %d", edge.Index)
+	}
+	if fd.WireFormat == 1 && (!edge.AlignedEligible || fd.Size != edge.Descriptor.AlignedByteLength ||
+		fd.Alignment < edge.Descriptor.AlignedRequiredAlignment ||
+		fd.Offset%edge.Descriptor.AlignedRequiredAlignment != 0) {
+		return fmt.Errorf("aligned layout violates descriptor %d", edge.Index)
+	}
+	frame.SchemaName = edge.SchemaName
+	frame.FileIdentifier = edge.FileIdentifier
+	frame.SchemaVersion = edge.SchemaVersion
+	frame.SchemaHash = append([]byte(nil), edge.SchemaHash...)
+	frame.RootTypeName = edge.RootTypeName
+	frame.FixedStringLength = edge.Descriptor.AlignedFixedStringLength
+	frame.ByteLength = edge.Descriptor.AlignedByteLength
+	frame.RequiredAlignment = edge.Descriptor.AlignedRequiredAlignment
+	return nil
 }
 
 type outputFrameAllocation struct {
@@ -1047,11 +1028,11 @@ func (rt *FlowRuntime) writeOutputFrames(nodeIndex uint32, outputs []FrameOutput
 }
 
 // dispatchDirect calls the linked-direct dispatch for the current invocation.
-func (rt *FlowRuntime) dispatchDirect(nodeIndex uint32) {
-	res, err := rt.mod.Execute(runtimeExportDispatchCurrentInvocation, int32(64))
-	if err != nil {
-		rt.mod.Execute(underscoreRuntimeExportName(runtimeExportDispatchCurrentInvocation), int32(64))
+func (rt *FlowRuntime) dispatchDirect(nodeIndex uint32) error {
+	_, dispatchErr := executeRuntimeExport(rt.mod.HasFunction, rt.mod.Execute, runtimeExportDispatchCurrentInvocation, int32(64))
+	completeErr := rt.completeInvocationChecked(nodeIndex)
+	if dispatchErr != nil {
+		return errors.Join(fmt.Errorf("flowrt: linked-direct dispatch for node %d: %w", nodeIndex, dispatchErr), completeErr)
 	}
-	_ = res
-	rt.CompleteInvocation(nodeIndex)
+	return completeErr
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -29,10 +28,11 @@ type fakeIsomorphicNode struct {
 	backlog   uint32
 }
 
-func (node *fakeIsomorphicNode) ID() string                   { return node.id }
-func (node *fakeIsomorphicNode) ContentHash() string          { return node.hash }
-func (node *fakeIsomorphicNode) Manifest() *modulert.Manifest { return node.manifest }
-func (node *fakeIsomorphicNode) Close() error                 { node.closed = true; return nil }
+func (node *fakeIsomorphicNode) ID() string                      { return node.id }
+func (node *fakeIsomorphicNode) ContentHash() string             { return node.hash }
+func (node *fakeIsomorphicNode) BoundIdentity() (string, string) { return node.hash, node.id }
+func (node *fakeIsomorphicNode) Manifest() *modulert.Manifest    { return node.manifest }
+func (node *fakeIsomorphicNode) Close() error                    { node.closed = true; return nil }
 func (node *fakeIsomorphicNode) InvokeMethodFrameSet(_ context.Context, _ string, inputs []modulert.InvokeInputFrame) (*modulert.InvokeFrameSetResult, error) {
 	node.inputs = append([]modulert.InvokeInputFrame(nil), inputs...)
 	if node.invokeErr != nil {
@@ -53,24 +53,49 @@ type fakeIsomorphicParent struct {
 	handlers     flowrt.HandlerMap
 	closed       bool
 	bootErr      error
+	drainErr     error
 	activated    chan struct{}
 	activateOnce sync.Once
 }
 
-func (parent *fakeIsomorphicParent) ValidateNodes(nodes []flowrt.IsomorphicNodeArtifact) error {
-	parent.validated = append([]flowrt.IsomorphicNodeArtifact(nil), nodes...)
-	return nil
+type activationContextParent struct {
+	activationResult chan error
 }
 
-func (parent *fakeIsomorphicParent) Activate(ctx context.Context, handlers flowrt.HandlerMap) error {
+func (*activationContextParent) ValidateNodes([]flowrt.IsomorphicNodeArtifact) error { return nil }
+func (*activationContextParent) PrepareActivation() error                            { return nil }
+func (*activationContextParent) DrainPrepared(ctx context.Context, _ flowrt.HandlerMap) error {
+	return ctx.Err()
+}
+func (parent *activationContextParent) Activate(ctx context.Context, _ flowrt.HandlerMap) error {
+	err := ctx.Err()
+	parent.activationResult <- err
+	return err
+}
+func (*activationContextParent) Release() {}
+
+func (parent *fakeIsomorphicParent) ValidateNodes(nodes []flowrt.IsomorphicNodeArtifact) error {
+	parent.validated = append([]flowrt.IsomorphicNodeArtifact(nil), nodes...)
+	return parent.drainErr
+}
+
+func (parent *fakeIsomorphicParent) PrepareActivation() error {
+	return parent.bootErr
+}
+
+func (parent *fakeIsomorphicParent) DrainPrepared(_ context.Context, handlers flowrt.HandlerMap) error {
 	parent.handlers = handlers
 	if parent.activated != nil {
 		parent.activateOnce.Do(func() { close(parent.activated) })
 	}
-	if parent.bootErr != nil {
-		return parent.bootErr
-	}
 	return nil
+}
+
+func (parent *fakeIsomorphicParent) Activate(ctx context.Context, handlers flowrt.HandlerMap) error {
+	if err := parent.PrepareActivation(); err != nil {
+		return err
+	}
+	return parent.DrainPrepared(ctx, handlers)
 }
 
 func (parent *fakeIsomorphicParent) Release() { parent.closed = true }
@@ -86,12 +111,19 @@ type blockingLifecycleParent struct {
 func (parent *blockingLifecycleParent) ValidateNodes([]flowrt.IsomorphicNodeArtifact) error {
 	return nil
 }
-func (parent *blockingLifecycleParent) Activate(context.Context, flowrt.HandlerMap) error {
+func (parent *blockingLifecycleParent) PrepareActivation() error { return nil }
+func (parent *blockingLifecycleParent) DrainPrepared(context.Context, flowrt.HandlerMap) error {
 	parent.mu.Lock()
 	defer parent.mu.Unlock()
 	close(parent.entered)
 	<-parent.resume
 	return parent.err
+}
+func (parent *blockingLifecycleParent) Activate(ctx context.Context, handlers flowrt.HandlerMap) error {
+	if err := parent.PrepareActivation(); err != nil {
+		return err
+	}
+	return parent.DrainPrepared(ctx, handlers)
 }
 func (parent *blockingLifecycleParent) Release() {
 	parent.mu.Lock()
@@ -101,9 +133,10 @@ func (parent *blockingLifecycleParent) Release() {
 
 type closeSignalNode struct{ closed chan struct{} }
 
-func (*closeSignalNode) ID() string                   { return "node" }
-func (*closeSignalNode) ContentHash() string          { return strings.Repeat("d", 64) }
-func (*closeSignalNode) Manifest() *modulert.Manifest { return nil }
+func (*closeSignalNode) ID() string                      { return "node" }
+func (*closeSignalNode) ContentHash() string             { return strings.Repeat("d", 64) }
+func (*closeSignalNode) BoundIdentity() (string, string) { return strings.Repeat("d", 64), "node" }
+func (*closeSignalNode) Manifest() *modulert.Manifest    { return nil }
 func (*closeSignalNode) InvokeMethodFrameSet(context.Context, string, []modulert.InvokeInputFrame) (*modulert.InvokeFrameSetResult, error) {
 	return nil, nil
 }
@@ -173,14 +206,16 @@ func TestInstallSignedBundleInstantiatesExactMembersAndBindsEntryIDHandlers(t *t
 		return metadata, nil
 	}
 	var loadedBytes [][]byte
+	var loadedScopes [][2]string
 	schemaHash := []byte{0xde, 0xad, 0xbe, 0xef}
 	nodes := []*fakeIsomorphicNode{
 		{id: "org.example.source", hash: metadata.Nodes[0].ContentHash, manifest: &modulert.Manifest{PluginID: "org.example.source"}, outputs: []modulert.InvokeOutputFrame{{PortID: "alpha", Payload: []byte{0, 1}, Alignment: 8, SchemaName: "Opaque.fbs", FileIdentifier: "OPAQ", SchemaVersion: "1.0.0", SchemaHash: schemaHash, RootTypeName: "Opaque", Ownership: 0, Mutability: 0, FrameID: 41}, {PortID: "beta", Payload: []byte{2, 0, 3}, Alignment: 8, SchemaName: "Opaque.fbs", FileIdentifier: "OPAQ", SchemaVersion: "1.0.0", SchemaHash: schemaHash, RootTypeName: "Opaque", Ownership: 0, Mutability: 0, FrameID: 43}}, yielded: true, backlog: 3817},
 		{id: "org.example.sink", hash: metadata.Nodes[1].ContentHash, manifest: &modulert.Manifest{PluginID: "org.example.sink"}},
 	}
 	loadIndex := 0
-	installer.loadIsomorphicNode = func(signed []byte) (isomorphicNodeInstance, error) {
+	installer.loadIsomorphicNode = func(signed []byte, outerHash, entryID string) (isomorphicNodeInstance, error) {
 		loadedBytes = append(loadedBytes, append([]byte(nil), signed...))
+		loadedScopes = append(loadedScopes, [2]string{outerHash, entryID})
 		node := nodes[loadIndex]
 		loadIndex++
 		return node, nil
@@ -209,6 +244,9 @@ func TestInstallSignedBundleInstantiatesExactMembersAndBindsEntryIDHandlers(t *t
 	}
 	if len(loadedBytes) != 2 || !bytes.Equal(loadedBytes[0], metadata.Nodes[0].SignedArtifact) || !bytes.Equal(loadedBytes[1], metadata.Nodes[1].SignedArtifact) {
 		t.Fatalf("child signed bytes changed: %x", loadedBytes)
+	}
+	if len(loadedScopes) != 2 || loadedScopes[0] != [2]string{metadata.ContentHash, metadata.Nodes[0].EntryID} || loadedScopes[1] != [2]string{metadata.ContentHash, metadata.Nodes[1].EntryID} {
+		t.Fatalf("child instance scopes = %+v, want outer bundle hash + exact entry IDs", loadedScopes)
 	}
 	if !bytes.Equal(storedAPP, metadata.Bundle.Entries[4].Payload) {
 		t.Fatalf("stored APP bytes = %x", storedAPP)
@@ -278,6 +316,201 @@ func TestInstallSignedBundleInstantiatesExactMembersAndBindsEntryIDHandlers(t *t
 	}
 }
 
+func TestInstallSignedBundleWakeupUsesInstallerLifetimeAfterCallerCancellation(t *testing.T) {
+	installer, _ := newIsomorphicInstallerForTest(t)
+	defer installer.Close()
+	wakeups := sdnservices.NewWakeupBroker(nil)
+	defer wakeups.Close()
+	installer.svc.Wakeups = wakeups
+
+	metadata := neutralSignedBundleMetadata()
+	bundlePath := t.TempDir() + "/neutral-flow.wasm"
+	if err := writeTestBundle(bundlePath, metadata.SignedArtifact); err != nil {
+		t.Fatal(err)
+	}
+	installer.verifyIsomorphicBundle = func([]byte) (*flowrt.IsomorphicBundleMetadata, error) {
+		return metadata, nil
+	}
+	parent := &activationContextParent{activationResult: make(chan error, 1)}
+	installer.loadIsomorphicParent = func([]byte, uint32) (isomorphicParentRuntime, error) {
+		return parent, nil
+	}
+	timerNode := &fakeIsomorphicNode{
+		id:   "neutral.timer",
+		hash: metadata.Nodes[0].ContentHash,
+		manifest: &modulert.Manifest{
+			Capabilities: []string{"timers"},
+			Methods:      []modulert.ManifestMethod{{MethodID: "on_wakeup"}},
+		},
+	}
+	nodes := []isomorphicNodeInstance{
+		timerNode,
+		&fakeIsomorphicNode{id: "neutral.sink", hash: metadata.Nodes[1].ContentHash},
+	}
+	loadIndex := 0
+	installer.loadIsomorphicNode = func([]byte, string, string) (isomorphicNodeInstance, error) {
+		node := nodes[loadIndex]
+		loadIndex++
+		return node, nil
+	}
+	installer.storeApplicationArtifact = func(context.Context, []byte) error { return nil }
+
+	callerCtx, cancelCaller := context.WithCancel(t.Context())
+	if _, err := installer.InstallSignedBundle(callerCtx, bundlePath, "test"); err != nil {
+		t.Fatalf("InstallSignedBundle() error = %v", err)
+	}
+	cancelCaller()
+
+	identity := sdnservices.WakeupIdentity{ArtifactHash: timerNode.hash, NodeID: timerNode.id}
+	if err := wakeups.Arm(identity, "neutral-token", time.Now()); err != nil {
+		t.Fatalf("Arm() error = %v", err)
+	}
+	select {
+	case activationErr := <-parent.activationResult:
+		if activationErr != nil {
+			t.Fatalf("wakeup activation context error = %v, want nil", activationErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("wakeup did not activate the successfully installed flow")
+	}
+}
+
+func TestInstallSignedBundleStartupDrainUsesCallerCancellation(t *testing.T) {
+	installer, registry := newIsomorphicInstallerForTest(t)
+	defer installer.Close()
+	metadata := neutralSignedBundleMetadata()
+	bundlePath := t.TempDir() + "/neutral-flow.wasm"
+	if err := writeTestBundle(bundlePath, metadata.SignedArtifact); err != nil {
+		t.Fatal(err)
+	}
+	installer.verifyIsomorphicBundle = func([]byte) (*flowrt.IsomorphicBundleMetadata, error) {
+		return metadata, nil
+	}
+	installer.loadIsomorphicParent = func([]byte, uint32) (isomorphicParentRuntime, error) {
+		return &activationContextParent{activationResult: make(chan error, 1)}, nil
+	}
+	loadIndex := 0
+	installer.loadIsomorphicNode = func([]byte, string, string) (isomorphicNodeInstance, error) {
+		artifact := metadata.Nodes[loadIndex]
+		loadIndex++
+		return &fakeIsomorphicNode{id: artifact.EntryID, hash: artifact.ContentHash}, nil
+	}
+	stored := false
+	installer.storeApplicationArtifact = func(context.Context, []byte) error {
+		stored = true
+		return nil
+	}
+
+	callerCtx, cancelCaller := context.WithCancel(t.Context())
+	cancelCaller()
+	_, err := installer.InstallSignedBundle(callerCtx, bundlePath, "test")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("InstallSignedBundle() error = %v, want caller cancellation", err)
+	}
+	if stored || installer.IsomorphicFlow(metadata.ContentHash) != nil {
+		t.Fatal("caller-canceled startup was published")
+	}
+	if entries, listErr := registry.List(); listErr != nil || len(entries) != 0 {
+		t.Fatalf("registry after caller-canceled startup = %+v, %v", entries, listErr)
+	}
+}
+
+func TestInstallSignedBundleRejectsStartupTriggerBeforePublishingApplication(t *testing.T) {
+	installer, registry := newIsomorphicInstallerForTest(t)
+	defer installer.Close()
+	metadata := neutralSignedBundleMetadata()
+	bundlePath := t.TempDir() + "/neutral-flow.wasm"
+	if err := writeTestBundle(bundlePath, metadata.SignedArtifact); err != nil {
+		t.Fatal(err)
+	}
+	installer.verifyIsomorphicBundle = func([]byte) (*flowrt.IsomorphicBundleMetadata, error) {
+		return metadata, nil
+	}
+	parent := &fakeIsomorphicParent{bootErr: errors.New("startup trigger descriptor rejected")}
+	installer.loadIsomorphicParent = func([]byte, uint32) (isomorphicParentRuntime, error) {
+		return parent, nil
+	}
+	index := 0
+	installer.loadIsomorphicNode = func([]byte, string, string) (isomorphicNodeInstance, error) {
+		artifact := metadata.Nodes[index]
+		index++
+		return &fakeIsomorphicNode{id: artifact.EntryID, hash: artifact.ContentHash}, nil
+	}
+	stored := false
+	installer.storeApplicationArtifact = func(context.Context, []byte) error {
+		stored = true
+		return nil
+	}
+
+	_, err := installer.InstallSignedBundle(t.Context(), bundlePath, "test")
+	if err == nil || !strings.Contains(err.Error(), "startup trigger descriptor rejected") {
+		t.Fatalf("InstallSignedBundle() error = %v, want observable startup preflight rejection", err)
+	}
+	if stored {
+		t.Fatal("APP artifact was published before startup trigger preflight succeeded")
+	}
+	if installer.IsomorphicFlow(metadata.ContentHash) != nil {
+		t.Fatal("startup-rejected bundle became visible")
+	}
+	if entries, listErr := registry.List(); listErr != nil || len(entries) != 0 {
+		t.Fatalf("registry after startup rejection = %+v, %v", entries, listErr)
+	}
+	if !parent.closed {
+		t.Fatal("startup-rejected parent runtime was not released")
+	}
+}
+
+func TestIsomorphicNodeHandlerRequiresCanonicalFallbackAcrossSeparateMemories(t *testing.T) {
+	node := &fakeIsomorphicNode{id: "org.example.separate", hash: strings.Repeat("e", 64)}
+	handler := isomorphicNodeHandler(node, nil)
+
+	_, err := handler(t.Context(), &flowrt.InvocationArgs{
+		NodeID:   "separate",
+		MethodID: "consume",
+		Frames: []flowrt.FrameData{{
+			PortID:       "records",
+			Bytes:        make([]byte, 64),
+			WireFormat:   1,
+			Alignment:    8,
+			Ownership:    0,
+			Mutability:   0,
+			Lifetime:     1,
+			SchemaName:   "Records.fbs",
+			RootTypeName: "Records",
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "canonical fallback") {
+		t.Fatalf("aligned cross-instance input error = %v, want canonical fallback requirement", err)
+	}
+	if len(node.inputs) != 0 {
+		t.Fatalf("aligned cross-instance input reached child: %+v", node.inputs)
+	}
+
+	node.outputs = []modulert.InvokeOutputFrame{{
+		PortID:       "records",
+		Payload:      make([]byte, 64),
+		WireFormat:   1,
+		Alignment:    8,
+		SchemaName:   "Records.fbs",
+		RootTypeName: "Records",
+	}}
+	_, err = handler(t.Context(), &flowrt.InvocationArgs{
+		NodeID:   "separate",
+		MethodID: "produce",
+		Frames: []flowrt.FrameData{{
+			PortID:       "start",
+			WireFormat:   0,
+			Alignment:    1,
+			Lifetime:     1,
+			SchemaName:   "Start.fbs",
+			RootTypeName: "Start",
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "canonical fallback") {
+		t.Fatalf("aligned cross-instance output error = %v, want canonical fallback requirement", err)
+	}
+}
+
 func TestSignedRuntimeNodeRouteMetadataRejectsAmbiguousOrUnsafeRoutes(t *testing.T) {
 	base := neutralSignedBundleMetadata()
 	artifactIndex := 3
@@ -309,11 +542,14 @@ func TestCloseLiveIsomorphicFlowQuiescesParentBeforeClosingChildren(t *testing.T
 		release: make(chan struct{}),
 	}
 	node := &closeSignalNode{closed: make(chan struct{})}
+	activationCtx, activationCancel := context.WithCancel(context.Background())
 	live := &liveIsomorphicFlow{
-		parent: parent,
-		nodes:  map[string]isomorphicNodeInstance{"node.wasm": node},
+		parent:           parent,
+		nodes:            map[string]isomorphicNodeInstance{"node.wasm": node},
+		activationCtx:    activationCtx,
+		activationCancel: activationCancel,
 	}
-	go func() { _ = parent.Activate(context.Background(), nil) }()
+	go func() { _ = parent.Activate(activationCtx, nil) }()
 	<-parent.entered
 	done := make(chan struct{})
 	go func() {
@@ -321,6 +557,11 @@ func TestCloseLiveIsomorphicFlowQuiescesParentBeforeClosingChildren(t *testing.T
 		close(done)
 	}()
 
+	select {
+	case <-activationCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("flow activation context was not canceled during shutdown")
+	}
 	select {
 	case <-node.closed:
 		t.Fatal("child closed while parent activation could still invoke it")
@@ -344,8 +585,9 @@ func TestCloseLiveIsomorphicFlowQuiescesParentBeforeClosingChildren(t *testing.T
 	}
 }
 
-func TestInstallSignedBundlePublishesBeforeActivationDrainsAndSurfacesFailure(t *testing.T) {
-	installer, _ := newIsomorphicInstallerForTest(t)
+func TestInstallSignedBundleRejectsActivationFailureBeforePublishing(t *testing.T) {
+	installer, registry := newIsomorphicInstallerForTest(t)
+	defer installer.Close()
 	metadata := neutralSignedBundleMetadata()
 	bundlePath := t.TempDir() + "/neutral-flow.wasm"
 	if err := writeTestBundle(bundlePath, metadata.SignedArtifact); err != nil {
@@ -364,18 +606,15 @@ func TestInstallSignedBundlePublishesBeforeActivationDrainsAndSurfacesFailure(t 
 		return parent, nil
 	}
 	index := 0
-	installer.loadIsomorphicNode = func([]byte) (isomorphicNodeInstance, error) {
+	installer.loadIsomorphicNode = func([]byte, string, string) (isomorphicNodeInstance, error) {
 		artifact := metadata.Nodes[index]
 		index++
 		return &fakeIsomorphicNode{id: artifact.EntryID, hash: artifact.ContentHash}, nil
 	}
-	installer.storeApplicationArtifact = func(context.Context, []byte) error { return nil }
-	logged := make(chan string, 1)
-	installer.log = func(format string, args ...interface{}) {
-		message := fmt.Sprintf(format, args...)
-		if strings.Contains(message, "neutral activation failed") {
-			logged <- message
-		}
+	stored := false
+	installer.storeApplicationArtifact = func(context.Context, []byte) error {
+		stored = true
+		return nil
 	}
 
 	result := make(chan error, 1)
@@ -385,36 +624,46 @@ func TestInstallSignedBundlePublishesBeforeActivationDrainsAndSurfacesFailure(t 
 	}()
 
 	select {
-	case err := <-result:
-		if err != nil {
-			t.Fatalf("InstallSignedBundle() error = %v", err)
-		}
-	case <-time.After(100 * time.Millisecond):
-		close(parent.resume)
-		<-result
-		installer.Close()
-		t.Fatal("InstallSignedBundle blocked on long-running startup activation")
-	}
-	if installer.IsomorphicFlow(metadata.ContentHash) == nil {
-		close(parent.resume)
-		installer.Close()
-		t.Fatal("verified bundle was not published before activation drain")
-	}
-	select {
 	case <-parent.entered:
 	case <-time.After(time.Second):
 		close(parent.resume)
-		installer.Close()
-		t.Fatal("background startup activation did not begin")
+		t.Fatal("startup activation did not begin")
+	}
+	select {
+	case err := <-result:
+		t.Fatalf("InstallSignedBundle returned before startup activation drained: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if stored {
+		close(parent.resume)
+		<-result
+		t.Fatal("APP artifact was published before startup activation succeeded")
+	}
+	if installer.IsomorphicFlow(metadata.ContentHash) != nil {
+		close(parent.resume)
+		<-result
+		t.Fatal("bundle became visible before startup activation succeeded")
+	}
+	if entries, err := registry.List(); err != nil || len(entries) != 0 {
+		close(parent.resume)
+		<-result
+		t.Fatalf("registry before activation success = %+v, %v", entries, err)
 	}
 	close(parent.resume)
-	select {
-	case <-logged:
-	case <-time.After(time.Second):
-		installer.Close()
-		t.Fatal("background activation failure was not surfaced")
+	if err := <-result; err == nil || !strings.Contains(err.Error(), "neutral activation failed") {
+		t.Fatalf("InstallSignedBundle() error = %v, want activation failure", err)
 	}
-	installer.Close()
+	if stored || installer.IsomorphicFlow(metadata.ContentHash) != nil {
+		t.Fatal("activation-failed bundle was published")
+	}
+	if entries, err := registry.List(); err != nil || len(entries) != 0 {
+		t.Fatalf("registry after activation failure = %+v, %v", entries, err)
+	}
+	select {
+	case <-parent.release:
+	default:
+		t.Fatal("activation-failed parent runtime was not released")
+	}
 }
 
 func TestInstallSignedBundleRollsBackEveryInstanceOnPartialFailure(t *testing.T) {
@@ -427,7 +676,7 @@ func TestInstallSignedBundleRollsBackEveryInstanceOnPartialFailure(t *testing.T)
 	installer.verifyIsomorphicBundle = func([]byte) (*flowrt.IsomorphicBundleMetadata, error) { return metadata, nil }
 	first := &fakeIsomorphicNode{id: "org.example.source", hash: metadata.Nodes[0].ContentHash}
 	loads := 0
-	installer.loadIsomorphicNode = func([]byte) (isomorphicNodeInstance, error) {
+	installer.loadIsomorphicNode = func([]byte, string, string) (isomorphicNodeInstance, error) {
 		loads++
 		if loads == 2 {
 			return nil, errors.New("second child failed")
@@ -498,7 +747,7 @@ func TestInstallSignedBundleApplicationFailureRemovesRegistryAndClosesInstances(
 		{id: "sink", hash: metadata.Nodes[1].ContentHash},
 	}
 	index := 0
-	installer.loadIsomorphicNode = func([]byte) (isomorphicNodeInstance, error) {
+	installer.loadIsomorphicNode = func([]byte, string, string) (isomorphicNodeInstance, error) {
 		node := nodes[index]
 		index++
 		return node, nil
@@ -554,7 +803,7 @@ func TestBootRestoresSignedBundleAndExactChildBytes(t *testing.T) {
 	installer.loadIsomorphicParent = func([]byte, uint32) (isomorphicParentRuntime, error) { return parent, nil }
 	var loaded [][]byte
 	index := 0
-	installer.loadIsomorphicNode = func(signed []byte) (isomorphicNodeInstance, error) {
+	installer.loadIsomorphicNode = func(signed []byte, _ string, _ string) (isomorphicNodeInstance, error) {
 		loaded = append(loaded, append([]byte(nil), signed...))
 		node := &fakeIsomorphicNode{id: metadata.Nodes[index].EntryID, hash: metadata.Nodes[index].ContentHash}
 		index++

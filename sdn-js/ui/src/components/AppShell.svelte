@@ -9,9 +9,6 @@
   export let peerCount: number | null = null;
   export let storageLabel = 'pending';
   export let title = 'Node';
-  export let nodeIdentityLocked = true;
-  export let nodeIdentityExpiresAt: number | null = null;
-  export let onLogoutClick: () => void = () => {};
 </script>
 
 <div class="sdn-app">
@@ -24,9 +21,6 @@
         {nodeState}
         {peerCount}
         {storageLabel}
-        {nodeIdentityLocked}
-        {nodeIdentityExpiresAt}
-        {onLogoutClick}
       />
       <section class="sdn-content" aria-label={title}>
         <slot />

@@ -7,8 +7,6 @@ import {
   NODE_KEY_FORMAT_ERROR,
   NODE_KEY_NO_PEER_ID_ERROR,
   NODE_KEY_REQUIRED_ERROR,
-  NO_LOCAL_WALLET_ERROR,
-  OPERATOR_REQUIRED_ERROR,
   STAR_COUNT,
   STAR_SEED,
   buildAuthSteps,
@@ -26,8 +24,6 @@ import {
   isRecognizedNodeKey,
   networkStatusFromHealth,
   nodeStepLabels,
-  operatorStepIndexForStage,
-  operatorStepLabels,
   parseHealthResponse,
   parseNodeInfoResponse,
   parseStatsResponse,
@@ -35,9 +31,7 @@ import {
   resolvePeerIdentity,
   shortenPeerId,
   validateNodeKeyForm,
-  validateOperatorForm,
 } from './login';
-import { LocalWalletError } from '../../lib/auth/local-wallet';
 import { SdnApiError } from '../../lib/auth/sdn-api-client';
 
 // Not currently wired into a vitest `include` glob for `ui/src/**` (no such
@@ -139,18 +133,6 @@ describe('generateOrbitArcs', () => {
   });
 });
 
-describe('validateOperatorForm', () => {
-  it('requires both fields', () => {
-    expect(validateOperatorForm('', '')).toBe(OPERATOR_REQUIRED_ERROR);
-    expect(validateOperatorForm('  ', 'secret')).toBe(OPERATOR_REQUIRED_ERROR);
-    expect(validateOperatorForm('op@sdn.io', '')).toBe(OPERATOR_REQUIRED_ERROR);
-  });
-
-  it('passes when both fields are present', () => {
-    expect(validateOperatorForm('op@sdn.io', 'secret')).toBeNull();
-  });
-});
-
 describe('node-key validation', () => {
   it('flags empty input as required', () => {
     expect(validateNodeKeyForm('')).toBe(NODE_KEY_REQUIRED_ERROR);
@@ -184,13 +166,12 @@ describe('mock auth timing + step view models', () => {
     expect(AUTH_STEP_TIMINGS_MS).toEqual({ step1: 700, step2: 1450, complete: 2150, redirect: 2900 });
   });
 
-  it('has the documented operator/node step labels', () => {
-    expect(operatorStepLabels()).toEqual(['CREDENTIAL CHECK', 'P2P HANDSHAKE', 'SESSION SEALED']);
+  it('has the documented read-only node step labels', () => {
     expect(nodeStepLabels()).toEqual(['PEER KEY VERIFY', 'P2P HANDSHAKE', 'SESSION SEALED']);
   });
 
   it('renders pending/active/done row states correctly', () => {
-    const labels = operatorStepLabels();
+    const labels = nodeStepLabels();
     const steps = buildAuthSteps(labels, 1);
     expect(steps[0]).toMatchObject({ glyph: '✓', color: '#5ad6a0', status: 'OK' });
     expect(steps[1]).toMatchObject({
@@ -203,7 +184,7 @@ describe('mock auth timing + step view models', () => {
   });
 
   it('marks every step done once step advances past all of them', () => {
-    const steps = buildAuthSteps(operatorStepLabels(), 3);
+    const steps = buildAuthSteps(nodeStepLabels(), 3);
     expect(steps.every((s) => s.glyph === '✓' && s.status === 'OK')).toBe(true);
   });
 });
@@ -251,41 +232,11 @@ describe('dwell constants', () => {
   });
 });
 
-describe('operatorStepIndexForStage', () => {
-  it('maps idle/challenge to step 0 (CREDENTIAL CHECK)', () => {
-    expect(operatorStepIndexForStage('idle')).toBe(0);
-    expect(operatorStepIndexForStage('challenge')).toBe(0);
-  });
-
-  it('maps verify to step 1 (P2P HANDSHAKE)', () => {
-    expect(operatorStepIndexForStage('verify')).toBe(1);
-  });
-
-  it('maps confirmed to step 2 (SESSION SEALED)', () => {
-    expect(operatorStepIndexForStage('confirmed')).toBe(2);
-  });
-});
-
 // ---------------------------------------------------------------------------
-// U1.2 — real-auth error text
+// U1.2 — read-only peer-resolution error text
 // ---------------------------------------------------------------------------
 
 describe('describeAuthFailure', () => {
-  it('gives the "no wallet" LocalWalletError a wallet-creation-pointing message', () => {
-    const err = new LocalWalletError('no local wallet labeled "op@sdn.io"');
-    expect(describeAuthFailure(err)).toBe(NO_LOCAL_WALLET_ERROR);
-  });
-
-  it('is case-insensitive when detecting the "no wallet" LocalWalletError', () => {
-    const err = new LocalWalletError('No Local Wallet Labeled "x"');
-    expect(describeAuthFailure(err)).toBe(NO_LOCAL_WALLET_ERROR);
-  });
-
-  it('uppercases other LocalWalletError messages verbatim (e.g. wrong passphrase)', () => {
-    const err = new LocalWalletError('incorrect passphrase');
-    expect(describeAuthFailure(err)).toBe('INCORRECT PASSPHRASE');
-  });
-
   it('prefers the SdnApiError JSON body message, uppercased', () => {
     const err = new SdnApiError(401, { code: 'unauthorized', message: 'challenge expired' }, '/api/auth/verify');
     expect(describeAuthFailure(err)).toBe('CHALLENGE EXPIRED');

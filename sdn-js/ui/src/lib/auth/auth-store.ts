@@ -1,16 +1,17 @@
 /**
  * SpaceAware auth session store (loop task U0.3 — D1 groundwork).
  *
- * Drives the passwordless Ed25519 challenge/verify round trip
- * (`POST /api/auth/challenge` → sign locally via an `UnlockedWallet`
- * (local-wallet.ts) → `POST /api/auth/verify` → `sdn_wallet_session`
- * cookie set by the server → `GET /api/auth/me` hydration) and exposes a
- * plain reactive-friendly state object (pub/sub via `onStateChange`, the
- * same shape as the existing `createNodeIdentitySessionController` pattern
- * in `node-identity-session.ts`) so Svelte components can mirror it into a
- * `$state` rune at the call site without this module depending on the
- * Svelte runtime itself — it is plain, framework-agnostic TS and is unit
- * tested directly (see `spaceaware-auth-store.test.ts`).
+ * Tracks the server's httpOnly `sdn_wallet_session` cookie through
+ * `GET /api/auth/me` hydration and `POST /api/auth/logout`. It exposes a
+ * plain reactive-friendly state object so Svelte components can mirror it
+ * into a `$state` rune without this module depending on the Svelte runtime.
+ *
+ * Phase 1A deliberately retains, but does not invoke, the document's typed
+ * public wallet client. The current node endpoint verifies a legacy raw
+ * challenge, while modern password-based wallet identities use the reviewed
+ * canonical v2 protocol. Those protocols must not be bridged in browser code.
+ * The separate server-auth-v2 cutover will add capability discovery and the
+ * first typed authentication operation here once the server can verify it.
  *
  * `/api/**` never redirects (loop GROUND TRUTH) — this store only tracks
  * session STATE; whether an unauthenticated visit to a `/console` route
@@ -20,8 +21,10 @@
  */
 
 import { SdnApiClient, SdnApiError, type AuthSessionUser, type SdnApiErrorBody } from './sdn-api-client';
-import type { UnlockedWallet } from './local-wallet';
+import type { getSdnWalletClient } from './wallet-client';
 import type { SpaceAwareRoute } from '../../spaceaware/router';
+
+type SdnWalletClient = ReturnType<typeof getSdnWalletClient>;
 
 export type AuthStatus = 'unknown' | 'anonymous' | 'authenticating' | 'authenticated' | 'error';
 export type AuthStage = 'idle' | 'challenge' | 'verify' | 'confirmed';
@@ -35,18 +38,16 @@ export interface AuthSessionState {
 
 export interface AuthStoreOptions {
   client: SdnApiClient;
+  wallet: SdnWalletClient;
   onStateChange?: (state: AuthSessionState) => void;
-  /** Injectable for tests; default `Date.now`. */
-  now?: () => number;
 }
 
 export interface AuthStore {
   readonly state: AuthSessionState;
+  readonly wallet: SdnWalletClient;
   /** `GET /api/auth/me` → `authenticated` (with `user`) or `anonymous` (401). Call once on boot. */
   hydrate(): Promise<void>;
-  /** Full challenge → sign (via `wallet.sign`) → verify → `auth/me` hydration round trip. */
-  loginWithWallet(wallet: UnlockedWallet): Promise<void>;
-  /** `POST /api/auth/logout`; always resets local state to `anonymous`, even if the request fails. */
+  /** `POST /api/auth/logout`; only a confirmed response proves the httpOnly cookie was cleared. */
   logout(): Promise<void>;
 }
 
@@ -69,14 +70,13 @@ export function guardRoute(
 ): boolean {
   if (!requiresAuthenticatedSession(route)) return false;
   if (state.status === 'authenticated') return false;
-  if (state.status === 'unknown') return false; // hydration in flight — do not flash-redirect
+  if (state.status === 'unknown' || state.status === 'error') return false; // session truth is indeterminate — do not claim anonymous
   navigate?.('/login');
   return true;
 }
 
 export function createAuthStore(options: AuthStoreOptions): AuthStore {
   const client = options.client;
-  const now = options.now ?? (() => Date.now());
 
   const state: AuthSessionState = {
     status: 'unknown',
@@ -99,52 +99,27 @@ export function createAuthStore(options: AuthStoreOptions): AuthStore {
         publish({ status: 'anonymous', stage: 'idle', user: null, error: null });
         return;
       }
-      publish({ status: 'anonymous', stage: 'idle', user: null, error: toErrorBody(err) });
-    }
-  }
-
-  async function loginWithWallet(wallet: UnlockedWallet): Promise<void> {
-    publish({ status: 'authenticating', stage: 'challenge', error: null });
-    try {
-      const ts = Math.floor(now() / 1000);
-      const challenge = await client.authChallenge({
-        xpub: wallet.xpub,
-        client_pubkey_hex: wallet.signingPublicKeyHex,
-        ts,
-      });
-
-      publish({ stage: 'verify' });
-      const challengeBytes = base64ToBytes(challenge.challenge);
-      const signature = await wallet.sign(challengeBytes);
-      const verifyResp = await client.authVerify({
-        challenge_id: challenge.challenge_id,
-        xpub: wallet.xpub,
-        client_pubkey_hex: wallet.signingPublicKeyHex,
-        challenge: challenge.challenge,
-        signature_hex: bytesToHex(signature),
-      });
-
-      publish({ stage: 'confirmed', user: verifyResp.user });
-
-      // auth/me is the hydration source of truth (acceptance: "me
-      // hydrates") — re-fetch rather than trusting the verify response
-      // alone, even though it already carries the user.
-      await hydrate();
-    } catch (err) {
-      publish({ status: 'error', stage: 'idle', error: toErrorBody(err) });
-      throw err;
+      // A transport/5xx failure does not prove an httpOnly session cookie is
+      // absent. Keep the state explicitly indeterminate instead of publishing
+      // a false anonymous result.
+      publish({ status: 'error', error: toErrorBody(err) });
     }
   }
 
   async function logout(): Promise<void> {
     try {
       await client.authLogout();
-    } finally {
       publish({ status: 'anonymous', stage: 'idle', user: null, error: null });
+    } catch (err) {
+      // The browser may still hold a live httpOnly cookie when the request did
+      // not complete. Preserve the last known user and expose indeterminate
+      // session truth to callers.
+      publish({ status: 'error', error: toErrorBody(err) });
+      throw err;
     }
   }
 
-  return { state, hydrate, loginWithWallet, logout };
+  return { state, wallet: options.wallet, hydrate, logout };
 }
 
 function toErrorBody(err: unknown): SdnApiErrorBody {
@@ -152,17 +127,4 @@ function toErrorBody(err: unknown): SdnApiErrorBody {
     return err.body ?? { code: err.code, message: err.message };
   }
   return { code: 'client_error', message: err instanceof Error ? err.message : String(err) };
-}
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-/** Decodes the server's `base64.RawStdEncoding` (unpadded, standard alphabet) challenge string. */
-function base64ToBytes(base64: string): Uint8Array {
-  const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
 }

@@ -58,3 +58,26 @@ func TestRegisterRoutes_ExternalLoginUIYieldsLoginToFrontendSurface(t *testing.T
 		t.Fatalf("external UI: /api/auth/challenge matched pattern %q", got)
 	}
 }
+
+// The shipped conjunction server explicitly selects the no-product-login
+// policy by calling SetExternalLoginUI(false). That explicit production choice
+// must not fall back to the legacy generic wallet page; only callers that do
+// not configure a product policy retain the backwards-compatible default.
+func TestRegisterRoutes_ExplicitNoExternalLoginDisablesLegacyLoginPage(t *testing.T) {
+	t.Parallel()
+
+	h := &Handler{}
+	h.SetExternalLoginUI(false)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(http.ResponseWriter, *http.Request) {})
+	h.RegisterRoutes(mux)
+
+	for _, path := range []string{"/login", "/login/legacy"} {
+		if got := matchedPattern(t, mux, path); got != "/" {
+			t.Errorf("explicit no-external-login policy: %s matched %q, want frontend fallback %q", path, got, "/")
+		}
+	}
+	if got := matchedPattern(t, mux, "/api/auth/challenge"); got != "/api/auth/challenge" {
+		t.Fatalf("auth API route changed under no-login policy: matched %q", got)
+	}
+}

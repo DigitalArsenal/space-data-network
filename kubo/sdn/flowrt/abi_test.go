@@ -3,6 +3,7 @@ package flowrt
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -151,6 +152,74 @@ func TestDecodeRoutingResultSurfacesRuntimeRejection(t *testing.T) {
 	}
 }
 
+func TestValidateInvocationHandlerResultFailsClosed(t *testing.T) {
+	handlerErr := errors.New("provider fetch failed")
+	if _, err := validateInvocationHandlerResult(7, "provider", "pull", nil, handlerErr); err == nil || !errors.Is(err, handlerErr) {
+		t.Fatalf("handler error = %v, want wrapped provider failure", err)
+	}
+	if _, err := validateInvocationHandlerResult(7, "provider", "pull", nil, nil); err == nil || !strings.Contains(err.Error(), "nil result") {
+		t.Fatalf("nil handler result error = %v, want fail-closed rejection", err)
+	}
+	if _, err := validateInvocationHandlerResult(7, "provider", "pull", &InvocationResult{StatusCode: -9}, nil); err == nil || !strings.Contains(err.Error(), "status -9") {
+		t.Fatalf("nonzero handler status error = %v, want surfaced status", err)
+	}
+	want := &InvocationResult{StatusCode: 0, BacklogRemaining: 3}
+	if got, err := validateInvocationHandlerResult(7, "provider", "pull", want, nil); err != nil || got != want {
+		t.Fatalf("successful handler result = (%+v, %v), want original result", got, err)
+	}
+}
+
+func TestExecuteRuntimeExportSelectsFallbackBeforeExecution(t *testing.T) {
+	var calls []string
+	result, err := executeRuntimeExport(func(name string) bool {
+		return name == underscoreRuntimeExportName(runtimeExportBeginInvocation)
+	}, func(name string, _ ...interface{}) ([]interface{}, error) {
+		calls = append(calls, name)
+		return []interface{}{int32(4)}, nil
+	}, runtimeExportBeginInvocation, int32(7), int32(64))
+	if err != nil || len(result) != 1 {
+		t.Fatalf("executeRuntimeExport() = (%v, %v), want fallback success", result, err)
+	}
+	want := underscoreRuntimeExportName(runtimeExportBeginInvocation)
+	if len(calls) != 1 || calls[0] != want {
+		t.Fatalf("executeRuntimeExport() calls = %q, want only %q", calls, want)
+	}
+}
+
+func TestExecuteRuntimeExportNeverRetriesTrappingPrimary(t *testing.T) {
+	primary := errors.New("primary mutated then trapped")
+	var calls []string
+	_, err := executeRuntimeExport(func(string) bool { return true }, func(name string, _ ...interface{}) ([]interface{}, error) {
+		calls = append(calls, name)
+		if name == runtimeExportBeginInvocation {
+			return nil, primary
+		}
+		return []interface{}{int32(4)}, nil
+	}, runtimeExportBeginInvocation, int32(7), int32(64))
+	if !errors.Is(err, primary) {
+		t.Fatalf("executeRuntimeExport() error = %v, want primary trap", err)
+	}
+	if len(calls) != 1 || calls[0] != runtimeExportBeginInvocation {
+		t.Fatalf("trapping export calls = %q, want primary exactly once", calls)
+	}
+}
+
+func TestResolveDrainHandlerRejectsMissingIsomorphicHandler(t *testing.T) {
+	info := flowNodeInfo{
+		PluginID:      "org.example.provider",
+		MethodID:      "pull",
+		DependencyID:  "provider",
+		NodeID:        "provider",
+		DispatchModel: "isomorphic",
+	}
+	if _, direct, err := resolveDrainHandler(HandlerMap{}, info); err == nil || direct || !strings.Contains(err.Error(), "no handler") {
+		t.Fatalf("missing isomorphic handler = direct:%v err:%v, want failure", direct, err)
+	}
+	if handler, direct, err := resolveDrainHandler(HandlerMap{}, flowNodeInfo{DispatchModel: "linked-direct"}); err != nil || handler != nil || !direct {
+		t.Fatalf("linked-direct resolution = handler:%v direct:%v err:%v", handler, direct, err)
+	}
+}
+
 func TestSelectOutputEdgeRequiresExactSignedIdentityAndLayout(t *testing.T) {
 	hash := []byte{0xde, 0xad, 0xbe, 0xef}
 	runtime := &FlowRuntime{edgeInfo: []flowEdgeInfo{{
@@ -203,6 +272,45 @@ func TestSelectOutputEdgeRequiresExactSignedIdentityAndLayout(t *testing.T) {
 	badLayout.RequiredAlignment = 16
 	if _, err := runtime.selectOutputEdge(2, badLayout); err == nil {
 		t.Fatal("selectOutputEdge() accepted mismatched aligned layout")
+	}
+}
+
+func TestBindInputFrameTypeRequiresTargetBoundSignedDescriptorForCanonicalFrames(t *testing.T) {
+	hash := []byte{0xaa, 0xbb, 0xcc, 0xdd}
+	edges := []flowEdgeInfo{{
+		Index:                      0,
+		ToPort:                     "start",
+		SchemaName:                 "TriggerStart.fbs",
+		FileIdentifier:             "TRG1",
+		SchemaVersion:              "4.2.0",
+		SchemaHash:                 hash,
+		RootTypeName:               "TriggerStart",
+		CanonicalFallbackAvailable: true,
+		AlignedEligible:            true,
+		Descriptor: FlowEdgeDescriptor{
+			ToNode:                   3,
+			AlignedByteLength:        128,
+			AlignedFixedStringLength: 16,
+			AlignedRequiredAlignment: 8,
+		},
+	}}
+
+	frame := FrameData{PortID: "start"}
+	fd := &FlowFrameDescriptor{TypeDescriptorIdx: 0, WireFormat: 0}
+	if err := bindInputFrameType(&frame, fd, 3, edges); err != nil {
+		t.Fatalf("bindInputFrameType(valid canonical) error = %v", err)
+	}
+	if frame.SchemaName != "TriggerStart.fbs" || frame.FileIdentifier != "TRG1" ||
+		frame.SchemaVersion != "4.2.0" || frame.RootTypeName != "TriggerStart" ||
+		!bytes.Equal(frame.SchemaHash, hash) {
+		t.Fatalf("bound canonical identity = %+v", frame)
+	}
+
+	missing := FrameData{PortID: "start"}
+	fd.TypeDescriptorIdx = InvalidIndex
+	if err := bindInputFrameType(&missing, fd, 3, edges); err == nil ||
+		!strings.Contains(err.Error(), "no signed type descriptor") {
+		t.Fatalf("bindInputFrameType(invalid canonical descriptor) error = %v", err)
 	}
 }
 

@@ -12,7 +12,11 @@ import {
   fieldStreamValueStateCategory,
 } from 'spacedatastandards.org/lib/js/FSM/main.js';
 
-import { aesGcmDecryptWithIv, sha256, verify } from './crypto/hd-wallet';
+import {
+  decryptPublicAesGcm,
+  publicSha256,
+  verifyPublicEd25519Signature,
+} from './crypto/public-runtime';
 
 type GeneratedEnum = Record<string, string | number>;
 type FieldKeyMap = Record<string, Uint8Array> | Map<string, Uint8Array>;
@@ -593,7 +597,7 @@ export async function verifyFieldStreamProviderSignature(
     return false;
   }
   try {
-    return await verify(
+    return verifyPublicEd25519Signature(
       cloneBytes(providerPublicKey),
       buildFieldStreamProviderSignaturePayload(message),
       cloneBytes(message.providerSignature),
@@ -613,7 +617,7 @@ export async function verifyFieldStreamGrantSignature(
   const signaturePayload = cloneOptionalBytes(grant.signaturePayload)
     ?? buildFieldStreamGrantSignaturePayload(grant);
   try {
-    return await verify(
+    return verifyPublicEd25519Signature(
       cloneBytes(providerPublicKey),
       signaturePayload,
       cloneBytes(grant.providerSignature),
@@ -679,7 +683,7 @@ function canonicalGrantFieldStreamPolicy(grant: FieldStreamAccessGrant): string 
 
 async function verifyFieldAadHash(field: FieldStreamFieldSummary, aad: Uint8Array): Promise<void> {
   const expected = requiredBytes(field.aadHash, `field ${field.fieldPath} aad hash`);
-  const actual = await sha256(aad);
+  const actual = publicSha256(aad);
   if (!bytesEqual(actual, expected)) {
     throw new Error(`field ${field.fieldPath} aad hash mismatch`);
   }
@@ -726,7 +730,7 @@ function zeroToUndefined(value: bigint): bigint | undefined {
 
 async function defaultDecryptField(input: FieldStreamDecryptFieldInput): Promise<Uint8Array> {
   const ciphertextAndTag = concatBytes(input.ciphertext, input.tag);
-  return aesGcmDecryptWithIv(
+  return decryptPublicAesGcm(
     cloneBytes(input.keyBytes),
     ciphertextAndTag,
     cloneBytes(input.nonce),

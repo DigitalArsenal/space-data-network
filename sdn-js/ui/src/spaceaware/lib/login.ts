@@ -19,8 +19,6 @@
  * to render whatever step index the REAL flow below computes.
  */
 
-import type { AuthStage } from '../../lib/auth/auth-store';
-import { LocalWalletError } from '../../lib/auth/local-wallet';
 import { SdnApiError } from '../../lib/auth/sdn-api-client';
 
 // ---------------------------------------------------------------------------
@@ -125,18 +123,11 @@ export function generateOrbitArcs(w: number, h: number): OrbitArc[] {
 // Form validation
 // ---------------------------------------------------------------------------
 
-export const OPERATOR_REQUIRED_ERROR = 'OPERATOR ID AND PASSPHRASE REQUIRED';
 export const NODE_KEY_REQUIRED_ERROR = 'PEER ID OR MULTIADDR REQUIRED';
 export const NODE_KEY_FORMAT_ERROR = 'UNRECOGNIZED PEER KEY FORMAT';
 
 /** Recognized node peer-key / multiaddr prefixes, per `Login.dc.html`. */
 export const NODE_KEY_PREFIXES = ['16Uiu', '12D3Koo', '/ip4', '/dns'] as const;
-
-/** Returns an error message, or `null` when the operator form is valid. */
-export function validateOperatorForm(opId: string, pass: string): string | null {
-  if (!opId.trim() || !pass) return OPERATOR_REQUIRED_ERROR;
-  return null;
-}
 
 export function isRecognizedNodeKey(key: string): boolean {
   return NODE_KEY_PREFIXES.some((prefix) => key.startsWith(prefix));
@@ -163,10 +154,6 @@ export const AUTH_STEP_TIMINGS_MS = {
 } as const;
 
 export type AuthPhase = 'idle' | 'auth' | 'ok';
-
-export function operatorStepLabels(): readonly [string, string, string] {
-  return ['CREDENTIAL CHECK', 'P2P HANDSHAKE', 'SESSION SEALED'];
-}
 
 export function nodeStepLabels(): readonly [string, string, string] {
   return ['PEER KEY VERIFY', 'P2P HANDSHAKE', 'SESSION SEALED'];
@@ -203,7 +190,7 @@ export function buildAuthSteps(labels: readonly string[], step: number): AuthSte
 }
 
 // ---------------------------------------------------------------------------
-// U1.2 — real-auth dwell timing + operator-tab stage mapping
+// U1.2 — read-only peer-resolution dwell timing
 // ---------------------------------------------------------------------------
 
 /**
@@ -226,48 +213,12 @@ export function remainingDwellMs(elapsedMs: number, minDwellMs: number = MIN_STE
   return Math.max(0, minDwellMs - elapsedMs);
 }
 
-/**
- * Maps `AuthStore.state.stage` (`lib/auth/auth-store.ts`) to the operator
- * tab's 0-based step index: CREDENTIAL CHECK (local wallet unlock/signing +
- * the challenge fetch) → P2P HANDSHAKE (signature verify round-trip) →
- * SESSION SEALED (confirmed via `auth/me`, published by `loginWithWallet`'s
- * trailing `hydrate()`). `idle` covers both "hasn't started" and "still
- * unlocking the wallet locally" (the store has nothing to report yet).
- */
-export function operatorStepIndexForStage(stage: AuthStage): number {
-  switch (stage) {
-    case 'confirmed':
-      return 2;
-    case 'verify':
-      return 1;
-    case 'challenge':
-    case 'idle':
-    default:
-      return 0;
-  }
-}
-
 // ---------------------------------------------------------------------------
-// U1.2 — real-auth error text
+// U1.2 — read-only peer-resolution error text
 // ---------------------------------------------------------------------------
 
-/**
- * Shown when `unlockLocalWallet` reports no stored wallet for the given
- * label (D1: "operator ID" selects a LOCAL wallet, "passphrase" decrypts
- * it). SpaceAware has no wallet-creation screen yet, so this is the honest
- * current-state message rather than a fabricated success path.
- */
-export const NO_LOCAL_WALLET_ERROR =
-  'NO LOCAL WALLET FOR THIS OPERATOR ID · WALLET CREATION IS NOT YET AVAILABLE IN THIS UI';
-
-const NO_LOCAL_WALLET_MESSAGE_PATTERN = /no local wallet labeled/i;
-
-/** Turns a thrown error from the real auth/resolve flow into the uppercase banner text `Login.dc.html`'s error row expects. */
+/** Turns a thrown peer-resolution error into the uppercase banner text the screen expects. */
 export function describeAuthFailure(err: unknown): string {
-  if (err instanceof LocalWalletError) {
-    if (NO_LOCAL_WALLET_MESSAGE_PATTERN.test(err.message)) return NO_LOCAL_WALLET_ERROR;
-    return err.message.toUpperCase();
-  }
   if (err instanceof SdnApiError) {
     // `err.message` is never empty — SdnApiError's own constructor already
     // synthesizes `HTTP <status>` when there is no JSON body.

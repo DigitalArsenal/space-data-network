@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MBL"
+	plg "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PLG"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/ipfs/kubo/sdn/license"
 	"github.com/ipfs/kubo/sdn/testsupport"
@@ -298,6 +299,79 @@ func buildSDKBundleScopedArtifact(t *testing.T, portable []byte, members []testB
 	recOffset := b.EndObject()
 	b.FinishWithFileIdentifier(recOffset, []byte(publicationTrailerMagic))
 	return appendPublicationTrailer(portable, b.FinishedBytes()), signatureJSON
+}
+
+func buildCapabilityPLGManifest(t *testing.T, pluginID, capability string) []byte {
+	t.Helper()
+	b := flatbuffers.NewBuilder(256)
+	pluginIDOffset := b.CreateString(pluginID)
+	nameOffset := b.CreateString(pluginID)
+	versionOffset := b.CreateString("1.0.0")
+	capabilityOffset := b.CreateString(capability)
+	plg.PluginCapabilityStart(b)
+	plg.PluginCapabilityAddNAME(b, capabilityOffset)
+	plg.PluginCapabilityAddREQUIRED(b, true)
+	capabilityRecord := plg.PluginCapabilityEnd(b)
+	plg.PLGStartCAPABILITIESVector(b, 1)
+	b.PrependUOffsetT(capabilityRecord)
+	capabilities := b.EndVector(1)
+	plg.PLGStart(b)
+	plg.PLGAddPLUGIN_ID(b, pluginIDOffset)
+	plg.PLGAddNAME(b, nameOffset)
+	plg.PLGAddVERSION(b, versionOffset)
+	plg.PLGAddCAPABILITIES(b, capabilities)
+	manifest := plg.PLGEnd(b)
+	b.FinishWithFileIdentifier(manifest, []byte("$PLG"))
+	return append([]byte(nil), b.FinishedBytes()...)
+}
+
+func TestNewModuleDeniesSignedCapabilityBeforeWASMStartSectionRuns(t *testing.T) {
+	pub, priv := mustGenerateEd25519Key(t)
+	manifest := buildCapabilityPLGManifest(t, "org.example.trapping-start", "http")
+	// Valid minimal WASM whose start section immediately executes unreachable.
+	// If capability admission happens after instantiation, WasmEdge reports the
+	// trap instead of the operator-policy denial this test requires.
+	trappingStartWASM := []byte{
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+		0x03, 0x02, 0x01, 0x00,
+		0x08, 0x01, 0x00,
+		0x0a, 0x05, 0x01, 0x03, 0x00, 0x00, 0x0b,
+	}
+	artifact, _ := buildSDKBundleScopedArtifact(t, trappingStartWASM, []testBundleMember{{
+		ID:          "manifest",
+		Role:        MBL.ModuleBundleEntryRoleMANIFEST,
+		SectionName: "sds.manifest",
+		Encoding:    MBL.ModulePayloadEncodingFLATBUFFER,
+		MediaType:   "application/octet-stream",
+		Payload:     manifest,
+	}}, priv, nil)
+	capabilityPolicy, err := NewCapabilityPolicyStore("")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = NewModule(artifact, nil, &NodeContext{
+		CapabilityPolicy: capabilityPolicy,
+		ModuleSignaturePolicy: &ModuleSignaturePolicy{
+			TrustedSigners: []ed25519.PublicKey{pub},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "http") || !strings.Contains(err.Error(), "unapproved sensitive") {
+		t.Fatalf("NewModule() error = %v, want signed-manifest capability denial before start-section trap", err)
+	}
+}
+
+func TestSignedManifestIdentityRequiresExactGuestBytes(t *testing.T) {
+	signed := buildCapabilityPLGManifest(t, "org.example.exact-manifest", "http")
+	guest := append([]byte(nil), signed...)
+	if err := verifyExactGuestManifestBytes(signed, guest); err != nil {
+		t.Fatalf("identical signed and guest manifests error = %v", err)
+	}
+	guest = append(guest, 0)
+	if err := verifyExactGuestManifestBytes(signed, guest); err == nil {
+		t.Fatal("byte-distinct guest manifest was accepted")
+	}
 }
 
 // --- verifyPublicationSignature / enforceModuleSignaturePolicy -----------

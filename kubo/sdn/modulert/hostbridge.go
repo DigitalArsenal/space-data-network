@@ -116,6 +116,9 @@ func (m *Module) BoundIdentity() (contentHash, pluginID string) {
 	if m == nil {
 		return "", ""
 	}
+	if m.instanceArtifactHash != "" && m.instanceNodeID != "" {
+		return m.instanceArtifactHash, m.instanceNodeID
+	}
 	contentHash = m.contentHash
 	if m.manifest != nil {
 		pluginID = m.manifest.PluginID

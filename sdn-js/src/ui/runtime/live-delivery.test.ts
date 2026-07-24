@@ -9,17 +9,17 @@ const { createBrowserModuleHarness } = vi.hoisted(() => ({
   })),
 }));
 
-const { aesGcmDecryptWithIv } = vi.hoisted(() => ({
-  aesGcmDecryptWithIv: vi.fn(async () => new TextEncoder().encode('live bundle')),
+const { decryptPublicAesGcm } = vi.hoisted(() => ({
+  decryptPublicAesGcm: vi.fn(async () => new TextEncoder().encode('live bundle')),
 }));
 
 vi.mock('space-data-module-sdk/testing/browser', () => ({
   createBrowserModuleHarness,
 }));
 
-vi.mock('../../crypto/hd-wallet', () => {
+vi.mock('../../crypto/public-runtime', () => {
   return {
-    aesGcmDecryptWithIv,
+    decryptPublicAesGcm,
   };
 });
 
@@ -34,7 +34,7 @@ import {
 describe('live-delivery', () => {
   beforeEach(() => {
     createBrowserModuleHarness.mockClear();
-    aesGcmDecryptWithIv.mockClear();
+    decryptPublicAesGcm.mockClear();
   });
 
   it('unwraps direct content keys and emits decrypt/load/invoke lifecycle events', async () => {
@@ -71,7 +71,7 @@ describe('live-delivery', () => {
     );
 
     expect(new TextDecoder().decode(decryptedBundle)).toBe('live bundle');
-    expect(aesGcmDecryptWithIv).toHaveBeenCalledWith(
+    expect(decryptPublicAesGcm).toHaveBeenCalledWith(
       contentKey,
       new Uint8Array(20).fill(2),
       new Uint8Array(12).fill(1),
@@ -235,13 +235,13 @@ describe('live-delivery', () => {
         undefined,
       ),
     ).rejects.toThrow(/iv and authentication tag/);
-    expect(aesGcmDecryptWithIv).not.toHaveBeenCalled();
+    expect(decryptPublicAesGcm).not.toHaveBeenCalled();
   });
 
   it('passes canonical grant AAD into AES-GCM so tampered delivery metadata fails closed', async () => {
     const encryptedBundleBytes = new Uint8Array(12 + 4 + 16);
     const aad = new TextEncoder().encode('listing=protected-od;grant=g1;epoch=e1');
-    aesGcmDecryptWithIv.mockRejectedValueOnce(new Error('authentication failed'));
+    decryptPublicAesGcm.mockRejectedValueOnce(new Error('authentication failed'));
 
     await expect(
       decryptEncryptedModuleBundle(
@@ -250,7 +250,7 @@ describe('live-delivery', () => {
         aad,
       ),
     ).rejects.toThrow(/authentication failed/);
-    expect(aesGcmDecryptWithIv).toHaveBeenCalledWith(
+    expect(decryptPublicAesGcm).toHaveBeenCalledWith(
       new Uint8Array(32).fill(4),
       new Uint8Array(20),
       new Uint8Array(12),

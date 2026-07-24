@@ -1,0 +1,167 @@
+map $host $sdn_http_backend {
+    default http://127.0.0.1:5020;
+    sdn.spaceaware.io https://127.0.0.1:18443;
+}
+
+map $http_upgrade $sdn_upgrade_backend {
+    default http://127.0.0.1:5020;
+    websocket http://127.0.0.1:18080;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name spaceaware.io www.spaceaware.io sdn.spaceaware.io;
+
+    ssl_certificate /etc/spacedatanetwork/tls/origin.crt;
+    ssl_certificate_key /etc/spacedatanetwork/tls/origin.key;
+
+    client_max_body_size 200m;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_ssl_verify off;
+    proxy_buffering off;
+    proxy_request_buffering off;
+
+
+    location ^~ /cli-bundle/ {
+        alias /var/www/sdn-updates/cli-bundle/;
+        add_header Cache-Control "public, max-age=120" always;
+    }
+
+    location ^~ /p2p/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "public, max-age=120" always;
+    }
+
+    location = /index.html {
+        proxy_pass http://127.0.0.1:5020/;
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "public, max-age=120" always;
+    }
+
+    location = /styles.css {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /app.js {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /module-harness.js {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /flatbuffers.js {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /fonts/chakra-400.woff2 {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /fonts/chakra-500.woff2 {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /fonts/chakra-600.woff2 {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /fonts/chakra-700.woff2 {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /fonts/plex-400.woff2 {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /fonts/plex-500.woff2 {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location = /fonts/plex-600.woff2 {
+        proxy_pass http://127.0.0.1:5020;
+    }
+
+    location ^~ /assets/ {
+        proxy_pass $sdn_http_backend;
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "public, max-age=1800" always;
+    }
+
+    location ^~ /TestData/ {
+        proxy_pass $sdn_http_backend;
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "public, max-age=1800" always;
+    }
+
+    location ^~ /ipfs/terrain/ {
+        proxy_pass http://127.0.0.1:5020;
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "public, max-age=1800" always;
+    }
+
+    location ^~ /terrain/ {
+        rewrite ^/terrain/(.*)$ /ipfs/terrain/$1 break;
+        proxy_pass http://127.0.0.1:5020;
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "public, max-age=1800" always;
+    }
+
+    location ^~ /asset-ipfs/ {
+        limit_except GET HEAD OPTIONS {
+            deny all;
+        }
+        proxy_pass http://10.132.0.3:8080/ipfs/;
+        proxy_set_header Connection "";
+        proxy_hide_header Access-Control-Allow-Origin;
+        proxy_hide_header Access-Control-Allow-Methods;
+        proxy_hide_header Access-Control-Allow-Headers;
+        proxy_hide_header Cache-Control;
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+        add_header Access-Control-Allow-Headers "Accept, Range, Content-Type" always;
+        add_header Access-Control-Expose-Headers "Content-Length, Content-Range" always;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+
+    location ^~ /ipfs/ {
+        limit_except GET HEAD OPTIONS {
+            deny all;
+        }
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Connection "";
+        proxy_hide_header Access-Control-Allow-Origin;
+        proxy_hide_header Access-Control-Allow-Methods;
+        proxy_hide_header Access-Control-Allow-Headers;
+        proxy_hide_header Cache-Control;
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+        add_header Access-Control-Allow-Headers "Accept, Range, Content-Type" always;
+        add_header Access-Control-Expose-Headers "Content-Length, Content-Range" always;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+
+    location = / {
+        proxy_pass $sdn_upgrade_backend;
+    }
+
+    location = /sdn/v1/node/qr {
+        proxy_pass https://127.0.0.1:18443/api/node/epm/qr;
+    }
+
+    location ^~ /api/module-delivery/ {
+        proxy_pass https://127.0.0.1:18443;
+    }
+
+    location / {
+        proxy_pass $sdn_http_backend;
+    }
+}

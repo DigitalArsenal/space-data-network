@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
+import { ed25519 } from '@noble/curves/ed25519';
 import * as flatbuffers from 'flatbuffers';
 import {
   FSP,
@@ -29,7 +30,6 @@ import {
   verifyFieldStreamGrantSignature,
   verifyFieldStreamProviderSignature,
 } from './field-stream';
-import { ed25519PublicKey, sign } from './crypto/hd-wallet';
 
 const textEncoder = new TextEncoder();
 
@@ -658,9 +658,9 @@ describe('field stream marketplace envelopes', () => {
 
   it('verifies provider signatures over canonical FSM payload bytes', async () => {
     const seed = new Uint8Array(32).fill(0x42);
-    const publicKey = await ed25519PublicKey(seed);
+    const publicKey = ed25519.getPublicKey(seed);
     const message = decodeFieldStreamMessageSummary(encodeMessageFixture());
-    const signature = await sign(seed, buildFieldStreamProviderSignaturePayload(message));
+    const signature = ed25519.sign(buildFieldStreamProviderSignaturePayload(message), seed);
 
     expect(await verifyFieldStreamProviderSignature({
       ...message,
@@ -678,7 +678,7 @@ describe('field stream marketplace envelopes', () => {
 
   it('verifies grant signatures over storefront-compatible payload bytes', async () => {
     const seed = new Uint8Array(32).fill(0x43);
-    const publicKey = await ed25519PublicKey(seed);
+    const publicKey = ed25519.getPublicKey(seed);
     const grant = {
       ...customerAlphaGrant(),
       grantId: 'grant-alpha-1',
@@ -689,7 +689,7 @@ describe('field stream marketplace envelopes', () => {
       grantScope: 'stream:listing-maneuver-ephemeris:maneuver-ephemeris-live',
       allowedOperations: ['Subscribe', 'Decrypt'],
     };
-    const signature = await sign(seed, buildFieldStreamGrantSignaturePayload(grant));
+    const signature = ed25519.sign(buildFieldStreamGrantSignaturePayload(grant), seed);
 
     expect(await verifyFieldStreamGrantSignature({
       ...grant,
