@@ -217,7 +217,7 @@ func TestAppsSurfaceSharesTheEmbeddedRootRecord(t *testing.T) {
 		wantSub string
 	}{
 		{"/apps/", "Space Data Network"},
-		{"/apps/spaceaware/", "SpaceAware"},
+		{"/apps/spaceaware/", "Space Data Network Dashboard"},
 	} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
