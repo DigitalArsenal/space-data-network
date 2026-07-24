@@ -1,34 +1,23 @@
 package main
 
+// Root-surface serving and the auth/login surface configuration.
+//
+// UI CLEAN SLATE (owner ruling 2026-07-24): every embedded UI application —
+// the $APP registry, launcher, per-app pages, and their build pipelines —
+// has been removed from this repo pending the owner's new UI codebase. The
+// primary route "/" serves a minimal placeholder; the isolated wallet
+// callback (auth machinery, not UI content) remains. New user-facing
+// surfaces are Iris's (ui-oracle) domain and land only with the owner's
+// codebase.
+
 import (
-	"embed"
-	"encoding/json"
-	"fmt"
+	_ "embed"
 	"net/http"
 	"os"
 	"strings"
 
-	"github.com/spacedatanetwork/sdn-server/internal/appmanifest"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 )
-
-// appSurfaceCSP is applied uniformly to pages decoded from embedded SDS $APP
-// records. It permits only the document's own inline resources and same-origin
-// API traffic; hosts do not know application-specific routes or assets.
-const appSurfaceCSP = "default-src 'self'; " +
-	"base-uri 'none'; " +
-	"object-src 'none'; " +
-	"frame-ancestors 'none'; " +
-	"form-action 'none'; " +
-	"script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; " +
-	"style-src 'self' 'unsafe-inline'; " +
-	"img-src 'self' data:; " +
-	"font-src 'self' data:; " +
-	"worker-src 'self' blob:; " +
-	"connect-src 'self'"
-
-//go:embed embedded/apps.json embedded/*.app
-var embeddedAppsFS embed.FS
 
 //go:embed embedded/wallet_callback.html
 var walletCallbackHTML []byte
@@ -48,110 +37,41 @@ const walletCallbackCSP = "default-src 'none'; " +
 	"frame-ancestors 'none'; " +
 	"form-action 'none'"
 
-// embeddedAppSpec is host metadata only: a stable mount slug and an opaque SDS
-// $APP payload. The host decodes the record with the same resolver used for any
-// installed app; it does not embed or route an application's HTML directly.
-type embeddedAppSpec struct {
-	slug   string
-	record []byte
-	root   bool
-}
+// placeholderCSP locks the placeholder page to itself: no scripts, no
+// external fetches, nothing to misuse while the real UI is absent.
+const placeholderCSP = "default-src 'none'; " +
+	"style-src 'unsafe-inline'; " +
+	"base-uri 'none'; " +
+	"frame-ancestors 'none'; " +
+	"form-action 'none'"
 
-func embeddedAppSpecs() ([]embeddedAppSpec, error) {
-	var config struct {
-		Apps []struct {
-			Slug   string `json:"slug"`
-			Record string `json:"record"`
-			Root   bool   `json:"root"`
-		} `json:"apps"`
-	}
-	data, err := embeddedAppsFS.ReadFile("embedded/apps.json")
-	if err != nil {
-		return nil, fmt.Errorf("embedded apps: read config: %w", err)
-	}
-	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("embedded apps: parse config: %w", err)
-	}
-	if len(config.Apps) == 0 {
-		return nil, fmt.Errorf("embedded apps: config declares no apps")
-	}
-	specs := make([]embeddedAppSpec, 0, len(config.Apps))
-	roots := 0
-	for _, entry := range config.Apps {
-		if entry.Slug == "" || entry.Record == "" || strings.Contains(entry.Record, "/") || !strings.HasSuffix(entry.Record, ".app") {
-			return nil, fmt.Errorf("embedded apps: invalid app configuration for %q", entry.Slug)
-		}
-		if entry.Root {
-			roots++
-		}
-		record, err := embeddedAppsFS.ReadFile("embedded/" + entry.Record)
-		if err != nil {
-			return nil, fmt.Errorf("embedded apps: read %q: %w", entry.Record, err)
-		}
-		specs = append(specs, embeddedAppSpec{slug: entry.Slug, record: record, root: entry.Root})
-	}
-	if roots != 1 {
-		return nil, fmt.Errorf("embedded apps: config must declare exactly one root app, found %d", roots)
-	}
-	return specs, nil
-}
+const placeholderHTML = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Space Data Network</title>
+<style>
+html,body{margin:0;height:100%;background:#04060a;color:#8fd6ff;
+font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+display:flex;align-items:center;justify-content:center;}
+main{text-align:center;letter-spacing:0.08em;}
+h1{font-size:16px;font-weight:600;text-transform:uppercase;letter-spacing:0.22em;color:#dfeeff;}
+p{color:#5b7f95;margin-top:10px;}
+</style>
+</head>
+<body>
+<main>
+<h1>Space Data Network</h1>
+<p>Node online. Interface arriving shortly.</p>
+</main>
+</body>
+</html>
+`
 
-func embeddedAppManifest(slug string) (*appmanifest.AppManifest, error) {
-	specs, err := embeddedAppSpecs()
-	if err != nil {
-		return nil, err
-	}
-	for _, spec := range specs {
-		if spec.slug != slug {
-			continue
-		}
-		manifest, err := appmanifest.FromAPP(spec.record)
-		if err != nil {
-			return nil, fmt.Errorf("embedded app %q: decode $APP: %w", slug, err)
-		}
-		return manifest, nil
-	}
-	return nil, fmt.Errorf("embedded app %q is not registered", slug)
-}
-
-func primaryEmbeddedAppSlug() (string, error) {
-	specs, err := embeddedAppSpecs()
-	if err != nil {
-		return "", err
-	}
-	for _, spec := range specs {
-		if spec.root {
-			return spec.slug, nil
-		}
-	}
-	return "", fmt.Errorf("embedded apps: no root app")
-}
-
-// makeEmbeddedAppSurfaceHandler mounts one resolved $APP entry page as a
-// homepage. The only host policy is HTTP method/path handling; page content,
-// identity, and media type come from the APP record itself. The isolated
-// wallet callback (an exact, read-only static route used by the external
-// wallet presenter's opener handshake) is served ahead of the app page.
-func makeEmbeddedAppSurfaceHandler(slug string) (http.Handler, error) {
-	manifest, err := embeddedAppManifest(slug)
-	if err != nil {
-		return nil, err
-	}
-	resolution, err := manifest.Resolve()
-	if err != nil {
-		return nil, fmt.Errorf("embedded app %q: resolve: %w", slug, err)
-	}
-	if resolution.EntryPage == nil {
-		return nil, fmt.Errorf("embedded app %q has no entry page", slug)
-	}
-	page, err := resolution.EntryPage.DecodedContent()
-	if err != nil {
-		return nil, fmt.Errorf("embedded app %q: decode entry page: %w", slug, err)
-	}
-	app := resolvedApp{slug: slug, id: manifest.ID, name: manifest.Name, version: manifest.Version, description: manifest.Description, mediaType: strings.TrimSpace(resolution.EntryPage.MediaType), page: page}
-	if app.mediaType == "" {
-		app.mediaType = "text/html"
-	}
+// makeRootPlaceholderHandler serves the minimal placeholder at "/" and the
+// wallet callback routes; everything else under the root surface 404s.
+func makeRootPlaceholderHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isWalletCallbackPath(r.URL.Path) {
 			serveWalletCallback(w, r)
@@ -165,8 +85,14 @@ func makeEmbeddedAppSurfaceHandler(slug string) (http.Handler, error) {
 			http.NotFound(w, r)
 			return
 		}
-		serveAppPage(w, r, app)
-	}), nil
+		w.Header().Set("Content-Security-Policy", placeholderCSP)
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		if r.Method != http.MethodHead {
+			_, _ = w.Write([]byte(placeholderHTML))
+		}
+	})
 }
 
 func isWalletCallbackPath(requestPath string) bool {
@@ -200,8 +126,7 @@ func serveWalletCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 // uiMode selects which auth/login surface configuration the daemon runs with.
-// The primary route "/" always serves the embedded root SDS $APP; the mode
-// gates only the legacy wallet/login development surfaces.
+// The mode gates only the legacy wallet/login development surfaces.
 type uiMode int
 
 const (

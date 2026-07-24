@@ -42,13 +42,42 @@ func TestResolveUIModeDefaultsToConjunction(t *testing.T) {
 	}
 }
 
-func rootAppSurfaceForTest(t *testing.T) http.Handler {
-	t.Helper()
-	handler, err := makeEmbeddedAppSurfaceHandler("spaceaware")
-	if err != nil {
-		t.Fatalf("makeEmbeddedAppSurfaceHandler() error = %v", err)
+// TestRootPlaceholder locks the clean-slate root surface: "/" serves the
+// self-contained placeholder (no scripts, no external references), unknown
+// paths 404, non-GET/HEAD 405.
+func TestRootPlaceholder(t *testing.T) {
+	handler := makeRootPlaceholderHandler()
+
+	for _, path := range []string{"/", "/index.html"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d, want 200", path, rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "Space Data Network") {
+			t.Errorf("GET %s placeholder missing title text", path)
+		}
+		for _, forbidden := range []string{"<script", "http://", "https://", "src="} {
+			if strings.Contains(body, forbidden) {
+				t.Errorf("placeholder contains forbidden reference %q", forbidden)
+			}
+		}
+		if got := rec.Header().Get("Content-Security-Policy"); got != placeholderCSP {
+			t.Errorf("placeholder CSP = %q, want %q", got, placeholderCSP)
+		}
 	}
-	return handler
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/console", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("GET /console status = %d, want 404", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST / status = %d, want 405", rec.Code)
+	}
 }
 
 func TestWalletCallbackIsExactAndNoStore(t *testing.T) {
@@ -58,7 +87,7 @@ func TestWalletCallbackIsExactAndNoStore(t *testing.T) {
 
 	// Exercise the same outer security middleware used by the admin server. The
 	// callback-specific policy must override its generic referrer policy.
-	handler := adminSecurityMiddleware(rootAppSurfaceForTest(t), "", func(string, string) bool { return false })
+	handler := adminSecurityMiddleware(makeRootPlaceholderHandler(), "", func(string, string) bool { return false })
 
 	for _, path := range []string{"/wallet/callback", "/wallet/callback/", "/wallet-callback.html"} {
 		t.Run(path, func(t *testing.T) {
@@ -78,16 +107,13 @@ func TestWalletCallbackIsExactAndNoStore(t *testing.T) {
 				if !bytes.Equal(rec.Body.Bytes(), walletCallbackHTML) {
 					t.Fatal("GET body differs from exact embedded wallet callback bytes")
 				}
-				if strings.Contains(rec.Body.String(), "window.__SDN_CONFIG__") {
-					t.Fatal("wallet callback received application-shell bytes")
-				}
 			}
 		})
 	}
 }
 
 func TestWalletCallbackRejectsOtherMethods(t *testing.T) {
-	handler := adminSecurityMiddleware(rootAppSurfaceForTest(t), "", func(string, string) bool { return false })
+	handler := adminSecurityMiddleware(makeRootPlaceholderHandler(), "", func(string, string) bool { return false })
 
 	for _, path := range []string{"/wallet/callback", "/wallet/callback/", "/wallet-callback.html"} {
 		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions} {
@@ -151,7 +177,7 @@ func TestProductionRoutesExcludeLegacyWalletUIAndConfiguration(t *testing.T) {
 	if serveRoot, mounted := registerLegacyWalletStaticFiles(mux, uiModeConjunction, walletRoot); mounted || serveRoot != "" {
 		t.Fatalf("conjunction legacy static mount = (%q, %v), want disabled", serveRoot, mounted)
 	}
-	mux.Handle("/", rootAppSurfaceForTest(t))
+	mux.Handle("/", makeRootPlaceholderHandler())
 
 	for _, requestPath := range []string{"/login", "/login/legacy", "/wallet-ui/legacy-wallet.js"} {
 		rec := httptest.NewRecorder()
@@ -202,60 +228,6 @@ func TestDataSourcesStayAnonymous(t *testing.T) {
 	for _, tc := range gated {
 		if isPublicAPIRequest(tc.method, tc.path) {
 			t.Errorf("%s %s must stay gated, but is anonymous-reachable", tc.method, tc.path)
-		}
-	}
-}
-
-// TestEmbeddedRootAPP serves the decoded SDS $APP entry page at the homepage.
-// The host must not retain a second raw HTML embed or a UI-specific route.
-func TestEmbeddedRootAPP(t *testing.T) {
-	if !strings.Contains(appSurfaceCSP, "'wasm-unsafe-eval'") {
-		t.Fatalf("embedded app CSP must permit WebAssembly compilation: %q", appSurfaceCSP)
-	}
-	if !strings.Contains(appSurfaceCSP, "worker-src 'self' blob:") {
-		t.Fatalf("embedded app CSP must permit in-memory workers: %q", appSurfaceCSP)
-	}
-
-	handler, err := makeEmbeddedAppSurfaceHandler("spaceaware")
-	if err != nil {
-		t.Fatalf("makeEmbeddedAppSurfaceHandler() error = %v", err)
-	}
-
-	want := injectFrontendConfig(decodedEmbeddedAppPage(t, "spaceaware"))
-	for _, path := range []string{"/", "/index.html"} {
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("GET %s status = %d, want 200", path, rec.Code)
-		}
-		assertAppSurfaceHeaders(t, rec.Header())
-		if !bytes.Equal(rec.Body.Bytes(), want) {
-			t.Fatalf("GET %s did not serve injectFrontendConfig(decode($APP))", path)
-		}
-	}
-
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/", nil))
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("POST / status = %d, want 405", rec.Code)
-	}
-}
-
-// TestEmbeddedRootAPPIsSingleFile verifies the record's entry page is an
-// entirely inline HTML document suitable for runtime extraction on each host.
-func TestEmbeddedRootAPPIsSingleFile(t *testing.T) {
-	html := string(decodedEmbeddedAppPage(t, "spaceaware"))
-	for _, want := range []string{"<title>Space Data Network Dashboard</title>", "<div id=\"root\">", "</head>"} {
-		if !strings.Contains(html, want) {
-			t.Errorf("embedded SDN UI page missing %q", want)
-		}
-	}
-	for _, forbidden := range []string{
-		"<script src=", `<link rel="stylesheet"`, "fonts.googleapis.com", "fonts.gstatic.com", "cdn.jsdelivr.net", "unpkg.com",
-		"coi-serviceworker.js", "local-flatsql.worker-", "flatsql-qV6XKjJS.wasm",
-	} {
-		if strings.Contains(html, forbidden) {
-			t.Errorf("embedded SDN UI page contains forbidden external reference %q", forbidden)
 		}
 	}
 }

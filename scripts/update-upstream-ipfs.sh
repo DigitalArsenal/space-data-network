@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # update-upstream-ipfs.sh - Refresh or verify upstream IPFS WebUI/Desktop mirrors.
+#
+# UI CLEAN SLATE (owner ruling 2026-07-24): the sdn-js UI overlay program and
+# its vendored upstream-webui snapshot were deleted pending the owner's new UI
+# codebase, so this script now manages only the upstream mirror subtrees.
 
 set -euo pipefail
 
@@ -10,13 +14,11 @@ usage() {
   cat <<'EOF'
 Usage: scripts/update-upstream-ipfs.sh [--check]
 
-Refreshes the upstream IPFS WebUI and IPFS Desktop mirror trees, refreshes the
-SDN vendor snapshot consumed by overlays, and runs focused mirror boundary
-tests.
+Refreshes the upstream IPFS WebUI and IPFS Desktop mirror trees.
 
 Options:
-  --check   Do not mutate mirrors; verify generated vendor files and focused
-            boundary tests are current.
+  --check   Do not mutate mirrors; nothing further to verify while the UI
+            program is removed (owner clean-slate ruling 2026-07-24).
 
 Environment:
   WEBUI_BRANCH    Branch or ref to pull from webui-upstream (default: main)
@@ -42,19 +44,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-run_focused_checks() {
-  node "$ROOT/scripts/sync-upstream-webui-into-sdn-js.mjs" --check
-  npm --prefix "$ROOT/sdn-js" exec vitest run \
-    src/ui/upstream-webui/branding.test.ts \
-    src/ui/upstream-webui/upstream-mirror-boundary.test.ts
-}
-
 if [[ "$MODE" == "check" ]]; then
-  run_focused_checks
+  echo "upstream mirror check: sdn-js UI overlays removed (clean slate); nothing to verify"
   exit 0
 fi
 
 "$ROOT/scripts/subtree-update.sh" webui
 "$ROOT/scripts/subtree-update.sh" desktop
-node "$ROOT/scripts/sync-upstream-webui-into-sdn-js.mjs"
-run_focused_checks

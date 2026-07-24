@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Space Data Network" color="#fff" data-sdn-mark="primary-outline-dot">
-  <circle cx="64" cy="64" r="52" fill="none" stroke="currentColor" stroke-width="9"/>
-  <path d="M64 116 L19 38 L109 38 Z" fill="none" stroke="currentColor" stroke-width="10" stroke-linejoin="round"/>
-  <circle cx="64" cy="64" r="7" fill="currentColor"/>
-</svg>

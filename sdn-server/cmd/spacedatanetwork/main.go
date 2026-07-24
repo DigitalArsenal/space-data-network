@@ -1341,7 +1341,6 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// (shipped); SDN_UI_MODE=spaceaware restores the full app for dev.
 			// Resolved once here so the /login wiring (below) and the "/"
 			// surface handler (further below) agree on the mode.
-			log.Info("Primary UI: embedded SDS $APP record")
 
 			// Auth-surface mode: default = conjunction (shipped, isolated
 			// external wallet presenter); SDN_UI_MODE=spaceaware restores the
@@ -1662,30 +1661,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.HandleFunc("/admin/", serveAdminUI)
 
 			// ----------------------------------------------------------------
-			// Public homepage at / — the decoded entry page of the embedded SDS
-			// $APP record, intentionally separate from /admin and static paths.
+			// Public root at / — UI CLEAN SLATE (owner ruling 2026-07-24): the
+			// embedded $APP program was removed pending the owner's new UI
+			// codebase. A minimal placeholder serves at "/" (plus the isolated
+			// wallet callback); /admin and the APIs are unchanged.
 			// ----------------------------------------------------------------
-			// GET /apps/ lists the embedded APP records served by this daemon;
-			// GET /apps/<appId>/ serves each app's decoded inline UI page with the
-			// common APP-surface header set + __SDN_CONFIG__ injection. Mounted on
-			// adminMux ahead of the homepage (ServeMux longest-prefix match).
-			if appsHandler, appsErr := makeAppsHandler(); appsErr != nil {
-				log.Warnf("Could not mount /apps/ launcher: %v", appsErr)
-			} else {
-				adminMux.Handle("/apps/", appsHandler)
-				log.Infof("SDN apps launcher at %s://%s/apps/", adminScheme, adminAddr)
-			}
-
-			rootAppSlug, rootAppErr := primaryEmbeddedAppSlug()
-			if rootAppErr != nil {
-				return fmt.Errorf("load configured root SDS $APP: %w", rootAppErr)
-			}
-			rootAppHandler, rootAppErr := makeEmbeddedAppSurfaceHandler(rootAppSlug)
-			if rootAppErr != nil {
-				return fmt.Errorf("mount embedded SDN UI $APP: %w", rootAppErr)
-			}
-			adminMux.Handle("/", rootAppHandler)
-			log.Infof("SDN UI at %s://%s/ from embedded SDS $APP (admin portal remains at /admin)", adminScheme, adminAddr)
+			adminMux.Handle("/", makeRootPlaceholderHandler())
+			log.Infof("Root placeholder at %s://%s/ (UI pending new codebase; admin portal remains at /admin)", adminScheme, adminAddr)
 
 			adminServer = &http.Server{
 				Addr:              adminAddr,
