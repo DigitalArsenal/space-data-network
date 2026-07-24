@@ -1,0 +1,1790 @@
+<!doctype html>
+<!--
+  Supplemental OMM — Provider Status Board (App 2 of the SDN apps program).
+
+  Single self-contained HTML+CSS+JS document. NO external references of any kind
+  (no CDN scripts, no external fonts, no remote images): every network call this
+  page makes is a same-origin GET to the node's ANONYMOUS gateway surfaces. This
+  is the inline CONTENT of the App 2 SDS $APP record — the whole file is the
+  record's entry UI page.
+
+  TWO VIEWS (owner directives 2026-07-14): a LANES | RUNS top navigation menu at
+  the very top of the page (no routing — both views live in this document).
+    LANES — the single consolidated lane table, one row per ingest lane.
+            Clicking a row expands it (accessible: the row is a button with
+            aria-expanded; a colspan detail row unfolds) into a stats strip +
+            a paginated per-satellite table (with a NORAD search box).
+    RUNS  — a report screen, separate from the lanes table: the checked-in
+            LAST FULL RUN milestone card (REF) plus a live list of pipeline
+            runs — one row per (schema, provider, source, batch) from
+            /api/v1/stats sources[], every batch incl. interrupted ones.
+            Clicking a run row expands its full summary.
+
+  HONESTY CONTRACT (see the LEGEND at the bottom of the page):
+    LIVE    — value fetched this session from a real anonymous gateway surface.
+    REF     — checked-in run/gate fact (compile-time truth, not live telemetry):
+              offline benchmark parity, per-provider gate status, and the
+              full-run milestone numbers come from the modules pipeline run
+              report / CI parity gates, which have no runtime route.
+    NO DATA — no anonymous surface can feed this cell today. The cell names the
+              exact surface that WOULD feed it, so the gap is explicit.
+
+  Anonymous surfaces this board reads:
+    /api/v1/stats        → sources[] per-(schema,provider,source,batch): live
+                           count / distinct objects / newest epoch / first+last
+                           record arrival / mean·min·max OD fit RMS (km).
+    /api/v1/data/index   → per-record page {norad, epoch, rms, cid} for a lane's
+                           drill-down (NORAD substring search + pagination).
+    /api/node/info       → agent_version for the header VERSION cell.
+    /api/v1/catalog      → node-wide schema counts.
+  Per-provider last-pull and objects-fitted counts still live only behind
+  Standard/Admin auth (/api/v1/data/local-replica-stats, /api/v1/data/summary);
+  the board never invents them — an idle lane renders honestly as idle.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Supplemental OMM — Provider Status Board</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #12161b;
+    --panel2: #171c22;
+    --edge: #262d36;
+    --edge2: #333c48;
+    --ink: #dde4ec;
+    --dim: #939dab;
+    --dimmer: #707b88;
+    --live: #46d19e;
+    --ref: #d7a24a;
+    --nodata: #5a636f;
+    --blocked: #c95c5c;
+    --interim: #d7a24a;
+    --pass: #46d19e;
+    --accent: #4a90d9;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sys: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; border-radius: 0 !important; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: var(--sys); }
+  /* Readability: 19.5px base (owner: "bigger text"), left-aligned everywhere —
+     including wrapped text — no centered blocks anywhere on the page. */
+  body { font-size: 19.5px; line-height: 1.55; -webkit-font-smoothing: antialiased; text-align: left; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 0 18px 44px; }
+
+  /* Top navigation menu (owner: "'lanes' and 'runs' should be in a top menu").
+     Full-width bar at the very top of the page, generous click targets, active
+     view marked by aria-pressed (accent underline + brighter ink). */
+  .topmenu { display: flex; border: 1px solid var(--edge); border-top: none; background: var(--panel);
+    margin: 0 -18px 22px; padding: 0 18px; }
+  .topmenu button {
+    font-family: var(--mono); font-size: 17px; text-transform: uppercase; letter-spacing: 0.12em;
+    background: transparent; color: var(--dim); border: none; border-right: 1px solid var(--edge);
+    padding: 16px 38px; cursor: pointer;
+  }
+  .topmenu button:first-child { border-left: 1px solid var(--edge); }
+  .topmenu button:hover { color: #fff; background: #10151b; border-color: var(--edge); }
+  .topmenu button[aria-pressed="true"] { color: #fff; background: #14202e; box-shadow: inset 0 -3px 0 var(--accent); }
+
+  header { border: 1px solid var(--edge); background: var(--panel); padding: 16px 18px; }
+  .titlerow { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  h1 { font-size: 22.5px; letter-spacing: 0.14em; text-transform: uppercase; margin: 0; font-weight: 600; }
+  .appid { font-family: var(--mono); font-size: 16px; color: var(--dim); }
+  .sub { color: var(--dim); font-size: 16.5px; margin-top: 7px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .meta { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
+  .meta .kv { font-family: var(--mono); font-size: 16px; color: var(--dim); }
+  .meta .kv b { color: var(--ink); font-weight: 600; }
+  .spacer { flex: 1; }
+  button {
+    font-family: var(--mono); font-size: 16px; text-transform: uppercase; letter-spacing: 0.08em;
+    background: var(--panel2); color: var(--ink); border: 1px solid var(--edge2);
+    padding: 7px 14px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: #fff; }
+  button:active { background: #0d1116; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button:disabled:hover { border-color: var(--edge2); color: var(--ink); }
+
+  /* Pills carry their own breathing room (owner: "text and tags need to be
+     spaced better with margin around them") — inline-block + margin so a pill
+     never sits flush against neighboring text in any cell/tile/legend row. */
+  .pill { font-family: var(--mono); font-size: 14.5px; text-transform: uppercase; letter-spacing: 0.06em;
+    display: inline-block; padding: 3px 10px; margin: 2px 8px 2px 0; border: 1px solid var(--edge2);
+    color: var(--dim); white-space: nowrap; }
+  .pill:last-child { margin-right: 0; }
+  .pill.live { color: var(--live); border-color: #244b3d; background: #0e1a15; }
+  .pill.ref { color: var(--ref); border-color: #4a3c1f; background: #1a150c; }
+  .pill.nodata { color: var(--nodata); border-color: var(--edge); }
+  .pill.pass { color: var(--pass); border-color: #244b3d; background: #0e1a15; }
+  .pill.interim { color: var(--interim); border-color: #4a3c1f; background: #1a150c; }
+  .pill.blocked { color: var(--blocked); border-color: #4a2626; background: #1a0e0e; }
+  section { margin-top: 28px; }
+  .sectlabel { font-size: 15px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer);
+    margin: 0 0 12px 1px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+  /* ONE-LINE tile strips: every box shares the row equally and the strip never
+     wraps — content adapts INSIDE its box (inner wrap/shrink), and because the
+     columns are fractions of the container the strip can never force
+     horizontal scroll. Applied to the report-card and aggregate strips. */
+  .tiles.oneline { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 1fr; }
+  .tile { border: 1px solid var(--edge); background: var(--panel); padding: 14px 16px; text-align: left;
+    min-width: 0; }
+  .tile .lab { font-size: 14.5px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--dim);
+    overflow-wrap: anywhere; }
+  .tile .val { font-family: var(--mono); font-size: 27px; margin-top: 9px; color: var(--ink);
+    overflow-wrap: anywhere; }
+  .tile .val.small { font-size: 17px; line-height: 1.5; }
+  .tile .foot { font-family: var(--mono); font-size: 14px; color: var(--dimmer); margin-top: 9px;
+    overflow-wrap: anywhere; }
+  /* Milestone report-card tiles (RUNS view): tighter numeral so six boxes fit
+     one line; long values (the RMS percentile triple) wrap WITHIN their box. */
+  .runstrip .tile .val { font-size: 19px; }
+  /* Aggregate strips sized for a one-line row. */
+  .tiles.oneline .tile .val { font-size: 22px; }
+  .tiles.oneline.runstrip .tile .val { font-size: 19px; }
+
+  /* Filter/sort toolbar. */
+  .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .toolbar input[type="text"] {
+    font-family: var(--mono); font-size: 16px; letter-spacing: 0.04em;
+    background: var(--panel2); color: var(--ink); border: 1px solid var(--edge2);
+    padding: 7px 11px; flex: 0 1 320px; min-width: 190px; max-width: 100%;
+  }
+  .toolbar input[type="text"]:focus { outline: none; border-color: var(--accent); }
+  .toolbar input::placeholder { color: var(--dimmer); text-transform: uppercase; letter-spacing: 0.08em; }
+  .toolbar .count { font-family: var(--mono); font-size: 15px; color: var(--dim);
+    text-transform: uppercase; letter-spacing: 0.06em; }
+  .toolbar .count.empty { color: var(--ref); }
+
+  /* No x-scroll: every table here is table-layout:fixed at width:100%, so it can
+     never exceed its container; long cell values wrap (overflow-wrap) or truncate
+     with a title tooltip (.trunc). There is deliberately NO overflow-x scroller. */
+  .tablewrap { border: 1px solid var(--edge); background: var(--panel); }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  thead th { font-size: 14.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim);
+    text-align: left; padding: 13px 12px; border-bottom: 1px solid var(--edge2); font-weight: 600;
+    background: var(--panel2); white-space: normal; vertical-align: bottom; }
+  th .th-inner { display: flex; align-items: baseline; gap: 6px; justify-content: space-between; }
+  th .th-label { overflow-wrap: anywhere; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--ink); }
+  th.sortable:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+  .sortind { flex: 0 0 auto; color: var(--dimmer); font-size: 13px; line-height: 1; }
+  th[aria-sort="ascending"], th[aria-sort="descending"] { color: var(--ink); }
+  th[aria-sort="ascending"] .sortind, th[aria-sort="descending"] .sortind { color: var(--accent); }
+  tbody td { padding: 13px 14px; border-bottom: 1px solid var(--edge); vertical-align: top; text-align: left; }
+  tbody tr:last-child td { border-bottom: none; }
+  .prov { font-weight: 600; }
+  .prov .name { text-transform: uppercase; letter-spacing: 0.04em; overflow-wrap: anywhere; }
+  .prov .caret { color: var(--dim); margin-right: 8px; font-size: 13px; display: inline-block; width: 12px; }
+  .prov .tok { font-family: var(--mono); font-size: 14.5px; color: var(--dim); margin-top: 6px; overflow-wrap: anywhere; }
+  .up { font-family: var(--mono); font-size: 15.5px; color: var(--dim); }
+  .cell-note { font-family: var(--mono); font-size: 14px; color: var(--dimmer); margin-top: 7px; overflow-wrap: anywhere; }
+  .val-mono { font-family: var(--mono); font-size: 16px; overflow-wrap: anywhere; }
+  /* Single-line truncation that keeps the full value in a title tooltip. */
+  .trunc { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Consolidated lane table: clickable rows + colspan detail expansion. */
+  tr.lane { cursor: pointer; }
+  tr.lane:hover td { background: #10151b; }
+  tr.lane:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
+  tr.lane.idle td { color: var(--dim); }
+  tr.lane.idle .prov .name { color: var(--dim); }
+  tr.lane.open td { background: #10151b; }
+  .pipe-obj { font-family: var(--mono); font-size: 21px; color: var(--ink); }
+  tr.lane.idle .pipe-obj { color: var(--dimmer); }
+  .pipe-rate { font-family: var(--mono); font-size: 15.5px; color: var(--live); }
+  .pipe-sub { font-family: var(--mono); font-size: 14px; color: var(--dimmer); margin-top: 7px; overflow-wrap: anywhere; }
+  /* Empty states left-aligned like all other content (no centered blocks). */
+  tr.empty td { text-align: left; color: var(--dim); font-family: var(--mono); font-size: 16px;
+    padding: 22px 14px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+  tr.detail > td { background: #0d1116; padding: 0; border-bottom: 1px solid var(--edge2); }
+  .detail-inner { padding: 18px; text-align: left; }
+  .det-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .det-stat { border: 1px solid var(--edge); background: var(--panel); padding: 12px 14px; text-align: left; }
+  .det-stat .lab { font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); }
+  .det-stat .val { font-family: var(--mono); font-size: 18.5px; margin-top: 8px; color: var(--ink); overflow-wrap: anywhere; }
+  .det-ref { border: 1px solid var(--edge); background: var(--panel); padding: 14px 16px; margin-bottom: 16px;
+    font-size: 16px; color: var(--dim); line-height: 1.6; text-align: left; }
+  .det-ref .hd { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; flex-wrap: wrap; }
+  .det-ref .ln { margin-top: 8px; overflow-wrap: anywhere; }
+  .det-ref b { color: var(--ink); }
+  .subtools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .subtools input[type="text"] {
+    font-family: var(--mono); font-size: 15.5px; letter-spacing: 0.04em;
+    background: var(--panel2); color: var(--ink); border: 1px solid var(--edge2);
+    padding: 6px 10px; flex: 0 1 260px; min-width: 160px; max-width: 100%;
+  }
+  .subtools input[type="text"]:focus { outline: none; border-color: var(--accent); }
+  .subtools input::placeholder { color: var(--dimmer); text-transform: uppercase; letter-spacing: 0.06em; }
+  .subtools .count { font-family: var(--mono); font-size: 14.5px; color: var(--dim);
+    text-transform: uppercase; letter-spacing: 0.05em; margin-left: auto; }
+  .subtable td, .subtable th { padding: 11px 13px; }
+  .subtable td { font-family: var(--mono); font-size: 15.5px; color: var(--ink); }
+  .subtable .muted { color: var(--dimmer); }
+  .pager { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  .pager .pageinfo { font-family: var(--mono); font-size: 14.5px; color: var(--dim); }
+
+  /* Tooltip (house style — no external lib). Hidden state is display:none so a
+     latent tooltip never contributes to document width (no phantom x-scroll);
+     right-edge columns open leftward (.tip-right) and width is viewport-capped. */
+  .tip { position: relative; border-bottom: 1px dotted var(--dimmer); cursor: help; }
+  .tip .tiptext {
+    display: none; position: absolute; z-index: 20;
+    left: 0; top: calc(100% + 6px); width: max-content; max-width: min(320px, 84vw);
+    background: #05070a; color: var(--ink); border: 1px solid var(--edge2);
+    padding: 8px 10px; font-family: var(--mono); font-size: 15px; line-height: 1.55; text-transform: none;
+    letter-spacing: 0; box-shadow: 0 6px 20px rgba(0,0,0,.5); pointer-events: none; white-space: normal;
+  }
+  .tip:hover .tiptext, .tip:focus-within .tiptext { display: block; }
+  .tip-right .tiptext { left: auto; right: 0; }
+
+  /* Provider enable/disable checkbox ON the lane row (first column). Large
+     box + generous hit area; stops row-expansion propagation itself. */
+  .lane-check { display: flex; align-items: flex-start; gap: 12px; }
+  .lane-check input { width: 23px; height: 23px; margin: 1px 0 0; padding: 0; accent-color: var(--accent);
+    cursor: pointer; flex: 0 0 auto; }
+  .lane-check input:disabled { cursor: not-allowed; }
+  .lane-check .lane-id { flex: 1 1 auto; min-width: 0; }
+
+  /* Per-run actions (RUNS view expansion). */
+  .runacts { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+  .runacts button.danger { color: var(--blocked); border-color: #4a2626; }
+  .runacts button.danger:hover { border-color: var(--blocked); color: #ff9d9d; }
+  .runacts button.armed { background: #1a0e0e; color: #ff9d9d; border-color: var(--blocked); }
+  .runacts .actnote { font-family: var(--mono); font-size: 14px; color: var(--dimmer); overflow-wrap: anywhere; }
+  .runacts .actnote.ok { color: var(--live); }
+  .runacts .actnote.err { color: var(--blocked); }
+
+  .legend { border: 1px solid var(--edge); background: var(--panel); padding: 16px 18px; margin-top: 28px; }
+  .legend h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--dimmer); margin: 0 0 12px; }
+  .legend .row { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 11px; font-size: 16.5px; color: var(--dim); }
+  .legend .row:last-child { margin-bottom: 0; }
+  .legend b { color: var(--ink); }
+  footer { margin-top: 30px; font-family: var(--mono); font-size: 14px; color: var(--dimmer); line-height: 1.8; }
+  footer .refs { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <nav class="topmenu" aria-label="Board views">
+    <button id="nav-lanes" type="button" aria-pressed="true">Lanes</button>
+    <button id="nav-runs" type="button" aria-pressed="false">Runs</button>
+  </nav>
+
+  <header>
+    <div class="titlerow">
+      <h1>Supplemental OMM — Provider Status Board</h1>
+      <span class="appid" id="app-id">io.spaceaware.supplemental-omm</span>
+    </div>
+    <div class="sub">App 2 · independent operator-source ingest + OD validation</div>
+    <div class="meta">
+      <span class="kv">NODE&nbsp;<b id="node-id">…</b></span>
+      <span class="kv">VERSION&nbsp;<b id="node-version">…</b></span>
+      <span class="kv">DATA PLANE&nbsp;<span id="health-pill" class="pill nodata">…</span></span>
+      <span class="spacer"></span>
+      <span class="kv">UPDATED&nbsp;<b id="updated">—</b></span>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+
+  <div id="view-lanes">
+    <section id="live-pipeline">
+      <div class="sectlabel">Live pipeline — per-lane publish progress (LIVE · anonymous /api/v1/stats · polling 5s)</div>
+      <div class="tiles oneline" id="pipe-tiles"></div>
+      <div class="toolbar" style="margin-top:14px">
+        <input id="lane-filter" type="text" placeholder="Filter lanes…" autocomplete="off" spellcheck="false" aria-label="Filter lanes by provider, token, gate, or source">
+        <span class="count" id="lane-count"></span>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <colgroup id="lane-cols"></colgroup>
+          <thead><tr id="lane-head"></tr></thead>
+          <tbody id="lane-body"></tbody>
+        </table>
+      </div>
+      <div class="sub" style="margin-top:10px">
+        One row per ingest lane, from this node's records (<span class="val-mono">/api/v1/stats</span> →
+        sources[], active batch = newest batch_id per source). <b>Data current as of</b> = newest record
+        EPOCH; <b>ElSets</b> = element sets in the batch; <b>Objects</b> = distinct NORAD IDs;
+        <b>Mean RMS</b> = OD fit RMS averaged over the batch's indexed records (fitted lanes only). Click a
+        row to drill into its satellites. The checkbox enables or disables that provider on this node
+        (a disabled provider's row stays visible). RMS statistics cover the records this node has
+        indexed with a fit RMS; records without one are excluded, never zero-filled.
+      </div>
+    </section>
+
+    <section>
+      <div class="sectlabel">Node-wide catalog (LIVE · anonymous /api/v1/stats + /api/v1/catalog)</div>
+      <div class="tiles oneline" id="tiles"></div>
+    </section>
+  </div>
+
+  <div id="view-runs" hidden>
+    <section id="ref-run-report">
+      <div class="sectlabel">Last full constellation run — Starlink · 2026-07-14</div>
+      <div class="tiles oneline runstrip" id="run-tiles"></div>
+    </section>
+
+    <section id="runs-list">
+      <div class="sectlabel">Pipeline runs on this node (LIVE · anonymous /api/v1/stats · one row per provider + batch)</div>
+      <div class="tablewrap">
+        <table>
+          <colgroup id="runs-cols"></colgroup>
+          <thead><tr id="runs-head"></tr></thead>
+          <tbody id="runs-body"></tbody>
+        </table>
+      </div>
+      <div class="sub" style="margin-top:10px">
+        Every (provider, schema, batch) with records on this node is a run — including interrupted
+        ones. <b>Run started</b> = first record arrival; <b>Duration</b> = first→last record;
+        <b>Mean RMS</b> = OD fit RMS over the batch's indexed records (fitted lanes only). Click a run
+        for its full summary.
+      </div>
+    </section>
+  </div>
+
+  <div class="legend">
+    <h2>Provenance legend</h2>
+    <div class="row"><span class="pill live">LIVE</span><span>Fetched this session from a real <b>anonymous</b> same-origin gateway surface. A lane with no active batch renders honestly as <b>idle</b> — the surface exists, the node just has no rows yet.</span></div>
+    <div class="row"><span class="pill ref">REF</span><span>Recorded fact (not live telemetry from this node): offline benchmark results, provider gate status, and the full-run milestone numbers.</span></div>
+    <div class="row"><span class="pill nodata">NO DATA</span><span>No anonymous surface can feed this cell today; the cell names the exact surface (auth-gated or not-yet-built). This board never invents an endpoint.</span></div>
+  </div>
+
+  <footer>
+    <div>SDS $APP record #2 · inline entry UI page · zero non-same-origin requests · all fetches → <span id="api-base">/api/v1</span>/* and <span id="root-base">/api</span>/node/info</div>
+    <div>Last-full-run milestone numbers on the Runs screen are a recorded run report (2026-07-14) — not live telemetry from this node, and not matched to a batch in the live runs list.</div>
+    <div>Module refs: 7 independent provider adapters + OD fit-pipeline + catalog-synthesis. Data refs: OEM (both) · OMM (fitted, GPS almanac, synthesized catalog). Parity evidence comes only from immutable offline development fixtures.</div>
+    <div class="refs" id="src-refs"></div>
+  </footer>
+</div>
+
+<script>
+"use strict";
+(function () {
+  var CFG = (typeof window !== "undefined" && window.__SDN_CONFIG__) || {};
+  var API = (CFG.apiBase && String(CFG.apiBase)) || "/api/v1";
+  // Root API base (one level above the versioned base): /api/v1 -> /api. The
+  // node-info surface that carries agent_version lives at /api/node/info (the
+  // versioned /api/v1/node/info is auth-gated), so it is fetched off this root.
+  var ROOT = API.replace(/\/v1\/?$/, "");
+  if (ROOT === API) ROOT = API.replace(/\/?$/, "");
+  document.getElementById("api-base").textContent = API;
+  document.getElementById("root-base").textContent = ROOT;
+
+  // ---- LAST FULL RUN (REF): checked-in milestone from the modules pipeline run
+  // ---- report (analysis/od, commit 8d9c39d, 2026-07-14). NOT live telemetry.
+  var LAST_FULL_RUN = [
+    { lab: "Total end-to-end", val: "118 s", foot: "10,820 objects" },
+    { lab: "Fit throughput", val: "93 sats/s", foot: "24 workers" },
+    { lab: "Download", val: "~280 MB/s", foot: "2.2 Gb/s · saturated" },
+    { lab: "Offline benchmark", val: "87.0%", foot: "9,413 / 10,816" },
+    { lab: "Space-Track matched", val: "10,740", foot: "of 10,820" },
+    { lab: "RMS p50/p90/p99 km", val: "0.117 / 0.209 / 0.266", foot: "fit residual" }
+  ];
+
+  // ---- Per-lane checked-in run summary (REF) for the row expansion, keyed by
+  // ---- provider key. Only the Starlink full-run has one today.
+  var RUN_SUMMARIES = {
+    "spacex-starlink": {
+      tag: "Full constellation run · 2026-07-14",
+      lines: [
+        "118 s end-to-end for 10,820 objects — fit 93 sats/s across 24 workers.",
+        "Download ~280 MB/s (2.2 Gb/s, link saturated).",
+        "Offline benchmark 9,413/10,816 = 87.0%; Space-Track matched 10,740/10,820.",
+        "RMS p50 0.117 / p90 0.209 / p99 0.266 km."
+      ]
+    }
+  };
+
+  // ---- Static registry for the seven independent production provider lanes.
+  // ---- Upstreams + the checked-in offline gate/parity REF facts are folded
+  // ---- into the row expansion. Nothing here is fabricated telemetry.
+  var PROVIDERS = [
+    { key: "spacex-starlink", name: "SpaceX Starlink", token: "SpaceX-E",
+      source: "api.starlink.com", producer: "SDN", status: "supported",
+      gate: "HARD-PASS", gateClass: "pass",
+      rms: "offline benchmark · 10/10", rmsNote: "MEME→OEM; immutable same-day fixtures: ours 0.072–0.116 km vs benchmark 0.175–0.223 km, all 10 beaten" },
+    { key: "iss", name: "ISS (ZARYA)", token: "ISS-E",
+      upstream: "nasa-public-data S3 · CCSDS OEM",
+      gate: "HARD-PASS", gateClass: "pass",
+      rms: "0.071 vs 0.111 km (same-ephemeris)", rmsNote: "offline same-ephemeris gate: both element sets scored against the identical source OEM; margin 0.040 km" },
+    { key: "oneweb", name: "OneWeb", token: "OneWeb-E",
+      upstream: "ephemeris.oneweb.net · LTEF",
+      gate: "BLOCKED", gateClass: "blocked",
+      rms: "n/a", rmsNote: "LTEF encoding undocumented — owner-assist for the spec" },
+    { key: "gps", name: "GPS", token: "GPS-A",
+      upstream: "navcen.uscg.gov · YUMA almanac",
+      gate: "BLOCKED", gateClass: "blocked",
+      rms: "n/a", rmsNote: "almanac ≠ state ephemeris; nothing to fit (needs IGS precise + PRN→NORAD)" },
+    { key: "glonass", name: "GLONASS", token: "GLONASS-RE",
+      upstream: "ftp.glonass-iac.ru · SP3-d",
+      gate: "INTERIM", gateClass: "interim",
+      rms: "RMS 2.06 km · elem-range", rmsNote: "IGS20/GPS-time as-declared; element-range gate MM[2.0,2.3] i[63,67]°" },
+    { key: "intelsat", name: "Intelsat", token: "Intelsat-11P",
+      upstream: "my.intelsat.com · ECF",
+      gate: "INTERIM", gateClass: "interim",
+      rms: "MM 8e-4 · non-indep", rmsNote: "RAAN/argp ill-conditioned at near-zero incl/ecc; name→NORAD registry (owner-assist)" },
+    { key: "cpf", name: "CPF (ILRS)", token: "CPF",
+      upstream: "edc.dgfi.tum.de · CPF v2",
+      gate: "INTERIM", gateClass: "interim",
+      rms: "pred-vs-pred · elem-range", rmsNote: "compares two prediction products, not raw-vs-fit" }
+  ];
+
+  var SOURCE_REFS = [
+    "api.starlink.com/public-files/ephemerides/MANIFEST.txt",
+    "nasa-public-data.s3.amazonaws.com/…/ISS.OEM_J2K_EPH.txt",
+    "ephemeris.oneweb.net/ltef/ltef.csv",
+    "navcen.uscg.gov/…/current_yuma.alm",
+    "ftp.glonass-iac.ru/MCC/PRODUCTS/LATEST/Final.sp3",
+    "my.intelsat.com/ephemeris/public",
+    "edc.dgfi.tum.de/pub/slr/cpf_predicts_v2/",
+    "space-track.org/publicfiles/",
+    "space-track.org/basicspacedata/query/class/gp"
+  ];
+
+  var GATE_ORDINAL = { "HARD-PASS": 0, "INTERIM": 1, "BLOCKED": 2 };
+
+  // ---- Fetch helpers. getJSON is versioned-base relative (API + path);
+  // ---- getJSONRoot is root relative (ROOT + path, for /api/node/info). Both
+  // ---- classify the outcome honestly: ok | auth | pending(404) | unreachable.
+  function classify(r) {
+    if (r.status === 401 || r.status === 403) return Promise.resolve({ __state: "auth", __status: r.status });
+    if (r.status === 404) return Promise.resolve({ __state: "pending", __status: 404 });
+    if (!r.ok) return Promise.resolve({ __state: "pending", __status: r.status });
+    return r.json().then(function (j) { return { __state: "ok", data: j }; })
+      .catch(function () { return { __state: "pending", __status: r.status }; });
+  }
+  function getJSON(path) {
+    return fetch(API + path, { headers: { "Accept": "application/json" }, credentials: "same-origin" })
+      .then(classify).catch(function () { return { __state: "unreachable" }; });
+  }
+  function getJSONRoot(path) {
+    return fetch(ROOT + path, { headers: { "Accept": "application/json" }, credentials: "same-origin" })
+      .then(classify).catch(function () { return { __state: "unreachable" }; });
+  }
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function fmtInt(n) {
+    if (typeof n !== "number" || !isFinite(n)) return "—";
+    return n.toLocaleString("en-US");
+  }
+  function fmtBytes(n) {
+    if (typeof n !== "number" || !isFinite(n)) return "—";
+    var u = ["B", "KB", "MB", "GB", "TB"], i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i === 0 ? n : n.toFixed(1)) + " " + u[i];
+  }
+  function fmtRMS(v) { return (typeof v === "number" && isFinite(v)) ? v.toFixed(3) : null; }
+  function pillFor(p) { return el("span", "pill " + p.cls, p.txt); }
+  function shortId(s) { s = String(s); return s.length > 14 ? s.slice(0, 7) + "…" + s.slice(-5) : s; }
+  function parseMs(iso) { if (!iso) return 0; var ms = Date.parse(iso); return isNaN(ms) ? 0 : ms; }
+  function ageStr(iso) {
+    var ms = parseMs(iso);
+    if (!ms) return null;
+    var s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+    if (s < 60) return s + "s ago";
+    if (s < 3600) return Math.floor(s / 60) + "m ago";
+    if (s < 86400) return Math.floor(s / 3600) + "h ago";
+    return Math.floor(s / 86400) + "d ago";
+  }
+  function isoTime(iso) { return iso ? String(iso).slice(0, 19).replace("T", " ") + "Z" : null; }
+
+  // ---- View switcher (LANES | RUNS) -----------------------------------------
+  // Both views live in this one document; the nav buttons toggle [hidden] and
+  // aria-pressed. No routing, no libraries.
+  function setView(view) {
+    var lanes = document.getElementById("view-lanes");
+    var runs = document.getElementById("view-runs");
+    var bl = document.getElementById("nav-lanes");
+    var br = document.getElementById("nav-runs");
+    var showRuns = (view === "runs");
+    lanes.hidden = showRuns;
+    runs.hidden = !showRuns;
+    bl.setAttribute("aria-pressed", showRuns ? "false" : "true");
+    br.setAttribute("aria-pressed", showRuns ? "true" : "false");
+  }
+
+  // ---- Report card (RUNS view): the checked-in full-run milestone. Clean
+  // ---- titles + numbers, no tag chips (owner directive) — the checked-in /
+  // ---- not-live provenance lives as fine print in the page footer.
+  function renderRunStrip() {
+    var host = document.getElementById("run-tiles");
+    host.innerHTML = "";
+    LAST_FULL_RUN.forEach(function (t) {
+      var d = el("div", "tile");
+      d.appendChild(el("div", "lab", t.lab));
+      d.appendChild(el("div", "val", t.val));
+      if (t.foot) d.appendChild(el("div", "foot", t.foot));
+      host.appendChild(d);
+    });
+  }
+
+  function unreachableVal(a, b) {
+    var v = el("div", "val small");
+    var st = (a && a.__state) || (b && b.__state);
+    v.appendChild(pillFor({ cls: "nodata", txt: st === "unreachable" ? "UNREACHABLE" : "NO DATA" }));
+    return v;
+  }
+  // nodeInfo is the peer-count fallback: /api/node/info carries the same peers
+  // block as /api/v1/stats and answers even when the stats aggregate is slow.
+  function renderTiles(stats, catalog, nodeInfo) {
+    var host = document.getElementById("tiles");
+    host.innerHTML = "";
+    var schemaMap = {};
+    var totalRecords = null, totalBytes = null;
+    // Two distinct peer populations: the raw libp2p/DHT swarm (ipfsPeers) and
+    // the subset of it that are actual Space Data Network nodes (sdnPeers =
+    // connected now, sdnKnown = also counting advertisement-discovered nodes
+    // this node has seen but is not connected to right now).
+    var ipfsPeers = null, sdnPeers = null, sdnKnown = null;
+
+    if (stats && stats.__state === "ok" && stats.data) {
+      var s = stats.data;
+      if (typeof s.total_records === "number") totalRecords = s.total_records;
+      if (typeof s.total_bytes === "number") totalBytes = s.total_bytes;
+      if (typeof s.connected_peers === "number") ipfsPeers = s.connected_peers;
+      if (s.peers && typeof s.peers === "object") {
+        if (typeof s.peers.ipfs === "number") ipfsPeers = s.peers.ipfs;
+        if (typeof s.peers.sdn === "number") sdnPeers = s.peers.sdn;
+        if (typeof s.peers.sdn_known === "number") sdnKnown = s.peers.sdn_known;
+      }
+      (s.schemas || []).forEach(function (row) {
+        if (row && row.schema) schemaMap[row.schema] = { count: row.count, bytes: row.total_bytes };
+      });
+    }
+    // Peer-count fallback: /api/node/info serves the same peers block and stays
+    // responsive when the stats aggregate is not.
+    if (sdnPeers === null && nodeInfo && nodeInfo.__state === "ok" && nodeInfo.data && nodeInfo.data.peers && typeof nodeInfo.data.peers === "object") {
+      var np = nodeInfo.data.peers;
+      if (typeof np.ipfs === "number" && ipfsPeers === null) ipfsPeers = np.ipfs;
+      if (typeof np.sdn === "number") sdnPeers = np.sdn;
+      if (typeof np.sdn_known === "number") sdnKnown = np.sdn_known;
+    }
+    if (catalog && catalog.__state === "ok" && catalog.data && Array.isArray(catalog.data.schemas)) {
+      catalog.data.schemas.forEach(function (row) {
+        var name = row.name || row.schema;
+        if (!name) return;
+        var cur = schemaMap[name] || {};
+        cur.count = (typeof cur.count === "number") ? cur.count : row.record_count;
+        cur.newest = row.newest_epoch; cur.oldest = row.oldest_epoch;
+        schemaMap[name] = cur;
+      });
+    }
+
+    function schemaTile(label, schema) {
+      var t = el("div", "tile");
+      t.appendChild(el("div", "lab", label));
+      var m = schemaMap[schema];
+      if (m && typeof m.count === "number") {
+        t.appendChild(el("div", "val", fmtInt(m.count)));
+        var foot = "records";
+        if (m.newest) foot = "newest epoch " + String(m.newest).slice(0, 19).replace("T", " ");
+        t.appendChild(el("div", "foot", foot));
+      } else if ((stats && stats.__state === "ok") || (catalog && catalog.__state === "ok")) {
+        var v = el("div", "val small"); v.appendChild(pillFor({ cls: "nodata", txt: "0 / none" })); t.appendChild(v);
+        t.appendChild(el("div", "foot", "no " + schema + " records on this node yet"));
+      } else {
+        t.appendChild(unreachableVal(stats, catalog));
+        t.appendChild(el("div", "foot", "/api/v1/stats · /api/v1/catalog"));
+      }
+      return t;
+    }
+    host.appendChild(schemaTile("OEM ephemeris (ingested)", "OEM"));
+    host.appendChild(schemaTile("OMM (fitted + catalog)", "OMM"));
+
+    var tr = el("div", "tile");
+    tr.appendChild(el("div", "lab", "Total records"));
+    if (totalRecords !== null) { tr.appendChild(el("div", "val", fmtInt(totalRecords))); tr.appendChild(el("div", "foot", fmtBytes(totalBytes) + " on disk")); }
+    else { tr.appendChild(unreachableVal(stats)); tr.appendChild(el("div", "foot", "/api/v1/stats")); }
+    host.appendChild(tr);
+
+    // SDN peers first (headline): nodes that actually speak the Space Data
+    // Network protocols. IPFS peers second: the whole libp2p/DHT swarm, of
+    // which the SDN nodes are a small subset.
+    var sp = el("div", "tile");
+    sp.appendChild(el("div", "lab", "SDN peers"));
+    if (sdnPeers !== null) {
+      sp.appendChild(el("div", "val", fmtInt(sdnPeers)));
+      var sdnFoot = "connected SDN nodes";
+      if (sdnKnown !== null && sdnKnown > sdnPeers) sdnFoot = "connected · " + fmtInt(sdnKnown) + " known";
+      sp.appendChild(el("div", "foot", sdnFoot));
+      sp.title = "Peers running Space Data Network nodes (SDN protocols / SDN advertisement)"
+        + (sdnKnown !== null ? " — " + fmtInt(sdnPeers) + " connected now, " + fmtInt(sdnKnown) + " known to this node" : "");
+    } else {
+      sp.appendChild(unreachableVal(stats));
+      sp.appendChild(el("div", "foot", "connected SDN nodes"));
+    }
+    host.appendChild(sp);
+
+    var pk = el("div", "tile");
+    pk.appendChild(el("div", "lab", "IPFS peers"));
+    if (ipfsPeers !== null) {
+      pk.appendChild(el("div", "val", fmtInt(ipfsPeers)));
+      pk.appendChild(el("div", "foot", "libp2p swarm"));
+      pk.title = "All libp2p/DHT swarm connections, SDN and non-SDN alike";
+    } else {
+      pk.appendChild(unreachableVal(stats));
+      pk.appendChild(el("div", "foot", "libp2p swarm"));
+    }
+    host.appendChild(pk);
+  }
+
+  function renderHeader(idRes, nodeInfoRes, healthRes) {
+    var idEl = document.getElementById("node-id");
+    if (idRes && idRes.__state === "ok" && idRes.data) {
+      var d = idRes.data;
+      var pid = d.peer_id || d.peerId || d.id || (d.node && d.node.peer_id) || "";
+      idEl.textContent = pid ? shortId(pid) : "unavailable";
+      if (pid) idEl.title = pid;
+    } else { idEl.textContent = idRes && idRes.__state === "unreachable" ? "offline" : "unavailable"; }
+
+    // VERSION: agent_version from the anonymous /api/node/info surface (the
+    // versioned /api/v1/node/info is auth-gated; /api/v1/version omits the field).
+    var vEl = document.getElementById("node-version");
+    if (nodeInfoRes && nodeInfoRes.__state === "ok" && nodeInfoRes.data) {
+      var av = nodeInfoRes.data.agent_version || nodeInfoRes.data.version || "";
+      vEl.textContent = av ? String(av) : "unavailable";
+      if (av) vEl.title = String(av);
+    } else { vEl.textContent = nodeInfoRes && nodeInfoRes.__state === "unreachable" ? "offline" : "unavailable"; }
+
+    var hp = document.getElementById("health-pill");
+    hp.className = "pill";
+    if (healthRes && healthRes.__state === "ok" && healthRes.data) {
+      var ok = (healthRes.data.status === "ok");
+      hp.classList.add(ok ? "live" : "blocked");
+      hp.textContent = ok ? "OK" : String(healthRes.data.status || "DEGRADED").toUpperCase();
+    } else if (healthRes && healthRes.__state === "unreachable") {
+      hp.classList.add("nodata"); hp.textContent = "OFFLINE";
+    } else { hp.classList.add("nodata"); hp.textContent = "NO DATA"; }
+  }
+
+  function renderSourceRefs() {
+    var host = document.getElementById("src-refs");
+    host.innerHTML = "";
+    SOURCE_REFS.forEach(function (u) { host.appendChild(el("span", null, "· " + u)); });
+  }
+
+  // ---- Lane matching + rate history ----------------------------------------
+  function normKey(s) { return String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]+/g, ""); }
+  // Two passes: exact key/name/projection-token matches win over substring
+  // matches. Tokens are compatibility projection metadata, not live sources.
+  function matchProvider(sourceName, providerID) {
+    var cands = [normKey(sourceName), normKey(providerID)].filter(Boolean);
+    if (!cands.length) return null;
+    var i, a, b, pc;
+    for (i = 0; i < PROVIDERS.length; i++) {
+      pc = [normKey(PROVIDERS[i].key), normKey(PROVIDERS[i].name), normKey(PROVIDERS[i].token)];
+      for (a = 0; a < cands.length; a++) {
+        for (b = 0; b < pc.length; b++) {
+          if (pc[b] && cands[a] === pc[b]) return PROVIDERS[i];
+        }
+      }
+    }
+    for (i = 0; i < PROVIDERS.length; i++) {
+      pc = [normKey(PROVIDERS[i].key), normKey(PROVIDERS[i].name), normKey(PROVIDERS[i].token)];
+      for (a = 0; a < cands.length; a++) {
+        for (b = 0; b < pc.length; b++) {
+          if (!pc[b]) continue;
+          var shorter = cands[a].length < pc[b].length ? cands[a] : pc[b];
+          if (shorter.length >= 3 && (cands[a].indexOf(pc[b]) !== -1 || pc[b].indexOf(cands[a]) !== -1)) return PROVIDERS[i];
+        }
+      }
+    }
+    return null;
+  }
+
+  var PIPE_WINDOW_MS = 60000;
+  var pipeHist = {}; // laneKey -> [{ t, c }]
+  function pushHist(key, count) {
+    var now = Date.now();
+    var arr = pipeHist[key] || (pipeHist[key] = []);
+    var last = arr.length ? arr[arr.length - 1] : null;
+    if (!last || last.c !== count || (now - last.t) > 4000) arr.push({ t: now, c: count });
+    while (arr.length > 2 && (now - arr[0].t) > PIPE_WINDOW_MS) arr.shift();
+    return arr;
+  }
+  function ratePerMin(arr) {
+    if (!arr || arr.length < 2) return null;
+    var first = arr[0], last = arr[arr.length - 1];
+    var dt = (last.t - first.t) / 1000, dc = last.c - first.c;
+    if (dt <= 0 || dc < 0) return 0;
+    return (dc / dt) * 60;
+  }
+  function activeBatch(rows) {
+    var best = null, bestT = -1, total = 0, batches = {};
+    rows.forEach(function (r) {
+      total += (typeof r.count === "number" ? r.count : 0);
+      batches[r.batch_id || ""] = true;
+      var t = parseMs(r.last_seen || r.updated_at || r.first_seen);
+      if (best === null || t >= bestT) { best = r; bestT = t; }
+    });
+    return { row: best, total: total, batchCount: Object.keys(batches).length };
+  }
+
+  // ---- Single consolidated lane table --------------------------------------
+  // laneState.rows is the per-poll lane model (display order: active first).
+  // expanded/drill persist across polls so an open drill-down keeps its page +
+  // search while live cells keep updating.
+  var LANE_COLUMNS = [
+    { id: "provider", label: "Provider / lane", width: "18%", sortable: true },
+    { id: "gate", label: "Gate", width: "11%", sortable: true },
+    { id: "epoch", label: "Data current as of (epoch)", width: "14%", sortable: true },
+    { id: "elsets", label: "ElSets", width: "10%", sortable: true },
+    { id: "objects", label: "Objects", width: "12%", sortable: true },
+    { id: "rms", label: "Mean RMS (km)", width: "12%", sortable: true },
+    { id: "rate", label: "Rate", width: "8%", sortable: true },
+    { id: "last", label: "Last record", width: "15%", sortable: true }
+  ];
+  var laneState = { rows: [], sortCol: null, sortDir: 1, filter: "", reachable: false };
+  var expanded = {};   // laneKey -> true
+  var drill = {};      // laneKey -> { page, limit, total, norad, rows, state, src }
+  var searchDebounce = {};
+
+  function laneSortKey(colId, l) {
+    switch (colId) {
+      case "provider": return { v: l.name.toLowerCase(), last: false };
+      case "gate": { var o = GATE_ORDINAL[l.gate]; return { v: (o == null ? 99 : o), last: (l.gate == null) }; }
+      case "epoch": return l.latestEpochMs ? { v: l.latestEpochMs, last: false } : { v: 0, last: true };
+      case "elsets": return l.active ? { v: l.count, last: false } : { v: 0, last: true };
+      case "objects": return (l.active && l.objects != null) ? { v: l.objects, last: false } : { v: 0, last: true };
+      case "rms": return (l.meanRMS != null) ? { v: l.meanRMS, last: false } : { v: 0, last: true };
+      case "rate": return (l.rate != null) ? { v: l.rate, last: false } : { v: 0, last: true };
+      case "last": return l.lastMs ? { v: l.lastMs, last: false } : { v: 0, last: true };
+    }
+    return { v: 0, last: true };
+  }
+  function laneMatches(l, q) {
+    if (!q) return true;
+    var src = l.source || {};
+    var hay = [l.name, l.token, l.gate || "", src.source_name || "", src.provider_id || ""].join(" ").toLowerCase();
+    return hay.indexOf(q) !== -1;
+  }
+
+  function buildLaneColsAndHead() {
+    var cg = document.getElementById("lane-cols");
+    var hr = document.getElementById("lane-head");
+    cg.innerHTML = ""; hr.innerHTML = "";
+    LANE_COLUMNS.forEach(function (col) {
+      var c = document.createElement("col"); c.style.width = col.width; cg.appendChild(c);
+      var th = document.createElement("th");
+      th.setAttribute("data-col", col.id);
+      var inner = el("div", "th-inner");
+      inner.appendChild(el("span", "th-label", col.label));
+      if (col.sortable) {
+        th.className = "sortable";
+        th.setAttribute("aria-sort", "none");
+        th.setAttribute("tabindex", "0");
+        inner.appendChild(el("span", "sortind", "↕"));
+        var onSort = function () {
+          if (laneState.sortCol === col.id) { laneState.sortDir = -laneState.sortDir; }
+          else { laneState.sortCol = col.id; laneState.sortDir = 1; }
+          renderLaneTable();
+        };
+        th.addEventListener("click", onSort);
+        th.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); onSort(); }
+        });
+      }
+      th.appendChild(inner);
+      hr.appendChild(th);
+    });
+  }
+
+  function buildLanes(statsRes) {
+    var sources = [];
+    if (statsRes && statsRes.__state === "ok" && statsRes.data && Array.isArray(statsRes.data.sources)) {
+      sources = statsRes.data.sources;
+    }
+    laneState.reachable = !!(statsRes && (statsRes.__state === "ok" || statsRes === "skeleton"));
+
+    // OMM lanes only; group matched providers, collect unmatched as extras.
+    var byProvider = {}, extras = [];
+    sources.forEach(function (row) {
+      if (!row || !/^OMM/i.test(String(row.schema || ""))) return;
+      var p = matchProvider(row.source_name, row.provider_id);
+      if (p) { (byProvider[p.key] || (byProvider[p.key] = { p: p, rows: [] })).rows.push(row); }
+      else { extras.push(row); }
+    });
+
+    function laneFromActive(base, ab) {
+      var r = ab && ab.row ? ab.row : null;
+      var lane = base;
+      lane.active = !!r;
+      lane.batchCount = ab ? ab.batchCount : 0;
+      if (r) {
+        lane.source = { schema: r.schema || "OMM.fbs", provider_id: r.provider_id || "", source_name: r.source_name || "", batch_id: r.batch_id || "" };
+        lane.count = (typeof r.count === "number") ? r.count : 0;
+        lane.objects = (typeof r.objects === "number" && r.objects > 0) ? r.objects : null;
+        lane.latestEpoch = r.latest_epoch || null;
+        lane.latestEpochMs = parseMs(r.latest_epoch);
+        lane.firstSeen = r.first_seen || null;
+        lane.lastSeen = r.last_seen || r.updated_at || null;
+        lane.lastMs = parseMs(r.last_seen || r.updated_at);
+        lane.meanRMS = (typeof r.mean_rms === "number") ? r.mean_rms : null;
+        lane.minRMS = (typeof r.min_rms === "number") ? r.min_rms : null;
+        lane.maxRMS = (typeof r.max_rms === "number") ? r.max_rms : null;
+        lane.batchId = r.batch_id || "";
+        lane.rate = ratePerMin(pushHist(lane.laneKey, lane.count));
+      } else {
+        lane.source = null; lane.count = 0; lane.objects = null; lane.latestEpoch = null;
+        lane.latestEpochMs = 0; lane.firstSeen = null; lane.lastSeen = null; lane.lastMs = 0;
+        lane.meanRMS = null; lane.minRMS = null; lane.maxRMS = null; lane.batchId = ""; lane.rate = null;
+        pipeHist[lane.laneKey] = [];
+      }
+      return lane;
+    }
+
+    var lanes = [];
+    PROVIDERS.forEach(function (p) {
+      var slot = byProvider[p.key];
+      lanes.push(laneFromActive({
+        laneKey: "prov:" + p.key, key: p.key, provider: p,
+        name: p.name, token: p.token ? "projection " + p.token : "producer " + (p.producer || "SDN"),
+        gate: p.gate, gateClass: p.gateClass
+      }, slot ? activeBatch(slot.rows) : null));
+    });
+    extras.forEach(function (row) {
+      var key = "src:" + (row.source_name || "") + "|" + (row.provider_id || "");
+      lanes.push(laneFromActive({
+        laneKey: key, key: key, provider: null,
+        name: row.source_name || row.provider_id || "(unnamed source)",
+        token: row.provider_id ? "provider " + row.provider_id : "unmatched source",
+        gate: null, gateClass: "nodata"
+      }, activeBatch([row])));
+    });
+
+    // Default order: active lanes first (by objects/count desc), then idle in
+    // registry order, extras appended.
+    lanes = lanes.map(function (l, i) { return { l: l, i: i }; }).sort(function (a, b) {
+      if (a.l.active !== b.l.active) return a.l.active ? -1 : 1;
+      if (a.l.active && b.l.active) {
+        var ca = a.l.count || 0, cb = b.l.count || 0;
+        if (ca !== cb) return cb - ca;
+      }
+      return a.i - b.i;
+    }).map(function (d) { return d.l; });
+
+    laneState.rows = lanes;
+  }
+
+  function sortedFilteredLanes() {
+    var q = laneState.filter.trim().toLowerCase();
+    var rows = laneState.rows.filter(function (l) { return laneMatches(l, q); });
+    if (laneState.sortCol) {
+      var dir = laneState.sortDir;
+      rows = rows.map(function (r, i) { return { r: r, i: i, k: laneSortKey(laneState.sortCol, r) }; }).sort(function (a, b) {
+        if (a.k.last !== b.k.last) return a.k.last ? 1 : -1;
+        if (a.k.last && b.k.last) return a.i - b.i;
+        var av = a.k.v, bv = b.k.v, c;
+        if (typeof av === "number" && typeof bv === "number") c = av - bv;
+        else c = String(av).localeCompare(String(bv));
+        if (c !== 0) return dir * c;
+        return a.i - b.i;
+      }).map(function (d) { return d.r; });
+    }
+    return rows;
+  }
+
+  function renderLaneTable() {
+    var body = document.getElementById("lane-body");
+    if (!body) return;
+
+    // Preserve drill-down search focus + caret across the poll re-render.
+    var focusLane = null, focusVal = "", focusStart = 0, focusEnd = 0;
+    var act = document.activeElement;
+    if (act && act.classList && act.classList.contains("drill-search")) {
+      focusLane = act.getAttribute("data-lane"); focusVal = act.value;
+      focusStart = act.selectionStart; focusEnd = act.selectionEnd;
+    }
+
+    body.innerHTML = "";
+    var rows = sortedFilteredLanes();
+    var colCount = LANE_COLUMNS.length;
+
+    if (rows.length === 0) {
+      var tr = el("tr", "empty");
+      var td = el("td", null, laneState.filter.trim() ? ("No lanes match “" + laneState.filter.trim() + "”") : "No lanes");
+      td.setAttribute("colspan", String(colCount));
+      tr.appendChild(td); body.appendChild(tr);
+    } else {
+      rows.forEach(function (l) {
+        body.appendChild(laneSummaryRow(l, colCount));
+        if (expanded[l.laneKey]) body.appendChild(laneDetailRow(l, colCount));
+      });
+    }
+
+    var cnt = document.getElementById("lane-count");
+    if (cnt) {
+      var active = laneState.rows.filter(function (l) { return l.active; }).length;
+      cnt.textContent = "showing " + rows.length + " of " + laneState.rows.length + " · " + active + " pulling";
+      cnt.classList.toggle("empty", rows.length === 0 && laneState.rows.length > 0);
+    }
+
+    // Header sort indicators.
+    var ths = document.querySelectorAll("#lane-head th");
+    for (var i = 0; i < ths.length; i++) {
+      var th = ths[i];
+      if (!th.classList.contains("sortable")) continue;
+      var ind = th.querySelector(".sortind");
+      if (th.getAttribute("data-col") === laneState.sortCol) {
+        th.setAttribute("aria-sort", laneState.sortDir === 1 ? "ascending" : "descending");
+        if (ind) ind.textContent = laneState.sortDir === 1 ? "▲" : "▼";
+      } else {
+        th.setAttribute("aria-sort", "none");
+        if (ind) ind.textContent = "↕";
+      }
+    }
+
+    if (focusLane) {
+      var input = body.querySelector('.drill-search[data-lane="' + cssEscape(focusLane) + '"]');
+      if (input) {
+        input.value = focusVal;
+        try { input.focus(); input.setSelectionRange(focusStart, focusEnd); } catch (e) {}
+      }
+    }
+  }
+
+  function cssEscape(s) { return String(s).replace(/["\\]/g, "\\$&"); }
+
+  function laneSummaryRow(l, colCount) {
+    var open = !!expanded[l.laneKey];
+    var tr = el("tr", "lane" + (l.active ? "" : " idle") + (open ? " open" : ""));
+    tr.setAttribute("role", "button");
+    tr.setAttribute("tabindex", "0");
+    tr.setAttribute("aria-expanded", open ? "true" : "false");
+    tr.addEventListener("click", function () { toggleLane(l); });
+    tr.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); toggleLane(l); }
+    });
+
+    // Provider / lane. Registry lanes carry a LARGE enable/disable checkbox on
+    // the row itself: checked = the provider is enabled on this node (persisted
+    // selection + schedule toggling). Unchecking never hides the row.
+    var prov = el("td", "prov");
+    var wrap = el("div", "lane-check");
+    if (l.provider) {
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      var unrunnable = laneUnrunnable(l.provider);
+      var blocked = adminBlockedReason();
+      cb.checked = unrunnable ? false : providerEnabled(l.provider.key);
+      cb.disabled = unrunnable || !!blocked;
+      cb.setAttribute("aria-label", (cb.checked ? "Disable" : "Enable") + " provider " + l.name);
+      if (unrunnable) cb.title = "blocked: " + (l.provider.rmsNote || "no producible source");
+      else if (blocked) cb.title = blocked;
+      else cb.title = cb.checked ? "Provider enabled on this node — uncheck to disable" : "Provider disabled on this node — check to enable";
+      cb.addEventListener("click", function (e) { e.stopPropagation(); });
+      cb.addEventListener("keydown", function (e) { e.stopPropagation(); });
+      cb.addEventListener("change", function (e) {
+        e.stopPropagation();
+        toggleProvider(l.provider.key, cb.checked, cb);
+      });
+      wrap.appendChild(cb);
+    }
+    var idBlock = el("div", "lane-id");
+    var nameLine = el("div", "name");
+    nameLine.appendChild(el("span", "caret", open ? "▾" : "▸"));
+    nameLine.appendChild(document.createTextNode(l.name));
+    idBlock.appendChild(nameLine);
+    idBlock.appendChild(el("div", "tok", l.token));
+    wrap.appendChild(idBlock);
+    prov.appendChild(wrap);
+    tr.appendChild(prov);
+
+    // Gate
+    var gateTd = el("td");
+    if (l.gate) {
+      gateTd.appendChild(pillFor({ cls: l.gateClass, txt: l.gate }));
+      gateTd.appendChild(el("div", "cell-note", "gate status"));
+    } else {
+      gateTd.appendChild(pillFor({ cls: "nodata", txt: "UNTAGGED" }));
+      gateTd.appendChild(el("div", "cell-note", "unmatched source lane"));
+    }
+    tr.appendChild(gateTd);
+
+    if (l.active) {
+      // Data current as of (epoch)
+      var epochTd = el("td");
+      epochTd.appendChild(el("div", "up", isoTime(l.latestEpoch) || "—"));
+      var ea = ageStr(l.latestEpoch);
+      if (ea) epochTd.appendChild(el("div", "pipe-sub", "epoch age " + ea));
+      tr.appendChild(epochTd);
+
+      // ElSets
+      var setsTd = el("td");
+      setsTd.appendChild(el("div", "pipe-obj", fmtInt(l.count)));
+      var note = "batch " + shortId(l.batchId || "—");
+      if (l.batchCount > 1) note += " · +" + (l.batchCount - 1) + " older";
+      setsTd.appendChild(el("div", "pipe-sub", note));
+      tr.appendChild(setsTd);
+
+      // Objects
+      var objTd = el("td");
+      objTd.appendChild(el("div", "pipe-obj", l.objects != null ? fmtInt(l.objects) : "—"));
+      tr.appendChild(objTd);
+
+      // Mean RMS
+      tr.appendChild(laneRMSCell(l));
+
+      // Rate
+      var rateTd = el("td");
+      if (l.rate === null) {
+        // Warm-up state, sized for the narrow Rate column (no mid-word wrap).
+        rateTd.appendChild(el("div", "up", "…"));
+        var warm = el("div", "pipe-sub", "warm-up");
+        warm.title = "Rate needs two polls of rising counts before it can be computed honestly.";
+        rateTd.appendChild(warm);
+      } else {
+        rateTd.appendChild(el("div", "pipe-rate", (l.rate >= 10 ? Math.round(l.rate) : l.rate.toFixed(1)) + "/min"));
+      }
+      tr.appendChild(rateTd);
+
+      // Last record
+      var lastTd = el("td");
+      lastTd.appendChild(el("span", "pill live", ageStr(l.lastSeen) || "LIVE"));
+      var lt = isoTime(l.lastSeen);
+      if (lt) lastTd.appendChild(el("div", "pipe-sub", lt));
+      tr.appendChild(lastTd);
+    } else {
+      var idleTd = el("td");
+      idleTd.appendChild(pillFor({ cls: "nodata", txt: laneState.reachable ? "IDLE" : "NO DATA" }));
+      idleTd.appendChild(el("div", "pipe-sub", laneState.reachable ? "no active batch" : "/api/v1/stats · unreachable"));
+      tr.appendChild(idleTd);
+      tr.appendChild(cell("—", "pipe-obj"));
+      tr.appendChild(cell("—", "pipe-obj"));
+      tr.appendChild(laneRMSCell(l));
+      tr.appendChild(cell("—", "pipe-sub"));
+      tr.appendChild(cell("—", "pipe-sub"));
+    }
+    return tr;
+  }
+  function cell(text, cls) { var td = el("td"); td.appendChild(el("div", cls || null, text)); return td; }
+
+  // Mean RMS cell: LIVE aggregate when present; else "n/a" for lanes whose gate
+  // has no independent OD RMS (non-independent / blocked), else a plain dash.
+  function laneRMSCell(l) {
+    var td = el("td");
+    var live = fmtRMS(l.meanRMS);
+    if (live != null) {
+      td.appendChild(el("div", "val-mono", live));
+      var sub = "mean";
+      if (l.minRMS != null && l.maxRMS != null) sub = fmtRMS(l.minRMS) + "–" + fmtRMS(l.maxRMS);
+      td.appendChild(el("div", "pipe-sub", sub));
+    } else if (l.provider && l.provider.gateClass === "blocked") {
+      td.appendChild(el("div", "up", "n/a"));
+      td.appendChild(el("div", "pipe-sub", "no OrbPro OD"));
+    } else {
+      td.appendChild(el("div", "up", "—"));
+      td.appendChild(el("div", "pipe-sub", "no fit RMS yet"));
+    }
+    return td;
+  }
+
+  function toggleLane(l) {
+    if (expanded[l.laneKey]) { delete expanded[l.laneKey]; renderLaneTable(); return; }
+    expanded[l.laneKey] = true;
+    var d = ensureDrill(l);
+    if (l.source && d.state === "idle") { d.page = 1; loadDrill(l); }
+    else renderLaneTable();
+  }
+
+  function ensureDrill(l) {
+    if (!drill[l.laneKey]) drill[l.laneKey] = { page: 1, limit: 50, total: 0, norad: "", rows: [], state: "idle", src: null };
+    return drill[l.laneKey];
+  }
+  function loadDrill(l) {
+    var d = ensureDrill(l);
+    if (!l.source) { d.state = "empty"; d.rows = []; d.total = 0; renderLaneTable(); return; }
+    d.src = l.source;
+    d.state = "loading";
+    renderLaneTable();
+    var s = l.source;
+    var qs = "?schema=" + encodeURIComponent(s.schema || "OMM.fbs") +
+      "&source_name=" + encodeURIComponent(s.source_name || "") +
+      "&provider_id=" + encodeURIComponent(s.provider_id || "") +
+      "&batch_id=" + encodeURIComponent(s.batch_id || "") +
+      "&page=" + d.page + "&limit=" + d.limit;
+    if (d.norad) qs += "&norad=" + encodeURIComponent(d.norad);
+    getJSON("/data/index" + qs).then(function (res) {
+      var cur = drill[l.laneKey];
+      if (!cur) return;
+      if (res && res.__state === "ok" && res.data) {
+        cur.total = res.data.total || 0;
+        cur.rows = Array.isArray(res.data.rows) ? res.data.rows : [];
+        cur.limit = res.data.limit || cur.limit;
+        cur.page = res.data.page || cur.page;
+        cur.state = "ok";
+      } else if (res && res.__state === "auth") { cur.state = "auth"; }
+      else if (res && res.__state === "pending") { cur.state = "pending"; }
+      else if (res && res.__state === "unreachable") { cur.state = "unreachable"; }
+      else { cur.state = "error"; }
+      renderLaneTable();
+    });
+  }
+
+  function laneDetailRow(l, colCount) {
+    var tr = el("tr", "detail");
+    var td = el("td"); td.setAttribute("colspan", String(colCount));
+    var inner = el("div", "detail-inner");
+
+    // Stats strip (live batch aggregates).
+    var strip = el("div", "det-stats");
+    function stat(lab, val) { var s = el("div", "det-stat"); s.appendChild(el("div", "lab", lab)); s.appendChild(el("div", "val", val)); strip.appendChild(s); }
+    if (l.active) {
+      stat("Mean RMS (km)", fmtRMS(l.meanRMS) || "—");
+      stat("Min RMS (km)", fmtRMS(l.minRMS) || "—");
+      stat("Max RMS (km)", fmtRMS(l.maxRMS) || "—");
+      stat("Newest epoch", isoTime(l.latestEpoch) || "—");
+      stat("ElSets", fmtInt(l.count));
+      stat("Distinct objects", l.objects != null ? fmtInt(l.objects) : "—");
+      stat("Pull started", isoTime(l.firstSeen) || "—");
+      stat("Batch id", shortId(l.batchId || "—"));
+    } else {
+      stat("Status", laneState.reachable ? "idle — no active batch" : "stats unreachable");
+    }
+    inner.appendChild(strip);
+
+    // REF facts (gate + parity + optional run summary).
+    if (l.provider) {
+      // Gate pill stays (owner: lane gate pills stay); no bare REF chip.
+      var ref = el("div", "det-ref");
+      var hd = el("div", "hd");
+      hd.appendChild(pillFor({ cls: l.provider.gateClass, txt: l.provider.gate }));
+      hd.appendChild(el("span", null, l.provider.source || l.provider.upstream));
+      ref.appendChild(hd);
+      ref.appendChild(el("div", "ln", l.provider.rmsNote));
+      var rs = RUN_SUMMARIES[l.provider.key];
+      if (rs) {
+        var head = el("div", "ln");
+        var b = el("b"); b.textContent = rs.tag; head.appendChild(b);
+        ref.appendChild(head);
+        rs.lines.forEach(function (line) { ref.appendChild(el("div", "ln", "· " + line)); });
+      }
+      inner.appendChild(ref);
+    }
+
+    // Per-satellite paginated table (from /api/v1/data/index).
+    inner.appendChild(laneDrillBlock(l));
+
+    td.appendChild(inner);
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function laneDrillBlock(l) {
+    var d = ensureDrill(l);
+    var block = el("div");
+
+    var tools = el("div", "subtools");
+    var search = document.createElement("input");
+    search.type = "text";
+    search.className = "drill-search";
+    search.setAttribute("data-lane", l.laneKey);
+    search.setAttribute("placeholder", "Search NORAD…");
+    search.setAttribute("autocomplete", "off");
+    search.setAttribute("spellcheck", "false");
+    search.setAttribute("aria-label", "Search satellites by NORAD id");
+    search.value = d.norad || "";
+    search.addEventListener("click", function (e) { e.stopPropagation(); });
+    search.addEventListener("input", function () {
+      var v = search.value.replace(/[^0-9]/g, "");
+      d.norad = v;
+      if (searchDebounce[l.laneKey]) clearTimeout(searchDebounce[l.laneKey]);
+      searchDebounce[l.laneKey] = setTimeout(function () { d.page = 1; loadDrill(l); }, 300);
+    });
+    tools.appendChild(search);
+    var cnt = el("span", "count");
+    if (d.state === "ok") {
+      var from = d.total === 0 ? 0 : (d.page - 1) * d.limit + 1;
+      var to = Math.min(d.total, d.page * d.limit);
+      cnt.textContent = d.total === 0 ? "0 records" : ("records " + from + "–" + to + " of " + d.total);
+    } else if (d.state === "loading") { cnt.textContent = "loading…"; }
+    tools.appendChild(cnt);
+    block.appendChild(tools);
+
+    var wrap = el("div", "tablewrap");
+    var tbl = document.createElement("table");
+    tbl.className = "subtable";
+    var cg = document.createElement("colgroup");
+    ["24%", "34%", "20%", "22%"].forEach(function (w) { var c = document.createElement("col"); c.style.width = w; cg.appendChild(c); });
+    tbl.appendChild(cg);
+    var thead = document.createElement("thead");
+    var htr = document.createElement("tr");
+    ["NORAD", "Epoch", "RMS (km)", "Record (CID)"].forEach(function (h) { var th = document.createElement("th"); th.textContent = h; htr.appendChild(th); });
+    thead.appendChild(htr); tbl.appendChild(thead);
+    var tbody = document.createElement("tbody");
+
+    if (d.state === "ok" && d.rows.length > 0) {
+      d.rows.forEach(function (row) {
+        var rtr = document.createElement("tr");
+        rtr.appendChild(subCell(row.norad != null ? String(row.norad) : "—", row.norad == null));
+        rtr.appendChild(subCell(isoTime(row.epoch) || "—", row.epoch == null));
+        rtr.appendChild(subCell(fmtRMS(row.rms) || "—", row.rms == null));
+        var cidTd = document.createElement("td");
+        var cidSpan = el("span", "trunc", row.cid ? shortId(row.cid) : "—");
+        if (row.cid) cidSpan.title = row.cid;
+        cidTd.appendChild(cidSpan);
+        rtr.appendChild(cidTd);
+        tbody.appendChild(rtr);
+      });
+    } else {
+      var etr = el("tr", "empty");
+      var etd = document.createElement("td"); etd.setAttribute("colspan", "4");
+      etd.textContent = drillEmptyText(l, d);
+      etr.appendChild(etd); tbody.appendChild(etr);
+    }
+    tbl.appendChild(tbody); wrap.appendChild(tbl); block.appendChild(wrap);
+
+    // Pager.
+    if (d.state === "ok" && d.total > d.limit) {
+      var pager = el("div", "pager");
+      var prev = document.createElement("button"); prev.type = "button"; prev.textContent = "‹ Prev";
+      var next = document.createElement("button"); next.type = "button"; next.textContent = "Next ›";
+      var pages = Math.max(1, Math.ceil(d.total / d.limit));
+      prev.disabled = d.page <= 1; next.disabled = d.page >= pages;
+      prev.addEventListener("click", function (e) { e.stopPropagation(); if (d.page > 1) { d.page--; loadDrill(l); } });
+      next.addEventListener("click", function (e) { e.stopPropagation(); if (d.page < pages) { d.page++; loadDrill(l); } });
+      pager.appendChild(prev);
+      pager.appendChild(el("span", "pageinfo", "page " + d.page + " / " + pages));
+      pager.appendChild(next);
+      block.appendChild(pager);
+    }
+    return block;
+  }
+  function subCell(text, muted) { var td = document.createElement("td"); var s = el("span", muted ? "muted" : null, text); td.appendChild(s); return td; }
+  function drillEmptyText(l, d) {
+    if (!l.source) return "No active batch — no satellites to list";
+    switch (d.state) {
+      case "loading": return "Loading satellites…";
+      case "auth": return "Per-record index requires auth";
+      case "pending": return "/api/v1/data/index · not available on this node";
+      case "unreachable": return "/api/v1/data/index · unreachable";
+      case "error": return "Could not load satellites";
+      default: return d.norad ? ("No satellites match NORAD “" + d.norad + "”") : "No satellites indexed for this lane yet";
+    }
+  }
+
+  // ---- RUNS report screen -----------------------------------------------------
+  // One row per (schema, provider, source, batch) from /api/v1/stats sources[] —
+  // EVERY batch with records is a run (including interrupted ones), not just the
+  // newest/active batch the lanes view keys on. Clicking a run expands its full
+  // summary. All values are the live stats aggregates; nothing is synthesized.
+  var RUNS_COLUMNS = [
+    { label: "Provider / run", width: "22%" },
+    { label: "Run started", width: "15%" },
+    { label: "Duration", width: "11%" },
+    { label: "ElSets", width: "9%" },
+    { label: "Objects", width: "11%" },
+    { label: "Mean RMS (km)", width: "13%" },
+    { label: "Data current as of (epoch)", width: "19%" }
+  ];
+  var runsState = { rows: [], reachable: false };
+  var runsExpanded = {}; // runKey -> true
+
+  function durStr(sec) {
+    if (typeof sec !== "number" || !isFinite(sec) || sec < 0) return null;
+    sec = Math.round(sec);
+    if (sec < 60) return sec + "s";
+    if (sec < 3600) return Math.floor(sec / 60) + "m " + (sec % 60) + "s";
+    return Math.floor(sec / 3600) + "h " + Math.floor((sec % 3600) / 60) + "m";
+  }
+
+  function buildRuns(statsRes) {
+    var sources = [];
+    if (statsRes && statsRes.__state === "ok" && statsRes.data && Array.isArray(statsRes.data.sources)) {
+      sources = statsRes.data.sources;
+    }
+    runsState.reachable = !!(statsRes && (statsRes.__state === "ok" || statsRes === "skeleton"));
+
+    var runs = sources.map(function (r) {
+      var p = matchProvider(r.source_name, r.provider_id);
+      var firstMs = parseMs(r.first_seen), lastMs = parseMs(r.last_seen || r.updated_at);
+      var durSec = (firstMs && lastMs && lastMs >= firstMs) ? (lastMs - firstMs) / 1000 : null;
+      var count = (typeof r.count === "number") ? r.count : 0;
+      return {
+        key: [r.schema || "", r.provider_id || "", r.source_name || "", r.batch_id || ""].join("|"),
+        name: p ? p.name : (r.source_name || r.provider_id || "(unnamed source)"),
+        token: (r.schema || "?") + (p ? " · projection " + p.token : (r.provider_id ? " · provider " + r.provider_id : " · unmatched source")),
+        source: r,
+        firstMs: firstMs, lastMs: lastMs, durSec: durSec, count: count,
+        objects: (typeof r.objects === "number" && r.objects > 0) ? r.objects : null,
+        meanRMS: (typeof r.mean_rms === "number") ? r.mean_rms : null,
+        minRMS: (typeof r.min_rms === "number") ? r.min_rms : null,
+        maxRMS: (typeof r.max_rms === "number") ? r.max_rms : null,
+        // ElSets/min over the run window; null when the window is degenerate.
+        rate: (durSec && durSec > 0) ? (count / durSec) * 60 : null
+      };
+    });
+    // Newest run first (by start time); rows with no first_seen sink.
+    runs.sort(function (a, b) {
+      if (!!b.firstMs !== !!a.firstMs) return b.firstMs ? 1 : -1;
+      if (b.firstMs !== a.firstMs) return b.firstMs - a.firstMs;
+      return String(a.key).localeCompare(String(b.key));
+    });
+    runsState.rows = runs;
+  }
+
+  function buildRunsColsAndHead() {
+    var cg = document.getElementById("runs-cols");
+    var hr = document.getElementById("runs-head");
+    cg.innerHTML = ""; hr.innerHTML = "";
+    RUNS_COLUMNS.forEach(function (col) {
+      var c = document.createElement("col"); c.style.width = col.width; cg.appendChild(c);
+      var th = document.createElement("th");
+      th.appendChild(el("span", "th-label", col.label));
+      hr.appendChild(th);
+    });
+  }
+
+  function renderRunsTable() {
+    var body = document.getElementById("runs-body");
+    if (!body) return;
+    body.innerHTML = "";
+    var colCount = RUNS_COLUMNS.length;
+
+    if (runsState.rows.length === 0) {
+      var tr = el("tr", "empty");
+      var td = el("td", null, runsState.reachable ? "No runs recorded on this node yet" : "/api/v1/stats · unreachable");
+      td.setAttribute("colspan", String(colCount));
+      tr.appendChild(td); body.appendChild(tr);
+      return;
+    }
+    runsState.rows.forEach(function (run) {
+      body.appendChild(runSummaryRow(run, colCount));
+      if (runsExpanded[run.key]) body.appendChild(runDetailRow(run, colCount));
+    });
+  }
+
+  function runSummaryRow(run, colCount) {
+    var open = !!runsExpanded[run.key];
+    var tr = el("tr", "lane" + (open ? " open" : ""));
+    tr.setAttribute("role", "button");
+    tr.setAttribute("tabindex", "0");
+    tr.setAttribute("aria-expanded", open ? "true" : "false");
+    var toggle = function () {
+      if (runsExpanded[run.key]) delete runsExpanded[run.key];
+      else runsExpanded[run.key] = true;
+      renderRunsTable();
+    };
+    tr.addEventListener("click", toggle);
+    tr.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); toggle(); }
+    });
+
+    var prov = el("td", "prov");
+    var nameLine = el("div", "name");
+    nameLine.appendChild(el("span", "caret", open ? "▾" : "▸"));
+    nameLine.appendChild(document.createTextNode(run.name));
+    prov.appendChild(nameLine);
+    prov.appendChild(el("div", "tok", run.token));
+    tr.appendChild(prov);
+
+    var startTd = el("td");
+    startTd.appendChild(el("div", "up", isoTime(run.source.first_seen) || "—"));
+    var sa = ageStr(run.source.first_seen);
+    if (sa) startTd.appendChild(el("div", "pipe-sub", sa));
+    tr.appendChild(startTd);
+
+    var durTd = el("td");
+    durTd.appendChild(el("div", "up", durStr(run.durSec) || "—"));
+    tr.appendChild(durTd);
+
+    var setsTd = el("td");
+    setsTd.appendChild(el("div", "pipe-obj", fmtInt(run.count)));
+    tr.appendChild(setsTd);
+
+    var objTd = el("td");
+    objTd.appendChild(el("div", "pipe-obj", run.objects != null ? fmtInt(run.objects) : "—"));
+    tr.appendChild(objTd);
+
+    var rmsTd = el("td");
+    var rms = fmtRMS(run.meanRMS);
+    if (rms != null) {
+      rmsTd.appendChild(el("div", "val-mono", rms));
+      if (run.minRMS != null && run.maxRMS != null) rmsTd.appendChild(el("div", "pipe-sub", fmtRMS(run.minRMS) + "–" + fmtRMS(run.maxRMS)));
+    } else {
+      rmsTd.appendChild(el("div", "up", "—"));
+      rmsTd.appendChild(el("div", "pipe-sub", "no fit RMS"));
+    }
+    tr.appendChild(rmsTd);
+
+    var epochTd = el("td");
+    epochTd.appendChild(el("div", "up", isoTime(run.source.latest_epoch) || "—"));
+    var ea = ageStr(run.source.latest_epoch);
+    if (ea) epochTd.appendChild(el("div", "pipe-sub", "epoch age " + ea));
+    tr.appendChild(epochTd);
+
+    return tr;
+  }
+
+  // ---- Run controls (stop / clear / restart / provider selection) -----------
+  // Writes go to the ADMIN surface (/api/v1/admin/runs/*): on an auth-gated or
+  // unreachable node the controls render disabled with the honest reason —
+  // never fake success. Reads (flags + selection) are anonymous.
+  var runControls = {
+    admin: "unknown",      // ok | auth | unreachable | unknown
+    selection: {},         // provider key -> bool (absent = enabled default)
+    flags: {},             // batch_id -> {requested_at}
+    clearArmed: {},        // runKey -> true (two-step clear confirm)
+    notes: {}              // runKey -> {cls, text} action feedback
+  };
+
+  function postJSON(path) {
+    return fetch(API + path, { method: "POST", headers: { "Accept": "application/json" }, credentials: "same-origin" })
+      .then(classify).catch(function () { return { __state: "unreachable" }; });
+  }
+  function postJSONBody(path, body) {
+    return fetch(API + path, {
+      method: "POST", credentials: "same-origin",
+      headers: { "Accept": "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(classify).catch(function () { return { __state: "unreachable" }; });
+  }
+
+  function providerEnabled(key) {
+    return runControls.selection.hasOwnProperty(key) ? !!runControls.selection[key] : true;
+  }
+
+  // Only the oneweb RAW lane has no producible source (blocked at source) —
+  // every other lane, including gps (almanac catalog) and the BLOCKED-gate
+  // parity lanes, has a live publishable source and stays selectable.
+  function laneUnrunnable(p) { return p.key === "oneweb"; }
+
+  function adminBlockedReason() {
+    if (runControls.admin === "auth") return "requires node authentication";
+    if (runControls.admin === "unreachable") return "node control surface unreachable";
+    if (runControls.admin === "unknown") return "node control surface not checked yet";
+    return null;
+  }
+
+  function toggleProvider(key, enabled, cb) {
+    // Explicit full map of every checkable provider — the operator's intent,
+    // no defaults left implicit once a choice has been made.
+    var map = {};
+    PROVIDERS.forEach(function (p) {
+      if (laneUnrunnable(p)) return;
+      map[p.key] = (p.key === key) ? enabled : providerEnabled(p.key);
+    });
+    postJSONBody("/admin/runs/providers", { providers: map }).then(function (res) {
+      if (res && res.__state === "ok" && res.data && res.data.providers) {
+        runControls.selection = res.data.providers;
+        runControls.admin = "ok";
+      } else {
+        // Honest revert: the node did not accept the change.
+        runControls.admin = (res && res.__state === "auth") ? "auth" : "unreachable";
+        if (cb) cb.checked = providerEnabled(key);
+      }
+      renderLaneTable();
+    });
+  }
+
+  function refreshRunControls() {
+    // Anonymous reads first (selection + stop flags) — these must work even
+    // when the node control surface is gated.
+    getJSON("/runs/providers").then(function (res) {
+      if (res && res.__state === "ok" && res.data && res.data.providers) {
+        runControls.selection = res.data.providers;
+      }
+      renderLaneTable();
+    });
+    getJSON("/runs/flags").then(function (res) {
+      var flags = {};
+      if (res && res.__state === "ok" && res.data && Array.isArray(res.data.flags)) {
+        res.data.flags.forEach(function (f) { if (f && f.batch_id) flags[f.batch_id] = f; });
+      }
+      runControls.flags = flags;
+      renderRunsTable();
+    });
+    // Control-surface probe (GET classifies reachability honestly).
+    getJSON("/admin/runs/providers").then(function (res) {
+      if (res && res.__state === "ok") runControls.admin = "ok";
+      else if (res && res.__state === "auth") runControls.admin = "auth";
+      else runControls.admin = "unreachable";
+      renderLaneTable();
+      renderRunsTable();
+    });
+  }
+
+  function setRunNote(runKey, cls, text) {
+    runControls.notes[runKey] = { cls: cls, text: text };
+    renderRunsTable();
+  }
+
+  function stopRun(run) {
+    var r = run.source;
+    var qs = "?batch_id=" + encodeURIComponent(r.batch_id || "") +
+      "&schema=" + encodeURIComponent(r.schema || "") +
+      "&source_name=" + encodeURIComponent(r.source_name || "") +
+      "&provider_id=" + encodeURIComponent(r.provider_id || "");
+    postJSON("/admin/runs/stop" + qs).then(function (res) {
+      if (res && res.__state === "ok" && res.data && res.data.stop === true) {
+        runControls.flags[r.batch_id] = { batch_id: r.batch_id, requested_at: res.data.requested_at };
+        setRunNote(run.key, "ok", "stop requested " + (res.data.requested_at || "") + " — takes effect when the producer next checks in");
+      } else if (res && res.__state === "auth") {
+        runControls.admin = "auth";
+        setRunNote(run.key, "err", "stop refused: requires node authentication");
+      } else {
+        setRunNote(run.key, "err", "stop failed: node control surface unreachable");
+      }
+    });
+  }
+
+  function clearRun(run) {
+    var r = run.source;
+    var qs = "?schema=" + encodeURIComponent(r.schema || "") +
+      "&provider_id=" + encodeURIComponent(r.provider_id || "") +
+      "&source_name=" + encodeURIComponent(r.source_name || "") +
+      "&batch_id=" + encodeURIComponent(r.batch_id || "");
+    postJSON("/admin/runs/clear" + qs).then(function (res) {
+      delete runControls.clearArmed[run.key];
+      if (res && res.__state === "ok" && res.data) {
+        setRunNote(run.key, "ok", "cleared: " + fmtInt(res.data.tags_deleted) + " tag rows + " +
+          fmtInt(res.data.records_deleted) + " records deleted (records shared with other batches survive)");
+        pollPipeline(); // refresh the runs list from the store truth
+      } else if (res && res.__state === "auth") {
+        runControls.admin = "auth";
+        setRunNote(run.key, "err", "clear refused: requires node authentication");
+      } else {
+        setRunNote(run.key, "err", "clear failed: node control surface unreachable");
+      }
+    });
+  }
+
+  // A run is STOPPABLE while its last record is fresh (the runner is likely
+  // still publishing); stale runs render the honest reason instead.
+  var RUN_ACTIVE_WINDOW_MS = 10 * 60 * 1000;
+
+  function runActionsBar(run) {
+    var bar = el("div", "runacts");
+    var blocked = adminBlockedReason();
+    var flag = runControls.flags[run.source.batch_id || ""];
+    var active = run.lastMs > 0 && (Date.now() - run.lastMs) < RUN_ACTIVE_WINDOW_MS;
+
+    // STOP — cooperative flag; only meaningful for a run still publishing.
+    var stopBtn = document.createElement("button");
+    stopBtn.type = "button";
+    stopBtn.textContent = flag ? "Stop requested" : "Stop";
+    stopBtn.disabled = !!blocked || !!flag || !active;
+    if (blocked) stopBtn.title = blocked;
+    else if (flag) stopBtn.title = "stop already requested " + (flag.requested_at || "");
+    else if (!active) stopBtn.title = "run idle (last record " + (ageStr(run.source.last_seen) || "long ago") + ") — nothing to stop";
+    stopBtn.addEventListener("click", function (e) { e.stopPropagation(); if (!stopBtn.disabled) stopRun(run); });
+    bar.appendChild(stopBtn);
+
+    // CLEAR — two-step confirm that names what will be deleted.
+    var clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    var armed = !!runControls.clearArmed[run.key];
+    clearBtn.className = armed ? "danger armed" : "danger";
+    clearBtn.textContent = armed
+      ? ("Confirm: delete " + fmtInt(run.count) + " ElSets of batch " + shortId(run.source.batch_id || ""))
+      : "Clear";
+    clearBtn.disabled = !!blocked;
+    if (blocked) clearBtn.title = blocked;
+    else clearBtn.title = armed
+      ? "Deletes this batch's records + tags; records shared with other batches survive"
+      : "Click twice to delete this run's records from the node";
+    clearBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (clearBtn.disabled) return;
+      if (!runControls.clearArmed[run.key]) { runControls.clearArmed[run.key] = true; renderRunsTable(); }
+      else clearRun(run);
+    });
+    bar.appendChild(clearBtn);
+    if (armed) {
+      var cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.textContent = "Cancel";
+      cancel.addEventListener("click", function (e) { e.stopPropagation(); delete runControls.clearArmed[run.key]; renderRunsTable(); });
+      bar.appendChild(cancel);
+    }
+
+    // RESTART — node-side only: module-scheduled lanes fire run-now on this
+    // node. When the producer is not managed by this node, the action renders
+    // disabled with the plain reason.
+    var prov = matchProvider(run.source.source_name, run.source.provider_id);
+    var restart = document.createElement("button");
+    restart.type = "button";
+    restart.textContent = "Restart";
+    if (prov && prov.module && prov.module.id && prov.module.method) {
+      restart.disabled = !!blocked;
+      if (blocked) restart.title = blocked;
+      else restart.title = "Runs this lane's schedule now";
+      restart.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (restart.disabled) return;
+        postJSON("/modules/runtime/" + encodeURIComponent(prov.module.id) + "/schedules/" + encodeURIComponent(prov.module.method) + "/run")
+          .then(function (res) {
+            if (res && res.__state === "ok") setRunNote(run.key, "ok", "restart triggered");
+            else if (res && res.__state === "auth") setRunNote(run.key, "err", "restart refused: requires node authentication");
+            else setRunNote(run.key, "err", "restart failed: node control surface unreachable");
+          });
+      });
+    } else {
+      restart.disabled = true;
+      restart.title = "producer not managed by this node";
+    }
+    bar.appendChild(restart);
+
+    var note = runControls.notes[run.key];
+    if (note) bar.appendChild(el("span", "actnote " + (note.cls || ""), note.text));
+    else if (flag) bar.appendChild(el("span", "actnote", "stop requested " + (flag.requested_at || "")));
+    return bar;
+  }
+
+  function runDetailRow(run, colCount) {
+    var tr = el("tr", "detail");
+    var td = el("td"); td.setAttribute("colspan", String(colCount));
+    var inner = el("div", "detail-inner");
+    var r = run.source;
+
+    inner.appendChild(runActionsBar(run));
+
+    var strip = el("div", "det-stats");
+    function stat(lab, val) { var s = el("div", "det-stat"); s.appendChild(el("div", "lab", lab)); s.appendChild(el("div", "val", val)); strip.appendChild(s); }
+    stat("ElSets", fmtInt(run.count));
+    stat("Distinct objects", run.objects != null ? fmtInt(run.objects) : "—");
+    stat("Bytes", fmtBytes(typeof r.total_bytes === "number" ? r.total_bytes : NaN));
+    stat("Run started", isoTime(r.first_seen) || "—");
+    stat("Last record", isoTime(r.last_seen || r.updated_at) || "—");
+    stat("Duration", durStr(run.durSec) || "—");
+    stat("Rate", run.rate != null ? ((run.rate >= 10 ? Math.round(run.rate) : run.rate.toFixed(1)) + "/min") : "—");
+    stat("Data current as of", isoTime(r.latest_epoch) || "—");
+    stat("Mean RMS (km)", fmtRMS(run.meanRMS) || "—");
+    stat("Min RMS (km)", fmtRMS(run.minRMS) || "—");
+    stat("Max RMS (km)", fmtRMS(run.maxRMS) || "—");
+    stat("Schema", r.schema || "—");
+    inner.appendChild(strip);
+
+    // Clean text summary — no tag chips in run boxes (owner directive).
+    var ref = el("div", "det-ref");
+    var hd = el("div", "hd");
+    var title = el("b"); title.textContent = run.name + " — batch summary";
+    hd.appendChild(title);
+    ref.appendChild(hd);
+    var bid = el("div", "ln");
+    var bb = el("b"); bb.textContent = "Batch id: "; bid.appendChild(bb);
+    bid.appendChild(document.createTextNode(r.batch_id || "—"));
+    ref.appendChild(bid);
+    if (r.source_url) {
+      var su = el("div", "ln");
+      var sb = el("b"); sb.textContent = "Source URL: "; su.appendChild(sb);
+      su.appendChild(document.createTextNode(String(r.source_url)));
+      ref.appendChild(su);
+    }
+    ref.appendChild(el("div", "ln", "Provider id " + (r.provider_id || "—") + " · source " + (r.source_name || "—") +
+      " · RMS aggregates cover the records this node has indexed with a fit RMS; records without one are excluded, never zero-filled."));
+    inner.appendChild(ref);
+
+    td.appendChild(inner);
+    tr.appendChild(td);
+    return tr;
+  }
+
+  // ---- Aggregate pipeline tiles ---------------------------------------------
+  function renderPipeTiles() {
+    var host = document.getElementById("pipe-tiles");
+    host.innerHTML = "";
+    function tile(lab, valNode, foot) {
+      var t = el("div", "tile");
+      t.appendChild(el("div", "lab", lab));
+      t.appendChild(valNode);
+      if (foot != null) t.appendChild(el("div", "foot", foot));
+      host.appendChild(t);
+    }
+    if (!laneState.reachable) {
+      var v0 = el("div", "val small"); v0.appendChild(pillFor({ cls: "nodata", txt: "NO DATA" }));
+      tile("Pull status", v0, "/api/v1/stats unreachable");
+      return;
+    }
+    var active = 0, totalObjs = 0, newestMs = 0, rmsVals = [];
+    laneState.rows.forEach(function (l) {
+      if (!l.active) return;
+      active++;
+      totalObjs += (l.count || 0);
+      if (l.lastMs > newestMs) newestMs = l.lastMs;
+      if (l.meanRMS != null) rmsVals.push(l.meanRMS);
+    });
+    tile("Lanes pulling", el("div", "val", active + " / " + laneState.rows.length), active === 0 ? "no active batch yet" : "active / total lanes");
+    tile("Records (active)", el("div", "val", fmtInt(totalObjs)), active === 0 ? "awaiting first record" : "element sets across active batches");
+    var ageNode;
+    if (newestMs > 0) ageNode = el("div", "val", ageStr(new Date(newestMs).toISOString()) || "—");
+    else { ageNode = el("div", "val small"); ageNode.appendChild(pillFor({ cls: "nodata", txt: "IDLE" })); }
+    tile("Newest record", ageNode, newestMs > 0 ? "most recent published object" : "pipeline idle");
+    var rmsNode;
+    if (rmsVals.length) {
+      var mean = rmsVals.reduce(function (a, b) { return a + b; }, 0) / rmsVals.length;
+      rmsNode = el("div", "val", fmtRMS(mean));
+      tile("Mean fit RMS (km)", rmsNode, "over " + rmsVals.length + " fitted lane" + (rmsVals.length === 1 ? "" : "s"));
+    } else {
+      rmsNode = el("div", "val small"); rmsNode.appendChild(pillFor({ cls: "nodata", txt: "—" }));
+      tile("Mean fit RMS (km)", rmsNode, "no fitted-lane RMS yet");
+    }
+  }
+
+  // ---- Poll orchestration ---------------------------------------------------
+  function applyStats(statsRes) {
+    buildLanes(statsRes);
+    buildRuns(statsRes);
+    renderPipeTiles();
+    renderLaneTable();
+    renderRunsTable();
+  }
+  function pollPipeline() {
+    getJSON("/stats").then(applyStats);
+    // Stop flags are tiny and drive the per-run STOP state — poll alongside.
+    getJSON("/runs/flags").then(function (res) {
+      if (res && res.__state === "ok" && res.data && Array.isArray(res.data.flags)) {
+        var flags = {};
+        res.data.flags.forEach(function (f) { if (f && f.batch_id) flags[f.batch_id] = f; });
+        runControls.flags = flags;
+      }
+    });
+  }
+
+  function refresh() {
+    document.getElementById("updated").textContent = new Date().toISOString().slice(0, 19).replace("T", " ") + "Z";
+    Promise.all([
+      getJSON("/id"), getJSONRoot("/node/info"), getJSON("/data/health"),
+      getJSON("/stats"), getJSON("/catalog")
+    ]).then(function (r) {
+      renderHeader(r[0], r[1], r[2]);
+      renderTiles(r[3], r[4], r[1]);
+      applyStats(r[3]);
+    });
+    refreshRunControls();
+  }
+
+  // ---- Boot -----------------------------------------------------------------
+  buildLaneColsAndHead();
+  buildRunsColsAndHead();
+  renderRunStrip();
+  renderSourceRefs();
+  document.getElementById("nav-lanes").addEventListener("click", function () { setView("lanes"); });
+  document.getElementById("nav-runs").addEventListener("click", function () { setView("runs"); });
+  var filterInput = document.getElementById("lane-filter");
+  if (filterInput) filterInput.addEventListener("input", function () { laneState.filter = filterInput.value; renderLaneTable(); });
+
+  renderTiles(null, null, null);
+  applyStats("skeleton"); // honest idle skeleton until the first poll lands
+  document.getElementById("refresh").addEventListener("click", refresh);
+  refresh();
+  setInterval(pollPipeline, 5000);
+})();
+</script>
+</body>
+</html>
