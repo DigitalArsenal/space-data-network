@@ -90,6 +90,7 @@ var SupportedSchemas = []string{
 	"AEM.fbs",  // Attitude Ephemeris Message
 	"ANI.fbs",  // Analytic Imagery Product
 	"AOF.fbs",  // AOS Transfer Frame (CCSDS 732.0-B-3)
+	"APP.fbs",  // Application Package Manifest
 	"APM.fbs",  // Attitude Parameter Message
 	"ARM.fbs",  // Armor and Protection
 	"AST.fbs",  // Astrodynamics
