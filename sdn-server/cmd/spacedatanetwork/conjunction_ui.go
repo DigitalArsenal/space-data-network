@@ -1,196 +1,134 @@
 package main
 
-// Conjunction-only UI serving (SDN_SPACEAWARE_UI_LOOP.md Phase C, task C2 —
-// OWNER DIRECTIVE 2026-07-11 "ship with the conjunction app ONLY").
-//
-// The daemon ships the standalone CONJUNCTION app as THE user interface. It is
-// a single self-contained HTML artifact (all JS/CSS/fonts inlined, NO hd-wallet
-// wasm — C1) produced by sdn-js `npm run build:conjunction`
-// (scripts/build-conjunction-single-file.mjs) and committed at
-// embedded/conjunction_app.html (sibling of the full-app spaceaware_app.html,
-// which stays committed and dormant — the descoped SpaceAware screens are NOT
-// deleted, they simply stop being served in the shipped configuration).
-//
-// Which UI the daemon serves is chosen by resolveUIMode() (SDN_UI_MODE env
-// var, default = conjunction). This keeps the dev workflow for the full
-// SpaceAware app working (SDN_UI_MODE=spaceaware) without deleting its build
-// target, while the SHIPPED default serves conjunction-only:
-//
-//   - conjunction (default): the conjunction app is served at the primary UI
-//     route "/"; the descoped SpaceAware screens (/console/*, /orbital,
-//     /gantt, /bmc2/*, and the SpaceAware /login screen) return 404 — code
-//     stays, serving stops. Deep links use the ?group= query string, which is
-//     preserved on "/", so no path-based routes are needed.
-//   - spaceaware: the full SpaceAware app (login/console/orbital/gantt/bmc2)
-//     is served at its route skeleton exactly as it was through Phase U — for
-//     local development and future re-enablement only.
-//
-// The conjunction app's data sources (/api/v1/peers, /api/v1/channels,
-// /api/v1/stats, /api/v1/data/health) are all anonymous-safe public read
-// endpoints (isPublicReadAPIPath), so no session flow ships with this UI; the
-// admin API wall (adminSecurityMiddleware + RequireAuth) is unchanged.
-
 import (
-	"bytes"
-	_ "embed"
+	"embed"
+	"encoding/json"
+	"fmt"
 	"net/http"
-	"os"
 	"strings"
 
-	"github.com/spacedatanetwork/sdn-server/internal/auth"
+	"github.com/spacedatanetwork/sdn-server/internal/appmanifest"
 )
 
-//go:embed embedded/conjunction_app.html
-var conjunctionAppHTML []byte
-
-// conjunctionCSP is the Content-Security-Policy served with the conjunction UI
-// (C3). The conjunction artifact is a single self-contained document — all
-// JS/CSS inline, all fonts inlined as data: URIs, and its only network calls
-// are same-origin GETs to /api/v1/* — so this policy enforces that
-// fully-self-hosted posture at the browser layer, complementing the build-time
-// forbidden-host audit and the runtime zero-external-request verification.
-//
-//   - connect-src 'self' is the load-bearing directive: it blocks any
-//     exfiltration / third-party beacon the single-file bundle would otherwise
-//     be able to make. The app only fetches /api/v1/{peers,channels,stats} +
-//     /api/v1/data/health, all same-origin.
-//   - default/img/font/object/base-uri lock every other fetch to self (+ data:
-//     for the inlined woff2 fonts and any inline images).
-//   - frame-ancestors 'none' + form-action 'none' add clickjacking / form-
-//     hijack protection; the conjunction app has no <form> and is never framed.
-//   - script-src/style-src carry 'unsafe-inline' because the packaging hard
-//     rule inlines the single module script (plus the serve-time __SDN_CONFIG__
-//     script) and Svelte emits inline style="" attributes throughout; a
-//     nonce/hash pass over the embedded artifact is the noted future hardening,
-//     but 'unsafe-inline' here does NOT weaken the exfiltration protection that
-//     connect-src provides. No wasm ships (C1), so no 'wasm-unsafe-eval'; no
-//     workers/blob:, so no worker-src.
-const conjunctionCSP = "default-src 'self'; " +
+// appSurfaceCSP is applied uniformly to pages decoded from embedded SDS $APP
+// records. It permits only the document's own inline resources and same-origin
+// API traffic; hosts do not know application-specific routes or assets.
+const appSurfaceCSP = "default-src 'self'; " +
 	"base-uri 'none'; " +
 	"object-src 'none'; " +
 	"frame-ancestors 'none'; " +
 	"form-action 'none'; " +
-	"script-src 'self' 'unsafe-inline'; " +
+	"script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; " +
 	"style-src 'self' 'unsafe-inline'; " +
 	"img-src 'self' data:; " +
 	"font-src 'self' data:; " +
+	"worker-src 'self' blob:; " +
 	"connect-src 'self'"
 
-// appsLauncherLink is a serve-time-injected, fully self-contained affordance
-// that surfaces the /apps/ launcher on the served conjunction UI (A2.10 item 3:
-// "surface an APPS link on the conjunction page WITHOUT rebuilding the sdn-js
-// artifact"). It is a single same-origin anchor with an inline style attribute —
-// allowed by conjunctionCSP's style-src 'unsafe-inline' — carrying no script and
-// making no network request until clicked, so it preserves the zero-external-
-// request / console-clean posture. It is injected before </body> at serve time
-// (via injectAppsLauncherLink); the embedded conjunction artifact and the App 1
-// APP-record drift gate are untouched (they cover the embed bytes, not the
-// serve-time bytes). House style: uppercase, square corners, monospace, no arrow
-// glyph, with a title tooltip.
-const appsLauncherLink = `<a href="/apps/" title="Open the SDN apps launcher" ` +
-	`style="position:fixed;bottom:12px;right:12px;z-index:2147483000;` +
-	`font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;` +
-	`font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:#8fd6ff;` +
-	`background:#0a0e14;border:1px solid #2a3a4a;padding:7px 12px;text-decoration:none;">APPS</a>`
+//go:embed embedded/apps.json embedded/*.app
+var embeddedAppsFS embed.FS
 
-// injectAppsLauncherLink inserts the /apps/ launcher affordance before the final
-// </body> of the served conjunction document (appending to the end if no </body>
-// is present). It operates on serve-time bytes only.
-func injectAppsLauncherLink(html []byte) []byte {
-	link := []byte(appsLauncherLink)
-	if idx := bytes.LastIndex(html, []byte("</body>")); idx >= 0 {
-		out := make([]byte, 0, len(html)+len(link))
-		out = append(out, html[:idx]...)
-		out = append(out, link...)
-		out = append(out, html[idx:]...)
-		return out
-	}
-	return append(html, link...)
+// embeddedAppSpec is host metadata only: a stable mount slug and an opaque SDS
+// $APP payload. The host decodes the record with the same resolver used for any
+// installed app; it does not embed or route an application's HTML directly.
+type embeddedAppSpec struct {
+	slug   string
+	record []byte
+	root   bool
 }
 
-// uiMode selects which embedded UI the daemon serves at the primary route.
-type uiMode int
-
-const (
-	// uiModeConjunction is the SHIPPED default: the conjunction-only app at "/",
-	// with every descoped SpaceAware screen 404'd.
-	uiModeConjunction uiMode = iota
-	// uiModeSpaceAware serves the full SpaceAware app route skeleton — dev /
-	// re-enablement only, never the shipped default.
-	uiModeSpaceAware
-)
-
-func (m uiMode) String() string {
-	if m == uiModeSpaceAware {
-		return "spaceaware"
+func embeddedAppSpecs() ([]embeddedAppSpec, error) {
+	var config struct {
+		Apps []struct {
+			Slug   string `json:"slug"`
+			Record string `json:"record"`
+			Root   bool   `json:"root"`
+		} `json:"apps"`
 	}
-	return "conjunction"
+	data, err := embeddedAppsFS.ReadFile("embedded/apps.json")
+	if err != nil {
+		return nil, fmt.Errorf("embedded apps: read config: %w", err)
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("embedded apps: parse config: %w", err)
+	}
+	if len(config.Apps) != 1 {
+		return nil, fmt.Errorf("embedded apps: config must declare exactly one current app")
+	}
+	entry := config.Apps[0]
+	if entry.Slug == "" || entry.Record == "" || strings.Contains(entry.Record, "/") || !strings.HasSuffix(entry.Record, ".app") || !entry.Root {
+		return nil, fmt.Errorf("embedded apps: invalid current app configuration")
+	}
+	record, err := embeddedAppsFS.ReadFile("embedded/" + entry.Record)
+	if err != nil {
+		return nil, fmt.Errorf("embedded apps: read %q: %w", entry.Record, err)
+	}
+	return []embeddedAppSpec{{slug: entry.Slug, record: record, root: entry.Root}}, nil
 }
 
-// resolveUIMode reads SDN_UI_MODE and returns the UI serving mode. Anything
-// other than an explicit "spaceaware"/"full" opt-in yields the conjunction-only
-// shipped default (empty, unset, "conjunction", or an unrecognized value).
-func resolveUIMode() uiMode {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("SDN_UI_MODE"))) {
-	case "spaceaware", "full", "spaceaware-full", "dev":
-		return uiModeSpaceAware
-	default:
-		return uiModeConjunction
+func embeddedAppManifest(slug string) (*appmanifest.AppManifest, error) {
+	specs, err := embeddedAppSpecs()
+	if err != nil {
+		return nil, err
 	}
+	for _, spec := range specs {
+		if spec.slug != slug {
+			continue
+		}
+		manifest, err := appmanifest.FromAPP(spec.record)
+		if err != nil {
+			return nil, fmt.Errorf("embedded app %q: decode $APP: %w", slug, err)
+		}
+		return manifest, nil
+	}
+	return nil, fmt.Errorf("embedded app %q is not registered", slug)
 }
 
-// makeUISurfaceHandler builds the "/" catch-all surface handler for the chosen
-// UI mode. In the SHIPPED conjunction default it serves the conjunction app at
-// the primary route and 404s the descoped SpaceAware screens; in spaceaware
-// (dev) mode it delegates to the unchanged full-app makeFrontendSurfaceHandler.
-func makeUISurfaceHandler(frontendHandler http.Handler, authHandler *auth.Handler, requireAuth bool, mode uiMode) http.Handler {
-	if mode == uiModeConjunction {
-		return makeConjunctionSurfaceHandler(frontendHandler)
+func primaryEmbeddedAppSlug() (string, error) {
+	specs, err := embeddedAppSpecs()
+	if err != nil {
+		return "", err
 	}
-	return makeFrontendSurfaceHandler(frontendHandler, authHandler, requireAuth)
+	for _, spec := range specs {
+		if spec.root {
+			return spec.slug, nil
+		}
+	}
+	return "", fmt.Errorf("embedded apps: no root app")
 }
 
-// makeConjunctionSurfaceHandler serves the conjunction-only ship (C2). The
-// conjunction app is THE UI at the primary route "/"; deep links use the
-// ?group= query string (preserved on "/"), so no path-based routes are needed.
-// Every descoped SpaceAware screen (/console/*, /orbital, /gantt, /bmc2/*, the
-// SpaceAware /login screen) returns 404 — its code stays committed and dormant,
-// only its serving stops. Anything else (assets, /favicon fallback, unknown)
-// falls through to the disk frontend handler and its own 404s.
-func makeConjunctionSurfaceHandler(frontendHandler http.Handler) http.Handler {
+// makeEmbeddedAppSurfaceHandler mounts one resolved $APP entry page as a
+// homepage. The only host policy is HTTP method/path handling; page content,
+// identity, and media type come from the APP record itself.
+func makeEmbeddedAppSurfaceHandler(slug string) (http.Handler, error) {
+	manifest, err := embeddedAppManifest(slug)
+	if err != nil {
+		return nil, err
+	}
+	resolution, err := manifest.Resolve()
+	if err != nil {
+		return nil, fmt.Errorf("embedded app %q: resolve: %w", slug, err)
+	}
+	if resolution.EntryPage == nil {
+		return nil, fmt.Errorf("embedded app %q has no entry page", slug)
+	}
+	page, err := resolution.EntryPage.DecodedContent()
+	if err != nil {
+		return nil, fmt.Errorf("embedded app %q: decode entry page: %w", slug, err)
+	}
+	app := resolvedApp{slug: slug, id: manifest.ID, name: manifest.Name, version: manifest.Version, description: manifest.Description, mediaType: strings.TrimSpace(resolution.EntryPage.MediaType), page: page}
+	if app.mediaType == "" {
+		app.mediaType = "text/html"
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
-			serveConjunctionUI(w, r)
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if isSpaceAwareUIPath(r.URL.Path) {
+		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
 			http.NotFound(w, r)
 			return
 		}
-		frontendHandler.ServeHTTP(w, r)
-	})
-}
-
-// serveConjunctionUI serves the embedded single-file conjunction artifact from
-// memory with the same runtime-config injection and cross-origin-isolation
-// headers as the disk-backed frontend handler (COOP/COEP mirror the full-app
-// surface for parity; the conjunction app is fully self-contained so they do
-// not gate any subresource).
-func serveConjunctionUI(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
-	w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
-	w.Header().Set("Content-Security-Policy", conjunctionCSP)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusOK)
-	if r.Method != http.MethodHead {
-		// Inject the /apps/ launcher affordance (A2.10 item 3) at serve time, on
-		// top of the __SDN_CONFIG__ injection, without touching the embedded
-		// artifact or its drift gate.
-		_, _ = w.Write(injectAppsLauncherLink(injectFrontendConfig(conjunctionAppHTML)))
-	}
+		serveAppPage(w, r, app)
+	}), nil
 }

@@ -25,7 +25,7 @@
 //
 //	/spacedatanetwork/channels/<STANDARD3>/<sourceID>
 //
-//	e.g.  /spacedatanetwork/channels/OMM/celestrak-gp
+//	e.g.  /spacedatanetwork/channels/OMM/provider-a
 //
 // STANDARD3 is the validated 3-letter uppercase code; sourceID is the provider
 // id (an opaque, non-empty string with no "--"). gossipsub topics are arbitrary

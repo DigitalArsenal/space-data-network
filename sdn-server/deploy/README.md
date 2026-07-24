@@ -13,20 +13,19 @@ clean store-lock error).
 Ingestion therefore runs in one of two mutually exclusive shapes:
 
 **Preferred — in-daemon ingest (daemon + ingest on one store).** Enable the
-`ingest` section in the daemon config; the CelesTrak/Space-Track/UDL workers
+`ingest` section in the daemon config; the credentialed Space-Track/UDL workers
 run inside `spacedatanetwork.service` against the daemon's own store handle:
 
 ```yaml
 # /etc/spacedatanetwork/config.yaml
 ingest:
   enabled: true
-  celestrak_interval: 3h
-  satcat_interval: 24h
-  space_weather_interval: 3h
   spacetrack_enabled: false   # true needs SPACETRACK_* env vars
   udl_enabled: false          # true needs UDL_* env vars
-  dataset_publish_url: http://127.0.0.1:5001/api/v1/admin/dataset-updates/publish
 ```
+
+Public-source providers are standalone signed modules; the daemon and
+standalone Go ingest worker do not contain direct CelesTrak request paths.
 
 ```bash
 # Credentials (only if spacetrack/udl are enabled) go on the DAEMON unit:

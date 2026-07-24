@@ -118,10 +118,10 @@ func TestLocalLanePublishStoresWithSourceTags(t *testing.T) {
 	mux, store := newLocalLaneTestMux(t)
 
 	target := "/api/v1/data/publish/OMM.fbs" +
-		"?source_name=constellation-od" +
-		"&provider_id=sdn-od" +
+		"?source_name=orbital-fit" +
+		"&provider_id=ephemeris-pipeline" +
 		"&batch_id=batch-abc123" +
-		"&source_url=https%3A%2F%2Fcelestrak.org%2FNORAD%2Felements%2Fsupplemental%2Fsup-gp.php"
+		"&source_url=https%3A%2F%2Fcatalogfixture.org%2FNORAD%2Felements%2Fhistorical%2Fsup-gp.php"
 
 	req := localLaneRequest(http.MethodPost, target, buildMinimalOMM(t))
 	rec := httptest.NewRecorder()
@@ -133,8 +133,8 @@ func TestLocalLanePublishStoresWithSourceTags(t *testing.T) {
 
 	rows, err := store.QueryRawRecords(storage.RawRecordQuery{
 		SchemaName: "OMM.fbs",
-		SourceName: "constellation-od",
-		ProviderID: "sdn-od",
+		SourceName: "orbital-fit",
+		ProviderID: "ephemeris-pipeline",
 		BatchID:    "batch-abc123",
 		Limit:      10,
 	})
@@ -162,7 +162,7 @@ func TestLocalLanePublishStoresWithSourceTags(t *testing.T) {
 func TestLocalLaneAdminPublishAliasStoresRecord(t *testing.T) {
 	mux, store := newLocalLaneTestMux(t)
 
-	target := "/api/v1/admin/publish?schema=OMM.fbs&source_name=constellation-od&provider_id=sdn-od"
+	target := "/api/v1/admin/publish?schema=OMM.fbs&source_name=orbital-fit&provider_id=ephemeris-pipeline"
 	req := localLaneRequest(http.MethodPost, target, buildMinimalOMM(t))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -172,7 +172,7 @@ func TestLocalLaneAdminPublishAliasStoresRecord(t *testing.T) {
 	}
 	rows, err := store.QueryRawRecords(storage.RawRecordQuery{
 		SchemaName: "OMM.fbs",
-		SourceName: "constellation-od",
+		SourceName: "orbital-fit",
 		Limit:      10,
 	})
 	if err != nil {

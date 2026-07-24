@@ -26,7 +26,7 @@ func newCapTestStore(t *testing.T) *storage.FlatSQLStore {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	tags := storage.SourceTags{ProviderID: "prov", SourceName: "celestrak-gp", BatchID: "b1"}
+	tags := storage.SourceTags{ProviderID: "prov", SourceName: "provider-gp", BatchID: "b1"}
 	for _, spec := range []struct {
 		norad uint32
 		epoch string
@@ -141,7 +141,7 @@ func decodeStreamFrames(t *testing.T, result map[string]interface{}, segments []
 func TestFlatSQLQueryStreamOp(t *testing.T) {
 	store := newCapTestStore(t)
 	result, segments := callOp(t, store, "storage.flatsql_query_stream", map[string]interface{}{
-		"sql":    `SELECT _data FROM "OMM@celestrak-gp" WHERE NORAD_CAT_ID = ?`,
+		"sql":    `SELECT _data FROM "OMM@provider-gp" WHERE NORAD_CAT_ID = ?`,
 		"params": []map[string]interface{}{{"t": "i64", "v": 30001}},
 	})
 	frames := decodeStreamFrames(t, result, segments)
@@ -154,7 +154,7 @@ func TestFlatSQLEpochStreamOp(t *testing.T) {
 	store := newCapTestStore(t)
 	result, segments := callOp(t, store, "storage.flatsql_epoch_stream", map[string]interface{}{
 		"schema":  "OMM.fbs",
-		"source":  "celestrak-gp",
+		"source":  "provider-gp",
 		"profile": "nearest",
 		"epoch":   float64(mustUnix(t, "2026-05-11T12:00:00Z")),
 		"limit":   1000,
@@ -212,7 +212,7 @@ func TestFlatSQLQueryStreamOpErrors(t *testing.T) {
 	}
 	// Store remains healthy (A.3c no-poison contract through the cap).
 	result, segments := callOp(t, store, "storage.flatsql_query_stream", map[string]interface{}{
-		"sql": `SELECT _data FROM "OMM@celestrak-gp"`,
+		"sql": `SELECT _data FROM "OMM@provider-gp"`,
 	})
 	if len(decodeStreamFrames(t, result, segments)) != 3 {
 		t.Fatal("store unhealthy after bad SQL through cap")

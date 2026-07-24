@@ -84,11 +84,11 @@ func (h *DataQueryHandler) handleHealth(w http.ResponseWriter, r *http.Request) 
 // not a bulk export.
 const recordIndexMaxLimit = 200
 
-// handleRecordIndex serves the ANONYMOUS per-record index page the App 2
-// supplemental-OMM board drills into when a lane row is expanded:
+// handleRecordIndex serves an ANONYMOUS per-record index page for an explicitly
+// selected SDS schema:
 //
 //	GET /api/v1/data/index?schema=OMM.fbs&source_name=&provider_id=&batch_id=&norad=&page=&limit=
-//	-> {total, page, limit, rows:[{norad, epoch (RFC3339), rms, cid}]}
+//	-> {total, page, limit, rows:[{norad, epoch (RFC3339), cid}]}
 //
 // It reads sdn_record_index (joined to sdn_record_source_tags for the source
 // lane filter) — no FlatBuffer payloads are hydrated. norad is a NORAD substring
@@ -104,6 +104,10 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 
 	values := r.URL.Query()
 	schema := normalizeRecordIndexSchema(firstNonEmptyDataString(values.Get("schema"), values.Get("schema_name"), values.Get("schemaName")))
+	if schema == "" {
+		writeError(w, http.StatusBadRequest, "schema is required")
+		return
+	}
 
 	page := parsePositiveIntParam(values.Get("page"), 1)
 	limit := parsePositiveIntParam(values.Get("limit"), 50)
@@ -138,11 +142,6 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 		} else {
 			m["epoch"] = nil
 		}
-		if rr.RMS != nil {
-			m["rms"] = *rr.RMS
-		} else {
-			m["rms"] = nil
-		}
 		out = append(out, m)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -155,11 +154,12 @@ func (h *DataQueryHandler) handleRecordIndex(w http.ResponseWriter, r *http.Requ
 }
 
 // normalizeRecordIndexSchema maps a caller schema alias to the canonical stored
-// schema_name (e.g. "OMM" -> "OMM.fbs"); empty defaults to OMM.fbs.
+// schema_name (e.g. "OMM" -> "OMM.fbs"). An empty value remains empty so the
+// caller can reject implicit application-specific defaults.
 func normalizeRecordIndexSchema(schema string) string {
 	schema = strings.TrimSpace(schema)
 	if schema == "" {
-		return "OMM.fbs"
+		return ""
 	}
 	if !strings.Contains(schema, ".") {
 		return schema + ".fbs"

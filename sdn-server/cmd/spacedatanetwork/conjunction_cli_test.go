@@ -119,7 +119,7 @@ func TestRunConjunctionScreenDryRunExportsManeuverEphemerisProvenance(t *testing
 		PrimaryPNMCID:       "bafyprimarypnm",
 		PrimaryQuery:        "ENTITY_ID = 'SAT-MANEUVER'",
 		SecondaryProviderID: "space-data-network-02",
-		SecondarySourceName: "celestrak-gp",
+		SecondarySourceName: "catalogfixture-gp",
 		SecondaryPNMCID:     "bafysecondarypnm",
 		SecondaryQuery:      "NORAD_CAT_ID = 25544",
 		ModuleID:            "com.space-data-network.conjunction-assessment",
@@ -172,7 +172,7 @@ func TestRunConjunctionScreenDryRunExportsManeuverEphemerisProvenance(t *testing
 	if response.Sources[1]["role"] != "secondary" ||
 		response.Sources[1]["schema"] != "OMM.fbs" ||
 		response.Sources[1]["provider_id"] != "space-data-network-02" ||
-		response.Sources[1]["source_name"] != "celestrak-gp" ||
+		response.Sources[1]["source_name"] != "catalogfixture-gp" ||
 		response.Sources[1]["pnm_cid"] != "bafysecondarypnm" ||
 		response.Sources[1]["query"] != "NORAD_CAT_ID = 25544" ||
 		response.Sources[1]["encrypted"] != false {

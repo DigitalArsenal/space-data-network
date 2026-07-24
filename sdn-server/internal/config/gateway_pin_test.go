@@ -18,21 +18,21 @@ func TestGatewayPinnedStandardDefaultsOff(t *testing.T) {
 
 func TestGatewayPinnedStandardMatching(t *testing.T) {
 	g := GatewayConfig{Pin: []GatewayPinEntry{
-		{Peer: "16Uiu2HAmCelestrak", Standard: "OMM"},
+		{Peer: "16Uiu2HAmProviderFixture", Standard: "OMM"},
 		{Peer: "16Uiu2HAmOther", Standard: "all"},
 	}}
 	cases := []struct {
 		peer, schema string
 		want         bool
 	}{
-		{"16Uiu2HAmCelestrak", "OMM.fbs", true},
-		{"16Uiu2HAmCelestrak", "omm", true},
-		{"16Uiu2HAmCelestrak", "OMM", true},
-		{"16Uiu2HAmCelestrak", "CAT.fbs", false}, // standard not pinned
-		{"16Uiu2HAmUnknown", "OMM.fbs", false},   // peer not pinned
-		{"16Uiu2HAmOther", "CAT.fbs", true},      // "all" wildcard
+		{"16Uiu2HAmProviderFixture", "OMM.fbs", true},
+		{"16Uiu2HAmProviderFixture", "omm", true},
+		{"16Uiu2HAmProviderFixture", "OMM", true},
+		{"16Uiu2HAmProviderFixture", "CAT.fbs", false}, // standard not pinned
+		{"16Uiu2HAmUnknown", "OMM.fbs", false},         // peer not pinned
+		{"16Uiu2HAmOther", "CAT.fbs", true},            // "all" wildcard
 		{"16Uiu2HAmOther", "SPW.fbs", true},
-		{"16Uiu2HAmCelestrak", "", false}, // concrete standard required
+		{"16Uiu2HAmProviderFixture", "", false}, // concrete standard required
 	}
 	for _, c := range cases {
 		if got := g.PinnedStandard(c.peer, c.schema); got != c.want {

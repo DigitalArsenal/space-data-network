@@ -1,36 +1,18 @@
 package flowrt
 
-// Engine-link surface for flow mounts — the MINIMAL port of
-// sdn-server/internal/flowrt/engine_link.go needed by the kubo timer-served
-// flow path (cronmount.go).
-//
-// WHAT IS PORTED: the mechanical detection of an engine-LINKED artifact
-// (wasmImportsModule) plus the EngineLinkCapability constant loadFlowInstance
-// excludes from bridge provisioning. This is enough for cronmount to admit
-// bridge-mode flows and REJECT linked ones with a clear error.
-//
-// WHAT IS DEFERRED (and why): the full loop-C.7 direct-linkage machinery — the
-// flatsql_link memory-crossing shim, PrewarmLinkShimAOT, EngineLinkProvider,
-// the SdnEngineRefEntry body-ref harvest and epoch/poison handling — is NOT
-// ported here. Every flow this foundation targets (the CelesTrak ingest flows
-// and the supplemental-OMM OD flow) is bridge-mode by design ("new flows
-// default to bridge"): they read/write records through the policy-mediated
-// storage.ingest_with_source / storage.* cap ops, which land records in
-// sdnstore by (source, 3-letter type) — NOT through direct engine linkage. The
-// low-level engine-ref harvest core already lives at
-// kubo/sdn/flatsqlrt/engine_link.go for when a linked flow is actually needed;
-// bringing the flow-level mount machinery over is a separate, larger port.
+// Engine-link metadata for generic flow mounts. Import detection selects the
+// application-blind linked-store runtime path; it does not inspect flow or
+// application identity.
 
 // EngineLinkCapability is the manifest capability a flow compiler stamps onto
 // engine-linked artifacts. It is satisfied by a mount's engine link, not by a
-// hostcall handler, so capability provisioning excludes it. Retained here so
-// loadFlowInstance can recognize and (for now) reject it cleanly.
+// hostcall handler, so capability provisioning excludes it.
 const EngineLinkCapability = "storage_engine_link"
 
 // engineImportModule is the wasm import-module name a linked flow artifact
-// imports from the live store engine. A bundle importing it NEEDS the engine
-// instance to instantiate at all; cronmount rejects such bundles (bridge-mode
-// only). Mirrors flatsqlrt.EngineImportModule without importing flatsqlrt.
+// imports from the linked store engine. A bundle importing it needs the generic
+// store linkage to instantiate. Mirrors flatsqlrt.EngineImportModule without
+// importing flatsqlrt.
 const engineImportModule = "flatsql"
 
 // wasmImportsModule reports whether portable wasm bytes import anything from

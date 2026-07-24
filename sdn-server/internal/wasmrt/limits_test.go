@@ -52,6 +52,21 @@ func hotLoopFixtureWasm(t *testing.T) []byte {
 	return b
 }
 
+func TestHasFunctionReportsExportPresence(t *testing.T) {
+	mod, err := NewModule(hotLoopFixtureWasm(t))
+	if err != nil {
+		t.Fatalf("NewModule: %v", err)
+	}
+	defer mod.Release()
+
+	if !mod.HasFunction("normal") {
+		t.Fatal("HasFunction did not report an exported function")
+	}
+	if mod.HasFunction("missing") {
+		t.Fatal("HasFunction reported a function that is not exported")
+	}
+}
+
 // runWithSafetyValve calls fn on a goroutine and fails the test — rather
 // than hanging the whole `go test` run — if it does not return within
 // margin. It exists so that a broken B3 enforcement mechanism surfaces as a

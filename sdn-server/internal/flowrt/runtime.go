@@ -83,16 +83,39 @@ func NewFlowRuntime(wasmBytes []byte, maxMemoryPages uint32, extraOpts ...wasmrt
 		return nil, fmt.Errorf("failed to create flow WASM module: %w", err)
 	}
 
-	// Call _initialize if present (WASI reactor pattern)
-	mod.Execute("_initialize")
+	// Run a declared initializer before reading any runtime descriptors.
+	switch {
+	case mod.HasFunction("_initialize"):
+		if _, initErr := mod.Execute("_initialize"); initErr != nil {
+			mod.Release()
+			return nil, fmt.Errorf("flowrt: run WASI reactor initialization: %w", initErr)
+		}
+	case mod.HasFunction("__wasm_call_ctors"):
+		if _, initErr := mod.Execute("__wasm_call_ctors"); initErr != nil {
+			mod.Release()
+			return nil, fmt.Errorf("flowrt: run command module constructors: %w", initErr)
+		}
+	}
 
 	rt := &FlowRuntime{mod: mod}
 
-	// Cache descriptor counts
-	rt.NodeCount = rt.callUint32(runtimeExportNodeDescriptorCount)
-	rt.EdgeCount = rt.callUint32(runtimeExportEdgeDescriptorCount)
-	rt.TriggerCount = rt.callUint32(runtimeExportTriggerDescriptorCount)
-	rt.DepCount = rt.callUint32(runtimeExportDependencyDescriptorCount)
+	counts := []struct {
+		name string
+		dst  *uint32
+	}{
+		{runtimeExportNodeDescriptorCount, &rt.NodeCount},
+		{runtimeExportEdgeDescriptorCount, &rt.EdgeCount},
+		{runtimeExportTriggerDescriptorCount, &rt.TriggerCount},
+		{runtimeExportDependencyDescriptorCount, &rt.DepCount},
+	}
+	for _, count := range counts {
+		value, countErr := rt.executeUint32(count.name)
+		if countErr != nil {
+			rt.Release()
+			return nil, fmt.Errorf("flowrt: read descriptor count %s: %w", count.name, countErr)
+		}
+		*count.dst = value
+	}
 
 	// Cache the static per-node dispatch identities once.
 	rt.nodeInfo = make([]flowNodeInfo, rt.NodeCount)
@@ -136,16 +159,19 @@ func (rt *FlowRuntime) Module() *wasmrt.Module { return rt.mod }
 // ABI wrappers — all calls are serialized by the caller's mu.Lock
 // ---------------------------------------------------------------------------
 
-// callUint32 calls a no-arg export returning a uint32. Returns 0 on error.
-func (rt *FlowRuntime) callUint32(name string) uint32 {
+// executeUint32 calls a required no-arg export returning a uint32.
+func (rt *FlowRuntime) executeUint32(name string) (uint32, error) {
 	res, err := rt.mod.Execute(name)
 	if err != nil {
 		res, err = rt.mod.Execute(underscoreRuntimeExportName(name))
 		if err != nil {
-			return 0
+			return 0, err
 		}
 	}
-	return uint32(wasmrt.ToInt32(res[0]))
+	if len(res) == 0 {
+		return 0, fmt.Errorf("export %q returned no values", name)
+	}
+	return uint32(wasmrt.ToInt32(res[0])), nil
 }
 
 // callVoid calls a no-arg void export.
@@ -171,8 +197,8 @@ func (rt *FlowRuntime) ResetState() {
 
 // GetReadyNodeIndex returns the next node index ready for invocation,
 // or InvalidIndex if none are ready.
-func (rt *FlowRuntime) GetReadyNodeIndex() uint32 {
-	return rt.callUint32(runtimeExportReadyNode)
+func (rt *FlowRuntime) GetReadyNodeIndex() (uint32, error) {
+	return rt.executeUint32(runtimeExportReadyNode)
 }
 
 // BeginInvocation begins invocation for the given node with a frame budget.
@@ -190,7 +216,10 @@ func (rt *FlowRuntime) BeginInvocation(nodeIndex uint32, frameBudget int32) int3
 
 // GetCurrentInvocationDescriptor reads the current invocation descriptor.
 func (rt *FlowRuntime) GetCurrentInvocationDescriptor() (*FlowInvocationDescriptor, error) {
-	ptr := rt.callUint32(runtimeExportCurrentInvocation)
+	ptr, err := rt.executeUint32(runtimeExportCurrentInvocation)
+	if err != nil {
+		return nil, err
+	}
 	if ptr == 0 || ptr == InvalidIndex {
 		return nil, errors.New("no current invocation descriptor")
 	}
@@ -245,7 +274,10 @@ func (rt *FlowRuntime) EnqueueTriggerFrame(triggerIndex uint32, framePtr uint32)
 
 // GetNodeDispatchDescriptor reads the dispatch descriptor at the given index.
 func (rt *FlowRuntime) GetNodeDispatchDescriptor(index uint32) (*FlowNodeDispatchDescriptor, error) {
-	basePtr := rt.callUint32(runtimeExportNodeDispatchDescriptors)
+	basePtr, err := rt.executeUint32(runtimeExportNodeDispatchDescriptors)
+	if err != nil {
+		return nil, err
+	}
 	if basePtr == 0 {
 		return nil, errors.New("no dispatch descriptors")
 	}
@@ -255,7 +287,10 @@ func (rt *FlowRuntime) GetNodeDispatchDescriptor(index uint32) (*FlowNodeDispatc
 
 // GetDependencyDescriptor reads the dependency descriptor at the given index.
 func (rt *FlowRuntime) GetDependencyDescriptor(index uint32) (*SignedArtifactDependencyDescriptor, error) {
-	basePtr := rt.callUint32(runtimeExportDependencyDescriptors)
+	basePtr, err := rt.executeUint32(runtimeExportDependencyDescriptors)
+	if err != nil {
+		return nil, err
+	}
 	if basePtr == 0 {
 		return nil, errors.New("no dependency descriptors")
 	}
@@ -265,7 +300,10 @@ func (rt *FlowRuntime) GetDependencyDescriptor(index uint32) (*SignedArtifactDep
 
 // GetNodeRuntimeState reads the runtime state for a node.
 func (rt *FlowRuntime) GetNodeRuntimeState(index uint32) (*FlowNodeRuntimeState, error) {
-	basePtr := rt.callUint32(runtimeExportNodeStates)
+	basePtr, err := rt.executeUint32(runtimeExportNodeStates)
+	if err != nil {
+		return nil, err
+	}
 	if basePtr == 0 {
 		return nil, errors.New("no node states")
 	}
@@ -275,7 +313,10 @@ func (rt *FlowRuntime) GetNodeRuntimeState(index uint32) (*FlowNodeRuntimeState,
 
 // GetIngressRuntimeState reads the runtime state for an ingress.
 func (rt *FlowRuntime) GetIngressRuntimeState(index uint32) (*FlowIngressRuntimeState, error) {
-	basePtr := rt.callUint32(runtimeExportIngressStates)
+	basePtr, err := rt.executeUint32(runtimeExportIngressStates)
+	if err != nil {
+		return nil, err
+	}
 	if basePtr == 0 {
 		return nil, errors.New("no ingress states")
 	}
@@ -336,7 +377,10 @@ func (rt *FlowRuntime) Drain(ctx context.Context, handlers HandlerMap, opts Drai
 			}
 		}
 
-		nodeIndex := rt.GetReadyNodeIndex()
+		nodeIndex, readyErr := rt.GetReadyNodeIndex()
+		if readyErr != nil {
+			return result, fmt.Errorf("flowrt: read ready node: %w", readyErr)
+		}
 		if nodeIndex == InvalidIndex {
 			break // no more ready nodes
 		}

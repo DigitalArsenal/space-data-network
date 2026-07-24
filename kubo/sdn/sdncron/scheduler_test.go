@@ -216,3 +216,14 @@ func TestApplyConfigErrors(t *testing.T) {
 		t.Fatalf("ApplyConfig(bad timers) err = %v, want ErrInvalidConfig", err)
 	}
 }
+
+func TestRegisterRejectsMissingOrInvalidArtifactInterval(t *testing.T) {
+	store, _ := NewConfigStore(t.TempDir())
+	for _, interval := range []string{"", "0ms", "not-a-duration"} {
+		s := NewScheduler(store, nil)
+		err := s.Register(Registration{Module: &fakeModule{id: "invalid", interval: interval}})
+		if err == nil {
+			t.Fatalf("Register interval %q succeeded; artifact timer defaults must be explicit and positive", interval)
+		}
+	}
+}

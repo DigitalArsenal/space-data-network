@@ -14,16 +14,16 @@ import (
 
 func TestSearchProvidersRouteMergesDirectoryAndReplicaStats(t *testing.T) {
 	store := newDataAPITestStore(t)
-	storeDataAPITestOMM(t, store, 56775, "STARLINK-6292", "2026-05-10")
+	storeDataAPITestOMM(t, store, 56775, "SATELLITE-6292", "2026-05-10")
 	verifiedAt := time.Unix(1_778_436_120, 0).UTC()
 	if err := store.UpsertDirectoryRecord(storage.DirectoryRecord{
 		Kind:      "node",
-		PeerID:    "16Uiu2HCelesTrak",
-		DN:        "CelesTrak Provider",
-		LegalName: "CelesTrak",
+		PeerID:    "16Uiu2HCatalogFixture",
+		DN:        "CatalogFixture Provider",
+		LegalName: "CatalogFixture",
 		Source:    "test",
 		EPMJSON: `{
-			"aliases": ["celestrak.eth"],
+			"aliases": ["catalogfixture.eth"],
 			"provider_id": "space-data-network-02"
 		}`,
 		UpdatedAt: 1_779_689_334,
@@ -33,10 +33,10 @@ func TestSearchProvidersRouteMergesDirectoryAndReplicaStats(t *testing.T) {
 	if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
 		CID:               "bafkshard-omm",
 		SchemaName:        "OMM.fbs",
-		ProviderPeerID:    "16Uiu2HCelesTrak",
+		ProviderPeerID:    "16Uiu2HCatalogFixture",
 		ProviderPublicKey: "provider-public-key",
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
+		SourceName:        "catalogfixture-gp",
 		BatchID:           "test-batch",
 		QueryProfile:      storage.DatasetPublicationQueryProfile,
 		SnapshotID:        "head-2",
@@ -56,10 +56,10 @@ func TestSearchProvidersRouteMergesDirectoryAndReplicaStats(t *testing.T) {
 	NewSearchHandler(store).RegisterRoutes(mux)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/search/providers", bytes.NewBufferString(`{
-		"query": "celestrak",
+		"query": "catalogfixture",
 		"schema": "OMM",
 		"provider_id": "space-data-network-02",
-		"source_name": "celestrak-gp",
+		"source_name": "catalogfixture-gp",
 		"query_profile": "`+storage.DatasetPublicationQueryProfile+`",
 		"limit": 10
 	}`))
@@ -80,11 +80,11 @@ func TestSearchProvidersRouteMergesDirectoryAndReplicaStats(t *testing.T) {
 		t.Fatalf("provider search count=%d len(results)=%d body=%s", body.Count, len(body.Results), rec.Body.String())
 	}
 	row := body.Results[0]
-	if row["peer_id"] != "16Uiu2HCelesTrak" ||
-		row["dn"] != "CelesTrak Provider" ||
+	if row["peer_id"] != "16Uiu2HCatalogFixture" ||
+		row["dn"] != "CatalogFixture Provider" ||
 		row["provider_id"] != "space-data-network-02" ||
 		row["schema_name"] != "OMM.fbs" ||
-		row["source_name"] != "celestrak-gp" {
+		row["source_name"] != "catalogfixture-gp" {
 		t.Fatalf("unexpected provider row: %#v", row)
 	}
 	if row["local_rows"] != float64(1) || row["pinned_rows"] != float64(50000) || row["pinned_bytes"] != float64(8_000_000) {
@@ -94,7 +94,7 @@ func TestSearchProvidersRouteMergesDirectoryAndReplicaStats(t *testing.T) {
 
 func TestSearchDataRouteReturnsLocalReplicaRows(t *testing.T) {
 	store := newDataAPITestStore(t)
-	storeDataAPITestOMM(t, store, 56775, "STARLINK-6292", "2026-05-10")
+	storeDataAPITestOMM(t, store, 56775, "SATELLITE-6292", "2026-05-10")
 
 	mux := http.NewServeMux()
 	NewSearchHandler(store).RegisterRoutes(mux)
@@ -102,7 +102,7 @@ func TestSearchDataRouteReturnsLocalReplicaRows(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/search/data", bytes.NewBufferString(`{
 		"schema": "OMM",
 		"provider_id": "space-data-network-02",
-		"source_name": "celestrak-gp"
+		"source_name": "catalogfixture-gp"
 	}`))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -121,7 +121,7 @@ func TestSearchDataRouteReturnsLocalReplicaRows(t *testing.T) {
 		t.Fatalf("data search count=%d len(results)=%d body=%s", body.Count, len(body.Results), rec.Body.String())
 	}
 	row := body.Results[0]
-	if row["schema_name"] != "OMM.fbs" || row["provider_id"] != "space-data-network-02" || row["source_name"] != "celestrak-gp" {
+	if row["schema_name"] != "OMM.fbs" || row["provider_id"] != "space-data-network-02" || row["source_name"] != "catalogfixture-gp" {
 		t.Fatalf("unexpected data row: %#v", row)
 	}
 	if row["local_rows"] != float64(1) || row["cached_bytes"] == float64(0) {
@@ -133,11 +133,11 @@ func TestSearchProvidersLiveDHTModeUsesLiveBackend(t *testing.T) {
 	store := newDataAPITestStore(t)
 	live := &fakeLiveSearchBackend{
 		providerRows: []map[string]interface{}{{
-			"peer_id":     "16Uiu2HLiveCelesTrak",
-			"dn":          "Live CelesTrak",
+			"peer_id":     "16Uiu2HLiveCatalogFixture",
+			"dn":          "Live CatalogFixture",
 			"provider_id": "space-data-network-02",
 			"schema_name": "OMM.fbs",
-			"source_name": "celestrak-gp",
+			"source_name": "catalogfixture-gp",
 		}},
 	}
 
@@ -146,7 +146,7 @@ func TestSearchProvidersLiveDHTModeUsesLiveBackend(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/search/providers", bytes.NewBufferString(`{
 		"mode": "live-dht",
-		"query": "celestrak",
+		"query": "catalogfixture",
 		"schema": "OMM",
 		"provider_id": "space-data-network-02",
 		"limit": 10
@@ -174,7 +174,7 @@ func TestSearchProvidersLiveDHTModeUsesLiveBackend(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode provider search response: %v", err)
 	}
-	if body.Count != 1 || body.Results[0]["peer_id"] != "16Uiu2HLiveCelesTrak" {
+	if body.Count != 1 || body.Results[0]["peer_id"] != "16Uiu2HLiveCatalogFixture" {
 		t.Fatalf("unexpected live provider response: %#v", body)
 	}
 }

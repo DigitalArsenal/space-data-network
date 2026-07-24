@@ -55,15 +55,8 @@ const (
 // are the fail-closed baseline for request-scoped calls (protocol/HTTP
 // handlers, which pass a ctx deadline). SCHEDULED work — a cron ticker fire
 // or the run-now admin action, both of which reach the guest through
-// InvokeCron — is a different animal: a data-source adapter pull (fetch →
-// parse ephemeris → per-record CID + sign → publish) legitimately runs for
-// minutes on a slow (1 vCPU) production host, blowing past the 30s
-// interactive cap. Prod evidence: on the celestrak node every iss-source and
-// spacex-starlink-source pull failed with
-//
-//	plugin_invoke_stream(pull): wasm execution exceeded wall-clock timeout:
-//	"plugin_invoke_stream" exceeded 30s
-//
+// InvokeCron — may legitimately run for minutes on a slow production host,
+// blowing past the 30s interactive cap.
 // The larger budget is granted per-call by the HOST at the InvokeCron seam
 // (see InvokeCron), never by the module manifest — a module cannot self-grant
 // unbounded CPU. A ctx deadline still narrows it (ExecuteContext semantics
@@ -85,7 +78,9 @@ const (
 	// just over a longer window — rather than trading a wall-clock failure for
 	// a fuel-exhaustion one. A pure-compute runaway is still ultimately bounded
 	// by the 10m wall-clock interrupt even if it somehow outran this.
-	defaultScheduledInvokeCostLimit uint = defaultInvokeCostLimit * 20
+	defaultScheduledInvokeCostLimit uint   = defaultInvokeCostLimit * 20
+	defaultModuleMemoryPages        uint32 = 1024
+	maxModuleMemoryPages            uint32 = 16384
 )
 
 // Module is the generic module-sdk runtime. It loads any space-data-module-sdk
@@ -132,6 +127,7 @@ type Module struct {
 	// wall-clock budget (see scheduledBudget), keeping the interactive
 	// instructions-per-second ceiling over the longer scheduled window.
 	scheduledInvokeCostLimit uint
+	maxMemoryPages           uint32
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -195,10 +191,24 @@ func (r *CapabilityRegistry) RegisterBridgeAware(capability string, factory Brid
 // NewModule loads a module-sdk WASM binary, reads its manifest, creates a
 // per-module host bridge, and provisions declared capabilities.
 func NewModule(wasmBytes []byte, capReg *CapabilityRegistry, nodeCtx *NodeContext) (*Module, error) {
+	return NewModuleWithMaxMemoryPages(wasmBytes, capReg, nodeCtx, 0)
+}
+
+// NewModuleWithMaxMemoryPages loads a module under a caller-supplied wasm32
+// memory ceiling. The isomorphic bundle installer uses this to give each
+// independently instantiated signed child the same bounded resource request
+// as its signed parent; ordinary module installs retain the conservative
+// default through NewModule.
+func NewModuleWithMaxMemoryPages(wasmBytes []byte, capReg *CapabilityRegistry, nodeCtx *NodeContext, requestedPages uint32) (*Module, error) {
+	maxMemoryPages, err := resolveModuleMemoryPages(requestedPages)
+	if err != nil {
+		return nil, err
+	}
 	m := &Module{
-		wasmBytes: append([]byte(nil), wasmBytes...),
-		nodeCtx:   nodeCtx,
-		capReg:    capReg,
+		wasmBytes:      append([]byte(nil), wasmBytes...),
+		nodeCtx:        nodeCtx,
+		capReg:         capReg,
+		maxMemoryPages: maxMemoryPages,
 	}
 	if nodeCtx != nil {
 		// Operator-tunable scheduled budget (config
@@ -212,6 +222,16 @@ func NewModule(wasmBytes []byte, capReg *CapabilityRegistry, nodeCtx *NodeContex
 	}
 
 	return m, nil
+}
+
+func resolveModuleMemoryPages(requested uint32) (uint32, error) {
+	if requested == 0 {
+		return defaultModuleMemoryPages, nil
+	}
+	if requested > maxModuleMemoryPages {
+		return 0, fmt.Errorf("module memory ceiling %d pages exceeds bounded maximum %d", requested, maxModuleMemoryPages)
+	}
+	return requested, nil
 }
 
 // scheduledBudget resolves the per-call resource budget granted to a
@@ -336,9 +356,9 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 		}
 	}
 
-	mod, err := wasmrt.NewModule(wasmBytes,
+	opts := []wasmrt.Option{
 		wasmrt.WithWASI(),
-		wasmrt.WithMaxMemoryPages(1024),
+		wasmrt.WithMaxMemoryPages(m.maxMemoryPages),
 		wasmrt.WithExecTimeout(defaultInvokeTimeout),
 		wasmrt.WithCostLimit(defaultInvokeCostLimit),
 		wasmrt.WithMallocName("plugin_alloc"),
@@ -347,15 +367,20 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 		wasmrt.WithHostModule("sdn", wasmrt.SharedHostFuncs("sdn", logFunc)),
 		wasmrt.WithHostModule("env", wasmrt.SharedHostFuncs("env", logFunc)),
 		wasmrt.WithHostModule(HostcallImportModule, bridge.BuildWasmEdgeHostFuncs()),
-	)
+	}
+	if moduleDeclaresWASIThreads(wasmBytes) {
+		opts = append(opts, wasmrt.WithWASIThreads())
+		log.Infof("Module artifact declares the standard wasi-threads contract — enabling shared-memory worker execution")
+	}
+	mod, err := wasmrt.NewModule(wasmBytes, opts...)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create WASM module: %w", err)
 	}
 
 	// Run the guest's runtime init before the manifest read or any invoke.
 	// WASI reactor modules (the module-SDK default) export _initialize, which
-	// runs global constructors + sets up the guest heap. Emscripten command-style
-	// builds (e.g. the analysis/od module) instead run their constructors via
+	// runs global constructors + sets up the guest heap. Command-style builds
+	// instead run their constructors via
 	// __wasm_call_ctors. Match the module-SDK's own service-mode runner: prefer
 	// _initialize, else __wasm_call_ctors. We deliberately do NOT fall back to
 	// _start — that runs a command module's main()/serve-loop and proc_exits the
@@ -365,9 +390,15 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 	// module that exports neither.
 	switch {
 	case mod.HasFunction("_initialize"):
-		mod.Execute("_initialize")
+		if _, initErr := mod.Execute("_initialize"); initErr != nil {
+			mod.Release()
+			return nil, nil, nil, fmt.Errorf("run WASI reactor initialization: %w", initErr)
+		}
 	case mod.HasFunction("__wasm_call_ctors"):
-		mod.Execute("__wasm_call_ctors")
+		if _, initErr := mod.Execute("__wasm_call_ctors"); initErr != nil {
+			mod.Release()
+			return nil, nil, nil, fmt.Errorf("run command module constructors: %w", initErr)
+		}
 	}
 
 	// Read manifest
@@ -425,6 +456,194 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 	}
 
 	return mod, bridge, manifest, nil
+}
+
+type moduleThreadFeatures struct {
+	sharedImportedMemory bool
+	threadSpawnImport    bool
+	threadStartExport    bool
+	emscriptenHook       bool
+}
+
+func moduleDeclaresWASIThreads(wasm []byte) bool {
+	features := scanModuleThreadFeatures(wasm)
+	return features.sharedImportedMemory && features.threadSpawnImport &&
+		features.threadStartExport && !features.emscriptenHook
+}
+
+// scanModuleThreadFeatures reads only the standard WASM import/export
+// sections needed to recognize the SDK's isomorphic pthread contract. A
+// malformed artifact yields no features and therefore never enables threads.
+func scanModuleThreadFeatures(wasm []byte) moduleThreadFeatures {
+	var features moduleThreadFeatures
+	if len(wasm) < 8 || wasm[0] != 0 || wasm[1] != 'a' || wasm[2] != 's' || wasm[3] != 'm' {
+		return features
+	}
+	for cursor := 8; cursor < len(wasm); {
+		sectionID := wasm[cursor]
+		cursor++
+		sectionSize, width := readModuleULEB(wasm, cursor)
+		if width == 0 {
+			return moduleThreadFeatures{}
+		}
+		cursor += width
+		if sectionSize > uint64(len(wasm)-cursor) {
+			return moduleThreadFeatures{}
+		}
+		body := wasm[cursor : cursor+int(sectionSize)]
+		cursor += int(sectionSize)
+		switch sectionID {
+		case 0x02:
+			scanModuleImports(body, &features)
+		case 0x07:
+			scanModuleExports(body, &features)
+		}
+	}
+	return features
+}
+
+func scanModuleImports(section []byte, features *moduleThreadFeatures) {
+	cursor := 0
+	count, width := readModuleULEB(section, cursor)
+	if width == 0 {
+		return
+	}
+	cursor += width
+	for index := uint64(0); index < count && cursor < len(section); index++ {
+		moduleName, next, ok := readModuleWasmName(section, cursor)
+		if !ok {
+			return
+		}
+		cursor = next
+		fieldName, next, ok := readModuleWasmName(section, cursor)
+		if !ok || next >= len(section) {
+			return
+		}
+		cursor = next
+		kind := section[cursor]
+		cursor++
+		switch kind {
+		case 0x00: // function: type index
+			_, width = readModuleULEB(section, cursor)
+			if width == 0 {
+				return
+			}
+			cursor += width
+			if moduleName == "wasi" && fieldName == "thread-spawn" {
+				features.threadSpawnImport = true
+			}
+			if moduleName == "env" && (fieldName == "__pthread_create_js" ||
+				fieldName == "pthread_create" || fieldName == "_emscripten_thread_mailbox_await" ||
+				fieldName == "__emscripten_init_main_thread_js") {
+				features.emscriptenHook = true
+			}
+		case 0x01: // table: ref type + limits
+			if cursor >= len(section) {
+				return
+			}
+			cursor++
+			cursor = skipModuleWasmLimits(section, cursor)
+		case 0x02: // memory: limits; bit 1 means shared
+			if cursor >= len(section) {
+				return
+			}
+			flags := section[cursor]
+			cursor++
+			if flags&0x02 != 0 && moduleName == "env" && fieldName == "memory" {
+				features.sharedImportedMemory = true
+			}
+			_, width = readModuleULEB(section, cursor)
+			if width == 0 {
+				return
+			}
+			cursor += width
+			if flags&0x01 != 0 {
+				_, width = readModuleULEB(section, cursor)
+				if width == 0 {
+					return
+				}
+				cursor += width
+			}
+		case 0x03: // global: value type + mutability
+			if cursor+2 > len(section) {
+				return
+			}
+			cursor += 2
+		default:
+			return
+		}
+	}
+}
+
+func scanModuleExports(section []byte, features *moduleThreadFeatures) {
+	cursor := 0
+	count, width := readModuleULEB(section, cursor)
+	if width == 0 {
+		return
+	}
+	cursor += width
+	for index := uint64(0); index < count && cursor < len(section); index++ {
+		name, next, ok := readModuleWasmName(section, cursor)
+		if !ok || next >= len(section) {
+			return
+		}
+		cursor = next + 1 // external kind
+		_, width = readModuleULEB(section, cursor)
+		if width == 0 {
+			return
+		}
+		cursor += width
+		if name == "wasi_thread_start" {
+			features.threadStartExport = true
+		}
+	}
+}
+
+func skipModuleWasmLimits(data []byte, cursor int) int {
+	if cursor >= len(data) {
+		return len(data)
+	}
+	flags := data[cursor]
+	cursor++
+	_, width := readModuleULEB(data, cursor)
+	if width == 0 {
+		return len(data)
+	}
+	cursor += width
+	if flags&0x01 != 0 {
+		_, width = readModuleULEB(data, cursor)
+		if width == 0 {
+			return len(data)
+		}
+		cursor += width
+	}
+	return cursor
+}
+
+func readModuleWasmName(data []byte, cursor int) (string, int, bool) {
+	length, width := readModuleULEB(data, cursor)
+	if width == 0 {
+		return "", cursor, false
+	}
+	cursor += width
+	if length > uint64(len(data)-cursor) {
+		return "", cursor, false
+	}
+	return string(data[cursor : cursor+int(length)]), cursor + int(length), true
+}
+
+func readModuleULEB(data []byte, cursor int) (uint64, int) {
+	var value uint64
+	var shift uint
+	for width := 0; width < 10 && cursor+width < len(data); width++ {
+		current := data[cursor+width]
+		value |= uint64(current&0x7f) << shift
+		if current&0x80 == 0 {
+			return value, width + 1
+		}
+		shift += 7
+	}
+	return 0, 0
 }
 
 // capPrefixFromName maps a capability string to the hostcall operation prefix.

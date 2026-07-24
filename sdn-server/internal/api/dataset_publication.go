@@ -30,17 +30,17 @@ const (
 // DatasetPublicationRequest describes a local request to export, pin, sign,
 // and announce a dataset update from the daemon's current FlatSQL store.
 type DatasetPublicationRequest struct {
-	DatastoreKey      string `json:"datastoreKey,omitempty"`
-	Schema            string `json:"schema"`
-	ProviderID        string `json:"providerId,omitempty"`
-	SourceName        string `json:"sourceName,omitempty"`
-	BatchID           string `json:"batchId,omitempty"`
-	DatasetID         string `json:"datasetId,omitempty"`
-	Limit             int    `json:"limit,omitempty"`
-	ChunkSize         int    `json:"chunkSize,omitempty"`
-	FullCatalog       bool   `json:"fullCatalog,omitempty"`
-	AnnounceExisting  bool   `json:"announceExisting,omitempty"`
-	CombinedCelesTrak bool   `json:"combinedCelesTrak,omitempty"`
+	DatastoreKey        string   `json:"datastoreKey,omitempty"`
+	Schema              string   `json:"schema"`
+	ProviderID          string   `json:"providerId,omitempty"`
+	SourceName          string   `json:"sourceName,omitempty"`
+	BatchID             string   `json:"batchId,omitempty"`
+	DatasetID           string   `json:"datasetId,omitempty"`
+	Limit               int      `json:"limit,omitempty"`
+	ChunkSize           int      `json:"chunkSize,omitempty"`
+	FullCatalog         bool     `json:"fullCatalog,omitempty"`
+	AnnounceExisting    bool     `json:"announceExisting,omitempty"`
+	AnnouncementSchemas []string `json:"announcementSchemas,omitempty"`
 }
 
 // DatasetPublicationResult is the safe summary returned after publication.
@@ -321,9 +321,8 @@ func (s *ConcreteDatasetPublicationService) announceExistingDatasetPublications(
 		if publication.PNMCID != "" {
 			if pnmRecord, err := s.store.GetRecord("PNM.fbs", publication.PNMCID); err == nil && len(pnmRecord.Data) > 0 {
 				if err := s.publisher.PublishDatasetUpdatePNM(workCtx, sdnpubsub.DatasetUpdateAnnouncement{
-					PNM:               pnmRecord.Data,
-					Schemas:           []string{publication.SchemaName},
-					CombinedCelesTrak: req.CombinedCelesTrak,
+					PNM:     pnmRecord.Data,
+					Schemas: append([]string{publication.SchemaName}, req.AnnouncementSchemas...),
 				}); err != nil {
 					return nil, err
 				}
@@ -748,16 +747,12 @@ func (s *ConcreteDatasetPublicationService) recordDatasetPublicationChannel(
 }
 
 func datasetPublicationChannelSourceID(req DatasetPublicationRequest, sourceIdentity datasetPublicationSourceIdentity) string {
-	for _, value := range []string{req.SourceName, sourceIdentity.SourceName} {
-		sourceName := strings.ToLower(strings.TrimSpace(value))
-		if sourceName == "celestrak" || strings.HasPrefix(sourceName, "celestrak-") {
-			return "celestrak"
+	for _, value := range []string{sourceIdentity.ProviderID, req.ProviderID, sourceIdentity.SourceName, req.SourceName} {
+		if sourceID := strings.TrimSpace(value); sourceID != "" {
+			return sourceID
 		}
 	}
-	if providerID := strings.TrimSpace(sourceIdentity.ProviderID); providerID != "" {
-		return providerID
-	}
-	return strings.TrimSpace(req.ProviderID)
+	return ""
 }
 
 func (s *ConcreteDatasetPublicationService) publishedShardFromResult(
@@ -861,9 +856,8 @@ func (s *ConcreteDatasetPublicationService) reusableDatasetPublicationResult(
 
 func (s *ConcreteDatasetPublicationService) announceDatasetPublication(ctx context.Context, req DatasetPublicationRequest, publishedShard storage.DatasetShardPublication, pnmBytes []byte) error {
 	if err := s.publisher.PublishDatasetUpdatePNM(ctx, sdnpubsub.DatasetUpdateAnnouncement{
-		PNM:               pnmBytes,
-		Schemas:           []string{publishedShard.SchemaName},
-		CombinedCelesTrak: req.CombinedCelesTrak,
+		PNM:     pnmBytes,
+		Schemas: append([]string{publishedShard.SchemaName}, req.AnnouncementSchemas...),
 	}); err != nil {
 		return err
 	}

@@ -35,14 +35,14 @@ func TestIdentityWizardSetValuesWritesLocalEPMAndJSON(t *testing.T) {
 		&out,
 		identityWizardOptions{
 			Sets: []string{
-				"dn=CelesTrak Provider",
-				"legal_name=CelesTrak",
+				"dn=CatalogFixture Provider",
+				"legal_name=CatalogFixture",
 				"given_name=Celes",
 				"family_name=Trak",
 				"entity_type=node",
-				"email=ops@celestrak.test",
+				"email=ops@fixture.test",
 				"telephone=+1-555-0100",
-				"alternate_names=celestrak.eth,provider.sol",
+				"alternate_names=catalogfixture.eth,provider.sol",
 			},
 			Format: "json",
 		},
@@ -65,7 +65,7 @@ func TestIdentityWizardSetValuesWritesLocalEPMAndJSON(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatalf("wizard json output is invalid JSON: %v\n%s", err, output)
 	}
-	if payload["dn"] != "CelesTrak Provider" || payload["legal_name"] != "CelesTrak" {
+	if payload["dn"] != "CatalogFixture Provider" || payload["legal_name"] != "CatalogFixture" {
 		t.Fatalf("wizard json payload = %#v", payload)
 	}
 	if payload["given_name"] != "Celes" || payload["family_name"] != "Trak" || payload["entity_type"] != "node" {
@@ -80,7 +80,7 @@ func TestIdentityWizardSetValuesWritesLocalEPMAndJSON(t *testing.T) {
 		t.Fatalf("local EPM has invalid FlatBuffer identifier: %x", localEPM[:min(len(localEPM), 16)])
 	}
 
-	nodes, err := directory.NewService(store).SearchNodes("CelesTrak", 10)
+	nodes, err := directory.NewService(store).SearchNodes("CatalogFixture", 10)
 	if err != nil {
 		t.Fatalf("SearchNodes failed: %v", err)
 	}
@@ -101,8 +101,8 @@ func TestIdentityWizardCSVAndFlatBufferOutputs(t *testing.T) {
 		&csvOut,
 		identityWizardOptions{
 			Sets: []string{
-				"dn=CelesTrak Provider",
-				"legal_name=CelesTrak",
+				"dn=CatalogFixture Provider",
+				"legal_name=CatalogFixture",
 			},
 			Format: "csv",
 		},
@@ -122,7 +122,7 @@ func TestIdentityWizardCSVAndFlatBufferOutputs(t *testing.T) {
 	if records[0][0] != "peer_id" || records[1][0] != peerID.String() {
 		t.Fatalf("wizard csv peer_id column = %#v", records)
 	}
-	if records[0][1] != "dn" || records[1][1] != "CelesTrak Provider" {
+	if records[0][1] != "dn" || records[1][1] != "CatalogFixture Provider" {
 		t.Fatalf("wizard csv dn column = %#v", records)
 	}
 

@@ -1,7 +1,7 @@
 package caps
 
 // Loop C.8a: http.request response-size policy. The old behavior silently
-// truncated bodies at 4 MiB — a truncated CelesTrak catalog would have
+// truncated bodies at 4 MiB — a truncated Provider catalog would have
 // ingested a partial batch as if complete. Now: 100 MB ceiling (runner
 // parity), optional per-request max_bytes clamp, and exceeding the bound is
 // an explicit ERROR.
@@ -29,7 +29,7 @@ func httpCapCall(t *testing.T, payload map[string]interface{}) map[string]interf
 }
 
 func TestHTTPCapDeliversBodiesBeyondTheOld4MiBTruncation(t *testing.T) {
-	// 10 MB — the size class of the real CelesTrak GP full catalog, and 2.5x
+	// 10 MB — the size class of the real Provider GP full catalog, and 2.5x
 	// the old silent-truncation limit.
 	payload := strings.Repeat("NORAD_CAT_ID,EPOCH,MEAN_MOTION\n", 10*1024*1024/31)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

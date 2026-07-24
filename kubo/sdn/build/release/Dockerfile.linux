@@ -1,0 +1,87 @@
+# Reproducible SDN-kubo release build for Linux.
+#
+# Produces a self-contained, download-and-run artifact under /out:
+#   /out/ipfs              the SDN node binary (kubo + SDN plugins)
+#   /out/lib/libwasmedge*  the WasmEdge shared library (AOT-capable)
+# The binary is linked with rpath $ORIGIN/lib, so it finds its WasmEdge
+# library next to itself with NO system install, NO headers, NO Go on the
+# target host. Extract the archive anywhere and run ./ipfs.
+#
+# We deliberately link the *shared* WasmEdge lib (which ships the LLVM/AOT
+# compiler) rather than a fully-static LLVM-off build, so the engine runs
+# AOT (fast), not interpreted (~100x slower).
+#
+# Build (run with the kubo module directory as the context):
+#   docker buildx build --platform linux/amd64 \
+#     -f sdn/build/release/Dockerfile.linux \
+#     --build-arg WASMEDGE_VER=0.14.1 \
+#     --output type=local,dest=dist/linux-amd64 .
+#
+# ARGs are pinned for reproducibility; bump deliberately.
+
+ARG GO_VER=1.26.1
+ARG WASMEDGE_VER=0.14.1
+ARG WASMEDGE_BUILD_ARCH=x86_64
+ARG WASMEDGE_SOURCE_SHA256=ff95d3b9d4736f36e31c0477208cc70f12a0a3f946bbf756f1e7b181877d5af3
+FROM wasmedge/wasmedge:manylinux_2_28_${WASMEDGE_BUILD_ARCH} AS wasmedge
+
+ARG WASMEDGE_VER
+ARG WASMEDGE_SOURCE_SHA256
+COPY sdn/build/release/patches/wasmedge-0.14.1-atomic-wait-notify.patch /tmp/wasmedge.patch
+
+# Build the pinned AOT-capable runtime with the application-blind atomic
+# wait/notify lost-wakeup correction. The patch is part of the release input;
+# production never depends on a hand-replaced system library.
+RUN set -eux; \
+    curl -fsSL "https://github.com/WasmEdge/WasmEdge/archive/refs/tags/${WASMEDGE_VER}.tar.gz" -o /tmp/wasmedge-src.tgz; \
+    printf '%s  %s\n' "${WASMEDGE_SOURCE_SHA256}" /tmp/wasmedge-src.tgz | sha256sum -c -; \
+    mkdir -p /src /opt/wasmedge; \
+    tar -C /src --strip-components=1 -xzf /tmp/wasmedge-src.tgz; \
+    cd /src; \
+    patch -p1 < /tmp/wasmedge.patch; \
+    cmake -S /src -B /src/build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/opt/wasmedge \
+      -DCMAKE_CXX_FLAGS=-Wno-error=deprecated-declarations \
+      -DWASMEDGE_BUILD_SHARED_LIB=ON \
+      -DWASMEDGE_BUILD_STATIC_LIB=OFF \
+      -DWASMEDGE_BUILD_TESTS=OFF \
+      -DWASMEDGE_BUILD_TOOLS=OFF \
+      -DWASMEDGE_BUILD_PLUGINS=OFF \
+      -DWASMEDGE_BUILD_EXAMPLE=OFF \
+      -DWASMEDGE_USE_LLVM=ON \
+      -DWASMEDGE_LINK_LLVM_STATIC=ON \
+      -DWASMEDGE_DISABLE_LIBTINFO=ON; \
+    cmake --build /src/build -j"$(nproc)" --target wasmedge_shared; \
+    cmake --install /src/build; \
+    test -f /opt/wasmedge/lib64/libwasmedge.so.0.1.0
+
+FROM golang:${GO_VER}-bookworm AS build
+
+COPY --from=wasmedge /opt/wasmedge /opt/wasmedge
+
+RUN set -eux; \
+    # WasmEdge installs the manylinux library in lib64/; normalize to lib/.
+    if [ -d /opt/wasmedge/lib64 ] && [ ! -e /opt/wasmedge/lib ]; then ln -s lib64 /opt/wasmedge/lib; fi; \
+    ls /opt/wasmedge/lib/libwasmedge.so*
+
+ENV CGO_ENABLED=1 \
+    GOTOOLCHAIN=local \
+    CGO_CFLAGS="-I/opt/wasmedge/include"
+
+WORKDIR /src
+COPY . .
+
+# rpath $ORIGIN/lib is set here (escaped so the linker gets a literal
+# $ORIGIN, resolved at load time relative to the binary).
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_LDFLAGS="-L/opt/wasmedge/lib -lwasmedge -Wl,-rpath,\$ORIGIN/lib" \
+    go build -trimpath -o /out/ipfs ./cmd/ipfs \
+ && mkdir -p /out/lib \
+ && cp -a /opt/wasmedge/lib/libwasmedge.so* /out/lib/ \
+ && /out/ipfs --version
+
+# Export just the artifact tree (ipfs + lib/) to the local output dir.
+FROM scratch AS artifact
+COPY --from=build /out/ /

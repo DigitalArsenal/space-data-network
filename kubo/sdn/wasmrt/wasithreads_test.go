@@ -11,8 +11,13 @@ package wasmrt
 // the module would trap at the guest's first pthread_create.
 
 import (
+	"context"
 	_ "embed"
+	"fmt"
+	"os"
+	"os/exec"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -170,6 +175,76 @@ func TestWASIThreadsScaling(t *testing.T) {
 	// (measured ~2x in interpreter under Docker) while tolerating CI jitter.
 	if ratio > 3.0 {
 		t.Errorf("run(%d) took %.2fx run(1) — workers are NOT running in parallel (serial would be ~%dx)", n, ratio, n)
+	}
+}
+
+const wasiThreadsRetirementChildEnv = "SDN_WASI_THREADS_RETIREMENT_CHILD"
+
+// TestWASIThreadsRetiresParkedWorkersAcrossWaves reproduces the lifecycle used
+// by page-scoped download cohorts: 64 workers complete two phases, park, and
+// are released one-at-a-time immediately before pthread_join. It runs in a
+// subprocess because a runtime-level missed wake can strand pthread_join; the
+// parent must be able to kill that process instead of hanging in Module.Release.
+func TestWASIThreadsRetiresParkedWorkersAcrossWaves(t *testing.T) {
+	if os.Getenv(wasiThreadsRetirementChildEnv) == "1" {
+		runWASIThreadsRetirementChild(t)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0],
+		"-test.run=^TestWASIThreadsRetiresParkedWorkersAcrossWaves$", "-test.v")
+	cmd.Env = append(os.Environ(), wasiThreadsRetirementChildEnv+"=1")
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("64-worker retirement helper timed out; pthread_join lost a worker-exit wakeup\n%s", output)
+	}
+	if err != nil {
+		t.Fatalf("64-worker retirement helper failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "retirement wave 4 complete") {
+		t.Fatalf("retirement helper did not prove all four waves\n%s", output)
+	}
+}
+
+func runWASIThreadsRetirementChild(t *testing.T) {
+	const (
+		waves    = 4
+		workers  = 64
+		workKilo = 0
+	)
+
+	m := newThreadsFixture(t)
+	defer m.Release()
+	for wave := 1; wave <= waves; wave++ {
+		fmt.Fprintf(os.Stderr, "retirement wave %d begin\n", wave)
+		res, err := m.Execute("run_parked_release", int32(workers), int32(workKilo))
+		if err != nil {
+			t.Fatalf("retirement wave %d: %v", wave, err)
+		}
+		if got := ToInt32(res[0]); got != workers {
+			t.Fatalf("retirement wave %d returned %d joined workers, want %d", wave, got, workers)
+		}
+		if got := execI32(t, m, "get_joined"); got != workers {
+			t.Fatalf("retirement wave %d get_joined = %d, want %d", wave, got, workers)
+		}
+		for index := int32(0); index < workers; index++ {
+			if marker := execI32(t, m, "get_marker", index); marker == 0 {
+				t.Fatalf("retirement wave %d worker %d never ran", wave, index)
+			}
+		}
+		wantSpawns := wave * workers
+		if got := m.ThreadSpawnCount(); got != wantSpawns {
+			t.Fatalf("retirement wave %d spawn count = %d, want %d", wave, got, wantSpawns)
+		}
+		if got := len(m.WorkerOSThreadIDs()); got != wantSpawns {
+			t.Fatalf("retirement wave %d OS-thread observations = %d, want %d", wave, got, wantSpawns)
+		}
+		if err := m.WorkerError(); err != nil {
+			t.Fatalf("retirement wave %d worker invocation failed: %v", wave, err)
+		}
+		fmt.Fprintf(os.Stderr, "retirement wave %d complete\n", wave)
 	}
 }
 

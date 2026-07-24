@@ -1,8 +1,6 @@
 package main
 
-// SDN apps launcher + per-app serving (App 2 packet A2.10 — OWNER DIRECTIVE
-// 2026-07-13 "App 2 must be servable and selectable from the UI, same as the
-// conjunction app").
+// SDN embedded-app launcher and per-app serving.
 //
 // This surface is mounted at "/apps/" on the admin mux (main.go), ahead of the
 // "/" primary-UI surface, so it is available in BOTH conjunction (shipped
@@ -20,14 +18,9 @@ package main
 //     an app's page reads window.__SDN_CONFIG__.apiBase the same way at "/apps/
 //     <id>/" as the conjunction app does at "/".
 //
-// The app set is DATA, not structure: appServingSpecs() is a slice of
-// {slug, builder} pairs consuming the internal/appmanifest record/embed API
-// (NewConjunctionApp over the daemon's embedded conjunction artifact;
-// NewSupplementalOMMApp over appmanifest's embedded status board). Adding App 3
-// is one more entry here — the launcher and the per-app router iterate the set
-// and never branch per app. The App 2 status board bytes are consumed ONLY via
-// appmanifest.SupplementalOMMBoardHTML()/the record (the board file itself is
-// owned by a concurrent worker; this code never reads or embeds it directly).
+// Embedded applications are opaque SDS $APP payloads. The generic resolver
+// decodes each record before serving it; no application HTML is embedded in or
+// routed by handwritten Go.
 //
 // Anonymous by construction: these are public app pages, mounted without a
 // RequireAuth wrapper. The apps' own data sources are the same anonymous-safe
@@ -43,40 +36,6 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/appmanifest"
 )
-
-// appServingSpec is one app the daemon serves under /apps/. slug is the
-// <appId> path segment (/apps/<slug>/), matching genapprecord's -app names;
-// build turns the app's serving artifact bytes into its canonical APP record via
-// the internal/appmanifest builder.
-type appServingSpec struct {
-	slug  string
-	build func() (*appmanifest.AppManifest, error)
-}
-
-// appServingSpecs returns the data-driven registry of apps served under /apps/.
-// This is the ONE place the app set is enumerated; the launcher and per-app
-// router consume it and never hardcode individual apps. Records are built from
-// the same single sources of truth the drift gates verify:
-//   - conjunction: the daemon's embedded serving artifact (conjunctionAppHTML,
-//     cmd/spacedatanetwork/embedded/conjunction_app.html).
-//   - supplemental-omm: appmanifest's embedded status board, consumed via the
-//     record/embed API (SupplementalOMMBoardHTML) — never read directly here.
-func appServingSpecs() []appServingSpec {
-	return []appServingSpec{
-		{
-			slug: "conjunction",
-			build: func() (*appmanifest.AppManifest, error) {
-				return appmanifest.NewConjunctionApp(conjunctionAppHTML)
-			},
-		},
-		{
-			slug: "supplemental-omm",
-			build: func() (*appmanifest.AppManifest, error) {
-				return appmanifest.NewSupplementalOMMApp(appmanifest.SupplementalOMMBoardHTML())
-			},
-		},
-	}
-}
 
 // resolvedApp is one launcher/serving-ready app: the URL slug, the record's
 // launcher metadata, the decoded entry-page bytes, and the page media type.
@@ -96,7 +55,10 @@ type resolvedApp struct {
 // so the caller logs and skips mounting the surface rather than serving a
 // half-built launcher.
 func resolveServedApps() ([]resolvedApp, error) {
-	specs := appServingSpecs()
+	specs, err := embeddedAppSpecs()
+	if err != nil {
+		return nil, err
+	}
 	out := make([]resolvedApp, 0, len(specs))
 	seen := make(map[string]bool, len(specs))
 	for _, spec := range specs {
@@ -108,9 +70,9 @@ func resolveServedApps() ([]resolvedApp, error) {
 		}
 		seen[spec.slug] = true
 
-		manifest, err := spec.build()
+		manifest, err := appmanifest.FromAPP(spec.record)
 		if err != nil {
-			return nil, fmt.Errorf("apps: build %q record: %w", spec.slug, err)
+			return nil, fmt.Errorf("apps: decode %q $APP record: %w", spec.slug, err)
 		}
 		resolution, err := manifest.Resolve()
 		if err != nil {
@@ -192,9 +154,9 @@ func makeAppsHandler() (http.Handler, error) {
 	}), nil
 }
 
-// setAppSurfaceHeaders applies the conjunction-grade cross-origin-isolation +
-// CSP + no-store header set shared by the launcher and every app page. It reuses
-// conjunctionCSP (conjunction_ui.go) as the single self-hosting CSP source of
+// setAppSurfaceHeaders applies the generic cross-origin-isolation + CSP +
+// no-store header set shared by the launcher and every decoded APP page. It uses
+// appSurfaceCSP (conjunction_ui.go) as the single self-hosting CSP source of
 // truth: default/connect/img/font/object/base-uri locked to self (+ data: for
 // inlined fonts/images), the exfiltration-blocking connect-src 'self', and
 // 'unsafe-inline' script/style for the single-file inline bundles. If a future
@@ -203,7 +165,7 @@ func makeAppsHandler() (http.Handler, error) {
 func setAppSurfaceHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 	w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
-	w.Header().Set("Content-Security-Policy", conjunctionCSP)
+	w.Header().Set("Content-Security-Policy", appSurfaceCSP)
 	w.Header().Set("Cache-Control", "no-store")
 }
 

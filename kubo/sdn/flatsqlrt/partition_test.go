@@ -54,22 +54,22 @@ SELECT _data FROM (
     PARTITION BY NORAD_CAT_ID
     ORDER BY ABS(strftime('%s', EPOCH) - strftime('%s', ?))
   ) AS rn
-  FROM "OMM@celestrak-gp"
+  FROM "OMM@provider-a"
 ) WHERE rn = 1`
 
 func TestProviderPartitioningAndNearestEpoch(t *testing.T) {
 	rt := newTestRuntime(t)
 	db := newOMMDatabase(t, rt, "omm-partition")
 
-	if err := db.RegisterSource("celestrak-gp"); err != nil {
-		t.Fatalf("RegisterSource celestrak-gp: %v", err)
+	if err := db.RegisterSource("provider-a"); err != nil {
+		t.Fatalf("RegisterSource provider-a: %v", err)
 	}
 	if err := db.RegisterSource("provider-two"); err != nil {
 		t.Fatalf("RegisterSource provider-two: %v", err)
 	}
 
-	// celestrak-gp: 3 objects x 2 epochs.
-	celestrak := concatStreams(
+	// provider-a: 3 objects x 2 epochs.
+	providerRecords := concatStreams(
 		buildOMM(1001, "SAT-A", "2026-05-10T00:00:00Z"),
 		buildOMM(1001, "SAT-A", "2026-05-12T00:00:00Z"),
 		buildOMM(1002, "SAT-B", "2026-05-10T00:00:00Z"),
@@ -77,8 +77,8 @@ func TestProviderPartitioningAndNearestEpoch(t *testing.T) {
 		buildOMM(1003, "SAT-C", "2026-05-10T00:00:00Z"),
 		buildOMM(1003, "SAT-C", "2026-05-12T00:00:00Z"),
 	)
-	if _, err := db.IngestWithSource(celestrak, "celestrak-gp"); err != nil {
-		t.Fatalf("IngestWithSource celestrak-gp: %v", err)
+	if _, err := db.IngestWithSource(providerRecords, "provider-a"); err != nil {
+		t.Fatalf("IngestWithSource provider-a: %v", err)
 	}
 	// provider-two: 1 object, distinct catalog number.
 	if _, err := db.IngestOneWithSource(buildOMM(2001, "OTHER-SAT", "2026-05-11T00:00:00Z")[4:], "provider-two"); err != nil {
@@ -90,7 +90,7 @@ func TestProviderPartitioningAndNearestEpoch(t *testing.T) {
 		table string
 		want  int64
 	}{
-		{`OMM@celestrak-gp`, 6},
+		{`OMM@provider-a`, 6},
 		{`OMM@provider-two`, 1},
 	} {
 		res, err := db.Query(fmt.Sprintf(`SELECT COUNT(*) FROM "%s"`, tc.table))
@@ -112,7 +112,7 @@ func TestProviderPartitioningAndNearestEpoch(t *testing.T) {
 		t.Fatalf("unified view query: %v", err)
 	}
 	if len(res.Rows) != 2 ||
-		res.Rows[0][0] != "OMM@celestrak-gp" || res.Rows[0][1].(int64) != 6 ||
+		res.Rows[0][0] != "OMM@provider-a" || res.Rows[0][1].(int64) != 6 ||
 		res.Rows[1][0] != "OMM@provider-two" || res.Rows[1][1].(int64) != 1 {
 		t.Fatalf("unified view rows: %#v", res.Rows)
 	}
@@ -138,7 +138,7 @@ SELECT NORAD_CAT_ID, EPOCH FROM (
     PARTITION BY NORAD_CAT_ID
     ORDER BY ABS(strftime('%s', EPOCH) - strftime('%s', ?))
   ) AS rn
-  FROM "OMM@celestrak-gp"
+  FROM "OMM@provider-a"
 ) WHERE rn = 1 ORDER BY NORAD_CAT_ID`, true); err != nil {
 		t.Fatalf("register nearest-epoch template: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestCatalogScaleMeasurements(t *testing.T) {
 
 	rt := newTestRuntime(t)
 	db := newOMMDatabase(t, rt, "omm-scale")
-	if err := db.RegisterSource("celestrak-gp"); err != nil {
+	if err := db.RegisterSource("provider-a"); err != nil {
 		t.Fatalf("RegisterSource: %v", err)
 	}
 
@@ -221,7 +221,7 @@ func TestCatalogScaleMeasurements(t *testing.T) {
 		snapshot = append(snapshot, buildOMM(norad, fmt.Sprintf("SAT-%d", norad), epoch)...)
 	}
 	start := time.Now()
-	if _, err := db.IngestWithSource(snapshot, "celestrak-gp"); err != nil {
+	if _, err := db.IngestWithSource(snapshot, "provider-a"); err != nil {
 		t.Fatalf("snapshot ingest: %v", err)
 	}
 	ingestDur := time.Since(start)
@@ -237,11 +237,11 @@ func TestCatalogScaleMeasurements(t *testing.T) {
 			epoch := time.Unix(baseEpochUnix+int64(e*86400+i%86400), 0).UTC().Format("2006-01-02T15:04:05Z")
 			hist = append(hist, buildOMM(norad, fmt.Sprintf("SAT-%d", norad), epoch)...)
 		}
-		if _, err := db.IngestWithSource(hist, "celestrak-gp"); err != nil {
+		if _, err := db.IngestWithSource(hist, "provider-a"); err != nil {
 			t.Fatalf("history ingest %d: %v", e, err)
 		}
 	}
-	res, err := db.Query(`SELECT COUNT(*) FROM "OMM@celestrak-gp"`)
+	res, err := db.Query(`SELECT COUNT(*) FROM "OMM@provider-a"`)
 	if err != nil {
 		t.Fatalf("count: %v", err)
 	}
@@ -258,7 +258,7 @@ SELECT _data FROM (
     PARTITION BY NORAD_CAT_ID
     ORDER BY ABS(USER_DEFINED_EPOCH_TIMESTAMP - ?)
   ) AS rn
-  FROM "OMM@celestrak-gp"
+  FROM "OMM@provider-a"
 ) WHERE rn = 1`
 	targetUnix := float64(baseEpochUnix + 2*86400 + 43200)
 	start = time.Now()
@@ -294,7 +294,7 @@ SELECT _data FROM (
 	res, err = db.Query(`SELECT COUNT(*) FROM (
   SELECT NORAD_CAT_ID, ROW_NUMBER() OVER (
     PARTITION BY NORAD_CAT_ID ORDER BY USER_DEFINED_EPOCH_TIMESTAMP DESC
-  ) AS rn FROM "OMM@celestrak-gp") WHERE rn = 1`)
+  ) AS rn FROM "OMM@provider-a") WHERE rn = 1`)
 	if err != nil {
 		t.Fatalf("latest-per-object count: %v", err)
 	}

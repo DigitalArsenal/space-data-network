@@ -13,11 +13,6 @@ import (
 	"github.com/ipfs/kubo/sdn/plugins"
 )
 
-// defaultFallbackMs is the interval used when a registered timer declares no
-// usable default (a blank or non-positive manifest DefaultIntervalMs). One hour
-// matches the owner's canonical "run every 1 hour to detect new data" cadence.
-const defaultFallbackMs int64 = 3_600_000
-
 // Sentinel errors the settings API maps to HTTP status codes: ErrUnknownModule
 // -> 404, ErrInvalidConfig -> 400 (anything else -> 500).
 var (
@@ -153,9 +148,13 @@ func (s *Scheduler) Register(reg Registration) error {
 		config:  cfg,
 	}
 	for _, spec := range specs {
+		defaultMs, err := parseIntervalMs(spec.DefaultInterval)
+		if err != nil {
+			return fmt.Errorf("sdncron: module %q timer %q: %w", id, spec.Method, err)
+		}
 		r.timers[spec.Method] = &timerCtl{
 			method:    spec.Method,
-			defaultMs: parseIntervalMs(spec.DefaultInterval),
+			defaultMs: defaultMs,
 			resetCh:   make(chan int64, 1),
 		}
 	}
@@ -272,7 +271,7 @@ func (s *Scheduler) fire(ctx context.Context, r *registered, method string) {
 // module-wide override, else the manifest default. Caller holds s.mu.
 func (s *Scheduler) effectiveMsLocked(r *registered, tc *timerCtl) int64 {
 	if tc == nil {
-		return defaultFallbackMs
+		return 0
 	}
 	if ms, ok := r.config.timerIntervalMs(tc.method); ok {
 		return ms
@@ -280,10 +279,7 @@ func (s *Scheduler) effectiveMsLocked(r *registered, tc *timerCtl) int64 {
 	if ms, ok := r.config.intervalMs(); ok {
 		return ms
 	}
-	if tc.defaultMs > 0 {
-		return tc.defaultMs
-	}
-	return defaultFallbackMs
+	return tc.defaultMs
 }
 
 // pushIntervalLocked recomputes a timer's effective interval and hands it to the
@@ -503,18 +499,22 @@ func (s *Scheduler) scheduleResult(moduleID string) map[string]interface{} {
 // ---------------------------------------------------------------------------
 
 // parseIntervalMs parses a plugins.CronMethodSpec.DefaultInterval Go duration
-// string ("30s", "1h", "50ms") into milliseconds, falling back to
-// defaultFallbackMs on a blank or unparseable value.
-func parseIntervalMs(interval string) int64 {
+// string ("30s", "1h", "50ms") into milliseconds. The artifact must declare
+// an explicit positive interval; the host does not invent a cadence.
+func parseIntervalMs(interval string) (int64, error) {
 	interval = strings.TrimSpace(interval)
 	if interval == "" {
-		return defaultFallbackMs
+		return 0, errors.New("default_interval is required")
 	}
 	d, err := time.ParseDuration(interval)
 	if err != nil || d <= 0 {
-		return defaultFallbackMs
+		return 0, fmt.Errorf("default_interval %q must be a positive duration", interval)
 	}
-	return d.Milliseconds()
+	ms := d.Milliseconds()
+	if ms <= 0 {
+		return 0, fmt.Errorf("default_interval %q is shorter than one millisecond", interval)
+	}
+	return ms, nil
 }
 
 func clampDuration(ms int64) time.Duration {

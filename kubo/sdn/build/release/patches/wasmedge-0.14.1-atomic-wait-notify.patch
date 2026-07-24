@@ -1,0 +1,123 @@
+diff --git a/include/executor/executor.h b/include/executor/executor.h
+index 12c6a998..f46f0e16 100644
+--- a/include/executor/executor.h
++++ b/include/executor/executor.h
+@@ -884,6 +884,7 @@ private:
+     std::mutex Mutex;
+     std::condition_variable Cond;
+     Runtime::Instance::MemoryInstance *MemInst;
++    bool Notified = false;
+     Waiter(Runtime::Instance::MemoryInstance *Inst) noexcept : MemInst(Inst) {}
+   };
+   std::mutex WaiterMapMutex;
+diff --git a/include/executor/engine/atomic.ipp b/include/executor/engine/atomic.ipp
+index 65c5581a..d62c0c90 100644
+--- a/include/executor/engine/atomic.ipp
++++ b/include/executor/engine/atomic.ipp
+@@ -455,37 +455,53 @@ Executor::atomicWait(Runtime::Instance::MemoryInstance &MemInst,
+   auto *AtomicObj = MemInst.getPointer<std::atomic<T> *>(Address);
+   assuming(AtomicObj);
+ 
+-  if (AtomicObj->load() != Expected) {
+-    return UINT32_C(1); // NotEqual
+-  }
+-
+-  decltype(WaiterMap)::iterator WaiterIterator;
++  Waiter *CurrentWaiter = nullptr;
+   {
+     std::unique_lock<decltype(WaiterMapMutex)> Locker(WaiterMapMutex);
+-    WaiterIterator = WaiterMap.emplace(Address, &MemInst);
++    // The value check and waiter publication must be atomic with respect to
++    // atomicNotify's lookup. Otherwise a store+notify can land after the first
++    // value check but before publication and be lost forever.
++    if (AtomicObj->load() != Expected) {
++      return UINT32_C(1); // NotEqual
++    }
++    auto Iterator = WaiterMap.emplace(Address, &MemInst);
++    CurrentWaiter = &Iterator->second;
+   }
+ 
+   cxx20::scope_exit ScopeExitHolder([&]() noexcept {
+     std::unique_lock<decltype(WaiterMapMutex)> Locker(WaiterMapMutex);
+-    WaiterMap.erase(WaiterIterator);
++    auto Range = WaiterMap.equal_range(Address);
++    for (auto Iterator = Range.first; Iterator != Range.second; ++Iterator) {
++      if (&Iterator->second == CurrentWaiter) {
++        WaiterMap.erase(Iterator);
++        break;
++      }
++    }
+   });
+ 
+-  while (true) {
+-    std::unique_lock<decltype(WaiterIterator->second.Mutex)> Locker(
+-        WaiterIterator->second.Mutex);
+-    std::cv_status WaitResult = std::cv_status::no_timeout;
+-    if (!Until) {
+-      WaiterIterator->second.Cond.wait(Locker);
+-    } else {
+-      WaitResult = WaiterIterator->second.Cond.wait_until(Locker, *Until);
+-    }
++  std::unique_lock<decltype(CurrentWaiter->Mutex)> Locker(
++      CurrentWaiter->Mutex);
++  for (;;) {
+     if (unlikely(StopToken.load(std::memory_order_relaxed) != 0)) {
+       return Unexpect(ErrCode::Value::Interrupted);
+     }
+-    if (likely(AtomicObj->load() != Expected)) {
++    // atomicNotify persists this predicate while holding the same mutex. This
++    // closes the notify-after-publication/before-cond-wait window.
++    if (CurrentWaiter->Notified) {
+       return UINT32_C(0); // ok
+     }
+-    if (WaitResult == std::cv_status::timeout) {
++
++    if (!Until) {
++      CurrentWaiter->Cond.wait(Locker, [&]() noexcept {
++        return CurrentWaiter->Notified ||
++               StopToken.load(std::memory_order_relaxed) != 0;
++      });
++      continue;
++    }
++    if (!CurrentWaiter->Cond.wait_until(Locker, *Until, [&]() noexcept {
++          return CurrentWaiter->Notified ||
++                 StopToken.load(std::memory_order_relaxed) != 0;
++        })) {
+       return UINT32_C(2); // Timed-out
+     }
+   }
+diff --git a/lib/executor/engine/threadInstr.cpp b/lib/executor/engine/threadInstr.cpp
+index fad134fd..e8cf9142 100644
+--- a/lib/executor/engine/threadInstr.cpp
++++ b/lib/executor/engine/threadInstr.cpp
+@@ -67,6 +67,17 @@ Executor::atomicNotify(Runtime::Instance::MemoryInstance &MemInst,
+   for (auto Iterator = Range.first; Total < Count && Iterator != Range.second;
+        ++Iterator) {
+     if (likely(&MemInst == Iterator->second.MemInst)) {
++      {
++        std::unique_lock<decltype(Iterator->second.Mutex)> WaiterLocker(
++            Iterator->second.Mutex);
++        // A waiter remains published until it observes this flag and removes
++        // itself. Do not let repeated notify(1) calls count that same waiter
++        // twice while another waiter at this address is still asleep.
++        if (Iterator->second.Notified) {
++          continue;
++        }
++        Iterator->second.Notified = true;
++      }
+       Iterator->second.Cond.notify_all();
+       ++Total;
+     }
+@@ -78,6 +89,12 @@ void Executor::atomicNotifyAll() noexcept {
+   std::unique_lock<decltype(WaiterMapMutex)> Locker(WaiterMapMutex);
+   for (auto Iterator = WaiterMap.begin(); Iterator != WaiterMap.end();
+        ++Iterator) {
++    {
++      // Synchronize with the predicate check before the waiter sleeps. The
++      // StopToken was set by Executor::stop before this function is called.
++      std::unique_lock<decltype(Iterator->second.Mutex)> WaiterLocker(
++          Iterator->second.Mutex);
++    }
+     Iterator->second.Cond.notify_all();
+   }
+ }

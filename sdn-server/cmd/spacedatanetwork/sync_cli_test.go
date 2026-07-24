@@ -45,9 +45,9 @@ func TestClassifySyncProviderIdentifier(t *testing.T) {
 		"bc1qspacedatanetwork000000000000000000000000":                "bitcoin-address",
 		"0x000000000000000000000000000000000000dEaD":                  "ethereum-address",
 		"So11111111111111111111111111111111111111112":                 "solana-address",
-		"celestrak.eth":         "ens-domain",
-		"provider.sol":          "sns-domain",
-		"space-data-network-02": "provider-id",
+		"catalogfixture.eth":                                          "ens-domain",
+		"provider.sol":                                                "sns-domain",
+		"space-data-network-02":                                       "provider-id",
 	}
 	for input, want := range tests {
 		if got := classifySyncProviderIdentifier(input); got != want {
@@ -77,7 +77,7 @@ func TestSyncStatusReportsLocalReplicaWithoutSourceName(t *testing.T) {
 		"provider_identifier=space-data-network-02",
 		"provider_identifier_kind=provider-id",
 		"provider_id=space-data-network-02",
-		"source_name=celestrak-gp",
+		"source_name=catalogfixture-gp",
 		"status=synced",
 		"local_rows=1",
 		"pinned_rows=1",
@@ -97,7 +97,7 @@ func TestSyncStatusResolvesProviderAliasFromDirectory(t *testing.T) {
 	var out bytes.Buffer
 	err := runSyncStatusWithOptions(context.Background(), &out, syncStatusOptions{
 		Schema:       "OMM.fbs",
-		ProviderID:   "celestrak.eth",
+		ProviderID:   "catalogfixture.eth",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 	})
 	if err != nil {
@@ -106,11 +106,11 @@ func TestSyncStatusResolvesProviderAliasFromDirectory(t *testing.T) {
 
 	body := out.String()
 	for _, want := range []string{
-		"provider_identifier=celestrak.eth",
+		"provider_identifier=catalogfixture.eth",
 		"provider_identifier_kind=ens-domain",
 		"provider_identifier_match=directory",
-		"provider_peer_id=16Uiu2HCelesTrak",
-		"source_name=celestrak-gp",
+		"provider_peer_id=16Uiu2HCatalogFixture",
+		"source_name=catalogfixture-gp",
 		"status=synced",
 	} {
 		if !strings.Contains(body, want) {
@@ -127,7 +127,7 @@ func TestSyncStatusResolvesProviderDomainFromSourcePrefix(t *testing.T) {
 	var out bytes.Buffer
 	err := runSyncStatusWithOptions(context.Background(), &out, syncStatusOptions{
 		Schema:       "OMM",
-		ProviderID:   "celestrak.eth",
+		ProviderID:   "catalogfixture.eth",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 	})
 	if err != nil {
@@ -136,11 +136,11 @@ func TestSyncStatusResolvesProviderDomainFromSourcePrefix(t *testing.T) {
 
 	body := out.String()
 	for _, want := range []string{
-		"provider_identifier=celestrak.eth",
+		"provider_identifier=catalogfixture.eth",
 		"provider_identifier_kind=ens-domain",
 		"provider_identifier_match=source",
 		"provider_id=space-data-network-02",
-		"source_name=celestrak-gp",
+		"source_name=catalogfixture-gp",
 		"status=synced",
 	} {
 		if !strings.Contains(body, want) {
@@ -157,7 +157,7 @@ func TestSyncStatusReportsMaterializedPublicationReplica(t *testing.T) {
 	var out bytes.Buffer
 	err := runSyncStatusWithOptions(context.Background(), &out, syncStatusOptions{
 		Schema:       "OMM",
-		ProviderID:   "celestrak.eth",
+		ProviderID:   "catalogfixture.eth",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 	})
 	if err != nil {
@@ -166,11 +166,11 @@ func TestSyncStatusReportsMaterializedPublicationReplica(t *testing.T) {
 
 	body := out.String()
 	for _, want := range []string{
-		"provider_identifier=celestrak.eth",
+		"provider_identifier=catalogfixture.eth",
 		"provider_identifier_kind=ens-domain",
 		"provider_identifier_match=source",
 		"provider_id=space-data-network-02",
-		"source_name=celestrak-gp",
+		"source_name=catalogfixture-gp",
 		"batch_id=test-batch",
 		"status=synced",
 		"local_rows=1",
@@ -190,7 +190,7 @@ func TestSyncStatusJSONOutput(t *testing.T) {
 	var out bytes.Buffer
 	err := runSyncStatusWithOptions(context.Background(), &out, syncStatusOptions{
 		Schema:       "omm",
-		ProviderID:   "celestrak.eth",
+		ProviderID:   "catalogfixture.eth",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		JSON:         true,
 	})
@@ -272,9 +272,9 @@ func seedSyncCLITestData(t *testing.T, store *storage.FlatSQLStore) {
 	verifiedAt := time.Date(2026, 5, 25, 6, 8, 54, 0, time.UTC)
 	if err := store.UpsertDirectoryRecord(storage.DirectoryRecord{
 		Kind:           "node",
-		PeerID:         "16Uiu2HCelesTrak",
-		DN:             "CelesTrak",
-		LegalName:      "CelesTrak",
+		PeerID:         "16Uiu2HCatalogFixture",
+		DN:             "CatalogFixture",
+		LegalName:      "CatalogFixture",
 		BitcoinAddress: "bc1qspacedatanetwork000000000000000000000000",
 		EPMCID:         "bafkreigh2akiscaildcagqrb7hf7vsgkl2kpdx3obxxm2pvshpwrsp7m2a",
 		Source:         "test",
@@ -282,7 +282,7 @@ func seedSyncCLITestData(t *testing.T, store *storage.FlatSQLStore) {
 			"xpub": "xpub661MyMwAqRbcFexample",
 			"ethereum_address": "0x000000000000000000000000000000000000dEaD",
 			"solana_address": "So11111111111111111111111111111111111111112",
-			"ens_names": ["celestrak.eth"],
+			"ens_names": ["catalogfixture.eth"],
 			"sns_names": ["provider.sol"],
 			"ipns": "ipns://k51qzi5uqu5dlprovider"
 		}`,
@@ -297,15 +297,15 @@ func seedSyncCLITestReplica(t *testing.T, store *storage.FlatSQLStore) {
 
 	payload := sds.NewOMMBuilder().
 		WithNoradCatID(56775).
-		WithObjectName("STARLINK-6292").
+		WithObjectName("SATELLITE-6292").
 		WithEpoch("2026-05-25T06:08:54Z").
 		Build()
-	if _, err := store.StoreWithSourceTags("OMM.fbs", payload, "16Uiu2HCelesTrak", nil, storage.SourceTags{
+	if _, err := store.StoreWithSourceTags("OMM.fbs", payload, "16Uiu2HCatalogFixture", nil, storage.SourceTags{
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
-		SourceURL:         "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+		SourceName:        "catalogfixture-gp",
+		SourceURL:         "https://fixture.test/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
 		BatchID:           "test-batch",
-		ProducerPeerID:    "16Uiu2HCelesTrak",
+		ProducerPeerID:    "16Uiu2HCatalogFixture",
 		ProducerPublicKey: "provider-public-key",
 	}); err != nil {
 		t.Fatalf("store OMM failed: %v", err)
@@ -315,10 +315,10 @@ func seedSyncCLITestReplica(t *testing.T, store *storage.FlatSQLStore) {
 	if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
 		CID:               "bafkshard-omm",
 		SchemaName:        "OMM.fbs",
-		ProviderPeerID:    "16Uiu2HCelesTrak",
+		ProviderPeerID:    "16Uiu2HCatalogFixture",
 		ProviderPublicKey: "provider-public-key",
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
+		SourceName:        "catalogfixture-gp",
 		BatchID:           "test-batch",
 		QueryProfile:      storage.DatasetPublicationQueryProfile,
 		SnapshotID:        "head-2",
@@ -340,15 +340,15 @@ func seedSyncCLITestPublicationReplica(t *testing.T, store *storage.FlatSQLStore
 
 	payload := sds.NewOMMBuilder().
 		WithNoradCatID(56775).
-		WithObjectName("STARLINK-6292").
+		WithObjectName("SATELLITE-6292").
 		WithEpoch("2026-05-25T06:08:54Z").
 		Build()
-	if _, err := store.StoreWithSourceTags("OMM.fbs", payload, "16Uiu2HCelesTrak", nil, storage.SourceTags{
+	if _, err := store.StoreWithSourceTags("OMM.fbs", payload, "16Uiu2HCatalogFixture", nil, storage.SourceTags{
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
-		SourceURL:         "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+		SourceName:        "catalogfixture-gp",
+		SourceURL:         "https://fixture.test/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
 		BatchID:           "test-batch",
-		ProducerPeerID:    "16Uiu2HCelesTrak",
+		ProducerPeerID:    "16Uiu2HCatalogFixture",
 		ProducerPublicKey: "provider-public-key",
 	}); err != nil {
 		t.Fatalf("store OMM failed: %v", err)
@@ -357,7 +357,7 @@ func seedSyncCLITestPublicationReplica(t *testing.T, store *storage.FlatSQLStore
 	if err := store.UpsertDatasetShardPublication(storage.DatasetShardPublication{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "test-batch",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Offset:       0,

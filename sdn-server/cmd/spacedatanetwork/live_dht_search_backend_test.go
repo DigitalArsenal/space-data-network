@@ -32,7 +32,7 @@ func TestLiveDHTSearchBackendRefreshesDiscoveryBeforeProviderRows(t *testing.T) 
 	backend := newLiveDHTSearchBackend(node)
 
 	rows, err := backend.SearchProviders(context.Background(), api.SearchRequest{
-		Query:      "celestrak",
+		Query:      "catalogfixture",
 		Schema:     "OMM",
 		ProviderID: "space-data-network-02",
 		Limit:      5,
@@ -47,7 +47,7 @@ func TestLiveDHTSearchBackendRefreshesDiscoveryBeforeProviderRows(t *testing.T) 
 		t.Fatalf("provider row count = %d, want 1: %#v", len(rows), rows)
 	}
 	row := rows[0]
-	if row["peer_id"] != "16Uiu2HCelesTrak" ||
+	if row["peer_id"] != "16Uiu2HCatalogFixture" ||
 		row["provider_id"] != "space-data-network-02" ||
 		row["schema_name"] != "OMM.fbs" {
 		t.Fatalf("unexpected provider row: %#v", row)

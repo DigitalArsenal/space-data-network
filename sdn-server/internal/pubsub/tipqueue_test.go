@@ -506,14 +506,13 @@ func TestBuildPNMMessage(t *testing.T) {
 	}
 }
 
-func TestPublishDatasetUpdatePNMPublishesSchemaAndCombinedCelesTrakTopics(t *testing.T) {
+func TestPublishDatasetUpdatePNMPublishesExplicitlyDeclaredSchemaTopics(t *testing.T) {
 	pnmBytes := buildTestPNM(t, "bafymanifest", "DPM")
 	publisher := &recordingSchemaPublisher{}
 
 	err := PublishDatasetUpdatePNM(context.Background(), publisher, DatasetUpdateAnnouncement{
-		PNM:               pnmBytes,
-		Schemas:           []string{"CAT.fbs", "OMM", "CAT.fbs"},
-		CombinedCelesTrak: true,
+		PNM:     pnmBytes,
+		Schemas: []string{"CAT.fbs", "OMM", "CAT.fbs", "MPE", "SPW.fbs"},
 	})
 	if err != nil {
 		t.Fatalf("PublishDatasetUpdatePNM failed: %v", err)

@@ -42,8 +42,8 @@ func TestFlatSQLStoreExportDatasetWindowWritesShardAndIndex(t *testing.T) {
 
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-satcat-csv",
-		SourceURL:    "https://celestrak.org/pub/satcat.csv",
+		SourceName:   "catalogfixture-satcat-csv",
+		SourceURL:    "https://fixture.test/pub/satcat.csv",
 		BatchID:      "source-sha-001",
 		ContentKeyID: "public",
 	}
@@ -56,16 +56,16 @@ func TestFlatSQLStoreExportDatasetWindowWritesShardAndIndex(t *testing.T) {
 		Build()
 	recordB := sds.NewCATBuilder().
 		WithNoradCatID(40909).
-		WithObjectName("STARLINK-1001").
+		WithObjectName("SATELLITE-1001").
 		WithObjectID("2015-049A").
 		WithObjectType("PAYLOAD").
 		WithOpsStatus("OPERATIONAL").
 		Build()
 
-	if _, err := store.StoreWithSourceTags("CAT.fbs", recordA, "source:celestrak", nil, tags); err != nil {
+	if _, err := store.StoreWithSourceTags("CAT.fbs", recordA, "source:catalogfixture", nil, tags); err != nil {
 		t.Fatalf("store record A failed: %v", err)
 	}
-	if _, err := store.StoreWithSourceTags("CAT.fbs", recordB, "source:celestrak", nil, tags); err != nil {
+	if _, err := store.StoreWithSourceTags("CAT.fbs", recordB, "source:catalogfixture", nil, tags); err != nil {
 		t.Fatalf("store record B failed: %v", err)
 	}
 
@@ -74,7 +74,7 @@ func TestFlatSQLStoreExportDatasetWindowWritesShardAndIndex(t *testing.T) {
 	export, err := store.ExportDatasetWindow(filepath.Join(tmpDir, "export"), IndexedRecordQuery{
 		SchemaName:         "CAT.fbs",
 		ProviderID:         "space-data-network-02",
-		SourceName:         "celestrak-satcat-csv",
+		SourceName:         "catalogfixture-satcat-csv",
 		BatchID:            "source-sha-001",
 		CAReadyResidentSet: true,
 		From:               &from,
@@ -135,7 +135,7 @@ func TestFlatSQLStoreExportDatasetWindowWritesShardAndIndex(t *testing.T) {
 	if index.ShardCID != export.ShardCID {
 		t.Fatalf("ShardCID = %q, want %q", index.ShardCID, export.ShardCID)
 	}
-	if index.ProviderID != "space-data-network-02" || index.SourceName != "celestrak-satcat-csv" || index.BatchID != "source-sha-001" {
+	if index.ProviderID != "space-data-network-02" || index.SourceName != "catalogfixture-satcat-csv" || index.BatchID != "source-sha-001" {
 		t.Fatalf("source tags not preserved in index: %+v", index)
 	}
 	if len(index.Records) != 2 {
@@ -165,8 +165,8 @@ func TestFlatSQLStoreRepairDatasetPublicationIndexFromShard(t *testing.T) {
 
 	tags := SourceTags{
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
-		SourceURL:         "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+		SourceName:        "catalogfixture-gp",
+		SourceURL:         "https://fixture.test/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
 		BatchID:           "source-sha-001",
 		ContentKeyID:      "public",
 		ProducerPeerID:    "space-data-network-02",
@@ -177,7 +177,7 @@ func TestFlatSQLStoreRepairDatasetPublicationIndexFromShard(t *testing.T) {
 		WithObjectID("1998-067A").
 		WithObjectName("ISS").
 		Build()
-	if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:celestrak", nil, tags); err != nil {
+	if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:catalogfixture", nil, tags); err != nil {
 		t.Fatalf("store OMM failed: %v", err)
 	}
 
@@ -185,7 +185,7 @@ func TestFlatSQLStoreRepairDatasetPublicationIndexFromShard(t *testing.T) {
 	export, err := store.ExportDatasetWindow(outputDir, IndexedRecordQuery{
 		SchemaName:          "OMM.fbs",
 		ProviderID:          "space-data-network-02",
-		SourceName:          "celestrak-gp",
+		SourceName:          "catalogfixture-gp",
 		Limit:               10,
 		AllowLargeResultSet: true,
 		OrderByCID:          true,
@@ -196,7 +196,7 @@ func TestFlatSQLStoreRepairDatasetPublicationIndexFromShard(t *testing.T) {
 	publication := DatasetShardPublication{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		QueryProfile: DatasetPublicationQueryProfile,
 		Offset:       0,
 		Limit:        10,
@@ -240,7 +240,7 @@ func TestFlatSQLStoreRepairDatasetPublicationIndexFindsLegacyQueryShardPath(t *t
 
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "source-sha-legacy-query",
 		ContentKeyID: "public",
 	}
@@ -249,7 +249,7 @@ func TestFlatSQLStoreRepairDatasetPublicationIndexFindsLegacyQueryShardPath(t *t
 		WithObjectID("1998-067A").
 		WithObjectName("ISS").
 		Build()
-	if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:celestrak", nil, tags); err != nil {
+	if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:catalogfixture", nil, tags); err != nil {
 		t.Fatalf("store OMM failed: %v", err)
 	}
 
@@ -257,7 +257,7 @@ func TestFlatSQLStoreRepairDatasetPublicationIndexFindsLegacyQueryShardPath(t *t
 	export, err := store.ExportDatasetWindow(outputDir, IndexedRecordQuery{
 		SchemaName:          "OMM.fbs",
 		ProviderID:          "space-data-network-02",
-		SourceName:          "celestrak-gp",
+		SourceName:          "catalogfixture-gp",
 		BatchID:             "source-sha-legacy-query",
 		Limit:               10,
 		AllowLargeResultSet: true,
@@ -269,7 +269,7 @@ func TestFlatSQLStoreRepairDatasetPublicationIndexFindsLegacyQueryShardPath(t *t
 	publication := DatasetShardPublication{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "source-sha-legacy-query",
 		QueryProfile: DatasetPublicationQueryProfile,
 		Offset:       0,
@@ -324,8 +324,8 @@ func TestFlatSQLStoreExportDatasetWindowAllowsLargePublicationWindows(t *testing
 
 	tags := SourceTags{
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-satcat-csv",
-		SourceURL:  "https://celestrak.org/pub/satcat.csv",
+		SourceName: "catalogfixture-satcat-csv",
+		SourceURL:  "https://fixture.test/pub/satcat.csv",
 		BatchID:    "source-sha-large",
 	}
 	for i := 0; i < 1005; i++ {
@@ -337,7 +337,7 @@ func TestFlatSQLStoreExportDatasetWindowAllowsLargePublicationWindows(t *testing
 			WithObjectType("PAYLOAD").
 			WithOpsStatus("OPERATIONAL").
 			Build()
-		if _, err := store.StoreWithSourceTags("CAT.fbs", record, "source:celestrak", nil, tags); err != nil {
+		if _, err := store.StoreWithSourceTags("CAT.fbs", record, "source:catalogfixture", nil, tags); err != nil {
 			t.Fatalf("store record %d failed: %v", i, err)
 		}
 	}
@@ -345,7 +345,7 @@ func TestFlatSQLStoreExportDatasetWindowAllowsLargePublicationWindows(t *testing
 	export, err := store.ExportDatasetWindow(filepath.Join(tmpDir, "export"), IndexedRecordQuery{
 		SchemaName:          "CAT.fbs",
 		ProviderID:          "space-data-network-02",
-		SourceName:          "celestrak-satcat-csv",
+		SourceName:          "catalogfixture-satcat-csv",
 		BatchID:             "source-sha-large",
 		Limit:               1005,
 		AllowLargeResultSet: true,
@@ -548,7 +548,7 @@ func TestBuildDatasetPublicationPNMAnnouncesSignedManifestCID(t *testing.T) {
 	manifest := &DatasetPublicationManifest{
 		Path:      "/tmp/cat-active.dpm",
 		CID:       "bafymanifestcid",
-		FileID:    "celestrak:cat:CAT.fbs:2023-11-14T22:13:20Z",
+		FileID:    "catalogfixture:cat:CAT.fbs:2023-11-14T22:13:20Z",
 		Signature: []byte{0x01, 0x02, 0x03},
 	}
 	pnmBytes, err := BuildDatasetPublicationPNM(manifest, DatasetPublicationPNMOptions{
@@ -612,8 +612,8 @@ func TestVerifyDatasetPublicationReplayVerifiesPNMManifestAssetsAndQuery(t *test
 
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-satcat-csv",
-		SourceURL:    "https://celestrak.org/pub/satcat.csv",
+		SourceName:   "catalogfixture-satcat-csv",
+		SourceURL:    "https://fixture.test/pub/satcat.csv",
 		BatchID:      "source-sha-001",
 		ContentKeyID: "public",
 	}
@@ -626,15 +626,15 @@ func TestVerifyDatasetPublicationReplayVerifiesPNMManifestAssetsAndQuery(t *test
 		Build()
 	recordB := sds.NewCATBuilder().
 		WithNoradCatID(40909).
-		WithObjectName("STARLINK-1001").
+		WithObjectName("SATELLITE-1001").
 		WithObjectID("2015-049A").
 		WithObjectType("PAYLOAD").
 		WithOpsStatus("OPERATIONAL").
 		Build()
-	if _, err := store.StoreWithSourceTags("CAT.fbs", recordA, "source:celestrak", nil, tags); err != nil {
+	if _, err := store.StoreWithSourceTags("CAT.fbs", recordA, "source:catalogfixture", nil, tags); err != nil {
 		t.Fatalf("store record A failed: %v", err)
 	}
-	if _, err := store.StoreWithSourceTags("CAT.fbs", recordB, "source:celestrak", nil, tags); err != nil {
+	if _, err := store.StoreWithSourceTags("CAT.fbs", recordB, "source:catalogfixture", nil, tags); err != nil {
 		t.Fatalf("store record B failed: %v", err)
 	}
 
@@ -643,7 +643,7 @@ func TestVerifyDatasetPublicationReplayVerifiesPNMManifestAssetsAndQuery(t *test
 	export, err := store.ExportDatasetWindow(filepath.Join(tmpDir, "export"), IndexedRecordQuery{
 		SchemaName:         "CAT.fbs",
 		ProviderID:         "space-data-network-02",
-		SourceName:         "celestrak-satcat-csv",
+		SourceName:         "catalogfixture-satcat-csv",
 		BatchID:            "source-sha-001",
 		CAReadyResidentSet: true,
 		From:               &from,
@@ -759,24 +759,24 @@ func TestMaterializeDatasetPublicationImportsAdvertisedShard(t *testing.T) {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 	tags := SourceTags{
-		ProviderID:   "celestrak.eth",
-		SourceName:   "celestrak-satcat-csv",
-		SourceURL:    "https://celestrak.org/pub/satcat.csv",
+		ProviderID:   "catalogfixture.eth",
+		SourceName:   "catalogfixture-satcat-csv",
+		SourceURL:    "https://fixture.test/pub/satcat.csv",
 		BatchID:      "source-sha-002",
 		ContentKeyID: "public",
 	}
 	recordA := sds.NewCATBuilder().WithNoradCatID(25544).WithObjectName("ISS").WithObjectType("PAYLOAD").WithOpsStatus("OPERATIONAL").Build()
-	recordB := sds.NewCATBuilder().WithNoradCatID(40909).WithObjectName("STARLINK").WithObjectType("PAYLOAD").WithOpsStatus("OPERATIONAL").Build()
-	if _, err := providerStore.StoreWithSourceTags("CAT.fbs", recordA, "celestrak.eth", nil, tags); err != nil {
+	recordB := sds.NewCATBuilder().WithNoradCatID(40909).WithObjectName("SATELLITE").WithObjectType("PAYLOAD").WithOpsStatus("OPERATIONAL").Build()
+	if _, err := providerStore.StoreWithSourceTags("CAT.fbs", recordA, "catalogfixture.eth", nil, tags); err != nil {
 		t.Fatalf("store record A failed: %v", err)
 	}
-	if _, err := providerStore.StoreWithSourceTags("CAT.fbs", recordB, "celestrak.eth", nil, tags); err != nil {
+	if _, err := providerStore.StoreWithSourceTags("CAT.fbs", recordB, "catalogfixture.eth", nil, tags); err != nil {
 		t.Fatalf("store record B failed: %v", err)
 	}
 	export, err := providerStore.ExportDatasetWindow(filepath.Join(tmpDir, "export"), IndexedRecordQuery{
 		SchemaName:          "CAT.fbs",
-		ProviderID:          "celestrak.eth",
-		SourceName:          "celestrak-satcat-csv",
+		ProviderID:          "catalogfixture.eth",
+		SourceName:          "catalogfixture-satcat-csv",
 		BatchID:             "source-sha-002",
 		CAReadyResidentSet:  true,
 		Limit:               10,
@@ -790,7 +790,7 @@ func TestMaterializeDatasetPublicationImportsAdvertisedShard(t *testing.T) {
 		Export:         export,
 		DatasetID:      "cat-active",
 		UpdateID:       "source-sha-002",
-		ProviderPeerID: "celestrak.eth",
+		ProviderPeerID: "catalogfixture.eth",
 		ProviderEPMCID: "bafy-provider-epm",
 		PublishedAt:    publishedAt,
 		SigningKey:     signingKey,
@@ -857,8 +857,8 @@ func TestMaterializeDatasetPublicationImportsAdvertisedShard(t *testing.T) {
 	}
 	records, err := subscriberStore.QueryIndexedRecords(IndexedRecordQuery{
 		SchemaName: "CAT.fbs",
-		ProviderID: "celestrak.eth",
-		SourceName: "celestrak-satcat-csv",
+		ProviderID: "catalogfixture.eth",
+		SourceName: "catalogfixture-satcat-csv",
 		BatchID:    "source-sha-002",
 		Limit:      10,
 	})
@@ -936,8 +936,8 @@ func TestImportDatasetShardCountsOnlyNewRowsOnReplay(t *testing.T) {
 
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
-		SourceURL:    "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+		SourceName:   "catalogfixture-gp",
+		SourceURL:    "https://fixture.test/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
 		BatchID:      "source-sha-replay",
 		ContentKeyID: "public",
 	}
@@ -948,7 +948,7 @@ func TestImportDatasetShardCountsOnlyNewRowsOnReplay(t *testing.T) {
 			WithObjectType("PAYLOAD").
 			WithOpsStatus("OPERATIONAL").
 			Build()
-		if _, err := providerStore.StoreWithSourceTags("CAT.fbs", record, "celestrak.eth", nil, tags); err != nil {
+		if _, err := providerStore.StoreWithSourceTags("CAT.fbs", record, "catalogfixture.eth", nil, tags); err != nil {
 			t.Fatalf("store record %d failed: %v", i, err)
 		}
 	}
@@ -973,14 +973,14 @@ func TestImportDatasetShardCountsOnlyNewRowsOnReplay(t *testing.T) {
 		t.Fatalf("read index: %v", err)
 	}
 
-	imported, index, err := subscriberStore.ImportDatasetShard(shardBytes, indexBytes, "celestrak.eth")
+	imported, index, err := subscriberStore.ImportDatasetShard(shardBytes, indexBytes, "catalogfixture.eth")
 	if err != nil {
 		t.Fatalf("first ImportDatasetShard failed: %v", err)
 	}
 	if imported != 3 || index.RecordCount != 3 {
 		t.Fatalf("first imported=%d recordCount=%d, want 3/3", imported, index.RecordCount)
 	}
-	imported, _, err = subscriberStore.ImportDatasetShard(shardBytes, indexBytes, "celestrak.eth")
+	imported, _, err = subscriberStore.ImportDatasetShard(shardBytes, indexBytes, "catalogfixture.eth")
 	if err != nil {
 		t.Fatalf("second ImportDatasetShard failed: %v", err)
 	}
@@ -1027,8 +1027,8 @@ func TestImportDatasetShardFromFilesStreamsShardIntoFlatSQL(t *testing.T) {
 
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
-		SourceURL:    "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+		SourceName:   "catalogfixture-gp",
+		SourceURL:    "https://fixture.test/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
 		BatchID:      "source-sha-file-import",
 		ContentKeyID: "public",
 	}
@@ -1039,7 +1039,7 @@ func TestImportDatasetShardFromFilesStreamsShardIntoFlatSQL(t *testing.T) {
 			WithObjectType("PAYLOAD").
 			WithOpsStatus("OPERATIONAL").
 			Build()
-		if _, err := providerStore.StoreWithSourceTags("CAT.fbs", record, "celestrak.eth", nil, tags); err != nil {
+		if _, err := providerStore.StoreWithSourceTags("CAT.fbs", record, "catalogfixture.eth", nil, tags); err != nil {
 			t.Fatalf("store record %d failed: %v", i, err)
 		}
 	}
@@ -1056,14 +1056,14 @@ func TestImportDatasetShardFromFilesStreamsShardIntoFlatSQL(t *testing.T) {
 		t.Fatalf("ExportDatasetWindow failed: %v", err)
 	}
 
-	imported, index, err := subscriberStore.ImportDatasetShardFromFiles(export.ShardPath, export.IndexPath, "celestrak.eth")
+	imported, index, err := subscriberStore.ImportDatasetShardFromFiles(export.ShardPath, export.IndexPath, "catalogfixture.eth")
 	if err != nil {
 		t.Fatalf("ImportDatasetShardFromFiles failed: %v", err)
 	}
 	if imported != 4 || index.RecordCount != 4 {
 		t.Fatalf("imported=%d recordCount=%d, want 4/4", imported, index.RecordCount)
 	}
-	imported, _, err = subscriberStore.ImportDatasetShardFromFiles(export.ShardPath, export.IndexPath, "celestrak.eth")
+	imported, _, err = subscriberStore.ImportDatasetShardFromFiles(export.ShardPath, export.IndexPath, "catalogfixture.eth")
 	if err != nil {
 		t.Fatalf("replay ImportDatasetShardFromFiles failed: %v", err)
 	}
@@ -1122,8 +1122,8 @@ func TestImportDatasetShardAcceptsLegacyBareHexRecordCIDs(t *testing.T) {
 
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
-		SourceURL:    "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+		SourceName:   "catalogfixture-gp",
+		SourceURL:    "https://fixture.test/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
 		BatchID:      "source-legacy-cid-import",
 		ContentKeyID: "public",
 	}
@@ -1135,7 +1135,7 @@ func TestImportDatasetShardAcceptsLegacyBareHexRecordCIDs(t *testing.T) {
 			WithObjectType("PAYLOAD").
 			WithOpsStatus("OPERATIONAL").
 			Build()
-		if _, err := providerStore.StoreWithSourceTags("CAT.fbs", record, "celestrak.eth", nil, tags); err != nil {
+		if _, err := providerStore.StoreWithSourceTags("CAT.fbs", record, "catalogfixture.eth", nil, tags); err != nil {
 			t.Fatalf("store record %d failed: %v", i, err)
 		}
 	}
@@ -1195,7 +1195,7 @@ func TestImportDatasetShardAcceptsLegacyBareHexRecordCIDs(t *testing.T) {
 		t.Fatalf("marshal patched index: %v", err)
 	}
 
-	imported, importedIndex, err := subscriberStore.ImportDatasetShard(shardBytes, legacyIndexBytes, "celestrak.eth")
+	imported, importedIndex, err := subscriberStore.ImportDatasetShard(shardBytes, legacyIndexBytes, "catalogfixture.eth")
 	if err != nil {
 		t.Fatalf("ImportDatasetShard with legacy bare-hex record CIDs failed: %v", err)
 	}
@@ -1258,7 +1258,7 @@ func TestBuildSignedDatasetPublicationManifestBindsExportAndQuery(t *testing.T) 
 	query := IndexedRecordQuery{
 		SchemaName:          "CAT.fbs",
 		ProviderID:          "provider-1",
-		SourceName:          "celestrak-satcat-csv",
+		SourceName:          "catalogfixture-satcat-csv",
 		BatchID:             "batch-sha",
 		CAReadyResidentSet:  true,
 		From:                &from,
@@ -1294,8 +1294,8 @@ func TestBuildSignedDatasetPublicationManifestBindsExportAndQuery(t *testing.T) 
 		IndexBytes:     int64(len(indexBytes)),
 		SourceBatches: []DatasetExportSourceBatch{{
 			ProviderID:    "provider-1",
-			SourceName:    "celestrak-satcat-csv",
-			SourceURL:     "https://celestrak.org/satcat/records.php",
+			SourceName:    "catalogfixture-satcat-csv",
+			SourceURL:     "https://fixture.test/satcat/records.php",
 			SourceSHA256:  "batch-sha",
 			ContentKeyID:  "public",
 			RecordCount:   2,

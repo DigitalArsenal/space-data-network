@@ -84,7 +84,7 @@ func TestReadOnlyOpenAgainstLiveWriter(t *testing.T) {
 
 	tags := SourceTags{
 		ProviderID: "prov-ro",
-		SourceName: "celestrak-gp",
+		SourceName: "catalogfixture-gp",
 		SourceURL:  "https://example.test/gp",
 		BatchID:    "batch-ro-1",
 	}
@@ -126,7 +126,7 @@ func TestReadOnlyOpenAgainstLiveWriter(t *testing.T) {
 	records, err := reader.QuerySourceTaggedRecords(SourceTagQuery{
 		SchemaName: "OMM.fbs",
 		ProviderID: "prov-ro",
-		SourceName: "celestrak-gp",
+		SourceName: "catalogfixture-gp",
 		Limit:      10,
 	})
 	if err != nil {
@@ -163,11 +163,11 @@ func TestReadOnlyOpenAgainstLiveWriter(t *testing.T) {
 	if err := reader.SaveLocalEPM("peer-ro-test", []byte{1, 2, 3}); !errors.Is(err, ErrStoreReadOnly) {
 		t.Fatalf("reader SaveLocalEPM: want ErrStoreReadOnly, got %v", err)
 	}
-	if _, err := reader.ReconcileSourceBatch("OMM.fbs", "prov-ro", "celestrak-gp", "batch-ro-1", true); !errors.Is(err, ErrStoreReadOnly) {
+	if _, err := reader.ReconcileSourceBatch("OMM.fbs", "prov-ro", "catalogfixture-gp", "batch-ro-1", true); !errors.Is(err, ErrStoreReadOnly) {
 		t.Fatalf("reader ReconcileSourceBatch(apply): want ErrStoreReadOnly, got %v", err)
 	}
 	// Dry-run reconcile stays available to read verbs.
-	if _, err := reader.ReconcileSourceBatch("OMM.fbs", "prov-ro", "celestrak-gp", "batch-ro-1", false); err != nil {
+	if _, err := reader.ReconcileSourceBatch("OMM.fbs", "prov-ro", "catalogfixture-gp", "batch-ro-1", false); err != nil {
 		t.Fatalf("reader ReconcileSourceBatch(dry-run): %v", err)
 	}
 

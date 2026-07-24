@@ -47,7 +47,7 @@ tor:
   enabled: false
 ```
 
-## Ingestion Workers (CelesTrak + Space-Track + UDL)
+## Credentialed Ingestion Workers (Space-Track + UDL)
 
 **Single-writer topology:** the FlatSQL v2 store admits exactly one writer
 process (exclusive `store.lock` beside compact record metadata and stream
@@ -58,9 +58,6 @@ inside the daemon against its own store handle:
 ```yaml
 ingest:
   enabled: true
-  celestrak_interval: 3h
-  satcat_interval: 24h
-  space_weather_interval: 3h
   spacetrack_enabled: false   # credentials via SPACETRACK_* env vars
   udl_enabled: false          # credentials via UDL_* env vars
 ```
@@ -69,15 +66,22 @@ The standalone `spacedatanetwork ingest` verb below remains supported for
 offline/standalone stores; against a daemon-held store it fails with a clean
 store-lock error (never journal corruption) and points at the config above.
 
-Run a one-time sync:
+Provider-specific public-source acquisition is not implemented in the Go
+runner. It belongs to signed standalone modules loaded through the generic
+runtime. Production nodes therefore have no built-in CelesTrak URL, request,
+cache, or scheduler path.
+
+Run a one-time Space-Track sync:
 
 ```bash
+export SPACETRACK_IDENTITY="your-identity"
+export SPACETRACK_PASSWORD="your-password"
 ./spacedatanetwork ingest \
   --once \
   --storage-path /opt/data/sdn \
   --raw-path /opt/data/raw \
-  --celestrak-catalog-url "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv" \
-  --celestrak-satcat-url "https://celestrak.org/pub/satcat.txt"
+  --spacetrack-enabled true \
+  --spacetrack-start-day 2026-01-01
 ```
 
 Run continuous workers with Space-Track credentials:
@@ -88,21 +92,10 @@ export SPACETRACK_PASSWORD="your-password"
 ./spacedatanetwork ingest \
   --storage-path /opt/data/sdn \
   --raw-path /opt/data/raw \
-  --celestrak-catalog-url "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv" \
-  --celestrak-satcat-url "https://celestrak.org/pub/satcat.txt" \
-  --celestrak-interval 3h \
-  --satcat-interval 24h \
   --spacetrack-enabled true \
   --spacetrack-batch-days 3 \
   --spacetrack-batch-sleep 3s
 ```
-
-Default source behavior:
-
-- GP source: `https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv`
-- SATCAT source: `https://celestrak.org/pub/satcat.txt` (fixed-width text)
-- CelesTrak refresh minimum: 3 hours per endpoint (cached under `<raw-path>/cache`)
-- Ingest stores both `OMM.fbs` and `MPE.fbs`; use `MPE` endpoints for orbit bulk consumers.
 
 ### Unified Data Library (UDL)
 
@@ -185,7 +178,7 @@ Legacy import from `/opt/data/satellite_data.db`:
   --storage-path /opt/data/sdn \
   --batch-size 50000 \
   --provider-id space-data-network-02 \
-  --source-name celestrak-gp-historical \
+  --source-name legacy-gp-historical \
   --datastore-namespace
 ```
 
@@ -200,8 +193,8 @@ SDN-managed FlatSQL datastore keyed by schema, provider/source, producer peer
 identity, batch head, query profile, snapshot, high-water marker, and artifact
 hash. That keeps source identity at the datastore boundary instead of adding a
 per-record source-tag row for the full historical archive. Omit the flag only
-when you intentionally need the older mixed-store/source-tag import path. Live
-CelesTrak CSV batches remain under `space-data-network-02 / celestrak-gp`.
+when you intentionally need the older mixed-store/source-tag import path.
+Module-published batches retain their bundle-declared provider/source tags.
 Use `--batch-id`, `--source-url`, `--producer-peer-id`, and
 `--producer-public-key` when replaying a specific archived source snapshot.
 

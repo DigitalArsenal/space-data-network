@@ -63,7 +63,6 @@ import (
 	"github.com/ipfs/kubo/sdn/plugins"
 	sdnapihttp "github.com/ipfs/kubo/sdn/sdnapi"
 	"github.com/ipfs/kubo/sdn/sdnmodules"
-	"github.com/ipfs/kubo/sdn/sdnodresults"
 	"github.com/ipfs/kubo/sdn/sdnstore"
 	"github.com/ipfs/kubo/sdn/sdnui"
 )
@@ -171,13 +170,9 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 		// Modules backs GET /sdn/v1/modules and the module config endpoints: the
 		// live cron scheduler is the module cron/config control surface. Resolved
 		// lazily so the listener can start before the runtime services exist.
-		// Wrapped in the compat shim (omm_compat.go) so the supplemental-OMM
-		// board's hardcoded "supplemental-omm" config-panel id resolves to the
-		// mounted OD ServiceFlow (org.sdn.flows.od-supplemental-omm) instead of
-		// 404ing — every other module id is unaffected, passed straight through.
 		Modules: func() sdnapihttp.ModuleAdmin {
 			if s := pluginsdnruntime.Services(); s != nil && s.Scheduler != nil {
-				return ommCompatModuleAdmin{real: s.Scheduler}
+				return s.Scheduler
 			}
 			return nil
 		},
@@ -188,6 +183,16 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 		Installer: func() sdnapihttp.ModuleInstaller {
 			if in := pluginsdnruntime.Installer(); in != nil {
 				return installerAdapter{in}
+			}
+			return nil
+		},
+		// ArtifactRuntimeNodes backs the generic signed-flow latest-value route.
+		// The installer admits only output names declared in signed artifact
+		// metadata and returns their exact opaque bytes; this HTTP plugin adds no
+		// application-specific mapping or payload decoding.
+		ArtifactRuntimeNodes: func() sdnapihttp.ArtifactRuntimeNodeReader {
+			if in := pluginsdnruntime.FlowInstaller(); in != nil {
+				return in
 			}
 			return nil
 		},
@@ -218,40 +223,6 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 		Authorized: requestFromLoopback,
 	})
 
-	// Supplemental-OMM RUN API (GET /sdn/v1/runs...): the read-only board
-	// surface over the node's REAL OD-fit results, derived from the mounted
-	// OD ServiceFlow's fire history + its linked FlatSQL store
-	// (sdn/sdnodresults) — NOT the disconnected, inert sdnruns.Store (see
-	// plugin/plugins/sdnruntime/sdnruns.go: that run engine is fully inert
-	// per the SDN_OD_FLOW_LOOP.md STOP block, so it never gains new rows;
-	// derived runs are the run log going forward). A SEPARATE handler (like
-	// credentials), mounted on this same loopback listener. The ODFlow
-	// resolved lazily so the routes report an honest empty result before the
-	// runtime is up or on a node with no OD flow mounted (the fallback for
-	// nodes without the new store).
-	odResultsReader := sdnodresults.NewReader(func() sdnodresults.ODFlow {
-		fi := pluginsdnruntime.FlowInstaller()
-		if fi == nil {
-			return nil
-		}
-		sf := fi.Flow(ommFlowProgramID)
-		if sf == nil {
-			return nil
-		}
-		return sf
-	})
-	runsHandler := sdnapihttp.NewRunsHandler(sdnapihttp.RunsDeps{
-		Reader: func() *sdnodresults.Reader { return odResultsReader },
-	})
-
-	// Supplemental-OMM START/STOP/RESET admin controls (owner UI request): a
-	// SEPARATE handler (like credentials/runs), mounted on this same loopback
-	// listener. See omm_runcontrol.go for why this resolves against a local,
-	// duck-typed interface rather than a hard flowrt import — every route
-	// honestly reports 503 until the underlying ServiceFlow lifecycle
-	// primitives (a concurrent, separate workstream) land.
-	runControlHandler := newOmmRunControlHandler(resolveOmmRunControl)
-
 	// Node EPM / vCard / QR export (GET /sdn/v1/node/{epm,vcard,qr}): the node's
 	// self-signed $EPM record, built ONCE from its libp2p identity and memoized
 	// so the exported record (and its signature timestamp) is stable across
@@ -278,7 +249,7 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 	flowsHandler, flowsNote := p.buildFlowsHandler(node)
 
 	p.srv = &http.Server{
-		Handler:           newRootHandler(sdnapihttp.NewHandler(deps), sdnui.Handler(), credsHandler, runsHandler, nodeEPMHandler, flowsHandler, runControlHandler),
+		Handler:           newRootHandler(sdnapihttp.NewHandler(deps), sdnui.Handler(), credsHandler, nodeEPMHandler, flowsHandler),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Infof("SDN flow platform API: %s", flowsNote)
@@ -427,7 +398,7 @@ func wireFlowNetModules(baker *flowrt.Baker, node *core.IpfsNode) string {
 // request path unchanged, so the API's own GET /sdn/v1/{node,peers,...} routes
 // still match. The console and the API it drives are therefore same-origin,
 // which is what lets the page fetch /sdn/v1/* with no cross-origin request.
-func newRootHandler(api, ui, creds, runs, nodeEPM, flows, runControl http.Handler) http.Handler {
+func newRootHandler(api, ui, creds, nodeEPM, flows http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	// The flow-platform API owns the /api/v1/flows/ subtree (bake + palette +
 	// flow management). It is more specific than the "/" console catch-all, so
@@ -438,19 +409,11 @@ func newRootHandler(api, ui, creds, runs, nodeEPM, flows, runControl http.Handle
 		mux.Handle("/api/v1/flows", flows)
 		mux.Handle("/api/v1/flows/", flows)
 	}
-	// The credential admin + runs routes claim their exact prefixes; because they
-	// are more specific than the "/sdn/v1/" subtree, ServeMux routes those requests
-	// to their dedicated handlers and everything else under /sdn/v1/ to the
-	// read-only API. The full request path is forwarded unchanged, so each
-	// handler's own method+path routes still match.
+	// The credential admin routes claim their exact prefix; because they are more
+	// specific than the "/sdn/v1/" subtree, ServeMux routes those requests to the
+	// dedicated handler and everything else under /sdn/v1/ to the generic API.
 	mux.Handle("/sdn/v1/admin/credentials", creds)
 	mux.Handle("/sdn/v1/admin/credentials/", creds)
-	mux.Handle("/sdn/v1/runs", runs)
-	mux.Handle("/sdn/v1/runs/", runs)
-	// The run-control (START/STOP/RESET) subtree is more specific than
-	// /sdn/v1/modules/{id}/config's GET/PUT-only routes on the generic API,
-	// so it must be registered here to win the match.
-	mux.Handle("/sdn/v1/modules/supplemental-omm/run/", runControl)
 	// The node EPM export routes are registered as EXACT patterns (not a
 	// /sdn/v1/node/ subtree) so they never shadow or redirect the read-only API's
 	// exact GET /sdn/v1/node route: /sdn/v1/node stays on the API, while

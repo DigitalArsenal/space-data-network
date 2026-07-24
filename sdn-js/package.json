@@ -34,6 +34,7 @@
     "build:ui": "vite build --config ui/vite.config.mts",
     "build:docs-network-ecosystem": "vite build --config docs-network-ecosystem.config.mts",
     "build:sdn-ui": "vite build --config ui/vite.config.mts",
+	"build:sdn-ui-app": "vite build --config ui/vite.sdnapp.config.mts && node scripts/build-sdn-ui-app.mjs",
     "dev:sdn-ui": "vite --config ui/vite.config.mts",
     "build:spaceaware:vite": "vite build --config ui/vite.spaceaware.config.mts",
     "build:spaceaware": "npm run build:spaceaware:vite && node scripts/build-spaceaware-single-file.mjs",

@@ -13,7 +13,7 @@ database whose schema string concatenates:
 - every SDS record table the node serves (OMM, CAT, MPE, SPW, EPM, PNM, …),
   each `flatsql_register_file_id`-routed by its 4-byte identifier, and
   partitioned per provider/source via `flatsql_register_source`
-  (`OMM@celestrak-gp`, …) with unified `UNION ALL` views (`_source` column
+  (`OMM@provider-primary`, …) with unified `UNION ALL` views (`_source` column
   carries the shadow-table name);
 - the **control tables** (plain SQLite tables created through
   `flatsql_query` DDL — proven in `TestControlTableDDLThroughEngine`):
@@ -130,7 +130,7 @@ time-partitioned segments (wired after the hot path).
 
 The store is SINGLE-WRITER by construction: one in-process engine owns the
 compact record metadata and the stream appenders. Two independent processes
-on one basePath (the pre-C.6b celestrak.eth production shape: daemon +
+on one basePath (the pre-C.6b legacy production shape: daemon +
 `spacedatanetwork-ingest.service`) would interleave metadata frames and
 stream appends — store corruption.
 

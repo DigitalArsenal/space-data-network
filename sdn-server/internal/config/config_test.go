@@ -3,10 +3,22 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestProductionIngestConfigHasNoDirectPublicCatalogFields(t *testing.T) {
+	forbiddenSource := strings.Join([]string{"celes", "trak"}, "")
+	typ := reflect.TypeOf(IngestConfig{})
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if strings.Contains(strings.ToLower(field.Name+" "+field.Tag.Get("yaml")), forbiddenSource) {
+			t.Fatalf("production ingest config exposes forbidden direct source field %s (%s)", field.Name, field.Tag.Get("yaml"))
+		}
+	}
+}
 
 func TestModulesConfigDefaultsToUnsetScheduledTimeout(t *testing.T) {
 	// Unset (0) means the module runtime applies its own built-in default

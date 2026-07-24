@@ -76,7 +76,7 @@ func TestDatasetPublicationHandlerPublishesLocalRequest(t *testing.T) {
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	body := bytes.NewBufferString(`{"schema":"OMM.fbs","sourceName":"celestrak-gp","providerId":"space-data-network-02","limit":1000,"combinedCelesTrak":true}`)
+	body := bytes.NewBufferString(`{"schema":"OMM.fbs","sourceName":"provider-gp","providerId":"space-data-network-02","limit":1000,"announcementSchemas":["MPE.fbs"]}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/dataset-updates/publish", body)
 	req.RemoteAddr = "127.0.0.1:4321"
 	res := httptest.NewRecorder()
@@ -89,7 +89,7 @@ func TestDatasetPublicationHandlerPublishesLocalRequest(t *testing.T) {
 	if !service.called {
 		t.Fatal("service was not called")
 	}
-	if service.request.Schema != "OMM.fbs" || service.request.SourceName != "celestrak-gp" {
+	if service.request.Schema != "OMM.fbs" || service.request.SourceName != "provider-gp" {
 		t.Fatalf("unexpected request: %#v", service.request)
 	}
 	var payload DatasetPublicationResult
@@ -147,7 +147,7 @@ func TestDatasetPublicationHandlerParsesAnnounceExisting(t *testing.T) {
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	body := bytes.NewBufferString(`{"schema":"OMM.fbs","providerId":"space-data-network-02","sourceName":"celestrak-gp","announceExisting":true,"limit":50000}`)
+	body := bytes.NewBufferString(`{"schema":"OMM.fbs","providerId":"space-data-network-02","sourceName":"provider-gp","announceExisting":true,"limit":50000}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/dataset-updates/publish", body)
 	req.RemoteAddr = "127.0.0.1:4321"
 	res := httptest.NewRecorder()
@@ -205,8 +205,8 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 
 	tags := storage.SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-satcat-csv",
-		SourceURL:    "https://celestrak.org/pub/satcat.csv",
+		SourceName:   "provider-satcat-csv",
+		SourceURL:    "https://fixture.test/source",
 		BatchID:      "source-sha-001",
 		ContentKeyID: "public",
 	}
@@ -219,15 +219,15 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 		Build()
 	recordB := sds.NewCATBuilder().
 		WithNoradCatID(40909).
-		WithObjectName("STARLINK-1001").
+		WithObjectName("SATELLITE-1001").
 		WithObjectID("2015-049A").
 		WithObjectType("PAYLOAD").
 		WithOpsStatus("OPERATIONAL").
 		Build()
-	if _, err := store.StoreWithSourceTags("CAT.fbs", recordA, "source:celestrak", nil, tags); err != nil {
+	if _, err := store.StoreWithSourceTags("CAT.fbs", recordA, "source:provider", nil, tags); err != nil {
 		t.Fatalf("store record A failed: %v", err)
 	}
-	if _, err := store.StoreWithSourceTags("CAT.fbs", recordB, "source:celestrak", nil, tags); err != nil {
+	if _, err := store.StoreWithSourceTags("CAT.fbs", recordB, "source:provider", nil, tags); err != nil {
 		t.Fatalf("store record B failed: %v", err)
 	}
 
@@ -251,13 +251,13 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 	)
 
 	result, err := service.PublishDatasetUpdate(context.Background(), DatasetPublicationRequest{
-		Schema:            "CAT",
-		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-satcat-csv",
-		BatchID:           "source-sha-001",
-		DatasetID:         "celestrak-cat",
-		Limit:             10,
-		CombinedCelesTrak: true,
+		Schema:              "CAT",
+		ProviderID:          "space-data-network-02",
+		SourceName:          "provider-satcat-csv",
+		BatchID:             "source-sha-001",
+		DatasetID:           "provider-cat",
+		Limit:               10,
+		AnnouncementSchemas: []string{"MPE.fbs"},
 	})
 	if err != nil {
 		t.Fatalf("PublishDatasetUpdate failed: %v", err)
@@ -292,11 +292,8 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 	if !publisher.called {
 		t.Fatal("publisher was not called")
 	}
-	if !publisher.announcement.CombinedCelesTrak {
-		t.Fatal("CombinedCelesTrak was not preserved")
-	}
-	if len(publisher.announcement.Schemas) != 1 || publisher.announcement.Schemas[0] != "CAT.fbs" {
-		t.Fatalf("unexpected announcement schemas: %#v", publisher.announcement.Schemas)
+	if got := publisher.announcement.Schemas; len(got) != 2 || got[0] != "CAT.fbs" || got[1] != "MPE.fbs" {
+		t.Fatalf("unexpected explicit announcement schemas: %#v", got)
 	}
 	if len(publisher.announcement.PNM) == 0 {
 		t.Fatal("publisher received empty PNM")
@@ -304,7 +301,7 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 	publishedShard, found, err := store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
 		SchemaName:   "CAT.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-satcat-csv",
+		SourceName:   "provider-satcat-csv",
 		BatchID:      "source-sha-001",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Offset:       0,
@@ -345,7 +342,7 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 		if entry.ProviderPublicKey != wantPublicKey {
 			t.Fatalf("pin ledger provider public key = %q, want %q", entry.ProviderPublicKey, wantPublicKey)
 		}
-		if entry.ProviderID != "space-data-network-02" || entry.SourceName != "celestrak-satcat-csv" || entry.BatchID != "source-sha-001" {
+		if entry.ProviderID != "space-data-network-02" || entry.SourceName != "provider-satcat-csv" || entry.BatchID != "source-sha-001" {
 			t.Fatalf("pin ledger source identity mismatch: %#v", entry)
 		}
 		if entry.SnapshotID != publishedShard.FeedHead || entry.Head != publishedShard.FeedHead || entry.VerificationState != "verified" {
@@ -386,8 +383,8 @@ func TestConcreteDatasetPublicationServiceRecordsVerifiedChannelMonitor(t *testi
 
 	tags := storage.SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
-		SourceURL:    "https://celestrak.org/NORAD/elements/gp.php",
+		SourceName:   "provider-gp",
+		SourceURL:    "https://fixture.test/source",
 		BatchID:      "source-sha-omm",
 		ContentKeyID: "public",
 	}
@@ -397,7 +394,7 @@ func TestConcreteDatasetPublicationServiceRecordsVerifiedChannelMonitor(t *testi
 		WithObjectID("1998-067A").
 		WithEpoch("2026-01-01T00:00:00.000000").
 		Build()
-	if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:celestrak", nil, tags); err != nil {
+	if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:provider", nil, tags); err != nil {
 		t.Fatalf("store OMM failed: %v", err)
 	}
 
@@ -415,7 +412,7 @@ func TestConcreteDatasetPublicationServiceRecordsVerifiedChannelMonitor(t *testi
 		store,
 		publisher,
 		signingKey,
-		"16Uiu2HCelesTrakProvider",
+		"16Uiu2HProviderFixture",
 		"bafy-provider-epm",
 		kubo.URL,
 		filepath.Join(dir, "publications"),
@@ -423,13 +420,13 @@ func TestConcreteDatasetPublicationServiceRecordsVerifiedChannelMonitor(t *testi
 	service.SetChannelRecorder(channelAPI)
 
 	result, err := service.PublishDatasetUpdate(context.Background(), DatasetPublicationRequest{
-		Schema:            "OMM.fbs",
-		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
-		BatchID:           "source-sha-omm",
-		ChunkSize:         50000,
-		FullCatalog:       true,
-		CombinedCelesTrak: true,
+		Schema:              "OMM.fbs",
+		ProviderID:          "space-data-network-02",
+		SourceName:          "provider-gp",
+		BatchID:             "source-sha-omm",
+		ChunkSize:           50000,
+		FullCatalog:         true,
+		AnnouncementSchemas: []string{"MPE.fbs"},
 	})
 	if err != nil {
 		t.Fatalf("PublishDatasetUpdate failed: %v", err)
@@ -440,7 +437,7 @@ func TestConcreteDatasetPublicationServiceRecordsVerifiedChannelMonitor(t *testi
 
 	mux := http.NewServeMux()
 	channelAPI.RegisterRoutes(mux)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels/celestrak-OMM/monitor", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels/space-data-network-02-OMM/monitor", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -450,13 +447,13 @@ func TestConcreteDatasetPublicationServiceRecordsVerifiedChannelMonitor(t *testi
 	if err := json.Unmarshal(rec.Body.Bytes(), &monitor); err != nil {
 		t.Fatalf("decode monitor: %v", err)
 	}
-	if monitor["channelId"] != "celestrak-OMM" || monitor["standardCode"] != "OMM" {
+	if monitor["channelId"] != "space-data-network-02-OMM" || monitor["standardCode"] != "OMM" {
 		t.Fatalf("monitor channel identity mismatch: %#v", monitor)
 	}
 	if monitor["pnmVerified"] != true || monitor["dpmVerified"] != true {
 		t.Fatalf("monitor did not report verified PNM/DPM: %#v", monitor)
 	}
-	if monitor["channelHead"] == "" || monitor["providerPeer"] != "16Uiu2HCelesTrakProvider" {
+	if monitor["channelHead"] == "" || monitor["providerPeer"] != "16Uiu2HProviderFixture" {
 		t.Fatalf("monitor did not report provider feed head: %#v", monitor)
 	}
 	if monitor["remoteRows"] != float64(1) || monitor["syncedRows"] != float64(1) || monitor["pinnedRows"] != float64(1) {
@@ -487,7 +484,7 @@ func TestConcreteDatasetPublicationServicePublishesRegisteredDatastoreNamespace(
 		SchemaName:    "CAT.fbs",
 		SourcePeerID:  "source:legacy-sqlite",
 		ProviderID:    "space-data-network-02",
-		SourceName:    "celestrak-cat-historical",
+		SourceName:    "provider-cat-historical",
 		BatchHead:     "historical-head",
 		QueryProfile:  storage.DatasetPublicationQueryProfile,
 		SnapshotID:    "historical-head",
@@ -545,7 +542,7 @@ func TestConcreteDatasetPublicationServicePublishesRegisteredDatastoreNamespace(
 	result, err := service.PublishDatasetUpdate(context.Background(), DatasetPublicationRequest{
 		Schema:       "CAT.fbs",
 		DatastoreKey: datastoreKey,
-		DatasetID:    "celestrak-cat-historical",
+		DatasetID:    "provider-cat-historical",
 		Limit:        10,
 	})
 	if err != nil {
@@ -557,7 +554,7 @@ func TestConcreteDatasetPublicationServicePublishesRegisteredDatastoreNamespace(
 	if len(publisher.feedHeads) != 1 {
 		t.Fatalf("feed head announcements = %d, want 1", len(publisher.feedHeads))
 	}
-	if publisher.feedHeads[0].ProviderID != "space-data-network-02" || publisher.feedHeads[0].SourceName != "celestrak-cat-historical" || publisher.feedHeads[0].BatchID != "historical-head" {
+	if publisher.feedHeads[0].ProviderID != "space-data-network-02" || publisher.feedHeads[0].SourceName != "provider-cat-historical" || publisher.feedHeads[0].BatchID != "historical-head" {
 		t.Fatalf("feed head source identity mismatch: %#v", publisher.feedHeads[0])
 	}
 
@@ -578,7 +575,7 @@ func TestConcreteDatasetPublicationServicePublishesRegisteredDatastoreNamespace(
 	publishedShard, found, err := reopenedNamespaceStore.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
 		SchemaName:   "CAT.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-cat-historical",
+		SourceName:   "provider-cat-historical",
 		BatchID:      "historical-head",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Offset:       0,
@@ -610,7 +607,7 @@ func TestConcreteDatasetPublicationServicePublishesFullCatalogAsDPMSeries(t *tes
 
 	tags := storage.SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-satcat-csv",
+		SourceName:   "provider-satcat-csv",
 		BatchID:      "source-sha-001",
 		ContentKeyID: "public",
 	}
@@ -622,7 +619,7 @@ func TestConcreteDatasetPublicationServicePublishesFullCatalogAsDPMSeries(t *tes
 			WithObjectType("PAYLOAD").
 			WithOpsStatus("OPERATIONAL").
 			Build()
-		if _, err := store.StoreWithSourceTags("CAT.fbs", record, "source:celestrak", nil, tags); err != nil {
+		if _, err := store.StoreWithSourceTags("CAT.fbs", record, "source:provider", nil, tags); err != nil {
 			t.Fatalf("store record %d failed: %v", i, err)
 		}
 	}
@@ -649,9 +646,9 @@ func TestConcreteDatasetPublicationServicePublishesFullCatalogAsDPMSeries(t *tes
 	result, err := service.PublishDatasetUpdate(context.Background(), DatasetPublicationRequest{
 		Schema:      "CAT.fbs",
 		ProviderID:  "space-data-network-02",
-		SourceName:  "celestrak-satcat-csv",
+		SourceName:  "provider-satcat-csv",
 		BatchID:     "source-sha-001",
-		DatasetID:   "celestrak-cat-full",
+		DatasetID:   "provider-cat-full",
 		FullCatalog: true,
 		ChunkSize:   2,
 		Limit:       5,
@@ -681,7 +678,7 @@ func TestConcreteDatasetPublicationServicePublishesFullCatalogAsDPMSeries(t *tes
 		}
 		total += publication.RecordCount
 		manifest := dpm.GetRootAsDPM(pinned[publication.ManifestCID], 0)
-		if got, want := string(manifest.FILE_ID()), "celestrak-cat-full:CAT.fbs:source-sha-001:part-"+fmt.Sprintf("%06d", i+1); got != want {
+		if got, want := string(manifest.FILE_ID()), "provider-cat-full:CAT.fbs:source-sha-001:part-"+fmt.Sprintf("%06d", i+1); got != want {
 			t.Fatalf("publication %d FILE_ID = %q, want %q", i, got, want)
 		}
 	}
@@ -704,7 +701,7 @@ func TestConcreteDatasetPublicationServiceSkipsUnchangedFullCatalogShards(t *tes
 
 	tags := storage.SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "provider-gp",
 		BatchID:      "source-sha-unchanged",
 		ContentKeyID: "public",
 	}
@@ -716,7 +713,7 @@ func TestConcreteDatasetPublicationServiceSkipsUnchangedFullCatalogShards(t *tes
 			WithObjectType("PAYLOAD").
 			WithOpsStatus("OPERATIONAL").
 			Build()
-		if _, err := store.StoreWithSourceTags("CAT.fbs", record, "source:celestrak", nil, tags); err != nil {
+		if _, err := store.StoreWithSourceTags("CAT.fbs", record, "source:provider", nil, tags); err != nil {
 			t.Fatalf("store record %d failed: %v", i, err)
 		}
 	}
@@ -751,8 +748,8 @@ func TestConcreteDatasetPublicationServiceSkipsUnchangedFullCatalogShards(t *tes
 	req := DatasetPublicationRequest{
 		Schema:      "CAT.fbs",
 		ProviderID:  "space-data-network-02",
-		SourceName:  "celestrak-gp",
-		DatasetID:   "celestrak-cat-full",
+		SourceName:  "provider-gp",
+		DatasetID:   "provider-cat-full",
 		FullCatalog: true,
 		ChunkSize:   2,
 	}
@@ -795,7 +792,7 @@ func TestConcreteDatasetPublicationServiceSkipsUnchangedFullCatalogShards(t *tes
 	}
 	mux := http.NewServeMux()
 	restartedChannelAPI.RegisterRoutes(mux)
-	reqMonitor := httptest.NewRequest(http.MethodGet, "/api/v1/channels/celestrak-CAT/monitor", nil)
+	reqMonitor := httptest.NewRequest(http.MethodGet, "/api/v1/channels/space-data-network-02-CAT/monitor", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, reqMonitor)
 	if rec.Code != http.StatusOK {
@@ -833,7 +830,7 @@ func TestConcreteDatasetPublicationServiceAnnounceExistingRepublishesRepairedInd
 
 	tags := storage.SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "provider-gp",
 		BatchID:      "source-sha-stale-index",
 		ContentKeyID: "public",
 	}
@@ -843,7 +840,7 @@ func TestConcreteDatasetPublicationServiceAnnounceExistingRepublishesRepairedInd
 			WithObjectID(fmt.Sprintf("2026-004%c", 'A'+rune(i))).
 			WithObjectName("REPAIR-INDEX-TEST").
 			Build()
-		if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:celestrak", nil, tags); err != nil {
+		if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:provider", nil, tags); err != nil {
 			t.Fatalf("store OMM %d failed: %v", i, err)
 		}
 	}
@@ -871,9 +868,9 @@ func TestConcreteDatasetPublicationServiceAnnounceExistingRepublishesRepairedInd
 	req := DatasetPublicationRequest{
 		Schema:      "OMM.fbs",
 		ProviderID:  "space-data-network-02",
-		SourceName:  "celestrak-gp",
+		SourceName:  "provider-gp",
 		BatchID:     "source-sha-stale-index",
-		DatasetID:   "celestrak-omm-full",
+		DatasetID:   "provider-omm-full",
 		FullCatalog: true,
 		ChunkSize:   2,
 		Limit:       2,
@@ -889,7 +886,7 @@ func TestConcreteDatasetPublicationServiceAnnounceExistingRepublishesRepairedInd
 	published, found, err := store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "provider-gp",
 		BatchID:      "source-sha-stale-index",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Offset:       0,
@@ -926,9 +923,9 @@ func TestConcreteDatasetPublicationServiceAnnounceExistingRepublishesRepairedInd
 	repaired, err := service.PublishDatasetUpdate(repairCtx, DatasetPublicationRequest{
 		Schema:           "OMM.fbs",
 		ProviderID:       "space-data-network-02",
-		SourceName:       "celestrak-gp",
+		SourceName:       "provider-gp",
 		BatchID:          "source-sha-stale-index",
-		DatasetID:        "celestrak-omm-full",
+		DatasetID:        "provider-omm-full",
 		AnnounceExisting: true,
 		Limit:            2,
 	})
@@ -954,7 +951,7 @@ func TestConcreteDatasetPublicationServiceAnnounceExistingRepublishesRepairedInd
 	stored, found, err := store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "provider-gp",
 		BatchID:      "source-sha-stale-index",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Offset:       0,
@@ -989,7 +986,7 @@ func TestConcreteDatasetPublicationServicePrunesStaleFullCatalogShards(t *testin
 
 	tags := storage.SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "provider-gp",
 		BatchID:      "source-sha-shrinking",
 		ContentKeyID: "public",
 	}
@@ -1002,7 +999,7 @@ func TestConcreteDatasetPublicationServicePrunesStaleFullCatalogShards(t *testin
 			WithObjectType("PAYLOAD").
 			WithOpsStatus("OPERATIONAL").
 			Build()
-		cid, err := store.StoreWithSourceTags("CAT.fbs", record, "source:celestrak", nil, tags)
+		cid, err := store.StoreWithSourceTags("CAT.fbs", record, "source:provider", nil, tags)
 		if err != nil {
 			t.Fatalf("store record %d failed: %v", i, err)
 		}
@@ -1031,9 +1028,9 @@ func TestConcreteDatasetPublicationServicePrunesStaleFullCatalogShards(t *testin
 	req := DatasetPublicationRequest{
 		Schema:      "CAT.fbs",
 		ProviderID:  "space-data-network-02",
-		SourceName:  "celestrak-gp",
+		SourceName:  "provider-gp",
 		BatchID:     "source-sha-shrinking",
-		DatasetID:   "celestrak-cat-full",
+		DatasetID:   "provider-cat-full",
 		FullCatalog: true,
 		ChunkSize:   2,
 	}
@@ -1044,7 +1041,7 @@ func TestConcreteDatasetPublicationServicePrunesStaleFullCatalogShards(t *testin
 	if len(first.Publications) != 3 {
 		t.Fatalf("first publications = %d, want 3", len(first.Publications))
 	}
-	firstCAR := mustLatestShardGroupCAR(t, store, "CAT.fbs", "space-data-network-02", "celestrak-gp", "verified")
+	firstCAR := mustLatestShardGroupCAR(t, store, "CAT.fbs", "space-data-network-02", "provider-gp", "verified")
 	if _, ok := pinned[firstCAR.CID]; !ok {
 		t.Fatalf("first shard-group CAR %q was not pinned", firstCAR.CID)
 	}
@@ -1066,7 +1063,7 @@ func TestConcreteDatasetPublicationServicePrunesStaleFullCatalogShards(t *testin
 	publications, err := store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
 		SchemaName:   "CAT.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "provider-gp",
 		BatchID:      "source-sha-shrinking",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Limit:        2,
@@ -1080,7 +1077,7 @@ func TestConcreteDatasetPublicationServicePrunesStaleFullCatalogShards(t *testin
 	if publications[0].Offset != 0 || publications[0].RecordCount != 2 {
 		t.Fatalf("remaining publication = %#v, want offset 0 record count 2", publications[0])
 	}
-	currentCAR := mustLatestShardGroupCAR(t, store, "CAT.fbs", "space-data-network-02", "celestrak-gp", "verified")
+	currentCAR := mustLatestShardGroupCAR(t, store, "CAT.fbs", "space-data-network-02", "provider-gp", "verified")
 	if currentCAR.CID == firstCAR.CID {
 		t.Fatalf("current shard-group CAR reused stale CID %q", currentCAR.CID)
 	}
@@ -1091,7 +1088,7 @@ func TestConcreteDatasetPublicationServicePrunesStaleFullCatalogShards(t *testin
 		CID:               firstCAR.CID,
 		SchemaName:        "CAT.fbs",
 		ProviderID:        "space-data-network-02",
-		SourceName:        "celestrak-gp",
+		SourceName:        "provider-gp",
 		QueryProfile:      storage.DatasetPublicationQueryProfile,
 		Role:              "shard-group-car",
 		VerificationState: "stale",
@@ -1121,7 +1118,7 @@ func TestConcreteDatasetPublicationServiceDefaultsFullCatalogToLargeSyncChunks(t
 
 	tags := storage.SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "provider-gp",
 		BatchID:      "source-sha-001",
 		ContentKeyID: "public",
 	}
@@ -1133,7 +1130,7 @@ func TestConcreteDatasetPublicationServiceDefaultsFullCatalogToLargeSyncChunks(t
 			WithObjectType("PAYLOAD").
 			WithOpsStatus("OPERATIONAL").
 			Build()
-		if _, err := store.StoreWithSourceTags("CAT.fbs", record, "source:celestrak", nil, tags); err != nil {
+		if _, err := store.StoreWithSourceTags("CAT.fbs", record, "source:provider", nil, tags); err != nil {
 			t.Fatalf("store record %d failed: %v", i, err)
 		}
 	}
@@ -1160,9 +1157,9 @@ func TestConcreteDatasetPublicationServiceDefaultsFullCatalogToLargeSyncChunks(t
 	result, err := service.PublishDatasetUpdate(context.Background(), DatasetPublicationRequest{
 		Schema:      "CAT.fbs",
 		ProviderID:  "space-data-network-02",
-		SourceName:  "celestrak-gp",
+		SourceName:  "provider-gp",
 		BatchID:     "source-sha-001",
-		DatasetID:   "celestrak-cat-full",
+		DatasetID:   "provider-cat-full",
 		FullCatalog: true,
 		Limit:       defaultDatasetPublicationLimit + 1,
 	})
@@ -1184,7 +1181,7 @@ func TestConcreteDatasetPublicationServiceDefaultsFullCatalogToLargeSyncChunks(t
 	publishedShard, found, err := store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
 		SchemaName:   "CAT.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "provider-gp",
 		BatchID:      "source-sha-001",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Offset:       0,

@@ -98,24 +98,24 @@ func TestIngestWithSourceStoresTaggedBatch(t *testing.T) {
 	}
 	stream := sizePrefixedStream(records)
 	rawPayload := []byte("NORAD_CAT_ID,EPOCH\n7001,2023-11-14T22:13:20Z\n")
-	provenance := []byte(`{"source_url":"https://fixture.test/gp","parser_version":"celestrak-gp-wasm/v2","normalized_count":3}`)
+	provenance := []byte(`{"source_url":"https://fixture.test/gp","parser_version":"provider-gp-wasm/v2","normalized_count":3}`)
 
 	payload := map[string]interface{}{
 		"schema":         "OMM.fbs",
 		"provider_id":    "space-data-network-02",
-		"source_name":    "celestrak-gp",
+		"source_name":    "provider-gp",
 		"source_url":     "https://fixture.test/gp",
 		"batch_id":       "batch-ingest-1",
 		"content_key_id": "public",
-		"source_peer":    "source:celestrak",
+		"source_peer":    "source:provider",
 		"records":        base64.StdEncoding.EncodeToString(stream),
 		"archive": map[string]interface{}{
-			"source": "celestrak",
+			"source": "provider",
 			"name":   "catalog.csv",
 			"raw":    base64.StdEncoding.EncodeToString(rawPayload),
 		},
 		"provenance": map[string]interface{}{
-			"source": "celestrak-gp",
+			"source": "provider-gp",
 			"json":   base64.StdEncoding.EncodeToString(provenance),
 		},
 	}
@@ -136,7 +136,7 @@ func TestIngestWithSourceStoresTaggedBatch(t *testing.T) {
 	tagged, err := store.QuerySourceTaggedRecords(storage.SourceTagQuery{
 		SchemaName: "OMM.fbs",
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-gp",
+		SourceName: "provider-gp",
 		BatchID:    "batch-ingest-1",
 		Limit:      10,
 	})
@@ -147,9 +147,9 @@ func TestIngestWithSourceStoresTaggedBatch(t *testing.T) {
 		t.Fatalf("tagged records = %d, want 3", len(tagged))
 	}
 
-	// Raw archive landed under <raw>/celestrak/<day>/catalog.csv.
+	// Raw archive landed under <raw>/provider/<day>/catalog.csv.
 	day := time.Now().UTC().Format("2006-01-02")
-	archived, err := os.ReadFile(filepath.Join(rawRoot, "celestrak", day, "catalog.csv"))
+	archived, err := os.ReadFile(filepath.Join(rawRoot, "provider", day, "catalog.csv"))
 	if err != nil {
 		t.Fatalf("raw archive missing: %v", err)
 	}
@@ -157,8 +157,8 @@ func TestIngestWithSourceStoresTaggedBatch(t *testing.T) {
 		t.Fatal("raw archive bytes differ from the submitted payload")
 	}
 
-	// Provenance JSON landed under <raw>/provenance/celestrak-gp/.
-	provDir := filepath.Join(rawRoot, "provenance", "celestrak-gp")
+	// Provenance JSON landed under <raw>/provenance/provider-gp/.
+	provDir := filepath.Join(rawRoot, "provenance", "provider-gp")
 	entries, err := os.ReadDir(provDir)
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("provenance dir entries=%v err=%v, want exactly 1 file", entries, err)
@@ -171,11 +171,11 @@ func TestIngestWithSourceStoresTaggedBatch(t *testing.T) {
 	payload2 := map[string]interface{}{
 		"schema":         "OMM.fbs",
 		"provider_id":    "space-data-network-02",
-		"source_name":    "celestrak-gp",
+		"source_name":    "provider-gp",
 		"source_url":     "https://fixture.test/gp",
 		"batch_id":       "batch-ingest-1",
 		"content_key_id": "public",
-		"source_peer":    "source:celestrak",
+		"source_peer":    "source:provider",
 		"records":        base64.StdEncoding.EncodeToString(stream),
 	}
 	body2, _ := json.Marshal(payload2)
@@ -190,7 +190,7 @@ func TestIngestWithSourceStoresTaggedBatch(t *testing.T) {
 	replayTagged, err := store.QuerySourceTaggedRecords(storage.SourceTagQuery{
 		SchemaName: "OMM.fbs",
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-gp",
+		SourceName: "provider-gp",
 		BatchID:    "batch-ingest-1",
 		Limit:      20,
 	})
@@ -209,7 +209,7 @@ func TestIngestWithSourceCurrentBatchReconcile(t *testing.T) {
 		payload := map[string]interface{}{
 			"schema":      "CAT.fbs",
 			"provider_id": "space-data-network-02",
-			"source_name": "celestrak-satcat",
+			"source_name": "provider-satcat",
 			"batch_id":    batchID,
 			"records":     base64.StdEncoding.EncodeToString(sizePrefixedStream(records)),
 			"reconcile":   reconcile,
@@ -246,7 +246,7 @@ func TestIngestWithSourceCurrentBatchReconcile(t *testing.T) {
 	old, err := store.QuerySourceTaggedRecords(storage.SourceTagQuery{
 		SchemaName: "CAT.fbs",
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-satcat",
+		SourceName: "provider-satcat",
 		BatchID:    "satcat-batch-1",
 		Limit:      10,
 	})
@@ -259,7 +259,7 @@ func TestIngestWithSourceCurrentBatchReconcile(t *testing.T) {
 	current, err := store.QuerySourceTaggedRecords(storage.SourceTagQuery{
 		SchemaName: "CAT.fbs",
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-satcat",
+		SourceName: "provider-satcat",
 		BatchID:    "satcat-batch-2",
 		Limit:      10,
 	})

@@ -83,7 +83,7 @@ func TestEngineEpochQueries(t *testing.T) {
 			buildEngineOMM(t, norad, fmt.Sprintf("SAT-%d", norad), epoch2),
 		)
 	}
-	tags := SourceTags{ProviderID: "prov-a", SourceName: "celestrak-gp", BatchID: "batch-1"}
+	tags := SourceTags{ProviderID: "prov-a", SourceName: "catalogfixture-gp", BatchID: "batch-1"}
 	inserted, err := store.StoreBatchWithSourceTags("OMM.fbs", records, "peer-epoch-test", nil, tags)
 	if err != nil {
 		t.Fatalf("StoreBatchWithSourceTags failed: %v", err)
@@ -177,12 +177,12 @@ func TestEngineEpochQueries(t *testing.T) {
 	if len(p2) != 1 || p2[2001] == 0 {
 		t.Fatalf("provider-two filter returned %v, want exactly norad 2001", p2)
 	}
-	stream, err = store.QueryEpochRawStream("OMM.fbs", "celestrak-gp", "nearest", target, 0)
+	stream, err = store.QueryEpochRawStream("OMM.fbs", "catalogfixture-gp", "nearest", target, 0)
 	if err != nil {
-		t.Fatalf("QueryEpochRawStream celestrak-gp failed: %v", err)
+		t.Fatalf("QueryEpochRawStream catalogfixture-gp failed: %v", err)
 	}
 	if cg := decodeEpochFrames(t, stream); len(cg) != 3 {
-		t.Fatalf("celestrak-gp filter returned %d frames, want 3", len(cg))
+		t.Fatalf("catalogfixture-gp filter returned %d frames, want 3", len(cg))
 	}
 	stream, err = store.QueryEpochRawStream("OMM.fbs", "", "nearest", target, 0)
 	if err != nil {
@@ -228,7 +228,7 @@ func TestEngineRecordsBootRebuild(t *testing.T) {
 			buildEngineOMM(t, norad, fmt.Sprintf("SAT-%d", norad), epoch2),
 		)
 	}
-	tags := SourceTags{ProviderID: "prov-a", SourceName: "celestrak-gp", BatchID: "batch-1"}
+	tags := SourceTags{ProviderID: "prov-a", SourceName: "catalogfixture-gp", BatchID: "batch-1"}
 	if _, err := store.StoreBatchWithSourceTags("OMM.fbs", records, "peer-epoch-test", nil, tags); err != nil {
 		t.Fatalf("StoreBatchWithSourceTags failed: %v", err)
 	}
@@ -279,13 +279,13 @@ func TestEngineHotWindowHydratesFromCompactCatalogBeforeFullReplay(t *testing.T)
 
 	epoch1 := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC).Unix()
 	epoch2 := epoch1 + 2*86400
-	celestrakTags := SourceTags{ProviderID: "prov-a", SourceName: "celestrak-gp", BatchID: "batch-1"}
+	catalogfixtureTags := SourceTags{ProviderID: "prov-a", SourceName: "catalogfixture-gp", BatchID: "batch-1"}
 	if _, err := store.StoreBatchWithSourceTags("OMM.fbs", [][]byte{
 		buildEngineOMM(t, 1001, "SAT-1001-A", epoch1),
 		buildEngineOMM(t, 1001, "SAT-1001-B", epoch2),
 		buildEngineOMM(t, 1002, "SAT-1002", epoch2),
-	}, "peer-engine-catalog", nil, celestrakTags); err != nil {
-		t.Fatalf("StoreBatchWithSourceTags celestrak failed: %v", err)
+	}, "peer-engine-catalog", nil, catalogfixtureTags); err != nil {
+		t.Fatalf("StoreBatchWithSourceTags catalogfixture failed: %v", err)
 	}
 	otherTags := SourceTags{ProviderID: "prov-b", SourceName: "provider-two", BatchID: "batch-1"}
 	if _, err := store.StoreBatchWithSourceTags("OMM.fbs", [][]byte{
@@ -309,7 +309,7 @@ func TestEngineHotWindowHydratesFromCompactCatalogBeforeFullReplay(t *testing.T)
 	if count, err := reopened.EngineRecordCount("OMM.fbs"); err != nil || count != 0 {
 		t.Fatalf("deferred reopen engine count = %d err=%v, want 0 nil", count, err)
 	}
-	stream, err := reopened.QueryEpochRawStream("OMM.fbs", "celestrak-gp", "nearest", float64(epoch2), 0)
+	stream, err := reopened.QueryEpochRawStream("OMM.fbs", "catalogfixture-gp", "nearest", float64(epoch2), 0)
 	if err != nil {
 		t.Fatalf("QueryEpochRawStream before hot-window hydration failed: %v", err)
 	}
@@ -330,13 +330,13 @@ func TestEngineHotWindowHydratesFromCompactCatalogBeforeFullReplay(t *testing.T)
 	if count, err := reopened.EngineRecordCount("OMM.fbs"); err != nil || count != 4 {
 		t.Fatalf("engine count after compact hot-window hydration = %d err=%v, want 4 nil", count, err)
 	}
-	stream, err = reopened.QueryEpochRawStream("OMM.fbs", "celestrak-gp", "nearest", float64(epoch2), 0)
+	stream, err = reopened.QueryEpochRawStream("OMM.fbs", "catalogfixture-gp", "nearest", float64(epoch2), 0)
 	if err != nil {
 		t.Fatalf("QueryEpochRawStream after hot-window hydration failed: %v", err)
 	}
 	nearest := decodeEpochFrames(t, stream)
 	if len(nearest) != 2 || nearest[1001] != float64(epoch2) || nearest[1002] != float64(epoch2) {
-		t.Fatalf("celestrak nearest after hot-window hydration = %v, want 1001/1002 at epoch2", nearest)
+		t.Fatalf("catalogfixture nearest after hot-window hydration = %v, want 1001/1002 at epoch2", nearest)
 	}
 }
 
@@ -360,7 +360,7 @@ func TestEpochEngineMeasure(t *testing.T) {
 	store := newEngineRecordsStore(t, filepath.Join(t.TempDir(), "store"))
 	defer store.Close()
 
-	tags := SourceTags{ProviderID: "prov-a", SourceName: "celestrak-gp", BatchID: "batch-scale"}
+	tags := SourceTags{ProviderID: "prov-a", SourceName: "catalogfixture-gp", BatchID: "batch-scale"}
 	total := objects * epochsPerObj
 	var (
 		batch      [][]byte
@@ -476,7 +476,7 @@ func TestEngineHotWindowEviction(t *testing.T) {
 		)
 	}
 	evictedPayload := batch1[0] // 1001@epoch1 — the oldest ingested record
-	tags := SourceTags{ProviderID: "prov-a", SourceName: "celestrak-gp", BatchID: "batch-1"}
+	tags := SourceTags{ProviderID: "prov-a", SourceName: "catalogfixture-gp", BatchID: "batch-1"}
 	if _, err := store.StoreBatchWithSourceTags("OMM.fbs", batch1, "peer-evict-test", nil, tags); err != nil {
 		t.Fatalf("StoreBatchWithSourceTags batch1 failed: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestEngineHotWindowEviction(t *testing.T) {
 	for norad := uint32(2001); norad <= 2009; norad++ {
 		batch2 = append(batch2, buildEngineOMM(t, norad, fmt.Sprintf("SAT-%d", norad), epoch3))
 	}
-	tags2 := SourceTags{ProviderID: "prov-a", SourceName: "celestrak-gp", BatchID: "batch-2"}
+	tags2 := SourceTags{ProviderID: "prov-a", SourceName: "catalogfixture-gp", BatchID: "batch-2"}
 	if _, err := store.StoreBatchWithSourceTags("OMM.fbs", batch2, "peer-evict-test", nil, tags2); err != nil {
 		t.Fatalf("StoreBatchWithSourceTags batch2 failed: %v", err)
 	}

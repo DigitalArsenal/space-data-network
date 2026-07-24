@@ -187,7 +187,7 @@ func buildLegacyFixture(t *testing.T) *legacyFixture {
 			INSERT INTO sdn_record_source_tags (
 				schema_name, cid, provider_id, source_name, source_url, batch_id,
 				content_key_id, producer_peer_id, producer_public_key, created_at
-			) VALUES (?, ?, 'space-data-network-02', 'celestrak-gp', NULL, 'batch-legacy',
+			) VALUES (?, ?, 'space-data-network-02', 'catalogfixture-gp', NULL, 'batch-legacy',
 			          'public', 'peerlegacy', 'pk-legacy', 1700000200)
 		`, row.schemaName, row.cid)
 	}
@@ -217,14 +217,14 @@ func buildLegacyFixture(t *testing.T) *legacyFixture {
 	// BLOB-era table with a stream-metadata twin — must be skipped, its rows
 	// were already re-homed by the v1 blob→stream migration.
 	mustExecLegacy(t, legacy, `
-		CREATE TABLE sds_omm (
+		CREATE TABLE sds_cat (
 			cid TEXT PRIMARY KEY,
 			peer_id TEXT NOT NULL,
 			timestamp INTEGER NOT NULL,
 			data BLOB NOT NULL
 		)
 	`)
-	mustExecLegacy(t, legacy, `INSERT INTO sds_omm (cid, peer_id, timestamp, data) VALUES ('cid-omm-1', 'peerlegacy', 1700000000, X'00')`)
+	mustExecLegacy(t, legacy, `INSERT INTO sds_cat (cid, peer_id, timestamp, data) VALUES ('cid-cat-decoy', 'peerlegacy', 1700000000, X'00')`)
 
 	// FTS shadow table — must be skipped.
 	mustExecLegacy(t, legacy, `CREATE TABLE sdn_search_fts_data (id INTEGER PRIMARY KEY, block BLOB)`)
@@ -404,7 +404,7 @@ func TestMigrateLegacyControlUnlimitedPreservesCursorSpace(t *testing.T) {
 
 	// Skip decisions.
 	skipReasons, copiedRows := reportTableEntries(report)
-	for _, name := range []string{"OMM", "sds_omm", "sdn_search_fts_data"} {
+	for _, name := range []string{"OMM", "sds_cat", "sdn_search_fts_data"} {
 		if skipReasons[name] == "" {
 			t.Fatalf("expected table %s to be skipped, report: %+v", name, report.Tables)
 		}

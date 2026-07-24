@@ -24,13 +24,14 @@ package sdnruntime
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	logging "github.com/ipfs/go-log/v2"
 	core "github.com/ipfs/kubo/core"
@@ -40,25 +41,26 @@ import (
 	"github.com/ipfs/kubo/sdn/credstore"
 	"github.com/ipfs/kubo/sdn/flatsqlrt"
 	"github.com/ipfs/kubo/sdn/modulert"
-	"github.com/ipfs/kubo/sdn/plugins"
-	"github.com/ipfs/kubo/sdn/sdnapps"
-	"github.com/ipfs/kubo/sdn/sdncron"
 	"github.com/ipfs/kubo/sdn/sdnflows"
 	"github.com/ipfs/kubo/sdn/sdnmodules"
 	"github.com/ipfs/kubo/sdn/sdnservices"
 	"github.com/ipfs/kubo/sdn/sdnstore"
-	"github.com/ipfs/kubo/sdn/sds"
 )
 
 var log = logging.Logger("plugin/sdnruntime")
+
+const (
+	trustedPublisherKeysEnv = "SDN_TRUSTED_PUBLISHER_KEYS"
+	// 16384 wasm pages = 1 GiB. This bounds each signed runtime while leaving
+	// room for a large frame page, routing copies, and allocator overhead on an
+	// 8 GiB node; the same request is passed to independently loaded children.
+	isomorphicParentMaxMemoryPages uint32 = 16384
+)
 
 type sdnRuntimePlugin struct {
 	enabled   bool
 	repoPath  string
 	hotWindow int
-	// role is the node's configured role (Config.Role), e.g. "celestrak" to
-	// bring up the host-02 CelesTrak reference set. Env SDN_ROLE also applies.
-	role string
 }
 
 var _ plugin.PluginDaemonInternal = (*sdnRuntimePlugin)(nil)
@@ -84,10 +86,6 @@ func (p *sdnRuntimePlugin) Init(env *plugin.Environment) error {
 			}
 			if v, ok := cfg["HotWindow"].(float64); ok && v > 0 {
 				p.hotWindow = int(v)
-			}
-			// Node role gate for the CelesTrak reference set (see celestrak_set.go).
-			if v, ok := cfg["Role"].(string); ok {
-				p.role = v
 			}
 		}
 	}
@@ -167,10 +165,7 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 		PeerID:           node.Identity.String(),
 		FallbackSource:   node.Identity.String(),
 		ModulesConfigDir: modulesConfigDir,
-		// Owner rule: the http cap's CelesTrak/Space-Track fetch ledger (3h
-		// no-refetch window, >= 2.5s serial spacing) persists under <repo>/sdn.
-		FetchLedgerDir: sdnDir,
-		CronLog:        log.Infof,
+		CronLog:          log.Infof,
 		// Credential keystore backing the secrets:<id> capability (nil-safe).
 		CredStore: credStore,
 	}
@@ -178,6 +173,18 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 	svc, err := sdnservices.BuildServices(deps)
 	if err != nil {
 		return fmt.Errorf("sdnruntime: build services: %w", err)
+	}
+	signaturePolicy, err := moduleSignaturePolicyFromText(os.Getenv(trustedPublisherKeysEnv))
+	if err != nil {
+		svc.Close()
+		return fmt.Errorf("sdnruntime: %s: %w", trustedPublisherKeysEnv, err)
+	}
+	// Production loading is fail closed even when the operator has not yet
+	// configured a publisher. The same trust roots gate outer flow bundles and
+	// every independently instantiated child node.
+	svc.NodeCtx.ModuleSignaturePolicy = signaturePolicy
+	if len(signaturePolicy.TrustedSigners) == 0 {
+		log.Warnf("SDN signed artifact loading is fail-closed: %s contains no trusted publisher keys", trustedPublisherKeysEnv)
 	}
 	setServices(svc)
 
@@ -187,16 +194,15 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 	// directory <repo>/sdn/modules/install/*.wasm is scanned at boot. The
 	// installer loads each module through svc.LoadModule (fail-closed capability
 	// gate, keyed by content hash) and registers the resulting real
-	// *modulert.Module with the cron scheduler — closing the gap the cron demo
-	// left (a NATIVE heartbeat stub).
+	// *modulert.Module with the cron scheduler.
 	installer, err := buildInstaller(svc, node.Blockstore, modulesConfigDir)
 	if err != nil {
 		return fmt.Errorf("sdnruntime: build module installer: %w", err)
 	}
 	setInstaller(installer)
 
-	// Flow install + register pipeline (sdnflows): loads a compiled .flow.json
-	// bundle (chaining WASM module nodes) and registers it as a timer-served
+	// Flow install + register pipeline (sdnflows): loads a compiled bundle with
+	// canonical flow.plg topology and registers it as a timer-served
 	// flow with the SAME cron scheduler modules use, so a flow both fires its
 	// host-cron timer (fetch -> parse -> store) on its cadence and appears at
 	// GET /sdn/v1/modules alongside modules. The installed-flows registry lives
@@ -207,32 +213,9 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 	}
 	setFlowInstaller(flowInstaller)
 
-	// Install the SDN apps program's $APP records (Supplemental OMM + Conjunction)
-	// into the node's record store so the node lists them at GET /sdn/v1/apps and
-	// serves each app's inline UI at GET /sdn/v1/apps/<id>. Idempotent: the store
-	// keys records by content, so re-seeding on a later boot is a no-op.
-	if n, err := sdnapps.Seed(node.Context(), svc.Store); err != nil {
-		log.Warnf("SDN apps seed failed: %v", err)
-	} else {
-		log.Infof("SDN apps installed: %d $APP record(s) under (source=%q, type=%q)", n, sdnapps.Source, sdnapps.SDSType)
-	}
-
-	// Optional developer OMM seed (off by default). When SDN_DEV_SEED_OMM is set,
-	// a handful of real OMM FlatBuffers are stored under a couple of provider
-	// lanes so the Supplemental OMM board has live records to render on a fresh
-	// isolated repo. This is a local dev/verification affordance only — never
-	// enabled in a production config.
-	if os.Getenv("SDN_DEV_SEED_OMM") != "" {
-		if n, err := seedDevOMM(node.Context(), svc.Store); err != nil {
-			log.Warnf("SDN dev OMM seed failed: %v", err)
-		} else {
-			log.Infof("SDN dev OMM seed: stored %d OMM record(s) (SDN_DEV_SEED_OMM set)", n)
-		}
-	}
-
 	// Optional developer install of a REAL WASM module (off by default; a
-	// local/live-smoke affordance, mirroring SDN_DEV_SEED_OMM / SDN_CRON_DEMO —
-	// never enabled in a production config). When SDN_INSTALL_WASM=<path> is set,
+	// local/live-smoke affordance that is never enabled in a production config).
+	// When SDN_INSTALL_WASM=<path> is set,
 	// the node installs that real module-sdk .wasm through the pipeline: it
 	// records DEV operator approvals for the module's declared sensitive
 	// capabilities (so the fail-closed gate admits it), stores the bytes in the
@@ -245,23 +228,6 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 		}
 	}
 
-	// Optional demo cron module (off by default; mirrors SDN_DEV_SEED_OMM). When
-	// SDN_CRON_DEMO is set, register a native heartbeat CronModule so a fresh
-	// node has a registered, self-scheduling module to observe on GET
-	// /sdn/v1/modules and drive from the settings API — the live evidence for
-	// the cron scheduler foundation. Never enabled in a production config.
-	if svc.Scheduler != nil && os.Getenv("SDN_CRON_DEMO") != "" {
-		if err := svc.Scheduler.Register(sdncron.Registration{
-			Module:  newDemoCronModule("cron-demo"),
-			Name:    "Cron Demo (heartbeat)",
-			Version: "0.1.0",
-		}); err != nil {
-			log.Warnf("SDN cron demo module registration failed: %v", err)
-		} else {
-			log.Infof("SDN cron demo module registered (SDN_CRON_DEMO set): id=cron-demo timer=heartbeat")
-		}
-	}
-
 	// Optional developer install of a REAL compiled flow bundle (off by default;
 	// a local/live-smoke affordance, mirroring SDN_INSTALL_WASM — never enabled
 	// in a production config). When SDN_INSTALL_FLOW=<bundle dir> is set, the
@@ -269,15 +235,12 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 	// operator approvals for the flow's declared sensitive capabilities (so the
 	// fail-closed gate admits it), loads + registers the flow with the cron
 	// scheduler, and persists it. SDN_FLOW_CONFIG=<json> supplies the flow's node
-	// CONFIG (e.g. celestrak_space_weather_url pointing at a reachable stub —
-	// celestrak.org is firewalled from a workstation); SDN_FLOW_INTERVAL=<dur>
-	// overrides every timer interval so the fire is observable quickly.
+	// configuration. Timer semantics come from the canonical flow.plg artifact.
 	if fp := strings.TrimSpace(os.Getenv("SDN_INSTALL_FLOW")); fp != "" {
 		if err := devInstallFlow(node.Context(), flowInstaller, svc, fp); err != nil {
 			log.Warnf("SDN_INSTALL_FLOW install failed for %q: %v", fp, err)
 		}
 	}
-
 	// Re-establish the persisted installed-modules set + install any operator
 	// drop-in *.wasm (before the scheduler starts, so every module's timers begin
 	// together). Tolerant: a module whose bytes are missing or whose sensitive
@@ -296,36 +259,6 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 	} else if n > 0 {
 		log.Infof("SDN flow installer: re-registered %d installed flow(s) at boot", n)
 	}
-
-	// --- BEGIN celestrak reference set (host-02 role; see celestrak_set.go) ---
-	// When this node is in the "celestrak" role (SDN_ROLE=celestrak env or
-	// Config.Role), install the owner-mandated 3h CelesTrak reference set —
-	// GP + SupGP + Space Weather + GPS almanac + SATCAT — before the scheduler
-	// starts so every reference timer begins together. No-op on other nodes.
-	p.maybeInstallCelestrakReferenceSet(node.Context(), flowInstaller, installer, svc)
-	// --- END celestrak reference set ---
-
-	// --- BEGIN supplemental-OMM OD flow (omm role; see operator_omm_flow.go) ---
-	// When this node is in the "omm" role (SDN_ROLE=omm env or Config.Role), BAKE
-	// the ONE composed wasi-threads OD flow (five in-wasm providers -> threaded fit
-	// -> in-wasm FlatSQL store) and mount it as a timer-served flow before the
-	// scheduler starts. This REPLACES the old per-provider operator-ephemeris
-	// module set (formerly maybeInstallOperatorEphemerisSet; removed by the
-	// Go-orchestration purge — see operator_omm_flow.go): the ONE wasm flow does
-	// the fetch + threaded fit + $OMM/$OCM/$OBD store, $OEM in-memory only. No-op
-	// on other nodes.
-	p.maybeInstallOperatorOMMFlow(node.Context(), flowInstaller, svc)
-	// --- END supplemental-OMM OD flow ---
-
-	// --- BEGIN supplemental-OMM OD run engine (see sdnruns.go) ---
-	// Build + register the supplemental-OMM run engine (cron module
-	// "supplemental-omm", default hourly): each fire OD-fits enabled providers'
-	// operator ephemeris to OMMs via the real analysis/od WASM module, compares to
-	// CelesTrak/Space-Track references, and records a run (served at /sdn/v1/runs).
-	// Registered before the scheduler starts so its timer begins with the others.
-	startSupplementalOMMRuns(node, svc, installer, sdnDir)
-	// --- END supplemental-OMM OD run engine ---
-
 	// Start the cron scheduler after modules are registered; it fires each
 	// registered module's timers on their effective interval (config override,
 	// else manifest default) and stops when the node context is cancelled
@@ -359,56 +292,26 @@ func (p *sdnRuntimePlugin) Start(node *core.IpfsNode) error {
 
 func (*sdnRuntimePlugin) Close() error { return nil }
 
-// seedDevOMM stores a small set of real OMM FlatBuffers under two provider lanes
-// (celestrak-gp, spacex) so a fresh isolated repo has live OMM records for the
-// Supplemental OMM board to render. Gated behind SDN_DEV_SEED_OMM by the caller;
-// it uses the sds OMM builder (the same fixture the storage tests use) and the
-// store's normal Store path (OMM has a registered FlatSQL schema). Idempotent:
-// byte-identical records dedup by content.
-func seedDevOMM(ctx context.Context, store *sdnstore.Store) (int, error) {
-	if store == nil {
-		return 0, fmt.Errorf("sdnruntime: store is nil")
+func moduleSignaturePolicyFromText(raw string) (*modulert.ModuleSignaturePolicy, error) {
+	policy := &modulert.ModuleSignaturePolicy{
+		AllowUnsignedByContentHash: make(map[string]bool),
 	}
-	type sat struct {
-		norad uint32
-		name  string
-		epoch string
-		mm    float64
-		inc   float64
-	}
-	lanes := map[string][]sat{
-		"celestrak-gp": {
-			{25544, "ISS (ZARYA)", "2026-07-15T00:00:00Z", 15.50, 51.64},
-			{20580, "HST", "2026-07-15T00:00:00Z", 15.09, 28.47},
-			{33591, "NOAA 19", "2026-07-15T00:00:00Z", 14.13, 99.19},
-		},
-		"spacex": {
-			{44713, "STARLINK-1007", "2026-07-15T00:00:00Z", 15.06, 53.05},
-			{44714, "STARLINK-1008", "2026-07-15T00:00:00Z", 15.06, 53.05},
-		},
-	}
-	n := 0
-	for source, sats := range lanes {
-		for _, s := range sats {
-			sized := sds.NewOMMBuilder().
-				WithNoradCatID(s.norad).
-				WithObjectName(s.name).
-				WithObjectID(fmt.Sprintf("2024-%03dA", s.norad%1000)).
-				WithEpoch(s.epoch).
-				WithMeanMotion(s.mm).
-				WithEccentricity(0.0001).
-				WithInclination(s.inc).
-				WithOriginator(source).
-				Build()
-			// sds builds a size-prefixed OMM; sdnstore.Store takes a single
-			// FlatBuffer without the 4-byte size prefix.
-			if _, err := store.Store(ctx, source, "OMM", sized[4:]); err != nil {
-				return n, fmt.Errorf("sdnruntime: seed OMM %s/%d: %w", source, s.norad, err)
-			}
-			n++
+	seen := make(map[string]bool)
+	for _, encoded := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\r' || r == '\n'
+	}) {
+		encoded = strings.ToLower(strings.TrimSpace(encoded))
+		if encoded == "" || seen[encoded] {
+			continue
 		}
+		decoded, err := hex.DecodeString(encoded)
+		if err != nil || len(decoded) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("trusted publisher key %q must be exactly %d hexadecimal Ed25519 public-key bytes", encoded, ed25519.PublicKeySize)
+		}
+		seen[encoded] = true
+		policy.TrustedSigners = append(policy.TrustedSigners, ed25519.PublicKey(append([]byte(nil), decoded...)))
 	}
-	return n, nil
+	return policy, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -522,17 +425,26 @@ func setFlowInstaller(in *sdnflows.Installer) {
 // repo path), in which case the registry is in no-persistence mode.
 func buildFlowInstaller(svc *sdnservices.Services, sdnDir string) (*sdnflows.Installer, error) {
 	flowsDir := ""
+	dropinDir := ""
 	if sdnDir != "" {
 		flowsDir = filepath.Join(sdnDir, "flows")
+		dropinDir = filepath.Join(flowsDir, "install")
 	}
 	registry, err := sdnflows.NewRegistry(flowsDir)
 	if err != nil {
 		return nil, err
 	}
+	var trustedSigners []ed25519.PublicKey
+	if svc != nil && svc.NodeCtx != nil && svc.NodeCtx.ModuleSignaturePolicy != nil {
+		trustedSigners = svc.NodeCtx.ModuleSignaturePolicy.TrustedSigners
+	}
 	return sdnflows.New(sdnflows.Config{
-		Services: svc,
-		Registry: registry,
-		Log:      log.Infof,
+		Services:       svc,
+		Registry:       registry,
+		MaxMemoryPages: isomorphicParentMaxMemoryPages,
+		DropinDir:      dropinDir,
+		TrustedSigners: trustedSigners,
+		Log:            log.Infof,
 	})
 }
 
@@ -540,8 +452,7 @@ func buildFlowInstaller(svc *sdnservices.Services, sdnDir string) (*sdnflows.Ins
 // flow bundle from disk, records DEV operator approvals for its declared
 // sensitive capabilities (so the fail-closed gate admits it), and installs +
 // registers it through the pipeline. SDN_FLOW_CONFIG (JSON) is the flow's node
-// CONFIG (URL overrides etc.); SDN_FLOW_INTERVAL overrides every timer's
-// interval. Local/live-smoke only.
+// CONFIG (URL overrides etc.). Local/live-smoke only.
 func devInstallFlow(ctx context.Context, installer *sdnflows.Installer, svc *sdnservices.Services, bundleDir string) error {
 	raw, err := os.ReadFile(filepath.Join(bundleDir, "runtime.wasm"))
 	if err != nil {
@@ -574,43 +485,12 @@ func devInstallFlow(ctx context.Context, installer *sdnflows.Installer, svc *sdn
 		}
 		spec.Config = m
 	}
-	if iv := strings.TrimSpace(os.Getenv("SDN_FLOW_INTERVAL")); iv != "" {
-		// Apply the override to every timer the bundle declares by reading its
-		// flow.json triggers.
-		spec.Intervals = flowIntervalOverrides(bundleDir, iv)
-	}
-
 	f, err := installer.Install(spec, "dev:SDN_INSTALL_FLOW")
 	if err != nil {
 		return err
 	}
 	log.Infof("SDN_INSTALL_FLOW: installed + registered flow id=%q hash=%s… timers=%v", f.ID, hash[:12], f.Timers)
 	return nil
-}
-
-// flowIntervalOverrides reads a bundle's flow.json timer triggers and maps each
-// to the given interval duration string (for SDN_FLOW_INTERVAL).
-func flowIntervalOverrides(bundleDir, interval string) map[string]string {
-	data, err := os.ReadFile(filepath.Join(bundleDir, "flow.json"))
-	if err != nil {
-		return nil
-	}
-	var topo struct {
-		Triggers []struct {
-			TriggerID string `json:"triggerId"`
-			Kind      string `json:"kind"`
-		} `json:"triggers"`
-	}
-	if json.Unmarshal(data, &topo) != nil {
-		return nil
-	}
-	out := map[string]string{}
-	for _, t := range topo.Triggers {
-		if t.Kind == "timer" && t.TriggerID != "" {
-			out[t.TriggerID] = interval
-		}
-	}
-	return out
 }
 
 // buildInstaller constructs the module install pipeline over the live services,
@@ -679,42 +559,6 @@ func devInstallWasm(ctx context.Context, installer *sdnmodules.Installer, svc *s
 }
 
 // ---------------------------------------------------------------------------
-// Demo cron module (SDN_CRON_DEMO).
-//
-// A native sdncron.CronModule used as the live-evidence module for the cron
-// scheduler foundation: it declares one "heartbeat" timer (default 15s) and, on
-// each scheduled fire, logs a heartbeat and returns a small JSON result. It has
-// no capabilities and touches nothing, so it is safe to register on any node —
-// but it is gated behind SDN_CRON_DEMO so production nodes stay clean. A real
-// WASM module (modulert.Module) plugs into the same scheduler seam unchanged.
-// ---------------------------------------------------------------------------
-
-type demoCronModule struct {
-	id    string
-	count atomic.Int64
-}
-
-func newDemoCronModule(id string) *demoCronModule { return &demoCronModule{id: id} }
-
-func (d *demoCronModule) ID() string { return d.id }
-
-func (d *demoCronModule) CronMethods() []plugins.CronMethodSpec {
-	return []plugins.CronMethodSpec{{
-		Method:          "heartbeat",
-		Description:     "Demo heartbeat: proves the SDN cron scheduler fires registered module timers.",
-		DefaultInterval: "15s",
-		Input:           "none",
-		Output:          "json",
-	}}
-}
-
-func (d *demoCronModule) InvokeCron(_ context.Context, method string, _ []byte) ([]byte, error) {
-	n := d.count.Add(1)
-	log.Infof("SDN cron demo module %q fired: method=%s count=%d", d.id, method, n)
-	return []byte(fmt.Sprintf(`{"ok":true,"module":%q,"method":%q,"count":%d}`, d.id, method, n)), nil
-}
-
-// ---------------------------------------------------------------------------
 // Built-in schema provider (Phase-6 placeholder).
 //
 // sdnstore is SDS-type-neutral: it embeds no schemas and stores any 3-letter
@@ -730,8 +574,8 @@ func defaultSchemas() sdnstore.SchemaProvider {
 		case "OMM":
 			return ommSchema, "$OMM", "OMM", true
 		case "SPW":
-			// Space weather — the type the CelesTrak SPW ingest flow lands. A
-			// later phase replaces this per-type shipping with the full SDS
+			// Space weather records. A later phase replaces this per-type shipping
+			// with the full SDS
 			// registry; the wiring (Deps.Schemas) does not change.
 			return spwSchema, "$SPW", "SPW", true
 		}
@@ -791,8 +635,7 @@ const ommSchema = `
   file_identifier "$OMM";
 `
 
-// spwSchema is the CelesTrak Space Weather (SPW) FlatSQL table shape — the
-// type the CelesTrak SPW ingest flow lands records under. Enums included
+// spwSchema is the Space Weather (SPW) FlatSQL table shape. Enums are included
 // because the SPW table references F107DataType.
 const spwSchema = `
   enum FluxQualifier: byte { OBSERVED = 0, BURST_ADJUSTED = 1, INTERPOLATED_EXTRAPOLATED = 2, NO_OBSERVATION = 3, CELESTRAK_INTERPOLATED = 4 }

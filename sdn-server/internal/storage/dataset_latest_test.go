@@ -18,7 +18,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
-const latestTestPeerID = "16Uiu2HAmTestCelestrakPeer"
+const latestTestPeerID = "16Uiu2HAmTestCatalogFixturePeer"
 
 type latestTestBatch struct {
 	tags   SourceTags
@@ -34,8 +34,8 @@ func publishAndReplicateBatch(t *testing.T, tmpDir string, provider, subscriber 
 	t.Helper()
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
-		SourceURL:    "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+		SourceName:   "catalogfixture-gp",
+		SourceURL:    "https://fixture.test/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
 		BatchID:      batchID,
 		ContentKeyID: "public",
 	}
@@ -48,7 +48,7 @@ func publishAndReplicateBatch(t *testing.T, tmpDir string, provider, subscriber 
 			WithOpsStatus("OPERATIONAL").
 			Build())
 	}
-	if _, err := provider.StoreBatchWithSourceTags("CAT.fbs", records, "celestrak.eth", nil, tags); err != nil {
+	if _, err := provider.StoreBatchWithSourceTags("CAT.fbs", records, "catalogfixture.eth", nil, tags); err != nil {
 		t.Fatalf("store batch (%s): %v", batchID, err)
 	}
 	windowLimit := count + 10

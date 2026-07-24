@@ -9,7 +9,7 @@ import (
 )
 
 // QueryRawStream executes SQL whose result cells are all BLOBs (e.g.
-// `SELECT _data FROM "OMM@celestrak-gp" WHERE ...`) inside the engine and
+// `SELECT _data FROM "OMM@catalogfixture-gp" WHERE ...`) inside the engine and
 // returns the aligned size-prefixed FlatBuffer stream — the wire format.
 // This is the generic engine query surface for the module hostcall bridge
 // and the retrieval module (loop C.1).
@@ -68,7 +68,7 @@ func (s *FlatSQLStore) QuerySandboxedJSON(sql string, caps flatsqlrt.SandboxCaps
 // QuerySurfaceTable describes one queryable relation of the public query
 // surface (the exact set the sandbox authorizer permits reading).
 type QuerySurfaceTable struct {
-	// Name as written in SQL (quote shadow names: "OMM@celestrak-gp").
+	// Name as written in SQL (quote shadow names: "OMM@catalogfixture-gp").
 	Name string `json:"name"`
 	// Kind: "view" (unified UNION ALL view with _source) or "table"
 	// (per-source shadow vtab / base vtab).

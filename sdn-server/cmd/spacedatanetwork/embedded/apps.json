@@ -1,0 +1,5 @@
+{
+  "apps": [
+    { "slug": "spaceaware", "record": "spaceaware.app", "root": true }
+  ]
+}

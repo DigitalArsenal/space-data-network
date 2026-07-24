@@ -103,7 +103,7 @@ func TestStorageQueryOnlyGrantDeniesWriteAndDelete(t *testing.T) {
 	// storage.flatsql_query_stream / storage.flatsql_epoch_stream: also
 	// read-tier — must keep working under storage_query alone.
 	if ok, envelope := storageOpOK(t, handler, "storage.flatsql_query_stream", map[string]interface{}{
-		"sql": `SELECT _data FROM "OMM@celestrak-gp"`,
+		"sql": `SELECT _data FROM "OMM@provider-gp"`,
 	}); !ok {
 		t.Fatalf("storage.flatsql_query_stream denied for a storage_query grant: %v", envelope)
 	}
@@ -115,7 +115,7 @@ func TestStorageQueryOnlyGrantDeniesWriteAndDelete(t *testing.T) {
 // grant reads either") — does NOT implicitly grant storage.query or the
 // flatsql read-stream ops. No existing test or shipped flow manifest relies
 // on storage_write implying read (verified against the compiled
-// data-retrieval/public-query/celestrak-ingest flow manifests, which each
+// data-retrieval/public-query/provider-ingest flow manifests, which each
 // request exactly one of storage_query or storage_ingest, never relying on
 // storage_write for reads), so this is a safe, strictly-more-restrictive
 // default.
@@ -153,7 +153,7 @@ func TestStorageWriteGrantAllowsWriteButNotQuery(t *testing.T) {
 
 	// storage.flatsql_query_stream: DENIED for the same reason.
 	if ok, envelope := storageOpOK(t, handler, "storage.flatsql_query_stream", map[string]interface{}{
-		"sql": `SELECT _data FROM "OMM@celestrak-gp"`,
+		"sql": `SELECT _data FROM "OMM@provider-gp"`,
 	}); ok {
 		t.Fatal("storage.flatsql_query_stream SUCCEEDED for a module granted only storage_write")
 	} else if errMsg, _ := envelope["error"].(map[string]interface{})["message"].(string); !containsStorageCapError(errMsg, "storage_query") {
@@ -175,8 +175,8 @@ func TestStorageNoGrantDeniesEverything(t *testing.T) {
 		{"storage.query", map[string]interface{}{"schema": "OMM.fbs", "limit": 10}},
 		{"storage.write", writeTestOMMPayload(t, 9103)},
 		{"storage.delete", map[string]interface{}{"schema": "OMM.fbs", "cid": "deadbeef"}},
-		{"storage.flatsql_query_stream", map[string]interface{}{"sql": `SELECT _data FROM "OMM@celestrak-gp"`}},
-		{"storage.flatsql_epoch_stream", map[string]interface{}{"schema": "OMM.fbs", "source": "celestrak-gp", "epoch": float64(1700000000)}},
+		{"storage.flatsql_query_stream", map[string]interface{}{"sql": `SELECT _data FROM "OMM@provider-gp"`}},
+		{"storage.flatsql_epoch_stream", map[string]interface{}{"schema": "OMM.fbs", "source": "provider-gp", "epoch": float64(1700000000)}},
 	} {
 		if ok, envelope := storageOpOK(t, handler, tc.op, tc.payload); ok {
 			t.Fatalf("%s SUCCEEDED with no storage_* grant at all: %v", tc.op, envelope)

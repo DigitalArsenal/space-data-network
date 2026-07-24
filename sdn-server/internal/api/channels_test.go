@@ -65,7 +65,7 @@ func TestChannelHandlerShowsHyphenatedSourceChannel(t *testing.T) {
 	mux := http.NewServeMux()
 	NewChannelHandler(nil).RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels/celestrak-eth-CDM", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels/catalogfixture-eth-CDM", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -73,7 +73,7 @@ func TestChannelHandlerShowsHyphenatedSourceChannel(t *testing.T) {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	body := decodeChannelJSON(t, rec.Body.String())
-	if body["channelId"] != "celestrak-eth-CDM" || body["sourceId"] != "celestrak-eth" || body["standardCode"] != "CDM" {
+	if body["channelId"] != "catalogfixture-eth-CDM" || body["sourceId"] != "catalogfixture-eth" || body["standardCode"] != "CDM" {
 		t.Fatalf("unexpected channel response: %#v", body)
 	}
 	if body["pnmVerified"] != false ||
@@ -267,15 +267,15 @@ func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedge
 
 	tags := storage.SourceTags{
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "batch-001",
 		ContentKeyID: "public",
 	}
 	for _, record := range [][]byte{
 		sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").WithEpoch("2026-05-12T00:00:00Z").Build(),
-		sds.NewOMMBuilder().WithNoradCatID(56775).WithObjectName("STARLINK-6292").WithEpoch("2026-05-12T00:01:00Z").Build(),
+		sds.NewOMMBuilder().WithNoradCatID(56775).WithObjectName("SATELLITE-6292").WithEpoch("2026-05-12T00:01:00Z").Build(),
 	} {
-		if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:celestrak", nil, tags); err != nil {
+		if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:catalogfixture", nil, tags); err != nil {
 			t.Fatalf("store OMM failed: %v", err)
 		}
 	}
@@ -284,7 +284,7 @@ func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedge
 	if err := store.UpsertDatasetShardPublication(storage.DatasetShardPublication{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "batch-001",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Offset:       0,
@@ -330,10 +330,10 @@ func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedge
 		},
 	} {
 		entry.SchemaName = "OMM.fbs"
-		entry.ProviderPeerID = "16Uiu2HCelesTrakProvider"
+		entry.ProviderPeerID = "16Uiu2HCatalogFixtureProvider"
 		entry.ProviderPublicKey = "provider-public-key"
 		entry.ProviderID = "space-data-network-02"
-		entry.SourceName = "celestrak-gp"
+		entry.SourceName = "catalogfixture-gp"
 		entry.BatchID = "batch-001"
 		entry.QueryProfile = storage.DatasetPublicationQueryProfile
 		entry.VerifiedAt = verifiedAt
@@ -344,7 +344,7 @@ func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedge
 
 	mux := http.NewServeMux()
 	NewChannelHandler(store).RegisterRoutes(mux)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels/celestrak-OMM/monitor", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels/space-data-network-02-OMM/monitor", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -354,7 +354,7 @@ func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedge
 	if body["pnmVerified"] != true || body["dpmVerified"] != true {
 		t.Fatalf("monitor did not restore verified state: %#v", body)
 	}
-	if body["channelHead"] != "restored-feed-head" || body["providerPeer"] != "16Uiu2HCelesTrakProvider" {
+	if body["channelHead"] != "restored-feed-head" || body["providerPeer"] != "16Uiu2HCatalogFixtureProvider" {
 		t.Fatalf("monitor did not restore head/provider: %#v", body)
 	}
 	if body["localRows"] != float64(2) || body["remoteRows"] != float64(2) || body["syncedRows"] != float64(2) {
@@ -368,7 +368,7 @@ func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedge
 	if err := store.UpsertDatasetShardPublication(storage.DatasetShardPublication{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "batch-002",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Offset:       0,
@@ -403,10 +403,10 @@ func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedge
 		},
 	} {
 		entry.SchemaName = "OMM.fbs"
-		entry.ProviderPeerID = "16Uiu2HCelesTrakProvider"
+		entry.ProviderPeerID = "16Uiu2HCatalogFixtureProvider"
 		entry.ProviderPublicKey = "provider-public-key"
 		entry.ProviderID = "space-data-network-02"
-		entry.SourceName = "celestrak-gp"
+		entry.SourceName = "catalogfixture-gp"
 		entry.BatchID = "batch-002"
 		entry.QueryProfile = storage.DatasetPublicationQueryProfile
 		entry.VerifiedAt = secondBatchAt
@@ -417,7 +417,7 @@ func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedge
 
 	freshMux := http.NewServeMux()
 	NewChannelHandler(store).RegisterRoutes(freshMux)
-	monitorLatestReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/celestrak-OMM/monitor", nil)
+	monitorLatestReq := httptest.NewRequest(http.MethodGet, "/api/v1/channels/space-data-network-02-OMM/monitor", nil)
 	monitorLatestRec := httptest.NewRecorder()
 	freshMux.ServeHTTP(monitorLatestRec, monitorLatestReq)
 	if monitorLatestRec.Code != http.StatusOK {
@@ -425,7 +425,7 @@ func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedge
 	}
 	monitorLatestBody := decodeChannelJSON(t, monitorLatestRec.Body.String())
 	if monitorLatestBody["pnmCid"] != "bafkpnm-restored-2" ||
-		monitorLatestBody["providerPeer"] != "16Uiu2HCelesTrakProvider" ||
+		monitorLatestBody["providerPeer"] != "16Uiu2HCatalogFixtureProvider" ||
 		monitorLatestBody["remoteRows"] != float64(1) {
 		t.Fatalf("monitor did not restore newest verified feed: %#v", monitorLatestBody)
 	}
@@ -442,7 +442,7 @@ func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedge
 	restoredCount := 0
 	for _, result := range listResults {
 		row := result.(map[string]interface{})
-		if row["channelId"] == "celestrak-OMM" {
+		if row["channelId"] == "space-data-network-02-OMM" {
 			restoredCount++
 			restoredRow = row
 		}
@@ -451,9 +451,9 @@ func TestChannelHandlerMonitorRestoresVerifiedDatasetPublicationFromDurableLedge
 		t.Fatalf("list did not restore verified feed from durable ledger: %s", listRec.Body.String())
 	}
 	if restoredCount != 1 {
-		t.Fatalf("list restored celestrak-OMM %d times, want 1: %s", restoredCount, listRec.Body.String())
+		t.Fatalf("list restored space-data-network-02-OMM %d times, want 1: %s", restoredCount, listRec.Body.String())
 	}
-	if restoredRow["sourceId"] != "celestrak" ||
+	if restoredRow["sourceId"] != "space-data-network-02" ||
 		restoredRow["standardCode"] != "OMM" ||
 		restoredRow["topic"] != "/spacedatanetwork/channels/OMM" ||
 		restoredRow["pnmVerified"] != true ||
@@ -478,7 +478,7 @@ func TestChannelHandlerStreamsVerifiedDatasetPublicationShardFromDurableLedger(t
 	oldPublication := storage.DatasetShardPublication{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "batch-stream-old",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Offset:       0,
@@ -538,7 +538,7 @@ func TestChannelHandlerStreamsVerifiedDatasetPublicationShardFromDurableLedger(t
 	publication := storage.DatasetShardPublication{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "batch-stream",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Offset:       0,
@@ -612,7 +612,7 @@ func TestChannelHandlerStreamsVerifiedDatasetPublicationShardFromDurableLedger(t
 		},
 	} {
 		entry.SchemaName = oldPublication.SchemaName
-		entry.ProviderPeerID = "16Uiu2HCelesTrakProvider"
+		entry.ProviderPeerID = "16Uiu2HCatalogFixtureProvider"
 		entry.ProviderPublicKey = "provider-public-key"
 		entry.ProviderID = oldPublication.ProviderID
 		entry.SourceName = oldPublication.SourceName
@@ -651,7 +651,7 @@ func TestChannelHandlerStreamsVerifiedDatasetPublicationShardFromDurableLedger(t
 		},
 	} {
 		entry.SchemaName = publication.SchemaName
-		entry.ProviderPeerID = "16Uiu2HCelesTrakProvider"
+		entry.ProviderPeerID = "16Uiu2HCatalogFixtureProvider"
 		entry.ProviderPublicKey = "provider-public-key"
 		entry.ProviderID = publication.ProviderID
 		entry.SourceName = publication.SourceName
@@ -665,7 +665,7 @@ func TestChannelHandlerStreamsVerifiedDatasetPublicationShardFromDurableLedger(t
 
 	mux := http.NewServeMux()
 	NewChannelHandler(store).RegisterRoutes(mux)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels/celestrak-OMM/stream", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/channels/space-data-network-02-OMM/stream", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -687,7 +687,7 @@ func TestChannelHandlerLatestVerifiedDatasetShardPublicationRequiresMatchingHead
 	publication := storage.DatasetShardPublication{
 		SchemaName:   "OMM.fbs",
 		ProviderID:   "space-data-network-02",
-		SourceName:   "celestrak-gp",
+		SourceName:   "catalogfixture-gp",
 		BatchID:      "batch-old",
 		QueryProfile: storage.DatasetPublicationQueryProfile,
 		Offset:       0,

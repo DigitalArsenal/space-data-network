@@ -136,7 +136,7 @@ func TestStoreRoutedByProducer(t *testing.T) {
 	}
 
 	// A different producer's record for the same schema lands in a separate table.
-	data2 := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK").Build()
+	data2 := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("SATELLITE").Build()
 	cidB, err := store.StoreRoutedByProducer("OMM.fbs", data2, "peerB", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -179,7 +179,7 @@ func TestCrossTableRoutedQueries(t *testing.T) {
 	defer store.Close()
 
 	ommA := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build()
-	ommB := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK").Build()
+	ommB := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("SATELLITE").Build()
 	if _, err := store.StoreRoutedByProducer("OMM.fbs", ommA, "peerA", nil); err != nil {
 		t.Fatal(err)
 	}

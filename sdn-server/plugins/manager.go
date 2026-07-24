@@ -560,7 +560,7 @@ func (m *Manager) scheduleCronMethods(ctx context.Context, pluginID string, cp C
 	m.cronConfigMu.RUnlock()
 
 	for _, spec := range cp.CronMethods() {
-		interval, enabled := m.resolveCronSchedule(pluginID, spec, pluginConfig)
+		interval, enabled := m.resolveCronSchedule(spec, pluginConfig)
 		if !enabled {
 			log.Infof("Plugin %q: cron method %q disabled", pluginID, spec.Method)
 			continue
@@ -608,7 +608,7 @@ func (m *Manager) scheduleCronMethods(ctx context.Context, pluginID string, cp C
 
 // resolveCronSchedule determines the interval and enabled state for a cron
 // method. Server config overrides the plugin's default.
-func (m *Manager) resolveCronSchedule(pluginID string, spec CronMethodSpec, pluginConfig map[string]CronScheduleConfig) (time.Duration, bool) {
+func (m *Manager) resolveCronSchedule(spec CronMethodSpec, pluginConfig map[string]CronScheduleConfig) (time.Duration, bool) {
 	// Start with the plugin's declared default.
 	intervalStr := spec.DefaultInterval
 	enabled := true
@@ -629,7 +629,7 @@ func (m *Manager) resolveCronSchedule(pluginID string, spec CronMethodSpec, plug
 	if err != nil || interval < time.Second {
 		interval = 30 * time.Second // sane fallback
 	}
-	if minInterval := providerMinimumCadence(pluginID, spec); minInterval > 0 && interval < minInterval {
+	if minInterval := declaredMinimumCadence(spec); minInterval > 0 && interval < minInterval {
 		interval = minInterval
 	}
 
@@ -884,7 +884,7 @@ func (m *Manager) SaveRuntimeModuleSchedule(ctx context.Context, moduleID, metho
 		return RuntimeModuleSchedule{}, fmt.Errorf("module %q schedule %q not found", moduleID, methodID)
 	}
 	now := time.Now().UTC()
-	schedule, cronConfig, err := normalizeRuntimeModuleSchedule(moduleID, spec, config, now)
+	schedule, cronConfig, err := normalizeRuntimeModuleSchedule(spec, config, now)
 	if err != nil {
 		return RuntimeModuleSchedule{}, err
 	}
@@ -1467,9 +1467,9 @@ func (m *Manager) buildRuntimeModuleSchedules(pluginID string, cron []CronMethod
 				MaxRuntime:     cfg.MaxRuntime,
 			}
 		}
-		schedule, _, err := normalizeRuntimeModuleSchedule(pluginID, spec, config, now)
+		schedule, _, err := normalizeRuntimeModuleSchedule(spec, config, now)
 		if err != nil {
-			schedule, _, _ = normalizeRuntimeModuleSchedule(pluginID, spec, RuntimeModuleScheduleConfig{
+			schedule, _, _ = normalizeRuntimeModuleSchedule(spec, RuntimeModuleScheduleConfig{
 				Enabled:  true,
 				Interval: spec.DefaultInterval,
 				Timezone: "UTC",
@@ -1915,7 +1915,7 @@ func (m *Manager) recordRuntimeModuleScheduleRun(moduleID, methodID string, run 
 		plugin := m.Get(moduleID)
 		if cp, ok := plugin.(CronProvider); ok {
 			if spec, found := findCronMethodSpec(cp.CronMethods(), methodID); found {
-				schedule, _, _ = normalizeRuntimeModuleSchedule(moduleID, spec, RuntimeModuleScheduleConfig{
+				schedule, _, _ = normalizeRuntimeModuleSchedule(spec, RuntimeModuleScheduleConfig{
 					Enabled:  true,
 					Interval: spec.DefaultInterval,
 					Timezone: "UTC",
@@ -1997,7 +1997,7 @@ func findCronMethodSpec(cron []CronMethodSpec, methodID string) (CronMethodSpec,
 	return CronMethodSpec{}, false
 }
 
-func normalizeRuntimeModuleSchedule(pluginID string, spec CronMethodSpec, config RuntimeModuleScheduleConfig, now time.Time) (RuntimeModuleSchedule, CronScheduleConfig, error) {
+func normalizeRuntimeModuleSchedule(spec CronMethodSpec, config RuntimeModuleScheduleConfig, now time.Time) (RuntimeModuleSchedule, CronScheduleConfig, error) {
 	methodID := strings.TrimSpace(spec.Method)
 	if methodID == "" {
 		return RuntimeModuleSchedule{}, CronScheduleConfig{}, errors.New("schedule method id is required")
@@ -2010,9 +2010,9 @@ func normalizeRuntimeModuleSchedule(pluginID string, spec CronMethodSpec, config
 	if err != nil || interval <= 0 {
 		return RuntimeModuleSchedule{}, CronScheduleConfig{}, fmt.Errorf("schedule %q interval is not a valid duration", methodID)
 	}
-	minInterval := providerMinimumCadence(pluginID, spec)
+	minInterval := declaredMinimumCadence(spec)
 	if minInterval > 0 && interval < minInterval {
-		return RuntimeModuleSchedule{}, CronScheduleConfig{}, fmt.Errorf("schedule %q interval %s is below provider minimum cadence %s", methodID, interval, minInterval)
+		return RuntimeModuleSchedule{}, CronScheduleConfig{}, fmt.Errorf("schedule %q interval %s is below manifest minimum cadence %s", methodID, interval, minInterval)
 	}
 	timezone := strings.TrimSpace(config.Timezone)
 	if timezone == "" {
@@ -2095,11 +2095,7 @@ func isPlausibleCronExpression(expression string) bool {
 	return len(fields) == 5 || len(fields) == 6
 }
 
-func providerMinimumCadence(pluginID string, spec CronMethodSpec) time.Duration {
-	haystack := strings.ToLower(pluginID + " " + spec.Method + " " + spec.Description)
-	if strings.Contains(haystack, "celestrak") {
-		return 3 * time.Hour
-	}
+func declaredMinimumCadence(spec CronMethodSpec) time.Duration {
 	if interval, err := time.ParseDuration(strings.TrimSpace(spec.DefaultInterval)); err == nil && interval > 0 {
 		return interval
 	}

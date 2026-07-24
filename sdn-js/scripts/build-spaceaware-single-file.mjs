@@ -24,6 +24,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import esbuild from 'esbuild';
+import { createHash } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
+import { Builder } from 'flatbuffers';
+import { APP, APPT, APPUIPageT, appContentEncoding } from '../node_modules/spacedatastandards.org/lib/js/APP/main.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sdnJsRoot = path.resolve(__dirname, '..');
@@ -36,7 +40,7 @@ const outPath = path.resolve(
   'cmd',
   'spacedatanetwork',
   'embedded',
-  'spaceaware_app.html',
+  'spaceaware.app',
 );
 
 function fail(message) {
@@ -148,11 +152,16 @@ if (!html.includes('</head>')) {
 }
 
 fs.mkdirSync(path.dirname(outPath), { recursive: true });
-fs.writeFileSync(outPath, html);
+const content = gzipSync(Buffer.from(html)).toString('base64');
+const page = new APPUIPageT('homepage', 'SpaceAware', 'Space Data Network node interface.', null, null, null, content, appContentEncoding.BASE64_GZIP, 'text/html', createHash('sha256').update(html).digest('hex'), true);
+const app = new APPT('io.spaceaware.sdn-ui', 'SpaceAware', '1.0.0', 'Space Data Network node interface.', [], [], [], [page]);
+const builder = new Builder(1024);
+APP.finishSizePrefixedAPPBuffer(builder, app.pack(builder));
+fs.writeFileSync(outPath, builder.asUint8Array());
 
 const total = Buffer.byteLength(html);
 console.log('SpaceAware single-file artifact written:');
 console.log(`  ${outPath}`);
-console.log(`  total ${(total / 1024).toFixed(1)} KiB`);
+console.log(`  decoded HTML ${(total / 1024).toFixed(1)} KiB; APP ${(builder.asUint8Array().length / 1024).toFixed(1)} KiB`);
 for (const s of inlinedScripts) console.log(`  inlined script ${s.src} (${(s.bytes / 1024).toFixed(1)} KiB)`);
 for (const s of inlinedStyles) console.log(`  inlined style ${s.href} (${(s.bytes / 1024).toFixed(1)} KiB)`);

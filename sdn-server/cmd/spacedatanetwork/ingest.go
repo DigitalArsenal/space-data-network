@@ -20,10 +20,10 @@ import (
 
 var ingestCmd = &cobra.Command{
 	Use:   "ingest",
-	Short: "Run CelesTrak/Space-Track/UDL ingestion workers",
-	Long: `Ingests CelesTrak, Space-Track, and Unified Data Library (UDL) data into
-FlatSQL with checkpoints, raw archive snapshots, and gap-fill batching for
-production-safe sync.`,
+	Short: "Run credentialed Space-Track and UDL ingestion workers",
+	Long: `Ingests Space-Track and Unified Data Library (UDL) data into FlatSQL
+with checkpoints, raw archive snapshots, and gap-fill batching. Public-source
+provider acquisition belongs to signed standalone modules.`,
 	RunE: runIngest,
 }
 
@@ -31,13 +31,6 @@ var (
 	ingestStoragePath          string
 	ingestRawPath              string
 	ingestOnce                 bool
-	ingestCelestrakInterval    time.Duration
-	ingestSatcatInterval       time.Duration
-	ingestSpaceWeatherInterval time.Duration
-	ingestCatalogURL           string
-	ingestSatcatURL            string
-	ingestSatcatCSVURL         string
-	ingestSpaceWeatherURL      string
 	ingestSpaceTrackEnabled    bool
 	ingestSpaceTrackIdentity   string
 	ingestSpaceTrackPassword   string
@@ -47,9 +40,6 @@ var (
 	ingestSpaceTrackPoll       time.Duration
 	ingestSpaceTrackLoginURL   string
 	ingestSpaceTrackQueryTmpl  string
-	ingestSpaceTrackPublicFiles bool
-	ingestSpaceTrackCurrentGP   bool
-	ingestSpaceTrackSupPoll     time.Duration
 	ingestUDLEnabled           bool
 	ingestUDLUsername          string
 	ingestUDLPassword          string
@@ -60,7 +50,6 @@ var (
 	ingestUDLPoll              time.Duration
 	ingestUDLMaxResults        int
 	ingestHTTPTimeout          time.Duration
-	ingestDatasetPublishURL    string
 	ingestMinFreeDiskGB        float64
 )
 
@@ -68,14 +57,6 @@ func init() {
 	ingestCmd.Flags().StringVar(&ingestStoragePath, "storage-path", "", "override storage path (defaults to config.storage.path)")
 	ingestCmd.Flags().StringVar(&ingestRawPath, "raw-path", "", "raw archive path (default: <storage-parent>/raw)")
 	ingestCmd.Flags().BoolVar(&ingestOnce, "once", false, "run one sync cycle and exit")
-
-	ingestCmd.Flags().DurationVar(&ingestCelestrakInterval, "celestrak-interval", 3*time.Hour, "CelesTrak GP sync interval (minimum 3h)")
-	ingestCmd.Flags().DurationVar(&ingestSatcatInterval, "satcat-interval", 24*time.Hour, "CelesTrak SATCAT sync interval")
-	ingestCmd.Flags().DurationVar(&ingestSpaceWeatherInterval, "celestrak-space-weather-interval", 3*time.Hour, "CelesTrak space-weather sync interval (minimum 3h)")
-	ingestCmd.Flags().StringVar(&ingestCatalogURL, "celestrak-catalog-url", "", "override CelesTrak GP catalog CSV URL")
-	ingestCmd.Flags().StringVar(&ingestSatcatURL, "celestrak-satcat-url", "", "override CelesTrak SATCAT URL (txt or csv)")
-	ingestCmd.Flags().StringVar(&ingestSatcatCSVURL, "celestrak-satcat-csv-url", "", "override CelesTrak SATCAT CSV records URL")
-	ingestCmd.Flags().StringVar(&ingestSpaceWeatherURL, "celestrak-space-weather-url", "", "override CelesTrak space-weather CSV URL")
 
 	ingestCmd.Flags().BoolVar(&ingestSpaceTrackEnabled, "spacetrack-enabled", true, "enable Space-Track gap-fill worker")
 	ingestCmd.Flags().StringVar(&ingestSpaceTrackIdentity, "spacetrack-identity", "", "Space-Track login identity (or SPACETRACK_IDENTITY env)")
@@ -86,10 +67,6 @@ func init() {
 	ingestCmd.Flags().DurationVar(&ingestSpaceTrackPoll, "spacetrack-poll-interval", 30*time.Minute, "Space-Track gap-fill poll interval")
 	ingestCmd.Flags().StringVar(&ingestSpaceTrackLoginURL, "spacetrack-login-url", "", "override Space-Track login URL")
 	ingestCmd.Flags().StringVar(&ingestSpaceTrackQueryTmpl, "spacetrack-query-template", "", "Space-Track query URL template with two %s placeholders for start/end day")
-	ingestCmd.Flags().BoolVar(&ingestSpaceTrackPublicFiles, "spacetrack-publicfiles-enabled", true, "enable Space-Track publicfiles operator-ephemeris (CCSDS OEM) lane (requires --spacetrack-enabled)")
-	ingestCmd.Flags().BoolVar(&ingestSpaceTrackCurrentGP, "spacetrack-current-gp-enabled", true, "enable Space-Track current full-catalog gp (OMM) lane (requires --spacetrack-enabled)")
-	ingestCmd.Flags().DurationVar(&ingestSpaceTrackSupPoll, "spacetrack-supplemental-poll-interval", 6*time.Hour, "Space-Track supplemental (publicfiles + current-gp) poll interval")
-
 	ingestCmd.Flags().BoolVar(&ingestUDLEnabled, "udl-enabled", true, "enable Unified Data Library (UDL) sync worker")
 	ingestCmd.Flags().StringVar(&ingestUDLUsername, "udl-username", "", "UDL basic auth username (or UDL_USERNAME env)")
 	ingestCmd.Flags().StringVar(&ingestUDLPassword, "udl-password", "", "UDL basic auth password (or UDL_PASSWORD env)")
@@ -101,7 +78,6 @@ func init() {
 	ingestCmd.Flags().IntVar(&ingestUDLMaxResults, "udl-max-results", 10000, "maxResults page size for UDL queries")
 
 	ingestCmd.Flags().DurationVar(&ingestHTTPTimeout, "http-timeout", 90*time.Second, "HTTP request timeout")
-	ingestCmd.Flags().StringVar(&ingestDatasetPublishURL, "dataset-publish-url", "", "local SDN admin dataset publication endpoint")
 	ingestCmd.Flags().Float64Var(&ingestMinFreeDiskGB, "min-free-disk-gb", 0, "minimum free disk (GB) required before a sync runs (0 = default 5 GiB); lower on small volumes")
 
 	rootCmd.AddCommand(ingestCmd)
@@ -142,11 +118,6 @@ func runIngest(cmd *cobra.Command, args []string) error {
 	if udlPassword == "" {
 		udlPassword = strings.TrimSpace(os.Getenv("UDL_PASSWORD"))
 	}
-	datasetPublishURL := ingestDatasetPublishURL
-	if datasetPublishURL == "" {
-		datasetPublishURL = strings.TrimSpace(os.Getenv("SDN_DATASET_PUBLISH_URL"))
-	}
-
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -196,14 +167,6 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		Once:             ingestOnce,
 		MinFreeDiskBytes: minFreeDiskBytes,
 
-		CelestrakCatalogURL:      ingestCatalogURL,
-		CelestrakSatcatURL:       ingestSatcatURL,
-		CelestrakSatcatCSVURL:    ingestSatcatCSVURL,
-		CelestrakSpaceWeatherURL: ingestSpaceWeatherURL,
-		CelestrakInterval:        ingestCelestrakInterval,
-		SatcatInterval:           ingestSatcatInterval,
-		SpaceWeatherInterval:     ingestSpaceWeatherInterval,
-
 		SpaceTrackEnabled:      ingestSpaceTrackEnabled,
 		SpaceTrackIdentity:     identity,
 		SpaceTrackPassword:     password,
@@ -213,10 +176,6 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		SpaceTrackPollInterval: ingestSpaceTrackPoll,
 		SpaceTrackLoginURL:     ingestSpaceTrackLoginURL,
 		SpaceTrackQueryTmpl:    ingestSpaceTrackQueryTmpl,
-
-		SpaceTrackPublicFilesEnabled: ingestSpaceTrackEnabled && ingestSpaceTrackPublicFiles,
-		SpaceTrackCurrentGPEnabled:   ingestSpaceTrackEnabled && ingestSpaceTrackCurrentGP,
-		SpaceTrackSupplementalPoll:   ingestSpaceTrackSupPoll,
 
 		UDLEnabled:      ingestUDLEnabled,
 		UDLUsername:     udlUsername,
@@ -229,8 +188,6 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		UDLMaxResults:   ingestUDLMaxResults,
 
 		HTTPTimeout: ingestHTTPTimeout,
-
-		DatasetPublishURL: datasetPublishURL,
 	})
 	if err != nil {
 		if errors.Is(err, storage.ErrStoreLocked) {

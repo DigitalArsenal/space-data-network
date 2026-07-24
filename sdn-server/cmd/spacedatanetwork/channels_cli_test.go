@@ -164,15 +164,15 @@ func TestChannelsShowParsesHyphenatedSource(t *testing.T) {
 	cmd := newChannelsCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"show", "celestrak-eth-CDM"})
+	cmd.SetArgs([]string{"show", "catalogfixture-eth-CDM"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("channels show failed: %v", err)
 	}
 	body := out.String()
 	for _, want := range []string{
-		"channelId=celestrak-eth-CDM",
-		"sourceId=celestrak-eth",
+		"channelId=catalogfixture-eth-CDM",
+		"sourceId=catalogfixture-eth",
 		"standardCode=CDM",
 		"visibility=unknown",
 	} {
@@ -186,13 +186,13 @@ func TestChannelsShowUsesLocalAPI(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/channels/celestrak-eth-CDM" {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/channels/catalogfixture-eth-CDM" {
 			t.Fatalf("unexpected show request %s %s", r.Method, r.URL.String())
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"channelId":"celestrak-eth-CDM",
-			"sourceId":"celestrak-eth",
+			"channelId":"catalogfixture-eth-CDM",
+			"sourceId":"catalogfixture-eth",
 			"standardCode":"CDM",
 			"visibility":"public",
 			"subscribed":false,
@@ -209,15 +209,15 @@ func TestChannelsShowUsesLocalAPI(t *testing.T) {
 	cmd := newChannelsCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"show", "celestrak-eth-CDM", "--api-url", server.URL})
+	cmd.SetArgs([]string{"show", "catalogfixture-eth-CDM", "--api-url", server.URL})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("channels show failed: %v", err)
 	}
 	body := out.String()
 	for _, want := range []string{
-		"channelId=celestrak-eth-CDM",
-		"sourceId=celestrak-eth",
+		"channelId=catalogfixture-eth-CDM",
+		"sourceId=catalogfixture-eth",
 		"standardCode=CDM",
 		"visibility=public",
 		"subscribed=false",

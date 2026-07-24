@@ -283,11 +283,9 @@ func (h *CoreAPIHandler) handleStats(w http.ResponseWriter, r *http.Request) {
 			resp["schemas"] = schemaList
 		}
 
-		// Per-(schema, provider, source, batch) live pipeline progress. This is
-		// the anonymous read surface the App 2 supplemental-OMM board polls to
-		// render pull progress: the rising count per source/batch is the
-		// "objects fitted so far" signal, first_seen is when the batch's first
-		// record landed, last_seen drives last-record age. Read-only aggregate.
+		// Per-(schema, provider, source, batch) live pipeline progress. This
+		// schema-neutral read-only aggregate reports counts, bytes, and arrival
+		// timestamps without interpreting application records.
 		if progress, err := h.store.SourceBatchProgress(); err == nil {
 			sources := make([]map[string]interface{}, 0, len(progress))
 			for _, p := range progress {
@@ -307,24 +305,6 @@ func (h *CoreAPIHandler) handleStats(w http.ResponseWriter, r *http.Request) {
 				}
 				if p.UpdatedAtUnix > 0 {
 					row["updated_at"] = time.Unix(p.UpdatedAtUnix, 0).UTC().Format(time.RFC3339)
-				}
-				if p.ObjectCount > 0 {
-					row["objects"] = p.ObjectCount
-				}
-				if p.LatestEpochUnix > 0 {
-					row["latest_epoch"] = time.Unix(p.LatestEpochUnix, 0).UTC().Format(time.RFC3339)
-				}
-				// OD fit RMS (km) aggregates over the batch's indexed records.
-				// Emitted only when the lane has an RMS-bearing record (fitted
-				// OMM); omitted (never zero-filled) for raw/republished lanes.
-				if p.MeanRMS != nil {
-					row["mean_rms"] = *p.MeanRMS
-				}
-				if p.MinRMS != nil {
-					row["min_rms"] = *p.MinRMS
-				}
-				if p.MaxRMS != nil {
-					row["max_rms"] = *p.MaxRMS
 				}
 				sources = append(sources, row)
 			}

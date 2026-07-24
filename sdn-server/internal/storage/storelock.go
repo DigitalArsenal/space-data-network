@@ -3,7 +3,7 @@ package storage
 // Store liveness lock (loop C.6b). The v2 FlatSQL store is SINGLE-WRITER:
 // one in-process engine owns the compact record metadata log and the
 // stream appenders. Two independent processes opening the same basePath —
-// the celestrak.eth prod topology was `spacedatanetwork` (daemon) plus
+// the catalogfixture.eth prod topology was `spacedatanetwork` (daemon) plus
 // `spacedatanetwork-ingest.service` on ONE path — would interleave metadata
 // frames and stream appends and corrupt the store. Every writer open
 // therefore takes an EXCLUSIVE OS advisory lock (flock on Unix, LockFileEx

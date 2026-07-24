@@ -63,7 +63,7 @@ func TestProvidersListOutputsTableRowsFromSharedSearch(t *testing.T) {
 	}
 
 	output := out.String()
-	for _, want := range []string{"peer_id", "provider_id", "schema_name", "CelesTrak", "space-data-network-02", "OMM.fbs"} {
+	for _, want := range []string{"peer_id", "provider_id", "schema_name", "CatalogFixture", "space-data-network-02", "OMM.fbs"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("providers list table missing %q:\n%s", want, output)
 		}
@@ -76,7 +76,7 @@ func TestProvidersSearchOutputsJSONFromSharedSearch(t *testing.T) {
 	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
-	if err := runProvidersSearch(&out, "celestrak", providersSharedOptions{
+	if err := runProvidersSearch(&out, "catalogfixture", providersSharedOptions{
 		Schema: "OMM",
 		Format: "json",
 		Limit:  10,
@@ -92,7 +92,7 @@ func TestProvidersSearchOutputsJSONFromSharedSearch(t *testing.T) {
 		t.Fatalf("providers search JSON = %#v", body)
 	}
 	row := body.Results[0]
-	if row["peer_id"] != "16Uiu2HCelesTrak" ||
+	if row["peer_id"] != "16Uiu2HCatalogFixture" ||
 		row["provider_id"] != "space-data-network-02" ||
 		row["schema_name"] != "OMM.fbs" {
 		t.Fatalf("providers search row = %#v", row)
@@ -105,7 +105,7 @@ func TestProvidersShowOutputsCSVFromSharedSearch(t *testing.T) {
 	withSyncCLITestConfig(t, cfgPath, store)
 
 	var out bytes.Buffer
-	if err := runProvidersShow(&out, "celestrak.eth", providersSharedOptions{
+	if err := runProvidersShow(&out, "catalogfixture.eth", providersSharedOptions{
 		Schema: "OMM",
 		Format: "csv",
 		Limit:  10,
@@ -123,7 +123,7 @@ func TestProvidersShowOutputsCSVFromSharedSearch(t *testing.T) {
 	if records[0][0] != "peer_id" || records[0][10] != "provider_id" || records[0][7] != "schema_name" {
 		t.Fatalf("providers show CSV header = %#v", records[0])
 	}
-	if records[1][0] != "16Uiu2HCelesTrak" || records[1][10] != "space-data-network-02" || records[1][7] != "OMM.fbs" {
+	if records[1][0] != "16Uiu2HCatalogFixture" || records[1][10] != "space-data-network-02" || records[1][7] != "OMM.fbs" {
 		t.Fatalf("providers show CSV row = %#v", records[1])
 	}
 }
@@ -175,7 +175,7 @@ func TestRunProvidersQueryUsesUnifiedDataQueryEndpoint(t *testing.T) {
 			"records": [{
 				"schema_name": "OMM.fbs",
 				"provider_id": "space-data-network-02",
-				"source_name": "celestrak-gp",
+				"source_name": "catalogfixture-gp",
 				"cid": "bafkreiquery"
 			}]
 		}`))
@@ -187,7 +187,7 @@ func TestRunProvidersQueryUsesUnifiedDataQueryEndpoint(t *testing.T) {
 		BaseURL:    server.URL,
 		Schema:     "OMM.fbs",
 		ProviderID: "space-data-network-02",
-		SourceName: "celestrak-gp",
+		SourceName: "catalogfixture-gp",
 		Format:     "json",
 	}); err != nil {
 		t.Fatalf("runProvidersQuery failed: %v", err)
@@ -198,7 +198,7 @@ func TestRunProvidersQueryUsesUnifiedDataQueryEndpoint(t *testing.T) {
 	}
 	if receivedBody["schema"] != "OMM.fbs" ||
 		receivedBody["provider_id"] != "space-data-network-02" ||
-		receivedBody["source_name"] != "celestrak-gp" {
+		receivedBody["source_name"] != "catalogfixture-gp" {
 		t.Fatalf("query body = %#v", receivedBody)
 	}
 

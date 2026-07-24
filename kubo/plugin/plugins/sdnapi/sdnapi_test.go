@@ -8,8 +8,14 @@ import (
 
 	plugin "github.com/ipfs/kubo/plugin"
 
+	sdnapihttp "github.com/ipfs/kubo/sdn/sdnapi"
+	"github.com/ipfs/kubo/sdn/sdnflows"
 	"github.com/ipfs/kubo/sdn/sdnui"
 )
+
+func TestFlowInstallerImplementsArtifactRuntimeNodeReader(t *testing.T) {
+	var _ sdnapihttp.ArtifactRuntimeNodeReader = (*sdnflows.Installer)(nil)
+}
 
 func TestInitDefaults(t *testing.T) {
 	p := &sdnAPIPlugin{}
@@ -76,10 +82,6 @@ func TestRootHandlerRoutesUIAndAPI(t *testing.T) {
 	creds := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(credsMarker + " " + r.URL.Path))
 	})
-	runsMarker := "SDN-RUNS-MARKER"
-	runs := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(runsMarker + " " + r.URL.Path))
-	})
 	nodeEPMMarker := "SDN-NODEEPM-MARKER"
 	nodeEPM := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(nodeEPMMarker + " " + r.URL.Path))
@@ -88,11 +90,7 @@ func TestRootHandlerRoutesUIAndAPI(t *testing.T) {
 	flows := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(flowsMarker + " " + r.URL.Path))
 	})
-	runControlMarker := "SDN-RUNCONTROL-MARKER"
-	runControl := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(runControlMarker + " " + r.URL.Path))
-	})
-	root := newRootHandler(api, sdnui.Handler(), creds, runs, nodeEPM, flows, runControl)
+	root := newRootHandler(api, sdnui.Handler(), creds, nodeEPM, flows)
 
 	// The flow-platform subtree wins over the "/" console catch-all and reaches
 	// the flow handler with the full path intact (the editor $APP posts here).
@@ -132,29 +130,16 @@ func TestRootHandlerRoutesUIAndAPI(t *testing.T) {
 		t.Errorf("PUT /sdn/v1/admin/credentials/spacetrack -> body=%q, want credentials handler", rec.Body.String())
 	}
 
-	// The runs prefix wins over the /sdn/v1/ subtree and reaches the runs handler.
-	rec = httptest.NewRecorder()
-	root.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sdn/v1/runs", nil))
-	if !strings.Contains(rec.Body.String(), runsMarker) {
-		t.Errorf("GET /sdn/v1/runs -> body=%q, want runs handler", rec.Body.String())
-	}
-	rec = httptest.NewRecorder()
-	root.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sdn/v1/runs/abc/objects", nil))
-	if !strings.Contains(rec.Body.String(), runsMarker) {
-		t.Errorf("GET /sdn/v1/runs/abc/objects -> body=%q, want runs handler", rec.Body.String())
-	}
-
-	// The run-control (START/STOP/RESET) prefix wins over both /sdn/v1/ and
-	// /sdn/v1/modules/{id}/config's GET/PUT-only routes on the generic API.
+	// Unrecognized paths remain on the generic API subtree; the root router has
+	// no application-specific read or control handlers.
 	for _, path := range []string{
-		"/sdn/v1/modules/supplemental-omm/run/start",
-		"/sdn/v1/modules/supplemental-omm/run/stop",
-		"/sdn/v1/modules/supplemental-omm/run/reset",
+		"/sdn/v1/jobs",
+		"/sdn/v1/modules/example-module/run/start",
 	} {
 		rec = httptest.NewRecorder()
-		root.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
-		if !strings.Contains(rec.Body.String(), runControlMarker) {
-			t.Errorf("POST %s -> body=%q, want run-control handler", path, rec.Body.String())
+		root.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if !strings.Contains(rec.Body.String(), apiMarker) {
+			t.Errorf("GET %s -> body=%q, want generic API handler", path, rec.Body.String())
 		}
 	}
 

@@ -313,7 +313,7 @@ func registerLegacyPublicationPlan(ctx context.Context, options legacyPublicatio
 		}
 		manifest, err := storage.BuildSignedDatasetPublicationManifest(outputDir, storage.DatasetPublicationManifestOptions{
 			Export:         &export,
-			DatasetID:      firstNonEmptyString(plan.DatasetID, "sdn-omm-celestrak-gp-historical"),
+			DatasetID:      firstNonEmptyString(plan.DatasetID, "sdn-omm-legacy-gp-historical"),
 			UpdateID:       legacyDatasetUpdateID(plan.SourceTags.BatchID, entry.Offset, entry.Limit),
 			ProviderPeerID: plan.ProviderPeerID,
 			ProviderEPMCID: plan.ProviderEPMCID,

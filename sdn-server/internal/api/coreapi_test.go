@@ -180,8 +180,8 @@ func TestCoreAPI_Stats_EmptyStore(t *testing.T) {
 			t.Errorf("field %q missing from stats response", field)
 		}
 	}
-	// sources is always present (possibly empty) so the App 2 pipeline board can
-	// rely on it without a shape guard.
+	// sources is always present (possibly empty) so generic clients can rely on
+	// it without a shape guard.
 	if _, ok := body["sources"].([]interface{}); !ok {
 		t.Errorf("sources field is not an array, got %T", body["sources"])
 	}
@@ -293,12 +293,12 @@ func TestCoreAPI_Stats_PeersBlockWithoutSDNSource(t *testing.T) {
 
 // TestCoreAPI_Stats_IncludesSourceBatchProgress proves the anonymous stats
 // surface carries per-(schema, provider, source, batch) live pipeline progress:
-// a rising record count plus first/last record arrival timestamps. This is the
-// surface the App 2 supplemental-OMM board polls to show pull progress.
+// a rising record count plus first/last record arrival timestamps, without
+// adding schema-specific interpretations.
 func TestCoreAPI_Stats_IncludesSourceBatchProgress(t *testing.T) {
 	store, _, validator := newDataAPITestStoreWithBasePath(t)
 	storeDataAPITestOMMWithBatch(t, store, 25544, "ISS (ZARYA)", "2026-05-05", "batch-alpha")
-	storeDataAPITestOMMWithBatch(t, store, 56775, "STARLINK-6292", "2026-05-06", "batch-alpha")
+	storeDataAPITestOMMWithBatch(t, store, 56775, "SATELLITE-6292", "2026-05-06", "batch-alpha")
 
 	h := &CoreAPIHandler{
 		peerID:    peer.ID("12D3KooWTestPeerID"),
@@ -331,6 +331,19 @@ func TestCoreAPI_Stats_IncludesSourceBatchProgress(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
+	var raw struct {
+		Sources []map[string]interface{} `json:"sources"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode raw sources: %v", err)
+	}
+	for _, source := range raw.Sources {
+		for _, field := range []string{"objects", "latest_epoch", "mean_rms", "min_rms", "max_rms"} {
+			if _, ok := source[field]; ok {
+				t.Errorf("generic source progress unexpectedly exposes schema-specific field %q: %+v", field, source)
+			}
+		}
+	}
 	if body.TotalRecords < 2 {
 		t.Fatalf("total_records = %d, want >= 2", body.TotalRecords)
 	}
@@ -338,7 +351,7 @@ func TestCoreAPI_Stats_IncludesSourceBatchProgress(t *testing.T) {
 	var found bool
 	for _, s := range body.Sources {
 		if s.Schema == "OMM.fbs" && s.ProviderID == "space-data-network-02" &&
-			s.SourceName == "celestrak-gp" && s.BatchID == "batch-alpha" {
+			s.SourceName == "catalogfixture-gp" && s.BatchID == "batch-alpha" {
 			found = true
 			if s.Count != 2 {
 				t.Fatalf("OMM batch-alpha count = %d, want 2 (rising pull progress)", s.Count)

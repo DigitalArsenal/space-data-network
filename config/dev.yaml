@@ -40,7 +40,7 @@ admin:
   enabled: true
   listen_addr: 127.0.0.1:5010
   http_challenge_addr: 127.0.0.1:5080
-  require_auth: true
+  require_auth: false
   session_expiry: 24h
   totp_required: false
   tls_mode: managed
@@ -57,3 +57,10 @@ users:
 setup:
   token_expiry: 10m
   data_path: ./data/dev
+
+# Local demo (2026-07-14): unauthenticated publish lane so the constellation
+# pipeline can feed the board end-to-end locally (local-first verification).
+publishing:
+  enabled: true
+  allowed_schemas: ["OMM.fbs", "OEM.fbs", "OCM.fbs"]
+  max_record_bytes: 10485760
