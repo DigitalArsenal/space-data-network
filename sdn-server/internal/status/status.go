@@ -275,6 +275,10 @@ func multiaddrStrings(addrs []multiaddr.Multiaddr) []string {
 // skipped — only public IPs are geolocatable.
 func firstPublicIP(addrs []string) string {
 	for _, a := range addrs {
+		// A relay circuit's outer IP locates the RELAY, not the peer.
+		if strings.Contains(a, "/p2p-circuit") {
+			continue
+		}
 		ip := ipFromMultiaddr(a)
 		if ip == "" {
 			continue
