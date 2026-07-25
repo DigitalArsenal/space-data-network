@@ -19,3 +19,17 @@ asset_pins:
   min_free_bytes: 0
   # Zero selects DefaultAssetPinRetentionInterval (one hour).
   retention_interval: 0s
+
+# GeoIP powers the node-status dashboard map. It is fail-open: if the database
+# is absent, peers are reported without coordinates and nothing else breaks.
+# Provision a MaxMind GeoLite2-City .mmdb to enable it. Leave mmdb_path unset to
+# use the default <data-dir>/geoip/GeoLite2-City.mmdb.
+geoip:
+  # mmdb_path: /path/to/GeoLite2-City.mmdb
+
+# Public read-only node-status feed served at /ws/status. Same-origin browser
+# handshakes and loopback/dev origins are always allowed; list any additional
+# cross-origin dashboard hosts here (full origins, scheme://host[:port]).
+status:
+  allowed_origins:
+    - https://sdn.spaceaware.io

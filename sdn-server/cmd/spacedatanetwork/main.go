@@ -51,12 +51,14 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt/editor"
 	"github.com/spacedatanetwork/sdn-server/internal/frontend"
 	"github.com/spacedatanetwork/sdn-server/internal/gateway"
+	"github.com/spacedatanetwork/sdn-server/internal/geoip"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	nodestatus "github.com/spacedatanetwork/sdn-server/internal/status"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/storefront"
 	"github.com/spacedatanetwork/sdn-server/internal/tlsmgr"
@@ -1609,6 +1611,50 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 				adminMux.HandleFunc("/ws", serveWS)
 				log.Infof("WebSocket bridge available at %s://%s/ws (auth required: %v)", adminScheme, adminAddr, cfg.Admin.RequireAuth)
+
+				// Public read-only node-status feed (/ws/status). Unlike /ws
+				// above, this is DELIBERATELY unauthenticated: it carries only
+				// core-node telemetry already public via /api/v1/id and
+				// /api/peers/sdn, reshaped into the $NST binary transport. It
+				// lives outside the /api/ prefix the top-level auth wall's
+				// isAPIOrPlugin check inspects and is intentionally NOT
+				// self-gated, so an anonymous dashboard can subscribe. The
+				// Broadcaster's CheckOrigin is the only handshake gate
+				// (same-origin + loopback + configured allowlist).
+				geoReader := geoip.Open(cfg.GeoIP.MMDBPath)
+				statusBroadcaster := nodestatus.NewBroadcaster(func() []byte {
+					snapshot := epm.BuildGraphSnapshot(n.Host(), n.PeerRegistry())
+					var registryPeers []*peers.TrustedPeer
+					if registry := n.PeerRegistry(); registry != nil {
+						registryPeers = registry.ListPeers()
+					}
+					observed := epm.BuildObservedSDNPeers(
+						snapshot,
+						registryPeers,
+						n.SDNAdvertisementFlagsByPeer(),
+						n.SDNAdvertisementAddrsByPeer(),
+					)
+					selfVCard := ""
+					if epmSvc := n.EPMService(); epmSvc != nil {
+						if v, err := epmSvc.GetNodeVCard(); err == nil {
+							selfVCard = v
+						}
+					}
+					return nodestatus.BuildNodeStatusSet(nodestatus.Input{
+						Snapshot:         snapshot,
+						Observed:         observed,
+						SelfPeerID:       n.PeerID().String(),
+						SelfVCard:        selfVCard,
+						AgentVersion:     versioninfo.AgentVersion,
+						SuiteVersion:     versioninfo.SuiteVersion,
+						StandardsVersion: versioninfo.SpaceDataStandardsVersion,
+						Uptime:           time.Since(processStartTime),
+						Geo:              geoReader,
+					})
+				}, cfg.Status.AllowedOrigins)
+				statusBroadcaster.Start()
+				adminMux.HandleFunc("/ws/status", statusBroadcaster.ServeHTTP)
+				log.Infof("Status feed available at %s://%s/ws/status (public read-only)", adminScheme, adminAddr)
 			}
 
 			// ----------------------------------------------------------------
