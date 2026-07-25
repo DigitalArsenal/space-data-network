@@ -37,6 +37,8 @@ type Config struct {
 	TipQueue   TipQueueConfig   `yaml:"tip_queue"`
 	AssetPins  AssetPinConfig   `yaml:"asset_pins"`
 	Modules    ModulesConfig    `yaml:"modules"`
+	GeoIP      GeoIPConfig      `yaml:"geoip"`
+	Status     StatusConfig     `yaml:"status"`
 }
 
 // ModulesConfig tunes the module-sdk WASM runtime (internal/modulert).
@@ -575,6 +577,29 @@ type NetworkConfig struct {
 	RateLimitBurst       int     `yaml:"rate_limit_burst"`        // Allow burst of messages up to this limit (default: 50)
 }
 
+// GeoIPConfig configures the fail-open GeoLite2-City connector
+// (internal/geoip) used to place peers on the status dashboard map.
+type GeoIPConfig struct {
+	// MMDBPath is the filesystem path to a MaxMind GeoLite2-City .mmdb
+	// database. Empty or missing is fine: the connector fail-opens and peers
+	// are reported without coordinates. Defaults to <data-dir>/geoip/
+	// GeoLite2-City.mmdb.
+	MMDBPath string `yaml:"mmdb_path"`
+}
+
+// StatusConfig configures the public read-only node-status feed
+// (internal/status, served at /ws/status).
+type StatusConfig struct {
+	// AllowedOrigins is the extra cross-origin allowlist for the status
+	// WebSocket beyond the always-permitted same-origin and loopback/dev
+	// origins. Values are full origins (scheme://host[:port]). The status
+	// feed is public read-only telemetry, but a browser handshake still
+	// carries the page's Origin, so a central dashboard hosted elsewhere must
+	// be listed here to subscribe cross-origin. Operators add their node's
+	// public dashboard host(s); the default seeds the primary hosted board.
+	AllowedOrigins []string `yaml:"allowed_origins"`
+}
+
 // StorageConfig contains storage-related settings.
 type StorageConfig struct {
 	Path string `yaml:"path"`
@@ -1017,6 +1042,12 @@ func Default() *Config {
 			// an explicit "10GB"-style absolute size still works (back-compat).
 			MaxSize:    fmt.Sprintf("%d%%", DefaultStorageMaxSizePercent),
 			GCInterval: "1h",
+		},
+		GeoIP: GeoIPConfig{
+			MMDBPath: filepath.Join(dataPath, "geoip", "GeoLite2-City.mmdb"),
+		},
+		Status: StatusConfig{
+			AllowedOrigins: []string{"https://sdn.spaceaware.io"},
 		},
 		Schemas: SchemaConfig{
 			Validate: true,
