@@ -51,6 +51,11 @@ type Input struct {
 	// Geo resolves peer public IPs to coordinates (fail-open, may be nil).
 	Geo GeoResolver
 
+	// FallbackAddrs maps peer ID -> known dialable multiaddrs (e.g. the
+	// bootstrap constants). Used for geo resolution when the live peerstore
+	// only holds relay/private addresses; never emitted as the peer's addrs.
+	FallbackAddrs map[string][]string
+
 	// Now is the generation time; zero means time.Now().
 	Now time.Time
 }
@@ -125,8 +130,12 @@ func BuildNodeStatusSet(in Input) []byte {
 			Multiaddrs:   multiaddrStrings(tp.Addrs),
 			LastSeen:     lastSeen[pid],
 			IsOnline:     online[pid],
+			VCard:        peers.TrustedPeerToVCard(tp),
 		}
 		row.applyGeo(in.Geo)
+		if row.Lat == 0 && row.Lon == 0 {
+			row.applyGeoFromAddrs(in.Geo, in.FallbackAddrs[pid])
+		}
 		rows = append(rows, row)
 	}
 
@@ -159,10 +168,14 @@ type peerRow struct {
 // applyGeo resolves the first public IP among the row's multiaddrs and fills
 // the geo fields. No-op when no resolver or no public IP is present.
 func (row *peerRow) applyGeo(geo GeoResolver) {
+	row.applyGeoFromAddrs(geo, row.Multiaddrs)
+}
+
+func (row *peerRow) applyGeoFromAddrs(geo GeoResolver, addrs []string) {
 	if geo == nil {
 		return
 	}
-	ip := firstPublicIP(row.Multiaddrs)
+	ip := firstPublicIP(addrs)
 	if ip == "" {
 		return
 	}

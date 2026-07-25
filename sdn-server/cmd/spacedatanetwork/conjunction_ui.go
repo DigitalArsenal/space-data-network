@@ -2,18 +2,21 @@ package main
 
 // Root-surface serving and the auth/login surface configuration.
 //
-// UI CLEAN SLATE (owner ruling 2026-07-24): every embedded UI application —
-// the $APP registry, launcher, per-app pages, and their build pipelines —
-// has been removed from this repo pending the owner's new UI codebase. The
-// primary route "/" serves a minimal placeholder; the isolated wallet
-// callback (auth machinery, not UI content) remains. New user-facing
-// surfaces are Iris's (ui-oracle) domain and land only with the owner's
-// codebase.
+// The primary route "/" serves the SDN Node Status $APP homepage — ONE
+// self-contained file built by sdn-js/dashboard (build-dashboard.mjs) from the
+// SpaceAware-Student-UI design components, go:embed'ed here. It reads the
+// node's public read-only /ws/status feed exclusively. The self-hosted display
+// + mono web fonts it references are served same-origin at /fonts/*.woff2. The
+// isolated wallet callback (auth machinery, not UI content) is unchanged, and
+// so is the 404 behavior for every other root-surface path. New user-facing
+// surfaces are Iris's (ui-oracle) domain.
 
 import (
-	_ "embed"
+	"embed"
+	"io/fs"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
@@ -45,16 +48,43 @@ const placeholderCSP = "default-src 'none'; " +
 	"frame-ancestors 'none'; " +
 	"form-action 'none'"
 
-// placeholderHTML is the single self-contained interim page served at "/"
-// (owner directive 2026-07-24: the SPACE DATA NETWORK wordmark, green on
-// textured black) until the new UI codebase lands.
+// placeholderHTML is the self-contained wordmark page kept on disk as the
+// graceful fallback served at "/" when the dashboard artifact has not been
+// built into the binary (embedded/dashboard.html empty).
 //
 //go:embed embedded/placeholder.html
 var placeholderHTML []byte
 
-// makeRootPlaceholderHandler serves the minimal placeholder at "/" and the
-// wallet callback routes; everything else under the root surface 404s.
-func makeRootPlaceholderHandler() http.Handler {
+// dashboardHTML is the built SDN Node Status $APP homepage: ONE self-contained
+// file emitted by sdn-js/dashboard/build-dashboard.mjs (design components +
+// theme tokens, fed by the /ws/status $NST feed). It is the "/" content.
+//
+//go:embed embedded/dashboard.html
+var dashboardHTML []byte
+
+// dashboardCSPRaw is the appSurfaceCSP-grade policy for the dashboard, emitted
+// by build-dashboard.mjs alongside the html so the inline-script hash in
+// script-src always matches the shipped bytes.
+//
+//go:embed embedded/dashboard.csp
+var dashboardCSPRaw string
+
+// dashboardFonts holds the self-hosted display + mono web fonts (Chakra Petch +
+// IBM Plex Mono) served same-origin at /fonts/*.woff2, so the dashboard's
+// @font-face rules resolve without any external Google Fonts request.
+//
+//go:embed embedded/fonts/*.woff2
+var dashboardFonts embed.FS
+
+// dashboardCSP returns the trimmed, build-generated CSP for the "/" dashboard.
+func dashboardCSP() string { return strings.TrimSpace(dashboardCSPRaw) }
+
+// makeRootHandler serves the SDN Node Status dashboard at "/" (and
+// "/index.html") with its build-generated CSP, the isolated wallet callback
+// routes unchanged, and a 404 for every other root-surface path. If the
+// dashboard artifact was not built into the binary it falls back to the
+// self-contained wordmark placeholder.
+func makeRootHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isWalletCallbackPath(r.URL.Path) {
 			serveWalletCallback(w, r)
@@ -68,12 +98,49 @@ func makeRootPlaceholderHandler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Security-Policy", placeholderCSP)
+		body := dashboardHTML
+		csp := dashboardCSP()
+		if len(body) == 0 || csp == "" {
+			// Dashboard artifact absent — serve the wordmark placeholder.
+			body = placeholderHTML
+			csp = placeholderCSP
+		}
+		w.Header().Set("Content-Security-Policy", csp)
 		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		if r.Method != http.MethodHead {
-			_, _ = w.Write(placeholderHTML)
+			_, _ = w.Write(body)
+		}
+	})
+}
+
+// makeFontsHandler serves the self-hosted dashboard web fonts at
+// /fonts/<name>.woff2 (GET/HEAD only, public, immutable). These are the exact
+// same-origin font paths the built dashboard's @font-face rules reference.
+func makeFontsHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		name := strings.TrimPrefix(r.URL.Path, "/fonts/")
+		if name == "" || strings.Contains(name, "/") || !strings.HasSuffix(name, ".woff2") {
+			http.NotFound(w, r)
+			return
+		}
+		body, err := fs.ReadFile(dashboardFonts, path.Join("embedded/fonts", name))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "font/woff2")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.WriteHeader(http.StatusOK)
+		if r.Method != http.MethodHead {
+			_, _ = w.Write(body)
 		}
 	})
 }

@@ -1,0 +1,15 @@
+/*
+ * Self-hosted display + mono families (Chakra Petch + IBM Plex Mono), served
+ * same-origin by the node at /fonts/*.woff2 — the SAME absolute paths the node
+ * serves (see sdn-server dashboard font handler). Root-absolute url()s are left
+ * verbatim by vite (not inlined), so the single-file page fetches them from the
+ * origin that served it. No Google Fonts / external-origin request is made;
+ * CSP font-src 'self' data: covers these.
+ */
+@font-face { font-family: 'Chakra Petch'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/chakra-400.woff2') format('woff2'); }
+@font-face { font-family: 'Chakra Petch'; font-style: normal; font-weight: 500; font-display: swap; src: url('/fonts/chakra-500.woff2') format('woff2'); }
+@font-face { font-family: 'Chakra Petch'; font-style: normal; font-weight: 600; font-display: swap; src: url('/fonts/chakra-600.woff2') format('woff2'); }
+@font-face { font-family: 'Chakra Petch'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/chakra-700.woff2') format('woff2'); }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/plex-400.woff2') format('woff2'); }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: swap; src: url('/fonts/plex-500.woff2') format('woff2'); }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 600; font-display: swap; src: url('/fonts/plex-600.woff2') format('woff2'); }

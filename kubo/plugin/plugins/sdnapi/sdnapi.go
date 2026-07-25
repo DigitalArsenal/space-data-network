@@ -1,10 +1,13 @@
-// Package sdnapi is the SDN read-only HTTP API + operator-console plugin: the
-// third SDN addition to upstream kubo (alongside sdnflag and sdnruntime). It
-// exposes a live SDN node's state — identity, peers, the stored (source, type)
-// catalog, bounded record listings, channels and installed apps — as small
-// JSON under /sdn/v1/*, and (Phase 8) serves the self-contained static SDN
-// operator console (kubo/sdn/sdnui) at "/" on the SAME loopback listener, so
-// the node serves its own UI with no external assets and no extra port.
+// Package sdnapi is the SDN read-only HTTP API plugin: the third SDN addition
+// to upstream kubo (alongside sdnflag and sdnruntime). It exposes a live SDN
+// node's state — identity, peers, the stored (source, type) catalog, bounded
+// record listings, channels and installed apps — as small JSON under /sdn/v1/*.
+//
+// The node's user-facing surface (the SDN Node Status $APP homepage) is served
+// by the sdn-server daemon at "/", NOT by this plugin: the former vanilla-JS
+// operator console (kubo/sdn/sdnui) was a wrong-artifact carryover and has been
+// retired. This plugin now owns ONLY the /sdn/v1/* API subtree; every other
+// path on its listener is a plain 404.
 //
 // # Zero core patch — the node serves it directly, kubo-style
 //
@@ -64,7 +67,6 @@ import (
 	sdnapihttp "github.com/ipfs/kubo/sdn/sdnapi"
 	"github.com/ipfs/kubo/sdn/sdnmodules"
 	"github.com/ipfs/kubo/sdn/sdnstore"
-	"github.com/ipfs/kubo/sdn/sdnui"
 )
 
 var log = logging.Logger("plugin/sdnapi")
@@ -249,7 +251,7 @@ func (p *sdnAPIPlugin) Start(node *core.IpfsNode) error {
 	flowsHandler, flowsNote := p.buildFlowsHandler(node)
 
 	p.srv = &http.Server{
-		Handler:           newRootHandler(sdnapihttp.NewHandler(deps), sdnui.Handler(), credsHandler, nodeEPMHandler, flowsHandler),
+		Handler:           newRootHandler(sdnapihttp.NewHandler(deps), credsHandler, nodeEPMHandler, flowsHandler),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Infof("SDN flow platform API: %s", flowsNote)
@@ -391,14 +393,14 @@ func wireFlowNetModules(baker *flowrt.Baker, node *core.IpfsNode) string {
 }
 
 // newRootHandler composes the single loopback listener's routing: the
-// read-only JSON API owns the /sdn/v1/ subtree, and the embedded static
-// operator console (kubo/sdn/sdnui) owns everything else — "/" serves the app
-// shell, "/styles.css" and "/app.js" its assets, and any other path is 404.
+// read-only JSON API owns the /sdn/v1/ subtree (with the credential-admin and
+// node-EPM export routes claiming their more-specific prefixes) and the flow
+// platform owns /api/v1/flows/. There is no "/" console: the operator console
+// was retired, so any path outside those subtrees is a plain 404 from the mux.
 // Because the API is mounted on a subtree pattern, ServeMux forwards the full
 // request path unchanged, so the API's own GET /sdn/v1/{node,peers,...} routes
-// still match. The console and the API it drives are therefore same-origin,
-// which is what lets the page fetch /sdn/v1/* with no cross-origin request.
-func newRootHandler(api, ui, creds, nodeEPM, flows http.Handler) http.Handler {
+// still match.
+func newRootHandler(api, creds, nodeEPM, flows http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	// The flow-platform API owns the /api/v1/flows/ subtree (bake + palette +
 	// flow management). It is more specific than the "/" console catch-all, so
@@ -422,7 +424,6 @@ func newRootHandler(api, ui, creds, nodeEPM, flows http.Handler) http.Handler {
 	mux.Handle("/sdn/v1/node/vcard", nodeEPM)
 	mux.Handle("/sdn/v1/node/qr", nodeEPM)
 	mux.Handle("/sdn/v1/", api)
-	mux.Handle("/", ui)
 	return mux
 }
 

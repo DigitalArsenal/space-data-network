@@ -42,11 +42,15 @@ func TestResolveUIModeDefaultsToConjunction(t *testing.T) {
 	}
 }
 
-// TestRootPlaceholder locks the clean-slate root surface: "/" serves the
-// self-contained placeholder (no scripts, no external references), unknown
-// paths 404, non-GET/HEAD 405.
-func TestRootPlaceholder(t *testing.T) {
-	handler := makeRootPlaceholderHandler()
+// TestRootDashboard locks the root surface: "/" serves the built SDN Node
+// Status $APP homepage (single self-contained file, wired to /ws/status +
+// /fonts) under its build-generated appSurfaceCSP-grade CSP; unknown paths 404,
+// non-GET/HEAD 405.
+func TestRootDashboard(t *testing.T) {
+	if len(dashboardHTML) == 0 {
+		t.Fatal("embedded dashboard.html is empty — run sdn-js/dashboard/build-dashboard.mjs")
+	}
+	handler := makeRootHandler()
 
 	for _, path := range []string{"/", "/index.html"} {
 		rec := httptest.NewRecorder()
@@ -54,17 +58,23 @@ func TestRootPlaceholder(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("GET %s status = %d, want 200", path, rec.Code)
 		}
-		body := rec.Body.String()
-		if !strings.Contains(body, "Space Data Network") {
-			t.Errorf("GET %s placeholder missing title text", path)
+		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+			t.Errorf("GET %s content-type = %q, want text/html", path, ct)
 		}
-		for _, forbidden := range []string{"<script", "http://", "https://", "src="} {
-			if strings.Contains(body, forbidden) {
-				t.Errorf("placeholder contains forbidden reference %q", forbidden)
+		body := rec.Body.String()
+		for _, needle := range []string{"Space Data Network", "/ws/status", "/fonts/"} {
+			if !strings.Contains(body, needle) {
+				t.Errorf("GET %s dashboard body missing %q", path, needle)
 			}
 		}
-		if got := rec.Header().Get("Content-Security-Policy"); got != placeholderCSP {
-			t.Errorf("placeholder CSP = %q, want %q", got, placeholderCSP)
+		got := rec.Header().Get("Content-Security-Policy")
+		if got != dashboardCSP() {
+			t.Errorf("dashboard CSP header = %q, want %q", got, dashboardCSP())
+		}
+		for _, want := range []string{"script-src 'self'", "'wasm-unsafe-eval'", "'sha256-", "connect-src 'self' wss:", "font-src 'self' data:"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("dashboard CSP missing %q: %s", want, got)
+			}
 		}
 	}
 
@@ -80,6 +90,44 @@ func TestRootPlaceholder(t *testing.T) {
 	}
 }
 
+// TestDashboardFonts locks the self-hosted font surface: each /fonts/*.woff2
+// path serves the embedded font (GET/HEAD), path traversal / unknown names 404,
+// non-GET/HEAD 405.
+func TestDashboardFonts(t *testing.T) {
+	handler := makeFontsHandler()
+
+	for _, name := range []string{
+		"chakra-400.woff2", "chakra-500.woff2", "chakra-600.woff2", "chakra-700.woff2",
+		"plex-400.woff2", "plex-500.woff2", "plex-600.woff2",
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/fonts/"+name, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /fonts/%s status = %d, want 200", name, rec.Code)
+		}
+		if ct := rec.Header().Get("Content-Type"); ct != "font/woff2" {
+			t.Errorf("GET /fonts/%s content-type = %q, want font/woff2", name, ct)
+		}
+		if rec.Body.Len() == 0 {
+			t.Errorf("GET /fonts/%s served empty body", name)
+		}
+	}
+
+	for _, bad := range []string{"/fonts/", "/fonts/../secret", "/fonts/app.js", "/fonts/nope.woff2"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, bad, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s status = %d, want 404", bad, rec.Code)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/fonts/plex-400.woff2", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /fonts/plex-400.woff2 status = %d, want 405", rec.Code)
+	}
+}
+
 func TestWalletCallbackIsExactAndNoStore(t *testing.T) {
 	if len(walletCallbackHTML) == 0 {
 		t.Fatal("embedded wallet callback is empty")
@@ -87,7 +135,7 @@ func TestWalletCallbackIsExactAndNoStore(t *testing.T) {
 
 	// Exercise the same outer security middleware used by the admin server. The
 	// callback-specific policy must override its generic referrer policy.
-	handler := adminSecurityMiddleware(makeRootPlaceholderHandler(), "", func(string, string) bool { return false })
+	handler := adminSecurityMiddleware(makeRootHandler(), "", func(string, string) bool { return false })
 
 	for _, path := range []string{"/wallet/callback", "/wallet/callback/", "/wallet-callback.html"} {
 		t.Run(path, func(t *testing.T) {
@@ -113,7 +161,7 @@ func TestWalletCallbackIsExactAndNoStore(t *testing.T) {
 }
 
 func TestWalletCallbackRejectsOtherMethods(t *testing.T) {
-	handler := adminSecurityMiddleware(makeRootPlaceholderHandler(), "", func(string, string) bool { return false })
+	handler := adminSecurityMiddleware(makeRootHandler(), "", func(string, string) bool { return false })
 
 	for _, path := range []string{"/wallet/callback", "/wallet/callback/", "/wallet-callback.html"} {
 		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions} {
@@ -177,7 +225,7 @@ func TestProductionRoutesExcludeLegacyWalletUIAndConfiguration(t *testing.T) {
 	if serveRoot, mounted := registerLegacyWalletStaticFiles(mux, uiModeConjunction, walletRoot); mounted || serveRoot != "" {
 		t.Fatalf("conjunction legacy static mount = (%q, %v), want disabled", serveRoot, mounted)
 	}
-	mux.Handle("/", makeRootPlaceholderHandler())
+	mux.Handle("/", makeRootHandler())
 
 	for _, requestPath := range []string{"/login", "/login/legacy", "/wallet-ui/legacy-wallet.js"} {
 		rec := httptest.NewRecorder()

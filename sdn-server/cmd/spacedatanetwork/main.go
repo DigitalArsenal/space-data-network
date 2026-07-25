@@ -40,6 +40,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/adminui"
 	"github.com/spacedatanetwork/sdn-server/internal/api"
+	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/assetpin"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/bundle"
@@ -1622,6 +1623,17 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				// Broadcaster's CheckOrigin is the only handshake gate
 				// (same-origin + loopback + configured allowlist).
 				geoReader := geoip.Open(cfg.GeoIP.MMDBPath)
+				// Bootstrap constants keep geo resolution working when the live
+				// peerstore only holds relay/private addrs for a prod peer.
+				statusFallbackAddrs := map[string][]string{}
+				if infos, err := bootstrap.ParseBootstrapAddresses(bootstrap.DefaultBootstrapAddresses()); err == nil {
+					for _, info := range infos {
+						pid := info.AddrInfo.ID.String()
+						for _, a := range info.AddrInfo.Addrs {
+							statusFallbackAddrs[pid] = append(statusFallbackAddrs[pid], a.String())
+						}
+					}
+				}
 				statusBroadcaster := nodestatus.NewBroadcaster(func() []byte {
 					snapshot := epm.BuildGraphSnapshot(n.Host(), n.PeerRegistry())
 					var registryPeers []*peers.TrustedPeer
@@ -1650,6 +1662,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						StandardsVersion: versioninfo.SpaceDataStandardsVersion,
 						Uptime:           time.Since(processStartTime),
 						Geo:              geoReader,
+						FallbackAddrs:    statusFallbackAddrs,
 					})
 				}, cfg.Status.AllowedOrigins)
 				statusBroadcaster.Start()
@@ -1707,13 +1720,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.HandleFunc("/admin/", serveAdminUI)
 
 			// ----------------------------------------------------------------
-			// Public root at / — UI CLEAN SLATE (owner ruling 2026-07-24): the
-			// embedded $APP program was removed pending the owner's new UI
-			// codebase. A minimal placeholder serves at "/" (plus the isolated
-			// wallet callback); /admin and the APIs are unchanged.
+			// Public root at / — the SDN Node Status $APP homepage (single
+			// self-contained file built from the design components, fed by the
+			// public /ws/status feed). Its self-hosted web fonts are served
+			// same-origin at /fonts/*.woff2. The isolated wallet callback and
+			// the 404 behavior for every other root path are unchanged; /admin
+			// and the APIs are unchanged.
 			// ----------------------------------------------------------------
-			adminMux.Handle("/", makeRootPlaceholderHandler())
-			log.Infof("Root placeholder at %s://%s/ (UI pending new codebase; admin portal remains at /admin)", adminScheme, adminAddr)
+			adminMux.Handle("/fonts/", makeFontsHandler())
+			adminMux.Handle("/", makeRootHandler())
+			log.Infof("Node status dashboard at %s://%s/ (fed by /ws/status; admin portal remains at /admin)", adminScheme, adminAddr)
 
 			adminServer = &http.Server{
 				Addr:              adminAddr,
