@@ -3,6 +3,13 @@ export {
   addressLookupNamespace,
   normalizeAddressLookupKey,
 } from './address-lookup';
+export {
+  SDN_NODE_STATUS_GLOBAL,
+  getStatusDashboardGlobal,
+  startStatusDashboard,
+  type SDNNodeStatusGlobal,
+  type StatusDashboardHandle,
+} from './status-dashboard';
 export * from './sdn-backend';
 export * from './sdn-backend-browser';
 export * from './sdn-backend-desktop';

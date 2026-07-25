@@ -227,6 +227,7 @@ await build({
   entryPoints: [
     path.join(packageRoot, 'src/index.ts'),
     path.join(packageRoot, 'src/ui/index.ts'),
+    path.join(packageRoot, 'src/status/index.ts'),
     path.join(packageRoot, 'src/storefront/index.ts'),
     path.join(packageRoot, 'src/astro/index.ts'),
   ],
