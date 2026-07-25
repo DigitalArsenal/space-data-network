@@ -9,6 +9,7 @@
     "check:nav": "node scripts/check-sdn-stack-nav.mjs sdn docs/index.html docs/onboarding.html",
     "check:public-wallet-boundary": "node scripts/check-public-wallet-boundary.mjs",
     "build:designer-ui-package": "node scripts/build-claude-designer-ui-package.mjs",
+    "build:ui-schemas": "node scripts/build-ui-schemas.mjs",
     "install:wasmedge": "./scripts/install-wasmedge.sh",
     "build:licensing": "npm --prefix ../space-data-network-modules/licensing/core run build",
     "test": "npm run test:go && npm run test:js",

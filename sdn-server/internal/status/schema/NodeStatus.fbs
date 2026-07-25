@@ -1,0 +1,52 @@
+// NodeStatus.fbs — LOCAL UI-transport schema for the node status dashboard.
+//
+// NOT a spacedatastandards.org record (owner ruling 2026-07-24: local schemas
+// are approved for UI transport; SDS stays for network-standard records).
+// Compiled exclusively with the wasm flatc (scripts/build-ui-schemas.mjs);
+// generated Go lives in internal/status/nst, generated TS in
+// sdn-js/src/status/generated. Field names are UPPER_SNAKE to match the SDS
+// JSON-key capitalization convention.
+
+namespace nst;
+
+table NodeStatus {
+  /// libp2p peer ID (base58)
+  PEER_ID: string;
+  /// Distinguished name from the node's EPM
+  DN: string;
+  ORGANIZATION: string;
+  TRUST_LEVEL: string;
+  ROLE: string;
+  AGENT_VERSION: string;
+  /// Multiaddrs the peer is known by
+  MULTIFORMAT_ADDRESS: [string];
+  /// Unix seconds of last observation (0 = never)
+  LAST_SEEN: int64;
+  IS_ONLINE: bool;
+  /// Round-trip latency to the peer, milliseconds (0 = unknown)
+  LATENCY_MS: float;
+  /// Full vCard 4.0 text derived from the peer's EPM
+  VCARD: string;
+  /// GeoIP-resolved coordinates (0,0 = unresolved)
+  LAT: float;
+  LON: float;
+  GEO_COUNTRY: string;
+  GEO_CITY: string;
+  /// True on the node emitting this set
+  IS_SELF: bool;
+  /// Seconds since the emitting process started (self only)
+  UPTIME_S: int64;
+  SUITE_VERSION: string;
+  STANDARDS_VERSION: string;
+}
+
+table NodeStatusSet {
+  NODES: [NodeStatus];
+  /// Unix milliseconds when this set was generated
+  GENERATED_AT: int64;
+  /// Peer ID of the emitting node
+  SOURCE_PEER_ID: string;
+}
+
+root_type NodeStatusSet;
+file_identifier "$NST";
