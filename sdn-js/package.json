@@ -34,6 +34,7 @@
     "build": "npm run build:core",
     "build:package": "npm run build:core",
     "build:core": "rm -rf dist && tsc --project tsconfig.build.json --emitDeclarationOnly && node scripts/build-package-entry.mjs",
+    "build:dashboard": "node dashboard/build-dashboard.mjs",
     "build:docs-network-ecosystem": "vite build --config docs-network-ecosystem.config.mts",
     "dev": "tsc --emitDeclarationOnly --watch",
     "test": "npm run build:core && vitest run",
@@ -111,11 +112,13 @@
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@types/node": "^20.10.0",
     "eslint": "^8.55.0",
+    "spaceaware-student-sdn": "file:../../SpaceAware-Student-UI",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.3.0",
     "vite": "^6.0.0",
+    "vite-plugin-singlefile": "^2.3.3",
     "vitest": "^3.2.4"
   },
   "overrides": {

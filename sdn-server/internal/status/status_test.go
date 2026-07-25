@@ -1,6 +1,7 @@
 package status
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -204,5 +205,68 @@ func TestBuildNodeStatusSetNilInputs(t *testing.T) {
 	var self nst.NodeStatus
 	if !set.Nodes(&self, 0) || !self.IsSelf() {
 		t.Error("self node missing or IS_SELF false")
+	}
+}
+
+func TestBuildNodeStatusSetPeerFallbackGeoAndVCard(t *testing.T) {
+	peerDecoded, err := peer.Decode(peerIDFixture)
+	if err != nil {
+		t.Fatalf("decode peer id: %v", err)
+	}
+
+	// The live peerstore only knows a relay/private addr for the peer; the
+	// bootstrap fallback carries its public IP. VCard derives from the
+	// TrustedPeer itself.
+	in := Input{
+		SelfPeerID: selfPeerIDFixture,
+		Observed: []*peers.TrustedPeer{
+			{
+				ID:           peerDecoded,
+				Name:         "Peer DN",
+				Organization: "Peer Org",
+				TrustLevel:   peers.Standard,
+				Addrs:        mustAddrs(t, "/ip4/10.0.0.7/tcp/4001"),
+			},
+		},
+		Geo: stubGeo{
+			ip:  "81.2.69.142",
+			loc: geoip.Location{Lat: 51.5142, Lon: -0.0931, Country: "United Kingdom", City: "London"},
+		},
+		FallbackAddrs: map[string][]string{
+			peerIDFixture: {"/ip4/81.2.69.142/tcp/4001"},
+		},
+		Now: time.UnixMilli(1_700_000_000_000),
+	}
+
+	buf := BuildNodeStatusSet(in)
+	set := nst.GetSizePrefixedRootAsNodeStatusSet(buf, 0)
+
+	var row nst.NodeStatus
+	found := false
+	for i := 0; i < set.NodesLength(); i++ {
+		if set.Nodes(&row, i) && string(row.PeerId()) == peerIDFixture {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("peer row not found")
+	}
+	if row.Lat() == 0 || row.Lon() == 0 {
+		t.Errorf("fallback geo not applied: lat=%v lon=%v", row.Lat(), row.Lon())
+	}
+	if string(row.GeoCity()) != "London" {
+		t.Errorf("GEO_CITY = %q, want London", string(row.GeoCity()))
+	}
+	vcard := string(row.Vcard())
+	if !strings.Contains(vcard, "BEGIN:VCARD") || !strings.Contains(vcard, "Peer DN") {
+		t.Errorf("peer VCARD not populated from TrustedPeer: %q", vcard)
+	}
+	// Emitted addrs must remain the peerstore's, never the fallback list.
+	if row.MultiformatAddressLength() != 1 {
+		t.Fatalf("addrs length = %d, want 1", row.MultiformatAddressLength())
+	}
+	if got := string(row.MultiformatAddress(0)); got != "/ip4/10.0.0.7/tcp/4001" {
+		t.Errorf("emitted addr = %q, want the peerstore addr", got)
 	}
 }

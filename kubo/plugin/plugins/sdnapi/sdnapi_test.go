@@ -10,7 +10,6 @@ import (
 
 	sdnapihttp "github.com/ipfs/kubo/sdn/sdnapi"
 	"github.com/ipfs/kubo/sdn/sdnflows"
-	"github.com/ipfs/kubo/sdn/sdnui"
 )
 
 func TestFlowInstallerImplementsArtifactRuntimeNodeReader(t *testing.T) {
@@ -90,7 +89,7 @@ func TestRootHandlerRoutesUIAndAPI(t *testing.T) {
 	flows := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(flowsMarker + " " + r.URL.Path))
 	})
-	root := newRootHandler(api, sdnui.Handler(), creds, nodeEPM, flows)
+	root := newRootHandler(api, creds, nodeEPM, flows)
 
 	// The flow-platform subtree wins over the "/" console catch-all and reaches
 	// the flow handler with the full path intact (the editor $APP posts here).
@@ -143,23 +142,17 @@ func TestRootHandlerRoutesUIAndAPI(t *testing.T) {
 		}
 	}
 
-	// Root serves the console app shell.
-	rec = httptest.NewRecorder()
-	root.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET / code = %d, want 200", rec.Code)
-	}
-	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
-		t.Errorf("GET / content-type = %q, want text/html", ct)
-	}
-	if !strings.Contains(rec.Body.String(), "app-shell") {
-		t.Errorf("GET / did not serve the console app shell")
-	}
-
-	// Console assets are served, not routed to the API.
-	rec = httptest.NewRecorder()
-	root.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/app.js", nil))
-	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), apiMarker) {
-		t.Errorf("GET /app.js -> code=%d, want console asset (not API)", rec.Code)
+	// The operator console was retired: "/" and former console asset paths are
+	// no longer served by this plugin — they 404 from the mux (the node's
+	// user-facing homepage is served by the sdn-server daemon, not here).
+	for _, path := range []string{"/", "/app.js", "/styles.css", "/index.html"} {
+		rec = httptest.NewRecorder()
+		root.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s code = %d, want 404 (console retired)", path, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), apiMarker) {
+			t.Errorf("GET %s leaked to the API handler", path)
+		}
 	}
 }
