@@ -13,6 +13,10 @@
       "types": "./dist/ui/index.d.ts",
       "import": "./dist/ui/index.mjs"
     },
+    "./status": {
+      "types": "./dist/status/index.d.ts",
+      "import": "./dist/status/index.mjs"
+    },
     "./storefront": {
       "types": "./dist/storefront/index.d.ts",
       "import": "./dist/storefront/index.mjs"

@@ -128,6 +128,7 @@ describe('sdn-js package build', () => {
     expect(modules.map((modulePath) => path.relative(DIST_PATH, modulePath))).toEqual([
       'astro/index.mjs',
       'index.mjs',
+      'status/index.mjs',
       'storefront/index.mjs',
       'ui/index.mjs',
     ]);
@@ -140,6 +141,8 @@ describe('sdn-js package build', () => {
     expect(packageJson.exports?.['.']?.import).toBe('./dist/index.mjs');
     expect(packageJson.exports?.['./ui']?.import).toBe('./dist/ui/index.mjs');
     expect(packageJson.exports?.['./ui']?.types).toBe('./dist/ui/index.d.ts');
+    expect(packageJson.exports?.['./status']?.import).toBe('./dist/status/index.mjs');
+    expect(packageJson.exports?.['./status']?.types).toBe('./dist/status/index.d.ts');
     expect(packageJson.exports?.['./storefront']?.import).toBe('./dist/storefront/index.mjs');
     expect(packageJson.exports?.['./storefront']?.types).toBe('./dist/storefront/index.d.ts');
     expect(packageJson.exports?.['./astro']?.import).toBe('./dist/astro/index.mjs');
