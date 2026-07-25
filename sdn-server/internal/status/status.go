@@ -111,6 +111,12 @@ func BuildNodeStatusSet(in Input) []byte {
 		StandardsVersion: in.StandardsVersion,
 	}
 	self.applyGeo(in.Geo)
+	if self.Lat == 0 && self.Lon == 0 {
+		// A node fronted by relays/CDN has no direct public addr of its own;
+		// fall back to its curated bootstrap addrs (self is a bootstrap peer
+		// on prod hosts).
+		self.applyGeoFromAddrs(in.Geo, in.FallbackAddrs[selfPeerID])
+	}
 	rows = append(rows, self)
 
 	for _, tp := range in.Observed {
