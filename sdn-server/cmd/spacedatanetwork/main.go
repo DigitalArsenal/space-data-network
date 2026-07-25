@@ -1740,8 +1740,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					// Tunnel secure websocket upgrades to the local libp2p ws listener.
 					// This bypasses adminSecurityMiddleware entirely: it is a raw
-					// proxy passthrough, not a normal admin-mux response.
-					if wsUpgradeProxy != nil && isWebSocketUpgradeRequest(r) {
+					// proxy passthrough, not a normal admin-mux response. The admin
+					// mux's OWN websocket endpoints (/ws pubsub bridge, /ws/status
+					// telemetry) must never be tunneled — without this exemption
+					// every ws client on a TLS admin listener gets a libp2p
+					// multistream banner instead of the endpoint it dialed.
+					if wsUpgradeProxy != nil && isWebSocketUpgradeRequest(r) && !isAdminWebSocketPath(r.URL.Path) {
 						wsUpgradeProxy.ServeHTTP(w, r)
 						return
 					}
@@ -2667,6 +2671,16 @@ func defaultPortForScheme(scheme string) string {
 		return "80"
 	}
 	return ""
+}
+
+// isAdminWebSocketPath reports whether the path is a websocket endpoint served
+// by the admin mux itself rather than the libp2p ws transport tunnel.
+func isAdminWebSocketPath(path string) bool {
+	switch strings.TrimSuffix(path, "/") {
+	case "/ws", "/ws/status":
+		return true
+	}
+	return false
 }
 
 func isWebSocketUpgradeRequest(r *http.Request) bool {
