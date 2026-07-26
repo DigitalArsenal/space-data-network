@@ -95,4 +95,10 @@
     margin-left: 4px;
   }
   .body { overflow: auto; padding: 14px 18px 18px; }
+  /* Phones: the modal takes the whole screen so its content and close
+     button are never clipped by the cramped viewport. */
+  @media (max-width: 760px) {
+    .overlay { padding: 0; }
+    .modal { width: 100%; max-height: 100dvh; height: 100dvh; }
+  }
 </style>

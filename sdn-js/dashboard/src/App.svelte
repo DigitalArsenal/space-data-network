@@ -311,12 +311,14 @@
       accent={theme.cyan}
     >
       {#snippet right()}
-        {#if connected}
-          <StatusChip label="FEED LIVE" color={theme.green} />
-          <StatusChip label={`${onlinePeers}/${totalPeers} PEERS ONLINE`} color={theme.ice} dot={false} />
-        {:else}
-          <StatusChip label="CONNECTING" color={theme.amber} />
-        {/if}
+        <span class="hdr-status">
+          {#if connected}
+            <StatusChip label="FEED LIVE" color={theme.green} />
+            <StatusChip label={`${onlinePeers}/${totalPeers} PEERS ONLINE`} color={theme.ice} dot={false} />
+          {:else}
+            <StatusChip label="CONNECTING" color={theme.amber} />
+          {/if}
+        </span>
         {#if session}
           <!-- The key's fingerprint is the ONE identifier that survives a
                reload (§4/§6b); the dot marks a key still unlocked in this
@@ -709,6 +711,51 @@
     font-size: 16.5px;
     letter-spacing: 0.06em;
     max-width: 560px;
+  }
+
+  .hdr-status { display: contents; }
+
+  /* Narrow screens (owner report: taps landing on clipped targets): the
+     desktop half-and-half no-scroll layout collapses tap targets into
+     140px strips. On phones the page scrolls naturally instead: panels
+     take their content height, the table shows its 5 rows fully, the
+     globe gets a fixed workable height. Desktop is untouched. */
+  @media (max-width: 760px) {
+    .body {
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 12px 12px 24px;
+    }
+    .stack {
+      flex: none;
+      min-height: auto;
+    }
+    .table-panel {
+      flex: none;
+      min-height: auto;
+      max-height: none;
+    }
+    .globe-panel {
+      flex: none;
+      height: 340px;
+      min-height: 340px;
+    }
+    .self-page {
+      flex: none;
+      min-height: auto;
+      overflow: visible;
+    }
+    .toolbar {
+      gap: 10px;
+    }
+    .search {
+      flex-basis: 100%;
+      max-width: none;
+    }
+    /* The header's right side can't fit the status chips AND the session
+       control on a phone — the actionable control wins; the same counts
+       live in the meta line anyway. */
+    .hdr-status { display: none; }
   }
   .empty .glyph { font-size: 21px; }
 </style>

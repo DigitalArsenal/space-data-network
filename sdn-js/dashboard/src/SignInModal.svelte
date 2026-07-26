@@ -165,6 +165,10 @@
     z-index: 50;
     padding: 28px;
   }
+  @media (max-width: 760px) {
+    .overlay { padding: 0; }
+    .modal { width: 100%; max-height: 100dvh; height: 100dvh; }
+  }
   .modal {
     width: min(560px, 100%);
     max-height: min(88vh, 760px);
