@@ -3,16 +3,32 @@
 package vcard
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"strconv"
 	"strings"
 
 	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	"github.com/emersion/go-vcard"
 )
+
+// epmCIDString computes the canonical CIDv1(raw, sha2-256) of a serialized
+// EPM — the same identity epm.ComputeEPMCID publishes (duplicated here to
+// avoid an import cycle; both are locked to the same construction).
+func epmCIDString(epmBytes []byte) (string, error) {
+	hash := sha256.Sum256(epmBytes)
+	multihash, err := mh.Encode(hash[:], mh.SHA2_256)
+	if err != nil {
+		return "", err
+	}
+	return cid.NewCidV1(cid.Raw, multihash).String(), nil
+}
 
 // Errors
 var (
@@ -35,6 +51,29 @@ const (
 	ethereumAliasDomain     = "ethereum.spacedatanetwork.org"
 	solanaAliasDomain       = "solana.spacedatanetwork.org"
 	vcardFoldLineLimitBytes = 74
+
+	// Owner rule (graph task nst-qr-identity-verify): vCard v3 importers
+	// (iPhone/Android) drop X-* properties, so EVERY piece of the EPM
+	// verification chain must ride in EMAIL aliases shaped
+	// <value>@<kind>.spacedatanetwork.org. The kinds below complete the
+	// chain the existing signing/encryption/xpub/chain aliases started:
+	// sign/encrypt carry the keys' HD derivation paths (base64url — path
+	// characters are not email-safe), epmsig/epmts carry the EPM record's
+	// embedded signature (base64url of the raw bytes) and its timestamp,
+	// and epmcid carries the canonical CID of the serialized record. An
+	// importer can then fetch the record (by CID or /identity/<peer>.epm),
+	// derive the signing public key from the xpub at the sign path, match
+	// it against the record's KEYS, and verify the signature.
+	signPathAliasDomain    = "sign.spacedatanetwork.org"
+	encryptPathAliasDomain = "encrypt.spacedatanetwork.org"
+	epmSigAliasDomain      = "epmsig.spacedatanetwork.org"
+	epmTsAliasDomain       = "epmts.spacedatanetwork.org"
+	epmCidAliasDomain      = "epmcid.spacedatanetwork.org"
+	xpubAliasDomain        = "xpub.spacedatanetwork.org"
+	// PeerAliasDomain carries the libp2p peer id for nodes that have not
+	// published an EPM yet (their compact card would otherwise hold no
+	// machine identity at all).
+	PeerAliasDomain = "peer.spacedatanetwork.org"
 )
 
 // EPMToVCard converts an EPM FlatBuffer to an iPhone-compatible vCard 3.0 string.
@@ -190,11 +229,17 @@ func AppleIdentityLinesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM b
 	}
 
 	lines := make([]string, 0, len(entries)*3)
+	seenAlias := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
 		if entry.EmailDomain == "" || entry.EmailType == "" || !isSafeEmailLocalPart(entry.Value) {
 			continue
 		}
-		lines = append(lines, foldVCardLine("EMAIL;type=INTERNET;type="+entry.EmailType+":"+entry.Value+"@"+entry.EmailDomain))
+		line := foldVCardLine("EMAIL;type=INTERNET;type=" + entry.EmailType + ":" + entry.Value + "@" + entry.EmailDomain)
+		if _, ok := seenAlias[line]; ok {
+			continue
+		}
+		seenAlias[line] = struct{}{}
+		lines = append(lines, line)
 	}
 
 	item := 1
@@ -214,15 +259,24 @@ func AppleIdentityLinesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM b
 }
 
 // AppleIdentityEmailAliasLinesFromEPM returns only the iPhone-visible email
-// aliases for EPM public keys and chain addresses. This is intentionally
-// smaller than AppleIdentityLinesFromEPM for QR payloads.
-func AppleIdentityEmailAliasLinesFromEPM(epm *EPM.EPM) []string {
+// aliases for EPM identity material. When kinds are given, only those alias
+// kinds are kept (used by the compact QR card to hold the verification chain
+// without the bulkier public-key aliases). Pass epmBytes to include the
+// epmcid alias.
+func AppleIdentityEmailAliasLinesFromEPM(epm *EPM.EPM, epmBytes []byte, kinds ...string) []string {
 	if epm == nil {
 		return nil
 	}
-	entries := appleIdentityEntriesFromEPM(epm, nil, false)
+	entries := appleIdentityEntriesFromEPM(epm, epmBytes, false)
 	if len(entries) == 0 {
 		return nil
+	}
+	var allowed map[string]struct{}
+	if len(kinds) > 0 {
+		allowed = make(map[string]struct{}, len(kinds))
+		for _, k := range kinds {
+			allowed[k] = struct{}{}
+		}
 	}
 
 	lines := make([]string, 0, len(entries))
@@ -230,6 +284,11 @@ func AppleIdentityEmailAliasLinesFromEPM(epm *EPM.EPM) []string {
 	for _, entry := range entries {
 		if entry.EmailDomain == "" || entry.EmailType == "" || !isSafeEmailLocalPart(entry.Value) {
 			continue
+		}
+		if allowed != nil {
+			if _, ok := allowed[entry.EmailType]; !ok {
+				continue
+			}
 		}
 		line := foldVCardLine("EMAIL;type=INTERNET;type=" + entry.EmailType + ":" + entry.Value + "@" + entry.EmailDomain)
 		if _, ok := seen[line]; ok {
@@ -240,6 +299,120 @@ func AppleIdentityEmailAliasLinesFromEPM(epm *EPM.EPM) []string {
 	}
 
 	return lines
+}
+
+// CompactQRVCardKinds is the alias-kind allowlist for scannable QR cards:
+// the complete EPM verification chain (xpub → derivation paths → signature
+// → timestamp → record CID) without the bulk public-key/chain aliases that
+// are recoverable from the record itself.
+var CompactQRVCardKinds = []string{"xpub", "sign", "encrypt", "epmsig", "epmts", "epmcid"}
+
+// CompactQRVCard builds the scannable VERSION:3.0 contact card for an EPM:
+// structured name + human contact fields (email, phone, work address) plus
+// the verification-chain email aliases. This is the card behind every node
+// QR — self and observed peers alike — so iPhone/Android imports carry both
+// the human identity and the machine identity.
+func CompactQRVCard(epmBytes []byte) (string, error) {
+	if len(epmBytes) == 0 {
+		return "", ErrEmptyEPM
+	}
+	if !EPM.SizePrefixedEPMBufferHasIdentifier(epmBytes) {
+		return "", ErrInvalidEPM
+	}
+	epm := EPM.GetSizePrefixedRootAsEPM(epmBytes, 0)
+
+	displayName := strings.TrimSpace(safeString(epm.DN()))
+	if displayName == "" {
+		displayName = strings.TrimSpace(safeString(epm.LEGAL_NAME()))
+	}
+	// Default node DNs embed libp2p's "<peer.ID 16*abc123>" short form —
+	// ugly on a phone contact and a peer-id leak; neutralize it.
+	if displayName == "" || strings.Contains(displayName, "<peer.ID") {
+		displayName = "SDN Node"
+	}
+	familyName := strings.TrimSpace(safeString(epm.FAMILY_NAME()))
+	givenName := strings.TrimSpace(safeString(epm.GIVEN_NAME()))
+	additionalName := strings.TrimSpace(safeString(epm.ADDITIONAL_NAME()))
+	honorificPrefix := strings.TrimSpace(safeString(epm.HONORIFIC_PREFIX()))
+	honorificSuffix := strings.TrimSpace(safeString(epm.HONORIFIC_SUFFIX()))
+	if familyName+givenName+additionalName+honorificPrefix+honorificSuffix == "" {
+		givenName = displayName
+	}
+	joinComponents := func(values ...string) string {
+		escaped := make([]string, len(values))
+		for i, v := range values {
+			escaped[i] = escapeVCardText(v)
+		}
+		return strings.Join(escaped, ";")
+	}
+
+	lines := []string{
+		"BEGIN:VCARD",
+		"VERSION:3.0",
+		"N:" + joinComponents(familyName, givenName, additionalName, honorificPrefix, honorificSuffix),
+		"FN:" + escapeVCardText(displayName),
+	}
+	if org := strings.TrimSpace(safeString(epm.LEGAL_NAME())); org != "" && org != displayName {
+		lines = append(lines, "ORG:"+escapeVCardText(org))
+	}
+	if email := strings.TrimSpace(safeString(epm.EMAIL())); email != "" {
+		lines = append(lines, "EMAIL:"+escapeVCardText(email))
+	}
+	if tel := strings.TrimSpace(safeString(epm.TELEPHONE())); tel != "" {
+		lines = append(lines, "TEL:"+escapeVCardText(tel))
+	}
+	address := new(EPM.Address)
+	if epm.ADDRESS(address) != nil {
+		addressValues := []string{
+			strings.TrimSpace(safeString(address.POST_OFFICE_BOX_NUMBER())),
+			"",
+			strings.TrimSpace(safeString(address.STREET())),
+			strings.TrimSpace(safeString(address.LOCALITY())),
+			strings.TrimSpace(safeString(address.REGION())),
+			strings.TrimSpace(safeString(address.POSTAL_CODE())),
+			strings.TrimSpace(safeString(address.COUNTRY())),
+		}
+		if strings.Join(addressValues, "") != "" {
+			lines = append(lines, "ADR;TYPE=WORK:"+joinComponents(addressValues...))
+		}
+	}
+	// Contact lines fold here; the alias lines arrive pre-folded from
+	// AppleIdentityEmailAliasLinesFromEPM (re-folding a folded line would
+	// corrupt it).
+	for i, line := range lines {
+		lines[i] = foldVCardLine(line)
+	}
+	lines = append(lines, AppleIdentityEmailAliasLinesFromEPM(epm, epmBytes, CompactQRVCardKinds...)...)
+	lines = append(lines, "END:VCARD")
+	return strings.Join(lines, "\r\n") + "\r\n", nil
+}
+
+// CompactQRVCardForPeer builds the minimal scannable card for a peer that
+// has NOT published an EPM: a clean display name plus the peer-id alias so
+// the import still carries machine-usable identity.
+func CompactQRVCardForPeer(displayName, peerID string) string {
+	name := strings.TrimSpace(displayName)
+	if name == "" || strings.HasPrefix(name, "<peer.ID") {
+		short := peerID
+		if len(short) > 8 {
+			short = short[len(short)-8:]
+		}
+		name = "SDN Node " + short
+	}
+	lines := []string{
+		"BEGIN:VCARD",
+		"VERSION:3.0",
+		"N:;" + escapeVCardText(name) + ";;;",
+		"FN:" + escapeVCardText(name),
+	}
+	if isSafeEmailLocalPart(peerID) {
+		lines = append(lines, "EMAIL;type=INTERNET;type=peer:"+peerID+"@"+PeerAliasDomain)
+	}
+	lines = append(lines, "END:VCARD")
+	for i, line := range lines {
+		lines[i] = foldVCardLine(line)
+	}
+	return strings.Join(lines, "\r\n") + "\r\n"
 }
 
 func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM bool) []appleIdentityLine {
@@ -257,6 +430,7 @@ func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM
 
 		addressType := strings.TrimSpace(string(key.ADDRESS_TYPE()))
 		keyPath := strings.TrimSpace(string(key.KEY_ADDRESS()))
+		pathAlias := base64.RawURLEncoding.EncodeToString([]byte(keyPath))
 		switch key.KEY_TYPE() {
 		case EPM.KeyTypeSigning:
 			entries = append(entries, appleIdentityLine{
@@ -265,6 +439,14 @@ func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM
 				EmailType:   "signing",
 				EmailDomain: signingAliasDomain,
 			})
+			if keyPath != "" {
+				entries = append(entries, appleIdentityLine{
+					Label:       joinedLabel("Signing Key Derivation Path", addressType, keyPath),
+					Value:       pathAlias,
+					EmailType:   "sign",
+					EmailDomain: signPathAliasDomain,
+				})
+			}
 		case EPM.KeyTypeEncryption:
 			entries = append(entries, appleIdentityLine{
 				Label:       joinedLabel("Public Key Encryption", addressType, keyPath),
@@ -272,6 +454,14 @@ func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM
 				EmailType:   "encryption",
 				EmailDomain: encryptionAliasDomain,
 			})
+			if keyPath != "" {
+				entries = append(entries, appleIdentityLine{
+					Label:       joinedLabel("Encryption Key Derivation Path", addressType, keyPath),
+					Value:       pathAlias,
+					EmailType:   "encrypt",
+					EmailDomain: encryptPathAliasDomain,
+				})
+			}
 		default:
 			entries = append(entries, appleIdentityLine{
 				Label: joinedLabel("Public Key", addressType, keyPath),
@@ -281,8 +471,10 @@ func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM
 
 		if xpub := strings.TrimSpace(string(key.XPUB())); xpub != "" {
 			entries = append(entries, appleIdentityLine{
-				Label: joinedLabel("Extended Public Key", addressType, keyPath),
-				Value: xpub,
+				Label:       joinedLabel("Extended Public Key", addressType, keyPath),
+				Value:       xpub,
+				EmailType:   "xpub",
+				EmailDomain: xpubAliasDomain,
 			})
 		}
 	}
@@ -311,12 +503,34 @@ func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM
 			Label: "EPM Signature",
 			Value: signature,
 		})
+		// Alias form: base64url of the raw signature bytes (hex is not a
+		// compact email local part; b64url is email-safe).
+		if sigBytes, err := hex.DecodeString(signature); err == nil && len(sigBytes) > 0 {
+			entries = append(entries, appleIdentityLine{
+				Label:       "EPM Signature",
+				Value:       base64.RawURLEncoding.EncodeToString(sigBytes),
+				EmailType:   "epmsig",
+				EmailDomain: epmSigAliasDomain,
+			})
+		}
 	}
 	if ts := epm.SIGNATURE_TIMESTAMP(); ts != 0 {
 		entries = append(entries, appleIdentityLine{
-			Label: "EPM Signature Timestamp",
-			Value: strconv.FormatInt(ts, 10),
+			Label:       "EPM Signature Timestamp",
+			Value:       strconv.FormatInt(ts, 10),
+			EmailType:   "epmts",
+			EmailDomain: epmTsAliasDomain,
 		})
+	}
+	if len(epmBytes) > 0 {
+		if epmCid, err := epmCIDString(epmBytes); err == nil {
+			entries = append(entries, appleIdentityLine{
+				Label:       "EPM CID",
+				Value:       epmCid,
+				EmailType:   "epmcid",
+				EmailDomain: epmCidAliasDomain,
+			})
+		}
 	}
 	if includeBinaryEPM && len(epmBytes) > 0 {
 		entries = append(entries, appleIdentityLine{
@@ -384,16 +598,30 @@ func isSafeEmailLocalPart(value string) bool {
 }
 
 func insertRawVCardLines(vcardStr string, lines []string) string {
+	return insertRawVCardLinesCRLF(vcardStr, lines)
+}
+
+// insertRawVCardLinesCRLF splices lines before END:VCARD and emits strict
+// CRLF line endings — vCard 3.0 importers (iOS in particular) expect CRLF
+// throughout; the previous implementation left the body \n-separated.
+func insertRawVCardLinesCRLF(vcardStr string, lines []string) string {
 	if len(lines) == 0 {
-		return vcardStr
+		if strings.Contains(vcardStr, "\r\n") {
+			return vcardStr
+		}
+		return strings.ReplaceAll(strings.TrimRight(vcardStr, "\n"), "\n", "\r\n") + "\r\n"
 	}
 	normalized := strings.ReplaceAll(strings.TrimSpace(vcardStr), "\r\n", "\n")
-	insert := strings.Join(lines, "\r\n")
+	insert := strings.ReplaceAll(strings.Join(lines, "\n"), "\r\n", "\n")
+	var out string
 	if strings.Contains(normalized, "\nEND:VCARD") {
-		return strings.Replace(normalized, "\nEND:VCARD", "\r\n"+insert+"\r\nEND:VCARD", 1) + "\r\n"
+		out = strings.Replace(normalized, "\nEND:VCARD", "\n"+insert+"\nEND:VCARD", 1)
+	} else {
+		out = strings.TrimRight(normalized, "\n") + "\n" + insert + "\nEND:VCARD"
 	}
-	return strings.TrimRight(normalized, "\n") + "\r\n" + insert + "\r\nEND:VCARD\r\n"
+	return strings.ReplaceAll(out, "\n", "\r\n") + "\r\n"
 }
+
 
 func foldVCardLine(line string) string {
 	if len(line) <= vcardFoldLineLimitBytes {

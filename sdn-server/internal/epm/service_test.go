@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
+	"strconv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -507,14 +508,14 @@ func TestNodeQRUsesCompactContactAndXPubVCard(t *testing.T) {
 			t.Fatalf("QR vCard missing %q: %s", required, qrVCard)
 		}
 	}
-	xpubAlias := "EMAIL;TYPE=INTERNET;TYPE=xpub:" + xpub + "@xpub.spacedatanetwork.org"
+	xpubAlias := "EMAIL;type=INTERNET;type=xpub:" + xpub + "@xpub.spacedatanetwork.org"
 	if got := strings.Count(unfolded, xpubAlias); got != 1 {
 		t.Fatalf("QR vCard xpub alias count = %d, want 1: %s", got, qrVCard)
 	}
-	// Owner directive 2026-07-25 (nst-dashboard-table #12): the scannable
-	// card also carries the HD signing/encryption derivation paths as
-	// base64url email aliases so an importer can derive the verification
-	// keys for the signed EPM from the xpub.
+	// Owner directive (nst-qr-identity-verify): the scannable card carries
+	// the COMPLETE verification chain as email aliases — the keys' HD
+	// derivation paths (base64url of the EPM KEYS' KEY_ADDRESS), the EPM
+	// record's embedded signature + timestamp, and the record CID.
 	for kind, path := range map[string]string{
 		"sign":    identity.SigningKeyPath,
 		"encrypt": identity.EncryptionKeyPath,
@@ -524,6 +525,30 @@ func TestNodeQRUsesCompactContactAndXPubVCard(t *testing.T) {
 		if got := strings.Count(unfolded, alias); got != 1 {
 			t.Fatalf("QR vCard %s alias count = %d, want 1: %s", kind, got, qrVCard)
 		}
+	}
+	epmBytes := service.GetNodeEPM()
+	epmRecord := EPM.GetSizePrefixedRootAsEPM(epmBytes, 0)
+	sigBytes, err := hex.DecodeString(strings.TrimSpace(string(epmRecord.SIGNATURE())))
+	if err != nil || len(sigBytes) == 0 {
+		t.Fatalf("test EPM has no decodable signature: %v", err)
+	}
+	sigAlias := "EMAIL;type=INTERNET;type=epmsig:" +
+		base64.RawURLEncoding.EncodeToString(sigBytes) + "@epmsig.spacedatanetwork.org"
+	if !strings.Contains(unfolded, sigAlias) {
+		t.Fatalf("QR vCard missing EPM signature alias %q: %s", sigAlias, qrVCard)
+	}
+	tsAlias := "EMAIL;type=INTERNET;type=epmts:" +
+		strconv.FormatInt(epmRecord.SIGNATURE_TIMESTAMP(), 10) + "@epmts.spacedatanetwork.org"
+	if !strings.Contains(unfolded, tsAlias) {
+		t.Fatalf("QR vCard missing signature timestamp alias %q: %s", tsAlias, qrVCard)
+	}
+	epmCid, err := ComputeEPMCID(epmBytes)
+	if err != nil {
+		t.Fatalf("ComputeEPMCID failed: %v", err)
+	}
+	cidAlias := "EMAIL;type=INTERNET;type=epmcid:" + epmCid + "@epmcid.spacedatanetwork.org"
+	if !strings.Contains(unfolded, cidAlias) {
+		t.Fatalf("QR vCard missing EPM CID alias %q: %s", cidAlias, qrVCard)
 	}
 	for _, forbidden := range []string{
 		"PRODID", "ORG:", "TITLE:", "ROLE:", "UID:", "X-SDN-", "X-ABRELATEDNAMES:",
@@ -535,11 +560,11 @@ func TestNodeQRUsesCompactContactAndXPubVCard(t *testing.T) {
 			t.Fatalf("QR vCard contains forbidden %q: %s", forbidden, qrVCard)
 		}
 	}
-	// Density budget: contact fields + xpub + two path aliases. Was 512
-	// before the derivation-path directive; the two extra alias lines cost
-	// ~150 folded bytes.
-	if got := len([]byte(qrVCard)); got > 700 {
-		t.Fatalf("QR vCard is %d bytes, want <= 700: %s", got, qrVCard)
+	// Density budget: contact fields + the verification chain (xpub 111B +
+	// two b64url paths + sig 86B + timestamp + CID 59B, folded). Still a
+	// comfortably scannable QR (~byte-mode version 25 at EC-M).
+	if got := len([]byte(qrVCard)); got > 1400 {
+		t.Fatalf("QR vCard is %d bytes, want <= 1400: %s", got, qrVCard)
 	}
 	for _, line := range strings.Split(strings.TrimSuffix(qrVCard, "\r\n"), "\r\n") {
 		if got := len([]byte(line)); got > 75 {
