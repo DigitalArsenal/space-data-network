@@ -109,6 +109,7 @@ const MACHINE_PROPS = new Set(['X-SDN-MULTIADDR', 'X-SDN-PEER-ID']);
 const ALIAS_DOMAIN_SUFFIX = '.spacedatanetwork.org';
 const PATH_ALIAS_KINDS = new Set(['sign', 'encrypt']);
 const ADDRESS_ALIAS_KINDS = new Set(['bitcoin', 'ethereum', 'solana']);
+const PUBKEY_ALIAS_KINDS = new Set(['signing', 'encryption']);
 
 /** base64url (raw, unpadded) → string, null if invalid. */
 export function decodeB64Url(value) {
@@ -137,19 +138,44 @@ export function isAliasEmail(prop) {
   return prop.name === 'EMAIL' && aliasParts(prop.value) !== null;
 }
 
+/** b64url → lowercase hex (for displaying the EPM signature); null on error. */
+export function b64UrlToHex(value) {
+  const raw = decodeB64Url(value);
+  if (raw === null) return null;
+  let hexOut = '';
+  for (let i = 0; i < raw.length; i += 1) hexOut += raw.charCodeAt(i).toString(16).padStart(2, '0');
+  return hexOut;
+}
+
 /**
- * Pull the SDN identity out of parsed props: xpub, decoded sign/encrypt
- * derivation paths, chain addresses, peer id, EPM CID.
+ * Pull the SDN identity out of parsed props — the complete verification
+ * chain the email aliases carry (owner rule): xpub, decoded sign/encrypt
+ * derivation paths, signing/encryption public keys, the EPM signature +
+ * timestamp + CID, chain addresses, peer id.
  * @param {VCardProp[]} props
  */
 export function extractIdentity(props) {
-  const id = { xpub: '', signPath: '', encryptPath: '', addresses: {}, peerId: '', epmCid: '' };
+  const id = {
+    xpub: '',
+    signPaths: [],
+    encryptPaths: [],
+    signingKeys: [],
+    encryptionKeys: [],
+    epmSignature: '',
+    epmSignedAt: '',
+    epmCid: '',
+    addresses: {},
+    peerId: '',
+  };
+  const push = (list, v) => {
+    if (v && !list.includes(v)) list.push(v);
+  };
   for (const p of props) {
     if (p.name === 'X-SDN-PEER-ID') {
       id.peerId = p.value;
       continue;
     }
-    if (p.name === 'X-SDN-EPM-CID') {
+    if (p.name === 'X-SDN-EPM-CID' && !id.epmCid) {
       id.epmCid = p.value;
       continue;
     }
@@ -157,10 +183,15 @@ export function extractIdentity(props) {
     const alias = aliasParts(p.value);
     if (!alias) continue;
     if (alias.kind === 'xpub') id.xpub = alias.local;
+    else if (alias.kind === 'peer' && !id.peerId) id.peerId = alias.local;
+    else if (alias.kind === 'epmcid') id.epmCid = alias.local;
+    else if (alias.kind === 'epmts') id.epmSignedAt = alias.local;
+    else if (alias.kind === 'epmsig') id.epmSignature = b64UrlToHex(alias.local) ?? alias.local;
     else if (PATH_ALIAS_KINDS.has(alias.kind)) {
       const decoded = decodeB64Url(alias.local) ?? alias.local;
-      if (alias.kind === 'sign') id.signPath = decoded;
-      else id.encryptPath = decoded;
+      push(alias.kind === 'sign' ? id.signPaths : id.encryptPaths, decoded);
+    } else if (PUBKEY_ALIAS_KINDS.has(alias.kind)) {
+      push(alias.kind === 'signing' ? id.signingKeys : id.encryptionKeys, alias.local);
     } else if (ADDRESS_ALIAS_KINDS.has(alias.kind)) id.addresses[alias.kind] = alias.local;
   }
   return id;

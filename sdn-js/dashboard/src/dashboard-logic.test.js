@@ -247,11 +247,34 @@ describe('identity aliases', async () => {
   it('decodes xpub, derivation paths, chain addresses, peer id, EPM CID', () => {
     const id = extractIdentity(parseVCard(CARD_ID));
     expect(id.xpub).toBe('xpub661MyMwAqRbcF');
-    expect(id.signPath).toBe("m/44'/0'/7'/0'/0'");
-    expect(id.encryptPath).toBe("m/44'/0'/7'/1'/0'");
+    expect(id.signPaths).toEqual(["m/44'/0'/7'/0'/0'"]);
+    expect(id.encryptPaths).toEqual(["m/44'/0'/7'/1'/0'"]);
     expect(id.addresses.bitcoin).toBe('bc1qexample');
     expect(id.peerId).toBe('16UiuPeer');
     expect(id.epmCid).toBe('bafyExample');
+  });
+
+  it('decodes signature-chain and pubkey aliases (owner verification rule)', () => {
+    const sigB64 = Buffer.from('a1b2c3d4', 'hex').toString('base64url');
+    const card = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'FN:Chain Node',
+      `EMAIL;type=INTERNET;type=epmsig:${sigB64}@epmsig.spacedatanetwork.org`,
+      'EMAIL;type=INTERNET;type=epmts:1785069259@epmts.spacedatanetwork.org',
+      'EMAIL;type=INTERNET;type=epmcid:bafkreichain@epmcid.spacedatanetwork.org',
+      'EMAIL;type=INTERNET;type=signing:0d80e1fd@signing.spacedatanetwork.org',
+      'EMAIL;type=INTERNET;type=encryption:0213dc85@encryption.spacedatanetwork.org',
+      'EMAIL;type=INTERNET;type=peer:16UiuAliasPeer@peer.spacedatanetwork.org',
+      'END:VCARD',
+    ].join('\r\n');
+    const id = extractIdentity(parseVCard(card));
+    expect(id.epmSignature).toBe('a1b2c3d4');
+    expect(id.epmSignedAt).toBe('1785069259');
+    expect(id.epmCid).toBe('bafkreichain');
+    expect(id.signingKeys).toEqual(['0d80e1fd']);
+    expect(id.encryptionKeys).toEqual(['0213dc85']);
+    expect(id.peerId).toBe('16UiuAliasPeer');
   });
 
   it('classifies alias vs contact emails', () => {

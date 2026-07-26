@@ -852,46 +852,23 @@ func (s *Service) GetNodeQRVCard() (string, error) {
 		return "", fmt.Errorf("HD extended public key is required for node QR: %w", err)
 	}
 
-	epmRecord := EPM.GetSizePrefixedRootAsEPM(s.epmBytes, 0)
-	displayName := nodeQRDisplayName(epmRecord)
-	familyName := stringFromBytes(epmRecord.FAMILY_NAME())
-	givenName := stringFromBytes(epmRecord.GIVEN_NAME())
-	additionalName := stringFromBytes(epmRecord.ADDITIONAL_NAME())
-	honorificPrefix := stringFromBytes(epmRecord.HONORIFIC_PREFIX())
-	honorificSuffix := stringFromBytes(epmRecord.HONORIFIC_SUFFIX())
-	if strings.TrimSpace(familyName+givenName+additionalName+honorificPrefix+honorificSuffix) == "" {
-		givenName = displayName
+	// The compact card (contact fields + the complete verification-chain
+	// email aliases sourced from the EPM record itself) is shared with the
+	// anonymous /identity/<peerId>.qr.vcf surface via internal/vcard.
+	card, err := vcard.CompactQRVCard(s.epmBytes)
+	if err != nil {
+		return "", err
 	}
-	lines := []string{
-		"BEGIN:VCARD",
-		"VERSION:3.0",
-		"N:" + joinNodeQRVCardValues(familyName, givenName, additionalName, honorificPrefix, honorificSuffix),
-		"FN:" + escapeNodeQRVCardValue(displayName),
+	// Older EPMs may lack XPUB in their KEYS entries; the node's configured
+	// xpub is authoritative, so guarantee the alias is present. Check the
+	// UNFOLDED card — RFC 6350 folding can split the domain across
+	// physical lines (the colon-anchored-needle trap).
+	if !strings.Contains(unfoldVCardText(card), "@xpub.spacedatanetwork.org") {
+		card = insertVCardLines(card, []string{
+			foldNodeQRVCardLine("EMAIL;TYPE=INTERNET;TYPE=xpub:" + xpub + "@xpub.spacedatanetwork.org"),
+		})
 	}
-	addNodeQRVCardLine(&lines, "EMAIL", stringFromBytes(epmRecord.EMAIL()))
-	addNodeQRVCardLine(&lines, "TEL", stringFromBytes(epmRecord.TELEPHONE()))
-	address := new(EPM.Address)
-	if epmRecord.ADDRESS(address) != nil {
-		addressValues := []string{
-			stringFromBytes(address.POST_OFFICE_BOX_NUMBER()),
-			"",
-			stringFromBytes(address.STREET()),
-			stringFromBytes(address.LOCALITY()),
-			stringFromBytes(address.REGION()),
-			stringFromBytes(address.POSTAL_CODE()),
-			stringFromBytes(address.COUNTRY()),
-		}
-		if strings.TrimSpace(strings.Join(addressValues, "")) != "" {
-			lines = append(lines, "ADR;TYPE=WORK:"+joinNodeQRVCardValues(addressValues...))
-		}
-	}
-	lines = append(lines, "EMAIL;TYPE=INTERNET;TYPE=xpub:"+xpub+"@xpub.spacedatanetwork.org")
-	lines = append(lines, nodeDerivationPathEmailAliasLines(s.identity)...)
-	lines = append(lines, "END:VCARD")
-	for i, line := range lines {
-		lines[i] = foldNodeQRVCardLine(line)
-	}
-	return strings.Join(lines, "\r\n") + "\r\n", nil
+	return card, nil
 }
 
 func (s *Service) decorateNodeVCardLocked(vcardStr string) string {
@@ -908,10 +885,12 @@ func (s *Service) decorateNodeVCardLocked(vcardStr string) string {
 		}
 	}
 	lines = append(lines, nodeIdentityAddressEmailAliasLines(s.identity)...)
-	if xpub := strings.TrimSpace(s.xpub); xpub != "" {
+	// The verification-chain aliases (xpub, sign/encrypt derivation paths,
+	// epmsig/epmts/epmcid) are emitted by EPMToVCard from the EPM record
+	// itself; only guarantee the xpub alias when the record's KEYS lack it.
+	if xpub := strings.TrimSpace(s.xpub); xpub != "" && !strings.Contains(unfoldVCardText(vcardStr), "@xpub.spacedatanetwork.org") {
 		lines = append(lines, "EMAIL;type=INTERNET;type=xpub:"+xpub+"@xpub.spacedatanetwork.org")
 	}
-	lines = append(lines, nodeDerivationPathEmailAliasLines(s.identity)...)
 	if s.profile != nil {
 		if photoLine := vcardPhotoLine(s.profile.PhotoDataURL); photoLine != "" {
 			lines = append(lines, photoLine)
@@ -924,12 +903,24 @@ func insertVCardLines(vcardStr string, lines []string) string {
 	if len(lines) == 0 {
 		return vcardStr
 	}
+	// Normalize to \n for splicing, then emit strict CRLF line endings —
+	// vCard 3.0 importers (iOS in particular) expect CRLF throughout.
 	normalized := strings.ReplaceAll(strings.TrimSpace(vcardStr), "\r\n", "\n")
-	insert := strings.Join(lines, "\r\n")
+	insert := strings.ReplaceAll(strings.Join(lines, "\n"), "\r\n", "\n")
+	var out string
 	if strings.Contains(normalized, "\nEND:VCARD") {
-		return strings.Replace(normalized, "\nEND:VCARD", "\r\n"+insert+"\r\nEND:VCARD", 1) + "\r\n"
+		out = strings.Replace(normalized, "\nEND:VCARD", "\n"+insert+"\nEND:VCARD", 1)
+	} else {
+		out = strings.TrimRight(normalized, "\n") + "\n" + insert + "\nEND:VCARD"
 	}
-	return strings.TrimRight(normalized, "\n") + "\r\n" + insert + "\r\nEND:VCARD\r\n"
+	return strings.ReplaceAll(out, "\n", "\r\n") + "\r\n"
+}
+
+// unfoldVCardText removes RFC 6350 line folding so substring checks see
+// logical lines (a folded line may split any needle across physical lines).
+func unfoldVCardText(vcardStr string) string {
+	unfolded := strings.ReplaceAll(vcardStr, "\r\n ", "")
+	return strings.ReplaceAll(unfolded, "\n ", "")
 }
 
 func nodeQRDisplayName(epmRecord *EPM.EPM) string {
@@ -1012,40 +1003,6 @@ func nodeIdentityAddressEmailAliasLines(identity *wasm.DerivedIdentity) []string
 	if identity.Addresses.Solana != nil {
 		if address := strings.TrimSpace(identity.Addresses.Solana.Address); address != "" {
 			lines = append(lines, "EMAIL;type=INTERNET;type=solana:"+address+"@solana.spacedatanetwork.org")
-		}
-	}
-	return lines
-}
-
-// nodeDerivationPathEmailAliasLines serializes the identity's HD derivation
-// paths as vCard-3.0-safe EMAIL aliases, following the established
-// <value>@<kind>.spacedatanetwork.org alias convention (phones drop X-
-// properties on import, so machine identity rides in EMAIL items). Owner
-// rule: the serialized EPM's digital signature is made with the signing key
-// derived at the signing path — publishing the sign/encrypt paths beside the
-// xpub alias is what lets an importer derive the verification keys. The path
-// string itself is base64url (raw, unpadded): apostrophes and slashes are
-// not email-local-part safe; UIs decode it back to the literal m/44'/…
-// form for display.
-func nodeDerivationPathEmailAliasLines(identity *wasm.DerivedIdentity) []string {
-	if identity == nil {
-		return nil
-	}
-	alias := func(kind, path string) string {
-		p := strings.TrimSpace(path)
-		if p == "" {
-			return ""
-		}
-		encoded := base64.RawURLEncoding.EncodeToString([]byte(p))
-		return "EMAIL;type=INTERNET;type=" + kind + ":" + encoded + "@" + kind + ".spacedatanetwork.org"
-	}
-	lines := make([]string, 0, 2)
-	for _, line := range []string{
-		alias("sign", identity.SigningKeyPath),
-		alias("encrypt", identity.EncryptionKeyPath),
-	} {
-		if line != "" {
-			lines = append(lines, line)
 		}
 	}
 	return lines

@@ -43,12 +43,22 @@
   const identityRows = $derived(
     [
       ['XPUB', identity.xpub, true],
-      ['SIGNING PATH', identity.signPath, false],
-      ['ENCRYPTION PATH', identity.encryptPath, false],
+      ['SIGNING PATHS', identity.signPaths.join('   ·   '), false],
+      ['ENCRYPTION PATHS', identity.encryptPaths.join('   ·   '), false],
+      ['SIGNING KEYS', identity.signingKeys.join('\n'), true],
+      ['ENCRYPTION KEYS', identity.encryptionKeys.join('\n'), true],
+      ['EPM SIGNATURE', identity.epmSignature, true],
+      [
+        'EPM SIGNED AT',
+        identity.epmSignedAt
+          ? `${identity.epmSignedAt} · ${new Date(Number(identity.epmSignedAt) * 1000).toISOString()}`
+          : '',
+        true,
+      ],
+      ['EPM CID', identity.epmCid, true],
       ['BITCOIN', identity.addresses.bitcoin, true],
       ['ETHEREUM', identity.addresses.ethereum, true],
       ['SOLANA', identity.addresses.solana, true],
-      ['EPM CID', identity.epmCid, true],
     ].filter(([, v]) => Boolean(v))
   );
 
@@ -69,15 +79,29 @@
     download(`${shortId(node.peerId).replace('…', '-')}.epm`, await res.blob());
   }
 
-  // Render the QR whenever the QR view opens (canvas mounts with the view).
+  // Render the QR whenever the QR view opens. The content is the node's
+  // SERVER-canonical compact card (/identity/<peerId>.qr.vcf — contact
+  // fields + the complete verification-chain aliases); the client-built
+  // compact card is only the offline fallback.
   $effect(() => {
     if (view !== 'qr' || !qrCanvas) return;
-    QRCode.toCanvas(qrCanvas, buildCompactVCard(node, props), {
-      errorCorrectionLevel: 'M',
-      margin: 2,
-      width: 280,
-      color: { dark: '#04060a', light: '#eaf6f8' },
-    }).catch(() => {});
+    const canvas = qrCanvas;
+    (async () => {
+      let card = '';
+      try {
+        const res = await fetch(`/identity/${node.peerId}.qr.vcf`);
+        if (res.ok) card = await res.text();
+      } catch {
+        /* fall back below */
+      }
+      if (!card.trim()) card = buildCompactVCard(node, props);
+      await QRCode.toCanvas(canvas, card, {
+        errorCorrectionLevel: 'M',
+        margin: 2,
+        width: 320,
+        color: { dark: '#04060a', light: '#eaf6f8' },
+      });
+    })().catch(() => {});
   });
 
   onMount(() => {
@@ -262,7 +286,7 @@
   .row { display: flex; gap: 14px; padding: 4px 0; align-items: baseline; }
   dt { flex: none; width: 150px; font-size: 12.5px; letter-spacing: 0.16em; }
   dd { margin: 0; font-size: 15.5px; min-width: 0; overflow-wrap: anywhere; }
-  dd.small { font-size: 12px; }
+  dd.small { font-size: 12px; white-space: pre-line; }
   .section { border-top: 1px solid; margin-top: 12px; padding-top: 11px; }
   .k { font-size: 12.5px; letter-spacing: 0.18em; margin-bottom: 7px; display: inline-block; }
   .vhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }

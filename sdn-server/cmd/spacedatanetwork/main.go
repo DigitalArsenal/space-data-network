@@ -33,6 +33,7 @@ import (
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	logging "github.com/ipfs/go-log/v2"
 	libp2phost "github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 	qrgen "github.com/skip2/go-qrcode"
@@ -1668,6 +1669,48 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				statusBroadcaster.Start()
 				adminMux.HandleFunc("/ws/status", statusBroadcaster.ServeHTTP)
 				log.Infof("Status feed available at %s://%s/ws/status (public read-only)", adminScheme, adminAddr)
+
+				// EPM exchange pump: RequestPeerEPM was previously never
+				// invoked, so observed peers' vCards stayed the sparse
+				// registry fallback (graph task nst-qr-identity-verify).
+				// Periodically request the EPM of every connected registry
+				// peer that has not published one to us yet; each stored
+				// EPM upgrades that peer's feed vCard, downloads and QR.
+				go func() {
+					const retryCooldown = time.Hour
+					lastAttempt := map[peer.ID]time.Time{}
+					ticker := time.NewTicker(2 * time.Minute)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case <-ticker.C:
+						}
+						epmSvc := n.EPMService()
+						registry := n.PeerRegistry()
+						if epmSvc == nil || registry == nil {
+							continue
+						}
+						for _, tp := range registry.ListPeers() {
+							if tp == nil || len(tp.EPMData) > 0 {
+								continue
+							}
+							if n.Host().Network().Connectedness(tp.ID) != network.Connected {
+								continue
+							}
+							if last, ok := lastAttempt[tp.ID]; ok && time.Since(last) < retryCooldown {
+								continue
+							}
+							lastAttempt[tp.ID] = time.Now()
+							go func(target peer.ID) {
+								if err := epmSvc.RequestPeerEPM(ctx, n.Host(), target); err != nil {
+									log.Debugf("epm-exchange: request to %s failed: %v", target.ShortString(), err)
+								}
+							}(tp.ID)
+						}
+					}
+				}()
 			}
 
 			// ----------------------------------------------------------------
@@ -1766,6 +1809,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					}
 					return nil
 				},
+				SelfQRVCard: func() (string, error) {
+					if svc := n.EPMService(); svc != nil {
+						return svc.GetNodeQRVCard()
+					}
+					return "", fmt.Errorf("EPM service not available")
+				},
 				PeerVCard: func(peerID string) (string, bool) {
 					tp := peerLookup(peerID)
 					if tp == nil {
@@ -1787,6 +1836,22 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						return nil, false
 					}
 					return tp.EPMData, true
+				},
+				PeerQRVCard: func(peerID string) (string, bool) {
+					tp := peerLookup(peerID)
+					if tp == nil {
+						return "", false
+					}
+					if len(tp.EPMData) > 0 {
+						if card, err := sdnvcard.CompactQRVCard(tp.EPMData); err == nil {
+							return card, true
+						}
+					}
+					name := strings.TrimSpace(tp.Name)
+					if name == "" {
+						name = strings.TrimSpace(tp.Organization)
+					}
+					return sdnvcard.CompactQRVCardForPeer(name, peerID), true
 				},
 			}))
 			adminMux.Handle("/", makeRootHandler())

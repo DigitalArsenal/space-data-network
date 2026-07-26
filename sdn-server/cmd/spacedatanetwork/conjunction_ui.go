@@ -201,8 +201,14 @@ type identitySource struct {
 	SelfID    string
 	SelfVCard func() (string, error)
 	SelfEPM   func() []byte
-	PeerVCard func(peerID string) (string, bool)
-	PeerEPM   func(peerID string) ([]byte, bool)
+	// SelfQRVCard returns the node's compact scannable card (contact fields
+	// + the complete verification-chain email aliases).
+	SelfQRVCard func() (string, error)
+	PeerVCard   func(peerID string) (string, bool)
+	PeerEPM     func(peerID string) ([]byte, bool)
+	// PeerQRVCard returns a peer's compact scannable card (from its
+	// published EPM when available, else the minimal peer-alias card).
+	PeerQRVCard func(peerID string) (string, bool)
 }
 
 // makeIdentityHandler serves node identity artifacts for the status
@@ -228,6 +234,22 @@ func makeIdentityHandler(src identitySource) http.Handler {
 		var body []byte
 		var contentType, filename string
 		switch ext {
+		case "qr.vcf":
+			var card string
+			if id == src.SelfID {
+				if src.SelfQRVCard != nil {
+					card, _ = src.SelfQRVCard()
+				}
+			} else if src.PeerQRVCard != nil {
+				card, _ = src.PeerQRVCard(id)
+			}
+			if strings.TrimSpace(card) == "" {
+				http.NotFound(w, r)
+				return
+			}
+			body = []byte(card)
+			contentType = "text/vcard; charset=utf-8"
+			filename = id + ".qr.vcf"
 		case "vcf":
 			var card string
 			if id == src.SelfID {
