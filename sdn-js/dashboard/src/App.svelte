@@ -22,6 +22,7 @@
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
   import NodeTable from './NodeTable.svelte';
   import NodeModal from './NodeModal.svelte';
+  import NodeDetail from './NodeDetail.svelte';
   import Globe from './Globe.svelte';
   import { shortId } from './format.js';
   import { TRUST_TIERS } from './trust.js';
@@ -29,7 +30,13 @@
   import { createSemanticEngine } from './semantic.js';
 
   const SECTIONS = [
-    { label: 'NETWORK', items: [{ id: 'nodes', label: 'NODES', glyph: '◍', fkey: 'N1' }] }
+    {
+      label: 'NETWORK',
+      items: [
+        { id: 'self', label: 'THIS NODE', glyph: '◉', fkey: 'N1' },
+        { id: 'nodes', label: 'NODES', glyph: '◍', fkey: 'N2' },
+      ],
+    },
   ];
 
   const HIDE_KEY = 'sdn.dashboard.hideUntrustedOffline';
@@ -45,6 +52,7 @@
   /** @type {import('../../src/status/view-model').NodeStatusSetView | null} */
   let view = $state(null);
   let now = $state(Date.now());
+  let route = $state('self');
   let query = $state('');
   let trustTier = $state('all');
   let hideUntrustedOffline = $state(readHidePref());
@@ -65,6 +73,8 @@
   globalThis.SDN_SEMANTIC = engine;
 
   const nodes = $derived(view?.nodes ?? []);
+  const selfNode = $derived(nodes.find((n) => n.isSelf) ?? null);
+  const selfTitle = $derived(selfNode ? selfNode.dn?.trim() || selfNode.org?.trim() || shortId(selfNode.peerId) : '');
   const onlinePeers = $derived(nodes.filter((n) => !n.isSelf && n.online).length);
   const totalPeers = $derived(nodes.filter((n) => !n.isSelf).length);
   const connected = $derived(view != null);
@@ -175,9 +185,13 @@
 <svelte:window onkeydown={(e) => e.key === 'Escape' && settingsOpen && (settingsOpen = false)} />
 
 <div class="root" style="background:{theme.pageGlow};color:{theme.textBody};">
-  <SdnRail sections={SECTIONS} active="nodes" onSelect={() => {}} />
+  <SdnRail sections={SECTIONS} active={route} onSelect={(id) => (route = id)} />
   <main>
-    <ConsoleHeader title="NETWORK NODES" sub="· LIVE NODE STATUS" accent={theme.cyan}>
+    <ConsoleHeader
+      title={route === 'self' ? 'THIS NODE' : 'NETWORK NODES'}
+      sub={route === 'self' ? '· NODE IDENTITY & STATUS' : '· LIVE NODE STATUS'}
+      accent={theme.cyan}
+    >
       {#snippet right()}
         {#if connected}
           <StatusChip label="FEED LIVE" color={theme.green} />
@@ -194,6 +208,33 @@
           <span class="glyph" style="color:{theme.cyan};">◍</span>
           Connecting to the node status feed (/ws/status)…
         </div>
+      {:else if route === 'self'}
+        {#if selfNode}
+          <div class="self-page">
+            <Panel variant="raised" pad="0" style="max-width:880px;">
+              <div class="self-head" style="border-color:{theme.divider};">
+                <div class="self-titles">
+                  <div class="self-dn" style="color:{theme.textBright};">{selfTitle}</div>
+                  {#if selfNode.org?.trim() && selfNode.org.trim() !== selfTitle}
+                    <div class="self-org" style="color:{theme.textDim};">{selfNode.org}</div>
+                  {/if}
+                </div>
+                <div class="self-chips">
+                  <StatusChip label="SELF" color={theme.cyan} dot={false} />
+                  <StatusChip label={selfNode.online ? 'ONLINE' : 'OFFLINE'} color={selfNode.online ? theme.green : theme.textMuted} />
+                </div>
+              </div>
+              <div class="self-body">
+                <NodeDetail node={selfNode} {now} />
+              </div>
+            </Panel>
+          </div>
+        {:else}
+          <div class="empty" style="color:{theme.textDim};border-color:{theme.hairline};">
+            <span class="glyph" style="color:{theme.cyan};">◉</span>
+            Waiting for this node's status entry…
+          </div>
+        {/if}
       {:else}
         <div class="toolbar">
           <div class="search" style="border-color:{theme.hairline};">
@@ -477,6 +518,34 @@
     line-height: 1.5;
     margin-top: 8px;
   }
+  .self-page {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    display: flex;
+    justify-content: center;
+    padding-bottom: 8px;
+  }
+  .self-page :global(> section) { width: 100%; height: fit-content; }
+  .self-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 16px 18px 13px;
+    border-bottom: 1px solid;
+  }
+  .self-titles { min-width: 0; }
+  .self-dn {
+    font-family: 'Chakra Petch', sans-serif;
+    font-weight: 600;
+    font-size: 24px;
+    letter-spacing: 0.04em;
+    overflow-wrap: anywhere;
+  }
+  .self-org { font-size: 15px; letter-spacing: 0.04em; margin-top: 3px; }
+  .self-chips { display: flex; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
+  .self-body { padding: 14px 18px 18px; }
   .empty {
     display: flex;
     align-items: center;
