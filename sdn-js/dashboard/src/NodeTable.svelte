@@ -20,13 +20,15 @@
    */
   let { rows = [], now, sortKey, sortDir, onSort, onOpen, semanticActive = false } = $props();
 
+  // wide: hidden on narrow screens (<=760px) so the remaining columns fit a
+  // phone without a nested horizontal scroller swallowing taps.
   const COLS = [
     { key: 'node', label: 'NODE' },
-    { key: 'org', label: 'ORGANIZATION' },
+    { key: 'org', label: 'ORGANIZATION', wide: true },
     { key: 'trust', label: 'TRUST' },
     { key: 'status', label: 'STATUS' },
-    { key: 'geo', label: 'GEO' },
-    { key: 'agent', label: 'AGENT' },
+    { key: 'geo', label: 'GEO', wide: true },
+    { key: 'agent', label: 'AGENT', wide: true },
     { key: 'seen', label: 'LAST SEEN' },
   ];
 
@@ -38,7 +40,7 @@
     <thead>
       <tr style="color:{theme.textMuted};border-color:{theme.panelBorder};">
         {#each COLS as col (col.key)}
-          <th onclick={() => onSort(col.key)} class:active={sortKey === col.key} style="color:{sortKey === col.key ? theme.ice : theme.textMuted};">
+          <th onclick={() => onSort(col.key)} class:active={sortKey === col.key} class:wide={col.wide} style="color:{sortKey === col.key ? theme.ice : theme.textMuted};">
             {col.label}{#if sortKey === col.key}<span class="dir">{sortDir === 1 ? '▲' : '▼'}</span>{/if}
           </th>
         {/each}
@@ -60,15 +62,15 @@
             {#if n.isSelf}<span class="tag" style="color:{theme.cyan};border-color:{theme.cyan};">SELF</span>{/if}
             <div class="pid" style="color:{theme.textFaint};">{shortId(n.peerId)}</div>
           </td>
-          <td style="color:{theme.textBody};">{n.org?.trim() || '—'}</td>
+          <td class="wide" style="color:{theme.textBody};">{n.org?.trim() || '—'}</td>
           <td><span class="trust" style="color:{trustColor(n.trustLevel)};border-color:{trustColor(n.trustLevel)};">{normalizeTrust(n.trustLevel).toUpperCase()}</span></td>
           <td>
             <span class="status" style="color:{n.online ? theme.green : theme.textMuted};">
               <i style="background:{n.online ? theme.green : theme.textMuted};"></i>{n.online ? 'ONLINE' : 'OFFLINE'}
             </span>
           </td>
-          <td style="color:{theme.textBody};">{n.geoLabel || '—'}</td>
-          <td class="mono nowrap" style="color:{theme.textDim};">{n.agent || '—'}</td>
+          <td class="wide" style="color:{theme.textBody};">{n.geoLabel || '—'}</td>
+          <td class="mono nowrap wide" style="color:{theme.textDim};">{n.agent || '—'}</td>
           <td class="mono" style="color:{theme.textBody};">{n.isSelf ? `UP ${formatUptime(n.uptimeS)}` : formatLastSeen(n.lastSeen, now)}</td>
           {#if semanticActive}
             <td class="num mono" style="color:{row.score !== undefined && row.score >= 0 ? theme.ice : theme.textFaint};">
@@ -165,4 +167,15 @@
   }
   .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 14.5px; }
   .nowrap { white-space: nowrap; }
+  /* Narrow screens: drop the wide columns so NODE/TRUST/STATUS/LAST SEEN
+     fit without a nested horizontal scroller (tap targets stay whole). */
+  @media (max-width: 760px) {
+    th.wide, td.wide { display: none; }
+    th, td { padding: 9px 7px; }
+    .dn { font-size: 14.5px; }
+    .pid { font-size: 10.5px; }
+    .trust { padding: 2px 5px; font-size: 10px; letter-spacing: 0.08em; }
+    .status { font-size: 11.5px; letter-spacing: 0.06em; }
+    .mono { font-size: 12px; }
+  }
 </style>
