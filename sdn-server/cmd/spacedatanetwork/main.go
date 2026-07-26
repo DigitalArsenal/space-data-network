@@ -1328,7 +1328,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.HandleFunc("/api/node/epm/json", handleNodeEPMJSON(n))
 			adminMux.HandleFunc("/api/node/epm/vcard", handleNodeEPMVCard(n))
 			adminMux.HandleFunc("/api/node/epm/qr", handleNodeEPMQR(n))
-			adminMux.HandleFunc("/api/node/epm", handleNodeEPM(n))
+			// The auth handler is constructed further below (it needs the
+			// storage path), so the gate resolves it per request rather than
+			// capturing a nil pointer at mount time.
+			adminMux.HandleFunc("/api/node/epm", gateNodeEPMWrite(
+				handleNodeEPM(n),
+				cfg.Admin.RequireAuth,
+				func() *auth.Handler { return authHandler },
+			))
 
 			// Peer graph API endpoints
 			adminMux.HandleFunc("/api/peers/sdn", handleObservedSDNPeers(n))
@@ -1776,6 +1783,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// fail-open: absent assets 404 and the dashboard keeps its
 			// always-on substring search.
 			adminMux.Handle("/embedding/", makeEmbeddingHandler(cfg.Embedding.AssetsDir))
+			// hd-wallet-wasm, served SAME-ORIGIN for the dashboard's wallet
+			// sign-in (its CSP is default-src 'self'). Staged by
+			// deployment/wallet-wasm/stage-wallet-wasm.sh; fail-open —
+			// absent assets 404 and the dashboard reports sign-in
+			// unavailable rather than reaching a CDN.
+			adminMux.Handle("/wallet-wasm/", makeWalletWasmHandler(cfg.WalletWasm.AssetsDir))
 			// Anonymous identity downloads for the dashboard modal:
 			// /identity/<peerId>.vcf|.epm — the same data the public
 			// status feed already streams (vCards) or that peers publish
@@ -2581,8 +2594,11 @@ func serveAdminMuxRequest(
 
 		if isAPIOrPlugin && !publicAPIRequest(r.Method, requestPath) {
 			minTrust := peers.Standard
-			if isAdminOnlyAPIPath(requestPath) {
+			switch {
+			case isAdminOnlyAPIPath(requestPath):
 				minTrust = peers.Admin
+			case isAnyTierAuthenticatedAPIPath(requestPath):
+				minTrust = anyTierAuthenticatedTrust
 			}
 			authHandler.RequireAuth(minTrust, func(w http.ResponseWriter, r *http.Request) {
 				adminMux.ServeHTTP(w, r)
@@ -2874,6 +2890,61 @@ func extractTCPPortFromMultiaddr(addr string) string {
 	return ""
 }
 
+// anyTierAuthenticatedTrust is the trust floor for the session-introspection
+// and session-termination endpoints below: a VALID SESSION is required (these
+// paths are NOT on the anonymous allow-list), but no trust TIER is imposed on
+// top of it. peers.Never is the bottom of the scale, so every session that
+// authenticates at all clears it — including a session whose operator has been
+// demoted or locked out, which is exactly the case that must still work.
+const anyTierAuthenticatedTrust = peers.Never
+
+// isAnyTierAuthenticatedAPIPath reports whether path is reachable by ANY
+// authenticated session regardless of trust tier.
+//
+// # Ruling (graph task nst-node-admin-contract, Hermes 2026-07-26)
+//
+// The top-level wall's default floor is peers.Standard. That is right for
+// reads of node data, but wrong for these two, because neither is a privileged
+// read of anything:
+//
+//   - /api/auth/me is SESSION INTROSPECTION. It returns the caller's OWN xpub,
+//     name and trust level — nothing the caller does not already hold, since
+//     they signed a challenge with the matching private key to obtain the
+//     session. Gating it at Standard means an operator at unknown/marginal tier
+//     cannot discover that they ARE at unknown/marginal tier: the one state a
+//     UI most needs to render legibly ("signed in, insufficient permissions")
+//     is the one state the endpoint refuses to describe. Worse, the client
+//     cannot even tell "signed in but low tier" from "not signed in".
+//   - /api/auth/logout is SESSION TERMINATION. Refusing to let a principal end
+//     their own session strands a live credential; logout must never be harder
+//     to reach than login. A low-tier or revoked operator ending their session
+//     is a security IMPROVEMENT, never a risk.
+//
+// Deliberately NOT moved here:
+//
+//   - /api/auth/attest stays at the Standard default. It is not the caller's
+//     own session: the request names an ARBITRARY xpub and, on success, reports
+//     that user's name and trust level. It is a proof endpoint, not
+//     introspection, and no surface needs it before sign-in. Widening its reach
+//     without a driving requirement would grow the pre-session attack surface
+//     for nothing.
+//   - Neither path joins the ANONYMOUS allow-list (isPublicReadAPIPath /
+//     isPublicAPIRequest). Anonymous paths also skip CSRF validation in
+//     adminSecurityMiddleware, which would turn POST /api/auth/logout into a
+//     cross-origin forced-logout vector. Requiring a session keeps CSRF
+//     protection on. An anonymous or expired caller therefore gets 401 from
+//     logout, which correctly means "already not signed in".
+//
+// Exact matches only — a prefix rule would admit look-alike paths.
+func isAnyTierAuthenticatedAPIPath(path string) bool {
+	switch path {
+	case "/api/auth/me", "/api/auth/logout":
+		return true
+	default:
+		return false
+	}
+}
+
 func isAdminOnlyAPIPath(path string) bool {
 	return strings.HasPrefix(path, "/api/peers") ||
 		strings.HasPrefix(path, "/api/groups") ||
@@ -2883,6 +2954,14 @@ func isAdminOnlyAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/import") ||
 		strings.HasPrefix(path, "/api/admin/") ||
 		strings.HasPrefix(path, "/api/auth/users") ||
+		// The node's own EPM identity. Reads (/api/node/epm[/json|/vcard|/qr])
+		// are on the anonymous surface via isPublicReadAPIPath and never reach
+		// this check; every OTHER method — the PUT that rewrites who this node
+		// says it is — is an operator action. isAdminOnlyAPIPath is prefix-only
+		// with no method granularity, which is exactly why the write also
+		// carries its own method-granular Admin gate where /api/node/epm is
+		// mounted on adminMux.
+		strings.HasPrefix(path, "/api/node/epm") ||
 		strings.HasPrefix(path, "/api/v0") ||
 		strings.HasPrefix(path, "/api/v1/admin/") ||
 		path == "/api/v1/data/summary" ||
@@ -2907,6 +2986,39 @@ func isAdminOnlyAPIPath(path string) bool {
 		// (including the GET list/tiers reads) becomes Admin-only rather
 		// than splitting read/write here.
 		strings.HasPrefix(path, "/api/modules/capabilities")
+}
+
+// gateNodeEPMWrite splits /api/node/epm by method: reads pass through to inner
+// (GET is part of the anonymous read surface — isPublicReadAPIPath — so the
+// node's published identity stays fetchable without a session, exactly like
+// /api/node/epm/json|vcard|qr), while PUT — the write that rewrites who this
+// node says it is — requires an authenticated session at peers.Admin.
+//
+// This is the SECOND of two independent locks on that write. The first is the
+// top-level auth wall (serveAdminMuxRequest + isAdminOnlyAPIPath), which is
+// prefix-only and therefore cannot express "GET public, PUT admin" for a single
+// path on its own. Both are keyed off the same cfg.Admin.RequireAuth policy: a
+// node deliberately run with authentication disabled has no identity system to
+// gate against and keeps its pre-existing open-admin behavior, matching
+// gateHandlerWithTrust. When authentication IS required the gate fails closed —
+// a missing auth handler admits nobody (auth.Handler.RequireTrust on a nil
+// receiver writes 401).
+//
+// resolveAuth is a function rather than a value because the auth handler is
+// constructed after this route is mounted.
+func gateNodeEPMWrite(inner http.HandlerFunc, requireAuth bool, resolveAuth func() *auth.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && requireAuth {
+			var handler *auth.Handler
+			if resolveAuth != nil {
+				handler = resolveAuth()
+			}
+			if !handler.RequireTrust(w, r, peers.Admin) {
+				return
+			}
+		}
+		inner(w, r)
+	}
 }
 
 // gateHandlerWithTrust enforces a minimum trust level on inner before

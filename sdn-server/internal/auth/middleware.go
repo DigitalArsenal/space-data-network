@@ -49,6 +49,37 @@ func (h *Handler) RequireAuth(minTrust peers.TrustLevel, next http.HandlerFunc) 
 	}
 }
 
+// RequireTrust enforces minTrust on r and reports whether the caller may
+// proceed. When it returns false it has ALREADY written the same JSON failure
+// shapes RequireAuth writes for API paths — 401 {"code":"unauthorized"} with no
+// valid session, 403 {"code":"forbidden"} when the session is below minTrust.
+//
+// It exists for handlers that need a METHOD-granular gate (the canonical case:
+// GET /api/node/epm is part of the anonymous read surface while PUT is an
+// operator write), which the wrapper form RequireAuth cannot express because it
+// gates a whole route. Unlike RequireAuth it never redirects and never rotates
+// the session cookie, so it composes safely underneath the top-level auth wall
+// (cmd/spacedatanetwork/main.go serveAdminMuxRequest) without emitting a second
+// Set-Cookie or invalidating the token that wall just rotated.
+//
+// Fail-closed: a nil Handler admits nobody.
+func (h *Handler) RequireTrust(w http.ResponseWriter, r *http.Request, minTrust peers.TrustLevel) bool {
+	if h == nil {
+		writeJSON(w, http.StatusUnauthorized, errorResponse{Code: "unauthorized", Message: "not authenticated"})
+		return false
+	}
+	session, err := h.sessionFromRequest(r)
+	if err != nil || session == nil {
+		writeJSON(w, http.StatusUnauthorized, errorResponse{Code: "unauthorized", Message: "not authenticated"})
+		return false
+	}
+	if session.TrustLevel < minTrust {
+		writeJSON(w, http.StatusForbidden, errorResponse{Code: "forbidden", Message: "insufficient permissions"})
+		return false
+	}
+	return true
+}
+
 // PolicyEngine is the interface used by RequirePolicy.  *abac.Engine satisfies it.
 type PolicyEngine interface {
 	Evaluate(sub abac.Subject, action abac.Action, res abac.Resource) abac.Decision

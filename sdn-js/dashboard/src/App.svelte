@@ -19,13 +19,20 @@
   import ConsoleHeader from 'spaceaware-student-sdn/src/lib/shell/ConsoleHeader.svelte';
   import StatusChip from 'spaceaware-student-sdn/src/lib/components/StatusChip.svelte';
   import Panel from 'spaceaware-student-sdn/src/lib/components/Panel.svelte';
+  import GBtn from 'spaceaware-student-sdn/src/lib/components/GBtn.svelte';
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
   import NodeTable from './NodeTable.svelte';
   import NodeModal from './NodeModal.svelte';
   import NodeDetail from './NodeDetail.svelte';
+  import NodeEditForm from './NodeEditForm.svelte';
+  import Permissions from './Permissions.svelte';
+  import SignInModal from './SignInModal.svelte';
   import Globe from './Globe.svelte';
   import { shortId } from './format.js';
-  import { TRUST_TIERS } from './trust.js';
+  import { TRUST_TIERS, normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
+  import { canEditNodeProfile } from './permissions.js';
+  import { apiFetch } from './api.js';
+  import { xpubFingerprint, fingerprintMatches, shortFingerprint } from './wallet.js';
   import { applySettings, substringSearch, semanticRank, sortNodes, nodeEmbedText } from './filters.js';
   import { createSemanticEngine } from './semantic.js';
 
@@ -35,9 +42,16 @@
       items: [
         { id: 'self', label: 'THIS NODE', glyph: '◉', fkey: 'N1' },
         { id: 'nodes', label: 'NODES', glyph: '◍', fkey: 'N2' },
+        { id: 'permissions', label: 'PERMISSIONS', glyph: '◈', fkey: 'N3' },
       ],
     },
   ];
+
+  const ROUTE_TITLE = {
+    self: ['THIS NODE', '· NODE IDENTITY & STATUS'],
+    nodes: ['NETWORK NODES', '· LIVE NODE STATUS'],
+    permissions: ['PERMISSIONS', '· OPERATOR KEYS & PEER TRUST'],
+  };
 
   const HIDE_KEY = 'sdn.dashboard.hideUntrustedOffline';
   const readHidePref = () => {
@@ -65,6 +79,24 @@
   /** @type {Map<string, number> | null} */
   let semScores = $state(null);
 
+  // --- operator session (nst-node-edit-permissions-ui) ---------------------
+  // `identity` (the in-page signer) exists ONLY for a session established in
+  // this tab: /api/auth/me restores the identity's FINGERPRINT, name and
+  // trust level across a reload, but never key material, and there is nothing
+  // stored anywhere to restore it from. A restored session can therefore
+  // administer, but must re-enter its recovery phrase to sign an attestation.
+  // The node never returns the raw xpub (contract §4) — `fingerprint` is the
+  // authoritative name of the signed-in key, and while we hold the key we
+  // check the node's fingerprint against our own hash of it.
+  /** @type {{name?: string, trustLevel: string, fingerprint: string, xpub: string, identity: any} | null} */
+  let session = $state(null);
+  /** @type {boolean|null} null until /api/auth/status answers. */
+  let adminConfigured = $state(null);
+  let signInOpen = $state(false);
+  let editing = $state(false);
+  /** Post-save profile echo, held until the status feed catches up. */
+  let epmOverride = $state(null);
+
   const PAGE_SIZE = 5;
 
   const engine = createSemanticEngine({ onStatus: (s) => (semStatus = s) });
@@ -73,8 +105,88 @@
   globalThis.SDN_SEMANTIC = engine;
 
   const nodes = $derived(view?.nodes ?? []);
-  const selfNode = $derived(nodes.find((n) => n.isSelf) ?? null);
+  const feedSelfNode = $derived(nodes.find((n) => n.isSelf) ?? null);
+  // A saved profile is republished immediately but only reaches the status
+  // feed on its next frame; until then THIS NODE renders the node's own
+  // freshly-read vCard/DN so an operator never sees a stale card they just
+  // changed. The override clears itself the moment the feed agrees.
+  const selfNode = $derived.by(() => {
+    if (!feedSelfNode) return null;
+    if (!epmOverride) return feedSelfNode;
+    return {
+      ...feedSelfNode,
+      vcard: epmOverride.vcard || feedSelfNode.vcard,
+      dn: typeof epmOverride.dn === 'string' ? epmOverride.dn : feedSelfNode.dn,
+    };
+  });
+  $effect(() => {
+    if (epmOverride && feedSelfNode && feedSelfNode.vcard === epmOverride.vcard) epmOverride = null;
+  });
   const selfTitle = $derived(selfNode ? selfNode.dn?.trim() || selfNode.org?.trim() || shortId(selfNode.peerId) : '');
+  const sessionTier = $derived(normalizeTrust(session?.trustLevel));
+  const sessionTierColor = $derived(theme[TRUST_COLOR_TOKEN[sessionTier]] ?? theme.textMuted);
+  const canEdit = $derived(Boolean(session) && canEditNodeProfile(session.trustLevel));
+
+  function clearSession() {
+    session?.identity?.destroy?.();
+    session = null;
+    editing = false;
+  }
+
+  /**
+   * Restore the session from the node. Reachable at ANY authenticated tier
+   * (contract §6b), so a `marginal` operator renders as SIGNED IN with a
+   * read-only permissions view rather than as a stranger — only `401` means
+   * "no session". Any other failure (network, node restart mid-request)
+   * leaves the current state alone rather than inventing a sign-out.
+   */
+  async function refreshSession() {
+    let me;
+    try {
+      me = await apiFetch('/api/auth/me');
+    } catch (err) {
+      if (err?.status === 401) clearSession();
+      return;
+    }
+    const held = session?.identity ?? null;
+    const local = held ? await xpubFingerprint(held.xpub) : '';
+    if (!fingerprintMatches(local, me?.xpub_fingerprint)) {
+      // The cookie names a DIFFERENT identity than the key in this page.
+      clearSession();
+      return;
+    }
+    session = {
+      name: me?.name ?? '',
+      trustLevel: me?.trust_level ?? '',
+      fingerprint: me?.xpub_fingerprint ?? session?.fingerprint ?? '',
+      xpub: session?.xpub ?? '',
+      identity: held,
+    };
+  }
+
+  function onSignedIn(result) {
+    signInOpen = false;
+    session = {
+      name: result.user?.name ?? '',
+      trustLevel: result.user?.trust_level ?? '',
+      fingerprint: result.user?.xpub_fingerprint ?? result.localFingerprint ?? '',
+      xpub: result.identity.xpub,
+      identity: result.identity,
+    };
+    apiFetch('/api/auth/status')
+      .then((s) => (adminConfigured = Boolean(s?.admin_configured)))
+      .catch(() => {});
+  }
+
+  async function signOut() {
+    try {
+      await apiFetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // 401 here means "already not signed in" — contract §6b says treat it
+      // as success. Local state is cleared either way.
+    }
+    clearSession();
+  }
   const onlinePeers = $derived(nodes.filter((n) => !n.isSelf && n.online).length);
   const totalPeers = $derived(nodes.filter((n) => !n.isSelf).length);
   const connected = $derived(view != null);
@@ -170,6 +282,12 @@
       unsub = g.subscribe((v) => (view = v));
     };
     attach();
+    // Restore any live session and learn whether this node has an admin yet
+    // (drives the first-admin bootstrap notice in the sign-in dialog).
+    refreshSession();
+    apiFetch('/api/auth/status')
+      .then((s) => (adminConfigured = Boolean(s?.admin_configured)))
+      .catch(() => (adminConfigured = null));
     const clock = setInterval(() => (now = Date.now()), 1000);
     // Warm the semantic model shortly after first paint (fail-open).
     const warm = setTimeout(() => engine.init(), 800);
@@ -188,8 +306,8 @@
   <SdnRail sections={SECTIONS} active={route} onSelect={(id) => (route = id)} />
   <main>
     <ConsoleHeader
-      title={route === 'self' ? 'THIS NODE' : 'NETWORK NODES'}
-      sub={route === 'self' ? '· NODE IDENTITY & STATUS' : '· LIVE NODE STATUS'}
+      title={(ROUTE_TITLE[route] ?? ROUTE_TITLE.nodes)[0]}
+      sub={(ROUTE_TITLE[route] ?? ROUTE_TITLE.nodes)[1]}
       accent={theme.cyan}
     >
       {#snippet right()}
@@ -199,11 +317,30 @@
         {:else}
           <StatusChip label="CONNECTING" color={theme.amber} />
         {/if}
+        {#if session}
+          <!-- The key's fingerprint is the ONE identifier that survives a
+               reload (§4/§6b); the dot marks a key still unlocked in this
+               page (able to sign an attestation), hollow means the session
+               was restored from the cookie alone. -->
+          <StatusChip
+            label={`${shortFingerprint(session.fingerprint) || session.name || 'SIGNED IN'} · ${sessionTier.toUpperCase()}`}
+            color={sessionTierColor}
+            dot={Boolean(session.identity)}
+            title={`KEY ${session.fingerprint || 'unknown'}${session.name ? ` · ${session.name}` : ''}${session.identity ? ' · unlocked in this page' : ' · session restored (key locked)'}`}
+          />
+          <GBtn title="End this session" onclick={signOut}>SIGN OUT</GBtn>
+        {:else}
+          <GBtn title="Sign in with your wallet key" variant="primary" onclick={() => (signInOpen = true)}>SIGN IN</GBtn>
+        {/if}
       {/snippet}
     </ConsoleHeader>
 
     <div class="body">
-      {#if !connected}
+      <!-- PERMISSIONS reads the node's own APIs, not the status feed, so it
+           renders before the feed-connection gate. -->
+      {#if route === 'permissions'}
+        <Permissions {session} {nodes} onRequestSignIn={() => (signInOpen = true)} />
+      {:else if !connected}
         <div class="empty" style="color:{theme.textDim};border-color:{theme.hairline};">
           <span class="glyph" style="color:{theme.cyan};">◍</span>
           Connecting to the node status feed (/ws/status)…
@@ -222,10 +359,23 @@
                 <div class="self-chips">
                   <StatusChip label="SELF" color={theme.cyan} dot={false} />
                   <StatusChip label={selfNode.online ? 'ONLINE' : 'OFFLINE'} color={selfNode.online ? theme.green : theme.textMuted} />
+                  {#if canEdit && !editing}
+                    <GBtn title="Edit this node's published identity" variant="primary" onclick={() => (editing = true)}>EDIT</GBtn>
+                  {/if}
                 </div>
               </div>
               <div class="self-body">
-                <NodeDetail node={selfNode} {now} />
+                {#if editing}
+                  <NodeEditForm
+                    onCancel={() => (editing = false)}
+                    onSaved={({ json, vcard }) => {
+                      epmOverride = { vcard, dn: typeof json?.dn === 'string' ? json.dn : undefined };
+                      editing = false;
+                    }}
+                  />
+                {:else}
+                  <NodeDetail node={selfNode} {now} />
+                {/if}
               </div>
             </Panel>
           </div>
@@ -333,6 +483,10 @@
 
   {#if selected}
     <NodeModal node={selected} {now} onClose={() => (selected = null)} />
+  {/if}
+
+  {#if signInOpen}
+    <SignInModal {adminConfigured} onClose={() => (signInOpen = false)} onSignedIn={onSignedIn} />
   {/if}
 </div>
 
