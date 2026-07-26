@@ -511,6 +511,20 @@ func TestNodeQRUsesCompactContactAndXPubVCard(t *testing.T) {
 	if got := strings.Count(unfolded, xpubAlias); got != 1 {
 		t.Fatalf("QR vCard xpub alias count = %d, want 1: %s", got, qrVCard)
 	}
+	// Owner directive 2026-07-25 (nst-dashboard-table #12): the scannable
+	// card also carries the HD signing/encryption derivation paths as
+	// base64url email aliases so an importer can derive the verification
+	// keys for the signed EPM from the xpub.
+	for kind, path := range map[string]string{
+		"sign":    identity.SigningKeyPath,
+		"encrypt": identity.EncryptionKeyPath,
+	} {
+		alias := "EMAIL;type=INTERNET;type=" + kind + ":" +
+			base64.RawURLEncoding.EncodeToString([]byte(path)) + "@" + kind + ".spacedatanetwork.org"
+		if got := strings.Count(unfolded, alias); got != 1 {
+			t.Fatalf("QR vCard %s alias count = %d, want 1: %s", kind, got, qrVCard)
+		}
+	}
 	for _, forbidden := range []string{
 		"PRODID", "ORG:", "TITLE:", "ROLE:", "UID:", "X-SDN-", "X-ABRELATEDNAMES:",
 		"@signing.spacedatanetwork.org", "@encryption.spacedatanetwork.org",
@@ -521,8 +535,11 @@ func TestNodeQRUsesCompactContactAndXPubVCard(t *testing.T) {
 			t.Fatalf("QR vCard contains forbidden %q: %s", forbidden, qrVCard)
 		}
 	}
-	if got := len([]byte(qrVCard)); got > 512 {
-		t.Fatalf("QR vCard is %d bytes, want <= 512: %s", got, qrVCard)
+	// Density budget: contact fields + xpub + two path aliases. Was 512
+	// before the derivation-path directive; the two extra alias lines cost
+	// ~150 folded bytes.
+	if got := len([]byte(qrVCard)); got > 700 {
+		t.Fatalf("QR vCard is %d bytes, want <= 700: %s", got, qrVCard)
 	}
 	for _, line := range strings.Split(strings.TrimSuffix(qrVCard, "\r\n"), "\r\n") {
 		if got := len([]byte(line)); got > 75 {
