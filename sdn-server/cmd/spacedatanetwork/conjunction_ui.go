@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
@@ -137,6 +138,135 @@ func makeFontsHandler() http.Handler {
 		}
 		w.Header().Set("Content-Type", "font/woff2")
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.WriteHeader(http.StatusOK)
+		if r.Method != http.MethodHead {
+			_, _ = w.Write(body)
+		}
+	})
+}
+
+// embeddingAssetExts allow-lists the file types the /embedding/* surface may
+// serve: the sentence-embedding model, its tokenizer vocab, and the
+// onnxruntime-web runtime artifacts the dashboard's semantic search loads
+// same-origin. Everything else (and any nested path) 404s.
+var embeddingAssetExts = map[string]string{
+	".onnx": "application/octet-stream",
+	".txt":  "text/plain; charset=utf-8",
+	".wasm": "application/wasm",
+	".mjs":  "text/javascript; charset=utf-8",
+}
+
+// makeEmbeddingHandler serves the semantic-search assets at
+// /embedding/<name> from the configured assets dir (GET/HEAD only, flat
+// namespace, extension allow-list). Fail-open like the geoip mmdb: an empty
+// dir path or missing files simply 404 and the dashboard keeps substring
+// search. Responses are cacheable for a day — operators replace assets by
+// re-running deployment/embedding/fetch-model.sh, not live-swapping.
+func makeEmbeddingHandler(assetsDir string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		name := strings.TrimPrefix(r.URL.Path, "/embedding/")
+		mediaType, allowed := embeddingAssetExts[strings.ToLower(path.Ext(name))]
+		if assetsDir == "" || name == "" || !allowed ||
+			strings.Contains(name, "/") || strings.Contains(name, "\\") || strings.HasPrefix(name, ".") {
+			http.NotFound(w, r)
+			return
+		}
+		f, err := os.Open(filepath.Join(assetsDir, name))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil || info.IsDir() {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", mediaType)
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		http.ServeContent(w, r, name, info.ModTime(), f)
+	})
+}
+
+// identitySource feeds the anonymous /identity/* download surface with the
+// node's own artifacts and observed-peer lookups. Kept as closures so this
+// file stays free of node wiring.
+type identitySource struct {
+	SelfID    string
+	SelfVCard func() (string, error)
+	SelfEPM   func() []byte
+	PeerVCard func(peerID string) (string, bool)
+	PeerEPM   func(peerID string) ([]byte, bool)
+}
+
+// makeIdentityHandler serves node identity artifacts for the status
+// dashboard's node modal: /identity/<peerId>.vcf (the vCard, importable by
+// phones) and /identity/<peerId>.epm (the peer's serialized EPM record —
+// signed per the owner rule with the signing key derived at the signing path
+// published in the vCard's sign/xpub email aliases). This is the same
+// public read-only surface class as /ws/status: every vCard served here
+// already streams in the feed's VCARD field, and EPM records are what peers
+// publish to the network. GET/HEAD only; unknown ids/extensions 404.
+func makeIdentityHandler(src identitySource) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		name := strings.TrimPrefix(r.URL.Path, "/identity/")
+		id, ext, ok := strings.Cut(name, ".")
+		if !ok || id == "" || strings.ContainsAny(id, "/\\.") {
+			http.NotFound(w, r)
+			return
+		}
+		var body []byte
+		var contentType, filename string
+		switch ext {
+		case "vcf":
+			var card string
+			if id == src.SelfID {
+				if src.SelfVCard != nil {
+					card, _ = src.SelfVCard()
+				}
+			} else if src.PeerVCard != nil {
+				card, _ = src.PeerVCard(id)
+			}
+			if strings.TrimSpace(card) == "" {
+				http.NotFound(w, r)
+				return
+			}
+			body = []byte(card)
+			contentType = "text/vcard; charset=utf-8"
+			filename = id + ".vcf"
+		case "epm":
+			var epmBytes []byte
+			if id == src.SelfID {
+				if src.SelfEPM != nil {
+					epmBytes = src.SelfEPM()
+				}
+			} else if src.PeerEPM != nil {
+				epmBytes, _ = src.PeerEPM(id)
+			}
+			if len(epmBytes) == 0 {
+				http.NotFound(w, r)
+				return
+			}
+			body = epmBytes
+			contentType = "application/x-flatbuffers"
+			filename = id + ".epm"
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusOK)
 		if r.Method != http.MethodHead {

@@ -38,6 +38,7 @@ type Config struct {
 	AssetPins  AssetPinConfig   `yaml:"asset_pins"`
 	Modules    ModulesConfig    `yaml:"modules"`
 	GeoIP      GeoIPConfig      `yaml:"geoip"`
+	Embedding  EmbeddingConfig  `yaml:"embedding"`
 	Status     StatusConfig     `yaml:"status"`
 }
 
@@ -587,6 +588,20 @@ type GeoIPConfig struct {
 	MMDBPath string `yaml:"mmdb_path"`
 }
 
+// EmbeddingConfig configures the fail-open semantic-search asset surface
+// served at /embedding/* for the status dashboard: the quantized sentence-
+// embedding model, its tokenizer vocab, and the onnxruntime-web .wasm/.mjs
+// runtime artifacts, all same-origin so the dashboard's strict CSP holds.
+type EmbeddingConfig struct {
+	// AssetsDir is the directory holding the /embedding/* static assets
+	// (model.onnx, vocab.txt, ort-wasm-*.wasm/.mjs), staged by
+	// deployment/embedding/fetch-model.sh — the same staged-file pattern as
+	// the GeoIP mmdb. Empty or missing is fine: the surface 404s and the
+	// dashboard fails open to substring search. Defaults to
+	// <data-dir>/embedding.
+	AssetsDir string `yaml:"assets_dir"`
+}
+
 // StatusConfig configures the public read-only node-status feed
 // (internal/status, served at /ws/status).
 type StatusConfig struct {
@@ -1045,6 +1060,9 @@ func Default() *Config {
 		},
 		GeoIP: GeoIPConfig{
 			MMDBPath: filepath.Join(dataPath, "geoip", "GeoLite2-City.mmdb"),
+		},
+		Embedding: EmbeddingConfig{
+			AssetsDir: filepath.Join(dataPath, "embedding"),
 		},
 		Status: StatusConfig{
 			AllowedOrigins: []string{"https://sdn.spaceaware.io"},
