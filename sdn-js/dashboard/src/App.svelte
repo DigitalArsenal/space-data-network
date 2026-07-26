@@ -319,21 +319,23 @@
             <StatusChip label="CONNECTING" color={theme.amber} />
           {/if}
         </span>
-        {#if session}
-          <!-- The key's fingerprint is the ONE identifier that survives a
-               reload (§4/§6b); the dot marks a key still unlocked in this
-               page (able to sign an attestation), hollow means the session
-               was restored from the cookie alone. -->
-          <StatusChip
-            label={`${shortFingerprint(session.fingerprint) || session.name || 'SIGNED IN'} · ${sessionTier.toUpperCase()}`}
-            color={sessionTierColor}
-            dot={Boolean(session.identity)}
-            title={`KEY ${session.fingerprint || 'unknown'}${session.name ? ` · ${session.name}` : ''}${session.identity ? ' · unlocked in this page' : ' · session restored (key locked)'}`}
-          />
-          <GBtn title="End this session" onclick={signOut}>SIGN OUT</GBtn>
-        {:else}
-          <GBtn title="Sign in with your wallet key" variant="primary" onclick={() => (signInOpen = true)}>SIGN IN</GBtn>
-        {/if}
+        <span class="hdr-session">
+          {#if session}
+            <!-- The key's fingerprint is the ONE identifier that survives a
+                 reload (§4/§6b); the dot marks a key still unlocked in this
+                 page (able to sign an attestation), hollow means the session
+                 was restored from the cookie alone. -->
+            <StatusChip
+              label={`${shortFingerprint(session.fingerprint) || session.name || 'SIGNED IN'} · ${sessionTier.toUpperCase()}`}
+              color={sessionTierColor}
+              dot={Boolean(session.identity)}
+              title={`KEY ${session.fingerprint || 'unknown'}${session.name ? ` · ${session.name}` : ''}${session.identity ? ' · unlocked in this page' : ' · session restored (key locked)'}`}
+            />
+            <GBtn title="End this session" onclick={signOut}>SIGN OUT</GBtn>
+          {:else}
+            <GBtn title="Sign in with your wallet key" variant="primary" onclick={() => (signInOpen = true)}>SIGN IN</GBtn>
+          {/if}
+        </span>
       {/snippet}
     </ConsoleHeader>
 
@@ -714,6 +716,7 @@
   }
 
   .hdr-status { display: contents; }
+  .hdr-session { display: contents; }
 
   /* Narrow screens (owner report: taps landing on clipped targets): the
      desktop half-and-half no-scroll layout collapses tap targets into
@@ -756,6 +759,12 @@
        control on a phone — the actionable control wins; the same counts
        live in the meta line anyway. */
     .hdr-status { display: none; }
+    .hdr-session {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      padding-right: 8px;
+    }
   }
   .empty .glyph { font-size: 21px; }
 </style>
