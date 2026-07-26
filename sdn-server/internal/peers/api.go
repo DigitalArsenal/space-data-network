@@ -263,15 +263,44 @@ func (h *APIHandler) peerView(tp *TrustedPeer) PeerView {
 }
 
 // AddPeerRequest is the request body for adding a peer.
+//
+// Identity may be supplied three ways (see ResolvePeerIdentifier, identity.go):
+// id, its alias peer_id, or public_key — the key material an operator is more
+// likely to have been handed. Supplying both an id and a public_key is allowed
+// only when they agree.
+//
+// VCard is the optional contact card for the peer. When present it is stored
+// verbatim as TrustedPeer.VCardData, and the EPM record derivable from it
+// (vcard.VCardToEPM — which honours an EPM already embedded in the card) is
+// stored as TrustedPeer.EPMData. A card that yields no EPM is still stored as
+// VCardData; the request is not failed for it.
 type AddPeerRequest struct {
 	ID           string            `json:"id"`
+	PeerID       string            `json:"peer_id,omitempty"`
+	PublicKey    string            `json:"public_key,omitempty"`
 	Addrs        []string          `json:"addrs,omitempty"`
 	TrustLevel   string            `json:"trust_level"`
 	Name         string            `json:"name,omitempty"`
 	Organization string            `json:"organization,omitempty"`
 	Groups       []string          `json:"groups,omitempty"`
 	Notes        string            `json:"notes,omitempty"`
+	VCard        string            `json:"vcard,omitempty"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
+}
+
+// epmFromVCard returns the EPM record derivable from a contact card, or nil
+// when the card carries nothing convertible. Conversion failure is not an
+// error for the caller: the card itself is still worth storing, and the peer
+// registry never invents contact data it could not read.
+func epmFromVCard(vcardStr string) []byte {
+	if strings.TrimSpace(vcardStr) == "" {
+		return nil
+	}
+	epmBytes, err := vcard.VCardToEPM(vcardStr)
+	if err != nil || len(epmBytes) == 0 {
+		return nil
+	}
+	return epmBytes
 }
 
 // addPeer adds a new peer.
@@ -282,9 +311,9 @@ func (h *APIHandler) addPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	peerID, err := peer.Decode(req.ID)
+	peerID, err := ResolvePeerIdentifier(req.ID, req.PeerID, req.PublicKey)
 	if err != nil {
-		http.Error(w, "Invalid peer ID: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -310,6 +339,8 @@ func (h *APIHandler) addPeer(w http.ResponseWriter, r *http.Request) {
 		Notes:        req.Notes,
 		AddedAt:      time.Now(),
 		Metadata:     req.Metadata,
+		VCardData:    strings.TrimSpace(req.VCard),
+		EPMData:      epmFromVCard(req.VCard),
 	}
 
 	if err := h.registry.AddPeer(tp); err != nil {
@@ -339,6 +370,22 @@ func (h *APIHandler) updatePeer(w http.ResponseWriter, r *http.Request, peerID p
 		return
 	}
 
+	// The URL owns the identity of the record being updated. Identifier
+	// fields in the body may restate it but must never redirect the write to
+	// a different peer: a public_key that derives some other peer ID is a
+	// mistake worth surfacing, not a silent no-op.
+	if strings.TrimSpace(req.ID) != "" || strings.TrimSpace(req.PeerID) != "" || strings.TrimSpace(req.PublicKey) != "" {
+		bodyID, err := ResolvePeerIdentifier(req.ID, req.PeerID, req.PublicKey)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if bodyID != peerID {
+			http.Error(w, "body identifies peer "+bodyID.String()+", which does not match the request path", http.StatusBadRequest)
+			return
+		}
+	}
+
 	// Update fields if provided
 	if req.TrustLevel != "" {
 		if level, err := ParseTrustLevel(req.TrustLevel); err == nil {
@@ -359,6 +406,12 @@ func (h *APIHandler) updatePeer(w http.ResponseWriter, r *http.Request, peerID p
 	}
 	if req.Metadata != nil {
 		existing.Metadata = req.Metadata
+	}
+	if card := strings.TrimSpace(req.VCard); card != "" {
+		existing.VCardData = card
+		if epmBytes := epmFromVCard(card); len(epmBytes) > 0 {
+			existing.EPMData = epmBytes
+		}
 	}
 	if len(req.Addrs) > 0 {
 		addrs := make([]multiaddr.Multiaddr, 0, len(req.Addrs))
@@ -793,6 +846,20 @@ func (h *APIHandler) handleVCardImport(w http.ResponseWriter, r *http.Request) {
 	var imported []*TrustedPeer
 	var errors []string
 
+	// Contact data is only attributed when attribution is unambiguous. A
+	// single-card payload IS that peer's card, so it is stored verbatim and
+	// its derivable EPM record with it. A multi-card payload describes several
+	// distinct peers; storing the whole payload (or the first card's EPM) on
+	// each one would attach contact data to identities it does not belong to,
+	// so those imports carry peer fields only.
+	singleCard := len(infos) == 1
+	var cardData string
+	var cardEPM []byte
+	if singleCard {
+		cardData = strings.TrimSpace(vcardStr)
+		cardEPM = epmFromVCard(vcardStr)
+	}
+
 	for _, info := range infos {
 		trustLevel := Standard
 		if tlStr, ok := info.Metadata["trust_level"]; ok {
@@ -808,7 +875,8 @@ func (h *APIHandler) handleVCardImport(w http.ResponseWriter, r *http.Request) {
 			Name:         info.Name,
 			Organization: info.Organization,
 			Notes:        info.Notes,
-			VCardData:    vcardStr,
+			VCardData:    cardData,
+			EPMData:      cardEPM,
 		}
 
 		if addErr := h.registry.AddPeer(tp); addErr != nil {

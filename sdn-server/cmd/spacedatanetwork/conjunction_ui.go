@@ -194,6 +194,92 @@ func makeEmbeddingHandler(assetsDir string) http.Handler {
 	})
 }
 
+// walletWasmAssetExts allow-lists the file types the /wallet-wasm/* surface
+// may serve: the emscripten loader (.js), the runtime ES modules (.mjs) and
+// the standalone WASI artifact (.wasm). Everything else 404s.
+var walletWasmAssetExts = map[string]string{
+	".js":   "text/javascript; charset=utf-8",
+	".mjs":  "text/javascript; charset=utf-8",
+	".wasm": "application/wasm",
+}
+
+// walletWasmMaxDepth bounds how deep under the staged root a request may
+// reach. The hd-wallet-wasm dist tree is at most dist/runtime/generated/aligned
+// /<file> — three directories. Anything deeper is not part of the package and
+// is refused rather than walked.
+const walletWasmMaxDepth = 4
+
+// makeWalletWasmHandler serves the hd-wallet-wasm package's dist tree at
+// /wallet-wasm/<relative-path> from the configured assets dir (GET/HEAD only,
+// extension allow-list, no traversal). The dashboard's sign-in loads the
+// wallet SAME-ORIGIN — its CSP is default-src 'self' — so the loader, the
+// runtime ES modules it imports relatively (./aligned.mjs, ./sdn-typed.mjs,
+// ../hd-wallet.js …) and the WASI artifact must all resolve under this one
+// prefix with the package's own layout preserved. Hence a nested path rather
+// than the flat namespace /embedding/* uses.
+//
+// Fail-open like /embedding/*: an empty dir path or missing files simply 404,
+// and the dashboard reports sign-in as unavailable instead of reaching
+// off-origin. Responses are cacheable for a day — operators replace assets by
+// re-running deployment/wallet-wasm/stage-wallet-wasm.sh, not live-swapping.
+func makeWalletWasmHandler(assetsDir string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		name, mediaType, ok := walletWasmAssetPath(assetsDir, strings.TrimPrefix(r.URL.Path, "/wallet-wasm/"))
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		f, err := os.Open(filepath.Join(assetsDir, filepath.FromSlash(name)))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil || info.IsDir() {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", mediaType)
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		http.ServeContent(w, r, name, info.ModTime(), f)
+	})
+}
+
+// walletWasmAssetPath validates a /wallet-wasm/ request suffix and returns the
+// cleaned slash-relative asset name plus its media type. It refuses anything
+// that is not a plain, bounded, forward-only relative path with an allow-listed
+// extension — no absolute paths, no "..", no dot-files, no backslashes (which
+// Windows path handling would treat as separators), no empty segments.
+func walletWasmAssetPath(assetsDir, raw string) (string, string, bool) {
+	if assetsDir == "" || raw == "" || strings.Contains(raw, "\\") {
+		return "", "", false
+	}
+	cleaned := path.Clean(raw)
+	if cleaned == "." || strings.HasPrefix(cleaned, "/") || strings.HasPrefix(cleaned, "..") {
+		return "", "", false
+	}
+	segments := strings.Split(cleaned, "/")
+	if len(segments) > walletWasmMaxDepth {
+		return "", "", false
+	}
+	for _, segment := range segments {
+		if segment == "" || strings.HasPrefix(segment, ".") {
+			return "", "", false
+		}
+	}
+	mediaType, allowed := walletWasmAssetExts[strings.ToLower(path.Ext(cleaned))]
+	if !allowed {
+		return "", "", false
+	}
+	return cleaned, mediaType, true
+}
+
 // identitySource feeds the anonymous /identity/* download surface with the
 // node's own artifacts and observed-peer lookups. Kept as closures so this
 // file stays free of node wiring.

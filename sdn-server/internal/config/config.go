@@ -39,6 +39,7 @@ type Config struct {
 	Modules    ModulesConfig    `yaml:"modules"`
 	GeoIP      GeoIPConfig      `yaml:"geoip"`
 	Embedding  EmbeddingConfig  `yaml:"embedding"`
+	WalletWasm WalletWasmConfig `yaml:"wallet_wasm"`
 	Status     StatusConfig     `yaml:"status"`
 }
 
@@ -602,6 +603,21 @@ type EmbeddingConfig struct {
 	AssetsDir string `yaml:"assets_dir"`
 }
 
+// WalletWasmConfig configures the fail-open same-origin hd-wallet-wasm asset
+// surface served at /wallet-wasm/* for the dashboard's wallet sign-in. The
+// dashboard's CSP is default-src 'self', so the wallet loader, its runtime ES
+// modules and the WASI artifact must all come from this node — never a CDN.
+type WalletWasmConfig struct {
+	// AssetsDir is the directory holding the /wallet-wasm/* static assets,
+	// staged (as a mirror of the hd-wallet-wasm package's dist/ tree) by
+	// deployment/wallet-wasm/stage-wallet-wasm.sh — the same staged-file
+	// pattern as the GeoIP mmdb and the /embedding/* model. Empty or missing
+	// is fine: the surface 404s and the dashboard reports sign-in as
+	// unavailable instead of reaching off-origin. Defaults to
+	// <data-dir>/wallet-wasm.
+	AssetsDir string `yaml:"assets_dir"`
+}
+
 // StatusConfig configures the public read-only node-status feed
 // (internal/status, served at /ws/status).
 type StatusConfig struct {
@@ -1063,6 +1079,9 @@ func Default() *Config {
 		},
 		Embedding: EmbeddingConfig{
 			AssetsDir: filepath.Join(dataPath, "embedding"),
+		},
+		WalletWasm: WalletWasmConfig{
+			AssetsDir: filepath.Join(dataPath, "wallet-wasm"),
 		},
 		Status: StatusConfig{
 			AllowedOrigins: []string{"https://sdn.spaceaware.io"},

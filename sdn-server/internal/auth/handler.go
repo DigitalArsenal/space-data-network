@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -94,9 +95,49 @@ type verifyResponse struct {
 	ExpiresAt int64           `json:"expires_at"`
 }
 
+// authSessionUser is the shared /api/auth/verify and /api/auth/me body: who
+// the caller is, as this node sees them.
+//
+// # Why there is a fingerprint here and NOT the xpub
+//
+// TestAuth_Me_DoesNotExposeXPub and the two verify tests assert that the raw
+// xpub never appears in either body. That lock is kept. An xpub is a BIP-32
+// EXTENDED public key: it lets its holder enumerate the entire derived subtree,
+// which for an SDN identity is every Bitcoin/Ethereum/Solana address the
+// account will ever use (internal/wasm.DeriveIdentity derives them all under
+// the same account node). Handing that to whoever holds a session cookie turns
+// a stolen cookie — already bad — into a permanent chain-privacy compromise
+// that outlives session revocation. The session holder normally IS the key
+// holder and learns nothing, but "normally" is not the threat model.
+//
+// XPubFingerprint satisfies what a UI actually needs — a stable identifier for
+// "which key is signed in", legible across a page reload when the client no
+// longer holds the seed — without being invertible or enumerable. It is the
+// first 8 bytes of SHA-256 over the stored xpub string, lowercase hex. A client
+// that re-derives its identity can hash its own xpub the same way to confirm
+// the session belongs to the key it just unlocked.
+//
+// Note this is NOT the BIP-32 key fingerprint (hash160 of the account public
+// key) and NOT hd-wallet-wasm's 8-hex accountFingerprint. It is a hash of the
+// identifier string this node stores, and it is meaningful only against this
+// node's own /api/auth responses.
 type authSessionUser struct {
-	Name       string           `json:"name,omitempty"`
-	TrustLevel peers.TrustLevel `json:"trust_level"`
+	XPubFingerprint string           `json:"xpub_fingerprint"`
+	Name            string           `json:"name,omitempty"`
+	TrustLevel      peers.TrustLevel `json:"trust_level"`
+}
+
+// XPubFingerprint returns the stable, non-invertible identifier this node
+// reports for an xpub-keyed identity: the first 8 bytes of SHA-256 over the
+// exact stored xpub string, lowercase hex (16 characters). An empty xpub
+// yields an empty string rather than the hash of "".
+func XPubFingerprint(xpub string) string {
+	trimmed := strings.TrimSpace(xpub)
+	if trimmed == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(trimmed))
+	return hex.EncodeToString(sum[:8])
 }
 
 type addUserRequest struct {
@@ -545,8 +586,9 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, verifyResponse{
 		User: authSessionUser{
-			Name:       user.Name,
-			TrustLevel: user.TrustLevel,
+			XPubFingerprint: XPubFingerprint(user.XPub),
+			Name:            user.Name,
+			TrustLevel:      user.TrustLevel,
 		},
 		ExpiresAt: time.Now().Add(h.sessionTTL).Unix(),
 	})
@@ -598,8 +640,9 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, authSessionUser{
-		Name:       user.Name,
-		TrustLevel: user.TrustLevel,
+		XPubFingerprint: XPubFingerprint(user.XPub),
+		Name:            user.Name,
+		TrustLevel:      user.TrustLevel,
 	})
 }
 
