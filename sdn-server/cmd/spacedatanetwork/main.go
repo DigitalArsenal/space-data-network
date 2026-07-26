@@ -1728,6 +1728,67 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// and the APIs are unchanged.
 			// ----------------------------------------------------------------
 			adminMux.Handle("/fonts/", makeFontsHandler())
+			// Semantic-search assets for the dashboard's embedding search
+			// (model + tokenizer + ort wasm runtime), same-origin and
+			// fail-open: absent assets 404 and the dashboard keeps its
+			// always-on substring search.
+			adminMux.Handle("/embedding/", makeEmbeddingHandler(cfg.Embedding.AssetsDir))
+			// Anonymous identity downloads for the dashboard modal:
+			// /identity/<peerId>.vcf|.epm — the same data the public
+			// status feed already streams (vCards) or that peers publish
+			// (signed EPM records).
+			peerLookup := func(peerID string) *peers.TrustedPeer {
+				reg := n.PeerRegistry()
+				if reg == nil {
+					return nil
+				}
+				pid, err := peer.Decode(peerID)
+				if err != nil {
+					return nil
+				}
+				tp, err := reg.GetPeer(pid)
+				if err != nil {
+					return nil
+				}
+				return tp
+			}
+			adminMux.Handle("/identity/", makeIdentityHandler(identitySource{
+				SelfID: n.Host().ID().String(),
+				SelfVCard: func() (string, error) {
+					if svc := n.EPMService(); svc != nil {
+						return svc.GetNodeVCard()
+					}
+					return "", fmt.Errorf("EPM service not available")
+				},
+				SelfEPM: func() []byte {
+					if svc := n.EPMService(); svc != nil {
+						return svc.GetNodeEPM()
+					}
+					return nil
+				},
+				PeerVCard: func(peerID string) (string, bool) {
+					tp := peerLookup(peerID)
+					if tp == nil {
+						return "", false
+					}
+					if v := strings.TrimSpace(tp.VCardData); v != "" {
+						return v, true
+					}
+					if len(tp.EPMData) > 0 {
+						if v, err := sdnvcard.EPMToVCard(tp.EPMData); err == nil {
+							return v, true
+						}
+					}
+					return peers.TrustedPeerToVCard(tp), true
+				},
+				PeerEPM: func(peerID string) ([]byte, bool) {
+					tp := peerLookup(peerID)
+					if tp == nil || len(tp.EPMData) == 0 {
+						return nil, false
+					}
+					return tp.EPMData, true
+				},
+			}))
 			adminMux.Handle("/", makeRootHandler())
 			log.Infof("Node status dashboard at %s://%s/ (fed by /ws/status; admin portal remains at /admin)", adminScheme, adminAddr)
 

@@ -279,3 +279,141 @@ func TestDataSourcesStayAnonymous(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddingAssets locks the /embedding/* semantic-search asset surface:
+// flat namespace, extension allow-list, correct media types, fail-open 404s
+// when the staged dir or a file is absent, and GET/HEAD only. This is the
+// same staged-file contract as the geoip mmdb — a node without staged assets
+// still serves the dashboard, which keeps substring search.
+func TestEmbeddingAssets(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"model.onnx":                  "application/octet-stream",
+		"vocab.txt":                   "text/plain; charset=utf-8",
+		"ort-wasm-simd-threaded.wasm": "application/wasm",
+		"ort-wasm-simd-threaded.mjs":  "text/javascript; charset=utf-8",
+	}
+	for name := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("asset-bytes"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handler := makeEmbeddingHandler(dir)
+
+	for name, wantType := range files {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/embedding/"+name, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /embedding/%s status = %d, want 200", name, rec.Code)
+		}
+		if ct := rec.Header().Get("Content-Type"); ct != wantType {
+			t.Errorf("GET /embedding/%s content-type = %q, want %q", name, ct, wantType)
+		}
+		if rec.Body.String() != "asset-bytes" {
+			t.Errorf("GET /embedding/%s body = %q", name, rec.Body.String())
+		}
+	}
+
+	// HEAD works for the dashboard's availability probe.
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/embedding/model.onnx", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("HEAD /embedding/model.onnx status = %d, want 200", rec.Code)
+	}
+
+	for _, bad := range []string{
+		"/embedding/",                  // no name
+		"/embedding/missing.onnx",      // absent file
+		"/embedding/model.html",        // extension not allow-listed
+		"/embedding/sub/model.onnx",    // nested path
+		"/embedding/..%2Fmodel.onnx",   // encoded traversal
+		"/embedding/.hidden.txt",       // dotfile
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, bad, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s status = %d, want 404", bad, rec.Code)
+		}
+	}
+
+	// Unconfigured/absent dir fail-opens to 404 (never 500).
+	for _, h := range []http.Handler{makeEmbeddingHandler(""), makeEmbeddingHandler(filepath.Join(dir, "nope"))} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/embedding/model.onnx", nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("fail-open status = %d, want 404", rec.Code)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/embedding/model.onnx", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST status = %d, want 405", rec.Code)
+	}
+}
+
+// TestIdentityDownloads locks the anonymous /identity/* surface the node
+// modal uses: <peerId>.vcf serves the vCard (self via the EPM service, peers
+// via the registry chain), <peerId>.epm serves the signed serialized EPM
+// record, unknown ids/extensions 404, and only GET/HEAD are allowed.
+func TestIdentityDownloads(t *testing.T) {
+	handler := makeIdentityHandler(identitySource{
+		SelfID:    "16UiuSelf",
+		SelfVCard: func() (string, error) { return "BEGIN:VCARD\r\nFN:Self\r\nEND:VCARD\r\n", nil },
+		SelfEPM:   func() []byte { return []byte("self-epm-bytes") },
+		PeerVCard: func(id string) (string, bool) {
+			if id == "16UiuPeerA" {
+				return "BEGIN:VCARD\r\nFN:Peer A\r\nEND:VCARD\r\n", true
+			}
+			return "", false
+		},
+		PeerEPM: func(id string) ([]byte, bool) {
+			if id == "16UiuPeerA" {
+				return []byte("peer-epm-bytes"), true
+			}
+			return nil, false
+		},
+	})
+
+	cases := []struct {
+		path     string
+		wantCode int
+		wantType string
+		wantBody string
+	}{
+		{"/identity/16UiuSelf.vcf", http.StatusOK, "text/vcard; charset=utf-8", "FN:Self"},
+		{"/identity/16UiuSelf.epm", http.StatusOK, "application/x-flatbuffers", "self-epm-bytes"},
+		{"/identity/16UiuPeerA.vcf", http.StatusOK, "text/vcard; charset=utf-8", "FN:Peer A"},
+		{"/identity/16UiuPeerA.epm", http.StatusOK, "application/x-flatbuffers", "peer-epm-bytes"},
+		{"/identity/16UiuUnknown.vcf", http.StatusNotFound, "", ""},
+		{"/identity/16UiuUnknown.epm", http.StatusNotFound, "", ""},
+		{"/identity/16UiuPeerA.exe", http.StatusNotFound, "", ""},
+		{"/identity/16UiuPeerA", http.StatusNotFound, "", ""},
+		{"/identity/", http.StatusNotFound, "", ""},
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		if rec.Code != tc.wantCode {
+			t.Errorf("GET %s status = %d, want %d", tc.path, rec.Code, tc.wantCode)
+			continue
+		}
+		if tc.wantType != "" && rec.Header().Get("Content-Type") != tc.wantType {
+			t.Errorf("GET %s content-type = %q, want %q", tc.path, rec.Header().Get("Content-Type"), tc.wantType)
+		}
+		if tc.wantBody != "" && !strings.Contains(rec.Body.String(), tc.wantBody) {
+			t.Errorf("GET %s body missing %q", tc.path, tc.wantBody)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/identity/16UiuSelf.vcf", nil))
+	if rec.Code != http.StatusOK || rec.Body.Len() != 0 {
+		t.Errorf("HEAD status/body = %d/%d, want 200/empty", rec.Code, rec.Body.Len())
+	}
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/identity/16UiuSelf.vcf", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST status = %d, want 405", rec.Code)
+	}
+}

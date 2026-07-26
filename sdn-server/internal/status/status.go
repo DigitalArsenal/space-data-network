@@ -19,7 +19,24 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/geoip"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/status/nst"
+	"github.com/spacedatanetwork/sdn-server/internal/vcard"
 )
+
+// peerVCard picks the richest vCard available for an observed peer: the card
+// the peer itself published (EPM exchange), then one derived from its stored
+// EPM record, then the sparse registry-fields fallback — the same preference
+// order as the peers API's /epm/vcard endpoint.
+func peerVCard(tp *peers.TrustedPeer) string {
+	if v := strings.TrimSpace(tp.VCardData); v != "" {
+		return v
+	}
+	if len(tp.EPMData) > 0 {
+		if v, err := vcard.EPMToVCard(tp.EPMData); err == nil {
+			return v
+		}
+	}
+	return peers.TrustedPeerToVCard(tp)
+}
 
 // GeoResolver resolves a textual IP to coarse coordinates. *geoip.Reader
 // satisfies it; tests supply a stub. A nil resolver is treated as no geo data.
@@ -136,7 +153,7 @@ func BuildNodeStatusSet(in Input) []byte {
 			Multiaddrs:   multiaddrStrings(tp.Addrs),
 			LastSeen:     lastSeen[pid],
 			IsOnline:     online[pid],
-			VCard:        peers.TrustedPeerToVCard(tp),
+			VCard:        peerVCard(tp),
 		}
 		row.applyGeo(in.Geo)
 		if row.Lat == 0 && row.Lon == 0 {

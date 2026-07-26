@@ -1,31 +1,68 @@
 <script>
   /**
-   * SDN Node Status $APP view.
+   * SDN Node Status $APP view — dashboard v2 (graph task nst-dashboard-table).
    *
-   * Composes the DESIGN repo's shell (SdnRail + ConsoleHeader) and primitives
-   * (StatusChip) around a single "NETWORK NODES" route: one card per entry in
-   * the live NodeStatusSet. Data comes EXCLUSIVELY from globalThis.SDN_NODE_STATUS
-   * (published by the sdn-js status runtime); this view never fetches anything.
+   * Composes the DESIGN repo's shell (SdnRail + ConsoleHeader) around one
+   * "NETWORK NODES" route: an mmdb-geo globe + a searchable, sortable,
+   * trust-filterable node table; row/dot click opens the full-detail modal
+   * (parsed vCard). Search is semantic when the node serves /embedding/*
+   * assets (MiniLM int8 via onnxruntime-web, same-origin, fail-open) and
+   * plain substring always. Data comes EXCLUSIVELY from
+   * globalThis.SDN_NODE_STATUS; this view never fetches node data itself.
    *
    * PROVISIONAL (Iris ruling): the next design-tool zip supersedes this view.
-   * The data seam (SDN_NODE_STATUS) survives. Styled ONLY with theme.js tokens
-   * and the design components — no invented palette.
+   * The data seam (SDN_NODE_STATUS) survives. Styled ONLY with theme.js
+   * tokens and the design components — no invented palette.
    */
   import { onMount } from 'svelte';
   import SdnRail from 'spaceaware-student-sdn/src/lib/shell/SdnRail.svelte';
   import ConsoleHeader from 'spaceaware-student-sdn/src/lib/shell/ConsoleHeader.svelte';
   import StatusChip from 'spaceaware-student-sdn/src/lib/components/StatusChip.svelte';
+  import Panel from 'spaceaware-student-sdn/src/lib/components/Panel.svelte';
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
-  import NodeCard from './NodeCard.svelte';
+  import NodeTable from './NodeTable.svelte';
+  import NodeModal from './NodeModal.svelte';
+  import Globe from './Globe.svelte';
   import { shortId } from './format.js';
+  import { TRUST_TIERS } from './trust.js';
+  import { applySettings, substringSearch, semanticRank, sortNodes, nodeEmbedText } from './filters.js';
+  import { createSemanticEngine } from './semantic.js';
 
   const SECTIONS = [
     { label: 'NETWORK', items: [{ id: 'nodes', label: 'NODES', glyph: '◍', fkey: 'N1' }] }
   ];
 
+  const HIDE_KEY = 'sdn.dashboard.hideUntrustedOffline';
+  const readHidePref = () => {
+    try {
+      const raw = globalThis.localStorage?.getItem(HIDE_KEY);
+      return raw === null || raw === undefined ? true : raw === '1';
+    } catch {
+      return true;
+    }
+  };
+
   /** @type {import('../../src/status/view-model').NodeStatusSetView | null} */
   let view = $state(null);
   let now = $state(Date.now());
+  let query = $state('');
+  let trustTier = $state('all');
+  let hideUntrustedOffline = $state(readHidePref());
+  let sortKey = $state('trust');
+  let sortDir = $state(1);
+  let selected = $state(null);
+  let settingsOpen = $state(false);
+  let page = $state(0);
+  let semStatus = $state('idle');
+  /** @type {Map<string, number> | null} */
+  let semScores = $state(null);
+
+  const PAGE_SIZE = 5;
+
+  const engine = createSemanticEngine({ onStatus: (s) => (semStatus = s) });
+  // Diagnostic seam (same spirit as SDN_NODE_STATUS): lets operators probe
+  // embeddings/scores from the console; the UI never reads it back.
+  globalThis.SDN_SEMANTIC = engine;
 
   const nodes = $derived(view?.nodes ?? []);
   const onlinePeers = $derived(nodes.filter((n) => !n.isSelf && n.online).length);
@@ -34,6 +71,79 @@
   const updatedAgo = $derived(
     view ? Math.max(0, Math.round((now - view.generatedAt) / 1000)) : null
   );
+
+  const visible = $derived(applySettings(nodes, { trustTier, hideUntrustedOffline }));
+  const searching = $derived(Boolean(query.trim()));
+  const semanticActive = $derived(searching && semStatus === 'ready' && semScores !== null);
+
+  /** @type {{node: any, score?: number}[]} */
+  const rows = $derived.by(() => {
+    if (!searching) return sortNodes(visible, sortKey, sortDir).map((node) => ({ node }));
+    const subs = substringSearch(visible, query);
+    if (semanticActive) {
+      return semanticRank(visible, semScores, new Set(subs.map((n) => n.peerId)));
+    }
+    return sortNodes(subs, sortKey, sortDir).map((node) => ({ node }));
+  });
+
+  const pageCount = $derived(Math.max(1, Math.ceil(rows.length / PAGE_SIZE)));
+  const safePage = $derived(Math.min(page, pageCount - 1));
+  const pagedRows = $derived(rows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE));
+
+  // Any change to the filtered set snaps back to the first page.
+  $effect(() => {
+    void query;
+    void trustTier;
+    void hideUntrustedOffline;
+    void sortKey;
+    void sortDir;
+    page = 0;
+  });
+
+  const searchModeLabel = $derived(
+    semStatus === 'ready' ? 'SEMANTIC' : semStatus === 'loading' ? 'MODEL…' : 'TEXT'
+  );
+  const searchModeColor = $derived(
+    semStatus === 'ready' ? theme.cyan : semStatus === 'loading' ? theme.amber : theme.textMuted
+  );
+
+  function toggleSort(key) {
+    if (sortKey === key) sortDir = -sortDir;
+    else {
+      sortKey = key;
+      sortDir = 1;
+    }
+  }
+
+  function setHidePref(checked) {
+    hideUntrustedOffline = checked;
+    try {
+      globalThis.localStorage?.setItem(HIDE_KEY, checked ? '1' : '0');
+    } catch {
+      /* private mode etc. — non-persistent is fine */
+    }
+  }
+
+  // Keep node embeddings current whenever the feed updates (no-op until ready).
+  $effect(() => {
+    if (semStatus === 'ready' && nodes.length) {
+      engine.embedNodes(nodes, nodeEmbedText);
+    }
+  });
+
+  // Debounced query embedding → semScores drives the semantic ranking.
+  $effect(() => {
+    const q = query.trim();
+    if (!q || semStatus !== 'ready') {
+      semScores = null;
+      return;
+    }
+    const t = setTimeout(async () => {
+      const scores = await engine.queryScores(q);
+      if (query.trim() === q) semScores = scores;
+    }, 220);
+    return () => clearTimeout(t);
+  });
 
   onMount(() => {
     let unsub = () => {};
@@ -51,13 +161,18 @@
     };
     attach();
     const clock = setInterval(() => (now = Date.now()), 1000);
+    // Warm the semantic model shortly after first paint (fail-open).
+    const warm = setTimeout(() => engine.init(), 800);
     return () => {
       cancelled = true;
       clock && clearInterval(clock);
+      clearTimeout(warm);
       unsub();
     };
   });
 </script>
+
+<svelte:window onkeydown={(e) => e.key === 'Escape' && settingsOpen && (settingsOpen = false)} />
 
 <div class="root" style="background:{theme.pageGlow};color:{theme.textBody};">
   <SdnRail sections={SECTIONS} active="nodes" onSelect={() => {}} />
@@ -80,21 +195,104 @@
           Connecting to the node status feed (/ws/status)…
         </div>
       {:else}
+        <div class="toolbar">
+          <div class="search" style="border-color:{theme.hairline};">
+            <span class="sglyph" style="color:{theme.textMuted};">⌕</span>
+            <input
+              type="search"
+              placeholder="SEARCH NODES — name, org, vCard, place, trust…"
+              bind:value={query}
+              style="color:{theme.textBright};"
+              aria-label="Search nodes"
+            />
+            <span class="mode" style="color:{searchModeColor};border-color:{searchModeColor};" title="Active search mode">{searchModeLabel}</span>
+          </div>
+
+          <label class="ctl" style="color:{theme.textMuted};">
+            TRUST
+            <select bind:value={trustTier} style="color:{theme.textBright};border-color:{theme.hairline};" aria-label="Filter by trust tier">
+              <option value="all">ALL</option>
+              {#each TRUST_TIERS as tier (tier)}
+                <option value={tier}>{tier.toUpperCase()}</option>
+              {/each}
+            </select>
+          </label>
+
+          <div class="settings-wrap">
+            <button
+              class="settings-btn"
+              style="color:{settingsOpen ? theme.cyan : theme.textMuted};border-color:{settingsOpen ? theme.cyan : theme.hairline};"
+              onclick={() => (settingsOpen = !settingsOpen)}
+              aria-expanded={settingsOpen}
+              aria-haspopup="true"
+            >⚙ SETTINGS</button>
+            {#if settingsOpen}
+              <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+              <div class="settings-backdrop" onclick={() => (settingsOpen = false)}></div>
+              <div class="settings-menu" style="background:{theme.panelRaised};border-color:{theme.panelBorder};">
+                <div class="settings-title" style="color:{theme.textMuted};border-color:{theme.divider};">DISPLAY SETTINGS</div>
+                <label class="ctl check" style="color:{theme.textBody};" title="When checked, offline nodes are hidden unless an explicit trust tier has been set for them">
+                  <input
+                    type="checkbox"
+                    checked={hideUntrustedOffline}
+                    onchange={(e) => setHidePref(e.currentTarget.checked)}
+                  />
+                  HIDE UNTRUSTED OFFLINE
+                </label>
+                <div class="settings-hint" style="color:{theme.textFaint};">
+                  Offline nodes stay visible when an explicit trust tier is set (including NEVER).
+                </div>
+              </div>
+            {/if}
+          </div>
+        </div>
+
         <div class="meta" style="color:{theme.textMuted};">
-          <span>{nodes.length} NODE{nodes.length === 1 ? '' : 'S'}</span>
+          <span>{rows.length}/{nodes.length} NODE{nodes.length === 1 ? '' : 'S'}</span>
           <span class="dot">·</span>
           <span>SOURCE {shortId(view?.sourcePeerId ?? '')}</span>
           <span class="dot">·</span>
           <span>UPDATED {updatedAgo === 0 ? 'now' : `${updatedAgo}s ago`}</span>
         </div>
-        <div class="grid">
-          {#each nodes as node (node.peerId + (node.isSelf ? ':self' : ''))}
-            <NodeCard {node} {now} />
-          {/each}
+
+        <div class="stack">
+          <Panel variant="raised" pad="0" style="flex:1 1 50%;min-height:0;display:flex;flex-direction:column;">
+            <div class="table-panel">
+              <NodeTable
+                rows={pagedRows}
+                {now}
+                {sortKey}
+                {sortDir}
+                onSort={toggleSort}
+                onOpen={(n) => (selected = n)}
+                {semanticActive}
+              />
+              <div class="pager" style="border-color:{theme.divider};color:{theme.textMuted};">
+                <span>ROWS {rows.length ? safePage * PAGE_SIZE + 1 : 0}–{Math.min((safePage + 1) * PAGE_SIZE, rows.length)} OF {rows.length}</span>
+                <span class="pager-ctl">
+                  <button style="color:{theme.ice};border-color:{theme.hairline};" disabled={safePage === 0} onclick={() => (page = safePage - 1)}>‹ PREV</button>
+                  <span>PAGE {safePage + 1}/{pageCount}</span>
+                  <button style="color:{theme.ice};border-color:{theme.hairline};" disabled={safePage >= pageCount - 1} onclick={() => (page = safePage + 1)}>NEXT ›</button>
+                </span>
+              </div>
+            </div>
+          </Panel>
+          <Panel variant="raised" pad="0" style="flex:1 1 50%;min-height:0;display:flex;flex-direction:column;">
+            <div class="globe-panel">
+              <div class="k" style="color:{theme.textMuted};border-color:{theme.divider};">NODE LOCATIONS <span style="color:{theme.textFaint};">· GEOLITE2 MMDB</span></div>
+              <div class="globe-body">
+                <Globe nodes={rows.map((r) => r.node)} selectedId={selected?.peerId ?? ''} onSelect={(n) => (selected = n)} />
+              </div>
+            </div>
+          </Panel>
         </div>
       {/if}
     </div>
   </main>
+
+  {#if selected}
+    <NodeModal node={selected} {now} onClose={() => (selected = null)} />
+  {/if}
 </div>
 
 <style>
@@ -118,23 +316,166 @@
   .body {
     flex: 1;
     min-height: 0;
-    overflow: auto;
-    padding: 18px 24px 40px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 16px 24px 24px;
   }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid;
+    padding: 7px 10px;
+    flex: 1 1 320px;
+    min-width: 260px;
+    max-width: 560px;
+  }
+  .sglyph { font-size: 18px; }
+  .search input {
+    flex: 1;
+    background: transparent;
+    border: 0;
+    outline: none;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 15px;
+    letter-spacing: 0.06em;
+    min-width: 0;
+  }
+  .search input::placeholder { color: rgba(159, 212, 245, 0.35); }
+  .mode {
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    border: 1px solid;
+    padding: 2px 7px;
+    white-space: nowrap;
+  }
+  .ctl {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    letter-spacing: 0.16em;
+    white-space: nowrap;
+  }
+  .ctl select {
+    background: transparent;
+    border: 1px solid;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 13px;
+    letter-spacing: 0.1em;
+    padding: 5px 8px;
+    outline: none;
+  }
+  .ctl select option { background: #0a141b; }
+  .ctl.check { cursor: pointer; user-select: none; }
+  .ctl.check input {
+    appearance: none;
+    width: 13px;
+    height: 13px;
+    border: 1px solid rgba(110, 170, 190, 0.5);
+    background: transparent;
+    cursor: pointer;
+    display: inline-grid;
+    place-content: center;
+    margin: 0;
+  }
+  .ctl.check input::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    transform: scale(0);
+    background: #35c9d8;
+  }
+  .ctl.check input:checked::before { transform: scale(1); }
   .meta {
     display: flex;
     align-items: center;
     gap: 9px;
-    font-size: 11px;
+    font-size: 14.5px;
     letter-spacing: 0.14em;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
   }
   .meta .dot { opacity: 0.5; }
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  .stack {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
     gap: 16px;
-    align-items: start;
+  }
+  .globe-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .globe-panel .k {
+    font-size: 12.5px;
+    letter-spacing: 0.18em;
+    padding: 11px 14px 9px;
+    border-bottom: 1px solid;
+  }
+  .globe-body { flex: 1; min-height: 0; }
+  .table-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    border-top: 1px solid;
+    padding: 9px 14px;
+    font-size: 12.5px;
+    letter-spacing: 0.14em;
+  }
+  .pager-ctl { display: inline-flex; align-items: center; gap: 10px; }
+  .pager button {
+    background: transparent;
+    border: 1px solid;
+    cursor: pointer;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 12.5px;
+    letter-spacing: 0.12em;
+    padding: 4px 10px;
+  }
+  .pager button:disabled { opacity: 0.35; cursor: default; }
+  .settings-wrap { position: relative; }
+  .settings-backdrop { position: fixed; inset: 0; z-index: 29; }
+  .settings-btn {
+    background: transparent;
+    border: 1px solid;
+    cursor: pointer;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 12.5px;
+    letter-spacing: 0.16em;
+    padding: 7px 12px;
+    white-space: nowrap;
+  }
+  .settings-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 30;
+    border: 1px solid;
+    min-width: 300px;
+    padding: 12px 14px 13px;
+    box-shadow: 0 14px 44px rgba(0, 0, 0, 0.5);
+  }
+  .settings-title {
+    font-size: 11.5px;
+    letter-spacing: 0.18em;
+    border-bottom: 1px solid;
+    padding-bottom: 7px;
+    margin-bottom: 10px;
+  }
+  .settings-hint {
+    font-size: 12.5px;
+    letter-spacing: 0.04em;
+    line-height: 1.5;
+    margin-top: 8px;
   }
   .empty {
     display: flex;
@@ -142,9 +483,9 @@
     gap: 12px;
     border: 1px solid;
     padding: 26px 28px;
-    font-size: 12.5px;
+    font-size: 16.5px;
     letter-spacing: 0.06em;
     max-width: 560px;
   }
-  .empty .glyph { font-size: 16px; }
+  .empty .glyph { font-size: 21px; }
 </style>

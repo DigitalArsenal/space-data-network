@@ -886,6 +886,7 @@ func (s *Service) GetNodeQRVCard() (string, error) {
 		}
 	}
 	lines = append(lines, "EMAIL;TYPE=INTERNET;TYPE=xpub:"+xpub+"@xpub.spacedatanetwork.org")
+	lines = append(lines, nodeDerivationPathEmailAliasLines(s.identity)...)
 	lines = append(lines, "END:VCARD")
 	for i, line := range lines {
 		lines[i] = foldNodeQRVCardLine(line)
@@ -907,6 +908,10 @@ func (s *Service) decorateNodeVCardLocked(vcardStr string) string {
 		}
 	}
 	lines = append(lines, nodeIdentityAddressEmailAliasLines(s.identity)...)
+	if xpub := strings.TrimSpace(s.xpub); xpub != "" {
+		lines = append(lines, "EMAIL;type=INTERNET;type=xpub:"+xpub+"@xpub.spacedatanetwork.org")
+	}
+	lines = append(lines, nodeDerivationPathEmailAliasLines(s.identity)...)
 	if s.profile != nil {
 		if photoLine := vcardPhotoLine(s.profile.PhotoDataURL); photoLine != "" {
 			lines = append(lines, photoLine)
@@ -1007,6 +1012,40 @@ func nodeIdentityAddressEmailAliasLines(identity *wasm.DerivedIdentity) []string
 	if identity.Addresses.Solana != nil {
 		if address := strings.TrimSpace(identity.Addresses.Solana.Address); address != "" {
 			lines = append(lines, "EMAIL;type=INTERNET;type=solana:"+address+"@solana.spacedatanetwork.org")
+		}
+	}
+	return lines
+}
+
+// nodeDerivationPathEmailAliasLines serializes the identity's HD derivation
+// paths as vCard-3.0-safe EMAIL aliases, following the established
+// <value>@<kind>.spacedatanetwork.org alias convention (phones drop X-
+// properties on import, so machine identity rides in EMAIL items). Owner
+// rule: the serialized EPM's digital signature is made with the signing key
+// derived at the signing path — publishing the sign/encrypt paths beside the
+// xpub alias is what lets an importer derive the verification keys. The path
+// string itself is base64url (raw, unpadded): apostrophes and slashes are
+// not email-local-part safe; UIs decode it back to the literal m/44'/…
+// form for display.
+func nodeDerivationPathEmailAliasLines(identity *wasm.DerivedIdentity) []string {
+	if identity == nil {
+		return nil
+	}
+	alias := func(kind, path string) string {
+		p := strings.TrimSpace(path)
+		if p == "" {
+			return ""
+		}
+		encoded := base64.RawURLEncoding.EncodeToString([]byte(p))
+		return "EMAIL;type=INTERNET;type=" + kind + ":" + encoded + "@" + kind + ".spacedatanetwork.org"
+	}
+	lines := make([]string, 0, 2)
+	for _, line := range []string{
+		alias("sign", identity.SigningKeyPath),
+		alias("encrypt", identity.EncryptionKeyPath),
+	} {
+		if line != "" {
+			lines = append(lines, line)
 		}
 	}
 	return lines
