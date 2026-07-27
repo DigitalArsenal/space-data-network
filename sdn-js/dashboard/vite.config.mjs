@@ -58,6 +58,15 @@ export default defineConfig({
     dedupe: ['svelte']
   },
   optimizeDeps: { exclude: ['spaceaware-student-sdn'] },
+  // The semantic engine runs in a Web Worker (semantic.worker.js), imported
+  // with ?worker&inline so vite bakes it into the single bundle and spawns it
+  // from a blob: URL — no second served file, which is what keeps the
+  // single-file law and `worker-src 'self' blob:` in agreement.
+  // format MUST be 'iife' (vite's default), NOT 'es': with 'es' vite spawns
+  // an inline worker from a `data:text/javascript` URL, which this page's
+  // `worker-src 'self' blob:` correctly refuses. 'iife' emits the blob: path
+  // (atob → Blob → createObjectURL) the CSP was written for.
+  worker: { format: 'iife' },
   build: {
     target: 'es2022',
     outDir: path.resolve(__dirname, 'dist'),
