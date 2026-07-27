@@ -12,6 +12,10 @@
  * (e.g. point a locally-served page at a remote node's feed).
  */
 import './fonts.css';
+// The ONLY stylesheet hd-wallet-ui has (contract §11.4: the package ships
+// zero css). Document-level because its confirmation dialog appends itself to
+// document.body and ignores the mount.
+import './wallet-theme.css';
 import { mount } from 'svelte';
 import App from './App.svelte';
 import { startStatusDashboard } from '../../src/ui/runtime/status-dashboard';

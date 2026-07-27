@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
+	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
 
@@ -319,6 +320,70 @@ func TestAnyTierAuthenticatedAPIPathIsExactMatchOnly(t *testing.T) {
 	}
 }
 
+// TestNodeDoesNotImplementTheWalletRelay locks a BOUNDARY rule, not a feature.
+//
+// hd-wallet-ui's in-page app, if left with its DEFAULT relay, drives operations
+// by fetching the relative paths /relay/v1/transactions/{id} and .../result —
+// which on a node origin means this node. Implementing them would put a
+// transaction store, result tokens and redirect URIs into the Go host: that is
+// application logic, and this host is connectors only. The dashboard therefore
+// injects its own in-process relay and the default is never constructed.
+//
+// If a future change adds these routes, this test fails and the boundary
+// question gets asked out loud instead of being answered by accident.
+func TestNodeDoesNotImplementTheWalletRelay(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{
+		"/relay/v1/transactions/abc",
+		"/relay/v1/transactions/abc/result",
+		"/api/relay/v1/transactions/abc",
+	} {
+		if isPublicAPIPath(path) {
+			t.Fatalf("%q is on the anonymous surface; the node must not host a wallet relay", path)
+		}
+		if isAnyTierAuthenticatedAPIPath(path) {
+			t.Fatalf("%q was given the any-tier floor; the node must not host a wallet relay", path)
+		}
+	}
+
+	// The staged wallet trees must never serve it either.
+	rec := httptest.NewRecorder()
+	makeWalletUIHandler(stageWalletUI(t)).ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "/wallet-ui/relay/v1/transactions/abc", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("staged UI tree answered a relay path: status = %d", rec.Code)
+	}
+}
+
+// TestWalletAssetDefaultsAreDistinctAndPopulated locks that a default config
+// gives BOTH staged wallet trees their own directory. A shared or empty default
+// would either cross-serve the two surfaces or silently disable sign-in on a
+// node that ran the staging script.
+func TestWalletAssetDefaultsAreDistinctAndPopulated(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	wasmDir := cfg.WalletWasm.AssetsDir
+	uiDir := cfg.WalletWasm.UIAssetsDir
+
+	if strings.TrimSpace(wasmDir) == "" {
+		t.Fatal("wallet_wasm.assets_dir default is empty")
+	}
+	if strings.TrimSpace(uiDir) == "" {
+		t.Fatal("wallet_wasm.ui_assets_dir default is empty")
+	}
+	if wasmDir == uiDir {
+		t.Fatalf("both wallet trees default to the same directory %q", wasmDir)
+	}
+	if filepath.Base(wasmDir) != "wallet-wasm" {
+		t.Fatalf("wallet_wasm.assets_dir default = %q, want a wallet-wasm directory", wasmDir)
+	}
+	if filepath.Base(uiDir) != "wallet-ui" {
+		t.Fatalf("wallet_wasm.ui_assets_dir default = %q, want a wallet-ui directory", uiDir)
+	}
+}
+
 // stageWalletWasm writes a minimal mirror of the hd-wallet-wasm dist tree and
 // returns its root.
 func stageWalletWasm(t *testing.T) string {
@@ -452,6 +517,152 @@ func TestWalletWasmHandlerFailsOpenWhenUnstaged(t *testing.T) {
 	}
 }
 
+// stageWalletUI writes a minimal mirror of the staged hd-wallet-ui tree.
+func stageWalletUI(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	files := map[string]string{
+		"compat/index.js":        "export function createWalletUI(){}",
+		"wallet-origin/index.js": "export function createWalletOriginApp(){}",
+		"client/style.css":       ".wallet-login{display:grid}",
+		// Present in the upstream package but never staged; if one ever were,
+		// the handler must still refuse to serve it as page content.
+		"wallet-origin-host/index.html": "<!doctype html><title>nope</title>",
+		"client/index.d.ts":             "export declare const x: number;",
+	}
+	for rel, content := range files {
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s): %v", rel, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s): %v", rel, err)
+		}
+	}
+	return root
+}
+
+// TestWalletUIHandlerServesTheInPageModules locks the /wallet-ui/* surface the
+// dashboard's sign-in imports: the compat controller, the wallet application it
+// wraps, and the reference stylesheet — each with the media type a browser needs
+// to execute or apply it, all SAME-ORIGIN (owner law 2026-07-27: "we do NOT
+// load anything from a site").
+func TestWalletUIHandlerServesTheInPageModules(t *testing.T) {
+	t.Parallel()
+
+	handler := makeWalletUIHandler(stageWalletUI(t))
+	cases := map[string]string{
+		"/wallet-ui/compat/index.js":        "text/javascript; charset=utf-8",
+		"/wallet-ui/wallet-origin/index.js": "text/javascript; charset=utf-8",
+		"/wallet-ui/client/style.css":       "text/css; charset=utf-8",
+	}
+	for path, wantType := range cases {
+		path, wantType := path, wantType
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+			}
+			if got := rec.Header().Get("Content-Type"); got != wantType {
+				t.Fatalf("Content-Type = %q, want %q", got, wantType)
+			}
+			if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+				t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+			}
+		})
+	}
+}
+
+// TestWalletUIHandlerNeverServesHTML locks the deliberate omission of .html
+// from the allow-list. hd-wallet-ui ships a standalone wallet DOCUMENT
+// (dist/wallet-origin-host/index.html); serving operator-staged HTML from this
+// node's own origin is a different and heavier decision than serving modules
+// the dashboard chose to import, and it has not been taken.
+func TestWalletUIHandlerNeverServesHTML(t *testing.T) {
+	t.Parallel()
+
+	handler := makeWalletUIHandler(stageWalletUI(t))
+	for _, path := range []string{
+		"/wallet-ui/wallet-origin-host/index.html",
+		"/wallet-ui/index.html",
+		"/wallet-ui/client/index.d.ts",
+		"/wallet-ui/",
+		"/wallet-ui/../wallet-wasm/hd-wallet.js",
+		"/wallet-ui/.hidden.js",
+	} {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+			}
+		})
+	}
+
+	if _, ok := walletUIAssetExts[".html"]; ok {
+		t.Fatal(".html is on the /wallet-ui/ allow-list; serving staged HTML same-origin is not an approved surface")
+	}
+	if _, ok := walletWasmAssetExts[".html"]; ok {
+		t.Fatal(".html is on the /wallet-wasm/ allow-list")
+	}
+}
+
+// TestWalletUIHandlerFailsOpenWhenUnstaged locks the same fail-open posture as
+// every other staged surface: an unconfigured node 404s and the dashboard
+// reports sign-in unavailable rather than reaching off-origin.
+func TestWalletUIHandlerFailsOpenWhenUnstaged(t *testing.T) {
+	t.Parallel()
+
+	for name, dir := range map[string]string{
+		"unconfigured": "",
+		"missing dir":  filepath.Join(t.TempDir(), "never-staged"),
+	} {
+		name, dir := name, dir
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			rec := httptest.NewRecorder()
+			makeWalletUIHandler(dir).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet-ui/compat/index.js", nil))
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+			}
+		})
+	}
+}
+
+// TestWalletSurfacesAreIndependentlyRooted locks that the two staged trees do
+// not bleed into one another: /wallet-ui/ must not serve out of the wallet-wasm
+// root or vice versa, so a single misconfigured directory cannot silently widen
+// either surface.
+func TestWalletSurfacesAreIndependentlyRooted(t *testing.T) {
+	t.Parallel()
+
+	wasmRoot := stageWalletWasm(t)
+	uiRoot := stageWalletUI(t)
+
+	rec := httptest.NewRecorder()
+	makeWalletUIHandler(uiRoot).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet-ui/hd-wallet.js", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("/wallet-ui/ served a wallet-wasm asset: status = %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	makeWalletWasmHandler(wasmRoot).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet-wasm/compat/index.js", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("/wallet-wasm/ served a wallet-ui asset: status = %d", rec.Code)
+	}
+
+	// .css belongs to the UI surface only.
+	rec = httptest.NewRecorder()
+	makeWalletWasmHandler(wasmRoot).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wallet-wasm/client/style.css", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("/wallet-wasm/ served a stylesheet: status = %d", rec.Code)
+	}
+}
+
 // TestWalletWasmSurfaceIsNotBehindTheAPIWall locks that the wallet assets stay
 // reachable to an anonymous browser: the sign-in page must be able to LOAD the
 // wallet before it can possibly hold a session.
@@ -471,4 +682,89 @@ func TestWalletWasmSurfaceIsNotBehindTheAPIWall(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d — the wallet must load before sign-in", rec.Code, http.StatusOK)
 	}
+}
+
+// TestResolveAuthDBPathKeepsTheAuthStoreSeparate locks the owner directive of
+// 2026-07-27: "use the entries in an sqlite database to handle that. Also I
+// think it should probably be in a separate database file that the other
+// standards for safety."
+//
+// The default has always satisfied it — a distinct auth.db beside the record
+// store — so the default must NOT move (moving it would orphan every deployed
+// node's operator entries). What is new: the location is configurable, and a
+// path inside the standards record store is REFUSED rather than silently
+// accepted, because "separate for safety" is only true if a record-store
+// rebuild cannot take operator credentials with it.
+func TestResolveAuthDBPathKeepsTheAuthStoreSeparate(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+
+	t.Run("default is unchanged", func(t *testing.T) {
+		t.Parallel()
+		cfg := config.Default()
+		cfg.Storage.Path = base
+		cfg.Admin.AuthDBPath = ""
+		got, err := resolveAuthDBPath(cfg)
+		if err != nil {
+			t.Fatalf("resolveAuthDBPath: %v", err)
+		}
+		if want := filepath.Join(base, "auth.db"); got != want {
+			t.Fatalf("default auth db = %q, want %q — moving it orphans deployed operator entries", got, want)
+		}
+	})
+
+	t.Run("relative paths resolve under storage", func(t *testing.T) {
+		t.Parallel()
+		cfg := config.Default()
+		cfg.Storage.Path = base
+		cfg.Admin.AuthDBPath = "operators.db"
+		got, err := resolveAuthDBPath(cfg)
+		if err != nil {
+			t.Fatalf("resolveAuthDBPath: %v", err)
+		}
+		if want := filepath.Join(base, "operators.db"); got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("absolute paths are honoured", func(t *testing.T) {
+		t.Parallel()
+		cfg := config.Default()
+		cfg.Storage.Path = base
+		elsewhere := filepath.Join(t.TempDir(), "auth", "operators.db")
+		cfg.Admin.AuthDBPath = elsewhere
+		got, err := resolveAuthDBPath(cfg)
+		if err != nil {
+			t.Fatalf("resolveAuthDBPath: %v", err)
+		}
+		if got != elsewhere {
+			t.Fatalf("got %q, want %q", got, elsewhere)
+		}
+	})
+
+	t.Run("inside the standards store is refused", func(t *testing.T) {
+		t.Parallel()
+		for name, rel := range map[string]string{
+			"directly inside": filepath.Join("store", "auth.db"),
+			"nested inside":   filepath.Join("store", "nested", "auth.db"),
+		} {
+			cfg := config.Default()
+			cfg.Storage.Path = base
+			cfg.Admin.AuthDBPath = rel
+			if _, err := resolveAuthDBPath(cfg); err == nil {
+				t.Fatalf("%s: an auth db inside the standards store was accepted", name)
+			}
+		}
+	})
+
+	t.Run("a sibling of the store is fine", func(t *testing.T) {
+		t.Parallel()
+		cfg := config.Default()
+		cfg.Storage.Path = base
+		cfg.Admin.AuthDBPath = "store-auth.db"
+		if _, err := resolveAuthDBPath(cfg); err != nil {
+			t.Fatalf("a sibling path was refused: %v", err)
+		}
+	})
 }

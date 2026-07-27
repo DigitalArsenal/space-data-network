@@ -616,6 +616,19 @@ type WalletWasmConfig struct {
 	// unavailable instead of reaching off-origin. Defaults to
 	// <data-dir>/wallet-wasm.
 	AssetsDir string `yaml:"assets_dir"`
+
+	// UIAssetsDir is the directory holding the /wallet-ui/* static assets: the
+	// hd-wallet-ui package's dist tree, which supplies the actual wallet
+	// sign-in experience the dashboard mounts IN-PAGE.
+	//
+	// OWNER LAW 2026-07-27: "we do NOT load anything from a site." The wallet
+	// UI must come from this node and nowhere else, so hd-wallet-ui's
+	// registered-site client — which opens https://wallet.spacedatanetwork.org
+	// — is inadmissible and is not what this serves. Staged alongside
+	// AssetsDir by deployment/wallet-wasm/stage-wallet-wasm.sh, at a matching
+	// version. Empty or missing is fine: the surface 404s and the dashboard
+	// reports sign-in as unavailable. Defaults to <data-dir>/wallet-ui.
+	UIAssetsDir string `yaml:"ui_assets_dir"`
 }
 
 // StatusConfig configures the public read-only node-status feed
@@ -940,6 +953,25 @@ type AdminConfig struct {
 	// SessionExpiry is the duration for admin session tokens (default: 24h).
 	SessionExpiry string `yaml:"session_expiry"`
 
+	// AuthDBPath is the SQLite file holding operator trust-matrix entries and
+	// sessions.
+	//
+	// OWNER DIRECTIVE 2026-07-27, verbatim: "use the entries in an sqlite
+	// database to handle that. Also I think it should probably be in a separate
+	// database file that the other standards for safety."
+	//
+	// This is a real SQLite file (flatsqldrv.OpenStandalone opens
+	// sql.Open("sqlite", path)), kept deliberately OUT of the standards /
+	// FlatSQL record store. Operator credentials and session state have a
+	// different blast radius from network record storage: a rebuilt or corrupt
+	// standards store must not be able to lock an operator out of their own
+	// node, and a record-store bug must not be able to reach auth rows.
+	//
+	// Empty means the default, <storage.path>/auth.db — unchanged from before
+	// this key existed, so no deployed node's store moves. Set it to relocate
+	// the auth database; it must never point inside the standards store.
+	AuthDBPath string `yaml:"auth_db_path"`
+
 	// TOTPRequired requires TOTP 2FA for admin login.
 	TOTPRequired bool `yaml:"totp_required"`
 
@@ -1081,7 +1113,8 @@ func Default() *Config {
 			AssetsDir: filepath.Join(dataPath, "embedding"),
 		},
 		WalletWasm: WalletWasmConfig{
-			AssetsDir: filepath.Join(dataPath, "wallet-wasm"),
+			AssetsDir:   filepath.Join(dataPath, "wallet-wasm"),
+			UIAssetsDir: filepath.Join(dataPath, "wallet-ui"),
 		},
 		Status: StatusConfig{
 			AllowedOrigins: []string{"https://sdn.spaceaware.io"},

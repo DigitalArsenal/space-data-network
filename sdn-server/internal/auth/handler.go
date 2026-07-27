@@ -52,6 +52,7 @@ type Handler struct {
 	tlsManager           *tlsmgr.Manager
 	externalLoginUI      bool // when true, an embedded UI owns GET /login; legacy page moves to /login/legacy
 	loginUIPolicySet     bool // distinguishes the backwards-compatible default from an explicit no-login production policy
+	root                 rootIdentityState
 }
 
 type pendingChallenge struct {
@@ -62,6 +63,10 @@ type pendingChallenge struct {
 	createdAt           time.Time
 	expiresAt           time.Time
 	firstAdminBootstrap bool
+	// rootAdmin marks a challenge minted for the node's OWN root account
+	// (root_identity.go). It is admitted at rootTrustLevel with no user-store
+	// enrolment required and no client-supplied xpub stored.
+	rootAdmin bool
 }
 
 type rateEntry struct {
@@ -235,8 +240,17 @@ func (h *Handler) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	if walletUIConfigured {
 		jsFile, cssFile = WalletAssets()
 	}
+	// OWNER DIRECTIVE 2026-07-27: the node's own root account is ALWAYS an
+	// admin sign-in path. admin_configured therefore reports whether an admin
+	// can sign in AT ALL — which is true whenever a root identity is
+	// registered, even with an empty user store. A UI that used
+	// admin_configured:false to render "no admin yet, seed one in config" must
+	// not do that when root sign-in is available; root_admin_available says
+	// which case it is.
+	rootAvailable := h.NodeRootIdentity() != nil
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"admin_configured":     h.userStore.HasAdmin(),
+		"admin_configured":     h.userStore.HasAdmin() || rootAvailable,
+		"root_admin_available": rootAvailable,
 		"users_configured":     h.userStore.UserCount() > 0,
 		"config_path":          h.configPath,
 		"wallet_ui_configured": walletUIConfigured,
@@ -327,6 +341,52 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// OWNER DIRECTIVE 2026-07-27: the node's own root account is always
+	// admitted, with no error. This is checked BEFORE any user lookup and
+	// short-circuits it: whoever holds the node's seed does not need an entry
+	// in the node's own user store to reach its console. Any xpub the client
+	// sent is deliberately IGNORED and replaced with the node's own — that is
+	// what keeps a wallet's master xpub (§13.1) out of the store entirely.
+	if h.isNodeRootSigningKey(pubRaw) {
+		rootXPub := h.rootSessionXPub()
+		if rootXPub != "" {
+			challengeBytes := make([]byte, 32)
+			if _, err := rand.Read(challengeBytes); err != nil {
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Code: "server_error", Message: "failed to generate challenge"})
+				return
+			}
+			idBytes := make([]byte, 16)
+			rand.Read(idBytes)
+			challengeID := hex.EncodeToString(idBytes)
+
+			h.cleanupChallenges(now)
+			h.mu.Lock()
+			if len(h.challenges) >= maxPendingChallenges {
+				h.mu.Unlock()
+				writeJSON(w, http.StatusTooManyRequests, errorResponse{Code: "too_many_requests", Message: "too many pending challenges"})
+				return
+			}
+			h.challenges[challengeID] = pendingChallenge{
+				id:        challengeID,
+				xpub:      rootXPub,
+				pubKey:    append(ed25519.PublicKey(nil), pubRaw...),
+				challenge: challengeBytes,
+				createdAt: now,
+				expiresAt: now.Add(h.challengeTTL),
+				rootAdmin: true,
+			}
+			h.mu.Unlock()
+
+			log.Infof("Auth challenge for the node's own root account")
+			writeJSON(w, http.StatusOK, challengeResponse{
+				ChallengeID: challengeID,
+				Challenge:   base64.RawStdEncoding.EncodeToString(challengeBytes),
+				ExpiresAt:   now.Add(h.challengeTTL).Unix(),
+			})
+			return
+		}
+	}
+
 	var user *User
 	if req.XPub != "" {
 		user, err = h.userStore.GetUser(req.XPub)
@@ -388,9 +448,23 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else if req.XPub != "" && !h.userStore.HasAdmin() {
-		shouldStore = true
-		firstAdminBootstrap = true
-		expectedPubKey = pubRaw
+		// First-admin bootstrap is the ONE path that mints a new operator
+		// identity from whatever xpub the client presents, so it is the one
+		// path that must refuse a master key. See IsMasterXPub (xpub.go) for
+		// the full reasoning: a depth-0 xpub enumerates the entire wallet, it
+		// is a one-way door once written to auth.db, and it can never match a
+		// users: entry seeded from show-identity. Refusing simply declines to
+		// store the challenge, so the wire behaviour is the existing
+		// indistinguishable "valid-looking challenge that can never verify" —
+		// no new enumeration signal. The operator gets the explanation in the
+		// server log.
+		if IsMasterXPub(req.XPub) {
+			log.Warnf("Refusing first-admin bootstrap for a BIP-32 MASTER xpub (depth 0): it would store a key that enumerates the entire wallet and cannot match a users: entry seeded from show-identity. Sign in with an already-registered identity (send no xpub and the node resolves by signing key), or seed the operator in config.")
+		} else {
+			shouldStore = true
+			firstAdminBootstrap = true
+			expectedPubKey = pubRaw
+		}
 	}
 
 	// Generate challenge
@@ -527,10 +601,29 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The node's own root account: admitted unconditionally at
+	// rootTrustLevel, with no user-store enrolment required. The identity is
+	// the node's own xpub (set when the challenge was minted), so nothing the
+	// client supplied reaches the session or the store.
+	if pending.rootAdmin {
+		h.completeRootSignIn(w, r, pending)
+		return
+	}
+
 	// Look up user trust level
 	user, err := h.userStore.GetUser(pending.xpub)
 	if (err == nil && user == nil) && pending.firstAdminBootstrap {
 		if h.userStore.HasAdmin() {
+			h.writeAuthenticationFailure(w)
+			return
+		}
+		// Defence in depth: handleChallenge already refuses to mint an
+		// identity from a master xpub, so a pending bootstrap challenge should
+		// never carry one. Re-check anyway — this is the line that actually
+		// WRITES the user, and it must not depend on an upstream check staying
+		// correct.
+		if IsMasterXPub(pending.xpub) {
+			log.Warnf("Refusing to create first admin from a BIP-32 MASTER xpub (depth 0)")
 			h.writeAuthenticationFailure(w)
 			return
 		}

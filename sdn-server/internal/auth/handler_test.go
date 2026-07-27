@@ -1157,7 +1157,16 @@ func TestHandleUserByXPub_UpdateTrust_AllowsAssignableLevels(t *testing.T) {
 	}
 }
 
-func TestLoginPage_UsesCDNWalletUIFallbackWhenNoLocalDistIsConfigured(t *testing.T) {
+// TestLoginPage_ServesWalletUnavailableWhenNoLocalDistIsConfigured replaces
+// TestLoginPage_UsesCDNWalletUIFallbackWhenNoLocalDistIsConfigured, which
+// asserted the OPPOSITE: that a node with no local wallet dist served a working
+// login page by pulling hd-wallet-ui 2.0.6 from unpkg.com.
+//
+// Owner law 2026-07-27, verbatim: "we do NOT load anything from a site." That
+// retires the behavior and therefore the lock on it. A node with nothing staged
+// now says so — see buildWalletUnavailablePage and the owner-law tests in
+// no_external_origin_test.go.
+func TestLoginPage_ServesWalletUnavailableWhenNoLocalDistIsConfigured(t *testing.T) {
 	t.Parallel()
 
 	h := &Handler{}
@@ -1171,14 +1180,14 @@ func TestLoginPage_UsesCDNWalletUIFallbackWhenNoLocalDistIsConfigured(t *testing
 	}
 
 	body := rec.Body.String()
-	if !strings.Contains(body, "https://unpkg.com/hd-wallet-ui@2.0.6/src/app.js?module") {
-		t.Fatalf("login page missing CDN wallet-ui module: %s", body)
+	if strings.Contains(body, "unpkg.com") {
+		t.Fatalf("login page still loads the wallet from a CDN: %s", body)
 	}
-	if !strings.Contains(body, "https://unpkg.com/hd-wallet-ui@2.0.6/styles/widget.css") {
-		t.Fatalf("login page missing CDN wallet-ui stylesheet: %s", body)
+	if !strings.Contains(body, "Wallet sign-in is unavailable") {
+		t.Fatalf("login page does not report the missing wallet: %s", body)
 	}
-	if !strings.Contains(body, "createWalletUI") {
-		t.Fatalf("login page missing wallet initialization hook: %s", body)
+	if !strings.Contains(body, "stage-wallet-wasm.sh") {
+		t.Fatalf("login page does not tell the operator how to stage a wallet: %s", body)
 	}
 }
 
@@ -1193,10 +1202,13 @@ func TestLoginPage_BuildersExposeWalletAccountSurfaceForUnauthorizedUsers(t *tes
 			name: "hosted wallet dist page",
 			html: buildLoginPage("/wallet-ui/dist/assets/wallet.js", "/wallet-ui/dist/assets/wallet.css"),
 		},
-		{
-			name: "fallback CDN page",
-			html: buildFallbackLoginPage("", tlsmgr.Status{}),
-		},
+		// The no-local-dist fallback used to be a fully functional CDN-backed
+		// login page and was asserted here alongside the hosted one. Owner law
+		// 2026-07-27 ("we do NOT load anything from a site") replaced it with a
+		// static "wallet sign-in is unavailable" notice that deliberately has
+		// no login button, no wallet hooks and no scripts at all, so it is no
+		// longer a login surface and is covered by no_external_origin_test.go
+		// instead.
 	}
 
 	for _, page := range pages {

@@ -1,6 +1,7 @@
 package node
 
 import (
+	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -216,4 +217,66 @@ func zeroBytes(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
+}
+
+// RootAuthPublicKeys returns the Ed25519 public keys that PROVE possession of
+// this node's own root seed, together with the node's own account xpub.
+//
+// OWNER DIRECTIVE 2026-07-27: the root account the node is based on is always
+// accepted as the admin sign-in. The auth handler recognises it by comparing a
+// presented key against these locally derived keys — nothing client-supplied
+// participates (see internal/auth/root_identity.go).
+//
+// Two keys are returned because the wallet's identity scheme decides which one
+// signs, and both are the same root account:
+//
+//   - SigningKeyPath  m/44'/0'/account'/0'/0'  (SLIP-10, hardened) — the node's
+//     documented §2 key; what the modern hd-wallet-ui identity and the future
+//     v2 admit point present.
+//   - LegacyAuthKeyPath m/44'/0'/account'/0/0  (bip32-scalar-as-ed25519-seed) —
+//     what hd-wallet-ui's LEGACY schemes present, and therefore the only one
+//     reachable through today's raw-32 admit point.
+//
+// Accepting both is what makes root sign-in work today and keep working after
+// v2 lands.
+func (n *Node) RootAuthPublicKeys() (xpub string, keys []ed25519.PublicKey, err error) {
+	if n == nil || n.identityBundle == nil {
+		return "", nil, errors.New("node identity bundle not loaded")
+	}
+	bundle := n.identityBundle
+	xpub = strings.TrimSpace(bundle.XPub)
+	if xpub == "" {
+		return "", nil, errors.New("node identity bundle has no xpub")
+	}
+
+	// The SLIP-10 signing key is already derived on the bundle.
+	if bundle.Identity != nil && bundle.Identity.SigningPubKey != nil {
+		if raw, rerr := bundle.Identity.SigningPubKey.Raw(); rerr == nil && len(raw) == ed25519.PublicKeySize {
+			keys = append(keys, ed25519.PublicKey(append([]byte(nil), raw...)))
+		}
+	}
+
+	// The legacy bip32-scalar key must be derived from the seed.
+	if n.hdwallet != nil && strings.TrimSpace(bundle.Mnemonic) != "" {
+		seed, serr := n.hdwallet.MnemonicToSeed(n.ctx, bundle.Mnemonic, "")
+		if serr != nil {
+			return "", nil, fmt.Errorf("derive root seed: %w", serr)
+		}
+		account := uint32(0)
+		if bundle.Identity != nil {
+			account = bundle.Identity.Account
+		}
+		legacyPub, lerr := n.hdwallet.DeriveLegacyAuthPublicKey(n.ctx, seed, account)
+		if lerr != nil {
+			// Non-fatal: the SLIP-10 key alone still admits a modern/v2 login.
+			log.Warnf("Failed to derive the legacy root auth key; root sign-in through hd-wallet-ui's legacy profile will not be recognised: %v", lerr)
+		} else if len(legacyPub) == ed25519.PublicKeySize {
+			keys = append(keys, legacyPub)
+		}
+	}
+
+	if len(keys) == 0 {
+		return "", nil, errors.New("no root auth public keys could be derived")
+	}
+	return xpub, keys, nil
 }

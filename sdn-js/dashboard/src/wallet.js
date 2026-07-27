@@ -1,23 +1,32 @@
 /*
- * hd-wallet-wasm sign-in for the dashboard (graph task
- * nst-node-edit-permissions-ui deliverable 1; wire contract:
- * graph/tasks/nst-node-admin-contract.md §1–§5, §7, §9).
+ * The §4 sign-in wire, and the hd-wallet-wasm core the wallet UI runs on
+ * (graph task nst-node-edit-permissions-ui; contract
+ * graph/tasks/nst-node-admin-contract.md §1–§7, §11).
  *
- * THE SEED NEVER LEAVES THE PAGE. The recovery phrase is read from a form
- * field, turned into a seed, turned into keys, and dropped. The node only
- * ever sees `xpub`, `client_pubkey_hex` and a signature — never the phrase,
- * never the seed, never a private key. Nothing here writes localStorage,
- * sessionStorage, IndexedDB or any network body carrying key material.
+ * CUSTODY: this module never holds a phrase, a password or a private key.
+ * hd-wallet-ui collects the credentials, derives, signs and wipes its own
+ * inputs (see walletui.js); the node only ever sees `xpub`,
+ * `client_pubkey_hex` and a signature. Nothing here writes localStorage,
+ * sessionStorage or IndexedDB, and no request body carries key material.
  *
- * Loading: the wallet ES module is imported LAZILY from the node's OWN
- * origin (`/wallet-wasm/runtime/index.mjs`, contract §1) the first time an
- * operator opens sign-in. It is deliberately NOT inlined into the
- * single-file page: hd-wallet.js is 5.2 MB (the .wasm rides in it as a
- * data: URI), which would multiply the embedded homepage ~20x for a
- * surface most visitors never touch. Same-origin only — if the assets are
- * unstaged the node answers 404 and the UI reports "sign-in unavailable".
- * Reaching a CDN would be a CSP defect, not a degradation (contract §1).
+ * OWNER LAW 2026-07-27: "we do NOT load anything from a site." Both wallet
+ * packages are imported LAZILY from the node's OWN origin —
+ * `/wallet-wasm/runtime/index.mjs` (§1) and `/wallet-ui/*` (§11.3) — the
+ * first time an operator opens sign-in. They are deliberately not inlined
+ * into the single-file page: hd-wallet.js alone is 5.2 MB (the .wasm rides
+ * in it as a data: URI). If the assets are unstaged the node answers 404 and
+ * the UI reports SIGN-IN UNAVAILABLE. A CDN fallback would be a defect, not
+ * a degradation.
  */
+
+import {
+  RAW_CHALLENGE_OPERATION,
+  buildRegistryBinding,
+  collectLegacyCredentials,
+  createWalletApp,
+  readIdentity,
+  signChallengeWithWallet,
+} from './walletui.js';
 
 /** Contract §1: the ONE entry point. hd-wallet.js is imported by it, relatively. */
 export const WALLET_ENTRY = '/wallet-wasm/runtime/index.mjs';
@@ -72,10 +81,12 @@ export function decodeChallengeB64(challenge) {
 
 /**
  * POST /api/auth/challenge body (contract §4).
- * `ts` is Unix SECONDS. `xpub` is always sent: the node then resolves the
- * user by xpub, which is the only path that works for a config/admin-added
- * user whose signing key is not bound yet (TOFU, §5.3) and the only path
- * that works at all for first-admin bootstrap (§5.1, where it is MANDATORY).
+ * `ts` is Unix SECONDS. `xpub` is OMITTED on every path this page drives
+ * (§13.1(i)): the node resolves the operator by signing key, and §14.1 admits
+ * the node's own root keys before any user lookup at all. The parameter
+ * survives for a future v2 identity that reports a real ACCOUNT xpub — the
+ * legacy wallet identities report a MASTER xpub, which must never be sent.
+ * (§5's "xpub is MANDATORY for bootstrap" is superseded by §13.1 and §14.1.)
  */
 export function challengeRequestBody({ clientPubKeyHex, xpub, nowMs = Date.now() }) {
   const body = {
@@ -106,7 +117,16 @@ export function verifyRequestBody({ challengeId, clientPubKeyHex, challenge, sig
 
 /**
  * Attestation signing preimage (contract §7 / internal/auth/attestation.go
- * canonicalBytes) — NOT the raw-challenge form of §3:
+ * canonicalBytes) — NOT the raw-challenge form of §3.
+ *
+ * NO CALLER IN THIS PAGE, deliberately: §13.2 rules attestation CLI/API-only
+ * this wave. It is not implementable through hd-wallet-ui — the operation
+ * table is a frozen six-entry object, and raw-challenge locks its payload to
+ * exactly 32 bytes while this preimage is variable-length. The encoder stays
+ * (and stays tested) because it is the §7 wire truth; it gains a caller the
+ * day an upstream operation can sign a caller-supplied payload.
+ *
+ * Layout:
  *
  *   u32be len | XPub  ‖  u32be len | Claim  ‖  i64be IssuedAt.UnixNano  ‖  u32be len | Nonce
  *
@@ -215,130 +235,113 @@ export function loadWallet() {
   return walletPromise;
 }
 
-/** Best-effort zeroing of key material we are done with. */
-function wipe(...items) {
-  for (const item of items) {
-    try {
-      if (item instanceof Uint8Array) item.fill(0);
-      else if (item && typeof item.wipe === 'function') item.wipe();
-    } catch {
-      /* wiping is best-effort; never let it break the flow */
-    }
-  }
-}
-
 /**
- * Derive the node-compatible identity from a recovery phrase (contract §2).
- * Returns an object holding ONLY the public identity plus an in-memory
- * signer. Seed, master key and account key are wiped before returning; the
- * 32-byte Ed25519 signing seed is retained in this closure so the operator
- * can attest (§7) without re-entering the phrase, and is zeroed by
- * `destroy()` (called on sign-out).
+ * Full sign-in (contract §4, §11) driven by hd-wallet-ui, mounted in our own
+ * DOM and wearing our own stylesheet (owner directive 2026-07-27).
+ *
+ * Order matters and is forced by the wire: the wallet must unlock FIRST,
+ * because §4 binds the challenge to a public key at mint time and the wallet
+ * only reveals the key (and the xpub) as `unlockLegacy`'s return value. The
+ * package's own `start()` never surfaces either — its signed result carries
+ * `keyId: "sha256:…"` and nothing else — which is why §11.4's manual drive is
+ * the only composition that satisfies both sides.
+ *
+ * Custody stays entirely with the wallet: it reads the credential controls,
+ * derives, signs and wipes. This function never sees a phrase, a password or
+ * a private key, and nothing is stored anywhere.
+ *
+ * @returns {Promise<{user: object, identity: object, localFingerprint: string, expiresAt: number}>}
  */
-export async function deriveIdentity(mnemonic, account = 0) {
-  const { mod, Curve } = await loadWallet();
-  const phrase = String(mnemonic ?? '').trim().replace(/\s+/g, ' ');
-  if (!phrase) throw new Error('Enter your recovery phrase.');
-  if (typeof mod.mnemonic?.validate === 'function' && !mod.mnemonic.validate(phrase)) {
-    throw new Error('That is not a valid BIP-39 recovery phrase.');
-  }
-
-  const paths = accountPaths(account);
-  const seed = mod.mnemonic.toSeed(phrase, '');
-  let master = null;
-  let acct = null;
-  let neutered = null;
-  let xpub = '';
-  let peerId = '';
-  let sk = null;
+export async function signInWithWalletUI({ mount, profile, post, displayName, document: doc = globalThis.document }) {
+  const { identity, controller, published, binding, close } = await unlockWithWalletUI({
+    mount,
+    profile,
+    displayName,
+    document: doc,
+  });
   try {
-    master = mod.hdkey.fromSeed(seed, Curve.SECP256K1);
-    acct = master.derivePath(paths.identity);
-    neutered = acct.neutered();
-    xpub = neutered.toXpub();
-    peerId = mod.libp2p.peerIdFromXpub(xpub);
-    // SLIP-10 Ed25519, fully hardened — NOT buildSigningPath/getSigningKey,
-    // which build the non-hardened secp256k1 BIP-44 path (contract §2).
-    sk = mod.slip10.deriveEd25519Path(seed, paths.signing).privateKey;
-  } finally {
-    wipe(seed, master, acct, neutered);
-  }
-  const pk = mod.curves.ed25519.publicKeyFromSeed(sk);
-
-  return {
-    xpub,
-    peerId,
-    account,
-    signingPubKeyHex: toHex(pk),
-    /** Raw Ed25519 over the exact message bytes — no digest, no envelope (§3). */
-    sign: (message) => mod.curves.ed25519.sign(message, sk),
-    destroy: () => wipe(sk),
-  };
-}
-
-/**
- * Full sign-in (contract §4): challenge → sign → verify → session cookie.
- * @param {{mnemonic: string, account?: number, post: (path: string, body: any) => Promise<any>}} args
- * @returns {Promise<{user: {name?: string, trust_level: string}, identity: object, expiresAt: number}>}
- */
-export async function signIn({ mnemonic, account = 0, post }) {
-  const identity = await deriveIdentity(mnemonic, account);
-  try {
+    // NO `xpub` ON THE WIRE — ruled 2026-07-27 (§13.1(i)). The node resolves
+    // an already-registered operator by SIGNING KEY when the xpub is absent
+    // (GetUserBySigningPubKey). Sending one would put a depth-0 MASTER xpub —
+    // the only kind this wallet's raw-32 identities report — on the wire and
+    // into auth.db, a durable at-rest secret enumerating the entire wallet.
+    // So it is never sent here, and never in step 3 either (§4: send it in
+    // verify only if you sent it in challenge).
     const challenge = await post(
       '/api/auth/challenge',
-      challengeRequestBody({ clientPubKeyHex: identity.signingPubKeyHex, xpub: identity.xpub })
+      challengeRequestBody({ clientPubKeyHex: identity.clientPubKeyHex })
     );
-    const bytes = decodeChallengeB64(challenge?.challenge);
-    if (!bytes) throw new Error('The node returned a malformed challenge.');
-    const signature = identity.sign(bytes);
+    if (!decodeChallengeB64(challenge?.challenge)) throw new Error('The node returned a malformed challenge.');
+
+    // The wallet renders its OWN confirmation dialog here, signs, and hands
+    // the result back through the in-process relay.
+    const { signatureHex } = await signChallengeWithWallet({
+      controller,
+      published,
+      binding,
+      challengeBase64: challenge.challenge,
+    });
+
     const verified = await post(
       '/api/auth/verify',
       verifyRequestBody({
         challengeId: challenge.challenge_id,
-        clientPubKeyHex: identity.signingPubKeyHex,
+        clientPubKeyHex: identity.clientPubKeyHex,
         // VERBATIM, unpadded — the server decodes with RawStdEncoding.
         challenge: challenge.challenge,
-        signatureHex: toHex(signature),
-        xpub: identity.xpub,
+        signatureHex,
       })
     );
-    // The node names the identity it resolved with a non-invertible
-    // fingerprint (§4). Hash our own xpub and confirm the session it just
-    // issued really belongs to the key this page unlocked.
-    const local = await xpubFingerprint(identity.xpub);
-    if (!fingerprintMatches(local, verified?.user?.xpub_fingerprint)) {
-      throw new Error('The node issued a session for a different identity than the key you unlocked.');
-    }
+    // No local fingerprint to compare: §4's `xpub_fingerprint` names the xpub
+    // the NODE holds for this operator (a config label, typically the
+    // show-identity account xpub), which is deliberately NOT the wallet's
+    // master xpub. Hashing the wallet's would manufacture a false mismatch.
+    // The node's value is taken as reported and displayed.
     return {
       user: verified?.user ?? {},
-      identity,
-      localFingerprint: local,
+      // No `sign`: the wallet owns the key and destroyed it when the
+      // operation completed (§13.2). No `xpub`: see above.
+      identity: {
+        signingPubKeyHex: identity.clientPubKeyHex,
+        derivationPath: identity.derivationPath,
+        destroy: () => {},
+      },
+      localFingerprint: '',
       expiresAt: verified?.expires_at ?? 0,
     };
-  } catch (err) {
-    identity.destroy();
-    throw err;
+  } finally {
+    close();
   }
 }
 
 /**
- * Prove possession of the signed-in key to the node (contract §7).
- * Grants nothing and changes no trust level — it answers "is the key on
- * file for this xpub the key this browser holds?".
+ * Mount the wallet and unlock it — the half of sign-in that touches no
+ * network at all: credentials in, public identity out, nothing transmitted.
  */
-export async function attest({ identity, claim = 'self', post }) {
-  const issuedAtSeconds = Math.floor(Date.now() / 1000);
-  const nonce = new Uint8Array(16);
-  (globalThis.crypto ?? {}).getRandomValues?.(nonce);
-  const preimage = attestationPreimage({ xpub: identity.xpub, claim, issuedAtSeconds, nonce });
-  const signature = identity.sign(preimage);
-  return post('/api/auth/attest', {
-    xpub: identity.xpub,
-    claim,
-    issued_at: rfc3339Seconds(issuedAtSeconds),
-    nonce_hex: toHex(nonce),
-    signature_hex: toHex(signature),
-  });
+async function unlockWithWalletUI({ mount, profile, displayName, document: doc }) {
+  const { mod } = await loadWallet();
+  const origin = globalThis.location?.origin ?? '';
+  const binding = await buildRegistryBinding(origin, displayName);
+  const { app, controller, published } = await createWalletApp({ mount, wasm: mod, binding, document: doc });
+  const close = () => {
+    try {
+      app.stop('close');
+    } catch {
+      /* the controller self-destroys on completion; stop() is belt-and-braces */
+    }
+  };
+  try {
+    const title = `Sign in to ${binding.clientDisplayName}`;
+    const { controls } = await collectLegacyCredentials({ profile, controller, mount, title, document: doc });
+    const identity = readIdentity(
+      await controller.unlockLegacy({ ...controls, operation: RAW_CHALLENGE_OPERATION, profile })
+    );
+    mount.replaceChildren?.();
+    return { identity, controller, published, binding, close };
+  } catch (err) {
+    close();
+    throw err;
+  }
 }
 
 /** Derive a libp2p peer id from an xpub (contract §8: xpubs are NOT peer ids). */
