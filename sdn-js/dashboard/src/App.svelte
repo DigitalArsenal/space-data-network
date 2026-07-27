@@ -520,6 +520,44 @@
     -webkit-font-smoothing: antialiased;
     overflow: hidden;
   }
+  /* ------------------------------------------------------------------
+     RAIL MENU SCALE — owner directive 2026-07-27, +30% on menus.
+     SdnRail lives in the design repo (spaceaware-student-sdn) and the
+     ZIP-SYNC LAW forbids editing that tree: the design tool is its only
+     writer. So the scale is applied HERE, in the consumer, exactly as the
+     law prescribes. Every rule is the design value x1.3.
+     `.root` prefixes the selectors purely for specificity — the design's
+     own rules carry Svelte's scope class, so an unprefixed selector would
+     lose. Drop this block if a future design zip ships these sizes.
+     ------------------------------------------------------------------ */
+  .root :global(.sdn-rail .brand-name) {
+    font-size: 19.5px; /* 15 x1.3 */
+  }
+  .root :global(.sdn-rail .brand-sub),
+  .root :global(.sdn-rail .sec),
+  .root :global(.sdn-rail .fkey) {
+    font-size: 12.35px; /* 9.5 x1.3 */
+  }
+  .root :global(.sdn-rail .nav-lbl) {
+    font-size: 19.5px; /* 15 x1.3 */
+  }
+  .root :global(.sdn-rail .nav-ico) {
+    font-size: 26.65px; /* 20.5 x1.3 */
+  }
+  .root :global(.sdn-rail .nav-i) {
+    height: 56px; /* 46 -> 56 so the taller glyph + label are not cramped */
+  }
+  .root :global(.sdn-rail .brand) {
+    height: 52px; /* 44 -> 52, matching the larger wordmark */
+  }
+  /* The expanded flyout has to grow or "PERMISSIONS N3" clips: the label
+     column is (width - 64px icon gutter). 218px left ~154px, and the label
+     needs ~186px at 19.5px. */
+  .root :global(aside.sdn-rail:hover),
+  .root :global(aside.sdn-rail.pinned) {
+    width: 286px;
+  }
+
   main {
     position: absolute;
     left: 66px;
@@ -574,29 +612,34 @@
     padding: 2px 7px;
     white-space: nowrap;
   }
+  /* MENU SCALE (owner directive 2026-07-27: "font needs to be 30% bigger on
+     sdn node menus") — every size in this block is its previous value x1.3,
+     with padding/tracking nudged only where the larger glyphs would clip.
+     Body text, tables and panels are deliberately untouched: they were
+     already scaled by the earlier global directive. */
   .ctl {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    font-size: 12.5px;
-    letter-spacing: 0.16em;
+    font-size: 16.25px; /* 12.5 x1.3 */
+    letter-spacing: 0.14em; /* eased from 0.16em so TRUST/HIDE… stay on one line */
     white-space: nowrap;
   }
   .ctl select {
     background: transparent;
     border: 1px solid;
     font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    font-size: 13px;
-    letter-spacing: 0.1em;
-    padding: 5px 8px;
+    font-size: 16.9px; /* 13 x1.3 */
+    letter-spacing: 0.08em;
+    padding: 6px 10px;
     outline: none;
   }
   .ctl select option { background: #0a141b; }
   .ctl.check { cursor: pointer; user-select: none; }
   .ctl.check input {
     appearance: none;
-    width: 13px;
-    height: 13px;
+    width: 17px; /* 13 x1.3 — the tick keeps pace with its label */
+    height: 17px;
     border: 1px solid rgba(110, 170, 190, 0.5);
     background: transparent;
     cursor: pointer;
@@ -606,8 +649,8 @@
   }
   .ctl.check input::before {
     content: '';
-    width: 7px;
-    height: 7px;
+    width: 9px; /* 7 x1.3 */
+    height: 9px;
     transform: scale(0);
     background: #35c9d8;
   }
@@ -666,9 +709,9 @@
     border: 1px solid;
     cursor: pointer;
     font-family: 'IBM Plex Mono', ui-monospace, monospace;
-    font-size: 12.5px;
-    letter-spacing: 0.16em;
-    padding: 7px 12px;
+    font-size: 16.25px; /* 12.5 x1.3 */
+    letter-spacing: 0.14em;
+    padding: 8px 14px;
     white-space: nowrap;
   }
   .settings-menu {
@@ -677,19 +720,23 @@
     right: 0;
     z-index: 30;
     border: 1px solid;
-    min-width: 300px;
-    padding: 12px 14px 13px;
+    /* 300 x1.3 so the hint does not re-wrap at the new size — but min-width
+       beats max-width in CSS, so the cap has to live INSIDE the min() or a
+       390px phone pushes the popover off the left edge. */
+    min-width: min(390px, calc(100vw - 32px));
+    max-width: calc(100vw - 32px);
+    padding: 14px 16px 15px;
     box-shadow: 0 14px 44px rgba(0, 0, 0, 0.5);
   }
   .settings-title {
-    font-size: 11.5px;
-    letter-spacing: 0.18em;
+    font-size: 14.95px; /* 11.5 x1.3 */
+    letter-spacing: 0.16em;
     border-bottom: 1px solid;
     padding-bottom: 7px;
     margin-bottom: 10px;
   }
   .settings-hint {
-    font-size: 12.5px;
+    font-size: 16.25px; /* 12.5 x1.3 */
     letter-spacing: 0.04em;
     line-height: 1.5;
     margin-top: 8px;
@@ -771,6 +818,16 @@
     }
     .search {
       flex-basis: 100%;
+      max-width: none;
+    }
+    /* At the +30% menu size the popover is wider than the toolbar row it
+       hangs off, and that row has wrapped — anchoring to it pushes the menu
+       off the left edge. Pin it to the viewport instead; the existing
+       full-screen backdrop already dismisses it. */
+    .settings-menu {
+      position: fixed;
+      inset: auto 12px 12px 12px;
+      min-width: 0;
       max-width: none;
     }
     /* The header's right side can't fit the status chips AND the session
