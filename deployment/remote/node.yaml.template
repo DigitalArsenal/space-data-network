@@ -1,0 +1,67 @@
+# SDN single-node remote deployment config (rendered by sdn-remote-deploy.sh).
+#
+# The double-underscore tokens below are substituted at deploy time.
+#
+# EVERY writable path lives under /app/data, which is the ONE named docker
+# volume. That is deliberate: storage.path = /app/data/store means the node
+# derives its key directory as filepath.Dir(storage.path)/keys = /app/data/keys
+# (sdn-server/internal/node/identity_bundle.go:52), so the encrypted mnemonic,
+# the auth database, the TLS cache and the record store are all inside the same
+# volume. One volume to snapshot, one volume to restore, one volume to lose.
+#
+# Do NOT set storage.path to /app/data itself: the key directory would then
+# resolve to /app/keys, OUTSIDE the volume, and the node's identity would be
+# destroyed by the next image upgrade.
+
+mode: full
+
+network:
+  bootstrap:
+    - /dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
+    - /dnsaddr/bootstrap.spacedatanetwork.org/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3
+    - /ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
+    - /ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3
+
+storage:
+  path: /app/data/store
+  max_size: 10GB
+  gc_interval: 1h
+
+admin:
+  enabled: true
+  listen_addr: __ADMIN_LISTEN__
+  require_auth: true
+  session_expiry: 24h
+  totp_required: false
+  auth_db_path: /app/data/auth.db
+__TLS_BLOCK__
+  webui_path: /app/webui
+
+# Same-origin wallet sign-in assets, baked into the image. Without these the
+# dashboard reports "sign-in unavailable" and a Docker-deployed node cannot be
+# administered at all, because the node's own root identity IS the admin
+# credential and the wallet is how it is presented.
+wallet_wasm:
+  assets_dir: /app/wallet-wasm
+  ui_assets_dir: /app/wallet-ui
+
+peers:
+  registry_path: /app/data/peers.db
+
+tor:
+  enabled: false
+  hidden_service_enabled: false
+
+flows:
+  enabled: false
+  storage_path: /app/data/flows
+
+setup:
+  token_expiry: 10m
+  data_path: /app/data
+
+# NOTE: there are deliberately NO credentials in this file and there never may
+# be. The at-rest key password is fed from a mounted file, the mnemonic is
+# imported from a tmpfs mount on first boot, and the operator account is
+# created interactively through the one-time setup token. `users:` entries, if
+# you add any later, carry only an xpub + signing_pubkey_hex — public material.

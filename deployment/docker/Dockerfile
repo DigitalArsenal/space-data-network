@@ -50,9 +50,28 @@ WORKDIR /app
 COPY --from=builder /out/spacedatanetwork /app/spacedatanetwork
 COPY --from=builder /out/spacedatanetwork-edge /app/spacedatanetwork-edge
 COPY --from=builder /root/.wasmedge /opt/wasmedge
-COPY sdn-js/ui/dist/ /app/admin-ui/
+# The node dashboard + fonts are compiled INTO the binary
+# (sdn-server/cmd/spacedatanetwork/embedded, //go:embed in conjunction_ui.go).
+# There is deliberately no external admin-ui copy here: sdn-js/ui/dist no longer
+# exists in the tree, and copying it is what used to break this image build.
 COPY webui/build/ /app/webui/
 COPY config/full-docker.yaml /app/config/full-docker.yaml
+
+# The pure-WASI HD wallet. NOT optional: without it n.hdwallet is nil, so
+# loadOrCreateIdentityBundle fails ("hd wallet not available"), the node falls
+# back to a random node.key with NO mnemonic, and root admin sign-in is dead
+# ("Node root admin sign-in unavailable: node identity bundle not loaded").
+# /usr/local/lib is the last entry of the node's search list (node.go:1478).
+COPY sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm /usr/local/lib/hd-wallet-wasi.wasm
+
+# Same-origin wallet sign-in assets. The dashboard's CSP is default-src 'self'
+# and owner law 2026-07-27 is "we do NOT load anything from a site", so these
+# must be served BY the node. They are staged from the pinned npm packages by
+# deployment/wallet-wasm/stage-wallet-wasm.sh before the image is built.
+# Both directories are tracked (via .gitkeep) so an unstaged tree still builds:
+# absent assets 404 and the dashboard reports sign-in unavailable (main.go:1826).
+COPY deployment/wallet-wasm/staged/wallet-wasm/ /app/wallet-wasm/
+COPY deployment/wallet-wasm/staged/wallet-ui/ /app/wallet-ui/
 
 RUN mkdir -p /app/data /app/keys && chown -R sdn:sdn /app
 
@@ -62,7 +81,6 @@ EXPOSE 5001 4001 4001/udp 8080 8081
 
 ENV WASMEDGE_DIR=/opt/wasmedge
 ENV LD_LIBRARY_PATH=/opt/wasmedge/lib
-ENV SDN_ADMIN_UI_PATH=/app/admin-ui
 ENV SDN_WEBUI_PATH=/app/webui
 
 VOLUME /app/data

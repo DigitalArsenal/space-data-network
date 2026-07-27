@@ -1,0 +1,82 @@
+# SDN node — single-host remote deployment (rendered by sdn-remote-deploy.sh).
+#
+# Every value below marked with a double-underscore token is substituted by
+# that script; do not edit the rendered copy on the host by hand.
+#
+# There is deliberately NO `build:` key. Release images are built LOCALLY for
+# linux/amd64 and streamed to this host with `docker save | ssh | docker load`
+# (standing owner law: never build on hosts). If you add a `build:` key here you
+# have broken the law and put the Go source on a production box.
+
+services:
+  sdn-node:
+    image: __IMAGE__
+    container_name: sdn-node
+
+    # ------------------------------------------------------------------
+    # PINNED HOSTNAME — DO NOT CHANGE THIS VALUE, EVER.
+    # ------------------------------------------------------------------
+    # The credential keystore root key is derived from the hardware
+    # fingerprint + node key + os.Hostname()
+    # (sdn-server/internal/credstore/secrets.go:217, DeriveRootKey fails
+    # closed without it). Docker assigns a *new* random hostname (the
+    # container ID) every time the container is RECREATED — which
+    # `docker compose up -d` does on every image upgrade. Unpinned, every
+    # routine upgrade would permanently destroy this node's stored provider
+    # credentials. Pinning it here is what makes upgrades survivable.
+    hostname: __HOSTNAME__
+
+    restart: __RESTART__
+
+    # The image CMD points at the baked-in config; this deployment runs the
+    # rendered node.yaml mounted below instead.
+    command: ["daemon", "--config", "/app/config/node.yaml"]
+
+    env_file:
+      - ./sdn.env
+
+    ports:
+__PORTS__
+
+    volumes:
+      # THE volume. Record store, keys/mnemonic, auth.db, ACME cache, peers,
+      # flows — all of it, because node.yaml sets storage.path=/app/data/store
+      # so the key directory resolves to /app/data/keys (inside the volume).
+      # Back this up and you have backed up the node's identity.
+      - sdn-data:/app/data
+
+      - ./node.yaml:/app/config/node.yaml:ro
+
+      # Durable at-rest key password. Host file is 0400 uid 1000; it is NOT in
+      # the image, NOT in the environment, NOT in this file.
+      - /etc/sdn/key_password:/run/sdn-key/key_password:ro
+
+      # First-boot mnemonic import. Host path is under /run, which is a tmpfs
+      # on any systemd host, so the plaintext never touches the disk and never
+      # survives a reboot. sdn-remote-deploy.sh shreds the file as soon as the
+      # node reports the identity imported; the (empty) directory stays so this
+      # bind mount remains valid on restart.
+      - /run/sdn-secrets:/run/secrets:ro
+
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -q --spider --no-check-certificate https://localhost/api/v1/status || wget -q --spider http://localhost:5001/api/v1/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+    security_opt:
+      - no-new-privileges:true
+
+    tmpfs:
+      - /tmp
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  sdn-data:
+    name: sdn-data
