@@ -655,3 +655,67 @@ describe('ACCOUNTS — one list for nodes and logins (contract §16)', async () 
     expect(rows[1].bytes).toBe(12);
   });
 });
+
+describe('contact card — the human vCard (owner directive 2026-07-27)', async () => {
+  const { parseVCard, contactCard, splitStructured } = await import('./vcard.js');
+  const CRLF = '\r\n';
+  const FULL = [
+    'BEGIN:VCARD', 'VERSION:3.0', 'N:Koury;TJ;Q;Dr;PhD', 'FN:TJ Koury',
+    'ORG:DigitalArsenal', 'TITLE:Director', 'TEL:+1-555-0100',
+    'EMAIL;TYPE=INTERNET:tj@example.org',
+    'ADR:PO 9;;123 Main St;Sterling;VA;20164;USA',
+    'URL:https://spaceaware.io', 'X-SOCIALPROFILE;TYPE=x:@spaceaware',
+    'EMAIL;type=INTERNET;type=xpub:xpub661@xpub.spacedatanetwork.org',
+    'END:VCARD',
+  ].join(CRLF);
+
+  it('splits structured values on UNESCAPED semicolons only', () => {
+    expect(splitStructured('a;b;c')).toEqual(['a', 'b', 'c']);
+    // NB: the vCard bytes contain a backslash, so the JS literal needs two.
+    expect(splitStructured('Smith\\; Jr;John')).toEqual(['Smith; Jr', 'John']);
+    expect(splitStructured('line\\nbreak;x')).toEqual(['line\nbreak', 'x']);
+    expect(splitStructured('')).toEqual(['']);
+  });
+
+  it('reads the human fields out of a full card', () => {
+    const rows = Object.fromEntries(contactCard(parseVCard(FULL)).map((r) => [r.key, r.value]));
+    expect(rows.given_name).toBe('TJ');
+    expect(rows.family_name).toBe('Koury');
+    expect(rows.organization).toBe('DigitalArsenal');
+    expect(rows.job_title).toBe('Director');
+    expect(rows.telephone).toBe('+1-555-0100');
+    expect(rows.street).toBe('123 Main St');
+    expect(rows.locality).toBe('Sterling');
+    expect(rows.postal_code).toBe('20164');
+    expect(rows.country).toBe('USA');
+    expect(rows.po_box).toBe('PO 9');
+    expect(rows.website).toBe('https://spaceaware.io');
+    expect(rows.social).toBe('x: @spaceaware');
+  });
+
+  it('shows the HUMAN email, never a machine alias', () => {
+    const rows = Object.fromEntries(contactCard(parseVCard(FULL)).map((r) => [r.key, r.value]));
+    expect(rows.email).toBe('tj@example.org');
+    expect(rows.email).not.toContain('spacedatanetwork.org');
+  });
+
+  it('renders every field even when the card is empty — blank, never invented', () => {
+    const bare = contactCard(parseVCard(['BEGIN:VCARD', 'VERSION:3.0', 'END:VCARD'].join(CRLF)));
+    // The card shows its SHAPE: all rows present...
+    expect(bare).toHaveLength(18);
+    expect(bare.map((r) => r.label)).toContain('FIRST NAME');
+    expect(bare.map((r) => r.label)).toContain('SOCIAL');
+    // ...and every value is literally empty. Nothing is defaulted or guessed.
+    expect(bare.every((r) => r.value === '')).toBe(true);
+    // Same shape for a card that does not exist at all.
+    expect(contactCard(parseVCard('')).every((r) => r.value === '')).toBe(true);
+    expect(contactCard(null).every((r) => r.value === '')).toBe(true);
+  });
+
+  it('carries no machine identity — that lives in the other widgets', () => {
+    const keys = contactCard(parseVCard(FULL)).map((r) => r.key);
+    for (const machine of ['xpub', 'signing_key', 'epm_signature', 'peer_id', 'derivation']) {
+      expect(keys).not.toContain(machine);
+    }
+  });
+});

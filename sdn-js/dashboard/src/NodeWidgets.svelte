@@ -22,14 +22,16 @@
   import Kicker from 'spaceaware-student-sdn/src/lib/components/Kicker.svelte';
   import GBtn from 'spaceaware-student-sdn/src/lib/components/GBtn.svelte';
   import { theme } from 'spaceaware-student-sdn/src/lib/theme.js';
-  import { parseVCard, displayFields, isAliasEmail, extractIdentity, buildCompactVCard } from './vcard.js';
+  import { parseVCard, contactCard, extractIdentity, buildCompactVCard } from './vcard.js';
   import { normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
   import { shortId, formatUptime, formatLastSeen, formatCoords } from './format.js';
 
   /** @type {{ node: any, now: number }} */
   let { node, now } = $props();
 
-  let view = $state('parsed'); // 'parsed' | 'raw' | 'qr'
+  // Section controls, in the owner's order: MAIN CARD -> CANONICAL RAW -> QR.
+  // QR is a full-section takeover, not an inline panel.
+  let view = $state('card'); // 'card' | 'raw' | 'qr'
   let epmAvailable = $state(false);
   let qrCanvas = $state(null);
 
@@ -40,21 +42,9 @@
   const coords = $derived(formatCoords(node.lat, node.lon));
   const hasVCard = $derived(Boolean(node.vcard?.trim()));
 
-  // Machine props already decoded into their own widgets (or too raw to show,
-  // like the embedded binary EPM) stay out of the parsed contact view.
-  const HIDDEN_PROPS = new Set([
-    'X-SDN-PEER-ID', 'X-SDN-EPM-CID', 'X-SDN-EPM-B64', 'X-SDN-EPM-SIGNATURE',
-    'X-SDN-EPM-SIGNATURE-TIMESTAMP', 'X-SIGNING-KEY', 'X-ENCRYPTION-KEY',
-    'X-SDN-BITCOIN-ADDRESS', 'PRODID',
-  ]);
-  const fields = $derived(
-    displayFields(
-      props.filter(
-        (p) => !isAliasEmail(p) && !HIDDEN_PROPS.has(p.name) &&
-          !p.name.endsWith('.X-ABLABEL') && !p.name.endsWith('.X-ABRELATEDNAMES')
-      )
-    )
-  );
+  // The HUMAN card: a fixed set of labelled rows that render even when empty,
+  // so the shape of the card is visible. Values are never invented.
+  const contactRows = $derived(contactCard(props));
 
   const statusRows = $derived(
     [
@@ -145,6 +135,61 @@
 </script>
 
 <div class="grid">
+  <!-- CONTACT CARD — upper-left, the human card ------------------------- -->
+  <div class="contact">
+    <Panel variant="raised" pad="0">
+      <div class="w">
+        <div class="whead" style="border-color:{theme.divider};">
+          <Kicker text="VCARD" />
+          <div class="wtitle" style="color:{theme.textBright};">CONTACT CARD</div>
+          <div class="wchips actions">
+            {#each [['card', 'MAIN CARD'], ['raw', 'CANONICAL RAW'], ['qr', 'QR']] as [id, label] (id)}
+              <button
+                class="act"
+                style="color:{view === id ? theme.cyan : theme.ice};border-color:{view === id ? theme.cyan : theme.hairline};"
+                onclick={() => (view = id)}
+              >{label}</button>
+            {/each}
+          </div>
+        </div>
+        <div class="wbody">
+          {#if view === 'qr'}
+            <!-- QR REPLACES ALL CONTENT of the section when selected. -->
+            <div class="qr">
+              <canvas bind:this={qrCanvas}></canvas>
+              <div class="qr-hint" style="color:{theme.textFaint};">
+                Scan to import this node as a contact — the server-canonical compact card.
+              </div>
+            </div>
+          {:else if view === 'raw'}
+            <pre class="mono" style="color:{theme.textDim};border-color:{theme.hairline};">{node.vcard || 'No vCard published by this node.'}</pre>
+          {:else}
+            <dl class="contact-fields">
+              {#each contactRows as f (f.key)}
+                <div class="row">
+                  <dt style="color:{theme.textMuted};">{f.label}</dt>
+                  <dd class="mono wrap" style="color:{f.value ? theme.textBody : theme.textFaint};">{f.value}</dd>
+                </div>
+              {/each}
+            </dl>
+          {/if}
+        </div>
+        {#if hasVCard && view !== 'qr'}
+          <!-- Downloads live at the BOTTOM of the vCard section. -->
+          <div class="wfoot" style="border-color:{theme.divider};">
+            <span class="k" style="color:{theme.textMuted};">DOWNLOADS</span>
+            <span class="dl">
+              <button class="act" style="color:{theme.ice};border-color:{theme.hairline};" onclick={downloadVcf}>↓ VCF</button>
+              {#if epmAvailable}
+                <button class="act" style="color:{theme.ice};border-color:{theme.hairline};" onclick={downloadEpm}>↓ EPM</button>
+              {/if}
+            </span>
+          </div>
+        {/if}
+      </div>
+    </Panel>
+  </div>
+
   <!-- STATUS & IDENTITY ------------------------------------------------- -->
   <Panel variant="raised" pad="0">
     <div class="w">
@@ -161,7 +206,7 @@
           {#each statusRows as [label, value, color] (label)}
             <div class="row">
               <dt style="color:{theme.textMuted};">{label}</dt>
-              <dd class="mono" style="color:{color};">
+              <dd class="mono wrap" class:machine={label === 'PEER ID'} style="color:{color};">
                 {value}{#if label === 'GEO' && coords}<span style="color:{theme.textFaint};"> · {coords}</span>{/if}
               </dd>
             </div>
@@ -190,7 +235,7 @@
             {#each keyRows as [label, value] (label)}
               <div class="row">
                 <dt style="color:{theme.textMuted};">{label}</dt>
-                <dd class="mono wrap" style="color:{label.includes('PATH') ? theme.ice : theme.textBody};">{value}</dd>
+                <dd class="mono wrap machine" style="color:{label.includes('PATH') ? theme.ice : theme.textBody};">{value}</dd>
               </div>
             {/each}
           </dl>
@@ -212,7 +257,7 @@
             {#each epmRows as [label, value] (label)}
               <div class="row">
                 <dt style="color:{theme.textMuted};">{label}</dt>
-                <dd class="mono wrap small" style="color:{theme.textBody};">{value}</dd>
+                <dd class="mono wrap machine" style="color:{theme.textBody};">{value}</dd>
               </div>
             {/each}
           </dl>
@@ -234,7 +279,7 @@
             {#each chainRows as [label, value] (label)}
               <div class="row">
                 <dt style="color:{theme.textMuted};">{label}</dt>
-                <dd class="mono wrap" style="color:{theme.textBody};">{value}</dd>
+                <dd class="mono wrap machine" style="color:{theme.textBody};">{value}</dd>
               </div>
             {/each}
           </dl>
@@ -242,59 +287,6 @@
       </div>
     </Panel>
   {/if}
-
-  <!-- CONTACT CARD (wide) ------------------------------------------------ -->
-  <div class="wide">
-    <Panel variant="raised" pad="0">
-      <div class="w">
-        <div class="whead" style="border-color:{theme.divider};">
-          <Kicker text="VCARD" />
-          <div class="wtitle" style="color:{theme.textBright};">CONTACT CARD</div>
-          {#if hasVCard}
-            <div class="wchips actions">
-              {#each [['parsed', 'PARSED'], ['raw', 'RAW'], ['qr', 'QR']] as [id, label] (id)}
-                <button
-                  class="act"
-                  style="color:{view === id ? theme.cyan : theme.ice};border-color:{view === id ? theme.cyan : theme.hairline};"
-                  onclick={() => (view = id)}
-                >{label}</button>
-              {/each}
-              <button class="act" style="color:{theme.ice};border-color:{theme.hairline};" onclick={downloadVcf}>↓ VCF</button>
-              {#if epmAvailable}
-                <button class="act" style="color:{theme.ice};border-color:{theme.hairline};" onclick={downloadEpm}>↓ EPM</button>
-              {/if}
-            </div>
-          {/if}
-        </div>
-        <div class="wbody">
-          {#if !hasVCard}
-            <div class="none" style="color:{theme.textFaint};">No vCard published by this node.</div>
-          {:else if view === 'raw'}
-            <pre class="mono" style="color:{theme.textDim};border-color:{theme.hairline};">{node.vcard}</pre>
-          {:else if view === 'qr'}
-            <div class="qr">
-              <canvas bind:this={qrCanvas}></canvas>
-              <div class="qr-hint" style="color:{theme.textFaint};">
-                Scan to import this node as a contact (vCard 3.0 — xpub, key derivation paths,
-                EPM signature + CID ride as email aliases).
-              </div>
-            </div>
-          {:else}
-            <dl class="cols">
-              {#each fields as field (field.name)}
-                <div class="row">
-                  <dt style="color:{theme.textMuted};">{field.label}</dt>
-                  <dd class="mono wrap" style="color:{theme.textBody};">
-                    {#each field.values as v, i}{#if i}<br />{/if}{v}{/each}
-                  </dd>
-                </div>
-              {/each}
-            </dl>
-          {/if}
-        </div>
-      </div>
-    </Panel>
-  </div>
 
   <!-- NETWORK ADDRESSES -------------------------------------------------- -->
   {#if node.addrs?.length}
@@ -324,12 +316,21 @@
 <style>
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    /* dense: a short widget backfills the hole a tall one leaves, so the page
+       fills upper-left -> lower-right instead of stranding one column. */
+    grid-auto-flow: row dense;
     gap: 16px;
     align-items: start;
     min-width: 0;
   }
-  /* Card + addresses want the full row where there is room to give it. */
+  /* The contact card is the first and widest widget: two columns where there
+     is room, so its labelled rows are readable rather than squeezed. */
+  .contact { grid-column: span 2; min-width: 0; }
+  .contact :global(> section) { height: 100%; }
+  .contact .contact-fields { columns: 2; column-gap: 24px; }
+  .contact .contact-fields .row { break-inside: avoid; }
+  /* Addresses are long strings; give them the full row. */
   .wide { grid-column: 1 / -1; min-width: 0; }
   .grid :global(> section),
   .wide :global(> section) { height: 100%; }
@@ -351,14 +352,37 @@
   }
   .wchips { display: flex; gap: 6px; flex-wrap: wrap; }
   .wchips.actions { gap: 6px; }
-  .wbody { padding: 12px 16px 15px; min-width: 0; }
+  .wbody { padding: 12px 16px 15px; min-width: 0; overflow-wrap: anywhere; }
+  .wfoot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    border-top: 1px solid;
+    padding: 11px 16px;
+    margin-top: auto;
+  }
+  .wfoot .k { font-size: 12.5px; letter-spacing: 0.16em; }
+  .dl { display: inline-flex; gap: 6px; flex-wrap: wrap; }
   dl { margin: 0; }
   dl.cols { columns: 2; column-gap: 26px; }
   dl.cols .row { break-inside: avoid; }
   .row { display: flex; gap: 12px; padding: 4px 0; align-items: baseline; min-width: 0; }
   dt { flex: none; width: 132px; font-size: 12.5px; letter-spacing: 0.16em; }
-  dd { margin: 0; font-size: 15.5px; min-width: 0; }
+  dd {
+    margin: 0;
+    font-size: 15.5px;
+    min-width: 0;
+    /* Nothing is ever clipped: peer ids, xpubs and signature hex are single
+       unbreakable tokens, so they MUST be allowed to break anywhere. */
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
   dd.wrap { overflow-wrap: anywhere; }
+  /* Long machine values (64-128 hex, xpub, CID) at a denser face so a column
+     holds them in a few lines instead of a ragged tower. */
+  dd.machine { font-size: 12.5px; line-height: 1.45; }
   dd.small { font-size: 12px; white-space: pre-line; }
   .act {
     background: transparent;
@@ -395,6 +419,8 @@
 
   @media (max-width: 760px) {
     .grid { grid-template-columns: 1fr; gap: 12px; }
+    .contact { grid-column: 1 / -1; }
+    .contact .contact-fields { columns: 1; }
     dl.cols { columns: 1; }
     .row { flex-direction: column; gap: 2px; align-items: stretch; }
     dt { width: auto; }
