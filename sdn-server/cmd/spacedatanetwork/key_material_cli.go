@@ -1,0 +1,476 @@
+package main
+
+// `sdn key` — import and export of the node's key material in several formats
+// (owner directive 2026-07-27, graph task nst-key-material-cli).
+//
+// # Connectors only
+//
+// Every capability here ALREADY EXISTS in internal/keys — ExportEncrypted,
+// ImportEncrypted, ExportMnemonic, ImportMnemonic, GenerateQRData,
+// ImportFromQRData — and in the EPM service for the public records. None of it
+// was reachable from the CLI. This file is the missing wire and nothing else:
+// it adds no key handling, no crypto, and no storage of its own.
+//
+// It also deliberately does NOT modify internal/keys/backup.go. That file
+// embeds a BIP-39 wordlist (a 128-word run) and the repository's mnemonic guard
+// blocks re-staging it. It does not need modifying — its API is already
+// complete, which is the whole point.
+//
+// # The secret/public split is the design
+//
+// Formats fall into three custody classes and the command treats them
+// differently rather than uniformly:
+//
+//	PUBLIC     xpub, peerid, epm, vcard  — safe to print, pipe, and commit
+//	ENCRYPTED  backup                    — safe at rest; useless without the password
+//	SECRET     mnemonic                  — plaintext seed; the whole node
+//
+// A SECRET export is refused unless the operator passes --insecure-plaintext,
+// and even then it prints a warning to stderr (never stdout, so it cannot
+// silently end up inside a redirected file). That mirrors the existing
+// `show-identity --show-mnemonic` precedent rather than inventing a new posture.
+
+import (
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/spacedatanetwork/sdn-server/internal/auth"
+	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/keys"
+	"github.com/spacedatanetwork/sdn-server/internal/wasm"
+)
+
+// keyFormat identifies an import/export encoding.
+type keyFormat string
+
+const (
+	keyFormatXPub     keyFormat = "xpub"
+	keyFormatPeerID   keyFormat = "peerid"
+	keyFormatEPM      keyFormat = "epm"
+	keyFormatVCard    keyFormat = "vcard"
+	keyFormatBackup   keyFormat = "backup"
+	keyFormatMnemonic keyFormat = "mnemonic"
+)
+
+// keyFormatCustody classifies a format. Callers gate on this rather than
+// special-casing format names, so a format added later cannot accidentally
+// default to "printable".
+type keyFormatCustody int
+
+const (
+	custodyPublic keyFormatCustody = iota
+	custodyEncrypted
+	custodySecret
+)
+
+func (c keyFormatCustody) String() string {
+	switch c {
+	case custodyPublic:
+		return "public"
+	case custodyEncrypted:
+		return "encrypted"
+	case custodySecret:
+		return "SECRET"
+	default:
+		return "unknown"
+	}
+}
+
+// keyFormatInfo is the format table. It is the single source of truth for what
+// `key export` and `key import` accept and how each is treated.
+var keyFormatInfo = map[keyFormat]struct {
+	Custody     keyFormatCustody
+	Exportable  bool
+	Importable  bool
+	Description string
+}{
+	keyFormatXPub: {custodyPublic, true, false,
+		"BIP-32 account extended public key (m/44'/0'/account') — NEVER the master key"},
+	keyFormatPeerID: {custodyPublic, true, false,
+		"libp2p peer ID derived from the account key"},
+	keyFormatEPM: {custodyPublic, true, false,
+		"the node's signed EPM record (size-prefixed FlatBuffer)"},
+	keyFormatVCard: {custodyPublic, true, false,
+		"the node's contact card (no key bytes, no embedded record — see §18)"},
+	keyFormatBackup: {custodyEncrypted, true, true,
+		"password-encrypted identity backup; restorable with `key import --format backup`"},
+	keyFormatMnemonic: {custodySecret, true, true,
+		"BIP-39 recovery phrase — THE ENTIRE NODE IDENTITY IN PLAINTEXT"},
+}
+
+func knownKeyFormats(filter func(keyFormat) bool) []string {
+	var out []string
+	for f := range keyFormatInfo {
+		if filter == nil || filter(f) {
+			out = append(out, string(f))
+		}
+	}
+	// Deterministic help text.
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			if out[j] < out[i] {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	return out
+}
+
+var (
+	keyExportFormat    string
+	keyExportOutput    string
+	keyExportPlaintext bool
+	keyImportFormat    string
+	keyImportInput     string
+	keyImportForce     bool
+)
+
+var keyCmd = &cobra.Command{
+	Use:   "key",
+	Short: "Import and export the node's key material",
+	Long: `Import and export the node's key material in several formats.
+
+Formats are classified by custody, and the command enforces that class:
+
+  public     xpub, peerid, epm, vcard   safe to print, pipe, and share
+  encrypted  backup                     safe at rest; needs the key password
+  SECRET     mnemonic                   plaintext seed — the entire node
+
+Exporting a SECRET format requires --insecure-plaintext and prints a warning.
+Importing REPLACES this node's identity and is destructive; see 'key import --help'.`,
+}
+
+var keyExportCmd = &cobra.Command{
+	Use:   "export",
+	Short: "Export the node's key material in a chosen format",
+	Long: `Export the node's key material.
+
+Public formats print to stdout (or --output). The 'backup' format produces a
+password-encrypted blob that is safe to store. The 'mnemonic' format is the
+plaintext seed and REQUIRES --insecure-plaintext.`,
+	RunE: runKeyExport,
+}
+
+var keyImportCmd = &cobra.Command{
+	Use:   "import",
+	Short: "Import key material, REPLACING this node's identity",
+	Long: `Import key material, REPLACING this node's identity.
+
+THIS IS DESTRUCTIVE AND CHANGES WHO THIS NODE IS:
+
+  * the libp2p PeerID changes, so peers must re-trust this node;
+  * previously published records stay signed by the OLD key and this node can no
+    longer produce that signature;
+  * root-admin sign-in follows the NEW seed (§14), so the operator must hold the
+    imported phrase in their wallet or they will be locked out of the console.
+
+Refuses to overwrite an existing identity unless --force is passed.`,
+	RunE: runKeyImport,
+}
+
+func init() {
+	exportable := knownKeyFormats(func(f keyFormat) bool { return keyFormatInfo[f].Exportable })
+	importable := knownKeyFormats(func(f keyFormat) bool { return keyFormatInfo[f].Importable })
+
+	keyExportCmd.Flags().StringVar(&keyExportFormat, "format", string(keyFormatXPub),
+		"output format: "+strings.Join(exportable, ", "))
+	keyExportCmd.Flags().StringVarP(&keyExportOutput, "output", "o", "",
+		"write to a file instead of stdout")
+	keyExportCmd.Flags().BoolVar(&keyExportPlaintext, "insecure-plaintext", false,
+		"REQUIRED to export a SECRET format (mnemonic); prints the plaintext seed")
+
+	keyImportCmd.Flags().StringVar(&keyImportFormat, "format", string(keyFormatMnemonic),
+		"input format: "+strings.Join(importable, ", "))
+	keyImportCmd.Flags().StringVarP(&keyImportInput, "input", "i", "-",
+		"read from a file, or '-' for stdin")
+	keyImportCmd.Flags().BoolVar(&keyImportForce, "force", false,
+		"overwrite an existing node identity (DESTRUCTIVE)")
+
+	keyCmd.AddCommand(keyExportCmd)
+	keyCmd.AddCommand(keyImportCmd)
+	rootCmd.AddCommand(keyCmd)
+}
+
+// resolveKeyPassword mirrors the precedence show-identity uses: env, then
+// config, then the machine-derived default.
+func resolveKeyCLIPassword(cfg *config.Config) string {
+	if p := os.Getenv("SDN_KEY_PASSWORD"); p != "" {
+		return p
+	}
+	if cfg != nil && cfg.Security.KeyPassword != "" {
+		return cfg.Security.KeyPassword
+	}
+	return keys.DeriveDefaultPassword()
+}
+
+// keyManagerForConfig opens the key manager over the node's key directory. The
+// directory layout is the one loadOrCreateIdentityBundle uses, so the CLI and
+// the daemon always agree on where the identity lives.
+func keyManagerForConfig(cfg *config.Config) (*keys.Manager, string, error) {
+	if cfg == nil {
+		return nil, "", errors.New("config is required")
+	}
+	keyDir := filepath.Join(filepath.Dir(cfg.Storage.Path), "keys")
+	mgr, err := keys.NewManager(keyDir)
+	if err != nil {
+		return nil, keyDir, fmt.Errorf("open key manager at %s: %w", keyDir, err)
+	}
+	return mgr, keyDir, nil
+}
+
+// validateExportFormat resolves a format name and enforces the custody gate.
+func validateExportFormat(name string, allowPlaintext bool) (keyFormat, error) {
+	f := keyFormat(strings.ToLower(strings.TrimSpace(name)))
+	info, ok := keyFormatInfo[f]
+	if !ok {
+		return "", fmt.Errorf("unknown format %q: expected one of %s", name,
+			strings.Join(knownKeyFormats(func(k keyFormat) bool { return keyFormatInfo[k].Exportable }), ", "))
+	}
+	if !info.Exportable {
+		return "", fmt.Errorf("format %q cannot be exported", name)
+	}
+	if info.Custody == custodySecret && !allowPlaintext {
+		return "", fmt.Errorf(
+			"refusing to export %q: it is %s (%s).\n"+
+				"Pass --insecure-plaintext if you really intend to write the plaintext seed.\n"+
+				"Prefer `--format backup`, which is encrypted and restorable",
+			name, info.Custody, info.Description)
+	}
+	return f, nil
+}
+
+func validateImportFormat(name string) (keyFormat, error) {
+	f := keyFormat(strings.ToLower(strings.TrimSpace(name)))
+	info, ok := keyFormatInfo[f]
+	if !ok || !info.Importable {
+		return "", fmt.Errorf("unknown or non-importable format %q: expected one of %s", name,
+			strings.Join(knownKeyFormats(func(k keyFormat) bool { return keyFormatInfo[k].Importable }), ", "))
+	}
+	return f, nil
+}
+
+func runKeyExport(cmd *cobra.Command, _ []string) error {
+	format, err := validateExportFormat(keyExportFormat, keyExportPlaintext)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	mgr, keyDir, err := keyManagerForConfig(cfg)
+	if err != nil {
+		return err
+	}
+	password := resolveKeyCLIPassword(cfg)
+
+	var payload string
+	switch format {
+	case keyFormatMnemonic:
+		// Warning goes to STDERR, never stdout: `key export --format mnemonic
+		// -o file` or a shell redirect must not fold the warning into the
+		// exported material.
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"WARNING: exporting the plaintext BIP-39 recovery phrase for %s.\n"+
+				"Anyone holding it controls this node completely and can sign as it.\n",
+			keyDir)
+		payload, err = mgr.ExportMnemonic()
+	case keyFormatBackup:
+		payload, err = mgr.ExportEncrypted(password)
+	default:
+		payload, err = exportPublicKeyMaterial(cmd, cfg, format)
+	}
+	if err != nil {
+		return fmt.Errorf("export %s: %w", format, err)
+	}
+
+	if keyExportOutput != "" {
+		// Secret and encrypted material is written 0600; public material uses
+		// the same mode rather than guessing, because an operator redirecting
+		// identity output rarely wants it world-readable.
+		if err := os.WriteFile(keyExportOutput, []byte(payload+"\n"), 0o600); err != nil {
+			return fmt.Errorf("write %s: %w", keyExportOutput, err)
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "wrote %s (%s, mode 0600)\n", keyExportOutput, format)
+		return nil
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), payload)
+	return nil
+}
+
+func runKeyImport(cmd *cobra.Command, _ []string) error {
+	format, err := validateImportFormat(keyImportFormat)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	mgr, keyDir, err := keyManagerForConfig(cfg)
+	if err != nil {
+		return err
+	}
+
+	// Refuse to clobber an existing identity by accident. The mnemonic file is
+	// the authoritative marker: if it exists, this node already HAS an
+	// identity, and importing replaces who it is.
+	mnemonicPath := filepath.Join(keyDir, "mnemonic")
+	if _, statErr := os.Stat(mnemonicPath); statErr == nil && !keyImportForce {
+		return fmt.Errorf(
+			"this node already has an identity at %s.\n"+
+				"Importing REPLACES it: the PeerID changes, peers must re-trust this node,\n"+
+				"previously published records stay signed by the old key, and root-admin\n"+
+				"sign-in will follow the NEW seed — so the operator must hold the imported\n"+
+				"phrase in their wallet or they will be locked out of the console.\n"+
+				"Export a backup first (`key export --format backup -o backup.txt`), then\n"+
+				"re-run with --force if that is genuinely what you intend",
+			mnemonicPath)
+	}
+
+	raw, err := readKeyImportInput(cmd)
+	if err != nil {
+		return err
+	}
+	material := strings.TrimSpace(raw)
+	if material == "" {
+		return errors.New("no key material on input")
+	}
+
+	switch format {
+	case keyFormatMnemonic:
+		err = mgr.ImportMnemonic(material)
+	case keyFormatBackup:
+		err = mgr.ImportEncrypted(material, resolveKeyCLIPassword(cfg))
+	default:
+		return fmt.Errorf("format %q cannot be imported", format)
+	}
+	if err != nil {
+		return fmt.Errorf("import %s: %w", format, err)
+	}
+
+	fmt.Fprintf(cmd.ErrOrStderr(),
+		"imported %s into %s.\n"+
+			"This node's identity has CHANGED. Restart the daemon, re-check peer trust,\n"+
+			"and confirm the operator's wallet holds this seed before relying on\n"+
+			"root-admin sign-in.\n", format, keyDir)
+	return nil
+}
+
+// readKeyImportInput reads material from --input or stdin.
+func readKeyImportInput(cmd *cobra.Command) (string, error) {
+	if keyImportInput != "" && keyImportInput != "-" {
+		data, err := os.ReadFile(keyImportInput)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", keyImportInput, err)
+		}
+		return string(data), nil
+	}
+	reader := bufio.NewReader(cmd.InOrStdin())
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return "", fmt.Errorf("read stdin: %w", err)
+	}
+	return string(data), nil
+}
+
+// exportPublicKeyMaterial renders the PUBLIC formats.
+//
+// It reuses exactly the derivation `show-identity` performs — read the stored
+// mnemonic, derive via the hd-wallet WASM module — so the CLI can never report
+// an identity the daemon would disagree with. Nothing here derives differently
+// or caches.
+//
+// EPM and vCard are deliberately NOT produced here: those are SIGNED records the
+// running EPM service owns, and re-deriving them from the key store would
+// produce an unsigned lookalike. The error points at the surface that already
+// serves them.
+func exportPublicKeyMaterial(cmd *cobra.Command, cfg *config.Config, format keyFormat) (string, error) {
+	switch format {
+	case keyFormatEPM:
+		return "", errors.New(
+			"format \"epm\" is a SIGNED record owned by the running daemon, not the key store.\n" +
+				"Use `spacedatanetwork identity export --format flatbuffer` or GET /api/node/epm")
+	case keyFormatVCard:
+		return "", errors.New(
+			"format \"vcard\" is derived from the SIGNED record owned by the running daemon.\n" +
+				"Use `spacedatanetwork identity export --format text` or GET /api/node/epm/vcard")
+	case keyFormatXPub, keyFormatPeerID:
+	default:
+		return "", fmt.Errorf("format %q has no public exporter", format)
+	}
+
+	mnemonic, _, err := loadStoredMnemonic(cfg)
+	if err != nil {
+		return "", err
+	}
+	wp, err := resolveHDWalletWasmPath()
+	if err != nil {
+		return "", err
+	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	hw, err := wasm.NewHDWalletModule(ctx, wp)
+	if err != nil {
+		return "", fmt.Errorf("load HD wallet WASM: %w", err)
+	}
+	defer hw.Close(ctx)
+
+	seed, err := hw.MnemonicToSeed(ctx, mnemonic, "")
+	if err != nil {
+		return "", fmt.Errorf("derive seed: %w", err)
+	}
+
+	switch format {
+	case keyFormatXPub:
+		xpub, err := hw.DeriveXPub(ctx, seed, 0)
+		if err != nil {
+			return "", fmt.Errorf("derive xpub: %w", err)
+		}
+		// ⚠ Must be the ACCOUNT key (m/44'/0'/account', depth 3), never the
+		// BIP-32 MASTER key. A master xpub enumerates every account and every
+		// address under the whole wallet; §13.1 refuses to STORE one, and this
+		// refuses to EMIT one.
+		if depth, ok := auth.XPubDepth(xpub); ok && depth == 0 {
+			return "", errors.New(
+				"refusing to export a BIP-32 MASTER xpub (depth 0): it enumerates every " +
+					"account and address under this wallet. Only the account xpub is exportable")
+		}
+		return xpub, nil
+	default: // keyFormatPeerID
+		identity, err := hw.DeriveIdentity(ctx, seed, 0)
+		if err != nil {
+			return "", fmt.Errorf("derive identity: %w", err)
+		}
+		return identity.PeerID.String(), nil
+	}
+}
+
+// loadStoredMnemonic reads and decrypts the node's stored mnemonic, using the
+// same path and password precedence as show-identity.
+func loadStoredMnemonic(cfg *config.Config) (mnemonic string, path string, err error) {
+	keyDir := filepath.Join(filepath.Dir(cfg.Storage.Path), "keys")
+	path = filepath.Join(keyDir, "mnemonic")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", path, fmt.Errorf("read %s: %w", path, err)
+	}
+	if keys.IsMnemonicEncrypted(data) {
+		mnemonic, err = keys.DecryptMnemonic(data, resolveKeyCLIPassword(cfg))
+		if err != nil {
+			return "", path, fmt.Errorf("decrypt mnemonic (wrong password?): %w", err)
+		}
+		return mnemonic, path, nil
+	}
+	return string(data), path, nil
+}

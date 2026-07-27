@@ -431,7 +431,7 @@
                 </div>
               </Panel>
             {:else}
-              <NodeWidgets node={selfNode} {now} />
+              <NodeWidgets node={selfNode} {now} {canEdit} />
               {#if session}
                 <div class="stored-wallets"><StoredWallets /></div>
               {/if}

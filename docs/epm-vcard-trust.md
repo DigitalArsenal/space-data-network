@@ -39,7 +39,45 @@ X-SDN-PEER-ID
 X-SDN-DIRECTORY-KIND
 ```
 
-`X-SDN-EPM-B64` is the source of truth. It contains the complete signed EPM bytes. Importers must prefer this embedded payload over mutable vCard fields such as `FN` or `ORG`.
+**Superseded 2026-07-27 by owner directive.** This section previously read:
+*"`X-SDN-EPM-B64` is the source of truth. It contains the complete signed EPM
+bytes. Importers must prefer this embedded payload over mutable vCard fields
+such as `FN` or `ORG`."* That is no longer what the node emits.
+
+`X-SDN-EPM-B64` is **no longer emitted**, and neither is any key material
+(`X-SIGNING-KEY`, `X-ENCRYPTION-KEY`, `X-PUBLIC-KEY`, and the
+`signing.`/`encryption.` email aliases that carried the same bytes). The card
+was carrying a full copy of a record that is already retrievable, plus public
+keys that are already derivable — both redundant.
+
+**The source of truth is now the record itself, addressed by CID.** A vCard
+carries the *verification chain*, not the record:
+
+| alias | carries |
+| --- | --- |
+| `…@xpub.spacedatanetwork.org` | the account extended public key |
+| `…@sign.spacedatanetwork.org` | the signing key's derivation path (base64url) |
+| `…@encrypt.spacedatanetwork.org` | the encryption key's derivation path (base64url) |
+| `…@epmsig.spacedatanetwork.org` | the record's embedded signature |
+| `…@epmts.spacedatanetwork.org` | the signature timestamp |
+| `…@epmcid.spacedatanetwork.org` | the record's content identifier |
+
+A verifier therefore: derives the secp256k1 key from **xpub + path**, fetches
+the authoritative record by **CID**, and verifies the signature against the
+fetched bytes. Mutable display fields such as `FN` or `ORG` are never
+authoritative — that principle is unchanged; only the mechanism for obtaining
+the authoritative values has moved from an embedded copy to a CID fetch, which
+is strictly stronger (a CID-addressed fetch cannot be stale or substituted).
+
+**Key material on the record vs. on the card.** The EPM **record**'s `KEYS[]`
+still carries the ed25519 public key, and must: SLIP-10 ed25519 has no public
+derivation, so that key cannot be derived from any xpub and removing it from the
+record would make ed25519 signatures unverifiable. Only the **vCard surface**
+dropped key bytes. A card is a contact card; the record is the record.
+
+**Importers reading older cards:** the embedded-blob reader is retained, so
+pre-directive and third-party cards that still carry `X-SDN-EPM-B64` continue to
+be verified from it and continue to beat spoofed display fields.
 
 ## PNM Announcement
 

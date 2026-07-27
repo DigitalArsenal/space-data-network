@@ -197,111 +197,54 @@ func TestQRToEPM(t *testing.T) {
 	}
 }
 
-func TestEPMQRFullRoundtrip(t *testing.T) {
-	// Create comprehensive EPM
-	builder := flatbuffers.NewBuilder(1024)
+// TestEPMQRCarriesTheCompactIdentityCard replaces TestEPMQRFullRoundtrip.
+//
+// OWNER DIRECTIVE 2026-07-27: the QR no longer transports the serialized record.
+// EPMToQR renders the compact identity card — contact fields plus the
+// verification chain (xpub, sign/encrypt derivation paths, epmsig/epmts/epmcid)
+// — and a verifier FETCHES the authoritative record by its CID instead of
+// unpacking a copy carried alongside.
+//
+// So a full EPM->QR->EPM byte round trip is deliberately no longer a thing, and
+// asserting one would be asserting the defect. What must hold is that the card
+// scans, carries the chain, and carries no key bytes or embedded record.
+func TestEPMQRCarriesTheCompactIdentityCard(t *testing.T) {
+	epmBytes := createDerivationPathEPM(t)
 
-	dnOffset := builder.CreateString("Alice Johnson")
-	legalNameOffset := builder.CreateString("Johnson Industries")
-	familyNameOffset := builder.CreateString("Johnson")
-	givenNameOffset := builder.CreateString("Alice")
-	emailOffset := builder.CreateString("alice@johnson.com")
-	telOffset := builder.CreateString("+1-555-9876")
-	titleOffset := builder.CreateString("CEO")
-	occupationOffset := builder.CreateString("Executive")
-
-	// Address
-	streetOffset := builder.CreateString("123 Tech Blvd")
-	localityOffset := builder.CreateString("San Francisco")
-	regionOffset := builder.CreateString("CA")
-	postalOffset := builder.CreateString("94105")
-	countryOffset := builder.CreateString("USA")
-
-	EPM.AddressStart(builder)
-	EPM.AddressAddSTREET(builder, streetOffset)
-	EPM.AddressAddLOCALITY(builder, localityOffset)
-	EPM.AddressAddREGION(builder, regionOffset)
-	EPM.AddressAddPOSTAL_CODE(builder, postalOffset)
-	EPM.AddressAddCOUNTRY(builder, countryOffset)
-	addrOffset := EPM.AddressEnd(builder)
-
-	EPM.EPMStart(builder)
-	EPM.EPMAddDN(builder, dnOffset)
-	EPM.EPMAddLEGAL_NAME(builder, legalNameOffset)
-	EPM.EPMAddFAMILY_NAME(builder, familyNameOffset)
-	EPM.EPMAddGIVEN_NAME(builder, givenNameOffset)
-	EPM.EPMAddEMAIL(builder, emailOffset)
-	EPM.EPMAddTELEPHONE(builder, telOffset)
-	EPM.EPMAddJOB_TITLE(builder, titleOffset)
-	EPM.EPMAddOCCUPATION(builder, occupationOffset)
-	EPM.EPMAddADDRESS(builder, addrOffset)
-	epm := EPM.EPMEnd(builder)
-	EPM.FinishSizePrefixedEPMBuffer(builder, epm)
-
-	originalBytes := make([]byte, len(builder.FinishedBytes()))
-	copy(originalBytes, builder.FinishedBytes())
-
-	// Full roundtrip: EPM -> vCard -> QR -> vCard -> EPM
-	pngData, err := EPMToQR(originalBytes, 512)
+	pngData, err := EPMToQR(epmBytes, 512)
 	if err != nil {
 		t.Fatalf("EPMToQR failed: %v", err)
 	}
 
-	resultBytes, err := QRToEPM(pngData)
+	scanned, err := QRToVCard(pngData)
 	if err != nil {
-		t.Fatalf("QRToEPM failed: %v", err)
+		t.Fatalf("QRToVCard failed: %v", err)
 	}
+	unfolded := unfoldVCardForTest(scanned)
 
-	result := EPM.GetSizePrefixedRootAsEPM(resultBytes, 0)
-
-	// Verify all fields
-	if string(result.DN()) != "Alice Johnson" {
-		t.Errorf("DN mismatch: got %s", result.DN())
+	if !strings.Contains(unfolded, "BEGIN:VCARD") || !strings.Contains(unfolded, "END:VCARD") {
+		t.Fatalf("scanned payload is not a vCard:\n%s", scanned)
 	}
-	if string(result.LEGAL_NAME()) != "Johnson Industries" {
-		t.Errorf("LEGAL_NAME mismatch: got %s", result.LEGAL_NAME())
+	// The verification chain must survive into the QR.
+	for _, required := range []string{
+		"sign.spacedatanetwork.org",
+		"encrypt.spacedatanetwork.org",
+		"epmcid.spacedatanetwork.org",
+	} {
+		if !strings.Contains(unfolded, required) {
+			t.Fatalf("QR card is missing chain alias %q:\n%s", required, scanned)
+		}
 	}
-	if string(result.FAMILY_NAME()) != "Johnson" {
-		t.Errorf("FAMILY_NAME mismatch: got %s", result.FAMILY_NAME())
-	}
-	if string(result.GIVEN_NAME()) != "Alice" {
-		t.Errorf("GIVEN_NAME mismatch: got %s", result.GIVEN_NAME())
-	}
-	if string(result.EMAIL()) != "alice@johnson.com" {
-		t.Errorf("EMAIL mismatch: got %s", result.EMAIL())
-	}
-	if string(result.TELEPHONE()) != "+1-555-9876" {
-		t.Errorf("TELEPHONE mismatch: got %s", result.TELEPHONE())
-	}
-	if string(result.JOB_TITLE()) != "CEO" {
-		t.Errorf("JOB_TITLE mismatch: got %s", result.JOB_TITLE())
-	}
-	if string(result.OCCUPATION()) != "Executive" {
-		t.Errorf("OCCUPATION mismatch: got %s", result.OCCUPATION())
-	}
-
-	// Verify address
-	addr := new(EPM.Address)
-	if result.ADDRESS(addr) == nil {
-		t.Fatal("ADDRESS is nil")
-	}
-	if string(addr.STREET()) != "123 Tech Blvd" {
-		t.Errorf("STREET mismatch: got %s", addr.STREET())
-	}
-	if string(addr.LOCALITY()) != "San Francisco" {
-		t.Errorf("LOCALITY mismatch: got %s", addr.LOCALITY())
-	}
-	if string(addr.REGION()) != "CA" {
-		t.Errorf("REGION mismatch: got %s", addr.REGION())
-	}
-	if string(addr.POSTAL_CODE()) != "94105" {
-		t.Errorf("POSTAL_CODE mismatch: got %s", addr.POSTAL_CODE())
-	}
-	if string(addr.COUNTRY()) != "USA" {
-		t.Errorf("COUNTRY mismatch: got %s", addr.COUNTRY())
+	// And it must carry neither key bytes nor the record itself.
+	for _, banned := range []string{
+		"X-SDN-EPM-B64", "Binary EPM",
+		"signing.spacedatanetwork.org", "encryption.spacedatanetwork.org",
+	} {
+		if strings.Contains(unfolded, banned) {
+			t.Fatalf("QR card still carries removed material %q:\n%s", banned, scanned)
+		}
 	}
 }
-
 func TestVCardToQRImage(t *testing.T) {
 	vcard := "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Image Test\r\nEND:VCARD\r\n"
 

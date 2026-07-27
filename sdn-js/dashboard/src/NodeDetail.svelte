@@ -34,14 +34,16 @@
   // Machine props already decoded into the IDENTITY section (or too raw to
   // display, like the embedded binary EPM) stay out of the parsed view —
   // the RAW view still shows the complete card.
+  // §18: the emitted card no longer carries key bytes or the serialized blob,
+  // so hiding them is dead weight — X-SDN-EPM-B64, X-SIGNING-KEY,
+  // X-ENCRYPTION-KEY and X-PUBLIC-KEY are dropped from this list. The
+  // verification chain IS still emitted and is still decoded into the
+  // IDENTITY section, so those three stay hidden here.
   const HIDDEN_PROPS = new Set([
     'X-SDN-PEER-ID',
     'X-SDN-EPM-CID',
-    'X-SDN-EPM-B64',
     'X-SDN-EPM-SIGNATURE',
     'X-SDN-EPM-SIGNATURE-TIMESTAMP',
-    'X-SIGNING-KEY',
-    'X-ENCRYPTION-KEY',
     'X-SDN-BITCOIN-ADDRESS',
     'PRODID',
   ]);
