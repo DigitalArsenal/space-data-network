@@ -1,6 +1,7 @@
 package vcard
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -76,20 +77,59 @@ func TestEPMToVCardAddress(t *testing.T) {
 	}
 }
 
-func TestEPMToVCardKeys(t *testing.T) {
+// TestEPMToVCardCarriesNoKeyBytes inverts what this test used to assert.
+//
+// OWNER DIRECTIVE 2026-07-27: no key material on the vCard surface. The card
+// carries xpub + derivation paths + the epmsig/epmts/epmcid chain; a verifier
+// derives the secp256k1 key from xpub + path and fetches the authoritative
+// record by CID. Publishing the key bytes as well was redundant to the xpub and
+// is now a defect.
+//
+// This does NOT un-publish anything from the EPM RECORD — see
+// TestRecordStillCarriesEd25519KeyAfterVCardStrip.
+func TestEPMToVCardCarriesNoKeyBytes(t *testing.T) {
 	epm := createTestEPM()
 
 	vcardStr, err := EPMToVCard(epm)
 	if err != nil {
 		t.Fatalf("EPMToVCard failed: %v", err)
 	}
+	unfolded := unfoldVCardForTest(vcardStr)
 
-	// Check keys
-	if !strings.Contains(vcardStr, "X-SIGNING-KEY:0xsigningkey123") {
-		t.Errorf("vCard missing X-SIGNING-KEY, got:\n%s", vcardStr)
+	for _, banned := range []string{
+		"X-SIGNING-KEY", "X-ENCRYPTION-KEY", "X-PUBLIC-KEY",
+		"0xsigningkey123", "0xencryptionkey456",
+		"signing.spacedatanetwork.org", "encryption.spacedatanetwork.org",
+		"Public Key Signing", "Public Key Encryption",
+	} {
+		if strings.Contains(unfolded, banned) {
+			t.Fatalf("emitted vCard still carries key material %q:\n%s", banned, vcardStr)
+		}
 	}
-	if !strings.Contains(vcardStr, "X-ENCRYPTION-KEY:0xencryptionkey456") {
-		t.Errorf("vCard missing X-ENCRYPTION-KEY, got:\n%s", vcardStr)
+}
+
+// TestEPMToVCardCarriesNoEmbeddedBlob locks the other half of the directive:
+// the serialized record must not ride the card under ANY property name. It was
+// previously emitted twice — as X-SDN-EPM-B64 and again as the "Binary EPM"
+// Apple related-name — which is why removing only the obvious one was not
+// enough.
+func TestEPMToVCardCarriesNoEmbeddedBlob(t *testing.T) {
+	epmBytes := createTestEPM()
+
+	vcardStr, err := EPMToVCard(epmBytes)
+	if err != nil {
+		t.Fatalf("EPMToVCard failed: %v", err)
+	}
+	unfolded := unfoldVCardForTest(vcardStr)
+
+	for _, banned := range []string{"X-SDN-EPM-B64", "Binary EPM"} {
+		if strings.Contains(unfolded, banned) {
+			t.Fatalf("emitted vCard still carries the embedded record via %q:\n%s", banned, vcardStr)
+		}
+	}
+	// The blob itself, by content: the first bytes of the record base64'd.
+	if head := base64.StdEncoding.EncodeToString(epmBytes)[:32]; strings.Contains(unfolded, head) {
+		t.Fatalf("emitted vCard still contains the serialized record bytes:\n%s", vcardStr)
 	}
 }
 
@@ -102,22 +142,22 @@ func TestEPMToVCardAddsIOSVisibleIdentityFields(t *testing.T) {
 	}
 	unfolded := unfoldVCardForTest(vcardStr)
 
-	if !strings.Contains(unfolded, "EMAIL;type=INTERNET;type=signing:0xsigningkey123@signing.spacedatanetwork.org") {
-		t.Errorf("vCard missing iOS-visible signing email alias, got:\n%s", vcardStr)
+	// The iOS-visible identity surface is now the VERIFICATION CHAIN only:
+	// derivation paths and the record CID. Key bytes and the embedded record
+	// were removed by owner directive 2026-07-27.
+	if !strings.Contains(unfolded, "epmcid.spacedatanetwork.org") {
+		t.Errorf("vCard missing the epmcid alias — the chain must survive the key-material strip, got:\n%s", vcardStr)
 	}
-	if !strings.Contains(unfolded, "EMAIL;type=INTERNET;type=encryption:0xencryptionkey456@encryption.spacedatanetwork.org") {
-		t.Errorf("vCard missing iOS-visible encryption email alias, got:\n%s", vcardStr)
+	if !strings.Contains(vcardStr, "X-ABLabel:EPM CID") {
+		t.Errorf("vCard missing the iOS-visible EPM CID label, got:\n%s", vcardStr)
 	}
-	if !strings.Contains(vcardStr, "X-ABLabel:Public Key Signing") ||
-		!strings.Contains(vcardStr, "X-ABRELATEDNAMES:0xsigningkey123") {
-		t.Errorf("vCard missing Apple related-name signing key fields, got:\n%s", vcardStr)
-	}
-	if !strings.Contains(vcardStr, "X-ABLabel:Public Key Encryption") ||
-		!strings.Contains(vcardStr, "X-ABRELATEDNAMES:0xencryptionkey456") {
-		t.Errorf("vCard missing Apple related-name encryption key fields, got:\n%s", vcardStr)
-	}
-	if !strings.Contains(vcardStr, "X-ABLabel:Binary EPM") {
-		t.Errorf("vCard missing iOS-visible binary EPM label, got:\n%s", vcardStr)
+	for _, banned := range []string{
+		"Public Key Signing", "Public Key Encryption", "Binary EPM",
+		"0xsigningkey123", "0xencryptionkey456",
+	} {
+		if strings.Contains(unfolded, banned) {
+			t.Errorf("vCard still carries removed key/blob material %q, got:\n%s", banned, vcardStr)
+		}
 	}
 }
 
@@ -317,11 +357,12 @@ END:VCARD`
 	if !strings.Contains(recovered, "EMAIL:test@roundtrip.com") {
 		t.Error("EMAIL not preserved in roundtrip")
 	}
-	if !strings.Contains(recovered, "X-SIGNING-KEY:0xroundsigkey") {
-		t.Error("X-SIGNING-KEY not preserved in roundtrip")
-	}
-	if !strings.Contains(recovered, "X-ENCRYPTION-KEY:0xroundenckey") {
-		t.Error("X-ENCRYPTION-KEY not preserved in roundtrip")
+	// Key bytes deliberately do NOT survive a vCard round trip any more: the
+	// card no longer emits them (owner directive 2026-07-27). VCardToEPM still
+	// READS X-SIGNING-KEY/X-ENCRYPTION-KEY so third-party and pre-directive
+	// cards still import, but this node never writes them back out.
+	if strings.Contains(recovered, "X-SIGNING-KEY") || strings.Contains(recovered, "X-ENCRYPTION-KEY") {
+		t.Errorf("round-tripped vCard re-emitted key material:\n%s", recovered)
 	}
 }
 

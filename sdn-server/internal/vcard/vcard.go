@@ -172,24 +172,24 @@ func EPMToVCard(epmBytes []byte) (string, error) {
 		}
 	}
 
-	// Cryptographic keys -> X-SIGNING-KEY / X-ENCRYPTION-KEY
-	key := new(EPM.CryptoKey)
-	for i := 0; i < epm.KEYSLength(); i++ {
-		if epm.KEYS(key, i) {
-			if pubKey := key.PUBLIC_KEY(); pubKey != nil {
-				var fieldName string
-				switch key.KEY_TYPE() {
-				case EPM.KeyTypeSigning:
-					fieldName = "X-SIGNING-KEY"
-				case EPM.KeyTypeEncryption:
-					fieldName = "X-ENCRYPTION-KEY"
-				default:
-					fieldName = "X-PUBLIC-KEY"
-				}
-				card.Add(fieldName, &vcard.Field{Value: string(pubKey)})
-			}
-		}
-	}
+	// OWNER DIRECTIVE 2026-07-27: no key BYTES on the vCard surface, and no
+	// embedded EPM blob. What used to be emitted here — X-SIGNING-KEY,
+	// X-ENCRYPTION-KEY, X-PUBLIC-KEY and X-SDN-EPM-B64 — is gone.
+	//
+	// The vCard still carries everything a verifier needs, in the email-alias
+	// chain built below: the account xpub, the sign/encrypt DERIVATION PATHS,
+	// and epmsig/epmts/epmcid. A verifier derives the secp256k1 key from
+	// xpub + path (that is the whole point of the paradigm) and fetches the
+	// authoritative record by CID. The blob was redundant to that chain, and
+	// the key bytes were redundant to the xpub.
+	//
+	// ⚠ THIS IS THE VCARD SURFACE ONLY. The EPM RECORD's KEYS[] still carries
+	// the ed25519 public key and MUST keep carrying it: SLIP-10 ed25519 has no
+	// public derivation, so that key cannot be derived from any xpub and
+	// un-publishing it from the RECORD would make every ed25519 EPM signature
+	// unverifiable (§17 of graph/tasks/nst-node-admin-contract.md). vCard is a
+	// contact card; the record is the record. Removing bytes from the card does
+	// not un-publish them from the record.
 
 	if signature := epm.SIGNATURE(); signature != nil {
 		card.Add(FieldSDNEPMSignature, &vcard.Field{Value: string(signature)})
@@ -197,8 +197,6 @@ func EPMToVCard(epmBytes []byte) (string, error) {
 	if ts := epm.SIGNATURE_TIMESTAMP(); ts != 0 {
 		card.Add(FieldSDNEPMSignatureTimestamp, &vcard.Field{Value: strconv.FormatInt(ts, 10)})
 	}
-	card.Add(FieldSDNEPMBase64, &vcard.Field{Value: base64.StdEncoding.EncodeToString(epmBytes)})
-
 	// Encode to string
 	var b strings.Builder
 	enc := vcard.NewEncoder(&b)
@@ -433,12 +431,11 @@ func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM
 		pathAlias := base64.RawURLEncoding.EncodeToString([]byte(keyPath))
 		switch key.KEY_TYPE() {
 		case EPM.KeyTypeSigning:
-			entries = append(entries, appleIdentityLine{
-				Label:       joinedLabel("Public Key Signing", addressType, keyPath),
-				Value:       publicKey,
-				EmailType:   "signing",
-				EmailDomain: signingAliasDomain,
-			})
+			// OWNER DIRECTIVE 2026-07-27: no key BYTES on the vCard. The
+			// "signing"/"encryption" aliases and their Apple related-name rows
+			// carried the raw public key; they are gone. What remains is the
+			// DERIVATION PATH alias below, which is what the paradigm actually
+			// needs — a verifier derives the key from xpub + path.
 			if keyPath != "" {
 				entries = append(entries, appleIdentityLine{
 					Label:       joinedLabel("Signing Key Derivation Path", addressType, keyPath),
@@ -448,12 +445,6 @@ func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM
 				})
 			}
 		case EPM.KeyTypeEncryption:
-			entries = append(entries, appleIdentityLine{
-				Label:       joinedLabel("Public Key Encryption", addressType, keyPath),
-				Value:       publicKey,
-				EmailType:   "encryption",
-				EmailDomain: encryptionAliasDomain,
-			})
 			if keyPath != "" {
 				entries = append(entries, appleIdentityLine{
 					Label:       joinedLabel("Encryption Key Derivation Path", addressType, keyPath),
@@ -463,10 +454,7 @@ func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM
 				})
 			}
 		default:
-			entries = append(entries, appleIdentityLine{
-				Label: joinedLabel("Public Key", addressType, keyPath),
-				Value: publicKey,
-			})
+			// Unclassified key: still no bytes on the card.
 		}
 
 		if xpub := strings.TrimSpace(string(key.XPUB())); xpub != "" {
@@ -532,12 +520,11 @@ func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM
 			})
 		}
 	}
-	if includeBinaryEPM && len(epmBytes) > 0 {
-		entries = append(entries, appleIdentityLine{
-			Label: "Binary EPM",
-			Value: base64.StdEncoding.EncodeToString(epmBytes),
-		})
-	}
+	// The "Binary EPM" related-name used to carry the entire serialized record
+	// base64-encoded — the same blob as X-SDN-EPM-B64, wearing a different
+	// property name. Removed by the same owner directive: the record is fetched
+	// by its epmcid alias, so a copy of it on the card is redundant.
+	_ = includeBinaryEPM
 
 	return entries
 }
@@ -621,7 +608,6 @@ func insertRawVCardLinesCRLF(vcardStr string, lines []string) string {
 	}
 	return strings.ReplaceAll(out, "\n", "\r\n") + "\r\n"
 }
-
 
 func foldVCardLine(line string) string {
 	if len(line) <= vcardFoldLineLimitBytes {

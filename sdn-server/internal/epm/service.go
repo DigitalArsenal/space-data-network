@@ -1377,6 +1377,66 @@ func derivePublicIdentityKeysFromXPub(xpub string, account uint32) (*xpubDerived
 	}, true
 }
 
+// derivePublicIdentityKeysAtPaths derives the signing and encryption public
+// keys AT THE GIVEN PATHS from the account xpub.
+//
+// This exists because relabelling KEY_ADDRESS without re-deriving would make the
+// record LIE: the alias would advertise path X while the published key came
+// from path Y, and every verifier following the owner's paradigm (derive from
+// xpub + path) would compute a different key and conclude the signature was
+// forged. The path and the key must move together or neither may move.
+//
+// Only NON-HARDENED components below the BIP-44 account are walked — that is
+// all an extended PUBLIC key can derive, and ValidateKeyPath has already
+// guaranteed the shape.
+func derivePublicIdentityKeysAtPaths(xpub string, signingPath, encryptionPath string) (*xpubDerivedPublicIdentityKeys, bool) {
+	trimmed := strings.TrimSpace(xpub)
+	if trimmed == "" {
+		return nil, false
+	}
+	signingKey, err := deriveXPubPublicKeyAtPath(trimmed, signingPath)
+	if err != nil {
+		return nil, false
+	}
+	encryptionKey, err := deriveXPubPublicKeyAtPath(trimmed, encryptionPath)
+	if err != nil {
+		return nil, false
+	}
+	return &xpubDerivedPublicIdentityKeys{
+		XPub:                trimmed,
+		SigningPublicKey:    signingKey,
+		EncryptionPublicKey: encryptionKey,
+		SigningKeyPath:      signingPath,
+		EncryptionKeyPath:   encryptionPath,
+	}, true
+}
+
+// deriveXPubPublicKeyAtPath walks the non-hardened components below the BIP-44
+// account and returns the hex-encoded compressed public key found there.
+func deriveXPubPublicKeyAtPath(xpub string, path string) (string, error) {
+	if err := ValidateKeyPath(path, SlotXPubDerivable); err != nil {
+		return "", err
+	}
+	components, err := ParseKeyPath(path)
+	if err != nil {
+		return "", err
+	}
+	node, err := parseXPub(xpub)
+	if err != nil {
+		return "", err
+	}
+	// The first three components (m/44'/coin'/account') ARE the account xpub;
+	// walking them again would derive the wrong subtree.
+	const accountDepth = 3
+	for i := accountDepth; i < len(components); i++ {
+		node, err = deriveXPubPublicChild(node, components[i].Index)
+		if err != nil {
+			return "", err
+		}
+	}
+	return hex.EncodeToString(node.publicKey), nil
+}
+
 // AccountPublicKeyFromXPub returns the 33-byte compressed secp256k1 public key
 // that a BIP-32 account xpub serializes.
 //
@@ -1600,6 +1660,14 @@ func (s *Service) GetIdentityAttestation() *IdentityAttestation {
 
 // UpdateProfile updates the node's EPM profile and rebuilds the EPM.
 func (s *Service) UpdateProfile(profile *Profile) error {
+	// §18: validate the operator-editable derivation paths BEFORE anything is
+	// applied. A bad path must change nothing at all — not the profile, not the
+	// record, not the published aliases — so this runs before the lock is even
+	// taken and the error travels verbatim to the operator.
+	if err := ValidateProfileKeyPaths(profile); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 
 	s.profile = profile
@@ -1792,7 +1860,11 @@ func (s *Service) buildEPMBytesLocked(signatureHex string, signatureTimestamp in
 	var keyOffsets []flatbuffers.UOffsetT
 
 	if s.identity != nil {
-		if derived, ok := derivePublicIdentityKeysFromXPub(s.xpub, s.identity.Account); ok {
+		// §18: the operator-editable SIGNING PATH / ENCRYPTION PATH. Empty
+		// falls back to this node's defaults; a set path is derived AT that
+		// path so the published key and the published path always agree.
+		signPath, encPath := EffectiveKeyPaths(s.profile, s.identity.Account)
+		if derived, ok := derivePublicIdentityKeysAtPaths(s.xpub, signPath, encPath); ok {
 			xpubOff := builder.CreateString(derived.XPub)
 			addrTypeOff := builder.CreateString("secp256k1")
 

@@ -3,11 +3,9 @@ package vcard
 
 import (
 	"bytes"
-	"encoding/base64"
 	"errors"
 	"image"
 	"image/png"
-	"strings"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	"github.com/makiuchi-d/gozxing"
@@ -75,33 +73,44 @@ func QRToVCard(pngData []byte) (string, error) {
 	return result.GetText(), nil
 }
 
-// EPMToQR converts an EPM FlatBuffer directly to a QR code PNG.
+// EPMToQR renders an EPM as a scannable QR code.
+//
+// OWNER DIRECTIVE 2026-07-27: this used to encode the ENTIRE serialized EPM as
+// an X-SDN-EPM-B64 blob, which is why it needed a 1024px minimum — the payload
+// was the whole record. It now renders the SAME compact identity card the node
+// serves at /identity/<peer>.qr.vcf (CompactQRVCard): contact fields plus the
+// verification-chain email aliases (xpub, sign/encrypt derivation paths,
+// epmsig, epmts, epmcid).
+//
+// That card is strictly more useful at a fraction of the density. A phone can
+// actually import it as a contact, and a verifier gets the complete chain: derive
+// the secp256k1 key from xpub + path, fetch the authoritative record by CID, and
+// check the signature. The blob was redundant to that chain — the record is
+// retrievable, so shipping a copy of it inside a QR bought nothing and cost the
+// scannability.
 func EPMToQR(epmBytes []byte, size int) ([]byte, error) {
-	if size > 0 && size < 1024 {
-		size = 1024
-	}
 	if len(epmBytes) == 0 {
 		return nil, ErrEmptyEPM
 	}
 	if !EPM.SizePrefixedEPMBufferHasIdentifier(epmBytes) {
 		return nil, ErrInvalidEPM
 	}
-	epm := EPM.GetSizePrefixedRootAsEPM(epmBytes, 0)
-	displayName := strings.TrimSpace(string(epm.DN()))
-	if displayName == "" {
-		displayName = "Space Data Network EPM"
+	card, err := CompactQRVCard(epmBytes)
+	if err != nil {
+		return nil, err
 	}
-	vcardStr := strings.Join([]string{
-		"BEGIN:VCARD",
-		"VERSION:3.0",
-		"FN:" + escapeVCardText(displayName),
-		foldVCardLine(FieldSDNEPMBase64 + ":" + base64.StdEncoding.EncodeToString(epmBytes)),
-		"END:VCARD",
-	}, "\r\n") + "\r\n"
-	return VCardToQR(vcardStr, size)
+	return VCardToQR(card, size)
 }
 
-// QRToEPM scans a QR code image and converts to EPM FlatBuffer.
+// QRToEPM scans a QR code image and converts it to EPM FlatBuffer bytes.
+//
+// ⚠ LEGACY INBOUND PATH. It works only on QR codes that carry an embedded
+// X-SDN-EPM-B64 blob — i.e. codes produced BEFORE the 2026-07-27 owner
+// directive, or by a third party that still embeds one. Codes this node emits
+// today carry the compact identity card instead (see EPMToQR), from which the
+// record is FETCHED by its epmcid alias rather than unpacked in place. The
+// reader is kept because refusing to read older cards would strand them; it is
+// not a round trip of what we now emit.
 func QRToEPM(pngData []byte) ([]byte, error) {
 	vcardStr, err := QRToVCard(pngData)
 	if err != nil {

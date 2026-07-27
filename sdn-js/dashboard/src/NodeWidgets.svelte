@@ -25,9 +25,134 @@
   import { parseVCard, contactCard, extractIdentity, buildCompactVCard } from './vcard.js';
   import { normalizeTrust, TRUST_COLOR_TOKEN } from './trust.js';
   import { shortId, formatUptime, formatLastSeen, formatCoords } from './format.js';
+  import { apiFetch, apiPutExpectBinary } from './api.js';
+  import { profileFormFromJson, profileFormToBody } from './profile.js';
 
-  /** @type {{ node: any, now: number }} */
-  let { node, now } = $props();
+  /** @type {{ node: any, now: number, canEdit?: boolean }} */
+  let { node, now, canEdit = false } = $props();
+
+  // ---- key slots: paths in effect, GEN KEY proposals, save ----------------
+  /** @type {{slot:string,label:string,rotatable:boolean}[]} */
+  let keySlots = $state([]);
+  let paths = $state({});
+  let baseline = $state({});
+  let proposed = $state({});
+  let busySlot = $state('');
+  let savingPaths = $state(false);
+  let keyError = $state('');
+  let keyNotice = $state('');
+
+  const pathsDirty = $derived(keySlots.some((s) => (paths[s.slot] ?? '') !== (baseline[s.slot] ?? '')));
+
+  const SLOT_LABEL = { signing: 'SIGNING PATH', encryption: 'ENCRYPTION PATH' };
+
+  async function loadSlots() {
+    // §16.5's rule applies here too: /api/node/epm/keys is Admin-only, so an
+    // anonymous or below-Admin visitor must never call it. A 403 in the
+    // console on every public page load is exactly the noise that trains
+    // operators to ignore real errors.
+    if (!node?.isSelf || !canEdit) {
+      keySlots = [];
+      return;
+    }
+    try {
+      const res = await apiFetch('/api/node/epm/keys');
+      const slots = (res?.slots ?? [])
+        // §18.7.2: only the xpub-derivable secp256k1 slots are offered. The
+        // ed25519 record-signing key is not rotatable from a button.
+        .filter((s) => s.xpub_derivable)
+        .map((s) => ({ slot: s.slot, label: SLOT_LABEL[s.slot] ?? String(s.slot).toUpperCase(), rotatable: Boolean(s.rotatable) }));
+      const truth = {};
+      for (const s of res?.slots ?? []) if (s.xpub_derivable) truth[s.slot] = s.path ?? '';
+
+      // A refresh must NEVER discard an operator's unsaved work. The status
+      // feed re-renders this widget every few seconds, and re-reading server
+      // truth into the field wiped any pending GEN KEY proposal while the
+      // operator was still reading it.
+      //
+      // Field content is replaced only when:
+      //   · it is not dirty (nothing to lose), or
+      //   · the SERVER itself moved — someone published a different path, and
+      //     showing a stale proposal against it would be a lie.
+      // Otherwise the edit stands and the dirty flag with it.
+      const merged = {};
+      const keptProposals = {};
+      for (const slot of Object.keys(truth)) {
+        const dirty = (paths[slot] ?? '') !== (baseline[slot] ?? '');
+        const serverMoved = baseline[slot] !== undefined && baseline[slot] !== truth[slot];
+        const keep = dirty && !serverMoved;
+        merged[slot] = keep ? paths[slot] : truth[slot];
+        if (keep && proposed[slot]) keptProposals[slot] = true;
+      }
+      keySlots = slots;
+      paths = merged;
+      // The baseline is always server truth — that is what "dirty" is measured
+      // against, and what SAVE must diff from.
+      baseline = { ...truth };
+      proposed = keptProposals;
+    } catch {
+      // Anonymous or non-admin: the widget simply shows what the card says.
+      keySlots = [];
+    }
+  }
+
+  async function genKey(slot) {
+    if (busySlot) return;
+    busySlot = slot;
+    keyError = '';
+    keyNotice = '';
+    try {
+      const res = await apiFetch('/api/node/epm/keys', { method: 'POST', body: { slot } });
+      // A PROPOSAL: it fills the field and nothing else. Never auto-saved.
+      if (res?.next_path) {
+        paths = { ...paths, [slot]: res.next_path };
+        proposed = { ...proposed, [slot]: true };
+      }
+    } catch (err) {
+      keyError = err?.message || 'The node refused to propose a path.';
+    } finally {
+      busySlot = '';
+    }
+  }
+
+  async function savePaths() {
+    if (savingPaths) return;
+    savingPaths = true;
+    keyError = '';
+    keyNotice = '';
+    try {
+      // §6 round-trip rule: PUT replaces the WHOLE profile, so the current one
+      // is read back and re-sent with the edited paths carried alongside it.
+      const current = await apiFetch('/api/node/epm/json').catch(() => ({}));
+      const body = profileFormToBody(profileFormFromJson(current));
+      for (const s of keySlots) body[`${s.slot}_key_path`] = paths[s.slot] ?? '';
+      await apiPutExpectBinary('/api/node/epm', body);
+
+      // VERIFY-AFTER-WRITE. The node is the authority on what it published; a
+      // 200 is not proof the path was applied. Re-read and compare, so this
+      // can never report a success the record does not show.
+      const after = await apiFetch('/api/node/epm/keys').catch(() => null);
+      const applied = {};
+      for (const s of after?.slots ?? []) if (s.xpub_derivable) applied[s.slot] = s.path ?? '';
+      const missed = keySlots.filter((s) => (applied[s.slot] ?? '') !== (paths[s.slot] ?? ''));
+      if (missed.length) {
+        keyError =
+          `The node accepted the request but still publishes ${missed
+            .map((s) => `${s.label} ${applied[s.slot] || '(unset)'}`)
+            .join(', ')}. The edited path was not applied.`;
+        paths = { ...applied };
+        baseline = { ...applied };
+      } else {
+        baseline = { ...paths };
+        keyNotice = 'Paths published — the EPM was re-signed and the sign/encrypt aliases regenerated.';
+      }
+      proposed = {};
+    } catch (err) {
+      keyError = err?.message || 'Save failed.';
+    } finally {
+      savingPaths = false;
+    }
+  }
 
   // Section controls, in the owner's order: MAIN CARD -> CANONICAL RAW -> QR.
   // QR is a full-section takeover, not an inline panel.
@@ -58,15 +183,10 @@
     ].filter(([, v]) => Boolean(v))
   );
 
-  const keyRows = $derived(
-    [
-      ['XPUB', identity.xpub],
-      ['SIGNING PATH', identity.signPaths.join('   ·   ')],
-      ['ENCRYPTION PATH', identity.encryptPaths.join('   ·   ')],
-      ['SIGNING KEY', identity.signingKeys.join('\n')],
-      ['ENCRYPTION KEY', identity.encryptionKeys.join('\n')],
-    ].filter(([, v]) => Boolean(v))
-  );
+  // §18.7.6: the public-key rows are gone. A verifier derives those from
+  // xpub + path, so publishing the bytes was redundant — the PATHS are the
+  // identity surface, and they are editable.
+  const xpubRow = $derived(identity.xpub);
 
   const epmRows = $derived(
     [
@@ -125,6 +245,19 @@
         color: { dark: '#04060a', light: '#eaf6f8' },
       });
     })().catch(() => {});
+  });
+
+  // Load when the session's authority changes — NOT on every feed tick. The
+  // widget re-renders whenever the status feed produces a new node object, and
+  // re-fetching on each of those was what reset the field. `loadedFor` is a
+  // plain flag, not $state: an effect that reads and writes its own reactive
+  // guard re-runs forever.
+  let loadedFor = null;
+  $effect(() => {
+    const authority = canEdit;
+    if (loadedFor === authority) return;
+    loadedFor = authority;
+    loadSlots();
   });
 
   onMount(() => {
@@ -222,8 +355,8 @@
     </div>
   </Panel>
 
-  <!-- VERIFICATION KEYS -------------------------------------------------- -->
-  {#if keyRows.length}
+  <!-- VERIFICATION KEYS — xpub + the EDITABLE derivation paths ---------- -->
+  <div>
     <Panel variant="raised" pad="0">
       <div class="w">
         <div class="whead" style="border-color:{theme.divider};">
@@ -232,17 +365,68 @@
         </div>
         <div class="wbody">
           <dl>
-            {#each keyRows as [label, value] (label)}
-              <div class="row">
-                <dt style="color:{theme.textMuted};">{label}</dt>
-                <dd class="mono wrap machine" style="color:{label.includes('PATH') ? theme.ice : theme.textBody};">{value}</dd>
-              </div>
-            {/each}
+            <div class="row">
+              <dt style="color:{theme.textMuted};">XPUB</dt>
+              <dd class="mono wrap machine" style="color:{theme.textBody};">{xpubRow}</dd>
+            </div>
           </dl>
+
+          {#each keySlots as slot (slot.slot)}
+            <div class="slot" style="border-color:{theme.divider};">
+              <div class="slot-head">
+                <span class="k" style="color:{theme.textMuted};">{slot.label}</span>
+                {#if canEdit && slot.rotatable}
+                  <GBtn
+                    title="Propose the next derivable path for this slot — fills the field, does not save"
+                    disabled={busySlot === slot.slot}
+                    onclick={() => genKey(slot.slot)}
+                  >{busySlot === slot.slot ? 'PROPOSING…' : 'GEN KEY'}</GBtn>
+                {/if}
+              </div>
+              {#if canEdit}
+                <input
+                  class="mono path"
+                  bind:value={paths[slot.slot]}
+                  spellcheck="false"
+                  autocomplete="off"
+                  style="color:{theme.textBright};border-color:{proposed[slot.slot] ? theme.cyan : theme.hairline};background:{theme.inputWell};"
+                />
+                {#if proposed[slot.slot]}
+                  <div class="hint" style="color:{theme.cyan};">
+                    Proposal only — press SAVE PATHS to publish it.
+                  </div>
+                {/if}
+              {:else}
+                <div class="mono path ro" style="color:{theme.ice};">{paths[slot.slot] || '—'}</div>
+              {/if}
+            </div>
+          {/each}
+
+          {#if keyError}
+            <!-- Verbatim from the server: the hardening rules are not
+                 guessable from the UI, so the node's own words are shown. -->
+            <div class="err mono" style="color:{theme.red};border-color:{theme.red};">{keyError}</div>
+          {/if}
+          {#if keyNotice}
+            <div class="ok" style="color:{theme.green};border-color:{theme.green};">{keyNotice}</div>
+          {/if}
         </div>
+        {#if canEdit && keySlots.length}
+          <div class="wfoot" style="border-color:{theme.divider};">
+            <span class="k" style="color:{theme.textFaint};">
+              {pathsDirty ? 'UNSAVED PATH CHANGES' : 'PATHS PUBLISHED'}
+            </span>
+            <GBtn
+              title="Re-sign and republish this node's EPM with these paths"
+              variant="primary"
+              disabled={!pathsDirty || savingPaths}
+              onclick={savePaths}
+            >{savingPaths ? 'SAVING…' : 'SAVE PATHS'}</GBtn>
+          </div>
+        {/if}
       </div>
     </Panel>
-  {/if}
+  </div>
 
   <!-- EPM PROVENANCE ----------------------------------------------------- -->
   {#if epmRows.length}
@@ -321,9 +505,13 @@
        fills upper-left -> lower-right instead of stranding one column. */
     grid-auto-flow: row dense;
     gap: 16px;
-    align-items: start;
+    /* Owner: every widget in a row is the SAME HEIGHT — the grid reads as
+       uniform cards instead of leaving dead space under the short ones. */
+    align-items: stretch;
     min-width: 0;
   }
+  .grid > * { min-width: 0; display: grid; }
+  .grid :global(> * > section) { height: 100%; }
   /* The contact card is the first and widest widget: two columns where there
      is room, so its labelled rows are readable rather than squeezed. */
   .contact { grid-column: span 2; min-width: 0; }
@@ -332,7 +520,6 @@
   .contact .contact-fields .row { break-inside: avoid; }
   /* Addresses are long strings; give them the full row. */
   .wide { grid-column: 1 / -1; min-width: 0; }
-  .grid :global(> section),
   .wide :global(> section) { height: 100%; }
   .w { display: flex; flex-direction: column; height: 100%; min-width: 0; }
   .whead {
@@ -364,6 +551,29 @@
     margin-top: auto;
   }
   .wfoot .k { font-size: 12.5px; letter-spacing: 0.16em; }
+  .slot { border-top: 1px solid; margin-top: 10px; padding-top: 10px; }
+  .slot-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+  .slot .k { font-size: 12.5px; letter-spacing: 0.16em; }
+  .path {
+    width: 100%;
+    border: 1px solid;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 14px;
+    letter-spacing: 0.02em;
+    padding: 7px 9px;
+    outline: none;
+    overflow-wrap: anywhere;
+  }
+  .path.ro { border: 0; padding: 0; background: transparent; }
+  .hint { font-size: 12.5px; letter-spacing: 0.03em; margin-top: 5px; line-height: 1.5; }
+  .err, .ok {
+    border: 1px solid;
+    padding: 8px 10px;
+    margin-top: 10px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
   .dl { display: inline-flex; gap: 6px; flex-wrap: wrap; }
   dl { margin: 0; }
   dl.cols { columns: 2; column-gap: 26px; }

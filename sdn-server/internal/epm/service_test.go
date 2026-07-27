@@ -5,9 +5,9 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
-	"strconv"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -368,7 +368,7 @@ func TestNodeVCardIncludesDirectoryMetadataAndPhoto(t *testing.T) {
 	}
 }
 
-func TestNodeVCardIncludesSignedEPMPayload(t *testing.T) {
+func TestNodeVCardCarriesTheVerificationChainWithoutKeyMaterial(t *testing.T) {
 	t.Parallel()
 
 	identity, err := testDerivedIdentity()
@@ -396,18 +396,34 @@ func TestNodeVCardIncludesSignedEPMPayload(t *testing.T) {
 	if !strings.Contains(vcard, "X-SDN-EPM-SIGNATURE-TIMESTAMP:") {
 		t.Fatalf("vCard missing EPM signature timestamp: %s", vcard)
 	}
-	if !strings.Contains(vcard, "X-SDN-EPM-B64:") {
-		t.Fatalf("vCard missing embedded EPM payload: %s", vcard)
+	// OWNER DIRECTIVE 2026-07-27: the serialized record no longer rides the
+	// card. The CID + signature + timestamp above ARE the chain — a verifier
+	// fetches the authoritative record by CID rather than trusting a copy
+	// carried alongside it. Asserting the blob's presence would now be
+	// asserting the defect.
+	if strings.Contains(vcard, "X-SDN-EPM-B64") || strings.Contains(unfolded, "Binary EPM") {
+		t.Fatalf("node vCard still embeds the serialized EPM: %s", vcard)
 	}
-	signingPubBytes, err := identity.SigningPubKey.Raw()
-	if err != nil {
-		t.Fatalf("SigningPubKey.Raw failed: %v", err)
+	for _, banned := range []string{"X-SIGNING-KEY", "X-ENCRYPTION-KEY",
+		"signing.spacedatanetwork.org", "encryption.spacedatanetwork.org"} {
+		if strings.Contains(unfolded, banned) {
+			t.Fatalf("node vCard still carries key material %q: %s", banned, vcard)
+		}
 	}
-	if !strings.Contains(unfolded, hex.EncodeToString(signingPubBytes)+"@signing.spacedatanetwork.org") {
-		t.Fatalf("vCard missing iPhone-visible signing public key alias: %s", vcard)
+	// The signing/encryption PUBLIC KEY aliases that used to be asserted here
+	// are gone with the rest of the key material. The chain aliases that remain
+	// — xpub, the sign/encrypt DERIVATION PATHS, epmsig/epmts/epmcid — plus the
+	// chain ADDRESS aliases below are what the identity contract actually needs:
+	// addresses are derived public identifiers, not signing/encryption key
+	// bytes, and they stay per the locked vCard alias contract.
+	if !strings.Contains(unfolded, "@xpub.spacedatanetwork.org") {
+		t.Fatalf("vCard missing the xpub alias — the verifier derives keys from it: %s", vcard)
 	}
-	if !strings.Contains(unfolded, hex.EncodeToString(identity.EncryptionPub)+"@encryption.spacedatanetwork.org") {
-		t.Fatalf("vCard missing iPhone-visible encryption public key alias: %s", vcard)
+	if !strings.Contains(unfolded, "@sign.spacedatanetwork.org") {
+		t.Fatalf("vCard missing the signing DERIVATION PATH alias: %s", vcard)
+	}
+	if !strings.Contains(unfolded, "@encrypt.spacedatanetwork.org") {
+		t.Fatalf("vCard missing the encryption DERIVATION PATH alias: %s", vcard)
 	}
 	if !strings.Contains(unfolded, identity.Addresses.Bitcoin.Address+"@bitcoin.spacedatanetwork.org") {
 		t.Fatalf("vCard missing iPhone-visible bitcoin address alias: %s", vcard)
@@ -417,9 +433,6 @@ func TestNodeVCardIncludesSignedEPMPayload(t *testing.T) {
 	}
 	if !strings.Contains(unfolded, identity.Addresses.Solana.Address+"@solana.spacedatanetwork.org") {
 		t.Fatalf("vCard missing iPhone-visible solana address alias: %s", vcard)
-	}
-	if !strings.Contains(vcard, "X-ABLabel:Binary EPM") {
-		t.Fatalf("vCard missing Apple related-name binary EPM label: %s", vcard)
 	}
 }
 

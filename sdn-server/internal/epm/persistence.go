@@ -26,6 +26,22 @@ type Profile struct {
 	PhotoDataURL    string   `json:"photo_data_url,omitempty"`
 	Address         *Address `json:"address,omitempty"`
 	AlternateNames  []string `json:"alternate_names,omitempty"`
+
+	// SigningKeyPath / EncryptionKeyPath are the operator-editable BIP-32
+	// derivation paths behind the SIGNING PATH / ENCRYPTION PATH fields and
+	// their GEN KEY buttons (§18 of graph/tasks/nst-node-admin-contract.md).
+	//
+	// EMPTY MEANS "use this node's default", never "delete". PUT /api/node/epm
+	// is a whole-profile replace (§6), so a client that omits these must not
+	// thereby wipe the node's key layout — the resolver treats empty as unset
+	// and falls back to the derived defaults.
+	//
+	// Both are XPUB-DERIVABLE secp256k1 slots and are validated as such:
+	// hardened BIP-44 account prefix, NON-hardened below it. A hardened
+	// component here would make the key underivable from the published xpub,
+	// which is the entire paradigm (§17.8).
+	SigningKeyPath    string `json:"signing_key_path,omitempty"`
+	EncryptionKeyPath string `json:"encryption_key_path,omitempty"`
 }
 
 // Address holds geographic address fields.

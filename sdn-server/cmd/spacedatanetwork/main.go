@@ -1328,6 +1328,17 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.HandleFunc("/api/node/epm/json", handleNodeEPMJSON(n))
 			adminMux.HandleFunc("/api/node/epm/vcard", handleNodeEPMVCard(n))
 			adminMux.HandleFunc("/api/node/epm/qr", handleNodeEPMQR(n))
+			// §18 key slots: read the derivation paths in effect and compute
+			// what GEN KEY would rotate them to. Admin-only (it describes the
+			// node's identity layout); derives server-side and returns PATHS
+			// ONLY — the seed never leaves the process and no key material is
+			// returned, because the public key is reconstructible by anyone
+			// from xpub + path.
+			adminMux.HandleFunc("/api/node/epm/keys", gateNodeEPMWrite(
+				handleNodeEPMKeySlots(n),
+				cfg.Admin.RequireAuth,
+				func() *auth.Handler { return authHandler },
+			))
 			// The auth handler is constructed further below (it needs the
 			// storage path), so the gate resolves it per request rather than
 			// capturing a nil pointer at mount time.
@@ -4391,6 +4402,15 @@ func handleNodeEPM(n *node.Node) http.HandlerFunc {
 				return
 			}
 			if err := epmSvc.UpdateProfile(&profile); err != nil {
+				// §18: a rejected derivation path is OPERATOR INPUT, not a
+				// server fault. It must come back 400 with the validation text
+				// verbatim — that text explains the hardening rule, which is
+				// not guessable from a form field — and nothing may have been
+				// applied (UpdateProfile validates before it mutates).
+				if epm.IsKeyPathValidationError(err) {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}

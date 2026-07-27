@@ -2,6 +2,7 @@ package directory
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -436,7 +437,7 @@ func TestAdminHTTPHandler_ImportsDirectoryVCard(t *testing.T) {
 	}
 }
 
-func TestAdminHTTPHandler_ImportsEmbeddedSignedEPMFromVCard(t *testing.T) {
+func TestAdminHTTPHandler_EmbeddedSignedEPMBeatsSpoofedDisplayFields(t *testing.T) {
 	store := mustNewDirectoryStore(t)
 	svc := NewService(store)
 	handler := NewAdminHTTPHandler(svc)
@@ -471,10 +472,27 @@ func TestAdminHTTPHandler_ImportsEmbeddedSignedEPMFromVCard(t *testing.T) {
 	if err := epmSvc.UpdateProfile(&epm.Profile{DN: "Trusted Node"}); err != nil {
 		t.Fatalf("UpdateProfile failed: %v", err)
 	}
-	vcard, err := epmSvc.GetNodeVCard()
-	if err != nil {
-		t.Fatalf("GetNodeVCard failed: %v", err)
+	// OWNER DIRECTIVE 2026-07-27: emitted vCards no longer embed the serialized
+	// record, so GetNodeVCard() cannot supply the blob this test is about. The
+	// anti-spoofing property it guards is still REAL and still enforced — for
+	// any card that DOES carry an embedded signed EPM, i.e. pre-directive cards
+	// and third-party ones — so the fixture now builds such a card explicitly
+	// rather than relying on our own emitter to produce one.
+	//
+	// ⚠ For a card WITHOUT a blob there is no signed value available offline,
+	// so import falls to the unverified display fields. That gap is real and is
+	// tracked by sdn-directory-import-cid-verify: the replacement is to fetch
+	// the record by its epmcid alias and verify the signature, which is
+	// STRONGER than trusting an embedded copy and needs no canonicalization
+	// standard. Until then, blob-less vCard import must be treated as
+	// unverified operator input.
+	signedEPM := epmSvc.GetNodeEPM()
+	if len(signedEPM) == 0 {
+		t.Fatal("expected a signed node EPM")
 	}
+	vcard := "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Trusted Node\r\n" +
+		"X-SDN-EPM-B64:" + base64.StdEncoding.EncodeToString(signedEPM) + "\r\n" +
+		"END:VCARD\r\n"
 	spoofed := strings.Replace(vcard, "FN:Trusted Node", "FN:Spoofed Node", 1)
 	body, err := json.Marshal(map[string]string{
 		"source": "manual-vcard-upload",
