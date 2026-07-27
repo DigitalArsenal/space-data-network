@@ -272,3 +272,87 @@ export function vcardProseText(props) {
     .map((p) => p.value)
     .join(' ');
 }
+
+/**
+ * Split a structured vCard value (N, ADR) on UNESCAPED semicolons.
+ * `\;` is a literal semicolon inside a component and must survive.
+ */
+export function splitStructured(value) {
+  const out = [];
+  let cur = '';
+  const s = String(value ?? '');
+  for (let i = 0; i < s.length; i += 1) {
+    const c = s[i];
+    if (c === '\\' && i + 1 < s.length) {
+      const next = s[i + 1];
+      cur += next === 'n' || next === 'N' ? '\n' : next;
+      i += 1;
+    } else if (c === ';') {
+      out.push(cur);
+      cur = '';
+    } else {
+      cur += c;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+/**
+ * The HUMAN contact card, as a FIXED set of labelled rows.
+ *
+ * Owner directive 2026-07-27: the card must show its own shape — every field
+ * is rendered with its label even when the node published nothing for it, so
+ * an operator can see at a glance what is missing. That is an exception to
+ * hiding empty facts, and ONLY to hiding: the never-invent-contact-data law
+ * is untouched, so an absent value stays literally empty. Nothing is
+ * defaulted, guessed, or copied from another field.
+ *
+ * Machine identity (xpub, derivation paths, keys, EPM chain) is deliberately
+ * NOT here — it lives in its own widgets. Alias emails are excluded for the
+ * same reason.
+ */
+export function contactCard(props) {
+  const all = Array.isArray(props) ? props : [];
+  const first = (name) => all.find((p) => p.name === name)?.value ?? '';
+  const n = splitStructured(first('N'));
+  const adr = splitStructured(all.find((p) => p.name === 'ADR')?.value ?? '');
+
+  // EMAIL: the human one — every alias address is machine identity.
+  const email = all.find((p) => p.name === 'EMAIL' && !isAliasEmail(p))?.value ?? '';
+
+  // Social handles: X-SOCIALPROFILE carries them, and a URL whose TYPE names a
+  // service is the other common shape. Plain URLs are listed as WEBSITE.
+  const socials = all
+    .filter((p) => p.name === 'X-SOCIALPROFILE' || p.name.endsWith('.X-SOCIALPROFILE'))
+    .map((p) => {
+      const kind = (p.params?.TYPE ?? p.params?.type ?? '').trim();
+      return kind ? `${kind}: ${p.value}` : p.value;
+    });
+
+  const website = all
+    .filter((p) => p.name === 'URL' || p.name.endsWith('.URL'))
+    .map((p) => p.value)
+    .join('\n');
+
+  return [
+    { key: 'given_name', label: 'FIRST NAME', value: (n[1] ?? '').trim() },
+    { key: 'family_name', label: 'LAST NAME', value: (n[0] ?? '').trim() },
+    { key: 'additional_name', label: 'MIDDLE NAME', value: (n[2] ?? '').trim() },
+    { key: 'dn', label: 'DISPLAY NAME', value: first('FN').trim() },
+    { key: 'organization', label: 'ORGANIZATION', value: first('ORG').trim() },
+    { key: 'job_title', label: 'TITLE', value: first('TITLE').trim() },
+    { key: 'role', label: 'ROLE', value: first('ROLE').trim() },
+    { key: 'email', label: 'EMAIL', value: email.trim() },
+    { key: 'telephone', label: 'PHONE', value: first('TEL').trim() },
+    { key: 'street', label: 'STREET', value: (adr[2] ?? '').trim() },
+    { key: 'locality', label: 'CITY', value: (adr[3] ?? '').trim() },
+    { key: 'region', label: 'REGION', value: (adr[4] ?? '').trim() },
+    { key: 'postal_code', label: 'POSTAL CODE', value: (adr[5] ?? '').trim() },
+    { key: 'country', label: 'COUNTRY', value: (adr[6] ?? '').trim() },
+    { key: 'po_box', label: 'PO BOX', value: (adr[0] ?? '').trim() },
+    { key: 'website', label: 'WEBSITE', value: website.trim() },
+    { key: 'social', label: 'SOCIAL', value: socials.join('\n') },
+    { key: 'note', label: 'NOTE', value: first('NOTE').trim() },
+  ];
+}
