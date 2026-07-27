@@ -387,11 +387,26 @@ export function withoutQuarantine(controller) {
   return shim;
 }
 
-/** The localStorage keys hd-wallet-ui quarantines (contract §15.1). */
+/**
+ * The localStorage keys hd-wallet-ui quarantines — ALL SIX of them.
+ *
+ * This must stay byte-identical to the wallet's own
+ * `LEGACY_WALLET_QUARANTINE_KEYS` (wallet-storage.js), because anything this
+ * list misses is a record an operator can neither see nor delete: the same
+ * custody defect as hiding the block, reached by a different route.
+ *
+ * The `wallet_storage_*` trio was written by the 2.0.6 CDN `/login` page
+ * removed in §12.1. The bare trio is OLDER still — operators whose records
+ * predate that page hold these and nothing else, and were invisible to the
+ * first version of this scan.
+ */
 export const QUARANTINE_KEYS = [
   'wallet_storage_metadata',
   'wallet_storage_encrypted',
   'wallet_storage_passkey_credential',
+  'encrypted_wallet',
+  'passkey_credential',
+  'passkey_wallet',
 ];
 
 /**
