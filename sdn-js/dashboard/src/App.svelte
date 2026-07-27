@@ -24,6 +24,7 @@
   import NodeTable from './NodeTable.svelte';
   import NodeModal from './NodeModal.svelte';
   import NodeDetail from './NodeDetail.svelte';
+  import NodeWidgets from './NodeWidgets.svelte';
   import NodeEditForm from './NodeEditForm.svelte';
   import Permissions from './Permissions.svelte';
   import SignInModal from './SignInModal.svelte';
@@ -364,25 +365,29 @@
         </div>
       {:else if route === 'self'}
         {#if selfNode}
+          <!-- A PAGE, not a modal (owner directive 2026-07-27): a page header
+               plus independent widgets, instead of the single-column card the
+               NODES dialog still uses. -->
           <div class="self-page">
-            <Panel variant="raised" pad="0" style="max-width:880px;">
-              <div class="self-head" style="border-color:{theme.divider};">
-                <div class="self-titles">
-                  <div class="self-dn" style="color:{theme.textBright};">{selfTitle}</div>
-                  {#if selfNode.org?.trim() && selfNode.org.trim() !== selfTitle}
-                    <div class="self-org" style="color:{theme.textDim};">{selfNode.org}</div>
-                  {/if}
-                </div>
-                <div class="self-chips">
-                  <StatusChip label="SELF" color={theme.cyan} dot={false} />
-                  <StatusChip label={selfNode.online ? 'ONLINE' : 'OFFLINE'} color={selfNode.online ? theme.green : theme.textMuted} />
-                  {#if canEdit && !editing}
-                    <GBtn title="Edit this node's published identity" variant="primary" onclick={() => (editing = true)}>EDIT</GBtn>
-                  {/if}
-                </div>
+            <div class="page-head" style="border-color:{theme.divider};">
+              <div class="self-titles">
+                <div class="self-dn" style="color:{theme.textBright};">{selfTitle}</div>
+                {#if selfNode.org?.trim() && selfNode.org.trim() !== selfTitle}
+                  <div class="self-org" style="color:{theme.textDim};">{selfNode.org}</div>
+                {/if}
               </div>
-              <div class="self-body">
-                {#if editing}
+              <div class="self-chips">
+                <StatusChip label="SELF" color={theme.cyan} dot={false} />
+                <StatusChip label={selfNode.online ? 'ONLINE' : 'OFFLINE'} color={selfNode.online ? theme.green : theme.textMuted} />
+                {#if canEdit && !editing}
+                  <GBtn title="Edit this node's published identity" variant="primary" onclick={() => (editing = true)}>EDIT</GBtn>
+                {/if}
+              </div>
+            </div>
+
+            {#if editing}
+              <Panel variant="raised" pad="0" style="max-width:880px;">
+                <div class="self-body">
                   <NodeEditForm
                     onCancel={() => (editing = false)}
                     onSaved={({ json, vcard }) => {
@@ -390,11 +395,11 @@
                       editing = false;
                     }}
                   />
-                {:else}
-                  <NodeDetail node={selfNode} {now} />
-                {/if}
-              </div>
-            </Panel>
+                </div>
+              </Panel>
+            {:else}
+              <NodeWidgets node={selfNode} {now} />
+            {/if}
           </div>
         {:else}
           <div class="empty" style="color:{theme.textDim};border-color:{theme.hairline};">
@@ -746,10 +751,20 @@
     min-height: 0;
     overflow: auto;
     display: flex;
-    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
     padding-bottom: 8px;
   }
-  .self-page :global(> section) { width: 100%; height: fit-content; }
+  .page-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding-bottom: 13px;
+    border-bottom: 1px solid;
+    flex: none;
+  }
   .self-head {
     display: flex;
     align-items: flex-start;

@@ -1338,6 +1338,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			))
 
 			// Peer graph API endpoints
+			// Unified ACCOUNTS surface (owner directive 2026-07-27: a node and
+			// a login account are the same thing). Read-only; management keeps
+			// using /api/peers and /api/auth/users.
+			adminMux.HandleFunc("/api/accounts", handleAccounts(n, func() *auth.Handler { return authHandler }))
 			adminMux.HandleFunc("/api/peers/sdn", handleObservedSDNPeers(n))
 			adminMux.HandleFunc("/api/peers/graph", handlePeerGraph(n))
 			adminMux.HandleFunc("/api/peers/graph/schema", handlePeerGraphSchema)
@@ -3029,7 +3033,8 @@ func validateAuthDBPathSeparation(authPath, storagePath string) error {
 }
 
 func isAdminOnlyAPIPath(path string) bool {
-	return strings.HasPrefix(path, "/api/peers") ||
+	return strings.HasPrefix(path, "/api/accounts") ||
+		strings.HasPrefix(path, "/api/peers") ||
 		strings.HasPrefix(path, "/api/groups") ||
 		strings.HasPrefix(path, "/api/blocklist") ||
 		strings.HasPrefix(path, "/api/settings") ||

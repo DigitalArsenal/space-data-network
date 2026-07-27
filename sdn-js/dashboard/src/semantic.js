@@ -1,204 +1,130 @@
 /*
- * In-browser semantic search over the node table (spec: graph task
- * nst-dashboard-table deliverable 4).
+ * In-browser semantic search over the node table — MAIN-THREAD FACADE.
  *
- * Sentence embeddings from a MiniLM-class int8 ONNX model executed by
- * onnxruntime-web's WASM backend. CSP-clean and same-origin only: the ort
- * runtime JS is bundled into the single-file page; the model, vocab and ort
- * .wasm/.mjs artifacts are fetched from the node's /embedding/* static
- * surface (config embedding.assets_dir — staged like the geoip mmdb,
- * fail-open). If the assets are absent the engine reports 'unavailable' and
- * the dashboard silently keeps its always-on substring search.
+ * The model, the tokenizer and every embedding now live in a Web Worker
+ * (semantic.worker.js). This module only posts messages, so the dashboard
+ * paints and stays interactive while the engine warms up. Before this split
+ * the ONNX session creation plus the corpus pass produced ONE 9.2-second
+ * long task ~1s after navigation — the page painted at ~200 ms and then
+ * froze solid (measured live on sdn.spaceaware.io).
  *
- * Tokenizer: BERT WordPiece (uncased) implemented inline against
- * /embedding/vocab.txt — greedy longest-match with ## continuations,
- * [CLS]/[SEP] framing, 128-token cap. Pooling: attention-masked mean over
- * last_hidden_state, L2-normalized → cosine via dot product.
+ * The public contract is unchanged, including fail-open: status goes
+ * 'idle' → 'loading' → 'ready' | 'unavailable', and anything that fails
+ * (missing /embedding/* assets, no worker support, wasm init, inference)
+ * lands permanently on 'unavailable' while the dashboard keeps its always-on
+ * substring search. "Warming up" is simply the pre-'ready' state — there is
+ * no separate spinner contract to honour.
+ *
+ * Vite inlines the worker as a blob: URL (`?worker&inline`), which is why the
+ * dashboard CSP carries `worker-src 'self' blob:`; the single-file law holds
+ * because no second file is served.
  */
 
-import * as ort from 'onnxruntime-web/wasm';
+import SemanticWorker from './semantic.worker.js?worker&inline';
 
-const ASSET_BASE = '/embedding/';
-const MODEL_URL = `${ASSET_BASE}model.onnx`;
-const VOCAB_URL = `${ASSET_BASE}vocab.txt`;
-const MAX_TOKENS = 128;
-
-/** djb2 — cheap change-detection hash for per-node embedding cache keys. */
-export function textHash(s) {
-  let h = 5381;
-  for (let i = 0; i < s.length; i += 1) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-  return h;
-}
-
-/** BERT-uncased basic + WordPiece tokenization. Exported for tests. */
-export function wordpieceTokenize(text, vocab) {
-  const clean = text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '') // strip accents
-    .replace(/([\p{P}\p{S}])/gu, ' $1 ') // isolate punctuation/symbols
-    .trim();
-  const ids = [];
-  for (const word of clean.split(/\s+/)) {
-    if (!word) continue;
-    let start = 0;
-    const sub = [];
-    let bad = false;
-    while (start < word.length) {
-      let end = word.length;
-      let id = -1;
-      while (start < end) {
-        const piece = (start > 0 ? '##' : '') + word.slice(start, end);
-        const found = vocab.get(piece);
-        if (found !== undefined) {
-          id = found;
-          break;
-        }
-        end -= 1;
-      }
-      if (id < 0) {
-        bad = true;
-        break;
-      }
-      sub.push(id);
-      start = end;
-    }
-    if (bad) ids.push(vocab.get('[UNK]') ?? 100);
-    else ids.push(...sub);
-  }
-  return ids;
-}
-
-function l2normalize(vec) {
-  let sum = 0;
-  for (let i = 0; i < vec.length; i += 1) sum += vec[i] * vec[i];
-  const inv = sum > 0 ? 1 / Math.sqrt(sum) : 0;
-  for (let i = 0; i < vec.length; i += 1) vec[i] *= inv;
-  return vec;
-}
-
-/** Cosine of two L2-normalized vectors = dot product. */
-export function cosine(a, b) {
-  let dot = 0;
-  for (let i = 0; i < a.length; i += 1) dot += a[i] * b[i];
-  return dot;
-}
+// Re-exported so tests (and anything else) keep importing the primitives
+// from here even though they now live in the runtime-agnostic core.
+export { textHash, wordpieceTokenize, cosine, l2normalize } from './semantic-core.js';
 
 /**
  * Create the lazy engine. status: 'idle' → 'loading' → 'ready' | 'unavailable'.
- * All failures (missing assets, wasm init, inference) permanently fail-open
- * to 'unavailable'; callers keep substring search.
  */
 export function createSemanticEngine({ onStatus = () => {} } = {}) {
   let status = 'idle';
-  let session = null;
-  let vocab = null;
-  const nodeCache = new Map(); // peerId → {hash, vec}
-  const queryCache = new Map(); // query → vec (bounded)
+  let lastError = '';
+  let worker = null;
+  let seq = 0;
+  const pending = new Map(); // seq → resolve
 
   const setStatus = (s) => {
     status = s;
     onStatus(s);
   };
 
+  const fail = (e) => {
+    if (e?.message && !lastError) lastError = e.message;
+    if (status !== 'unavailable') setStatus('unavailable');
+    for (const resolve of pending.values()) resolve(new Map());
+    pending.clear();
+    try {
+      worker?.terminate();
+    } catch {
+      /* already gone */
+    }
+    worker = null;
+  };
+
+  function spawn() {
+    if (worker) return worker;
+    try {
+      worker = new SemanticWorker();
+    } catch {
+      fail();
+      return null;
+    }
+    worker.onerror = fail;
+    worker.onmessageerror = fail;
+    worker.onmessage = (e) => {
+      const msg = e.data ?? {};
+      if (msg.type === 'status') {
+        if (msg.reason) lastError = msg.reason;
+        setStatus(msg.status);
+      } else if (msg.type === 'scores') {
+        const resolve = pending.get(msg.seq);
+        if (resolve) {
+          pending.delete(msg.seq);
+          resolve(new Map(msg.entries ?? []));
+        }
+      }
+    };
+    return worker;
+  }
+
   async function init() {
     if (status !== 'idle') return status;
+    const w = spawn();
+    if (!w) return status;
     setStatus('loading');
-    try {
-      const [vocabRes, modelHead] = await Promise.all([
-        fetch(VOCAB_URL),
-        fetch(MODEL_URL, { method: 'HEAD' }),
-      ]);
-      if (!vocabRes.ok || !modelHead.ok) throw new Error('embedding assets absent');
-      const words = (await vocabRes.text()).split(/\r?\n/);
-      vocab = new Map();
-      words.forEach((w, i) => {
-        if (w) vocab.set(w, i);
-      });
-      // Same-origin ort artifacts; single-threaded (page has no COOP/COEP).
-      ort.env.wasm.wasmPaths = ASSET_BASE;
-      ort.env.wasm.numThreads = 1;
-      session = await ort.InferenceSession.create(MODEL_URL, {
-        executionProviders: ['wasm'],
-      });
-      setStatus('ready');
-    } catch {
-      session = null;
-      vocab = null;
-      setStatus('unavailable');
-    }
+    // The worker runs from a blob:, so it cannot resolve root-relative asset
+    // paths on its own — hand it this page's origin.
+    w.postMessage({ type: 'init', origin: globalThis.location?.origin ?? '' });
     return status;
   }
 
-  async function embed(text) {
-    if (status !== 'ready') return null;
-    const tokens = wordpieceTokenize(text, vocab).slice(0, MAX_TOKENS - 2);
-    const cls = vocab.get('[CLS]') ?? 101;
-    const sep = vocab.get('[SEP]') ?? 102;
-    const ids = [cls, ...tokens, sep];
-    const n = ids.length;
-    const inputIds = new BigInt64Array(n);
-    const mask = new BigInt64Array(n);
-    const types = new BigInt64Array(n);
-    for (let i = 0; i < n; i += 1) {
-      inputIds[i] = BigInt(ids[i]);
-      mask[i] = 1n;
-      types[i] = 0n;
-    }
-    const feeds = {
-      input_ids: new ort.Tensor('int64', inputIds, [1, n]),
-      attention_mask: new ort.Tensor('int64', mask, [1, n]),
-    };
-    if (session.inputNames.includes('token_type_ids')) {
-      feeds.token_type_ids = new ort.Tensor('int64', types, [1, n]);
-    }
-    const out = await session.run(feeds);
-    const hidden = out[session.outputNames[0]];
-    const [, seq, dim] = hidden.dims;
-    const data = hidden.data;
-    const vec = new Float32Array(dim);
-    for (let t = 0; t < seq; t += 1) {
-      for (let d = 0; d < dim; d += 1) vec[d] += data[t * dim + d];
-    }
-    for (let d = 0; d < dim; d += 1) vec[d] /= seq;
-    return l2normalize(vec);
-  }
-
-  /** Ensure every node's embedding is cached & current; yields between runs. */
-  async function embedNodes(nodes, textOf) {
-    if (status !== 'ready') return;
-    for (const node of nodes) {
-      const text = textOf(node);
-      const hash = textHash(text);
-      const cached = nodeCache.get(node.peerId);
-      if (cached && cached.hash === hash) continue;
-      const vec = await embed(text);
-      if (vec) nodeCache.set(node.peerId, { hash, vec });
-    }
+  /**
+   * Ensure every node's embedding is current in the worker's cache.
+   * `textOf` runs HERE (a function cannot cross postMessage) — it is pure
+   * string building and costs nothing; the model work stays in the worker.
+   */
+  function embedNodes(nodes, textOf) {
+    if (status !== 'ready' || !worker) return;
+    const items = [];
+    for (const node of nodes) items.push({ id: node.peerId, text: textOf(node) });
+    worker.postMessage({ type: 'corpus', items });
   }
 
   /** peerId → cosine(query, node) for all cached nodes. */
-  async function queryScores(query) {
-    if (status !== 'ready') return new Map();
-    let qvec = queryCache.get(query);
-    if (!qvec) {
-      qvec = await embed(query);
-      if (!qvec) return new Map();
-      if (queryCache.size > 64) queryCache.clear();
-      queryCache.set(query, qvec);
-    }
-    const scores = new Map();
-    for (const [peerId, { vec }] of nodeCache) scores.set(peerId, cosine(qvec, vec));
-    return scores;
+  function queryScores(query) {
+    if (status !== 'ready' || !worker) return Promise.resolve(new Map());
+    seq += 1;
+    const id = seq;
+    return new Promise((resolve) => {
+      pending.set(id, resolve);
+      worker.postMessage({ type: 'query', seq: id, text: query });
+    });
   }
 
   return {
     get status() {
       return status;
     },
+    /** Diagnostic only — why the engine gave up. Never drives UI. */
+    get lastError() {
+      return lastError;
+    },
     init,
-    embed,
     embedNodes,
     queryScores,
+    stop: fail,
   };
 }
